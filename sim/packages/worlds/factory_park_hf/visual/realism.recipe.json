@@ -1,0 +1,654 @@
+{
+  "authoring_contract": {
+    "coordinate_frame": "mujoco_rh_z_up_m",
+    "dressing_defaults": {
+      "cast_shadow": true,
+      "classification": "VisualOnly",
+      "collision": false,
+      "physics_representation": "none",
+      "receive_decals": true
+    },
+    "dressing_id_namespace": "factory_park_hf.realism",
+    "placement_source": "expanded_layout",
+    "preview_output_contract": {
+      "consumer_output_root": "consumer_owned_evidence_root",
+      "recipe_field": "output_basename",
+      "rule": "Each Blender or Unreal consumer writes beneath its own output root and records the actual repository-relative or absolute artifact path in its evidence manifest."
+    },
+    "randomness": "seeded_only",
+    "stable_sort_key": "dressing_id"
+  },
+  "detail_targets": {
+    "clutter": {
+      "clusters": 34,
+      "exclude_spawn_clearance_radius_m": 4.0,
+      "features": [
+        "pallets",
+        "stillages",
+        "IBC_totes",
+        "traffic_cones",
+        "waste_bins",
+        "cable_reels",
+        "empty_drums",
+        "wheel_chocks"
+      ],
+      "minimum_route_clearance_m": 1.2
+    },
+    "facades": {
+      "features": [
+        "corrugated_panel_courses",
+        "corner_flashings",
+        "roof_parapets_and_gutters",
+        "downpipes",
+        "window_and_door_frames",
+        "service_doors",
+        "ventilation_louvres",
+        "weathering_masks"
+      ],
+      "hero_distance_m": 35.0,
+      "repeat_module_m": 1.0,
+      "scope": [
+        "main_factory",
+        "warehouse",
+        "administration_office",
+        "south_guardhouse"
+      ]
+    },
+    "gate": {
+      "features": [
+        "sliding_gate_rails",
+        "access_control_pedestals",
+        "barrier_arms",
+        "security_cameras",
+        "intercom",
+        "canopy_luminaires",
+        "lane_delineators"
+      ],
+      "hero_distance_m": 18.0,
+      "preserve_clear_width_m": 18.0,
+      "scope": [
+        "gate_leaf_west_open",
+        "gate_leaf_east_open",
+        "south_guardhouse",
+        "gate_canopy"
+      ]
+    },
+    "lighting_support": {
+      "emissive_only_beyond_m": 45.0,
+      "features": [
+        "street_lamp_heads",
+        "wall_packs",
+        "dock_lights",
+        "gate_canopy_lights"
+      ],
+      "fixture_instance_limit": 96
+    },
+    "loading": {
+      "clear_route_margin_m": 1.2,
+      "features": [
+        "roller_shutter_doors",
+        "dock_levellers",
+        "rubber_bumpers",
+        "wheel_guides",
+        "bollards",
+        "canopies",
+        "safety_stripes",
+        "pallet_clusters"
+      ],
+      "hero_distance_m": 22.0,
+      "scope_semantic_classes": [
+        "loading_dock",
+        "loading_ramp"
+      ]
+    },
+    "roads": {
+      "decal_density_per_100_square_m": [
+        1.5,
+        3.0
+      ],
+      "features": [
+        "lane_edge_wear",
+        "sealed_cracks",
+        "patch_repairs",
+        "oil_and_tire_marks",
+        "drain_grates",
+        "manhole_covers",
+        "curb_staining",
+        "low_profile_puddles_visual_only"
+      ],
+      "keep_lane_markings_readable": true,
+      "scope_semantic_classes": [
+        "road",
+        "parking_area",
+        "parking_space",
+        "curb",
+        "speed_bump"
+      ]
+    },
+    "tanks": {
+      "bund_access_clearance_m": 1.4,
+      "features": [
+        "weld_courses",
+        "roof_rails",
+        "access_ladders",
+        "inspection_hatches",
+        "valve_clusters",
+        "pipe_elbows_and_flanges",
+        "hazard_placards_without_branding",
+        "localized_weathering"
+      ],
+      "hero_distance_m": 28.0,
+      "scope_semantic_classes": [
+        "storage_tank",
+        "containment_bund",
+        "pipe_rack"
+      ]
+    },
+    "utilities": {
+      "features": [
+        "transformer_yard",
+        "cable_trays",
+        "electrical_cabinets",
+        "hvac_units",
+        "roof_vents",
+        "hydrant_and_fire_hose_points",
+        "utility_conduits"
+      ],
+      "hero_distance_m": 25.0,
+      "scope": [
+        "administration_office",
+        "tank_pipe_rack"
+      ]
+    },
+    "vegetation": {
+      "exclude_engineered_surfaces": true,
+      "features": [
+        "mown_grass",
+        "weedy_edges",
+        "drainage_reeds",
+        "sparse_temperate_trees"
+      ],
+      "grass_density_per_square_m": [
+        0.35,
+        0.9
+      ],
+      "minimum_road_edge_clearance_m": 0.6,
+      "shrub_cluster_count_range": [
+        18,
+        30
+      ],
+      "tree_count_range": [
+        26,
+        38
+      ]
+    }
+  },
+  "hard_rules": {
+    "added_dressing_classification": "VisualOnly",
+    "added_dressing_collision": false,
+    "allow_new_physics_authority": false,
+    "layout_unchanged": true,
+    "mujoco_world_unchanged": true,
+    "physics_authority": "mujoco"
+  },
+  "inputs": {
+    "expanded_layout": "sim/worlds/factory_park_hf/generated/expanded-layout.json",
+    "mujoco_world": "sim/worlds/factory_park_hf/factory_park_hf.xml",
+    "semantic_entities": "sim/worlds/factory_park_hf/generated/semantic-entities.json",
+    "terrain_obj": "sim/worlds/factory_park_hf/generated/terrain.obj"
+  },
+  "lighting": {
+    "blender": {
+      "ambient_occlusion": true,
+      "renderer": "BLENDER_EEVEE_NEXT",
+      "sun_angle_deg": 0.535,
+      "world_strength": 0.35
+    },
+    "exposure": {
+      "ev100": 14.0,
+      "highlight_rolloff": "filmic_medium_high",
+      "mode": "manual",
+      "white_balance_k": 5600
+    },
+    "intent": "neutral_late_morning_operational_daylight",
+    "sky": {
+      "aerial_haze": 0.08,
+      "cloud_cover": 0.28,
+      "ground_albedo": 0.18,
+      "turbidity": 2.8
+    },
+    "sun": {
+      "angular_diameter_deg": 0.535,
+      "azimuth_deg": 138.0,
+      "color_temperature_k": 5600,
+      "elevation_deg": 42.0,
+      "illuminance_lux": 78000
+    },
+    "unreal": {
+      "fog": "ExponentialHeightFog",
+      "global_illumination": "Lumen",
+      "reflections": "Lumen",
+      "shadow_method": "VirtualShadowMaps",
+      "skylight_realtime_capture": true
+    }
+  },
+  "pbr_material_profiles": {
+    "asphalt_worn": {
+      "applies_to": [
+        "asphalt"
+      ],
+      "base_color_srgb": [
+        0.12,
+        0.13,
+        0.14
+      ],
+      "channels": [
+        "base_color",
+        "normal",
+        "roughness",
+        "ambient_occlusion"
+      ],
+      "metallic": 0.0,
+      "roughness_range": [
+        0.72,
+        0.92
+      ],
+      "texel_density_px_per_m": 512,
+      "variation": [
+        "aggregate",
+        "patches",
+        "tire_wear",
+        "oil_stains",
+        "sealed_cracks"
+      ],
+      "workflow": "metallic_roughness"
+    },
+    "compacted_gravel": {
+      "applies_to": [
+        "gravel"
+      ],
+      "base_color_srgb": [
+        0.31,
+        0.27,
+        0.21
+      ],
+      "channels": [
+        "base_color",
+        "normal",
+        "roughness",
+        "ambient_occlusion",
+        "height"
+      ],
+      "metallic": 0.0,
+      "roughness_range": [
+        0.82,
+        0.98
+      ],
+      "texel_density_px_per_m": 512,
+      "variation": [
+        "aggregate_size",
+        "wheel_ruts",
+        "dust",
+        "edge_scatter"
+      ],
+      "workflow": "metallic_roughness"
+    },
+    "concrete_weathered": {
+      "applies_to": [
+        "concrete",
+        "bund_concrete",
+        "curb_concrete",
+        "drainage_concrete"
+      ],
+      "base_color_srgb": [
+        0.48,
+        0.49,
+        0.47
+      ],
+      "channels": [
+        "base_color",
+        "normal",
+        "roughness",
+        "ambient_occlusion"
+      ],
+      "metallic": 0.0,
+      "roughness_range": [
+        0.68,
+        0.9
+      ],
+      "texel_density_px_per_m": 512,
+      "variation": [
+        "formwork",
+        "water_streaks",
+        "edge_darkening",
+        "efflorescence",
+        "repairs"
+      ],
+      "workflow": "metallic_roughness"
+    },
+    "factory_cladding_blue": {
+      "applies_to": [
+        "factory_cladding"
+      ],
+      "base_color_srgb": [
+        0.17,
+        0.29,
+        0.34
+      ],
+      "channels": [
+        "base_color",
+        "normal",
+        "roughness",
+        "metallic",
+        "ambient_occlusion"
+      ],
+      "metallic": 0.45,
+      "roughness_range": [
+        0.42,
+        0.68
+      ],
+      "texel_density_px_per_m": 512,
+      "variation": [
+        "corrugation",
+        "panel_seams",
+        "fasteners",
+        "sun_fade",
+        "rain_streaks"
+      ],
+      "workflow": "metallic_roughness"
+    },
+    "industrial_glass": {
+      "applies_to": [
+        "glass"
+      ],
+      "base_color_srgb": [
+        0.18,
+        0.34,
+        0.4
+      ],
+      "channels": [
+        "base_color",
+        "normal",
+        "roughness",
+        "opacity"
+      ],
+      "ior": 1.52,
+      "metallic": 0.0,
+      "roughness_range": [
+        0.12,
+        0.28
+      ],
+      "texel_density_px_per_m": 512,
+      "transmission": 0.72,
+      "variation": [
+        "dust",
+        "water_spots",
+        "frame_occlusion"
+      ],
+      "workflow": "translucent_dielectric"
+    },
+    "painted_safety_steel": {
+      "applies_to": [
+        "painted_steel"
+      ],
+      "base_color_srgb": [
+        0.86,
+        0.61,
+        0.03
+      ],
+      "channels": [
+        "base_color",
+        "normal",
+        "roughness",
+        "metallic",
+        "ambient_occlusion"
+      ],
+      "metallic": 0.55,
+      "roughness_range": [
+        0.38,
+        0.66
+      ],
+      "texel_density_px_per_m": 768,
+      "variation": [
+        "paint_chips",
+        "edge_wear",
+        "primer",
+        "localized_rust"
+      ],
+      "workflow": "metallic_roughness"
+    },
+    "road_and_parking_paint": {
+      "applies_to": [
+        "road_marking",
+        "parking_marking"
+      ],
+      "base_color_source": "retain_layout_material_hue",
+      "channels": [
+        "base_color",
+        "normal",
+        "roughness",
+        "ambient_occlusion",
+        "opacity"
+      ],
+      "metallic": 0.0,
+      "roughness_range": [
+        0.55,
+        0.78
+      ],
+      "texel_density_px_per_m": 1024,
+      "variation": [
+        "traffic_wear",
+        "edge_chipping",
+        "rubber_transfer",
+        "dirt_mask"
+      ],
+      "workflow": "metallic_roughness"
+    },
+    "shipping_container_weathered": {
+      "applies_to": [
+        "container_blue",
+        "container_orange",
+        "container_red"
+      ],
+      "base_color_source": "retain_layout_material_hue",
+      "channels": [
+        "base_color",
+        "normal",
+        "roughness",
+        "metallic",
+        "ambient_occlusion"
+      ],
+      "metallic": 0.55,
+      "roughness_range": [
+        0.45,
+        0.78
+      ],
+      "texel_density_px_per_m": 768,
+      "variation": [
+        "corrugation",
+        "door_hardware",
+        "scratches",
+        "paint_fade",
+        "surface_rust"
+      ],
+      "workflow": "metallic_roughness"
+    },
+    "tank_enamel_white": {
+      "applies_to": [
+        "tank_white"
+      ],
+      "base_color_srgb": [
+        0.77,
+        0.79,
+        0.76
+      ],
+      "channels": [
+        "base_color",
+        "normal",
+        "roughness",
+        "metallic",
+        "ambient_occlusion"
+      ],
+      "metallic": 0.32,
+      "roughness_range": [
+        0.4,
+        0.7
+      ],
+      "texel_density_px_per_m": 512,
+      "variation": [
+        "weld_seams",
+        "inspection_hatches",
+        "rain_streaks",
+        "dust_band",
+        "minor_rust"
+      ],
+      "workflow": "metallic_roughness"
+    },
+    "warehouse_galvanized": {
+      "applies_to": [
+        "warehouse_cladding",
+        "fence_steel",
+        "steel"
+      ],
+      "base_color_srgb": [
+        0.47,
+        0.5,
+        0.5
+      ],
+      "channels": [
+        "base_color",
+        "normal",
+        "roughness",
+        "metallic",
+        "ambient_occlusion"
+      ],
+      "metallic": 0.82,
+      "roughness_range": [
+        0.34,
+        0.62
+      ],
+      "texel_density_px_per_m": 512,
+      "variation": [
+        "zinc_spangle",
+        "panel_seams",
+        "fasteners",
+        "oxidation",
+        "handling_marks"
+      ],
+      "workflow": "metallic_roughness"
+    }
+  },
+  "performance_budgets": {
+    "lod_policy": {
+      "foliage_cull_distance_m": 120.0,
+      "hero_assets": "LOD0_to_35m_then_automatic",
+      "micro_detail_cull_distance_m": 55.0,
+      "repeated_props": "instanced_static_mesh_or_hierarchical_instancing"
+    },
+    "max_draw_calls": 1800,
+    "max_non_nanite_triangles": 2000000,
+    "max_shadow_casting_local_lights": 24,
+    "max_texture_memory_mb": 2048,
+    "max_unique_4k_texture_sets": 18,
+    "max_visible_triangles": 8000000,
+    "max_visual_only_instances": 5000,
+    "minimum_foliage_instance_batch": 32,
+    "reference_resolution_px": [
+      1920,
+      1080
+    ],
+    "target_frame_rate_fps": 60,
+    "target_frame_time_ms": 16.67
+  },
+  "preview_targets": [
+    {
+      "camera_frame": "mujoco_rh_z_up_m",
+      "id": "site_aerial",
+      "lens_mm": 48.0,
+      "look_at_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "output_basename": "site-aerial-v2.png",
+      "position_m": [
+        155.0,
+        -185.0,
+        145.0
+      ],
+      "purpose": "whole_site_composition_and_zone_readability",
+      "resolution_px": [
+        1920,
+        1080
+      ]
+    },
+    {
+      "camera_frame": "mujoco_rh_z_up_m",
+      "id": "south_gate_robot_eye",
+      "lens_mm": 24.0,
+      "look_at_m": [
+        0.0,
+        -50.0,
+        0.9
+      ],
+      "output_basename": "south-gate-robot-eye-v2.png",
+      "position_m": [
+        0.0,
+        -79.0,
+        0.78
+      ],
+      "purpose": "robot_scale_gate_and_road_readability",
+      "resolution_px": [
+        1920,
+        1080
+      ]
+    },
+    {
+      "camera_frame": "mujoco_rh_z_up_m",
+      "id": "loading_dock_robot_eye",
+      "lens_mm": 28.0,
+      "look_at_m": [
+        50.0,
+        19.0,
+        2.2
+      ],
+      "output_basename": "loading-dock-robot-eye-v2.png",
+      "position_m": [
+        49.0,
+        4.0,
+        0.78
+      ],
+      "purpose": "loading_detail_and_route_clearance",
+      "resolution_px": [
+        1920,
+        1080
+      ]
+    },
+    {
+      "camera_frame": "mujoco_rh_z_up_m",
+      "id": "tank_farm_inspection",
+      "lens_mm": 35.0,
+      "look_at_m": [
+        65.0,
+        -36.0,
+        3.2
+      ],
+      "output_basename": "tank-farm-inspection-v2.png",
+      "position_m": [
+        89.0,
+        -36.0,
+        1.55
+      ],
+      "purpose": "tank_weathering_utilities_and_bund_access",
+      "resolution_px": [
+        1920,
+        1080
+      ]
+    }
+  ],
+  "profile": "industrial_realism_v2",
+  "profile_description": "Contemporary maintained Chinese industrial campus with operational wear, restrained clutter, and robot-scale readability.",
+  "schema": "lingtu.sim.factory-park-realism-recipe.v1",
+  "seed": 20260808,
+  "world_package": "factory_park_hf@1.0.0"
+}

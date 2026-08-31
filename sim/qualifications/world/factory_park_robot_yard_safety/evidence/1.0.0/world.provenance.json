@@ -1,0 +1,40 @@
+{
+  "package": {
+    "id": "factory_park_robot_yard_safety",
+    "manifest": "world.package.yaml",
+    "projection": "visual/world.visual-projection.json",
+    "version": "1.0.0"
+  },
+  "provenance": {
+    "license": "LicenseRef-LingTu-Project-Owned",
+    "license_file": "LICENSE.txt",
+    "owner": "LingTu project",
+    "source_uri": "simstudio://scene-drafts/8fb12f2cba404ed5a7566eb04bca23f1/revisions/1",
+    "third_party_assets": []
+  },
+  "request_digest": "a317072f9ace8ba2894ed996b6ad2734a3f3b7df5544047ab5528d41bc327aca",
+  "schema": "lingtu.sim.world-provenance.v1",
+  "source_intake": {
+    "content_digest": "b1b214fd7761c02a28f9760c2e3f7330d56f85929f987d3d7e290a4ee3f8beaa",
+    "files": [
+      {
+        "path": "LICENSE.txt",
+        "sha256": "26c61ab554553ccc5e3d2dbc91cbf36672ca695093a476a3dc6fa045275b2f24",
+        "size": 74
+      },
+      {
+        "path": "height.r16",
+        "sha256": "1521ffc1f64f072b5c0609c1d42ea590a6b5714def3e017d36b20a685ec43b9e",
+        "size": 80002
+      },
+      {
+        "path": "scene-draft.json",
+        "sha256": "9fc0a24c882310da46931df3ea25ec48572edf8e9b24b92d3c5e4f6a92bd1ce7",
+        "size": 1489
+      }
+    ],
+    "schema": "lingtu.sim.source-intake.v1",
+    "source_kind": "directory",
+    "source_sha256": "b1b214fd7761c02a28f9760c2e3f7330d56f85929f987d3d7e290a4ee3f8beaa"
+  }
+}

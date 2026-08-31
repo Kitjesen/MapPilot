@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from drivers.sim.mujoco.runtime import focus_presentation_viewer, launch_presentation_viewer
-from sim.scripts.mujoco.native_dds_sensors import _build_parser as build_sensor_parser
+from drivers.sim.mujoco.runtime import (
+    draw_navigation_paths,
+    focus_presentation_viewer,
+    launch_presentation_viewer,
+)
 from sim.scripts.mujoco import native_navigation_acceptance as native
 from sim.scripts.mujoco import teleop_avoid_wasd as wasd
+from sim.scripts.mujoco.native_dds_sensors import _build_parser as build_sensor_parser
 from sim.scripts.mujoco.teleop_avoid_wasd import (
     ContinuousTypedTeleop,
     KeyboardCommandState,
@@ -36,6 +41,11 @@ def test_wasd_maps_to_body_frame_intent_with_shift_deadman() -> None:
     assert state.command({"shift", "d"}) == TeleopTwist(vy=-0.15)
     assert state.command({"shift", "q"}) == TeleopTwist(wz=0.35)
     assert state.command({"shift", "e"}) == TeleopTwist(wz=-0.35)
+    assert state.command({"shift", "m", "s"}) == TeleopTwist(
+        vx=-0.18,
+        manual_mode=True,
+    )
+    assert state.command({"m", "s"}) == TeleopTwist()
     assert state.command({"shift", "w", "space"}) == TeleopTwist()
 
 
@@ -54,10 +64,50 @@ def test_opposite_keys_cancel_each_axis() -> None:
 
 
 def test_windows_key_poller_reports_only_held_keys() -> None:
-    held = {ord("W"), 0x10}
+    held = {ord("W"), ord("R"), ord("M"), 0x10}
     poller = WindowsKeyPoller(lambda code: 0x8000 if code in held else 0)
 
-    assert poller.snapshot() == {"w", "shift"}
+    assert poller.snapshot() == {"w", "r", "m", "shift"}
+
+
+def test_resume_key_is_edge_triggered() -> None:
+    assert wasd._pressed_once({"r"}, set(), "r") is True
+    assert wasd._pressed_once({"r"}, {"r"}, "r") is False
+    assert wasd._pressed_once(set(), {"r"}, "r") is False
+
+
+def test_viewer_uses_stall_tolerant_teleop_input_timeout() -> None:
+    assert wasd._input_timeout(350, viewer=True) == 10_000
+    assert wasd._input_timeout(350, viewer=False) == 350
+    assert wasd._input_timeout(20_000, viewer=True) == 20_000
+
+
+def test_resume_uses_typed_navigation_control(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[tuple[Path, list[str], int, float]] = []
+
+    def fake_run_control(
+        binary: Path,
+        arguments: list[str],
+        *,
+        domain_id: int,
+        timeout_s: float,
+    ) -> dict[str, object]:
+        calls.append((binary, arguments, domain_id, timeout_s))
+        return {"returncode": 0, "stdout": "accepted resume"}
+
+    monkeypatch.setattr(wasd.acceptance, "_run_control", fake_run_control)
+
+    result = wasd._send_resume(tmp_path / "lingtu_nav_control", 231)
+
+    assert result["returncode"] == 0
+    assert calls == [
+        (
+            tmp_path / "lingtu_nav_control",
+            ["resume", "mujoco_wasd_operator_resume"],
+            231,
+            8.0,
+        )
+    ]
 
 
 def test_teleop_stream_command_uses_typed_navigation_control_boundary(tmp_path: Path) -> None:
@@ -88,7 +138,7 @@ def test_teleop_stream_command_uses_typed_navigation_control_boundary(tmp_path: 
 
 
 def test_native_teleop_stream_watchdog_sends_zero_and_stops_session() -> None:
-    source = Path("src/nav/cpp/endpoint/motion/nav_control.cpp").read_text(encoding="utf-8")
+    source = Path("src/nav/cpp/endpoint/tools/navctl.cpp").read_text(encoding="utf-8")
     start = source.index("if (input_timed_out) {")
     end = source.index("if (SteadyClock::now() >= next_publish)", start)
     timeout_branch = source[start:end]
@@ -242,11 +292,11 @@ def test_native_stream_serializes_updates_and_graceful_quit(tmp_path: Path) -> N
     process = _FakePopen()
     stream.process = process  # type: ignore[assignment]
 
-    stream.send(TeleopTwist(vx=0.18, vy=-0.15, wz=0.35))
+    stream.send(TeleopTwist(vx=0.18, vy=-0.15, wz=0.35, manual_mode=True))
     result = stream.close("mujoco_wasd_exit")
 
     assert process.stdin.writes == [
-        "0.18 -0.15 0.35\n",
+        "0.18 -0.15 0.35 1\n",
         "quit mujoco_wasd_exit\n",
     ]
     assert result["ok"] is True
@@ -282,15 +332,26 @@ def test_interactive_plan_keeps_native_avoidance_and_dds_output(tmp_path: Path) 
             "navigation",
             "navigation_control",
             "sensor_publisher",
-            "cmd_vel_tap",
+            "driver_bridge",
         )
     }
     paths = {
         "slam": tmp_path / "map.pcd",
         "slam_config": tmp_path / "slam.yaml",
         "policy": tmp_path / "policy.onnx",
+        "path_library": tmp_path / "paths",
         "sensor_runner": tmp_path / "native_dds_sensors.py",
         "world": tmp_path / "scene.xml",
+    }
+    manifest = {
+        "runtime_tolerances": {
+            "sensor_publisher_write_mode": "async_fifo",
+            "sensor_publisher_async_max_bytes": 1_048_576,
+            "sensor_publisher_async_max_records": 512,
+            "sensor_publisher_async_max_batches": 256,
+            "sensor_publisher_async_oldest_s": 0.5,
+            "sensor_publisher_async_shutdown_s": 2.0,
+        }
     }
 
     plan = build_interactive_plan(
@@ -301,7 +362,7 @@ def test_interactive_plan_keeps_native_avoidance_and_dds_output(tmp_path: Path) 
         case_dir=tmp_path / "case",
         duration_s=60.0,
         warmup_s=10.0,
-        manifest={},
+        manifest=manifest,
         viewer=True,
         viewer_hz=24.0,
     )
@@ -309,9 +370,47 @@ def test_interactive_plan_keeps_native_avoidance_and_dds_output(tmp_path: Path) 
     by_name = {item["name"]: item["command"] for item in plan["processes"]}
     assert by_name["navigation"][by_name["navigation"].index("--control-mode") + 1] == "teleop_avoid"
     assert by_name["sensor"][by_name["sensor"].index("--command-source") + 1] == "dds"
+    assert by_name["sensor"][by_name["sensor"].index("--driver-bridge-bin") + 1] == str(
+        binaries["driver_bridge"]
+    )
     assert "--require-cmd-vel" not in by_name["sensor"]
     assert "--viewer" in by_name["sensor"]
+    assert "--motion-log" not in by_name["sensor"]
+    assert "--motion-log-hz" not in by_name["sensor"]
+    assert "--motion-log-lidar-points" not in by_name["sensor"]
     assert by_name["sensor"][by_name["sensor"].index("--viewer-hz") + 1] == "24.0"
+    assert (
+        by_name["sensor"][by_name["sensor"].index("--driver-command-timeout-ms") + 1]
+        == "10000"
+    )
+    assert (
+        by_name["sensor"][by_name["sensor"].index("--driver-heartbeat-timeout-ms") + 1]
+        == "10000"
+    )
+    assert (
+        by_name["sensor"][by_name["sensor"].index("--driver-apply-timeout-ms") + 1]
+        == "10000"
+    )
+    assert (
+        by_name["sensor"][by_name["sensor"].index("--async-publisher-max-bytes") + 1]
+        == "67108864"
+    )
+    assert (
+        by_name["sensor"][by_name["sensor"].index("--async-publisher-max-records") + 1]
+        == "4096"
+    )
+    assert (
+        by_name["sensor"][by_name["sensor"].index("--async-publisher-max-batches") + 1]
+        == "1024"
+    )
+    assert (
+        by_name["sensor"][by_name["sensor"].index("--async-publisher-oldest-s") + 1]
+        == "10.0"
+    )
+    assert (
+        by_name["sensor"][by_name["sensor"].index("--async-publisher-shutdown-s") + 1]
+        == "10.0"
+    )
     assert "teleop_command" not in plan
     assert plan["interactive_control"]["direct_mujoco_control"] is False
     assert plan["interactive_control"]["state_provider"] == "mujoco_fixture"
@@ -333,11 +432,23 @@ def test_interactive_plan_keeps_native_avoidance_and_dds_output(tmp_path: Path) 
         case_dir=tmp_path / "headless_case",
         duration_s=5.0,
         warmup_s=1.0,
-        manifest={},
+        manifest=manifest,
         viewer=False,
         viewer_hz=24.0,
     )
     assert headless_plan["scene_variant"] == "obstacle_stop_demo"
+    headless_sensor = next(
+        item["command"] for item in headless_plan["processes"] if item["name"] == "sensor"
+    )
+    assert (
+        headless_sensor[headless_sensor.index("--driver-heartbeat-timeout-ms") + 1] == "500"
+    )
+    assert headless_sensor[headless_sensor.index("--driver-apply-timeout-ms") + 1] == "500"
+    assert (
+        headless_sensor[headless_sensor.index("--async-publisher-max-bytes") + 1]
+        == "1048576"
+    )
+    assert headless_sensor[headless_sensor.index("--async-publisher-oldest-s") + 1] == "0.5"
 
 
 def test_fastlio_state_provider_keeps_product_slam_process(tmp_path: Path) -> None:
@@ -349,13 +460,15 @@ def test_fastlio_state_provider_keeps_product_slam_process(tmp_path: Path) -> No
             "navigation",
             "navigation_control",
             "sensor_publisher",
-            "cmd_vel_tap",
+            "driver_bridge",
+            "mapd",
         )
     }
     paths = {
         "slam": tmp_path / "map.pcd",
         "slam_config": tmp_path / "slam.yaml",
         "policy": tmp_path / "policy.onnx",
+        "path_library": tmp_path / "paths",
         "sensor_runner": tmp_path / "native_dds_sensors.py",
         "world": tmp_path / "scene.xml",
     }
@@ -431,6 +544,24 @@ def test_runtime_evidence_records_obstacle_stop_and_final_zero(tmp_path: Path) -
     assert evidence["teleop_reason_counts"] == {"obstacle_stop": 1}
 
 
+def test_status_prompts_for_explicit_resume(tmp_path: Path) -> None:
+    nav_status = tmp_path / "nav_status.json"
+    nav_status.write_text(
+        """{
+          "control_authority": {"resume_required": true},
+          "control_loop_health": {"reason": "deadline_miss_ratio_high"},
+          "input_gate": {"reason": "ready"},
+          "teleop": {"reason": "idle", "output": {"vx": 0, "vy": 0, "wz": 0}}
+        }""",
+        encoding="utf-8",
+    )
+
+    status = wasd._format_status(nav_status, TeleopTwist())
+
+    assert "resume=R" in status
+    assert "loop=deadline_miss_ratio_high" in status
+
+
 def test_cli_defaults_to_safe_interactive_contract() -> None:
     args = build_parser().parse_args([])
 
@@ -478,9 +609,15 @@ class _PresentationCamera:
         self.elevation = 0.0
 
 
+class _PresentationOption:
+    def __init__(self) -> None:
+        self.geomgroup = [1] * 6
+
+
 class _PresentationViewer:
     def __init__(self) -> None:
         self.cam = _PresentationCamera()
+        self.opt = _PresentationOption()
 
 
 def test_presentation_viewer_launch_hides_debug_panels(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -514,6 +651,8 @@ def test_presentation_viewer_starts_on_robot_then_follows_without_stealing_orbit
     assert viewer.cam.distance == pytest.approx(2.5)
     assert viewer.cam.azimuth == pytest.approx(30.0)
     assert viewer.cam.elevation == pytest.approx(-20.0)
+    assert viewer.opt.geomgroup[3] == 0
+    assert viewer.opt.geomgroup[5] == 1
 
     viewer.cam.distance = 3.5
     viewer.cam.azimuth = 95.0
@@ -524,6 +663,58 @@ def test_presentation_viewer_starts_on_robot_then_follows_without_stealing_orbit
     assert viewer.cam.distance == pytest.approx(3.5)
     assert viewer.cam.azimuth == pytest.approx(95.0)
     assert viewer.cam.elevation == pytest.approx(-12.0)
+
+
+def test_presentation_viewer_draws_lidar_and_navigation_paths() -> None:
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_string(
+        """<mujoco><worldbody><geom type="plane" size="2 2 0.1"/></worldbody></mujoco>"""
+    )
+    scene = mujoco.MjvScene(model, maxgeom=16)
+    viewer = SimpleNamespace(user_scn=scene)
+
+    overlay = draw_navigation_paths(
+        viewer,
+        {
+            "global_path": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.5, 0.0]],
+            "local_path": [[0.0, 0.0, 0.0], [0.6, 0.2, 0.0]],
+        },
+        point_cloud=[
+            [0.2, -0.1, 0.3, 1.0],
+            [0.3, 0.1, 0.4, 1.0],
+        ],
+    )
+
+    assert overlay == {"point_count": 2, "global_segments": 2, "local_segments": 1}
+    assert scene.ngeom == 5
+    assert list(scene.geoms[0].rgba) == pytest.approx([0.90, 0.56, 0.12, 0.95])
+    assert list(scene.geoms[2].rgba) == pytest.approx([0.18, 0.82, 0.38, 0.98])
+    assert list(scene.geoms[3].rgba) == pytest.approx([0.16, 0.72, 1.0, 0.80])
+
+
+def test_presentation_viewer_prefers_native_local_obstacles_over_raw_lidar() -> None:
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_string(
+        """<mujoco><worldbody><geom type="plane" size="2 2 0.1"/></worldbody></mujoco>"""
+    )
+    scene = mujoco.MjvScene(model, maxgeom=8)
+    viewer = SimpleNamespace(user_scn=scene)
+
+    overlay = draw_navigation_paths(
+        viewer,
+        {
+            "local_planner": "cmu",
+            "local_map": {
+                "enabled": True,
+                "frame_id": "map",
+                "obstacle_points": [[1.25, -0.4, 0.55, 0.55]],
+            },
+        },
+        point_cloud=[[9.0, 9.0, 9.0, 1.0]],
+    )
+
+    assert overlay["point_count"] == 1
+    assert list(scene.geoms[0].pos) == pytest.approx([1.25, -0.4, 0.55])
 
 
 def test_native_sensor_parser_exposes_presentation_only_viewer() -> None:

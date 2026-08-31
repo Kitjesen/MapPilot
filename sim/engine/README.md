@@ -1,11 +1,12 @@
-# sim/engine - Simulation Platform Core
+# sim/engine - Python Simulation Engine
 
-Status: current engine contract as of 2026-07-18.
+Status: development engine used by direct simulation scripts and gates.
 
-`sim/engine` is the canonical simulation runtime. Code here must stay
-hardware-free: it can create synthetic worlds, MuJoCo engines, bridges, and
-scenario assets, but it must not start robot services, publish to real robot
-topics, or depend on field hardware being present.
+`sim/engine` contains Python simulation utilities used by development gates.
+It remains hardware-free, but it is
+not the canonical generic simulation Runtime. New platform work belongs behind
+the interfaces in `sim/runtime/`; protocol conversion belongs in
+`sim/adapters/`. Do not add a second coordinator or UE runtime here.
 
 ## Package Structure
 
@@ -13,10 +14,8 @@ topics, or depend on field hardware being present.
 | --- | --- |
 | `core/` | Engine abstractions: `SimEngine` (ABC), `SimWorld`, `WorldConfig`, `RobotConfig`, sensor configs (`CameraConfig`, `LidarConfig`, `IMUConfig`), and data types (`RobotState`, `CameraData`, `VelocityCommand`). |
 | `mujoco/` | MuJoCo engine implementation: `MuJoCoEngine` (physics stepping, ONNX policy to joint control), `MuJoCoCamera`, `MuJoCoLidar`, `PolicyRunner`. |
-| `bridge/` | Simulation adapters and compatibility bridges: native-DDS/MuJoCo adapters live with their gate scripts; `SimROS2Bridge`, `GazeboBridgeConfig`, `GazeboRuntimeAdapter`, and `CmuUnityLingtuAdapter` remain explicit ROS/GZ/CMU compatibility surfaces. |
-| `scenarios/` | Test scenario builders: `NavigationScenario` (A-to-B), `SemanticNavScenario` (natural language instruction), plus asset generators for large-terrain, multi-floor, and corridor maps. |
+| `bridge/` | Explicit Gazebo and CMU compatibility adapters. Native-DDS/MuJoCo adapters live with their gate scripts. |
 | `worlds/` | `WorldRegistry` scene XML lookup, alias registration, empty-world fallback. Resolves paths under `sim/worlds/`. |
-| `cli.py` | CLI entry point (`python -m sim.engine.cli`) for engine/world/scenario selection. |
 
 ## Usage
 
@@ -27,34 +26,22 @@ import sys; sys.path.insert(0, "src")
 
 from sim.engine.core import SimEngine, WorldConfig, RobotConfig
 from sim.engine.mujoco import MuJoCoEngine
-from sim.engine.bridge import SimROS2Bridge
-from sim.engine.scenarios import NavigationScenario
 from sim.engine.worlds import WorldRegistry
 ```
 
-### CLI
+### Full navigation smoke
 
 ```bash
-python -m sim.engine.cli                           # default MuJoCo + factory
-python -m sim.engine.cli --world office            # switch scene
-python -m sim.engine.cli --headless                # no GUI
-python -m sim.engine.cli --scenario navigation     # A-to-B nav test
-python -m sim.engine.cli --scenario semantic_nav   # semantic nav test
-```
-
-### Via LingTu profiles
-
-```bash
-python lingtu.py sim                  # MuJoCo full simulation
+python -m sim.scripts.mujoco.product_acceptance --run-plan _ --runner _ --manifest _ --help
 ```
 
 ## MuJoCo LiDAR Backend
 
-`lidar_backend="mujoco_lidar"` means LingTu uses the MuJoCo-LiDAR package
-source kept with the simulation LiDAR driver tree.
+`lidar_backend="mujoco_lidar"` uses the official `mujoco-lidar==0.3.3`
+distribution installed by the `sim-mujoco` extra:
 
-```text
-src/drivers/sim/lidar/mujoco_lidar/
+```bash
+uv sync --extra sim-mujoco
 ```
 
 The LingTu wrapper and call chain are:
@@ -68,95 +55,47 @@ src/drivers/sim/mujoco/driver.py
   -> mujoco_lidar.MjLidarWrapper.trace_rays()
 ```
 
-For local runs from the checkout, include LingTu `src` on `PYTHONPATH`; the
-top-level `mujoco_lidar` import is a compatibility entry that resolves to the
-driver-tree package above:
-
-```powershell
-$env:PYTHONPATH='D:\inovxio\brain\lingtu\src;D:\inovxio\brain\lingtu'
-```
+There is no repository-local `mujoco_lidar` compatibility package and the
+runtime rejects a package that resolves inside `src`. Product runs also
+require the canonical `sim/assets/livox/mid360.npy` scan pattern; startup
+fails if the explicit pattern is missing or has the wrong shape or dtype. A
+development-only backend may use the explicit legacy fallback, but that backend
+cannot satisfy a Product acceptance gate.
 
 `src/drivers/sim/mujoco` stays as the Module/runtime adapter layer. The
 simulation engine and sensor implementation stay in `sim/engine` so driver
 code does not own MuJoCo physics or LiDAR ray-casting internals.
-
-## Scenario Architecture
-
-Scenarios inherit from `Scenario` (ABC) and implement three methods:
-
-```python
-class Scenario(ABC):
-    name: str           # unique identifier
-    max_time: float     # timeout (seconds)
-
-    def setup(self, engine) -> None:       # place robot, set goal, spawn obstacles
-    def is_complete(self, engine) -> bool: # check termination condition
-    def is_success(self, engine) -> bool:  # check pass/fail after completion
-```
-
-### Built-in scenarios
-
-| Scenario | Class | Success Condition |
-| --- | --- | --- |
-| `navigation` | `NavigationScenario` | Robot enters `goal_radius` around target (x, y) |
-| `semantic_nav` | `SemanticNavScenario` | Robot reaches target object matching natural language instruction |
-
-### Scenario assets
-
-Asset generators under `scenarios/` produce MJCF scene fragments for
-validation tests:
-
-| File | Purpose |
-| --- | --- |
-| `large_terrain_assets.py` | Large outdoor terrain with elevation variation |
-| `multifloor_assets.py` | Multi-floor building with stairs/ramps |
-| `nav_corridor_assets.py` | Corridor with obstacles for path planning tests |
-
-### CLI flow
-
-```text
-cli.py::main()
-  -> _build_engine(engine_name, world_name, headless)   # MuJoCoEngine + WorldRegistry
-  -> _build_scenario(scenario_name, scenario_args)      # Scenario subclass
-  -> scenario.setup(engine)
-  -> loop: engine.step() -> scenario.is_complete() -> timeout check
-  -> _print_scenario_result(scenario, engine)
-```
 
 ## Bridge Architecture
 
 Simulation output can enter LingTu through two families of adapters:
 
 - native-DDS adapters used by the current real-equivalent MuJoCo gates;
-- ROS/GZ/CMU compatibility bridges used by legacy, benchmark, or delivery-demo
-  gates.
+- ROS/GZ compatibility bridges used by legacy or delivery-demo gates.
 
 Native-DDS acceptance uses `sim/scripts/mujoco/native_dds_sensors.py`,
 `native_navigation_acceptance.py`, and related manifest-driven C++ processes.
 Those paths publish LingTu-owned DDS types and must stay disconnected from
 physical hardware command subscribers.
 
-Compatibility bridges convert simulation engine output into ROS/GZ/CMU topics
+Compatibility bridges convert simulation engine output into ROS/GZ topics
 for gates that explicitly require them:
 
 | Bridge | Backend | Topics |
 | --- | --- | --- |
-| `SimROS2Bridge` | MuJoCo direct compatibility | `/slam/odometry`, `/slam/registered_cloud`, `/camera/*`, TF |
 | `GazeboBridgeConfig` | Gazebo/GZ | Topic name mapping for `ros_gz_bridge` |
 | `GazeboRuntimeAdapter` | Gazebo ROS | `/lingtu/gazebo/raw/*` to `/nav/*` normalization |
-| `CmuUnityLingtuAdapter` | CMU Unity | External TARE topics to LingTu `/nav/*` + `/exploration/*` |
 | `GazeboCmdVelAdapter` | Gazebo | `TwistStamped` to `Twist` conversion for Gazebo diff-drive |
 
 ## Entrypoints
 
-Use `python lingtu.py sim`, profile launchers, or the stable scripts under
-`sim/scripts/`. Do not add new top-level simulation entrypoints here unless the
-profile graph and tests need a new stable contract.
+Use the native acceptance scripts under `sim/scripts/mujoco/` for Product
+evidence.
 
 ## Evidence Boundary
 
-Generated reports belong under `artifacts/`, not under `sim/engine`. G4 server
-closure evidence must remain simulation-only and should preserve:
+Generated reports belong under `artifacts/`, not under `sim/engine`. Simulation
+diagnostics must remain simulation-only and should preserve:
 
 - `simulation_only=true`
 - `real_robot_motion=false`

@@ -203,14 +203,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     engine = build_engine(
         world=world_path,
         drive_mode="policy",
-        n_rays=6400,
         start=[float(v) for v in args.start.split(",")],
         mujoco_memory="96M",
         mid360_samples_per_frame=int(args.samples_per_frame),
         lidar_backend="mujoco_lidar",
         mujoco_lidar_backend="cpu",
         require_product_lidar_backend=True,
-        allow_legacy_lidar_fallback=False,
     )
     model = engine.model
     data = engine.data
@@ -268,10 +266,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 intensity_values.append(np.asarray(scan[:, 3], dtype=np.float64))
             imu_gyro_values.append(np.asarray(state.imu_gyro, dtype=np.float64))
             imu_gravity_values.append(np.asarray(state.imu_projected_gravity, dtype=np.float64))
-            imu_accel_values.append(np.asarray(
-                getattr(state, "imu_linear_acceleration", np.zeros(3, dtype=np.float64)),
-                dtype=np.float64,
-            ))
+            imu_accel_values.append(
+                np.asarray(
+                    getattr(state, "imu_linear_acceleration", np.zeros(3, dtype=np.float64)),
+                    dtype=np.float64,
+                )
+            )
             contacts.append(int(data.ncon))
             base_z.append(float(pos[2]))
             clearances.append(_wheel_clearance(model, data))
@@ -309,18 +309,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     end_pos = np.asarray(engine.get_robot_state().position, dtype=float).copy()
     backend = engine.get_lidar_backend_report()
     clearance_values = [v for item in clearances for v in item.values()]
-    intensities = (
-        np.concatenate(intensity_values)
-        if intensity_values
-        else np.zeros((0,), dtype=np.float64)
-    )
+    intensities = np.concatenate(intensity_values) if intensity_values else np.zeros((0,), dtype=np.float64)
     imu_last_gyro = imu_gyro_values[-1] if imu_gyro_values else np.zeros(3, dtype=np.float64)
-    imu_last_gravity = (
-        imu_gravity_values[-1] if imu_gravity_values else np.zeros(3, dtype=np.float64)
-    )
-    imu_last_accel = (
-        imu_accel_values[-1] if imu_accel_values else np.zeros(3, dtype=np.float64)
-    )
+    imu_last_gravity = imu_gravity_values[-1] if imu_gravity_values else np.zeros(3, dtype=np.float64)
+    imu_last_accel = imu_accel_values[-1] if imu_accel_values else np.zeros(3, dtype=np.float64)
     report = {
         "scenario": "thunderv4_mid360_policy_real_hits",
         "world": str(world_path),

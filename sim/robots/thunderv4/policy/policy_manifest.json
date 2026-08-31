@@ -1,9 +1,0 @@
-{
-  "schema_version": "lingtu.sim_policy_manifest.v1",
-  "asset": "pose_flat_low_kpkd_microterrain_model29600_policy.pt",
-  "sha256": "c7032b8cd11f042f7794b4487ccdcc4a56b9ca4081262e73419e64e0dfb3d3ca",
-  "format": "torchscript",
-  "simulation_only": true,
-  "real_robot_motion": false,
-  "source_note": "Thunder v4 MuJoCo policy moved from local product booklet asset folder."
-}

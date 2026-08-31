@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.truth-snapshot.v1",
+  "title": "LingTu session-bound simulation truth snapshot",
+  "description": "One immutable runtime snapshot produced by the coordinator from MuJoCo state and consumed by RobotSimUE, recording, and replay.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "session_id",
+    "model_generation",
+    "reset_generation",
+    "sequence",
+    "physics_step",
+    "sim_time_ns",
+    "bodies"
+  ],
+  "properties": {
+    "schema": {"const": "lingtu.sim.truth-snapshot.v1"},
+    "session_id": {"$ref": "#/$defs/id"},
+    "model_generation": {"$ref": "#/$defs/counter"},
+    "reset_generation": {"$ref": "#/$defs/counter"},
+    "sequence": {"$ref": "#/$defs/counter"},
+    "physics_step": {"$ref": "#/$defs/counter"},
+    "sim_time_ns": {"$ref": "#/$defs/counter"},
+    "bodies": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/body"}
+    },
+    "joints": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/joint"}
+    },
+    "actuators": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/actuator"}
+    },
+    "sensors": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/sensor"}
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 127
+    },
+    "counter": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "vector3": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"type": "number"}
+    },
+    "quaternion": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {"type": "number"}
+    },
+    "number_array": {
+      "type": "array",
+      "items": {"type": "number"}
+    },
+    "body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stable_id",
+        "instance_id",
+        "frame_id",
+        "position_m",
+        "quaternion_wxyz",
+        "linear_velocity_mps",
+        "angular_velocity_rps"
+      ],
+      "properties": {
+        "body_id": {"$ref": "#/$defs/counter"},
+        "name": {"type": "string", "minLength": 1},
+        "stable_id": {"$ref": "#/$defs/id"},
+        "instance_id": {"$ref": "#/$defs/id"},
+        "frame_id": {"$ref": "#/$defs/id"},
+        "position_m": {"$ref": "#/$defs/vector3"},
+        "quaternion_wxyz": {"$ref": "#/$defs/quaternion"},
+        "linear_velocity_mps": {"$ref": "#/$defs/vector3"},
+        "angular_velocity_rps": {"$ref": "#/$defs/vector3"}
+      }
+    },
+    "joint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stable_id", "position_rad", "velocity_rps"],
+      "properties": {
+        "joint_id": {"$ref": "#/$defs/counter"},
+        "name": {"type": "string", "minLength": 1},
+        "stable_id": {"$ref": "#/$defs/id"},
+        "instance_id": {"$ref": "#/$defs/id"},
+        "frame_id": {"$ref": "#/$defs/id"},
+        "position_rad": {"$ref": "#/$defs/number_array"},
+        "velocity_rps": {"$ref": "#/$defs/number_array"}
+      }
+    },
+    "actuator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actuator_id", "name", "stable_id", "instance_id", "channel_id", "control"],
+      "properties": {
+        "actuator_id": {"$ref": "#/$defs/counter"},
+        "name": {"type": "string", "minLength": 1},
+        "stable_id": {"$ref": "#/$defs/id"},
+        "instance_id": {"$ref": "#/$defs/id"},
+        "channel_id": {"$ref": "#/$defs/id"},
+        "control": {"type": "number"}
+      }
+    },
+    "sensor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sensor_type", "source_stable_id", "values"],
+      "properties": {
+        "sensor_id": {"$ref": "#/$defs/counter"},
+        "name": {"type": "string", "minLength": 1},
+        "stable_id": {"$ref": "#/$defs/id"},
+        "instance_id": {"$ref": "#/$defs/id"},
+        "frame_id": {"$ref": "#/$defs/id"},
+        "sensor_type": {"type": "string", "minLength": 1},
+        "source_stable_id": {"$ref": "#/$defs/id"},
+        "values": {"$ref": "#/$defs/number_array"}
+      }
+    }
+  }
+}

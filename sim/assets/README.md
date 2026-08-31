@@ -19,9 +19,6 @@ joint names, and wheel masses, while adding the `front_camera` and `lidar_link`
 interfaces expected by the simulation stack. It also uses position actuators so
 the existing LingTu policy and PD-control path can keep writing joint targets.
 
-Compatibility paths:
-
-- `../robots/thunder.urdf` is a copy of the latest URDF with mesh paths adjusted
-  from `../meshes/` to `../assets/meshes/`.
-- `../robots/nova_dog/robot_with_camera.xml` mirrors `mjcf/thunder_v3_lingtu.xml`
-  for older scripts that still open the historical NOVA Dog path.
+These are source/reference assets. The runnable Thunder V4 robot lives under
+`sim/robots/doso/thunder_v4/`; its locomotion policy lives under
+`sim/controllers/doso/thunder_v4/locomotion/`.

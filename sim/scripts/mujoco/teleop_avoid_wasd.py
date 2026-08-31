@@ -33,8 +33,18 @@ TELEOP_STREAM_TIMEOUT_STOP_MARKER = "LT_TELEOP_STREAM_TIMEOUT_STOP_V1"
 DEFAULT_ARTIFACT_DIR = ROOT / "artifacts" / "mujoco_teleop_avoid_wasd"
 MIN_ISOLATED_DDS_DOMAIN_ID = 200
 MAX_CYCLONEDDS_UDP_DOMAIN_ID = 232
+VIEWER_DRIVER_TIMEOUT_MS = 10_000
+VIEWER_QUEUE_LIMITS = {
+    "sensor_publisher_async_max_bytes": 64 * 1024 * 1024,
+    "sensor_publisher_async_max_records": 4096,
+    "sensor_publisher_async_max_batches": 1024,
+    "sensor_publisher_async_oldest_s": 10.0,
+    "sensor_publisher_async_shutdown_s": 10.0,
+}
 INTERACTIVE_SCENARIOS = (
     "free",
+    "obstacle_detour_left",
+    "obstacle_detour_right",
     "obstacle_slow",
     "obstacle_stop",
     "terrain_soft",
@@ -48,6 +58,7 @@ class TeleopTwist:
     vx: float = 0.0
     vy: float = 0.0
     wz: float = 0.0
+    manual_mode: bool = False
 
     def is_zero(self) -> bool:
         return abs(self.vx) < 1e-9 and abs(self.vy) < 1e-9 and abs(self.wz) < 1e-9
@@ -71,6 +82,7 @@ class KeyboardCommandState:
             vx=float(forward) * max(0.0, float(self.linear_speed_mps)),
             vy=float(lateral) * max(0.0, float(self.lateral_speed_mps)),
             wz=float(yaw) * max(0.0, float(self.yaw_speed_rad_s)),
+            manual_mode="m" in keys,
         )
 
 
@@ -92,6 +104,8 @@ class WindowsKeyPoller:
         "d": ord("D"),
         "q": ord("Q"),
         "e": ord("E"),
+        "m": ord("M"),
+        "r": ord("R"),
         "shift": 0x10,
         "space": 0x20,
         "escape": 0x1B,
@@ -135,7 +149,16 @@ class PynputKeyPoller:
 
     def _name(self, key: Any) -> str | None:
         char = getattr(key, "char", None)
-        if isinstance(char, str) and char.lower() in {"w", "a", "s", "d", "q", "e"}:
+        if isinstance(char, str) and char.lower() in {
+            "w",
+            "a",
+            "s",
+            "d",
+            "q",
+            "e",
+            "m",
+            "r",
+        }:
             return char.lower()
         if key in {self._keyboard.Key.shift, self._keyboard.Key.shift_l, self._keyboard.Key.shift_r}:
             return "shift"
@@ -175,6 +198,24 @@ def create_key_poller() -> KeyPoller:
     return WindowsKeyPoller() if os.name == "nt" else PynputKeyPoller()
 
 
+def _pressed_once(pressed: set[str], previous: set[str], key: str) -> bool:
+    return key in pressed and key not in previous
+
+
+def _input_timeout(requested_ms: int, *, viewer: bool) -> int:
+    timeout_ms = max(50, int(requested_ms))
+    return max(timeout_ms, VIEWER_DRIVER_TIMEOUT_MS) if viewer else timeout_ms
+
+
+def _send_resume(binary: Path, domain_id: int) -> Mapping[str, Any]:
+    return acceptance._run_control(
+        binary,
+        ["resume", "mujoco_wasd_operator_resume"],
+        domain_id=domain_id,
+        timeout_s=8.0,
+    )
+
+
 def build_teleop_stream_command(
     binary: Path,
     ready_file: Path,
@@ -186,6 +227,11 @@ def build_teleop_stream_command(
 ) -> list[str]:
     """Build one stdin-driven typed-DDS teleop command stream."""
 
+    ready_file_arg = (
+        str(Path(ready_file).resolve())
+        if Path(binary).suffix.lower() == ".exe"
+        else native._linux_arg(Path(ready_file))
+    )
     return native._native_command(
         Path(binary),
         "teleop-stream",
@@ -198,7 +244,7 @@ def build_teleop_stream_command(
         "--input-timeout-ms",
         str(max(50, int(input_timeout_ms))),
         "--ready-file",
-        native._linux_arg(Path(ready_file)),
+        ready_file_arg,
     )
 
 
@@ -286,7 +332,10 @@ class NativeTeleopStream:
             raise RuntimeError(f"typed teleop stream is not running: {self.poll()}")
         if self.process.stdin is None:
             raise RuntimeError("typed teleop stream stdin is unavailable")
-        self.process.stdin.write(f"{twist.vx:.12g} {twist.vy:.12g} {twist.wz:.12g}\n")
+        self.process.stdin.write(
+            f"{twist.vx:.12g} {twist.vy:.12g} {twist.wz:.12g} "
+            f"{int(twist.manual_mode)}\n"
+        )
         self.process.stdin.flush()
         self.samples += 1
 
@@ -415,6 +464,7 @@ class ContinuousTypedTeleop:
                 "vx": twist.vx,
                 "vy": twist.vy,
                 "wz": twist.wz,
+                "manual_mode": twist.manual_mode,
                 "transport": "persistent_typed_dds_navigation_command",
                 "stdin_write_latency_ms": send_latency_ms,
             }
@@ -426,6 +476,9 @@ class ContinuousTypedTeleop:
         returncode = self._stream.poll()
         if returncode is not None:
             raise RuntimeError(f"typed teleop stream exited early: {returncode}")
+
+    def poll(self) -> int | None:
+        return self._stream.poll() if self._stream is not None else None
 
     def close(self, reason: str = "mujoco_wasd_exit") -> Mapping[str, Any]:
         stream = self._stream
@@ -466,6 +519,25 @@ def build_interactive_plan(
 ) -> dict[str, Any]:
     if state_provider not in STATE_PROVIDERS:
         raise ValueError(f"unsupported state provider: {state_provider}")
+    plan_manifest = dict(manifest)
+    if state_provider == "mujoco_fixture":
+        slam_runtime = dict(plan_manifest.get("slam_runtime") or {})
+        slam_runtime.update(provider="mujoco_navigation_fixture", mode="mapping")
+        plan_manifest["slam_runtime"] = slam_runtime
+    if viewer:
+        driver_bridge = dict(plan_manifest.get("driver_bridge") or {})
+        for name in ("command_timeout_ms", "heartbeat_timeout_ms", "apply_timeout_ms"):
+            value = driver_bridge.get(name)
+            if value is None:
+                driver_bridge[name] = VIEWER_DRIVER_TIMEOUT_MS
+            elif isinstance(value, int) and not isinstance(value, bool):
+                driver_bridge[name] = max(value, VIEWER_DRIVER_TIMEOUT_MS)
+        plan_manifest["driver_bridge"] = driver_bridge
+        tolerances = dict(plan_manifest.get("runtime_tolerances") or {})
+        if tolerances.get("sensor_publisher_write_mode") == "async_fifo":
+            for name, minimum in VIEWER_QUEUE_LIMITS.items():
+                tolerances[name] = max(type(minimum)(tolerances.get(name, minimum)), minimum)
+            plan_manifest["runtime_tolerances"] = tolerances
     plan = acceptance.build_execution_plan(
         scenario=scenario,
         domain_id=domain_id,
@@ -475,27 +547,16 @@ def build_interactive_plan(
         duration_s=duration_s,
         warmup_s=warmup_s,
         command_vx=0.0,
-        manifest=manifest,
+        manifest=plan_manifest,
     )
     if scenario == "obstacle_stop" and state_provider == "mujoco_fixture":
         plan["scene_variant"] = "obstacle_stop_demo"
     sensor = next(item for item in plan["processes"] if item["name"] == "sensor")
     command = list(sensor["command"])
-    if state_provider == "mujoco_fixture":
-        plan["processes"] = [item for item in plan["processes"] if item["name"] != "slam"]
-        for option in ("--slam-status-json",):
-            if option in command:
-                index = command.index(option)
-                del command[index : index + 2]
-        command = [value for value in command if value != "--require-slam-output"]
-        if "--navigation-fixture" not in command:
-            command.append("--navigation-fixture")
-        if "--publish-odom-prior" not in command:
-            command.append("--publish-odom-prior")
-        if "--scan-time-profile" in command:
-            command[command.index("--scan-time-profile") + 1] = "instantaneous"
-        else:
-            command.extend(["--scan-time-profile", "instantaneous"])
+    for option in ("--motion-log", "--motion-log-hz", "--motion-log-lidar-points"):
+        if option in command:
+            index = command.index(option)
+            del command[index : index + 2]
     require_nonzero_cmd_vel = scenario not in {"obstacle_stop", "terrain_hard"}
     if require_nonzero_cmd_vel and "--require-cmd-vel" not in command:
         command.append("--require-cmd-vel")
@@ -505,7 +566,7 @@ def build_interactive_plan(
     plan.pop("teleop_command", None)
     plan["interactive_control"] = {
         "ingress": "lingtu_nav_control typed /nav/command/request",
-        "final_output": "native endpoint /nav/cmd_vel",
+        "final_output": "native endpoint /nav/cmd_vel -> MuJoCo physical driver bridge",
         "direct_mujoco_control": False,
         "viewer": bool(viewer),
         "state_provider": state_provider,
@@ -520,15 +581,20 @@ def _format_status(path: Path, requested: TeleopTwist) -> str:
     teleop = nav.get("teleop") or {}
     output = teleop.get("output") or nav.get("final_cmd_vel") or {}
     gate = nav.get("input_gate") or {}
+    authority = nav.get("control_authority") or {}
+    loop_health = nav.get("control_loop_health") or {}
     reason = str(teleop.get("reason") or (nav.get("last_local") or {}).get("reason") or "waiting")
     obstacle = teleop.get("obstacle_distance_m")
     terrain = teleop.get("traversability_cost")
+    resume = "  resume=R" if bool(authority.get("resume_required")) else ""
+    manual = "  manual=ON" if requested.manual_mode else ""
     return (
         f"intent=({requested.vx:+.2f},{requested.vy:+.2f},{requested.wz:+.2f})  "
         f"final=({float(output.get('vx') or 0.0):+.2f},"
         f"{float(output.get('vy') or 0.0):+.2f},"
         f"{float(output.get('wz') or 0.0):+.2f})  "
-        f"gate={str(gate.get('reason') or 'unknown')}  reason={reason}  "
+        f"gate={str(gate.get('reason') or 'unknown')}  reason={reason}{resume}{manual}  "
+        f"loop={str(loop_health.get('reason') or 'warming_up')}  "
         f"obstacle={obstacle if obstacle is not None else '--'}  "
         f"terrain={terrain if terrain is not None else '--'}"
     )
@@ -557,6 +623,9 @@ def _record_runtime_evidence(
     )
     evidence["motion_intent_samples"] = int(evidence.get("motion_intent_samples") or 0) + int(
         not requested.is_zero()
+    )
+    evidence["manual_mode_samples"] = int(evidence.get("manual_mode_samples") or 0) + int(
+        requested.manual_mode
     )
     evidence["final_nonzero_samples"] = int(evidence.get("final_nonzero_samples") or 0) + int(
         output_norm > 1e-4
@@ -678,6 +747,11 @@ def run(
 ) -> dict[str, Any]:
     artifact_dir = Path(args.artifact_dir).expanduser().resolve()
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    preflight_state_provider = (
+        "mujoco_navigation_fixture"
+        if str(args.state_provider) == "mujoco_fixture"
+        else str(args.state_provider)
+    )
     preflight_args = acceptance.build_parser().parse_args(
         [
             "--manifest",
@@ -686,6 +760,8 @@ def run(
             str(artifact_dir),
             "--scenario",
             str(args.scenario),
+            "--state-provider",
+            preflight_state_provider,
             "--preflight-only",
         ]
     )
@@ -711,6 +787,7 @@ def run(
             "native PathFollower",
             "native final safety",
             "typed /nav/cmd_vel",
+            "MuJoCo physical driver bridge",
             "MuJoCo ThunderV4 policy",
         ],
         "preflight": prepared.get("details") or {},
@@ -737,24 +814,30 @@ def run(
         viewer_hz=float(args.viewer_hz),
         state_provider=str(args.state_provider),
     )
+    arm_contract = dict(plan.get("external_arm") or {})
     artifacts = {name: Path(value) for name, value in plan["artifacts"].items()}
     domain_tokens = ["--domain-id", str(int(args.domain_id))]
+    cleanup_specs = {
+        "prior_traversability": [Path(binaries["traversability"]).name, *domain_tokens],
+        "prior_navigation": [Path(binaries["navigation"]).name, *domain_tokens],
+        "prior_teleop_command": [Path(binaries["navigation_control"]).name, "teleop", *domain_tokens],
+        "prior_teleop_command_current": [
+            Path(binaries["navigation_control"]).name,
+            "teleop",
+            *domain_tokens,
+        ],
+        "prior_sensor_publisher": [Path(binaries["sensor_publisher"]).name, *domain_tokens],
+        "prior_driver_bridge": [
+            Path(binaries["driver_bridge"]).name,
+            *domain_tokens,
+        ],
+    }
+    if "slam" in binaries:
+        cleanup_specs["prior_slam"] = [Path(binaries["slam"]).name, *domain_tokens]
     prior_cleanup = acceptance.reclaim_prior_case_processes(
         case_dir,
         artifacts,
-        {
-            "prior_slam": [Path(binaries["slam"]).name, *domain_tokens],
-            "prior_traversability": [Path(binaries["traversability"]).name, *domain_tokens],
-            "prior_navigation": [Path(binaries["navigation"]).name, *domain_tokens],
-            "prior_teleop_command": [Path(binaries["navigation_control"]).name, "teleop", *domain_tokens],
-            "prior_teleop_command_current": [
-                Path(binaries["navigation_control"]).name,
-                "teleop",
-                *domain_tokens,
-            ],
-            "prior_sensor_publisher": [Path(binaries["sensor_publisher"]).name, *domain_tokens],
-            "prior_cmd_vel_tap": [Path(binaries["cmd_vel_tap"]).name, *domain_tokens],
-        },
+        cleanup_specs,
     )
     if not all(bool(item.get("clean")) for item in prior_cleanup):
         report["blockers"] = [*report["blockers"], "prior_owned_process_cleanup_failed"]
@@ -763,7 +846,12 @@ def run(
     acceptance.reset_case_artifacts(artifacts)
     acceptance.build_scene_variant(paths["world"], artifacts["scene"], str(plan["scene_variant"]))
     processes = [
-        native.ManagedProcess(str(item["name"]), list(item["command"]), Path(str(item["log"])))
+        native.ManagedProcess(
+            str(item["name"]),
+            list(item["command"]),
+            Path(str(item["log"])),
+            env=item.get("env"),
+        )
         for item in plan["processes"]
     ]
     by_name = {process.name: process for process in processes}
@@ -774,6 +862,7 @@ def run(
         yaw_speed_rad_s=float(args.yaw_speed),
         require_deadman=str(args.deadman) == "shift",
     )
+    input_timeout_ms = _input_timeout(int(args.input_timeout_ms), viewer=bool(args.viewer))
 
     def send_stop(reason: str) -> Mapping[str, Any]:
         return acceptance._run_control(
@@ -788,13 +877,15 @@ def run(
         domain_id=int(args.domain_id),
         log_dir=case_dir,
         rate_hz=float(args.rate_hz),
-        input_timeout_ms=max(50, int(args.input_timeout_ms)),
+        input_timeout_ms=input_timeout_ms,
         stream_factory=stream_factory,
         stop_sender=send_stop,
     )
     startup_ok = False
     startup_reason = "not_started"
     runtime_error = ""
+    external_arm: dict[str, Any] = {}
+    resume_attempts: list[dict[str, Any]] = []
     viewer_closed_by_user = False
     stop_result: Mapping[str, Any] = {}
     process_cleanup: list[dict[str, Any]] = []
@@ -803,6 +894,7 @@ def run(
         "samples": 0,
         "gate_ready_samples": 0,
         "motion_intent_samples": 0,
+        "manual_mode_samples": 0,
         "final_nonzero_samples": 0,
         "max_final_cmd_norm": 0.0,
         "min_obstacle_distance_m": None,
@@ -825,14 +917,41 @@ def run(
         if not startup_ok:
             raise RuntimeError(startup_reason)
         teleop.apply(TeleopTwist())
+        if arm_contract.get("required") is True:
+            trigger = acceptance.trigger_external_arm(
+                artifacts["sensor_arm"],
+                token=str(arm_contract.get("token") or ""),
+                domain_id=int(args.domain_id),
+                scenario=str(args.scenario),
+            )
+            arm_ok, arm_reason, arm_evidence = acceptance._wait_for_external_arm_ack(
+                sensor=by_name["sensor"],
+                teleop=teleop,
+                status_path=artifacts["sensor_arm_status"],
+                domain_id=int(args.domain_id),
+                scenario=str(args.scenario),
+                not_before_ns=int(trigger["not_before_ns"]),
+                timeout_s=float(args.startup_timeout_s),
+            )
+            external_arm = {
+                "trigger": trigger,
+                "ack": {
+                    "ok": arm_ok,
+                    "reason": arm_reason,
+                    "evidence": arm_evidence,
+                },
+            }
+            if not arm_ok:
+                raise RuntimeError(arm_reason)
         poller.start()
         deadman_text = "Hold SHIFT + " if command_state.require_deadman else ""
         print(
             f"\nNative MuJoCo teleop_avoid ready. {deadman_text}WASD move, Q/E yaw, "
-            "SPACE stop, ESC exit.\n"
+            "hold M for manual escape, SPACE stop, R resume, ESC exit.\n"
         )
         deadline = time.monotonic() + max(1.0, float(args.duration_s))
         next_status_s = 0.0
+        previous_keys: set[str] = set()
         while time.monotonic() < deadline:
             exited = [process for process in processes if process.poll() is not None]
             if exited:
@@ -850,9 +969,18 @@ def run(
             keys = poller.snapshot()
             if "escape" in keys:
                 break
+            if _pressed_once(keys, previous_keys, "r"):
+                teleop.apply(TeleopTwist())
+                resume_result = dict(
+                    _send_resume(binaries["navigation_control"], int(args.domain_id))
+                )
+                resume_attempts.append(resume_result)
+                resume_text = str(resume_result.get("stdout") or resume_result.get("stderr") or "")
+                print(f"\nresume: {resume_text.strip() or resume_result.get('returncode')}\n")
             requested = command_state.command(keys)
             teleop.apply(requested)
             teleop.check()
+            previous_keys = keys
             now_s = time.monotonic()
             if now_s >= next_status_s:
                 _record_runtime_evidence(artifacts["nav_status"], requested, runtime_evidence)
@@ -879,7 +1007,7 @@ def run(
             process_cleanup.append(dict(process.cleanup))
         for name, key in (
             ("sensor_publisher", "sensor_publisher_pid"),
-            ("cmd_vel_tap", "cmd_vel_tap_pid"),
+            ("driver_bridge", "driver_bridge_pid"),
         ):
             path = artifacts.get(key)
             if path is not None:
@@ -901,6 +1029,9 @@ def run(
             "ok": not blockers,
             "blockers": list(dict.fromkeys(blockers)),
             "startup": {"ok": startup_ok, "reason": startup_reason},
+            "external_arm": external_arm,
+            "resume_attempts": resume_attempts,
+            "teleop_input_timeout_ms": input_timeout_ms,
             "runtime_error": runtime_error,
             "viewer_closed_by_user": viewer_closed_by_user,
             "requested_last": requested.__dict__,

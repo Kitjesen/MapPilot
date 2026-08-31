@@ -35,8 +35,8 @@ the intended regression use. Raw datasets remain outside git under
 List the catalog:
 
 ```bash
-python scripts/datasets/public_slam_dataset.py list
-python scripts/datasets/public_slam_dataset.py list --json
+python tools/datasets/public_slam_dataset.py list
+python tools/datasets/public_slam_dataset.py list --json
 ```
 
 Recommended order:
@@ -57,7 +57,7 @@ Recommended order:
 Create a replay manifest after downloading a sequence:
 
 ```bash
-python scripts/datasets/public_slam_dataset.py manifest \
+python tools/datasets/public_slam_dataset.py manifest \
   aist-hard-localization-mid360 \
   "$LINGTU_DATASET_ROOT/aist-hard/outdoor_hard_01a" \
   "$LINGTU_DATASET_ROOT/normalized/aist-hard" \
@@ -76,7 +76,7 @@ They must emit normalized JSONL and preserve source ordering and timestamps:
 Convert normalized records to the existing native LTU1 replay format:
 
 ```bash
-python scripts/datasets/normalized_lidar_imu_to_ltu1.py \
+python tools/datasets/normalized_lidar_imu_to_ltu1.py \
   normalized.jsonl sensors.ltu
 ```
 
@@ -84,7 +84,7 @@ Missing point-level time is rejected by default. For transport/runtime smoke
 only, it may be made explicit:
 
 ```bash
-python scripts/datasets/normalized_lidar_imu_to_ltu1.py \
+python tools/datasets/normalized_lidar_imu_to_ltu1.py \
   --allow-undeskewed normalized.jsonl sensors.ltu
 ```
 

@@ -1,0 +1,18 @@
+schema: lingtu.sim.sensor-package.v1
+id: depth_camera
+version: 1.0.0
+kind: sensor
+description: Forward metric depth camera contract.
+sensor_type: depth_camera
+outputs:
+  - depth
+timing:
+  rate_hz: 30
+interface:
+  transport: camera_shm
+  message_type: lingtu.dds.Image
+configuration:
+  width: 640
+  height: 480
+  encoding: 32FC1
+  unit: m

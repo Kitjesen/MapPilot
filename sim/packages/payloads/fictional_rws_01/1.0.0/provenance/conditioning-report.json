@@ -1,0 +1,56 @@
+{
+  "schema": "lingtu.asset.conditioning-report.v1",
+  "asset_id": "fictional_rws_01",
+  "source_task_id": "2dd80649-65d8-4263-a702-f3d29f73e40c",
+  "conversion_task_id": "3a3dffd1-049f-4205-bcf0-b3c3f58ac1bc",
+  "segmentation_task_id": "74cd1171-28b7-4899-843d-c0f99b1ffada",
+  "coordinate_system": {
+    "forward": "+X",
+    "up": "+Z",
+    "unit": "meter"
+  },
+  "dimensions_m": [
+    0.6500018537044525,
+    0.362533837556839,
+    0.3277865629327721
+  ],
+  "total_triangles": 184997,
+  "objects": [
+    {
+      "name": "SM_RWS01_EOSensor",
+      "role": "eo_sensor",
+      "triangles": 7999
+    },
+    {
+      "name": "SM_RWS01_Launcher",
+      "role": "pitch_visual",
+      "triangles": 49999
+    },
+    {
+      "name": "SM_RWS01_MountBase",
+      "role": "fixed_mount",
+      "triangles": 44999
+    },
+    {
+      "name": "SM_RWS01_RecoilHousing",
+      "role": "pitch_housing",
+      "triangles": 22000
+    },
+    {
+      "name": "SM_RWS01_YawFrame",
+      "role": "yaw_frame",
+      "triangles": 60000
+    }
+  ],
+  "frames": [
+    "payload_base",
+    "yaw_frame",
+    "pitch_frame",
+    "muzzle_frame",
+    "eo_optical_frame"
+  ],
+  "texture_sets": 5,
+  "source_asset": {
+    "path": "assets/rws-01-v002-runtime.glb"
+  }
+}

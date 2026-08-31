@@ -1,0 +1,19 @@
+schema: lingtu.sim.world-package.v1
+id: factory_park_hf
+version: 1.2.0
+kind: world
+description: Factory park with a 1 ms exact-sampling timebase and realtime articulated-body integration.
+physics:
+  mjcf: physics/factory_park_hf.xml
+  global_policy:
+    timestep_s: 0.001
+    integrator: implicitfast
+    solver: newton
+    iterations: 100
+    gravity_mps2: [0.0, 0.0, -9.81]
+visual:
+  binding: WorldVisual:FactoryParkHF
+  level: /Game/RobotSim/Maps/FactoryPark_HF
+entities:
+  - source: ../../../../worlds/factory_park_hf/generated/semantic-entities.json
+    role: static_semantics

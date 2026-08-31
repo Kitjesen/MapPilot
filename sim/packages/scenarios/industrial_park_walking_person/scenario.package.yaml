@@ -1,0 +1,26 @@
+schema: lingtu.sim.scenario-package.v1
+id: industrial_park_walking_person
+version: 1.0.0
+kind: scenario
+description: One walking person for the Thunder tracking Product.
+world: industrial_park@1.0.0
+entities:
+  - entity_id: person_01
+    entity_type: pedestrian
+    authority: scenario
+    initial_transform:
+      position_m: [6.0, 4.0, 0.0]
+      quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]
+    physics_proxy:
+      mode: kinematic
+      mjcf: physics/person_capsule.xml
+      attach_root: proxy_root
+    behavior:
+      profile: linear_crossing
+      seed: 20260829
+      parameters:
+        start_time_s: 2.0
+        duration_s: 180.0
+        speed_mps: 0.05
+        end_position_m: [15.0, 4.0, 0.0]
+    semantic_class: person

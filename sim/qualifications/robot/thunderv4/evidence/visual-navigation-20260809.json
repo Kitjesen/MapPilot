@@ -1,0 +1,63 @@
+{
+  "artifacts": {
+    "episode_result.json": {
+      "sha256": "1d107e0fdf35a6ef31e9a09afb2e6123dd84a5199095573b24a6a75ff3f585eb"
+    },
+    "sensor-readiness.json": {
+      "sha256": "9eefe4a26d2dd588990072869e6834ebe485df39f7350978f289aa34d40a6281"
+    },
+    "session.runtime.json": {
+      "sha256": "4b99a15c063a6463702f53c1419f79cebcd45e60b3a2a8b5e0c39ba491bec0d0"
+    },
+    "simstudio-visual-acceptance.json": {
+      "sha256": "1a069a965d53c530730679efcca117daf31b261b2b9f3af47091584c3f42879f"
+    },
+    "visual-first-frame.png": {
+      "sha256": "3fdcb21b4b15474eace09583d931aa7ee7fc7973f88f7f924b5998e69a7a6d9b"
+    },
+    "visual-readiness.json": {
+      "sha256": "dfb6df60e7a95b37ff3d78e51e4681f8f66e3e7d6b4cfe1b73ce3ff49a5820ba"
+    }
+  },
+  "observations": {
+    "bindings": {
+      "control": "ACTIVE",
+      "physics": "ACTIVE",
+      "sensors": "ACTIVE",
+      "visual": "ACTIVE"
+    },
+    "clock": {
+      "first_pause_sequence": 997,
+      "initial_sequence": 935,
+      "second_pause_sequence": 53
+    },
+    "episode_status": "SUCCEEDED",
+    "reset_generation_increment": 1,
+    "sensor_contract": {
+      "depth": "640x480@30Hz",
+      "imu": "500Hz",
+      "mid360": "10Hz",
+      "rgb": "640x480@30Hz",
+      "truth_odom": "100Hz (truth-only)"
+    },
+    "sensor_streams": {
+      "thunder_01.front_depth": "ACTIVE",
+      "thunder_01.front_rgb": "ACTIVE",
+      "thunder_01.imu": "ACTIVE",
+      "thunder_01.mid360": "ACTIVE",
+      "thunder_01.truth_odom": "ACTIVE"
+    }
+  },
+  "package": {
+    "id": "thunderv4",
+    "kind": "robot",
+    "version": "1.0.0"
+  },
+  "run": {
+    "bundle_id": "86d2c141da6b4307bb413611035af6fd",
+    "launch_profile": "visual",
+    "run_id": "01115e392e5d4bd3a913ef90c1f9392a",
+    "product_session_id": "81043161d1ef56b12029794186e5f2efa"
+  },
+  "schema": "lingtu.sim.qualification-evidence.v1"
+}

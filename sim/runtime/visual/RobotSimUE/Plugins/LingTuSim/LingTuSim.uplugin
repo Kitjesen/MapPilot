@@ -1,0 +1,21 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0-skeleton",
+  "FriendlyName": "LingTu Simulation",
+  "Description": "Plan-driven UE runtime boundaries for RobotSimUE.",
+  "Category": "Simulation",
+  "EnabledByDefault": true,
+  "CanContainContent": false,
+  "SupportedTargetPlatforms": ["Win64"],
+  "Plugins": [
+    {"Name": "PlatformCrypto", "Enabled": true}
+  ],
+  "Modules": [
+    {"Name": "LingTuSimRuntime", "Type": "Runtime", "LoadingPhase": "Default"},
+    {"Name": "LingTuSimSession", "Type": "Runtime", "LoadingPhase": "Default"},
+    {"Name": "LingTuSimVisual", "Type": "Runtime", "LoadingPhase": "Default"},
+    {"Name": "LingTuSimSensors", "Type": "Runtime", "LoadingPhase": "Default"},
+    {"Name": "LingTuSimUI", "Type": "Runtime", "LoadingPhase": "Default"}
+  ]
+}

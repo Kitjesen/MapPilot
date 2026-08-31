@@ -1,0 +1,29 @@
+schema: lingtu.sim.scenario-package.v1
+id: factory_park_pedestrian_crossing
+version: 1.0.0
+kind: scenario
+description: Deterministic pedestrian crossing beside the FactoryPark_HF robot spawn.
+world: factory_park_hf@1.0.0
+entities:
+  - entity_id: pedestrian_01
+    entity_type: pedestrian
+    authority: scenario
+    initial_transform:
+      position_m: [4.0, -72.0, 0.0]
+      quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]
+    physics_proxy:
+      mode: kinematic
+      mjcf: physics/pedestrian_capsule.xml
+      attach_root: proxy_root
+    visual:
+      binding: EntityVisual:PedestrianCapsule
+      projection: visual/entity.visual-projection.json
+    behavior:
+      profile: linear_crossing
+      seed: 20260810
+      parameters:
+        start_time_s: 2.0
+        duration_s: 8.0
+        speed_mps: 1.5
+        end_position_m: [4.0, -84.0, 0.0]
+    semantic_class: pedestrian

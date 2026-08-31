@@ -1,0 +1,20 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "",
+  "Category": "Simulation",
+  "Description": "LingTu UE5 host for digest-bound simulation bundles and dynamic robot/world visualization.",
+  "Modules": [{"Name": "RobotSimUE", "Type": "Runtime", "LoadingPhase": "Default"}],
+  "Plugins": [
+    {"Name": "LingTuSim", "Enabled": true},
+    {"Name": "PythonScriptPlugin", "Enabled": true},
+    {"Name": "EditorScriptingUtilities", "Enabled": true},
+    {"Name": "ModelContextProtocol", "Enabled": true},
+    {"Name": "AllToolsets", "Enabled": true},
+    {"Name": "Terminal", "Enabled": true},
+    {
+      "Name": "Tripo3DUEBridge",
+      "Enabled": true,
+      "SupportedTargetPlatforms": ["Win64"]
+    }
+  ]
+}

@@ -1,0 +1,127 @@
+{
+  "batch_id": "operations_safety",
+  "description": "Physical safety and logistics fixtures for parking, container-yard, and gravel-test operations.",
+  "elements": [
+    {
+      "element_type": "safety_bollard",
+      "instance_key": "parking_west_01",
+      "position_xy_m": [8.0, -48.0],
+      "surface_id": "parking_apron"
+    },
+    {
+      "element_type": "safety_bollard",
+      "instance_key": "parking_west_02",
+      "position_xy_m": [8.0, -44.5],
+      "surface_id": "parking_apron"
+    },
+    {
+      "element_type": "safety_bollard",
+      "instance_key": "parking_east_01",
+      "position_xy_m": [42.0, -48.0],
+      "surface_id": "parking_apron"
+    },
+    {
+      "element_type": "safety_bollard",
+      "instance_key": "parking_east_02",
+      "position_xy_m": [42.0, -44.5],
+      "surface_id": "parking_apron"
+    },
+    {
+      "element_type": "lane_marker",
+      "instance_key": "parking_guide_01",
+      "position_xy_m": [15.0, -34.0],
+      "surface_id": "parking_apron",
+      "yaw_deg": 90.0
+    },
+    {
+      "element_type": "lane_marker",
+      "instance_key": "parking_guide_02",
+      "position_xy_m": [35.0, -34.0],
+      "surface_id": "parking_apron",
+      "yaw_deg": 90.0
+    },
+    {
+      "element_type": "pallet_stack",
+      "instance_key": "container_pallet_01",
+      "position_xy_m": [-25.0, -14.0],
+      "surface_id": "container_yard_apron"
+    },
+    {
+      "element_type": "pallet_stack",
+      "instance_key": "container_pallet_02",
+      "position_xy_m": [-27.0, -14.0],
+      "surface_id": "container_yard_apron"
+    },
+    {
+      "element_type": "industrial_drum",
+      "instance_key": "container_drum_01",
+      "position_xy_m": [-29.0, -16.0],
+      "surface_id": "container_yard_apron"
+    },
+    {
+      "element_type": "industrial_drum",
+      "instance_key": "container_drum_02",
+      "position_xy_m": [-30.0, -16.0],
+      "surface_id": "container_yard_apron"
+    },
+    {
+      "element_type": "industrial_drum",
+      "instance_key": "container_drum_03",
+      "position_xy_m": [-31.0, -16.0],
+      "surface_id": "container_yard_apron"
+    },
+    {
+      "element_type": "traffic_cone",
+      "instance_key": "container_cone_01",
+      "position_xy_m": [-27.0, -20.0],
+      "surface_id": "container_yard_apron"
+    },
+    {
+      "element_type": "traffic_cone",
+      "instance_key": "container_cone_02",
+      "position_xy_m": [-30.0, -20.0],
+      "surface_id": "container_yard_apron"
+    },
+    {
+      "element_type": "equipment_cabinet",
+      "instance_key": "container_equipment_01",
+      "position_xy_m": [-79.0, -14.0],
+      "surface_id": "container_yard_apron",
+      "yaw_deg": 90.0
+    },
+    {
+      "element_type": "fire_cabinet",
+      "instance_key": "container_fire_01",
+      "position_xy_m": [-77.0, -14.0],
+      "surface_id": "container_yard_apron",
+      "yaw_deg": 90.0
+    },
+    {
+      "element_type": "jersey_barrier",
+      "instance_key": "gravel_barrier_west",
+      "position_xy_m": [-88.0, 75.0],
+      "surface_id": "gravel_acceptance_pad",
+      "yaw_deg": 90.0
+    },
+    {
+      "element_type": "jersey_barrier",
+      "instance_key": "gravel_barrier_east",
+      "position_xy_m": [-64.0, 75.0],
+      "surface_id": "gravel_acceptance_pad",
+      "yaw_deg": 90.0
+    },
+    {
+      "element_type": "safety_sign",
+      "instance_key": "gravel_sign_west",
+      "position_xy_m": [-88.0, 80.0],
+      "surface_id": "gravel_acceptance_pad"
+    },
+    {
+      "element_type": "safety_sign",
+      "instance_key": "gravel_sign_east",
+      "position_xy_m": [-64.0, 80.0],
+      "surface_id": "gravel_acceptance_pad"
+    }
+  ],
+  "schema": "lingtu.sim.factory-park-element-batch.v1"
+}

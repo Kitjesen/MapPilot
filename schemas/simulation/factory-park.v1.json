@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lingtu.inovxio.local/schemas/simulation/factory-park.v1.json",
+  "additionalProperties": false,
+  "properties": {
+    "batch_id": {
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "elements": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "element_type": {
+            "enum": [
+              "equipment_cabinet",
+              "fire_cabinet",
+              "industrial_drum",
+              "jersey_barrier",
+              "lane_marker",
+              "pallet_stack",
+              "safety_bollard",
+              "safety_sign",
+              "traffic_cone",
+              "wheel_stop"
+            ],
+            "type": "string"
+          },
+          "instance_key": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "position_xy_m": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "surface_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "yaw_deg": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "instance_key",
+          "element_type",
+          "surface_id",
+          "position_xy_m"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "schema": {
+      "const": "lingtu.sim.factory-park-element-batch.v1"
+    }
+  },
+  "required": [
+    "schema",
+    "batch_id",
+    "elements"
+  ],
+  "title": "LingTu FactoryPark_HF Element Batch v1",
+  "type": "object"
+}

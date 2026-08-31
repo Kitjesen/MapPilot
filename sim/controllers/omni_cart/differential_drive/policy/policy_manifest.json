@@ -1,0 +1,10 @@
+{
+  "actuation": "direct_wheel_torque",
+  "controller_model": "two_wheel_differential_drive",
+  "limitations": [
+    "linear_y commands are rejected",
+    "wheel-ground interaction is MuJoCo contact physics, not a mecanum or omnidirectional model",
+    "this baseline controller has no learned policy or terrain adaptation"
+  ],
+  "schema": "lingtu.sim.controller-policy-manifest.v1"
+}

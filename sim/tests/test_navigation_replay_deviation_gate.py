@@ -7,54 +7,18 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.sim]
+from sim.scripts.navigation_replay_deviation_gate import (
+    SCHEMA_VERSION,
+    build_fixture_trace,
+    build_report,
+    build_topic_jsonl_trace,
+    evaluate_trace,
+)
 
-from sim.scripts.navigation_replay_deviation_gate import SCHEMA_VERSION
-from sim.scripts.navigation_replay_deviation_gate import build_fixture_trace
-from sim.scripts.navigation_replay_deviation_gate import build_report
-from sim.scripts.navigation_replay_deviation_gate import build_routecheck_trace
-from sim.scripts.navigation_replay_deviation_gate import build_topic_jsonl_trace
-from sim.scripts.navigation_replay_deviation_gate import evaluate_trace
+pytestmark = [pytest.mark.sim]
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _write_routecheck_report(tmp_path: Path) -> Path:
-    plan_path = tmp_path / "routecheck" / "candidate" / "plan.json"
-    plan_path.parent.mkdir(parents=True, exist_ok=True)
-    plan_path.write_text(
-        json.dumps(
-            {
-                "feasible": True,
-                "goal": {"x": 2.0, "y": 0.4, "z": 0.0, "frame_id": "map"},
-                "path": [
-                    {"x": 0.0, "y": 0.0, "z": 0.0, "frame_id": "map"},
-                    {"x": 1.0, "y": 0.2, "z": 0.0, "frame_id": "map"},
-                    {"x": 2.0, "y": 0.4, "z": 0.0, "frame_id": "map"},
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    report_path = tmp_path / "routecheck" / "summary.json"
-    report_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "mode": "routecheck_non_motion",
-                "outcome": "pass",
-                "simulation_only": True,
-                "real_robot_motion": False,
-                "cmd_vel_sent_to_hardware": False,
-                "artifacts": {
-                    "candidate_files": {"plan": str(plan_path)},
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    return report_path
 
 
 def _write_topic_jsonl(tmp_path: Path, *, encoding: str = "utf-8") -> Path:
@@ -127,6 +91,8 @@ def test_fixture_navigation_replay_deviation_passes():
     assert report["cmd_vel_nonzero"] > 0
     assert report["final_distance_m"] <= report["thresholds"]["max_final_distance_m"]
     assert report["tracking_error_p95_m"] <= report["thresholds"]["max_tracking_error_p95_m"]
+    assert [edge["id"] for edge in report["runtime_dataflow"]] == list(report["deviation_checks"])
+    assert all(edge["ok"] is True for edge in report["runtime_dataflow"])
 
 
 def test_navigation_replay_deviation_rejects_zero_commands_and_tracking_drift(tmp_path: Path):
@@ -142,6 +108,8 @@ def test_navigation_replay_deviation_rejects_zero_commands_and_tracking_drift(tm
     assert report["ok"] is False
     assert any("command_replay" in gap for gap in report["remaining_gaps"])
     assert any("tracking_deviation" in gap for gap in report["remaining_gaps"])
+    failed_edges = {edge["id"] for edge in report["runtime_dataflow"] if edge["ok"] is False}
+    assert {"command_replay", "tracking_deviation"} <= failed_edges
 
 
 def test_navigation_replay_deviation_evaluator_handles_trace_dict_directly():
@@ -152,33 +120,6 @@ def test_navigation_replay_deviation_evaluator_handles_trace_dict_directly():
     assert evaluation["ok"] is True
     assert evaluation["sample_count"] == len(trace["samples"])
     assert evaluation["odom_motion_m"] >= evaluation["thresholds"]["min_odom_motion_m"]
-
-
-def test_navigation_replay_deviation_builds_trace_from_routecheck_report(tmp_path: Path):
-    routecheck_report = _write_routecheck_report(tmp_path)
-
-    trace = build_routecheck_trace(routecheck_report)
-    evaluation = evaluate_trace(trace)
-
-    assert trace["source"] == "routecheck_preflight_plan_preview"
-    assert trace["trace_kind"] == "non_motion_plan_replay"
-    assert trace["simulation_only"] is True
-    assert trace["cmd_vel_sent_to_hardware"] is False
-    assert evaluation["ok"] is True
-    assert evaluation["cmd_vel_nonzero"] > 0
-
-
-def test_navigation_replay_deviation_report_can_write_routecheck_trace(tmp_path: Path):
-    routecheck_report = _write_routecheck_report(tmp_path)
-    trace_path = tmp_path / "navigation_replay_deviation" / "trace.json"
-
-    report = build_report(routecheck_report_path=routecheck_report, write_trace=trace_path)
-
-    assert report["ok"] is True
-    assert report["trace_kind"] == "non_motion_plan_replay"
-    assert report["trace_artifact"] == str(trace_path)
-    trace = json.loads(trace_path.read_text(encoding="utf-8"))
-    assert trace["source_plan"].endswith("plan.json")
 
 
 def test_navigation_replay_deviation_builds_trace_from_topic_jsonl(tmp_path: Path):
@@ -228,35 +169,6 @@ def test_navigation_replay_deviation_cli_fixture_writes_report(tmp_path: Path):
     assert probe.returncode == 0, probe.stderr
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["ok"] is True
-
-
-def test_navigation_replay_deviation_cli_routecheck_report_writes_trace(tmp_path: Path):
-    routecheck_report = _write_routecheck_report(tmp_path)
-    trace_path = tmp_path / "trace.json"
-    report_path = tmp_path / "report.json"
-
-    probe = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "sim/scripts/navigation_replay_deviation_gate.py"),
-            "--routecheck-report",
-            str(routecheck_report),
-            "--write-trace",
-            str(trace_path),
-            "--json-out",
-            str(report_path),
-            "--strict",
-        ],
-        cwd=REPO_ROOT,
-        text=True,
-        capture_output=True,
-        timeout=20,
-    )
-
-    assert probe.returncode == 0, probe.stderr
-    report = json.loads(report_path.read_text(encoding="utf-8"))
-    assert report["ok"] is True
-    assert trace_path.exists()
 
 
 def test_navigation_replay_deviation_cli_topic_jsonl_writes_trace(tmp_path: Path):

@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.controller-package.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "version",
+    "kind",
+    "adapter",
+    "policy",
+    "timing",
+    "robot_interface",
+    "actuators"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lingtu.sim.controller-package.v1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "const": "controller"
+    },
+    "description": {
+      "type": "string"
+    },
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plugin",
+        "abi"
+      ],
+      "properties": {
+        "plugin": {
+          "type": "string",
+          "minLength": 1
+        },
+        "abi": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "command_calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "scope",
+        "provenance",
+        "external_yaw_cap_radps",
+        "policy_yaw_observation_gain",
+        "policy_yaw_observation_limit_radps",
+        "leaves_base_twist_unchanged",
+        "affected_axes"
+      ],
+      "properties": {
+        "schema": {
+          "const": "lingtu.sim.controller-command-calibration.v1"
+        },
+        "scope": {
+          "const": "quadruped_him_observation_only"
+        },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_id",
+            "audit_note",
+            "qualification_claim"
+          ],
+          "properties": {
+            "source_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "artifact_path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "audit_note": {
+              "type": "string",
+              "minLength": 1
+            },
+            "qualification_claim": {
+              "const": false
+            }
+          }
+        },
+        "external_yaw_cap_radps": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "policy_yaw_observation_gain": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "policy_yaw_observation_limit_radps": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "leaves_base_twist_unchanged": {
+          "const": true
+        },
+        "affected_axes": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "angular_z"
+            }
+          ],
+          "minItems": 1,
+          "maxItems": 1,
+          "items": false,
+          "uniqueItems": true
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime",
+        "artifact",
+        "manifest"
+      ],
+      "properties": {
+        "runtime": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact": {
+          "type": "string",
+          "minLength": 1
+        },
+        "manifest": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inference_hz",
+        "low_level_hz"
+      ],
+      "properties": {
+        "inference_hz": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "low_level_hz": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "robot_interface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requires_state",
+        "produces_command"
+      ],
+      "properties": {
+        "requires_state": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "accepts_command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message_type": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "produces_command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message_type": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "actuators": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "channels"
+      ],
+      "properties": {
+        "channels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

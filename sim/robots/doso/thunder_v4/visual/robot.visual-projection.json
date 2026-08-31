@@ -1,0 +1,1505 @@
+{
+  "binding": "RobotVisual:ThunderV4",
+  "components": [
+    {
+      "asset_key": "RobotVisual:ThunderV4/FL_calf/visual/FL_calf_visual",
+      "body_frame_id": "FL_calf",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "FL_calf_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/fl_calf_Link.STL"
+      },
+      "local_body_id": "FL_calf",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "limb_graphite",
+        "pbr": {
+          "base_color_rgba": [
+            0.006995,
+            0.008023,
+            0.009134,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "limb_graphite",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "FL_calf_visual",
+          "source_mesh": "visual/meshes/fl_calf_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/FL_calf_visual.FL_calf_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "FL_calf/visual/FL_calf_visual",
+      "visual_id": "FL_calf_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/FL_foot/visual/FL_foot_visual",
+      "body_frame_id": "FL_foot",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "FL_foot_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/fl_foot_Link.STL"
+      },
+      "local_body_id": "FL_foot",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "wheel_black",
+        "pbr": {
+          "base_color_rgba": [
+            0.001821,
+            0.002125,
+            0.002428,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "wheel_black",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "FL_foot_visual",
+          "source_mesh": "visual/meshes/fl_foot_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/FL_foot_visual.FL_foot_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "FL_foot/visual/FL_foot_visual",
+      "visual_id": "FL_foot_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/FL_hip/visual/FL_hip_visual",
+      "body_frame_id": "FL_hip",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "FL_hip_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/fl_hip_Link.STL"
+      },
+      "local_body_id": "FL_hip",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "joint_graphite",
+        "pbr": {
+          "base_color_rgba": [
+            0.009134,
+            0.01033,
+            0.011612,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "joint_graphite",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "FL_hip_visual",
+          "source_mesh": "visual/meshes/fl_hip_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/FL_hip_visual.FL_hip_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "FL_hip/visual/FL_hip_visual",
+      "visual_id": "FL_hip_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/FL_thigh/visual/FL_thigh_visual",
+      "body_frame_id": "FL_thigh",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "FL_thigh_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/fl_thigh_Link.STL"
+      },
+      "local_body_id": "FL_thigh",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "limb_graphite",
+        "pbr": {
+          "base_color_rgba": [
+            0.006995,
+            0.008023,
+            0.009134,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "limb_graphite",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "FL_thigh_visual",
+          "source_mesh": "visual/meshes/fl_thigh_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/FL_thigh_visual.FL_thigh_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "FL_thigh/visual/FL_thigh_visual",
+      "visual_id": "FL_thigh_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/FR_calf/visual/FR_calf_visual",
+      "body_frame_id": "FR_calf",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "FR_calf_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/fr_calf_Link.STL"
+      },
+      "local_body_id": "FR_calf",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "limb_graphite",
+        "pbr": {
+          "base_color_rgba": [
+            0.006995,
+            0.008023,
+            0.009134,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "limb_graphite",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "FR_calf_visual",
+          "source_mesh": "visual/meshes/fr_calf_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/FR_calf_visual.FR_calf_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "FR_calf/visual/FR_calf_visual",
+      "visual_id": "FR_calf_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/FR_foot/visual/FR_foot_visual",
+      "body_frame_id": "FR_foot",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "FR_foot_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/fr_foot_Link.STL"
+      },
+      "local_body_id": "FR_foot",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "wheel_black",
+        "pbr": {
+          "base_color_rgba": [
+            0.001821,
+            0.002125,
+            0.002428,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "wheel_black",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "FR_foot_visual",
+          "source_mesh": "visual/meshes/fr_foot_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/FR_foot_visual.FR_foot_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "FR_foot/visual/FR_foot_visual",
+      "visual_id": "FR_foot_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/FR_hip/visual/FR_hip_visual",
+      "body_frame_id": "FR_hip",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "FR_hip_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/fr_hip_link.STL"
+      },
+      "local_body_id": "FR_hip",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "joint_graphite",
+        "pbr": {
+          "base_color_rgba": [
+            0.009134,
+            0.01033,
+            0.011612,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "joint_graphite",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "FR_hip_visual",
+          "source_mesh": "visual/meshes/fr_hip_link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/FR_hip_visual.FR_hip_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "FR_hip/visual/FR_hip_visual",
+      "visual_id": "FR_hip_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/FR_thigh/visual/FR_thigh_visual",
+      "body_frame_id": "FR_thigh",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "FR_thigh_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/fr_thigh_Link.STL"
+      },
+      "local_body_id": "FR_thigh",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "limb_graphite",
+        "pbr": {
+          "base_color_rgba": [
+            0.006995,
+            0.008023,
+            0.009134,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "limb_graphite",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "FR_thigh_visual",
+          "source_mesh": "visual/meshes/fr_thigh_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/FR_thigh_visual.FR_thigh_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "FR_thigh/visual/FR_thigh_visual",
+      "visual_id": "FR_thigh_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/RL_calf/visual/RL_calf_visual",
+      "body_frame_id": "RL_calf",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "RL_calf_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/rl_calf_Link.STL"
+      },
+      "local_body_id": "RL_calf",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "limb_graphite",
+        "pbr": {
+          "base_color_rgba": [
+            0.006995,
+            0.008023,
+            0.009134,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "limb_graphite",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "RL_calf_visual",
+          "source_mesh": "visual/meshes/rl_calf_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/RL_calf_visual.RL_calf_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "RL_calf/visual/RL_calf_visual",
+      "visual_id": "RL_calf_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/RL_foot/visual/RL_foot_visual",
+      "body_frame_id": "RL_foot",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "RL_foot_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/rl_foot_Link.STL"
+      },
+      "local_body_id": "RL_foot",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "wheel_black",
+        "pbr": {
+          "base_color_rgba": [
+            0.001821,
+            0.002125,
+            0.002428,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "wheel_black",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "RL_foot_visual",
+          "source_mesh": "visual/meshes/rl_foot_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/RL_foot_visual.RL_foot_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "RL_foot/visual/RL_foot_visual",
+      "visual_id": "RL_foot_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/RL_hip/visual/RL_hip_visual",
+      "body_frame_id": "RL_hip",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "RL_hip_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/rl_hip_Link.STL"
+      },
+      "local_body_id": "RL_hip",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "joint_graphite",
+        "pbr": {
+          "base_color_rgba": [
+            0.009134,
+            0.01033,
+            0.011612,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "joint_graphite",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "RL_hip_visual",
+          "source_mesh": "visual/meshes/rl_hip_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/RL_hip_visual.RL_hip_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "RL_hip/visual/RL_hip_visual",
+      "visual_id": "RL_hip_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/RL_thigh/visual/RL_thigh_visual",
+      "body_frame_id": "RL_thigh",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "RL_thigh_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/rl_thigh_Link.STL"
+      },
+      "local_body_id": "RL_thigh",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "limb_graphite",
+        "pbr": {
+          "base_color_rgba": [
+            0.006995,
+            0.008023,
+            0.009134,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "limb_graphite",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "RL_thigh_visual",
+          "source_mesh": "visual/meshes/rl_thigh_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/RL_thigh_visual.RL_thigh_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "RL_thigh/visual/RL_thigh_visual",
+      "visual_id": "RL_thigh_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/RR_calf/visual/RR_calf_visual",
+      "body_frame_id": "RR_calf",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "RR_calf_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/rr_calf_Link.STL"
+      },
+      "local_body_id": "RR_calf",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "limb_graphite",
+        "pbr": {
+          "base_color_rgba": [
+            0.006995,
+            0.008023,
+            0.009134,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "limb_graphite",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "RR_calf_visual",
+          "source_mesh": "visual/meshes/rr_calf_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/RR_calf_visual.RR_calf_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "RR_calf/visual/RR_calf_visual",
+      "visual_id": "RR_calf_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/RR_foot/visual/RR_foot_visual",
+      "body_frame_id": "RR_foot",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "RR_foot_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/rr_foot_Link.STL"
+      },
+      "local_body_id": "RR_foot",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "wheel_black",
+        "pbr": {
+          "base_color_rgba": [
+            0.001821,
+            0.002125,
+            0.002428,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "wheel_black",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "RR_foot_visual",
+          "source_mesh": "visual/meshes/rr_foot_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/RR_foot_visual.RR_foot_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "RR_foot/visual/RR_foot_visual",
+      "visual_id": "RR_foot_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/RR_hip/visual/RR_hip_visual",
+      "body_frame_id": "RR_hip",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "RR_hip_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/rr_hip_Link.STL"
+      },
+      "local_body_id": "RR_hip",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "joint_graphite",
+        "pbr": {
+          "base_color_rgba": [
+            0.009134,
+            0.01033,
+            0.011612,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "joint_graphite",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "RR_hip_visual",
+          "source_mesh": "visual/meshes/rr_hip_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/RR_hip_visual.RR_hip_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "RR_hip/visual/RR_hip_visual",
+      "visual_id": "RR_hip_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/RR_thigh/visual/RR_thigh_visual",
+      "body_frame_id": "RR_thigh",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "RR_thigh_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/rr_thigh_Link.STL"
+      },
+      "local_body_id": "RR_thigh",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "limb_graphite",
+        "pbr": {
+          "base_color_rgba": [
+            0.006995,
+            0.008023,
+            0.009134,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "limb_graphite",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "RR_thigh_visual",
+          "source_mesh": "visual/meshes/rr_thigh_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/RR_thigh_visual.RR_thigh_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "RR_thigh/visual/RR_thigh_visual",
+      "visual_id": "RR_thigh_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/base_link/visual/base_link_visual",
+      "body_frame_id": "base_link",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "base_link_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/base_link.STL"
+      },
+      "local_body_id": "base_link",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "body_shell_black",
+        "pbr": {
+          "base_color_rgba": [
+            0.006049,
+            0.006995,
+            0.008023,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "body_shell_black",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "base_link_visual",
+          "source_mesh": "visual/meshes/base_link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/base_link_visual.base_link_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "base_link/visual/base_link_visual",
+      "visual_id": "base_link_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/camera1_link/visual/camera1_link_visual",
+      "body_frame_id": "camera1_link",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "camera1_link_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/camera1_Link.STL"
+      },
+      "local_body_id": "camera1_link",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "sensor_black",
+        "pbr": {
+          "base_color_rgba": [
+            0.003677,
+            0.004391,
+            0.005182,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "sensor_black",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "camera1_link_visual",
+          "source_mesh": "visual/meshes/camera1_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/camera1_link_visual.camera1_link_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "camera1_link/visual/camera1_link_visual",
+      "visual_id": "camera1_link_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/camera2_link/visual/camera2_link_visual",
+      "body_frame_id": "camera2_link",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "camera2_link_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/camera2_Link.STL"
+      },
+      "local_body_id": "camera2_link",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "sensor_black",
+        "pbr": {
+          "base_color_rgba": [
+            0.003677,
+            0.004391,
+            0.005182,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "sensor_black",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "camera2_link_visual",
+          "source_mesh": "visual/meshes/camera2_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/camera2_link_visual.camera2_link_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "camera2_link/visual/camera2_link_visual",
+      "visual_id": "camera2_link_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/lidar1_link/visual/lidar1_link_visual",
+      "body_frame_id": "lidar1_link",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "lidar1_link_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/lidar1_Link.STL"
+      },
+      "local_body_id": "lidar1_link",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "sensor_black",
+        "pbr": {
+          "base_color_rgba": [
+            0.003677,
+            0.004391,
+            0.005182,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "sensor_black",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "lidar1_link_visual",
+          "source_mesh": "visual/meshes/lidar1_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/lidar1_link_visual.lidar1_link_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "lidar1_link/visual/lidar1_link_visual",
+      "visual_id": "lidar1_link_visual"
+    },
+    {
+      "asset_key": "RobotVisual:ThunderV4/lidar2_link/visual/lidar2_link_visual",
+      "body_frame_id": "lidar2_link",
+      "geometry": {
+        "kind": "mesh",
+        "mesh": "lidar2_link_visual",
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "source_mesh": "visual/meshes/lidar2_Link.STL"
+      },
+      "local_body_id": "lidar2_link",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "sensor_black",
+        "pbr": {
+          "base_color_rgba": [
+            0.003677,
+            0.004391,
+            0.005182,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "sensor_black",
+      "source": {
+        "geometry_source": {
+          "kind": "mesh",
+          "mesh": "lidar2_link_visual",
+          "source_mesh": "visual/meshes/lidar2_Link.STL"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "mjcf/thunderv4.xml"
+        },
+        "package": {
+          "id": "thunderv4",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.3"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Game/RobotSim/Robots/ThunderV4/Meshes/lidar2_link_visual.lidar2_link_visual",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "lidar2_link/visual/lidar2_link_visual",
+      "visual_id": "lidar2_link_visual"
+    }
+  ],
+  "mjcf": {
+    "path": "mjcf/thunderv4.xml"
+  },
+  "package": {
+    "id": "thunderv4",
+    "manifest": "robot.package.yaml",
+    "version": "1.0.3"
+  },
+  "schema": "lingtu.sim.robot-visual-projection.v1"
+}

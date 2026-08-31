@@ -1,0 +1,38 @@
+schema: lingtu.sim.world-package.v1
+id: forest_hf
+version: 2.0.0
+kind: world
+description: Deterministic 2 km same-source forest terrain with MuJoCo authority.
+physics:
+  mjcf: physics/forest_hf.xml
+  global_policy:
+    timestep_s: 0.001
+    integrator: rk4
+    solver: newton
+    iterations: 100
+    gravity_mps2: [0.0, 0.0, -9.81]
+visual:
+  binding: WorldVisual:ForestHF
+  level: /Game/RobotSim/Maps/Forest_HF_2km
+  projection: visual/world.visual-projection.json
+entities: []
+provenance:
+  path: provenance/generation.json
+content:
+  files:
+  - path: physics/forest_hf.xml
+    size: 560
+  - path: provenance/generation.json
+    size: 460
+  - path: routes/forest.routes.json
+    size: 3190
+  - path: terrain.recipe.json
+    size: 1747
+  - path: visual/ue_projection.json
+    size: 1101
+  - path: visual/world.visual-projection.json
+    size: 2022
+  provenance:
+    path: provenance/generation.json
+  visual_projection:
+    path: visual/world.visual-projection.json

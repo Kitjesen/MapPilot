@@ -9,15 +9,15 @@ Fast-LIO2 mapping session and produces a single verdict from four groups:
 1. Continuity: periodic SLAM status samples during the whole run must stay
    TRACKING with zero dropped frames, zero rollbacks, no map-frame jump, no
    scan stalls, sane input/processing rates, and bounded odometry/velocity.
-2. Scale convergence: the saved native SLAM trajectory is joined against dense
-   MuJoCo ground-truth samples on the shared simulated-hardware clock. Windowed
-   path-length ratios and the cumulative path ratio must stay inside bounds,
-   so endpoint-displacement luck cannot pass a drifting run.
+2. Scale convergence: an externally saved native SLAM trajectory is joined
+   against dense MuJoCo ground-truth samples on the shared simulated-hardware
+   clock. Windowed path-length ratios and the cumulative path ratio must stay
+   inside bounds, so endpoint-displacement luck cannot pass a drifting run.
 3. Trajectory consistency: after 2D rigid (rotation+translation, no scale)
    alignment the SLAM trajectory must match simulator truth within an absolute
    trajectory error budget.
-4. Map quality: the native save-map artifact must pass the existing saved-map
-   quality gate against the known world footprint.
+4. Map quality: the externally supplied mapd artifact must pass the existing
+   saved-map quality gate against the known world footprint.
 
 Python remains an orchestrator/sensor adapter only; pose estimation and map
 building stay in the native C++ SLAM runtime.
@@ -49,9 +49,8 @@ SCHEMA_VERSION = "lingtu.mujoco_continuous_mapping_quality_gate.v1"
 # CycloneDDS on sunrise rejects high domain ids (multicast port out of range).
 # Keep isolated MuJoCo gates on 200-232; production robot uses domain 0.
 MAX_CYCLONEDDS_DOMAIN_ID = 232
-DEFAULT_SLAM_CONFIG = SRC / "localization" / "fastlio2" / "config" / "mid360_mujoco_native_dds.yaml"
+DEFAULT_SLAM_CONFIG = SRC / "localization" / "fastlio2" / "config" / "sim_mid360_slam.yaml"
 DEFAULT_SLAM_RUNTIME_BIN = ROOT / "build" / "slam_core" / "slamd"
-DEFAULT_SLAM_CONTROL_BIN = ROOT / "build" / "slam_core" / "slamctl"
 BRIDGE_SCRIPT = ROOT / "sim" / "scripts" / "mujoco" / "native_dds_sensors.py"
 
 
@@ -76,7 +75,7 @@ def yaw_from_quat(qx: float, qy: float, qz: float, qw: float) -> float:
 
 
 def parse_trajectory_txt(path: Path | str) -> dict[str, Any]:
-    """Parse native save-map trajectory.txt: `stamp x y z qx qy qz qw` rows."""
+    """Parse mapd-exported trajectory.txt: `stamp x y z qx qy qz qw` rows."""
 
     t: list[float] = []
     xy: list[list[float]] = []
@@ -641,7 +640,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--realtime-factor", type=float, default=1.0)
     parser.add_argument("--publisher-bin", default=os.environ.get("LINGTU_MUJOCO_NATIVE_DDS_PUBLISHER_BIN", ""))
     parser.add_argument("--slam-runtime-bin", default=str(DEFAULT_SLAM_RUNTIME_BIN))
-    parser.add_argument("--slam-control-bin", default=str(DEFAULT_SLAM_CONTROL_BIN))
     parser.add_argument("--slam-config", default=str(DEFAULT_SLAM_CONFIG))
     parser.add_argument(
         "--attach-status-json",
@@ -649,7 +647,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Attach to an externally started SLAM runtime via its status JSON instead of spawning one.",
     )
     parser.add_argument("--status-sample-period-s", type=float, default=0.5)
-    parser.add_argument("--save-timeout-s", type=float, default=300.0)
+    parser.add_argument(
+        "--saved-map-dir",
+        default="",
+        help=(
+            "Directory of a map already saved through Gateway/SDK -> mapd save_map. "
+            "Defaults to <run-dir>/saved_map; this gate never invokes slamctl or writes map artifacts."
+        ),
+    )
     parser.add_argument("--bridge-min-motion-ratio", type=float, default=0.2)
     parser.add_argument("--bridge-max-motion-ratio", type=float, default=3.0)
     parser.add_argument("--bridge-max-yaw-error-rad", type=float, default=0.30)
@@ -900,6 +905,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         "duration_s": float(args.duration),
         "domain_id": domain_id,
         "drive_profile": str(args.drive_profile),
+        "map_artifact_owner": "external_mapd_save_map",
         "remaining_gaps": [],
     }
     gaps: list[str] = summary["remaining_gaps"]
@@ -962,38 +968,6 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         elif not bridge_report.get("ok"):
             gaps.extend(f"bridge:{gap}" for gap in bridge_report.get("remaining_gaps") or ["bridge_report_not_ok"])
 
-        # Save the cumulative native map while the runtime is still alive.
-        save_pcd = run_dir / "saved_map" / "map.pcd"
-        control_bin = Path(args.slam_control_bin)
-        save_report: dict[str, Any] = {"attempted": False}
-        if not control_bin.exists():
-            gaps.append(f"slam_control_bin_missing:{control_bin}")
-        else:
-            save_command = [
-                str(control_bin),
-                "save-map",
-                str(save_pcd),
-                "--domain-id",
-                str(domain_id),
-                "--timeout-s",
-                str(float(args.save_timeout_s)),
-            ]
-            save_result = subprocess.run(
-                save_command,
-                capture_output=True,
-                text=True,
-                timeout=float(args.save_timeout_s) + 30.0,
-            )
-            save_report = {
-                "attempted": True,
-                "rc": int(save_result.returncode),
-                "stdout": save_result.stdout.strip()[-2000:],
-                "stderr": save_result.stderr.strip()[-2000:],
-                "pcd": str(save_pcd),
-            }
-            if save_result.returncode != 0 or not save_pcd.is_file():
-                gaps.append(f"native_save_map_failed:rc={save_result.returncode}")
-        summary["save_map"] = save_report
     finally:
         _terminate(bridge_process)
         if slam_process is not None:
@@ -1019,8 +993,15 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     summary["status_samples_path"] = str(samples_path)
 
     # Scale convergence + trajectory consistency.
+    saved_map_dir = (
+        Path(args.saved_map_dir)
+        if str(args.saved_map_dir or "").strip()
+        else run_dir / "saved_map"
+    )
+    summary["saved_map_dir"] = str(saved_map_dir)
+    summary["saved_map_source"] = "external"
     motion_log = load_motion_log(run_dir / "sim_motion.jsonl")
-    slam_trajectory = parse_trajectory_txt(run_dir / "saved_map" / "trajectory.txt")
+    slam_trajectory = parse_trajectory_txt(saved_map_dir / "trajectory.txt")
     convergence = analyze_scale_convergence(
         motion_log,
         slam_trajectory,
@@ -1039,15 +1020,15 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
 
     # Saved-map quality gate.
     quality_summary: dict[str, Any] = {"attempted": False}
-    save_pcd = run_dir / "saved_map" / "map.pcd"
-    if save_pcd.is_file():
+    map_pcd = saved_map_dir / "map.pcd"
+    if map_pcd.is_file():
         from sim.scripts.mujoco.saved_map_quality_gate import (
             _write_overlay_plot,
             evaluate_saved_map_quality,
         )
 
         quality_report, candidates, expected = evaluate_saved_map_quality(
-            pcd_path=save_pcd,
+            pcd_path=map_pcd,
             world_xml=str(args.world),
             min_near_ratio=float(args.min_near_ratio),
             max_far_ratio=float(args.max_far_ratio),
@@ -1064,7 +1045,6 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             "far_ratio": float(
                 (quality_report.get("scene_overlay") or {}).get("candidate_cells_farther_than_far_distance_ratio") or 1.0
             ),
-            "map_optimization": quality_report.get("map_optimization") or {},
         }
         try:
             plot_path = run_dir / "saved_map_quality.png"
@@ -1082,7 +1062,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         if not quality_report.get("ok"):
             gaps.extend(f"map_quality:{gap}" for gap in quality_report.get("remaining_gaps") or [])
     else:
-        gaps.append("saved_map_pcd_missing")
+        gaps.append(f"external_saved_map_pcd_missing:{map_pcd}")
     summary["map_quality"] = quality_summary
 
     summary["plots"] = _write_plots(run_dir, convergence, motion_log, slam_trajectory)

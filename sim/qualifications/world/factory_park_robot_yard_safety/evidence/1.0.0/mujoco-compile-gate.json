@@ -1,0 +1,7 @@
+{
+  "backend": "mujoco",
+  "nbody": 93,
+  "ngeom": 93,
+  "nhfield": 1,
+  "status": "passed"
+}

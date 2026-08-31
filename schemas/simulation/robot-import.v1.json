@@ -1,0 +1,273 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.robot-import-request.v1",
+  "title": "LingTu robot import request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "version",
+    "source",
+    "source_format",
+    "source_model",
+    "units",
+    "provenance",
+    "physics",
+    "visual",
+    "semantic",
+    "frames",
+    "interfaces",
+    "defaults",
+    "declared_capabilities"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lingtu.sim.robot-import-request.v1"
+    },
+    "id": {
+      "$ref": "#/$defs/identity"
+    },
+    "version": {
+      "$ref": "#/$defs/version"
+    },
+    "description": {
+      "type": "string"
+    },
+    "compatibility": {
+      "type": "object"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_format": {
+      "enum": [
+        "mjcf",
+        "urdf"
+      ]
+    },
+    "source_model": {
+      "$ref": "#/$defs/relative_path"
+    },
+    "units": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "length",
+        "angle"
+      ],
+      "properties": {
+        "length": {
+          "const": "m"
+        },
+        "angle": {
+          "const": "radian"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "owner",
+        "license",
+        "license_file",
+        "source_uri"
+      ],
+      "properties": {
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license_file": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "source_uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "third_party_assets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "license",
+              "source_uri"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "license": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_uri": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "physics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attach_root",
+        "root_joint"
+      ],
+      "properties": {
+        "attach_root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "root_joint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "initial_keyframe": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "visual": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding"
+      ],
+      "properties": {
+        "binding": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "visual_asset_index": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "semantic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "class"
+      ],
+      "properties": {
+        "class": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "frames": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "role"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "parent_frame": {
+            "type": "string",
+            "minLength": 1
+          },
+          "extrinsic": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "interfaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "command"
+      ],
+      "properties": {
+        "state": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "controller",
+        "sensor_rig"
+      ],
+      "properties": {
+        "controller": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sensor_rig": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "declared_capabilities": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "identity": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9+_.-]*$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*:)(?!.*\\\\)(?!.*\\s)(?!.*//)(?!.*\\/$)(?!\\.\\.?(/|$))(?!.*(/\\.\\.?)(/|$)).+$"
+    }
+  }
+}

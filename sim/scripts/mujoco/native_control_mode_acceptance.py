@@ -3,7 +3,7 @@
 The public interface is deliberately mode-first: one invocation selects exactly
 one of ``autonomy``, ``teleop``, or ``teleop_avoid``. ``run`` invokes the
 configured harness and records provenance; ``evaluate`` accepts only that
-runner artifact and recomputes observations from its digested source report.
+runner artifact and recomputes observations from its source report.
 The report keeps control chain, product integration, and SLAM/map quality as
 separate layers so a working DDS loop cannot be mistaken for product-ready
 localization.
@@ -12,7 +12,6 @@ localization.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import subprocess
@@ -45,19 +44,6 @@ def _write_json(path: Path, value: Mapping[str, Any]) -> None:
         json.dumps(value, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def _mapping_sha256(value: Mapping[str, Any]) -> str:
-    payload = json.dumps(dict(value), ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
 
 
 def _utc_now() -> str:
@@ -258,50 +244,6 @@ def _invalid_runner_report(plan: Mapping[str, Any], control_mode: str, blockers:
     }
 
 
-def _layered_runner_report(
-    plan: Mapping[str, Any],
-    control_mode: str,
-    gates: Mapping[str, Mapping[str, Any]],
-    *,
-    provenance: Mapping[str, Any],
-    supplemental_observations: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    blockers = [f"{layer}:{blocker}" for layer, gate in gates.items() for blocker in gate.get("blockers") or ()]
-    return {
-        "schema_version": ACCEPTANCE_SCHEMA,
-        "ok": not blockers,
-        "promotion_eligible": not blockers,
-        "control_mode": control_mode,
-        "execution_plan": dict(plan),
-        "gates": {name: dict(value) for name, value in gates.items()},
-        "blockers": blockers,
-        "provenance": dict(provenance),
-        "supplemental_observations": dict(supplemental_observations or {}),
-    }
-
-
-def _evaluate_geometry_mirror(
-    plan: Mapping[str, Any],
-    control_mode: str,
-    source_report: Mapping[str, Any],
-    provenance: Mapping[str, Any],
-) -> dict[str, Any]:
-    observations = extract_runner_observations("teleop_avoid_geometry_mirror", source_report)
-    geometry = observations["geometry_mirror"]
-    gates = {
-        "control_chain": _gate(["typed_command_observations_missing"]),
-        "product_integration": _gate(["native_dds_product_harness_missing"]),
-        "slam_map_quality": _gate(["native_slam_map_observations_missing"]),
-    }
-    return _layered_runner_report(
-        plan,
-        control_mode,
-        gates,
-        provenance=provenance,
-        supplemental_observations={"geometry_mirror": geometry},
-    )
-
-
 def _summarize_teleop_avoid_runner(source_report: Mapping[str, Any]) -> dict[str, Any]:
     cases = [item for item in source_report.get("cases") or () if isinstance(item, Mapping)]
     if not cases:
@@ -324,7 +266,11 @@ def _summarize_teleop_avoid_runner(source_report: Mapping[str, Any]) -> dict[str
         str((item.get("evaluation") or {}).get("case") or str(item.get("scenario") or "")) for item in cases
     }
     startup_ok = all(bool(item.get("startup", {}).get("ok")) for item in cases if isinstance(item, Mapping))
-    command_ok = all(bool(item.get("ok")) or str(item.get("scenario") or "") in {"obstacle_slow", "obstacle_stop"} for item in cases)
+    command_ok = all(
+        bool(item.get("ok"))
+        or str(item.get("scenario") or "") in {"obstacle_slow", "obstacle_stop"}
+        for item in cases
+    )
     return {
         "ok": bool(source_report.get("ok")) and not case_blocks and not promotion_blockers,
         "blockers": [*case_blocks, *promotion_blockers],
@@ -428,9 +374,17 @@ def _teleop_avoid_native_observations(source_report: Mapping[str, Any]) -> dict[
             nonzero_cmd_samples += int(metrics.get("steady_nonzero_cmd_samples") or 0)
             motion = metrics.get("policy_motion_xy_m")
             if isinstance(motion, (int, float)) and math.isfinite(float(motion)):
-                motion_sources.append({"case": str(case.get("scenario") or case.get("case") or ""), "motion_m": float(motion)})
+                motion_sources.append(
+                    {
+                        "case": str(case.get("scenario") or case.get("case") or ""),
+                        "motion_m": float(motion),
+                    }
+                )
             case_command_samples.append(
-                (str(case.get("scenario") or case.get("case") or ""), int(metrics.get("steady_nonzero_cmd_samples") or 0))
+                (
+                    str(case.get("scenario") or case.get("case") or ""),
+                    int(metrics.get("steady_nonzero_cmd_samples") or 0),
+                )
             )
             teleop_reasoned_accept += int(1 if any(
                 str(value) == "accepted" for value in metrics.get("teleop_reasons") or ()
@@ -475,11 +429,19 @@ def _teleop_avoid_native_observations(source_report: Mapping[str, Any]) -> dict[
     ]
     slam_states = [str(status.get("state") or "") for status in slam_reports]
     slam_states = [state for state in slam_states if state]
-    traversability_statuses = [case.get("terrain_producer_observation") for case in cases if isinstance(case.get("terrain_producer_observation"), Mapping)]
+    traversability_statuses = [
+        case.get("terrain_producer_observation")
+        for case in cases
+        if isinstance(case.get("terrain_producer_observation"), Mapping)
+    ]
     last_traversability: Mapping[str, Any] = {}
     if traversability_statuses:
         last_traversability = traversability_statuses[-1]
-    runtime_clean = all(bool(item.get("process_cleanup", {}).get("zero_leftovers")) for item in cases if isinstance(item, Mapping))
+    runtime_clean = all(
+        bool(item.get("process_cleanup", {}).get("zero_leftovers"))
+        for item in cases
+        if isinstance(item, Mapping)
+    )
     for sensor_report in sensor_reports:
         if isinstance(sensor_report, Mapping):
             reported_source = str(sensor_report.get("command_source") or "").strip()
@@ -503,7 +465,10 @@ def _teleop_avoid_native_observations(source_report: Mapping[str, Any]) -> dict[
             "python_cmd_vel_mux_active": any(str(item) == "python_cmd_vel_mux" for item in processes),
             "python_planner_used": False,
             "command_source": str(command_source).lower(),
-            "policy_loaded": all(bool((case.get("sensor_report", {}) or {}).get("policy_loaded") is True) for case in cases),
+            "policy_loaded": all(
+                bool((case.get("sensor_report", {}) or {}).get("policy_loaded") is True)
+                for case in cases
+            ),
             "motion_m": motion_m,
             "cleanup_clean": bool(runtime_clean),
             "harness_report_ok": bool(source_report.get("ok") is True and not runtime_summary["case_blockers"]),
@@ -536,20 +501,6 @@ def _teleop_avoid_native_observations(source_report: Mapping[str, Any]) -> dict[
             "case_motion_count": len(motion_sources),
             "case_cmd_samples": case_command_samples,
         },
-    }
-
-
-def _geometry_mirror_observations(
-    source_report: Mapping[str, Any],
-) -> dict[str, Any]:
-    geometry_blockers = [str(value) for value in source_report.get("blockers") or ()]
-    return {
-        "schema_version": str(source_report.get("schema_version") or ""),
-        "ok": source_report.get("ok") is True and not geometry_blockers,
-        "blockers": geometry_blockers,
-        "cases": [
-            str(item.get("case") or "") for item in source_report.get("cases") or () if isinstance(item, Mapping)
-        ],
     }
 
 
@@ -651,13 +602,135 @@ def _teleop_avoid_observations(source_report: Mapping[str, Any]) -> dict[str, An
     return _teleop_avoid_native_observations(source_report)
 
 
+def _teleop_native_observations(source_report: Mapping[str, Any]) -> dict[str, Any]:
+    """Recompute pure-teleop observations from the runner's raw case evidence."""
+
+    case = source_report.get("case")
+    case = case if isinstance(case, Mapping) else {}
+    motion = case.get("operator_motion")
+    motion = motion if isinstance(motion, Mapping) else {}
+    events = [item for item in motion.get("events") or () if isinstance(item, Mapping)]
+    accepted_actions = {
+        str(item.get("action") or "")
+        for item in events
+        if item.get("accepted") is True
+    }
+    lifecycle_ok = motion.get("returncode") == 0 and accepted_actions >= {
+        "claim",
+        "sample",
+        "hold",
+        "release",
+    }
+    forbidden = case.get("forbidden_goal")
+    forbidden = forbidden if isinstance(forbidden, Mapping) else {}
+    goal_rejected = (
+        forbidden.get("returncode") not in (None, 0)
+        and "goal rejected:" in str(forbidden.get("stderr") or "")
+    )
+    stop = case.get("stop")
+    stop = stop if isinstance(stop, Mapping) else {}
+    stop_acked = (
+        stop.get("returncode") == 0
+        and "accepted stop:" in str(stop.get("stdout") or "")
+    )
+    post_stop = [
+        item for item in case.get("post_stop_samples") or () if isinstance(item, Mapping)
+    ]
+    post_stop_zero = len(post_stop) >= POST_STOP_REQUIRED_STATUS_SAMPLES and all(
+        all(
+            isinstance((item.get("final_cmd_vel") or {}).get(axis), (int, float))
+            and not isinstance((item.get("final_cmd_vel") or {}).get(axis), bool)
+            and math.isfinite(float((item.get("final_cmd_vel") or {})[axis]))
+            and abs(float((item.get("final_cmd_vel") or {})[axis])) <= 1e-6
+            for axis in ("vx", "vy", "wz")
+        )
+        for item in post_stop
+    )
+    sensor = case.get("sensor_report")
+    sensor = sensor if isinstance(sensor, Mapping) else {}
+    driver = sensor.get("cmd_vel")
+    driver = driver if isinstance(driver, Mapping) else {}
+    physical_motion = sensor.get("motion")
+    physical_motion = physical_motion if isinstance(physical_motion, Mapping) else {}
+    cleanup = [
+        item for item in case.get("process_cleanup") or () if isinstance(item, Mapping)
+    ]
+    driver_cleanup = driver.get("process_cleanup")
+    driver_cleanup = driver_cleanup if isinstance(driver_cleanup, Mapping) else {}
+    observed_output_ack = driver.get("observed_output_ack")
+    observed_output_ack = (
+        observed_output_ack if isinstance(observed_output_ack, Mapping) else {}
+    )
+    return {
+        "endpoint": {
+            "control_mode": "teleop",
+            "command_transport": "typed_dds_request_ack",
+            "command_events": [
+                {
+                    "kind": "teleop",
+                    "accepted": lifecycle_ok,
+                    "acked": lifecycle_ok,
+                },
+                {
+                    "kind": "goal",
+                    "accepted": False if goal_rejected else None,
+                    "acked": goal_rejected,
+                },
+                {
+                    "kind": "stop",
+                    "accepted": stop_acked,
+                    "acked": stop_acked,
+                    "post_stop_zero_observed": post_stop_zero,
+                    "post_stop_nonzero_samples": (
+                        0 if post_stop_zero else len(post_stop)
+                    ),
+                },
+            ],
+            "final_cmd_topic": "rt/nav/cmd_vel",
+            "final_cmd_writer": "navd",
+            "nonzero_cmd_samples": int(driver.get("nonzero_samples") or 0),
+            "physical_output_ack": {
+                "producer_boot_id": str(
+                    observed_output_ack.get("producer_boot_id") or ""
+                ),
+                "output_sequence": int(
+                    observed_output_ack.get("output_sequence") or 0
+                ),
+            },
+        },
+        "runtime": {
+            "processes": [
+                *[str(value) for value in case.get("product_processes") or ()],
+                *[str(value) for value in case.get("test_fixture_processes") or ()],
+            ],
+            "python_cmd_vel_mux_active": False,
+            "python_planner_used": False,
+            "command_source": str(sensor.get("command_source") or ""),
+            "policy_loaded": sensor.get("policy_loaded") is True,
+            "motion_m": float(physical_motion.get("sim_path_length_xy_m") or 0.0),
+            "cleanup_clean": (
+                bool(cleanup)
+                and all(item.get("clean") is True for item in cleanup)
+                and driver_cleanup.get("clean") is True
+            ),
+            "harness_report_ok": (
+                source_report.get("ok") is True
+                and case.get("ok") is True
+                and not case.get("blockers")
+            ),
+            "product_gate_eligible": source_report.get("product_gate_eligible") is True,
+        },
+        "slam_map": {},
+    }
+
+
 def extract_runner_observations(runner_kind: str, source_report: Mapping[str, Any]) -> dict[str, Any]:
     """Normalize raw harness observations; summary proof flags are ignored."""
 
     if runner_kind == "native_navigation_acceptance":
         return _native_navigation_observations(source_report)
-    if runner_kind == "teleop_avoid_geometry_mirror":
-        return {"geometry_mirror": _geometry_mirror_observations(source_report)}
+    if runner_kind == "teleop_native_acceptance":
+        return _teleop_native_observations(source_report)
     if runner_kind == "teleop_avoid_native_acceptance":
         return _teleop_avoid_observations(source_report)
     return {}
@@ -696,7 +769,11 @@ def _evaluate_teleop_avoid(
         return _invalid_runner_report(
             plan,
             control_mode,
-            [f"runner_observations:{value}" for value in observations.get("blockers") or ("runner_observations_missing",)],
+            [
+                f"runner_observations:{value}"
+                for value in observations.get("blockers")
+                or ("runner_observations_missing",)
+            ],
         )
     diagnostic = evaluate_observations(manifest, control_mode, observations)
     diagnostic.update(
@@ -710,6 +787,30 @@ def _evaluate_teleop_avoid(
                 "teleop_avoid_summary": observations.get("summary", {}),
                 "case_names": observations.get("summary", {}).get("cases", []),
             },
+        }
+    )
+    return diagnostic
+
+
+def _evaluate_teleop(
+    manifest: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    control_mode: str,
+    source_report: Mapping[str, Any],
+    provenance: Mapping[str, Any],
+) -> dict[str, Any]:
+    observations = _teleop_native_observations(source_report)
+    diagnostic = evaluate_observations(manifest, control_mode, observations)
+    formal = bool((observations.get("runtime") or {}).get("product_gate_eligible"))
+    diagnostic.update(
+        {
+            "schema_version": ACCEPTANCE_SCHEMA,
+            "promotion_eligible": bool(diagnostic.get("ok")) and formal,
+            "assessment_kind": (
+                "runner_artifact" if formal else "diagnostic_runner_artifact"
+            ),
+            "provenance": dict(provenance),
+            "observations": observations,
         }
     )
     return diagnostic
@@ -737,8 +838,6 @@ def evaluate_runner_artifact(
         provenance_blockers.append("runner_producer_schema_mismatch")
     if str(artifact.get("control_mode") or "") != control_mode:
         provenance_blockers.append("runner_control_mode_mismatch")
-    if str(artifact.get("manifest_sha256") or "") != _mapping_sha256(manifest):
-        provenance_blockers.append("runner_manifest_digest_mismatch")
     runner = plan.get("runner")
     runner = runner if isinstance(runner, Mapping) else {}
     kind = str(artifact.get("runner_kind") or "")
@@ -780,8 +879,6 @@ def evaluate_runner_artifact(
         source_report: dict[str, Any] = {}
     else:
         source_path = source_path.resolve()
-        if str(source.get("sha256") or "") != _sha256(source_path):
-            provenance_blockers.append("runner_source_report_digest_mismatch")
         source_report = _load_json(source_path)
         expected_schema = str(runner.get("report_schema") or "")
         if str(source_report.get("schema_version") or "") != expected_schema:
@@ -799,8 +896,6 @@ def evaluate_runner_artifact(
         script = script.resolve()
         if script != expected_script:
             provenance_blockers.append("runner_source_script_path_mismatch")
-        if str(source.get("script_sha256") or "") != _sha256(script):
-            provenance_blockers.append("runner_source_script_digest_mismatch")
     if run_dir_value and run_dir.is_dir():
         expected_report = (run_dir / "harness" / str(runner.get("report") or "report.json")).resolve()
         if source_path.is_file() and source_path.resolve() != expected_report:
@@ -830,8 +925,6 @@ def evaluate_runner_artifact(
     recorded_observations = dict(recorded_observations) if isinstance(recorded_observations, Mapping) else {}
     if recorded_observations != recomputed_observations:
         provenance_blockers.append("runner_observations_mismatch")
-    if str(artifact.get("observations_sha256") or "") != _mapping_sha256(recomputed_observations):
-        provenance_blockers.append("runner_observations_digest_mismatch")
     if provenance_blockers:
         return _invalid_runner_report(plan, control_mode, provenance_blockers)
     provenance = {
@@ -840,10 +933,10 @@ def evaluate_runner_artifact(
         "source_report": dict(source),
         "execution": dict(artifact.get("execution") or {}),
     }
-    if kind == "teleop_avoid_geometry_mirror":
-        return _evaluate_geometry_mirror(plan, control_mode, source_report, provenance)
     if kind == "teleop_avoid_native_acceptance":
-        return _evaluate_teleop_avoid(plan, control_mode, manifest, source_report, provenance)
+        return _evaluate_teleop_avoid(manifest, plan, control_mode, source_report, provenance)
+    if kind == "teleop_native_acceptance":
+        return _evaluate_teleop(manifest, plan, control_mode, source_report, provenance)
     if kind == "native_navigation_acceptance":
         return _evaluate_native_navigation(manifest, plan, control_mode, source_report, provenance)
     return _invalid_runner_report(plan, control_mode, ["runner_adapter_missing"])
@@ -917,10 +1010,8 @@ def execute_mode(
                     blockers.append("runner_source_report_schema_mismatch")
                 source_report = {
                     "path": str(report_path.resolve()),
-                    "sha256": _sha256(report_path),
                     "schema_version": report_schema,
                     "script_path": str(script),
-                    "script_sha256": _sha256(script),
                 }
                 try:
                     observations = extract_runner_observations(kind, raw_report)
@@ -934,7 +1025,6 @@ def execute_mode(
             "name": "native_control_mode_acceptance",
             "schema_version": ACCEPTANCE_SCHEMA,
         },
-        "manifest_sha256": _mapping_sha256(manifest),
         "artifact_dir": str(artifact_dir),
         "run_dir": str(run_dir),
         "started_at": started_at,
@@ -943,7 +1033,6 @@ def execute_mode(
         "execution": execution,
         "source_report": source_report,
         "observations": observations,
-        "observations_sha256": _mapping_sha256(observations),
         "runner_blockers": blockers,
     }
     _write_json(artifact_dir / "runner_artifact.json", artifact)

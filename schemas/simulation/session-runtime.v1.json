@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.session-runtime.v1",
+  "title": "LingTu simulation session runtime manifest",
+  "description": "Mutable per-run state written atomically by the live RuntimeCoordinator or the visual replay runtime.",
+  "oneOf": [
+    {"$ref": "#/$defs/live_manifest"},
+    {"$ref": "#/$defs/replay_manifest"}
+  ],
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 127},
+    "counter": {"type": "integer", "minimum": 0},
+    "state": {"enum": ["NEW", "PREPARING", "READY", "RUNNING", "PAUSED", "STOPPED", "FAILED"]},
+    "sensor_streams": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["model_generation", "reset_generation", "is_ready", "required_stream_ids", "blocking_reasons", "failures", "streams", "summary"],
+      "properties": {
+        "model_generation": {"$ref": "#/$defs/counter"},
+        "reset_generation": {"$ref": "#/$defs/counter"},
+        "is_ready": {"type": "boolean"},
+        "required_stream_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "blocking_reasons": {"type": "object"},
+        "failures": {"type": "object"},
+        "streams": {"type": "object"},
+        "summary": {"type": "object"}
+      }
+    },
+    "live_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "state", "source_id", "failure_reason", "model_generation", "reset_generation"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "state": {"enum": ["UNBOUND", "PREPARED", "ACTIVE", "FAILED"]},
+        "source_id": {"type": ["string", "null"]},
+        "failure_reason": {"type": ["string", "null"]},
+        "model_generation": {"$ref": "#/$defs/counter"},
+        "reset_generation": {"$ref": "#/$defs/counter"}
+      }
+    },
+    "live_bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["physics", "visual", "sensors", "control"],
+      "properties": {
+        "physics": {"$ref": "#/$defs/live_binding"},
+        "visual": {"$ref": "#/$defs/live_binding"},
+        "sensors": {"$ref": "#/$defs/live_binding"},
+        "control": {"$ref": "#/$defs/live_binding"}
+      }
+    },
+    "live_allocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_dir", "log_dir", "boot_id", "physics_pid", "dds_domain", "ports", "shm", "shared_memory"],
+      "properties": {
+        "run_dir": {"type": "string", "minLength": 1},
+        "log_dir": {"type": "string", "minLength": 1},
+        "boot_id": {"$ref": "#/$defs/id"},
+        "physics_pid": {"type": ["integer", "null"], "minimum": 1},
+        "dds_domain": {"type": "integer", "minimum": 0, "maximum": 232},
+        "ports": {"type": "object"},
+        "shm": {"type": "object"},
+        "shared_memory": {"type": "object"}
+      }
+    },
+    "live_clock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "physics_step", "sim_time_ns"],
+      "properties": {
+        "sequence": {"$ref": "#/$defs/counter"},
+        "physics_step": {"$ref": "#/$defs/counter"},
+        "sim_time_ns": {"$ref": "#/$defs/counter"}
+      }
+    },
+    "live_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "run_id", "session_id", "model_generation", "reset_generation", "state", "bindings", "sensor_streams", "bundle_dir", "allocation", "clock"],
+      "properties": {
+        "schema": {"const": "lingtu.sim.session-runtime.v1"},
+        "run_id": {"$ref": "#/$defs/id"},
+        "session_id": {"$ref": "#/$defs/id"},
+        "model_generation": {"$ref": "#/$defs/counter"},
+        "reset_generation": {"$ref": "#/$defs/counter"},
+        "state": {"$ref": "#/$defs/state"},
+        "bindings": {"$ref": "#/$defs/live_bindings"},
+        "sensor_streams": {"$ref": "#/$defs/sensor_streams"},
+        "bundle_dir": {"type": "string", "minLength": 1},
+        "allocation": {"$ref": "#/$defs/live_allocation"},
+        "clock": {"$ref": "#/$defs/live_clock"}
+      }
+    },
+    "replay_unbound_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "state", "source_id"],
+      "properties": {
+        "required": {"const": false},
+        "state": {"const": "UNBOUND"},
+        "source_id": {"const": null}
+      }
+    },
+    "replay_visual_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "state", "source_id"],
+      "properties": {
+        "required": {"const": true},
+        "state": {"enum": ["PREPARING", "ACTIVE", "FAILED"]},
+        "source_id": {"const": "robotsimue-visual"}
+      }
+    },
+    "replay_bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["physics", "visual", "sensors", "control"],
+      "properties": {
+        "physics": {"$ref": "#/$defs/replay_unbound_binding"},
+        "visual": {"$ref": "#/$defs/replay_visual_binding"},
+        "sensors": {"$ref": "#/$defs/replay_unbound_binding"},
+        "control": {"$ref": "#/$defs/replay_unbound_binding"}
+      }
+    },
+    "replay_allocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_dir", "log_dir", "boot_id", "physics_pid", "visual_pid", "dds_domain", "ports", "shm", "shared_memory"],
+      "properties": {
+        "run_dir": {"type": "string", "minLength": 1},
+        "log_dir": {"type": "string", "minLength": 1},
+        "boot_id": {"$ref": "#/$defs/id"},
+        "physics_pid": {"const": null},
+        "visual_pid": {"type": ["integer", "null"], "minimum": 1},
+        "dds_domain": {"type": "integer", "minimum": 0, "maximum": 232},
+        "ports": {"type": "object"},
+        "shm": {"type": "object"},
+        "shared_memory": {"type": "object"}
+      }
+    },
+    "replay_clock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority", "sequence", "physics_step", "sim_time_ns"],
+      "properties": {
+        "authority": {"const": "recorded_mujoco"},
+        "sequence": {"$ref": "#/$defs/counter"},
+        "physics_step": {"$ref": "#/$defs/counter"},
+        "sim_time_ns": {"$ref": "#/$defs/counter"}
+      }
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_run_id", "source_recording", "clock_authority", "frame_count", "physics_process_launched"],
+      "properties": {
+        "source_run_id": {"$ref": "#/$defs/id"},
+        "source_recording": {"type": "string", "minLength": 1},
+        "clock_authority": {"const": "recorded_mujoco"},
+        "frame_count": {"type": "integer", "minimum": 1},
+        "physics_process_launched": {"const": false}
+      }
+    },
+    "replay_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "run_id", "session_id", "model_generation", "reset_generation", "state", "failure_reason", "bindings", "sensor_streams", "bundle_dir", "allocation", "clock", "replay"],
+      "properties": {
+        "schema": {"const": "lingtu.sim.session-runtime.v1"},
+        "run_id": {"$ref": "#/$defs/id"},
+        "session_id": {"$ref": "#/$defs/id"},
+        "model_generation": {"$ref": "#/$defs/counter"},
+        "reset_generation": {"$ref": "#/$defs/counter"},
+        "state": {"enum": ["PREPARING", "STOPPED", "FAILED"]},
+        "failure_reason": {"type": ["string", "null"]},
+        "bindings": {"$ref": "#/$defs/replay_bindings"},
+        "sensor_streams": {"const": null},
+        "bundle_dir": {"type": "string", "minLength": 1},
+        "allocation": {"$ref": "#/$defs/replay_allocation"},
+        "clock": {"$ref": "#/$defs/replay_clock"},
+        "replay": {"$ref": "#/$defs/replay"}
+      }
+    }
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.mujoco-snapshot.v1",
+  "title": "LingTu standalone MuJoCo snapshot",
+  "description": "Offline inspection output from lingtu_mujoco_snapshot. It is not a session-bound runtime wire snapshot.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "model_generation", "reset_generation", "sequence", "sim_time_ns", "bodies"],
+  "properties": {
+    "schema": {"const": "lingtu.sim.mujoco-snapshot.v1"},
+    "model_generation": {"$ref": "#/$defs/counter"},
+    "reset_generation": {"$ref": "#/$defs/counter"},
+    "sequence": {"$ref": "#/$defs/counter"},
+    "sim_time_ns": {"$ref": "#/$defs/counter"},
+    "bodies": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/body"}
+    }
+  },
+  "$defs": {
+    "counter": {"type": "integer", "minimum": 0},
+    "vector3": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"type": "number"}
+    },
+    "quaternion": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {"type": "number"}
+    },
+    "body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "body_id",
+        "name",
+        "position_m",
+        "quaternion_wxyz",
+        "linear_velocity_mps",
+        "angular_velocity_rps"
+      ],
+      "properties": {
+        "body_id": {"$ref": "#/$defs/counter"},
+        "name": {"type": "string", "minLength": 1},
+        "position_m": {"$ref": "#/$defs/vector3"},
+        "quaternion_wxyz": {"$ref": "#/$defs/quaternion"},
+        "linear_velocity_mps": {"$ref": "#/$defs/vector3"},
+        "angular_velocity_rps": {"$ref": "#/$defs/vector3"}
+      }
+    }
+  }
+}

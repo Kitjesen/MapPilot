@@ -1,0 +1,21 @@
+<!-- ForestHF 1.0.0 physics foundation.
+     The generated forest remains visual-only until deterministic obstacle
+     proxies are reviewed and promoted into a later package version. -->
+<mujoco model="forest_hf_1_0_0">
+  <compiler angle="radian" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.001" integrator="RK4" solver="Newton" iterations="100"/>
+
+  <asset>
+    <texture name="forest_ground_checker" type="2d" builtin="checker"
+             rgb1=".16 .20 .11" rgb2=".11 .14 .08" width="512" height="512"/>
+    <material name="forest_ground_debug" texture="forest_ground_checker"
+              texrepeat="32 32" reflectance="0.02"/>
+  </asset>
+
+  <worldbody>
+    <geom name="forest_ground" type="plane" size="80 80 0.1"
+          material="forest_ground_debug" contype="1" conaffinity="1" condim="3"/>
+    <light name="forest_sun_debug" pos="0 0 40" dir="-0.25 0.2 -1"
+           diffuse=".75 .78 .68" specular=".08 .08 .08"/>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,66 @@
+{
+  "authority": {
+    "physics": "mujoco",
+    "raycast": "mujoco",
+    "unreal": "visual_only_no_collision"
+  },
+  "canonical_source": "generated/heightfield_u16.raw",
+  "elevation_range_m": [
+    -10.0,
+    70.0
+  ],
+  "extent_m": [
+    2000.0,
+    2000.0
+  ],
+  "facets": {
+    "mujoco": {
+      "format": "mujoco_hfield_f32",
+      "normalization": {
+        "compiler_behavior": "affine_sample_min_max_to_unit_interval",
+        "geom_origin_z_m": -1.3023575188830385,
+        "hfield_elevation_scale_m": 31.459220263981077,
+        "production_sample_max_u16": 32896,
+        "production_sample_min_u16": 7125
+      },
+      "path": "generated/heightfield_f32.bin",
+      "row_order": "south_to_north"
+    },
+    "unreal": {
+      "actor_type": "Landscape",
+      "axis_mapping": [
+        "x",
+        "-y",
+        "z"
+      ],
+      "components_xy": [
+        64,
+        64
+      ],
+      "format": "ue_landscape_r16_png",
+      "heightmap": "generated/heightfield_r16.png",
+      "location_z_cm": 3000.0,
+      "quads_per_section": 63,
+      "scale_cm": [
+        49.6031746031746,
+        49.6031746031746,
+        15.625
+      ],
+      "sections_per_component": 1,
+      "world_partition": true
+    }
+  },
+  "generator": "sim.tools.worlds.forest_hf.generate",
+  "schema": "lingtu.sim.forest-terrain-recipe.v1",
+  "seed": 20260813,
+  "source_grid": {
+    "dimensions_px": [
+      4033,
+      4033
+    ],
+    "endianness": "little",
+    "row_order": "north_to_south",
+    "sample_type": "uint16"
+  },
+  "world_package": "forest_hf@2.0.0"
+}

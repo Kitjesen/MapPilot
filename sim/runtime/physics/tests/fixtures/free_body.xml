@@ -1,0 +1,12 @@
+<mujoco model="lingtu_runtime_test">
+  <worldbody>
+    <geom name="floor" type="plane" size="2 2 0.1"/>
+    <body name="test_body" pos="0 0 1">
+      <freejoint/>
+      <geom type="sphere" size="0.1" mass="1"/>
+    </body>
+  </worldbody>
+  <sensor>
+    <clock name="sim_clock"/>
+  </sensor>
+</mujoco>

@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.session-intent.v1",
+  "title": "LingTu simulation session intent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "session"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lingtu.sim.session-intent.v1"
+    },
+    "session": {
+      "$ref": "#/$defs/session_spec_without_required_schema"
+    },
+    "overrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seed": {
+          "type": "integer"
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required_bindings": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": [
+                  "physics",
+                  "visual",
+                  "sensors",
+                  "control"
+                ]
+              },
+              "contains": {
+                "const": "physics"
+              },
+              "uniqueItems": true
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "package_ref": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[A-Za-z0-9][A-Za-z0-9+_.-]*$"
+    },
+    "vector3": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "quaternion_wxyz": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false,
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "spawn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "position_m",
+        "quaternion_wxyz"
+      ],
+      "properties": {
+        "position_m": {
+          "$ref": "#/$defs/vector3"
+        },
+        "quaternion_wxyz": {
+          "$ref": "#/$defs/quaternion_wxyz"
+        }
+      }
+    },
+    "robot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance_id",
+        "package",
+        "spawn"
+      ],
+      "properties": {
+        "instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "package": {
+          "$ref": "#/$defs/package_ref"
+        },
+        "controller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/package_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sensor_rig": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/package_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "spawn": {
+          "$ref": "#/$defs/spawn"
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "backend",
+        "mode",
+        "required_bindings"
+      ],
+      "properties": {
+        "backend": {
+          "const": "mujoco"
+        },
+        "mode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required_bindings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "physics",
+              "visual",
+              "sensors",
+              "control"
+            ]
+          },
+          "contains": {
+            "const": "physics"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "session_spec_without_required_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "mujoco_version",
+        "seed",
+        "world",
+        "robots",
+        "runtime"
+      ],
+      "properties": {
+        "schema": {
+          "const": "lingtu.sim.session.v1"
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+        "maxLength": 63,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$"
+        },
+        "mujoco_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "seed": {
+          "type": "integer"
+        },
+        "world": {
+          "$ref": "#/$defs/package_ref"
+        },
+        "scenario": {
+          "$ref": "#/$defs/package_ref"
+        },
+        "robots": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/robot"
+          }
+        },
+        "runtime": {
+          "$ref": "#/$defs/runtime"
+        }
+      }
+    }
+  }
+}

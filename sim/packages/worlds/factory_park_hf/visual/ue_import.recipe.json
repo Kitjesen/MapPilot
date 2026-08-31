@@ -1,0 +1,213 @@
+{
+  "binding": "WorldVisual:FactoryParkHF",
+  "blender_authoring": {
+    "collision_authority_field": "collision",
+    "expanded_layout": "sim/worlds/factory_park_hf/generated/expanded-layout.json",
+    "layout_coordinates": "mujoco_rh_z_up_m",
+    "object_shapes": [
+      "box",
+      "cylinder"
+    ],
+    "semantic_entities": "sim/worlds/factory_park_hf/generated/semantic-entities.json",
+    "terrain_coordinates": "unreal_lh_z_up_cm",
+    "terrain_obj": "sim/worlds/factory_park_hf/generated/terrain.obj",
+    "visual_only_authority_field": "visual_only"
+  },
+  "coordinate_contract": {
+    "axis_mapping": [
+      "x",
+      "-y",
+      "z"
+    ],
+    "extent_m": [
+      220.0,
+      180.0
+    ],
+    "grid_px": [
+      221,
+      181
+    ],
+    "height_encoding": {
+      "bit_depth": 16,
+      "elevation_scale_m": 0.75,
+      "formula": "world_height_m = sample_u16 / 65535 * elevation_scale_m + vertical_origin_m",
+      "range": [
+        0,
+        65535
+      ],
+      "type": "uint16_normalized"
+    },
+    "image_mapping": {
+      "column_0_x_m": -110.0,
+      "column_last_x_m": 110.0,
+      "row_0_y_m": 90.0,
+      "row_last_y_m": -90.0
+    },
+    "mujoco_hfield": {
+      "geom_position_m": [
+        0.0,
+        0.0,
+        -0.666674296177615
+      ],
+      "size": [
+        110.0,
+        90.0,
+        0.75,
+        1.0
+      ]
+    },
+    "origin": "site_center",
+    "sample_spacing_m": [
+      1.0,
+      1.0
+    ],
+    "source_frame": "mujoco_rh_z_up_m",
+    "spawn_reference": {
+      "sample_pixel": [
+        110,
+        166
+      ],
+      "sample_u16": 58254,
+      "world_position_m": [
+        0.0,
+        -76.0,
+        0.0
+      ]
+    },
+    "unreal_frame": "unreal_lh_z_up_cm",
+    "unreal_landscape": {
+      "location_cm": [
+        0.0,
+        0.0,
+        -29.1674296177615
+      ],
+      "scale_xyz": [
+        100.0,
+        100.0,
+        0.146484375
+      ]
+    },
+    "vertical_origin_m": -0.666674296177615
+  },
+  "element_batches": [
+    {
+      "batch_id": "operations_safety",
+      "object_count": 19
+    }
+  ],
+  "limitations": [
+    "No Unreal UMAP, production PBR texture set, foliage, lighting bake, Cook, or packaged build is generated.",
+    "Dynamic pedestrians and forklifts are route intent only; a scenario executor must own their runtime motion."
+  ],
+  "physics_authority": {
+    "backend": "mujoco",
+    "layout": "sim/worlds/factory_park_hf/generated/expanded-layout.json",
+    "mjcf": "sim/worlds/factory_park_hf/factory_park_hf.xml",
+    "rule": "Every collision=true layout object is emitted as a MuJoCo geom; terrain modifiers are baked into the shared heightfield."
+  },
+  "schema": "lingtu.sim.unreal-world-import-recipe.v1",
+  "sources": {
+    "asset_manifest": {
+      "bytes": 4281,
+      "path": "sim/worlds/factory_park_hf/generated/asset-manifest.json"
+    },
+    "expanded_layout": {
+      "bytes": 66153,
+      "format": "canonical JSON",
+      "path": "sim/worlds/factory_park_hf/generated/expanded-layout.json",
+      "role": "expanded_layout"
+    },
+    "heightfield_png": {
+      "bytes": 80256,
+      "format": "16-bit grayscale PNG",
+      "path": "sim/worlds/factory_park_hf/generated/heightfield_r16.png",
+      "role": "ue_heightfield"
+    },
+    "mujoco_heightfield": {
+      "bytes": 160012,
+      "format": "image/vnd.mujoco.hfield",
+      "path": "sim/worlds/factory_park_hf/generated/heightfield_f32.bin",
+      "role": "mujoco_heightfield",
+      "row_order": "south_to_north_y_ascending"
+    },
+    "mujoco_world": {
+      "bytes": 28462,
+      "format": "MJCF XML",
+      "path": "sim/worlds/factory_park_hf/factory_park_hf.xml",
+      "role": "mujoco_world"
+    },
+    "realism_recipe": {
+      "bytes": 14995,
+      "format": "canonical JSON",
+      "path": "sim/packages/worlds/factory_park_hf/visual/realism.recipe.json",
+      "role": "visual_realism_recipe"
+    },
+    "semantic_entities": {
+      "bytes": 79572,
+      "format": "canonical JSON",
+      "path": "sim/worlds/factory_park_hf/generated/semantic-entities.json",
+      "role": "semantic_entities"
+    },
+    "site_plan_svg": {
+      "bytes": 31001,
+      "format": "SVG",
+      "path": "sim/worlds/factory_park_hf/generated/site-plan.svg",
+      "role": "site_plan"
+    },
+    "terrain_obj": {
+      "bytes": 2964956,
+      "format": "Wavefront OBJ in Unreal centimetres",
+      "path": "sim/worlds/factory_park_hf/generated/terrain.obj",
+      "role": "unreal_terrain_mesh",
+      "sample_grid": [
+        221,
+        181
+      ],
+      "triangle_count": 79200,
+      "vertex_count": 40001
+    }
+  },
+  "status": "source_assets_only",
+  "target_level": "/Game/RobotSim/Maps/FactoryPark_HF",
+  "unreal_landscape_import": {
+    "dimensions_px": [
+      221,
+      181
+    ],
+    "format": "16-bit grayscale PNG",
+    "location_cm": [
+      0.0,
+      0.0,
+      -29.1674296177615
+    ],
+    "material_requirement": "Project-owned asphalt, concrete, gravel, soil, and drainage layers.",
+    "recommended_source": "sim/worlds/factory_park_hf/generated/heightfield_r16.png",
+    "scale_xyz": [
+      100.0,
+      100.0,
+      0.146484375
+    ]
+  },
+  "unreal_layout_import": {
+    "axis_mapping": [
+      "x",
+      "-y",
+      "z"
+    ],
+    "linear_scale_m_to_cm": 100.0,
+    "object_count": 146,
+    "semantic_metadata_fields": [
+      "id",
+      "semantic_class",
+      "material",
+      "collision",
+      "visual_only"
+    ],
+    "source": "sim/worlds/factory_park_hf/generated/expanded-layout.json",
+    "supported_shapes": [
+      "box",
+      "cylinder"
+    ]
+  },
+  "world_package": "factory_park_hf@1.0.0"
+}

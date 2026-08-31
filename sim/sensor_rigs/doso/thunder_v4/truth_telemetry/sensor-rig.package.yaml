@@ -1,0 +1,11 @@
+schema: lingtu.sim.sensor-rig-package.v1
+id: thunderv4_truth_telemetry
+version: 1.0.0
+kind: sensor_rig
+description: Simulation-only truth telemetry rig for Thunder V4 qualification runs.
+sensors:
+  - id: truth_odom
+    package: truth_odom@1.0.0
+    parent_frame: base_link
+    runtime: {owner: physics, source: mujoco_truth}
+    frequency_hz: 100

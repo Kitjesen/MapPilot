@@ -1,0 +1,89 @@
+{
+  "schema": "lingtu.sim.entity-visual-projection.v1",
+  "binding": "EntityVisual:PedestrianCapsule",
+  "package": {
+    "id": "open_field_pedestrian_crossing",
+    "version": "1.0.0",
+    "manifest": "scenario.package.yaml"
+  },
+  "mjcf": {
+    "path": "physics/pedestrian_capsule.xml"
+  },
+  "components": [
+    {
+      "local_body_id": "proxy_root",
+      "body_frame_id": "proxy_root",
+      "visual_id": "pedestrian_capsule",
+      "visual_frame_id": "proxy_root/visual/pedestrian_capsule",
+      "asset_key": "EntityVisual:PedestrianCapsule/proxy_root/visual/pedestrian_capsule",
+      "geometry": {
+        "kind": "primitive",
+        "primitive": "capsule",
+        "size": [
+          0.3,
+          0.6
+        ]
+      },
+      "unreal": {
+        "representation": "component",
+        "component_class": "/Script/Engine.CapsuleComponent",
+        "radius_m": 0.3,
+        "cylinder_half_length_m": 0.6,
+        "capsule_half_height_m": 0.9,
+        "dimensions_m": [
+          0.6,
+          0.6,
+          1.8
+        ]
+      },
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.9
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material_key": null,
+      "material": {
+        "source": "compiler_default",
+        "key": null,
+        "pbr": {
+          "base_color_rgba": [
+            0.85,
+            0.22,
+            0.08,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.72
+        }
+      },
+      "source": {
+        "manifest_schema": "lingtu.sim.scenario-package.v1",
+        "package": {
+          "id": "open_field_pedestrian_crossing",
+          "version": "1.0.0",
+          "manifest": "scenario.package.yaml"
+        },
+        "mjcf": {
+          "path": "physics/pedestrian_capsule.xml"
+        },
+        "geometry_source": {
+          "kind": "primitive",
+          "primitive": "capsule"
+        }
+      }
+    }
+  ]
+}

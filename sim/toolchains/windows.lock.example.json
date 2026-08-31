@@ -1,0 +1,15 @@
+{
+  "schema": "lingtu.sim.windows-toolchain-lock",
+  "schema_version": 1,
+  "generated_at_utc": null,
+  "host": {"computer_name": null, "os_build": null, "architecture": "unknown"},
+  "policy": {"lock_requires_exact_version": true, "lock_requires_source": true, "lock_requires_sha256": true, "lock_requires_installation_evidence": true, "notes": "Example only: unknown tools remain null and are not locked."},
+  "summary": {"state": "unlocked", "locked_count": 0, "component_count": 5},
+  "components": {
+    "unreal_engine": {"id": "unreal_engine", "status": {"state": "not_found", "reasons": ["No installation detected."]}, "version": {"exact": null, "source": null}, "source": {"type": "unknown", "location": null, "evidence": []}, "architecture": "unknown", "sha256": {"value": null, "path": null, "algorithm": "sha256", "evidence": []}, "installation": {"root_path": null, "executable_path": null, "evidence": []}, "validation": {"checks": [], "validated_at_utc": null}, "lock": null},
+    "visual_studio_msvc": {"id": "visual_studio_msvc", "status": {"state": "not_found", "reasons": ["No installation detected."]}, "version": {"exact": null, "source": null}, "source": {"type": "unknown", "location": null, "evidence": []}, "architecture": "unknown", "sha256": {"value": null, "path": null, "algorithm": "sha256", "evidence": []}, "installation": {"root_path": null, "executable_path": null, "evidence": []}, "validation": {"checks": [], "validated_at_utc": null}, "lock": null},
+    "windows_sdk": {"id": "windows_sdk", "status": {"state": "not_found", "reasons": ["No installation detected."]}, "version": {"exact": null, "source": null}, "source": {"type": "unknown", "location": null, "evidence": []}, "architecture": "unknown", "sha256": {"value": null, "path": null, "algorithm": "sha256", "evidence": []}, "installation": {"root_path": null, "executable_path": null, "evidence": []}, "validation": {"checks": [], "validated_at_utc": null}, "lock": null},
+    "mujoco_sdk": {"id": "mujoco_sdk", "status": {"state": "not_found", "reasons": ["No installation detected."]}, "version": {"exact": null, "source": null}, "source": {"type": "unknown", "location": null, "evidence": []}, "architecture": "unknown", "sha256": {"value": null, "path": null, "algorithm": "sha256", "evidence": []}, "installation": {"root_path": null, "executable_path": null, "evidence": []}, "validation": {"checks": [], "validated_at_utc": null}, "lock": null},
+    "blender": {"id": "blender", "status": {"state": "not_found", "reasons": ["No installation detected."]}, "version": {"exact": null, "source": null}, "source": {"type": "unknown", "location": null, "evidence": []}, "architecture": "unknown", "sha256": {"value": null, "path": null, "algorithm": "sha256", "evidence": []}, "installation": {"root_path": null, "executable_path": null, "evidence": []}, "validation": {"checks": [], "validated_at_utc": null}, "lock": null}
+  }
+}

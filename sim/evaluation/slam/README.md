@@ -24,7 +24,7 @@ Convert ROS 2 bags in an offline ROS 2 environment; the robot runtime remains
 ROS-free. For an extracted AIST hard-localization sequence:
 
 ```bash
-python3 scripts/datasets/public_slam_dataset.py manifest \
+python3 tools/datasets/public_slam_dataset.py manifest \
   aist-hard-localization-mid360 \
   /data/raw/outdoor_hard_01a \
   /data/ltu \
@@ -36,7 +36,7 @@ python3 scripts/compat/ros2/datasets/ros2_bag_to_normalized_jsonl.py \
   /data/ltu/outdoor_hard_01a.normalized.jsonl \
   --storage-id sqlite3
 
-python3 scripts/datasets/normalized_lidar_imu_to_ltu1.py \
+python3 tools/datasets/normalized_lidar_imu_to_ltu1.py \
   /data/ltu/outdoor_hard_01a.normalized.jsonl \
   /data/ltu/outdoor_hard_01a.ltu
 
@@ -53,9 +53,9 @@ Terminal 1:
 ```bash
 LINGTU_SLAM_BIN="$PWD/build/slam_core/slamd" \
 LINGTU_SLAM_MODE=mapping \
-LINGTU_SLAM_CONFIG="$PWD/src/localization/fastlio2/config/mid360_s100p.yaml" \
+LINGTU_SLAM_CONFIG="$PWD/config/robots/unitree/go2/sensors/mid360_fastlio2.yaml" \
 LINGTU_DDS_DOMAIN_ID=83 \
-LINGTU_SLAM_STATUS_JSON=/tmp/lingtu_slam_status.json \
+LINGTU_SLAM_STATUS_JSON=/tmp/messages_status.json \
 bash scripts/deploy/thunder/run_slam_dds.sh
 ```
 
@@ -71,7 +71,7 @@ build/livox_sdk2_stream/livox_sdk2_stream \
 ```
 
 The end-to-end path is therefore `rosbag2 -> normalized JSONL -> LTU1 -> native
-CycloneDDS -> Fast-LIO2 -> /tmp/lingtu_slam_status.json`. Use the readiness
+CycloneDDS -> Fast-LIO2 -> /tmp/messages_status.json`. Use the readiness
 commands below to capture unique status observations and evaluate the result.
 
 The ROS adapter lazily imports `rosbag2_py`, `rclpy.serialization`, and the
@@ -115,7 +115,7 @@ parallel robot stack.
 
 ## Patrol Localization Readiness
 
-Use `scripts/datasets/inspection_localization_readiness.py` after replaying a
+Use `tools/datasets/inspection_localization_readiness.py` after replaying a
 public or field SLAM run into native status snapshots. It reads JSONL snapshots,
 explicit evidence and stationary windows, optional annotated degeneracy windows,
 and an optional relocalization case file with map hashes. The output is a JSON
@@ -131,8 +131,8 @@ Capture unique observation sequences first; repeated reads of a frozen snapshot
 are counted as duplicates and cannot satisfy the evidence gate:
 
 ```bash
-python3 scripts/datasets/capture_slam_status_jsonl.py \
-  /tmp/lingtu_slam_status.json \
+python3 tools/datasets/capture_slam_status_jsonl.py \
+  /tmp/messages_status.json \
   /tmp/inspection-static-60m.jsonl \
   --duration-s 3600 \
   --poll-hz 20 \
@@ -145,7 +145,7 @@ When the robot was physically stationary for the complete capture, explicitly
 assert that fact and evaluate the full captured timestamp range:
 
 ```bash
-python3 scripts/datasets/inspection_localization_readiness.py \
+python3 tools/datasets/inspection_localization_readiness.py \
   /tmp/inspection-static-60m.jsonl \
   --full-evidence-window \
   --stationary-full-window \
@@ -161,9 +161,9 @@ publishes a goal or velocity, or authorizes motion.
 The same static acceptance can be captured and evaluated in one process:
 
 ```bash
-python3 scripts/datasets/inspection_localization_readiness.py \
+python3 tools/datasets/inspection_localization_readiness.py \
   /tmp/inspection-static-60m.jsonl \
-  --capture-source /tmp/lingtu_slam_status.json \
+  --capture-source /tmp/messages_status.json \
   --capture-duration-s 3600 \
   --capture-poll-hz 20 \
   --capture-min-samples 30000 \

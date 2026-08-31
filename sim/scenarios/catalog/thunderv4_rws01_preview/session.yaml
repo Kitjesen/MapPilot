@@ -1,0 +1,24 @@
+schema: lingtu.sim.session.v2
+session_id: thunderv4_rws01_preview
+mujoco_version: 3.10.0
+seed: 20260812
+world: open_field@1.0.0
+robots:
+  - instance_id: thunder_01
+    package: thunderv4@1.0.3
+    controller: thunderv4_locomotion@1.0.0
+    sensor_rig: null
+    spawn:
+      position_m: [0.0, 0.0, 0.0]
+      quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]
+    payloads:
+      - instance_id: rws_01
+        package: fictional_rws_01@1.0.0
+        parent_frame: payload_top
+        extrinsic:
+          position_m: [0.0, 0.0, 0.0]
+          quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]
+runtime:
+  backend: mujoco
+  mode: unreal
+  required_bindings: [physics, visual, control]

@@ -1,0 +1,62 @@
+schema: lingtu.sim.payload-package.v1
+id: fictional_rws_01
+version: 1.0.0
+kind: payload
+description: Fictional remote payload for game and robotics simulation only.
+safety:
+  mode: simulation_only
+  fictional: true
+  real_world_calibration: prohibited
+compatibility:
+  runtime_abi: lingtu.sim.payload.v1
+  mujoco: 3.10.x
+mount:
+  required_parent_role: payload_mount
+  root_frame: payload_base
+physics:
+  mjcf:
+    path: mjcf/fictional_rws_01.xml
+  attach_root: payload_base
+  global_options: inherit_session
+  authority: mujoco
+  collision_representation: primitive_proxy
+visual:
+  binding: PayloadVisual:FictionalRWS01
+  projection:
+    path: visual/payload.visual-projection.json
+  authority: mujoco
+  ue_collision: disabled
+frames:
+  - name: payload_base
+    role: payload_root
+  - name: yaw_frame
+    role: articulation
+    parent_frame: payload_base
+  - name: pitch_frame
+    role: articulation
+    parent_frame: yaw_frame
+  - name: muzzle_frame
+    role: simulated_projectile_origin
+    parent_frame: pitch_frame
+  - name: eo_optical_frame
+    role: sensor_mount
+    parent_frame: pitch_frame
+interfaces:
+  state:
+    - lingtu.sim.payload-state.v1
+  command:
+    - lingtu.sim.payload-aim-command.v1
+declared_capabilities:
+  - static_visual_mount
+  - two_axis_aim_proxy
+  - eo_sensor_mount
+  - simulated_projectile_origin
+provenance:
+  generator: tripo3d
+  source_task_id: 2dd80649-65d8-4263-a702-f3d29f73e40c
+  conversion_task_id: 3a3dffd1-049f-4205-bcf0-b3c3f58ac1bc
+  segmentation_task_id: 74cd1171-28b7-4899-843d-c0f99b1ffada
+  source_asset:
+    path: assets/rws-01-v002-runtime.glb
+  conditioning_report:
+    path: provenance/conditioning-report.json

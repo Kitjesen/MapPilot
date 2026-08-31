@@ -1,0 +1,730 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.sensor-plan.v1",
+  "title": "LingTu deterministic simulation sensor plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "backends",
+    "env",
+    "schema",
+    "session_id",
+    "streams"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lingtu.sim.sensor-plan.v1"
+    },
+    "env": {
+      "const": "sim"
+    },
+    "backends": {
+      "$ref": "#/$defs/backends"
+    },
+    "streams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rgb",
+        "depth",
+        "imu",
+        "mid360",
+        "truth_odom"
+      ],
+      "properties": {
+        "rgb": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rgb_stream"
+          },
+          "minItems": 0
+        },
+        "depth": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/depth_stream"
+          },
+          "minItems": 0
+        },
+        "imu": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/imu_stream"
+          },
+          "minItems": 0
+        },
+        "mid360": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mid360_stream"
+          },
+          "minItems": 0
+        },
+        "truth_odom": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/truth_odom_stream"
+          },
+          "minItems": 0
+        }
+      }
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+    "maxLength": 63,
+    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$"
+    }
+  },
+  "$defs": {
+    "backends": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "physics",
+        "visual"
+      ],
+      "properties": {
+        "physics": {
+          "const": "mujoco"
+        },
+        "visual": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "unreal",
+            null
+          ]
+        }
+      }
+    },
+    "rgb_stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance_id",
+        "sensor_id",
+        "owner",
+        "source",
+        "frame_id",
+        "rate_hz",
+        "transport",
+        "message_type",
+        "width",
+        "height",
+        "encoding"
+      ],
+      "properties": {
+        "instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sensor_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner": {
+          "enum": [
+            "visual",
+            "sensor_runtime"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "frame_id": {
+          "$ref": "#/$defs/frame_id"
+        },
+        "parent_frame_id": {
+          "$ref": "#/$defs/nullable_frame_id"
+        },
+        "extrinsic": {
+          "$ref": "#/$defs/extrinsic"
+        },
+        "rate_hz": {
+          "$ref": "#/$defs/camera_rate_hz"
+        },
+        "transport": {
+          "const": "camera_shm"
+        },
+        "message_type": {
+          "const": "lingtu.dds.Image"
+        },
+        "width": {
+          "$ref": "#/$defs/image_dimension"
+        },
+        "height": {
+          "$ref": "#/$defs/image_dimension"
+        },
+        "encoding": {
+          "const": "rgb8"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "allOf": [
+              {
+                "required": [
+                  "parent_frame_id"
+                ]
+              },
+              {
+                "properties": {
+                  "parent_frame_id": {
+                    "$ref": "#/$defs/frame_id"
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "extrinsic"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "extrinsic"
+            ]
+          },
+          "then": {
+            "required": [
+              "parent_frame_id"
+            ],
+            "properties": {
+              "parent_frame_id": {
+                "$ref": "#/$defs/frame_id"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "depth_stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance_id",
+        "sensor_id",
+        "owner",
+        "source",
+        "frame_id",
+        "rate_hz",
+        "transport",
+        "message_type",
+        "width",
+        "height",
+        "encoding",
+        "requested_encoding",
+        "depth_scale",
+        "unit"
+      ],
+      "properties": {
+        "instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sensor_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner": {
+          "enum": [
+            "visual",
+            "sensor_runtime"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "frame_id": {
+          "$ref": "#/$defs/frame_id"
+        },
+        "parent_frame_id": {
+          "$ref": "#/$defs/nullable_frame_id"
+        },
+        "extrinsic": {
+          "$ref": "#/$defs/extrinsic"
+        },
+        "rate_hz": {
+          "$ref": "#/$defs/camera_rate_hz"
+        },
+        "transport": {
+          "const": "camera_shm"
+        },
+        "message_type": {
+          "const": "lingtu.dds.Image"
+        },
+        "width": {
+          "$ref": "#/$defs/image_dimension"
+        },
+        "height": {
+          "$ref": "#/$defs/image_dimension"
+        },
+        "encoding": {
+          "const": "16UC1"
+        },
+        "requested_encoding": {
+          "enum": [
+            "16UC1",
+            "32FC1"
+          ]
+        },
+        "depth_scale": {
+          "const": 0.001
+        },
+        "unit": {
+          "const": "m"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "allOf": [
+              {
+                "required": [
+                  "parent_frame_id"
+                ]
+              },
+              {
+                "properties": {
+                  "parent_frame_id": {
+                    "$ref": "#/$defs/frame_id"
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "extrinsic"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "extrinsic"
+            ]
+          },
+          "then": {
+            "required": [
+              "parent_frame_id"
+            ],
+            "properties": {
+              "parent_frame_id": {
+                "$ref": "#/$defs/frame_id"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "imu_stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance_id",
+        "sensor_id",
+        "owner",
+        "source",
+        "frame_id",
+        "rate_hz",
+        "transport",
+        "message_type",
+        "fields"
+      ],
+      "properties": {
+        "instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sensor_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner": {
+          "enum": [
+            "physics",
+            "sensor_runtime"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "frame_id": {
+          "$ref": "#/$defs/frame_id"
+        },
+        "parent_frame_id": {
+          "$ref": "#/$defs/nullable_frame_id"
+        },
+        "extrinsic": {
+          "$ref": "#/$defs/extrinsic"
+        },
+        "rate_hz": {
+          "const": 200
+        },
+        "transport": {
+          "const": "typed_dds"
+        },
+        "message_type": {
+          "const": "lingtu.dds.Imu"
+        },
+        "fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 3,
+          "items": {
+            "enum": [
+              "orientation",
+              "angular_velocity",
+              "linear_acceleration"
+            ]
+          },
+          "contains": {
+            "const": "angular_velocity"
+          },
+          "minContains": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "allOf": [
+              {
+                "required": [
+                  "parent_frame_id"
+                ]
+              },
+              {
+                "properties": {
+                  "parent_frame_id": {
+                    "$ref": "#/$defs/frame_id"
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "extrinsic"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "extrinsic"
+            ]
+          },
+          "then": {
+            "required": [
+              "parent_frame_id"
+            ],
+            "properties": {
+              "parent_frame_id": {
+                "$ref": "#/$defs/frame_id"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "mid360_stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance_id",
+        "sensor_id",
+        "owner",
+        "source",
+        "frame_id",
+        "raycast_frame_stable_id",
+        "rate_hz",
+        "transport",
+        "message_type",
+        "point_fields",
+        "offset_time_unit",
+        "line_semantics"
+      ],
+      "properties": {
+        "instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sensor_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner": {
+          "enum": [
+            "physics",
+            "sensor_runtime"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "frame_id": {
+          "$ref": "#/$defs/frame_id"
+        },
+        "raycast_frame_stable_id": {
+          "$ref": "#/$defs/frame_id"
+        },
+        "navigation_fixture_raw_overlay": {
+          "type": "boolean"
+        },
+        "parent_frame_id": {
+          "$ref": "#/$defs/nullable_frame_id"
+        },
+        "extrinsic": {
+          "$ref": "#/$defs/extrinsic"
+        },
+        "rate_hz": {
+          "const": 10
+        },
+        "transport": {
+          "const": "typed_dds"
+        },
+        "message_type": {
+          "const": "lingtu.dds.LivoxFrame"
+        },
+        "point_fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {
+            "enum": [
+              "x",
+              "y",
+              "z",
+              "offset_time_ns",
+              "reflectivity",
+              "tag",
+              "line"
+            ]
+          },
+          "contains": {
+            "enum": [
+              "offset_time_ns",
+              "reflectivity",
+              "line"
+            ]
+          },
+          "minContains": 3
+        },
+        "offset_time_unit": {
+          "const": "ns"
+        },
+        "line_semantics": {
+          "enum": [
+            "livox_channel",
+            "unknown"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "allOf": [
+              {
+                "required": [
+                  "parent_frame_id"
+                ]
+              },
+              {
+                "properties": {
+                  "parent_frame_id": {
+                    "$ref": "#/$defs/frame_id"
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "extrinsic"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "extrinsic"
+            ]
+          },
+          "then": {
+            "required": [
+              "parent_frame_id"
+            ],
+            "properties": {
+              "parent_frame_id": {
+                "$ref": "#/$defs/frame_id"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "truth_odom_stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance_id",
+        "sensor_id",
+        "owner",
+        "source",
+        "frame_id",
+        "rate_hz",
+        "transport",
+        "message_type",
+        "estimator_input"
+      ],
+      "properties": {
+        "instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sensor_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner": {
+          "const": "physics"
+        },
+        "source": {
+          "const": "mujoco_truth"
+        },
+        "frame_id": {
+          "$ref": "#/$defs/frame_id"
+        },
+        "parent_frame_id": {
+          "$ref": "#/$defs/nullable_frame_id"
+        },
+        "extrinsic": {
+          "$ref": "#/$defs/extrinsic"
+        },
+        "rate_hz": {
+          "const": 100
+        },
+        "transport": {
+          "const": "typed_dds"
+        },
+        "message_type": {
+          "const": "lingtu.dds.Odometry"
+        },
+        "estimator_input": {
+          "const": false
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "allOf": [
+              {
+                "required": [
+                  "parent_frame_id"
+                ]
+              },
+              {
+                "properties": {
+                  "parent_frame_id": {
+                    "$ref": "#/$defs/frame_id"
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "extrinsic"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "extrinsic"
+            ]
+          },
+          "then": {
+            "required": [
+              "parent_frame_id"
+            ],
+            "properties": {
+              "parent_frame_id": {
+                "$ref": "#/$defs/frame_id"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "extrinsic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "position_m",
+        "quaternion_wxyz"
+      ],
+      "properties": {
+        "position_m": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "number"
+          }
+        },
+        "quaternion_wxyz": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "frame_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_./:-]*$"
+    },
+    "nullable_frame_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/frame_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "image_dimension": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8192
+    },
+    "camera_rate_hz": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 240
+    },
+    "sensor_rate_hz": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 10000
+    }
+  }
+}

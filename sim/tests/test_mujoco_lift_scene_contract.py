@@ -67,29 +67,36 @@ def test_lift_scene_merges_with_configured_thunder_robot_model() -> None:
     engine = build_engine(
         world=resolve_world("lift_building"),
         drive_mode="kinematic",
-        n_rays=16,
         start=[6.0, 2.6, 0.48],
         mujoco_memory="",
         mid360_pattern=None,
-        lidar_backend="mj_multiray",
+        lidar_backend="mujoco_lidar",
         require_product_lidar_backend=False,
-        allow_legacy_lidar_fallback=True,
     )
     try:
-        assert mujoco.mj_name2id(
-            engine._model,
-            mujoco.mjtObj.mjOBJ_BODY,
-            "base_link",
-        ) >= 0
-        assert mujoco.mj_name2id(
-            engine._model,
-            mujoco.mjtObj.mjOBJ_BODY,
-            "lift_cabin",
-        ) >= 0
-        assert mujoco.mj_name2id(
-            engine._model,
-            mujoco.mjtObj.mjOBJ_JOINT,
-            "lift_cabin_z",
-        ) >= 0
+        assert (
+            mujoco.mj_name2id(
+                engine._model,
+                mujoco.mjtObj.mjOBJ_BODY,
+                "base_link",
+            )
+            >= 0
+        )
+        assert (
+            mujoco.mj_name2id(
+                engine._model,
+                mujoco.mjtObj.mjOBJ_BODY,
+                "lift_cabin",
+            )
+            >= 0
+        )
+        assert (
+            mujoco.mj_name2id(
+                engine._model,
+                mujoco.mjtObj.mjOBJ_JOINT,
+                "lift_cabin_z",
+            )
+            >= 0
+        )
     finally:
         engine.close()

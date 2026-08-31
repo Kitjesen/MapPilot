@@ -1,0 +1,33 @@
+{
+	"FileVersion": 3,
+	"Version": 3,
+	"VersionName": "1.0.4",
+	"FriendlyName": "Tripo Bridge",
+	"Description": "WebSocket bridge for importing FBX models from Tripo Studio",
+	"Category": "Tripo3D",
+	"CreatedBy": "Tripo3D",
+	"CreatedByURL": "https://www.tripo3d.ai",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EngineVersion": "5.8.0",
+	"CanContainContent": true,
+	"Installed": true,
+	"SupportedTargetPlatforms": [
+		"Win64"
+	],
+	"Modules": [
+		{
+			"Name": "Tripo3DUEBridge",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	],
+	"LocalizationTargets": [
+		{
+			"Name": "Tripo3DUEBridge",
+			"LoadingPolicy": "Editor",
+			"ConfigGenerationPolicy": "Never"
+		}
+	]
+}

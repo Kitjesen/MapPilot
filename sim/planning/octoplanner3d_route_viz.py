@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Plot OctoPlanner3D route JSON over the real building2_9 PCD cloud.
-
-This is intentionally separate from legacy PCT/tomogram previews. A tomogram is
-a planner-derived slice grid; this plot is for checking the actual point cloud
-and OctoPlanner3D path geometry.
-"""
+"""Plot OctoPlanner3D route JSON over the real building2_9 PCD cloud."""
 
 from __future__ import annotations
 
@@ -18,7 +13,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PCD = (

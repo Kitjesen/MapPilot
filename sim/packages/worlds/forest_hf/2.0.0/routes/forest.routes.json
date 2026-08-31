@@ -1,0 +1,161 @@
+{
+  "extent_m": [
+    2000.0,
+    2000.0
+  ],
+  "goal": {
+    "acceptance_radius_m": 5.0,
+    "position_xy_m": [
+      420.0,
+      710.0
+    ],
+    "route_id": "forest.route.primary_loop.v1",
+    "stable_id": "forest.goal.overlook.v1"
+  },
+  "routes": [
+    {
+      "centerline_xy_m": [
+        [
+          -760.0,
+          -650.0
+        ],
+        [
+          -250.0,
+          -790.0
+        ],
+        [
+          360.0,
+          -720.0
+        ],
+        [
+          760.0,
+          -340.0
+        ],
+        [
+          790.0,
+          260.0
+        ],
+        [
+          420.0,
+          710.0
+        ],
+        [
+          -180.0,
+          800.0
+        ],
+        [
+          -700.0,
+          500.0
+        ],
+        [
+          -820.0,
+          -80.0
+        ],
+        [
+          -760.0,
+          -650.0
+        ]
+      ],
+      "kind": "primary_loop",
+      "navigation_limits": {
+        "clearance_each_side_m": 2.0,
+        "maximum_cross_slope": 0.08,
+        "maximum_grade": 0.12,
+        "maximum_step_m": 0.18,
+        "minimum_drivable_width_m": 6.0
+      },
+      "road_width_m": 12.0,
+      "stable_id": "forest.route.primary_loop.v1"
+    },
+    {
+      "centerline_xy_m": [
+        [
+          -180.0,
+          800.0
+        ],
+        [
+          -120.0,
+          900.0
+        ],
+        [
+          40.0,
+          950.0
+        ]
+      ],
+      "kind": "branch",
+      "navigation_limits": {
+        "clearance_each_side_m": 2.0,
+        "maximum_cross_slope": 0.08,
+        "maximum_grade": 0.12,
+        "maximum_step_m": 0.18,
+        "minimum_drivable_width_m": 6.0
+      },
+      "road_width_m": 10.0,
+      "stable_id": "forest.route.branch_north.v1"
+    },
+    {
+      "centerline_xy_m": [
+        [
+          790.0,
+          260.0
+        ],
+        [
+          890.0,
+          360.0
+        ],
+        [
+          950.0,
+          500.0
+        ]
+      ],
+      "kind": "branch",
+      "navigation_limits": {
+        "clearance_each_side_m": 2.0,
+        "maximum_cross_slope": 0.08,
+        "maximum_grade": 0.12,
+        "maximum_step_m": 0.18,
+        "minimum_drivable_width_m": 6.0
+      },
+      "road_width_m": 10.0,
+      "stable_id": "forest.route.branch_east.v1"
+    },
+    {
+      "centerline_xy_m": [
+        [
+          -760.0,
+          -650.0
+        ],
+        [
+          -880.0,
+          -760.0
+        ],
+        [
+          -950.0,
+          -850.0
+        ]
+      ],
+      "kind": "branch",
+      "navigation_limits": {
+        "clearance_each_side_m": 2.0,
+        "maximum_cross_slope": 0.08,
+        "maximum_grade": 0.12,
+        "maximum_step_m": 0.18,
+        "minimum_drivable_width_m": 6.0
+      },
+      "road_width_m": 10.0,
+      "stable_id": "forest.route.branch_southwest.v1"
+    }
+  ],
+  "schema": "lingtu.sim.forest-route-contract.v1",
+  "spawn": {
+    "heading_deg": -15.0,
+    "minimum_clear_radius_m": 8.0,
+    "position_xy_m": [
+      -760.0,
+      -650.0
+    ],
+    "route_id": "forest.route.primary_loop.v1",
+    "stable_id": "forest.spawn.trailhead.v1"
+  },
+  "world_package": "forest_hf@2.0.0"
+}

@@ -1,0 +1,45 @@
+schema: lingtu.sim.controller-package.v1
+id: thunderv4_locomotion
+version: 1.0.0
+kind: controller
+description: History-stacked ONNX locomotion controller for Thunder V4.
+adapter:
+  plugin: quadruped_him
+  abi: lingtu.sim.controller-adapter.v1
+policy:
+  runtime: onnxruntime
+  artifact: policy/policy_1119.onnx
+  manifest: policy/policy_manifest.json
+timing:
+  inference_hz: 50
+  low_level_hz: 200
+robot_interface:
+  requires_state:
+    - joint_position
+    - joint_velocity
+    - base_angular_velocity
+    - projected_gravity
+  accepts_command:
+    type: base_twist
+    message_type: lingtu.dds.FinalVelocityCommand
+  produces_command:
+    type: joint_torque
+    message_type: lingtu.sim.joint-torque.v1
+actuators:
+  channels:
+    - FR_hip_joint
+    - FR_thigh_joint
+    - FR_calf_joint
+    - FL_hip_joint
+    - FL_thigh_joint
+    - FL_calf_joint
+    - RR_hip_joint
+    - RR_thigh_joint
+    - RR_calf_joint
+    - RL_hip_joint
+    - RL_thigh_joint
+    - RL_calf_joint
+    - FR_foot_joint
+    - FL_foot_joint
+    - RR_foot_joint
+    - RL_foot_joint

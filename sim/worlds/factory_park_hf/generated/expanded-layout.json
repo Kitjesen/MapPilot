@@ -1,0 +1,3335 @@
+{
+  "checkpoints": [
+    {
+      "id": "checkpoint_gate",
+      "label": "南门与门岗",
+      "position_m": [
+        0.0,
+        -76.0,
+        0.0
+      ],
+      "radius_m": 0.8,
+      "route_id": "robot_acceptance_loop"
+    },
+    {
+      "id": "checkpoint_container_yard",
+      "label": "集装箱堆场",
+      "position_m": [
+        -16.0,
+        -33.0,
+        0.0
+      ],
+      "radius_m": 0.8,
+      "route_id": "forklift_logistics_route"
+    },
+    {
+      "id": "checkpoint_factory",
+      "label": "主厂房",
+      "position_m": [
+        -6.0,
+        32.0,
+        0.0
+      ],
+      "radius_m": 0.8,
+      "route_id": "pedestrian_safe_route"
+    },
+    {
+      "id": "checkpoint_gravel",
+      "label": "碎石测试区",
+      "position_m": [
+        -76.0,
+        69.5,
+        0.0
+      ],
+      "radius_m": 0.8,
+      "route_id": "robot_acceptance_loop"
+    },
+    {
+      "id": "checkpoint_warehouse",
+      "label": "仓库装卸区",
+      "position_m": [
+        50.0,
+        7.0,
+        0.0
+      ],
+      "radius_m": 0.8,
+      "route_id": "forklift_logistics_route"
+    },
+    {
+      "id": "checkpoint_tank_farm",
+      "label": "罐区围堰",
+      "position_m": [
+        88.0,
+        -36.0,
+        0.0
+      ],
+      "radius_m": 0.8,
+      "route_id": "robot_acceptance_loop"
+    }
+  ],
+  "coordinate_contract": {
+    "axis_mapping": [
+      "x",
+      "-y",
+      "z"
+    ],
+    "extent_m": [
+      220.0,
+      180.0
+    ],
+    "grid_px": [
+      221,
+      181
+    ],
+    "height_encoding": {
+      "bit_depth": 16,
+      "elevation_scale_m": 0.75,
+      "formula": "world_height_m = sample_u16 / 65535 * elevation_scale_m + vertical_origin_m",
+      "range": [
+        0,
+        65535
+      ],
+      "type": "uint16_normalized"
+    },
+    "image_mapping": {
+      "column_0_x_m": -110.0,
+      "column_last_x_m": 110.0,
+      "row_0_y_m": 90.0,
+      "row_last_y_m": -90.0
+    },
+    "mujoco_hfield": {
+      "geom_position_m": [
+        0.0,
+        0.0,
+        -0.666674296177615
+      ],
+      "size": [
+        110.0,
+        90.0,
+        0.75,
+        1.0
+      ]
+    },
+    "origin": "site_center",
+    "sample_spacing_m": [
+      1.0,
+      1.0
+    ],
+    "source_frame": "mujoco_rh_z_up_m",
+    "spawn_reference": {
+      "sample_pixel": [
+        110,
+        166
+      ],
+      "sample_u16": 58254,
+      "world_position_m": [
+        0.0,
+        -76.0,
+        0.0
+      ]
+    },
+    "unreal_frame": "unreal_lh_z_up_cm",
+    "unreal_landscape": {
+      "location_cm": [
+        0.0,
+        0.0,
+        -29.1674296177615
+      ],
+      "scale_xyz": [
+        100.0,
+        100.0,
+        0.146484375
+      ]
+    },
+    "vertical_origin_m": -0.666674296177615
+  },
+  "coordinate_system": {
+    "frame": "mujoco_rh_z_up_m",
+    "handedness": "right",
+    "linear_unit": "metre",
+    "up_axis": "z"
+  },
+  "element_batches": [
+    {
+      "batch_id": "operations_safety",
+      "digest": "6dc891d5c909f8b738aafae8db5416102e9ada325b6458ad21cd82909430f0bf",
+      "object_count": 19
+    }
+  ],
+  "extent_m": [
+    220.0,
+    180.0
+  ],
+  "generator": {
+    "algorithm": "lingtu_factory_park_layout.v2",
+    "module": "sim.tools.worlds.factory_park_hf.generate"
+  },
+  "layout_digest": "30bc105663db22e192aeba9294b18882f4db111e1db3891f802ce5ca50b4619a",
+  "objects": [
+    {
+      "clear_width_m": 10.0,
+      "collision": true,
+      "friction": [
+        1.0,
+        0.02,
+        0.001
+      ],
+      "id": "road_ring_north",
+      "material": "asphalt",
+      "position_m": [
+        0.0,
+        62.0,
+        0.025
+      ],
+      "semantic_class": "road",
+      "shape": "box",
+      "size_m": [
+        186.0,
+        10.0,
+        0.05
+      ],
+      "surface": "vehicle",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "clear_width_m": 10.0,
+      "collision": true,
+      "friction": [
+        1.0,
+        0.02,
+        0.001
+      ],
+      "id": "road_ring_south",
+      "material": "asphalt",
+      "position_m": [
+        0.0,
+        -62.0,
+        0.025
+      ],
+      "semantic_class": "road",
+      "shape": "box",
+      "size_m": [
+        186.0,
+        10.0,
+        0.05
+      ],
+      "surface": "vehicle",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "clear_width_m": 10.0,
+      "collision": true,
+      "friction": [
+        1.0,
+        0.02,
+        0.001
+      ],
+      "id": "road_ring_west",
+      "material": "asphalt",
+      "position_m": [
+        -93.0,
+        0.0,
+        0.025
+      ],
+      "semantic_class": "road",
+      "shape": "box",
+      "size_m": [
+        10.0,
+        124.0,
+        0.05
+      ],
+      "surface": "vehicle",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "clear_width_m": 10.0,
+      "collision": true,
+      "friction": [
+        1.0,
+        0.02,
+        0.001
+      ],
+      "id": "road_ring_east",
+      "material": "asphalt",
+      "position_m": [
+        93.0,
+        0.0,
+        0.025
+      ],
+      "semantic_class": "road",
+      "shape": "box",
+      "size_m": [
+        10.0,
+        124.0,
+        0.05
+      ],
+      "surface": "vehicle",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "clear_width_m": 12.0,
+      "collision": true,
+      "friction": [
+        1.0,
+        0.02,
+        0.001
+      ],
+      "id": "road_central_cross",
+      "material": "asphalt",
+      "position_m": [
+        0.0,
+        0.0,
+        0.026
+      ],
+      "semantic_class": "road",
+      "shape": "box",
+      "size_m": [
+        186.0,
+        12.0,
+        0.052
+      ],
+      "surface": "vehicle",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "clear_width_m": 12.0,
+      "collision": true,
+      "friction": [
+        1.0,
+        0.02,
+        0.001
+      ],
+      "id": "road_entry_boulevard",
+      "material": "asphalt",
+      "position_m": [
+        0.0,
+        -44.0,
+        0.027
+      ],
+      "semantic_class": "road",
+      "shape": "box",
+      "size_m": [
+        12.0,
+        88.0,
+        0.054
+      ],
+      "surface": "vehicle",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "clear_width_m": 12.0,
+      "collision": true,
+      "friction": [
+        1.0,
+        0.02,
+        0.001
+      ],
+      "id": "road_central_spine",
+      "material": "asphalt",
+      "position_m": [
+        0.0,
+        31.0,
+        0.027
+      ],
+      "semantic_class": "road",
+      "shape": "box",
+      "size_m": [
+        12.0,
+        62.0,
+        0.054
+      ],
+      "surface": "vehicle",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "clear_width_m": 8.0,
+      "collision": true,
+      "friction": [
+        1.0,
+        0.02,
+        0.001
+      ],
+      "id": "road_loading_apron",
+      "material": "asphalt",
+      "position_m": [
+        50.0,
+        9.0,
+        0.026
+      ],
+      "semantic_class": "road",
+      "shape": "box",
+      "size_m": [
+        70.0,
+        8.0,
+        0.052
+      ],
+      "surface": "vehicle",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "clear_width_m": 8.0,
+      "collision": true,
+      "friction": [
+        1.0,
+        0.02,
+        0.001
+      ],
+      "id": "road_gravel_access",
+      "material": "asphalt",
+      "position_m": [
+        -76.0,
+        68.0,
+        0.026
+      ],
+      "semantic_class": "road",
+      "shape": "box",
+      "size_m": [
+        8.0,
+        12.0,
+        0.052
+      ],
+      "surface": "vehicle",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "clear_width_m": 6.0,
+      "collision": true,
+      "id": "parking_apron",
+      "material": "asphalt",
+      "position_m": [
+        25.0,
+        -34.0,
+        0.022
+      ],
+      "semantic_class": "parking_area",
+      "shape": "box",
+      "size_m": [
+        38.0,
+        34.0,
+        0.044
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "clear_aisle_width_m": 6.0,
+      "collision": true,
+      "id": "container_yard_apron",
+      "material": "concrete",
+      "position_m": [
+        -52.0,
+        -33.0,
+        0.025
+      ],
+      "semantic_class": "container_yard",
+      "shape": "box",
+      "size_m": [
+        58.0,
+        42.0,
+        0.05
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "tank_bund_floor",
+      "material": "bund_concrete",
+      "position_m": [
+        65.0,
+        -36.0,
+        0.02
+      ],
+      "semantic_class": "containment_bund",
+      "shape": "box",
+      "size_m": [
+        35.0,
+        35.0,
+        0.04
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "friction": [
+        0.78,
+        0.03,
+        0.002
+      ],
+      "id": "gravel_acceptance_pad",
+      "material": "gravel",
+      "position_m": [
+        -76.0,
+        76.0,
+        0.025
+      ],
+      "semantic_class": "gravel_test_area",
+      "shape": "box",
+      "size_m": [
+        28.0,
+        14.0,
+        0.05
+      ],
+      "terrain_modifier": "roughen",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "fence_north",
+      "material": "fence_steel",
+      "position_m": [
+        0.0,
+        89.4,
+        1.2
+      ],
+      "semantic_class": "boundary_fence",
+      "shape": "box",
+      "size_m": [
+        219.0,
+        0.2,
+        2.4
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "fence_west",
+      "material": "fence_steel",
+      "position_m": [
+        -109.4,
+        0.0,
+        1.2
+      ],
+      "semantic_class": "boundary_fence",
+      "shape": "box",
+      "size_m": [
+        0.2,
+        179.0,
+        2.4
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "fence_east",
+      "material": "fence_steel",
+      "position_m": [
+        109.4,
+        0.0,
+        1.2
+      ],
+      "semantic_class": "boundary_fence",
+      "shape": "box",
+      "size_m": [
+        0.2,
+        179.0,
+        2.4
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "fence_south_west",
+      "material": "fence_steel",
+      "position_m": [
+        -59.25,
+        -89.4,
+        1.2
+      ],
+      "semantic_class": "boundary_fence",
+      "shape": "box",
+      "size_m": [
+        100.5,
+        0.2,
+        2.4
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "fence_south_east",
+      "material": "fence_steel",
+      "position_m": [
+        59.25,
+        -89.4,
+        1.2
+      ],
+      "semantic_class": "boundary_fence",
+      "shape": "box",
+      "size_m": [
+        100.5,
+        0.2,
+        2.4
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "gate_leaf_west_open",
+      "material": "painted_steel",
+      "position_m": [
+        -8.7,
+        -86.2,
+        1.1
+      ],
+      "semantic_class": "gate",
+      "shape": "box",
+      "size_m": [
+        0.25,
+        6.0,
+        2.2
+      ],
+      "state": "open",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "gate_leaf_east_open",
+      "material": "painted_steel",
+      "position_m": [
+        8.7,
+        -86.2,
+        1.1
+      ],
+      "semantic_class": "gate",
+      "shape": "box",
+      "size_m": [
+        0.25,
+        6.0,
+        2.2
+      ],
+      "state": "open",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "half_height_m": 1.5,
+      "id": "gate_post_west",
+      "material": "painted_steel",
+      "position_m": [
+        -9.0,
+        -89.0,
+        1.5
+      ],
+      "radius_m": 0.22,
+      "semantic_class": "gate_post",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "half_height_m": 1.5,
+      "id": "gate_post_east",
+      "material": "painted_steel",
+      "position_m": [
+        9.0,
+        -89.0,
+        1.5
+      ],
+      "radius_m": 0.22,
+      "semantic_class": "gate_post",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "clear_height_m": 3.35,
+      "collision": true,
+      "id": "gate_canopy",
+      "material": "painted_steel",
+      "position_m": [
+        0.0,
+        -84.5,
+        3.6
+      ],
+      "semantic_class": "gate_canopy",
+      "shape": "box",
+      "size_m": [
+        20.0,
+        1.2,
+        0.5
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "south_guardhouse",
+      "material": "guardhouse",
+      "position_m": [
+        -14.0,
+        -80.0,
+        1.8
+      ],
+      "semantic_class": "guardhouse",
+      "shape": "box",
+      "size_m": [
+        7.0,
+        6.0,
+        3.6
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "main_factory",
+      "material": "factory_cladding",
+      "position_m": [
+        -47.0,
+        32.0,
+        6.0
+      ],
+      "semantic_class": "main_factory_building",
+      "shape": "box",
+      "size_m": [
+        70.0,
+        40.0,
+        12.0
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "main_factory_roof_monitor",
+      "material": "glass",
+      "position_m": [
+        -47.0,
+        32.0,
+        12.8
+      ],
+      "semantic_class": "roof_structure",
+      "shape": "box",
+      "size_m": [
+        34.0,
+        5.0,
+        1.6
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "warehouse",
+      "material": "warehouse_cladding",
+      "position_m": [
+        50.0,
+        34.0,
+        5.0
+      ],
+      "semantic_class": "warehouse_building",
+      "shape": "box",
+      "size_m": [
+        60.0,
+        32.0,
+        10.0
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "administration_office",
+      "material": "guardhouse",
+      "position_m": [
+        22.0,
+        77.0,
+        4.0
+      ],
+      "semantic_class": "office_building",
+      "shape": "box",
+      "size_m": [
+        24.0,
+        10.0,
+        8.0
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "dock_height_m": 1.3,
+      "id": "loading_dock_01",
+      "material": "concrete",
+      "position_m": [
+        30.0,
+        15.7,
+        0.65
+      ],
+      "semantic_class": "loading_dock",
+      "shape": "box",
+      "size_m": [
+        8.0,
+        4.4,
+        1.3
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "loading_ramp_01",
+      "material": "steel",
+      "pitch_deg": -6.0,
+      "position_m": [
+        30.0,
+        11.2,
+        0.34
+      ],
+      "semantic_class": "loading_ramp",
+      "shape": "box",
+      "size_m": [
+        5.2,
+        5.0,
+        0.24
+      ],
+      "slope_percent": 10.5,
+      "visual_only": false,
+      "yaw_deg": 90.0
+    },
+    {
+      "collision": true,
+      "dock_height_m": 1.3,
+      "id": "loading_dock_02",
+      "material": "concrete",
+      "position_m": [
+        50.0,
+        15.7,
+        0.65
+      ],
+      "semantic_class": "loading_dock",
+      "shape": "box",
+      "size_m": [
+        8.0,
+        4.4,
+        1.3
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "loading_ramp_02",
+      "material": "steel",
+      "pitch_deg": -6.0,
+      "position_m": [
+        50.0,
+        11.2,
+        0.34
+      ],
+      "semantic_class": "loading_ramp",
+      "shape": "box",
+      "size_m": [
+        5.2,
+        5.0,
+        0.24
+      ],
+      "slope_percent": 10.5,
+      "visual_only": false,
+      "yaw_deg": 90.0
+    },
+    {
+      "collision": true,
+      "dock_height_m": 1.3,
+      "id": "loading_dock_03",
+      "material": "concrete",
+      "position_m": [
+        70.0,
+        15.7,
+        0.65
+      ],
+      "semantic_class": "loading_dock",
+      "shape": "box",
+      "size_m": [
+        8.0,
+        4.4,
+        1.3
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "loading_ramp_03",
+      "material": "steel",
+      "pitch_deg": -6.0,
+      "position_m": [
+        70.0,
+        11.2,
+        0.34
+      ],
+      "semantic_class": "loading_ramp",
+      "shape": "box",
+      "size_m": [
+        5.2,
+        5.0,
+        0.24
+      ],
+      "slope_percent": 10.5,
+      "visual_only": false,
+      "yaw_deg": 90.0
+    },
+    {
+      "collision": true,
+      "id": "container_blue_01",
+      "material": "container_blue",
+      "position_m": [
+        -68.0,
+        -45.0,
+        1.295
+      ],
+      "semantic_class": "shipping_container",
+      "shape": "box",
+      "size_m": [
+        12.2,
+        2.44,
+        2.59
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "container_orange_01",
+      "material": "container_orange",
+      "position_m": [
+        -50.0,
+        -45.0,
+        1.295
+      ],
+      "semantic_class": "shipping_container",
+      "shape": "box",
+      "size_m": [
+        12.2,
+        2.44,
+        2.59
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "container_red_01",
+      "material": "container_red",
+      "position_m": [
+        -32.0,
+        -45.0,
+        1.295
+      ],
+      "semantic_class": "shipping_container",
+      "shape": "box",
+      "size_m": [
+        12.2,
+        2.44,
+        2.59
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "container_orange_02",
+      "material": "container_orange",
+      "position_m": [
+        -68.0,
+        -27.0,
+        1.295
+      ],
+      "semantic_class": "shipping_container",
+      "shape": "box",
+      "size_m": [
+        12.2,
+        2.44,
+        2.59
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "container_blue_02",
+      "material": "container_blue",
+      "position_m": [
+        -50.0,
+        -27.0,
+        1.295
+      ],
+      "semantic_class": "shipping_container",
+      "shape": "box",
+      "size_m": [
+        12.2,
+        2.44,
+        2.59
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "container_red_02",
+      "material": "container_red",
+      "position_m": [
+        -32.0,
+        -27.0,
+        1.295
+      ],
+      "semantic_class": "shipping_container",
+      "shape": "box",
+      "size_m": [
+        12.2,
+        2.44,
+        2.59
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "container_blue_03_stacked",
+      "material": "container_blue",
+      "position_m": [
+        -68.0,
+        -45.0,
+        3.885
+      ],
+      "semantic_class": "shipping_container",
+      "shape": "box",
+      "size_m": [
+        12.2,
+        2.44,
+        2.59
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "tank_bund_west",
+      "material": "bund_concrete",
+      "position_m": [
+        47.5,
+        -36.0,
+        0.6
+      ],
+      "semantic_class": "containment_bund",
+      "shape": "box",
+      "size_m": [
+        0.5,
+        35.0,
+        1.2
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "tank_bund_east",
+      "material": "bund_concrete",
+      "position_m": [
+        82.5,
+        -36.0,
+        0.6
+      ],
+      "semantic_class": "containment_bund",
+      "shape": "box",
+      "size_m": [
+        0.5,
+        35.0,
+        1.2
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "tank_bund_north",
+      "material": "bund_concrete",
+      "position_m": [
+        65.0,
+        -18.5,
+        0.6
+      ],
+      "semantic_class": "containment_bund",
+      "shape": "box",
+      "size_m": [
+        35.0,
+        0.5,
+        1.2
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "tank_bund_south",
+      "material": "bund_concrete",
+      "position_m": [
+        65.0,
+        -53.5,
+        0.6
+      ],
+      "semantic_class": "containment_bund",
+      "shape": "box",
+      "size_m": [
+        35.0,
+        0.5,
+        1.2
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "half_height_m": 4.0,
+      "id": "storage_tank_01",
+      "material": "tank_white",
+      "position_m": [
+        57.0,
+        -43.0,
+        4.0
+      ],
+      "radius_m": 4.0,
+      "semantic_class": "storage_tank",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "half_height_m": 4.0,
+      "id": "storage_tank_02",
+      "material": "tank_white",
+      "position_m": [
+        73.0,
+        -43.0,
+        4.0
+      ],
+      "radius_m": 4.0,
+      "semantic_class": "storage_tank",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "half_height_m": 4.0,
+      "id": "storage_tank_03",
+      "material": "tank_white",
+      "position_m": [
+        65.0,
+        -28.0,
+        4.0
+      ],
+      "radius_m": 4.0,
+      "semantic_class": "storage_tank",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "tank_pipe_rack",
+      "material": "steel",
+      "position_m": [
+        65.0,
+        -36.0,
+        3.0
+      ],
+      "semantic_class": "pipe_rack",
+      "shape": "box",
+      "size_m": [
+        24.0,
+        0.35,
+        0.35
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "accessible": false,
+      "collision": false,
+      "id": "parking_space_1_1",
+      "material": "parking_marking",
+      "position_m": [
+        13.0,
+        -44.0,
+        0.051
+      ],
+      "semantic_class": "parking_space",
+      "shape": "box",
+      "size_m": [
+        2.7,
+        5.4,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "parking_stop_1_1",
+      "material": "curb_concrete",
+      "position_m": [
+        13.0,
+        -41.55,
+        0.09
+      ],
+      "semantic_class": "parking_stop",
+      "shape": "box",
+      "size_m": [
+        2.35,
+        0.22,
+        0.18
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "accessible": false,
+      "collision": false,
+      "id": "parking_space_1_2",
+      "material": "parking_marking",
+      "position_m": [
+        21.0,
+        -44.0,
+        0.051
+      ],
+      "semantic_class": "parking_space",
+      "shape": "box",
+      "size_m": [
+        2.7,
+        5.4,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "parking_stop_1_2",
+      "material": "curb_concrete",
+      "position_m": [
+        21.0,
+        -41.55,
+        0.09
+      ],
+      "semantic_class": "parking_stop",
+      "shape": "box",
+      "size_m": [
+        2.35,
+        0.22,
+        0.18
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "accessible": false,
+      "collision": false,
+      "id": "parking_space_1_3",
+      "material": "parking_marking",
+      "position_m": [
+        29.0,
+        -44.0,
+        0.051
+      ],
+      "semantic_class": "parking_space",
+      "shape": "box",
+      "size_m": [
+        2.7,
+        5.4,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "parking_stop_1_3",
+      "material": "curb_concrete",
+      "position_m": [
+        29.0,
+        -41.55,
+        0.09
+      ],
+      "semantic_class": "parking_stop",
+      "shape": "box",
+      "size_m": [
+        2.35,
+        0.22,
+        0.18
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "accessible": false,
+      "collision": false,
+      "id": "parking_space_1_4",
+      "material": "parking_marking",
+      "position_m": [
+        37.0,
+        -44.0,
+        0.051
+      ],
+      "semantic_class": "parking_space",
+      "shape": "box",
+      "size_m": [
+        2.7,
+        5.4,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "parking_stop_1_4",
+      "material": "curb_concrete",
+      "position_m": [
+        37.0,
+        -41.55,
+        0.09
+      ],
+      "semantic_class": "parking_stop",
+      "shape": "box",
+      "size_m": [
+        2.35,
+        0.22,
+        0.18
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "accessible": true,
+      "collision": false,
+      "id": "parking_space_2_1",
+      "material": "parking_marking",
+      "position_m": [
+        13.0,
+        -24.0,
+        0.051
+      ],
+      "semantic_class": "parking_space",
+      "shape": "box",
+      "size_m": [
+        2.7,
+        5.4,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "parking_stop_2_1",
+      "material": "curb_concrete",
+      "position_m": [
+        13.0,
+        -26.45,
+        0.09
+      ],
+      "semantic_class": "parking_stop",
+      "shape": "box",
+      "size_m": [
+        2.35,
+        0.22,
+        0.18
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "accessible": false,
+      "collision": false,
+      "id": "parking_space_2_2",
+      "material": "parking_marking",
+      "position_m": [
+        21.0,
+        -24.0,
+        0.051
+      ],
+      "semantic_class": "parking_space",
+      "shape": "box",
+      "size_m": [
+        2.7,
+        5.4,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "parking_stop_2_2",
+      "material": "curb_concrete",
+      "position_m": [
+        21.0,
+        -26.45,
+        0.09
+      ],
+      "semantic_class": "parking_stop",
+      "shape": "box",
+      "size_m": [
+        2.35,
+        0.22,
+        0.18
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "accessible": false,
+      "collision": false,
+      "id": "parking_space_2_3",
+      "material": "parking_marking",
+      "position_m": [
+        29.0,
+        -24.0,
+        0.051
+      ],
+      "semantic_class": "parking_space",
+      "shape": "box",
+      "size_m": [
+        2.7,
+        5.4,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "parking_stop_2_3",
+      "material": "curb_concrete",
+      "position_m": [
+        29.0,
+        -26.45,
+        0.09
+      ],
+      "semantic_class": "parking_stop",
+      "shape": "box",
+      "size_m": [
+        2.35,
+        0.22,
+        0.18
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "accessible": false,
+      "collision": false,
+      "id": "parking_space_2_4",
+      "material": "parking_marking",
+      "position_m": [
+        37.0,
+        -24.0,
+        0.051
+      ],
+      "semantic_class": "parking_space",
+      "shape": "box",
+      "size_m": [
+        2.7,
+        5.4,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "parking_stop_2_4",
+      "material": "curb_concrete",
+      "position_m": [
+        37.0,
+        -26.45,
+        0.09
+      ],
+      "semantic_class": "parking_stop",
+      "shape": "box",
+      "size_m": [
+        2.35,
+        0.22,
+        0.18
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "parking_curb_west",
+      "material": "curb_concrete",
+      "position_m": [
+        6.4,
+        -34.0,
+        0.09
+      ],
+      "semantic_class": "curb",
+      "shape": "box",
+      "size_m": [
+        0.3,
+        34.0,
+        0.18
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "parking_curb_east",
+      "material": "curb_concrete",
+      "position_m": [
+        43.6,
+        -34.0,
+        0.09
+      ],
+      "semantic_class": "curb",
+      "shape": "box",
+      "size_m": [
+        0.3,
+        34.0,
+        0.18
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "parking_curb_north",
+      "material": "curb_concrete",
+      "position_m": [
+        25.0,
+        -16.9,
+        0.09
+      ],
+      "semantic_class": "curb",
+      "shape": "box",
+      "size_m": [
+        37.5,
+        0.3,
+        0.18
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "speed_bump_south",
+      "material": "rubber",
+      "position_m": [
+        0.0,
+        -68.0,
+        0.065
+      ],
+      "semantic_class": "speed_bump",
+      "shape": "box",
+      "size_m": [
+        11.5,
+        0.5,
+        0.13
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "speed_bump_gate",
+      "material": "rubber",
+      "position_m": [
+        0.0,
+        -58.0,
+        0.065
+      ],
+      "semantic_class": "speed_bump",
+      "shape": "box",
+      "size_m": [
+        11.5,
+        0.5,
+        0.13
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "speed_bump_north",
+      "material": "rubber",
+      "position_m": [
+        0.0,
+        55.0,
+        0.065
+      ],
+      "semantic_class": "speed_bump",
+      "shape": "box",
+      "size_m": [
+        11.5,
+        0.5,
+        0.13
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "depth_m": 0.45,
+      "id": "east_drainage_channel",
+      "material": "drainage_concrete",
+      "position_m": [
+        85.0,
+        0.0,
+        -0.18
+      ],
+      "semantic_class": "drainage_ditch",
+      "shape": "box",
+      "size_m": [
+        2.0,
+        112.0,
+        0.36
+      ],
+      "terrain_modifier": "subtract",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "id": "east_drainage_grate",
+      "material": "steel",
+      "position_m": [
+        85.0,
+        0.0,
+        0.025
+      ],
+      "semantic_class": "drainage_grate",
+      "shape": "box",
+      "size_m": [
+        2.2,
+        12.0,
+        0.05
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "half_height_m": 3.0,
+      "id": "streetlight_01_pole",
+      "material": "painted_steel",
+      "position_m": [
+        -88.0,
+        -58.0,
+        3.0
+      ],
+      "radius_m": 0.12,
+      "semantic_class": "streetlight",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "streetlight_01_head",
+      "material": "lamp",
+      "position_m": [
+        -87.55,
+        -58.0,
+        6.05
+      ],
+      "semantic_class": "streetlight_luminaire",
+      "shape": "box",
+      "size_m": [
+        1.0,
+        0.35,
+        0.15
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "half_height_m": 3.0,
+      "id": "streetlight_02_pole",
+      "material": "painted_steel",
+      "position_m": [
+        -88.0,
+        58.0,
+        3.0
+      ],
+      "radius_m": 0.12,
+      "semantic_class": "streetlight",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "streetlight_02_head",
+      "material": "lamp",
+      "position_m": [
+        -87.55,
+        58.0,
+        6.05
+      ],
+      "semantic_class": "streetlight_luminaire",
+      "shape": "box",
+      "size_m": [
+        1.0,
+        0.35,
+        0.15
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "half_height_m": 3.0,
+      "id": "streetlight_03_pole",
+      "material": "painted_steel",
+      "position_m": [
+        -5.0,
+        58.0,
+        3.0
+      ],
+      "radius_m": 0.12,
+      "semantic_class": "streetlight",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "streetlight_03_head",
+      "material": "lamp",
+      "position_m": [
+        -4.55,
+        58.0,
+        6.05
+      ],
+      "semantic_class": "streetlight_luminaire",
+      "shape": "box",
+      "size_m": [
+        1.0,
+        0.35,
+        0.15
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "half_height_m": 3.0,
+      "id": "streetlight_04_pole",
+      "material": "painted_steel",
+      "position_m": [
+        88.0,
+        58.0,
+        3.0
+      ],
+      "radius_m": 0.12,
+      "semantic_class": "streetlight",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "streetlight_04_head",
+      "material": "lamp",
+      "position_m": [
+        88.45,
+        58.0,
+        6.05
+      ],
+      "semantic_class": "streetlight_luminaire",
+      "shape": "box",
+      "size_m": [
+        1.0,
+        0.35,
+        0.15
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "half_height_m": 3.0,
+      "id": "streetlight_05_pole",
+      "material": "painted_steel",
+      "position_m": [
+        88.0,
+        -58.0,
+        3.0
+      ],
+      "radius_m": 0.12,
+      "semantic_class": "streetlight",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "streetlight_05_head",
+      "material": "lamp",
+      "position_m": [
+        88.45,
+        -58.0,
+        6.05
+      ],
+      "semantic_class": "streetlight_luminaire",
+      "shape": "box",
+      "size_m": [
+        1.0,
+        0.35,
+        0.15
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "half_height_m": 3.0,
+      "id": "streetlight_06_pole",
+      "material": "painted_steel",
+      "position_m": [
+        5.0,
+        -58.0,
+        3.0
+      ],
+      "radius_m": 0.12,
+      "semantic_class": "streetlight",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "streetlight_06_head",
+      "material": "lamp",
+      "position_m": [
+        5.45,
+        -58.0,
+        6.05
+      ],
+      "semantic_class": "streetlight_luminaire",
+      "shape": "box",
+      "size_m": [
+        1.0,
+        0.35,
+        0.15
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "half_height_m": 3.0,
+      "id": "streetlight_07_pole",
+      "material": "painted_steel",
+      "position_m": [
+        5.0,
+        5.0,
+        3.0
+      ],
+      "radius_m": 0.12,
+      "semantic_class": "streetlight",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "streetlight_07_head",
+      "material": "lamp",
+      "position_m": [
+        5.45,
+        5.0,
+        6.05
+      ],
+      "semantic_class": "streetlight_luminaire",
+      "shape": "box",
+      "size_m": [
+        1.0,
+        0.35,
+        0.15
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "half_height_m": 3.0,
+      "id": "streetlight_08_pole",
+      "material": "painted_steel",
+      "position_m": [
+        -88.0,
+        5.0,
+        3.0
+      ],
+      "radius_m": 0.12,
+      "semantic_class": "streetlight",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "streetlight_08_head",
+      "material": "lamp",
+      "position_m": [
+        -87.55,
+        5.0,
+        6.05
+      ],
+      "semantic_class": "streetlight_luminaire",
+      "shape": "box",
+      "size_m": [
+        1.0,
+        0.35,
+        0.15
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "boulevard_lane_mark_01",
+      "material": "road_marking",
+      "position_m": [
+        0.0,
+        -74.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        0.14,
+        4.0,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "boulevard_lane_mark_02",
+      "material": "road_marking",
+      "position_m": [
+        0.0,
+        -62.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        0.14,
+        4.0,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "boulevard_lane_mark_03",
+      "material": "road_marking",
+      "position_m": [
+        0.0,
+        -50.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        0.14,
+        4.0,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "boulevard_lane_mark_04",
+      "material": "road_marking",
+      "position_m": [
+        0.0,
+        -38.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        0.14,
+        4.0,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "boulevard_lane_mark_05",
+      "material": "road_marking",
+      "position_m": [
+        0.0,
+        -26.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        0.14,
+        4.0,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "boulevard_lane_mark_06",
+      "material": "road_marking",
+      "position_m": [
+        0.0,
+        -14.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        0.14,
+        4.0,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "boulevard_lane_mark_07",
+      "material": "road_marking",
+      "position_m": [
+        0.0,
+        -2.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        0.14,
+        4.0,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "boulevard_lane_mark_08",
+      "material": "road_marking",
+      "position_m": [
+        0.0,
+        10.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        0.14,
+        4.0,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "boulevard_lane_mark_09",
+      "material": "road_marking",
+      "position_m": [
+        0.0,
+        22.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        0.14,
+        4.0,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "boulevard_lane_mark_10",
+      "material": "road_marking",
+      "position_m": [
+        0.0,
+        34.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        0.14,
+        4.0,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "boulevard_lane_mark_11",
+      "material": "road_marking",
+      "position_m": [
+        0.0,
+        46.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        0.14,
+        4.0,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_01",
+      "material": "road_marking",
+      "position_m": [
+        -84.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_02",
+      "material": "road_marking",
+      "position_m": [
+        -72.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_03",
+      "material": "road_marking",
+      "position_m": [
+        -60.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_04",
+      "material": "road_marking",
+      "position_m": [
+        -48.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_05",
+      "material": "road_marking",
+      "position_m": [
+        -36.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_06",
+      "material": "road_marking",
+      "position_m": [
+        -24.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_07",
+      "material": "road_marking",
+      "position_m": [
+        -12.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_08",
+      "material": "road_marking",
+      "position_m": [
+        0.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_09",
+      "material": "road_marking",
+      "position_m": [
+        12.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_10",
+      "material": "road_marking",
+      "position_m": [
+        24.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_11",
+      "material": "road_marking",
+      "position_m": [
+        36.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_12",
+      "material": "road_marking",
+      "position_m": [
+        48.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_13",
+      "material": "road_marking",
+      "position_m": [
+        60.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_14",
+      "material": "road_marking",
+      "position_m": [
+        72.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "cross_street_lane_mark_15",
+      "material": "road_marking",
+      "position_m": [
+        84.0,
+        0.0,
+        0.06
+      ],
+      "semantic_class": "lane_marking",
+      "shape": "box",
+      "size_m": [
+        4.0,
+        0.14,
+        0.01
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "pedestrian_crossing_stripe_01",
+      "material": "road_marking",
+      "position_m": [
+        -4.5,
+        -10.0,
+        0.061
+      ],
+      "semantic_class": "pedestrian_crossing",
+      "shape": "box",
+      "size_m": [
+        1.0,
+        4.0,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "pedestrian_crossing_stripe_02",
+      "material": "road_marking",
+      "position_m": [
+        -2.7,
+        -10.0,
+        0.061
+      ],
+      "semantic_class": "pedestrian_crossing",
+      "shape": "box",
+      "size_m": [
+        1.0,
+        4.0,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "pedestrian_crossing_stripe_03",
+      "material": "road_marking",
+      "position_m": [
+        -0.9,
+        -10.0,
+        0.061
+      ],
+      "semantic_class": "pedestrian_crossing",
+      "shape": "box",
+      "size_m": [
+        1.0,
+        4.0,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "pedestrian_crossing_stripe_04",
+      "material": "road_marking",
+      "position_m": [
+        0.9,
+        -10.0,
+        0.061
+      ],
+      "semantic_class": "pedestrian_crossing",
+      "shape": "box",
+      "size_m": [
+        1.0,
+        4.0,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "pedestrian_crossing_stripe_05",
+      "material": "road_marking",
+      "position_m": [
+        2.7,
+        -10.0,
+        0.061
+      ],
+      "semantic_class": "pedestrian_crossing",
+      "shape": "box",
+      "size_m": [
+        1.0,
+        4.0,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "id": "pedestrian_crossing_stripe_06",
+      "material": "road_marking",
+      "position_m": [
+        4.5,
+        -10.0,
+        0.061
+      ],
+      "semantic_class": "pedestrian_crossing",
+      "shape": "box",
+      "size_m": [
+        1.0,
+        4.0,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "half_height_m": 0.012,
+      "id": "checkpoint_gate",
+      "material": "checkpoint_green",
+      "position_m": [
+        0.0,
+        -76.0,
+        0.065
+      ],
+      "radius_m": 0.8,
+      "semantic_class": "semantic_checkpoint",
+      "shape": "cylinder",
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "half_height_m": 0.012,
+      "id": "checkpoint_container_yard",
+      "material": "checkpoint_green",
+      "position_m": [
+        -16.0,
+        -33.0,
+        0.065
+      ],
+      "radius_m": 0.8,
+      "semantic_class": "semantic_checkpoint",
+      "shape": "cylinder",
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "half_height_m": 0.012,
+      "id": "checkpoint_factory",
+      "material": "checkpoint_green",
+      "position_m": [
+        -6.0,
+        32.0,
+        0.065
+      ],
+      "radius_m": 0.8,
+      "semantic_class": "semantic_checkpoint",
+      "shape": "cylinder",
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "half_height_m": 0.012,
+      "id": "checkpoint_gravel",
+      "material": "checkpoint_green",
+      "position_m": [
+        -76.0,
+        69.5,
+        0.065
+      ],
+      "radius_m": 0.8,
+      "semantic_class": "semantic_checkpoint",
+      "shape": "cylinder",
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "half_height_m": 0.012,
+      "id": "checkpoint_warehouse",
+      "material": "checkpoint_green",
+      "position_m": [
+        50.0,
+        7.0,
+        0.065
+      ],
+      "radius_m": 0.8,
+      "semantic_class": "semantic_checkpoint",
+      "shape": "cylinder",
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "half_height_m": 0.012,
+      "id": "checkpoint_tank_farm",
+      "material": "checkpoint_green",
+      "position_m": [
+        88.0,
+        -36.0,
+        0.065
+      ],
+      "radius_m": 0.8,
+      "semantic_class": "semantic_checkpoint",
+      "shape": "cylinder",
+      "visual_only": true,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "safety_bollard",
+        "instance_key": "parking_west_01",
+        "surface_id": "parking_apron"
+      },
+      "half_height_m": 0.55,
+      "id": "element__operations_safety__parking_west_01",
+      "material": "painted_steel",
+      "position_m": [
+        8.0,
+        -48.0,
+        0.594
+      ],
+      "radius_m": 0.12,
+      "semantic_class": "safety_bollard",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "safety_bollard",
+        "instance_key": "parking_west_02",
+        "surface_id": "parking_apron"
+      },
+      "half_height_m": 0.55,
+      "id": "element__operations_safety__parking_west_02",
+      "material": "painted_steel",
+      "position_m": [
+        8.0,
+        -44.5,
+        0.594
+      ],
+      "radius_m": 0.12,
+      "semantic_class": "safety_bollard",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "safety_bollard",
+        "instance_key": "parking_east_01",
+        "surface_id": "parking_apron"
+      },
+      "half_height_m": 0.55,
+      "id": "element__operations_safety__parking_east_01",
+      "material": "painted_steel",
+      "position_m": [
+        42.0,
+        -48.0,
+        0.594
+      ],
+      "radius_m": 0.12,
+      "semantic_class": "safety_bollard",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "safety_bollard",
+        "instance_key": "parking_east_02",
+        "surface_id": "parking_apron"
+      },
+      "half_height_m": 0.55,
+      "id": "element__operations_safety__parking_east_02",
+      "material": "painted_steel",
+      "position_m": [
+        42.0,
+        -44.5,
+        0.594
+      ],
+      "radius_m": 0.12,
+      "semantic_class": "safety_bollard",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": false,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "lane_marker",
+        "instance_key": "parking_guide_01",
+        "surface_id": "parking_apron"
+      },
+      "id": "element__operations_safety__parking_guide_01",
+      "material": "road_marking",
+      "position_m": [
+        15.0,
+        -34.0,
+        0.05
+      ],
+      "semantic_class": "lane_marker",
+      "shape": "box",
+      "size_m": [
+        2.5,
+        0.15,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 90.0
+    },
+    {
+      "collision": false,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "lane_marker",
+        "instance_key": "parking_guide_02",
+        "surface_id": "parking_apron"
+      },
+      "id": "element__operations_safety__parking_guide_02",
+      "material": "road_marking",
+      "position_m": [
+        35.0,
+        -34.0,
+        0.05
+      ],
+      "semantic_class": "lane_marker",
+      "shape": "box",
+      "size_m": [
+        2.5,
+        0.15,
+        0.012
+      ],
+      "visual_only": true,
+      "yaw_deg": 90.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "pallet_stack",
+        "instance_key": "container_pallet_01",
+        "surface_id": "container_yard_apron"
+      },
+      "id": "element__operations_safety__container_pallet_01",
+      "material": "pallet_wood",
+      "position_m": [
+        -25.0,
+        -14.0,
+        0.275
+      ],
+      "semantic_class": "pallet_stack",
+      "shape": "box",
+      "size_m": [
+        1.2,
+        1.0,
+        0.45
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "pallet_stack",
+        "instance_key": "container_pallet_02",
+        "surface_id": "container_yard_apron"
+      },
+      "id": "element__operations_safety__container_pallet_02",
+      "material": "pallet_wood",
+      "position_m": [
+        -27.0,
+        -14.0,
+        0.275
+      ],
+      "semantic_class": "pallet_stack",
+      "shape": "box",
+      "size_m": [
+        1.2,
+        1.0,
+        0.45
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "industrial_drum",
+        "instance_key": "container_drum_01",
+        "surface_id": "container_yard_apron"
+      },
+      "half_height_m": 0.45,
+      "id": "element__operations_safety__container_drum_01",
+      "material": "container_blue",
+      "position_m": [
+        -29.0,
+        -16.0,
+        0.5
+      ],
+      "radius_m": 0.29,
+      "semantic_class": "industrial_drum",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "industrial_drum",
+        "instance_key": "container_drum_02",
+        "surface_id": "container_yard_apron"
+      },
+      "half_height_m": 0.45,
+      "id": "element__operations_safety__container_drum_02",
+      "material": "container_blue",
+      "position_m": [
+        -30.0,
+        -16.0,
+        0.5
+      ],
+      "radius_m": 0.29,
+      "semantic_class": "industrial_drum",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "industrial_drum",
+        "instance_key": "container_drum_03",
+        "surface_id": "container_yard_apron"
+      },
+      "half_height_m": 0.45,
+      "id": "element__operations_safety__container_drum_03",
+      "material": "container_blue",
+      "position_m": [
+        -31.0,
+        -16.0,
+        0.5
+      ],
+      "radius_m": 0.29,
+      "semantic_class": "industrial_drum",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "traffic_cone",
+        "instance_key": "container_cone_01",
+        "surface_id": "container_yard_apron"
+      },
+      "half_height_m": 0.35,
+      "id": "element__operations_safety__container_cone_01",
+      "material": "container_orange",
+      "position_m": [
+        -27.0,
+        -20.0,
+        0.4
+      ],
+      "radius_m": 0.2,
+      "semantic_class": "traffic_cone",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "traffic_cone",
+        "instance_key": "container_cone_02",
+        "surface_id": "container_yard_apron"
+      },
+      "half_height_m": 0.35,
+      "id": "element__operations_safety__container_cone_02",
+      "material": "container_orange",
+      "position_m": [
+        -30.0,
+        -20.0,
+        0.4
+      ],
+      "radius_m": 0.2,
+      "semantic_class": "traffic_cone",
+      "shape": "cylinder",
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "equipment_cabinet",
+        "instance_key": "container_equipment_01",
+        "surface_id": "container_yard_apron"
+      },
+      "id": "element__operations_safety__container_equipment_01",
+      "material": "warehouse_cladding",
+      "position_m": [
+        -79.0,
+        -14.0,
+        0.95
+      ],
+      "semantic_class": "equipment_cabinet",
+      "shape": "box",
+      "size_m": [
+        1.2,
+        0.55,
+        1.8
+      ],
+      "visual_only": false,
+      "yaw_deg": 90.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "fire_cabinet",
+        "instance_key": "container_fire_01",
+        "surface_id": "container_yard_apron"
+      },
+      "id": "element__operations_safety__container_fire_01",
+      "material": "container_red",
+      "position_m": [
+        -77.0,
+        -14.0,
+        0.65
+      ],
+      "semantic_class": "fire_cabinet",
+      "shape": "box",
+      "size_m": [
+        0.8,
+        0.35,
+        1.2
+      ],
+      "visual_only": false,
+      "yaw_deg": 90.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "jersey_barrier",
+        "instance_key": "gravel_barrier_west",
+        "surface_id": "gravel_acceptance_pad"
+      },
+      "id": "element__operations_safety__gravel_barrier_west",
+      "material": "concrete",
+      "position_m": [
+        -88.0,
+        75.0,
+        0.45
+      ],
+      "semantic_class": "jersey_barrier",
+      "shape": "box",
+      "size_m": [
+        2.0,
+        0.55,
+        0.8
+      ],
+      "visual_only": false,
+      "yaw_deg": 90.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "jersey_barrier",
+        "instance_key": "gravel_barrier_east",
+        "surface_id": "gravel_acceptance_pad"
+      },
+      "id": "element__operations_safety__gravel_barrier_east",
+      "material": "concrete",
+      "position_m": [
+        -64.0,
+        75.0,
+        0.45
+      ],
+      "semantic_class": "jersey_barrier",
+      "shape": "box",
+      "size_m": [
+        2.0,
+        0.55,
+        0.8
+      ],
+      "visual_only": false,
+      "yaw_deg": 90.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "safety_sign",
+        "instance_key": "gravel_sign_west",
+        "surface_id": "gravel_acceptance_pad"
+      },
+      "id": "element__operations_safety__gravel_sign_west",
+      "material": "painted_steel",
+      "position_m": [
+        -88.0,
+        80.0,
+        0.95
+      ],
+      "semantic_class": "safety_sign",
+      "shape": "box",
+      "size_m": [
+        0.8,
+        0.12,
+        1.8
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    },
+    {
+      "collision": true,
+      "element_provenance": {
+        "batch_id": "operations_safety",
+        "element_type": "safety_sign",
+        "instance_key": "gravel_sign_east",
+        "surface_id": "gravel_acceptance_pad"
+      },
+      "id": "element__operations_safety__gravel_sign_east",
+      "material": "painted_steel",
+      "position_m": [
+        -64.0,
+        80.0,
+        0.95
+      ],
+      "semantic_class": "safety_sign",
+      "shape": "box",
+      "size_m": [
+        0.8,
+        0.12,
+        1.8
+      ],
+      "visual_only": false,
+      "yaw_deg": 0.0
+    }
+  ],
+  "routes": [
+    {
+      "closed": true,
+      "id": "robot_acceptance_loop",
+      "semantic_class": "robot_route",
+      "waypoints_m": [
+        [
+          0.0,
+          -76.0,
+          0.0
+        ],
+        [
+          0.0,
+          -62.0,
+          0.0
+        ],
+        [
+          -93.0,
+          -62.0,
+          0.0
+        ],
+        [
+          -93.0,
+          62.0,
+          0.0
+        ],
+        [
+          -76.0,
+          68.0,
+          0.0
+        ],
+        [
+          -76.0,
+          76.0,
+          0.0
+        ],
+        [
+          -76.0,
+          68.0,
+          0.0
+        ],
+        [
+          0.0,
+          62.0,
+          0.0
+        ],
+        [
+          93.0,
+          62.0,
+          0.0
+        ],
+        [
+          93.0,
+          -62.0,
+          0.0
+        ],
+        [
+          0.0,
+          -62.0,
+          0.0
+        ],
+        [
+          0.0,
+          -76.0,
+          0.0
+        ]
+      ],
+      "width_m": 4.0
+    },
+    {
+      "closed": true,
+      "id": "forklift_logistics_route",
+      "semantic_class": "forklift_route",
+      "waypoints_m": [
+        [
+          -18.0,
+          -33.0,
+          0.0
+        ],
+        [
+          -10.0,
+          -33.0,
+          0.0
+        ],
+        [
+          -10.0,
+          0.0,
+          0.0
+        ],
+        [
+          15.0,
+          0.0,
+          0.0
+        ],
+        [
+          15.0,
+          9.0,
+          0.0
+        ],
+        [
+          74.0,
+          9.0,
+          0.0
+        ],
+        [
+          74.0,
+          5.0,
+          0.0
+        ],
+        [
+          15.0,
+          5.0,
+          0.0
+        ],
+        [
+          15.0,
+          -8.0,
+          0.0
+        ],
+        [
+          -18.0,
+          -8.0,
+          0.0
+        ],
+        [
+          -18.0,
+          -33.0,
+          0.0
+        ]
+      ],
+      "width_m": 3.5
+    },
+    {
+      "closed": true,
+      "id": "pedestrian_safe_route",
+      "semantic_class": "pedestrian_route",
+      "waypoints_m": [
+        [
+          -9.0,
+          -78.0,
+          0.0
+        ],
+        [
+          -7.0,
+          -70.0,
+          0.0
+        ],
+        [
+          -7.0,
+          -8.0,
+          0.0
+        ],
+        [
+          -10.0,
+          7.0,
+          0.0
+        ],
+        [
+          -10.0,
+          56.0,
+          0.0
+        ],
+        [
+          10.0,
+          56.0,
+          0.0
+        ],
+        [
+          10.0,
+          7.0,
+          0.0
+        ],
+        [
+          7.0,
+          -8.0,
+          0.0
+        ],
+        [
+          7.0,
+          -70.0,
+          0.0
+        ],
+        [
+          9.0,
+          -78.0,
+          0.0
+        ],
+        [
+          -9.0,
+          -78.0,
+          0.0
+        ]
+      ],
+      "width_m": 1.8
+    }
+  ],
+  "schema": "lingtu.sim.expanded-world-layout.v1",
+  "seed": 20260808,
+  "site_boundary_m": {
+    "maximum": [
+      110.0,
+      90.0,
+      16.0
+    ],
+    "minimum": [
+      -110.0,
+      -90.0,
+      -1.0
+    ]
+  },
+  "spawn": {
+    "clearance_radius_m": 4.0,
+    "id": "thunder_01_spawn",
+    "position_m": [
+      0.0,
+      -76.0,
+      0.0
+    ],
+    "quaternion_wxyz": [
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "surface_id": "road_entry_boulevard"
+  },
+  "terrain": {
+    "elevation_scale_m": 0.75,
+    "extent_m": [
+      220.0,
+      180.0
+    ],
+    "grid_px": [
+      221,
+      181
+    ],
+    "heightfield_r16_png": "sim/worlds/factory_park_hf/generated/heightfield_r16.png",
+    "mujoco_heightfield": "sim/worlds/factory_park_hf/generated/heightfield_f32.bin",
+    "obj_frame": "unreal_lh_z_up_cm",
+    "source_frame": "mujoco_rh_z_up_m",
+    "terrain_obj": "sim/worlds/factory_park_hf/generated/terrain.obj"
+  },
+  "validation": {
+    "minimum_forklift_route_width_m": 3.5,
+    "minimum_pedestrian_route_width_m": 1.8,
+    "minimum_vehicle_road_width_m": 8.0,
+    "required_semantic_classes": [
+      "road",
+      "main_factory_building",
+      "warehouse_building",
+      "loading_dock",
+      "loading_ramp",
+      "shipping_container",
+      "storage_tank",
+      "containment_bund",
+      "parking_area",
+      "guardhouse",
+      "drainage_ditch",
+      "speed_bump",
+      "curb",
+      "gravel_test_area",
+      "boundary_fence",
+      "gate"
+    ],
+    "south_gate_clear_width_m": 18.0,
+    "spawn_clearance_radius_m": 4.0
+  },
+  "world_package": "factory_park_hf@1.0.0"
+}

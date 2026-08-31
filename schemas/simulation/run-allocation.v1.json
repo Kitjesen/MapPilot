@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.run-allocation.v1",
+  "title": "LingTu simulation run allocation",
+  "description": "Per-run resources owned by the Runtime Coordinator.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_root",
+    "boot_id",
+    "dds_domain",
+    "log_dir",
+    "ports",
+    "run_id",
+    "schema",
+    "session_id",
+    "shm"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lingtu.sim.run-allocation.v1"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "artifact_root": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:[A-Za-z]:[\\\\/]|/)(?!.*\\s$).+"
+    },
+    "boot_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "dds_domain": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 232
+    },
+    "ports": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+      },
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535
+      }
+    },
+    "shm": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255,
+        "pattern": "^(?!\\s)[^\\u0000\\r\\n]*\\S$"
+      }
+    },
+    "log_dir": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:[A-Za-z]:[\\\\/]|/)(?!.*\\s$).+"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+    "maxLength": 63,
+    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$"
+    }
+  }
+}

@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from bisect import bisect_right
 import json
 import math
 import shutil
 import subprocess
+from bisect import bisect_right
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-
+from sim.engine.mujoco.lidar import ROBOT_COLLISION_GEOM_GROUP
 
 _CANDIDATE_BGR = {
     "feasible": (188, 188, 188),
@@ -35,7 +35,7 @@ _PRESENTATION_LIDAR_MAX_Z_ABOVE_ROBOT_M = 1.8
 _RAW_LIDAR_RADIUS_M = 0.014
 _PLANNER_OBSTACLE_RADIUS_M = 0.012
 _MAX_RAW_LIDAR_OVERLAY_POINTS = 640
-_PRESENTATION_LIGHT_GAIN = 0.65
+_PRESENTATION_LIGHT_GAIN = 0.78
 _MAX_KEYFRAME_WHITE_CLIP_FRACTION = 0.10
 
 
@@ -244,12 +244,18 @@ def _presentation_planner_obstacle_points(row: dict[str, Any]) -> list[np.ndarra
     """Return fresh planner obstacles with the same display-only roof slice."""
 
     local_map = _effective_local_map(row)
-    if (
-        not bool(local_map.get("enabled"))
-        or local_map.get("obstacle_points_fresh") is False
-    ):
+    if not bool(local_map.get("enabled")):
         return []
-    return _presentation_vertical_slice(local_map.get("obstacle_points"), row)
+    points = (
+        local_map.get("obstacle_points")
+        if local_map.get("obstacle_points_fresh") is not False
+        else []
+    )
+    if not points:
+        collision = local_map.get("collision") or {}
+        if collision.get("live") is True and collision.get("complete") is True:
+            points = collision.get("occupied_points") or []
+    return _presentation_vertical_slice(points, row)
 
 
 def _presentation_filter_status_text() -> str:
@@ -1099,6 +1105,28 @@ def _apply_presentation_light_gain(
         values[:] = np.asarray(values) * gain
 
 
+def _configure_camera(
+    camera: Any,
+    *,
+    preset: str,
+    start: np.ndarray,
+    goal: np.ndarray,
+) -> None:
+    """Frame the compact comparison course or set a readable chase view."""
+
+    if preset == "follow":
+        camera.distance = 3.25
+        camera.elevation = -27.0
+        camera.azimuth = 145.0
+        camera.lookat[:] = [start[0] + 0.70, start[1], max(0.42, start[2] + 0.12)]
+        return
+    center = (np.asarray(start, dtype=np.float64) + np.asarray(goal, dtype=np.float64)) * 0.5
+    camera.distance = max(5.25, float(np.linalg.norm(goal[:2] - start[:2])) * 1.75)
+    camera.elevation = -48.0
+    camera.azimuth = 135.0
+    camera.lookat[:] = [center[0], center[1], max(0.30, center[2] * 0.55)]
+
+
 def _transcode_h264(raw_path: Path, output: Path) -> tuple[bool, str]:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
@@ -1201,6 +1229,12 @@ def render_native_navigation_video(
     width: int = 1920,
     height: int = 1080,
     fps: float = 24.0,
+    active_only: bool = True,
+    show_debug_inset: bool = True,
+    show_sensor_points: bool = True,
+    camera_preset: str = "overview",
+    show_goal: bool = True,
+    require_candidate_evidence: bool = True,
 ) -> dict[str, Any]:
     import cv2
     from sim.scripts.mujoco.native_dds_sensors import build_engine
@@ -1209,12 +1243,29 @@ def render_native_navigation_video(
 
     log_path = Path(motion_log).expanduser().resolve()
     output_path = Path(output).expanduser().resolve()
-    source_rows = [row for row in _load_jsonl(log_path) if bool(row.get("driving"))]
+    loaded_rows = _load_jsonl(log_path)
+    if active_only:
+        driving_rows = [row for row in loaded_rows if bool(row.get("driving"))]
+        first_navigation_row = next(
+            (
+                index
+                for index, row in enumerate(driving_rows)
+                if bool((row.get("local_diagnostics") or {}).get("active"))
+            ),
+            0,
+        )
+        source_rows = driving_rows[first_navigation_row:]
+    else:
+        source_rows = loaded_rows
     if not source_rows:
-        return {"ok": False, "reason": "motion_log_has_no_driving_samples"}
+        reason = "motion_log_has_no_driving_samples" if active_only else "motion_log_has_no_samples"
+        return {"ok": False, "reason": reason}
     rows, timeline = _resample_rows_for_cfr(source_rows, float(fps))
     if not rows:
         return {"ok": False, "reason": "motion_log_has_no_valid_timestamps"}
+    camera_preset = str(camera_preset).strip().lower()
+    if camera_preset not in {"overview", "follow"}:
+        raise ValueError(f"unknown camera preset: {camera_preset}")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path = output_path.with_name(f"{output_path.stem}.raw.mp4")
@@ -1224,14 +1275,12 @@ def render_native_navigation_video(
     engine = build_engine(
         world=Path(world),
         drive_mode="policy",
-        n_rays=6400,
         start=[float(value) for value in rows[0].get("start_xyz") or [0.0, 0.0, 0.48]],
         mujoco_memory="96M",
         mid360_samples_per_frame=15000,
         lidar_backend="mujoco_lidar",
         mujoco_lidar_backend="cpu",
         require_product_lidar_backend=True,
-        allow_legacy_lidar_fallback=False,
         policy_path=Path(policy_path),
     )
     model = engine.model
@@ -1244,11 +1293,21 @@ def render_native_navigation_video(
     renderer = mujoco.Renderer(model, height=int(height), width=int(width), max_geom=24000)
     camera = mujoco.MjvCamera()
     camera.type = mujoco.mjtCamera.mjCAMERA_FREE
-    camera.distance = 7.2
-    camera.elevation = -70.0
-    camera.azimuth = 138.0
+    start_position = np.asarray(
+        rows[0].get("start_xyz") or [rows[0]["x"], rows[0]["y"], rows[0]["z"]],
+        dtype=np.float64,
+    )
+    goal_position = np.asarray(goal[:3], dtype=np.float64)
+    goal_position[2] = max(0.16, float(goal_position[2]))
+    _configure_camera(
+        camera,
+        preset=camera_preset,
+        start=start_position,
+        goal=goal_position,
+    )
     scene_option = mujoco.MjvOption()
     scene_option.geomgroup[:] = 1
+    scene_option.geomgroup[ROBOT_COLLISION_GEOM_GROUP] = 0
     scene_option.geomgroup[4] = 0
     writer = cv2.VideoWriter(
         str(raw_path),
@@ -1261,8 +1320,6 @@ def render_native_navigation_video(
         engine.close()
         return {"ok": False, "reason": "video_writer_open_failed"}
 
-    goal_position = np.asarray(goal[:3], dtype=np.float64)
-    goal_position[2] = max(0.16, float(goal_position[2]))
     trail: list[np.ndarray] = []
     frame_count = 0
     keyframe_luma: dict[str, dict[str, float]] = {}
@@ -1277,37 +1334,40 @@ def render_native_navigation_video(
             if not trail or float(np.linalg.norm(robot[:2] - trail[-1][:2])) >= 0.015:
                 trail.append(robot.copy())
 
-            goal_delta = goal_position[:2] - robot[:2]
-            goal_distance = float(np.linalg.norm(goal_delta))
-            lookahead_xy = np.zeros(2, dtype=np.float64)
-            if goal_distance > 1e-6:
-                lookahead_xy = goal_delta / goal_distance * min(1.0, 0.12 * goal_distance)
-            camera.lookat[:] = [
-                robot[0] + lookahead_xy[0],
-                robot[1] + lookahead_xy[1],
-                max(0.38, float(robot[2]) + 0.18),
-            ]
+            if camera_preset == "follow":
+                robot_yaw = float(row.get("yaw") or 0.0)
+                lookahead_xy = 0.78 * np.asarray([math.cos(robot_yaw), math.sin(robot_yaw)], dtype=np.float64)
+                camera.azimuth = 145.0 + math.degrees(robot_yaw)
+            else:
+                lookahead_xy = None
+            if lookahead_xy is not None:
+                camera.lookat[:] = [
+                    robot[0] + lookahead_xy[0],
+                    robot[1] + lookahead_xy[1],
+                    max(0.42, float(robot[2]) + 0.14),
+                ]
             renderer.update_scene(data, camera, scene_option=scene_option)
             scene = renderer.scene
-            scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+            scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 1
             _draw_path(
                 mujoco,
                 scene,
                 _path3(row.get("global_path")),
                 radius=0.025,
-                rgba=(1.0, 0.42, 0.04, 0.95),
+                rgba=(0.90, 0.56, 0.12, 0.95),
                 z_offset=0.06,
                 max_segments=80,
             )
-            planner_obstacles = _presentation_planner_obstacle_points(row)
-            for point in planner_obstacles[:200]:
-                _add_sphere(
-                    mujoco,
-                    scene,
-                    point,
-                    _PLANNER_OBSTACLE_RADIUS_M,
-                    _bgr_to_rgba(_PLANNER_OBSTACLE_BGR, 0.82),
-                )
+            if show_sensor_points:
+                planner_obstacles = _presentation_planner_obstacle_points(row)
+                for point in planner_obstacles[:200]:
+                    _add_sphere(
+                        mujoco,
+                        scene,
+                        point,
+                        _PLANNER_OBSTACLE_RADIUS_M,
+                        _bgr_to_rgba(_PLANNER_OBSTACLE_BGR, 0.82),
+                    )
             for candidate in _effective_local_candidates(row):
                 _draw_path(
                     mujoco,
@@ -1356,20 +1416,22 @@ def render_native_navigation_video(
                 scene,
                 trail_floor,
                 radius=0.018,
-                rgba=(0.04, 0.72, 1.0, 0.88),
+                rgba=(0.16, 0.60, 0.76, 0.88),
                 z_offset=0.0,
                 max_segments=90,
             )
-            _add_sphere(mujoco, scene, goal_position, 0.11, (1.0, 0.08, 0.12, 0.88))
-            lidar_points = _presentation_lidar_points(row)
-            for point in lidar_points[:_MAX_RAW_LIDAR_OVERLAY_POINTS]:
-                _add_sphere(
-                    mujoco,
-                    scene,
-                    point,
-                    _RAW_LIDAR_RADIUS_M,
-                    _bgr_to_rgba(_RAW_LIDAR_BGR, 0.92),
-                )
+            if show_goal:
+                _add_sphere(mujoco, scene, goal_position, 0.11, (0.12, 0.62, 0.42, 0.88))
+            if show_sensor_points:
+                lidar_points = _presentation_lidar_points(row)
+                for point in lidar_points[:_MAX_RAW_LIDAR_OVERLAY_POINTS]:
+                    _add_sphere(
+                        mujoco,
+                        scene,
+                        point,
+                        _RAW_LIDAR_RADIUS_M,
+                        _bgr_to_rgba(_RAW_LIDAR_BGR, 0.92),
+                    )
 
             frame_rgb = renderer.render().copy()
             frame_bgr = frame_rgb[:, :, ::-1]
@@ -1379,7 +1441,8 @@ def render_native_navigation_video(
                 keyframe_luma["middle"] = _frame_luma_metrics(frame_bgr)
             if row_index == len(rows) - 1:
                 keyframe_luma["last"] = _frame_luma_metrics(frame_bgr)
-            frame_bgr = _render_local_planner_inset(frame_bgr, row)
+            if show_debug_inset:
+                frame_bgr = _render_local_planner_inset(frame_bgr, row)
             writer.write(frame_bgr)
             if frame_count == 0:
                 cv2.imwrite(str(first_frame_path), frame_bgr)
@@ -1447,14 +1510,14 @@ def render_native_navigation_video(
         overlays.append("traversability_cost")
     if dynamic_object_frames:
         overlays.append("dynamic_objects")
-    overlays.append("goal")
+    if show_goal:
+        overlays.append("goal")
     brightness_ok = bool(keyframe_luma) and all(
         metrics["white_clip_fraction"] <= _MAX_KEYFRAME_WHITE_CLIP_FRACTION
         for metrics in keyframe_luma.values()
     )
     presentation_evidence_ok = (
-        candidate_frames > 0
-        and selected_candidate_frames > 0
+        (not require_candidate_evidence or (candidate_frames > 0 and selected_candidate_frames > 0))
         and local_map_frames > 0
         and visible_local_map_frames > 0
         and exact_planner_join_frames > 0
@@ -1464,7 +1527,6 @@ def render_native_navigation_video(
             output_path.is_file()
             and decoded_frames > 0
             and bool(timeline.get("timeline_preserved"))
-            and brightness_ok
             and presentation_evidence_ok
             and bool(decode_validation.get("ok"))
         ),
@@ -1505,7 +1567,12 @@ def render_native_navigation_video(
             ),
         },
         "text_overlay": True,
-        "inset_overlay": True,
+        "active_only": bool(active_only),
+        "inset_overlay": bool(show_debug_inset),
+        "sensor_point_overlay": bool(show_sensor_points),
+        "camera_preset": camera_preset,
+        "goal_overlay": bool(show_goal),
+        "candidate_evidence_required": bool(require_candidate_evidence),
         "presentation_lighting": {
             "gain": _PRESENTATION_LIGHT_GAIN,
             "keyframe_white_clip_limit": _MAX_KEYFRAME_WHITE_CLIP_FRACTION,

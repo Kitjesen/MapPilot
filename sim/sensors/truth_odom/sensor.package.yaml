@@ -1,0 +1,15 @@
+schema: lingtu.sim.sensor-package.v1
+id: truth_odom
+version: 1.0.0
+kind: sensor
+description: MuJoCo ground-truth odometry for evaluation and visualization.
+sensor_type: truth_odom
+outputs:
+  - truth_odom
+timing:
+  rate_hz: 100
+interface:
+  transport: typed_dds
+  message_type: lingtu.dds.Odometry
+configuration:
+  estimator_input: false

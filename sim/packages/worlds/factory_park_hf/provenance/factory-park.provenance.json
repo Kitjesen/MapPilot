@@ -1,0 +1,152 @@
+{
+  "asset_id": "factory_park_hf.world",
+  "checkpoint_count": 6,
+  "coordinate_contract": {
+    "axis_mapping": [
+      "x",
+      "-y",
+      "z"
+    ],
+    "extent_m": [
+      220.0,
+      180.0
+    ],
+    "grid_px": [
+      221,
+      181
+    ],
+    "height_encoding": {
+      "bit_depth": 16,
+      "elevation_scale_m": 0.75,
+      "formula": "world_height_m = sample_u16 / 65535 * elevation_scale_m + vertical_origin_m",
+      "range": [
+        0,
+        65535
+      ],
+      "type": "uint16_normalized"
+    },
+    "image_mapping": {
+      "column_0_x_m": -110.0,
+      "column_last_x_m": 110.0,
+      "row_0_y_m": 90.0,
+      "row_last_y_m": -90.0
+    },
+    "mujoco_hfield": {
+      "geom_position_m": [
+        0.0,
+        0.0,
+        -0.666674296177615
+      ],
+      "size": [
+        110.0,
+        90.0,
+        0.75,
+        1.0
+      ]
+    },
+    "origin": "site_center",
+    "sample_spacing_m": [
+      1.0,
+      1.0
+    ],
+    "source_frame": "mujoco_rh_z_up_m",
+    "spawn_reference": {
+      "sample_pixel": [
+        110,
+        166
+      ],
+      "sample_u16": 58254,
+      "world_position_m": [
+        0.0,
+        -76.0,
+        0.0
+      ]
+    },
+    "unreal_frame": "unreal_lh_z_up_cm",
+    "unreal_landscape": {
+      "location_cm": [
+        0.0,
+        0.0,
+        -29.1674296177615
+      ],
+      "scale_xyz": [
+        100.0,
+        100.0,
+        0.146484375
+      ]
+    },
+    "vertical_origin_m": -0.666674296177615
+  },
+  "element_batches": [
+    {
+      "batch_id": "operations_safety",
+      "object_count": 19
+    }
+  ],
+  "generator": {
+    "algorithm": "lingtu_factory_park_layout.v2",
+    "module": "sim.tools.worlds.factory_park_hf.generate",
+    "seed": 20260808
+  },
+  "object_count": 146,
+  "outputs": [
+    {
+      "bytes": 14995,
+      "path": "sim/packages/worlds/factory_park_hf/visual/realism.recipe.json"
+    },
+    {
+      "bytes": 6513,
+      "path": "sim/packages/worlds/factory_park_hf/visual/ue_import.recipe.json"
+    },
+    {
+      "bytes": 569,
+      "path": "sim/packages/worlds/factory_park_hf/world.package.yaml"
+    },
+    {
+      "bytes": 28462,
+      "path": "sim/worlds/factory_park_hf/factory_park_hf.xml"
+    },
+    {
+      "bytes": 4281,
+      "path": "sim/worlds/factory_park_hf/generated/asset-manifest.json"
+    },
+    {
+      "bytes": 66153,
+      "path": "sim/worlds/factory_park_hf/generated/expanded-layout.json"
+    },
+    {
+      "bytes": 160012,
+      "path": "sim/worlds/factory_park_hf/generated/heightfield_f32.bin"
+    },
+    {
+      "bytes": 80256,
+      "path": "sim/worlds/factory_park_hf/generated/heightfield_r16.png"
+    },
+    {
+      "bytes": 79572,
+      "path": "sim/worlds/factory_park_hf/generated/semantic-entities.json"
+    },
+    {
+      "bytes": 31001,
+      "path": "sim/worlds/factory_park_hf/generated/site-plan.svg"
+    },
+    {
+      "bytes": 2964956,
+      "path": "sim/worlds/factory_park_hf/generated/terrain.obj"
+    }
+  ],
+  "reproducibility": {
+    "command": "python -m sim.tools.worlds.factory_park_hf.generate --repo-root . --seed 20260808",
+    "deterministic": true,
+    "standard_library_only": true
+  },
+  "route_count": 3,
+  "schema": "lingtu.sim.generated-world-provenance.v1",
+  "source": {
+    "license": "LicenseRef-LingTu-Project-Owned",
+    "owner": "LingTu project",
+    "third_party_assets": [],
+    "type": "procedural"
+  },
+  "version": "1.0.0"
+}

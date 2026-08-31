@@ -1,0 +1,19 @@
+schema: lingtu.sim.session.v1
+session_id: omni_cart_controlled_headless
+mujoco_version: 3.10.0
+seed: 20260809
+world: open_field@1.0.0
+robots:
+  - instance_id: cart_01
+    package: omni_cart@1.0.0
+    sensor_rig: null
+    controller: omni_cart_differential_drive@1.0.0
+    spawn:
+      position_m: [0.0, 0.0, 0.0]
+      quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]
+runtime:
+  backend: mujoco
+  mode: headless
+  required_bindings:
+    - physics
+    - control

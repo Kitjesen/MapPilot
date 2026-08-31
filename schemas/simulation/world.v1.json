@@ -1,0 +1,510 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.world-package.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "description": "Version 1 accepts the original catalog manifest shape and the imported-world artifact envelope. The optional artifact fields are additive so existing canonical v1 packages remain valid.",
+  "required": [
+    "schema",
+    "id",
+    "version",
+    "kind",
+    "physics",
+    "visual",
+    "entities"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "anyOf": [
+          {
+            "required": [
+              "provenance"
+            ]
+          },
+          {
+            "required": [
+              "content"
+            ]
+          },
+          {
+            "properties": {
+              "visual": {
+                "required": [
+                  "projection"
+                ]
+              }
+            },
+            "required": [
+              "visual"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "required": [
+          "provenance",
+          "content"
+        ],
+        "properties": {
+          "visual": {
+            "required": [
+              "binding",
+              "level",
+              "projection"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "schema": {
+      "const": "lingtu.sim.world-package.v1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9+_.-]*$"
+    },
+    "kind": {
+      "const": "world"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "physics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mjcf",
+        "global_policy"
+      ],
+      "properties": {
+        "mjcf": {
+          "$ref": "#/$defs/package_path"
+        },
+        "global_policy": {
+          "$ref": "#/$defs/global_physics_policy"
+        }
+      }
+    },
+    "visual": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding",
+        "level"
+      ],
+      "properties": {
+        "binding": {
+          "type": "string",
+          "minLength": 1
+        },
+        "level": {
+          "$ref": "#/$defs/game_path"
+        },
+        "projection": {
+          "$ref": "#/$defs/relative_path"
+        }
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/entity"
+          },
+          {
+            "$ref": "#/$defs/legacy_entity"
+          }
+        ]
+      }
+    },
+    "provenance": {
+      "$ref": "#/$defs/content_ref"
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files",
+        "provenance",
+        "visual_projection"
+      ],
+      "properties": {
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/file_record"
+          }
+        },
+        "provenance": {
+          "$ref": "#/$defs/content_ref"
+        },
+        "visual_projection": {
+          "$ref": "#/$defs/content_ref"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*:)(?!.*\\\\)(?!.*//)(?!\\.\\.?(/|$))(?!.*(/\\.\\.?)(/|$)).+$"
+    },
+    "package_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*:)(?!.*\\\\)(?!.*//).+$"
+    },
+    "game_path": {
+      "type": "string",
+      "minLength": 7,
+      "pattern": "^/Game/(?!.*\\\\)(?!.*\\s)(?!.*//)(?!.*(/\\.\\.?)(/|$)).+"
+    },
+    "content_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/relative_path"
+        }
+      }
+    },
+    "file_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "size"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "vec3": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "vec4": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false,
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "global_physics_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timestep_s",
+        "integrator",
+        "solver",
+        "iterations",
+        "gravity_mps2"
+      ],
+      "properties": {
+        "timestep_s": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "integrator": {
+          "enum": [
+            "euler",
+            "rk4",
+            "implicit",
+            "implicitfast"
+          ]
+        },
+        "solver": {
+          "enum": [
+            "pgs",
+            "cg",
+            "newton"
+          ]
+        },
+        "iterations": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "gravity_mps2": {
+          "$ref": "#/$defs/vec3"
+        }
+      }
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entity_id",
+        "entity_type",
+        "authority",
+        "initial_transform",
+        "physics_proxy",
+        "semantic_class",
+        "collision"
+      ],
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        },
+        "entity_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authority": {
+          "enum": [
+            "scenario",
+            "ue_animation",
+            "mujoco"
+          ]
+        },
+        "initial_transform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "position_m",
+            "quaternion_wxyz"
+          ],
+          "properties": {
+            "position_m": {
+              "$ref": "#/$defs/vec3"
+            },
+            "quaternion_wxyz": {
+              "$ref": "#/$defs/vec4"
+            }
+          }
+        },
+        "physics_proxy": {
+          "enum": [
+            "mujoco",
+            "kinematic",
+            "none"
+          ]
+        },
+        "semantic_class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "collision": {
+          "type": "boolean"
+        },
+        "geometry": {
+          "$ref": "#/$defs/entity_geometry"
+        },
+        "visual": {
+          "$ref": "#/$defs/entity_visual"
+        }
+      }
+    },
+    "entity_geometry": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "shape",
+            "size_m"
+          ],
+          "properties": {
+            "shape": {
+              "const": "box"
+            },
+            "size_m": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              ],
+              "items": false,
+              "minItems": 3,
+              "maxItems": 3
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "shape",
+            "radius_m",
+            "half_height_m"
+          ],
+          "properties": {
+            "shape": {
+              "const": "cylinder"
+            },
+            "radius_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "half_height_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "entity_visual": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "const": "level"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "material"
+          ],
+          "properties": {
+            "mode": {
+              "const": "runtime"
+            },
+            "material": {
+              "$ref": "#/$defs/entity_material"
+            }
+          }
+        }
+      ]
+    },
+    "entity_material": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "base_color_rgba",
+        "metallic",
+        "roughness"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base_color_rgba": {
+          "$ref": "#/$defs/unit_vec4"
+        },
+        "metallic": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "roughness": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "unit_vec4": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      ],
+      "items": false,
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "legacy_entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "role"
+      ],
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/package_path"
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

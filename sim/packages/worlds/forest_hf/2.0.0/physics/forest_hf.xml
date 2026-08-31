@@ -1,0 +1,10 @@
+<mujoco model="forest_hf_2_0_0">
+  <compiler angle="radian" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.001" integrator="RK4" solver="Newton" iterations="100"/>
+  <asset>
+    <hfield name="forest_terrain" file="../generated/heightfield_f32.bin" content_type="image/vnd.mujoco.hfield" size="1000 1000 31.459220263981077 10"/>
+  </asset>
+  <worldbody>
+    <geom name="forest_terrain" type="hfield" hfield="forest_terrain" pos="0 0 -1.3023575188830385" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+  </worldbody>
+</mujoco>

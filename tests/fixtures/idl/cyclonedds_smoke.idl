@@ -1,0 +1,6 @@
+module LingTuCycloneSmoke {
+  struct Sample {
+    @key unsigned long id;
+    string<32> message;
+  };
+};

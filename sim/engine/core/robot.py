@@ -2,13 +2,12 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 
 from runtime.runtime_interface import FRAMES
 
-THUNDER_V3_JOINT_NAMES = [
+THUNDER_V4_JOINT_NAMES = [
     "FR_hip_joint",
     "FR_thigh_joint",
     "FR_calf_joint",
@@ -30,11 +29,11 @@ THUNDER_V3_JOINT_NAMES = [
 
 @dataclass
 class RobotConfig:
-    """Thunder v3 robot simulation configuration.
+    """Thunder V4 robot simulation configuration.
 
     Single source of truth: physical parameters, initial pose, policy path,
     and joint mapping are all defined here.
-    Corresponds to the sim section in config/robot_config.yaml.
+    This simulation model is separate from the field RobotConfig.
     """
 
     # Model files
@@ -50,44 +49,10 @@ class RobotConfig:
     pd_kv: float = 5.0  # velocity gain (damping)
     leg_control_mode: str = "auto"  # auto, position, or torque
     torque_kp: list[float] = field(
-        default_factory=lambda: [
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-        ]
+        default_factory=lambda: [70.0, 100.0, 120.0] * 4 + [0.0] * 4
     )
     torque_kd: list[float] = field(
-        default_factory=lambda: [
-            7.5,
-            7.5,
-            7.5,
-            7.5,
-            7.5,
-            7.5,
-            7.5,
-            7.5,
-            7.5,
-            7.5,
-            7.5,
-            7.5,
-            1.0,
-            1.0,
-            1.0,
-            1.0,
-        ]
+        default_factory=lambda: [15.0, 15.0, 20.0] * 4 + [1.0] * 4
     )
     torque_limit: list[float] = field(
         default_factory=lambda: [
@@ -103,10 +68,10 @@ class RobotConfig:
             120.0,
             120.0,
             120.0,
-            60.0,
-            60.0,
-            60.0,
-            60.0,
+            17.0,
+            17.0,
+            17.0,
+            17.0,
         ]
     )
 
@@ -134,7 +99,8 @@ class RobotConfig:
     )
     imu_gyro_scale: float = 0.25
     joint_vel_scale: float = 0.05
-    policy_freq_hz: float = 100.0  # ThunderV4 HIM policy default: dt=0.001, decimation=10
+    policy_freq_hz: float = 50.0  # policy_1119: 200 Hz physics with decimation 4
+    policy_cpu_threads: int = 1
     obs_dim: int = 57
     history_len: int = 5
 
@@ -161,15 +127,15 @@ class RobotConfig:
     )
 
     # Joint names (MuJoCo order)
-    leg_joint_names: list[str] = field(default_factory=lambda: THUNDER_V3_JOINT_NAMES.copy())
+    leg_joint_names: list[str] = field(default_factory=lambda: THUNDER_V4_JOINT_NAMES.copy())
 
     # Body names
-    # Thunder v3 uses base_link as the root body. The LingTu runtime MJCF adds
+    # Thunder V4 uses base_link as the root body. The LingTu runtime MJCF adds
     # a lidar_link body for the MID-360 sensor pose.
     base_body_name: str = FRAMES.model_base
     lidar_body_name: str = FRAMES.lidar
 
-    # Current Thunder v3 runtime MJCF has one actuator per leg/wheel joint.
+    # Current Thunder V4 runtime MJCF has one actuator per leg/wheel joint.
     leg_act_offset: int = 0
 
     # Joint order mapping (from nova_nav_bridge.py original constants)
@@ -228,14 +194,9 @@ class RobotConfig:
         return np.array(self.dart_to_mj, dtype=np.int32)
 
     @classmethod
-    def default_thunder_v3(cls) -> "RobotConfig":
+    def default_thunder_v4(cls) -> "RobotConfig":
         """Return current Thunder simulation config (paths resolved at runtime)."""
         cfg = cls()
-        cfg.robot_xml = "robots/thunderv4/mjcf/thunderv4.xml"
-        cfg.policy_onnx = "robots/thunderv4/policy/pose_flat_low_kpkd_microterrain_model29600_policy.pt"
+        cfg.robot_xml = "robots/doso/thunder_v4/mjcf/thunderv4.xml"
+        cfg.policy_onnx = "controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx"
         return cfg
-
-    @classmethod
-    def default_nova_dog(cls) -> "RobotConfig":
-        """Compatibility alias for callers that still use the old method name."""
-        return cls.default_thunder_v3()

@@ -1,0 +1,17 @@
+schema: lingtu.sim.world-package.v1
+id: forest_hf
+version: 1.0.0
+kind: world
+description: Deterministic 160x160 m forest authoring world with a MuJoCo-owned flat ground plane and Blender-owned visual recipe.
+physics:
+  mjcf: physics/forest_hf.xml
+  global_policy:
+    timestep_s: 0.001
+    integrator: rk4
+    solver: newton
+    iterations: 100
+    gravity_mps2: [0.0, 0.0, -9.81]
+visual:
+  binding: WorldVisual:ForestHF
+  level: /Game/RobotSim/Maps/Forest_HF
+entities: []

@@ -6,23 +6,32 @@ and acceptance reporting only. Global planning, local planning, path following,
 and command safety remain inside ``navd``.
 """
 
+# ruff: noqa: E402 - direct execution establishes the repository import paths.
+
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import os
+import secrets
+import shutil
+import signal
 import subprocess
 import sys
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNTIME_EVIDENCE_SAMPLE_PERIOD_S = 0.20
 DEFAULT_PARENT_SENSOR_DIAGNOSTICS_PERIOD_S = 0.5
+_ASCII_ALNUM = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+)
+_NATIVE_IDENTITY_CHARACTERS = _ASCII_ALNUM | frozenset("._:-")
 
 
 def _phase_runtime_timeout_s(
@@ -65,6 +74,7 @@ def _motion_health_collection_active(motion_complete_marker: Path) -> bool:
 
 
 SENSOR_PUBLISHER_PROBE_TIMEOUT_S = 60.0
+WSL_RUNTIME_PROBE_TIMEOUT_S = 5.0
 _NON_BLOCKING_SLAM_ACCURACY_GAP_PREFIXES = (
     "native_slam_not_tracking:",
     "native_slam_quality_low:",
@@ -75,8 +85,22 @@ _NON_BLOCKING_SLAM_ACCURACY_GAP_PREFIXES = (
 )
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
+from sim.runtime.process_owner import ProcessTreeOwner
+from sim.runtime.windows_cpu_isolation import (
+    WindowsCpuIsolationConfig,
+    WindowsCpuIsolationPlan,
+    WindowsCpuTopology,
+    WindowsPhysicalCore,
+    discover_windows_cpu_topology,
+    resolve_windows_cpu_isolation,
+)
 from sim.scripts.mujoco.native_dds_sensors import (
+    DEFAULT_THUNDERV4_ONNX_POLICY,
+    _driver_producer_matches_host,
     _linux_binary_command,
     _managed_wsl_command,
     _read_linux_pid,
@@ -85,9 +109,22 @@ from sim.scripts.mujoco.native_dds_sensors import (
     _wsl_path,
     _wsl_pid_alive,
 )
+from sim.scripts.mujoco.product_acceptance import classify_evidence
+
+from lingtu.assembly.native_nav import mapd_environment
+from lingtu.sim.acceptance import load_manifest as _load_acceptance_manifest
+from lingtu.sim.acceptance import validate_runner_plan
 
 DEFAULT_MANIFEST = ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_native_navigation_acceptance.json"
-DEFAULT_THUNDERV4_MJCF = ROOT / "sim" / "robots" / "thunderv4" / "mjcf" / "thunderv4.xml"
+DEFAULT_THUNDERV4_MJCF = (
+    ROOT / "sim" / "robots" / "doso" / "thunder_v4" / "mjcf" / "thunderv4.xml"
+)
+
+
+def _linux_arg(path: Path) -> str:
+    """Format a path for a Linux process, including one launched through WSL."""
+
+    return _wsl_path(path) if os.name == "nt" else str(path)
 
 
 def _compiled_mujoco_site_offset_body(
@@ -98,8 +135,9 @@ def _compiled_mujoco_site_offset_body(
 ) -> tuple[float, float, float]:
     """Resolve a site's final compiled pose relative to the robot body."""
 
-    import mujoco
     import numpy as np
+
+    import mujoco
 
     resolved = Path(model_path).expanduser().resolve()
     previous_cwd = Path.cwd()
@@ -148,32 +186,14 @@ def _load_json(path: Path) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _merge_manifest(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(base)
-    for key, value in override.items():
-        if key == "extends":
-            continue
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _merge_manifest(dict(merged[key]), value)
-        else:
-            merged[key] = value
-    return merged
-
-
-def _load_manifest(path: Path, seen: set[Path] | None = None) -> dict[str, Any]:
+def _load_manifest(path: Path) -> dict[str, Any]:
     resolved = path.expanduser().resolve()
-    visited = set(seen or set())
-    if resolved in visited:
-        raise ValueError(f"manifest inheritance cycle: {resolved}")
-    visited.add(resolved)
-    manifest = _load_json(resolved)
-    parent_value = str(manifest.get("extends") or "").strip()
-    if not parent_value:
-        return manifest
-    parent = Path(parent_value)
-    if not parent.is_absolute():
-        parent = resolved.parent / parent
-    return _merge_manifest(_load_manifest(parent, visited), manifest)
+    try:
+        resolved.relative_to(ROOT)
+        root = ROOT
+    except ValueError:
+        root = resolved.parent
+    return _load_acceptance_manifest(resolved, root=root)
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
@@ -184,21 +204,184 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
     )
 
 
+def _arm_mujoco_motion(
+    *,
+    arm_file: Path,
+    status_file: Path,
+    token: str,
+    domain_id: int,
+    scenario: str,
+    sensor: "ManagedProcess",
+    timeout_s: float = 5.0,
+) -> dict[str, Any]:
+    payload = {
+        "schema": "lingtu.mujoco.external_arm.v1",
+        "arm": True,
+        "token": token,
+        "domain_id": domain_id,
+        "scenario": scenario,
+    }
+    arm_file.parent.mkdir(parents=True, exist_ok=True)
+    temporary = arm_file.with_name(f".{arm_file.name}.{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(arm_file)
+
+    deadline = time.monotonic() + max(0.1, float(timeout_s))
+    last_status: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        if sensor.poll() is not None:
+            raise RuntimeError("MuJoCo sensor runner exited before motion arm acknowledgement")
+        last_status = _load_json(status_file)
+        state = str(last_status.get("state") or "")
+        if state == "armed":
+            return last_status
+        if state in {"invalid", "timed_out"}:
+            raise RuntimeError(
+                str(last_status.get("last_error") or f"external_arm_{state}")
+            )
+        time.sleep(0.05)
+    raise TimeoutError("MuJoCo motion arm acknowledgement timed out")
+
+
 def _repo_path(value: str) -> Path:
     path = Path(value).expanduser()
     return path.resolve() if path.is_absolute() else (ROOT / path).resolve()
 
 
-def _linux_arg(path: Path) -> str:
-    return _wsl_path(path) if os.name == "nt" else str(path)
+def _ordered_binary_candidates(
+    values: Sequence[str],
+    *,
+    platform_name: str | None = None,
+) -> list[str]:
+    """Order manifest candidates for the current native binary platform."""
+
+    platform = os.name if platform_name is None else platform_name
+    normalized = [str(value) for value in values if str(value)]
+    if platform != "nt":
+        return [
+            value
+            for value in normalized
+            if PurePath(value).suffix.lower() != ".exe"
+        ]
+    canonical_windows_prefixes = (
+        "build/maps-windows/Release/",
+        "build/nav-cpp/windows-x64-nav-endpoint/Release/",
+        "build/slam-core-windows-x64/stage/bin/",
+        "build/windows-native-dds-adapter/Release/",
+    )
+    exe_values = [
+        value
+        for value in normalized
+        if PurePath(value).suffix.lower() == ".exe"
+        and PurePath(value).as_posix().startswith(canonical_windows_prefixes)
+    ]
+    fallback_values = [
+        value
+        for value in normalized
+        if PurePath(value).suffix.lower() != ".exe"
+    ]
+    return [*exe_values, *fallback_values]
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+def _validated_native_clock_platform(
+    navigation_binary: Path,
+    driver_bridge_binary: Path,
+    *,
+    platform_name: str | None = None,
+) -> str:
+    """Require the FinalVelocityCommand producer and bridge to share one boot clock."""
+
+    platform = os.name if platform_name is None else platform_name
+    if platform != "nt":
+        return "posix"
+    navigation_platform = (
+        "windows" if navigation_binary.suffix.lower() == ".exe" else "wsl"
+    )
+    bridge_platform = (
+        "windows" if driver_bridge_binary.suffix.lower() == ".exe" else "wsl"
+    )
+    if navigation_platform != bridge_platform:
+        raise ValueError(
+            "navigation and MuJoCo driver bridge must use the same native boot clock: "
+            f"navigation={navigation_platform}, driver_bridge={bridge_platform}"
+        )
+    return navigation_platform
+
+
+def _native_path_arg(
+    binary: Path,
+    path: Path,
+    *,
+    platform_name: str | None = None,
+) -> str:
+    """Format a filesystem argument for the process that will consume it."""
+
+    platform = os.name if platform_name is None else platform_name
+    if platform == "nt" and binary.suffix.lower() != ".exe":
+        return _wsl_path(path)
+    return str(path.expanduser().resolve())
+
+
+def _local_planner_backend(manifest: dict[str, Any]) -> str:
+    backend = str(
+        (manifest.get("navigation_runtime") or {}).get("local_planner") or "cmu"
+    ).strip().lower()
+    if backend not in {"cmu", "scan"}:
+        raise ValueError(f"unsupported local planner backend: {backend}")
+    return backend
+
+
+def _path_library_args(
+    backend: str,
+    navigation_binary: Path,
+    paths: dict[str, Path],
+) -> tuple[str, ...]:
+    if backend == "scan":
+        return ()
+    if backend != "cmu":
+        raise ValueError(f"unsupported local planner backend: {backend}")
+    return (
+        "--path-library",
+        _native_path_arg(navigation_binary, paths["path_library"]),
+    )
+
+
+def _bind_manifest_binaries_to_run_plan(
+    manifest: dict[str, Any],
+    plan: Any,
+) -> dict[str, dict[str, str]]:
+    """Replace component discovery with the RunPlan's concrete artifact paths."""
+
+    process_names = {
+        "sensor_publisher": "sensor_publisher",
+        "slam": "slam_runtime",
+        "mapd": "map_runtime",
+        "traversability": "traversability_runtime",
+        "navigation": "nav_runtime",
+        "driver_bridge": "driver_bridge",
+    }
+    selected = {process.name: process for process in plan.processes}
+    specs = manifest.get("binaries") or {}
+    bindings: dict[str, dict[str, str]] = {}
+    for binary_name, process_name in process_names.items():
+        process = selected.get(process_name)
+        spec = specs.get(binary_name)
+        if process is None or process.command is None or not isinstance(spec, dict):
+            continue
+        artifact = process.command.artifact
+        path = _repo_path(artifact.path)
+        if not path.is_file():
+            raise ValueError(f"RunPlan process artifact is missing: {process_name}:{path}")
+        spec.pop("env", None)
+        spec["candidates"] = [artifact.path]
+        bindings[binary_name] = {
+            "path": str(path),
+            "process": process_name,
+        }
+    return bindings
 
 
 def _text_tail(value: str | None, limit: int = 4000) -> str:
@@ -208,8 +391,12 @@ def _text_tail(value: str | None, limit: int = 4000) -> str:
 def _resolve_binary(spec: dict[str, Any]) -> Path | None:
     env_name = str(spec.get("env") or "")
     env_value = str(os.environ.get(env_name, "")) if env_name else ""
-    values = [env_value] if env_value else []
-    values.extend(str(value) for value in spec.get("candidates") or [])
+    if env_value:
+        candidate = _repo_path(env_value)
+        return candidate if candidate.is_file() else None
+    values = _ordered_binary_candidates(
+        [str(value) for value in spec.get("candidates") or []]
+    )
     for value in values:
         if not value or (value.startswith("/home/") and os.name == "nt"):
             continue
@@ -219,8 +406,254 @@ def _resolve_binary(spec: dict[str, Any]) -> Path | None:
     return None
 
 
+def _requires_wsl_runtime(
+    manifest: dict[str, Any],
+    *,
+    platform_name: str | None = None,
+) -> bool:
+    """Return whether any resolved acceptance worker must run through WSL."""
+
+    platform = os.name if platform_name is None else platform_name
+    if platform != "nt":
+        return False
+    state_provider = str(
+        ((manifest.get("slam_runtime") or {}).get("provider") or "fastlio2")
+    ).strip().lower()
+    require_traversability = bool(
+        ((manifest.get("thresholds") or {}).get("require_traversability", True))
+    )
+    for name, raw_spec in (manifest.get("binaries") or {}).items():
+        if name == "slam" and state_provider == "mujoco_navigation_fixture":
+            continue
+        if name == "traversability" and not require_traversability:
+            continue
+        spec = raw_spec if isinstance(raw_spec, dict) else {}
+        binary = _resolve_binary(spec)
+        if binary is not None and binary.suffix.lower() != ".exe":
+            return True
+    return False
+
+
 def _native_command(binary: Path, *args: str) -> list[str]:
     return _linux_binary_command(binary, *args)
+
+
+def _with_native_env(
+    command: list[str],
+    **values: str,
+) -> tuple[list[str], Mapping[str, str]]:
+    """Inject process-local identity while preserving Linux/WSL command style."""
+
+    assignments = {name: str(value) for name, value in values.items()}
+    if os.name == "nt" and len(command) >= 3 and command[1] == "-e":
+        env_args = [f"{name}={value}" for name, value in assignments.items()]
+        return [*command[:2], "env", *env_args, *command[2:]], {}
+    if os.name != "nt":
+        env_args = [f"{name}={value}" for name, value in assignments.items()]
+        return ["env", *env_args, *command], {}
+    return list(command), assignments
+
+
+@dataclass(frozen=True)
+class NativeDriverRuntimeLaunch:
+    host_boot_id: str
+    clock_platform: str
+    navigation_command: tuple[str, ...]
+    navigation_env: Mapping[str, str]
+    driver_bridge_args: tuple[str, ...]
+
+
+def _native_driver_runtime_launch(
+    *,
+    manifest: dict[str, Any],
+    navigation_binary: Path,
+    driver_bridge_binary: Path,
+    navigation_command: Sequence[str],
+    driver_bridge_pid: Path,
+    host_boot_id: str | None = None,
+    platform_name: str | None = None,
+    navigation_environment: Mapping[str, str] | None = None,
+) -> NativeDriverRuntimeLaunch:
+    """Bind navd and the physical MuJoCo driver bridge to one runtime identity."""
+
+    clock_platform = _validated_native_clock_platform(
+        navigation_binary,
+        driver_bridge_binary,
+        platform_name=platform_name,
+    )
+    identity = host_boot_id if host_boot_id is not None else secrets.token_hex(16)
+    if (
+        not isinstance(identity, str)
+        or not identity
+        or len(identity) > 128
+        or not identity.isascii()
+        or identity[0] not in _ASCII_ALNUM
+        or any(character not in _NATIVE_IDENTITY_CHARACTERS for character in identity)
+    ):
+        raise ValueError("native driver host boot identity must be one safe ASCII token")
+
+    config = manifest.get("driver_runtime")
+    if not isinstance(config, dict):
+        raise ValueError("driver_runtime must be an object")
+    expected_keys = {
+        "max_linear_mps",
+        "max_angular_rps",
+        "command_timeout_ms",
+        "heartbeat_timeout_ms",
+        "apply_timeout_ms",
+    }
+    if set(config) != expected_keys:
+        raise ValueError("driver_runtime must define the exact physical bridge contract")
+
+    def positive_finite(name: str) -> float:
+        value = config[name]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"driver_runtime.{name} must be a positive finite number")
+        result = float(value)
+        if not math.isfinite(result) or result <= 0.0:
+            raise ValueError(f"driver_runtime.{name} must be a positive finite number")
+        return result
+
+    def positive_timeout(name: str) -> int:
+        value = config[name]
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 60_000:
+            raise ValueError(f"driver_runtime.{name} must be an integer in [1, 60000]")
+        return value
+
+    max_linear_mps = positive_finite("max_linear_mps")
+    max_angular_rps = positive_finite("max_angular_rps")
+    command_timeout_ms = positive_timeout("command_timeout_ms")
+    heartbeat_timeout_ms = positive_timeout("heartbeat_timeout_ms")
+    apply_timeout_ms = positive_timeout("apply_timeout_ms")
+    environment_values = {
+        **dict(navigation_environment or {}),
+        "LINGTU_HOST_BOOT_ID": identity,
+    }
+    command, environment = _with_native_env(
+        list(navigation_command),
+        **environment_values,
+    )
+    bridge_args = (
+        "--driver-bridge-bin",
+        str(driver_bridge_binary),
+        "--driver-bridge-pid-file",
+        str(driver_bridge_pid),
+        "--driver-expected-host-boot-id",
+        identity,
+        "--driver-max-linear-mps",
+        f"{max_linear_mps:g}",
+        "--driver-max-angular-rps",
+        f"{max_angular_rps:g}",
+        "--driver-command-timeout-ms",
+        str(command_timeout_ms),
+        "--driver-heartbeat-timeout-ms",
+        str(heartbeat_timeout_ms),
+        "--driver-apply-timeout-ms",
+        str(apply_timeout_ms),
+    )
+    return NativeDriverRuntimeLaunch(
+        host_boot_id=identity,
+        clock_platform=clock_platform,
+        navigation_command=tuple(command),
+        navigation_env=dict(environment),
+        driver_bridge_args=bridge_args,
+    )
+
+
+def _native_map_identity(
+    *,
+    paths: dict[str, Path],
+    phase: str,
+    domain_id: int,
+    session_root: Path,
+) -> dict[str, str]:
+    """Resolve the native identity shared by Mapd and optional terrain."""
+
+    map_dir = paths.get("map_dir")
+    metadata = _load_json(paths.get("metadata", Path()))
+    map_id = str(
+        os.environ.get("LINGTU_MAP_ID")
+        or metadata.get("map_name")
+        or (map_dir.name if map_dir else "mujoco_map")
+    )
+    content_epoch = str(
+        os.environ.get("LINGTU_MAP_CONTENT_EPOCH")
+        or metadata.get("content_epoch")
+        or metadata.get("created_at")
+        or "1"
+    ).strip()
+    frame_id = str(
+        os.environ.get("LINGTU_MAP_FRAME")
+        or metadata.get("frame_id")
+        or metadata.get("frame")
+        or "map"
+    ).strip()
+    if (
+        not content_epoch
+        or content_epoch[0] not in "123456789"
+        or not content_epoch.isascii()
+        or not content_epoch.isdigit()
+    ):
+        raise ValueError("LINGTU_MAP_CONTENT_EPOCH must be a positive integer")
+    if not frame_id:
+        raise ValueError("LINGTU_MAP_FRAME must not be empty")
+    session_id = str(os.environ.get("LINGTU_PRODUCT_SESSION_ID") or "").strip()
+    if not session_id:
+        session_id = f"mujoco-native-{phase}-{int(domain_id)}-{time.time_ns()}"
+    return {
+        "LINGTU_PRODUCT_SESSION_ID": session_id,
+        "LINGTU_SESSION_ROOT": str(session_root.resolve()),
+        "LINGTU_MAP_ID": map_id,
+        "LINGTU_MAP_CONTENT_EPOCH": content_epoch,
+        "LINGTU_MAP_FRAME": frame_id,
+    }
+
+
+def _native_mapd_launch(
+    *,
+    binary: Path,
+    domain_id: int,
+    status_file: Path,
+    map_root: Path,
+    runtime: Mapping[str, Any],
+    environment: Mapping[str, str],
+) -> tuple[list[str], Mapping[str, str]]:
+    collision_cap = int(
+        runtime.get("max_collision_snapshot_points")
+        or environment.get("LINGTU_MAPD_MAX_COLLISION_SNAPSHOT_POINTS")
+        or 50000
+    )
+    command = _native_command(
+        binary,
+        "--domain-id",
+        str(domain_id),
+        "--status-file",
+        _native_path_arg(binary, status_file),
+        "--map-root",
+        _native_path_arg(binary, map_root),
+        "--disable-query",
+        "--state-hz",
+        str(float(runtime.get("state_hz") or 5.0)),
+        "--cloud-hz",
+        str(float(runtime.get("cloud_hz") or 5.0)),
+        "--map-hz",
+        str(float(runtime.get("map_hz") or 5.0)),
+        "--scene-hz",
+        str(float(runtime.get("scene_hz") or 2.0)),
+        "--max-points",
+        str(int(runtime.get("max_points") or 5000)),
+        "--max-collision-snapshot-points",
+        str(collision_cap),
+        "--min-range",
+        str(float(runtime.get("min_range_m") or 0.1)),
+        "--max-range",
+        str(float(runtime.get("max_range_m") or 12.0)),
+        "--decay-ms",
+        str(int(runtime.get("decay_ms") or 250)),
+        "--stale-ms",
+        str(int(runtime.get("stale_ms") or 1000)),
+    )
+    return _with_native_env(command, **dict(environment))
 
 
 def _probe_sensor_publisher(binary: Path) -> tuple[bool, str]:
@@ -229,20 +662,253 @@ def _probe_sensor_publisher(binary: Path) -> tuple[bool, str]:
         proc = subprocess.run(
             command,
             cwd=ROOT,
-            input="",
+            input=b"",
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            text=False,
             timeout=SENSOR_PUBLISHER_PROBE_TIMEOUT_S,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, f"{type(exc).__name__}:{exc}"
-    output = f"{proc.stdout or ''}\n{proc.stderr or ''}".strip()
+    output = "\n".join(
+        _decode_native_probe_output(value)
+        for value in (proc.stdout, proc.stderr)
+        if value
+    ).strip()
     if proc.returncode != 0 or "built without DDS support" in output:
         return False, output[-2000:]
     return True, output[-2000:]
+
+
+def _probe_wsl_runtime() -> tuple[bool, str]:
+    """Check the WSL control path before launching native acceptance workers."""
+
+    if os.name != "nt":
+        return True, "native_linux"
+    launcher = shutil.which("wsl.exe") or shutil.which("wsl")
+    if not launcher:
+        return False, "wsl_executable_missing"
+    try:
+        probe = subprocess.run(
+            [launcher, "-e", "true"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=False,
+            timeout=WSL_RUNTIME_PROBE_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"{type(exc).__name__}:{exc}"
+    output = "\n".join(
+        _decode_native_probe_output(value)
+        for value in (probe.stdout, probe.stderr)
+        if value
+    ).strip()
+    if probe.returncode != 0:
+        return False, output[-2000:] or f"wsl_exit_{probe.returncode}"
+    return True, output[-2000:] or "ready"
+
+
+def _decode_native_probe_output(value: bytes | str | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if b"\x00" in value:
+        mixed_boundary = None
+        for index in range(1, max(1, len(value) - 7)):
+            suffix = value[index : index + 8]
+            if len(suffix) == 8 and b"\x00" not in suffix and all(
+                byte in {9, 10, 13} or 32 <= byte < 127 for byte in suffix
+            ):
+                mixed_boundary = index
+                break
+        prefix = value if mixed_boundary is None else value[:mixed_boundary]
+        suffix = b"" if mixed_boundary is None else value[mixed_boundary:]
+        candidate = prefix[:-1] if len(prefix) % 2 else prefix
+        try:
+            decoded = candidate.decode("utf-16-le").lstrip("\ufeff").rstrip("\x00")
+            if suffix:
+                decoded += suffix.decode("utf-8", errors="replace")
+            return decoded
+        except UnicodeDecodeError:
+            pass
+    return value.decode("utf-8", errors="replace")
+
+
+def _artifact_storage_probe(out_dir: Path) -> tuple[bool, str]:
+    """Classify where high-rate native acceptance artifacts will be written."""
+
+    if os.name != "nt":
+        return True, "native_filesystem"
+    resolved = Path(out_dir).expanduser().resolve()
+    drive = str(resolved.drive).replace("/", "\\").lower()
+    if (
+        drive.startswith("\\\\?\\unc\\wsl.localhost\\")
+        or drive.startswith("\\\\wsl.localhost\\")
+        or drive.startswith("\\\\wsl$\\")
+    ):
+        return True, "wsl_ext4_unc"
+    if len(drive) == 2 and drive[1] == ":":
+        return False, "windows_9p_mount"
+    return False, "windows_non_ext4_path"
+
+
+def _navigation_affinity_masks(
+    plan: WindowsCpuIsolationPlan,
+    topology: WindowsCpuTopology | None,
+    physical_cores: int,
+) -> tuple[int, int]:
+    """Give navd whole cores while retaining MuJoCo and one support core."""
+
+    if isinstance(physical_cores, bool) or not isinstance(physical_cores, int) or physical_cores <= 0:
+        raise ValueError("windows_navigation_physical_cores must be a positive integer")
+    if physical_cores > len(plan.unreal_core_ids):
+        raise ValueError(
+            "windows_navigation_physical_cores must leave one non-MuJoCo support core"
+        )
+    if physical_cores == 1:
+        return (
+            plan.owner_thread_affinity_mask,
+            plan.mujoco_affinity_mask | plan.unreal_affinity_mask,
+        )
+    if topology is None:
+        raise ValueError("Windows CPU topology is required for multi-core navigation affinity")
+    by_id = {core.core_id: core for core in topology.cores}
+    available: list[WindowsPhysicalCore] = [
+        by_id[core_id] for core_id in plan.unreal_core_ids if core_id in by_id
+    ]
+    if len(available) != len(plan.unreal_core_ids):
+        raise ValueError("Windows CPU topology changed while resolving acceptance affinity")
+    available.sort(key=lambda core: (-core.efficiency_class, core.core_id))
+    extra = available[: physical_cores - 1]
+    navigation_mask = plan.owner_thread_affinity_mask
+    for core in extra:
+        navigation_mask |= core.affinity_mask
+    support_mask = (plan.mujoco_affinity_mask | plan.unreal_affinity_mask) & ~navigation_mask
+    return navigation_mask, support_mask
+
+
+def _windows_acceptance_affinity_masks(
+    manifest: Mapping[str, Any],
+) -> tuple[int | None, int | None]:
+    """Reserve whole, non-overlapping cores for navd and simulation support."""
+
+    enabled = manifest.get("windows_cpu_isolation", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("windows_cpu_isolation must be boolean")
+    if os.name != "nt" or not enabled:
+        return None, None
+    plan = resolve_windows_cpu_isolation(WindowsCpuIsolationConfig())
+    physical_cores = manifest.get("windows_navigation_physical_cores", 1)
+    if physical_cores == 1:
+        return _navigation_affinity_masks(plan, None, physical_cores)
+    return _navigation_affinity_masks(
+        plan,
+        discover_windows_cpu_topology(),
+        physical_cores,
+    )
+
+
+def _navigation_smoother_environment(
+    runtime: Mapping[str, Any],
+) -> dict[str, str]:
+    enabled = runtime.get("velocity_smoother_enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("navigation_runtime.velocity_smoother_enabled must be boolean")
+    environment = {
+        "LINGTU_NAV_SMOOTHER_ENABLED": "true" if enabled else "false",
+    }
+    raw = runtime.get("velocity_smoother") or {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("navigation_runtime.velocity_smoother must be an object")
+    if not raw:
+        return environment
+
+    scale_velocities = raw.get("scale_velocities", False)
+    if not isinstance(scale_velocities, bool):
+        raise ValueError("navigation_runtime.velocity_smoother.scale_velocities must be boolean")
+    environment["LINGTU_NAV_SMOOTHER_SCALE_VELOCITIES"] = (
+        "true" if scale_velocities else "false"
+    )
+
+    numeric_environment = {
+        "linear_min_mps": (
+            "LINGTU_NAV_SMOOTHER_X_MIN_MPS",
+            "LINGTU_NAV_SMOOTHER_Y_MIN_MPS",
+        ),
+        "linear_max_mps": (
+            "LINGTU_NAV_SMOOTHER_X_MAX_MPS",
+            "LINGTU_NAV_SMOOTHER_Y_MAX_MPS",
+        ),
+        "linear_acceleration_mps2": (
+            "LINGTU_NAV_SMOOTHER_X_ACCEL_MPS2",
+            "LINGTU_NAV_SMOOTHER_Y_ACCEL_MPS2",
+        ),
+        "linear_deceleration_mps2": (
+            "LINGTU_NAV_SMOOTHER_X_DECEL_MPS2",
+            "LINGTU_NAV_SMOOTHER_Y_DECEL_MPS2",
+        ),
+        "yaw_min_radps": ("LINGTU_NAV_SMOOTHER_YAW_MIN_RADPS",),
+        "yaw_max_radps": ("LINGTU_NAV_SMOOTHER_YAW_MAX_RADPS",),
+        "yaw_acceleration_radps2": (
+            "LINGTU_NAV_SMOOTHER_YAW_ACCEL_RADPS2",
+        ),
+        "yaw_deceleration_radps2": (
+            "LINGTU_NAV_SMOOTHER_YAW_DECEL_RADPS2",
+        ),
+    }
+    unknown = set(raw) - {"scale_velocities", *numeric_environment}
+    if unknown:
+        raise ValueError(
+            "unsupported navigation_runtime.velocity_smoother fields: "
+            + ", ".join(sorted(str(name) for name in unknown))
+        )
+    for name, environment_names in numeric_environment.items():
+        if name not in raw:
+            continue
+        value = raw[name]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(
+                f"navigation_runtime.velocity_smoother.{name} must be finite"
+            )
+        resolved = float(value)
+        if not math.isfinite(resolved):
+            raise ValueError(
+                f"navigation_runtime.velocity_smoother.{name} must be finite"
+            )
+        for environment_name in environment_names:
+            environment[environment_name] = f"{resolved:g}"
+    return environment
+
+
+def _scan_follower_environment(runtime: Mapping[str, Any]) -> dict[str, str]:
+    raw = runtime.get("scan_follower") or {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("navigation_runtime.scan_follower must be an object")
+    fields = {
+        "time_forward_s": "LINGTU_NAV_SCAN_TIME_FORWARD_S",
+        "heading_error_rad": "LINGTU_NAV_SCAN_HEADING_ERROR_RAD",
+        "position_gain": "LINGTU_NAV_SCAN_POSITION_GAIN",
+        "yaw_gain": "LINGTU_NAV_SCAN_YAW_GAIN",
+        "max_vx_mps": "LINGTU_NAV_SCAN_MAX_VX_MPS",
+        "max_vy_mps": "LINGTU_NAV_SCAN_MAX_VY_MPS",
+        "max_yaw_rate_rad_s": "LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S",
+    }
+    environment: dict[str, str] = {}
+    positive = {"time_forward_s", "max_vx_mps", "max_vy_mps"}
+    for key, env_name in fields.items():
+        if key not in raw:
+            continue
+        value = float(raw[key])
+        if (
+            not math.isfinite(value)
+            or value < 0.0
+            or (key in positive and value == 0.0)
+        ):
+            raise ValueError("navigation_runtime.scan_follower values are inconsistent")
+        environment[env_name] = f"{value:g}"
+    return environment
 
 
 @dataclass
@@ -250,28 +916,67 @@ class ManagedProcess:
     name: str
     command: list[str]
     log_path: Path
+    env: Mapping[str, str] | None = None
+    affinity_mask: int | None = None
     process: subprocess.Popen[str] | None = None
     _log: Any = None
     linux_pid: int | None = None
     pid_path: Path | None = None
     cleanup: dict[str, Any] = field(default_factory=dict)
+    _process_owner: ProcessTreeOwner | None = field(
+        default=None, init=False, repr=False
+    )
 
     def start(self) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self._log = self.log_path.open("w", encoding="utf-8")
+        self._process_owner = (
+            ProcessTreeOwner(affinity_mask=self.affinity_mask)
+            if self.affinity_mask is not None
+            else ProcessTreeOwner()
+        )
         launch_command = self.command
         if os.name == "nt" and len(self.command) >= 3 and self.command[1] == "-e":
             self.pid_path = self.log_path.with_suffix(".pid")
             launch_command = _managed_wsl_command(self.command, self.pid_path)
-        self.process = subprocess.Popen(
-            launch_command,
-            cwd=ROOT,
-            stdout=self._log,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        if self.pid_path is not None:
-            self.linux_pid = _read_linux_pid(self.pid_path)
+        if self._uses_windows_console_group():
+            popen_options = dict(
+                self._process_owner.popen_options(
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+                )
+            )
+        else:
+            popen_options = dict(self._process_owner.popen_options())
+        if self.env:
+            inherited = dict(os.environ)
+            inherited.update(self.env)
+            popen_options["env"] = inherited
+        try:
+            self.process = subprocess.Popen(
+                launch_command,
+                cwd=ROOT,
+                stdout=self._log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                **popen_options,
+            )
+            self._process_owner.attach(self.process)
+            if self.pid_path is not None:
+                self.linux_pid = _read_linux_pid(self.pid_path)
+                if self.linux_pid is None:
+                    raise RuntimeError(
+                        f"WSL process ownership handshake failed: {self.name}"
+                    )
+        except Exception:
+            if self.process is not None:
+                self._process_owner.terminate(self.process, timeout_s=2.0)
+                self.process = None
+            else:
+                self._process_owner.close()
+            self._process_owner = None
+            self._log.close()
+            self._log = None
+            raise
 
     def poll(self) -> int | None:
         return self.process.poll() if self.process is not None else None
@@ -281,32 +986,84 @@ class ManagedProcess:
             raise RuntimeError(f"process was not started: {self.name}")
         return int(self.process.wait(timeout=max(0.1, timeout_s)))
 
-    def stop(self) -> None:
-        alive_before = _wsl_pid_alive(self.linux_pid)
-        if alive_before:
-            _signal_wsl_pid(self.linux_pid, "TERM")
-            if not _wait_wsl_pid_exit(self.linux_pid, 3.0):
-                _signal_wsl_pid(self.linux_pid, "KILL")
-                _wait_wsl_pid_exit(self.linux_pid, 1.0)
-        if self.process is not None and self.process.poll() is None:
+    def _uses_windows_console_group(self) -> bool:
+        return (
+            os.name == "nt"
+            and self.pid_path is None
+            and any(
+                argument in {"operator-motion", "teleop-stream"}
+                for argument in self.command[1:3]
+            )
+        )
+
+    def _owned_process_alive(self) -> bool:
+        if self.linux_pid is not None:
+            return _wsl_pid_alive(self.linux_pid)
+        return self.process is not None and self.process.poll() is None
+
+    def request_graceful_stop(self) -> bool:
+        """Ask the owned runtime to clean up its authority before escalation."""
+
+        if not self._owned_process_alive():
+            return False
+        try:
+            if self.linux_pid is not None:
+                return bool(_signal_wsl_pid(self.linux_pid, "TERM"))
+            if self.process is None:
+                return False
+            if self._uses_windows_console_group():
+                self.process.send_signal(signal.CTRL_BREAK_EVENT)
+            else:
+                self.process.terminate()
+            return True
+        except (OSError, ValueError):
+            return False
+
+    def stop(self, *, graceful_timeout_s: float = 3.0) -> None:
+        alive_before = self._owned_process_alive()
+        graceful_signal_sent = self.request_graceful_stop()
+        graceful_exit = not alive_before
+        if graceful_signal_sent and self.linux_pid is not None:
+            graceful_exit = _wait_wsl_pid_exit(
+                self.linux_pid, max(0.0, float(graceful_timeout_s))
+            )
+        elif graceful_signal_sent and self.process is not None:
+            try:
+                self.process.wait(timeout=max(0.1, float(graceful_timeout_s)))
+                graceful_exit = True
+            except subprocess.TimeoutExpired:
+                graceful_exit = False
+
+        hard_cleanup_used = self.process is not None and self.process.poll() is None
+        if self.process is not None and self._process_owner is not None:
+            self._process_owner.terminate(self.process, timeout_s=2.0)
+        elif self.process is not None and self.process.poll() is None:
             self.process.terminate()
             try:
                 self.process.wait(timeout=2.0)
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait(timeout=1.0)
+        if self._process_owner is not None:
+            self._process_owner.close_after_exit()
+            self._process_owner = None
         if self._log is not None:
             self._log.close()
             self._log = None
-        alive_after = _wsl_pid_alive(self.linux_pid)
+        alive_after = self._owned_process_alive()
         self.cleanup = {
             "name": self.name,
             "linux_pid": self.linux_pid,
             "pid_file": str(self.pid_path or ""),
             "alive_before_cleanup": alive_before,
             "alive_after_cleanup": alive_after,
+            "graceful_signal_sent": graceful_signal_sent,
+            "graceful_exit": graceful_exit,
+            "hard_cleanup_used": hard_cleanup_used,
             "clean": not alive_after,
-            "relay_returncode": self.process.poll() if self.process is not None else None,
+            "relay_returncode": (
+                self.process.poll() if self.process is not None else None
+            ),
         }
 
     def tail(self, limit: int = 5000) -> str:
@@ -615,25 +1372,32 @@ def _validate_map(manifest: dict[str, Any]) -> tuple[dict[str, Path], list[str],
     provenance: dict[str, Any] = {}
     metadata = _load_json(paths["metadata"]) if paths["metadata"].is_file() else {}
     if metadata and paths["slam"].is_file() and paths["planner"].is_file():
-        map_hash = _sha256(paths["slam"])
-        planner_hash = _sha256(paths["planner"])
-        expected_map = str(((metadata.get("artifacts") or {}).get("map_pcd") or {}).get("sha256") or "")
+        artifacts = metadata.get("artifacts") or {}
+        map_pcd = artifacts.get("map_pcd") or {}
         octomap = (metadata.get("artifacts") or {}).get("octomap") or {}
-        expected_planner = str(octomap.get("sha256") or "")
-        expected_source = str(octomap.get("source_map_sha256") or "")
+        metadata_frame = str(metadata.get("frame_id") or "").strip()
+        map_frame = str(map_pcd.get("frame_id") or "").strip()
+        planner_frame = str(octomap.get("frame_id") or "").strip()
         provenance = {
-            "map_sha256": map_hash,
-            "planner_sha256": planner_hash,
-            "metadata_map_sha256": expected_map,
-            "metadata_planner_sha256": expected_planner,
-            "metadata_planner_source_sha256": expected_source,
+            "map_exists": paths["slam"].is_file(),
+            "map_format_ok": paths["slam"].stat().st_size > 0,
+            "planner_exists": paths["planner"].is_file(),
+            "planner_format_ok": paths["planner"].stat().st_size > 0,
+            "metadata_frame_id": metadata_frame,
         }
-        if expected_map and expected_map != map_hash:
-            blockers.append("map_metadata_hash_mismatch")
-        if expected_planner and expected_planner != planner_hash:
-            blockers.append("octomap_metadata_hash_mismatch")
-        if expected_source and expected_source != map_hash:
-            blockers.append("octomap_not_derived_from_selected_map")
+        if not provenance["map_format_ok"]:
+            blockers.append("map_format_invalid")
+        if not provenance["planner_format_ok"]:
+            blockers.append("octomap_format_invalid")
+        if not metadata_frame or map_frame != metadata_frame or planner_frame != metadata_frame:
+            blockers.append("map_artifact_metadata_inconsistent")
+        identity = manifest.get("source_identity") or {}
+        expected_identity = identity.get("map_artifacts") or {}
+        actual_schema = str(metadata.get("schema_version") or "")
+        provenance["metadata_schema"] = actual_schema
+        declared_schema = str(expected_identity.get("metadata_schema") or "")
+        if declared_schema and declared_schema != actual_schema:
+            blockers.append("selected_map_metadata_schema_mismatch")
     return paths, blockers, provenance
 
 
@@ -662,6 +1426,10 @@ def _run_saved_map_asset_builder(
         str(spec.get("map_source") or "mujoco_lidar"),
         "--skip-plan",
     ]
+    if "support_dilation_cells" in spec:
+        arguments.extend(
+            ["--support-dilation-cells", str(int(spec["support_dilation_cells"]))]
+        )
     if str(spec.get("map_source") or "mujoco_lidar") == "mujoco_lidar":
         arguments.extend(
             [
@@ -691,12 +1459,37 @@ def _prepare_acceptance_assets(
     world_path = _repo_path(world_value) if world_value else None
     _, map_blockers, _ = _validate_map(manifest)
     if world_path is not None and world_path.is_file() and not map_blockers:
+        from sim.scripts.mujoco.comparison_scene import (
+            build_comparison_scene,
+            is_comparison_scene,
+        )
+
+        effective_world = world_path
+        presentation: dict[str, Any] = {
+            "applied": False,
+            "reason": "not_formal_comparison_scene",
+        }
+        if is_comparison_scene(world_path):
+            effective_world = build_comparison_scene(
+                world_path,
+                out_dir / "prepared_assets" / "cmu_scan_comparison_scene.xml",
+            )
+            manifest["world"] = str(effective_world)
+            presentation = {
+                "applied": True,
+                "source_scene": str(world_path),
+                "effective_scene": str(effective_world),
+                "collision_geometry": "preserved_from_source",
+                "display_geometry_group": 5,
+                "product_lidar_groups": [0, 1],
+            }
         return {
             "attempted": False,
             "ok": True,
             "reason": "configured_assets_ready",
-            "scene_xml": str(world_path),
+            "scene_xml": str(effective_world),
             "map_dir": str(_repo_path(str(manifest.get("map_dir") or ""))),
+            "presentation": presentation,
         }
 
     spec = manifest.get("asset_builder") or {}
@@ -784,8 +1577,13 @@ def _preflight_runtime(
     state_provider = str(
         ((manifest.get("slam_runtime") or {}).get("provider") or "fastlio2")
     ).strip().lower()
+    require_traversability = bool(
+        ((manifest.get("thresholds") or {}).get("require_traversability", True))
+    )
     for name, raw_spec in (manifest.get("binaries") or {}).items():
         if name == "slam" and state_provider == "mujoco_navigation_fixture":
+            continue
+        if name == "traversability" and not require_traversability:
             continue
         spec = raw_spec if isinstance(raw_spec, dict) else {}
         binary = _resolve_binary(spec)
@@ -793,6 +1591,14 @@ def _preflight_runtime(
             blockers.append(f"native_binary_missing:{name}")
         else:
             binaries[str(name)] = binary
+    if "navigation" in binaries and "driver_bridge" in binaries:
+        try:
+            _validated_native_clock_platform(
+                binaries["navigation"],
+                binaries["driver_bridge"],
+            )
+        except ValueError:
+            blockers.append("native_driver_clock_platform_mismatch")
     if "sensor_publisher" in binaries:
         publisher_ok, publisher_probe = _probe_sensor_publisher(binaries["sensor_publisher"])
         if not publisher_ok:
@@ -803,9 +1609,12 @@ def _preflight_runtime(
 
     paths_cfg = manifest.get("paths") or {}
     paths = {
-        "path_library": _repo_path(str(paths_cfg.get("path_library") or "")),
         "sensor_runner": _repo_path(str(paths_cfg.get("sensor_runner") or "")),
     }
+    if _local_planner_backend(manifest) == "cmu":
+        paths["path_library"] = _repo_path(
+            str(paths_cfg.get("path_library") or "")
+        )
     if state_provider != "mujoco_navigation_fixture":
         paths["slam_config"] = _repo_path(str(paths_cfg.get("slam_config") or ""))
     for name, path in paths.items():
@@ -835,13 +1644,105 @@ def _preflight_runtime(
     policy = (
         _repo_path(policy_value)
         if policy_value
-        else ROOT / "sim" / "robots" / "thunderv4" / "policy" / "pose_flat_low_kpkd_microterrain_model29600_policy.onnx"
+        else DEFAULT_THUNDERV4_ONNX_POLICY
     )
     paths["policy"] = policy
     if not policy.is_file():
         blockers.append(f"thunderv4_policy_missing:{policy}")
+    driver_bridge = binaries.get("driver_bridge")
+    if driver_bridge is not None:
+        provenance["driver_bridge"] = {
+            "path": str(driver_bridge),
+        }
     provenance.update(provenance_probe)
     return binaries, paths, blockers, provenance
+
+
+def _mirror_native_runtime_inputs(
+    paths: dict[str, Path],
+    out_dir: Path,
+) -> tuple[dict[str, Path], dict[str, Any]]:
+    """Keep native read-heavy inputs on the same Linux filesystem as workers.
+
+    On Windows the native processes run inside WSL.  Passing repository paths
+    through ``/mnt/<drive>`` is a 9p access path and makes octomap planning and
+    path-library lookup contend with the control loop.  The supervisor owns a
+    per-run ext4 mirror; source files remain untouched and all provenance stays
+    visible in the acceptance report.
+    """
+
+    if os.name != "nt":
+        return paths, {"enabled": False, "reason": "native_linux"}
+    storage_ok, storage_detail = _artifact_storage_probe(out_dir)
+    if not storage_ok:
+        return paths, {
+            "enabled": False,
+            "reason": storage_detail,
+            "ok": False,
+        }
+
+    mirror_root = (out_dir / "native_assets").resolve()
+    mirrored = dict(paths)
+    sources: dict[str, str] = {}
+    destinations: dict[str, str] = {}
+
+    def copy_file(name: str, source: Path, destination: Path) -> None:
+        source = source.resolve()
+        destination = destination.resolve()
+        if not source.is_file():
+            return
+        try:
+            destination.relative_to(source)
+        except ValueError:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+        mirrored[name] = destination
+        sources[name] = str(source)
+        destinations[name] = str(destination)
+
+    map_dir = paths.get("map_dir")
+    if map_dir is not None and map_dir.is_dir():
+        source_map = map_dir.resolve()
+        destination_map = (mirror_root / "map").resolve()
+        if source_map != destination_map:
+            shutil.copytree(source_map, destination_map, dirs_exist_ok=True)
+        mirrored["map_dir"] = destination_map
+        sources["map_dir"] = str(source_map)
+        destinations["map_dir"] = str(destination_map)
+        for name in ("slam", "planner", "metadata"):
+            source = paths.get(name)
+            if source is None:
+                continue
+            try:
+                relative = source.resolve().relative_to(source_map)
+            except ValueError:
+                continue
+            mirrored[name] = destination_map / relative
+            sources[name] = str(source.resolve())
+            destinations[name] = str((destination_map / relative).resolve())
+
+    path_library = paths.get("path_library")
+    if path_library is not None and path_library.is_dir():
+        source_library = path_library.resolve()
+        destination_library = (mirror_root / "path_library").resolve()
+        if source_library != destination_library:
+            shutil.copytree(source_library, destination_library, dirs_exist_ok=True)
+        mirrored["path_library"] = destination_library
+        sources["path_library"] = str(source_library)
+        destinations["path_library"] = str(destination_library)
+
+    slam_config = paths.get("slam_config")
+    if slam_config is not None:
+        copy_file("slam_config", slam_config, mirror_root / "slam_config.yaml")
+
+    return mirrored, {
+        "enabled": True,
+        "ok": True,
+        "filesystem": storage_detail,
+        "root": str(mirror_root),
+        "sources": sources,
+        "destinations": destinations,
+    }
 
 
 def _preflight(
@@ -861,7 +1762,7 @@ def _preflight_map_free(
 
 
 def _build_helper() -> dict[str, Any]:
-    source = ROOT / "sim" / "native_dds"
+    source = ROOT / "sim" / "adapters" / "dds"
     build = ROOT / "build" / "mujoco_native_dds"
     commands = (
         [
@@ -977,11 +1878,13 @@ def _wait_for_startup(
     nav_status: Path,
     slam_status: Path,
     traversability_status: Path,
+    mapd_status: Path,
     timeout_s: float,
     thresholds: dict[str, Any],
 ) -> tuple[bool, str]:
     deadline = time.monotonic() + max(0.1, timeout_s)
     required_stable_s = max(0.0, float(thresholds.get("startup_ready_stable_s") or 0.0))
+    require_traversability = bool(thresholds.get("require_traversability", True))
     ready_since_s: float | None = None
     while time.monotonic() < deadline:
         evidence.sample(
@@ -995,6 +1898,7 @@ def _wait_for_startup(
         slam = evidence.last_slam
         nav = evidence.last_nav
         traversability = evidence.last_traversability
+        mapd = _load_json(mapd_status)
         slam_readiness = _slam_navigation_readiness(
             slam=slam,
             nav=nav,
@@ -1005,11 +1909,28 @@ def _wait_for_startup(
             if slam_readiness == "mujoco_navigation_fixture"
             else True
         )
+        control_loop = nav.get("control_loop_health") or {}
+        control_loop_ready = bool(control_loop.get("ready")) and bool(
+            control_loop.get("healthy")
+        )
         runtime_ready = (
             slam_readiness is not None
             and bool(nav.get("has_odom"))
             and fixture_gate_ready
-            and int((traversability.get("counters") or {}).get("published") or 0) > 0
+            and control_loop_ready
+            and (
+                not require_traversability
+                or int((traversability.get("counters") or {}).get("published") or 0) > 0
+            )
+            and mapd.get("ready") is True
+            and mapd.get("live") is True
+            and int(mapd.get("accepted_observations") or 0) > 0
+            and int(mapd.get("map_layers_published_generation") or 0) > 0
+            and int(
+                (((nav.get("local_map") or {}).get("collision") or {}).get("generation"))
+                or 0
+            )
+            > 0
         )
         if runtime_ready:
             now_s = time.monotonic()
@@ -1060,6 +1981,61 @@ def _goal_command(
     }
 
 
+def _resume_command(
+    binary: Path,
+    domain_id: int,
+    timeout_s: float,
+) -> dict[str, Any]:
+    timeout_ms = max(1000, int(math.ceil(float(timeout_s) * 1000.0)))
+    command = _native_command(
+        binary,
+        "resume",
+        "mujoco_acceptance_startup",
+        "--domain-id",
+        str(domain_id),
+        "--timeout-ms",
+        str(timeout_ms),
+    )
+    proc = subprocess.run(
+        command,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=max(5.0, float(timeout_s) + 5.0),
+        check=False,
+    )
+    return {
+        "command": command,
+        "returncode": proc.returncode,
+        "stdout": _text_tail(proc.stdout),
+        "stderr": _text_tail(proc.stderr),
+    }
+
+
+def _resume_when_ready(
+    binary: Path,
+    domain_id: int,
+    timeout_s: float,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + min(3.0, max(0.1, float(timeout_s)))
+    attempts: list[dict[str, Any]] = []
+    while True:
+        result = _resume_command(binary, domain_id, timeout_s)
+        attempts.append(dict(result))
+        diagnostic = f"{result.get('stdout') or ''}\n{result.get('stderr') or ''}"
+        if (
+            int(result.get("returncode") or 0) == 0
+            or "control_loop_recovery_pending" not in diagnostic
+            or time.monotonic() >= deadline
+        ):
+            outcome = dict(result)
+            outcome["attempts"] = attempts
+            return outcome
+        time.sleep(0.1)
+
+
 def _deferred_goal_command(
     binary: Path,
     goal: list[float],
@@ -1108,13 +2084,169 @@ def _goal_metrics(sensor_report: dict[str, Any], goal: list[float]) -> dict[str,
         return {"available": False}
     start_distance = math.hypot(float(goal[0]) - float(start[0]), float(goal[1]) - float(start[1]))
     end_distance = math.hypot(float(goal[0]) - float(end[0]), float(goal[1]) - float(end[1]))
-    return {
+    metrics = {
         "available": True,
         "start_distance_m": start_distance,
         "end_distance_m": end_distance,
+        "start_error_xy_m": start_distance,
+        "end_error_xy_m": end_distance,
         "distance_reduction_m": start_distance - end_distance,
+        "net_displacement_xy_m": math.hypot(
+            float(end[0]) - float(start[0]),
+            float(end[1]) - float(start[1]),
+        ),
         "sim_path_length_xy_m": float(motion.get("sim_path_length_xy_m") or 0.0),
     }
+    if len(goal) >= 3 and len(start) >= 3 and len(end) >= 3:
+        start_z_error = abs(float(goal[2]) - float(start[2]))
+        end_z_error = abs(float(goal[2]) - float(end[2]))
+        start_3d_error = math.hypot(start_distance, start_z_error)
+        end_3d_error = math.hypot(end_distance, end_z_error)
+        metrics.update(
+            {
+                "start_error_z_m": start_z_error,
+                "end_error_z_m": end_z_error,
+                "start_error_3d_m": start_3d_error,
+                "end_error_3d_m": end_3d_error,
+                "distance_reduction_3d_m": start_3d_error - end_3d_error,
+            }
+        )
+    return metrics
+
+
+def _percentile(values: list[float], percentile: float) -> float:
+    ordered = sorted(values)
+    if not ordered:
+        return math.inf
+    position = (len(ordered) - 1) * max(0.0, min(100.0, percentile)) / 100.0
+    lower = int(math.floor(position))
+    upper = int(math.ceil(position))
+    if lower == upper:
+        return ordered[lower]
+    fraction = position - lower
+    return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
+
+
+def _point_to_segment_distance(
+    point: tuple[float, ...],
+    start: tuple[float, ...],
+    end: tuple[float, ...],
+) -> float:
+    delta = tuple(end[index] - start[index] for index in range(len(point)))
+    length_squared = sum(value * value for value in delta)
+    if length_squared <= 1e-12:
+        return math.sqrt(
+            sum((point[index] - start[index]) ** 2 for index in range(len(point)))
+        )
+    projection = sum(
+        (point[index] - start[index]) * delta[index]
+        for index in range(len(point))
+    ) / length_squared
+    projection = max(0.0, min(1.0, projection))
+    return math.sqrt(
+        sum(
+            (
+                point[index]
+                - (start[index] + projection * delta[index])
+            )
+            ** 2
+            for index in range(len(point))
+        )
+    )
+
+
+def _polyline_distance(point: tuple[float, ...], raw_path: Any) -> float | None:
+    path: list[tuple[float, ...]] = []
+    for raw_point in raw_path if isinstance(raw_path, list) else []:
+        if not isinstance(raw_point, list) or len(raw_point) < len(point):
+            continue
+        try:
+            candidate = tuple(float(raw_point[index]) for index in range(len(point)))
+        except (TypeError, ValueError):
+            continue
+        if all(math.isfinite(value) for value in candidate):
+            path.append(candidate)
+    if len(path) < 2:
+        return None
+    return min(
+        _point_to_segment_distance(point, start, end)
+        for start, end in zip(path, path[1:])
+    )
+
+
+def _trajectory_tracking_metrics(motion_log: Path) -> dict[str, Any]:
+    xy_errors: list[float] = []
+    errors_3d: list[float] = []
+    sample_times: list[float] = []
+    if not motion_log.is_file():
+        return {"available": False, "samples": 0}
+    for line in motion_log.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+            if not isinstance(row, dict) or not bool(row.get("driving")):
+                continue
+            point_xy = (float(row["x"]), float(row["y"]))
+            point_3d = (point_xy[0], point_xy[1], float(row["z"]))
+            timestamp = float(row.get("sim_time_s"))
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not all(math.isfinite(value) for value in (*point_3d, timestamp)):
+            continue
+        xy_error = _polyline_distance(point_xy, row.get("local_path"))
+        error_3d = _polyline_distance(point_3d, row.get("local_path"))
+        if xy_error is None:
+            continue
+        xy_errors.append(xy_error)
+        if error_3d is not None:
+            errors_3d.append(error_3d)
+        sample_times.append(timestamp)
+    if not xy_errors:
+        return {"available": False, "samples": 0}
+    result = {
+        "available": True,
+        "samples": len(xy_errors),
+        "elapsed_s": max(sample_times) - min(sample_times),
+        "rmse_xy_m": math.sqrt(sum(value * value for value in xy_errors) / len(xy_errors)),
+        "p95_xy_error_m": _percentile(xy_errors, 95.0),
+        "max_xy_error_m": max(xy_errors),
+    }
+    if errors_3d:
+        result.update(
+            {
+                "rmse_3d_m": math.sqrt(
+                    sum(value * value for value in errors_3d) / len(errors_3d)
+                ),
+                "p95_3d_error_m": _percentile(errors_3d, 95.0),
+                "max_3d_error_m": max(errors_3d),
+            }
+        )
+    return result
+
+
+def _mujoco_truth_speed_blocker(
+    sensor_report: Mapping[str, Any],
+    thresholds: Mapping[str, Any],
+) -> str | None:
+    required = thresholds.get("min_mujoco_truth_peak_xy_speed_mps")
+    if required is None:
+        return None
+    observed = (sensor_report.get("mujoco_truth_velocity") or {}).get(
+        "max_xy_speed_mps"
+    )
+    try:
+        required_speed = float(required)
+        observed_speed = float(observed)
+    except (TypeError, ValueError):
+        return "mujoco_truth_speed_evidence_missing"
+    if not math.isfinite(required_speed) or required_speed < 0.0:
+        raise ValueError(
+            "thresholds.min_mujoco_truth_peak_xy_speed_mps must be finite and non-negative"
+        )
+    if not math.isfinite(observed_speed):
+        return "mujoco_truth_speed_evidence_missing"
+    if observed_speed + 1e-9 < required_speed:
+        return "mujoco_truth_peak_xy_speed_below_threshold"
+    return None
 
 
 def _planner_constraint_args(manifest: dict[str, Any]) -> list[str]:
@@ -1165,6 +2297,70 @@ def _planner_constraint_args(manifest: dict[str, Any]) -> list[str]:
     return arguments
 
 
+def _path_follower_args(runtime: Mapping[str, Any]) -> list[str]:
+    options = {
+        "route_snap_m": ("--waypoint-reached-m", 0.0, True),
+        "goal_reached_m": ("--goal-reached-m", 0.0, True),
+        "path_follower_goal_tolerance_m": ("--path-follower-goal-tolerance-m", 0.0, False),
+        "path_follower_lookahead_m": ("--path-follower-lookahead-m", 0.0, True),
+        "path_follower_max_accel_mps2": ("--path-follower-max-accel-mps2", 0.0, True),
+        "path_follower_max_speed_mps": ("--path-follower-max-speed-mps", 0.0, True),
+        "path_follower_min_speed_mps": ("--path-follower-min-speed-mps", 0.0, False),
+        "path_follower_max_yaw_rate_rad_s": ("--path-follower-max-yaw-rate-rad-s", 0.0, False),
+        "path_follower_heading_align_enter_rad": (
+            "--path-follower-heading-align-enter-rad",
+            0.0,
+            True,
+        ),
+        "path_follower_heading_align_exit_rad": (
+            "--path-follower-heading-align-exit-rad",
+            0.0,
+            False,
+        ),
+    }
+    values = {
+        key: float(runtime[key])
+        for key in options
+        if key in runtime
+    }
+    if not all(math.isfinite(value) for value in values.values()):
+        raise ValueError("navigation_runtime path follower values must be finite")
+    for key, value in values.items():
+        _, lower_bound, strictly_greater = options[key]
+        if value < lower_bound or (strictly_greater and value == lower_bound):
+            raise ValueError("navigation_runtime path follower values are inconsistent")
+    minimum = values.get("path_follower_min_speed_mps")
+    maximum = values.get("path_follower_max_speed_mps")
+    if minimum is not None and maximum is not None and minimum > maximum:
+        raise ValueError("navigation_runtime path follower values are inconsistent")
+    align_enter = values.get("path_follower_heading_align_enter_rad")
+    align_exit = values.get("path_follower_heading_align_exit_rad")
+    if align_enter is not None and align_enter > math.pi:
+        raise ValueError("navigation_runtime path follower values are inconsistent")
+    if align_enter is not None and align_exit is not None and align_exit >= align_enter:
+        raise ValueError("navigation_runtime path follower values are inconsistent")
+    arguments: list[str] = []
+    for key, (option, _, _) in options.items():
+        if key in values:
+            arguments.extend([option, str(values[key])])
+    return arguments
+
+
+def _sensor_start_args(start: list[float]) -> list[str]:
+    if len(start) < 3:
+        raise ValueError("MuJoCo navigation start pose requires x, y, and z")
+    position = [float(value) for value in start[:3]]
+    if not all(math.isfinite(value) for value in position):
+        raise ValueError("MuJoCo navigation start position must be finite")
+    arguments = ["--start", ",".join(str(value) for value in position)]
+    if len(start) >= 4:
+        yaw_rad = float(start[3])
+        if not math.isfinite(yaw_rad):
+            raise ValueError("MuJoCo navigation start yaw must be finite")
+        arguments.extend(["--start-yaw-deg", str(math.degrees(yaw_rad))])
+    return arguments
+
+
 def _sensor_runtime_args(manifest: dict[str, Any]) -> list[str]:
     config = dict(manifest.get("sensor_runtime") or {})
     supported = {
@@ -1176,8 +2372,13 @@ def _sensor_runtime_args(manifest: dict[str, Any]) -> list[str]:
         "publish_odom_prior",
         "odom_prior_velocity_window_s",
         "navigation_fixture_cloud_points",
+        "navigation_fixture_ground_resolution_m",
+        "navigation_fixture_ground_y_half_m",
         "stop_on_nav_goal_reached",
         "physics_integrator",
+        "physics_timestep_s",
+        "policy_cpu_threads",
+        "publisher_write_mode",
     }
     unknown = sorted(set(config) - supported)
     if unknown:
@@ -1220,6 +2421,28 @@ def _sensor_runtime_args(manifest: dict[str, Any]) -> list[str]:
                 str(int(config["navigation_fixture_cloud_points"])),
             ]
         )
+    if "navigation_fixture_ground_resolution_m" in config:
+        ground_resolution_m = float(config["navigation_fixture_ground_resolution_m"])
+        if (
+            not math.isfinite(ground_resolution_m)
+            or ground_resolution_m <= 0.0
+            or ground_resolution_m > 0.2
+        ):
+            raise ValueError(
+                "navigation_fixture_ground_resolution_m must be in (0, 0.2]"
+            )
+        arguments.extend(
+            ["--navigation-fixture-ground-resolution-m", str(ground_resolution_m)]
+        )
+    if "navigation_fixture_ground_y_half_m" in config:
+        ground_y_half_m = float(config["navigation_fixture_ground_y_half_m"])
+        if not math.isfinite(ground_y_half_m) or ground_y_half_m <= 0.0:
+            raise ValueError(
+                "navigation_fixture_ground_y_half_m must be positive and finite"
+            )
+        arguments.extend(
+            ["--navigation-fixture-ground-y-half-m", str(ground_y_half_m)]
+        )
     if bool(config.get("stop_on_nav_goal_reached")):
         arguments.append("--stop-on-nav-goal-reached")
     if "physics_integrator" in config:
@@ -1227,6 +2450,21 @@ def _sensor_runtime_args(manifest: dict[str, Any]) -> list[str]:
         if integrator not in {"model", "euler", "rk4", "implicit", "implicitfast"}:
             raise ValueError(f"unsupported MuJoCo physics integrator: {integrator}")
         arguments.extend(["--physics-integrator", integrator])
+    if "physics_timestep_s" in config:
+        timestep_s = float(config["physics_timestep_s"])
+        if not math.isfinite(timestep_s) or not 0.0005 <= timestep_s <= 0.005:
+            raise ValueError("MuJoCo physics timestep must be in [0.0005, 0.005] seconds")
+        arguments.extend(["--physics-timestep-s", str(timestep_s)])
+    if "policy_cpu_threads" in config:
+        policy_threads = int(config["policy_cpu_threads"])
+        if not 1 <= policy_threads <= 8:
+            raise ValueError("policy_cpu_threads must be in [1, 8]")
+        arguments.extend(["--policy-cpu-threads", str(policy_threads)])
+    if "publisher_write_mode" in config:
+        write_mode = str(config["publisher_write_mode"]).strip().lower()
+        if write_mode not in {"sync", "async_fifo"}:
+            raise ValueError("publisher_write_mode must be sync or async_fifo")
+        arguments.extend(["--publisher-write-mode", write_mode])
     return arguments
 
 
@@ -1353,6 +2591,10 @@ def _evaluate_phase(
     frame_contract: dict[str, Any] | None = None,
 ) -> tuple[bool, list[str], dict[str, Any]]:
     blockers: list[str] = []
+    uses_slam_pose = (
+        str(thresholds.get("navigation_state_provider") or "").strip().lower()
+        != "mujoco_navigation_fixture"
+    )
     if (
         _slam_navigation_readiness(
             slam=evidence.last_slam or {},
@@ -1379,10 +2621,12 @@ def _evaluate_phase(
             max_track_failures
         ):
             blockers.append("continuous_map_tracking_degraded")
-    if evidence.max_registered_clouds <= 0:
-        blockers.append("registered_cloud_not_consumed_by_traversability")
-    if evidence.max_traversability_published <= 0:
-        blockers.append("traversability_not_published")
+    require_traversability = bool(thresholds.get("require_traversability", True))
+    if require_traversability:
+        if evidence.max_registered_clouds <= 0:
+            blockers.append("registered_cloud_not_consumed_by_traversability")
+        if evidence.max_traversability_published <= 0:
+            blockers.append("traversability_not_published")
     if not evidence.plan_accepted:
         blockers.append("octoplanner3d_plan_not_accepted")
     if evidence.max_global_path_points < int(thresholds.get("min_global_path_points") or 2):
@@ -1415,15 +2659,17 @@ def _evaluate_phase(
             blockers.append("native_control_mode_not_autonomy")
         if nav_status.get("check_obstacle") is not True:
             blockers.append("obstacle_slow_stop_not_enabled")
-        if nav_status.get("use_traversability_cost") is not True:
+        if require_traversability and nav_status.get("use_traversability_cost") is not True:
             blockers.append("terrain_cost_not_enabled")
         input_gate = nav_status.get("input_gate") or {}
-        for required_input in (
+        required_inputs = [
             "require_odom",
             "require_cloud",
-            "require_traversability",
             "require_localization_health",
-        ):
+        ]
+        if require_traversability:
+            required_inputs.append("require_traversability")
+        for required_input in required_inputs:
             if input_gate.get(required_input) is not True:
                 blockers.append(f"stale_fail_safe_contract_missing:{required_input}")
 
@@ -1436,7 +2682,7 @@ def _evaluate_phase(
         if int(cmd_vel.get("nonzero_samples") or 0) != 0:
             blockers.append("no_motion_phase_consumed_nonzero_cmd_vel")
         max_static_map_error_m = thresholds.get("max_no_motion_slam_map_xy_error_m")
-        if max_static_map_error_m is not None:
+        if uses_slam_pose and max_static_map_error_m is not None:
             try:
                 static_map_error_m = float(motion.get("slam_map_xy_error_m"))
             except (TypeError, ValueError):
@@ -1444,7 +2690,7 @@ def _evaluate_phase(
             if static_map_error_m > float(max_static_map_error_m):
                 blockers.append("no_motion_slam_map_pose_drift")
         max_static_odom_m = thresholds.get("max_no_motion_slam_odom_xy_m")
-        if max_static_odom_m is not None:
+        if uses_slam_pose and max_static_odom_m is not None:
             try:
                 static_odom_m = float(motion.get("slam_odom_xy_m"))
             except (TypeError, ValueError):
@@ -1452,7 +2698,11 @@ def _evaluate_phase(
             if static_odom_m > float(max_static_odom_m):
                 blockers.append("no_motion_slam_odom_drift")
     elif phase == "motion":
-        if frame_contract is not None and not bool(frame_contract.get("ok")):
+        if (
+            require_traversability
+            and frame_contract is not None
+            and not bool(frame_contract.get("ok"))
+        ):
             blockers.append("traversability_frame_contract_mismatch")
         if not publish_cmd_vel:
             blockers.append("motion_phase_publish_cmd_vel_disabled")
@@ -1461,7 +2711,7 @@ def _evaluate_phase(
         if int(cmd_vel.get("nonzero_samples") or 0) < int(thresholds.get("min_cmd_vel_samples") or 3):
             blockers.append("mujoco_policy_received_too_few_nonzero_cmd_vel_samples")
         max_motion_map_error_m = thresholds.get("max_motion_slam_map_xy_error_m")
-        if max_motion_map_error_m is not None:
+        if uses_slam_pose and max_motion_map_error_m is not None:
             try:
                 motion_map_error_m = float(motion.get("slam_map_xy_error_m"))
             except (TypeError, ValueError):
@@ -1499,6 +2749,13 @@ def _evaluate_phase(
     )
     goal_metrics["native_goal_reached"] = native_goal_reached
     if phase == "motion":
+        truth_velocity = sensor_report.get("mujoco_truth_velocity") or {}
+        goal_metrics["mujoco_truth_peak_xy_speed_mps"] = truth_velocity.get(
+            "max_xy_speed_mps"
+        )
+        truth_speed_blocker = _mujoco_truth_speed_blocker(sensor_report, thresholds)
+        if truth_speed_blocker:
+            blockers.append(truth_speed_blocker)
         min_forward_linear_fraction = thresholds.get(
             "min_forward_linear_command_fraction"
         )
@@ -1585,13 +2842,46 @@ def _evaluate_phase(
         else:
             if float(goal_metrics.get("sim_path_length_xy_m") or 0.0) < float(thresholds.get("min_motion_m") or 0.15):
                 blockers.append("thunderv4_motion_below_threshold")
-            if float(goal_metrics.get("distance_reduction_m") or 0.0) < float(
-                thresholds.get("min_goal_distance_reduction_m") or 0.1
+            min_net_displacement_m = thresholds.get("min_net_displacement_m")
+            if (
+                min_net_displacement_m is not None
+                and float(goal_metrics.get("net_displacement_xy_m") or 0.0)
+                < float(min_net_displacement_m)
+            ):
+                blockers.append("net_displacement_below_threshold")
+            min_goal_distance_reduction_m = thresholds.get(
+                "min_goal_distance_reduction_m"
+            )
+            if (
+                min_goal_distance_reduction_m is not None
+                and float(goal_metrics.get("distance_reduction_m") or 0.0)
+                < float(min_goal_distance_reduction_m)
             ):
                 blockers.append("goal_distance_did_not_decrease")
             max_goal_error_m = thresholds.get("max_goal_error_m")
             if max_goal_error_m is not None and float(goal_metrics.get("end_distance_m")) > float(max_goal_error_m):
                 blockers.append("final_goal_error_above_threshold")
+            max_goal_error_xy_m = thresholds.get("max_goal_error_xy_m")
+            if (
+                max_goal_error_xy_m is not None
+                and float(goal_metrics.get("end_error_xy_m", math.inf))
+                > float(max_goal_error_xy_m)
+            ):
+                blockers.append("final_goal_xy_error_above_threshold")
+            max_goal_error_z_m = thresholds.get("max_goal_error_z_m")
+            if (
+                max_goal_error_z_m is not None
+                and float(goal_metrics.get("end_error_z_m", math.inf))
+                > float(max_goal_error_z_m)
+            ):
+                blockers.append("final_goal_z_error_above_threshold")
+            max_goal_error_3d_m = thresholds.get("max_goal_error_3d_m")
+            if (
+                max_goal_error_3d_m is not None
+                and float(goal_metrics.get("end_error_3d_m", math.inf))
+                > float(max_goal_error_3d_m)
+            ):
+                blockers.append("final_goal_3d_error_above_threshold")
         if bool(thresholds.get("require_goal_reached")) and not native_goal_reached:
             blockers.append("native_goal_not_reached")
     return not blockers, blockers, goal_metrics
@@ -1601,15 +2891,21 @@ def _video_artifact_blocker(
     *,
     required: bool,
     video_report: dict[str, Any],
+    require_candidates: bool = True,
 ) -> str | None:
     """Return the video gate blocker, including presentation evidence gaps."""
 
     if not required:
         return None
-    if "candidate_frames" in video_report and int(video_report.get("candidate_frames") or 0) <= 0:
+    if (
+        require_candidates
+        and "candidate_frames" in video_report
+        and int(video_report.get("candidate_frames") or 0) <= 0
+    ):
         return "native_navigation_video_candidates_missing"
     if (
-        "selected_candidate_frames" in video_report
+        require_candidates
+        and "selected_candidate_frames" in video_report
         and int(video_report.get("selected_candidate_frames") or 0) <= 0
     ):
         return "native_navigation_video_selected_path_missing"
@@ -1625,9 +2921,6 @@ def _video_artifact_blocker(
         and int(video_report.get("exact_planner_join_frames") or 0) <= 0
     ):
         return "native_navigation_video_exact_join_missing"
-    lighting = video_report.get("presentation_lighting")
-    if isinstance(lighting, dict) and lighting.get("brightness_ok") is not True:
-        return "native_navigation_video_brightness_failed"
     if video_report.get("ok") is True:
         return None
     return "native_navigation_video_failed"
@@ -1641,10 +2934,23 @@ def _run_phase(
     paths: dict[str, Path],
     out_dir: Path,
     domain_id: int,
+    host_boot_id: str,
+    native_environment: Mapping[str, str],
 ) -> dict[str, Any]:
     phase_cfg = dict((manifest.get("phases") or {}).get(phase) or {})
     thresholds = dict(manifest.get("thresholds") or {})
     runtime_tolerances = dict(manifest.get("runtime_tolerances") or {})
+    navigation_runtime_cfg = dict(manifest.get("navigation_runtime") or {})
+    require_traversability = bool(thresholds.get("require_traversability", True))
+    use_traversability_cost = navigation_runtime_cfg.get(
+        "use_traversability_cost", require_traversability
+    )
+    if not isinstance(use_traversability_cost, bool):
+        raise ValueError("navigation_runtime.use_traversability_cost must be boolean")
+    if use_traversability_cost and not require_traversability:
+        raise ValueError(
+            "navigation_runtime.use_traversability_cost requires thresholds.require_traversability"
+        )
     start = [float(value) for value in manifest.get("start") or [0.0, 0.0, 0.48, 0.0]]
     goal = [float(value) for value in manifest.get("goal") or [1.0, 0.0, 0.3, 0.0]]
     world_value = str(manifest.get("world") or "building")
@@ -1656,16 +2962,18 @@ def _run_phase(
     slam_cloud_dir = phase_dir / "slam_clouds"
     slam_cloud_dir.mkdir(parents=True, exist_ok=True)
     traversability_status = phase_dir / "traversability_status.json"
+    mapd_status = phase_dir / "mapd_status.json"
     nav_status = phase_dir / "nav_status.json"
     sensor_report_path = phase_dir / "sensor_report.json"
     parent_sensor_diagnostics_path = phase_dir / "parent_sensor_diagnostics.json"
     motion_log_path = phase_dir / "motion.jsonl"
     motion_complete_marker = phase_dir / "motion_complete.json"
     sensor_publisher_pid = phase_dir / "sensor_publisher.pid"
-    cmd_vel_tap_pid = phase_dir / "cmd_vel_tap.pid"
+    driver_bridge_pid = phase_dir / "driver_bridge.pid"
     for path in (
         slam_status,
         traversability_status,
+        mapd_status,
         nav_status,
         sensor_report_path,
         parent_sensor_diagnostics_path,
@@ -1696,17 +3004,17 @@ def _run_phase(
             "--mode",
             slam_mode,
             "--config",
-            _linux_arg(paths["slam_config"]),
+            _native_path_arg(binaries["slam"], paths["slam_config"]),
             "--domain-id",
             str(domain_id),
             "--tick-hz",
             "50",
             "--status-json",
-            _linux_arg(slam_status),
+            _native_path_arg(binaries["slam"], slam_status),
             "--status-json-hz",
             str(float(slam_runtime_cfg.get("status_json_hz") or 10.0)),
             "--cloud-snapshot-dir",
-            _linux_arg(slam_cloud_dir),
+            _native_path_arg(binaries["slam"], slam_cloud_dir),
             "--cloud-snapshot-hz",
             str(float(slam_runtime_cfg.get("cloud_snapshot_hz") or 5.0)),
         ]
@@ -1714,7 +3022,7 @@ def _run_phase(
         slam_args.extend(
             [
                 "--map",
-                _linux_arg(paths["slam"]),
+                _native_path_arg(binaries["slam"], paths["slam"]),
                 "--track-against-map-period-s",
                 str(float(runtime_tolerances.get("track_against_map_period_s") or 1.0)),
                 "--track-against-map-initial-pose",
@@ -1722,11 +3030,15 @@ def _run_phase(
             ]
         )
 
+    navigation_affinity_mask, support_affinity_mask = (
+        _windows_acceptance_affinity_masks(manifest)
+    )
     slam = (
         ManagedProcess(
             "slam",
             _native_command(binaries["slam"], *slam_args),
             phase_dir / "slam.log",
+            affinity_mask=support_affinity_mask,
         )
         if use_slam_process
         else None
@@ -1734,31 +3046,78 @@ def _run_phase(
     lidar_offset_body = _compiled_mujoco_site_offset_body(DEFAULT_THUNDERV4_MJCF)
     lidar_offset_args = _sensor_offset_args(lidar_offset_body)
     traversability_runtime_cfg = dict(manifest.get("traversability_runtime") or {})
-    traversability = ManagedProcess(
-        "traversability",
-        _native_command(
-            binaries["traversability"],
-            "--domain-id",
-            str(domain_id),
-            "--publish-hz",
-            str(float(traversability_runtime_cfg.get("publish_hz") or 10.0)),
-            "--slow-hz",
-            str(float(traversability_runtime_cfg.get("slow_hz") or 5.0)),
-            "--tick-hz",
-            "20",
-            "--resolution",
-            "0.2",
-            "--radius",
-            "6",
-            "--max-points",
-            "5000",
-            *lidar_offset_args,
-            "--status-file",
-            _linux_arg(traversability_status),
-        ),
-        phase_dir / "traversability.log",
+    local_planner_backend = _local_planner_backend(manifest)
+    phase_identity = _native_map_identity(
+        paths=paths,
+        phase=phase,
+        domain_id=domain_id,
+        session_root=phase_dir,
     )
-    navigation_runtime_cfg = dict(manifest.get("navigation_runtime") or {})
+    native_map_env = dict(native_environment)
+    for key, value in phase_identity.items():
+        native_map_env.setdefault(key, value)
+    native_map_env.update(
+        {
+            "LINGTU_ENV": "sim",
+            "LINGTU_PRODUCT": "nav",
+        }
+    )
+    native_map_env.update(mapd_environment(local_planner_backend))
+    mapd_command, mapd_env = _native_mapd_launch(
+        binary=binaries["mapd"],
+        domain_id=domain_id,
+        status_file=mapd_status,
+        map_root=paths["map_dir"].parent,
+        runtime=dict(manifest.get("mapd_runtime") or {}),
+        environment=native_map_env,
+    )
+    mapd = ManagedProcess(
+        "mapd",
+        mapd_command,
+        phase_dir / "mapd.log",
+        env=mapd_env,
+        affinity_mask=support_affinity_mask,
+    )
+    traversability = None
+    if require_traversability:
+        traversability_command, traversability_env = _with_native_env(
+            _native_command(
+                binaries["traversability"],
+                "--domain-id",
+                str(domain_id),
+                "--publish-hz",
+                str(float(traversability_runtime_cfg.get("publish_hz") or 10.0)),
+                "--slow-hz",
+                str(float(traversability_runtime_cfg.get("slow_hz") or 5.0)),
+                "--tick-hz",
+                "20",
+                "--resolution",
+                "0.2",
+                "--radius",
+                "6",
+                "--max-points",
+                "5000",
+                *lidar_offset_args,
+                "--status-file",
+                _native_path_arg(binaries["traversability"], traversability_status),
+            ),
+            **native_map_env,
+        )
+        traversability = ManagedProcess(
+            "traversability",
+            traversability_command,
+            phase_dir / "traversability.log",
+            env=traversability_env,
+            affinity_mask=support_affinity_mask,
+        )
+    navigation_environment = dict(native_environment)
+    navigation_environment.update(native_map_env)
+    navigation_environment.update(
+        _navigation_smoother_environment(navigation_runtime_cfg)
+    )
+    navigation_environment.update(
+        _scan_follower_environment(navigation_runtime_cfg)
+    )
     local_planner_debug_candidates = int(
         navigation_runtime_cfg.get("debug_candidate_limit", 36 if record_video else 0)
     )
@@ -1768,72 +3127,114 @@ def _run_phase(
     status_period_s = float(navigation_runtime_cfg.get("status_period_s") or 0.1)
     if record_video and (local_planner_debug_candidates > 0 or local_map_debug_points > 0):
         status_period_s = min(status_period_s, 0.2)
+    navigation_command = _native_command(
+        binaries["navigation"],
+        "--control-mode",
+        "autonomy",
+        "--local-planner",
+        local_planner_backend,
+        *_path_follower_args(navigation_runtime_cfg),
+        "--domain-id",
+        str(domain_id),
+        *_path_library_args(
+            local_planner_backend,
+            binaries["navigation"],
+            paths,
+        ),
+        "--map",
+        _native_path_arg(binaries["navigation"], paths["planner"]),
+        *_planner_constraint_args(manifest),
+        "--tick-hz",
+        "20",
+        "--control-loop-deadline-miss-ratio-limit",
+        str(
+            float(
+                navigation_runtime_cfg.get(
+                    "control_loop_deadline_miss_ratio_limit", 0.05
+                )
+            )
+        ),
+        "--control-loop-p95-utilization-limit",
+        str(
+            float(
+                navigation_runtime_cfg.get(
+                    "control_loop_p95_utilization_limit", 0.90
+                )
+            )
+        ),
+        "--corridor-lookahead-m",
+        str(float(navigation_runtime_cfg.get("corridor_lookahead_m", 3.0))),
+        "--max-obstacle-points",
+        str(int(navigation_runtime_cfg.get("max_obstacle_points") or 5000)),
+        "--local-planner-obstacle-height-max-m",
+        str(float(navigation_runtime_cfg.get("obstacle_height_max_m", 1.2))),
+        *lidar_offset_args,
+        "--local-planner-debug-candidates",
+        str(local_planner_debug_candidates),
+        "--local-map-debug-points",
+        str(local_map_debug_points),
+        "--odom-max-age-s",
+        str(float(runtime_tolerances.get("odom_max_age_s") or 0.6)),
+        "--tf-max-age-s",
+        str(float(runtime_tolerances.get("tf_max_age_s") or 0.6)),
+        "--cloud-max-age-s",
+        str(float(runtime_tolerances.get("cloud_max_age_s") or 0.6)),
+        "--traversability-max-age-s",
+        str(float(runtime_tolerances.get("traversability_max_age_s") or 1.5)),
+        "--localization-health-max-age-s",
+        str(float(runtime_tolerances.get("localization_health_max_age_s") or 0.5)),
+        "--terrain-map-max-age-s",
+        str(float(runtime_tolerances.get("terrain_map_max_age_s") or 0.5)),
+        "--cloud-pose-max-gap-s",
+        str(float(runtime_tolerances.get("cloud_pose_max_gap_s") or 0.2)),
+        "--input-future-tolerance-s",
+        str(float(runtime_tolerances.get("input_future_tolerance_s") or 0.05)),
+        "--input-recovery-frames",
+        str(int(runtime_tolerances.get("input_recovery_frames") or 1)),
+        "--publish-cmd-vel",
+        "true" if bool(phase_cfg.get("publish_cmd_vel")) else "false",
+        "--check-obstacle",
+        "true",
+        "--use-traversability-cost",
+        "true" if use_traversability_cost else "false",
+        "--status-file",
+        _native_path_arg(binaries["navigation"], nav_status),
+        "--status-s",
+        str(status_period_s),
+    )
+    driver_runtime = _native_driver_runtime_launch(
+        manifest=manifest,
+        navigation_binary=binaries["navigation"],
+        driver_bridge_binary=binaries["driver_bridge"],
+        navigation_command=navigation_command,
+        driver_bridge_pid=driver_bridge_pid,
+        host_boot_id=host_boot_id,
+        navigation_environment=navigation_environment,
+    )
     navigation = ManagedProcess(
         "navigation",
-        _native_command(
-            binaries["navigation"],
-            "--control-mode",
-            "autonomy",
-            "--domain-id",
-            str(domain_id),
-            "--path-library",
-            _linux_arg(paths["path_library"]),
-            "--map",
-            _linux_arg(paths["planner"]),
-            *_planner_constraint_args(manifest),
-            "--tick-hz",
-            "20",
-            "--corridor-lookahead-m",
-            str(float(navigation_runtime_cfg.get("corridor_lookahead_m", 3.0))),
-            "--max-obstacle-points",
-            str(int(navigation_runtime_cfg.get("max_obstacle_points") or 5000)),
-            "--local-planner-obstacle-height-max-m",
-            str(float(navigation_runtime_cfg.get("obstacle_height_max_m", 1.2))),
-            "--obstacle-terrain-ext-share",
-            str(float(navigation_runtime_cfg.get("obstacle_terrain_ext_share", 0.0))),
-            *lidar_offset_args,
-            "--local-planner-debug-candidates",
-            str(local_planner_debug_candidates),
-            "--local-map-debug-points",
-            str(local_map_debug_points),
-            "--odom-max-age-s",
-            str(float(runtime_tolerances.get("odom_max_age_s") or 0.6)),
-            "--tf-max-age-s",
-            str(float(runtime_tolerances.get("tf_max_age_s") or 0.6)),
-            "--cloud-max-age-s",
-            str(float(runtime_tolerances.get("cloud_max_age_s") or 0.6)),
-            "--traversability-max-age-s",
-            str(float(runtime_tolerances.get("traversability_max_age_s") or 1.5)),
-            "--localization-health-max-age-s",
-            str(float(runtime_tolerances.get("localization_health_max_age_s") or 0.5)),
-            "--terrain-map-max-age-s",
-            str(float(runtime_tolerances.get("terrain_map_max_age_s") or 0.5)),
-            "--cloud-pose-max-gap-s",
-            str(float(runtime_tolerances.get("cloud_pose_max_gap_s") or 0.2)),
-            "--input-future-tolerance-s",
-            str(float(runtime_tolerances.get("input_future_tolerance_s") or 0.05)),
-            "--input-recovery-frames",
-            str(int(runtime_tolerances.get("input_recovery_frames") or 1)),
-            "--publish-cmd-vel",
-            "true" if bool(phase_cfg.get("publish_cmd_vel")) else "false",
-            "--check-obstacle",
-            "true",
-            "--use-traversability-cost",
-            "true",
-            "--status-file",
-            _linux_arg(nav_status),
-            "--status-s",
-            str(status_period_s),
-        ),
+        list(driver_runtime.navigation_command),
         phase_dir / "navigation.log",
+        env=driver_runtime.navigation_env,
+        affinity_mask=navigation_affinity_mask,
     )
+    motion_arm_enabled = bool(phase_cfg.get("publish_cmd_vel"))
+    motion_arm_file = phase_dir / "motion_arm.json"
+    motion_arm_status = phase_dir / "motion_arm_status.json"
+    motion_arm_token = secrets.token_hex(16)
+    motion_arm_scenario = f"{str(manifest.get('name') or 'navigation')}:{phase}:{domain_id}"
+    motion_arm_timeout_s = max(
+        30.0,
+        float(thresholds.get("startup_timeout_s") or 18.0) + 30.0,
+    )
+    motion_arm_file.unlink(missing_ok=True)
+    motion_arm_status.unlink(missing_ok=True)
     sensor_args = [
         sys.executable,
         str(paths["sensor_runner"]),
         "--world",
         world_arg,
-        "--start",
-        ",".join(str(value) for value in start[:3]),
+        *_sensor_start_args(start),
         "--start-anchor",
         str(phase_cfg.get("start_anchor") or "off"),
         "--duration",
@@ -1850,12 +3251,7 @@ def _run_phase(
         str(paths["policy"]),
         "--command-source",
         "dds",
-        "--cmd-vel-tap-bin",
-        str(binaries["cmd_vel_tap"]),
-        "--cmd-vel-pid-file",
-        str(cmd_vel_tap_pid),
-        "--cmd-vel-timeout-s",
-        "0.25",
+        *driver_runtime.driver_bridge_args,
         "--sim-hardware-realtime-factor",
         str(float(runtime_tolerances.get("sim_hardware_realtime_factor") or 0.75)),
         "--publisher-bin",
@@ -1874,6 +3270,21 @@ def _run_phase(
             runtime_tolerances,
         ),
     ]
+    if motion_arm_enabled:
+        sensor_args.extend(
+            [
+                "--external-arm-file",
+                str(motion_arm_file),
+                "--external-arm-token",
+                motion_arm_token,
+                "--external-arm-scenario",
+                motion_arm_scenario,
+                "--external-arm-timeout-s",
+                f"{motion_arm_timeout_s:g}",
+                "--external-arm-status-json",
+                str(motion_arm_status),
+            ]
+        )
     if use_slam_process:
         sensor_args.extend(
             [
@@ -1917,7 +3328,12 @@ def _run_phase(
                 str(motion_log_lidar_points),
             ]
         )
-    sensor = ManagedProcess("sensor", sensor_args, phase_dir / "sensor.log")
+    sensor = ManagedProcess(
+        "sensor",
+        sensor_args,
+        phase_dir / "sensor.log",
+        affinity_mask=support_affinity_mask,
+    )
     goal_trigger = phase_dir / "goal_control.trigger"
     goal_trigger.unlink(missing_ok=True)
     deferred_goal = (
@@ -1931,18 +3347,21 @@ def _run_phase(
                 trigger_path=goal_trigger,
             ),
             phase_dir / "goal_control.log",
+            affinity_mask=support_affinity_mask,
         )
         if os.name == "nt" and binaries["navigation_control"].suffix.lower() != ".exe"
         else None
     )
     processes = [
         process
-        for process in (slam, traversability, navigation, deferred_goal, sensor)
+        for process in (slam, mapd, traversability, navigation, deferred_goal, sensor)
         if process is not None
     ]
     evidence = NativeEvidence()
     startup_ok = False
     startup_reason = "not_started"
+    motion_arm_result: dict[str, Any] = {}
+    resume_result: dict[str, Any] = {}
     goal_result: dict[str, Any] = {}
     phase_error = ""
     process_cleanup: list[dict[str, Any]] = []
@@ -1951,19 +3370,42 @@ def _run_phase(
     try:
         for process in processes:
             process.start()
-            started_commands.append({"name": process.name, "command": process.command})
+            started_commands.append(
+                {
+                    "name": process.name,
+                    "command": process.command,
+                    "affinity_mask": process.affinity_mask,
+                }
+            )
         startup_ok, startup_reason = _wait_for_startup(
             sensor=sensor,
             evidence=evidence,
             nav_status=nav_status,
             slam_status=slam_status,
             traversability_status=traversability_status,
+            mapd_status=mapd_status,
             timeout_s=float(thresholds.get("startup_timeout_s") or 18.0),
             thresholds=thresholds,
         )
         if startup_ok:
             plan_timeout_s = float(thresholds.get("plan_timeout_s") or 12.0)
+            if motion_arm_enabled:
+                motion_arm_result = _arm_mujoco_motion(
+                    arm_file=motion_arm_file,
+                    status_file=motion_arm_status,
+                    token=motion_arm_token,
+                    domain_id=domain_id,
+                    scenario=motion_arm_scenario,
+                    sensor=sensor,
+                    timeout_s=min(10.0, plan_timeout_s),
+                )
             if deferred_goal is not None:
+                resume_result = _resume_when_ready(
+                    binaries["navigation_control"],
+                    domain_id,
+                    timeout_s=plan_timeout_s,
+                )
+            if int(resume_result.get("returncode") or 0) == 0 and deferred_goal is not None:
                 goal_trigger.write_text("go\n", encoding="ascii")
                 goal_returncode = deferred_goal.wait(timeout_s=plan_timeout_s + 5.0)
                 goal_result = {
@@ -1974,13 +3416,38 @@ def _run_phase(
                     "wsl_relay_prestarted": True,
                     "trigger": str(goal_trigger),
                 }
-            else:
-                goal_result = _goal_command(
-                    binaries["navigation_control"],
-                    goal,
-                    domain_id,
-                    timeout_s=plan_timeout_s,
-                )
+            elif deferred_goal is None:
+                control_attempts: list[dict[str, Any]] = []
+                for attempt in range(1, 5):
+                    resume_result = _resume_when_ready(
+                        binaries["navigation_control"],
+                        domain_id,
+                        timeout_s=plan_timeout_s,
+                    )
+                    if int(resume_result.get("returncode") or 0) != 0:
+                        break
+                    goal_result = _goal_command(
+                        binaries["navigation_control"],
+                        goal,
+                        domain_id,
+                        timeout_s=plan_timeout_s,
+                    )
+                    control_attempts.append(
+                        {
+                            "attempt": attempt,
+                            "resume": dict(resume_result),
+                            "goal": dict(goal_result),
+                        }
+                    )
+                    if int(goal_result.get("returncode") or 0) == 0:
+                        break
+                    if "operator_takeover_resume_required" not in str(
+                        goal_result.get("stderr") or ""
+                    ):
+                        break
+                    time.sleep(0.05)
+                if goal_result:
+                    goal_result["control_attempts"] = control_attempts
         phase_duration_s = float(phase_cfg.get("duration_s") or 12.0)
         deadline = time.monotonic() + _phase_runtime_timeout_s(
             phase_duration_s,
@@ -2014,11 +3481,17 @@ def _run_phase(
             process.stop()
         process_cleanup.extend(process.cleanup for process in processes)
         process_cleanup.append(_cleanup_pid_file("sensor_publisher", sensor_publisher_pid))
-        process_cleanup.append(_cleanup_pid_file("cmd_vel_tap", cmd_vel_tap_pid))
+        process_cleanup.append(_cleanup_pid_file("driver_bridge", driver_bridge_pid))
 
     sensor_report = _load_json(sensor_report_path)
     parent_sensor_diagnostics = _load_json(parent_sensor_diagnostics_path)
     sensor_acceptance = _navigation_sensor_assessment(sensor_report, thresholds)
+    terminal_driver_stop = _terminal_driver_stop_evidence(
+        sensor_report=sensor_report,
+        expected_host_boot_id=driver_runtime.host_boot_id,
+        process_cleanup=process_cleanup,
+        require_prior_output_ack=bool(phase_cfg.get("publish_cmd_vel")),
+    )
     video_report: dict[str, Any] = {
         "requested": record_video,
         "ok": not record_video,
@@ -2039,6 +3512,7 @@ def _run_phase(
                 width=int(video_cfg.get("width") or 1920),
                 height=int(video_cfg.get("height") or 1080),
                 fps=float(video_cfg.get("fps") or 24.0),
+                require_candidate_evidence=local_planner_backend == "cmu",
             )
             video_report["requested"] = True
         except Exception as exc:
@@ -2048,9 +3522,13 @@ def _run_phase(
                 "reason": f"{type(exc).__name__}:{exc}",
                 "motion_log": str(motion_log_path),
             }
-    traversability_frame_contract = _traversability_frame_contract(
-        evidence,
-        dict(manifest.get("frame_contract") or {}),
+    traversability_frame_contract = (
+        _traversability_frame_contract(
+            evidence,
+            dict(manifest.get("frame_contract") or {}),
+        )
+        if require_traversability
+        else None
     )
     ok, blockers, goal_metrics = _evaluate_phase(
         phase=phase,
@@ -2061,8 +3539,27 @@ def _run_phase(
         goal=goal,
         frame_contract=traversability_frame_contract,
     )
+    tracking_metrics = _trajectory_tracking_metrics(motion_log_path)
+    goal_metrics["trajectory_tracking"] = tracking_metrics
+    min_tracking_samples = thresholds.get("min_tracking_samples")
+    if (
+        min_tracking_samples is not None
+        and int(tracking_metrics.get("samples") or 0) < int(min_tracking_samples)
+    ):
+        blockers.append("trajectory_tracking_samples_below_threshold")
+    max_tracking_p95_m = thresholds.get("max_tracking_xy_error_p95_m")
+    if (
+        max_tracking_p95_m is not None
+        and float(tracking_metrics.get("p95_xy_error_m", math.inf))
+        > float(max_tracking_p95_m)
+    ):
+        blockers.append("trajectory_tracking_p95_above_threshold")
     if not startup_ok:
         blockers.append(startup_reason)
+    if motion_arm_enabled and str(motion_arm_result.get("state") or "") != "armed":
+        blockers.append("mujoco_motion_arm_not_acknowledged")
+    if int(resume_result.get("returncode") or 0) != 0 or not resume_result:
+        blockers.append("native_resume_command_failed")
     if int(goal_result.get("returncode") or 0) != 0 or not goal_result:
         blockers.append("native_goal_command_failed")
     if phase_error:
@@ -2071,9 +3568,11 @@ def _run_phase(
         blockers.append("sensor_or_slam_acceptance_failed")
     if not all(bool(item.get("clean")) for item in process_cleanup):
         blockers.append("acceptance_process_cleanup_failed")
+    blockers.extend(terminal_driver_stop["blockers"])
     video_blocker = _video_artifact_blocker(
         required=bool(thresholds.get("require_video_artifact", True)),
         video_report=video_report,
+        require_candidates=local_planner_backend == "cmu",
     )
     if video_blocker:
         blockers.append(video_blocker)
@@ -2088,21 +3587,35 @@ def _run_phase(
         "python_role": "mujoco_physics_sensor_bridge_process_supervisor_acceptance_only",
         "navigation_compute_owner": "navd",
         "navigation_state_provider": state_provider,
+        "local_planner_backend": local_planner_backend,
+        "driver_bridge": {
+            "binary": str(binaries["driver_bridge"]),
+            "host_boot_id": driver_runtime.host_boot_id,
+            "native_clock_platform": driver_runtime.clock_platform,
+            "contract": dict(manifest["driver_runtime"]),
+            "ack_source": "physical_mujoco_step",
+        },
         "startup": {"ok": startup_ok, "reason": startup_reason},
+        "motion_arm": motion_arm_result,
+        "resume_command": resume_result,
         "goal_command": goal_result,
         "goal_metrics": goal_metrics,
         "pre_safety_path_follower_command": _pre_safety_command_evidence(evidence),
         "post_safety_command": {
             "dds_topic": "rt/nav/cmd_vel",
             "published_samples": evidence.max_cmd_vel_published,
-            "tap_nonzero_samples": int((sensor_report.get("cmd_vel") or {}).get("nonzero_samples") or 0),
+            "physically_applied_nonzero_samples": int(
+                (sensor_report.get("cmd_vel") or {}).get("nonzero_samples") or 0
+            ),
         },
+        "terminal_driver_stop": terminal_driver_stop,
         "traversability_frame_contract": traversability_frame_contract,
         "process_cleanup": {
             "zero_leftovers": all(bool(item.get("clean")) for item in process_cleanup),
             "processes": process_cleanup,
         },
         "evidence": evidence.to_dict(),
+        "mapd_status": _load_json(mapd_status),
         "sensor_report": sensor_report,
         "parent_sensor_diagnostics": {
             "path": str(parent_sensor_diagnostics_path),
@@ -2121,15 +3634,169 @@ def _run_phase(
     return report
 
 
+def _terminal_driver_stop_evidence(
+    *,
+    sensor_report: Mapping[str, Any],
+    expected_host_boot_id: str,
+    process_cleanup: Sequence[Mapping[str, Any]],
+    require_prior_output_ack: bool = True,
+) -> dict[str, Any]:
+    """Evaluate the strongest terminal stop proof emitted by the native bridge."""
+
+    driver_value = sensor_report.get("cmd_vel")
+    driver = driver_value if isinstance(driver_value, Mapping) else {}
+    stop_value = driver.get("stopped_evidence")
+    stopped = stop_value if isinstance(stop_value, Mapping) else {}
+    ack_value = driver.get("observed_output_ack")
+    output_ack = ack_value if isinstance(ack_value, Mapping) else {}
+    command_value = driver.get("last_command")
+    last_command = command_value if isinstance(command_value, Mapping) else {}
+    driver_cleanup_value = driver.get("process_cleanup")
+    driver_cleanup = (
+        driver_cleanup_value if isinstance(driver_cleanup_value, Mapping) else {}
+    )
+    publisher_value = sensor_report.get("native_sensor_publisher_process")
+    publisher_cleanup = publisher_value if isinstance(publisher_value, Mapping) else {}
+
+    bridge_boot_id = str(driver.get("bridge_boot_id") or "")
+    controller_boot_id = str(driver.get("controller_boot_id") or "")
+    stopped_bridge_boot_id = str(stopped.get("bridge_boot_id") or "")
+    stopped_controller_boot_id = str(stopped.get("controller_boot_id") or "")
+
+    def positive_int(value: Any) -> int | None:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            return None
+        return value
+
+    stop_command_sequence = positive_int(stopped.get("bridge_command_seq"))
+    applied_step_sequence = positive_int(stopped.get("applied_step_seq"))
+    observed_ack_sequence = positive_int(output_ack.get("accepted_sequence"))
+    observed_output_sequence = positive_int(output_ack.get("output_sequence"))
+    observed_producer = str(output_ack.get("producer_boot_id") or "")
+    identity_matches = bool(
+        bridge_boot_id
+        and controller_boot_id
+        and stopped_bridge_boot_id == bridge_boot_id
+        and stopped_controller_boot_id == controller_boot_id
+    )
+    stop_ack_accepted = bool(
+        identity_matches
+        and stop_command_sequence is not None
+        and applied_step_sequence is not None
+        and str(stopped.get("kind") or "") == "deactivate_zero"
+    )
+    output_ack_exact = bool(
+        observed_ack_sequence is not None
+        and observed_output_sequence is not None
+        and _driver_producer_matches_host(observed_producer, expected_host_boot_id)
+    )
+
+    zero_values: dict[str, float] = {}
+    exact_zero = True
+    for component in ("vx", "vy", "wz"):
+        value = last_command.get(component)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            exact_zero = False
+            zero_values[component] = math.nan
+            continue
+        parsed = float(value)
+        zero_values[component] = parsed
+        if not math.isfinite(parsed) or parsed != 0.0:
+            exact_zero = False
+
+    authority_cleared = bool(
+        driver.get("driver_ready") is False
+        and driver.get("accepted_sequence") == 0
+        and str(driver.get("accepted_producer_boot_id") or "") == ""
+        and driver.get("accepted_output_sequence") == 0
+    )
+    cleanup_entries = [item for item in process_cleanup if isinstance(item, Mapping)]
+    owned_processes_stopped = bool(
+        cleanup_entries
+        and len(cleanup_entries) == len(process_cleanup)
+        and all(item.get("clean") is True for item in cleanup_entries)
+        and driver.get("process_returncode") == 0
+        and driver_cleanup.get("clean") is True
+        and publisher_cleanup.get("clean") is True
+    )
+
+    blockers: list[str] = []
+    if not identity_matches:
+        blockers.append("driver_terminal_stop_ack_identity_mismatch")
+    if not stop_ack_accepted:
+        blockers.append("driver_terminal_stop_ack_missing_or_invalid_sequence")
+    if require_prior_output_ack and not output_ack_exact:
+        blockers.append("driver_terminal_prior_output_ack_identity_or_sequence_invalid")
+    if not exact_zero:
+        blockers.append("driver_terminal_logical_cmd_vel_not_exact_zero")
+    if not (stop_ack_accepted and exact_zero):
+        blockers.append("driver_terminal_physical_stop_not_exact_zero")
+    if not authority_cleared:
+        blockers.append("driver_terminal_authority_not_cleared")
+    if not owned_processes_stopped:
+        blockers.append("driver_terminal_owned_process_cleanup_failed")
+    blockers = list(dict.fromkeys(blockers))
+    return {
+        "ok": not blockers,
+        "stop_ack": {
+            "accepted": stop_ack_accepted,
+            "bridge_boot_id": stopped_bridge_boot_id,
+            "controller_boot_id": stopped_controller_boot_id,
+            "bridge_command_seq": stopped.get("bridge_command_seq"),
+            "applied_step_seq": stopped.get("applied_step_seq"),
+            "kind": str(stopped.get("kind") or ""),
+        },
+        "prior_output_ack": {
+            "required": require_prior_output_ack,
+            "exact_identity_and_sequence": output_ack_exact,
+            "accepted_sequence": output_ack.get("accepted_sequence"),
+            "producer_boot_id": observed_producer,
+            "output_sequence": output_ack.get("output_sequence"),
+        },
+        "logical_final_cmd_vel": {"exact_zero": exact_zero, **zero_values},
+        "physical_stop": {
+            "exact_zero": stop_ack_accepted and exact_zero,
+            "proof": "deactivate_zero was physically applied before the exact STOPPED ACK",
+        },
+        "authority_cleared": authority_cleared,
+        "owned_processes_stopped": owned_processes_stopped,
+        "blockers": blockers,
+    }
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     manifest_path = Path(args.manifest).expanduser().resolve()
     manifest = _load_manifest(manifest_path)
+    validated_run_plan = getattr(args, "validated_run_plan", None)
+    native_environment = (
+        validated_run_plan.native_process_environment
+        if validated_run_plan is not None
+        else {}
+    )
+    run_plan_binary_bindings = (
+        _bind_manifest_binaries_to_run_plan(
+            manifest,
+            validated_run_plan,
+        )
+        if validated_run_plan is not None
+        else {}
+    )
+    run_plan_verified = bool(getattr(args, "run_plan_verified", False))
     if not manifest:
-        return {
+        report = {
             "schema_version": "lingtu.mujoco.native_navigation.acceptance.v1",
             "ok": False,
             "blockers": [f"manifest_unreadable:{manifest_path}"],
         }
+        report.update(
+            classify_evidence(
+                None,
+                run_plan_verified=run_plan_verified,
+                acceptance_evaluated=False,
+                ok=False,
+            )
+        )
+        return report
     world_override = str(getattr(args, "world", "") or "").strip()
     map_dir_override = str(getattr(args, "map_dir", "") or "").strip()
     if world_override:
@@ -2166,15 +3833,99 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             diagnostic_sensor_overrides[key] = float(value)
     if diagnostic_sensor_overrides:
         manifest["diagnostic_sensor_overrides"] = diagnostic_sensor_overrides
+    configured_video = dict(manifest.get("acceptance_video") or {})
+    record_video = getattr(args, "record_video", None)
     manifest["acceptance_video"] = {
-        "enabled": bool(getattr(args, "record_video", False)),
+        "enabled": (
+            bool(configured_video.get("enabled"))
+            if record_video is None
+            else bool(record_video)
+        ),
         "width": int(getattr(args, "video_width", 1920) or 1920),
         "height": int(getattr(args, "video_height", 1080) or 1080),
         "fps": float(getattr(args, "video_fps", 24.0) or 24.0),
         "lidar_points": int(getattr(args, "video_lidar_points", 640) or 640),
     }
 
+
     out_dir = Path(args.out_dir).expanduser().resolve()
+    requires_wsl_runtime = _requires_wsl_runtime(manifest)
+    if requires_wsl_runtime:
+        native_runtime_ok, native_runtime_detail = _probe_wsl_runtime()
+    else:
+        native_runtime_ok = True
+        native_runtime_detail = (
+            "native_windows_pe" if os.name == "nt" else "native_linux"
+        )
+    if not native_runtime_ok:
+        report = {
+            "schema_version": "lingtu.mujoco.native_navigation.acceptance.v1",
+            "ok": False,
+            "manifest": str(manifest_path),
+            "preflight": {
+                "ok": False,
+                "blockers": ["wsl_runtime_unavailable"],
+                "native_runtime_probe": {
+                    "ok": False,
+                    "detail": native_runtime_detail,
+                },
+            },
+            "phases": {},
+            "blockers": ["wsl_runtime_unavailable"],
+        }
+        report.update(
+            classify_evidence(
+                manifest.get("acceptance_scope"),
+                run_plan_verified=run_plan_verified,
+                acceptance_evaluated=False,
+                ok=False,
+            )
+        )
+        _write_json(out_dir / "report.json", report)
+        return report
+    if requires_wsl_runtime:
+        artifact_storage_ok, artifact_storage_detail = _artifact_storage_probe(out_dir)
+    else:
+        artifact_storage_ok = True
+        artifact_storage_detail = (
+            "native_windows_filesystem" if os.name == "nt" else "native_filesystem"
+        )
+    motion_requested = str(getattr(args, "mode", "both")) in {"motion", "both"}
+    if (
+        motion_requested
+        and not artifact_storage_ok
+        and not bool(getattr(args, "allow_windows_9p_artifacts", False))
+    ):
+        report = {
+            "schema_version": "lingtu.mujoco.native_navigation.acceptance.v1",
+            "ok": False,
+            "manifest": str(manifest_path),
+            "preflight": {
+                "ok": False,
+                "blockers": ["native_acceptance_artifacts_on_windows_9p"],
+                "native_runtime_probe": {
+                    "ok": True,
+                    "detail": native_runtime_detail,
+                },
+                "artifact_storage": {
+                    "ok": False,
+                    "detail": artifact_storage_detail,
+                    "path": str(out_dir),
+                },
+            },
+            "phases": {},
+            "blockers": ["native_acceptance_artifacts_on_windows_9p"],
+        }
+        report.update(
+            classify_evidence(
+                manifest.get("acceptance_scope"),
+                run_plan_verified=run_plan_verified,
+                acceptance_evaluated=False,
+                ok=False,
+            )
+        )
+        _write_json(out_dir / "report.json", report)
+        return report
     asset_preparation = (
         _prepare_acceptance_assets(manifest, out_dir)
         if bool(getattr(args, "prepare_assets", True))
@@ -2186,6 +3937,40 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         build_result = _build_helper()
 
     binaries, paths, blockers, provenance = _preflight(manifest)
+    native_asset_mirror: dict[str, Any]
+    if not requires_wsl_runtime:
+        native_asset_mirror = {
+            "enabled": False,
+            "ok": True,
+            "reason": native_runtime_detail,
+        }
+    elif blockers:
+        native_asset_mirror = {
+            "enabled": False,
+            "ok": False,
+            "reason": "preflight_blocked",
+        }
+    else:
+        try:
+            paths, native_asset_mirror = _mirror_native_runtime_inputs(paths, out_dir)
+        except (OSError, shutil.Error) as exc:
+            native_asset_mirror = {
+                "enabled": True,
+                "ok": False,
+                "reason": f"copy_failed:{type(exc).__name__}:{exc}",
+            }
+            blockers.append("native_asset_mirror_failed")
+    provenance["native_runtime_probe"] = {
+        "ok": native_runtime_ok,
+        "detail": native_runtime_detail,
+    }
+    provenance["native_asset_mirror"] = native_asset_mirror
+    provenance["artifact_storage"] = {
+        "ok": artifact_storage_ok,
+        "detail": artifact_storage_detail,
+        "path": str(out_dir),
+    }
+    provenance["run_plan_binary_bindings"] = run_plan_binary_bindings
     preflight = {
         "ok": not blockers,
         "blockers": blockers,
@@ -2204,6 +3989,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "phases": {},
             "blockers": blockers,
         }
+        report.update(
+            classify_evidence(
+                manifest.get("acceptance_scope"),
+                run_plan_verified=run_plan_verified,
+                acceptance_evaluated=False,
+                ok=not blockers,
+            )
+        )
         _write_json(out_dir / "report.json", report)
         return report
 
@@ -2219,8 +4012,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "phases": {},
             "blockers": ["cyclonedds_domain_out_of_port_range"],
         }
+        report.update(
+            classify_evidence(
+                manifest.get("acceptance_scope"),
+                run_plan_verified=run_plan_verified,
+                acceptance_evaluated=False,
+                ok=False,
+            )
+        )
         _write_json(out_dir / "report.json", report)
         return report
+    host_boot_id = secrets.token_hex(16)
     for offset, phase in enumerate(requested):
         phase_reports[phase] = _run_phase(
             phase=phase,
@@ -2229,6 +4031,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             paths=paths,
             out_dir=out_dir,
             domain_id=domain_base + offset,
+            host_boot_id=host_boot_id,
+            native_environment=native_environment,
         )
     all_blockers = [
         f"{phase}:{blocker}"
@@ -2243,13 +4047,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "phases": phase_reports,
         "blockers": all_blockers,
         "acceptance_scope": manifest.get("acceptance_scope") or {},
+        "host_boot_id": host_boot_id,
         "chain": [
             "existing saved map",
             "navd",
             "OctoPlanner3D -> LocalPlanner -> embedded PathFollower",
-            "native slow/stop + terrain cost + stale fail-safe",
+            "native command limits + input freshness",
             "rt/nav/cmd_vel",
-            "C++ typed-DDS tap",
+            "C++ typed-DDS physical driver bridge",
             "ThunderV4 RL policy",
             "goal arrival",
         ],
@@ -2261,9 +4066,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 == "mujoco_navigation_fixture"
                 else "Fast-LIO2 odometry/registered cloud/health -> native DDS"
             ),
-            "lingtu_traversability_dds",
+            "Mapd robot-centred local collision snapshot",
+            *(
+                ["lingtu_traversability_dds"]
+                if bool((manifest.get("thresholds") or {}).get("require_traversability", True))
+                else []
+            ),
         ],
     }
+    report.update(
+        classify_evidence(
+            manifest.get("acceptance_scope"),
+            run_plan_verified=run_plan_verified,
+            acceptance_evaluated=True,
+            ok=bool(report["ok"]),
+        )
+    )
     _write_json(out_dir / "report.json", report)
     return report
 
@@ -2271,6 +4089,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
+    parser.add_argument("--run-plan", type=Path)
     parser.add_argument("--mode", choices=["no_motion", "motion", "both"], default="both")
     parser.add_argument("--domain-id", type=int, default=None)
     parser.add_argument(
@@ -2296,6 +4115,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Dispatcher compatibility flag; component evidence scope is unchanged.",
+    )
+    parser.add_argument(
+        "--allow-windows-9p-artifacts",
+        action="store_true",
+        help=(
+            "Diagnostic override: allow motion acceptance artifacts on a Windows "
+            "/mnt/<drive> (9p) mount. Product motion acceptance should use a "
+            "\\\\wsl.localhost\\<distro>\\... path instead."
+        ),
+    )
+    parser.add_argument(
         "--phase-duration-s",
         type=float,
         default=None,
@@ -2303,8 +4136,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--record-video",
-        action="store_true",
-        help="Render a clean MuJoCo video from the exact native-DDS motion run.",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Override acceptance video generation; the manifest default is used "
+            "when omitted."
+        ),
     )
     parser.add_argument("--video-width", type=int, default=1920)
     parser.add_argument("--video-height", type=int, default=1080)
@@ -2324,6 +4161,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--diagnostic-imu-acc-max-dynamic-mps2", type=float, default=None)
     parser.add_argument("--diagnostic-imu-acc-max-slew-mps3", type=float, default=None)
     args = parser.parse_args(argv)
+    if args.run_plan is not None:
+        plan = validate_runner_plan(
+            ROOT,
+            args.run_plan,
+            Path(args.manifest),
+            expected_products=("nav", "tracking", "inspection"),
+        )
+        args.run_plan_roles = tuple(
+            sorted({role for process in plan.processes for role in process.provides})
+        )
+        args.run_plan_verified = True
+        args.validated_run_plan = plan
     report = run(args)
     print(json.dumps(report, ensure_ascii=True, indent=2, sort_keys=True))
     return 0 if report.get("ok") else 1

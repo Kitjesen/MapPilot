@@ -23,10 +23,10 @@ SYNC_PATHS = [
     "sim/scripts/mujoco/continuous_mapping_quality_gate.py",
     "sim/scripts/mujoco/native_dds_sensors.py",
 
-    "src/localization/fastlio2/config/mid360_mujoco_native_dds.yaml",
-    "src/localization/fastlio2/config/mid360_mujoco_native_dds_vel_tight.yaml",
+    "src/localization/fastlio2/config/sim_mid360_slam.yaml",
+    "src/localization/fastlio2/config/sim_mid360_slam_tight.yaml",
 ]
-DEFAULT_SLAM_CONFIG = ROOT / "src" / "localization" / "fastlio2" / "config" / "mid360_mujoco_native_dds.yaml"
+DEFAULT_SLAM_CONFIG = ROOT / "src" / "localization" / "fastlio2" / "config" / "sim_mid360_slam.yaml"
 
 
 def _validate_domain_id(domain_id: int) -> int:

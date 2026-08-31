@@ -11,22 +11,19 @@ namespace LingTuSim
 {
     namespace
     {
-        constexpr int32 Sha256BlockBytes = 64;
-
         struct FParsedArtifact
         {
             FString Path;
-            FString SessionDigest;
-            FString Sha256;
+            FString SessionId;
         };
 
         struct FArtifactContract
         {
             const TCHAR* Filename;
-            const TCHAR* Schema;
+            const TCHAR* PrimarySchema;
+            const TCHAR* AlternateSchema;
             bool bRequired;
             FString FSessionBundleView::* PathMember;
-            FString FSessionBundleView::* DigestMember;
         };
 
         bool Fail(
@@ -41,17 +38,25 @@ namespace LingTuSim
             return false;
         }
 
-        bool IsLowerHexDigest(const FString& Value)
+        bool IsValidSessionId(const FString& Value)
         {
-            if (Value.Len() != 64)
+            if (Value.IsEmpty() || Value.Len() > 63)
             {
                 return false;
             }
 
-            for (const TCHAR Character : Value)
+            for (int32 Index = 0; Index < Value.Len(); ++Index)
             {
-                if (!((Character >= TEXT('0') && Character <= TEXT('9'))
-                    || (Character >= TEXT('a') && Character <= TEXT('f'))))
+                const TCHAR Character = Value[Index];
+                const bool bAsciiAlphaNumeric =
+                    (Character >= TEXT('A') && Character <= TEXT('Z'))
+                    || (Character >= TEXT('a') && Character <= TEXT('z'))
+                    || (Character >= TEXT('0') && Character <= TEXT('9'));
+                if (!bAsciiAlphaNumeric
+                    && (Index == 0
+                        || (Character != TEXT('_')
+                            && Character != TEXT('.')
+                            && Character != TEXT('-'))))
                 {
                     return false;
                 }
@@ -59,160 +64,10 @@ namespace LingTuSim
             return true;
         }
 
-        uint32 RotateRight(const uint32 Value, const uint32 Count)
-        {
-            return (Value >> Count) | (Value << (32U - Count));
-        }
-
-        bool ComputeSha256(
-            const FString& Path,
-            FString& OutDigest,
-            FRuntimeLoadError& OutError)
-        {
-            TArray<uint8> Bytes;
-            if (!FFileHelper::LoadFileToArray(Bytes, *Path))
-            {
-                return Fail(
-                    OutError,
-                    ERuntimeLoadErrorCode::ReadFailed,
-                    Path,
-                    TEXT("Unable to read artifact bytes for SHA-256."));
-            }
-            if (Bytes.Num() > MAX_int32 - 72)
-            {
-                return Fail(
-                    OutError,
-                    ERuntimeLoadErrorCode::HashFailed,
-                    Path,
-                    TEXT("Artifact is too large for the in-memory SHA-256 implementation."));
-            }
-
-            const uint64 BitLength = static_cast<uint64>(Bytes.Num()) * 8ULL;
-            TArray<uint8> Padded = Bytes;
-            Padded.Add(0x80U);
-            while ((Padded.Num() % Sha256BlockBytes) != 56)
-            {
-                Padded.Add(0U);
-            }
-            for (int32 Shift = 56; Shift >= 0; Shift -= 8)
-            {
-                Padded.Add(static_cast<uint8>((BitLength >> Shift) & 0xffULL));
-            }
-
-            static constexpr uint32 RoundConstants[64] = {
-                0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U,
-                0x3956c25bU, 0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U,
-                0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U,
-                0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U,
-                0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU,
-                0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU,
-                0x983e5152U, 0xa831c66dU, 0xb00327c8U, 0xbf597fc7U,
-                0xc6e00bf3U, 0xd5a79147U, 0x06ca6351U, 0x14292967U,
-                0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U,
-                0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
-                0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U,
-                0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
-                0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U,
-                0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU, 0x682e6ff3U,
-                0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U,
-                0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U,
-            };
-
-            uint32 Hash[8] = {
-                0x6a09e667U,
-                0xbb67ae85U,
-                0x3c6ef372U,
-                0xa54ff53aU,
-                0x510e527fU,
-                0x9b05688cU,
-                0x1f83d9abU,
-                0x5be0cd19U,
-            };
-
-            for (int32 Offset = 0; Offset < Padded.Num(); Offset += Sha256BlockBytes)
-            {
-                uint32 Words[64] = {};
-                for (int32 Index = 0; Index < 16; ++Index)
-                {
-                    const int32 WordOffset = Offset + Index * 4;
-                    Words[Index] = (static_cast<uint32>(Padded[WordOffset]) << 24U)
-                        | (static_cast<uint32>(Padded[WordOffset + 1]) << 16U)
-                        | (static_cast<uint32>(Padded[WordOffset + 2]) << 8U)
-                        | static_cast<uint32>(Padded[WordOffset + 3]);
-                }
-                for (int32 Index = 16; Index < 64; ++Index)
-                {
-                    const uint32 Sigma0 = RotateRight(Words[Index - 15], 7U)
-                        ^ RotateRight(Words[Index - 15], 18U)
-                        ^ (Words[Index - 15] >> 3U);
-                    const uint32 Sigma1 = RotateRight(Words[Index - 2], 17U)
-                        ^ RotateRight(Words[Index - 2], 19U)
-                        ^ (Words[Index - 2] >> 10U);
-                    Words[Index] = Words[Index - 16] + Sigma0 + Words[Index - 7] + Sigma1;
-                }
-
-                uint32 A = Hash[0];
-                uint32 B = Hash[1];
-                uint32 C = Hash[2];
-                uint32 D = Hash[3];
-                uint32 E = Hash[4];
-                uint32 F = Hash[5];
-                uint32 G = Hash[6];
-                uint32 H = Hash[7];
-
-                for (int32 Index = 0; Index < 64; ++Index)
-                {
-                    const uint32 Sum1 = RotateRight(E, 6U)
-                        ^ RotateRight(E, 11U)
-                        ^ RotateRight(E, 25U);
-                    const uint32 Choose = (E & F) ^ ((~E) & G);
-                    const uint32 Temp1 = H + Sum1 + Choose + RoundConstants[Index] + Words[Index];
-                    const uint32 Sum0 = RotateRight(A, 2U)
-                        ^ RotateRight(A, 13U)
-                        ^ RotateRight(A, 22U);
-                    const uint32 Majority = (A & B) ^ (A & C) ^ (B & C);
-                    const uint32 Temp2 = Sum0 + Majority;
-
-                    H = G;
-                    G = F;
-                    F = E;
-                    E = D + Temp1;
-                    D = C;
-                    C = B;
-                    B = A;
-                    A = Temp1 + Temp2;
-                }
-
-                Hash[0] += A;
-                Hash[1] += B;
-                Hash[2] += C;
-                Hash[3] += D;
-                Hash[4] += E;
-                Hash[5] += F;
-                Hash[6] += G;
-                Hash[7] += H;
-            }
-
-            OutDigest.Reset(64);
-            for (const uint32 Word : Hash)
-            {
-                OutDigest += FString::Printf(TEXT("%08x"), Word);
-            }
-            if (!IsLowerHexDigest(OutDigest))
-            {
-                return Fail(
-                    OutError,
-                    ERuntimeLoadErrorCode::HashFailed,
-                    Path,
-                    TEXT("SHA-256 did not produce a 64-character lowercase hexadecimal digest."));
-            }
-            return true;
-        }
-
         bool LoadJsonArtifact(
             const FString& Path,
-            const FString& ExpectedSchema,
-            const bool bComputeDigest,
+            const FString& PrimarySchema,
+            const FString& AlternateSchema,
             FParsedArtifact& OutArtifact,
             FRuntimeLoadError& OutError)
         {
@@ -251,39 +106,39 @@ namespace LingTuSim
 
             FString ActualSchema;
             if (!RootObject->TryGetStringField(TEXT("schema"), ActualSchema)
-                || ActualSchema != ExpectedSchema)
+                || (ActualSchema != PrimarySchema
+                    && (AlternateSchema.IsEmpty() || ActualSchema != AlternateSchema)))
             {
+                const FString ExpectedSchemas = AlternateSchema.IsEmpty()
+                    ? FString::Printf(TEXT("'%s'"), *PrimarySchema)
+                    : FString::Printf(TEXT("'%s' or '%s'"), *PrimarySchema, *AlternateSchema);
                 return Fail(
                     OutError,
                     ERuntimeLoadErrorCode::SchemaMismatch,
                     Path,
                     FString::Printf(
-                        TEXT("Artifact schema mismatch in %s: expected '%s', got '%s'."),
+                        TEXT("Artifact schema mismatch in %s: expected %s, got '%s'."),
                         *Path,
-                        *ExpectedSchema,
+                        *ExpectedSchemas,
                         ActualSchema.IsEmpty() ? TEXT("<missing>") : *ActualSchema));
             }
 
-            FString SessionDigest;
-            if (!RootObject->TryGetStringField(TEXT("session_digest"), SessionDigest)
-                || !IsLowerHexDigest(SessionDigest))
+            FString SessionId;
+            if (!RootObject->TryGetStringField(TEXT("session_id"), SessionId)
+                || !IsValidSessionId(SessionId))
             {
                 return Fail(
                     OutError,
-                    ERuntimeLoadErrorCode::InvalidDigest,
+                    ERuntimeLoadErrorCode::InvalidField,
                     Path,
                     FString::Printf(
-                        TEXT("Artifact session_digest in %s must be 64 lowercase hexadecimal characters."),
+                        TEXT("Artifact session_id in %s is invalid."),
                         *Path));
             }
 
             FParsedArtifact Candidate;
             Candidate.Path = Path;
-            Candidate.SessionDigest = MoveTemp(SessionDigest);
-            if (bComputeDigest && !ComputeSha256(Path, Candidate.Sha256, OutError))
-            {
-                return false;
-            }
+            Candidate.SessionId = MoveTemp(SessionId);
             OutArtifact = MoveTemp(Candidate);
             return true;
         }
@@ -316,61 +171,48 @@ namespace LingTuSim
         }
 
         FSessionBundleView Candidate;
-        FParsedArtifact SessionLock;
-        Candidate.SessionLockPath = FPaths::Combine(NormalizedDirectory, TEXT("session.lock.json"));
-        if (!LoadJsonArtifact(
-                Candidate.SessionLockPath,
-                TEXT("lingtu.sim.session-lock.v1"),
-                false,
-                SessionLock,
-                OutError))
-        {
-            return false;
-        }
-        Candidate.SessionDigest = SessionLock.SessionDigest;
-
         static const FArtifactContract Contracts[] = {
             {
                 TEXT("physics.plan.json"),
                 TEXT("lingtu.sim.physics-plan.v1"),
+                TEXT("lingtu.sim.physics-plan.v2"),
                 true,
                 &FSessionBundleView::PhysicsPlanPath,
-                &FSessionBundleView::PhysicsPlanDigest,
             },
             {
                 TEXT("visual.plan.json"),
                 TEXT("lingtu.sim.visual-plan.v1"),
+                TEXT("lingtu.sim.visual-plan.v2"),
                 true,
                 &FSessionBundleView::VisualPlanPath,
-                &FSessionBundleView::VisualPlanDigest,
             },
             {
                 TEXT("sensor.plan.json"),
                 TEXT("lingtu.sim.sensor-plan.v1"),
+                nullptr,
                 true,
                 &FSessionBundleView::SensorPlanPath,
-                &FSessionBundleView::SensorPlanDigest,
             },
             {
                 TEXT("control.plan.json"),
                 TEXT("lingtu.sim.control-plan.v1"),
+                nullptr,
                 true,
                 &FSessionBundleView::ControlPlanPath,
-                &FSessionBundleView::ControlPlanDigest,
             },
             {
                 TEXT("scenario.plan.json"),
                 TEXT("lingtu.sim.scenario-plan.v1"),
+                nullptr,
                 false,
                 &FSessionBundleView::ScenarioPlanPath,
-                &FSessionBundleView::ScenarioPlanDigest,
             },
             {
                 TEXT("transport.intent.json"),
                 TEXT("lingtu.sim.transport-intent.v1"),
+                nullptr,
                 true,
                 &FSessionBundleView::TransportIntentPath,
-                &FSessionBundleView::TransportIntentDigest,
             },
         };
 
@@ -383,23 +225,31 @@ namespace LingTuSim
             }
 
             FParsedArtifact Artifact;
-            if (!LoadJsonArtifact(Path, Contract.Schema, true, Artifact, OutError))
+            if (!LoadJsonArtifact(
+                    Path,
+                    Contract.PrimarySchema,
+                    Contract.AlternateSchema != nullptr ? Contract.AlternateSchema : TEXT(""),
+                    Artifact,
+                    OutError))
             {
                 return false;
             }
-            if (Artifact.SessionDigest != Candidate.SessionDigest)
+            if (Candidate.SessionId.IsEmpty())
+            {
+                Candidate.SessionId = Artifact.SessionId;
+            }
+            else if (Artifact.SessionId != Candidate.SessionId)
             {
                 return Fail(
                     OutError,
-                    ERuntimeLoadErrorCode::DigestMismatch,
+                    ERuntimeLoadErrorCode::InvalidField,
                     Path,
                     FString::Printf(
-                        TEXT("Artifact session_digest in %s does not match session.lock.json."),
+                        TEXT("Artifact session_id in %s does not match the other plans."),
                         *Path));
             }
 
             Candidate.*Contract.PathMember = MoveTemp(Artifact.Path);
-            Candidate.*Contract.DigestMember = MoveTemp(Artifact.Sha256);
         }
 
         if (!Candidate.IsBound())
@@ -547,6 +397,26 @@ namespace LingTuSim
             return true;
         }
 
+        bool HasOnlyFields(
+            const TSharedPtr<FJsonObject>& Object,
+            const TSet<FString>& AllowedFields,
+            const FString& Source,
+            FRuntimeLoadError& OutError)
+        {
+            for (const TPair<FString, TSharedPtr<FJsonValue>>& Field : Object->Values)
+            {
+                if (!AllowedFields.Contains(Field.Key))
+                {
+                    return Fail(
+                        OutError,
+                        ERuntimeLoadErrorCode::InvalidField,
+                        Source,
+                        FString::Printf(TEXT("Unknown field '%s'."), *Field.Key));
+                }
+            }
+            return true;
+        }
+
         bool ParseEntity(
             const TSharedPtr<FJsonValue>& EntityValue,
             const FString& Source,
@@ -566,6 +436,42 @@ namespace LingTuSim
                     TEXT("Snapshot entity must be a JSON object."));
             }
             const TSharedPtr<FJsonObject>& EntityObject = *EntityObjectPointer;
+
+            static const TSet<FString> AllowedBodyFields = {
+                TEXT("body_id"),
+                TEXT("name"),
+                TEXT("stable_id"),
+                TEXT("instance_id"),
+                TEXT("frame_id"),
+                TEXT("position_m"),
+                TEXT("quaternion_wxyz"),
+                TEXT("linear_velocity_mps"),
+                TEXT("angular_velocity_rps"),
+            };
+            if (!HasOnlyFields(EntityObject, AllowedBodyFields, Source, OutError))
+            {
+                return false;
+            }
+
+            uint64 BodyId = 0;
+            FString BodyName;
+            if ((EntityObject->HasField(TEXT("body_id"))
+                    && !ReadNonNegativeUint64Field(
+                        EntityObject,
+                        TEXT("body_id"),
+                        Source,
+                        BodyId,
+                        OutError))
+                || (EntityObject->HasField(TEXT("name"))
+                    && !ReadRequiredEntityId(
+                        EntityObject,
+                        TEXT("name"),
+                        Source,
+                        BodyName,
+                        OutError)))
+            {
+                return false;
+            }
 
             FEntityState Candidate;
             if (!ReadRequiredEntityId(
@@ -614,7 +520,7 @@ namespace LingTuSim
                     EntityObject,
                     TEXT("linear_velocity_mps"),
                     3,
-                    false,
+                    true,
                     Source,
                     LinearVelocity,
                     OutError)
@@ -622,7 +528,7 @@ namespace LingTuSim
                     EntityObject,
                     TEXT("angular_velocity_rps"),
                     3,
-                    false,
+                    true,
                     Source,
                     AngularVelocity,
                     OutError))
@@ -672,17 +578,18 @@ namespace LingTuSim
         bool ParseSnapshotJsonInternal(
             const FString& SnapshotJson,
             const FString& Source,
-            const FString& ExpectedSessionDigest,
+            const FString* ExpectedSessionId,
             FSnapshotEnvelope& OutSnapshot,
             FRuntimeLoadError& OutError)
         {
-            if (!IsLowerHexDigest(ExpectedSessionDigest))
+            if (ExpectedSessionId != nullptr
+                && !IsValidSessionId(*ExpectedSessionId))
             {
                 return Fail(
                     OutError,
                     ERuntimeLoadErrorCode::InvalidArgument,
                     Source,
-                    TEXT("Expected session_digest must be 64 lowercase hexadecimal characters."));
+                    TEXT("Expected session_id is invalid."));
             }
 
             TSharedPtr<FJsonObject> RootObject;
@@ -699,6 +606,33 @@ namespace LingTuSim
                         : FString::Printf(TEXT("Invalid snapshot JSON: %s"), *Detail));
             }
 
+            if (RootObject->HasField(TEXT("entities")))
+            {
+                return Fail(
+                    OutError,
+                    ERuntimeLoadErrorCode::InvalidField,
+                    Source,
+                    TEXT("Legacy snapshot field 'entities' is not supported; use 'bodies'."));
+            }
+
+            static const TSet<FString> AllowedSnapshotFields = {
+                TEXT("schema"),
+                TEXT("session_id"),
+                TEXT("model_generation"),
+                TEXT("reset_generation"),
+                TEXT("sequence"),
+                TEXT("physics_step"),
+                TEXT("sim_time_ns"),
+                TEXT("bodies"),
+                TEXT("joints"),
+                TEXT("actuators"),
+                TEXT("sensors"),
+            };
+            if (!HasOnlyFields(RootObject, AllowedSnapshotFields, Source, OutError))
+            {
+                return false;
+            }
+
             FString Schema;
             if (!RootObject->TryGetStringField(TEXT("schema"), Schema)
                 || Schema != TEXT("lingtu.sim.truth-snapshot.v1"))
@@ -713,22 +647,23 @@ namespace LingTuSim
             }
 
             FSnapshotEnvelope Candidate;
-            if (!RootObject->TryGetStringField(TEXT("session_digest"), Candidate.SessionDigest)
-                || !IsLowerHexDigest(Candidate.SessionDigest))
+            if (!RootObject->TryGetStringField(TEXT("session_id"), Candidate.SessionId)
+                || !IsValidSessionId(Candidate.SessionId))
             {
                 return Fail(
                     OutError,
-                    ERuntimeLoadErrorCode::InvalidDigest,
+                    ERuntimeLoadErrorCode::InvalidField,
                     Source,
-                    TEXT("Snapshot session_digest must be 64 lowercase hexadecimal characters."));
+                    TEXT("Snapshot session_id is invalid."));
             }
-            if (Candidate.SessionDigest != ExpectedSessionDigest)
+            if (ExpectedSessionId != nullptr
+                && Candidate.SessionId != *ExpectedSessionId)
             {
                 return Fail(
                     OutError,
-                    ERuntimeLoadErrorCode::DigestMismatch,
+                    ERuntimeLoadErrorCode::InvalidField,
                     Source,
-                    TEXT("Snapshot session_digest does not match the loaded SessionBundle."));
+                    TEXT("Snapshot session_id does not match the loaded SessionBundle."));
             }
 
             if (!ReadNonNegativeUint64Field(
@@ -749,6 +684,12 @@ namespace LingTuSim
                     Source,
                     Candidate.Sequence,
                     OutError)
+                || !ReadNonNegativeUint64Field(
+                    RootObject,
+                    TEXT("physics_step"),
+                    Source,
+                    Candidate.PhysicsStep,
+                    OutError)
                 || !ReadNonNegativeInt64Field(
                     RootObject,
                     TEXT("sim_time_ns"),
@@ -760,25 +701,35 @@ namespace LingTuSim
             }
 
             const TArray<TSharedPtr<FJsonValue>>* EntityValues = nullptr;
-            const TArray<TSharedPtr<FJsonValue>>* BodyValues = nullptr;
-            const bool bHasEntities = RootObject->TryGetArrayField(TEXT("entities"), EntityValues);
-            const bool bHasBodies = RootObject->TryGetArrayField(TEXT("bodies"), BodyValues);
-            if (bHasEntities == bHasBodies)
+            if (!RootObject->TryGetArrayField(TEXT("bodies"), EntityValues)
+                || EntityValues == nullptr)
             {
                 return Fail(
                     OutError,
                     ERuntimeLoadErrorCode::InvalidField,
                     Source,
-                    TEXT("Snapshot must contain exactly one entity array: 'entities' or 'bodies'."));
+                    TEXT("Snapshot bodies must be an array."));
             }
-            EntityValues = bHasEntities ? EntityValues : BodyValues;
-            if (EntityValues == nullptr)
+
+            // UE consumes body poses only. Keep the other collections type-safe
+            // without walking every unused element on each presentation frame.
+            static const TCHAR* OptionalArrayFields[] = {
+                TEXT("joints"),
+                TEXT("actuators"),
+                TEXT("sensors"),
+            };
+            for (const TCHAR* OptionalArrayField : OptionalArrayFields)
             {
-                return Fail(
-                    OutError,
-                    ERuntimeLoadErrorCode::InvalidField,
-                    Source,
-                    TEXT("Snapshot entity array is unavailable."));
+                const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+                if (RootObject->HasField(OptionalArrayField)
+                    && !RootObject->TryGetArrayField(OptionalArrayField, Values))
+                {
+                    return Fail(
+                        OutError,
+                        ERuntimeLoadErrorCode::InvalidField,
+                        Source,
+                        FString::Printf(TEXT("Snapshot %s must be an array."), OptionalArrayField));
+                }
             }
 
             Candidate.Entities.Reserve(EntityValues->Num());
@@ -787,7 +738,7 @@ namespace LingTuSim
             {
                 FEntityState Entity;
                 const FString EntitySource = FString::Printf(
-                    TEXT("%s.entities[%d]"),
+                    TEXT("%s.bodies[%d]"),
                     *Source,
                     EntityIndex);
                 if (!ParseEntity((*EntityValues)[EntityIndex], EntitySource, Entity, OutError))
@@ -815,7 +766,7 @@ namespace LingTuSim
 
     bool FSessionBundleLoader::LoadSnapshotFile(
         const FString& SnapshotPath,
-        const FString& ExpectedSessionDigest,
+        const FString& ExpectedSessionId,
         FSnapshotEnvelope& OutSnapshot,
         FRuntimeLoadError& OutError)
     {
@@ -851,14 +802,14 @@ namespace LingTuSim
         return ParseSnapshotJsonInternal(
             SnapshotJson,
             NormalizedPath,
-            ExpectedSessionDigest,
+            &ExpectedSessionId,
             OutSnapshot,
             OutError);
     }
 
     bool FSessionBundleLoader::ParseSnapshotJson(
         const FString& SnapshotJson,
-        const FString& ExpectedSessionDigest,
+        const FString& ExpectedSessionId,
         FSnapshotEnvelope& OutSnapshot,
         FRuntimeLoadError& OutError)
     {
@@ -866,7 +817,21 @@ namespace LingTuSim
         return ParseSnapshotJsonInternal(
             SnapshotJson,
             TEXT("<snapshot-json>"),
-            ExpectedSessionDigest,
+            &ExpectedSessionId,
+            OutSnapshot,
+            OutError);
+    }
+
+    bool FSessionBundleLoader::ParseSnapshotJson(
+        const FString& SnapshotJson,
+        FSnapshotEnvelope& OutSnapshot,
+        FRuntimeLoadError& OutError)
+    {
+        OutError.Reset();
+        return ParseSnapshotJsonInternal(
+            SnapshotJson,
+            TEXT("<snapshot-json>"),
+            nullptr,
             OutSnapshot,
             OutError);
     }

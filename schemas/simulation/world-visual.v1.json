@@ -1,0 +1,458 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.world-visual-projection.v1",
+  "title": "LingTu imported world visual projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "package",
+    "binding",
+    "level",
+    "units",
+    "terrain",
+    "entities",
+    "spawn_alignment"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lingtu.sim.world-visual-projection.v1"
+    },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "manifest",
+        "provenance"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "manifest": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "provenance": {
+          "$ref": "#/$defs/relative_path"
+        }
+      }
+    },
+    "binding": {
+      "type": "string",
+      "minLength": 1
+    },
+    "level": {
+      "$ref": "#/$defs/game_path"
+    },
+    "units": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "length",
+        "up_axis",
+        "handedness"
+      ],
+      "properties": {
+        "length": {
+          "const": "m"
+        },
+        "up_axis": {
+          "const": "Z"
+        },
+        "handedness": {
+          "const": "RH"
+        }
+      }
+    },
+    "terrain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "grid_px",
+        "extent_m",
+        "sample_spacing_m",
+        "physics_bounds_m",
+        "visual_bounds_m",
+        "assets"
+      ],
+      "properties": {
+        "grid_px": {
+          "$ref": "#/$defs/int_vec2"
+        },
+        "extent_m": {
+          "$ref": "#/$defs/vec2"
+        },
+        "sample_spacing_m": {
+          "$ref": "#/$defs/vec2"
+        },
+        "physics_bounds_m": {
+          "$ref": "#/$defs/bounds"
+        },
+        "visual_bounds_m": {
+          "$ref": "#/$defs/bounds"
+        },
+        "assets": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role",
+              "path",
+              "bytes"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "$ref": "#/$defs/relative_path"
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "collision": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/entity_projection"
+      }
+    },
+    "spawn_alignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "position_m",
+        "aligned_to_heightmap"
+      ],
+      "properties": {
+        "position_m": {
+          "$ref": "#/$defs/vec3"
+        },
+        "aligned_to_heightmap": {
+          "const": true
+        }
+      }
+    }
+  },
+  "$defs": {
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*:)(?!.*\\\\)(?!.*//)(?!\\.\\.?(/|$))(?!.*(/\\.\\.?)(/|$)).+$"
+    },
+    "game_path": {
+      "type": "string",
+      "minLength": 7,
+      "pattern": "^/Game/(?!.*\\\\)(?!.*\\s)(?!.*//)(?!.*(/\\.\\.?)(/|$)).+"
+    },
+    "int_vec2": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "integer",
+          "minimum": 2
+        },
+        {
+          "type": "integer",
+          "minimum": 2
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "vec2": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "vec3": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "vec4": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false,
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_m",
+        "max_m"
+      ],
+      "properties": {
+        "min_m": {
+          "$ref": "#/$defs/vec3"
+        },
+        "max_m": {
+          "$ref": "#/$defs/vec3"
+        }
+      }
+    },
+    "entity_projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entity_id",
+        "semantic_class",
+        "authority",
+        "transform",
+        "geometry",
+        "unreal",
+        "material"
+      ],
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        },
+        "semantic_class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authority": {
+          "enum": [
+            "scenario",
+            "ue_animation",
+            "mujoco"
+          ]
+        },
+        "transform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "position_m",
+            "quaternion_wxyz"
+          ],
+          "properties": {
+            "position_m": {
+              "$ref": "#/$defs/vec3"
+            },
+            "quaternion_wxyz": {
+              "$ref": "#/$defs/vec4"
+            }
+          }
+        },
+        "geometry": {
+          "$ref": "#/$defs/entity_geometry"
+        },
+        "unreal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "representation",
+            "component_class",
+            "asset_path",
+            "dimensions_m"
+          ],
+          "properties": {
+            "representation": {
+              "const": "static_mesh"
+            },
+            "component_class": {
+              "const": "/Script/Engine.StaticMeshComponent"
+            },
+            "asset_path": {
+              "enum": [
+                "/Engine/BasicShapes/Cube.Cube",
+                "/Engine/BasicShapes/Cylinder.Cylinder"
+              ]
+            },
+            "dimensions_m": {
+              "$ref": "#/$defs/positive_vec3"
+            }
+          }
+        },
+        "material": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "key",
+            "pbr"
+          ],
+          "properties": {
+            "source": {
+              "const": "world_package"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "pbr": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "base_color_rgba",
+                "metallic",
+                "roughness"
+              ],
+              "properties": {
+                "base_color_rgba": {
+                  "$ref": "#/$defs/unit_vec4"
+                },
+                "metallic": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "roughness": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "entity_geometry": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "shape",
+            "size_m"
+          ],
+          "properties": {
+            "shape": {
+              "const": "box"
+            },
+            "size_m": {
+              "$ref": "#/$defs/positive_vec3"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "shape",
+            "radius_m",
+            "half_height_m"
+          ],
+          "properties": {
+            "shape": {
+              "const": "cylinder"
+            },
+            "radius_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "half_height_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "positive_vec3": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "unit_vec4": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      ],
+      "items": false,
+      "minItems": 4,
+      "maxItems": 4
+    }
+  }
+}

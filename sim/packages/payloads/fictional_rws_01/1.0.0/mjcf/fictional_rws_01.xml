@@ -1,0 +1,39 @@
+<mujoco model="fictional_rws_01">
+  <compiler angle="radian" autolimits="true"/>
+
+  <default>
+    <default class="payload_collision">
+      <geom contype="1" conaffinity="1" group="3" friction="0.8 0.02 0.001" rgba="0.20 0.23 0.19 1"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="payload_base">
+      <inertial pos="0 0 0.035" mass="3.5" diaginertia="0.045 0.050 0.070"/>
+      <site name="mount_interface" pos="0 0 0" quat="1 0 0 0" size="0.012" rgba="0.1 0.8 0.2 1"/>
+      <geom name="mount_base_proxy" class="payload_collision" type="box" pos="0 0 0.035" size="0.18 0.16 0.035"/>
+
+      <body name="yaw_frame" pos="0 0 0.070">
+        <joint name="yaw_joint" type="hinge" axis="0 0 1" range="-3.14159265 3.14159265" damping="1.5" armature="0.02"/>
+        <inertial pos="0 0 0.085" mass="4.0" diaginertia="0.060 0.065 0.045"/>
+        <geom name="yaw_ring_proxy" class="payload_collision" type="cylinder" pos="0 0 0.025" size="0.14 0.025"/>
+        <geom name="yaw_housing_proxy" class="payload_collision" type="box" pos="0 0 0.105" size="0.14 0.13 0.08"/>
+        <geom name="eo_sensor_proxy" class="payload_collision" type="box" pos="0.03 0.105 0.085" size="0.045 0.035 0.045"/>
+
+        <body name="pitch_frame" pos="0 0 0.145">
+          <joint name="pitch_joint" type="hinge" axis="0 1 0" range="-0.35 0.80" damping="1.0" armature="0.015"/>
+          <inertial pos="0.06 0 0.025" mass="3.0" diaginertia="0.035 0.060 0.055"/>
+          <geom name="pitch_housing_proxy" class="payload_collision" type="box" pos="-0.02 0 0.02" size="0.10 0.09 0.055"/>
+          <geom name="launcher_proxy" class="payload_collision" type="capsule" fromto="0.02 0 0.05 0.29 0 0.05" size="0.038"/>
+          <site name="muzzle_frame" pos="0.31 0 0.05" quat="1 0 0 0" size="0.010" rgba="0.9 0.2 0.1 1"/>
+          <site name="eo_optical_frame" pos="0.02 0.11 -0.015" quat="1 0 0 0" size="0.010" rgba="0.1 0.4 0.9 1"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="yaw_motor" joint="yaw_joint" ctrllimited="true" ctrlrange="-1 1" gear="20"/>
+    <motor name="pitch_motor" joint="pitch_joint" ctrllimited="true" ctrlrange="-1 1" gear="14"/>
+  </actuator>
+</mujoco>

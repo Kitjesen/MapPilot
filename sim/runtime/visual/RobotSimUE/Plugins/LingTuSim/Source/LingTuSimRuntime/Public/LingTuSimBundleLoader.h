@@ -13,10 +13,7 @@ namespace LingTuSim
         ReadFailed,
         InvalidJson,
         SchemaMismatch,
-        InvalidDigest,
-        DigestMismatch,
         InvalidField,
-        HashFailed,
     };
 
     struct LINGTUSIMRUNTIME_API FRuntimeLoadError
@@ -52,13 +49,23 @@ namespace LingTuSim
 
         static bool LoadSnapshotFile(
             const FString& SnapshotPath,
-            const FString& ExpectedSessionDigest,
+            const FString& ExpectedSessionId,
             FSnapshotEnvelope& OutSnapshot,
             FRuntimeLoadError& OutError);
 
         static bool ParseSnapshotJson(
             const FString& SnapshotJson,
-            const FString& ExpectedSessionDigest,
+            const FString& ExpectedSessionId,
+            FSnapshotEnvelope& OutSnapshot,
+            FRuntimeLoadError& OutError);
+
+        /**
+         * Parses and validates a snapshot envelope without binding it to the
+         * currently active session. Session ingress uses this overload so a
+         * well-formed next-generation snapshot can trigger an atomic rebind.
+         */
+        static bool ParseSnapshotJson(
+            const FString& SnapshotJson,
             FSnapshotEnvelope& OutSnapshot,
             FRuntimeLoadError& OutError);
     };

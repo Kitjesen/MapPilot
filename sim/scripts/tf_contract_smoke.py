@@ -3,7 +3,7 @@
 
 The script does not publish goals, cmd_vel, or any robot-control topic. It only
 listens for TF and odometry, then verifies that the runtime exposes the
-canonical map->odom->body frame chain declared in config/topic_contract.yaml.
+canonical map->odom->body frame chain declared by runtime.runtime_interface.
 With --require-sensors it also verifies the normalized Gazebo point-cloud topics
 used by maps and local planning. Use --require-camera when the server has a
 working headless rendering backend and camera evidence is part of the gate.

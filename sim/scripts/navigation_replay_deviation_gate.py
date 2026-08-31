@@ -59,19 +59,6 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def _resolve_artifact_path(report_path: Path, value: Any) -> Path | None:
-    if not value:
-        return None
-    raw = Path(str(value))
-    candidates = [raw]
-    if not raw.is_absolute():
-        candidates.extend([report_path.parent / raw, ROOT / raw])
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[-1] if candidates else None
-
-
 def _xy(value: Any) -> tuple[float, float] | None:
     if isinstance(value, (list, tuple)) and len(value) >= 2:
         x = _as_float(value[0])
@@ -123,13 +110,7 @@ def _cmd_components(value: Any) -> tuple[float, float, float] | None:
 
 
 def _samples(trace: dict[str, Any]) -> list[dict[str, Any]]:
-    raw = (
-        trace.get("samples")
-        or trace.get("timeline")
-        or trace.get("replay_samples")
-        or trace.get("messages")
-        or []
-    )
+    raw = trace.get("samples") or trace.get("timeline") or trace.get("replay_samples") or trace.get("messages") or []
     if isinstance(raw, dict):
         raw = raw.get("rows") or raw.get("samples") or []
     if not isinstance(raw, list):
@@ -173,7 +154,9 @@ def _path_points(value: Any) -> list[tuple[float, float]]:
     return []
 
 
-def _path_count(trace: dict[str, Any], samples: list[dict[str, Any]], *, count_key: str, path_keys: tuple[str, ...]) -> int:
+def _path_count(
+    trace: dict[str, Any], samples: list[dict[str, Any]], *, count_key: str, path_keys: tuple[str, ...]
+) -> int:
     explicit = _as_int(trace.get(count_key), 0)
     if explicit > 0:
         return explicit
@@ -205,12 +188,7 @@ def _odom_points(trace: dict[str, Any], samples: list[dict[str, Any]]) -> list[t
 def _commands(samples: list[dict[str, Any]]) -> list[tuple[float, float, float]]:
     commands: list[tuple[float, float, float]] = []
     for sample in samples:
-        raw = (
-            sample.get("cmd_vel")
-            or sample.get("cmd")
-            or sample.get("velocity_command")
-            or sample.get("command")
-        )
+        raw = sample.get("cmd_vel") or sample.get("cmd") or sample.get("velocity_command") or sample.get("command")
         cmd = _cmd_components(raw)
         if cmd is not None:
             commands.append(cmd)
@@ -243,10 +221,7 @@ def _goal_xy(trace: dict[str, Any]) -> tuple[float, float] | None:
 def _tracking_errors(trace: dict[str, Any], samples: list[dict[str, Any]]) -> list[float]:
     errors: list[float] = []
     raw_errors = (
-        trace.get("tracking_errors_m")
-        or trace.get("cross_track_errors_m")
-        or trace.get("deviation_errors_m")
-        or []
+        trace.get("tracking_errors_m") or trace.get("cross_track_errors_m") or trace.get("deviation_errors_m") or []
     )
     if isinstance(raw_errors, list):
         for item in raw_errors:
@@ -350,107 +325,6 @@ def _polyline_length(points: list[tuple[float, float]]) -> tuple[float, list[flo
     return total, distances
 
 
-def _sample_polyline(points: list[tuple[float, float]], count: int) -> list[tuple[float, float]]:
-    if not points:
-        return []
-    if len(points) == 1 or count <= 1:
-        return [points[0]]
-    total, distances = _polyline_length(points)
-    if total <= 1e-9:
-        return [points[0] for _ in range(count)]
-    sampled: list[tuple[float, float]] = []
-    segment_index = 0
-    for index in range(count):
-        target = total * index / (count - 1)
-        while segment_index + 1 < len(distances) and distances[segment_index + 1] < target:
-            segment_index += 1
-        next_index = min(segment_index + 1, len(points) - 1)
-        segment_start = distances[segment_index]
-        segment_end = distances[next_index]
-        ratio = 0.0 if segment_end <= segment_start else (target - segment_start) / (segment_end - segment_start)
-        start = points[segment_index]
-        end = points[next_index]
-        sampled.append(
-            (
-                start[0] + (end[0] - start[0]) * ratio,
-                start[1] + (end[1] - start[1]) * ratio,
-            )
-        )
-    return sampled
-
-
-def build_routecheck_trace(
-    routecheck_report_path: Path,
-    *,
-    phase: str = "candidate",
-    sample_count: int = 12,
-) -> dict[str, Any]:
-    report = _load_json(routecheck_report_path)
-    artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
-    phase_files = artifacts.get(f"{phase}_files") if isinstance(artifacts.get(f"{phase}_files"), dict) else {}
-    plan_path = _resolve_artifact_path(routecheck_report_path, phase_files.get("plan"))
-    if plan_path is None or not plan_path.exists():
-        raise FileNotFoundError(f"{phase} plan artifact is missing in routecheck report")
-    plan = _load_json(plan_path)
-    path_points = [_xy(item) for item in plan.get("path") or []]
-    path_xy = [point for point in path_points if point is not None]
-    if len(path_xy) < 2:
-        raise ValueError(f"{phase} plan artifact does not contain at least two path points")
-
-    sample_count = max(int(sample_count), max(5, len(path_xy) * 3))
-    replay_xy = _sample_polyline(path_xy, sample_count)
-    total_length, _ = _polyline_length(path_xy)
-    dt = 0.2
-    samples: list[dict[str, Any]] = []
-    for index, point in enumerate(replay_xy):
-        if index + 1 < len(replay_xy):
-            next_point = replay_xy[index + 1]
-            vx = (next_point[0] - point[0]) / dt
-            vy = (next_point[1] - point[1]) / dt
-        elif index > 0:
-            previous = replay_xy[index - 1]
-            vx = (point[0] - previous[0]) / dt
-            vy = (point[1] - previous[1]) / dt
-        else:
-            vx = 0.0
-            vy = 0.0
-        samples.append(
-            {
-                "t": round(index * dt, 3),
-                "odom": {"x": point[0], "y": point[1], "yaw": 0.0, "frame_id": "map"},
-                "cmd_vel": {
-                    "linear_x": vx,
-                    "linear_y": vy,
-                    "angular_z": 0.0,
-                },
-                "global_path_points": len(path_xy),
-                "local_path_points": len(path_xy),
-                "tracking_error_m": 0.0,
-            }
-        )
-
-    goal_xy = _xy(plan.get("goal")) or path_xy[-1]
-    return {
-        "schema_version": "lingtu.navigation_replay_trace.v1",
-        "source": "routecheck_preflight_plan_preview",
-        "source_report": str(routecheck_report_path),
-        "source_plan": str(plan_path),
-        "source_phase": phase,
-        "trace_kind": "non_motion_plan_replay",
-        "simulation_only": True,
-        "real_robot_motion": False,
-        "cmd_vel_sent_to_hardware": False,
-        "global_path": [_point_dict(point) for point in path_xy],
-        "local_path": [_point_dict(point) for point in path_xy],
-        "goal": _point_dict(goal_xy),
-        "samples": samples,
-        "final_distance_m": 0.0,
-        "tracking_error_p95_m": 0.0,
-        "tracking_error_final_m": 0.0,
-        "odom_motion_m": total_length,
-    }
-
-
 def build_topic_jsonl_trace(topic_jsonl_path: Path) -> dict[str, Any]:
     global_path: list[tuple[float, float]] = []
     local_path: list[tuple[float, float]] = []
@@ -475,9 +349,7 @@ def build_topic_jsonl_trace(topic_jsonl_path: Path) -> dict[str, Any]:
             if points:
                 local_path = points
             continue
-        if "global_path" in topic or "globalpath" in topic or (
-            topic.endswith("/path") and "local" not in topic
-        ):
+        if "global_path" in topic or "globalpath" in topic or (topic.endswith("/path") and "local" not in topic):
             points = _path_points(payload)
             if points:
                 global_path = points
@@ -516,9 +388,7 @@ def build_topic_jsonl_trace(topic_jsonl_path: Path) -> dict[str, Any]:
 
     tracking_path = local_path or global_path
     inferred_errors = [
-        error
-        for point in odom_points
-        if (error := _nearest_path_error(point, tracking_path)) is not None
+        error for point in odom_points if (error := _nearest_path_error(point, tracking_path)) is not None
     ]
     trace_goal = goal or (global_path[-1] if global_path else None)
     return {
@@ -668,10 +538,7 @@ def evaluate_trace(
         and cmd_vel_nonzero_ratio >= thresholds["min_cmd_vel_nonzero_ratio"]
     )
     odometry_replay_ok = odom_motion_m >= thresholds["min_odom_motion_m"]
-    goal_deviation_ok = (
-        final_distance_m is not None
-        and final_distance_m <= thresholds["max_final_distance_m"]
-    )
+    goal_deviation_ok = final_distance_m is not None and final_distance_m <= thresholds["max_final_distance_m"]
     tracking_deviation_ok = (
         tracking_error_p95_m is not None
         and tracking_error_final_m is not None
@@ -733,11 +600,7 @@ def evaluate_trace(
         ),
     }
 
-    blockers = [
-        f"{name}: {check['blocker']}"
-        for name, check in checks.items()
-        if check.get("ok") is not True
-    ]
+    blockers = [f"{name}: {check['blocker']}" for name, check in checks.items() if check.get("ok") is not True]
     return {
         "ok": not blockers,
         "passed": not blockers,
@@ -763,34 +626,14 @@ def build_report(
     *,
     trace_path: Path | None = None,
     fixture: bool = False,
-    routecheck_report_path: Path | None = None,
-    routecheck_phase: str = "candidate",
     topic_jsonl_path: Path | None = None,
     thresholds: dict[str, float] | None = None,
     write_trace: Path | None = None,
 ) -> dict[str, Any]:
-    trace_source = (
-        "fixture"
-        if fixture
-        else (
-            str(routecheck_report_path)
-            if routecheck_report_path
-            else (
-                str(topic_jsonl_path)
-                if topic_jsonl_path
-                else (str(trace_path) if trace_path else "")
-            )
-        )
-    )
+    trace_source = "fixture" if fixture else str(topic_jsonl_path or trace_path or "")
     load_error = ""
     if fixture:
         trace = build_fixture_trace()
-    elif routecheck_report_path is not None:
-        try:
-            trace = build_routecheck_trace(routecheck_report_path, phase=routecheck_phase)
-        except Exception as exc:
-            trace = {}
-            load_error = f"failed to build routecheck replay trace: {exc}"
     elif topic_jsonl_path is not None:
         try:
             trace = build_topic_jsonl_trace(topic_jsonl_path)
@@ -815,6 +658,15 @@ def build_report(
         blockers.insert(0, load_error)
 
     ok = not blockers
+    runtime_dataflow = [
+        {
+            "id": name,
+            "ok": check["ok"],
+            "blocker": check["blocker"],
+            "evidence": check["evidence"],
+        }
+        for name, check in evaluation["deviation_checks"].items()
+    ]
     return {
         "schema_version": SCHEMA_VERSION,
         "source_schema_version": trace.get("schema_version") if isinstance(trace, dict) else None,
@@ -827,6 +679,7 @@ def build_report(
         "simulation_only": trace.get("simulation_only") is True,
         "real_robot_motion": bool(trace.get("real_robot_motion")) if trace else False,
         "cmd_vel_sent_to_hardware": bool(trace.get("cmd_vel_sent_to_hardware")) if trace else False,
+        "runtime_dataflow": runtime_dataflow,
         **{key: value for key, value in evaluation.items() if key not in {"ok", "passed", "remaining_gaps"}},
         "remaining_gaps": blockers,
     }
@@ -835,9 +688,9 @@ def build_report(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--trace", type=Path, default=None, help="Replay trace/report JSON to validate.")
-    parser.add_argument("--routecheck-report", type=Path, default=None, help="Build a non-motion replay trace from a routecheck preflight summary.")
-    parser.add_argument("--routecheck-phase", default="candidate", choices=("baseline", "candidate"))
-    parser.add_argument("--topic-jsonl", type=Path, default=None, help="Build a replay trace from recorded topic JSONL events.")
+    parser.add_argument(
+        "--topic-jsonl", type=Path, default=None, help="Build a replay trace from recorded topic JSONL events."
+    )
     parser.add_argument("--fixture", action="store_true", help="Evaluate a deterministic passing fixture trace.")
     parser.add_argument("--write-fixture", type=Path, default=None, help="Write the deterministic fixture trace.")
     parser.add_argument("--write-trace", type=Path, default=None, help="Write the trace used for validation.")
@@ -883,8 +736,6 @@ def main(argv: list[str] | None = None) -> int:
     report = build_report(
         trace_path=args.trace,
         fixture=args.fixture,
-        routecheck_report_path=args.routecheck_report,
-        routecheck_phase=args.routecheck_phase,
         topic_jsonl_path=args.topic_jsonl,
         thresholds=thresholds,
         write_trace=args.write_trace,

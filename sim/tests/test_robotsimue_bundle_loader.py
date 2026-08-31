@@ -47,7 +47,6 @@ def test_loads_the_compiled_bundle_boundary_with_optional_scenario() -> None:
     runtime_types = _read("Public/LingTuSimRuntimeTypes.h")
 
     artifact_contracts = {
-        "session.lock.json": "lingtu.sim.session-lock.v1",
         "physics.plan.json": "lingtu.sim.physics-plan.v1",
         "visual.plan.json": "lingtu.sim.visual-plan.v1",
         "sensor.plan.json": "lingtu.sim.sensor-plan.v1",
@@ -59,22 +58,22 @@ def test_loads_the_compiled_bundle_boundary_with_optional_scenario() -> None:
         assert filename in implementation
         assert schema in implementation
 
-    for digest_field in (
-        "PhysicsPlanDigest",
-        "VisualPlanDigest",
-        "SensorPlanDigest",
-        "ControlPlanDigest",
-        "ScenarioPlanDigest",
-        "TransportIntentDigest",
-    ):
-        assert digest_field in implementation
-
-    assert "ComputeSha256" in implementation
-    assert "IsLowerHexDigest" in implementation
-    assert "DigestMismatch" in implementation
     assert "IFileManager::Get().FileExists" in implementation
     assert "&& !ScenarioPlanPath.IsEmpty()" not in runtime_types
-    assert "ScenarioPlanPath.IsEmpty() == ScenarioPlanDigest.IsEmpty()" in runtime_types
+
+
+def test_loader_uses_the_session_slug_contract() -> None:
+    implementation = _read("Private/LingTuSimBundleLoader.cpp")
+    tests = _read("Private/Tests/LingTuSimBundleLoaderTest.cpp")
+
+    assert "Value.Len() > 63" in implementation
+    assert "Character >= TEXT('A')" in implementation
+    assert "Character >= TEXT('a')" in implementation
+    assert "Character >= TEXT('0')" in implementation
+    for punctuation in ("_", ".", "-"):
+        assert f"Character != TEXT('{punctuation}')" in implementation
+    assert "64-character session_id is rejected" in tests
+    assert "session_id with a space is rejected" in tests
 
 
 def test_parses_immutable_snapshots_with_dynamic_entity_cardinality() -> None:
@@ -82,7 +81,7 @@ def test_parses_immutable_snapshots_with_dynamic_entity_cardinality() -> None:
 
     for field in (
         "lingtu.sim.truth-snapshot.v1",
-        "session_digest",
+        "session_id",
         "model_generation",
         "reset_generation",
         "sequence",
@@ -99,7 +98,7 @@ def test_parses_immutable_snapshots_with_dynamic_entity_cardinality() -> None:
     ):
         assert field in implementation
 
-    assert "ExpectedSessionDigest" in implementation
+    assert "ExpectedSessionId" in implementation
     assert "EntityValues->Num()" in implementation
     assert "Candidate.Entities.Reserve(EntityValues->Num())" in implementation
     assert "Candidate.Entities.Add" in implementation
@@ -119,22 +118,17 @@ def test_loader_returns_errors_without_crossing_the_compiled_json_boundary() -> 
     loader_surface = "\n".join((implementation, header, build_rules))
 
     for error_code in (
+        "InvalidArgument",
         "MissingArtifact",
         "ReadFailed",
         "InvalidJson",
         "SchemaMismatch",
-        "InvalidDigest",
-        "DigestMismatch",
         "InvalidField",
-        "HashFailed",
     ):
         assert error_code in loader_surface
 
     assert "FJsonSerializer::Deserialize" in implementation
-    assert "FFileHelper::LoadFileToArray" in implementation
-    assert "RoundConstants[64]" in implementation
-    assert "0x428a2f98U" in implementation
-    assert "GetSHA256Signature" not in implementation
+    assert "FFileHelper::LoadFileToString" in implementation
     assert not re.search(
         r"\b(?:check|checkf|verify|ensure|ensureMsgf)\s*\(", implementation
     )

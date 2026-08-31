@@ -35,31 +35,12 @@ def _write_binary_pcd(path: Path) -> None:
     path.write_bytes(header + payload)
 
 
-def test_default_route_viz_uses_octoplanner3d_pcd_not_tomogram():
+def test_default_route_viz_uses_octoplanner3d_pcd():
     default_pcd = viz.DEFAULT_PCD.as_posix()
 
     assert default_pcd.endswith(
         "sim/fixtures/octoplanner3d/building2_9.pcd"
     )
-    assert "tomogram" not in default_pcd
-    assert "pct/vendor" not in default_pcd
-
-
-def test_legacy_building2_9_visualization_prefers_octoplanner3d_pcd():
-    repo = Path(__file__).resolve().parents[2]
-    octo_fragment = (
-        "src', 'nav', 'services', 'plan', 'global_planner', 'algorithm',\n"
-        "    'OctoPlanner3D', 'octomap', 'pcd_files', 'building2_9.pcd'"
-    )
-    for rel_path in (
-        "sim/planning/e2e_generate_viz.py",
-        "sim/planning/sim_robot_node.py",
-    ):
-        text = (repo / rel_path).read_text(encoding="utf-8")
-        assert octo_fragment in text
-        assert text.index("_OCTOPLANNER3D_BUILDING2_9_PCD") < text.index("pct/vendor")
-
-
 def test_load_pcd_xyz_reads_binary_xyz_with_extra_fields(tmp_path: Path):
     pcd = tmp_path / "tiny.pcd"
     _write_binary_pcd(pcd)

@@ -1,0 +1,45 @@
+{
+  "binding": "WorldVisual:ForestHF",
+  "runtime_contract": {
+    "classification": "VisualOnly",
+    "collision_enabled": false,
+    "collision_profile": "NoCollision",
+    "generate_overlap_events": false,
+    "physics_authority": "mujoco",
+    "raycast_authority": "mujoco",
+    "simulate_physics": false
+  },
+  "schema": "lingtu.sim.forest-ue-projection.v1",
+  "target_level": "/Game/RobotSim/Maps/Forest_HF_2km",
+  "terrain": {
+    "actor_type": "Landscape",
+    "axis_mapping": [
+      "x",
+      "-y",
+      "z"
+    ],
+    "components_xy": [
+      64,
+      64
+    ],
+    "extent_cm": [
+      200000.0,
+      200000.0
+    ],
+    "location_z_cm": 3000.0,
+    "quads_per_section": 63,
+    "scale_cm": [
+      49.6031746031746,
+      49.6031746031746,
+      15.625
+    ],
+    "sections_per_component": 1,
+    "source_heightmap": "generated/heightfield_r16.png",
+    "source_resolution_px": [
+      4033,
+      4033
+    ],
+    "world_partition": true
+  },
+  "world_package": "forest_hf@2.0.0"
+}

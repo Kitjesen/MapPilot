@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import math
 from pathlib import Path
@@ -12,11 +13,13 @@ from sim.scripts.mujoco.continuous_mapping_quality_gate import (
     analyze_scale_convergence,
     analyze_status_continuity,
     ate_metrics_2d,
+    build_parser,
     join_time_series,
     load_motion_log,
     parse_trajectory_txt,
     path_length_xy,
     rigid_align_2d,
+    run_gate,
     validate_domain_id,
     windowed_path_ratios,
 )
@@ -366,3 +369,14 @@ def test_validate_domain_id_rejects_out_of_range():
         validate_domain_id(MAX_CYCLONEDDS_DOMAIN_ID + 1)
     with pytest.raises(ValueError, match="CycloneDDS"):
         validate_domain_id(-1)
+
+
+def test_gate_consumes_external_mapd_artifacts_without_slamctl_save() -> None:
+    args = build_parser().parse_args([])
+    run_source = inspect.getsource(run_gate)
+
+    assert args.saved_map_dir == ""
+    assert not hasattr(args, "slam_control_bin")
+    assert not hasattr(args, "save_timeout_s")
+    assert "subprocess.run(" not in run_source
+    assert '"save-map"' not in run_source

@@ -1,0 +1,29 @@
+schema: lingtu.sim.controller-package.v1
+id: omni_cart_differential_drive
+version: 1.0.0
+kind: controller
+description: Analytic differential-drive controller producing bounded torque for two named wheel joints; lateral velocity is unsupported.
+adapter:
+  plugin: differential_drive_wheel_torque
+  abi: lingtu.sim.controller-adapter.v1
+policy:
+  runtime: analytic
+  artifact: policy/differential_drive.json
+  manifest: policy/policy_manifest.json
+timing:
+  inference_hz: 100
+  low_level_hz: 500
+robot_interface:
+  requires_state:
+    - joint_position
+    - joint_velocity
+  accepts_command:
+    type: base_twist
+    message_type: lingtu.dds.FinalVelocityCommand
+  produces_command:
+    type: joint_torque
+    message_type: lingtu.sim.joint-torque.v1
+actuators:
+  channels:
+    - left_wheel_joint
+    - right_wheel_joint

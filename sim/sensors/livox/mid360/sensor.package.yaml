@@ -1,0 +1,26 @@
+schema: lingtu.sim.sensor-package.v1
+id: mid360
+version: 1.0.0
+kind: sensor
+description: Livox Mid-360 point cloud contract.
+sensor_type: lidar
+outputs:
+  - mid360
+timing:
+  rate_hz: 10
+interface:
+  transport: typed_dds
+  message_type: lingtu.dds.LivoxFrame
+configuration:
+  point_fields:
+    - x
+    - y
+    - z
+    - offset_time_ns
+    - reflectivity
+    - tag
+    - line
+  offset_time_unit: ns
+  line_semantics: livox_channel
+noise:
+  point_time: required

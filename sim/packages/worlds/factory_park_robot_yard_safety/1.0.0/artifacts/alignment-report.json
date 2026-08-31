@@ -1,0 +1,64 @@
+{
+  "extent_m": [
+    220.0,
+    180.0
+  ],
+  "grid_px": [
+    221,
+    181
+  ],
+  "height_encoding": {
+    "elevation_max_m": 0.08332570382238502,
+    "elevation_min_m": -0.666674296177615,
+    "formula": "height_m = sample_u16 / 65535 * (elevation_max_m - elevation_min_m) + elevation_min_m",
+    "input": "uint16"
+  },
+  "physics": {
+    "bounds_m": {
+      "max_m": [
+        110.0,
+        90.0,
+        0.08332570382238502
+      ],
+      "min_m": [
+        -110.0,
+        -90.0,
+        -0.666674296177615
+      ]
+    },
+    "format": "mujoco_hfield_f32"
+  },
+  "sample_spacing_m": [
+    1.0,
+    1.0
+  ],
+  "schema": "lingtu.sim.world-heightmap-alignment.v1",
+  "spawn": {
+    "aligned_to_heightmap": true,
+    "position_m": [
+      0.0,
+      -76.0,
+      0.0
+    ]
+  },
+  "units": {
+    "handedness": "RH",
+    "length": "m",
+    "up_axis": "Z"
+  },
+  "visual": {
+    "bounds_m": {
+      "max_m": [
+        110.0,
+        90.0,
+        0.08332570382238502
+      ],
+      "min_m": [
+        -110.0,
+        -90.0,
+        -0.666674296177615
+      ]
+    },
+    "format": "ue_16bit_png_plus_obj_cm"
+  }
+}

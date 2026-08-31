@@ -1,0 +1,273 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.payload-package.v1",
+  "title": "LingTu simulation payload package",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "version",
+    "kind",
+    "description",
+    "safety",
+    "compatibility",
+    "mount",
+    "physics",
+    "visual",
+    "frames",
+    "interfaces",
+    "declared_capabilities",
+    "provenance"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lingtu.sim.payload-package.v1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "kind": {
+      "const": "payload"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "fictional",
+        "real_world_calibration"
+      ],
+      "properties": {
+        "mode": {
+          "const": "simulation_only"
+        },
+        "fictional": {
+          "type": "boolean"
+        },
+        "real_world_calibration": {
+          "enum": [
+            "prohibited",
+            "not_applicable"
+          ]
+        }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime_abi",
+        "mujoco"
+      ],
+      "properties": {
+        "runtime_abi": {
+          "const": "lingtu.sim.payload.v1"
+        },
+        "mujoco": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "mount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_parent_role",
+        "root_frame"
+      ],
+      "properties": {
+        "required_parent_role": {
+          "const": "payload_mount"
+        },
+        "root_frame": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "physics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mjcf",
+        "attach_root",
+        "global_options",
+        "authority",
+        "collision_representation"
+      ],
+      "properties": {
+        "mjcf": {
+          "$ref": "#/$defs/artifact"
+        },
+        "attach_root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "global_options": {
+          "const": "inherit_session"
+        },
+        "authority": {
+          "const": "mujoco"
+        },
+        "collision_representation": {
+          "enum": [
+            "primitive_proxy",
+            "convex_proxy"
+          ]
+        }
+      }
+    },
+    "visual": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding",
+        "projection",
+        "authority",
+        "ue_collision"
+      ],
+      "properties": {
+        "binding": {
+          "type": "string",
+          "minLength": 1
+        },
+        "projection": {
+          "$ref": "#/$defs/artifact"
+        },
+        "authority": {
+          "const": "mujoco"
+        },
+        "ue_collision": {
+          "const": "disabled"
+        }
+      }
+    },
+    "frames": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "role"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "parent_frame": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "interfaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "command"
+      ],
+      "properties": {
+        "state": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "declared_capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generator"
+      ],
+      "properties": {
+        "generator": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "conversion_task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "segmentation_task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_asset": {
+          "$ref": "#/$defs/artifact"
+        },
+        "conditioning_report": {
+          "$ref": "#/$defs/artifact"
+        },
+        "source_uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "$defs": {
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$)).+$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/relative_path"
+        }
+      }
+    }
+  }
+}

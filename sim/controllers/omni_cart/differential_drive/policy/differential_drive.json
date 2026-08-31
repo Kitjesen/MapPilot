@@ -1,0 +1,11 @@
+{
+  "angular_velocity_limit_rps": 1.5,
+  "lateral_velocity_supported": false,
+  "linear_velocity_limit_mps": 0.8,
+  "schema": "lingtu.sim.differential-drive-analytic-policy.v1",
+  "speed_error_gain_nm_per_rps": 2.5,
+  "torque_limit_nm": 12.0,
+  "track_width_m": 0.68,
+  "wheel_radius_m": 0.11,
+  "wheel_speed_limit_rps": 10.0
+}

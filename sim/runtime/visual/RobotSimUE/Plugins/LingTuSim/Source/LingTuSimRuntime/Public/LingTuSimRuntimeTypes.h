@@ -6,7 +6,6 @@ namespace LingTuSim
 {
     struct LINGTUSIMRUNTIME_API FCompiledArtifactNames
     {
-        static const TCHAR* SessionLock() { return TEXT("session.lock.json"); }
         static const TCHAR* PhysicsPlan() { return TEXT("physics.plan.json"); }
         static const TCHAR* VisualPlan() { return TEXT("visual.plan.json"); }
         static const TCHAR* SensorPlan() { return TEXT("sensor.plan.json"); }
@@ -38,52 +37,38 @@ namespace LingTuSim
 
     struct LINGTUSIMRUNTIME_API FSessionBundleView
     {
-        FString SessionDigest;
-        FString SessionLockPath;
+        FString SessionId;
         FString PhysicsPlanPath;
         FString VisualPlanPath;
         FString SensorPlanPath;
         FString ControlPlanPath;
         FString ScenarioPlanPath;
         FString TransportIntentPath;
-        FString PhysicsPlanDigest;
-        FString VisualPlanDigest;
-        FString SensorPlanDigest;
-        FString ControlPlanDigest;
-        FString ScenarioPlanDigest;
-        FString TransportIntentDigest;
-
         bool IsBound() const
         {
-            return !SessionDigest.IsEmpty()
-                && !SessionLockPath.IsEmpty()
+            return !SessionId.IsEmpty()
                 && !PhysicsPlanPath.IsEmpty()
                 && !VisualPlanPath.IsEmpty()
                 && !SensorPlanPath.IsEmpty()
                 && !ControlPlanPath.IsEmpty()
-                && !TransportIntentPath.IsEmpty()
-                && !PhysicsPlanDigest.IsEmpty()
-                && !VisualPlanDigest.IsEmpty()
-                && !SensorPlanDigest.IsEmpty()
-                && !ControlPlanDigest.IsEmpty()
-                && !TransportIntentDigest.IsEmpty()
-                && (ScenarioPlanPath.IsEmpty() == ScenarioPlanDigest.IsEmpty());
+                && !TransportIntentPath.IsEmpty();
         }
     };
 
     struct LINGTUSIMRUNTIME_API FSnapshotEnvelope
     {
-        FString SessionDigest;
+        FString SessionId;
         uint64 ModelGeneration = 0;
         uint64 ResetGeneration = 0;
         uint64 Sequence = 0;
+        uint64 PhysicsStep = 0;
         int64 SimTimeNs = 0;
         TArray<FEntityState> Entities;
     };
 
     struct LINGTUSIMRUNTIME_API FCommandEnvelope
     {
-        FString SessionDigest;
+        FString SessionId;
         FName InstanceId;
         FString StableId;
         FString FrameId;

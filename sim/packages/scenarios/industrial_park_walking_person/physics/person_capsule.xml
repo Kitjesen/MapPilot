@@ -1,0 +1,9 @@
+<mujoco model="lingtu_walking_person">
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="proxy_root" mocap="true">
+      <geom name="person" type="capsule" pos="0 0 0.9" size="0.30 0.60"
+            contype="1" conaffinity="1" rgba="0.10 0.42 0.88 1"/>
+    </body>
+  </worldbody>
+</mujoco>

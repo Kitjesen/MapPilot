@@ -1,0 +1,18 @@
+schema: lingtu.sim.sensor-package.v1
+id: imu
+version: 1.0.0
+kind: sensor
+description: Six-axis inertial measurement unit contract.
+sensor_type: imu
+outputs:
+  - imu
+timing:
+  rate_hz: 200
+interface:
+  transport: typed_dds
+  message_type: lingtu.dds.Imu
+configuration:
+  fields:
+    - orientation
+    - angular_velocity
+    - linear_acceleration

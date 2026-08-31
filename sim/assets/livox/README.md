@@ -21,5 +21,5 @@ assets, not generated test fixtures.
 MuJoCo gates use this asset by default. The legacy golden-spiral scan can only
 be enabled explicitly with `--allow-golden-spiral-lidar`.
 
-See `docs/07-testing/MUJOCO_MID360_FIDELITY.md` for the sensor-fidelity and
+See `docs/07-testing/simulation/MUJOCO_MID360_FIDELITY.md` for the sensor-fidelity and
 acceptance-boundary contract.

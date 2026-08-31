@@ -53,12 +53,6 @@ new connection command.
 | `/tmp/factory_traj.npy` | live viewer 保存的实际轨迹 |
 | `/root/lingtu/` | ROS2 导航系统 workspace (与本 demo 无关，不要动) |
 
-### 路径数据来源
-
-`/tmp/factory_global_path.npy` 是之前用 ROS2 全局规划器 (`global_planner.py` + C++ `ele_planner.so`) 在 3 层工厂 tomogram 上规划出来的。**不需要重新生成**，直接用。
-
----
-
 ## 工作流
 
 ```bash

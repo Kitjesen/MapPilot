@@ -6,32 +6,25 @@ Production validation requires product LiDAR backends:
   Livox MID-360 scan-pattern support and optional CPU/Taichi/JAX/Warp backends.
 * ``ray_caster_lidar``: native ``mujoco.sensor.ray_caster_lidar`` plugin.
 
-The legacy local ``mj_multiRay`` implementation remains available only as an
-explicit development fallback. Product gates should set
-``LidarConfig.require_product_backend`` so fallback cannot pass silently.
+Initialization fails when neither supported backend is available.
 """
 
 from __future__ import annotations
 
-import sys
+import importlib.metadata
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
 from sim.engine.core.sensor import LidarConfig
 
-# Add sim/sensors/ to path so livox_mid360 can be imported.
-_SIM_SENSORS = Path(__file__).resolve().parents[2] / "sensors"
-if str(_SIM_SENSORS) not in sys.path:
-    sys.path.insert(0, str(_SIM_SENSORS))
-
-_MUJOCO_LIDAR_PARENT = Path(__file__).resolve().parents[3] / "src" / "drivers" / "sim" / "lidar"
-if _MUJOCO_LIDAR_PARENT.is_dir() and str(_MUJOCO_LIDAR_PARENT) not in sys.path:
-    sys.path.insert(0, str(_MUJOCO_LIDAR_PARENT))
-
 _PRODUCT_BACKENDS = {"mujoco_lidar", "ray_caster_lidar"}
-_SELF_GEOM_GROUP = 5
+ROBOT_COLLISION_GEOM_GROUP = 3
+ROBOT_VISUAL_GEOM_GROUP = 5
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_SOURCE_ROOT = _REPO_ROOT / "src"
+_MUJOCO_LIDAR_VERSION = "0.3.3"
 _BACKEND_ALIASES = {
     "": "auto",
     "auto": "auto",
@@ -44,12 +37,27 @@ _BACKEND_ALIASES = {
     "ray_caster_lidar": "ray_caster_lidar",
     "ray-caster-lidar": "ray_caster_lidar",
     "plugin": "ray_caster_lidar",
-    "mj_multiray": "mj_multiray",
-    "mj-multiray": "mj_multiray",
-    "mj_multiRay": "mj_multiray",
-    "multiray": "mj_multiray",
-    "fallback": "mj_multiray",
 }
+
+
+def _load_official_mujoco_lidar_wrapper() -> type:
+    """Load the pinned distribution without accepting a source-tree shadow."""
+
+    try:
+        installed_version = importlib.metadata.version("mujoco-lidar")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise RuntimeError("mujoco-lidar 0.3.3 is required; install the sim-mujoco extra") from exc
+    if installed_version != _MUJOCO_LIDAR_VERSION:
+        raise RuntimeError(f"unsupported mujoco-lidar version: {installed_version}; expected {_MUJOCO_LIDAR_VERSION}")
+
+    import mujoco_lidar
+
+    origin = Path(str(getattr(mujoco_lidar, "__file__", ""))).resolve()
+    if origin == _REPO_SOURCE_ROOT or _REPO_SOURCE_ROOT in origin.parents:
+        raise RuntimeError(
+            "mujoco_lidar resolved inside LingTu src; install the pinned distribution instead of a source shadow"
+        )
+    return mujoco_lidar.MjLidarWrapper
 
 
 class MuJoCoLidar:
@@ -62,16 +70,13 @@ class MuJoCoLidar:
         self._rng = np.random.default_rng(0)
         self._ray_angles: np.ndarray | None = None
         self._ray_cursor = 0
-        self._ray_dirs_local: np.ndarray | None = None
-        self._frame_idx = 0
         self._body_id = 0
+        self._exclude_body_id = 0
         self._mujoco_lidar: Any | None = None
         self._mujoco_lidar_impl = ""
         self._plugin_reader: Any | None = None
         self._backend = ""
         self._backend_error = ""
-        self._fallback_used = False
-        self._product_backend = False
         self._self_geom_count = 0
 
         self._geomgroup = self._geomgroup_from_config(config)
@@ -79,23 +84,15 @@ class MuJoCoLidar:
         init_errors: list[str] = []
 
         if requested == "auto":
-            for candidate in ("mujoco_lidar", "ray_caster_lidar", "mj_multiray"):
-                if candidate == "mj_multiray" and not bool(config.allow_legacy_fallback):
-                    continue
+            for candidate in ("mujoco_lidar", "ray_caster_lidar"):
                 if self._try_init(candidate, init_errors):
                     break
         else:
-            if not self._try_init(requested, init_errors):
-                if bool(config.allow_legacy_fallback) and requested != "mj_multiray":
-                    self._try_init("mj_multiray", init_errors)
+            self._try_init(requested, init_errors)
 
         if not self._backend:
             detail = "; ".join(init_errors) or f"unsupported backend: {requested}"
             raise RuntimeError(f"MuJoCo LiDAR backend initialization failed: {detail}")
-
-        if bool(config.require_product_backend) and self._backend not in _PRODUCT_BACKENDS:
-            detail = "; ".join(init_errors) or self._backend_error or "legacy fallback selected"
-            raise RuntimeError(f"Product MuJoCo LiDAR backend required; selected {self._backend!r}. Details: {detail}")
 
         print(
             "[MuJoCoLidar] Initialized: "
@@ -128,8 +125,6 @@ class MuJoCoLidar:
                 self._init_mujoco_lidar()
             elif backend == "ray_caster_lidar":
                 self._init_ray_caster_plugin()
-            elif backend == "mj_multiray":
-                self._init_fallback(self._model, self._data, self._config)
             else:
                 raise ValueError(f"unsupported backend: {backend}")
         except Exception as exc:
@@ -138,8 +133,6 @@ class MuJoCoLidar:
             self._backend_error = msg
             return False
         self._backend = backend
-        self._product_backend = backend in _PRODUCT_BACKENDS
-        self._fallback_used = backend == "mj_multiray"
         self._backend_error = ""
         return True
 
@@ -152,6 +145,25 @@ class MuJoCoLidar:
             return 0
         return int(body_id)
 
+    def _resolve_exclude_body_id(
+        self,
+        config: LidarConfig | None = None,
+    ) -> int:
+        import mujoco
+
+        resolved_config = config or self._config
+        configured = str(getattr(resolved_config, "exclude_body_name", None) or "").strip()
+        if not configured:
+            return int(self._body_id)
+        body_id = mujoco.mj_name2id(
+            self._model,
+            mujoco.mjtObj.mjOBJ_BODY,
+            configured,
+        )
+        if body_id < 0:
+            raise ValueError(f"MuJoCo LiDAR exclusion body not found: {configured}")
+        return int(body_id)
+
     def _resolve_site_id(self) -> int:
         import mujoco
 
@@ -160,58 +172,83 @@ class MuJoCoLidar:
             raise ValueError(f"MuJoCo LiDAR site not found: {self._config.site_name}")
         return int(site_id)
 
-    def _exclude_robot_geoms(self) -> None:
-        """Move robot-owned geoms to a LiDAR-excluded MuJoCo group."""
+    def _exclude_robot_geoms(self) -> tuple[tuple[int, int], ...]:
+        """Keep robot collision and visual geometry in separate LiDAR-excluded groups."""
 
-        root_body = int(self._body_id)
+        root_body = int(self._exclude_body_id)
         if root_body <= 0:
-            return
+            return ()
 
         excluded = 0
+        changed: list[tuple[int, int]] = []
         for geom_id in range(int(self._model.ngeom)):
             body_id = int(self._model.geom_bodyid[geom_id])
             while body_id > 0 and body_id != root_body:
                 body_id = int(self._model.body_parentid[body_id])
             if body_id != root_body:
                 continue
-            self._model.geom_group[geom_id] = _SELF_GEOM_GROUP
+            previous_group = int(self._model.geom_group[geom_id])
+            collidable = bool(
+                int(self._model.geom_contype[geom_id])
+                or int(self._model.geom_conaffinity[geom_id])
+            )
+            target_group = (
+                ROBOT_COLLISION_GEOM_GROUP if collidable else ROBOT_VISUAL_GEOM_GROUP
+            )
+            if previous_group != target_group:
+                changed.append((geom_id, previous_group))
+            self._model.geom_group[geom_id] = target_group
             excluded += 1
 
         # MuJoCo ray queries filter by geom group, while bodyexclude only skips
-        # one body. Reserving one group excludes the full articulated robot.
-        self._geomgroup[_SELF_GEOM_GROUP] = 0
+        # one body. Both robot groups must stay outside the LiDAR mask.
+        self._geomgroup[ROBOT_COLLISION_GEOM_GROUP] = 0
+        self._geomgroup[ROBOT_VISUAL_GEOM_GROUP] = 0
         self._self_geom_count = excluded
+        return tuple(changed)
+
+    def _restore_robot_geom_groups(
+        self,
+        changed: tuple[tuple[int, int], ...],
+    ) -> None:
+        for geom_id, group in changed:
+            self._model.geom_group[geom_id] = group
+        self._self_geom_count = 0
 
     def _init_mujoco_lidar(self) -> None:
         """Initialize discoverse-dev/MuJoCo-LiDAR wrapper."""
 
+        MjLidarWrapper = _load_official_mujoco_lidar_wrapper()
         self._resolve_site_id()
         self._body_id = self._resolve_body_id()
-        self._exclude_robot_geoms()
-        from mujoco_lidar import MjLidarWrapper
-
-        self._ray_angles = self._load_scan_mode_angles(self._config.mid360_npy_path)
-        if self._ray_angles is None:
-            self._ray_angles = self._load_package_mid360_angles()
+        self._exclude_body_id = self._resolve_exclude_body_id()
+        self._ray_angles = self._load_configured_mid360_angles()
         self._ray_cursor = 0
         impl = str(self._config.mujoco_lidar_backend or "cpu").strip().lower()
         self._mujoco_lidar_impl = impl
-        self._mujoco_lidar = MjLidarWrapper(
-            self._model,
-            site_name=self._config.site_name,
-            backend=impl,
-            cutoff_dist=float(self._config.range_max),
-            args={
-                "geomgroup": self._geomgroup,
-                "bodyexclude": self._body_id,
-            },
-        )
+        changed = self._exclude_robot_geoms()
+        try:
+            wrapper = MjLidarWrapper(
+                self._model,
+                site_name=self._config.site_name,
+                backend=impl,
+                cutoff_dist=float(self._config.range_max),
+                args={
+                    "geomgroup": self._geomgroup,
+                    "bodyexclude": self._exclude_body_id,
+                },
+            )
+        except BaseException:
+            self._restore_robot_geom_groups(changed or ())
+            raise
+        self._mujoco_lidar = wrapper
 
     def _init_ray_caster_plugin(self) -> None:
         """Initialize native mujoco.sensor.ray_caster_lidar plugin reader."""
 
         import mujoco
-        from livox_mid360 import read_plugin_lidar
+
+        from sim.sensors.livox_mid360 import read_plugin_lidar
 
         sensor_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_SENSOR, self._config.sensor_name)
         if sensor_id < 0:
@@ -219,39 +256,6 @@ class MuJoCoLidar:
         if int(self._model.sensor_plugin[sensor_id]) < 0:
             raise RuntimeError(f"MuJoCo sensor {self._config.sensor_name!r} is not backed by a loaded plugin")
         self._plugin_reader = read_plugin_lidar
-
-    def _init_fallback(self, model, data, config: LidarConfig) -> None:
-        """Initialize legacy local ``mj_multiRay`` backend."""
-
-        self._body_id = self._resolve_body_id()
-        self._exclude_robot_geoms()
-        self._rng = np.random.default_rng(0)
-        self._ray_angles = self._load_scan_mode_angles(config.mid360_npy_path)
-        if self._ray_angles is None:
-            self._ray_dirs_local = self._build_golden_spiral(
-                config.n_rays,
-                np.deg2rad(float(config.vfov_min_deg)),
-                np.deg2rad(float(config.vfov_max_deg)),
-            )
-        else:
-            self._ray_cursor = 0
-            self._ray_dirs_local = None
-        self._frame_idx = 0
-
-    @staticmethod
-    def _build_golden_spiral(
-        n: int,
-        vfov_min: float = np.deg2rad(-7.0),
-        vfov_max: float = np.deg2rad(52.0),
-    ) -> np.ndarray:
-        """Build golden-angle spiral ray directions for legacy fallback only."""
-
-        golden_ang = np.pi * (3 - np.sqrt(5))
-        i = np.arange(n, dtype=np.float64)
-        ha = (i * golden_ang) % (2 * np.pi)
-        va = vfov_min + i / n * (vfov_max - vfov_min)
-        cv = np.cos(va)
-        return np.column_stack([cv * np.cos(ha), cv * np.sin(ha), np.sin(va)])
 
     @staticmethod
     def _load_scan_mode_angles(path: str | None) -> np.ndarray | None:
@@ -285,6 +289,21 @@ class MuJoCoLidar:
             raise ValueError(f"MID-360 scan-mode file must contain Nx2 theta/phi angles: {scan_path}")
         if len(angles) == 0:
             raise ValueError(f"MID-360 scan-mode file is empty: {scan_path}")
+        return angles
+
+    def _load_configured_mid360_angles(self) -> np.ndarray:
+        """Load a configured pattern and enforce the product pattern contract."""
+
+        configured = str(self._config.mid360_npy_path or "").strip()
+        require_product = bool(self._config.require_product_backend)
+        if not configured:
+            if require_product:
+                raise RuntimeError("product MuJoCo LiDAR requires an explicit canonical MID-360 pattern")
+            return self._load_package_mid360_angles()
+
+        pattern_path = Path(configured).expanduser().resolve()
+        angles = self._load_scan_mode_angles(str(pattern_path))
+        assert angles is not None
         return angles
 
     @staticmethod
@@ -323,13 +342,6 @@ class MuJoCoLidar:
             angles[:, 0].astype(np.float32, copy=False),
             angles[:, 1].astype(np.float32, copy=False),
         )
-
-    def _next_pattern_dirs_local(self, sample_count: int | None = None) -> np.ndarray:
-        theta, phi = self._next_pattern_angles(sample_count)
-        theta64 = theta.astype(np.float64, copy=False)
-        phi64 = phi.astype(np.float64, copy=False)
-        cp = np.cos(phi64)
-        return np.column_stack([cp * np.cos(theta64), cp * np.sin(theta64), np.sin(phi64)])
 
     def scan(self, sample_count: int | None = None) -> np.ndarray:
         """Perform one LiDAR scan.
@@ -433,10 +445,7 @@ class MuJoCoLidar:
                     0.0,
                     1.0,
                 )
-                range_sigmas = (
-                    float(near_std)
-                    + blend * (float(far_std) - float(near_std))
-                ).astype(np.float32)
+                range_sigmas = (float(near_std) + blend * (float(far_std) - float(near_std))).astype(np.float32)
             else:
                 range_sigmas = np.full(len(ranges), range_noise, dtype=np.float32)
             measured_ranges = ranges + self._rng.normal(
@@ -474,7 +483,7 @@ class MuJoCoLidar:
             return self._scan_mujoco_lidar(sample_count)
         if self._backend == "ray_caster_lidar":
             return self._scan_plugin()
-        return self._scan_fallback(sample_count)
+        raise RuntimeError(f"unsupported active LiDAR backend: {self._backend}")
 
     def _scan_mujoco_lidar(self, sample_count: int | None = None) -> np.ndarray:
         if self._mujoco_lidar is None:
@@ -518,57 +527,10 @@ class MuJoCoLidar:
         valid = np.isfinite(pts).all(axis=1)
         return pts[valid]
 
-    def _scan_fallback(self, sample_count: int | None = None) -> np.ndarray:
-        """Legacy ``mj_multiRay`` scan used only when fallback is explicit/allowed."""
-
-        import mujoco
-
-        body_id = getattr(self, "_body_id", 0)
-        pos = self._data.xpos[body_id].copy()
-        rmat = self._data.xmat[body_id].reshape(3, 3).copy()
-
-        if self._ray_angles is not None:
-            dirs_local = self._next_pattern_dirs_local(sample_count)
-        else:
-            ang = self._frame_idx * 0.628
-            self._frame_idx += 1
-            c, s = np.cos(ang), np.sin(ang)
-            Rz = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]], dtype=np.float64)
-            dirs_local = self._ray_dirs_local @ Rz.T
-        dirs_world = dirs_local @ rmat.T
-
-        n_rays = len(dirs_world)
-        dist_out = np.full(n_rays, -1.0, dtype=np.float64)
-        geomid_out = np.full(n_rays, -1, dtype=np.int32)
-
-        mujoco.mj_multiRay(
-            self._model,
-            self._data,
-            pos,
-            dirs_world.flatten(),
-            self._geomgroup,
-            1,
-            body_id,
-            geomid_out,
-            dist_out,
-            None,
-            n_rays,
-            self._config.range_max,
-        )
-
-        mask = dist_out > self._config.range_min
-        if not mask.any():
-            return np.zeros((0, 3), dtype=np.float32)
-
-        pts = (pos + dirs_world[mask] * dist_out[mask, None]).astype(np.float32)
-        return pts
-
     def update_data(self, data) -> None:
         """Update MjData reference after simulation reset."""
 
         self._data = data
-        if hasattr(self, "_frame_idx"):
-            self._frame_idx = 0
 
     @property
     def config(self) -> LidarConfig:
@@ -583,19 +545,17 @@ class MuJoCoLidar:
 
         return {
             "backend": self._backend,
-            "product_backend": bool(self._product_backend),
-            "product_lidar_backend_verified": bool(self._product_backend and not self._fallback_used),
-            "fallback_used": bool(self._fallback_used),
+            "product_backend": self._backend in _PRODUCT_BACKENDS,
+            "product_lidar_backend_verified": self._backend in _PRODUCT_BACKENDS,
             "requested_backend": str(self._config.backend),
             "mujoco_lidar_backend": self._mujoco_lidar_impl,
             "require_product_backend": bool(self._config.require_product_backend),
-            "allow_legacy_fallback": bool(self._config.allow_legacy_fallback),
             "site_name": str(self._config.site_name),
             "sensor_name": str(self._config.sensor_name),
             "body_name": str(self._config.body_name),
+            "exclude_body_name": str(getattr(self._config, "exclude_body_name", None) or self._config.body_name),
             "pattern_path": str(self._config.mid360_npy_path or ""),
             "samples_per_frame": int(self._config.samples_per_frame),
-            "fallback_n_rays": int(self._config.n_rays),
             "range_min_m": float(self._config.range_min),
             "range_max_m": float(self._config.range_max),
             "noise_std_m": float(self._config.noise_std if self._config.add_noise else 0.0),
@@ -633,7 +593,8 @@ class MuJoCoLidar:
             "intensity_model": "distance_proxy_not_material_calibrated",
             "multi_return_model": "single_return",
             "self_occlusion_mode": "robot_group" if self._self_geom_count else "backend_default",
-            "self_geom_group": _SELF_GEOM_GROUP,
+            "self_geom_group": ROBOT_VISUAL_GEOM_GROUP,
+            "self_collision_geom_group": ROBOT_COLLISION_GEOM_GROUP,
             "self_geoms": int(self._self_geom_count),
             "fields": ["x", "y", "z", "intensity"],
             "error": self._backend_error,

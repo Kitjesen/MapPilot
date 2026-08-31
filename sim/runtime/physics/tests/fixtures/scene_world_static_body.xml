@@ -1,0 +1,9 @@
+<mujoco model="lingtu_scene_world_static_body">
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+  <worldbody>
+    <geom name="floor" type="plane" size="2 2 0.1"/>
+    <body name="static_prop" pos="1 0 0.25">
+      <geom name="static_prop_collision" type="box" size="0.25 0.25 0.25"/>
+    </body>
+  </worldbody>
+</mujoco>

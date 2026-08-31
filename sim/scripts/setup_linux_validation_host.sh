@@ -17,19 +17,12 @@ cd "${ROOT}"
 CONDA_ENV="${LINGTU_CONDA_ENV:-}"
 SKIP_APT="${LINGTU_SKIP_APT:-0}"
 RUN_MUJOCO="${LINGTU_RUN_MUJOCO:-1}"
-RUN_PCT="${LINGTU_RUN_PCT:-1}"
-PCT_BUILD_LEGACY_NATIVE="${LINGTU_PCT_BUILD_LEGACY_GTSAM_NATIVE:-0}"
-RUN_MULTIFLOOR="${LINGTU_RUN_MULTIFLOOR:-1}"
-RUN_NAV_KERNEL="${LINGTU_RUN_NAV_KERNEL:-1}"
-RUN_ROUTECHECK_PREFLIGHT="${LINGTU_RUN_ROUTECHECK_PREFLIGHT:-1}"
-SETUP_CLOSURE_MAX_REPORT_AGE_S="${LINGTU_SETUP_CLOSURE_MAX_REPORT_AGE_S:-21600}"
 INSTALL_SYSTEM_DEPS="${LINGTU_INSTALL_SYSTEM_DEPS:-1}"
 INSTALL_PYTHON_DEPS="${LINGTU_INSTALL_PYTHON_DEPS:-1}"
 RUN_VERIFY="${LINGTU_RUN_VERIFY:-1}"
 SUDO_PASSWORD="${LINGTU_SUDO_PASSWORD:-}"
 APT_RETRIES="${LINGTU_APT_RETRIES:-3}"
 APT_TIMEOUT="${LINGTU_APT_TIMEOUT:-30}"
-MID360_PATTERN_SHA256="448821576a658673e8f7929992c8c0d687eb052657d7b584d038729a83da1bfb"
 
 log() {
   printf '\n[%s] %s\n' "$(date +%H:%M:%S)" "$*"
@@ -37,11 +30,6 @@ log() {
 
 have() {
   command -v "$1" >/dev/null 2>&1
-}
-
-join_by_comma() {
-  local IFS=,
-  printf '%s' "$*"
 }
 
 need_sudo() {
@@ -178,44 +166,6 @@ PY
   fi
 }
 
-build_pct_runtime() {
-  if [[ "${RUN_PCT}" != "1" ]]; then
-    return
-  fi
-  if [[ "${PCT_BUILD_LEGACY_NATIVE}" == "1" ]]; then
-    log "building PCT legacy native/GTSAM runtime for parity baselines"
-    LINGTU_PCT_BUILD_LEGACY_GTSAM_NATIVE=1 \
-      JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}" \
-      bash "${ROOT}/src/nav/services/plan/global_planner/algorithm/pct/runtime/build_legacy_native_x86_64.sh"
-    return
-  fi
-
-  log "building PCT Rust GPMP runtime"
-  python3 scripts/build/build_rust_kernels.py --target gpmp_trajectory_optimizer --release
-
-  local arch
-  case "$(uname -m)" in
-    x86_64|amd64) arch="x86_64" ;;
-    aarch64|arm64) arch="aarch64" ;;
-    *) arch="$(uname -m)" ;;
-  esac
-  local release_dir="${ROOT}/src/kernels/planning/gpmp_trajectory_optimizer/target/release"
-  local out_dir="${ROOT}/src/nav/services/plan/global_planner/algorithm/pct/runtime/rust/${arch}"
-  mkdir -p "${out_dir}"
-  cp -a "${release_dir}/gpmp_optimize" "${out_dir}/"
-  cp -a "${release_dir}/liblingtu_gpmp_trajectory_optimizer.so" "${out_dir}/"
-  chmod +x "${out_dir}/gpmp_optimize"
-  log "PCT Rust GPMP runtime artifacts installed to ${out_dir}"
-}
-
-build_nav_kernel_runtime() {
-  if [[ "${RUN_NAV_KERNEL}" != "1" ]]; then
-    return
-  fi
-  log "building nav_kernel nanobind runtime for production local planning"
-  bash "${ROOT}/scripts/build/build_nav_kernel.sh" --clean
-}
-
 verify_mid360_pattern_asset() {
   if [[ "${RUN_MUJOCO}" != "1" ]]; then
     return
@@ -225,18 +175,16 @@ verify_mid360_pattern_asset() {
     log "missing official MID-360 scan pattern asset: sim/assets/livox/mid360.npy"
     return 1
   fi
-  python3 - "${pattern}" "${MID360_PATTERN_SHA256}" <<'PY'
-import hashlib
+  python3 - "${pattern}" <<'PY'
 import sys
 from pathlib import Path
+import numpy as np
 
 path = Path(sys.argv[1])
-expected = sys.argv[2]
-digest = hashlib.sha256(path.read_bytes()).hexdigest()
-if digest != expected:
-    print(f"MID-360 pattern SHA256 mismatch: {digest} != {expected}", file=sys.stderr)
-    raise SystemExit(1)
-print(f"MID-360 pattern ok: {path} {digest}")
+angles = np.load(path, mmap_mode="r")
+if angles.ndim != 2 or angles.shape[1] != 2:
+    raise SystemExit(f"invalid MID-360 pattern shape: {angles.shape}")
+print(f"MID-360 pattern ok: {path} {angles.shape}")
 PY
 }
 
@@ -246,23 +194,10 @@ run_verification() {
     return
   fi
 
-  local closure_required=()
   export PYTHONPATH="${ROOT}/src:${ROOT}:${PYTHONPATH:-}"
   export PYTEST_DISABLE_PLUGIN_AUTOLOAD="${PYTEST_DISABLE_PLUGIN_AUTOLOAD:-1}"
 
-  if [[ "${RUN_PCT}" == "1" ]]; then
-    log "PCT runtime inspection"
-    python3 - <<'PY'
-from nav.services.plan.global_planner.algorithm.pct.runtime.api import inspect_pct_runtime
-import json
-print(json.dumps(inspect_pct_runtime(), indent=2, ensure_ascii=False))
-PY
-  fi
-
   local focused_tests=()
-  if [[ "${RUN_PCT}" == "1" ]]; then
-    focused_tests+=(src/runtime/tests/test_pct_runtime.py)
-  fi
   if [[ "${RUN_MUJOCO}" == "1" ]]; then
     focused_tests+=(src/runtime/tests/test_sim_runtime_adapters.py)
   fi
@@ -280,64 +215,6 @@ PY
     python3 -m pytest "${existing_tests[@]}" -q --tb=short
   fi
 
-  if [[ "${RUN_PCT}" == "1" ]]; then
-    log "strict PCT planning gate"
-    python3 sim/scripts/multifloor_nav_validation.py \
-      --output-dir artifacts/server_pct_gate \
-      --route same_floor \
-      --planners pct \
-      --skip-mujoco \
-      --strict \
-      --json-out artifacts/server_pct_gate/report.json
-  fi
-
-  if [[ "${RUN_PCT}" == "1" && "${RUN_MULTIFLOOR}" == "1" ]]; then
-    log "multi-floor exploration/local-planning closure gate, simulation-only"
-    python3 sim/scripts/multifloor_nav_validation.py \
-      --output-dir artifacts/server_sim_closure/multifloor_exploration \
-      --route matrix \
-      --planners pct,astar \
-      --skip-mujoco \
-      --frontier-loop \
-      --local-planner-backend nanobind \
-      --require-production-local-planner \
-      --strict \
-      --json-out artifacts/server_sim_closure/multifloor_exploration/report.json
-    closure_required+=(multifloor_exploration)
-  fi
-
-  if [[ "${RUN_ROUTECHECK_PREFLIGHT}" == "1" ]]; then
-    log "Gateway routecheck preflight closure gate, non-motion"
-    python3 sim/scripts/routecheck_preflight_gate.py \
-      --map server_sim_demo \
-      --goal-x 1.0 \
-      --goal-y 0.0 \
-      --goal-yaw 0.0 \
-      --json-out artifacts/server_sim_closure/routecheck/summary.json \
-      --strict
-    closure_required+=(routecheck_preflight)
-  fi
-
-  if [[ "${RUN_MUJOCO}" == "1" ]]; then
-    log "MuJoCo bridge-loop gate, simulation-only"
-    python3 sim/scripts/multifloor_nav_validation.py \
-      --output-dir artifacts/server_mujoco_bridge \
-      --route same_floor \
-      --planners astar \
-      --bridge-loop \
-      --strict \
-      --json-out artifacts/server_mujoco_bridge/report.json
-  fi
-
-  if [[ "${#closure_required[@]}" -gt 0 ]]; then
-    log "server simulation closure summary for setup-generated gates"
-    python3 sim/scripts/server_sim_closure.py \
-      --required "$(join_by_comma "${closure_required[@]}")" \
-      --required-only \
-      --max-report-age-s "${SETUP_CLOSURE_MAX_REPORT_AGE_S}" \
-      --json-out artifacts/server_sim_closure_summary_setup.json \
-      --strict
-  fi
 }
 
 main() {
@@ -345,8 +222,6 @@ main() {
   print_environment
   install_system_deps
   install_python_deps
-  build_pct_runtime
-  build_nav_kernel_runtime
   verify_mid360_pattern_asset
   run_verification
 

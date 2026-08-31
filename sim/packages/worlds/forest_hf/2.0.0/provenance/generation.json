@@ -1,0 +1,9 @@
+{
+  "generated_binaries_checked_in": false,
+  "license": "LicenseRef-LingTu-Project-Owned",
+  "owner": "LingTu project",
+  "schema": "lingtu.sim.procedural-world-provenance.v1",
+  "seed": 20260813,
+  "third_party_assets": [],
+  "world_package": "forest_hf@2.0.0"
+}

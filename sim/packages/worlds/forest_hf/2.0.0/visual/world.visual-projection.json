@@ -1,0 +1,83 @@
+{
+  "binding": "WorldVisual:ForestHF",
+  "entities": [],
+  "level": "/Game/RobotSim/Maps/Forest_HF_2km",
+  "package": {
+    "id": "forest_hf",
+    "manifest": "world.package.yaml",
+    "provenance": "provenance/generation.json",
+    "version": "2.0.0"
+  },
+  "schema": "lingtu.sim.world-visual-projection.v1",
+  "spawn_alignment": {
+    "aligned_to_heightmap": true,
+    "position_m": [
+      -760.0,
+      -650.0,
+      14.414435034714277
+    ]
+  },
+  "terrain": {
+    "assets": [
+      {
+        "bytes": 1747,
+        "collision": false,
+        "path": "terrain.recipe.json",
+        "role": "canonical_u16_source_contract"
+      },
+      {
+        "bytes": 560,
+        "collision": true,
+        "path": "physics/forest_hf.xml",
+        "role": "mujoco_f32_projection_contract"
+      },
+      {
+        "bytes": 1101,
+        "collision": false,
+        "path": "visual/ue_projection.json",
+        "role": "unreal_visual_projection_contract"
+      }
+    ],
+    "extent_m": [
+      2000.0,
+      2000.0
+    ],
+    "grid_px": [
+      4033,
+      4033
+    ],
+    "physics_bounds_m": {
+      "max_m": [
+        1000.0,
+        1000.0,
+        70.0
+      ],
+      "min_m": [
+        -1000.0,
+        -1000.0,
+        -10.0
+      ]
+    },
+    "sample_spacing_m": [
+      0.49603174603174605,
+      0.49603174603174605
+    ],
+    "visual_bounds_m": {
+      "max_m": [
+        1000.0,
+        1000.0,
+        70.0
+      ],
+      "min_m": [
+        -1000.0,
+        -1000.0,
+        -10.0
+      ]
+    }
+  },
+  "units": {
+    "handedness": "RH",
+    "length": "m",
+    "up_axis": "Z"
+  }
+}

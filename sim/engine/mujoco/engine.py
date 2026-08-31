@@ -10,12 +10,11 @@ Core logic sourced from nova_nav_bridge.py:
 """
 
 import math
-import os
 import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -26,20 +25,17 @@ from sim.engine.core.engine import (
     SimEngine,
     VelocityCommand,
 )
-from sim.engine.core.robot import THUNDER_V3_JOINT_NAMES, RobotConfig
+from sim.engine.core.robot import THUNDER_V4_JOINT_NAMES, RobotConfig
 from sim.engine.core.sensor import CameraConfig, DiscreteRayConfig, IMUConfig, LidarConfig
 from sim.engine.core.world import SimWorld, WorldConfig
 from sim.engine.mujoco.camera import MuJoCoCamera
 from sim.engine.mujoco.lidar import MuJoCoLidar
 from sim.engine.mujoco.robot_controller import (
     DART_TO_MJ,
-    MJ_TO_DART,
-    STANDING_POSE,
-    PolicyRunner,
     load_policy_runner,
 )
 
-DEFAULT_LEG_JOINT_NAMES = THUNDER_V3_JOINT_NAMES
+DEFAULT_LEG_JOINT_NAMES = THUNDER_V4_JOINT_NAMES
 
 
 def _freeze_scene_euler_orientations(scene_root: Any, mujoco_module: Any) -> None:
@@ -92,6 +88,7 @@ class MuJoCoEngine(SimEngine):
         headless: bool = True,
         drive_mode: str = "policy",
         discrete_ray_config: DiscreteRayConfig | None = None,
+        initial_keyframe: str | None = None,
     ) -> None:
         """Initialize MuJoCo engine (model not loaded; call load() before use).
 
@@ -108,7 +105,7 @@ class MuJoCoEngine(SimEngine):
         """
         super().__init__()
 
-        self._robot_cfg = robot_config or RobotConfig.default_nova_dog()
+        self._robot_cfg = robot_config or RobotConfig.default_thunder_v4()
         self._world_cfg = world_config or WorldConfig()
         self._lidar_cfg = lidar_config or LidarConfig()
         self._camera_cfgs = camera_configs or []
@@ -118,6 +115,9 @@ class MuJoCoEngine(SimEngine):
         self._drive_mode = (drive_mode or "policy").strip().lower()
         if self._drive_mode not in {"policy", "kinematic"}:
             raise ValueError(f"Unsupported MuJoCo drive_mode: {drive_mode}")
+        self._initial_keyframe = (
+            initial_keyframe.strip() if isinstance(initial_keyframe, str) and initial_keyframe.strip() else None
+        )
 
         # MuJoCo core objects (initialized after load())
         self._model = None
@@ -143,17 +143,20 @@ class MuJoCoEngine(SimEngine):
         self._last_leg_targets_mj: np.ndarray | None = None
         self._root_qposadr: int = 0
         self._root_dofadr: int = 0
+        self._kinematic_base_height = float(self._robot_cfg.init_position[2])
+        self._scenario_mocap_ids: dict[str, int] = {}
 
         # cmd_vel (thread-safe)
         self._cmd_vel = np.zeros(3, dtype=np.float64)  # [vx, vy, wz]
         self._cmd_vel_time = 0.0
         self._lock = threading.Lock()
         self._data_lock = threading.RLock()
+        self._lidar_lock = threading.Lock()
 
         # Physics parameters
         self._physics_dt: float = 0.002  # read from model.opt.timestep
         policy_hz = max(float(getattr(self._robot_cfg, "policy_freq_hz", 50.0) or 50.0), 1.0)
-        self._control_dt: float = 1.0 / policy_hz
+        self._control_dt: float = 0.01 if self._drive_mode == "kinematic" else 1.0 / policy_hz
         self._last_policy_update_sim_time: float = -self._control_dt
         self._sensor_tick_residual_s: float = 0.0
 
@@ -339,16 +342,14 @@ class MuJoCoEngine(SimEngine):
             self._policy = None
         elif policy_path:
             if Path(policy_path).exists():
-                self._policy = load_policy_runner(policy_path)
-                wheel_limit = getattr(self._policy, "wheel_torque_limit", None)
-                if wheel_limit is not None:
-                    self._robot_cfg.torque_limit[12:] = [float(wheel_limit)] * 4
+                self._policy = load_policy_runner(
+                    policy_path,
+                    cpu_threads=self._robot_cfg.policy_cpu_threads,
+                )
             else:
-                print(f"[MuJoCoEngine] Policy not found at {policy_path}, running PD-only mode")
-                self._policy = None
+                raise FileNotFoundError(f"MuJoCo policy is missing: {policy_path}")
         else:
-            print("[MuJoCoEngine] No policy configured, running PD-only mode")
-            self._policy = None
+            raise ValueError("MuJoCo policy drive mode requires a policy artifact")
 
         self._running = True
         print(
@@ -364,8 +365,6 @@ class MuJoCoEngine(SimEngine):
         """Resolve body/joint IDs in MuJoCo.
         # Extracted from src/drivers/sim/nova_nav_bridge.py NavBridge.__init__
         """
-        import mujoco
-
         self._base_body_id, resolved_base = self._resolve_body_id(
             self._robot_cfg.base_body_name,
             aliases=["trunk", "base_link", "robot_placeholder"],
@@ -393,19 +392,23 @@ class MuJoCoEngine(SimEngine):
             print(f"[MuJoCoEngine] Warning: actuators not found: {missing_actuators}")
 
     def _resolve_root_joint_adrs(self) -> None:
-        """Resolve floating-base qpos/qvel addresses for kinematic drive."""
+        """Resolve the floating joint owned by the configured base body."""
         import mujoco
 
-        self._root_qposadr = 0
-        self._root_dofadr = 0
         if self._model is None:
-            return
-
-        for jid in range(int(self._model.njnt)):
-            if int(self._model.jnt_type[jid]) == int(mujoco.mjtJoint.mjJNT_FREE):
-                self._root_qposadr = int(self._model.jnt_qposadr[jid])
-                self._root_dofadr = int(self._model.jnt_dofadr[jid])
-                return
+            raise ValueError("MuJoCo model is not loaded")
+        first_joint = int(self._model.body_jntadr[self._base_body_id])
+        joint_count = int(self._model.body_jntnum[self._base_body_id])
+        free_joints = [
+            joint_id
+            for joint_id in range(first_joint, first_joint + joint_count)
+            if int(self._model.jnt_type[joint_id]) == int(mujoco.mjtJoint.mjJNT_FREE)
+        ]
+        if len(free_joints) != 1:
+            raise ValueError("configured MuJoCo base body must own exactly one free joint")
+        joint_id = free_joints[0]
+        self._root_qposadr = int(self._model.jnt_qposadr[joint_id])
+        self._root_dofadr = int(self._model.jnt_dofadr[joint_id])
 
     def _resolve_body_id(self, preferred_name: str, aliases: list[str]) -> tuple[int, str]:
         """Resolve a MuJoCo body name with a few safe fallbacks."""
@@ -509,19 +512,48 @@ class MuJoCoEngine(SimEngine):
         """Reset simulation to initial state."""
         import mujoco
 
-        mujoco.mj_resetData(self._model, self._data)
+        qadr = self._root_qposadr
+        spawn_position = np.asarray(self._robot_cfg.init_position, dtype=np.float64)
+        spawn_quaternion = np.asarray(
+            self._robot_cfg.init_orientation_wxyz,
+            dtype=np.float64,
+        )
+        if self._initial_keyframe is None:
+            mujoco.mj_resetData(self._model, self._data)
+            position = spawn_position
+            quaternion = spawn_quaternion
+        else:
+            keyframe_id = mujoco.mj_name2id(
+                self._model,
+                mujoco.mjtObj.mjOBJ_KEY,
+                self._initial_keyframe,
+            )
+            if keyframe_id < 0:
+                raise ValueError(f"MuJoCo initial keyframe is missing: {self._initial_keyframe}")
+            mujoco.mj_resetDataKeyframe(self._model, self._data, keyframe_id)
+            key_position = np.asarray(
+                self._data.qpos[qadr : qadr + 3],
+                dtype=np.float64,
+            ).copy()
+            key_quaternion = np.asarray(
+                self._data.qpos[qadr + 3 : qadr + 7],
+                dtype=np.float64,
+            ).copy()
+            position = spawn_position + self._quat_wxyz_to_mat(spawn_quaternion) @ key_position
+            quaternion = self._multiply_quaternions_wxyz(
+                spawn_quaternion,
+                key_quaternion,
+            )
+        self._data.qpos[qadr : qadr + 3] = position
+        self._data.qpos[qadr + 3 : qadr + 7] = quaternion
+        self._kinematic_base_height = float(position[2])
 
-        # Set initial position
-        pos = self._robot_cfg.init_position
-        q_wxyz = self._robot_cfg.init_orientation_wxyz
-        self._data.qpos[0:3] = pos
-        self._data.qpos[3] = q_wxyz[0]  # w
-        self._data.qpos[4] = q_wxyz[1]  # x
-        self._data.qpos[5] = q_wxyz[2]  # y
-        self._data.qpos[6] = q_wxyz[3]  # z
-
-        # Set initial standing joint angles
-        self._apply_standing_pose()
+        if self._initial_keyframe is None:
+            initial_leg_targets_mj = self._robot_cfg.standing_pose_array[DART_TO_MJ]
+            self._apply_standing_pose()
+        else:
+            initial_leg_targets_mj, _ = self._get_joint_state()
+            self._write_leg_ctrl(initial_leg_targets_mj)
 
         # Zero arm joints ctrl (required by original bridge)
         offset = self._leg_actuator_offset
@@ -537,11 +569,12 @@ class MuJoCoEngine(SimEngine):
         self._policy = None  # temporarily disable policy
         warmup_seconds = 0.1 if self._leg_control_mode == "torque" else 2.0
         warmup_steps = max(1, round(warmup_seconds / max(self._physics_dt, 1e-6)))
-        standing_mj = self._robot_cfg.standing_pose_array[DART_TO_MJ]
         for _ in range(warmup_steps):
-            self._write_leg_ctrl(standing_mj)
+            self._write_leg_ctrl(initial_leg_targets_mj)
             mujoco.mj_step(self._model, self._data)
         self._policy = _policy_backup  # restore policy
+        if self._drive_mode == "kinematic":
+            self._kinematic_base_height = float(self._data.qpos[qadr + 2])
 
         self._sim_time = 0.0
         self._last_policy_update_sim_time = -self._control_dt
@@ -569,8 +602,6 @@ class MuJoCoEngine(SimEngine):
         """Write standing pose to joint ctrl (used during initialization)."""
         if not self._leg_joint_ids:
             return
-        import mujoco
-
         standing_dart = self._robot_cfg.standing_pose_array
         standing_mj = standing_dart[self._robot_cfg.dart_to_mj_array]
 
@@ -754,7 +785,8 @@ class MuJoCoEngine(SimEngine):
                 self._write_leg_ctrl(standing_dart[DART_TO_MJ])
                 return
             if self._policy_idle_hold:
-                self._policy.reset()
+                # Refresh temporal observations without rearming the policy's
+                # one-time startup hold. Full reset belongs to simulation reset.
                 self._policy.warm_up(gyro, pg, jp, jv)
                 self._policy_idle_hold = False
             obs = self._policy.build_obs(gyro, pg, direction, jp, jv)
@@ -809,7 +841,7 @@ class MuJoCoEngine(SimEngine):
         self._data.qvel[dadr + 5] = wz
 
         # Keep the simplified simulator upright and at nominal body height.
-        self._data.qpos[qadr + 2] = float(self._robot_cfg.init_position[2])
+        self._data.qpos[qadr + 2] = self._kinematic_base_height
         cy, sy = np.cos(yaw / 2.0), np.sin(yaw / 2.0)
         self._data.qpos[qadr + 3] = cy
         self._data.qpos[qadr + 4] = 0.0
@@ -995,6 +1027,24 @@ class MuJoCoEngine(SimEngine):
             dtype=np.float64,
         )
 
+    @staticmethod
+    def _multiply_quaternions_wxyz(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+        lw, lx, ly, lz = [float(value) for value in left]
+        rw, rx, ry, rz = [float(value) for value in right]
+        result = np.array(
+            [
+                lw * rw - lx * rx - ly * ry - lz * rz,
+                lw * rx + lx * rw + ly * rz - lz * ry,
+                lw * ry - lx * rz + ly * rw + lz * rx,
+                lw * rz + lx * ry - ly * rx + lz * rw,
+            ],
+            dtype=np.float64,
+        )
+        norm = float(np.linalg.norm(result))
+        if not math.isfinite(norm) or norm <= 1e-12:
+            raise ValueError("composed MuJoCo spawn quaternion is invalid")
+        return result / norm
+
     def _get_joint_state(self):
         """Read position and velocity of 16 leg joints.
         # Extracted from src/drivers/sim/nova_nav_bridge.py get_joint_state()
@@ -1034,7 +1084,39 @@ class MuJoCoEngine(SimEngine):
         if self._lidar is None:
             return np.zeros((0, 4), dtype=np.float32)
         with self._data_lock:
-            return self._lidar.scan(sample_count=sample_count)
+            with self._lidar_lock:
+                return self._lidar.scan(sample_count=sample_count)
+
+    def capture_lidar_snapshot(self):
+        """Copy the current MuJoCo state for an asynchronous LiDAR scan."""
+
+        import mujoco
+
+        if self._model is None or self._data is None:
+            raise RuntimeError("MuJoCo engine is not loaded")
+        snapshot = mujoco.MjData(self._model)
+        with self._data_lock:
+            mujoco.mj_copyData(snapshot, self._model, self._data)
+        return snapshot
+
+    def get_lidar_points_from_snapshot(
+        self,
+        snapshot,
+        sample_count: int | None = None,
+    ) -> np.ndarray:
+        """Scan one immutable MuJoCo state without blocking physics stepping."""
+
+        if self._lidar is None:
+            return np.zeros((0, 4), dtype=np.float32)
+        if snapshot is None:
+            raise ValueError("LiDAR snapshot is required")
+        with self._lidar_lock:
+            live_data = self._lidar._data
+            self._lidar.update_data(snapshot)
+            try:
+                return self._lidar.scan(sample_count=sample_count)
+            finally:
+                self._lidar.update_data(live_data)
 
     def get_lidar_backend_report(self) -> dict:
         """Return JSON-ready LiDAR backend evidence for validation reports."""
@@ -1043,7 +1125,6 @@ class MuJoCoEngine(SimEngine):
                 "backend": "none",
                 "product_backend": False,
                 "product_lidar_backend_verified": False,
-                "fallback_used": False,
                 "error": "lidar_not_initialized",
             }
         report = getattr(self._lidar, "backend_report", None)
@@ -1053,18 +1134,17 @@ class MuJoCoEngine(SimEngine):
             "backend": getattr(self._lidar, "backend", "unknown"),
             "product_backend": False,
             "product_lidar_backend_verified": False,
-            "fallback_used": False,
             "error": "backend_report_unavailable",
         }
 
     def get_discrete_rays(self, config: DiscreteRayConfig | None = None) -> DiscreteRayData:
         """Return IsaacLab-style fixed-pattern terrain ray observations."""
-        import mujoco
-
         with self._data_lock:
             return self._get_discrete_rays_locked(config)
 
     def _get_discrete_rays_locked(self, config: DiscreteRayConfig | None = None) -> DiscreteRayData:
+        import mujoco
+
         cfg = config or self._discrete_ray_cfg
         if cfg.pattern != "grid":
             raise ValueError(f"unsupported discrete ray pattern: {cfg.pattern}")
@@ -1199,15 +1279,50 @@ class MuJoCoEngine(SimEngine):
         """Teleport robot to a given pose (ROS quaternion x,y,z,w)."""
         import mujoco
 
-        self._data.qpos[0:3] = position[:3]
+        qadr = self._root_qposadr
+        self._data.qpos[qadr : qadr + 3] = position[:3]
         # ROS x,y,z,w -> MuJoCo w,x,y,z
-        self._data.qpos[3] = orientation[3]  # w
-        self._data.qpos[4] = orientation[0]  # x
-        self._data.qpos[5] = orientation[1]  # y
-        self._data.qpos[6] = orientation[2]  # z
+        self._data.qpos[qadr + 3] = orientation[3]  # w
+        self._data.qpos[qadr + 4] = orientation[0]  # x
+        self._data.qpos[qadr + 5] = orientation[1]  # y
+        self._data.qpos[qadr + 6] = orientation[2]  # z
+        self._kinematic_base_height = float(position[2])
         # Zero velocities
         self._data.qvel[:] = 0.0
         mujoco.mj_forward(self._model, self._data)
+
+    def apply_scenario_snapshot(self, snapshot: Any) -> int:
+        """Apply scenario-owned kinematic poses to their namespaced mocap bodies."""
+
+        import mujoco
+
+        if self._model is None or self._data is None:
+            raise RuntimeError("MuJoCo engine is not loaded")
+        applied = 0
+        with self._data_lock:
+            for entity in snapshot.entities:
+                if entity.authority != "scenario" or entity.physics_proxy_mode != "kinematic":
+                    continue
+                stable_id = entity.body_stable_id
+                if not stable_id:
+                    raise ValueError(f"scenario entity {entity.entity_id!r} has no kinematic body")
+                mocap_id = self._scenario_mocap_ids.get(stable_id)
+                if mocap_id is None:
+                    _, body_name = stable_id.split("/", 1)
+                    compiled_name = f"{entity.entity_id}__{body_name.replace('/', '__')}"
+                    body_id = int(mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, compiled_name))
+                    if body_id < 0:
+                        raise ValueError(f"MuJoCo scenario body is missing: {compiled_name}")
+                    mocap_id = int(self._model.body_mocapid[body_id])
+                    if mocap_id < 0:
+                        raise ValueError(f"MuJoCo scenario body is not mocap-controlled: {compiled_name}")
+                    self._scenario_mocap_ids[stable_id] = mocap_id
+                self._data.mocap_pos[mocap_id] = entity.transform.position_m
+                self._data.mocap_quat[mocap_id] = entity.transform.quaternion_wxyz
+                applied += 1
+            if applied:
+                mujoco.mj_forward(self._model, self._data)
+        return applied
 
     def add_obstacle(
         self, name: str, shape: str, size: list[float], position: list[float], rgba: list[float] | None = None
@@ -1272,6 +1387,18 @@ class MuJoCoEngine(SimEngine):
             raise ValueError(f"unsupported MuJoCo integrator: {name}")
         self._model.opt.integrator = options[normalized]
         return self.physics_integrator
+
+    def set_physics_timestep(self, timestep_s: float) -> float:
+        """Override the loaded model timestep for an explicit simulation profile."""
+        if self._model is None:
+            raise RuntimeError("MuJoCo model is not loaded")
+        value = float(timestep_s)
+        if not math.isfinite(value) or not 0.0005 <= value <= 0.005:
+            raise ValueError("MuJoCo physics timestep must be in [0.0005, 0.005] seconds")
+        self._model.opt.timestep = value
+        self._physics_dt = value
+        self._sensor_tick_residual_s = 0.0
+        return self._physics_dt
 
     @property
     def dt(self) -> float:

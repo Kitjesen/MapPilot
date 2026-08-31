@@ -98,13 +98,11 @@ def test_presentation_viewer_renders_robot_and_obstacle_pixels(tmp_path: Path) -
     engine = build_engine(
         world=scene,
         drive_mode="kinematic",
-        n_rays=32,
         start=[0.0, 0.0, 0.48],
         mujoco_memory="64M",
         mid360_pattern=None,
         mid360_samples_per_frame=32,
         require_product_lidar_backend=False,
-        allow_legacy_lidar_fallback=True,
     )
     renderer = None
     try:
@@ -127,9 +125,7 @@ def test_presentation_viewer_renders_robot_and_obstacle_pixels(tmp_path: Path) -
             return False
 
         robot_geoms = [
-            geom_id
-            for geom_id in range(engine.model.ngeom)
-            if belongs_to_robot(int(engine.model.geom_bodyid[geom_id]))
+            geom_id for geom_id in range(engine.model.ngeom) if belongs_to_robot(int(engine.model.geom_bodyid[geom_id]))
         ]
         viewer = SimpleNamespace(cam=mujoco.MjvCamera(), opt=mujoco.MjvOption())
         focus_presentation_viewer(

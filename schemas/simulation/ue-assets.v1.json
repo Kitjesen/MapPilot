@@ -1,0 +1,548 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.ue-asset-library.v1",
+  "title": "LingTu offline UE5.8 visual asset library",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "engine",
+    "policy",
+    "selection",
+    "summary",
+    "entries"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lingtu.sim.ue-asset-library.v1"
+    },
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "major",
+        "minor"
+      ],
+      "properties": {
+        "name": {
+          "const": "Unreal Engine"
+        },
+        "major": {
+          "const": 5
+        },
+        "minor": {
+          "const": 8
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "catalog_authority",
+        "runtime_materialization",
+        "generated_candidates_auto_promote",
+        "physics_authority",
+        "unreal_collision_profile"
+      ],
+      "properties": {
+        "catalog_authority": {
+          "const": "SimCatalog"
+        },
+        "runtime_materialization": {
+          "const": "ResolvedSessionBundle"
+        },
+        "generated_candidates_auto_promote": {
+          "const": false
+        },
+        "physics_authority": {
+          "const": "mujoco"
+        },
+        "unreal_collision_profile": {
+          "const": "NoCollision"
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "packages",
+        "candidate_manifests"
+      ],
+      "properties": {
+        "packages": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "ref"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "robot",
+                  "payload"
+                ]
+              },
+              "ref": {
+                "$ref": "#/$defs/package_ref"
+              }
+            }
+          }
+        },
+        "candidate_manifests": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/path"
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry_count",
+        "catalog_package_count",
+        "quarantined_candidate_count"
+      ],
+      "properties": {
+        "entry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "catalog_package_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quarantined_candidate_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/package_entry"
+          },
+          {
+            "$ref": "#/$defs/candidate_entry"
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "package_ref": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*@[A-Za-z0-9][A-Za-z0-9+_.-]*$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*:)(?!.*\\\\)(?!.*\\s)(?!.*//)(?!.*\\/$)(?!\\.\\.?(/|$))(?!.*(/\\.\\.?)(/|$)).+$"
+    },
+    "unreal_asset": {
+      "type": "string",
+      "pattern": "^/(Game|Engine)/[^\\\\\\s]+$"
+    },
+    "file_descriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "bytes"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "package_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id",
+        "version",
+        "ref"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "robot",
+            "payload"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ref": {
+          "$ref": "#/$defs/package_ref"
+        }
+      }
+    },
+    "render_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "physics_authority",
+        "unreal_collision_profile",
+        "unreal_simulate_physics"
+      ],
+      "properties": {
+        "physics_authority": {
+          "const": "mujoco"
+        },
+        "unreal_collision_profile": {
+          "const": "NoCollision"
+        },
+        "unreal_simulate_physics": {
+          "const": false
+        }
+      }
+    },
+    "qualification_view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "package",
+        "state",
+        "declared_capabilities",
+        "qualified_capabilities",
+        "checks",
+        "report",
+        "diagnostics"
+      ],
+      "properties": {
+        "schema": {
+          "const": "lingtu.sim.qualification-view.v1"
+        },
+        "package": {
+          "$ref": "#/$defs/package_identity"
+        },
+        "state": {
+          "enum": [
+            "unverified",
+            "invalid",
+            "stale",
+            "failed",
+            "qualified"
+          ]
+        },
+        "declared_capabilities": {},
+        "qualified_capabilities": {
+          "type": "object"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "report": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path"
+              ],
+              "properties": {
+                "path": {
+                  "$ref": "#/$defs/path"
+                }
+              }
+            }
+          ]
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "package_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry_id",
+        "source_type",
+        "asset_kind",
+        "availability",
+        "package",
+        "source",
+        "qualification",
+        "visual",
+        "render_policy"
+      ],
+      "properties": {
+        "entry_id": {
+          "type": "string",
+          "pattern": "^(robot|payload):.+@.+$"
+        },
+        "source_type": {
+          "const": "catalog_package"
+        },
+        "asset_kind": {
+          "enum": [
+            "robot",
+            "payload"
+          ]
+        },
+        "availability": {
+          "const": "CATALOG_PACKAGE"
+        },
+        "package": {
+          "$ref": "#/$defs/package_identity"
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "manifest"
+          ],
+          "properties": {
+            "manifest": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "bytes"
+              ],
+              "properties": {
+                "path": {
+                  "$ref": "#/$defs/path"
+                },
+                "bytes": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        },
+        "qualification": {
+          "$ref": "#/$defs/qualification_view"
+        },
+        "visual": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "binding",
+            "projection",
+            "component_count",
+            "unreal_assets"
+          ],
+          "properties": {
+            "binding": {
+              "type": "string",
+              "minLength": 1
+            },
+            "projection": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "bytes",
+                "schema"
+              ],
+              "properties": {
+                "path": {
+                  "$ref": "#/$defs/path"
+                },
+                "bytes": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "schema": {
+                  "enum": [
+                    "lingtu.sim.robot-visual-projection.v1",
+                    "lingtu.sim.payload-visual-projection.v1"
+                  ]
+                }
+              }
+            },
+            "component_count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "unreal_assets": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/unreal_asset"
+              }
+            }
+          }
+        },
+        "render_policy": {
+          "$ref": "#/$defs/render_policy"
+        }
+      }
+    },
+    "candidate_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry_id",
+        "source_type",
+        "asset_kind",
+        "availability",
+        "source",
+        "provenance",
+        "qualification",
+        "binding",
+        "visual",
+        "render_policy"
+      ],
+      "properties": {
+        "entry_id": {
+          "type": "string",
+          "pattern": "^candidate:.+$"
+        },
+        "source_type": {
+          "const": "generated_candidate"
+        },
+        "asset_kind": {
+          "const": "world_visual_candidate"
+        },
+        "availability": {
+          "const": "QUARANTINED"
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "manifest",
+            "artifact"
+          ],
+          "properties": {
+            "manifest": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "bytes"
+              ],
+              "properties": {
+                "path": {
+                  "$ref": "#/$defs/path"
+                },
+                "bytes": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "artifact": {
+              "$ref": "#/$defs/file_descriptor"
+            }
+          }
+        },
+        "provenance": {
+          "type": "object"
+        },
+        "qualification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "blockers",
+            "promotion_target"
+          ],
+          "properties": {
+            "state": {
+              "const": "QUARANTINED"
+            },
+            "blockers": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "promotion_target": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "world_entity_id",
+            "semantic_class"
+          ],
+          "properties": {
+            "world_entity_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "semantic_class": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "visual": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "component_count",
+            "unreal_assets",
+            "geometry"
+          ],
+          "properties": {
+            "component_count": {
+              "const": 1
+            },
+            "unreal_assets": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {
+                "$ref": "#/$defs/unreal_asset"
+              }
+            },
+            "geometry": {
+              "type": "object"
+            }
+          }
+        },
+        "render_policy": {
+          "$ref": "#/$defs/render_policy"
+        }
+      }
+    }
+  }
+}

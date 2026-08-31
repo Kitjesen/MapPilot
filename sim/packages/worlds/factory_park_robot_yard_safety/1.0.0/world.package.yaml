@@ -1,0 +1,3588 @@
+schema: lingtu.sim.world-package.v1
+id: factory_park_robot_yard_safety
+version: 1.0.0
+kind: world
+physics:
+  mjcf: world.xml
+  global_policy:
+    timestep_s: 0.002
+    integrator: rk4
+    solver: newton
+    iterations: 100
+    gravity_mps2:
+    - 0.0
+    - 0.0
+    - -9.81
+visual:
+  binding: WorldVisual:FactoryParkHF
+  level: /Game/RobotSim/Maps/FactoryPark_HF
+  projection: visual/world.visual-projection.json
+entities:
+- entity_id: road_ring_north
+  entity_type: road
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 0.0
+    - 62.0
+    - 0.025
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: road
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 186.0
+    - 10.0
+    - 0.05
+  visual:
+    mode: level
+- entity_id: road_ring_south
+  entity_type: road
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 0.0
+    - -62.0
+    - 0.025
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: road
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 186.0
+    - 10.0
+    - 0.05
+  visual:
+    mode: level
+- entity_id: road_ring_west
+  entity_type: road
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -93.0
+    - 0.0
+    - 0.025
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: road
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 10.0
+    - 124.0
+    - 0.05
+  visual:
+    mode: level
+- entity_id: road_ring_east
+  entity_type: road
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 93.0
+    - 0.0
+    - 0.025
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: road
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 10.0
+    - 124.0
+    - 0.05
+  visual:
+    mode: level
+- entity_id: road_central_cross
+  entity_type: road
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 0.0
+    - 0.0
+    - 0.026
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: road
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 186.0
+    - 12.0
+    - 0.052
+  visual:
+    mode: level
+- entity_id: road_entry_boulevard
+  entity_type: road
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 0.0
+    - -44.0
+    - 0.027
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: road
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 12.0
+    - 88.0
+    - 0.054
+  visual:
+    mode: level
+- entity_id: road_central_spine
+  entity_type: road
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 0.0
+    - 31.0
+    - 0.027
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: road
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 12.0
+    - 62.0
+    - 0.054
+  visual:
+    mode: level
+- entity_id: road_loading_apron
+  entity_type: road
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 50.0
+    - 9.0
+    - 0.026
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: road
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 70.0
+    - 8.0
+    - 0.052
+  visual:
+    mode: level
+- entity_id: road_gravel_access
+  entity_type: road
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -76.0
+    - 68.0
+    - 0.026
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: road
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 8.0
+    - 12.0
+    - 0.052
+  visual:
+    mode: level
+- entity_id: parking_apron
+  entity_type: parking_area
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 25.0
+    - -34.0
+    - 0.022
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: parking_area
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 38.0
+    - 34.0
+    - 0.044
+  visual:
+    mode: level
+- entity_id: container_yard_apron
+  entity_type: container_yard
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -52.0
+    - -33.0
+    - 0.025
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: container_yard
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 58.0
+    - 42.0
+    - 0.05
+  visual:
+    mode: level
+- entity_id: tank_bund_floor
+  entity_type: containment_bund
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 65.0
+    - -36.0
+    - 0.02
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: containment_bund
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 35.0
+    - 35.0
+    - 0.04
+  visual:
+    mode: level
+- entity_id: gravel_acceptance_pad
+  entity_type: gravel_test_area
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -76.0
+    - 76.0
+    - 0.025
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: gravel_test_area
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 28.0
+    - 14.0
+    - 0.05
+  visual:
+    mode: level
+- entity_id: fence_north
+  entity_type: boundary_fence
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 0.0
+    - 89.4
+    - 1.2
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: boundary_fence
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 219.0
+    - 0.2
+    - 2.4
+  visual:
+    mode: level
+- entity_id: fence_west
+  entity_type: boundary_fence
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -109.4
+    - 0.0
+    - 1.2
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: boundary_fence
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 0.2
+    - 179.0
+    - 2.4
+  visual:
+    mode: level
+- entity_id: fence_east
+  entity_type: boundary_fence
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 109.4
+    - 0.0
+    - 1.2
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: boundary_fence
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 0.2
+    - 179.0
+    - 2.4
+  visual:
+    mode: level
+- entity_id: fence_south_west
+  entity_type: boundary_fence
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -59.25
+    - -89.4
+    - 1.2
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: boundary_fence
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 100.5
+    - 0.2
+    - 2.4
+  visual:
+    mode: level
+- entity_id: fence_south_east
+  entity_type: boundary_fence
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 59.25
+    - -89.4
+    - 1.2
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: boundary_fence
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 100.5
+    - 0.2
+    - 2.4
+  visual:
+    mode: level
+- entity_id: gate_leaf_west_open
+  entity_type: gate
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -8.7
+    - -86.2
+    - 1.1
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: gate
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 0.25
+    - 6.0
+    - 2.2
+  visual:
+    mode: level
+- entity_id: gate_leaf_east_open
+  entity_type: gate
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 8.7
+    - -86.2
+    - 1.1
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: gate
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 0.25
+    - 6.0
+    - 2.2
+  visual:
+    mode: level
+- entity_id: gate_post_west
+  entity_type: gate_post
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -9.0
+    - -89.0
+    - 1.5
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: gate_post
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.22
+    half_height_m: 1.5
+  visual:
+    mode: level
+- entity_id: gate_post_east
+  entity_type: gate_post
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 9.0
+    - -89.0
+    - 1.5
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: gate_post
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.22
+    half_height_m: 1.5
+  visual:
+    mode: level
+- entity_id: gate_canopy
+  entity_type: gate_canopy
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 0.0
+    - -84.5
+    - 3.6
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: gate_canopy
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 20.0
+    - 1.2
+    - 0.5
+  visual:
+    mode: level
+- entity_id: south_guardhouse
+  entity_type: guardhouse
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -14.0
+    - -80.0
+    - 1.8
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: guardhouse
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 7.0
+    - 6.0
+    - 3.6
+  visual:
+    mode: level
+- entity_id: main_factory
+  entity_type: main_factory_building
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -47.0
+    - 32.0
+    - 6.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: main_factory_building
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 70.0
+    - 40.0
+    - 12.0
+  visual:
+    mode: level
+- entity_id: main_factory_roof_monitor
+  entity_type: roof_structure
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -47.0
+    - 32.0
+    - 12.8
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: roof_structure
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 34.0
+    - 5.0
+    - 1.6
+  visual:
+    mode: level
+- entity_id: warehouse
+  entity_type: warehouse_building
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 50.0
+    - 34.0
+    - 5.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: warehouse_building
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 60.0
+    - 32.0
+    - 10.0
+  visual:
+    mode: level
+- entity_id: administration_office
+  entity_type: office_building
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 22.0
+    - 77.0
+    - 4.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: office_building
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 24.0
+    - 10.0
+    - 8.0
+  visual:
+    mode: level
+- entity_id: loading_dock_01
+  entity_type: loading_dock
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 30.0
+    - 15.7
+    - 0.65
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: loading_dock
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 8.0
+    - 4.4
+    - 1.3
+  visual:
+    mode: level
+- entity_id: loading_ramp_01
+  entity_type: loading_ramp
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 30.0
+    - 11.2
+    - 0.34
+    quaternion_wxyz:
+    - 0.7061377159181262
+    - -0.03700710955926802
+    - -0.03700710955926802
+    - 0.7061377159181262
+  physics_proxy: mujoco
+  semantic_class: loading_ramp
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 5.2
+    - 5.0
+    - 0.24
+  visual:
+    mode: level
+- entity_id: loading_dock_02
+  entity_type: loading_dock
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 50.0
+    - 15.7
+    - 0.65
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: loading_dock
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 8.0
+    - 4.4
+    - 1.3
+  visual:
+    mode: level
+- entity_id: loading_ramp_02
+  entity_type: loading_ramp
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 50.0
+    - 11.2
+    - 0.34
+    quaternion_wxyz:
+    - 0.7061377159181262
+    - -0.03700710955926802
+    - -0.03700710955926802
+    - 0.7061377159181262
+  physics_proxy: mujoco
+  semantic_class: loading_ramp
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 5.2
+    - 5.0
+    - 0.24
+  visual:
+    mode: level
+- entity_id: loading_dock_03
+  entity_type: loading_dock
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 70.0
+    - 15.7
+    - 0.65
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: loading_dock
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 8.0
+    - 4.4
+    - 1.3
+  visual:
+    mode: level
+- entity_id: loading_ramp_03
+  entity_type: loading_ramp
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 70.0
+    - 11.2
+    - 0.34
+    quaternion_wxyz:
+    - 0.7061377159181262
+    - -0.03700710955926802
+    - -0.03700710955926802
+    - 0.7061377159181262
+  physics_proxy: mujoco
+  semantic_class: loading_ramp
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 5.2
+    - 5.0
+    - 0.24
+  visual:
+    mode: level
+- entity_id: container_blue_01
+  entity_type: shipping_container
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -68.0
+    - -45.0
+    - 1.295
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: shipping_container
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 12.2
+    - 2.44
+    - 2.59
+  visual:
+    mode: level
+- entity_id: container_orange_01
+  entity_type: shipping_container
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -50.0
+    - -45.0
+    - 1.295
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: shipping_container
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 12.2
+    - 2.44
+    - 2.59
+  visual:
+    mode: level
+- entity_id: container_red_01
+  entity_type: shipping_container
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -32.0
+    - -45.0
+    - 1.295
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: shipping_container
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 12.2
+    - 2.44
+    - 2.59
+  visual:
+    mode: level
+- entity_id: container_orange_02
+  entity_type: shipping_container
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -68.0
+    - -27.0
+    - 1.295
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: shipping_container
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 12.2
+    - 2.44
+    - 2.59
+  visual:
+    mode: level
+- entity_id: container_blue_02
+  entity_type: shipping_container
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -50.0
+    - -27.0
+    - 1.295
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: shipping_container
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 12.2
+    - 2.44
+    - 2.59
+  visual:
+    mode: level
+- entity_id: container_red_02
+  entity_type: shipping_container
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -32.0
+    - -27.0
+    - 1.295
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: shipping_container
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 12.2
+    - 2.44
+    - 2.59
+  visual:
+    mode: level
+- entity_id: container_blue_03_stacked
+  entity_type: shipping_container
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -68.0
+    - -45.0
+    - 3.885
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: shipping_container
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 12.2
+    - 2.44
+    - 2.59
+  visual:
+    mode: level
+- entity_id: tank_bund_west
+  entity_type: containment_bund
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 47.5
+    - -36.0
+    - 0.6
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: containment_bund
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 0.5
+    - 35.0
+    - 1.2
+  visual:
+    mode: level
+- entity_id: tank_bund_east
+  entity_type: containment_bund
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 82.5
+    - -36.0
+    - 0.6
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: containment_bund
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 0.5
+    - 35.0
+    - 1.2
+  visual:
+    mode: level
+- entity_id: tank_bund_north
+  entity_type: containment_bund
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 65.0
+    - -18.5
+    - 0.6
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: containment_bund
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 35.0
+    - 0.5
+    - 1.2
+  visual:
+    mode: level
+- entity_id: tank_bund_south
+  entity_type: containment_bund
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 65.0
+    - -53.5
+    - 0.6
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: containment_bund
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 35.0
+    - 0.5
+    - 1.2
+  visual:
+    mode: level
+- entity_id: storage_tank_01
+  entity_type: storage_tank
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 57.0
+    - -43.0
+    - 4.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: storage_tank
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 4.0
+    half_height_m: 4.0
+  visual:
+    mode: level
+- entity_id: storage_tank_02
+  entity_type: storage_tank
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 73.0
+    - -43.0
+    - 4.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: storage_tank
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 4.0
+    half_height_m: 4.0
+  visual:
+    mode: level
+- entity_id: storage_tank_03
+  entity_type: storage_tank
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 65.0
+    - -28.0
+    - 4.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: storage_tank
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 4.0
+    half_height_m: 4.0
+  visual:
+    mode: level
+- entity_id: tank_pipe_rack
+  entity_type: pipe_rack
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 65.0
+    - -36.0
+    - 3.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: pipe_rack
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 24.0
+    - 0.35
+    - 0.35
+  visual:
+    mode: level
+- entity_id: parking_space_1_1
+  entity_type: parking_space
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 13.0
+    - -44.0
+    - 0.051
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: parking_space
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 2.7
+    - 5.4
+    - 0.012
+  visual:
+    mode: level
+- entity_id: parking_stop_1_1
+  entity_type: parking_stop
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 13.0
+    - -41.55
+    - 0.09
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: parking_stop
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 2.35
+    - 0.22
+    - 0.18
+  visual:
+    mode: level
+- entity_id: parking_space_1_2
+  entity_type: parking_space
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 21.0
+    - -44.0
+    - 0.051
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: parking_space
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 2.7
+    - 5.4
+    - 0.012
+  visual:
+    mode: level
+- entity_id: parking_stop_1_2
+  entity_type: parking_stop
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 21.0
+    - -41.55
+    - 0.09
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: parking_stop
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 2.35
+    - 0.22
+    - 0.18
+  visual:
+    mode: level
+- entity_id: parking_space_1_3
+  entity_type: parking_space
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 29.0
+    - -44.0
+    - 0.051
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: parking_space
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 2.7
+    - 5.4
+    - 0.012
+  visual:
+    mode: level
+- entity_id: parking_stop_1_3
+  entity_type: parking_stop
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 29.0
+    - -41.55
+    - 0.09
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: parking_stop
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 2.35
+    - 0.22
+    - 0.18
+  visual:
+    mode: level
+- entity_id: parking_space_1_4
+  entity_type: parking_space
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 37.0
+    - -44.0
+    - 0.051
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: parking_space
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 2.7
+    - 5.4
+    - 0.012
+  visual:
+    mode: level
+- entity_id: parking_stop_1_4
+  entity_type: parking_stop
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 37.0
+    - -41.55
+    - 0.09
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: parking_stop
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 2.35
+    - 0.22
+    - 0.18
+  visual:
+    mode: level
+- entity_id: parking_space_2_1
+  entity_type: parking_space
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 13.0
+    - -24.0
+    - 0.051
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: parking_space
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 2.7
+    - 5.4
+    - 0.012
+  visual:
+    mode: level
+- entity_id: parking_stop_2_1
+  entity_type: parking_stop
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 13.0
+    - -26.45
+    - 0.09
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: parking_stop
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 2.35
+    - 0.22
+    - 0.18
+  visual:
+    mode: level
+- entity_id: parking_space_2_2
+  entity_type: parking_space
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 21.0
+    - -24.0
+    - 0.051
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: parking_space
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 2.7
+    - 5.4
+    - 0.012
+  visual:
+    mode: level
+- entity_id: parking_stop_2_2
+  entity_type: parking_stop
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 21.0
+    - -26.45
+    - 0.09
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: parking_stop
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 2.35
+    - 0.22
+    - 0.18
+  visual:
+    mode: level
+- entity_id: parking_space_2_3
+  entity_type: parking_space
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 29.0
+    - -24.0
+    - 0.051
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: parking_space
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 2.7
+    - 5.4
+    - 0.012
+  visual:
+    mode: level
+- entity_id: parking_stop_2_3
+  entity_type: parking_stop
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 29.0
+    - -26.45
+    - 0.09
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: parking_stop
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 2.35
+    - 0.22
+    - 0.18
+  visual:
+    mode: level
+- entity_id: parking_space_2_4
+  entity_type: parking_space
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 37.0
+    - -24.0
+    - 0.051
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: parking_space
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 2.7
+    - 5.4
+    - 0.012
+  visual:
+    mode: level
+- entity_id: parking_stop_2_4
+  entity_type: parking_stop
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 37.0
+    - -26.45
+    - 0.09
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: parking_stop
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 2.35
+    - 0.22
+    - 0.18
+  visual:
+    mode: level
+- entity_id: parking_curb_west
+  entity_type: curb
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 6.4
+    - -34.0
+    - 0.09
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: curb
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 0.3
+    - 34.0
+    - 0.18
+  visual:
+    mode: level
+- entity_id: parking_curb_east
+  entity_type: curb
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 43.6
+    - -34.0
+    - 0.09
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: curb
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 0.3
+    - 34.0
+    - 0.18
+  visual:
+    mode: level
+- entity_id: parking_curb_north
+  entity_type: curb
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 25.0
+    - -16.9
+    - 0.09
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: curb
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 37.5
+    - 0.3
+    - 0.18
+  visual:
+    mode: level
+- entity_id: speed_bump_south
+  entity_type: speed_bump
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 0.0
+    - -68.0
+    - 0.065
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: speed_bump
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 11.5
+    - 0.5
+    - 0.13
+  visual:
+    mode: level
+- entity_id: speed_bump_gate
+  entity_type: speed_bump
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 0.0
+    - -58.0
+    - 0.065
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: speed_bump
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 11.5
+    - 0.5
+    - 0.13
+  visual:
+    mode: level
+- entity_id: speed_bump_north
+  entity_type: speed_bump
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 0.0
+    - 55.0
+    - 0.065
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: speed_bump
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 11.5
+    - 0.5
+    - 0.13
+  visual:
+    mode: level
+- entity_id: east_drainage_channel
+  entity_type: drainage_ditch
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 85.0
+    - 0.0
+    - -0.18
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: drainage_ditch
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 2.0
+    - 112.0
+    - 0.36
+  visual:
+    mode: level
+- entity_id: east_drainage_grate
+  entity_type: drainage_grate
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 85.0
+    - 0.0
+    - 0.025
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: drainage_grate
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 2.2
+    - 12.0
+    - 0.05
+  visual:
+    mode: level
+- entity_id: streetlight_01_pole
+  entity_type: streetlight
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -88.0
+    - -58.0
+    - 3.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: streetlight
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.12
+    half_height_m: 3.0
+  visual:
+    mode: level
+- entity_id: streetlight_01_head
+  entity_type: streetlight_luminaire
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -87.55
+    - -58.0
+    - 6.05
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: streetlight_luminaire
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 1.0
+    - 0.35
+    - 0.15
+  visual:
+    mode: level
+- entity_id: streetlight_02_pole
+  entity_type: streetlight
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -88.0
+    - 58.0
+    - 3.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: streetlight
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.12
+    half_height_m: 3.0
+  visual:
+    mode: level
+- entity_id: streetlight_02_head
+  entity_type: streetlight_luminaire
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -87.55
+    - 58.0
+    - 6.05
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: streetlight_luminaire
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 1.0
+    - 0.35
+    - 0.15
+  visual:
+    mode: level
+- entity_id: streetlight_03_pole
+  entity_type: streetlight
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -5.0
+    - 58.0
+    - 3.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: streetlight
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.12
+    half_height_m: 3.0
+  visual:
+    mode: level
+- entity_id: streetlight_03_head
+  entity_type: streetlight_luminaire
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -4.55
+    - 58.0
+    - 6.05
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: streetlight_luminaire
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 1.0
+    - 0.35
+    - 0.15
+  visual:
+    mode: level
+- entity_id: streetlight_04_pole
+  entity_type: streetlight
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 88.0
+    - 58.0
+    - 3.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: streetlight
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.12
+    half_height_m: 3.0
+  visual:
+    mode: level
+- entity_id: streetlight_04_head
+  entity_type: streetlight_luminaire
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 88.45
+    - 58.0
+    - 6.05
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: streetlight_luminaire
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 1.0
+    - 0.35
+    - 0.15
+  visual:
+    mode: level
+- entity_id: streetlight_05_pole
+  entity_type: streetlight
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 88.0
+    - -58.0
+    - 3.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: streetlight
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.12
+    half_height_m: 3.0
+  visual:
+    mode: level
+- entity_id: streetlight_05_head
+  entity_type: streetlight_luminaire
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 88.45
+    - -58.0
+    - 6.05
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: streetlight_luminaire
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 1.0
+    - 0.35
+    - 0.15
+  visual:
+    mode: level
+- entity_id: streetlight_06_pole
+  entity_type: streetlight
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 5.0
+    - -58.0
+    - 3.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: streetlight
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.12
+    half_height_m: 3.0
+  visual:
+    mode: level
+- entity_id: streetlight_06_head
+  entity_type: streetlight_luminaire
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 5.45
+    - -58.0
+    - 6.05
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: streetlight_luminaire
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 1.0
+    - 0.35
+    - 0.15
+  visual:
+    mode: level
+- entity_id: streetlight_07_pole
+  entity_type: streetlight
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 5.0
+    - 5.0
+    - 3.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: streetlight
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.12
+    half_height_m: 3.0
+  visual:
+    mode: level
+- entity_id: streetlight_07_head
+  entity_type: streetlight_luminaire
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 5.45
+    - 5.0
+    - 6.05
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: streetlight_luminaire
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 1.0
+    - 0.35
+    - 0.15
+  visual:
+    mode: level
+- entity_id: streetlight_08_pole
+  entity_type: streetlight
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -88.0
+    - 5.0
+    - 3.0
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: streetlight
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.12
+    half_height_m: 3.0
+  visual:
+    mode: level
+- entity_id: streetlight_08_head
+  entity_type: streetlight_luminaire
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -87.55
+    - 5.0
+    - 6.05
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: streetlight_luminaire
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 1.0
+    - 0.35
+    - 0.15
+  visual:
+    mode: level
+- entity_id: boulevard_lane_mark_01
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 0.0
+    - -74.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 0.14
+    - 4.0
+    - 0.01
+  visual:
+    mode: level
+- entity_id: boulevard_lane_mark_02
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 0.0
+    - -62.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 0.14
+    - 4.0
+    - 0.01
+  visual:
+    mode: level
+- entity_id: boulevard_lane_mark_03
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 0.0
+    - -50.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 0.14
+    - 4.0
+    - 0.01
+  visual:
+    mode: level
+- entity_id: boulevard_lane_mark_04
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 0.0
+    - -38.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 0.14
+    - 4.0
+    - 0.01
+  visual:
+    mode: level
+- entity_id: boulevard_lane_mark_05
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 0.0
+    - -26.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 0.14
+    - 4.0
+    - 0.01
+  visual:
+    mode: level
+- entity_id: boulevard_lane_mark_06
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 0.0
+    - -14.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 0.14
+    - 4.0
+    - 0.01
+  visual:
+    mode: level
+- entity_id: boulevard_lane_mark_07
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 0.0
+    - -2.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 0.14
+    - 4.0
+    - 0.01
+  visual:
+    mode: level
+- entity_id: boulevard_lane_mark_08
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 0.0
+    - 10.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 0.14
+    - 4.0
+    - 0.01
+  visual:
+    mode: level
+- entity_id: boulevard_lane_mark_09
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 0.0
+    - 22.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 0.14
+    - 4.0
+    - 0.01
+  visual:
+    mode: level
+- entity_id: boulevard_lane_mark_10
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 0.0
+    - 34.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 0.14
+    - 4.0
+    - 0.01
+  visual:
+    mode: level
+- entity_id: boulevard_lane_mark_11
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 0.0
+    - 46.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 0.14
+    - 4.0
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_01
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -84.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_02
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -72.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_03
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -60.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_04
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -48.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_05
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -36.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_06
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -24.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_07
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -12.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_08
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 0.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_09
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 12.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_10
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 24.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_11
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 36.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_12
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 48.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_13
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 60.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_14
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 72.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: cross_street_lane_mark_15
+  entity_type: lane_marking
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 84.0
+    - 0.0
+    - 0.06
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: lane_marking
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 4.0
+    - 0.14
+    - 0.01
+  visual:
+    mode: level
+- entity_id: pedestrian_crossing_stripe_01
+  entity_type: pedestrian_crossing
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -4.5
+    - -10.0
+    - 0.061
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: pedestrian_crossing
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 1.0
+    - 4.0
+    - 0.012
+  visual:
+    mode: level
+- entity_id: pedestrian_crossing_stripe_02
+  entity_type: pedestrian_crossing
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -2.7
+    - -10.0
+    - 0.061
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: pedestrian_crossing
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 1.0
+    - 4.0
+    - 0.012
+  visual:
+    mode: level
+- entity_id: pedestrian_crossing_stripe_03
+  entity_type: pedestrian_crossing
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -0.9
+    - -10.0
+    - 0.061
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: pedestrian_crossing
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 1.0
+    - 4.0
+    - 0.012
+  visual:
+    mode: level
+- entity_id: pedestrian_crossing_stripe_04
+  entity_type: pedestrian_crossing
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 0.9
+    - -10.0
+    - 0.061
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: pedestrian_crossing
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 1.0
+    - 4.0
+    - 0.012
+  visual:
+    mode: level
+- entity_id: pedestrian_crossing_stripe_05
+  entity_type: pedestrian_crossing
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 2.7
+    - -10.0
+    - 0.061
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: pedestrian_crossing
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 1.0
+    - 4.0
+    - 0.012
+  visual:
+    mode: level
+- entity_id: pedestrian_crossing_stripe_06
+  entity_type: pedestrian_crossing
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 4.5
+    - -10.0
+    - 0.061
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: pedestrian_crossing
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 1.0
+    - 4.0
+    - 0.012
+  visual:
+    mode: level
+- entity_id: checkpoint_gate
+  entity_type: semantic_checkpoint
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 0.0
+    - -76.0
+    - 0.065
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: semantic_checkpoint
+  collision: false
+  geometry:
+    shape: cylinder
+    radius_m: 0.8
+    half_height_m: 0.012
+  visual:
+    mode: level
+- entity_id: checkpoint_container_yard
+  entity_type: semantic_checkpoint
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -16.0
+    - -33.0
+    - 0.065
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: semantic_checkpoint
+  collision: false
+  geometry:
+    shape: cylinder
+    radius_m: 0.8
+    half_height_m: 0.012
+  visual:
+    mode: level
+- entity_id: checkpoint_factory
+  entity_type: semantic_checkpoint
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -6.0
+    - 32.0
+    - 0.065
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: semantic_checkpoint
+  collision: false
+  geometry:
+    shape: cylinder
+    radius_m: 0.8
+    half_height_m: 0.012
+  visual:
+    mode: level
+- entity_id: checkpoint_gravel
+  entity_type: semantic_checkpoint
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - -76.0
+    - 69.5
+    - 0.065
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: semantic_checkpoint
+  collision: false
+  geometry:
+    shape: cylinder
+    radius_m: 0.8
+    half_height_m: 0.012
+  visual:
+    mode: level
+- entity_id: checkpoint_warehouse
+  entity_type: semantic_checkpoint
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 50.0
+    - 7.0
+    - 0.065
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: semantic_checkpoint
+  collision: false
+  geometry:
+    shape: cylinder
+    radius_m: 0.8
+    half_height_m: 0.012
+  visual:
+    mode: level
+- entity_id: checkpoint_tank_farm
+  entity_type: semantic_checkpoint
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 88.0
+    - -36.0
+    - 0.065
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: none
+  semantic_class: semantic_checkpoint
+  collision: false
+  geometry:
+    shape: cylinder
+    radius_m: 0.8
+    half_height_m: 0.012
+  visual:
+    mode: level
+- entity_id: element__operations_safety__parking_west_01
+  entity_type: safety_bollard
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 8.0
+    - -48.0
+    - 0.594
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: safety_bollard
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.12
+    half_height_m: 0.55
+  visual:
+    mode: level
+- entity_id: element__operations_safety__parking_west_02
+  entity_type: safety_bollard
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 8.0
+    - -44.5
+    - 0.594
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: safety_bollard
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.12
+    half_height_m: 0.55
+  visual:
+    mode: level
+- entity_id: element__operations_safety__parking_east_01
+  entity_type: safety_bollard
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 42.0
+    - -48.0
+    - 0.594
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: safety_bollard
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.12
+    half_height_m: 0.55
+  visual:
+    mode: level
+- entity_id: element__operations_safety__parking_east_02
+  entity_type: safety_bollard
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 42.0
+    - -44.5
+    - 0.594
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: safety_bollard
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.12
+    half_height_m: 0.55
+  visual:
+    mode: level
+- entity_id: element__operations_safety__parking_guide_01
+  entity_type: lane_marker
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 15.0
+    - -34.0
+    - 0.05
+    quaternion_wxyz:
+    - 0.7071067811865476
+    - 0.0
+    - 0.0
+    - 0.7071067811865476
+  physics_proxy: none
+  semantic_class: lane_marker
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 2.5
+    - 0.15
+    - 0.012
+  visual:
+    mode: level
+- entity_id: element__operations_safety__parking_guide_02
+  entity_type: lane_marker
+  authority: ue_animation
+  initial_transform:
+    position_m:
+    - 35.0
+    - -34.0
+    - 0.05
+    quaternion_wxyz:
+    - 0.7071067811865476
+    - 0.0
+    - 0.0
+    - 0.7071067811865476
+  physics_proxy: none
+  semantic_class: lane_marker
+  collision: false
+  geometry:
+    shape: box
+    size_m:
+    - 2.5
+    - 0.15
+    - 0.012
+  visual:
+    mode: level
+- entity_id: element__operations_safety__container_pallet_01
+  entity_type: pallet_stack
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -25.0
+    - -14.0
+    - 0.275
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: pallet_stack
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 1.2
+    - 1.0
+    - 0.45
+  visual:
+    mode: level
+- entity_id: element__operations_safety__container_pallet_02
+  entity_type: pallet_stack
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -27.0
+    - -14.0
+    - 0.275
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: pallet_stack
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 1.2
+    - 1.0
+    - 0.45
+  visual:
+    mode: level
+- entity_id: element__operations_safety__container_drum_01
+  entity_type: industrial_drum
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -29.0
+    - -16.0
+    - 0.5
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: industrial_drum
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.29
+    half_height_m: 0.45
+  visual:
+    mode: level
+- entity_id: element__operations_safety__container_drum_02
+  entity_type: industrial_drum
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -30.0
+    - -16.0
+    - 0.5
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: industrial_drum
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.29
+    half_height_m: 0.45
+  visual:
+    mode: level
+- entity_id: element__operations_safety__container_drum_03
+  entity_type: industrial_drum
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -31.0
+    - -16.0
+    - 0.5
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: industrial_drum
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.29
+    half_height_m: 0.45
+  visual:
+    mode: level
+- entity_id: element__operations_safety__container_cone_01
+  entity_type: traffic_cone
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -27.0
+    - -20.0
+    - 0.4
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: traffic_cone
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.2
+    half_height_m: 0.35
+  visual:
+    mode: level
+- entity_id: element__operations_safety__container_cone_02
+  entity_type: traffic_cone
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -30.0
+    - -20.0
+    - 0.4
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: traffic_cone
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.2
+    half_height_m: 0.35
+  visual:
+    mode: level
+- entity_id: element__operations_safety__container_equipment_01
+  entity_type: equipment_cabinet
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -79.0
+    - -14.0
+    - 0.95
+    quaternion_wxyz:
+    - 0.7071067811865476
+    - 0.0
+    - 0.0
+    - 0.7071067811865476
+  physics_proxy: mujoco
+  semantic_class: equipment_cabinet
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 1.2
+    - 0.55
+    - 1.8
+  visual:
+    mode: level
+- entity_id: element__operations_safety__container_fire_01
+  entity_type: fire_cabinet
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -77.0
+    - -14.0
+    - 0.65
+    quaternion_wxyz:
+    - 0.7071067811865476
+    - 0.0
+    - 0.0
+    - 0.7071067811865476
+  physics_proxy: mujoco
+  semantic_class: fire_cabinet
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 0.8
+    - 0.35
+    - 1.2
+  visual:
+    mode: level
+- entity_id: element__operations_safety__gravel_barrier_west
+  entity_type: jersey_barrier
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -88.0
+    - 75.0
+    - 0.45
+    quaternion_wxyz:
+    - 0.7071067811865476
+    - 0.0
+    - 0.0
+    - 0.7071067811865476
+  physics_proxy: mujoco
+  semantic_class: jersey_barrier
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 2.0
+    - 0.55
+    - 0.8
+  visual:
+    mode: level
+- entity_id: element__operations_safety__gravel_barrier_east
+  entity_type: jersey_barrier
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -64.0
+    - 75.0
+    - 0.45
+    quaternion_wxyz:
+    - 0.7071067811865476
+    - 0.0
+    - 0.0
+    - 0.7071067811865476
+  physics_proxy: mujoco
+  semantic_class: jersey_barrier
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 2.0
+    - 0.55
+    - 0.8
+  visual:
+    mode: level
+- entity_id: element__operations_safety__gravel_sign_west
+  entity_type: safety_sign
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -88.0
+    - 80.0
+    - 0.95
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: safety_sign
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 0.8
+    - 0.12
+    - 1.8
+  visual:
+    mode: level
+- entity_id: element__operations_safety__gravel_sign_east
+  entity_type: safety_sign
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -64.0
+    - 80.0
+    - 0.95
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: safety_sign
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 0.8
+    - 0.12
+    - 1.8
+  visual:
+    mode: level
+- entity_id: element__robot_yard_safety__cone_near_spawn
+  entity_type: traffic_cone
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 4.8
+    - -74.0
+    - 0.404
+    quaternion_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  physics_proxy: mujoco
+  semantic_class: traffic_cone
+  collision: true
+  geometry:
+    shape: cylinder
+    radius_m: 0.2
+    half_height_m: 0.35
+  visual:
+    mode: runtime
+    material:
+      key: container_orange
+      base_color_rgba:
+      - 0.82
+      - 0.32
+      - 0.06
+      - 1.0
+      metallic: 0.0
+      roughness: 0.4
+- entity_id: element__robot_yard_safety__barrier_near_spawn
+  entity_type: jersey_barrier
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - -4.8
+    - -73.0
+    - 0.454
+    quaternion_wxyz:
+    - 0.7071067811865476
+    - 0.0
+    - 0.0
+    - 0.7071067811865476
+  physics_proxy: mujoco
+  semantic_class: jersey_barrier
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 2.0
+    - 0.55
+    - 0.8
+  visual:
+    mode: runtime
+    material:
+      key: concrete
+      base_color_rgba:
+      - 0.42
+      - 0.43
+      - 0.41
+      - 1.0
+      metallic: 0.0
+      roughness: 0.88
+- entity_id: element__robot_yard_safety__safety_sign_near_spawn
+  entity_type: safety_sign
+  authority: mujoco
+  initial_transform:
+    position_m:
+    - 4.8
+    - -79.0
+    - 0.954
+    quaternion_wxyz:
+    - 0.7071067811865476
+    - 0.0
+    - 0.0
+    - 0.7071067811865476
+  physics_proxy: mujoco
+  semantic_class: safety_sign
+  collision: true
+  geometry:
+    shape: box
+    size_m:
+    - 0.8
+    - 0.12
+    - 1.8
+  visual:
+    mode: runtime
+    material:
+      key: painted_steel
+      base_color_rgba:
+      - 0.92
+      - 0.74
+      - 0.08
+      - 1.0
+      metallic: 0.36
+      roughness: 0.3
+provenance:
+  path: provenance/world.provenance.json
+content:
+  files:
+  - path: artifacts/alignment-report.json
+    size: 1112
+  - path: artifacts/heightfield_f32.bin
+    size: 160012
+  - path: artifacts/heightfield_r16.png
+    size: 18445
+  - path: artifacts/terrain.obj
+    size: 5765768
+  - path: provenance/world.provenance.json
+    size: 1438
+  - path: visual/world.visual-projection.json
+    size: 5139
+  - path: world.xml
+    size: 20658
+  provenance:
+    path: provenance/world.provenance.json
+  visual_projection:
+    path: visual/world.visual-projection.json
+description: FactoryPark HF with runtime-authored robot-yard safety props.

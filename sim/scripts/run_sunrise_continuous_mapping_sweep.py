@@ -31,7 +31,7 @@ from run_sunrise_continuous_mapping_gate import (  # noqa: E402
 )
 
 DEFAULT_SLAM_CONFIG = (
-    ROOT / "src" / "localization" / "fastlio2" / "config" / "mid360_mujoco_native_dds.yaml"
+    ROOT / "src" / "localization" / "fastlio2" / "config" / "sim_mid360_slam.yaml"
 )
 VEL_TIGHT_SLAM_CONFIG = (
     ROOT
@@ -39,7 +39,7 @@ VEL_TIGHT_SLAM_CONFIG = (
     / "localization"
     / "fastlio2"
     / "config"
-    / "mid360_mujoco_native_dds_vel_tight.yaml"
+    / "sim_mid360_slam_tight.yaml"
 )
 
 SYNC_PATHS = [
@@ -47,8 +47,8 @@ SYNC_PATHS = [
     "sim/scripts/mujoco/native_dds_sensors.py",
 
     "sim/scripts/run_sunrise_continuous_mapping_gate.py",
-    "src/localization/fastlio2/config/mid360_mujoco_native_dds.yaml",
-    "src/localization/fastlio2/config/mid360_mujoco_native_dds_vel_tight.yaml",
+    "src/localization/fastlio2/config/sim_mid360_slam.yaml",
+    "src/localization/fastlio2/config/sim_mid360_slam_tight.yaml",
 ]
 
 

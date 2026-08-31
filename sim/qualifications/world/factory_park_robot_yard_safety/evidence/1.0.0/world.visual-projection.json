@@ -1,0 +1,233 @@
+{
+  "artifact_content_digest": "f1e7d6ed37c5730bb69303932b83e7cd42b148d193e145cf791f40796ed2572d",
+  "binding": "WorldVisual:FactoryParkHF",
+  "digest": "d24692b0bebbb1257581d64a56bedd8464563fa2563f0a677b7706f4fac405f1",
+  "entities": [
+    {
+      "authority": "mujoco",
+      "entity_id": "element__robot_yard_safety__barrier_near_spawn",
+      "geometry": {
+        "shape": "box",
+        "size_m": [
+          2.0,
+          0.55,
+          0.8
+        ]
+      },
+      "material": {
+        "key": "concrete",
+        "pbr": {
+          "base_color_rgba": [
+            0.42,
+            0.43,
+            0.41,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.88
+        },
+        "source": "world_package"
+      },
+      "semantic_class": "jersey_barrier",
+      "transform": {
+        "position_m": [
+          -4.8,
+          -73.0,
+          0.454
+        ],
+        "quaternion_wxyz": [
+          0.7071067811865476,
+          0.0,
+          0.0,
+          0.7071067811865476
+        ]
+      },
+      "unreal": {
+        "asset_path": "/Engine/BasicShapes/Cube.Cube",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "dimensions_m": [
+          2.0,
+          0.55,
+          0.8
+        ],
+        "representation": "static_mesh"
+      }
+    },
+    {
+      "authority": "mujoco",
+      "entity_id": "element__robot_yard_safety__cone_near_spawn",
+      "geometry": {
+        "half_height_m": 0.35,
+        "radius_m": 0.2,
+        "shape": "cylinder"
+      },
+      "material": {
+        "key": "container_orange",
+        "pbr": {
+          "base_color_rgba": [
+            0.82,
+            0.32,
+            0.06,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.4
+        },
+        "source": "world_package"
+      },
+      "semantic_class": "traffic_cone",
+      "transform": {
+        "position_m": [
+          4.8,
+          -74.0,
+          0.404
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "unreal": {
+        "asset_path": "/Engine/BasicShapes/Cylinder.Cylinder",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "dimensions_m": [
+          0.4,
+          0.4,
+          0.7
+        ],
+        "representation": "static_mesh"
+      }
+    },
+    {
+      "authority": "mujoco",
+      "entity_id": "element__robot_yard_safety__safety_sign_near_spawn",
+      "geometry": {
+        "shape": "box",
+        "size_m": [
+          0.8,
+          0.12,
+          1.8
+        ]
+      },
+      "material": {
+        "key": "painted_steel",
+        "pbr": {
+          "base_color_rgba": [
+            0.92,
+            0.74,
+            0.08,
+            1.0
+          ],
+          "metallic": 0.36,
+          "roughness": 0.3
+        },
+        "source": "world_package"
+      },
+      "semantic_class": "safety_sign",
+      "transform": {
+        "position_m": [
+          4.8,
+          -79.0,
+          0.954
+        ],
+        "quaternion_wxyz": [
+          0.7071067811865476,
+          0.0,
+          0.0,
+          0.7071067811865476
+        ]
+      },
+      "unreal": {
+        "asset_path": "/Engine/BasicShapes/Cube.Cube",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "dimensions_m": [
+          0.8,
+          0.12,
+          1.8
+        ],
+        "representation": "static_mesh"
+      }
+    }
+  ],
+  "level": "/Game/RobotSim/Maps/FactoryPark_HF",
+  "package": {
+    "id": "factory_park_robot_yard_safety",
+    "manifest": "world.package.yaml",
+    "provenance": "provenance/world.provenance.json",
+    "version": "1.0.0"
+  },
+  "schema": "lingtu.sim.world-visual-projection.v1",
+  "spawn_alignment": {
+    "aligned_to_heightmap": true,
+    "position_m": [
+      0.0,
+      -76.0,
+      0.0
+    ]
+  },
+  "terrain": {
+    "assets": [
+      {
+        "bytes": 160012,
+        "path": "artifacts/heightfield_f32.bin",
+        "role": "mujoco_hfield",
+        "sha256": "6a0c00bc23b9c1437cb575631f3a40099b82f0a394460e81f0ed129f4af16cac"
+      },
+      {
+        "bytes": 18445,
+        "path": "artifacts/heightfield_r16.png",
+        "role": "unreal_height_png",
+        "sha256": "b4358c1da6765e7490a39b932296ed8b03306fe902645715c9b063f6083fc038"
+      },
+      {
+        "bytes": 5765768,
+        "path": "artifacts/terrain.obj",
+        "role": "unreal_mesh_obj",
+        "sha256": "6e12be4208e3f9cb204f7e1d091649161feca14f43c1e92f83285ea270e4bc43"
+      }
+    ],
+    "extent_m": [
+      220.0,
+      180.0
+    ],
+    "grid_px": [
+      221,
+      181
+    ],
+    "physics_bounds_m": {
+      "max_m": [
+        110.0,
+        90.0,
+        0.08332570382238502
+      ],
+      "min_m": [
+        -110.0,
+        -90.0,
+        -0.666674296177615
+      ]
+    },
+    "sample_spacing_m": [
+      1.0,
+      1.0
+    ],
+    "visual_bounds_m": {
+      "max_m": [
+        110.0,
+        90.0,
+        0.08332570382238502
+      ],
+      "min_m": [
+        -110.0,
+        -90.0,
+        -0.666674296177615
+      ]
+    }
+  },
+  "units": {
+    "handedness": "RH",
+    "length": "m",
+    "up_axis": "Z"
+  }
+}

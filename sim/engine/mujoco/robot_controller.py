@@ -8,7 +8,6 @@ Logic preserved exactly as-is.
 
 from collections import deque
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -108,6 +107,7 @@ JOINT_VEL_SCALE = np.array([0.05, 0.05, 0.05, 0.05], dtype=np.float64)
 IMU_GYRO_SCALE = 0.25
 OBS_DIM = 57
 HISTORY_LEN = 5
+POLICY_1119_STARTUP_HOLD_INFERENCE_STEPS = 25
 
 # MuJoCo <-> Dart/ONNX joint order mapping
 # MuJoCo (4+4+4+4): FR(hip,thigh,calf,foot), FL(...), RR(...), RL(...)
@@ -120,16 +120,38 @@ class UnsupportedPolicyInputError(ValueError):
     """Raised when an ONNX policy uses an unknown observation contract."""
 
 
+def _create_onnx_session(onnx_path: str, cpu_threads: int):
+    import onnxruntime as ort
+
+    threads = int(cpu_threads)
+    if not 1 <= threads <= 8:
+        raise ValueError("ONNX policy cpu_threads must be in [1, 8]")
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = threads
+    options.inter_op_num_threads = 1
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    return ort.InferenceSession(
+        onnx_path,
+        sess_options=options,
+        providers=["CPUExecutionProvider"],
+    )
+
+
 class PolicyRunner:
     """ONNX gait policy inference, matching brainstem StandardObservationBuilder.
 
     # Extracted from src/drivers/sim/nova_nav_bridge.py — logic preserved exactly.
     """
 
-    def __init__(self, onnx_path: str, *, session=None):
-        import onnxruntime as ort
-
-        self.session = session or ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+    def __init__(
+        self,
+        onnx_path: str,
+        *,
+        session=None,
+        cpu_threads: int = 1,
+        startup_hold_inference_steps: int = 0,
+    ):
+        self.session = session or _create_onnx_session(onnx_path, cpu_threads)
         inp = self.session.get_inputs()[0]
         out = self.session.get_outputs()[0]
         print(f"[Policy] Loaded {onnx_path}")
@@ -143,9 +165,11 @@ class PolicyRunner:
         self._history_len = self._resolve_history_len(self._policy_input_dim)
         self.history: deque = deque(maxlen=self._history_len)
         self.last_action = STANDING_POSE.copy()
-        self.run_at_idle = True
+        self.run_at_idle = False
         self.zero_wheels_at_idle = True
         self.wheel_torque_limit = 60.0
+        self._startup_hold_steps = max(0, int(startup_hold_inference_steps))
+        self._startup_hold_remaining = self._startup_hold_steps
         # Will be filled with real sensor data in warm_up()
 
     @staticmethod
@@ -258,12 +282,16 @@ class PolicyRunner:
         real_action = raw_action * ACTION_SCALE + STANDING_POSE
         real_action = self.clamp_action(real_action)
         self.last_action = real_action.copy()
+        if self._startup_hold_remaining > 0:
+            self._startup_hold_remaining -= 1
+            return STANDING_POSE.copy()
         return real_action
 
     def reset(self) -> None:
         """Reset history buffer (call on simulation reset)."""
         self.history.clear()
         self.last_action = STANDING_POSE.copy()
+        self._startup_hold_remaining = self._startup_hold_steps
 
 
 class TorchScriptPolicyRunner:
@@ -305,8 +333,6 @@ class TorchScriptPolicyRunner:
         jp_dart = joint_pos_16[MJ_TO_DART]
         jv_dart = joint_vel_16[MJ_TO_DART]
         q = jp_dart - THUNDERV4_STANDING_POSE
-        # ponytail: match sim/robots/thunderv4/mujoco_him_keyboard.py:get_obs().
-        q += np.random.uniform(-0.01, 0.01, q.shape)
         q[12:] = 0.0
         dq = jv_dart * 0.05
         return np.concatenate(
@@ -344,13 +370,8 @@ class TorchScriptPolicyRunner:
 class ThunderV4OnnxPolicyRunner(TorchScriptPolicyRunner):
     """ONNX runtime for the converted ThunderV4 TorchScript policy."""
 
-    def __init__(self, policy_path: str, *, session=None):
-        import onnxruntime as ort
-
-        self.session = session or ort.InferenceSession(
-            policy_path,
-            providers=["CPUExecutionProvider"],
-        )
+    def __init__(self, policy_path: str, *, session=None, cpu_threads: int = 1):
+        self.session = session or _create_onnx_session(policy_path, cpu_threads)
         self.input_name = self.session.get_inputs()[0].name
         self.output_name = self.session.get_outputs()[0].name
         self.last_action = np.zeros(16, dtype=np.float64)
@@ -381,19 +402,35 @@ def _is_thunderv4_policy(path: Path) -> bool:
     return "thunderv4/policy" in normalized or path.name.startswith("pose_flat_low_kpkd")
 
 
-def load_policy_runner(policy_path: str):
+def load_policy_runner(policy_path: str, *, cpu_threads: int = 1):
     path = Path(policy_path)
     if path.suffix.lower() in {".pt", ".pth", ".jit"}:
         return TorchScriptPolicyRunner(policy_path)
     if path.suffix.lower() == ".onnx":
-        import onnxruntime as ort
-
-        session = ort.InferenceSession(
-            policy_path,
-            providers=["CPUExecutionProvider"],
-        )
+        session = _create_onnx_session(policy_path, cpu_threads)
         input_dim = PolicyRunner._extract_input_dim(session.get_inputs()[0].shape)
         if input_dim == OBS_DIM and _is_thunderv4_policy(path):
-            return ThunderV4OnnxPolicyRunner(policy_path, session=session)
-        return PolicyRunner(policy_path, session=session)
-    return PolicyRunner(policy_path)
+            return ThunderV4OnnxPolicyRunner(
+                policy_path, session=session, cpu_threads=cpu_threads
+            )
+        startup_hold_steps = (
+            POLICY_1119_STARTUP_HOLD_INFERENCE_STEPS
+            if path.name.lower() == "policy_1119.onnx"
+            else 0
+        )
+        return PolicyRunner(
+            policy_path,
+            session=session,
+            cpu_threads=cpu_threads,
+            startup_hold_inference_steps=startup_hold_steps,
+        )
+    startup_hold_steps = (
+        POLICY_1119_STARTUP_HOLD_INFERENCE_STEPS
+        if path.name.lower() == "policy_1119.onnx"
+        else 0
+    )
+    return PolicyRunner(
+        policy_path,
+        cpu_threads=cpu_threads,
+        startup_hold_inference_steps=startup_hold_steps,
+    )

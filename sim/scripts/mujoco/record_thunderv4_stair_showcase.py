@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
@@ -27,11 +28,63 @@ if str(SRC) not in sys.path:
 
 from drivers.sim.mujoco.driver import MujocoDriverModule
 from sim.engine.core.engine import VelocityCommand
-from sim.scripts.policy_nav_smoke import (
-    _contact_snapshot,
-    _contact_summary,
-    _rpy_from_xyzw,
-)
+
+_FEET = {"FR_foot", "FL_foot", "RR_foot", "RL_foot"}
+
+
+def _rpy_from_xyzw(q: Any) -> tuple[float, float, float]:
+    x, y, z, w = (float(v) for v in q)
+    roll = math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+    sin_pitch = 2 * (w * y - z * x)
+    pitch = math.copysign(math.pi / 2, sin_pitch) if abs(sin_pitch) >= 1 else math.asin(sin_pitch)
+    yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    return roll, pitch, yaw
+
+
+def _contact_snapshot(engine: Any) -> dict[str, Any]:
+    import mujoco
+
+    model, data = engine.model, engine.data
+    feet: set[str] = set()
+    non_foot_ground_contacts = 0
+    max_normal_force = 0.0
+    for index in range(int(data.ncon)):
+        contact = data.contact[index]
+        body_ids = (int(model.geom_bodyid[contact.geom1]), int(model.geom_bodyid[contact.geom2]))
+        names = {
+            mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id) or ""
+            for body_id in body_ids
+        }
+        contact_feet = names & _FEET
+        if 0 in body_ids and contact_feet:
+            feet.update(contact_feet)
+            force = np.zeros(6, dtype=np.float64)
+            mujoco.mj_contactForce(model, data, index, force)
+            max_normal_force = max(max_normal_force, abs(float(force[0])))
+        elif 0 in body_ids:
+            non_foot_ground_contacts += 1
+    return {
+        "ncon": int(data.ncon),
+        "feet": sorted(feet),
+        "support_count": len(feet),
+        "non_foot_ground_contacts": non_foot_ground_contacts,
+        "max_normal_force": max_normal_force,
+    }
+
+
+def _contact_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    feet = sorted({name for sample in samples for name in sample["feet"]})
+    supports = [int(sample["support_count"]) for sample in samples]
+    return {
+        "sample_count": len(samples),
+        "contact_sample_count": sum(int(sample["ncon"] > 0) for sample in samples),
+        "foot_contact_sample_count": sum(int(bool(sample["feet"])) for sample in samples),
+        "unique_feet": feet,
+        "unique_feet_count": len(feet),
+        "max_support_count": max(supports, default=0),
+        "non_foot_ground_contacts": sum(int(sample["non_foot_ground_contacts"]) for sample in samples),
+        "max_normal_force": max((float(sample["max_normal_force"]) for sample in samples), default=0.0),
+    }
 
 
 def _jsonable_position(state: Any) -> list[float]:

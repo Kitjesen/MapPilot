@@ -1,0 +1,34 @@
+{
+  "package": {
+    "id": "factory_park_robot_yard_safety",
+    "manifest": "world.package.yaml",
+    "projection": "visual/world.visual-projection.json",
+    "version": "1.0.0"
+  },
+  "provenance": {
+    "license": "LicenseRef-LingTu-Project-Owned",
+    "license_file": "LICENSE.txt",
+    "owner": "LingTu project",
+    "source_uri": "simstudio://scene-drafts/8fb12f2cba404ed5a7566eb04bca23f1/revisions/1",
+    "third_party_assets": []
+  },
+  "schema": "lingtu.sim.world-provenance.v1",
+  "source_intake": {
+    "files": [
+      {
+        "path": "LICENSE.txt",
+        "size": 74
+      },
+      {
+        "path": "height.r16",
+        "size": 80002
+      },
+      {
+        "path": "scene-draft.json",
+        "size": 1489
+      }
+    ],
+    "schema": "lingtu.sim.source-intake.v1",
+    "source_kind": "directory"
+  }
+}

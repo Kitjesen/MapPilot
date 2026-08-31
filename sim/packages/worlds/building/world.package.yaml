@@ -1,0 +1,17 @@
+schema: lingtu.sim.world-package.v1
+id: building
+version: 1.0.0
+kind: world
+description: Two-floor MuJoCo building with explicit walls, obstacles, and a fourteen-step staircase.
+physics:
+  mjcf: ../../../worlds/mujoco/building_scene.xml
+  global_policy:
+    timestep_s: 0.005
+    integrator: euler
+    solver: newton
+    iterations: 100
+    gravity_mps2: [0.0, 0.0, -9.81]
+visual:
+  binding: WorldVisual:Building
+  level: /Game/RobotSim/Maps/ThunderV4_RuntimePreview
+entities: []

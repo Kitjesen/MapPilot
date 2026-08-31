@@ -1,26 +1,51 @@
 <?xml version="1.0" encoding="utf-8"?>
 <mujoco model="lingtu_omni_cart">
   <compiler angle="radian" autolimits="true"/>
-  <option timestep="0.001" iterations="40" solver="PGS" gravity="0 0 -9.81"/>
+  <!-- Attachable RobotPackages inherit session-owned MuJoCo options. -->
   <asset>
     <material name="cart_body" rgba="0.12 0.38 0.68 1"/>
     <material name="cart_top" rgba="0.06 0.12 0.18 1"/>
     <material name="cart_front" rgba="0.95 0.72 0.18 1"/>
     <material name="sensor_black" rgba="0.02 0.025 0.03 1"/>
+    <material name="wheel_rubber" rgba="0.025 0.03 0.035 1"/>
   </asset>
   <worldbody>
     <body name="base_link" pos="0 0 0">
       <joint name="floating_base_joint" type="free"/>
-      <geom name="cart_base" type="cylinder" size="0.34 0.08" pos="0 0 0.08"
+      <geom name="cart_base" type="cylinder" size="0.34 0.08" pos="0 0 0.14"
             material="cart_body" contype="1" conaffinity="1" condim="3"
-            friction="1 0.5 0.5"/>
+            friction="0.8 0.02 0.001" density="250"/>
       <geom name="cart_top_plate" type="box" size="0.26 0.22 0.035"
-            pos="0 0 0.19" material="cart_top" contype="1" conaffinity="1"/>
+            pos="0 0 0.25" material="cart_top" contype="1" conaffinity="1"
+            density="300"/>
       <geom name="cart_front_marker" type="box" size="0.13 0.045 0.04"
-            pos="0.28 0 0.18" material="cart_front" contype="0" conaffinity="0"/>
+            pos="0.28 0 0.24" material="cart_front" contype="0" conaffinity="0"/>
       <geom name="front_camera_body" type="box" size="0.055 0.075 0.045"
             pos="0.32 0 0.31" material="sensor_black" contype="0" conaffinity="0"/>
       <camera name="front_camera" pos="0.38 0 0.34" xyaxes="0 -1 0 0 0 1" fovy="78"/>
+      <site name="imu" pos="0 0 0.24" size="0.001"/>
+      <geom name="front_support" type="sphere" size="0.045" pos="0.24 0 0.045"
+            rgba="0.12 0.13 0.14 1" contype="1" conaffinity="1" condim="1" priority="2"
+            density="200" group="3"/>
+      <geom name="rear_support" type="sphere" size="0.045" pos="-0.24 0 0.045"
+            rgba="0.12 0.13 0.14 1" contype="1" conaffinity="1" condim="1" priority="2"
+            density="200" group="3"/>
+      <body name="left_wheel_link" pos="0 0.34 0.11">
+        <joint name="left_wheel_joint" type="hinge" axis="0 1 0" limited="false"
+               damping="0.04" frictionloss="0.01" armature="0.01"/>
+        <geom name="left_drive_wheel" type="cylinder" size="0.11 0.04"
+              quat="0.70710678 0.70710678 0 0" material="wheel_rubber"
+              contype="1" conaffinity="1" condim="3" friction="1.4 0.02 0.001"
+              density="500" group="3"/>
+      </body>
+      <body name="right_wheel_link" pos="0 -0.34 0.11">
+        <joint name="right_wheel_joint" type="hinge" axis="0 1 0" limited="false"
+               damping="0.04" frictionloss="0.01" armature="0.01"/>
+        <geom name="right_drive_wheel" type="cylinder" size="0.11 0.04"
+              quat="0.70710678 0.70710678 0 0" material="wheel_rubber"
+              contype="1" conaffinity="1" condim="3" friction="1.4 0.02 0.001"
+              density="500" group="3"/>
+      </body>
       <body name="lidar_link" pos="0 0 0.37">
         <geom name="lidar_mid360_visual" type="cylinder" size="0.075 0.045"
               rgba="0.02 0.025 0.03 1" contype="0" conaffinity="0"/>
@@ -28,4 +53,15 @@
       </body>
     </body>
   </worldbody>
+  <sensor>
+    <framequat name="imu_orientation" objtype="site" objname="imu" noise="0.001"/>
+    <gyro name="imu_angular_velocity" site="imu" noise="0.005" cutoff="34.9"/>
+    <accelerometer name="imu_linear_acceleration" site="imu" noise="0.005" cutoff="157"/>
+  </sensor>
+  <actuator>
+    <motor name="left_wheel_joint" joint="left_wheel_joint" gear="1"
+           ctrllimited="true" ctrlrange="-12 12"/>
+    <motor name="right_wheel_joint" joint="right_wheel_joint" gear="1"
+           ctrllimited="true" ctrlrange="-12 12"/>
+  </actuator>
 </mujoco>

@@ -1,0 +1,45 @@
+schema: lingtu.sim.sensor-rig-package.v1
+id: thunderv4_navigation
+version: 1.0.0
+kind: sensor_rig
+description: Navigation sensor arrangement for Thunder V4.
+sensors:
+  - id: imu
+    package: imu@1.0.0
+    parent_frame: imu
+    runtime: {owner: physics, source: mujoco_sensor}
+    frequency_hz: 200
+  - id: mid360
+    package: mid360@1.0.0
+    parent_frame: lidar1_link
+    runtime: {owner: physics, source: mujoco_livox_model}
+    frequency_hz: 10
+    configuration:
+      raycast_frame: lidar1_link_site
+  - id: front_rgb
+    package: rgb_camera@1.0.0
+    parent_frame: front_camera
+    runtime: {owner: visual, source: unreal_camera}
+    frequency_hz: 30
+    extrinsic:
+      position_m: [0.423358800364963, -0.000496202974186816, 0.11370714960317]
+      quaternion_wxyz: [0.5, -0.5, 0.5, -0.5]
+    configuration:
+      width: 640
+      height: 480
+  - id: front_depth
+    package: depth_camera@1.0.0
+    parent_frame: front_camera
+    runtime: {owner: visual, source: unreal_camera}
+    frequency_hz: 30
+    extrinsic:
+      position_m: [0.423358800364963, -0.000496202974186816, 0.11370714960317]
+      quaternion_wxyz: [0.5, -0.5, 0.5, -0.5]
+    configuration:
+      width: 640
+      height: 480
+  - id: truth_odom
+    package: truth_odom@1.0.0
+    parent_frame: base_link
+    runtime: {owner: physics, source: mujoco_truth}
+    frequency_hz: 100

@@ -1,0 +1,9 @@
+<mujoco model="mid360_raycast_fixture">
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+  <worldbody>
+    <geom name="floor" type="plane" size="5 5 0.1" pos="0 0 0"/>
+    <body name="sensor_body" pos="0 0 1">
+      <site name="lidar_site" pos="0 0 0" size="0.001"/>
+    </body>
+  </worldbody>
+</mujoco>

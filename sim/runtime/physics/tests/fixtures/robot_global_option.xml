@@ -1,0 +1,10 @@
+<mujoco model="lingtu_robot_global_option_fixture">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.001" iterations="40" solver="PGS" gravity="0 0 -9.81"/>
+  <worldbody>
+    <body name="base_link">
+      <joint name="floating_base_joint" type="free"/>
+      <geom name="body" type="box" size="0.2 0.15 0.1"/>
+    </body>
+  </worldbody>
+</mujoco>

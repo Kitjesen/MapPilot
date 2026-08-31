@@ -1,0 +1,25 @@
+{
+  "schema": "lingtu.sim.editor-plugin-provenance.v1",
+  "plugin": {
+    "name": "Tripo3DUEBridge",
+    "version": "1.0.4",
+    "engine_version": "5.8.0",
+    "platform": "Win64",
+    "module_type": "Editor",
+    "build_id": "55116800"
+  },
+  "source": {
+    "archive_name": "Tripo3d_UE_Bridge-latest.zip",
+    "archive_sha256": "6f1fb698eecae1d702707cedf737d2e2f064f666c62f60e673faeca7a1a60e05",
+    "selected_archive_root": "Tripo3DUEBridge-UE5.8-Win64/",
+    "provided_by": "project owner",
+    "license_file_present": false
+  },
+  "qualification": {
+    "distribution": "unqualified",
+    "allowed_usage": "local_editor_candidate_asset_import",
+    "runtime_dependency": false,
+    "world_package_authority": false,
+    "collision_authority": false
+  }
+}

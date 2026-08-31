@@ -8,7 +8,8 @@
 -->
 <mujoco model="lingtu_industrial_park">
   <compiler angle="radian" autolimits="true"/>
-  <option gravity="0 0 -9.81" timestep="0.002" integrator="RK4"/>
+  <option gravity="0 0 -9.81" timestep="0.005" integrator="Euler"
+          solver="Newton" iterations="100"/>
 
   <visual>
     <headlight diffuse="0.65 0.65 0.62" ambient="0.35 0.35 0.35" specular="0.0 0.0 0.0"/>

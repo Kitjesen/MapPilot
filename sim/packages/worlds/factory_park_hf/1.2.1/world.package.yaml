@@ -1,0 +1,19 @@
+schema: lingtu.sim.world-package.v1
+id: factory_park_hf
+version: 1.2.1
+kind: world
+description: Factory park with 1 ms realtime MuJoCo integration and a deterministic HISM Unreal projection.
+physics:
+  mjcf: physics/factory_park_hf.xml
+  global_policy:
+    timestep_s: 0.001
+    integrator: implicitfast
+    solver: newton
+    iterations: 100
+    gravity_mps2: [0.0, 0.0, -9.81]
+visual:
+  binding: WorldVisual:FactoryParkHF
+  level: /Game/RobotSim/Generated/FactoryParkHF/Maps/FactoryPark_HF_Instanced_9d314c86ef83ea06
+entities:
+  - source: ../../../../worlds/factory_park_hf/generated/semantic-entities.json
+    role: static_semantics

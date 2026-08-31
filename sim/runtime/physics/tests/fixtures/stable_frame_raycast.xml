@@ -1,0 +1,15 @@
+<mujoco model="stable_frame_raycast_fixture">
+  <worldbody>
+    <geom name="floor" type="plane" size="5 5 0.1" pos="0 0 0"/>
+    <body name="rig_root" pos="0 0 2">
+      <body name="body_sensor_frame" pos="0 0 -1" quat="0.7071067811865476 0 0.7071067811865476 0"/>
+      <site name="site_sensor_frame" pos="0 0 -1" size="0.001"/>
+      <body name="self_occluder" pos="0 0 -1">
+        <geom name="self_occluder_geom" type="sphere" size="0.1"/>
+      </body>
+      <body name="ambiguous_sensor_frame" pos="0 0 -1">
+        <site name="ambiguous_sensor_frame" size="0.001"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

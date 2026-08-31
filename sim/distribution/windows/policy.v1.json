@@ -1,0 +1,43 @@
+{
+  "host_toolchain": {
+    "msvc": {
+      "compiler": "VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe",
+      "version": "14.44.35207",
+      "version_file": "VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt"
+    },
+    "unreal_auto_sdk": {
+      "netfx_header": "HostWin64/Win64/Windows Kits/NETFXSDK/4.6.2/Include/um/mscoree.h"
+    },
+    "windows_sdk": {
+      "library_evidence": "Lib/10.0.26100.0/um/x64/kernel32.lib",
+      "resource_compiler": "bin/10.0.26100.0/x64/rc.exe",
+      "version": "10.0.26100.0"
+    }
+  },
+  "product": {
+    "configuration": "Shipping",
+    "id": "robotsimue",
+    "maps": [
+      "/Game/RobotSim/Maps/FactoryPark_HF",
+      "/Game/RobotSim/Maps/OpenField_HF",
+      "/Game/RobotSim/Maps/OpenFieldRuntime",
+      "/Game/RobotSim/Maps/ThunderV4_RuntimePreview"
+    ],
+    "platform": "Win64",
+    "project": "sim/runtime/visual/RobotSimUE/RobotSimUE.uproject",
+    "target": "RobotSimUE"
+  },
+  "schema": "lingtu.sim.windows-distribution-policy.v1",
+  "unreal": {
+    "branch": "++UE5+Release-5.8",
+    "changelist": 56057345,
+    "evidence": [
+      {"path": "Engine/Build/Build.version"},
+      {"path": "Engine/Build/BatchFiles/RunUAT.bat"},
+      {"path": "Engine/Binaries/Win64/UnrealEditor-Cmd.exe"},
+      {"path": "Engine/Binaries/DotNET/AutomationTool/AutomationTool.dll"},
+      {"path": "Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.dll"}
+    ],
+    "version": "5.8.1"
+  }
+}

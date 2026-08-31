@@ -1,0 +1,11 @@
+<mujoco model="lingtu_actuated_hinge_test">
+  <worldbody>
+    <body name="test_body" pos="0 0 0.5">
+      <joint name="hinge_joint" type="hinge" axis="0 1 0" damping="0.05"/>
+      <geom type="box" pos="0 0 0.25" size="0.05 0.05 0.25" mass="1"/>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="hinge_joint" joint="hinge_joint" ctrllimited="true" ctrlrange="-2 2"/>
+  </actuator>
+</mujoco>

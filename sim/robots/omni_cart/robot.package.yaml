@@ -2,7 +2,7 @@ schema: lingtu.sim.robot-package.v1
 id: omni_cart
 version: 1.0.0
 kind: robot
-description: Standard omni-directional cart simulation package.
+description: Two-wheel differential-drive cart with direct wheel-torque actuation; the legacy package ID does not imply holonomic motion.
 compatibility:
   runtime_abi: lingtu.sim.robot.v1
   mujoco: 3.10.x
@@ -10,13 +10,27 @@ physics:
   mjcf: omni_cart.xml
   attach_root: base_link
   root_joint: floating_base_joint
+  global_options: inherit_session
 visual:
   binding: RobotVisual:OmniCart
+  projection: visual/robot.visual-projection.json
+semantic:
+  class: wheeled_robot
 frames:
   - name: base_link
     role: body
+  - name: imu
+    role: sensor_mount
+    parent_frame: base_link
+    extrinsic:
+      position_m: [0.0, 0.0, 0.24]
+      quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]
   - name: front_camera
     role: sensor_mount
+    parent_frame: base_link
+    extrinsic:
+      position_m: [0.38, 0.0, 0.34]
+      quaternion_wxyz: [0.5, -0.5, 0.5, -0.5]
   - name: lidar_link
     role: sensor_mount
 interfaces:
@@ -26,11 +40,11 @@ interfaces:
   command:
     - lingtu.sim.base-velocity.v1
 defaults:
-  controller: null
+  controller: omni_cart_differential_drive@1.0.0
   sensor_rig: omni_cart_navigation@1.0.0
 declared_capabilities:
   locomotion:
-    - drive
+    - differential_drive
   sensor_mounts:
     - front_camera
     - lidar_link

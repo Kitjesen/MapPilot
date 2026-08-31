@@ -1,0 +1,495 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.physics-plan.v2",
+  "title": "LingTu deterministic simulation physics plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "composition",
+    "global_policy",
+    "robots",
+    "schema",
+    "session_id",
+    "world"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lingtu.sim.physics-plan.v2"
+    },
+    "composition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_kind",
+        "composer",
+        "namespace_separator",
+        "state_authority"
+      ],
+      "properties": {
+        "model_kind": {
+          "const": "single_mjmodel"
+        },
+        "composer": {
+          "const": "mjs_attach_v1"
+        },
+        "namespace_separator": {
+          "const": "__"
+        },
+        "state_authority": {
+          "const": "mujoco"
+        }
+      }
+    },
+    "global_policy": {
+      "$ref": "#/$defs/global_physics_policy"
+    },
+    "world": {
+      "$ref": "#/$defs/world_ref"
+    },
+    "robots": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/robot"
+      }
+    },
+    "kinematic_entities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/kinematic_entity"
+      }
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+    "maxLength": 63,
+    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$"
+    }
+  },
+  "$defs": {
+    "global_physics_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "owner",
+        "timestep_s",
+        "integrator",
+        "solver",
+        "iterations",
+        "gravity_mps2"
+      ],
+      "properties": {
+        "owner": {
+          "const": "world"
+        },
+        "timestep_s": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "integrator": {
+          "enum": [
+            "euler",
+            "rk4",
+            "implicit",
+            "implicitfast"
+          ]
+        },
+        "solver": {
+          "enum": [
+            "pgs",
+            "cg",
+            "newton"
+          ]
+        },
+        "iterations": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "gravity_mps2": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "package_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "kind",
+        "manifest"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "manifest": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "world_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package",
+        "mjcf"
+      ],
+      "properties": {
+        "package": {
+          "$ref": "#/$defs/package_ref"
+        },
+        "mjcf": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "kinematic_entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entity_id",
+        "namespace",
+        "package",
+        "model",
+        "initial_transform"
+      ],
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "namespace": {
+          "type": "string",
+          "minLength": 1
+        },
+        "package": {
+          "$ref": "#/$defs/package_ref"
+        },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mjcf",
+            "attach_root"
+          ],
+          "properties": {
+            "mjcf": {
+              "type": "string",
+              "minLength": 1
+            },
+            "attach_root": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "initial_transform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "position_m",
+            "quaternion_wxyz"
+          ],
+          "properties": {
+            "position_m": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              }
+            },
+            "quaternion_wxyz": {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
+              "items": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    },
+    "robot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance_id",
+        "namespace",
+        "package",
+        "controller",
+        "sensor_rig",
+        "spawn",
+        "model",
+        "frames",
+        "semantic"
+      ],
+      "properties": {
+        "instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "namespace": {
+          "type": "string",
+          "minLength": 1
+        },
+        "package": {
+          "$ref": "#/$defs/package_ref"
+        },
+        "controller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/package_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sensor_rig": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/package_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "semantic": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "class"
+          ],
+          "properties": {
+            "class": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "spawn": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "position_m",
+            "quaternion_wxyz"
+          ],
+          "properties": {
+            "position_m": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              }
+            },
+            "quaternion_wxyz": {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
+              "items": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mjcf",
+            "attach_root",
+            "root_joint",
+            "initial_keyframe"
+          ],
+          "properties": {
+            "mjcf": {
+              "type": "string",
+              "minLength": 1
+            },
+            "attach_root": {
+              "type": "string",
+              "minLength": 1
+            },
+            "root_joint": {
+              "type": "string",
+              "minLength": 1
+            },
+            "initial_keyframe": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            }
+          }
+        },
+        "frames": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "payloads": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/payload"
+          }
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance_id",
+        "namespace",
+        "robot_instance_id",
+        "package",
+        "parent_frame",
+        "parent_body",
+        "mount_transform",
+        "model",
+        "authority",
+        "collision_representation",
+        "frames"
+      ],
+      "properties": {
+        "instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "namespace": {
+          "type": "string",
+          "minLength": 1
+        },
+        "robot_instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "package": {
+          "$ref": "#/$defs/payload_package_ref"
+        },
+        "parent_frame": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parent_body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mount_transform": {
+          "$ref": "#/$defs/transform"
+        },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mjcf",
+            "attach_root"
+          ],
+          "properties": {
+            "mjcf": {
+              "type": "string",
+              "minLength": 1
+            },
+            "attach_root": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "authority": {
+          "const": "mujoco"
+        },
+        "collision_representation": {
+          "enum": [
+            "primitive_proxy",
+            "convex_proxy"
+          ]
+        },
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "payload_package_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "kind",
+        "manifest"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "payload"
+        },
+        "manifest": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "transform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "position_m",
+        "quaternion_wxyz"
+      ],
+      "properties": {
+        "position_m": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "number"
+          }
+        },
+        "quaternion_wxyz": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

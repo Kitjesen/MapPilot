@@ -1,0 +1,191 @@
+<!-- Generated FactoryPark_HF world; layout_sha256=30bc105663db22e192aeba9294b18882f4db111e1db3891f802ce5ca50b4619a -->
+<mujoco model="factory_park_hf">
+  <compiler angle="radian" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.002" integrator="RK4" solver="Newton" iterations="100"/>
+  <visual><headlight diffuse=".55 .55 .52" ambient=".28 .30 .32" specular=".05 .05 .05"/></visual>
+  <asset>
+    <hfield name="factory_park_terrain" file="generated/heightfield_f32.bin" content_type="image/vnd.mujoco.hfield" size="110 90 0.75 1"/>
+    <texture name="terrain_grid" type="2d" builtin="checker" rgb1=".23 .25 .20" rgb2=".27 .28 .23" width="512" height="512"/>
+    <material name="terrain_ground" texture="terrain_grid" texrepeat="44 36" reflectance="0.01" roughness="0.9"/>
+    <material name="asphalt" rgba="0.16 0.18 0.19 1" specular="0.05" shininess="0.04"/>
+    <material name="bund_concrete" rgba="0.54 0.55 0.52 1" specular="0.05" shininess="0.04"/>
+    <material name="checkpoint_green" rgba="0.1 0.85 0.3 0.8" specular="0.05" shininess="0.04"/>
+    <material name="concrete" rgba="0.55 0.57 0.56 1" specular="0.05" shininess="0.04"/>
+    <material name="container_blue" rgba="0.08 0.28 0.55 1" specular="0.05" shininess="0.04"/>
+    <material name="container_orange" rgba="0.82 0.32 0.06 1" specular="0.05" shininess="0.04"/>
+    <material name="container_red" rgba="0.62 0.08 0.06 1" specular="0.05" shininess="0.04"/>
+    <material name="curb_concrete" rgba="0.76 0.76 0.7 1" specular="0.05" shininess="0.04"/>
+    <material name="drainage_concrete" rgba="0.35 0.38 0.39 1" specular="0.05" shininess="0.04"/>
+    <material name="factory_cladding" rgba="0.28 0.38 0.43 1" specular="0.05" shininess="0.04"/>
+    <material name="fence_steel" rgba="0.31 0.34 0.34 1" specular="0.05" shininess="0.04"/>
+    <material name="glass" rgba="0.25 0.48 0.6 0.72" specular="0.05" shininess="0.04"/>
+    <material name="gravel" rgba="0.36 0.32 0.26 1" specular="0.05" shininess="0.04"/>
+    <material name="guardhouse" rgba="0.72 0.72 0.67 1" specular="0.05" shininess="0.04"/>
+    <material name="lamp" rgba="1 0.88 0.52 1" specular="0.05" shininess="0.04"/>
+    <material name="painted_steel" rgba="0.92 0.74 0.08 1" specular="0.05" shininess="0.04"/>
+    <material name="pallet_wood" rgba="0.48 0.31 0.15 1" specular="0.05" shininess="0.04"/>
+    <material name="parking_marking" rgba="0.88 0.88 0.82 0.85" specular="0.05" shininess="0.04"/>
+    <material name="road_marking" rgba="0.96 0.86 0.18 0.9" specular="0.05" shininess="0.04"/>
+    <material name="rubber" rgba="0.08 0.08 0.07 1" specular="0.05" shininess="0.04"/>
+    <material name="steel" rgba="0.32 0.34 0.36 1" specular="0.05" shininess="0.04"/>
+    <material name="tank_white" rgba="0.82 0.84 0.8 1" specular="0.05" shininess="0.04"/>
+    <material name="warehouse_cladding" rgba="0.54 0.58 0.58 1" specular="0.05" shininess="0.04"/>
+  </asset>
+  <worldbody>
+    <geom name="terrain" type="hfield" hfield="factory_park_terrain" pos="0 0 -0.666674296" material="terrain_ground" contype="1" conaffinity="1" condim="3" friction="0.92 0.02 0.001"/>
+    <geom name="road_ring_north" type="box" pos="0 62 0.025" size="93 5 0.025" material="asphalt" contype="1" conaffinity="1" condim="3" friction="1 0.02 0.001"/>
+    <geom name="road_ring_south" type="box" pos="0 -62 0.025" size="93 5 0.025" material="asphalt" contype="1" conaffinity="1" condim="3" friction="1 0.02 0.001"/>
+    <geom name="road_ring_west" type="box" pos="-93 0 0.025" size="5 62 0.025" material="asphalt" contype="1" conaffinity="1" condim="3" friction="1 0.02 0.001"/>
+    <geom name="road_ring_east" type="box" pos="93 0 0.025" size="5 62 0.025" material="asphalt" contype="1" conaffinity="1" condim="3" friction="1 0.02 0.001"/>
+    <geom name="road_central_cross" type="box" pos="0 0 0.026" size="93 6 0.026" material="asphalt" contype="1" conaffinity="1" condim="3" friction="1 0.02 0.001"/>
+    <geom name="road_entry_boulevard" type="box" pos="0 -44 0.027" size="6 44 0.027" material="asphalt" contype="1" conaffinity="1" condim="3" friction="1 0.02 0.001"/>
+    <geom name="road_central_spine" type="box" pos="0 31 0.027" size="6 31 0.027" material="asphalt" contype="1" conaffinity="1" condim="3" friction="1 0.02 0.001"/>
+    <geom name="road_loading_apron" type="box" pos="50 9 0.026" size="35 4 0.026" material="asphalt" contype="1" conaffinity="1" condim="3" friction="1 0.02 0.001"/>
+    <geom name="road_gravel_access" type="box" pos="-76 68 0.026" size="4 6 0.026" material="asphalt" contype="1" conaffinity="1" condim="3" friction="1 0.02 0.001"/>
+    <geom name="parking_apron" type="box" pos="25 -34 0.022" size="19 17 0.022" material="asphalt" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="container_yard_apron" type="box" pos="-52 -33 0.025" size="29 21 0.025" material="concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="tank_bund_floor" type="box" pos="65 -36 0.02" size="17.5 17.5 0.02" material="bund_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="gravel_acceptance_pad" type="box" pos="-76 76 0.025" size="14 7 0.025" material="gravel" contype="1" conaffinity="1" condim="3" friction="0.78 0.03 0.002"/>
+    <geom name="fence_north" type="box" pos="0 89.4 1.2" size="109.5 0.1 1.2" material="fence_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="fence_west" type="box" pos="-109.4 0 1.2" size="0.1 89.5 1.2" material="fence_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="fence_east" type="box" pos="109.4 0 1.2" size="0.1 89.5 1.2" material="fence_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="fence_south_west" type="box" pos="-59.25 -89.4 1.2" size="50.25 0.1 1.2" material="fence_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="fence_south_east" type="box" pos="59.25 -89.4 1.2" size="50.25 0.1 1.2" material="fence_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="gate_leaf_west_open" type="box" pos="-8.7 -86.2 1.1" size="0.125 3 1.1" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="gate_leaf_east_open" type="box" pos="8.7 -86.2 1.1" size="0.125 3 1.1" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="gate_post_west" type="cylinder" pos="-9 -89 1.5" size="0.22 1.5" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="gate_post_east" type="cylinder" pos="9 -89 1.5" size="0.22 1.5" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="gate_canopy" type="box" pos="0 -84.5 3.6" size="10 0.6 0.25" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="south_guardhouse" type="box" pos="-14 -80 1.8" size="3.5 3 1.8" material="guardhouse" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="main_factory" type="box" pos="-47 32 6" size="35 20 6" material="factory_cladding" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="main_factory_roof_monitor" type="box" pos="-47 32 12.8" size="17 2.5 0.8" material="glass" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="warehouse" type="box" pos="50 34 5" size="30 16 5" material="warehouse_cladding" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="administration_office" type="box" pos="22 77 4" size="12 5 4" material="guardhouse" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="loading_dock_01" type="box" pos="30 15.7 0.65" size="4 2.2 0.65" material="concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="loading_ramp_01" type="box" pos="30 11.2 0.34" size="2.6 2.5 0.12" material="steel" euler="0 -0.104719755 1.57079633" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="loading_dock_02" type="box" pos="50 15.7 0.65" size="4 2.2 0.65" material="concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="loading_ramp_02" type="box" pos="50 11.2 0.34" size="2.6 2.5 0.12" material="steel" euler="0 -0.104719755 1.57079633" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="loading_dock_03" type="box" pos="70 15.7 0.65" size="4 2.2 0.65" material="concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="loading_ramp_03" type="box" pos="70 11.2 0.34" size="2.6 2.5 0.12" material="steel" euler="0 -0.104719755 1.57079633" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="container_blue_01" type="box" pos="-68 -45 1.295" size="6.1 1.22 1.295" material="container_blue" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="container_orange_01" type="box" pos="-50 -45 1.295" size="6.1 1.22 1.295" material="container_orange" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="container_red_01" type="box" pos="-32 -45 1.295" size="6.1 1.22 1.295" material="container_red" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="container_orange_02" type="box" pos="-68 -27 1.295" size="6.1 1.22 1.295" material="container_orange" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="container_blue_02" type="box" pos="-50 -27 1.295" size="6.1 1.22 1.295" material="container_blue" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="container_red_02" type="box" pos="-32 -27 1.295" size="6.1 1.22 1.295" material="container_red" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="container_blue_03_stacked" type="box" pos="-68 -45 3.885" size="6.1 1.22 1.295" material="container_blue" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="tank_bund_west" type="box" pos="47.5 -36 0.6" size="0.25 17.5 0.6" material="bund_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="tank_bund_east" type="box" pos="82.5 -36 0.6" size="0.25 17.5 0.6" material="bund_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="tank_bund_north" type="box" pos="65 -18.5 0.6" size="17.5 0.25 0.6" material="bund_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="tank_bund_south" type="box" pos="65 -53.5 0.6" size="17.5 0.25 0.6" material="bund_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="storage_tank_01" type="cylinder" pos="57 -43 4" size="4 4" material="tank_white" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="storage_tank_02" type="cylinder" pos="73 -43 4" size="4 4" material="tank_white" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="storage_tank_03" type="cylinder" pos="65 -28 4" size="4 4" material="tank_white" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="tank_pipe_rack" type="box" pos="65 -36 3" size="12 0.175 0.175" material="steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="parking_space_1_1" type="box" pos="13 -44 0.051" size="1.35 2.7 0.006" material="parking_marking" contype="0" conaffinity="0"/>
+    <geom name="parking_stop_1_1" type="box" pos="13 -41.55 0.09" size="1.175 0.11 0.09" material="curb_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="parking_space_1_2" type="box" pos="21 -44 0.051" size="1.35 2.7 0.006" material="parking_marking" contype="0" conaffinity="0"/>
+    <geom name="parking_stop_1_2" type="box" pos="21 -41.55 0.09" size="1.175 0.11 0.09" material="curb_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="parking_space_1_3" type="box" pos="29 -44 0.051" size="1.35 2.7 0.006" material="parking_marking" contype="0" conaffinity="0"/>
+    <geom name="parking_stop_1_3" type="box" pos="29 -41.55 0.09" size="1.175 0.11 0.09" material="curb_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="parking_space_1_4" type="box" pos="37 -44 0.051" size="1.35 2.7 0.006" material="parking_marking" contype="0" conaffinity="0"/>
+    <geom name="parking_stop_1_4" type="box" pos="37 -41.55 0.09" size="1.175 0.11 0.09" material="curb_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="parking_space_2_1" type="box" pos="13 -24 0.051" size="1.35 2.7 0.006" material="parking_marking" contype="0" conaffinity="0"/>
+    <geom name="parking_stop_2_1" type="box" pos="13 -26.45 0.09" size="1.175 0.11 0.09" material="curb_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="parking_space_2_2" type="box" pos="21 -24 0.051" size="1.35 2.7 0.006" material="parking_marking" contype="0" conaffinity="0"/>
+    <geom name="parking_stop_2_2" type="box" pos="21 -26.45 0.09" size="1.175 0.11 0.09" material="curb_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="parking_space_2_3" type="box" pos="29 -24 0.051" size="1.35 2.7 0.006" material="parking_marking" contype="0" conaffinity="0"/>
+    <geom name="parking_stop_2_3" type="box" pos="29 -26.45 0.09" size="1.175 0.11 0.09" material="curb_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="parking_space_2_4" type="box" pos="37 -24 0.051" size="1.35 2.7 0.006" material="parking_marking" contype="0" conaffinity="0"/>
+    <geom name="parking_stop_2_4" type="box" pos="37 -26.45 0.09" size="1.175 0.11 0.09" material="curb_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="parking_curb_west" type="box" pos="6.4 -34 0.09" size="0.15 17 0.09" material="curb_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="parking_curb_east" type="box" pos="43.6 -34 0.09" size="0.15 17 0.09" material="curb_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="parking_curb_north" type="box" pos="25 -16.9 0.09" size="18.75 0.15 0.09" material="curb_concrete" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="speed_bump_south" type="box" pos="0 -68 0.065" size="5.75 0.25 0.065" material="rubber" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="speed_bump_gate" type="box" pos="0 -58 0.065" size="5.75 0.25 0.065" material="rubber" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="speed_bump_north" type="box" pos="0 55 0.065" size="5.75 0.25 0.065" material="rubber" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="east_drainage_channel" type="box" pos="85 0 -0.18" size="1 56 0.18" material="drainage_concrete" contype="0" conaffinity="0"/>
+    <geom name="east_drainage_grate" type="box" pos="85 0 0.025" size="1.1 6 0.025" material="steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="streetlight_01_pole" type="cylinder" pos="-88 -58 3" size="0.12 3" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="streetlight_01_head" type="box" pos="-87.55 -58 6.05" size="0.5 0.175 0.075" material="lamp" contype="0" conaffinity="0"/>
+    <geom name="streetlight_02_pole" type="cylinder" pos="-88 58 3" size="0.12 3" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="streetlight_02_head" type="box" pos="-87.55 58 6.05" size="0.5 0.175 0.075" material="lamp" contype="0" conaffinity="0"/>
+    <geom name="streetlight_03_pole" type="cylinder" pos="-5 58 3" size="0.12 3" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="streetlight_03_head" type="box" pos="-4.55 58 6.05" size="0.5 0.175 0.075" material="lamp" contype="0" conaffinity="0"/>
+    <geom name="streetlight_04_pole" type="cylinder" pos="88 58 3" size="0.12 3" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="streetlight_04_head" type="box" pos="88.45 58 6.05" size="0.5 0.175 0.075" material="lamp" contype="0" conaffinity="0"/>
+    <geom name="streetlight_05_pole" type="cylinder" pos="88 -58 3" size="0.12 3" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="streetlight_05_head" type="box" pos="88.45 -58 6.05" size="0.5 0.175 0.075" material="lamp" contype="0" conaffinity="0"/>
+    <geom name="streetlight_06_pole" type="cylinder" pos="5 -58 3" size="0.12 3" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="streetlight_06_head" type="box" pos="5.45 -58 6.05" size="0.5 0.175 0.075" material="lamp" contype="0" conaffinity="0"/>
+    <geom name="streetlight_07_pole" type="cylinder" pos="5 5 3" size="0.12 3" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="streetlight_07_head" type="box" pos="5.45 5 6.05" size="0.5 0.175 0.075" material="lamp" contype="0" conaffinity="0"/>
+    <geom name="streetlight_08_pole" type="cylinder" pos="-88 5 3" size="0.12 3" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="streetlight_08_head" type="box" pos="-87.55 5 6.05" size="0.5 0.175 0.075" material="lamp" contype="0" conaffinity="0"/>
+    <geom name="boulevard_lane_mark_01" type="box" pos="0 -74 0.06" size="0.07 2 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="boulevard_lane_mark_02" type="box" pos="0 -62 0.06" size="0.07 2 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="boulevard_lane_mark_03" type="box" pos="0 -50 0.06" size="0.07 2 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="boulevard_lane_mark_04" type="box" pos="0 -38 0.06" size="0.07 2 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="boulevard_lane_mark_05" type="box" pos="0 -26 0.06" size="0.07 2 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="boulevard_lane_mark_06" type="box" pos="0 -14 0.06" size="0.07 2 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="boulevard_lane_mark_07" type="box" pos="0 -2 0.06" size="0.07 2 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="boulevard_lane_mark_08" type="box" pos="0 10 0.06" size="0.07 2 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="boulevard_lane_mark_09" type="box" pos="0 22 0.06" size="0.07 2 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="boulevard_lane_mark_10" type="box" pos="0 34 0.06" size="0.07 2 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="boulevard_lane_mark_11" type="box" pos="0 46 0.06" size="0.07 2 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_01" type="box" pos="-84 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_02" type="box" pos="-72 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_03" type="box" pos="-60 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_04" type="box" pos="-48 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_05" type="box" pos="-36 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_06" type="box" pos="-24 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_07" type="box" pos="-12 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_08" type="box" pos="0 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_09" type="box" pos="12 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_10" type="box" pos="24 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_11" type="box" pos="36 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_12" type="box" pos="48 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_13" type="box" pos="60 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_14" type="box" pos="72 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="cross_street_lane_mark_15" type="box" pos="84 0 0.06" size="2 0.07 0.005" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="pedestrian_crossing_stripe_01" type="box" pos="-4.5 -10 0.061" size="0.5 2 0.006" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="pedestrian_crossing_stripe_02" type="box" pos="-2.7 -10 0.061" size="0.5 2 0.006" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="pedestrian_crossing_stripe_03" type="box" pos="-0.9 -10 0.061" size="0.5 2 0.006" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="pedestrian_crossing_stripe_04" type="box" pos="0.9 -10 0.061" size="0.5 2 0.006" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="pedestrian_crossing_stripe_05" type="box" pos="2.7 -10 0.061" size="0.5 2 0.006" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="pedestrian_crossing_stripe_06" type="box" pos="4.5 -10 0.061" size="0.5 2 0.006" material="road_marking" contype="0" conaffinity="0"/>
+    <geom name="checkpoint_gate" type="cylinder" pos="0 -76 0.065" size="0.8 0.012" material="checkpoint_green" contype="0" conaffinity="0"/>
+    <geom name="checkpoint_container_yard" type="cylinder" pos="-16 -33 0.065" size="0.8 0.012" material="checkpoint_green" contype="0" conaffinity="0"/>
+    <geom name="checkpoint_factory" type="cylinder" pos="-6 32 0.065" size="0.8 0.012" material="checkpoint_green" contype="0" conaffinity="0"/>
+    <geom name="checkpoint_gravel" type="cylinder" pos="-76 69.5 0.065" size="0.8 0.012" material="checkpoint_green" contype="0" conaffinity="0"/>
+    <geom name="checkpoint_warehouse" type="cylinder" pos="50 7 0.065" size="0.8 0.012" material="checkpoint_green" contype="0" conaffinity="0"/>
+    <geom name="checkpoint_tank_farm" type="cylinder" pos="88 -36 0.065" size="0.8 0.012" material="checkpoint_green" contype="0" conaffinity="0"/>
+    <geom name="element__operations_safety__parking_west_01" type="cylinder" pos="8 -48 0.594" size="0.12 0.55" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__parking_west_02" type="cylinder" pos="8 -44.5 0.594" size="0.12 0.55" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__parking_east_01" type="cylinder" pos="42 -48 0.594" size="0.12 0.55" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__parking_east_02" type="cylinder" pos="42 -44.5 0.594" size="0.12 0.55" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__parking_guide_01" type="box" pos="15 -34 0.05" size="1.25 0.075 0.006" material="road_marking" euler="0 0 1.57079633" contype="0" conaffinity="0"/>
+    <geom name="element__operations_safety__parking_guide_02" type="box" pos="35 -34 0.05" size="1.25 0.075 0.006" material="road_marking" euler="0 0 1.57079633" contype="0" conaffinity="0"/>
+    <geom name="element__operations_safety__container_pallet_01" type="box" pos="-25 -14 0.275" size="0.6 0.5 0.225" material="pallet_wood" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__container_pallet_02" type="box" pos="-27 -14 0.275" size="0.6 0.5 0.225" material="pallet_wood" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__container_drum_01" type="cylinder" pos="-29 -16 0.5" size="0.29 0.45" material="container_blue" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__container_drum_02" type="cylinder" pos="-30 -16 0.5" size="0.29 0.45" material="container_blue" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__container_drum_03" type="cylinder" pos="-31 -16 0.5" size="0.29 0.45" material="container_blue" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__container_cone_01" type="cylinder" pos="-27 -20 0.4" size="0.2 0.35" material="container_orange" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__container_cone_02" type="cylinder" pos="-30 -20 0.4" size="0.2 0.35" material="container_orange" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__container_equipment_01" type="box" pos="-79 -14 0.95" size="0.6 0.275 0.9" material="warehouse_cladding" euler="0 0 1.57079633" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__container_fire_01" type="box" pos="-77 -14 0.65" size="0.4 0.175 0.6" material="container_red" euler="0 0 1.57079633" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__gravel_barrier_west" type="box" pos="-88 75 0.45" size="1 0.275 0.4" material="concrete" euler="0 0 1.57079633" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__gravel_barrier_east" type="box" pos="-64 75 0.45" size="1 0.275 0.4" material="concrete" euler="0 0 1.57079633" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__gravel_sign_west" type="box" pos="-88 80 0.95" size="0.4 0.06 0.9" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <geom name="element__operations_safety__gravel_sign_east" type="box" pos="-64 80 0.95" size="0.4 0.06 0.9" material="painted_steel" contype="1" conaffinity="1" condim="3" friction="0.9 0.02 0.001"/>
+    <site name="site_checkpoint_gate" type="cylinder" pos="0 -76 0.12" size="0.8 0.01" rgba=".1 .9 .3 .35"/>
+    <site name="site_checkpoint_container_yard" type="cylinder" pos="-16 -33 0.12" size="0.8 0.01" rgba=".1 .9 .3 .35"/>
+    <site name="site_checkpoint_factory" type="cylinder" pos="-6 32 0.12" size="0.8 0.01" rgba=".1 .9 .3 .35"/>
+    <site name="site_checkpoint_gravel" type="cylinder" pos="-76 69.5 0.12" size="0.8 0.01" rgba=".1 .9 .3 .35"/>
+    <site name="site_checkpoint_warehouse" type="cylinder" pos="50 7 0.12" size="0.8 0.01" rgba=".1 .9 .3 .35"/>
+    <site name="site_checkpoint_tank_farm" type="cylinder" pos="88 -36 0.12" size="0.8 0.01" rgba=".1 .9 .3 .35"/>
+    <light name="sun" pos="20 -40 70" dir="-.25 .35 -1" directional="true" diffuse=".9 .87 .78" specular=".08 .08 .08"/>
+    <light name="yard_fill" pos="-70 -50 18" dir=".4 .2 -1" diffuse=".28 .31 .34"/>
+  </worldbody>
+</mujoco>

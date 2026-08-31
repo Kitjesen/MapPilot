@@ -1,0 +1,7 @@
+{
+  "content_digest": "7eec6fae95a11d0e23ea9de434db25487913f198989309a4061f49e6fa81d51c",
+  "manifest_projection": "visual/world.visual-projection.json",
+  "manifest_provenance": "provenance/world.provenance.json",
+  "projection_digest": "10552e6247520569a72cfbe5bd67fa1acc7d5c3e89459d634ea8138ea85ba277",
+  "status": "passed"
+}

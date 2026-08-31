@@ -1,0 +1,17 @@
+schema: lingtu.sim.world-package.v1
+id: teleop_avoid_field
+version: 1.0.0
+kind: world
+description: Controlled headless field for physical teleop obstacle-detour acceptance.
+physics:
+  mjcf: ../../../worlds/mujoco/teleop_avoid_field.xml
+  global_policy:
+    timestep_s: 0.005
+    integrator: euler
+    solver: newton
+    iterations: 100
+    gravity_mps2: [0.0, 0.0, -9.81]
+visual:
+  binding: WorldVisual:OpenField
+  level: /Game/RobotSim/Maps/ThunderV4_RuntimePreview
+entities: []

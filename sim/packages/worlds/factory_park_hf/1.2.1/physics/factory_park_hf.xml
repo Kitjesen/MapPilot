@@ -1,0 +1,6 @@
+<!-- Realtime physics-policy wrapper. This package changes only the integration
+     policy of the included 1.0.0 geometry. -->
+<mujoco model="factory_park_hf_realtime_1ms">
+  <include file="../../../../../worlds/factory_park_hf/factory_park_hf.xml"/>
+  <option gravity="0 0 -9.81" timestep="0.001" integrator="implicitfast" solver="Newton" iterations="100"/>
+</mujoco>

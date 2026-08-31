@@ -1,0 +1,29 @@
+{
+  "name": "thunder_v4_factory_fastlio2",
+  "world": "sim/worlds/mujoco/factory_scene.xml",
+  "robot": {
+    "name": "doso/thunder_v4",
+    "model_path": "sim/robots/doso/thunder_v4/mjcf/thunderv4.xml",
+    "frame_id": "body"
+  },
+  "sensors": {
+    "lidar": "livox_mid360",
+    "camera": "front_rgbd",
+    "imu": "sim_imu",
+    "gnss": null,
+    "lidar_topic": "/livox/lidar",
+    "imu_topic": "/livox/imu",
+    "ground_truth_topic": "/sim/ground_truth"
+  },
+  "backend": {
+    "name": "fastlio2",
+    "profile": "fastlio2",
+    "odometry_topic": "/slam/odometry",
+    "map_topic": "/slam/map_cloud"
+  },
+  "duration_s": 120.0,
+  "reference_source": "sim_ground_truth",
+  "output_dir": "sim/output/slam_eval/thunder_v4_factory_fastlio2",
+  "max_association_dt_s": 0.02,
+  "tags": ["thunder_v4", "factory", "lidar_imu", "baseline"]
+}

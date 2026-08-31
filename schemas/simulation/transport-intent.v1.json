@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.transport-intent.v1",
+  "title": "LingTu deterministic simulation transport intent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "allocation_boundary",
+    "backends",
+    "channels",
+    "env",
+    "schema",
+    "session_id"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lingtu.sim.transport-intent.v1"
+    },
+    "env": {
+      "const": "sim"
+    },
+    "backends": {
+      "$ref": "#/$defs/backends"
+    },
+    "channels": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/channel"
+      }
+    },
+    "allocation_boundary": {
+      "$ref": "#/$defs/allocation_boundary"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+    "maxLength": 63,
+    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$"
+    }
+  },
+  "$defs": {
+    "backends": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "physics",
+        "visual"
+      ],
+      "properties": {
+        "physics": {
+          "const": "mujoco"
+        },
+        "visual": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "unreal",
+            null
+          ]
+        }
+      }
+    },
+    "channel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "channel_id",
+        "direction",
+        "owner",
+        "source",
+        "transport",
+        "delivery",
+        "message_type",
+        "payload_role"
+      ],
+      "properties": {
+        "channel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction": {
+          "enum": [
+            "publish",
+            "subscribe"
+          ]
+        },
+        "owner": {
+          "enum": [
+            "physics",
+            "visual",
+            "host",
+            "native_service",
+            "simulation",
+            "sensor_runtime"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transport": {
+          "enum": [
+            "typed_dds",
+            "camera_shm",
+            "named_file_mapping",
+            "udp_loopback_json",
+            "in_process",
+            "pixel_streaming"
+          ]
+        },
+        "delivery": {
+          "enum": [
+            "reliable",
+            "best_effort",
+            "latest_wins",
+            "ordered_no_drop"
+          ]
+        },
+        "message_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload_role": {
+          "enum": [
+            "rgb",
+            "depth",
+            "imu",
+            "mid360_livox",
+            "truth_odom",
+            "truth_snapshot",
+            "control",
+            "diagnostics",
+            "viewer"
+          ]
+        },
+        "contract": {
+          "type": "string",
+          "minLength": 1
+        },
+        "frame_policy": {
+          "enum": [
+            "sim_time",
+            "source_time",
+            "none"
+          ]
+        }
+      }
+    },
+    "allocation_boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "owner",
+        "runtime_values_external"
+      ],
+      "properties": {
+        "owner": {
+          "const": "RunAllocation"
+        },
+        "runtime_values_external": {
+          "const": true
+        }
+      }
+    }
+  }
+}

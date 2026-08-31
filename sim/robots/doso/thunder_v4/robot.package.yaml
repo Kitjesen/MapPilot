@@ -1,0 +1,77 @@
+schema: lingtu.sim.robot-package.v1
+id: thunderv4
+version: 1.0.3
+kind: robot
+description: Thunder V4 quadruped simulation package with high-fidelity visual meshes.
+compatibility:
+  runtime_abi: lingtu.sim.robot.v1
+  mujoco: 3.10.x
+physics:
+  mjcf: mjcf/thunderv4.xml
+  attach_root: base_link
+  root_joint: floating_base_joint
+  global_options: inherit_session
+  initial_keyframe: v4_nominal_stand
+visual:
+  binding: RobotVisual:ThunderV4
+  projection: visual/robot.visual-projection.json
+  source_mesh_root: visual/meshes
+semantic:
+  class: quadruped
+frames:
+  - name: base_link
+    role: body
+  - name: imu
+    role: sensor_mount
+    parent_frame: base_link
+    extrinsic:
+      position_m: [0, 0, 0]
+      quaternion_wxyz: [1, 0, 0, 0]
+  - name: payload_top
+    role: payload_mount
+    parent_frame: base_link
+    extrinsic:
+      position_m: [0, 0, 0.14]
+      quaternion_wxyz: [1, 0, 0, 0]
+  - name: front_camera
+    role: sensor_mount
+    parent_frame: base_link
+    extrinsic:
+      position_m: [0.423358800364963, -0.000496202974186816, 0.11370714960317]
+      quaternion_wxyz: [-0.5, -0.5, 0.5, 0.5]
+  - name: lidar1_link
+    role: sensor_mount
+    parent_frame: base_link
+    extrinsic:
+      position_m: [0.402876074867229, 0, 0.0582019450665819]
+      quaternion_wxyz: [0, -0.9238795325, 0, -0.3826834324]
+  - name: lidar1_link_site
+    role: sensor_origin
+    parent_frame: lidar1_link
+    extrinsic:
+      position_m: [0, 0, 0]
+      quaternion_wxyz: [1, 0, 0, 0]
+  - name: camera1_link
+    role: sensor_mount
+  - name: lidar2_link
+    role: sensor_mount
+  - name: camera2_link
+    role: sensor_mount
+interfaces:
+  state:
+    - lingtu.sim.base-state.v1
+    - lingtu.sim.joint-state.v1
+  command:
+    - lingtu.sim.joint-torque.v1
+defaults:
+  controller: thunderv4_locomotion@1.0.0
+  sensor_rig: thunderv4_navigation@1.0.0
+declared_capabilities:
+  locomotion:
+    - stand
+    - walk
+  sensor_mounts:
+    - front_camera
+    - lidar1_link
+  payload_mounts:
+    - payload_top

@@ -9,7 +9,8 @@ import mujoco
 import numpy as np
 
 SIM_ROOT = Path(__file__).resolve().parents[1]
-ASSET_ROOT = SIM_ROOT / "robots" / "thunderv4"
+REPO_ROOT = SIM_ROOT.parent
+ASSET_ROOT = SIM_ROOT / "robots" / "doso" / "thunder_v4"
 MJCF_ROOT = ASSET_ROOT / "mjcf"
 
 ACTUATOR_ORDER = (
@@ -48,8 +49,16 @@ def _joint_id(model: mujoco.MjModel, name: str) -> int:
 
 
 def _keyboard_module():
-    script_path = ASSET_ROOT / "mujoco_him_keyboard.py"
-    spec = importlib.util.spec_from_file_location("mujoco_him_keyboard", script_path)
+    script_path = (
+        REPO_ROOT
+        / "sim"
+        / "controllers"
+        / "doso"
+        / "thunder_v4"
+        / "locomotion"
+        / "keyboard.py"
+    )
+    spec = importlib.util.spec_from_file_location("thunderv4_keyboard", script_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

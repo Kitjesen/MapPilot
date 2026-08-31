@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 from pathlib import Path
 
@@ -11,15 +10,6 @@ from sim.scripts.mujoco import native_control_mode_acceptance as acceptance
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_native_control_mode_acceptance.json"
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _mapping_sha256(value: dict) -> str:
-    payload = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
 
 
 def _endpoint_observations(control_mode: str, nonzero_samples: int) -> dict:
@@ -77,10 +67,15 @@ def test_each_control_mode_has_an_exclusive_product_execution_plan() -> None:
     assert teleop["command_kind"] == "teleop"
     assert set(teleop["required_processes"]) == {
         "navigation",
+        "driver",
         "mujoco_sensor_policy",
     }
-    assert teleop["required_inputs"] == ["rt/nav/command/request"]
-    assert teleop["runner"]["kind"] == "unavailable"
+    assert teleop["required_inputs"] == [
+        "rt/nav/operator_motion/control",
+        "rt/nav/operator_motion/sample",
+        "rt/driver/control_state",
+    ]
+    assert teleop["runner"]["kind"] == "teleop_native_acceptance"
 
     assert teleop_avoid["endpoint_control_mode"] == "teleop_avoid"
     assert teleop_avoid["command_kind"] == "teleop"
@@ -111,7 +106,7 @@ def test_pure_teleop_passes_without_slam_and_marks_quality_not_applicable() -> N
     evidence = {
         "endpoint": _endpoint_observations("teleop", 12),
         "runtime": {
-            "processes": ["navigation", "mujoco_sensor_policy"],
+            "processes": ["navigation", "driver", "mujoco_sensor_policy"],
             "python_cmd_vel_mux_active": False,
             "python_planner_used": False,
             "command_source": "dds",
@@ -313,9 +308,61 @@ def test_promotion_rejects_handwritten_boolean_evidence(tmp_path: Path) -> None:
     assert "runner_artifact_schema_mismatch" in report["blockers"]
 
 
-def test_run_mode_fails_honestly_when_full_mode_harness_is_unavailable(
+def test_run_mode_executes_pure_teleop_harness_as_non_product_diagnostic(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    def fake_run(command: list[str], **_kwargs: object) -> object:
+        assert Path(command[1]).name == "teleop_native_acceptance.py"
+        harness_dir = Path(command[command.index("--artifact-dir") + 1])
+        source_report = {
+            "schema_version": "lingtu.mujoco.teleop_native_acceptance.v1",
+            "ok": True,
+            "product_gate_eligible": False,
+            "case": {
+                "ok": True,
+                "blockers": [],
+                "product_processes": ["navigation", "driver"],
+                "test_fixture_processes": ["mujoco_sensor_policy"],
+                "operator_motion": {
+                    "returncode": 0,
+                    "events": [
+                        {"action": action, "accepted": True}
+                        for action in ("claim", "sample", "hold", "release")
+                    ],
+                },
+                "forbidden_goal": {
+                    "returncode": 1,
+                    "stderr": "goal rejected: control_mode_teleop",
+                },
+                "stop": {"returncode": 0, "stdout": "accepted stop: test"},
+                "post_stop_samples": [
+                    {"final_cmd_vel": {"vx": 0.0, "vy": 0.0, "wz": 0.0}}
+                    for _ in range(3)
+                ],
+                "sensor_report": {
+                    "command_source": "dds",
+                    "policy_loaded": True,
+                    "motion": {"sim_path_length_xy_m": 0.2},
+                    "cmd_vel": {
+                        "nonzero_samples": 4,
+                        "accepted_producer_boot_id": "host",
+                        "accepted_output_sequence": 8,
+                        "process_cleanup": {"clean": True},
+                    },
+                },
+                "process_cleanup": [
+                    {"name": "navigation", "clean": True},
+                    {"name": "sensor", "clean": True},
+                ],
+            },
+        }
+        (harness_dir / "report.json").write_text(
+            json.dumps(source_report), encoding="utf-8"
+        )
+        return type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(acceptance.subprocess, "run", fake_run)
     args = acceptance.build_parser().parse_args(
         [
             "--control-mode",
@@ -330,12 +377,13 @@ def test_run_mode_fails_honestly_when_full_mode_harness_is_unavailable(
     report = acceptance.run(args)
     artifact = json.loads((tmp_path / "runner_artifact.json").read_text(encoding="utf-8"))
 
-    assert report["ok"] is False
+    assert report["ok"] is True
     assert report["promotion_eligible"] is False
-    assert "runner_unavailable:full_mujoco_native_teleop_harness_not_implemented" in report["blockers"]
     assert artifact["schema_version"] == acceptance.RUNNER_ARTIFACT_SCHEMA
     assert artifact["producer"]["name"] == "native_control_mode_acceptance"
-    assert artifact["source_report"] is None
+    assert artifact["source_report"]["schema_version"] == (
+        "lingtu.mujoco.teleop_native_acceptance.v1"
+    )
 
 
 def test_run_mode_executes_native_teleop_avoid_acceptance_but_does_not_promote_it(
@@ -404,12 +452,11 @@ def test_run_mode_executes_native_teleop_avoid_acceptance_but_does_not_promote_i
     assert artifact["execution"]["returncode"] == 2
     assert artifact["runner_blockers"] == []
     assert artifact["source_report"]["schema_version"] == ("lingtu.mujoco.teleop_avoid_native_acceptance.v1")
-    assert artifact["source_report"]["sha256"]
     assert Path(artifact["source_report"]["path"]) != stale_report
     assert stale_report.is_file()
     assert artifact["observations"]["ok"] is False
     assert artifact["observations"]["case_count"] == 0
-    assert artifact["observations_sha256"]
+    assert "sha256" not in json.dumps(artifact)
     assert report["promotion_eligible"] is False
     assert "runner_execution_nonzero" in report["blockers"]
 
@@ -441,7 +488,7 @@ def test_run_mode_executes_native_teleop_avoid_acceptance_but_does_not_promote_i
         artifact,
     )
     assert tampered["promotion_eligible"] is False
-    assert "runner_source_report_digest_mismatch" in tampered["blockers"]
+    assert "runner_source_report_schema_mismatch" in tampered["blockers"]
 
 
 def test_autonomy_adapter_recomputes_proofs_from_harness_report(
@@ -510,7 +557,6 @@ def test_autonomy_adapter_recomputes_proofs_from_harness_report(
             "name": "native_control_mode_acceptance",
             "schema_version": acceptance.ACCEPTANCE_SCHEMA,
         },
-        "manifest_sha256": _mapping_sha256(manifest),
         "artifact_dir": str(tmp_path),
         "run_dir": str(run_dir),
         "runner_kind": "native_navigation_acceptance",
@@ -529,13 +575,10 @@ def test_autonomy_adapter_recomputes_proofs_from_harness_report(
         },
         "runner_blockers": [],
         "observations": observations,
-        "observations_sha256": _mapping_sha256(observations),
         "source_report": {
             "path": str(source_path),
-            "sha256": _sha256(source_path),
             "schema_version": "lingtu.mujoco.native_navigation.acceptance.v1",
             "script_path": str(script_path),
-            "script_sha256": _sha256(script_path),
         },
         # These summaries must be ignored; the harness did not run either proof.
         "endpoint": {
@@ -543,6 +586,11 @@ def test_autonomy_adapter_recomputes_proofs_from_harness_report(
             "stop_proven": True,
         },
     }
+
+    changed_observations = copy.deepcopy(artifact)
+    changed_observations["observations"]["runtime"]["motion_m"] = 99.0
+    changed_report = acceptance.evaluate_runner_artifact(manifest, "autonomy", changed_observations)
+    assert "runner_observations_mismatch" in changed_report["blockers"]
 
     report = acceptance.evaluate_runner_artifact(manifest, "autonomy", artifact)
 

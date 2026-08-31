@@ -1,0 +1,5 @@
+{
+  "package": "lingtu.sim.world-package.v1",
+  "projection": "lingtu.sim.world-visual-projection.v1",
+  "request": "lingtu.sim.world-import-request.v1"
+}

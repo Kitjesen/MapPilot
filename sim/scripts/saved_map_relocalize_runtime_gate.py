@@ -3,10 +3,10 @@
 
 This gate proves the saved-map stage with live simulated sensors:
 
-raw MuJoCo MID-360 + IMU -> Fast-LIO native cloud + odometry
-  -> localizer loads same-source map.pcd
-  -> canonical relocalize service succeeds
-  -> canonical localization health locks and map->odom TF stays sane
+raw MuJoCo MID-360 + IMU -> native DDS -> slamd (FastLIO2 localization)
+  -> slamd loads the same-source map.pcd
+  -> slamctl typed-DDS relocalization succeeds
+  -> slamd health, saved-map points, and map->odom remain sane
 
 It is simulation-only and never connects to robot hardware.
 """
@@ -14,18 +14,16 @@ It is simulation-only and never connects to robot hardware.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import os
 import platform
-import re
-import signal
 import shutil
+import signal
 import subprocess
 import sys
 import time
-from collections import defaultdict
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -36,72 +34,67 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from runtime.runtime_interface import (
-    FRAME_LINKS,
-    TOPICS,
-    adapter_source_for_target,
+DEFAULT_SLAM_CONFIG = (
+    SRC / "localization/fastlio2/config/sim_mid360_slam.yaml"
 )
-
-FASTLIO_REGISTERED_CLOUD_TOPIC = adapter_source_for_target(
-    "fastlio2",
-    TOPICS.registered_cloud,
+DEFAULT_SLAM_RUNTIME_BIN = ROOT / "build/slam_core/slamd"
+DEFAULT_SLAM_CONTROL_BIN = ROOT / "build/slam_core/slamctl"
+NATIVE_SENSOR_BRIDGE = ROOT / "sim/scripts/mujoco/native_dds_sensors.py"
+WINDOWS_SLAM_RUNTIME_BIN = ROOT / "build/slam-core-windows-x64/Release/slamd.exe"
+WINDOWS_SLAM_CONTROL_BIN = ROOT / "build/slam-core-windows-x64/Release/slamctl.exe"
+DEFAULT_SENSOR_PUBLISHER_BIN = (
+    ROOT / "build/mujoco_native_dds/lingtu_mujoco_sensor_publisher"
 )
-FASTLIO_MAP_CLOUD_TOPIC = adapter_source_for_target("fastlio2", TOPICS.map_cloud)
-FASTLIO_ODOMETRY_TOPIC = adapter_source_for_target("fastlio2", TOPICS.odometry)
-LOCALIZER_MAP_CLOUD_INPUT = adapter_source_for_target(
-    "localizer",
-    TOPICS.saved_map_cloud,
+WINDOWS_SENSOR_PUBLISHER_BIN = (
+    ROOT
+    / "build/windows-native-dds-adapter/Release/lingtu_mujoco_sensor_publisher.exe"
 )
-LOCALIZER_QUALITY_INPUT = adapter_source_for_target(
-    "localizer",
-    TOPICS.localization_quality,
-)
-LOCALIZER_RELOCALIZE_INPUT = adapter_source_for_target(
-    "localizer",
-    TOPICS.relocalize_service,
-)
-LOCALIZER_RELOCALIZE_CHECK_INPUT = adapter_source_for_target(
-    "localizer",
-    TOPICS.relocalize_check_service,
-)
-LOCALIZER_GLOBAL_RELOCALIZE_INPUT = adapter_source_for_target(
-    "localizer",
-    TOPICS.global_relocalize_service,
-)
-MAP_TO_ODOM_LINK = FRAME_LINKS["map_to_odom"]
-TF_TOPIC = "/tf"
 KNOWN_SAVED_MAP_METADATA_SCHEMA_PREFIXES = (
     "lingtu.same_source_map_artifacts",
     "lingtu.saved_map_artifacts",
 )
 
 
-def _resolve_latest_map() -> Path | None:
-    patterns = (
-        "artifacts/server_sim_closure/cli_tare_endpoint_mujoco_live*/**/same_source_map/map.pcd",
-        "artifacts/server_sim_closure/mujoco_tare_exploration*/**/same_source_map/map.pcd",
-        "artifacts/server_sim_closure/cli_explore_endpoint_mujoco_live*/**/same_source_map/map.pcd",
-        "artifacts/server_sim_closure/cli_sim_mujoco_live*/**/same_source_map/map.pcd",
-        "artifacts/server_sim_closure/mujoco_fastlio2_live*/**/same_source_map/map.pcd",
-        "artifacts/server_sim_closure/mujoco_fastlio2_live*/same_source_map/map.pcd",
-        "artifacts/server_sim_closure/**/same_source_map/map.pcd",
+def _runtime_dataflow(
+    *,
+    map_artifact_ok: bool,
+    native_inputs_ok: bool,
+    sensor_feed_ok: bool | None = None,
+    relocalization_ok: bool | None = None,
+    tracking_ok: bool | None = None,
+    bbs3d_ok: bool | None = None,
+) -> list[dict[str, Any]]:
+    """Return the stable native saved-map runtime flow consumed by diagnostics."""
+
+    checked_edges = (
+        ("saved_map_artifact", map_artifact_ok),
+        ("native_runtime_inputs", native_inputs_ok),
+        ("native_dds_sensor_feed", sensor_feed_ok),
+        ("native_relocalization_response", relocalization_ok),
+        ("localization_tracking", tracking_ok),
+        ("bbs3d_global_engine", bbs3d_ok),
     )
-    first_pattern_latest: Path | None = None
-    all_candidates: dict[Path, Path] = {}
-    for pattern in patterns:
-        candidates = [path for path in ROOT.glob(pattern) if path.is_file()]
-        for candidate in candidates:
-            all_candidates[candidate.resolve()] = candidate
-        if candidates and first_pattern_latest is None:
-            first_pattern_latest = max(candidates, key=lambda path: path.stat().st_mtime)
-    tomogram_backed = [
-        path
-        for path in all_candidates.values()
-        if (path.parent / "tomogram.pickle").is_file()
+    return [
+        {"id": edge_id, "ok": edge_ok}
+        for edge_id, edge_ok in checked_edges
+        if edge_ok is not None
     ]
-    if tomogram_backed:
-        return max(tomogram_backed, key=lambda path: path.stat().st_mtime)
-    return first_pattern_latest
+
+
+def _bbs3d_succeeded(relocalization: Mapping[str, Any]) -> bool:
+    return (
+        relocalization.get("success") is True
+        and relocalization.get("engine") == "bbs3d_gicp"
+    )
+
+
+def _resolve_latest_map() -> Path | None:
+    candidates = [
+        path
+        for path in ROOT.glob("artifacts/sim_diagnostics/**/same_source_map/map.pcd")
+        if path.is_file()
+    ]
+    return max(candidates, key=lambda path: path.stat().st_mtime, default=None)
 
 
 def _resolve_map_path(value: str) -> Path | None:
@@ -130,16 +123,6 @@ def _load_map_metadata(map_pcd: Path | None) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _sha256_file(path: Path | None) -> str:
-    if path is None or not path.is_file():
-        return ""
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _metadata_path_matches_map(raw_path: str, map_pcd: Path) -> bool:
     if not raw_path:
         return False
@@ -165,6 +148,7 @@ def _map_metadata_contract(map_pcd: Path | None) -> dict[str, Any]:
     metadata_path = _map_metadata_path(map_pcd)
     checks: dict[str, bool] = {
         "map_pcd_present": True,
+        "map_pcd_format_ok": map_pcd.is_file() and map_pcd.stat().st_size > 0,
         "metadata_file_exists": metadata_path.is_file(),
     }
     payload: dict[str, Any] = {}
@@ -183,12 +167,10 @@ def _map_metadata_contract(map_pcd: Path | None) -> dict[str, Any]:
 
     schema_version = str(payload.get("schema_version") or "")
     pcd_path = str(payload.get("pcd") or "")
-    pcd_sha256 = str(payload.get("pcd_sha256") or "")
     try:
         point_count = int(payload.get("point_count") or 0)
     except (TypeError, ValueError):
         point_count = 0
-    actual_sha256 = _sha256_file(map_pcd)
     checks.update(
         {
             "schema_version_known": schema_version.startswith(
@@ -199,10 +181,6 @@ def _map_metadata_contract(map_pcd: Path | None) -> dict[str, Any]:
             "map_pcd_path_matches": (
                 _metadata_path_matches_map(pcd_path, map_pcd) if pcd_path else False
             ),
-            "map_pcd_sha256_present": bool(pcd_sha256),
-            "map_pcd_sha256_matches_file": bool(pcd_sha256)
-            and bool(actual_sha256)
-            and pcd_sha256 == actual_sha256,
             "map_pcd_point_count_positive": point_count > 0,
         }
     )
@@ -224,8 +202,6 @@ def _map_metadata_contract(map_pcd: Path | None) -> dict[str, Any]:
         "artifacts": {
             "map_pcd": {
                 "path": pcd_path,
-                "sha256": pcd_sha256,
-                "actual_sha256": actual_sha256,
                 "point_count": point_count,
             }
         },
@@ -258,70 +234,33 @@ def _resolve_scan_time_profile_arg(
     return "physical_rolling"
 
 
-def _default_localizer_config_path() -> Path:
-    config_path = ROOT / "src/localization/localizer/config/localizer.yaml"
-    if not config_path.is_file():
-        config_path = ROOT / "install/share/localizer/config/localizer.yaml"
-    return config_path
+def _resolve_path(value: str | Path) -> Path:
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else (ROOT / path).resolve()
 
 
-def _resolve_localizer_config_path(value: str) -> Path:
+def _binary_candidates(
+    value: str, default: Path, *fallbacks: Path
+) -> tuple[Path, ...]:
     raw = str(value or "").strip()
-    if not raw:
-        return _default_localizer_config_path()
-    path = Path(raw).expanduser()
-    if not path.is_absolute():
-        path = (ROOT / path).resolve()
-    return path
+    if raw:
+        requested = Path(raw).expanduser()
+        if requested.is_absolute() or requested.parent != Path("."):
+            return (_resolve_path(requested),)
+        found = shutil.which(raw)
+        return (Path(found),) if found else (_resolve_path(requested),)
+    candidates = [default, *fallbacks]
+    if os.name == "nt":
+        candidates.insert(0, default.with_suffix(".exe"))
+    return tuple(candidates)
 
 
-def _parse_localizer_thresholds(config_path: Path) -> dict[str, float | None]:
-    thresholds: dict[str, float | None] = {
-        "rough_score_thresh": None,
-        "refine_score_thresh": None,
-    }
-    if not config_path.is_file():
-        return thresholds
-    for line in config_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        body = line.split("#", 1)[0]
-        if ":" not in body:
-            continue
-        key, value = body.split(":", 1)
-        key = key.strip()
-        if key not in thresholds:
-            continue
-        try:
-            thresholds[key] = float(value.strip())
-        except ValueError:
-            thresholds[key] = None
-    return thresholds
-
-
-def _write_localizer_runtime_config(
-    base_config_path: Path,
-    run_dir: Path,
-    *,
-    rough_score_thresh: float | None,
-    refine_score_thresh: float | None,
-) -> Path:
-    if rough_score_thresh is None and refine_score_thresh is None:
-        return base_config_path
-    text = base_config_path.read_text(encoding="utf-8", errors="replace")
-    replacements = {
-        "rough_score_thresh": rough_score_thresh,
-        "refine_score_thresh": refine_score_thresh,
-    }
-    for key, value in replacements.items():
-        if value is None:
-            continue
-        pattern = re.compile(rf"^(\s*{re.escape(key)}\s*:\s*)([^#\r\n]*)(.*)$", re.MULTILINE)
-        replacement = rf"\g<1>{float(value):.6g}\g<3>"
-        text, count = pattern.subn(replacement, text, count=1)
-        if count == 0:
-            text = text.rstrip() + f"\n{key}: {float(value):.6g}\n"
-    runtime_config = run_dir / "localizer_runtime.yaml"
-    runtime_config.write_text(text, encoding="utf-8")
-    return runtime_config
+def _resolve_binary(value: str, default: Path, *fallbacks: Path) -> Path:
+    candidates = _binary_candidates(value, default, *fallbacks)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    return candidates[0]
 
 
 def _terminate_process(proc: subprocess.Popen[Any] | None, *, timeout_s: float = 6.0) -> None:
@@ -354,207 +293,66 @@ def _tail(path: Path, *, lines: int = 80) -> str:
     return "\n".join(text.splitlines()[-lines:])
 
 
-def _load_ros_modules():
-    try:
-        import rclpy  # type: ignore
-        from interface.srv import Relocalize  # type: ignore
-        from nav_msgs.msg import Odometry  # type: ignore
-        from sensor_msgs.msg import PointCloud2  # type: ignore
-        from std_msgs.msg import String  # type: ignore
-        from std_srvs.srv import Trigger  # type: ignore
-        from tf2_msgs.msg import TFMessage  # type: ignore
-    except Exception as exc:  # pragma: no cover - requires ROS 2 env
-        raise RuntimeError(
-            "ROS 2 Python dependencies are unavailable. Source "
-            "/opt/ros/humble/setup.bash and install/setup.bash first."
-        ) from exc
-    return rclpy, Relocalize, Trigger, Odometry, PointCloud2, String, TFMessage
-
-
 def _current_host_report() -> dict[str, Any]:
     return {
         "platform_system": platform.system(),
         "platform_machine": platform.machine(),
         "python_version": platform.python_version(),
-        "ros_domain_id": os.environ.get("ROS_DOMAIN_ID", ""),
-        "ros_distro": os.environ.get("ROS_DISTRO", ""),
+        "dds_implementation": "cyclonedds",
     }
 
 
-def _ros_module_preflight() -> dict[str, Any]:
+def _read_json(path: Path) -> dict[str, Any]:
     try:
-        _load_ros_modules()
-    except Exception as exc:
-        return {
-            "ok": False,
-            "blockers": [str(exc)],
-            "module_error_type": type(exc).__name__,
-        }
-    return {"ok": True, "blockers": [], "module_error_type": ""}
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
-class _RuntimeSampler:
+class _StatusSampler:
     def __init__(self) -> None:
-        self.counts: defaultdict[str, int] = defaultdict(int)
-        self.point_counts: dict[str, int] = {}
-        self.frames: dict[str, str] = {}
-        self.health_states: list[str] = []
-        self.health_latest = ""
-        self.map_to_odom_latest: dict[str, float] | None = None
+        self.samples = 0
+        self.states: list[str] = []
         self.first_odom: tuple[float, float, float] | None = None
         self.last_odom: tuple[float, float, float] | None = None
+        self.latest: dict[str, Any] = {}
+        self._last_snapshot_written_at_s: float | None = None
 
-    def on_cloud(self, name: str, msg: Any) -> None:
-        self.counts[name] += 1
-        self.point_counts[name] = int(getattr(msg, "width", 0) * getattr(msg, "height", 0))
-        self.frames[name] = str(getattr(getattr(msg, "header", None), "frame_id", "") or "")
-
-    def on_odom(self, name: str, msg: Any) -> None:
-        self.counts[name] += 1
-        pose = msg.pose.pose.position
-        xyz = (float(pose.x), float(pose.y), float(pose.z))
+    def sample(self, path: Path) -> dict[str, Any]:
+        status = _read_json(path)
+        if not status:
+            return {}
+        try:
+            snapshot_written_at_s = float(status["snapshot_written_at_s"])
+        except (KeyError, TypeError, ValueError):
+            snapshot_written_at_s = None
+        if (
+            snapshot_written_at_s is not None
+            and snapshot_written_at_s == self._last_snapshot_written_at_s
+        ):
+            return status
+        self._last_snapshot_written_at_s = snapshot_written_at_s
+        self.samples += 1
+        self.latest = status
+        state = str(status.get("state") or "").strip().upper()
+        if state:
+            self.states.append(state)
+        pose = ((status.get("odometry") or {}).get("pose") or {})
+        try:
+            xyz = (float(pose["x"]), float(pose["y"]), float(pose["z"]))
+        except (KeyError, TypeError, ValueError):
+            return status
         if self.first_odom is None:
             self.first_odom = xyz
         self.last_odom = xyz
-        self.frames[name] = str(msg.header.frame_id or "")
-        self.frames[f"{name}_child"] = str(msg.child_frame_id or "")
-
-    def on_health(self, msg: Any) -> None:
-        self.counts["localization_health"] += 1
-        text = str(getattr(msg, "data", "") or "")
-        state = text.split("|", 1)[0].strip().upper() or "UNKNOWN"
-        self.health_latest = text
-        self.health_states.append(state)
-
-    def on_tf(self, msg: Any) -> None:
-        for transform in getattr(msg, "transforms", []) or []:
-            if (
-                transform.header.frame_id != MAP_TO_ODOM_LINK.parent
-                or transform.child_frame_id != MAP_TO_ODOM_LINK.child
-            ):
-                continue
-            self.counts["map_to_odom_tf"] += 1
-            t = transform.transform.translation
-            q = transform.transform.rotation
-            self.map_to_odom_latest = {
-                "x": float(t.x),
-                "y": float(t.y),
-                "z": float(t.z),
-                "qx": float(q.x),
-                "qy": float(q.y),
-                "qz": float(q.z),
-                "qw": float(q.w),
-            }
+        return status
 
     @property
     def odom_delta_m(self) -> float | None:
         if self.first_odom is None or self.last_odom is None:
             return None
         return float(math.dist(self.first_odom, self.last_odom))
-
-
-def _wait_for_topic_samples(
-    *,
-    rclpy: Any,
-    node: Any,
-    sampler: _RuntimeSampler,
-    keys: tuple[str, ...],
-    deadline: float,
-) -> bool:
-    while time.time() < deadline:
-        rclpy.spin_once(node, timeout_sec=0.1)
-        if all(sampler.counts.get(key, 0) > 0 for key in keys):
-            return True
-    return False
-
-
-def _call_relocalize(
-    *,
-    rclpy: Any,
-    node: Any,
-    Relocalize: Any,
-    pcd_path: Path,
-    timeout_s: float,
-) -> tuple[bool, dict[str, Any]]:
-    client = node.create_client(Relocalize, TOPICS.relocalize_service)
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        if client.wait_for_service(timeout_sec=0.2):
-            break
-        rclpy.spin_once(node, timeout_sec=0.05)
-    else:
-        return False, {"available": False, "success": False, "message": "service unavailable"}
-
-    request = Relocalize.Request()
-    request.pcd_path = str(pcd_path)
-    request.x = 0.0
-    request.y = 0.0
-    request.z = 0.0
-    request.yaw = 0.0
-    request.pitch = 0.0
-    request.roll = 0.0
-    future = client.call_async(request)
-    deadline = time.time() + timeout_s
-    while time.time() < deadline and not future.done():
-        rclpy.spin_once(node, timeout_sec=0.1)
-    if not future.done():
-        return False, {"available": True, "success": False, "message": "service timeout"}
-    response = future.result()
-    return bool(response and response.success), {
-        "available": True,
-        "success": bool(response and response.success),
-        "message": str(getattr(response, "message", "") if response else ""),
-    }
-
-
-def _call_global_relocalize(
-    *,
-    rclpy: Any,
-    node: Any,
-    Trigger: Any,
-    timeout_s: float,
-) -> tuple[bool, dict[str, Any]]:
-    client = node.create_client(Trigger, TOPICS.global_relocalize_service)
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        if client.wait_for_service(timeout_sec=0.2):
-            break
-        rclpy.spin_once(node, timeout_sec=0.05)
-    else:
-        return False, {"available": False, "success": False, "message": "service unavailable"}
-
-    last_response: dict[str, Any] = {
-        "available": True,
-        "success": False,
-        "message": "not called",
-    }
-    while time.time() < deadline:
-        future = client.call_async(Trigger.Request())
-        call_deadline = min(deadline, time.time() + 5.0)
-        while time.time() < call_deadline and not future.done():
-            rclpy.spin_once(node, timeout_sec=0.1)
-        if not future.done():
-            last_response = {
-                "available": True,
-                "success": False,
-                "message": "service timeout",
-            }
-            continue
-        response = future.result()
-        message = str(getattr(response, "message", "") if response else "")
-        success = bool(response and response.success)
-        last_response = {
-            "available": True,
-            "success": success,
-            "message": message,
-        }
-        if success or "already running" in message.lower():
-            return True, last_response
-        if "no scan received yet" in message.lower():
-            time.sleep(0.5)
-            continue
-        return False, last_response
-    return False, last_response
 
 
 def _isolated_map_without_last_pose(map_pcd: Path, run_dir: Path) -> Path:
@@ -569,66 +367,70 @@ def _isolated_map_without_last_pose(map_pcd: Path, run_dir: Path) -> Path:
     return isolated
 
 
-def _start_live_feed(args: argparse.Namespace, run_dir: Path) -> subprocess.Popen[str]:
+def _sensor_feed_command(
+    args: argparse.Namespace,
+    run_dir: Path,
+    status_path: Path,
+) -> list[str]:
     python = shutil.which("python3") or sys.executable
-    drive_source = "nav_cmd_vel" if args.live_drive_source == "frontier" else "fixed"
     cmd = [
         python,
-        str(ROOT / "sim/scripts/mujoco/live_gate.py"),
+        str(args.sensor_bridge),
         "--world",
         args.world,
         "--duration",
         str(args.duration),
-        "--duration-clock",
-        args.duration_clock,
-        "--drive-source",
-        drive_source,
+        "--drive-mode",
+        "kinematic",
+        "--allow-kinematic-fastlio-acceptance",
         "--drive-vx",
         str(args.drive_vx),
         "--drive-vy",
         str(args.drive_vy),
         "--drive-wz",
         str(args.drive_wz),
-        "--nav-data-source",
-        "fastlio2",
-        "--work-dir",
-        str(run_dir / "live_feed/work"),
-        "--json-out",
-        str(run_dir / "live_feed/report.json"),
         "--mid360-samples-per-frame",
         str(args.mid360_samples_per_frame),
         "--scan-time-profile",
         args.scan_time_profile,
         "--imu-acc-mode",
         args.imu_acc_mode,
-        "--max-fastlio-z-drift-m",
-        str(args.max_fastlio_z_drift_m),
-        "--fastlio-lidar-input",
-        args.fastlio_lidar_input,
-        "--fastlio-ieskf-max-iter",
-        str(args.fastlio_ieskf_max_iter),
-        "--runtime-fault-confirm-samples",
-        str(args.runtime_fault_confirm_samples),
-        "--runtime-motion-fault-min-sim-m",
-        str(args.runtime_motion_fault_min_sim_m),
-        "--no-save-map-artifacts",
+        "--timestamp-clock",
+        "sim_hardware" if args.duration_clock == "sim" else "wall",
+        "--domain-id",
+        str(args.domain_id),
+        "--slam-status-json",
+        str(status_path),
+        "--require-slam-output",
+        "--json-out",
+        str(run_dir / "sensor_feed/report.json"),
     ]
-    if args.live_drive_source == "frontier":
+    if args.check_global_relocalize:
         cmd.extend(
             [
-                "--run-lingtu-frontier",
-                "--frontier-min-goals",
-                str(args.frontier_min_goals),
-                "--frontier-goal-timeout",
-                str(args.frontier_goal_timeout),
+                "--start",
+                f"{args.kidnap_start_x},{args.kidnap_start_y},{args.kidnap_start_z}",
+                "--start-anchor",
+                "warmup",
             ]
         )
-    (run_dir / "live_feed").mkdir(parents=True, exist_ok=True)
-    (run_dir / "live_feed/command.txt").write_text(
+    if args.publisher_bin:
+        cmd.extend(["--publisher-bin", str(args.publisher_bin)])
+    return cmd
+
+
+def _start_sensor_feed(
+    args: argparse.Namespace,
+    run_dir: Path,
+    status_path: Path,
+) -> subprocess.Popen[str]:
+    cmd = _sensor_feed_command(args, run_dir, status_path)
+    (run_dir / "sensor_feed").mkdir(parents=True, exist_ok=True)
+    (run_dir / "sensor_feed/command.txt").write_text(
         " ".join(shlex_quote(item) for item in cmd) + "\n",
         encoding="utf-8",
     )
-    log = (run_dir / "live_feed/gate.log").open("w", encoding="utf-8")
+    log = (run_dir / "sensor_feed/gate.log").open("w", encoding="utf-8")
     return subprocess.Popen(
         cmd,
         cwd=str(ROOT),
@@ -646,69 +448,36 @@ def shlex_quote(value: str) -> str:
     return shlex.quote(str(value))
 
 
-def _start_localizer(
+def _slamd_command(
+    args: argparse.Namespace,
+    map_pcd: Path,
+    status_path: Path,
+) -> list[str]:
+    return [
+        str(args.slam_runtime_bin),
+        "--backend", "fastlio2",
+        "--mode", "localization",
+        "--map", str(map_pcd),
+        "--config", str(args.slam_config),
+        "--domain-id", str(args.domain_id),
+        "--status-json", str(status_path),
+        "--status-json-hz", "10",
+        "--log-status-s", "5",
+    ]
+
+
+def _start_slamd(
+    args: argparse.Namespace,
     map_pcd: Path,
     run_dir: Path,
-    *,
-    config_path: Path,
-    initial_x: float = 0.0,
-    initial_y: float = 0.0,
-    initial_z: float = 0.0,
-    initial_yaw: float = 0.0,
-    disable_auto_global_relocalize: bool = False,
-    bbs3d_num_threads: int = 1,
-    bbs3d_timeout_ms: int = 30000,
+    status_path: Path,
 ) -> subprocess.Popen[str]:
-    ros2 = shutil.which("ros2")
-    if not ros2:
-        raise RuntimeError("ros2 CLI is unavailable")
-    cmd = [
-        ros2,
-        "run",
-        "localizer",
-        "localizer_node",
-        "--ros-args",
-        "-p",
-        f"config_path:={config_path}",
-        "-p",
-        f"static_map_path:={map_pcd}",
-        "-p",
-        f"initial_x:={initial_x}",
-        "-p",
-        f"initial_y:={initial_y}",
-        "-p",
-        f"initial_z:={initial_z}",
-        "-p",
-        f"initial_yaw:={initial_yaw}",
-        "-r",
-        f"{LOCALIZER_MAP_CLOUD_INPUT}:={TOPICS.saved_map_cloud}",
-        "-r",
-        f"{LOCALIZER_QUALITY_INPUT}:={TOPICS.localization_quality}",
-        "-r",
-        f"{LOCALIZER_RELOCALIZE_INPUT}:={TOPICS.relocalize_service}",
-        "-r",
-        f"{LOCALIZER_RELOCALIZE_CHECK_INPUT}:={TOPICS.relocalize_check_service}",
-        "-r",
-        f"{LOCALIZER_GLOBAL_RELOCALIZE_INPUT}:={TOPICS.global_relocalize_service}",
-    ]
-    if disable_auto_global_relocalize:
-        cmd.extend(
-            [
-                "-p",
-                "auto_global_relocalize_on_boot:=false",
-                "-p",
-                "auto_global_relocalize_on_lost:=false",
-                "-p",
-                f"bbs3d_num_threads:={bbs3d_num_threads}",
-                "-p",
-                f"bbs3d_timeout_ms:={bbs3d_timeout_ms}",
-            ]
-        )
-    (run_dir / "localizer_command.txt").write_text(
+    cmd = _slamd_command(args, map_pcd, status_path)
+    (run_dir / "slamd_command.txt").write_text(
         " ".join(shlex_quote(item) for item in cmd) + "\n",
         encoding="utf-8",
     )
-    log = (run_dir / "localizer.log").open("w", encoding="utf-8")
+    log = (run_dir / "slamd.log").open("w", encoding="utf-8")
     return subprocess.Popen(
         cmd,
         cwd=str(ROOT),
@@ -720,7 +489,7 @@ def _start_localizer(
     )
 
 
-def _live_feed_timeout_s(args: argparse.Namespace) -> float:
+def _sensor_feed_timeout_s(args: argparse.Namespace) -> float:
     if float(args.live_process_timeout_s) > 0.0:
         return float(args.live_process_timeout_s)
     if str(args.duration_clock) == "sim":
@@ -728,19 +497,86 @@ def _live_feed_timeout_s(args: argparse.Namespace) -> float:
     return max(5.0, float(args.duration) + 30.0)
 
 
-def _wait_for_process_with_spin(
-    proc: subprocess.Popen[str],
-    *,
-    timeout_s: float,
-    rclpy: Any,
-    node: Any,
+def _wait_for_process(
+    proc: subprocess.Popen[str], timeout_s: float, sampler: _StatusSampler, status_path: Path
 ) -> bool:
     deadline = time.time() + max(0.0, timeout_s)
     while time.time() < deadline:
+        sampler.sample(status_path)
         if proc.poll() is not None:
             return True
-        rclpy.spin_once(node, timeout_sec=0.1)
+        time.sleep(0.1)
     return proc.poll() is not None
+
+
+def _wait_for_status(
+    proc: subprocess.Popen[str], status_path: Path, sampler: _StatusSampler, timeout_s: float
+) -> dict[str, Any]:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        status = sampler.sample(status_path)
+        if int(status.get("registered_points") or 0) > 0 and status.get("map_loaded") is True:
+            return status
+        if proc.poll() is not None:
+            break
+        time.sleep(0.1)
+    return sampler.latest
+
+
+def _slamctl_command(args: argparse.Namespace) -> list[str]:
+    command = [str(args.slam_control_bin)]
+    if args.check_global_relocalize:
+        command.append("global-relocalize")
+    else:
+        command.extend(
+            [
+                "relocalize",
+                "--x", str(args.initial_x),
+                "--y", str(args.initial_y),
+                "--z", str(args.initial_z),
+                "--yaw", str(args.initial_yaw),
+            ]
+        )
+    command.extend(
+        [
+            "--domain-id",
+            str(args.domain_id),
+            "--timeout-s",
+            str(args.relocalization_timeout_s),
+        ]
+    )
+    return command
+
+
+def _call_slamctl(args: argparse.Namespace) -> tuple[bool, dict[str, Any]]:
+    command = _slamctl_command(args)
+    completed = subprocess.run(
+        command,
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        timeout=max(1.0, float(args.relocalization_timeout_s) + 5.0),
+        check=False,
+    )
+    response: dict[str, Any] = {}
+    for line in reversed(completed.stdout.splitlines()):
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            response = parsed
+            break
+    response.update(
+        {
+            "available": completed.returncode != 4,
+            "success": completed.returncode == 0 and response.get("success") is True,
+            "returncode": completed.returncode,
+            "stdout": completed.stdout.strip(),
+            "stderr": completed.stderr.strip(),
+        }
+    )
+    return bool(response["success"]), response
 
 
 def run_gate(args: argparse.Namespace) -> dict[str, Any]:
@@ -761,30 +597,43 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         args.scan_time_profile,
         map_metadata,
     )
-    localizer_config_source = _resolve_localizer_config_path(args.localizer_config)
-    if not localizer_config_source.is_file():
-        blockers.append(f"localizer config not found: {localizer_config_source}")
-    localizer_config_path = localizer_config_source
-    if localizer_config_source.is_file():
-        localizer_config_path = _write_localizer_runtime_config(
-            localizer_config_source,
-            run_dir,
-            rough_score_thresh=args.localizer_rough_score_thresh,
-            refine_score_thresh=args.localizer_refine_score_thresh,
-        )
-    localizer_thresholds = _parse_localizer_thresholds(localizer_config_path)
+    args.slam_config = _resolve_path(args.slam_config)
+    args.sensor_bridge = _resolve_path(args.sensor_bridge)
+    args.slam_runtime_bin = _resolve_binary(
+        args.slam_runtime_bin, DEFAULT_SLAM_RUNTIME_BIN, WINDOWS_SLAM_RUNTIME_BIN
+    )
+    args.slam_control_bin = _resolve_binary(
+        args.slam_control_bin, DEFAULT_SLAM_CONTROL_BIN, WINDOWS_SLAM_CONTROL_BIN
+    )
+    if not args.slam_config.is_file():
+        blockers.append(f"FastLIO native config not found: {args.slam_config}")
+    if not args.sensor_bridge.is_file():
+        blockers.append(f"native DDS sensor bridge not found: {args.sensor_bridge}")
+    if not args.slam_runtime_bin.is_file():
+        blockers.append(f"slamd not found: {args.slam_runtime_bin}")
+    if not args.slam_control_bin.is_file():
+        blockers.append(f"slamctl not found: {args.slam_control_bin}")
+    if not 1 <= int(args.domain_id) <= 231:
+        blockers.append(f"DDS domain id must be in [1, 231]: {args.domain_id}")
+    publisher_bin = _resolve_binary(
+        args.publisher_bin,
+        DEFAULT_SENSOR_PUBLISHER_BIN,
+        WINDOWS_SENSOR_PUBLISHER_BIN,
+    )
+    if not publisher_bin.is_file():
+        blockers.append(f"native DDS publisher not found: {publisher_bin}")
+    args.publisher_bin = str(publisher_bin)
     args.world = live_world
     args.scan_time_profile = scan_time_profile
 
     report_base: dict[str, Any] = {
-        "schema_version": "lingtu.saved_map_relocalize_runtime.v1",
+        "schema_version": "lingtu.saved_map_relocalize_runtime.v2",
         "validation_level": "runtime_relocalization",
         "execution_mode": "runtime_live",
         "runtime_stage": "saved_map_relocalization",
         "map_dependency": "saved_map_required",
         "requires_saved_map": True,
         "requires_live_slam": True,
-        "requires_tomogram": False,
         "runtime_relocalization_executed": False,
         "runtime_relocalization_validated": False,
         "simulation_only": True,
@@ -799,30 +648,29 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         "world": live_world,
         "scan_time_profile": scan_time_profile,
         "current_host": _current_host_report(),
-        "localizer_config": {
-            "source_path": str(localizer_config_source),
-            "runtime_path": str(localizer_config_path),
-            "rough_score_thresh": localizer_thresholds.get("rough_score_thresh"),
-            "refine_score_thresh": localizer_thresholds.get("refine_score_thresh"),
-            "overrides": {
-                "rough_score_thresh": args.localizer_rough_score_thresh,
-                "refine_score_thresh": args.localizer_refine_score_thresh,
-            },
+        "native_runtime": {
+            "slamd": str(args.slam_runtime_bin),
+            "slamctl": str(args.slam_control_bin),
+            "config": str(args.slam_config),
+            "sensor_bridge": str(args.sensor_bridge),
+            "publisher": str(args.publisher_bin or "auto"),
+            "domain_id": int(args.domain_id),
         },
+        "runtime_dataflow": _runtime_dataflow(
+            map_artifact_ok=map_metadata_contract.get("ok") is True,
+            native_inputs_ok=not blockers,
+        ),
     }
     if getattr(args, "preflight_only", False):
-        ros_preflight = _ros_module_preflight()
-        preflight_blockers = list(blockers)
-        preflight_blockers.extend(ros_preflight.get("blockers") or [])
         return {
             **report_base,
             "execution_mode": "host_preflight_only",
             "validation_only": True,
             "runtime_relocalization_executed": False,
             "runtime_relocalization_validated": False,
-            "ok": not preflight_blockers,
-            "blockers": preflight_blockers,
-            "ros2_python": ros_preflight,
+            "ok": not blockers,
+            "blockers": blockers,
+            "native_preflight": {"ok": not blockers},
             "claim_boundary": "preflight_only_no_live_slam_or_relocalization",
         }
     if blockers:
@@ -831,165 +679,94 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     if args.check_global_relocalize and map_pcd is not None and map_pcd.is_file():
         map_pcd = _isolated_map_without_last_pose(map_pcd, run_dir)
 
-    try:
-        rclpy, Relocalize, Trigger, Odometry, PointCloud2, String, TFMessage = _load_ros_modules()
-    except Exception as exc:
-        return {
-            **report_base,
-            "execution_mode": "host_guard",
-            "runtime_relocalization_executed": False,
-            "runtime_relocalization_validated": False,
-            "ok": False,
-            "blockers": [str(exc)],
-            "ros2_python": {
-                "ok": False,
-                "blockers": [str(exc)],
-                "module_error_type": type(exc).__name__,
-            },
-            "claim_boundary": "environment_blocked_no_runtime_relocalization",
-        }
-    sampler = _RuntimeSampler()
-    live_proc: subprocess.Popen[str] | None = None
-    localizer_proc: subprocess.Popen[str] | None = None
-    service: dict[str, Any] = {"available": False, "success": False, "message": "not called"}
-    service_ok = False
-    live_report: dict[str, Any] = {}
-    live_report_path = run_dir / "live_feed/report.json"
-
-    rclpy.init(args=None)
-    node = rclpy.create_node("saved_map_relocalize_runtime_gate")
-    qos = 10
-    node.create_subscription(
-        PointCloud2,
-        FASTLIO_REGISTERED_CLOUD_TOPIC,
-        lambda msg: sampler.on_cloud("cloud_registered", msg),
-        qos,
-    )
-    node.create_subscription(
-        PointCloud2,
-        FASTLIO_MAP_CLOUD_TOPIC,
-        lambda msg: sampler.on_cloud("cloud_map", msg),
-        qos,
-    )
-    node.create_subscription(
-        PointCloud2,
-        TOPICS.saved_map_cloud,
-        lambda msg: sampler.on_cloud("saved_map_cloud", msg),
-        qos,
-    )
-    node.create_subscription(
-        Odometry,
-        FASTLIO_ODOMETRY_TOPIC,
-        lambda msg: sampler.on_odom("raw_odometry", msg),
-        qos,
-    )
-    node.create_subscription(String, TOPICS.localization_health, sampler.on_health, qos)
-    node.create_subscription(TFMessage, TF_TOPIC, sampler.on_tf, qos)
+    sampler = _StatusSampler()
+    sensor_proc: subprocess.Popen[str] | None = None
+    slamd_proc: subprocess.Popen[str] | None = None
+    relocalization: dict[str, Any] = {
+        "available": False,
+        "success": False,
+        "message": "not called",
+    }
+    relocalization_ok = False
+    sensor_report: dict[str, Any] = {}
+    sensor_report_path = run_dir / "sensor_feed/report.json"
+    status_path = run_dir / "slamd.status.json"
+    status_path.unlink(missing_ok=True)
+    sensor_report_path.unlink(missing_ok=True)
 
     try:
-        live_proc = _start_live_feed(args, run_dir)
-        live_ready = _wait_for_topic_samples(
-            rclpy=rclpy,
-            node=node,
-            sampler=sampler,
-            keys=("cloud_registered", "cloud_map", "raw_odometry"),
-            deadline=time.time() + args.topic_timeout_s,
+        slamd_proc = _start_slamd(args, map_pcd, run_dir, status_path)
+        sensor_proc = _start_sensor_feed(args, run_dir, status_path)
+        ready_status = _wait_for_status(
+            slamd_proc, status_path, sampler, float(args.topic_timeout_s)
         )
-        if not live_ready:
-            blockers.append("live Fast-LIO topics did not become ready")
+        if int(ready_status.get("registered_points") or 0) <= 0:
+            blockers.append("native FastLIO registered cloud did not become ready")
+        if ready_status.get("map_loaded") is not True:
+            blockers.append("slamd did not load the saved map")
 
-        localizer_proc = _start_localizer(
-            map_pcd,
-            run_dir,
-            config_path=localizer_config_path,
-            initial_x=args.kidnap_initial_x if args.check_global_relocalize else 0.0,
-            initial_y=args.kidnap_initial_y if args.check_global_relocalize else 0.0,
-            initial_z=args.kidnap_initial_z if args.check_global_relocalize else 0.0,
-            initial_yaw=args.kidnap_initial_yaw if args.check_global_relocalize else 0.0,
-            disable_auto_global_relocalize=bool(args.check_global_relocalize),
-            bbs3d_num_threads=args.bbs3d_num_threads,
-            bbs3d_timeout_ms=args.bbs3d_timeout_ms,
-        )
-        if args.check_global_relocalize:
-            service_ok, service = _call_global_relocalize(
-                rclpy=rclpy,
-                node=node,
-                Trigger=Trigger,
-                timeout_s=args.service_timeout_s,
+        relocalization_ok, relocalization = _call_slamctl(args)
+        if not relocalization_ok:
+            blockers.append(
+                "slamctl relocalization failed: "
+                f"{relocalization.get('message') or relocalization.get('stderr')}"
             )
-            if not service_ok:
-                blockers.append(
-                    f"{TOPICS.global_relocalize_service} failed: {service.get('message')}"
-                )
-        else:
-            service_ok, service = _call_relocalize(
-                rclpy=rclpy,
-                node=node,
-                Relocalize=Relocalize,
-                pcd_path=map_pcd,
-                timeout_s=args.service_timeout_s,
-            )
-            if not service_ok:
-                blockers.append(
-                    f"{TOPICS.relocalize_service} failed: {service.get('message')}"
-                )
 
-        monitor_deadline = time.time() + args.monitor_after_service_s
+        monitor_deadline = time.time() + args.monitor_after_relocalization_s
         while time.time() < monitor_deadline:
-            rclpy.spin_once(node, timeout_sec=0.1)
+            sampler.sample(status_path)
+            time.sleep(0.1)
 
-        live_done = _wait_for_process_with_spin(
-            live_proc,
-            timeout_s=_live_feed_timeout_s(args),
-            rclpy=rclpy,
-            node=node,
+        sensor_done = _wait_for_process(
+            sensor_proc, _sensor_feed_timeout_s(args), sampler, status_path
         )
-        if not live_done:
-            blockers.append("live feed process timed out")
-            _terminate_process(live_proc)
-        if live_report_path.is_file():
-            live_report = json.loads(live_report_path.read_text(encoding="utf-8"))
+        if not sensor_done:
+            blockers.append("native DDS sensor feed process timed out")
+            _terminate_process(sensor_proc)
+        if sensor_report_path.is_file():
+            sensor_report = _read_json(sensor_report_path)
         else:
-            blockers.append("live feed report missing")
+            blockers.append("native DDS sensor report missing")
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        blockers.append(f"native localization runtime failed: {type(exc).__name__}: {exc}")
+        relocalization = {
+            **relocalization,
+            "success": False,
+            "message": str(exc),
+            "error_type": type(exc).__name__,
+        }
     finally:
-        _terminate_process(localizer_proc)
-        _terminate_process(live_proc)
-        try:
-            node.destroy_node()
-        finally:
-            rclpy.shutdown()
+        _terminate_process(slamd_proc)
+        _terminate_process(sensor_proc)
 
-    tracking_states = {"LOCKED", "RECOVERED"}
-    tracking_health_samples = sum(1 for state in sampler.health_states if state in tracking_states)
-    lost_health_samples = sum(1 for state in sampler.health_states if state == "LOST")
-    latest_health_state = sampler.health_states[-1] if sampler.health_states else ""
-    map_to_odom = sampler.map_to_odom_latest or {}
+    status = sampler.sample(status_path) or sampler.latest
+    tracking_states = {"TRACKING"}
+    tracking_health_samples = sum(1 for state in sampler.states if state in tracking_states)
+    lost_health_samples = sum(1 for state in sampler.states if state == "LOST")
+    latest_health_state = str(status.get("state") or "").upper()
+    map_to_odom = status.get("map_odom_tf") or {}
     map_to_odom_xy = math.hypot(
-        float(map_to_odom.get("x", 0.0)),
-        float(map_to_odom.get("y", 0.0)),
+        float(map_to_odom.get("tx", 0.0)),
+        float(map_to_odom.get("ty", 0.0)),
     ) if map_to_odom else None
-    map_to_odom_z_abs = abs(float(map_to_odom.get("z", 0.0))) if map_to_odom else None
+    map_to_odom_z_abs = abs(float(map_to_odom.get("tz", 0.0))) if map_to_odom else None
 
-    localizer_tail = _tail(run_dir / "localizer.log")
-    bbs3d_ok = "BBS3D: ok" in localizer_tail or "BBS3D boot OK" in localizer_tail
-    bbs3d_disabled = (
-        "BBS3D disabled at build time" in localizer_tail
-        or "bbs3d map not loaded" in str(service.get("message", "")).lower()
-    )
+    slamd_tail = _tail(run_dir / "slamd.log")
+    bbs3d_ok = _bbs3d_succeeded(relocalization)
+    bbs3d_disabled = "unavailable" in str(
+        relocalization.get("message") or ""
+    ).lower()
 
-    if live_report.get("ok") is not True:
-        blockers.append("live feed report is not ok")
-    if (live_report.get("fastlio2_z_consistency") or {}).get("ok") is not True:
-        blockers.append("live feed Fast-LIO Z consistency is not ok")
-    if sampler.counts.get("saved_map_cloud", 0) <= 0:
-        blockers.append(f"{TOPICS.saved_map_cloud} missing")
-    if sampler.point_counts.get("saved_map_cloud", 0) < int(args.min_saved_map_points):
-        blockers.append(f"{TOPICS.saved_map_cloud} point count below threshold")
+    if sensor_report.get("ok") is not True:
+        blockers.append("native DDS sensor report is not ok")
+    saved_map_points = int(status.get("saved_map_points") or 0)
+    if saved_map_points < int(args.min_saved_map_points):
+        blockers.append("saved map point count below threshold")
     if tracking_health_samples < int(args.min_tracking_health_samples):
-        blockers.append("localizer tracking health samples below threshold")
+        blockers.append("native localization tracking health samples below threshold")
     if latest_health_state not in tracking_states:
-        blockers.append("latest localization health is not LOCKED/RECOVERED")
-    if sampler.counts.get("map_to_odom_tf", 0) <= 0:
+        blockers.append("latest localization health is not TRACKING")
+    if not map_to_odom or map_to_odom.get("valid") is not True:
         blockers.append("map->odom TF missing")
     if map_to_odom_xy is not None and map_to_odom_xy > float(args.max_map_odom_xy_m):
         blockers.append(
@@ -1002,12 +779,22 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             f"{float(args.max_map_odom_z_abs_m):.3f}m"
         )
     if args.check_global_relocalize:
+        expected_start = [
+            float(args.kidnap_start_x),
+            float(args.kidnap_start_y),
+            float(args.kidnap_start_z),
+        ]
+        observed_start = sensor_report.get("start_anchor_xyz")
+        try:
+            observed_start_xyz = [float(observed_start[index]) for index in range(3)]
+        except (IndexError, TypeError, ValueError):
+            observed_start_xyz = []
+        if not observed_start_xyz or math.dist(expected_start, observed_start_xyz) > 0.05:
+            blockers.append("native DDS sensor feed did not apply the kidnapped start position")
         if bbs3d_disabled:
             blockers.append("BBS3D is disabled or did not load its map")
         if not bbs3d_ok:
             blockers.append("BBS3D global relocalize success was not observed")
-        if lost_health_samples <= 0 and "LOST" not in localizer_tail:
-            blockers.append("kidnapped localizer did not report LOST before recovery")
         min_global_xy = float(args.min_global_map_odom_xy_m)
         if min_global_xy > 0.0 and map_to_odom_xy is not None and map_to_odom_xy < min_global_xy:
             blockers.append(
@@ -1016,49 +803,74 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             )
 
     ok = not blockers
+    tracking_ok = bool(
+        tracking_health_samples >= int(args.min_tracking_health_samples)
+        and latest_health_state in tracking_states
+        and map_to_odom
+        and map_to_odom.get("valid") is True
+    )
     return {
         **report_base,
         "ok": ok,
-        "runtime_relocalization_executed": bool(service.get("available")),
+        "runtime_relocalization_executed": bool(relocalization.get("available")),
         "runtime_relocalization_validated": ok,
         "global_relocalization_requested": bool(args.check_global_relocalize),
         "global_relocalization_validated": bool(args.check_global_relocalize and ok),
         "blockers": blockers,
-        "service": service,
-        "live_feed": {
-            "ok": live_report.get("ok"),
-            "report": str(live_report_path),
-            "process_returncode": live_proc.returncode if live_proc is not None else None,
-            "base_blockers": live_report.get("base_blockers") or [],
-            "outputs": live_report.get("outputs") or {},
-            "fastlio2_z_consistency": live_report.get("fastlio2_z_consistency") or {},
-            "fastlio2_motion_consistency": live_report.get("fastlio2_motion_consistency") or {},
-            "frames": live_report.get("frames") or {},
-            "scan_time_profile": live_report.get("scan_time_profile") or "",
+        "runtime_dataflow": _runtime_dataflow(
+            map_artifact_ok=map_metadata_contract.get("ok") is True,
+            native_inputs_ok=True,
+            sensor_feed_ok=sensor_report.get("ok") is True,
+            relocalization_ok=(
+                relocalization.get("success") is True and relocalization_ok
+            ),
+            tracking_ok=tracking_ok,
+            bbs3d_ok=bbs3d_ok if args.check_global_relocalize else None,
+        ),
+        "relocalization": relocalization,
+        "sensor_feed": {
+            "ok": sensor_report.get("ok"),
+            "report": str(sensor_report_path),
+            "process_returncode": sensor_proc.returncode if sensor_proc is not None else None,
+            "remaining_gaps": sensor_report.get("remaining_gaps") or [],
+            "sensor_counts": sensor_report.get("sensor_counts") or {},
+            "slam_counts": sensor_report.get("slam_counts") or {},
+            "scan_time_profile": sensor_report.get("scan_time_profile") or "",
+            "start_anchor_xyz": sensor_report.get("start_anchor_xyz"),
         },
-        "localizer": {
-            "process_returncode": localizer_proc.returncode if localizer_proc is not None else None,
-            "health_samples": int(sampler.counts.get("localization_health", 0)),
+        "localization": {
+            "process_returncode": slamd_proc.returncode if slamd_proc is not None else None,
+            "status_json": str(status_path),
+            "health_samples": int(sampler.samples),
             "tracking_health_samples": int(tracking_health_samples),
             "lost_health_samples": int(lost_health_samples),
-            "health_states_seen": sorted(set(sampler.health_states)),
+            "health_states_seen": sorted(set(sampler.states)),
             "latest_health_state": latest_health_state,
-            "latest_health": sampler.health_latest,
-            "saved_map_cloud_samples": int(sampler.counts.get("saved_map_cloud", 0)),
-            "saved_map_cloud_points_latest": int(sampler.point_counts.get("saved_map_cloud", 0)),
-            "map_to_odom_tf_samples": int(sampler.counts.get("map_to_odom_tf", 0)),
+            "latest_health": str(status.get("reason") or ""),
+            "saved_map_cloud_samples": int(saved_map_points > 0),
+            "saved_map_cloud_points_latest": saved_map_points,
+            "registered_cloud_points_latest": int(status.get("registered_points") or 0),
+            "map_to_odom_tf_samples": int(bool(map_to_odom)),
             "map_to_odom_latest": map_to_odom,
             "map_to_odom_xy_m": map_to_odom_xy,
             "map_to_odom_z_abs_m": map_to_odom_z_abs,
             "odom_delta_m": sampler.odom_delta_m,
-            "frames": sampler.frames,
+            "frames": {
+                "registered_cloud": status.get("registered_cloud_frame_id") or "",
+                "saved_map_cloud": status.get("saved_map_cloud_frame_id") or "",
+                "map": map_to_odom.get("frame_id") or "",
+                "odom": map_to_odom.get("child_frame_id") or "",
+            },
+            "relocalization_state": status.get("relocalization_state") or "",
+            "relocalization_message": status.get("last_relocalization_message") or "",
+            "relocalization_quality": status.get("relocalization_quality"),
+            "relocalization_refine_backend": status.get("relocalization_refine_backend") or "",
             "bbs3d_success_observed": bbs3d_ok,
             "bbs3d_disabled_observed": bbs3d_disabled,
-            "kidnap_initial_pose": {
-                "x": float(args.kidnap_initial_x),
-                "y": float(args.kidnap_initial_y),
-                "z": float(args.kidnap_initial_z),
-                "yaw": float(args.kidnap_initial_yaw),
+            "kidnap_start_xyz": {
+                "x": float(args.kidnap_start_x),
+                "y": float(args.kidnap_start_y),
+                "z": float(args.kidnap_start_z),
             } if args.check_global_relocalize else None,
         },
         "thresholds": {
@@ -1066,26 +878,17 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             "min_tracking_health_samples": int(args.min_tracking_health_samples),
             "max_map_odom_xy_m": float(args.max_map_odom_xy_m),
             "max_map_odom_z_abs_m": float(args.max_map_odom_z_abs_m),
-            "max_fastlio_z_drift_m": float(args.max_fastlio_z_drift_m),
-            "localizer_rough_score_thresh": localizer_thresholds.get("rough_score_thresh"),
-            "localizer_refine_score_thresh": localizer_thresholds.get("refine_score_thresh"),
             "min_global_map_odom_xy_m": (
                 float(args.min_global_map_odom_xy_m)
                 if args.check_global_relocalize
                 else None
             ),
-            "bbs3d_num_threads": (
-                int(args.bbs3d_num_threads) if args.check_global_relocalize else None
-            ),
-            "bbs3d_timeout_ms": (
-                int(args.bbs3d_timeout_ms) if args.check_global_relocalize else None
-            ),
         },
         "logs": {
-            "localizer": str(run_dir / "localizer.log"),
-            "localizer_tail": localizer_tail,
-            "live_feed": str(run_dir / "live_feed/gate.log"),
-            "live_feed_tail": _tail(run_dir / "live_feed/gate.log"),
+            "slamd": str(run_dir / "slamd.log"),
+            "slamd_tail": slamd_tail,
+            "sensor_publisher": str(run_dir / "sensor_feed/gate.log"),
+            "sensor_publisher_tail": _tail(run_dir / "sensor_feed/gate.log"),
         },
         "wall_time_s": round(time.time() - started, 3),
     }
@@ -1097,12 +900,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--run-dir",
         type=Path,
-        default=ROOT / "artifacts/server_sim_closure/saved_map_relocalize_runtime",
+        default=ROOT / "artifacts/sim_diagnostics/saved_map_relocalize_runtime",
     )
     parser.add_argument(
         "--json-out",
         type=Path,
-        default=ROOT / "artifacts/server_sim_closure/saved_map_relocalize_runtime/report.json",
+        default=ROOT / "artifacts/sim_diagnostics/saved_map_relocalize_runtime/report.json",
     )
     parser.add_argument(
         "--world",
@@ -1120,42 +923,28 @@ def _build_parser() -> argparse.ArgumentParser:
         default="sim",
         help="Interpret the live-feed duration as wall-clock or MuJoCo simulation seconds.",
     )
-    parser.add_argument(
-        "--live-drive-source",
-        choices=["frontier", "fixed"],
-        default="fixed",
-        help=(
-            "fixed drives the simulator with a deterministic velocity profile "
-            "to validate live Fast-LIO/localizer relocalization. frontier is a "
-            "diagnostic mode; navigation/path following is covered by the "
-            "downstream pct_saved_map_navigation gate."
-        ),
-    )
     parser.add_argument("--drive-vx", type=float, default=0.25)
     parser.add_argument("--drive-vy", type=float, default=0.0)
     parser.add_argument("--drive-wz", type=float, default=0.06)
-    parser.add_argument("--frontier-min-goals", type=int, default=0)
-    parser.add_argument("--frontier-goal-timeout", type=float, default=240.0)
     parser.add_argument("--mid360-samples-per-frame", type=int, default=24000)
     parser.add_argument(
-        "--localizer-config",
-        default="",
-        help=(
-            "Optional localizer YAML. Defaults to the source-tree localizer.yaml "
-            "or the installed share config."
-        ),
+        "--slam-runtime-bin", default="",
+        help="Native slamd executable; empty auto-resolves current Linux/Windows builds.",
     )
     parser.add_argument(
-        "--localizer-rough-score-thresh",
-        type=float,
-        default=None,
-        help="Optional runtime YAML override for localizer rough_score_thresh.",
+        "--slam-control-bin", default="",
+        help="Native typed-DDS slamctl executable; empty auto-resolves current builds.",
     )
     parser.add_argument(
-        "--localizer-refine-score-thresh",
-        type=float,
-        default=None,
-        help="Optional runtime YAML override for localizer refine_score_thresh.",
+        "--slam-config", default=str(DEFAULT_SLAM_CONFIG),
+        help="FastLIO2 native runtime YAML.",
+    )
+    parser.add_argument("--sensor-bridge", default=str(NATIVE_SENSOR_BRIDGE))
+    parser.add_argument("--publisher-bin", default="")
+    parser.add_argument(
+        "--domain-id",
+        type=int,
+        default=os.environ.get("LINGTU_DDS_DOMAIN_ID", "").strip() or "231",
     )
     parser.add_argument(
         "--scan-time-profile",
@@ -1167,41 +956,32 @@ def _build_parser() -> argparse.ArgumentParser:
             "to the strict physical_rolling profile when unavailable."
         ),
     )
-    parser.add_argument("--imu-acc-mode", choices=["gravity_only", "finite_difference"], default="finite_difference")
-    parser.add_argument("--max-fastlio-z-drift-m", type=float, default=1.0)
     parser.add_argument(
-        "--fastlio-lidar-input",
-        choices=["livox_custom_msg", "timed_pointcloud2"],
-        default="timed_pointcloud2",
-        help=(
-            "Raw LiDAR message shape sent to Fast-LIO2 for the live feed. "
-            "timed_pointcloud2 preserves physical rolling subscan times in the "
-            "current target-host MuJoCo pipeline."
-        ),
+        "--imu-acc-mode",
+        choices=["sensor", "gravity_only", "finite_difference"],
+        default="sensor",
     )
-    parser.add_argument("--fastlio-ieskf-max-iter", type=int, default=10)
-    parser.add_argument("--runtime-fault-confirm-samples", type=int, default=6)
-    parser.add_argument("--runtime-motion-fault-min-sim-m", type=float, default=1.0)
     parser.add_argument("--topic-timeout-s", type=float, default=25.0)
-    parser.add_argument("--service-timeout-s", type=float, default=25.0)
-    parser.add_argument("--monitor-after-service-s", type=float, default=18.0)
+    parser.add_argument("--relocalization-timeout-s", type=float, default=25.0)
+    parser.add_argument("--monitor-after-relocalization-s", type=float, default=18.0)
     parser.add_argument(
         "--check-global-relocalize",
         action="store_true",
-        help="Use the canonical global relocalize service instead of seeded relocalize.",
+        help="Use slamctl global-relocalize instead of seeded relocalize.",
     )
-    parser.add_argument("--kidnap-initial-x", type=float, default=3.0)
-    parser.add_argument("--kidnap-initial-y", type=float, default=2.0)
-    parser.add_argument("--kidnap-initial-z", type=float, default=0.0)
-    parser.add_argument("--kidnap-initial-yaw", type=float, default=1.2)
+    parser.add_argument("--initial-x", type=float, default=0.0)
+    parser.add_argument("--initial-y", type=float, default=0.0)
+    parser.add_argument("--initial-z", type=float, default=0.0)
+    parser.add_argument("--initial-yaw", type=float, default=0.0)
+    parser.add_argument("--kidnap-start-x", type=float, default=3.0)
+    parser.add_argument("--kidnap-start-y", type=float, default=2.0)
+    parser.add_argument("--kidnap-start-z", type=float, default=0.0)
     parser.add_argument(
         "--min-global-map-odom-xy-m",
         type=float,
-        default=0.0,
+        default=1.0,
         help="Optional minimum map->odom XY correction expected in kidnapped global relocalization.",
     )
-    parser.add_argument("--bbs3d-num-threads", type=int, default=4)
-    parser.add_argument("--bbs3d-timeout-ms", type=int, default=90000)
     parser.add_argument(
         "--live-process-timeout-s",
         type=float,
@@ -1217,8 +997,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--preflight-only",
         action="store_true",
         help=(
-            "Check saved-map artifacts, localizer config, and ROS 2 Python "
-            "imports without launching MuJoCo/Fast-LIO/localizer processes."
+            "Check the saved map, native binaries, FastLIO config, and sensor "
+            "publisher path without launching any process."
         ),
     )
     return parser

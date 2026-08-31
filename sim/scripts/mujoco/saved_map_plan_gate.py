@@ -7,7 +7,6 @@ import argparse
 import json
 import math
 import os
-import shlex
 import shutil
 import subprocess
 import sys
@@ -24,12 +23,6 @@ if str(ROOT) not in sys.path:
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
-
-from maps.adapters.python.service import NativeMapsService
-from maps.artifacts import validate_saved_map_artifact_dir
-from nav.services.plan.global_planner.algorithm.octoplanner3d_planner import (
-    OctoPlanner3DPlanner,
-)
 
 BUILDING_SCENE_XML = ROOT / "sim" / "worlds" / "mujoco" / "building_scene.xml"
 INDUSTRIAL_PARK_SCENE_XML = ROOT / "sim" / "worlds" / "mujoco" / "industrial_park_scene.xml"
@@ -147,51 +140,186 @@ STAIR_SCENE_PROFILES: dict[str, dict[str, Any]] = {
 }
 
 
-def _wsl_path(path: Path) -> str:
-    value = str(path.resolve()).replace("\\", "/")
-    if os.name == "nt" and len(value) >= 3 and value[1] == ":" and value[2] == "/":
-        return f"/mnt/{value[0].lower()}/{value[3:]}"
-    return value
+def _first_executable(env_name: str, candidates: tuple[str, ...]) -> Path:
+    override = str(os.environ.get(env_name) or "").strip()
+    paths = ((Path(override),) if override else ()) + tuple(ROOT / value for value in candidates)
+    for path in paths:
+        resolved = path.expanduser().resolve()
+        if resolved.is_file():
+            return resolved
+    raise FileNotFoundError(f"{env_name} executable is unavailable")
 
 
-def _default_octomap_converter_command() -> list[str] | None:
-    exe = ROOT / "build" / "octoplanner3d_headless" / "octoplanner3d_pcd_to_octomap"
-    wsl_override = os.environ.get("LINGTU_OCTOPLANNER3D_CONVERTER_WSL", "").strip()
-    if not exe.is_file() and not wsl_override:
-        return None
-    if os.name == "nt":
-        launcher = shutil.which("wsl.exe") or shutil.which("wsl")
-        if not launcher:
-            return None
-        runtime_exe = wsl_override or _wsl_path(exe)
-        return [
-            launcher,
-            "bash",
-            "-lc",
-            (
-                "exec "
-                f"{shlex.quote(runtime_exe)} "
-                "--input {input_wsl} "
-                "--output {output_wsl} "
-                "--resolution {resolution} "
-                "--support-dilation-cells {support_dilation_cells} "
-                "--free-layers-above {free_layers_above} "
-                "--free-dilation-cells {free_dilation_cells} "
-                "--frame {frame_wsl}"
-            ),
-        ]
-    if wsl_override:
-        return [wsl_override]
-    return [str(exe)]
+def _mapctl_executable() -> Path:
+    return _first_executable(
+        "LINGTU_MAPCTL_BIN",
+        (
+            "build/maps-windows/Release/lingtu-mapctl.exe",
+            "build/maps/lingtu-mapctl",
+        ),
+    )
 
 
-def _shell_command_text(command: str | list[str] | tuple[str, ...] | None) -> str:
-    if not command:
-        return ""
-    if isinstance(command, str):
-        return command
-    values = [str(value) for value in command]
-    return subprocess.list2cmdline(values) if os.name == "nt" else shlex.join(values)
+def _planner_executable(override: str = "") -> Path:
+    if str(override or "").strip():
+        path = Path(override).expanduser().resolve()
+        if path.is_file():
+            return path
+        raise FileNotFoundError(f"OctoPlanner3D executable is unavailable: {path}")
+    return _first_executable(
+        "LINGTU_OCTOPLANNER3D_BIN",
+        (
+            "build/nav-cpp/windows-x64-nav-endpoint/Release/octoplanner3d_headless.exe",
+            "build/octoplanner3d_headless/octoplanner3d_headless",
+        ),
+    )
+
+
+def _run_json_process(
+    command: list[str],
+    *,
+    timeout_s: float,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    completed = subprocess.run(
+        command,
+        cwd=ROOT,
+        input=(json.dumps(payload, separators=(",", ":")) + "\n" if payload is not None else None),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=max(1.0, float(timeout_s)),
+        check=False,
+    )
+    try:
+        result = json.loads(completed.stdout.strip())
+    except json.JSONDecodeError:
+        result = {
+            "success": False,
+            "ok": False,
+            "reason_code": "invalid_native_json",
+            "message": completed.stderr.strip() or completed.stdout.strip(),
+        }
+    if not isinstance(result, dict):
+        result = {"success": False, "ok": False, "reason_code": "invalid_native_json"}
+    result.setdefault("native_returncode", completed.returncode)
+    if completed.returncode != 0:
+        result.setdefault("success", False)
+        result.setdefault("ok", False)
+        result.setdefault("native_stderr", completed.stderr.strip())
+    return result
+
+
+def _build_octomap_native(
+    *,
+    map_root: Path,
+    map_id: str,
+    args: argparse.Namespace,
+    scene_preset: str,
+    lidar_map_source: bool,
+) -> dict[str, Any]:
+    command = [
+        str(_mapctl_executable()),
+        "build",
+        map_id,
+        "--map-root",
+        str(map_root),
+        "--build-mode",
+        "external_pcl_converter" if args.converter else "native_octomap",
+        "--resolution",
+        str(float(args.resolution)),
+        "--support-dilation-cells",
+        str(effective_support_dilation_cells(args, scene_preset)),
+        "--free-layers-above",
+        str(effective_free_layers_above(args, scene_preset)),
+        "--free-dilation-cells",
+        str(int(getattr(args, "free_dilation_cells", 1))),
+        "--frame",
+        "map",
+        "--source-profile",
+        f"mujoco_{scene_preset}_saved_map_gate",
+        "--data-source",
+        "mujoco",
+        "--slam-source",
+        "mujoco_lidar_ground_truth_registered_map" if lidar_map_source else "mujoco_synthetic_map",
+        "--localization-source",
+        "mujoco_ground_truth_pose" if lidar_map_source else "mujoco_synthetic_scan",
+        "--mapping-source",
+        (
+            f"mujoco_{scene_preset}_lidar_scan_accumulation"
+            if lidar_map_source
+            else f"mujoco_{scene_preset}_saved_map_plan_gate"
+        ),
+        "--timeout-s",
+        str(float(args.converter_timeout)),
+    ]
+    if args.converter:
+        command.extend(["--converter", str(args.converter)])
+    result = _run_json_process(command, timeout_s=float(args.converter_timeout) + 5.0)
+    result["ok"] = result.get("success") is True
+    return result
+
+
+def _validate_map_native(map_root: Path, map_id: str) -> dict[str, Any]:
+    result = _run_json_process(
+        [
+            str(_mapctl_executable()),
+            "prepare",
+            map_id,
+            "--map-root",
+            str(map_root),
+        ],
+        timeout_s=10.0,
+    )
+    accepted = result.get("accepted") is True
+    return {
+        "ok": accepted,
+        "blockers": [] if accepted else [str(result.get("message") or "native_map_validation_failed")],
+        "native": result,
+    }
+
+
+def _plan_native(
+    *,
+    map_path: Path,
+    start: list[float],
+    goal: list[float],
+    constraints: dict[str, Any],
+    executable: str,
+    timeout_s: float,
+) -> dict[str, Any]:
+    payload = {
+        "planner": "octoplanner3d",
+        "protocol_version": 1,
+        "map_path": str(map_path.resolve()),
+        "map_source": {
+            "kind": "octomap_file",
+            "path": str(map_path.resolve()),
+            "format": map_path.suffix.lower().lstrip("."),
+            "frame": "map",
+        },
+        "map_format": map_path.suffix.lower().lstrip("."),
+        "start": [float(value) for value in start],
+        "goal": [float(value) for value in goal],
+        "options": dict(constraints),
+    }
+    result = _run_json_process(
+        [str(_planner_executable(executable))],
+        timeout_s=timeout_s,
+        payload=payload,
+    )
+    path = result.get("path") if isinstance(result.get("path"), list) else []
+    return {
+        "ok": result.get("ok") is True and bool(path) and bool(result.get("reached_goal", True)),
+        "available": True,
+        "path_count": len(path),
+        "path": path,
+        "reached_goal": bool(result.get("reached_goal", False)),
+        "error": str(result.get("error") or result.get("message") or ""),
+        "diagnostics": result.get("diagnostics") or {},
+        "constraint_overrides": constraints,
+    }
 
 
 def _frange(start: float, stop: float, step: float) -> list[float]:
@@ -280,7 +408,7 @@ def stair_scene_profile(scene_preset: str = "stairs3d") -> dict[str, Any]:
 
 def stair_scene_default_start_goal(scene_preset: str = "stairs3d") -> tuple[list[float], list[float]]:
     if scene_preset == "multifloor_stack_3":
-        return [7.00, -1.20, 0.55], [7.40, 2.80, 4.15]
+        return [7.00, -0.80, 0.55], [7.40, 2.80, 4.15]
     profile = stair_scene_profile(scene_preset)
     upper_floor_z = float(profile["rise_m"]) * int(profile["step_count"])
     start = [0.75, 0.0, 0.55]
@@ -524,7 +652,7 @@ def _multifloor_stack_geoms(scene_preset: str = "multifloor_stack_3") -> list[di
     floor_half_y = 1.75
     stair_start_x = floor_x - 2.15
     stair_half_width = float(profile.get("stair_width_m", 1.20)) / 2.0
-    wall_half_z = 0.12
+    wall_half_z = 0.50
     stair_rail_height = 1.08
     geoms: list[dict[str, Any]] = []
 
@@ -904,6 +1032,11 @@ def _stairs3d_scene_xml(scene_preset: str = "stairs3d") -> str:
     start_values, goal_values = stair_scene_default_start_goal(scene_preset)
     start = " ".join(str(v) for v in start_values)
     goal = " ".join(str(v) for v in goal_values)
+    ground_contact = (
+        'contype="0" conaffinity="0" group="5"'
+        if scene_preset == "multifloor_stack_3"
+        else 'contype="1" conaffinity="1" group="1"'
+    )
     return f"""<mujoco model="lingtu_{scene_preset}_nav">
   <compiler angle="radian"/>
   <option gravity="0 0 -9.81" timestep="0.002"/>
@@ -919,7 +1052,7 @@ def _stairs3d_scene_xml(scene_preset: str = "stairs3d") -> str:
     <body name="robot_placeholder" pos="{start}"/>
     <light pos="5 -7 8" dir="-0.3 0.45 -1" diffuse="0.9 0.88 0.82" castshadow="false"/>
     <geom name="ground_reference" type="plane" size="15 8 0.1" material="ground_mat"
-          contype="1" conaffinity="1" condim="3" friction="1 0.5 0.5" group="1"/>
+          {ground_contact} condim="3" friction="1 0.5 0.5"/>
 {"".join(geom_lines)}    <geom name="goal_marker" type="sphere" size="0.18" pos="{goal}"
           contype="0" conaffinity="0" rgba="0.1 0.32 1 0.75" group="5"/>
   </worldbody>
@@ -1254,8 +1387,6 @@ def _in_multifloor_stairwell_void(scene_preset: str, point: tuple[float, float, 
     x, y, z = point
     level_height = float(profile.get("level_height_m", 1.26))
     tread = float(profile["tread_m"])
-    rise = float(profile["rise_m"])
-    steps = int(round(level_height / rise))
     run_length = _multifloor_run_length(profile)
     floor_x = 3.90
     floor_y_step = MULTIFLOOR_FLOOR_Y_STEP_M
@@ -1563,7 +1694,6 @@ def collect_mujoco_lidar_points(
     vx: float,
     wz: float,
     publish_hz: float,
-    n_rays: int,
     mid360_pattern: Path | None,
     mid360_samples_per_frame: int,
     lidar_backend: str,
@@ -1589,7 +1719,6 @@ def collect_mujoco_lidar_points(
         engine = build_engine(
             world=scene_xml.resolve(),
             drive_mode="kinematic",
-            n_rays=int(n_rays),
             start=start,
             mujoco_memory=mujoco_memory,
             mid360_pattern=mid360_pattern or DEFAULT_MID360_PATTERN,
@@ -1597,7 +1726,6 @@ def collect_mujoco_lidar_points(
             lidar_backend=lidar_backend,
             mujoco_lidar_backend=mujoco_lidar_backend,
             require_product_lidar_backend=not bool(allow_legacy_lidar_fallback),
-            allow_legacy_lidar_fallback=bool(allow_legacy_lidar_fallback),
         )
         backend_report = engine.get_lidar_backend_report()
     except Exception as exc:
@@ -1801,11 +1929,11 @@ def planner_constraint_overrides(args: argparse.Namespace) -> dict[str, Any]:
     elif getattr(args, "scene_preset", "") in MULTILEVEL_SCENE_PRESETS:
         overrides["max_slope"] = STAIRS3D_MAX_SLOPE
     if getattr(args, "scene_preset", "") in MULTILEVEL_SCENE_PRESETS:
-        # Match the practical OctoPlanner3D configuration: ground support may
-        # be found immediately around the body center, while body collision is
-        # still checked with the configured robot radius.
-        overrides["strict_direct_ground_support"] = False
-        overrides["ground_support_xy_radius_cells"] = 1
+        # A route point represents the robot body above a real support surface.
+        # Nearby walls and floor edges must never substitute for support in the
+        # same XY column.
+        overrides["strict_direct_ground_support"] = True
+        overrides["ground_support_xy_radius_cells"] = 0
         resolution = float(getattr(args, "resolution", 0.18))
         overrides["ground_support_depth_cells"] = max(
             1,
@@ -1829,7 +1957,7 @@ def effective_support_dilation_cells(args: argparse.Namespace, scene_preset: str
     if requested >= 0:
         return requested
     if scene_preset in MULTILEVEL_SCENE_PRESETS:
-        return 2 if str(getattr(args, "map_source", "")) == "mujoco_lidar" else 0
+        return 0
     return 1
 
 
@@ -1895,7 +2023,6 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             vx=args.lidar_vx,
             wz=args.lidar_wz,
             publish_hz=getattr(args, "lidar_publish_hz", 10.0),
-            n_rays=getattr(args, "n_rays", 6400),
             mid360_pattern=getattr(args, "mid360_pattern", None),
             mid360_samples_per_frame=getattr(args, "mid360_samples_per_frame", 15000),
             lidar_backend=getattr(args, "lidar_backend", "mujoco_lidar"),
@@ -1943,78 +2070,32 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     write_ascii_pcd(map_pcd, points)
 
     lidar_map_source = args.map_source == "mujoco_lidar"
-    converter_command = _shell_command_text(
-        args.converter or ("" if args.no_env_converter else _default_octomap_converter_command())
+    build = _build_octomap_native(
+        map_root=map_dir.parent,
+        map_id=map_dir.name,
+        args=args,
+        scene_preset=scene_preset,
+        lidar_map_source=lidar_map_source,
     )
-    maps_service = NativeMapsService(map_dir.parent)
-    active_map: dict[str, Any] = {
-        "attempted": False,
-        "success": False,
-        "map_id": map_dir.name,
-    }
-    try:
-        build = maps_service.build_octomap_artifact(
-            map_dir.name,
-            converter_command=converter_command,
-            build_mode="external_pcl_converter",
-            resolution=args.resolution,
-            support_dilation_cells=effective_support_dilation_cells(args, scene_preset),
-            free_layers_above=effective_free_layers_above(args, scene_preset),
-            free_dilation_cells=getattr(args, "free_dilation_cells", 1),
-            frame_id="map",
-            source_profile=f"mujoco_{scene_preset}_saved_map_gate",
-            data_source="mujoco",
-            slam_source=("mujoco_lidar_ground_truth_registered_map" if lidar_map_source else "mujoco_synthetic_map"),
-            localization_source=("mujoco_ground_truth_pose" if lidar_map_source else "mujoco_synthetic_scan"),
-            mapping_source=(
-                f"mujoco_{scene_preset}_lidar_scan_accumulation"
-                if lidar_map_source
-                else f"mujoco_{scene_preset}_saved_map_plan_gate"
-            ),
-            timeout_sec=args.converter_timeout,
-        )
-        if build.get("success") is True:
-            active_map = maps_service.set_active_map(map_dir.name, strict=True)
-            active_map["attempted"] = True
-    finally:
-        maps_service.close()
-    nested_build = build.get("octomap_result")
-    if not build.get("success") and isinstance(nested_build, dict):
-        build["status"] = nested_build.get("status") or nested_build.get("reason_code")
     build["ok"] = build.get("success") is True
-    artifact_gate = validate_saved_map_artifact_dir(
-        map_dir,
-        require_octomap=True,
-        expected_frame_id="map",
-        expected_data_source="mujoco",
-    )
+    artifact_gate = _validate_map_native(map_dir.parent, map_dir.name)
 
     plan: dict[str, Any] = {"skipped": bool(args.skip_plan)}
     if artifact_gate.get("ok") is True and not args.skip_plan:
-        planner = OctoPlanner3DPlanner(
-            map_path=str(map_dir / "octomap.ot"),
-            executable_path=args.planner_executable or None,
-            timeout_s=args.planner_timeout,
-        )
-        planner.configure_constraints(planner_constraint_overrides(args))
         start, goal = effective_start_goal(args)
-        path = planner.plan(start, goal)
-        plan = {
-            "ok": bool(path) and bool(planner._last_plan_reached_goal),
-            "available": planner.available,
-            "path_count": len(path),
-            "path": jsonable_path(path),
-            "reached_goal": bool(planner._last_plan_reached_goal),
-            "error": planner._last_plan_error,
-            "diagnostics": planner._last_plan_diagnostics,
-            "constraint_overrides": planner_constraint_overrides(args),
-        }
+        plan = _plan_native(
+            map_path=map_dir / "octomap.ot",
+            start=start,
+            goal=goal,
+            constraints=planner_constraint_overrides(args),
+            executable=str(args.planner_executable or ""),
+            timeout_s=float(args.planner_timeout),
+        )
 
     acceptance = scene_acceptance(scene_preset, plan)
     ok = (
         build.get("ok") is True
         and artifact_gate.get("ok") is True
-        and active_map.get("success") is True
         and acceptance.get("ok") is True
         and (bool(args.skip_plan) or plan.get("ok") is True)
     )
@@ -2032,7 +2113,6 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         "scene_profile": stair_scene_profile(scene_preset) if scene_preset in MULTILEVEL_SCENE_PRESETS else None,
         "scan": scan_report,
         "build": build,
-        "active_map": active_map,
         "artifact_gate": artifact_gate,
         "plan": plan,
         "scene_acceptance": acceptance,
@@ -2074,7 +2154,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lidar-vx", type=float, default=0.2)
     parser.add_argument("--lidar-wz", type=float, default=0.0)
     parser.add_argument("--lidar-publish-hz", type=float, default=10.0)
-    parser.add_argument("--n-rays", type=int, default=6400)
     parser.add_argument("--trajectory-support-radius-m", type=float, default=0.0)
     parser.add_argument("--trajectory-support-spacing-m", type=float, default=0.1)
     parser.add_argument("--mujoco-memory", default="64M")

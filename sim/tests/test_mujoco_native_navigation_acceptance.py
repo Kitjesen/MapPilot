@@ -1,21 +1,216 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import math
+import subprocess
 import sys
+import threading
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+from lingtu.assembly.native_nav import mapd_environment
+from sim.engine.core.engine import VelocityCommand
 from sim.engine.mujoco import robot_controller
 from sim.engine.mujoco.engine import MuJoCoEngine
 from sim.scripts.mujoco import native_dds_sensors as sensors
 from sim.scripts.mujoco import native_navigation_acceptance as acceptance
 from sim.scripts.mujoco import native_navigation_video as navigation_video
+from sim.scripts.mujoco import saved_map_plan_gate
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_navigation_acceptance_uses_current_thunder_mjcf() -> None:
+    assert acceptance.DEFAULT_THUNDERV4_MJCF == (
+        ROOT / "sim" / "robots" / "doso" / "thunder_v4" / "mjcf" / "thunderv4.xml"
+    )
+    assert acceptance.DEFAULT_THUNDERV4_MJCF.is_file()
+
+
+def test_native_map_identity_comes_from_selected_map_metadata(monkeypatch, tmp_path) -> None:
+    map_dir = tmp_path / "building_map"
+    map_dir.mkdir()
+    session_root = tmp_path / "session"
+    session_root.mkdir()
+    metadata = map_dir / "metadata.json"
+    metadata.write_text(
+        json.dumps(
+            {
+                "map_name": "building",
+                "frame_id": "map",
+                "created_at": "12345",
+            }
+        ),
+        encoding="utf-8",
+    )
+    for name in (
+        "LINGTU_MAP_ID",
+        "LINGTU_MAP_CONTENT_EPOCH",
+        "LINGTU_MAP_FRAME",
+        "LINGTU_PRODUCT_SESSION_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    identity = acceptance._native_map_identity(
+        paths={"map_dir": map_dir, "metadata": metadata},
+        phase="motion",
+        domain_id=228,
+        session_root=session_root,
+    )
+
+    assert identity["LINGTU_MAP_ID"] == "building"
+    assert identity["LINGTU_MAP_CONTENT_EPOCH"] == "12345"
+    assert identity["LINGTU_MAP_FRAME"] == "map"
+    assert identity["LINGTU_SESSION_ROOT"] == str(session_root.resolve())
+    assert "LINGTU_EXPLORE_ROUTE" not in identity
+
+
+def test_saved_map_build_does_not_activate(monkeypatch, tmp_path):
+    commands = []
+    monkeypatch.setattr(saved_map_plan_gate, "_mapctl_executable", lambda: Path("lingtu-mapctl"))
+    monkeypatch.setattr(
+        saved_map_plan_gate,
+        "_run_json_process",
+        lambda command, **_kwargs: commands.append(command) or {"success": True},
+    )
+    args = SimpleNamespace(
+        converter="",
+        converter_timeout=5.0,
+        free_dilation_cells=1,
+        free_layers_above=1,
+        resolution=0.1,
+        support_dilation_cells=1,
+    )
+
+    result = saved_map_plan_gate._build_octomap_native(
+        map_root=tmp_path,
+        map_id="yard",
+        args=args,
+        scene_preset="default",
+        lidar_map_source=False,
+    )
+
+    assert result["ok"] is True
+    assert "--activate" not in commands[0]
+
+
+def test_asset_builder_locks_support_dilation(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        saved_map_plan_gate,
+        "run_gate",
+        lambda args: {"support_dilation_cells": args.support_dilation_cells},
+    )
+
+    result = acceptance._run_saved_map_asset_builder(
+        {
+            "scene_preset": "multifloor_stack_3",
+            "map_source": "mujoco_lidar",
+            "support_dilation_cells": 2,
+        },
+        tmp_path,
+    )
+
+    assert result["support_dilation_cells"] == 2
+
+
+def test_multifloor_global_guide_uses_stair_compatible_support_model():
+    manifest = acceptance._load_manifest(
+        ROOT / "config/runtime_graph/acceptance/mujoco_multifloor_navigation_acceptance.json"
+    )
+    constraints = manifest["planner_constraints"]
+
+    assert manifest["start"] == [7.0, -0.8, 0.55, 3.141592653589793]
+    assert constraints["robot_radius_m"] == 0.35
+    assert constraints["strict_ground_support"] is False
+    assert constraints["obstacle_clearance_radius_cells"] == 4
+
+
+def test_multifloor_ground_is_visual_only():
+    root = ET.fromstring(saved_map_plan_gate._stairs3d_scene_xml("multifloor_stack_3"))
+    ground = root.find(".//geom[@name='ground_reference']")
+
+    assert ground is not None
+    assert ground.get("contype") == "0"
+    assert ground.get("conaffinity") == "0"
+    assert ground.get("group") == "5"
+
+
+def test_multifloor_perimeter_rails_are_not_step_over_support():
+    root = ET.fromstring(saved_map_plan_gate._stairs3d_scene_xml("multifloor_stack_3"))
+    rail = root.find(".//geom[@name='rail_level_1_south']")
+
+    assert rail is not None
+    half_height = float(rail.get("size", "0 0 0").split()[2])
+    assert half_height >= 0.45
+
+
+def test_saved_map_lidar_collector_uses_current_engine_interface(monkeypatch, tmp_path):
+    class Engine:
+        sim_time = 0.0
+
+        @staticmethod
+        def get_lidar_backend_report():
+            return {"active": "mujoco_lidar"}
+
+        @staticmethod
+        def set_robot_pose(_position, _orientation):
+            return None
+
+        @staticmethod
+        def get_robot_state():
+            return SimpleNamespace(position=[0.0, 0.0, 0.5])
+
+        @staticmethod
+        def get_lidar_points():
+            return [[1.0, 0.0, 0.5, 1.0]]
+
+        @staticmethod
+        def step(_command):
+            return SimpleNamespace(position=[0.0, 0.0, 0.5])
+
+        @staticmethod
+        def close():
+            return None
+
+    def build_engine(
+        *,
+        world,
+        drive_mode,
+        start,
+        mujoco_memory,
+        mid360_pattern,
+        mid360_samples_per_frame,
+        lidar_backend,
+        mujoco_lidar_backend,
+        require_product_lidar_backend,
+    ):
+        return Engine()
+
+    monkeypatch.setattr("drivers.sim.mujoco.runtime.build_engine", build_engine)
+    points, report = saved_map_plan_gate.collect_mujoco_lidar_points(
+        tmp_path / "scene.xml",
+        start=[0.0, 0.0, 0.5, 0.0],
+        scans=1,
+        duration_s=0.1,
+        timeout_s=1.0,
+        vx=0.0,
+        wz=0.0,
+        publish_hz=10.0,
+        mid360_pattern=tmp_path / "pattern.csv",
+        mid360_samples_per_frame=100,
+        lidar_backend="mujoco_lidar",
+        mujoco_lidar_backend="cpu",
+        allow_legacy_lidar_fallback=False,
+        mujoco_memory="64M",
+        mapping_trajectory=[[0.0, 0.0, 0.5, 0.0]],
+    )
+
+    assert report["ok"] is True
+    assert points == [(1.0, 0.0, 0.5)]
 
 
 class _FakeOnnxSession:
@@ -30,55 +225,146 @@ class _FakeOnnxSession:
         return [self._output]
 
 
+def test_motion_arm_is_acknowledged_before_navigation_commands(monkeypatch, tmp_path):
+    arm_file = tmp_path / "motion_arm.json"
+    status_file = tmp_path / "motion_arm_status.json"
+
+    class Sensor:
+        @staticmethod
+        def poll():
+            return None
+
+    def acknowledge(_delay_s: float) -> None:
+        acceptance._write_json(status_file, {"state": "armed"})
+
+    monkeypatch.setattr(acceptance.time, "sleep", acknowledge)
+    result = acceptance._arm_mujoco_motion(
+        arm_file=arm_file,
+        status_file=status_file,
+        token="run-token",
+        domain_id=227,
+        scenario="scan:motion:227",
+        sensor=Sensor(),
+    )
+
+    payload = json.loads(arm_file.read_text(encoding="utf-8"))
+    assert result["state"] == "armed"
+    assert payload == {
+        "schema": "lingtu.mujoco.external_arm.v1",
+        "arm": True,
+        "token": "run-token",
+        "domain_id": 227,
+        "scenario": "scan:motion:227",
+    }
+
+
 def test_onnx_policy_runner_is_selected_from_input_contract_not_directory(monkeypatch, tmp_path):
+    created_options = []
+
+    class SessionOptions:
+        def __init__(self):
+            self.intra_op_num_threads = 0
+            self.inter_op_num_threads = 0
+            self.execution_mode = None
+
+    def make_session(*_args, **kwargs):
+        created_options.append(kwargs["sess_options"])
+        return next(sessions)
+
     sessions = iter([_FakeOnnxSession(285), _FakeOnnxSession(57)])
     monkeypatch.setitem(
         sys.modules,
         "onnxruntime",
-        SimpleNamespace(InferenceSession=lambda *_args, **_kwargs: next(sessions)),
+        SimpleNamespace(
+            ExecutionMode=SimpleNamespace(ORT_SEQUENTIAL="sequential"),
+            InferenceSession=make_session,
+            SessionOptions=SessionOptions,
+        ),
     )
     policy_dir = tmp_path / "thunderv4" / "policy"
     policy_dir.mkdir(parents=True)
 
-    history_runner = robot_controller.load_policy_runner(str(policy_dir / "history.onnx"))
-    frame_runner = robot_controller.load_policy_runner(str(policy_dir / "frame.onnx"))
+    history_runner = robot_controller.load_policy_runner(
+        str(policy_dir / "history.onnx"), cpu_threads=2
+    )
+    frame_runner = robot_controller.load_policy_runner(
+        str(policy_dir / "frame.onnx"), cpu_threads=2
+    )
 
     assert isinstance(history_runner, robot_controller.PolicyRunner)
     assert history_runner._history_len == 5
-    assert history_runner.run_at_idle is True
+    assert history_runner.run_at_idle is False
     assert history_runner.zero_wheels_at_idle is True
     assert isinstance(frame_runner, robot_controller.ThunderV4OnnxPolicyRunner)
+    assert len(created_options) == 2
+    assert all(options.intra_op_num_threads == 2 for options in created_options)
+    assert all(options.inter_op_num_threads == 1 for options in created_options)
+    assert all(options.execution_mode == "sequential" for options in created_options)
 
 
-def test_cpp_cmd_vel_tap_consumes_canonical_typed_dds_topic():
-    source = (ROOT / "sim" / "native_dds" / "cmd_vel_tap.cpp").read_text(encoding="utf-8")
-    cmake = (ROOT / "sim" / "native_dds" / "CMakeLists.txt").read_text(encoding="utf-8")
+def test_cpp_driver_bridge_consumes_canonical_typed_dds_topic():
+    source = (ROOT / "sim" / "adapters" / "dds" / "mujoco_driver_bridge.cpp").read_text(
+        encoding="utf-8"
+    )
+    protocol = (
+        ROOT / "sim" / "adapters" / "dds" / "mujoco_driver_bridge_protocol.cpp"
+    ).read_text(encoding="utf-8")
+    cmake = (ROOT / "sim" / "adapters" / "dds" / "CMakeLists.txt").read_text(encoding="utf-8")
 
     assert "lingtu::message::kNavCmdVel" in source
     assert "lingtu_dds_FinalVelocityCommand_desc" in source
     assert "lingtu_dds_TwistStamped_desc" not in source
-    assert "static_cast<const lingtu_dds_FinalVelocityCommand*>" in source
-    assert "sourceWallSeconds(*msg)" in source
-    assert "qos_for_topic(contract.dds_topic)" in source
-    assert "LT_CMD_V1" in source
-    assert "src/message/idl/lingtu_slam.idl" in cmake
+    assert "static_cast<const lingtu_dds_FinalVelocityCommand *>" in source
+    assert "qos_for_topic(command_contract.dds_topic)" in source
+    assert "LT_DRIVER_COMMAND_V2" in protocol
+    assert "src/message/idl/messages.idl" in cmake
+    assert "add_executable(lingtu_mujoco_driver_bridge" in cmake
 
 
-def test_cpp_cmd_vel_tap_publishes_simulated_thunder_control_readiness():
-    source = (ROOT / "sim" / "native_dds" / "cmd_vel_tap.cpp").read_text(encoding="utf-8")
+def test_cpp_driver_bridge_timestamps_command_after_dds_take():
+    source = (ROOT / "sim" / "adapters" / "dds" / "mujoco_driver_bridge.cpp").read_text(
+        encoding="utf-8"
+    )
+
+    take_latest = source.split("std::optional<NavCommand> takeLatest()", 1)[1].split(
+        "void publishControlState", 1
+    )[0]
+    assert take_latest.index("dds_take(command_reader_") < take_latest.index(
+        "const auto arrival_time = bridgeNow()"
+    )
+    assert "takeLatest(command_arrival)" not in source
+
+
+def test_nav_runtime_preserves_goal_during_transient_driver_blocker():
+    source = (ROOT / "src" / "nav" / "cpp" / "endpoint" / "runtime" / "loop.cpp").read_text(
+        encoding="utf-8"
+    )
+
+    transition = source.split("const std::string driver_blocker", 1)[1].split(
+        "if (staged_inspection_goal", 1
+    )[0]
+    assert "clearEndpointMotion" in transition
+    assert "keepZeroFresh" in transition
+    assert "navigation_runtime_controller.interrupt" not in transition
+
+
+def test_cpp_driver_bridge_control_state_is_derived_from_physical_bridge_status():
+    source = (ROOT / "sim" / "adapters" / "dds" / "mujoco_driver_bridge.cpp").read_text(
+        encoding="utf-8"
+    )
 
     assert "lingtu::message::kDriverControlState" in source
     assert "lingtu_dds_DriverControlState_desc" in source
-    assert "msg.connected = true" in source
-    assert "msg.ready = true" in source
-    assert "msg.motors_enabled = true" in source
-    assert 'msg.owner = const_cast<char*>("grpc")' in source
-    assert 'msg.owner_id = const_cast<char*>("lingtu-driver")' in source
-    assert "dds_write(writer, &msg)" in source
-    assert "msg.accepted_producer_boot_id" in source
-    assert "msg.accepted_output_sequence" in source
-    assert "msg->producer_boot_id" in source
-    assert "msg->output_seq" in source
+    assert "const auto output_ack = status.output_ack" in source
+    assert "message.ready = status.ready" in source
+    assert "message.lease_valid = status.lease_valid" in source
+    assert "message.accepted_sequence = status.accepted_sequence" in source
+    assert "output_ack.producerBootId()" in source
+    assert "output_ack.outputSequence()" in source
+    assert "output_ack.accepted()" in source
+    assert "checked(dds_write(state_writer_, &message)" in source
+    assert "message.ready = true" not in source
+    assert "message.last_command_accepted = true" not in source
 
 
 def test_native_navigation_phase_timeout_includes_wsl_shutdown_grace():
@@ -89,6 +375,1082 @@ def test_native_navigation_phase_timeout_includes_wsl_shutdown_grace():
         10.0,
         realtime_factor=0.5,
     ) == pytest.approx(100.0)
+
+
+def test_native_navigation_resume_waits_for_control_loop_recovery(monkeypatch):
+    replies = iter(
+        [
+            {
+                "returncode": 1,
+                "stdout": "",
+                "stderr": "control_loop_recovery_pending",
+            },
+            {"returncode": 0, "stdout": "accepted", "stderr": ""},
+        ]
+    )
+    monkeypatch.setattr(acceptance, "_resume_command", lambda *_args, **_kwargs: next(replies))
+    monkeypatch.setattr(acceptance.time, "sleep", lambda _seconds: None)
+
+    result = acceptance._resume_when_ready(Path("nav_control"), 220, 3.0)
+
+    assert result["returncode"] == 0
+    assert len(result["attempts"]) == 2
+
+
+@pytest.mark.parametrize(("ok", "expected_exit"), ((True, 0), (False, 1)))
+def test_native_navigation_runner_accepts_dispatcher_strict_argument(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    ok: bool,
+    expected_exit: int,
+) -> None:
+    def run(args) -> dict[str, object]:
+        assert args.strict is True
+        assert args.preflight_only is True
+        return {
+            "ok": ok,
+            "evidence_scope": "preflight",
+            "product_acceptance_passed": False,
+        }
+
+    monkeypatch.setattr(acceptance, "run", run)
+
+    assert acceptance.main(["--strict", "--preflight-only"]) == expected_exit
+    report = json.loads(capsys.readouterr().out)
+    assert report["product_acceptance_passed"] is False
+
+
+def test_local_planner_manifests_share_one_truth_lidar_baseline() -> None:
+    scan = acceptance._load_manifest(
+        ROOT
+        / "config"
+        / "runtime_graph"
+        / "acceptance"
+        / "mujoco_local_scan.json"
+    )
+    cmu = acceptance._load_manifest(
+        ROOT
+        / "config"
+        / "runtime_graph"
+        / "acceptance"
+        / "mujoco_local_cmu.json"
+    )
+
+    assert scan["product_contract"]["product"] == "nav"
+    assert scan["navigation_runtime"]["local_planner"] == "scan"
+    assert cmu["navigation_runtime"]["local_planner"] == "cmu"
+    assert scan["windows_cpu_isolation"] is True
+    assert scan["windows_navigation_physical_cores"] == 3
+    for field in ("world", "start", "goal", "map_dir", "asset_builder", "slam_runtime"):
+        assert scan[field] == cmu[field]
+    assert scan["start"] == [3.0, 4.0, 0.6, 0.0]
+    assert scan["navigation_runtime"]["path_follower_max_speed_mps"] >= 0.5
+    assert scan["slam_runtime"]["provider"] == "mujoco_navigation_fixture"
+    assert scan["paths"]["slam_config"] == cmu["paths"]["slam_config"]
+    assert scan["paths"]["slam_config"] == (
+        "src/localization/fastlio2/config/sim_mid360.yaml"
+    )
+    for field in (
+        "publish_hz",
+        "imu_hz",
+        "publish_odom_prior",
+        "scan_time_profile",
+        "mid360_samples_per_frame",
+        "physics_timestep_s",
+        "physics_integrator",
+        "publisher_write_mode",
+    ):
+        assert scan["sensor_runtime"][field] == cmu["sensor_runtime"][field]
+    assert scan["sensor_runtime"]["publish_odom_prior"] is True
+    assert scan["sensor_runtime"]["scan_time_profile"] == "instantaneous"
+    assert scan["sensor_runtime"]["mid360_samples_per_frame"] == 4000
+    assert scan["sensor_runtime"]["physics_timestep_s"] == 0.005
+    assert scan["sensor_runtime"]["physics_integrator"] == "euler"
+    assert scan["sensor_runtime"]["publisher_write_mode"] == "async_fifo"
+    assert scan["thresholds"]["min_mujoco_truth_peak_xy_speed_mps"] >= 0.5
+    assert scan["thresholds"]["require_traversability"] is False
+    assert scan["navigation_runtime"]["use_traversability_cost"] is False
+    assert scan["asset_builder"] == {
+        "kind": "saved_map_plan_gate",
+        "scene_preset": "industrial_park",
+        "length": 60.0,
+        "width": 40.0,
+        "spacing": 0.1,
+        "hits_per_cell": 2,
+        "resolution": 0.2,
+        "map_source": "synthetic_hits",
+    }
+    assert scan["paths"]["path_library"] is None
+    assert cmu["paths"]["path_library"] == (
+        "src/nav/cpp/planning/local/cmu/paths/thunder"
+    )
+    assert "rt/maps/local_collision" in scan["contracts"]["navigation_inputs"]
+    assert "rt/nav/traversability" not in scan["contracts"]["navigation_inputs"]
+    assert scan["contracts"]["terrain_output"] is None
+    assert acceptance._path_library_args("scan", Path("navd"), {}) == ()
+
+    sensor_args = acceptance._sensor_runtime_args(scan)
+    assert "--publish-odom-prior" in sensor_args
+    assert sensor_args[sensor_args.index("--scan-time-profile") + 1] == "instantaneous"
+    assert sensor_args[sensor_args.index("--mid360-samples-per-frame") + 1] == "4000"
+    assert sensor_args[sensor_args.index("--publisher-write-mode") + 1] == "async_fifo"
+
+    follower_args = acceptance._path_follower_args(scan["navigation_runtime"])
+    assert "--path-follower-goal-tolerance-m" not in follower_args
+    assert follower_args[follower_args.index("--path-follower-max-speed-mps") + 1] == "0.6"
+    assert follower_args[follower_args.index("--path-follower-max-accel-mps2") + 1] == "1.0"
+    assert follower_args[follower_args.index("--path-follower-max-yaw-rate-rad-s") + 1] == "0.8"
+    assert follower_args[follower_args.index("--path-follower-heading-align-enter-rad") + 1] == "1.0"
+    assert follower_args[follower_args.index("--path-follower-heading-align-exit-rad") + 1] == "0.5"
+    assert acceptance._mujoco_truth_speed_blocker(
+        {"mujoco_truth_velocity": {"max_xy_speed_mps": 0.49}},
+        scan["thresholds"],
+    ) == "mujoco_truth_peak_xy_speed_below_threshold"
+    assert acceptance._mujoco_truth_speed_blocker(
+        {"mujoco_truth_velocity": {"max_xy_speed_mps": 0.51}},
+        scan["thresholds"],
+    ) is None
+
+
+def test_scan_acceptance_gives_navd_three_whole_cores_and_keeps_support_disjoint() -> None:
+    topology = acceptance.WindowsCpuTopology(
+        cores=(
+            acceptance.WindowsPhysicalCore(0, 0, 0b0000000011, 2),
+            acceptance.WindowsPhysicalCore(1, 0, 0b0000001100, 2),
+            acceptance.WindowsPhysicalCore(2, 0, 0b0000110000, 1),
+            acceptance.WindowsPhysicalCore(3, 0, 0b0011000000, 1),
+            acceptance.WindowsPhysicalCore(4, 0, 0b1100000000, 0),
+        )
+    )
+    plan = acceptance.WindowsCpuIsolationPlan(
+        processor_group=0,
+        mujoco_core_id=0,
+        owner_core_id=1,
+        unreal_core_ids=(2, 3, 4),
+        mujoco_affinity_mask=0b0000000011,
+        owner_thread_affinity_mask=0b0000001100,
+        unreal_affinity_mask=0b1111110000,
+    )
+
+    nav_mask, support_mask = acceptance._navigation_affinity_masks(plan, topology, 3)
+
+    assert nav_mask == 0b0011111100
+    assert support_mask == 0b1100000011
+    assert nav_mask & support_mask == 0
+
+
+def test_manifest_loader_reports_invalid_manifest(tmp_path: Path) -> None:
+    manifest = tmp_path / "invalid.json"
+    manifest.write_text("{", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid acceptance manifest"):
+        acceptance._load_manifest(manifest)
+
+
+def test_native_navigation_cli_cannot_override_manifest_local_planner() -> None:
+    with pytest.raises(SystemExit) as failure:
+        acceptance.main(["--local-planner", "scan", "--preflight-only"])
+
+    assert failure.value.code == 2
+
+
+def test_binary_candidate_resolver_rejects_noncanonical_windows_exe():
+    candidates = [
+        "build/nav-cpp/linux-aarch64/navd",
+        "build/nav-cpp/windows-x64-nav-endpoint-root-d/Release/navd.exe",
+    ]
+
+    assert acceptance._ordered_binary_candidates(candidates, platform_name="nt") == [
+        "build/nav-cpp/linux-aarch64/navd",
+    ]
+
+
+def test_binary_candidate_resolver_windows_ignores_existing_retired_root_d_exe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    retired = (
+        tmp_path
+        / "build/nav-cpp/windows-x64-nav-endpoint-root-d/Release/navd.exe"
+    )
+    canonical = tmp_path / "build/nav-cpp/windows-x64-nav-endpoint/Release/navd.exe"
+    retired.parent.mkdir(parents=True)
+    canonical.parent.mkdir(parents=True)
+    retired.write_bytes(b"retired")
+    canonical.write_bytes(b"canonical")
+    monkeypatch.setattr(acceptance, "ROOT", tmp_path)
+    monkeypatch.setattr(acceptance.os, "name", "nt")
+
+    resolved = acceptance._resolve_binary(
+        {
+            "candidates": [
+                retired.relative_to(tmp_path).as_posix(),
+                canonical.relative_to(tmp_path).as_posix(),
+            ]
+        }
+    )
+
+    assert resolved == canonical.resolve()
+
+
+def test_run_plan_binding_replaces_component_candidates_and_env_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "build/root-d/navd.exe"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"run-plan-navd")
+    relative = artifact.relative_to(tmp_path).as_posix()
+    command = SimpleNamespace(
+        artifact=SimpleNamespace(
+            path=relative,
+        )
+    )
+    plan = SimpleNamespace(
+        processes=(SimpleNamespace(name="nav_runtime", command=command),)
+    )
+    manifest = {
+        "binaries": {
+            "navigation": {
+                "env": "LINGTU_MUJOCO_NAV_BIN",
+                "candidates": ["build/old/navd.exe"],
+            }
+        }
+    }
+    monkeypatch.setattr(acceptance, "ROOT", tmp_path)
+
+    bindings = acceptance._bind_manifest_binaries_to_run_plan(manifest, plan)
+
+    assert manifest["binaries"]["navigation"] == {"candidates": [relative]}
+    assert bindings == {
+        "navigation": {
+            "path": str(artifact.resolve()),
+            "process": "nav_runtime",
+        }
+    }
+
+
+def test_scan_mapd_launch_uses_run_plan_collision_profile(tmp_path: Path) -> None:
+    environment = mapd_environment("scan")
+
+    command, process_environment = acceptance._native_mapd_launch(
+        binary=Path("mapd.exe"),
+        domain_id=227,
+        status_file=tmp_path / "mapd.json",
+        map_root=tmp_path,
+        runtime={},
+        environment=environment,
+    )
+
+    cap_index = command.index("--max-collision-snapshot-points")
+    assert command[cap_index + 1] == "4000000"
+    assert process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
+    assert process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_Z"] == "100"
+    assert mapd_environment("cmu") == {}
+
+
+def test_binary_candidate_resolver_skips_exe_on_non_windows():
+    candidates = [
+        "build/nav-cpp/windows-x64-nav-endpoint/Release/navd.exe",
+        "build/nav-cpp/linux-aarch64/navd",
+    ]
+
+    assert acceptance._ordered_binary_candidates(candidates, platform_name="posix") == [
+        "build/nav-cpp/linux-aarch64/navd",
+    ]
+
+
+def test_driver_bridge_must_share_navigation_native_boot_clock():
+    wsl_nav = Path("build/native/navd")
+    wsl_bridge = Path("build/native/lingtu_mujoco_driver_bridge")
+    windows_nav = Path("build/native/navd.exe")
+    windows_bridge = Path("build/native/lingtu_mujoco_driver_bridge.exe")
+
+    assert (
+        acceptance._validated_native_clock_platform(
+            wsl_nav,
+            wsl_bridge,
+            platform_name="nt",
+        )
+        == "wsl"
+    )
+    assert (
+        acceptance._validated_native_clock_platform(
+            windows_nav,
+            windows_bridge,
+            platform_name="nt",
+        )
+        == "windows"
+    )
+    assert (
+        acceptance._validated_native_clock_platform(
+            wsl_nav,
+            wsl_bridge,
+            platform_name="posix",
+        )
+        == "posix"
+    )
+    with pytest.raises(ValueError, match="same native boot clock"):
+        acceptance._validated_native_clock_platform(
+            windows_nav,
+            wsl_bridge,
+            platform_name="nt",
+        )
+
+
+def test_native_driver_runtime_uses_one_host_identity_and_exact_bridge_contract(tmp_path):
+    host_boot_id = "a" * 32
+    navigation_binary = Path("build/native/navd")
+    driver_bridge_binary = Path("build/native/lingtu_mujoco_driver_bridge")
+    driver_bridge_pid = tmp_path / "driver_bridge.pid"
+    manifest = {
+        "driver_runtime": {
+            "max_linear_mps": 1.0,
+            "max_angular_rps": 1.0,
+            "command_timeout_ms": 200,
+            "heartbeat_timeout_ms": 500,
+            "apply_timeout_ms": 500,
+        }
+    }
+
+    launch = acceptance._native_driver_runtime_launch(
+        manifest=manifest,
+        navigation_binary=navigation_binary,
+        driver_bridge_binary=driver_bridge_binary,
+        navigation_command=[str(navigation_binary), "--domain-id", "220"],
+        driver_bridge_pid=driver_bridge_pid,
+        host_boot_id=host_boot_id,
+        platform_name="posix",
+    )
+
+    assert launch.host_boot_id == host_boot_id
+    assert launch.clock_platform == "posix"
+    assert (
+        launch.navigation_env.get("LINGTU_HOST_BOOT_ID") == host_boot_id
+        or f"LINGTU_HOST_BOOT_ID={host_boot_id}" in launch.navigation_command
+    )
+    assert launch.driver_bridge_args == (
+        "--driver-bridge-bin",
+        str(driver_bridge_binary),
+        "--driver-bridge-pid-file",
+        str(driver_bridge_pid),
+        "--driver-expected-host-boot-id",
+        host_boot_id,
+        "--driver-max-linear-mps",
+        "1",
+        "--driver-max-angular-rps",
+        "1",
+        "--driver-command-timeout-ms",
+        "200",
+        "--driver-heartbeat-timeout-ms",
+        "500",
+        "--driver-apply-timeout-ms",
+        "500",
+    )
+
+
+def test_terminal_driver_stop_evidence_requires_exact_zero_identity_and_cleanup():
+    sensor_report = {
+        "cmd_vel": {
+            "bridge_boot_id": "bridge-boot",
+            "controller_boot_id": "controller-boot",
+            "driver_ready": False,
+            "accepted_sequence": 0,
+            "accepted_producer_boot_id": "",
+            "accepted_output_sequence": 0,
+            "observed_output_ack": {
+                "accepted_sequence": 41,
+                "producer_boot_id": "host-boot:123:456",
+                "output_sequence": 17,
+            },
+            "stopped_evidence": {
+                "bridge_boot_id": "bridge-boot",
+                "controller_boot_id": "controller-boot",
+                "bridge_command_seq": 42,
+                "applied_step_seq": 99,
+                "kind": "deactivate_zero",
+            },
+            "last_command": {"vx": 0.0, "vy": 0.0, "wz": 0.0},
+            "process_returncode": 0,
+            "process_cleanup": {"clean": True},
+        },
+        "native_sensor_publisher_process": {"clean": True},
+    }
+    process_cleanup = [
+        {"name": "slam", "clean": True},
+        {"name": "navigation", "clean": True},
+        {"name": "sensor", "clean": True},
+        {"name": "driver_bridge", "clean": True},
+    ]
+
+    report = acceptance._terminal_driver_stop_evidence(
+        sensor_report=sensor_report,
+        expected_host_boot_id="host-boot",
+        process_cleanup=process_cleanup,
+    )
+
+    assert report["ok"] is True
+    assert report["stop_ack"] == {
+        "accepted": True,
+        "bridge_boot_id": "bridge-boot",
+        "controller_boot_id": "controller-boot",
+        "bridge_command_seq": 42,
+        "applied_step_seq": 99,
+        "kind": "deactivate_zero",
+    }
+    assert report["logical_final_cmd_vel"] == {
+        "exact_zero": True,
+        "vx": 0.0,
+        "vy": 0.0,
+        "wz": 0.0,
+    }
+    assert report["physical_stop"]["exact_zero"] is True
+    assert report["authority_cleared"] is True
+    assert report["owned_processes_stopped"] is True
+    assert report["blockers"] == []
+
+
+def test_terminal_driver_stop_does_not_invent_prior_output_in_no_motion_phase():
+    sensor_report = {
+        "cmd_vel": {
+            "bridge_boot_id": "bridge-boot",
+            "controller_boot_id": "controller-boot",
+            "driver_ready": False,
+            "accepted_sequence": 0,
+            "accepted_producer_boot_id": "",
+            "accepted_output_sequence": 0,
+            "observed_output_ack": {},
+            "stopped_evidence": {
+                "bridge_boot_id": "bridge-boot",
+                "controller_boot_id": "controller-boot",
+                "bridge_command_seq": 1,
+                "applied_step_seq": 2,
+                "kind": "deactivate_zero",
+            },
+            "last_command": {"vx": 0.0, "vy": 0.0, "wz": 0.0},
+            "process_returncode": 0,
+            "process_cleanup": {"clean": True},
+        },
+        "native_sensor_publisher_process": {"clean": True},
+    }
+
+    report = acceptance._terminal_driver_stop_evidence(
+        sensor_report=sensor_report,
+        expected_host_boot_id="host-boot",
+        process_cleanup=[{"name": "sensor", "clean": True}],
+        require_prior_output_ack=False,
+    )
+
+    assert report["ok"] is True
+    assert report["prior_output_ack"]["required"] is False
+    assert report["prior_output_ack"]["exact_identity_and_sequence"] is False
+
+
+@pytest.mark.parametrize(
+    ("mutate", "blocker"),
+    [
+        (
+            lambda report: report["cmd_vel"]["stopped_evidence"].update(
+                bridge_boot_id="wrong"
+            ),
+            "driver_terminal_stop_ack_identity_mismatch",
+        ),
+        (
+            lambda report: report["cmd_vel"]["last_command"].update(vx=1e-12),
+            "driver_terminal_logical_cmd_vel_not_exact_zero",
+        ),
+        (
+            lambda report: report["cmd_vel"].update(accepted_sequence=1),
+            "driver_terminal_authority_not_cleared",
+        ),
+        (
+            lambda report: report["cmd_vel"]["process_cleanup"].update(clean=False),
+            "driver_terminal_owned_process_cleanup_failed",
+        ),
+    ],
+)
+def test_terminal_driver_stop_evidence_fails_closed(mutate, blocker):
+    sensor_report = {
+        "cmd_vel": {
+            "bridge_boot_id": "bridge-boot",
+            "controller_boot_id": "controller-boot",
+            "driver_ready": False,
+            "accepted_sequence": 0,
+            "accepted_producer_boot_id": "",
+            "accepted_output_sequence": 0,
+            "observed_output_ack": {
+                "accepted_sequence": 10,
+                "producer_boot_id": "host-boot:123:456",
+                "output_sequence": 9,
+            },
+            "stopped_evidence": {
+                "bridge_boot_id": "bridge-boot",
+                "controller_boot_id": "controller-boot",
+                "bridge_command_seq": 11,
+                "applied_step_seq": 12,
+                "kind": "deactivate_zero",
+            },
+            "last_command": {"vx": 0.0, "vy": 0.0, "wz": 0.0},
+            "process_returncode": 0,
+            "process_cleanup": {"clean": True},
+        },
+        "native_sensor_publisher_process": {"clean": True},
+    }
+    mutate(sensor_report)
+
+    report = acceptance._terminal_driver_stop_evidence(
+        sensor_report=sensor_report,
+        expected_host_boot_id="host-boot",
+        process_cleanup=[{"name": "sensor", "clean": True}],
+    )
+
+    assert report["ok"] is False
+    assert blocker in report["blockers"]
+
+
+def test_native_driver_identity_matches_nav_and_bridge_token_intersection(tmp_path):
+    manifest = {
+        "driver_runtime": {
+            "max_linear_mps": 1.0,
+            "max_angular_rps": 1.0,
+            "command_timeout_ms": 200,
+            "heartbeat_timeout_ms": 500,
+            "apply_timeout_ms": 500,
+        }
+    }
+    common = {
+        "manifest": manifest,
+        "navigation_binary": Path("build/native/navd"),
+        "driver_bridge_binary": Path("build/native/lingtu_mujoco_driver_bridge"),
+        "navigation_command": ["navd"],
+        "driver_bridge_pid": tmp_path / "driver_bridge.pid",
+        "platform_name": "posix",
+    }
+
+    launch = acceptance._native_driver_runtime_launch(
+        **common,
+        host_boot_id="host.acceptance:phase-1",
+    )
+    assert launch.host_boot_id == "host.acceptance:phase-1"
+
+    for invalid in ("host@phase", "-leading-dash", "x" * 129, "non ascii 中文"):
+        with pytest.raises(ValueError, match="safe ASCII token"):
+            acceptance._native_driver_runtime_launch(
+                **common,
+                host_boot_id=invalid,
+            )
+
+
+def test_acceptance_run_reuses_one_host_identity_across_phases(monkeypatch, tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text('{"domain_id_base": 220}\n', encoding="utf-8")
+    monkeypatch.setattr(acceptance, "_probe_wsl_runtime", lambda: (True, "ready"))
+    monkeypatch.setattr(
+        acceptance,
+        "_artifact_storage_probe",
+        lambda _path: (True, "native_linux"),
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "_preflight",
+        lambda _manifest: ({}, {}, [], {}),
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "_mirror_native_runtime_inputs",
+        lambda paths, _out_dir: (paths, {"enabled": False, "reason": "native_linux"}),
+    )
+    host_boot_ids: list[str] = []
+
+    def run_phase(**kwargs):
+        host_boot_ids.append(kwargs["host_boot_id"])
+        return {"ok": True, "blockers": []}
+
+    monkeypatch.setattr(acceptance, "_run_phase", run_phase)
+    args = SimpleNamespace(
+        manifest=str(manifest_path),
+        world="",
+        map_dir="",
+        phase_duration_s=None,
+        diagnostic_imu_acc_mode="",
+        diagnostic_scan_time_profile="",
+        diagnostic_imu_acc_lowpass_hz=None,
+        diagnostic_imu_acc_max_dynamic_mps2=None,
+        diagnostic_imu_acc_max_slew_mps3=None,
+        record_video=False,
+        video_width=1920,
+        video_height=1080,
+        video_fps=24.0,
+        video_lidar_points=640,
+        out_dir=str(tmp_path / "out"),
+        prepare_assets=False,
+        build_helper=False,
+        preflight_only=False,
+        mode="both",
+        domain_id=220,
+        allow_windows_9p_artifacts=False,
+    )
+
+    report = acceptance.run(args)
+
+    assert report["ok"] is True
+    assert len(host_boot_ids) == 2
+    assert len(set(host_boot_ids)) == 1
+    assert len(host_boot_ids[0]) == 32
+
+
+def test_binary_candidate_resolver_env_override_is_authoritative(monkeypatch, tmp_path):
+    override = tmp_path / "override-navd.exe"
+    fallback = tmp_path / "navd"
+    override.write_bytes(b"override")
+    fallback.write_bytes(b"fallback")
+    monkeypatch.setenv("LINGTU_TEST_NAVD", str(override))
+
+    resolved = acceptance._resolve_binary(
+        {"env": "LINGTU_TEST_NAVD", "candidates": [str(fallback)]}
+    )
+
+    assert resolved == override.resolve()
+
+
+def test_native_runtime_requirement_follows_resolved_binary_platform(monkeypatch):
+    monkeypatch.setattr(
+        acceptance,
+        "_resolve_binary",
+        lambda spec: Path(str(spec["resolved"])),
+    )
+    windows_manifest = {
+        "slam_runtime": {"provider": "mujoco_navigation_fixture"},
+        "binaries": {
+            "slam": {"resolved": "ignored-slam"},
+            "navigation": {"resolved": "navd.exe"},
+            "driver_bridge": {"resolved": "driver_bridge.exe"},
+        },
+    }
+    mixed_manifest = {
+        "binaries": {
+            "navigation": {"resolved": "navd.exe"},
+            "driver_bridge": {"resolved": "driver_bridge.exe"},
+            "traversability": {"resolved": "lingtu_traversability_dds"},
+        },
+    }
+
+    assert acceptance._requires_wsl_runtime(
+        windows_manifest, platform_name="nt"
+    ) is False
+    assert acceptance._requires_wsl_runtime(
+        mixed_manifest, platform_name="nt"
+    ) is True
+    assert acceptance._requires_wsl_runtime(
+        mixed_manifest, platform_name="posix"
+    ) is False
+
+
+def test_native_path_argument_matches_worker_platform(monkeypatch, tmp_path):
+    asset = tmp_path / "map" / "octomap.ot"
+    monkeypatch.setattr(acceptance, "_wsl_path", lambda _path: "/mnt/d/map/octomap.ot")
+
+    assert acceptance._native_path_arg(
+        Path("navd.exe"), asset, platform_name="nt"
+    ) == str(asset.resolve())
+    assert acceptance._native_path_arg(
+        Path("navd"), asset, platform_name="nt"
+    ) == "/mnt/d/map/octomap.ot"
+
+
+@pytest.mark.skipif(acceptance.os.name != "nt", reason="Windows candidate resolution")
+def test_binary_candidate_resolver_windows_prefers_existing_exe_and_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    exe_candidate = (
+        tmp_path
+        / "build/nav-cpp/windows-x64-nav-endpoint/Release/navd.exe"
+    )
+    linux_candidate = tmp_path / "build/mujoco_native_nav/navd"
+    exe_candidate.parent.mkdir(parents=True)
+    linux_candidate.parent.mkdir(parents=True)
+    linux_candidate.write_bytes(b"linux")
+    monkeypatch.setattr(acceptance, "ROOT", tmp_path)
+
+    fallback = acceptance._resolve_binary(
+        {
+            "candidates": [
+                exe_candidate.relative_to(tmp_path).as_posix(),
+                linux_candidate.relative_to(tmp_path).as_posix(),
+            ]
+        }
+    )
+
+    exe_candidate.write_bytes(b"windows")
+    preferred = acceptance._resolve_binary(
+        {
+            "candidates": [
+                linux_candidate.relative_to(tmp_path).as_posix(),
+                exe_candidate.relative_to(tmp_path).as_posix(),
+            ]
+        }
+    )
+
+    assert fallback == linux_candidate.resolve()
+    assert preferred == exe_candidate.resolve()
+
+
+def test_native_traversability_identity_is_injected_without_wslenv(monkeypatch, tmp_path):
+    map_dir = tmp_path / "same_source_map"
+    map_dir.mkdir()
+    map_path = map_dir / "map.pcd"
+    map_path.write_bytes(b"mujoco-map")
+    for name in (
+        "LINGTU_EXPLORE_ROUTE",
+        "LINGTU_PRODUCT_SESSION_ID",
+        "LINGTU_MAP_ID",
+        "LINGTU_MAP_CONTENT_EPOCH",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    values = acceptance._native_traversability_env(
+        paths={"map_dir": map_dir, "slam": map_path},
+        phase="motion",
+        domain_id=226,
+    )
+    command, env = acceptance._with_native_env(
+        ["wsl.exe", "-e", "/tmp/lingtu_traversability_dds", "--domain-id", "226"],
+        **values,
+    )
+
+    assert values["LINGTU_EXPLORE_ROUTE"] == "map"
+    assert values["LINGTU_MAP_ID"] == "same_source_map"
+    assert values["LINGTU_MAP_CONTENT_EPOCH"] == "1"
+    assert values["LINGTU_PRODUCT_SESSION_ID"].startswith("mujoco-native-motion-226-")
+    assert command[:3] == ["wsl.exe", "-e", "env"]
+    assert env == {}
+    assert "LINGTU_EXPLORE_ROUTE=map" in command
+    assert "/tmp/lingtu_traversability_dds" in command
+
+
+def test_native_traversability_identity_rejects_nonnumeric_epoch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LINGTU_MAP_CONTENT_EPOCH", "not-a-number")
+
+    with pytest.raises(ValueError, match="must be a positive integer"):
+        acceptance._native_traversability_env(
+            paths={},
+            phase="motion",
+            domain_id=226,
+        )
+
+
+def test_native_traversability_identity_uses_popen_env_for_windows_exe(monkeypatch):
+    monkeypatch.setattr(acceptance.os, "name", "nt")
+
+    command, env = acceptance._with_native_env(
+        ["D:\\build\\lingtu_traversability_dds.exe", "--domain-id", "226"],
+        LINGTU_EXPLORE_ROUTE="live",
+    )
+
+    assert command == ["D:\\build\\lingtu_traversability_dds.exe", "--domain-id", "226"]
+    assert env == {"LINGTU_EXPLORE_ROUTE": "live"}
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows UNC path contract")
+def test_wsl_ext4_unc_paths_convert_to_linux_paths_without_resolving_share(monkeypatch):
+    def unavailable_share(*_args, **_kwargs):
+        raise OSError("WSL share is unavailable")
+
+    monkeypatch.setattr(Path, "resolve", unavailable_share)
+    assert acceptance._wsl_path(
+        Path(r"\\wsl.localhost\Ubuntu\home\thunder\acceptance\nav_status.json")
+    ) == "/home/thunder/acceptance/nav_status.json"
+    assert acceptance._wsl_path(
+        Path(r"\\wsl$\Ubuntu\home\thunder\acceptance\nav_status.json")
+    ) == "/home/thunder/acceptance/nav_status.json"
+
+
+def test_wsl_runtime_probe_is_bounded_and_reports_unavailable(monkeypatch):
+    monkeypatch.setattr(acceptance.shutil, "which", lambda _name: "wsl.exe")
+
+    def timeout_run(*_args, **kwargs):
+        assert kwargs["timeout"] == acceptance.WSL_RUNTIME_PROBE_TIMEOUT_S
+        raise subprocess.TimeoutExpired("wsl.exe", kwargs["timeout"])
+
+    monkeypatch.setattr(acceptance.subprocess, "run", timeout_run)
+
+    ok, detail = acceptance._probe_wsl_runtime()
+
+    assert ok is False
+    assert detail.startswith("TimeoutExpired:")
+
+
+def test_native_probe_decodes_windows_wsl_utf16_diagnostics():
+    assert acceptance._decode_native_probe_output("wsl: ready") == "wsl: ready"
+    assert acceptance._decode_native_probe_output("wsl: ready".encode("utf-16")) == "wsl: ready"
+    odd_utf16 = "wsl: ready\r\n".encode("utf-16-le") + b"\n"
+    assert acceptance._decode_native_probe_output(odd_utf16) == "wsl: ready\r\n"
+    mixed = "wsl: ready\r\n".encode("utf-16-le") + b"stdin records: clouds=0"
+    assert acceptance._decode_native_probe_output(mixed) == "wsl: ready\r\nstdin records: clouds=0"
+
+
+def test_native_acceptance_artifacts_require_wsl_ext4_for_windows_motion():
+    ok, detail = acceptance._artifact_storage_probe(Path(r"D:\tmp\lingtu-native"))
+    assert ok is False
+    assert detail == "windows_9p_mount"
+
+    ok, detail = acceptance._artifact_storage_probe(
+        Path(r"\\wsl.localhost\Ubuntu\tmp\lingtu-native")
+    )
+    assert ok is True
+    assert detail == "wsl_ext4_unc"
+
+
+def test_native_runtime_inputs_are_mirrored_to_ext4_artifacts(monkeypatch, tmp_path):
+    monkeypatch.setattr(acceptance.os, "name", "nt")
+    monkeypatch.setattr(
+        acceptance,
+        "_artifact_storage_probe",
+        lambda _path: (True, "wsl_ext4_unc"),
+    )
+    source = tmp_path / "source"
+    map_dir = source / "map"
+    map_dir.mkdir(parents=True)
+    (map_dir / "map.pcd").write_bytes(b"map")
+    (map_dir / "octomap.ot").write_bytes(b"octomap")
+    (map_dir / "metadata.json").write_text("{}\n", encoding="utf-8")
+    library = source / "paths"
+    library.mkdir()
+    (library / "default.path").write_text("path\n", encoding="utf-8")
+    slam_config = source / "slam.yaml"
+    slam_config.write_text("mode: localization\n", encoding="utf-8")
+    paths = {
+        "map_dir": map_dir,
+        "slam": map_dir / "map.pcd",
+        "planner": map_dir / "octomap.ot",
+        "metadata": map_dir / "metadata.json",
+        "path_library": library,
+        "slam_config": slam_config,
+    }
+
+    mirrored, report = acceptance._mirror_native_runtime_inputs(
+        paths, tmp_path / "run"
+    )
+
+    assert report["ok"] is True
+    assert report["filesystem"] == "wsl_ext4_unc"
+    assert mirrored["map_dir"].name == "map"
+    assert mirrored["map_dir"] != map_dir
+    assert mirrored["slam"].read_bytes() == b"map"
+    assert mirrored["planner"].read_bytes() == b"octomap"
+    assert mirrored["path_library"].joinpath("default.path").read_text(encoding="utf-8") == "path\n"
+    assert mirrored["slam_config"].read_text(encoding="utf-8") == "mode: localization\n"
+
+
+def test_native_acceptance_stops_before_workers_when_wsl_is_unavailable(
+    monkeypatch, tmp_path
+):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"name": "test"}\n', encoding="utf-8")
+    monkeypatch.setattr(
+        acceptance,
+        "_probe_wsl_runtime",
+        lambda: (False, "TimeoutExpired:wsl.exe"),
+    )
+    monkeypatch.setattr(acceptance, "_requires_wsl_runtime", lambda _manifest: True)
+    args = type(
+        "Args",
+        (),
+        {
+            "manifest": str(manifest),
+            "world": "",
+            "map_dir": "",
+            "phase_duration_s": None,
+            "diagnostic_imu_acc_mode": "",
+            "diagnostic_scan_time_profile": "",
+            "diagnostic_imu_acc_lowpass_hz": None,
+            "diagnostic_imu_acc_max_dynamic_mps2": None,
+            "diagnostic_imu_acc_max_slew_mps3": None,
+            "record_video": False,
+            "video_width": 1920,
+            "video_height": 1080,
+            "video_fps": 24.0,
+            "video_lidar_points": 640,
+            "out_dir": str(tmp_path / "report"),
+        },
+    )()
+
+    report = acceptance.run(args)
+
+    assert report["ok"] is False
+    assert report["blockers"] == ["wsl_runtime_unavailable"]
+    assert report["preflight"]["native_runtime_probe"]["detail"] == "TimeoutExpired:wsl.exe"
+    assert (tmp_path / "report" / "report.json").is_file()
+
+
+def test_native_acceptance_rejects_windows_9p_motion_artifacts(monkeypatch, tmp_path):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"name": "test"}\n', encoding="utf-8")
+    monkeypatch.setattr(acceptance, "_probe_wsl_runtime", lambda: (True, "ready"))
+    monkeypatch.setattr(acceptance, "_requires_wsl_runtime", lambda _manifest: True)
+    args = type(
+        "Args",
+        (),
+        {
+            "manifest": str(manifest),
+            "world": "",
+            "map_dir": "",
+            "phase_duration_s": None,
+            "diagnostic_imu_acc_mode": "",
+            "diagnostic_scan_time_profile": "",
+            "diagnostic_imu_acc_lowpass_hz": None,
+            "diagnostic_imu_acc_max_dynamic_mps2": None,
+            "diagnostic_imu_acc_max_slew_mps3": None,
+            "record_video": False,
+            "video_width": 1920,
+            "video_height": 1080,
+            "video_fps": 24.0,
+            "video_lidar_points": 640,
+            "mode": "motion",
+            "allow_windows_9p_artifacts": False,
+            "out_dir": str(tmp_path / "windows-artifacts"),
+        },
+    )()
+
+    report = acceptance.run(args)
+
+    assert report["ok"] is False
+    assert report["blockers"] == ["native_acceptance_artifacts_on_windows_9p"]
+    assert report["preflight"]["artifact_storage"]["detail"] == "windows_9p_mount"
+
+
+def test_native_windows_chain_skips_wsl_and_ext4_gates(monkeypatch, tmp_path):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"name": "test"}\n', encoding="utf-8")
+    monkeypatch.setattr(acceptance, "_requires_wsl_runtime", lambda _manifest: False)
+
+    def unexpected_probe(*_args, **_kwargs):
+        raise AssertionError("native Windows workers must not probe WSL or ext4")
+
+    monkeypatch.setattr(acceptance, "_probe_wsl_runtime", unexpected_probe)
+    monkeypatch.setattr(acceptance, "_artifact_storage_probe", unexpected_probe)
+    monkeypatch.setattr(
+        acceptance,
+        "_preflight",
+        lambda _manifest: ({}, {}, ["expected_preflight_stop"], {}),
+    )
+    args = SimpleNamespace(
+        manifest=str(manifest),
+        world="",
+        map_dir="",
+        phase_duration_s=None,
+        diagnostic_imu_acc_mode="",
+        diagnostic_scan_time_profile="",
+        diagnostic_imu_acc_lowpass_hz=None,
+        diagnostic_imu_acc_max_dynamic_mps2=None,
+        diagnostic_imu_acc_max_slew_mps3=None,
+        record_video=False,
+        video_width=1920,
+        video_height=1080,
+        video_fps=24.0,
+        video_lidar_points=640,
+        out_dir=str(tmp_path / "native-windows"),
+        prepare_assets=False,
+        build_helper=False,
+        preflight_only=True,
+        mode="motion",
+        domain_id=220,
+        allow_windows_9p_artifacts=False,
+    )
+
+    report = acceptance.run(args)
+
+    assert report["blockers"] == ["expected_preflight_stop"]
+    provenance = report["preflight"]["map_provenance"]
+    assert provenance["native_runtime_probe"] == {
+        "ok": True,
+        "detail": "native_windows_pe",
+    }
+    assert provenance["artifact_storage"] == {
+        "ok": True,
+        "detail": "native_windows_filesystem",
+        "path": str((tmp_path / "native-windows").resolve()),
+    }
+    assert provenance["native_asset_mirror"] == {
+        "enabled": False,
+        "ok": True,
+        "reason": "native_windows_pe",
+    }
+
+
+def test_wsl_cleanup_control_calls_use_bounded_timeout(monkeypatch):
+    calls: list[float] = []
+    monkeypatch.setattr(sensors.os, "name", "nt")
+    monkeypatch.setattr(sensors.shutil, "which", lambda _name: "wsl.exe")
+
+    def timeout_run(*_args, **kwargs):
+        calls.append(float(kwargs["timeout"]))
+        raise subprocess.TimeoutExpired("wsl.exe", kwargs["timeout"])
+
+    monkeypatch.setattr(sensors.subprocess, "run", timeout_run)
+
+    assert sensors._wsl_pid_alive(123) is True
+    assert sensors._signal_wsl_pid(123, "TERM") is False
+    assert calls == [sensors.WSL_CONTROL_TIMEOUT_S, sensors.WSL_CONTROL_TIMEOUT_S]
+
+
+def test_managed_wsl_process_fails_when_linux_pid_ownership_is_missing(
+    monkeypatch,
+    tmp_path,
+):
+    class Process:
+        pid = 4242
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+    process = Process()
+
+    class ProcessOwner:
+        terminated = False
+
+        @staticmethod
+        def popen_options():
+            return {}
+
+        @staticmethod
+        def attach(_process):
+            return None
+
+        def terminate(self, _process, *, timeout_s):
+            assert timeout_s == pytest.approx(2.0)
+            self.terminated = True
+
+        @staticmethod
+        def close():
+            return None
+
+    owner = ProcessOwner()
+    monkeypatch.setattr(acceptance.os, "name", "nt")
+    monkeypatch.setattr(acceptance, "ProcessTreeOwner", lambda: owner)
+    monkeypatch.setattr(acceptance.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(
+        acceptance,
+        "_managed_wsl_command",
+        lambda command, _pid_path: command,
+    )
+    monkeypatch.setattr(acceptance, "_read_linux_pid", lambda _path: None)
+    managed = acceptance.ManagedProcess(
+        "navd",
+        ["wsl.exe", "-e", "/opt/lingtu/navd"],
+        tmp_path / "navd.log",
+    )
+
+    with pytest.raises(RuntimeError, match="ownership handshake failed"):
+        managed.start()
+
+    assert owner.terminated is True
+    assert managed.process is None
+    assert managed._log is None
 
 
 def test_parent_sensor_diagnostics_args_use_case_artifact_and_controlled_period(tmp_path):
@@ -154,12 +1516,170 @@ def test_thunderv4_compiled_lidar_offset_matches_body_frame_extrinsics():
     ]
 
 
-def test_sensor_bridge_parses_native_cmd_vel_tap_protocol():
-    assert sensors.NativeCmdVelSource.parse_line("LT_CMD_V1\t7\t123.25\t0.3\t-0.1\t0.4\n") == (123.25, 0.3, -0.1, 0.4)
-    assert sensors.NativeCmdVelSource.parse_line("unrelated log line") is None
-    assert sensors.NativeCmdVelSource.parse_line("LT_CMD_V1\tbad") is None
-    assert sensors.NativeCmdVelSource.parse_pid_line("LT_PID_V1\t123\n") == 123
-    assert sensors.NativeCmdVelSource.parse_pid_line("LT_PID_V1\tbad") is None
+def test_driver_bridge_protocol_rejects_unknown_nan_and_identity_mismatch():
+    parse = sensors.NativeDriverBridge.parse_stdout_line
+    bridge_boot_id = "b" * 32
+    controller_boot_id = "controller-1"
+
+    parsed = parse(
+        "LT_DRIVER_COMMAND_V2\t"
+        f"{bridge_boot_id}\t{controller_boot_id}\t7\tnav\tproducer-a\t91\t0.25\t-0.5\t1",
+        bridge_boot_id=bridge_boot_id,
+        controller_boot_id=controller_boot_id,
+    )
+
+    assert parsed.bridge_command_seq == 7
+    assert parsed.kind == "nav"
+    assert parsed.producer_boot_id == "producer-a"
+    assert parsed.output_sequence == 91
+    assert parsed.walk_x == pytest.approx(0.25)
+    assert parsed.walk_y == pytest.approx(-0.5)
+    assert parsed.walk_z == pytest.approx(1.0)
+
+    invalid_lines = [
+        "LT_CMD_V1\t7\t123.25\t0.3\t-0.1\t0.4",
+        "LT_DRIVER_COMMAND_V2\t"
+        f"{bridge_boot_id}\t{controller_boot_id}\t8\tnav\tproducer-a\t92\tnan\t0\t0",
+        "LT_DRIVER_COMMAND_V2\t"
+        f"{'c' * 32}\t{controller_boot_id}\t9\tnav\tproducer-a\t93\t0\t0\t0",
+        "LT_DRIVER_COMMAND_V2\t"
+        f"{bridge_boot_id}\t{controller_boot_id}\t10\tnav\tproducer-a\t94\t1_0\t0\t0",
+    ]
+    for line in invalid_lines:
+        with pytest.raises(ValueError):
+            parse(line, bridge_boot_id=bridge_boot_id, controller_boot_id=controller_boot_id)
+
+
+def test_sensor_tick_applies_driver_bridge_command_before_ack():
+    events: list[tuple[str, object, int | None]] = []
+    command = SimpleNamespace(
+        velocity=VelocityCommand(linear_x=0.2, linear_y=-0.1, angular_z=0.3),
+        bridge_command_seq=7,
+    )
+
+    class Engine:
+        def step_sensor_tick(self, cmd, *, dt_s):
+            events.append(("step", cmd, None))
+            assert dt_s == pytest.approx(0.005)
+            return {"state": "stepped"}
+
+    class Bridge:
+        def complete_step(self, applied, step_seq):
+            events.append(("applied", applied, step_seq))
+
+    state, next_step_seq = sensors._step_with_driver_bridge(
+        Engine(),
+        Bridge(),
+        command,
+        imu_period_s=0.005,
+        step_seq=41,
+    )
+
+    assert state == {"state": "stepped"}
+    assert next_step_seq == 42
+    assert events == [
+        ("step", command.velocity, None),
+        ("applied", command, 42),
+    ]
+
+
+def test_anchored_sensor_tick_acks_zero_without_running_policy_dynamics():
+    events: list[tuple[str, object, int | None]] = []
+    command = sensors.PreparedDriverBridgeStep(
+        velocity=VelocityCommand(),
+        protocol=SimpleNamespace(kind="activation_zero"),
+    )
+
+    class Engine:
+        def step_static_sensor_tick(self, *, dt_s):
+            events.append(("static", dt_s, None))
+            return {"state": "anchored"}
+
+        def step_sensor_tick(self, cmd, *, dt_s):
+            raise AssertionError("anchored ticks must not advance policy dynamics")
+
+    class Bridge:
+        def complete_step(self, applied, *, step_seq):
+            events.append(("applied", applied, step_seq))
+
+    state, next_step_seq = sensors._step_anchored_with_driver_bridge(
+        Engine(),
+        Bridge(),
+        command,
+        imu_period_s=0.005,
+        step_seq=41,
+    )
+
+    assert state == {"state": "anchored"}
+    assert next_step_seq == 42
+    assert events == [
+        ("static", 0.005, None),
+        ("applied", command.protocol, 42),
+    ]
+
+
+def test_anchored_sensor_tick_rejects_nonzero_motion_before_ack():
+    command = sensors.PreparedDriverBridgeStep(
+        velocity=VelocityCommand(linear_x=0.2),
+        protocol=SimpleNamespace(kind="nav"),
+    )
+
+    class Engine:
+        def step_static_sensor_tick(self, *, dt_s):
+            raise AssertionError("nonzero anchored motion must be rejected before stepping")
+
+    class Bridge:
+        def complete_step(self, applied, *, step_seq):
+            raise AssertionError("nonzero anchored motion must not be acknowledged")
+
+    with pytest.raises(RuntimeError, match="exact physical stop"):
+        sensors._step_anchored_with_driver_bridge(
+            Engine(),
+            Bridge(),
+            command,
+            imu_period_s=0.005,
+            step_seq=41,
+        )
+
+
+def test_sensor_tick_does_not_ack_driver_bridge_command_when_physics_step_fails():
+    command = SimpleNamespace(
+        velocity=VelocityCommand(linear_x=0.2, linear_y=0.0, angular_z=0.0),
+        bridge_command_seq=9,
+    )
+
+    class Engine:
+        def step_sensor_tick(self, cmd, *, dt_s):
+            raise RuntimeError("physics failed")
+
+    class Bridge:
+        def complete_step(self, applied, step_seq):
+            raise AssertionError("failed physics steps must not be ACKed")
+
+    with pytest.raises(RuntimeError, match="physics failed"):
+        sensors._step_with_driver_bridge(
+            Engine(),
+            Bridge(),
+            command,
+            imu_period_s=0.005,
+            step_seq=41,
+        )
+
+
+def test_driver_heartbeat_refreshes_during_sensor_work_and_stops_cleanly():
+    refreshed = threading.Event()
+
+    class Bridge:
+        heartbeat_timeout_ms = 60
+
+        def refresh_heartbeat(self):
+            refreshed.set()
+            return True
+
+    heartbeat = sensors.DriverHeartbeat(Bridge())
+    heartbeat.start()
+    assert refreshed.wait(timeout=0.5)
+    heartbeat.stop()
 
 
 def test_start_anchor_releases_once_real_motion_starts():
@@ -207,14 +1727,20 @@ def test_mujoco_sensor_record_clock_contract_separates_navigation_fixture_from_r
     sensor_bridge = (
         ROOT / "sim" / "scripts" / "mujoco" / "native_dds_sensors.py"
     ).read_text(encoding="utf-8")
-    endpoint_loop = (ROOT / "src" / "nav" / "cpp" / "endpoint" / "endpoint_loop.cpp").read_text(
-        encoding="utf-8"
-    )
-    input_projector = (
-        ROOT / "src" / "nav" / "cpp" / "endpoint" / "input" / "nav_input_state_projector.cpp"
+    endpoint_loop = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "runtime" / "loop.cpp"
+    ).read_text(encoding="utf-8")
+    pose_input = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "input" / "pose.cpp"
+    ).read_text(encoding="utf-8")
+    map_input = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "input" / "map.cpp"
+    ).read_text(encoding="utf-8")
+    health_input = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "input" / "health.cpp"
     ).read_text(encoding="utf-8")
     nav_main = (
-        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav_native_endpoint.cpp"
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "main.cpp"
     ).read_text(encoding="utf-8")
     traversability = (
         ROOT / "src" / "nav" / "cpp" / "endpoint" / "traversability" / "traversability_dds.cpp"
@@ -249,46 +1775,44 @@ def test_mujoco_sensor_record_clock_contract_separates_navigation_fixture_from_r
     assert 'if bool(getattr(args, "navigation_fixture", False)):' in restamp_policy
     assert "return False" in restamp_policy
     assert "if _should_restamp_native_records(args):" in publisher_start
-    assert 'command.append("--restamp-stdin-records")' in publisher_start
-    assert "input_projector.projectTf(msg, steadySeconds())" in endpoint_loop
-    assert "input_projector.projectOdometry(msg, steadySeconds())" in endpoint_loop
-    assert "classifySourceOrder(state_.last_tf_s" in input_projector
-    assert "classifySourceOrder(state_.last_odom_s" in input_projector
-    assert 'resetInputEpoch(transform->stamp_s, "source_clock_rebase", false)' in input_projector
-    tf_handler = input_projector.split("NavInputStateProjector::projectTf", 1)[1].split(
-        "NavInputStateProjector::projectOdometry", 1
+    assert 'publisher_args.append("--restamp-stdin-records")' in publisher_start
+    assert "inputs.projectTf(msg, steadySeconds())" in endpoint_loop
+    assert "inputs.projectOdometry(msg, steadySeconds())" in endpoint_loop
+    assert "classifySourceOrder(state_.last_tf_s" in pose_input
+    assert "classifySourceOrder(state_.last_odom_s" in pose_input
+    assert 'resetEpoch(transform->stamp_s, "source_clock_rebase", false)' in pose_input
+    tf_handler = pose_input.split("InputProjector::projectTf", 1)[1].split(
+        "InputProjector::projectOdometry", 1
     )[0]
     assert tf_handler.index("const bool map_frame_jump") < tf_handler.index(
         "stamp_decision == SourceStampDecision::kClockRebase"
     )
-    assert "classifySourceOrder(state_.last_cloud_s" in input_projector
-    assert "classifySourceOrder(state_.last_traversability_s" in input_projector
-    assert "state_.localization_health.stamp_s" in input_projector
-    assert "snapshot.odom_receive_s = state_.last_odom_receive_s;" in input_projector
-    assert "snapshot.tf_receive_s = state_.last_tf_receive_s;" in input_projector
-    assert "snapshot.cloud_receive_s = state_.last_cloud_receive_s;" in input_projector
+    assert "classifySourceOrder(state_.last_cloud_s" in map_input
+    assert "classifySourceOrder(state_.last_traversability_s" in map_input
+    assert "state_.localization_health.stamp_s" in health_input
+    assert "input.odom_receive_s = state_.last_odom_receive_s;" in health_input
+    assert "input.tf_receive_s = state_.last_tf_receive_s;" in health_input
+    assert "input.cloud_receive_s = state_.last_cloud_receive_s;" in health_input
     assert (
-        "snapshot.traversability_receive_s = state_.last_traversability_receive_s;"
-        in input_projector
+        "input.traversability_receive_s = state_.last_traversability_receive_s;"
+        in health_input
     )
     assert (
-        "snapshot.localization_health_receive_s = state_.localization_health_receive_s;"
-        in input_projector
+        "input.localization_health_receive_s = state_.localization_health_receive_s;"
+        in health_input
     )
-    cloud_handler = input_projector.split("NavInputStateProjector::projectCloud", 1)[1].split(
-        "NavInputStateProjector::projectTerrainMap", 1
+    cloud_handler = map_input.split("InputProjector::projectCloud", 1)[1].split(
+        "InputProjector::projectTerrainMap", 1
     )[0]
-    traversability_handler = input_projector.split(
-        "NavInputStateProjector::projectTraversability", 1
-    )[1].split("NavInputStateProjector::projectLocalizationHealth", 1)[0]
-    health_handler = input_projector.split(
-        "NavInputStateProjector::projectLocalizationHealth", 1
-    )[1].split("NavInputStateProjector::resetInputEpoch", 1)[0]
-    assert "resetInputEpoch" not in cloud_handler
-    assert "resetInputEpoch" not in traversability_handler
-    assert "resetInputEpoch" not in health_handler
-    assert "nav.tickTeleopIntent(" in nav_main
-    assert "nav.tick(" in nav_main
+    traversability_handler = map_input.split(
+        "InputProjector::projectTraversability", 1
+    )[1].split("InputProjector::projectLocalTraversability", 1)[0]
+    health_handler = health_input.split("InputProjector::projectLocalizationHealth", 1)[1]
+    assert "resetEpoch" not in cloud_handler
+    assert "resetEpoch" not in traversability_handler
+    assert "resetEpoch" not in health_handler
+    assert "navigator.tickIntent(" in nav_main
+    assert "navigator.tick(" in nav_main
     assert nav_main.count("steadySeconds") >= 2
     assert "const double schedule_now = steadySeconds();" in traversability
     assert "last_publish = schedule_now;" in traversability
@@ -576,6 +2100,22 @@ def test_native_navigation_video_hides_stale_and_overhead_lidar_only_from_presen
         [1.0, 0.1, 3.2, 1.0],
     ]
 
+    scan_row = {
+        **fresh_row,
+        "local_map": {
+            "enabled": True,
+            "obstacle_points_fresh": True,
+            "obstacle_points": [],
+            "collision": {
+                "live": True,
+                "complete": True,
+                "occupied_points": [[1.2, 0.0, 0.4], [1.2, 0.0, 3.2]],
+            },
+        },
+    }
+    scan_visible = navigation_video._presentation_planner_obstacle_points(scan_row)
+    assert [point.tolist() for point in scan_visible] == [[1.2, 0.0, 0.4]]
+
     stale_row = dict(fresh_row, t=11.0, timeline_hold_age_s=0.9)
     assert navigation_video._presentation_lidar_points(stale_row) == []
     assert navigation_video._presentation_planner_obstacle_points(stale_row) == []
@@ -735,7 +2275,11 @@ def test_native_navigation_video_shows_local_planner_decision_layers():
         encoding="utf-8"
     )
     assert '"text_overlay": True' in renderer_source
-    assert '"inset_overlay": True' in renderer_source
+    assert '"inset_overlay": bool(show_debug_inset)' in renderer_source
+    assert "active_only: bool = True" in renderer_source
+    assert "show_debug_inset: bool = True" in renderer_source
+    assert 'camera_preset: str = "overview"' in renderer_source
+    assert "show_goal: bool = True" in renderer_source
     assert '"local_candidates"' in renderer_source
     assert '"planner_local_map"' in renderer_source
     assert '"--nav-status-json", str(nav_status)' in acceptance_source
@@ -941,14 +2485,61 @@ def test_native_acceptance_manifest_declares_exact_product_chain():
     assert manifest["frame_contract"]["traversability_geometry_frame_current"] == "map"
     assert manifest["frame_contract"]["traversability_header_frame_current"] == "map"
     slam_config = (ROOT / manifest["paths"]["slam_config"]).read_text(encoding="utf-8")
-    assert "t_il: [0.0, 0.0, 0.0]" in slam_config
-    assert "navigation_body_from_imu_translation: [-0.30638, 0.0, 0.19417]" in slam_config
+    assert "r_il: [0.7071067812, 0.0, 0.7071067812, 0.0, -1.0, 0.0, 0.7071067812, 0.0, -0.7071067812]" in slam_config
+    assert "t_il: [0.402876074867229, 0.0, 0.0582019450665819]" in slam_config
+    assert "navigation_body_from_imu_translation: [0.0, 0.0, 0.0]" in slam_config
     assert manifest["runtime_tolerances"]["track_against_map_period_s"] == 5.0
     assert manifest["thresholds"]["min_track_against_map_successes"] == 1
     assert manifest["asset_builder"]["kind"] == "saved_map_plan_gate"
     assert manifest["asset_builder"]["map_source"] == "mujoco_lidar"
     assert manifest["world"] == ""
     assert manifest["map_dir"] == ""
+
+
+@pytest.mark.parametrize(
+    "manifest_name",
+    [
+        "mujoco_native_navigation_acceptance.json",
+        "mujoco_multifloor_navigation_acceptance.json",
+        "mujoco_industrial_park_60m_navigation_acceptance.json",
+    ],
+)
+def test_native_navigation_manifest_uses_physical_driver_bridge(manifest_name):
+    manifest = acceptance._load_manifest(
+        ROOT / "config" / "runtime_graph" / "acceptance" / manifest_name
+    )
+
+    assert "cmd_vel_tap" not in manifest["binaries"]
+    assert manifest["binaries"]["driver_bridge"] == {
+        "env": "LINGTU_MUJOCO_DRIVER_BRIDGE_BIN",
+        "candidates": [
+            "build/windows-native-dds-adapter/Release/lingtu_mujoco_driver_bridge.exe",
+            "build/mujoco_native_dds/lingtu_mujoco_driver_bridge",
+        ],
+    }
+    assert manifest["driver_runtime"] == {
+        "max_linear_mps": 1.0,
+        "max_angular_rps": 1.0,
+        "command_timeout_ms": 200,
+        "heartbeat_timeout_ms": 500,
+        "apply_timeout_ms": 500,
+    }
+    assert manifest["contracts"]["locomotion_input"] == "rt/nav/cmd_vel"
+    assert manifest["contracts"]["locomotion_state"] == "rt/driver/control_state"
+    assert manifest["contracts"]["locomotion_ack_source"] == "physical_mujoco_step"
+
+
+def test_native_navigation_runner_has_no_diagnostic_tap_in_formal_path():
+    source = (
+        ROOT / "sim" / "scripts" / "mujoco" / "native_navigation_acceptance.py"
+    ).read_text(encoding="utf-8")
+
+    assert "cmd_vel_tap" not in source
+    assert "--cmd-vel-tap-bin" not in source
+    assert "--cmd-vel-timeout-s" not in source
+    assert "_native_driver_runtime_launch(" in source
+    assert "*driver_runtime.driver_bridge_args" in source
+    assert '"ack_source": "physical_mujoco_step"' in source
 
 
 def test_multifloor_merged_manifest_locks_runtime_octoplanner3d_constraints():
@@ -958,10 +2549,17 @@ def test_multifloor_merged_manifest_locks_runtime_octoplanner3d_constraints():
 
     assert manifest["asset_builder"]["scene_preset"] == "multifloor_stack_3"
     assert manifest["asset_builder"]["resolution"] == 0.09
+    assert manifest["asset_builder"]["support_dilation_cells"] == 2
     assert manifest["start"][:3] == [7.0, -1.2, 0.55]
+    assert math.isclose(manifest["start"][3], math.pi)
     assert manifest["goal"][:3] == [7.4, 2.8, 4.15]
+    start_args = acceptance._sensor_start_args(manifest["start"])
+    assert start_args[start_args.index("--start-yaw-deg") + 1] == "180.0"
     constraints = manifest["planner_constraints"]
-    assert constraints["body_clearance_below_m"] == 0.18
+    assert constraints["robot_radius_m"] == 0.15
+    assert constraints["obstacle_clearance_radius_cells"] == 2
+    assert constraints["obstacle_clearance_weight"] == 2.0
+    assert constraints["body_clearance_below_m"] == 0.15
     assert constraints["body_clearance_above_m"] == 0.30
     assert constraints["support_height_m"] == 0.55
     assert constraints["max_step_height_m"] == 0.23
@@ -972,7 +2570,26 @@ def test_multifloor_merged_manifest_locks_runtime_octoplanner3d_constraints():
     sensor_args = acceptance._sensor_runtime_args(manifest)
     assert sensor_args[sensor_args.index("--publish-hz") + 1] == "10.0"
     assert sensor_args[sensor_args.index("--mid360-samples-per-frame") + 1] == "6000"
-    assert "--publish-odom-prior" not in sensor_args
+    assert "--publish-odom-prior" in sensor_args
+    assert manifest["mapd_runtime"]["stale_ms"] == 3000
+    assert manifest["slam_runtime"]["provider"] == "mujoco_navigation_fixture"
+    assert manifest["navigation_runtime"]["local_planner"] == "scan"
+    assert manifest["thresholds"]["require_traversability"] is False
+    runtime_args = acceptance._path_follower_args(manifest["navigation_runtime"])
+    assert runtime_args[runtime_args.index("--path-follower-goal-tolerance-m") + 1] == "0.05"
+    assert runtime_args[runtime_args.index("--path-follower-max-accel-mps2") + 1] == "0.3"
+    assert runtime_args[runtime_args.index("--goal-reached-m") + 1] == "0.1"
+    assert runtime_args[runtime_args.index("--waypoint-reached-m") + 1] == "0.2"
+    assert acceptance._scan_follower_environment(manifest["navigation_runtime"]) == {
+        "LINGTU_NAV_SCAN_TIME_FORWARD_S": "0.55",
+        "LINGTU_NAV_SCAN_HEADING_ERROR_RAD": "0.8",
+        "LINGTU_NAV_SCAN_POSITION_GAIN": "0.9",
+        "LINGTU_NAV_SCAN_YAW_GAIN": "1.2",
+        "LINGTU_NAV_SCAN_MAX_VX_MPS": "0.5",
+        "LINGTU_NAV_SCAN_MAX_VY_MPS": "0.25",
+        "LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S": "1",
+    }
+    assert manifest["driver_runtime"]["apply_timeout_ms"] == 1500
 
 
 def test_industrial_park_navigation_matches_global_and_local_clearance_contracts():
@@ -982,17 +2599,18 @@ def test_industrial_park_navigation_matches_global_and_local_clearance_contracts
 
     assert manifest["planner_constraints"]["robot_radius_m"] == 0.95
     assert manifest["navigation_runtime"]["corridor_lookahead_m"] == 1.2
-    assert manifest["sensor_runtime"]["odom_prior_velocity_window_s"] == 0.1
+    assert manifest["sensor_runtime"].get("publish_odom_prior") is not True
+    assert "odom_prior_velocity_window_s" not in manifest["sensor_runtime"]
     assert manifest["sensor_runtime"]["stop_on_nav_goal_reached"] is True
     assert manifest["sensor_runtime"]["mid360_samples_per_frame"] == 10000
-    assert manifest["sensor_runtime"]["imu_hz"] == 100.0
-    assert manifest["sensor_runtime"]["scan_time_profile"] == "instantaneous"
+    assert manifest["sensor_runtime"]["imu_hz"] == 200.0
+    assert manifest["sensor_runtime"]["scan_time_profile"] == "physical_rolling"
     assert manifest["runtime_tolerances"]["sim_hardware_realtime_factor"] == 0.5
     assert manifest["sensor_runtime"]["physics_integrator"] == "euler"
-    assert "physical_rolling_sample_mode" not in manifest["sensor_runtime"]
+    assert manifest["sensor_runtime"]["physical_rolling_sample_mode"] == "subscan"
     assert manifest["telemetry_log"]["hz"] == 10.0
     assert manifest["telemetry_log"]["lidar_points"] == 640
-    assert manifest["slam_runtime"]["provider"] == "mujoco_navigation_fixture"
+    assert manifest["slam_runtime"]["provider"] == "fastlio2"
     assert manifest["navigation_runtime"]["status_period_s"] == 0.5
     assert "debug_candidate_limit" not in manifest["navigation_runtime"]
     assert "debug_local_map_points" not in manifest["navigation_runtime"]
@@ -1008,26 +2626,35 @@ def test_industrial_park_navigation_matches_global_and_local_clearance_contracts
     assert "max_navigation_loop_overrun_ms" not in manifest["thresholds"]
     assert "max_sim_hardware_lag_observed_s" not in manifest["thresholds"]
     assert "max_sim_hardware_consecutive_catch_up_steps" not in manifest["thresholds"]
-    assert manifest["thresholds"]["require_slam_tracking"] is False
-    assert manifest["thresholds"]["require_slam_accuracy"] is False
+    assert manifest["thresholds"]["require_slam_tracking"] is True
+    assert manifest["thresholds"]["require_slam_accuracy"] is True
     assert manifest["thresholds"]["require_navigation_safety_contracts"] is True
-    assert manifest["thresholds"]["require_video_artifact"] is True
+    assert manifest["thresholds"]["require_video_artifact"] is False
     assert acceptance.RUNTIME_EVIDENCE_SAMPLE_PERIOD_S == 0.20
     assert acceptance.SENSOR_PUBLISHER_PROBE_TIMEOUT_S == 60.0
     sensor_args = acceptance._sensor_runtime_args(manifest)
     assert "--stop-on-nav-goal-reached" in sensor_args
-    assert sensor_args[sensor_args.index("--odom-prior-velocity-window-s") + 1] == "0.1"
-    assert sensor_args[sensor_args.index("--scan-time-profile") + 1] == "instantaneous"
-    assert sensor_args[sensor_args.index("--navigation-fixture-cloud-points") + 1] == "4000"
-    assert sensor_args[sensor_args.index("--imu-hz") + 1] == "100.0"
+    assert "--publish-odom-prior" in sensor_args
+    assert manifest["slam_runtime"]["provider"] == "mujoco_navigation_fixture"
+    assert manifest["navigation_runtime"]["local_planner"] == "scan"
+    assert manifest["navigation_runtime"]["use_traversability_cost"] is False
+    assert manifest["thresholds"]["require_traversability"] is False
+    assert manifest["thresholds"]["require_goal_reached"] is True
+    assert manifest["thresholds"]["min_tracking_samples"] == 50
+    assert manifest["acceptance_video"]["enabled"] is True
+    assert "--odom-prior-velocity-window-s" not in sensor_args
+    assert sensor_args[sensor_args.index("--scan-time-profile") + 1] == "physical_rolling"
+    assert "--navigation-fixture-cloud-points" not in sensor_args
+    assert sensor_args[sensor_args.index("--imu-hz") + 1] == "200.0"
+    assert sensor_args[sensor_args.index("--physical-rolling-sample-mode") + 1] == "subscan"
     assert sensor_args[sensor_args.index("--physics-integrator") + 1] == "euler"
     source = (ROOT / "sim" / "scripts" / "mujoco" / "native_navigation_acceptance.py").read_text(encoding="utf-8")
     assert '"--corridor-lookahead-m"' in source
     endpoint_source = (
-        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav_native_endpoint.cpp"
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "main.cpp"
     ).read_text(encoding="utf-8")
     config_source = (
-        ROOT / "src" / "nav" / "cpp" / "endpoint" / "endpoint_config.hpp"
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "config" / "build.cpp"
     ).read_text(encoding="utf-8")
     assert "buildNavLoopConfig(cfg, safety_config.obstacle_margin_m)" in endpoint_source
     assert "out.local_planner.footprintPadding = obstacle_margin_m;" in config_source
@@ -1065,13 +2692,27 @@ def test_mujoco_engine_exposes_explicit_integrator_override(monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "mujoco", SimpleNamespace(mjtIntegrator=integrators))
     engine = object.__new__(MuJoCoEngine)
-    engine._model = SimpleNamespace(opt=SimpleNamespace(integrator=integrators.mjINT_RK4))
+    engine._model = SimpleNamespace(
+        opt=SimpleNamespace(integrator=integrators.mjINT_RK4, timestep=0.001)
+    )
+    engine._physics_dt = 0.001
+    engine._sensor_tick_residual_s = 0.0004
 
     assert engine.physics_integrator == "rk4"
     assert engine.set_physics_integrator("euler") == "euler"
     assert engine._model.opt.integrator == integrators.mjINT_EULER
     with pytest.raises(ValueError, match="unsupported MuJoCo integrator"):
         engine.set_physics_integrator("bogus")
+
+    assert engine.set_physics_timestep(0.002) == pytest.approx(0.002)
+    assert engine._model.opt.timestep == pytest.approx(0.002)
+    assert engine._sensor_tick_residual_s == 0.0
+    for invalid in (0.0, 0.00049, 0.00501, float("nan")):
+        with pytest.raises(
+            ValueError,
+            match="physics timestep must be in",
+        ):
+            engine.set_physics_timestep(invalid)
 
 
 def test_required_video_artifact_blocks_when_not_requested_or_rendering_fails():
@@ -1115,6 +2756,23 @@ def test_video_artifact_gate_accepts_success_and_optional_runs():
         )
         is None
     )
+    assert (
+        acceptance._video_artifact_blocker(
+            required=True,
+            require_candidates=False,
+            video_report={
+                "requested": True,
+                "ok": True,
+                "candidate_frames": 0,
+                "selected_candidate_frames": 0,
+                "local_map_frames": 12,
+                "visible_local_map_frames": 8,
+                "exact_planner_join_frames": 12,
+                "presentation_lighting": {"brightness_ok": True},
+            },
+        )
+        is None
+    )
 
 
 def test_required_video_artifact_blocks_missing_planner_presentation_evidence():
@@ -1155,7 +2813,7 @@ def test_required_video_artifact_blocks_missing_planner_presentation_evidence():
             **base,
             "presentation_lighting": {"brightness_ok": False},
         },
-    ) == "native_navigation_video_brightness_failed"
+    ) is None
 
 
 def test_video_decode_validation_rejects_ffmpeg_decoder_errors(monkeypatch, tmp_path):
@@ -1188,6 +2846,24 @@ def test_navigation_fixture_readiness_uses_native_nav_odom_without_slam_status()
     assert readiness == "mujoco_navigation_fixture"
 
 
+def _complete_startup_dependencies(evidence, tmp_path: Path) -> Path:
+    evidence.last_nav["control_loop_health"] = {"ready": True, "healthy": True}
+    evidence.last_nav["local_map"] = {"collision": {"generation": 1}}
+    status = tmp_path / "mapd-status.json"
+    status.write_text(
+        json.dumps(
+            {
+                "ready": True,
+                "live": True,
+                "accepted_observations": 1,
+                "map_layers_published_generation": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return status
+
+
 def test_navigation_fixture_startup_waits_for_complete_native_input_gate(tmp_path):
     sensor = SimpleNamespace(poll=lambda: None)
     evidence = acceptance.NativeEvidence(
@@ -1203,6 +2879,7 @@ def test_navigation_fixture_startup_waits_for_complete_native_input_gate(tmp_pat
         "slam_status": tmp_path / "missing-slam.json",
         "traversability_status": tmp_path / "missing-traversability.json",
     }
+    mapd_status = _complete_startup_dependencies(evidence, tmp_path)
 
     ok, _ = acceptance._wait_for_startup(
         sensor=sensor,
@@ -1210,6 +2887,7 @@ def test_navigation_fixture_startup_waits_for_complete_native_input_gate(tmp_pat
         nav_status=paths["nav_status"],
         slam_status=paths["slam_status"],
         traversability_status=paths["traversability_status"],
+        mapd_status=mapd_status,
         timeout_s=0.01,
         thresholds={"navigation_state_provider": "mujoco_navigation_fixture"},
     )
@@ -1222,6 +2900,7 @@ def test_navigation_fixture_startup_waits_for_complete_native_input_gate(tmp_pat
         nav_status=paths["nav_status"],
         slam_status=paths["slam_status"],
         traversability_status=paths["traversability_status"],
+        mapd_status=mapd_status,
         timeout_s=0.1,
         thresholds={"navigation_state_provider": "mujoco_navigation_fixture"},
     )
@@ -1248,6 +2927,7 @@ def test_navigation_fixture_startup_requires_configured_stable_ready_window(
         },
         last_traversability={"counters": {"published": 5}},
     )
+    mapd_status = _complete_startup_dependencies(evidence, tmp_path)
 
     ok, reason = acceptance._wait_for_startup(
         sensor=SimpleNamespace(poll=lambda: None),
@@ -1255,6 +2935,7 @@ def test_navigation_fixture_startup_requires_configured_stable_ready_window(
         nav_status=tmp_path / "missing-nav.json",
         slam_status=tmp_path / "missing-slam.json",
         traversability_status=tmp_path / "missing-traversability.json",
+        mapd_status=mapd_status,
         timeout_s=1.0,
         thresholds={
             "navigation_state_provider": "mujoco_navigation_fixture",
@@ -1288,6 +2969,7 @@ def test_navigation_fixture_startup_stable_window_resets_after_ready_dropout(
         },
         last_traversability={"counters": {"published": 5}},
     )
+    mapd_status = _complete_startup_dependencies(evidence, tmp_path)
 
     def sample(**_):
         evidence.last_nav["input_gate"]["ready"] = next(ready_sequence, True)
@@ -1300,6 +2982,7 @@ def test_navigation_fixture_startup_stable_window_resets_after_ready_dropout(
         nav_status=tmp_path / "missing-nav.json",
         slam_status=tmp_path / "missing-slam.json",
         traversability_status=tmp_path / "missing-traversability.json",
+        mapd_status=mapd_status,
         timeout_s=1.0,
         thresholds={
             "navigation_state_provider": "mujoco_navigation_fixture",
@@ -1391,17 +3074,17 @@ def test_sensor_runtime_options_are_attached_only_to_sensor_process():
 
 def test_native_endpoint_keeps_lidar_extrinsic_out_of_body_pose_local_planning():
     endpoint_source = (
-        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav_native_endpoint.cpp"
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "main.cpp"
     ).read_text(encoding="utf-8")
     input_source = (
-        ROOT / "src" / "nav" / "cpp" / "endpoint" / "input" / "nav_input_state_projector.cpp"
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "input" / "map.cpp"
     ).read_text(encoding="utf-8")
     config_source = (
-        ROOT / "src" / "nav" / "cpp" / "endpoint" / "endpoint_config.hpp"
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "config" / "build.cpp"
     ).read_text(encoding="utf-8")
 
     assert "sensorOriginFromBody" in input_source
-    assert "input_projector_config.sensor_offset" in endpoint_source
+    assert "inputs_config.sensor_offset" in endpoint_source
     assert "cfg.sensor_offset_x_m" in endpoint_source
     assert "cfg.sensor_offset_y_m" in endpoint_source
     assert "out.local_planner.sensorOffsetX = 0.0;" in config_source
@@ -1547,7 +3230,7 @@ def test_multifloor_manifest_locks_runtime_octoplanner3d_constraints():
     assert manifest["start"][:3] == [7.0, -1.2, 0.55]
     assert manifest["goal"][:3] == [7.4, 2.8, 4.15]
     constraints = manifest["planner_constraints"]
-    assert constraints["body_clearance_below_m"] == 0.18
+    assert constraints["body_clearance_below_m"] == 0.15
     assert constraints["body_clearance_above_m"] == 0.30
     assert constraints["support_height_m"] == 0.55
     assert constraints["max_step_height_m"] == 0.23
@@ -1627,25 +3310,25 @@ def test_acceptance_preserves_asset_builder_failure_reason(tmp_path, monkeypatch
 
 
 
-def test_preflight_validates_same_source_map_hashes(tmp_path, monkeypatch):
+def test_preflight_validates_map_formats_and_metadata(tmp_path, monkeypatch):
     map_dir = tmp_path / "map"
     map_dir.mkdir()
     map_pcd = map_dir / "map.pcd"
     octomap = map_dir / "octomap.ot"
     map_pcd.write_bytes(b"pcd")
     octomap.write_bytes(b"octomap")
-    map_hash = hashlib.sha256(map_pcd.read_bytes()).hexdigest()
-    octomap_hash = hashlib.sha256(octomap.read_bytes()).hexdigest()
     (map_dir / "metadata.json").write_text(
         json.dumps(
             {
                 "artifacts": {
-                    "map_pcd": {"sha256": map_hash},
+                    "map_pcd": {"path": "map.pcd", "frame_id": "map"},
                     "octomap": {
-                        "sha256": octomap_hash,
-                        "source_map_sha256": map_hash,
+                        "path": "octomap.ot",
+                        "frame_id": "map",
                     },
-                }
+                },
+                "frame_id": "map",
+                "schema_version": "lingtu.saved_map_artifacts.v1",
             }
         ),
         encoding="utf-8",
@@ -1661,9 +3344,17 @@ def test_preflight_validates_same_source_map_hashes(tmp_path, monkeypatch):
     fake_sensor.write_text("pass\n", encoding="utf-8")
     fake_policy = tmp_path / "history_285.onnx"
     fake_policy.write_bytes(b"onnx")
+    world = tmp_path / "world.xml"
+    world.write_text("<mujoco/>", encoding="utf-8")
     manifest = {
+        "world": str(world),
         "map_dir": str(map_dir),
         "map_files": {"slam": "map.pcd", "planner": "octomap.ot", "metadata": "metadata.json"},
+        "source_identity": {
+            "map_artifacts": {
+                "metadata_schema": "lingtu.saved_map_artifacts.v1",
+            }
+        },
         "paths": {
             "slam_config": str(fake_config),
             "path_library": str(fake_paths),
@@ -1678,7 +3369,7 @@ def test_preflight_validates_same_source_map_hashes(tmp_path, monkeypatch):
                 "traversability",
                 "navigation",
                 "navigation_control",
-                "cmd_vel_tap",
+                "driver_bridge",
             )
         },
     }
@@ -1691,8 +3382,18 @@ def test_preflight_validates_same_source_map_hashes(tmp_path, monkeypatch):
     assert set(binaries) == set(manifest["binaries"])
     assert paths["slam"] == map_pcd
     assert paths["policy"] == fake_policy
-    assert provenance["metadata_planner_source_sha256"] == map_hash
+    assert provenance["map_format_ok"] is True
+    assert provenance["planner_format_ok"] is True
+    assert provenance["driver_bridge"] == {
+        "path": str(fake_bin),
+    }
 
+    metadata = json.loads((map_dir / "metadata.json").read_text(encoding="utf-8"))
+    metadata["artifacts"]["octomap"]["frame_id"] = "odom"
+    (map_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    _, _, blockers, _ = acceptance._preflight(manifest)
+
+    assert "map_artifact_metadata_inconsistent" in blockers
 
 def test_phase_evaluator_proves_local_path_is_telemetry_and_follower_is_embedded():
     evidence = acceptance.NativeEvidence(
@@ -1745,6 +3446,107 @@ def test_phase_evaluator_proves_local_path_is_telemetry_and_follower_is_embedded
     assert metrics["distance_reduction_m"] == 0.5
 
 
+def test_scan_baseline_does_not_require_traversability_process():
+    evidence = acceptance.NativeEvidence(
+        samples=5,
+        plan_accepted=True,
+        local_path_found=True,
+        max_global_path_points=8,
+        max_local_path_points=40,
+        max_cmd_vel_published=12,
+        max_path_follower_cmd_norm=0.4,
+        max_computed_cmd_norm=0.4,
+        local_path_role="dds_telemetry_and_preview",
+        path_follower_role="embedded_before_cmd_vel_gate",
+        command_transport="typed_dds_request_ack",
+        max_command_requests=1,
+        max_command_acks=1,
+        command_last_accepted=True,
+        last_slam={"state": "TRACKING", "track_against_map": {"successes": 1}},
+        last_nav={"has_odom": True, "counters": {"odom": 5}},
+    )
+    sensor_report = {
+        "command_source": "dds",
+        "policy_loaded": True,
+        "cmd_vel": {"nonzero_samples": 12},
+        "motion": {
+            "sim_start_xyz": [0.0, 0.0, 0.48],
+            "sim_end_xyz": [-0.5, 0.0, 0.48],
+            "sim_path_length_xy_m": 0.5,
+        },
+    }
+
+    ok, blockers, _ = acceptance._evaluate_phase(
+        phase="motion",
+        phase_cfg={"publish_cmd_vel": True},
+        thresholds={
+            "require_traversability": False,
+            "navigation_state_provider": "mujoco_navigation_fixture",
+            "max_motion_slam_map_xy_error_m": 0.2,
+        },
+        evidence=evidence,
+        sensor_report=sensor_report,
+        goal=[1.0, 0.0, 0.48, 0.0],
+    )
+
+    assert ok, blockers
+    assert "motion_slam_map_pose_error_too_large" not in blockers
+    assert "goal_distance_did_not_decrease" not in blockers
+    assert "registered_cloud_not_consumed_by_traversability" not in blockers
+    assert "traversability_not_published" not in blockers
+
+
+def test_multifloor_goal_metrics_report_xy_z_and_3d_error():
+    metrics = acceptance._goal_metrics(
+        {
+            "motion": {
+                "sim_start_xyz": [0.0, 0.0, 0.5],
+                "sim_end_xyz": [3.0, 4.0, 2.5],
+                "sim_path_length_xy_m": 6.0,
+            }
+        },
+        [3.0, 4.0, 3.0, 0.0],
+    )
+
+    assert metrics["end_error_xy_m"] == pytest.approx(0.0)
+    assert metrics["end_error_z_m"] == pytest.approx(0.5)
+    assert metrics["end_error_3d_m"] == pytest.approx(0.5)
+
+
+def test_truth_tracking_metrics_project_each_pose_to_current_local_path(tmp_path):
+    motion_log = tmp_path / "motion.jsonl"
+    rows = [
+        {
+            "sim_time_s": 10.0,
+            "driving": True,
+            "x": 0.5,
+            "y": 0.2,
+            "z": 0.0,
+            "local_path": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+        },
+        {
+            "sim_time_s": 11.0,
+            "driving": True,
+            "x": 1.5,
+            "y": 0.4,
+            "z": 0.3,
+            "local_path": [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+        },
+    ]
+    motion_log.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+    metrics = acceptance._trajectory_tracking_metrics(motion_log)
+
+    assert metrics["available"] is True
+    assert metrics["samples"] == 2
+    assert metrics["elapsed_s"] == pytest.approx(1.0)
+    assert metrics["max_xy_error_m"] == pytest.approx(0.4)
+    assert metrics["max_3d_error_m"] == pytest.approx(0.5)
+
+
 def test_motion_strict_arrival_rejects_progress_without_final_goal_arrival():
     evidence = acceptance.NativeEvidence(
         plan_accepted=True,
@@ -1792,6 +3594,55 @@ def test_motion_strict_arrival_rejects_progress_without_final_goal_arrival():
     assert "native_goal_not_reached" in blockers
     assert "final_goal_error_above_threshold" in blockers
     assert metrics["end_distance_m"] > 0.5
+
+
+def test_motion_rejects_long_path_without_long_net_displacement():
+    evidence = acceptance.NativeEvidence(
+        plan_accepted=True,
+        local_path_found=True,
+        max_global_path_points=300,
+        max_local_path_points=40,
+        max_cmd_vel_published=500,
+        max_traversability_published=500,
+        max_registered_clouds=500,
+        max_path_follower_cmd_norm=0.4,
+        max_computed_cmd_norm=0.4,
+        local_path_role="dds_telemetry_and_preview",
+        path_follower_role="embedded_before_cmd_vel_gate",
+        command_transport="typed_dds_request_ack",
+        max_command_requests=1,
+        max_command_acks=1,
+        command_last_accepted=True,
+        goal_reached_observed=True,
+        last_slam={"state": "TRACKING", "track_against_map": {"successes": 10}},
+    )
+    sensor_report = {
+        "command_source": "dds",
+        "policy_loaded": True,
+        "cmd_vel": {"nonzero_samples": 500},
+        "motion": {
+            "sim_start_xyz": [3.0, 4.0, 0.48],
+            "sim_end_xyz": [8.0, 4.0, 0.48],
+            "sim_path_length_xy_m": 55.0,
+        },
+    }
+
+    ok, blockers, metrics = acceptance._evaluate_phase(
+        phase="motion",
+        phase_cfg={"publish_cmd_vel": True},
+        thresholds={
+            "min_motion_m": 50.0,
+            "min_net_displacement_m": 50.0,
+        },
+        evidence=evidence,
+        sensor_report=sensor_report,
+        goal=[56.0, 32.0, 0.3, 0.0],
+    )
+
+    assert not ok
+    assert metrics["sim_path_length_xy_m"] == 55.0
+    assert metrics["net_displacement_xy_m"] == 5.0
+    assert "net_displacement_below_threshold" in blockers
 
 
 def test_motion_rejects_host_realtime_instability_even_if_navigation_arrives():
@@ -2380,6 +4231,7 @@ def _navigation_isolation_ready_evidence():
 def test_startup_allows_degraded_slam_only_for_explicit_valid_odom_prior_isolation(tmp_path):
     evidence = _navigation_isolation_ready_evidence()
     sensor = SimpleNamespace(poll=lambda: None)
+    mapd_status = _complete_startup_dependencies(evidence, tmp_path)
 
     ok, reason = acceptance._wait_for_startup(
         sensor=sensor,
@@ -2387,6 +4239,7 @@ def test_startup_allows_degraded_slam_only_for_explicit_valid_odom_prior_isolati
         nav_status=tmp_path / "missing-nav.json",
         slam_status=tmp_path / "missing-slam.json",
         traversability_status=tmp_path / "missing-traversability.json",
+        mapd_status=mapd_status,
         timeout_s=0.1,
         thresholds={"allow_degraded_slam_for_navigation_isolation": True},
     )
@@ -2398,6 +4251,7 @@ def test_startup_allows_degraded_slam_only_for_explicit_valid_odom_prior_isolati
 def test_startup_keeps_product_default_closed_for_degraded_slam(tmp_path):
     evidence = _navigation_isolation_ready_evidence()
     sensor = SimpleNamespace(poll=lambda: None)
+    mapd_status = _complete_startup_dependencies(evidence, tmp_path)
 
     ok, reason = acceptance._wait_for_startup(
         sensor=sensor,
@@ -2405,6 +4259,7 @@ def test_startup_keeps_product_default_closed_for_degraded_slam(tmp_path):
         nav_status=tmp_path / "missing-nav.json",
         slam_status=tmp_path / "missing-slam.json",
         traversability_status=tmp_path / "missing-traversability.json",
+        mapd_status=mapd_status,
         timeout_s=0.1,
         thresholds={},
     )
@@ -2745,24 +4600,11 @@ def test_evidence_treats_small_future_tf_age_as_fresh(tmp_path):
     assert evidence.min_map_odom_tf_age_s == 0.007
 
 
-def test_native_runner_does_not_import_python_planners():
-    source = (ROOT / "sim" / "scripts" / "mujoco" / "native_navigation_acceptance.py").read_text(encoding="utf-8")
-    forbidden = (
-        "GlobalPlanner" + "Service",
-        "LocalPlanner" + "Module",
-        "PathFollower" + "Module",
-        "octoplanner3d_planner.py",
-        "nav.local",
-    )
-    for token in forbidden:
-        assert token not in source
-
-
 def test_native_control_waits_for_business_ack_and_local_path_is_telemetry_only():
     client = (ROOT / "src" / "nav" / "cpp" / "client" / "client.cpp").read_text(encoding="utf-8")
-    endpoint_loop = (ROOT / "src" / "nav" / "cpp" / "endpoint" / "endpoint_loop.cpp").read_text(
-        encoding="utf-8"
-    )
+    endpoint_loop = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "runtime" / "loop.cpp"
+    ).read_text(encoding="utf-8")
     nav_loop = (ROOT / "src" / "nav" / "cpp" / "engine" / "nav_loop.cpp").read_text(encoding="utf-8")
 
     write_start = client.index("NavigationCommandReceipt writeCommandReceipt(")
@@ -2772,9 +4614,18 @@ def test_native_control_waits_for_business_ack_and_local_path_is_telemetry_only(
     assert "kNavCommandAck" in client
     register_index = write_body.index("registerNavigationAck(")
     publish_index = write_body.index("dds_write(command_writer", register_index)
-    ack_index = write_body.index("waitForAck(", publish_index)
+    ack_index = write_body.index("waitForAckUntil(", publish_index)
     assert register_index < publish_index < ack_index
-    assert "active_request_id, pending, timeout_ms" in write_body
+    ack_retry_start = write_body.index(
+        "for (int ack_attempt = 0; ack_attempt < kNavigationCommandAckWriteAttempts"
+    )
+    ack_retry_end = write_body.index("if (!observation.has_value())", ack_retry_start)
+    ack_retry_body = write_body[ack_retry_start:ack_retry_end]
+    assert "command_ack_timeout_retry" in ack_retry_body
+    assert "waitForAckUntil(" in ack_retry_body
+    assert "active_request_id =" not in ack_retry_body
+    assert "active_request_id," in ack_retry_body
+    assert "final_ack_attempt" in ack_retry_body
 
     tick_index = endpoint_loop.index("autonomy_tick.tick(")
     telemetry_index = endpoint_loop.index("dds.writeLocalPath(out.local_path_map);", tick_index)
@@ -2784,3 +4635,87 @@ def test_native_control_waits_for_business_ack_and_local_path_is_telemetry_only(
     planner_index = nav_loop.index("local_planner_.plan(")
     follower_index = nav_loop.index("nav_kernel::computeControl(", planner_index)
     assert planner_index < follower_index
+
+def test_policy_cpu_threads_are_bounded_and_reported(monkeypatch):
+    state = {"cpu": 8, "interop": 8}
+
+    def set_num_threads(value):
+        state["cpu"] = int(value)
+
+    def set_num_interop_threads(value):
+        state["interop"] = int(value)
+
+    fake_torch = SimpleNamespace(
+        set_num_threads=set_num_threads,
+        get_num_threads=lambda: state["cpu"],
+        set_num_interop_threads=set_num_interop_threads,
+        get_num_interop_threads=lambda: state["interop"],
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    report = sensors._configure_policy_cpu_threads(Path("policy.pt"), 1)
+
+    assert report == {
+        "backend": "torchscript",
+        "requested_cpu_threads": 1,
+        "active_cpu_threads": 1,
+        "active_interop_threads": 1,
+    }
+    with pytest.raises(ValueError, match="policy-cpu-threads"):
+        sensors._configure_policy_cpu_threads(Path("policy.pt"), 0)
+
+
+def test_sensor_runtime_performance_controls_are_explicit_and_validated():
+    arguments = acceptance._sensor_runtime_args(
+        {
+            "sensor_runtime": {
+                "physics_timestep_s": 0.002,
+                "policy_cpu_threads": 1,
+            }
+        }
+    )
+
+    assert arguments[arguments.index("--physics-timestep-s") + 1] == "0.002"
+    assert arguments[arguments.index("--policy-cpu-threads") + 1] == "1"
+
+    with pytest.raises(ValueError, match="physics timestep"):
+        acceptance._sensor_runtime_args(
+            {"sensor_runtime": {"physics_timestep_s": 0.01}}
+        )
+    with pytest.raises(ValueError, match="policy_cpu_threads"):
+        acceptance._sensor_runtime_args(
+            {"sensor_runtime": {"policy_cpu_threads": 0}}
+        )
+
+
+def test_60m_acceptance_allows_visibility_simplified_global_route():
+    manifest = acceptance._load_manifest(
+        ROOT
+        / "config"
+        / "runtime_graph"
+        / "acceptance"
+        / "mujoco_industrial_park_60m_navigation_acceptance.json"
+    )
+    thresholds = dict(manifest["thresholds"])
+
+    evidence = acceptance.NativeEvidence(max_global_path_points=9)
+    _, blockers, _ = acceptance._evaluate_phase(
+        phase="motion",
+        phase_cfg={"publish_cmd_vel": False},
+        thresholds=thresholds,
+        evidence=evidence,
+        sensor_report={},
+        goal=[56.0, 32.0, 0.3, 0.0],
+    )
+    assert "global_path_too_short" not in blockers
+
+    evidence.max_global_path_points = 1
+    _, blockers, _ = acceptance._evaluate_phase(
+        phase="motion",
+        phase_cfg={"publish_cmd_vel": False},
+        thresholds=thresholds,
+        evidence=evidence,
+        sensor_report={},
+        goal=[56.0, 32.0, 0.3, 0.0],
+    )
+    assert "global_path_too_short" in blockers

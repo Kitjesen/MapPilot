@@ -11,15 +11,15 @@ from __future__ import annotations
 
 import argparse
 import errno
-import hashlib
 import hmac
 import json
 import math
 import os
 import queue
-import signal
+import re
+import secrets
 import shutil
-import struct
+import signal
 import subprocess
 import sys
 import threading
@@ -39,56 +39,59 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from sim.scripts.mujoco_live.motion import (
-    _physical_rolling_scan_from_samples,
-    _relative_times_for_scan,
-)
-from sim.scripts.mujoco.async_jsonl_writer import AsyncJsonlWriter
+from sim.scripts.mujoco import native_sensor_records as _sensor_records  # noqa: E402
+from sim.scripts.mujoco.async_jsonl_writer import AsyncJsonlWriter  # noqa: E402
 
-from drivers.sim.mujoco.driver import _xyzi_to_livox_frame
-from drivers.sim.mujoco.runtime import (
+from drivers.sim.mujoco.driver import _xyzi_to_livox_frame  # noqa: E402
+from drivers.sim.mujoco.runtime import (  # noqa: E402
     DEFAULT_MID360_PATTERN,
     DEFAULT_MID360_SAMPLES_PER_FRAME,
     build_engine,
+    draw_navigation_paths,
     focus_presentation_viewer,
     launch_presentation_viewer,
     parse_start,
     resolve_world,
 )
-from drivers.sim.mujoco.sensors import (
+from drivers.sim.mujoco.sensors import (  # noqa: E402
+    NAVIGATION_FIXTURE_GROUND_RESOLUTION_M,
+    NAVIGATION_FIXTURE_GROUND_Y_HALF_M,
     angle_delta_rad,
+    navigation_fixture_registered_body_points,
     projected_gravity_body,
     quat_xyzw_to_matrix,
     specific_force_body,
+    world_xyzi_to_body_xyzi,
     world_xyzi_to_sensor_xyzi,
     yaw_from_quat_xyzw,
 )
-from runtime.msgs.geometry import Quaternion, Vector3
-from runtime.msgs.numpy_compat import np
-from runtime.msgs.sensor import Imu
-from runtime.runtime_interface import TOPICS, topic_default_frame_id
-from message.livox_frame import POINT_DTYPE
+from runtime.msgs.geometry import Quaternion, Vector3  # noqa: E402
+from runtime.msgs.numpy_compat import np  # noqa: E402
+from runtime.msgs.sensor import Imu  # noqa: E402
+from runtime.runtime_interface import TOPICS, topic_default_frame_id  # noqa: E402
 
 NATIVE_SLAM_RUNTIME = "slamd"
-NATIVE_SENSOR_PUBLISHER = "livox_sdk2_stream --stdin-records --dds"
+NATIVE_SENSOR_PUBLISHER = "lingtu_mujoco_sensor_publisher --stdin-records --dds"
 LIDAR_FRAME_ID = topic_default_frame_id(TOPICS.lidar_scan)
 IMU_FRAME_ID = topic_default_frame_id(TOPICS.imu)
-_MAGIC = b"LTU1"
-_RECORD_CLOUD = 1
-_RECORD_IMU = 2
-_RECORD_ODOM_PRIOR = 3
-_RECORD_REGISTERED_CLOUD = 4
-_HEADER = struct.Struct("<4sB3xQIII")
-_IMU_PAYLOAD = struct.Struct("<ffffff")
-_ODOM_PRIOR_PAYLOAD = struct.Struct("<ddddddddddB7x")
-_MID360_ACCEL_MPS2_PER_G = 9.80665
+_MAGIC = _sensor_records.LTU1_MAGIC
+_RECORD_CLOUD = _sensor_records.RECORD_CLOUD
+_RECORD_IMU = _sensor_records.RECORD_IMU
+_RECORD_ODOM_PRIOR = _sensor_records.RECORD_ODOM_PRIOR
+_RECORD_REGISTERED_CLOUD = _sensor_records.RECORD_REGISTERED_CLOUD
+_HEADER = _sensor_records.HEADER
+_IMU_PAYLOAD = _sensor_records.IMU_PAYLOAD
+_ODOM_PRIOR_PAYLOAD = _sensor_records.ODOM_PRIOR_PAYLOAD
+_MID360_ACCEL_MPS2_PER_G = _sensor_records.MID360_ACCEL_MPS2_PER_G
+POINT_DTYPE = _sensor_records.POINT_DTYPE
 KINEMATIC_LEGACY_IMU_ACC_AXIS_SCALE = (-0.43, 1.0, 1.0)
 # MuJoCo kinematic drive sets base velocity directly. Its finite-difference X
 # acceleration is a control artifact, not a physical IMU force for Fast-LIO.
 KINEMATIC_SIM_HARDWARE_IMU_ACC_AXIS_SCALE = (0.0, 1.0, 1.0)
-_THUNDERV4_POLICY_DIR = ROOT / "sim" / "robots" / "thunderv4" / "policy"
-DEFAULT_THUNDERV4_ONNX_POLICY = _THUNDERV4_POLICY_DIR / "pose_flat_low_kpkd_microterrain_model29600_policy.onnx"
-DEFAULT_THUNDERV4_TORCHSCRIPT_POLICY = _THUNDERV4_POLICY_DIR / "pose_flat_low_kpkd_microterrain_model29600_policy.pt"
+_THUNDERV4_POLICY_DIR = (
+    ROOT / "sim" / "controllers" / "doso" / "thunder_v4" / "locomotion" / "policy"
+)
+DEFAULT_THUNDERV4_ONNX_POLICY = _THUNDERV4_POLICY_DIR / "policy_1119.onnx"
 REQUIRED_SLAM_OUTPUT_TOPICS = (
     TOPICS.odometry,
     TOPICS.map_cloud,
@@ -105,6 +108,7 @@ DEFAULT_IMU_ACC_MAX_SLEW_MPS3 = 30.0
 DEFAULT_SIM_HARDWARE_MAX_LAG_S = 0.05
 DEFAULT_SIM_HARDWARE_CATCH_UP_YIELD_STEPS = 40
 DEFAULT_NATIVE_CLOCK_SYNC_SAMPLES = 5
+WSL_CONTROL_TIMEOUT_S = 2.0
 MAX_NATIVE_CLOCK_SYNC_RTT_S = 0.10
 DEFAULT_ODOM_PRIOR_VELOCITY_WINDOW_S = 0.10
 DEFAULT_PARENT_DIAGNOSTICS_PERIOD_S = 0.5
@@ -114,6 +118,9 @@ DEFAULT_ASYNC_PUBLISHER_MAX_RECORDS = 512
 DEFAULT_ASYNC_PUBLISHER_MAX_BATCHES = 256
 DEFAULT_ASYNC_PUBLISHER_OLDEST_S = 0.5
 DEFAULT_ASYNC_PUBLISHER_SHUTDOWN_S = 2.0
+DEFAULT_NATIVE_PUBLISHER_READY_S = 10.0
+DEFAULT_DRIVER_BRIDGE_TRANSPORT_READY_S = 10.0
+NATIVE_SENSOR_PUBLISHER_READY_SCHEMA = "lingtu.mujoco_sensor_publisher.ready.v1"
 PARENT_DIAGNOSTICS_SCHEMA = "lingtu.mujoco.parent_sensor_diagnostics.v1"
 _PARENT_DIAGNOSTIC_RECORD_TYPES = (
     "cloud",
@@ -146,17 +153,97 @@ _EXTERNAL_ARM_MAX_BYTES = 4096
 _EXTERNAL_ARM_STATUS_PERIOD_S = 0.25
 
 
+def _relative_times_for_scan(
+    point_count: int,
+    lidar_period_s: float,
+    *,
+    scan_time_profile: str,
+) -> np.ndarray:
+    """Return per-point times matching how this validation scan was produced."""
+
+    count = max(0, int(point_count))
+    profile = str(scan_time_profile or "synthetic_rolling").strip().lower()
+    if profile == "instantaneous":
+        return np.zeros(count, dtype=np.float32)
+    if profile == "synthetic_rolling":
+        return np.linspace(
+            0.0,
+            float(lidar_period_s),
+            num=count,
+            endpoint=False,
+            dtype=np.float32,
+        )
+    raise ValueError(f"unsupported scan_time_profile: {scan_time_profile}")
+
+
+def _physical_rolling_scan_from_samples(
+    samples: Sequence[tuple[float, np.ndarray, np.ndarray, int]],
+    *,
+    scan_start_s: float,
+    scan_end_s: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
+    """Build one scan from subscans captured at their actual simulation times."""
+
+    start = float(scan_start_s)
+    end = float(scan_end_s)
+    eps = 1e-6
+    sensor_chunks: list[np.ndarray] = []
+    world_chunks: list[np.ndarray] = []
+    time_chunks: list[np.ndarray] = []
+    moving_point_count = 0
+    selected_subscans = 0
+    for sim_time_s, cloud_sensor, cloud_world, moving_count in samples:
+        t = float(sim_time_s)
+        if t < start - eps or t > end + eps:
+            continue
+        sensor_pts = np.asarray(cloud_sensor, dtype=np.float32)
+        world_pts = np.asarray(cloud_world, dtype=np.float32)
+        if sensor_pts.size == 0 or sensor_pts.ndim != 2 or sensor_pts.shape[1] < 4:
+            continue
+        if world_pts.size == 0 or world_pts.ndim != 2 or world_pts.shape[1] < 4:
+            world_pts = np.zeros((len(sensor_pts), 4), dtype=np.float32)
+        sensor_chunks.append(sensor_pts[:, :4])
+        world_chunks.append(world_pts[:, :4])
+        relative_t = max(0.0, min(float(end - start), t - start))
+        time_chunks.append(np.full(len(sensor_pts), relative_t, dtype=np.float32))
+        moving_point_count += max(0, int(moving_count))
+        selected_subscans += 1
+    if not sensor_chunks:
+        return (
+            np.zeros((0, 4), dtype=np.float32),
+            np.zeros((0, 4), dtype=np.float32),
+            np.zeros(0, dtype=np.float32),
+            0,
+            0,
+        )
+    return (
+        np.vstack(sensor_chunks).astype(np.float32, copy=False),
+        np.vstack(world_chunks).astype(np.float32, copy=False),
+        np.concatenate(time_chunks).astype(np.float32, copy=False),
+        int(moving_point_count),
+        int(selected_subscans),
+    )
+
+
+def _dds_domain_id(value: str) -> int:
+    try:
+        domain_id = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("DDS domain id must be an integer") from exc
+    if not 0 <= domain_id <= 232:
+        raise argparse.ArgumentTypeError("DDS domain id must be between 0 and 232")
+    return domain_id
+
+
 def _write_atomic_json_object(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(
-        f".{path.name}.{os.getpid()}.{threading.get_ident()}.{time.monotonic_ns()}.tmp"
-    )
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.{time.monotonic_ns()}.tmp")
     try:
         temporary.write_text(
             json.dumps(payload, allow_nan=False, ensure_ascii=True, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        for attempt in range(5):
+        for attempt in range(25):
             try:
                 os.replace(temporary, path)
                 break
@@ -166,9 +253,9 @@ def _write_atomic_json_object(path: Path, payload: dict[str, Any]) -> None:
                     or exc.errno in {errno.EACCES, errno.EBUSY, errno.EPERM}
                     or getattr(exc, "winerror", None) in {5, 32, 33}
                 )
-                if not transient or attempt == 4:
+                if not transient or attempt == 24:
                     raise
-                time.sleep(0.005 * (attempt + 1))
+                time.sleep(0.01)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -241,10 +328,7 @@ class ParentSensorDiagnostics:
             }
             for name in _PARENT_DIAGNOSTIC_RECORD_TYPES
         }
-        self._pending_flush = {
-            name: {"records": 0, "bytes": 0}
-            for name in _PARENT_DIAGNOSTIC_RECORD_TYPES
-        }
+        self._pending_flush = {name: {"records": 0, "bytes": 0} for name in _PARENT_DIAGNOSTIC_RECORD_TYPES}
         self._flush = {
             "attempt": 0,
             "success": 0,
@@ -428,6 +512,12 @@ class ParentSensorDiagnostics:
                 "max_consecutive_steps": int(pacing.get("max_consecutive_steps") or 0),
                 "catch_up_events": int(pacing.get("catch_up_events") or 0),
                 "catch_up_yields": int(pacing.get("catch_up_yields") or 0),
+                "forced_sensor_observations": int(
+                    pacing.get("forced_sensor_observations") or 0
+                ),
+                "forced_lidar_observations": int(
+                    pacing.get("forced_lidar_observations") or 0
+                ),
             }
 
     @staticmethod
@@ -651,6 +741,7 @@ def _external_arm_config_from_args(args: argparse.Namespace) -> dict[str, Any] |
         "status_json": status_json,
     }
 
+
 def _prepare_external_arm_files(config: dict[str, Any]) -> None:
     """Remove only the two exact per-run rendezvous artifacts before startup."""
 
@@ -686,8 +777,12 @@ class ExternalArmGate:
         self.arm_observed_sim_time_s: float | None = None
         self._wait_elapsed_wall_s = 0.0
         self._observations = 0
+        self._read_failures = 0
+        self._status_write_failures = 0
         self._next_status_write_wall_s = self.started_wall_s
-        self._publish_status(self.started_wall_s, force=True)
+        if not self._publish_status(self.started_wall_s, force=True):
+            self.state = "invalid"
+            self.last_error = "external_arm_status_write_failed"
 
     @property
     def acknowledged(self) -> bool:
@@ -726,26 +821,26 @@ class ExternalArmGate:
             "wait_elapsed_wall_s": min(self.timeout_s, self._elapsed(now)),
             "arm_observed_sim_time_s": self.arm_observed_sim_time_s,
             "observations": self._observations,
+            "read_failures": self._read_failures,
+            "status_write_failures": self._status_write_failures,
             "last_error": self.last_error[:160],
-            "token_sha256_12": hashlib.sha256(self.expected_token.encode("utf-8")).hexdigest()[:12],
         }
 
-    def _publish_status(self, monotonic_now_s: float, *, force: bool = False) -> None:
+    def _publish_status(self, monotonic_now_s: float, *, force: bool = False) -> bool:
         if self.status_json is None:
-            return
+            return True
         if not force and monotonic_now_s + 1e-9 < self._next_status_write_wall_s:
-            return
+            return True
         try:
             _write_atomic_json_object(
                 self.status_json,
                 self.snapshot(monotonic_now_s=monotonic_now_s),
             )
         except (OSError, ValueError):
-            self.state = "invalid"
-            self.last_error = "external_arm_status_write_failed"
-            self._wait_elapsed_wall_s = max(0.0, monotonic_now_s - self.started_wall_s)
-            return
+            self._status_write_failures += 1
+            return False
         self._next_status_write_wall_s = monotonic_now_s + _EXTERNAL_ARM_STATUS_PERIOD_S
+        return True
 
     def _transition(
         self,
@@ -760,7 +855,9 @@ class ExternalArmGate:
         self._wait_elapsed_wall_s = max(0.0, monotonic_now_s - self.started_wall_s)
         if state == "armed":
             self.arm_observed_sim_time_s = float(sim_time_s) if sim_time_s is not None else None
-        self._publish_status(monotonic_now_s, force=True)
+        if not self._publish_status(monotonic_now_s, force=True) and state == "armed":
+            self.state = "invalid"
+            self.last_error = "external_arm_status_write_failed"
 
     def poll(self, *, sim_time_s: float, monotonic_now_s: float | None = None) -> str:
         now = time.monotonic() if monotonic_now_s is None else float(monotonic_now_s)
@@ -779,8 +876,13 @@ class ExternalArmGate:
             return self.state
         try:
             payload = _strict_json_object(self.arm_file.read_bytes())
-        except (OSError, ValueError) as exc:
-            error = str(exc) if isinstance(exc, ValueError) else "external_arm_read_failed"
+        except OSError:
+            self._read_failures += 1
+            self.last_error = "external_arm_read_failed"
+            self._publish_status(now)
+            return self.state
+        except ValueError as exc:
+            error = str(exc)
             self._transition("invalid", monotonic_now_s=now, error=error)
             return self.state
         error = _validate_external_arm_payload(
@@ -851,6 +953,9 @@ class OdomPriorVelocityEstimator:
         self._max_speed_mps = 0.0
         self._max_velocity = np.zeros(3, dtype=np.float64)
         self._max_velocity_stamp_s = 0.0
+        self._max_xy_speed_mps = 0.0
+        self._max_xy_velocity = np.zeros(3, dtype=np.float64)
+        self._max_xy_velocity_stamp_s = 0.0
 
     def update(self, position: Any, timestamp_s: float) -> tuple[np.ndarray, bool]:
         stamp = float(timestamp_s)
@@ -911,6 +1016,11 @@ class OdomPriorVelocityEstimator:
             self._max_speed_mps = speed_mps
             self._max_velocity = self._last_velocity.copy()
             self._max_velocity_stamp_s = stamp
+        xy_speed_mps = float(np.linalg.norm(velocity[:2]))
+        if xy_speed_mps > self._max_xy_speed_mps:
+            self._max_xy_speed_mps = xy_speed_mps
+            self._max_xy_velocity = self._last_velocity.copy()
+            self._max_xy_velocity_stamp_s = stamp
         return self._last_velocity.copy(), True
 
     def stats(self) -> dict[str, Any]:
@@ -923,6 +1033,9 @@ class OdomPriorVelocityEstimator:
             "max_speed_mps": self._max_speed_mps,
             "max_velocity_mps": self._max_velocity.astype(float).tolist(),
             "max_velocity_stamp_s": self._max_velocity_stamp_s,
+            "max_xy_speed_mps": self._max_xy_speed_mps,
+            "max_xy_velocity_mps": self._max_xy_velocity.astype(float).tolist(),
+            "max_xy_velocity_stamp_s": self._max_xy_velocity_stamp_s,
         }
 
 
@@ -1086,10 +1199,7 @@ class LinearMocapMotion:
             raise ValueError("mocap motion start must be finite and non-negative")
         if not math.isfinite(self.duration_s) or self.duration_s <= 0.0:
             raise ValueError("mocap motion duration must be positive and finite")
-        if not all(
-            math.isfinite(value)
-            for value in (*self.start_xyz, *self.end_xyz)
-        ):
+        if not all(math.isfinite(value) for value in (*self.start_xyz, *self.end_xyz)):
             raise ValueError("mocap motion positions must be finite")
 
     @classmethod
@@ -1105,9 +1215,7 @@ class LinearMocapMotion:
     ) -> "LinearMocapMotion":
         import mujoco
 
-        body_id = int(
-            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
-        )
+        body_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name))
         if body_id < 0:
             raise ValueError(f"MuJoCo mocap body not found: {body_name}")
         mocap_id = int(model.body_mocapid[body_id])
@@ -1125,10 +1233,7 @@ class LinearMocapMotion:
     def update(self, data: Any, elapsed_s: float, *, wall_s: float | None = None) -> None:
         elapsed = max(0.0, float(elapsed_s))
         alpha = min(1.0, max(0.0, (elapsed - self.start_s) / self.duration_s))
-        position = tuple(
-            start + (end - start) * alpha
-            for start, end in zip(self.start_xyz, self.end_xyz, strict=True)
-        )
+        position = tuple(start + (end - start) * alpha for start, end in zip(self.start_xyz, self.end_xyz, strict=True))
         data.mocap_pos[self.mocap_id] = position
         data.mocap_quat[self.mocap_id] = (1.0, 0.0, 0.0, 0.0)
         now = time.time() if wall_s is None else float(wall_s)
@@ -1173,6 +1278,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mocap-motion-start-s", type=float, default=0.0)
     parser.add_argument("--mocap-motion-duration-s", type=float, default=1.0)
     parser.add_argument("--start", default="", help="Optional start pose x,y,z")
+    parser.add_argument(
+        "--start-yaw-deg",
+        type=float,
+        default=None,
+        help="Optional initial body yaw in world degrees.",
+    )
     parser.add_argument(
         "--start-anchor",
         choices=["off", "warmup", "run"],
@@ -1233,6 +1344,30 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=4000,
         help="Maximum body-frame registered-cloud points per navigation fixture frame.",
+    )
+    parser.add_argument(
+        "--navigation-fixture-ground-resolution-m",
+        type=float,
+        default=NAVIGATION_FIXTURE_GROUND_RESOLUTION_M,
+        help="Synthetic ground sample spacing for navigation functional acceptance.",
+    )
+    parser.add_argument(
+        "--navigation-fixture-ground-y-half-m",
+        type=float,
+        default=NAVIGATION_FIXTURE_GROUND_Y_HALF_M,
+        help=(
+            "Half-width of synthetic traversable ground around the robot. "
+            "Navigation acceptance scenes should match this to their drivable floor."
+        ),
+    )
+    parser.add_argument(
+        "--navigation-fixture-raw-overlay",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Overlay MuJoCo raw body-frame returns on top of synthetic fixture ground. "
+            "Disable for free-space control acceptance so self/side-wall returns cannot masquerade as obstacles."
+        ),
     )
     parser.add_argument(
         "--imu-acc-mode",
@@ -1440,7 +1575,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.15,
         help="Maximum absolute SLAM odom yaw error relative to MuJoCo yaw delta.",
     )
-    parser.add_argument("--domain-id", type=int, default=0)
+    parser.add_argument("--domain-id", type=_dds_domain_id, default=0)
     parser.add_argument(
         "--external-arm-file",
         default="",
@@ -1498,22 +1633,30 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Velocity source for the MuJoCo engine. profile uses the deterministic "
             "diagnostic command below; dds consumes the final typed-DDS /nav/cmd_vel "
-            "through the Linux C++ tap and is required for native navigation acceptance."
+            "through the native physical driver bridge and is required for native "
+            "Product acceptance."
         ),
     )
     parser.add_argument(
-        "--cmd-vel-tap-bin",
-        default=os.environ.get("LINGTU_MUJOCO_CMD_VEL_TAP_BIN", ""),
-        help="Linux C++ typed-DDS /nav/cmd_vel tap used by --command-source dds.",
+        "--driver-bridge-bin",
+        default=os.environ.get("LINGTU_MUJOCO_DRIVER_BRIDGE_BIN", ""),
+        help=(
+            "Verified native C++ physical driver bridge artifact used by "
+            "--command-source dds. No build-directory discovery is performed."
+        ),
     )
-    parser.add_argument("--cmd-vel-pid-file", default="")
-    parser.add_argument("--publisher-pid-file", default="")
+    parser.add_argument("--driver-bridge-pid-file", default="")
     parser.add_argument(
-        "--cmd-vel-timeout-s",
-        type=float,
-        default=0.25,
-        help="Fail-safe age after which the last DDS command is replaced by zero velocity.",
+        "--driver-expected-host-boot-id",
+        default=os.environ.get("LINGTU_HOST_BOOT_ID", ""),
+        help="Exact FinalVelocityCommand producer identity accepted by the driver bridge.",
     )
+    parser.add_argument("--driver-max-linear-mps", type=float, default=1.0)
+    parser.add_argument("--driver-max-angular-rps", type=float, default=1.0)
+    parser.add_argument("--driver-command-timeout-ms", type=int, default=200)
+    parser.add_argument("--driver-heartbeat-timeout-ms", type=int, default=500)
+    parser.add_argument("--driver-apply-timeout-ms", type=int, default=500)
+    parser.add_argument("--publisher-pid-file", default="")
     parser.add_argument(
         "--require-cmd-vel",
         action="store_true",
@@ -1551,14 +1694,27 @@ def _build_parser() -> argparse.ArgumentParser:
             "while retaining the model timestep and 50 Hz policy cadence."
         ),
     )
+    parser.add_argument(
+        "--physics-timestep-s",
+        type=float,
+        default=0.0,
+        help=("Override the loaded MuJoCo model timestep for this simulation run. Zero preserves the model value."),
+    )
+    parser.add_argument(
+        "--policy-cpu-threads",
+        type=int,
+        default=1,
+        help=(
+            "CPU threads used by the small gait policy. Product simulation "
+            "defaults to one to avoid starving native DDS processes."
+        ),
+    )
     parser.add_argument("--policy-path", default=os.environ.get("LINGTU_MUJOCO_NATIVE_DDS_POLICY_PATH", ""))
-    parser.add_argument("--n-rays", type=int, default=6400)
     parser.add_argument("--mujoco-memory", default="64M")
     parser.add_argument("--mid360-pattern", type=Path, default=DEFAULT_MID360_PATTERN)
     parser.add_argument("--mid360-samples-per-frame", type=int, default=DEFAULT_MID360_SAMPLES_PER_FRAME)
     parser.add_argument("--lidar-backend", choices=["mujoco_lidar", "ray_caster_lidar"], default="mujoco_lidar")
     parser.add_argument("--mujoco-lidar-backend", choices=["cpu", "taichi", "warp", "jax"], default="cpu")
-    parser.add_argument("--allow-legacy-lidar-fallback", action="store_true")
     parser.add_argument("--max-points", type=int, default=DEFAULT_MID360_SAMPLES_PER_FRAME)
     parser.add_argument(
         "--require-slam-output",
@@ -1777,10 +1933,7 @@ def _select_native_wall_clock_alignment(
         raise RuntimeError("native wall-clock synchronization returned no valid samples")
     rtt_ns, offset_ns = min(valid, key=lambda value: value[0])
     if rtt_ns > int(float(max_rtt_s) * 1_000_000_000):
-        raise RuntimeError(
-            "native wall-clock synchronization uncertainty too high: "
-            f"rtt_ms={rtt_ns / 1_000_000.0:.3f}"
-        )
+        raise RuntimeError(f"native wall-clock synchronization uncertainty too high: rtt_ms={rtt_ns / 1_000_000.0:.3f}")
     return {
         "source": "native_wall_midpoint_lowest_rtt",
         "sample_count": len(valid),
@@ -1821,6 +1974,8 @@ class SimHardwareCatchUpController:
         self.fast_static_clock_ticks = 0
         self.dynamic_catch_up_ticks = 0
         self.catch_up_yields = 0
+        self.forced_sensor_observations = 0
+        self.forced_lidar_observations = 0
         self.max_lag_observed_s = 0.0
         self.max_consecutive_steps = 0
         self._consecutive_steps = 0
@@ -1846,6 +2001,16 @@ class SimHardwareCatchUpController:
         self.dropped_imu_ticks += 1
         return True
 
+    def force_sensor_observation(self, *, reason: str) -> None:
+        """Keep a due coherent sensor frame even while wall-clock catch-up is active."""
+
+        if self.dropped_imu_ticks > 0:
+            self.dropped_imu_ticks -= 1
+        self.forced_sensor_observations += 1
+        if reason == "lidar_due":
+            self.forced_lidar_observations += 1
+        self._consecutive_steps = 0
+
     def record_lidar_subscan_drop(self) -> None:
         self.dropped_lidar_subscan_ticks += 1
 
@@ -1867,11 +2032,13 @@ class SimHardwareCatchUpController:
         final_lag_s = self.clock.lag_s(sim_time_s, monotonic_now_s)
         return {
             "enabled": True,
-            "strategy": "small_step_dynamics_drop_intermediate_sensor_ticks",
+            "strategy": "small_step_dynamics_preserve_lidar_deadlines",
             "max_lag_s": self.max_lag_s,
             "yield_every_steps": self.yield_every_steps,
             "catch_up_events": self.catch_up_events,
             "catch_up_yields": self.catch_up_yields,
+            "forced_sensor_observations": self.forced_sensor_observations,
+            "forced_lidar_observations": self.forced_lidar_observations,
             "dropped_imu_ticks": self.dropped_imu_ticks,
             "dropped_lidar_subscan_ticks": self.dropped_lidar_subscan_ticks,
             "dropped_lidar_frames": self.dropped_lidar_frames,
@@ -1981,18 +2148,13 @@ def _motion_log_lidar_sample(
     if robot.size < 3 or not np.isfinite(robot[:3]).all():
         robot = np.zeros(3, dtype=np.float64)
     finite = np.isfinite(pts[:, :3]).all(axis=1)
-    below_presentation_ceiling = (
-        pts[:, 2]
-        <= float(robot[2]) + _MOTION_LOG_LIDAR_MAX_Z_ABOVE_ROBOT_M
-    )
+    below_presentation_ceiling = pts[:, 2] <= float(robot[2]) + _MOTION_LOG_LIDAR_MAX_Z_ABOVE_ROBOT_M
     visible = pts[finite & below_presentation_ceiling]
     if visible.shape[0] <= max_points:
         return visible.astype(np.float32, copy=False)
 
     delta_xy = visible[:, :2].astype(np.float64) - robot[:2]
-    local_mask = np.einsum("ij,ij->i", delta_xy, delta_xy) <= (
-        _MOTION_LOG_LIDAR_LOCAL_RADIUS_M**2
-    )
+    local_mask = np.einsum("ij,ij->i", delta_xy, delta_xy) <= (_MOTION_LOG_LIDAR_LOCAL_RADIUS_M**2)
     local = visible[local_mask]
     context = visible[~local_mask]
     target_local = min(
@@ -2067,6 +2229,67 @@ def _sensor_anchor_active(
     return waiting_for_external_arm or _start_anchor_active(mode, motion_started=motion_started)
 
 
+def _driver_bridge_anchor_state(
+    mode: str,
+    *,
+    motion_started: bool,
+    driving: bool,
+    external_arm_gate: ExternalArmGate | None,
+    command_norm: float,
+) -> tuple[bool, bool]:
+    """Resolve anchoring before a bridge command can become physical evidence."""
+
+    anchor_active = _sensor_anchor_active(
+        mode,
+        motion_started=motion_started,
+        external_arm_gate=external_arm_gate,
+    )
+    external_arm_ready = external_arm_gate is None or external_arm_gate.acknowledged
+    release_warmup = mode == "warmup" and bool(driving) and external_arm_ready
+    if release_warmup and not motion_started:
+        # The locomotion policy must settle under a zero command before the
+        # first navigation command. Releasing only on the first non-zero sample
+        # cold-starts the controller and can make the robot collapse while the
+        # planner is still aligning its heading.
+        motion_started = True
+        anchor_active = _sensor_anchor_active(
+            mode,
+            motion_started=motion_started,
+            external_arm_gate=external_arm_gate,
+        )
+    if float(command_norm) <= 1e-4:
+        return anchor_active, motion_started
+    if anchor_active and not release_warmup:
+        raise RuntimeError("native driver bridge produced motion while the MuJoCo Product remained physically anchored")
+    motion_started = True
+    return (
+        _sensor_anchor_active(
+            mode,
+            motion_started=motion_started,
+            external_arm_gate=external_arm_gate,
+        ),
+        motion_started,
+    )
+
+
+def _anchor_position_after_policy_settle(
+    requested_start: Sequence[float] | None,
+    settled_position: Sequence[float],
+    *,
+    policy_settled: bool,
+) -> np.ndarray:
+    """Keep requested map x/y while anchoring a policy robot at its physical standing height."""
+
+    anchor = np.asarray(settled_position, dtype=np.float64).copy()
+    if requested_start is None:
+        return anchor
+    requested = np.asarray(requested_start, dtype=np.float64)
+    anchor[:2] = requested[:2]
+    if not policy_settled:
+        anchor[2] = requested[2]
+    return anchor
+
+
 def _resolve_policy_path_for_drive(drive_mode: str, value: str) -> Path | None:
     text = str(value or "").strip()
     if text:
@@ -2076,16 +2299,79 @@ def _resolve_policy_path_for_drive(drive_mode: str, value: str) -> Path | None:
         return candidate
     if str(drive_mode or "").strip().lower() != "policy":
         return None
-    for candidate in (DEFAULT_THUNDERV4_ONNX_POLICY, DEFAULT_THUNDERV4_TORCHSCRIPT_POLICY):
-        if candidate.exists():
-            return candidate.resolve()
+    if DEFAULT_THUNDERV4_ONNX_POLICY.exists():
+        return DEFAULT_THUNDERV4_ONNX_POLICY.resolve()
     return None
 
 
+def _configure_policy_cpu_threads(
+    policy_path: Path | None,
+    requested_threads: int,
+) -> dict[str, Any]:
+    threads = int(requested_threads)
+    if not 1 <= threads <= 8:
+        raise ValueError("--policy-cpu-threads must be in [1, 8]")
+    suffix = policy_path.suffix.lower() if policy_path is not None else ""
+    if suffix == ".onnx":
+        return {
+            "backend": "onnxruntime",
+            "requested_cpu_threads": threads,
+            "active_cpu_threads": threads,
+            "active_interop_threads": 1,
+        }
+    if suffix not in {".pt", ".pth", ".jit"}:
+        return {
+            "backend": "not_torchscript",
+            "requested_cpu_threads": threads,
+            "active_cpu_threads": None,
+            "active_interop_threads": None,
+        }
+
+    import torch
+
+    torch.set_num_threads(threads)
+    active_interop = int(torch.get_num_interop_threads())
+    if active_interop != 1:
+        try:
+            torch.set_num_interop_threads(1)
+        except RuntimeError as exc:
+            raise RuntimeError("Torch inter-op threads must be configured before policy work starts") from exc
+
+    return {
+        "backend": "torchscript",
+        "requested_cpu_threads": threads,
+        "active_cpu_threads": int(torch.get_num_threads()),
+        "active_interop_threads": int(torch.get_num_interop_threads()),
+    }
+
+
+def _lexical_wsl_unc_path(path: Path) -> str | None:
+    """Convert a WSL UNC path without requiring the share to be reachable."""
+
+    raw = str(path).replace("/", "\\")
+    extended_prefix = "\\\\?\\UNC\\"
+    if raw.lower().startswith(extended_prefix.lower()):
+        raw = "\\\\" + raw[len(extended_prefix) :]
+    if not raw.startswith("\\\\"):
+        return None
+    parts = [part for part in raw[2:].split("\\") if part]
+    if len(parts) < 2 or parts[0].lower() not in {"wsl.localhost", "wsl$"}:
+        return None
+    return "/" + "/".join(parts[2:])
+
+
 def _wsl_path(path: Path) -> str:
-    resolved = path.resolve()
     if os.name != "nt":
-        return str(resolved)
+        return str(path.resolve())
+    # UNC conversion is lexical on purpose: Path.resolve() contacts the WSL
+    # share and raises WinError 64 when the distribution is stopped.
+    wsl_unc = _lexical_wsl_unc_path(path)
+    if wsl_unc is not None:
+        return wsl_unc
+    resolved = path.resolve()
+    wsl_unc = _lexical_wsl_unc_path(resolved)
+    if wsl_unc is not None:
+        return wsl_unc
     drive = resolved.drive.rstrip(":").lower()
     if not drive:
         raise ValueError(f"cannot convert path to WSL form: {resolved}")
@@ -2119,10 +2405,10 @@ def _managed_wsl_command(
             'pid_file="$1"; shift; echo "$$" > "$pid_file"; '
             'printf "LINGTU_CLOCK_READY\\n"; '
             f'i=0; while [ "$i" -lt {DEFAULT_NATIVE_CLOCK_SYNC_SAMPLES} ]; do '
-            'IFS= read -r request || exit 71; '
+            "IFS= read -r request || exit 71; "
             '[ "$request" = "LINGTU_CLOCK_SAMPLE" ] || exit 72; '
-            'date +%s%N; i=$((i + 1)); done; '
-            'IFS= read -r request || exit 73; '
+            "date +%s%N; i=$((i + 1)); done; "
+            "IFS= read -r request || exit 73; "
             '[ "$request" = "LINGTU_CLOCK_START" ] || exit 74; '
             'exec "$@" >/dev/null'
         )
@@ -2234,7 +2520,7 @@ def _wsl_pid_alive(pid: int | None) -> bool:
             [wsl, "-e", "kill", "-0", str(pid)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            timeout=10.0,
+            timeout=WSL_CONTROL_TIMEOUT_S,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -2255,7 +2541,7 @@ def _signal_wsl_pid(pid: int | None, signal_name: str) -> bool:
             [wsl, "-e", "kill", f"-{signal_name}", str(pid)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            timeout=10.0,
+            timeout=WSL_CONTROL_TIMEOUT_S,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -2320,6 +2606,77 @@ def _terminate_wsl_pid(
     }
 
 
+def _publisher_process_kind(process: subprocess.Popen[Any]) -> str:
+    kind = str(getattr(process, "_lingtu_publisher_kind", "") or "").strip().lower()
+    if kind in {"local", "wsl"}:
+        return kind
+    return "wsl" if getattr(process, "_lingtu_linux_pid", None) else "local"
+
+
+def _terminate_local_publisher(
+    process: subprocess.Popen[Any],
+    *,
+    term_timeout_s: float = 3.0,
+    kill_timeout_s: float = 2.0,
+) -> dict[str, Any]:
+    pid = int(getattr(process, "_lingtu_owned_pid", getattr(process, "pid", 0)) or 0)
+    errors: list[str] = []
+    try:
+        alive_before = process.poll() is None
+    except OSError as exc:
+        alive_before = True
+        errors.append(f"local_poll_failed:{type(exc).__name__}:{exc}")
+    term_sent = False
+    kill_sent = False
+    if alive_before:
+        try:
+            process.terminate()
+            term_sent = True
+            process.wait(timeout=max(0.1, float(term_timeout_s)))
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+                kill_sent = True
+                process.wait(timeout=max(0.1, float(kill_timeout_s)))
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                errors.append(f"local_kill_failed:{type(exc).__name__}:{exc}")
+        except OSError as exc:
+            errors.append(f"local_terminate_failed:{type(exc).__name__}:{exc}")
+    try:
+        alive_after = process.poll() is None
+    except OSError as exc:
+        alive_after = True
+        errors.append(f"local_poll_failed:{type(exc).__name__}:{exc}")
+    if alive_after:
+        errors.append("local_process_still_alive")
+    return {
+        "process_kind": "local",
+        "pid": pid,
+        "owned_pid": pid > 0,
+        "alive_before_cleanup": alive_before,
+        "term_sent": term_sent,
+        "kill_sent": kill_sent,
+        "alive_after_cleanup": alive_after,
+        "clean": not alive_after and not errors,
+        "errors": errors,
+    }
+
+
+def _terminate_native_publisher_process(
+    process: subprocess.Popen[Any],
+) -> dict[str, Any]:
+    if _publisher_process_kind(process) == "local":
+        return _terminate_local_publisher(process)
+    cleanup = _terminate_wsl_pid(getattr(process, "_lingtu_linux_pid", None))
+    cleanup.update(
+        {
+            "process_kind": "wsl",
+            "pid": cleanup.get("linux_pid"),
+        }
+    )
+    return cleanup
+
+
 def _stop_relay(process: subprocess.Popen[Any], timeout_s: float = 2.0) -> list[str]:
     """Stop the Windows WSL relay without assuming it owns the Linux child."""
 
@@ -2340,21 +2697,41 @@ def _stop_relay(process: subprocess.Popen[Any], timeout_s: float = 2.0) -> list[
     return errors
 
 
-def _cmd_vel_tap_candidates(value: str) -> list[Path]:
-    if value:
-        return [Path(value).expanduser()]
-    return [ROOT / "build" / "mujoco_native_dds" / "lingtu_mujoco_cmd_vel_tap"]
+def _resolve_driver_bridge_bin(value: str) -> Path:
+    raw = str(value or "").strip()
+    if not raw:
+        raise FileNotFoundError(
+            "--driver-bridge-bin is required for --command-source dds; "
+            "the Product acceptance runner must pass its verified artifact"
+        )
+    candidate = Path(raw).expanduser()
+    if not candidate.is_file():
+        raise FileNotFoundError(f"MuJoCo driver bridge binary not found: {candidate}")
+    return candidate.resolve()
 
 
-def _resolve_cmd_vel_tap_bin(value: str) -> Path:
-    for candidate in _cmd_vel_tap_candidates(value):
-        if candidate.exists():
-            return candidate.resolve()
-    raise FileNotFoundError(
-        "native /nav/cmd_vel tap missing. Build it with: "
-        "cmake -S sim/native_dds -B build/mujoco_native_dds && "
-        "cmake --build build/mujoco_native_dds -j"
-    )
+def _wait_for_driver_bridge_transport(
+    process: subprocess.Popen[Any],
+    ready_file: Path,
+    *,
+    timeout_s: float = DEFAULT_DRIVER_BRIDGE_TRANSPORT_READY_S,
+) -> None:
+    deadline = time.monotonic() + max(0.0, float(timeout_s))
+    last_value = ""
+    while time.monotonic() <= deadline:
+        try:
+            if ready_file.exists():
+                last_value = ready_file.read_text(encoding="utf-8").strip()
+                if last_value == "ready":
+                    return
+        except OSError as exc:
+            last_value = f"{type(exc).__name__}: {exc}"
+        returncode = process.poll()
+        if returncode is not None:
+            raise RuntimeError(f"native driver bridge exited before transport readiness with return code {returncode}")
+        time.sleep(0.02)
+    detail = last_value or "ready marker not written"
+    raise RuntimeError(f"native driver bridge transport readiness timed out after {float(timeout_s):.1f}s ({detail})")
 
 
 def _linear_command_direction(
@@ -2374,97 +2751,308 @@ def _linear_command_direction(
     return "lateral"
 
 
-class NativeCmdVelSource:
-    """Receive final navigation commands through a C++ typed-DDS reader.
+@dataclass(frozen=True)
+class DriverBridgeCommand:
+    bridge_command_seq: int
+    kind: str
+    producer_boot_id: str
+    output_sequence: int
+    walk_x: float
+    walk_y: float
+    walk_z: float
 
-    Python only consumes a line-oriented process boundary and applies the
-    already-arbitrated command to MuJoCo. It never imports a DDS binding and
-    never computes a global path, local path, or follower command.
-    """
 
-    _PREFIX = "LT_CMD_V1"
+@dataclass(frozen=True)
+class PreparedDriverBridgeStep:
+    velocity: VelocityCommand
+    protocol: DriverBridgeCommand | None
+
+    def __iter__(self):
+        yield self.velocity
+        yield self.protocol
+
+
+def _safe_protocol_token(value: str, *, allow_empty: bool = False) -> bool:
+    if not value:
+        return allow_empty
+    if len(value) > 128 or not value.isascii() or not value[0].isalnum():
+        return False
+    return all(character.isalnum() or character in "._:@-" for character in value)
+
+
+def _parse_positive_protocol_int(value: str, field: str) -> int:
+    if not value or not value.isascii() or not value.isdecimal():
+        raise ValueError(f"{field} must be a decimal integer")
+    parsed = int(value)
+    if parsed <= 0 or parsed > (1 << 64) - 1:
+        raise ValueError(f"{field} must be a positive uint64")
+    return parsed
+
+
+def _parse_protocol_uint64(value: str, field: str) -> int:
+    if not value or not value.isascii() or not value.isdecimal():
+        raise ValueError(f"{field} must be a decimal integer")
+    parsed = int(value)
+    if parsed < 0 or parsed > (1 << 64) - 1:
+        raise ValueError(f"{field} must be a uint64")
+    return parsed
+
+
+def _driver_producer_matches_host(producer: str, expected_host_boot_id: str) -> bool:
+    if (
+        not _safe_protocol_token(producer)
+        or len(producer) >= 128
+        or not producer.startswith(f"{expected_host_boot_id}:")
+    ):
+        return False
+    suffix = producer[len(expected_host_boot_id) + 1 :]
+    fields = suffix.split(":")
+    if len(fields) != 2:
+        return False
+    try:
+        _parse_positive_protocol_int(fields[0], "producer_pid")
+        _parse_positive_protocol_int(fields[1], "producer_start_boottime_ns")
+    except ValueError:
+        return False
+    return True
+
+
+def _parse_protocol_float(value: str, field: str) -> float:
+    if (
+        not value.isascii()
+        or re.fullmatch(
+            r"[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?",
+            value,
+        )
+        is None
+    ):
+        raise ValueError(f"{field} must be a finite decimal")
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be a finite decimal") from exc
+    if not math.isfinite(parsed):
+        raise ValueError(f"{field} must be finite")
+    return parsed
+
+
+def _format_protocol_float(value: float) -> str:
+    if not math.isfinite(value):
+        raise ValueError("driver bridge protocol values must be finite")
+    if value == 0.0:
+        return "0"
+    return format(value, ".17g")
+
+
+class NativeDriverBridge:
+    """Own the physical MuJoCo side of the native driver V2 boundary."""
+
+    _COMMAND_PREFIX = "LT_DRIVER_COMMAND_V2"
+    _READY_PREFIX = "LT_DRIVER_READY_V2"
+    _FAULT_PREFIX = "LT_DRIVER_FAULT_V2"
+    _STOPPED_PREFIX = "LT_DRIVER_STOPPED_V2"
     _PID_PREFIX = "LT_PID_V1"
+    _KINDS = {
+        "activation_zero",
+        "nav",
+        "deactivate_zero",
+        "writer_fault_zero",
+        "safety_zero",
+    }
+    _FAULTS = {
+        "protocol_violation",
+        "controller_eof",
+        "heartbeat_timeout",
+        "apply_timeout",
+        "writer_missing",
+        "writer_ambiguous",
+        "command_sequence_overflow",
+    }
 
     def __init__(
         self,
         *,
         binary: Path,
         domain_id: int,
-        timeout_s: float,
+        expected_host_boot_id: str,
+        max_linear_mps: float,
+        max_angular_rps: float,
         pid_file: Path | None = None,
+        command_timeout_ms: int = 200,
+        heartbeat_timeout_ms: int = 500,
+        apply_timeout_ms: int = 500,
     ) -> None:
         self.binary = binary.resolve()
         self.domain_id = int(domain_id)
-        self.timeout_s = max(0.01, float(timeout_s))
-        self._lock = threading.Lock()
-        self._latest: tuple[float, float, float] = (0.0, 0.0, 0.0)
-        self._latest_arrival_s = 0.0
-        self._latest_source_stamp_s = 0.0
+        self.expected_host_boot_id = str(expected_host_boot_id)
+        self.max_linear_mps = float(max_linear_mps)
+        self.max_angular_rps = float(max_angular_rps)
+        if not _safe_protocol_token(self.expected_host_boot_id):
+            raise ValueError("expected_host_boot_id must be a safe non-empty token")
+        if not math.isfinite(self.max_linear_mps) or self.max_linear_mps <= 0.0:
+            raise ValueError("max_linear_mps must be finite and positive")
+        if not math.isfinite(self.max_angular_rps) or self.max_angular_rps <= 0.0:
+            raise ValueError("max_angular_rps must be finite and positive")
+        timeouts = {
+            "command_timeout_ms": command_timeout_ms,
+            "heartbeat_timeout_ms": heartbeat_timeout_ms,
+            "apply_timeout_ms": apply_timeout_ms,
+        }
+        for name, value in timeouts.items():
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        self.command_timeout_ms = command_timeout_ms
+        self.heartbeat_timeout_ms = heartbeat_timeout_ms
+        self.apply_timeout_ms = apply_timeout_ms
+        self.bridge_boot_id = secrets.token_hex(16)
+        self.controller_boot_id = secrets.token_hex(16)
+        self._condition = threading.Condition()
+        self._control_lock = threading.Lock()
+        self._write_lock = threading.Lock()
+        self._commands: deque[DriverBridgeCommand] = deque()
+        self._inflight: DriverBridgeCommand | None = None
+        self._current_velocity = (0.0, 0.0, 0.0)
+        self._control_seq = 1
+        self._last_command_seq = 0
+        self._last_step_seq = 0
+        self._heartbeat_refreshes = 0
+        self._last_ready_sequence = 0
+        self._last_ready_producer_boot_id = ""
+        self._last_ready_output_sequence = 0
+        self._ready_observed = False
+        self._observed_nav_ack_sequence = 0
+        self._observed_nav_ack_producer_boot_id = ""
+        self._observed_nav_ack_output_sequence = 0
+        self._ready = False
+        self._fault = ""
+        self._reported_pid: int | None = None
+        self._deactivate_requested = False
+        self._deactivate_applied = False
+        self._deactivate_command_seq = 0
+        self._deactivate_applied_step_seq = 0
+        self._stopped_evidence: dict[str, Any] = {}
+        self._waited_clean_exit = False
+        self._closed = False
         self._samples = 0
         self._nonzero_samples = 0
         self._forward_linear_samples = 0
         self._reverse_linear_samples = 0
         self._lateral_linear_samples = 0
-        self._stale_reads = 0
         self._parse_errors = 0
         self._stderr_tail: list[str] = []
         self._failed_before_close = False
         self._terminated_by_parent = False
+        self._process_kind = "local"
+        self._owned_pid: int | None = None
         self._linux_pid: int | None = None
         self._cleanup: dict[str, Any] = {}
-        self._pid_file = pid_file
-        if os.name == "nt" and self._pid_file is None:
-            self._pid_file = (
-                ROOT / "artifacts" / "mujoco_native_dds" / f"cmd_vel_tap_{os.getpid()}_{id(self)}.pid"
-            ).resolve()
-        if self._pid_file is not None:
-            self._pid_file.parent.mkdir(parents=True, exist_ok=True)
-            self._pid_file.unlink(missing_ok=True)
+        requested_pid_file = pid_file.expanduser().resolve() if pid_file is not None else None
+        runtime_dir = (
+            requested_pid_file.parent
+            if requested_pid_file is not None
+            else (ROOT / "artifacts" / "mujoco_native_dds").resolve()
+        )
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        runtime_stem = (
+            requested_pid_file.stem if requested_pid_file is not None else f"driver_bridge_{os.getpid()}_{id(self)}"
+        )
+        self._ready_file = (runtime_dir / f"{runtime_stem}.ready").resolve()
+        self._ready_file.unlink(missing_ok=True)
+        ready_argument = (
+            _wsl_path(self._ready_file)
+            if os.name == "nt" and self.binary.suffix.lower() != ".exe"
+            else str(self._ready_file)
+        )
         command = _linux_binary_command(
             self.binary,
             "--domain-id",
             str(self.domain_id),
+            "--ready-file",
+            ready_argument,
+            "--bridge-boot-id",
+            self.bridge_boot_id,
+            "--expected-host-boot-id",
+            self.expected_host_boot_id,
+            "--max-linear-mps",
+            _format_protocol_float(self.max_linear_mps),
+            "--max-angular-rps",
+            _format_protocol_float(self.max_angular_rps),
+            "--command-timeout-ms",
+            str(self.command_timeout_ms),
+            "--heartbeat-timeout-ms",
+            str(self.heartbeat_timeout_ms),
+            "--apply-timeout-ms",
+            str(self.apply_timeout_ms),
         )
-        launch_command = (
-            _managed_wsl_command(command, self._pid_file) if os.name == "nt" and self._pid_file is not None else command
-        )
+        managed_wsl = os.name == "nt" and len(command) >= 3 and command[1] == "-e"
+        self._process_kind = "wsl" if managed_wsl else "local"
+        self._pid_file = requested_pid_file
+        if managed_wsl:
+            if self._pid_file is None:
+                self._pid_file = (runtime_dir / f"{runtime_stem}.pid").resolve()
+            self._pid_file.parent.mkdir(parents=True, exist_ok=True)
+            self._pid_file.unlink(missing_ok=True)
+            launch_command = _managed_wsl_command(command, self._pid_file)
+        else:
+            self._pid_file = None
+            launch_command = command
         self.process = subprocess.Popen(
             launch_command,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
-            errors="replace",
+            errors="strict",
             bufsize=1,
         )
+        self.process._lingtu_publisher_kind = self._process_kind
+        self.process._lingtu_owned_pid = int(self.process.pid)
+        self.process._lingtu_linux_pid = None
+        self._owned_pid = int(self.process.pid)
         self._stdout_thread = threading.Thread(target=self._read_stdout, daemon=True)
         self._stderr_thread = threading.Thread(target=self._read_stderr, daemon=True)
         self._stdout_thread.start()
         self._stderr_thread.start()
-        if os.name == "nt" and self._pid_file is not None:
+        if managed_wsl and self._pid_file is not None:
             linux_pid = _read_linux_pid(self._pid_file, timeout_s=10.0)
             if linux_pid is None:
                 relay_errors = _stop_relay(self.process)
                 self._stdout_thread.join(timeout=1.0)
                 self._stderr_thread.join(timeout=1.0)
                 detail = ";".join(relay_errors) if relay_errors else "pid_file_not_written"
-                raise RuntimeError(f"cmd_vel tap Linux PID handshake failed: {detail}")
-            with self._lock:
+                raise RuntimeError(f"driver bridge Linux PID handshake failed: {detail}")
+            with self._condition:
                 self._linux_pid = linux_pid
-
-    @classmethod
-    def parse_line(cls, line: str) -> tuple[float, float, float, float] | None:
-        parts = line.strip().split("\t")
-        if len(parts) != 6 or parts[0] != cls._PREFIX:
-            return None
+                self._owned_pid = linux_pid
+                if self._reported_pid is not None and self._reported_pid != linux_pid:
+                    self._fault = "pid_mismatch"
+            self.process._lingtu_owned_pid = linux_pid
+            self.process._lingtu_linux_pid = linux_pid
         try:
-            return float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5])
-        except ValueError:
-            return None
+            _wait_for_driver_bridge_transport(
+                self.process,
+                self._ready_file,
+                timeout_s=DEFAULT_DRIVER_BRIDGE_TRANSPORT_READY_S,
+            )
+            self._write_control_line(
+                f"LT_DRIVER_ACTIVATE_V2\t{self.bridge_boot_id}\t{self.controller_boot_id}\t{self._control_seq}"
+            )
+        except BaseException:
+            _terminate_native_publisher_process(self.process)
+            if managed_wsl:
+                _stop_relay(self.process)
+            self._stdout_thread.join(timeout=1.0)
+            self._stderr_thread.join(timeout=1.0)
+            try:
+                self._ready_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
 
     @classmethod
     def parse_pid_line(cls, line: str) -> int | None:
-        parts = line.strip().split("\t")
+        parts = line.rstrip("\r\n").split("\t")
         if len(parts) != 2 or parts[0] != cls._PID_PREFIX:
             return None
         try:
@@ -2473,81 +3061,414 @@ class NativeCmdVelSource:
             return None
         return pid if pid > 0 else None
 
+    def _write_control_line(self, line: str) -> None:
+        if len(line.encode("ascii")) > 512 or "\n" in line or "\r" in line:
+            raise ValueError("driver bridge control line is invalid")
+        stream = self.process.stdin
+        if stream is None or stream.closed:
+            raise RuntimeError("native driver bridge stdin is closed")
+        with self._write_lock:
+            stream.write(line + "\n")
+            stream.flush()
+
+    @classmethod
+    def _parse_command_parts(
+        cls,
+        parts: list[str],
+        *,
+        bridge_boot_id: str,
+        controller_boot_id: str,
+    ) -> DriverBridgeCommand:
+        if len(parts) != 10:
+            raise ValueError("LT_DRIVER_COMMAND_V2 field count mismatch")
+        if parts[1] != bridge_boot_id or parts[2] != controller_boot_id:
+            raise ValueError("driver bridge command identity mismatch")
+        sequence = _parse_positive_protocol_int(parts[3], "bridge_command_seq")
+        kind = parts[4]
+        if kind not in cls._KINDS:
+            raise ValueError("unknown driver bridge command kind")
+        producer = "" if parts[5] == "-" else parts[5]
+        output_sequence = _parse_protocol_uint64(parts[6], "output_sequence")
+        walk = tuple(
+            _parse_protocol_float(parts[index], field) for index, field in ((7, "walk_x"), (8, "walk_y"), (9, "walk_z"))
+        )
+        if any(abs(value) > 1.0 for value in walk):
+            raise ValueError("normalized driver walk exceeds [-1, 1]")
+        if kind == "nav":
+            if not _safe_protocol_token(producer) or output_sequence <= 0:
+                raise ValueError("nav command output identity is incomplete")
+        elif producer or output_sequence != 0 or any(value != 0.0 or math.copysign(1.0, value) < 0.0 for value in walk):
+            raise ValueError("internal driver zero is not exact")
+        return DriverBridgeCommand(
+            sequence,
+            kind,
+            producer,
+            output_sequence,
+            walk[0],
+            walk[1],
+            walk[2],
+        )
+
+    @classmethod
+    def parse_stdout_line(
+        cls,
+        line: str,
+        *,
+        bridge_boot_id: str,
+        controller_boot_id: str,
+    ) -> DriverBridgeCommand:
+        raw = line.rstrip("\r\n")
+        if not raw or len(raw.encode("utf-8")) > 512:
+            raise ValueError("driver bridge stdout line is empty or oversized")
+        parts = raw.split("\t")
+        if not parts or parts[0] != cls._COMMAND_PREFIX:
+            raise ValueError("stdout record is not LT_DRIVER_COMMAND_V2")
+        return cls._parse_command_parts(
+            parts,
+            bridge_boot_id=bridge_boot_id,
+            controller_boot_id=controller_boot_id,
+        )
+
+    def _parse_command(self, parts: list[str]) -> DriverBridgeCommand:
+        return self._parse_command_parts(
+            parts,
+            bridge_boot_id=self.bridge_boot_id,
+            controller_boot_id=self.controller_boot_id,
+        )
+
+    def _handle_stdout_line(self, line: str) -> None:
+        raw = line.rstrip("\r\n")
+        if not raw or len(raw.encode("utf-8")) > 512:
+            raise ValueError("driver bridge stdout line is empty or oversized")
+        pid = self.parse_pid_line(raw)
+        if pid is not None:
+            with self._condition:
+                expected = self._linux_pid if self._process_kind == "wsl" else int(self.process.pid)
+                if expected is not None and pid != expected:
+                    raise ValueError("driver bridge PID identity mismatch")
+                self._reported_pid = pid
+            return
+        parts = raw.split("\t")
+        prefix = parts[0]
+        with self._condition:
+            if prefix == self._COMMAND_PREFIX:
+                command = self._parse_command(parts)
+                if command.kind == "nav" and not _driver_producer_matches_host(
+                    command.producer_boot_id,
+                    self.expected_host_boot_id,
+                ):
+                    raise ValueError("driver bridge command producer identity mismatch")
+                if command.bridge_command_seq <= self._last_command_seq or self._commands or self._inflight:
+                    raise ValueError("driver bridge command sequence is stale or concurrent")
+                self._last_command_seq = command.bridge_command_seq
+                self._commands.append(command)
+                self._condition.notify_all()
+                return
+            if prefix == self._READY_PREFIX:
+                if len(parts) != 6 or parts[1] != self.bridge_boot_id or parts[2] != self.controller_boot_id:
+                    raise ValueError("driver bridge READY identity mismatch")
+                accepted = _parse_positive_protocol_int(parts[3], "accepted_sequence")
+                producer = "" if parts[4] == "-" else parts[4]
+                output = _parse_protocol_uint64(parts[5], "accepted_output_sequence")
+                if accepted <= self._last_ready_sequence:
+                    raise ValueError("driver bridge READY sequence did not advance")
+                if bool(producer) != bool(output) or (producer and not _safe_protocol_token(producer)):
+                    raise ValueError("driver bridge READY output identity is incomplete")
+                if producer and not _driver_producer_matches_host(
+                    producer,
+                    self.expected_host_boot_id,
+                ):
+                    raise ValueError("driver bridge READY producer identity mismatch")
+                self._last_ready_sequence = accepted
+                self._last_ready_producer_boot_id = producer
+                self._last_ready_output_sequence = output
+                self._ready_observed = True
+                if producer:
+                    self._observed_nav_ack_sequence = accepted
+                    self._observed_nav_ack_producer_boot_id = producer
+                    self._observed_nav_ack_output_sequence = output
+                self._ready = True
+                self._condition.notify_all()
+                return
+            if prefix == self._STOPPED_PREFIX:
+                if len(parts) != 6 or parts[1] != self.bridge_boot_id or parts[2] != self.controller_boot_id:
+                    raise ValueError("driver bridge STOPPED identity mismatch")
+                command_seq = _parse_positive_protocol_int(parts[3], "bridge_command_seq")
+                applied_step_seq = _parse_positive_protocol_int(parts[4], "applied_step_seq")
+                if parts[5] != "deactivate_zero":
+                    raise ValueError("driver bridge STOPPED kind mismatch")
+                if not self._deactivate_requested or not self._deactivate_applied:
+                    raise ValueError("driver bridge STOPPED arrived before physical deactivation")
+                if command_seq != self._deactivate_command_seq or applied_step_seq != self._deactivate_applied_step_seq:
+                    raise ValueError("driver bridge STOPPED physical evidence mismatch")
+                if self._stopped_evidence:
+                    raise ValueError("driver bridge STOPPED was duplicated")
+                self._stopped_evidence = {
+                    "bridge_boot_id": self.bridge_boot_id,
+                    "controller_boot_id": self.controller_boot_id,
+                    "bridge_command_seq": command_seq,
+                    "applied_step_seq": applied_step_seq,
+                    "kind": "deactivate_zero",
+                }
+                # STOPPED is a terminal safety state. Historical execution
+                # evidence remains available separately, while current motion
+                # authority and output acknowledgement are cleared.
+                self._ready = False
+                self._last_ready_sequence = 0
+                self._last_ready_producer_boot_id = ""
+                self._last_ready_output_sequence = 0
+                self._condition.notify_all()
+                return
+            if prefix == self._FAULT_PREFIX:
+                if (
+                    len(parts) != 4
+                    or parts[1] != self.bridge_boot_id
+                    or parts[2]
+                    not in {
+                        self.controller_boot_id,
+                        "-",
+                    }
+                    or parts[3] not in self._FAULTS
+                ):
+                    raise ValueError("driver bridge FAULT is malformed")
+                self._fault = parts[3]
+                self._ready = False
+                self._condition.notify_all()
+                return
+        raise ValueError("unknown native driver bridge stdout record")
+
     def _read_stdout(self) -> None:
         stream = self.process.stdout
         if stream is None:
             return
-        for line in stream:
-            linux_pid = self.parse_pid_line(line)
-            if linux_pid is not None:
-                with self._lock:
-                    self._linux_pid = linux_pid
-                if self._pid_file is not None:
-                    self._pid_file.write_text(f"{linux_pid}\n", encoding="ascii")
-                continue
-            parsed = self.parse_line(line)
-            if parsed is None:
-                with self._lock:
-                    self._parse_errors += 1
-                continue
-            source_stamp_s, vx, vy, wz = parsed
-            now_s = time.monotonic()
-            with self._lock:
-                self._latest = (vx, vy, wz)
-                self._latest_arrival_s = now_s
-                self._latest_source_stamp_s = source_stamp_s
-                self._samples += 1
-                if math.hypot(vx, vy) > 1e-4 or abs(wz) > 1e-4:
-                    self._nonzero_samples += 1
-                linear_direction = _linear_command_direction(vx, vy)
-                if linear_direction == "forward":
-                    self._forward_linear_samples += 1
-                elif linear_direction == "reverse":
-                    self._reverse_linear_samples += 1
-                elif linear_direction == "lateral":
-                    self._lateral_linear_samples += 1
+        try:
+            for line in stream:
+                self._handle_stdout_line(line)
+        except (UnicodeError, ValueError, OSError):
+            with self._condition:
+                self._parse_errors += 1
+                self._fault = "protocol_violation"
+                self._ready = False
+                self._condition.notify_all()
 
     def _read_stderr(self) -> None:
         stream = self.process.stderr
         if stream is None:
             return
         for line in stream:
-            with self._lock:
+            with self._condition:
                 self._stderr_tail.append(line.rstrip())
                 del self._stderr_tail[:-20]
 
-    def command(self) -> tuple[float, float, float]:
-        now_s = time.monotonic()
-        with self._lock:
-            age_s = now_s - self._latest_arrival_s if self._latest_arrival_s > 0.0 else math.inf
-            if age_s > self.timeout_s:
-                self._stale_reads += 1
-                return 0.0, 0.0, 0.0
-            return self._latest
+    def _raise_if_failed_locked(self) -> None:
+        if self._fault:
+            raise RuntimeError(f"native driver bridge fault: {self._fault}")
+        returncode = self.process.poll()
+        if returncode is not None and returncode != 0:
+            self._failed_before_close = True
+            raise RuntimeError(f"native driver bridge exited with return code {returncode}")
+
+    def _write_control_or_fail(self, line: str) -> None:
+        try:
+            self._write_control_line(line)
+        except (OSError, RuntimeError, UnicodeError, ValueError):
+            with self._condition:
+                self._failed_before_close = True
+                self._ready = False
+                self._condition.notify_all()
+            raise
+
+    def prepare_step(self, *, wait_for_command_s: float = 0.0) -> PreparedDriverBridgeStep:
+        from sim.engine.core.engine import VelocityCommand
+
+        with self._condition:
+            self._raise_if_failed_locked()
+            if self._inflight is not None:
+                raise RuntimeError("previous driver bridge command has not been physically applied")
+            wait_s = max(0.0, float(wait_for_command_s))
+            if not self._commands and (self._last_command_seq == 0 or wait_s > 0.0):
+                deadline = time.monotonic() + max(
+                    wait_s,
+                    self.apply_timeout_ms / 1000.0 if self._last_command_seq == 0 else 0.0,
+                )
+                while not self._commands and not self._fault and self.process.poll() is None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0.0:
+                        break
+                    self._condition.wait(timeout=remaining)
+                self._raise_if_failed_locked()
+                if not self._commands and self._last_command_seq == 0:
+                    raise RuntimeError("activation zero was not received before apply deadline")
+            command = self._commands.popleft() if self._commands else None
+            self._inflight = command
+            if command is None:
+                physical = self._current_velocity
+            else:
+                physical = (
+                    command.walk_x * self.max_linear_mps,
+                    command.walk_y * self.max_linear_mps,
+                    command.walk_z * self.max_angular_rps,
+                )
+            return PreparedDriverBridgeStep(
+                velocity=VelocityCommand(
+                    linear_x=physical[0],
+                    linear_y=physical[1],
+                    angular_z=physical[2],
+                ),
+                protocol=command,
+            )
+
+    def heartbeat(self, step_seq: int) -> None:
+        with self._control_lock:
+            with self._condition:
+                self._raise_if_failed_locked()
+                if isinstance(step_seq, bool) or step_seq <= self._last_step_seq:
+                    raise ValueError("controller step_seq must advance")
+                self._last_step_seq = int(step_seq)
+                self._control_seq += 1
+                line = (
+                    f"LT_DRIVER_HEARTBEAT_V2\t{self.bridge_boot_id}\t"
+                    f"{self.controller_boot_id}\t{self._control_seq}\t{step_seq}"
+                )
+            self._write_control_or_fail(line)
+
+    def refresh_heartbeat(self) -> bool:
+        """Refresh controller liveness without claiming a new physics step."""
+
+        with self._control_lock:
+            with self._condition:
+                self._raise_if_failed_locked()
+                if self._last_step_seq <= 0 or self._deactivate_requested:
+                    return False
+                self._control_seq += 1
+                self._heartbeat_refreshes += 1
+                line = (
+                    f"LT_DRIVER_HEARTBEAT_V2\t{self.bridge_boot_id}\t"
+                    f"{self.controller_boot_id}\t{self._control_seq}\t{self._last_step_seq}"
+                )
+            self._write_control_or_fail(line)
+        return True
+
+    def complete_step(self, command: DriverBridgeCommand, *, step_seq: int) -> None:
+        with self._control_lock:
+            with self._condition:
+                self._raise_if_failed_locked()
+                if self._inflight != command:
+                    raise ValueError("APPLIED command does not match the in-flight bridge command")
+                if isinstance(step_seq, bool) or step_seq <= self._last_step_seq:
+                    raise ValueError("controller step_seq must advance")
+                producer = command.producer_boot_id or "-"
+                applied_line = (
+                    f"LT_DRIVER_APPLIED_V2\t{self.bridge_boot_id}\t{self.controller_boot_id}\t"
+                    f"{command.bridge_command_seq}\t{command.kind}\t{producer}\t"
+                    f"{command.output_sequence}\t{_format_protocol_float(command.walk_x)}\t"
+                    f"{_format_protocol_float(command.walk_y)}\t"
+                    f"{_format_protocol_float(command.walk_z)}\t{step_seq}"
+                )
+                self._current_velocity = (
+                    command.walk_x * self.max_linear_mps,
+                    command.walk_y * self.max_linear_mps,
+                    command.walk_z * self.max_angular_rps,
+                )
+                self._inflight = None
+                if command.kind == "nav":
+                    self._samples += 1
+                    if any(abs(value) > 1e-4 for value in self._current_velocity):
+                        self._nonzero_samples += 1
+                    direction = _linear_command_direction(
+                        self._current_velocity[0],
+                        self._current_velocity[1],
+                    )
+                    if direction == "forward":
+                        self._forward_linear_samples += 1
+                    elif direction == "reverse":
+                        self._reverse_linear_samples += 1
+                    elif direction == "lateral":
+                        self._lateral_linear_samples += 1
+                if command.kind == "deactivate_zero":
+                    self._deactivate_applied = True
+                    self._deactivate_command_seq = command.bridge_command_seq
+                    self._deactivate_applied_step_seq = int(step_seq)
+                self._last_step_seq = int(step_seq)
+                self._control_seq += 1
+                heartbeat_line = (
+                    f"LT_DRIVER_HEARTBEAT_V2\t{self.bridge_boot_id}\t"
+                    f"{self.controller_boot_id}\t{self._control_seq}\t{step_seq}"
+                )
+            self._write_control_or_fail(applied_line)
+            self._write_control_or_fail(heartbeat_line)
+
+    def begin_deactivate(self) -> None:
+        with self._control_lock:
+            with self._condition:
+                self._raise_if_failed_locked()
+                if self._deactivate_requested:
+                    return
+                if self._inflight is not None:
+                    raise RuntimeError("cannot deactivate with an un-applied driver command")
+                self._control_seq += 1
+                line = f"LT_DRIVER_DEACTIVATE_V2\t{self.bridge_boot_id}\t{self.controller_boot_id}\t{self._control_seq}"
+                self._deactivate_requested = True
+            self._write_control_or_fail(line)
+
+    def wait_stopped(self, *, timeout_s: float = 3.0) -> None:
+        timeout_s = max(0.01, float(timeout_s))
+        deadline = time.monotonic() + timeout_s
+        with self._condition:
+            if not self._deactivate_applied:
+                raise RuntimeError("driver bridge cannot stop cleanly before physical deactivate zero")
+            while not self._stopped_evidence and not self._fault:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    break
+                self._condition.wait(timeout=remaining)
+            self._raise_if_failed_locked()
+            if not self._stopped_evidence:
+                raise RuntimeError("native driver bridge STOPPED evidence was not received")
+        returncode = self.process.wait(timeout=max(0.01, deadline - time.monotonic()))
+        if returncode != 0:
+            self._failed_before_close = True
+            raise RuntimeError(f"native driver bridge clean stop returned {returncode}")
+        self._waited_clean_exit = True
 
     def stats(self) -> dict[str, Any]:
-        with self._lock:
-            age_s = time.monotonic() - self._latest_arrival_s if self._latest_arrival_s > 0.0 else None
+        with self._condition:
             return {
-                "transport": "cpp_typed_dds_tap",
+                "transport": "cpp_typed_dds_physical_bridge_v2",
                 "topic": "/nav/cmd_vel",
                 "dds_topic": "rt/nav/cmd_vel",
                 "binary": str(self.binary),
+                "bridge_boot_id": self.bridge_boot_id,
+                "controller_boot_id": self.controller_boot_id,
+                "transport_ready": True,
+                "driver_ready": self._ready,
+                "driver_ready_observed": self._ready_observed,
+                "accepted_sequence": self._last_ready_sequence,
+                "accepted_producer_boot_id": self._last_ready_producer_boot_id,
+                "accepted_output_sequence": self._last_ready_output_sequence,
+                "observed_output_ack": {
+                    "accepted_sequence": self._observed_nav_ack_sequence,
+                    "producer_boot_id": self._observed_nav_ack_producer_boot_id,
+                    "output_sequence": self._observed_nav_ack_output_sequence,
+                },
+                "stopped_evidence": dict(self._stopped_evidence),
+                "fault": self._fault,
                 "samples": self._samples,
                 "nonzero_samples": self._nonzero_samples,
                 "forward_linear_samples": self._forward_linear_samples,
                 "reverse_linear_samples": self._reverse_linear_samples,
                 "lateral_linear_samples": self._lateral_linear_samples,
-                "stale_reads": self._stale_reads,
                 "parse_errors": self._parse_errors,
-                "last_source_stamp_s": self._latest_source_stamp_s,
-                "last_arrival_age_s": age_s,
+                "heartbeat_refreshes": self._heartbeat_refreshes,
+                "last_physical_step_seq": self._last_step_seq,
                 "last_command": {
-                    "vx": self._latest[0],
-                    "vy": self._latest[1],
-                    "wz": self._latest[2],
+                    "vx": self._current_velocity[0],
+                    "vy": self._current_velocity[1],
+                    "wz": self._current_velocity[2],
                 },
                 "process_returncode": self.process.poll(),
+                "process_kind": self._process_kind,
+                "owned_pid": self._owned_pid,
                 "linux_pid": self._linux_pid,
                 "failed_before_close": self._failed_before_close,
                 "terminated_by_parent": self._terminated_by_parent,
@@ -2556,27 +3477,178 @@ class NativeCmdVelSource:
             }
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         returncode = self.process.poll()
         if returncode is None:
             self._terminated_by_parent = True
-            with self._lock:
-                linux_pid = self._linux_pid
-            self._cleanup = _terminate_wsl_pid(linux_pid)
+            self._cleanup = _terminate_native_publisher_process(self.process)
+        elif returncode != 0:
+            self._failed_before_close = True
+            self._cleanup = _terminate_native_publisher_process(self.process)
+        else:
+            self._cleanup = _terminate_native_publisher_process(self.process)
+        if self.process.stdin is not None and not self.process.stdin.closed:
+            self.process.stdin.close()
+        if self._process_kind == "wsl":
             relay_errors = _stop_relay(self.process, timeout_s=3.0)
             if relay_errors:
                 self._cleanup.setdefault("errors", []).extend(relay_errors)
                 self._cleanup["clean"] = False
-        elif returncode != 0:
-            self._failed_before_close = True
-            with self._lock:
-                linux_pid = self._linux_pid
-            self._cleanup = _terminate_wsl_pid(linux_pid)
-        else:
-            with self._lock:
-                linux_pid = self._linux_pid
-            self._cleanup = _terminate_wsl_pid(linux_pid)
         self._stdout_thread.join(timeout=1.0)
         self._stderr_thread.join(timeout=1.0)
+        try:
+            self._ready_file.unlink(missing_ok=True)
+        except OSError as exc:
+            self._cleanup.setdefault("errors", []).append(
+                f"driver_bridge_ready_file_cleanup_failed:{type(exc).__name__}:{exc}"
+            )
+            self._cleanup["clean"] = False
+        if self._pid_file is not None:
+            try:
+                self._pid_file.unlink(missing_ok=True)
+            except OSError as exc:
+                self._cleanup.setdefault("errors", []).append(
+                    f"driver_bridge_pid_cleanup_failed:{type(exc).__name__}:{exc}"
+                )
+                self._cleanup["clean"] = False
+        physical_clean = (
+            self._deactivate_applied
+            and bool(self._stopped_evidence)
+            and self._waited_clean_exit
+            and self.process.poll() == 0
+            and not self._terminated_by_parent
+        )
+        self._cleanup["clean"] = bool(self._cleanup.get("clean")) and physical_clean
+
+
+class DriverHeartbeat:
+    """Keep the controller lease alive while sensor work runs between physics steps."""
+
+    def __init__(self, bridge: NativeDriverBridge) -> None:
+        self._bridge = bridge
+        self._period_s = bridge.heartbeat_timeout_ms / 3000.0
+        self._stop = threading.Event()
+        self._error: BaseException | None = None
+        self._thread = threading.Thread(
+            target=self._run,
+            name="mujoco-driver-heartbeat",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._period_s):
+            try:
+                self._bridge.refresh_heartbeat()
+            except BaseException as exc:
+                self._error = exc
+                return
+
+    def raise_if_failed(self) -> None:
+        if self._error is not None:
+            detail = f"{type(self._error).__name__}: {self._error}"
+            raise RuntimeError(f"native driver heartbeat refresh failed: {detail}") from self._error
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=max(1.0, self._period_s * 2.0))
+        if self._thread.is_alive():
+            raise RuntimeError("native driver heartbeat thread did not stop")
+        self.raise_if_failed()
+
+
+def _step_with_driver_bridge(
+    engine: Any,
+    bridge: Any,
+    prepared: Any,
+    *,
+    imu_period_s: float,
+    step_seq: int,
+) -> tuple[Any, int]:
+    """Run one real controller tick before acknowledging its driver command."""
+
+    velocity = prepared.velocity
+    state = _step_engine_for_sensor_tick(engine, velocity, imu_period_s)
+    return state, _ack_driver_bridge_step(bridge, prepared, step_seq=step_seq)
+
+
+def _step_anchored_with_driver_bridge(
+    engine: Any,
+    bridge: Any,
+    prepared: Any,
+    *,
+    imu_period_s: float,
+    step_seq: int,
+) -> tuple[Any, int]:
+    """Advance anchored sensors and acknowledge the applied zero without running policy dynamics."""
+
+    velocity = prepared.velocity
+    command_norm = math.sqrt(
+        float(velocity.linear_x) ** 2
+        + float(velocity.linear_y) ** 2
+        + float(velocity.angular_z) ** 2
+    )
+    if command_norm > 1e-4:
+        raise RuntimeError("anchored driver step must be an exact physical stop")
+    state = _step_static_engine_for_sensor_tick(engine, imu_period_s)
+    return state, _ack_driver_bridge_step(bridge, prepared, step_seq=step_seq)
+
+
+def _ack_driver_bridge_step(bridge: Any, prepared: Any, *, step_seq: int) -> int:
+    """Publish physical-step evidence after the corresponding simulation step succeeded."""
+
+    next_step_seq = int(step_seq) + 1
+    protocol = getattr(prepared, "protocol", prepared)
+    if protocol is None:
+        bridge.heartbeat(next_step_seq)
+    else:
+        bridge.complete_step(protocol, step_seq=next_step_seq)
+    return next_step_seq
+
+
+def _deactivate_driver_bridge(
+    engine: Any,
+    bridge: NativeDriverBridge,
+    *,
+    imu_period_s: float,
+    step_seq: int,
+) -> int:
+    """Physically apply the bridge's terminal zero before accepting clean exit."""
+
+    prepared = bridge.prepare_step()
+    if prepared.protocol is not None:
+        _, step_seq = _step_with_driver_bridge(
+            engine,
+            bridge,
+            prepared,
+            imu_period_s=imu_period_s,
+            step_seq=step_seq,
+        )
+    bridge.begin_deactivate()
+    deadline = time.monotonic() + max(3.0, bridge.apply_timeout_ms / 1000.0)
+    while True:
+        remaining_s = deadline - time.monotonic()
+        if remaining_s <= 0.0:
+            raise RuntimeError("driver bridge physical deactivate zero timed out")
+        prepared = bridge.prepare_step(wait_for_command_s=remaining_s)
+        if prepared.protocol is None:
+            raise RuntimeError("driver bridge did not issue a physical deactivate zero")
+        if prepared.protocol.kind != "deactivate_zero":
+            raise RuntimeError("driver bridge emitted a non-deactivate command after shutdown began")
+        _, step_seq = _step_with_driver_bridge(
+            engine,
+            bridge,
+            prepared,
+            imu_period_s=imu_period_s,
+            step_seq=step_seq,
+        )
+        break
+    bridge.wait_stopped(timeout_s=3.0)
+    return step_seq
 
 
 def _make_report(
@@ -2932,11 +4004,10 @@ def _publisher_candidates(value: str) -> list[Path]:
         return [Path(value).expanduser()]
     if os.name == "nt":
         return [
-            ROOT / "build" / "livox_sdk2_stream" / "Debug" / "livox_sdk2_stream.exe",
-            ROOT / "build" / "livox_sdk2_stream" / "Release" / "livox_sdk2_stream.exe",
+            ROOT / "build" / "windows-native-dds-adapter" / "Release" / "lingtu_mujoco_sensor_publisher.exe",
         ]
     return [
-        ROOT / "build" / "livox_sdk2_stream" / "livox_sdk2_stream",
+        ROOT / "build" / "mujoco_native_dds" / "lingtu_mujoco_sensor_publisher",
     ]
 
 
@@ -2946,8 +4017,51 @@ def _resolve_publisher_bin(value: str) -> Path:
             return candidate.resolve()
     raise FileNotFoundError(
         "native DDS sensor publisher missing. Build it with: "
-        "LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS=ON bash scripts/build/build_livox_sdk2_stream.sh"
+        "cmake -S sim/adapters/dds -B build/mujoco_native_dds "
+        "-DLINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME=ON && "
+        "cmake --build build/mujoco_native_dds"
     )
+
+
+def _is_portable_sensor_publisher(path: Path) -> bool:
+    return path.stem.lower() == "lingtu_mujoco_sensor_publisher"
+
+
+def _publisher_runtime_base(args: argparse.Namespace) -> Path:
+    report_value = str(getattr(args, "json_out", "") or "").strip()
+    if report_value:
+        return Path(report_value).expanduser().resolve().parent
+    return (ROOT / "artifacts").resolve()
+
+
+def _wait_for_publisher_ready(
+    process: subprocess.Popen[Any],
+    ready_file: Path,
+    *,
+    timeout_s: float = DEFAULT_NATIVE_PUBLISHER_READY_S,
+) -> None:
+    deadline = time.monotonic() + max(0.0, float(timeout_s))
+    last_error = "ready marker not written"
+    while time.monotonic() <= deadline:
+        try:
+            if ready_file.exists():
+                if ready_file.stat().st_size > 4096:
+                    raise RuntimeError("DDS readiness marker exceeds 4096 bytes")
+                payload = json.loads(ready_file.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    raise RuntimeError("DDS readiness marker must be a JSON object")
+                if payload.get("ready") is not True:
+                    raise RuntimeError("DDS readiness marker does not confirm readiness")
+                if payload.get("schema") != NATIVE_SENSOR_PUBLISHER_READY_SCHEMA:
+                    raise RuntimeError("DDS readiness marker schema mismatch")
+                return
+        except (OSError, json.JSONDecodeError) as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+        returncode = process.poll()
+        if returncode is not None:
+            raise RuntimeError(f"native sensor publisher exited before DDS readiness with return code {returncode}")
+        time.sleep(0.02)
+    raise RuntimeError(f"native sensor publisher DDS readiness timed out after {float(timeout_s):.1f}s ({last_error})")
 
 
 def _should_restamp_native_records(args: argparse.Namespace) -> bool:
@@ -2965,9 +4079,7 @@ def _should_restamp_native_records(args: argparse.Namespace) -> bool:
 
 def _start_native_publisher(args: argparse.Namespace) -> subprocess.Popen[bytes]:
     publisher = _resolve_publisher_bin(str(args.publisher_bin or ""))
-    clock_handshake = os.name == "nt" and publisher.suffix.lower() != ".exe"
-    command = _linux_binary_command(
-        publisher,
+    publisher_args = [
         "--stdin-records",
         "--dds",
         "--domain-id",
@@ -2976,35 +4088,45 @@ def _start_native_publisher(args: argparse.Namespace) -> subprocess.Popen[bytes]
         LIDAR_FRAME_ID,
         "--imu-frame",
         IMU_FRAME_ID,
-    )
+    ]
     if bool(getattr(args, "navigation_fixture", False)):
-        command.append("--navigation-fixture")
+        publisher_args.append("--navigation-fixture")
     if _should_restamp_native_records(args):
-        command.append("--restamp-stdin-records")
+        publisher_args.append("--restamp-stdin-records")
+    ready_file: Path | None = None
+    if _is_portable_sensor_publisher(publisher):
+        ready_file = (_publisher_runtime_base(args) / f"mujoco_sensor_publisher_{os.getpid()}.ready.json").resolve()
+        ready_file.parent.mkdir(parents=True, exist_ok=True)
+        ready_file.unlink(missing_ok=True)
+        ready_file.with_name(ready_file.name + ".tmp").unlink(missing_ok=True)
+        ready_argument = (
+            _wsl_path(ready_file) if os.name == "nt" and publisher.suffix.lower() != ".exe" else str(ready_file)
+        )
+        publisher_args.extend(["--ready-file", ready_argument])
+    command = _linux_binary_command(publisher, *publisher_args)
+    managed_wsl = os.name == "nt" and len(command) >= 3 and command[1] == "-e"
+    clock_handshake = managed_wsl
     pid_file_value = str(getattr(args, "publisher_pid_file", "") or "")
     if pid_file_value:
         pid_file = Path(pid_file_value).expanduser().resolve()
     else:
-        report_path = Path(str(getattr(args, "json_out", "") or "")).expanduser()
-        base = report_path.parent if str(report_path) else ROOT / "artifacts"
-        pid_file = (base / f"mujoco_sensor_publisher_{os.getpid()}.pid").resolve()
+        pid_file = (_publisher_runtime_base(args) / f"mujoco_sensor_publisher_{os.getpid()}.pid").resolve()
+    launch_command = _managed_wsl_command(
+        command,
+        pid_file,
+        clock_handshake=clock_handshake,
+    )
     process = subprocess.Popen(
-        _managed_wsl_command(command, pid_file, clock_handshake=clock_handshake),
+        launch_command,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE if clock_handshake else subprocess.DEVNULL,
     )
-    linux_pid = _read_linux_pid(pid_file, timeout_s=10.0)
-    if linux_pid is None:
-        relay_errors = _stop_relay(process)
-        detail = ";".join(relay_errors) if relay_errors else "pid_file_not_written"
-        raise RuntimeError(f"sensor publisher Linux PID handshake failed: {detail}")
-    if clock_handshake:
-        try:
-            process._lingtu_native_clock_alignment = _synchronize_managed_native_clock(process)
-        except BaseException:
-            _stop_relay(process)
-            raise
-    else:
+    if not managed_wsl:
+        process._lingtu_publisher_kind = "local"
+        process._lingtu_owned_pid = int(process.pid)
+        process._lingtu_linux_pid_file = None
+        process._lingtu_linux_pid = None
+        process._lingtu_ready_file = ready_file
         process._lingtu_native_clock_alignment = {
             "source": "shared_local_wall_clock",
             "sample_count": 1,
@@ -3012,8 +4134,43 @@ def _start_native_publisher(args: argparse.Namespace) -> subprocess.Popen[bytes]
             "uncertainty_ms": 0.0,
             "native_minus_local_s": 0.0,
         }
+        if ready_file is not None:
+            try:
+                _wait_for_publisher_ready(
+                    process,
+                    ready_file,
+                    timeout_s=DEFAULT_NATIVE_PUBLISHER_READY_S,
+                )
+            except BaseException:
+                _terminate_native_publisher_process(process)
+                raise
+        return process
+    linux_pid = _read_linux_pid(pid_file, timeout_s=10.0)
+    if linux_pid is None:
+        relay_errors = _stop_relay(process)
+        detail = ";".join(relay_errors) if relay_errors else "pid_file_not_written"
+        raise RuntimeError(f"sensor publisher Linux PID handshake failed: {detail}")
+    try:
+        process._lingtu_native_clock_alignment = _synchronize_managed_native_clock(process)
+    except BaseException:
+        _stop_relay(process)
+        raise
+    process._lingtu_publisher_kind = "wsl"
+    process._lingtu_owned_pid = linux_pid
     process._lingtu_linux_pid_file = pid_file
     process._lingtu_linux_pid = linux_pid
+    process._lingtu_ready_file = ready_file
+    if ready_file is not None:
+        try:
+            _wait_for_publisher_ready(
+                process,
+                ready_file,
+                timeout_s=DEFAULT_NATIVE_PUBLISHER_READY_S,
+            )
+        except BaseException:
+            _terminate_native_publisher_process(process)
+            _stop_relay(process)
+            raise
     return process
 
 
@@ -3023,9 +4180,17 @@ def _finish_native_publisher(
     close_stdin: bool = True,
     termination_cleanup: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    pid = getattr(process, "_lingtu_linux_pid", None)
     pid_file = getattr(process, "_lingtu_linux_pid_file", None)
+    ready_file = getattr(process, "_lingtu_ready_file", None)
     errors: list[str] = []
+    try:
+        returncode_before_cleanup = process.poll()
+    except OSError as exc:
+        returncode_before_cleanup = None
+        errors.append(f"publisher_poll_failed:{type(exc).__name__}:{exc}")
+    prior_parent_termination = bool(
+        termination_cleanup and (termination_cleanup.get("term_sent") or termination_cleanup.get("kill_sent"))
+    )
     try:
         if close_stdin and process.stdin is not None and not process.stdin.closed:
             process.stdin.close()
@@ -3039,20 +4204,41 @@ def _finish_native_publisher(
         errors.append(f"publisher_wait_failed:{type(exc).__name__}:{exc}")
 
     cleanup = (
-        dict(termination_cleanup)
-        if termination_cleanup is not None
-        else _terminate_wsl_pid(pid)
+        dict(termination_cleanup) if termination_cleanup is not None else _terminate_native_publisher_process(process)
     )
-    relay_errors = _stop_relay(process)
-    if relay_errors:
-        errors.extend(relay_errors)
+    if _publisher_process_kind(process) == "wsl":
+        relay_errors = _stop_relay(process)
+        if relay_errors:
+            errors.extend(relay_errors)
+    if ready_file is not None:
+        try:
+            Path(ready_file).unlink(missing_ok=True)
+        except OSError as exc:
+            errors.append(f"publisher_ready_file_cleanup_failed:{type(exc).__name__}:{exc}")
     if errors:
         cleanup.setdefault("errors", []).extend(errors)
         cleanup["clean"] = False
+    terminated_by_parent = prior_parent_termination or bool(cleanup.get("term_sent") or cleanup.get("kill_sent"))
+    returncode = process.poll()
+    failed_before_cleanup = returncode not in {None, 0} and not terminated_by_parent
+    if failed_before_cleanup:
+        cleanup.setdefault("errors", []).append(f"publisher_exited_nonzero:returncode={returncode}")
+        cleanup["clean"] = False
+    if terminated_by_parent:
+        exit_context = "parent_requested_termination"
+    elif returncode_before_cleanup is None:
+        exit_context = "stdin_eof_exit"
+    else:
+        exit_context = "natural_exit"
     cleanup.update(
         {
             "pid_file": str(pid_file or ""),
-            "returncode": process.poll(),
+            "ready_file": str(ready_file or ""),
+            "returncode_before_cleanup": returncode_before_cleanup,
+            "returncode": returncode,
+            "exit_context": exit_context,
+            "failed_before_cleanup": failed_before_cleanup,
+            "terminated_by_parent": terminated_by_parent,
         }
     )
     return cleanup
@@ -3219,9 +4405,7 @@ class AsyncFifoPublisher:
             return
         self._set_failure_locked(
             "queue_oldest_age",
-            AsyncPublisherError(
-                f"queue_oldest_age:{oldest_age_s:.9f}s>{self._oldest_ns / 1_000_000_000.0:.9f}s"
-            ),
+            AsyncPublisherError(f"queue_oldest_age:{oldest_age_s:.9f}s>{self._oldest_ns / 1_000_000_000.0:.9f}s"),
         )
 
     def _fail_queue_full_locked(self, limit: str) -> None:
@@ -3345,19 +4529,13 @@ class AsyncFifoPublisher:
             "max_bytes": self._max_observed_bytes,
             "oldest_age_s": oldest_age_s,
             "undrained_batches": (
-                self._current_batches
-                if self._failure_undrained_batches is None
-                else self._failure_undrained_batches
+                self._current_batches if self._failure_undrained_batches is None else self._failure_undrained_batches
             ),
             "undrained_records": (
-                self._current_records
-                if self._failure_undrained_records is None
-                else self._failure_undrained_records
+                self._current_records if self._failure_undrained_records is None else self._failure_undrained_records
             ),
             "undrained_bytes": (
-                self._current_bytes
-                if self._failure_undrained_bytes is None
-                else self._failure_undrained_bytes
+                self._current_bytes if self._failure_undrained_bytes is None else self._failure_undrained_bytes
             ),
             "writer_alive": not self._writer_finished and self._thread.is_alive(),
             "cleanup_reason": self._cleanup_reason,
@@ -3464,7 +4642,7 @@ def _shutdown_async_native_publisher(
 
     publisher.mark_shutdown_timeout()
     timeout_stats = publisher.stats()
-    termination = _terminate_wsl_pid(getattr(process, "_lingtu_linux_pid", None))
+    termination = _terminate_native_publisher_process(process)
     joined_after_terminate = publisher.join(timeout_s=timeout)
     return {
         "timed_out": True,
@@ -3498,9 +4676,7 @@ def _cleanup_native_publisher(
     async_errors: list[str] = []
     if bool(async_cleanup.get("timed_out")):
         async_errors.append("async_writer_shutdown_timeout")
-    if bool(async_cleanup.get("timed_out")) and not bool(
-        async_cleanup.get("joined_after_terminate")
-    ):
+    if bool(async_cleanup.get("timed_out")) and not bool(async_cleanup.get("joined_after_terminate")):
         async_errors.append("async_writer_still_alive_after_terminate")
     fatal_reason = str((async_cleanup.get("queue") or {}).get("fatal_reason") or "")
     if fatal_reason:
@@ -3509,6 +4685,15 @@ def _cleanup_native_publisher(
         cleanup.setdefault("errors", []).extend(async_errors)
         cleanup["clean"] = False
     return cleanup
+
+
+def _native_sensor_publisher_gaps(cleanup: dict[str, Any]) -> list[str]:
+    gaps: list[str] = []
+    if bool(cleanup.get("failed_before_cleanup")) and not bool(cleanup.get("terminated_by_parent")):
+        gaps.append("native_sensor_publisher_failed")
+    if cleanup.get("clean") is not True:
+        gaps.append("native_sensor_publisher_cleanup_failed")
+    return gaps
 
 
 def _write_serialized_record(
@@ -3552,10 +4737,33 @@ def _write_record(
     diagnostic_record_type: str = "",
     async_batch: AsyncPublisherBatch | None = None,
 ) -> None:
+    _publish_encoded_record(
+        stream,
+        _sensor_records.encode_record(
+            record_type,
+            timestamp_ns=timestamp_ns,
+            sequence=sequence,
+            payload=payload,
+            count=count,
+        ),
+        parent_diagnostics=parent_diagnostics,
+        diagnostic_record_type=diagnostic_record_type,
+        async_batch=async_batch,
+    )
+
+
+def _publish_encoded_record(
+    stream: Any,
+    encoded: _sensor_records.EncodedSensorRecord,
+    *,
+    parent_diagnostics: ParentSensorDiagnostics | None = None,
+    diagnostic_record_type: str,
+    async_batch: AsyncPublisherBatch | None = None,
+) -> None:
     record = _SerializedPublisherRecord(
         diagnostic_record_type=str(diagnostic_record_type),
-        header=_HEADER.pack(_MAGIC, int(record_type), int(timestamp_ns), int(sequence), int(count), len(payload)),
-        payload=bytes(payload),
+        header=encoded.header,
+        payload=encoded.payload,
     )
     if async_batch is not None:
         async_batch.append(
@@ -3632,14 +4840,9 @@ def _write_native_scan(
     parent_diagnostics: ParentSensorDiagnostics | None = None,
     async_batch: AsyncPublisherBatch | None = None,
 ) -> None:
-    payload = np.asarray(scan.points).tobytes()
-    _write_record(
+    _publish_encoded_record(
         stream,
-        _RECORD_CLOUD,
-        int(scan.timestamp_ns),
-        int(scan.sequence),
-        payload,
-        int(scan.point_count),
+        _sensor_records.encode_scan(scan),
         parent_diagnostics=parent_diagnostics,
         diagnostic_record_type="cloud",
         async_batch=async_batch,
@@ -3654,22 +4857,9 @@ def _write_native_imu(
     parent_diagnostics: ParentSensorDiagnostics | None = None,
     async_batch: AsyncPublisherBatch | None = None,
 ) -> None:
-    acc_scale = _MID360_ACCEL_MPS2_PER_G
-    payload = _IMU_PAYLOAD.pack(
-        float(imu.angular_velocity.x),
-        float(imu.angular_velocity.y),
-        float(imu.angular_velocity.z),
-        float(imu.linear_acceleration.x) / acc_scale,
-        float(imu.linear_acceleration.y) / acc_scale,
-        float(imu.linear_acceleration.z) / acc_scale,
-    )
-    _write_record(
+    _publish_encoded_record(
         stream,
-        _RECORD_IMU,
-        int(float(imu.ts) * 1_000_000_000),
-        sequence,
-        payload,
-        1,
+        _sensor_records.encode_imu(imu, sequence=sequence),
         parent_diagnostics=parent_diagnostics,
         diagnostic_record_type="imu",
         async_batch=async_batch,
@@ -3687,37 +4877,15 @@ def _write_native_odom_prior(
     parent_diagnostics: ParentSensorDiagnostics | None = None,
     async_batch: AsyncPublisherBatch | None = None,
 ) -> None:
-    position = np.asarray(getattr(state, "position", (0.0, 0.0, 0.0)), dtype=np.float64)
-    orientation = np.asarray(getattr(state, "orientation", (0.0, 0.0, 0.0, 1.0)), dtype=np.float64)
-    if velocity is None:
-        velocity = getattr(state, "linear_velocity", (0.0, 0.0, 0.0))
-    velocity = np.asarray(velocity, dtype=np.float64)
-    if position.size < 3:
-        position = np.pad(position, (0, 3 - position.size))
-    if orientation.size < 4:
-        orientation = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float64)
-    if velocity.size < 3:
-        velocity = np.pad(velocity, (0, 3 - velocity.size))
-    payload = _ODOM_PRIOR_PAYLOAD.pack(
-        float(position[0]),
-        float(position[1]),
-        float(position[2]),
-        float(orientation[0]),
-        float(orientation[1]),
-        float(orientation[2]),
-        float(orientation[3]),
-        float(velocity[0]),
-        float(velocity[1]),
-        float(velocity[2]),
-        int(bool(has_velocity)),
-    )
-    _write_record(
+    _publish_encoded_record(
         stream,
-        _RECORD_ODOM_PRIOR,
-        int(float(timestamp_s) * 1_000_000_000),
-        sequence,
-        payload,
-        1,
+        _sensor_records.encode_odom_prior(
+            state,
+            timestamp_s=timestamp_s,
+            sequence=sequence,
+            velocity=velocity,
+            has_velocity=has_velocity,
+        ),
         parent_diagnostics=parent_diagnostics,
         diagnostic_record_type="odom_prior",
         async_batch=async_batch,
@@ -3733,49 +4901,16 @@ def _write_native_registered_cloud(
     parent_diagnostics: ParentSensorDiagnostics | None = None,
     async_batch: AsyncPublisherBatch | None = None,
 ) -> None:
-    points = np.asarray(points_xyzi_body, dtype=np.float32)
-    if points.ndim != 2 or points.shape[1] < 3:
-        raise ValueError(f"expected body-frame XYZI cloud shape (N, >=3), got {points.shape}")
-    frame = _xyzi_to_livox_frame(
-        points,
-        timestamp_ns=int(timestamp_ns),
-        sequence=int(sequence),
-        frame_id="body",
-        scan_duration_ns=0,
-    )
-    payload = np.asarray(frame.points, dtype=POINT_DTYPE).tobytes()
-    _write_record(
+    _publish_encoded_record(
         stream,
-        _RECORD_REGISTERED_CLOUD,
-        int(timestamp_ns),
-        int(sequence),
-        payload,
-        int(frame.point_count),
+        _sensor_records.encode_registered_cloud(
+            points_xyzi_body,
+            timestamp_ns=timestamp_ns,
+            sequence=sequence,
+        ),
         parent_diagnostics=parent_diagnostics,
         diagnostic_record_type="registered_cloud",
         async_batch=async_batch,
-    )
-
-
-def _world_xyzi_to_body_xyzi(points_xyzi_world: Any, state: Any) -> Any:
-    points = np.asarray(points_xyzi_world, dtype=np.float32)
-    if points.size == 0:
-        return np.zeros((0, 4), dtype=np.float32)
-    if points.ndim != 2 or points.shape[1] < 3:
-        raise ValueError(f"expected world-frame XYZI cloud shape (N, >=3), got {points.shape}")
-    position = np.asarray(state.position, dtype=np.float64).reshape(3)
-    rotation_body_to_world = quat_xyzw_to_matrix(
-        np.asarray(state.orientation, dtype=np.float64)
-    )
-    xyz_body = (points[:, :3].astype(np.float64) - position) @ rotation_body_to_world
-    intensity = (
-        points[:, 3:4]
-        if points.shape[1] >= 4
-        else np.zeros((len(points), 1), dtype=np.float32)
-    )
-    return np.hstack((xyz_body.astype(np.float32), intensity.astype(np.float32))).astype(
-        np.float32,
-        copy=False,
     )
 
 
@@ -3814,6 +4949,34 @@ def _slam_status_counts(path: str) -> tuple[Counter[str], dict[str, Any]]:
     return counts, status
 
 
+def _acceptance_contacts(model: Any, data: Any) -> list[dict[str, Any]]:
+    """Return contacts involving scenario geoms for acceptance evidence."""
+
+    import mujoco
+
+    contacts: list[dict[str, Any]] = []
+    for index in range(int(getattr(data, "ncon", 0))):
+        contact = data.contact[index]
+        geom1 = str(
+            mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, int(contact.geom1))
+            or ""
+        )
+        geom2 = str(
+            mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, int(contact.geom2))
+            or ""
+        )
+        if not (geom1.startswith("acceptance_") or geom2.startswith("acceptance_")):
+            continue
+        contacts.append(
+            {
+                "geom1": geom1,
+                "geom2": geom2,
+                "distance_m": float(contact.dist),
+            }
+        )
+    return contacts
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     from sim.engine.core.engine import VelocityCommand
 
@@ -3821,6 +4984,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     settle_s = max(0.0, float(args.settle_s))
     warmup_s = max(0.0, float(args.warmup_s))
     requested_start = parse_start(str(args.start or ""))
+    requested_start_yaw_deg = getattr(args, "start_yaw_deg", None)
+    if requested_start_yaw_deg is not None and not math.isfinite(
+        float(requested_start_yaw_deg)
+    ):
+        raise ValueError("--start-yaw-deg must be finite")
     start_anchor = str(args.start_anchor)
     drive_ramp_s = max(0.0, float(args.drive_ramp_s))
     imu_acc_axis_scale, imu_acc_axis_scale_source = _resolve_imu_acc_axis_scale(
@@ -3844,9 +5012,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     motion_interval_completed = False
     motion_complete_marker_value = str(getattr(args, "motion_complete_marker", "") or "")
     motion_complete_marker = (
-        Path(motion_complete_marker_value).expanduser().resolve()
-        if motion_complete_marker_value
-        else None
+        Path(motion_complete_marker_value).expanduser().resolve() if motion_complete_marker_value else None
     )
     if motion_complete_marker is not None:
         motion_complete_marker.unlink(missing_ok=True)
@@ -3858,6 +5024,40 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         1,
         int(getattr(args, "navigation_fixture_cloud_points", 4000) or 4000),
     )
+    navigation_fixture_ground_y_half_m = float(
+        getattr(
+            args,
+            "navigation_fixture_ground_y_half_m",
+            NAVIGATION_FIXTURE_GROUND_Y_HALF_M,
+        )
+    )
+    if not math.isfinite(navigation_fixture_ground_y_half_m) or navigation_fixture_ground_y_half_m <= 0.0:
+        raise ValueError("navigation fixture ground y half-width must be positive and finite")
+    navigation_fixture_ground_resolution_m = float(
+        getattr(
+            args,
+            "navigation_fixture_ground_resolution_m",
+            NAVIGATION_FIXTURE_GROUND_RESOLUTION_M,
+        )
+    )
+    if (
+        not math.isfinite(navigation_fixture_ground_resolution_m)
+        or navigation_fixture_ground_resolution_m <= 0.0
+        or navigation_fixture_ground_resolution_m > NAVIGATION_FIXTURE_GROUND_RESOLUTION_M
+    ):
+        raise ValueError("navigation fixture ground resolution must be in (0, 0.2]")
+    navigation_fixture_ground_report: dict[str, Any] = {
+        "enabled": navigation_fixture,
+        "synthetic_ground_points": 0,
+        "raw_body_points": 0,
+        "raw_overlay_points": 0,
+        "raw_obstacle_overlay_points": 0,
+        "raw_overlay_enabled": bool(getattr(args, "navigation_fixture_raw_overlay", True)),
+        "published_points": 0,
+        "max_points": navigation_fixture_cloud_points,
+        "resolution_m": navigation_fixture_ground_resolution_m,
+        "y_half_m": navigation_fixture_ground_y_half_m,
+    }
     imu_acc_conditioner: SimImuSignalConditioner | None = None
     if str(args.imu_acc_mode) == "sensor" and str(args.imu_acc_conditioning) == "realistic":
         imu_acc_conditioner = SimImuSignalConditioner(
@@ -3872,27 +5072,30 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "_parent_diagnostics",
         None,
     )
+    driver_bridge_path: Path | None = None
+    if str(args.command_source) == "dds":
+        driver_bridge_path = _resolve_driver_bridge_bin(str(args.driver_bridge_bin or ""))
+        if not _safe_protocol_token(str(args.driver_expected_host_boot_id or "")):
+            raise ValueError("--driver-expected-host-boot-id must be a safe non-empty token for --command-source dds")
     publisher_path = _resolve_publisher_bin(str(args.publisher_bin or ""))
     publisher = _start_native_publisher(args)
     publisher_write_mode = str(
-        getattr(args, "publisher_write_mode", DEFAULT_PUBLISHER_WRITE_MODE)
-        or DEFAULT_PUBLISHER_WRITE_MODE
+        getattr(args, "publisher_write_mode", DEFAULT_PUBLISHER_WRITE_MODE) or DEFAULT_PUBLISHER_WRITE_MODE
     )
     if publisher_write_mode not in {"sync", "async_fifo"}:
         _finish_native_publisher(publisher)
         raise ValueError(f"unsupported publisher write mode: {publisher_write_mode}")
     async_publisher: AsyncFifoPublisher | None = None
-    async_publisher_shutdown_s = float(
-        getattr(args, "async_publisher_shutdown_s", DEFAULT_ASYNC_PUBLISHER_SHUTDOWN_S)
-    )
+    async_publisher_shutdown_s = float(getattr(args, "async_publisher_shutdown_s", DEFAULT_ASYNC_PUBLISHER_SHUTDOWN_S))
     if not math.isfinite(async_publisher_shutdown_s) or async_publisher_shutdown_s <= 0.0:
         _finish_native_publisher(publisher)
         raise ValueError("--async-publisher-shutdown-s must be positive and finite")
     publisher_cleanup: dict[str, Any] = {}
     native_clock_alignment: dict[str, Any] = {}
     cleanup_errors: list[str] = []
-    cmd_vel_source: NativeCmdVelSource | None = None
-    cmd_vel_stats: dict[str, Any] = {
+    driver_bridge: NativeDriverBridge | None = None
+    driver_heartbeat: DriverHeartbeat | None = None
+    driver_bridge_stats: dict[str, Any] = {
         "transport": "deterministic_profile",
         "samples": 0,
         "nonzero_samples": 0,
@@ -3904,29 +5107,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             async_publisher = AsyncFifoPublisher(
                 publisher.stdin,
                 parent_diagnostics=parent_diagnostics,
-                max_bytes=int(
-                    getattr(args, "async_publisher_max_bytes", DEFAULT_ASYNC_PUBLISHER_MAX_BYTES)
-                ),
-                max_records=int(
-                    getattr(args, "async_publisher_max_records", DEFAULT_ASYNC_PUBLISHER_MAX_RECORDS)
-                ),
-                max_batches=int(
-                    getattr(args, "async_publisher_max_batches", DEFAULT_ASYNC_PUBLISHER_MAX_BATCHES)
-                ),
-                oldest_s=float(
-                    getattr(args, "async_publisher_oldest_s", DEFAULT_ASYNC_PUBLISHER_OLDEST_S)
-                ),
-            )
-        if str(args.command_source) == "dds":
-            cmd_vel_source = NativeCmdVelSource(
-                binary=_resolve_cmd_vel_tap_bin(str(args.cmd_vel_tap_bin or "")),
-                domain_id=int(args.domain_id),
-                timeout_s=float(args.cmd_vel_timeout_s),
-                pid_file=(
-                    Path(str(args.cmd_vel_pid_file)).expanduser().resolve()
-                    if str(args.cmd_vel_pid_file or "")
-                    else None
-                ),
+                max_bytes=int(getattr(args, "async_publisher_max_bytes", DEFAULT_ASYNC_PUBLISHER_MAX_BYTES)),
+                max_records=int(getattr(args, "async_publisher_max_records", DEFAULT_ASYNC_PUBLISHER_MAX_RECORDS)),
+                max_batches=int(getattr(args, "async_publisher_max_batches", DEFAULT_ASYNC_PUBLISHER_MAX_BATCHES)),
+                oldest_s=float(getattr(args, "async_publisher_oldest_s", DEFAULT_ASYNC_PUBLISHER_OLDEST_S)),
             )
     except Exception:
         _cleanup_native_publisher(
@@ -3982,7 +5166,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     engine = None
     viewer = None
     viewer_closed_early = False
+    viewer_overlay = {"point_count": 0, "global_segments": 0, "local_segments": 0}
     policy_loaded = False
+    policy_runtime_report: dict[str, Any] = {
+        "backend": "unconfigured",
+        "requested_cpu_threads": int(args.policy_cpu_threads),
+        "active_cpu_threads": None,
+        "active_interop_threads": None,
+    }
+    physics_timestep_requested_s = 0.0
     pacing_controller: SimHardwareCatchUpController | None = None
     pacing_stats: dict[str, Any] = {
         "enabled": False,
@@ -3991,6 +5183,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     last_sim_time_s = 0.0
     sim_start_s = 0.0
     goal_reached_early = False
+    motion_started_sim_s: float | None = None
     lidar_backend_report: dict[str, Any] = {}
     physics_integrator_requested = str(getattr(args, "physics_integrator", "model") or "model")
     physics_integrator_active = "unloaded"
@@ -3999,10 +5192,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     mocap_motion: LinearMocapMotion | None = None
     try:
         policy_path = _resolve_policy_path_for_drive(str(args.drive_mode), str(args.policy_path or ""))
+        policy_runtime_report = _configure_policy_cpu_threads(policy_path, int(args.policy_cpu_threads))
+        physics_timestep_requested_s = float(args.physics_timestep_s)
+        if not math.isfinite(physics_timestep_requested_s):
+            raise ValueError("--physics-timestep-s must be finite")
         engine = build_engine(
             world=resolve_world(str(args.world)),
             drive_mode=str(args.drive_mode),
-            n_rays=int(args.n_rays),
             start=requested_start,
             mujoco_memory=str(args.mujoco_memory),
             mid360_pattern=args.mid360_pattern,
@@ -4010,13 +5206,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             lidar_backend=str(args.lidar_backend),
             mujoco_lidar_backend=str(args.mujoco_lidar_backend),
             require_product_lidar_backend=True,
-            allow_legacy_lidar_fallback=bool(args.allow_legacy_lidar_fallback),
             policy_path=policy_path,
+            policy_cpu_threads=int(args.policy_cpu_threads),
+            max_linear_vel=(float(args.driver_max_linear_mps) if str(args.command_source) == "dds" else None),
+            max_angular_vel=(float(args.driver_max_angular_rps) if str(args.command_source) == "dds" else None),
         )
         if bool(getattr(args, "viewer", False)):
             viewer = launch_presentation_viewer(engine.model, engine.data)
         if physics_integrator_requested != "model":
             engine.set_physics_integrator(physics_integrator_requested)
+        if physics_timestep_requested_s != 0.0:
+            engine.set_physics_timestep(physics_timestep_requested_s)
         mocap_body = str(getattr(args, "mocap_motion_body", "") or "").strip()
         if mocap_body:
             mocap_motion = LinearMocapMotion.attach(
@@ -4039,24 +5239,44 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         lidar_backend_report = engine.get_lidar_backend_report()
         policy_loaded = bool(getattr(engine, "has_policy", False))
         hold_cmd = VelocityCommand()
+        policy_settled_before_anchor = bool(
+            policy_loaded and start_anchor in {"warmup", "run"} and settle_s > 0.0
+        )
+        if policy_settled_before_anchor:
+            settle_end_s = float(getattr(engine, "sim_time", 0.0)) + settle_s
+            while float(getattr(engine, "sim_time", 0.0)) + 1e-9 < settle_end_s:
+                if parent_diagnostics is not None:
+                    if parent_diagnostics.stop_requested:
+                        break
+                    parent_diagnostics.maybe_publish()
+                _step_engine_for_sensor_tick(engine, hold_cmd, imu_period_s)
+
         initial_state = engine.get_robot_state()
         if viewer is not None:
             focus_presentation_viewer(viewer, initial_state.position, initialize=True)
             viewer.sync()
-        anchor_position = np.asarray(
-            requested_start if requested_start is not None else initial_state.position,
-            dtype=np.float64,
+        anchor_position = _anchor_position_after_policy_settle(
+            requested_start,
+            initial_state.position,
+            policy_settled=policy_settled_before_anchor,
         )
         anchor_orientation = np.asarray(initial_state.orientation, dtype=np.float64)
+        if requested_start_yaw_deg is not None:
+            yaw_half = 0.5 * math.radians(float(requested_start_yaw_deg))
+            anchor_orientation = np.asarray(
+                [0.0, 0.0, math.sin(yaw_half), math.cos(yaw_half)],
+                dtype=np.float64,
+            )
 
         def apply_start_anchor() -> Any:
             engine.set_robot_pose(anchor_position, anchor_orientation)
             return engine.get_robot_state()
 
         motion_started = False
+        motion_started_sim_s = None
         if _start_anchor_active(start_anchor, motion_started=motion_started):
             apply_start_anchor()
-        if settle_s > 0.0:
+        if settle_s > 0.0 and not policy_settled_before_anchor:
             settle_end_s = float(getattr(engine, "sim_time", 0.0)) + settle_s
             while float(getattr(engine, "sim_time", 0.0)) + 1e-9 < settle_end_s:
                 if parent_diagnostics is not None:
@@ -4075,10 +5295,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         native_clock_alignment = dict(publisher._lingtu_native_clock_alignment)
         hardware_clock = SimulatedHardwareClock(
             sim_start_s=sim_start_s,
-            wall_epoch_s=(
-                time.time()
-                + float(native_clock_alignment["native_minus_local_s"])
-            ),
+            wall_epoch_s=(time.time() + float(native_clock_alignment["native_minus_local_s"])),
             monotonic_start_s=time.monotonic(),
             realtime_factor=float(args.sim_hardware_realtime_factor),
         )
@@ -4088,7 +5305,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             imu_clock=imu_timestamp_clock,
             lidar_clock=lidar_timestamp_clock,
         )
-        if unified_sim_hardware_clock and not navigation_fixture:
+        dds_closed_loop = str(args.command_source) == "dds"
+        if unified_sim_hardware_clock and (not navigation_fixture or dds_closed_loop):
             pacing_controller = SimHardwareCatchUpController(
                 clock=hardware_clock,
                 max_lag_s=float(args.sim_hardware_max_lag_s),
@@ -4118,6 +5336,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         odom_prior_sequence = 0
         registered_cloud_sequence = 0
         odom_prior_velocity_estimator = OdomPriorVelocityEstimator(window_s=float(args.odom_prior_velocity_window_s))
+        mujoco_truth_velocity_estimator = OdomPriorVelocityEstimator(
+            window_s=float(args.odom_prior_velocity_window_s)
+        )
         prev_imu_s = None
         prev_velocity = None
         next_lidar_s = 0.0
@@ -4143,8 +5364,33 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         next_lidar_sim_s = sim_start_s
         viewer_period_s = 1.0 / max(1.0, float(getattr(args, "viewer_hz", 30.0) or 30.0))
         next_viewer_sim_s = sim_start_s
+        viewer_overlay_period_s = 0.1
+        next_viewer_overlay_sim_s = sim_start_s
         previous_loop_end_wall_s: float | None = None
+        driver_step_seq = 0
+        if str(args.command_source) == "dds":
+            if driver_bridge_path is None:
+                raise RuntimeError("driver bridge artifact was not resolved")
+            driver_bridge = NativeDriverBridge(
+                binary=driver_bridge_path,
+                domain_id=int(args.domain_id),
+                expected_host_boot_id=str(args.driver_expected_host_boot_id),
+                max_linear_mps=float(args.driver_max_linear_mps),
+                max_angular_rps=float(args.driver_max_angular_rps),
+                pid_file=(
+                    Path(str(args.driver_bridge_pid_file)).expanduser().resolve()
+                    if str(args.driver_bridge_pid_file or "")
+                    else None
+                ),
+                command_timeout_ms=int(args.driver_command_timeout_ms),
+                heartbeat_timeout_ms=int(args.driver_heartbeat_timeout_ms),
+                apply_timeout_ms=int(args.driver_apply_timeout_ms),
+            )
+            driver_heartbeat = DriverHeartbeat(driver_bridge)
+            driver_heartbeat.start()
         while True:
+            if driver_heartbeat is not None:
+                driver_heartbeat.raise_if_failed()
             publisher_batch = _begin_native_publisher_batch(async_publisher)
             if parent_diagnostics is not None:
                 if parent_diagnostics.stop_requested:
@@ -4194,11 +5440,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     )
             if external_arm_gate is None and unified_sim_hardware_clock:
                 sim_elapsed_before_step_s = max(0.0, float(getattr(engine, "sim_time", 0.0)) - sim_start_s)
-                if sim_elapsed_before_step_s >= warmup_s + duration_s:
+                anchored_dds_motion = driver_bridge is not None and start_anchor == "warmup"
+                if anchored_dds_motion:
+                    drive_elapsed_s = (
+                        max(0.0, sim_time_before_step_s - motion_started_sim_s)
+                        if motion_started_sim_s is not None
+                        else 0.0
+                    )
+                    if motion_started_sim_s is not None and drive_elapsed_s >= duration_s:
+                        motion_interval_completed = True
+                        break
+                elif sim_elapsed_before_step_s >= warmup_s + duration_s:
                     motion_interval_completed = True
                     break
                 driving = sim_elapsed_before_step_s >= warmup_s
-                drive_elapsed_s = max(0.0, sim_elapsed_before_step_s - warmup_s)
+                if not anchored_dds_motion:
+                    drive_elapsed_s = max(0.0, sim_elapsed_before_step_s - warmup_s)
                 drop_sensor_tick = bool(
                     pacing_controller
                     and pacing_controller.should_drop_sensor_tick(
@@ -4212,13 +5469,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     break
                 driving = loop_start >= drive_start_s
                 drive_elapsed_s = max(0.0, loop_start - drive_start_s) if driving else 0.0
-            if driving and cmd_vel_source is not None:
-                command_vx, command_vy, command_wz = cmd_vel_source.command()
-                cmd = VelocityCommand(
-                    linear_x=command_vx,
-                    linear_y=command_vy,
-                    angular_z=command_wz,
-                )
+            prepared_driver_step: PreparedDriverBridgeStep | None = None
+            if driver_bridge is not None:
+                prepared_driver_step = driver_bridge.prepare_step()
+                cmd = prepared_driver_step.velocity
             elif driving:
                 ramp = 1.0 if drive_ramp_s <= 0.0 else min(1.0, drive_elapsed_s / drive_ramp_s)
                 profile_vx, profile_vy, profile_wz = _drive_command_for_profile(
@@ -4236,13 +5490,29 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 cmd = hold_cmd
             command_norm = math.sqrt(float(cmd.linear_x) ** 2 + float(cmd.linear_y) ** 2 + float(cmd.angular_z) ** 2)
-            if driving and (cmd_vel_source is None or command_norm > 1e-4):
+            if driver_bridge is not None:
+                anchor_active, motion_started = _driver_bridge_anchor_state(
+                    start_anchor,
+                    motion_started=motion_started,
+                    driving=driving,
+                    external_arm_gate=external_arm_gate,
+                    command_norm=command_norm,
+                )
+                if motion_started and motion_started_sim_s is None:
+                    motion_started_sim_s = sim_time_before_step_s
+            elif driving:
                 motion_started = True
-            anchor_active = _sensor_anchor_active(
-                start_anchor,
-                motion_started=motion_started,
-                external_arm_gate=external_arm_gate,
-            )
+                anchor_active = _sensor_anchor_active(
+                    start_anchor,
+                    motion_started=motion_started,
+                    external_arm_gate=external_arm_gate,
+                )
+            else:
+                anchor_active = _sensor_anchor_active(
+                    start_anchor,
+                    motion_started=motion_started,
+                    external_arm_gate=external_arm_gate,
+                )
             runtime_stage_profiler.record(
                 "command_input",
                 time.monotonic() - command_stage_start,
@@ -4255,8 +5525,27 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     drive_elapsed_s if driving else 0.0,
                     wall_s=time.time(),
                 )
-            fast_static_clock = anchor_active and drop_sensor_tick
-            if fast_static_clock:
+            fast_static_clock = anchor_active and drop_sensor_tick and driver_bridge is None
+            if driver_bridge is not None:
+                if prepared_driver_step is None:
+                    raise RuntimeError("driver bridge step was not prepared")
+                if anchor_active:
+                    state, driver_step_seq = _step_anchored_with_driver_bridge(
+                        engine,
+                        driver_bridge,
+                        prepared_driver_step,
+                        imu_period_s=imu_period_s,
+                        step_seq=driver_step_seq,
+                    )
+                else:
+                    state, driver_step_seq = _step_with_driver_bridge(
+                        engine,
+                        driver_bridge,
+                        prepared_driver_step,
+                        imu_period_s=imu_period_s,
+                        step_seq=driver_step_seq,
+                    )
+            elif fast_static_clock:
                 sim_time_s = _advance_static_engine_clock_for_dropped_tick(
                     engine,
                     imu_period_s,
@@ -4277,6 +5566,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 if not viewer.is_running():
                     viewer_closed_early = True
                     break
+                if sim_time_s + 1e-9 >= next_viewer_overlay_sim_s:
+                    viewer_overlay = draw_navigation_paths(
+                        viewer,
+                        _read_json_object(str(getattr(args, "nav_status_json", "") or "")),
+                        point_cloud=latest_world_points,
+                    )
+                    next_viewer_overlay_sim_s = sim_time_s + viewer_overlay_period_s
                 focus_presentation_viewer(
                     viewer,
                     anchor_position if state is None else state.position,
@@ -4289,7 +5585,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 position = np.asarray(state.position, dtype=np.float64).copy()
                 yaw = yaw_from_quat_xyzw(state.orientation)
-            physical_drive_active = driving and (cmd_vel_source is None or motion_started)
+            physical_drive_active = driving and (driver_bridge is None or motion_started)
             if physical_drive_active and sim_start_position is None:
                 sim_start_position = position.copy()
                 sim_start_yaw = float(yaw)
@@ -4309,6 +5605,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 parent_diagnostics.record_scheduled("imu")
                 if bool(args.publish_odom_prior):
                     parent_diagnostics.record_scheduled("odom_prior")
+            if (
+                drop_sensor_tick
+                and pacing_controller is not None
+                and unified_sim_hardware_clock
+                and sim_time_s + 1e-9 >= next_lidar_sim_s
+            ):
+                pacing_controller.force_sensor_observation(reason="lidar_due")
+                drop_sensor_tick = False
             if drop_sensor_tick:
                 catch_up_stage_start = time.monotonic()
                 if pacing_controller is not None:
@@ -4393,6 +5697,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             sensor_counts[TOPICS.imu] += 1
             imu_sequence += 1
+            if physical_drive_active:
+                mujoco_truth_velocity_estimator.update(state.position, sensor_ts_s)
             if bool(args.publish_odom_prior):
                 odom_prior_velocity, odom_prior_velocity_valid = odom_prior_velocity_estimator.update(
                     state.position,
@@ -4502,9 +5808,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 sensor_counts[TOPICS.lidar_scan] += 1
                 sequence += 1
                 if navigation_fixture:
-                    body_points = _bounded_points(
-                        _world_xyzi_to_body_xyzi(world_points, state),
-                        navigation_fixture_cloud_points,
+                    body_points, navigation_fixture_ground_report = navigation_fixture_registered_body_points(
+                        world_xyzi_to_body_xyzi(state, world_points),
+                        state,
+                        max_points=navigation_fixture_cloud_points,
+                        raw_overlay_enabled=bool(getattr(args, "navigation_fixture_raw_overlay", True)),
+                        ground_resolution_m=navigation_fixture_ground_resolution_m,
+                        ground_y_half_m=navigation_fixture_ground_y_half_m,
                     )
                     if parent_diagnostics is not None:
                         parent_diagnostics.record_generated("registered_cloud")
@@ -4567,6 +5877,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 if nav_status is None:
                     nav_status = _read_json_object(str(getattr(args, "nav_status_json", "") or ""))
                 local_planner_debug = nav_status.get("local_candidates") or {}
+                local_planner_metrics = nav_status.get("local_planner_debug") or {}
                 local_map_debug = nav_status.get("local_map") or {}
                 try:
                     nav_status_stamp_s = float(nav_status.get("stamp_s") or 0.0)
@@ -4584,6 +5895,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                             "id": next_planner_debug_id,
                             "nav_status_stamp_s": nav_status_stamp_s,
                             "local_planner_debug": local_planner_debug,
+                            "local_planner_metrics": local_planner_metrics,
                             "local_map": local_map_debug,
                             "global_path": nav_status.get("global_path") or [],
                             "local_path": nav_status.get("local_path") or [],
@@ -4616,6 +5928,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         "yaw": float(yaw),
                         "driving": bool(driving),
                         "start_xyz": [float(value) for value in parse_start(str(args.start or ""))],
+                        "start_yaw_deg": (
+                            float(requested_start_yaw_deg)
+                            if requested_start_yaw_deg is not None
+                            else None
+                        ),
                         "qpos": np.asarray(engine.data.qpos, dtype=np.float64).tolist(),
                         "cmd": [float(cmd.linear_x), float(cmd.linear_y), float(cmd.angular_z)],
                         "global_path": nav_status.get("global_path") or [],
@@ -4627,6 +5944,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         "input_gate": nav_status.get("input_gate") or {},
                         "odom_prior_velocity": odom_prior_velocity_estimator.stats(),
                         "lidar_world": display_points[:, :3].astype(float).tolist(),
+                        "acceptance_contacts": _acceptance_contacts(
+                            engine.model,
+                            engine.data,
+                        ),
                     }
                 ):
                     motion_log_samples += 1
@@ -4649,9 +5970,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         parent_diagnostics=parent_diagnostics,
                     )
                     if publisher.poll() is not None:
-                        raise RuntimeError(
-                            f"native DDS sensor publisher exited: {publisher.returncode}"
-                        )
+                        raise RuntimeError(f"native DDS sensor publisher exited: {publisher.returncode}")
                     runtime_stage_profiler.record(
                         "publisher_flush",
                         time.monotonic() - publisher_flush_stage_start,
@@ -4705,13 +6024,31 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
         if parent_diagnostics is not None:
             parent_diagnostics.update_scheduler_pacing(pacing_stats)
-        if cmd_vel_source is not None:
+        if driver_bridge is not None:
             try:
-                cmd_vel_source.close()
+                if driver_heartbeat is not None:
+                    try:
+                        driver_heartbeat.stop()
+                    except Exception as exc:
+                        cleanup_errors.append(
+                            f"driver_heartbeat_cleanup_failed:{type(exc).__name__}:{exc}"
+                        )
+                if engine is None:
+                    raise RuntimeError("MuJoCo engine unavailable for physical driver shutdown")
+                driver_step_seq = _deactivate_driver_bridge(
+                    engine,
+                    driver_bridge,
+                    imu_period_s=imu_period_s,
+                    step_seq=driver_step_seq,
+                )
             except Exception as exc:
-                cleanup_errors.append(f"cmd_vel_tap_cleanup_failed:{type(exc).__name__}:{exc}")
+                cleanup_errors.append(f"driver_bridge_physical_shutdown_failed:{type(exc).__name__}:{exc}")
             finally:
-                cmd_vel_stats = cmd_vel_source.stats()
+                try:
+                    driver_bridge.close()
+                except Exception as exc:
+                    cleanup_errors.append(f"driver_bridge_cleanup_failed:{type(exc).__name__}:{exc}")
+                driver_bridge_stats = driver_bridge.stats()
         if motion_log_writer is not None:
             try:
                 motion_log_writer_diagnostics = motion_log_writer.close()
@@ -4783,14 +6120,31 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         elif not (motion_interval_completed or goal_reached_early):
             gaps.append("external_arm_motion_interval_incomplete")
     if str(args.command_source) == "dds":
-        if bool(cmd_vel_stats.get("failed_before_close")):
-            gaps.append("native_cmd_vel_tap_failed")
-        if (cmd_vel_stats.get("process_cleanup") or {}).get("clean") is not True:
-            gaps.append("native_cmd_vel_tap_cleanup_failed")
-        if bool(args.require_cmd_vel) and int(cmd_vel_stats.get("nonzero_samples") or 0) <= 0:
+        observed_output_ack = driver_bridge_stats.get("observed_output_ack")
+        observed_output_ack = observed_output_ack if isinstance(observed_output_ack, dict) else {}
+        if bool(driver_bridge_stats.get("failed_before_close")):
+            gaps.append("native_driver_bridge_failed")
+        if (driver_bridge_stats.get("process_cleanup") or {}).get("clean") is not True:
+            gaps.append("native_driver_bridge_cleanup_failed")
+        if driver_bridge_stats.get("driver_ready_observed") is not True:
+            gaps.append("native_driver_bridge_ready_never_observed")
+        if not driver_bridge_stats.get("stopped_evidence"):
+            gaps.append("native_driver_bridge_stopped_evidence_missing")
+        if (
+            driver_bridge_stats.get("driver_ready") is not False
+            or int(driver_bridge_stats.get("accepted_sequence") or 0) != 0
+            or str(driver_bridge_stats.get("accepted_producer_boot_id") or "")
+            or int(driver_bridge_stats.get("accepted_output_sequence") or 0) != 0
+        ):
+            gaps.append("native_driver_bridge_terminal_authority_not_cleared")
+        if bool(args.require_cmd_vel) and int(driver_bridge_stats.get("nonzero_samples") or 0) <= 0:
             gaps.append("native_cmd_vel_nonzero_missing")
-    if publisher_cleanup.get("clean") is not True:
-        gaps.append("native_sensor_publisher_cleanup_failed")
+        if bool(args.require_cmd_vel) and (
+            not str(observed_output_ack.get("producer_boot_id") or "")
+            or int(observed_output_ack.get("output_sequence") or 0) <= 0
+        ):
+            gaps.append("native_driver_bridge_output_ack_missing")
+    gaps.extend(_native_sensor_publisher_gaps(publisher_cleanup))
     gaps.extend(cleanup_errors)
     if args.require_slam_output and not str(args.slam_status_json or ""):
         gaps.append("slam_status_json_not_configured")
@@ -4830,16 +6184,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     report["warmup_s"] = warmup_s
     report["external_arm"] = (
-        external_arm_gate.snapshot()
-        if external_arm_gate is not None
-        else _external_arm_disabled_report()
+        external_arm_gate.snapshot() if external_arm_gate is not None else _external_arm_disabled_report()
     )
     report["motion_interval_completed"] = motion_interval_completed
     report["start_anchor"] = start_anchor
     report["start_anchor_xyz"] = [float(value) for value in anchor_position[:3]]
+    report["start_anchor_yaw_deg"] = (
+        float(requested_start_yaw_deg)
+        if requested_start_yaw_deg is not None
+        else None
+    )
     report["settle_s"] = settle_s
     report["drive_ramp_s"] = drive_ramp_s
     report["drive_duration_s"] = duration_s
+    report["motion_started_sim_s"] = motion_started_sim_s
     report["drive_mode"] = str(args.drive_mode)
     report["command_source"] = str(args.command_source)
     report["viewer"] = {
@@ -4847,13 +6205,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "refresh_hz": float(getattr(args, "viewer_hz", 30.0) or 30.0),
         "closed_early": viewer_closed_early,
         "control_authority": "none_presentation_only",
+        "navigation_overlay": viewer_overlay,
     }
-    report["cmd_vel"] = cmd_vel_stats
+    report["cmd_vel"] = driver_bridge_stats
     report["native_sensor_publisher_process"] = publisher_cleanup
     report["policy_loaded"] = policy_loaded
     report["drive_profile"] = str(args.drive_profile)
     report["policy_path"] = str(policy_path) if policy_path is not None else ""
+    report["policy_runtime"] = policy_runtime_report
     report["physics_integrator_requested"] = physics_integrator_requested
+    report["physics_timestep_requested_s"] = physics_timestep_requested_s
     report["physics_integrator"] = physics_integrator_active
     report["physics_timestep_s"] = physics_timestep_s
     report["imu_acc_mode"] = str(args.imu_acc_mode)
@@ -4875,14 +6236,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     report["publish_odom_prior"] = bool(args.publish_odom_prior)
     report["navigation_fixture"] = navigation_fixture
     report["navigation_fixture_cloud_points"] = navigation_fixture_cloud_points
-    report["mocap_motion"] = (
-        mocap_motion.stats()
-        if mocap_motion is not None
-        else {"enabled": False}
-    )
+    report["navigation_fixture_ground_coverage"] = navigation_fixture_ground_report
+    report["mocap_motion"] = mocap_motion.stats() if mocap_motion is not None else {"enabled": False}
     report["odom_prior_velocity_source"] = "robust_pose_window"
     report["odom_prior_velocity_window_s"] = float(args.odom_prior_velocity_window_s)
     report["odom_prior_velocity"] = odom_prior_velocity_estimator.stats()
+    report["mujoco_truth_velocity"] = mujoco_truth_velocity_estimator.stats()
     report["physical_rolling_sample_mode"] = str(args.physical_rolling_sample_mode)
     report["imu_acc_axis_scale"] = [float(v) for v in imu_acc_axis_scale]
     report["imu_acc_axis_scale_source"] = imu_acc_axis_scale_source

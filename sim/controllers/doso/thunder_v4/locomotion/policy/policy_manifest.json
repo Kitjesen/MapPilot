@@ -1,0 +1,33 @@
+{
+  "schema_version": "lingtu.sim_policy_manifest.v1",
+  "asset": "policy_1119.onnx",
+  "format": "onnx",
+  "onnx": {
+    "input_name": "obs_history",
+    "input_shape": [1, 285],
+    "output_name": "actions",
+    "output_shape": [1, 16]
+  },
+  "contract": {
+    "observation_frame_dim": 57,
+    "history_frames": 5,
+    "action_dim": 16,
+    "inference_hz": 50,
+    "low_level_hz": 200,
+    "physics_timestep_s": 0.005,
+    "startup_stand_hold_s": 0.5,
+    "startup_hold_inference_steps": 25,
+    "hip_action_scale": 0.125,
+    "thigh_calf_action_scale": 0.25,
+    "wheel_action_scale": 5.0,
+    "leg_kp": [70, 100, 120],
+    "leg_kd": [15, 15, 20],
+    "wheel_kd": 1.0,
+    "source_reference_wheel_torque_limit_nm": 60.0,
+    "active_thunderv4_mjcf_wheel_torque_limit_nm": 17.0,
+    "run_policy_at_idle": false
+  },
+  "source_note": "Recovered from the Brainstem legacy policy_1119 deployment asset.",
+  "simulation_only": true,
+  "real_robot_motion": false
+}

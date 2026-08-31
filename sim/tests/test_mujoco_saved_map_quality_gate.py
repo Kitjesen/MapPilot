@@ -101,47 +101,6 @@ def test_quality_gate_accepts_cells_near_scene_obstacle(tmp_path: Path) -> None:
     assert report["scene_overlay"]["candidate_cells_within_near_distance_ratio"] == pytest.approx(1.0)
 
 
-def test_quality_gate_reports_map_optimization_metadata(tmp_path: Path) -> None:
-    world = tmp_path / "world.xml"
-    pcd = tmp_path / "map.pcd"
-    _write_world(world)
-    expected, _ = expected_obstacle_cells(world, cell_m=0.2, z_min=0.3, z_max=1.6)
-    _write_ascii_pcd(pcd, _points_from_cells(expected, 0.2))
-    (tmp_path / "map_optimization.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "lingtu.slam.map_optimization.v1",
-                "status": "optimized_loop_closed",
-                "backend": "native_patch_pose_graph",
-                "refine_backend": "native_voxel_refine",
-                "loop_closure_enabled": True,
-                "loop_closure_applied": True,
-                "refine_applied": True,
-                "hba_refine_applied": True,
-                "loop_count": 1,
-                "optimized_pose_count": 8,
-                "raw_map_points": 100,
-                "optimized_map_points": 64,
-                "loop_closure_error_m": 0.32,
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    report, _, _ = evaluate_saved_map_quality(
-        pcd_path=pcd,
-        world_xml=world,
-        min_candidate_cells=1,
-    )
-
-    assert report["ok"] is True
-    assert report["map_optimization"]["present"] is True
-    assert report["map_optimization"]["status"] == "optimized_loop_closed"
-    assert report["map_optimization"]["refine_applied"] is True
-    assert report["map_optimization"]["loop_count"] == 1
-    assert report["map_optimization"]["optimized_pose_count"] == 8
-
-
 def test_quality_gate_allows_bounded_global_map_frame_alignment(tmp_path: Path) -> None:
     world = tmp_path / "world.xml"
     pcd = tmp_path / "map.pcd"

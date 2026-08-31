@@ -1,0 +1,406 @@
+{
+  "schema": "lingtu.sim.blender-forest-recipe.v1",
+  "status": "authoring_recipe",
+  "package": "forest_hf@1.0.0",
+  "seed": 20260813,
+  "coordinate_contract": {
+    "source_frame": "mujoco_rh_z_up_m",
+    "blender_frame": "rh_z_up_m",
+    "unreal_frame": "lh_z_up_cm",
+    "axis_mapping_to_unreal": [
+      "x",
+      "-y",
+      "z"
+    ],
+    "linear_scale_m_to_cm": 100.0,
+    "origin": "forest_center",
+    "extent_m": [
+      160.0,
+      160.0
+    ],
+    "bounds_m": {
+      "min": [
+        -80.0,
+        -80.0,
+        0.0
+      ],
+      "max": [
+        80.0,
+        80.0,
+        24.0
+      ]
+    }
+  },
+  "scene_design": {
+    "biome": "temperate_mixed_forest",
+    "season": "late_summer",
+    "weather": "bright_overcast_after_light_rain",
+    "terrain": {
+      "physics_surface": "flat_plane_z0",
+      "visual_surface": "flat_plane_z0_with_shader_microrelief_only",
+      "displacement_enabled": false,
+      "reason": "Version 1 keeps rendered ground coincident with the authoritative MuJoCo plane."
+    },
+    "trail": {
+      "curve_id": "main_robot_trail",
+      "width_m": 3.2,
+      "shoulder_m": 0.8,
+      "vegetation_exclusion_radius_m": 2.4,
+      "surface_material": "forest_trail_compacted_soil",
+      "control_points_m": [
+        [
+          -72.0,
+          -58.0,
+          0.0
+        ],
+        [
+          -52.0,
+          -38.0,
+          0.0
+        ],
+        [
+          -31.0,
+          -18.0,
+          0.0
+        ],
+        [
+          -8.0,
+          -7.0,
+          0.0
+        ],
+        [
+          14.0,
+          4.0,
+          0.0
+        ],
+        [
+          30.0,
+          24.0,
+          0.0
+        ],
+        [
+          47.0,
+          43.0,
+          0.0
+        ],
+        [
+          70.0,
+          59.0,
+          0.0
+        ]
+      ],
+      "spline": "cubic_bezier_through_points",
+      "maximum_grade": 0.0
+    },
+    "clearings": [
+      {
+        "id": "robot_start",
+        "center_m": [
+          -64.0,
+          -52.0,
+          0.0
+        ],
+        "radius_m": 7.0
+      },
+      {
+        "id": "inspection_glade",
+        "center_m": [
+          18.0,
+          7.0,
+          0.0
+        ],
+        "radius_m": 10.0
+      }
+    ],
+    "spawn": {
+      "position_m": [
+        -64.0,
+        -52.0,
+        0.48
+      ],
+      "quaternion_wxyz": [
+        0.9238795325,
+        0.0,
+        0.0,
+        0.3826834324
+      ],
+      "minimum_clear_radius_m": 4.0
+    }
+  },
+  "deterministic_population": {
+    "sampling": "seeded_blue_noise_with_rejection",
+    "stable_order": "species_id_then_instance_index",
+    "preview_counts": {
+      "canopy_trees": 120,
+      "understory_trees": 72,
+      "shrubs": 240,
+      "ferns_and_groundcover_clusters": 420,
+      "rocks": 48,
+      "fallen_logs": 24,
+      "stumps": 18
+    },
+    "target_counts": {
+      "canopy_trees": 420,
+      "understory_trees": 280,
+      "shrubs": 900,
+      "ferns_and_groundcover_clusters": 1800,
+      "rocks": 180,
+      "fallen_logs": 72,
+      "stumps": 54
+    },
+    "placement_rules": {
+      "boundary_margin_m": 3.0,
+      "minimum_tree_spacing_m": 3.0,
+      "minimum_understory_spacing_m": 1.8,
+      "minimum_rock_spacing_m": 1.25,
+      "trail_exclusion_uses": "scene_design.trail.vegetation_exclusion_radius_m",
+      "clearing_exclusion": true,
+      "random_rotation_degrees": [
+        0.0,
+        360.0
+      ],
+      "uniform_scale_ranges": {
+        "canopy_trees": [
+          0.82,
+          1.2
+        ],
+        "understory_trees": [
+          0.75,
+          1.15
+        ],
+        "shrubs": [
+          0.7,
+          1.3
+        ],
+        "rocks": [
+          0.65,
+          1.4
+        ],
+        "fallen_logs": [
+          0.8,
+          1.25
+        ]
+      }
+    },
+    "species_mix": [
+      {
+        "id": "pine_a",
+        "category": "canopy_trees",
+        "weight": 0.38,
+        "height_m": [
+          12.0,
+          20.0
+        ]
+      },
+      {
+        "id": "birch_a",
+        "category": "canopy_trees",
+        "weight": 0.34,
+        "height_m": [
+          10.0,
+          17.0
+        ]
+      },
+      {
+        "id": "oak_a",
+        "category": "canopy_trees",
+        "weight": 0.28,
+        "height_m": [
+          9.0,
+          15.0
+        ]
+      }
+    ]
+  },
+  "blender_authoring": {
+    "minimum_version": "4.2",
+    "unit_system": "METRIC",
+    "unit_scale": 1.0,
+    "collections": [
+      "Forest_Terrain",
+      "Forest_Trail",
+      "Forest_Canopy",
+      "Forest_Understory",
+      "Forest_Groundcover",
+      "Forest_Deadwood",
+      "Forest_Rocks",
+      "Forest_Lighting"
+    ],
+    "geometry_strategy": {
+      "trees": "geometry_nodes_instances_realize_only_for_export",
+      "groundcover": "geometry_nodes_instances",
+      "trail": "beveled_curve_with_projected_material_mask",
+      "rocks_and_deadwood": "linked_collection_instances"
+    },
+    "mesh_requirements": {
+      "apply_object_scale": true,
+      "recalculate_normals_outside": true,
+      "uv_layers_required": 1,
+      "tangent_space": "mikktspace",
+      "export_format": "glb",
+      "embed_textures": true
+    }
+  },
+  "materials": {
+    "provenance": {
+      "owner": "Inovxio",
+      "license": "project-owned",
+      "source_uri": "repo://sim/packages/worlds/forest_hf/1.0.0/visual/forest.recipe.json",
+      "third_party_assets": [],
+      "generation_policy": "All texture pixels and procedural masks are generated from project-authored Blender node graphs; no downloaded scans, photographs, Megascans, or marketplace assets are permitted."
+    },
+    "texture_workflow": {
+      "workflow": "metallic_roughness",
+      "color_space": {
+        "base_color": "sRGB",
+        "normal": "Non-Color",
+        "roughness": "Non-Color",
+        "ambient_occlusion": "Non-Color",
+        "opacity": "Non-Color"
+      },
+      "bake_resolution_px": {
+        "terrain_and_trail": 2048,
+        "tree_atlas": 2048,
+        "groundcover_atlas": 1024,
+        "rocks_and_deadwood": 1024
+      },
+      "channels": [
+        "base_color",
+        "normal",
+        "roughness",
+        "ambient_occlusion",
+        "opacity_when_required"
+      ]
+    },
+    "definitions": {
+      "forest_floor_leaf_litter": {
+        "base_color_srgb": [
+          0.16,
+          0.12,
+          0.07
+        ],
+        "metallic": 0.0,
+        "roughness": 0.88,
+        "procedural_layers": [
+          "soil",
+          "leaf_litter",
+          "needle_litter",
+          "moss_patches"
+        ]
+      },
+      "forest_trail_compacted_soil": {
+        "base_color_srgb": [
+          0.22,
+          0.16,
+          0.09
+        ],
+        "metallic": 0.0,
+        "roughness": 0.82,
+        "procedural_layers": [
+          "compacted_soil",
+          "shallow_ruts",
+          "damp_edge_mask"
+        ]
+      },
+      "bark_mixed": {
+        "base_color_srgb": [
+          0.18,
+          0.12,
+          0.07
+        ],
+        "metallic": 0.0,
+        "roughness": 0.9,
+        "procedural_layers": [
+          "vertical_fissures",
+          "lichen",
+          "moss_side_bias"
+        ]
+      },
+      "foliage_late_summer": {
+        "base_color_srgb": [
+          0.12,
+          0.28,
+          0.07
+        ],
+        "metallic": 0.0,
+        "roughness": 0.72,
+        "two_sided": true,
+        "alpha_mode": "mask"
+      },
+      "rock_mossy": {
+        "base_color_srgb": [
+          0.27,
+          0.29,
+          0.24
+        ],
+        "metallic": 0.0,
+        "roughness": 0.86,
+        "procedural_layers": [
+          "granite_noise",
+          "edge_wear",
+          "moss_upward_mask"
+        ]
+      }
+    }
+  },
+  "runtime_contract": {
+    "visual_defaults": {
+      "classification": "VisualOnly",
+      "collision_profile": "NoCollision",
+      "collision_enabled": false,
+      "simulate_physics": false,
+      "generate_overlap_events": false,
+      "can_ever_affect_navigation": false,
+      "auto_spawn_in_production_map": false
+    },
+    "physics_proxy_policy": {
+      "authority": "mujoco",
+      "current_package": "ground_plane_only",
+      "render_mesh_is_collider": false,
+      "visual_instances_create_collision": false,
+      "promotion_required": true,
+      "future_proxy_generation": {
+        "source_seed": 20260813,
+        "tree_trunks": "cylinder_or_capsule",
+        "rocks": "bounded_box_or_convex_proxy",
+        "fallen_logs": "capsule",
+        "minimum_proxy_radius_m": 0.12,
+        "must_preserve_trail_clearance": true,
+        "required_evidence": [
+          "proxy_manifest",
+          "same_seed_instance_mapping",
+          "mujoco_load_check",
+          "robot_clearance_check"
+        ]
+      }
+    }
+  },
+  "performance_budgets": {
+    "preview_profile": "practical_preview",
+    "target_profile": "forest_hf_target",
+    "instance_strategy": "linked_instances_in_blender_and_hierarchical_instancing_in_unreal",
+    "target_frame_rate_fps": 60,
+    "reference_resolution_px": [
+      1920,
+      1080
+    ],
+    "max_visible_triangles": 8000000,
+    "max_texture_memory_mb": 1536,
+    "foliage_cull_distance_m": 120.0,
+    "groundcover_cull_distance_m": 45.0
+  },
+  "output_contract": {
+    "generated_outputs_are_not_present_in_this_package_version": true,
+    "planned_blend": "generated/forest_hf.blend",
+    "planned_visual_glb": "generated/forest_hf_visual.glb",
+    "planned_instance_manifest": "generated/forest.instances.json",
+    "planned_texture_root": "generated/textures",
+    "promotion_rule": "Do not reference planned outputs from world.package.yaml until generation, hash validation, scale review, material review, and visual qualification pass."
+  },
+  "limitations": [
+    "This package contains an authoring recipe, not a generated Blender scene or a qualified Unreal level.",
+    "The current MuJoCo world contains only the authoritative flat ground plane; vegetation and props are visual-only until proxy promotion.",
+    "No third-party textures or marketplace foliage are included.",
+    "No Blender run, Unreal import, Cook, packaged build, or robot runtime validation is claimed."
+  ]
+}

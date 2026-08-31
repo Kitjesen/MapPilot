@@ -1,0 +1,95 @@
+{
+  "schema": "lingtu.sim.tripo-generation-profile.v1",
+  "id": "tripo.hero-static-pbr.high-fidelity",
+  "version": "1.0.0",
+  "purpose": "Generate one game-ready static hero prop candidate for qualified WorldPackage visual facets.",
+  "api": {
+    "base_url": "https://openapi.tripo3d.com/v3",
+    "create_endpoint": "/generation/multiview-to-model",
+    "task_endpoint_template": "/tasks/{task_id}",
+    "model_url_ttl_seconds": 300,
+    "download_immediately": true
+  },
+  "input": {
+    "mode": "multiview",
+    "minimum_views": 2,
+    "required_views": [
+      "front"
+    ],
+    "preferred_view_order": [
+      "front",
+      "left",
+      "back",
+      "right"
+    ],
+    "same_object_and_lighting": true
+  },
+  "generation": {
+    "model": "v3.1-20260211",
+    "geometry_quality": "detailed",
+    "texture": true,
+    "pbr": true,
+    "texture_quality": "extreme",
+    "auto_size": true,
+    "export_uv": true,
+    "face_limit": 100000,
+    "smart_low_poly": false,
+    "require_model_seed": true,
+    "require_texture_seed": true
+  },
+  "required_pbr_maps": [
+    "base_color",
+    "normal",
+    "roughness",
+    "metallic"
+  ],
+  "ingress": {
+    "official_api": {
+      "artifact_format": "glb",
+      "route": "immediate download -> SimStudio SourceInbox -> import draft"
+    },
+    "ue_bridge": {
+      "plugin": "Tripo3DUEBridge@1.0.4",
+      "endpoint": "ws://127.0.0.1:60620",
+      "import_root": "/Game/TripoModels",
+      "role": "editor_preview_only"
+    }
+  },
+  "unreal_candidate_policy": {
+    "canonical_candidate_root": "/Game/RobotSim/Staging/Tripo",
+    "auto_spawn_in_production_map": false,
+    "collision": "NoCollision",
+    "nanite_for_static_mesh": true,
+    "skeletal_mesh_allowed": false
+  },
+  "promotion": {
+    "target": "WorldPackage.visual facet",
+    "required_candidate_blockers": [
+      "license_and_usage_rights_unverified",
+      "unreal_import_not_verified"
+    ],
+    "required_evidence": [
+      "source_image_sha256",
+      "api_request_without_credentials",
+      "task_id",
+      "model_version",
+      "model_seed",
+      "texture_seed",
+      "downloaded_artifact_sha256",
+      "license_and_usage_rights",
+      "metre_scale_aabb",
+      "material_slot_inventory",
+      "pbr_map_inventory",
+      "triangle_count",
+      "uv_validation",
+      "unreal_no_collision_validation"
+    ],
+    "requires_stable_entity_id": true,
+    "requires_explicit_mujoco_collision_decision": true
+  },
+  "cost_and_secret_policy": {
+    "execute_requires_explicit_credit_confirmation": true,
+    "persist_api_key": false,
+    "log_authorization_header": false
+  }
+}

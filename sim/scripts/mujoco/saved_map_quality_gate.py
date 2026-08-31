@@ -571,48 +571,6 @@ def _layer_counts(xyz: np.ndarray, z_min: float, z_max: float) -> dict[str, int]
     }
 
 
-def _load_map_optimization_metadata(pcd_path: Path | str) -> dict[str, Any]:
-    metadata_path = Path(pcd_path).parent / "map_optimization.json"
-    if not metadata_path.is_file():
-        return {"present": False, "path": str(metadata_path)}
-    try:
-        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        return {
-            "present": True,
-            "path": str(metadata_path),
-            "readable": False,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-    if not isinstance(payload, dict):
-        return {
-            "present": True,
-            "path": str(metadata_path),
-            "readable": False,
-            "error": "metadata_not_object",
-        }
-    return {
-        "present": True,
-        "readable": True,
-        "path": str(metadata_path),
-        "schema_version": payload.get("schema_version"),
-        "status": payload.get("status"),
-        "backend": payload.get("backend"),
-        "refine_backend": payload.get("refine_backend"),
-        "loop_closure_enabled": bool(payload.get("loop_closure_enabled", False)),
-        "loop_closure_applied": bool(payload.get("loop_closure_applied", False)),
-        "refine_applied": bool(
-            payload.get("refine_applied", payload.get("hba_refine_applied", False))
-        ),
-        "hba_refine_applied": bool(payload.get("hba_refine_applied", False)),
-        "loop_count": int(payload.get("loop_count") or 0),
-        "optimized_pose_count": int(payload.get("optimized_pose_count") or 0),
-        "raw_map_points": int(payload.get("raw_map_points") or 0),
-        "optimized_map_points": int(payload.get("optimized_map_points") or 0),
-        "loop_closure_error_m": payload.get("loop_closure_error_m"),
-    }
-
-
 def evaluate_saved_map_quality(
     *,
     pcd_path: Path | str,
@@ -712,7 +670,6 @@ def evaluate_saved_map_quality(
         "layers": _layer_counts(xyz, z_min, z_max),
         "candidate_filter": candidate_report,
         "quality_basis": quality_basis,
-        "map_optimization": _load_map_optimization_metadata(pcd_path),
         "scene_overlay": basis_metrics,
         "raw_scene_overlay": raw_metrics,
         "remaining_gaps": remaining_gaps,

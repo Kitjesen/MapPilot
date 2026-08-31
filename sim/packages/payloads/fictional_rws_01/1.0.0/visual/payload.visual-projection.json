@@ -1,0 +1,144 @@
+{
+  "schema": "lingtu.sim.payload-visual-projection.v1",
+  "package": {
+    "id": "fictional_rws_01",
+    "version": "1.0.0",
+    "manifest": "payload.package.yaml"
+  },
+  "binding": "PayloadVisual:FictionalRWS01",
+  "authority": "mujoco",
+  "visual_policy": {
+    "collision_enabled": "no_collision",
+    "simulate_physics": false,
+    "generate_overlap_events": false
+  },
+  "source_asset": {
+    "path": "assets/rws-01-v002-runtime.glb"
+  },
+  "material_contract": {
+    "source_format": "gltf2",
+    "material_count": 5,
+    "required_channels": [
+      "base_color",
+      "normal",
+      "metallic_roughness"
+    ]
+  },
+  "components": [
+    {
+      "mesh": "SM_RWS01_MountBase",
+      "body_frame": "payload_base",
+      "unreal_asset": "/Game/RobotSim/Payloads/FictionalRWS01/Runtime/rws-01-v002-runtime/StaticMeshes/SM_RWS01_MountBase.SM_RWS01_MountBase",
+      "local_transform": {
+        "position_m": [
+          0,
+          0,
+          0
+        ],
+        "quaternion_wxyz": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "mesh": "SM_RWS01_YawFrame",
+      "body_frame": "yaw_frame",
+      "unreal_asset": "/Game/RobotSim/Payloads/FictionalRWS01/Runtime/rws-01-v002-runtime/StaticMeshes/SM_RWS01_YawFrame.SM_RWS01_YawFrame",
+      "local_transform": {
+        "position_m": [
+          0,
+          0,
+          -0.07
+        ],
+        "quaternion_wxyz": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "mesh": "SM_RWS01_EOSensor",
+      "body_frame": "yaw_frame",
+      "unreal_asset": "/Game/RobotSim/Payloads/FictionalRWS01/Runtime/rws-01-v002-runtime/StaticMeshes/SM_RWS01_EOSensor.SM_RWS01_EOSensor",
+      "local_transform": {
+        "position_m": [
+          0,
+          0,
+          -0.07
+        ],
+        "quaternion_wxyz": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "mesh": "SM_RWS01_RecoilHousing",
+      "body_frame": "pitch_frame",
+      "unreal_asset": "/Game/RobotSim/Payloads/FictionalRWS01/Runtime/rws-01-v002-runtime/StaticMeshes/SM_RWS01_RecoilHousing.SM_RWS01_RecoilHousing",
+      "local_transform": {
+        "position_m": [
+          0,
+          0,
+          -0.215
+        ],
+        "quaternion_wxyz": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "mesh": "SM_RWS01_Launcher",
+      "body_frame": "pitch_frame",
+      "unreal_asset": "/Game/RobotSim/Payloads/FictionalRWS01/Runtime/rws-01-v002-runtime/StaticMeshes/SM_RWS01_Launcher.SM_RWS01_Launcher",
+      "local_transform": {
+        "position_m": [
+          0,
+          0,
+          -0.215
+        ],
+        "quaternion_wxyz": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  ]
+}

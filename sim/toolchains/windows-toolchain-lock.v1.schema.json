@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lingtu.local/schemas/windows-toolchain-lock.v1.schema.json",
+  "title": "LingTu Windows toolchain lock v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "generated_at_utc", "host", "policy", "summary", "components"],
+  "properties": {
+    "schema": {"const": "lingtu.sim.windows-toolchain-lock"},
+    "schema_version": {"const": 1},
+    "generated_at_utc": {"type": ["string", "null"], "format": "date-time"},
+    "host": {"type": "object", "additionalProperties": false, "required": ["computer_name", "os_build", "architecture"], "properties": {"computer_name": {"type": ["string", "null"]}, "os_build": {"type": ["string", "null"]}, "architecture": {"$ref": "#/$defs/architecture"}}},
+    "policy": {"type": "object", "additionalProperties": false, "required": ["lock_requires_exact_version", "lock_requires_source", "lock_requires_sha256", "lock_requires_installation_evidence"], "properties": {"lock_requires_exact_version": {"const": true}, "lock_requires_source": {"const": true}, "lock_requires_sha256": {"const": true}, "lock_requires_installation_evidence": {"const": true}, "notes": {"type": "string"}}},
+    "summary": {"type": "object", "additionalProperties": false, "required": ["state", "locked_count", "component_count"], "properties": {"state": {"enum": ["unlocked", "partially_locked", "locked"]}, "locked_count": {"type": "integer", "minimum": 0, "maximum": 5}, "component_count": {"const": 5}}},
+    "components": {"type": "object", "additionalProperties": false, "required": ["unreal_engine", "visual_studio_msvc", "windows_sdk", "mujoco_sdk", "blender"], "properties": {"unreal_engine": {"$ref": "#/$defs/component"}, "visual_studio_msvc": {"$ref": "#/$defs/component"}, "windows_sdk": {"$ref": "#/$defs/component"}, "mujoco_sdk": {"$ref": "#/$defs/component"}, "blender": {"$ref": "#/$defs/component"}}}
+  },
+  "$defs": {
+    "architecture": {"enum": ["x64", "arm64", "x86", "any", "unknown"]},
+    "component_state": {"enum": ["not_found", "detected", "validated", "locked"]},
+    "version": {"type": "object", "additionalProperties": false, "required": ["exact", "source"], "properties": {"exact": {"type": ["string", "null"], "pattern": "^[0-9A-Za-z][0-9A-Za-z._+-]*$"}, "source": {"type": ["string", "null"]}}},
+    "source": {"type": "object", "additionalProperties": false, "required": ["type", "location", "evidence"], "properties": {"type": {"enum": ["installation", "environment", "repository", "unknown"]}, "location": {"type": ["string", "null"]}, "evidence": {"type": "array", "items": {"type": "string"}}}},
+    "sha256": {"type": "object", "additionalProperties": false, "required": ["value", "path", "algorithm", "evidence"], "properties": {"value": {"type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$"}, "path": {"type": ["string", "null"]}, "algorithm": {"const": "sha256"}, "evidence": {"type": "array", "items": {"type": "string"}}}},
+    "installation": {"type": "object", "additionalProperties": false, "required": ["root_path", "executable_path", "evidence"], "properties": {"root_path": {"type": ["string", "null"]}, "executable_path": {"type": ["string", "null"]}, "evidence": {"type": "array", "items": {"type": "string"}}}},
+    "validation_check": {"type": "object", "additionalProperties": false, "required": ["id", "passed", "evidence"], "properties": {"id": {"type": "string", "minLength": 1}, "passed": {"type": "boolean"}, "evidence": {"type": "string"}}},
+    "validation": {"type": "object", "additionalProperties": false, "required": ["checks", "validated_at_utc"], "properties": {"checks": {"type": "array", "items": {"$ref": "#/$defs/validation_check"}}, "validated_at_utc": {"type": ["string", "null"], "format": "date-time"}}},
+    "lock": {"type": ["object", "null"], "additionalProperties": false, "required": ["lock_id", "approved_by", "approved_at_utc", "evidence"], "properties": {"lock_id": {"type": "string", "minLength": 1}, "approved_by": {"type": "string", "minLength": 1}, "approved_at_utc": {"type": "string", "format": "date-time"}, "evidence": {"type": "array", "items": {"type": "string"}}}},
+    "component": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "status", "version", "source", "architecture", "sha256", "installation", "validation", "lock"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "status": {"type": "object", "additionalProperties": false, "required": ["state", "reasons"], "properties": {"state": {"$ref": "#/$defs/component_state"}, "reasons": {"type": "array", "items": {"type": "string"}}}},
+        "version": {"$ref": "#/$defs/version"}, "source": {"$ref": "#/$defs/source"}, "architecture": {"$ref": "#/$defs/architecture"}, "sha256": {"$ref": "#/$defs/sha256"}, "installation": {"$ref": "#/$defs/installation"}, "validation": {"$ref": "#/$defs/validation"}, "lock": {"$ref": "#/$defs/lock"}
+      },
+      "allOf": [{"if": {"properties": {"status": {"properties": {"state": {"enum": ["validated", "locked"]}}}}}, "then": {"properties": {"version": {"properties": {"exact": {"type": "string"}, "source": {"type": "string", "minLength": 1}}}, "source": {"properties": {"type": {"not": {"const": "unknown"}}, "location": {"type": "string", "minLength": 1}, "evidence": {"minItems": 1}}}, "architecture": {"not": {"const": "unknown"}}, "sha256": {"properties": {"value": {"type": "string"}, "path": {"type": "string", "minLength": 1}, "evidence": {"minItems": 1}}}, "installation": {"properties": {"root_path": {"type": "string", "minLength": 1}, "evidence": {"minItems": 1}}}, "validation": {"properties": {"validated_at_utc": {"type": "string"}}}, "lock": {"type": "object"}}}}, {"if": {"properties": {"status": {"properties": {"state": {"enum": ["validated", "locked"]}}}}}, "then": {"required": ["lock"]}}]
+    }
+  }
+}

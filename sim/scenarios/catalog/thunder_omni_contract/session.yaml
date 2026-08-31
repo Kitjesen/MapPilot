@@ -5,8 +5,8 @@ seed: 20260804
 world: open_field@1.0.0
 robots:
   - instance_id: thunder_01
-    package: thunderv4@1.0.0
-    sensor_rig: thunderv4_navigation@1.0.0
+    package: thunderv4@1.0.3
+    sensor_rig: thunderv4_headless_navigation@1.0.0
     spawn:
       position_m: [0.0, 0.0, 0.0]
       quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]

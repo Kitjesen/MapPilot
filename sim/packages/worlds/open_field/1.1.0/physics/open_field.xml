@@ -1,0 +1,25 @@
+<!-- LingTu MuJoCo open field. This version owns the 1 ms physics timebase
+     required by exact 200 Hz navigation-sensor sampling. -->
+<mujoco model="open_field">
+  <compiler angle="radian" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.001" integrator="RK4" solver="Newton" iterations="100"/>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker"
+             rgb1=".92 .92 .92" rgb2=".78 .78 .78" width="512" height="512"/>
+    <material name="grid_mat" texture="grid" texrepeat="10 10" reflectance="0.05"/>
+    <material name="obs_mat" rgba=".75 .3 .25 1"/>
+  </asset>
+
+  <worldbody>
+    <geom name="floor" type="plane" size="80 80 0.1"
+          material="grid_mat" conaffinity="1" condim="3"/>
+    <geom name="box1" type="box" size="1.0 0.5 0.8" pos="6 0 0.8" material="obs_mat" conaffinity="1"/>
+    <geom name="box2" type="box" size="0.5 1.8 1.2" pos="9 4 1.2" rgba=".3 .75 .3 1" conaffinity="1"/>
+    <geom name="cyl1" type="cylinder" size="0.4 1.0" pos="4 -5 1.0" rgba=".8 .7 .2 1" conaffinity="1"/>
+    <geom name="wall1" type="box" size="0.2 8.0 2.0" pos="-8 0 2.0" rgba=".6 .6 .6 1" conaffinity="1"/>
+    <geom name="wall2" type="box" size="8.0 0.2 2.0" pos="0 -8 2.0" rgba=".6 .6 .6 1" conaffinity="1"/>
+    <light name="sun" pos="0 0 30" dir="0 0 -1" diffuse=".85 .85 .85" specular=".2 .2 .2"/>
+    <light name="fill" pos="5 5 15" dir="-1 -1 -0.5" diffuse=".3 .3 .3"/>
+  </worldbody>
+</mujoco>

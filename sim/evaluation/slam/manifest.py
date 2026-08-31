@@ -13,7 +13,6 @@ class SlamEvalRobot:
     name: str
     model_path: str
     frame_id: str = "body"
-    config_path: str = "config/robot_config.yaml"
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,39 @@
+<mujoco model="teleop_avoid_field">
+  <compiler angle="radian" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.005" integrator="Euler"
+          solver="Newton" iterations="100"/>
+
+  <visual>
+    <headlight diffuse="0.7 0.7 0.68" ambient="0.35 0.35 0.35" specular="0 0 0"/>
+    <global azimuth="-55" elevation="-28" fovy="52"/>
+  </visual>
+
+  <asset>
+    <texture name="floor_grid" type="2d" builtin="checker"
+             rgb1=".82 .83 .82" rgb2=".68 .70 .69" width="512" height="512"/>
+    <material name="floor" texture="floor_grid" texrepeat="12 5" reflectance="0.03"/>
+    <material name="wall" rgba=".58 .60 .62 1"/>
+    <material name="obstacle" rgba=".88 .16 .08 1"/>
+  </asset>
+
+  <worldbody>
+    <geom name="ground" type="plane" size="14 5 0.1" material="floor"
+          conaffinity="1" condim="3"/>
+
+    <!-- The physical obstacle blocks the direct forward corridor but leaves
+         enough room on either side for the padded Thunder footprint. -->
+    <geom name="detour_obstacle" type="box" pos="2.0 0 0.65" size="0.45 0.55 0.65"
+          material="obstacle" conaffinity="1" condim="3"/>
+
+    <geom name="left_wall" type="box" pos="5.0 2.8 1.2" size="7.0 0.08 1.2"
+          material="wall" conaffinity="1" condim="3"/>
+    <geom name="right_wall" type="box" pos="5.0 -2.8 1.2" size="7.0 0.08 1.2"
+          material="wall" conaffinity="1" condim="3"/>
+    <geom name="rear_wall" type="box" pos="-2.0 0 1.2" size="0.08 2.8 1.2"
+          material="wall" conaffinity="1" condim="3"/>
+    <geom name="front_wall" type="box" pos="22.0 0 1.2" size="0.08 2.8 1.2"
+          material="wall" conaffinity="1" condim="3"/>
+    <light name="sun" pos="2 -4 10" dir="0.2 0.3 -1" diffuse=".8 .8 .76"/>
+    <light name="fill" pos="7 4 6" dir="-0.5 -0.3 -1" diffuse=".3 .32 .34"/>
+  </worldbody>
+</mujoco>

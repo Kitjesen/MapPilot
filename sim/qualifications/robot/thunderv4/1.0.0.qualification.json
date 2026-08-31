@@ -1,0 +1,67 @@
+{
+  "checks": [
+    {
+      "evidence": [
+        {
+          "path": "evidence/visual-navigation-20260809.json"
+        }
+      ],
+      "id": "package-and-physics-compile",
+      "status": "passed"
+    },
+    {
+      "evidence": [
+        {
+          "path": "evidence/visual-navigation-20260809.json"
+        }
+      ],
+      "id": "visual-plan-instantiation",
+      "status": "passed"
+    },
+    {
+      "evidence": [
+        {
+          "path": "evidence/visual-navigation-20260809.json"
+        }
+      ],
+      "id": "navigation-sensor-contract",
+      "status": "passed"
+    },
+    {
+      "evidence": [
+        {
+          "path": "evidence/visual-navigation-20260809.json"
+        }
+      ],
+      "id": "reset-lifecycle",
+      "status": "passed"
+    },
+    {
+      "evidence": [
+        {
+          "path": "evidence/walk-20260809.json"
+        }
+      ],
+      "id": "forward-walk-truth-motion",
+      "status": "passed"
+    }
+  ],
+  "package": {
+    "id": "thunderv4",
+    "kind": "robot",
+    "version": "1.0.0"
+  },
+  "provenance": {
+    "path": "visual/robot.visual-projection.json"
+  },
+  "qualified_capabilities": {
+    "locomotion": [
+      "walk"
+    ],
+    "sensor_mounts": [
+      "front_camera",
+      "lidar1_link"
+    ]
+  },
+  "schema": "lingtu.sim.qualification-record.v1"
+}

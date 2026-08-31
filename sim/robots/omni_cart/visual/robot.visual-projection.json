@@ -1,0 +1,382 @@
+{
+  "binding": "RobotVisual:OmniCart",
+  "components": [
+    {
+      "asset_key": "RobotVisual:OmniCart/base_link/visual/cart_base",
+      "body_frame_id": "base_link",
+      "geometry": {
+        "kind": "primitive",
+        "primitive": "cylinder",
+        "size": [
+          0.34,
+          0.08
+        ]
+      },
+      "local_body_id": "base_link",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.14
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "cart_body",
+        "pbr": {
+          "base_color_rgba": [
+            0.12,
+            0.38,
+            0.68,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "cart_body",
+      "source": {
+        "geometry_source": {
+          "kind": "primitive",
+          "primitive": "cylinder"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "sim/robots/omni_cart/omni_cart.xml"
+        },
+        "package": {
+          "id": "omni_cart",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.0"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Engine/BasicShapes/Cylinder.Cylinder",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "dimensions_m": [
+          0.68,
+          0.68,
+          0.16
+        ],
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "base_link/visual/cart_base",
+      "visual_id": "cart_base"
+    },
+    {
+      "asset_key": "RobotVisual:OmniCart/base_link/visual/cart_front_marker",
+      "body_frame_id": "base_link",
+      "geometry": {
+        "kind": "primitive",
+        "primitive": "box",
+        "size": [
+          0.13,
+          0.045,
+          0.04
+        ]
+      },
+      "local_body_id": "base_link",
+      "local_transform": {
+        "position_m": [
+          0.28,
+          0.0,
+          0.24
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "cart_front",
+        "pbr": {
+          "base_color_rgba": [
+            0.95,
+            0.72,
+            0.18,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "cart_front",
+      "source": {
+        "geometry_source": {
+          "kind": "primitive",
+          "primitive": "box"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "sim/robots/omni_cart/omni_cart.xml"
+        },
+        "package": {
+          "id": "omni_cart",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.0"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Engine/BasicShapes/Cube.Cube",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "dimensions_m": [
+          0.26,
+          0.09,
+          0.08
+        ],
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "base_link/visual/cart_front_marker",
+      "visual_id": "cart_front_marker"
+    },
+    {
+      "asset_key": "RobotVisual:OmniCart/base_link/visual/cart_top_plate",
+      "body_frame_id": "base_link",
+      "geometry": {
+        "kind": "primitive",
+        "primitive": "box",
+        "size": [
+          0.26,
+          0.22,
+          0.035
+        ]
+      },
+      "local_body_id": "base_link",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.25
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "cart_top",
+        "pbr": {
+          "base_color_rgba": [
+            0.06,
+            0.12,
+            0.18,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "cart_top",
+      "source": {
+        "geometry_source": {
+          "kind": "primitive",
+          "primitive": "box"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "sim/robots/omni_cart/omni_cart.xml"
+        },
+        "package": {
+          "id": "omni_cart",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.0"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Engine/BasicShapes/Cube.Cube",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "dimensions_m": [
+          0.52,
+          0.44,
+          0.07
+        ],
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "base_link/visual/cart_top_plate",
+      "visual_id": "cart_top_plate"
+    },
+    {
+      "asset_key": "RobotVisual:OmniCart/base_link/visual/front_camera_body",
+      "body_frame_id": "base_link",
+      "geometry": {
+        "kind": "primitive",
+        "primitive": "box",
+        "size": [
+          0.055,
+          0.075,
+          0.045
+        ]
+      },
+      "local_body_id": "base_link",
+      "local_transform": {
+        "position_m": [
+          0.32,
+          0.0,
+          0.31
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": "sensor_black",
+        "pbr": {
+          "base_color_rgba": [
+            0.02,
+            0.025,
+            0.03,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_material_rgba"
+      },
+      "material_key": "sensor_black",
+      "source": {
+        "geometry_source": {
+          "kind": "primitive",
+          "primitive": "box"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "sim/robots/omni_cart/omni_cart.xml"
+        },
+        "package": {
+          "id": "omni_cart",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.0"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Engine/BasicShapes/Cube.Cube",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "dimensions_m": [
+          0.11,
+          0.15,
+          0.09
+        ],
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "base_link/visual/front_camera_body",
+      "visual_id": "front_camera_body"
+    },
+    {
+      "asset_key": "RobotVisual:OmniCart/lidar_link/visual/lidar_mid360_visual",
+      "body_frame_id": "lidar_link",
+      "geometry": {
+        "kind": "primitive",
+        "primitive": "cylinder",
+        "size": [
+          0.075,
+          0.045
+        ]
+      },
+      "local_body_id": "lidar_link",
+      "local_transform": {
+        "position_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "material": {
+        "key": null,
+        "pbr": {
+          "base_color_rgba": [
+            0.02,
+            0.025,
+            0.03,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.65
+        },
+        "source": "mjcf_geom_rgba"
+      },
+      "material_key": null,
+      "source": {
+        "geometry_source": {
+          "kind": "primitive",
+          "primitive": "cylinder"
+        },
+        "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
+        "mjcf": {
+          "path": "sim/robots/omni_cart/omni_cart.xml"
+        },
+        "package": {
+          "id": "omni_cart",
+          "manifest": "robot.package.yaml",
+          "version": "1.0.0"
+        }
+      },
+      "unreal": {
+        "asset_path": "/Engine/BasicShapes/Cylinder.Cylinder",
+        "component_class": "/Script/Engine.StaticMeshComponent",
+        "dimensions_m": [
+          0.15,
+          0.15,
+          0.09
+        ],
+        "representation": "static_mesh"
+      },
+      "visual_frame_id": "lidar_link/visual/lidar_mid360_visual",
+      "visual_id": "lidar_mid360_visual"
+    }
+  ],
+  "mjcf": {
+    "path": "sim/robots/omni_cart/omni_cart.xml"
+  },
+  "package": {
+    "id": "omni_cart",
+    "manifest": "robot.package.yaml",
+    "version": "1.0.0"
+  },
+  "schema": "lingtu.sim.robot-visual-projection.v1"
+}

@@ -1,0 +1,130 @@
+{
+  "binding": "WorldVisual:OpenFieldHF",
+  "blender_mesh_import": {
+    "coordinates": "unreal_lh_z_up_cm",
+    "import_scale": 1.0,
+    "source": "sim/worlds/open_field_hf/generated/terrain.obj",
+    "vertex_per_height_sample": true
+  },
+  "coordinate_contract": {
+    "axis_mapping": [
+      "x",
+      "-y",
+      "z"
+    ],
+    "extent_m": [
+      160.0,
+      160.0
+    ],
+    "grid_px": [
+      253,
+      253
+    ],
+    "height_encoding": {
+      "bit_depth": 16,
+      "elevation_scale_m": 8.0,
+      "formula": "world_height_m = sample_u16 / 65535 * elevation_scale_m + vertical_origin_m",
+      "range": [
+        0,
+        65535
+      ],
+      "type": "uint16_normalized"
+    },
+    "image_mapping": {
+      "column_0_x_m": -80.0,
+      "column_last_x_m": 80.0,
+      "row_0_y_m": 80.0,
+      "row_last_y_m": -80.0
+    },
+    "mujoco_hfield": {
+      "geom_position_m": [
+        0.0,
+        0.0,
+        -4.534859235523003
+      ],
+      "size": [
+        80.0,
+        80.0,
+        8.0,
+        1.0
+      ]
+    },
+    "origin": "terrain_center",
+    "sample_spacing_m": [
+      0.6349206349206349,
+      0.6349206349206349
+    ],
+    "source_frame": "mujoco_rh_z_up_m",
+    "spawn_reference": {
+      "sample_pixel": [
+        126,
+        126
+      ],
+      "sample_u16": 37149,
+      "world_position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "unreal_frame": "unreal_lh_z_up_cm",
+    "unreal_landscape": {
+      "location_cm": [
+        0.0,
+        0.0,
+        -53.48592355230028
+      ],
+      "scale_xyz": [
+        63.49206349206349,
+        63.49206349206349,
+        1.5625
+      ]
+    },
+    "vertical_origin_m": -4.534859235523003
+  },
+  "limitations": [
+    "No Unreal UMAP, Landscape material, foliage, lighting bake, Cook, or packaged build is generated.",
+    "This recipe establishes import inputs and scale contracts; it is not evidence of a finished high-fidelity UE world."
+  ],
+  "schema": "lingtu.sim.unreal-world-import-recipe.v1",
+  "sources": {
+    "asset_manifest": {
+      "bytes": 2710,
+      "path": "sim/worlds/open_field_hf/generated/asset-manifest.json"
+    },
+    "heightfield_png": {
+      "bytes": 128344,
+      "path": "sim/worlds/open_field_hf/generated/heightfield_r16.png"
+    },
+    "mujoco_heightfield": {
+      "bytes": 256044,
+      "path": "sim/worlds/open_field_hf/generated/heightfield_f32.bin"
+    },
+    "terrain_obj": {
+      "bytes": 4880616,
+      "path": "sim/worlds/open_field_hf/generated/terrain.obj"
+    }
+  },
+  "status": "source_assets_only",
+  "target_level": "/Game/RobotSim/Maps/OpenField_HF",
+  "unreal_landscape_import": {
+    "dimensions_px": [
+      253,
+      253
+    ],
+    "format": "16-bit grayscale PNG",
+    "location_cm": [
+      0.0,
+      0.0,
+      -53.48592355230028
+    ],
+    "material_requirement": "Create project-owned grass, mud, and rock PBR layers.",
+    "recommended_source": "sim/worlds/open_field_hf/generated/heightfield_r16.png",
+    "scale_xyz": [
+      63.49206349206349,
+      63.49206349206349,
+      1.5625
+    ]
+  },
+  "world_package": "open_field_hf@1.0.0"
+}

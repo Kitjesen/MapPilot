@@ -1,0 +1,59 @@
+{
+  "artifacts": {
+    "episode_result.json": {
+      "sha256": "71e5af4c237bf88096d8e81ddd44a129b59fe2a094fe40f24a5e5b0d4ac6daf8"
+    },
+    "frame_000000.png": {
+      "sha256": "53b64829e780299ea06f9c46cc27da0bc9383c19761e65d9c718b1566a332096"
+    },
+    "frame_000009.png": {
+      "sha256": "a0017d27b69f922ca57a5b52f18fab3c66c5c780b3be802998b8d30f37e5f56d"
+    },
+    "motion-evidence.json": {
+      "sha256": "9cd9d55b37c98689ff19a9686b1aaadf06d1a7fc455a760dcc36b70b58045a06"
+    },
+    "motion-trajectory.jsonl": {
+      "sha256": "ad1516417312294105bf96ef2465a9d3d113a91059eb9a4db8998a9422fc326f"
+    },
+    "session.runtime.json": {
+      "sha256": "f23371d4d54b007e66bd2f9a037bf70d54caf4b30a551461df4798eed2c8e0ab"
+    }
+  },
+  "motion": {
+    "base_body_id": "thunder_01/base_link",
+    "captured_frame_count": 10,
+    "command": {
+      "angular_z": 0.0,
+      "linear_x": 0.25,
+      "linear_y": 0.0
+    },
+    "controller_id": "thunder_01.thunderv4_locomotion",
+    "end_position_m": [
+      0.5689681216815314,
+      -76.03427116301843,
+      0.46245835183186024
+    ],
+    "expectation_met": true,
+    "frames_published": 180,
+    "horizontal_displacement_m": 0.5690039858647395,
+    "minimum_displacement_m": 0.1,
+    "motion_verified": true,
+    "start_position_m": [
+      0.0004879757246651586,
+      -76.00986092781226,
+      0.0560689112457391
+    ]
+  },
+  "package": {
+    "id": "thunderv4",
+    "kind": "robot",
+    "version": "1.0.0"
+  },
+  "run": {
+    "episode_status": "SUCCEEDED",
+    "launch_profile": "visual-control-qa",
+    "run_id": "thunder-forward",
+    "product_session_id": "f1e2c30c2bff20f03eb7728e583db854"
+  },
+  "schema": "lingtu.sim.qualification-evidence.v1"
+}

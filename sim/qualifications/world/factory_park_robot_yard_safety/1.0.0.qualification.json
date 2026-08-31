@@ -1,0 +1,68 @@
+{
+  "checks": [
+    {
+      "evidence": [
+        {
+          "path": "evidence/1.0.0/alignment-report.json"
+        },
+        {
+          "path": "evidence/1.0.0/schema-gate.json"
+        }
+      ],
+      "id": "schema",
+      "status": "passed"
+    },
+    {
+      "evidence": [
+        {
+          "path": "evidence/1.0.0/world.xml"
+        },
+        {
+          "path": "evidence/1.0.0/mujoco-compile-gate.json"
+        }
+      ],
+      "id": "mujoco_compile",
+      "status": "passed"
+    },
+    {
+      "evidence": [
+        {
+          "path": "evidence/1.0.0/world.visual-projection.json"
+        },
+        {
+          "path": "evidence/1.0.0/projection-gate.json"
+        }
+      ],
+      "id": "visual_projection",
+      "status": "passed"
+    },
+    {
+      "evidence": [
+        {
+          "path": "evidence/1.0.0/entity-graph-gate.json"
+        }
+      ],
+      "id": "entity_graph",
+      "status": "passed"
+    },
+    {
+      "evidence": [
+        {
+          "path": "evidence/1.0.0/world.provenance.json"
+        }
+      ],
+      "id": "provenance",
+      "status": "passed"
+    }
+  ],
+  "package": {
+    "id": "factory_park_robot_yard_safety",
+    "kind": "world",
+    "version": "1.0.0"
+  },
+  "provenance": {
+    "path": "provenance/world.provenance.json"
+  },
+  "qualified_capabilities": {},
+  "schema": "lingtu.sim.qualification-record.v1"
+}

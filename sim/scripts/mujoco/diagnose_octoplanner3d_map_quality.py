@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import struct
 from pathlib import Path
 from typing import Any
