@@ -1,6 +1,29 @@
 # LingTu
 
-LingTu is an autonomous navigation system for quadruped robots. A compiled
+<p align="center">
+  <img src="docs/assets/lingtu-logo-v3.png" alt="LingTu autonomous navigation logo" width="240">
+</p>
+
+<p align="center">
+  <strong>Native autonomous navigation for quadruped robots.</strong><br>
+  Mapping, localization, planning, perception, simulation, and field control in one product runtime.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/version-2.3.0-00C7D9" alt="Version 2.3.0">
+  <img src="https://img.shields.io/badge/Python-%E2%89%A53.10-18232B" alt="Python 3.10 or newer">
+  <img src="https://img.shields.io/badge/C%2B%2B-17-18232B" alt="C++17">
+  <img src="https://img.shields.io/badge/env-real%20%7C%20sim-FFB000" alt="Real and simulation environments">
+</p>
+
+<p align="center">
+  <a href="docs/QUICKSTART.md">Quick start</a> ·
+  <a href="docs/architecture/README.md">Architecture</a> ·
+  <a href="docs/04-deployment/README.md">Deployment</a> ·
+  <a href="docs/07-testing/README.md">Validation</a>
+</p>
+
+LingTu is an autonomous navigation platform for quadruped robots. A compiled
 Product declares native field processes plus one Python Host; typed DDS joins
 the field processes, while Modules and wires organize Host-local behavior.
 
@@ -43,7 +66,7 @@ The main runtime concepts are:
 
 ## Current Runtime Shape
 
-Status: current product contract as of 2026-07-28.
+Status: current product contract for LingTu 2.3.0 as of 2026-08-31.
 
 The runtime is split by responsibility:
 
