@@ -1,4 +1,4 @@
-#include "far/far_planner.hpp"
+#include "planning/global/far/planner.hpp"
 
 #include <gtest/gtest.h>
 
@@ -9,12 +9,12 @@
 namespace {
 
 using lingtu::nav::plan::GlobalPlanRequest;
-using lingtu::nav::plan::far::FarGridMap;
-using lingtu::nav::plan::far::FarPlanner;
-using lingtu::nav::plan::far::FarPlannerConfig;
-using lingtu::nav::plan::far::kFreeCell;
-using lingtu::nav::plan::far::kOccupiedCell;
-using lingtu::nav::plan::far::kUnknownCell;
+using lingtu::nav::plan::far_planner::FarGridMap;
+using lingtu::nav::plan::far_planner::FarPlanner;
+using lingtu::nav::plan::far_planner::FarPlannerConfig;
+using lingtu::nav::plan::far_planner::kFreeCell;
+using lingtu::nav::plan::far_planner::kOccupiedCell;
+using lingtu::nav::plan::far_planner::kUnknownCell;
 
 FarGridMap OpenMap(std::uint64_t generation = 1U) {
   FarGridMap map;

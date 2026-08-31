@@ -3,7 +3,7 @@
 #include <iostream>
 #include <vector>
 
-#include "plan/dds_drain_policy.hpp"
+#include "dds/drain.hpp"
 
 namespace {
 

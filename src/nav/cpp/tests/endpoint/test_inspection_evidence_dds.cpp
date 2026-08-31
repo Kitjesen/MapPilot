@@ -7,10 +7,10 @@
 #include <thread>
 
 #include "dds/dds.h"
-#include "lingtu_slam.h"
-#include "message/cpp/dds_qos_profiles.hpp"
-#include "message/cpp/dds_topics.hpp"
-#include "nav_dds_runtime.hpp"
+#include "messages.h"
+#include "message/cpp/qos.hpp"
+#include "message/cpp/topics.hpp"
+#include "dds/runtime.hpp"
 
 namespace {
 
@@ -117,7 +117,7 @@ inspection::Executor makeActionPendingExecutor() {
   route.id = "route-1";
   route.name = "Bin route";
   route.map_id = "factory";
-  route.map_version = 7;
+  route.map_content_epoch = 7;
   route.revision = 3;
   route.loop_count = 1;
   inspection::Point point;
@@ -151,6 +151,19 @@ void waitForSample(Take &&take) {
   throw std::runtime_error("timed out waiting for DDS sample");
 }
 
+std::vector<lingtu::nav::endpoint::InspectionEvidenceResultSample>
+takeEvidenceResults(lingtu::nav::endpoint::Dds &runtime) {
+  std::vector<lingtu::nav::endpoint::InspectionEvidenceResultSample> results;
+  const auto commands = runtime.takeCommands(0.0);
+  for (const auto &event : commands.ordered) {
+    if (const auto *result =
+            std::get_if<lingtu::nav::endpoint::InspectionEvidenceResultSample>(&event)) {
+      results.push_back(*result);
+    }
+  }
+  return results;
+}
+
 void testEvidenceQosIsReliableAndBounded() {
   for (const auto *topic : {
            lingtu::message::kNavInspectionEvidenceRequest.dds_topic.data(),
@@ -180,20 +193,29 @@ void testEvidenceQosIsReliableAndBounded() {
 
 void testRequestStatusAndMatchedResultHandshake() {
   constexpr int kDomain = 97;
-  lingtu::nav::endpoint::DdsRuntime runtime(kDomain);
-  require(!runtime.inspectionEvidenceWorkerMatched(),
+  lingtu::nav::endpoint::DdsStatus dds_status;
+  lingtu::nav::endpoint::Dds runtime(kDomain, &dds_status);
+  (void)runtime.takeCommands(0.0);
+  require(!dds_status.inspection_evidence_worker_matched,
           "evidence writer must report no worker before discovery");
   EvidencePeer peer(kDomain);
-  waitForSample([&]() { return runtime.inspectionEvidenceWorkerMatched(); });
+  waitForSample([&]() {
+  (void)runtime.takeCommands(0.0);
+    return dds_status.inspection_evidence_worker_matched;
+  });
   auto executor = makeActionPendingExecutor();
   const auto request = executor.PendingAction();
   require(request.has_value(), "action request must be available");
 
   lingtu_dds_InspectionEvidenceRequest request_wire{};
   for (int attempt = 0; attempt < 100; ++attempt) {
-    require(runtime.writeInspectionEvidenceRequest(*request, executor.route()->map_id,
-                                                   executor.route()->map_version,
-                                                   executor.status().deadline_s),
+    require(runtime
+                .publish(lingtu::nav::endpoint::OutputEvent{
+                    lingtu::nav::endpoint::InspectionEvidenceRequestOutput{
+                        *request, executor.route()->map_id,
+                        executor.route()->map_content_epoch,
+                        executor.status().deadline_s}})
+                .published,
             "evidence request write must succeed");
     std::this_thread::sleep_for(10ms);
     if (peer.takeRequest(&request_wire))
@@ -205,7 +227,7 @@ void testRequestStatusAndMatchedResultHandshake() {
   require(std::string(request_wire.route_id) == "route-1", "route id");
   require(request_wire.revision == 3, "route revision");
   require(std::string(request_wire.map_id) == "factory", "map id");
-  require(request_wire.map_version == 7, "map version");
+  require(request_wire.map_content_epoch == 7, "map version");
   require(request_wire.point_index == 0, "point index");
   require(std::string(request_wire.point_id) == "bin-a", "point id");
   require(std::string(request_wire.action) == "capture:bin_full", "action");
@@ -219,7 +241,11 @@ void testRequestStatusAndMatchedResultHandshake() {
 
   require(executor.OnActionStarted(request->request_id, 1.70),
           "successful request publication must start the action timeout");
-  runtime.writeInspectionStatus(executor.status());
+  require(runtime
+              .publish(lingtu::nav::endpoint::OutputEvent{
+                  lingtu::nav::endpoint::InspectionStatusOutput{executor.status()}})
+              .published,
+          "inspection status write must succeed");
   lingtu_dds_InspectionStatus status_wire{};
   waitForSample([&]() { return peer.takeStatus(&status_wire); });
   require(std::string(status_wire.action) == "capture:bin_full", "status action");
@@ -239,20 +265,20 @@ void testRequestStatusAndMatchedResultHandshake() {
 
   peer.writeResult("late-request", "evidence-late", true, "", "bin_full");
   std::this_thread::sleep_for(20ms);
-  runtime.drainInspectionEvidenceResults([&](const lingtu_dds_InspectionEvidenceResult &result) {
+  for (const auto &result : takeEvidenceResults(runtime)) {
     require(!lingtu::nav::endpoint::applyInspectionEvidenceResult(executor, result, 1.80),
             "late result must not advance inspection");
-  });
+  }
   require(executor.status().state == inspection::RunState::kActionPending,
           "late result must leave action pending");
 
   peer.writeResult(request->request_id, "evidence-1", true, "", "bin_full");
   std::this_thread::sleep_for(20ms);
   bool applied = false;
-  runtime.drainInspectionEvidenceResults([&](const lingtu_dds_InspectionEvidenceResult &result) {
+  for (const auto &result : takeEvidenceResults(runtime)) {
     applied =
         lingtu::nav::endpoint::applyInspectionEvidenceResult(executor, result, 1.90) || applied;
-  });
+  }
   require(applied, "matching persisted evidence result must advance inspection");
   require(executor.status().state == inspection::RunState::kSucceeded,
           "matching evidence must complete the single-point route");
@@ -260,10 +286,10 @@ void testRequestStatusAndMatchedResultHandshake() {
 
   peer.writeResult(request->request_id, "evidence-duplicate", true, "", "bin_full");
   std::this_thread::sleep_for(20ms);
-  runtime.drainInspectionEvidenceResults([&](const lingtu_dds_InspectionEvidenceResult &result) {
+  for (const auto &result : takeEvidenceResults(runtime)) {
     require(!lingtu::nav::endpoint::applyInspectionEvidenceResult(executor, result, 2.0),
             "duplicate result must be ignored");
-  });
+  }
   require(executor.status().evidence_id == "evidence-1", "duplicate must not replace evidence");
 }
 

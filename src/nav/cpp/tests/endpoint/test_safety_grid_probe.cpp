@@ -18,7 +18,7 @@ void require(bool condition, const char *message) {
 void setCost(Grid2D &grid, double x, double y, float cost) {
   int row = -1;
   int col = -1;
-  require(lingtu::nav::endpoint::safetyGridProbeCell(grid, x, y, row, col),
+  require(lingtu::nav::endpoint::safetyGridCell(grid, x, y, row, col),
           "test cost coordinate must be in bounds");
   grid.data[static_cast<std::size_t>(grid.index(row, col))] = cost;
 }
@@ -26,7 +26,7 @@ void setCost(Grid2D &grid, double x, double y, float cost) {
 void markObserved(const Grid2D &grid, std::vector<std::uint8_t> &observed, double x, double y) {
   int row = -1;
   int col = -1;
-  require(lingtu::nav::endpoint::safetyGridProbeCell(grid, x, y, row, col),
+  require(lingtu::nav::endpoint::safetyGridCell(grid, x, y, row, col),
           "test observed coordinate must be in bounds");
   observed[static_cast<std::size_t>(grid.index(row, col))] = 1;
 }
@@ -36,11 +36,11 @@ void testCellSnapsOnlyFloatingPointBoundaryNoise() {
   int row = -1;
   int col = -1;
 
-  require(lingtu::nav::endpoint::safetyGridProbeCell(grid, 0.6, 0.0, row, col),
+  require(lingtu::nav::endpoint::safetyGridCell(grid, 0.6, 0.0, row, col),
           "exact conceptual boundary must be in bounds");
   require(col == 13, "floating-point boundary noise must not select the prior cell");
 
-  require(lingtu::nav::endpoint::safetyGridProbeCell(grid, 0.6 - 1e-10, 0.0, row, col),
+  require(lingtu::nav::endpoint::safetyGridCell(grid, 0.6 - 1e-10, 0.0, row, col),
           "coordinate slightly below a boundary must be in bounds");
   require(col == 12, "coordinate slightly below a boundary must not be lifted");
 }
@@ -83,6 +83,17 @@ void testProbeAttributesEachFusedCostSource() {
   require(probe.samples[5].surface_risk_cost == 100.0F && probe.samples[5].height_risk_cost == 0.0F,
           "surface risk must remain separate from height risk");
   require(probe.samples[6].fused_cost == 0.0F, "clear forward sample must remain zero");
+
+  const auto near_body = lingtu::nav::endpoint::buildNearBodyHardSafetyGridProbe(
+      {0.0, 0.0, 0.0}, layers, 1.2, 90.0F, 2);
+  require(near_body.total_count == 3, "near-body probe must count every hard cell in range");
+  require(near_body.truncated && near_body.samples.size() == 2,
+          "near-body probe must bound status output without hiding the total");
+  require(near_body.samples[0].unknown_before_overlays &&
+              near_body.samples[0].fused_cost == 100.0F,
+          "nearest unknown hard cell must retain its source attribution");
+  require(near_body.samples[1].occupancy_cost == 100.0F,
+          "nearest occupancy hard cell must retain its source attribution");
 }
 
 }  // namespace

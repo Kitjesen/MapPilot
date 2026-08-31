@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include "motion/motion_layer.hpp"
+#include "input/obstacle.hpp"
 
 namespace {
 
@@ -55,8 +55,19 @@ bool containsNear(const std::vector<float> &xyzh, float x, float y, float eps) {
   return false;
 }
 
+bool containsBeyondX(const std::vector<float> &xyzh, float x) {
+  const std::size_t n = xyzh.size() / 4;
+  for (std::size_t i = 0; i < n; ++i) {
+    if (xyzh[i * 4] > x) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void require(bool condition, const char *message) {
   if (!condition) {
+    std::cerr << message << '\n';
     throw std::runtime_error(message);
   }
 }
@@ -194,6 +205,114 @@ void testMovingCurrentClusterProducesVelocityTrack() {
   require(layer.stats().dynamic_cells == 0, "expired tracks must clear dynamic cell telemetry");
 }
 
+void testConfirmedMovingClusterAddsFutureOccupancyToSnapshot() {
+  auto cfg = baseConfig();
+  cfg.static_min_frames = 10;
+  cfg.dynamic_min_cells = 3;
+  cfg.dynamic_min_speed_mps = 0.2;
+  cfg.dynamic_max_speed_mps = 2.0;
+  cfg.dynamic_free_min_frames = 2;
+  cfg.dynamic_confirm_frames = 3;
+  lingtu::nav::endpoint::MotionLayer layer(cfg);
+  const lingtu::nav::endpoint::SensorOrigin origin{0.0, 0.0, 0.0, true};
+  primeFree(layer, origin, {1.0f, 1.1f, 1.2f});
+  layer.updateFromScan(origin, cluster(1.0f), 1.0);
+  layer.dynamicClusters(8, 1.0);
+  layer.updateFromScan(origin, cluster(1.1f), 1.1);
+  layer.dynamicClusters(8, 1.1);
+  layer.updateFromScan(origin, cluster(1.2f), 1.2);
+
+  const auto current = layer.snapshot(100, 1.2);
+  require(containsNear(current, 1.2f, 0.15f, 0.15f),
+          "current snapshot must retain the measured moving obstacle");
+  require(!containsNear(current, 1.45f, 0.15f, 0.20f),
+          "current snapshot must not disguise predicted occupancy as measurement");
+  const auto predicted = layer.snapshotPredictedDynamic(100, 1.2);
+  require(containsNear(predicted, 1.45f, 0.15f, 0.20f),
+          "confirmed moving obstacle must add bounded future occupancy");
+  require(layer.stats().predicted_points == predicted.size() / 4,
+          "motion-layer telemetry must expose the applied prediction point count");
+  require(layer.stats().prediction_clusters == 1,
+          "motion-layer telemetry must expose the applied prediction cluster count");
+  require(std::abs(layer.stats().prediction_horizon_s -
+                   lingtu::nav::endpoint::kDynamicPredictionHorizonS) < 1e-9,
+          "motion-layer telemetry must expose the prediction horizon");
+  const auto bounded = layer.snapshotPredictedDynamic(7, 1.2);
+  require(bounded.size() / 4 == 7, "predicted occupancy must obey its point budget exactly");
+  for (std::size_t offset = 0; offset + 3 < bounded.size(); offset += 4) {
+    require(std::abs(bounded[offset + 3] - 0.4f) < 1e-5f,
+            "predicted occupancy height must come from the observed cluster cells");
+  }
+}
+
+void testConfirmedTrackPredictsThroughBriefOcclusion() {
+  auto cfg = baseConfig();
+  cfg.static_min_frames = 10;
+  cfg.dynamic_min_cells = 3;
+  cfg.dynamic_min_speed_mps = 0.2;
+  cfg.dynamic_max_speed_mps = 2.0;
+  cfg.dynamic_free_min_frames = 2;
+  cfg.dynamic_confirm_frames = 3;
+  cfg.dynamic_track_ttl_s = 0.6;
+  lingtu::nav::endpoint::MotionLayer layer(cfg);
+  const lingtu::nav::endpoint::SensorOrigin origin{0.0, 0.0, 0.0, true};
+  primeFree(layer, origin, {1.0f, 1.1f, 1.2f});
+  layer.updateFromScan(origin, cluster(1.0f), 1.0);
+  layer.dynamicClusters(8, 1.0);
+  layer.updateFromScan(origin, cluster(1.1f), 1.1);
+  layer.dynamicClusters(8, 1.1);
+  layer.updateFromScan(origin, cluster(1.2f), 1.2);
+  const auto confirmed = layer.dynamicClusters(8, 1.2);
+  require(!confirmed.empty(), "test fixture must confirm a moving track");
+  const auto confirmed_id = confirmed.front().id;
+
+  layer.updateFromScan(origin, point(3.0f, -1.0f, 0.0f, 0.4f), 1.3);
+  const auto occluded = layer.dynamicClusters(8, 1.3);
+  require(!occluded.empty() && occluded.front().id == confirmed_id,
+          "a confirmed track must survive one briefly occluded scan");
+  require(containsBeyondX(layer.snapshotPredictedDynamic(100, 1.3), 1.4f),
+          "brief occlusion must not make future dynamic occupancy disappear");
+
+  layer.updateFromScan(origin, point(3.0f, -1.0f, 0.0f, 0.4f), 2.0);
+  require(layer.snapshotPredictedDynamic(100, 2.0).empty(),
+          "an occluded dynamic track must disappear after its TTL");
+}
+
+void testUnconfirmedStationaryAndExpiredTracksDoNotPredict() {
+  auto cfg = baseConfig();
+  cfg.static_min_frames = 10;
+  cfg.dynamic_min_cells = 3;
+  cfg.dynamic_min_speed_mps = 0.2;
+  cfg.dynamic_max_speed_mps = 2.0;
+  cfg.dynamic_free_min_frames = 2;
+  cfg.dynamic_confirm_frames = 3;
+  cfg.dynamic_track_ttl_s = 0.6;
+  const lingtu::nav::endpoint::SensorOrigin origin{0.0, 0.0, 0.0, true};
+
+  lingtu::nav::endpoint::MotionLayer stationary(cfg);
+  primeFree(stationary, origin, {1.0f});
+  stationary.updateFromScan(origin, cluster(1.0f), 1.0);
+  require(stationary.snapshotPredictedDynamic(100, 1.0).empty(),
+          "first stationary observation must not predict");
+  stationary.updateFromScan(origin, cluster(1.0f), 1.1);
+  require(stationary.snapshotPredictedDynamic(100, 1.1).empty(),
+          "stationary cluster must not create future occupancy");
+
+  lingtu::nav::endpoint::MotionLayer moving(cfg);
+  primeFree(moving, origin, {1.0f, 1.1f, 1.2f});
+  moving.updateFromScan(origin, cluster(1.0f), 1.0);
+  require(moving.snapshotPredictedDynamic(100, 1.0).empty(),
+          "first moving observation must not predict");
+  moving.updateFromScan(origin, cluster(1.1f), 1.1);
+  require(moving.snapshotPredictedDynamic(100, 1.1).empty(),
+          "tentative moving cluster must not create future occupancy");
+  moving.updateFromScan(origin, cluster(1.2f), 1.2);
+  require(containsBeyondX(moving.snapshotPredictedDynamic(100, 1.2), 1.3f),
+          "confirmed moving cluster must predict before expiry");
+  require(moving.snapshotPredictedDynamic(100, 2.0).empty(),
+          "expired dynamic track must remove all future occupancy");
+}
+
 void testPriorFreeEvidenceIsRequired() {
   auto cfg = baseConfig();
   cfg.static_min_frames = 10;
@@ -307,6 +426,56 @@ void testBoundedSnapshotPreservesNearestHazard() {
           "bounded snapshot must retain the nearest obstacle to the current sensor origin");
 }
 
+void testInflatedBoundedSnapshotPreservesNearestHazard() {
+  auto cfg = baseConfig();
+  cfg.ray_clearing_enabled = false;
+  cfg.inflation_radius_m = 0.12;
+  lingtu::nav::endpoint::MotionLayer layer(cfg);
+  const lingtu::nav::endpoint::SensorOrigin origin{0.0, 0.0, 0.0, true};
+  std::vector<float> points;
+  for (int i = 0; i < 64; ++i) {
+    points.insert(points.end(), {
+                                    10.0f + 2.0f * static_cast<float>(i),
+                                    5.0f,
+                                    0.0f,
+                                    0.4f,
+                                });
+  }
+  points.insert(points.end(), {0.35f, 0.0f, 0.0f, 0.4f});
+  layer.updateFromScan(origin, points, 1.0);
+
+  const auto snapshot = layer.snapshot(1, 1.0);
+  require(snapshot.size() == 4, "inflated one-point budget must emit one obstacle");
+  require(std::hypot(snapshot[0], snapshot[1]) < 0.6f,
+          "inflated bounded snapshot must retain the nearest obstacle cell");
+}
+
+void testInflatedCoarseReductionCannotReplaceNearHazardWithTallerFarPoint() {
+  auto cfg = baseConfig();
+  cfg.ray_clearing_enabled = false;
+  cfg.inflation_radius_m = 0.12;
+  lingtu::nav::endpoint::MotionLayer layer(cfg);
+  const lingtu::nav::endpoint::SensorOrigin origin{0.0, 0.0, 0.0, true};
+  std::vector<float> points{{0.35f, 0.0f, 0.0f, 0.2f}};
+  for (int index = 0; index < 180; ++index) {
+    const float angle = 0.17f * static_cast<float>(index);
+    const float radius = 2.0f + 0.005f * static_cast<float>(index);
+    points.insert(points.end(), {
+                                    radius * std::cos(angle),
+                                    radius * std::sin(angle),
+                                    0.0f,
+                                    1.0f,
+                                });
+  }
+  layer.updateFromScan(origin, points, 1.0);
+
+  const auto snapshot = layer.snapshot(1, 1.0);
+
+  require(snapshot.size() == 4, "coarse-reduced snapshot must obey its point budget");
+  require(std::hypot(snapshot[0], snapshot[1]) < 0.6f,
+          "coarse reduction must rank distance before obstacle height");
+}
+
 }  // namespace
 
 int main() {
@@ -316,12 +485,17 @@ int main() {
   testStaticNeedsRepeatedFreeEvidence();
   testStationaryClusterDoesNotBecomeDynamic();
   testMovingCurrentClusterProducesVelocityTrack();
+  testConfirmedMovingClusterAddsFutureOccupancyToSnapshot();
+  testConfirmedTrackPredictsThroughBriefOcclusion();
+  testUnconfirmedStationaryAndExpiredTracksDoNotPredict();
   testPriorFreeEvidenceIsRequired();
   testAlternatingJitterDoesNotBecomeDynamic();
   testImplausibleSpeedDoesNotBecomeDynamic();
   testSameFrameQueriesReusePrunePass();
   testBoundedSnapshotUsesFullBudget();
   testBoundedSnapshotPreservesNearestHazard();
+  testInflatedBoundedSnapshotPreservesNearestHazard();
+  testInflatedCoarseReductionCannotReplaceNearHazardWithTallerFarPoint();
   std::cout << "test_motion_layer passed\n";
   return 0;
 }

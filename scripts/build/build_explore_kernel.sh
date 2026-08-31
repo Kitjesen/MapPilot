@@ -83,25 +83,17 @@ else
 fi
 
 # --- IDL Code Generation ---
-# idlc is only available on Linux (CycloneDDS toolchain).  Skip on other
-# platforms; the generated files are committed or generated on the target.
-IDL_DIR="${REPO_ROOT}/src/message/idl"
-GEN_DIR="${REPO_ROOT}/src/message/cpp/generated"
+# Generate with the CycloneDDS toolchain whenever it is installed. Official
+# idlc builds are available on Linux and Windows; the host OS is not a contract.
+MESSAGE_IDL="${REPO_ROOT}/src/message/idl/messages.idl"
+GEN_DIR="${BUILD_DIR}/dds_generated"
 
-if [[ "$(uname -s)" == "Linux" ]] && command -v idlc &>/dev/null; then
-    info "Generating C bindings from IDL files..."
+if command -v idlc &>/dev/null; then
+    info "Generating C bindings from the LingTu message IDL..."
     mkdir -p "$GEN_DIR"
-    for idl_file in "$IDL_DIR"/explore_types.idl "$IDL_DIR"/lingtu_slam.idl "$IDL_DIR"/marker_types.idl; do
-        if [ -f "$idl_file" ]; then
-            info "  idlc -l c -I $IDL_DIR $(basename "$idl_file") -> $GEN_DIR"
-            # idlc generates in CWD; cd into the output directory.
-            # -I lets idlc resolve #include "other.idl" directives.
-            (cd "$GEN_DIR" && idlc -l c -I "$IDL_DIR" "$idl_file") || { warn "idlc failed for $(basename "$idl_file"), continuing..."; }
-        fi
-    done
+    info "  idlc -l c $(basename "$MESSAGE_IDL") -> $GEN_DIR"
+    (cd "$GEN_DIR" && idlc -l c "$MESSAGE_IDL") || warn "idlc failed; DDS transport will be unavailable"
     ok "IDL generation complete"
-elif [[ "$(uname -s)" != "Linux" ]]; then
-    warn "Skipping idlc code generation on non-Linux platform ($(uname -s))"
 else
     warn "idlc not found; skipping IDL code generation (DDS types must be pre-generated)"
 fi
@@ -151,14 +143,12 @@ set(EXPLORE_CPP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(REPO_ROOT "__REPO_ROOT_PLACEHOLDER__")
 
 # ── idlc-generated C type bindings (optional) ──────────────────────────
-# Only compile explore_types.c (self-contained for all TARE types).
-# lingtu_slam.c has duplicate symbol definitions (Time, Header, Point, etc.)
-# that would cause linker errors if both are compiled.
-set(LINGTU_DDS_GEN_DIR "${REPO_ROOT}/src/message/cpp/generated")
+# Compile the shared LingTu message types when generated.
+set(LINGTU_DDS_GEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/dds_generated")
 set(LINGTU_DDS_GEN_SOURCES "")
-if(EXISTS "${LINGTU_DDS_GEN_DIR}/explore_types.c")
-  set(LINGTU_DDS_GEN_SOURCES "${LINGTU_DDS_GEN_DIR}/explore_types.c")
-  message(STATUS "idlc generated source: explore_types.c")
+if(EXISTS "${LINGTU_DDS_GEN_DIR}/messages.c")
+  set(LINGTU_DDS_GEN_SOURCES "${LINGTU_DDS_GEN_DIR}/messages.c")
+  message(STATUS "idlc generated source: messages.c")
 endif()
 
 set(LINGTU_EXPLORE_BINDING_SOURCES

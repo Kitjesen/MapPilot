@@ -2,7 +2,7 @@
 #include <stdexcept>
 #include <thread>
 
-#include "plan/global_plan_task.hpp"
+#include "runtime/goal/task.hpp"
 
 namespace {
 
@@ -28,7 +28,7 @@ waitAndPlan(const lingtu::nav::plan::GlobalPlanRequest &request,
   lingtu::nav::plan::GlobalPlanResult result;
   result.ok = true;
   result.reached_goal = true;
-  result.map_identity = {"field", 7, "sha256-a", "map"};
+  result.map_identity = {"field", 7, "map"};
   result.path = {request.start, request.goal};
   return result;
 }
@@ -87,13 +87,27 @@ int main() {
               "planning_frame_changed_during_planning",
           "changed planning frame was not rejected");
   auto changed_map = first_result->result.map_identity;
-  changed_map.version += 1;
+  changed_map.content_epoch += 1;
   require(lingtu::nav::endpoint::globalPlanStaleReason(*first_result, 11, 4, changed_map) ==
               "active_map_changed_during_planning",
           "changed active map was not rejected");
   require(lingtu::nav::endpoint::globalPlanStaleReason(*first_result, 11, 4, std::nullopt) ==
               "active_map_unavailable_after_planning",
           "missing active map was not rejected");
+
+  auto single_point = *first_result;
+  single_point.context.start = {1.0, 2.0, 0.5};
+  single_point.context.goal = {4.0, 5.0, 2.0};
+  single_point.result.path = {
+      {single_point.context.goal.x, single_point.context.goal.y, single_point.context.goal.z}};
+  const auto path_with_start = lingtu::nav::endpoint::globalPlanPath(single_point);
+  require(path_with_start.size() == 2U && path_with_start.front().x == 1.0,
+          "single-point plan did not include its start");
+  single_point.result.path = {
+      {single_point.context.start.x, single_point.context.start.y, single_point.context.start.z}};
+  const auto path_with_goal = lingtu::nav::endpoint::globalPlanPath(single_point);
+  require(path_with_goal.size() == 2U && path_with_goal.back().x == 4.0,
+          "start-only plan did not include its goal");
 
   auto overlay_completion = *first_result;
   auto &requested_overlay = overlay_completion.context.request.temporary_overlay;

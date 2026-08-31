@@ -3,7 +3,7 @@
 #include <limits>
 #include <stdexcept>
 
-#include "plan/input_gate.hpp"
+#include "input/gate.hpp"
 
 namespace {
 
@@ -13,13 +13,28 @@ void require(bool condition, const char *message) {
   }
 }
 
+lingtu::nav::endpoint::InputSnapshot input(double now_s, double odom_s, double tf_s,
+                                           double cloud_s, bool require_tf,
+                                           std::uint64_t generation) {
+  lingtu::nav::endpoint::InputSnapshot out;
+  out.now_s = now_s;
+  out.odom_stamp_s = odom_s;
+  out.tf_stamp_s = tf_s;
+  out.cloud_stamp_s = cloud_s;
+  out.odom_requires_tf = require_tf;
+  out.odom_generation = generation;
+  out.tf_generation = generation;
+  out.cloud_generation = generation;
+  return out;
+}
+
 void testRequiresConsecutiveFreshFrames() {
   lingtu::nav::endpoint::InputGate gate({0.25, 0.25, 0.35, 3});
-  auto state = gate.evaluate(1.0, 1.0, 1.0, 1.0, true);
+  auto state = gate.evaluate(input(1.0, 1.0, 1.0, 1.0, true, 1));
   require(state.recovering, "first fresh frame must remain in recovery");
-  state = gate.evaluate(1.05, 1.05, 1.05, 1.05, true);
+  state = gate.evaluate(input(1.05, 1.05, 1.05, 1.05, true, 2));
   require(state.recovering, "second fresh frame must remain in recovery");
-  state = gate.evaluate(1.10, 1.10, 1.10, 1.10, true);
+  state = gate.evaluate(input(1.10, 1.10, 1.10, 1.10, true, 3));
   require(state.ready, "third consecutive fresh frame must open the gate");
 }
 
@@ -114,20 +129,21 @@ void testCoordinateEpochForcesFreshDdsRecovery() {
 
 void testStaleCloudStopsImmediatelyAndRequiresRecoveryAgain() {
   lingtu::nav::endpoint::InputGate gate({0.25, 0.25, 0.35, 2});
-  gate.evaluate(1.0, 1.0, 1.0, 1.0, true);
-  require(gate.evaluate(1.1, 1.1, 1.1, 1.1, true).ready, "gate must become ready");
+  gate.evaluate(input(1.0, 1.0, 1.0, 1.0, true, 1));
+  require(gate.evaluate(input(1.1, 1.1, 1.1, 1.1, true, 2)).ready,
+          "gate must become ready");
 
-  const auto stale = gate.evaluate(1.6, 1.6, 1.6, 1.1, true);
+  const auto stale = gate.evaluate(input(1.6, 1.6, 1.6, 1.1, true, 3));
   require(!stale.ready && !stale.recovering, "stale cloud must close the gate immediately");
   require(stale.reason == "cloud_stale", "stale cloud reason must be explicit");
 
-  const auto recovering = gate.evaluate(1.7, 1.7, 1.7, 1.7, true);
+  const auto recovering = gate.evaluate(input(1.7, 1.7, 1.7, 1.7, true, 4));
   require(recovering.recovering, "one fresh frame after a stop must not reopen motion");
 }
 
 void testMapFrameOdometryDoesNotRequireMapOdomTf() {
   lingtu::nav::endpoint::InputGate gate({0.25, 0.25, 0.35, 1});
-  const auto state = gate.evaluate(1.0, 1.0, 0.0, 1.0, false);
+  const auto state = gate.evaluate(input(1.0, 1.0, 0.0, 1.0, false, 1));
   require(state.ready, "map-frame odometry must not require map-to-odom TF");
 }
 
@@ -136,19 +152,19 @@ void testFutureInputsCloseTheGate() {
   cfg.future_tolerance_s = 0.05;
 
   lingtu::nav::endpoint::InputGate odom_gate(cfg);
-  auto state = odom_gate.evaluate(10.0, 10.1, 10.0, 10.0, true);
+  auto state = odom_gate.evaluate(input(10.0, 10.1, 10.0, 10.0, true, 1));
   require(!state.ready && state.reason == "odom_future", "future odometry must close the gate");
 
   lingtu::nav::endpoint::InputGate tf_gate(cfg);
-  state = tf_gate.evaluate(10.0, 10.0, 10.1, 10.0, true);
+  state = tf_gate.evaluate(input(10.0, 10.0, 10.1, 10.0, true, 1));
   require(!state.ready && state.reason == "tf_future", "future TF must close the gate");
 
   lingtu::nav::endpoint::InputGate cloud_gate(cfg);
-  state = cloud_gate.evaluate(10.0, 10.0, 10.0, 10.1, true);
+  state = cloud_gate.evaluate(input(10.0, 10.0, 10.0, 10.1, true, 1));
   require(!state.ready && state.reason == "cloud_future", "future cloud must close the gate");
 
   lingtu::nav::endpoint::InputGate tolerated_gate(cfg);
-  state = tolerated_gate.evaluate(10.0, 10.04, 10.04, 10.04, true);
+  state = tolerated_gate.evaluate(input(10.0, 10.04, 10.04, 10.04, true, 1));
   require(state.ready, "small timestamp jitter inside the tolerance must remain fresh");
 }
 
@@ -158,7 +174,7 @@ void testCloudCanBeOptional() {
   cfg.require_cloud = false;
   lingtu::nav::endpoint::InputGate gate(cfg);
 
-  const auto state = gate.evaluate(10.0, 9.9, 9.9, 0.0, true);
+  const auto state = gate.evaluate(input(10.0, 9.9, 9.9, 0.0, true, 1));
   require(state.ready, "optional cloud must not block an obstacle-disabled endpoint");
   require(state.reason == "ready", "optional cloud gate must become ready");
 }
@@ -170,7 +186,7 @@ void testOdometryAndCloudCanBeOptionalForPureTeleop() {
   cfg.require_cloud = false;
   lingtu::nav::endpoint::InputGate gate(cfg);
 
-  const auto state = gate.evaluate(10.0, 0.0, 0.0, 0.0, true);
+  const auto state = gate.evaluate(input(10.0, 0.0, 0.0, 0.0, true, 1));
   require(state.ready, "pure teleop must not require localization or cloud input");
   require(state.odom_age_s < 0.0, "optional odometry must be reported as not required");
   require(state.cloud_age_s < 0.0, "optional cloud must be reported as not required");
@@ -522,23 +538,6 @@ void testDriverControlMustBeFreshAndReady() {
   require(state.ready, "fresh accepted LingTu control ownership must open the gate");
 }
 
-void testSourceStampClockRollbackRebasesOnlyToFreshCurrentEpoch() {
-  using lingtu::nav::endpoint::classifySourceStamp;
-  using lingtu::nav::endpoint::SourceStampDecision;
-
-  require(classifySourceStamp(100.95, 100.01, 100.0, 0.05, 0.35) ==
-              SourceStampDecision::kClockRebase,
-          "a fresh post-rollback heartbeat must replace a stored future wall-clock stamp");
-  require(classifySourceStamp(100.0, 99.9, 100.0, 0.05, 0.35) == SourceStampDecision::kReject,
-          "ordinary out-of-order heartbeats must remain rejected");
-  require(classifySourceStamp(100.95, 99.0, 100.0, 0.05, 0.35) == SourceStampDecision::kReject,
-          "a stale replay must not masquerade as a clock rollback recovery");
-  require(classifySourceStamp(100.0, 100.7, 100.0, 0.05, 0.35) == SourceStampDecision::kReject,
-          "a queued pre-rollback heartbeat must remain rejected after the local clock steps back");
-  require(classifySourceStamp(100.0, 100.1, 100.1, 0.05, 0.35) == SourceStampDecision::kAccept,
-          "monotonic source timestamps must remain accepted");
-}
-
 void testSourceOrderIsIndependentOfReceiverWallClock() {
   using lingtu::nav::endpoint::classifySourceOrder;
   using lingtu::nav::endpoint::SourceStampDecision;
@@ -641,7 +640,6 @@ int main() {
   testLocalizationStateAndCatastrophicReasonCloseTheGate();
   testSafetyInputsUseSourceTimestamps();
   testDriverControlMustBeFreshAndReady();
-  testSourceStampClockRollbackRebasesOnlyToFreshCurrentEpoch();
   testSourceOrderIsIndependentOfReceiverWallClock();
   testInputFreshnessUsesReceiverSteadyClock();
   testLocalizationHealthJsonCarriesSourceStateAndStamp();

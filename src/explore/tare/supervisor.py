@@ -18,8 +18,8 @@ Supervisor modes
 - ``starting``  鈥?TARE alive, no waypoints yet (warm-up)
 - ``healthy``   鈥?waypoints flowing within timeout
 - ``degraded``  鈥?waypoint silence > warn_timeout_s (TARE may be stuck)
-- ``fallback``  鈥?waypoint silence > fallback_timeout_s (operator should
-                   switch to wavefront backend)
+- ``fallback``  鈥?waypoint silence > fallback_timeout_s (operator attention
+                   required)
 - ``finished``  鈥?TARE reports exploration complete
 
 The supervisor does NOT auto-swap backends at runtime 鈥?that requires
@@ -175,8 +175,8 @@ class ExplorationSupervisorModule(Module, layer=5):
             if not self._fallback_requested:
                 logger.error(
                     "ExplorationSupervisor: fallback requested 鈥?no waypoint "
-                    "for %.1fs (>%.0fs threshold). Operator should switch to "
-                    "wavefront backend or investigate TARE.",
+                    "for %.1fs (>%.0fs threshold). Operator should stop or "
+                    "investigate TARE.",
                     wp_age_f,
                     self._fallback_timeout_s,
                 )

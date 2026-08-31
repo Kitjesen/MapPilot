@@ -7,7 +7,7 @@
 #include <variant>
 #include <vector>
 
-#include "plan/rolling_segment_lifecycle.hpp"
+#include "runtime/rolling/lifecycle.hpp"
 
 namespace {
 
@@ -589,12 +589,12 @@ void testUnsafeForwardSuffixFailsBeforeMotionTick() {
 
   auto context = readyContext(10.1);
   const auto result = lifecycle.step(RollingSegmentRevalidate{context});
-  require(result.effects.size() == 2U, "unsafe forward suffix must stop and clear before NavLoop");
+  require(result.effects.size() == 2U, "unsafe forward suffix must stop and clear before Executor");
   const auto status = confirmSafeStop(lifecycle, result).status;
   require(status.state == ExplorationSegmentState::kFailed &&
               status.reason == "segment_path_no_longer_safe",
           "unsafe forward suffix must be a failed segment, not stale binding");
-  require(!lifecycle.snapshot().active, "unsafe segment must not reach NavLoop");
+  require(!lifecycle.snapshot().active, "unsafe segment must not reach Executor");
 }
 
 void testNewerSameEpochRevisionRevalidatesActiveBinding() {
@@ -696,7 +696,7 @@ void testReachedMotionOutcomeTerminatesSegment() {
           "reached motion outcome must use the product terminal contract");
 }
 
-void testFailureMotionOutcomesTerminateSegment() {
+void testRecoveryFailureTerminatesSegment() {
   RollingSegmentLifecycle recovery_lifecycle;
   (void)recovery_lifecycle.step(RollingSegmentBeginTick{10.0});
   (void)recovery_lifecycle.step(RollingSegmentObserveExecutionGrid{freeGrid()});
@@ -713,20 +713,6 @@ void testFailureMotionOutcomesTerminateSegment() {
               !recovery_lifecycle.snapshot().active,
           "recovery exhaustion must fail and release the active segment");
 
-  RollingSegmentLifecycle safety_lifecycle;
-  (void)safety_lifecycle.step(RollingSegmentBeginTick{10.0});
-  (void)safety_lifecycle.step(RollingSegmentObserveExecutionGrid{freeGrid()});
-  (void)safety_lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext()});
-  const auto safety = safety_lifecycle.step(RollingSegmentMotionOutcome{
-      RollingSegmentMotionOutcomeKind::kFinalSafetyStopped,
-      {},
-  });
-  const auto safety_terminal = confirmSafeStop(safety_lifecycle, safety).status;
-  require(safety.effects.size() == 2U &&
-              safety_terminal.state == ExplorationSegmentState::kFailed &&
-              safety_terminal.reason == "segment_final_safety_stopped" &&
-              !safety_lifecycle.snapshot().active,
-          "final-safety stop must fail and release the active segment");
 }
 
 void testShutdownCancellationRetriesTerminalStatusUntilDelivered() {
@@ -936,7 +922,7 @@ int main() {
   testEpochMismatchImmediatelyRevokesActiveBinding();
   testGenericNavigationPreemptionProducesReplayableCancellation();
   testReachedMotionOutcomeTerminatesSegment();
-  testFailureMotionOutcomesTerminateSegment();
+  testRecoveryFailureTerminatesSegment();
   testShutdownCancellationRetriesTerminalStatusUntilDelivered();
   testClearFailureRetriesSafeStopBeforeTerminalDelivery();
   testAcceptedAckFailureFailsClosed();

@@ -2,16 +2,16 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
 
 #include "dds/dds.h"
-#include "lingtu_slam.h"
-#include "message/cpp/dds_qos_profiles.hpp"
-#include "message/cpp/dds_topics.hpp"
-#include "nav_dds_runtime.hpp"
+#include "messages.h"
+#include "message/cpp/qos.hpp"
+#include "message/cpp/topics.hpp"
+#include "nav/cpp/platform/runtime.hpp"
+#include "dds/runtime.hpp"
 
 namespace {
 
@@ -28,13 +28,6 @@ dds_entity_t checked(dds_return_t value, const char *operation) {
     throw std::runtime_error(std::string(operation) + ": " + dds_strretcode(-value));
   }
   return static_cast<dds_entity_t>(value);
-}
-
-std::string hostBootId() {
-  std::ifstream input("/proc/sys/kernel/random/boot_id");
-  std::string value;
-  std::getline(input, value);
-  return value;
 }
 
 struct Sample {
@@ -102,10 +95,13 @@ class FinalVelocityReader {
   dds_entity_t reader_{0};
 };
 
-Sample writeAndTake(lingtu::nav::endpoint::DdsRuntime &runtime, FinalVelocityReader &reader,
+Sample writeAndTake(lingtu::nav::endpoint::Dds &runtime, FinalVelocityReader &reader,
                     const nav_kernel::Twist &command) {
   for (int attempt = 0; attempt < 100; ++attempt) {
-    const auto receipt = runtime.writeCmdVelSequenced(command);
+    const auto published = runtime.publish(
+        lingtu::nav::endpoint::OutputEvent{
+            lingtu::nav::endpoint::FinalVelocityOutput{command}});
+    const auto &receipt = published.final_velocity;
     require(receipt.has_value(), "final velocity write must succeed");
     std::this_thread::sleep_for(10ms);
     Sample sample = reader.take();
@@ -122,10 +118,11 @@ Sample writeAndTake(lingtu::nav::endpoint::DdsRuntime &runtime, FinalVelocityRea
 void testWriterAddsFreshnessEnvelope() {
   constexpr int kDomain = 96;
   FinalVelocityReader reader(kDomain);
-  lingtu::nav::endpoint::DdsRuntime runtime(kDomain);
+  lingtu::nav::endpoint::Dds runtime(kDomain);
 
   const Sample first = writeAndTake(runtime, reader, nav_kernel::Twist{0.2, -0.1, 0.4});
-  require(first.host_boot_id == hostBootId(), "host boot id must match Linux");
+  require(first.host_boot_id == lingtu::nav::platform::hostBootId(),
+          "host boot id must match the platform runtime");
   require(!first.producer_boot_id.empty(), "producer boot id must be present");
   require(first.output_seq >= 1, "output sequence must be positive");
   require(first.source_boottime_ns > 0, "boottime timestamp must be present");

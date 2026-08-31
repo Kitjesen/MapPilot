@@ -11,7 +11,6 @@ from runtime.msgs import (
     OperatorMotionReceipt,
 )
 
-
 _EXPLORATION_RUN_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
 
@@ -29,6 +28,15 @@ class _NavigationClient:
             endpoint_timestamp_s=123.5,
             reason="accepted",
         )
+
+    def preview_plan(self, x, y, z):
+        self.calls.append(("preview_plan", x, y, z))
+        return {
+            "feasible": True,
+            "start_valid": True,
+            "reason": "planned",
+            "path": [{"x": x, "y": y, "z": z}],
+        }
 
     def cancel_task(self, task_id, reason, *, request_id=None):
         self.calls.append(("cancel_task", task_id, reason, request_id))
@@ -66,6 +74,20 @@ class _NavigationClient:
     def stop(self, reason, *, request_id=None):
         self.calls.append(("stop", reason, request_id))
 
+    def resume_autonomy(self, reason, *, request_id=None):
+        self.calls.append(("resume_autonomy", reason, request_id))
+
+    def resume_autonomy_with_receipt(self, reason, *, request_id=None):
+        self.calls.append(("resume_autonomy_with_receipt", reason, request_id))
+        return {
+            "accepted": False,
+            "kind": int(NavigationCommandKind.RESUME_AUTONOMY),
+            "task_id": "",
+            "request_id": request_id,
+            "endpoint_timestamp_s": 127.5,
+            "reason": "manual_takeover_still_active",
+        }
+
 
 class _ExplorationClient:
     def __init__(self) -> None:
@@ -84,45 +106,45 @@ class _ExplorationClient:
     def start(
         self,
         exploration_run_id,
-        session_id,
+        product_session_id,
         *,
         reason="operator_start",
         request_id=None,
     ):
-        self.calls.append(("start", exploration_run_id, session_id, reason, request_id))
+        self.calls.append(("start", exploration_run_id, product_session_id, reason, request_id))
         return self._receipt(exploration_run_id, request_id)
 
     def pause(
         self,
         exploration_run_id,
-        session_id,
+        product_session_id,
         reason="operator_pause",
         *,
         request_id=None,
     ):
-        self.calls.append(("pause", exploration_run_id, session_id, reason, request_id))
+        self.calls.append(("pause", exploration_run_id, product_session_id, reason, request_id))
         return self._receipt(exploration_run_id, request_id)
 
     def resume(
         self,
         exploration_run_id,
-        session_id,
+        product_session_id,
         reason="operator_resume",
         *,
         request_id=None,
     ):
-        self.calls.append(("resume", exploration_run_id, session_id, reason, request_id))
+        self.calls.append(("resume", exploration_run_id, product_session_id, reason, request_id))
         return self._receipt(exploration_run_id, request_id)
 
     def stop(
         self,
         exploration_run_id,
-        session_id,
+        product_session_id,
         reason="operator_stop",
         *,
         request_id=None,
     ):
-        self.calls.append(("stop", exploration_run_id, session_id, reason, request_id))
+        self.calls.append(("stop", exploration_run_id, product_session_id, reason, request_id))
         return self._receipt(exploration_run_id, request_id)
 
     def set_directed_target(
@@ -132,7 +154,7 @@ class _ExplorationClient:
         ttl_s,
         *,
         exploration_run_id,
-        session_id,
+        product_session_id,
         reason="operator_directed_explore",
         request_id=None,
     ):
@@ -143,7 +165,7 @@ class _ExplorationClient:
                 y,
                 ttl_s,
                 exploration_run_id,
-                session_id,
+                product_session_id,
                 reason,
                 request_id,
             )
@@ -153,12 +175,12 @@ class _ExplorationClient:
     def clear_directed_target(
         self,
         exploration_run_id,
-        session_id,
+        product_session_id,
         reason="operator_clear_directed_explore",
         *,
         request_id=None,
     ):
-        self.calls.append(("clear", exploration_run_id, session_id, reason, request_id))
+        self.calls.append(("clear", exploration_run_id, product_session_id, reason, request_id))
         return self._receipt(exploration_run_id, request_id)
 
 
@@ -241,6 +263,7 @@ class _OperatorMotionClient:
         wz,
         *,
         deadman=True,
+        manual_mode=False,
         freshness_budget_ms=350,
         request_id=None,
     ):
@@ -254,6 +277,7 @@ class _OperatorMotionClient:
                 vy,
                 wz,
                 deadman,
+                manual_mode,
                 freshness_budget_ms,
                 request_id,
             )
@@ -352,6 +376,52 @@ def test_commands_forward_typed_navigation_requests(monkeypatch) -> None:
     ]
 
 
+def test_commands_expose_native_plan_preview(monkeypatch) -> None:
+    navigation = _NavigationClient()
+    monkeypatch.setattr(
+        command_module,
+        "get_native_navigation_client",
+        lambda *, required: navigation,
+    )
+
+    result = command_module.Commands().preview_plan(1, 2, 0.3)
+
+    assert result == {
+        "feasible": True,
+        "start_valid": True,
+        "reason": "planned",
+        "path": [{"x": 1.0, "y": 2.0, "z": 0.3}],
+    }
+    assert navigation.calls == [("preview_plan", 1.0, 2.0, 0.3)]
+
+
+def test_commands_resume_autonomy_returns_plain_native_receipt(monkeypatch) -> None:
+    navigation = _NavigationClient()
+    monkeypatch.setattr(
+        command_module,
+        "get_native_navigation_client",
+        lambda *, required: navigation,
+    )
+    commands = command_module.Commands()
+
+    receipt = commands.resume_autonomy_with_receipt(
+        "operator_resume",
+        request_id="resume-1",
+    )
+
+    assert receipt == {
+        "accepted": False,
+        "kind": int(NavigationCommandKind.RESUME_AUTONOMY),
+        "task_id": "",
+        "request_id": "resume-1",
+        "endpoint_timestamp_s": 127.5,
+        "reason": "manual_takeover_still_active",
+    }
+    assert navigation.calls == [
+        ("resume_autonomy_with_receipt", "operator_resume", "resume-1"),
+    ]
+
+
 def test_commands_forward_task_addressed_inspection_requests_without_v1_fallback(monkeypatch) -> None:
     inspection = _InspectionTaskClient()
     monkeypatch.setattr(
@@ -403,67 +473,6 @@ def test_commands_forward_typed_pause_and_resume_for_one_task(monkeypatch) -> No
         ("pause_task", "task-1", "operator_pause", "pause-1"),
         ("resume_task", "task-1", "operator_resume", "resume-1"),
     ]
-
-
-@pytest.mark.parametrize(
-    ("action", "receipt_kind", "receipt_task", "receipt_request", "error"),
-    [
-        ("pause", NavigationCommandKind.RESUME_TASK, "task-1", "pause-1", "wrong command kind"),
-        ("resume", NavigationCommandKind.RESUME_TASK, "other-task", "resume-1", "wrong task_id"),
-        ("pause", NavigationCommandKind.PAUSE_TASK, "task-1", "other-request", "wrong request_id"),
-        (
-            "pause",
-            NavigationCommandKind.PAUSE_TASK,
-            "task-1",
-            "pause-1-clock-retry-1",
-            "wrong request_id",
-        ),
-        (
-            "resume",
-            NavigationCommandKind.RESUME_TASK,
-            "task-1",
-            "resume-1-clock-retry-1",
-            "wrong request_id",
-        ),
-        ("resume", None, "task-1", "resume-1", "invalid receipt"),
-    ],
-)
-def test_commands_fail_closed_on_uncorrelated_task_lifecycle_receipt(
-    monkeypatch,
-    action,
-    receipt_kind,
-    receipt_task,
-    receipt_request,
-    error,
-) -> None:
-    if receipt_kind is None:
-        receipt = {"accepted": True}
-    else:
-        receipt = NavigationCommandReceipt(
-            accepted=True,
-            kind=int(receipt_kind),
-            task_id=receipt_task,
-            request_id=receipt_request,
-            endpoint_timestamp_s=127.0,
-            reason=f"{action}_requested",
-        )
-
-    class UntrustedNavigationClient:
-        def pause_task(self, task_id, reason, *, request_id=None):
-            return receipt
-
-        def resume_task(self, task_id, reason, *, request_id=None):
-            return receipt
-
-    monkeypatch.setattr(
-        command_module,
-        "get_native_navigation_client",
-        lambda *, required: UntrustedNavigationClient(),
-    )
-    operation = getattr(command_module.Commands(), f"{action}_task")
-
-    with pytest.raises(RuntimeError, match=error):
-        operation("task-1", f"operator_{action}", request_id=f"{action}-1")
 
 
 def test_commands_forward_run_bound_exploration_lifecycle_requests(monkeypatch) -> None:
@@ -648,6 +657,7 @@ def test_commands_are_the_typed_operator_motion_adapter(monkeypatch) -> None:
             -0.1,
             0.5,
             deadman=True,
+            manual_mode=True,
             freshness_budget_ms=350,
             request_id="sample-1",
         )
@@ -685,6 +695,7 @@ def test_commands_are_the_typed_operator_motion_adapter(monkeypatch) -> None:
             -0.1,
             0.5,
             True,
+            True,
             350,
             "sample-1",
         ),
@@ -694,31 +705,18 @@ def test_commands_are_the_typed_operator_motion_adapter(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("ack", [None, False, 1, "true", {"accepted": True}])
-@pytest.mark.parametrize("action", ["claim", "sample", "hold", "release"])
-def test_commands_reject_ambiguous_operator_motion_ack(
-    monkeypatch,
-    ack,
-    action,
-) -> None:
+def test_commands_reject_ambiguous_operator_motion_sample_ack(monkeypatch, ack) -> None:
     monkeypatch.setattr(
         command_module,
         "get_native_operator_motion_client",
         lambda *, required: _OperatorMotionClient(
-            ack if action != "sample" else _DEFAULT_OPERATOR_RECEIPT,
-            sample_ack=ack if action == "sample" else True,
+            sample_ack=ack,
         ),
     )
     commands = command_module.Commands()
 
-    with pytest.raises(RuntimeError, match="invalid receipt|invalid submission"):
-        if action == "claim":
-            commands.claim("ws:operator-a", 42, 1, lease_ttl_ms=1000)
-        elif action == "sample":
-            commands.sample("ws:operator-a", 42, 1, 0.2, 0.0, 0.1)
-        elif action == "hold":
-            commands.hold("ws:operator-a", 42, 1)
-        else:
-            commands.release("ws:operator-a", 42, 1)
+    with pytest.raises(RuntimeError, match="invalid submission"):
+        commands.sample("ws:operator-a", 42, 1, 0.2, 0.0, 0.1)
 
 
 def test_commands_preserve_rejected_operator_motion_receipt(monkeypatch) -> None:

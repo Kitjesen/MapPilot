@@ -61,16 +61,24 @@ cmake -S "$NAV_CPP_DIR" -B "$BUILD_DIR" \
 
 cmake --build "$BUILD_DIR" --parallel "$JOBS"
 
+for profile in go2 thunder; do
+  for asset in startPaths.ply pathList.ply paths.ply correspondences.txt search_radius.txt; do
+    if [[ ! -s "$BUILD_DIR/cmu_paths/$profile/$asset" ]]; then
+      echo "ERROR: staged CMU $profile path library is missing: $asset" >&2
+      exit 1
+    fi
+  done
+done
+
 case "${RUN_TESTS,,}" in
   1|on|true|yes)
-    test_catalog="$(ctest --test-dir "$BUILD_DIR" -N)"
     for required_test in \
       test_nav_endpoint_config \
       test_explore_control \
       test_explore_input \
       test_tare_policy \
       test_nav_client \
-      test_nav_input_state_projector \
+      test_input_projector \
       test_rolling_segment_effect_coordinator \
       test_inspection_command_coordinator \
       test_control_loop_health \
@@ -79,16 +87,16 @@ case "${RUN_TESTS,,}" in
       test_active_occupancy_gate \
       test_far_c_api \
       test_far_planner \
-      test_nav_loop \
+      test_executor \
       test_path_follower_core \
       test_local_planner_core; do
-      if ! grep -Fq "$required_test" <<<"$test_catalog"; then
-        echo "ERROR: required navigation test is missing from CTest: $required_test" >&2
+      if [[ ! -x "$BUILD_DIR/$required_test" && ! -x "$BUILD_DIR/endpoint/$required_test" ]]; then
+        echo "ERROR: required navigation test binary is missing: $required_test" >&2
         echo "Install the system GTest development package and reconfigure the build." >&2
         exit 1
       fi
     done
-    ctest --test-dir "$BUILD_DIR" --output-on-failure
+    (cd "$BUILD_DIR" && ctest --output-on-failure)
     ;;
 esac
 

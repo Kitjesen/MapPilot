@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 from nav.adapters.native.abi import (
@@ -58,7 +59,7 @@ class NativeNavigationClient:
         x: float,
         y: float,
         z: float,
-        yaw: float,
+        yaw: float | None,
         *,
         task_id: str,
         request_id: str | None = None,
@@ -71,9 +72,20 @@ class NativeNavigationClient:
             float(x),
             float(y),
             float(z),
-            float(yaw),
+            None if yaw is None else float(yaw),
         )
         return NavigationCommandReceipt(**receipt)
+
+    def preview_plan(self, x: float, y: float, z: float) -> dict[str, object]:
+        """Return a read-only plan from the native endpoint planner."""
+
+        request_id = f"plan-{os.getpid()}-{time.time_ns()}"
+        return self._session.preview_plan(
+            request_id,
+            float(x),
+            float(y),
+            float(z),
+        )
 
     def cancel_task(
         self,
@@ -159,6 +171,19 @@ class NativeNavigationClient:
             "lingtu_nav_client_resume_autonomy_with_id",
             reason or "resume_autonomy",
             request_id,
+        )
+
+    def resume_autonomy_with_receipt(
+        self,
+        reason: str = "resume_autonomy",
+        *,
+        request_id: str | None = None,
+    ) -> dict[str, object]:
+        """Release manual takeover and return the correlated endpoint ACK."""
+
+        return self._session.resume_autonomy_with_receipt(
+            str(request_id or ""),
+            str(reason or "resume_autonomy"),
         )
 
     def _send_reason_command(

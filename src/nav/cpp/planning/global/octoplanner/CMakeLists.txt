@@ -14,8 +14,8 @@ get_filename_component(
 set(OCTOPLANNER3D_SOURCE_DIR
   "${OCTOPLANNER3D_DEFAULT_SOURCE_DIR}"
   CACHE PATH "Path to the local OctoPlanner3D source")
-get_filename_component(LINGTU_PLAN_CPP_DIR
-  "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+get_filename_component(LINGTU_NAV_CPP_DIR
+  "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
 option(OCTOPLANNER3D_REQUIRE_PCL "Require the PCL-backed octoplanner3d_pcd_to_octomap target" OFF)
 option(
   OCTOPLANNER3D_RUNTIME_ENABLE_PCD_INPUT
@@ -59,17 +59,30 @@ else()
   message(WARNING "PCL not found: building octoplanner3d_headless with .bt OctoMap input support only")
 endif()
 
-add_library(octomap_vendor SHARED IMPORTED GLOBAL)
-set_target_properties(octomap_vendor PROPERTIES
-  IMPORTED_LOCATION "${OCTOMAP_LIBRARY}"
-  INTERFACE_INCLUDE_DIRECTORIES "${OCTOMAP_INCLUDE_DIR}"
-)
+if(WIN32)
+  add_library(octomap_vendor STATIC IMPORTED GLOBAL)
+  add_library(octomath_vendor STATIC IMPORTED GLOBAL)
+  set_target_properties(octomap_vendor PROPERTIES
+    IMPORTED_LOCATION "${OCTOMAP_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${OCTOMAP_INCLUDE_DIR}"
+  )
+  set_target_properties(octomath_vendor PROPERTIES
+    IMPORTED_LOCATION "${OCTOMATH_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${OCTOMAP_INCLUDE_DIR}"
+  )
+else()
+  add_library(octomap_vendor SHARED IMPORTED GLOBAL)
+  set_target_properties(octomap_vendor PROPERTIES
+    IMPORTED_LOCATION "${OCTOMAP_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${OCTOMAP_INCLUDE_DIR}"
+  )
 
-add_library(octomath_vendor SHARED IMPORTED GLOBAL)
-set_target_properties(octomath_vendor PROPERTIES
-  IMPORTED_LOCATION "${OCTOMATH_LIBRARY}"
-  INTERFACE_INCLUDE_DIRECTORIES "${OCTOMAP_INCLUDE_DIR}"
-)
+  add_library(octomath_vendor SHARED IMPORTED GLOBAL)
+  set_target_properties(octomath_vendor PROPERTIES
+    IMPORTED_LOCATION "${OCTOMATH_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${OCTOMAP_INCLUDE_DIR}"
+  )
+endif()
 
 add_library(octoplanner3d_global_planner STATIC
   "${OCTOPLANNER3D_SOURCE_DIR}/planner/src/global_planner.cpp"
@@ -108,7 +121,7 @@ add_library(octoplanner3d_runtime STATIC
 target_include_directories(octoplanner3d_runtime
   PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
-    "${LINGTU_PLAN_CPP_DIR}"
+    "${LINGTU_NAV_CPP_DIR}"
 )
 target_link_libraries(octoplanner3d_runtime
   PRIVATE
@@ -224,11 +237,3 @@ set_target_properties(octoplanner3d_pcd_to_octomap PROPERTIES
   BUILD_RPATH "${OCTOPLANNER3D_SOURCE_DIR}/lib"
   INSTALL_RPATH "$ORIGIN"
 )
-
-install(TARGETS
-  octoplanner3d_headless
-  octoplanner3d_edit_octomap
-  octoplanner3d_dump_octomap
-  octoplanner3d_make_test_octomap
-  RUNTIME DESTINATION bin)
-install(TARGETS octoplanner3d_pcd_to_octomap RUNTIME DESTINATION bin)

@@ -1,23 +1,9 @@
-#include "client.hpp"
-#include "client_c.h"
-#include "clock_sync.hpp"
-
-#include "message/cpp/dds_qos_profiles.hpp"
-#include "message/cpp/dds_topics.hpp"
-#include "message/cpp/exploration_command.hpp"
-#include "message/cpp/inspection_command.hpp"
-#include "message/cpp/navigation_command.hpp"
-#include "message/cpp/operator_motion.hpp"
-
-#include "dds/dds.h"
-#include "lingtu_slam.h"
-
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <cstring>
 #include <cstdio>
+#include <cstring>
 #include <exception>
 #include <optional>
 #include <set>
@@ -26,9 +12,77 @@
 #include <thread>
 #include <vector>
 
+#include "client.hpp"
+#include "client_c.h"
+#include "clock_sync.hpp"
+#include "dds/dds.h"
+#include "messages.h"
+#include "message/cpp/qos.hpp"
+#include "message/cpp/topics.hpp"
+#include "message/cpp/exploration_command.hpp"
+#include "message/cpp/inspection_command.hpp"
+#include "message/cpp/navigation_command.hpp"
+#include "message/cpp/operator_motion.hpp"
+#include "command/ingress.hpp"
+
+#if defined(_WIN32)
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace {
+
+void check(bool condition, const char *message);
+
+int currentProcessId() {
+#if defined(_WIN32)
+  return _getpid();
+#else
+  return getpid();
+#endif
+}
+
+enum class TestDomainSlot : std::size_t {
+  kExplorationCommands,
+  kExplorationEvents,
+  kInspectionCommands,
+  kOperatorIdentity,
+  kOperatorReceipts,
+  kEstopBypass,
+  kAckReplay,
+  kCommandRoundtrip,
+  kGoalStatus,
+  kPathTelemetry,
+  kPlanPreview,
+  kMapScene,
+  kSourceStamp,
+  kClockAnchor,
+  kDelayedClockAck,
+  kConcurrentClients,
+  kCount,
+};
+
+int testDomain(TestDomainSlot slot) {
+  constexpr int kFirstTestDomain = 20;
+  constexpr int kDomainsPerCase = 8;
+  const int case_index = static_cast<int>(slot);
+  return kFirstTestDomain + case_index * kDomainsPerCase + currentProcessId() % kDomainsPerCase;
+}
+
+void testDdsDomainPortContract() {
+  constexpr int kCycloneDefaultPortBase = 7400;
+  constexpr int kCycloneDefaultDomainGain = 250;
+  constexpr int kCycloneMaximumFixedPortOffset = 11;
+  constexpr int kWindowsDynamicPortStart = 49152;
+  for (std::size_t index = 0; index < static_cast<std::size_t>(TestDomainSlot::kCount); ++index) {
+    const int domain = testDomain(static_cast<TestDomainSlot>(index));
+    const int highest_fixed_port = kCycloneDefaultPortBase + kCycloneDefaultDomainGain * domain +
+                                   kCycloneMaximumFixedPortOffset;
+    check(highest_fixed_port < kWindowsDynamicPortStart,
+          "test DDS domain maps Cyclone discovery into Windows dynamic ports");
+  }
+}
 
 double nowSeconds() {
   const auto now = std::chrono::system_clock::now().time_since_epoch();
@@ -147,7 +201,7 @@ void writeExplorationAck(
     lingtu::message::ExplorationCommandKind kind,
     bool accepted,
     const std::string& reason,
-    const std::string& session_id,
+    const std::string&product_session_id,
     bool duplicate = false) {
   lingtu_dds_ExplorationCommandAck ack{};
   const double stamp_s = nowSeconds();
@@ -161,7 +215,7 @@ void writeExplorationAck(
   ack.accepted = accepted;
   ack.duplicate = duplicate;
   ack.reason = const_cast<char*>(reason.c_str());
-  ack.session_id = const_cast<char*>(session_id.c_str());
+  ack.product_session_id = const_cast<char*>(product_session_id.c_str());
   ack.intent_revision = 17U;
   checked(dds_write(writer, &ack), "dds_write(test_exploration_client_ack)");
 }
@@ -475,7 +529,7 @@ void sendExplorationAndReply(
     const std::string& reason = "accepted",
     bool duplicate = false,
     const std::string& ack_exploration_run_id = {},
-    const std::string& ack_session_id = {}) {
+    const std::string&ack_product_session_id = {}) {
   std::exception_ptr sender_error;
   std::thread sender([&]() {
     try {
@@ -488,7 +542,7 @@ void sendExplorationAndReply(
   verify(*request);
   const std::string request_id = request->request_id;
   const std::string exploration_run_id = request->exploration_run_id;
-  const std::string session_id = request->session_id;
+  const std::string product_session_id = request->product_session_id;
   const auto kind =
       static_cast<lingtu::message::ExplorationCommandKind>(request->kind);
   writeExplorationAck(
@@ -500,7 +554,7 @@ void sendExplorationAndReply(
       kind,
       accepted,
       reason,
-      ack_session_id.empty() ? session_id : ack_session_id,
+                      ack_product_session_id.empty() ? product_session_id : ack_product_session_id,
       duplicate);
   returnLoan(request_reader, request);
   sender.join();
@@ -543,7 +597,7 @@ void sendInspectionTaskAndReply(
 void testExplorationCommands() {
   using ExplorationKind = lingtu::message::ExplorationCommandKind;
   const std::string exploration_run_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-  const int domain_id = 205 + static_cast<int>(getpid() % 10);
+  const int domain_id = testDomain(TestDomainSlot::kExplorationCommands);
   const dds_entity_t participant = checked(
       dds_create_participant(
           static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
@@ -584,7 +638,7 @@ void testExplorationCommands() {
             "exploration start kind mismatch");
         check(std::string(request.header.frame_id) == "map",
               "exploration command frame mismatch");
-        check(std::string(request.session_id) == "session-a",
+        check(std::string(request.product_session_id) == "session-a",
               "exploration session id mismatch");
         check(std::string(request.exploration_run_id) == exploration_run_id,
               "exploration run id mismatch");
@@ -602,7 +656,7 @@ void testExplorationCommands() {
         check(
             request.kind == static_cast<std::int32_t>(ExplorationKind::kPause),
             "exploration pause kind mismatch");
-        check(std::string(request.session_id) == "session-a",
+        check(std::string(request.product_session_id) == "session-a",
               "exploration pause must retain the active session binding");
       });
   sendExplorationAndReply(
@@ -616,7 +670,7 @@ void testExplorationCommands() {
         check(
             request.kind == static_cast<std::int32_t>(ExplorationKind::kResume),
             "exploration resume kind mismatch");
-        check(std::string(request.session_id) == "session-a",
+        check(std::string(request.product_session_id) == "session-a",
               "exploration resume must retain the active session binding");
       });
   sendExplorationAndReply(
@@ -630,7 +684,7 @@ void testExplorationCommands() {
         check(
             request.kind == static_cast<std::int32_t>(ExplorationKind::kStop),
             "exploration stop kind mismatch");
-        check(std::string(request.session_id) == "session-a",
+        check(std::string(request.product_session_id) == "session-a",
               "exploration stop must retain the active session binding");
         check(std::string(request.reason) == "operator_stop",
               "exploration stop reason mismatch");
@@ -664,7 +718,7 @@ void testExplorationCommands() {
               "directed target y mismatch");
         check(std::abs(request.directed_target_ttl_s - 45.0) < 1e-9,
               "directed target ttl mismatch");
-        check(std::string(request.session_id) == "session-a",
+        check(std::string(request.product_session_id) == "session-a",
               "directed target session mismatch");
         check(std::string(request.reason) == "operator_directed_explore",
               "directed target reason mismatch");
@@ -689,7 +743,7 @@ void testExplorationCommands() {
             std::string(request.request_id) == "explore-directed-clear",
             "directed target clear request id mismatch");
         check(
-            std::string(request.session_id) == "session-a",
+            std::string(request.product_session_id) == "session-a",
             "directed target clear session mismatch");
         check(!request.has_directed_target, "directed target clear flag mismatch");
         check(std::abs(request.directed_target_x) < 1e-12,
@@ -820,7 +874,7 @@ void testExplorationCommands() {
 void testExplorationRunEventReader() {
   using EventKind = lingtu::message::ExplorationRunEventKind;
   using RunState = lingtu::message::ExplorationRunState;
-  const int domain_id = 195 + static_cast<int>(getpid() % 10);
+  const int domain_id = testDomain(TestDomainSlot::kExplorationEvents);
   const dds_entity_t participant = checked(
       dds_create_participant(
           static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
@@ -856,8 +910,7 @@ void testExplorationRunEventReader() {
     event.state = static_cast<std::int32_t>(state);
     event.route = const_cast<char*>("live");
     event.map_id = const_cast<char*>("");
-    event.map_version = 0;
-    event.artifact_hash = const_cast<char*>("");
+    event.map_content_epoch = 0;
     event.reason = const_cast<char*>("state_changed");
     event.motion_stop_confirmed = motion_stop_confirmed;
     event.motion_stop_reason = const_cast<char*>(motion_stop_reason.c_str());
@@ -894,8 +947,7 @@ void testExplorationRunEventReader() {
             first->product_session_id == "product-session-a" &&
             first->state == static_cast<std::int32_t>(RunState::kRunning) &&
             first->route == "live" && first->map_id.empty() &&
-            first->map_version == 0 && first->artifact_hash.empty() &&
-            first->reason == "state_changed" && !first->motion_stop_confirmed &&
+            first->map_content_epoch == 0 && first->reason == "state_changed" && !first->motion_stop_confirmed &&
             first->motion_stop_reason.empty(),
         "exploration run event snapshot lost lifecycle fields");
     first_received = true;
@@ -944,7 +996,7 @@ void testExplorationRunEventReader() {
 void testInspectionTaskCommands() {
   using InspectionKind = lingtu::message::InspectionCommandKind;
   // CycloneDDS' default UDP port mapping overflows above domain 232.
-  const int domain_id = 220 + static_cast<int>(getpid() % 10);
+  const int domain_id = testDomain(TestDomainSlot::kInspectionCommands);
   const dds_entity_t participant = checked(
       dds_create_participant(
           static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
@@ -1090,7 +1142,7 @@ void testInspectionTaskCommands() {
 
 void testOperatorMotionAckCorrelationUsesFullSourceIdentity() {
   using OperatorAction = lingtu::message::OperatorMotionAction;
-  const int domain_id = 205 + static_cast<int>(getpid() % 5);
+  const int domain_id = testDomain(TestDomainSlot::kOperatorIdentity);
   const dds_entity_t participant = checked(
       dds_create_participant(
           static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
@@ -1178,7 +1230,7 @@ void testOperatorMotionAckCorrelationUsesFullSourceIdentity() {
 void testOperatorMotionReceiptApis() {
   using OperatorAction = lingtu::message::OperatorMotionAction;
   using Receipt = lingtu::nav::commands::OperatorMotionCommandReceipt;
-  const int domain_id = 95 + static_cast<int>(getpid() % 5);
+  const int domain_id = testDomain(TestDomainSlot::kOperatorReceipts);
   const dds_entity_t participant = checked(
       dds_create_participant(
           static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
@@ -1473,7 +1525,7 @@ void testOperatorMotionReceiptApis() {
 
 void testEstopBypassesGoalAckWait() {
   using NavigationKind = lingtu::message::NavigationCommandKind;
-  const int domain_id = 215 + static_cast<int>(getpid() % 5);
+  const int domain_id = testDomain(TestDomainSlot::kEstopBypass);
   const dds_entity_t participant = checked(
       dds_create_participant(
           static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
@@ -1580,9 +1632,117 @@ void testEstopBypassesGoalAckWait() {
       "estop was blocked behind the goal ACK wait");
 }
 
+void testNavigationAckTimeoutReplaysSameRequestWithoutRedispatch() {
+  using CommandKind = lingtu::message::NavigationCommandKind;
+  using lingtu::nav::endpoint::CommandAck;
+  using lingtu::nav::endpoint::CommandIngressController;
+  using lingtu::nav::endpoint::CommandIngressRequest;
+
+  const int domain_id = testDomain(TestDomainSlot::kAckReplay);
+  const dds_entity_t participant =
+      checked(dds_create_participant(static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
+              "dds_create_participant(test_nav_client_ack_replay)");
+  const dds_entity_t subscriber = checked(dds_create_subscriber(participant, nullptr, nullptr),
+                                          "dds_create_subscriber(test_nav_client_ack_replay)");
+  const dds_entity_t publisher = checked(dds_create_publisher(participant, nullptr, nullptr),
+                                         "dds_create_publisher(test_nav_client_ack_replay)");
+  const dds_entity_t request_reader =
+      createReader(participant, subscriber, lingtu::message::kNavCommandRequest,
+                   &lingtu_dds_NavigationCommandRequest_desc);
+  const dds_entity_t ack_writer =
+      createWriter(participant, publisher, lingtu::message::kNavCommandAck,
+                   &lingtu_dds_NavigationCommandAck_desc);
+
+  lingtu::nav::commands::Client client(domain_id);
+  lingtu::nav::commands::NavigationCommandReceipt receipt;
+  std::exception_ptr sender_error;
+  std::thread sender([&]() {
+    try {
+      receipt = client.navigation().startTask(4.0, -1.5, 0.25, 0.4, 800, "ack-replay-task",
+                                              "ack-replay-request");
+    } catch (...) {
+      sender_error = std::current_exception();
+    }
+  });
+
+  CommandIngressController ingress;
+  int dispatch_count = 0;
+  std::exception_ptr observation_error;
+  try {
+    auto ingress_request = [](const lingtu_dds_NavigationCommandRequest &message) {
+      CommandIngressRequest request;
+      request.client_id = message.client_id == nullptr ? "" : message.client_id;
+      request.request_id = message.request_id == nullptr ? "" : message.request_id;
+      request.task_id = message.task_id == nullptr ? "" : message.task_id;
+      request.raw_kind = message.kind;
+      request.payload.frame_id = message.header.frame_id == nullptr ? "" : message.header.frame_id;
+      request.payload.goal = {
+          message.goal.position.x,    message.goal.position.y,    message.goal.position.z,
+          message.goal.orientation.x, message.goal.orientation.y, message.goal.orientation.z,
+          message.goal.orientation.w,
+      };
+      request.payload.reason = message.reason == nullptr ? "" : message.reason;
+      return request;
+    };
+
+    auto *first = takeOne<lingtu_dds_NavigationCommandRequest>(request_reader);
+    const CommandIngressRequest first_request = ingress_request(*first);
+    const auto first_result = ingress.handle(first_request, [&](CommandKind kind, const auto &) {
+      ++dispatch_count;
+      check(kind == CommandKind::Goal, "ACK replay test dispatched the wrong kind");
+      return CommandAck{true, "goal_accepted"};
+    });
+    check(first_result.ack.accepted, "first ACK replay request was not accepted");
+    check(first_result.dispatched, "first ACK replay request was not dispatched");
+    check(!first_result.replayed, "first ACK replay request was marked replayed");
+    ingress.recordAckPublication(false);
+    returnLoan(request_reader, first);
+
+    // Simulate an endpoint that completed the command but lost its first
+    // application ACK. The client must repeat the same idempotency identity.
+    auto *second = takeOne<lingtu_dds_NavigationCommandRequest>(request_reader, 1200);
+    const CommandIngressRequest second_request = ingress_request(*second);
+    check(second_request.client_id == first_request.client_id &&
+              second_request.request_id == first_request.request_id &&
+              second_request.task_id == first_request.task_id &&
+              second_request.raw_kind == first_request.raw_kind &&
+              second_request.payload.canonical() == first_request.payload.canonical(),
+          "ACK timeout retry changed the command idempotency identity or semantic payload");
+    const auto replay = ingress.handle(second_request, [&](CommandKind, const auto &) {
+      ++dispatch_count;
+      return CommandAck{true, "unexpected_redispatch"};
+    });
+    check(replay.ack.accepted, "replayed ACK was not accepted");
+    check(replay.replayed, "second same-ID command did not replay the journaled ACK");
+    check(!replay.dispatched, "second same-ID command was dispatched twice");
+    writeAck(ack_writer, replay.request_id, replay.kind, replay.ack.accepted, replay.ack.reason,
+             nowSeconds(), replay.task_id);
+    ingress.recordAckPublication(true);
+    returnLoan(request_reader, second);
+  } catch (...) {
+    observation_error = std::current_exception();
+  }
+
+  sender.join();
+  dds_delete(participant);
+  if (observation_error) {
+    std::rethrow_exception(observation_error);
+  }
+  if (sender_error) {
+    std::rethrow_exception(sender_error);
+  }
+  check(dispatch_count == 1, "lost ACK caused duplicate business dispatch");
+  check(receipt.accepted && receipt.request_id == "ack-replay-request" &&
+            receipt.task_id == "ack-replay-task",
+        "client did not return the replayed command receipt");
+  check(ingress.diagnostics().ack_publish_failed == 1U && ingress.diagnostics().ack_sent == 1U &&
+            ingress.diagnostics().replayed == 1U,
+        "ACK replay diagnostics did not preserve the lost/replayed publication evidence");
+}
+
 void runTest() {
   using CommandKind = lingtu::message::NavigationCommandKind;
-  const int domain_id = 170 + static_cast<int>(getpid() % 20);
+  const int domain_id = testDomain(TestDomainSlot::kCommandRoundtrip);
   const dds_entity_t participant = checked(
       dds_create_participant(
           static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
@@ -1826,6 +1986,35 @@ void runTest() {
       c_cancel_receipt.accepted != 0 &&
           std::string(c_cancel_receipt.task_id) == c_goal_receipt.task_id,
       "C cancel task receipt did not target the original task");
+
+  lingtu_nav_navigation_command_receipt_v1 c_resume_autonomy_receipt{};
+  c_resume_autonomy_receipt.abi_version = LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
+  c_resume_autonomy_receipt.struct_size = sizeof(c_resume_autonomy_receipt);
+  sendAndReply(
+      request_reader, ack_writer,
+      [&]() {
+        check(lingtu_nav_client_resume_autonomy_with_receipt_v1(c_client, "c-resume-autonomy-001",
+                                                                "operator_resume", 1000,
+                                                                &c_resume_autonomy_receipt) == 0,
+              "C resume autonomy receipt call failed");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest &request) {
+        check(request.kind == static_cast<std::int32_t>(CommandKind::ResumeAutonomy),
+              "C resume autonomy kind mismatch");
+        check(request.task_id == nullptr || std::string(request.task_id).empty(),
+              "C resume autonomy must not synthesize a task id");
+        check(std::string(request.reason) == "operator_resume",
+              "C resume autonomy reason mismatch");
+      },
+      false, "manual_takeover_still_active");
+  check(c_resume_autonomy_receipt.accepted == 0 &&
+            c_resume_autonomy_receipt.kind ==
+                static_cast<std::int32_t>(CommandKind::ResumeAutonomy) &&
+            std::string(c_resume_autonomy_receipt.task_id).empty() &&
+            std::string(c_resume_autonomy_receipt.request_id) == "c-resume-autonomy-001" &&
+            std::string(c_resume_autonomy_receipt.reason) == "manual_takeover_still_active" &&
+            c_resume_autonomy_receipt.endpoint_timestamp_s > 0.0,
+        "C resume autonomy rejection receipt was not surfaced to caller");
   lingtu_nav_client_destroy(c_client);
 
   sendAndReply(
@@ -1964,7 +2153,7 @@ void runTest() {
 }
 
 void testNavigationGoalStatusReaderAndRetention() {
-  const int domain_id = 110 + static_cast<int>(getpid() % 10);
+  const int domain_id = testDomain(TestDomainSlot::kGoalStatus);
   const dds_entity_t participant = checked(
       dds_create_participant(
           static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
@@ -2063,18 +2252,19 @@ void testNavigationGoalStatusReaderAndRetention() {
   lingtu_nav_navigation_goal_status_v1 c_task_status{};
   c_task_status.abi_version = LINGTU_NAV_NAVIGATION_GOAL_STATUS_ABI_VERSION;
   c_task_status.struct_size = sizeof(c_task_status);
-  bool c_task_status_found = false;
-  for (int attempt = 0; attempt < 100 && !c_task_status_found; ++attempt) {
+  bool c_terminal_status_found = false;
+  for (int attempt = 0; attempt < 100 && !c_terminal_status_found; ++attempt) {
     const int result = lingtu_nav_client_get_navigation_task_status_v1(
         c_client, task_id.c_str(), &c_task_status);
     check(result >= 0, "C task status query failed");
-    c_task_status_found = result == 1;
-    if (!c_task_status_found) {
+    c_terminal_status_found = result == 1 && std::string(c_task_status.task_id) == task_id &&
+                              std::string(c_task_status.request_id) == request_id &&
+                              c_task_status.state == terminal->state;
+    if (!c_terminal_status_found) {
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
   }
-  check(
-      c_task_status_found &&
+  check(c_terminal_status_found &&
           std::string(c_task_status.task_id) == task_id &&
           std::string(c_task_status.request_id) == request_id &&
           c_task_status.state == terminal->state,
@@ -2088,7 +2278,7 @@ void testNavigationGoalStatusReaderAndRetention() {
 }
 
 void testNavigationPathTelemetry() {
-  const int domain_id = 125 + static_cast<int>(getpid() % 10);
+  const int domain_id = testDomain(TestDomainSlot::kPathTelemetry);
   const dds_entity_t participant = checked(
       dds_create_participant(
           static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
@@ -2166,8 +2356,115 @@ void testNavigationPathTelemetry() {
   dds_delete(participant);
 }
 
+void testPlanPreview() {
+  check(
+      (lingtu_nav_client_capabilities() & LINGTU_NAV_CLIENT_CAP_PLAN_PREVIEW) != 0U,
+      "plan preview client capability missing");
+  const int domain_id = testDomain(TestDomainSlot::kPlanPreview);
+  const dds_entity_t participant = checked(
+      dds_create_participant(
+          static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
+      "dds_create_participant(test_plan_preview)");
+  const dds_entity_t subscriber = checked(
+      dds_create_subscriber(participant, nullptr, nullptr),
+      "dds_create_subscriber(test_plan_preview)");
+  const dds_entity_t publisher = checked(
+      dds_create_publisher(participant, nullptr, nullptr),
+      "dds_create_publisher(test_plan_preview)");
+  const dds_entity_t request_reader = createReader(
+      participant,
+      subscriber,
+      lingtu::message::kNavPlanRequest,
+      &lingtu_dds_PlanRequest_desc);
+  const dds_entity_t result_writer = createWriter(
+      participant,
+      publisher,
+      lingtu::message::kNavPlanResult,
+      &lingtu_dds_PlanResult_desc);
+  lingtu_nav_client_handle client = lingtu_nav_client_create(domain_id);
+  check(client != nullptr, "C plan preview client creation failed");
+
+  lingtu_nav_plan_result_v1 result{};
+  result.abi_version = LINGTU_NAV_PLAN_RESULT_ABI_VERSION;
+  result.struct_size = sizeof(result);
+  int call_result = -1;
+  std::thread caller([&]() {
+    call_result = lingtu_nav_client_preview_plan_v1(
+        client,
+        "preview-001",
+        4.0,
+        5.0,
+        0.5,
+        2000,
+        &result,
+        nullptr,
+        0U);
+  });
+
+  auto* request = takeOne<lingtu_dds_PlanRequest>(request_reader, 2000);
+  check(
+      std::string(request->request_id) == "preview-001" &&
+          std::string(request->header.frame_id) == "map" &&
+          request->goal.x == 4.0 && request->goal.y == 5.0 &&
+          request->goal.z == 0.5,
+      "plan preview request was not published exactly");
+  const std::string request_id = request->request_id;
+  returnLoan(request_reader, request);
+
+  lingtu_dds_PlanResult response{};
+  const double stamp_s = nowSeconds();
+  response.header.stamp.sec = static_cast<std::int32_t>(stamp_s);
+  response.header.stamp.nanosec = static_cast<std::uint32_t>(
+      (stamp_s - static_cast<double>(response.header.stamp.sec)) * 1e9);
+  response.header.frame_id = const_cast<char*>("map");
+  response.request_id = const_cast<char*>(request_id.c_str());
+  response.feasible = true;
+  response.start_valid = true;
+  response.reason = const_cast<char*>("");
+  response.elapsed_ms = 12.5;
+  response.planner = const_cast<char*>("far");
+  response.start = {1.0, 2.0, 0.5};
+  response.goal = {4.0, 5.0, 0.5};
+  std::array<lingtu_dds_Point, 2U> path{{
+      {1.0, 2.0, 0.5},
+      {4.0, 5.0, 0.5},
+  }};
+  response.path._maximum = static_cast<std::uint32_t>(path.size());
+  response.path._length = static_cast<std::uint32_t>(path.size());
+  response.path._buffer = path.data();
+  response.path._release = false;
+  checked(dds_write(result_writer, &response), "dds_write(test_plan_result)");
+  caller.join();
+
+  check(call_result == 2, "plan preview probe did not retain its path");
+  check(
+      result.point_count == path.size() && result.feasible == 1 &&
+          result.start_valid == 1 && std::string(result.request_id) == request_id &&
+          std::string(result.frame_id) == "map" &&
+          std::string(result.planner) == "far" && result.elapsed_ms == 12.5,
+      "plan preview result metadata was not preserved");
+  std::vector<lingtu_nav_path_point> copied(result.point_count);
+  call_result = lingtu_nav_client_preview_plan_v1(
+      client,
+      request_id.c_str(),
+      4.0,
+      5.0,
+      0.5,
+      2000,
+      &result,
+      copied.data(),
+      copied.size());
+  check(
+      call_result == 1 && copied.size() == 2U && copied[0].x == 1.0 &&
+          copied[1].y == 5.0,
+      "plan preview staged path was not copied on retry");
+
+  lingtu_nav_client_destroy(client);
+  dds_delete(participant);
+}
+
 void testMapSceneTelemetryAndCapacityGate() {
-  const int domain_id = 135 + static_cast<int>(getpid() % 10);
+  const int domain_id = testDomain(TestDomainSlot::kMapScene);
   const dds_entity_t participant = checked(
       dds_create_participant(
           static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
@@ -2273,7 +2570,7 @@ void testMapSceneTelemetryAndCapacityGate() {
 
 void testSourceStampIsRefreshedAfterDiscovery() {
   using CommandKind = lingtu::message::NavigationCommandKind;
-  const int domain_id = 195 + static_cast<int>(getpid() % 20);
+  const int domain_id = testDomain(TestDomainSlot::kSourceStamp);
   lingtu::nav::commands::Client client(domain_id);
   std::exception_ptr sender_error;
   std::thread sender([&]() {
@@ -2343,7 +2640,7 @@ void testSourceStampIsRefreshedAfterDiscovery() {
 void testFirstClockSensitiveCommandUsesEndpointClockAnchor() {
   using CommandKind = lingtu::message::NavigationCommandKind;
   constexpr double kEndpointClockOffsetS = -1.0;
-  const int domain_id = 150 + static_cast<int>(getpid() % 10);
+  const int domain_id = testDomain(TestDomainSlot::kClockAnchor);
   const dds_entity_t participant = checked(
       dds_create_participant(
           static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
@@ -2427,7 +2724,7 @@ void testFirstClockSensitiveCommandUsesEndpointClockAnchor() {
 void testDelayedClockAckIsResampledBeforeClockSensitiveCommand() {
   using CommandKind = lingtu::message::NavigationCommandKind;
   constexpr double kEndpointClockOffsetS = -1.0;
-  const int domain_id = 140 + static_cast<int>(getpid() % 10);
+  const int domain_id = testDomain(TestDomainSlot::kDelayedClockAck);
   const dds_entity_t participant = checked(
       dds_create_participant(
           static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
@@ -2530,7 +2827,7 @@ void testDelayedClockAckIsResampledBeforeClockSensitiveCommand() {
 void testConcurrentClientsKeepClockAcksIsolated() {
   using CommandKind = lingtu::message::NavigationCommandKind;
   constexpr double kEndpointClockOffsetS = -0.75;
-  const int domain_id = 120 + static_cast<int>(getpid() % 20);
+  const int domain_id = testDomain(TestDomainSlot::kConcurrentClients);
   const dds_entity_t participant = checked(
       dds_create_participant(
           static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
@@ -2655,10 +2952,53 @@ void testClockOffsetTracksRealtimeRollback() {
       "clock offset projection must follow endpoint CLOCK_REALTIME rollback");
 }
 
+bool runNamedTest(const std::string &name) {
+  using TestFunction = void (*)();
+  const std::pair<const char *, TestFunction> tests[] = {
+      {"domain_contract", &testDdsDomainPortContract},
+      {"command_roundtrip", &runTest},
+      {"goal_status", &testNavigationGoalStatusReaderAndRetention},
+      {"path_telemetry", &testNavigationPathTelemetry},
+      {"map_scene", &testMapSceneTelemetryAndCapacityGate},
+      {"exploration_commands", &testExplorationCommands},
+      {"exploration_events", &testExplorationRunEventReader},
+      {"inspection_commands", &testInspectionTaskCommands},
+      {"operator_identity", &testOperatorMotionAckCorrelationUsesFullSourceIdentity},
+      {"operator_receipts", &testOperatorMotionReceiptApis},
+      {"estop_bypass", &testEstopBypassesGoalAckWait},
+      {"ack_replay", &testNavigationAckTimeoutReplaysSameRequestWithoutRedispatch},
+      {"source_stamp", &testSourceStampIsRefreshedAfterDiscovery},
+      {"clock_anchor", &testFirstClockSensitiveCommandUsesEndpointClockAnchor},
+      {"delayed_clock_ack", &testDelayedClockAckIsResampledBeforeClockSensitiveCommand},
+      {"concurrent_clients", &testConcurrentClientsKeepClockAcksIsolated},
+      {"plan_preview", &testPlanPreview},
+      {"clock_rollback", &testClockOffsetTracksRealtimeRollback},
+  };
+  for (const auto &test : tests) {
+    if (name == test.first) {
+      test.second();
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char **argv) {
   try {
+    if (argc == 2 && std::string(argv[1]) == "--ack-replay-only") {
+      testNavigationAckTimeoutReplaysSameRequestWithoutRedispatch();
+      std::puts("test_nav_client ack replay: PASS");
+      return 0;
+    }
+    if (argc == 3 && std::string(argv[1]) == "--case") {
+      const std::string name = argv[2];
+      const std::string unknown_case = "unknown test_nav_client case: " + name;
+      check(runNamedTest(name), unknown_case.c_str());
+      std::printf("test_nav_client %s: PASS\n", name.c_str());
+      return 0;
+    }
     check(
         lingtu_nav_client_abi_version() == LINGTU_NAV_CLIENT_ABI_VERSION,
         "navigation client ABI version mismatch");
@@ -2706,6 +3046,7 @@ int main() {
         (lingtu_nav_client_capabilities() &
          LINGTU_NAV_CLIENT_CAP_EXPLORATION_RUN_EVENTS) != 0U,
         "exploration run event client capability missing");
+    testDdsDomainPortContract();
     runTest();
     testNavigationGoalStatusReaderAndRetention();
     testNavigationPathTelemetry();
@@ -2716,6 +3057,7 @@ int main() {
     testOperatorMotionAckCorrelationUsesFullSourceIdentity();
     testOperatorMotionReceiptApis();
     testEstopBypassesGoalAckWait();
+    testNavigationAckTimeoutReplaysSameRequestWithoutRedispatch();
     testSourceStampIsRefreshedAfterDiscovery();
     testFirstClockSensitiveCommandUsesEndpointClockAnchor();
     testDelayedClockAckIsResampledBeforeClockSensitiveCommand();

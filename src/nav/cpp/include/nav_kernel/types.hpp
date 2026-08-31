@@ -42,6 +42,17 @@ struct TrajectoryPoint {
   double timeFromStartS{0.0};
 };
 
+// Exact executable B-spline in the current body frame. `timeS` is the
+// trajectory execution clock and may pause while the tracker aligns heading.
+struct SplineTarget {
+  std::vector<Vec3> controls;
+  int degree{3};
+  double intervalS{0.0};
+  double timeS{0.0};
+  // Execution-clock value represented by spline time zero.
+  double startTimeS{-1.0};
+};
+
 using Path = std::vector<Pose>;
 
 inline double normalizeAngle(double a) {

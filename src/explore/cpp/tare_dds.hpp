@@ -8,14 +8,13 @@
 
 #ifdef LINGTU_EXPLORE_HAS_DDS
 
-#include "message/cpp/dds_qos_profiles.hpp"
-#include "message/cpp/dds_topics.hpp"
+#include "message/cpp/qos.hpp"
+#include "message/cpp/topics.hpp"
 
 #include "dds/dds.h"
 
-// idlc-generated type descriptors.  The build system generates these from
-// explore_types.idl (self-contained: includes all types needed by TARE).
-#include "explore_types.h"
+// Shared idlc-generated LingTu message descriptors.
+#include "messages.h"
 
 #include <cstddef>
 #include <cstdint>

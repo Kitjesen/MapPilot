@@ -32,6 +32,7 @@ _DEFAULT_CAPABILITIES = (
     | native_abi.NATIVE_COMMAND_CAP_OPERATOR_MOTION_RECEIPT
     | native_abi.NATIVE_COMMAND_CAP_NAVIGATION_COMMAND_RECEIPT
     | native_abi.NATIVE_COMMAND_CAP_NAVIGATION_TASK_STATUS
+    | native_abi.NATIVE_COMMAND_CAP_PLAN_PREVIEW
 )
 
 
@@ -103,6 +104,10 @@ class _Library:
         self.lingtu_nav_client_clear_estop_with_id = _Function(self._clear_estop_with_id)
         self.lingtu_nav_client_resume_autonomy = _Function(self._resume_autonomy)
         self.lingtu_nav_client_resume_autonomy_with_id = _Function(self._resume_autonomy_with_id)
+        self.lingtu_nav_client_resume_autonomy_with_receipt_v1 = _Function(
+            self._resume_autonomy_with_receipt
+        )
+        self.lingtu_nav_client_preview_plan_v1 = _Function(self._preview_plan)
         self.lingtu_nav_client_operator_motion_claim = _Function(self._operator_motion_claim)
         self.lingtu_nav_client_operator_motion_claim_with_receipt_v1 = _Function(
             self._operator_motion_claim_with_receipt
@@ -112,6 +117,9 @@ class _Library:
             self._operator_motion_release_with_receipt
         )
         self.lingtu_nav_client_operator_motion_sample = _Function(self._operator_motion_sample)
+        self.lingtu_nav_client_operator_motion_sample_v2 = _Function(
+            self._operator_motion_sample_v2
+        )
         self.lingtu_nav_client_operator_motion_hold = _Function(self._operator_motion_hold)
         self.lingtu_nav_client_operator_motion_release = _Function(self._operator_motion_release)
         self.lingtu_nav_client_last_error = _Function(lambda _handle: self.error)
@@ -217,6 +225,73 @@ class _Library:
         self.calls.append(("resume_autonomy", handle, request_id, reason, timeout_ms))
         return 0
 
+    def _resume_autonomy_with_receipt(
+        self,
+        handle,
+        request_id,
+        reason,
+        timeout_ms,
+        receipt,
+    ):
+        self.calls.append(
+            ("resume_autonomy_receipt", handle, request_id, reason, timeout_ms)
+        )
+        self._navigation_command_receipt(
+            receipt,
+            task_id=b"",
+            request_id=request_id,
+            kind=int(NavigationCommandKind.RESUME_AUTONOMY),
+        )
+        return 0
+
+    def _preview_plan(
+        self,
+        handle,
+        request_id,
+        x,
+        y,
+        z,
+        timeout_ms,
+        result_pointer,
+        points,
+        point_capacity,
+    ):
+        self.calls.append(
+            (
+                "preview_plan",
+                handle,
+                request_id,
+                x,
+                y,
+                z,
+                timeout_ms,
+                point_capacity,
+            )
+        )
+        result = result_pointer._obj
+        result.abi_version = native_abi.NATIVE_PLAN_RESULT_ABI_VERSION
+        result.struct_size = ctypes.sizeof(native_abi._NativePlanResultV1)
+        result.timestamp_s = 125.5
+        result.frame_id = b"map"
+        result.request_id = request_id
+        result.feasible = 1
+        result.start_valid = 1
+        result.reason = b"planned"
+        result.elapsed_ms = 4.25
+        result.planner = b"astar"
+        result.start.x = 0.5
+        result.start.y = 1.0
+        result.start.z = 0.0
+        result.goal.x = x
+        result.goal.y = y
+        result.goal.z = z
+        result.point_count = 2
+        if points is None or point_capacity < 2:
+            return 2
+        points[0] = native_abi._NativePathPoint(0.5, 1.0, 0.0)
+        points[1] = native_abi._NativePathPoint(x, y, z)
+        return 1
+
     def _operator_motion_claim(
         self,
         handle,
@@ -264,6 +339,40 @@ class _Library:
                 source_epoch,
                 sequence,
                 deadman,
+                vx,
+                vy,
+                wz,
+                freshness_budget_ms,
+                timeout_ms,
+            )
+        )
+        return 0
+
+    def _operator_motion_sample_v2(
+        self,
+        handle,
+        request_id,
+        source_id,
+        source_epoch,
+        sequence,
+        deadman,
+        manual_mode,
+        vx,
+        vy,
+        wz,
+        freshness_budget_ms,
+        timeout_ms,
+    ):
+        self.calls.append(
+            (
+                "operator_sample",
+                handle,
+                request_id,
+                source_id,
+                source_epoch,
+                sequence,
+                deadman,
+                manual_mode,
                 vx,
                 vy,
                 wz,
@@ -478,6 +587,118 @@ def test_native_client_reuses_one_cpp_handle_for_commands(tmp_path):
 
     ]
 
+
+def test_native_client_previews_plan_without_creating_a_task(tmp_path, monkeypatch):
+    library = _Library()
+    client = NativeNavigationClient(
+        tmp_path / "liblingtu_nav_client.so",
+        timeout_ms=250,
+        library=library,
+    )
+    monkeypatch.setattr("nav.adapters.native.commands.os.getpid", lambda: 23)
+    monkeypatch.setattr("nav.adapters.native.commands.time.time_ns", lambda: 456)
+
+    preview = client.preview_plan(3.0, 4.0, 0.2)
+    client.close()
+
+    assert preview == {
+        "timestamp_s": 125.5,
+        "frame_id": "map",
+        "request_id": "plan-23-456",
+        "feasible": True,
+        "start_valid": True,
+        "reason": "planned",
+        "elapsed_ms": 4.25,
+        "planner": "astar",
+        "start": {"x": 0.5, "y": 1.0, "z": 0.0},
+        "goal": {"x": 3.0, "y": 4.0, "z": 0.2},
+        "point_count": 2,
+        "path": [
+            {"x": 0.5, "y": 1.0, "z": 0.0},
+            {"x": 3.0, "y": 4.0, "z": 0.2},
+        ],
+    }
+    assert library.calls == [
+        ("create", 0),
+        ("preview_plan", 41, b"plan-23-456", 3.0, 4.0, 0.2, 250, 0),
+        ("preview_plan", 41, b"plan-23-456", 3.0, 4.0, 0.2, 250, 2),
+        ("destroy", 41),
+    ]
+
+
+def test_native_client_resume_autonomy_returns_rejected_endpoint_receipt(tmp_path):
+    library = _Library()
+    library.navigation_command_accepted = False
+    library.navigation_command_reason = b"manual_takeover_still_active"
+    client = NativeNavigationClient(
+        tmp_path / "liblingtu_nav_client.so",
+        timeout_ms=250,
+        library=library,
+    )
+
+    receipt = client.resume_autonomy_with_receipt(
+        "operator_resume",
+        request_id="resume-rejected-001",
+    )
+    client.close()
+
+    assert receipt == {
+        "accepted": False,
+        "kind": int(NavigationCommandKind.RESUME_AUTONOMY),
+        "task_id": "",
+        "request_id": "resume-rejected-001",
+        "endpoint_timestamp_s": 124.5,
+        "reason": "manual_takeover_still_active",
+    }
+    assert library.calls == [
+        ("create", 0),
+        (
+            "resume_autonomy_receipt",
+            41,
+            b"resume-rejected-001",
+            b"operator_resume",
+            250,
+        ),
+        ("destroy", 41),
+    ]
+
+
+def test_native_client_legacy_resume_autonomy_does_not_require_receipt_symbol(tmp_path):
+    library = _Library()
+    del library.lingtu_nav_client_resume_autonomy_with_receipt_v1
+    client = NativeNavigationClient(
+        tmp_path / "liblingtu_nav_client.so",
+        timeout_ms=250,
+        library=library,
+    )
+
+    assert client.resume_autonomy(
+        "operator_resume",
+        request_id="legacy-resume-001",
+    ) is None
+    with pytest.raises(
+        NativeCommandClientError,
+        match="resume autonomy receipt ABI is unavailable",
+    ):
+        client.resume_autonomy_with_receipt(
+            "operator_resume",
+            request_id="receipt-unavailable",
+        )
+    client.close()
+
+    assert library.calls == [
+        ("create", 0),
+        (
+            "resume_autonomy",
+            41,
+            b"legacy-resume-001",
+            b"operator_resume",
+            250,
+        ),
+        ("destroy", 41),
+    ]
+
+
 def test_native_client_pauses_and_resumes_the_same_task_with_typed_receipts(tmp_path):
     library = _Library()
     client = NativeNavigationClient(
@@ -681,7 +902,7 @@ def test_native_session_reads_ordered_inspection_task_event(tmp_path):
         event.command_request_id = b"pause-request-43"
         event.state = 12
         event.map_id = b"field-map"
-        event.map_version = 7
+        event.map_content_epoch = 7
         event.route_id = b"route-a"
         event.route_revision = 3
         event.point_index = 1
@@ -712,7 +933,7 @@ def test_native_session_reads_ordered_inspection_task_event(tmp_path):
         "command_request_id": "pause-request-43",
         "state": 12,
         "map_id": "field-map",
-        "map_version": 7,
+        "map_content_epoch": 7,
         "route_id": "route-a",
         "route_revision": 3,
         "point_index": 1,
@@ -881,7 +1102,7 @@ def test_native_session_reads_bounded_map_scene_and_health(tmp_path):
         header.occupancy.resolution = 0.1
         header.occupancy.origin_qw = 1.0
         header.occupancy.cell_count = 2
-        for name in ("elevation", "esdf", "traversability"):
+        for name in ("elevation", "esdf"):
             grid = getattr(header, name)
             grid.resolution = 0.1
             grid.origin_qw = 1.0
@@ -959,6 +1180,52 @@ def test_native_session_reads_bounded_map_scene_and_health(tmp_path):
     session.close()
 
 
+def test_native_session_reads_native_traversability_grid(tmp_path):
+    library = _Library()
+    library.lingtu_nav_client_capabilities = _Function(
+        lambda: native_abi.NATIVE_COMMAND_CAP_TRAVERSABILITY_GRID
+    )
+    take_calls = 0
+
+    def take(_handle, header_pointer, cells, capacity):
+        nonlocal take_calls
+        take_calls += 1
+        header = header_pointer._obj
+        header.abi_version = native_abi.NATIVE_TRAVERSABILITY_GRID_ABI_VERSION
+        header.struct_size = ctypes.sizeof(native_abi._NativeTraversabilityGridHeaderV1)
+        header.timestamp_s = 52.5
+        header.frame_id = b"map"
+        header.receive_sequence = 7
+        header.reset_epoch = 2
+        header.width = 2
+        header.height = 2
+        header.resolution = 0.2
+        header.origin_x = 1.0
+        header.origin_y = -2.0
+        header.origin_z = 0.0
+        header.yaw = 0.0
+        header.cell_count = 4
+        if cells is None or int(capacity) < 4:
+            return 2
+        for index, value in enumerate((0, 25, 80, 100)):
+            cells[index] = value
+        return 1
+
+    library.lingtu_nav_client_take_traversability_grid_v1 = _Function(take)
+    session = NativeCommandSession(tmp_path / "liblingtu_nav_client.so", library=library)
+
+    grid = session.take_traversability_grid()
+    assert grid is not None
+    assert take_calls == 2
+    assert grid["frame_id"] == "map"
+    assert grid["reset_epoch"] == 2
+    assert grid["width"] == 2
+    assert grid["height"] == 2
+    assert grid["origin"] == {"x": 1.0, "y": -2.0, "z": 0.0}
+    assert grid["cells_u8"] == bytes((0, 25, 80, 100))
+    session.close()
+
+
 def test_native_session_rejects_oversized_map_scene_before_allocation(tmp_path):
     library = _Library()
     library.lingtu_nav_client_capabilities = _Function(lambda: native_abi.NATIVE_COMMAND_CAP_MAP_SCENE)
@@ -1018,6 +1285,7 @@ def test_native_operator_motion_client_uses_typed_c_abi(tmp_path):
             -0.1,
             0.5,
             deadman=True,
+            manual_mode=True,
             freshness_budget_ms=350,
             request_id="sample-1",
         )
@@ -1049,6 +1317,7 @@ def test_native_operator_motion_client_uses_typed_c_abi(tmp_path):
             b"ws:operator-a",
             42,
             2,
+            1,
             1,
             0.2,
             -0.1,
@@ -1236,5 +1505,26 @@ def test_native_operator_motion_rejects_non_boolean_deadman(tmp_path, deadman) -
             0.0,
             0.1,
             deadman=deadman,
+        )
+    client.close()
+
+
+@pytest.mark.parametrize("manual_mode", ["true", "0", 1, None])
+def test_native_operator_motion_rejects_non_boolean_manual_mode(tmp_path, manual_mode) -> None:
+    library = _Library()
+    client = NativeOperatorMotionClient(
+        tmp_path / "liblingtu_nav_client.so",
+        library=library,
+    )
+
+    with pytest.raises(TypeError, match="manual_mode must be a boolean"):
+        client.sample(
+            "ws:operator-a",
+            42,
+            1,
+            0.2,
+            0.0,
+            0.1,
+            manual_mode=manual_mode,
         )
     client.close()

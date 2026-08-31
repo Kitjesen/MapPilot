@@ -58,7 +58,7 @@ struct Route {
   std::string id;
   std::string name;
   std::string map_id;
-  std::int64_t map_version{0};
+  std::int64_t map_content_epoch{0};
   std::uint64_t revision{1};
   std::uint32_t loop_count{1};
   FailurePolicy failure_policy{FailurePolicy::kStop};
@@ -102,7 +102,7 @@ struct RunStatus {
   // from task_id because retries and pause/resume/cancel each get a new ID.
   std::string request_id;
   std::string map_id;
-  std::int64_t map_version{0};
+  std::int64_t map_content_epoch{0};
   std::string route_id;
   std::uint64_t route_revision{0};
   std::size_t point_index{0};
@@ -141,12 +141,91 @@ struct TaskEvent {
   RunStatus status;
 };
 
+struct TaskEventValidationResult {
+  bool ok{false};
+  std::string reason;
+};
+
+struct RestartTaskEventResult {
+  bool ok{false};
+  bool replayed_terminal{false};
+  bool synthesized_failure{false};
+  TaskEvent event;
+  std::string reason;
+};
+
+struct TaskEventEnvelope {
+  std::string boot_id;
+  std::uint64_t sequence{0U};
+  TaskEvent event;
+};
+
+enum class TaskEventOutboxRecordResult : std::uint8_t {
+  kAccepted,
+  kInvalid,
+  kOutOfOrder,
+  kBackpressure,
+};
+
+struct TaskEventOutboxDiagnostics {
+  std::uint64_t accepted{0U};
+  std::uint64_t rejected_invalid{0U};
+  std::uint64_t rejected_out_of_order{0U};
+  std::uint64_t rejected_backpressure{0U};
+  std::uint64_t delivered{0U};
+  std::uint64_t delivery_failures{0U};
+  std::size_t pending{0U};
+};
+
 ValidationResult ValidateRoute(const Route& route);
 bool IsKnownCommandKind(std::int32_t value) noexcept;
 const char* CommandKindName(CommandKind kind) noexcept;
 const char* FailurePolicyName(FailurePolicy policy) noexcept;
 const char* RunStateName(RunState state) noexcept;
 const char* TaskEventKindName(TaskEventKind kind) noexcept;
+const char* TaskEventOutboxRecordResultName(TaskEventOutboxRecordResult result) noexcept;
+bool IsActiveRunState(RunState state) noexcept;
+bool IsTerminalRunState(RunState state) noexcept;
+TaskEventValidationResult ValidateTaskEvent(const TaskEvent& event);
+RestartTaskEventResult ReconcileTaskEventAfterRestart(
+    const TaskEvent& checkpoint,
+    double timestamp_s);
+
+// Ordered, retrying delivery for one endpoint boot. Recovery explicitly sets
+// the first sequence accepted by the new boot; ordinary record calls remain
+// strictly contiguous after that initialization.
+class InspectionTaskEventOutbox final {
+ public:
+  using WriteCallback = std::function<bool(const TaskEventEnvelope&)>;
+
+  static constexpr std::size_t kDefaultCapacity = 1024U;
+  static constexpr std::size_t kDefaultFlushLimit = 32U;
+
+  InspectionTaskEventOutbox(
+      std::string boot_id,
+      WriteCallback write,
+      std::size_t capacity = kDefaultCapacity);
+
+  InspectionTaskEventOutbox(const InspectionTaskEventOutbox&) = delete;
+  InspectionTaskEventOutbox& operator=(const InspectionTaskEventOutbox&) = delete;
+
+  bool InitializeNextSequence(std::uint64_t next_sequence) noexcept;
+  TaskEventOutboxRecordResult Record(const TaskEvent& event);
+  std::size_t Flush(std::size_t max_events = kDefaultFlushLimit);
+  TaskEventOutboxDiagnostics diagnostics() const noexcept;
+  std::uint64_t next_sequence() const noexcept { return next_sequence_; }
+
+ private:
+  std::string boot_id_;
+  WriteCallback write_;
+  std::size_t capacity_;
+  std::uint64_t next_sequence_{1U};
+  bool initialized_{false};
+  bool recording_started_{false};
+  bool sequence_exhausted_{false};
+  std::deque<TaskEventEnvelope> pending_;
+  TaskEventOutboxDiagnostics diagnostics_;
+};
 
 class Executor {
  public:
@@ -168,7 +247,7 @@ class Executor {
       std::string task_id,
       std::string request_id,
       const std::string& active_map_id,
-      std::int64_t active_map_version,
+      std::int64_t active_map_content_epoch,
       double now_s,
       std::string* error);
   // Legacy in-process callers have no request identity. Keep this overload
@@ -177,7 +256,7 @@ class Executor {
       Route route,
       std::string run_id,
       const std::string& active_map_id,
-      std::int64_t active_map_version,
+      std::int64_t active_map_content_epoch,
       double now_s,
       std::string* error);
   // A native motion authority must call the matching Commit* only after it
@@ -197,7 +276,7 @@ class Executor {
   bool Pause(const std::string& reason);
   bool Resume(
       const std::string& active_map_id,
-      std::int64_t active_map_version,
+      std::int64_t active_map_content_epoch,
       double now_s,
       const std::string& request_id = {});
   bool Cancel(const std::string& reason);
@@ -219,7 +298,7 @@ class Executor {
       const std::string& reason,
       double now_s);
   void Tick(double now_s);
-  void OnMapChanged(const std::string& active_map_id, std::int64_t active_map_version);
+  void OnMapChanged(const std::string& active_map_id, std::int64_t active_map_content_epoch);
 
   bool active() const noexcept;
   const Route* route() const noexcept;
@@ -230,9 +309,18 @@ class Executor {
   std::size_t FlushTaskEvents(const std::function<bool(const TaskEvent&)>& accept,
                               std::size_t max_events = 64U);
   std::vector<TaskEvent> TakeTaskEvents();
+  // Recovery may advance the process-wide task-event cursor, but only before
+  // this fresh Executor has acquired a route or queued any event.
+  bool SetNextTaskEventSequence(std::uint64_t next_sequence) noexcept;
+  std::uint64_t next_task_event_sequence() const noexcept {
+    return next_task_event_sequence_;
+  }
+  std::size_t pending_task_event_count() const noexcept {
+    return task_events_.size();
+  }
 
  private:
-  bool MapMatches(const std::string& map_id, std::int64_t map_version) const;
+  bool MapMatches(const std::string& map_id, std::int64_t map_content_epoch) const;
   bool SetRequestId(const std::string& request_id);
   void RecordTaskEvent(
       TaskEventKind kind,

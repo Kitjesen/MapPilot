@@ -10,7 +10,6 @@ from nav.adapters.native.abi import (
 )
 from nav.adapters.native.exploration_commands import NativeExplorationCommandClient
 
-
 RUN_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
 
@@ -164,7 +163,7 @@ def test_exploration_client_requires_product_session_for_every_command() -> None
     )
 
     for command in commands:
-        with pytest.raises(ValueError, match="exploration session_id is required"):
+        with pytest.raises(ValueError, match="exploration product_session_id is required"):
             command()
 
     assert library.calls == []
@@ -238,15 +237,15 @@ def test_exploration_client_sends_typed_directed_target_commands() -> None:
     client.close()
 
 
-@pytest.mark.parametrize("session_id", ("", None))
+@pytest.mark.parametrize("product_session_id", ("", None))
 def test_exploration_client_rejects_empty_directed_clear_session_before_native_call(
-    session_id: str | None,
+    product_session_id: str | None,
 ) -> None:
     library = _Library()
     client = _client(library)
 
-    with pytest.raises(ValueError, match="exploration session_id is required"):
-        client.clear_directed_target(RUN_ID, session_id)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="exploration product_session_id is required"):
+        client.clear_directed_target(RUN_ID, product_session_id)  # type: ignore[arg-type]
 
     assert library.calls == []
     client.close()
@@ -304,8 +303,7 @@ def test_native_session_takes_full_exploration_run_event() -> None:
             "state": 4,
             "route": b"map",
             "map_id": b"orchard",
-            "map_version": 3,
-            "artifact_hash": b"a" * 64,
+            "map_content_epoch": 3,
             "reason": b"paused",
             "motion_stop_confirmed": 1,
             "motion_stop_reason": b"cmd_vel_zero_confirmed",
@@ -330,8 +328,7 @@ def test_native_session_takes_full_exploration_run_event() -> None:
         "state": 4,
         "route": "map",
         "map_id": "orchard",
-        "map_version": 3,
-        "artifact_hash": "a" * 64,
+        "map_content_epoch": 3,
         "reason": "paused",
         "motion_stop_confirmed": True,
         "motion_stop_reason": "cmd_vel_zero_confirmed",

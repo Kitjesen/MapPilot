@@ -62,8 +62,7 @@ ExploreInput MakeInput(Grid2D grid, Pose2D robot, std::uint64_t generation,
 ExploreInput MakeKnownMapInput(Grid2D grid, Pose2D robot, std::uint64_t generation) {
   ExploreInput input = MakeInput(std::move(grid), robot, generation, 1U, "known-map-session");
   input.map.map_id = "known-map";
-  input.map.map_version = 3;
-  input.map.artifact_hash = std::string(64U, 'a');
+  input.map.map_content_epoch = 3;
   input.map.live = false;
   return input;
 }
@@ -151,6 +150,53 @@ void TestGridResourceLimitFailsClosed() {
   assert(decision.reason == "resource_limit_grid_cells");
   assert(!decision.has_goal);
   assert(!decision.diagnostics.state_committed);
+}
+
+void TestCoverageResourceFailureDoesNotCommitStagedPlanState() {
+  TarePolicyConfig config;
+  config.sensor_range_m = 1.1;
+  config.max_coverage_cells = 7U;
+  TarePolicy subject(config);
+  TarePolicy control(config);
+
+  const ExploreInput first =
+      MakeInput(MakeFrontierGrid(), Pose2D{2.5, 3.5, 0.0}, 1U);
+  const auto subject_first = subject.plan(first);
+  const auto control_first = control.plan(first);
+  assert(subject_first.diagnostics.state_committed);
+  assert(subject_first.diagnostics.covered_cells == 5U);
+  assert(control_first.diagnostics.covered_cells == subject_first.diagnostics.covered_cells);
+
+  const auto failed =
+      subject.plan(MakeInput(MakeFrontierGrid(), Pose2D{5.5, 3.5, 0.0}, 2U));
+  assert(failed.reason == "resource_limit_coverage_cells");
+  assert(failed.has_goal);
+  assert(!failed.route.empty());
+  assert(!failed.diagnostics.state_committed);
+  assert(subject.diagnostics().accepted_generation == 1U);
+  assert(subject.diagnostics().covered_cells == 5U);
+  assert(subject.diagnostics().keypose_nodes == 1U);
+  assert(subject.diagnostics().reset_count == subject_first.diagnostics.reset_count);
+
+  const ExploreInput next =
+      MakeInput(MakeFrontierGrid(), Pose2D{2.5, 3.5, 0.0}, 3U);
+  const auto subject_next = subject.plan(next);
+  const auto control_next = control.plan(next);
+  assert(subject_next.diagnostics.state_committed);
+  assert(control_next.diagnostics.state_committed);
+  assert(subject_next.reason == control_next.reason);
+  assert(subject_next.has_goal == control_next.has_goal);
+  assert(subject_next.goal_x == control_next.goal_x);
+  assert(subject_next.goal_y == control_next.goal_y);
+  assert(subject_next.route.size() == control_next.route.size());
+  assert(subject_next.candidates.size() == control_next.candidates.size());
+  assert(subject_next.diagnostics.covered_cells == control_next.diagnostics.covered_cells);
+  assert(subject_next.diagnostics.keypose_nodes == control_next.diagnostics.keypose_nodes);
+  assert(subject_next.diagnostics.keypose_edges == control_next.diagnostics.keypose_edges);
+  assert(subject_next.diagnostics.reset_count == control_next.diagnostics.reset_count);
+  assert(subject_next.diagnostics.accepted_generation == 3U);
+  assert(subject_next.diagnostics.accepted_intent_revision ==
+         control_next.diagnostics.accepted_intent_revision);
 }
 
 void TestReturnsAlongKeyposeGraphWhenCoverageCompletes() {
@@ -471,6 +517,7 @@ int main() {
   TestResetEpochClearsPlannerState();
   TestCancellationDoesNotCommit();
   TestGridResourceLimitFailsClosed();
+  TestCoverageResourceFailureDoesNotCommitStagedPlanState();
   TestReturnsAlongKeyposeGraphWhenCoverageCompletes();
   TestNoFrontiersAtHomeMeansDone();
   TestRejectsRobotOutsideFreeSpace();

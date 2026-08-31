@@ -1,3 +1,6 @@
+// Projected A* semantics ported from SCAN-Planner at upstream 348e8a5.
+// Modified for LingTu's bounded route-guided Grid and cancellation contract.
+// SPDX-License-Identifier: Apache-2.0
 #include "planning/local/scan/search.hpp"
 
 #include <algorithm>
@@ -66,7 +69,11 @@ bool routeIsFree(const Grid &grid) {
 
 bool routeSlopeAllowed(const Grid &grid, const LocalPlannerParams &params) {
   const auto &route = grid.route();
-  for (std::size_t i = 0; i + 1U < route.size(); ++i) {
+  // Executor prepends the measured body pose before the projected route.
+  // Its Z delta is body heave, not terrain slope; all route edges remain hard
+  // checked from the projection onward.
+  const std::size_t first_route_edge = route.size() > 2U ? 1U : 0U;
+  for (std::size_t i = first_route_edge; i + 1U < route.size(); ++i) {
     const double horizontal =
         std::hypot(route[i + 1U].x - route[i].x, route[i + 1U].y - route[i].y);
     const double vertical = std::abs(route[i + 1U].z - route[i].z);
@@ -150,15 +157,19 @@ std::vector<Vec3> simplify(const Grid &grid, const std::vector<Vec3> &path) {
 
 SearchResult searchInside(const Grid &grid, const Vec3 &start, double start_yaw,
                           const Vec3 &requested_goal, const GridIndex &start_index,
-                          const GridIndex &goal_index, const LocalPlannerParams &params) {
+                          const GridIndex &goal_index, const LocalPlannerParams &params,
+                          const LocalPlanCancel &cancel) {
   SearchResult result;
   const double goal_yaw = yawBetween(start, requested_goal, start_yaw);
-  if (!grid.contains(goal_index) || !grid.free(goal_index, goal_yaw)) {
+  if (!grid.contains(goal_index) || !grid.free(requested_goal, goal_yaw)) {
     result.reason = "start_or_goal_blocked";
     return result;
   }
 
-  const int count = grid.cellCount();
+  const int width = grid.sizeX();
+  const int count = width * grid.sizeY();
+  const auto linear_xy = [width](int x, int y) { return y * width + x; };
+  const auto index_xy = [width](int value) { return GridIndex{value % width, value / width, 0}; };
   auto &scratch = searchScratch();
   scratch.reset(count);
   auto &cost = scratch.cost;
@@ -166,15 +177,17 @@ SearchResult searchInside(const Grid &grid, const Vec3 &start, double start_yaw,
   auto &closed = scratch.closed;
   auto &open = scratch.open;
 
-  const int start_linear = grid.linear(start_index);
-  const int goal_linear = grid.linear(goal_index);
-  const Vec3 projected_goal =
-      projectedPoint(grid, goal_index.x, goal_index.y, start, requested_goal);
+  const int start_linear = linear_xy(start_index.x, start_index.y);
+  const int goal_linear = linear_xy(goal_index.x, goal_index.y);
   cost[static_cast<std::size_t>(start_linear)] = 0.0;
-  open.push({distance3D(start, projected_goal), start_linear});
+  open.push({distance3D(start, requested_goal), start_linear});
 
   const int max_nodes = std::clamp(params.scan.maxSearchNodes, 100, count);
   while (!open.empty() && result.expandedNodes < max_nodes) {
+    if ((result.expandedNodes & 31) == 0 && cancel && cancel()) {
+      result.reason = "planning_cancelled";
+      return result;
+    }
     const QueueItem item = open.top();
     open.pop();
     if (closed[static_cast<std::size_t>(item.linear)] != 0U)
@@ -184,20 +197,11 @@ SearchResult searchInside(const Grid &grid, const Vec3 &start, double start_yaw,
     if (item.linear == goal_linear)
       break;
 
-    const GridIndex current_index = grid.indexFromLinear(item.linear);
+    const GridIndex current_index = index_xy(item.linear);
     const Vec3 current =
         item.linear == start_linear
             ? start
             : projectedPoint(grid, current_index.x, current_index.y, start, requested_goal);
-    double current_yaw = start_yaw;
-    const int parent_linear = parent[static_cast<std::size_t>(item.linear)];
-    if (parent_linear >= 0) {
-      const GridIndex parent_index = grid.indexFromLinear(parent_linear);
-      current_yaw =
-          yawBetween(projectedPoint(grid, parent_index.x, parent_index.y, start, requested_goal),
-                     current, start_yaw);
-    }
-
     for (int dy = -1; dy <= 1; ++dy) {
       for (int dx = -1; dx <= 1; ++dx) {
         if (dx == 0 && dy == 0)
@@ -206,12 +210,14 @@ SearchResult searchInside(const Grid &grid, const Vec3 &start, double start_yaw,
             projectedIndex(grid, current_index.x + dx, current_index.y + dy, start, requested_goal);
         if (!grid.contains(next_index))
           continue;
-        const int next_linear = grid.linear(next_index);
+        const int next_linear = linear_xy(next_index.x, next_index.y);
         if (closed[static_cast<std::size_t>(next_linear)] != 0U)
           continue;
-        const Vec3 next = projectedPoint(grid, next_index.x, next_index.y, start, requested_goal);
-        const double yaw = yawBetween(current, next, current_yaw);
-        if (!grid.free(next_index, yaw) || !grid.segmentFree(current, next)) {
+        const Vec3 next = next_linear == goal_linear
+                              ? requested_goal
+                              : projectedPoint(grid, next_index.x, next_index.y,
+                                               start, requested_goal);
+        if (!grid.segmentFree(current, next)) {
           continue;
         }
 
@@ -223,7 +229,7 @@ SearchResult searchInside(const Grid &grid, const Vec3 &start, double start_yaw,
           continue;
         cost[static_cast<std::size_t>(next_linear)] = tentative;
         parent[static_cast<std::size_t>(next_linear)] = item.linear;
-        const double heuristic = distance3D(next, projected_goal);
+        const double heuristic = distance3D(next, requested_goal);
         open.push({tentative + heuristic, next_linear});
       }
     }
@@ -236,21 +242,21 @@ SearchResult searchInside(const Grid &grid, const Vec3 &start, double start_yaw,
 
   std::vector<Vec3> reversed;
   for (int cursor = goal_linear; cursor >= 0; cursor = parent[static_cast<std::size_t>(cursor)]) {
-    const GridIndex cursor_index = grid.indexFromLinear(cursor);
-    reversed.push_back(projectedPoint(grid, cursor_index.x, cursor_index.y, start, requested_goal));
+    const GridIndex cursor_index = index_xy(cursor);
+    reversed.push_back(cursor == goal_linear
+                           ? requested_goal
+                           : projectedPoint(grid, cursor_index.x, cursor_index.y,
+                                            start, requested_goal));
     if (cursor == start_linear)
       break;
   }
-  if (reversed.empty() || grid.linear(grid.index(reversed.back())) != start_linear) {
+  const GridIndex reversed_start = reversed.empty() ? GridIndex{} : grid.index(reversed.back());
+  if (reversed.empty() || linear_xy(reversed_start.x, reversed_start.y) != start_linear) {
     result.reason = "search_parent_chain_invalid";
     return result;
   }
   std::reverse(reversed.begin(), reversed.end());
   reversed.front() = start;
-  if (grid.contains(grid.index(requested_goal)) &&
-      grid.segmentFree(reversed.back(), requested_goal)) {
-    reversed.back() = requested_goal;
-  }
   result.path = simplify(grid, reversed);
   result.reason = "search_ready";
   return result;
@@ -281,7 +287,8 @@ void appendWithoutDuplicate(std::vector<Vec3> &output, const Vec3 &point) {
 }
 
 SearchResult searchCollisionSegments(const Grid &grid, double start_yaw,
-                                     const LocalPlannerParams &params) {
+                                     const LocalPlannerParams &params,
+                                     const LocalPlanCancel &cancel) {
   SearchResult result;
   const auto &route = grid.route();
   const auto groups = collisionEdgeGroups(grid);
@@ -294,6 +301,10 @@ SearchResult searchCollisionSegments(const Grid &grid, double start_yaw,
   std::vector<Vec3> combined;
   std::size_t route_cursor = 0U;
   for (const auto &group : groups) {
+    if (cancel && cancel()) {
+      result.reason = "planning_cancelled";
+      return result;
+    }
     const std::size_t entry_index = group.first;
     const std::size_t exit_index = group.second + 1U;
     for (; route_cursor <= entry_index; ++route_cursor) {
@@ -305,7 +316,7 @@ SearchResult searchCollisionSegments(const Grid &grid, double start_yaw,
     const double segment_yaw = yawBetween(entry, exit, start_yaw);
     const double snap_distance = 0.5 * std::max(params.vehicleLength, params.vehicleWidth) +
                                  std::max(0.0, params.footprintPadding) +
-                                 std::max(0.0, params.scan.obstacleClearance);
+                                 std::max(0.0, params.scan.endpointSearchMargin);
     const int snap_radius_cells =
         std::clamp(static_cast<int>(std::ceil(snap_distance / grid.resolution())) + 2, 4, 16);
     const GridIndex entry_grid = grid.index(entry);
@@ -325,7 +336,7 @@ SearchResult searchCollisionSegments(const Grid &grid, double start_yaw,
     }
 
     SearchResult segment =
-        searchInside(grid, entry, segment_yaw, exit, entry_grid, exit_grid, params);
+        searchInside(grid, entry, segment_yaw, exit, entry_grid, exit_grid, params, cancel);
     result.expandedNodes += segment.expandedNodes;
     if (!segment.found()) {
       result.reason = std::string{"collision_segment_"} + segment.reason;
@@ -355,7 +366,8 @@ SearchResult searchCollisionSegments(const Grid &grid, double start_yaw,
 
 SearchResult searchBoundaryFallback(const Grid &grid, const Vec3 &start, double start_yaw,
                                     const Vec3 &requested_goal, const GridIndex &start_index,
-                                    const LocalPlannerParams &params) {
+                                    const LocalPlannerParams &params,
+                                    const LocalPlanCancel &cancel) {
   SearchResult result;
   if (!grid.contains(start_index)) {
     result.reason = "boundary_start_outside_grid";
@@ -381,22 +393,23 @@ SearchResult searchBoundaryFallback(const Grid &grid, const Vec3 &start, double 
   const int start_x = start_index.x + 1;
   const int start_y = start_index.y + 1;
   const int start_linear = linear(start_x, start_y);
-  const GridIndex requested_index = grid.index(requested_goal);
-  int goal_x = std::clamp(requested_index.x + 1, 0, width - 1);
-  int goal_y = std::clamp(requested_index.y + 1, 0, height - 1);
-  const double requested_yaw = yawBetween(start, requested_goal, start_yaw);
-  if (!grid.contains(requested_index) || !grid.free(requested_goal, requested_yaw)) {
-    double best_distance = std::numeric_limits<double>::infinity();
-    for (int y = 0; y < height; ++y) {
-      for (int x = 0; x < width; ++x) {
-        if (real(x, y))
-          continue;
-        const double distance = distance3D(point(x, y), requested_goal);
-        if (distance < best_distance) {
-          best_distance = distance;
-          goal_x = x;
-          goal_y = y;
-        }
+  // Reaching this function already means strict search to the requested goal
+  // failed. The fallback hypothesis must therefore target the virtual boundary
+  // even when the requested goal happens to lie inside the rolling window;
+  // otherwise the reconstructed path has no virtual exit and fails with
+  // boundary_no_exit by construction.
+  int goal_x = 0;
+  int goal_y = 0;
+  double best_distance = std::numeric_limits<double>::infinity();
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      if (real(x, y))
+        continue;
+      const double distance = distance3D(point(x, y), requested_goal);
+      if (distance < best_distance) {
+        best_distance = distance;
+        goal_x = x;
+        goal_y = y;
       }
     }
   }
@@ -413,6 +426,10 @@ SearchResult searchBoundaryFallback(const Grid &grid, const Vec3 &start, double 
   const int max_nodes = std::clamp(params.scan.maxSearchNodes, 100, count);
 
   while (!open.empty() && result.expandedNodes < max_nodes) {
+    if ((result.expandedNodes & 31) == 0 && cancel && cancel()) {
+      result.reason = "planning_cancelled";
+      return result;
+    }
     const QueueItem item = open.top();
     open.pop();
     if (closed[static_cast<std::size_t>(item.linear)] != 0U)
@@ -505,8 +522,8 @@ SearchResult searchBoundaryFallback(const Grid &grid, const Vec3 &start, double 
     const Vec3 fallback_target = point(fallback_x, fallback_y);
     const GridIndex fallback_index =
         projectedIndex(grid, fallback_x - 1, fallback_y - 1, start, requested_goal);
-    SearchResult executable =
-        searchInside(grid, start, start_yaw, fallback_target, start_index, fallback_index, params);
+    SearchResult executable = searchInside(grid, start, start_yaw, fallback_target, start_index,
+                                           fallback_index, params, cancel);
     result.expandedNodes += executable.expandedNodes;
     if (!executable.found())
       continue;
@@ -523,8 +540,12 @@ SearchResult searchBoundaryFallback(const Grid &grid, const Vec3 &start, double 
 }  // namespace
 
 SearchResult search(const Grid &grid, const Vec3 &start, double startYaw,
-                    const LocalPlannerParams &params) {
+                    const LocalPlannerParams &params, const LocalPlanCancel &cancel) {
   SearchResult result;
+  if (cancel && cancel()) {
+    result.reason = "planning_cancelled";
+    return result;
+  }
   if (!grid.valid() || grid.route().size() < 2) {
     result.reason = "grid_invalid";
     return result;
@@ -550,20 +571,46 @@ SearchResult search(const Grid &grid, const Vec3 &start, double startYaw,
     result.reason = "start_height_blocked";
     return result;
   }
-  if (!grid.obstacleFree(start, startYaw)) {
+  const double search_yaw = yawBetween(start, requested_goal, startYaw);
+  if (!grid.obstacleFree(start, search_yaw)) {
     result.reason = "start_obstacle_blocked";
     return result;
   }
-  SearchResult inside = searchCollisionSegments(grid, startYaw, params);
-  if (inside.found())
+  SearchResult inside = searchCollisionSegments(grid, startYaw, params, cancel);
+  if (inside.found() || inside.reason == "planning_cancelled")
     return inside;
 
   SearchResult fallback =
-      searchBoundaryFallback(grid, start, startYaw, requested_goal, start_index, params);
+      searchBoundaryFallback(grid, start, startYaw, requested_goal, start_index, params, cancel);
   fallback.expandedNodes += inside.expandedNodes;
-  if (fallback.found())
-    return fallback;
   return fallback;
+}
+
+SearchResult searchSegment(const Grid &grid, const Vec3 &start, const Vec3 &goal,
+                           double startYaw, const LocalPlannerParams &params,
+                           const LocalPlanCancel &cancel) {
+  SearchResult result;
+  if (cancel && cancel()) {
+    result.reason = "planning_cancelled";
+    return result;
+  }
+  if (!grid.valid()) {
+    result.reason = "grid_invalid";
+    return result;
+  }
+  const GridIndex start_index = grid.index(start);
+  const GridIndex goal_index = grid.index(goal);
+  const double yaw = yawBetween(start, goal, startYaw);
+  if (!grid.contains(start_index) || !grid.contains(goal_index) ||
+      !grid.free(start, yaw) || !grid.free(goal, yaw)) {
+    result.reason = "start_or_goal_blocked";
+    return result;
+  }
+
+  LocalPlannerParams projected = params;
+  projected.scan.guideWeight = 0.0;
+  return searchInside(grid, start, startYaw, goal, start_index, goal_index,
+                      projected, cancel);
 }
 
 }  // namespace nav_kernel::local::scan

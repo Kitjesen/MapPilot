@@ -7,11 +7,11 @@ local planning, path following, or motor control.
 
 ```text
 Gateway / GoalService / Explore
-  -> Python navigation or inspection interface
+  -> Python command or inspection interface
   -> stable C ABI (`liblingtu_nav_client.so`)
   -> one process-wide C++ Client / CycloneDDS participant
   -> typed request + typed business ACK
-  -> `nav_native_endpoint`
+  -> `navd`
   -> authority, safety, planner, follower, driver
 ```
 
@@ -24,7 +24,7 @@ Gateway / GoalService / Explore
 - `client_c.h` is the stable cross-language ABI. Version and capability checks
   fail early when Python and the deployed shared library do not match.
 - `nav/adapters/native/abi.py` owns the process-wide ctypes
-  handle. `navigation.py` and `inspection_commands.py` are small Python-facing
+  handle. `commands.py` and `inspection_commands.py` are small Python-facing
   interfaces over that same handle; they never create Python DDS writers.
 - The endpoint is the authority. A successful DDS write is not admission; only
   a matching accepted ACK completes command submission. For goals this means
@@ -33,11 +33,11 @@ Gateway / GoalService / Explore
   only with the same kind and payload because the endpoint caches ACKs for
   idempotency.
 
-## Compatibility
+## Typed ingress
 
-This directory is the only compatibility client path for typed command ingress.
-Path, legacy goal, cancel, and legacy teleop topic readers were removed from
-`navd`; native field commanding uses typed request paths only.
+This directory is the Host client path for typed command ingress. `navd` accepts
+the declared typed request paths; the Host does not publish paths or motion
+commands as an alternative control route.
 
 ## Tests
 

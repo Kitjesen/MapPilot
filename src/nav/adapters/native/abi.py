@@ -15,10 +15,10 @@ import threading
 from pathlib import Path
 from typing import Any
 
-# Field Products package the Host and native client in one fingerprinted,
-# atomically switched release. Exact equality intentionally fails closed.
+# Field Products package the Host and native client in one atomically switched
+# release. Exact equality intentionally fails closed.
 # Append-only extensions inside a release are advertised by capability bits.
-NATIVE_COMMAND_ABI_VERSION = 7
+NATIVE_COMMAND_ABI_VERSION = 8
 NATIVE_COMMAND_CAP_NAVIGATION = 1 << 0
 NATIVE_COMMAND_CAP_INSPECTION = 1 << 1
 NATIVE_COMMAND_CAP_EXPLORATION = 1 << 2
@@ -33,13 +33,16 @@ NATIVE_COMMAND_CAP_NAVIGATION_COMMAND_RECEIPT = 1 << 10
 NATIVE_COMMAND_CAP_NAVIGATION_TASK_STATUS = 1 << 11
 NATIVE_COMMAND_CAP_INSPECTION_TASK_EVENTS = 1 << 12
 NATIVE_COMMAND_CAP_EXPLORATION_RUN_EVENTS = 1 << 13
+NATIVE_COMMAND_CAP_TRAVERSABILITY_GRID = 1 << 14
+NATIVE_COMMAND_CAP_PLAN_PREVIEW = 1 << 15
 
 NATIVE_OPERATOR_MOTION_RECEIPT_ABI_VERSION = 1
 NATIVE_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION = 1
 NATIVE_NAVIGATION_GOAL_STATUS_ABI_VERSION = 1
 NATIVE_INSPECTION_TASK_EVENT_ABI_VERSION = 1
 NATIVE_EXPLORATION_COMMAND_RECEIPT_ABI_VERSION = 1
-NATIVE_EXPLORATION_RUN_EVENT_ABI_VERSION = 1
+NATIVE_EXPLORATION_RUN_EVENT_ABI_VERSION = 2
+NATIVE_PLAN_RESULT_ABI_VERSION = 1
 
 NATIVE_MAP_SCENE_ABI_VERSION = 1
 NATIVE_MAP_SCENE_MAX_POINTS_PER_LAYER = 300_000
@@ -47,6 +50,8 @@ NATIVE_MAP_SCENE_MAX_TOTAL_POINTS = 800_000
 NATIVE_MAP_SCENE_MAX_GRID_CELLS_PER_LAYER = 1_000_000
 NATIVE_MAP_SCENE_MAX_TOTAL_GRID_CELLS = 4_000_000
 NATIVE_MAP_SCENE_MAX_PAYLOAD_BYTES = 32 * 1024 * 1024
+NATIVE_TRAVERSABILITY_GRID_ABI_VERSION = 1
+NATIVE_TRAVERSABILITY_MAX_CELLS = 1_000_000
 
 
 class _NativeNavigationState(ctypes.Structure):
@@ -61,8 +66,7 @@ class _NativeNavigationState(ctypes.Structure):
         ("active_request_id", ctypes.c_char * 128),
         ("goal_epoch", ctypes.c_ulonglong),
         ("map_id", ctypes.c_char * 128),
-        ("map_version", ctypes.c_int64),
-        ("map_hash", ctypes.c_char * 128),
+        ("map_content_epoch", ctypes.c_int64),
         ("planning_state", ctypes.c_int32),
         ("execution_state", ctypes.c_int32),
         ("recovery_state", ctypes.c_int32),
@@ -130,7 +134,7 @@ class _NativeInspectionTaskEventV1(ctypes.Structure):
         ("command_request_id", ctypes.c_char * 128),
         ("state", ctypes.c_int32),
         ("map_id", ctypes.c_char * 128),
-        ("map_version", ctypes.c_int64),
+        ("map_content_epoch", ctypes.c_int64),
         ("route_id", ctypes.c_char * 128),
         ("route_revision", ctypes.c_ulonglong),
         ("point_index", ctypes.c_uint32),
@@ -173,8 +177,7 @@ class _NativeExplorationRunEventV1(ctypes.Structure):
         ("state", ctypes.c_int32),
         ("route", ctypes.c_char * 32),
         ("map_id", ctypes.c_char * 128),
-        ("map_version", ctypes.c_int64),
-        ("artifact_hash", ctypes.c_char * 128),
+        ("map_content_epoch", ctypes.c_int64),
         ("reason", ctypes.c_char * 256),
         ("motion_stop_confirmed", ctypes.c_int32),
         ("motion_stop_reason", ctypes.c_char * 256),
@@ -189,12 +192,49 @@ class _NativePathPoint(ctypes.Structure):
     ]
 
 
+class _NativePlanResultV1(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("struct_size", ctypes.c_uint32),
+        ("timestamp_s", ctypes.c_double),
+        ("frame_id", ctypes.c_char * 32),
+        ("request_id", ctypes.c_char * 128),
+        ("feasible", ctypes.c_int32),
+        ("start_valid", ctypes.c_int32),
+        ("reason", ctypes.c_char * 256),
+        ("elapsed_ms", ctypes.c_double),
+        ("planner", ctypes.c_char * 64),
+        ("start", _NativePathPoint),
+        ("goal", _NativePathPoint),
+        ("point_count", ctypes.c_ulonglong),
+    ]
+
+
 class _NativePathHeader(ctypes.Structure):
     _fields_ = [
         ("timestamp_s", ctypes.c_double),
         ("frame_id", ctypes.c_char * 32),
         ("receive_sequence", ctypes.c_ulonglong),
         ("point_count", ctypes.c_ulonglong),
+    ]
+
+
+class _NativeTraversabilityGridHeaderV1(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("struct_size", ctypes.c_uint32),
+        ("timestamp_s", ctypes.c_double),
+        ("frame_id", ctypes.c_char * 32),
+        ("receive_sequence", ctypes.c_ulonglong),
+        ("reset_epoch", ctypes.c_ulonglong),
+        ("width", ctypes.c_uint32),
+        ("height", ctypes.c_uint32),
+        ("resolution", ctypes.c_float),
+        ("origin_x", ctypes.c_double),
+        ("origin_y", ctypes.c_double),
+        ("origin_z", ctypes.c_double),
+        ("yaw", ctypes.c_double),
+        ("cell_count", ctypes.c_ulonglong),
     ]
 
 class _NativeMapScenePointV1(ctypes.Structure):
@@ -372,6 +412,7 @@ class NativeCommandSession:
         self._state_changed = threading.Condition(self.lock)
         self._active_calls = 0
         self._navigation_configured = False
+        self._resume_autonomy_receipt_configured = False
         self._exploration_configured = False
         self._directed_exploration_configured = False
         self._inspection_task_configured = False
@@ -381,7 +422,9 @@ class NativeCommandSession:
         self._host_state_configured = False
         self._goal_status_configured = False
         self._path_telemetry_configured = False
+        self._plan_preview_configured = False
         self._map_scene_configured = False
+        self._traversability_configured = False
         self._configure_core_abi()
         self._validate_abi()
         self.handle = self.library.lingtu_nav_client_create(int(domain_id))
@@ -492,6 +535,29 @@ class NativeCommandSession:
                     "native navigation command ABI is incomplete; rebuild liblingtu_nav_client.so"
                 ) from exc
             self._navigation_configured = True
+
+    def ensure_resume_autonomy_receipt_abi(self) -> None:
+        """Configure the additive resume receipt symbol only when requested."""
+
+        self.ensure_navigation_abi()
+        with self.lock:
+            if self._resume_autonomy_receipt_configured:
+                return
+            try:
+                function = self.library.lingtu_nav_client_resume_autonomy_with_receipt_v1
+                function.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_int,
+                    ctypes.POINTER(_NativeNavigationCommandReceiptV1),
+                ]
+                function.restype = ctypes.c_int
+            except AttributeError as exc:
+                raise NativeCommandClientError(
+                    "native resume autonomy receipt ABI is unavailable; rebuild liblingtu_nav_client.so"
+                ) from exc
+            self._resume_autonomy_receipt_configured = True
 
     def ensure_exploration_abi(self) -> None:
         """Validate and configure exploration-session command symbols lazily."""
@@ -708,6 +774,21 @@ class NativeCommandSession:
                     ctypes.c_int,
                 ]
                 lib.lingtu_nav_client_operator_motion_sample.restype = ctypes.c_int
+                lib.lingtu_nav_client_operator_motion_sample_v2.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_ulonglong,
+                    ctypes.c_ulonglong,
+                    ctypes.c_int,
+                    ctypes.c_int,
+                    ctypes.c_double,
+                    ctypes.c_double,
+                    ctypes.c_double,
+                    ctypes.c_uint,
+                    ctypes.c_int,
+                ]
+                lib.lingtu_nav_client_operator_motion_sample_v2.restype = ctypes.c_int
                 lib.lingtu_nav_client_operator_motion_hold.argtypes = [
                     ctypes.c_void_p,
                     ctypes.c_char_p,
@@ -859,6 +940,33 @@ class NativeCommandSession:
                 ) from exc
             self._path_telemetry_configured = True
 
+    def ensure_plan_preview_abi(self) -> None:
+        """Validate the read-only native plan preview symbol lazily."""
+
+        with self.lock:
+            if self._plan_preview_configured:
+                return
+            self._require_capability(NATIVE_COMMAND_CAP_PLAN_PREVIEW, "plan preview")
+            try:
+                preview = self.library.lingtu_nav_client_preview_plan_v1
+                preview.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_double,
+                    ctypes.c_double,
+                    ctypes.c_double,
+                    ctypes.c_int,
+                    ctypes.POINTER(_NativePlanResultV1),
+                    ctypes.POINTER(_NativePathPoint),
+                    ctypes.c_ulonglong,
+                ]
+                preview.restype = ctypes.c_int
+            except AttributeError as exc:
+                raise NativeCommandClientError(
+                    "native plan preview ABI is incomplete; rebuild liblingtu_nav_client.so"
+                ) from exc
+            self._plan_preview_configured = True
+
     def ensure_map_scene_abi(self) -> None:
         """Validate bounded latest-only MapScene telemetry symbols lazily."""
 
@@ -889,6 +997,32 @@ class NativeCommandSession:
                     "rebuild liblingtu_nav_client.so"
                 ) from exc
             self._map_scene_configured = True
+
+    def ensure_traversability_abi(self) -> None:
+        """Validate bounded latest-only native control-risk grid telemetry."""
+
+        with self.lock:
+            if self._traversability_configured:
+                return
+            self._require_capability(
+                NATIVE_COMMAND_CAP_TRAVERSABILITY_GRID,
+                "native traversability grid telemetry",
+            )
+            try:
+                take = self.library.lingtu_nav_client_take_traversability_grid_v1
+                take.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.POINTER(_NativeTraversabilityGridHeaderV1),
+                    ctypes.POINTER(ctypes.c_uint8),
+                    ctypes.c_ulonglong,
+                ]
+                take.restype = ctypes.c_int
+            except AttributeError as exc:
+                raise NativeCommandClientError(
+                    "native traversability grid ABI is incomplete; "
+                    "rebuild liblingtu_nav_client.so"
+                ) from exc
+            self._traversability_configured = True
 
     def _require_capability(self, capability: int, label: str) -> None:
         if self.capabilities & capability:
@@ -993,10 +1127,7 @@ class NativeCommandSession:
                 "map_id": bytes(state.map_id).split(b"\0", 1)[0].decode(
                     "utf-8", errors="replace"
                 ),
-                "map_version": int(state.map_version),
-                "map_hash": bytes(state.map_hash).split(b"\0", 1)[0].decode(
-                    "utf-8", errors="replace"
-                ),
+                "map_content_epoch": int(state.map_content_epoch),
                 "planning_state": int(state.planning_state),
                 "execution_state": int(state.execution_state),
                 "recovery_state": int(state.recovery_state),
@@ -1067,7 +1198,7 @@ class NativeCommandSession:
                 ),
                 "state": int(event.state),
                 "map_id": self._decode_fixed_text(event.map_id),
-                "map_version": int(event.map_version),
+                "map_content_epoch": int(event.map_content_epoch),
                 "route_id": self._decode_fixed_text(event.route_id),
                 "route_revision": int(event.route_revision),
                 "point_index": int(event.point_index),
@@ -1136,8 +1267,7 @@ class NativeCommandSession:
                 "state": int(event.state),
                 "route": self._decode_fixed_text(event.route),
                 "map_id": self._decode_fixed_text(event.map_id),
-                "map_version": int(event.map_version),
-                "artifact_hash": self._decode_fixed_text(event.artifact_hash),
+                "map_content_epoch": int(event.map_content_epoch),
                 "reason": self._decode_fixed_text(event.reason),
                 "motion_stop_confirmed": bool(event.motion_stop_confirmed),
                 "motion_stop_reason": self._decode_fixed_text(
@@ -1185,7 +1315,7 @@ class NativeCommandSession:
         x: float,
         y: float,
         z: float,
-        yaw: float,
+        yaw: float | None,
     ) -> dict[str, object]:
         """Submit one navigation task and return the correlated native ACK."""
 
@@ -1203,7 +1333,7 @@ class NativeCommandSession:
             float(x),
             float(y),
             float(z),
-            float(yaw),
+            math.nan if yaw is None else float(yaw),
             self.goal_timeout_ms,
         )
 
@@ -1229,6 +1359,114 @@ class NativeCommandSession:
             str(reason or "cancel").encode("utf-8"),
             self.cancel_timeout_ms,
         )
+
+    def preview_plan(
+        self,
+        request_id: str,
+        x: float,
+        y: float,
+        z: float,
+    ) -> dict[str, object]:
+        """Run the endpoint planner without creating a navigation task."""
+
+        self.ensure_plan_preview_abi()
+        request = str(request_id or "").strip()
+        if not request:
+            raise ValueError("request_id is required")
+        function = self.library.lingtu_nav_client_preview_plan_v1
+        with self.lock:
+            self.require_open()
+            handle = self.handle
+            self._active_calls += 1
+        result = _NativePlanResultV1()
+        result.abi_version = NATIVE_PLAN_RESULT_ABI_VERSION
+        result.struct_size = ctypes.sizeof(_NativePlanResultV1)
+        try:
+            status = int(
+                function(
+                    handle,
+                    request.encode("utf-8"),
+                    float(x),
+                    float(y),
+                    float(z),
+                    self.goal_timeout_ms,
+                    ctypes.byref(result),
+                    None,
+                    0,
+                )
+            )
+            if (
+                int(result.abi_version) != NATIVE_PLAN_RESULT_ABI_VERSION
+                or int(result.struct_size) < ctypes.sizeof(_NativePlanResultV1)
+            ):
+                raise NativeCommandClientError(
+                    "native plan preview returned an incompatible result ABI"
+                )
+            point_count = int(result.point_count)
+            if status == 1:
+                if point_count:
+                    raise NativeCommandClientError(
+                        "native plan preview skipped the required path buffer probe"
+                    )
+                path: list[dict[str, float]] = []
+            elif status == 2:
+                point_buffer = (_NativePathPoint * point_count)()
+                status = int(
+                    function(
+                        handle,
+                        request.encode("utf-8"),
+                        float(x),
+                        float(y),
+                        float(z),
+                        self.goal_timeout_ms,
+                        ctypes.byref(result),
+                        point_buffer,
+                        point_count,
+                    )
+                )
+                if status != 1:
+                    if status < 0:
+                        raise NativeCommandClientError(self.last_error(handle))
+                    raise NativeCommandClientError(
+                        "native plan preview did not complete its buffered copy"
+                    )
+                path = [
+                    {"x": float(point.x), "y": float(point.y), "z": float(point.z)}
+                    for point in point_buffer
+                ]
+            else:
+                if status < 0:
+                    raise NativeCommandClientError(self.last_error(handle))
+                raise NativeCommandClientError(
+                    f"native plan preview returned unexpected status {status}"
+                )
+            return {
+                "timestamp_s": float(result.timestamp_s),
+                "frame_id": self._decode_fixed_text(result.frame_id),
+                "request_id": self._decode_fixed_text(result.request_id),
+                "feasible": bool(result.feasible),
+                "start_valid": bool(result.start_valid),
+                "reason": self._decode_fixed_text(result.reason),
+                "elapsed_ms": float(result.elapsed_ms),
+                "planner": self._decode_fixed_text(result.planner),
+                "start": {
+                    "x": float(result.start.x),
+                    "y": float(result.start.y),
+                    "z": float(result.start.z),
+                },
+                "goal": {
+                    "x": float(result.goal.x),
+                    "y": float(result.goal.y),
+                    "z": float(result.goal.z),
+                },
+                "point_count": int(result.point_count),
+                "path": path,
+            }
+        finally:
+            with self.lock:
+                self._active_calls -= 1
+                if self._active_calls == 0:
+                    self._state_changed.notify_all()
 
     def pause_navigation_task(
         self,
@@ -1258,6 +1496,21 @@ class NativeCommandSession:
             task_id=task_id,
             request_id=request_id,
             reason=reason or "operator_resume",
+        )
+
+    def resume_autonomy_with_receipt(
+        self,
+        request_id: str,
+        reason: str,
+    ) -> dict[str, object]:
+        """Release manual takeover and return the correlated native ACK."""
+
+        self.ensure_resume_autonomy_receipt_abi()
+        return self._write_navigation_command_receipt(
+            self.library.lingtu_nav_client_resume_autonomy_with_receipt_v1,
+            str(request_id or "").encode("utf-8"),
+            str(reason or "resume_autonomy").encode("utf-8"),
+            self.cancel_timeout_ms,
         )
 
     def _request_navigation_task_lifecycle(
@@ -1462,6 +1715,123 @@ class NativeCommandSession:
                 self._active_calls -= 1
                 if self._active_calls == 0:
                     self._state_changed.notify_all()
+
+    def take_traversability_grid(self) -> dict[str, object] | None:
+        """Pop one bounded native traversability-grid sample."""
+
+        self.ensure_traversability_abi()
+        with self.lock:
+            self.require_open()
+            handle = self.handle
+            function = self.library.lingtu_nav_client_take_traversability_grid_v1
+            self._active_calls += 1
+        header = _NativeTraversabilityGridHeaderV1()
+        try:
+            result = int(function(handle, ctypes.byref(header), None, 0))
+            if result < 0:
+                raise NativeCommandClientError(self.last_error(handle))
+            if result == 0:
+                return None
+            self._validate_traversability_header(header)
+            if result != 2:
+                raise NativeCommandClientError(
+                    "native traversability grid did not provide a capacity probe"
+                )
+            count = int(header.cell_count)
+            cells = (ctypes.c_uint8 * count)()
+            identity = self._traversability_header_identity(header)
+            result = int(function(handle, ctypes.byref(header), cells, count))
+            if result != 1:
+                if result < 0:
+                    raise NativeCommandClientError(self.last_error(handle))
+                raise NativeCommandClientError(
+                    "native traversability grid buffered copy was incomplete"
+                )
+            self._validate_traversability_header(header)
+            if self._traversability_header_identity(header) != identity:
+                raise NativeCommandClientError(
+                    "native traversability grid identity changed during copy"
+                )
+            cell_bytes = bytes(cells)
+            if any(value > 100 for value in cell_bytes):
+                raise NativeCommandClientError(
+                    "native traversability grid cell is outside control-risk range"
+                )
+            return {
+                "timestamp_s": float(header.timestamp_s),
+                "frame_id": self._decode_fixed_text(header.frame_id),
+                "receive_sequence": int(header.receive_sequence),
+                "reset_epoch": int(header.reset_epoch),
+                "width": int(header.width),
+                "height": int(header.height),
+                "resolution": float(header.resolution),
+                "origin": {
+                    "x": float(header.origin_x),
+                    "y": float(header.origin_y),
+                    "z": float(header.origin_z),
+                },
+                "yaw": float(header.yaw),
+                "cells_u8": cell_bytes,
+            }
+        finally:
+            with self.lock:
+                self._active_calls -= 1
+                if self._active_calls == 0:
+                    self._state_changed.notify_all()
+
+    @staticmethod
+    def _traversability_header_identity(
+        header: _NativeTraversabilityGridHeaderV1,
+    ) -> tuple[int, ...]:
+        return (
+            int(header.receive_sequence),
+            int(header.reset_epoch),
+            int(header.width),
+            int(header.height),
+            int(header.cell_count),
+        )
+
+    @classmethod
+    def _validate_traversability_header(
+        cls,
+        header: _NativeTraversabilityGridHeaderV1,
+    ) -> None:
+        if (
+            int(header.abi_version) != NATIVE_TRAVERSABILITY_GRID_ABI_VERSION
+            or int(header.struct_size) < ctypes.sizeof(_NativeTraversabilityGridHeaderV1)
+        ):
+            raise NativeCommandClientError(
+                "native traversability grid ABI header is incompatible"
+            )
+        width = int(header.width)
+        height = int(header.height)
+        count = int(header.cell_count)
+        if (
+            width <= 0
+            or height <= 0
+            or count != width * height
+            or count > NATIVE_TRAVERSABILITY_MAX_CELLS
+        ):
+            raise NativeCommandClientError(
+                "native traversability grid dimensions exceed product limit"
+            )
+        if (
+            not math.isfinite(float(header.timestamp_s))
+            or float(header.timestamp_s) <= 0.0
+            or int(header.receive_sequence) <= 0
+            or int(header.reset_epoch) <= 0
+            or cls._decode_fixed_text(header.frame_id) != "map"
+            or not math.isfinite(float(header.resolution))
+            or float(header.resolution) <= 0.0
+            or not math.isfinite(float(header.origin_x))
+            or not math.isfinite(float(header.origin_y))
+            or not math.isfinite(float(header.origin_z))
+            or not math.isfinite(float(header.yaw))
+            or abs(float(header.yaw)) > 1e-6
+        ):
+            raise NativeCommandClientError(
+                "native traversability grid identity or transform is invalid"
+            )
 
     def read_map_scene_health(self) -> dict[str, object]:
         """Return native MapScene receive, rejection, and capacity counters."""

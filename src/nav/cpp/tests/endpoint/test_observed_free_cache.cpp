@@ -78,12 +78,26 @@ void testRollingGridUsesTheCacheLattice() {
   }
 }
 
+void testFloatPointOnCellBoundaryUsesTheConceptualCell() {
+  constexpr double kResolution = 0.2;
+  const double boundary = static_cast<double>(static_cast<float>(-1.2));
+  lingtu::nav::endpoint::ObservedFreeCache cache(kResolution);
+  cache.observeRay(boundary, 0.0, boundary, 0.0, 10.0, 1.0);
+
+  auto grid = lingtu::nav::endpoint::makeUnknownSafetyGrid(20, 20, kResolution, -2.0, -2.0);
+  cache.apply(grid, 10.0, 0.6);
+
+  require(costAt(grid, -1.1, 0.0) == 0.0F,
+          "float32 boundary noise must not shift an observed point into the prior cell");
+}
+
 }  // namespace
 
 int main() {
   testCoveragePersistsBrieflyAndExpires();
   testClearStartsANewMapEpoch();
   testRollingGridUsesTheCacheLattice();
+  testFloatPointOnCellBoundaryUsesTheConceptualCell();
   std::cout << "test_observed_free_cache passed\n";
   return 0;
 }

@@ -4,9 +4,9 @@
 #include <string>
 #include <vector>
 
-#include "explore/exploration_run_event_outbox.hpp"
-#include "explore/exploration_run_lifecycle.hpp"
-#include "explore/explore_status_contract.hpp"
+#include "explore/run_event_outbox.hpp"
+#include "explore/run_lifecycle.hpp"
+#include "explore/status_identity.hpp"
 
 namespace {
 
@@ -35,7 +35,6 @@ ExplorationRunBinding binding() {
       "map",
       "map-a",
       7,
-      std::string(64U, 'a'),
   };
 }
 
@@ -52,7 +51,6 @@ ExplorationRunEventRecord runningEvent() {
       "map",
       "map-a",
       7,
-      std::string(64U, 'a'),
       "exploration_running",
       false,
       {},
@@ -116,6 +114,36 @@ void testOutboxRejectsFalseTerminalAndBackpressure() {
   require(!outbox.canRecord(1U), "full outbox must advertise backpressure");
   require(outbox.record(valid) == ExplorationRunEventOutboxRecordResult::kBackpressure,
           "full outbox must never drop an accepted fact");
+}
+
+void testRunFactsRequireCanonicalRouteMapIdentity() {
+  ExplorationRunEventOutbox outbox("boot", [](const auto &) { return true; });
+
+  auto live_event = runningEvent();
+  live_event.route = "live";
+  live_event.map_id.clear();
+  live_event.map_content_epoch = 0;
+  require(outbox.record(live_event) == ExplorationRunEventOutboxRecordResult::kAccepted,
+          "canonical live event must be accepted");
+
+  live_event.map_id = "map-a";
+  require(outbox.record(live_event) == ExplorationRunEventOutboxRecordResult::kInvalid,
+          "live event must not bind a map_id");
+  live_event.map_id.clear();
+  live_event.map_content_epoch = 1;
+  require(outbox.record(live_event) == ExplorationRunEventOutboxRecordResult::kInvalid,
+          "live event must use epoch zero");
+
+  auto live_binding = binding();
+  live_binding.route = "live";
+  live_binding.map_id.clear();
+  live_binding.map_content_epoch = 0;
+  require(live_binding.valid(), "canonical live lifecycle binding must be valid");
+  live_binding.map_id = "map-a";
+  require(!live_binding.valid(), "live lifecycle binding must not bind a map_id");
+  live_binding.map_id.clear();
+  live_binding.map_content_epoch = 1;
+  require(!live_binding.valid(), "live lifecycle binding must use epoch zero");
 }
 
 void testLifecycleWaitsForPostStopTerminal() {
@@ -194,13 +222,116 @@ void testLifecycleCancellationAndCompletionTruth() {
           "motion-free completion must carry explicit parking evidence");
 }
 
+void testStopLifecycleUsesReservedOutboxCapacity() {
+  bool writer_available = false;
+  std::vector<ExplorationRunEventEnvelope> delivered;
+  ExplorationRunEventOutbox outbox(
+      "boot",
+      [&](const auto &event) {
+        if (!writer_available) {
+          return false;
+        }
+        delivered.push_back(event);
+        return true;
+      },
+      2U);
+  ExplorationRunLifecycle lifecycle(outbox);
+
+  require(lifecycle.start(binding(), 45.0, "exploration_start_admitted"),
+          "start must fill the normal two-event outbox capacity");
+  require(!outbox.canRecord(), "normal lifecycle facts must observe backpressure");
+  require(outbox.canRecordMotionStop(ExplorationRunEventOutbox::kMotionStopReserve),
+          "a full normal outbox must preserve the complete STOP fact budget");
+  require(lifecycle.cancel("stop-request", 46.0, "operator_stop", true),
+          "STOP must still record cancelling truth through reserved capacity");
+  require(lifecycle.recordStopConfirmationFailure(46.5, "cancel_rejected"),
+          "one stop failure fact must use reserved capacity");
+  require(lifecycle.recordStopConfirmationFailure(46.6, "cancel_rejected"),
+          "a repeated rejection for the same stop request must be idempotent");
+  require(lifecycle.confirmMotionStop(47.0, "navigation_terminal_after_stop"),
+          "STOP terminal must retain confirmed parking truth in the reserve");
+  require(outbox.diagnostics().pending == 5U,
+          "normal and safety-critical facts must remain ordered and retained");
+
+  writer_available = true;
+  require(outbox.flush() == 5U, "all retained lifecycle facts must flush after recovery");
+  require(delivered[2].event.state == ExplorationRunState::kCancelling &&
+              delivered[3].event.kind == ExplorationRunEventKind::kStopConfirmationFailed &&
+              delivered[4].event.state == ExplorationRunState::kCancelled,
+          "STOP facts must preserve cancelling, first failure, terminal FIFO order");
+}
+
+void testStopPromotesPendingPauseWithoutAnotherTransitionFact() {
+  bool writer_available = false;
+  std::vector<ExplorationRunEventEnvelope> delivered;
+  ExplorationRunEventOutbox outbox(
+      "boot",
+      [&](const auto &event) {
+        if (!writer_available) {
+          return false;
+        }
+        delivered.push_back(event);
+        return true;
+      },
+      2U);
+  ExplorationRunLifecycle lifecycle(outbox);
+
+  require(lifecycle.start(binding(), 48.0, "exploration_start_admitted"),
+          "pause-to-stop setup start");
+  require(lifecycle.pause("pause-request", 49.0, "operator_pause", true),
+          "pause must begin the physical stop transition");
+  require(lifecycle.recordStopConfirmationFailure(49.5, "cancel_rejected"),
+          "pause stop failure must be retained once");
+  require(lifecycle.cancel("stop-request", 50.0, "operator_stop", true),
+          "STOP must promote the pending pause instead of adding another transition fact");
+  require(lifecycle.confirmMotionStop(51.0, "navigation_terminal_after_stop"),
+          "promoted STOP must close as cancelled");
+  require(outbox.diagnostics().pending == 5U,
+          "pause promotion must stay within the three motion-stop reserve slots");
+
+  writer_available = true;
+  require(outbox.flush() == 5U, "promoted STOP facts must flush after recovery");
+  require(delivered[2].event.state == ExplorationRunState::kPausing &&
+              delivered[3].event.kind == ExplorationRunEventKind::kStopConfirmationFailed &&
+              delivered[4].event.state == ExplorationRunState::kCancelled &&
+              delivered[4].event.command_request_id == "stop-request",
+          "pending pause must terminate as the later STOP request without a duplicate transition");
+}
+
+void testLifecycleShutdownFailureWaitsForMotionStop() {
+  std::vector<ExplorationRunEventEnvelope> delivered;
+  ExplorationRunEventOutbox outbox("boot", [&](const ExplorationRunEventEnvelope &event) {
+    delivered.push_back(event);
+    return true;
+  });
+  ExplorationRunLifecycle lifecycle(outbox);
+
+  require(lifecycle.start(binding(), 50.0, "exploration_start_admitted"), "shutdown failure setup");
+  require(lifecycle.fail(51.0, "exploration_endpoint_stopped", true),
+          "shutdown with possible motion must enter pending failure");
+  require(lifecycle.active() && lifecycle.stopConfirmationPending() &&
+              lifecycle.state() == ExplorationRunState::kCancelling,
+          "shutdown failure claimed completion before motion terminal");
+  require(
+      lifecycle.recordStopConfirmationFailure(52.0, "exploration_shutdown_motion_stop_unconfirmed"),
+      "shutdown deadline must remain durable while stop is unconfirmed");
+  require(lifecycle.confirmMotionStop(53.0, "navigation_goal_terminal_during_shutdown"),
+          "matching shutdown terminal must close the failed run");
+  require(!lifecycle.active() && lifecycle.state() == ExplorationRunState::kFailed,
+          "shutdown terminal did not produce a failed run");
+}
+
 }  // namespace
 
 int main() {
   testOutboxRetriesOldestWithoutReordering();
   testOutboxRejectsFalseTerminalAndBackpressure();
+  testRunFactsRequireCanonicalRouteMapIdentity();
   testLifecycleWaitsForPostStopTerminal();
   testLifecycleCancellationAndCompletionTruth();
+  testStopLifecycleUsesReservedOutboxCapacity();
+  testStopPromotesPendingPauseWithoutAnotherTransitionFact();
+  testLifecycleShutdownFailureWaitsForMotionStop();
   std::cout << "test_exploration_run_event_outbox passed\n";
   return 0;
 }

@@ -9,10 +9,8 @@ odometry, then publishes the same framework ports.
 
 Port contract
 -------------
-Output port ``exploration_goal: Out[PoseStamped]`` matches
-``WavefrontFrontierExplorer`` exactly �?letting ``autoconnect`` wire it
-straight into ``Navigation.goal_pose`` without manual wires, and
-letting you hot-swap the exploration backend without other modules noticing.
+Output port ``exploration_goal: Out[PoseStamped]`` is the shared Host
+exploration goal contract consumed by navigation adapters.
 
 DDS topic contract is centralized in ``topics`` and ``runtime.runtime_interface``.
 
@@ -38,10 +36,16 @@ from runtime.stream import Out
 
 from ..base import ExploreModule
 from .policy import PortableTAREPolicy
+from .topics import (
+    EXPLORATION_FINISH,
+    EXPLORATION_LOCAL_PATH,
+    EXPLORATION_RUNTIME,
+    EXPLORATION_START,
+)
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_GOAL_FRAME_ID = topic_default_frame_id(TOPICS.goal_pose)
+_DEFAULT_GOAL_FRAME_ID = topic_default_frame_id(TOPICS.exploration_way_point)
 
 
 @register("exploration", "tare", description="CMU TARE hierarchical exploration bridge")
@@ -61,10 +65,10 @@ class TAREExplorerModule(ExploreModule, layer=5):
     def __init__(
         self,
         way_point_topic: str = TOPICS.exploration_way_point,
-        path_topic: str = TOPICS.exploration_local_path,
-        runtime_topic: str = TOPICS.exploration_runtime,
-        finish_topic: str = TOPICS.exploration_finish,
-        start_topic: str = TOPICS.exploration_start,
+        path_topic: str = EXPLORATION_LOCAL_PATH,
+        runtime_topic: str = EXPLORATION_RUNTIME,
+        finish_topic: str = EXPLORATION_FINISH,
+        start_topic: str = EXPLORATION_START,
         goal_frame_id: str = "",
         way_point_timeout_s: float = 15.0,
         auto_start: bool = True,

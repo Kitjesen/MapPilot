@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -19,7 +20,7 @@ struct GridIndex {
 
 class Grid {
  public:
-  Grid(const LocalPlannerParams &params, const LocalPlanInput &input);
+  Grid(const LocalPlannerParams &params, const LocalPlanRequest &input);
 
   [[nodiscard]] bool valid() const noexcept;
   [[nodiscard]] const std::string &reason() const noexcept;
@@ -30,7 +31,6 @@ class Grid {
   [[nodiscard]] int cellCount() const noexcept;
   [[nodiscard]] int occupiedCellCount() const noexcept;
   [[nodiscard]] int collisionPointCount() const noexcept;
-  [[nodiscard]] int legacyObstaclePointCount() const noexcept;
   [[nodiscard]] int linear(const GridIndex &index) const noexcept;
   [[nodiscard]] GridIndex indexFromLinear(int linear) const noexcept;
   [[nodiscard]] bool contains(const GridIndex &index) const noexcept;
@@ -49,6 +49,8 @@ class Grid {
   [[nodiscard]] const std::vector<Vec3> &route() const noexcept;
 
  private:
+  [[nodiscard]] bool markOccupied(int linearIndex) noexcept;
+  [[nodiscard]] bool occupiedLinear(int linearIndex) const noexcept;
   [[nodiscard]] bool occupiedCell(const GridIndex &index) const noexcept;
   [[nodiscard]] bool traversabilityFootprintBlocked(const Vec3 &center, double yaw) const;
   [[nodiscard]] bool traversabilityCellInsideInitialFootprint(double cellX, double cellY,
@@ -57,7 +59,8 @@ class Grid {
   const LocalPlannerParams &params_;
   Pose vehicle_{};
   std::vector<Vec3> route_;
-  std::vector<unsigned char> occupied_;
+  LocalCollisionMapView collision_{};
+  std::vector<std::uint64_t> occupied_;
   LocalTraversabilityView traversability_{};
   Vec3 origin_{};
   int nx_{0};
@@ -65,7 +68,6 @@ class Grid {
   int nz_{0};
   double resolution_{0.0};
   int collision_point_count_{0};
-  int legacy_obstacle_point_count_{0};
   int occupied_cell_count_{0};
   std::string reason_{"grid_invalid"};
 };

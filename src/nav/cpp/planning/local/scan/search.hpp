@@ -18,6 +18,12 @@ struct SearchResult {
 };
 
 SearchResult search(const Grid &grid, const Vec3 &start, double startYaw,
-                    const LocalPlannerParams &params);
+                    const LocalPlannerParams &params, const LocalPlanCancel &cancel = {});
+
+// Projected A* between the free entry and exit controls of one collision
+// segment. This is the search used by SCAN's rebound-anchor construction.
+SearchResult searchSegment(const Grid &grid, const Vec3 &start, const Vec3 &goal,
+                           double startYaw, const LocalPlannerParams &params,
+                           const LocalPlanCancel &cancel = {});
 
 }  // namespace nav_kernel::local::scan

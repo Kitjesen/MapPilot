@@ -35,7 +35,7 @@ int main() {
   route.id = "north_loop";
   route.name = "North loop";
   route.map_id = "factory";
-  route.map_version = 7;
+  route.map_content_epoch = 7;
   route.revision = 1U;
   route.loop_count = 1U;
   route.points = &point;

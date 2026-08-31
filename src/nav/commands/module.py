@@ -136,12 +136,21 @@ class Commands(Module, layer=3):
         }
 
     @rpc
+    def preview_plan(self, x: float, y: float, z: float) -> dict[str, object]:
+        """Run one read-only plan through the native navigation endpoint."""
+
+        client = get_native_navigation_client(required=True)
+        if client is None:
+            raise RuntimeError("native navigation command boundary is unavailable")
+        return client.preview_plan(float(x), float(y), float(z))
+
+    @rpc
     def send_goal(
         self,
         x: float,
         y: float,
         z: float,
-        yaw: float,
+        yaw: float | None,
         *,
         task_id: str,
         request_id: str | None = None,
@@ -151,14 +160,10 @@ class Commands(Module, layer=3):
                 float(x),
                 float(y),
                 float(z),
-                float(yaw),
+                None if yaw is None else float(yaw),
                 task_id=task_id,
                 request_id=request_id,
-            ),
-            action="send_goal",
-            expected_kind=NavigationCommandKind.GOAL,
-            task_id=task_id,
-            request_id=request_id,
+            )
         )
 
     @rpc
@@ -173,11 +178,7 @@ class Commands(Module, layer=3):
                 str(task_id or ""),
                 str(reason or "cancel"),
                 request_id=request_id,
-            ),
-            action="cancel_task",
-            expected_kind=NavigationCommandKind.TASK_CANCEL,
-            task_id=task_id,
-            request_id=request_id,
+            )
         )
 
     @rpc
@@ -194,11 +195,7 @@ class Commands(Module, layer=3):
                 str(task_id or ""),
                 str(reason or "operator_pause"),
                 request_id=request_id,
-            ),
-            action="pause_task",
-            expected_kind=NavigationCommandKind.PAUSE_TASK,
-            task_id=task_id,
-            request_id=request_id,
+            )
         )
 
     @rpc
@@ -215,11 +212,7 @@ class Commands(Module, layer=3):
                 str(task_id or ""),
                 str(reason or "operator_resume"),
                 request_id=request_id,
-            ),
-            action="resume_task",
-            expected_kind=NavigationCommandKind.RESUME_TASK,
-            task_id=task_id,
-            request_id=request_id,
+            )
         )
 
     @rpc
@@ -239,8 +232,7 @@ class Commands(Module, layer=3):
                 int(sequence),
                 lease_ttl_ms=int(lease_ttl_ms),
                 request_id=request_id,
-            ),
-            action="claim",
+            )
         )
 
     @rpc
@@ -254,11 +246,14 @@ class Commands(Module, layer=3):
         wz: float,
         *,
         deadman: bool = True,
+        manual_mode: bool = False,
         freshness_budget_ms: int = 350,
         request_id: str | None = None,
     ) -> bool:
         if not isinstance(deadman, bool):
             raise TypeError("operator motion deadman must be a boolean")
+        if not isinstance(manual_mode, bool):
+            raise TypeError("operator motion manual_mode must be a boolean")
         return self._operator_motion_sample(
             lambda client: client.sample(
                 str(source_id),
@@ -268,6 +263,7 @@ class Commands(Module, layer=3):
                 float(vy),
                 float(wz),
                 deadman=deadman,
+                manual_mode=manual_mode,
                 freshness_budget_ms=int(freshness_budget_ms),
                 request_id=request_id,
             ),
@@ -291,8 +287,7 @@ class Commands(Module, layer=3):
                 int(sequence),
                 reason=str(reason or "operator_hold"),
                 request_id=request_id,
-            ),
-            action="hold",
+            )
         )
 
     @rpc
@@ -312,8 +307,7 @@ class Commands(Module, layer=3):
                 int(sequence),
                 reason=str(reason or "operator_release"),
                 request_id=request_id,
-            ),
-            action="release",
+            )
         )
 
     @rpc
@@ -351,17 +345,33 @@ class Commands(Module, layer=3):
         )
 
     @rpc
+    def resume_autonomy_with_receipt(
+        self,
+        reason: str = "resume_autonomy",
+        request_id: str | None = None,
+    ) -> dict[str, object]:
+        return self._navigation_control_receipt(
+            lambda client: client.resume_autonomy_with_receipt(
+                str(reason or "resume_autonomy"),
+                request_id=request_id,
+            ),
+            action="resume_autonomy",
+            expected_kind=NavigationCommandKind.RESUME_AUTONOMY,
+            request_id=request_id,
+        )
+
+    @rpc
     def start_exploration(
         self,
         exploration_run_id: str,
-        session_id: str,
+        product_session_id: str,
         reason: str = "operator_start",
         request_id: str | None = None,
     ) -> dict[str, object]:
         return self._exploration_receipt(
             lambda client: client.start(
                 exploration_run_id=str(exploration_run_id or ""),
-                session_id=str(session_id or ""),
+                product_session_id=str(product_session_id or ""),
                 reason=str(reason or "operator_start"),
                 request_id=request_id,
             ),
@@ -374,14 +384,14 @@ class Commands(Module, layer=3):
     def pause_exploration(
         self,
         exploration_run_id: str,
-        session_id: str,
+        product_session_id: str,
         reason: str = "operator_pause",
         request_id: str | None = None,
     ) -> dict[str, object]:
         return self._exploration_receipt(
             lambda client: client.pause(
                 exploration_run_id=str(exploration_run_id or ""),
-                session_id=str(session_id or ""),
+                product_session_id=str(product_session_id or ""),
                 reason=str(reason or "operator_pause"),
                 request_id=request_id,
             ),
@@ -394,14 +404,14 @@ class Commands(Module, layer=3):
     def resume_exploration(
         self,
         exploration_run_id: str,
-        session_id: str,
+        product_session_id: str,
         reason: str = "operator_resume",
         request_id: str | None = None,
     ) -> dict[str, object]:
         return self._exploration_receipt(
             lambda client: client.resume(
                 exploration_run_id=str(exploration_run_id or ""),
-                session_id=str(session_id or ""),
+                product_session_id=str(product_session_id or ""),
                 reason=str(reason or "operator_resume"),
                 request_id=request_id,
             ),
@@ -414,14 +424,14 @@ class Commands(Module, layer=3):
     def stop_exploration(
         self,
         exploration_run_id: str,
-        session_id: str,
+        product_session_id: str,
         reason: str = "operator_stop",
         request_id: str | None = None,
     ) -> dict[str, object]:
         return self._exploration_receipt(
             lambda client: client.stop(
                 exploration_run_id=str(exploration_run_id or ""),
-                session_id=str(session_id or ""),
+                product_session_id=str(product_session_id or ""),
                 reason=str(reason or "operator_stop"),
                 request_id=request_id,
             ),
@@ -437,7 +447,7 @@ class Commands(Module, layer=3):
         y: float,
         ttl_s: float,
         exploration_run_id: str,
-        session_id: str,
+        product_session_id: str,
         reason: str = "operator_directed_explore",
         request_id: str | None = None,
     ) -> dict[str, object]:
@@ -447,7 +457,7 @@ class Commands(Module, layer=3):
                 float(y),
                 float(ttl_s),
                 exploration_run_id=str(exploration_run_id or ""),
-                session_id=str(session_id or ""),
+                product_session_id=str(product_session_id or ""),
                 reason=str(reason or "operator_directed_explore"),
                 request_id=request_id,
             ),
@@ -460,14 +470,14 @@ class Commands(Module, layer=3):
     def clear_directed_exploration_target(
         self,
         exploration_run_id: str,
-        session_id: str,
+        product_session_id: str,
         reason: str = "operator_clear_directed_explore",
         request_id: str | None = None,
     ) -> dict[str, object]:
         return self._exploration_receipt(
             lambda client: client.clear_directed_target(
                 exploration_run_id=str(exploration_run_id or ""),
-                session_id=str(session_id or ""),
+                product_session_id=str(product_session_id or ""),
                 reason=str(reason or "operator_clear_directed_explore"),
                 request_id=request_id,
             ),
@@ -553,48 +563,69 @@ class Commands(Module, layer=3):
     @staticmethod
     def _navigation_receipt(
         operation: Callable[[Any], Any],
-        *,
-        action: str,
-        expected_kind: NavigationCommandKind,
-        task_id: str,
-        request_id: str | None,
     ) -> NavigationCommandReceipt:
-        normalized_task_id = str(task_id or "").strip()
-        if not normalized_task_id:
-            raise ValueError(f"native navigation {action} task_id is required")
         client = get_native_navigation_client(required=True)
         if client is None:
             raise RuntimeError("native navigation command boundary is unavailable")
-        receipt = operation(client)
-        if not isinstance(receipt, NavigationCommandReceipt):
+        return operation(client)
+
+    @staticmethod
+    def _navigation_control_receipt(
+        operation: Callable[[Any], Any],
+        *,
+        action: str,
+        expected_kind: NavigationCommandKind,
+        request_id: str | None,
+    ) -> dict[str, object]:
+        client = get_native_navigation_client(required=True)
+        if client is None:
+            raise RuntimeError("native navigation command boundary is unavailable")
+        raw_receipt = operation(client)
+        if not isinstance(raw_receipt, Mapping):
             raise RuntimeError(f"native navigation {action} returned an invalid receipt")
-        if receipt.kind != int(expected_kind):
-            raise RuntimeError(f"native navigation {action} returned the wrong command kind")
-        if receipt.task_id != normalized_task_id:
-            raise RuntimeError(f"native navigation {action} returned the wrong task_id")
-        normalized_request_id = str(request_id or "").strip()
-        request_matches = receipt.request_id == normalized_request_id
-        if action not in {"pause_task", "resume_task"}:
-            request_matches = request_matches or receipt.request_id.startswith(
-                f"{normalized_request_id}-clock-retry-"
-            )
-        if normalized_request_id and not request_matches:
+
+        accepted = raw_receipt.get("accepted")
+        kind = raw_receipt.get("kind")
+        task_id = raw_receipt.get("task_id")
+        receipt_request_id = raw_receipt.get("request_id")
+        endpoint_timestamp_s = raw_receipt.get("endpoint_timestamp_s")
+        reason = raw_receipt.get("reason")
+        if (
+            not isinstance(accepted, bool)
+            or kind != int(expected_kind)
+            or task_id not in (None, "")
+            or not isinstance(receipt_request_id, str)
+            or not receipt_request_id
+            or not isinstance(endpoint_timestamp_s, (int, float))
+            or isinstance(endpoint_timestamp_s, bool)
+            or not isinstance(reason, str)
+        ):
+            raise RuntimeError(f"native navigation {action} returned an invalid receipt")
+
+        expected_request_id = str(request_id or "").strip()
+        request_matches = receipt_request_id == expected_request_id
+        request_matches = request_matches or receipt_request_id.startswith(
+            f"{expected_request_id}-clock-retry-"
+        )
+        if expected_request_id and not request_matches:
             raise RuntimeError(f"native navigation {action} returned the wrong request_id")
-        return receipt
+        return {
+            "accepted": accepted,
+            "kind": int(kind),
+            "task_id": task_id,
+            "request_id": receipt_request_id,
+            "endpoint_timestamp_s": float(endpoint_timestamp_s),
+            "reason": reason,
+        }
 
     @staticmethod
     def _operator_motion_receipt(
         operation: Callable[[Any], Any],
-        *,
-        action: str,
     ) -> OperatorMotionReceipt:
         client = get_native_operator_motion_client(required=True)
         if client is None:
             raise RuntimeError("native operator motion command boundary is unavailable")
-        receipt = operation(client)
-        if not isinstance(receipt, OperatorMotionReceipt):
-            raise RuntimeError(f"native operator motion {action} returned an invalid receipt")
-        return receipt
+        return operation(client)
 
     @staticmethod
     def _operator_motion_sample(

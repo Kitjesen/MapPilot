@@ -16,8 +16,10 @@ class Backend {
   Backend(const Backend &) = delete;
   Backend &operator=(const Backend &) = delete;
 
-  LocalPlanResult plan(const LocalPlanInput &input);
-  LocalPlanResult planIntent(const LocalPlanInput &input, const LocalMotionIntent &intent);
+  LocalPlan plan(const LocalPlanRequest &request);
+  LocalPlan plan(const LocalPlanRequest &request, const LocalPlanCancel &cancel);
+  [[nodiscard]] bool pathSafe(const LocalPlanRequest &request,
+                              const std::vector<Vec3> &planningPath) const;
   void reset();
   LocalPlannerDebugSnapshot debugSnapshot() const;
 

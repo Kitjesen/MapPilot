@@ -2,8 +2,7 @@
 
 The C++ source lives under ``src/explore/cpp`` and builds the Python extension
 ``lingtu_explore_kernel``. Keep extension discovery and symbol checks here so
-Modules and policy adapters do not encode build-layout details. Mirrors
-``src/nav/kernel/loader.py``.
+Modules and policy adapters do not encode build-layout details.
 """
 
 from __future__ import annotations

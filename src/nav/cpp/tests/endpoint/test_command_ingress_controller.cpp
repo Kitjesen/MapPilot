@@ -5,7 +5,7 @@
 #include <string>
 #include <utility>
 
-#include "motion/command_ingress_controller.hpp"
+#include "command/ingress.hpp"
 
 namespace {
 using lingtu::message::NavigationCommandKind;

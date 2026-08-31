@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "motion/teleop_admission_controller.hpp"
+#include "control/admission.hpp"
 
 namespace {
 using lingtu::nav::endpoint::TeleopAdmissionActions;
@@ -174,6 +174,31 @@ void testStampFailClosed() {
           "failed zero publication must be observable");
 }
 
+void testResumeBoundaryRejectsQueuedPreResumeSamples() {
+  Fixture queued;
+  TeleopAdmissionController queued_controller(queued.actions);
+  auto queued_ctx = context();
+  queued_ctx.autonomy_mode = false;
+  queued_ctx.request_not_before_s = 99.85;
+  const auto queued_result = queued_controller.admit(request(), queued_ctx);
+  require(!queued_result.accepted &&
+              queued_result.reason == "teleop_source_predates_resume",
+          "a queued pre-resume teleop sample must be rejected");
+  orderIs(queued, {"stop", "zero"});
+
+  Fixture fresh;
+  TeleopAdmissionController fresh_controller(fresh.actions);
+  auto fresh_ctx = context();
+  fresh_ctx.autonomy_mode = false;
+  fresh_ctx.request_not_before_s = 99.85;
+  auto fresh_request = request();
+  fresh_request.source_stamp_s = 99.9;
+  const auto fresh_result = fresh_controller.admit(fresh_request, fresh_ctx);
+  require(fresh_result.accepted && fresh_result.reason == "accepted_for_safety_arbitration",
+          "a fresh post-resume teleop sample must be admitted");
+  orderIs(fresh, {"accept"});
+}
+
 void testAutonomyGates() {
   Fixture disabled;
   TeleopAdmissionController disabled_controller(disabled.actions);
@@ -260,6 +285,7 @@ int main() {
     testEstopBeforeDecode();
     testDecodeOwnership();
     testStampFailClosed();
+    testResumeBoundaryRejectsQueuedPreResumeSamples();
     testAutonomyGates();
     testTakeoverOrderAndFailures();
     testOwnedAndManualOnlyQueue();

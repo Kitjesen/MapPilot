@@ -293,8 +293,14 @@ namespace global_planner
             closed_set.insert(current.idx);
 
             if (current.idx == goal) {
-                const auto cells = reconstructPath(came_from, current.idx);
-                printf("OctoPlanner3D::startPlan A* path found in %d iterations, waypoints=%zu\n", iters, cells.size());
+                const auto raw_cells = reconstructPath(came_from, current.idx);
+                const auto cells = simplifyPath(raw_cells);
+                printf(
+                    "OctoPlanner3D::startPlan A* path found in %d iterations, "
+                    "raw_waypoints=%zu waypoints=%zu\n",
+                    iters,
+                    raw_cells.size(),
+                    cells.size());
                 planner_results_.clear();
                 for (std::size_t i = 0; i < cells.size(); ++i)
                 {
@@ -434,6 +440,66 @@ namespace global_planner
         }
         std::reverse(path.begin(), path.end());
         return path;
+    }
+
+    bool OctoPlanner3D::hasTraversableLine(
+        const GridIndex & from,
+        const GridIndex & to) const
+    {
+        const int dx = to.x - from.x;
+        const int dy = to.y - from.y;
+        const int dz = to.z - from.z;
+        const int steps = std::max({std::abs(dx), std::abs(dy), std::abs(dz)});
+        if (steps == 0) {
+            return true;
+        }
+
+        GridIndex previous = from;
+        for (int step = 1; step <= steps; ++step) {
+            const double t = static_cast<double>(step) / static_cast<double>(steps);
+            const GridIndex current{
+                from.x + static_cast<int>(std::lround(static_cast<double>(dx) * t)),
+                from.y + static_cast<int>(std::lround(static_cast<double>(dy) * t)),
+                from.z + static_cast<int>(std::lround(static_cast<double>(dz) * t))};
+            if (current == previous) {
+                continue;
+            }
+            if (!isPlanningCellTraversableDetailed(
+                    current,
+                    robot_radius_,
+                    require_ground_support_,
+                    strict_direct_ground_support_,
+                    ground_support_xy_radius_cells_,
+                    ground_support_depth_cells_,
+                    nullptr) ||
+                !isMotionAllowed(previous, current)) {
+                return false;
+            }
+            previous = current;
+        }
+        return previous == to;
+    }
+
+    std::vector<GridIndex> OctoPlanner3D::simplifyPath(
+        const std::vector<GridIndex> & path) const
+    {
+        if (path.size() <= 2U) {
+            return path;
+        }
+
+        std::vector<GridIndex> simplified;
+        simplified.reserve(path.size());
+        simplified.push_back(path.front());
+        std::size_t anchor = 0U;
+        while (anchor + 1U < path.size()) {
+            std::size_t next = path.size() - 1U;
+            while (next > anchor + 1U && !hasTraversableLine(path[anchor], path[next])) {
+                --next;
+            }
+            simplified.push_back(path[next]);
+            anchor = next;
+        }
+        return simplified;
     }
 
     bool OctoPlanner3D::findNearestFreeCell(const GridIndex & seed, double robot_radius, int radius_cells, bool require_ground_support,bool strict_direct_ground_support, int support_xy_radius_cells, int support_depth_cells,GridIndex & out) const
@@ -608,8 +674,12 @@ namespace global_planner
         }
         return false;
         }
+        const double support_footprint_radius = std::max(
+            robot_radius,
+            static_cast<double>(std::max(0, support_xy_radius_cells)) *
+                octree_->getResolution());
         if (require_ground_support && strict_direct_ground_support &&
-            !hasFootprintGroundSupport(idx, robot_radius, support_depth_cells))
+            !hasFootprintGroundSupport(idx, support_footprint_radius, support_depth_cells))
         {
         if (failure) {
             *failure = TraversabilityFailure::GroundSupport;

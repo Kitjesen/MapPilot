@@ -24,7 +24,7 @@ void require(bool condition, const char *message) {
   }
 }
 
-void testEmptyMapRootDisablesPersistence() {
+void testEmptyDataDirectoryDisablesPersistence() {
   std::size_t sink_calls = 0;
   Writer writer({}, [&](const std::filesystem::path &, const std::string &) {
     ++sink_calls;
@@ -37,7 +37,7 @@ void testEmptyMapRootDisablesPersistence() {
   writer.flush();
 
   const auto diagnostics = writer.diagnostics();
-  require(sink_calls == 0, "empty map root must disable the sink");
+  require(sink_calls == 0, "empty inspection data directory must disable the sink");
   require(diagnostics.submitted == 0, "disabled writer must not count submissions");
   require(diagnostics.written == 0, "disabled writer must not report writes");
   require(!diagnostics.writing, "disabled writer must remain idle");
@@ -52,7 +52,8 @@ void testSubmitIsNonBlockingAndPendingStatusIsLatestWins() {
   std::vector<std::filesystem::path> paths;
   std::vector<std::string> writes;
 
-  Writer writer("map-root", [&](const std::filesystem::path &path, const std::string &snapshot) {
+  Writer writer("inspection-data", [&](const std::filesystem::path &path,
+                                         const std::string &snapshot) {
     std::unique_lock<std::mutex> lock(mutex);
     paths.push_back(path);
     writes.push_back(snapshot);
@@ -93,7 +94,7 @@ void testSubmitIsNonBlockingAndPendingStatusIsLatestWins() {
   writer.flush();
 
   require(writes.size() == 2U, "latest-wins must write exactly two statuses");
-  require(paths[0] == std::filesystem::path("map-root") / ".inspection" / "run_status.json",
+  require(paths[0] == std::filesystem::path("inspection-data") / "run_status.json",
           "the writer must target the inspection run-status path");
   require(writes[0] == inspection::RunStatusToJson(first) + "\n",
           "the in-flight status must complete with one trailing newline");
@@ -126,7 +127,7 @@ void testFlushPublishesExactStatusSnapshot() {
     writer.submit(status);
     writer.flush();
 
-    const auto path = root / ".inspection" / "run_status.json";
+    const auto path = root / "run_status.json";
     std::ifstream input(path, std::ios::binary);
     const std::string contents((std::istreambuf_iterator<char>(input)),
                                std::istreambuf_iterator<char>());
@@ -142,7 +143,7 @@ void testSinkFailuresAreReported() {
   status.run_id = "failed-run";
 
   {
-    Writer writer("map-root",
+    Writer writer("inspection-data",
                   [](const std::filesystem::path &, const std::string &) { return false; });
     writer.submit(status);
     writer.flush();
@@ -154,7 +155,7 @@ void testSinkFailuresAreReported() {
   }
 
   {
-    Writer writer("map-root", [](const std::filesystem::path &, const std::string &) -> bool {
+    Writer writer("inspection-data", [](const std::filesystem::path &, const std::string &) -> bool {
       throw std::runtime_error("sink failed");
     });
     writer.submit(status);
@@ -169,7 +170,7 @@ void testSinkFailuresAreReported() {
 }  // namespace
 
 int main() {
-  testEmptyMapRootDisablesPersistence();
+  testEmptyDataDirectoryDisablesPersistence();
   testSubmitIsNonBlockingAndPendingStatusIsLatestWins();
   testFlushPublishesExactStatusSnapshot();
   testSinkFailuresAreReported();

@@ -89,7 +89,7 @@ struct PlannerConfig
   int snap_search_radius_cells{8};
   bool require_ground_support{true};
   bool strict_direct_ground_support{true};
-  int ground_support_xy_radius_cells{2};
+  int ground_support_xy_radius_cells{0};
   int ground_support_depth_cells{2};
   double support_height_m{0.0};
   double support_height_tolerance_m{0.0};
@@ -244,6 +244,10 @@ private:
     const std::unordered_map<GridIndex, GridIndex, GridIndexHash> & came_from,
     GridIndex current) const;
 
+  bool hasTraversableLine(const GridIndex & from, const GridIndex & to) const;
+
+  std::vector<GridIndex> simplifyPath(const std::vector<GridIndex> & path) const;
+
   bool startPlan();
 
   double euclidean(const GridIndex & a, const GridIndex & b)
@@ -261,7 +265,7 @@ private:
   int snap_search_radius_cells_ = 8;
   bool require_ground_support_ = true;
   bool strict_direct_ground_support_ = true;
-  int ground_support_xy_radius_cells_ = 2;
+  int ground_support_xy_radius_cells_ = 0;
   int ground_support_depth_cells_ = 2;
   double support_height_m_ = 0.0;
   double support_height_tolerance_m_ = 0.0;

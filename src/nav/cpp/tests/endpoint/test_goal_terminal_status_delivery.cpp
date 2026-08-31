@@ -9,8 +9,8 @@
 #include <utility>
 #include <vector>
 
-#include "motion/motion_stop_coordinator.hpp"
-#include "plan/goal_replan_runtime_coordinator.hpp"
+#include "safety/stop.hpp"
+#include "runtime/goal/runtime.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
 
@@ -31,7 +31,7 @@ using lingtu::nav::endpoint::GoalReplanRuntimeInterruption;
 using lingtu::nav::endpoint::GoalReplanRuntimeResult;
 using lingtu::nav::endpoint::GoalTerminalStatusDelivery;
 using lingtu::nav::endpoint::MotionStopActions;
-using lingtu::nav::endpoint::MotionStopCoordinator;
+using lingtu::nav::endpoint::MotionStopBarrier;
 using lingtu::nav::endpoint::NavigationGoalStatusOutbox;
 using lingtu::nav::endpoint::StopConfirmationState;
 
@@ -42,13 +42,13 @@ void require(bool condition, const char *message) {
 }
 
 struct Fixture {
-  lingtu::nav::plan::MapIdentity map_identity{"field", 7, "sha256-a", "map"};
+  lingtu::nav::plan::MapIdentity map_identity{"field", 7, "map"};
   bool writes_allowed{false};
   std::vector<GoalPlanStatus> observed;
   std::vector<GoalPlanStatus> write_attempts;
   NavigationGoalStatusOutbox outbox;
   GoalPlanController goal_plan;
-  MotionStopCoordinator motion_stop;
+  MotionStopBarrier motion_stop;
   GoalReplanRuntimeCoordinator coordinator;
   int terminal_commit_count{0};
 
@@ -107,7 +107,7 @@ struct Fixture {
     actions.stop_control = [] {};
     actions.latch_estop = [](const std::string &) {};
     actions.clear_control_estop = [] { return true; };
-    actions.resume_autonomy = [] { return true; };
+    actions.resume_control = [] { return true; };
     actions.cancel_inspection = [](const std::string &) {};
     actions.clear_operator_resume_required = [] {};
     actions.set_autonomy_request_not_before = [](double) {};

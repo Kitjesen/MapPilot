@@ -1,7 +1,6 @@
 from pathlib import Path
 
-
-_ENDPOINT_SOURCE = Path("src/nav/cpp/endpoint/explore/explore_dds.cpp")
+_ENDPOINT_SOURCE = Path("src/nav/cpp/endpoint/explore/main.cpp")
 
 
 def test_native_explore_dispatch_preserves_policy_goal_yaw() -> None:

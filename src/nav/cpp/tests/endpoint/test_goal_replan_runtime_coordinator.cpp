@@ -11,10 +11,10 @@
 #include <utility>
 #include <vector>
 
-#include "motion/command_ingress_controller.hpp"
-#include "motion/goal_task_cancel_router.hpp"
-#include "motion/motion_stop_coordinator.hpp"
-#include "plan/goal_replan_runtime_coordinator.hpp"
+#include "command/ingress.hpp"
+#include "command/cancel.hpp"
+#include "safety/stop.hpp"
+#include "runtime/goal/runtime.hpp"
 
 namespace {
 
@@ -51,7 +51,7 @@ using lingtu::nav::endpoint::GoalTaskCancelRouter;
 using lingtu::nav::endpoint::GoalTaskCancelTerminalServiceResult;
 using lingtu::nav::endpoint::GoalTerminalSchedulingDecision;
 using lingtu::nav::endpoint::MotionStopActions;
-using lingtu::nav::endpoint::MotionStopCoordinator;
+using lingtu::nav::endpoint::MotionStopBarrier;
 using lingtu::nav::endpoint::StopConfirmationState;
 using lingtu::nav::endpoint::TerminalStopPolicy;
 
@@ -104,7 +104,7 @@ bool sameTemporaryOverlay(const lingtu::nav::plan::GlobalPlanTemporaryOverlay &l
 }
 
 struct Fixture {
-  lingtu::nav::plan::MapIdentity map_identity{"field", 7, "sha256-a", "map"};
+  lingtu::nav::plan::MapIdentity map_identity{"field", 7, "map"};
   std::vector<GoalPlanStatus> statuses;
   std::vector<GoalPlanPathActivation> activations;
   mutable std::mutex planner_requests_mutex;
@@ -123,7 +123,7 @@ struct Fixture {
   StopConfirmationState confirmation{StopConfirmationState::Confirmed};
   bool inspection_active{false};
   GoalPlanController goal_plan;
-  MotionStopCoordinator motion_stop;
+  MotionStopBarrier motion_stop;
   GoalReplanRuntimeCoordinator coordinator;
 
   Fixture()
@@ -204,7 +204,7 @@ struct Fixture {
     actions.stop_control = [this] { ++stop_control_calls; };
     actions.latch_estop = [](const std::string &) {};
     actions.clear_control_estop = [] { return true; };
-    actions.resume_autonomy = [] { return true; };
+    actions.resume_control = [] { return true; };
     actions.cancel_inspection = [](const std::string &) {};
     actions.clear_operator_resume_required = [] {};
     actions.set_autonomy_request_not_before = [](double) {};
@@ -452,6 +452,73 @@ void testNormalReplanChainHasNoIntermediateTerminal() {
     require(!lingtu::message::isTerminalNavigationGoalState(status.state),
             "successful replan published an intermediate terminal");
   }
+}
+
+void testRuntimeGuardHoldPausesInFlightReplanWithoutTerminal() {
+  Fixture fixture;
+  fixture.activate(fixture.request());
+  fixture.block_on_call.store(2);
+  (void)fixture.startReplan(70.0);
+  fixture.waitForPlannerCalls(2, "runtime-hold planner call did not start");
+
+  auto held_input = fixture.frameInput(70.6);
+  held_input.control_hold = true;
+  held_input.fresh_admission.operator_takeover_latched = true;
+  const auto held = fixture.coordinator.advancePlanningCycle(held_input);
+
+  require(held.handled && held.reason == "control_hold_pending" && held.zero_kept_fresh &&
+              !held.terminal_after_stop.has_value() && !fixture.coordinator.terminalPending(),
+          "runtime guard hold cancelled or terminalized an in-flight replan");
+  require(fixture.goal_plan.snapshot().active_task_id == "task-a" &&
+              fixture.cancelled_plans.load() == 0 && fixture.keep_zero_calls > 0,
+          "runtime guard hold changed the active goal or stopped refreshing zero");
+
+  fixture.release_blocked.store(true);
+  bool resumed = false;
+  for (int i = 0; i < 1000; ++i) {
+    const auto result =
+        fixture.coordinator.advancePlanningCycle(fixture.frameInput(70.7 + i * 0.001));
+    if (result.plan_advance.path_activated) {
+      resumed = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  require(resumed && fixture.goal_plan.snapshot().active_task_id == "task-a",
+          "in-flight replan did not resume after runtime guard hold cleared");
+}
+
+void testDriverBlockerPausesInFlightReplanWithoutTerminal() {
+  Fixture fixture;
+  fixture.activate(fixture.request());
+  fixture.block_on_call.store(2);
+  (void)fixture.startReplan(71.0);
+  fixture.waitForPlannerCalls(2, "driver-hold planner call did not start");
+
+  auto held_input = fixture.frameInput(71.6);
+  held_input.fresh_admission.driver_control_blocker = "driver_control_rejected";
+  const auto held = fixture.coordinator.advancePlanningCycle(held_input);
+
+  require(held.handled && held.reason == "driver_control_hold_pending" && held.zero_kept_fresh &&
+              !held.terminal_after_stop.has_value() && !fixture.coordinator.terminalPending(),
+          "transient driver blocker cancelled or terminalized an in-flight replan");
+  require(fixture.goal_plan.snapshot().active_task_id == "task-a" &&
+              fixture.cancelled_plans.load() == 0 && fixture.keep_zero_calls > 0,
+          "transient driver blocker changed the active goal or stopped refreshing zero");
+
+  fixture.release_blocked.store(true);
+  bool resumed = false;
+  for (int i = 0; i < 1000; ++i) {
+    const auto result =
+        fixture.coordinator.advancePlanningCycle(fixture.frameInput(71.7 + i * 0.001));
+    if (result.plan_advance.path_activated) {
+      resumed = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  require(resumed && fixture.goal_plan.snapshot().active_task_id == "task-a",
+          "in-flight replan did not resume after driver control recovered");
 }
 
 void testLegacyRecoveryReasonWithoutTypedTriggerDoesNotArm() {
@@ -816,7 +883,7 @@ void testGoalReachedMapDriftFailsClosed() {
   fixture.activate(fixture.request());
   const auto frame = fixture.frameInput(18.0);
   auto event = fixture.reachedEvent();
-  event.goal_snapshot.active_map_identity->artifact_sha256 = "sha256-stale";
+  event.goal_snapshot.active_map_identity->content_epoch = 8;
 
   const auto failed = fixture.coordinator.handleAutonomyOutcome(frame, event);
 
@@ -1071,7 +1138,7 @@ void testReplacementActivationAfterAckRechecksStoredMapIdentity() {
       32.0);
   fixture.commitTerminal(completed);
 
-  fixture.map_identity.version = 8;
+  fixture.map_identity.content_epoch = 8;
   const auto blocked = fixture.coordinator.advancePlanningCycle(fixture.frameInput(32.5));
   require(blocked.terminal_after_stop.has_value() && blocked.terminal_task_id == "task-b" &&
               blocked.reason == "active_map_changed_before_replacement_activation" &&
@@ -1992,7 +2059,6 @@ void testAllInterruptionsConsumeActiveAttempt() {
         interruptions[i] == GoalReplanRuntimeInterruption::kStop ||
         interruptions[i] == GoalReplanRuntimeInterruption::kEstop ||
         interruptions[i] == GoalReplanRuntimeInterruption::kOperatorTakeover ||
-        interruptions[i] == GoalReplanRuntimeInterruption::kDriverAuthorityLost ||
         interruptions[i] == GoalReplanRuntimeInterruption::kControlHold ||
         interruptions[i] == GoalReplanRuntimeInterruption::kInspectionPause ||
         interruptions[i] == GoalReplanRuntimeInterruption::kInspectionCancel ||
@@ -2010,6 +2076,11 @@ void testAllInterruptionsConsumeActiveAttempt() {
                   ticket.statuses.front().reason == "estop_latched" &&
                   ticket.statuses.front().project_to_navigation_state,
               "active estop must create a durable Cancelled/estop_latched terminal");
+    }
+    if (interruptions[i] == GoalReplanRuntimeInterruption::kDriverAuthorityLost) {
+      require(!interrupted.terminal_after_stop.has_value() &&
+                  fixture.goal_plan.snapshot().active_task_id == "task-a",
+              "transient driver loss cancelled the active navigation goal");
     }
   }
 
@@ -2147,7 +2218,7 @@ void testInvalidTimeAdmissionAndIdentityFailClosed() {
   Fixture map_changed;
   map_changed.activate(map_changed.request());
   require(map_changed.arm(250.0).reason == "backoff_pending", "map-change fixture did not arm");
-  map_changed.map_identity.artifact_sha256 = "sha256-b";
+  map_changed.map_identity.content_epoch = 8;
   auto changed = map_changed.coordinator.advancePlanningCycle(map_changed.frameInput(250.5));
   require(changed.terminal_after_stop.has_value() &&
               changed.reason == "active_map_changed_before_replan",
@@ -2309,6 +2380,8 @@ void testGoalTerminalSchedulingDecisionTable() {
 
 int main() {
   testNormalReplanChainHasNoIntermediateTerminal();
+  testRuntimeGuardHoldPausesInFlightReplanWithoutTerminal();
+  testDriverBlockerPausesInFlightReplanWithoutTerminal();
   testLegacyRecoveryReasonWithoutTypedTriggerDoesNotArm();
   testPersistentObstructionReplaysExactOverlayAfterStopAndBackoff();
   testHandleAutonomyOutcomeDoesNotAdvanceOrResume();

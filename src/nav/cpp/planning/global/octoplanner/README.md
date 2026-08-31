@@ -30,3 +30,23 @@ terminal-tolerance, and cancellation changes. See `LICENSE`.
 
 FAR is a separate optional 2D global planner under `../far`; it is not part of
 this vendor tree and does not replace OctoPlanner3D as the product default.
+
+## Files
+
+| File | Responsibility |
+| --- | --- |
+| `octoplanner3d_core.hpp/.cpp` | Adapts `GlobalPlanRequest/Result` to OctoPlanner3D, validates temporary overlays, loads immutable OctoMaps, caches a map-bound `PlannerSession`, and applies terminal constraints. |
+| `octoplanner3d_headless.cpp` | Standalone JSON stdin/stdout frontend used by diagnostics and compatibility tooling. |
+| `pcd_to_octomap.cpp` | Offline PCD-to-`.ot`/`.bt` conversion CLI with support/free-envelope options; not part of online `navd`. |
+| `edit_octomap.cpp` | Offline editor for occupied, free, preblocked, traversable, and cleared regions. |
+| `dump_octomap.cpp` | Exports bounded occupied voxel centers for inspection and debugging. |
+| `make_test_octomap.cpp` | Generates deterministic two-floor and spiral-stair OctoMaps for tests. |
+| `no_air_climb_smoke.cpp` | Checks ground support, body clearance, floor continuity, overlays, and no-air-climb behavior. |
+| `queue_node_compare_smoke.cpp` | Checks the vendored planner priority-queue ordering. |
+| `edit_octomap_smoke.cmake` | Drives the binary OctoMap edit/read/write smoke test. |
+| `vendor/planner/include/global_planner.h` | Vendored constrained search types and `OctoPlanner3D` interface. |
+| `vendor/planner/src/global_planner.cpp` | Vendored 3D grid/A* search implementation with LingTu constraints. |
+| `vendor/octomap/include/pcd2octomap_converter.h` | Optional vendored PCD converter interface. |
+| `vendor/octomap/src/pcd2octomap_converter.cpp` | Optional vendored PCD converter implementation. |
+| `CMakeLists.txt` | Wires system OctoMap, optional PCL, runtime library, CLIs, and smoke tests. |
+| `LICENSE` | MIT license and provenance for the vendored subset. |

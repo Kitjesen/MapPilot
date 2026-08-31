@@ -250,16 +250,15 @@ Built OctoMap voxel editor:
   $editor
 $(if [[ -x "$converter" ]]; then printf 'Built OctoMap PCD converter:\n  %s\n' "$converter"; else printf 'OctoMap PCD converter: not built (PCL path unavailable)\n'; fi)
 
-Use it with LingTu:
-  export LINGTU_OCTOPLANNER3D_EXECUTABLE="$exe"
+LingTu map conversion:
   export LINGTU_OCTOMAP_EDITOR="$editor"
 $(if [[ -x "$converter" ]]; then printf '  export LINGTU_MAP_ARTIFACT_CONVERTER="%s"\n' "$converter"; else printf '  # no LINGTU_MAP_ARTIFACT_CONVERTER export; build again with --require-pcl\n'; fi)
 
 Local development:
-  python lingtu.py sim_nav --planner octoplanner3d
+  python -m lingtu.control switch nav --env sim
 
 Field Product startup after a saved map exists:
-  bash scripts/lingtu nav start <map>
+  bash scripts/lingtu switch nav --map <map>
 EOF
 
 print_dependency_diagnostics

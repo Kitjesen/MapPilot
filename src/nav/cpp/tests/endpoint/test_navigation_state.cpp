@@ -1,6 +1,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "runtime/goal/plan.hpp"
 #include "status/navigation_state.hpp"
 
 namespace {
@@ -33,7 +34,7 @@ void testLifecycleAndTransientHold() {
   });
 
   NavigationStateContext context;
-  context.map = NavigationMapIdentity{"factory", 12, "sha256-map"};
+  context.map = NavigationMapIdentity{"factory", 12};
   context.authority = "autonomy";
   auto state = tracker.sample(context);
   require(state.active_task_id == "navigation-task-7", "planning task identity missing");
@@ -42,7 +43,7 @@ void testLifecycleAndTransientHold() {
           "planning lifecycle missing");
   require(state.planning_state == static_cast<int>(NavigationPlanningState::kPlanning),
           "planning state missing");
-  require(state.map_id == "factory" && state.map_version == 12, "map identity missing");
+  require(state.map_id == "factory" && state.map_content_epoch == 12, "map identity missing");
 
   context.input_ready = false;
   context.input_gate_reason = "localization_stale";

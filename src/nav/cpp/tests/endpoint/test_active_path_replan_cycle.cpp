@@ -10,10 +10,10 @@
 #include <utility>
 #include <vector>
 
-#include "motion/autonomy_tick_controller.hpp"
-#include "motion/motion_stop_coordinator.hpp"
-#include "plan/active_path_blockage_policy.hpp"
-#include "plan/goal_replan_runtime_coordinator.hpp"
+#include "control/autonomy.hpp"
+#include "safety/stop.hpp"
+#include "runtime/goal/blockage.hpp"
+#include "runtime/goal/runtime.hpp"
 
 namespace {
 
@@ -25,8 +25,10 @@ using lingtu::nav::endpoint::AutonomyTickActions;
 using lingtu::nav::endpoint::AutonomyTickController;
 using lingtu::nav::endpoint::AutonomyTickInput;
 using lingtu::nav::endpoint::AutonomyTickOutcomeKind;
-using lingtu::nav::endpoint::AutonomyTickPlannerInputs;
+using lingtu::nav::endpoint::PlanView;
 using lingtu::nav::endpoint::AutonomyTickResult;
+using lingtu::nav::endpoint::FinalControl;
+using lingtu::nav::endpoint::FinalActions;
 using lingtu::nav::endpoint::BoundedGoalReplanConfig;
 using lingtu::nav::endpoint::BoundedGoalReplanState;
 using lingtu::nav::endpoint::CommandSafetyConfig;
@@ -52,7 +54,7 @@ using lingtu::nav::endpoint::GoalReplanTriggerKind;
 using lingtu::nav::endpoint::InputGateState;
 using lingtu::nav::endpoint::LocalDiagnostics;
 using lingtu::nav::endpoint::MotionStopActions;
-using lingtu::nav::endpoint::MotionStopCoordinator;
+using lingtu::nav::endpoint::MotionStopBarrier;
 using lingtu::nav::endpoint::StopConfirmationState;
 using lingtu::nav::endpoint::TimingDiagnostics;
 using lingtu::nav::endpoint::TraversabilityGrid;
@@ -93,7 +95,7 @@ bool sameOverlay(const GlobalPlanTemporaryOverlay &lhs, const GlobalPlanTemporar
 struct Fixture {
   static constexpr std::uint64_t kFrameEpoch = 3U;
 
-  MapIdentity map_identity{"field", 7, "sha256-a", "map"};
+  MapIdentity map_identity{"field", 7, "map"};
   std::vector<GoalPlanStatus> statuses;
   std::vector<GoalPlanPathActivation> activations;
   mutable std::mutex planner_requests_mutex;
@@ -106,8 +108,7 @@ struct Fixture {
   int stop_evidence_failure_calls{0};
   std::string last_stop_evidence_failure;
   int planner_input_calls{0};
-  int nav_loop_calls{0};
-  int path_safety_calls{0};
+  int motion_calls{0};
   int command_safety_calls{0};
   int stop_linear_motion_calls{0};
   CommandSafetyConfig safety;
@@ -118,8 +119,9 @@ struct Fixture {
   TimingDiagnostics timing;
   std::vector<float> unused_planner_obstacles;
   GoalPlanController goal_plan;
-  MotionStopCoordinator motion_stop;
+  MotionStopBarrier motion_stop;
   GoalReplanRuntimeCoordinator coordinator;
+  FinalControl final_control;
   AutonomyTickController autonomy_tick;
 
   Fixture()
@@ -146,7 +148,8 @@ struct Fixture {
             goalActions()),
         motion_stop(true, stopActions()),
         coordinator(goal_plan, motion_stop, BoundedGoalReplanConfig{0.5}),
-        autonomy_tick(autonomyActions()) {
+        final_control(finalControlActions()),
+        autonomy_tick(autonomyActions(), final_control) {
     input_gate.ready = true;
     traversability.values = {0.0F};
     traversability.rows = 1;
@@ -194,7 +197,7 @@ struct Fixture {
     actions.stop_control = [this] { ++stop_control_calls; };
     actions.latch_estop = [](const std::string &) {};
     actions.clear_control_estop = [] { return true; };
-    actions.resume_autonomy = [] { return true; };
+    actions.resume_control = [] { return true; };
     actions.cancel_inspection = [](const std::string &) {};
     actions.clear_operator_resume_required = [] {};
     actions.set_autonomy_request_not_before = [](double) {};
@@ -215,32 +218,40 @@ struct Fixture {
     AutonomyTickActions actions;
     actions.steady_now_s = [] { return 11.0; };
     actions.current_map_identity = [this] { return GoalPlanMapIdentityResult{map_identity, {}}; };
-    actions.compute_planner_inputs = [this](TimingDiagnostics &) {
+    actions.read_plan = [this](double, TimingDiagnostics &) {
       ++planner_input_calls;
-      return AutonomyTickPlannerInputs{false, {}, &unused_planner_obstacles};
+      return PlanView{false, {}, &unused_planner_obstacles};
     };
     actions.tick_autonomy = [this](const nav_kernel::Pose &, const float *, int, double,
-                                   lingtu::nav::plan::TraversabilityGridView) {
-      ++nav_loop_calls;
-      lingtu::nav::plan::NavLoopOutput output;
+                                   lingtu::nav::navigation::TraversabilityGridView) {
+      ++motion_calls;
+      lingtu::nav::navigation::ExecutionOutput output;
       output.cmd_vel = {0.4, 0.0, 0.2};
       return output;
     };
-    actions.evaluate_path_safety =
-        [this](const CommandSafetyConfig &, const nav_kernel::Twist &,
-               const std::optional<nav_kernel::Pose> &, const std::vector<nav_kernel::Vec3> &,
-               const std::vector<float> &, const TraversabilityGrid &, bool) {
-          ++path_safety_calls;
-          return CommandSafetyDecision{};
-        };
-    actions.evaluate_command_safety = [this](const CommandSafetyConfig &, const nav_kernel::Twist &,
-                                             double, const std::optional<nav_kernel::Pose> &,
-                                             const std::vector<float> &, const TraversabilityGrid &,
-                                             bool) {
-      ++command_safety_calls;
-      return CommandSafetyDecision{};
-    };
     actions.stop_linear_motion = [this] { ++stop_linear_motion_calls; };
+    return actions;
+  }
+
+  FinalActions finalControlActions() {
+    FinalActions actions;
+    actions.command_safety = [this](const CommandSafetyConfig &,
+                                    const nav_kernel::Twist &command, double) {
+      ++command_safety_calls;
+      CommandSafetyDecision decision;
+      decision.should_publish = true;
+      decision.cmd = command;
+      decision.reason = "accepted";
+      return decision;
+    };
+    actions.shape = [](const nav_kernel::Twist &command, double) {
+      nav_kernel::VelocitySmootherOutput output;
+      output.command = command;
+      output.valid = true;
+      return output;
+    };
+    actions.commit = [](const nav_kernel::Twist &, double) { return true; };
+    actions.stop = [](double, const std::string &) {};
     return actions;
   }
 
@@ -383,9 +394,9 @@ void requireTriggeredAutonomyStoppedBeforePlanning(const Fixture &fixture,
                                                    const GoalReplanTrigger &expected) {
   require(result.handled && result.clear_local_path && result.clear_local_planner_debug,
           "typed blockage did not take over the autonomy tick");
-  require(fixture.planner_input_calls == 0 && fixture.nav_loop_calls == 0 &&
-              fixture.path_safety_calls == 0 && fixture.command_safety_calls == 0,
-          "typed blockage entered NavLoop or final safety");
+  require(fixture.planner_input_calls == 0 && fixture.motion_calls == 0 &&
+              fixture.command_safety_calls == 0,
+          "typed blockage entered Executor or the command boundary");
   require(fixture.stop_linear_motion_calls == 1 && result.publish.cmd_vel &&
               result.publish.command.vx == 0.0 && result.publish.command.vy == 0.0 &&
               result.publish.command.wz == 0.0 && result.delta.cmd_vel_count == 1U,

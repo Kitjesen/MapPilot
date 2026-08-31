@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "dds/frame.hpp"
 #include "traversability/transform_buffer.hpp"
 
 namespace {

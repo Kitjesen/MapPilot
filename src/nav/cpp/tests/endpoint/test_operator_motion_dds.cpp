@@ -6,10 +6,10 @@
 #include <thread>
 
 #include "dds/dds.h"
-#include "lingtu_slam.h"
-#include "message/cpp/dds_qos_profiles.hpp"
-#include "message/cpp/dds_topics.hpp"
-#include "nav_dds_runtime.hpp"
+#include "messages.h"
+#include "message/cpp/qos.hpp"
+#include "message/cpp/topics.hpp"
+#include "dds/runtime.hpp"
 
 namespace {
 
@@ -67,7 +67,7 @@ bool takeAndCheck(dds_entity_t reader, Check &&check) {
 
 void testTypedOperatorMotionRoundTrip() {
   constexpr int kDomain = 122;
-  lingtu::nav::endpoint::DdsRuntime runtime(kDomain);
+  lingtu::nav::endpoint::Dds runtime(kDomain);
   const dds_entity_t participant = checked(dds_create_participant(kDomain, nullptr, nullptr),
                                            "dds_create_participant(test_peer)");
   const dds_entity_t control_writer = createWriter(
@@ -92,13 +92,18 @@ void testTypedOperatorMotionRoundTrip() {
   for (int attempt = 0; attempt < 100 && !control_seen; ++attempt) {
     checked(dds_write(control_writer, &control), "dds_write(test_control)");
     std::this_thread::sleep_for(10ms);
-    runtime.drainOperatorMotionControls([&](const lingtu_dds_OperatorMotionControl &received) {
-      require(std::string(received.source_id) == "ws:test", "control source mismatch");
-      require(received.source_epoch == 17U, "control epoch mismatch");
-      require(received.source_sequence == 3U, "control sequence mismatch");
-      require(std::string(received.request_id) == "claim-3", "control request mismatch");
+    const auto commands = runtime.takeCommands(0.0);
+    for (const auto &event : commands.ordered) {
+      const auto *received =
+          std::get_if<lingtu::nav::endpoint::OperatorMotionControlSample>(&event);
+      if (received == nullptr)
+        continue;
+      require(received->source_id == "ws:test", "control source mismatch");
+      require(received->source_epoch == 17U, "control epoch mismatch");
+      require(received->source_sequence == 3U, "control sequence mismatch");
+      require(received->request_id == "claim-3", "control request mismatch");
       control_seen = true;
-    });
+    }
   }
   require(control_seen, "operator control reader received no sample");
 
@@ -109,6 +114,7 @@ void testTypedOperatorMotionRoundTrip() {
   sample.source_sequence = 4U;
   sample.request_id = const_cast<char *>("sample-4");
   sample.deadman = true;
+  sample.manual_mode = true;
   sample.velocity.linear.x = 0.2;
   sample.velocity.angular.z = -0.1;
   sample.freshness_budget_ms = 350U;
@@ -118,12 +124,18 @@ void testTypedOperatorMotionRoundTrip() {
   for (int attempt = 0; attempt < 100 && !sample_seen; ++attempt) {
     checked(dds_write(sample_writer, &sample), "dds_write(test_sample)");
     std::this_thread::sleep_for(10ms);
-    runtime.drainOperatorMotionSamples([&](const lingtu_dds_OperatorMotionSample &received) {
-      require(received.source_sequence == 4U, "sample sequence mismatch");
-      require(received.deadman, "sample deadman mismatch");
-      require(received.velocity.linear.x == 0.2, "sample velocity mismatch");
+    const auto commands = runtime.takeCommands(0.0);
+    for (const auto &event : commands.ordered) {
+      const auto *received =
+          std::get_if<lingtu::nav::endpoint::OperatorMotionInputSample>(&event);
+      if (received == nullptr)
+        continue;
+      require(received->source_sequence == 4U, "sample sequence mismatch");
+      require(received->deadman, "sample deadman mismatch");
+      require(received->manual_mode, "sample manual mode mismatch");
+      require(received->velocity.vx == 0.2, "sample velocity mismatch");
       sample_seen = true;
-    });
+    }
   }
   require(sample_seen, "operator sample reader received no sample");
 
@@ -137,7 +149,8 @@ void testTypedOperatorMotionRoundTrip() {
   ack.reason = "hold_zero_published";
   ack.accepted_sequence = 5U;
   ack.final_output_sequence = 9U;
-  require(runtime.writeOperatorMotionAck(ack), "operator ACK write failed");
+  require(runtime.publish(lingtu::nav::endpoint::OutputEvent{ack}).published,
+          "operator ACK write failed");
   bool ack_seen = false;
   for (int attempt = 0; attempt < 100 && !ack_seen; ++attempt) {
     std::this_thread::sleep_for(10ms);
@@ -160,7 +173,8 @@ void testTypedOperatorMotionRoundTrip() {
   status.authority_reason = "zero_barrier_complete";
   status.input_gate_reason = "ready";
   status.teleop_output = {0.2, 0.0, -0.1};
-  require(runtime.writeOperatorMotionStatus(status), "operator status write failed");
+  require(runtime.publish(lingtu::nav::endpoint::OutputEvent{status}).published,
+          "operator status write failed");
   bool status_seen = false;
   for (int attempt = 0; attempt < 100 && !status_seen; ++attempt) {
     std::this_thread::sleep_for(10ms);

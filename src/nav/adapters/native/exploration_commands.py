@@ -23,7 +23,7 @@ _EXPLORATION_RUN_ID_PATTERN = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
 def normalize_exploration_identity(
     exploration_run_id: Any,
-    session_id: Any,
+    product_session_id: Any,
 ) -> tuple[str, str]:
     """Validate caller-owned run and Product-session identities."""
 
@@ -32,9 +32,9 @@ def normalize_exploration_identity(
         raise ValueError(
             "exploration_run_id must be a canonical uppercase 26-character ULID"
         )
-    product_session_id = str(session_id or "").strip()
+    product_session_id = str(product_session_id or "").strip()
     if not product_session_id:
-        raise ValueError("exploration session_id is required")
+        raise ValueError("exploration product_session_id is required")
     return run_id, product_session_id
 
 
@@ -108,7 +108,7 @@ class NativeExplorationCommandClient:
     def start(
         self,
         exploration_run_id: str,
-        session_id: str,
+        product_session_id: str,
         *,
         reason: str = "operator_start",
         request_id: str | None = None,
@@ -117,7 +117,7 @@ class NativeExplorationCommandClient:
 
         run_id, product_session_id = normalize_exploration_identity(
             exploration_run_id,
-            session_id,
+            product_session_id,
         )
         return self._command(
             "lingtu_nav_client_start_exploration_with_receipt_v1",
@@ -133,7 +133,7 @@ class NativeExplorationCommandClient:
     def pause(
         self,
         exploration_run_id: str,
-        session_id: str,
+        product_session_id: str,
         reason: str = "operator_pause",
         *,
         request_id: str | None = None,
@@ -141,7 +141,7 @@ class NativeExplorationCommandClient:
         return self._reason_command(
             "lingtu_nav_client_pause_exploration_with_receipt_v1",
             exploration_run_id,
-            session_id,
+            product_session_id,
             reason,
             request_id,
         )
@@ -149,7 +149,7 @@ class NativeExplorationCommandClient:
     def resume(
         self,
         exploration_run_id: str,
-        session_id: str,
+        product_session_id: str,
         reason: str = "operator_resume",
         *,
         request_id: str | None = None,
@@ -157,7 +157,7 @@ class NativeExplorationCommandClient:
         return self._reason_command(
             "lingtu_nav_client_resume_exploration_with_receipt_v1",
             exploration_run_id,
-            session_id,
+            product_session_id,
             reason,
             request_id,
         )
@@ -165,7 +165,7 @@ class NativeExplorationCommandClient:
     def stop(
         self,
         exploration_run_id: str,
-        session_id: str,
+        product_session_id: str,
         reason: str = "operator_stop",
         *,
         request_id: str | None = None,
@@ -173,7 +173,7 @@ class NativeExplorationCommandClient:
         return self._reason_command(
             "lingtu_nav_client_stop_exploration_with_receipt_v1",
             exploration_run_id,
-            session_id,
+            product_session_id,
             reason,
             request_id,
         )
@@ -184,7 +184,7 @@ class NativeExplorationCommandClient:
         y: float,
         ttl_s: float,
         exploration_run_id: str,
-        session_id: str,
+        product_session_id: str,
         reason: str = "operator_directed_explore",
         *,
         request_id: str | None = None,
@@ -194,7 +194,7 @@ class NativeExplorationCommandClient:
         target_x, target_y, target_ttl_s = normalize_directed_target(x, y, ttl_s)
         run_id, product_session_id = normalize_exploration_identity(
             exploration_run_id,
-            session_id,
+            product_session_id,
         )
         self._session.ensure_directed_exploration_abi()
         return self._command(
@@ -214,7 +214,7 @@ class NativeExplorationCommandClient:
     def clear_directed_target(
         self,
         exploration_run_id: str,
-        session_id: str,
+        product_session_id: str,
         reason: str = "operator_clear_directed_explore",
         *,
         request_id: str | None = None,
@@ -223,7 +223,7 @@ class NativeExplorationCommandClient:
 
         run_id, product_session_id = normalize_exploration_identity(
             exploration_run_id,
-            session_id,
+            product_session_id,
         )
 
         self._session.ensure_directed_exploration_abi()
@@ -242,13 +242,13 @@ class NativeExplorationCommandClient:
         self,
         function_name: str,
         exploration_run_id: str,
-        session_id: str,
+        product_session_id: str,
         reason: str,
         request_id: str | None,
     ) -> dict[str, object]:
         run_id, product_session_id = normalize_exploration_identity(
             exploration_run_id,
-            session_id,
+            product_session_id,
         )
         return self._command(
             function_name,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 import numpy as np
 import pytest
 
@@ -11,11 +10,9 @@ from runtime.msgs.nav import OccupancyGrid, Odometry, Path
 from runtime.msgs.semantic import (
     Detection3D,
     GoalResult,
-    MissionStatus,
     NavigationCommand,
     Region,
     Relation,
-    SafetyState,
     SceneGraph,
 )
 
@@ -256,24 +253,3 @@ class TestNavigationCommand:
         tw = cmd.to_twist()
         assert tw.linear.x == pytest.approx(0.5)
         assert tw.angular.z == pytest.approx(0.3)
-
-
-# ===== SafetyState =====
-
-class TestSafetyState:
-    def test_is_safe(self):
-        assert SafetyState(level="safe").is_safe is True
-        assert SafetyState(level="danger").is_safe is False
-        assert SafetyState(level="estop", issues=["collision"]).is_safe is False
-
-
-# ===== MissionStatus =====
-
-class TestMissionStatus:
-    def test_to_from_dict(self):
-        ms = MissionStatus(state="executing", goal="kitchen", progress_pct=45.0, elapsed_sec=12.5)
-        d = ms.to_dict()
-        restored = MissionStatus.from_dict(d)
-        assert restored.state == "executing"
-        assert restored.goal == "kitchen"
-        assert restored.progress_pct == pytest.approx(45.0)

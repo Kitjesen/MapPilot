@@ -3,7 +3,7 @@
 #include <cstdlib>
 #include <string_view>
 
-#include "plan/goal_terminal_ingress_policy.hpp"
+#include "command/terminal.hpp"
 
 namespace {
 

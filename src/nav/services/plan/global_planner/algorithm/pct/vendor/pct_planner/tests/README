@@ -1,7 +1,0 @@
-# 测试用脚本（与正式规划分离）
-
-- **fake_localization.py**：无真定位时发布 TF map->body，订阅 /initialpose。由 `launch/test/` 下的 launch 启动。
-- **check_map.py**：从 .pickle 中选一对起终点并打印 ros2 命令，便于在终端测规划。
-  - 用法: `python3 check_map.py [地图名]`，默认地图名 spiral0.3_2。
-
-正式规划请用 `system_launch`，不要依赖本目录。

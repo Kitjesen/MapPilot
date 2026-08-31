@@ -2,7 +2,7 @@
 #include <cstdio>
 #include <stdexcept>
 
-#include "motion/operator_motion_output_evidence.hpp"
+#include "control/operator.hpp"
 
 namespace {
 

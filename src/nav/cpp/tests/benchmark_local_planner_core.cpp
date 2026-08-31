@@ -1,4 +1,5 @@
-#include "local_planner.hpp"
+#include "planning/local/planner.hpp"
+#include "planner_fixture.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -13,6 +14,7 @@
 namespace {
 
 using Clock = std::chrono::steady_clock;
+constexpr double kNavTickBudgetMs = 50.0;
 
 std::vector<float> makeObstacleCloud(int points) {
   std::vector<float> cloud;
@@ -52,11 +54,30 @@ std::vector<float> makeTraversabilityGrid(int rows, int cols) {
   return grid;
 }
 
+std::vector<float> makeLateBlockedTraversabilityGrid(
+    int rows, int cols, double resolution, double origin_x, double origin_y) {
+  std::vector<float> grid(
+      static_cast<std::size_t>(rows) * static_cast<std::size_t>(cols), 0.0f);
+  for (int row = 0; row < rows; ++row) {
+    const double y = origin_y + (static_cast<double>(row) + 0.5) * resolution;
+    for (int col = 0; col < cols; ++col) {
+      const double x = origin_x + (static_cast<double>(col) + 0.5) * resolution;
+      if (std::hypot(x, y) >= 1.6) {
+        grid[static_cast<std::size_t>(row) * static_cast<std::size_t>(cols) +
+             static_cast<std::size_t>(col)] = 100.0f;
+      }
+    }
+  }
+  return grid;
+}
+
 struct Stats {
   double mean_ms{0.0};
   double p50_ms{0.0};
   double p95_ms{0.0};
+  double p99_ms{0.0};
   double max_ms{0.0};
+  double over_budget_pct{0.0};
 };
 
 Stats summarize(std::vector<double> values) {
@@ -68,11 +89,15 @@ Stats summarize(std::vector<double> values) {
         static_cast<std::size_t>(std::llround(p * static_cast<double>(values.size() - 1))));
     return values[idx];
   };
+  const auto over_budget = std::count_if(values.begin(), values.end(),
+                                         [](double value) { return value > kNavTickBudgetMs; });
   return {
       sum / static_cast<double>(values.size()),
       percentile(0.50),
       percentile(0.95),
+      percentile(0.99),
       values.back(),
+      100.0 * static_cast<double>(over_budget) / static_cast<double>(values.size()),
   };
 }
 
@@ -99,7 +124,9 @@ void printStats(const std::string& label, int points, const Stats& stats) {
             << " mean_ms=" << std::fixed << std::setprecision(3) << stats.mean_ms
             << " p50_ms=" << stats.p50_ms
             << " p95_ms=" << stats.p95_ms
-            << " max_ms=" << stats.max_ms << '\n';
+            << " p99_ms=" << stats.p99_ms
+            << " max_ms=" << stats.max_ms
+            << " over_50ms_pct=" << stats.over_budget_pct << '\n';
 }
 
 }  // namespace
@@ -124,8 +151,8 @@ int main(int argc, char** argv) {
   params.autonomySpeed = 0.4;
   params.maxSpeed = 1.0;
 
-  nav_kernel::LocalPlannerCore planner(params);
-  if (!planner.loadPaths(path_library)) {
+  nav_kernel::PlannerFixture planner(params);
+  if (!planner.configure(path_library)) {
     std::cerr << "failed to load path library: " << path_library << '\n';
     return 1;
   }
@@ -136,14 +163,17 @@ int main(int argc, char** argv) {
   constexpr double origin_x = -8.0;
   constexpr double origin_y = -8.0;
   const auto traversability = makeTraversabilityGrid(rows, cols);
+  const auto late_blocked_traversability = makeLateBlockedTraversabilityGrid(
+      rows, cols, resolution, origin_x, origin_y);
 
-  std::cout << "path_library=" << path_library
-            << " iterations=" << iterations
-            << " warmup=" << warmup << '\n';
+  std::cout << "path_library=" << path_library << " iterations=" << iterations
+            << " warmup=" << warmup << " scoring_threads=" << params.scoringThreads
+            << " tick_budget_ms=" << kNavTickBudgetMs << '\n';
 
-  for (const int points : {0, 500, 1500, 5000, 10000}) {
+  // 5800 is the field measured-obstacle cap plus the bounded prediction cap.
+  for (const int points : {0, 500, 1500, 5000, 5800, 10000}) {
     const auto cloud = makeObstacleCloud(points);
-    const float* cloud_data = cloud.empty() ? nullptr : cloud.data();
+    const float *cloud_data = cloud.empty() ? nullptr : cloud.data();
 
     const auto no_grid = runTimed(iterations, warmup, [&](double t) {
       planner.planFrame(
@@ -170,6 +200,23 @@ int main(int argc, char** argv) {
       planner.plan(cloud_data, points, t);
     });
     printStats("plan cached grid", points, cached_grid);
+
+    const auto teleop_intent = runTimed(iterations, warmup, [&](double t) {
+      planner.setVehicle(0.0, 0.0, 0.0, 0.0);
+      planner.planObjective(cloud_data, points, t, 0.0, 1.0, 2.0, 55.0);
+    });
+    printStats("teleopIntent cached grid", points, teleop_intent);
+
+    if (points == 0 || points == 5000) {
+      planner.setTraversabilityGrid(
+          late_blocked_traversability.data(), rows, cols,
+          resolution, origin_x, origin_y);
+      const auto blocked_teleop_intent = runTimed(iterations, warmup, [&](double t) {
+        planner.setVehicle(0.0, 0.0, 0.0, 0.0);
+        planner.planObjective(cloud_data, points, t, 0.0, 1.0, 2.0, 55.0);
+      });
+      printStats("teleopIntent late blocked", points, blocked_teleop_intent);
+    }
   }
 
   return 0;

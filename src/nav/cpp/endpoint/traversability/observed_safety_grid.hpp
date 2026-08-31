@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 
 #include "lingtu/maps/layers/grid.hpp"
@@ -32,14 +33,23 @@ inline lingtu::maps::layers::Grid2D makeUnknownSafetyGrid(int rows, int cols, do
   return lingtu::maps::layers::makeGrid2D(rows, cols, resolution, origin_x, origin_y, unknown_cost);
 }
 
+inline std::int64_t safetyGridLatticeIndex(double coordinate, double origin, double resolution) {
+  const double normalized = (coordinate - origin) / resolution;
+  const double boundary = std::nearbyint(normalized);
+  const double tolerance =
+      4.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, std::fabs(normalized));
+  return static_cast<std::int64_t>(
+      std::floor(std::fabs(normalized - boundary) <= tolerance ? boundary : normalized));
+}
+
 inline bool safetyGridCell(const lingtu::maps::layers::Grid2D &grid, double x, double y, int &row,
                            int &col) {
   if (grid.empty() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(grid.resolution) ||
       grid.resolution <= 0.0) {
     return false;
   }
-  col = static_cast<int>(std::floor((x - grid.originX) / grid.resolution));
-  row = static_cast<int>(std::floor((y - grid.originY) / grid.resolution));
+  col = static_cast<int>(safetyGridLatticeIndex(x, grid.originX, grid.resolution));
+  row = static_cast<int>(safetyGridLatticeIndex(y, grid.originY, grid.resolution));
   return row >= 0 && row < grid.rows && col >= 0 && col < grid.cols;
 }
 

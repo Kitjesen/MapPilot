@@ -5,7 +5,7 @@
 #include <string>
 #include <utility>
 
-#include "inspection/inspection_runtime_controller.hpp"
+#include "runtime/inspection/inspection_runtime_controller.hpp"
 
 namespace {
 
@@ -34,7 +34,7 @@ Route makeRoute(std::string action = {}, double dwell_s = 0.0) {
   route.id = "route-a";
   route.name = "Route A";
   route.map_id = "map-a";
-  route.map_version = 7;
+  route.map_content_epoch = 7;
   route.revision = 3U;
   route.loop_count = 1U;
   route.failure_policy = FailurePolicy::kStop;
@@ -104,7 +104,7 @@ void reachActionPending(Executor &executor, InspectionRuntimeController &runtime
       require(result.evidence_dispatch.has_value(),
               "matched worker receives evidence dispatch intent");
       require(result.evidence_dispatch->map_id == "map-a" &&
-                  result.evidence_dispatch->map_version == 7,
+                  result.evidence_dispatch->map_content_epoch == 7,
               "evidence intent carries immutable route map identity");
       require(result.evidence_dispatch->deadline_s == executor.status().deadline_s,
               "evidence intent carries the action deadline");

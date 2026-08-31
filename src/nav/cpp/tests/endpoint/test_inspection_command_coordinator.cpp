@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "inspection/inspection_command_coordinator.hpp"
+#include "runtime/inspection/inspection_command_coordinator.hpp"
 
 namespace {
 
@@ -38,7 +38,7 @@ Route makeRoute(std::string route_id = "route-a") {
   value.id = std::move(route_id);
   value.name = "Production route";
   value.map_id = "map-a";
-  value.map_version = 7;
+  value.map_content_epoch = 7;
   value.revision = 3U;
   Point point;
   point.id = "point-a";

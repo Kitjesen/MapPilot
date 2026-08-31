@@ -1,6 +1,6 @@
 #pragma once
 
-#include "global_planner_contract.hpp"
+#include "planning/global/contract.hpp"
 
 #include <cstddef>
 #include <filesystem>
@@ -33,6 +33,7 @@ public:
     const CancelCheck & cancel_check = {});
 
   std::size_t mapLoadCount() const;
+  std::size_t prepareCount() const;
 
 private:
   struct Impl;

@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-#include "plan/goal_plan_controller.hpp"
+#include "runtime/goal/plan.hpp"
 
 namespace {
 
@@ -23,7 +23,7 @@ planImmediately(const lingtu::nav::plan::GlobalPlanRequest &request,
   lingtu::nav::plan::GlobalPlanResult result;
   result.ok = true;
   result.reached_goal = true;
-  result.map_identity = {"field", 7, "sha256-a", "map"};
+  result.map_identity = {"field", 7, "map"};
   result.overlay_revision = request.temporary_overlay.revision;
   result.overlay_frame_epoch = request.temporary_overlay.frame_epoch;
   result.overlay_obstacle_generation = request.temporary_overlay.obstacle_generation;
@@ -52,7 +52,7 @@ int main() {
   actions.preempt_rolling = [](const std::string &) { return true; };
   actions.clear_external_inspection = [] {};
   actions.current_map_identity = [] {
-    return GoalPlanMapIdentityResult{lingtu::nav::plan::MapIdentity{"field", 7, "sha256-a", "map"},
+    return GoalPlanMapIdentityResult{lingtu::nav::plan::MapIdentity{"field", 7, "map"},
                                      {}};
   };
   actions.publish_status = [&](const GoalPlanStatus &status) { statuses.push_back(status); };
@@ -113,7 +113,7 @@ int main() {
   blocked_actions.preempt_rolling = [](const std::string &) { return true; };
   blocked_actions.clear_external_inspection = [&] { blocked_external_inspection_cleared = true; };
   blocked_actions.current_map_identity = [] {
-    return GoalPlanMapIdentityResult{lingtu::nav::plan::MapIdentity{"field", 7, "sha256-a", "map"},
+    return GoalPlanMapIdentityResult{lingtu::nav::plan::MapIdentity{"field", 7, "map"},
                                      {}};
   };
   blocked_actions.publish_status = [&](const GoalPlanStatus &status) {
@@ -146,7 +146,7 @@ int main() {
     value.clear_external_inspection = [] {};
     value.current_map_identity = [] {
       return GoalPlanMapIdentityResult{
-          lingtu::nav::plan::MapIdentity{"field", 7, "sha256-a", "map"}, {}};
+          lingtu::nav::plan::MapIdentity{"field", 7, "map"}, {}};
     };
     value.publish_status = [observed_statuses](const GoalPlanStatus &status) {
       observed_statuses->push_back(status);
@@ -297,7 +297,7 @@ int main() {
   std::vector<GoalPlanPathActivation> success_activations;
   bool success_preempted = false;
   std::optional<lingtu::nav::plan::MapIdentity> success_current_map =
-      lingtu::nav::plan::MapIdentity{"field", 7, "sha256-a", "map"};
+      lingtu::nav::plan::MapIdentity{"field", 7, "map"};
   auto success_actions = make_admission_actions(&success_statuses, &success_preempted, true);
   success_actions.activate_path = [&](const GoalPlanPathActivation &activation) {
     success_activations.push_back(activation);
@@ -330,7 +330,7 @@ int main() {
   require(success_activations.front().map_identity.has_value() &&
               lingtu::nav::plan::sameMapIdentity(
                   *success_activations.front().map_identity,
-                  lingtu::nav::plan::MapIdentity{"field", 7, "sha256-a", "map"}),
+                  lingtu::nav::plan::MapIdentity{"field", 7, "map"}),
           "path activation lost the planner map identity");
   require(success_activations.front().goal_yaw.has_value() &&
               *success_activations.front().goal_yaw == 0.25,
@@ -430,9 +430,9 @@ int main() {
 
   success_current_map.reset();
   expect_resume_rejection(context, "active_map_unavailable_before_resume");
-  success_current_map = lingtu::nav::plan::MapIdentity{"field", 8, "sha256-b", "map"};
+  success_current_map = lingtu::nav::plan::MapIdentity{"field", 8, "map"};
   expect_resume_rejection(context, "active_map_changed_before_resume");
-  success_current_map = lingtu::nav::plan::MapIdentity{"field", 7, "sha256-a", "map"};
+  success_current_map = lingtu::nav::plan::MapIdentity{"field", 7, "map"};
 
   auto deferred_resume = success_controller.deferResume(request.task_id, "resume-1", context);
   require(deferred_resume.accepted && deferred_resume.reason == "resume_ready",
@@ -453,7 +453,7 @@ int main() {
     overlay_actions.clear_external_inspection = [] {};
     overlay_actions.current_map_identity = [] {
       return GoalPlanMapIdentityResult{
-          lingtu::nav::plan::MapIdentity{"field", 7, "sha256-a", "map"}, {}};
+          lingtu::nav::plan::MapIdentity{"field", 7, "map"}, {}};
     };
     overlay_actions.publish_status = [](const GoalPlanStatus &) {};
     overlay_actions.inspection_active = [] { return false; };

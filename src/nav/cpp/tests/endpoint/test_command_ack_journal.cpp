@@ -4,7 +4,7 @@
 #include <string>
 
 #include "message/cpp/navigation_command.hpp"
-#include "motion/command_ack_journal.hpp"
+#include "command/ingress.hpp"
 
 namespace {
 

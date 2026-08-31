@@ -8,6 +8,7 @@
 #include <optional>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -109,22 +110,47 @@ bool KnownCellVisible(const Grid2D &grid, const Pose2D &observer, int row, int c
   return detail::HasFreeLineOfSight(grid, observer, Pose2D{x, y, 0.0});
 }
 
-bool RecordKnownCoverage(CoverageMap *coverage, int row, int col, std::uint64_t generation,
-                         std::size_t max_cells) {
-  const std::uint64_t key = KnownCoverageKey(row, col);
-  if (coverage->find(key) != coverage->end()) {
+class CoverageChanges {
+ public:
+  CoverageChanges(const CoverageMap &accepted, bool reset, std::uint64_t generation)
+      : accepted_(accepted), reset_(reset), generation_(generation) {}
+
+  [[nodiscard]] bool contains(std::uint64_t key) const {
+    return added_.find(key) != added_.end() ||
+           (!reset_ && accepted_.find(key) != accepted_.end());
+  }
+
+  [[nodiscard]] bool record(std::uint64_t key, std::size_t max_cells) {
+    if (contains(key)) {
+      return true;
+    }
+    if (size() >= max_cells) {
+      return false;
+    }
+    added_.insert(key);
     return true;
   }
-  if (coverage->size() >= max_cells) {
-    return false;
-  }
-  (*coverage)[key] = generation;
-  return true;
-}
 
-bool KnownCellCovered(const CoverageMap &coverage, int row, int col) {
-  return coverage.find(KnownCoverageKey(row, col)) != coverage.end();
-}
+  [[nodiscard]] std::size_t size() const {
+    return (reset_ ? 0U : accepted_.size()) + added_.size();
+  }
+
+  void commit(CoverageMap *accepted) const {
+    if (reset_) {
+      accepted->clear();
+    }
+    accepted->reserve(accepted->size() + added_.size());
+    for (const std::uint64_t key : added_) {
+      accepted->emplace(key, generation_);
+    }
+  }
+
+ private:
+  const CoverageMap &accepted_;
+  bool reset_{false};
+  std::uint64_t generation_{0U};
+  std::unordered_set<std::uint64_t> added_;
+};
 
 double RouteLength(const Pose2D &robot, const std::vector<Pose2D> &route) {
   double length = 0.0;
@@ -279,7 +305,7 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
   decision.diagnostics.frame_id = input.map.frame_id;
   decision.diagnostics.session_id = input.map.session_id;
   decision.diagnostics.map_id = input.map.map_id;
-  decision.diagnostics.map_version = input.map.map_version;
+  decision.diagnostics.map_content_epoch = input.map.map_content_epoch;
   decision.diagnostics.reset_epoch = input.map.reset_epoch;
   decision.diagnostics.generation = input.map.generation;
   decision.diagnostics.accepted_generation = impl_->accepted_generation;
@@ -291,7 +317,6 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
     decision.diagnostics.phase = "rejected";
     decision.diagnostics.planning_time_ms =
         std::chrono::duration<double, std::milli>(Clock::now() - started).count();
-    impl_->last = decision.diagnostics;
     return decision;
   };
 
@@ -326,25 +351,25 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
     return finish_without_commit("cancelled");
   }
 
-  Impl working = *impl_;
   bool reset = false;
-  if (!working.identity.has_value() || !working.identity->sameSource(input.map)) {
-    working.ResetState();
+  if (!impl_->identity.has_value() || !impl_->identity->sameSource(input.map)) {
     reset = true;
-  } else if (input.map.reset_epoch < working.identity->reset_epoch) {
+  } else if (input.map.reset_epoch < impl_->identity->reset_epoch) {
     return finish_without_commit("stale_reset_epoch");
-  } else if (input.map.reset_epoch > working.identity->reset_epoch) {
-    working.ResetState();
+  } else if (input.map.reset_epoch > impl_->identity->reset_epoch) {
     reset = true;
-  } else if (input.map.generation < working.accepted_generation ||
-             (input.map.generation == working.accepted_generation &&
-              input.directed_intent_revision == working.accepted_intent_revision)) {
+  } else if (input.map.generation < impl_->accepted_generation ||
+             (input.map.generation == impl_->accepted_generation &&
+              input.directed_intent_revision == impl_->accepted_intent_revision)) {
     return finish_without_commit("stale_map_generation");
   }
+  detail::KeyposeGraph keyposes = impl_->keyposes;
+  std::vector<Pose2D> selected_goals = reset ? std::vector<Pose2D>{} : impl_->selected_goals;
+  const std::size_t reset_count = impl_->reset_count + (reset ? 1U : 0U);
+  CoverageChanges coverage(impl_->coverage, reset, input.map.generation);
   if (reset) {
-    ++working.reset_count;
+    keyposes.Reset();
   }
-  working.identity = input.map;
 
   const detail::FrontierAnalysis analysis = detail::AnalyzeFrontiers(
       input.exploration_grid, input.robot_pose, config_.min_frontier_size,
@@ -358,8 +383,8 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
   }
 
   std::string keypose_reason;
-  if (!working.keyposes.Update(input.robot_pose, input.exploration_grid, input.map.generation,
-                               cancelled, &keypose_reason)) {
+  if (!keyposes.Update(input.robot_pose, input.exploration_grid, input.map.generation, cancelled,
+                       &keypose_reason)) {
     return finish_without_commit(keypose_reason.empty() ? "keypose_update_failed" : keypose_reason);
   }
 
@@ -382,8 +407,7 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
               observation.at(observation_cell.row, observation_cell.col) == kUnknown) {
             continue;
           }
-          if (!RecordKnownCoverage(&working.coverage, row, col, input.map.generation,
-                                   config_.max_coverage_cells)) {
+          if (!coverage.record(KnownCoverageKey(row, col), config_.max_coverage_cells)) {
             return finish_without_commit("resource_limit_coverage_cells");
           }
         }
@@ -396,8 +420,8 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
     // Without explicit observations, use the configured sensor model instead
     // of treating every cell inside a radius as covered.
     if (!input.live_observation_grid.has_value()) {
-      if (!RecordKnownCoverage(&working.coverage, analysis.robot_cell.row, analysis.robot_cell.col,
-                               input.map.generation, config_.max_coverage_cells)) {
+      if (!coverage.record(KnownCoverageKey(analysis.robot_cell.row, analysis.robot_cell.col),
+                           config_.max_coverage_cells)) {
         return finish_without_commit("resource_limit_coverage_cells");
       }
       const int sensor_radius_cells =
@@ -420,8 +444,7 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
         const std::size_t position = static_cast<std::size_t>(grid.index(row, col));
         if (analysis.reachable[position] != 0U &&
             KnownCellVisible(grid, input.robot_pose, row, col, config_) &&
-            !RecordKnownCoverage(&working.coverage, row, col, input.map.generation,
-                                 config_.max_coverage_cells)) {
+            !coverage.record(KnownCoverageKey(row, col), config_.max_coverage_cells)) {
           return finish_without_commit("resource_limit_coverage_cells");
         }
         if ((++visibility_iterations & 1023U) == 0U && cancelled()) {
@@ -434,7 +457,7 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
     for (int row = 0; row < grid.height; ++row) {
       for (int col = 0; col < grid.width; ++col) {
         const std::size_t position = static_cast<std::size_t>(grid.index(row, col));
-        if (analysis.reachable[position] != 0U && KnownCellCovered(working.coverage, row, col)) {
+        if (analysis.reachable[position] != 0U && coverage.contains(KnownCoverageKey(row, col))) {
           ++covered_reachable;
         }
       }
@@ -476,7 +499,7 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
         }
         const auto [x, y] = detail::CellToWorld(grid, row, col);
         if (RecentlyVisited(x, y, input.visited_goals, config_.novelty_radius_m) ||
-            RecentlyVisited(x, y, working.selected_goals, config_.novelty_radius_m)) {
+            RecentlyVisited(x, y, selected_goals, config_.novelty_radius_m)) {
           continue;
         }
 
@@ -492,9 +515,8 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
             continue;
           }
           ++visible_frontier;
-          if (working.coverage.find(
-                  CoverageKey(frontier_x, frontier_y, config_.coverage_resolution_m)) !=
-              working.coverage.end()) {
+          if (coverage.contains(
+                  CoverageKey(frontier_x, frontier_y, config_.coverage_resolution_m))) {
             ++already_covered;
           }
         }
@@ -553,7 +575,7 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
     for (int row = 0; row < grid.height; ++row) {
       for (int col = 0; col < grid.width; ++col) {
         const std::size_t position = static_cast<std::size_t>(grid.index(row, col));
-        if (analysis.reachable[position] == 0U || KnownCellCovered(working.coverage, row, col) ||
+        if (analysis.reachable[position] == 0U || coverage.contains(KnownCoverageKey(row, col)) ||
             !std::isfinite(analysis.travel_distance_m[position]) ||
             analysis.travel_distance_m[position] < config_.min_goal_distance_m) {
           continue;
@@ -582,7 +604,7 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
           static_cast<std::size_t>(grid.index(sample.row, sample.col));
       const auto [x, y] = detail::CellToWorld(grid, sample.row, sample.col);
       if (RecentlyVisited(x, y, input.visited_goals, config_.novelty_radius_m) ||
-          RecentlyVisited(x, y, working.selected_goals, config_.novelty_radius_m)) {
+          RecentlyVisited(x, y, selected_goals, config_.novelty_radius_m)) {
         continue;
       }
       const double heading = std::atan2(y - input.robot_pose.y, x - input.robot_pose.x);
@@ -609,7 +631,7 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
           continue;
         }
         const std::size_t position = static_cast<std::size_t>(grid.index(row, col));
-        if (analysis.reachable[position] == 0U || KnownCellCovered(working.coverage, row, col) ||
+        if (analysis.reachable[position] == 0U || coverage.contains(KnownCoverageKey(row, col)) ||
             !KnownCellVisible(grid, viewpoint, row, col, config_)) {
           if ((++gain_iterations & 255U) == 0U && cancelled()) {
             return finish_without_commit("cancelled");
@@ -667,14 +689,14 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
   const bool exploration_complete =
       input.map.live ? analysis.clusters.empty() : known_coverage_complete;
   if (exploration_complete) {
-    const Pose2D *home = working.keyposes.Home();
+    const Pose2D *home = keyposes.Home();
     if (!config_.return_home_when_done || home == nullptr ||
         PoseDistance(input.robot_pose, *home) <= config_.return_home_distance_m) {
       decision.done = true;
       decision.reason = "exploration_complete";
       decision.diagnostics.phase = "complete";
     } else {
-      decision.route = working.keyposes.RouteHome();
+      decision.route = keyposes.RouteHome();
       if (decision.route.size() < 2U) {
         return finish_without_commit("return_route_unavailable");
       }
@@ -710,12 +732,12 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
     decision.goal_yaw = decision.route.front().yaw;
     decision.reason = local_phase ? "selected_local_coverage" : "selected_global_route";
     decision.diagnostics.phase = local_phase ? "local_coverage" : "global_route";
-    working.selected_goals.push_back(decision.route.front());
-    if (working.selected_goals.size() > config_.max_route_targets * 8U) {
-      working.selected_goals.erase(working.selected_goals.begin(),
-                                   working.selected_goals.begin() +
-                                       static_cast<std::ptrdiff_t>(working.selected_goals.size() -
-                                                                   config_.max_route_targets * 8U));
+    selected_goals.push_back(decision.route.front());
+    if (selected_goals.size() > config_.max_route_targets * 8U) {
+      selected_goals.erase(selected_goals.begin(),
+                           selected_goals.begin() +
+                               static_cast<std::ptrdiff_t>(selected_goals.size() -
+                                                           config_.max_route_targets * 8U));
     }
   }
 
@@ -731,11 +753,9 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
           continue;
         }
         const std::uint64_t key = CoverageKey(x, y, config_.coverage_resolution_m);
-        if (working.coverage.find(key) == working.coverage.end() &&
-            working.coverage.size() >= config_.max_coverage_cells) {
+        if (!coverage.record(key, config_.max_coverage_cells)) {
           return finish_without_commit("resource_limit_coverage_cells");
         }
-        working.coverage[key] = input.map.generation;
       }
       if ((row & 31) == 0 && cancelled()) {
         return finish_without_commit("cancelled");
@@ -743,22 +763,26 @@ ExploreDecision TarePolicy::plan(const ExploreInput &input,
     }
   }
 
-  working.accepted_generation = input.map.generation;
-  working.accepted_intent_revision = input.directed_intent_revision;
-  const detail::KeyposeGraphStats graph_stats = working.keyposes.Stats();
+  const detail::KeyposeGraphStats graph_stats = keyposes.Stats();
   decision.diagnostics.keypose_nodes = graph_stats.nodes;
   decision.diagnostics.keypose_edges = graph_stats.edges;
-  decision.diagnostics.covered_cells = working.coverage.size();
+  decision.diagnostics.covered_cells = coverage.size();
   decision.diagnostics.route_targets = decision.route.size();
   decision.diagnostics.route_length_m = RouteLength(input.robot_pose, decision.route);
-  decision.diagnostics.reset_count = working.reset_count;
+  decision.diagnostics.reset_count = reset_count;
   decision.diagnostics.accepted_generation = input.map.generation;
   decision.diagnostics.accepted_intent_revision = input.directed_intent_revision;
   decision.diagnostics.state_committed = true;
   decision.diagnostics.planning_time_ms =
       std::chrono::duration<double, std::milli>(Clock::now() - started).count();
-  working.last = decision.diagnostics;
-  *impl_ = std::move(working);
+  coverage.commit(&impl_->coverage);
+  impl_->keyposes = std::move(keyposes);
+  impl_->identity = input.map;
+  impl_->selected_goals = std::move(selected_goals);
+  impl_->accepted_generation = input.map.generation;
+  impl_->accepted_intent_revision = input.directed_intent_revision;
+  impl_->reset_count = reset_count;
+  impl_->last = decision.diagnostics;
   return decision;
 }
 

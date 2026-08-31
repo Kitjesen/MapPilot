@@ -22,7 +22,6 @@ target_compile_features(lingtu_inspection PUBLIC cxx_std_17)
 install(TARGETS lingtu_inspection
   LIBRARY DESTINATION inspection
   RUNTIME DESTINATION inspection)
-install(FILES c_api.h DESTINATION include/nav/inspection)
 
 if(MSVC)
   target_compile_options(lingtu_inspection_core PRIVATE /W4)
@@ -33,14 +32,32 @@ else()
 endif()
 
 if(BUILD_TESTING)
+  find_package(Threads REQUIRED)
   add_executable(lingtu_inspection_test test_inspection.cpp)
-  target_link_libraries(lingtu_inspection_test PRIVATE lingtu_inspection_core)
+  target_link_libraries(lingtu_inspection_test PRIVATE lingtu_inspection_core Threads::Threads)
   if(MSVC)
     target_compile_options(lingtu_inspection_test PRIVATE /UNDEBUG)
   else()
     target_compile_options(lingtu_inspection_test PRIVATE -UNDEBUG)
   endif()
   add_test(NAME lingtu_inspection_test COMMAND lingtu_inspection_test)
+
+  set(_LINGTU_INSPECTION_ENDPOINT_TEST
+    "${CMAKE_CURRENT_SOURCE_DIR}/../cpp/tests/endpoint/test_inspection_task_event_outbox.cpp")
+  if(EXISTS "${_LINGTU_INSPECTION_ENDPOINT_TEST}")
+    add_executable(lingtu_inspection_task_event_outbox_test
+      "${_LINGTU_INSPECTION_ENDPOINT_TEST}")
+    target_link_libraries(lingtu_inspection_task_event_outbox_test PRIVATE
+      lingtu_inspection_core)
+    if(MSVC)
+      target_compile_options(lingtu_inspection_task_event_outbox_test PRIVATE /UNDEBUG)
+    else()
+      target_compile_options(lingtu_inspection_task_event_outbox_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(
+      NAME lingtu_inspection_task_event_outbox_test
+      COMMAND lingtu_inspection_task_event_outbox_test)
+  endif()
 
   add_executable(lingtu_inspection_c_api_exception_test
     test_c_api_exception.cpp

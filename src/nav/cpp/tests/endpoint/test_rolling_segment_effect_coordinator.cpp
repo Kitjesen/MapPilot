@@ -6,7 +6,7 @@
 #include <variant>
 #include <vector>
 
-#include "plan/rolling_segment_effect_coordinator.hpp"
+#include "runtime/rolling/effects.hpp"
 
 namespace {
 

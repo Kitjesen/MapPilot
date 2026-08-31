@@ -3,8 +3,8 @@
 #include <stdexcept>
 #include <string>
 
-#include "explore/exploration_segment_lifecycle.hpp"
-#include "explore/explore_goal_lifecycle.hpp"
+#include "explore/segment_lifecycle.hpp"
+#include "explore/goal_lifecycle.hpp"
 
 namespace {
 
@@ -16,12 +16,12 @@ using lingtu::nav::endpoint::ExplorationSegmentRequestBinding;
 using lingtu::nav::endpoint::ExplorationSegmentState;
 using lingtu::nav::endpoint::ExplorationSegmentStatusEvent;
 using lingtu::nav::endpoint::hasNewerExplorationSegmentSnapshot;
-using lingtu::nav::endpoint::isExplorationSegmentFallbackReason;
 using lingtu::nav::endpoint::makeExplorationSegmentReplanBarrier;
 using lingtu::nav::endpoint::NavigationGoalLifecycleEvent;
 using lingtu::nav::endpoint::PendingExploreGoalLifecycle;
 using lingtu::nav::endpoint::reactToExplorationSegmentAck;
 using lingtu::nav::endpoint::reactToExplorationSegmentStatus;
+using lingtu::nav::endpoint::reactToRejectedExploreStart;
 using lingtu::nav::endpoint::reactToNavigationGoalLifecycle;
 using lingtu::nav::endpoint::shouldMarkExploreGoalVisited;
 
@@ -134,13 +134,19 @@ void testTerminalEventAfterClearIsIgnored() {
   require(!reaction.matched, "duplicate terminal event must be harmless after clear");
 }
 
-void testOnlyExactStaticMapBoundaryFailureUsesSegmentFallback() {
-  require(isExplorationSegmentFallbackReason("goal_outside_static_map"),
-          "the exact static-map boundary failure must select the fallback");
-  require(!isExplorationSegmentFallbackReason("goal_outside_static_map "),
-          "a suffixed static-map failure must not select the fallback");
-  require(!isExplorationSegmentFallbackReason("goal_snap_exhausted"),
-          "a different goal failure must not select the fallback");
+void testRejectedStartRequeuesOnlyWhileExplorationIsRunning() {
+  const auto reaction = reactToRejectedExploreStart(false, true);
+  require(reaction.requeue_goal,
+          "a rejected start must be retried with a new dispatch while exploration runs");
+  require(!reaction.confirm_no_motion,
+          "a running rejection must not pretend that a stop was requested");
+}
+
+void testRejectedStartConfirmsNoMotionAfterStopOrPause() {
+  const auto reaction = reactToRejectedExploreStart(true, false);
+  require(!reaction.requeue_goal, "a rejected start must not be requeued after stop or pause");
+  require(reaction.confirm_no_motion,
+          "a rejected start after stop or pause must settle without TaskCancel");
 }
 
 void testSegmentAckAndStatusRequireExactBinding() {
@@ -331,11 +337,12 @@ int main() {
   testMatchingFailureRequestsReplan();
   testTerminalStatusCannotRestoreOldMapVisitedTarget();
   testPathActiveRetainsPendingGoal();
-    testMatchingReachedExcludesWithoutReplan();
-    testMatchingCancelledClearsWithoutExcluding();
-    testMatchingTaskCancelRequestClearsPendingGoal();
-    testTerminalEventAfterClearIsIgnored();
-  testOnlyExactStaticMapBoundaryFailureUsesSegmentFallback();
+  testMatchingReachedExcludesWithoutReplan();
+  testMatchingCancelledClearsWithoutExcluding();
+  testMatchingTaskCancelRequestClearsPendingGoal();
+  testTerminalEventAfterClearIsIgnored();
+  testRejectedStartRequeuesOnlyWhileExplorationIsRunning();
+  testRejectedStartConfirmsNoMotionAfterStopOrPause();
   testSegmentAckAndStatusRequireExactBinding();
   testUnboundExecuteRejectionIsTerminal();
   testSegmentStatusMayArriveBeforeExecuteAck();

@@ -1,17 +1,15 @@
 """Standardized exploration Module contract for LingTu.
 
 ``ExploreModule`` formalizes the Python-side exploration port contract so that
-every exploration backend (TARE, wavefront, future planners) presents the same
+every Host exploration backend presents the same
 interface to ``autoconnect`` and the mission stack. The heavy algorithm lives in
 C++ (``src/explore/cpp`` exposed through ``lingtu_explore_kernel``); Python
 subclasses only convert data and orchestrate ports.
 
 Port contract
 -------------
-Output ``exploration_goal: Out[PoseStamped]`` mirrors
-``WavefrontFrontierExplorer`` exactly so autoconnect can wire either backend to
-``Navigation.goal_pose`` and the backend can be hot-swapped without other
-modules noticing.
+Output ``exploration_goal: Out[PoseStamped]`` is the shared Host exploration
+goal contract consumed by navigation adapters.
 
 Subclasses implement :meth:`_plan_once` to produce goals and use
 :meth:`_build_pose_stamped` for the shared PoseStamped conversion.
@@ -29,7 +27,7 @@ from runtime.stream import In, Out
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_GOAL_FRAME_ID = topic_default_frame_id(TOPICS.goal_pose)
+DEFAULT_GOAL_FRAME_ID = topic_default_frame_id(TOPICS.exploration_way_point)
 
 
 class ExploreModule(Module, layer=5):

@@ -1,8 +1,11 @@
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
-#include "explore/explore_control.hpp"
+#include "explore/control.hpp"
 
 namespace {
 
@@ -19,6 +22,63 @@ void require(bool condition, const std::string &message) {
   }
 }
 
+void testProductSessionStatusFileFallbackContract() {
+  const auto source_path =
+      std::filesystem::path(__FILE__).parent_path() / "../../endpoint/explore/main.cpp";
+  std::ifstream input(source_path);
+  require(input.good(), "explore endpoint source must be readable");
+  const std::string source((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+
+  const auto explicit_status =
+      source.find("config.status_file = envString(\"LINGTU_EXPLORE_STATUS_FILE\");");
+  const auto empty_guard = source.find("if (config.status_file.empty())", explicit_status);
+  const auto session_root = source.find("envString(\"LINGTU_SESSION_ROOT\")", empty_guard);
+  const auto fallback_name = source.find("\"explore.status.json\"", session_root);
+  const auto cli_override = source.find("arg == \"--status-file\"", fallback_name);
+
+  require(explicit_status != std::string::npos,
+          "explicit exploration status environment must be read first");
+  require(empty_guard != std::string::npos && session_root != std::string::npos &&
+              fallback_name != std::string::npos,
+          "missing exploration status path must fall back inside LINGTU_SESSION_ROOT");
+  require(explicit_status < empty_guard && empty_guard < session_root &&
+              session_root < fallback_name && fallback_name < cli_override,
+          "explicit environment and CLI status paths must win over the session fallback");
+}
+
+void testProductIdentityStatusContract() {
+  const auto source_path =
+      std::filesystem::path(__FILE__).parent_path() / "../../endpoint/explore/main.cpp";
+  std::ifstream input(source_path);
+  require(input.good(), "explore endpoint source must be readable");
+  const std::string source((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+
+  const auto product_env = source.find("envString(\"LINGTU_PRODUCT\")");
+  const auto product_session_env = source.find("envString(\"LINGTU_PRODUCT_SESSION_ID\")");
+  const auto sim_guard = source.find("runtime_env == \"sim\"");
+  const auto product_status = source.find("\\\"product\\\": \\\"", sim_guard);
+  const auto product_session_status =
+      source.find("\\\"product_session_id\\\": \\\"", product_status);
+  const auto map_status = source.find("\\\"map\\\": {\\\"frame_id\\\": \\\"", product_status);
+  const auto map_id_status = source.find("\\\"map_id\\\": \\\"", map_status);
+  const auto duplicate_map_session = source.find("jsonEscape(map.session_id)", map_status);
+  const auto duplicate_segment_session =
+      source.find("jsonEscape(pending_segment->binding.session_id)", map_status);
+
+  require(product_env != std::string::npos && product_session_env != std::string::npos,
+          "explore Product identity must come from the canonical process environment");
+  require(sim_guard != std::string::npos,
+          "simulation Product launch must fail closed without exact Product identity");
+  require(product_status != std::string::npos && product_session_status != std::string::npos,
+          "explore status must expose Product and Product session identity at top level");
+  require(map_status != std::string::npos && map_id_status != std::string::npos &&
+              duplicate_map_session == std::string::npos &&
+              duplicate_segment_session == std::string::npos,
+          "explore status must not duplicate the top-level Product session identity");
+}
+
 ExplorationControlRequest request(const std::string &request_id, ExplorationCommandKind kind) {
   ExplorationControlRequest value;
   value.request_id = request_id;
@@ -30,8 +90,8 @@ ExplorationControlRequest request(const std::string &request_id, ExplorationComm
   value.future_tolerance_s = 0.1;
   value.inputs_ready = true;
   value.snapshot_ready = true;
-  value.session_id = "session-a";
-  value.expected_session_id = "session-a";
+  value.product_session_id = "session-a";
+  value.expected_product_session_id = "session-a";
   value.exploration_run_id = kRunA;
   return value;
 }
@@ -67,32 +127,36 @@ void testStrictValidation() {
   invalid.exploration_run_id = "01arz3ndektsv4rrffq69g5fav";
   require(control.Apply(invalid).reason == "exploration_run_id_invalid",
           "run identity must be a canonical uppercase ULID");
+
+  invalid = request(kRunA, ExplorationCommandKind::kStart);
+  require(control.Apply(invalid).reason == "exploration_run_id_matches_request_id",
+          "run identity must be distinct from the request identity");
 }
 
 void testStartRequiresVerifiedProductSession() {
   ExploreControl empty_control;
   auto empty = request("empty-session", ExplorationCommandKind::kStart);
-  empty.session_id.clear();
-  empty.expected_session_id = "product-session";
+  empty.product_session_id.clear();
+  empty.expected_product_session_id = "product-session";
   const auto empty_result = empty_control.Apply(empty);
   require(!empty_result.accepted, "start without a session must be rejected");
-  require(empty_result.reason == "exploration_session_id_empty", "empty session reason");
+  require(empty_result.reason == "exploration_product_session_id_empty", "empty session reason");
   require(!empty_control.active(), "empty session must not activate exploration");
 
   ExploreControl unverified_control;
   auto unverified = request("unverified-session", ExplorationCommandKind::kStart);
-  unverified.session_id = "product-session";
-  unverified.expected_session_id.clear();
+  unverified.product_session_id = "product-session";
+  unverified.expected_product_session_id.clear();
   const auto unverified_result = unverified_control.Apply(unverified);
   require(!unverified_result.accepted, "start without a verified session must be rejected");
-  require(unverified_result.reason == "exploration_session_unverified",
+  require(unverified_result.reason == "exploration_product_session_unverified",
           "unverified session reason");
   require(!unverified_control.active(), "unverified session must not activate exploration");
 
   ExploreControl mismatch_control;
   auto mismatch = request("mismatched-session", ExplorationCommandKind::kStart);
-  mismatch.session_id = "request-session";
-  mismatch.expected_session_id = "product-session";
+  mismatch.product_session_id = "request-session";
+  mismatch.expected_product_session_id = "product-session";
   const auto mismatch_result = mismatch_control.Apply(mismatch);
   require(!mismatch_result.accepted, "start for another Product session must be rejected");
   require(mismatch_result.reason == "exploration_product_session_mismatch",
@@ -103,7 +167,7 @@ void testStartRequiresVerifiedProductSession() {
 void testStartAndIdempotency() {
   ExploreControl control;
   auto start = request("start-1", ExplorationCommandKind::kStart);
-  start.session_id = "session-a";
+  start.product_session_id = "session-a";
   const auto accepted = control.Apply(start);
   require(accepted.accepted, "start must be accepted with fresh inputs");
   require(accepted.reason == "exploration_start_admitted", "start admission reason");
@@ -111,7 +175,7 @@ void testStartAndIdempotency() {
   require(accepted.reset_planner, "start must reset planner state");
   require(accepted.clear_history, "start must clear prior history");
   require(control.running(), "start must enter running state");
-  require(control.session_id() == "session-a", "requested session must be retained");
+  require(control.product_session_id() == "session-a", "requested session must be retained");
   require(control.exploration_run_id() == kRunA, "active run identity must be retained");
 
   const auto duplicate = control.Apply(start);
@@ -129,20 +193,20 @@ void testStartAndIdempotency() {
           "duplicate run mismatch reason");
 
   auto empty_session_retry = start;
-  empty_session_retry.session_id.clear();
+  empty_session_retry.product_session_id.clear();
   const auto empty_session_result = control.Apply(empty_session_retry);
   require(!empty_session_result.accepted && empty_session_result.duplicate,
           "duplicate start with an empty session must be rejected");
-  require(empty_session_result.reason == "exploration_session_id_empty",
+  require(empty_session_result.reason == "exploration_product_session_id_empty",
           "duplicate empty session reason");
 
   auto rebound_retry = start;
-  rebound_retry.session_id = "session-b";
-  rebound_retry.expected_session_id = "session-b";
+  rebound_retry.product_session_id = "session-b";
+  rebound_retry.expected_product_session_id = "session-b";
   const auto rebound_result = control.Apply(rebound_retry);
   require(!rebound_result.accepted && rebound_result.duplicate,
           "request id must not be rebound to another Product session");
-  require(rebound_result.reason == "duplicate_request_id_session_mismatch",
+  require(rebound_result.reason == "duplicate_request_id_product_session_mismatch",
           "duplicate session mismatch reason");
 
   auto mismatch = start;
@@ -152,10 +216,10 @@ void testStartAndIdempotency() {
   require(mismatch_result.reason == "duplicate_request_id_kind_mismatch", "mismatch reason");
 
   auto conflicting = request("start-2", ExplorationCommandKind::kStart);
-  conflicting.session_id = "session-b";
-  conflicting.expected_session_id = "session-b";
+  conflicting.product_session_id = "session-b";
+  conflicting.expected_product_session_id = "session-b";
   conflicting.exploration_run_id = kRunB;
-  require(control.Apply(conflicting).reason == "exploration_session_conflict",
+  require(control.Apply(conflicting).reason == "exploration_product_session_conflict",
           "active session replacement must be rejected");
 
   auto same_session_new_run = request("start-3", ExplorationCommandKind::kStart);
@@ -228,16 +292,39 @@ void testInputAndStopInProgressGates() {
           "start must not race an outstanding cancellation");
 }
 
+void testEventBackpressureCanBeRetried() {
+  ExploreControl control;
+  require(control.Apply(request("start-backpressure", ExplorationCommandKind::kStart)).accepted,
+          "backpressure retry setup start");
+
+  auto stop = request("stop-backpressure", ExplorationCommandKind::kStop);
+  stop.goal_pending = true;
+  stop.event_capacity_ready = false;
+  const auto blocked = control.Apply(stop);
+  require(!blocked.accepted && !blocked.duplicate,
+          "full lifecycle outbox must reject without mutating control state");
+  require(blocked.reason == "exploration_event_outbox_backpressure",
+          "backpressure rejection reason");
+  require(control.running(), "backpressure must leave the active run untouched");
+
+  stop.event_capacity_ready = true;
+  const auto retried = control.Apply(stop);
+  require(retried.accepted && !retried.duplicate,
+          "the same STOP request must be admitted after outbox recovery");
+  require(retried.request_cancel, "recovered STOP must request physical cancellation");
+  require(!control.active(), "admitted STOP must disable further planning");
+}
+
 void testPauseResumeAndStop() {
   ExploreControl control;
   auto start = request("start", ExplorationCommandKind::kStart);
   require(control.Apply(start).accepted, "start setup");
 
   auto foreign_pause = request("pause-foreign", ExplorationCommandKind::kPause);
-  foreign_pause.session_id = "session-b";
+  foreign_pause.product_session_id = "session-b";
   const auto foreign_pause_result = control.Apply(foreign_pause);
   require(!foreign_pause_result.accepted, "foreign session must not pause the active task");
-  require(foreign_pause_result.reason == "exploration_session_mismatch",
+  require(foreign_pause_result.reason == "exploration_product_session_mismatch",
           "foreign pause session mismatch reason");
   require(control.running(), "foreign pause must not change the active task");
 
@@ -269,10 +356,10 @@ void testPauseResumeAndStop() {
   require(control.paused(), "early resume must preserve pausing state");
 
   auto foreign_resume = request("resume-foreign", ExplorationCommandKind::kResume);
-  foreign_resume.session_id = "session-b";
+  foreign_resume.product_session_id = "session-b";
   const auto foreign_resume_result = control.Apply(foreign_resume);
   require(!foreign_resume_result.accepted, "foreign session must not resume the active task");
-  require(foreign_resume_result.reason == "exploration_session_mismatch",
+  require(foreign_resume_result.reason == "exploration_product_session_mismatch",
           "foreign resume session mismatch reason");
   require(control.paused(), "foreign resume must preserve paused state");
 
@@ -283,11 +370,11 @@ void testPauseResumeAndStop() {
   require(control.running(), "resume must restore running state");
 
   auto foreign_stop = request("stop-foreign", ExplorationCommandKind::kStop);
-  foreign_stop.session_id = "session-b";
+  foreign_stop.product_session_id = "session-b";
   foreign_stop.goal_pending = true;
   const auto foreign_stop_result = control.Apply(foreign_stop);
   require(!foreign_stop_result.accepted, "foreign session must not stop the active task");
-  require(foreign_stop_result.reason == "exploration_session_mismatch",
+  require(foreign_stop_result.reason == "exploration_product_session_mismatch",
           "foreign stop session mismatch reason");
   require(!foreign_stop_result.request_cancel,
           "foreign stop must not cancel the active session's goal");
@@ -323,11 +410,11 @@ void testPauseResumeAndStop() {
 void testDirectedTargetLifecycle() {
   ExploreControl control;
   auto start = request("start-directed", ExplorationCommandKind::kStart);
-  start.session_id = "session-a";
+  start.product_session_id = "session-a";
   require(control.Apply(start).accepted, "directed start setup");
 
   auto set = request("directed-set", ExplorationCommandKind::kSetDirectedTarget);
-  set.session_id = "session-a";
+  set.product_session_id = "session-a";
   set.has_directed_target = true;
   set.directed_target_x = 42.0;
   set.directed_target_y = -3.0;
@@ -348,6 +435,28 @@ void testDirectedTargetLifecycle() {
   require(!duplicate.set_directed_target, "set retry must not repeat action");
   require(duplicate.intent_revision == 7U, "set retry must retain intent revision");
 
+  const auto require_payload_mismatch = [&control, &set](auto mutate,
+                                                          const std::string &message) {
+    auto changed = set;
+    mutate(changed);
+    const auto result = control.Apply(changed);
+    require(!result.accepted && result.duplicate, message);
+    require(result.reason == "duplicate_request_id_directed_target_mismatch",
+            "changed directed target retry must report a payload mismatch");
+  };
+  require_payload_mismatch(
+      [](ExplorationControlRequest &changed) { changed.has_directed_target = false; },
+      "request id must not be rebound to another directed target presence");
+  require_payload_mismatch(
+      [](ExplorationControlRequest &changed) { changed.directed_target_x += 1.0; },
+      "request id must not be rebound to another directed target x coordinate");
+  require_payload_mismatch(
+      [](ExplorationControlRequest &changed) { changed.directed_target_y -= 1.0; },
+      "request id must not be rebound to another directed target y coordinate");
+  require_payload_mismatch(
+      [](ExplorationControlRequest &changed) { changed.directed_target_ttl_s += 1.0; },
+      "request id must not be rebound to another directed target ttl");
+
   control.RecordIntentOutcome(set.request_id, false, "directed_target_clock_invalid", 8U);
   const auto rejected_retry = control.Apply(set);
   require(!rejected_retry.accepted && rejected_retry.duplicate,
@@ -358,10 +467,10 @@ void testDirectedTargetLifecycle() {
 
   auto wrong_session =
       request("directed-wrong-session", ExplorationCommandKind::kSetDirectedTarget);
-  wrong_session.session_id = "session-b";
+  wrong_session.product_session_id = "session-b";
   wrong_session.has_directed_target = true;
   wrong_session.directed_target_ttl_s = 30.0;
-  require(control.Apply(wrong_session).reason == "directed_target_session_mismatch",
+  require(control.Apply(wrong_session).reason == "directed_target_product_session_mismatch",
           "directed target must stay within its exploration session");
 
   auto wrong_run = request("directed-wrong-run", ExplorationCommandKind::kSetDirectedTarget);
@@ -372,7 +481,7 @@ void testDirectedTargetLifecycle() {
           "directed target must stay within its exploration run");
 
   auto stale_snapshot = request("directed-no-snapshot", ExplorationCommandKind::kSetDirectedTarget);
-  stale_snapshot.session_id = "session-a";
+  stale_snapshot.product_session_id = "session-a";
   stale_snapshot.has_directed_target = true;
   stale_snapshot.directed_target_ttl_s = 30.0;
   stale_snapshot.snapshot_ready = false;
@@ -380,21 +489,33 @@ void testDirectedTargetLifecycle() {
           "directed target requires a fresh snapshot");
 
   auto clear = request("directed-clear", ExplorationCommandKind::kClearDirectedTarget);
-  clear.session_id = "session-a";
+  clear.product_session_id = "session-a";
   const auto cleared = control.Apply(clear);
   require(cleared.accepted && cleared.clear_directed_target,
           "clear must remove the directed target");
+
+  auto clear_retry = clear;
+  clear_retry.has_directed_target = true;
+  clear_retry.directed_target_x = 123.0;
+  clear_retry.directed_target_y = 456.0;
+  clear_retry.directed_target_ttl_s = 789.0;
+  const auto duplicate_clear = control.Apply(clear_retry);
+  require(duplicate_clear.accepted && duplicate_clear.duplicate,
+          "clear retry must ignore unrelated directed target fields");
 }
 
 }  // namespace
 
 int main() {
+  testProductSessionStatusFileFallbackContract();
+  testProductIdentityStatusContract();
   testStrictValidation();
   testStartRequiresVerifiedProductSession();
   testStartAndIdempotency();
   testCompletionClosesExecutionWithoutAutoResume();
   testLastStartReplaySurvivesAckCacheChurn();
   testInputAndStopInProgressGates();
+  testEventBackpressureCanBeRetried();
   testPauseResumeAndStop();
   testDirectedTargetLifecycle();
   std::cout << "test_explore_control passed\n";

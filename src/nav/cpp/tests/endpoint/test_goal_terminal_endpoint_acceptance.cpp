@@ -9,8 +9,8 @@
 #include <utility>
 #include <vector>
 
-#include "motion/motion_stop_coordinator.hpp"
-#include "plan/goal_replan_runtime_coordinator.hpp"
+#include "safety/stop.hpp"
+#include "runtime/goal/runtime.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
 
@@ -35,7 +35,7 @@ using lingtu::nav::endpoint::GoalReplanRuntimeResult;
 using lingtu::nav::endpoint::GoalTerminalStatusDelivery;
 using lingtu::nav::endpoint::advanceShutdownTransaction;
 using lingtu::nav::endpoint::MotionStopActions;
-using lingtu::nav::endpoint::MotionStopCoordinator;
+using lingtu::nav::endpoint::MotionStopBarrier;
 using lingtu::nav::endpoint::MotionStopTerminalBarrierResult;
 using lingtu::nav::endpoint::MotionStopTerminalCommit;
 using lingtu::nav::endpoint::NavigationGoalStatusOutbox;
@@ -97,7 +97,7 @@ struct EstopEndpointResult {
 };
 
 struct Fixture {
-  lingtu::nav::plan::MapIdentity map_identity{"field", 7, "sha256-a", "map"};
+  lingtu::nav::plan::MapIdentity map_identity{"field", 7, "map"};
   bool writes_allowed{true};
   std::vector<std::string> order;
   std::vector<GoalPlanStatus> observed;
@@ -114,7 +114,7 @@ struct Fixture {
   std::vector<StopConfirmationState> confirmation_results{StopConfirmationState::Confirmed};
   NavigationGoalStatusOutbox outbox;
   GoalPlanController goal_plan;
-  MotionStopCoordinator motion_stop;
+  MotionStopBarrier motion_stop;
   GoalReplanRuntimeCoordinator runtime;
   GoalTerminalStatusDelivery delivery;
 
@@ -189,7 +189,7 @@ struct Fixture {
       estop_latched = false;
       return true;
     };
-    actions.resume_autonomy = [] { return true; };
+    actions.resume_control = [] { return true; };
     actions.cancel_inspection = [this](const std::string &reason) {
       order.emplace_back("cancel_inspection:" + reason);
     };

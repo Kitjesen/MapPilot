@@ -3,7 +3,7 @@
 #include <cmath>
 #include <optional>
 
-#include "frame_transform.hpp"
+#include "dds/frame.hpp"
 
 namespace lingtu::nav::endpoint {
 
@@ -15,7 +15,7 @@ struct TraversabilityPose {
   double pitch{0.0};
   double yaw{0.0};
   double stamp_s{0.0};
-  lingtu_dds_Quaternion rotation{};
+  Quaternion rotation{};
 };
 
 inline std::optional<TraversabilityPose> traversabilityPose(const RigidTransform &transform) {
@@ -63,6 +63,31 @@ inline std::optional<nav_kernel::Vec3>
 traversabilitySensorOrigin(const RigidTransform &transform, const nav_kernel::Vec3 &sensor_offset) {
   const auto pose = traversabilityPose(transform);
   return pose ? traversabilitySensorOrigin(*pose, sensor_offset) : std::nullopt;
+}
+
+inline bool pointInsideRobotSelfFilterBody(const nav_kernel::Vec3 &body_point,
+                                           double vehicle_length_m, double vehicle_width_m,
+                                           double padding_m) {
+  if (!std::isfinite(body_point.x) || !std::isfinite(body_point.y) ||
+      !std::isfinite(body_point.z) || !std::isfinite(vehicle_length_m) ||
+      !std::isfinite(vehicle_width_m) || !std::isfinite(padding_m) ||
+      vehicle_length_m <= 0.0 || vehicle_width_m <= 0.0 || padding_m < 0.0) {
+    return false;
+  }
+  const double half_length = 0.5 * vehicle_length_m + padding_m;
+  const double half_width = 0.5 * vehicle_width_m + padding_m;
+  return std::abs(body_point.x) <= half_length && std::abs(body_point.y) <= half_width;
+}
+
+inline bool pointInsideRobotSelfFilter(const RigidTransform &map_body,
+                                       const nav_kernel::Vec3 &map_point,
+                                       double vehicle_length_m, double vehicle_width_m,
+                                       double padding_m) {
+  if (!map_body.valid || !quaternionIsFiniteAndNonzero(map_body.rotation)) {
+    return false;
+  }
+  return pointInsideRobotSelfFilterBody(transformPoint(inverseTransform(map_body), map_point),
+                                        vehicle_length_m, vehicle_width_m, padding_m);
 }
 
 }  // namespace lingtu::nav::endpoint

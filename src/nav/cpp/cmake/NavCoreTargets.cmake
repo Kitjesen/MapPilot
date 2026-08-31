@@ -8,9 +8,11 @@ get_filename_component(LINGTU_SRC_ROOT
   "${LINGTU_NAV_ROOT}/.." ABSOLUTE)
 
 set(LINGTU_NAV_INCLUDE_DIR "${LINGTU_NAV_CPP_ROOT}/include")
-set(LINGTU_NAV_LOCAL_CPP_DIR "${LINGTU_NAV_CPP_ROOT}/planning/local")
-set(LINGTU_NAV_PLAN_CPP_DIR "${LINGTU_NAV_CPP_ROOT}/engine")
-set(LINGTU_NAV_GLOBAL_CPP_DIR "${LINGTU_NAV_CPP_ROOT}/planning/global")
+set(LINGTU_NAV_LOCAL_PLANNING_DIR "${LINGTU_NAV_CPP_ROOT}/planning/local")
+set(LINGTU_NAV_GLOBAL_PLANNING_DIR "${LINGTU_NAV_CPP_ROOT}/planning/global")
+set(LINGTU_NAV_TRACKING_DIR "${LINGTU_NAV_CPP_ROOT}/tracking")
+set(LINGTU_NAV_TRAJECTORY_DIR "${LINGTU_NAV_CPP_ROOT}/trajectory")
+set(LINGTU_NAV_NAVIGATION_DIR "${LINGTU_NAV_CPP_ROOT}/navigation")
 set(LINGTU_NAV_CLIENT_CPP_DIR "${LINGTU_NAV_CPP_ROOT}/client")
 set(LINGTU_NAV_TESTS_DIR "${LINGTU_NAV_CPP_ROOT}/tests")
 
@@ -34,12 +36,11 @@ find_package(OpenMP QUIET)
 
 if(NOT TARGET lingtu_nav_far)
   add_library(lingtu_nav_far STATIC
-    "${LINGTU_NAV_GLOBAL_CPP_DIR}/far/far_planner.cpp")
+    "${LINGTU_NAV_GLOBAL_PLANNING_DIR}/far/planner.cpp")
   add_library(LingTuNav::far ALIAS lingtu_nav_far)
   target_compile_features(lingtu_nav_far PUBLIC cxx_std_17)
   target_include_directories(lingtu_nav_far PUBLIC
-    "$<BUILD_INTERFACE:${LINGTU_NAV_GLOBAL_CPP_DIR}>"
-    "$<INSTALL_INTERFACE:include/nav/global>")
+    "$<BUILD_INTERFACE:${LINGTU_NAV_CPP_ROOT}>")
   set_target_properties(lingtu_nav_far PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
   target_compile_options(lingtu_nav_far PRIVATE
@@ -50,12 +51,11 @@ endif()
 
 if(NOT TARGET lingtu_nav_far_c_api)
   add_library(lingtu_nav_far_c_api SHARED
-    "${LINGTU_NAV_GLOBAL_CPP_DIR}/far/far_c_api.cpp")
+    "${LINGTU_NAV_GLOBAL_PLANNING_DIR}/far/api.cpp")
   add_library(LingTuNav::far_c_api ALIAS lingtu_nav_far_c_api)
   target_compile_features(lingtu_nav_far_c_api PUBLIC cxx_std_17)
   target_include_directories(lingtu_nav_far_c_api PUBLIC
-    "$<BUILD_INTERFACE:${LINGTU_NAV_GLOBAL_CPP_DIR}>"
-    "$<INSTALL_INTERFACE:include/nav/global>")
+    "$<BUILD_INTERFACE:${LINGTU_NAV_CPP_ROOT}>")
   target_link_libraries(lingtu_nav_far_c_api PRIVATE lingtu_nav_far)
   target_compile_definitions(lingtu_nav_far_c_api PRIVATE
     LINGTU_NAV_FAR_C_API_BUILD)
@@ -64,59 +64,94 @@ if(NOT TARGET lingtu_nav_far_c_api)
   lingtu_nav_enable_performance(lingtu_nav_far_c_api)
 endif()
 
-# Kept as a CMake variable during the include-path migration. There is no
-# longer a C++ source tree under src/nav/kernel.
+# Shared navigation source root consumed by endpoint and test targets.
 set(LINGTU_NAV_KERNEL_DIR "${LINGTU_NAV_CPP_ROOT}")
 
+if(NOT TARGET lingtu_nav_spline)
+  add_library(lingtu_nav_spline STATIC
+    "${LINGTU_NAV_TRAJECTORY_DIR}/spline.cpp")
+  target_compile_features(lingtu_nav_spline PUBLIC cxx_std_17)
+  target_include_directories(lingtu_nav_spline PUBLIC
+    "$<BUILD_INTERFACE:${LINGTU_NAV_CPP_ROOT}>"
+    "$<BUILD_INTERFACE:${LINGTU_NAV_INCLUDE_DIR}>")
+  set_target_properties(lingtu_nav_spline PROPERTIES
+    POSITION_INDEPENDENT_CODE ON)
+  target_compile_options(lingtu_nav_spline PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
+  lingtu_nav_enable_performance(lingtu_nav_spline)
+endif()
+
 if(NOT TARGET lingtu_nav_local_planner)
-  add_library(lingtu_nav_local_planner INTERFACE)
+  add_library(lingtu_nav_local_planner STATIC
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/planner.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/task.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/cmu/backend.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/anchors.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/backend.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/grid.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/optimizer.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/search.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/seed.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/spline.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/recovery.cpp")
   add_library(LingTuNav::local_planner ALIAS lingtu_nav_local_planner)
   add_library(local_planner_cpp ALIAS lingtu_nav_local_planner)
-  target_compile_features(lingtu_nav_local_planner INTERFACE cxx_std_17)
-  target_include_directories(lingtu_nav_local_planner INTERFACE
-    "$<BUILD_INTERFACE:${LINGTU_NAV_LOCAL_CPP_DIR}>"
-    "$<BUILD_INTERFACE:${LINGTU_NAV_INCLUDE_DIR}>"
-    "$<INSTALL_INTERFACE:include>")
-  target_compile_options(lingtu_nav_local_planner INTERFACE
-    $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+  target_compile_features(lingtu_nav_local_planner PUBLIC cxx_std_17)
+  target_include_directories(lingtu_nav_local_planner PUBLIC
+    "$<BUILD_INTERFACE:${LINGTU_NAV_CPP_ROOT}>"
+    "$<BUILD_INTERFACE:${LINGTU_NAV_INCLUDE_DIR}>")
+  find_package(Threads REQUIRED)
+  target_link_libraries(lingtu_nav_local_planner PUBLIC Threads::Threads lingtu_nav_spline)
+  set_target_properties(lingtu_nav_local_planner PROPERTIES
+    POSITION_INDEPENDENT_CODE ON)
+  target_compile_options(lingtu_nav_local_planner PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
   if(OpenMP_CXX_FOUND)
-    target_link_libraries(lingtu_nav_local_planner INTERFACE
+    target_link_libraries(lingtu_nav_local_planner PUBLIC
       OpenMP::OpenMP_CXX)
   endif()
+  lingtu_nav_enable_performance(lingtu_nav_local_planner)
 endif()
 
-if(NOT TARGET lingtu_nav_path_follower)
-  add_library(lingtu_nav_path_follower STATIC
-    "${LINGTU_NAV_CPP_ROOT}/control/path_follower_core.cpp")
-  add_library(LingTuNav::path_follower ALIAS lingtu_nav_path_follower)
-  target_compile_features(lingtu_nav_path_follower PUBLIC cxx_std_17)
-  target_include_directories(lingtu_nav_path_follower PUBLIC
-    "$<BUILD_INTERFACE:${LINGTU_NAV_INCLUDE_DIR}>"
-    "$<INSTALL_INTERFACE:include>")
-  set_target_properties(lingtu_nav_path_follower PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
-  target_compile_options(lingtu_nav_path_follower PRIVATE
-    $<$<CXX_COMPILER_ID:MSVC>:/W4>
-    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
-  lingtu_nav_enable_performance(lingtu_nav_path_follower)
-endif()
-
-if(NOT TARGET lingtu_nav_plan_loop)
-  add_library(lingtu_nav_plan_loop STATIC
-    "${LINGTU_NAV_PLAN_CPP_DIR}/nav_loop.cpp")
-  add_library(LingTuNav::plan_loop ALIAS lingtu_nav_plan_loop)
-  target_compile_features(lingtu_nav_plan_loop PUBLIC cxx_std_17)
-  target_include_directories(lingtu_nav_plan_loop PUBLIC
-    "$<BUILD_INTERFACE:${LINGTU_NAV_PLAN_CPP_DIR}>"
-    "$<BUILD_INTERFACE:${LINGTU_NAV_LOCAL_CPP_DIR}>"
+if(NOT TARGET lingtu_nav_follower)
+  add_library(lingtu_nav_follower STATIC
+    "${LINGTU_NAV_TRACKING_DIR}/follower.cpp")
+  add_library(LingTuNav::follower ALIAS lingtu_nav_follower)
+  target_compile_features(lingtu_nav_follower PUBLIC cxx_std_17)
+  target_include_directories(lingtu_nav_follower PUBLIC
+    "$<BUILD_INTERFACE:${LINGTU_NAV_CPP_ROOT}>"
     "$<BUILD_INTERFACE:${LINGTU_NAV_INCLUDE_DIR}>")
-  target_link_libraries(lingtu_nav_plan_loop PUBLIC
-    lingtu_nav_path_follower
-    lingtu_nav_local_planner)
-  set_target_properties(lingtu_nav_plan_loop PROPERTIES
+  target_link_libraries(lingtu_nav_follower PRIVATE lingtu_nav_spline)
+  set_target_properties(lingtu_nav_follower PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
-  target_compile_options(lingtu_nav_plan_loop PRIVATE
+  target_compile_options(lingtu_nav_follower PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
-  lingtu_nav_enable_performance(lingtu_nav_plan_loop)
+  lingtu_nav_enable_performance(lingtu_nav_follower)
+endif()
+
+if(NOT TARGET lingtu_nav_navigation)
+  add_library(lingtu_nav_navigation STATIC
+    "${LINGTU_NAV_NAVIGATION_DIR}/executor.cpp"
+    "${LINGTU_NAV_NAVIGATION_DIR}/recovery.cpp"
+    "${LINGTU_NAV_NAVIGATION_DIR}/route.cpp"
+    "${LINGTU_NAV_NAVIGATION_DIR}/state.cpp")
+  add_library(LingTuNav::navigation ALIAS lingtu_nav_navigation)
+  target_compile_features(lingtu_nav_navigation PUBLIC cxx_std_17)
+  target_include_directories(lingtu_nav_navigation PUBLIC
+    "$<BUILD_INTERFACE:${LINGTU_NAV_CPP_ROOT}>"
+    "$<BUILD_INTERFACE:${LINGTU_NAV_INCLUDE_DIR}>")
+  target_link_libraries(lingtu_nav_navigation PUBLIC
+    lingtu_nav_follower
+    lingtu_nav_local_planner)
+  set_target_properties(lingtu_nav_navigation PROPERTIES
+    POSITION_INDEPENDENT_CODE ON)
+  target_compile_options(lingtu_nav_navigation PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
+  lingtu_nav_enable_performance(lingtu_nav_navigation)
 endif()

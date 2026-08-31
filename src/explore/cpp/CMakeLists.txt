@@ -22,19 +22,17 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 # ── idlc-generated C type bindings (optional) ──────────────────────────
-# The build system (scripts/build/build_explore_kernel.sh) runs idlc on
-# explore_types.idl and places the generated .c/.h in the generated/ dir.
-# Only explore_types.c is compiled (self-contained for TARE types);
-# lingtu_slam.c has duplicate symbol definitions that would cause errors.
-set(LINGTU_DDS_GEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../message/cpp/generated")
+# The build system generates the shared LingTu IDL into this directory.
+set(LINGTU_DDS_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/dds_generated"
+  CACHE PATH "Directory containing generated Explore DDS C bindings")
 
-if(EXISTS "${LINGTU_DDS_GEN_DIR}/explore_types.c")
-  message(STATUS "idlc generated source: explore_types.c")
-  target_sources(lingtu_explore_core PRIVATE "${LINGTU_DDS_GEN_DIR}/explore_types.c")
+if(EXISTS "${LINGTU_DDS_GEN_DIR}/messages.c")
+  message(STATUS "idlc generated source: messages.c")
+  target_sources(lingtu_explore_core PRIVATE "${LINGTU_DDS_GEN_DIR}/messages.c")
   target_include_directories(lingtu_explore_core PUBLIC
     $<BUILD_INTERFACE:${LINGTU_DDS_GEN_DIR}>)
 else()
-  message(STATUS "idlc generated explore_types.c not found in ${LINGTU_DDS_GEN_DIR} (DDS types unavailable)")
+  message(STATUS "idlc generated messages.c not found in ${LINGTU_DDS_GEN_DIR} (DDS types unavailable)")
 endif()
 
 # ── Optional CycloneDDS transport ────────────────────────────────────────
@@ -49,7 +47,7 @@ if(LINGTU_EXPLORE_CPP_WITH_DDS)
     message(STATUS "CycloneDDS found: ${CycloneDDS_DIR}")
     target_compile_definitions(lingtu_explore_core PUBLIC LINGTU_EXPLORE_HAS_DDS)
     target_link_libraries(lingtu_explore_core PUBLIC CycloneDDS::ddsc)
-    # The repo root contains message/cpp/ (dds_topics.hpp, dds_qos_profiles.hpp).
+    # The repo root contains message/cpp/ (topics.hpp, qos.hpp).
     target_include_directories(lingtu_explore_core PUBLIC
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../..>)
   else()

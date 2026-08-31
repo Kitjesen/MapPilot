@@ -6,7 +6,10 @@
 #include <string>
 #include <vector>
 
-#include "nav_endpoint_messages.hpp"
+#include "dds/codec.hpp"
+#include "input/planner.hpp"
+#include "safety/command.hpp"
+#include "status/nav_status_writer.hpp"
 
 namespace {
 
@@ -16,45 +19,53 @@ void require(bool condition, const char *message) {
   }
 }
 
-void testTerrainExtDefaultZeroShareDoesNotEnterPlannerObstacles() {
-  const std::vector<float> ext_only{
-      1.0f, 0.0f, 0.4f, -0.4f, 2.0f, 0.0f, 0.5f, 0.5f,
-  };
+void testCmuPlannerInputPrefersFreshTerrainAndFallsBackToRegisteredScan() {
+  using namespace lingtu::nav::endpoint;
+  TraversabilityGrid traversability;
+  double traversability_received_s = 0.0;
+  const std::vector<float> registered{1.0f, 0.0f, 0.2f, 0.2f};
+  const std::vector<float> predicted{4.0f, 0.0f, 0.5f, 0.5f};
+  const std::vector<float> terrain{2.0f, 0.0f, 0.3f, 0.3f};
+  double terrain_received_s = 10.0;
+  const std::vector<float> terrain_ext{3.0f, 0.0f, 0.4f, 0.4f};
+  double terrain_ext_received_s = 10.0;
+  std::vector<float> planner_obstacles;
+  PlanData data{traversability,
+                traversability_received_s,
+                registered,
+                predicted,
+                terrain,
+                terrain_received_s,
+                terrain_ext,
+                terrain_ext_received_s,
+                planner_obstacles};
+  PlanConfig config;
+  config.check_obstacle = true;
+  config.terrain_max_age_s = 1.0;
+  config.max_obstacle_points = 100;
+  config.use_terrain_cloud = true;
+  TimingDiagnostics timing;
 
-  std::vector<float> out;
-  lingtu::nav::endpoint::buildPlannerObstacleCloud(out, {}, {}, false, ext_only, true, 100, {});
-  require(out.empty(), "terrain_map_ext default zero share must preserve prior behavior");
-}
+  const PlanView view = makePlanView(config, data, 10.1, timing, false);
+  require(view.obstacles != nullptr, "CMU planner obstacle view must exist");
+  require(view.terrain_selected, "fresh CMU terrain must replace the registered scan");
+  const std::vector<float> expected_terrain{2.0f, 0.0f, 0.3f, 0.3f,
+                                            4.0f, 0.0f, 0.5f, 0.5f};
+  require(*view.obstacles == expected_terrain,
+          "CMU terrain input must retain dynamic predicted obstacles");
 
-void testFreshTerrainExtEntersPlannerObstaclesWhenEnabled() {
-  const std::vector<float> ext_only{
-      1.0f, 0.0f, 0.4f, 0.4f, 2.0f, 0.0f, 0.5f, 0.5f,
-  };
-  lingtu::nav::endpoint::ObstacleMergeConfig config;
-  config.registered_share = 0.0;
-  config.terrain_share = 0.0;
-  config.terrain_ext_share = 1.0;
+  terrain_received_s = 8.0;
+  const PlanView stale = makePlanView(config, data, 10.1, timing, false);
+  const std::vector<float> expected_fallback{1.0f, 0.0f, 0.2f, 0.2f,
+                                             4.0f, 0.0f, 0.5f, 0.5f};
+  require(!stale.terrain_selected && *stale.obstacles == expected_fallback,
+          "stale terrain must fall back to the registered scan");
 
-  std::vector<float> out;
-  lingtu::nav::endpoint::buildPlannerObstacleCloud(out, {}, {}, false, ext_only, true, 100, config);
-  require(out.size() == ext_only.size(),
-          "enabled fresh terrain_map_ext must enter planner obstacles");
-
-  lingtu::nav::endpoint::buildPlannerObstacleCloud(out, {}, {}, false, ext_only, false, 100,
-                                                   config);
-  require(out.empty(), "stale terrain_map_ext must not enter planner obstacles");
-}
-
-void testCleanTerrainStillEntersPlannerObstacles() {
-  const std::vector<float> terrain{
-      1.0f,
-      0.0f,
-      0.4f,
-      0.4f,
-  };
-  std::vector<float> out;
-  lingtu::nav::endpoint::buildPlannerObstacleCloud(out, {}, terrain, true, {}, false, 100, {});
-  require(out.size() == 4, "fresh clean terrain must remain a planner obstacle source");
+  terrain_received_s = 10.0;
+  config.use_terrain_cloud = false;
+  const PlanView disabled = makePlanView(config, data, 10.1, timing, false);
+  require(!disabled.terrain_selected && *disabled.obstacles == expected_fallback,
+          "non-CMU planners must keep the registered scan input");
 }
 
 lingtu_dds_Header header(const char *frame, double stamp = 10.0) {
@@ -75,19 +86,6 @@ lingtu::nav::endpoint::RigidTransform mapOdom() {
 }
 
 void testCanonicalFrameDecoders() {
-  std::vector<lingtu_dds_PoseStamped> poses(2);
-  poses[0].pose.position.x = 1.0;
-  poses[1].pose.position.x = 2.0;
-  lingtu_dds_Path path_msg{};
-  path_msg.header = header("odom");
-  path_msg.poses._length = static_cast<std::uint32_t>(poses.size());
-  path_msg.poses._maximum = path_msg.poses._length;
-  path_msg.poses._buffer = poses.data();
-  const auto path = lingtu::nav::endpoint::decodePath(path_msg, mapOdom());
-  require(path.ok(), "odom path with map<-odom TF must decode");
-  require(path.value.size() == 2, "decoded path size must be preserved");
-  require(std::abs(path.value[0].x - 11.0) < 1e-9, "odom path must transform to map");
-
   lingtu_dds_PoseStamped goal_msg{};
   goal_msg.header = header("odom");
   goal_msg.pose.position.x = 3.0;
@@ -96,11 +94,16 @@ void testCanonicalFrameDecoders() {
   const auto goal = lingtu::nav::endpoint::decodeGoal(goal_msg, mapOdom());
   require(goal.ok(), "odom goal with map<-odom TF must decode");
   require(std::abs(goal.value.position.x - 13.0) < 1e-9, "odom goal must transform to map");
-  require(std::abs(goal.value.yaw - 0.5) < 1e-9, "goal yaw must be preserved");
+  require(goal.value.yaw && std::abs(*goal.value.yaw - 0.5) < 1e-9,
+          "goal yaw must be preserved");
 
-  path_msg.header = header("camera_link");
-  require(!lingtu::nav::endpoint::decodePath(path_msg, mapOdom()).ok(),
-          "unsupported path frame must fail closed");
+  lingtu_dds_PoseStamped position_only_goal{};
+  position_only_goal.header = header("map");
+  position_only_goal.pose.position.x = 4.0;
+  const auto position_only =
+      lingtu::nav::endpoint::decodeGoal(position_only_goal, std::nullopt);
+  require(position_only.ok(), "zero quaternion must encode a position-only goal");
+  require(!position_only.value.yaw, "position-only goal must not request final yaw alignment");
 
   std::vector<std::uint8_t> grid_data(4, 0);
   lingtu_dds_OccupancyGrid grid_msg{};
@@ -122,17 +125,6 @@ void testCanonicalFrameDecoders() {
           "teleop twist outside the body frame must fail closed");
   twist_msg.header = header("base_link");
   require(lingtu::nav::endpoint::decodeTwist(twist_msg).ok(), "body twist must decode");
-}
-
-void testPathEchoUsesStampAndContent() {
-  const std::vector<nav_kernel::Vec3> own{{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
-  const std::vector<nav_kernel::Vec3> external{{0.0, 0.0, 0.0}, {0.0, 1.0, 0.0}};
-  lingtu::nav::endpoint::PathEcho echo;
-  echo.arm(own, 10.0);
-  require(!echo.take(external, 10.0, 10.1), "same-size external path must not be suppressed");
-  require(!echo.take(own, 11.0, 11.1), "different-stamp path must not be suppressed");
-  require(echo.take(own, 10.0, 11.2), "matching self echo must be suppressed");
-  require(!echo.take(own, 10.0, 11.3), "self echo must be consumed once");
 }
 
 void testSourceStampValidationRejectsReplayAndFutureCommands() {
@@ -214,19 +206,104 @@ void testPointCloudLayoutValidation() {
   require(std::abs(transformed[1]) < 1e-5, "body roll must rotate y out of the map plane");
   require(std::abs(transformed[2] - 2.0) < 1e-5, "body roll must affect map z");
   require(std::abs(transformed[3] - 1.0) < 1e-5, "derived height must use transformed map z");
+
+  lingtu_dds_PointField terrain_fields[4]{};
+  const char *terrain_names[4] = {"x", "y", "z", "intensity"};
+  for (int index = 0; index < 4; ++index) {
+    terrain_fields[index].name = const_cast<char *>(terrain_names[index]);
+    terrain_fields[index].offset = static_cast<std::uint32_t>(index * 4);
+    terrain_fields[index].datatype = 7;
+    terrain_fields[index].count = 1;
+  }
+  const float terrain_xyzi[4] = {1.0f, 2.0f, 3.0f, 0.42f};
+  std::vector<std::uint8_t> terrain_data(sizeof(terrain_xyzi));
+  std::memcpy(terrain_data.data(), terrain_xyzi, sizeof(terrain_xyzi));
+  lingtu_dds_PointCloud2 terrain_msg{};
+  terrain_msg.header = header("map");
+  terrain_msg.height = 1;
+  terrain_msg.width = 1;
+  terrain_msg.fields._length = 4;
+  terrain_msg.fields._maximum = 4;
+  terrain_msg.fields._buffer = terrain_fields;
+  terrain_msg.point_step = 16;
+  terrain_msg.row_step = 16;
+  terrain_msg.data._length = static_cast<std::uint32_t>(terrain_data.size());
+  terrain_msg.data._maximum = terrain_msg.data._length;
+  terrain_msg.data._buffer = terrain_data.data();
+
+  const auto ordinary =
+      lingtu::nav::endpoint::cloudToXyzh(terrain_msg, 0, std::nullopt, std::nullopt);
+  const auto terrain_height =
+      lingtu::nav::endpoint::terrainCloudToXyzh(terrain_msg, 0, std::nullopt, std::nullopt);
+  require(std::abs(ordinary[3] - 3.0f) < 1e-6f,
+          "ordinary scan intensity must not become obstacle height");
+  require(std::abs(terrain_height[3] - 0.42f) < 1e-6f,
+          "CMU terrain intensity must decode as height above ground");
+}
+
+void testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity() {
+  lingtu_dds_PointField fields[3]{};
+  const char *names[3] = {"x", "y", "z"};
+  for (int index = 0; index < 3; ++index) {
+    fields[index].name = const_cast<char *>(names[index]);
+    fields[index].offset = static_cast<std::uint32_t>(index * 4);
+    fields[index].datatype = 7;
+    fields[index].count = 1;
+  }
+  const float xyz[6] = {1.0F, 2.0F, 0.5F, 3.0F, 4.0F, 0.75F};
+  std::vector<std::uint8_t> data(sizeof(xyz));
+  std::memcpy(data.data(), xyz, sizeof(xyz));
+  lingtu_dds_MapCollisionLayer message{};
+  message.header = header("map");
+  message.reset_epoch = 4U;
+  message.observation_sequence = 9U;
+  message.generation = 12U;
+  message.live = true;
+  message.resolution = 0.10F;
+  message.aabb_min.x = -5.0;
+  message.aabb_min.y = -5.0;
+  message.aabb_min.z = -2.0;
+  message.aabb_max.x = 5.0;
+  message.aabb_max.y = 5.0;
+  message.aabb_max.z = 2.0;
+  message.complete = false;
+  message.occupied.header = header("map");
+  message.occupied.height = 1U;
+  message.occupied.width = 2U;
+  message.occupied.fields._length = 3U;
+  message.occupied.fields._maximum = 3U;
+  message.occupied.fields._buffer = fields;
+  message.occupied.point_step = 12U;
+  message.occupied.row_step = 24U;
+  message.occupied.data._length = static_cast<std::uint32_t>(data.size());
+  message.occupied.data._maximum = message.occupied.data._length;
+  message.occupied.data._buffer = data.data();
+
+  auto decoded = lingtu::nav::endpoint::decodeLocalCollisionMap(message);
+  require(decoded.ok(), "structurally valid incomplete collision layer must decode");
+  require(decoded.value.occupied_xyz.size() == 6U,
+          "collision decoder must copy every occupied center");
+  const auto view = decoded.value.view();
+  require(view.present(), "decoded collision view must be present");
+  require(!view.complete, "wire completeness flag must survive the owning copy");
+  require(view.resetEpoch == 4U && view.observationSequence == 9U &&
+              view.generation == 12U,
+          "collision identity must survive the owning copy");
+
+  message.occupied.header = header("odom");
+  decoded = lingtu::nav::endpoint::decodeLocalCollisionMap(message);
+  require(!decoded.ok(), "collision payload outside map frame must fail closed");
 }
 
 }  // namespace
 
 int main() {
-  testTerrainExtDefaultZeroShareDoesNotEnterPlannerObstacles();
-  testFreshTerrainExtEntersPlannerObstaclesWhenEnabled();
-  testCleanTerrainStillEntersPlannerObstacles();
+  testCmuPlannerInputPrefersFreshTerrainAndFallsBackToRegisteredScan();
   testCanonicalFrameDecoders();
-  testPathEchoUsesStampAndContent();
   testSourceStampValidationRejectsReplayAndFutureCommands();
   testResumeBoundaryRejectsOldMotionRequests();
   testPointCloudLayoutValidation();
+  testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity();
   std::cout << "test_nav_endpoint_messages passed\n";
   return 0;
 }

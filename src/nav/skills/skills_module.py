@@ -1,5 +1,3 @@
-# 192.168.127.10
-
 from __future__ import annotations
 
 import itertools
@@ -10,7 +8,6 @@ import time
 from collections import OrderedDict
 from typing import Any
 
-from nav.model.status import MissionStatus
 from nav.services.goals import build_goal_pose
 from runtime.module import Module, skill
 from runtime.msgs.nav import NavigationGoalStatus, NavigationState
@@ -25,9 +22,8 @@ class NavSkills(Module, layer=6):
     """Translate AI tool calls into the canonical navigation command sink."""
 
     runtime_id = "nav.skills"
-    SOFT_DEPENDS = ["nav.goals", "nav.mission"]
+    SOFT_DEPENDS = ["nav.goals", "host.bus"]
 
-    mission_status: In[MissionStatus]
     goal_status: In[dict]
     navigation_state: In[NavigationState]
     navigation_goal_status: In[NavigationGoalStatus]
@@ -37,7 +33,6 @@ class NavSkills(Module, layer=6):
     def __init__(self, planning_frame_id: str | None = None, **config: Any) -> None:
         super().__init__(**config)
         self._planning_frame_id = normalize_frame_id(planning_frame_id) or map_frame_id()
-        self._cached_status: dict[str, Any] = {}
         self._cached_navigation_state: dict[str, Any] = {}
         self._acks: dict[str, dict[str, Any]] = {}
         self._pending: set[str] = set()
@@ -47,18 +42,9 @@ class NavSkills(Module, layer=6):
         self._sequence = itertools.count(1)
 
     def setup(self) -> None:
-        self.mission_status.subscribe(self._on_mission_status)
         self.goal_status.subscribe(self._on_goal_status)
         self.navigation_state.subscribe(self._on_navigation_state)
         self.navigation_goal_status.subscribe(self._on_navigation_goal_status)
-
-    def _on_mission_status(self, status: MissionStatus) -> None:
-        if not isinstance(status, dict):
-            return
-        self._cached_status = dict(status)
-        frame = normalize_frame_id(status.get("planning_frame_id"))
-        if frame:
-            self._planning_frame_id = frame
 
     def _on_goal_status(self, status: dict) -> None:
         if not isinstance(status, dict):
@@ -112,15 +98,23 @@ class NavSkills(Module, layer=6):
         )
 
     @skill
-    def stop_navigation(self) -> str:
+    def stop_navigation(self, task_id: str) -> str:
         """Stop the active navigation mission without invoking hardware E-stop."""
-        return self._submit({"action": "cancel", "reason": "navigation_stop"})
+        task = str(task_id or "").strip()
+        if not task:
+            return self._json_rejection("cancel", "task_id_required", "task_id is required")
+        return self._submit(
+            {"action": "cancel", "task_id": task, "reason": "navigation_stop"}
+        )
 
     @skill
-    def cancel_mission(self, reason: str = "user_cancel") -> str:
+    def cancel_mission(self, task_id: str, reason: str = "user_cancel") -> str:
         """Cancel the active navigation mission."""
+        task = str(task_id or "").strip()
+        if not task:
+            return self._json_rejection("cancel", "task_id_required", "task_id is required")
         clean_reason = str(reason or "user_cancel").strip() or "user_cancel"
-        return self._submit({"action": "cancel", "reason": clean_reason})
+        return self._submit({"action": "cancel", "task_id": task, "reason": clean_reason})
 
     @skill
     def get_navigation_status(self) -> str:
@@ -130,15 +124,13 @@ class NavSkills(Module, layer=6):
             status["state"] = status.get("lifecycle_state_name", "UNKNOWN")
             status["source"] = "native_navigation_state"
             return json.dumps(status)
-        if not self._cached_status:
-            return json.dumps(
-                {
-                    "state": "UNKNOWN",
-                    "reason": "mission_status_unavailable",
-                    "planning_frame_id": self._planning_frame_id,
-                }
-            )
-        return json.dumps(self._cached_status)
+        return json.dumps(
+            {
+                "state": "UNKNOWN",
+                "reason": "navigation_state_unavailable",
+                "planning_frame_id": self._planning_frame_id,
+            }
+        )
 
     @skill
     def get_navigation_result(self, request_id: str) -> str:
@@ -174,23 +166,30 @@ class NavSkills(Module, layer=6):
         )
 
     @skill
-    def start_patrol(
+    def start_inspection(
         self,
-        waypoints: list[dict[str, Any]],
-        loop: bool = False,
+        route_id: str,
+        revision: int = 0,
     ) -> str:
-        """Submit a structured map-frame patrol route."""
-        if not isinstance(waypoints, list) or not waypoints:
+        """Start a stored native inspection route."""
+        route = str(route_id or "").strip()
+        if not route:
             return self._json_rejection(
-                "patrol",
-                "invalid_waypoints",
-                "waypoints must be a non-empty list",
+                "inspection",
+                "route_id_required",
+                "route_id is required",
+            )
+        if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+            return self._json_rejection(
+                "inspection",
+                "invalid_route_revision",
+                "revision must be a non-negative integer",
             )
         return self._submit(
             {
-                "action": "patrol",
-                "waypoints": waypoints,
-                "loop": bool(loop),
+                "action": "inspection",
+                "route_id": route,
+                "revision": revision,
             }
         )
 
@@ -229,7 +228,7 @@ class NavSkills(Module, layer=6):
                 {
                     "state": "UNKNOWN",
                     "active": False,
-                    "reason": "mission_status_unavailable",
+                    "reason": "navigation_state_unavailable",
                 }
             )
         state = str(status.get("state", "UNKNOWN"))
@@ -256,62 +255,6 @@ class NavSkills(Module, layer=6):
             }
         )
 
-    @skill
-    def navigate_relative(
-        self,
-        dx: float,
-        dy: float = 0.0,
-        dyaw: float = 0.0,
-    ) -> str:
-        """Submit a goal relative to the current robot pose.
-
-        Body-frame semantics: +dx moves forward along the current heading,
-        +dy moves to the robot's left, and dyaw (radians, CCW) rotates the
-        target heading. The offset is resolved into a map-frame goal and
-        dispatched through the same goto sink as navigate_to.
-        """
-        position = (self._cached_status or {}).get("position")
-        if not isinstance(position, dict) or position.get("x") is None:
-            return self._json_rejection("goto", "pose_unavailable", "current robot pose is not available yet")
-        try:
-            px = float(position["x"])
-            py = float(position["y"])
-            pyaw = float(position.get("yaw", 0.0))
-            fdx = float(dx)
-            fdy = float(dy)
-            fdyaw = float(dyaw)
-        except (TypeError, ValueError, KeyError) as exc:
-            return self._json_rejection("goto", "invalid_offset", str(exc))
-        cos_yaw = math.cos(pyaw)
-        sin_yaw = math.sin(pyaw)
-        target_x = px + fdx * cos_yaw - fdy * sin_yaw
-        target_y = py + fdx * sin_yaw + fdy * cos_yaw
-        return self.navigate_to(target_x, target_y, yaw=pyaw + fdyaw)
-
-    @skill
-    def get_robot_pose(self) -> str:
-        """Return the latest robot pose in the planning frame."""
-        status = self._cached_status
-        position = status.get("position") if isinstance(status, dict) else None
-        if not isinstance(position, dict) or position.get("x") is None:
-            return json.dumps(
-                {
-                    "available": False,
-                    "reason": "mission_status_unavailable",
-                    "planning_frame_id": self._planning_frame_id,
-                }
-            )
-        return json.dumps(
-            {
-                "available": True,
-                "frame_id": status.get("planning_frame_id", self._planning_frame_id),
-                "x": position.get("x"),
-                "y": position.get("y"),
-                "z": position.get("z"),
-                "yaw": position.get("yaw"),
-            }
-        )
-
     @staticmethod
     def _is_active_state(state: str) -> bool:
         return str(state).lower() in {
@@ -326,7 +269,7 @@ class NavSkills(Module, layer=6):
             status = dict(self._cached_navigation_state)
             status["state"] = status.get("lifecycle_state_name", "UNKNOWN")
             return status
-        return self._cached_status
+        return {}
 
     def _current_state_name(self) -> str:
         return str(self._current_status().get("state", "UNKNOWN"))
@@ -342,11 +285,7 @@ class NavSkills(Module, layer=6):
         """Use explicit z, then the latest robot height, then zero."""
         if z is not None:
             return float(z)
-        try:
-            position = self._cached_status.get("position", {})
-            return float(position.get("z", 0.0))
-        except (TypeError, ValueError):
-            return 0.0
+        return 0.0
 
     def _request_id(self) -> str:
         return f"nav-{time.time_ns()}-{next(self._sequence)}"

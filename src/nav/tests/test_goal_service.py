@@ -6,7 +6,6 @@ All tests are pure Python and do not require ROS2 or hardware.
 from __future__ import annotations
 
 import json
-import sqlite3
 
 import pytest
 
@@ -23,19 +22,45 @@ from runtime.msgs.nav import (
 
 @pytest.fixture
 def goal_service():
-    mod = GoalService()
+    class FakeCommands:
+        def __init__(self) -> None:
+            self.goals: list[tuple] = []
+            self.cancels: list[tuple] = []
+            self.inspections: list[tuple] = []
+
+        def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+            self.goals.append((x, y, z, yaw, task_id, request_id))
+            return NavigationCommandReceipt(
+                accepted=True,
+                kind=int(NavigationCommandKind.GOAL),
+                task_id=task_id,
+                request_id=request_id,
+                endpoint_timestamp_s=100.0,
+                reason="accepted",
+            )
+
+        def cancel_task(self, task_id, reason, *, request_id):
+            self.cancels.append((task_id, reason, request_id))
+            return NavigationCommandReceipt(
+                accepted=True,
+                kind=int(NavigationCommandKind.TASK_CANCEL),
+                task_id=task_id,
+                request_id=request_id,
+                endpoint_timestamp_s=101.0,
+                reason="cancel_requested",
+            )
+
+        def start_inspection_task(self, task_id, route_id, *, revision=0, request_id=None):
+            self.inspections.append((task_id, route_id, revision, request_id))
+            return True
+
+    commands = FakeCommands()
+    mod = GoalService(command_module="nav.commands")
+    mod.on_system_modules({"nav.commands": commands})
     mod.setup()
-    goals: list[PoseStamped] = []
-    patrols: list[list] = []
-    cancels: list[str] = []
     statuses: list[dict] = []
-    mod.goal_pose.subscribe(goals.append)
-    mod.patrol_goals.subscribe(patrols.append)
-    mod.cancel.subscribe(cancels.append)
     mod.goal_status.subscribe(statuses.append)
-    mod._test_goals = goals
-    mod._test_patrols = patrols
-    mod._test_cancels = cancels
+    mod._test_commands = commands
     mod._test_statuses = statuses
     return mod
 
@@ -48,95 +73,197 @@ def _cmd(mod: GoalService, cmd: dict) -> dict:
 
 
 class TestGoalService:
-    @pytest.mark.parametrize(
-        "legacy_column",
-        [
-            "_".join(("product", "fingerprint")),
-            "_".join(("runtime", "manifest", "fingerprint")),
-        ],
-    )
-    def test_task_ledger_migrates_legacy_runtime_identity_column(
-        self,
-        tmp_path,
-        legacy_column,
-    ):
-        db_path = tmp_path / "legacy-tasks.sqlite3"
-        with sqlite3.connect(db_path) as connection:
-            connection.execute(
-                f"""
-                CREATE TABLE navigation_tasks (
-                    task_id TEXT PRIMARY KEY,
-                    state TEXT NOT NULL,
-                    admission TEXT NOT NULL DEFAULT 'unconfirmed',
-                    admission_reason TEXT NOT NULL DEFAULT '',
-                    evidence_status TEXT NOT NULL DEFAULT 'unavailable',
-                    state_source TEXT NOT NULL DEFAULT 'none',
-                    state_observed_at REAL,
-                    terminal INTEGER NOT NULL DEFAULT 0,
-                    reason TEXT NOT NULL DEFAULT '',
-                    source TEXT NOT NULL DEFAULT '',
-                    observed_only INTEGER NOT NULL DEFAULT 0,
-                    target_json TEXT NOT NULL,
-                    {legacy_column} TEXT NOT NULL DEFAULT '',
-                    map_identity_json TEXT NOT NULL,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL,
-                    terminal_at REAL,
-                    endpoint_boot_id TEXT NOT NULL DEFAULT '',
-                    active_request_id TEXT NOT NULL DEFAULT '',
-                    cancel_requested_at REAL,
-                    cancel_request_id TEXT NOT NULL DEFAULT '',
-                    cancel_reason TEXT NOT NULL DEFAULT '',
-                    can_resume INTEGER NOT NULL DEFAULT 0,
-                    last_goal_status_json TEXT,
-                    last_navigation_state_json TEXT
-                )
-                """
-            )
-            connection.execute(
-                f"""
-                INSERT INTO navigation_tasks (
-                    task_id, state, target_json, {legacy_column},
-                    map_identity_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                ("legacy-task", "unknown", "{}", "legacy-runtime", "{}", 1.0, 1.0),
-            )
-
-        ledger = NavigationTaskLedger(db_path)
-        row = ledger._conn.execute(
-            """
-            SELECT run_plan_fingerprint
-            FROM navigation_tasks WHERE task_id = ?
-            """,
-            ("legacy-task",),
-        ).fetchone()
-
-        assert row["run_plan_fingerprint"] == "legacy-runtime"
-        ledger.close()
-
     def test_port_types(self, goal_service):
         summary = goal_service.port_summary()
 
         assert summary["ports_in"]["goal_command"]["type"] == "str"
         assert summary["ports_in"]["goal_request"]["type"] == "PoseStamped"
         assert summary["ports_in"]["cancel_request"]["type"] == "str"
+        assert summary["ports_in"]["visual_goal_request"]["type"] == "PoseStamped"
+        assert summary["ports_in"]["visual_cancel_request"]["type"] == "str"
         assert summary["ports_in"]["navigation_goal_status"]["type"] == "NavigationGoalStatus"
-        assert summary["ports_out"]["goal_pose"]["type"] == "PoseStamped"
-        assert summary["ports_out"]["patrol_goals"]["type"] == "list"
-        assert summary["ports_out"]["cancel"]["type"] == "str"
+        assert set(summary["ports_out"]) == {"goal_status"}
         assert summary["ports_out"]["goal_status"]["type"] == "dict"
 
-    @pytest.mark.parametrize(
-        "retired_name",
-        [
-            "_".join(("product", "fingerprint")),
-            "_".join(("runtime", "manifest", "fingerprint")),
-        ],
-    )
-    def test_goal_service_rejects_retired_fingerprint_kwargs(self, retired_name):
-        with pytest.raises(TypeError, match="run_plan_fingerprint"):
-            GoalService(**{retired_name: "retired"})
+    def test_position_only_goal_keeps_yaw_unspecified(self, goal_service):
+        result = goal_service.submit_goal(
+            PoseStamped(
+                pose=Pose(
+                    position=Vector3(2.0, 1.0, 0.0),
+                    orientation=Quaternion(0.0, 0.0, 0.0, 0.0),
+                ),
+                frame_id="map",
+            )
+        )
+
+        assert result["accepted"] is True
+        assert goal_service._test_commands.goals[-1][3] is None
+        assert result["target"]["yaw"] is None
+
+    def test_visual_stop_cancels_accepted_visual_task(self, goal_service):
+        goal_service.visual_goal_request._deliver(
+            PoseStamped(
+                pose=Pose(position=Vector3(2.0, 0.0, 0.0)),
+                frame_id="map",
+            )
+        )
+        visual_task_id = goal_service._test_commands.goals[-1][4]
+
+        goal_service.visual_cancel_request._deliver("visual_servo_stop")
+
+        assert goal_service._test_commands.cancels[-1][0] == visual_task_id
+        assert goal_service._test_commands.cancels[-1][1] == "visual_servo_stop"
+
+    def test_visual_native_lifecycle_is_forwarded_to_the_servo(self, goal_service):
+        goal_service.visual_goal_request._deliver(
+            PoseStamped(
+                pose=Pose(position=Vector3(2.0, 0.0, 0.0)),
+                frame_id="map",
+            )
+        )
+        task_id = goal_service._test_commands.goals[-1][4]
+        request_id = goal_service._test_commands.goals[-1][5]
+        goal_service._test_statuses.clear()
+
+        goal_service.navigation_goal_status._deliver(
+            NavigationGoalStatus(
+                ts=102.0,
+                frame_id="map",
+                boot_id="navd-boot-visual",
+                sequence=1,
+                task_id=task_id,
+                request_id=request_id,
+                state=int(NavigationGoalState.PATH_ACTIVE),
+                goal_epoch=2,
+                reason="path_active",
+            )
+        )
+
+        assert goal_service._test_statuses[-1] == {
+            "request_id": request_id,
+            "action": "visual_servo",
+            "success": True,
+            "accepted": True,
+            "state": "path_active",
+            "message": "native navigation path_active",
+            "task_id": task_id,
+            "reason": "path_active",
+            "terminal": False,
+            "source": "native_goal_status",
+        }
+
+    def test_visual_stop_keeps_old_task_when_replacement_fails(self, goal_service):
+        goal_service.visual_goal_request._deliver(
+            PoseStamped(
+                pose=Pose(position=Vector3(2.0, 0.0, 0.0)),
+                frame_id="map",
+            )
+        )
+        old_task_id = goal_service._test_commands.goals[-1][4]
+
+        goal_service.visual_goal_request._deliver(
+            PoseStamped(
+                pose=Pose(position=Vector3(3.0, 0.0, 0.0)),
+                frame_id="map",
+            )
+        )
+        replacement_task_id = goal_service._test_commands.goals[-1][4]
+        replacement_request_id = goal_service._test_commands.goals[-1][5]
+
+        goal_service.navigation_goal_status._deliver(
+            NavigationGoalStatus(
+                ts=102.0,
+                frame_id="map",
+                boot_id="navd-boot-visual",
+                sequence=1,
+                task_id=replacement_task_id,
+                request_id=replacement_request_id,
+                state=int(NavigationGoalState.FAILED),
+                goal_epoch=2,
+                reason="planning_failed",
+            )
+        )
+        goal_service.visual_cancel_request._deliver("visual_servo_stop")
+
+        assert [cancel[0] for cancel in goal_service._test_commands.cancels] == [old_task_id]
+
+    def test_visual_stop_recovers_open_tasks_for_current_product_session(self, tmp_path):
+        class Commands:
+            def __init__(self) -> None:
+                self.goals: list[tuple] = []
+                self.cancels: list[tuple] = []
+
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+                self.goals.append((x, y, z, yaw, task_id, request_id))
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=100.0,
+                    reason="accepted",
+                )
+
+            def cancel_task(self, task_id, reason, *, request_id):
+                self.cancels.append((task_id, reason, request_id))
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.TASK_CANCEL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=101.0,
+                    reason="cancel_requested",
+                )
+
+        ledger_path = str(tmp_path / "navigation_tasks.sqlite3")
+
+        first_commands = Commands()
+        first = GoalService(
+            command_module="nav.commands",
+            task_ledger_path=ledger_path,
+            product_session_id="product-a",
+        )
+        first.on_system_modules({"nav.commands": first_commands})
+        first.setup()
+        first.visual_goal_request._deliver(
+            PoseStamped(
+                pose=Pose(position=Vector3(2.0, 0.0, 0.0)),
+                frame_id="map",
+            )
+        )
+        current_task_id = first_commands.goals[-1][4]
+        first.stop()
+
+        foreign_commands = Commands()
+        foreign = GoalService(
+            command_module="nav.commands",
+            task_ledger_path=ledger_path,
+            product_session_id="product-b",
+        )
+        foreign.on_system_modules({"nav.commands": foreign_commands})
+        foreign.setup()
+        foreign.visual_goal_request._deliver(
+            PoseStamped(
+                pose=Pose(position=Vector3(3.0, 0.0, 0.0)),
+                frame_id="map",
+            )
+        )
+        foreign_task_id = foreign_commands.goals[-1][4]
+        foreign.stop()
+
+        restarted_commands = Commands()
+        restarted = GoalService(
+            command_module="nav.commands",
+            task_ledger_path=ledger_path,
+            product_session_id="product-a",
+        )
+        restarted.on_system_modules({"nav.commands": restarted_commands})
+        restarted.setup()
+        restarted.visual_cancel_request._deliver("visual_servo_stop")
+
+        assert [cancel[0] for cancel in restarted_commands.cancels] == [current_task_id]
+        assert foreign_task_id not in {cancel[0] for cancel in restarted_commands.cancels}
+        restarted.stop()
 
     def test_native_goal_status_updates_live_task_history(self, goal_service):
         goal_service.submit_goal(
@@ -189,22 +316,19 @@ class TestGoalService:
         assert goal_service.get_task("task-owned-by-another-service") is None
         assert goal_service.navigation_goal_status.callback_errors == 0
 
-    def test_goto_command_publishes_map_goal(self, goal_service):
+    def test_goto_command_dispatches_native_map_goal(self, goal_service):
         status = _cmd(
             goal_service,
             {"action": "goto", "x": 1.0, "y": 2.0, "z": 0.3, "yaw": 0.5},
         )
 
         assert status["success"] is True
-        assert len(goal_service._test_goals) == 1
-        goal = goal_service._test_goals[-1]
-        assert goal.frame_id == "map"
-        assert goal.x == pytest.approx(1.0)
-        assert goal.y == pytest.approx(2.0)
-        assert goal.z == pytest.approx(0.3)
-        assert goal.yaw == pytest.approx(0.5)
+        x, y, z, yaw, task_id, request_id = goal_service._test_commands.goals[-1]
+        assert (x, y, z, yaw) == pytest.approx((1.0, 2.0, 0.3, 0.5))
+        assert task_id.startswith("nav-task-")
+        assert request_id.startswith("nav-")
 
-    def test_goal_request_republishes_normalized_goal(self, goal_service):
+    def test_goal_request_dispatches_normalized_native_goal(self, goal_service):
         goal = PoseStamped(
             pose=Pose(
                 position=Vector3(3.0, 4.0, 0.2),
@@ -216,9 +340,7 @@ class TestGoalService:
         goal_service.goal_request._deliver(goal)
 
         assert goal_service._test_statuses[-1]["success"] is True
-        assert len(goal_service._test_goals) == 1
-        assert goal_service._test_goals[-1].frame_id == "map"
-        assert goal_service._test_goals[-1].x == pytest.approx(3.0)
+        assert goal_service._test_commands.goals[-1][:4] == pytest.approx((3.0, 4.0, 0.2, 0.25))
 
     def test_goal_request_rejects_wrong_frame(self, goal_service):
         goal = PoseStamped(pose=Pose(1.0, 2.0, 0.0), frame_id="odom")
@@ -226,48 +348,55 @@ class TestGoalService:
         goal_service.goal_request._deliver(goal)
 
         assert goal_service._test_statuses[-1]["success"] is False
-        assert goal_service._test_goals == []
+        assert goal_service._test_commands.goals == []
 
-    def test_patrol_command_publishes_waypoints(self, goal_service):
+    def test_inspection_command_dispatches_stored_native_route(self, goal_service):
         status = _cmd(
             goal_service,
             {
-                "action": "patrol",
-                "loop": True,
-                "waypoints": [{"x": 1.0, "y": 2.0}, [3.0, 4.0, 0.2]],
+                "action": "inspection",
+                "route_id": "daily-route",
+                "revision": 7,
             },
         )
 
         assert status["success"] is True
-        assert len(goal_service._test_patrols) == 1
-        assert goal_service._test_patrols[-1] == [
-            {"x": 1.0, "y": 2.0, "z": 0.0, "frame_id": "map", "loop": True},
-            {"x": 3.0, "y": 4.0, "z": 0.2, "frame_id": "map", "loop": True},
-        ]
+        task_id, route_id, revision, request_id = goal_service._test_commands.inspections[-1]
+        assert task_id.startswith("nav-task-")
+        assert route_id == "daily-route"
+        assert revision == 7
+        assert request_id.startswith("nav-")
 
-    def test_patrol_command_rejects_wrong_frame(self, goal_service):
+    def test_inline_patrol_command_is_retired(self, goal_service):
         status = _cmd(
             goal_service,
             {
                 "action": "patrol",
-                "waypoints": [{"x": 1.0, "y": 2.0, "frame_id": "odom"}],
+                "waypoints": [{"x": 1.0, "y": 2.0}],
             },
         )
 
         assert status["success"] is False
-        assert goal_service._test_patrols == []
+        assert status["message"] == "unknown action: patrol"
+        assert goal_service._test_commands.inspections == []
 
-    def test_cancel_command_publishes_reason(self, goal_service):
-        status = _cmd(goal_service, {"action": "cancel", "reason": "operator"})
+    def test_cancel_command_dispatches_task_scoped_native_cancel(self, goal_service):
+        status = _cmd(
+            goal_service,
+            {"action": "cancel", "task_id": "task-1", "reason": "operator"},
+        )
 
         assert status["success"] is True
-        assert goal_service._test_cancels == ["operator"]
+        assert goal_service._test_commands.cancels[-1][:2] == ("task-1", "operator")
 
-    def test_cancel_request_publishes_reason(self, goal_service):
+    def test_unscoped_cancel_request_is_rejected(self, goal_service):
         goal_service.cancel_request._deliver("api_cancel")
 
-        assert goal_service._test_statuses[-1]["success"] is True
-        assert goal_service._test_cancels == ["api_cancel"]
+        assert goal_service._test_statuses[-1]["success"] is False
+        assert goal_service._test_statuses[-1]["message"] == (
+            "task_id is required to cancel a native navigation task"
+        )
+        assert goal_service._test_commands.cancels == []
 
     def test_native_goal_uses_assembled_command_capability(self):
         class FakeCommands:
@@ -289,9 +418,7 @@ class TestGoalService:
         service = GoalService(command_module="nav.commands")
         service.on_system_modules({"nav.commands": commands})
         service.setup()
-        emitted = []
         statuses = []
-        service.goal_pose.subscribe(emitted.append)
         service.goal_status.subscribe(statuses.append)
 
         service.goal_request._deliver(
@@ -304,7 +431,6 @@ class TestGoalService:
             )
         )
 
-        assert emitted == []
         assert commands.goals[0][:4] == (1.0, 2.0, 0.3, pytest.approx(0.4))
         assert str(commands.goals[0][4]).startswith("nav-task-")
         generated_task_id = str(commands.goals[0][4])
@@ -414,14 +540,11 @@ class TestGoalService:
         service = GoalService(command_module="nav.commands")
         service.on_system_modules({"nav.commands": commands})
         service.setup()
-        emitted = []
         statuses = []
-        service.cancel.subscribe(emitted.append)
         service.goal_status.subscribe(statuses.append)
 
         service.cancel_request._deliver("operator_cancel")
 
-        assert emitted == []
         assert commands.reasons == []
         assert statuses[-1]["success"] is False
         assert "task_id is required" in statuses[-1]["message"]
@@ -431,8 +554,6 @@ class TestGoalService:
     def test_goal_rejects_equal_task_and_request_identity(self):
         service = GoalService()
         service.setup()
-        emitted = []
-        service.goal_pose.subscribe(emitted.append)
 
         status = service.submit_goal(
             PoseStamped(
@@ -443,7 +564,6 @@ class TestGoalService:
             request_id="same-identity",
         )
 
-        assert emitted == []
         assert status["accepted"] is False
         assert "must be distinct" in status["message"]
 
@@ -537,9 +657,7 @@ class TestGoalService:
         service = GoalService(command_module="nav.commands")
         service.on_system_modules({"nav.commands": commands})
         service.setup()
-        patrols = []
         statuses = []
-        service.patrol_goals.subscribe(patrols.append)
         service.goal_status.subscribe(statuses.append)
 
         service._on_command(
@@ -554,7 +672,6 @@ class TestGoalService:
             )
         )
 
-        assert patrols == []
         assert commands.starts == [
             (
                 "inspection-task-42",
@@ -611,7 +728,7 @@ class TestGoalService:
         goal_service._on_command("not-json")
 
         assert goal_service._test_statuses[-1]["success"] is False
-        assert goal_service._test_goals == []
+        assert goal_service._test_commands.goals == []
 
     def test_task_attempt_replay_does_not_dispatch_native_goal_twice(self, tmp_path):
         class FakeCommands:
@@ -695,8 +812,8 @@ class TestGoalService:
         commands = FakeCommands()
         service = GoalService(
             command_module="nav.commands",
-            run_plan_fingerprint="runtime-a",
-            map_identity={"map_id": "yard", "version": 7},
+            product_session_id="runtime-a",
+            map_identity={"map_id": "yard", "content_epoch": 7},
         )
         service.on_system_modules({"nav.commands": commands})
         service.setup()
@@ -841,8 +958,8 @@ class TestGoalService:
         commands = FakeCommands()
         service = GoalService(
             command_module="nav.commands",
-            run_plan_fingerprint="runtime-a",
-            map_identity={"map_id": "yard", "version": 7},
+            product_session_id="runtime-a",
+            map_identity={"map_id": "yard", "content_epoch": 7},
         )
         service.on_system_modules({"nav.commands": commands})
         service.setup()
@@ -855,7 +972,7 @@ class TestGoalService:
             task_id="task-probe-context",
             request_id="goal-attempt-probe-context",
         )
-        service._run_plan_fingerprint = ""
+        service._product_session_id = ""
         service._map_identity = None
         status_count = service.goal_status.msg_count
 
@@ -869,7 +986,7 @@ class TestGoalService:
         assert rejected is not None
         assert rejected["accepted"] is False
         assert rejected["state"] == "rejected"
-        assert "different RunPlan" in rejected["message"]
+        assert "different Product session" in rejected["message"]
         assert commands.calls == 1
         assert service.goal_status.msg_count == status_count
         service.stop()
@@ -984,6 +1101,32 @@ class TestGoalService:
         assert task["terminal"] is True
         assert task["execution_reason"] == "goal_reached"
         assert second_commands.goals == []
+        second_service.stop()
+
+    def test_environment_configures_durable_task_ledger_when_path_is_not_explicit(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        db_path = tmp_path / "field-navigation-tasks.sqlite3"
+        monkeypatch.setenv("LINGTU_TASK_LEDGER_PATH", str(db_path))
+
+        first_service = GoalService()
+        first_service._task_ledger.admit(
+            "task-from-environment",
+            "request-from-environment",
+            "goal",
+            {"x": 1.0, "y": 2.0},
+            target={"x": 1.0, "y": 2.0},
+        )
+        first_service.stop()
+
+        second_service = GoalService()
+        task = second_service.get_task("task-from-environment")
+
+        assert db_path.is_file()
+        assert task is not None
+        assert task["task_id"] == "task-from-environment"
         second_service.stop()
 
     def test_endpoint_boot_change_marks_evidence_without_replaying_motion(self, tmp_path):
@@ -1334,9 +1477,8 @@ class TestGoalService:
         assert task["terminal"] is False
         service.stop()
 
-    def test_list_tasks_active_only_excludes_terminal_history(self):
-        service = GoalService()
-        service.setup()
+    def test_list_tasks_active_only_excludes_terminal_history(self, goal_service):
+        service = goal_service
         active = service.submit_goal(
             PoseStamped(
                 pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
@@ -1408,11 +1550,8 @@ class TestGoalService:
         assert commands.calls == 1
         service.stop()
 
-    def test_local_cancel_is_persisted_nonterminal_and_replay_safe(self):
-        service = GoalService()
-        service.setup()
-        cancellations: list[str] = []
-        service.cancel.subscribe(cancellations.append)
+    def test_native_cancel_is_persisted_nonterminal_and_replay_safe(self, goal_service):
+        service = goal_service
         service.submit_goal(
             PoseStamped(
                 pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
@@ -1435,7 +1574,8 @@ class TestGoalService:
         )
         task = service.get_task("task-local-cancel")
 
-        assert cancellations == ["operator"]
+        assert len(service._test_commands.cancels) == 1
+        assert service._test_commands.cancels[0][:2] == ("task-local-cancel", "operator")
         assert first["state"] == "cancel_requested"
         assert first["history_recorded"] is True
         assert replay["replay"] is True

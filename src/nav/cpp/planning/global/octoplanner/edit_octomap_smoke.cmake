@@ -23,7 +23,7 @@ if(NOT make_result EQUAL 0)
   message(FATAL_ERROR "make test octomap failed: ${make_stdout}\n${make_stderr}")
 endif()
 
-file(COPY_FILE "${BT_PATH}" "${OT_PATH}" ONLY_IF_DIFFERENT)
+configure_file("${BT_PATH}" "${OT_PATH}" COPYONLY)
 
 execute_process(
   COMMAND "${EDITOR}"

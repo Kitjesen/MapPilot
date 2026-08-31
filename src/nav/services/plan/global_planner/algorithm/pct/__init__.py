@@ -1,1 +1,0 @@
-﻿"""PCT global planner."""

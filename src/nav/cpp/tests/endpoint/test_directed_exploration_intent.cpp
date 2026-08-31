@@ -3,7 +3,7 @@
 #include <string>
 #include <utility>
 
-#include "explore/directed_exploration_intent.hpp"
+#include "explore/directed_intent.hpp"
 
 namespace {
 
@@ -27,7 +27,7 @@ ExploreMapIdentity map(std::uint64_t generation, std::uint64_t reset_epoch = 1U,
   return value;
 }
 
-void testSetBindsSessionAndMapEpoch() {
+void testSetBindsProductSessionAndMapEpoch() {
   DirectedExplorationIntentStore store;
   const auto accepted = store.Set("explore-session", map(1U), 12.0, -4.0, 30.0, 100.0);
   require(accepted.accepted && accepted.changed, "set must be accepted");
@@ -36,12 +36,14 @@ void testSetBindsSessionAndMapEpoch() {
   const auto same_epoch_next_generation = store.current("explore-session", map(2U), 101.0);
   require(same_epoch_next_generation.has_value(),
           "generation update must not invalidate a rolling intent");
+  require(same_epoch_next_generation->product_session_id == "explore-session",
+          "intent must retain the Product session binding");
   require(same_epoch_next_generation->target.x == 12.0 &&
               same_epoch_next_generation->target.y == -4.0,
           "target must be retained");
 
   require(!store.current("other-session", map(2U), 101.0).has_value(),
-          "intent must not cross exploration sessions");
+          "intent must not cross Product sessions");
   require(!store.current("explore-session", map(2U, 2U), 101.0).has_value(),
           "reset epoch change must invalidate intent visibility");
   require(
@@ -90,7 +92,7 @@ void testRejectsUnsafeInputs() {
 }  // namespace
 
 int main() {
-  testSetBindsSessionAndMapEpoch();
+  testSetBindsProductSessionAndMapEpoch();
   testClearAndExpiryAdvanceRevision();
   testRejectsUnsafeInputs();
   std::cout << "test_directed_exploration_intent passed\n";

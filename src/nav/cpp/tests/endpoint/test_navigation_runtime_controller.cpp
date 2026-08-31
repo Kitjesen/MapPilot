@@ -9,9 +9,9 @@
 #include <utility>
 #include <vector>
 
-#include "motion/motion_stop_coordinator.hpp"
-#include "navigation_runtime_controller.hpp"
-#include "plan/goal_replan_runtime_coordinator.hpp"
+#include "safety/stop.hpp"
+#include "runtime/navigation.hpp"
+#include "runtime/goal/runtime.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
 #include "status/goal_terminal_transaction.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
@@ -40,7 +40,7 @@ using lingtu::nav::endpoint::GoalTerminalStatusDelivery;
 using lingtu::nav::endpoint::GoalTerminalTransaction;
 using lingtu::nav::endpoint::GoalTerminalTransactionActions;
 using lingtu::nav::endpoint::MotionStopActions;
-using lingtu::nav::endpoint::MotionStopCoordinator;
+using lingtu::nav::endpoint::MotionStopBarrier;
 using lingtu::nav::endpoint::NavigationGoalStatusOutbox;
 using lingtu::nav::endpoint::NavigationRuntimeAutonomyObservation;
 using lingtu::nav::endpoint::NavigationRuntimeController;
@@ -55,7 +55,7 @@ void require(bool condition, const char *message) {
 }
 
 struct Fixture {
-  lingtu::nav::plan::MapIdentity map_identity{"field", 7, "sha256-a", "map"};
+  lingtu::nav::plan::MapIdentity map_identity{"field", 7, "map"};
   bool writes_allowed{true};
   StopConfirmationState confirmation{StopConfirmationState::Confirmed};
   std::vector<GoalPlanStatus> observed_statuses;
@@ -67,7 +67,7 @@ struct Fixture {
   std::size_t diagnostic_syncs{0U};
   NavigationGoalStatusOutbox outbox;
   GoalPlanController goal_plan;
-  MotionStopCoordinator motion_stop;
+  MotionStopBarrier motion_stop;
   GoalReplanRuntimeCoordinator coordinator;
   GoalTerminalStatusDelivery delivery;
   GoalTerminalTransaction terminal_transaction;
@@ -129,7 +129,7 @@ struct Fixture {
     actions.stop_control = [this] { ++stop_control_calls; };
     actions.latch_estop = [this](const std::string &reason) { estop_reasons.push_back(reason); };
     actions.clear_control_estop = [] { return true; };
-    actions.resume_autonomy = [] { return true; };
+    actions.resume_control = [] { return true; };
     actions.cancel_inspection = [](const std::string &) {};
     actions.clear_operator_resume_required = [] {};
     actions.set_autonomy_request_not_before = [](double) {};
@@ -444,6 +444,62 @@ void testTerminalCompanionInterfacesForwardExactTransactions() {
   }
 }
 
+void testLifecycleInterruptionsAreCompletedByController() {
+  Fixture fixture;
+  fixture.activateGoal();
+
+  const auto stopped =
+      fixture.runtime.interrupt(GoalReplanRuntimeInterruption::kStop, 55.0);
+  require(stopped.runtime_result.terminal_after_stop.has_value(),
+          "controller interruption did not surface the Stop terminal");
+  require(stopped.terminal_transaction.has_value() &&
+              stopped.terminal_transaction->action_committed &&
+              stopped.terminal_transaction->delivery_acknowledged,
+          "controller interruption did not complete the Stop terminal transaction");
+  require(!fixture.runtime.terminalPending(),
+          "completed interruption left an acknowledged terminal pending");
+}
+
+void testGoalSubmissionOwnsExternalPreemptionAndTerminalBarrier() {
+  {
+    Fixture fixture;
+    fixture.activateGoal();
+    const auto submitted =
+        fixture.runtime.submitGoal(fixture.request("task-b", "request-b"), fixture.admission(), 56.0);
+    require(submitted.plan_result.accepted,
+            "controller did not admit an external replacement goal");
+    require(!submitted.preemption_terminal,
+            "ordinary external replacement unexpectedly created a terminal transaction");
+  }
+
+  {
+    Fixture fixture;
+    fixture.activateGoal();
+    const auto pending =
+        fixture.coordinator.interrupt(GoalReplanRuntimeInterruption::kMapDrift, 57.0);
+    require(pending.terminal_after_stop.has_value(),
+            "fixture did not create a terminal barrier for goal admission");
+    const auto blocked =
+        fixture.runtime.submitGoal(fixture.request("task-b", "request-b"), fixture.admission(), 58.0);
+    require(!blocked.plan_result.accepted && blocked.plan_result.reason == "goal_terminal_pending",
+            "new goal bypassed the pending terminal barrier");
+    require(fixture.runtime.terminalPending(),
+            "blocked new goal unexpectedly cleared the pending terminal");
+  }
+}
+
+void testControllerInterruptionPreservesEstopReason() {
+  Fixture fixture;
+  fixture.activateGoal();
+  const auto estopped =
+      fixture.runtime.interrupt(GoalReplanRuntimeInterruption::kEstop, 59.0, "operator_estop");
+  require(estopped.terminal_transaction.has_value() &&
+              estopped.terminal_transaction->action_committed,
+          "controller did not commit the estop terminal transaction");
+  require(fixture.estop_reasons == std::vector<std::string>{"operator_estop"},
+          "controller did not preserve the caller's estop reason");
+}
+
 void testIncompleteFrameActionsAreRejectedBeforeRuntimeMutation() {
   Fixture fixture;
   const auto before = fixture.goal_plan.snapshot();
@@ -470,6 +526,9 @@ int main() {
     testUnhandledAutonomyTickCannotCreateInspectionFallbackTerminal();
     testCapturedSnapshotCannotCommitReachedAfterGoalStateChangesDuringTick();
     testTerminalCompanionInterfacesForwardExactTransactions();
+    testLifecycleInterruptionsAreCompletedByController();
+    testGoalSubmissionOwnsExternalPreemptionAndTerminalBarrier();
+    testControllerInterruptionPreservesEstopReason();
     testIncompleteFrameActionsAreRejectedBeforeRuntimeMutation();
     return 0;
   } catch (const std::exception &exc) {

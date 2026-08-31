@@ -22,8 +22,6 @@ route contract:
 | `base.py` | Standardized `ExploreModule` base class (shared exploration port contract). |
 | `cpp/` | C++ exploration algorithm core. This is the primary place for field exploration algorithms. |
 | `kernel/` | Python loader for the `lingtu_explore_kernel` nanobind extension (mirrors `nav/kernel`). |
-| `frontier.py` | Wavefront frontier exploration for development and simulation Hosts. Field exploration uses the C++ endpoint. |
-| `traversable_frontier.py` | Frontier preview scored with traversability, slope, ESDF, and semantic evidence. |
 | `tare/backend.py` | `create_nanobind_explore_backend` — wraps the native `TarePolicy` for Python callers. |
 | `tare/policy.py` | Thin Python data contract (`TAREPolicyConfig`/`TAREDecision`) + `PortableTAREPolicy` delegating to C++. |
 | `tare/module.py` | `TAREExplorerModule(ExploreModule)` — standardized exploration module. |
@@ -141,7 +139,7 @@ It never grants command authority. Gateway commands use
 `liblingtu_nav_client.so` and complete only after the matching DDS ACK.
 
 The Python `TAREExplorerModule` and nanobind path remain for development and
-compatibility Profiles; they are not the `env=real` Product control plane.
+simulation; they are not the `env=real` Product control plane.
 Assembly resolves that field Product with `owner="native"`, so Blueprint omits
 both `TAREExplorerModule` and `ExplorationSupervisorModule`; `nav.commands` is
 the only Gateway control adapter for the native endpoint.

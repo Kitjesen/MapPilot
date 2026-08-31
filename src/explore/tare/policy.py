@@ -105,7 +105,7 @@ def _to_tare_decision(
             "frame_id",
             "session_id",
             "map_id",
-            "map_version",
+            "map_content_epoch",
             "reset_epoch",
             "generation",
             "accepted_generation",

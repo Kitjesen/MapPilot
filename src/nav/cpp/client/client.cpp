@@ -1,25 +1,13 @@
 #include "client.hpp"
-#include "client_c.h"
-#include "clock_sync.hpp"
-
-#include "message/cpp/dds_qos_profiles.hpp"
-#include "message/cpp/dds_topics.hpp"
-#include "message/cpp/exploration_command.hpp"
-#include "message/cpp/inspection_command.hpp"
-#include "message/cpp/navigation_command.hpp"
-#include "message/cpp/operator_motion.hpp"
-
-#include "dds/dds.h"
-#include "lingtu_slam.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstdint>
 #include <cstring>
 #include <deque>
 #include <iomanip>
@@ -34,7 +22,17 @@
 #include <utility>
 #include <vector>
 
-#include <unistd.h>
+#include "client_c.h"
+#include "clock_sync.hpp"
+#include "dds/dds.h"
+#include "messages.h"
+#include "message/cpp/qos.hpp"
+#include "message/cpp/topics.hpp"
+#include "message/cpp/exploration_command.hpp"
+#include "message/cpp/inspection_command.hpp"
+#include "message/cpp/navigation_command.hpp"
+#include "message/cpp/operator_motion.hpp"
+#include "nav/cpp/platform/runtime.hpp"
 
 namespace lingtu::nav::commands {
 namespace {
@@ -74,6 +72,9 @@ constexpr std::size_t kMaximumMapScenePointStep = 64U;
 constexpr std::size_t kMaximumMapSceneFields = 8U;
 constexpr std::size_t kMaximumMapSceneTextBytes = 128U;
 constexpr std::uint8_t kPointFieldFloat32 = 7U;
+constexpr std::size_t kMaximumTraversabilityCells = LINGTU_NAV_TRAVERSABILITY_GRID_MAX_CELLS;
+constexpr double kTraversabilityYawToleranceRad = 1e-6;
+constexpr int kNavigationCommandAckWriteAttempts = 2;
 
 double nowSeconds() {
   const auto now = std::chrono::system_clock::now().time_since_epoch();
@@ -134,21 +135,21 @@ void requireDirectedTarget(double x, double y, double ttl_s) {
   }
 }
 
-void requireDirectedTargetSessionId(const std::string& session_id) {
-  if (session_id.empty()) {
-    throw std::invalid_argument("directed exploration session_id is required");
+void requireDirectedTargetProductSessionId(const std::string&product_session_id) {
+  if (product_session_id.empty()) {
+    throw std::invalid_argument("directed exploration product_session_id is required");
   }
 }
 
 void requireExplorationIdentity(
     const std::string& exploration_run_id,
-    const std::string& session_id) {
+    const std::string&product_session_id) {
   if (!lingtu::message::isValidExplorationRunId(exploration_run_id)) {
     throw std::invalid_argument(
         "exploration_run_id must be a canonical uppercase 26-character ULID");
   }
-  if (session_id.empty()) {
-    throw std::invalid_argument("exploration session_id is required");
+  if (product_session_id.empty()) {
+    throw std::invalid_argument("exploration product_session_id is required");
   }
 }
 
@@ -678,6 +679,84 @@ bool decodeMapRuntimeState(
   return true;
 }
 
+bool decodeTraversabilityGrid(const lingtu_dds_OccupancyGrid &message,
+                              TraversabilityGridSnapshot *grid, std::string *error) {
+  if (grid == nullptr || error == nullptr) {
+    return false;
+  }
+  grid->timestamp_s = stampSeconds(message.header.stamp);
+  if (!std::isfinite(grid->timestamp_s) || grid->timestamp_s <= 0.0 ||
+      !copyBoundedText(message.header.frame_id, 32U, "traversability frame", &grid->frame_id, error,
+                       true)) {
+    if (error->empty()) {
+      *error = "traversability timestamp or frame is invalid";
+    }
+    return false;
+  }
+  if (grid->frame_id != "map") {
+    *error = "traversability frame must be map";
+    return false;
+  }
+  const auto &info = message.info;
+  const std::size_t width = static_cast<std::size_t>(info.width);
+  const std::size_t height = static_cast<std::size_t>(info.height);
+  if (width == 0U || height == 0U || width > kMaximumTraversabilityCells ||
+      height > kMaximumTraversabilityCells || height > kMaximumTraversabilityCells / width) {
+    *error = "traversability dimensions exceed product limit";
+    return false;
+  }
+  const std::size_t cell_count = width * height;
+  if (!std::isfinite(info.resolution) || info.resolution <= 0.0F ||
+      !std::isfinite(info.origin.position.x) || !std::isfinite(info.origin.position.y) ||
+      !std::isfinite(info.origin.position.z) || !std::isfinite(info.origin.orientation.x) ||
+      !std::isfinite(info.origin.orientation.y) || !std::isfinite(info.origin.orientation.z) ||
+      !std::isfinite(info.origin.orientation.w)) {
+    *error = "traversability metadata is non-finite";
+    return false;
+  }
+  const auto &q = info.origin.orientation;
+  const double norm = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+  if (!std::isfinite(norm) || norm < 1e-9) {
+    *error = "traversability origin quaternion is invalid";
+    return false;
+  }
+  const double nx = q.x / norm;
+  const double ny = q.y / norm;
+  const double nz = q.z / norm;
+  const double nw = q.w / norm;
+  const double roll = std::atan2(2.0 * (nw * nx + ny * nz), 1.0 - 2.0 * (nx * nx + ny * ny));
+  const double pitch = std::asin(std::clamp(2.0 * (nw * ny - nz * nx), -1.0, 1.0));
+  const double yaw = std::atan2(2.0 * (nw * nz + nx * ny), 1.0 - 2.0 * (ny * ny + nz * nz));
+  // navd currently consumes this grid axis-aligned. Reject a rotated or
+  // tilted origin instead of silently drawing/control-scoring the wrong cell.
+  if (std::abs(roll) > kTraversabilityYawToleranceRad ||
+      std::abs(pitch) > kTraversabilityYawToleranceRad ||
+      std::abs(yaw) > kTraversabilityYawToleranceRad) {
+    *error = "traversability origin yaw/tilt is unsupported";
+    return false;
+  }
+  if (message.data._buffer == nullptr ||
+      static_cast<std::size_t>(message.data._length) < cell_count) {
+    *error = "traversability cell payload is truncated";
+    return false;
+  }
+  grid->width = static_cast<std::uint32_t>(width);
+  grid->height = static_cast<std::uint32_t>(height);
+  grid->resolution = info.resolution;
+  grid->origin_x = info.origin.position.x;
+  grid->origin_y = info.origin.position.y;
+  grid->origin_z = info.origin.position.z;
+  grid->yaw = 0.0;
+  grid->cells.assign(message.data._buffer, message.data._buffer + cell_count);
+  if (std::any_of(grid->cells.begin(), grid->cells.end(),
+                  [](std::uint8_t value) { return value > 100U; })) {
+    *error = "traversability cell is outside 0..100 contract";
+    grid->cells.clear();
+    return false;
+  }
+  return true;
+}
+
 bool diagnosticsEnabled() {
   const char* raw = std::getenv("LINGTU_NAV_CLIENT_DIAGNOSTICS");
   if (raw == nullptr) {
@@ -692,7 +771,15 @@ std::string makeRequestId(CommandKind kind) {
   const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::system_clock::now().time_since_epoch()).count();
   return "nav-" + std::to_string(static_cast<std::int32_t>(kind)) + "-" +
-      std::to_string(static_cast<long long>(getpid())) + "-" +
+      std::to_string(lingtu::nav::platform::processId()) + "-" +
+      std::to_string(ticks) + "-" + std::to_string(++sequence);
+}
+
+std::string makePlanRequestId() {
+  static std::atomic<std::uint64_t> sequence{0};
+  const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+  return "plan-" + std::to_string(lingtu::nav::platform::processId()) + "-" +
       std::to_string(ticks) + "-" + std::to_string(++sequence);
 }
 
@@ -701,14 +788,14 @@ std::string makeTaskId(CommandKind kind) {
   const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::system_clock::now().time_since_epoch()).count();
   return "nav-task-" + std::to_string(static_cast<std::int32_t>(kind)) + "-" +
-      std::to_string(static_cast<long long>(getpid())) + "-" +
+      std::to_string(lingtu::nav::platform::processId()) + "-" +
       std::to_string(ticks) + "-" + std::to_string(++sequence);
 }
 
 std::string makeClientId() {
   const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count();
-  return "nav-client-" + std::to_string(static_cast<long long>(getpid())) +
+  return "nav-client-" + std::to_string(lingtu::nav::platform::processId()) +
       "-" + std::to_string(ticks);
 }
 
@@ -717,7 +804,7 @@ std::string makeExplorationRequestId(ExplorationKind kind) {
   const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::system_clock::now().time_since_epoch()).count();
   return "explore-" + std::to_string(static_cast<std::int32_t>(kind)) + "-" +
-      std::to_string(static_cast<long long>(getpid())) + "-" +
+      std::to_string(lingtu::nav::platform::processId()) + "-" +
       std::to_string(ticks) + "-" + std::to_string(++sequence);
 }
 
@@ -727,7 +814,7 @@ std::string makeInspectionRequestId(
   const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::system_clock::now().time_since_epoch()).count();
   return "inspection-" + std::to_string(static_cast<std::int32_t>(kind)) + "-" +
-      std::to_string(static_cast<long long>(getpid())) + "-" +
+      std::to_string(lingtu::nav::platform::processId()) + "-" +
       std::to_string(ticks) + "-" + std::to_string(++sequence);
 }
 
@@ -737,7 +824,7 @@ std::string makeOperatorMotionRequestId(OperatorMotionAction action) {
       std::chrono::system_clock::now().time_since_epoch()).count();
   return "operator-motion-" +
       std::to_string(static_cast<std::int32_t>(action)) + "-" +
-      std::to_string(static_cast<long long>(getpid())) + "-" +
+      std::to_string(lingtu::nav::platform::processId()) + "-" +
       std::to_string(ticks) + "-" + std::to_string(++sequence);
 }
 
@@ -746,7 +833,7 @@ std::string makeOperatorMotionSampleRequestId() {
   const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::system_clock::now().time_since_epoch()).count();
   return "operator-motion-sample-" +
-      std::to_string(static_cast<long long>(getpid())) + "-" +
+      std::to_string(lingtu::nav::platform::processId()) + "-" +
       std::to_string(ticks) + "-" + std::to_string(++sequence);
 }
 
@@ -825,7 +912,7 @@ struct Client::Impl {
   struct PendingExplorationAck {
     ExplorationKind kind;
     std::string exploration_run_id;
-    std::string session_id;
+    std::string product_session_id;
     SteadyClock::time_point sent_steady;
     std::optional<AckObservation> observation;
   };
@@ -844,6 +931,10 @@ struct Client::Impl {
     std::uint64_t sequence{0U};
     SteadyClock::time_point sent_steady;
     std::optional<OperatorMotionCommandReceipt> receipt;
+  };
+
+  struct PendingPlanResult {
+    std::optional<PlanResult> result;
   };
 
   explicit Impl(int domain_id) {
@@ -866,6 +957,14 @@ struct Client::Impl {
           lingtu::message::kNavCommandAck,
           &lingtu_dds_NavigationCommandAck_desc,
           "nav_command_ack");
+      plan_writer = createWriter(
+          lingtu::message::kNavPlanRequest,
+          &lingtu_dds_PlanRequest_desc,
+          "nav_plan_request");
+      plan_result_reader = createReader(
+          lingtu::message::kNavPlanResult,
+          &lingtu_dds_PlanResult_desc,
+          "nav_plan_result");
       exploration_writer = createWriter(
           lingtu::message::kNavExplorationCommand,
           &lingtu_dds_ExplorationCommandRequest_desc,
@@ -918,6 +1017,8 @@ struct Client::Impl {
           lingtu::message::kNavLocalPath,
           &lingtu_dds_Path_desc,
           "local_path");
+      traversability_reader = createReader(lingtu::message::kNavTraversability,
+                                           &lingtu_dds_OccupancyGrid_desc, "traversability");
       map_scene_reader = createReader(
           lingtu::message::kMapsScene,
           &lingtu_dds_MapScene_desc,
@@ -1087,7 +1188,9 @@ struct Client::Impl {
     }
     std::fprintf(
         stderr,
-        "nav_client_clock: event=%s request_id=%s kind=%s sync_rtt_ms=%.3f endpoint_stamp_s=%.9f local_wall_receive_s=%.9f clock_offset_s=%.9f send_source_stamp_s=%.9f ack_rtt_ms=%.3f ack_endpoint_stamp_s=%.9f ack_local_wall_receive_s=%.9f\n",
+        "nav_client_clock: event=%s request_id=%s kind=%s sync_rtt_ms=%.3f endpoint_stamp_s=%.9f "
+        "local_wall_receive_s=%.9f clock_offset_s=%.9f send_source_stamp_s=%.9f ack_rtt_ms=%.3f "
+        "ack_endpoint_stamp_s=%.9f ack_local_wall_receive_s=%.9f\n",
         event,
         request_id.c_str(),
         navigationCommandKindName(kind),
@@ -1115,6 +1218,51 @@ struct Client::Impl {
   using ExplorationPending = std::shared_ptr<PendingExplorationAck>;
   using InspectionPending = std::shared_ptr<PendingInspectionAck>;
   using OperatorMotionPending = std::shared_ptr<PendingOperatorMotionAck>;
+  using PlanPending = std::shared_ptr<PendingPlanResult>;
+
+  PlanPending registerPlan(const std::string& request_id) const {
+    auto pending = std::make_shared<PendingPlanResult>();
+    std::lock_guard<std::mutex> lock(ack_mutex);
+    if (!ack_receiver_error.empty()) {
+      throw std::runtime_error(ack_receiver_error);
+    }
+    if (!pending_plans.emplace(request_id, pending).second) {
+      throw std::runtime_error("duplicate in-flight plan request id: " + request_id);
+    }
+    return pending;
+  }
+
+  void unregisterPlan(
+      const std::string& request_id,
+      const PlanPending& pending) const {
+    std::lock_guard<std::mutex> lock(ack_mutex);
+    const auto it = pending_plans.find(request_id);
+    if (it != pending_plans.end() && it->second == pending) {
+      pending_plans.erase(it);
+    }
+  }
+
+  PlanResult waitForPlan(
+      const std::string& request_id,
+      const PlanPending& pending,
+      int timeout_ms) const {
+    std::unique_lock<std::mutex> lock(ack_mutex);
+    const bool ready = ack_cv.wait_for(
+        lock,
+        std::chrono::milliseconds(std::max(1, timeout_ms)),
+        [&]() { return pending->result.has_value() || !ack_receiver_error.empty(); });
+    const auto it = pending_plans.find(request_id);
+    if (it != pending_plans.end() && it->second == pending) {
+      pending_plans.erase(it);
+    }
+    if (!ready) {
+      throw std::runtime_error("timed out waiting for plan result: " + request_id);
+    }
+    if (!pending->result) {
+      throw std::runtime_error(ack_receiver_error);
+    }
+    return std::move(*pending->result);
+  }
 
   NavigationPending registerNavigationAck(
       const std::string& request_id,
@@ -1138,13 +1286,12 @@ struct Client::Impl {
       const std::string& request_id,
       ExplorationKind kind,
       const std::string& exploration_run_id,
-      const std::string& session_id,
+      const std::string&product_session_id,
       SteadyClock::time_point sent_steady) const {
     auto pending = std::make_shared<PendingExplorationAck>(
         PendingExplorationAck{
             kind,
-            exploration_run_id,
-            session_id,
+            exploration_run_id, product_session_id,
             sent_steady,
             std::nullopt});
     std::lock_guard<std::mutex> lock(ack_mutex);
@@ -1242,28 +1389,38 @@ struct Client::Impl {
     }
   }
 
-  AckObservation waitForAck(
+  std::optional<AckObservation> waitForAckUntil(
       const std::string& request_id,
       const NavigationPending& pending,
-      int timeout_ms) const {
-    const auto deadline = SteadyClock::now() +
-        std::chrono::milliseconds(std::max(1, timeout_ms));
+                                                SteadyClock::time_point deadline,
+                                                bool unregister_on_timeout) const {
     std::unique_lock<std::mutex> lock(ack_mutex);
     const bool ready = ack_cv.wait_until(lock, deadline, [&]() {
       return pending->observation.has_value() || !ack_receiver_error.empty();
     });
-    const auto it = pending_navigation_acks.find(request_id);
+    if (ready || unregister_on_timeout) {
+      const auto it = pending_navigation_acks.find(request_id);
     if (it != pending_navigation_acks.end() && it->second == pending) {
       pending_navigation_acks.erase(it);
     }
+    }
     if (!ready) {
-      throw std::runtime_error(
-          "timed out waiting for navigation command ACK: " + request_id);
+      return std::nullopt;
     }
     if (!pending->observation) {
       throw std::runtime_error(ack_receiver_error);
     }
     return *pending->observation;
+  }
+
+  AckObservation waitForAck(const std::string &request_id, const NavigationPending &pending,
+                            int timeout_ms) const {
+    const auto deadline = SteadyClock::now() + std::chrono::milliseconds(std::max(1, timeout_ms));
+    const auto observation = waitForAckUntil(request_id, pending, deadline, true);
+    if (!observation) {
+      throw std::runtime_error("timed out waiting for navigation command ACK: " + request_id);
+    }
+    return *observation;
   }
 
   AckObservation waitForExplorationAck(
@@ -1450,9 +1607,9 @@ struct Client::Impl {
           observation.reason = "exploration_ack_run_id_mismatch";
           observation.correlation_valid = false;
         }
-        if (text(ack.session_id) != pending.session_id) {
+        if (text(ack.product_session_id) != pending.product_session_id) {
           observation.accepted = false;
-          observation.reason = "exploration_ack_session_mismatch";
+          observation.reason = "exploration_ack_product_session_mismatch";
           observation.correlation_valid = false;
         }
         pending.observation = std::move(observation);
@@ -1593,6 +1750,71 @@ struct Client::Impl {
     return count > 0;
   }
 
+  bool takePlanResults() {
+    constexpr std::size_t kMaxSamples = 8U;
+    void* samples[kMaxSamples]{};
+    dds_sample_info_t infos[kMaxSamples]{};
+    const dds_return_t count = dds_take(
+        plan_result_reader, samples, infos, kMaxSamples, kMaxSamples);
+    if (count < 0) {
+      throw std::runtime_error(
+          std::string("dds_take(nav_plan_result): ") + dds_strretcode(-count));
+    }
+    bool matched = false;
+    try {
+      std::lock_guard<std::mutex> lock(ack_mutex);
+      for (dds_return_t i = 0; i < count; ++i) {
+        if (!infos[i].valid_data) {
+          continue;
+        }
+        const auto& message = *static_cast<lingtu_dds_PlanResult*>(samples[i]);
+        const std::string request_id = text(message.request_id);
+        const auto it = pending_plans.find(request_id);
+        if (it == pending_plans.end() || it->second->result) {
+          continue;
+        }
+        const std::size_t point_count =
+            static_cast<std::size_t>(message.path._length);
+        if (point_count > kMaximumPathPointCount ||
+            (point_count > 0U && message.path._buffer == nullptr)) {
+          continue;
+        }
+        PlanResult result;
+        result.timestamp_s = stampSeconds(message.header.stamp);
+        result.frame_id = text(message.header.frame_id);
+        result.request_id = request_id;
+        result.feasible = message.feasible;
+        result.start_valid = message.start_valid;
+        result.reason = text(message.reason);
+        result.elapsed_ms = message.elapsed_ms;
+        result.planner = text(message.planner);
+        result.start = {message.start.x, message.start.y, message.start.z};
+        result.goal = {message.goal.x, message.goal.y, message.goal.z};
+        result.path.reserve(point_count);
+        for (std::size_t point_index = 0U; point_index < point_count; ++point_index) {
+          const auto& point = message.path._buffer[point_index];
+          result.path.push_back({point.x, point.y, point.z});
+        }
+        it->second->result = std::move(result);
+        matched = true;
+      }
+    } catch (...) {
+      if (count > 0) {
+        dds_return_loan(plan_result_reader, samples, count);
+      }
+      throw;
+    }
+    if (count > 0) {
+      checked(
+          dds_return_loan(plan_result_reader, samples, count),
+          "dds_return_loan(nav_plan_result)");
+    }
+    if (matched) {
+      ack_cv.notify_all();
+    }
+    return count > 0;
+  }
+
   bool takeNavigationStates() {
     constexpr std::size_t kMaxSamples = 16;
     void* samples[kMaxSamples]{};
@@ -1632,8 +1854,7 @@ struct Client::Impl {
             text(state.active_request_id),
             state.goal_epoch,
             text(state.map_id),
-            state.map_version,
-            text(state.map_hash),
+            state.map_content_epoch,
             state.planning_state,
             state.execution_state,
             state.recovery_state,
@@ -1784,7 +2005,7 @@ struct Client::Impl {
         if (boot_id.empty() || task_id.empty() || request_id.empty() ||
             command_request_id.empty() || map_id.empty() || route_id.empty() ||
             event.event_sequence == 0U || event.route_revision == 0U ||
-            event.map_version < 0 || !known_kind || !known_state) {
+            event.map_content_epoch < 0 || !known_kind || !known_state) {
           continue;
         }
         auto& last_sequence = inspection_task_event_sequences_by_boot[boot_id];
@@ -1803,7 +2024,7 @@ struct Client::Impl {
             command_request_id,
             event.state,
             map_id,
-            event.map_version,
+            event.map_content_epoch,
             route_id,
             event.route_revision,
             event.point_index,
@@ -1868,7 +2089,6 @@ struct Client::Impl {
         const std::string product_session_id = text(event.product_session_id);
         const std::string route = text(event.route);
         const std::string map_id = text(event.map_id);
-        const std::string artifact_hash = text(event.artifact_hash);
         const std::string reason = text(event.reason);
         const std::string motion_stop_reason = text(event.motion_stop_reason);
         const bool known_kind =
@@ -1876,10 +2096,8 @@ struct Client::Impl {
         const bool known_state =
             lingtu::message::isKnownExplorationRunState(event.state);
         const bool route_valid =
-            (route == "live" && map_id.empty() && event.map_version == 0 &&
-             artifact_hash.empty()) ||
-            (route == "map" && !map_id.empty() && event.map_version > 0 &&
-             !artifact_hash.empty());
+            (route == "live" && map_id.empty() && event.map_content_epoch == 0) ||
+            (route == "map" && !map_id.empty() && event.map_content_epoch > 0);
         if (!std::isfinite(event.timestamp_s) || event.timestamp_s <= 0.0 ||
             frame_id != "map" || boot_id.empty() || event.event_sequence == 0U ||
             !known_kind || !known_state ||
@@ -1933,8 +2151,7 @@ struct Client::Impl {
             event.state,
             route,
             map_id,
-            event.map_version,
-            artifact_hash,
+            event.map_content_epoch,
             reason,
             event.motion_stop_confirmed,
             motion_stop_reason,
@@ -2017,6 +2234,55 @@ struct Client::Impl {
       checked(
           dds_return_loan(reader, samples, count),
           (std::string("dds_return_loan(") + label + ")").c_str());
+    }
+    return count > 0;
+  }
+
+  bool takeTraversabilitySamples() {
+    constexpr std::size_t kMaxSamples = 8U;
+    void *samples[kMaxSamples]{};
+    dds_sample_info_t infos[kMaxSamples]{};
+    const dds_return_t count =
+        dds_take(traversability_reader, samples, infos, kMaxSamples, kMaxSamples);
+    if (count < 0) {
+      throw std::runtime_error(std::string("dds_take(traversability): ") + dds_strretcode(-count));
+    }
+    try {
+      for (dds_return_t i = 0; i < count; ++i) {
+        if (!infos[i].valid_data) {
+          continue;
+        }
+        TraversabilityGridSnapshot candidate;
+        std::string error;
+        if (!decodeTraversabilityGrid(*static_cast<lingtu_dds_OccupancyGrid *>(samples[i]),
+                                      &candidate, &error)) {
+          continue;
+        }
+        std::lock_guard<std::mutex> lock(traversability_mutex);
+        const bool timestamp_rewound = candidate.timestamp_s < last_traversability_timestamp_s;
+        if (timestamp_rewound) {
+          ++traversability_reset_epoch;
+        }
+        if (!timestamp_rewound && candidate.timestamp_s <= last_traversability_timestamp_s) {
+          continue;
+        }
+        if (traversability_receive_sequence == std::numeric_limits<std::uint64_t>::max()) {
+          continue;
+        }
+        candidate.receive_sequence = ++traversability_receive_sequence;
+        candidate.reset_epoch = traversability_reset_epoch;
+        last_traversability_timestamp_s = candidate.timestamp_s;
+        pending_traversability = std::move(candidate);
+      }
+    } catch (...) {
+      if (count > 0) {
+        dds_return_loan(traversability_reader, samples, count);
+      }
+      throw;
+    }
+    if (count > 0) {
+      checked(dds_return_loan(traversability_reader, samples, count),
+              "dds_return_loan(traversability)");
     }
     return count > 0;
   }
@@ -2190,6 +2456,7 @@ struct Client::Impl {
       try {
         const bool received =
             takeNavigationAcks() | takeExplorationAcks() |
+            takePlanResults() |
             takeInspectionTaskAcks() |
             takeOperatorMotionAcks() |
             takeNavigationGoalStatuses() | takeInspectionTaskEvents() |
@@ -2207,7 +2474,7 @@ struct Client::Impl {
                 pending_local_path,
                 local_path_receive_sequence,
                 "local_path") |
-            takeMapRuntimeStates() | takeMapScenes();
+            takeTraversabilitySamples() | takeMapRuntimeStates() | takeMapScenes();
         if (!received) {
           std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
@@ -2224,7 +2491,7 @@ struct Client::Impl {
   ExplorationCommandReceipt writeExplorationCommand(
       ExplorationKind kind,
       const std::string& exploration_run_id,
-      const std::string& session_id,
+      const std::string&product_session_id,
       const std::string& requested_reason,
       int timeout_ms,
       const std::string& requested_id,
@@ -2232,7 +2499,7 @@ struct Client::Impl {
       double directed_target_x = 0.0,
       double directed_target_y = 0.0,
       double directed_target_ttl_s = 0.0) const {
-    requireExplorationIdentity(exploration_run_id, session_id);
+    requireExplorationIdentity(exploration_run_id, product_session_id);
     const std::string request_id = requested_id.empty()
         ? makeExplorationRequestId(kind)
         : requested_id;
@@ -2246,7 +2513,7 @@ struct Client::Impl {
     message.request_id = const_cast<char*>(request_id.c_str());
     message.exploration_run_id = const_cast<char*>(exploration_run_id.c_str());
     message.kind = static_cast<std::int32_t>(kind);
-    message.session_id = const_cast<char*>(session_id.c_str());
+    message.product_session_id = const_cast<char*>(product_session_id.c_str());
     message.has_directed_target = has_directed_target;
     message.directed_target_x = directed_target_x;
     message.directed_target_y = directed_target_y;
@@ -2254,7 +2521,7 @@ struct Client::Impl {
     message.reason = const_cast<char*>(reason.c_str());
     const auto sent = SteadyClock::now();
     const auto pending = registerExplorationAck(
-        request_id, kind, exploration_run_id, session_id, sent);
+        request_id, kind, exploration_run_id, product_session_id, sent);
     try {
       checked(
           dds_write(exploration_writer, static_cast<const void*>(&message)),
@@ -2405,7 +2672,8 @@ struct Client::Impl {
       bool deadman,
       std::uint32_t freshness_budget_ms,
       int timeout_ms,
-      const std::string& requested_id) const {
+      const std::string& requested_id,
+      bool manual_mode) const {
     requireOperatorSource(source_id, source_epoch);
     if (sequence == 0U) {
       throw std::invalid_argument("operator motion sequence is required");
@@ -2433,6 +2701,7 @@ struct Client::Impl {
     message.source_sequence = sequence;
     message.request_id = const_cast<char*>(request_id.c_str());
     message.deadman = deadman;
+    message.manual_mode = manual_mode;
     message.velocity.linear.x = vx;
     message.velocity.linear.y = vy;
     message.velocity.angular.z = wz;
@@ -2519,12 +2788,24 @@ struct Client::Impl {
       const std::string& request_id,
       CommandKind kind,
       int timeout_ms) const {
+    const auto operation_deadline =
+        SteadyClock::now() + std::chrono::milliseconds(std::max(1, timeout_ms));
+    const auto remaining_timeout_ms = [&]() {
+      const auto now = SteadyClock::now();
+      if (now >= operation_deadline) {
+        throw std::runtime_error("timed out waiting for navigation command ACK: " + request_id);
+      }
+      const auto remaining =
+          std::chrono::duration_cast<std::chrono::milliseconds>(operation_deadline - now).count();
+      return static_cast<int>(std::max<long long>(1, remaining));
+    };
+
     std::unique_lock<std::mutex> clock_lane_lock;
     if (requiresEndpointClock(kind)) {
       clock_lane_lock = std::unique_lock<std::mutex>(clock_command_mutex);
     }
-    waitForReader(command_writer, "nav_command_request", timeout_ms);
-    waitForWriter(ack_reader, "nav_command_ack", timeout_ms);
+    waitForReader(command_writer, "nav_command_request", remaining_timeout_ms());
+    waitForWriter(ack_reader, "nav_command_ack", remaining_timeout_ms());
     if (requiresEndpointClock(kind) &&
         !std::isfinite(
             endpoint_clock_offset_s.load(std::memory_order_relaxed))) {
@@ -2533,7 +2814,7 @@ struct Client::Impl {
       // remote operators are not guaranteed to share the robot's wall clock.
       // A safe Stop/ACK handshake establishes the endpoint clock without
       // weakening the endpoint's future/stale safety gates.
-      synchronizeEndpointClock(timeout_ms);
+      synchronizeEndpointClock(remaining_timeout_ms());
     }
     std::string active_request_id = request_id;
     message.client_id = const_cast<char*>(client_id.c_str());
@@ -2546,7 +2827,7 @@ struct Client::Impl {
       // DDS discovery can consume most of the command freshness budget on the
       // first request from a new client. Source time describes the actual
       // publication, so refresh it only after both endpoints are matched.
-      const double send_source_stamp_s = sourceNowSeconds();
+      double send_source_stamp_s = sourceNowSeconds();
       last_send_source_stamp_s.store(
           send_source_stamp_s, std::memory_order_relaxed);
       last_send_clock_offset_s.store(
@@ -2558,10 +2839,24 @@ struct Client::Impl {
           kind,
           nullptr,
           send_source_stamp_s);
-      const auto sent_steady = SteadyClock::now();
       const auto pending = registerNavigationAck(
-          active_request_id, task_id, kind, sent_steady);
-      try {
+          active_request_id, task_id, kind, SteadyClock::now());
+      std::optional<AckObservation> observation;
+      for (int ack_attempt = 0; ack_attempt < kNavigationCommandAckWriteAttempts; ++ack_attempt) {
+        if (SteadyClock::now() >= operation_deadline) {
+          unregisterNavigationAck(active_request_id, pending);
+          throw std::runtime_error("timed out waiting for navigation command ACK: " +
+                                   active_request_id);
+        }
+        if (ack_attempt > 0) {
+          send_source_stamp_s = sourceNowSeconds();
+          last_send_source_stamp_s.store(send_source_stamp_s, std::memory_order_relaxed);
+          last_send_clock_offset_s.store(endpointClockOffsetOrZero(), std::memory_order_relaxed);
+          fillStamp(message.header, send_source_stamp_s);
+          logClockEvent("command_ack_timeout_retry", active_request_id, kind, nullptr,
+                        send_source_stamp_s);
+        }
+        try {
         checked(
             dds_write(command_writer, static_cast<const void*>(&message)),
             "dds_write(nav_command_request)");
@@ -2569,47 +2864,67 @@ struct Client::Impl {
         unregisterNavigationAck(active_request_id, pending);
         throw;
       }
-      // The typed application ACK is stronger evidence than a DDS protocol ACK:
-      // it proves that the endpoint received, decoded, and accepted the exact
-      // request id/kind. Waiting for the protocol ACK first can turn a transient
-      // middleware timeout into a false command failure even when the endpoint's
-      // NavigationCommandAck is already available.
-      const auto observation = waitForAck(
-          active_request_id, pending, timeout_ms);
-      (void)updateEndpointClock(observation);
+        // The typed application ACK is stronger evidence than a DDS protocol ACK:
+        // it proves that the endpoint received, decoded, and accepted the exact
+        // request id/kind. Waiting for the protocol ACK first can turn a transient
+        // middleware timeout into a false command failure even when the endpoint's
+        // NavigationCommandAck is already available. If that application ACK is
+        // lost, retry the exact same request_id once so the endpoint replay journal
+        // can return the original decision without re-dispatching the command.
+        const auto now = SteadyClock::now();
+        SteadyClock::time_point wait_deadline = operation_deadline;
+        const bool final_ack_attempt = ack_attempt + 1 == kNavigationCommandAckWriteAttempts;
+        if (!final_ack_attempt) {
+          const auto retry_window = std::max(
+              std::chrono::milliseconds(1),
+              std::chrono::duration_cast<std::chrono::milliseconds>(operation_deadline - now) / 2);
+          wait_deadline = std::min(operation_deadline, now + retry_window);
+        }
+        observation = waitForAckUntil(
+          active_request_id, pending, wait_deadline, final_ack_attempt);
+        if (observation) {
+          break;
+        }
+      }
+      if (!observation.has_value()) {
+        throw std::runtime_error("timed out waiting for navigation command ACK: " +
+                                 active_request_id);
+      }
+      const AckObservation ack_observation = *observation;
+      (void)updateEndpointClock(ack_observation);
       NavigationCommandReceipt receipt{
           task_id,
           active_request_id,
-          observation.accepted,
+          ack_observation.accepted,
           static_cast<std::int32_t>(kind),
-          observation.reason,
-          observation.endpoint_stamp_s,
-          observation.accepted
+          ack_observation.reason,
+          ack_observation.endpoint_stamp_s,
+          ack_observation.accepted
               ? std::string{}
-              : rejectionMessage(active_request_id, kind, observation),
+              : rejectionMessage(active_request_id, kind, ack_observation),
       };
-      if (observation.accepted) {
+      if (ack_observation.accepted) {
         return receipt;
       }
       logClockEvent(
           "command_rejected",
           active_request_id,
           kind,
-          &observation,
+          &ack_observation,
           send_source_stamp_s);
-      if (attempt == 0 && isRecoverableClockRejection(kind, observation.reason)) {
+      if (attempt == 0 && isRecoverableClockRejection(kind, ack_observation.reason)) {
         logClockEvent(
             "clock_recovery",
             active_request_id,
             kind,
-            &observation,
+            &ack_observation,
             send_source_stamp_s);
         // The rejected motion was never applied.  Establish a new endpoint
         // clock sample through a safe Stop before issuing one fresh request id.
         endpoint_clock_offset_s.store(
             std::numeric_limits<double>::quiet_NaN(),
             std::memory_order_relaxed);
-        synchronizeEndpointClock(timeout_ms);
+        synchronizeEndpointClock(remaining_timeout_ms());
         continue;
       }
       return receipt;
@@ -2628,7 +2943,7 @@ struct Client::Impl {
     requireAcceptedNavigationReceipt(receipt);
     return receipt.request_id;
   }
-  void writeReasonCommand(
+  NavigationCommandReceipt writeReasonCommandReceipt(
       CommandKind kind,
       const std::string& requested_reason,
       const char* default_reason,
@@ -2643,7 +2958,43 @@ struct Client::Impl {
     message.request_id = const_cast<char*>(request_id.c_str());
     message.kind = static_cast<std::int32_t>(kind);
     message.reason = const_cast<char*>(reason.c_str());
-    writeCommand(message, "", request_id, kind, timeout_ms);
+    return writeCommandReceipt(message, "", request_id, kind, timeout_ms);
+  }
+
+  void writeReasonCommand(CommandKind kind, const std::string &requested_reason,
+                          const char *default_reason, int timeout_ms,
+                          const std::string &requested_id) const {
+    requireAcceptedNavigationReceipt(writeReasonCommandReceipt(
+        kind, requested_reason, default_reason, timeout_ms, requested_id));
+  }
+
+  PlanResult preview(
+      double x,
+      double y,
+      double z,
+      int timeout_ms,
+      const std::string& requested_id) const {
+    requireFinite(x, "plan goal x");
+    requireFinite(y, "plan goal y");
+    requireFinite(z, "plan goal z");
+    const std::string request_id =
+        requested_id.empty() ? makePlanRequestId() : requested_id;
+    waitForReader(plan_writer, "nav_plan_request", timeout_ms);
+    waitForWriter(plan_result_reader, "nav_plan_result", timeout_ms);
+    lingtu_dds_PlanRequest message{};
+    fillHeader(message.header, nowSeconds(), "map");
+    message.request_id = const_cast<char*>(request_id.c_str());
+    message.goal = {x, y, z};
+    const auto pending = registerPlan(request_id);
+    try {
+      checked(
+          dds_write(plan_writer, static_cast<const void*>(&message)),
+          "dds_write(nav_plan_request)");
+    } catch (...) {
+      unregisterPlan(request_id, pending);
+      throw;
+    }
+    return waitForPlan(request_id, pending, timeout_ms);
   }
 
   mutable std::mutex ack_mutex;
@@ -2656,6 +3007,7 @@ struct Client::Impl {
       pending_inspection_acks;
   mutable std::unordered_map<std::string, OperatorMotionPending>
       pending_operator_motion_acks;
+  mutable std::unordered_map<std::string, PlanPending> pending_plans;
   mutable std::string ack_receiver_error;
   mutable std::mutex navigation_state_mutex;
   std::optional<NavigationStateSnapshot> latest_navigation_state;
@@ -2683,6 +3035,11 @@ struct Client::Impl {
   mutable std::mutex local_path_mutex;
   std::optional<PathSnapshot> pending_local_path;
   std::uint64_t local_path_receive_sequence{0U};
+  mutable std::mutex traversability_mutex;
+  std::optional<TraversabilityGridSnapshot> pending_traversability;
+  double last_traversability_timestamp_s{0.0};
+  std::uint64_t traversability_receive_sequence{0U};
+  std::uint64_t traversability_reset_epoch{1U};
   mutable std::mutex map_scene_mutex;
   std::optional<MapSceneSnapshot> pending_map_scene;
   MapSceneHealthSnapshot map_scene_health;
@@ -2700,6 +3057,8 @@ struct Client::Impl {
   dds_entity_t subscriber{0};
   dds_entity_t command_writer{0};
   dds_entity_t ack_reader{0};
+  dds_entity_t plan_writer{0};
+  dds_entity_t plan_result_reader{0};
   dds_entity_t exploration_writer{0};
   dds_entity_t exploration_ack_reader{0};
   dds_entity_t exploration_run_event_reader{0};
@@ -2713,6 +3072,7 @@ struct Client::Impl {
   dds_entity_t navigation_state_reader{0};
   dds_entity_t global_path_reader{0};
   dds_entity_t local_path_reader{0};
+  dds_entity_t traversability_reader{0};
   dds_entity_t map_scene_reader{0};
   dds_entity_t map_state_reader{0};
   const std::string client_id{makeClientId()};
@@ -2831,6 +3191,19 @@ bool Client::takeLocalPath(PathSnapshot* path) {
   return true;
 }
 
+bool Client::takeTraversability(TraversabilityGridSnapshot *grid) {
+  if (grid == nullptr) {
+    throw std::invalid_argument("traversability output is null");
+  }
+  std::lock_guard<std::mutex> lock(impl_->traversability_mutex);
+  if (!impl_->pending_traversability.has_value()) {
+    return false;
+  }
+  *grid = std::move(*impl_->pending_traversability);
+  impl_->pending_traversability.reset();
+  return true;
+}
+
 bool Client::takeMapScene(MapSceneSnapshot* scene) {
   if (scene == nullptr) {
     throw std::invalid_argument("map scene output is null");
@@ -2862,7 +3235,6 @@ NavigationCommandReceipt Client::NavigationCommands::startTask(
   requireFinite(x, "goal x");
   requireFinite(y, "goal y");
   requireFinite(z, "goal z");
-  requireFinite(yaw, "goal yaw");
   const std::string task_id = requested_task_id.empty()
       ? makeTaskId(CommandKind::Goal)
       : requested_task_id;
@@ -2876,10 +3248,26 @@ NavigationCommandReceipt Client::NavigationCommands::startTask(
   message.goal.position.x = x;
   message.goal.position.y = y;
   message.goal.position.z = z;
-  message.goal.orientation = quaternionFromYaw(yaw);
+  if (std::isfinite(yaw)) {
+    message.goal.orientation = quaternionFromYaw(yaw);
+  } else {
+    // A zero quaternion is the wire representation of a position-only goal.
+    // The endpoint preserves it as std::nullopt instead of requesting a final
+    // world-frame yaw alignment.
+    message.goal.orientation = {};
+  }
   message.reason = const_cast<char*>("");
   return owner_.impl_->writeCommandReceipt(
       message, task_id, request_id, CommandKind::Goal, timeout_ms);
+}
+
+PlanResult Client::NavigationCommands::preview(
+    double x,
+    double y,
+    double z,
+    int timeout_ms,
+    const std::string& request_id) {
+  return owner_.impl_->preview(x, y, z, timeout_ms, request_id);
 }
 
 NavigationCommandReceipt Client::NavigationCommands::cancelTask(
@@ -2975,6 +3363,13 @@ void Client::NavigationCommands::clearEstop(
       requested_id);
 }
 
+NavigationCommandReceipt
+Client::NavigationCommands::resumeAutonomyWithReceipt(const std::string &reason, int timeout_ms,
+                                                      const std::string &requested_id) {
+  return owner_.impl_->writeReasonCommandReceipt(CommandKind::ResumeAutonomy, reason,
+                                                 "resume_autonomy", timeout_ms, requested_id);
+}
+
 void Client::NavigationCommands::resumeAutonomy(
     const std::string& reason,
     int timeout_ms,
@@ -2989,14 +3384,13 @@ void Client::NavigationCommands::resumeAutonomy(
 
 ExplorationCommandReceipt Client::ExplorationCommands::start(
     const std::string& exploration_run_id,
-    const std::string& session_id,
+    const std::string&product_session_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
   return owner_.impl_->writeExplorationCommand(
       ExplorationKind::kStart,
-      exploration_run_id,
-      session_id,
+      exploration_run_id, product_session_id,
       reason.empty() ? "operator_start" : reason,
       timeout_ms,
       request_id);
@@ -3004,14 +3398,13 @@ ExplorationCommandReceipt Client::ExplorationCommands::start(
 
 ExplorationCommandReceipt Client::ExplorationCommands::pause(
     const std::string& exploration_run_id,
-    const std::string& session_id,
+    const std::string&product_session_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
   return owner_.impl_->writeExplorationCommand(
       ExplorationKind::kPause,
-      exploration_run_id,
-      session_id,
+      exploration_run_id, product_session_id,
       reason.empty() ? "operator_pause" : reason,
       timeout_ms,
       request_id);
@@ -3019,14 +3412,13 @@ ExplorationCommandReceipt Client::ExplorationCommands::pause(
 
 ExplorationCommandReceipt Client::ExplorationCommands::resume(
     const std::string& exploration_run_id,
-    const std::string& session_id,
+    const std::string&product_session_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
   return owner_.impl_->writeExplorationCommand(
       ExplorationKind::kResume,
-      exploration_run_id,
-      session_id,
+      exploration_run_id, product_session_id,
       reason.empty() ? "operator_resume" : reason,
       timeout_ms,
       request_id);
@@ -3034,14 +3426,13 @@ ExplorationCommandReceipt Client::ExplorationCommands::resume(
 
 ExplorationCommandReceipt Client::ExplorationCommands::stop(
     const std::string& exploration_run_id,
-    const std::string& session_id,
+    const std::string&product_session_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
   return owner_.impl_->writeExplorationCommand(
       ExplorationKind::kStop,
-      exploration_run_id,
-      session_id,
+      exploration_run_id, product_session_id,
       reason.empty() ? "operator_stop" : reason,
       timeout_ms,
       request_id);
@@ -3052,15 +3443,14 @@ ExplorationCommandReceipt Client::ExplorationCommands::setDirectedTarget(
     double y,
     double ttl_s,
     const std::string& exploration_run_id,
-    const std::string& session_id,
+    const std::string&product_session_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
   requireDirectedTarget(x, y, ttl_s);
   return owner_.impl_->writeExplorationCommand(
       ExplorationKind::kSetDirectedTarget,
-      exploration_run_id,
-      session_id,
+      exploration_run_id, product_session_id,
       reason.empty() ? "operator_directed_explore" : reason,
       timeout_ms,
       request_id,
@@ -3072,15 +3462,14 @@ ExplorationCommandReceipt Client::ExplorationCommands::setDirectedTarget(
 
 ExplorationCommandReceipt Client::ExplorationCommands::clearDirectedTarget(
     const std::string& exploration_run_id,
-    const std::string& session_id,
+    const std::string&product_session_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
-  requireDirectedTargetSessionId(session_id);
+  requireDirectedTargetProductSessionId(product_session_id);
   return owner_.impl_->writeExplorationCommand(
       ExplorationKind::kClearDirectedTarget,
-      exploration_run_id,
-      session_id,
+      exploration_run_id, product_session_id,
       reason.empty() ? "operator_clear_directed_explore" : reason,
       timeout_ms,
       request_id);
@@ -3192,7 +3581,8 @@ void Client::OperatorMotionCommands::sample(
     bool deadman,
     std::uint32_t freshness_budget_ms,
     int timeout_ms,
-    const std::string& request_id) {
+    const std::string& request_id,
+    bool manual_mode) {
   owner_.impl_->writeOperatorMotionSample(
       source_id,
       source_epoch,
@@ -3203,7 +3593,8 @@ void Client::OperatorMotionCommands::sample(
       deadman,
       freshness_budget_ms,
       timeout_ms,
-      request_id);
+      request_id,
+      manual_mode);
 }
 
 OperatorMotionCommandReceipt

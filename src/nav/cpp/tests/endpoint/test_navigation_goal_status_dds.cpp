@@ -7,10 +7,10 @@
 #include <thread>
 
 #include "dds/dds.h"
-#include "lingtu_slam.h"
-#include "message/cpp/dds_qos_profiles.hpp"
-#include "message/cpp/dds_topics.hpp"
-#include "nav_dds_runtime.hpp"
+#include "messages.h"
+#include "message/cpp/qos.hpp"
+#include "message/cpp/topics.hpp"
+#include "dds/runtime.hpp"
 
 namespace {
 
@@ -102,14 +102,18 @@ void testGoalStatusQosIsReliableAndRetained() {
 
 void testRuntimePublishesCorrelatedGoalLifecycle() {
   constexpr int kDomain = 121;
-  lingtu::nav::endpoint::DdsRuntime runtime(kDomain);
+  lingtu::nav::endpoint::Dds runtime(kDomain);
   GoalStatusPeer peer(kDomain);
 
   lingtu_dds_NavigationGoalStatus observed{};
   for (int attempt = 0; attempt < 100; ++attempt) {
-    const bool written = runtime.writeNavigationGoalStatus(
-        "navigation-task-1", "goal-attempt-1", lingtu::message::NavigationGoalState::Failed, 42U,
-        "goal_outside_map");
+    const bool written = runtime
+                             .publish(lingtu::nav::endpoint::OutputEvent{
+                                 lingtu::nav::endpoint::NavigationGoalStatusOutput{
+                                     "navigation-task-1", "goal-attempt-1",
+                                     lingtu::message::NavigationGoalState::Failed, 42U,
+                                     "goal_outside_map"}})
+                             .published;
     require(written, "valid goal lifecycle write must report success");
     std::this_thread::sleep_for(10ms);
     if (peer.take(&observed)) {
@@ -141,23 +145,20 @@ void testRuntimePublishesCorrelatedGoalLifecycle() {
 
 void testRuntimeRejectsInvalidGoalLifecycleIdentity() {
   constexpr int kDomain = 122;
-  lingtu::nav::endpoint::DdsRuntime runtime(kDomain);
-  require(!runtime.writeNavigationGoalStatus("", "goal-attempt-1",
-                                             lingtu::message::NavigationGoalState::Failed, 42U,
-                                             "goal_outside_map"),
+  lingtu::nav::endpoint::Dds runtime(kDomain);
+  const auto publish = [&](std::string task_id, std::string request_id) {
+    return runtime
+        .publish(lingtu::nav::endpoint::OutputEvent{
+            lingtu::nav::endpoint::NavigationGoalStatusOutput{
+                std::move(task_id), std::move(request_id),
+                lingtu::message::NavigationGoalState::Failed, 42U,
+                "goal_outside_map"}})
+        .published;
+  };
+  require(!publish("", "goal-attempt-1"),
           "empty task id must fail goal lifecycle write");
-  require(!runtime.writeNavigationGoalStatus("navigation-task-1", "",
-                                             lingtu::message::NavigationGoalState::Failed, 42U,
-                                             "goal_outside_map"),
+  require(!publish("navigation-task-1", ""),
           "empty request id must fail goal lifecycle write");
-  require(!runtime.writeNavigationGoalStatus(nullptr, "goal-attempt-1",
-                                             lingtu::message::NavigationGoalState::Failed, 42U,
-                                             "goal_outside_map"),
-          "null task id must fail goal lifecycle write");
-  require(!runtime.writeNavigationGoalStatus("navigation-task-1", nullptr,
-                                             lingtu::message::NavigationGoalState::Failed, 42U,
-                                             "goal_outside_map"),
-          "null request id must fail goal lifecycle write");
 }
 
 }  // namespace

@@ -1,10 +1,12 @@
 #pragma once
 
-#include <memory>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+#include "client_export.h"
 
 namespace lingtu::nav::commands {
 
@@ -19,8 +21,7 @@ struct NavigationStateSnapshot {
   std::string active_request_id;
   std::uint64_t goal_epoch{0U};
   std::string map_id;
-  std::int64_t map_version{0};
-  std::string map_hash;
+  std::int64_t map_content_epoch{0};
   std::int32_t planning_state{0};
   std::int32_t execution_state{0};
   std::int32_t recovery_state{0};
@@ -85,7 +86,7 @@ struct InspectionTaskEventSnapshot {
   std::string command_request_id;
   std::int32_t state{0};
   std::string map_id;
-  std::int64_t map_version{0};
+  std::int64_t map_content_epoch{0};
   std::string route_id;
   std::uint64_t route_revision{0U};
   std::uint32_t point_index{0U};
@@ -112,8 +113,7 @@ struct ExplorationRunEventSnapshot {
   std::int32_t state{0};
   std::string route;
   std::string map_id;
-  std::int64_t map_version{0};
-  std::string artifact_hash;
+  std::int64_t map_content_epoch{0};
   std::string reason;
   bool motion_stop_confirmed{false};
   std::string motion_stop_reason;
@@ -143,6 +143,38 @@ struct PathSnapshot {
   std::string frame_id;
   std::uint64_t receive_sequence{0U};
   std::vector<PathPoint> points;
+};
+
+struct PlanResult {
+  double timestamp_s{0.0};
+  std::string frame_id;
+  std::string request_id;
+  bool feasible{false};
+  bool start_valid{false};
+  std::string reason;
+  double elapsed_ms{0.0};
+  std::string planner;
+  PathPoint start;
+  PathPoint goal;
+  std::vector<PathPoint> path;
+};
+
+// Latest native /nav/traversability control-risk grid.  This is deliberately
+// separate from MapScene and Python planning cost: the native endpoint is the
+// only producer with motion-control authority.
+struct TraversabilityGridSnapshot {
+  double timestamp_s{0.0};
+  std::string frame_id;
+  std::uint64_t receive_sequence{0U};
+  std::uint64_t reset_epoch{1U};
+  std::uint32_t width{0U};
+  std::uint32_t height{0U};
+  float resolution{0.0F};
+  double origin_x{0.0};
+  double origin_y{0.0};
+  double origin_z{0.0};
+  double yaw{0.0};
+  std::vector<std::uint8_t> cells;
 };
 
 struct MapScenePoint {
@@ -222,9 +254,9 @@ struct MapSceneHealthSnapshot {
   std::string state_error;
 };
 
-class Client {
+class LINGTU_NAV_CLIENT_API Client {
  public:
-  class NavigationCommands {
+  class LINGTU_NAV_CLIENT_API NavigationCommands {
    public:
     [[nodiscard]] NavigationCommandReceipt startTask(
         double x,
@@ -233,6 +265,12 @@ class Client {
         double yaw,
         int timeout_ms = 1000,
         const std::string& task_id = {},
+        const std::string& request_id = {});
+    [[nodiscard]] PlanResult preview(
+        double x,
+        double y,
+        double z,
+        int timeout_ms = 1000,
         const std::string& request_id = {});
     [[nodiscard]] NavigationCommandReceipt cancelTask(
         const std::string& task_id,
@@ -261,6 +299,9 @@ class Client {
         const std::string& reason,
         int timeout_ms = 1000,
         const std::string& request_id = {});
+    [[nodiscard]] NavigationCommandReceipt
+    resumeAutonomyWithReceipt(const std::string &reason, int timeout_ms = 1000,
+                              const std::string &request_id = {});
     void resumeAutonomy(
         const std::string& reason,
         int timeout_ms = 1000,
@@ -272,29 +313,29 @@ class Client {
     Client& owner_;
   };
 
-  class ExplorationCommands {
+  class LINGTU_NAV_CLIENT_API ExplorationCommands {
    public:
     ExplorationCommandReceipt start(
         const std::string& exploration_run_id,
-        const std::string& session_id,
+        const std::string&product_session_id,
         const std::string& reason = "operator_start",
         int timeout_ms = 1000,
         const std::string& request_id = {});
     ExplorationCommandReceipt pause(
         const std::string& exploration_run_id,
-        const std::string& session_id,
+        const std::string&product_session_id,
         const std::string& reason = "operator_pause",
         int timeout_ms = 1000,
         const std::string& request_id = {});
     ExplorationCommandReceipt resume(
         const std::string& exploration_run_id,
-        const std::string& session_id,
+        const std::string&product_session_id,
         const std::string& reason = "operator_resume",
         int timeout_ms = 1000,
         const std::string& request_id = {});
     ExplorationCommandReceipt stop(
         const std::string& exploration_run_id,
-        const std::string& session_id,
+        const std::string&product_session_id,
         const std::string& reason = "operator_stop",
         int timeout_ms = 1000,
         const std::string& request_id = {});
@@ -304,13 +345,13 @@ class Client {
         double y,
         double ttl_s,
         const std::string& exploration_run_id,
-        const std::string& session_id,
+        const std::string&product_session_id,
         const std::string& reason = "operator_directed_explore",
         int timeout_ms = 1000,
         const std::string& request_id = {});
     ExplorationCommandReceipt clearDirectedTarget(
         const std::string& exploration_run_id,
-        const std::string& session_id,
+        const std::string&product_session_id,
         const std::string& reason = "operator_clear_directed_explore",
         int timeout_ms = 1000,
         const std::string& request_id = {});
@@ -321,7 +362,7 @@ class Client {
     Client& owner_;
   };
 
-  class InspectionCommands {
+  class LINGTU_NAV_CLIENT_API InspectionCommands {
    public:
     [[nodiscard]] InspectionTaskCommandReceipt startTask(
         const std::string& task_id,
@@ -350,7 +391,7 @@ class Client {
     Client& owner_;
   };
 
-  class OperatorMotionCommands {
+  class LINGTU_NAV_CLIENT_API OperatorMotionCommands {
    public:
     [[nodiscard]] OperatorMotionCommandReceipt claimWithReceipt(
         const std::string& source_id,
@@ -376,7 +417,8 @@ class Client {
         bool deadman = true,
         std::uint32_t freshness_budget_ms = 350,
         int timeout_ms = 1000,
-        const std::string& request_id = {});
+        const std::string& request_id = {},
+        bool manual_mode = false);
     [[nodiscard]] OperatorMotionCommandReceipt holdWithReceipt(
         const std::string& source_id,
         std::uint64_t source_epoch,
@@ -438,6 +480,7 @@ class Client {
   navigationTaskStatus(const std::string& task_id) const;
   [[nodiscard]] bool takeGlobalPath(PathSnapshot* path);
   [[nodiscard]] bool takeLocalPath(PathSnapshot* path);
+  [[nodiscard]] bool takeTraversability(TraversabilityGridSnapshot *grid);
   [[nodiscard]] bool takeMapScene(MapSceneSnapshot* scene);
   [[nodiscard]] MapSceneHealthSnapshot mapSceneHealth() const;
 

@@ -41,7 +41,7 @@ class _Route(ctypes.Structure):
         ("id", ctypes.c_char_p),
         ("name", ctypes.c_char_p),
         ("map_id", ctypes.c_char_p),
-        ("map_version", ctypes.c_int64),
+        ("map_content_epoch", ctypes.c_int64),
         ("revision", ctypes.c_uint64),
         ("loop_count", ctypes.c_uint32),
         ("failure_policy", ctypes.c_int32),
@@ -87,12 +87,12 @@ def _load_library() -> ctypes.CDLL:
 class NativeInspectionStore:
     """Typed owner of one native route-store handle."""
 
-    def __init__(self, map_root: str | os.PathLike[str]) -> None:
+    def __init__(self, data_dir: str | os.PathLike[str]) -> None:
         self._lib = _load_library()
         self._configure_core_abi()
         self._validate_abi()
         self._configure_abi()
-        self._handle = self._lib.lingtu_inspection_store_create(os.fspath(map_root).encode("utf-8"))
+        self._handle = self._lib.lingtu_inspection_store_create(os.fspath(data_dir).encode("utf-8"))
         if not self._handle:
             raise InspectionNativeError("failed to create native inspection store")
 
@@ -219,7 +219,7 @@ class NativeInspectionStore:
             text(route.get("id")),
             text(route.get("name") or route.get("id")),
             text(route.get("map_id")),
-            int(route.get("map_version", 0)),
+            int(route.get("map_content_epoch", 0)),
             int(route.get("revision", 1)),
             int(route.get("loop_count", 1)),
             policy,

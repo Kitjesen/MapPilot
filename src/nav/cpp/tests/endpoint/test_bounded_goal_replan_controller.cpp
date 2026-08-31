@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "plan/bounded_goal_replan_controller.hpp"
+#include "runtime/goal/retry.hpp"
 
 namespace {
 
@@ -23,9 +23,8 @@ void require(bool condition, const char *message) {
 }
 
 lingtu::nav::plan::MapIdentity mapIdentity(std::string id = "map-a", std::int64_t version = 1,
-                                           std::string sha = "sha-a",
                                            std::string frame = "map") {
-  return {std::move(id), version, std::move(sha), std::move(frame)};
+  return {std::move(id), version, std::move(frame)};
 }
 
 BoundedGoalReplanGoal goal(std::string task = "task-a", std::string request = "req-a",
@@ -114,7 +113,7 @@ int main() {
   BoundedGoalReplanController pending_supersede;
   (void)pending_supersede.observeGoal(active, 5.5);
   (void)pending_supersede.armAfterConfirmedStop(active, 5.5, true);
-  const auto other_task = goal("task-b", "req-c", 1U, mapIdentity("map-c", 1, "sha-c"));
+  const auto other_task = goal("task-b", "req-c", 1U, mapIdentity("map-c", 1));
   expectAction(pending_supersede.observeGoal(other_task, 5.6).action,
                BoundedGoalReplanAction::kCancel,
                "new goal did not cancel pending old goal");
@@ -145,7 +144,7 @@ int main() {
   BoundedGoalReplanController map_change;
   (void)map_change.observeGoal(active, 8.0);
   (void)map_change.armAfterConfirmedStop(active, 8.0, true);
-  const auto changed_map = goal("task-a", "req-a", 1U, mapIdentity("map-b", 1, "sha-b"));
+  const auto changed_map = goal("task-a", "req-a", 1U, mapIdentity("map-b", 1));
   expectAction(map_change.tick(changed_map, 8.5).action, BoundedGoalReplanAction::kCancel,
                "map identity change did not beat pending timer");
   require(map_change.snapshot().reason == "stale_map_identity",

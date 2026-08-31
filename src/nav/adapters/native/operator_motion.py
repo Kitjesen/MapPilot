@@ -31,6 +31,12 @@ def _require_deadman(deadman: bool) -> bool:
     return deadman
 
 
+def _require_manual_mode(manual_mode: bool) -> bool:
+    if not isinstance(manual_mode, bool):
+        raise TypeError("operator motion manual_mode must be a boolean")
+    return manual_mode
+
+
 def _decode_fixed_text(value: bytes | bytearray | memoryview) -> str:
     return bytes(value).split(b"\0", 1)[0].decode("utf-8", errors="replace")
 
@@ -191,19 +197,22 @@ class NativeOperatorMotionClient:
         wz: float,
         *,
         deadman: bool = True,
+        manual_mode: bool = False,
         freshness_budget_ms: int = 350,
         request_id: str | None = None,
     ) -> bool:
-        """Write one replaceable joystick sample to DDS without an endpoint ACK."""
+        """Write one replaceable physical-velocity sample to DDS without an endpoint ACK."""
 
         checked_deadman = _require_deadman(deadman)
+        checked_manual_mode = _require_manual_mode(manual_mode)
         self._session.call(
-            "lingtu_nav_client_operator_motion_sample",
+            "lingtu_nav_client_operator_motion_sample_v2",
             str(request_id or "").encode("utf-8"),
             str(source_id).encode("utf-8"),
             int(source_epoch),
             _require_sequence(sequence),
             1 if checked_deadman else 0,
+            1 if checked_manual_mode else 0,
             float(vx),
             float(vy),
             float(wz),

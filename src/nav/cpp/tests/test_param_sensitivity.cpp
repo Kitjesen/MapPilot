@@ -4,16 +4,15 @@
  * 楠岃瘉鍏抽敭鍙傛暟鍦ㄨ竟鐣屽€?鎵弿鍊间笅鐨勮涓猴紝闃叉璋冨弬寮曞叆鍥炲綊銆?
  *
  * 娴嬭瘯瑕嗙洊:
- *   TEST(PathFollower, DirDiffThreVariation)  鈥?灏?澶?dirDiffThre 鍏堣浆鍐嶈蛋 vs 杈硅蛋杈硅浆
- *   TEST(LocalPlanner, SlopeWeightImpact)     鈥?slopeWeight=0 vs 5 瀵瑰潯搴﹁瘎鍒嗗奖鍝?
- *   TEST(PctAdapter,  StuckBoundaryExact)     鈥?stuckTimeoutSec=2 绮剧‘杈圭晫
- *   TEST(PctAdapter,  ReplanCooldownDebounce) 鈥?replanCooldownSec=3 鍐峰嵈闃叉姈
+ *   TEST(PathFollower, HeadingAlignEnterVariation)
+ *   TEST(WaypointTracker,  StuckBoundaryExact)     鈥?stuckTimeoutSec=2 绮剧‘杈圭晫
+ *   TEST(WaypointTracker,  ReplanCooldownDebounce) 鈥?replanCooldownSec=3 鍐峰嵈闃叉姈
  */
 
 #include <gtest/gtest.h>
-#include "nav_kernel/path_follower_core.hpp"
-#include "local_planner_scoring.hpp"
-#include "nav_kernel/pct_adapter_core.hpp"
+#include "planning/local/planner.hpp"
+#include "tracking/follower.hpp"
+#include "nav_kernel/waypoint_helpers_core.hpp"
 #include <cmath>
 
 using namespace nav_kernel;
@@ -28,26 +27,48 @@ static Pose makePose(double x, double y, double z, double yaw = 0.0) {
   return p;
 }
 
+static FollowerOutput followPath(
+    Follower& follower,
+    const Vec3& vehicle,
+    double yaw,
+    const std::vector<Vec3>& path,
+    double requested_speed,
+    double time,
+    double slow_factor,
+    int safety_stop,
+    const FollowerParams& params) {
+  FollowerState state;
+  state.vehicleRelative = vehicle;
+  state.vehicleYawRelative = yaw;
+  state.requestedSpeed = requested_speed;
+  state.currentTime = time;
+  state.slowFactor = slow_factor;
+  state.safetyStop = safety_stop;
+  state.params = params;
+  state.standardPathProfile = false;
+  return follower.follow(LocalPlan::path(path), state);
+}
+
 // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
-//  TEST 1: PathFollower 鈥?dirDiffThre 鍙傛暟鏁忔劅鎬?
+//  TEST 1: PathFollower heading-alignment enter threshold sensitivity
 //
 //  鍦烘櫙锛氭満鍣ㄤ汉鍦ㄥ師鐐癸紝鐩爣璺偣鍦ㄦ鍙虫柟 (x=2, y=0)锛?
 //  浣嗘満鍣ㄤ汉褰撳墠鏈濆悜鍋忓樊 90掳锛堥潰鏈?y 杞存柟鍚戯級銆?
 //
-//  灏忛槇鍊?(0.1 rad): dirDiff > thre 鈫?canAccel=false 鈫?vx鈮?, |wz|>0 (鍏堣浆鍐嶈蛋)
-//  澶ч槇鍊?(1.5 rad): dirDiff < thre 鈫?canAccel=true  鈫?vx>0 (杈硅蛋杈硅浆)
+//  Small enter angle freezes translation; a larger one permits coupled motion.
 // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
-TEST(PathFollower, DirDiffThreVariation) {
+TEST(PathFollower, HeadingAlignEnterVariation) {
   // 鍏辩敤璺緞: 娌?+X 鏂瑰悜, 浠?(0.5,0,0) 鍒?(3,0,0)
   std::vector<Vec3> path = {{0.5, 0, 0}, {1.0, 0, 0}, {2.0, 0, 0}, {3.0, 0, 0}};
   Vec3 robot{0, 0, 0};
   double yawDiff = M_PI / 2;  // 90掳 鏈濆悜鍋忓樊
 
-  // 鈹€鈹€ 灏忛槇鍊? dirDiffThre = 0.1 rad (~5.7掳) 鈹€鈹€
+  // Small heading-alignment enter angle: 0.1 rad.
   {
-    PathFollowerParams p;
-    p.dirDiffThre      = 0.1;
+    FollowerParams p;
+    p.headingAlignEnterRad = 0.1;
+    p.headingAlignExitRad = 0.05;
     p.maxSpeed         = 1.0;
     p.maxAccel         = 1.0;
     p.baseLookAheadDis = 0.3;
@@ -58,25 +79,26 @@ TEST(PathFollower, DirDiffThreVariation) {
     p.twoWayDrive      = false;
     p.noRotAtGoal      = false;
 
-    PathFollowerState state;
-    auto out = computeControl(robot, yawDiff, path,
-                              1.0, 0.0, 1.0, 0, p, state);
+    Follower follower;
+    auto out = followPath(
+        follower, robot, yawDiff, path, 1.0, 0.0, 1.0, 0, p);
 
     // 90掳 >> 0.1 rad, dis >> omniDirGoalThre 鈫?canAccel = false
-    EXPECT_FALSE(out.canAccel)
-        << "dirDiffThre=0.1: 90deg error should block linear accel";
+    EXPECT_FALSE(out.canAccelerate)
+        << "headingAlignEnterRad=0.1: 90deg error should block linear accel";
     // vx 搴旀帴杩?0 (vehicleSpeed 浠?0 寮€濮? canAccel=false 鈫?瓒嬪悜 0)
     EXPECT_NEAR(out.cmd.vx, 0.0, 0.01)
-        << "dirDiffThre=0.1: vx should be ~0 (turn in place first)";
+        << "headingAlignEnterRad=0.1: vx should be ~0 (turn in place first)";
     // wz 搴旈潪闆?(杞悜淇)
     EXPECT_GT(std::fabs(out.cmd.wz), 0.0)
-        << "dirDiffThre=0.1: |wz| should be >0 (turning to correct heading)";
+        << "headingAlignEnterRad=0.1: |wz| should be >0";
   }
 
-  // 鈹€鈹€ 澶ч槇鍊? dirDiffThre = 1.6 rad (~92掳, > PI/2) 鈹€鈹€
+  // Large heading-alignment enter angle: 1.6 rad (> pi/2).
   {
-    PathFollowerParams p;
-    p.dirDiffThre      = 1.6;   // 92掳 > 90掳 鈫?鍏佽杈硅蛋杈硅浆
+    FollowerParams p;
+    p.headingAlignEnterRad = 1.6;
+    p.headingAlignExitRad = 0.8;
     p.maxSpeed         = 1.0;
     p.maxAccel         = 10.0;
     p.nominalDt        = 0.01;
@@ -88,22 +110,23 @@ TEST(PathFollower, DirDiffThreVariation) {
     p.twoWayDrive      = false;
     p.noRotAtGoal      = false;
 
-    PathFollowerState state;
+    Follower follower;
     // Two 10 ms updates integrate speed to 0.2 m/s at 10 m/s^2.
-    computeControl(robot, yawDiff, path, 1.0, 0.0, 1.0, 0, p, state);
-    auto out = computeControl(robot, yawDiff, path, 1.0, 0.01, 1.0, 0, p, state);
+    followPath(follower, robot, yawDiff, path, 1.0, 0.0, 1.0, 0, p);
+    auto out = followPath(
+        follower, robot, yawDiff, path, 1.0, 0.01, 1.0, 0, p);
 
     // 90掳 鈮?1.571 rad < 1.6 rad 鈫?canAccel = true (鍏佽杈硅蛋杈硅浆)
-    EXPECT_TRUE(out.canAccel)
-        << "dirDiffThre=1.6: 90deg (1.571) < 1.6 rad should allow accel";
+    EXPECT_TRUE(out.canAccelerate)
+        << "headingAlignEnterRad=1.6 should allow this 90deg error";
     // vx > 0 (omni 鍒嗚В: vx = cos(dirDiff)*speed)
     EXPECT_GT(out.cmd.vx, 0.0)
-        << "dirDiffThre=1.6: vx should be >0 (moving while turning)";
+        << "headingAlignEnterRad=1.6 should permit translation";
   }
 
-  // 鈹€鈹€ 鍗曡皟鎬? 鏇村ぇ鐨?dirDiffThre 鍏佽鏇村ぇ鐨勮搴﹁宸€氳繃 鈹€鈹€
+  // A larger enter angle admits a larger heading error.
   {
-    PathFollowerParams p;
+    FollowerParams p;
     p.maxSpeed         = 1.0;
     p.maxAccel         = 1.0;
     p.baseLookAheadDis = 0.3;
@@ -118,96 +141,33 @@ TEST(PathFollower, DirDiffThreVariation) {
     double angle = 0.12;
 
     // thre = 0.1 鈫?0.12 > 0.1 鈫?blocked
-    p.dirDiffThre = 0.1;
-    PathFollowerState s1;
-    auto o1 = computeControl(robot, angle, path, 1.0, 0.0, 1.0, 0, p, s1);
-    EXPECT_FALSE(o1.canAccel) << "dirDiffThre=0.1, angle=0.12 鈫?blocked";
+    p.headingAlignEnterRad = 0.1;
+    p.headingAlignExitRad = 0.05;
+    Follower first;
+    auto o1 = followPath(
+        first, robot, angle, path, 1.0, 0.0, 1.0, 0, p);
+    EXPECT_FALSE(o1.canAccelerate)
+        << "headingAlignEnterRad=0.1 must block angle=0.12";
 
     // thre = 0.2 鈫?0.12 < 0.2 鈫?allowed
-    p.dirDiffThre = 0.2;
-    PathFollowerState s2;
-    auto o2 = computeControl(robot, angle, path, 1.0, 0.0, 1.0, 0, p, s2);
-    EXPECT_TRUE(o2.canAccel) << "dirDiffThre=0.2, angle=0.12 鈫?allowed";
+    p.headingAlignEnterRad = 0.2;
+    p.headingAlignExitRad = 0.1;
+    Follower second;
+    auto o2 = followPath(
+        second, robot, angle, path, 1.0, 0.0, 1.0, 0, p);
+    EXPECT_TRUE(o2.canAccelerate)
+        << "headingAlignEnterRad=0.2 must allow angle=0.12";
   }
 }
 
 // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
-//  TEST 2: LocalPlanner 鈥?slopeWeight 鍙傛暟鏁忔劅鎬?
-//
-//  鏂瑰悜A锛堝钩鍧︼級锛歞irDiff=0.1 rad, slopePenalty=0.0
-//  鏂瑰悜B锛堟湁鍧★級锛歞irDiff=0.1 rad, slopePenalty=1.0
-//
-//  slopeWeight=0: 涓や釜鏂瑰悜寰楀垎鎺ヨ繎 (鍧″害涓嶅奖鍝?
-//  slopeWeight=5: 鏂瑰悜A寰楀垎 > 鏂瑰悜B寰楀垎 (鍧″害鏄庢樉褰卞搷)
-// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
-
-TEST(LocalPlanner, SlopeWeightImpact) {
-  const double dirDiffDeg      = 5.73;  // ~0.1 rad 鈫?angDiffDeg format
-  const double rotDirW         = 1.0;
-  const double groupDirW       = 1.0;
-  const double relativeGoalDis = 10.0;  // 杩滅鐩爣, 璧?rotDirW 鍒嗘敮
-
-  const double slopePenaltyA = 0.0;  // 骞冲潶
-  const double slopePenaltyB = 1.0;  // 鏈€澶у潯搴?
-
-  PathScoreParams p;
-  p.dirWeight       = 0.02;
-  p.omniDirGoalThre = 5.0;
-
-  // 鈹€鈹€ slopeWeight = 0: 鍧″害涓嶅奖鍝?鈫?涓や釜鏂瑰悜寰楀垎鐩稿悓 鈹€鈹€
-  p.slopeWeight = 0.0;
-  double scoreA_sw0 = scorePath(dirDiffDeg, rotDirW, groupDirW,
-                                slopePenaltyA, relativeGoalDis, p);
-  double scoreB_sw0 = scorePath(dirDiffDeg, rotDirW, groupDirW,
-                                slopePenaltyB, relativeGoalDis, p);
-
-  EXPECT_NEAR(scoreA_sw0, scoreB_sw0, 1e-9)
-      << "slopeWeight=0: terrain penalty should have no effect";
-  EXPECT_GT(scoreA_sw0, 0.0)
-      << "slopeWeight=0: scores should be positive";
-
-  // 鈹€鈹€ slopeWeight = 5: 鍧″害鏄庢樉褰卞搷 鈫?A > B 鈹€鈹€
-  p.slopeWeight = 5.0;
-  double scoreA_sw5 = scorePath(dirDiffDeg, rotDirW, groupDirW,
-                                slopePenaltyA, relativeGoalDis, p);
-  double scoreB_sw5 = scorePath(dirDiffDeg, rotDirW, groupDirW,
-                                slopePenaltyB, relativeGoalDis, p);
-
-  // 鏂瑰悜A (骞冲潶): terrainFactor = max(0, 1-5*0) = 1.0 鈫?婊″垎
-  EXPECT_GT(scoreA_sw5, 0.0)
-      << "slopeWeight=5, flat: score should be positive";
-  // 鏂瑰悜B (鍧?: terrainFactor = max(0, 1-5*1.0) = max(0, -4) = 0 鈫?鍒嗘暟=0
-  EXPECT_NEAR(scoreB_sw5, 0.0, 1e-9)
-      << "slopeWeight=5, steep slope: score should be 0 (clamped)";
-  // A 鏄庢樉浼樹簬 B
-  EXPECT_GT(scoreA_sw5, scoreB_sw5)
-      << "slopeWeight=5: flat path should score higher than steep path";
-
-  // 鈹€鈹€ 楠岃瘉鍗曡皟鎬? slopeWeight 瓒婂ぇ, 鏈夊潯鏂瑰悜寰楀垎瓒婁綆 鈹€鈹€
-  p.slopeWeight = 1.0;
-  double scoreB_sw1 = scorePath(dirDiffDeg, rotDirW, groupDirW,
-                                slopePenaltyB, relativeGoalDis, p);
-  // terrainFactor(sw=1) = max(0, 1-1*1.0) = 0 鈫?宸茬粡鏄?
-  // 鐢ㄤ腑绛夊潯搴﹂獙璇?
-  double midSlope = 0.3;
-  p.slopeWeight = 1.0;
-  double scoreMid_sw1 = scorePath(dirDiffDeg, rotDirW, groupDirW,
-                                  midSlope, relativeGoalDis, p);
-  p.slopeWeight = 3.0;
-  double scoreMid_sw3 = scorePath(dirDiffDeg, rotDirW, groupDirW,
-                                  midSlope, relativeGoalDis, p);
-  EXPECT_GT(scoreMid_sw1, scoreMid_sw3)
-      << "mid-slope: higher slopeWeight should yield lower score";
-}
-
-// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
-//  TEST 3: PctAdapter 鈥?stuckTimeoutSec=2 绮剧‘杈圭晫
+//  TEST 2: WaypointTracker 鈥?stuckTimeoutSec=2 绮剧‘杈圭晫
 //
 //  鍋滅暀 2.0s (鎭板ソ鍒版湡) 鈫?搴旇Е鍙?stuck
 //  鍋滅暀 1.9s (宸?.1绉? 鈫?涓嶅簲瑙﹀彂 stuck
 // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
-TEST(PctAdapter, StuckBoundaryExact) {
+TEST(WaypointTracker, StuckBoundaryExact) {
   WaypointTrackerParams p;
   p.stuckTimeoutSec   = 2.0;
   p.replanCooldownSec = 0.001;  // 鏋佸皬鍐峰嵈, 涓嶅共鎵拌竟鐣屾祴璇?
@@ -245,14 +205,14 @@ TEST(PctAdapter, StuckBoundaryExact) {
 }
 
 // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
-//  TEST 4: PctAdapter 鈥?replanCooldownSec=3 闃叉姈
+//  TEST 4: WaypointTracker 鈥?replanCooldownSec=3 闃叉姈
 //
 //  绗?娆?stuck 鈫?瑙﹀彂 replan (璁℃暟=1)
 //  绔嬪嵆鍐嶆 stuck 鈫?鍐峰嵈鏈熷唴, 涓嶅彔鍔?(璁℃暟浠?1)
 //  绛夊喎鍗存湡鍚庡啀 stuck 鈫?璁℃暟=2
 // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
-TEST(PctAdapter, ReplanCooldownDebounce) {
+TEST(WaypointTracker, ReplanCooldownDebounce) {
   WaypointTrackerParams p;
   p.stuckTimeoutSec   = 2.0;
   p.replanCooldownSec = 3.0;

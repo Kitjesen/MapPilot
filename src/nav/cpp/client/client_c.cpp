@@ -1,13 +1,14 @@
 #include "client_c.h"
 
-#include "client.hpp"
-
 #include <algorithm>
 #include <cstring>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
+
+#include "client.hpp"
 
 namespace {
 
@@ -19,6 +20,10 @@ struct Handle {
   std::mutex path_mutex;
   std::optional<lingtu::nav::commands::PathSnapshot> global_path_staging;
   std::optional<lingtu::nav::commands::PathSnapshot> local_path_staging;
+  std::mutex plan_mutex;
+  std::unordered_map<std::string, lingtu::nav::commands::PlanResult> plan_staging;
+  std::mutex traversability_mutex;
+  std::optional<lingtu::nav::commands::TraversabilityGridSnapshot> traversability_staging;
   std::mutex map_scene_mutex;
   std::optional<lingtu::nav::commands::MapSceneSnapshot> map_scene_staging;
   std::uint64_t map_scene_consumer_buffer_retries{0U};
@@ -74,6 +79,24 @@ bool validateNavigationReceiptBuffer(
   }
   if (receipt->struct_size < sizeof(*receipt)) {
     thread_error = std::string(operation) + " receipt struct is too small";
+    return false;
+  }
+  return true;
+}
+
+bool validatePlanResultBuffer(
+    const lingtu_nav_plan_result_v1* result,
+    const char* operation) {
+  if (result == nullptr) {
+    thread_error = std::string(operation) + " result is null";
+    return false;
+  }
+  if (result->abi_version != LINGTU_NAV_PLAN_RESULT_ABI_VERSION) {
+    thread_error = std::string(operation) + " result ABI version mismatch";
+    return false;
+  }
+  if (result->struct_size < sizeof(*result)) {
+    thread_error = std::string(operation) + " result struct is too small";
     return false;
   }
   return true;
@@ -185,6 +208,25 @@ void copyNavigationReceipt(
   target->endpoint_timestamp_s = source.endpoint_timestamp_s;
 }
 
+void copyPlanResult(
+    lingtu_nav_plan_result_v1* target,
+    const lingtu::nav::commands::PlanResult& source) {
+  std::memset(target, 0, sizeof(*target));
+  target->abi_version = LINGTU_NAV_PLAN_RESULT_ABI_VERSION;
+  target->struct_size = sizeof(*target);
+  target->timestamp_s = source.timestamp_s;
+  copyString(target->frame_id, source.frame_id);
+  copyString(target->request_id, source.request_id);
+  target->feasible = source.feasible ? 1 : 0;
+  target->start_valid = source.start_valid ? 1 : 0;
+  copyString(target->reason, source.reason);
+  target->elapsed_ms = source.elapsed_ms;
+  copyString(target->planner, source.planner);
+  target->start = {source.start.x, source.start.y, source.start.z};
+  target->goal = {source.goal.x, source.goal.y, source.goal.z};
+  target->point_count = static_cast<unsigned long long>(source.path.size());
+}
+
 void copyOperatorMotionReceipt(
     lingtu_nav_operator_motion_receipt_v1* target,
     const lingtu::nav::commands::OperatorMotionCommandReceipt& source) {
@@ -251,7 +293,7 @@ void copyInspectionTaskEvent(
   copyString(target->command_request_id, source.command_request_id);
   target->state = source.state;
   copyString(target->map_id, source.map_id);
-  target->map_version = source.map_version;
+  target->map_content_epoch = source.map_content_epoch;
   copyString(target->route_id, source.route_id);
   target->route_revision = source.route_revision;
   target->point_index = source.point_index;
@@ -296,8 +338,7 @@ void copyExplorationRunEvent(
   target->state = source.state;
   copyString(target->route, source.route);
   copyString(target->map_id, source.map_id);
-  target->map_version = source.map_version;
-  copyString(target->artifact_hash, source.artifact_hash);
+  target->map_content_epoch = source.map_content_epoch;
   copyString(target->reason, source.reason);
   target->motion_stop_confirmed = source.motion_stop_confirmed ? 1 : 0;
   copyString(target->motion_stop_reason, source.motion_stop_reason);
@@ -361,6 +402,63 @@ int takePath(
     return -1;
   } catch (...) {
     thread_error = "unknown native navigation path take failure";
+    return -1;
+  }
+}
+
+int takeTraversabilityGrid(lingtu_nav_client_handle raw_handle,
+                           lingtu_nav_traversability_grid_header_v1 *header, uint8_t *cells,
+                           unsigned long long cell_capacity) {
+  Handle *handle = asHandle(raw_handle);
+  if (handle == nullptr || handle->client == nullptr || header == nullptr ||
+      (cell_capacity > 0U && cells == nullptr)) {
+    thread_error = "traversability grid take received an invalid argument";
+    return -1;
+  }
+  try {
+    std::lock_guard<std::mutex> lock(handle->traversability_mutex);
+    if (!handle->traversability_staging.has_value()) {
+      lingtu::nav::commands::TraversabilityGridSnapshot snapshot;
+      if (!handle->client->takeTraversability(&snapshot)) {
+        std::memset(header, 0, sizeof(*header));
+        header->abi_version = LINGTU_NAV_TRAVERSABILITY_GRID_ABI_VERSION;
+        header->struct_size = sizeof(*header);
+        thread_error.clear();
+        return 0;
+      }
+      handle->traversability_staging = std::move(snapshot);
+    }
+    const auto &source = *handle->traversability_staging;
+    std::memset(header, 0, sizeof(*header));
+    header->abi_version = LINGTU_NAV_TRAVERSABILITY_GRID_ABI_VERSION;
+    header->struct_size = sizeof(*header);
+    header->timestamp_s = source.timestamp_s;
+    copyString(header->frame_id, source.frame_id);
+    header->receive_sequence = source.receive_sequence;
+    header->reset_epoch = source.reset_epoch;
+    header->width = source.width;
+    header->height = source.height;
+    header->resolution = source.resolution;
+    header->origin_x = source.origin_x;
+    header->origin_y = source.origin_y;
+    header->origin_z = source.origin_z;
+    header->yaw = source.yaw;
+    header->cell_count = static_cast<unsigned long long>(source.cells.size());
+    if (header->cell_count > cell_capacity) {
+      thread_error.clear();
+      return 2;
+    }
+    if (!source.cells.empty()) {
+      std::copy(source.cells.begin(), source.cells.end(), cells);
+    }
+    handle->traversability_staging.reset();
+    thread_error.clear();
+    return 1;
+  } catch (const std::exception &exc) {
+    thread_error = exc.what();
+    return -1;
+  } catch (...) {
+    thread_error = "unknown native traversability grid take failure";
     return -1;
   }
 }
@@ -488,7 +586,9 @@ uint64_t lingtu_nav_client_capabilities(void) {
       LINGTU_NAV_CLIENT_CAP_NAVIGATION_COMMAND_RECEIPT |
       LINGTU_NAV_CLIENT_CAP_NAVIGATION_TASK_STATUS |
       LINGTU_NAV_CLIENT_CAP_INSPECTION_TASK_EVENTS |
-      LINGTU_NAV_CLIENT_CAP_EXPLORATION_RUN_EVENTS;
+      LINGTU_NAV_CLIENT_CAP_EXPLORATION_RUN_EVENTS |
+      LINGTU_NAV_CLIENT_CAP_TRAVERSABILITY_GRID |
+      LINGTU_NAV_CLIENT_CAP_PLAN_PREVIEW;
 }
 
 lingtu_nav_client_handle lingtu_nav_client_create(int domain_id) {
@@ -533,6 +633,59 @@ int lingtu_nav_client_start_task_with_receipt_v1(
             task_id == nullptr ? "" : task_id,
             request_id == nullptr ? "" : request_id));
   });
+}
+
+int lingtu_nav_client_preview_plan_v1(
+    lingtu_nav_client_handle raw_handle,
+    const char* request_id,
+    double x,
+    double y,
+    double z,
+    int timeout_ms,
+    lingtu_nav_plan_result_v1* result,
+    lingtu_nav_path_point* points,
+    unsigned long long point_capacity) {
+  if (!validatePlanResultBuffer(result, "plan preview")) {
+    return -1;
+  }
+  Handle* handle = asHandle(raw_handle);
+  if (handle == nullptr || handle->client == nullptr || request_id == nullptr ||
+      *request_id == '\0' || (point_capacity > 0U && points == nullptr)) {
+    thread_error = "plan preview received an invalid argument";
+    return -1;
+  }
+  try {
+    std::lock_guard<std::mutex> lock(handle->plan_mutex);
+    const std::string key(request_id);
+    auto staged = handle->plan_staging.find(key);
+    if (staged == handle->plan_staging.end()) {
+      auto plan = handle->client->navigation().preview(
+          x, y, z, timeout_ms, key);
+      staged = handle->plan_staging.emplace(key, std::move(plan)).first;
+    }
+    const auto& plan = staged->second;
+    copyPlanResult(result, plan);
+    if (plan.path.size() > point_capacity) {
+      thread_error.clear();
+      return 2;
+    }
+    for (std::size_t index = 0U; index < plan.path.size(); ++index) {
+      points[index] = {
+          plan.path[index].x,
+          plan.path[index].y,
+          plan.path[index].z,
+      };
+    }
+    handle->plan_staging.erase(staged);
+    thread_error.clear();
+    return 1;
+  } catch (const std::exception& exc) {
+    thread_error = exc.what();
+    return -1;
+  } catch (...) {
+    thread_error = "unknown native plan preview failure";
+    return -1;
+  }
 }
 
 int lingtu_nav_client_cancel_task_with_receipt_v1(
@@ -689,11 +842,24 @@ int lingtu_nav_client_resume_autonomy_with_id(
   });
 }
 
+int lingtu_nav_client_resume_autonomy_with_receipt_v1(
+    lingtu_nav_client_handle handle, const char *request_id, const char *reason, int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1 *receipt) {
+  if (!validateNavigationReceiptBuffer(receipt, "resume autonomy")) {
+    return -1;
+  }
+  return invoke(handle, [&](lingtu::nav::commands::Client &client) {
+    copyNavigationReceipt(receipt, client.navigation().resumeAutonomyWithReceipt(
+                                       reason == nullptr ? "resume_autonomy" : reason, timeout_ms,
+                                       request_id == nullptr ? "" : request_id));
+  });
+}
+
 int lingtu_nav_client_start_exploration_with_receipt_v1(
     lingtu_nav_client_handle handle,
     const char* request_id,
     const char* exploration_run_id,
-    const char* session_id,
+    const char*product_session_id,
     const char* reason,
     int timeout_ms,
     lingtu_nav_exploration_command_receipt_v1* receipt) {
@@ -703,7 +869,7 @@ int lingtu_nav_client_start_exploration_with_receipt_v1(
   return invoke(handle, [&](lingtu::nav::commands::Client& client) {
     copyExplorationReceipt(receipt, client.exploration().start(
         exploration_run_id == nullptr ? "" : exploration_run_id,
-        session_id == nullptr ? "" : session_id,
+                                            product_session_id == nullptr ? "" : product_session_id,
         reason == nullptr ? "operator_start" : reason,
         timeout_ms,
         request_id == nullptr ? "" : request_id));
@@ -714,7 +880,7 @@ int lingtu_nav_client_pause_exploration_with_receipt_v1(
     lingtu_nav_client_handle handle,
     const char* request_id,
     const char* exploration_run_id,
-    const char* session_id,
+    const char*product_session_id,
     const char* reason,
     int timeout_ms,
     lingtu_nav_exploration_command_receipt_v1* receipt) {
@@ -724,7 +890,7 @@ int lingtu_nav_client_pause_exploration_with_receipt_v1(
   return invoke(handle, [&](lingtu::nav::commands::Client& client) {
     copyExplorationReceipt(receipt, client.exploration().pause(
         exploration_run_id == nullptr ? "" : exploration_run_id,
-        session_id == nullptr ? "" : session_id,
+                                            product_session_id == nullptr ? "" : product_session_id,
         reason == nullptr ? "operator_pause" : reason,
         timeout_ms,
         request_id == nullptr ? "" : request_id));
@@ -735,7 +901,7 @@ int lingtu_nav_client_resume_exploration_with_receipt_v1(
     lingtu_nav_client_handle handle,
     const char* request_id,
     const char* exploration_run_id,
-    const char* session_id,
+    const char*product_session_id,
     const char* reason,
     int timeout_ms,
     lingtu_nav_exploration_command_receipt_v1* receipt) {
@@ -745,7 +911,7 @@ int lingtu_nav_client_resume_exploration_with_receipt_v1(
   return invoke(handle, [&](lingtu::nav::commands::Client& client) {
     copyExplorationReceipt(receipt, client.exploration().resume(
         exploration_run_id == nullptr ? "" : exploration_run_id,
-        session_id == nullptr ? "" : session_id,
+                                        product_session_id == nullptr ? "" : product_session_id,
         reason == nullptr ? "operator_resume" : reason,
         timeout_ms,
         request_id == nullptr ? "" : request_id));
@@ -756,7 +922,7 @@ int lingtu_nav_client_stop_exploration_with_receipt_v1(
     lingtu_nav_client_handle handle,
     const char* request_id,
     const char* exploration_run_id,
-    const char* session_id,
+    const char*product_session_id,
     const char* reason,
     int timeout_ms,
     lingtu_nav_exploration_command_receipt_v1* receipt) {
@@ -766,7 +932,7 @@ int lingtu_nav_client_stop_exploration_with_receipt_v1(
   return invoke(handle, [&](lingtu::nav::commands::Client& client) {
     copyExplorationReceipt(receipt, client.exploration().stop(
         exploration_run_id == nullptr ? "" : exploration_run_id,
-        session_id == nullptr ? "" : session_id,
+                                           product_session_id == nullptr ? "" : product_session_id,
         reason == nullptr ? "operator_stop" : reason,
         timeout_ms,
         request_id == nullptr ? "" : request_id));
@@ -780,7 +946,7 @@ int lingtu_nav_client_set_directed_exploration_target_with_receipt_v1(
     double x,
     double y,
     double ttl_s,
-    const char* session_id,
+    const char*product_session_id,
     const char* reason,
     int timeout_ms,
     lingtu_nav_exploration_command_receipt_v1* receipt) {
@@ -793,7 +959,7 @@ int lingtu_nav_client_set_directed_exploration_target_with_receipt_v1(
         y,
         ttl_s,
         exploration_run_id == nullptr ? "" : exploration_run_id,
-        session_id == nullptr ? "" : session_id,
+                               product_session_id == nullptr ? "" : product_session_id,
         reason == nullptr ? "operator_directed_explore" : reason,
         timeout_ms,
         request_id == nullptr ? "" : request_id));
@@ -804,7 +970,7 @@ int lingtu_nav_client_clear_directed_exploration_target_with_receipt_v1(
     lingtu_nav_client_handle handle,
     const char* request_id,
     const char* exploration_run_id,
-    const char* session_id,
+    const char*product_session_id,
     const char* reason,
     int timeout_ms,
     lingtu_nav_exploration_command_receipt_v1* receipt) {
@@ -814,7 +980,7 @@ int lingtu_nav_client_clear_directed_exploration_target_with_receipt_v1(
   return invoke(handle, [&](lingtu::nav::commands::Client& client) {
     copyExplorationReceipt(receipt, client.exploration().clearDirectedTarget(
         exploration_run_id == nullptr ? "" : exploration_run_id,
-        session_id == nullptr ? "" : session_id,
+                               product_session_id == nullptr ? "" : product_session_id,
         reason == nullptr ? "operator_clear_directed_explore" : reason,
         timeout_ms,
         request_id == nullptr ? "" : request_id));
@@ -914,8 +1080,30 @@ int lingtu_nav_client_operator_motion_sample(
     double wz,
     unsigned int freshness_budget_ms,
     int timeout_ms) {
+  return lingtu_nav_client_operator_motion_sample_v2(
+      handle, request_id, source_id, source_epoch, sequence, deadman, 0, vx, vy, wz,
+      freshness_budget_ms, timeout_ms);
+}
+
+int lingtu_nav_client_operator_motion_sample_v2(
+    lingtu_nav_client_handle handle,
+    const char* request_id,
+    const char* source_id,
+    unsigned long long source_epoch,
+    unsigned long long sequence,
+    int deadman,
+    int manual_mode,
+    double vx,
+    double vy,
+    double wz,
+    unsigned int freshness_budget_ms,
+    int timeout_ms) {
   if (deadman != 0 && deadman != 1) {
     thread_error = "operator motion deadman must be 0 or 1";
+    return -1;
+  }
+  if (manual_mode != 0 && manual_mode != 1) {
+    thread_error = "operator motion manual_mode must be 0 or 1";
     return -1;
   }
   return invoke(handle, [&](lingtu::nav::commands::Client& client) {
@@ -929,7 +1117,8 @@ int lingtu_nav_client_operator_motion_sample(
         deadman != 0,
         freshness_budget_ms,
         timeout_ms,
-        request_id == nullptr ? "" : request_id);
+        request_id == nullptr ? "" : request_id,
+        manual_mode != 0);
   });
 }
 
@@ -1071,8 +1260,7 @@ int lingtu_nav_client_read_navigation_state(
     copyString(state->active_request_id, snapshot->active_request_id);
     state->goal_epoch = snapshot->goal_epoch;
     copyString(state->map_id, snapshot->map_id);
-    state->map_version = snapshot->map_version;
-    copyString(state->map_hash, snapshot->map_hash);
+    state->map_content_epoch = snapshot->map_content_epoch;
     state->planning_state = snapshot->planning_state;
     state->execution_state = snapshot->execution_state;
     state->recovery_state = snapshot->recovery_state;
@@ -1259,6 +1447,13 @@ int lingtu_nav_client_take_local_path(
       points,
       point_capacity,
       PathKind::Local);
+}
+
+int lingtu_nav_client_take_traversability_grid_v1(lingtu_nav_client_handle handle,
+                                                  lingtu_nav_traversability_grid_header_v1 *header,
+                                                  uint8_t *cells,
+                                                  unsigned long long cell_capacity) {
+  return takeTraversabilityGrid(handle, header, cells, cell_capacity);
 }
 
 int lingtu_nav_client_take_map_scene_v1(

@@ -7,19 +7,22 @@
 
 #include "lingtu/maps/build/grid_artifacts.hpp"
 #include "lingtu/maps/build/occupancy_snapshot.hpp"
-#include "lingtu/maps/hash.hpp"
-#include "plan/active_occupancy_gate.hpp"
+#include "input/active/occupancy.hpp"
 
 namespace {
 
 using lingtu::maps::BuildOccupancyProjectionSnapshot;
 using lingtu::maps::LoadOccupancyArtifact;
-using lingtu::maps::Sha256File;
 using lingtu::nav::endpoint::ActiveOccupancyGate;
 using lingtu::nav::endpoint::runWithActiveOccupancy;
 using lingtu::nav::plan::GlobalPlanRequest;
-using lingtu::nav::plan::far::FarPlanner;
-using lingtu::nav::plan::far::FarPlannerConfig;
+using lingtu::nav::plan::far_planner::FarPlanner;
+using lingtu::nav::plan::far_planner::FarPlannerConfig;
+
+lingtu::nav::plan::MapIdentity mapIdentity(std::string map_id = "field",
+                                           std::int64_t epoch = 7) {
+  return {std::move(map_id), epoch, "map"};
+}
 
 [[noreturn]] void fail(const std::string &message) {
   throw std::runtime_error(message);
@@ -78,26 +81,20 @@ void writeOpenRoomPcd(const std::filesystem::path &path) {
             "5 5 0\n");
 }
 
-std::filesystem::path writeValidActiveMap(const std::filesystem::path &root,
-                                          const std::string &map_id) {
+std::filesystem::path writeValidMap(const std::filesystem::path &root,
+                                    const std::string &map_id) {
   const auto map_dir = root / map_id;
   const auto map_pcd = map_dir / "map.pcd";
   writeOpenRoomPcd(map_pcd);
   const auto built = BuildOccupancyProjectionSnapshot(map_dir);
   require(built.ok, "failed to build occupancy fixture: " + built.message);
   const auto occupancy = map_dir / "occupancy.npz";
-  const std::string map_sha = Sha256File(map_pcd);
-  const std::string occupancy_sha = Sha256File(occupancy);
   writeFile(map_dir / "metadata.json",
             "{\"schema_version\":\"lingtu.saved_map_artifacts.v1\","
             "\"frame_id\":\"map\","
             "\"artifacts\":{"
-            "\"map_pcd\":{\"path\":\"map.pcd\",\"sha256\":\"" +
-                map_sha +
-                "\"},"
-                "\"occupancy_grid\":{\"path\":\"occupancy.npz\",\"sha256\":\"" +
-                occupancy_sha + "\",\"source_map_sha256\":\"" + map_sha + "\"}}}");
-  writeFile(root / "active_map.txt", map_id + "\n");
+            "\"map_pcd\":{\"path\":\"map.pcd\"},"
+            "\"occupancy_grid\":{\"path\":\"occupancy.npz\"}}}");
   return occupancy;
 }
 
@@ -119,17 +116,15 @@ GlobalPlanRequest roomRequest() {
 
 void testValidActiveOccupancyLoadsThroughNativeMapsContract() {
   TempMapRoot root;
-  const auto configured = writeValidActiveMap(root.path(), "field");
-  ActiveOccupancyGate gate(root.path());
+  const auto configured = writeValidMap(root.path(), "field");
+  ActiveOccupancyGate gate(mapIdentity());
 
   const auto result = gate.prepare(configured);
 
   require(result.ok(), "valid active occupancy was rejected: " + result.reason);
   require(result.artifact->identity().map_id == "field", "wrong active map id");
-  require(result.artifact->identity().version == 1, "wrong active map version");
+  require(result.artifact->identity().content_epoch == 7, "wrong runtime map content epoch");
   require(result.artifact->identity().frame_id == "map", "wrong planning frame");
-  require(result.artifact->sourceMapSha256() == Sha256File(root.path() / "field" / "map.pcd"),
-          "validated occupancy lost its source map hash");
   require(result.artifact->generation() == 1U, "first map generation must be one");
   require(result.artifact->map().width > 20, "occupancy geometry was not loaded");
   require(result.artifact->map().cells.size() == result.artifact->map().CellCount(),
@@ -142,9 +137,9 @@ void testValidActiveOccupancyLoadsThroughNativeMapsContract() {
 
 void testTamperedOccupancyIsRejectedBeforePlanner() {
   TempMapRoot root;
-  const auto configured = writeValidActiveMap(root.path(), "field");
+  const auto configured = writeValidMap(root.path(), "field");
   writeFile(configured, "tampered occupancy\n");
-  ActiveOccupancyGate gate(root.path());
+  ActiveOccupancyGate gate(mapIdentity());
   FarPlanner planner(plannerConfig());
   bool planner_rejected = false;
   try {
@@ -158,33 +153,32 @@ void testTamperedOccupancyIsRejectedBeforePlanner() {
 
 void testConfiguredPathMustBeTheNativeActiveArtifact() {
   TempMapRoot root;
-  (void)writeValidActiveMap(root.path(), "field");
-  const auto other = writeValidActiveMap(root.path(), "other");
-  writeFile(root.path() / "active_map.txt", "field\n");
-  ActiveOccupancyGate gate(root.path());
+  (void)writeValidMap(root.path(), "field");
+  const auto other = writeValidMap(root.path(), "other");
+  ActiveOccupancyGate gate(mapIdentity());
 
   const auto result = gate.prepare(other);
 
   require(!result.ok(), "non-active occupancy unexpectedly passed the gate");
 }
 
-void testActiveArtifactResolvesFromMapStoreWithoutLegacySymlink() {
+void testRuntimeIdentityLoadsConfiguredArtifact() {
   TempMapRoot root;
-  (void)writeValidActiveMap(root.path(), "field");
-  ActiveOccupancyGate gate(root.path());
+  (void)writeValidMap(root.path(), "field");
+  ActiveOccupancyGate gate(mapIdentity());
 
-  const auto result = gate.prepareActive();
+  const auto result = gate.prepare(root.path() / "field" / "occupancy.npz");
 
-  require(result.ok(), "MapStore active occupancy was rejected: " + result.reason);
+  require(result.ok(), "runtime-bound occupancy was rejected: " + result.reason);
   require(result.artifact->identity().map_id == "field", "resolved the wrong active map");
   require(!std::filesystem::exists(root.path() / "active"),
           "test fixture unexpectedly depends on a legacy active symlink");
 }
 
-void testMapSwitchAdvancesGenerationAndInvalidatesCache() {
+void testDifferentMapIsRejectedByRuntimeIdentity() {
   TempMapRoot root;
-  const auto first_path = writeValidActiveMap(root.path(), "field_a");
-  ActiveOccupancyGate gate(root.path());
+  const auto first_path = writeValidMap(root.path(), "field_a");
+  ActiveOccupancyGate gate(mapIdentity("field_a"));
   const auto first = gate.prepare(first_path);
   require(first.ok(), "first active map failed: " + first.reason);
   const auto repeated = gate.prepare(first_path);
@@ -192,24 +186,22 @@ void testMapSwitchAdvancesGenerationAndInvalidatesCache() {
   require(first.artifact.get() == repeated.artifact.get(),
           "identical active revision was reparsed");
 
-  const auto second_path = writeValidActiveMap(root.path(), "field_b");
+  const auto second_path = writeValidMap(root.path(), "field_b");
   const auto second = gate.prepare(second_path);
-  require(second.ok(), "second active map failed: " + second.reason);
-  require(second.artifact->identity().map_id == "field_b", "map switch identity is stale");
-  require(second.artifact->generation() == 2U, "map switch did not advance generation");
+  require(!second.ok(), "a different map bypassed the runtime identity");
 }
 
-void testGuardedFarPlanCarriesValidatedIdentity() {
+void testGuardedFarFailureCarriesValidatedIdentity() {
   TempMapRoot root;
-  const auto configured = writeValidActiveMap(root.path(), "field");
-  ActiveOccupancyGate gate(root.path());
+  const auto configured = writeValidMap(root.path(), "field");
+  ActiveOccupancyGate gate(mapIdentity());
   FarPlanner planner(plannerConfig());
 
   const auto result = runWithActiveOccupancy(gate, configured, planner, roomRequest());
 
-  require(result.ok, "guarded FAR plan failed: " + result.failure_reason);
-  require(result.reached_goal, "guarded FAR plan did not reach the goal");
-  require(result.path.size() >= 2U, "guarded FAR plan returned no usable path");
+  require(!result.ok, "point-only occupancy unexpectedly treated unknown space as free");
+  require(result.failure_reason.rfind("far_invalid_start:", 0U) == 0U,
+          "guarded FAR failure did not preserve the unknown-space safety gate");
   require(result.map_identity.valid(), "plan result has no validated map identity");
   require(result.map_identity.map_id == "field", "plan result identity is wrong");
   require(result.map_generation == 1U, "plan result generation is wrong");
@@ -222,9 +214,9 @@ int main() {
     testValidActiveOccupancyLoadsThroughNativeMapsContract();
     testTamperedOccupancyIsRejectedBeforePlanner();
     testConfiguredPathMustBeTheNativeActiveArtifact();
-    testActiveArtifactResolvesFromMapStoreWithoutLegacySymlink();
-    testMapSwitchAdvancesGenerationAndInvalidatesCache();
-    testGuardedFarPlanCarriesValidatedIdentity();
+    testRuntimeIdentityLoadsConfiguredArtifact();
+    testDifferentMapIsRejectedByRuntimeIdentity();
+    testGuardedFarFailureCarriesValidatedIdentity();
     std::cout << "test_active_occupancy_gate: PASS\n";
     return 0;
   } catch (const std::exception &exc) {

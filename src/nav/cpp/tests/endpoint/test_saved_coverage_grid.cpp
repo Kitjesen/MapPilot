@@ -3,12 +3,13 @@
 #include <string>
 
 #include "explore/saved_coverage_grid.hpp"
+#include "planning/global/far/planner.hpp"
 
 namespace {
 
 using lingtu::explore::ExploreMapIdentity;
 using lingtu::nav::endpoint::buildSavedCoverageGrid;
-using lingtu::nav::plan::far::FarGridMap;
+using lingtu::nav::plan::far_planner::FarGridMap;
 
 [[noreturn]] void fail(const std::string &message) {
   throw std::runtime_error(message);
@@ -30,8 +31,7 @@ FarGridMap artifact() {
   map.frame_id = "map";
   map.generation = 1U;
   map.identity.map_id = "yard";
-  map.identity.version = 7;
-  map.identity.artifact_sha256 = std::string(64U, 'b');
+  map.identity.content_epoch = 7;
   map.identity.frame_id = "map";
   map.cells = {0, 0, 100, -1, 0, 100};
   return map;
@@ -42,8 +42,7 @@ ExploreMapIdentity identity() {
   value.frame_id = "map";
   value.session_id = "product-session-0001";
   value.map_id = "yard";
-  value.map_version = 7;
-  value.artifact_hash = std::string(64U, 'a');
+  value.map_content_epoch = 7;
   value.reset_epoch = 1U;
   value.generation = 1U;
   value.live = false;
@@ -51,8 +50,7 @@ ExploreMapIdentity identity() {
 }
 
 void testExactSavedMapIdentityConvertsTheStaticGrid() {
-  const auto source_hash = std::string(64U, 'a');
-  const auto result = buildSavedCoverageGrid(artifact(), source_hash, identity());
+  const auto result = buildSavedCoverageGrid(artifact(), identity());
 
   require(result.ok(), "exact saved-map identity was rejected: " + result.reason);
   require(result.grid->width == 3 && result.grid->height == 2, "grid geometry changed");
@@ -60,18 +58,10 @@ void testExactSavedMapIdentityConvertsTheStaticGrid() {
   require(result.grid->cells == artifact().cells, "grid cells changed");
 }
 
-void testPointCloudHashMismatchFailsClosed() {
-  const auto result = buildSavedCoverageGrid(artifact(), std::string(64U, 'c'), identity());
-
-  require(!result.ok(), "mismatched source point cloud was accepted");
-  require(result.reason.find("source map hash") != std::string::npos,
-          "hash rejection reason is not actionable");
-}
-
 void testMapVersionMismatchFailsClosed() {
   auto changed = identity();
-  changed.map_version = 8;
-  const auto result = buildSavedCoverageGrid(artifact(), std::string(64U, 'a'), changed);
+  changed.map_content_epoch = 8;
+  const auto result = buildSavedCoverageGrid(artifact(), changed);
 
   require(!result.ok(), "mismatched saved-map version was accepted");
 }
@@ -80,11 +70,26 @@ void testLiveRouteCannotUseTheSavedGridAdapter() {
   auto live = identity();
   live.live = true;
   live.map_id.clear();
-  live.map_version = 0;
-  live.artifact_hash.clear();
-  const auto result = buildSavedCoverageGrid(artifact(), {}, live);
+  live.map_content_epoch = 0;
+  const auto result = buildSavedCoverageGrid(artifact(), live);
 
   require(!result.ok(), "live exploration accepted a saved coverage grid");
+}
+
+void testFrameMismatchIsRejected() {
+  auto changed = artifact();
+  changed.frame_id = "odom";
+  const auto result = buildSavedCoverageGrid(changed, identity());
+
+  require(!result.ok(), "saved coverage grid with the wrong frame was accepted");
+}
+
+void testMalformedGridIsRejected() {
+  auto malformed = artifact();
+  malformed.cells.pop_back();
+  const auto result = buildSavedCoverageGrid(malformed, identity());
+
+  require(!result.ok(), "saved coverage grid with incomplete cells was accepted");
 }
 
 }  // namespace
@@ -92,9 +97,10 @@ void testLiveRouteCannotUseTheSavedGridAdapter() {
 int main() {
   try {
     testExactSavedMapIdentityConvertsTheStaticGrid();
-    testPointCloudHashMismatchFailsClosed();
     testMapVersionMismatchFailsClosed();
     testLiveRouteCannotUseTheSavedGridAdapter();
+    testFrameMismatchIsRejected();
+    testMalformedGridIsRejected();
     std::cout << "test_saved_coverage_grid: PASS\n";
     return 0;
   } catch (const std::exception &error) {

@@ -2,7 +2,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "motion/control_loop_runtime_guard.hpp"
+#include "control/guard.hpp"
 #include "status/control_loop_health.hpp"
 
 namespace {
@@ -35,11 +35,13 @@ ControlLoopHealthSnapshot matureHealthy() {
   return snapshot;
 }
 
-ControlLoopHealthSnapshot matureUnhealthy(std::string reason = "p95_utilization_high") {
+ControlLoopHealthSnapshot matureUnhealthy(std::string reason,
+                                          std::size_t current_miss_streak = 0) {
   ControlLoopHealthSnapshot snapshot;
   snapshot.ready = true;
   snapshot.healthy = false;
   snapshot.reason = std::move(reason);
+  snapshot.current_miss_streak = current_miss_streak;
   return snapshot;
 }
 
@@ -47,6 +49,7 @@ ControlLoopRuntimeGuardConfig config() {
   ControlLoopRuntimeGuardConfig cfg;
   cfg.unhealthy_confirmation_samples = 2;
   cfg.recovery_confirmation_samples = 20;
+  cfg.latch_miss_streak = 20;
   return cfg;
 }
 
@@ -73,6 +76,10 @@ void testRejectsInvalidConfiguration() {
   invalid = config();
   invalid.recovery_confirmation_samples = 0;
   requireInvalidConfig(invalid, "zero recovery confirmation count must be rejected");
+
+  invalid = config();
+  invalid.latch_miss_streak = 0;
+  requireInvalidConfig(invalid, "zero latch miss streak must be rejected");
 }
 
 void testWarmupSnapshotDoesNotTripGuard() {
@@ -87,14 +94,43 @@ void testWarmupSnapshotDoesNotTripGuard() {
   require(!decision.resume_allowed, "warmup must not allow resume");
 }
 
-void testSingleMatureUnhealthySnapshotOnlySuspects() {
+void testHighUtilizationWarningDoesNotHoldMotion() {
   ControlLoopRuntimeGuard guard(config());
 
-  const auto decision = guard.observe(matureUnhealthy());
+  for (int sample = 0; sample < 5; ++sample) {
+    const auto decision = guard.observe(matureUnhealthy("p95_utilization_high"));
+
+    requireState(decision, ControlLoopRuntimeGuardState::kMonitoring,
+                 "high utilization without deadline loss must remain monitoring");
+    require(decision.reason == "p95_utilization_high",
+            "monitoring must preserve the high-utilization diagnostic");
+    require(!decision.clear_motion, "high utilization must not clear motion");
+    require(!decision.hold_motion, "high utilization must not hold motion");
+    require(!decision.resume_allowed, "high utilization must not create a resume boundary");
+  }
+}
+
+void testRollingDeadlineRatioWarningDoesNotHoldMotion() {
+  ControlLoopRuntimeGuard guard(config());
+
+  for (int sample = 0; sample < 5; ++sample) {
+    const auto decision = guard.observe(matureUnhealthy("deadline_miss_ratio_high"));
+
+    requireState(decision, ControlLoopRuntimeGuardState::kMonitoring,
+                 "rolling deadline ratio without a current streak must remain monitoring");
+    require(!decision.clear_motion, "rolling deadline ratio must not clear motion");
+    require(!decision.hold_motion, "rolling deadline ratio must not hold motion");
+  }
+}
+
+void testSingleGenericUnhealthySnapshotOnlySuspects() {
+  ControlLoopRuntimeGuard guard(config());
+
+  const auto decision = guard.observe(matureUnhealthy("control_loop_unhealthy"));
 
   requireState(decision, ControlLoopRuntimeGuardState::kSuspect,
                "first mature unhealthy sample must only enter suspect state");
-  require(decision.reason == "p95_utilization_high",
+  require(decision.reason == "control_loop_unhealthy",
           "suspect state must preserve the health reason");
   require(!decision.clear_motion, "suspect state must not clear motion");
   require(!decision.hold_motion, "suspect state must not hold motion");
@@ -104,9 +140,9 @@ void testSingleMatureUnhealthySnapshotOnlySuspects() {
 void testHealthySampleBetweenUnhealthySamplesResetsConfirmation() {
   ControlLoopRuntimeGuard guard(config());
 
-  guard.observe(matureUnhealthy());
+  guard.observe(matureUnhealthy("control_loop_unhealthy"));
   guard.observe(matureHealthy());
-  const auto decision = guard.observe(matureUnhealthy());
+  const auto decision = guard.observe(matureUnhealthy("control_loop_unhealthy"));
 
   requireState(decision, ControlLoopRuntimeGuardState::kSuspect,
                "non-consecutive mature unhealthy samples must not trip");
@@ -117,25 +153,37 @@ void testHealthySampleBetweenUnhealthySamplesResetsConfirmation() {
 void testSecondConsecutiveMatureUnhealthySnapshotTripsGuard() {
   ControlLoopRuntimeGuard guard(config());
 
-  guard.observe(matureUnhealthy("deadline_miss_ratio_high"));
-  const auto decision = guard.observe(matureUnhealthy("deadline_miss_ratio_high"));
+  guard.observe(matureUnhealthy("control_loop_unhealthy"));
+  const auto decision = guard.observe(matureUnhealthy("control_loop_unhealthy"));
 
   requireState(decision, ControlLoopRuntimeGuardState::kLatched,
                "second consecutive mature unhealthy sample must trip");
   require(decision.clear_motion, "first trip must request clear motion");
   require(decision.hold_motion, "first trip must request hold motion");
   require(!decision.resume_allowed, "first trip must not allow resume");
-  require(decision.reason == "deadline_miss_ratio_high",
+  require(decision.reason == "control_loop_unhealthy",
           "trip decision must preserve the health reason");
 }
 
-void testConsecutiveDeadlineMissReasonTripsImmediately() {
+void testShortDeadlineMissStreakDoesNotLatch() {
   ControlLoopRuntimeGuard guard(config());
 
-  const auto decision = guard.observe(matureUnhealthy("consecutive_deadline_misses"));
+  const auto decision = guard.observe(matureUnhealthy("consecutive_deadline_misses", 3));
+
+  requireState(decision, ControlLoopRuntimeGuardState::kSuspect,
+               "short deadline miss streak must remain recoverable without a latch");
+  require(!decision.clear_motion, "short streak must not clear and latch motion");
+  require(!decision.hold_motion, "short streak must not hold motion");
+  require(!decision.resume_allowed, "short streak must not create a resume boundary");
+}
+
+void testSustainedDeadlineMissStreakTripsImmediately() {
+  ControlLoopRuntimeGuard guard(config());
+
+  const auto decision = guard.observe(matureUnhealthy("consecutive_deadline_misses", 20));
 
   requireState(decision, ControlLoopRuntimeGuardState::kLatched,
-               "consecutive deadline misses must trip immediately");
+               "sustained deadline misses must trip immediately");
   require(decision.clear_motion, "immediate trip must request clear motion");
   require(decision.hold_motion, "immediate trip must request hold motion");
   require(!decision.resume_allowed, "immediate trip must not allow resume");
@@ -144,7 +192,7 @@ void testConsecutiveDeadlineMissReasonTripsImmediately() {
 void testLatchedGuardHoldsWithoutClearingAgain() {
   ControlLoopRuntimeGuard guard(config());
 
-  guard.observe(matureUnhealthy("consecutive_deadline_misses"));
+  guard.observe(matureUnhealthy("consecutive_deadline_misses", 20));
   const auto decision = guard.observe(matureUnhealthy("deadline_miss_ratio_high"));
 
   requireState(decision, ControlLoopRuntimeGuardState::kLatched, "latched guard must stay latched");
@@ -157,7 +205,7 @@ void testLatchedGuardHoldsWithoutClearingAgain() {
 
 void testResumeIsBlockedBeforeRecoveryConfirmation() {
   ControlLoopRuntimeGuard guard(config());
-  guard.observe(matureUnhealthy("consecutive_deadline_misses"));
+  guard.observe(matureUnhealthy("consecutive_deadline_misses", 20));
 
   for (int sample = 0; sample < 19; ++sample) {
     guard.observe(matureHealthy());
@@ -172,7 +220,7 @@ void testResumeIsBlockedBeforeRecoveryConfirmation() {
 
 void testResumeIsPermittedAfterRecoveryConfirmation() {
   ControlLoopRuntimeGuard guard(config());
-  guard.observe(matureUnhealthy("consecutive_deadline_misses"));
+  guard.observe(matureUnhealthy("consecutive_deadline_misses", 20));
 
   for (int sample = 0; sample < 20; ++sample) {
     guard.observe(matureHealthy());
@@ -185,9 +233,46 @@ void testResumeIsPermittedAfterRecoveryConfirmation() {
   require(!decision.resume_completed, "permitting resume must not complete it implicitly");
 }
 
+void testOperatorModeAutoResumesAfterRecoveryConfirmation() {
+  auto cfg = config();
+  cfg.auto_resume = true;
+  ControlLoopRuntimeGuard guard(cfg);
+  guard.observe(matureUnhealthy("consecutive_deadline_misses", 20));
+
+  ControlLoopRuntimeGuardDecision decision;
+  for (int sample = 0; sample < 20; ++sample) {
+    decision = guard.observe(matureHealthy());
+  }
+
+  requireState(decision, ControlLoopRuntimeGuardState::kMonitoring,
+               "operator control must return to monitoring after healthy confirmation");
+  require(!decision.hold_motion && decision.resume_completed,
+          "operator control recovery must release its transient runtime hold automatically");
+}
+
+void testRollingWarningCanConfirmRecoveryAfterHardDeadlineFault() {
+  ControlLoopRuntimeGuard guard(config());
+  guard.observe(matureUnhealthy("consecutive_deadline_misses", 20));
+
+  for (int sample = 0; sample < 19; ++sample) {
+    const auto decision =
+        guard.observe(matureUnhealthy("deadline_miss_ratio_high", 0));
+    requireState(decision, ControlLoopRuntimeGuardState::kLatched,
+                 "rolling warning must not unlock before recovery confirmation");
+    require(decision.hold_motion, "recovery confirmation must keep motion held");
+  }
+  const auto recovered = guard.observe(matureUnhealthy("deadline_miss_ratio_high", 0));
+
+  requireState(recovered, ControlLoopRuntimeGuardState::kRecovered,
+               "current deadline recovery must not wait for the rolling window to clear");
+  require(recovered.resume_allowed,
+          "explicit resume must be allowed after current deadline recovery");
+  require(recovered.hold_motion, "recovered state must stay held until explicit resume");
+}
+
 void testFailedResumeCompletionKeepsGuardLatched() {
   ControlLoopRuntimeGuard guard(config());
-  guard.observe(matureUnhealthy("consecutive_deadline_misses"));
+  guard.observe(matureUnhealthy("consecutive_deadline_misses", 20));
   for (int sample = 0; sample < 20; ++sample) {
     guard.observe(matureHealthy());
   }
@@ -203,7 +288,7 @@ void testFailedResumeCompletionKeepsGuardLatched() {
 
 void testSuccessfulResumeCompletionResetsGuard() {
   ControlLoopRuntimeGuard guard(config());
-  guard.observe(matureUnhealthy("consecutive_deadline_misses"));
+  guard.observe(matureUnhealthy("consecutive_deadline_misses", 20));
   for (int sample = 0; sample < 20; ++sample) {
     guard.observe(matureHealthy());
   }
@@ -240,7 +325,7 @@ void testResumeCompletionOutsideRecoveredDoesNotChangeHoldOrUnlock() {
 
   {
     ControlLoopRuntimeGuard guard(config());
-    guard.observe(matureUnhealthy());
+    guard.observe(matureUnhealthy("control_loop_unhealthy"));
     const auto failed = guard.completeResume(false);
     requireState(failed, ControlLoopRuntimeGuardState::kSuspect,
                  "failed completion in suspect must stay suspect");
@@ -258,7 +343,7 @@ void testResumeCompletionOutsideRecoveredDoesNotChangeHoldOrUnlock() {
 
   {
     ControlLoopRuntimeGuard guard(config());
-    guard.observe(matureUnhealthy("consecutive_deadline_misses"));
+    guard.observe(matureUnhealthy("consecutive_deadline_misses", 20));
     const auto failed = guard.completeResume(false);
     requireState(failed, ControlLoopRuntimeGuardState::kLatched,
                  "failed completion in latched must stay latched");
@@ -282,13 +367,18 @@ int main() {
   try {
     testRejectsInvalidConfiguration();
     testWarmupSnapshotDoesNotTripGuard();
-    testSingleMatureUnhealthySnapshotOnlySuspects();
+    testHighUtilizationWarningDoesNotHoldMotion();
+    testRollingDeadlineRatioWarningDoesNotHoldMotion();
+    testSingleGenericUnhealthySnapshotOnlySuspects();
     testHealthySampleBetweenUnhealthySamplesResetsConfirmation();
     testSecondConsecutiveMatureUnhealthySnapshotTripsGuard();
-    testConsecutiveDeadlineMissReasonTripsImmediately();
+    testShortDeadlineMissStreakDoesNotLatch();
+    testSustainedDeadlineMissStreakTripsImmediately();
     testLatchedGuardHoldsWithoutClearingAgain();
     testResumeIsBlockedBeforeRecoveryConfirmation();
     testResumeIsPermittedAfterRecoveryConfirmation();
+    testOperatorModeAutoResumesAfterRecoveryConfirmation();
+    testRollingWarningCanConfirmRecoveryAfterHardDeadlineFault();
     testFailedResumeCompletionKeepsGuardLatched();
     testSuccessfulResumeCompletionResetsGuard();
     testResumeCompletionOutsideRecoveredDoesNotChangeHoldOrUnlock();

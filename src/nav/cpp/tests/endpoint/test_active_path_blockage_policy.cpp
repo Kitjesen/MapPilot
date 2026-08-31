@@ -9,8 +9,8 @@
 #include <utility>
 #include <vector>
 
-#include "plan/active_path_blockage_policy.hpp"
-#include "plan/goal_plan_controller.hpp"
+#include "runtime/goal/blockage.hpp"
+#include "runtime/goal/plan.hpp"
 
 namespace {
 
@@ -31,8 +31,8 @@ void require(bool condition, const char *message) {
 }
 
 MapIdentity mapIdentity(std::string id = "map-a", std::int64_t version = 7,
-                        std::string sha = "sha-a", std::string frame = "map") {
-  return {std::move(id), version, std::move(sha), std::move(frame)};
+                        std::string frame = "map") {
+  return {std::move(id), version, std::move(frame)};
 }
 
 GoalReplanIdentity goalIdentity(std::string task = "task-a", std::string request = "req-a",
@@ -47,6 +47,8 @@ ActivePathBlockagePolicyConfig config() {
   value.lookahead_m = 5.0;
   value.corridor_radius_m = 0.50;
   value.corridor_vertical_tolerance_m = 0.75;
+  value.obstacle_height_min_m = 0.10;
+  value.obstacle_height_max_m = 1.20;
   value.overlay_radius_m = 0.65;
   value.overlay_half_height_m = 1.25;
   value.max_regions = 8U;
@@ -88,10 +90,11 @@ observation(double now_s, std::uint64_t cloud_generation, std::uint64_t traversa
             const std::vector<nav_kernel::Vec3> &active_path,
             const std::vector<float> &live_obstacles, GoalReplanIdentity identity = goalIdentity(),
             std::uint64_t frame_epoch = 3U, nav_kernel::Vec3 robot = {0.0, 0.0, 0.0},
-            bool external = true) {
+            bool external = true, bool local_path_viable = false) {
   ActivePathBlockageObservation value;
   value.now_s = now_s;
   value.external_active_goal = external;
+  value.local_path_viable = local_path_viable;
   value.goal = std::move(identity);
   value.frame_epoch = frame_epoch;
   value.robot_position = robot;
@@ -146,6 +149,49 @@ void testTransientAndSparseOccupancyDoNotTrigger() {
   require(sparse.snapshot().fresh_blocked_observations == 0U,
           "sparse corridor noise accumulated as blockage");
   require(sparse.snapshot().current_blocker_count == 3U, "sparse point count diagnostics changed");
+}
+
+void testViableLocalPathDefersGlobalReplan() {
+  ActivePathBlockagePolicy policy(config());
+  const auto active_path = path();
+  const auto blocked = staticBlockage();
+
+  for (std::uint64_t generation = 1U; generation <= 4U; ++generation) {
+    require(!policy.observe(observation(5.0 + static_cast<double>(generation), generation,
+                                        generation, active_path, blocked, goalIdentity(), 3U,
+                                        {0.0, 0.0, 0.0}, true, true)),
+            "viable local path was interrupted by global corridor blockage");
+  }
+  require(policy.snapshot().fresh_blocked_observations == 0U,
+          "viable local path accumulated global replan evidence");
+
+  require(!policy.observe(observation(10.0, 5U, 5U, active_path, blocked)),
+          "first blockage after local path loss triggered");
+  require(!policy.observe(observation(10.5, 6U, 6U, active_path, blocked)),
+          "second blockage after local path loss triggered early");
+  require(policy.observe(observation(11.0, 7U, 7U, active_path, blocked)).has_value(),
+          "persistent blockage after local path loss did not trigger");
+}
+
+void testGroundAndOutOfEnvelopeReturnsDoNotTrigger() {
+  ActivePathBlockagePolicy policy(config());
+  const auto active_path = path();
+  const auto non_obstacles = pointCloud({
+      {1.92F, -0.08F, 0.0F, -0.4F},
+      {1.92F, 0.08F, 0.0F, 0.0F},
+      {2.08F, -0.08F, 0.2F, 0.09F},
+      {2.08F, 0.08F, 0.2F, 1.21F},
+  });
+
+  for (std::uint64_t generation = 1U; generation <= 5U; ++generation) {
+    require(!policy.observe(observation(15.0 + static_cast<double>(generation), generation,
+                                        generation, active_path, non_obstacles)),
+            "ground or out-of-envelope returns triggered a path obstruction");
+  }
+  require(policy.snapshot().fresh_blocked_observations == 0U,
+          "ground returns accumulated persistent blockage evidence");
+  require(policy.snapshot().current_blocker_count == 0U,
+          "ground returns were counted as path blockers");
 }
 
 void testOnlyForwardCorridorBlocks() {
@@ -203,7 +249,7 @@ void testIdentityAndFrameChangesResetEvidence() {
           "map reset setup triggered early");
   require(!map_change.observe(
               observation(53.2, 3U, 3U, active_path, blocked,
-                          goalIdentity("task-a", "req-a", 11U, mapIdentity("map-b", 8, "sha-b")))),
+                          goalIdentity("task-a", "req-a", 11U, mapIdentity("map-b", 8)))),
           "new map inherited prior evidence");
   require(map_change.snapshot().fresh_blocked_observations == 1U,
           "new map did not restart evidence count");
@@ -402,6 +448,9 @@ void testConfigValidation() {
   value.minimum_fresh_observations = 1U;
   expect_invalid(value, "single-observation trigger was accepted");
   value = config();
+  value.obstacle_height_max_m = value.obstacle_height_min_m - 0.01;
+  expect_invalid(value, "inverted obstacle-height envelope was accepted");
+  value = config();
   value.overlay_radius_m = std::numeric_limits<double>::infinity();
   expect_invalid(value, "infinite overlay radius was accepted");
   value = config();
@@ -419,7 +468,9 @@ void testConfigValidation() {
 
 int main() {
   testStaticLiveOccupancyTriggers();
+  testViableLocalPathDefersGlobalReplan();
   testTransientAndSparseOccupancyDoNotTrigger();
+  testGroundAndOutOfEnvelopeReturnsDoNotTrigger();
   testOnlyForwardCorridorBlocks();
   testIdentityAndFrameChangesResetEvidence();
   testStaleClearDoesNotEraseButFreshClearDoes();

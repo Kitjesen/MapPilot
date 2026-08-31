@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
-from maps.paths import nav_map_root
 from nav.adapters.native.inspection_store import NativeInspectionStore
 from runtime import Module, rpc
 from runtime.registry import register
+
+
+def _inspection_dir(value: str | None) -> Path:
+    configured = value or os.environ.get("LINGTU_INSPECTION_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    session_root = os.environ.get("LINGTU_SESSION_ROOT", "").strip()
+    if session_root:
+        return Path(session_root).expanduser() / "inspection"
+    return Path.home() / ".lingtu" / "inspection"
 
 
 @register("inspection_service", "native", description="Native inspection routes and execution")
@@ -18,9 +28,9 @@ class Inspection(Module, layer=4):
     runtime_id = "nav.inspection"
     SOFT_DEPENDS = ["nav.commands"]
 
-    def __init__(self, map_root: str | None = None, **config: Any) -> None:
+    def __init__(self, data_dir: str | None = None, **config: Any) -> None:
         super().__init__(**config)
-        self._map_root = Path(map_root).expanduser() if map_root else nav_map_root()
+        self._data_dir = _inspection_dir(data_dir)
         self._commands: Any | None = None
 
     def on_system_modules(self, modules: dict[str, Module]) -> None:
@@ -106,7 +116,7 @@ class Inspection(Module, layer=4):
         )
 
     def _store_call(self, method: str, *args: Any) -> Any:
-        with NativeInspectionStore(self._map_root) as store:
+        with NativeInspectionStore(self._data_dir) as store:
             return getattr(store, method)(*args)
 
     def _command(self, method: str, **kwargs: Any) -> bool:

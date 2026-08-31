@@ -1,4 +1,4 @@
-"""Goal service for navigation, building, patrol, and cancel commands."""
+"""Low-rate semantic ingress for native navigation commands."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import itertools
 import json
 import logging
 import math
+import os
+import threading
 import time
 import uuid
 from collections.abc import Mapping
@@ -16,6 +18,7 @@ from runtime import In, Module, Out
 from runtime.msgs import (
     NavigationCommandKind,
     NavigationCommandReceipt,
+    NavigationGoalState,
     NavigationGoalStatus,
 )
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
@@ -69,47 +72,6 @@ def build_goal_pose(
     )
 
 
-def normalize_patrol_waypoint(
-    item: Any,
-    *,
-    planning_frame_id: str,
-    loop: bool,
-) -> dict[str, Any]:
-    if isinstance(item, dict):
-        frame_id = frame_id_from_sources(item, default_frame_id=planning_frame_id)
-        x = finite_float(item.get("x"), label="x")
-        y = finite_float(item.get("y"), label="y")
-        z = finite_float(item.get("z", 0.0), label="z")
-    elif isinstance(item, (list, tuple)) and len(item) >= 2:
-        frame_id = planning_frame_id
-        x = finite_float(item[0], label="x")
-        y = finite_float(item[1], label="y")
-        z = finite_float(item[2] if len(item) > 2 else 0.0, label="z")
-    else:
-        raise TypeError("waypoint must be an object or [x, y, z]")
-    if frame_id != planning_frame_id:
-        raise ValueError(f"unsupported waypoint frame {frame_id!r}; expected {planning_frame_id!r}")
-    return {"x": x, "y": y, "z": z, "frame_id": frame_id, "loop": loop}
-
-
-def normalize_patrol_waypoints(
-    raw_waypoints: Any,
-    *,
-    planning_frame_id: str,
-    loop: bool,
-) -> list[dict[str, Any]]:
-    if not isinstance(raw_waypoints, list) or not raw_waypoints:
-        raise ValueError("waypoints must be a non-empty list")
-    return [
-        normalize_patrol_waypoint(
-            waypoint,
-            planning_frame_id=planning_frame_id,
-            loop=loop,
-        )
-        for waypoint in raw_waypoints
-    ]
-
-
 INSPECTION_LIFECYCLE_ACTIONS: dict[str, tuple[str, str]] = {
     "inspection_pause": ("pause_inspection_task", "operator_pause"),
     "inspection_resume": ("resume_inspection_task", "operator_resume"),
@@ -123,11 +85,10 @@ INSPECTION_LIFECYCLE_ACTIONS: dict[str, tuple[str, str]] = {
     description="Map-frame navigation goal entry",
 )
 class GoalService(Module, layer=6):
-    """Normalize goal commands into Navigation inputs.
+    """Validate semantic requests and dispatch them to native navigation.
 
     Accepted commands:
       {"action": "goto", "x": 1.0, "y": 2.0, "z": 0.0, "yaw": 0.0}
-      {"action": "building_navigate", "target": {"place_id": "company-6f"}}
       {"action": "inspection", "route_id": "daily_route", "revision": 3}
       {"action": "cancel", "reason": "user"}
     """
@@ -137,54 +98,54 @@ class GoalService(Module, layer=6):
     goal_command: In[str]
     goal_request: In[PoseStamped]
     cancel_request: In[str]
+    visual_goal_request: In[PoseStamped]
+    visual_cancel_request: In[str]
     navigation_goal_status: In[NavigationGoalStatus]
-    goal_pose: Out[PoseStamped]
-    patrol_goals: Out[list]
-    cancel: Out[str]
     goal_status: Out[dict]
 
     def __init__(
         self,
         planning_frame_id: str | None = None,
-        command_module: str | None = None,
+        command_module: str = "nav.commands",
         task_ledger_path: str | None = None,
-        run_plan_fingerprint: str = "",
+        product_session_id: str = "",
         map_identity: Mapping[str, Any] | None = None,
-        building_module: str | None = None,
         **config: Any,
     ) -> None:
-        retired_names = (
-            "_".join(("product", "fingerprint")),
-            "_".join(("runtime", "manifest", "fingerprint")),
-        )
-        for retired_name in retired_names:
-            if retired_name in config:
-                raise TypeError(f"{retired_name} was retired; use run_plan_fingerprint")
         super().__init__(**config)
         self._planning_frame_id = normalize_frame_id(planning_frame_id) or map_frame_id()
-        self._command_module = str(command_module or "").strip()
-        self._building_module = str(building_module or "").strip()
+        self._command_module = str(command_module or "nav.commands").strip()
         self._commands: Any | None = None
-        self._building: Any | None = None
         self._request_sequence = itertools.count(1)
-        self._run_plan_fingerprint = str(run_plan_fingerprint or "").strip()
+        self._visual_task_ids: set[str] = set()
+        self._visual_task_lock = threading.Lock()
+        self._product_session_id = (
+            str(product_session_id or "").strip()
+            or str(os.environ.get("LINGTU_PRODUCT_SESSION_ID") or "").strip()
+        )
         self._map_identity = dict(map_identity) if map_identity is not None else None
-        self._task_ledger = NavigationTaskLedger(":memory:" if task_ledger_path is None else task_ledger_path)
+        resolved_task_ledger_path = task_ledger_path
+        if resolved_task_ledger_path is None:
+            resolved_task_ledger_path = (
+                str(os.environ.get("LINGTU_TASK_LEDGER_PATH") or "").strip()
+                or ":memory:"
+            )
+        self._task_ledger = NavigationTaskLedger(resolved_task_ledger_path)
 
     def on_system_modules(self, modules: dict[str, Module]) -> None:
-        if self._command_module:
-            self._commands = modules.get(self._command_module)
-        if self._building_module:
-            self._building = modules.get(self._building_module)
+        self._commands = modules.get(self._command_module)
 
     def setup(self) -> None:
         self.goal_command.subscribe(self._on_command)
         self.goal_request.subscribe(self._on_goal_request)
         self.cancel_request.subscribe(self._on_cancel_request)
+        self.visual_goal_request.subscribe(self._on_visual_goal_request)
+        self.visual_cancel_request.subscribe(self._on_visual_cancel_request)
         # Lifecycle transitions are low-rate and order-sensitive; do not coalesce them.
         self.navigation_goal_status.subscribe(self._on_navigation_goal_status)
 
         self._reconcile_task_history()
+        self._restore_visual_tasks()
 
     def stop(self) -> None:
         """Close the task ledger and then release Module resources."""
@@ -197,8 +158,26 @@ class GoalService(Module, layer=6):
     def _on_navigation_goal_status(self, status: NavigationGoalStatus) -> None:
         """Persist one native lifecycle event in source delivery order."""
 
+        with self._visual_task_lock:
+            visual_task = status.task_id in self._visual_task_ids
         try:
             self._task_ledger.record_goal_status(status)
+            if visual_task:
+                state_name = str(status.to_dict()["state_name"]).lower()
+                self._publish_status(
+                    "visual_servo",
+                    int(status.state) != int(NavigationGoalState.FAILED),
+                    f"native navigation {state_name}",
+                    request_id=status.request_id,
+                    task_id=status.task_id,
+                    state=state_name,
+                    reason=status.reason,
+                    terminal=status.terminal,
+                    source="native_goal_status",
+                )
+            if status.terminal:
+                with self._visual_task_lock:
+                    self._visual_task_ids.discard(status.task_id)
         except KeyError:
             logger.debug(
                 "Ignoring native goal status for untracked task %s",
@@ -213,6 +192,44 @@ class GoalService(Module, layer=6):
 
     def _on_goal_request(self, goal: PoseStamped) -> None:
         self.submit_goal(goal)
+
+    def _on_visual_goal_request(self, goal: PoseStamped) -> None:
+        status = self.submit_goal(goal, action="visual_servo")
+        if status.get("accepted") is True:
+            task_id = str(status.get("task_id") or "")
+            if task_id:
+                with self._visual_task_lock:
+                    self._visual_task_ids.add(task_id)
+
+    def _on_visual_cancel_request(self, reason: str) -> None:
+        with self._visual_task_lock:
+            task_ids = tuple(self._visual_task_ids)
+        if not task_ids:
+            self._publish_status(
+                "visual_servo_stop",
+                False,
+                "visual servo has no accepted navigation task to cancel",
+                reason=str(reason or "visual_servo_stop"),
+            )
+            return
+        resolved_reason = str(reason or "visual_servo_stop")
+        for task_id in task_ids:
+            self.submit_cancel(
+                resolved_reason,
+                task_id=task_id,
+                action="visual_servo_stop",
+            )
+
+    def _restore_visual_tasks(self) -> None:
+        task_ids = {
+            str(task["task_id"])
+            for task in self._task_ledger.list_open()
+            if task.get("source") == "visual_servo"
+            and str(task.get("product_session_id") or "").strip()
+            == self._product_session_id
+        }
+        with self._visual_task_lock:
+            self._visual_task_ids.update(task_ids)
 
     def lookup_goal_replay(
         self,
@@ -266,7 +283,7 @@ class GoalService(Module, layer=6):
                 "goal",
                 target,
                 target=target,
-                run_plan_fingerprint=self._run_plan_fingerprint,
+                product_session_id=self._product_session_id,
                 map_identity=self._map_identity,
             )
         except TaskLedgerConflict as exc:
@@ -347,7 +364,7 @@ class GoalService(Module, layer=6):
                 target,
                 source=action,
                 target=target,
-                run_plan_fingerprint=self._run_plan_fingerprint,
+                product_session_id=self._product_session_id,
                 map_identity=self._map_identity,
             )
         except TaskLedgerConflict as exc:
@@ -378,6 +395,7 @@ class GoalService(Module, layer=6):
             )
         dispatch_result = self._dispatch_goal(
             normalized_goal,
+            yaw=target["yaw"],
             task_id=resolved_task_id,
             request_id=resolved_request_id,
         )
@@ -430,7 +448,7 @@ class GoalService(Module, layer=6):
                 "x": normalized_goal.x,
                 "y": normalized_goal.y,
                 "z": normalized_goal.z,
-                "yaw": normalized_goal.yaw,
+                "yaw": target["yaw"],
             },
         )
 
@@ -440,6 +458,33 @@ class GoalService(Module, layer=6):
         *,
         frame_id: str,
     ) -> tuple[PoseStamped, dict[str, Any]]:
+        orientation = goal.pose.orientation
+        orientation_norm = math.sqrt(
+            orientation.x * orientation.x
+            + orientation.y * orientation.y
+            + orientation.z * orientation.z
+            + orientation.w * orientation.w
+        )
+        if orientation_norm <= 1e-12:
+            normalized_goal = PoseStamped(
+                pose=Pose(
+                    position=Vector3(
+                        finite_float(goal.pose.position.x, label="x"),
+                        finite_float(goal.pose.position.y, label="y"),
+                        finite_float(goal.pose.position.z, label="z"),
+                    ),
+                    orientation=Quaternion(0.0, 0.0, 0.0, 0.0),
+                ),
+                ts=getattr(goal, "ts", 0.0),
+                frame_id=frame_id,
+            )
+            return normalized_goal, {
+                "x": normalized_goal.x,
+                "y": normalized_goal.y,
+                "z": normalized_goal.z,
+                "yaw": None,
+                "frame_id": normalized_goal.frame_id,
+            }
         normalized_goal = build_goal_pose(
             x=goal.pose.position.x,
             y=goal.pose.position.y,
@@ -479,7 +524,7 @@ class GoalService(Module, layer=6):
         resolved_reason = str(reason or "cancel")
         resolved_task_id = str(task_id or "").strip()
         resolved_request_id = str(request_id or "").strip() or self._new_request_id()
-        if self._command_module and not resolved_task_id:
+        if not resolved_task_id:
             return self._publish_status(
                 action,
                 False,
@@ -490,66 +535,60 @@ class GoalService(Module, layer=6):
                 sink=self._sink_name,
             )
 
-        tracks_history = bool(resolved_task_id)
-        if tracks_history:
-            if resolved_task_id == resolved_request_id:
-                return self._publish_status(
-                    action,
-                    False,
-                    "task_id and request_id must be distinct",
-                    task_id=resolved_task_id,
-                    request_id=resolved_request_id,
-                    reason=resolved_reason,
-                    sink=self._sink_name,
-                )
-            try:
-                admission = self._task_ledger.admit(
-                    resolved_task_id,
-                    resolved_request_id,
-                    "cancel",
-                    {"reason": resolved_reason},
-                    source=action,
-                    run_plan_fingerprint=self._run_plan_fingerprint,
-                    map_identity=self._map_identity,
-                )
-            except TaskLedgerConflict as exc:
-                return self._publish_status(
-                    action,
-                    False,
-                    f"task admission conflict: {exc}",
-                    task_id=resolved_task_id,
-                    request_id=resolved_request_id,
-                    reason=resolved_reason,
-                    sink=self._sink_name,
-                )
-            except Exception:
-                return self._publish_status(
-                    action,
-                    False,
-                    "task history unavailable; command was not dispatched",
-                    task_id=resolved_task_id,
-                    request_id=resolved_request_id,
-                    reason=resolved_reason,
-                    sink=self._sink_name,
-                )
-            if admission["replay"]:
-                return self._publish_replay_status(
-                    admission["record"],
-                    action=action,
-                    request_id=resolved_request_id,
-                )
+        if resolved_task_id == resolved_request_id:
+            return self._publish_status(
+                action,
+                False,
+                "task_id and request_id must be distinct",
+                task_id=resolved_task_id,
+                request_id=resolved_request_id,
+                reason=resolved_reason,
+                sink=self._sink_name,
+            )
+        try:
+            admission = self._task_ledger.admit(
+                resolved_task_id,
+                resolved_request_id,
+                "cancel",
+                {"reason": resolved_reason},
+                source=action,
+                product_session_id=self._product_session_id,
+                map_identity=self._map_identity,
+            )
+        except TaskLedgerConflict as exc:
+            return self._publish_status(
+                action,
+                False,
+                f"task admission conflict: {exc}",
+                task_id=resolved_task_id,
+                request_id=resolved_request_id,
+                reason=resolved_reason,
+                sink=self._sink_name,
+            )
+        except Exception:
+            return self._publish_status(
+                action,
+                False,
+                "task history unavailable; command was not dispatched",
+                task_id=resolved_task_id,
+                request_id=resolved_request_id,
+                reason=resolved_reason,
+                sink=self._sink_name,
+            )
+        if admission["replay"]:
+            return self._publish_replay_status(
+                admission["record"],
+                action=action,
+                request_id=resolved_request_id,
+            )
 
         try:
-            if self._command_module:
-                result = self._call_commands(
-                    "cancel_task",
-                    reason=resolved_reason,
-                    task_id=resolved_task_id,
-                    request_id=resolved_request_id,
-                )
-            else:
-                result = None
-                self.cancel.publish(resolved_reason)
+            result = self._call_commands(
+                "cancel_task",
+                reason=resolved_reason,
+                task_id=resolved_task_id,
+                request_id=resolved_request_id,
+            )
         except Exception as exc:
             return self._publish_status(
                 action,
@@ -561,22 +600,16 @@ class GoalService(Module, layer=6):
                 state="unknown",
                 admission_confirmed=False,
                 admission_unconfirmed=True,
-                history_recorded=tracks_history,
+                history_recorded=True,
                 sink=self._sink_name,
             )
 
-        if tracks_history:
-            history_fields = self._record_dispatch_history(
-                result,
-                task_id=resolved_task_id,
-                request_id=resolved_request_id,
-                local_reason="cancel_requested",
-            )
-        else:
-            history_fields = {
-                "history_recorded": False,
-                "history_warning": "cancel has no task_id and is not in task history",
-            }
+        history_fields = self._record_dispatch_history(
+            result,
+            task_id=resolved_task_id,
+            request_id=resolved_request_id,
+            local_reason="cancel_requested",
+        )
 
         receipt_fields = self._receipt_status_fields(result)
         if isinstance(result, NavigationCommandReceipt) and not result.accepted:
@@ -619,11 +652,9 @@ class GoalService(Module, layer=6):
         if action in {"goto", "go", "goal", "navigate", "target"}:
             task_id = self._task_id_from(cmd) or self._new_task_id()
             self._publish_goal(cmd, action=action, task_id=task_id, request_id=request_id)
-        elif action in {"building_navigate", "building"}:
-            self._dispatch_building(cmd, action=action, request_id=request_id)
-        elif action in {"inspection", "patrol", "route"}:
+        elif action == "inspection":
             task_id = self._task_id_from(cmd) or self._new_task_id()
-            self._publish_patrol(
+            self._dispatch_inspection(
                 cmd,
                 action=action,
                 task_id=task_id,
@@ -642,97 +673,6 @@ class GoalService(Module, layer=6):
                 f"unknown action: {action}",
                 request_id=request_id,
             )
-
-    def _dispatch_building(
-        self,
-        cmd: dict[str, Any],
-        *,
-        action: str,
-        request_id: str,
-    ) -> None:
-        command = dict(cmd)
-        command["action"] = "building_navigate"
-        command["request_id"] = request_id
-        if not self._building_module:
-            self._publish_status(
-                action,
-                False,
-                "building navigation capability is not configured",
-                request_id=request_id,
-                reason="building_module_not_configured",
-                sink="building",
-            )
-            return
-        if self._building is None:
-            self._publish_status(
-                action,
-                False,
-                f"building navigation capability {self._building_module!r} is unavailable",
-                request_id=request_id,
-                reason="building_module_unavailable",
-                sink=self._building_module,
-            )
-            return
-        submit = getattr(self._building, "submit", None)
-        if not callable(submit):
-            self._publish_status(
-                action,
-                False,
-                "building navigation capability does not implement submit",
-                request_id=request_id,
-                reason="building_submit_unavailable",
-                sink=self._building_module,
-            )
-            return
-        try:
-            result = submit(command)
-        except Exception as exc:
-            self._publish_status(
-                action,
-                False,
-                str(exc) or "building navigation dispatch failed",
-                request_id=request_id,
-                reason="building_dispatch_error",
-                sink=self._building_module,
-            )
-            return
-        if not isinstance(result, dict):
-            self._publish_status(
-                action,
-                False,
-                "building navigation submit must return an object",
-                request_id=request_id,
-                reason="invalid_building_ack",
-                sink=self._building_module,
-            )
-            return
-
-        accepted = result.get("accepted")
-        success = result.get("success")
-        if not isinstance(accepted, bool) or not isinstance(success, bool):
-            self._publish_status(
-                action,
-                False,
-                "building navigation submit returned an invalid acknowledgement",
-                request_id=request_id,
-                reason="invalid_building_ack",
-                sink=self._building_module,
-            )
-            return
-        reason = str(result.get("reason") or "").strip()
-        message = str(result.get("message") or reason).strip()
-        if not message:
-            message = "building navigation accepted" if accepted else "building navigation rejected"
-        self._publish_status(
-            action,
-            success,
-            message,
-            request_id=request_id,
-            accepted=accepted,
-            state="accepted" if accepted else "rejected",
-            reason=reason,
-            sink=self._building_module,
-        )
 
     def _publish_goal(
         self,
@@ -785,19 +725,17 @@ class GoalService(Module, layer=6):
         self,
         goal: PoseStamped,
         *,
+        yaw: float | None,
         task_id: str,
         request_id: str,
     ) -> NavigationCommandReceipt | str | None:
         try:
-            if not self._command_module:
-                self.goal_pose.publish(goal)
-                return None
             return self._call_commands(
                 "send_goal",
                 x=goal.x,
                 y=goal.y,
                 z=goal.z,
-                yaw=goal.yaw,
+                yaw=yaw,
                 task_id=task_id,
                 request_id=request_id,
             )
@@ -831,8 +769,6 @@ class GoalService(Module, layer=6):
     def _reconcile_task_history(self) -> None:
         """Apply retained native evidence without ever replaying a command."""
 
-        if not self._command_module:
-            return
         open_tasks = self._task_ledger.list_open()
         if not open_tasks:
             return
@@ -959,47 +895,6 @@ class GoalService(Module, layer=6):
             }
         return {"history_recorded": True}
 
-    def _publish_patrol(
-        self,
-        cmd: dict[str, Any],
-        *,
-        action: str,
-        task_id: str,
-        request_id: str,
-    ) -> None:
-        if self._command_module:
-            self._dispatch_inspection(
-                cmd,
-                action=action,
-                task_id=task_id,
-                request_id=request_id,
-            )
-            return
-
-        raw_waypoints = cmd.get("waypoints") or cmd.get("goals") or []
-        loop = bool(cmd.get("loop", False))
-        try:
-            waypoints = normalize_patrol_waypoints(
-                raw_waypoints,
-                planning_frame_id=self._planning_frame_id,
-                loop=loop,
-            )
-        except (TypeError, ValueError) as exc:
-            self._publish_status(action, False, str(exc), request_id=request_id)
-            return
-
-        self.patrol_goals.publish(waypoints)
-        self._publish_status(
-            action,
-            True,
-            "patrol goals published",
-            task_id=task_id,
-            request_id=request_id,
-            frame_id=self._planning_frame_id,
-            waypoint_count=len(waypoints),
-            loop=loop,
-        )
-
     def _dispatch_inspection(
         self,
         cmd: dict[str, Any],
@@ -1098,17 +993,6 @@ class GoalService(Module, layer=6):
                 sink="native_dds",
             )
             return
-        if not self._command_module:
-            self._publish_status(
-                action,
-                False,
-                "inspection lifecycle command requires native command capability",
-                task_id=task_id,
-                request_id=request_id,
-                reason=reason,
-                sink="native_dds",
-            )
-            return
         try:
             accepted = self._call_commands(
                 method,
@@ -1201,7 +1085,7 @@ class GoalService(Module, layer=6):
 
     @property
     def _sink_name(self) -> str:
-        return "native_dds" if self._command_module else "module"
+        return "native_dds"
 
     def _call_commands(self, method: str, **kwargs: Any) -> Any:
         if self._commands is None:

@@ -46,13 +46,13 @@ the same occupancy policy used by the search.
 
 | File | Role |
 | --- | --- |
-| `far_planner.hpp/.cpp` | C++ planner and diagnostics |
-| `far_c_api.h/.cpp` | Stable versioned C ABI for non-C++ consumers |
-| `../../../../endpoint/active_occupancy_gate.*` | Maps artifact and TOCTOU gate |
+| `planner.hpp/.cpp` | C++ planner and diagnostics |
+| `api.h/.cpp` | Stable versioned C ABI for non-C++ consumers |
+| `../../../endpoint/nav/input/active/occupancy.*` | Maps artifact and TOCTOU gate |
 
-Select it explicitly with `LINGTU_NAV_GLOBAL_PLANNER=far`. The selected map is
-`LINGTU_ACTIVE_OCCUPANCY`; `/etc/lingtu/nav.env` is the deployment override
-boundary.
+Select it explicitly with `NAV_GLOBAL_PLANNER=far`. ProductControl writes
+the selected occupancy artifact to `FAR_OCCUPANCY_PATH` in the session
+environment. `/etc/lingtu/nav.env` may tune FAR, but it must not select a map.
 
 ## Verification
 

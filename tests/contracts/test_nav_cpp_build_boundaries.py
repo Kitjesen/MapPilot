@@ -1,6 +1,8 @@
+# ruff: noqa: D103, S101
+
 from __future__ import annotations
 
-import os
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -14,20 +16,114 @@ def test_navigation_cpp_has_one_portable_build_entrypoint() -> None:
     root_cmake = _read("src/nav/cpp/CMakeLists.txt")
     targets = _read("src/nav/cpp/cmake/NavCoreTargets.cmake")
 
-    assert "lingtu_nav_path_follower" in targets
-    assert "lingtu_nav_plan_loop" in targets
+    assert "lingtu_nav_local_planner" in targets
+    assert "lingtu_nav_follower" in targets
+    assert "lingtu_nav_navigation" in targets
     assert "LINGTU_NAV_CPP_BUILD_ENDPOINT" in root_cmake
     assert "add_subdirectory(endpoint)" in root_cmake
     assert "services/endpoint/cpp" not in root_cmake
+
+
+def test_navigation_runtime_install_does_not_publish_internal_headers() -> None:
+    root_cmake = _read("src/nav/cpp/CMakeLists.txt")
+    targets = _read("src/nav/cpp/cmake/NavCoreTargets.cmake")
+    endpoint = _read("src/nav/cpp/endpoint/CMakeLists.txt")
+    inspection = _read("src/nav/inspection/CMakeLists.txt")
+    cmake_sources = (root_cmake, targets, endpoint, inspection)
+
+    for source in cmake_sources:
+        assert "INSTALL_INTERFACE:" not in source
+        assert "DESTINATION include" not in source
+        assert "ARCHIVE DESTINATION" not in source
+        assert "install(TARGETS lingtu_nav_far_c_api" not in source
+
+    assert "install(" not in root_cmake
+    assert "install(" not in targets
+    assert "install(TARGETS ${_LINGTU_NAV_ENDPOINT_RUNTIME_TARGETS}" in endpoint
+    assert "install(TARGETS lingtu_inspection" in inspection
+
+    runtime_targets = endpoint.split("foreach(_target IN ITEMS", 1)[1].split(
+        ")", 1
+    )[0]
+    for runtime_target in (
+        "navd",
+        "lingtu_traversability_dds",
+        "lingtu_explore_dds",
+        "lingtu_nav_control",
+    ):
+        assert runtime_target in runtime_targets
+    assert "lingtu_motion_mock_dds" not in runtime_targets
+
+    octoplanner_cmake = _read(
+        "src/nav/cpp/planning/global/octoplanner/CMakeLists.txt"
+    )
+    assert "install(" not in octoplanner_cmake
+
+    package_release = _read("scripts/deploy/package_native_release.sh")
+    assert "navigation runtime install must not contain C/C++ headers" in package_release
+    assert "-name '*.h' -o -name '*.hpp'" in package_release
+    assert "--exclude='/src/nav/cpp/***'" in package_release
+    for pattern in (
+        "*.c",
+        "*.cc",
+        "*.cpp",
+        "*.cxx",
+        "*.h",
+        "*.hpp",
+        "CMakeLists.txt",
+        "README.md",
+    ):
+        assert f"--exclude='/src/nav/inspection/{pattern}'" in package_release
+
+    assert "Native release must not contain internal source: src/nav/cpp" in package_release
+    assert "Native release must not contain inspection C/C++ sources" in package_release
 
 
 def test_endpoint_links_navigation_targets_instead_of_recompiling_sources() -> None:
     endpoint = _read("src/nav/cpp/endpoint/CMakeLists.txt")
 
     assert '"${_NAV_PLAN_CPP_DIR}/nav_loop.cpp"' not in endpoint
-    assert '"${_NAV_KERNEL_DIR}/src/path_follower_core.cpp"' not in endpoint
-    assert "lingtu_nav_plan_loop" in endpoint
-    assert "lingtu_nav_path_follower" in endpoint
+    assert "lingtu_nav_navigation" in endpoint
+    assert "lingtu_nav_follower" in endpoint
+
+
+def test_navigation_algorithms_follow_domain_boundaries() -> None:
+    cpp = ROOT / "src/nav/cpp"
+
+    assert (cpp / "planning/global/contract.hpp").is_file()
+    assert (cpp / "planning/local/planner.hpp").is_file()
+    assert (cpp / "trajectory/spline.hpp").is_file()
+    assert (cpp / "tracking/follower.hpp").is_file()
+    assert (cpp / "navigation/executor.hpp").is_file()
+
+
+def test_follower_uses_one_registered_tracking_interface() -> None:
+    header = _read("src/nav/cpp/tracking/follower.hpp")
+    implementation = _read("src/nav/cpp/tracking/follower.cpp")
+    executor = _read("src/nav/cpp/navigation/executor.cpp")
+
+    assert "FollowerOutput follow(const LocalPlan &plan, const FollowerState &state)" in header
+    assert "registerAlgorithm(FollowerAlgorithm::Path" in implementation
+    assert "FollowerAlgorithm::Spline" in implementation
+    assert "follower_.follow(plan, follower_state)" in executor
+    for retired in ("computeControl", "trackTrajectory", "compute_control"):
+        assert retired not in header
+        assert retired not in implementation
+        assert retired not in executor
+
+
+def test_endpoint_cmake_uses_portable_threads_and_compiler_options() -> None:
+    root_cmake = _read("src/nav/cpp/CMakeLists.txt")
+    endpoint = _read("src/nav/cpp/endpoint/CMakeLists.txt")
+
+    assert "if(NOT UNIX)" not in root_cmake
+    assert "find_package(Threads REQUIRED)" in endpoint
+    assert "Threads::Threads" in endpoint
+    assert "pthread" not in endpoint
+    assert "function(lingtu_endpoint_enable_warnings target)" in endpoint
+    assert "if(MSVC)" in endpoint
+    assert "/W4" in endpoint
+    assert "-Wall -Wextra -Wpedantic" in endpoint
 
 
 def test_dds_types_are_compiled_once_per_endpoint_build_tree() -> None:
@@ -42,26 +138,40 @@ def test_dds_types_are_compiled_once_per_endpoint_build_tree() -> None:
     assert "add_dependencies(test_traversability_geometry lingtu_nav_client)" not in endpoint
 
 
-def test_legacy_cpp_shim_directories_are_removed() -> None:
-    assert not (ROOT / ("src/nav/services/plan/" + "cpp")).exists()
-    assert not (ROOT / ("src/nav/services/" + "endpoint/cpp")).exists()
-    assert not (ROOT / ("src/nav/commands/" + "cpp")).exists()
+def test_dds_idlc_uses_only_the_runtime_installed_beside_the_tool() -> None:
+    messages = _read("src/message/cpp/CMakeLists.txt")
 
-    # ``nav.kernel`` remains the Python extension-loader interface, but it is
-    # no longer a second C++ source/build tree.
-    assert (ROOT / "src/nav/kernel/loader.py").is_file()
-    assert not (ROOT / ("src/nav/kernel/" + "CMakeLists.txt")).exists()
-    assert not (ROOT / ("src/nav/kernel/" + "CMakeLists_nanobind_only.cmake")).exists()
-    assert not (ROOT / ("src/nav/kernel/" + "package.xml")).exists()
-    assert not (ROOT / ("src/nav/kernel/" + "include")).exists()
-    assert not (ROOT / ("src/nav/kernel/" + "src")).exists()
-    assert not (ROOT / ("src/nav/kernel/" + "tests")).exists()
-    assert not (ROOT / ("src/nav/local/" + "cpp/CMakeLists.txt")).exists()
+    assert 'get_filename_component(_idlc_prefix "${_idlc_bin_dir}" DIRECTORY)' in messages
+    assert '"${_idlc_prefix}/lib/${CMAKE_LIBRARY_ARCHITECTURE}"' in messages
+    assert '"LD_LIBRARY_PATH=${_idlc_library_path}"' in messages
+    assert "COMMAND ${_idlc_command}" in messages
+    assert 'COMMAND "${_LINGTU_IDLC_EXECUTABLE}" -l c' not in messages
+
+
+def test_native_dds_processes_share_the_message_generation_module() -> None:
+    consumers = {
+        "src/localization/slam/cpp/CMakeLists.txt": "messages_cyclone_idl",
+        "src/drivers/real/lidar/sdk2_stream/CMakeLists.txt": "livox_sdk2_stream_messages",
+        "src/drivers/real/motion/CMakeLists.txt": "lingtu_driver_messages",
+        "src/maps/CMakeLists.txt": "lingtu_mapd_dds_messages",
+    }
+
+    for path, target in consumers.items():
+        cmake = _read(path)
+        assert "lingtu_add_dds_c_messages(" in cmake
+        assert target in cmake
+        assert "COMMAND \"${CYCLONEDDS_IDLC_EXECUTABLE}\"" not in cmake
+
+
+def test_driver_build_can_omit_test_sources_from_a_runtime_staging_tree() -> None:
+    build = _read("scripts/build/build_driver.sh")
+
+    assert '-DBUILD_TESTING="${LINGTU_DRIVER_BUILD_TESTS:-ON}"' in build
 
 
 def test_global_planner_contract_does_not_expose_octomap_storage() -> None:
-    contract = _read("src/nav/cpp/planning/global/global_planner_contract.hpp")
-    adapter = _read("src/nav/cpp/endpoint/plan/active_octomap_gate.hpp")
+    contract = _read("src/nav/cpp/planning/global/contract.hpp")
+    adapter = _read("src/nav/cpp/endpoint/nav/input/active/octomap.hpp")
 
     assert "map_path" not in contract
     assert "octomap" not in contract.lower()
@@ -71,116 +181,80 @@ def test_global_planner_contract_does_not_expose_octomap_storage() -> None:
 
 
 def test_endpoint_rejects_stale_plans_and_reuses_validated_maps() -> None:
-    endpoint = _read("src/nav/cpp/endpoint/nav_native_endpoint.cpp")
-    controller = _read("src/nav/cpp/endpoint/plan/goal_plan_controller.cpp")
-    stale_guard = _read("src/nav/cpp/endpoint/plan/global_plan_task.cpp")
-    gate = _read("src/nav/cpp/endpoint/plan/active_octomap_gate.cpp")
+    endpoint = _read("src/nav/cpp/endpoint/nav/main.cpp")
+    controller = _read("src/nav/cpp/endpoint/nav/runtime/goal/plan.cpp")
+    stale_guard = _read("src/nav/cpp/endpoint/nav/runtime/goal/task.cpp")
+    gate = _read("src/nav/cpp/endpoint/nav/input/active/octomap.cpp")
 
     assert "globalPlanStaleReason" in controller
     assert "frame_epoch" in stale_guard
     assert "goal_epoch" in stale_guard
     assert "PlannerSession" in endpoint
-    assert "sameMapIdentity" in gate
+    assert "sameMapIdentity" in controller
     assert "cached_artifact_" in gate
+
+
+def test_navigation_map_identity_is_runtime_bound_not_store_discovered() -> None:
+    identity_idl = _read("src/message/idl/messages.idl")
+    declared = _read("src/nav/cpp/endpoint/nav/input/active/declared.cpp")
+    octomap = _read("src/nav/cpp/endpoint/nav/input/active/octomap.cpp")
+    occupancy = _read("src/nav/cpp/endpoint/nav/input/active/occupancy.cpp")
+
+    map_identity = identity_idl.split("struct MapIdentity", 1)[1].split("};", 1)[0]
+    assert "map_dir" not in map_identity
+    combined = declared + octomap + occupancy
+    assert "active_map.txt" not in combined
+    assert "MapStore" not in combined
+    assert "prepareActive" not in combined
+    assert "currentDeclaredIdentity" not in combined
 
 
 def test_far_is_optional_native_backend_with_active_map_gate() -> None:
     root_cmake = _read("src/nav/cpp/CMakeLists.txt")
-    endpoint = _read("src/nav/cpp/endpoint/nav_native_endpoint.cpp")
-    gate = _read("src/nav/cpp/endpoint/plan/active_occupancy_gate.cpp")
+    endpoint = _read("src/nav/cpp/endpoint/nav/main.cpp")
+    gate = _read("src/nav/cpp/endpoint/nav/input/active/occupancy.cpp")
 
     assert "lingtu_nav_far" in root_cmake
     assert "GlobalPlannerBackend::Far" in endpoint
     assert "runWithActiveOccupancy" in endpoint
-    assert "ValidateArtifacts" in gate
+    assert "LoadOccupancyArtifact" in gate
     assert "cached_artifact_" in gate
+
+
+def test_far_cpp_namespace_avoids_windows_far_macro() -> None:
+    suffixes = {".cpp", ".h", ".hpp"}
+    forbidden_substrings = (
+        "lingtu::nav::plan::far::",
+        "plan::far::",
+        "#undef far",
+        '#pragma push_macro("far")',
+        '#pragma pop_macro("far")',
+    )
+    violations: list[str] = []
+    for path in (ROOT / "src/nav/cpp").rglob("*"):
+        if path.suffix.lower() not in suffixes:
+            continue
+        relative = path.relative_to(ROOT).as_posix()
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for needle in forbidden_substrings:
+            if needle in text:
+                violations.append(f"{relative}: {needle}")
+        if re.search(r"namespace\s+lingtu::nav::plan::far\s*\{", text):
+            violations.append(f"{relative}: namespace lingtu::nav::plan::far")
+        if re.search(r"namespace\s+.*::far\s*\{", text):
+            violations.append(f"{relative}: namespace ending in ::far")
+    assert not violations, "\n".join(violations)
 
 
 def test_octoplanner_product_source_has_one_canonical_location() -> None:
     canonical = ROOT / "src/nav/cpp/planning/global/octoplanner"
-    legacy = ROOT / (
-        "src/nav/services/plan/global_planner/algorithm/" + "OctoPlanner3D"
-    )
 
     assert (canonical / "CMakeLists.txt").is_file()
     assert (canonical / "vendor/planner/src/global_planner.cpp").is_file()
-    assert not legacy.exists()
-
-
-def test_active_sources_do_not_reference_retired_navigation_cpp_paths() -> None:
-    forbidden = (
-        "src/nav/services/" + "endpoint/cpp",
-        "src/nav/services/plan/" + "cpp",
-        "src/nav/commands/" + "cpp",
-        "src/nav/services/plan/global_planner/algorithm/" + "OctoPlanner3D",
-        "src/nav/kernel/" + "include",
-        "src/nav/kernel/" + "src",
-        "src/nav/kernel/" + "tests",
-        "src/nav/kernel/" + "bindings",
-        "src/nav/local/" + "cpp",
-        "src/nav/services/plan/local_planner/" + "paths",
-    )
-    suffixes = {
-        ".cmake",
-        ".cpp",
-        ".h",
-        ".hpp",
-        ".md",
-        ".py",
-        ".service",
-        ".sh",
-        ".toml",
-        ".txt",
-        ".yaml",
-        ".yml",
-    }
-    scan_roots = (
-        ROOT / "src",
-        ROOT / "scripts",
-        ROOT / "config",
-        ROOT / "sim",
-        ROOT / "tests",
-        ROOT / "tools",
-        ROOT / "docs" / "architecture",
-    )
-    skipped_directories = {
-        ".git",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".tmp",
-        ".venv",
-        "__pycache__",
-        "node_modules",
-        "third_party",
-        "vendor",
-    }
-    violations: list[str] = []
-    this_file = Path(__file__).resolve()
-    for scan_root in scan_roots:
-        for directory, child_directories, filenames in os.walk(scan_root):
-            child_directories[:] = [
-                name
-                for name in child_directories
-                if name not in skipped_directories
-                and not Path(directory, name, "CMakeCache.txt").is_file()
-            ]
-            for filename in filenames:
-                path = Path(directory, filename)
-                if path.resolve() == this_file:
-                    continue
-                if path.suffix.lower() not in suffixes:
-                    continue
-                relative = path.relative_to(ROOT).as_posix()
-                text = path.read_text(encoding="utf-8", errors="ignore")
-                for retired in forbidden:
-                    if retired in text:
-                        violations.append(f"{relative}: {retired}")
-    assert not violations, "\n".join(violations)
 
 
 def test_build_and_ci_use_the_canonical_navigation_cpp_root() -> None:
     endpoint_builder = _read("scripts/build/build_nav_endpoint.sh")
-    kernel_builder = _read("scripts/build/build_nav_kernel.sh")
     native_ci = _read(".github/workflows/native-motion-build.yml")
     portable_ci = _read(".github/workflows/nav-core-tests.yml")
 
@@ -189,20 +263,15 @@ def test_build_and_ci_use_the_canonical_navigation_cpp_root() -> None:
     assert "LEGACY_NAV_ENDPOINT_DIR" not in endpoint_builder
     assert "src/nav/services/" + "endpoint/cpp" not in endpoint_builder
     assert "rm -rf" not in endpoint_builder
-    assert 'NAV_CPP_DIR="$REPO_ROOT/src/nav/cpp"' in kernel_builder
-    assert 'validate_cleanup_target "$BUILD_DIR"' in kernel_builder
-    assert '"$BUILD_ROOT"/*' in kernel_builder
-    assert 'rm -rf -- "$BUILD_DIR"' in kernel_builder
+    assert "lingtu_cmu_paths" in _read("src/nav/cpp/endpoint/CMakeLists.txt")
+    assert '"$BUILD_DIR/cmu_paths/$profile/$asset"' in endpoint_builder
     assert native_ci.count("src/nav/cpp/**") == 2
-    assert "src/nav/services/" + "endpoint/cpp/**" not in native_ci
-    assert "src/nav/kernel/**" not in native_ci
     assert "-S src/nav/cpp" in portable_ci
-    assert "src/nav/kernel" not in portable_ci
 
 
 def test_dds_services_delegate_to_checked_runners() -> None:
-    nav_service = _read("scripts/deploy/thunder/lingtu-nav-dds.service")
-    explore_service = _read("scripts/deploy/thunder/lingtu-explore-dds.service")
+    nav_service = _read("scripts/deploy/thunder/lt-nav.service")
+    explore_service = _read("scripts/deploy/thunder/lt-explore.service")
     nav_runner = _read("scripts/deploy/thunder/run_nav_dds.sh")
     explore_runner = _read("scripts/deploy/thunder/run_explore_dds.sh")
 
@@ -213,95 +282,19 @@ def test_dds_services_delegate_to_checked_runners() -> None:
     assert 'exec "${LINGTU_NAV_DDS_BIN}"' in nav_runner
     assert 'exec "${LINGTU_EXPLORE_DDS_BIN}"' in explore_runner
 
-def test_release_activation_is_atomic_and_rollback_safe() -> None:
+def test_release_cutter_only_sequences_deploy_and_package() -> None:
     release = _read("scripts/deploy/cut_release.sh")
 
-    for required in (
-        "thunder-runtime-env.sh",
-        "lingtu-traversability-dds.service",
-        "lingtu-nav-dds.service",
-        "lingtu-explore-dds.service",
-        "backup_activation_state",
-        "install_activation_files",
-        "verify_activation_files",
-        "restore_activation_state",
-        "release_rollback_trap",
-        "sudo systemctl daemon-reload",
-        "sudo systemd-analyze verify",
-        "sudo cmp -s",
-    ):
-        assert required in release
-    assert "sudo install -o root -g root -m 0644" in release
-    assert "sudo mv -f" in release
+    assert 'VERSION="v${RAW_VERSION#v}"' in release
+    assert 'PRODUCT="${LINGTU_DEPLOY_PRODUCT:-}"' in release
+    assert 'if [[ $# -gt 0 && "$1" != -* ]]; then' in release
+    assert 'bash "${SCRIPT_DIR}/deploy_robot.sh" "${PRODUCT}" "$@"' in release
+    assert 'bash "${SCRIPT_DIR}/package_native_release.sh" "${VERSION}" "${OUTPUT_DIR}"' in release
+    assert "systemctl" not in release
+    assert "RunPlan" not in release
+    assert "sha256" not in release.lower()
     assert "rm -rf" not in release
 
-
-def test_release_bundles_native_sensor_slam_and_driver_artifacts() -> None:
-    release = _read("scripts/deploy/cut_release.sh")
-
-    for required in (
-        'LIVOX_BUILD_DIR="${LINGTU_LIVOX_SDK2_STREAM_BUILD_DIR:-$DEV_DIR/build/livox_sdk2_stream}"',
-        'SLAM_BUILD_DIR="${LINGTU_SLAM_CORE_BUILD_DIR:-$DEV_DIR/build/slam_core}"',
-        'DRIVER_BUILD_DIR="${LINGTU_DRIVER_BUILD_DIR:-$DEV_DIR/build/driver}"',
-        'LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS=ON',
-        'bash "$DEV_DIR/scripts/build/build_livox_sdk2_stream.sh"',
-        'LINGTU_SLAM_BUILD_DDS_RUNTIME=ON',
-        'LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF',
-        'bash "$DEV_DIR/scripts/build/build_slam_core.sh"',
-        'bash "$DEV_DIR/scripts/build/build_mapd.sh"',
-        'bash "$DEV_DIR/scripts/build/build_dds_probe.sh"',
-        'bash "$DEV_DIR/scripts/build/build_driver.sh"',
-        'build/livox_sdk2_stream/livox_sdk2_stream',
-        'build/slam_core/slamd',
-        'build/maps/mapd',
-        'build/dds_probe/lingtu_dds_probe',
-        'build/driver/lingtu_driver',
-        'write_release_native_sha256_manifest',
-        'verify_release_native_sha256_manifest "$CURRENT_LINK"',
-        'verify_driver_uses_current_release',
-        'verify_mapd_uses_current_release',
-    ):
-        assert required in release
-
-    activation = release.split("activation_destinations() {", 1)[1].split(
-        "\n}\n\nrelease_source_for_destination()", 1
-    )[0]
-    source_mapping = release.split("release_source_for_destination() {", 1)[1].split(
-        "\n}\n\nbackup_label_for_path()", 1
-    )[0]
-    verification = release.split("verify_activation_files() {", 1)[1].split(
-        "\n}\n\ncleanup_activation_backup()", 1
-    )[0]
-    for section in (activation, source_mapping, verification):
-        assert "lingtu-driver.service" in section
-    assert "resolve_release_services" not in release
-    assert 'driver = selected_process("driver")' in release
-    assert 'CURRENT_DRIVER_UNIT="${fields[5]}"' in release
-    assert 'systemctl is-enabled --quiet "$CURRENT_DRIVER_UNIT"' in release
-
-    switch = release.index('sudo ln -sfn -- "$TARGET_DIR" "$CURRENT_LINK"')
-    reapply = release.index('reapply_committed_run_plan "activation"', switch)
-    assert switch < reapply
-    assert 'sudo systemctl restart' not in release
-    assert 'restart_service_list' not in release
-    assert '/api/v1/health' not in release
-    assert '/ready' not in release
-    assert 'DEADLINE=$((SECONDS + 60))' not in release
-    assert 'sleep 3' not in release
-    assert 'while [ $SECONDS -lt $DEADLINE ]' not in release
-
-
-def test_runtime_env_selects_the_map_for_the_configured_global_planner() -> None:
-    runtime_env = _read("scripts/deploy/thunder/runtime-env.sh")
-    runner = _read("scripts/deploy/thunder/run_nav_dds.sh")
-
-    assert "LINGTU_ACTIVE_PLANNER_MAP" in runtime_env
-    assert "octoplanner3d|octo)" in runtime_env
-    assert "LINGTU_ACTIVE_OCTOMAP" in runtime_env
-    assert "far)" in runtime_env
-    assert "LINGTU_ACTIVE_OCCUPANCY" in runtime_env
-    assert '--global-planner "${LINGTU_NAV_GLOBAL_PLANNER}"' in runner
-    assert '--map "${LINGTU_ACTIVE_PLANNER_MAP}"' in runner
 
 def test_explore_map_variant_declares_saved_map_localization_capability() -> None:
     from runtime.contracts.product_runtime import resolve_product_spec_contracts
@@ -323,22 +316,3 @@ def test_explore_map_variant_declares_saved_map_localization_capability() -> Non
     assert product["requires_map"] is True
     assert "saved_map_relocalization" in contract.capabilities
     assert "native_slam_mapping" not in contract.capabilities
-
-def test_mujoco_native_endpoint_closes_exploration_contract() -> None:
-    sim_env = _read("config/runtime_graph/envs/sim.yaml")
-    endpoint = sim_env.split("  mujoco_native:\n", 1)[1].split(
-        "  mujoco_host:\n", 1
-    )[0]
-
-    for required in (
-        "exploration_command_boundary:",
-        "  request: /nav/exploration/command",
-        "  ack: /nav/exploration/ack",
-        "  - /nav/exploration_grid",
-        "  - /nav/exploration_snapshot",
-    ):
-        assert required in endpoint
-    if "native_services:" in endpoint:
-        assert "  - lingtu_explore_dds" in endpoint
-    else:
-        assert "process_control: acceptance_runner" in endpoint

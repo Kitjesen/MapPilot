@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -164,6 +165,14 @@ std::filesystem::path pcdOutputPath(const std::filesystem::path & pcd_path)
   return out;
 }
 
+bool hasBinaryOctomapHeader(const std::filesystem::path & path)
+{
+  std::ifstream input(path, std::ios::binary);
+  std::string header;
+  return static_cast<bool>(std::getline(input, header)) &&
+    header == "# Octomap OcTree binary file";
+}
+
 std::shared_ptr<octomap::OcTree> loadOctomap(const std::string & map_path)
 {
   const std::filesystem::path path(map_path);
@@ -194,7 +203,7 @@ std::shared_ptr<octomap::OcTree> loadOctomap(const std::string & map_path)
 #endif
   }
 
-  if (extension == ".bt" || extension == ".BT") {
+  if (extension == ".bt" || extension == ".BT" || hasBinaryOctomapHeader(path)) {
     auto tree = std::make_shared<octomap::OcTree>(0.2);
     if (!tree->readBinary(path.string())) {
       throw std::runtime_error("failed to read OctoMap .bt file: " + map_path);
@@ -336,6 +345,61 @@ bool hasAcceptableSameFloorExcursion(
   return maximum->z - minimum->z <= max_excursion;
 }
 
+bool sameOptions(const PlannerOptions & lhs, const PlannerOptions & rhs)
+{
+  return lhs.robot_radius == rhs.robot_radius &&
+         lhs.body_clearance_below_m == rhs.body_clearance_below_m &&
+         lhs.body_clearance_above_m == rhs.body_clearance_above_m &&
+         lhs.max_iterations == rhs.max_iterations &&
+         lhs.snap_search_radius_cells == rhs.snap_search_radius_cells &&
+         lhs.require_ground_support == rhs.require_ground_support &&
+         lhs.strict_direct_ground_support == rhs.strict_direct_ground_support &&
+         lhs.ground_support_xy_radius_cells == rhs.ground_support_xy_radius_cells &&
+         lhs.ground_support_depth_cells == rhs.ground_support_depth_cells &&
+         lhs.support_height_m == rhs.support_height_m &&
+         lhs.support_height_tolerance_m == rhs.support_height_tolerance_m &&
+         lhs.support_patch_radius_cells == rhs.support_patch_radius_cells &&
+         lhs.support_patch_min_samples == rhs.support_patch_min_samples &&
+         lhs.enable_preblocked_costmap == rhs.enable_preblocked_costmap &&
+         lhs.preblocked_costmap_radius_cells == rhs.preblocked_costmap_radius_cells &&
+         lhs.preblocked_costmap_weight == rhs.preblocked_costmap_weight &&
+         lhs.lowest_traversable_only == rhs.lowest_traversable_only &&
+         lhs.floor_change_penalty == rhs.floor_change_penalty &&
+         lhs.max_step_height == rhs.max_step_height &&
+         lhs.max_slope == rhs.max_slope &&
+         lhs.same_floor_preference == rhs.same_floor_preference &&
+         lhs.same_floor_z_tolerance == rhs.same_floor_z_tolerance &&
+         lhs.max_same_floor_z_excursion == rhs.max_same_floor_z_excursion &&
+         lhs.obstacle_clearance_radius_cells == rhs.obstacle_clearance_radius_cells &&
+         lhs.obstacle_clearance_weight == rhs.obstacle_clearance_weight &&
+         lhs.terminal_goal_tolerance_m == rhs.terminal_goal_tolerance_m &&
+         lhs.terminal_goal_xy_tolerance_m == rhs.terminal_goal_xy_tolerance_m &&
+         lhs.terminal_goal_z_tolerance_m == rhs.terminal_goal_z_tolerance_m;
+}
+
+bool sameOverlay(
+  const lingtu::nav::plan::GlobalPlanTemporaryOverlay & lhs,
+  const lingtu::nav::plan::GlobalPlanTemporaryOverlay & rhs)
+{
+  if (lhs.revision != rhs.revision ||
+      lhs.frame_epoch != rhs.frame_epoch ||
+      lhs.obstacle_generation != rhs.obstacle_generation ||
+      lhs.traversability_generation != rhs.traversability_generation ||
+      lhs.blocked_regions.size() != rhs.blocked_regions.size()) {
+    return false;
+  }
+  for (std::size_t i = 0; i < lhs.blocked_regions.size(); ++i) {
+    const auto & a = lhs.blocked_regions[i];
+    const auto & b = rhs.blocked_regions[i];
+    if (a.center.x != b.center.x || a.center.y != b.center.y ||
+        a.center.z != b.center.z || a.radius_xy_m != b.radius_xy_m ||
+        a.min_z != b.min_z || a.max_z != b.max_z) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 bool pcdConversionEnabled()
@@ -396,8 +460,8 @@ std::string endpointResolutionFailureReason(
   return {};
 }
 
-PlanResult runWithLoadedMap(
-  const std::shared_ptr<octomap::OcTree> & map,
+PlanResult runPreparedPlanner(
+  global_planner::OctoPlanner3D & planner,
   const PlanRequest & request,
   const CancelCheck & cancel_check,
   const std::chrono::steady_clock::time_point & started)
@@ -405,19 +469,11 @@ PlanResult runWithLoadedMap(
   if (cancel_check && cancel_check()) {
     return cancelledResult(request, started);
   }
-  const std::string overlay_map_error = validateTemporaryOverlayForMap(map, request);
-  if (!overlay_map_error.empty()) {
-    return invalidTemporaryOverlayResult(request, overlay_map_error, started);
-  }
   const auto start = toPlannerPoint(request.start);
   const auto goal = toPlannerPoint(request.goal);
 
   std::vector<global_planner::PointPose> native_path;
-  global_planner::OctoPlanner3D planner;
-  planner.setConfig(plannerConfig(request.options));
   planner.setCancelCheck(cancel_check);
-  planner.setExternalPreblockedRegions(toPlannerBlockedRegions(request.temporary_overlay));
-  planner.setOctomap(map);
   planner.makePlan(start, goal);
   planner.getPlannerResults(native_path);
   const auto endpoint_resolution = planner.endpointResolution();
@@ -466,6 +522,27 @@ PlanResult runWithLoadedMap(
   return result;
 }
 
+PlanResult runWithLoadedMap(
+  const std::shared_ptr<octomap::OcTree> & map,
+  const PlanRequest & request,
+  const CancelCheck & cancel_check,
+  const std::chrono::steady_clock::time_point & started)
+{
+  if (cancel_check && cancel_check()) {
+    return cancelledResult(request, started);
+  }
+  const std::string overlay_map_error = validateTemporaryOverlayForMap(map, request);
+  if (!overlay_map_error.empty()) {
+    return invalidTemporaryOverlayResult(request, overlay_map_error, started);
+  }
+  global_planner::OctoPlanner3D planner;
+  planner.setConfig(plannerConfig(request.options));
+  planner.setCancelCheck(cancel_check);
+  planner.setExternalPreblockedRegions(toPlannerBlockedRegions(request.temporary_overlay));
+  planner.setOctomap(map);
+  return runPreparedPlanner(planner, request, cancel_check, started);
+}
+
 }  // namespace
 
 PlanResult runPlan(
@@ -484,15 +561,19 @@ PlanResult runPlan(
   if (!overlay_error.empty()) {
     return invalidTemporaryOverlayResult(request, overlay_error, started);
   }
-  return runWithLoadedMap(
-    loadOctomap(map_path.string()), request, cancel_check, started);
+  auto map = loadOctomap(map_path.string());
+  return runWithLoadedMap(map, request, cancel_check, started);
 }
 
 struct PlannerSession::Impl {
   mutable std::mutex mutex;
   lingtu::nav::plan::MapIdentity map_identity;
   std::shared_ptr<octomap::OcTree> map;
+  std::unique_ptr<global_planner::OctoPlanner3D> planner;
+  PlannerOptions options;
+  lingtu::nav::plan::GlobalPlanTemporaryOverlay overlay;
   std::size_t map_load_count{0};
+  std::size_t prepare_count{0};
 };
 
 PlannerSession::PlannerSession()
@@ -525,13 +606,35 @@ PlanResult PlannerSession::run(
   }
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  if (!impl_->map || !lingtu::nav::plan::sameMapIdentity(
-          impl_->map_identity, map_identity)) {
+  const bool map_changed = !impl_->map || !lingtu::nav::plan::sameMapIdentity(
+    impl_->map_identity, map_identity);
+  if (map_changed) {
     impl_->map = loadOctomap(map_path.string());
     impl_->map_identity = map_identity;
     ++impl_->map_load_count;
   }
-  auto result = runWithLoadedMap(impl_->map, request, cancel_check, started);
+  const std::string overlay_map_error = validateTemporaryOverlayForMap(impl_->map, request);
+  if (!overlay_map_error.empty()) {
+    auto result = invalidTemporaryOverlayResult(request, overlay_map_error, started);
+    result.map_identity = map_identity;
+    return result;
+  }
+  const bool prepare = map_changed || !impl_->planner ||
+    !sameOptions(impl_->options, request.options) ||
+    !sameOverlay(impl_->overlay, request.temporary_overlay);
+  if (prepare) {
+    auto planner = std::make_unique<global_planner::OctoPlanner3D>();
+    planner->setConfig(plannerConfig(request.options));
+    planner->setCancelCheck(cancel_check);
+    planner->setExternalPreblockedRegions(
+      toPlannerBlockedRegions(request.temporary_overlay));
+    planner->setOctomap(impl_->map);
+    impl_->planner = std::move(planner);
+    impl_->options = request.options;
+    impl_->overlay = request.temporary_overlay;
+    ++impl_->prepare_count;
+  }
+  auto result = runPreparedPlanner(*impl_->planner, request, cancel_check, started);
   result.map_identity = map_identity;
   return result;
 }
@@ -540,6 +643,12 @@ std::size_t PlannerSession::mapLoadCount() const
 {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   return impl_->map_load_count;
+}
+
+std::size_t PlannerSession::prepareCount() const
+{
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  return impl_->prepare_count;
 }
 
 }  // namespace octoplanner3d::runtime

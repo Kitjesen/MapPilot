@@ -2,6 +2,8 @@
 
 #include <cctype>
 #include <cmath>
+#include <limits>
+#include <stdexcept>
 #include <unordered_set>
 #include <utility>
 
@@ -56,6 +58,22 @@ bool SafeActionToken(const std::string& value) {
     }
   }
   return true;
+}
+
+bool SafeText(const std::string& value, std::size_t max_size) {
+  return value.size() <= max_size && value.find('\0') == std::string::npos;
+}
+
+bool KnownTaskEventKind(TaskEventKind kind) noexcept {
+  switch (kind) {
+    case TaskEventKind::kTaskAccepted:
+    case TaskEventKind::kStateChanged:
+    case TaskEventKind::kMilestone:
+    case TaskEventKind::kStopConfirmationFailed:
+    case TaskEventKind::kEvidenceRecorded:
+      return true;
+  }
+  return false;
 }
 
 }  // namespace
@@ -146,12 +164,223 @@ const char* TaskEventKindName(TaskEventKind kind) noexcept {
   return "unknown";
 }
 
+const char* TaskEventOutboxRecordResultName(TaskEventOutboxRecordResult result) noexcept {
+  switch (result) {
+    case TaskEventOutboxRecordResult::kAccepted: return "accepted";
+    case TaskEventOutboxRecordResult::kInvalid: return "invalid";
+    case TaskEventOutboxRecordResult::kOutOfOrder: return "out_of_order";
+    case TaskEventOutboxRecordResult::kBackpressure: return "backpressure";
+  }
+  return "unknown";
+}
+
+bool IsActiveRunState(RunState state) noexcept {
+  switch (state) {
+    case RunState::kValidating:
+    case RunState::kPlanning:
+    case RunState::kNavigating:
+    case RunState::kDwelling:
+    case RunState::kPaused:
+    case RunState::kRecovering:
+    case RunState::kSettling:
+    case RunState::kActionPending:
+    case RunState::kPausing:
+    case RunState::kCancelling:
+      return true;
+    case RunState::kIdle:
+    case RunState::kSucceeded:
+    case RunState::kFailed:
+    case RunState::kCancelled:
+      return false;
+  }
+  return false;
+}
+
+bool IsTerminalRunState(RunState state) noexcept {
+  return state == RunState::kSucceeded || state == RunState::kFailed ||
+      state == RunState::kCancelled;
+}
+
+TaskEventValidationResult ValidateTaskEvent(const TaskEvent& event) {
+  const auto& status = event.status;
+  if (event.sequence == 0U) return {false, "event_sequence_zero"};
+  if (!Finite(event.timestamp_s) || event.timestamp_s < 0.0) {
+    return {false, "event_timestamp_invalid"};
+  }
+  if (!KnownTaskEventKind(event.kind)) return {false, "event_kind_unknown"};
+  if (!IsActiveRunState(status.state) && !IsTerminalRunState(status.state)) {
+    return {false, "event_state_not_recoverable"};
+  }
+  if (!SafeTaskId(status.task_id) || status.task_id.size() > 96U) {
+    return {false, "event_task_id_invalid"};
+  }
+  if (status.run_id != status.task_id) return {false, "event_run_id_mismatch"};
+  if (!SafeTaskId(status.request_id) || status.request_id.size() > 96U) {
+    return {false, "event_command_request_id_invalid"};
+  }
+  if (!SafeTaskId(event.request_id) || event.request_id.size() > 128U) {
+    return {false, "event_request_id_invalid"};
+  }
+  if (!SafeId(status.map_id)) return {false, "event_map_id_invalid"};
+  if (status.map_content_epoch < 0) return {false, "event_map_content_epoch_invalid"};
+  if (!SafeId(status.route_id)) return {false, "event_route_id_invalid"};
+  if (status.route_revision == 0U) return {false, "event_route_revision_zero"};
+  if (status.point_index > 256U || status.point_count > 256U) {
+    return {false, "event_point_index_invalid"};
+  }
+  if (!status.point_id.empty() && !SafeId(status.point_id)) {
+    return {false, "event_point_id_invalid"};
+  }
+  if (!SafeActionToken(status.action)) return {false, "event_action_invalid"};
+  if (!status.action_request_id.empty() &&
+      (!SafeTaskId(status.action_request_id) || status.action_request_id.size() > 128U)) {
+    return {false, "event_action_request_id_invalid"};
+  }
+  if (!status.evidence_id.empty() && !SafeId(status.evidence_id)) {
+    return {false, "event_evidence_id_invalid"};
+  }
+  if (!Finite(status.phase_started_at_s) || status.phase_started_at_s < 0.0 ||
+      !Finite(status.stable_since_s) || status.stable_since_s < 0.0 ||
+      !Finite(status.deadline_s) || status.deadline_s < 0.0) {
+    return {false, "event_status_time_invalid"};
+  }
+  if (!SafeText(status.reason, 1024U)) return {false, "event_reason_invalid"};
+  if (event.kind == TaskEventKind::kTaskAccepted &&
+      status.state != RunState::kValidating) {
+    return {false, "task_accepted_state_invalid"};
+  }
+  if (event.kind == TaskEventKind::kStopConfirmationFailed &&
+      status.state != RunState::kPausing && status.state != RunState::kCancelling) {
+    return {false, "stop_confirmation_state_invalid"};
+  }
+  if (event.kind == TaskEventKind::kEvidenceRecorded && status.evidence_id.empty()) {
+    return {false, "evidence_event_missing_evidence_id"};
+  }
+  return {true, "ok"};
+}
+
+RestartTaskEventResult ReconcileTaskEventAfterRestart(
+    const TaskEvent& checkpoint,
+    double timestamp_s) {
+  const auto validation = ValidateTaskEvent(checkpoint);
+  if (!validation.ok) {
+    return {false, false, false, {}, "invalid_checkpoint:" + validation.reason};
+  }
+  if (IsTerminalRunState(checkpoint.status.state)) {
+    return {true, true, false, checkpoint, "terminal_replay"};
+  }
+  if (!IsActiveRunState(checkpoint.status.state)) {
+    return {false, false, false, {}, "checkpoint_state_not_recoverable"};
+  }
+  if (!Finite(timestamp_s) || timestamp_s < 0.0) {
+    return {false, false, false, {}, "restart_timestamp_invalid"};
+  }
+  if (checkpoint.sequence == std::numeric_limits<std::uint64_t>::max()) {
+    return {false, false, false, {}, "checkpoint_sequence_exhausted"};
+  }
+
+  TaskEvent failed = checkpoint;
+  ++failed.sequence;
+  failed.timestamp_s = timestamp_s;
+  failed.kind = TaskEventKind::kStateChanged;
+  failed.request_id = failed.status.request_id;
+  failed.status.state = RunState::kFailed;
+  failed.status.action_request_id.clear();
+  failed.status.phase_started_at_s = 0.0;
+  failed.status.stable_since_s = 0.0;
+  failed.status.deadline_s = 0.0;
+  failed.status.reason = "native_endpoint_restarted";
+  const auto failed_validation = ValidateTaskEvent(failed);
+  if (!failed_validation.ok) {
+    return {false, false, false, {}, "restart_event_invalid:" + failed_validation.reason};
+  }
+  return {true, false, true, std::move(failed), "active_failed_after_restart"};
+}
+
+InspectionTaskEventOutbox::InspectionTaskEventOutbox(
+    std::string boot_id,
+    WriteCallback write,
+    std::size_t capacity)
+    : boot_id_(std::move(boot_id)), write_(std::move(write)), capacity_(capacity) {
+  if (boot_id_.empty()) {
+    throw std::invalid_argument("inspection task event outbox boot_id is required");
+  }
+  if (!write_) {
+    throw std::invalid_argument("inspection task event outbox write callback is required");
+  }
+  if (capacity_ == 0U) {
+    throw std::invalid_argument("inspection task event outbox capacity must be positive");
+  }
+}
+
+bool InspectionTaskEventOutbox::InitializeNextSequence(std::uint64_t next_sequence) noexcept {
+  if (next_sequence == 0U || initialized_ || recording_started_ || !pending_.empty() ||
+      next_sequence < next_sequence_) {
+    return false;
+  }
+  next_sequence_ = next_sequence;
+  initialized_ = true;
+  sequence_exhausted_ = false;
+  return true;
+}
+
+TaskEventOutboxRecordResult InspectionTaskEventOutbox::Record(const TaskEvent& event) {
+  recording_started_ = true;
+  if (!ValidateTaskEvent(event).ok) {
+    ++diagnostics_.rejected_invalid;
+    return TaskEventOutboxRecordResult::kInvalid;
+  }
+  if (sequence_exhausted_ || event.sequence != next_sequence_) {
+    ++diagnostics_.rejected_out_of_order;
+    return TaskEventOutboxRecordResult::kOutOfOrder;
+  }
+  if (pending_.size() >= capacity_) {
+    ++diagnostics_.rejected_backpressure;
+    return TaskEventOutboxRecordResult::kBackpressure;
+  }
+
+  pending_.push_back(TaskEventEnvelope{boot_id_, event.sequence, event});
+  if (event.sequence == std::numeric_limits<std::uint64_t>::max()) {
+    sequence_exhausted_ = true;
+  } else {
+    ++next_sequence_;
+  }
+  ++diagnostics_.accepted;
+  diagnostics_.pending = pending_.size();
+  return TaskEventOutboxRecordResult::kAccepted;
+}
+
+std::size_t InspectionTaskEventOutbox::Flush(std::size_t max_events) {
+  std::size_t delivered = 0U;
+  while (delivered < max_events && !pending_.empty()) {
+    bool wrote = false;
+    try {
+      wrote = write_(pending_.front());
+    } catch (...) {
+      wrote = false;
+    }
+    if (!wrote) {
+      ++diagnostics_.delivery_failures;
+      break;
+    }
+    pending_.pop_front();
+    ++delivered;
+    ++diagnostics_.delivered;
+  }
+  diagnostics_.pending = pending_.size();
+  return delivered;
+}
+
+TaskEventOutboxDiagnostics InspectionTaskEventOutbox::diagnostics() const noexcept {
+  return diagnostics_;
+}
+
 bool Executor::Start(
     Route route,
     std::string task_id,
     std::string request_id,
     const std::string& active_map_id,
-    std::int64_t active_map_version,
+    std::int64_t active_map_content_epoch,
     double now_s,
     std::string* error) {
   status_ = {};
@@ -192,12 +421,12 @@ bool Executor::Start(
   status_.run_id = status_.task_id;
   status_.request_id = std::move(request_id);
   status_.map_id = route_.map_id;
-  status_.map_version = route_.map_version;
+  status_.map_content_epoch = route_.map_content_epoch;
   status_.route_id = route_.id;
   status_.route_revision = route_.revision;
   status_.point_count = validation.enabled_points;
-  if (!MapMatches(active_map_id, active_map_version)) {
-    Fail("route_map_version_mismatch", now_s);
+  if (!MapMatches(active_map_id, active_map_content_epoch)) {
+    Fail("route_map_content_epoch_mismatch", now_s);
     if (error != nullptr) *error = status_.reason;
     return false;
   }
@@ -223,7 +452,7 @@ bool Executor::Start(
     Route route,
     std::string run_id,
     const std::string& active_map_id,
-    std::int64_t active_map_version,
+    std::int64_t active_map_content_epoch,
     double now_s,
     std::string* error) {
   return Start(
@@ -231,7 +460,7 @@ bool Executor::Start(
       std::move(run_id),
       "",
       active_map_id,
-      active_map_version,
+      active_map_content_epoch,
       now_s,
       error);
 }
@@ -304,11 +533,11 @@ bool Executor::Pause(const std::string& reason) {
 
 bool Executor::Resume(
     const std::string& active_map_id,
-    std::int64_t active_map_version,
+    std::int64_t active_map_content_epoch,
     double now_s,
     const std::string& request_id) {
   if (status_.state != RunState::kPaused ||
-      !MapMatches(active_map_id, active_map_version)) {
+      !MapMatches(active_map_id, active_map_content_epoch)) {
     return false;
   }
   if (!SetRequestId(request_id)) return false;
@@ -542,10 +771,10 @@ void Executor::Tick(double now_s) {
 
 void Executor::OnMapChanged(
     const std::string& active_map_id,
-    std::int64_t active_map_version) {
+    std::int64_t active_map_content_epoch) {
   if (active() && status_.state != RunState::kPausing &&
       status_.state != RunState::kCancelling &&
-      !MapMatches(active_map_id, active_map_version)) {
+      !MapMatches(active_map_id, active_map_content_epoch)) {
     Fail("active_map_changed", status_.phase_started_at_s);
   }
 }
@@ -572,8 +801,8 @@ const Route* Executor::route() const noexcept {
   return has_route_ ? &route_ : nullptr;
 }
 
-bool Executor::MapMatches(const std::string& map_id, std::int64_t map_version) const {
-  return has_route_ && route_.map_id == map_id && route_.map_version == map_version;
+bool Executor::MapMatches(const std::string& map_id, std::int64_t map_content_epoch) const {
+  return has_route_ && route_.map_id == map_id && route_.map_content_epoch == map_content_epoch;
 }
 
 bool Executor::SetRequestId(const std::string& request_id) {
@@ -624,6 +853,16 @@ std::vector<TaskEvent> Executor::TakeTaskEvents() {
     task_events_.pop_front();
   }
   return result;
+}
+
+bool Executor::SetNextTaskEventSequence(std::uint64_t next_sequence) noexcept {
+  if (status_.state != RunState::kIdle || has_route_ || !task_events_.empty() ||
+      next_sequence == 0U || next_sequence < next_task_event_sequence_ ||
+      next_sequence == std::numeric_limits<std::uint64_t>::max()) {
+    return false;
+  }
+  next_task_event_sequence_ = next_sequence;
+  return true;
 }
 
 bool Executor::SelectCurrentPoint() {

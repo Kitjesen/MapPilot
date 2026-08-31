@@ -3,10 +3,12 @@
 #include <exception>
 #include <utility>
 
+#include "planning/global/far/planner.hpp"
+
 namespace lingtu::nav::endpoint {
 
 SavedCoverageGridResult
-buildSavedCoverageGrid(const plan::far::FarGridMap &artifact, const std::string &source_map_sha256,
+buildSavedCoverageGrid(const plan::far_planner::FarGridMap &artifact,
                        const lingtu::explore::ExploreMapIdentity &snapshot_identity) {
   if (snapshot_identity.live) {
     return {std::nullopt, "saved coverage grid requires the map route"};
@@ -19,20 +21,13 @@ buildSavedCoverageGrid(const plan::far::FarGridMap &artifact, const std::string 
   if (artifact.identity.map_id != snapshot_identity.map_id) {
     return {std::nullopt, "saved coverage map_id does not match the exploration snapshot"};
   }
-  if (artifact.identity.version != snapshot_identity.map_version) {
-    return {std::nullopt, "saved coverage map version does not match the exploration snapshot"};
+  if (artifact.identity.content_epoch != snapshot_identity.map_content_epoch) {
+    return {std::nullopt, "saved coverage content epoch does not match the exploration snapshot"};
   }
   if (artifact.identity.frame_id != snapshot_identity.frame_id ||
       artifact.frame_id != snapshot_identity.frame_id) {
     return {std::nullopt, "saved coverage frame does not match the exploration snapshot"};
   }
-  if (source_map_sha256.empty() || source_map_sha256 != snapshot_identity.artifact_hash) {
-    return {
-        std::nullopt,
-        "saved coverage source map hash does not match the exploration snapshot",
-    };
-  }
-
   lingtu::explore::Grid2D grid;
   grid.width = artifact.width;
   grid.height = artifact.height;

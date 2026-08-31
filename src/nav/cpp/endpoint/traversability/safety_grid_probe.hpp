@@ -4,10 +4,10 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <vector>
 
 #include "lingtu/maps/layers/grid.hpp"
+#include "traversability/observed_safety_grid.hpp"
 
 namespace lingtu::nav::endpoint {
 
@@ -27,6 +27,8 @@ struct SafetyGridProbeLayers {
 
 struct SafetyGridProbeSample {
   double distance_m{0.0};
+  double body_x{0.0};
+  double body_y{0.0};
   double map_x{0.0};
   double map_y{0.0};
   int row{-1};
@@ -52,25 +54,14 @@ struct SafetyGridForwardProbe {
   std::vector<SafetyGridProbeSample> samples;
 };
 
-inline bool safetyGridProbeCell(const lingtu::maps::layers::Grid2D &grid, double x, double y,
-                                int &row, int &col) {
-  if (grid.empty() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(grid.resolution) ||
-      grid.resolution <= 0.0) {
-    return false;
-  }
-  const auto cellIndex = [&](double coordinate, double origin) {
-    const double normalized = (coordinate - origin) / grid.resolution;
-    const double conceptual_boundary = std::nearbyint(normalized);
-    const double boundary_noise =
-        4.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, std::fabs(normalized));
-    return static_cast<int>(std::floor(std::fabs(normalized - conceptual_boundary) <= boundary_noise
-                                           ? conceptual_boundary
-                                           : normalized));
-  };
-  col = cellIndex(x, grid.originX);
-  row = cellIndex(y, grid.originY);
-  return row >= 0 && row < grid.rows && col >= 0 && col < grid.cols;
-}
+struct SafetyGridNearBodyProbe {
+  double radius_m{0.0};
+  float hard_cost{100.0F};
+  std::size_t total_count{0};
+  bool truncated{false};
+  SafetyGridProbePose pose{};
+  std::vector<SafetyGridProbeSample> samples;
+};
 
 inline float safetyGridProbeCost(const lingtu::maps::layers::Grid2D *grid, double x, double y) {
   if (grid == nullptr) {
@@ -78,7 +69,7 @@ inline float safetyGridProbeCost(const lingtu::maps::layers::Grid2D *grid, doubl
   }
   int row = -1;
   int col = -1;
-  if (!safetyGridProbeCell(*grid, x, y, row, col)) {
+  if (!safetyGridCell(*grid, x, y, row, col)) {
     return -1.0F;
   }
   return grid->data[static_cast<std::size_t>(grid->index(row, col))];
@@ -107,11 +98,13 @@ inline SafetyGridForwardProbe buildStraightForwardSafetyGridProbe(
   for (int index = 0; index <= forward_samples; ++index) {
     SafetyGridProbeSample sample;
     sample.distance_m = static_cast<double>(index) * probe.step_m;
+    sample.body_x = sample.distance_m;
+    sample.body_y = 0.0;
     sample.map_x = pose.x + c * sample.distance_m;
     sample.map_y = pose.y + s * sample.distance_m;
     sample.used_by_teleop = index > 0;
     sample.in_bounds =
-        safetyGridProbeCell(*layers.fused, sample.map_x, sample.map_y, sample.row, sample.col);
+        safetyGridCell(*layers.fused, sample.map_x, sample.map_y, sample.row, sample.col);
     if (sample.in_bounds) {
       const std::size_t flat_index =
           static_cast<std::size_t>(layers.fused->index(sample.row, sample.col));
@@ -129,6 +122,78 @@ inline SafetyGridForwardProbe buildStraightForwardSafetyGridProbe(
     sample.surface_risk_cost = safetyGridProbeCost(layers.surface_risk, sample.map_x, sample.map_y);
     probe.samples.push_back(sample);
   }
+  return probe;
+}
+
+inline SafetyGridNearBodyProbe buildNearBodyHardSafetyGridProbe(
+    const SafetyGridProbePose &pose, const SafetyGridProbeLayers &layers, double radius_m,
+    float hard_cost, std::size_t max_samples) {
+  SafetyGridNearBodyProbe probe;
+  probe.radius_m = std::max(0.0, radius_m);
+  probe.hard_cost = std::clamp(hard_cost, 0.0F, 100.0F);
+  probe.pose = pose;
+  if (layers.fused == nullptr || layers.fused->empty() || probe.radius_m <= 0.0) {
+    return probe;
+  }
+
+  const bool observed_mask_valid =
+      layers.observed_before_overlays != nullptr &&
+      layers.observed_before_overlays->size() == layers.fused->data.size();
+  const double c = std::cos(pose.yaw);
+  const double s = std::sin(pose.yaw);
+  std::vector<SafetyGridProbeSample> samples;
+  for (int row = 0; row < layers.fused->rows; ++row) {
+    for (int col = 0; col < layers.fused->cols; ++col) {
+      const std::size_t flat_index =
+          static_cast<std::size_t>(layers.fused->index(row, col));
+      const float fused_cost = layers.fused->data[flat_index];
+      if (!std::isfinite(fused_cost) || fused_cost < probe.hard_cost) {
+        continue;
+      }
+      SafetyGridProbeSample sample;
+      sample.row = row;
+      sample.col = col;
+      sample.in_bounds = true;
+      sample.map_x =
+          layers.fused->originX + (static_cast<double>(col) + 0.5) * layers.fused->resolution;
+      sample.map_y =
+          layers.fused->originY + (static_cast<double>(row) + 0.5) * layers.fused->resolution;
+      const double dx = sample.map_x - pose.x;
+      const double dy = sample.map_y - pose.y;
+      sample.body_x = dx * c + dy * s;
+      sample.body_y = -dx * s + dy * c;
+      sample.distance_m = std::hypot(sample.body_x, sample.body_y);
+      if (sample.distance_m > probe.radius_m + 1e-9) {
+        continue;
+      }
+      sample.observed_before_overlays =
+          observed_mask_valid && (*layers.observed_before_overlays)[flat_index] != 0;
+      sample.unknown_before_overlays = !sample.observed_before_overlays;
+      sample.occupancy_cost =
+          safetyGridProbeCost(layers.occupancy_source, sample.map_x, sample.map_y);
+      sample.height_risk_cost =
+          safetyGridProbeCost(layers.height_risk, sample.map_x, sample.map_y);
+      sample.surface_risk_cost =
+          safetyGridProbeCost(layers.surface_risk, sample.map_x, sample.map_y);
+      sample.fused_cost = fused_cost;
+      samples.push_back(sample);
+    }
+  }
+  std::sort(samples.begin(), samples.end(), [](const auto &lhs, const auto &rhs) {
+    if (std::abs(lhs.distance_m - rhs.distance_m) > 1e-9) {
+      return lhs.distance_m < rhs.distance_m;
+    }
+    if (std::abs(lhs.body_x - rhs.body_x) > 1e-9) {
+      return lhs.body_x < rhs.body_x;
+    }
+    return lhs.body_y < rhs.body_y;
+  });
+  probe.total_count = samples.size();
+  probe.truncated = samples.size() > max_samples;
+  if (probe.truncated) {
+    samples.resize(max_samples);
+  }
+  probe.samples = std::move(samples);
   return probe;
 }
 

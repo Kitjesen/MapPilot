@@ -3,17 +3,24 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
-#include "lingtu/maps/hash.hpp"
-#include "plan/active_octomap_gate.hpp"
+#include <octomap/OcTree.h>
+
+#include "lingtu/maps/build/pcd.hpp"
+#include "input/active/octomap.hpp"
 
 namespace {
 
-using lingtu::maps::Sha256File;
 using lingtu::nav::endpoint::ActiveOctomapGate;
 using lingtu::nav::endpoint::runWithActiveOctomap;
+
+lingtu::nav::plan::MapIdentity mapIdentity(std::string map_id = "field") {
+  return {std::move(map_id), 7, "map"};
+}
 
 [[noreturn]] void fail(const std::string &message) {
   throw std::runtime_error(message);
@@ -53,41 +60,51 @@ void writeFile(const std::filesystem::path &path, const std::string &content) {
   require(file.good(), "failed to write fixture: " + path.string());
 }
 
-std::filesystem::path writeValidActiveMap(const std::filesystem::path &root) {
+std::string readFile(const std::filesystem::path &path) {
+  std::ifstream file(path, std::ios::binary);
+  return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+}
+
+std::filesystem::path writeValidMap(const std::filesystem::path &root) {
   const auto map_dir = root / "field";
   const auto map_pcd = map_dir / "map.pcd";
   const auto octomap = map_dir / "octomap.ot";
-  writeFile(map_pcd, "valid point cloud fixture\n");
-  writeFile(octomap, "valid octomap fixture\n");
-  const std::string map_sha = Sha256File(map_pcd);
-  const std::string octomap_sha = Sha256File(octomap);
+  const std::vector<lingtu::maps::PointXyz> points = {
+      {0.0F, 0.0F, 0.0F},
+      {1.0F, 1.0F, 0.5F},
+  };
+  std::string pcd_error;
+  require(
+      lingtu::maps::WriteBinaryXyzPcd(map_pcd, points, &pcd_error),
+      "failed to write PCD fixture: " + pcd_error);
+  octomap::OcTree tree(0.2);
+  tree.updateNode(octomap::point3d(0.0F, 0.0F, 0.0F), true);
+  tree.updateInnerOccupancy();
+  require(tree.writeBinary(octomap.string()), "failed to write OctoMap fixture");
   writeFile(map_dir / "metadata.json",
             "{\"schema_version\":\"lingtu.saved_map_artifacts.v1\","
             "\"frame_id\":\"map\","
             "\"artifacts\":{"
-            "\"map_pcd\":{\"path\":\"map.pcd\",\"sha256\":\"" +
-                map_sha +
-                "\"},"
-                "\"octomap\":{\"path\":\"octomap.ot\",\"sha256\":\"" +
-                octomap_sha + "\",\"source_map_sha256\":\"" + map_sha + "\"}}}");
-  writeFile(root / "active_map.txt", "field\n");
+            "\"map_pcd\":{\"path\":\"map.pcd\"},"
+            "\"octomap\":{\"path\":\"octomap.ot\"}}}");
   return octomap;
 }
 
 void testValidActiveMapGetsPrivateSnapshot() {
   TempMapRoot root;
-  const auto configured = writeValidActiveMap(root.path());
-  ActiveOctomapGate gate(root.path());
+  const auto configured = writeValidMap(root.path());
+  ActiveOctomapGate gate(mapIdentity());
 
   auto result = gate.prepare(configured);
 
   require(result.ok(), "valid active map was rejected: " + result.reason);
   require(result.artifact->mapId() == "field", "prepared map id is not active map");
-  require(result.artifact->identity().version == 1, "prepared map version is invalid");
+  require(result.artifact->identity().content_epoch == 7,
+          "prepared map content epoch is not runtime-bound");
   require(result.artifact->identity().frame_id == "map", "prepared frame is invalid");
   require(result.artifact->loadPath() != configured,
           "planner must load a private snapshot, not the mutable active path");
-  require(Sha256File(result.artifact->loadPath()) == Sha256File(configured),
+  require(readFile(result.artifact->loadPath()) == readFile(configured),
           "private snapshot bytes differ from validated artifact");
   const auto current = gate.currentIdentity(configured);
   require(current.ok(), "current active map identity is unavailable: " + current.reason);
@@ -95,56 +112,23 @@ void testValidActiveMapGetsPrivateSnapshot() {
           "prepare and current identity disagree");
 }
 
-void testTamperedOctomapIsRejected() {
-  TempMapRoot root;
-  const auto configured = writeValidActiveMap(root.path());
-  writeFile(configured, "tampered octomap\n");
-  ActiveOctomapGate gate(root.path());
-
-  const auto result = gate.prepare(configured);
-
-  require(!result.ok(), "tampered octomap unexpectedly passed native Maps gate");
-}
-
-void testTamperedSourceMapIsRejected() {
-  TempMapRoot root;
-  const auto configured = writeValidActiveMap(root.path());
-  writeFile(root.path() / "field" / "map.pcd", "tampered source map\n");
-  ActiveOctomapGate gate(root.path());
-
-  const auto result = gate.prepare(configured);
-
-  require(!result.ok(), "tampered map.pcd unexpectedly passed same-source gate");
-}
-
 void testConfiguredPathMustBelongToActiveMap() {
   TempMapRoot root;
-  (void)writeValidActiveMap(root.path());
+  (void)writeValidMap(root.path());
   const auto other = root.path() / "other" / "octomap.ot";
   writeFile(other, "unrelated map\n");
-  ActiveOctomapGate gate(root.path());
+  ActiveOctomapGate gate(mapIdentity());
 
   const auto result = gate.prepare(other);
 
   require(!result.ok(), "non-active octomap path unexpectedly passed gate");
 }
 
-void testLegacyActiveAliasMustResolveToNativeActiveMap() {
+void testMissingArtifactNeverInvokesPlanner() {
   TempMapRoot root;
-  (void)writeValidActiveMap(root.path());
-  std::filesystem::create_directory_symlink(root.path() / "field", root.path() / "active");
-  ActiveOctomapGate gate(root.path());
-
-  const auto result = gate.prepare(root.path() / "active" / "octomap.ot");
-
-  require(result.ok(), "active alias pointing at native active map was rejected: " + result.reason);
-}
-
-void testRejectedGateNeverInvokesPlanner() {
-  TempMapRoot root;
-  const auto configured = writeValidActiveMap(root.path());
-  writeFile(configured, "tampered before planner load\n");
-  ActiveOctomapGate gate(root.path());
+  const auto configured = writeValidMap(root.path());
+  std::filesystem::remove(configured);
+  ActiveOctomapGate gate(mapIdentity());
   lingtu::nav::plan::GlobalPlanRequest request;
   bool planner_called = false;
 
@@ -165,18 +149,18 @@ void testRejectedGateNeverInvokesPlanner() {
 
 void testPlannerLoadsImmutableSnapshotAfterValidation() {
   TempMapRoot root;
-  const auto configured = writeValidActiveMap(root.path());
-  const std::string accepted_sha = Sha256File(configured);
+  const auto configured = writeValidMap(root.path());
+  const std::string accepted_content = readFile(configured);
   lingtu::nav::plan::GlobalPlanRequest request;
   std::filesystem::path planner_path;
   {
-    ActiveOctomapGate gate(root.path());
+    ActiveOctomapGate gate(mapIdentity());
     const auto result = runWithActiveOctomap(
         gate, configured, request, {},
         [&](const auto &snapshot_path, const auto &, const auto &, const auto &) {
           planner_path = snapshot_path;
           writeFile(configured, "source replaced after validation\n");
-          require(Sha256File(planner_path) == accepted_sha,
+          require(readFile(planner_path) == accepted_content,
                   "planner snapshot changed after mutable source was replaced");
           return lingtu::nav::plan::GlobalPlanResult{};
         });
@@ -192,8 +176,8 @@ void testPlannerLoadsImmutableSnapshotAfterValidation() {
 
 void testRepeatedPrepareReusesValidatedSnapshot() {
   TempMapRoot root;
-  const auto configured = writeValidActiveMap(root.path());
-  ActiveOctomapGate gate(root.path());
+  const auto configured = writeValidMap(root.path());
+  ActiveOctomapGate gate(mapIdentity());
 
   const auto first = gate.prepare(configured);
   const auto second = gate.prepare(configured);
@@ -208,11 +192,8 @@ void testRepeatedPrepareReusesValidatedSnapshot() {
 int main() {
   try {
     testValidActiveMapGetsPrivateSnapshot();
-    testTamperedOctomapIsRejected();
-    testTamperedSourceMapIsRejected();
     testConfiguredPathMustBelongToActiveMap();
-    testLegacyActiveAliasMustResolveToNativeActiveMap();
-    testRejectedGateNeverInvokesPlanner();
+    testMissingArtifactNeverInvokesPlanner();
     testPlannerLoadsImmutableSnapshotAfterValidation();
     testRepeatedPrepareReusesValidatedSnapshot();
     std::cout << "test_active_octomap_gate: PASS\n";

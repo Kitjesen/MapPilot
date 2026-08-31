@@ -5,8 +5,8 @@
 #include <string>
 #include <vector>
 
-#include "local_planner.hpp"
-#include "motion/teleop_safety.hpp"
+#include "planning/local/planner.hpp"
+#include "safety/command.hpp"
 #include "status/control_loop_health.hpp"
 #include "status/nav_status_publisher.hpp"
 
@@ -29,6 +29,7 @@ using lingtu::nav::endpoint::StatusMotionLayerSample;
 using lingtu::nav::endpoint::StatusPlannerSample;
 using lingtu::nav::endpoint::StatusRuntimeState;
 using lingtu::nav::endpoint::StatusWriterConfig;
+using lingtu::nav::endpoint::StatusFarInputSample;
 using lingtu::nav::endpoint::TeleopDiagnostics;
 using lingtu::nav::endpoint::TimingDiagnostics;
 using lingtu::nav::endpoint::TraversabilityGrid;
@@ -65,7 +66,11 @@ struct Fixture {
   std::vector<nav_kernel::Vec3> local_path;
   nav_kernel::LocalPlannerDebugSnapshot local_debug;
   TraversabilityGrid traversability;
-  std::vector<float> obstacles{1.0F, 2.0F, 3.0F, 0.5F};
+  std::vector<float> collision_points{0.5F, 0.0F, 0.4F};
+  std::vector<float> obstacles{
+      0.1F, 0.0F, 0.0F, -0.3F,
+      1.0F, 2.0F, 3.0F, 0.5F,
+  };
   std::vector<DynamicCluster> clusters;
   MotionLayerStats motion_stats;
   ControlLoopHealthSnapshot loop_health;
@@ -83,12 +88,17 @@ struct Fixture {
     local.recovery_action = 1;
     local.recovery_attempt = 2;
     local.recovery_candidate_count = 7;
+    local.recovery_rotation_target_rad = -0.6;
     local.recovery_verified = true;
     local.recovery_progress = 0.625;
     local.recovery_reason = "recovery_translation_active";
     local.recovery_exhausted = true;
+    teleop.manual_mode = true;
     teleop.output.vx = 0.77;
     motion_stats.dynamic_cells = 6;
+    motion_stats.predicted_points = 40;
+    motion_stats.prediction_clusters = 2;
+    motion_stats.prediction_horizon_s = 1.0;
     loop_health.ready = true;
     loop_health.healthy = false;
     loop_health.reason = "deadline_miss_ratio_high";
@@ -154,6 +164,10 @@ struct Fixture {
     state.local_path = &local_path;
     state.local_planner_debug = &local_debug;
     state.local_map_traversability = &traversability;
+    state.local_collision_map = {
+        collision_points.data(), 1U, 0.1, {-1.0, -1.0, -0.5}, {2.0, 1.0, 1.5},
+        1U, 2U, 3U, 1234.0, true, true,
+    };
 
     commands.received = 3;
     commands.ack_sent = 2;
@@ -164,11 +178,16 @@ struct Fixture {
     StatusWriterConfig result;
     result.status_file = std::move(path);
     result.control_mode = "autonomy";
+    result.local_planner = "cmu";
+    result.product = "nav";
+    result.product_session_id = "product-session-test";
     result.check_obstacle = true;
     result.use_traversability_cost = true;
     result.driver_control_max_age_s = 0.35;
     result.input_require_driver_control = true;
+    result.local_map_debug_point_limit = 4;
     result.stop_confirmation_timeout_s = 4.0;
+    result.stop_confirmation_evidence = "driver_ack_and_odometry";
     return result;
   }
 
@@ -176,7 +195,7 @@ struct Fixture {
     NavStatusPublisherActions result;
     result.steady_now_s = [this]() { return steady_s; };
     result.wall_now_s = [this]() { return wall_s; };
-    result.sample_planner = [this](TimingDiagnostics &timing) {
+    result.sample_planner = [this](double, TimingDiagnostics &timing) {
       ++planner_calls;
       timing.obstacle_merge_ms += 3.0;
       return StatusPlannerSample{true, true, false, obstacles.size() / 4, &obstacles};
@@ -187,6 +206,9 @@ struct Fixture {
       return StatusMotionLayerSample{17, motion_stats, &clusters};
     };
     result.sample_loop_health = [this]() { return loop_health; };
+    result.sample_far_input = []() {
+      return StatusFarInputSample{false, true, "not_required", "", 0};
+    };
     result.log = [this](const std::string &) { ++log_calls; };
     return result;
   }
@@ -260,10 +282,20 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
           "immediate autonomy snapshot must publish");
   publisher.flush();
   const std::string autonomy = fixture.writes.back();
+  require(contains(autonomy, "\"product_session_id\": \"product-session-test\""),
+          "status must expose the Product session identity");
+  require(contains(autonomy, "\"owner\": \"active_path_blockage_overlay\"") &&
+              !contains(autonomy, "local_planner_footprint"),
+          "live obstacle overlay diagnostics must not claim robot footprint ownership");
+  require(!contains(autonomy, "config_fingerprint"),
+          "status must not expose a redundant native config fingerprint");
   require(contains(autonomy, "\"active_cmd_source\": \"autonomy\""),
           "active path must select autonomy source");
   require(contains(autonomy, "\"stop_confirmation_timeout_s\": 4.000000"),
           "status must expose the active stop confirmation product contract");
+  require(contains(autonomy,
+                   "\"stop_confirmation_evidence\": \"driver_ack_and_odometry\""),
+          "status must expose the active stop evidence policy");
   require(contains(autonomy, "\"operator_motion\": {\"schema_version\": 1") &&
               contains(autonomy, "\"interface_enabled\": false") &&
               contains(autonomy, "\"authority_owner\": \"native_endpoint\"") &&
@@ -290,10 +322,13 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
           "operator-motion status must correlate sample admission with the final DDS output");
   require(contains(autonomy, "\"final_cmd_vel\": {\"vx\": 0.310000"),
           "autonomy final velocity must use local output");
+  require(contains(autonomy, "\"manual_mode\": true"),
+          "status must expose whether the active teleop sample requested manual escape");
   require(contains(autonomy, "\"recovery_state\": 2") &&
               contains(autonomy, "\"recovery_action\": 1") &&
               contains(autonomy, "\"recovery_attempt\": 2") &&
               contains(autonomy, "\"recovery_candidate_count\": 7") &&
+              contains(autonomy, "\"recovery_rotation_target_rad\": -0.600000") &&
               contains(autonomy, "\"recovery_verified\": true") &&
               contains(autonomy, "\"recovery_progress\": 0.625000") &&
               contains(autonomy, "\"recovery_reason\": \"recovery_translation_active\"") &&
@@ -302,7 +337,7 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
   require(contains(autonomy, "\"final_output\": {\"published\": true") &&
               contains(autonomy, "\"producer_boot_id\": \"endpoint-a:boot\"") &&
               contains(autonomy, "\"output_sequence\": 17") &&
-              contains(autonomy, "\"driver_acknowledged\": true"),
+              contains(autonomy, "\"driver_delivery_accepted\": true"),
           "final output must expose its exact DDS identity and correlated driver ACK");
   require(contains(autonomy, "\"driver_control\": {\"received\": true") &&
               contains(autonomy, "\"ready\": true") &&
@@ -317,6 +352,19 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
   require(contains(autonomy, "\"has_terrain_map\": true") &&
               contains(autonomy, "\"has_terrain_map_ext\": false"),
           "planner freshness flags must map into the snapshot");
+  require(contains(autonomy, "\"collision\": {\"enabled\": true") &&
+              contains(autonomy, "\"occupied_points_total\": 1") &&
+              contains(autonomy, "\"occupied_points\": [[0.500000, 0.000000, 0.400000]]"),
+          "local-map diagnostics must expose the exact collision layer consumed by SCAN");
+  require(contains(autonomy, "\"source_obstacle_points_total\": 2") &&
+              contains(autonomy, "\"obstacle_filter\": \"cmu_height_envelope\"") &&
+              contains(autonomy, "\"obstacle_points_total\": 1") &&
+              contains(autonomy, "\"obstacle_points\": [[1.000000, 2.000000, 3.000000, 0.500000]]"),
+          "CMU local-map diagnostics must omit ground points before bounded sampling");
+  require(contains(autonomy, "\"predicted_points\": 40") &&
+              contains(autonomy, "\"prediction_clusters\": 2") &&
+              contains(autonomy, "\"prediction_horizon_s\": 1.000000"),
+          "motion-layer status must expose applied dynamic prediction evidence");
   require(contains(autonomy, "\"odom\": 42") && contains(autonomy, "\"command_requests\": 3"),
           "runtime and command counters must be preserved");
   require(contains(autonomy, "\"command_ack_publish_failed\": 1"),
@@ -331,6 +379,10 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
               contains(autonomy, "\"deadline_miss_ratio\": 0.066667") &&
               contains(autonomy, "\"p95_utilization\": 0.840000"),
           "JSON snapshot must expose top-level control-loop health state");
+  require(contains(autonomy,
+                   "\"far_input\": {\"required\": false, \"ready\": true, \"reason\": \"not_required\"") &&
+              contains(autonomy, "\"navigation_ready\": false"),
+          "OctoPlanner must not require FAR input, but an unhealthy control loop must still block navigation readiness");
   require(contains(autonomy, "\"loop_ms\": {\"mean\": 49.750000") &&
               contains(autonomy, "\"p50\": 50.000000") &&
               contains(autonomy, "\"p95\": 52.500000") &&
@@ -350,7 +402,7 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
   require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
           "mismatched driver ACK snapshot must publish");
   publisher.flush();
-  require(contains(fixture.writes.back(), "\"driver_acknowledged\": false"),
+  require(contains(fixture.writes.back(), "\"driver_delivery_accepted\": false"),
           "a different driver output sequence must not acknowledge the final output");
 
   fixture.state.path_active = false;
@@ -361,7 +413,7 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
           "stale driver ACK snapshot must publish");
   publisher.flush();
   require(contains(fixture.writes.back(), "\"fresh\": false") &&
-              contains(fixture.writes.back(), "\"driver_acknowledged\": false"),
+              contains(fixture.writes.back(), "\"driver_delivery_accepted\": false"),
           "an over-age driver sample must not acknowledge the final output");
 
   fixture.input_gate.driver_control_age_s = 0.1;
@@ -371,7 +423,7 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
           "stale input-gate reason snapshot must publish");
   publisher.flush();
   require(contains(fixture.writes.back(), "\"fresh\": false") &&
-              contains(fixture.writes.back(), "\"driver_acknowledged\": false"),
+              contains(fixture.writes.back(), "\"driver_delivery_accepted\": false"),
           "a stale input-gate reason must not acknowledge the final output");
 
   fixture.input_gate.reason = "ready";
@@ -431,11 +483,58 @@ void testOperatorMotionReadinessDeclarationFollowsProductMode() {
           "autonomy takeover product must advertise the compiled operator-motion interface");
 }
 
+void testFarInputReadinessControlsNavigationReadiness() {
+  Fixture fixture;
+  fixture.loop_health.healthy = true;
+  fixture.loop_health.reason = "healthy";
+  auto actions = fixture.actions();
+  actions.sample_far_input = []() {
+    return StatusFarInputSample{true, false, "required occupancy artifact missing", "yard", 4};
+  };
+  auto config = fixture.config();
+  config.global_planner = "far";
+  config.publish_cmd_vel = true;
+  NavStatusPublisher publisher(std::move(config), 10.0, std::move(actions), fixture.sink());
+  TimingDiagnostics previous;
+  TimingDiagnostics current;
+  publisher.requestImmediate();
+  require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
+          "FAR status snapshot must publish when occupancy is unavailable");
+  publisher.flush();
+  const auto blocked = fixture.writes.back();
+  require(contains(blocked,
+                   "\"far_input\": {\"required\": true, \"ready\": false, \"reason\": \"required occupancy artifact missing\", \"map_id\": \"yard\", \"content_epoch\": 4}") &&
+              contains(blocked, "\"navigation_ready\": false"),
+          "missing FAR occupancy must be explicit and must block navigation readiness");
+
+  Fixture ready_fixture;
+  ready_fixture.loop_health.healthy = true;
+  ready_fixture.loop_health.reason = "healthy";
+  auto ready_actions = ready_fixture.actions();
+  ready_actions.sample_far_input = []() {
+    return StatusFarInputSample{true, true, "ready", "yard", 5};
+  };
+  auto ready_config = ready_fixture.config();
+  ready_config.global_planner = "far";
+  ready_config.publish_cmd_vel = true;
+  NavStatusPublisher ready_publisher(std::move(ready_config), 10.0,
+                                     std::move(ready_actions), ready_fixture.sink());
+  ready_publisher.requestImmediate();
+  require(ready_publisher.publishIfDue(ready_fixture.state, ready_fixture.commands, previous, current),
+          "valid FAR occupancy status snapshot must publish");
+  ready_publisher.flush();
+  require(contains(ready_fixture.writes.back(),
+                   "\"far_input\": {\"required\": true, \"ready\": true, \"reason\": \"ready\", \"map_id\": \"yard\", \"content_epoch\": 5}") &&
+              contains(ready_fixture.writes.back(), "\"navigation_ready\": true"),
+          "validated FAR occupancy must make the FAR input ready");
+}
+
 }  // namespace
 
 int main() {
   testCadenceImmediateDisabledAndEmptyFileLog();
   testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming();
   testOperatorMotionReadinessDeclarationFollowsProductMode();
+  testFarInputReadinessControlsNavigationReadiness();
   return 0;
 }

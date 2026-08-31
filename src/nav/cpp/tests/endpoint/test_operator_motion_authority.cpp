@@ -2,8 +2,8 @@
 #include <stdexcept>
 #include <string>
 
-#include "motion/control_authority.hpp"
-#include "motion/operator_motion_authority.hpp"
+#include "control/authority.hpp"
+#include "control/operator.hpp"
 
 namespace {
 using lingtu::nav::endpoint::ControlAuthority;
@@ -70,6 +70,13 @@ void testOnlyActiveSourceAndEpochMaySubmitSamples() {
   require(snapshot.last_sequence == 2, "snapshot sequence mismatch");
   require(snapshot.last_sample_sequence == 2, "snapshot sample sequence mismatch");
   require(snapshot.has_active_sample, "snapshot must expose active sample");
+
+  auto manual = sample("board", 7, 3);
+  manual.manual_mode = true;
+  require(submitSample(authority, manual, 10.03).accepted,
+          "manual sample from the active source must be accepted");
+  require(authority.snapshot().active_sample_manual_mode,
+          "accepted operator sample must retain its manual-mode intent");
 }
 
 void testSamplesMustBeSequenceMonotonic() {
@@ -302,7 +309,7 @@ void testSourceIdLengthIsBounded() {
           "maximum-length control source ID must be accepted");
 }
 
-void testRetainedSourceIdentityCapacityFailsClosed() {
+void testRetainedSourceIdentityCapacityEvictsOldestInactiveSource() {
   lingtu::nav::endpoint::OperatorMotionAuthorityOptions options;
   options.max_retained_source_identities = 2;
   OperatorMotionAuthority authority(options);
@@ -314,36 +321,23 @@ void testRetainedSourceIdentityCapacityFailsClosed() {
   require(authority.release({"beta", 1, 2}).accepted, "second source release failed");
   require(authority.completeZeroBarrier(true).accepted, "second source zero failed");
 
-  const auto replay = authority.claim(claim("alpha", 1));
-  require(!replay.accepted, "retained source epoch must remain replay-protected");
-  require(replay.reason == "stale_epoch", "retained source replay reason mismatch");
-  require(authority.claim(claim("alpha", 2)).accepted,
-          "retained source with a new epoch must still be accepted");
-  require(authority.claim(claim("alpha", 2, 2)).accepted,
-          "active retained source must still refresh at capacity");
-  require(authority.release({"alpha", 2, 3}).accepted, "retained source release failed");
-  require(authority.completeZeroBarrier(true).accepted, "retained source zero failed");
-
   const auto new_source = authority.claim(claim("gamma", 1));
-  require(!new_source.accepted, "new source must reject at identity capacity");
-  require(new_source.reason == "source_identity_capacity_exhausted",
-          "identity capacity rejection reason mismatch");
-  require(authority.claim(claim("beta", 2)).accepted,
-          "existing source must remain accepted after capacity rejection");
+  require(new_source.accepted, "new source must evict the oldest inactive identity at capacity");
+  require(authority.snapshot().active_source_id == "gamma",
+          "new source must become owner after inactive eviction");
+  const auto busy = authority.claim(claim("delta", 1));
+  require(!busy.accepted && busy.reason == "authority_busy",
+          "capacity handling must preserve the current owner");
+  require(submitSample(authority, sample("gamma", 1, 2), 10.02).accepted,
+          "preserved current owner must remain able to submit");
+  require(authority.release({"gamma", 1, 3}).accepted, "new source release failed");
+  require(authority.completeZeroBarrier(true).accepted, "new source zero failed");
 
-  auto expired_contender = claim("gamma", 1);
-  expired_contender.now_monotonic_s = 11.01;
-  const auto expiry = authority.claim(expired_contender);
-  require(!expiry.accepted, "expired authority must not be bypassed by a capacity rejection");
-  require(expiry.reason == "authority_lease_expired",
-          "authority expiry must take precedence once the lease is stale");
-  require(authority.snapshot().zero_barrier_pending,
-          "expired authority must still enter the zero barrier at capacity");
-  require(authority.completeZeroBarrier(true).accepted, "expired authority zero completion failed");
-  const auto still_full = authority.claim(expired_contender);
-  require(!still_full.accepted, "capacity must remain full after an existing source expires");
-  require(still_full.reason == "source_identity_capacity_exhausted",
-          "post-expiry capacity rejection reason mismatch");
+  const auto retained_beta = authority.claim(claim("beta", 1));
+  require(!retained_beta.accepted && retained_beta.reason == "stale_epoch",
+          "newer inactive identity must retain its epoch high-water");
+  require(authority.claim(claim("alpha", 1)).accepted,
+          "evicted oldest inactive identity must be claimable again");
 }
 
 void testWallClockStepsDoNotChangeLeaseLiveness() {
@@ -511,7 +505,7 @@ int main() {
     testLeaseTtlIsBoundedAndEpochCannotReplayAfterRelease();
     testPerSourceEpochHighWaterSurvivesSourceSwitches();
     testSourceIdLengthIsBounded();
-    testRetainedSourceIdentityCapacityFailsClosed();
+    testRetainedSourceIdentityCapacityEvictsOldestInactiveSource();
     testWallClockStepsDoNotChangeLeaseLiveness();
     testFreshSamplesRefreshLeasePastInitialClaimDeadline();
     testDeadmanFalseRefreshesLeaseBeforeHolding();

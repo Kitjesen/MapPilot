@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "explore/explore_input.hpp"
+#include "explore/input_gate.hpp"
 #include "explore/route.hpp"
 
 namespace {
@@ -26,18 +26,19 @@ lingtu_dds_ExplorationGrid makeSnapshot(std::vector<std::uint8_t> &data, char *f
   message.data._length = static_cast<std::uint32_t>(data.size());
   message.data._maximum = static_cast<std::uint32_t>(data.size());
   message.session_id = session;
-  message.map_version = 0;
+  message.map_content_epoch = 0;
   message.reset_epoch = 2U;
   message.generation = 7U;
   message.live = true;
   return message;
 }
 
-lingtu_dds_Odometry makeOdometry(char *frame, double stamp_s) {
+lingtu_dds_Odometry makeOdometry(char *frame, double stamp_s, char *child_frame = nullptr) {
   lingtu_dds_Odometry message{};
   message.header.stamp.sec = static_cast<std::int32_t>(stamp_s);
   message.header.stamp.nanosec = static_cast<std::uint32_t>((stamp_s - std::floor(stamp_s)) * 1e9);
   message.header.frame_id = frame;
+  message.child_frame_id = child_frame;
   message.pose.pose.position.x = 1.0;
   message.pose.pose.position.y = 2.0;
   message.pose.pose.orientation.w = 1.0;
@@ -73,6 +74,29 @@ void testStrictTrinaryAndIdentity() {
   assert(reason == "snapshot_identity_invalid");
 }
 
+void testSnapshotRequiresCanonicalRouteMapIdentity() {
+  std::vector<std::uint8_t> data{0U, 100U, 255U, 0U, 0U, 100U};
+  char frame[] = "map";
+  char session[] = "mapping-session";
+  char map_id[] = "map-a";
+  auto message = makeSnapshot(data, frame, session);
+  std::string reason;
+
+  message.map_id = map_id;
+  assert(!lingtu::nav::endpoint::parseExplorationSnapshot(message, {}, &reason));
+  assert(reason == "snapshot_route_map_identity_invalid");
+
+  message.map_id = nullptr;
+  message.map_content_epoch = 1;
+  assert(!lingtu::nav::endpoint::parseExplorationSnapshot(message, {}, &reason));
+  assert(reason == "snapshot_route_map_identity_invalid");
+
+  message.live = false;
+  message.map_content_epoch = 0;
+  assert(!lingtu::nav::endpoint::parseExplorationSnapshot(message, {}, &reason));
+  assert(reason == "snapshot_identity_invalid");
+}
+
 void testRejectRotatedGrid() {
   std::vector<std::uint8_t> data{0U, 100U, 255U, 0U, 0U, 100U};
   char frame[] = "map";
@@ -90,7 +114,8 @@ void testFreshness() {
 }
 
 void testRouteContract() {
-  using lingtu::nav::endpoint::allowsExplorationSegmentFallback;
+  using lingtu::nav::endpoint::isCanonicalExploreRouteMapIdentity;
+  using lingtu::nav::endpoint::isCanonicalExploreSnapshotBinding;
   using lingtu::nav::endpoint::parseRoute;
   using lingtu::nav::endpoint::Route;
   using lingtu::nav::endpoint::routeName;
@@ -104,15 +129,30 @@ void testRouteContract() {
   assert(routeName(Route::Live) == "live");
   assert(!usesLiveSegment(Route::Map));
   assert(usesLiveSegment(Route::Live));
-  assert(!allowsExplorationSegmentFallback(Route::Map, false));
-  assert(!allowsExplorationSegmentFallback(Route::Map, true));
-  assert(!allowsExplorationSegmentFallback(Route::Live, false));
-  assert(allowsExplorationSegmentFallback(Route::Live, true));
+  assert(isCanonicalExploreRouteMapIdentity(Route::Live, "", 0));
+  assert(!isCanonicalExploreRouteMapIdentity(Route::Live, "map-a", 0));
+  assert(!isCanonicalExploreRouteMapIdentity(Route::Live, "", 1));
+  assert(isCanonicalExploreRouteMapIdentity(Route::Map, "map-a", 1));
+  assert(!isCanonicalExploreRouteMapIdentity(Route::Map, "", 1));
+  assert(!isCanonicalExploreRouteMapIdentity(Route::Map, "map-a", 0));
+  assert(isCanonicalExploreSnapshotBinding(Route::Live, "product-a", "", 0, "product-a", true,
+                                           "", 0));
+  assert(!isCanonicalExploreSnapshotBinding(Route::Live, "product-a", "", 0, "product-b", true,
+                                            "", 0));
+  assert(!isCanonicalExploreSnapshotBinding(Route::Live, "product-a", "", 0, "product-a", false,
+                                            "", 0));
+  assert(isCanonicalExploreSnapshotBinding(Route::Map, "product-a", "map-a", 1, "product-a",
+                                           false, "map-a", 1));
+  assert(!isCanonicalExploreSnapshotBinding(Route::Map, "product-a", "map-a", 1, "product-a",
+                                            false, "map-b", 1));
+  assert(!isCanonicalExploreSnapshotBinding(Route::Map, "product-a", "map-a", 1, "product-a",
+                                            false, "map-a", 2));
 }
 
 void testMapFrameOdometry() {
   char map_frame[] = "map";
-  const auto message = makeOdometry(map_frame, 100.0);
+  char body_frame[] = "body";
+  const auto message = makeOdometry(map_frame, 100.0, body_frame);
   std::string reason;
   const auto pose =
       lingtu::nav::endpoint::mapPoseFromOdometry(message, std::nullopt, -1.0, 100.1, {}, &reason);
@@ -124,7 +164,8 @@ void testMapFrameOdometry() {
 
 void testOdomFrameRequiresFreshTransform() {
   char odom_frame[] = "odom";
-  const auto message = makeOdometry(odom_frame, 100.0);
+  char body_frame[] = "body";
+  const auto message = makeOdometry(odom_frame, 100.0, body_frame);
   std::string reason;
   assert(
       !lingtu::nav::endpoint::mapPoseFromOdometry(message, std::nullopt, -1.0, 100.1, {}, &reason));
@@ -145,16 +186,47 @@ void testOdomFrameRequiresFreshTransform() {
   assert(reason == "map_odom_transform_stale");
 }
 
+void testOdometryRequiresCanonicalFramePair() {
+  char map_frame[] = "map";
+  char empty_frame[] = "";
+  char body_frame[] = "body";
+  char base_link_frame[] = "base_link";
+  std::string reason;
+
+  auto message = makeOdometry(empty_frame, 100.0, body_frame);
+  assert(!lingtu::nav::endpoint::mapPoseFromOdometry(message, std::nullopt, -1.0, 100.1, {},
+                                                     &reason));
+  assert(reason == "odom_frame_empty");
+
+  char sensor_frame[] = "camera";
+  message = makeOdometry(sensor_frame, 100.0, body_frame);
+  assert(!lingtu::nav::endpoint::mapPoseFromOdometry(message, std::nullopt, -1.0, 100.1, {},
+                                                     &reason));
+  assert(reason == "odom_frame_unsupported");
+
+  message = makeOdometry(map_frame, 100.0, empty_frame);
+  assert(!lingtu::nav::endpoint::mapPoseFromOdometry(message, std::nullopt, -1.0, 100.1, {},
+                                                     &reason));
+  assert(reason == "odom_child_frame_empty");
+
+  message = makeOdometry(map_frame, 100.0, base_link_frame);
+  assert(!lingtu::nav::endpoint::mapPoseFromOdometry(message, std::nullopt, -1.0, 100.1, {},
+                                                     &reason));
+  assert(reason == "odom_child_frame_unsupported");
+}
+
 }  // namespace
 
 int main() {
   testValidSnapshot();
   testStrictTrinaryAndIdentity();
+  testSnapshotRequiresCanonicalRouteMapIdentity();
   testRejectRotatedGrid();
   testFreshness();
   testRouteContract();
   testMapFrameOdometry();
   testOdomFrameRequiresFreshTransform();
+  testOdometryRequiresCanonicalFramePair();
   std::cout << "test_explore_input passed\n";
   return 0;
 }

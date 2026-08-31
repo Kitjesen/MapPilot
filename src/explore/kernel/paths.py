@@ -2,7 +2,7 @@
 
 The C++ source lives under ``src/explore/cpp``. This module owns the Python
 side build/install path calculation so runtime loaders do not encode build
-layout details directly. Mirrors ``src/nav/kernel/paths.py``.
+layout details directly.
 """
 
 from __future__ import annotations
@@ -16,9 +16,7 @@ def repo_root_for_explore_kernel(anchor: str | Path | None = None) -> Path:
     start = here.parent if here.is_file() else here
 
     for parent in (start, *start.parents):
-        if (parent / "lingtu.py").exists() or (
-            (parent / "pyproject.toml").exists() and (parent / "AGENTS.md").exists()
-        ):
+        if (parent / "pyproject.toml").exists() and (parent / "AGENTS.md").exists():
             return parent
 
     if here.is_file():
@@ -32,9 +30,8 @@ def repo_root_for_explore_kernel(anchor: str | Path | None = None) -> Path:
 def explore_kernel_candidate_dirs(anchor: str | Path | None = None) -> list[str]:
     """Return candidate directories for the ``lingtu_explore_kernel`` module.
 
-    Priority order mirrors the nav kernel loader:
-    Windows local build, Linux local build, build-script copy under ``src/``,
-    then colcon install output.
+    Priority order is Windows local build, Linux local build, build-script copy
+    under ``src/``, then colcon install output.
     """
     repo = repo_root_for_explore_kernel(anchor)
     return [

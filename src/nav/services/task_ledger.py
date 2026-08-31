@@ -224,7 +224,7 @@ class NavigationTaskLedger:
                     source TEXT NOT NULL DEFAULT '',
                     observed_only INTEGER NOT NULL DEFAULT 0,
                     target_json TEXT NOT NULL,
-                    run_plan_fingerprint TEXT NOT NULL DEFAULT '',
+                    product_session_id TEXT NOT NULL DEFAULT '',
                     map_identity_json TEXT NOT NULL,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
@@ -282,204 +282,6 @@ class NavigationTaskLedger:
                     ON navigation_task_attempts(task_id, native_request_id) WHERE native_request_id <> '';
                 """
             )
-            self._migrate_run_plan_fingerprint()
-            self._migrate_legacy_schema()
-
-    def _migrate_run_plan_fingerprint(self) -> None:
-        """Carry forward retired runtime identity columns into the RunPlan field."""
-
-        columns = {
-            str(row["name"])
-            for row in self._conn.execute("PRAGMA table_info(navigation_tasks)")
-        }
-        if "run_plan_fingerprint" not in columns:
-            self._conn.execute(
-                "ALTER TABLE navigation_tasks ADD COLUMN "
-                "run_plan_fingerprint TEXT NOT NULL DEFAULT ''"
-            )
-            columns.add("run_plan_fingerprint")
-        legacy_columns = (
-            "_".join(("runtime", "manifest", "fingerprint")),
-            "_".join(("product", "fingerprint")),
-        )
-        for legacy_column in legacy_columns:
-            if legacy_column not in columns:
-                continue
-            self._conn.execute(
-                "UPDATE navigation_tasks "
-                f"SET run_plan_fingerprint = {legacy_column} "
-                "WHERE run_plan_fingerprint = ''"
-            )
-
-    def _migrate_legacy_schema(self) -> None:
-        columns = {
-            str(row["name"])
-            for row in self._conn.execute("PRAGMA table_info(navigation_tasks)")
-        }
-        additions = {
-            "admission": "TEXT NOT NULL DEFAULT 'unconfirmed'",
-            "admission_reason": "TEXT NOT NULL DEFAULT ''",
-            "evidence_status": "TEXT NOT NULL DEFAULT 'unavailable'",
-            "state_source": "TEXT NOT NULL DEFAULT 'none'",
-            "state_observed_at": "REAL",
-        }
-        missing = [name for name in additions if name not in columns]
-        if not missing:
-            return
-
-        for name in missing:
-            self._conn.execute(
-                f"ALTER TABLE navigation_tasks ADD COLUMN {name} {additions[name]}"
-            )
-        self._migrate_legacy_task_records()
-
-    def _migrate_legacy_task_records(self) -> None:
-        rows = self._conn.execute("SELECT * FROM navigation_tasks").fetchall()
-        for row in rows:
-            task_id = str(row["task_id"])
-            attempts = self._conn.execute(
-                """
-                SELECT request_id, kind, state, accepted, reason, native_ack_json
-                FROM navigation_task_attempts
-                WHERE task_id = ? ORDER BY updated_at DESC, request_id DESC
-                """,
-                (task_id,),
-            ).fetchall()
-            admission = "unconfirmed"
-            admission_reason = ""
-            for attempt in attempts:
-                if str(attempt["kind"]) != "goal":
-                    continue
-                accepted = attempt["accepted"]
-                if accepted is not None:
-                    admission = "accepted" if bool(accepted) else "rejected"
-                ack = self._safe_json_object(attempt["native_ack_json"])
-                admission_reason = str(
-                    (ack or {}).get("reason") or attempt["reason"] or ""
-                ).strip()
-                break
-
-            status = self._legacy_goal_status(row["last_goal_status_json"], task_id)
-            if status is None:
-                execution_state = "unknown"
-                execution_reason = ""
-                terminal = False
-                terminal_at = None
-                state_source = "none"
-                state_observed_at = None
-                active_request_id = ""
-                old_reason = str(row["reason"] or "")
-                if old_reason == "endpoint_restarted":
-                    evidence_status = "boot_changed"
-                elif old_reason == "endpoint_status_unavailable":
-                    evidence_status = "unavailable"
-                elif row["last_navigation_state_json"]:
-                    evidence_status = "stale"
-                else:
-                    evidence_status = "unavailable"
-            else:
-                execution_state = str(status["state"])
-                execution_reason = str(status["reason"])
-                terminal = execution_state in _TERMINAL_STATES
-                terminal_at = float(status["timestamp_s"]) if terminal else None
-                state_source = "native_goal_status"
-                state_observed_at = float(status["timestamp_s"])
-                evidence_status = "stale"
-                try:
-                    active_request_id = self._resolve_request_attempt(
-                        task_id,
-                        str(status["request_id"]),
-                    )
-                except (KeyError, TaskLedgerConflict):
-                    active_request_id = ""
-
-            self._conn.execute(
-                """
-                UPDATE navigation_tasks
-                SET state = ?, terminal = ?, reason = ?, terminal_at = ?,
-                    admission = ?, admission_reason = ?, evidence_status = ?,
-                    state_source = ?, state_observed_at = ?,
-                    active_request_id = ?, can_resume = 0
-                WHERE task_id = ?
-                """,
-                (
-                    execution_state,
-                    int(terminal),
-                    execution_reason,
-                    terminal_at,
-                    admission,
-                    admission_reason,
-                    evidence_status,
-                    state_source,
-                    state_observed_at,
-                    active_request_id,
-                    task_id,
-                ),
-            )
-
-            for attempt in attempts:
-                accepted = attempt["accepted"]
-                attempt_state = (
-                    "admitted"
-                    if accepted is None
-                    else ("accepted" if bool(accepted) else "rejected")
-                )
-                ack = self._safe_json_object(attempt["native_ack_json"])
-                attempt_reason = str(
-                    (ack or {}).get("reason")
-                    or (
-                        attempt["reason"]
-                        if str(attempt["state"]) in {"admitted", "accepted", "rejected"}
-                        else ""
-                    )
-                    or ""
-                ).strip()
-                self._conn.execute(
-                    """
-                    UPDATE navigation_task_attempts
-                    SET state = ?, reason = ?
-                    WHERE task_id = ? AND request_id = ?
-                    """,
-                    (attempt_state, attempt_reason, task_id, attempt["request_id"]),
-                )
-
-    @staticmethod
-    def _safe_json_object(value: object) -> dict[str, Any] | None:
-        if not value:
-            return None
-        try:
-            decoded = _decode_json(str(value))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return None
-        return decoded if isinstance(decoded, dict) else None
-
-    @classmethod
-    def _legacy_goal_status(
-        cls,
-        value: object,
-        task_id: str,
-    ) -> dict[str, Any] | None:
-        status = cls._safe_json_object(value)
-        if status is None or str(status.get("task_id") or "").strip() != task_id:
-            return None
-        try:
-            status["state"] = _goal_status_state(status.get("state"))
-            status["timestamp_s"] = _positive_timestamp(
-                status.get("timestamp_s", status.get("ts")),
-                "goal_status timestamp",
-            )
-            _required_identity(status.get("request_id"), "goal_status.request_id")
-            _required_identity(status.get("boot_id"), "goal_status.boot_id")
-            sequence_value = status.get("sequence")
-            if sequence_value is None or isinstance(sequence_value, bool):
-                return None
-            sequence = int(sequence_value)
-            if sequence <= 0:
-                return None
-        except (TypeError, ValueError):
-            return None
-        status["reason"] = str(status.get("reason") or "").strip()
-        return status
 
     def lookup_admission(
         self,
@@ -489,7 +291,7 @@ class NavigationTaskLedger:
         payload: Any,
         *,
         target: Any = None,
-        run_plan_fingerprint: str = "",
+        product_session_id: str = "",
         map_identity: Any = None,
     ) -> dict[str, Any] | None:
         """Return an exact prior admission without changing task history."""
@@ -513,7 +315,7 @@ class NavigationTaskLedger:
             row = self._conn.execute(
                 """
                 SELECT attempts.kind, attempts.payload_json,
-                       tasks.target_json, tasks.run_plan_fingerprint,
+                       tasks.target_json, tasks.product_session_id,
                        tasks.map_identity_json
                 FROM navigation_task_attempts AS attempts
                 JOIN navigation_tasks AS tasks ON tasks.task_id = attempts.task_id
@@ -528,7 +330,7 @@ class NavigationTaskLedger:
                 attempt_kind=attempt_kind,
                 payload_json=payload_json,
                 target_json=target_json,
-                run_plan_fingerprint=run_plan_fingerprint,
+                product_session_id=product_session_id,
                 map_identity=map_identity,
                 map_json=map_json,
                 require_context_match=True,
@@ -545,7 +347,7 @@ class NavigationTaskLedger:
         attempt_kind: str,
         payload_json: str,
         target_json: str,
-        run_plan_fingerprint: str,
+        product_session_id: str,
         map_identity: Any,
         map_json: str,
         require_context_match: bool,
@@ -556,12 +358,12 @@ class NavigationTaskLedger:
             raise TaskLedgerConflict("request identity was already used with different content")
         if attempt_kind == "goal" and row["target_json"] != target_json:
             raise TaskLedgerConflict("task_id was already admitted with a different target")
-        supplied_fingerprint = str(run_plan_fingerprint or "").strip()
+        supplied_session_id = str(product_session_id or "").strip()
         if (
-            require_context_match or supplied_fingerprint
-        ) and supplied_fingerprint != row["run_plan_fingerprint"]:
+            require_context_match or supplied_session_id
+        ) and supplied_session_id != row["product_session_id"]:
             raise TaskLedgerConflict(
-                "task_id was already admitted under a different RunPlan"
+                "task_id was already admitted under a different Product session"
             )
         if (require_context_match or map_identity is not None) and row["map_identity_json"] != map_json:
             raise TaskLedgerConflict("task_id was already admitted against a different map")
@@ -575,7 +377,7 @@ class NavigationTaskLedger:
         *,
         source: str = "",
         target: Any = None,
-        run_plan_fingerprint: str = "",
+        product_session_id: str = "",
         map_identity: Any = None,
     ) -> dict[str, Any]:
         """Persist one immutable attempt before it is dispatched."""
@@ -600,7 +402,7 @@ class NavigationTaskLedger:
             existing_attempt = self._conn.execute(
                 """
                 SELECT attempts.kind, attempts.payload_json,
-                       tasks.target_json, tasks.run_plan_fingerprint,
+                       tasks.target_json, tasks.product_session_id,
                        tasks.map_identity_json
                 FROM navigation_task_attempts AS attempts
                 JOIN navigation_tasks AS tasks ON tasks.task_id = attempts.task_id
@@ -614,7 +416,7 @@ class NavigationTaskLedger:
                     attempt_kind=attempt_kind,
                     payload_json=payload_json,
                     target_json=target_json,
-                    run_plan_fingerprint=run_plan_fingerprint,
+                    product_session_id=product_session_id,
                     map_identity=map_identity,
                     map_json=map_json,
                     require_context_match=False,
@@ -626,7 +428,7 @@ class NavigationTaskLedger:
 
             existing_task = self._conn.execute(
                 """
-                SELECT target_json, run_plan_fingerprint, map_identity_json, terminal
+                SELECT target_json, product_session_id, map_identity_json, terminal
                 FROM navigation_tasks WHERE task_id = ?
                 """,
                 (task,),
@@ -637,7 +439,7 @@ class NavigationTaskLedger:
                     """
                     INSERT INTO navigation_tasks (
                         task_id, state, source, observed_only, target_json,
-                        run_plan_fingerprint,
+                        product_session_id,
                         map_identity_json, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
@@ -647,7 +449,7 @@ class NavigationTaskLedger:
                         str(source or "").strip(),
                         observed_only,
                         target_json,
-                        str(run_plan_fingerprint or "").strip(),
+                        str(product_session_id or "").strip(),
                         map_json,
                         now,
                         now,
@@ -658,11 +460,11 @@ class NavigationTaskLedger:
                     raise TaskLedgerConflict("terminal task cannot accept a new attempt")
                 if attempt_kind == "goal" and existing_task["target_json"] != target_json:
                     raise TaskLedgerConflict("task_id was already admitted with a different target")
-                expected_fingerprint = existing_task["run_plan_fingerprint"]
-                supplied_fingerprint = str(run_plan_fingerprint or "").strip()
-                if supplied_fingerprint and supplied_fingerprint != expected_fingerprint:
+                expected_session_id = existing_task["product_session_id"]
+                supplied_session_id = str(product_session_id or "").strip()
+                if supplied_session_id and supplied_session_id != expected_session_id:
                     raise TaskLedgerConflict(
-                        "task_id was already admitted under a different RunPlan"
+                        "task_id was already admitted under a different Product session"
                     )
                 if map_identity is not None and existing_task["map_identity_json"] != map_json:
                     raise TaskLedgerConflict("task_id was already admitted against a different map")
@@ -1430,7 +1232,7 @@ class NavigationTaskLedger:
             "observed_only": bool(row["observed_only"]),
             "source": row["source"],
             "target": _decode_json(row["target_json"]),
-            "run_plan_fingerprint": row["run_plan_fingerprint"],
+            "product_session_id": row["product_session_id"],
             "map_identity": _decode_json(row["map_identity_json"]),
             "created_at": float(row["created_at"]),
             "updated_at": float(row["updated_at"]),

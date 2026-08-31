@@ -32,7 +32,7 @@ typedef struct lingtu_inspection_route {
   const char* id;
   const char* name;
   const char* map_id;
-  int64_t map_version;
+  int64_t map_content_epoch;
   uint64_t revision;
   uint32_t loop_count;
   int32_t failure_policy;
@@ -43,7 +43,7 @@ typedef struct lingtu_inspection_route {
 
 LINGTU_INSPECTION_API uint32_t lingtu_inspection_store_abi_version(void);
 LINGTU_INSPECTION_API lingtu_inspection_store_handle
-lingtu_inspection_store_create(const char* map_root);
+lingtu_inspection_store_create(const char* data_dir);
 LINGTU_INSPECTION_API void lingtu_inspection_store_destroy(
     lingtu_inspection_store_handle handle);
 LINGTU_INSPECTION_API int32_t lingtu_inspection_store_put(

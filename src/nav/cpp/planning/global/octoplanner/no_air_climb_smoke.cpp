@@ -97,6 +97,31 @@ std::filesystem::path writeHumpMap()
   return path;
 }
 
+std::filesystem::path writeWallClimbMap()
+{
+  octomap::OcTree tree(kResolution);
+  tree.setProbHit(0.7);
+  for (int ix = -8; ix <= -2; ++ix) {
+    for (int iy = -4; iy <= 4; ++iy) {
+      occupyCell(tree, ix, iy, 0);
+    }
+  }
+  for (int iy = -4; iy <= 4; ++iy) {
+    for (int iz = 0; iz <= 10; ++iz) {
+      occupyCell(tree, 1, iy, iz);
+    }
+  }
+  occupyCell(tree, 8, 8, 12);
+  tree.updateInnerOccupancy();
+
+  auto path = std::filesystem::temp_directory_path() /
+    "octoplanner3d_wall_climb.bt";
+  if (!tree.writeBinary(path.string())) {
+    throw std::runtime_error("failed to write wall-climb OctoMap: " + path.string());
+  }
+  return path;
+}
+
 std::filesystem::path writeOverlayMap()
 {
   octomap::OcTree tree(kResolution);
@@ -138,14 +163,28 @@ bool pathIntersects(
   const std::vector<octoplanner3d::runtime::Point> & path,
   const lingtu::nav::plan::GlobalPlanBlockedRegion & region)
 {
-  for (const auto & point : path) {
-    if (point.z < region.min_z || point.z > region.max_z) {
-      continue;
-    }
-    const double dx = point.x - region.center.x;
-    const double dy = point.y - region.center.y;
-    if (dx * dx + dy * dy <= region.radius_xy_m * region.radius_xy_m) {
-      return true;
+  if (path.empty()) {
+    return false;
+  }
+  for (std::size_t index = 1U; index < path.size(); ++index) {
+    const auto & from = path[index - 1U];
+    const auto & to = path[index];
+    const double dx = to.x - from.x;
+    const double dy = to.y - from.y;
+    const double dz = to.z - from.z;
+    const double length = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const int samples = std::max(1, static_cast<int>(std::ceil(length / 0.05)));
+    for (int sample = 0; sample <= samples; ++sample) {
+      const double t = static_cast<double>(sample) / static_cast<double>(samples);
+      const double z = from.z + dz * t;
+      if (z < region.min_z || z > region.max_z) {
+        continue;
+      }
+      const double x = from.x + dx * t - region.center.x;
+      const double y = from.y + dy * t - region.center.y;
+      if (x * x + y * y <= region.radius_xy_m * region.radius_xy_m) {
+        return true;
+      }
     }
   }
   return false;
@@ -194,30 +233,57 @@ int main()
                 << " goal_error=" << ground_result.goal_error_m << "\n";
       return 1;
     }
+    if (ground_result.path.size() > 6U) {
+      std::cerr << "safe route retained raw voxel zigzags; points="
+                << ground_result.path.size() << "\n";
+      return 26;
+    }
+
+    auto support_footprint_options = testOptions();
+    support_footprint_options.snap_search_radius_cells = 4;
+    support_footprint_options.robot_radius = 0.1;
+    support_footprint_options.ground_support_xy_radius_cells = 2;
+    const auto support_footprint_result = plan(
+      map_path.string(),
+      {center(-18), center(7), center(1)},
+      {center(18), center(7), center(1)},
+      support_footprint_options);
+    if (!support_footprint_result.ok || !support_footprint_result.reached_goal) {
+      std::cerr << "support-footprint route unexpectedly failed\n";
+      return 27;
+    }
+    for (const auto & point : support_footprint_result.path) {
+      if (point.y > center(6) + 1e-6) {
+        std::cerr << "support footprint did not keep the route off the floor edge; y="
+                  << point.y << "\n";
+        return 28;
+      }
+    }
 
     octoplanner3d::runtime::PlanRequest cached_request;
     cached_request.start = start;
     cached_request.goal = {center(18), center(0), center(1)};
     cached_request.options = testOptions();
     lingtu::nav::plan::MapIdentity map_identity{
-      "smoke-map", 1, "fixture-sha256", "map"};
+      "smoke-map", 1, "map"};
     octoplanner3d::runtime::PlannerSession session;
     const auto cached_first = session.run(map_path, map_identity, cached_request);
     const auto cached_second = session.run(map_path, map_identity, cached_request);
-    if (!cached_first.ok || !cached_second.ok || session.mapLoadCount() != 1) {
-      std::cerr << "same map identity did not reuse the in-memory OctoMap\n";
+    if (!cached_first.ok || !cached_second.ok || session.mapLoadCount() != 1 ||
+        session.prepareCount() != 1) {
+      std::cerr << "same map identity did not reuse prepared planner state\n";
       return 11;
     }
-    ++map_identity.version;
+    ++map_identity.content_epoch;
     const auto reloaded = session.run(map_path, map_identity, cached_request);
-    if (!reloaded.ok || session.mapLoadCount() != 2) {
-      std::cerr << "changed map identity did not reload the in-memory OctoMap\n";
+    if (!reloaded.ok || session.mapLoadCount() != 2 || session.prepareCount() != 2) {
+      std::cerr << "changed map identity did not rebuild prepared planner state\n";
       return 12;
     }
 
     const auto overlay_map_path = writeOverlayMap();
     lingtu::nav::plan::MapIdentity overlay_map_identity{
-      "overlay-smoke-map", 1, "overlay-fixture-sha256", "map"};
+      "overlay-smoke-map", 1, "map"};
     octoplanner3d::runtime::PlannerSession overlay_session;
     octoplanner3d::runtime::PlanRequest overlay_request;
     overlay_request.start = start;
@@ -312,7 +378,7 @@ int main()
 
     const auto overlay_budget_map_path = writeOverlayBudgetMap();
     lingtu::nav::plan::MapIdentity overlay_budget_map_identity{
-      "overlay-budget-smoke-map", 1, "overlay-budget-fixture-sha256", "map"};
+      "overlay-budget-smoke-map", 1, "map"};
     octoplanner3d::runtime::PlannerSession overlay_budget_session;
     const auto over_budget = overlay_budget_session.run(
       overlay_budget_map_path, overlay_budget_map_identity, overlay_request);
@@ -353,6 +419,24 @@ int main()
                 << air_result.path.size()
                 << " goal_error=" << air_result.goal_error_m << "\n";
       return 2;
+    }
+
+    const auto wall_map_path = writeWallClimbMap();
+    octoplanner3d::runtime::PlannerOptions wall_options;
+    wall_options.robot_radius = 0.1;
+    wall_options.snap_search_radius_cells = 2;
+    wall_options.ground_support_depth_cells = 2;
+    wall_options.enable_preblocked_costmap = false;
+    wall_options.obstacle_clearance_radius_cells = 0;
+    wall_options.max_iterations = 20000;
+    const auto wall_climb_result = plan(
+      wall_map_path.string(),
+      {center(-6), center(0), center(1)},
+      {center(-1), center(0), center(8)},
+      wall_options);
+    if (wall_climb_result.ok) {
+      std::cerr << "sideways wall cells were incorrectly accepted as ground support\n";
+      return 25;
     }
 
     const auto outside_map_result =

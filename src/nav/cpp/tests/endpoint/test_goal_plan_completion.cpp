@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include "plan/goal_plan_controller.hpp"
+#include "runtime/goal/plan.hpp"
 
 namespace {
 
@@ -39,7 +39,7 @@ successfulPlan(const lingtu::nav::plan::GlobalPlanRequest &request,
   lingtu::nav::plan::GlobalPlanResult result;
   result.ok = true;
   result.reached_goal = true;
-  result.map_identity = {"field", 7, "sha256-a", "map"};
+  result.map_identity = {"field", 7, "map"};
   result.path = {request.start, request.goal};
   return result;
 }
@@ -48,7 +48,7 @@ struct Recorder {
   std::vector<GoalPlanStatus> statuses;
   std::vector<GoalPlanPathActivation> activations;
   GoalPlanMapIdentityResult current_map{
-      lingtu::nav::plan::MapIdentity{"field", 7, "sha256-a", "map"}, {}};
+      lingtu::nav::plan::MapIdentity{"field", 7, "map"}, {}};
   bool inspection_is_active{false};
   GoalPlanInspectionDecision inspection_decision;
   std::vector<std::string> inspection_failures;
@@ -228,7 +228,7 @@ int main() {
         lingtu::nav::plan::GlobalPlanResult result;
         result.ok = false;
         result.reached_goal = false;
-        result.map_identity = {"field", 7, "sha256-a", "map"};
+        result.map_identity = {"field", 7, "map"};
         result.failure_reason = "octomap_no_path";
         result.path = {request.start};
         result.elapsed_ms = 12.5;
@@ -293,7 +293,7 @@ int main() {
         lingtu::nav::plan::GlobalPlanResult result;
         result.ok = true;
         result.reached_goal = true;
-        result.map_identity = {"field", 7, "sha256-a", "map"};
+        result.map_identity = {"field", 7, "map"};
         return result;
       },
       empty_recorder.actions());
@@ -448,7 +448,7 @@ int main() {
         result.reached_goal = true;
         result.path = {plan_request.start, plan_request.goal};
         if (plan_request.goal.x < 8.0) {
-          result.map_identity = {"field", 7, "sha256-a", "map"};
+          result.map_identity = {"field", 7, "map"};
         }
         return result;
       },
@@ -527,7 +527,7 @@ int main() {
   require(active_map_changed_controller.submit(stale_b_request, admission).accepted,
           "active-map-changed test could not start B");
   active_map_changed_recorder.current_map.identity =
-      lingtu::nav::plan::MapIdentity{"field", 8, "sha256-b", "map"};
+      lingtu::nav::plan::MapIdentity{"field", 8, "map"};
   auto active_map_changed_result = waitForCompletion(
       active_map_changed_controller, GoalPlanAdvanceContext{admission.frame_epoch, false, 32.0});
   require(active_map_changed_result.completion_consumed,
@@ -581,7 +581,7 @@ int main() {
         lingtu::nav::plan::GlobalPlanResult result;
         result.ok = true;
         result.reached_goal = true;
-        result.map_identity = {"field", 7, "sha256-a", "map"};
+        result.map_identity = {"field", 7, "map"};
         result.path = {plan_request.goal};
         return result;
       },
@@ -607,7 +607,7 @@ int main() {
         lingtu::nav::plan::GlobalPlanResult result;
         result.ok = true;
         result.reached_goal = true;
-        result.map_identity = {"field", 7, "sha256-a", "map"};
+        result.map_identity = {"field", 7, "map"};
         result.path = {plan_request.start};
         return result;
       },
@@ -875,7 +875,7 @@ int main() {
           call_index = ++replan_failure_calls;
         }
         lingtu::nav::plan::GlobalPlanResult result;
-        result.map_identity = {"field", 7, "sha256-a", "map"};
+        result.map_identity = {"field", 7, "map"};
         result.path = {plan_request.start, plan_request.goal};
         result.reached_goal = call_index == 1;
         result.ok = call_index == 1;
@@ -921,7 +921,7 @@ int main() {
   require(replan_map_drift_controller.replanActive(replan_context).accepted,
           "replan-map-drift test could not start replan");
   replan_map_drift_recorder.current_map.identity =
-      lingtu::nav::plan::MapIdentity{"field", 8, "sha256-b", "map"};
+      lingtu::nav::plan::MapIdentity{"field", 8, "map"};
   const auto replan_map_drift_result = waitForCompletion(
       replan_map_drift_controller, GoalPlanAdvanceContext{admission.frame_epoch, false, 43.0});
   require(replan_map_drift_result.completion_consumed,
@@ -966,7 +966,7 @@ int main() {
         lingtu::nav::plan::GlobalPlanResult result;
         result.ok = true;
         result.reached_goal = true;
-        result.map_identity = {"field", 7, "sha256-a", "map"};
+        result.map_identity = {"field", 7, "map"};
         result.path = {plan_request.start, plan_request.goal};
         return result;
       },
@@ -1024,7 +1024,7 @@ int main() {
         lingtu::nav::plan::GlobalPlanResult result;
         result.ok = true;
         result.reached_goal = true;
-        result.map_identity = {"field", 7, "sha256-a", "map"};
+        result.map_identity = {"field", 7, "map"};
         result.path = {plan_request.start, plan_request.goal};
         return result;
       },
@@ -1151,7 +1151,7 @@ int main() {
         lingtu::nav::plan::GlobalPlanResult result;
         result.ok = true;
         result.reached_goal = true;
-        result.map_identity = {"field", 7, "sha256-a", "map"};
+        result.map_identity = {"field", 7, "map"};
         result.path = {plan_request.start, plan_request.goal};
         return result;
       },
@@ -1192,7 +1192,7 @@ int main() {
     lingtu::nav::plan::GlobalPlanResult result;
     result.ok = true;
     result.reached_goal = true;
-    result.map_identity = {"field", 7, "sha256-a", "map"};
+    result.map_identity = {"field", 7, "map"};
     result.path = {plan_request.start, plan_request.goal};
     return result;
   };
@@ -1234,7 +1234,7 @@ int main() {
     lingtu::nav::plan::GlobalPlanResult result;
     result.ok = true;
     result.reached_goal = true;
-    result.map_identity = {"field", 7, "sha256-a", "map"};
+    result.map_identity = {"field", 7, "map"};
     result.path = {plan_request.start, plan_request.goal};
     return result;
   };
@@ -1290,7 +1290,7 @@ int main() {
       [](const lingtu::nav::plan::GlobalPlanRequest &plan_request,
          const lingtu::nav::plan::GlobalPlanCancelCheck &) {
         lingtu::nav::plan::GlobalPlanResult result;
-        result.map_identity = {"field", 7, "sha256-a", "map"};
+        result.map_identity = {"field", 7, "map"};
         if (plan_request.goal.x == 8.0) {
           result.failure_reason = "direct_replacement_no_path";
           return result;
@@ -1405,7 +1405,7 @@ int main() {
           }
         }
         lingtu::nav::plan::GlobalPlanResult result;
-        result.map_identity = {"field", 7, "sha256-a", "map"};
+        result.map_identity = {"field", 7, "map"};
         if (plan_request.goal.x == 8.0) {
           result.failure_reason = "replacement_no_path";
           return result;
@@ -1649,7 +1649,7 @@ int main() {
                                                  pending_identity_recorder.actions());
   queue_superseding_goal(pending_identity_controller, 53.0);
   pending_identity_recorder.current_map.identity =
-      lingtu::nav::plan::MapIdentity{"field", 8, "sha256-b", "map"};
+      lingtu::nav::plan::MapIdentity{"field", 8, "map"};
   const auto identity_resume = pending_identity_controller.resumePending(admission);
   require(!identity_resume.accepted &&
               identity_resume.reason == "active_map_changed_before_pending_plan",
@@ -1710,7 +1710,7 @@ int main() {
         lingtu::nav::plan::GlobalPlanResult result;
         result.ok = true;
         result.reached_goal = true;
-        result.map_identity = {"field", 7, "sha256-a", "map"};
+        result.map_identity = {"field", 7, "map"};
         result.path = {plan_request.start, plan_request.goal};
         return result;
       },

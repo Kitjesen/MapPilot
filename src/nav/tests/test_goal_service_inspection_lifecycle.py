@@ -144,7 +144,7 @@ def test_inspection_lifecycle_rejects_when_command_module_not_configured() -> No
     assert statuses[-1]["accepted"] is False
     assert statuses[-1]["request_id"] == "semantic-8"
     assert statuses[-1]["sink"] == "native_dds"
-    assert "requires native command capability" in statuses[-1]["message"]
+    assert "navigation command capability 'nav.commands' is unavailable" in statuses[-1]["message"]
 
 
 def test_inspection_lifecycle_rejects_when_command_module_unavailable() -> None:

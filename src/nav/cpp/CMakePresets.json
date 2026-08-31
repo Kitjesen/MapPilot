@@ -1,0 +1,117 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "nav-portable-base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/../../../build/nav-cpp/${presetName}",
+      "cacheVariables": {
+        "LINGTU_NAV_CPP_BUILD_BENCHMARKS": "OFF",
+        "LINGTU_NAV_CPP_BUILD_ENDPOINT": "OFF",
+        "LINGTU_NAV_CPP_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "windows-x64-nav-portable",
+      "displayName": "Windows x64 portable navigation",
+      "description": "Build and test the transport-free navigation core with MSVC.",
+      "inherits": "nav-portable-base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64"
+    },
+    {
+      "name": "windows-x64-nav-endpoint",
+      "displayName": "Windows x64 native navigation endpoint",
+      "description": "Build navd and DDS endpoint tests with an official CycloneDDS SDK prefix.",
+      "inherits": "windows-x64-nav-portable",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "$env{LINGTU_CYCLONEDDS_PREFIX};$env{LINGTU_OCTOMAP_PREFIX}",
+        "LINGTU_NAV_CPP_BUILD_ENDPOINT": "ON"
+      },
+      "environment": {
+        "PATH": "$env{LINGTU_CYCLONEDDS_PREFIX}/bin;$penv{PATH}"
+      }
+    },
+    {
+      "name": "linux-x64-nav-portable",
+      "displayName": "Linux x64 portable navigation",
+      "description": "Build and test the transport-free navigation core natively on Linux x64.",
+      "inherits": "nav-portable-base",
+      "generator": "Unix Makefiles",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-aarch64-nav-portable",
+      "displayName": "Linux aarch64 portable navigation",
+      "description": "Build and test the same navigation core natively on an aarch64 Linux host.",
+      "inherits": "nav-portable-base",
+      "generator": "Unix Makefiles",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-x64-nav-portable",
+      "configurePreset": "windows-x64-nav-portable",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-x64-nav-endpoint",
+      "configurePreset": "windows-x64-nav-endpoint",
+      "configuration": "Release"
+    },
+    {
+      "name": "linux-x64-nav-portable",
+      "configurePreset": "linux-x64-nav-portable",
+      "configuration": "Release"
+    },
+    {
+      "name": "linux-aarch64-nav-portable",
+      "configurePreset": "linux-aarch64-nav-portable",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-x64-nav-portable",
+      "configurePreset": "windows-x64-nav-portable",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-x64-nav-endpoint",
+      "configurePreset": "windows-x64-nav-endpoint",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-x64-nav-portable",
+      "configurePreset": "linux-x64-nav-portable",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-aarch64-nav-portable",
+      "configurePreset": "linux-aarch64-nav-portable",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

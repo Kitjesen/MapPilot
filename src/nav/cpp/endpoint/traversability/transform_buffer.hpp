@@ -6,7 +6,7 @@
 #include <optional>
 #include <vector>
 
-#include "frame_transform.hpp"
+#include "input/frame.hpp"
 
 namespace lingtu::nav::endpoint {
 
@@ -103,8 +103,8 @@ class TransformBuffer {
         before.translation.y + t * (after.translation.y - before.translation.y),
         before.translation.z + t * (after.translation.z - before.translation.z),
     };
-    lingtu_dds_Quaternion lhs = normalizeQuaternion(before.rotation);
-    lingtu_dds_Quaternion rhs = normalizeQuaternion(after.rotation);
+    Quaternion lhs = normalizeQuaternion(before.rotation);
+    Quaternion rhs = normalizeQuaternion(after.rotation);
     const double dot = lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z + lhs.w * rhs.w;
     if (dot < 0.0) {
       rhs.x = -rhs.x;

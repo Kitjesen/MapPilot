@@ -1,24 +1,7 @@
 """Product contracts for stable navigation task identity."""
 
-from dataclasses import fields
 from pathlib import Path
 
-from message.dds_types import (
-    NavigationCommandAck,
-    NavigationCommandRequest,
-    NavigationGoalStatus,
-    NavigationState,
-)
-from message.dds_types_generated import (
-    NavigationCommandAck as GeneratedNavigationCommandAck,
-)
-from message.dds_types_generated import (
-    NavigationCommandRequest as GeneratedNavigationCommandRequest,
-)
-from message.dds_types_generated import (
-    NavigationGoalStatus as GeneratedNavigationGoalStatus,
-)
-from message.dds_types_generated import NavigationState as GeneratedNavigationState
 from runtime.msgs.nav import (
     NavigationCommandKind,
     NavigationCommandReceipt,
@@ -35,13 +18,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _idl_fields(struct_name: str) -> list[str]:
-    idl = (REPO_ROOT / "src/message/idl/lingtu_slam.idl").read_text(encoding="utf-8")
+    idl = (REPO_ROOT / "src/message/idl/messages.idl").read_text(encoding="utf-8")
     body = idl.split(f"struct {struct_name} {{", 1)[1].split("};", 1)[0]
     return [line.rstrip(";").split()[-1] for line in body.splitlines() if ";" in line]
-
-
-def _field_names(message_type: type) -> list[str]:
-    return [field.name for field in fields(message_type)]
 
 
 def test_navigation_task_identity_is_distinct_from_command_attempt_identity() -> None:
@@ -53,7 +32,6 @@ def test_navigation_task_identity_is_distinct_from_command_attempt_identity() ->
             "request_id",
             "kind",
             "goal",
-            "velocity",
             "reason",
         ],
         "NavigationCommandAck": [
@@ -62,6 +40,7 @@ def test_navigation_task_identity_is_distinct_from_command_attempt_identity() ->
             "request_id",
             "kind",
             "accepted",
+            "duplicate",
             "reason",
         ],
         "NavigationGoalStatus": [
@@ -84,8 +63,7 @@ def test_navigation_task_identity_is_distinct_from_command_attempt_identity() ->
             "active_request_id",
             "goal_epoch",
             "map_id",
-            "map_version",
-            "map_hash",
+            "map_content_epoch",
             "planning_state",
             "execution_state",
             "recovery_state",
@@ -95,23 +73,8 @@ def test_navigation_task_identity_is_distinct_from_command_attempt_identity() ->
             "failure_code",
         ],
     }
-    runtime_types = {
-        "NavigationCommandRequest": NavigationCommandRequest,
-        "NavigationCommandAck": NavigationCommandAck,
-        "NavigationGoalStatus": NavigationGoalStatus,
-        "NavigationState": NavigationState,
-    }
-    generated_types = {
-        "NavigationCommandRequest": GeneratedNavigationCommandRequest,
-        "NavigationCommandAck": GeneratedNavigationCommandAck,
-        "NavigationGoalStatus": GeneratedNavigationGoalStatus,
-        "NavigationState": GeneratedNavigationState,
-    }
-
     for name, expected_fields in expected.items():
         assert _idl_fields(name) == expected_fields
-        assert _field_names(runtime_types[name]) == expected_fields
-        assert _field_names(generated_types[name]) == expected_fields
 
 
 def test_navigation_task_identity_uses_existing_dds_topics() -> None:

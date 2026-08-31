@@ -1,13 +1,19 @@
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 
 #include "traversability/exploration_snapshot_identity.hpp"
 
 namespace {
+
+void require(bool condition) {
+  if (!condition) {
+    throw std::runtime_error("exploration snapshot identity expectation failed");
+  }
+}
 
 template <typename Function>
 bool throwsException(Function &&function) {
@@ -20,78 +26,52 @@ bool throwsException(Function &&function) {
 }
 
 void testMapRouteCarriesDeclaredMapIdentity() {
-  const std::string hash(64U, 'a');
   const auto identity = lingtu::nav::endpoint::resolveExplorationSnapshotIdentity({
       "map",
       "product-session-1234",
       "warehouse",
-      "warehouse-lineage:v7",
-      hash,
+      "7",
   });
 
-  assert(identity.session_id == "product-session-1234");
-  assert(identity.map_id == "warehouse");
-  assert(identity.map_version == 7);
-  assert(identity.artifact_hash == hash);
-  assert(!identity.live);
+  require(identity.session_id == "product-session-1234");
+  require(identity.map_id == "warehouse");
+  require(identity.map_content_epoch == 7);
+  require(!identity.live);
 }
 
 void testMapRouteRejectsMissingMapId() {
-  assert(throwsException([] {
+  require(throwsException([] {
     (void)lingtu::nav::endpoint::resolveExplorationSnapshotIdentity({
         "map",
         "product-session-1234",
         "",
-        "warehouse-lineage:v7",
-        std::string(64U, 'a'),
+        "7",
     });
   }));
 }
 
 void testMapRouteRejectsMissingProductSession() {
-  assert(throwsException([] {
+  require(throwsException([] {
     (void)lingtu::nav::endpoint::resolveExplorationSnapshotIdentity({
         "map",
         "",
         "warehouse",
-        "warehouse-lineage:v7",
-        std::string(64U, 'a'),
+        "7",
     });
   }));
 }
 
-void testMapRouteRejectsInvalidMapVersionIds() {
-  const std::string invalid_versions[] = {
-      "", "v7", "lineage:v0", "lineage:v07", "lineage:v7tail", "lineage:v9223372036854775808",
+void testMapRouteRejectsInvalidContentEpochs() {
+  const std::string invalid_epochs[] = {
+      "", "v7", "0", "07", "7tail", "9223372036854775808",
   };
-  for (const auto &version : invalid_versions) {
-    assert(throwsException([&] {
+  for (const auto &content_epoch : invalid_epochs) {
+    require(throwsException([&] {
       (void)lingtu::nav::endpoint::resolveExplorationSnapshotIdentity({
           "map",
           "product-session-1234",
           "warehouse",
-          version,
-          std::string(64U, 'a'),
-      });
-    }));
-  }
-}
-
-void testMapRouteRejectsInvalidArtifactHashes() {
-  const std::string invalid_hashes[] = {
-      "",
-      std::string(63U, 'a'),
-      std::string(65U, 'a'),
-      std::string(63U, 'a') + "g",
-  };
-  for (const auto &hash : invalid_hashes) {
-    assert(throwsException([&] {
-      (void)lingtu::nav::endpoint::resolveExplorationSnapshotIdentity({
-          "map",
-          "product-session-1234",
-          "warehouse",
-          "warehouse-lineage:v7",
-          hash,
+          content_epoch,
       });
     }));
   }
@@ -102,70 +82,64 @@ void testLiveRouteCarriesProductSessionIdentity() {
       "live",
       "product-session-1234",
       "ignored-map",
-      "ignored-version",
-      "ignored-hash",
+      "ignored-content-epoch",
   });
-  assert(identity.session_id == "product-session-1234");
-  assert(identity.map_id.empty());
-  assert(identity.map_version == 0);
-  assert(identity.artifact_hash.empty());
-  assert(identity.live);
+  require(identity.session_id == "product-session-1234");
+  require(identity.map_id.empty());
+  require(identity.map_content_epoch == 0);
+  require(identity.live);
 }
 
 void testLiveRouteRejectsMissingOrInvalidProductSession() {
   const std::string invalid_sessions[] = {
       "",
-      std::string(15U, 'a'),
+      "-product-session",
       "product/session-1",
-      std::string(129U, 'a'),
+      std::string(64U, 'a'),
   };
-  for (const std::string &product_session : invalid_sessions) {
-    assert(throwsException([&] {
+  for (const std::string &product_session_id : invalid_sessions) {
+    require(throwsException([&] {
       (void)lingtu::nav::endpoint::resolveExplorationSnapshotIdentity({
           "live",
-          product_session,
+          product_session_id,
           "ignored-map",
-          "ignored-version",
-          "ignored-hash",
+          "ignored-content-epoch",
       });
     }));
   }
 }
 
 void testProductSessionLengthBoundaries() {
-  for (const std::size_t length : {16U, 128U}) {
-    const std::string product_session(length, 'a');
+  for (const std::size_t length : {1U, 63U}) {
+    const std::string product_session_id(length, 'a');
     const auto identity = lingtu::nav::endpoint::resolveExplorationSnapshotIdentity({
         "live",
-        product_session,
+        product_session_id,
         "ignored-map",
         "ignored-version",
-        "ignored-hash",
     });
-    assert(identity.session_id == product_session);
+    require(identity.session_id == product_session_id);
   }
 }
 
 void testMissingRouteFailsFast() {
-  assert(throwsException([] {
+  require(throwsException([] {
     (void)lingtu::nav::endpoint::resolveExplorationSnapshotIdentity({
         "",
         "product-session-1234",
         "ignored-map",
         "ignored-version",
-        "ignored-hash",
     });
   }));
 }
 
 void testInvalidRouteFailsFast() {
-  assert(throwsException([] {
+  require(throwsException([] {
     (void)lingtu::nav::endpoint::resolveExplorationSnapshotIdentity({
         "auto",
         "product-session-1234",
         "warehouse",
-        "warehouse-lineage:v7",
-        std::string(64U, 'a'),
+        "7",
     });
   }));
 }
@@ -173,24 +147,22 @@ void testInvalidRouteFailsFast() {
 void testMapRouteRejectsMalformedSourceNames() {
   const std::string invalid_map_ids[] = {" map", ".hidden", "-switch", "../warehouse", "a/b"};
   for (const auto &map_id : invalid_map_ids) {
-    assert(throwsException([&] {
+    require(throwsException([&] {
       (void)lingtu::nav::endpoint::resolveExplorationSnapshotIdentity({
           "map",
           "product-session-1234",
           map_id,
-          "warehouse-lineage:v7",
-          std::string(64U, 'a'),
+          "7",
       });
     }));
   }
 
-  assert(throwsException([] {
+  require(throwsException([] {
     (void)lingtu::nav::endpoint::resolveExplorationSnapshotIdentity({
         "map",
         "product/session",
         "warehouse",
-        "warehouse-lineage:v7",
-        std::string(64U, 'a'),
+        "7",
     });
   }));
 }
@@ -201,8 +173,7 @@ int main() {
   testMapRouteCarriesDeclaredMapIdentity();
   testMapRouteRejectsMissingMapId();
   testMapRouteRejectsMissingProductSession();
-  testMapRouteRejectsInvalidMapVersionIds();
-  testMapRouteRejectsInvalidArtifactHashes();
+  testMapRouteRejectsInvalidContentEpochs();
   testLiveRouteCarriesProductSessionIdentity();
   testLiveRouteRejectsMissingOrInvalidProductSession();
   testProductSessionLengthBoundaries();

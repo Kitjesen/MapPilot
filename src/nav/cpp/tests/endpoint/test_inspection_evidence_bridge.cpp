@@ -6,9 +6,9 @@
 #include <thread>
 
 #include "dds/dds.h"
-#include "lingtu_slam.h"
-#include "message/cpp/dds_qos_profiles.hpp"
-#include "message/cpp/dds_topics.hpp"
+#include "messages.h"
+#include "message/cpp/qos.hpp"
+#include "message/cpp/topics.hpp"
 #include "perception/inspection/native_bridge.h"
 
 namespace {
@@ -18,6 +18,13 @@ using namespace std::chrono_literals;
 void require(bool condition, const char *message) {
   if (!condition)
     throw std::runtime_error(message);
+}
+
+template <std::size_t N>
+void copyLiteral(char (&destination)[N], const char *value) {
+  const std::size_t length = std::strlen(value);
+  require(length < N, "test literal exceeds ABI field capacity");
+  std::memcpy(destination, value, length + 1U);
 }
 
 dds_entity_t checked(dds_return_t value, const char *operation) {
@@ -68,7 +75,7 @@ class BridgePeer {
     msg.route_id = const_cast<char *>("route-a");
     msg.revision = 9;
     msg.map_id = const_cast<char *>("map-a");
-    msg.map_version = 4;
+    msg.map_content_epoch = 4;
     msg.point_index = 2;
     msg.point_id = const_cast<char *>("point-a");
     msg.action = const_cast<char *>("capture:overview");
@@ -150,7 +157,7 @@ void testBridgeRoundTrip() {
   require(std::string(request.route_id) == "route-a", "route id");
   require(request.route_revision == 9, "route revision");
   require(std::string(request.map_id) == "map-a", "map id");
-  require(request.map_version == 4, "map version");
+  require(request.map_content_epoch == 4, "map version");
   require(request.point_index == 2, "point index");
   require(std::string(request.point_id) == "point-a", "point id");
   require(std::string(request.action) == "capture:overview", "action");
@@ -158,11 +165,11 @@ void testBridgeRoundTrip() {
 
   LingtuInspectionEvidenceResult result{};
   result.result_at_s = 124.5;
-  std::strcpy(result.request_id, "request-a");
-  std::strcpy(result.evidence_id, "evidence-a");
+  copyLiteral(result.request_id, "request-a");
+  copyLiteral(result.evidence_id, "evidence-a");
   result.persisted = 1;
-  std::strcpy(result.reason, "ok");
-  std::strcpy(result.analysis_verdict, "captured");
+  copyLiteral(result.reason, "ok");
+  copyLiteral(result.analysis_verdict, "captured");
   require(lingtu_inspection_evidence_bridge_write_result(bridge, &result) == 0,
           "write_result must succeed");
 

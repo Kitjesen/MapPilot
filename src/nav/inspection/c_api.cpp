@@ -70,7 +70,7 @@ lingtu::nav::inspection::Route ToRoute(const lingtu_inspection_route& input) {
   route.id = Text(input.id);
   route.name = Text(input.name);
   route.map_id = Text(input.map_id);
-  route.map_version = input.map_version;
+  route.map_content_epoch = input.map_content_epoch;
   route.revision = input.revision;
   route.loop_count = input.loop_count;
   route.failure_policy = input.failure_policy == 1
@@ -109,10 +109,10 @@ uint32_t lingtu_inspection_store_abi_version() {
   }
 }
 
-lingtu_inspection_store_handle lingtu_inspection_store_create(const char* map_root) {
-  if (map_root == nullptr || map_root[0] == '\0') return nullptr;
+lingtu_inspection_store_handle lingtu_inspection_store_create(const char* data_dir) {
+  if (data_dir == nullptr || data_dir[0] == '\0') return nullptr;
   try {
-    return new Handle(map_root);
+    return new Handle(data_dir);
   } catch (...) {
     return nullptr;
   }

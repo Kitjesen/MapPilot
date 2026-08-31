@@ -3,8 +3,8 @@
 #include <iostream>
 #include <stdexcept>
 
-#include "motion/control_authority.hpp"
-#include "motion/estop_latch_store.hpp"
+#include "control/authority.hpp"
+#include "safety/stop.hpp"
 
 namespace {
 
@@ -20,12 +20,14 @@ void testCancelClearsEveryResumableCommand() {
   ControlAuthority authority;
   authority.activatePath();
   authority.acceptTeleop({0.2, 0.0, 0.1}, 10.0);
+  authority.setTeleopManualMode(true);
 
   authority.cancel();
 
   require(!authority.pathActive(), "cancel must clear the active path");
   require(!authority.teleopRequest().has_value(), "cancel must clear the teleop request");
   require(authority.teleopStampSeconds() == 0.0, "cancel must clear teleop freshness");
+  require(!authority.teleopManualMode(), "cancel must clear manual mode");
 }
 
 void testStopDoesNotLatchButCannotResumeOldMotion() {
@@ -55,7 +57,7 @@ void testOperatorTakeoverBlocksOldAndNewPathsUntilExplicitResume() {
   require(authority.operatorTakeoverLatched(), "manual hold must retain operator ownership");
   require(!authority.teleopRequest().has_value(),
           "manual hold must clear the last velocity sample");
-  require(authority.resumeAutonomy(),
+  require(authority.resumeMotion(),
           "explicit resume must release the takeover latch when estop is clear");
   require(!authority.operatorTakeoverLatched(), "explicit resume must release operator ownership");
   require(authority.activatePath(),

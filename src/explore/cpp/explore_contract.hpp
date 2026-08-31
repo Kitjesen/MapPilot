@@ -85,8 +85,7 @@ struct ExploreMapIdentity {
   std::string frame_id{"map"};
   std::string session_id;
   std::string map_id;
-  std::int64_t map_version{0};
-  std::string artifact_hash;
+  std::int64_t map_content_epoch{0};
   std::uint64_t reset_epoch{0U};
   std::uint64_t generation{0U};
   bool live{true};
@@ -98,13 +97,12 @@ struct ExploreMapIdentity {
     if (live) {
       return !session_id.empty();
     }
-    return !map_id.empty() && map_version > 0 && !artifact_hash.empty();
+    return !map_id.empty() && map_content_epoch > 0;
   }
 
   [[nodiscard]] bool sameSource(const ExploreMapIdentity &other) const {
     return frame_id == other.frame_id && session_id == other.session_id && map_id == other.map_id &&
-           map_version == other.map_version && artifact_hash == other.artifact_hash &&
-           live == other.live;
+           map_content_epoch == other.map_content_epoch && live == other.live;
   }
 
   [[nodiscard]] MapStamp stamp(double timestamp) const {
@@ -143,7 +141,7 @@ struct ExploreDiagnostics {
   std::string frame_id;
   std::string session_id;
   std::string map_id;
-  std::int64_t map_version{0};
+  std::int64_t map_content_epoch{0};
   std::uint64_t reset_epoch{0U};
   std::uint64_t generation{0U};
   std::uint64_t accepted_generation{0U};
