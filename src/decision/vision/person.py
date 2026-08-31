@@ -37,7 +37,10 @@ class TrackedPerson:
     # position EMA.
     last_raw_pos: list[float] | None = None
     velocity: list[float] = field(default_factory=lambda: [0.0, 0.0])  # [vx, vy] m/s
+    # Local arrival time is only for freshness and operator-visible status.
     last_seen: float = field(default_factory=time.time)
+    # Perception source time orders observations and determines velocity dt.
+    observation_ts: float | None = None
     confidence: float = 1.0
     # Appearance features for Re-ID after occlusion
     appearance: np.ndarray | None = None  # CLIP image feature, shape (D,)
@@ -55,6 +58,7 @@ class PersonTracker:
     APPEARANCE_ALPHA = 0.1
     MATCH_DIST_THRESHOLD = 2.0
     APPEARANCE_THRESHOLD = 0.6
+    REACQUIRE_CONFIRM_FRAMES = 3
 
     def __init__(self, follow_distance: float = 1.5, lost_timeout: float = 5.0):
         self.follow_distance = follow_distance
@@ -66,11 +70,8 @@ class PersonTracker:
         self._clip_encoder = None  # CLIP encoder (externally injected)
         self._encoder_lock = threading.Lock()  # guards _clip_encoder injection/reads
         self._lock = threading.Lock()
-        # FusionMOT backend (optional, enabled via enable_fusion_tracking)
-        self._fusion_tracker = None
-        self._reid_extractor = None
-        self._target_track_id: int | None = None
-        self._following_selector = None  # PersonFollowingSelector (optional)
+        self._reacquire_id: str | None = None
+        self._reacquire_count = 0
 
         # OSNet Re-ID encoder (W3-5): primary Re-ID signal.
         # Initialised lazily via set_osnet_encoder() or enable_osnet_reid().
@@ -88,6 +89,16 @@ class PersonTracker:
         """Inject CLIP encoder for secondary appearance feature extraction."""
         with self._encoder_lock:
             self._clip_encoder = clip_encoder
+
+    @property
+    def has_image_selector(self) -> bool:
+        """Return whether the configured encoder can compare person crops."""
+        with self._encoder_lock:
+            return bool(
+                self._clip_encoder is not None
+                and callable(getattr(self._clip_encoder, "encode_text", None))
+                and callable(getattr(self._clip_encoder, "encode_image", None))
+            )
 
     def set_osnet_encoder(self, encoder) -> None:
         """Inject a pre-constructed OSNetReIDEncoder (primary Re-ID signal).
@@ -107,54 +118,6 @@ class PersonTracker:
             return True
         except Exception as exc:
             logger.info("PersonTracker: OSNet Re-ID unavailable (%s), will use CLIP-only Re-ID", exc)
-            return False
-
-    def enable_fusion_tracking(self) -> bool:
-        """Enable FusionMOT + OSNet Re-ID backend for Kalman-smoothed tracking.
-
-        When enabled, update() routes through FusionMOT which provides:
-          - Kalman prediction between frames (smooth bbox trajectory)
-          - OSNet Re-ID features (robust re-identification after occlusion)
-          - Stable track IDs across frames
-
-        Returns True if successfully initialized, False if qp_perception unavailable.
-        """
-        try:
-            from qp_perception.reid.extractor import ReIDConfig, ReIDExtractor
-            from qp_perception.tracking.fusion import FusionMOT, FusionMOTConfig
-
-            reid_cfg = ReIDConfig(backbone="osnet_x1_0", device="")
-            self._reid_extractor = ReIDExtractor(reid_cfg)
-
-            mot_cfg = FusionMOTConfig()
-            self._fusion_tracker = FusionMOT(
-                config=mot_cfg,
-                feature_dim=self._reid_extractor.feature_dim,
-            )
-
-            # PersonFollowingSelector: state machine for target lock lifecycle
-            try:
-                from qp_perception.selection.person_following import (
-                    FollowingConfig,
-                    PersonFollowingSelector,
-                )
-
-                self._following_selector = PersonFollowingSelector(
-                    FollowingConfig(
-                        search_timeout_s=self.REID_TIMEOUT,
-                        auto_lock=True,
-                        min_confidence=0.3,
-                    )
-                )
-            except Exception:
-                self._following_selector = None
-
-            logger.info("PersonTracker: FusionMOT + OSNet Re-ID enabled")
-            return True
-        except Exception as e:
-            logger.info("PersonTracker: FusionMOT unavailable (%s), using classic tracking", e)
-            self._fusion_tracker = None
-            self._reid_extractor = None
             return False
 
     _CLIP_SELECT_MIN_SIM = 0.2  # below this, CLIP is not confident enough to lock
@@ -229,18 +192,16 @@ class PersonTracker:
                     )
         return [{"role": "user", "content": content}]
 
-    async def select_target_with_vlm(
+    async def choose_target_with_vlm(
         self,
         description: str,
         person_crops: list[np.ndarray],
-        person_objects: list[dict],
         llm_chat_fn: Callable,
     ) -> int:
-        """Select target with vlm."""
+        """Return the best matching crop index without changing tracker state."""
         if not person_crops:
             return -1
 
-        self._description = description
         n = len(person_crops)
 
         clip_scores = self._clip_prescore(description, person_crops)
@@ -266,7 +227,6 @@ class PersonTracker:
                 if 1 <= idx <= n:
                     selected = idx - 1  # 0-based
                     logger.info("VLM selected person #%d for '%s'", idx, description)
-                    self._lock_target(person_objects[selected], person_crops[selected])
                     return selected
                 elif idx == 0:
                     logger.info("VLM: no matching person for '%s'", description)
@@ -282,10 +242,26 @@ class PersonTracker:
                     best_idx + 1,
                     clip_scores[best_idx],
                 )
-                self._lock_target(person_objects[best_idx], person_crops[best_idx])
                 return best_idx
 
         return -1
+
+    async def select_target_with_vlm(
+        self,
+        description: str,
+        person_crops: list[np.ndarray],
+        person_objects: list[dict],
+        llm_chat_fn: Callable,
+    ) -> int:
+        """Select and lock one target using a vision-language model."""
+        selected = await self.choose_target_with_vlm(
+            description,
+            person_crops,
+            llm_chat_fn,
+        )
+        if selected >= 0:
+            self.lock_target(person_objects[selected], person_crops[selected])
+        return selected
 
     def select_by_clip(
         self,
@@ -312,12 +288,12 @@ class PersonTracker:
                 description,
                 scores[best_idx],
             )
-            self._lock_target(person_objects[best_idx], person_crops[best_idx])
+            self.lock_target(person_objects[best_idx], person_crops[best_idx])
             return best_idx
         return -1
 
-    def _lock_target(self, obj: dict, crop: np.ndarray | None = None) -> None:
-        """Lock target and store initial appearance features (CLIP + OSNet)."""
+    def lock_target(self, obj: dict, crop: np.ndarray | None = None) -> None:
+        """Lock a target selected by a trusted caller."""
         pos = obj.get("position", [0, 0, 0])
         if isinstance(pos, dict):
             pos = [pos.get("x", 0), pos.get("y", 0), pos.get("z", 0)]
@@ -350,6 +326,7 @@ class PersonTracker:
                 position=list(pos[:3]),
                 last_raw_pos=list(pos[:3]),
                 last_seen=time.time(),
+                observation_ts=self._get_observation_ts(obj),
                 confidence=obj.get("confidence", 1.0),
                 appearance=appearance,
                 osnet_feat=osnet_feat,
@@ -357,6 +334,7 @@ class PersonTracker:
                 obj_id=obj.get("id"),
             )
             self._target_selected = True
+            self._reset_reacquire()
 
     def update(
         self,
@@ -368,14 +346,11 @@ class PersonTracker:
             o for o in scene_objects if o.get("label", "").lower() in ("person", "people", "human", "pedestrian")
         ]
         if not persons:
-            self._fusion_tick_empty()
+            with self._lock:
+                self._reset_reacquire()
             return False
 
         with self._lock:
-            # FusionMOT path: Kalman + OSNet Re-ID
-            if self._fusion_tracker is not None and rgb_frame is not None:
-                return self._update_fusion(persons, rgb_frame)
-
             if self._person is None:
                 best = max(persons, key=lambda p: p.get("confidence", 0))
                 self._init_person(best)
@@ -383,8 +358,7 @@ class PersonTracker:
 
             matched = self._match_person(persons, rgb_frame)
             if matched is not None:
-                self._update_tracked(matched, rgb_frame)
-                return True
+                return self._update_tracked(matched, rgb_frame)
 
             if not self._target_selected:
                 nearest = min(
@@ -394,152 +368,9 @@ class PersonTracker:
                         self._get_pos(p)[1] - self._person.position[1],
                     ),
                 )
-                self._update_tracked(nearest, rgb_frame)
-                return True
+                return self._update_tracked(nearest, rgb_frame)
 
         return False
-
-    def _update_fusion(self, persons: list[dict], rgb_frame: np.ndarray) -> bool:
-        """Update fusion."""
-        timestamp = time.time()
-
-        # Convert person detections to FusionMOT format
-        bboxes, confs, valid_persons = [], [], []
-        for p in persons:
-            bbox = p.get("bbox")
-            if not bbox or len(bbox) < 4:
-                continue
-            if is_numpy_array(bbox):
-                bbox = bbox.tolist()
-            x1, y1 = float(bbox[0]), float(bbox[1])
-            x2, y2 = float(bbox[2]), float(bbox[3])
-            w, h = x2 - x1, y2 - y1
-            if w <= 0 or h <= 0:
-                continue
-            bboxes.append([x1, y1, w, h])
-            confs.append(float(p.get("confidence", 0.5)))
-            valid_persons.append(p)
-
-        if not bboxes:
-            self._fusion_tick_empty()
-            return False
-
-        bboxes_np = np.array(bboxes, dtype=np.float32)
-        confs_np = np.array(confs, dtype=np.float32)
-
-        # Selective Re-ID: only extract for ambiguous/unmatched detections
-        tracks = self._fusion_tracker.update_selective(
-            bboxes_np,
-            confs_np,
-            timestamp,
-            reid_extractor=self._reid_extractor,
-            frame=rgb_frame,
-        )
-        if not tracks:
-            return False
-
-        track_map = self._map_tracks_to_persons(tracks, valid_persons)
-
-        if self._following_selector is not None:
-            track_objects = self._raw_to_tracks(tracks, timestamp)
-
-            # If VLM selected a person but selector not yet locked, associate
-            if not self._following_selector.is_locked and self._person is not None and self._target_selected:
-                matched = self._match_person(list(track_map.values()), rgb_frame)
-                if matched is not None:
-                    for tid, p in track_map.items():
-                        if p is matched:
-                            self._following_selector.lock_track(tid, self._description)
-                            self._target_track_id = tid
-                            break
-
-            obs = self._following_selector.select(track_objects, timestamp)
-            if obs is not None:
-                person = track_map.get(obs.track_id)
-                if person is not None:
-                    self._target_track_id = obs.track_id
-                    self._update_tracked(person, rgb_frame)
-                    return True
-            return False
-
-        if self._target_track_id is not None and self._target_track_id in track_map:
-            self._update_tracked(track_map[self._target_track_id], rgb_frame)
-            return True
-
-        if self._person is not None:
-            matched = self._match_person(list(track_map.values()), rgb_frame)
-            if matched is not None:
-                for tid, p in track_map.items():
-                    if p is matched:
-                        self._target_track_id = tid
-                        break
-                self._update_tracked(matched, rgb_frame)
-                return True
-            return False
-
-        if not self._target_selected:
-            best_tid = max(track_map, key=lambda t: track_map[t].get("confidence", 0))
-            self._init_person(track_map[best_tid])
-            self._target_track_id = best_tid
-            return True
-
-        return False
-
-    def _fusion_tick_empty(self) -> None:
-        """Maintain FusionMOT state with no detections (keeps lost-track timers)."""
-        if self._fusion_tracker is None:
-            return
-        try:
-            self._fusion_tracker.update(np.empty((0, 4)), np.array([]), None, time.time())
-        except Exception:
-            pass
-
-    @staticmethod
-    def _raw_to_tracks(raw_tracks: list, timestamp: float) -> list:
-        """Convert FusionMOT raw output to qp_perception Track objects."""
-        from qp_perception.types import BoundingBox, Track
-
-        result = []
-        for track_id, bbox_arr, conf in raw_tracks:
-            x, y, w, h = bbox_arr
-            result.append(
-                Track(
-                    track_id=int(track_id),
-                    bbox=BoundingBox(x=float(x), y=float(y), w=float(w), h=float(h)),
-                    confidence=float(conf),
-                    class_id="person",
-                    first_seen_ts=timestamp,
-                    last_seen_ts=timestamp,
-                )
-            )
-        return result
-
-    @staticmethod
-    def _map_tracks_to_persons(
-        tracks: list,
-        persons: list[dict],
-    ) -> dict[int, dict]:
-        """Map FusionMOT track_id to nearest input person by bbox center distance."""
-        result: dict[int, dict] = {}
-        for track_id, bbox_arr, _conf in tracks:
-            tx, ty, tw, th = bbox_arr
-            tcx, tcy = tx + tw / 2, ty + th / 2
-            best_p, best_d = None, float("inf")
-            for p in persons:
-                pb = p.get("bbox", [0, 0, 0, 0])
-                if is_numpy_array(pb):
-                    pb = pb.tolist()
-                if len(pb) < 4:
-                    continue
-                pcx = (float(pb[0]) + float(pb[2])) / 2
-                pcy = (float(pb[1]) + float(pb[3])) / 2
-                d = (tcx - pcx) ** 2 + (tcy - pcy) ** 2
-                if d < best_d:
-                    best_d = d
-                    best_p = p
-            if best_p is not None:
-                result[int(track_id)] = best_p
-        return result
 
     def _adaptive_reid_threshold(self, n_candidates: int) -> float:
         """Adaptive reid threshold."""
@@ -575,30 +406,34 @@ class PersonTracker:
         if self._person.obj_id:
             for p in persons:
                 if p.get("id") == self._person.obj_id:
+                    self._reset_reacquire()
                     return p
 
-        # Strategy 2: distance match using motion-predicted position
+        # Strategy 2: motion match. A changed tracker ID is only a candidate;
+        # it must remain the same for several frames before identity changes.
         predicted_pos = self._predict_position()
-        best_dist_p = None
-        best_dist = self.MATCH_DIST_THRESHOLD
+        motion_candidates: list[tuple[float, dict]] = []
         for p in persons:
             pos = self._get_pos(p)
-            # Use predicted position to account for motion since last observation
             dist = math.hypot(
                 pos[0] - predicted_pos[0],
                 pos[1] - predicted_pos[1],
             )
-            if dist < best_dist:
-                best_dist = dist
-                best_dist_p = p
+            if dist < self.MATCH_DIST_THRESHOLD:
+                motion_candidates.append((dist, p))
+        motion_candidates.sort(key=lambda item: item[0])
 
-        if best_dist_p is not None:
-            return best_dist_p
+        if not self._person.obj_id and motion_candidates:
+            self._reset_reacquire()
+            return motion_candidates[0][1]
+        for _, candidate in motion_candidates:
+            if not candidate.get("id"):
+                self._reset_reacquire()
+                return candidate
 
-        # Strategy 3: appearance Re-ID (distance match failed)
+        # Strategy 3: appearance Re-ID across new tracker IDs.
         if rgb_frame is None:
-            self._reid_stats["lost"] += 1
-            return None
+            return self._motion_reacquire(motion_candidates)
 
         reid_threshold = self._adaptive_reid_threshold(n_candidates)
 
@@ -649,6 +484,8 @@ class PersonTracker:
                 best_reid_p = p
 
         if best_reid_p is not None:
+            if not self._confirm_reacquire(best_reid_p):
+                return None
             # Attribute the winning signal type to stats
             if self._osnet_encoder is not None and self._person.osnet_feat is not None:
                 self._reid_stats["osnet_match"] += 1
@@ -664,26 +501,68 @@ class PersonTracker:
             )
             return best_reid_p
 
-        self._reid_stats["lost"] += 1
-        return None
+        return self._motion_reacquire(motion_candidates)
 
-    def _update_tracked(self, obj: dict, rgb_frame: np.ndarray | None) -> None:
+    def _motion_reacquire(self, candidates: list[tuple[float, dict]]) -> dict | None:
+        """Use motion only when one unambiguous new track stays consistent."""
+        if len(candidates) != 1:
+            self._reset_reacquire()
+            self._reid_stats["lost"] += 1
+            return None
+        candidate = candidates[0][1]
+        if not self._confirm_reacquire(candidate):
+            return None
+        self._reid_stats["motion_dominant"] += 1
+        return candidate
+
+    def _confirm_reacquire(self, candidate: dict) -> bool:
+        current_id = str(self._person.obj_id or "") if self._person is not None else ""
+        candidate_id = str(candidate.get("id") or "")
+        if not current_id or candidate_id == current_id:
+            self._reset_reacquire()
+            return True
+        if not candidate_id:
+            self._reset_reacquire()
+            return False
+        if candidate_id == self._reacquire_id:
+            self._reacquire_count += 1
+        else:
+            self._reacquire_id = candidate_id
+            self._reacquire_count = 1
+        if self._reacquire_count < self.REACQUIRE_CONFIRM_FRAMES:
+            return False
+        logger.info(
+            "PersonTracker: reacquired target as %s after %d frames",
+            candidate_id,
+            self._reacquire_count,
+        )
+        self._reset_reacquire()
+        return True
+
+    def _reset_reacquire(self) -> None:
+        self._reacquire_id = None
+        self._reacquire_count = 0
+
+    def _update_tracked(self, obj: dict, rgb_frame: np.ndarray | None) -> bool:
         """Update position, velocity, and appearance features for the matched target."""
         new_pos = self._get_pos(obj)
         now = time.time()
+        observation_ts = self._get_observation_ts(obj)
+        previous_observation_ts = self._person.observation_ts
 
-        dt = now - self._person.last_seen
+        if previous_observation_ts is not None and (
+            observation_ts is None or observation_ts <= previous_observation_ts
+        ):
+            return False
+
         old_smoothed = self._person.position
         old_raw = self._person.last_raw_pos or old_smoothed
 
-        # Velocity EMA on the raw finite difference. Clamp dt so a long
-        # occlusion gap (or stale timestamp after re-lock) can't collapse the
-        # velocity to ~0. Skip the update if dt is pathologically small.
-        if dt > 0.01:
-            dt_v = min(dt, 0.2)
+        if observation_ts is not None and previous_observation_ts is not None:
+            dt = observation_ts - previous_observation_ts
             self._person.velocity = [
-                (new_pos[0] - old_raw[0]) / dt_v * 0.3 + self._person.velocity[0] * 0.7,
-                (new_pos[1] - old_raw[1]) / dt_v * 0.3 + self._person.velocity[1] * 0.7,
+                (new_pos[0] - old_raw[0]) / dt * 0.3 + self._person.velocity[0] * 0.7,
+                (new_pos[1] - old_raw[1]) / dt * 0.3 + self._person.velocity[1] * 0.7,
             ]
 
         # Position EMA
@@ -695,6 +574,7 @@ class PersonTracker:
         ]
         self._person.last_raw_pos = list(new_pos[:3])
         self._person.last_seen = now
+        self._person.observation_ts = observation_ts
         self._person.confidence = obj.get("confidence", 1.0)
         self._person.obj_id = obj.get("id", self._person.obj_id)
         self._person.bbox = obj.get("bbox", self._person.bbox)
@@ -735,6 +615,8 @@ class PersonTracker:
                     except Exception as exc:
                         logger.debug("OSNet update_tracked encode failed: %s", exc)
 
+        return True
+
     def _init_person(self, obj: dict) -> None:
         """Init person."""
         pos = self._get_pos(obj)
@@ -742,6 +624,7 @@ class PersonTracker:
             position=list(pos[:3]),
             last_raw_pos=list(pos[:3]),
             last_seen=time.time(),
+            observation_ts=self._get_observation_ts(obj),
             confidence=obj.get("confidence", 1.0),
             obj_id=obj.get("id"),
             bbox=obj.get("bbox"),
@@ -754,6 +637,11 @@ class PersonTracker:
         if isinstance(pos, dict):
             return [pos.get("x", 0), pos.get("y", 0), pos.get("z", 0)]
         return list(pos[:3]) if len(pos) >= 3 else list(pos) + [0.0] * (3 - len(pos))
+
+    @staticmethod
+    def _get_observation_ts(obj: dict) -> float | None:
+        value = obj.get("ts")
+        return None if value is None else float(value)
 
     @staticmethod
     def _crop_person(rgb: np.ndarray, obj: dict) -> np.ndarray | None:
@@ -792,8 +680,9 @@ class PersonTracker:
             dx = robot_pos[0] - px
             dy = robot_pos[1] - py
             dist = math.hypot(dx, dy)
-            if dist < 0.01:
-                return {"x": px, "y": py, "z": pz}
+            if dist <= self.follow_distance:
+                robot_z = robot_pos[2] if len(robot_pos) > 2 else pz
+                return {"x": robot_pos[0], "y": robot_pos[1], "z": robot_z}
 
             fx = px + (dx / dist) * self.follow_distance
             fy = py + (dy / dist) * self.follow_distance
@@ -806,8 +695,6 @@ class PersonTracker:
 
     def needs_vlm_reselect(self) -> bool:
         """Needs vlm reselect."""
-        if self._following_selector is not None:
-            return self._following_selector.needs_reselect
         if self._person is None:
             return True
         elapsed = time.time() - self._person.last_seen
@@ -818,6 +705,19 @@ class PersonTracker:
             if self._person and not self.is_lost():
                 return list(self._person.position)
         return None
+
+    def status(self) -> dict | None:
+        """Return the current tracked person using JSON-ready values."""
+        with self._lock:
+            if self._person is None:
+                return None
+            return {
+                "id": self._person.obj_id,
+                "position": [float(value) for value in self._person.position],
+                "velocity": [float(value) for value in self._person.velocity],
+                "last_seen": float(self._person.last_seen),
+                "confidence": float(self._person.confidence),
+            }
 
     @property
     def target_selected(self) -> bool:
@@ -833,6 +733,4 @@ class PersonTracker:
             self._description = ""
             self._target_selected = False
             self._vlm_selecting = False
-            self._target_track_id = None
-            if self._following_selector is not None:
-                self._following_selector.unlock()
+            self._reset_reacquire()

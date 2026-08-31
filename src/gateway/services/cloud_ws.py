@@ -68,6 +68,10 @@ class CloudWs:
                 pass
             self._sub_loops.pop(q, None)
 
+    def has_subscribers(self) -> bool:
+        with self._lock:
+            return bool(self._subs)
+
     def record_delivery(self, dropped: bool, depth: int) -> None:
         with self._lock:
             if dropped:

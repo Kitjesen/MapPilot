@@ -11,11 +11,10 @@ import time
 from collections.abc import Mapping, Sequence
 from typing import Annotated, Any
 
-from fastapi import Query
+from fastapi import HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from gateway.schemas import (
-    DevicesResponse,
     HealthResponse,
     LivenessResponse,
     LocalizationStatusResponse,
@@ -32,13 +31,12 @@ from gateway.schemas import (
     RuntimeDataflowSubscribeRequest,
     RuntimeDataflowSubscribeResponse,
     RuntimeDataflowTopicDetailResponse,
-    RuntimeSwitchPlanRequest,
-    RuntimeSwitchPlanResponse,
     SceneGraphResponse,
     SSEEventEnvelope,
     StateResponse,
 )
-from gateway.services.map_service import map_service_query
+from gateway.services.environment_map_feedback import EnvironmentMapFeedback
+from gateway.services.mapd_transport import mapd_query
 from gateway.services.media_status import build_camera_status
 from gateway.services.navigation_lifecycle import (
     query_navigation_goal_status,
@@ -54,7 +52,6 @@ from gateway.services.runtime_status import (
     build_localization_status,
     build_navigation_status,
 )
-from gateway.services.runtime_switch_plan import build_runtime_switch_plan
 from gateway.services.sse import subscribe_with_event_id, unsubscribe
 from gateway.services.state_snapshot import build_state_snapshot
 from gateway.services.telemetry_normalizers import (
@@ -70,13 +67,12 @@ from gateway.services.traffic import (
 from gateway.services.traffic import (
     snapshot as traffic_snapshot,
 )
-from maps.paths import active_map_name, nav_map_root
-from runtime.contracts import CAMERA_ROLE, HW_ROLE, LIDAR_ROLE
+from runtime.contracts import CAMERA_ROLE, LIDAR_ROLE
 
 DEFAULT_NAV_ENDPOINT_STATUS_FILE = "/dev/shm/lingtu/nav_endpoint_status.json"
 DEFAULT_TRAVERSABILITY_STATUS_FILE = "/dev/shm/lingtu/traversability_status.json"
 _LOCATION_BINDING_METADATA_KEYS = frozenset(
-    {"map_id", "map_version", "frame_id", "binding_status"}
+    {"map_id", "map_content_epoch", "frame_id", "binding_status"}
 )
 
 
@@ -280,8 +276,8 @@ def _native_cmd_vel_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]
         "active_source": active_source,
         "evidence_stage": evidence_stage,
         "final_output_confirmed": final_output_published,
-        "driver_acknowledged": (
-            final_output_published and final_output.get("driver_acknowledged") is True
+        "driver_delivery_accepted": (
+            final_output_published and final_output.get("driver_delivery_accepted") is True
         ),
         "output_sequence": output_sequence if final_output_published else 0,
         "ts": payload.get("stamp_s"),
@@ -308,8 +304,10 @@ def _probe_brainstem() -> dict[str, Any]:
             "driver_status_file": path,
         }
 
-    brainstem = payload.get("brainstem")
-    brainstem = dict(brainstem) if isinstance(brainstem, Mapping) else {}
+    adapter = payload.get("adapter")
+    adapter = dict(adapter) if isinstance(adapter, Mapping) else {}
+    control = payload.get("control")
+    control = dict(control) if isinstance(control, Mapping) else {}
     output_ack = payload.get("output_ack")
     output_ack = dict(output_ack) if isinstance(output_ack, Mapping) else {}
     try:
@@ -323,13 +321,16 @@ def _probe_brainstem() -> dict[str, Any]:
     connected = payload.get("connected") is True
     status = "stale" if stale else ("connected" if connected else "unreachable")
 
-    info = dict(brainstem)
+    info = dict(control)
     info.update(
         {
             "status": status,
             "source": "lingtu-driver-status",
             "driver_status_file": path,
-            "host": str(brainstem.get("target") or ""),
+            "host": str(adapter.get("target") or ""),
+            "protocol": adapter.get("protocol"),
+            "owner": adapter.get("control_owner"),
+            "owner_id": adapter.get("control_owner_id"),
             "connected": connected,
             "ready": payload.get("ready") is True,
             "output_ack": output_ack,
@@ -510,27 +511,22 @@ def _location_entries(gw) -> list[Any]:
             return []
 
 
-def _map_version_value(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value if value >= 0 else None
-    if isinstance(value, str):
-        text = value.strip()
-        if text.isdigit():
-            return int(text)
-    return None
+def _map_content_epoch_value(value: Any) -> int | None:
+    return value if not isinstance(value, bool) and isinstance(value, int) and value > 0 else None
+
+
+def _active_map_from_service(gw: Any) -> str:
+    response = mapd_query(gw, {"action": "get_active_map"})
+    if not isinstance(response, Mapping) or response.get("success") is not True:
+        raise RuntimeError("mapd did not return active-map state")
+    return str(response.get("active") or "").strip()
 
 
 def _location_map_binding(gw) -> dict[str, Any]:
     """Snapshot the active saved-map identity for a tagged location."""
-    try:
-        map_root = nav_map_root()
-    except Exception:
-        return {"frame_id": "map", "binding_status": "unavailable"}
     for attempt in range(2):
         try:
-            map_id = str(active_map_name(map_root) or "").strip()
+            map_id = _active_map_from_service(gw)
         except Exception:
             return {"frame_id": "map", "binding_status": "unavailable"}
         if not map_id:
@@ -539,14 +535,14 @@ def _location_map_binding(gw) -> dict[str, Any]:
         binding: dict[str, Any] = {
             "map_id": map_id,
             "frame_id": "map",
-            "binding_status": "version_unavailable",
+            "binding_status": "content_epoch_unavailable",
         }
         try:
-            response = map_service_query(gw, {"action": "get_record", "name": map_id})
+            response = mapd_query(gw, {"action": "get_record", "map_id": map_id})
         except Exception:
             response = None
         try:
-            active_after_query = str(active_map_name(map_root) or "").strip()
+            active_after_query = _active_map_from_service(gw)
         except Exception:
             return {"frame_id": "map", "binding_status": "unavailable"}
         if active_after_query != map_id:
@@ -561,10 +557,10 @@ def _location_map_binding(gw) -> dict[str, Any]:
             or not isinstance(record, Mapping)
         ):
             return binding
-        version = _map_version_value(record.get("version"))
-        if version is None:
+        content_epoch = _map_content_epoch_value(record.get("content_epoch"))
+        if content_epoch is None:
             return binding
-        binding["map_version"] = version
+        binding["map_content_epoch"] = content_epoch
         binding["binding_status"] = "bound"
         return binding
     return {"frame_id": "map", "binding_status": "active_map_changed"}
@@ -617,6 +613,18 @@ def _positive_float(value: Any) -> float:
     if num != num or num in (float("inf"), float("-inf")):
         return 0.0
     return num if num > 0.0 else 0.0
+
+
+def _slam_rates(
+    gw: Any,
+    localization_status: Mapping[str, Any],
+    observed_odom_hz: Any = 0.0,
+) -> tuple[float, float, float]:
+    processed_scan_hz = _positive_float(localization_status.get("processed_scan_hz"))
+    odom_hz = _positive_float(observed_odom_hz)
+    if odom_hz <= 0.0:
+        odom_hz = _positive_float(gw._get_slam_hz_cached())
+    return processed_scan_hz, odom_hz, processed_scan_hz or odom_hz
 
 
 def _current_pose(gw) -> tuple[float, float, float, float | None] | None:
@@ -792,8 +800,16 @@ def register_status_routes(app, gw) -> None:
                 )
             ),
         ] = None,
+        include_elevation: Annotated[
+            bool,
+            Query(
+                description=(
+                    "Opt in to the large /maps/elevation grid payload. "
+                    "The default stream sends elevation metadata only."
+                )
+            ),
+        ] = False,
     ):
-        q, snapshot_event_id = subscribe_with_event_id(gw)
         topic_filter = topic.strip() if isinstance(topic, str) else ""
         selected_event_types: set[str] | None = None
         subscription_payload: dict[str, Any] | None = None
@@ -812,9 +828,20 @@ def register_status_routes(app, gw) -> None:
                 ),
                 "event_types": sorted(selected_event_types),
                 "stream_interfaces": stream_interfaces,
-                "ros2_topic_required": False,
                 "blockers": [] if selected_event_types else ["no_gateway_sse_stream"],
             }
+
+        # /maps/elevation is an explicit capability request.  A general map
+        # scene subscription remains metadata-only unless include_elevation=1
+        # is supplied by the client.
+        elevation_payload = bool(
+            include_elevation or topic_filter.rstrip("/") == "/maps/elevation"
+        )
+        q, snapshot_event_id = subscribe_with_event_id(
+            gw,
+            event_types=selected_event_types,
+            include_elevation_payload=elevation_payload,
+        )
 
         async def _stream():
             try:
@@ -955,6 +982,19 @@ def register_status_routes(app, gw) -> None:
         return build_path_response(path, robot)
 
     @app.get(
+        "/api/v1/maps/environment/layers",
+        summary="Operator-facing environment map layer state",
+    )
+    async def get_environment_map_layers():
+        feedback = getattr(gw, "_environment_map_feedback", None)
+        if not isinstance(feedback, EnvironmentMapFeedback):
+            raise HTTPException(status_code=503, detail="environment_map_feedback_unavailable")
+        return feedback.snapshot(
+            traversability_status=_native_traversability_status(),
+            nav_endpoint_status=_native_nav_endpoint_status(),
+        )
+
+    @app.get(
         "/api/v1/navigation/dds_snapshot",
         summary="Latest navigation data for the native DDS endpoint",
         response_model=NavigationDdsSnapshotResponse,
@@ -971,21 +1011,8 @@ def register_status_routes(app, gw) -> None:
         if not local_path:
             local_path = _native_path_points(nav_endpoint, "local_path")
         navigation = build_navigation_status(gw)
-        endpoint_only = os.environ.get("LINGTU_COMMAND_OUTPUT_MODE", "").strip().lower() == "endpoint_only"
-        cmd_vel = (
-            None if endpoint_only else (navigation.get("control", {}).get("cmd_vel_mux", {}).get("last_driver_cmd_vel"))
-        )
         operator_motion = _native_operator_motion_trace(nav_endpoint)
-        if not endpoint_only and isinstance(cmd_vel, Mapping):
-            cmd_payload = {
-                "frame_id": "base_link",
-                "linear": dict(cmd_vel.get("linear") or {}),
-                "angular": dict(cmd_vel.get("angular") or {}),
-                "active_source": str(cmd_vel.get("active_source") or "none"),
-                "ts": cmd_vel.get("ts"),
-            }
-        else:
-            cmd_payload = _native_cmd_vel_payload(nav_endpoint)
+        cmd_payload = _native_cmd_vel_payload(nav_endpoint)
         if cmd_payload is not None and operator_motion:
             cmd_payload["operator_motion"] = operator_motion.get("operator_motion")
         return {
@@ -1060,37 +1087,6 @@ def register_status_routes(app, gw) -> None:
     ):
         return build_runtime_dataflow_subscription(gw, request)
 
-    @app.post(
-        "/api/v1/runtime/switch-plan",
-        summary="Dry-run Product switch plan in the current Env",
-        response_model=RuntimeSwitchPlanResponse,
-    )
-    async def post_runtime_switch_plan(
-        request: RuntimeSwitchPlanRequest,
-    ):
-        return build_runtime_switch_plan(request, gw=gw)
-
-    @app.get(
-        "/api/v1/devices",
-        summary="Hardware device registry status",
-        response_model=DevicesResponse,
-    )
-    async def get_devices():
-        modules = getattr(gw, "_all_modules", None) or {}
-        mgr = modules.get(HW_ROLE)
-        if mgr is None:
-            return {"devices": [], "manager": "not_loaded"}
-        try:
-            health = mgr.health()
-            return {
-                "manager": "ok",
-                "spec_count": health.get("spec_count", 0),
-                "opened_count": health.get("opened_count", 0),
-                "devices": health.get("devices", []),
-            }
-        except Exception as e:
-            return {"devices": [], "manager": "error", "error": str(e)}
-
     @app.get(
         "/api/v1/health",
         summary="System health overview",
@@ -1150,18 +1146,6 @@ def register_status_routes(app, gw) -> None:
                         slam_status = _module_odometry_status(h)
                         if slam_status is not None:
                             _sensors["slam"] = slam_status
-                    elif "nav.mission" in name:
-                        nav = h.get("navigation", h)
-                        _sensors["navigation"] = {
-                            "state": nav.get(
-                                "state",
-                                h.get("mission_state", "idle"),
-                            ),
-                            "replan_count": nav.get(
-                                "replan_count",
-                                h.get("replan_count", 0),
-                            ),
-                        }
                 except Exception:
                     _summary[name] = "error"
                     _fail += 1
@@ -1176,11 +1160,11 @@ def register_status_routes(app, gw) -> None:
 
         localization_status = getattr(gw, "_localization_status", None)
         localization_status = localization_status if isinstance(localization_status, Mapping) else {}
-        processed_scan_hz = _positive_float(localization_status.get("processed_scan_hz"))
-        odom_hz = _positive_float(sensors.get("slam", {}).get("hz"))
-        if odom_hz <= 0.0:
-            odom_hz = _positive_float(gw._get_slam_hz_cached())
-        slam_hz = processed_scan_hz or odom_hz
+        processed_scan_hz, odom_hz, slam_hz = _slam_rates(
+            gw,
+            localization_status,
+            sensors.get("slam", {}).get("hz"),
+        )
         has_odom = gw._odom is not None
         if localization_status or has_odom or odom_hz > 0.0:
             slam_sensor = sensors.setdefault("slam", {})
@@ -1258,12 +1242,10 @@ def register_status_routes(app, gw) -> None:
         if not isinstance(control_loop_health, Mapping):
             control_loop_health = {}
 
-        processed_scan_hz = _positive_float(localization_status.get("processed_scan_hz"))
+        processed_scan_hz, odom_hz, slam_hz = _slam_rates(gw, localization_status)
         lidar_input_hz = _positive_float(localization_status.get("lidar_input_hz"))
         imu_input_hz = _positive_float(localization_status.get("imu_input_hz"))
         slam_tick_hz = _positive_float(localization_status.get("slam_tick_hz"))
-        odom_hz = _positive_float(gw._get_slam_hz_cached())
-        slam_hz = processed_scan_hz or odom_hz
         return {
             "schema_version": 1,
             "ok": True,
@@ -1309,11 +1291,6 @@ def register_status_routes(app, gw) -> None:
                 if hasattr(gw, "_ws_registry") and gw._ws_registry is not None
                 else {}
             ),
-            "audit": (
-                gw._audit_journal.snapshot(limit=10)
-                if hasattr(gw, "_audit_journal") and gw._audit_journal is not None
-                else {}
-            ),
         }
 
     @app.get(
@@ -1326,9 +1303,7 @@ def register_status_routes(app, gw) -> None:
         cloud = gw._cloud_viewer.debug_snapshot()
         localization_status = getattr(gw, "_localization_status", None)
         localization_status = localization_status if isinstance(localization_status, Mapping) else {}
-        processed_scan_hz = _positive_float(localization_status.get("processed_scan_hz"))
-        odom_hz = _positive_float(gw._get_slam_hz_cached())
-        slam_hz = processed_scan_hz or odom_hz
+        processed_scan_hz, odom_hz, slam_hz = _slam_rates(gw, localization_status)
         return {
             "status": "ok",
             "ts": time.time(),

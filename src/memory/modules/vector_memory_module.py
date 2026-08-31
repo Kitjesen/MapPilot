@@ -39,8 +39,6 @@ _DEFAULT_PERSIST_DIR = os.path.join(os.path.expanduser("~"), ".nova", "vector_me
 
 @register("vector_memory", "default", description="CLIP + ChromaDB spatial vector search")
 class VectorMemoryModule(Module, layer=3):
-    _run_in_worker = True
-    _worker_group = "semantic"
     """Vector-based spatial memory for fuzzy location queries.
 
     Stores CLIP embeddings of scene snapshots indexed by robot position.

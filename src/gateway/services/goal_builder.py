@@ -8,10 +8,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from gateway.schemas import PlanPreviewRequest
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.runtime_interface import map_frame_id
-from gateway.schemas import PlanPreviewRequest
-
 
 GOAL_MAP_FRAME_ID = map_frame_id()
 
@@ -21,7 +20,7 @@ class ConstructedGoal:
     x: float
     y: float
     z: float = 0.0
-    yaw: float = 0.0
+    yaw: float | None = None
     frame_id: str = GOAL_MAP_FRAME_ID
     source: str = "coordinate"
     target_type: str = "coordinate"
@@ -32,22 +31,26 @@ class ConstructedGoal:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def pose_stamped(self, *, ts: float | None = None) -> PoseStamped:
+        orientation = (
+            Quaternion.from_yaw(self.yaw)
+            if self.yaw is not None
+            else Quaternion(0.0, 0.0, 0.0, 0.0)
+        )
         return PoseStamped(
             pose=Pose(
                 position=Vector3(self.x, self.y, self.z),
-                orientation=Quaternion.from_yaw(self.yaw),
+                orientation=orientation,
             ),
             frame_id=self.frame_id,
             ts=ts or time.time(),
         )
 
-    def preview_request(self, *, client_id: str = "unknown") -> PlanPreviewRequest:
+    def preview_request(self) -> PlanPreviewRequest:
         return PlanPreviewRequest(
             x=self.x,
             y=self.y,
             z=self.z,
             frame_id=self.frame_id,
-            client_id=client_id,
         )
 
     def target_payload(self, *, ts: float | None = None) -> dict[str, Any]:
@@ -115,7 +118,7 @@ def construct_goal_from_request(
         x, y, z = _coordinates_from_location(entry)
         yaw = _optional_float(yaw_value, "yaw")
         if yaw is None:
-            yaw = _optional_float(_mapping(entry).get("yaw"), "location.yaw") or 0.0
+            yaw = _optional_float(_mapping(entry).get("yaw"), "location.yaw")
         if "source" not in fields_set:
             source = "saved_location"
         if "target_type" not in fields_set:
@@ -127,7 +130,7 @@ def construct_goal_from_request(
         y = _required_float(getattr(body, "y", None), "y")
         z = _required_float(getattr(body, "z", 0.0), "z")
         yaw = _optional_float(yaw_value, "yaw")
-        if yaw is None:
+        if yaw is None and default_source != "map_click":
             yaw = 0.0
 
     return ConstructedGoal(

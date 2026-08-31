@@ -4,7 +4,6 @@ import json
 
 import pytest
 
-from gateway.services.audit import AUDITED_COMMANDS
 from gateway.services.rate_limit import RateLimitMiddleware
 
 
@@ -34,15 +33,6 @@ async def _request(app, path="/api/v1/estop/reset"):
         send,
     )
     return sent
-
-
-def test_estop_reset_is_classified_as_an_audited_command():
-    assert "estop_reset" in AUDITED_COMMANDS
-
-def test_task_pause_and_resume_are_classified_as_audited_commands():
-    assert "navigation_task_pause" in AUDITED_COMMANDS
-    assert "navigation_task_resume" in AUDITED_COMMANDS
-
 
 
 @pytest.mark.asyncio

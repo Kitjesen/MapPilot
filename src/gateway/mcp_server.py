@@ -31,14 +31,11 @@ from fastapi.responses import JSONResponse
 from gateway.schemas import InstructionRequest
 from gateway.services.command_boundary import CommandBoundaryError
 from gateway.services.control_commands import ControlCommandService
-from gateway.services.module_refs import backend_reconfigure_targets
-from gateway.services.module_refs import navigation_state as _navigation_state
-from gateway.services.native_control import endpoint_only_enabled
+from gateway.services.module_refs import navigation_state as resolve_navigation_state
 from gateway.services.native_control import estop as native_estop
 from runtime.module import Module, skill
-from runtime.msgs.geometry import PoseStamped, Twist
 from runtime.msgs.nav import NavigationGoalStatus, NavigationState, Odometry
-from runtime.msgs.semantic import SafetyState, SceneGraph
+from runtime.msgs.semantic import SceneGraph
 from runtime.registry import register
 from runtime.status_provider import RuntimeStatusProvider
 from runtime.stream import In, Out
@@ -46,14 +43,6 @@ from runtime.stream import In, Out
 logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
-_MOTION_BACKEND_CATEGORIES = {
-    "planner",
-    "local_planner",
-    "path_follower",
-    "terrain",
-    "slam",
-}
-_BACKEND_RECONFIGURE_TARGETS = backend_reconfigure_targets()
 _BUILTIN_FALLBACK_TOOLS = frozenset({"emergency_stop", "send_instruction"})
 
 
@@ -66,8 +55,9 @@ def _ok(req_id: Any, result: Any) -> dict:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
 
-def _text(req_id: Any, text: str) -> dict:
-    return _ok(req_id, {"content": [{"type": "text", "text": str(text)}]})
+def _text(req_id: Any, value: Any) -> dict:
+    text = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
+    return _ok(req_id, {"content": [{"type": "text", "text": text}]})
 
 
 def _tool_error(req_id: Any, text: str) -> dict:
@@ -94,20 +84,13 @@ class MCPServerModule(Module, layer=6):
     implemented as @skill methods on this module so they appear automatically.
     """
 
-    _run_in_main: bool = True
-
     # -- receive telemetry for read-only queries ----------------------------
     odometry: In[Odometry]
     scene_graph: In[SceneGraph]
-    safety_state: In[SafetyState]
     navigation_state: In[NavigationState]
     navigation_goal_status: In[NavigationGoalStatus]
-    mission_status: In[dict]
 
     # -- outgoing commands --------------------------------------------------
-    goal_pose: Out[PoseStamped]
-    cmd_vel: Out[Twist]
-    stop_cmd: Out[int]
     instruction: Out[str]
     mode_cmd: Out[str]
 
@@ -132,12 +115,10 @@ class MCPServerModule(Module, layer=6):
         # Cached telemetry (written by subscriptions)
         self._odom: dict | None = None
         self._sg_json: str = "{}"
-        self._safety: dict | None = None
-        self._mission: dict | None = None
         self._navigation_state: dict | None = None
         self._navigation_goal_status_by_request: dict[str, dict[str, Any]] = {}
 
-        # Injected after system.start() by cli/main.py
+        # Injected by the Host after module startup.
         self._system_handle = None
         self._runtime_status_provider: RuntimeStatusProvider | None = None
 
@@ -150,9 +131,7 @@ class MCPServerModule(Module, layer=6):
         self._tagged_locations_mod = None
         self._vector_memory_mod = None
         self._episodic_mod = None
-        self._navigation = None
         self._nav_commands = None
-        self._backend_reconfigure_modules: dict[str, Any] = {}
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -174,15 +153,7 @@ class MCPServerModule(Module, layer=6):
         self._tool_list = []
         candidates: dict[str, dict[int, dict[str, Any]]] = {}
         self._all_modules = modules
-        self._navigation = modules.get("nav.mission")
         self._nav_commands = modules.get("nav.commands")
-        self._backend_reconfigure_modules = {
-            module_name: modules.get(module_name)
-            for module_names in _BACKEND_RECONFIGURE_TARGETS.values()
-            for module_name in module_names
-            if modules.get(module_name) is not None
-        }
-
         # Grab module references for built-in tools
         self._tagged_locations_mod = modules.get("TaggedLocationsModule")
         self._vector_memory_mod = modules.get("VectorMemoryModule")
@@ -249,10 +220,8 @@ class MCPServerModule(Module, layer=6):
     def setup(self) -> None:
         self.odometry.subscribe(self._on_odom)
         self.scene_graph.subscribe(self._on_sg)
-        self.safety_state.subscribe(self._on_safety)
         self.navigation_state.subscribe(self._on_navigation_state)
         self.navigation_goal_status.subscribe(self._on_navigation_goal_status)
-        self.mission_status.subscribe(self._on_mission)
 
     def start(self) -> None:
         with self._lifecycle_lock:
@@ -331,14 +300,6 @@ class MCPServerModule(Module, layer=6):
 
     def _on_sg(self, sg: SceneGraph) -> None:
         self._sg_json = sg.to_json() if hasattr(sg, "to_json") else str(sg)
-
-    def _on_safety(self, state: SafetyState) -> None:
-        import time
-
-        self._safety = {"level": getattr(state, "level", 0), "ts": time.time()}
-
-    def _on_mission(self, status: dict) -> None:
-        self._mission = status
 
     def _on_navigation_state(self, state: NavigationState) -> None:
         self._navigation_state = state.to_dict()
@@ -557,32 +518,17 @@ class MCPServerModule(Module, layer=6):
         gateway = (self._all_modules or {}).get("GatewayModule")
 
         if gateway is None:
-            if self._native_motion_required():
-                return json.dumps(
-                    {
-                        "ok": False,
-                        "accepted": False,
-                        "error": "gateway_unavailable",
-                        "message": "MCP instruction requires GatewayModule in field/native mode.",
-                        "tool": tool_name,
-                        "request_id": request_id,
-                        "client_id": "mcp",
-                        "execution_confirmed": False,
-                        "motor_confirmed": False,
-                    }
-                )
             self.instruction.publish(instruction)
             return json.dumps(
                 {
                     "ok": True,
                     "accepted": True,
                     "status": "submitted",
-                    "stage": "local_compat_submitted",
+                    "stage": "host_submitted",
                     "tool": tool_name,
                     "request_id": request_id,
                     "client_id": "mcp",
                     "instruction": instruction,
-                    "local_compat_submitted": True,
                     "execution_confirmed": False,
                     "motor_confirmed": False,
                 }
@@ -638,27 +584,16 @@ class MCPServerModule(Module, layer=6):
     def _publish_estop(self, status: str) -> str:
         wrote_native = native_estop(self, "mcp_emergency_stop")
         if not wrote_native:
-            if self._native_motion_required():
-                raise CommandBoundaryError("native emergency-stop boundary is unavailable")
-            self.stop_cmd.publish(2)
-            self.cmd_vel.publish(Twist())
+            raise CommandBoundaryError("native emergency-stop boundary is unavailable")
         return json.dumps(
             {
                 "ok": True,
                 "accepted": True,
                 "status": status,
-                "control_boundary": "native_estop" if wrote_native else "local_compat",
-                "stage": "native_command_ack" if wrote_native else "local_compat_published",
+                "control_boundary": "native_estop",
+                "stage": "native_command_ack",
                 "motor_confirmed": False,
             }
-        )
-
-    def _native_motion_required(self) -> bool:
-        if endpoint_only_enabled(self):
-            return True
-        return any(
-            bool(getattr(module, "_teleop_dds_enabled", False))
-            for module in self._all_modules.values()
         )
 
     @skill
@@ -670,12 +605,8 @@ class MCPServerModule(Module, layer=6):
         if mode == "estop":
             wrote_native = native_estop(self, "mcp_mode_estop")
             if not wrote_native:
-                if self._native_motion_required():
-                    raise CommandBoundaryError("native emergency-stop boundary is unavailable")
-                self.stop_cmd.publish(2)
-                self.cmd_vel.publish(Twist())
-            else:
-                stage = "native_command_ack"
+                raise CommandBoundaryError("native emergency-stop boundary is unavailable")
+            stage = "native_command_ack"
         self.mode_cmd.publish(mode)
         return json.dumps(
             {
@@ -686,62 +617,6 @@ class MCPServerModule(Module, layer=6):
                 "motor_confirmed": False,
             }
         )
-
-    @skill
-    def switch_backend(self, category: str, backend: str, config_json: str = "{}") -> str:
-        """Switch a low-risk runtime backend; motion backends require navigation IDLE."""
-        try:
-            config = json.loads(config_json or "{}")
-        except json.JSONDecodeError as exc:
-            return json.dumps(
-                {
-                    "ok": False,
-                    "category": category,
-                    "requested_backend": backend,
-                    "reason": "invalid_config_json",
-                    "error": str(exc),
-                }
-            )
-        if not isinstance(config, dict):
-            return json.dumps(
-                {
-                    "ok": False,
-                    "category": category,
-                    "requested_backend": backend,
-                    "reason": "invalid_config_json",
-                }
-            )
-        gateway = self._all_modules.get("GatewayModule")
-        if gateway is not None and hasattr(gateway, "reconfigure_backend"):
-            result = gateway.reconfigure_backend(category, backend, **config)
-            return json.dumps(result, default=str)
-        result = self.reconfigure_backend(category, backend, **config)
-        return json.dumps(result, default=str)
-
-    def reconfigure_backend(
-        self,
-        category: str,
-        backend: str,
-        **config: Any,
-    ) -> dict[str, Any]:
-        if category in _MOTION_BACKEND_CATEGORIES:
-            state = _navigation_state(self._navigation)
-            if state != "IDLE":
-                return {
-                    "ok": False,
-                    "category": category,
-                    "requested_backend": backend,
-                    "reason": "motion_backend_switch_requires_idle",
-                    "navigation_state": state or "UNKNOWN",
-                }
-
-        for module_name in _BACKEND_RECONFIGURE_TARGETS.get(category, ()):
-            module = self._backend_reconfigure_modules.get(module_name)
-            reconfigure = getattr(module, "reconfigure_backend", None)
-            if callable(reconfigure):
-                return reconfigure(category, backend, **config)
-
-        return super().reconfigure_backend(category, backend, **config)
 
     # -- FastAPI + MCP JSON-RPC endpoint -----------------------------------
 
@@ -868,7 +743,7 @@ class MCPServerModule(Module, layer=6):
             Returns available tools grouped by category, along with
             system state that affects tool availability.
             """
-            nav_state = _navigation_state(mcp._navigation)
+            nav_state = resolve_navigation_state(mcp._navigation_state)
             tool_names = [t["name"] for t in mcp._tool_list]
             return {
                 "schema_version": 1,

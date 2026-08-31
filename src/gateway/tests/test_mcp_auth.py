@@ -178,14 +178,14 @@ async def test_loopback_explore_operator_accepts_current_product_session(
         _ok_app,
         api_key=None,
         require_key=True,
-        product_session_id="session-token-1234",
+        product_session_id="product-session-1234",
     )
 
     sent = await _request(
         app,
         method=method,
         path=path,
-        headers=[(b"x-lingtu-product-session", b"session-token-1234")],
+        headers=[(b"x-lingtu-product-session", b"product-session-1234")],
     )
 
     assert sent[0]["status"] == 200
@@ -199,7 +199,7 @@ async def test_product_session_is_rejected_for_remote_explore_request(monkeypatc
         _ok_app,
         api_key=None,
         require_key=True,
-        product_session_id="session-token-1234",
+        product_session_id="product-session-1234",
     )
 
     sent = await _request(
@@ -207,7 +207,7 @@ async def test_product_session_is_rejected_for_remote_explore_request(monkeypatc
         method="POST",
         path="/api/v1/explore/start",
         client=("192.168.66.42", 5050),
-        headers=[(b"x-lingtu-product-session", b"session-token-1234")],
+        headers=[(b"x-lingtu-product-session", b"product-session-1234")],
     )
 
     assert sent[0]["status"] == 403
@@ -221,17 +221,40 @@ async def test_product_session_cannot_authorize_other_loopback_api(monkeypatch):
         _ok_app,
         api_key=None,
         require_key=True,
-        product_session_id="session-token-1234",
+        product_session_id="product-session-1234",
     )
 
     sent = await _request(
         app,
         method="POST",
         path="/api/v1/goal",
-        headers=[(b"x-lingtu-product-session", b"session-token-1234")],
+        headers=[(b"x-lingtu-product-session", b"product-session-1234")],
     )
 
     assert sent[0]["status"] == 403
+
+
+@pytest.mark.asyncio
+async def test_operator_key_takes_precedence_over_product_session_header(monkeypatch):
+    monkeypatch.setenv("LINGTU_API_KEY", "operator-secret")
+    app = APIKeyMiddleware(
+        _ok_app,
+        api_key="operator-secret",
+        require_key=True,
+        product_session_id="product-session-1234",
+    )
+
+    sent = await _request(
+        app,
+        method="POST",
+        path="/api/v1/session/end",
+        headers=[
+            (b"x-api-key", b"operator-secret"),
+            (b"x-lingtu-product-session", b"product-session-1234"),
+        ],
+    )
+
+    assert sent[0]["status"] == 200
 
 
 def test_real_env_gateway_requires_api_key(monkeypatch):
@@ -364,6 +387,38 @@ def test_mcp_tool_exception_returns_call_tool_error_result(monkeypatch):
     error_text = payload["result"]["content"][0]["text"]
     assert "failed" in error_text.lower()
     assert "actuator unavailable" not in error_text
+
+
+@pytest.mark.parametrize(
+    ("result", "expected_text"),
+    [
+        ({"success": True, "maps": [{"name": "大厅"}]}, None),
+        ([{"name": "yard"}], None),
+        ("already text", "already text"),
+    ],
+)
+def test_mcp_tool_serializes_structured_results_as_json(monkeypatch, result, expected_text):
+    from gateway.mcp_server import MCPServerModule
+
+    module = MCPServerModule(host="127.0.0.1")
+    module._tool_registry["result"] = lambda: result
+    endpoint = _capture_mcp_endpoint(monkeypatch, module)
+    response = asyncio.run(
+        endpoint(
+            {
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": "tools/call",
+                "params": {"name": "result", "arguments": {}},
+            }
+        )
+    )
+    text = json.loads(response.body)["result"]["content"][0]["text"]
+
+    if expected_text is not None:
+        assert text == expected_text
+    else:
+        assert json.loads(text) == result
 
 
 @pytest.mark.parametrize("arguments", [[], {"unexpected": True}])

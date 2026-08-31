@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+
 import pytest
 
 from gateway.services.event_handlers import handle_inspection_task_event
@@ -30,7 +33,7 @@ def _event(
         "command_request_id": request_id,
         "state": state,
         "map_id": "field-map",
-        "map_version": 7,
+        "map_content_epoch": 7,
         "route_id": "route-a",
         "route_revision": 3,
         "point_index": 0,
@@ -54,19 +57,110 @@ def test_submission_receipt_does_not_claim_native_execution() -> None:
         request_id="inspection-request-42",
         route_id="route-a",
         map_id="field-map",
-        map_version=7,
+        map_content_epoch=7,
         route_revision=3,
     )
 
     status = timeline.query("inspection-task-42")
 
     assert status["found"] is True
-    assert status["current_state"] == "SUBMISSION_ACCEPTED_AWAITING_NATIVE_EVENT"
+    assert status["current_state"] is None
+    assert status["state_available"] is False
+    assert status["phase"] is None
+    assert status["transition"] is None
     assert status["state_source"] == "business_ack_only"
     assert status["execution_confirmed"] is False
     assert status["terminal"] is False
     assert status["can_resume"] is False
     assert status["available_actions"] == []
+
+
+def test_query_projects_internal_navigation_phase_as_public_execution_state() -> None:
+    timeline = InspectionTaskTimeline()
+
+    assert timeline.observe(_event(event_sequence=1, state=3)) is True
+
+    status = timeline.query("inspection-task-42")
+
+    assert status["current_state"] == "EXECUTING"
+    assert status["phase"] == "NAVIGATING"
+    assert status["transition"] is None
+
+
+@pytest.mark.parametrize(
+    ("native_state", "public_state", "phase"),
+    [
+        (1, "PLANNING", "VALIDATING"),
+        (2, "PLANNING", "PLANNING"),
+        (3, "EXECUTING", "NAVIGATING"),
+        (4, "EXECUTING", "DWELLING"),
+        (5, "PAUSED", "PAUSED"),
+        (6, "RECOVERING", "RECOVERING"),
+        (7, "SUCCESS", "SUCCEEDED"),
+        (8, "FAILED", "FAILED"),
+        (9, "CANCELLED", "CANCELLED"),
+        (10, "EXECUTING", "SETTLING"),
+        (11, "EXECUTING", "ACTION_PENDING"),
+    ],
+)
+def test_confirmed_native_phases_use_the_canonical_public_task_states(
+    native_state: int,
+    public_state: str,
+    phase: str,
+) -> None:
+    timeline = InspectionTaskTimeline()
+
+    assert timeline.observe(_event(event_sequence=1, state=native_state)) is True
+
+    status = timeline.query("inspection-task-42")
+
+    assert status["current_state"] == public_state
+    assert status["state_available"] is True
+    assert status["phase"] == phase
+    assert status["transition"] is None
+
+
+def test_runtime_idle_is_rejected_as_an_inspection_task_state() -> None:
+    timeline = InspectionTaskTimeline()
+
+    assert timeline.observe(_event(event_sequence=1, state=0)) is False
+
+
+def test_stopping_phases_keep_the_last_confirmed_public_state() -> None:
+    timeline = InspectionTaskTimeline()
+    assert timeline.observe(_event(event_sequence=1, state=2)) is True
+    assert timeline.observe(_event(event_sequence=2, state=12)) is True
+
+    pausing = timeline.query("inspection-task-42")
+
+    assert pausing["current_state"] == "PLANNING"
+    assert pausing["state_available"] is True
+    assert pausing["phase"] == "PAUSING"
+    assert pausing["transition"] == "PAUSE_REQUESTED"
+
+    assert timeline.observe(_event(event_sequence=3, state=5)) is True
+    assert timeline.observe(_event(event_sequence=4, state=13)) is True
+
+    cancelling = timeline.query("inspection-task-42")
+
+    assert cancelling["current_state"] == "PAUSED"
+    assert cancelling["state_available"] is True
+    assert cancelling["phase"] == "CANCELLING"
+    assert cancelling["transition"] == "CANCEL_REQUESTED"
+
+
+def test_transition_without_a_confirmed_predecessor_does_not_guess_state() -> None:
+    timeline = InspectionTaskTimeline()
+
+    assert timeline.observe(_event(event_sequence=2, state=12)) is True
+
+    status = timeline.query("inspection-task-42")
+
+    assert status["current_state"] is None
+    assert status["state_available"] is False
+    assert status["phase"] == "PAUSING"
+    assert status["transition"] == "PAUSE_REQUESTED"
+    assert status["delivery"]["history_complete"] is False
 
 
 def test_native_events_are_the_only_execution_and_terminal_truth() -> None:
@@ -77,13 +171,15 @@ def test_native_events_are_the_only_execution_and_terminal_truth() -> None:
         request_id="inspection-request-42",
         route_id="route-a",
         map_id="field-map",
-        map_version=7,
+        map_content_epoch=7,
         route_revision=3,
     )
 
     assert timeline.observe(_event(event_sequence=1, kind=1, state=2)) is True
     planning = timeline.query("inspection-task-42")
     assert planning["current_state"] == "PLANNING"
+    assert planning["phase"] == "PLANNING"
+    assert planning["transition"] is None
     assert planning["state_source"] == "native_task_event"
     assert planning["execution_confirmed"] is True
     assert planning["terminal"] is False
@@ -102,25 +198,33 @@ def test_native_events_are_the_only_execution_and_terminal_truth() -> None:
 
     assert timeline.observe(_event(event_sequence=2, state=12, reason="operator_pause")) is True
     pausing = timeline.query("inspection-task-42")
-    assert pausing["current_state"] == "PAUSING"
+    assert pausing["current_state"] == "PLANNING"
+    assert pausing["phase"] == "PAUSING"
+    assert pausing["transition"] == "PAUSE_REQUESTED"
     assert pausing["terminal"] is False
     assert pausing["can_resume"] is False
 
     assert timeline.observe(_event(event_sequence=3, state=5, reason="stopped")) is True
     paused = timeline.query("inspection-task-42")
     assert paused["current_state"] == "PAUSED"
+    assert paused["phase"] == "PAUSED"
+    assert paused["transition"] is None
     assert paused["terminal"] is False
     assert paused["can_resume"] is True
     assert paused["available_actions"] == ["resume", "cancel"]
 
     assert timeline.observe(_event(event_sequence=4, state=13, reason="operator_cancel")) is True
     cancelling = timeline.query("inspection-task-42")
-    assert cancelling["current_state"] == "CANCELLING"
+    assert cancelling["current_state"] == "PAUSED"
+    assert cancelling["phase"] == "CANCELLING"
+    assert cancelling["transition"] == "CANCEL_REQUESTED"
     assert cancelling["terminal"] is False
 
     assert timeline.observe(_event(event_sequence=5, state=9, reason="native_stop_confirmed")) is True
     cancelled = timeline.query("inspection-task-42")
     assert cancelled["current_state"] == "CANCELLED"
+    assert cancelled["phase"] == "CANCELLED"
+    assert cancelled["transition"] is None
     assert cancelled["terminal"] is True
     assert cancelled["terminal_source"] == "native_task_event"
     assert cancelled["available_actions"] == []
@@ -157,7 +261,8 @@ def test_late_first_event_does_not_claim_a_complete_history() -> None:
     assert timeline.observe(_event(event_sequence=2, state=3)) is True
 
     status = timeline.query("inspection-task-42")
-    assert status["current_state"] == "NAVIGATING"
+    assert status["current_state"] == "EXECUTING"
+    assert status["phase"] == "NAVIGATING"
     assert status["delivery"]["history_complete"] is False
     assert status["delivery"]["reason"] == "event_sequence_gap"
     assert status["available_actions"] == []
@@ -185,7 +290,7 @@ def test_endpoint_restart_makes_submission_only_task_outcome_unknown() -> None:
         request_id="start-request-submitted",
         route_id="route-a",
         map_id="field-map",
-        map_version=7,
+        map_content_epoch=7,
         route_revision=3,
     )
     assert timeline.observe(_event(task_id="other-task", event_sequence=1)) is True
@@ -198,7 +303,8 @@ def test_endpoint_restart_makes_submission_only_task_outcome_unknown() -> None:
     ) is True
 
     status = timeline.query("inspection-task-submitted")
-    assert status["current_state"] == "INTERRUPTED_AWAITING_NATIVE_TRUTH"
+    assert status["current_state"] is None
+    assert status["state_available"] is False
     assert status["state_source"] == "continuity_monitor"
     assert status["execution_confirmed"] is False
     assert status["terminal"] is False
@@ -225,7 +331,7 @@ def test_native_event_cannot_redefine_a_frozen_task_identity() -> None:
         request_id="inspection-request-42",
         route_id="route-a",
         map_id="field-map",
-        map_version=7,
+        map_content_epoch=7,
         route_revision=3,
     )
     assert timeline.observe(_event(event_sequence=1, state=2)) is True
@@ -281,12 +387,12 @@ def test_terminal_task_fact_is_queryable_after_gateway_restart(tmp_path) -> None
         request_id="inspection-request-42",
         route_id="route-a",
         map_id="field-map",
-        map_version=7,
+        map_content_epoch=7,
         route_revision=3,
         route_snapshot={
             "id": "route-a",
             "map_id": "field-map",
-            "map_version": 7,
+            "map_content_epoch": 7,
             "revision": 3,
             "loop_count": 1,
             "failure_policy": "stop",
@@ -316,7 +422,7 @@ def test_terminal_task_fact_is_queryable_after_gateway_restart(tmp_path) -> None
     assert status["route_snapshot"] == {
         "id": "route-a",
         "map_id": "field-map",
-        "map_version": 7,
+        "map_content_epoch": 7,
         "revision": 3,
         "loop_count": 1,
         "failure_policy": "stop",
@@ -367,7 +473,7 @@ def test_request_id_binding_freezes_route_requirements_before_native_admission()
     route_snapshot = {
         "id": "route-a",
         "map_id": "field-map",
-        "map_version": 7,
+        "map_content_epoch": 7,
         "revision": 3,
         "loop_count": 1,
         "failure_policy": "stop",
@@ -396,7 +502,7 @@ def test_request_id_binding_freezes_route_requirements_before_native_admission()
         ],
     }
 
-    with pytest.raises(ValueError, match="different route_snapshot_sha256"):
+    with pytest.raises(ValueError, match="different route_snapshot"):
         timeline.reserve_submission(
             task_id="inspection-task-42",
             action="start",
@@ -415,7 +521,10 @@ def test_active_task_waits_for_native_reconciliation_after_gateway_restart(
     restored = InspectionTaskTimeline(journal_path=journal)
     recovered = restored.query("inspection-task-42")
 
-    assert recovered["current_state"] == "RECOVERED_AWAITING_NATIVE_RECONCILIATION"
+    assert recovered["current_state"] is None
+    assert recovered["state_available"] is False
+    assert recovered["phase"] == "NAVIGATING"
+    assert recovered["transition"] is None
     assert recovered["state_source"] == "durable_task_projection"
     assert recovered["execution_confirmed"] is False
     assert recovered["terminal"] is False
@@ -440,13 +549,16 @@ def test_corrupt_task_journal_is_visible_and_never_returns_a_forged_state(
     tmp_path,
 ) -> None:
     journal = tmp_path / "inspection_tasks.json"
-    journal.write_text('{"body":{},"sha256":"not-valid"}\n', encoding="utf-8")
+    journal.write_text('{"schema_version":"wrong"}\n', encoding="utf-8")
 
     restored = InspectionTaskTimeline(journal_path=journal)
     status = restored.query("inspection-task-42")
 
     assert status["found"] is False
-    assert status["current_state"] == "UNKNOWN"
+    assert status["current_state"] is None
+    assert status["state_available"] is False
+    assert status["phase"] is None
+    assert status["transition"] is None
     assert status["execution_confirmed"] is False
     assert status["terminal"] is False
     assert status["reason"] == "task_journal_corrupt"
@@ -474,6 +586,191 @@ def test_field_timeline_factory_uses_the_declared_durable_journal(
     assert status["terminal"] is True
     assert status["state_source"] == "persisted_native_task_event"
     assert restored.health()["retention"] == "durable_gateway_projection"
+
+
+def test_recording_identity_is_strictly_restored_with_the_task_journal(tmp_path) -> None:
+    journal = tmp_path / "inspection_tasks.json"
+    timeline = InspectionTaskTimeline(journal_path=journal)
+    timeline.bind_recording(
+        task_id="inspection-task-42",
+        session_id="inspection-session-42",
+        product_session_id="inspection-product-session-42",
+    )
+
+    restored = InspectionTaskTimeline(journal_path=journal)
+
+    recording = restored.query("inspection-task-42")["recording"]
+    assert recording["session_id"] == "inspection-session-42"
+    assert recording["product_session_id"] == "inspection-product-session-42"
+    assert recording["state"] == "recording"
+    assert recording["error"] == ""
+    assert recording["updated_at"] > 0.0
+
+
+@pytest.mark.parametrize("native_state", [7, 8, 9])
+def test_native_terminal_event_stops_the_bound_recording_once_in_background(native_state) -> None:
+    stopped = threading.Event()
+
+    class Recording:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def stop(self, *, expected_session_id: str):
+            self.calls.append(expected_session_id)
+            stopped.set()
+
+    class Gateway:
+        def __init__(self) -> None:
+            self._inspection_task_timeline = InspectionTaskTimeline()
+            self._inspection_task_timeline.bind_recording(
+                task_id="inspection-task-42",
+                session_id="inspection-session-42",
+                product_session_id="inspection-product-session-42",
+            )
+            self._recording = Recording()
+            self.events: list[dict[str, object]] = []
+
+        def push_event(self, event: dict[str, object]) -> None:
+            self.events.append(event)
+
+    gateway = Gateway()
+    terminal = _event(event_sequence=1, state=native_state)
+
+    handle_inspection_task_event(gateway, terminal)
+    handle_inspection_task_event(gateway, terminal)
+
+    assert stopped.wait(timeout=1.0)
+    assert gateway._recording.calls == ["inspection-session-42"]
+    deadline = time.time() + 1.0
+    recording = gateway._inspection_task_timeline.query("inspection-task-42")["recording"]
+    while recording["state"] != "completed" and time.time() < deadline:
+        time.sleep(0.01)
+        recording = gateway._inspection_task_timeline.query("inspection-task-42")["recording"]
+    assert recording["state"] == "completed"
+
+
+@pytest.mark.parametrize("crashed_after_claim", [False, True])
+def test_restored_terminal_fact_finishes_recording_after_gateway_restart(
+    tmp_path,
+    crashed_after_claim,
+) -> None:
+    journal = tmp_path / "inspection_tasks.json"
+    terminal = _event(event_sequence=1, state=7)
+    timeline = InspectionTaskTimeline(journal_path=journal)
+    timeline.bind_recording(
+        task_id="inspection-task-42",
+        session_id="inspection-session-42",
+        product_session_id="inspection-product-session-42",
+    )
+    assert timeline.observe(terminal) is True
+    if crashed_after_claim:
+        assert timeline.claim_recording_stop("inspection-task-42") is not None
+
+    stopped = threading.Event()
+
+    class Recording:
+        calls: list[str] = []
+
+        def stop(self, *, expected_session_id: str):
+            self.calls.append(expected_session_id)
+            stopped.set()
+
+    class Gateway:
+        def __init__(self) -> None:
+            self._inspection_task_timeline = InspectionTaskTimeline(journal_path=journal)
+            self._recording = Recording()
+            self.events: list[dict[str, object]] = []
+
+        def push_event(self, event: dict[str, object]) -> None:
+            self.events.append(event)
+
+    gateway = Gateway()
+
+    handle_inspection_task_event(gateway, terminal)
+    handle_inspection_task_event(gateway, terminal)
+
+    assert stopped.wait(timeout=1.0)
+    assert gateway._recording.calls == ["inspection-session-42"]
+
+
+def test_transient_recording_stop_failure_is_reclaimable_after_restart(tmp_path) -> None:
+    from gateway.services.recording import NativeRecordingError
+
+    journal = tmp_path / "inspection_tasks.json"
+    terminal = _event(event_sequence=1, state=7)
+    timeline = InspectionTaskTimeline(journal_path=journal)
+    timeline.bind_recording(
+        task_id="inspection-task-42",
+        session_id="inspection-session-42",
+        product_session_id="inspection-product-session-42",
+    )
+
+    stopped = threading.Event()
+
+    class Recording:
+        def stop(self, *, expected_session_id: str):
+            stopped.set()
+            raise NativeRecordingError(
+                "native_recorder_timeout", "temporary timeout", status_code=504
+            )
+
+    gateway = type(
+        "Gateway",
+        (),
+        {
+            "_inspection_task_timeline": timeline,
+            "_recording": Recording(),
+            "push_event": lambda self, event: None,
+        },
+    )()
+    handle_inspection_task_event(gateway, terminal)
+    assert stopped.wait(timeout=1.0)
+    deadline = time.time() + 1.0
+    while timeline.query("inspection-task-42")["recording"]["state"] == "stopping" and time.time() < deadline:
+        time.sleep(0.01)
+    assert timeline.query("inspection-task-42")["recording"]["state"] == "recording"
+
+    restored = InspectionTaskTimeline(journal_path=journal)
+    claimed = restored.claim_recording_stop("inspection-task-42", recover_stopping=True)
+    assert claimed is not None
+
+
+def test_recording_session_mismatch_is_a_terminal_cleanup_failure() -> None:
+    from gateway.services.recording import NativeRecordingError
+
+    stopped = threading.Event()
+    timeline = InspectionTaskTimeline()
+    timeline.bind_recording(
+        task_id="inspection-task-42",
+        session_id="inspection-session-42",
+        product_session_id="inspection-product-session-42",
+    )
+
+    class Recording:
+        def stop(self, *, expected_session_id: str):
+            stopped.set()
+            raise NativeRecordingError(
+                "recording_session_mismatch", "different active session", status_code=409
+            )
+
+    gateway = type(
+        "Gateway",
+        (),
+        {
+            "_inspection_task_timeline": timeline,
+            "_recording": Recording(),
+            "push_event": lambda self, event: None,
+        },
+    )()
+    handle_inspection_task_event(gateway, _event(event_sequence=1, state=7))
+    assert stopped.wait(timeout=1.0)
+    deadline = time.time() + 1.0
+    while timeline.query("inspection-task-42")["recording"]["state"] == "stopping" and time.time() < deadline:
+        time.sleep(0.01)
+
+    recording = timeline.query("inspection-task-42")["recording"]
+    assert recording["state"] == "failed"
+    assert recording["error"] == "recording_session_mismatch"
 
 
 def test_journal_write_failure_is_visible_without_publishing_an_unstored_fact(

@@ -27,7 +27,7 @@ The main program in this package is:
 | Runtime object | File | Role |
 | --- | --- | --- |
 | `SemanticPlannerModule` | `modules/semantic_planner.py` | Primary semantic planner. Receives instructions, scene graph, odometry, topology summary, and mission status. Publishes `goal_pose`, `cancel`, `servo_target`, `task_plan`, and `agent_message`. |
-| `VisualServoModule` | `modules/visual_servo.py` | Near-target visual control. Receives camera/depth/intrinsics/scene graph plus `servo_target`. Publishes far `goal_pose`, close-range `cmd_vel`, and `nav_stop`. |
+| `VisualServoModule` | `modules/visual_servo.py` | Visual target selection and tracking. Receives the current map-frame detections, synchronized robot pose, selection image, and `servo_target`; publishes bounded map-frame goals and visual-task cancellation through native navigation. |
 | `LLMModule` | `modules/llm.py` | Optional LLM backend module. The planner can also build its own LLM client directly. |
 
 There is no standalone `main.py` under `src/decision/`. Decision modules are
@@ -38,9 +38,9 @@ started by the runtime blueprint system.
 The startup chain is:
 
 ```text
-lingtu.py <profile>
-  -> cli/profile resolution
-  -> lingtu.assembly.full_stack / stack factories
+Product + env
+  -> resolve one RunPlan
+  -> build the selected Blueprint
   -> lingtu.assembly.stacks.planner()
   -> add SemanticPlannerModule, LLMModule, VisualServoModule
   -> lingtu.assembly.wires.semantic connects ports
@@ -59,10 +59,9 @@ Navigation are:
 src/lingtu/assembly/wires/semantic.py
 ```
 
-Local Profiles with semantic planning enabled include `dev` and `sim`. Field
-Products such as `nav` and `explore` may include semantic
-planning through their Product/env RunPlan. `stub` and `sim_nav` are smaller
-local Profiles and may not include the semantic stack.
+Products such as `nav` and `explore` include semantic planning only when their
+resolved Product/env RunPlan selects the semantic stack. Smaller development
+Blueprints omit it explicitly.
 
 ## Runtime Data Flow
 
@@ -81,8 +80,8 @@ SemanticPlannerModule.instruction
         +-- tasks/actions.py           action command shaping
         +-- frontiers/scorer.py        fallback frontier target
         |
-        +--> goal_pose      -> nav.mission.goal_pose
-        +--> cancel         -> nav.mission.cancel
+        +--> goal_pose      -> nav.goals.goal_request
+        +--> nav_command    -> nav.goals.goal_command
         +--> servo_target   -> VisualServoModule.servo_target
         +--> task_plan      -> Gateway/status consumers
         +--> agent_message  -> Gateway chat/status stream
@@ -91,17 +90,28 @@ SemanticPlannerModule.instruction
 Typical visual-servo flow:
 
 ```text
-Camera/color/depth/intrinsics
-PerceptionModule.scene_graph
+CameraModule.color_image
+PerceptionModule.detections_3d + PerceptionModule.robot_pose
 SemanticPlannerModule.servo_target or GatewayModule.servo_target
         |
         v
 VisualServoModule
         |
-        +--> goal_pose   -> nav.mission.goal_pose      (far target)
-        +--> cmd_vel     -> nav.velocity_mux           (close target)
-        +--> nav_stop    -> nav.mission.stop_signal    (pause planner while servoing)
+        +--> goal_pose    -> nav.goals.visual_goal_request
+        +--> goal_cancel  -> nav.goals.visual_cancel_request
+        +<-- goal_status  <- nav.goals.goal_status
+        +--> servo_status -> GatewayModule.visual_servo_status
 ```
+
+The current Product that loads this stack is `tracking`. Within that
+running Host, `find:<target>`, `follow:<target>`, and `stop` are hot task
+switches; they do not reload modules or restart the Product. Follow goals are
+updated at a bounded 2.5 Hz baseline and ignore sub-deadband target movement.
+The status reports target visibility and the matching native navigation task;
+stop remains `stopping` until native navigation publishes a terminal event.
+If no image-capable selector is configured, find remains available while
+description-based follow is unavailable instead of choosing an arbitrary
+person; selecting a visible person by track ID remains available.
 
 ## Directory Layout
 

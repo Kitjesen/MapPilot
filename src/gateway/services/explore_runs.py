@@ -8,7 +8,6 @@ record admission; they never manufacture execution or terminal state.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -20,6 +19,9 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
+
+from gateway.services._journal_file import atomic_write as _atomic_write
+from lingtu.switch_contracts import is_product_session_id
 
 _SCHEMA = "lingtu.explore.run.journal.v1"
 _PUBLIC_SCHEMA = "lingtu.explore.run.v1"
@@ -42,6 +44,19 @@ _KNOWN_STATES = frozenset(_STATE_BY_VALUE.values())
 _TERMINAL_STATES = frozenset({"completed", "cancelled", "failed"})
 _STOP_CONFIRMED_STATES = _TERMINAL_STATES | {"paused"}
 _EVENT_KINDS = frozenset({1, 2, 3})
+_PUBLIC_STATE_BY_PHASE = {
+    "admitted": "PLANNING",
+    "running": "EXECUTING",
+    "paused": "PAUSED",
+    "completed": "SUCCESS",
+    "cancelled": "CANCELLED",
+    "failed": "FAILED",
+}
+_PUBLIC_STATES = frozenset(_PUBLIC_STATE_BY_PHASE.values()) | {"RECOVERING"}
+_TRANSITION_TARGET_BY_PHASE = {
+    "pausing": "PAUSED",
+    "cancelling": "CANCELLED",
+}
 
 
 class ExploreRunConflict(ValueError):
@@ -153,32 +168,6 @@ def _event_kind(value: object, *, state: str) -> int:
     return value
 
 
-def _atomic_write(path: Path, payload: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(
-        f"{path.name}.tmp-{os.getpid()}-{threading.get_ident()}"
-    )
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(descriptor, "wb", closefd=True) as stream:
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-        if os.name != "nt":
-            directory = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-    except BaseException:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise
-
-
 class ExploreRuns:
     """Bounded run history whose lifecycle facts only come from native events."""
 
@@ -213,6 +202,8 @@ class ExploreRuns:
         """Persist one start admission before any native side effect."""
         request = _required_text(request_id, "request_id", max_length=128)
         session = _required_text(product_session_id, "product_session_id", max_length=128)
+        if not is_product_session_id(session):
+            raise ValueError("product_session_id is invalid")
         normalized_route = str(route or "").strip().lower()
         if normalized_route not in {"live", "map"}:
             raise ValueError("route must be live or map")
@@ -377,6 +368,23 @@ class ExploreRuns:
                 "event_sequence": sequence,
             }
             record["last_native_event"] = event
+            prior_public_state = str(record.get("confirmed_state") or "")
+            if prior_public_state not in _PUBLIC_STATES:
+                prior_public_state = str(
+                    _PUBLIC_STATE_BY_PHASE.get(str(record.get("state") or "")) or ""
+                )
+            if state in _PUBLIC_STATE_BY_PHASE:
+                record["confirmed_state"] = _PUBLIC_STATE_BY_PHASE[state]
+                record["transition"] = None
+            elif state in _TRANSITION_TARGET_BY_PHASE:
+                record["confirmed_state"] = prior_public_state or None
+                record["transition"] = {
+                    "confirmed": False,
+                    "from_state": prior_public_state or None,
+                    "phase": state.upper(),
+                    "reason": str(event.get("reason") or state),
+                    "target_state": _TRANSITION_TARGET_BY_PHASE[state],
+                }
             record["state"] = state
             record["state_source"] = "native_exploration_run_event"
             record["reason"] = str(event.get("reason") or state)
@@ -418,9 +426,13 @@ class ExploreRuns:
                 ):
                     return None
                 now = time.time()
-                record["state"] = "interrupted"
                 record["state_source"] = "runtime_reconciliation"
                 record["reason"] = "endpoint_restarted_stop_pending"
+                record["continuity"] = {
+                    "status": "interrupted",
+                    "reason": "endpoint_restarted_stop_pending",
+                    "replacement_boot_id": boot_id,
+                }
                 record["terminal"] = False
                 record["terminal_at"] = None
                 record["can_resume"] = False
@@ -444,7 +456,10 @@ class ExploreRuns:
                     "schema_version": _PUBLIC_SCHEMA,
                     "found": False,
                     "exploration_run_id": run_id,
-                    "state": "unknown",
+                    "state": None,
+                    "state_available": False,
+                    "phase": None,
+                    "transition": None,
                     "terminal": False,
                     "reason": "exploration_run_not_found",
                 }
@@ -507,21 +522,20 @@ class ExploreRuns:
             if _required_text(event.get(field), f"native {field}") != expected:
                 raise ExploreRunConflict(f"native exploration event {field} mismatch")
         expected_map = identity.get("map")
+        event_epoch = event.get("map_content_epoch")
+        if isinstance(event_epoch, bool) or not isinstance(event_epoch, int) or event_epoch < 0:
+            raise ExploreRunConflict("native exploration event map_content_epoch is invalid")
         if expected_map:
+            expected_epoch = expected_map.get("map_content_epoch")
+            if isinstance(expected_epoch, bool) or not isinstance(expected_epoch, int) or expected_epoch <= 0:
+                raise ExploreRunConflict("exploration run map_content_epoch is invalid")
             if str(event.get("map_id") or "") != str(expected_map.get("map_id") or ""):
                 raise ExploreRunConflict("native exploration event map_id mismatch")
-            if int(event.get("map_version") or 0) != int(expected_map.get("map_version") or 0):
-                raise ExploreRunConflict("native exploration event map_version mismatch")
-            if str(event.get("artifact_hash") or "") != str(
-                expected_map.get("artifact_hash") or ""
-            ):
-                raise ExploreRunConflict(
-                    "native exploration event artifact_hash mismatch"
-                )
+            if event_epoch != expected_epoch:
+                raise ExploreRunConflict("native exploration event map_content_epoch mismatch")
         elif (
             str(event.get("map_id") or "")
-            or int(event.get("map_version") or 0) != 0
-            or str(event.get("artifact_hash") or "")
+            or event_epoch != 0
         ):
             raise ExploreRunConflict("native live exploration event carries saved-map identity")
 
@@ -533,6 +547,60 @@ class ExploreRuns:
 
     def _snapshot(self, record: Mapping[str, Any]) -> dict[str, Any]:
         snapshot = json.loads(_json_bytes(dict(record)))
+        internal_state = snapshot.get("state")
+        confirmed_state = snapshot.pop("confirmed_state", None)
+        continuity = snapshot.get("continuity")
+        continuity_interrupted = (
+            isinstance(continuity, Mapping)
+            and continuity.get("status") == "interrupted"
+        )
+        if internal_state in {"submitted", "rejected"}:
+            snapshot["state"] = None
+            snapshot["state_available"] = False
+            snapshot["phase"] = None
+            snapshot["transition"] = None
+        elif internal_state in _PUBLIC_STATE_BY_PHASE:
+            snapshot["state"] = _PUBLIC_STATE_BY_PHASE[internal_state]
+            snapshot["state_available"] = not continuity_interrupted
+            snapshot["phase"] = str(internal_state).upper()
+            snapshot["transition"] = None
+        elif internal_state in _TRANSITION_TARGET_BY_PHASE:
+            public_state = (
+                str(confirmed_state) if confirmed_state in _PUBLIC_STATES else None
+            )
+            snapshot["state"] = public_state
+            snapshot["state_available"] = (
+                public_state is not None and not continuity_interrupted
+            )
+            snapshot["phase"] = str(internal_state).upper()
+            if not isinstance(snapshot.get("transition"), Mapping):
+                snapshot["transition"] = {
+                    "confirmed": False,
+                    "from_state": public_state,
+                    "phase": str(internal_state).upper(),
+                    "reason": str(snapshot.get("reason") or internal_state),
+                    "target_state": _TRANSITION_TARGET_BY_PHASE[internal_state],
+                }
+        elif internal_state == "interrupted":
+            last_event = snapshot.get("last_native_event")
+            last_phase = ""
+            if isinstance(last_event, Mapping):
+                try:
+                    last_phase = _state_name(last_event.get("state"))
+                except ValueError:
+                    last_phase = ""
+            public_state = _PUBLIC_STATE_BY_PHASE.get(last_phase)
+            snapshot["state"] = public_state
+            snapshot["state_available"] = False
+            snapshot["phase"] = last_phase.upper() if public_state else None
+            snapshot["transition"] = None
+            snapshot["continuity"] = {
+                "status": "interrupted",
+                "reason": str(snapshot.get("reason") or "continuity_unavailable"),
+                "replacement_boot_id": str(
+                    snapshot.get("replacement_boot_id") or ""
+                ),
+            }
         snapshot["schema_version"] = _PUBLIC_SCHEMA
         snapshot["found"] = True
         return snapshot
@@ -558,9 +626,7 @@ class ExploreRuns:
             "boot_sequences": self._boot_sequences,
             "runs": list(self._runs.values()),
         }
-        body_bytes = _json_bytes(body)
-        envelope = {"body": body, "sha256": hashlib.sha256(body_bytes).hexdigest()}
-        payload = _json_bytes(envelope) + b"\n"
+        payload = _json_bytes(body) + b"\n"
         if len(payload) > _MAX_JOURNAL_BYTES:
             self._journal_status = "write_failed"
             self._journal_error = "exploration run journal exceeds its size limit"
@@ -589,15 +655,9 @@ class ExploreRuns:
                 raise ValueError("exploration run journal is not a regular file")
             if metadata.st_size > _MAX_JOURNAL_BYTES:
                 raise ValueError("exploration run journal exceeds its size limit")
-            envelope = json.loads(self._journal_path.read_text(encoding="utf-8"))
-            if not isinstance(envelope, Mapping):
-                raise ValueError("exploration run journal envelope is invalid")
-            body = envelope.get("body")
+            body = json.loads(self._journal_path.read_text(encoding="utf-8"))
             if not isinstance(body, Mapping) or body.get("schema_version") != _SCHEMA:
                 raise ValueError("exploration run journal schema is invalid")
-            expected = str(envelope.get("sha256") or "")
-            if hashlib.sha256(_json_bytes(body)).hexdigest() != expected:
-                raise ValueError("exploration run journal integrity mismatch")
             values = body.get("runs")
             if not isinstance(values, list) or len(values) > self._retention:
                 raise ValueError("exploration run journal retention is invalid")

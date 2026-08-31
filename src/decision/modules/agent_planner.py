@@ -50,7 +50,7 @@ _AGENT_SKILL_BLOCKLIST = {
     "set_mode",
     "stop_navigation",
     "cancel_mission",
-    "start_patrol",
+    "start_inspection",
 }
 
 
@@ -66,8 +66,6 @@ class AgentPlannerModule(Module, layer=4):
     through the AgentLoop's LLM-driven observe-think-act cycle.
     """
 
-    _run_in_worker = True
-    _worker_group = "semantic"
     SOFT_DEPENDS = ["VectorMemoryModule", "SemanticMapperModule", "LLMModule"]
 
     # -- Inputs --

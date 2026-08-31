@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import os
 import time
 from collections.abc import Mapping
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any
 
 from gateway.services.native_control import (
@@ -26,10 +24,13 @@ from gateway.services.safety_status import (
     safety_stop_active,
     safety_summary,
 )
-from runtime.profiles.native_nav_config import compile_native_nav_config
 from runtime.runtime_interface import REAL_RUNTIME_CONTRACT, map_frame_id
 from runtime.runtime_policy import (
     backend_capability_defaults as _backend_capability_defaults,
+)
+from runtime.tf import (
+    map_from_odom_transform_from_mapping,
+    map_from_odom_transform_to_dict,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ MISSION_TERMINAL_STATES = {"SUCCESS", "FAILED", "CANCELLED"}
 
 CONTROL_SOURCE_META: dict[str, dict[str, Any]] = {
     "teleop": {
-        "label": "Teleop joystick",
+        "label": "Teleop velocity",
         "category": "manual",
         "owner": "teleop",
         "preempts_autonomy": True,
@@ -264,20 +265,12 @@ def safe_session(gw: Any) -> dict[str, Any]:
     try:
         snapshot = gw._session_snapshot()
         if isinstance(snapshot, Mapping):
-            result = dict(snapshot)
-            result["pending"] = bool(result.get("pending", False))
-            return result
+            return dict(snapshot)
     except Exception:
         logger.debug("safe_session_snapshot failed", exc_info=True)
     return {
         "mode": getattr(gw, "_session_mode", "unknown"),
         "active_map": getattr(gw, "_session_map", None),
-        "pending": bool(getattr(gw, "_session_pending", False)),
-        "error": "session_snapshot_unavailable",
-        "can_start_mapping": False,
-        "can_start_navigating": False,
-        "can_start_exploring": False,
-        "can_end": False,
     }
 
 
@@ -319,7 +312,7 @@ def localizer_algorithm_healthy(
     icp_fitness = _as_float(diagnostics.get("icp_fitness"), icp_quality)
     health_fitness = _as_float(diagnostics.get("localizer_health_fitness"), None)
     icp_ok = any(value is not None and 0.0 < value < 0.5 for value in (icp_fitness, health_fitness))
-    pose_fresh, _ = _pose_freshness(diagnostics)
+    pose_fresh, _ = classify_pose_freshness(diagnostics)
     cloud_fresh = _cloud_fresh(diagnostics)
     odom_cloud_ok = (
         health_source == "odom_map_cloud"
@@ -344,13 +337,6 @@ def localizer_algorithm_healthy(
     )
 
 
-def _localizer_algorithm_healthy(
-    diagnostics: Mapping[str, Any],
-    icp_quality: float,
-) -> bool:
-    return localizer_algorithm_healthy(diagnostics, icp_quality)
-
-
 def classify_pose_freshness(diagnostics: Mapping[str, Any]) -> tuple[bool | None, str]:
     reported = _reported_state(diagnostics.get("state"))
     explicit = _as_optional_bool(diagnostics.get("pose_fresh"))
@@ -367,10 +353,6 @@ def classify_pose_freshness(diagnostics: Mapping[str, Any]) -> tuple[bool | None
     if isinstance(confidence, (int, float)):
         return confidence >= 0.5, "fresh" if confidence >= 0.5 else "stale"
     return None, "unknown"
-
-
-def _pose_freshness(diagnostics: Mapping[str, Any]) -> tuple[bool | None, str]:
-    return classify_pose_freshness(diagnostics)
 
 
 def _cloud_fresh(diagnostics: Mapping[str, Any]) -> bool:
@@ -392,20 +374,19 @@ def _localization_state(
     reasons: list[str] = []
     mode = str(session.get("mode", "unknown"))
     ready = bool(session.get("localizer_ready", False))
-    pending = bool(session.get("pending", False))
     reported = _reported_state(diagnostics.get("state"))
     degeneracy = _reported_state(diagnostics.get("degeneracy"))
     localizer_health = _reported_state(diagnostics.get("localizer_health"))
     recovery_signal = _active_recovery_signal(diagnostics.get("recovery_signal"))
     diagnostics.get("confidence")
-    algorithm_healthy = _localizer_algorithm_healthy(diagnostics, icp_quality)
-    pose_fresh, _ = _pose_freshness(diagnostics)
+    algorithm_healthy = localizer_algorithm_healthy(diagnostics, icp_quality)
+    pose_fresh, _ = classify_pose_freshness(diagnostics)
 
     if odometry is None:
         reasons.append("odometry_missing")
         return "no_odometry", reasons
 
-    if "RELOCAL" in reported or (pending and mode == "navigating"):
+    if "RELOCAL" in reported:
         reasons.append("relocalization_pending")
         return "relocalizing", reasons
 
@@ -463,8 +444,8 @@ def build_localization_status_from_parts(
     diag_age_ms = (
         round(max(0.0, time.monotonic() - diag_received_mono) * 1000.0, 1) if diag_received_mono is not None else None
     )
-    algorithm_healthy = _localizer_algorithm_healthy(diagnostics, float(icp_quality))
-    pose_fresh, pose_freshness = _pose_freshness(diagnostics)
+    algorithm_healthy = localizer_algorithm_healthy(diagnostics, float(icp_quality))
+    pose_fresh, pose_freshness = classify_pose_freshness(diagnostics)
     state, reasons = _localization_state(
         odometry,
         session,
@@ -505,12 +486,19 @@ def build_localization_status_from_parts(
         runtime_boundary,
     )
     buffers = _mapping(diagnostics.get("buffers"))
-    map_odom_tf = diagnostics.get("map_odom_tf")
+    map_tracking = _mapping(diagnostics.get("track_against_map"))
+    map_from_odom = map_from_odom_transform_from_mapping(diagnostics.get("map_odom_tf"))
+    map_odom_tf = (
+        map_from_odom_transform_to_dict(map_from_odom)
+        if map_from_odom is not None
+        else None
+    )
     return {
         "schema_version": LOCALIZATION_STATUS_SCHEMA_VERSION,
         "state": state,
         "ready": ready,
         "has_odometry": odometry is not None,
+        "odometry": odometry,
         "session_mode": session.get("mode"),
         "active_map": session.get("active_map"),
         "icp_quality": float(icp_quality),
@@ -572,14 +560,13 @@ def build_localization_status_from_parts(
             diagnostics.get("lidar_rollback_count", buffers.get("lidar_rollback_count"))
         ),
         "map_loaded": _as_optional_bool(diagnostics.get("map_loaded")),
+        "map_tracking": map_tracking,
         "map_frame_jump": _as_optional_bool(diagnostics.get("map_frame_jump")),
         "map_frame_jump_sequence": _as_optional_int(diagnostics.get("map_frame_jump_sequence")),
         "scene_mode": diagnostics.get("scene_mode"),
         "gnss_fusion_health": _mapping(diagnostics.get("gnss_fusion_health")),
-        "map_odom_tf": dict(map_odom_tf) if isinstance(map_odom_tf, Mapping) else None,
-        "has_map_odom_tf": (
-            isinstance(map_odom_tf, Mapping) and _as_optional_bool(map_odom_tf.get("valid")) is not False
-        ),
+        "map_odom_tf": map_odom_tf,
+        "has_map_odom_tf": map_odom_tf is not None,
         "map_state": diagnostics.get("map_state"),
         "map_save_supported": map_save_supported,
         "map_save_source": map_save_source,
@@ -644,95 +631,18 @@ def build_localization_status(gw: Any) -> dict[str, Any]:
     )
 
 
-def _cmd_vel_health(gw: Any) -> dict[str, Any]:
-    mux = getattr(gw, "_cmd_vel_mux", None)
-    modules = getattr(gw, "_all_modules", None) or {}
-    if mux is None:
-        mux = modules.get("nav.velocity_mux")
-    if mux is None:
-        return {"active_source": "unknown", "sources": {}, "available": False}
-    try:
-        health = mux.health() if hasattr(mux, "health") else {}
-        if isinstance(health, Mapping):
-            data = dict(health)
-            data["available"] = True
-            data.setdefault("active_source", "unknown")
-            data.setdefault("sources", {})
-            return data
-    except Exception as exc:
-        return {
-            "active_source": "unknown",
-            "sources": {},
-            "available": False,
-            "error": str(exc),
-        }
-    return {"active_source": "unknown", "sources": {}, "available": False}
-
-
-def _navigation_status_from_module(gw: Any) -> dict[str, Any]:
-    modules = getattr(gw, "_all_modules", None) or {}
-    candidates = []
-    injected = getattr(gw, "_navigation", None)
-    if injected is not None:
-        candidates.append(injected)
-    direct = modules.get("nav.mission")
-    if direct is not None and not any(direct is candidate for candidate in candidates):
-        candidates.append(direct)
-    for name, module in modules.items():
-        if module is direct or any(module is candidate for candidate in candidates):
-            continue
-        token = str(name).lower()
-        class_token = module.__class__.__name__.lower()
-        if token.endswith("navigation") or token.endswith("nav.mission"):
-            candidates.append(module)
-            continue
-        if class_token == "navigation":
-            candidates.append(module)
-
-    for module in candidates:
-        get_status = getattr(module, "get_navigation_status", None)
-        if not callable(get_status):
-            continue
-        try:
-            raw = get_status()
-            if isinstance(raw, str):
-                raw = json.loads(raw)
-            status = _mapping(raw)
-            if status:
-                return status
-        except Exception:
-            continue
-    return {}
-
-
 def _control_summary(
     *,
     mode: str,
     lease: Mapping[str, Any],
     mission_state: str,
-    cmd_vel: Mapping[str, Any],
     native_endpoint: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     native_control = _mapping(native_endpoint)
-    endpoint_authoritative = native_control.get("required") is True
-    if endpoint_authoritative:
-        active_source = str(native_control.get("active_cmd_source") or "unknown")
-        active = active_source not in {"none", "unknown"}
-        sources = {active_source: {"active": active}} if active_source else {}
-        authority_source = "native_endpoint"
-        source_available = native_control.get("status_available") is True
-        cmd_vel_mux = {
-            "active_source": "unavailable",
-            "sources": {},
-            "available": False,
-            "reason": "not_loaded_endpoint_only",
-        }
-    else:
-        active_source = str(cmd_vel.get("active_source") or "none")
-        sources = _mapping(cmd_vel.get("sources"))
-        authority_source = "python_cmd_vel_mux"
-        source_available = bool(cmd_vel.get("available", False))
-        cmd_vel_mux = dict(cmd_vel)
+    active_source = str(native_control.get("active_cmd_source") or "unknown")
+    active = active_source not in {"none", "unknown"}
+    sources = {active_source: {"active": active}} if active_source else {}
+    source_available = native_control.get("status_available") is True
     active_source_health = _mapping(sources.get(active_source))
     authority = _mapping(native_control.get("control_authority"))
     meta = CONTROL_SOURCE_META.get(active_source, {})
@@ -758,9 +668,9 @@ def _control_summary(
     return {
         "mode": mode,
         "lease": dict(lease),
-        "authority_source": authority_source,
+        "authority_source": "native_endpoint",
         "authority_available": source_available,
-        "native_endpoint_available": (source_available if endpoint_authoritative else False),
+        "native_endpoint_available": source_available,
         "active_cmd_source": active_source,
         "command_owner": meta["owner"],
         "source_category": meta["category"],
@@ -770,7 +680,6 @@ def _control_summary(
         "operator_takeover_latched": authority.get("operator_takeover_latched") is True,
         "resume_required": authority.get("resume_required") is True,
         "estop_latched": authority.get("estop_latched") is True,
-        "mux_available": source_available if not endpoint_authoritative else False,
         "active_source": {
             "name": active_source,
             "label": meta["label"],
@@ -781,8 +690,7 @@ def _control_summary(
             "age_ms": active_source_health.get("age_ms"),
         },
         "sources": sources,
-        "cmd_vel_mux": cmd_vel_mux,
-        "native_endpoint_control": native_control if endpoint_authoritative else {},
+        "native_endpoint_control": native_control,
     }
 
 
@@ -888,7 +796,7 @@ def _speed_policy_summary(
         "scale": scale,
         "mode": mode,
         "reason": reason,
-        "source": str(raw_policy.get("source") or "mission_status"),
+        "source": str(raw_policy.get("source") or "native_navigation_state"),
         "applied": applied,
     }
 
@@ -991,8 +899,6 @@ def _navigation_reason_codes(
         codes.append("estop_active")
     if safety_stop_active(safety):
         codes.append(SAFETY_STOP_BLOCKER)
-    if bool(session.get("pending", False)):
-        codes.append("session_transition_pending")
     if _session_mode(session) not in {"navigating", "exploring"}:
         codes.append("navigation_session_inactive")
 
@@ -1008,6 +914,8 @@ def _navigation_reason_codes(
         codes.append("pose_stale")
     if _saved_map_relocalization_missing(localization):
         codes.append("saved_map_relocalization_missing")
+    if _saved_map_tracking_unhealthy(localization):
+        codes.append("saved_map_tracking_unhealthy")
 
     if state == "RECOVERING":
         codes.append("mission_recovering")
@@ -1025,11 +933,9 @@ def _navigation_reason_codes(
 
     if control.get("preempting_autonomy"):
         codes.append(f"control_preempted_by_{control.get('active_cmd_source')}")
-    if control.get("authority_source") != "native_endpoint" and not control.get("mux_available", False):
-        codes.append("cmd_vel_mux_unavailable")
     if map_artifact_gate.get("required") is True and map_artifact_gate.get("ok") is not True:
         codes.append("map_artifact_gate_failed")
-    if real_runtime_evidence.get("required") is True and not _real_runtime_evidence_ready(real_runtime_evidence):
+    if real_runtime_evidence.get("required") is True and real_runtime_evidence.get("ok") is not True:
         codes.append("real_runtime_evidence_missing_or_stale")
 
     return list(dict.fromkeys(codes))
@@ -1055,6 +961,25 @@ def _saved_map_relocalization_missing(localization: Mapping[str, Any]) -> bool:
     return True
 
 
+def _saved_map_tracking_unhealthy(localization: Mapping[str, Any]) -> bool:
+    if not localization.get("active_map"):
+        return False
+    if str(localization.get("backend") or "").lower() != "native_dds":
+        return False
+    if str(localization.get("native_mode") or "").lower() != "localization":
+        return False
+    tracking = localization.get("map_tracking")
+    if not isinstance(tracking, Mapping):
+        return True
+    successes = _as_optional_int(tracking.get("successes"))
+    return (
+        tracking.get("enabled") is not True
+        or successes is None
+        or successes <= 0
+        or tracking.get("degraded") is not False
+    )
+
+
 _NAVIGATION_BLOCKER_CODES = {
     "odometry_missing",
     "frame_mismatch_odometry",
@@ -1062,13 +987,13 @@ _NAVIGATION_BLOCKER_CODES = {
     "frame_mismatch_goal",
     "estop_active",
     SAFETY_STOP_BLOCKER,
-    "session_transition_pending",
     "navigation_session_inactive",
     "localization_lost",
     "localization_relocalizing",
     "localization_initializing",
     "localization_recovery_active",
     "saved_map_relocalization_missing",
+    "saved_map_tracking_unhealthy",
     "pose_stale",
     "map_artifact_gate_failed",
     "real_runtime_evidence_missing_or_stale",
@@ -1081,7 +1006,6 @@ _NAVIGATION_BLOCKER_CODES = {
     "native_estop_latched",
     "native_product_expectation_unavailable",
     "native_product_mismatch",
-    "native_product_fingerprint_mismatch",
     "native_product_parameters_mismatch",
     "native_teleop_local_planner_disabled",
     "native_obstacle_check_disabled",
@@ -1124,16 +1048,15 @@ def _with_active_map_artifact_consistency(
 ) -> dict[str, Any]:
     checked = dict(gate)
     active_map = str(session.get("active_map") or localization.get("active_map") or "").strip()
-    gate_map_dir = str(checked.get("map_dir") or "").strip()
-    gate_map_name = Path(gate_map_dir).name if gate_map_dir else ""
-    if active_map and gate_map_name and gate_map_name != active_map:
+    gate_map_id = str(checked.get("map_id") or "").strip()
+    if active_map and gate_map_id and gate_map_id != active_map:
         blockers = [str(item) for item in (checked.get("blockers") or []) if str(item)]
         if "active_map_artifact_gate_mismatch" not in blockers:
             blockers.append("active_map_artifact_gate_mismatch")
         checked["ok"] = False
         checked["reason"] = "active_map_artifact_gate_mismatch"
         checked["active_map"] = active_map
-        checked["gate_map"] = gate_map_name
+        checked["gate_map"] = gate_map_id
         checked["blockers"] = blockers
     return checked
 
@@ -1180,12 +1103,6 @@ def _real_runtime_evidence_status(session: Mapping[str, Any]) -> dict[str, Any]:
             "reason": "real_runtime_evidence_status_error",
             "blockers": [f"real-runtime-evidence status error: {exc}"],
         }
-
-
-def _real_runtime_evidence_ready(evidence: Mapping[str, Any]) -> bool:
-    if "preflight_ok" in evidence:
-        return evidence.get("preflight_ok") is True
-    return evidence.get("ok") is True
 
 
 def _frame_id(value: Any) -> str | None:
@@ -1247,11 +1164,16 @@ def _navigation_frame_summary(
     costmap_frame_id = _frame_id(mission.get("costmap_frame_id")) or "unknown"
     goal_frame_id = _frame_id(mission.get("goal_frame_id")) or _frame_from_payload(mission.get("goal"))
     planning_frame = normalize_frame_id(planning_frame_id) or default_planning_frame
-    map_odom_tf = _mapping(mission.get("map_odom_tf"))
+    map_from_odom = map_from_odom_transform_from_mapping(mission.get("map_odom_tf"))
+    map_odom_tf = (
+        map_from_odom_transform_to_dict(map_from_odom)
+        if map_from_odom is not None
+        else None
+    )
     linked_odom_frame: str | None = None
-    if map_odom_tf and _as_optional_bool(map_odom_tf.get("valid")) is not False:
-        parent = normalize_frame_id(map_odom_tf.get("frame_id"))
-        child = normalize_frame_id(map_odom_tf.get("child_frame_id"))
+    if map_odom_tf is not None:
+        parent = map_odom_tf["frame_id"]
+        child = map_odom_tf["child_frame_id"]
         if parent == planning_frame and child:
             linked_odom_frame = child
     odometry_expected = tuple(dict.fromkeys(frame for frame in (planning_frame, linked_odom_frame) if frame))
@@ -1272,7 +1194,7 @@ def _navigation_frame_summary(
         "goal_frame_id": goal_frame_id,
         "odometry_expected_frame_ids": list(odometry_expected),
         "has_map_odom_tf": linked_odom_frame is not None,
-        "map_odom_tf": dict(map_odom_tf) if map_odom_tf else None,
+        "map_odom_tf": map_odom_tf,
         "observed_frame_links": (
             {
                 "map_to_odom": {
@@ -1290,23 +1212,22 @@ def _navigation_frame_summary(
 
 
 def runtime_identity(gw: Any | None = None) -> dict[str, Any]:
-    """Return the Gateway's fixed Env and active Product identity."""
+    """Return the public Gateway runtime identity."""
 
     plan = getattr(gw, "_compiled_run_plan", None) if gw is not None else None
-    plan_env = str(getattr(plan, "env", "") or "").strip()
-    process_env = str(os.environ.get("LINGTU_ENV") or "").strip()
-    env = plan_env or process_env or "real"
+    env = str(getattr(gw, "_compiled_env", "real") or "real").strip()
     if env not in {"real", "sim"}:
         raise ValueError(f"Env must be 'real' or 'sim', received {env!r}")
 
-    plan_product = str(getattr(plan, "product", "") or "").strip()
-    compiled_product = str(getattr(gw, "_compiled_product", "") or "").strip() if gw is not None else ""
-    product = plan_product or compiled_product or str(os.environ.get("LINGTU_PRODUCT") or "").strip()
+    product = str(getattr(gw, "_compiled_product", "") or "").strip()
     return {
         "env": env,
         "product": product or None,
-        "run_plan_fingerprint": (str(getattr(plan, "fingerprint", "") or "").strip() or None),
-        "identity_source": ("run_plan" if plan is not None else "environment" if process_env or product else "default"),
+        "state": "active" if plan is not None else "standby",
+        "product_session_id": (
+            str(getattr(gw, "_compiled_product_session_id", "") or "").strip()
+            or None
+        ),
     }
 
 
@@ -1316,9 +1237,9 @@ def _runtime_boundary_status(gw: Any | None = None) -> dict[str, Any]:
         FRAMES,
         REAL_RUNTIME_CONTRACT,
         RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES,
-        THUNDER_LITE_RUNTIME_CONTRACT,
         canonical_data_source_name,
         resolved_runtime_data_flow,
+        runtime_contract_data_source,
         runtime_contract_manifest,
         runtime_data_flow_topics,
         runtime_required_topic_frame_ids,
@@ -1350,7 +1271,11 @@ def _runtime_boundary_status(gw: Any | None = None) -> dict[str, Any]:
 
     if declared and not data_source:
         blockers.append("data_source_missing")
-    if runtime_contract and data_source and runtime_contract != data_source:
+    if (
+        runtime_contract
+        and data_source
+        and runtime_contract_data_source(runtime_contract) != data_source
+    ):
         blockers.append("runtime_contract_data_source_mismatch")
 
     if data_source or runtime_contract:
@@ -1376,7 +1301,6 @@ def _runtime_boundary_status(gw: Any | None = None) -> dict[str, Any]:
         frame_contracts = {
             *DATA_SOURCE_CONTRACTS,
             REAL_RUNTIME_CONTRACT,
-            THUNDER_LITE_RUNTIME_CONTRACT,
         }
         if topic_contract in frame_contracts:
             topic_allowed_frames = {
@@ -1552,10 +1476,7 @@ def _native_endpoint_readiness(
     managed_run_plan_missing = bool(
         plan is None
         and gw is not None
-        and (
-            getattr(gw, "_compiled_run_plan_fingerprint", "")
-            or getattr(gw, "_compiled_command_output_mode", "") == "endpoint_only"
-        )
+        and getattr(gw, "_compiled_command_output_mode", "") == "endpoint_only"
     )
     legacy_runtime_requires_native_endpoint = (
         plan is None and endpoint_only_enabled(gw) and _session_mode(session) in {"navigating", "exploring"}
@@ -1565,7 +1486,9 @@ def _native_endpoint_readiness(
         return {
             "required": False,
             "ok": None,
+            "navigation_ready": None,
             "blockers": [],
+            "far_input": {"required": False, "ready": True, "reason": "not_required"},
             "input_gate": {},
             "status_available": None,
             "active_cmd_source": None,
@@ -1580,7 +1503,9 @@ def _native_endpoint_readiness(
         return {
             "required": True,
             "ok": False,
+            "navigation_ready": False,
             "blockers": ["run_plan_missing"],
+            "far_input": {},
             "input_gate": {},
             "status_available": None,
             "active_cmd_source": "unknown",
@@ -1596,7 +1521,9 @@ def _native_endpoint_readiness(
         return {
             "required": True,
             "ok": False,
+            "navigation_ready": False,
             "blockers": ["native_endpoint_status_missing_or_stale"],
+            "far_input": {},
             "input_gate": {},
             "status_available": False,
             "active_cmd_source": "unknown",
@@ -1637,34 +1564,37 @@ def _native_endpoint_readiness(
     if operator_takeover_latched or resume_required or active_cmd_source in {"teleop", "manual_hold"}:
         blockers.append("native_resume_required")
     control_mode = str(snapshot.get("control_mode") or "").strip().lower()
-    expected_config_fingerprint: str | None = None
-    actual_config_fingerprint: str | None = None
     parameter_mismatches: dict[str, dict[str, float | None]] = {}
-    expected_parameters: Mapping[str, Any] = {}
+    expected_parameters: dict[str, float] = {}
     observed_native_product = _mapping(snapshot.get("native_product"))
     native_product_required = plan is not None and "nav" in process_names
     if native_product_required:
-        try:
-            plan_config = dict(getattr(plan, "host_config", {}))
-            plan_config["native_nav"] = dict(native_nav)
-            plan_config["native_control_mode"] = expected_control_mode
-            expected_native = compile_native_nav_config(
-                product,
-                plan_config,
-            ).as_dict()
-        except (KeyError, TypeError, ValueError, RuntimeError) as exc:
-            logger.error("cannot resolve expected native navigation configuration: %s", exc)
+        actual_product = str(observed_native_product.get("product") or "").strip()
+        if actual_product != product:
+            blockers.append("native_product_mismatch")
+
+        expected_environment = getattr(plan, "native_process_environment", {})
+        parameter_environment = (
+            ("path_follower_max_speed_mps", "LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"),
+            ("path_follower_min_speed_mps", "LINGTU_NAV_PATH_FOLLOWER_MIN_SPEED_MPS"),
+            ("path_follower_max_accel_mps2", "LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2"),
+            ("path_follower_lookahead_m", "LINGTU_NAV_PATH_FOLLOWER_LOOKAHEAD_M"),
+            ("path_follower_goal_tolerance_m", "LINGTU_NAV_PATH_FOLLOWER_GOAL_TOLERANCE_M"),
+            ("waypoint_reached_m", "LINGTU_NAV_WAYPOINT_REACHED_M"),
+            ("goal_reached_m", "LINGTU_NAV_GOAL_REACHED_M"),
+            ("corridor_lookahead_m", "LINGTU_NAV_CORRIDOR_LOOKAHEAD_M"),
+            ("teleop_planner_horizon_m", "LINGTU_TELEOP_PLANNER_HORIZON_M"),
+            ("teleop_planner_max_deviation_deg", "LINGTU_TELEOP_PLANNER_MAX_DEVIATION_DEG"),
+        )
+        for parameter, environment_name in parameter_environment:
+            value = _finite_float(expected_environment.get(environment_name))
+            if value is None:
+                expected_parameters.clear()
+                break
+            expected_parameters[parameter] = value
+        if not expected_parameters:
             blockers.append("native_product_expectation_unavailable")
         else:
-            expected_config_fingerprint = str(expected_native["fingerprint"])
-            actual_product = str(observed_native_product.get("product") or "").strip()
-            actual_config_fingerprint = str(observed_native_product.get("config_fingerprint") or "").strip()
-            if actual_product != product:
-                blockers.append("native_product_mismatch")
-            if actual_config_fingerprint != expected_config_fingerprint:
-                blockers.append("native_product_fingerprint_mismatch")
-
-            expected_parameters = expected_native["parameters"]
             observed_path_follower = _mapping(snapshot.get("path_follower"))
             observed_nav_loop = _mapping(snapshot.get("nav_loop"))
             observed_parameters = (
@@ -1727,6 +1657,7 @@ def _native_endpoint_readiness(
     if control_mode != expected_control_mode:
         blockers.append("native_control_mode_mismatch")
     global_planner = str(snapshot.get("global_planner") or "").strip().lower()
+    far_input = _mapping(snapshot.get("far_input"))
     assisted_teleop_required = plan is not None and bool(
         {
             "operator_assisted_local_planner_control",
@@ -1763,19 +1694,32 @@ def _native_endpoint_readiness(
             blockers.append("native_obstacle_check_disabled")
         if use_traversability_cost is not True:
             blockers.append("native_traversability_cost_disabled")
-    expected_global_planner = (
-        str(
+    expected_global_planner = str(
+        native_nav.get("global_planner") or ""
+        if isinstance(native_nav, Mapping)
+        else ""
+    ).strip().lower()
+    if not expected_global_planner:
+        expected_global_planner = str(
             session.get("global_planner")
             or session.get("planner")
-            or os.environ.get("LINGTU_NAV_GLOBAL_PLANNER")
+            or os.environ.get("NAV_GLOBAL_PLANNER")
             or "octoplanner3d"
-        )
-        .strip()
-        .lower()
-    )
+        ).strip().lower()
     aliases = {"octo": "octoplanner3d", "octplanner": "octoplanner3d"}
     global_planner = aliases.get(global_planner, global_planner)
     expected_global_planner = aliases.get(expected_global_planner, expected_global_planner)
+    if global_planner == "far":
+        if not far_input:
+            blockers.append("native_far_input_status_missing")
+        elif far_input.get("required") is not True:
+            blockers.append("native_far_input_contract_invalid")
+        elif far_input.get("ready") is not True:
+            blockers.append("native_far_input_not_ready")
+        elif not str(far_input.get("map_id") or "").strip() or _as_int(
+            far_input.get("content_epoch"), 0
+        ) <= 0:
+            blockers.append("native_far_input_identity_invalid")
     planner_map = str(snapshot.get("planner_map") or "").strip()
     operator_motion = _mapping(snapshot.get("operator_motion"))
     operator_motion_status_available = bool(operator_motion)
@@ -1795,7 +1739,11 @@ def _native_endpoint_readiness(
                 blockers.append("native_operator_motion_ack_scope_invalid")
             if operator_motion.get("sample_evidence") != "status_sequences":
                 blockers.append("native_operator_motion_sample_evidence_invalid")
-    requires_map = "saved_map_relocalization" in set(required_capabilities)
+    lifecycle = getattr(plan, "lifecycle", {}) if plan is not None else {}
+    requires_map = bool(
+        isinstance(lifecycle, Mapping)
+        and lifecycle.get("requires_map") is True
+    )
     global_planner_required = (
         plan is None
         or requires_map
@@ -1815,6 +1763,7 @@ def _native_endpoint_readiness(
     return {
         "required": True,
         "ok": not blockers,
+        "navigation_ready": not blockers,
         "blockers": blockers,
         "status_available": True,
         "active_cmd_source": active_cmd_source,
@@ -1825,19 +1774,15 @@ def _native_endpoint_readiness(
         "control_mode": control_mode,
         "expected_control_mode": expected_control_mode,
         "native_product": observed_native_product,
-        "expected_config_fingerprint": expected_config_fingerprint,
-        "actual_config_fingerprint": actual_config_fingerprint,
         "parameter_mismatches": parameter_mismatches,
         "global_planner": global_planner,
         "expected_global_planner": expected_global_planner,
-        "planner_map": planner_map,
         "publish_cmd_vel": publish_cmd_vel,
-        "active_octomap": snapshot.get("active_octomap"),
         "assisted_teleop_required": assisted_teleop_required,
         "teleop_local_planner": teleop_local_planner,
         "check_obstacle": check_obstacle,
         "use_traversability_cost": use_traversability_cost,
-        "active_occupancy": snapshot.get("active_occupancy"),
+        "far_input": dict(far_input),
         "operator_motion": {
             "required": operator_motion_required,
             "status_available": operator_motion_status_available,
@@ -1863,19 +1808,17 @@ def _readiness_summary(
     map_required = map_artifact_gate.get("required") is True
     real_required = real_runtime_evidence.get("required") is True
     return {
+        "navigation_ready": can_accept_goal and not blockers,
         "can_accept_goal": can_accept_goal,
         "can_execute_autonomy": not blockers,
         "blockers": blockers,
         "advisories": advisories,
         "tf_ok": bool(frames.get("ok", False)),
         "map_artifacts_ok": (map_artifact_gate.get("ok") is True if map_required else True),
-        "real_runtime_evidence_ok": (_real_runtime_evidence_ready(real_runtime_evidence) if real_required else None),
-        "real_runtime_evidence_full_ok": (real_runtime_evidence.get("ok") is True if real_required else None),
+        "real_runtime_evidence_ok": (real_runtime_evidence.get("ok") is True if real_required else None),
         "planning_frame_id": frames.get("planning_frame_id"),
         "odom_frame_id": frames.get("odom_frame_id"),
-        "observed_frame_links": _mapping(
-            real_runtime_evidence.get("checked_frame_link_evidence") or frames.get("observed_frame_links")
-        ),
+        "observed_frame_links": _mapping(frames.get("observed_frame_links")),
         "map_artifact_gate": dict(map_artifact_gate),
         "real_runtime_evidence": dict(real_runtime_evidence),
         "native_endpoint": dict(native_endpoint),
@@ -1897,8 +1840,7 @@ def _mission_from_navigation_state(state: Mapping[str, Any]) -> dict[str, Any]:
         "active_request_id": state.get("active_request_id") or "",
         "goal_epoch": state.get("goal_epoch"),
         "map_id": state.get("map_id") or "",
-        "map_version": state.get("map_version"),
-        "map_hash": state.get("map_hash") or "",
+        "map_content_epoch": state.get("map_content_epoch"),
         "hold_reason": state.get("hold_reason") or "",
         "progress": state.get("progress"),
     }
@@ -1906,17 +1848,16 @@ def _mission_from_navigation_state(state: Mapping[str, Any]) -> dict[str, Any]:
 
 def build_navigation_status(gw: Any) -> dict[str, Any]:
     with gw._state_lock:
-        legacy_mission = _mapping(gw._mission)
         native_state = _mapping(getattr(gw, "_navigation_state", None))
-        mission = _mission_from_navigation_state(native_state) if native_state else legacy_mission
+        mission = _mission_from_navigation_state(native_state)
         odometry = gw._odom
         path_len = len(gw._last_path)
         mode = gw._mode
-        safety = gw._safety
+        safety = gw._navigation_state
         task_statuses = getattr(gw, "_navigation_goal_status_by_task", {})
         goal_statuses = getattr(gw, "_navigation_goal_status_by_request", {})
         latest_goal_status = getattr(gw, "_latest_navigation_goal_status", None)
-    state_source = "native_navigation_state" if native_state else "mission_status"
+    state_source = "native_navigation_state"
     active_task_id = str(mission.get("active_task_id") or "")
     active_request_id = str(mission.get("active_request_id") or "")
     active_goal_status = (
@@ -1938,8 +1879,7 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
     lease = safe_lease(gw)
     localization = build_localization_status(gw)
     native_endpoint = _native_endpoint_readiness(session, gw=gw)
-    cmd_vel = {} if native_endpoint.get("required") is True else _cmd_vel_health(gw)
-    nav_runtime = _navigation_status_from_module(gw)
+    nav_runtime: dict[str, Any] = {}
     state = str(mission.get("state", "IDLE"))
     wp_index = _as_int(mission.get("wp_index"), 0)
     wp_total = _as_int(mission.get("wp_total"), 0)
@@ -1958,14 +1898,12 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
     base_can_accept_goal = (
         mode != "estop"
         and odometry is not None
-        and not bool(session.get("pending", False))
         and session_mode in {"navigating", "exploring"}
     )
     control = _control_summary(
         mode=mode,
         lease=lease,
         mission_state=state,
-        cmd_vel=cmd_vel,
         native_endpoint=native_endpoint,
     )
     if native_state:
@@ -2057,15 +1995,13 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
         readiness=readiness,
         reason_codes=reason_codes,
     )
-    plan_safety_policy = nav_runtime.get("plan_safety_policy") or mission.get("plan_safety_policy")
-    last_plan_report = _mapping(nav_runtime.get("last_plan_report")) or _mapping(mission.get("last_plan_report"))
-
     return {
         "schema_version": NAVIGATION_STATUS_SCHEMA_VERSION,
         "state_source": state_source,
         "state": state,
         "has_odometry": odometry is not None,
         "can_accept_goal": can_accept_goal,
+        "navigation_ready": readiness["navigation_ready"],
         "wp_index": wp_index,
         "wp_total": wp_total,
         "replan_count": replan_count,
@@ -2103,11 +2039,8 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
             "reason_codes": reason_codes,
             "failure_reason": failure_reason,
             "localization_reasons": localization.get("reasons", []),
-            "cmd_vel_mux_available": control.get("mux_available", False),
             "frame_mismatches": frames.get("mismatches", []),
             "safety": safety_summary(safety),
-            "plan_safety_policy": plan_safety_policy,
-            "last_plan_report": last_plan_report,
             "map_artifact_gate": map_artifact_gate,
             "real_runtime_evidence": real_runtime_evidence,
         },

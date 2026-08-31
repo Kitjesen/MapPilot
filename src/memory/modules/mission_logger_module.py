@@ -172,12 +172,11 @@ class MissionLoggerModule(Module, layer=3):
     # ---------------------------------------------------------------------------
     # Query API
     #
-    # Rule: @skill methods return JSON str (for MCP/agent consumption).
-    #       The REPL (cli/repl.py) calls _list_missions_raw / _stats_raw which
-    #       return native Python dicts/lists — no JSON parsing overhead.
+    # Rule: @skill methods return JSON str for MCP/agent consumption while
+    # internal callers use the native Python helpers below.
     # ---------------------------------------------------------------------------
 
-    # -- REPL helpers (native types) --
+    # -- Query helpers (native types) --
 
     def _list_missions_raw(self, count: int = 10) -> list[dict[str, Any]]:
         """Return summary dicts of the most recent *count* missions."""

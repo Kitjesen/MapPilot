@@ -26,8 +26,6 @@ logger = logging.getLogger(__name__)
 
 @register("memory", "episodic", description="Spatio-temporal episodic memory recording exploration history")
 class EpisodicMemoryModule(OdomTrackingMixin, Module, layer=3):
-    _run_in_worker = True
-    _worker_group = "semantic"
     """时空情节记忆模块。
 
     每次收到场景图更新时，将当前位置和可见标签记录到情节记忆中。

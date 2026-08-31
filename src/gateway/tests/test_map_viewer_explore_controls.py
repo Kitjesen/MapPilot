@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 VIEWER = Path(__file__).resolve().parents[1] / "templates" / "map_viewer.html"
 
 
@@ -80,7 +79,10 @@ function response(ok,status,payload){{
     calls.push(url);
     if(calls.length===1) return response(false,409,{{
       message:'ProductControl required',
-      detail:{{reason:'parking_evidence_required',operator_command:'scripts/lingtu explore stop'}}
+      detail:{{
+        reason:'parking_evidence_required',
+        operator_command:'python -m lingtu.control stop --expected-product explore'
+      }}
     }});
     return response(true,200,{{exploring:true}});
   }};
@@ -88,7 +90,7 @@ function response(ok,status,payload){{
   await new Promise(resolve=>setTimeout(resolve,20));
   assert.deepStrictEqual(calls,['/api/v1/explore/stop','/api/v1/explore/status']);
   assert.match(toast,/parking_evidence_required/);
-  assert.match(toast,/scripts\\/lingtu explore stop/);
+  assert.match(toast,/python -m lingtu\\.control stop --expected-product explore/);
   assert.doesNotMatch(toast,/已发送/);
   assert.strictEqual(_exploring,true);
   assert.strictEqual($expBtn.textContent,'■ 停止探索');

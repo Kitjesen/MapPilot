@@ -17,7 +17,6 @@ algorithms.
 | route helper logic | `services/` |
 | inspection HTTP surface | `routes/inspection.py` plus native inspection/evidence service adapters |
 | dashboard templates and static assets | `templates/` |
-| optional visualization bridge | `visualization/rerun_bridge.py` |
 | auth helpers | `auth.py` |
 
 ## Request Flow
@@ -37,8 +36,9 @@ Example goal flow:
 map click
   -> Gateway goal endpoint
   -> PoseStamped goal
-  -> nav.mission.goal_pose
-  -> native endpoint or Module global/local planning chain
+  -> nav.goals
+  -> nav.commands
+  -> native navigation endpoint
 ```
 
 Example inspection flow:
@@ -60,8 +60,28 @@ inspection route command
 | `tests/` | Gateway-owned tests |
 | `templates/` | Dashboard HTML templates |
 
-Gateway maintenance scripts live in `scripts/gateway/`, not inside the Python
-package.
+## Camera Transport
+
+The dashboard prefers go2rtc WHEP for low-latency H.264 video and falls back
+to Gateway JPEG-over-WebSocket at `/ws/camera`. The browser probes
+`GET /api/v1/webrtc/go2rtc/status` before posting SDP to
+`POST /api/v1/webrtc/whep`. Bootstrap metadata describes WHEP support; the
+status endpoint reports whether the optional sidecar is currently available.
+
+Install and check the sidecar with:
+
+```bash
+sudo bash scripts/deploy/thunder/install_go2rtc.sh
+sudo systemctl restart go2rtc
+curl -s http://localhost:5050/api/v1/webrtc/go2rtc/status
+```
+
+The template is `config/go2rtc.yaml`; it keeps the go2rtc API on loopback so
+browsers use the Gateway proxy. Snapshot clients should continue using
+`GET /api/v1/camera/snapshot`, which is independent of dashboard streaming.
+If WHEP fails, inspect the status endpoint and `go2rtc` service log; for an
+established peer with no video, verify the camera device and inspect
+`chrome://webrtc-internals/`.
 
 ## Boundary Rule
 

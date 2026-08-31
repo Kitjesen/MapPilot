@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import threading
 import time
 from collections.abc import Mapping
@@ -104,8 +102,8 @@ _NO_PENDING_RESULT = object()
 class _PendingCommand:
     """One in-flight command shared by concurrent exact retries."""
 
-    def __init__(self, request_fingerprint: str) -> None:
-        self.request_fingerprint = request_fingerprint
+    def __init__(self, request_payload: Any) -> None:
+        self.request_payload = request_payload
         self.event = threading.Event()
         self.result: Any = _NO_PENDING_RESULT
         self.record: dict[str, Any] | None = None
@@ -134,7 +132,7 @@ class CommandJournal:
         command: str,
         request_id: str | None,
         client_id: str | None,
-        request_fingerprint: str,
+        request_payload: Any,
         action: Callable[[], Mapping[str, Any] | JSONResponse],
     ) -> dict[str, Any] | JSONResponse:
         """Execute once, replay exact retries, and reject payload conflicts.
@@ -191,22 +189,22 @@ class CommandJournal:
             if record is not None:
                 self._assert_same_payload_locked(
                     identity,
-                    request_fingerprint,
-                    record["request_fingerprint"],
+                    request_payload,
+                    record["request_payload"],
                 )
                 self._replayed_commands += 1
                 return self._replay_receipt(command, request_id, record)
 
             pending = self._pending.get(identity)
             if pending is None:
-                pending = _PendingCommand(request_fingerprint)
+                pending = _PendingCommand(request_payload)
                 self._pending[identity] = pending
                 owner = True
             else:
                 self._assert_same_payload_locked(
                     identity,
-                    request_fingerprint,
-                    pending.request_fingerprint,
+                    request_payload,
+                    pending.request_payload,
                 )
 
         if not owner:
@@ -288,7 +286,7 @@ class CommandJournal:
 
         record = {
             "client_id": client_id,
-            "request_fingerprint": request_fingerprint,
+            "request_payload": request_payload,
             "response": dict(response),
             "ts": now,
         }
@@ -354,10 +352,10 @@ class CommandJournal:
     def _assert_same_payload_locked(
         self,
         identity: tuple[str, str, str],
-        request_fingerprint: str,
-        existing_fingerprint: str,
+        request_payload: Any,
+        existing_payload: Any,
     ) -> None:
-        if request_fingerprint == existing_fingerprint:
+        if request_payload == existing_payload:
             return
         self._conflicting_commands += 1
         client_id, command, request_id = identity
@@ -473,8 +471,8 @@ def _clean_client_id(value: str | None) -> str:
     return cleaned or "unknown"
 
 
-def command_request_fingerprint(body: Any) -> str:
-    """Return a stable identity for one command payload.
+def command_request_payload(body: Any) -> Any:
+    """Return the command payload used for retry comparison.
 
     A request id is only retry-safe inside the same client, command, and exact
     payload.  Including the payload prevents a changed motion request from
@@ -487,14 +485,7 @@ def command_request_fingerprint(body: Any) -> str:
         value = model_dump(mode="json")
     elif hasattr(body, "dict") and callable(body.dict):
         value = body.dict()
-    encoded = json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        default=str,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return dict(value) if isinstance(value, Mapping) else value
 
 
 def publish_command_ack(
@@ -573,39 +564,25 @@ def run_control_command(
 ) -> dict[str, Any] | JSONResponse:
     request_id = getattr(body, "request_id", None) if body is not None else None
     client_id = getattr(body, "client_id", None) if body is not None else None
-    fingerprint = command_request_fingerprint(body)
+    request_payload = command_request_payload(body)
     try:
         response = gw._command_journal.execute(
             command,
             request_id,
             client_id,
-            fingerprint,
+            request_payload,
             action,
         )
     except IdempotencyConflict as conflict:
         return idempotency_conflict_response(gw, command, conflict)
     if not isinstance(response, dict):
         return response
-    # Record in audit journal for control command traceability
-    audit = getattr(gw, "_audit_journal", None)
     command_receipt = response.get("command")
-    replay = (
-        command_receipt.get("replay") is True
-        if isinstance(command_receipt, dict)
-        else False
-    )
     accepted = (
         command_receipt.get("accepted") is True
         if isinstance(command_receipt, dict)
         else False
     )
-    if audit is not None and not replay:
-        audit.record(
-            command,
-            client_id=str(client_id or "unknown"),
-            ok=response.get("ok") is True,
-            error=response.get("error"),
-        )
     if not accepted:
         response["ok"] = False
         response.setdefault("error", "command_rejected")

@@ -37,6 +37,7 @@ class RecordingCommands:
     def __init__(self) -> None:
         self.calls: list[tuple[object, ...]] = []
         self.events: list[tuple[str, str | None]] = []
+        self.sample_manual_modes: list[bool] = []
         self.called = threading.Event()
         self.hold_called = threading.Event()
         self.stop_called = threading.Event()
@@ -68,9 +69,11 @@ class RecordingCommands:
         wz: float,
         *,
         deadman: bool = True,
+        manual_mode: bool = False,
         freshness_budget_ms: int = 350,
         request_id: str | None = None,
     ) -> bool:
+        self.sample_manual_modes.append(manual_mode)
         self.calls.append(
             (
                 "sample",
@@ -149,6 +152,150 @@ class RecordingCommands:
         self.resume_called.set()
         return True
 
+    def resume_autonomy_with_receipt(
+        self,
+        reason: str = "resume_autonomy",
+        request_id: str | None = None,
+    ) -> dict[str, object]:
+        self.events.append(("resume_autonomy_with_receipt", request_id))
+        self.resume_called.set()
+        return {
+            "accepted": True,
+            "kind": 7,
+            "task_id": "",
+            "request_id": str(request_id or "native-generated"),
+            "reason": "teleop_resume_ready_reassert_command",
+            "endpoint_timestamp_s": 123.5,
+        }
+
+
+class UnconfirmedHoldCommands(RecordingCommands):
+    def hold(
+        self,
+        source_id: str,
+        source_epoch: int,
+        sequence: int,
+        *,
+        reason: str = "operator_hold",
+        request_id: str | None = None,
+    ) -> OperatorMotionReceipt:
+        self.calls.append(("hold", source_id, source_epoch, sequence, reason, request_id))
+        self.events.append(("hold", request_id))
+        self.hold_called.set()
+        return _receipt(
+            OperatorMotionAction.HOLD,
+            source_id,
+            source_epoch,
+            sequence,
+            request_id,
+            final_output_sequence=0,
+            reason="final_output_not_published",
+        )
+
+
+class ExpiredLeaseCommands(RecordingCommands):
+    """Model navd's zero barrier before a new source epoch can reclaim control."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.claim_epochs: list[int] = []
+
+    def claim(
+        self,
+        source_id: str,
+        source_epoch: int,
+        sequence: int,
+        *,
+        lease_ttl_ms: int,
+        request_id: str | None = None,
+    ) -> OperatorMotionReceipt:
+        self.claim_epochs.append(source_epoch)
+        if len(self.claim_epochs) != 2:
+            return super().claim(
+                source_id,
+                source_epoch,
+                sequence,
+                lease_ttl_ms=lease_ttl_ms,
+                request_id=request_id,
+            )
+        self.calls.append(
+            ("claim", source_id, source_epoch, sequence, lease_ttl_ms, request_id)
+        )
+        self.events.append(("claim", request_id))
+        return OperatorMotionReceipt(
+            accepted=False,
+            action=int(OperatorMotionAction.CLAIM),
+            request_id=str(request_id or f"{source_id}:claim:{sequence}"),
+            source_id=source_id,
+            source_epoch=source_epoch,
+            source_sequence=sequence,
+            accepted_sequence=0,
+            final_output_sequence=0,
+            endpoint_timestamp_s=time.time() or 1.0,
+            reason="authority_lease_expired",
+        )
+
+
+class BusyCommands(RecordingCommands):
+    def __init__(self) -> None:
+        super().__init__()
+        self.active_source_id: str | None = None
+
+    def claim(
+        self,
+        source_id: str,
+        source_epoch: int,
+        sequence: int,
+        *,
+        lease_ttl_ms: int,
+        request_id: str | None = None,
+    ) -> OperatorMotionReceipt:
+        if self.active_source_id not in (None, source_id):
+            self.calls.append(
+                ("claim", source_id, source_epoch, sequence, lease_ttl_ms, request_id)
+            )
+            self.events.append(("claim", request_id))
+            return OperatorMotionReceipt(
+                accepted=False,
+                action=int(OperatorMotionAction.CLAIM),
+                request_id=str(request_id or f"{source_id}:claim:{sequence}"),
+                source_id=source_id,
+                source_epoch=source_epoch,
+                source_sequence=sequence,
+                accepted_sequence=0,
+                final_output_sequence=0,
+                endpoint_timestamp_s=time.time() or 1.0,
+                reason="authority_busy",
+            )
+        self.active_source_id = source_id
+        return super().claim(
+            source_id,
+            source_epoch,
+            sequence,
+            lease_ttl_ms=lease_ttl_ms,
+            request_id=request_id,
+        )
+
+    def release(
+        self,
+        source_id: str,
+        source_epoch: int,
+        sequence: int,
+        *,
+        reason: str = "operator_release",
+        request_id: str | None = None,
+    ) -> OperatorMotionReceipt:
+        receipt = super().release(
+            source_id,
+            source_epoch,
+            sequence,
+            reason=reason,
+            request_id=request_id,
+        )
+        if self.active_source_id == source_id:
+            self.active_source_id = None
+        return receipt
+
 
 class RecordingTeleopLifecycle:
     def __init__(self) -> None:
@@ -162,7 +309,7 @@ class RecordingTeleopLifecycle:
         self.disconnects += 1
 
 
-def test_websocket_joy_reports_ingress_only_and_uses_native_command_path(monkeypatch) -> None:
+def test_websocket_velocity_reports_ingress_only_and_uses_native_command_path(monkeypatch) -> None:
     monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
     commands = RecordingCommands()
     gateway = GatewayModule()
@@ -177,13 +324,14 @@ def test_websocket_joy_reports_ingress_only_and_uses_native_command_path(monkeyp
             ws.send_text(
                 json.dumps(
                     {
-                        "type": "joy",
-                        "lx": 0.4,
-                        "ly": -0.2,
-                        "az": 0.3,
+                        "type": "velocity",
+                        "vx_mps": 0.4,
+                        "vy_mps": -0.2,
+                        "yaw_rps": 0.3,
                         "deadman": True,
+                        "manual_mode": True,
                         "sequence": 1,
-                        "request_id": "ws-joy-1",
+                        "request_id": "ws-velocity-1",
                     }
                 )
             )
@@ -192,15 +340,15 @@ def test_websocket_joy_reports_ingress_only_and_uses_native_command_path(monkeyp
             assert receipt["type"] == "ingress_ack"
             assert receipt["action"] == "queued"
             assert receipt["stage"] == "gateway_queue_accepted"
-            assert receipt["request_id"] == "ws-joy-1"
-            assert receipt["source_sequence"] == 2
+            assert receipt["request_id"] == "ws-velocity-1"
             assert receipt["replaceable"] is True
-            assert receipt["sample_ack_expected"] is False
             assert receipt["final_cmd_vel_confirmed"] is False
             assert receipt["motor_confirmed"] is False
+            assert "source_sequence" not in receipt
+            assert "sample_ack_expected" not in receipt
             assert commands.called.wait(1.0)
             assert commands.calls[1][0] == "sample"
-            assert commands.calls[1][4:] == (0.2, -0.1, 0.3, True, 350, "ws-joy-1")
+            assert commands.calls[1][4:] == (0.4, -0.2, 0.3, True, 350, "ws-velocity-1")
 
         assert commands.hold_called.wait(3.0)
         assert commands.release_called.wait(3.0)
@@ -226,10 +374,26 @@ def test_websocket_manual_hold_reports_final_logical_zero_not_motor(monkeypatch)
             ws.send_text(
                 json.dumps(
                     {
-                        "type": "joy",
-                        "lx": 0.0,
-                        "ly": 0.0,
-                        "az": 0.0,
+                        "type": "velocity",
+                        "vx_mps": 0.2,
+                        "vy_mps": 0.0,
+                        "yaw_rps": 0.0,
+                        "deadman": True,
+                        "request_id": "move-before-hold",
+                    }
+                )
+            )
+            assert json.loads(ws.receive_text())["type"] == "ingress_ack"
+            assert commands.called.wait(1.0)
+            assert commands.sample_manual_modes == [True]
+
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "velocity",
+                        "vx_mps": 0.0,
+                        "vy_mps": 0.0,
+                        "yaw_rps": 0.0,
                         "deadman": False,
                         "request_id": "hold-1",
                     }
@@ -238,20 +402,19 @@ def test_websocket_manual_hold_reports_final_logical_zero_not_motor(monkeypatch)
             receipt = json.loads(ws.receive_text())
 
             assert receipt["type"] == "control_ack"
-            assert receipt["action"] == "manual_hold"
+            assert receipt["action"] == "hold"
             assert receipt["accepted"] is True
             assert receipt["request_id"] == "hold-1"
-            assert receipt["source_sequence"] == 2
             assert receipt["stage"] == "final_zero_published"
             assert receipt["final_cmd_vel_confirmed"] is True
             assert receipt["motor_confirmed"] is False
-            assert receipt["native_receipt"]["action_name"] == "HOLD"
-            assert receipt["native_receipt"]["final_output_published"] is True
+            assert "source_sequence" not in receipt
+            assert "native_receipt" not in receipt
     finally:
         gateway.stop()
 
 
-def test_websocket_quiesces_native_teleop_before_stop_and_resume(monkeypatch) -> None:
+def test_websocket_hold_then_velocity_reclaims_control_without_resume(monkeypatch) -> None:
     monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
     commands = RecordingCommands()
     gateway = GatewayModule()
@@ -264,90 +427,308 @@ def test_websocket_quiesces_native_teleop_before_stop_and_resume(monkeypatch) ->
             ws.send_text(
                 json.dumps(
                     {
-                        "type": "joy",
-                        "lx": 0.4,
-                        "ly": 0.0,
-                        "az": 0.0,
+                        "type": "velocity",
+                        "vx_mps": 0.4,
+                        "vy_mps": 0.0,
+                        "yaw_rps": 0.0,
                         "deadman": True,
-                        "sequence": 1,
-                        "request_id": "joy-before-stop",
+                        "request_id": "velocity-before-hold",
                     }
                 )
             )
             assert json.loads(ws.receive_text())["stage"] == "gateway_queue_accepted"
             assert commands.called.wait(1.0)
 
-            ws.send_text(json.dumps({"type": "stop", "request_id": "stop-1"}))
-            stop_receipt = json.loads(ws.receive_text())
-            assert stop_receipt["type"] == "control_ack"
-            assert stop_receipt["action"] == "stop"
-            assert stop_receipt["accepted"] is True
-            assert stop_receipt["request_id"] == "stop-1"
-            assert stop_receipt["source_sequence"] == 3
-            assert stop_receipt["stage"] == "native_stop_acknowledged"
-            assert stop_receipt["native_command_acknowledged"] is True
-            assert stop_receipt["final_cmd_vel_confirmed"] is True
-            assert stop_receipt["motor_confirmed"] is False
-            assert stop_receipt["native_receipt"]["action_name"] == "HOLD"
-            assert commands.stop_called.wait(3.0)
-            assert [event[0] for event in commands.events[:4]] == ["claim", "sample", "hold", "stop"]
-            assert commands.events[3] == ("stop", "stop-1")
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "velocity",
+                        "vx_mps": 0.0,
+                        "vy_mps": 0.0,
+                        "yaw_rps": 0.0,
+                        "deadman": False,
+                        "request_id": "hold-1",
+                    }
+                )
+            )
+            hold_receipt = json.loads(ws.receive_text())
+            assert hold_receipt["type"] == "control_ack"
+            assert hold_receipt["action"] == "hold"
+            assert commands.hold_called.wait(1.0)
 
             commands.called.clear()
             ws.send_text(
                 json.dumps(
                     {
-                        "type": "joy",
-                        "lx": 0.2,
-                        "ly": 0.0,
-                        "az": 0.0,
+                        "type": "velocity",
+                        "vx_mps": 0.2,
+                        "vy_mps": 0.0,
+                        "yaw_rps": 0.0,
                         "deadman": True,
-                        "sequence": 2,
-                        "request_id": "joy-before-resume",
+                        "request_id": "velocity-after-hold",
                     }
                 )
             )
             assert json.loads(ws.receive_text())["stage"] == "gateway_queue_accepted"
             assert commands.called.wait(1.0)
-
-            ws.send_text(json.dumps({"type": "resume_autonomy", "request_id": "resume-1"}))
-            resume_receipt = json.loads(ws.receive_text())
-            assert resume_receipt["action"] == "resume_autonomy"
-            assert resume_receipt["accepted"] is True
-            assert commands.resume_called.wait(3.0)
-            assert [event[0] for event in commands.events[4:7]] == [
+            assert [event[0] for event in commands.events[:5]] == [
+                "claim",
                 "sample",
                 "hold",
-                "resume_autonomy",
+                "claim",
+                "sample",
             ]
-            assert commands.events[6] == ("resume_autonomy", "resume-1")
+            assert commands.resume_called.is_set() is False
     finally:
         gateway.stop()
 
 
-def test_websocket_local_stop_reports_logical_zero_without_native_or_motor_ack(
-    monkeypatch,
-) -> None:
-    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "local_driver")
+def test_websocket_does_not_consume_the_rest_control_lease(monkeypatch) -> None:
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    commands = RecordingCommands()
     gateway = GatewayModule()
     gateway.setup()
+    gateway.on_system_modules({"nav.commands": commands})
+    assert gateway._lease.acquire("rest-owner", 30.0) is True
 
     try:
         client = TestClient(gateway._app)
-        with client.websocket_connect("/ws/teleop?client_id=operator-local-stop") as ws:
-            ws.send_text(json.dumps({"type": "stop", "request_id": "local-stop-1"}))
+        with client.websocket_connect("/ws/teleop?client_id=operator-a") as ws:
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "velocity",
+                        "vx_mps": 0.2,
+                        "vy_mps": 0.0,
+                        "yaw_rps": 0.0,
+                        "deadman": True,
+                        "request_id": "move-with-rest-lease",
+                    }
+                )
+            )
             receipt = json.loads(ws.receive_text())
 
-            assert receipt == {
-                "type": "control_ack",
-                "action": "stop",
-                "accepted": True,
-                "request_id": "local-stop-1",
-                "source_sequence": 1,
-                "stage": "local_zero_requested",
-                "native_command_acknowledged": False,
-                "final_cmd_vel_confirmed": False,
-                "motor_confirmed": False,
+            assert receipt["type"] == "ingress_ack"
+            assert commands.called.wait(1.0)
+            assert gateway._lease.to_dict()["holder"] == "rest-owner"
+    finally:
+        gateway.stop()
+
+
+def test_websocket_recovers_expired_native_authority_inside_gateway(monkeypatch) -> None:
+    """The browser sends a fresh move; native epoch/claim recovery stays internal."""
+
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    commands = ExpiredLeaseCommands()
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.commands": commands})
+
+    try:
+        client = TestClient(gateway._app)
+        with client.websocket_connect("/ws/teleop?client_id=operator-idle") as ws:
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "velocity",
+                        "vx_mps": 0.2,
+                        "vy_mps": 0.0,
+                        "yaw_rps": 0.0,
+                        "deadman": True,
+                        "request_id": "velocity-before-idle",
+                    }
+                )
+            )
+            assert json.loads(ws.receive_text())["type"] == "ingress_ack"
+            assert commands.called.wait(1.0)
+            commands.called.clear()
+
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "velocity",
+                        "vx_mps": 0.0,
+                        "vy_mps": 0.0,
+                        "yaw_rps": 0.0,
+                        "deadman": False,
+                        "request_id": "idle-hold",
+                    }
+                )
+            )
+            assert json.loads(ws.receive_text())["action"] == "hold"
+
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "velocity",
+                        "vx_mps": 0.35,
+                        "vy_mps": 0.0,
+                        "yaw_rps": 0.0,
+                        "deadman": True,
+                        "request_id": "velocity-after-idle",
+                    }
+                )
+            )
+            receipt = json.loads(ws.receive_text())
+
+            assert receipt["type"] == "ingress_ack"
+            assert receipt["action"] == "queued"
+            assert receipt["request_id"] == "velocity-after-idle"
+            assert "source_epoch" not in receipt
+            assert "source_sequence" not in receipt
+            assert "native_receipt" not in receipt
+            assert commands.called.wait(1.0)
+            assert [event[0] for event in commands.events[:6]] == [
+                "claim",
+                "sample",
+                "hold",
+                "claim",
+                "claim",
+                "sample",
+            ]
+            assert commands.claim_epochs[1] == commands.claim_epochs[0]
+            assert commands.claim_epochs[2] > commands.claim_epochs[1]
+    finally:
+        gateway.stop()
+
+
+def test_websocket_hides_native_hold_failure_details(monkeypatch) -> None:
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    commands = UnconfirmedHoldCommands()
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.commands": commands})
+
+    try:
+        client = TestClient(gateway._app)
+        with client.websocket_connect("/ws/teleop?client_id=operator-a") as ws:
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "velocity",
+                        "vx_mps": 0.2,
+                        "vy_mps": 0.0,
+                        "yaw_rps": 0.0,
+                        "deadman": True,
+                        "request_id": "move-before-hold",
+                    }
+                )
+            )
+            assert json.loads(ws.receive_text())["type"] == "ingress_ack"
+            assert commands.called.wait(1.0)
+
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "velocity",
+                        "vx_mps": 0.0,
+                        "vy_mps": 0.0,
+                        "yaw_rps": 0.0,
+                        "deadman": False,
+                        "request_id": "hold-1",
+                    }
+                )
+            )
+            response = json.loads(ws.receive_text())
+
+            assert response["type"] == "control_rejected"
+            assert response["error"] == "hold_unconfirmed"
+            assert response["final_cmd_vel_confirmed"] is False
+            assert "native_receipt" not in response
+            assert "reason" not in response
+            assert "final_output_not_published" not in json.dumps(response)
+            assert commands.hold_called.wait(1.0)
+    finally:
+        gateway.stop()
+
+
+def test_websocket_rejects_second_connected_controller_without_touching_first(monkeypatch) -> None:
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    commands = RecordingCommands()
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.commands": commands})
+
+    try:
+        client = TestClient(gateway._app)
+        with client.websocket_connect("/ws/teleop?client_id=operator-a") as first:
+            with client.websocket_connect("/ws/teleop?client_id=operator-b") as second:
+                rejected = json.loads(second.receive_text())
+                assert rejected == {
+                    "type": "control_rejected",
+                    "error": "control_in_use",
+                    "message": "Another operator is connected.",
+                }
+
+            first.send_text(
+                json.dumps(
+                    {
+                        "type": "velocity",
+                        "vx_mps": 0.2,
+                        "vy_mps": 0.0,
+                        "yaw_rps": 0.0,
+                        "deadman": True,
+                        "request_id": "first-still-controls",
+                    }
+                )
+            )
+            assert json.loads(first.receive_text())["type"] == "ingress_ack"
+            assert commands.called.wait(1.0)
+    finally:
+        gateway.stop()
+
+
+def test_websocket_maps_native_busy_to_stable_public_error(monkeypatch) -> None:
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    commands = BusyCommands()
+    commands.active_source_id = "native-controller"
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.commands": commands})
+
+    try:
+        client = TestClient(gateway._app)
+        with client.websocket_connect("/ws/teleop?client_id=operator-a") as ws:
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "velocity",
+                        "vx_mps": 0.2,
+                        "vy_mps": 0.0,
+                        "yaw_rps": 0.0,
+                        "deadman": True,
+                        "request_id": "busy-1",
+                    }
+                )
+            )
+            response = json.loads(ws.receive_text())
+
+            assert response == {
+                "type": "control_rejected",
+                "error": "control_in_use",
+                "message": "Another controller currently owns robot motion.",
+                "request_id": "busy-1",
             }
+            assert "authority_busy" not in json.dumps(response)
+    finally:
+        gateway.stop()
+
+
+def test_websocket_rejects_removed_heartbeat_stop_and_resume_protocol(monkeypatch) -> None:
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    commands = RecordingCommands()
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.commands": commands})
+
+    try:
+        client = TestClient(gateway._app)
+        with client.websocket_connect("/ws/teleop?client_id=operator-a") as ws:
+            for message_type in ("heartbeat", "stop", "resume_control"):
+                ws.send_text(json.dumps({"type": message_type, "request_id": message_type}))
+                response = json.loads(ws.receive_text())
+                assert response["type"] == "control_rejected"
+                assert response["error"] == "unsupported_message"
+            assert commands.calls == []
     finally:
         gateway.stop()

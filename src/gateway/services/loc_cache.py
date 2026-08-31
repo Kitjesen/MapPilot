@@ -36,6 +36,3 @@ class LocCache:
         self._odom_timestamps.append(float(ts))
         if len(self._odom_timestamps) > max_samples:
             del self._odom_timestamps[:-max_samples]
-
-
-LocalizationRuntimeCacheService = LocCache

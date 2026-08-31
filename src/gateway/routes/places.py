@@ -1,13 +1,14 @@
 """Canonical semantic place provisioning routes.
 
-These endpoints expose the native POI-backed :mod:`maps.places` catalog to
+These endpoints expose the native POI-backed :mod:`memory.spatial.places` catalog to
 operators, BIM importers, and admin tools.  They intentionally do not read POI
-files directly or own a database; the maps service remains the only authority
+files directly or own a database; native mapd remains the only authority
 for saved-map binding metadata.
 """
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
@@ -15,8 +16,8 @@ from typing import Any, Literal
 from fastapi import HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from gateway.services.map_service import ensure_maps_service
-from maps.places.catalog import (
+from gateway.services.mapd_transport import map_client
+from memory.spatial.places import (
     PLACE_SCHEMA_VERSION,
     PlaceCatalog,
     PlaceCatalogError,
@@ -27,6 +28,37 @@ from maps.places.catalog import (
 
 MAX_TEXT_LENGTH = 128
 MAX_ALIASES = 16
+
+
+class _MapdPlacePort:
+    """Expose only the native mapd operations required by ``PlaceCatalog``."""
+
+    def __init__(self, gw: Any) -> None:
+        self._client = map_client(gw)
+
+    def list_maps(self) -> Mapping[str, Any]:
+        return self._client.service("list_maps")
+
+    def get_record(self, map_id: str) -> Mapping[str, Any]:
+        return self._client.service("get_record", map_id=map_id)
+
+    def poi_list(self, map_id: str = "") -> Mapping[str, Any]:
+        return self._client.service("list_poi", map_id=map_id)
+
+    def poi_set(self, command: Mapping[str, Any]) -> Mapping[str, Any]:
+        yaw = command.get("yaw")
+        return self._client.service(
+            "set_poi",
+            map_id=str(command.get("map_id") or ""),
+            name=str(command.get("name") or ""),
+            x_m=float(command.get("x", 0.0)),
+            y_m=float(command.get("y", 0.0)),
+            z_m=float(command.get("z", 0.0)),
+            yaw_rad=0.0 if yaw is None else float(yaw),
+            has_yaw=yaw is not None,
+            frame_id=str(command.get("frame_id") or "map"),
+            tags_json=json.dumps(command.get("tags") or {}, sort_keys=True),
+        )
 
 
 class PlaceCreateRequest(BaseModel):
@@ -166,7 +198,7 @@ def register_place_routes(app, gw) -> None:
 
     def catalog() -> PlaceCatalog:
         try:
-            return PlaceCatalog(ensure_maps_service(gw))
+            return PlaceCatalog(_MapdPlacePort(gw))
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -266,9 +298,7 @@ def _serialize_place(place: PlaceRef) -> dict[str, Any]:
         "building_id": place.building_id,
         "floor_id": place.floor_id,
         "map_id": place.map_id,
-        "map_version": place.map_version,
-        "version_id": place.version_id,
-        "map_pcd_sha256": place.map_pcd_sha256,
+        "content_epoch": place.content_epoch,
         "frame_id": place.frame_id,
         "x": place.x,
         "y": place.y,

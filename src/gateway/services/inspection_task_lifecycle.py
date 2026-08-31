@@ -7,25 +7,24 @@ two kinds of information separate:
 * an ``InspectionTaskEvent`` proves a native lifecycle fact.
 
 It is a bounded projection rather than a task authority. Field deployment may
-back it with an integrity-checked atomic journal; local/dev callers remain
+back it with an atomically written journal; local/dev callers remain
 process-local unless they explicitly configure a path. Missing, reordered, and
 post-restart events are surfaced instead of being filled in from command intent.
 """
 
 from __future__ import annotations
 
-import errno
-import hashlib
 import json
 import math
 import os
 import threading
 import time
-import uuid
 from collections import OrderedDict
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+
+from gateway.services._journal_file import atomic_write as _atomic_write
 
 _STATE_NAMES = {
     0: "IDLE",
@@ -43,6 +42,24 @@ _STATE_NAMES = {
     12: "PAUSING",
     13: "CANCELLING",
 }
+_TASK_EVENT_STATES = frozenset(_STATE_NAMES) - {0}
+_PUBLIC_STATE_BY_PHASE = {
+    "VALIDATING": "PLANNING",
+    "PLANNING": "PLANNING",
+    "NAVIGATING": "EXECUTING",
+    "DWELLING": "EXECUTING",
+    "PAUSED": "PAUSED",
+    "RECOVERING": "RECOVERING",
+    "SUCCEEDED": "SUCCESS",
+    "FAILED": "FAILED",
+    "CANCELLED": "CANCELLED",
+    "SETTLING": "EXECUTING",
+    "ACTION_PENDING": "EXECUTING",
+}
+_TRANSITION_BY_PHASE = {
+    "PAUSING": "PAUSE_REQUESTED",
+    "CANCELLING": "CANCEL_REQUESTED",
+}
 _EVENT_KIND_NAMES = {
     1: "TASK_ACCEPTED",
     2: "STATE_CHANGED",
@@ -57,6 +74,7 @@ _JOURNAL_MAX_BYTES = 16 * 1024 * 1024
 _JOURNAL_PATH_ENV = "LINGTU_INSPECTION_TASK_JOURNAL"
 _PROCESS_LOCAL_RETENTION = "process_local_gateway_projection"
 _DURABLE_RETENTION = "durable_gateway_projection"
+_RECORDING_STATES = {"recording", "stopping", "completed", "failed"}
 
 
 class InspectionTaskJournalUnavailable(RuntimeError):
@@ -83,6 +101,7 @@ class InspectionTaskTimeline:
         self._tasks: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._request_bindings: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._last_sequence_by_boot: dict[str, int] = {}
+        self._recording_stop_claims: set[str] = set()
         self._journal_path = (
             Path(journal_path).expanduser() if journal_path is not None else None
         )
@@ -99,7 +118,7 @@ class InspectionTaskTimeline:
         request_id: str,
         route_id: str | None = None,
         map_id: str | None = None,
-        map_version: int | None = None,
+        map_content_epoch: int | None = None,
         route_revision: int | None = None,
         route_snapshot: Mapping[str, Any] | None = None,
         reason: str | None = None,
@@ -129,13 +148,13 @@ class InspectionTaskTimeline:
                 {
                     "route_id": route_id,
                     "map_id": map_id,
-                    "map_version": map_version,
+                    "map_content_epoch": map_content_epoch,
                     "route_revision": route_revision,
                 },
             )
             _set_identity_if_absent(identity, "route_id", route_id)
             _set_identity_if_absent(identity, "map_id", map_id)
-            _set_identity_if_absent(identity, "map_version", map_version)
+            _set_identity_if_absent(identity, "map_content_epoch", map_content_epoch)
             _set_identity_if_absent(identity, "route_revision", route_revision)
             if normalized_route is not None:
                 _require_compatible_route_snapshot(record, normalized_route)
@@ -193,6 +212,113 @@ class InspectionTaskTimeline:
             self._reserve_request_locked(binding)
             self._persist_journal_locked()
 
+    def bind_recording(
+        self,
+        *,
+        task_id: str,
+        session_id: str,
+        product_session_id: str,
+    ) -> dict[str, Any]:
+        """Durably bind one task to the exact evidence recording it owns."""
+
+        normalized_task = _required_text(task_id, "task_id")
+        normalized_session = _required_text(session_id, "recording session_id")
+        normalized_product_session_id = _required_text(
+            product_session_id,
+            "recording product_session_id",
+        )
+        with self._lock:
+            self._require_journal_available_locked()
+            record = self._record_for(normalized_task)
+            existing = record.get("recording")
+            if existing is not None:
+                if (
+                    existing["session_id"] != normalized_session
+                    or existing["product_session_id"] != normalized_product_session_id
+                ):
+                    raise ValueError("inspection task recording identity mismatch")
+                return dict(existing)
+            now = time.time()
+            recording = {
+                "session_id": normalized_session,
+                "product_session_id": normalized_product_session_id,
+                "state": "recording",
+                "error": "",
+                "updated_at": now,
+            }
+            record["recording"] = recording
+            record["updated_at"] = now
+            self._persist_journal_locked()
+            return dict(recording)
+
+    def claim_recording_stop(
+        self,
+        task_id: str,
+        *,
+        recover_stopping: bool = False,
+    ) -> dict[str, Any] | None:
+        """Atomically claim the one allowed stop for a task recording."""
+
+        normalized_task = _required_text(task_id, "task_id")
+        with self._lock:
+            self._require_journal_available_locked()
+            record = self._tasks.get(normalized_task)
+            if record is None or not isinstance(record.get("recording"), Mapping):
+                return None
+            recording = record["recording"]
+            if normalized_task in self._recording_stop_claims:
+                return None
+            if recording["state"] != "recording" and not (
+                recover_stopping and recording["state"] == "stopping"
+            ):
+                return None
+            self._recording_stop_claims.add(normalized_task)
+            now = time.time()
+            recording["state"] = "stopping"
+            recording["updated_at"] = now
+            record["updated_at"] = now
+            try:
+                self._persist_journal_locked()
+            except InspectionTaskJournalUnavailable:
+                self._recording_stop_claims.discard(normalized_task)
+                raise
+            return dict(recording)
+
+    def finish_recording_stop(
+        self,
+        *,
+        task_id: str,
+        expected_session_id: str,
+        state: str,
+        error: str = "",
+    ) -> None:
+        """Persist the result of an exact-session stop attempt."""
+
+        normalized_task = _required_text(task_id, "task_id")
+        normalized_session = _required_text(
+            expected_session_id,
+            "recording session_id",
+        )
+        if state not in {"recording", "completed", "failed"}:
+            raise ValueError(
+                "recording stop state must be recording, completed or failed"
+            )
+        with self._lock:
+            self._require_journal_available_locked()
+            record = self._tasks.get(normalized_task)
+            recording = record.get("recording") if record is not None else None
+            if not isinstance(recording, Mapping):
+                raise ValueError("inspection task recording is not bound")
+            if recording["session_id"] != normalized_session:
+                raise ValueError("inspection task recording identity mismatch")
+            now = time.time()
+            recording["state"] = state
+            recording["error"] = str(error or "")
+            recording["updated_at"] = now
+            record["updated_at"] = now
+            self._persist_journal_locked()
+            self._recording_stop_claims.discard(normalized_task)
+
     def observe(self, event: Any) -> bool:
         """Accept one monotonic native event and reject duplicates/reordering.
 
@@ -238,7 +364,7 @@ class InspectionTaskTimeline:
                 return False
             _set_identity_if_absent(identity, "route_id", normalized["route_id"])
             _set_identity_if_absent(identity, "map_id", normalized["map_id"])
-            _set_identity_if_absent(identity, "map_version", normalized["map_version"])
+            _set_identity_if_absent(identity, "map_content_epoch", normalized["map_content_epoch"])
             _set_identity_if_absent(identity, "route_revision", normalized["route_revision"])
             delivery = record["delivery"]
             delivery["boot_id"] = boot_id
@@ -405,7 +531,7 @@ class InspectionTaskTimeline:
                     "task_id": task_id,
                     "route_id": None,
                     "map_id": None,
-                    "map_version": None,
+                    "map_content_epoch": None,
                     "route_revision": None,
                 },
                 "last_submission": None,
@@ -413,6 +539,7 @@ class InspectionTaskTimeline:
                 "route_snapshot": None,
                 "latest_event": None,
                 "timeline": [],
+                "recording": None,
                 "delivery": {
                     "continuity": "awaiting_native_event",
                     "history_complete": True,
@@ -459,12 +586,7 @@ class InspectionTaskTimeline:
             "request_bindings": list(self._request_bindings.values()),
             "tasks": list(self._tasks.values()),
         }
-        body_bytes = _canonical_json(body)
-        envelope = {
-            "body": body,
-            "sha256": hashlib.sha256(body_bytes).hexdigest(),
-        }
-        payload = _canonical_json(envelope) + b"\n"
+        payload = _canonical_json(body) + b"\n"
         if len(payload) > _JOURNAL_MAX_BYTES:
             self._journal_status = "write_failed"
             self._journal_error = "inspection task journal exceeds its size limit"
@@ -488,18 +610,11 @@ class InspectionTaskTimeline:
                 raise ValueError("journal path is not a regular file")
             if self._journal_path.stat().st_size > _JOURNAL_MAX_BYTES:
                 raise ValueError("journal exceeds its size limit")
-            envelope = json.loads(self._journal_path.read_text(encoding="utf-8"))
-            if not isinstance(envelope, Mapping):
-                raise ValueError("journal envelope must be an object")
-            body = envelope.get("body")
-            expected_sha256 = str(envelope.get("sha256") or "")
+            body = json.loads(self._journal_path.read_text(encoding="utf-8"))
             if not isinstance(body, Mapping):
                 raise ValueError("journal body must be an object")
             if body.get("schema_version") != _JOURNAL_SCHEMA:
                 raise ValueError("unsupported journal schema")
-            actual_sha256 = hashlib.sha256(_canonical_json(body)).hexdigest()
-            if expected_sha256 != actual_sha256:
-                raise ValueError("journal integrity mismatch")
             task_values = body.get("tasks")
             if not isinstance(task_values, list):
                 raise ValueError("journal tasks must be a list")
@@ -619,17 +734,12 @@ def _request_binding(
     reason: str,
     route_snapshot: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    route_sha256 = (
-        hashlib.sha256(_canonical_json(route_snapshot)).hexdigest()
-        if route_snapshot is not None
-        else ""
-    )
     return {
         "request_id": request_id,
         "task_id": task_id,
         "action": action,
         "reason": reason,
-        "route_snapshot_sha256": route_sha256,
+        "route_snapshot": dict(route_snapshot) if route_snapshot is not None else None,
     }
 
 
@@ -641,7 +751,7 @@ def _require_request_binding_compatible(
         "task_id",
         "action",
         "reason",
-        "route_snapshot_sha256",
+        "route_snapshot",
     ):
         if existing.get(field) != candidate.get(field):
             raise ValueError(
@@ -653,13 +763,13 @@ def _require_identity_compatible(
     identity: Mapping[str, Any],
     candidate: Mapping[str, Any],
 ) -> None:
-    for field in ("route_id", "map_id", "map_version", "route_revision"):
+    for field in ("route_id", "map_id", "map_content_epoch", "route_revision"):
         current_value = identity.get(field)
         candidate_value = candidate.get(field)
         if current_value is None or candidate_value is None:
             continue
         normalized_candidate: object = candidate_value
-        if field in {"map_version", "route_revision"}:
+        if field in {"map_content_epoch", "route_revision"}:
             normalized_candidate = int(candidate_value)
         else:
             normalized_candidate = str(candidate_value).strip()
@@ -671,7 +781,7 @@ def _identity_conflict_field(
     identity: Mapping[str, Any],
     event: Mapping[str, Any],
 ) -> str | None:
-    for field in ("route_id", "map_id", "map_version", "route_revision"):
+    for field in ("route_id", "map_id", "map_content_epoch", "route_revision"):
         expected = identity.get(field)
         if expected is not None and event.get(field) != expected:
             return field
@@ -681,7 +791,7 @@ def _identity_conflict_field(
 def _set_identity_if_absent(identity: dict[str, Any], key: str, value: object) -> None:
     if identity.get(key) is not None or value is None:
         return
-    if key in {"map_version", "route_revision"}:
+    if key in {"map_content_epoch", "route_revision"}:
         try:
             identity[key] = int(value)
         except (TypeError, ValueError):
@@ -716,10 +826,16 @@ def _normalise_route_snapshot(
                 "enabled": raw_point.get("enabled") is not False,
             }
         )
-    map_version = int(value.get("map_version", 0) or 0)
+    map_content_epoch = value.get("map_content_epoch")
     revision = int(value.get("revision", 0) or 0)
     loop_count = int(value.get("loop_count", 1) or 1)
-    if map_version < 0 or revision <= 0 or loop_count <= 0:
+    if (
+        isinstance(map_content_epoch, bool)
+        or not isinstance(map_content_epoch, int)
+        or map_content_epoch <= 0
+        or revision <= 0
+        or loop_count <= 0
+    ):
         raise ValueError("inspection task route snapshot has invalid version fields")
     return {
         "id": _required_text(value.get("id"), "inspection task route id"),
@@ -727,7 +843,7 @@ def _normalise_route_snapshot(
             value.get("map_id"),
             "inspection task route map_id",
         ),
-        "map_version": map_version,
+        "map_content_epoch": map_content_epoch,
         "revision": revision,
         "loop_count": loop_count,
         "failure_policy": str(value.get("failure_policy") or "stop"),
@@ -761,7 +877,7 @@ def _require_compatible_route_snapshot(
     expected = {
         "route_id": route_snapshot["id"],
         "map_id": route_snapshot["map_id"],
-        "map_version": route_snapshot["map_version"],
+        "map_content_epoch": route_snapshot["map_content_epoch"],
         "route_revision": route_snapshot["revision"],
     }
     for field, expected_value in expected.items():
@@ -794,7 +910,7 @@ def _normalise_event(event: Any) -> dict[str, Any] | None:
     if (
         sequence <= 0
         or kind not in _EVENT_KIND_NAMES
-        or state not in _STATE_NAMES
+        or state not in _TASK_EVENT_STATES
         or not math.isfinite(timestamp)
         or timestamp < 0.0
     ):
@@ -818,7 +934,7 @@ def _normalise_event(event: Any) -> dict[str, Any] | None:
         "state_name": _STATE_NAMES[state],
         "terminal": state in _TERMINAL_STATES,
         "map_id": str(payload.get("map_id") or ""),
-        "map_version": _integer("map_version"),
+        "map_content_epoch": _integer("map_content_epoch"),
         "route_id": str(payload.get("route_id") or ""),
         "route_revision": _integer("route_revision"),
         "point_index": _integer("point_index"),
@@ -842,7 +958,10 @@ def _unknown_task_snapshot(
         "schema_version": "lingtu.inspection.task.v1",
         "found": False,
         "task_id": task_id,
-        "current_state": "UNKNOWN",
+        "current_state": None,
+        "state_available": False,
+        "phase": None,
+        "transition": None,
         "state_source": "none",
         "execution_confirmed": False,
         "terminal": False,
@@ -877,20 +996,18 @@ def _snapshot(record: Mapping[str, Any]) -> dict[str, Any]:
         last_submission = dict(last_submission)
     progress = _task_progress(event)
     restored_from_journal = bool(delivery.get("restored_from_journal", False))
+    phase = str(event["state_name"]) if isinstance(event, Mapping) else None
+    transition = _TRANSITION_BY_PHASE.get(phase)
 
     if not isinstance(event, Mapping):
         endpoint_restarted = (
             delivery.get("continuity") == "endpoint_restart_observed"
         )
+        current_state = None
+        state_available = False
         if restored_from_journal:
-            current_state = "RECOVERED_AWAITING_NATIVE_RECONCILIATION"
             state_source = "durable_task_projection"
         else:
-            current_state = (
-                "INTERRUPTED_AWAITING_NATIVE_TRUTH"
-                if endpoint_restarted
-                else "SUBMISSION_ACCEPTED_AWAITING_NATIVE_EVENT"
-            )
             state_source = (
                 "continuity_monitor" if endpoint_restarted else "business_ack_only"
             )
@@ -908,17 +1025,24 @@ def _snapshot(record: Mapping[str, Any]) -> dict[str, Any]:
             delivery.get("continuity") == "endpoint_restart_observed" and not terminal
         )
         if restored_from_journal and not terminal:
-            current_state = "RECOVERED_AWAITING_NATIVE_RECONCILIATION"
+            current_state = None
+            state_available = False
             state_source = "durable_task_projection"
             execution_confirmed = False
             reason = "gateway_restarted_awaiting_native_reconciliation"
         elif interrupted:
-            current_state = "INTERRUPTED_AWAITING_NATIVE_TRUTH"
+            current_state = None
+            state_available = False
             state_source = "continuity_monitor"
             execution_confirmed = False
             reason = "endpoint_restarted"
         else:
-            current_state = str(event["state_name"])
+            current_state = (
+                _last_confirmed_public_state(timeline[:-1])
+                if transition is not None
+                else _PUBLIC_STATE_BY_PHASE[phase]
+            )
+            state_available = current_state is not None
             state_source = (
                 "persisted_native_task_event"
                 if restored_from_journal
@@ -942,6 +1066,9 @@ def _snapshot(record: Mapping[str, Any]) -> dict[str, Any]:
         "found": True,
         "task_id": identity["task_id"],
         "current_state": current_state,
+        "state_available": state_available,
+        "phase": phase,
+        "transition": transition,
         "state_source": state_source,
         "execution_confirmed": execution_confirmed,
         "terminal": terminal,
@@ -957,9 +1084,22 @@ def _snapshot(record: Mapping[str, Any]) -> dict[str, Any]:
         "last_submission": last_submission,
         "latest_event": dict(event) if isinstance(event, Mapping) else None,
         "timeline": timeline,
+        "recording": (
+            dict(recording)
+            if isinstance((recording := record.get("recording")), Mapping)
+            else None
+        ),
         "delivery": delivery,
         "updated_at": float(record["updated_at"]),
     }
+
+
+def _last_confirmed_public_state(timeline: list[Mapping[str, Any]]) -> str | None:
+    for event in reversed(timeline):
+        state = _PUBLIC_STATE_BY_PHASE.get(str(event.get("state_name") or ""))
+        if state is not None:
+            return state
+    return None
 
 
 def _unknown_progress() -> dict[str, Any]:
@@ -1026,48 +1166,6 @@ def _canonical_json(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def _atomic_write(path: Path, payload: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    try:
-        with temp.open("xb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temp, 0o600)
-        os.replace(temp, path)
-        _fsync_directory(path.parent)
-    finally:
-        temp.unlink(missing_ok=True)
-
-
-def _fsync_directory(path: Path) -> None:
-    flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        flags |= os.O_DIRECTORY
-    try:
-        descriptor = os.open(str(path), flags)
-    except OSError as exc:
-        if os.name == "nt" and exc.errno in {
-            errno.EACCES,
-            errno.EINVAL,
-            errno.EPERM,
-        }:
-            return
-        raise
-    try:
-        try:
-            os.fsync(descriptor)
-        except OSError as exc:
-            if not (
-                os.name == "nt"
-                and exc.errno in {errno.EACCES, errno.EINVAL, errno.EPERM}
-            ):
-                raise
-    finally:
-        os.close(descriptor)
-
-
 def _restore_boot_cursors(value: object) -> dict[str, int]:
     if not isinstance(value, Mapping):
         raise ValueError("journal boot cursors must be an object")
@@ -1098,12 +1196,9 @@ def _restore_request_bindings(
             raw_binding.get("request_id"),
             "journal request binding request_id",
         )
-        route_sha256 = str(raw_binding.get("route_snapshot_sha256") or "")
-        if route_sha256 and (
-            len(route_sha256) != 64
-            or any(character not in "0123456789abcdef" for character in route_sha256)
-        ):
-            raise ValueError("journal request binding route hash is invalid")
+        raw_route_snapshot = raw_binding.get("route_snapshot")
+        if raw_route_snapshot is not None and not isinstance(raw_route_snapshot, Mapping):
+            raise ValueError("journal request binding route snapshot must be an object")
         reserved_at = float(raw_binding.get("reserved_at", -1.0))
         if not math.isfinite(reserved_at) or reserved_at < 0.0:
             raise ValueError("journal request binding has an invalid reservation time")
@@ -1128,7 +1223,9 @@ def _restore_request_bindings(
                 "journal request binding action",
             ),
             "reason": str(raw_binding.get("reason") or ""),
-            "route_snapshot_sha256": route_sha256,
+            "route_snapshot": (
+                dict(raw_route_snapshot) if raw_route_snapshot is not None else None
+            ),
             "reserved_at": reserved_at,
             "accepted_at": accepted_at,
             "source": "gateway_pre_native_reservation",
@@ -1152,7 +1249,7 @@ def _restore_record(
         "task_id": task_id,
         "route_id": _restored_optional_text(raw_identity.get("route_id")),
         "map_id": _restored_optional_text(raw_identity.get("map_id")),
-        "map_version": _restored_optional_integer(raw_identity.get("map_version")),
+        "map_content_epoch": _restored_optional_integer(raw_identity.get("map_content_epoch")),
         "route_revision": _restored_optional_integer(
             raw_identity.get("route_revision")
         ),
@@ -1162,7 +1259,7 @@ def _restore_record(
         if (
             route_snapshot["id"] != identity["route_id"]
             or route_snapshot["map_id"] != identity["map_id"]
-            or route_snapshot["map_version"] != identity["map_version"]
+            or route_snapshot["map_content_epoch"] != identity["map_content_epoch"]
             or route_snapshot["revision"] != identity["route_revision"]
         ):
             raise ValueError("journal task route snapshot identity mismatch")
@@ -1247,6 +1344,7 @@ def _restore_record(
     updated_at = float(value.get("updated_at", -1.0))
     if not math.isfinite(updated_at) or updated_at < 0.0:
         raise ValueError("journal task has an invalid updated_at")
+    recording = _restore_recording(value.get("recording"))
     return {
         "identity": identity,
         "route_snapshot": route_snapshot,
@@ -1254,6 +1352,7 @@ def _restore_record(
         "commands": commands,
         "latest_event": timeline[-1] if timeline else None,
         "timeline": timeline,
+        "recording": recording,
         "delivery": {
             "continuity": continuity,
             "history_complete": history_complete,
@@ -1263,6 +1362,35 @@ def _restore_record(
             "retention": retention,
             "restored_from_journal": True,
         },
+        "updated_at": updated_at,
+    }
+
+
+def _restore_recording(value: object) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("journal task recording must be an object")
+    state = str(value.get("state") or "")
+    if state not in _RECORDING_STATES:
+        raise ValueError("journal task recording has an invalid state")
+    updated_at = float(value.get("updated_at", -1.0))
+    if not math.isfinite(updated_at) or updated_at < 0.0:
+        raise ValueError("journal task recording has an invalid timestamp")
+    error = value.get("error", "")
+    if not isinstance(error, str):
+        raise ValueError("journal task recording error must be text")
+    return {
+        "session_id": _required_text(
+            value.get("session_id"),
+            "journal recording session_id",
+        ),
+        "product_session_id": _required_text(
+            value.get("product_session_id"),
+            "journal recording product_session_id",
+        ),
+        "state": state,
+        "error": error,
         "updated_at": updated_at,
     }
 

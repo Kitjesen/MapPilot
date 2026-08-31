@@ -30,7 +30,7 @@ def _route_endpoint(app: FastAPI, path: str):
 def _native_tare_status(
     *,
     active: bool = True,
-    session_id: str = "tare-session-42",
+    product_session_id: str = "tare-session-42",
     frame_id: str = "map",
 ) -> dict[str, object]:
     return {
@@ -38,10 +38,9 @@ def _native_tare_status(
         "endpoint": "lingtu_explore_dds",
         "stamp_s": 100.0,
         "active": active,
-        "session_id": session_id,
+        "product_session_id": product_session_id,
         "map": {
             "frame_id": frame_id,
-            "session_id": "rolling-map-session-7",
         },
     }
 
@@ -56,20 +55,20 @@ class _DirectedCommands:
         x: float,
         y: float,
         ttl_s: float,
-        session_id: str,
+        product_session_id: str,
         reason: str,
         request_id: str | None,
     ) -> bool:
-        self.calls.append(("set", x, y, ttl_s, session_id, reason, request_id))
+        self.calls.append(("set", x, y, ttl_s, product_session_id, reason, request_id))
         return self.accepted
 
     def clear_directed_exploration_target(
         self,
-        session_id: str,
+        product_session_id: str,
         reason: str,
         request_id: str | None,
     ) -> bool:
-        self.calls.append(("clear", session_id, reason, request_id))
+        self.calls.append(("clear", product_session_id, reason, request_id))
         return self.accepted
 
 
@@ -89,10 +88,6 @@ def _app_and_gateway(commands: object | None) -> tuple[FastAPI, SimpleNamespace]
         _go2rtc_upstream="",
         _nav_commands=commands,
         _all_modules={},
-        # Deliberately present a local explorer: directed intent must never
-        # fall back to it when the native command boundary is unavailable.
-        _tare_explorer=SimpleNamespace(start_tare_exploration=lambda: (_ for _ in ()).throw(AssertionError())),
-        _frontier_explorer=None,
     )
     app = FastAPI()
     register_operation_routes(app, gateway)
@@ -119,7 +114,7 @@ def test_directed_schema_requires_finite_coordinates_and_conservative_ttl() -> N
     with pytest.raises(ValidationError):
         DirectedExplorationTargetRequest(x=0.0, y=0.0, ttl_s=121.0)
     with pytest.raises(ValidationError):
-        DirectedExplorationTargetRequest(x=0.0, y=0.0, session_id="client-must-not-select-session")
+        DirectedExplorationTargetRequest(x=0.0, y=0.0, product_session_id="client-must-not-select-session")
     with pytest.raises(ValidationError):
         DirectedExplorationTargetRequest(x=0.0, y=0.0, bbox=[-1.0, -1.0, 1.0, 1.0])
     with pytest.raises(ValidationError):
@@ -153,12 +148,12 @@ def test_directed_route_forwards_server_derived_session_and_map_context(monkeypa
         "x": 12.5,
         "y": -4.25,
         "ttl_s": 45.0,
-        "session_id": "tare-session-42",
+        "product_session_id": "tare-session-42",
         "frame_id": "map",
         "reason": "operator_check_east",
         "request_id": "directed-123",
     }
-    assert model.intent.session_id == "tare-session-42"
+    assert model.intent.product_session_id == "tare-session-42"
     assert model.intent.frame_id == "map"
     assert payload["native"] == {"active": True, "state": None, "stamp_s": 100.0}
     assert commands.calls == [
@@ -171,7 +166,7 @@ def test_directed_route_forwards_server_derived_session_and_map_context(monkeypa
     [
         (None, "native_tare_status_unavailable"),
         (_native_tare_status(active=False), "native_tare_not_active"),
-        (_native_tare_status(session_id=""), "native_tare_session_unavailable"),
+        (_native_tare_status(product_session_id=""), "native_tare_product_session_unavailable"),
         (_native_tare_status(frame_id="odom"), "native_tare_map_frame_mismatch"),
         ({**_native_tare_status(), "map": None}, "native_tare_map_context_unavailable"),
     ],
@@ -208,7 +203,6 @@ def test_directed_route_never_falls_back_when_native_command_is_missing(monkeypa
     assert response.status_code == 503
     assert payload["ok"] is False
     assert payload["error"] == "directed_exploration_command_unavailable"
-    assert gateway._tare_explorer is not None
 
 
 def test_directed_route_reports_native_rejection_and_clear_forwards_context(monkeypatch) -> None:
@@ -250,7 +244,7 @@ def test_directed_route_reports_native_rejection_and_clear_forwards_context(monk
         "x": None,
         "y": None,
         "ttl_s": None,
-        "session_id": "tare-session-42",
+        "product_session_id": "tare-session-42",
         "frame_id": "map",
         "reason": "operator_clear_directed_explore",
         "request_id": "clear-1",

@@ -93,7 +93,7 @@ def watchdog_loop(
                 continue
             logger.error(
                 "drift_watchdog: IEKF diverged xy=(%.0f,%.0f) z=%.0f v=%.1f; "
-                "ProductControl restart required",
+                "Product switch required",
                 x,
                 y,
                 z,
@@ -154,23 +154,19 @@ def report_drift(
         "xy": max(xy, y_abs),
         "v": v,
         "action": (
-            "operator_restart_required"
+            "operator_product_switch_required"
             if plan is not None
-            else "restart_unavailable"
+            else "product_switch_unavailable"
         ),
         "reason": (
             "operator_product_control_required"
             if plan is not None
-            else "run_plan_missing"
+            else "current_product_missing"
         ),
         "count": incident,
     }
     if plan is not None:
-        env = str(getattr(plan, "env", "") or "").strip()
-        command = "python -m lingtu.control restart --process slam"
-        if env in {"real", "sim"}:
-            command += f" --env {env}"
-        event["operator_command"] = command
+        event["current_product"] = str(getattr(plan, "product", "") or "")
     if dump_path is not None:
         event["dump_path"] = str(dump_path)
     gw.push_event(event)

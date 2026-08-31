@@ -8,11 +8,11 @@ This module focuses on single-shot instruction processing.
 
 Pipeline:
   instruction -> decompose -> resolve goal -> explore frontiers -> execute action
-  nav.mission.mission_status (RECOVERING/FAILED) -> LERa recovery -> new goal
+  native NavigationState (RECOVERING/FAILED) -> LERa recovery -> new goal
 
 Ports:
   In:  instruction, scene_graph, odometry,
-       detections, mission_status, topo_summary, room_graph
+       detections, navigation_state, topo_summary, room_graph
   Out: goal_pose, task_plan, planner_status, cancel, servo_target, agent_message
 
 Strategies:
@@ -41,10 +41,11 @@ from decision.backends import BackendManager
 from decision.modules.llm import LLMRequest, LLMResponse
 from decision.semantic_navigation.intent import HybridSemanticIntentParser, SemanticAction, SemanticIntent, TravelMode
 from decision.semantic_navigation.intent import normalize_floor_id as normalize_semantic_floor_id
-from maps.places import PlaceCatalog, PlaceCatalogError, PlaceRef
+from runtime.endpoints.mapd import MapClient
+from memory.spatial.places import PlaceCatalog, PlaceCatalogError, PlaceRef
 from runtime.module import Module, skill
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
-from runtime.msgs.nav import Odometry
+from runtime.msgs.nav import NavigationState, Odometry
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.semantic import SceneGraph
 from runtime.registry import register
@@ -58,6 +59,31 @@ _LERA_COOLDOWN = 15.0
 SEMANTIC_PLANNER_MAP_FRAME_ID = map_frame_id()
 
 
+class _MapdPlaceQueries:
+    """Expose the read-only mapd calls consumed by ``PlaceCatalog``."""
+
+    def __init__(self, transport: object) -> None:
+        self._transport = transport
+
+    def list_maps(self) -> dict[str, Any]:
+        return self._service("list_maps")
+
+    def get_record(self, map_id: str) -> dict[str, Any]:
+        return self._service("get_record", map_id=map_id)
+
+    def poi_list(self, map_id: str = "") -> dict[str, Any]:
+        return self._service("list_poi", map_id=map_id)
+
+    def _service(self, action: str, **arguments: Any) -> dict[str, Any]:
+        service = getattr(self._transport, "service", None)
+        if not callable(service):
+            raise TypeError("map query transport does not implement service")
+        response = service(action, **arguments)
+        if not isinstance(response, dict):
+            raise TypeError(f"mapd {action} response must be an object")
+        return response
+
+
 @register("semantic_planner", "default", description="Unified semantic planner module")
 class SemanticPlannerModule(Module, layer=4):
     """Unified semantic planner: decompose ->resolve ->explore ->execute.
@@ -67,7 +93,7 @@ class SemanticPlannerModule(Module, layer=4):
 
     LERa integration
     ----------------
-    Subscribes to nav.mission.mission_status. On RECOVERING or FAILED, calls
+    Subscribes to native NavigationState. On RECOVERING or FAILED, calls
     ActionExecutor.lera_recover() and dispatches one of four strategies:
       retry_different_path -republish current goal (Navigation replans)
       expand_search        -ask FrontierScorer for an alternative frontier
@@ -75,8 +101,6 @@ class SemanticPlannerModule(Module, layer=4):
       abort                -publish "lera_abort" to cancel port
     """
 
-    _run_in_worker = True
-    _worker_group = "semantic"
     SOFT_DEPENDS = ["VectorMemoryModule", "SemanticMapperModule", "LLMModule"]
 
     # -- Inputs --
@@ -84,7 +108,7 @@ class SemanticPlannerModule(Module, layer=4):
     scene_graph: In[SceneGraph]
     odometry: In[Odometry]
     detections: In[list]
-    mission_status: In[dict]  # from Navigation -drives LERa recovery
+    navigation_state: In[NavigationState]
     topo_summary: In[str]  # from SemanticMapperModule
     room_graph: In[dict]  # serialized TopologySemGraph snapshot
     llm_response: In[LLMResponse]  # symbolic semantic-intent slow path
@@ -109,7 +133,12 @@ class SemanticPlannerModule(Module, layer=4):
         lera_cooldown: float = _LERA_COOLDOWN,
         llm_backend: str = "kimi",
         llm_model: str = "",
+        scene_graph_max_age_s: float = 0.75,
+        scene_graph_future_tolerance_s: float = 0.20,
+        goal_republish_position_epsilon_m: float = 0.05,
+        goal_republish_yaw_epsilon_rad: float = math.radians(5.0),
         save_dir: str = "",
+        map_query: object | None = None,
         **kw,
     ):
         super().__init__(**kw)
@@ -122,6 +151,16 @@ class SemanticPlannerModule(Module, layer=4):
         self._lera_cooldown = lera_cooldown
         self._llm_backend = llm_backend
         self._llm_model = llm_model
+        self._scene_graph_max_age_s = max(0.0, float(scene_graph_max_age_s))
+        self._scene_graph_future_tolerance_s = max(0.0, float(scene_graph_future_tolerance_s))
+        self._goal_republish_position_epsilon_m = max(
+            0.001,
+            float(goal_republish_position_epsilon_m),
+        )
+        self._goal_republish_yaw_epsilon_rad = max(
+            0.001,
+            float(goal_republish_yaw_epsilon_rad),
+        )
 
         # Backends (lazy init in setup)
         self._goal_resolver = None
@@ -142,7 +181,8 @@ class SemanticPlannerModule(Module, layer=4):
         # Active instruction + resolved goal
         self._current_instruction: str = ""
         self._current_goal_pose: PoseStamped | None = None
-        self._last_goal_publish_signature: tuple[str, str, float, float, float] | None = None
+        self._last_goal_publish_signature: tuple[str, str] | None = None
+        self._last_published_goal_pose: PoseStamped | None = None
 
         # LERa state -all guarded by _lera_lock
         self._lera_lock = threading.Lock()
@@ -155,10 +195,9 @@ class SemanticPlannerModule(Module, layer=4):
         # Sibling module references (set in on_system_modules)
         self._backends: BackendManager | None = None
         self._semantic_intent_parser = HybridSemanticIntentParser()
-        self._place_catalog: PlaceCatalog | None = None
-        self._maps_service: Any | None = None
+        self._map_query = map_query if map_query is not None else MapClient()
+        self._place_catalog: PlaceCatalog | None = PlaceCatalog(_MapdPlaceQueries(self._map_query))
         self._nav_goal_service_available = False
-        self._nav_building_service_available = False
         self._symbolic_llm_lock = threading.Lock()
         self._symbolic_llm_instruction_epoch = 0
         self._symbolic_llm_current_request_id = ""
@@ -177,18 +216,6 @@ class SemanticPlannerModule(Module, layer=4):
     def on_system_modules(self, modules: dict) -> None:
         self._backends = BackendManager(modules)
         self._nav_goal_service_available = self._backends.get("nav.goals") is not None
-        self._nav_building_service_available = self._backends.get("nav.building") is not None
-        self._maps_service = self._backends.get("maps.service")
-        self._place_catalog = None
-        if self._maps_service is None:
-            return
-        try:
-            # Prefer the dict-returning maps service interface.
-            catalog_source = getattr(self._maps_service, "api", None) or self._maps_service
-            self._place_catalog = PlaceCatalog(catalog_source)
-        except Exception as exc:
-            logger.warning("Semantic place catalog unavailable: %s", exc)
-            self._place_catalog = None
 
     def setup(self) -> None:
         self._init_backends()
@@ -196,7 +223,7 @@ class SemanticPlannerModule(Module, layer=4):
         self.scene_graph.subscribe(self._on_scene_graph)
         self.odometry.subscribe(self._on_odom)
         self.detections.subscribe(self._on_detections)
-        self.mission_status.subscribe(self._on_mission_status)
+        self.navigation_state.subscribe(self._on_navigation_state)
         self.topo_summary.subscribe(self._on_topo_summary)
         self.room_graph.subscribe(self._on_room_graph)
         self.llm_response.subscribe(self._on_llm_response)
@@ -296,6 +323,7 @@ class SemanticPlannerModule(Module, layer=4):
 
         self._current_instruction = text
         self._last_goal_publish_signature = None
+        self._last_published_goal_pose = None
         with self._lera_lock:
             self._failure_count = 0
             self._requery_count = 0
@@ -616,19 +644,25 @@ class SemanticPlannerModule(Module, layer=4):
             return False
 
         place = resolution.place
-        if not (self._nav_building_service_available and self._nav_goal_service_available):
+        if not self._nav_goal_service_available:
             self._refuse_place_navigation(
-                "CONNECTOR_RUNTIME_REQUIRED",
-                "Named-place navigation requires the building mission runtime.",
+                "NAVIGATION_SERVICE_REQUIRED",
+                "Named-place navigation is unavailable.",
             )
             return True
-        if not self._building_place_is_executable(place):
+        if place.map_id and place.map_id != active_map:
+            self._refuse_place_navigation(
+                "CROSS_MAP_NAVIGATION_UNSUPPORTED",
+                "The place is on another map; cross-map navigation is not supported.",
+            )
+            return True
+        if not self._place_is_executable(place):
             self._refuse_place_navigation(
                 "PLACE_NOT_EXECUTABLE",
-                f"Place is not executable: {place.non_executable_reason or 'incomplete building binding'}.",
+                f"Place is not executable: {place.non_executable_reason or 'missing map pose'}.",
             )
             return True
-        self._publish_building_navigation(intent, place, expected_symbolic_epoch=expected_symbolic_epoch)
+        self._publish_place_navigation(place, expected_symbolic_epoch=expected_symbolic_epoch)
         return True
 
     @staticmethod
@@ -641,24 +675,8 @@ class SemanticPlannerModule(Module, layer=4):
             and bool(place.frame_id)
         )
 
-    @classmethod
-    def _building_place_is_executable(cls, place: PlaceRef) -> bool:
-        return (
-            cls._place_is_executable(place)
-            and place.yaw is not None
-            and place.map_version is not None
-            and bool(place.place_id)
-            and bool(place.name)
-            and bool(place.building_id)
-            and bool(place.floor_id)
-            and bool(place.map_id)
-            and bool(place.version_id)
-            and bool(place.map_pcd_sha256)
-        )
-
-    def _publish_building_navigation(
+    def _publish_place_navigation(
         self,
-        intent: SemanticIntent,
         place: PlaceRef,
         *,
         expected_symbolic_epoch: int | None = None,
@@ -666,33 +684,20 @@ class SemanticPlannerModule(Module, layer=4):
         if expected_symbolic_epoch is not None and not self._symbolic_llm_epoch_is_current(expected_symbolic_epoch):
             return
         payload = {
-            "action": "building_navigate",
-            "schema_version": "lingtu.building_goal.v1",
+            "action": "goto",
             "request_id": f"semantic-{time.time_ns()}",
             "source": "semantic",
-            "travel_mode": intent.travel_mode.value,
-            "connector_id": place.connector_id,
-            "target": {
-                "place_id": place.place_id,
-                "name": place.name,
-                "building_id": place.building_id,
-                "floor_id": place.floor_id,
-                "map_id": place.map_id,
-                "frame_id": place.frame_id,
-                "x": float(place.x),
-                "y": float(place.y),
-                "z": float(place.z),
-                "yaw": float(place.yaw),
-                "map_version": place.map_version,
-                "version_id": place.version_id,
-                "map_pcd_sha256": place.map_pcd_sha256,
-            },
+            "frame_id": place.frame_id,
+            "x": float(place.x),
+            "y": float(place.y),
+            "z": float(place.z),
+            "yaw": float(place.yaw or 0.0),
         }
         self.nav_command.publish(_json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
-        self.planner_status.publish("BUILDING_MISSION_DISPATCHED")
+        self.planner_status.publish("PLACE_GOAL_DISPATCHED")
         self._chat(
             "assistant",
-            f"Building navigation mission sent for {place.name} on {place.floor_id}.",
+            f"Navigation goal sent for {place.name}.",
             phase="place",
         )
 
@@ -709,28 +714,16 @@ class SemanticPlannerModule(Module, layer=4):
         return "I could not find that place in the active place map."
 
     def _active_map_id(self) -> str:
-        service = self._maps_service
-        if service is None:
+        service = getattr(self._map_query, "service", None)
+        if not callable(service):
             return ""
-        api = getattr(service, "api", None)
-        owner = api if api is not None else service
-        method = getattr(owner, "get_active_map", None)
-        if callable(method):
-            try:
-                response = method()
-            except Exception:
-                logger.debug("active map query failed", exc_info=True)
-            else:
-                if isinstance(response, dict) and response.get("success") is True:
-                    return str(response.get("active") or response.get("map_id") or "")
-        for attr in ("_active_map", "active_map"):
-            value = getattr(service, attr, "")
-            if value:
-                return str(value)
-        storage = getattr(service, "storage", None)
-        value = getattr(storage, "active_map", "") if storage is not None else ""
-        if value:
-            return str(value)
+        try:
+            response = service("get_active_map")
+        except Exception:
+            logger.debug("active map query failed", exc_info=True)
+            return ""
+        if isinstance(response, dict) and response.get("success") is True:
+            return str(response.get("active") or response.get("map_id") or "")
         return ""
 
     # Follow-verb patterns: explicit multi-character Chinese verbs plus "follow".
@@ -759,6 +752,12 @@ class SemanticPlannerModule(Module, layer=4):
 
     def _on_scene_graph(self, sg: SceneGraph) -> None:
         """Scene graph update ->cache + re-resolve if active instruction."""
+        if self._scene_graph_is_stale(sg):
+            self._latest_sg = None
+            self._current_scene_graph = None
+            if self._current_instruction:
+                self.planner_status.publish("WAITING_FOR_FRESH_SCENE_GRAPH")
+            return
         sg_json = sg.to_json() if hasattr(sg, "to_json") else str(sg)
         self._latest_sg = sg_json
         self._current_scene_graph = sg  # keep object for LERa label extraction
@@ -769,23 +768,54 @@ class SemanticPlannerModule(Module, layer=4):
     def _on_odom(self, odom: Odometry) -> None:
         self._robot_pos = np.array([odom.x, odom.y, getattr(odom, "z", 0.0)])
 
+    def _scene_graph_is_stale(self, sg: SceneGraph) -> bool:
+        frame_id = str(getattr(sg, "frame_id", "") or "")
+        if frame_id != SEMANTIC_PLANNER_MAP_FRAME_ID:
+            return True
+        ts = float(getattr(sg, "ts", 0.0) or 0.0)
+        if ts <= 0.0 or not math.isfinite(ts):
+            return True
+        age = time.time() - ts
+        if age < -self._scene_graph_future_tolerance_s:
+            return True
+        if self._scene_graph_max_age_s <= 0.0:
+            return False
+        return age > self._scene_graph_max_age_s
+
     @staticmethod
-    def _rounded_goal_coord(value: float) -> float:
-        value = float(value)
-        return round(value, 3) if math.isfinite(value) else value
+    def _wrap_angle_delta_rad(a: float, b: float) -> float:
+        return abs(math.atan2(math.sin(a - b), math.cos(a - b)))
+
+    def _goal_pose_within_republish_hysteresis(
+        self,
+        previous: PoseStamped,
+        current: PoseStamped,
+    ) -> bool:
+        dx = float(current.x) - float(previous.x)
+        dy = float(current.y) - float(previous.y)
+        dz = float(current.z) - float(previous.z)
+        distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if not math.isfinite(distance):
+            return False
+        if distance > self._goal_republish_position_epsilon_m:
+            return False
+        yaw_delta = self._wrap_angle_delta_rad(float(current.yaw), float(previous.yaw))
+        return yaw_delta <= self._goal_republish_yaw_epsilon_rad
 
     def _publish_goal_pose_once(self, instruction: str, pose: PoseStamped) -> bool:
-        signature = (
-            instruction,
-            str(pose.frame_id or ""),
-            self._rounded_goal_coord(pose.x),
-            self._rounded_goal_coord(pose.y),
-            self._rounded_goal_coord(pose.z),
-        )
+        signature = (instruction, str(pose.frame_id or ""))
         self._current_goal_pose = pose
-        if signature == self._last_goal_publish_signature:
+        if (
+            signature == self._last_goal_publish_signature
+            and self._last_published_goal_pose is not None
+            and self._goal_pose_within_republish_hysteresis(
+                self._last_published_goal_pose,
+                pose,
+            )
+        ):
             return False
         self._last_goal_publish_signature = signature
+        self._last_published_goal_pose = pose
         self.goal_pose.publish(pose)
         return True
 
@@ -803,14 +833,14 @@ class SemanticPlannerModule(Module, layer=4):
         if self._goal_resolver is not None and hasattr(self._goal_resolver, "set_topology_graph_snapshot"):
             self._goal_resolver.set_topology_graph_snapshot(snapshot)
 
-    def _on_mission_status(self, status: dict) -> None:
+    def _on_navigation_state(self, status: NavigationState) -> None:
         """Navigation failure ->trigger LERa recovery.
 
         This method runs on the caller's callback thread (synchronous publish
         chain). It must return immediately -the actual LERa call (which may
         block up to 15 s on a network LLM) is dispatched to a daemon thread.
         """
-        state = status.get("state", "")
+        state = str(status.to_dict().get("lifecycle_state_name") or "")
 
         # Fast path: non-terminal states only update cached nav state.
         if state not in ("RECOVERING", "STUCK", "FAILED"):
@@ -941,6 +971,7 @@ class SemanticPlannerModule(Module, layer=4):
                 self._current_instruction = ""
                 self._current_goal_pose = None
                 self._last_goal_publish_signature = None
+                self._last_published_goal_pose = None
             else:
                 # Re-run full Fast->Slow resolution with the current scene graph.
                 with self._lera_lock:
@@ -957,6 +988,7 @@ class SemanticPlannerModule(Module, layer=4):
             self._current_instruction = ""
             self._current_goal_pose = None
             self._last_goal_publish_signature = None
+            self._last_published_goal_pose = None
 
         else:
             logger.warning("[LERa] Unknown strategy '%s', defaulting to abort", strategy)

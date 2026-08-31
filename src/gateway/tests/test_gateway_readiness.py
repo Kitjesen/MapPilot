@@ -50,14 +50,14 @@ class _ThreadState:
 
 
 def _real_run_plan(product: str):
+    from lingtu.assembly.compiler import compile_run_plan
     from lingtu.assembly.products import resolve_product_host_runtime
-    from lingtu.assembly.profile_builder import compile_run_plan
 
-    resolved = resolve_product_host_runtime(product, "real")
+    resolved = resolve_product_host_runtime(product, "real", robot="unitree/go2")
     return compile_run_plan(
         resolved.product,
         resolved.env,
-        resolved.config,
+        robot="unitree/go2",
     )
 
 
@@ -115,6 +115,7 @@ def test_readiness_snapshot_requires_native_endpoint_for_idle_teleop_product(
 
     monkeypatch.setenv("LINGTU_ENV", "real")
     monkeypatch.setenv("LINGTU_PRODUCT", "teleop")
+    monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "1" * 32)
     monkeypatch.setenv(
         "LINGTU_NAV_STATUS_FILE",
         str(tmp_path / "missing-nav-endpoint-status.json"),
@@ -131,18 +132,14 @@ def test_readiness_snapshot_requires_native_endpoint_for_idle_teleop_product(
     assert status_code == 503
     assert payload["ready"] is False
     assert "navigation_blocked:native_endpoint_status_missing_or_stale" in payload["reasons"]
-    assert "native_endpoint_status_missing_or_stale" in payload["runtime"]["navigation"][
-        "blockers"
-    ]
+    assert "native_endpoint_status_missing_or_stale" in payload["runtime"]["navigation"]["blockers"]
     assert payload["product_contract"]["product"] == "teleop"
-    assert payload["product_contract"]["fingerprint"] == plan.fingerprint
+    assert payload["product_contract"]["product_session_id"] == "1" * 32
     assert payload["product_contract"]["command_output_mode"] == "endpoint_only"
     assert payload["product_contract"]["hardware_control_boundary"] == "driver"
     assert payload["product_contract"]["native_readiness_required"] is True
     assert "/nav/operator_motion/status" in payload["product_contract"]["required_topics"]
-    assert "native_operator_motion_authority" in payload["product_contract"][
-        "required_capabilities"
-    ]
+    assert "native_operator_motion_authority" in payload["product_contract"]["required_capabilities"]
 
     from gateway.schemas import ReadinessResponse
 
@@ -159,7 +156,6 @@ def test_managed_gateway_without_run_plan_fails_readiness_closed():
         command_output_mode="endpoint_only",
         hardware_control_boundary="driver",
         product="teleop",
-        run_plan_fingerprint="orphaned-fingerprint",
     )
     gateway._all_modules = {"GatewayModule": _HealthyModule()}
 
@@ -224,9 +220,7 @@ def test_maps_blocker_fails_data_readiness_for_mapd_product(monkeypatch):
     assert payload["motion_ready"] is False
     assert payload["reasons"] == ["maps:waiting_for_mapd_scene"]
     assert payload["runtime"]["maps"]["ready"] is False
-    assert payload["runtime"]["summary"]["data_blockers"] == [
-        "maps:waiting_for_mapd_scene"
-    ]
+    assert payload["runtime"]["summary"]["data_blockers"] == ["maps:waiting_for_mapd_scene"]
 
 
 def test_readiness_snapshot_can_omit_module_details_for_probe_payload():
@@ -334,12 +328,11 @@ def test_readiness_snapshot_includes_navigation_blockers():
     from gateway.services.readiness import build_readiness_snapshot
 
     gateway = GatewayModule()
-    gateway._all_modules = {"nav.mission": _HealthyModule()}
+    gateway._all_modules = {"host.bus": _HealthyModule()}
     gateway._session_mode = "navigating"
     gateway._icp_quality = 0.03
     with gateway._state_lock:
         gateway._odom = {"x": 0.0}
-        gateway._mission = {"state": "IDLE"}
         gateway._localization_status = {
             "state": "TRACKING",
             "confidence": 0.9,
@@ -371,6 +364,7 @@ def test_readiness_snapshot_includes_runtime_boundary_blockers(monkeypatch):
 
     monkeypatch.setenv("LINGTU_ENV", "sim")
     monkeypatch.setenv("LINGTU_PRODUCT", "explore")
+    monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "2" * 32)
     monkeypatch.setenv("LINGTU_DATA_SOURCE", "mujoco_fastlio2_live")
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
@@ -378,7 +372,6 @@ def test_readiness_snapshot_includes_runtime_boundary_blockers(monkeypatch):
     run_plan = SimpleNamespace(
         env="sim",
         product="explore",
-        fingerprint="sim-explore-runtime",
         host_config={
             "command_output_mode": "",
             "hardware_control_boundary": "",
@@ -388,16 +381,10 @@ def test_readiness_snapshot_includes_runtime_boundary_blockers(monkeypatch):
         required_capabilities=(),
     )
     gateway = GatewayModule(run_plan=run_plan)
-    gateway._all_modules = {"nav.mission": _HealthyModule()}
+    gateway._all_modules = {"host.bus": _HealthyModule()}
     gateway._session_mode = "navigating"
     with gateway._state_lock:
         gateway._odom = {"x": 0.0, "frame_id": "map"}
-        gateway._mission = {
-            "state": "IDLE",
-            "planning_frame_id": "map",
-            "costmap_frame_id": "map",
-            "goal_frame_id": "map",
-        }
         gateway._localization_status = {
             "state": "TRACKING",
             "confidence": 0.9,
@@ -418,7 +405,10 @@ def test_readiness_snapshot_includes_runtime_boundary_blockers(monkeypatch):
     assert boundary["ok"] is False
     assert boundary["env"] == "sim"
     assert boundary["product"] == "explore"
-    assert boundary["run_plan_fingerprint"] == "sim-explore-runtime"
+    assert boundary["state"] == "active"
+    assert boundary["product_session_id"] == "2" * 32
+    assert "run_plan_path" not in boundary
+    assert "identity_source" not in boundary
     assert "endpoint" not in boundary
     assert "profile" not in boundary
     assert boundary["expected_command_sink"] == ("mujoco_velocity_adapter")
@@ -454,9 +444,14 @@ def test_readiness_snapshot_includes_runtime_boundary_blockers(monkeypatch):
     assert payload["runtime"]["summary"]["data_blockers"] == [
         "runtime_blocked:runtime_contract_data_source_mismatch",
         "runtime_blocked:command_sink_mismatch",
-        "maps:host_bus_missing",
+            "maps:map_readiness_contract_missing",
     ]
-    assert payload["runtime"]["maps"] == {"required": True}
+    assert payload["runtime"]["maps"] == {
+        "required": True,
+        "ready": False,
+        "reason": "map_readiness_contract_missing",
+        "host_bus": None,
+    }
 
 
 def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
@@ -465,12 +460,12 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
 
     monkeypatch.setenv("LINGTU_ENV", "real")
     monkeypatch.setenv("LINGTU_PRODUCT", "nav")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "thunder")
+    monkeypatch.setenv("LINGTU_DATA_SOURCE", "field")
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
 
     gateway = GatewayModule()
-    gateway._all_modules = {"nav.mission": _HealthyModule()}
+    gateway._all_modules = {"host.bus": _HealthyModule()}
     gateway._session_mode = "navigating"
     gateway._icp_quality = 0.03
     with gateway._state_lock:
@@ -537,8 +532,28 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
     boundary = payload["runtime"]["boundary"]
     assert boundary["env"] == "real"
     assert boundary["product"] == "nav"
+    assert "runtime_contract_data_source_mismatch" not in boundary["blockers"]
     assert "endpoint" not in boundary
     assert "profile" not in boundary
+
+
+def test_manual_hold_is_a_non_motion_safe_readiness_state():
+    from gateway.services.readiness import _runtime_readiness_modes
+
+    modes = _runtime_readiness_modes(
+        failed_modules=[],
+        reasons=["navigation_blocked:native_resume_required"],
+        runtime={
+            "navigation": {
+                "state": "IDLE",
+                "active_cmd_source": "manual_hold",
+            }
+        },
+    )
+
+    assert modes["data_ready"] is True
+    assert modes["motion_ready"] is False
+    assert modes["non_motion_safe"] is True
 
 
 def test_readiness_snapshot_blocks_motion_but_not_data_when_safety_stop_active():
@@ -546,13 +561,13 @@ def test_readiness_snapshot_blocks_motion_but_not_data_when_safety_stop_active()
     from gateway.services.readiness import build_readiness_snapshot
 
     gateway = GatewayModule()
-    gateway._all_modules = {"nav.mission": _HealthyModule()}
+    gateway._all_modules = {"host.bus": _HealthyModule()}
     gateway._session_mode = "navigating"
     gateway._icp_quality = 0.03
     with gateway._state_lock:
         gateway._odom = {"x": 0.0, "y": 0.0, "z": 0.0}
         gateway._mission = {"state": "IDLE"}
-        gateway._safety = {"level": 2}
+        gateway._navigation_state = {"authority": "estop", "hold_reason": "operator_estop"}
         gateway._localization_status = {
             "state": "TRACKING",
             "confidence": 0.9,
@@ -575,47 +590,6 @@ def test_readiness_snapshot_blocks_motion_but_not_data_when_safety_stop_active()
     assert payload["runtime"]["summary"]["data_blockers"] == []
 
 
-def test_readiness_snapshot_flags_active_command_source_as_not_non_motion_safe():
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.readiness import build_readiness_snapshot
-
-    class FakeMux:
-        def health(self):
-            return {
-                "active_source": "teleop",
-                "sources": {
-                    "teleop": {"active": True, "priority": 100},
-                },
-            }
-
-    gateway = GatewayModule()
-    gateway._all_modules = {
-        "nav.mission": _HealthyModule(),
-        "nav.velocity_mux": FakeMux(),
-    }
-    gateway._session_mode = "navigating"
-    with gateway._state_lock:
-        gateway._odom = {"x": 0.0}
-        gateway._mission = {"state": "EXECUTING"}
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.9,
-            "degeneracy": "NONE",
-            "icp_fitness": 0.03,
-            "localizer_health": "RECOVERED",
-            "odom_age_ms": 100.0,
-        }
-        gateway._icp_quality = 0.03
-
-    payload, status_code = build_readiness_snapshot(gateway, now=129.0)
-
-    assert status_code == 200
-    assert payload["ready"] is True
-    assert payload["data_ready"] is True
-    assert payload["motion_ready"] is True
-    assert payload["non_motion_safe"] is False
-    assert payload["runtime"]["navigation"]["active_cmd_source"] == "teleop"
-    assert payload["runtime"]["summary"]["mission_state"] == "EXECUTING"
 
 
 def test_readiness_snapshot_surfaces_calibration_warnings(monkeypatch):
@@ -639,7 +613,7 @@ def test_readiness_snapshot_surfaces_calibration_warnings(monkeypatch):
     readiness_service._CALIBRATION_CACHE = None
 
     gateway = GatewayModule()
-    gateway._all_modules = {"nav.mission": _HealthyModule()}
+    gateway._all_modules = {"host.bus": _HealthyModule()}
     gateway._session_mode = "navigating"
     with gateway._state_lock:
         gateway._odom = {"x": 0.0}

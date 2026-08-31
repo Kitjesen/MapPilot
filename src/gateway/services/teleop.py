@@ -8,7 +8,6 @@ mechanics live here.
 from __future__ import annotations
 
 import logging
-import socket
 import threading
 import time
 from collections.abc import Callable
@@ -20,7 +19,6 @@ from gateway.services.command_boundary import (
 )
 from runtime.msgs.geometry import Twist, Vector3
 from runtime.msgs.nav import OperatorMotionAction, OperatorMotionReceipt
-from runtime.runtime_interface import TOPICS
 
 logger = logging.getLogger(__name__)
 
@@ -86,13 +84,14 @@ class _OperatorMotionSample:
     source_epoch: int
     sequence: int
     request_id: str | None
+    manual_mode: bool
     freshness_budget_ms: int
 
 
 class LatestNativeTeleopPublisher:
-    """Non-blocking latest-value publisher for high-rate joystick commands.
+    """Non-blocking latest-value publisher for high-rate velocity commands.
 
-    Ordinary joystick samples are replaceable: while one typed DDS submission
+    Ordinary velocity samples are replaceable: while one typed DDS submission
     call is in flight, only the newest pending sample is retained. Samples do
     not carry an endpoint application ACK.
     Safety-critical release/stop paths use :meth:`quiesce_and_send_zero`, which
@@ -135,6 +134,7 @@ class LatestNativeTeleopPublisher:
         source_id: str = "gateway:teleop",
         source_epoch: int = 1,
         sequence: int = 1,
+        manual_mode: bool = False,
         freshness_budget_ms: int = 350,
     ) -> bool:
         with self._condition:
@@ -148,6 +148,7 @@ class LatestNativeTeleopPublisher:
                 int(source_epoch),
                 int(sequence),
                 request_id,
+                bool(manual_mode),
                 int(freshness_budget_ms),
             )
             self._condition.notify()
@@ -273,7 +274,7 @@ class LatestNativeTeleopPublisher:
         return result
 
     def quiesce(self, *, timeout_s: float = 2.0) -> None:
-        """Prevent queued/in-flight joystick samples from crossing a stop."""
+        """Prevent queued/in-flight velocity samples from crossing a stop."""
 
         deadline = time.monotonic() + max(0.1, float(timeout_s))
         with self._condition:
@@ -325,6 +326,7 @@ class LatestNativeTeleopPublisher:
                         command.vy,
                         command.wz,
                         deadman=True,
+                        manual_mode=command.manual_mode,
                         freshness_budget_ms=command.freshness_budget_ms,
                         request_id=command.request_id,
                     )
@@ -369,28 +371,187 @@ class LatestNativeTeleopPublisher:
             logger.error("GatewayModule: native teleop failure callback failed: %s", exc)
 
 
-def resolve_native_command_boundary(
-    *,
-    command_output_mode: str,
-) -> bool:
-    """Resolve the Product command boundary from its compiled policy."""
-
-    mode = (command_output_mode or "").strip().lower()
-    if mode == "endpoint_only":
-        return True
-    if mode in {"", "local_driver"}:
-        return False
-    raise ValueError(f"unsupported command_output_mode: {command_output_mode!r}")
+NATIVE_TELEOP_LEASE_TTL_MS = 1000
+NATIVE_TELEOP_RECLAIM_AFTER_S = NATIVE_TELEOP_LEASE_TTL_MS * 0.5e-3
+_CLAIM_RETRY_REASONS = {
+    "authority_lease_expired",
+    "authority_change_requires_zero_barrier",
+    "stale_epoch",
+    "zero_barrier_pending",
+}
 
 
-def parse_bridge_addr(raw: str) -> tuple[str, int] | None:
-    raw = (raw or "").strip()
-    if not raw:
-        return None
-    if ":" not in raw:
-        raise ValueError("LINGTU_TELEOP_BRIDGE_ADDR must be HOST:PORT")
-    host, port = raw.rsplit(":", 1)
-    return host.strip(), int(port)
+@dataclass(frozen=True)
+class TeleopSessionResult:
+    """Outcome kept inside Gateway's Web teleop adapter."""
+
+    accepted: bool
+    reason: str
+    final_output_confirmed: bool = False
+
+
+class NativeTeleopSession:
+    """Connection-scoped Web teleop session.
+
+    The browser only connects, moves, holds, and disconnects. Native lease,
+    epoch, sequence, zero-barrier, and reclaim details remain inside Gateway.
+    """
+
+    def __init__(self, gw: Any, source_id: str) -> None:
+        self._gw = gw
+        self._source_id = str(source_id)
+        self._source_epoch = max(1, time.monotonic_ns())
+        self._sequence = 0
+        self._opened = False
+        self._owns_native_authority = False
+        self._claim_before_move = True
+        self._last_native_activity_s = 0.0
+
+    def open(self) -> TeleopSessionResult:
+        """Reserve the one connection-scoped Web controller slot."""
+
+        lock = self._gw._web_teleop_owner_lock
+        with lock:
+            owner = self._gw._web_teleop_owner
+            if owner not in (None, self._source_id):
+                return TeleopSessionResult(False, "connection_in_use")
+            self._gw._web_teleop_owner = self._source_id
+        self._opened = True
+        return TeleopSessionResult(True, "connected")
+
+    def move(
+        self,
+        vx_mps: float,
+        vy_mps: float,
+        yaw_rps: float,
+        *,
+        request_id: str,
+        manual_mode: bool = False,
+    ) -> TeleopSessionResult:
+        """Claim native authority when needed and queue the latest velocity."""
+
+        if not self._opened:
+            return TeleopSessionResult(False, "session_closed")
+        now = time.monotonic()
+        if (
+            self._claim_before_move
+            or not self._owns_native_authority
+            or now - self._last_native_activity_s >= NATIVE_TELEOP_RECLAIM_AFTER_S
+        ):
+            claimed = self._ensure_native_authority()
+            if not claimed.accepted:
+                return claimed
+        sequence = self._next_sequence()
+        accepted = bool(
+            self._gw._teleop_on_velocity(
+                vx_mps,
+                vy_mps,
+                yaw_rps,
+                request_id=request_id,
+                source_id=self._source_id,
+                source_epoch=self._source_epoch,
+                sequence=sequence,
+                manual_mode=manual_mode,
+            )
+        )
+        if not accepted:
+            self._claim_before_move = True
+            return TeleopSessionResult(False, "publisher_unavailable")
+        self._last_native_activity_s = time.monotonic()
+        return TeleopSessionResult(True, "queued")
+
+    def hold(self, *, request_id: str, reason: str = "web_operator_hold") -> TeleopSessionResult:
+        """Publish an ordered zero barrier for this session when it has control."""
+
+        if not self._opened:
+            return TeleopSessionResult(False, "session_closed")
+        if not self._owns_native_authority:
+            self._claim_before_move = True
+            return TeleopSessionResult(True, "already_idle")
+        receipt = self._gw._teleop_release(
+            source_id=self._source_id,
+            source_epoch=self._source_epoch,
+            sequence=self._next_sequence(),
+            request_id=request_id,
+            reason=reason,
+        )
+        self._claim_before_move = True
+        self._last_native_activity_s = time.monotonic()
+        if isinstance(receipt, OperatorMotionReceipt) and receipt.final_output_published:
+            return TeleopSessionResult(True, "held", final_output_confirmed=True)
+        internal_reason = receipt.reason if isinstance(receipt, OperatorMotionReceipt) else "hold_failed"
+        return TeleopSessionResult(False, internal_reason)
+
+    def disconnect(self, *, request_id: str) -> TeleopSessionResult:
+        """Hold, release native authority, and free the Web controller slot."""
+
+        try:
+            if not self._owns_native_authority:
+                return TeleopSessionResult(True, "already_idle")
+            hold_sequence = self._next_sequence()
+            receipt = self._gw._teleop_release(
+                source_id=self._source_id,
+                source_epoch=self._source_epoch,
+                sequence=hold_sequence,
+                release_sequence=self._next_sequence(),
+                request_id=request_id,
+                reason="disconnect",
+            )
+            if isinstance(receipt, OperatorMotionReceipt) and receipt.final_output_published:
+                return TeleopSessionResult(True, "disconnected", final_output_confirmed=True)
+            internal_reason = (
+                receipt.reason if isinstance(receipt, OperatorMotionReceipt) else "disconnect_zero_failed"
+            )
+            return TeleopSessionResult(False, internal_reason)
+        finally:
+            self._owns_native_authority = False
+            self._claim_before_move = True
+            self._opened = False
+            with self._gw._web_teleop_owner_lock:
+                if self._gw._web_teleop_owner == self._source_id:
+                    self._gw._web_teleop_owner = None
+
+    def _ensure_native_authority(self) -> TeleopSessionResult:
+        publisher = getattr(self._gw, "_teleop_native_publisher", None)
+        publisher_quiesce = getattr(publisher, "quiesce", None)
+        publisher_resume = getattr(publisher, "resume", None)
+        if callable(publisher_quiesce):
+            try:
+                publisher_quiesce()
+            except Exception as exc:
+                logger.error("GatewayModule: native teleop claim barrier failed: %s", exc)
+                return TeleopSessionResult(False, "publisher_unavailable")
+        last_reason = "claim_failed"
+        for _ in range(3):
+            sequence = self._next_sequence()
+            receipt = self._gw._teleop_claim(
+                source_id=self._source_id,
+                source_epoch=self._source_epoch,
+                sequence=sequence,
+                lease_ttl_ms=NATIVE_TELEOP_LEASE_TTL_MS,
+                request_id=f"{self._source_id}:claim:{sequence}",
+            )
+            if isinstance(receipt, OperatorMotionReceipt) and receipt.source_accepted:
+                if callable(publisher_resume):
+                    publisher_resume()
+                self._owns_native_authority = True
+                self._claim_before_move = False
+                self._last_native_activity_s = time.monotonic()
+                return TeleopSessionResult(True, "claimed")
+            last_reason = receipt.reason if isinstance(receipt, OperatorMotionReceipt) else "claim_failed"
+            if last_reason not in _CLAIM_RETRY_REASONS:
+                break
+            if last_reason in {"authority_lease_expired", "stale_epoch"}:
+                self._source_epoch = max(self._source_epoch + 1, time.monotonic_ns())
+        self._owns_native_authority = False
+        self._claim_before_move = True
+        if callable(publisher_resume):
+            publisher_resume()
+        return TeleopSessionResult(False, last_reason)
+
+    def _next_sequence(self) -> int:
+        self._sequence += 1
+        return self._sequence
 
 
 def init_teleop_state(
@@ -399,24 +560,18 @@ def init_teleop_state(
     max_speed: float,
     max_yaw: float,
     release_timeout: float,
-    bridge_addr_raw: str,
-    dds_enabled: bool,
 ) -> None:
-    gw._teleop_module = None
     gw._camera_module = None
     gw._teleop_clients = 0
     gw._teleop_clients_lock = threading.Lock()
+    gw._web_teleop_owner = None
+    gw._web_teleop_owner_lock = threading.Lock()
     gw._latest_jpeg = None
     gw._latest_jpeg_seq = 0
     gw._jpeg_lock = threading.Lock()
     gw._teleop_max_speed = max_speed
     gw._teleop_max_yaw = max_yaw
     gw._teleop_release_timeout = release_timeout
-    gw._teleop_bridge_addr = parse_bridge_addr(bridge_addr_raw)
-    gw._teleop_bridge_sock = (
-        socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if gw._teleop_bridge_addr is not None else None
-    )
-    gw._teleop_dds_enabled = dds_enabled
     gw._teleop_native_publisher = None
 
 
@@ -428,8 +583,6 @@ def bind_navigation_commands(gw: Any, commands: Any | None) -> None:
     if publisher is not None:
         publisher.close()
     gw._teleop_native_publisher = None
-    if not bool(getattr(gw, "_teleop_dds_enabled", False)):
-        return
     command_client = None
     if commands is not None:
         has_typed_operator_motion = all(
@@ -439,10 +592,7 @@ def bind_navigation_commands(gw: Any, commands: Any | None) -> None:
         if has_typed_operator_motion:
             command_client = commands
     if command_client is None:
-        logger.error(
-            "GatewayModule: %s disabled because nav.commands lacks typed operator motion",
-            TOPICS.teleop_cmd_vel,
-        )
+        logger.error("GatewayModule teleop disabled because nav.commands lacks typed operator motion")
         return
     push_event = getattr(gw, "push_event", None)
 
@@ -450,8 +600,14 @@ def bind_navigation_commands(gw: Any, commands: Any | None) -> None:
         if callable(push_event):
             push_event(
                 {
-                    "type": "operator_motion_sample_failed",
-                    "data": failure,
+                    "type": "teleop_command_failed",
+                    "data": {
+                        "request_id": failure.get("request_id"),
+                        "error": "control_unavailable",
+                        "stage": "dds_submission_failed",
+                        "final_cmd_vel_confirmed": False,
+                        "motor_confirmed": False,
+                    },
                 }
             )
 
@@ -461,134 +617,101 @@ def bind_navigation_commands(gw: Any, commands: Any | None) -> None:
     )
 
 
-def configure_teleop(
-    gw: Any,
-    *,
-    max_speed: float,
-    max_yaw: float,
-    release_timeout: float,
-) -> None:
-    gw._teleop_max_speed = max_speed
-    gw._teleop_max_yaw = max_yaw
-    gw._teleop_release_timeout = release_timeout
-
-
-def write_bridge(gw: Any, twist: Twist) -> bool:
-    sock = gw._teleop_bridge_sock
-    addr = gw._teleop_bridge_addr
-    if sock is None or addr is None:
-        return False
-    try:
-        payload = (f"{float(twist.linear.x):.9g} {float(twist.linear.y):.9g} {float(twist.angular.z):.9g}\n").encode(
-            "ascii"
-        )
-        sock.sendto(payload, addr)
-        return True
-    except Exception as exc:
-        logger.debug("GatewayModule: teleop bridge write failed: %s", exc)
-        return False
-
-
 def publish_remote_velocity_request(
     gw: Any,
     twist: Twist,
     *,
-    publish_local_compat: bool = True,
     request_id: str | None = None,
     source_id: str | None = None,
     source_epoch: int | None = None,
     sequence: int | None = None,
+    manual_mode: bool = False,
 ) -> bool:
     """Publish an operator velocity request.
 
-    Field endpoints send typed operator-motion samples to the native command
-    arbiter. It checks authority/freshness/localization/live obstacles/
-    traversability and is the only writer of final ``/nav/cmd_vel``. The
-    in-process publish is kept only for explicit dev/sim/compat profiles.
+    Send a typed operator-motion sample to the native command arbiter.
     """
-
-    if bool(getattr(gw, "_teleop_dds_enabled", False)):
-        publisher = getattr(gw, "_teleop_native_publisher", None)
-        if publisher is None:
-            raise CommandBoundaryError("native operator motion capability is unavailable")
-        normalized_source_id = str(source_id or "").strip()
-        normalized_source_epoch = int(source_epoch or 0)
-        normalized_sequence = int(sequence or 0)
-        if (
-            not normalized_source_id
-            or normalized_source_epoch <= 0
-            or normalized_sequence <= 0
-        ):
-            raise CommandBoundaryError(
-                "native operator motion requires an explicit claimed source session; "
-                "use /ws/teleop or the typed operator-motion client"
-            )
-        if not publisher.submit(
-            twist.linear.x,
-            twist.linear.y,
-            twist.angular.z,
-            request_id=request_id,
-            source_id=normalized_source_id,
-            source_epoch=normalized_source_epoch,
-            sequence=normalized_sequence,
-        ):
-            raise CommandBoundaryError("native operator motion publisher rejected the request")
-        return True
-
-    wrote_dds = write_bridge(gw, twist)
-    if publish_local_compat:
-        gw.cmd_vel.publish(twist)
-    return wrote_dds
+    publisher = getattr(gw, "_teleop_native_publisher", None)
+    if publisher is None:
+        raise CommandBoundaryError("native operator motion capability is unavailable")
+    normalized_source_id = str(source_id or "").strip()
+    normalized_source_epoch = int(source_epoch or 0)
+    normalized_sequence = int(sequence or 0)
+    if not normalized_source_id or normalized_source_epoch <= 0 or normalized_sequence <= 0:
+        raise CommandBoundaryError(
+            "native operator motion requires an explicit claimed source session; "
+            "use /ws/teleop or the typed operator-motion client"
+        )
+    if not publisher.submit(
+        twist.linear.x,
+        twist.linear.y,
+        twist.angular.z,
+        request_id=request_id,
+        source_id=normalized_source_id,
+        source_epoch=normalized_source_epoch,
+        sequence=normalized_sequence,
+        manual_mode=manual_mode,
+    ):
+        raise CommandBoundaryError("native operator motion publisher rejected the request")
+    return True
 
 
-def twist_from_joy(gw: Any, lx: float, ly: float, az: float) -> Twist:
-    vx = max(-1.0, min(1.0, float(lx))) * getattr(gw, "_teleop_max_speed", 0.5)
-    vy = max(-1.0, min(1.0, float(ly))) * getattr(gw, "_teleop_max_speed", 0.5)
-    wz = max(-1.0, min(1.0, float(az))) * getattr(gw, "_teleop_max_yaw", 1.0)
+def twist_from_velocity(
+    gw: Any,
+    vx_mps: float,
+    vy_mps: float,
+    yaw_rps: float,
+) -> Twist:
+    max_speed = abs(float(getattr(gw, "_teleop_max_speed", 0.5)))
+    max_yaw = abs(float(getattr(gw, "_teleop_max_yaw", 1.0)))
+    vx = max(-max_speed, min(max_speed, float(vx_mps)))
+    vy = max(-max_speed, min(max_speed, float(vy_mps)))
+    wz = max(-max_yaw, min(max_yaw, float(yaw_rps)))
     return Twist(
         linear=Vector3(x=vx, y=vy, z=0.0),
         angular=Vector3(x=0.0, y=0.0, z=wz),
     )
 
 
-def on_joy(gw: Any, lx: float, ly: float, az: float) -> bool:
-    return on_joy_with_request_id(gw, lx, ly, az, request_id=None)
+def on_velocity(gw: Any, vx_mps: float, vy_mps: float, yaw_rps: float) -> bool:
+    return on_velocity_with_request_id(
+        gw,
+        vx_mps,
+        vy_mps,
+        yaw_rps,
+        request_id=None,
+    )
 
 
-def on_joy_with_request_id(
+def on_velocity_with_request_id(
     gw: Any,
-    lx: float,
-    ly: float,
-    az: float,
+    vx_mps: float,
+    vy_mps: float,
+    yaw_rps: float,
     *,
     request_id: str | None = None,
     source_id: str = "gateway:teleop",
     source_epoch: int = 1,
     sequence: int = 1,
+    manual_mode: bool = False,
 ) -> bool:
-    request = twist_from_joy(gw, lx, ly, az)
-    if bool(getattr(gw, "_teleop_dds_enabled", False)):
-        publisher = getattr(gw, "_teleop_native_publisher", None)
-        if publisher is None:
-            logger.error("GatewayModule: dropping field teleop request: native teleop publisher is unavailable")
-            return False
-        if not publisher.submit(
-            request.linear.x,
-            request.linear.y,
-            request.angular.z,
-            request_id=request_id,
-            source_id=source_id,
-            source_epoch=source_epoch,
-            sequence=sequence,
-        ):
-            logger.debug("GatewayModule: teleop request rejected by stop/release barrier")
-            return False
-        return True
-    tm = gw._teleop_module
-    if tm is not None and hasattr(tm, "joy_input"):
-        tm.joy_input._deliver({"lx": lx, "ly": ly, "az": az})
-    else:
-        gw.cmd_vel.publish(request)
+    request = twist_from_velocity(gw, vx_mps, vy_mps, yaw_rps)
+    publisher = getattr(gw, "_teleop_native_publisher", None)
+    if publisher is None:
+        logger.error("GatewayModule: dropping teleop request: native teleop publisher is unavailable")
+        return False
+    if not publisher.submit(
+        request.linear.x,
+        request.linear.y,
+        request.angular.z,
+        request_id=request_id,
+        source_id=source_id,
+        source_epoch=source_epoch,
+        sequence=sequence,
+        manual_mode=manual_mode,
+    ):
+        logger.debug("GatewayModule: teleop request rejected by stop/release barrier")
+        return False
     return True
 
 
@@ -601,8 +724,6 @@ def claim(
     lease_ttl_ms: int,
     request_id: str | None = None,
 ) -> OperatorMotionReceipt | bool | None:
-    if not bool(getattr(gw, "_teleop_dds_enabled", False)):
-        return True
     publisher = getattr(gw, "_teleop_native_publisher", None)
     if publisher is None:
         logger.error("GatewayModule: field teleop claim failed: publisher unavailable")
@@ -636,56 +757,49 @@ def release(
     request_id: str | None = None,
     reason: str = "operator_hold",
 ) -> OperatorMotionReceipt | bool | None:
-    if bool(getattr(gw, "_teleop_dds_enabled", False)):
-        publisher = getattr(gw, "_teleop_native_publisher", None)
-        if publisher is None:
-            logger.error("GatewayModule: field teleop release failed: publisher unavailable")
-            return None
-        try:
-            if reason == "disconnect" and (
-                release_sequence is None or int(release_sequence) <= int(sequence)
-            ):
-                raise CommandBoundaryError(
-                    "disconnect release requires a sequence newer than the hold"
-                )
-            hold_receipt = publisher.quiesce_and_send_zero(
-                request_id=request_id,
+    publisher = getattr(gw, "_teleop_native_publisher", None)
+    if publisher is None:
+        logger.error("GatewayModule: field teleop release failed: publisher unavailable")
+        return None
+    try:
+        if reason == "disconnect" and (
+            release_sequence is None or int(release_sequence) <= int(sequence)
+        ):
+            raise CommandBoundaryError(
+                "disconnect release requires a sequence newer than the hold"
+            )
+        hold_receipt = publisher.quiesce_and_send_zero(
+            request_id=request_id,
+            source_id=source_id,
+            source_epoch=source_epoch,
+            sequence=sequence,
+            reason=reason,
+            timeout_s=max(2.0, float(gw._teleop_release_timeout) + 1.0),
+        )
+        if not isinstance(hold_receipt, OperatorMotionReceipt):
+            raise CommandBoundaryError("native endpoint returned no hold receipt")
+        if not hold_receipt.final_output_published:
+            return hold_receipt
+        if reason == "disconnect":
+            release_receipt = publisher.release_source(
                 source_id=source_id,
                 source_epoch=source_epoch,
-                sequence=sequence,
-                reason=reason,
-                timeout_s=max(2.0, float(gw._teleop_release_timeout) + 1.0),
+                sequence=int(release_sequence),
+                reason="disconnect",
+                request_id=f"{request_id}:release" if request_id else None,
             )
-            if not isinstance(hold_receipt, OperatorMotionReceipt):
-                raise CommandBoundaryError("native endpoint returned no hold receipt")
-            if not hold_receipt.final_output_published:
-                return hold_receipt
-            if reason == "disconnect":
-                release_receipt = publisher.release_source(
-                    source_id=source_id,
-                    source_epoch=source_epoch,
-                    sequence=int(release_sequence),
-                    reason="disconnect",
-                    request_id=f"{request_id}:release" if request_id else None,
-                )
-                if not isinstance(release_receipt, OperatorMotionReceipt):
-                    raise CommandBoundaryError("native endpoint returned no release receipt")
-                if not release_receipt.final_output_published:
-                    return release_receipt
+            if not isinstance(release_receipt, OperatorMotionReceipt):
+                raise CommandBoundaryError("native endpoint returned no release receipt")
+            if not release_receipt.final_output_published:
                 return release_receipt
-        except CommandBoundaryError as exc:
-            logger.error("GatewayModule: field teleop release failed: %s", exc)
-            return None
-        except Exception as exc:
-            logger.error("GatewayModule: field teleop release zero failed: %s", exc)
-            return None
-        return hold_receipt
-    tm = gw._teleop_module
-    if tm is not None:
-        tm.force_release()
-    else:
-        gw.cmd_vel.publish(Twist())
-    return True
+            return release_receipt
+    except CommandBoundaryError as exc:
+        logger.error("GatewayModule: field teleop release failed: %s", exc)
+        return None
+    except Exception as exc:
+        logger.error("GatewayModule: field teleop release zero failed: %s", exc)
+        return None
+    return hold_receipt
 
 
 def quiesce_native_teleop(
@@ -698,10 +812,8 @@ def quiesce_native_teleop(
     reason: str = "operator_hold",
     timeout_s: float = 2.0,
 ) -> OperatorMotionReceipt | bool:
-    """Drain replaceable joystick work and publish a zero barrier."""
+    """Drain replaceable velocity work and publish a zero barrier."""
 
-    if not bool(getattr(gw, "_teleop_dds_enabled", False)):
-        return False
     publisher = getattr(gw, "_teleop_native_publisher", None)
     if publisher is None:
         raise CommandBoundaryError("native teleop publisher is unavailable")
@@ -726,3 +838,7 @@ def shutdown_teleop(gw: Any) -> None:
     if publisher is not None:
         publisher.close()
     gw._teleop_native_publisher = None
+    owner_lock = getattr(gw, "_web_teleop_owner_lock", None)
+    if owner_lock is not None:
+        with owner_lock:
+            gw._web_teleop_owner = None

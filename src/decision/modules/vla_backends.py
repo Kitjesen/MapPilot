@@ -10,7 +10,6 @@ import json
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import Any
 
 try:
     import httpx
@@ -24,7 +23,7 @@ def _require_httpx() -> None:
     """Raise a clear error if httpx is not installed."""
     if httpx is None:
         raise ImportError(
-            "VLA HTTP backends require 'httpx'. Install it via 'pip install httpx' or the 'sdk-mcp' extra."
+            "VLA HTTP backends require 'httpx'. Install it with 'pip install httpx'."
         )
 
 

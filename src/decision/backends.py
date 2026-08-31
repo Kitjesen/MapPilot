@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
-
-if TYPE_CHECKING:
-    pass  # avoid circular imports
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

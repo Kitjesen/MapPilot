@@ -37,8 +37,6 @@ _DEFAULT_SAVE_DIR = os.path.join(os.path.expanduser("~"), ".nova", "semantic")
 
 @register("semantic", "mapper", description="Drives RoomObjectKG + TopologySemGraph from SceneGraph")
 class SemanticMapperModule(Module, layer=3):
-    _run_in_worker = True
-    _worker_group = "semantic"
     """Real-time semantic map builder: SceneGraph ->KG + topological graph.
 
     Bridges the gap between the live perception stream and the two persistent

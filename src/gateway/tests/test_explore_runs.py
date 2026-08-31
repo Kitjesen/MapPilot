@@ -19,7 +19,7 @@ def _context(*, session: str = "product-session-0001", route: str = "map") -> di
         "product_session_id": session,
         "route": route,
         "map": (
-            {"map_id": "yard-a", "map_version": 7, "artifact_hash": "a" * 64}
+            {"map_id": "yard-a", "map_content_epoch": 7}
             if route == "map"
             else None
         ),
@@ -46,8 +46,7 @@ def _event(
         "state": state,
         "route": "map",
         "map_id": "yard-a",
-        "map_version": 7,
-        "artifact_hash": "a" * 64,
+        "map_content_epoch": 7,
         "reason": f"exploration_{state}",
         "motion_stop_confirmed": stop_confirmed,
         "motion_stop_reason": "nav_stop_gate" if stop_confirmed else "",
@@ -89,21 +88,89 @@ def test_only_ordered_native_event_drives_execution_and_terminal_state() -> None
     runs = _runs()
     runs.reserve_start("start-request-1", **_context())
     admitted = runs.record_admission(RUN_A, accepted=True, reason="exploration_started")
-    assert admitted["state"] == "submitted"
+    assert admitted["admission"] == "accepted"
+    assert admitted["state"] is None
+    assert admitted["state_available"] is False
+    assert admitted["phase"] is None
 
     running = runs.observe_event(_event())
-    assert running["state"] == "running"
+    assert running["state"] == "EXECUTING"
+    assert running["state_available"] is True
+    assert running["phase"] == "RUNNING"
     assert running["state_source"] == "native_exploration_run_event"
     assert running["terminal"] is False
 
     complete = runs.observe_event(
         _event(state="completed", sequence=2, stop_confirmed=True)
     )
-    assert complete["state"] == "completed"
+    assert complete["state"] == "SUCCESS"
+    assert complete["state_available"] is True
+    assert complete["phase"] == "COMPLETED"
     assert complete["terminal"] is True
     assert complete["motion_stop"] == {
         "confirmed": True,
         "reason": "nav_stop_gate",
+    }
+
+
+@pytest.mark.parametrize(
+    ("native_state", "kind", "stop_confirmed", "public_state", "terminal"),
+    [
+        ("admitted", 1, False, "PLANNING", False),
+        ("paused", 2, True, "PAUSED", False),
+        ("cancelled", 2, True, "CANCELLED", True),
+        ("failed", 2, True, "FAILED", True),
+    ],
+)
+def test_confirmed_native_phase_maps_to_canonical_public_state(
+    native_state: str,
+    kind: int,
+    stop_confirmed: bool,
+    public_state: str,
+    terminal: bool,
+) -> None:
+    runs = _runs()
+    runs.reserve_start("start-request-1", **_context())
+    runs.record_admission(RUN_A, accepted=True, reason="exploration_started")
+    event = _event(state=native_state, stop_confirmed=stop_confirmed)
+    event["kind"] = kind
+
+    result = runs.observe_event(event)
+
+    assert result["state"] == public_state
+    assert result["state_available"] is True
+    assert result["phase"] == native_state.upper()
+    assert result["transition"] is None
+    assert result["terminal"] is terminal
+
+
+@pytest.mark.parametrize(
+    ("transition_phase", "target_state"),
+    [("pausing", "PAUSED"), ("cancelling", "CANCELLED")],
+)
+def test_transition_phase_keeps_last_confirmed_public_state(
+    transition_phase: str,
+    target_state: str,
+) -> None:
+    runs = _runs()
+    runs.reserve_start("start-request-1", **_context())
+    runs.record_admission(RUN_A, accepted=True, reason="exploration_started")
+    runs.observe_event(_event(state="running", sequence=1))
+    event = _event(state=transition_phase, sequence=2)
+    event["kind"] = 3
+    event["motion_stop_reason"] = "driver_ack_pending"
+
+    result = runs.observe_event(event)
+
+    assert result["state"] == "EXECUTING"
+    assert result["state_available"] is True
+    assert result["phase"] == transition_phase.upper()
+    assert result["transition"] == {
+        "confirmed": False,
+        "from_state": "EXECUTING",
+        "phase": transition_phase.upper(),
+        "reason": f"exploration_{transition_phase}",
+        "target_state": target_state,
     }
 
 
@@ -126,14 +193,14 @@ def test_runtime_message_timestamp_projects_to_canonical_native_field() -> None:
         state=int(ExplorationRunState.RUNNING),
         route="map",
         map_id="yard-a",
-        map_version=7,
-        artifact_hash="a" * 64,
+        map_content_epoch=7,
         reason="exploration_running",
     )
 
     result = runs.observe_event(event)
 
-    assert result["state"] == "running"
+    assert result["state"] == "EXECUTING"
+    assert result["phase"] == "RUNNING"
     assert result["last_native_event"]["timestamp_s"] == 101.0
     assert "ts" not in result["last_native_event"]
 
@@ -168,17 +235,19 @@ def test_native_terminal_without_parking_evidence_is_rejected() -> None:
     assert runs.query(RUN_A)["terminal"] is False
 
 
-def test_native_event_must_match_exact_map_artifact() -> None:
+def test_native_event_must_match_exact_map_content_epoch() -> None:
     runs = _runs()
     runs.reserve_start("start-request-1", **_context())
     runs.record_admission(RUN_A, accepted=True, reason="exploration_started")
     event = _event()
-    event["artifact_hash"] = "b" * 64
+    event["map_content_epoch"] = 8
 
-    with pytest.raises(ExploreRunConflict, match="artifact_hash mismatch"):
+    with pytest.raises(ExploreRunConflict, match="map_content_epoch mismatch"):
         runs.observe_event(event)
 
-    assert runs.query(RUN_A)["state"] == "submitted"
+    unresolved = runs.query(RUN_A)
+    assert unresolved["state"] is None
+    assert unresolved["state_available"] is False
 
 
 @pytest.mark.parametrize(
@@ -212,7 +281,8 @@ def test_terminal_run_cannot_be_reopened_by_a_later_event() -> None:
         runs.observe_event(_event(state="running", sequence=2))
 
     result = runs.query(RUN_A)
-    assert result["state"] == "completed"
+    assert result["state"] == "SUCCESS"
+    assert result["phase"] == "COMPLETED"
     assert result["terminal"] is True
 
 
@@ -229,7 +299,14 @@ def test_endpoint_restart_is_visible_but_does_not_invent_terminal_truth() -> Non
 
     assert interrupted is not None
     assert interrupted["exploration_run_id"] == RUN_A
-    assert interrupted["state"] == "interrupted"
+    assert interrupted["state"] == "EXECUTING"
+    assert interrupted["state_available"] is False
+    assert interrupted["phase"] == "RUNNING"
+    assert interrupted["continuity"] == {
+        "reason": "endpoint_restarted_stop_pending",
+        "replacement_boot_id": "explore-boot-b",
+        "status": "interrupted",
+    }
     assert interrupted["terminal"] is False
     assert interrupted["reason"] == "endpoint_restarted_stop_pending"
     assert interrupted["can_resume"] is False
@@ -264,16 +341,84 @@ def test_endpoint_restart_reconciliation_is_idempotent(
     assert writes == 1
 
 
+def test_endpoint_restart_during_transition_marks_confirmed_state_unavailable() -> None:
+    runs = _runs()
+    runs.reserve_start("start-request-1", **_context())
+    runs.record_admission(RUN_A, accepted=True, reason="exploration_started")
+    runs.observe_event(_event(state="running", sequence=1))
+    pausing = _event(state="pausing", sequence=2)
+    pausing["kind"] = 3
+    pausing["motion_stop_reason"] = "driver_ack_pending"
+    runs.observe_event(pausing)
+
+    interrupted = runs.reconcile_runtime(
+        product_session_id="product-session-0001",
+        observed_boot_id="explore-boot-b",
+    )
+
+    assert interrupted is not None
+    assert interrupted["state"] == "EXECUTING"
+    assert interrupted["state_available"] is False
+    assert interrupted["phase"] == "PAUSING"
+    assert interrupted["continuity"]["status"] == "interrupted"
+
+
+def test_interrupted_journal_restores_as_unavailable_continuity(
+    tmp_path: Path,
+) -> None:
+    journal = tmp_path / "explore_runs.json"
+    runs = _runs(journal)
+    runs.reserve_start("start-request-1", **_context())
+    runs.record_admission(RUN_A, accepted=True, reason="exploration_started")
+    runs.observe_event(_event())
+
+    body = json.loads(journal.read_text(encoding="utf-8"))
+    record = body["runs"][0]
+    record["state"] = "interrupted"
+    record["state_source"] = "runtime_reconciliation"
+    record["reason"] = "endpoint_restarted_stop_pending"
+    record["replacement_boot_id"] = "explore-boot-b"
+    journal.write_text(
+        json.dumps(body, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    restored = _runs(journal).query(RUN_A)
+
+    assert restored["state"] == "EXECUTING"
+    assert restored["state_available"] is False
+    assert restored["phase"] == "RUNNING"
+    assert restored["continuity"] == {
+        "reason": "endpoint_restarted_stop_pending",
+        "replacement_boot_id": "explore-boot-b",
+        "status": "interrupted",
+    }
+
+
+def test_rejected_admission_has_no_public_task_state() -> None:
+    runs = _runs()
+    runs.reserve_start("start-request-1", **_context())
+
+    rejected = runs.record_admission(
+        RUN_A,
+        accepted=False,
+        reason="native_rejected",
+    )
+
+    assert rejected["admission"] == "rejected"
+    assert rejected["state"] is None
+    assert rejected["state_available"] is False
+    assert rejected["phase"] is None
+    assert rejected["transition"] is None
+
+
 def test_corrupt_configured_journal_fails_closed(tmp_path: Path) -> None:
     journal = tmp_path / "explore_runs.json"
     journal.write_text(
         json.dumps(
             {
-                "body": {
-                    "schema_version": "lingtu.explore.run.journal.v1",
-                    "runs": [],
-                },
-                "sha256": "wrong",
+                "schema_version": "wrong",
+                "runs": [],
             }
         ),
         encoding="utf-8",
@@ -281,7 +426,7 @@ def test_corrupt_configured_journal_fails_closed(tmp_path: Path) -> None:
 
     runs = _runs(journal)
     assert runs.health()["journal"]["status"] == "corrupt"
-    with pytest.raises(ExploreRunJournalUnavailable, match="integrity"):
+    with pytest.raises(ExploreRunJournalUnavailable, match="schema"):
         runs.reserve_start("start-request-1", **_context())
 
 
@@ -292,7 +437,10 @@ def test_query_unknown_run_is_honest() -> None:
         "schema_version": "lingtu.explore.run.v1",
         "found": False,
         "exploration_run_id": missing,
-        "state": "unknown",
+        "state": None,
+        "state_available": False,
+        "phase": None,
+        "transition": None,
         "terminal": False,
         "reason": "exploration_run_not_found",
     }

@@ -16,21 +16,19 @@ from gateway.routes.operations import register_operation_routes
 from gateway.services import exploration, session_view
 from gateway.services.session_view import (
     detect_current_mode,
-    recover_external_explore_session,
+    reconcile_native_explore,
 )
 
 
-def _plan(*, variant: str = "live", fingerprint: str = "run-plan-fp") -> SimpleNamespace:
+def _plan(*, variant: str = "live") -> SimpleNamespace:
     return SimpleNamespace(
         product="explore",
         product_variant=variant,
         env="real",
         process_control="systemd",
-        fingerprint=fingerprint,
         lifecycle={
             "product": "explore",
             "product_variant": variant,
-            "product_session": "exploration",
             "session_mode": "exploring",
             "slam_mode": "mapping" if variant == "live" else "localization",
             "requires_map": variant == "map",
@@ -40,7 +38,7 @@ def _plan(*, variant: str = "live", fingerprint: str = "run-plan-fp") -> SimpleN
 
 def _status(
     *,
-    session_id: str,
+    product_session_id: str,
     variant: str = "live",
     active: bool = False,
     paused: bool = False,
@@ -56,16 +54,14 @@ def _status(
         "active": active,
         "paused": paused,
         "state": "paused" if paused else ("running" if active else "idle"),
-        "session_id": session_id if active else "",
+        "product_session_id": product_session_id,
         "pending_goal": None,
         "pending_segment": None,
         "input": {"odometry_age_s": 0.1, "snapshot_age_s": 0.1},
         "map": {
             "frame_id": "map",
-            "session_id": session_id,
             "map_id": "yard" if map_backed else "",
-            "map_version": 3 if map_backed else 0,
-            "artifact_hash": "a" * 64 if map_backed else "",
+            "map_content_epoch": 3 if map_backed else 0,
             "reset_epoch": 2,
             "generation": 9,
             "live": not map_backed,
@@ -78,21 +74,20 @@ def _write_current(
     tmp_path,
     *,
     variant: str = "live",
-    session_id: str = "session-a",
+    product_session_id: str = "session-a",
     map_name: str | None = None,
 ) -> None:
     map_identity = None
     if variant == "map":
         map_identity = {
             "map_id": "yard",
-            "version_id": "yard:v3",
+            "content_epoch": 3,
             "frame_id": "map",
             "map_dir": "/maps/yard",
             "artifacts": [
                 {
                     "artifact_type": "POINTCLOUD",
                     "uri": "file:///maps/yard/map.pcd",
-                    "sha256": "a" * 64,
                     "size_bytes": 123,
                 }
             ],
@@ -104,9 +99,7 @@ def _write_current(
                 "product": "explore",
                 "product_variant": variant,
                 "env": "real",
-                "run_plan_path": "/run/lingtu/run-plan.json",
-                "fingerprint": "run-plan-fp",
-                "product_session_id": session_id,
+                "product_session_id": product_session_id,
                 **({"map_name": map_name} if map_name is not None else {}),
                 "map_identity": map_identity,
                 "committed_at": 10.0,
@@ -116,14 +109,22 @@ def _write_current(
     )
 
 
-def _gateway(plan: SimpleNamespace | None = None) -> SimpleNamespace:
+def _gateway(
+    plan: SimpleNamespace | None = None,
+    *,
+    product_session_id: str = "session-a",
+) -> SimpleNamespace:
+    product = str(getattr(plan, "product", "") or "")
+    map_backed = str(getattr(plan, "product_variant", "") or "") == "map"
     return SimpleNamespace(
         _compiled_run_plan=plan,
-        _frontier_explorer=None,
-        _tare_explorer=None,
+        _compiled_env=str(getattr(plan, "env", "real") or "real"),
+        _compiled_product=product,
+        _compiled_product_session_id=product_session_id,
+        _session_active_map_name=lambda: "yard" if map_backed else None,
+        _session_projection_key=None,
         _session_mode="idle",
         _session_product=None,
-        _session_product_session="idle",
         _session_map=None,
         _session_slam_profile="stopped",
         _session_since=None,
@@ -141,7 +142,7 @@ def _route_endpoint(app: FastAPI, path: str):
 def test_field_binding_requires_committed_exact_live_identity(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
     monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "session-a")
-    monkeypatch.setattr(exploration, "_native_status", lambda: _status(session_id="session-a"))
+    monkeypatch.setattr(exploration, "_native_status", lambda: _status(product_session_id="session-a"))
     gateway = _gateway(_plan())
 
     missing = exploration.external_explore_binding(gateway)
@@ -151,30 +152,31 @@ def test_field_binding_requires_committed_exact_live_identity(tmp_path, monkeypa
     _write_current(tmp_path)
     valid = exploration.external_explore_binding(gateway)
     assert valid["valid"] is True
-    assert valid["session_id"] == "session-a"
+    assert valid["product_session_id"] == "session-a"
     assert valid["variant"] == "live"
 
     monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "session-b")
-    mismatch = exploration.external_explore_binding(gateway)
+    assert exploration.external_explore_binding(gateway)["valid"] is True
+    mismatch = exploration.external_explore_binding(
+        _gateway(_plan(), product_session_id="session-b")
+    )
     assert mismatch["valid"] is False
     assert "product_session_mismatch" in mismatch["blockers"]
-
 
 def test_field_binding_requires_exact_saved_map_identity(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
     monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "session-a")
     monkeypatch.setenv("LINGTU_MAP_ID", "yard")
-    monkeypatch.setenv("LINGTU_MAP_VERSION", "yard:v3")
+    monkeypatch.setenv("LINGTU_MAP_CONTENT_EPOCH", "3")
     monkeypatch.setenv("LINGTU_MAP_FRAME", "map")
-    monkeypatch.setenv("LINGTU_MAP_POINTCLOUD_SHA256", "a" * 64)
     _write_current(tmp_path, variant="map", map_name="North Yard")
-    status = _status(session_id="session-a", variant="map")
+    status = _status(product_session_id="session-a", variant="map")
     monkeypatch.setattr(exploration, "_native_status", lambda: status)
     gateway = _gateway(_plan(variant="map"))
 
     assert exploration.external_explore_binding(gateway)["valid"] is True
     assert exploration.external_explore_binding(gateway)["map_name"] == "North Yard"
-    status["map"]["artifact_hash"] = "b" * 64
+    status["map"]["map_content_epoch"] = 4
     rejected = exploration.external_explore_binding(gateway)
     assert rejected["valid"] is False
     assert "exploration_map_identity_mismatch" in rejected["blockers"]
@@ -186,7 +188,7 @@ def test_field_binding_requires_native_endpoint_boot_identity(
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
     monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "session-a")
     _write_current(tmp_path)
-    status = _status(session_id="session-a")
+    status = _status(product_session_id="session-a")
     status.pop("boot_id")
     monkeypatch.setattr(exploration, "_native_status", lambda: status)
 
@@ -200,13 +202,13 @@ def test_native_field_start_is_locked_revalidated_and_uses_server_session(tmp_pa
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
     monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "session-a")
     _write_current(tmp_path)
-    monkeypatch.setattr(exploration, "_native_status", lambda: _status(session_id="session-a"))
+    monkeypatch.setattr(exploration, "_native_status", lambda: _status(product_session_id="session-a"))
 
     calls: list[tuple[str, str]] = []
 
     class Commands:
-        def start_exploration(self, *, session_id: str, reason: str):
-            calls.append((session_id, reason))
+        def start_exploration(self, *, product_session_id: str, reason: str):
+            calls.append((product_session_id, reason))
             return True
 
         def stop_exploration(self, *, reason: str):
@@ -222,12 +224,12 @@ def test_native_field_start_is_locked_revalidated_and_uses_server_session(tmp_pa
 def test_native_field_start_never_calls_command_before_commit(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
     monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "session-a")
-    monkeypatch.setattr(exploration, "_native_status", lambda: _status(session_id="session-a"))
+    monkeypatch.setattr(exploration, "_native_status", lambda: _status(product_session_id="session-a"))
     calls: list[str] = []
 
     class Commands:
-        def start_exploration(self, *, session_id: str, reason: str):
-            calls.append(session_id)
+        def start_exploration(self, *, product_session_id: str, reason: str):
+            calls.append(product_session_id)
             return True
 
         def stop_exploration(self, *, reason: str):
@@ -245,15 +247,15 @@ def test_native_field_start_rejects_cancellation_window(tmp_path, monkeypatch) -
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
     monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "session-a")
     _write_current(tmp_path)
-    status = _status(session_id="session-a")
+    status = _status(product_session_id="session-a")
     status["state"] = "cancelling"
     status["pending_goal"] = {"task_id": "old-task"}
     monkeypatch.setattr(exploration, "_native_status", lambda: status)
     calls: list[str] = []
 
     class Commands:
-        def start_exploration(self, *, session_id: str, reason: str):
-            calls.append(session_id)
+        def start_exploration(self, *, product_session_id: str, reason: str):
+            calls.append(product_session_id)
             return True
 
         def stop_exploration(self, *, reason: str):
@@ -274,14 +276,14 @@ def test_native_field_start_rejects_incomplete_idle_status(
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
     monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "session-a")
     _write_current(tmp_path)
-    status = _status(session_id="session-a")
+    status = _status(product_session_id="session-a")
     del status[missing_field]
     monkeypatch.setattr(exploration, "_native_status", lambda: status)
     calls: list[str] = []
 
     class Commands:
-        def start_exploration(self, *, session_id: str, reason: str):
-            calls.append(session_id)
+        def start_exploration(self, *, product_session_id: str, reason: str):
+            calls.append(product_session_id)
             return True
 
         def stop_exploration(self, *, reason: str):
@@ -301,13 +303,13 @@ def test_native_field_start_rejects_product_control_mutation_race(tmp_path, monk
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
     monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "session-a")
     _write_current(tmp_path)
-    monkeypatch.setattr(exploration, "_native_status", lambda: _status(session_id="session-a"))
+    monkeypatch.setattr(exploration, "_native_status", lambda: _status(product_session_id="session-a"))
 
     calls: list[str] = []
 
     class Commands:
-        def start_exploration(self, *, session_id: str, reason: str):
-            calls.append(session_id)
+        def start_exploration(self, *, product_session_id: str, reason: str):
+            calls.append(product_session_id)
             return True
 
         def stop_exploration(self, *, reason: str):
@@ -347,7 +349,7 @@ def test_field_directed_command_rejects_product_control_mutation_race(
     monkeypatch.setattr(
         exploration,
         "_native_status",
-        lambda: _status(session_id="session-a", active=True),
+        lambda: _status(product_session_id="session-a", active=True),
     )
     calls: list[tuple[object, ...]] = []
 
@@ -408,8 +410,8 @@ def test_field_directed_command_uses_one_locked_verified_native_snapshot(
     _write_current(tmp_path)
     statuses = iter(
         [
-            _status(session_id="session-a", active=True),
-            _status(session_id="stale-session", active=True),
+            _status(product_session_id="session-a", active=True),
+            _status(product_session_id="stale-session", active=True),
         ]
     )
     monkeypatch.setattr(exploration, "_native_status", lambda: next(statuses))
@@ -445,7 +447,7 @@ def test_field_directed_command_uses_one_locked_verified_native_snapshot(
         )
         assert calls == [("clear", "session-a", "test", "request-1")]
 
-    assert result["intent"]["session_id"] == "session-a"
+    assert result["intent"]["product_session_id"] == "session-a"
     assert result["intent"]["frame_id"] == "map"
 
 
@@ -478,11 +480,10 @@ def test_staged_field_explore_session_is_not_falsely_blocked_as_non_idle(
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
     monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "session-a")
     _write_current(tmp_path)
-    status = _status(session_id="session-a")
+    status = _status(product_session_id="session-a")
     monkeypatch.setattr(exploration, "_native_status", lambda: status)
     gateway = _gateway(_plan())
     gateway._session_mode = "exploring"
-    gateway._session_pending = False
     gateway._exploring = False
     gateway._mode = "normal"
     gateway._odom = object()
@@ -509,7 +510,7 @@ def test_staged_field_explore_session_is_not_falsely_blocked_as_non_idle(
     )
     assert "safety_stop" in safety_blockers
 
-    status.update(active=True, state="running", session_id="session-a")
+    status.update(active=True, state="running", product_session_id="session-a")
     active_native_blockers = session_view._exploration_blockers(
         gateway,
         explorer_available=True,
@@ -523,7 +524,7 @@ def test_staged_field_explore_session_is_not_falsely_blocked_as_non_idle(
     status.update(
         active=False,
         state="cancelling",
-        session_id="",
+        product_session_id="",
         pending_goal={"task_id": "old-task"},
     )
     cancelling_native_blockers = session_view._exploration_blockers(
@@ -541,25 +542,25 @@ def test_gateway_restart_recovers_only_verified_external_explore(tmp_path, monke
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
     monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "session-a")
     monkeypatch.setenv("LINGTU_MAP_ID", "yard")
-    monkeypatch.setenv("LINGTU_MAP_VERSION", "yard:v3")
+    monkeypatch.setenv("LINGTU_MAP_CONTENT_EPOCH", "3")
     monkeypatch.setenv("LINGTU_MAP_FRAME", "map")
-    monkeypatch.setenv("LINGTU_MAP_POINTCLOUD_SHA256", "a" * 64)
     _write_current(tmp_path, variant="map", map_name="North Yard")
-    status = _status(session_id="session-a", variant="map", active=True)
+    status = _status(product_session_id="session-a", variant="map", active=True)
     monkeypatch.setattr(exploration, "_native_status", lambda: status)
     gateway = _gateway(_plan(variant="map"))
 
-    assert recover_external_explore_session(gateway) is True
+    assert reconcile_native_explore(gateway) is True
     assert gateway._session_mode == "exploring"
     assert gateway._session_product == "explore"
-    assert gateway._session_product_session == "exploration"
-    assert gateway._session_map == "North Yard"
+    assert gateway._session_map == "yard"
     assert gateway._exploring is True
 
     gateway = _gateway(_plan(variant="map"))
-    status["map"]["session_id"] = "stale-session"
-    assert recover_external_explore_session(gateway) is False
-    assert gateway._session_mode == "idle"
+    status["product_session_id"] = "stale-session"
+    assert reconcile_native_explore(gateway) is False
+    assert gateway._session_mode == "exploring"
+    assert gateway._session_product == "explore"
+    assert gateway._session_map == "yard"
     assert gateway._exploring is False
 
 
@@ -572,38 +573,28 @@ def test_gateway_restart_recovers_verified_paused_external_explore(
     monkeypatch.setattr(
         exploration,
         "_native_status",
-        lambda: _status(session_id="session-a", active=True, paused=True),
+        lambda: _status(product_session_id="session-a", active=True, paused=True),
     )
     gateway = _gateway(_plan())
 
-    assert recover_external_explore_session(gateway) is True
+    assert reconcile_native_explore(gateway) is True
     assert gateway._session_mode == "exploring"
     assert gateway._exploring is True
 
 
-def test_map_backed_explore_keeps_active_map_in_user_session_state() -> None:
-    from gateway.gateway_module import GatewayModule
-
-    gateway = GatewayModule()
-    gateway.setup()
-    gateway._session_mode = "exploring"
-    gateway._session_map = "yard"
-
+def test_map_backed_explore_projects_native_active_map() -> None:
+    gateway = _gateway(_plan(variant="map"))
     assert detect_current_mode(gateway) == ("exploring", "yard")
-    assert gateway._session_snapshot()["active_map"] == "yard"
-
-    gateway._session_map = None
-    assert detect_current_mode(gateway) == ("exploring", None)
-    assert gateway._session_snapshot()["active_map"] is None
 
 
 def test_readiness_recovers_commit_that_landed_after_gateway_setup(tmp_path, monkeypatch) -> None:
     from gateway.services import runtime_status
 
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
+    monkeypatch.setenv("LINGTU_EXPLORE_RUN_JOURNAL", str(tmp_path / "explore-runs.json"))
     monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "session-a")
     _write_current(tmp_path)
-    monkeypatch.setattr(exploration, "_native_status", lambda: _status(session_id="session-a"))
+    monkeypatch.setattr(exploration, "_native_status", lambda: _status(product_session_id="session-a"))
     monkeypatch.setattr(
         runtime_status,
         "build_navigation_status",
@@ -618,7 +609,6 @@ def test_readiness_recovers_commit_that_landed_after_gateway_setup(tmp_path, mon
         },
     )
     gateway = _gateway(_plan())
-    gateway._session_pending = False
     gateway._explorer_available = lambda: True
 
     readiness = exploration.exploration_start_readiness(gateway)
@@ -648,6 +638,8 @@ def test_public_field_stop_hands_off_to_product_control() -> None:
 
     assert response.status_code == 409
     assert payload["error"] == "product_control_stop_required"
-    assert payload["detail"]["operator_command"] == "scripts/lingtu explore stop"
+    assert payload["detail"]["operator_command"] == (
+        "python -m lingtu.control stop --expected-product explore"
+    )
     assert gateway._exploring is True
     assert events == []

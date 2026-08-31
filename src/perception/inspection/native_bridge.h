@@ -2,6 +2,20 @@
 
 #include <stdint.h>
 
+#if defined(LINGTU_INSPECTION_EVIDENCE_BRIDGE_STATIC)
+#define LINGTU_INSPECTION_EVIDENCE_BRIDGE_API
+#elif defined(_WIN32)
+#if defined(LINGTU_INSPECTION_EVIDENCE_BRIDGE_BUILD)
+#define LINGTU_INSPECTION_EVIDENCE_BRIDGE_API __declspec(dllexport)
+#else
+#define LINGTU_INSPECTION_EVIDENCE_BRIDGE_API __declspec(dllimport)
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
+#define LINGTU_INSPECTION_EVIDENCE_BRIDGE_API __attribute__((visibility("default")))
+#else
+#define LINGTU_INSPECTION_EVIDENCE_BRIDGE_API
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -19,7 +33,7 @@ typedef struct LingtuInspectionEvidenceRequest {
   char route_id[LINGTU_INSPECTION_EVIDENCE_ID_CAP];
   uint64_t route_revision;
   char map_id[LINGTU_INSPECTION_EVIDENCE_ID_CAP];
-  int64_t map_version;
+  int64_t map_content_epoch;
   uint32_t point_index;
   char point_id[LINGTU_INSPECTION_EVIDENCE_ID_CAP];
   char action[LINGTU_INSPECTION_EVIDENCE_ACTION_CAP];
@@ -35,21 +49,24 @@ typedef struct LingtuInspectionEvidenceResult {
   char analysis_verdict[LINGTU_INSPECTION_EVIDENCE_REASON_CAP];
 } LingtuInspectionEvidenceResult;
 
-void* lingtu_inspection_evidence_bridge_create(int32_t domain_id);
-void lingtu_inspection_evidence_bridge_destroy(void* handle);
+LINGTU_INSPECTION_EVIDENCE_BRIDGE_API void* lingtu_inspection_evidence_bridge_create(
+    int32_t domain_id);
+LINGTU_INSPECTION_EVIDENCE_BRIDGE_API void lingtu_inspection_evidence_bridge_destroy(
+    void* handle);
 
 // Non-blocking. Returns 1 when a request was copied into output, 0 when no
 // valid request is available now, and -1 on DDS or ABI validation errors.
-int32_t lingtu_inspection_evidence_bridge_take_request(
+LINGTU_INSPECTION_EVIDENCE_BRIDGE_API int32_t lingtu_inspection_evidence_bridge_take_request(
     void* handle,
     LingtuInspectionEvidenceRequest* output);
 
 // Returns 0 on publish success and -1 on DDS or ABI validation errors.
-int32_t lingtu_inspection_evidence_bridge_write_result(
+LINGTU_INSPECTION_EVIDENCE_BRIDGE_API int32_t lingtu_inspection_evidence_bridge_write_result(
     void* handle,
     const LingtuInspectionEvidenceResult* result);
 
-const char* lingtu_inspection_evidence_bridge_last_error(void* handle);
+LINGTU_INSPECTION_EVIDENCE_BRIDGE_API const char* lingtu_inspection_evidence_bridge_last_error(
+    void* handle);
 
 #ifdef __cplusplus
 }

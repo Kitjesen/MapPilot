@@ -546,7 +546,7 @@ class CLIPEncoder:
         """Encode a single image / object crop into one L2-normalised CLIP feature.
 
         Public alias over ``_encode_single_image``. This is the method that
-        ``EncoderModule._on_image`` and ``PersonTracker`` Re-ID expect — without
+        ``PerceptionModule`` and ``PersonTracker`` Re-ID expect — without
         it those callers silently fail through their ``try/except`` guards.
 
         Contract: ``image`` is **BGR** (OpenCV default), matching

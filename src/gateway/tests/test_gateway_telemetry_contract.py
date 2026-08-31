@@ -96,35 +96,6 @@ def test_scene_graph_path_and_locations_routes_validate_response_contracts():
     assert locations.locations[0].source == "test"
 
 
-def test_map_event_is_forwarded_to_sse_payload():
-    from gateway.gateway_module import GatewayModule
-
-    gateway = GatewayModule()
-    gateway.setup()
-    events: list[dict] = []
-    gateway.push_event = events.append
-
-    gateway._on_map_event(
-        {
-            "schema_version": "map.event.v1",
-            "event": "map.active_changed",
-            "map_id": "field_01",
-        }
-    )
-
-    assert "map_event" in gateway.port_summary()["ports_in"]
-    assert events == [
-        {
-            "type": "map_event",
-            "data": {
-                "schema_version": "map.event.v1",
-                "event": "map.active_changed",
-                "map_id": "field_01",
-            },
-        }
-    ]
-
-
 def test_scene_graph_route_degrades_invalid_json_to_empty_structured_payload():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SceneGraphResponse
@@ -186,47 +157,6 @@ def test_path_route_accepts_core_path_messages_without_dropping_points():
     assert path.path[1].z == 0.1
 
 
-def test_navigation_dds_snapshot_exposes_paths_and_muxed_cmd_vel():
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import NavigationDdsSnapshotResponse
-
-    gateway = GatewayModule()
-    gateway.setup()
-    with gateway._state_lock:
-        gateway._last_path = [{"x": 1.0, "y": 2.0, "z": 0.3, "frame_id": "map"}]
-        gateway._last_local_path = [{"x": 0.2, "y": 0.1, "z": 0.0, "frame_id": "map"}]
-        gateway._odom = {"x": 0.0, "y": 0.0, "frame_id": "map"}
-        gateway._mode = "auto"
-        gateway._mission = {"state": "EXECUTING", "ts": 123.0}
-
-    class FakeMux:
-        def health(self):
-            return {
-                "active_source": "path_follower",
-                "sources": {},
-                "last_driver_cmd_vel": {
-                    "linear": {"x": 0.4, "y": 0.0, "z": 0.0},
-                    "angular": {"x": 0.0, "y": 0.0, "z": 0.2},
-                    "ts": 456.0,
-                    "active_source": "path_follower",
-                },
-            }
-
-    gateway._cmd_vel_mux = FakeMux()
-
-    payload = asyncio.run(_endpoint(gateway, "/api/v1/navigation/dds_snapshot")())
-    snapshot = NavigationDdsSnapshotResponse.model_validate(payload)
-
-    assert snapshot.schema_version == "lingtu.navigation.dds_snapshot.v1"
-    assert snapshot.global_path.count == 1
-    assert snapshot.global_path.path[0].z == 0.3
-    assert snapshot.local_path.count == 1
-    assert snapshot.cmd_vel is not None
-    assert snapshot.cmd_vel.linear["x"] == 0.4
-    assert snapshot.cmd_vel.angular["z"] == 0.2
-    assert snapshot.cmd_vel.active_source == "path_follower"
-
-
 def test_navigation_dds_snapshot_reads_native_endpoint_status(monkeypatch, tmp_path):
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import NavigationDdsSnapshotResponse
@@ -273,7 +203,7 @@ def test_navigation_dds_snapshot_reads_native_endpoint_status(monkeypatch, tmp_p
     assert snapshot.cmd_vel.active_source == "native_local_planner_preview"
     assert snapshot.cmd_vel.evidence_stage == "local_planner_output"
     assert snapshot.cmd_vel.final_output_confirmed is False
-    assert snapshot.cmd_vel.driver_acknowledged is False
+    assert snapshot.cmd_vel.driver_delivery_accepted is False
     assert snapshot.cmd_vel.output_sequence == 0
     assert snapshot.traversability_endpoint is not None
     assert snapshot.traversability_endpoint["counters"]["published"] == 2
@@ -299,7 +229,7 @@ def test_navigation_dds_snapshot_prefers_native_final_teleop_command(
                 "final_output": {
                     "published": True,
                     "output_sequence": 41,
-                    "driver_acknowledged": False,
+                    "driver_delivery_accepted": False,
                 },
                 "teleop": {"fresh": True, "published": True},
                 "last_local": {"cmd_vel": {"vx": 0.0, "vy": 0.0, "wz": 0.0}},
@@ -323,7 +253,7 @@ def test_navigation_dds_snapshot_prefers_native_final_teleop_command(
     assert snapshot.cmd_vel.active_source == "native_teleop"
     assert snapshot.cmd_vel.evidence_stage == "final_output_published"
     assert snapshot.cmd_vel.final_output_confirmed is True
-    assert snapshot.cmd_vel.driver_acknowledged is False
+    assert snapshot.cmd_vel.driver_delivery_accepted is False
     assert snapshot.cmd_vel.output_sequence == 41
     assert gateway._teleop_active is True
 
@@ -345,7 +275,7 @@ def test_native_teleop_policy_output_is_preview_not_final():
     assert snapshot.active_source == "native_teleop_policy_preview"
     assert snapshot.evidence_stage == "teleop_policy_output"
     assert snapshot.final_output_confirmed is False
-    assert snapshot.driver_acknowledged is False
+    assert snapshot.driver_delivery_accepted is False
     assert snapshot.output_sequence == 0
 
 
@@ -382,28 +312,6 @@ def test_native_autonomy_takeover_is_reported_as_active_teleop(
     gateway.setup()
 
     assert gateway._teleop_active is True
-
-
-def test_velocity_mux_health_includes_latest_driver_command():
-    from nav.services.safety.velocity_mux import VelocityMux
-    from runtime.msgs.geometry import Twist, Vector3
-
-    mux = VelocityMux()
-    mux.setup()
-    mux._on_source(
-        "path_follower",
-        Twist(
-            linear=Vector3(0.3, 0.0, 0.0),
-            angular=Vector3(0.0, 0.0, 0.1),
-        ),
-    )
-
-    health = mux.health()
-
-    assert health["active_source"] == "path_follower"
-    assert health["last_driver_cmd_vel"]["linear"]["x"] == 0.3
-    assert health["last_driver_cmd_vel"]["angular"]["z"] == 0.1
-    assert health["last_driver_cmd_vel"]["active_source"] == "path_follower"
 
 
 def test_locations_route_is_empty_without_tagged_location_module():

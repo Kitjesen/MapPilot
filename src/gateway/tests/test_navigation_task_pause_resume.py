@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from gateway.gateway_module import GatewayModule
 from gateway.services.event_handlers import handle_navigation_goal_status
+from gateway.services.sse import subscribe, unsubscribe
 
 
 class _TaskControls:
@@ -97,8 +98,11 @@ def test_task_pause_and_resume_ack_do_not_advance_state_before_native_events() -
     assert pause.json()["final_output_confirmed"] is False
     assert (
         client.get("/api/v1/navigation/tasks/navigation-task-1").json()["status"]["state_name"]
-        == "PATH_ACTIVE"
+        == "EXECUTING"
     )
+    live_status = client.get("/api/v1/navigation/tasks/navigation-task-1").json()
+    assert live_status["source"] == "live_gateway_cache"
+    assert live_status["evidence_status"] == "live"
 
     handle_navigation_goal_status(
         gateway,
@@ -136,7 +140,7 @@ def test_task_pause_and_resume_ack_do_not_advance_state_before_native_events() -
     )
     assert (
         client.get("/api/v1/navigation/tasks/navigation-task-1").json()["status"]["state_name"]
-        == "PATH_ACTIVE"
+        == "EXECUTING"
     )
     assert controls.calls == [
         ("pause", "navigation-task-1", "pause-1", "operator_pause"),
@@ -151,7 +155,7 @@ def test_task_control_command_ack_event_uses_http_accepted_status(action: str) -
     gateway.setup()
     gateway.on_system_modules({"nav.goals": controls})
     assert gateway._lease.acquire("web", 30.0) is True
-    queue = gateway._sse_subscribe()
+    queue = subscribe(gateway)
 
     try:
         response = TestClient(gateway._app).post(
@@ -160,7 +164,7 @@ def test_task_control_command_ack_event_uses_http_accepted_status(action: str) -
         )
         event = queue.get_nowait()
     finally:
-        gateway._sse_unsubscribe(queue)
+        unsubscribe(gateway, queue)
 
     assert response.status_code == 202
     assert event["type"] == "command_ack"
@@ -176,7 +180,7 @@ def test_task_pause_remains_available_during_safety_stop_and_foreign_lease() -> 
     gateway.on_system_modules({"nav.goals": controls})
     assert gateway._lease.acquire("another-operator", 30.0) is True
     with gateway._state_lock:
-        gateway._safety = {"level": 2}
+        gateway._navigation_state = {"authority": "estop", "hold_reason": "operator_estop"}
 
     response = TestClient(gateway._app).post(
         "/api/v1/navigation/tasks/navigation-task-1/pause",
@@ -225,7 +229,7 @@ def test_task_resume_is_rejected_while_safety_stop_is_active() -> None:
     gateway.on_system_modules({"nav.goals": controls})
     assert gateway._lease.acquire("web", 30.0) is True
     with gateway._state_lock:
-        gateway._safety = {"level": 2}
+        gateway._navigation_state = {"authority": "estop", "hold_reason": "operator_estop"}
 
     response = TestClient(gateway._app).post(
         "/api/v1/navigation/tasks/navigation-task-1/resume",

@@ -30,17 +30,6 @@ def _int(value: Any, default: int = 0) -> int:
         return default
 
 
-def _find_module(gw: Any, token: str) -> Any | None:
-    modules = getattr(gw, "_all_modules", {}) or {}
-    token_l = token.lower()
-    for name, module in modules.items():
-        if token_l in str(name).lower():
-            return module
-        if token_l in module.__class__.__name__.lower():
-            return module
-    return None
-
-
 def _find_camera(gw: Any) -> Any | None:
     modules = getattr(gw, "_all_modules", {}) or {}
     return modules.get(CAMERA_ROLE)
@@ -140,12 +129,6 @@ def _jpeg_status(gw: Any) -> dict[str, Any]:
     }
 
 
-def _teleop_stream_clients(gw: Any) -> int:
-    teleop = _find_module(gw, "Teleop")
-    teleop_health, _ = _safe_health(teleop)
-    return _int(teleop_health.get("stream_clients"))
-
-
 def build_camera_status(gw: Any) -> dict[str, Any]:
     """Return a stable camera status without probing systemd, ROS, or hardware."""
     camera = _find_camera(gw)
@@ -170,7 +153,6 @@ def build_camera_status(gw: Any) -> dict[str, Any]:
             "service_recovery_allowed": False,
             "service_recovery_suppressed": False,
             "jpeg": _jpeg_status(gw),
-            "teleop_stream_clients": _teleop_stream_clients(gw),
             "ts": time.time(),
         }
 
@@ -202,7 +184,6 @@ def build_camera_status(gw: Any) -> dict[str, Any]:
 
     status.setdefault("role", CAMERA_ROLE)
     status["jpeg"] = _jpeg_status(gw)
-    status["teleop_stream_clients"] = _teleop_stream_clients(gw)
     status["ts"] = time.time()
     return status
 

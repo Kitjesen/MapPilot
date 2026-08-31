@@ -1,44 +1,38 @@
 """LingTu Python SDK -- programmatic robot control and state inspection.
 
-Provides typed clients for the Gateway REST API and MCP JSON-RPC tool
-interface.  The sync client (``LingTuClient``) uses only the Python stdlib;
-the async client (``AsyncLingTuClient``) requires ``aiohttp``.
+Provides typed synchronous and asynchronous clients for the Gateway REST API.
+Both clients use only the Python standard library.
 """
 
 from __future__ import annotations
 
+from lingtu.sdk.async_client import AsyncLingTuClient, AsyncLocalizationClient
 from lingtu.sdk.client import (
     CommandResult,
     HealthStatus,
     LingTuClient,
+    LocalizationClient,
     MapInfo,
     MapList,
     NavigationStatus,
+    Pose2D,
     Position,
     RobotState,
     SessionInfo,
 )
-from lingtu.sdk.config import LingTuConfig
 
 __all__ = [
+    "AsyncLingTuClient",
+    "AsyncLocalizationClient",
     "CommandResult",
     "HealthStatus",
     "LingTuClient",
-    "LingTuConfig",
+    "LocalizationClient",
     "MapInfo",
     "MapList",
     "NavigationStatus",
+    "Pose2D",
     "Position",
     "RobotState",
     "SessionInfo",
 ]
-
-
-def __getattr__(name: str):
-    """Load optional SDK clients only when they are requested."""
-
-    if name == "AsyncLingTuClient":
-        from lingtu.sdk.async_client import AsyncLingTuClient
-
-        return AsyncLingTuClient
-    raise AttributeError(f"module 'lingtu.sdk' has no attribute {name!r}")

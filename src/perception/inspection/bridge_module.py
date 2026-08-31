@@ -19,11 +19,6 @@ from pathlib import Path
 from typing import Any
 
 from runtime import In, Module
-from runtime.msgs.nav import Odometry
-from runtime.msgs.sensor import CameraIntrinsics, Image
-from runtime.registry import register
-
-from .native_bridge import NativeInspectionEvidenceBridge
 from runtime.contracts.inspection_evidence import (
     SUPPORTED_ACTIONS,
     EvidenceConflictError,
@@ -32,6 +27,11 @@ from runtime.contracts.inspection_evidence import (
     InspectionEvidenceResult,
     InspectionEvidenceStore,
 )
+from runtime.msgs.nav import Odometry
+from runtime.msgs.sensor import CameraIntrinsics, Image
+from runtime.registry import register
+
+from .native_bridge import NativeInspectionEvidenceBridge
 
 STATUS_SCHEMA_VERSION = "lingtu.inspection.evidence.status.v1"
 DEFAULT_EVIDENCE_ROOT = "~/data/lingtu/inspection_evidence"
@@ -61,9 +61,6 @@ def _default_status_file() -> Path:
 class InspectionEvidenceModule(Module, layer=3):
     """Persist inspection evidence requested by the native navigation runtime."""
 
-    _run_in_worker = True
-    _worker_group = "perception"
-
     color_image: In[Image]
     depth_image: In[Image]
     camera_info: In[CameraIntrinsics]
@@ -79,6 +76,7 @@ class InspectionEvidenceModule(Module, layer=3):
         poll_interval_s: float = 0.05,
         max_frame_age_s: float = 2.0,
         max_odom_age_s: float = 2.0,
+        max_rgb_odom_skew_s: float = 0.2,
         heartbeat_interval_s: float = 1.0,
         start_thread: bool = True,
         bridge_factory: Callable[[], Any] | None = None,
@@ -93,6 +91,9 @@ class InspectionEvidenceModule(Module, layer=3):
         self._poll_interval_s = max(0.01, float(poll_interval_s))
         self._max_frame_age_s = max(0.0, float(max_frame_age_s))
         self._max_odom_age_s = max(0.0, float(max_odom_age_s))
+        self._max_rgb_odom_skew_s = float(max_rgb_odom_skew_s)
+        if not math.isfinite(self._max_rgb_odom_skew_s) or self._max_rgb_odom_skew_s < 0.0:
+            raise ValueError("max_rgb_odom_skew_s must be finite and non-negative")
         self._heartbeat_interval_s = min(1.0, max(0.1, float(heartbeat_interval_s)))
         self._start_thread = bool(start_thread)
         self._bridge_factory = bridge_factory or (
@@ -299,7 +300,8 @@ class InspectionEvidenceModule(Module, layer=3):
             "depth": depth,
             "camera_info": camera_info,
             "detections": detections,
-            "captured_at_s": now,
+            "captured_at_s": _sample_timestamp(color),
+            "rgb_odom_skew_s": _sample_skew_s(color, odom),
         }
 
     def _encode_jpeg(self, image: Image) -> bytes:
@@ -322,6 +324,7 @@ class InspectionEvidenceModule(Module, layer=3):
         return {
             "captured_at_s": snapshot["captured_at_s"],
             "odometry_received_at_s": odom_sample.received_at_s,
+            "rgb_odom_skew_s": snapshot["rgb_odom_skew_s"],
             "odometry": pose,
         }
 
@@ -409,13 +412,18 @@ class InspectionEvidenceModule(Module, layer=3):
         )
         if color_reason != "ready":
             return color_reason
-        return _sample_readiness_reason(
+        odom_reason = _sample_readiness_reason(
             odom,
             now=now,
             max_age_s=self._max_odom_age_s,
             missing="odometry_missing",
             stale="odometry_stale",
         )
+        if odom_reason != "ready":
+            return odom_reason
+        if _sample_skew_s(color, odom) > self._max_rgb_odom_skew_s:
+            return "rgb_odometry_unsynchronized"
+        return "ready"
 
     def _write_status(self, *, ready: bool, state: str) -> None:
         now = time.time()
@@ -434,6 +442,7 @@ class InspectionEvidenceModule(Module, layer=3):
             "heartbeat_at_s": now,
             "evidence_root": str(self._evidence_root.expanduser()),
             "supported_actions": sorted(SUPPORTED_ACTIONS),
+            "max_rgb_odom_skew_s": self._max_rgb_odom_skew_s,
             "analyzers": {
                 "capture:overview": "capture_only",
                 "capture:parking": "trusted_observation_required",
@@ -464,6 +473,18 @@ def _sample_readiness_reason(
     if age_s > max_age_s or age_s < -max(1.0, max_age_s):
         return stale
     return "ready"
+
+
+def _sample_timestamp(sample: _Sample) -> float:
+    if sample.message_ts_s is not None and math.isfinite(sample.message_ts_s):
+        return sample.message_ts_s
+    return sample.received_at_s
+
+
+def _sample_skew_s(left: _Sample, right: _Sample) -> float:
+    if left.message_ts_s is not None and right.message_ts_s is not None:
+        return abs(_sample_timestamp(left) - _sample_timestamp(right))
+    return abs(left.received_at_s - right.received_at_s)
 
 
 def _jsonable_detections(value: Any) -> list[Any]:

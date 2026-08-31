@@ -1,6 +1,7 @@
 """Decision module."""
 
 import asyncio
+import math
 import os
 import sys
 import time
@@ -20,8 +21,8 @@ from decision.modules.agent_planner import AgentPlannerModule
 from decision.modules.semantic_planner import SemanticPlannerModule
 from decision.tasks.agent import AGENT_TOOLS, AgentLoop
 from runtime.module import Module, skill
-from runtime.msgs.geometry import Vector3
-from runtime.msgs.nav import Odometry
+from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+from runtime.msgs.nav import NavigationLifecycle, NavigationState, Odometry
 from runtime.msgs.semantic import Detection3D, SceneGraph
 from runtime.stream import In, Out
 
@@ -74,7 +75,7 @@ class TestSemanticPlannerInit:
         assert isinstance(mod.scene_graph, In)
         assert isinstance(mod.odometry, In)
         assert isinstance(mod.detections, In)
-        assert isinstance(mod.mission_status, In)
+        assert isinstance(mod.navigation_state, In)
 
     def test_out_ports(self):
         mod = SemanticPlannerModule()
@@ -172,8 +173,164 @@ class TestSemanticPlannerStateUpdate:
 
         assert len(goals) == 1
 
+    def test_scene_graph_micro_jitter_does_not_republish_goal(self):
+        class _Resolver:
+            def __init__(self):
+                self.calls = 0
 
-# ---------------------------------------------------------------------------
+            def maybe_reload_kg(self):
+                pass
+
+            def fast_resolve(self, instruction, sg_json):
+                self.calls += 1
+
+                class _Result:
+                    confidence = 1.0
+                    frame_id = "map"
+
+                    def __init__(self, x):
+                        self.position = [x, 2.0, 0.0]
+
+                return _Result(1.0 + 0.01 * self.calls)
+
+        self.mod._goal_resolver = _Resolver()
+        self.mod._current_instruction = "go to chair"
+        goals = []
+        self.mod.goal_pose._add_callback(goals.append)
+
+        self.mod._on_scene_graph(_make_scene_graph(["chair"]))
+        self.mod._on_scene_graph(_make_scene_graph(["chair"]))
+
+        assert len(goals) == 1
+
+    def test_goal_signature_includes_yaw(self):
+        goals = []
+        self.mod.goal_pose._add_callback(goals.append)
+
+        first = PoseStamped(
+            Pose(Vector3(1.0, 2.0, 0.0), Quaternion.from_yaw(0.0)),
+            frame_id="map",
+        )
+        second = PoseStamped(
+            Pose(Vector3(1.0, 2.0, 0.0), Quaternion.from_yaw(math.pi / 2.0)),
+            frame_id="map",
+        )
+
+        assert self.mod._publish_goal_pose_once("face the chair", first)
+        assert self.mod._publish_goal_pose_once("face the chair", second)
+        assert len(goals) == 2
+
+    def test_goal_hysteresis_suppresses_bucket_boundary_jitter(self):
+        goals = []
+        self.mod.goal_pose._add_callback(goals.append)
+
+        first = PoseStamped(Pose(Vector3(1.024, 2.0, 0.0)), frame_id="map")
+        jitter = PoseStamped(Pose(Vector3(1.026, 2.0, 0.0)), frame_id="map")
+        moved = PoseStamped(Pose(Vector3(1.08, 2.0, 0.0)), frame_id="map")
+
+        assert self.mod._publish_goal_pose_once("go to chair", first)
+        assert not self.mod._publish_goal_pose_once("go to chair", jitter)
+        assert self.mod._publish_goal_pose_once("go to chair", moved)
+        assert len(goals) == 2
+
+    def test_goal_hysteresis_suppresses_small_yaw_noise(self):
+        goals = []
+        self.mod.goal_pose._add_callback(goals.append)
+
+        first = PoseStamped(
+            Pose(Vector3(1.0, 2.0, 0.0), Quaternion.from_yaw(0.0)),
+            frame_id="map",
+        )
+        yaw_noise = PoseStamped(
+            Pose(Vector3(1.0, 2.0, 0.0), Quaternion.from_yaw(math.radians(2.0))),
+            frame_id="map",
+        )
+
+        assert self.mod._publish_goal_pose_once("face the chair", first)
+        assert not self.mod._publish_goal_pose_once("face the chair", yaw_noise)
+        assert len(goals) == 1
+
+    def test_stale_scene_graph_does_not_publish_motion_goal(self):
+        class _Resolver:
+            def fast_resolve(self, instruction, sg_json):
+                raise AssertionError("stale scene graph must not be resolved")
+
+        self.mod._goal_resolver = _Resolver()
+        self.mod._current_instruction = "go to chair"
+        goals = []
+        statuses = []
+        self.mod.goal_pose._add_callback(goals.append)
+        self.mod.planner_status._add_callback(statuses.append)
+
+        self.mod._current_scene_graph = _make_scene_graph(["old chair"])
+        stale = _make_scene_graph(["chair"])
+        stale.ts = time.time() - 10.0
+        self.mod._on_scene_graph(stale)
+
+        assert goals == []
+        assert statuses == ["WAITING_FOR_FRESH_SCENE_GRAPH"]
+        assert self.mod._latest_sg is None
+        assert self.mod._current_scene_graph is None
+
+    def test_future_scene_graph_does_not_publish_motion_goal(self):
+        class _Resolver:
+            def fast_resolve(self, instruction, sg_json):
+                raise AssertionError("future scene graph must not be resolved")
+
+        self.mod._goal_resolver = _Resolver()
+        self.mod._current_instruction = "go to chair"
+        goals = []
+        self.mod.goal_pose._add_callback(goals.append)
+
+        future = _make_scene_graph(["chair"])
+        future.ts = time.time() + 10.0
+        self.mod._on_scene_graph(future)
+
+        assert goals == []
+
+    def test_nonfinite_scene_graph_timestamp_does_not_publish_motion_goal(self):
+        class _Resolver:
+            def fast_resolve(self, instruction, sg_json):
+                raise AssertionError("nonfinite scene graph must not be resolved")
+
+        self.mod._goal_resolver = _Resolver()
+        self.mod._current_instruction = "go to chair"
+        goals = []
+        self.mod.goal_pose._add_callback(goals.append)
+
+        invalid = _make_scene_graph(["chair"])
+        invalid.ts = math.inf
+        self.mod._on_scene_graph(invalid)
+
+        assert goals == []
+        assert self.mod._current_scene_graph is None
+
+    def test_disabled_age_limit_still_rejects_invalid_source_timestamp(self):
+        mod = _make_module(scene_graph_max_age_s=0.0)
+
+        invalid = _make_scene_graph(["chair"])
+        invalid.ts = math.nan
+
+        assert mod._scene_graph_is_stale(invalid)
+        mod.stop()
+
+    def test_non_map_scene_graph_does_not_publish_motion_goal(self):
+        class _Resolver:
+            def fast_resolve(self, instruction, sg_json):
+                raise AssertionError("non-map scene graph must not be resolved")
+
+        self.mod._goal_resolver = _Resolver()
+        self.mod._current_instruction = "go to chair"
+        goals = []
+        self.mod.goal_pose._add_callback(goals.append)
+
+        odom_scene = _make_scene_graph(["chair"])
+        odom_scene.frame_id = "odom"
+        self.mod._on_scene_graph(odom_scene)
+
+        assert goals == []
+        assert self.mod._current_scene_graph is None
+
 
 # ---------------------------------------------------------------------------
 
@@ -208,7 +365,7 @@ class TestSemanticPlannerInstruction:
 
 
 # ---------------------------------------------------------------------------
-# 4. mission_status LERa cooldown
+# 4. native navigation-state LERa cooldown
 # ---------------------------------------------------------------------------
 
 
@@ -220,8 +377,9 @@ class TestSemanticPlannerRecovery:
         mod._on_odom(_make_odom())
         # Simulate an active instruction
         mod._current_instruction = "find the coffee machine"
-        # Deliver the new mission lifecycle state.
-        mod._on_mission_status({"state": "RECOVERING"})
+        mod._on_navigation_state(
+            NavigationState(boot_id="navd-test", sequence=1, lifecycle_state=NavigationLifecycle.RECOVERING)
+        )
 
         time.sleep(0.05)
         mod.stop()
@@ -230,9 +388,10 @@ class TestSemanticPlannerRecovery:
         """A repeated RECOVERING status must be blocked by the cooldown."""
         mod = _make_module()
         mod._current_instruction = "find exit"
-        mod._on_mission_status({"state": "RECOVERING"})
+        state = NavigationState(boot_id="navd-test", sequence=1, lifecycle_state=NavigationLifecycle.RECOVERING)
+        mod._on_navigation_state(state)
         last = mod._last_lera_time
-        mod._on_mission_status({"state": "RECOVERING"})
+        mod._on_navigation_state(state)
         # Second trigger is blocked by cooldown: _last_lera_time must not change
         assert mod._last_lera_time == last
         mod.stop()

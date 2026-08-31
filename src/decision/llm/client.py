@@ -29,6 +29,8 @@ class LLMConfig:
 class LLMClientBase(ABC):
     """L L M Client Base."""
 
+    supports_vision = False
+
     def __init__(self, config: LLMConfig):
         self.config = config
         self._api_key = os.environ.get(config.api_key_env, "")
@@ -61,7 +63,7 @@ class LLMClientBase(ABC):
 
     async def close(self):
         """Close underlying HTTP resources. Override in subclasses that hold clients."""
-        pass
+        return None
 
 
 class LLMError(Exception):
@@ -77,6 +79,8 @@ class LLMError(Exception):
 
 class OpenAIClient(LLMClientBase):
     """Open A I Client."""
+
+    supports_vision = True
 
     def __init__(self, config: LLMConfig):
         super().__init__(config)
@@ -470,7 +474,6 @@ class QwenClient(LLMClientBase):
     def _sync_call(self, messages: list[dict[str, str]], temperature: float) -> str:
         """Sync call."""
         try:
-            import dashscope
             from dashscope import Generation
         except ImportError:
             raise LLMError("dashscope package not installed. Run: pip install dashscope") from None
@@ -500,6 +503,8 @@ class QwenClient(LLMClientBase):
 
 class MoonshotClient(OpenAIClient):
     """Moonshot Client."""
+
+    supports_vision = False
 
     _DEFAULT_BASE_URL = "https://api.kimi.com/coding/v1"
 

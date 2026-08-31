@@ -45,11 +45,7 @@ def _cached_gateway_jpeg(gw: Any | None) -> bytes | None:
 def _teleop_snapshot_jpeg(gw: Any | None) -> bytes | None:
     if gw is None:
         return None
-    media = getattr(gw, "_camera_module", None) or getattr(
-        gw,
-        "_teleop_module",
-        None,
-    )
+    media = getattr(gw, "_camera_module", None)
     snapshot = getattr(media, "snapshot_jpeg", None)
     if not callable(snapshot):
         return None

@@ -168,15 +168,16 @@ class BPUDetector(DetectorBase):
     class-id filtering for the perception pipeline.
     """
 
+    _MODEL_DIR = os.environ.get("LINGTU_MODEL_DIR", "/var/lib/lingtu/models")
     MODEL_CANDIDATES = [
-        "/home/sunrise/models/yoloe26s_seg_nav125_nashe_640x640_nv12.hbm",
+        os.path.join(_MODEL_DIR, "yoloe26s_seg_nav125_nashe_640x640_nv12.hbm"),
         "/opt/hobot/model/s100/basic/yoloe_11s_seg_pf_nashe_640x640_nv12.hbm",
-        "/home/sunrise/models/yolo11s_seg_nashe_640x640_nv12.hbm",
-        "/home/sunrise/models/yolo12s_detect_nashe_640x640_nv12.hbm",
-        "/home/sunrise/models/yolo12n_detect_nashe_640x640_nv12.hbm",
-        "/home/sunrise/models/yolo11s_detect_nashe_640x640_nv12.hbm",
-        "/home/sunrise/models/yolo11n_detect_nashe_640x640_nv12.hbm",
-        "/home/sunrise/models/yolov8n_detect_nashe_640x640_nv12.hbm",
+        os.path.join(_MODEL_DIR, "yolo11s_seg_nashe_640x640_nv12.hbm"),
+        os.path.join(_MODEL_DIR, "yolo12s_detect_nashe_640x640_nv12.hbm"),
+        os.path.join(_MODEL_DIR, "yolo12n_detect_nashe_640x640_nv12.hbm"),
+        os.path.join(_MODEL_DIR, "yolo11s_detect_nashe_640x640_nv12.hbm"),
+        os.path.join(_MODEL_DIR, "yolo11n_detect_nashe_640x640_nv12.hbm"),
+        os.path.join(_MODEL_DIR, "yolov8n_detect_nashe_640x640_nv12.hbm"),
     ]
     INPUT_SIZE = 640
     STRIDES = [8, 16, 32]

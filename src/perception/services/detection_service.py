@@ -143,6 +143,8 @@ class DetectionService:
     def convert_to_core_detections(
         self,
         detections_3d: list[Any],
+        *,
+        source_ts: float = 0.0,
     ) -> list[CoreDetection3D]:
         """projection.Detection3D -> runtime.msgs.Detection3D."""
         results = []
@@ -159,6 +161,7 @@ class DetectionService:
                     position=Vector3(float(pos[0]), float(pos[1]), float(pos[2])),
                     bbox_2d=[float(x) for x in d.bbox_2d],
                     clip_feature=feat if has_feat else None,
+                    ts=source_ts,
                 )
             )
         return results

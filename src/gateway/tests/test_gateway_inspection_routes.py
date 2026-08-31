@@ -97,6 +97,30 @@ class _Client:
         return self.accepted
 
 
+class _Recording:
+    def __init__(self) -> None:
+        self.starts: list[dict[str, object]] = []
+        self.stops: list[dict[str, object]] = []
+        self.error: Exception | None = None
+        self.stop_error: Exception | None = None
+
+    def start(self, **kwargs):
+        if self.error is not None:
+            raise self.error
+        self.starts.append(dict(kwargs))
+        task_id = str(kwargs["task_id"])
+        return SimpleNamespace(
+            session_id=f"recording-{task_id}",
+            product_session_id="inspection-product-session",
+        )
+
+    def stop(self, **kwargs):
+        self.stops.append(dict(kwargs))
+        if self.stop_error is not None:
+            raise self.stop_error
+        return SimpleNamespace(state="completed")
+
+
 class _InspectionService:
     def __init__(self, client: _Client, store_type=_Store):
         self.client = client
@@ -135,6 +159,59 @@ class _InspectionService:
         return self.client.cancel_task(task_id, reason, request_id=request_id)
 
 
+class _MapReadiness:
+    def __init__(self, reason: str | None = None):
+        self.reason = reason
+
+    def map_readiness(self) -> str | None:
+        return self.reason
+
+
+def _component_scene(*, ts: float, reset_epoch: int = 7) -> dict:
+    return {
+        "ts": ts,
+        "frame_id": "map",
+        "map_id": "field-map",
+        "metadata": {
+            "producer_boot_id": "mapd-component-boot",
+            "reset_epoch": reset_epoch,
+            "observation_sequence": 11,
+            "generation": 13,
+        },
+        "layers": [],
+    }
+
+
+def _component_dynamic_residual(
+    *,
+    ts: float,
+    product_session_id: str = "inspection-component-session",
+    reset_epoch: int = 7,
+    ready: bool = True,
+) -> dict:
+    return {
+        "ts": ts,
+        "product_session_id": product_session_id,
+        "reset_epoch": reset_epoch,
+        "ready": ready,
+    }
+
+
+def _configure_component_environment_admission(gateway, monkeypatch) -> None:
+    from gateway.services.environment_map_feedback import EnvironmentMapFeedback
+
+    now = time.time()
+    product_session_id = "inspection-component-session"
+    feedback = EnvironmentMapFeedback(freshness_limit_s=60.0)
+    feedback.observe_scene(_component_scene(ts=now))
+    feedback.observe_dynamic_residual(
+        _component_dynamic_residual(ts=now, product_session_id=product_session_id)
+    )
+    gateway._environment_map_feedback = feedback
+    gateway._all_modules["host.bus"] = _MapReadiness()
+    monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", product_session_id)
+
+
 def _client(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -145,18 +222,23 @@ def _client(monkeypatch):
     _Store.deleted = []
     native_client = _Client()
     service = _InspectionService(native_client)
-    monkeypatch.setattr(inspection, "active_map_name", lambda _root: "field-map")
+    monkeypatch.setattr(inspection, "active_map", lambda _gw: "field-map")
     monkeypatch.setattr(
         inspection,
-        "map_service_query",
+        "mapd_query",
         lambda _gw, _request: {
             "success": True,
-            "record": {"name": "field-map", "version": 3},
+            "record": {"name": "field-map", "content_epoch": 3},
         },
     )
 
     app = FastAPI()
-    gateway = SimpleNamespace(_inspection=service, _all_modules={"nav.inspection": service})
+    gateway = SimpleNamespace(
+        _inspection=service,
+        _recording=_Recording(),
+        _all_modules={"nav.inspection": service},
+    )
+    _configure_component_environment_admission(gateway, monkeypatch)
     inspection.register_inspection_routes(app, gateway)
     test_client = TestClient(app)
     test_client.app.state.gateway = gateway
@@ -168,7 +250,7 @@ def _route(action: str = "") -> dict:
         "id": "route-a",
         "name": "Morning loop",
         "map_id": "field-map",
-        "map_version": 3,
+        "map_content_epoch": 3,
         "revision": 1,
         "loop_count": 1,
         "failure_policy": "stop",
@@ -206,7 +288,7 @@ def _persist_evidence(
             route_id="route-a",
             route_revision=route_revision,
             map_id="field-map",
-            map_version=3,
+            map_content_epoch=3,
             point_id="dock",
             point_index=0,
             request_id=request_id,
@@ -245,7 +327,7 @@ def _task_event(
         "command_request_id": "inspection-report-start",
         "state": state,
         "map_id": "field-map",
-        "map_version": 3,
+        "map_content_epoch": 3,
         "route_id": "route-a",
         "route_revision": 7,
         "point_index": point_index,
@@ -285,6 +367,7 @@ def test_task_report_accepts_native_success_only_with_verified_required_evidence
         "LINGTU_INSPECTION_EVIDENCE_STATUS_FILE",
         str(evidence_status),
     )
+    monkeypatch.setenv("LINGTU_INSPECTION_EVIDENCE_HEARTBEAT_MAX_AGE_S", "60")
     client, _native_client = _client(monkeypatch)
     route = _route(action="capture:overview")
     route["revision"] = 7
@@ -339,7 +422,7 @@ def test_task_report_accepts_native_success_only_with_verified_required_evidence
     assert report["report_status"] == "COMPLETE"
     assert report["acceptance"] == "ACCEPTABLE"
     assert report["execution"] == {
-        "state": "SUCCEEDED",
+        "state": "SUCCESS",
         "terminal": True,
         "confirmed": True,
         "reason": "route_complete",
@@ -542,7 +625,7 @@ def test_task_report_exposes_missing_required_evidence_after_native_success(
 
     assert response.status_code == 200
     report = response.json()
-    assert report["execution"]["state"] == "SUCCEEDED"
+    assert report["execution"]["state"] == "SUCCESS"
     assert report["report_status"] == "PARTIAL"
     assert report["acceptance"] == "REVIEW_REQUIRED"
     assert report["coverage"]["completed_points"] == 0
@@ -660,7 +743,7 @@ def test_task_report_refuses_acceptance_when_native_event_history_is_incomplete(
 
     assert response.status_code == 200
     report = response.json()
-    assert report["execution"]["state"] == "SUCCEEDED"
+    assert report["execution"]["state"] == "SUCCESS"
     assert report["execution"]["history_complete"] is False
     assert report["execution"]["history_reason"] == "event_sequence_gap"
     assert report["report_status"] == "UNKNOWN"
@@ -743,7 +826,7 @@ def test_inspection_routes_use_native_store_and_client(monkeypatch):
         "id": "route-a",
         "name": "Morning loop",
         "map_id": "field-map",
-        "map_version": 3,
+        "map_content_epoch": 3,
         "revision": 7,
         "loop_count": 2,
         "failure_policy": "retry",
@@ -829,7 +912,10 @@ def test_inspection_task_routes_generate_one_task_id_and_never_claim_execution(m
     snapshot = status.json()
     assert snapshot["found"] is True
     assert snapshot["task_id"] == task_id
-    assert snapshot["current_state"] == "SUBMISSION_ACCEPTED_AWAITING_NATIVE_EVENT"
+    assert snapshot["current_state"] is None
+    assert snapshot["state_available"] is False
+    assert snapshot["phase"] is None
+    assert snapshot["transition"] is None
     assert snapshot["state_source"] == "business_ack_only"
     assert snapshot["execution_confirmed"] is False
     assert snapshot["terminal"] is False
@@ -847,6 +933,403 @@ def test_inspection_task_routes_generate_one_task_id_and_never_claim_execution(m
         "operator_hold",
         "inspection-pause-product-42",
     )
+    recording = client.app.state.gateway._recording
+    assert recording.starts == [
+        {
+            "duration": 0,
+            "prefix": "inspection",
+            "capture_profile": "evidence",
+            "task_id": task_id,
+            "camera": False,
+        }
+    ]
+    assert recording.stops == []
+
+
+def test_inspection_start_retries_do_not_create_a_second_recording(monkeypatch):
+    client, native_client = _client(monkeypatch)
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+    request = {
+        "route_id": "route-a",
+        "map_id": "field-map",
+        "revision": 1,
+        "request_id": "inspection-recording-once",
+    }
+
+    first = client.post("/api/v1/inspection/tasks", json=request)
+    second = client.post("/api/v1/inspection/tasks", json=request)
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    recording = client.app.state.gateway._recording
+    assert len(recording.starts) == 1
+    assert len(native_client.calls) == 2
+
+
+def test_inspection_recording_failure_prevents_native_task_start(monkeypatch):
+    from gateway.services.recording import NativeRecordingError
+
+    client, native_client = _client(monkeypatch)
+    client.app.state.gateway._recording.error = NativeRecordingError(
+        "native_recorder_start_failed",
+        "recorder unavailable",
+        status_code=503,
+    )
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+
+    response = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": "inspection-recording-failed",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"] == "inspection_recording_start_failed"
+    assert native_client.calls == []
+
+
+def test_inspection_native_start_rejection_stops_only_the_new_recording(monkeypatch):
+    client, native_client = _client(monkeypatch)
+    native_client.accepted = False
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+
+    response = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": "inspection-native-rejected-after-recording",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["recording_cleanup"] == {
+        "attempted": True,
+        "session_id": "recording-" + response.json()["detail"]["task_id"],
+        "state": "completed",
+        "error": "",
+    }
+    recording = client.app.state.gateway._recording
+    assert len(recording.starts) == 1
+    assert recording.stops == [
+        {
+            "expected_session_id": recording.starts
+            and "recording-" + response.json()["detail"]["task_id"],
+        }
+    ]
+
+
+def test_rejected_start_retry_never_reuses_a_completed_recording(monkeypatch):
+    client, native_client = _client(monkeypatch)
+    native_client.accepted = False
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+    request = {
+        "route_id": "route-a",
+        "map_id": "field-map",
+        "revision": 1,
+        "request_id": "inspection-rejected-completed-recording",
+    }
+
+    first = client.post("/api/v1/inspection/tasks", json=request)
+    calls_after_rejection = list(native_client.calls)
+    second = client.post("/api/v1/inspection/tasks", json=request)
+
+    assert first.status_code == 409
+    assert second.status_code == 409
+    assert native_client.calls == calls_after_rejection
+    assert second.json()["detail"]["recording_cleanup"]["state"] == "completed"
+
+
+def test_rejected_start_retry_reclaims_a_transient_recording_stop_failure(monkeypatch):
+    from gateway.services.recording import NativeRecordingError
+
+    client, native_client = _client(monkeypatch)
+    native_client.accepted = False
+    recording = client.app.state.gateway._recording
+    recording.stop_error = NativeRecordingError(
+        "native_recorder_timeout", "temporary timeout", status_code=504
+    )
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+    request = {
+        "route_id": "route-a",
+        "map_id": "field-map",
+        "revision": 1,
+        "request_id": "inspection-rejected-cleanup-retry",
+    }
+
+    first = client.post("/api/v1/inspection/tasks", json=request)
+    calls_after_rejection = list(native_client.calls)
+    recording.stop_error = None
+    second = client.post("/api/v1/inspection/tasks", json=request)
+
+    assert first.status_code == 409
+    assert second.status_code == 409
+    assert len(recording.starts) == 1
+    assert len(recording.stops) == 2
+    assert native_client.calls == calls_after_rejection
+    assert first.json()["detail"]["recording_cleanup"] == {
+        "attempted": True,
+        "session_id": str(recording.starts[0]["session_id"])
+        if "session_id" in recording.starts[0]
+        else "recording-" + str(recording.starts[0]["task_id"]),
+        "state": "recording",
+        "error": "native_recorder_timeout",
+    }
+    assert second.json()["detail"]["recording_cleanup"]["state"] == "completed"
+    task_id = str(recording.starts[0]["task_id"])
+    assert client.app.state.gateway._inspection_task_timeline.query(task_id)["recording"][
+        "state"
+    ] == "completed"
+
+
+def test_inspection_unknown_native_start_result_keeps_recording_for_reconcile(monkeypatch):
+    client, native_client = _client(monkeypatch)
+    native_client.error = "DDS acknowledgement timed out"
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+
+    response = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": "inspection-unknown-after-recording",
+        },
+    )
+
+    assert response.status_code == 503
+    assert client.app.state.gateway._recording.stops == []
+    task_id = str(client.app.state.gateway._recording.starts[0]["task_id"])
+    assert client.app.state.gateway._inspection_task_timeline.query(task_id)["recording"][
+        "state"
+    ] == "recording"
+
+
+def test_inspection_bind_failure_reports_orphan_cleanup_failure(monkeypatch):
+    from gateway.services.inspection_task_lifecycle import InspectionTaskTimeline
+    from gateway.services.recording import NativeRecordingError
+
+    client, native_client = _client(monkeypatch)
+    recording = client.app.state.gateway._recording
+    recording.stop_error = NativeRecordingError(
+        "native_recorder_timeout", "cleanup timed out", status_code=504
+    )
+    monkeypatch.setattr(
+        InspectionTaskTimeline,
+        "bind_recording",
+        lambda self, **kwargs: (_ for _ in ()).throw(ValueError("bind failed")),
+    )
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+
+    response = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": "inspection-bind-orphan",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["orphan_cleanup_error"] == "native_recorder_timeout"
+    assert native_client.calls == []
+
+
+def test_inspection_start_admits_current_map_and_matching_dynamic_residual(monkeypatch):
+    client, native_client = _client(monkeypatch)
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+
+    response = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": "inspection-environment-ready",
+        },
+    )
+
+    assert response.status_code == 202
+    assert native_client.calls[-1][0] == "task_start"
+
+
+def test_inspection_start_rejects_stale_gateway_scene_before_native(monkeypatch):
+    client, native_client = _client(monkeypatch)
+    gateway = client.app.state.gateway
+    gateway._environment_map_feedback.observe_scene(
+        _component_scene(ts=time.time() - 61.0)
+    )
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+
+    response = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": "inspection-stale-gateway-scene",
+        },
+    )
+
+    assert response.status_code == 503
+    assert "map_scene_stale" in response.json()["detail"]["blockers"]
+    assert native_client.calls == []
+
+
+def test_inspection_start_without_explicit_environment_evidence_fails_closed(
+    monkeypatch,
+):
+    client, native_client = _client(monkeypatch)
+    client.app.state.gateway._environment_map_feedback = None
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+
+    response = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": "inspection-environment-evidence-missing",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["blockers"] == [
+        "environment_map_feedback_unavailable"
+    ]
+    assert native_client.calls == []
+
+
+@pytest.mark.parametrize("reason", ["mapd_state_stale", "map_scene_stale"])
+def test_inspection_start_rejects_stale_mapd_or_scene_before_native(
+    monkeypatch,
+    reason,
+):
+    client, native_client = _client(monkeypatch)
+    gateway = client.app.state.gateway
+    gateway._all_modules["host.bus"].reason = reason
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+
+    response = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": f"inspection-{reason}",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"] == "inspection_environment_not_ready"
+    assert reason in response.json()["detail"]["blockers"]
+    assert native_client.calls == []
+
+
+def test_inspection_start_rejects_mapd_capacity_limit_before_native(monkeypatch):
+    client, native_client = _client(monkeypatch)
+    gateway = client.app.state.gateway
+    gateway._all_modules["host.bus"].reason = "mapd_capacity_limited"
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+
+    response = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": "inspection-mapd-capacity-limited",
+        },
+    )
+
+    assert response.status_code == 503
+    assert "mapd_capacity_limited" in response.json()["detail"]["blockers"]
+    assert native_client.calls == []
+
+
+@pytest.mark.parametrize(
+    ("product_session_id", "reset_epoch", "expected_blocker"),
+    [
+        ("other-product-session", 7, "dynamic_residual_session_mismatch"),
+        ("inspection-component-session", 8, "dynamic_residual_reset_mismatch"),
+    ],
+)
+def test_inspection_start_rejects_dynamic_residual_identity_mismatch(
+    monkeypatch,
+    product_session_id,
+    reset_epoch,
+    expected_blocker,
+):
+    client, native_client = _client(monkeypatch)
+    gateway = client.app.state.gateway
+    gateway._environment_map_feedback.observe_dynamic_residual(
+        _component_dynamic_residual(
+            ts=time.time(),
+            product_session_id=product_session_id,
+            reset_epoch=reset_epoch,
+        )
+    )
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+
+    response = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": f"inspection-{expected_blocker}",
+        },
+    )
+
+    assert response.status_code == 503
+    assert expected_blocker in response.json()["detail"]["blockers"]
+    assert native_client.calls == []
+
+
+@pytest.mark.parametrize(
+    ("evidence", "expected_blocker"),
+    [
+        (None, "dynamic_residual_evidence_missing"),
+        (
+            _component_dynamic_residual(ts=1.0, ready=False),
+            "dynamic_residual_not_ready",
+        ),
+    ],
+)
+def test_inspection_start_rejects_missing_or_unready_dynamic_residual(
+    monkeypatch,
+    evidence,
+    expected_blocker,
+):
+    client, native_client = _client(monkeypatch)
+    gateway = client.app.state.gateway
+    if evidence is None:
+        gateway._environment_map_feedback.observe_dynamic_residual(None)
+    else:
+        gateway._environment_map_feedback.observe_dynamic_residual(
+            {**evidence, "ts": time.time()}
+        )
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+
+    response = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": f"inspection-{expected_blocker}",
+        },
+    )
+
+    assert response.status_code == 503
+    assert expected_blocker in response.json()["detail"]["blockers"]
+    assert native_client.calls == []
 
 
 def test_inspection_start_retry_cannot_change_the_started_route_snapshot(monkeypatch):
@@ -946,9 +1429,10 @@ def test_inspection_task_collection_rehydrates_the_current_task_by_map(monkeypat
     assert payload["retention"] == "process_local_gateway_projection"
     assert payload["count"] == 1
     assert payload["tasks"][0]["task_id"] == task_id
-    assert payload["tasks"][0]["current_state"] == (
-        "SUBMISSION_ACCEPTED_AWAITING_NATIVE_EVENT"
-    )
+    assert payload["tasks"][0]["current_state"] is None
+    assert payload["tasks"][0]["state_available"] is False
+    assert payload["tasks"][0]["phase"] is None
+    assert payload["tasks"][0]["transition"] is None
     assert payload["tasks"][0]["execution_confirmed"] is False
 
 
@@ -957,7 +1441,7 @@ def test_inspection_task_start_fails_before_native_when_journal_is_corrupt(
     tmp_path,
 ):
     journal = tmp_path / "inspection_tasks.json"
-    journal.write_text('{"body":{},"sha256":"invalid"}\n', encoding="utf-8")
+    journal.write_text('{"schema_version":"wrong"}\n', encoding="utf-8")
     monkeypatch.setenv("LINGTU_INSPECTION_TASK_JOURNAL", str(journal))
     client, native_client = _client(monkeypatch)
     route = _route()
@@ -983,7 +1467,7 @@ def test_inspection_task_list_reports_corrupt_journal_instead_of_empty_history(
     tmp_path,
 ):
     journal = tmp_path / "inspection_tasks.json"
-    journal.write_text('{"body":{},"sha256":"invalid"}\n', encoding="utf-8")
+    journal.write_text('{"schema_version":"wrong"}\n', encoding="utf-8")
     monkeypatch.setenv("LINGTU_INSPECTION_TASK_JOURNAL", str(journal))
     client, _native_client = _client(monkeypatch)
 
@@ -1039,7 +1523,7 @@ def test_inspection_native_client_unavailable_returns_503(monkeypatch):
         "id": "route-a",
         "name": "Morning loop",
         "map_id": "field-map",
-        "map_version": 3,
+        "map_content_epoch": 3,
         "revision": 1,
         "loop_count": 1,
         "failure_policy": "stop",
@@ -1155,7 +1639,7 @@ def test_inspection_start_resolves_current_saved_revision(monkeypatch):
         "id": "route-a",
         "name": "Morning loop",
         "map_id": "field-map",
-        "map_version": 3,
+        "map_content_epoch": 3,
         "revision": 1,
         "loop_count": 1,
         "failure_policy": "stop",
@@ -1198,7 +1682,7 @@ def test_inspection_start_rejects_stale_saved_revision_before_dds(monkeypatch):
         "id": "route-a",
         "name": "Morning loop",
         "map_id": "field-map",
-        "map_version": 3,
+        "map_content_epoch": 3,
         "revision": 1,
         "loop_count": 1,
         "failure_policy": "stop",
@@ -1264,15 +1748,22 @@ def test_inspection_client_acquisition_and_ack_do_not_block_event_loop(monkeypat
         ("field-map", "route-a"): {
             "id": "route-a",
             "map_id": "field-map",
+            "map_content_epoch": 3,
             "revision": 7,
             "points": [],
         }
     }
-    monkeypatch.setattr(inspection, "active_map_name", lambda _root: "field-map")
+    monkeypatch.setattr(inspection, "active_map", lambda _gw: "field-map")
 
     app = FastAPI()
     service = BlockingInspection()
-    inspection.register_inspection_routes(app, SimpleNamespace(_inspection=service))
+    gateway = SimpleNamespace(
+        _inspection=service,
+        _recording=_Recording(),
+        _all_modules={"nav.inspection": service},
+    )
+    _configure_component_environment_admission(gateway, monkeypatch)
+    inspection.register_inspection_routes(app, gateway)
     endpoint = next(
         route.endpoint
         for route in app.routes
@@ -1550,7 +2041,7 @@ def test_inspection_evidence_list_detail_and_artifact_are_verified(monkeypatch, 
 
     detail = client.get("/api/v1/inspection/evidence/evidence-001")
     assert detail.status_code == 200
-    assert detail.json()["evidence"]["manifest_sha256"] == item["manifest_sha256"]
+    assert detail.json()["evidence"] == item
 
     artifact = client.get("/api/v1/inspection/evidence/evidence-001/artifacts/rgb")
     assert artifact.status_code == 200

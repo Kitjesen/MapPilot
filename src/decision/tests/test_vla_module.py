@@ -93,8 +93,6 @@ def test_module_init(vla_module):
         "planner_status",
     }
     assert module._layer == 4
-    assert module._run_in_worker is True
-    assert module._worker_group == "semantic"
     assert "LLMModule" in module.SOFT_DEPENDS
     assert "PerceptionModule" in module.SOFT_DEPENDS
 

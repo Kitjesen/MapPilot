@@ -73,9 +73,6 @@ class LLMModule(Module, layer=4):
     don't block the Module system's synchronous callback chain.
     """
 
-    _run_in_worker = True
-    _worker_group = "semantic"
-
     request: In[LLMRequest]
     response: Out[LLMResponse]
 
@@ -141,6 +138,11 @@ class LLMModule(Module, layer=4):
         )
         self._loop_thread.start()
         logger.info("LLMModule: backend='%s' model='%s'", self._backend_name, self._model)
+
+    @property
+    def client(self):
+        """Return the initialized client for same-layer multimodal helpers."""
+        return self._client
 
     def _create_client(self):
         """Factory: instantiate the selected LLM backend."""

@@ -188,8 +188,9 @@ def invoke_navigation_command(
     method: str,
     *,
     required: bool,
+    accept_receipt: bool = False,
     **kwargs: Any,
-) -> bool:
+) -> dict[str, Any] | bool:
     commands = navigation_commands(owner)
     if commands is None:
         if required:
@@ -199,11 +200,18 @@ def invoke_navigation_command(
     if not callable(operation):
         raise CommandBoundaryError(f"native navigation command capability does not implement {method}")
     try:
-        accepted = operation(**kwargs)
+        result = operation(**kwargs)
     except Exception as exc:
         raise CommandBoundaryError(str(exc)) from exc
-    if accepted is not True:
-        outcome = "was rejected" if accepted is False else "returned an invalid acknowledgement"
+    if result is True:
+        return True
+    if accept_receipt and isinstance(result, Mapping):
+        if result.get("accepted") is True:
+            return dict(result)
+        reason = str(result.get("reason") or "was rejected")
+        raise CommandBoundaryError(f"native navigation command {method} was rejected: {reason}")
+    if result is not True:
+        outcome = "was rejected" if result is False else "returned an invalid acknowledgement"
         raise CommandBoundaryError(f"native navigation command {method} {outcome}")
     return True
 

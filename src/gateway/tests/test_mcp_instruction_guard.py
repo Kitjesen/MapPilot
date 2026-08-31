@@ -30,14 +30,27 @@ class _Gateway:
     def __init__(self) -> None:
         self.instruction = _Port()
         self._state_lock = threading.RLock()
-        self._safety: dict[str, Any] | None = None
+        self._navigation_state: dict[str, Any] | None = None
         self._lease: _Lease | None = None
         self._command_journal = CommandJournal()
         self.acks: list[tuple[int | None, dict[str, Any]]] = []
         self.events: list[dict[str, Any]] = []
 
-    def _run_control_command(self, command: str, body: Any, action: Any) -> dict[str, Any] | Any:
-        return run_control_command(self, command, body, action)
+    def _run_control_command(
+        self,
+        command: str,
+        body: Any,
+        action: Any,
+        *,
+        success_status_code: int = 200,
+    ) -> dict[str, Any] | Any:
+        return run_control_command(
+            self,
+            command,
+            body,
+            action,
+            success_status_code=success_status_code,
+        )
 
     def _publish_command_ack(
         self,
@@ -100,7 +113,7 @@ def test_mcp_navigate_to_object_rejects_safety_stop_without_publish() -> None:
     from gateway.mcp_server import MCPServerModule
 
     gateway = _Gateway()
-    gateway._safety = {"level": 2}
+    gateway._navigation_state = {"authority": "estop", "hold_reason": "operator_estop"}
     mcp = MCPServerModule(host="127.0.0.1")
     mcp.on_system_modules({"MCPServerModule": mcp, "GatewayModule": gateway})
 

@@ -5,6 +5,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+_PUBLIC_TASK_STATES = frozenset(
+    {
+        "PLANNING",
+        "EXECUTING",
+        "PAUSED",
+        "RECOVERING",
+        "SUCCESS",
+        "FAILED",
+        "CANCELLED",
+    }
+)
+
 
 def build_inspection_task_report(
     task: Mapping[str, Any],
@@ -20,7 +32,7 @@ def build_inspection_task_report(
     timeline = task.get("timeline")
     if not isinstance(timeline, list):
         timeline = []
-    execution_state = str(task.get("current_state") or "UNKNOWN")
+    execution_state = _public_execution_state(task)
     terminal = bool(task.get("terminal", False))
     execution_confirmed = bool(task.get("execution_confirmed", False))
     execution_reason = str(task.get("reason") or "")
@@ -192,8 +204,8 @@ def build_inspection_task_report(
                 identity.get("route_revision") or route.get("revision") or 0
             ),
             "map_id": str(identity.get("map_id") or route.get("map_id") or ""),
-            "map_version": int(
-                identity.get("map_version") or route.get("map_version") or 0
+            "map_content_epoch": int(
+                identity.get("map_content_epoch") or route.get("map_content_epoch") or 0
             ),
         },
         "coverage": {
@@ -236,7 +248,7 @@ def _verified_evidence_status(
         "route_id": str(route.get("id") or ""),
         "route_revision": int(route.get("revision") or 0),
         "map_id": str(route.get("map_id") or ""),
-        "map_version": int(route.get("map_version") or 0),
+        "map_content_epoch": int(route.get("map_content_epoch") or 0),
         "point_id": point_id,
         "point_index": point_index,
         "action": action,
@@ -249,14 +261,14 @@ def _verified_evidence_status(
 
 def _report_outcome(
     *,
-    execution_state: str,
+    execution_state: str | None,
     terminal: bool,
     execution_confirmed: bool,
     history_complete: bool,
     issues: list[dict[str, Any]],
 ) -> tuple[str, str]:
     if terminal and execution_confirmed:
-        if execution_state == "SUCCEEDED":
+        if execution_state == "SUCCESS":
             if not history_complete:
                 return "UNKNOWN", "REVIEW_REQUIRED"
             if issues:
@@ -264,18 +276,23 @@ def _report_outcome(
             return "COMPLETE", "ACCEPTABLE"
         if execution_state == "CANCELLED":
             return "CANCELLED", "NOT_ACCEPTABLE"
-        return "FAILED", "NOT_ACCEPTABLE"
+        if execution_state == "FAILED":
+            return "FAILED", "NOT_ACCEPTABLE"
+        return "UNKNOWN", "UNKNOWN"
     if not history_complete:
         return "UNKNOWN", "REVIEW_REQUIRED"
     if not terminal or not execution_confirmed:
-        if execution_state in {
-            "RECOVERED_AWAITING_NATIVE_RECONCILIATION",
-            "INTERRUPTED_AWAITING_NATIVE_TRUTH",
-            "UNKNOWN",
-        }:
+        if execution_state is None:
             return "UNKNOWN", "UNKNOWN"
         return "IN_PROGRESS", "PENDING"
     return "UNKNOWN", "UNKNOWN"
+
+
+def _public_execution_state(task: Mapping[str, Any]) -> str | None:
+    state = task.get("current_state")
+    if not isinstance(state, str) or state not in _PUBLIC_TASK_STATES:
+        return None
+    return state
 
 
 __all__ = ["build_inspection_task_report"]

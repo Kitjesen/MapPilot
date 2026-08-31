@@ -97,14 +97,14 @@ class InstanceTrackerStorage:
             logger.warning("Failed to load scene graph from %s: %s", path, e)
             return False
 
-        from .tracked_objects import TrackedObject, ViewNode
+        from .tracked_objects import ViewNode
 
         tracker._objects.clear()
         tracker._views.clear()
 
         for oid_str, odata in data.get("objects", {}).items():
             oid = int(oid_str)
-            obj = TrackedObject(
+            obj = tracker._create_tracked_object(
                 object_id=oid,
                 label=odata["label"],
                 position=np.array(odata["position"]),
@@ -125,7 +125,6 @@ class InstanceTrackerStorage:
                 points=(np.array(odata.get("points", [])).reshape(-1, 3) if odata.get("points") else np.empty((0, 3))),
             )
             obj._update_credibility()
-            tracker._enrich_from_kg(obj)
             obj.source = "loaded"
             tracker._objects[oid] = obj
 

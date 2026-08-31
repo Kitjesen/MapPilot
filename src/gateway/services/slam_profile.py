@@ -7,10 +7,13 @@ from typing import Any
 
 
 def slam_profile_from_status(status: dict | None) -> str:
-    """Return a live backend from localization_status when it is usable."""
+    """Return the external native runtime identity from usable telemetry."""
     if not isinstance(status, dict):
         return ""
-    profile = str(status.get("backend") or "").strip().lower()
+    profile = str(
+        status.get("backend_profile") or status.get("backend") or ""
+    ).strip().lower()
+    health_source = str(status.get("health_source") or "").strip().lower()
     state = str(status.get("reported_state") or status.get("state") or "").strip().upper()
     if state in {
         "STOPPED",
@@ -23,16 +26,8 @@ def slam_profile_from_status(status: dict | None) -> str:
         "ERROR",
     }:
         return ""
-    if str(status.get("health_source") or "").strip().lower() == "slam_runtime":
+    if profile == "native_dds" or health_source in {"slam_runtime", "dds_endpoint"}:
         return "native_dds"
-    if profile in {
-        "fastlio2",
-        "pointlio",
-        "genz",
-        "localizer",
-        "native_dds",
-    }:
-        return profile
     return ""
 
 
@@ -40,12 +35,14 @@ def current_slam_profile(gw: Any) -> str:
     """Return the current SLAM profile from native telemetry or session cache."""
     live_profile = slam_profile_from_status(gw._localization_status)
     if live_profile:
-        gw._session_runtime.remember_slam_profile(live_profile)
+        gw._cached_slam_profile = live_profile
+        gw._slam_profile_ts = time.time()
         return live_profile
     profile = str(gw._session_slam_profile or gw._cached_slam_profile or "").strip().lower()
     if not profile:
         profile = "none" if gw._session_uses_external_slam_none() else "stopped"
-    gw._session_runtime.remember_slam_profile(profile)
+    gw._cached_slam_profile = profile
+    gw._slam_profile_ts = time.time()
     return profile
 
 

@@ -46,7 +46,7 @@ def _request(
         "route_id": "route-1",
         "route_revision": 1,
         "map_id": "map-1",
-        "map_version": 2,
+        "map_content_epoch": 2,
         "point_id": "point-1",
         "point_index": 0,
         "request_id": request_id,
@@ -139,6 +139,36 @@ def test_module_replies_not_persisted_when_frame_is_stale(tmp_path: Path) -> Non
     assert bridge.results[0]["persisted"] is False
     assert bridge.results[0]["reason"] == "rgb_stale"
     assert not (tmp_path / "evidence" / "requests" / "req-stale").exists()
+
+
+def test_module_rejects_fresh_but_unsynchronized_rgb_and_odometry(tmp_path: Path) -> None:
+    now = time.time()
+    bridge = FakeBridge([_request(request_id="req-unsynchronized")])
+    status_file = tmp_path / "status.json"
+    module = InspectionEvidenceModule(
+        evidence_root=tmp_path / "evidence",
+        status_file=status_file,
+        bridge_factory=lambda: bridge,
+        start_thread=False,
+        max_frame_age_s=2.0,
+        max_odom_age_s=2.0,
+        max_rgb_odom_skew_s=0.2,
+        jpeg_encoder=_jpeg,
+    )
+    module.setup()
+    module.start()
+    module.color_image._deliver(_image(ts=now))
+    module.odometry._deliver(_odom(ts=now - 0.5))
+
+    assert module.poll_once() is True
+
+    assert bridge.results[0]["persisted"] is False
+    assert bridge.results[0]["reason"] == "rgb_odometry_unsynchronized"
+    assert not (tmp_path / "evidence" / "requests" / "req-unsynchronized").exists()
+    status = json.loads(status_file.read_text(encoding="utf-8"))
+    assert status["ready"] is False
+    assert status["readiness_reason"] == "rgb_odometry_unsynchronized"
+    assert status["max_rgb_odom_skew_s"] == 0.2
 
 
 def test_module_replays_committed_evidence_idempotently(tmp_path: Path) -> None:

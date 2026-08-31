@@ -6,6 +6,7 @@ import os
 import time
 
 import pytest
+from runtime.msgs.numpy_compat import np
 
 pytest.importorskip("fastapi")
 
@@ -14,37 +15,28 @@ def _endpoint(gateway, path: str):
     return next(route.endpoint for route in gateway._app.routes if route.path == path)
 
 
-def test_liveness_and_devices_routes_validate_response_contracts():
+def test_liveness_route_validates_response_contract():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import DevicesResponse, LivenessResponse
+    from gateway.schemas import LivenessResponse
 
     gateway = GatewayModule()
     gateway.setup()
 
     liveness = asyncio.run(_endpoint(gateway, "/health")())
-    devices = asyncio.run(_endpoint(gateway, "/api/v1/devices")())
-
     live_model = LivenessResponse.model_validate(liveness)
-    devices_model = DevicesResponse.model_validate(devices)
 
     assert live_model.status == "ok"
     assert live_model.ts > 0
-    assert devices_model.manager == "not_loaded"
-    assert devices_model.devices == []
 
 
-def test_health_and_devices_routes_tolerate_missing_module_inventory():
+def test_health_route_tolerates_missing_module_inventory():
     from gateway.gateway_module import GatewayModule
 
     gateway = GatewayModule()
     gateway.setup()
     del gateway._all_modules
 
-    devices = asyncio.run(_endpoint(gateway, "/api/v1/devices")())
     health = asyncio.run(_endpoint(gateway, "/api/v1/health")())
-
-    assert devices["manager"] == "not_loaded"
-    assert devices["devices"] == []
     assert health["modules"] == {}
     assert health["modules_ok"] == 0
     assert health["modules_fail"] == 0
@@ -64,7 +56,9 @@ def test_metrics_route_returns_operator_snapshot():
         "imu_input_hz": 200.0,
         "slam_tick_hz": 50.0,
     }
-    gateway.replace_map_cloud_points([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+    gateway._cloud_viewer.replace_map_points(
+        np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32)
+    )
 
     metrics = asyncio.run(_endpoint(gateway, "/api/v1/metrics")())
 
@@ -75,29 +69,6 @@ def test_metrics_route_returns_operator_snapshot():
     assert metrics["map"]["points"] == 2
     assert "traffic" in metrics
     assert "commands" in metrics
-
-
-def test_devices_route_uses_hw_module_name():
-    from gateway.gateway_module import GatewayModule
-
-    class Hw:
-        def health(self):
-            return {
-                "spec_count": 1,
-                "opened_count": 1,
-                "devices": [{"id": "gnss", "status": "ready"}],
-            }
-
-    gateway = GatewayModule()
-    gateway.setup()
-    gateway._all_modules = {"hw": Hw()}
-
-    devices = asyncio.run(_endpoint(gateway, "/api/v1/devices")())
-
-    assert devices["manager"] == "ok"
-    assert devices["spec_count"] == 1
-    assert devices["opened_count"] == 1
-    assert devices["devices"] == [{"id": "gnss", "status": "ready"}]
 
 
 def test_service_status_marks_current_gateway_http_observed():
@@ -143,8 +114,8 @@ def test_service_status_summarizes_field_readiness_blockers(monkeypatch, tmp_pat
                 "schema": "lingtu.thunder.service_readiness.v1",
                 "summary": {"ok": True, "blockers": [], "blocker_count": 0},
                 "systemd": {
-                    "lingtu-livox-dds.service": {"active_state": "active", "sub_state": "running"},
-                    "lingtu-camera-dds.service": {"active_state": "inactive", "sub_state": "dead"},
+                    "lt-lidar.service": {"active_state": "active", "sub_state": "running"},
+                    "lt-camera.service": {"active_state": "inactive", "sub_state": "dead"},
                 },
             }
         ),
@@ -204,7 +175,7 @@ def test_service_status_includes_fresh_field_readiness_summary(monkeypatch, tmp_
                         "blocker_count": 1,
                     },
                     "systemd": {
-                        "lingtu-livox-dds.service": {
+                        "lt-lidar.service": {
                             "active_state": "active",
                             "sub_state": "running",
                         }
@@ -315,7 +286,9 @@ def test_health_uses_live_point_count_and_module_slam_rate(monkeypatch):
     gateway = GatewayModule()
     gateway.setup()
     gateway._all_modules = {"SlamAdapterModule": _Slam()}
-    gateway.replace_map_cloud_points([(0.0, 0.0, 0.0)] * 42)
+    gateway._cloud_viewer.replace_map_points(
+        np.asarray([(0.0, 0.0, 0.0)] * 42, dtype=np.float32)
+    )
 
     def _fail_shell_hz():
         raise AssertionError("health should prefer module port rate")
@@ -353,7 +326,7 @@ def test_health_reports_gateway_cloud_debug():
 
     gateway = GatewayModule()
     gateway.setup()
-    gateway._publish_cloud_frame(
+    gateway._cloud_viewer.publish_cloud_frame(
         b"PCLD",
         metadata={
             "point_count": 7,
@@ -380,7 +353,7 @@ def test_liveness_reports_lightweight_health_summary():
 
     gateway = GatewayModule()
     gateway.setup()
-    gateway._publish_cloud_frame(
+    gateway._cloud_viewer.publish_cloud_frame(
         b"PCLD",
         metadata={"point_count": 5, "source": "slam_map_cloud"},
     )
@@ -538,17 +511,21 @@ def test_brainstem_probe_projects_native_driver_status(monkeypatch, tmp_path):
     status_path.write_text(
         json.dumps(
             {
-                "schema_version": "lingtu.driver.status.v1",
+                "schema_version": "lingtu.driver.status.v2",
                 "ready": True,
                 "connected": True,
                 "stamp_s": time.time(),
-                "brainstem": {
+                "adapter": {
                     "target": "192.168.66.20:13145",
+                    "protocol": "brainstem_grpc",
+                    "control_owner": "grpc",
+                    "control_owner_id": "lingtu-driver@robot",
+                },
+                "control": {
                     "fsm": "STANDING",
                     "motors_enabled": True,
                     "lease_valid": True,
                     "initial_zero_acknowledged": True,
-                    "owner": "GRPC",
                     "decision": "ready",
                 },
                 "output_ack": {
@@ -585,7 +562,8 @@ def test_brainstem_probe_rejects_stale_driver_status(monkeypatch, tmp_path):
                 "ready": True,
                 "connected": True,
                 "stamp_s": time.time() - 5.0,
-                "brainstem": {"target": "192.168.66.20:13145", "fsm": "STANDING"},
+                "adapter": {"target": "192.168.66.20:13145"},
+                "control": {"fsm": "STANDING"},
             }
         ),
         encoding="utf-8",

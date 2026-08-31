@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from itertools import pairwise
 from typing import Any
 
 from fastapi.responses import JSONResponse
 
 from gateway.schemas import PlanPreviewRequest
-from gateway.services.command_boundary import CommandBoundaryError
+from gateway.services.command_boundary import CommandBoundaryError, navigation_commands
 from gateway.services.safety_status import safety_stop_active, safety_summary
 from runtime.runtime_interface import map_frame_id
 
@@ -100,7 +101,7 @@ class ControlCommandService:
             )
         try:
             with self._gw._state_lock:
-                safety = getattr(self._gw, "_safety", None)
+                safety = getattr(self._gw, "_navigation_state", None)
         except Exception:
             safety = None
 
@@ -121,96 +122,57 @@ class ControlCommandService:
             ),
         )
 
-    def preview_navigation_plan(
-        self,
-        body: PlanPreviewRequest,
-        *,
-        ignore_blockers: set[str] | None = None,
-        map_only: bool = False,
-    ) -> dict[str, Any]:
-        from gateway.services.runtime_status import build_navigation_status
-
-        status = build_navigation_status(self._gw)
-        readiness = status.get("readiness", {})
-        ignored = ignore_blockers or set()
-        blockers = [str(blocker) for blocker in (readiness.get("blockers") or []) if str(blocker) not in ignored]
-        if blockers or not bool(status.get("has_odometry", False)):
-            reasons = ["navigation_not_ready", *blockers]
-            if not bool(status.get("has_odometry", False)):
-                reasons.append("odometry_missing")
-            return self._plan_preview_unavailable(
-                body,
-                reasons=reasons,
-                source="gateway_readiness",
-                ignored_blockers=sorted(ignored),
-            )
-
-        nav = (getattr(self._gw, "_all_modules", {}) or {}).get("nav.mission")
-        if nav is None or not hasattr(nav, "preview_plan"):
-            return self._plan_preview_unavailable(
-                body,
-                reasons=["nav_mission_unavailable"],
-                source="gateway_modules",
-            )
-
+    def preview_plan(self, body: PlanPreviewRequest) -> dict[str, Any]:
+        commands = navigation_commands(self._gw)
+        operation = getattr(commands, "preview_plan", None)
+        if not callable(operation):
+            return self._unavailable(body)
         try:
-            constraints = getattr(body, "planner_constraints", {}) or {}
-            try:
-                return nav.preview_plan(
-                    body.x,
-                    body.y,
-                    body.z,
-                    map_only=map_only,
-                    planner_constraints=constraints,
-                )
-            except TypeError:
-                return nav.preview_plan(body.x, body.y, body.z)
+            result = operation(float(body.x), float(body.y), float(body.z))
         except Exception as exc:
-            return self._plan_preview_unavailable(
-                body,
-                reasons=["planning_preview_failed"],
-                source="gateway_exception",
-                error=str(exc),
+            return self._unavailable(body, error=str(exc))
+        if not isinstance(result, Mapping):
+            return self._unavailable(body, error="native preview returned an invalid response")
+
+        ts = float(result.get("timestamp_s") or time.time())
+        frame_id = str(result.get("frame_id") or body.frame_id)
+        goal = _native_point(result.get("goal"), frame_id=frame_id, ts=ts)
+        if goal is None:
+            goal = _point_payload(body.x, body.y, body.z, frame_id=frame_id, ts=ts)
+        path = [
+            point
+            for raw in (result.get("path") or [])
+            if (point := _native_point(raw, frame_id=frame_id, ts=ts)) is not None
+        ]
+        feasible = bool(result.get("feasible", False))
+        reason = str(result.get("reason") or "").strip()
+        distance_m = sum(
+            math.dist(
+                (left["x"], left["y"], left["z"]),
+                (right["x"], right["y"], right["z"]),
             )
-
-    def evaluate_navigation_path(
-        self,
-        path: list[list[float]],
-    ) -> dict[str, Any] | None:
-        """Call Navigation's public no-motion path-safety capability."""
-
-        nav = (getattr(self._gw, "_all_modules", {}) or {}).get("nav.mission")
-        evaluate = getattr(nav, "evaluate_path_safety", None)
-        if not callable(evaluate):
-            return None
-        result = evaluate(path)
-        return dict(result) if isinstance(result, dict) else None
-
-    def reload_navigation_map(self, map_path: str) -> dict[str, Any]:
-        """Reload Navigation's planner through its public capability boundary."""
-
-        nav = (getattr(self._gw, "_all_modules", {}) or {}).get("nav.mission")
-        if nav is None:
-            return {
-                "ok": True,
-                "reason": "planner_not_in_process",
-                "delegated": True,
-                "map_path": map_path,
-            }
-        reload_map = getattr(nav, "reload_planner_map", None)
-        if not callable(reload_map):
-            return {
-                "ok": False,
-                "reason": "nav_mission_unavailable",
-                "map_path": map_path,
-            }
-        result = reload_map(map_path)
-        if isinstance(result, dict):
-            return dict(result)
+            for left, right in pairwise(path)
+        )
         return {
-            "ok": False,
-            "reason": "planner_reload_invalid_response",
-            "map_path": map_path,
+            "schema_version": 1,
+            "ok": True,
+            "feasible": feasible,
+            "frame_id": frame_id,
+            "start": (
+                _native_point(result.get("start"), frame_id=frame_id, ts=ts)
+                if result.get("start_valid") is True
+                else None
+            ),
+            "goal": goal,
+            "path": path,
+            "count": len(path),
+            "distance_m": distance_m if path else None,
+            "plan_ms": result.get("elapsed_ms"),
+            "planner": result.get("planner"),
+            "source": "native_nav",
+            "reasons": [reason] if reason and not feasible else [],
+            "error": None,
+            "ts": ts,
         }
 
     def run_planned_goal_command(
@@ -224,7 +186,6 @@ class ControlCommandService:
                 self.motion_safety_rejection,
                 self._goal_readiness_rejection,
                 self._goal_map_identity_rejection,
-                self._goal_plan_preview_rejection,
             ):
                 rejection = check(command, body)
                 if rejection is not None:
@@ -346,71 +307,20 @@ class ControlCommandService:
             ),
         )
 
-    def _goal_plan_preview_rejection(
-        self,
-        command: str,
-        body: Any,
-    ) -> JSONResponse | None:
-        try:
-            preview_body = PlanPreviewRequest(
-                x=body.x,
-                y=body.y,
-                z=body.z,
-                frame_id=getattr(body, "frame_id", CONTROL_MAP_FRAME_ID),
-                client_id=getattr(body, "client_id", "unknown"),
-            )
-        except Exception as exc:
-            return self.rejected_response(
-                command,
-                body,
-                error="navigation_plan_invalid",
-                message="Navigation goal cannot be previewed.",
-                detail=self.command_error_detail(
-                    reason_code="navigation_plan_invalid",
-                    reason="Navigation goal cannot be previewed.",
-                    source="gateway_request",
-                    error=str(exc),
-                ),
-            )
-
-        preview = self.preview_navigation_plan(preview_body)
-        if (
-            bool(preview.get("ok", True))
-            and bool(preview.get("feasible", False))
-            and not _path_safety_blocks_motion(preview)
-        ):
-            return None
-        return self.rejected_response(
-            command,
-            body,
-            error="navigation_plan_infeasible",
-            message="Navigation plan preview is not feasible.",
-            detail=self.command_error_detail(
-                reason_code="navigation_plan_infeasible",
-                reason="Navigation plan preview is not feasible.",
-                source=str(preview.get("source") or "navigation_preview"),
-                path="/api/v1/navigation/plan",
-                blockers=list(preview.get("reasons") or []),
-                preview=preview,
-            ),
-        )
-
-    def _plan_preview_unavailable(
+    def _unavailable(
         self,
         body: PlanPreviewRequest,
         *,
-        reasons: list[str],
-        source: str,
         error: str | None = None,
-        ignored_blockers: list[str] | None = None,
     ) -> dict[str, Any]:
         ts = time.time()
+        reason = str(error or "native navigation plan preview is unavailable").strip()
         return {
             "schema_version": 1,
-            "ok": error is None,
+            "ok": False,
             "feasible": False,
             "frame_id": body.frame_id,
-            "start": self._current_start_payload(ts=ts),
+            "start": None,
             "goal": _point_payload(
                 body.x,
                 body.y,
@@ -418,43 +328,16 @@ class ControlCommandService:
                 ts=ts,
                 frame_id=body.frame_id,
             ),
-            "adjusted_goal": None,
             "path": [],
             "count": 0,
             "distance_m": None,
             "plan_ms": None,
             "planner": None,
-            "selected_planner": None,
-            "plan_safety_policy": None,
-            "path_safety": None,
-            "fallback_reason": "",
-            "rejected_plans": [],
-            "source": source,
-            "reasons": list(dict.fromkeys(reasons)),
-            "ignored_blockers": list(ignored_blockers or []),
-            "error": error,
+            "source": "native_nav",
+            "reasons": [reason],
+            "error": reason,
             "ts": ts,
         }
-
-    def _current_start_payload(self, *, ts: float) -> dict[str, Any] | None:
-        with self._gw._state_lock:
-            odom = dict(self._gw._odom) if self._gw._odom else None
-        if not odom:
-            return None
-        try:
-            x = float(odom.get("x", 0.0))
-            y = float(odom.get("y", 0.0))
-            z = float(odom.get("z", 0.0))
-        except (TypeError, ValueError):
-            return None
-        if not all(math.isfinite(value) for value in (x, y, z)):
-            return None
-        frame_id = str(odom.get("frame_id") or odom.get("frame") or "").strip()
-        if not frame_id:
-            header = odom.get("header")
-            if isinstance(header, dict):
-                frame_id = str(header.get("frame_id") or header.get("frame") or "").strip()
-        return _point_payload(x, y, z, ts=ts, frame_id=frame_id or CONTROL_MAP_FRAME_ID)
 
 
 def _point_payload(
@@ -475,11 +358,21 @@ def _point_payload(
     }
 
 
-def _path_safety_blocks_motion(preview: dict[str, Any]) -> bool:
-    policy = str(preview.get("plan_safety_policy") or "").lower()
-    if policy != "reject":
-        return False
-    path_safety = preview.get("path_safety")
-    if not isinstance(path_safety, dict):
-        return False
-    return path_safety.get("ok") is False
+def _native_point(
+    value: Any,
+    *,
+    frame_id: str,
+    ts: float,
+) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    try:
+        return _point_payload(
+            float(value["x"]),
+            float(value["y"]),
+            float(value.get("z", 0.0)),
+            frame_id=frame_id,
+            ts=ts,
+        )
+    except (KeyError, TypeError, ValueError):
+        return None

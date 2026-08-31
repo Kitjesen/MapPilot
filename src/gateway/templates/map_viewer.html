@@ -695,38 +695,6 @@ renderer.domElement.addEventListener('mouseup',   e=>{
   }).catch(function(){});
 })();
 
-// ── WASD keyboard control ──────────────────────────────────────────────────
-(function(){
-  const kbHud=document.getElementById('kbHud');
-  const kW=document.getElementById('kW'),kA=document.getElementById('kA');
-  const kS=document.getElementById('kS'),kD=document.getElementById('kD');
-  const _k={};
-  let _wasMoving=false;
-  document.addEventListener('keydown',function(e){
-    const k=e.key.toLowerCase();
-    if(['w','a','s','d'].includes(k)){ e.preventDefault(); _k[k]=true; kbHud.style.opacity='1'; }
-  });
-  document.addEventListener('keyup',function(e){
-    _k[e.key.toLowerCase()]=false;
-  });
-  setInterval(function(){
-    kW.classList.toggle('on',!!_k['w']); kA.classList.toggle('on',!!_k['a']);
-    kS.classList.toggle('on',!!_k['s']); kD.classList.toggle('on',!!_k['d']);
-    const vx=(_k['w']?0.40:0)+(_k['s']?-0.40:0);
-    const wz=(_k['a']?0.70:0)+(_k['d']?-0.70:0);
-    if(vx!==0||wz!==0){
-      fetch('/api/v1/cmd_vel',{method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({vx:vx,vy:0,wz:wz})});
-      _wasMoving=true;
-    } else if(_wasMoving){
-      fetch('/api/v1/stop',{method:'POST'});
-      _wasMoving=false;
-      setTimeout(function(){kbHud.style.opacity='0';},1800);
-    }
-  },100);
-})();
-
 // ── Animation loop ─────────────────────────────────────────────────────────
 let _t = 0;
 (function _loop(){

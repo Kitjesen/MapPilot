@@ -41,7 +41,7 @@ class TrackingService:
         Returns the updated/created track list, or an empty list if the tracker
         is unavailable or the call fails.
         """
-        if self._tracker is None or not detections_3d:
+        if self._tracker is None:
             return []
 
         try:

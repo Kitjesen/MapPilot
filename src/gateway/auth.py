@@ -8,7 +8,6 @@ https://github.com/encode/starlette/issues/1012 and related).
 
 Security model:
   - API key set via ``LINGTU_API_KEY`` env var or ``robot_config.yaml``
-  - Optional route-scoped Open-RMF key via ``LINGTU_RMF_API_KEY``
   - If no key configured, auth is disabled by default (dev/testing mode)
   - If ``require_key=True`` and no key is configured, protected paths fail closed
   - Protected: ``/api/*``, ``/ws/*``, ``/mcp``
@@ -38,7 +37,6 @@ On auth failure:
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 import ipaddress
 import json
@@ -106,18 +104,6 @@ _MAP_OPERATION_PATH_RE = re.compile(
     r"^/api/v1/maps/operations/(?P<operation_id>[A-Za-z0-9_][A-Za-z0-9_-]{0,127})(?P<action>/(?:cancel|retry))?$"
 )
 _MAP_PCD_PATH_RE = re.compile(r"^/api/v1/maps/(?P<map_name>[A-Za-z0-9][A-Za-z0-9_.-]{0,99})/pcd$")
-_RMF_ALLOWED_ROUTES = frozenset(
-    {
-        ("GET", "/api/v1/session"),
-        ("GET", "/api/v1/navigation/status"),
-        ("GET", "/api/v1/navigation/dds_snapshot"),
-        ("POST", "/api/v1/lease"),
-        ("POST", "/api/v1/goal"),
-        ("POST", "/api/v1/navigation/cancel"),
-    }
-)
-
-
 def _map_key_allows(method: str, path: str) -> bool:
     if (method, path) in _MAP_ALLOWED_STATIC_ROUTES:
         return True
@@ -180,55 +166,25 @@ class APIKeyMiddleware:
         self,
         app,
         api_key: str | None = None,
-        rmf_api_key: str | None = None,
         map_api_key: str | None = None,
         product_session_id: str | None = None,
         require_key: bool = False,
     ):
         self.app = app
         self._key = api_key or _get_configured_key()
-        self._rmf_key = rmf_api_key or os.environ.get("LINGTU_RMF_API_KEY")
         self._map_key = map_api_key or os.environ.get("LINGTU_MAP_API_KEY")
         self._product_session_id = (
             product_session_id or os.environ.get("LINGTU_PRODUCT_SESSION_ID") or ""
         ).strip()
-        if self._key and self._rmf_key and hmac.compare_digest(self._key, self._rmf_key):
-            raise ValueError("LINGTU_RMF_API_KEY must differ from the operator API key")
         if self._map_key and self._key and hmac.compare_digest(self._map_key, self._key):
             raise ValueError("LINGTU_MAP_API_KEY must differ from the operator API key")
-        if self._map_key and self._rmf_key and hmac.compare_digest(self._map_key, self._rmf_key):
-            raise ValueError("LINGTU_MAP_API_KEY must differ from LINGTU_RMF_API_KEY")
         self._require_key = bool(require_key)
-        if self._key:
-            self._key_hash: str | None = hashlib.sha256(self._key.encode()).hexdigest()
-            logger.info(
-                "API key auth enabled (key hash: %s...)",
-                self._key_hash[:8],
-            )
-        else:
-            self._key_hash = None
-            logger.info("API key auth disabled (no LINGTU_API_KEY set)")
-        if self._rmf_key:
-            self._rmf_key_hash: str | None = hashlib.sha256(self._rmf_key.encode()).hexdigest()
-            logger.info(
-                "Scoped Open-RMF API key enabled (key hash: %s...)",
-                self._rmf_key_hash[:8],
-            )
-        else:
-            self._rmf_key_hash = None
-        if self._map_key:
-            self._map_key_hash: str | None = hashlib.sha256(self._map_key.encode()).hexdigest()
-            logger.info(
-                "Scoped map API key enabled (key hash: %s...)",
-                self._map_key_hash[:8],
-            )
-        else:
-            self._map_key_hash = None
-        self._product_session_hash = (
-            hashlib.sha256(self._product_session_id.encode()).hexdigest()
-            if self._product_session_id
-            else None
+        logger.info(
+            "API key auth %s",
+            "enabled" if self._key else "disabled (no LINGTU_API_KEY set)",
         )
+        if self._map_key:
+            logger.info("Scoped map API key enabled")
 
     async def __call__(self, scope, receive, send):
         # Lifespan and other scope types: pass through.
@@ -254,49 +210,6 @@ class APIKeyMiddleware:
         if "." in last_segment and not path.startswith("/api"):
             return await self.app(scope, receive, send)
 
-        # The current boot-scoped Product session may operate only the local
-        # Explore task boundary. This lets the robot-side operator CLI work
-        # without exposing the administrator API key to the ``sunrise`` user.
-        product_session_headers = [
-            value.decode("latin-1")
-            for key, value in scope.get("headers", [])
-            if key.decode("latin-1").lower() == "x-lingtu-product-session"
-        ]
-        if product_session_headers:
-            method = str(scope.get("method") or "").upper()
-            provided_hash = (
-                hashlib.sha256(product_session_headers[0].encode()).hexdigest()
-                if len(product_session_headers) == 1
-                else None
-            )
-            allowed = bool(
-                scope["type"] == "http"
-                and _is_loopback_client(scope)
-                and (method, path) in _PRODUCT_SESSION_ALLOWED_ROUTES
-                and provided_hash
-                and self._product_session_hash
-                and hmac.compare_digest(
-                    provided_hash,
-                    self._product_session_hash,
-                )
-            )
-            if allowed:
-                return await self.app(scope, receive, send)
-            return await self._reject(
-                scope,
-                send,
-                403,
-                "Product session credential is invalid or not permitted for this route",
-            )
-
-        # Auth disabled by default; fail closed for protected paths only when
-        # the caller explicitly requires an API key.
-        if self._key_hash is None and self._rmf_key_hash is None and self._map_key_hash is None:
-            if self._require_key:
-                return await self._reject(scope, send, 401, "API key required")
-            return await self.app(scope, receive, send)
-
-        # Extract API key from headers / query / cookies.
         header_keys = [
             value.decode("latin-1")
             for key, value in scope.get("headers", [])
@@ -305,34 +218,52 @@ class APIKeyMiddleware:
         header_key = header_keys[0] if len(header_keys) == 1 else None
         client_key = self._extract_key(scope)
 
-        client_hash = hashlib.sha256(client_key.encode()).hexdigest() if client_key else None
-
-        # 1. Check main operator API key.
-        if client_hash and self._key_hash and hmac.compare_digest(client_hash, self._key_hash):
+        # An administrator key authorizes the full API even when a local
+        # lifecycle request also carries its boot-scoped Product session.
+        if client_key and self._key and hmac.compare_digest(client_key, self._key):
             return await self.app(scope, receive, send)
 
-        # 2. Check scoped Open-RMF key (restricted to allowed routes only).
-        header_hash = hashlib.sha256(header_key.encode()).hexdigest() if header_key else None
-        if self._rmf_key_hash and header_hash and hmac.compare_digest(header_hash, self._rmf_key_hash):
+        # The current boot-scoped Product session may operate only the local
+        # Explore task boundary. This lets the robot-side operator CLI work
+        # without exposing the administrator API key to the runtime account.
+        product_session_headers = [
+            value.decode("latin-1")
+            for key, value in scope.get("headers", [])
+            if key.decode("latin-1").lower() == "x-lingtu-product-session"
+        ]
+        if product_session_headers:
             method = str(scope.get("method") or "").upper()
-            if scope["type"] == "http" and (method, path) in _RMF_ALLOWED_ROUTES:
+            provided_session_id = (
+                product_session_headers[0]
+                if len(product_session_headers) == 1
+                else None
+            )
+            allowed = bool(
+                scope["type"] == "http"
+                and _is_loopback_client(scope)
+                and (method, path) in _PRODUCT_SESSION_ALLOWED_ROUTES
+                and provided_session_id
+                and self._product_session_id
+                and hmac.compare_digest(provided_session_id, self._product_session_id)
+            )
+            if allowed:
                 return await self.app(scope, receive, send)
             return await self._reject(
                 scope,
                 send,
                 403,
-                "Open-RMF key is not permitted for this route",
+                "Product session is invalid or not permitted for this route",
             )
 
-        # 3. Check scoped map key (header-only and route-scoped).
-        if (
-            self._map_key_hash
-            and header_hash
-            and hmac.compare_digest(
-                header_hash,
-                self._map_key_hash,
-            )
-        ):
+        # Auth disabled by default; fail closed for protected paths only when
+        # the caller explicitly requires an API key.
+        if self._key is None and self._map_key is None:
+            if self._require_key:
+                return await self._reject(scope, send, 401, "API key required")
+            return await self.app(scope, receive, send)
+
+        # Check scoped map key (header-only and route-scoped).
+        if self._map_key and header_key and hmac.compare_digest(header_key, self._map_key):
             method = str(scope.get("method") or "").upper()
             if scope["type"] == "http" and _map_key_allows(method, path):
                 return await self.app(scope, receive, send)
@@ -343,7 +274,7 @@ class APIKeyMiddleware:
                 "Map key is not permitted for this route",
             )
 
-        # 4. No valid key matched.
+        # 3. No valid key matched.
         if not client_key:
             return await self._reject(scope, send, 401, "需要 API Key 认证")
         return await self._reject(scope, send, 403, "API Key 无效")

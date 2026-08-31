@@ -15,6 +15,8 @@ def test_gateway_map_odom_tf_updates_frame_tree() -> None:
     gateway = GatewayModule()
 
     gateway._on_map_odom_tf({
+        "frame_id": "map",
+        "child_frame_id": "odom",
         "tx": 1.0,
         "ty": 2.0,
         "tz": 3.0,
@@ -43,6 +45,81 @@ def test_gateway_map_odom_tf_updates_frame_tree() -> None:
     assert transform.translation.y == pytest.approx(2.0)
     assert transform.translation.z == pytest.approx(3.0)
     assert edges[("map", "odom")]["latest_ts"] == pytest.approx(123.0)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"valid": False},
+        {"frame_id": "odom", "child_frame_id": "map"},
+        {"frame_id": None},
+        {"child_frame_id": None},
+        {"tx": None},
+        {"qw": 0.0},
+        {"tx": float("nan")},
+        {"ts": float("inf")},
+        {"ts": None},
+    ],
+)
+def test_gateway_invalid_map_odom_tf_clears_cached_transform(change) -> None:
+    gateway = GatewayModule()
+    payload = {
+        "frame_id": "map",
+        "child_frame_id": "odom",
+        "tx": 1.0,
+        "ty": 2.0,
+        "tz": 3.0,
+        "qx": 0.0,
+        "qy": 0.0,
+        "qz": 0.0,
+        "qw": 1.0,
+        "ts": 123.0,
+        "valid": True,
+    }
+    gateway._on_map_odom_tf(payload)
+    payload.update(change)
+
+    gateway._on_map_odom_tf(payload)
+
+    assert gateway._T_map_odom is None
+    assert gateway._has_map_odom_tf is False
+    edges = {
+        (edge["parent"], edge["child"])
+        for edge in gateway._frame_tree.snapshot()["edges"]
+    }
+    assert ("map", "odom") not in edges
+
+
+@pytest.mark.parametrize("missing_key", ["ts", "ty"])
+def test_gateway_incomplete_map_odom_tf_clears_cached_transform(
+    missing_key: str,
+) -> None:
+    gateway = GatewayModule()
+    payload = {
+        "frame_id": "map",
+        "child_frame_id": "odom",
+        "tx": 1.0,
+        "ty": 2.0,
+        "tz": 3.0,
+        "qx": 0.0,
+        "qy": 0.0,
+        "qz": 0.0,
+        "qw": 1.0,
+        "ts": 123.0,
+        "valid": True,
+    }
+    gateway._on_map_odom_tf(payload)
+    payload.pop(missing_key)
+
+    gateway._on_map_odom_tf(payload)
+
+    assert gateway._T_map_odom is None
+    assert gateway._has_map_odom_tf is False
+    edges = {
+        (edge["parent"], edge["child"])
+        for edge in gateway._frame_tree.snapshot()["edges"]
+    }
+    assert ("map", "odom") not in edges
 
 
 def test_gateway_odometry_updates_frame_tree_for_diagnostics() -> None:

@@ -1,7 +1,10 @@
 """Sim-only semantic observer backed by MuJoCo scene XML metadata."""
 from __future__ import annotations
 
+import json
+import os
 import xml.etree.ElementTree as ET
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,6 +25,7 @@ _AGGREGATE_LABELS = {"stairs", "goal", "forklift"}
 
 @dataclass
 class _SceneObject:
+    track_id: str
     label: str
     position: np.ndarray
     extent: float
@@ -31,6 +35,7 @@ class _SceneObject:
 class SimDetection3D:
     position: np.ndarray
     label: str
+    track_id: str
     score: float = 1.0
     bbox_2d: np.ndarray = field(default_factory=lambda: np.array([]))
     depth: float = 0.0
@@ -41,9 +46,21 @@ class SimDetection3D:
 class SimSceneObserver:
     """Generate semantic detections from scene geometry for sim-only runtime smoke tests."""
 
-    def __init__(self, world: str = "") -> None:
+    def __init__(
+        self,
+        world: str = "",
+        scenario_entities: Sequence[Mapping[str, object]] = (),
+        scenario_snapshot: str | Path | None = None,
+    ) -> None:
         self._world = world
-        self._objects = self._load_objects(world)
+        scenario_objects = self._load_scenario_objects(scenario_entities)
+        self._objects = [
+            *self._load_objects(world),
+            *scenario_objects,
+        ]
+        self._scenario_objects = {item.track_id: item for item in scenario_objects}
+        self._scenario_snapshot = self._resolve_snapshot_path(scenario_snapshot)
+        self._snapshot_mtime_ns = -1
 
     def detect(self, rgb: np.ndarray, text_prompt: str) -> list:
         return []
@@ -52,6 +69,7 @@ class SimSceneObserver:
         return None
 
     def observe(self, tf_camera_to_world: np.ndarray, intrinsics, text_prompt: str = "") -> list[SimDetection3D]:
+        self._refresh_scenario_snapshot()
         if not self._objects:
             return []
 
@@ -141,6 +159,7 @@ class SimSceneObserver:
                 SimDetection3D(
                     position=obj.position.copy(),
                     label=obj.label,
+                    track_id=obj.track_id,
                     score=1.0,
                     bbox_2d=bbox,
                     depth=depth_forward,
@@ -171,14 +190,22 @@ class SimSceneObserver:
 
         raw: list[_SceneObject] = []
         for geom in worldbody.iter("geom"):
-            label = cls._map_label(geom.attrib.get("name", ""))
+            geom_name = geom.attrib.get("name", "")
+            label = cls._map_label(geom_name)
             if not label:
                 continue
             pos = cls._parse_vector(geom.attrib.get("pos", ""))
             if pos is None:
                 continue
             extent = cls._extent_from_geom(geom)
-            raw.append(_SceneObject(label=label, position=pos, extent=extent))
+            raw.append(
+                _SceneObject(
+                    track_id=geom_name,
+                    label=label,
+                    position=pos,
+                    extent=extent,
+                )
+            )
 
         grouped: list[_SceneObject] = []
         for label in sorted({obj.label for obj in raw}):
@@ -187,6 +214,7 @@ class SimSceneObserver:
                 positions = np.vstack([obj.position for obj in members])
                 grouped.append(
                     _SceneObject(
+                        track_id=members[0].track_id,
                         label=label,
                         position=np.mean(positions, axis=0),
                         extent=max(obj.extent for obj in members),
@@ -195,6 +223,73 @@ class SimSceneObserver:
             else:
                 grouped.extend(members)
         return grouped
+
+    @classmethod
+    def _load_scenario_objects(
+        cls,
+        entities: Sequence[Mapping[str, object]],
+    ) -> list[_SceneObject]:
+        objects: list[_SceneObject] = []
+        for entity in entities:
+            entity_id = str(entity.get("entity_id") or "").strip()
+            entity_type = str(entity.get("entity_type") or "").strip().lower()
+            semantic_class = str(entity.get("semantic_class") or "").strip().lower()
+            if not entity_id or entity_type == "robot":
+                continue
+            transform = entity.get("initial_transform")
+            if not isinstance(transform, Mapping):
+                continue
+            position = transform.get("position_m")
+            if not isinstance(position, list | tuple) or len(position) < 3:
+                continue
+            try:
+                point = np.array(position[:3], dtype=np.float32)
+            except (TypeError, ValueError):
+                continue
+            label = "person" if semantic_class in {"person", "pedestrian", "human"} else semantic_class
+            if not label:
+                label = entity_type
+            objects.append(
+                _SceneObject(
+                    track_id=entity_id,
+                    label=label,
+                    position=point,
+                    extent=0.9 if entity_type == "pedestrian" else 0.5,
+                )
+            )
+        return objects
+
+    @staticmethod
+    def _resolve_snapshot_path(value: str | Path | None) -> Path | None:
+        if value is not None:
+            return Path(value)
+        run_plan = str(os.environ.get("LINGTU_RUN_PLAN") or "").strip()
+        return Path(run_plan).parent / "scenario.current.json" if run_plan else None
+
+    def _refresh_scenario_snapshot(self) -> None:
+        path = self._scenario_snapshot
+        if path is None:
+            return
+        try:
+            modified = path.stat().st_mtime_ns
+        except FileNotFoundError:
+            return
+        if modified == self._snapshot_mtime_ns:
+            return
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        entities = payload.get("entities") if isinstance(payload, Mapping) else None
+        if not isinstance(entities, list):
+            raise ValueError("scenario snapshot entities must be a list")
+        for entity in entities:
+            if not isinstance(entity, Mapping):
+                continue
+            target = self._scenario_objects.get(str(entity.get("entity_id") or ""))
+            transform = entity.get("transform")
+            position = transform.get("position_m") if isinstance(transform, Mapping) else None
+            if target is None or not isinstance(position, list) or len(position) < 3:
+                continue
+            target.position = np.asarray(position[:3], dtype=np.float32)
+        self._snapshot_mtime_ns = modified
 
     @staticmethod
     def _parse_vector(value: str) -> np.ndarray | None:

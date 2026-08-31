@@ -61,9 +61,9 @@ def test_map_routes_register_expected_paths():
     from gateway.routes.maps import register_map_routes
 
     class MapsService:
-        def execute(self, request):
-            command = request.to_mapping()
-            assert command == {"action": "get_voxel_edits", "name": "demo"}
+        def service(self, action, **arguments):
+            assert action == "get_voxel_edits"
+            assert arguments == {"map_id": "demo"}
             return {
                 "action": "get_voxel_edits",
                 "success": True,
@@ -72,7 +72,7 @@ def test_map_routes_register_expected_paths():
             }
 
     app = FastAPI()
-    register_map_routes(app, SimpleNamespace(_map_mgr=MapsService()))
+    register_map_routes(app, SimpleNamespace(_map_client=MapsService()))
 
     paths = {getattr(route, "path", "") for route in app.routes}
     assert "/api/v1/slam/maps" in paths
@@ -91,9 +91,9 @@ def test_map_routes_register_expected_paths():
     assert "/api/v1/map/points" in paths
     assert "/api/v1/map_cloud/reset" in paths
     assert "/map/viewer" in paths
-    assert "/robot/meshes/{filename}" in paths
-    assert "/api/v1/map/restore_predufo" in paths
-    assert "/api/v1/map/activate" in paths
+    assert "/robot/meshes/{filename}" not in paths
+    assert "/api/v1/map/restore_predufo" not in paths
+    assert "/api/v1/map/activate" not in paths
     assert "/api/v1/map/rename" in paths
     assert "/api/v1/map/save" in paths
     assert "/api/v1/maps/operations" in paths
@@ -102,8 +102,8 @@ def test_map_routes_register_expected_paths():
     assert "/api/v1/maps/operations/{operation_id}/retry" in paths
     assert "/api/v1/maps/save-jobs" not in paths
     assert "/api/v1/maps/save-jobs/{job_id}" not in paths
-    assert "/api/v1/maps/{name}/versions" in paths
-    assert "/api/v1/maps/{name}/versions/{version}/rollback" in paths
+    assert "/api/v1/maps/{name}/versions" not in paths
+    assert "/api/v1/maps/{name}/versions/{version}/rollback" not in paths
 
 
 def test_slam_maps_does_not_turn_native_failure_into_empty_inventory(monkeypatch):
@@ -113,7 +113,7 @@ def test_slam_maps_does_not_turn_native_failure_into_empty_inventory(monkeypatch
 
     monkeypatch.setattr(
         map_routes,
-        "_map_service_command",
+        "_mapd_command",
         lambda _gw, _payload: {
             "success": False,
             "reason_code": "native_list_failed",
@@ -134,60 +134,36 @@ def test_slam_maps_does_not_turn_native_failure_into_empty_inventory(monkeypatch
 
 
 def test_robot_mesh_defaults_to_bundled_thunder_v4_asset(monkeypatch):
-    from gateway.routes.maps import _robot_mesh_path
+    from fastapi import FastAPI
+
+    from gateway.routes.assets import register_asset_routes, robot_mesh_path
 
     monkeypatch.delenv("DOG_MESH_DIR", raising=False)
-    path = _robot_mesh_path("base_link.STL")
+    path = robot_mesh_path("base_link.STL")
 
     assert path is not None
     assert path.name == "base_link.STL"
     assert path.parent.name == "meshes"
-    assert path.parent.parent.name == "thunderv4"
+    assert path.parent.parent.name == "thunder_v4"
+
+    app = FastAPI()
+    register_asset_routes(app)
+    assert "/robot/meshes/{filename}" in {
+        getattr(route, "path", "") for route in app.routes
+    }
 
 
-def test_map_version_routes_forward_typed_commands(monkeypatch):
+def test_map_content_epoch_routes_are_not_registered():
     from fastapi import FastAPI
 
     import gateway.routes.maps as map_routes
 
-    commands: list[dict] = []
-
-    def command(_gw, payload):
-        commands.append(payload)
-        if payload["action"] == "list_map_versions":
-            return {
-                "success": True,
-                "map_id": payload["name"],
-                "versions": [{"version": 2, "current": True}],
-                "count": 1,
-            }
-        if payload["action"] == "get_active":
-            return {"success": True, "active": "another_map"}
-        return {
-            "success": True,
-            "map_id": payload["name"],
-            "version": payload["version"],
-        }
-
-    monkeypatch.setattr(map_routes, "_map_service_command", command)
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
-    list_route = next(route for route in app.routes if route.path == "/api/v1/maps/{name}/versions")
-    rollback_route = next(
-        route for route in app.routes if route.path == "/api/v1/maps/{name}/versions/{version}/rollback"
-    )
 
-    listed = asyncio.run(list_route.endpoint("warehouse"))
-    rolled = asyncio.run(rollback_route.endpoint("warehouse", 1))
-    assert listed.status_code == 200
-    assert json.loads(listed.body)["versions"][0]["current"] is True
-    assert rolled.status_code == 200
-    assert json.loads(rolled.body)["version"] == 1
-    assert commands == [
-        {"action": "list_map_versions", "name": "warehouse"},
-        {"action": "get_active"},
-        {"action": "rollback_map_version", "name": "warehouse", "version": 1},
-    ]
+    paths = {route.path for route in app.routes}
+    assert "/api/v1/maps/{name}/versions" not in paths
+    assert "/api/v1/maps/{name}/versions/{version}/rollback" not in paths
 
 
 def test_save_map_returns_accepted_while_native_job_is_running(monkeypatch):
@@ -197,7 +173,7 @@ def test_save_map_returns_accepted_while_native_job_is_running(monkeypatch):
 
     monkeypatch.setattr(
         map_routes,
-        "_map_service_command",
+        "_mapd_command",
         lambda _gw, _payload: {
             "success": False,
             "accepted": True,
@@ -232,7 +208,7 @@ def test_save_map_fails_closed_when_slam_profile_is_unavailable(monkeypatch):
     def read_slam_profile():
         raise RuntimeError("telemetry unavailable")
 
-    monkeypatch.setattr(map_routes, "_map_service_command", submit_save)
+    monkeypatch.setattr(map_routes, "_mapd_command", submit_save)
     gateway = SimpleNamespace(
         _get_slam_profile=read_slam_profile,
         _session_slam_profile="native_dds",
@@ -293,9 +269,9 @@ def test_map_voxel_overlay_route_reads_saved_edits(monkeypatch, tmp_path):
     }
 
     class MapsService:
-        def execute(self, request):
-            command = request.to_mapping()
-            assert command == {"action": "get_voxel_edits", "name": "demo"}
+        def service(self, action, **arguments):
+            assert action == "get_voxel_edits"
+            assert arguments == {"map_id": "demo"}
             return {
                 "action": "get_voxel_edits",
                 "success": True,
@@ -304,7 +280,7 @@ def test_map_voxel_overlay_route_reads_saved_edits(monkeypatch, tmp_path):
             }
 
     app = FastAPI()
-    register_map_routes(app, SimpleNamespace(_map_mgr=MapsService()))
+    register_map_routes(app, SimpleNamespace(_map_client=MapsService()))
 
     route = next(route for route in app.routes if route.path == "/api/v1/maps/{name}/voxels/edits")
     payload = asyncio.run(route.endpoint("demo"))
@@ -313,20 +289,20 @@ def test_map_voxel_overlay_route_reads_saved_edits(monkeypatch, tmp_path):
     assert payload["edits"][0]["state"] == "preblocked"
 
 
-def test_diagnostics_maps_snapshot_uses_map_manager_private_list(
-    monkeypatch,
-    tmp_path,
-):
+def test_diagnostics_maps_snapshot_uses_mapd_transport(monkeypatch):
     from gateway.routes.diagnostics import _maps_snapshot
+    from runtime.endpoints import mapd as maps_client
 
-    class Manager:
-        def list_maps(self):
-            return {"action": "list", "success": True, "maps": [{"name": "demo"}]}
+    class Client:
+        def service(self, action):
+            assert action == "list_maps"
+            return {"action": action, "success": True, "maps": [{"name": "demo"}]}
 
-    monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path))
-    payload = _maps_snapshot(SimpleNamespace(_map_mgr=Manager()))
+    monkeypatch.setattr(maps_client, "MapClient", Client)
+    payload = _maps_snapshot(SimpleNamespace())
 
-    assert payload["has_manager"] is True
+    assert payload["has_manager"] is False
+    assert payload["source"] == "mapd"
     assert payload["manager"]["success"] is True
     assert payload["manager"]["maps"][0]["name"] == "demo"
 
@@ -349,7 +325,6 @@ def test_status_routes_register_expected_paths():
     assert "/api/v1/localization/status" in paths
     assert "/api/v1/navigation/status" in paths
     assert "/api/v1/runtime/dataflow" in paths
-    assert "/api/v1/devices" in paths
     assert "/api/v1/health" in paths
     assert "/health" in paths
     assert "/ready" in paths
@@ -366,8 +341,8 @@ def test_session_routes_register_expected_paths():
 
     paths = {getattr(route, "path", "") for route in app.routes}
     assert "/api/v1/session" in paths
-    assert "/api/v1/session/start" in paths
-    assert "/api/v1/session/end" in paths
+    assert "/api/v1/session/start" not in paths
+    assert "/api/v1/session/end" not in paths
 
 
 def test_camera_routes_register_expected_snapshot_path():
@@ -527,58 +502,13 @@ def test_command_routes_register_expected_paths():
     assert "/api/v1/navigation/goal_candidate" in routes
     assert "/api/v1/goal" in routes
     assert "/api/v1/navigate/click" in routes
-    assert "/api/v1/cmd_vel" in routes
+    assert "/api/v1/cmd_vel" not in routes
     assert "/api/v1/stop" in routes
     assert "/api/v1/navigation/cancel" in routes
     assert "/api/v1/instruction" in routes
     assert "/api/v1/mode" in routes
     assert "/api/v1/lease" in routes
     assert routes["/api/v1/goal"].endpoint.__module__ == "gateway.routes.commands"
-
-
-def test_map_bundle_file_resolution_rejects_path_escape():
-    from types import SimpleNamespace
-
-    from gateway.services.map_service import artifact_path
-
-    temp_root = Path.cwd() / ".tmp" / "test_gateway_route_split" / uuid.uuid4().hex
-    map_root = temp_root / "maps"
-    map_root.mkdir(parents=True, exist_ok=False)
-    map_dir = map_root / "demo"
-    map_dir.mkdir()
-    safe_file = map_dir / "map.pcd"
-    safe_file.write_bytes(b"pcd")
-    escaped_file = temp_root / "outside.pcd"
-    escaped_file.write_bytes(b"outside")
-
-    class MapsService:
-        uri = str(safe_file)
-
-        def execute(self, request):
-            command = request.to_mapping()
-            return self.get_map_bundle(
-                str(command.get("name") or ""),
-                str(command.get("capability") or ""),
-            )
-
-        def get_map_bundle(self, name: str, capability: str):
-            return {
-                "success": True,
-                "map_id": name,
-                "map_dir": str(map_dir),
-                "capability": capability,
-                "artifact": {"uri": self.uri},
-            }
-
-    service = MapsService()
-    gateway = SimpleNamespace(_map_mgr=service)
-
-    try:
-        assert artifact_path(gateway, "demo", "source_pointcloud") == safe_file
-        service.uri = str(escaped_file)
-        assert artifact_path(gateway, "demo", "source_pointcloud") is None
-    finally:
-        shutil.rmtree(temp_root, ignore_errors=True)
 
 
 def test_diagnostic_routes_export_tarball(monkeypatch):
@@ -623,7 +553,6 @@ def test_diagnostic_routes_export_tarball(monkeypatch):
             assert "diag/app_web/commands.json" in names
             assert "diag/app_web/routecheck.json" in names
             assert "diag/app_web/real_runtime_evidence.json" in names
-            assert "diag/app_web/algorithm_benchmark.json" in names
             assert "diag/app_web/frame_contract.json" in names
             assert "diag/app_web/runtime_contract.json" in names
             assert "diag/runtime_contract.json" in names
@@ -712,7 +641,6 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
         "maps",
         "commands",
         "routecheck",
-        "algorithm_benchmark",
         "frame_contract",
         "runtime_contract",
     }
@@ -732,72 +660,24 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
         == "/api/v1/diagnostics/runtime-contract"
     )
     validation_gates = snapshots["capabilities"]["data"]["validation_gates"]
-    assert validation_gates["runtime_audit"]["schema_version"] == ("lingtu.runtime_contract_audit.v1")
-    assert validation_gates["runtime_audit"]["command"] == (
-        "python lingtu.py runtime-audit --json-out artifacts/runtime_contract_audit.json"
-    )
-    assert validation_gates["runtime_audit"]["requires_ros"] is False
-    assert validation_gates["runtime_audit"]["acceptance_step"] == 1
-    assert validation_gates["runtime_audit"]["requires_prior_gates"] == []
-    assert "canonical_runtime_contract_matches_yaml" in (validation_gates["runtime_audit"]["proves"])
-    assert validation_gates["runtime_audit"]["collector_publishes_control_topics"] is False
-    assert validation_gates["runtime_audit"]["control_topics_published"] == []
-    assert "runtime_contract_integrity" in validation_gates["runtime_audit"]["checks"]
-    assert "runtime_stage_algorithm_interface_binding" in (validation_gates["runtime_audit"]["validates"])
-    assert validation_gates["runtime_audit"]["coverage"]["data_source_resolved_flow_inputs_outputs"] == [
-        "runtime_contract_integrity"
-    ]
     assert validation_gates["saved_map_artifact_gate"]["command"] == (
-        "python lingtu.py saved-map-artifact-gate "
-        "<map-dir> "
-        "--require-octomap "
-        "--require-occupancy "
+        "python scripts/gates/saved_map_artifact_gate.py "
+        "<map-id> "
+        "[--require-octomap | --require-occupancy] "
         "--json-out artifacts/saved_map_artifacts/report.json"
     )
-    assert validation_gates["saved_map_artifact_gate"]["script"] == ("scripts/gates/saved_map_artifact_gate.py")
     assert validation_gates["saved_map_artifact_gate"]["artifact"] == ("artifacts/saved_map_artifacts/report.json")
-    assert validation_gates["saved_map_artifact_gate"]["acceptance_step"] == 2
-    assert validation_gates["saved_map_artifact_gate"]["requires_prior_gates"] == ["runtime_audit"]
-    assert validation_gates["saved_map_artifact_gate"]["requires_ros"] is False
-    assert validation_gates["saved_map_artifact_gate"]["requires_real_robot_runtime"] is False
-    assert validation_gates["saved_map_artifact_gate"]["collector_publishes_control_topics"] is False
-    assert validation_gates["saved_map_artifact_gate"]["control_topics_published"] == []
-    assert "Required artifacts" in (validation_gates["saved_map_artifact_gate"]["operator_summary_sections"])
-    assert "octomap_and_occupancy_derive_from_same_map_pcd" in (validation_gates["saved_map_artifact_gate"]["proves"])
+    assert validation_gates["saved_map_artifact_gate"]["acceptance_step"] == 1
     assert validation_gates["real_runtime_evidence"]["expected_runtime_contract"] == ("real")
     assert validation_gates["real_runtime_evidence"]["command"] == (
-        "python lingtu.py real-runtime-evidence "
-        "--collector gateway "
-        "--gateway-url http://<robot>:5050 "
-        "--duration-sec 20 "
-        "--json-out artifacts/real_runtime/report.json"
-    )
-    assert validation_gates["real_runtime_evidence"]["collector_command"] == (
         "python scripts/gates/real_runtime_evidence_collect.py "
-        "--collector gateway "
         "--gateway-url http://<robot>:5050 "
         "--duration-sec 20 "
         "--expected-contract real "
         "--json-out artifacts/real_runtime/report.json"
-    )
-    assert validation_gates["real_runtime_evidence"]["gate_command"] == (
-        "python scripts/gates/real_runtime_evidence_gate.py "
-        "artifacts/real_runtime/report.json "
-        "--expected-contract real "
-        "--json-out artifacts/real_runtime/profiles_evidence.json"
     )
     assert validation_gates["real_runtime_evidence"]["artifact"] == ("artifacts/real_runtime/report.json")
-    assert validation_gates["real_runtime_evidence"]["acceptance_step"] == 3
-    assert validation_gates["real_runtime_evidence"]["requires_prior_gates"] == ["runtime_audit"]
-    assert "Topic frame evidence" in (validation_gates["real_runtime_evidence"]["operator_summary_sections"])
-    assert "Stage evidence matrix" in (validation_gates["real_runtime_evidence"]["operator_summary_sections"])
-    assert "observed_resolved_runtime_data_flow" in (validation_gates["real_runtime_evidence"]["proves"])
-    assert validation_gates["real_runtime_evidence"]["requires_real_robot_runtime"] is True
-    assert validation_gates["real_runtime_evidence"]["requires_ros"] is False
-    assert validation_gates["real_runtime_evidence"]["requires_active_robot_run"] is True
-    assert validation_gates["real_runtime_evidence"]["collector_publishes_control_topics"] is False
-    assert validation_gates["real_runtime_evidence"]["control_topics_published"] == []
-    assert "runtime_data_flow_stage_evidence_payload" in (validation_gates["real_runtime_evidence"]["validates"])
+    assert validation_gates["real_runtime_evidence"]["acceptance_step"] == 2
     assert snapshots["traffic"]["ok"] is True
     assert snapshots["traffic"]["data"]["client_policy"]["events_endpoint"] == ("/api/v1/events")
     assert snapshots["media"]["ok"] is True
@@ -807,12 +687,9 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
     assert snapshots["commands"]["data"]["idempotency_supported"] is True
     assert snapshots["routecheck"]["ok"] is True
     assert snapshots["routecheck"]["data"]["schema_version"] == 1
-    assert snapshots["algorithm_benchmark"]["ok"] is True
-    assert snapshots["algorithm_benchmark"]["data"]["read_only"] is True
-    assert snapshots["algorithm_benchmark"]["data"]["ros2_topic_required"] is False
     assert snapshots["frame_contract"]["ok"] is True
     frame_contract = snapshots["frame_contract"]["data"]
-    assert frame_contract["contract"]["exists"] is True
+    assert frame_contract["contract"]["schema_version"] == "lingtu.runtime_interface.v1"
     assert frame_contract["expected"]["map_frame"] == "map"
     assert frame_contract["expected"]["odom_frame"] == "odom"
     assert frame_contract["expected"]["body_frame"] == "body"
@@ -820,8 +697,8 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
     assert "runtime_boundary" in frame_contract
     assert snapshots["runtime_contract"]["ok"] is True
     runtime_contract = snapshots["runtime_contract"]["data"]["manifest"]
-    assert runtime_contract["data_sources"]["thunder"]["command_sink"] == ("driver")
-    real_flow = {stage["name"]: stage for stage in runtime_contract["resolved_runtime_data_flow"]["thunder"]}
+    assert runtime_contract["data_sources"]["field"]["command_sink"] == ("driver")
+    real_flow = {stage["name"]: stage for stage in runtime_contract["resolved_runtime_data_flow"]["field"]}
     assert list(real_flow["command_boundary"]["outputs"]) == ["driver"]
 
 
@@ -855,7 +732,7 @@ def test_diagnostic_runtime_contract_route_exposes_canonical_manifest():
     body = response.json()
     assert body["manifest"]["schema_version"] == "lingtu.runtime_interface.v1"
     assert body["manifest"]["frame_links"]["map_to_odom"]["parent"] == "map"
-    assert body["manifest"]["data_sources"]["thunder"]["mapping_source"] == ("slam_map_cloud")
+    assert body["manifest"]["data_sources"]["field"]["mapping_source"] == ("slam_map_cloud")
 
 
 def test_runtime_contract_manifest_is_fully_typed_by_gateway_schema():
@@ -879,7 +756,7 @@ def test_diagnostic_frame_contract_reports_navigation_mismatches(monkeypatch):
     from gateway.routes.diagnostics import _frame_contract_snapshot
 
     monkeypatch.setenv("LINGTU_PROFILE", "nav")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "thunder")
+    monkeypatch.setenv("LINGTU_DATA_SOURCE", "field")
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
@@ -904,7 +781,7 @@ def test_diagnostic_frame_contract_reports_navigation_mismatches(monkeypatch):
         "received_frame": "camera_link",
     } in snapshot["mismatches"]
     runtime = snapshot["runtime_boundary"]
-    assert runtime["data_source"] == "thunder"
+    assert runtime["data_source"] == "field"
     assert runtime["runtime_contract"] == "real"
     assert runtime["frame_links"]["body_to_lidar"] == {
         "parent": "body",
@@ -944,11 +821,6 @@ def test_frame_contract_snapshot_defaults_to_runtime_contract(monkeypatch):
         }
     }
     monkeypatch.setattr(
-        diagnostics,
-        "_load_topic_contract",
-        lambda: {"path": "missing.yaml", "exists": False, "data": {}},
-    )
-    monkeypatch.setattr(
         runtime_interface,
         "runtime_contract_manifest",
         lambda: {
@@ -984,7 +856,7 @@ def test_gateway_module_builds_split_routes_once():
     assert counts["/api/v1/diagnostic_pack"] == 1
     assert counts["/api/v1/diagnostics/routecheck/latest"] == 1
     assert counts["/api/v1/diagnostics/real-runtime-evidence/latest"] == 1
-    assert counts["/api/v1/diagnostics/algorithm-benchmark/latest"] == 1
+    assert counts["/api/v1/diagnostics/algorithm-benchmark/latest"] == 0
     assert counts["/api/v1/diagnostics/runtime-contract"] == 1
     assert counts["/api/v1/events"] == 1
     assert counts["/api/v1/state"] == 1
@@ -993,16 +865,15 @@ def test_gateway_module_builds_split_routes_once():
     assert counts["/api/v1/localization/status"] == 1
     assert counts["/api/v1/navigation/status"] == 1
     assert counts["/api/v1/runtime/dataflow"] == 1
-    assert counts["/api/v1/runtime/switch-plan"] == 1
-    assert counts["/api/v1/runtime/switch"] == 0
+    assert counts["/api/v1/slam/restart"] == 0
     assert counts["/api/v1/navigation"] == 0
     assert counts["/api/v1/status"] == 0
     assert counts["/api/v1/health"] == 1
     assert counts["/health"] == 1
     assert counts["/ready"] == 1
     assert counts["/api/v1/session"] == 1
-    assert counts["/api/v1/session/start"] == 1
-    assert counts["/api/v1/session/end"] == 1
+    assert counts["/api/v1/session/start"] == 0
+    assert counts["/api/v1/session/end"] == 0
     assert counts["/api/v1/slam/maps"] == 1
     assert counts["/api/v1/maps"] == 0
     assert counts["/api/v1/maps/{name}"] == 1
@@ -1013,7 +884,7 @@ def test_gateway_module_builds_split_routes_once():
     assert counts["/api/v1/navigation/goal_candidate"] == 1
     assert counts["/api/v1/goal"] == 1
     assert counts["/api/v1/navigate/click"] == 1
-    assert counts["/api/v1/cmd_vel"] == 1
+    assert counts["/api/v1/cmd_vel"] == 0
     assert counts["/api/v1/stop"] == 1
     assert counts["/api/v1/navigation/cancel"] == 1
     assert counts["/api/v1/instruction"] == 1
@@ -1046,8 +917,6 @@ def test_gateway_module_keeps_client_route_inventory():
         "/api/v1/navigation/status",
         "/api/v1/services/status",
         "/api/v1/runtime/dataflow",
-        "/api/v1/runtime/switch-plan",
-        "/api/v1/devices",
         "/api/v1/health",
         "/health",
         "/ready",
@@ -1055,7 +924,6 @@ def test_gateway_module_keeps_client_route_inventory():
         "/api/v1/diagnostic_pack",
         "/api/v1/diagnostics/routecheck/latest",
         "/api/v1/diagnostics/real-runtime-evidence/latest",
-        "/api/v1/diagnostics/algorithm-benchmark/latest",
         "/api/v1/diagnostics/runtime-contract",
         "/api/v1/events",
         "/api/v1/slam/maps",
@@ -1066,7 +934,6 @@ def test_gateway_module_keeps_client_route_inventory():
         "/api/v1/navigation/goal_candidate",
         "/api/v1/goal",
         "/api/v1/navigate/click",
-        "/api/v1/cmd_vel",
         "/api/v1/stop",
         "/api/v1/navigation/cancel",
         "/api/v1/instruction",
@@ -1139,7 +1006,7 @@ def test_routecheck_latest_diagnostic_reads_latest_summary(tmp_path, monkeypatch
         "gateway_used": True,
         "driver_used": False,
         "published": {"goal_pose": 0, "cmd_vel": 0, "stop_cmd": 0},
-        "phases": {"baseline": {"selected_planner": "pct"}},
+        "phases": {"baseline": {"selected_planner": "octoplanner3d"}},
     }
     (new_dir / "summary.json").write_text(
         json.dumps(new_summary),
@@ -1162,7 +1029,7 @@ def test_routecheck_latest_diagnostic_reads_latest_summary(tmp_path, monkeypatch
     assert payload["driver_used"] is False
     assert payload["published"] == {"goal_pose": 0, "cmd_vel": 0, "stop_cmd": 0}
     assert payload["latest"]["outcome"] == "pass"
-    assert payload["latest"]["phases"]["baseline"]["selected_planner"] == "pct"
+    assert payload["latest"]["phases"]["baseline"]["selected_planner"] == "octoplanner3d"
 
     monkeypatch.setenv("LINGTU_ROUTECHECK_ARTIFACT_ROOT", str(tmp_path))
     app = FastAPI()
@@ -1182,7 +1049,7 @@ def test_routecheck_latest_diagnostic_falls_back_to_project_artifacts(
 
     home = tmp_path / "home"
     project = tmp_path / "project"
-    routecheck_dir = project / "artifacts" / "server_sim_closure" / "routecheck"
+    routecheck_dir = project / "artifacts" / "sim_diagnostics" / "routecheck"
     routecheck_dir.mkdir(parents=True)
     summary = {
         "schema_version": 1,
@@ -1217,538 +1084,6 @@ def test_routecheck_latest_diagnostic_falls_back_to_project_artifacts(
     assert payload["latest"]["outcome"] == "pass"
 
 
-def _write_algorithm_benchmark_summary(
-    root: Path,
-    name: str = "summary_dimos_benchmark_test.json",
-    *,
-    ok: bool = True,
-    claim_allowed: bool = True,
-    missing_or_failed: list[str] | None = None,
-    claim_boundary: dict | None = None,
-    gates: dict | None = None,
-) -> Path:
-    from gateway.routes.diagnostics import DIMOS_BENCHMARK_REQUIRED_GATES
-
-    root.mkdir(parents=True, exist_ok=True)
-    missing = missing_or_failed or []
-    summary = {
-        "schema_version": "lingtu.server_sim_closure.summary.v1",
-        "ok": ok,
-        "missing_or_failed": missing,
-        "gates": gates or {},
-        "algorithm_validation": {
-            "claim_allowed": claim_allowed,
-            "required_gate_sequence": list(DIMOS_BENCHMARK_REQUIRED_GATES),
-            "validation_flow": [{"gate": "routecheck_preflight", "ok": True}],
-            "claim_boundary": {
-                "ros2_topic_required": False,
-                "read_only": True,
-                "global_planning_source": "static_saved_map_octomap",
-                "live_costmap_role": "local_planning_and_safety_only",
-                **(claim_boundary or {}),
-            },
-            "blocking_categories": {"hard": missing},
-        },
-    }
-    path = root / name
-    path.write_text(json.dumps(summary), encoding="utf-8")
-    return path
-
-
-def test_algorithm_benchmark_latest_diagnostic_reads_readonly_artifact(
-    tmp_path,
-    monkeypatch,
-):
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
-    from gateway.routes.diagnostics import (
-        build_algorithm_benchmark_latest_summary,
-        register_diagnostic_routes,
-    )
-
-    summary_path = _write_algorithm_benchmark_summary(tmp_path)
-    os.utime(summary_path, (100, 100))
-    monkeypatch.setattr("gateway.routes.diagnostics.time.time", lambda: 200.0)
-
-    payload = build_algorithm_benchmark_latest_summary(tmp_path, max_age_s=1000.0)
-
-    assert payload["ok"] is True
-    assert payload["schema_version"] == "lingtu.algorithm_benchmark_latest.v1"
-    assert payload["read_only"] is True
-    assert payload["ros2_topic_required"] is False
-    assert payload["publishes"] == []
-    assert payload["summary_path"] == str(summary_path)
-    assert payload["report_age_s"] == 100.0
-    assert payload["claim_allowed"] is True
-    assert payload["missing_or_failed"] == []
-    assert payload["blockers"] == []
-
-    monkeypatch.setenv("LINGTU_ALGORITHM_BENCHMARK_ROOT", str(tmp_path))
-    monkeypatch.setenv("LINGTU_ALGORITHM_BENCHMARK_MAX_AGE_SEC", "1000")
-    app = FastAPI()
-    register_diagnostic_routes(app, SimpleNamespace(_all_modules={}))
-    response = TestClient(app).get("/api/v1/diagnostics/algorithm-benchmark/latest")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["schema_version"] == "lingtu.algorithm_benchmark_latest.v1"
-    assert body["ok"] is True
-    assert body["read_only"] is True
-    assert body["ros2_topic_required"] is False
-    assert body["publishes"] == []
-
-
-def test_algorithm_benchmark_latest_diagnostic_reports_missing_artifact(tmp_path):
-    from gateway.routes.diagnostics import build_algorithm_benchmark_latest_summary
-
-    payload = build_algorithm_benchmark_latest_summary(tmp_path)
-
-    assert payload["ok"] is False
-    assert payload["count"] == 0
-    assert payload["reason"] == "algorithm_benchmark_report_not_found"
-    assert payload["read_only"] is True
-    assert payload["ros2_topic_required"] is False
-    assert payload["publishes"] == []
-    assert payload["dimos_gap"]["schema_version"] == "lingtu.dimos_gap_report.v1"
-    assert payload["dimos_gap"]["gap_counts"]["failed"] == len(payload["required_gate_sequence"])
-    assert payload["dimos_gap"]["lingtu_readiness"]["highest_priority_blocker"] == ("moving_obstacle_sweep")
-    assert payload["dimos_gap"]["next_steps"][0]["gate"] == ("gateway_runtime_acceptance")
-
-
-def test_algorithm_benchmark_latest_diagnostic_blocks_failed_or_stale_artifact(
-    tmp_path,
-    monkeypatch,
-):
-    from gateway.routes.diagnostics import build_algorithm_benchmark_latest_summary
-
-    summary_path = _write_algorithm_benchmark_summary(
-        tmp_path,
-        ok=False,
-        claim_allowed=False,
-        missing_or_failed=["large_loop_closure", "moving_obstacle_sweep"],
-    )
-    os.utime(summary_path, (100, 100))
-    monkeypatch.setattr("gateway.routes.diagnostics.time.time", lambda: 200.0)
-
-    payload = build_algorithm_benchmark_latest_summary(tmp_path, max_age_s=50.0)
-
-    assert payload["ok"] is False
-    assert payload["reason"] == "algorithm_benchmark_report_stale"
-    assert "algorithm benchmark summary is stale" in payload["blockers"]
-    assert "algorithm benchmark summary is not passing" in payload["blockers"]
-    assert "algorithm validation claim_allowed is not true" in payload["blockers"]
-    assert payload["missing_or_failed"] == [
-        "large_loop_closure",
-        "moving_obstacle_sweep",
-    ]
-    assert payload["dimos_gap"]["gap_counts"]["p0"] == 2
-    assert payload["dimos_gap"]["lingtu_readiness"]["highest_priority_blocker"] == ("moving_obstacle_sweep")
-    assert payload["dimos_gap"]["next_steps"][0]["gate"] == ("gateway_runtime_acceptance")
-
-
-def test_algorithm_benchmark_latest_diagnostic_marks_stale_green_gap_not_ready(
-    tmp_path,
-    monkeypatch,
-):
-    from gateway.routes.diagnostics import (
-        DIMOS_BENCHMARK_REQUIRED_GATES,
-        build_algorithm_benchmark_latest_summary,
-    )
-
-    gates = {
-        gate: {
-            "name": gate,
-            "ok": True,
-            "status": "passed",
-            "path": f"artifacts/server_sim_closure/{gate}/report.json",
-            "blockers": [],
-        }
-        for gate in DIMOS_BENCHMARK_REQUIRED_GATES
-    }
-    summary_path = _write_algorithm_benchmark_summary(
-        tmp_path,
-        ok=True,
-        claim_allowed=True,
-        missing_or_failed=[],
-        gates=gates,
-    )
-    os.utime(summary_path, (100, 100))
-    monkeypatch.setattr("gateway.routes.diagnostics.time.time", lambda: 200.0)
-
-    payload = build_algorithm_benchmark_latest_summary(tmp_path, max_age_s=50.0)
-
-    dimos_gap = payload["dimos_gap"]
-    assert payload["ok"] is False
-    assert payload["reason"] == "algorithm_benchmark_report_stale"
-    assert dimos_gap["lingtu_readiness"]["ok"] is False
-    assert dimos_gap["lingtu_readiness"]["summary_fresh"] is False
-    assert dimos_gap["summary_freshness"] == {
-        "checked": True,
-        "fresh": False,
-        "report_age_s": 100.0,
-        "max_age_s": 50.0,
-        "blocker": "algorithm benchmark summary is stale",
-    }
-    assert dimos_gap["gap_counts"]["failed"] == len(DIMOS_BENCHMARK_REQUIRED_GATES)
-    assert all(row["status"] == "stale" for row in dimos_gap["gap_matrix"])
-    assert dimos_gap["next_steps"][0]["recommended_action"] == (
-        "regenerate a fresh DimOS benchmark summary before claiming readiness"
-    )
-
-
-def test_algorithm_benchmark_latest_diagnostic_includes_runtime_dataflow(
-    tmp_path,
-):
-    from gateway.routes.diagnostics import build_algorithm_benchmark_latest_summary
-
-    native_report = tmp_path / "native_pct_mujoco" / "report.json"
-    native_report.parent.mkdir(parents=True, exist_ok=True)
-    native_report.write_text(
-        json.dumps(
-            {
-                "schema_version": "lingtu.native_pct_mujoco_gate.v1",
-                "ok": False,
-                "pct_runtime_ok": True,
-                "pct_path_count": 8,
-                "selected_planner": "pct",
-                "fallback_used": False,
-                "source_planning_contract": {
-                    "pct_optimizer_enabled": False,
-                    "pct_planner_path_mode": "native_astar_raw_path",
-                },
-                "path_count": 2,
-                "max_path_poses": 5,
-                "local_path_samples": [{"points": [[0, 0, 0], [1, 0, 0]]}],
-                "cmd_count_nonzero": 0,
-                "cmd_samples": [],
-                "moved_m": 0.0,
-                "reached_goal": False,
-            }
-        ),
-        encoding="utf-8",
-    )
-    _write_algorithm_benchmark_summary(
-        tmp_path,
-        ok=False,
-        claim_allowed=False,
-        missing_or_failed=["native_pct_mujoco"],
-        gates={
-            "native_pct_mujoco": {
-                "ok": False,
-                "status": "failed",
-                "path": str(native_report),
-                "blockers": ["cmd_vel evidence missing"],
-            },
-        },
-    )
-
-    payload = build_algorithm_benchmark_latest_summary(tmp_path, max_age_s=1000.0)
-
-    rows = {row["gate"]: row for row in payload["dimos_gap"]["gap_matrix"]}
-    flow = rows["native_pct_mujoco"]["runtime_dataflow"]
-    assert flow["checked"] is True
-    assert flow["edge_status"]["pct_backend"] is True
-    assert flow["edge_status"]["global_path_to_local_planner"] is True
-    assert flow["edge_status"]["path_follower_to_cmd_vel"] is False
-    assert flow["primary_blocker"] == "path_follower_to_cmd_vel"
-    assert (
-        payload["dimos_gap"]["runtime_dataflow"]["failing_primary_blockers"]["native_pct_mujoco"]
-        == "path_follower_to_cmd_vel"
-    )
-
-
-def test_algorithm_benchmark_latest_diagnostic_includes_aggregate_child_dataflow(
-    tmp_path,
-):
-    from sim.scripts import dimos_gap_report
-
-    from gateway.routes.diagnostics import build_algorithm_benchmark_latest_summary
-
-    child_report = tmp_path / "moving_obstacle_sweep" / "children" / "report.json"
-    child_report.parent.mkdir(parents=True, exist_ok=True)
-    child_report.write_text(
-        json.dumps(
-            {
-                "schema_version": "lingtu.mujoco_fastlio2_live_gate.v2",
-                "ok": False,
-                "outputs": {
-                    "fastlio2_cloud_registered": 2,
-                    "fastlio2_odometry": 2,
-                    "nav_odometry": 2,
-                    "nav_registered_cloud": 2,
-                    "nav_cmd_vel": 4,
-                    "nav_cmd_vel_nonzero": 0,
-                },
-                "lingtu_inspection": {
-                    "global_path_count": 1,
-                    "local_path_count": 1,
-                    "successful_navigation_goal_count": 0,
-                    "min_required_checkpoints": 1,
-                },
-                "fastlio2_motion_consistency": {"ok": True},
-                "fastlio2_z_consistency": {"ok": True},
-                "fastlio2_yaw_consistency": {"ok": True},
-            }
-        ),
-        encoding="utf-8",
-    )
-    aggregate_report = tmp_path / "moving_obstacle_sweep" / "report.json"
-    aggregate_report.write_text(
-        json.dumps(
-            {
-                "schema_version": "lingtu.moving_obstacle_sweep_gate.v1",
-                "ok": False,
-                "minimal_red_defect": {"path": str(child_report)},
-            }
-        ),
-        encoding="utf-8",
-    )
-    summary_path = _write_algorithm_benchmark_summary(
-        tmp_path,
-        ok=False,
-        claim_allowed=False,
-        missing_or_failed=["moving_obstacle_sweep"],
-        gates={
-            "moving_obstacle_sweep": {
-                "ok": False,
-                "status": "failed",
-                "path": str(aggregate_report),
-                "blockers": ["child cmd_vel evidence missing"],
-            },
-        },
-    )
-
-    payload = build_algorithm_benchmark_latest_summary(tmp_path, max_age_s=1000.0)
-    cli_payload = dimos_gap_report.build_gap_report(
-        summary_path=summary_path,
-        include_dataflow=True,
-    )
-
-    rows = {row["gate"]: row for row in payload["dimos_gap"]["gap_matrix"]}
-    cli_rows = {row["gate"]: row for row in cli_payload["gap_matrix"]}
-    flow = rows["moving_obstacle_sweep"]["runtime_dataflow"]
-    cli_flow = cli_rows["moving_obstacle_sweep"]["runtime_dataflow"]
-    assert flow["checked"] is True
-    assert flow["source_gate_report"] == str(aggregate_report)
-    assert flow["source_report"] == str(child_report)
-    assert flow["edge_status"]["global_planner_to_local_planner"] is True
-    assert flow["edge_status"]["path_follower_to_cmd_vel"] is False
-    assert flow["primary_blocker"] == "path_follower_to_cmd_vel"
-    assert (
-        payload["dimos_gap"]["runtime_dataflow"]["failing_primary_blockers"]["moving_obstacle_sweep"]
-        == "path_follower_to_cmd_vel"
-    )
-    assert flow == cli_flow
-    assert (
-        payload["dimos_gap"]["runtime_dataflow"]["failing_primary_blockers"]
-        == cli_payload["runtime_dataflow"]["failing_primary_blockers"]
-    )
-
-
-def test_algorithm_benchmark_latest_diagnostic_includes_embedded_case_dataflow(
-    tmp_path,
-):
-    from gateway.routes.diagnostics import build_algorithm_benchmark_latest_summary
-
-    aggregate_report = tmp_path / "large_loop_closure" / "report.json"
-    aggregate_report.parent.mkdir(parents=True, exist_ok=True)
-    aggregate_report.write_text(
-        json.dumps(
-            {
-                "schema_version": "lingtu.large_loop_closure_gate.v1",
-                "ok": False,
-                "minimal_red_defect": {
-                    "path": str(tmp_path / "large_loop_closure" / "missing_child.json"),
-                    "fastlio2_path_length_m": 12.0,
-                    "global_path_points_max": 8,
-                    "local_path_count": 1,
-                    "local_path_points_max": 4,
-                    "nav_cmd_vel_nonzero": 0,
-                    "successful_navigation_goal_count": 0,
-                    "min_required_checkpoints": 2,
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    _write_algorithm_benchmark_summary(
-        tmp_path,
-        ok=False,
-        claim_allowed=False,
-        missing_or_failed=["large_loop_closure"],
-        gates={
-            "large_loop_closure": {
-                "ok": False,
-                "status": "failed",
-                "path": str(aggregate_report),
-                "blockers": ["embedded case cmd_vel evidence missing"],
-            },
-        },
-    )
-
-    payload = build_algorithm_benchmark_latest_summary(tmp_path, max_age_s=1000.0)
-
-    rows = {row["gate"]: row for row in payload["dimos_gap"]["gap_matrix"]}
-    flow = rows["large_loop_closure"]["runtime_dataflow"]
-    assert flow["checked"] is True
-    assert flow["schema_detected"] == "aggregate_case"
-    assert flow["edge_status"]["fastlio_feedback"] is True
-    assert flow["edge_status"]["global_path"] is True
-    assert flow["edge_status"]["local_path"] is True
-    assert flow["edge_status"]["cmd_vel"] is False
-    assert flow["primary_blocker"] == "cmd_vel"
-    assert payload["dimos_gap"]["runtime_dataflow"]["failing_primary_blockers"]["large_loop_closure"] == "cmd_vel"
-
-
-def test_algorithm_benchmark_latest_endpoint_preserves_runtime_dataflow(
-    tmp_path,
-    monkeypatch,
-):
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
-    from gateway.routes.diagnostics import register_diagnostic_routes
-
-    child_report = tmp_path / "moving_obstacle_sweep" / "children" / "report.json"
-    child_report.parent.mkdir(parents=True, exist_ok=True)
-    child_report.write_text(
-        json.dumps(
-            {
-                "schema_version": "lingtu.mujoco_fastlio2_live_gate.v2",
-                "ok": False,
-                "outputs": {
-                    "fastlio2_cloud_registered": 2,
-                    "fastlio2_odometry": 2,
-                    "nav_odometry": 2,
-                    "nav_registered_cloud": 2,
-                    "nav_cmd_vel": 3,
-                    "nav_cmd_vel_nonzero": 0,
-                },
-                "lingtu_inspection": {
-                    "global_path_count": 1,
-                    "local_path_count": 1,
-                    "successful_navigation_goal_count": 0,
-                    "min_required_checkpoints": 1,
-                },
-                "fastlio2_motion_consistency": {"ok": True},
-                "fastlio2_z_consistency": {"ok": True},
-                "fastlio2_yaw_consistency": {"ok": True},
-            }
-        ),
-        encoding="utf-8",
-    )
-    aggregate_report = tmp_path / "moving_obstacle_sweep" / "report.json"
-    aggregate_report.write_text(
-        json.dumps(
-            {
-                "schema_version": "lingtu.moving_obstacle_sweep_gate.v1",
-                "ok": False,
-                "minimal_red_defect": {"path": str(child_report)},
-            }
-        ),
-        encoding="utf-8",
-    )
-    _write_algorithm_benchmark_summary(
-        tmp_path,
-        ok=False,
-        claim_allowed=False,
-        missing_or_failed=["moving_obstacle_sweep"],
-        gates={
-            "moving_obstacle_sweep": {
-                "ok": False,
-                "status": "failed",
-                "path": str(aggregate_report),
-                "blockers": ["child cmd_vel evidence missing"],
-            },
-        },
-    )
-
-    monkeypatch.setenv("LINGTU_ALGORITHM_BENCHMARK_ROOT", str(tmp_path))
-    monkeypatch.setenv("LINGTU_ALGORITHM_BENCHMARK_MAX_AGE_SEC", "1000")
-    app = FastAPI()
-    register_diagnostic_routes(app, SimpleNamespace(_all_modules={}))
-
-    response = TestClient(app).get("/api/v1/diagnostics/algorithm-benchmark/latest")
-
-    assert response.status_code == 200
-    body = response.json()
-    rows = {row["gate"]: row for row in body["dimos_gap"]["gap_matrix"]}
-    flow = rows["moving_obstacle_sweep"]["runtime_dataflow"]
-    assert body["dimos_gap"]["runtime_dataflow"]["checked"] is True
-    assert flow["primary_blocker"] == "path_follower_to_cmd_vel"
-    assert flow["source_gate_report"] == str(aggregate_report)
-    assert flow["source_report"] == str(child_report)
-    assert (
-        body["dimos_gap"]["runtime_dataflow"]["failing_primary_blockers"]["moving_obstacle_sweep"]
-        == "path_follower_to_cmd_vel"
-    )
-
-
-def test_algorithm_benchmark_latest_splits_inspection_variant_from_strict_benchmark(
-    tmp_path,
-):
-    from gateway.routes.diagnostics import build_algorithm_benchmark_latest_summary
-    from runtime.algorithm_gates import INSPECTION_MVP_REQUIRED_GATES
-
-    product_gates = {
-        "gateway_runtime_acceptance",
-        "routecheck_preflight",
-        "large_terrain",
-        "fastlio2_dynamic_inspection",
-        "dynamic_obstacle_local_planner",
-        "moving_obstacle_sweep",
-    }
-    strict_only_failures = [
-        "native_pct_mujoco",
-        "large_loop_closure",
-        "gazebo_runtime",
-        "saved_map_relocalize",
-        "pct_saved_map_navigation",
-    ]
-    gates = {gate: {"ok": True, "status": "pass"} for gate in product_gates}
-    gates.update({gate: {"ok": False, "status": "fail"} for gate in strict_only_failures})
-    _write_algorithm_benchmark_summary(
-        tmp_path,
-        ok=False,
-        claim_allowed=False,
-        missing_or_failed=strict_only_failures,
-        gates=gates,
-    )
-
-    payload = build_algorithm_benchmark_latest_summary(tmp_path, max_age_s=1000.0)
-
-    assert payload["ok"] is False
-    assert payload["active_benchmark_variant"] == "inspection_mvp"
-    inspection = payload["benchmark_variants"]["inspection_mvp"]
-    strict = payload["benchmark_variants"]["dimos_benchmark"]
-    assert inspection["ok"] is True
-    assert inspection["ros2_topic_required"] is False
-    assert inspection["missing_or_failed"] == []
-    assert tuple(inspection["required_gate_sequence"]) == INSPECTION_MVP_REQUIRED_GATES
-    assert strict["ok"] is False
-    assert strict["missing_or_failed"] == strict_only_failures
-
-
-def test_algorithm_benchmark_latest_rejects_live_costmap_global_planning_claim(
-    tmp_path,
-):
-    from gateway.routes.diagnostics import build_algorithm_benchmark_latest_summary
-
-    _write_algorithm_benchmark_summary(
-        tmp_path,
-        claim_boundary={
-            "global_planning_source": "live_costmap",
-            "live_costmap_role": "global_planning",
-        },
-    )
-
-    payload = build_algorithm_benchmark_latest_summary(tmp_path, max_age_s=1000.0)
-
-    assert payload["ok"] is False
-    assert payload["reason"] == "algorithm_benchmark_not_passing"
-    assert "algorithm claim boundary must keep live_costmap local-only" in payload["blockers"]
-
-
 def _write_real_runtime_evidence_report(
     run_dir: Path,
     *,
@@ -1759,18 +1094,6 @@ def _write_real_runtime_evidence_report(
         "schema_version": "lingtu.real_runtime_evidence.validation.v1",
         "ok": True,
         "expected_contract": "real",
-        "checked_real_motion_evidence": {"ok": True},
-        "checked_hardware_boundary_evidence": {"ok": True},
-        "checked_live_topic_freshness": {"/slam/odometry": {"ok": True}},
-        "checked_runtime_data_flow_evidence": {
-            "command_boundary": {"ok": True},
-        },
-        "checked_frame_link_evidence": {
-            "map_to_odom": {"ok": True},
-            "odom_to_body": {"ok": True},
-            "body_to_lidar": {"ok": True},
-            "body_to_camera": {"ok": True},
-        },
         "blockers": [],
     }
     if runtime_evidence is not None:
@@ -1815,8 +1138,6 @@ def test_real_runtime_evidence_latest_diagnostic_reads_gate_artifact(tmp_path, m
     assert payload["simulation_only"] is False
     assert payload["real_robot_motion"] is True
     assert payload["cmd_vel_sent_to_hardware"] is True
-    assert payload["checked_real_motion_evidence"] == {"ok": True}
-    assert payload["checked_hardware_boundary_evidence"] == {"ok": True}
 
     monkeypatch.setenv("LINGTU_REAL_RUNTIME_EVIDENCE_ROOT", str(tmp_path))
     monkeypatch.setenv("LINGTU_REAL_RUNTIME_EVIDENCE_MAX_AGE_SEC", "1000")
@@ -1842,12 +1163,6 @@ def test_real_runtime_evidence_latest_uses_newest_report_even_when_failing(tmp_p
             "schema_version": "lingtu.real_runtime_evidence.validation.v1",
             "ok": False,
             "expected_contract": "real",
-            "checked_real_motion_evidence": {"ok": False},
-            "checked_hardware_boundary_evidence": {"ok": True},
-            "checked_live_topic_freshness": {"/slam/odometry": {"ok": True}},
-            "checked_runtime_data_flow_evidence": {
-                "command_boundary": {"ok": True},
-            },
             "blockers": ["newer real motion evidence failed"],
         },
     )
@@ -1866,54 +1181,6 @@ def test_real_runtime_evidence_latest_uses_newest_report_even_when_failing(tmp_p
     assert payload["runtime_evidence_ok"] is False
     assert payload["reason"] == "real-runtime-evidence gate did not pass"
     assert "newer real motion evidence failed" in payload["blockers"]
-
-
-def test_real_runtime_evidence_preflight_allows_no_motion_without_hardware_boundary(
-    tmp_path,
-):
-    from gateway.routes.diagnostics import build_real_runtime_evidence_latest_summary
-
-    validation = {
-        "schema_version": "lingtu.real_runtime_evidence.validation.v1",
-        "ok": False,
-        "expected_contract": "real",
-        "hardware_boundary_required": False,
-        "checked_real_motion_evidence": {"ok": False},
-        "checked_hardware_boundary_evidence": {"ok": False},
-        "checked_live_topic_freshness": {
-            "/slam/odometry": {"ok": True},
-            "/nav/cmd_vel": {"ok": False},
-        },
-        "checked_runtime_data_flow_evidence": {
-            "endpoint_adapter": {"ok": True},
-            "slam_or_relayed_localization_map": {"ok": True},
-        },
-        "checked_frame_link_evidence": {
-            "map_to_odom": {"ok": True},
-            "odom_to_body": {"ok": True},
-            "body_to_lidar": {"ok": True},
-            "body_to_camera": {"ok": True},
-        },
-        "blockers": ["no motion yet"],
-    }
-    report_path = _write_real_runtime_evidence_report(
-        tmp_path / "real_runtime",
-        runtime_evidence=validation,
-    )
-    report = json.loads(report_path.read_text(encoding="utf-8"))
-    report["real_robot_motion"] = False
-    report["cmd_vel_sent_to_hardware"] = False
-    report_path.write_text(json.dumps(report), encoding="utf-8")
-
-    payload = build_real_runtime_evidence_latest_summary(
-        tmp_path,
-        max_age_s=1000.0,
-        now=200.0,
-    )
-
-    assert payload["ok"] is False
-    assert payload["preflight_ok"] is True
-    assert "real-runtime-evidence hardware command route missing" not in payload["preflight_blockers"]
 
 
 def test_real_runtime_evidence_latest_diagnostic_reports_missing_artifact(tmp_path):
@@ -1944,7 +1211,7 @@ def test_real_runtime_evidence_latest_diagnostic_rejects_stale_artifact(tmp_path
     assert "real-runtime-evidence is stale" in payload["blockers"]
 
 
-def test_real_runtime_evidence_latest_diagnostic_rejects_missing_data_flow_section(
+def test_real_runtime_evidence_latest_trusts_validator_verdict_without_mirror_sections(
     tmp_path,
 ):
     from gateway.routes.diagnostics import build_real_runtime_evidence_latest_summary
@@ -1953,9 +1220,6 @@ def test_real_runtime_evidence_latest_diagnostic_rejects_missing_data_flow_secti
         "schema_version": "lingtu.real_runtime_evidence.validation.v1",
         "ok": True,
         "expected_contract": "real",
-        "checked_real_motion_evidence": {"ok": True},
-        "checked_hardware_boundary_evidence": {"ok": True},
-        "checked_live_topic_freshness": {"/slam/odometry": {"ok": True}},
         "blockers": [],
     }
     report_path = _write_real_runtime_evidence_report(
@@ -1970,9 +1234,8 @@ def test_real_runtime_evidence_latest_diagnostic_rejects_missing_data_flow_secti
         now=200.0,
     )
 
-    assert payload["ok"] is False
-    assert payload["reason"] == "real-runtime-evidence data-flow section missing or failed"
-    assert "real-runtime-evidence data-flow section missing or failed" in payload["blockers"]
+    assert payload["ok"] is True
+    assert payload["blockers"] == []
 
 
 def _schema_ref_for(
@@ -2028,16 +1291,15 @@ def test_openapi_exposes_client_response_models():
     assert "AppCapabilitiesResponse" in schemas
     assert "ValidationGateCapability" in schemas
     validation_gate_properties = schemas["ValidationGateCapability"]["properties"]
-    assert "script" in validation_gate_properties
-    assert "collector_command" in validation_gate_properties
-    assert "gate_command" in validation_gate_properties
-    assert "requires_real_robot_runtime" in validation_gate_properties
-    assert "requires_active_robot_run" in validation_gate_properties
-    assert "collector_publishes_control_topics" in validation_gate_properties
-    assert "control_topics_published" in validation_gate_properties
-    assert "validates" in validation_gate_properties
-    assert "checks" in validation_gate_properties
-    assert "coverage" in validation_gate_properties
+    assert set(validation_gate_properties) == {
+        "schema_version",
+        "scope",
+        "acceptance_step",
+        "required_when",
+        "command",
+        "artifact",
+        "expected_runtime_contract",
+    }
     assert "AppTrafficResponse" in schemas
     assert "AppMediaLinks" in schemas
     assert "CameraMediaStatus" in schemas
@@ -2048,7 +1310,6 @@ def test_openapi_exposes_client_response_models():
     assert "TrafficSSEStats" in schemas
     assert "TrafficCloudStats" in schemas
     assert "HealthResponse" in schemas
-    assert "DevicesResponse" in schemas
     assert "LivenessResponse" in schemas
     assert "ControlCommandResponse" in schemas
     assert "GatewayErrorResponse" in schemas
@@ -2056,8 +1317,6 @@ def test_openapi_exposes_client_response_models():
     assert "RuntimeContractResponse" in schemas
     assert "RuntimeContractManifest" in schemas
     assert "RuntimeDataflowResponse" in schemas
-    assert "RuntimeSwitchPlanRequest" in schemas
-    assert "RuntimeSwitchPlanResponse" in schemas
     assert "RuntimeDataflowTopicSummary" in schemas
     assert "RuntimeDataflowObservability" in schemas
     assert "RuntimeDataflowCommunication" in schemas
@@ -2065,7 +1324,6 @@ def test_openapi_exposes_client_response_models():
     assert "RuntimeDataSourceSummary" in schemas
     assert "RuntimeAlgorithmInterfaceSummary" in schemas
     assert "RuntimeAdapterAliasSummary" in schemas
-    assert "RuntimeProfileDataSourceBinding" in schemas
     assert "RuntimeProductDataSourceBinding" in schemas
     assert "RuntimeTransform3D" in schemas
     assert "RuntimeMessageFormatSummary" in schemas
@@ -2103,9 +1361,9 @@ def test_openapi_exposes_client_response_models():
     assert "AuthCheckResponse" in schemas
     assert "LeaseResponse" in schemas
     assert "SessionResponse" in schemas
-    assert "SessionStartRequest" in schemas
-    assert "SessionTransitionResponse" in schemas
-    assert "MapNameRequest" in schemas
+    assert "product_session_id" in schemas["SessionResponse"]["properties"]
+    assert "SessionStartRequest" not in schemas
+    assert "SessionTransitionResponse" not in schemas
     assert "MapRenameRequest" in schemas
     assert "MapSaveRequest" in schemas
     assert "MapSaveOperationResponse" in schemas
@@ -2133,12 +1391,12 @@ def test_openapi_exposes_client_response_models():
     assert "ExplorationCommandResponse" in schemas
     assert "ExplorationStatusResponse" in schemas
     assert "SlamStatusResponse" in schemas
-    assert "SlamSwitchRequest" in schemas
-    assert "SlamRelocalizeRequest" in schemas
-    assert "SlamOperationResponse" in schemas
-    assert "schema_version" in schemas["SlamOperationResponse"]["properties"]
-    assert "ok" in schemas["SlamOperationResponse"]["properties"]
-    assert "ts" in schemas["SlamOperationResponse"]["properties"]
+    assert "LocalizationInitialPose" in schemas
+    assert "LocalizationRelocalizationRequest" in schemas
+    assert "LocalizationMapTrackingRequest" in schemas
+    assert "LocalizationOperationResponse" in schemas
+    assert "mode" in schemas["LocalizationRelocalizationRequest"]["properties"]
+    assert "initial_pose" in schemas["LocalizationRelocalizationRequest"]["properties"]
     assert "RecordingStartRequest" in schemas
     assert "RecordingOperationResponse" in schemas
     assert "RecordingStatusResponse" in schemas
@@ -2157,7 +1415,6 @@ def test_openapi_exposes_client_response_models():
     assert _schema_ref_for(openapi, "/ready").endswith("/ReadinessResponse")
     assert _schema_ref_for(openapi, "/ready", "503").endswith("/ReadinessResponse")
     assert _schema_ref_for(openapi, "/api/v1/health").endswith("/HealthResponse")
-    assert _schema_ref_for(openapi, "/api/v1/devices").endswith("/DevicesResponse")
     assert _schema_ref_for(openapi, "/health").endswith("/LivenessResponse")
     assert _schema_ref_for(openapi, "/api/v1/scene_graph").endswith("/SceneGraphResponse")
     assert _schema_ref_for(openapi, "/api/v1/locations").endswith("/LocationsResponse")
@@ -2168,9 +1425,6 @@ def test_openapi_exposes_client_response_models():
     assert _schema_ref_for(openapi, "/api/v1/locations/{name}", method="delete").endswith("/LocationOperationResponse")
     assert _schema_ref_for(openapi, "/api/v1/path").endswith("/PathResponse")
     assert _schema_ref_for(openapi, "/api/v1/diagnostics/routecheck/latest").endswith("/RoutecheckLatestResponse")
-    assert _schema_ref_for(openapi, "/api/v1/diagnostics/algorithm-benchmark/latest").endswith(
-        "/AlgorithmBenchmarkLatestResponse"
-    )
     assert _schema_ref_for(openapi, "/api/v1/diagnostics/runtime-contract").endswith("/RuntimeContractResponse")
     assert _schema_ref_for(openapi, "/api/v1/runtime/dataflow").endswith("/RuntimeDataflowResponse")
     assert _schema_ref_for(openapi, "/api/v1/runtime/dataflow/subscribe", method="post").endswith(
@@ -2179,36 +1433,12 @@ def test_openapi_exposes_client_response_models():
     assert _request_schema_ref_for(openapi, "/api/v1/runtime/dataflow/subscribe").endswith(
         "/RuntimeDataflowSubscribeRequest"
     )
-    assert _schema_ref_for(openapi, "/api/v1/runtime/switch-plan", method="post").endswith("/RuntimeSwitchPlanResponse")
-    assert _request_schema_ref_for(openapi, "/api/v1/runtime/switch-plan").endswith("/RuntimeSwitchPlanRequest")
-    field_products = {
-        "teleop",
-        "teleop_avoid",
-        "map",
-        "explore",
-        "nav",
-        "tracking",
-        "inspection",
-    }
-    for schema_name in ("RuntimeSwitchPlanRequest",):
-        properties = schemas[schema_name]["properties"]
-        assert {"current_product", "target_product"} <= set(properties)
-        assert set(properties["target_product"]["enum"]) == field_products
     assert schemas["RuntimeContractResponse"]["properties"]["manifest"]["$ref"].endswith("/RuntimeContractManifest")
     assert schemas["RuntimeDataflowResponse"]["properties"]["topics"]["items"]["$ref"].endswith(
         "/RuntimeDataflowTopicSummary"
     )
     assert "runtime_dataflow_subscribe" in schemas["ClientLinks"]["properties"]
-    algorithm_schema = schemas["AlgorithmBenchmarkLatestResponse"]["properties"]
-    assert {
-        "read_only",
-        "ros2_topic_required",
-        "publishes",
-        "claim_allowed",
-        "missing_or_failed",
-        "required_gate_sequence",
-        "dimos_gap",
-    } <= set(algorithm_schema)
+    assert "AlgorithmBenchmarkLatestResponse" not in schemas
     assert schemas["RuntimeDataflowTopicSummary"]["properties"]["observability"]["$ref"].endswith(
         "/RuntimeDataflowObservability"
     )
@@ -2216,6 +1446,10 @@ def test_openapi_exposes_client_response_models():
         "/RuntimeDataflowCommunication"
     )
     contract_manifest = schemas["RuntimeContractManifest"]["properties"]
+    assert "topic_ros_types" not in contract_manifest
+    assert "ros2_topic_required" not in schemas["RuntimeDataflowResponse"]["properties"]
+    assert "ros2_topic_required" not in schemas["RuntimeDataflowObservability"]["properties"]
+    assert "ros2_topic_required" not in schemas["RuntimeDataflowSubscribeResponse"]["properties"]
     assert contract_manifest["frames"]["$ref"].endswith("/RuntimeFrameSummary")
     assert contract_manifest["frame_links"]["additionalProperties"]["$ref"].endswith("/RuntimeFrameLinkSummary")
     assert contract_manifest["runtime_data_flow"]["items"]["$ref"].endswith("/RuntimeDataFlowStageSummary")
@@ -2231,9 +1465,6 @@ def test_openapi_exposes_client_response_models():
     )
     assert contract_manifest["adapter_relays"]["additionalProperties"]["items"]["$ref"].endswith(
         "/RuntimeAdapterAliasSummary"
-    )
-    assert contract_manifest["profile_data_sources"]["additionalProperties"]["$ref"].endswith(
-        "/RuntimeProfileDataSourceBinding"
     )
     assert contract_manifest["product_data_sources"]["additionalProperties"]["$ref"].endswith(
         "/RuntimeProductDataSourceBinding"
@@ -2260,14 +1491,12 @@ def test_openapi_exposes_client_response_models():
     assert {"name", "inputs", "outputs", "owner", "map_dependency"} <= set(algorithm_schema)
     adapter_schema = schemas["RuntimeAdapterAliasSummary"]["properties"]
     assert {"source", "target", "msg_format", "scope", "note"} <= set(adapter_schema)
-    profile_binding_schema = schemas["RuntimeProfileDataSourceBinding"]["properties"]
-    assert {"profile", "data_source", "mode", "note"} <= set(profile_binding_schema)
     product_binding_schema = schemas["RuntimeProductDataSourceBinding"]["properties"]
     assert {"product", "data_source", "mode", "note"} <= set(product_binding_schema)
     transform_schema = schemas["RuntimeTransform3D"]["properties"]
     assert {"parent", "child", "x", "y", "z", "roll", "pitch", "yaw"} <= set(transform_schema)
     message_format_schema = schemas["RuntimeMessageFormatSummary"]["properties"]
-    assert {"name", "ros_type", "frame_role", "required_fields", "note"} <= set(message_format_schema)
+    assert {"name", "frame_role", "required_fields", "note"} <= set(message_format_schema)
     artifact_format_schema = schemas["RuntimeArtifactFormatSummary"]["properties"]
     assert {
         "name",
@@ -2287,7 +1516,7 @@ def test_openapi_exposes_client_response_models():
     assert _request_schema_ref_for(openapi, "/api/v1/navigation/goal_candidate").endswith("/GoalCandidateRequest")
     assert _schema_ref_for(openapi, "/api/v1/navigation/plan", method="post").endswith("/PlanPreviewResponse")
     assert _request_schema_ref_for(openapi, "/api/v1/navigation/plan").endswith("/PlanPreviewRequest")
-    assert _schema_ref_for(openapi, "/api/v1/cmd_vel", method="post").endswith("/ControlCommandResponse")
+    assert "/api/v1/cmd_vel" not in openapi["paths"]
     assert _schema_ref_for(openapi, "/api/v1/stop", method="post").endswith("/ControlCommandResponse")
     assert _schema_ref_for(openapi, "/api/v1/navigation/cancel", method="post").endswith("/ControlCommandResponse")
     assert _request_schema_ref_for(openapi, "/api/v1/navigation/cancel").endswith("/CancelRequest")
@@ -2296,7 +1525,6 @@ def test_openapi_exposes_client_response_models():
     for path in (
         "/api/v1/goal",
         "/api/v1/navigate/click",
-        "/api/v1/cmd_vel",
         "/api/v1/stop",
         "/api/v1/navigation/cancel",
         "/api/v1/instruction",
@@ -2310,9 +1538,8 @@ def test_openapi_exposes_client_response_models():
     assert _schema_ref_for(openapi, "/api/v1/auth/check").endswith("/AuthCheckResponse")
     assert _schema_ref_for(openapi, "/api/v1/lease", method="post").endswith("/LeaseResponse")
     assert _schema_ref_for(openapi, "/api/v1/session").endswith("/SessionResponse")
-    assert _schema_ref_for(openapi, "/api/v1/session/start", method="post").endswith("/SessionTransitionResponse")
-    assert _request_schema_ref_for(openapi, "/api/v1/session/start").endswith("/SessionStartRequest")
-    assert _schema_ref_for(openapi, "/api/v1/session/end", method="post").endswith("/SessionTransitionResponse")
+    assert "/api/v1/session/start" not in openapi["paths"]
+    assert "/api/v1/session/end" not in openapi["paths"]
     assert _schema_ref_for(openapi, "/api/v1/slam/maps").endswith("/MapListResponse")
     assert _schema_ref_for(openapi, "/api/v1/maps/{name}", method="delete").endswith("/MapLifecycleResponse")
     assert _schema_ref_for(openapi, "/api/v1/maps/{name}/build_occupancy", method="post").endswith(
@@ -2348,32 +1575,36 @@ def test_openapi_exposes_client_response_models():
     assert _schema_ref_for(openapi, "/api/v1/explore/stop", method="post").endswith("/ExplorationCommandResponse")
     assert _schema_ref_for(openapi, "/api/v1/explore/status").endswith("/ExplorationStatusResponse")
     assert _schema_ref_for(openapi, "/api/v1/slam/status").endswith("/SlamStatusResponse")
-    assert _schema_ref_for(openapi, "/api/v1/slam/switch", method="post").endswith("/SlamOperationResponse")
-    assert _request_schema_ref_for(openapi, "/api/v1/slam/switch").endswith("/SlamSwitchRequest")
-    assert _schema_ref_for(openapi, "/api/v1/slam/restart", method="post").endswith("/SlamOperationResponse")
-    assert _schema_ref_for(openapi, "/api/v1/slam/auto_relocalize", method="post").endswith("/SlamOperationResponse")
-    assert _schema_ref_for(openapi, "/api/v1/slam/relocalize", method="post").endswith("/SlamOperationResponse")
-    assert _request_schema_ref_for(openapi, "/api/v1/slam/relocalize").endswith("/SlamRelocalizeRequest")
-    assert _schema_ref_for(openapi, "/api/v1/slam/track_against_map", method="post").endswith("/SlamOperationResponse")
-    assert _request_schema_ref_for(openapi, "/api/v1/slam/track_against_map").endswith("/SlamRelocalizeRequest")
-    for prefix in ("/api/v1/recordings", "/api/v1/bag"):
-        assert _schema_ref_for(openapi, f"{prefix}/start", method="post").endswith(
-            "/RecordingOperationResponse"
-        )
-        assert _request_schema_ref_for(openapi, f"{prefix}/start").endswith(
-            "/RecordingStartRequest"
-        )
-        assert _schema_ref_for(openapi, f"{prefix}/stop", method="post").endswith(
-            "/RecordingOperationResponse"
-        )
-        assert _schema_ref_for(openapi, f"{prefix}/status").endswith(
-            "/RecordingStatusResponse"
-        )
-    assert openapi["paths"]["/api/v1/bag/start"]["post"]["deprecated"] is True
+    assert "/api/v1/slam/switch" not in openapi["paths"]
+    assert _schema_ref_for(openapi, "/api/v1/localization/relocalizations", method="post").endswith(
+        "/LocalizationOperationResponse"
+    )
+    assert _request_schema_ref_for(openapi, "/api/v1/localization/relocalizations").endswith(
+        "/LocalizationRelocalizationRequest"
+    )
+    assert _schema_ref_for(openapi, "/api/v1/localization/map-tracking", method="post").endswith(
+        "/LocalizationOperationResponse"
+    )
+    assert _request_schema_ref_for(openapi, "/api/v1/localization/map-tracking").endswith(
+        "/LocalizationMapTrackingRequest"
+    )
+    assert "/api/v1/slam/auto_relocalize" not in openapi["paths"]
+    assert "/api/v1/slam/relocalize" not in openapi["paths"]
+    assert "/api/v1/slam/track_against_map" not in openapi["paths"]
+    assert _schema_ref_for(openapi, "/api/v1/recordings/start", method="post").endswith(
+        "/RecordingOperationResponse"
+    )
+    assert _request_schema_ref_for(openapi, "/api/v1/recordings/start").endswith(
+        "/RecordingStartRequest"
+    )
+    assert _schema_ref_for(openapi, "/api/v1/recordings/stop", method="post").endswith(
+        "/RecordingOperationResponse"
+    )
+    assert _schema_ref_for(openapi, "/api/v1/recordings/status").endswith(
+        "/RecordingStatusResponse"
+    )
     assert _schema_ref_for(openapi, "/api/v1/webrtc/go2rtc/status").endswith("/Go2RTCStatusResponse")
     assert _schema_ref_for(openapi, "/api/v1/map_cloud/reset", method="post").endswith("/MapLifecycleResponse")
-    assert _schema_ref_for(openapi, "/api/v1/map/activate", method="post").endswith("/MapLifecycleResponse")
-    assert _request_schema_ref_for(openapi, "/api/v1/map/activate").endswith("/MapNameRequest")
     assert _schema_ref_for(openapi, "/api/v1/map/rename", method="post").endswith("/MapLifecycleResponse")
     assert _request_schema_ref_for(openapi, "/api/v1/map/rename").endswith("/MapRenameRequest")
     assert _schema_ref_for(openapi, "/api/v1/map/save", method="post").endswith("/MapSaveOperationResponse")
@@ -2382,8 +1613,6 @@ def test_openapi_exposes_client_response_models():
     assert _schema_ref_for(openapi, "/api/v1/maps/operations/{operation_id}").endswith(
         "/MapSaveOperationResponse"
     )
-    assert _schema_ref_for(openapi, "/api/v1/map/restore_predufo", method="post").endswith("/MapLifecycleResponse")
-    assert _request_schema_ref_for(openapi, "/api/v1/map/restore_predufo").endswith("/MapNameRequest")
     assert _schema_ref_for(openapi, "/api/v1/app/bootstrap").endswith("/AppBootstrapResponse")
     assert _schema_ref_for(openapi, "/api/v1/app/capabilities").endswith("/AppCapabilitiesResponse")
     assert _schema_ref_for(openapi, "/api/v1/app/traffic").endswith("/AppTrafficResponse")
@@ -2397,11 +1626,11 @@ def test_openapi_exposes_client_response_models():
     assert schemas["PathResponse"]["properties"]["path"]["items"]["$ref"].endswith("/PathPoint")
     assert schemas["PlanPreviewResponse"]["properties"]["goal"]["$ref"].endswith("/PathPoint")
     assert schemas["PlanPreviewResponse"]["properties"]["path"]["items"]["$ref"].endswith("/PathPoint")
-    assert "selected_planner" in schemas["PlanPreviewResponse"]["properties"]
-    assert "plan_safety_policy" in schemas["PlanPreviewResponse"]["properties"]
-    assert "path_safety" in schemas["PlanPreviewResponse"]["properties"]
-    assert "fallback_reason" in schemas["PlanPreviewResponse"]["properties"]
-    assert "rejected_plans" in schemas["PlanPreviewResponse"]["properties"]
+    assert "selected_planner" not in schemas["PlanPreviewResponse"]["properties"]
+    assert "plan_safety_policy" not in schemas["PlanPreviewResponse"]["properties"]
+    assert "path_safety" not in schemas["PlanPreviewResponse"]["properties"]
+    assert "fallback_reason" not in schemas["PlanPreviewResponse"]["properties"]
+    assert "rejected_plans" not in schemas["PlanPreviewResponse"]["properties"]
     assert schemas["GoalCandidateResponse"]["properties"]["target"]["anyOf"][0]["$ref"].endswith(
         "/ConstructedGoalTarget"
     )
@@ -2464,8 +1693,10 @@ def test_openapi_exposes_client_response_models():
     assert schemas["NavigationDiagnosticsSummary"]["properties"]["frame_mismatches"]["items"]["$ref"].endswith(
         "/NavigationFrameMismatch"
     )
-    assert "plan_safety_policy" in schemas["NavigationDiagnosticsSummary"]["properties"]
-    assert "last_plan_report" in schemas["NavigationDiagnosticsSummary"]["properties"]
+    diagnostics = schemas["NavigationDiagnosticsSummary"]["properties"]
+    assert "safety" in diagnostics
+    assert "plan_safety_policy" not in diagnostics
+    assert "last_plan_report" not in diagnostics
     assert schemas["AppTrafficResponse"]["properties"]["sse"]["$ref"].endswith("/TrafficSSEStats")
     assert schemas["AppTrafficResponse"]["properties"]["cloud"]["$ref"].endswith("/TrafficCloudStats")
     assert "schema_version" in schemas["ControlCommandResponse"]["properties"]
@@ -2529,7 +1760,6 @@ def test_capabilities_manifest_http_paths_exist_in_openapi():
         capabilities["endpoints"]["state"]["path"],
         capabilities["endpoints"]["state"]["localization_status"],
         capabilities["endpoints"]["state"]["navigation_status"],
-        capabilities["endpoints"]["state"]["devices"],
         capabilities["endpoints"]["state"]["health"],
         capabilities["endpoints"]["app"]["bootstrap"],
         capabilities["endpoints"]["app"]["capabilities"],
@@ -2539,7 +1769,6 @@ def test_capabilities_manifest_http_paths_exist_in_openapi():
         capabilities["endpoints"]["control"]["navigation_goal_candidate"],
         capabilities["endpoints"]["control"]["navigation_plan"],
         capabilities["endpoints"]["ops"]["routecheck_latest"],
-        capabilities["endpoints"]["ops"]["algorithm_benchmark_latest"],
         capabilities["endpoints"]["ops"]["runtime_contract"],
     ]
     for spec in key_specs:

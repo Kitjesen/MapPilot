@@ -34,7 +34,6 @@ from runtime.msgs.scene import (
     BeliefMessage,
     PhantomNode,
     RoomTypePosterior,
-    TrackedObject,
 )
 
 if TYPE_CHECKING:
@@ -520,7 +519,7 @@ class BeliefPropagationMixin:
             reverse=True,
         )
 
-    def promote_phantom(self, phantom_id: int, detection) -> TrackedObject | None:
+    def promote_phantom(self, phantom_id: int, detection):
         """将 phantom 节点实体化: 当检测到与 phantom 匹配的物体时调用。
 
         phantom 的先验 α 被继承到新 TrackedObject 中 — 信息不丢失。
@@ -531,7 +530,7 @@ class BeliefPropagationMixin:
 
         import time as _time
 
-        obj = TrackedObject(
+        obj = self._create_tracked_object(
             object_id=self._next_id,
             label=detection.label,
             position=detection.position.copy(),
@@ -545,7 +544,6 @@ class BeliefPropagationMixin:
             is_kg_expected=True,
             safety_level=phantom.safety_level,
         )
-        self._enrich_from_kg(obj)
         self._objects[self._next_id] = obj
         self._next_id += 1
         return obj

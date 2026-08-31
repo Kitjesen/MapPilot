@@ -25,7 +25,6 @@ def _service(events: list[dict]) -> CloudViewerService:
         current_loop=lambda: None,
         push_event=events.append,
         session_mode=lambda: "navigating",
-        product_session=lambda: "navigation",
         active_session_map=lambda: "field",
         saved_active_map=lambda: "field",
     )

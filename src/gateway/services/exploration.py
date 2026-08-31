@@ -7,7 +7,6 @@ import json
 import logging
 import math
 import os
-import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -45,7 +44,7 @@ def external_explore_binding(gw: Any) -> dict[str, Any]:
         "managed": product_control_owns_explore(gw),
         "valid": False,
         "blockers": [],
-        "session_id": None,
+        "product_session_id": None,
         "variant": None,
         "map_id": None,
         "map_name": None,
@@ -70,9 +69,11 @@ def external_explore_binding(gw: Any) -> dict[str, Any]:
     ):
         blockers.append("explore_run_plan_invalid")
 
-    session_id = str(os.environ.get("LINGTU_PRODUCT_SESSION_ID") or "").strip()
-    result["session_id"] = session_id or None
-    if not session_id:
+    product_session_id = str(
+        getattr(gw, "_compiled_product_session_id", "") or ""
+    ).strip()
+    result["product_session_id"] = product_session_id or None
+    if not product_session_id:
         blockers.append("product_session_missing")
 
     current = _committed_current_run()
@@ -88,12 +89,10 @@ def external_explore_binding(gw: Any) -> dict[str, Any]:
             str(current.get("product_variant") or "").strip() == variant,
             str(current.get("env") or "").strip()
             == str(getattr(plan, "env", "") or "").strip(),
-            str(current.get("fingerprint") or "").strip()
-            == str(getattr(plan, "fingerprint", "") or "").strip(),
         )
         if not all(current_checks):
             blockers.append("product_activation_identity_mismatch")
-        if str(current.get("product_session_id") or "").strip() != session_id:
+        if str(current.get("product_session_id") or "").strip() != product_session_id:
             blockers.append("product_session_mismatch")
 
     status = _native_status()
@@ -112,7 +111,6 @@ def external_explore_binding(gw: Any) -> dict[str, Any]:
         map_status,
         route=variant,
         map_identity=map_identity,
-        product_session_id=session_id,
     ):
         blockers.append("exploration_map_identity_mismatch")
     elif isinstance(map_status, Mapping):
@@ -120,8 +118,8 @@ def external_explore_binding(gw: Any) -> dict[str, Any]:
         if result["map_name"] is None:
             result["map_name"] = result["map_id"]
 
-    if status.get("active") is True and str(status.get("session_id") or "").strip() != session_id:
-        blockers.append("active_exploration_session_mismatch")
+    if str(status.get("product_session_id") or "").strip() != product_session_id:
+        blockers.append("native_exploration_product_session_mismatch")
 
     return _finish_binding(result)
 
@@ -208,19 +206,19 @@ def _map_identity_matches(
     *,
     route: str,
     map_identity: Any,
-    product_session_id: str,
 ) -> bool:
     if not isinstance(status, Mapping):
         return False
     try:
         reset_epoch = int(status.get("reset_epoch"))
         generation = int(status.get("generation"))
-        map_version = int(status.get("map_version"))
+        map_content_epoch = status.get("map_content_epoch")
     except (TypeError, ValueError):
+        return False
+    if isinstance(map_content_epoch, bool) or not isinstance(map_content_epoch, int):
         return False
     if not (
         str(status.get("frame_id") or "").strip() == "map"
-        and str(status.get("session_id") or "").strip() == product_session_id
         and reset_epoch > 0
         and generation > 0
     ):
@@ -230,50 +228,37 @@ def _map_identity_matches(
             map_identity is None
             and status.get("live") is True
             and not str(status.get("map_id") or "").strip()
-            and map_version == 0
-            and not str(status.get("artifact_hash") or "").strip()
+            and map_content_epoch == 0
             and not any(
                 str(os.environ.get(name) or "").strip()
                 for name in (
                     "LINGTU_MAP_ID",
-                    "LINGTU_MAP_VERSION",
-                    "LINGTU_MAP_POINTCLOUD_SHA256",
+                    "LINGTU_MAP_CONTENT_EPOCH",
                 )
             )
         )
     if route != "map" or not isinstance(map_identity, Mapping):
         return False
     map_id = str(map_identity.get("map_id") or "").strip()
-    version_id = str(map_identity.get("version_id") or "").strip()
+    content_epoch = map_identity.get("content_epoch")
     frame_id = str(map_identity.get("frame_id") or "").strip()
-    artifact_hash = _pointcloud_hash(map_identity)
-    match = re.search(r":v([1-9][0-9]*)$", version_id)
-    if not map_id or frame_id != "map" or not artifact_hash or match is None:
+    if (
+        not map_id
+        or frame_id != "map"
+        or isinstance(content_epoch, bool)
+        or not isinstance(content_epoch, int)
+        or content_epoch <= 0
+    ):
         return False
     return bool(
         status.get("live") is False
         and str(status.get("map_id") or "").strip() == map_id
-        and map_version == int(match.group(1))
-        and str(status.get("artifact_hash") or "").strip() == artifact_hash
+        and map_content_epoch == content_epoch
         and str(os.environ.get("LINGTU_MAP_ID") or "").strip() == map_id
-        and str(os.environ.get("LINGTU_MAP_VERSION") or "").strip() == version_id
+        and str(os.environ.get("LINGTU_MAP_CONTENT_EPOCH") or "").strip()
+        == str(content_epoch)
         and str(os.environ.get("LINGTU_MAP_FRAME") or "").strip() == frame_id
-        and str(os.environ.get("LINGTU_MAP_POINTCLOUD_SHA256") or "").strip()
-        == artifact_hash
     )
-
-
-def _pointcloud_hash(map_identity: Mapping[str, Any]) -> str:
-    artifacts = map_identity.get("artifacts")
-    if not isinstance(artifacts, list):
-        return ""
-    for artifact in artifacts:
-        if not isinstance(artifact, Mapping):
-            continue
-        artifact_type = str(artifact.get("artifact_type") or "").strip().upper()
-        if artifact_type in {"POINTCLOUD", "POINT_CLOUD", "PCD", "SOURCE_POINTCLOUD"}:
-            return str(artifact.get("sha256") or "").strip()
-    return ""
 
 
 def _native_commands(gw: Any) -> Any | None:
@@ -306,7 +291,7 @@ def reconcile_exploration_runtime(
             status_code=409,
             detail={"blockers": list(binding.get("blockers") or [])},
         )
-    product_session_id = str(binding.get("session_id") or "").strip()
+    product_session_id = str(binding.get("product_session_id") or "").strip()
     status = binding.get("native_status")
     boot_id = (
         str(status.get("boot_id") or "").strip()
@@ -387,6 +372,19 @@ def _require_durable_explore_runs(runs: Any) -> None:
         )
 
 
+def _run_has_interrupted_continuity(run: Mapping[str, Any] | None) -> bool:
+    """Return true when a retained run lost endpoint continuity without parking."""
+
+    if not isinstance(run, Mapping) or run.get("terminal") is True:
+        return False
+    continuity = run.get("continuity")
+    return (
+        isinstance(continuity, Mapping)
+        and str(continuity.get("status") or "").strip().lower() == "interrupted"
+        and run.get("state_available") is False
+    )
+
+
 def exploration_map_save_readiness(gw: Any) -> dict[str, Any]:
     """Prove that live Explore mapping is parked before snapshot admission."""
 
@@ -409,7 +407,7 @@ def exploration_map_save_readiness(gw: Any) -> dict[str, Any]:
             "message": "Saved-map coverage exploration does not create a new mapping result.",
         }
 
-    product_session_id = str(binding.get("session_id") or "").strip()
+    product_session_id = str(binding.get("product_session_id") or "").strip()
     latest_run = runs.latest_for_session(product_session_id)
     if latest_run is not None and (
         latest_run.get("terminal") is not True
@@ -465,10 +463,10 @@ def _directed_context_from_status(status: Any) -> tuple[dict[str, Any], str, str
             detail={"source": "native_tare_status", "active": bool(status.get("active"))},
         )
 
-    session_id = str(status.get("session_id") or "").strip()
-    if not session_id:
+    product_session_id = str(status.get("product_session_id") or "").strip()
+    if not product_session_id:
         raise DirectedExplorationError(
-            "native_tare_session_unavailable",
+            "native_tare_product_session_unavailable",
             "The active native TARE status has no session identifier.",
             status_code=409,
             detail={"source": "native_tare_status"},
@@ -480,7 +478,7 @@ def _directed_context_from_status(status: Any) -> tuple[dict[str, Any], str, str
             "native_tare_map_context_unavailable",
             "The active native TARE status has no map context.",
             status_code=409,
-            detail={"source": "native_tare_status", "session_id": session_id},
+            detail={"source": "native_tare_status", "product_session_id": product_session_id},
         )
     frame_id = str(map_status.get("frame_id") or "").strip()
     if frame_id != GATEWAY_MAP_FRAME_ID:
@@ -492,10 +490,10 @@ def _directed_context_from_status(status: Any) -> tuple[dict[str, Any], str, str
                 "source": "native_tare_status",
                 "expected_frame_id": GATEWAY_MAP_FRAME_ID,
                 "actual_frame_id": frame_id or None,
-                "session_id": session_id,
+                "product_session_id": product_session_id,
             },
         )
-    return dict(status), session_id, frame_id
+    return dict(status), product_session_id, frame_id
 
 
 def _directed_command(gw: Any, method: str) -> Any:
@@ -585,22 +583,22 @@ def _raise_directed_binding_error(binding: Mapping[str, Any]) -> None:
     )
 
 
-def _invoke_directed_for_verified_session(
+def _invoke_directed_for_verified_product_session(
     gw: Any,
     *,
     method: str,
-    args_for_session: Callable[
+    args_for_product_session: Callable[
         [str], tuple[tuple[Any, ...], dict[str, Any]]
     ],
 ) -> tuple[dict[str, Any], str, str]:
     """Issue one command against the session verified in the same lock."""
 
     def invoke(status: Any) -> tuple[dict[str, Any], str, str]:
-        verified_status, session_id, frame_id = _directed_context_from_status(status)
+        verified_status, product_session_id, frame_id = _directed_context_from_status(status)
         operation = _directed_command(gw, method)
-        args, kwargs = args_for_session(session_id)
+        args, kwargs = args_for_product_session(product_session_id)
         _invoke_directed_command(operation, args, kwargs)
-        return verified_status, session_id, frame_id
+        return verified_status, product_session_id, frame_id
 
     if not product_control_owns_explore(gw):
         return invoke(_native_status())
@@ -645,14 +643,14 @@ def directed_exploration_target(
     ttl_value = float(ttl_s)
     reason_value = str(reason)
 
-    def args_for_session(
-        session_id: str,
+    def args_for_product_session(
+        product_session_id: str,
     ) -> tuple[tuple[Any, ...], dict[str, Any]]:
         args = (
             x_value,
             y_value,
             ttl_value,
-            session_id,
+            product_session_id,
             reason_value,
             request_id,
         )
@@ -660,15 +658,15 @@ def directed_exploration_target(
             "x": x_value,
             "y": y_value,
             "ttl_s": ttl_value,
-            "session_id": session_id,
+            "product_session_id": product_session_id,
             "reason": reason_value,
             "request_id": request_id,
         }
 
-    status, session_id, frame_id = _invoke_directed_for_verified_session(
+    status, product_session_id, frame_id = _invoke_directed_for_verified_product_session(
         gw,
         method="set_directed_exploration_target",
-        args_for_session=args_for_session,
+        args_for_product_session=args_for_product_session,
     )
     return {
         "intent": {
@@ -676,7 +674,7 @@ def directed_exploration_target(
             "x": x_value,
             "y": y_value,
             "ttl_s": ttl_value,
-            "session_id": session_id,
+            "product_session_id": product_session_id,
             "frame_id": frame_id,
             "reason": reason_value,
             "request_id": request_id,
@@ -699,20 +697,20 @@ def clear_directed_exploration_target(
 
     reason_value = str(reason)
 
-    def args_for_session(
-        session_id: str,
+    def args_for_product_session(
+        product_session_id: str,
     ) -> tuple[tuple[Any, ...], dict[str, Any]]:
-        args = (session_id, reason_value, request_id)
+        args = (product_session_id, reason_value, request_id)
         return args, {
-            "session_id": session_id,
+            "product_session_id": product_session_id,
             "reason": reason_value,
             "request_id": request_id,
         }
 
-    status, session_id, frame_id = _invoke_directed_for_verified_session(
+    status, product_session_id, frame_id = _invoke_directed_for_verified_product_session(
         gw,
         method="clear_directed_exploration_target",
-        args_for_session=args_for_session,
+        args_for_product_session=args_for_product_session,
     )
     return {
         "intent": {
@@ -720,7 +718,7 @@ def clear_directed_exploration_target(
             "x": None,
             "y": None,
             "ttl_s": None,
-            "session_id": session_id,
+            "product_session_id": product_session_id,
             "frame_id": frame_id,
             "reason": reason_value,
             "request_id": request_id,
@@ -734,26 +732,17 @@ def clear_directed_exploration_target(
 
 
 def explorer_backend(gw: Any) -> str:
-    if gw._frontier_explorer is not None:
-        return "frontier"
-    if gw._tare_explorer is not None:
-        return "tare"
     if _native_status() is not None:
         return "tare"
     return "none"
 
 
 def explorer_available(gw: Any) -> bool:
-    backend = explorer_backend(gw)
-    if backend == "none":
-        return False
-    if gw._frontier_explorer is not None or gw._tare_explorer is not None:
-        return True
     return _native_commands(gw) is not None and _native_status() is not None
 
 
 def explorer_stop_available(gw: Any) -> bool:
-    return gw._frontier_explorer is not None or gw._tare_explorer is not None or _native_commands(gw) is not None
+    return _native_commands(gw) is not None
 
 
 def explorer_unavailable_detail() -> dict[str, Any]:
@@ -828,7 +817,7 @@ def _explore_run_map_binding(binding: Mapping[str, Any]) -> dict[str, Any] | Non
             status_code=409,
         )
     try:
-        map_version = int(map_status.get("map_version"))
+        map_content_epoch = int(map_status.get("map_content_epoch"))
     except (TypeError, ValueError) as exc:
         raise ExplorationRunError(
             "exploration_map_identity_unavailable",
@@ -836,8 +825,7 @@ def _explore_run_map_binding(binding: Mapping[str, Any]) -> dict[str, Any] | Non
             status_code=409,
         ) from exc
     map_id = str(map_status.get("map_id") or "").strip()
-    artifact_hash = str(map_status.get("artifact_hash") or "").strip()
-    if not map_id or map_version <= 0 or not artifact_hash:
+    if not map_id or map_content_epoch <= 0:
         raise ExplorationRunError(
             "exploration_map_identity_unavailable",
             "The active Explore Product map binding is incomplete.",
@@ -845,8 +833,7 @@ def _explore_run_map_binding(binding: Mapping[str, Any]) -> dict[str, Any] | Non
         )
     return {
         "map_id": map_id,
-        "map_version": map_version,
-        "artifact_hash": artifact_hash,
+        "map_content_epoch": map_content_epoch,
     }
 
 
@@ -920,7 +907,7 @@ def _dispatch_native_exploration_start(
     try:
         result = commands.start_exploration(
             exploration_run_id=exploration_run_id,
-            session_id=str(binding["session_id"]),
+            product_session_id=str(binding["product_session_id"]),
             reason="gateway_start",
             request_id=request_id,
         )
@@ -964,11 +951,7 @@ def start_exploration_run(gw: Any, request_id: str | None = None) -> dict[str, A
                 )
             continuity = reconcile_exploration_runtime(gw, binding)
             latest = continuity.get("latest")
-            if (
-                isinstance(latest, Mapping)
-                and latest.get("terminal") is not True
-                and latest.get("state") == "interrupted"
-            ):
+            if _run_has_interrupted_continuity(latest):
                 raise ExplorationRunError(
                     "exploration_run_interrupted",
                     (
@@ -993,7 +976,7 @@ def start_exploration_run(gw: Any, request_id: str | None = None) -> dict[str, A
                     )
             reservation = runs.reserve_start(
                 request,
-                product_session_id=str(binding["session_id"]),
+                product_session_id=str(binding["product_session_id"]),
                 route=route,
                 map=map_identity,
             )
@@ -1046,7 +1029,7 @@ def start_exploration_run(gw: Any, request_id: str | None = None) -> dict[str, A
                         stop_receipt = _typed_exploration_receipt(
                             stop_operation(
                                 exploration_run_id=str(run["exploration_run_id"]),
-                                session_id=str(binding["session_id"]),
+                                product_session_id=str(binding["product_session_id"]),
                                 reason="exploration_journal_write_failed",
                                 request_id=stop_request_id,
                             ),
@@ -1144,7 +1127,7 @@ def command_exploration_run(
                     "The requested Explore run is not retained on this robot.",
                     status_code=404,
                 )
-            if run.get("state") == "interrupted":
+            if _run_has_interrupted_continuity(run):
                 raise ExplorationRunError(
                     "exploration_run_interrupted",
                     (
@@ -1178,8 +1161,8 @@ def command_exploration_run(
                     status_code=409,
                     detail={"blockers": list(binding["blockers"])},
                 )
-            expected_session = str(run["identity"]["product_session_id"])
-            if str(binding["session_id"]) != expected_session:
+            expected_product_session_id = str(run["identity"]["product_session_id"])
+            if str(binding["product_session_id"]) != expected_product_session_id:
                 raise ExplorationRunError(
                     "exploration_product_session_mismatch",
                     "The Explore run belongs to a different Product session.",
@@ -1197,7 +1180,7 @@ def command_exploration_run(
             try:
                 result = operation(
                     exploration_run_id=exploration_run_id,
-                    session_id=expected_session,
+                    product_session_id=expected_product_session_id,
                     reason=str(reason or default_reason),
                     request_id=command_request_id,
                 )
@@ -1242,18 +1225,6 @@ def begin_exploration(
     exploration_run_id: str = "",
     request_id: str = "",
 ) -> Any:
-    if gw._frontier_explorer is not None:
-        return _require_explorer_ack(
-            gw._frontier_explorer.begin_exploration(),
-            action="start",
-        )
-    if gw._tare_explorer is not None:
-        starter = getattr(gw._tare_explorer, "start_tare_exploration", None)
-        if starter is None:
-            starter = getattr(gw._tare_explorer, "begin_exploration", None)
-        if starter is None:
-            raise RuntimeError("TARE explorer has no start method")
-        return _require_explorer_ack(starter(), action="start")
     commands = _native_commands(gw)
     if commands is not None and _native_status() is not None:
         if product_control_owns_explore(gw):
@@ -1282,7 +1253,7 @@ def begin_exploration(
                         )
                     _require_explorer_ack(
                         commands.start_exploration(
-                            session_id=binding["session_id"],
+                            product_session_id=binding["product_session_id"],
                             reason="gateway_start",
                         ),
                         action="start",
@@ -1305,18 +1276,6 @@ def begin_exploration(
 
 
 def end_exploration(gw: Any) -> Any:
-    if gw._frontier_explorer is not None:
-        return _require_explorer_ack(
-            gw._frontier_explorer.end_exploration(),
-            action="stop",
-        )
-    if gw._tare_explorer is not None:
-        stopper = getattr(gw._tare_explorer, "stop_tare_exploration", None)
-        if stopper is None:
-            stopper = getattr(gw._tare_explorer, "end_exploration", None)
-        if stopper is None:
-            raise RuntimeError("TARE explorer has no stop method")
-        return _require_explorer_ack(stopper(), action="stop")
     commands = _native_commands(gw)
     if commands is not None:
         _require_explorer_ack(
@@ -1328,22 +1287,6 @@ def end_exploration(gw: Any) -> Any:
 
 
 def tare_status_payload(gw: Any) -> dict[str, Any]:
-    if gw._tare_explorer is not None:
-        raw_status: Any = {}
-        status_fn = getattr(gw._tare_explorer, "get_tare_status", None)
-        if status_fn is not None:
-            try:
-                raw_status = coerce_explorer_result(status_fn())
-            except Exception as exc:
-                raw_status = {"error": str(exc)}
-        if not isinstance(raw_status, dict):
-            raw_status = {"raw": raw_status}
-        return {
-            "runtime": "python_module",
-            "status": raw_status,
-            "stats": gw._last_tare_stats or {},
-        }
-
     status = _native_status()
     if status is None:
         return {}
@@ -1369,30 +1312,8 @@ def exploration_status_payload(gw: Any) -> dict[str, Any]:
             **readiness,
             **gw._explorer_unavailable_detail(),
         }
-    if backend == "frontier":
-        health = {}
-        if hasattr(gw._frontier_explorer, "health"):
-            try:
-                health = gw._frontier_explorer.health() or {}
-            except Exception as exc:
-                health = {"error": str(exc)}
-        frontier_count = 0
-        if isinstance(health, dict):
-            try:
-                frontier_count = int(health.get("frontier_count", 0) or 0)
-            except (TypeError, ValueError):
-                frontier_count = 0
-        return {
-            "available": True,
-            "backend": "frontier",
-            "exploring": gw._exploring,
-            "frontier_count": frontier_count,
-            **readiness,
-        }
-
     tare = gw._tare_status_payload()
     tare_status = tare.get("status") if isinstance(tare, dict) else {}
-    tare_runtime = str(tare.get("runtime") or "") if isinstance(tare, dict) else ""
     tare_started = False
     frontier_count = 0
     if isinstance(tare_status, dict):
@@ -1403,14 +1324,12 @@ def exploration_status_payload(gw: Any) -> dict[str, Any]:
                 frontier_count = int(planner.get("frontier_clusters", 0) or 0)
             except (TypeError, ValueError):
                 frontier_count = 0
-    exploring = tare_started if tare_runtime == "native_dds" else bool(gw._exploring or tare_started)
     return {
         "available": gw._explorer_available(),
         "backend": "tare",
-        "exploring": exploring,
+        "exploring": tare_started,
         "frontier_count": frontier_count,
         "tare": tare,
-        "supervisor": gw._exploration_supervisor_state or {},
         **readiness,
     }
 
@@ -1426,9 +1345,9 @@ def exploration_start_readiness(gw: Any) -> dict[str, Any]:
         product_control_owns_explore(gw)
         and str(gw._session_mode or "idle").lower() == "idle"
     ):
-        from gateway.services.session_view import recover_external_explore_session
+        from gateway.services.session_view import reconcile_native_explore
 
-        recover_external_explore_session(gw)
+        reconcile_native_explore(gw)
 
     native_status = _native_status()
     native_active = bool(native_status and native_status.get("active") is True)
@@ -1437,8 +1356,6 @@ def exploration_start_readiness(gw: Any) -> dict[str, Any]:
             blockers.append("exploration_command_boundary_unavailable")
         else:
             blockers.append("explorer_backend_not_running")
-    if gw._session_pending:
-        blockers.append("session_transition_pending")
     if gw._exploring or native_active:
         blockers.append("exploration_already_active")
     session_mode = str(gw._session_mode or "idle").lower()
@@ -1466,8 +1383,8 @@ def exploration_start_readiness(gw: Any) -> dict[str, Any]:
                 continuity["latest"]
                 if continuity is not None
                 else (
-                    runs.latest_for_session(str(binding.get("session_id") or ""))
-                    if binding.get("session_id")
+                    runs.latest_for_session(str(binding.get("product_session_id") or ""))
+                    if binding.get("product_session_id")
                     else None
                 )
             )

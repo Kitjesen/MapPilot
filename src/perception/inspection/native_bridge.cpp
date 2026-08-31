@@ -1,10 +1,10 @@
 #include "perception/inspection/native_bridge.h"
 
-#include "message/cpp/dds_qos_profiles.hpp"
-#include "message/cpp/dds_topics.hpp"
+#include "message/cpp/qos.hpp"
+#include "message/cpp/topics.hpp"
 
 #include "dds/dds.h"
-#include "lingtu_slam.h"
+#include "messages.h"
 
 #include <chrono>
 #include <cmath>
@@ -135,7 +135,7 @@ class EvidenceBridge {
         copyBounded(next.action, sizeof(next.action), wire->action);
     next.requested_at_s = headerStampSeconds(wire->header);
     next.route_revision = wire->revision;
-    next.map_version = wire->map_version;
+    next.map_content_epoch = wire->map_content_epoch;
     next.point_index = wire->point_index;
     next.deadline_s = wire->deadline_s;
     checked(dds_return_loan(request_reader_, samples, count), "dds_return_loan");
@@ -235,7 +235,8 @@ EvidenceBridge* asBridge(void* handle) {
 
 }  // namespace
 
-extern "C" void* lingtu_inspection_evidence_bridge_create(int32_t domain_id) {
+extern "C" LINGTU_INSPECTION_EVIDENCE_BRIDGE_API void*
+lingtu_inspection_evidence_bridge_create(int32_t domain_id) {
   try {
     g_last_error.clear();
     return new EvidenceBridge(domain_id);
@@ -245,11 +246,13 @@ extern "C" void* lingtu_inspection_evidence_bridge_create(int32_t domain_id) {
   }
 }
 
-extern "C" void lingtu_inspection_evidence_bridge_destroy(void* handle) {
+extern "C" LINGTU_INSPECTION_EVIDENCE_BRIDGE_API void
+lingtu_inspection_evidence_bridge_destroy(void* handle) {
   delete asBridge(handle);
 }
 
-extern "C" int32_t lingtu_inspection_evidence_bridge_take_request(
+extern "C" LINGTU_INSPECTION_EVIDENCE_BRIDGE_API int32_t
+lingtu_inspection_evidence_bridge_take_request(
     void* handle,
     LingtuInspectionEvidenceRequest* output) {
   if (handle == nullptr) {
@@ -264,7 +267,8 @@ extern "C" int32_t lingtu_inspection_evidence_bridge_take_request(
   }
 }
 
-extern "C" int32_t lingtu_inspection_evidence_bridge_write_result(
+extern "C" LINGTU_INSPECTION_EVIDENCE_BRIDGE_API int32_t
+lingtu_inspection_evidence_bridge_write_result(
     void* handle,
     const LingtuInspectionEvidenceResult* result) {
   if (handle == nullptr) {
@@ -274,7 +278,8 @@ extern "C" int32_t lingtu_inspection_evidence_bridge_write_result(
   return asBridge(handle)->writeResult(result);
 }
 
-extern "C" const char* lingtu_inspection_evidence_bridge_last_error(void* handle) {
+extern "C" LINGTU_INSPECTION_EVIDENCE_BRIDGE_API const char*
+lingtu_inspection_evidence_bridge_last_error(void* handle) {
   if (handle == nullptr) {
     return g_last_error.c_str();
   }

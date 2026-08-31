@@ -13,15 +13,15 @@ DEFAULT_CLOUD_QUEUE_MAXSIZE = 2
 SSE_EVENT_SCHEMA_VERSION = 1
 SSE_RETRY_MS = 3000
 DEFAULT_SSE_RASTER_MIN_INTERVAL_S = 1.0
-DEFAULT_SSE_SLOPE_PAYLOAD_ENABLED = False
 SSE_EVENT_TYPES = (
     "snapshot",
     "ping",
     "odometry",
     "slam_status",
     "map_cloud",
-    "saved_map",
+    "map_scene",
     "scene_graph",
+    "visual_servo_status",
     "safety",
     "mission",
     "navigation_state",
@@ -39,12 +39,9 @@ SSE_EVENT_TYPES = (
     "exploring",
     "tare_stats",
     "exploration_supervisor",
-    "traversable_frontiers",
-    "frontier_candidate",
     "global_path",
     "local_path",
-    "costmap",
-    "slope_grid",
+    "native_traversability",
     "agent_message",
 )
 SSE_DIAGNOSTIC_EVENT_TYPES = (
@@ -63,7 +60,6 @@ RECOMMENDED_CLIENT_RATES_HZ: dict[str, float] = {
     "health": 0.2,
     "path": 2.0,
     "scene_graph": 1.0,
-    "devices": 0.2,
 }
 
 
@@ -145,7 +141,6 @@ def snapshot(gw: Any) -> dict[str, Any]:
             "dropped_events": gw._sse_dropped_events,
             "suppressed_events": dict(gw._sse_suppressed_events),
             "raster_min_interval_s": gw._sse_raster_min_interval_s,
-            "slope_grid_inline": gw._sse_slope_payload_enabled,
             "drop_policy": DROP_OLDEST_POLICY,
         }
     realtime = gw._cloud_viewer.traffic_snapshot()

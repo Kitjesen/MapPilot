@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import hmac
 from typing import Any
 
 from gateway.schemas import AuthCheckResponse, AuthLoginRequest, AuthLoginResponse
-
 
 try:
     from fastapi import Request as FastAPIRequest
@@ -13,19 +13,12 @@ except ImportError:  # FastAPI remains optional until routes are registered.
     FastAPIRequest = Any
 
 
-_AUTH_PATHS = frozenset({"/api/v1/auth/login", "/api/v1/auth/check"})
-
-
 def register_auth_routes(app) -> None:
-    from fastapi.exceptions import RequestValidationError
-    from fastapi.encoders import jsonable_encoder
-    from fastapi.responses import JSONResponse
+    """Register the Gateway authentication endpoints."""
 
-    app.router.routes[:] = [
-        route
-        for route in app.router.routes
-        if getattr(route, "path", "") not in _AUTH_PATHS
-    ]
+    from fastapi.encoders import jsonable_encoder
+    from fastapi.exceptions import RequestValidationError
+    from fastapi.responses import JSONResponse
 
     @app.post(
         "/api/v1/auth/login",
@@ -41,13 +34,7 @@ def register_auth_routes(app) -> None:
         if not configured:
             return JSONResponse({"ok": True, "message": "\u8ba4\u8bc1\u672a\u542f\u7528"})
 
-        import hashlib
-        import hmac as _hmac
-
-        if _hmac.compare_digest(
-            hashlib.sha256(key.encode()).hexdigest(),
-            hashlib.sha256(configured.encode()).hexdigest(),
-        ):
+        if hmac.compare_digest(key, configured):
             resp = JSONResponse({"ok": True, "message": "\u767b\u5f55\u6210\u529f"})
             resp.set_cookie("lingtu_api_key", key, httponly=True, samesite="lax", max_age=86400 * 30)
             return resp

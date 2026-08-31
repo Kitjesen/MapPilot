@@ -11,7 +11,7 @@ from contextlib import nullcontext
 from typing import Any
 from urllib.parse import quote
 
-from gateway.services.map_service import active_map, validate_map_artifacts
+from gateway.services.mapd_transport import active_map, validate_map_artifacts
 from gateway.services.runtime_status import _runtime_boundary_status
 from runtime.runtime_interface import TOPICS, runtime_contract_manifest, runtime_data_flow_topics
 
@@ -19,49 +19,29 @@ RUNTIME_DATAFLOW_SCHEMA_VERSION = 1
 LIVE_MODULE_SAMPLE_STALE_MS = 2000.0
 
 _PRODUCT_OBSERVABILITY_TOPICS = (
+    TOPICS.maps_scene,
     TOPICS.localization_health,
-    TOPICS.mission_status,
-    TOPICS.traversable_frontiers,
-    TOPICS.frontier_candidate,
+    TOPICS.nav_state,
 )
 
-_PRODUCT_OBSERVABILITY_STAGES: tuple[dict[str, Any], ...] = (
-    {
-        "name": "traversable_frontier_preview",
-        "owner": "TraversableFrontierModule",
-        "frame_role": "map",
-        "map_dependency": "live_occupancy_grid_and_traversability_layers",
-        "inputs": (
-            TOPICS.odometry,
-            TOPICS.exploration_grid,
-            "module:TraversableFrontierModule.fused_cost",
-            "module:TraversableFrontierModule.slope_grid",
-            "module:TraversableFrontierModule.esdf_field",
-            "module:TraversableFrontierModule.elevation_map",
-        ),
-        "outputs": (TOPICS.traversable_frontiers, TOPICS.frontier_candidate),
-    },
-)
+_PRODUCT_OBSERVABILITY_STAGES: tuple[dict[str, Any], ...] = ()
 
 
 _GATEWAY_TOPIC_CHANNELS: dict[str, list[dict[str, Any]]] = {
     TOPICS.odometry: [
         {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "odometry"},
-        {"transport": "gateway_rest", "path": "/api/v1/state", "field": "odometry"},
+        {"transport": "gateway_rest", "path": "/api/v1/state", "field": "localization.odometry"},
         {
             "transport": "gateway_rest",
             "path": "/api/v1/localization/status",
             "field": "has_odometry",
         },
     ],
-    TOPICS.map_cloud: [
-        {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "map_cloud"},
-        {"transport": "gateway_ws", "path": "/ws/cloud", "payload": "binary_accumulated_point_cloud"},
-        {"transport": "gateway_ws", "path": "/ws/scan", "payload": "binary_current_scan_point_cloud"},
-        {"transport": "gateway_rest", "path": "/api/v1/map/points", "payload": "point_sample"},
+    TOPICS.maps_scene: [
+        {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "map_scene"},
+        {"transport": "gateway_ws", "path": "/ws/cloud", "payload": "binary_map_scene_point_cloud"},
     ],
     TOPICS.saved_map_cloud: [
-        {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "saved_map"},
         {
             "transport": "gateway_rest",
             "path": "/api/v1/maps/{name}/points",
@@ -86,44 +66,31 @@ _GATEWAY_TOPIC_CHANNELS: dict[str, list[dict[str, Any]]] = {
     TOPICS.cmd_vel: [
         {"transport": "gateway_rest", "path": "/api/v1/navigation/status", "field": "control"},
     ],
-    TOPICS.goal_pose: [
-        {"transport": "gateway_rest", "path": "/api/v1/navigation/status", "field": "target"},
+    TOPICS.nav_command_request: [
+        {
+            "transport": "gateway_rest",
+            "path": "/api/v1/goal",
+            "via": "nav.goals -> nav.commands",
+        },
+        {
+            "transport": "gateway_rest",
+            "path": "/api/v1/navigate/click",
+            "via": "nav.goals -> nav.commands",
+        },
+        {
+            "transport": "gateway_rest",
+            "path": "/api/v1/navigation/cancel",
+            "via": "nav.goals -> nav.commands",
+        },
     ],
     TOPICS.semantic_scene_graph: [
         {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "scene_graph"},
         {"transport": "gateway_rest", "path": "/api/v1/scene_graph"},
     ],
-    TOPICS.safety_state: [
-        {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "safety"},
-        {"transport": "gateway_rest", "path": "/api/v1/state", "field": "safety"},
-    ],
-    TOPICS.mission_status: [
-        {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "mission"},
+    TOPICS.nav_state: [
+        {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "navigation_state"},
         {"transport": "gateway_rest", "path": "/api/v1/navigation/status"},
-    ],
-    TOPICS.traversable_frontiers: [
-        {
-            "transport": "gateway_sse",
-            "path": "/api/v1/events",
-            "event_type": "traversable_frontiers",
-        },
-        {
-            "transport": "gateway_rest",
-            "path": "/api/v1/runtime/dataflow/topic",
-            "field": "inspection.latest_payload",
-        },
-    ],
-    TOPICS.frontier_candidate: [
-        {
-            "transport": "gateway_sse",
-            "path": "/api/v1/events",
-            "event_type": "frontier_candidate",
-        },
-        {
-            "transport": "gateway_rest",
-            "path": "/api/v1/runtime/dataflow/topic",
-            "field": "inspection.latest_payload",
-        },
+        {"transport": "gateway_rest", "path": "/api/v1/state", "field": "navigation.diagnostics.safety"},
     ],
     TOPICS.planner_status: [
         {"transport": "gateway_rest", "path": "/api/v1/navigation/status", "field": "diagnostics"},
@@ -136,7 +103,7 @@ _TOPIC_PORT_HINTS: dict[str, tuple[str, ...]] = {
     TOPICS.imu: ("imu",),
     TOPICS.odometry: ("odometry", "odom"),
     TOPICS.registered_cloud: ("registered_cloud", "registered_scan"),
-    TOPICS.map_cloud: ("map_cloud",),
+    TOPICS.maps_scene: ("map_scene",),
     TOPICS.cumulative_map_cloud: ("cumulative_map_cloud",),
     TOPICS.saved_map_cloud: ("saved_map", "saved_map_cloud"),
     TOPICS.localization_quality: ("localization_quality", "icp_quality"),
@@ -144,13 +111,8 @@ _TOPIC_PORT_HINTS: dict[str, tuple[str, ...]] = {
     TOPICS.global_path: ("global_path", "path"),
     TOPICS.local_path: ("local_path",),
     TOPICS.cmd_vel: ("cmd_vel", "driver_cmd_vel"),
-    TOPICS.goal_pose: ("goal_pose",),
-    TOPICS.cancel: ("cancel",),
-    TOPICS.stop: ("stop_cmd", "stop"),
-    TOPICS.safety_state: ("safety_state",),
-    TOPICS.mission_status: ("mission_status",),
-    TOPICS.traversable_frontiers: ("traversable_frontiers",),
-    TOPICS.frontier_candidate: ("frontier_candidate",),
+    TOPICS.nav_command_request: ("command_request", "navigation_command_request"),
+    TOPICS.nav_state: ("navigation_state",),
     TOPICS.semantic_scene_graph: ("scene_graph",),
     TOPICS.semantic_instruction: ("instruction",),
     TOPICS.added_obstacles: ("added_obstacles",),
@@ -172,7 +134,8 @@ _COMMAND_INTERFACES: tuple[dict[str, Any], ...] = (
         "name": "goal",
         "method": "POST",
         "path": "/api/v1/goal",
-        "publishes": [TOPICS.goal_pose],
+        "publishes": [TOPICS.nav_command_request],
+        "command_path": ["Gateway", "nav.goals", "nav.commands", TOPICS.nav_command_request],
         "read_only": False,
         "guard": "planning_and_motion_readiness",
     },
@@ -180,25 +143,17 @@ _COMMAND_INTERFACES: tuple[dict[str, Any], ...] = (
         "name": "navigate_click",
         "method": "POST",
         "path": "/api/v1/navigate/click",
-        "publishes": [TOPICS.goal_pose],
+        "publishes": [TOPICS.nav_command_request],
+        "command_path": ["Gateway", "nav.goals", "nav.commands", TOPICS.nav_command_request],
         "read_only": False,
         "guard": "planning_and_motion_readiness",
-    },
-    {
-        "name": "direct_cmd_vel",
-        "method": "POST",
-        "path": "/api/v1/cmd_vel",
-        "publishes": [TOPICS.cmd_vel],
-        "read_only": False,
-        "guard": "motion_guard_and_lease",
-        "response_evidence": "source_request_accepted_only",
-        "final_output_confirmed": False,
     },
     {
         "name": "stop",
         "method": "POST",
         "path": "/api/v1/stop",
-        "publishes": [TOPICS.stop, TOPICS.cmd_vel],
+        "publishes": [TOPICS.nav_command_request],
+        "command_path": ["Gateway", "native command client", TOPICS.nav_command_request],
         "read_only": False,
         "guard": "always_available_safety_stop",
         "response_evidence": "command_ack_not_driver_execution",
@@ -208,7 +163,8 @@ _COMMAND_INTERFACES: tuple[dict[str, Any], ...] = (
         "name": "navigation_cancel",
         "method": "POST",
         "path": "/api/v1/navigation/cancel",
-        "publishes": [TOPICS.cancel],
+        "publishes": [TOPICS.nav_command_request],
+        "command_path": ["Gateway", "nav.goals", "nav.commands", TOPICS.nav_command_request],
         "read_only": False,
         "guard": "control_command_journal",
     },
@@ -228,16 +184,16 @@ _ARTIFACT_GATEWAY_CHANNELS: dict[str, list[dict[str, Any]]] = {
         {
             "transport": "gateway_rest",
             "path": "/api/v1/diagnostics/field-check",
-            "field": "map.saved_map_artifact_gate",
+            "field": "evidence.map",
         },
         {
             "transport": "gateway_rest",
             "path": "/api/v1/inspection/acceptance",
-            "field": "evidence.field_check.map.saved_map_artifact_gate",
+            "field": "evidence.field_check.evidence.map",
         },
         {
             "transport": "gateway_cli",
-            "command": "python lingtu.py saved-map-artifact-gate --require-octomap",
+            "command": "python scripts/gates/saved_map_artifact_gate.py <map-id> --require-octomap",
         },
     ],
 }
@@ -390,10 +346,7 @@ def _latest_payload_summary(value: Any) -> dict[str, Any]:
 
 
 def _latest_payload_for_topic(gw: Any, topic: str) -> Any | None:
-    attr_by_topic = {
-        TOPICS.traversable_frontiers: "_last_traversable_frontiers",
-        TOPICS.frontier_candidate: "_last_frontier_candidate",
-    }
+    attr_by_topic: dict[str, str] = {}
     if topic == TOPICS.odometry:
         with getattr(gw, "_state_lock", None) or nullcontext():
             value = getattr(gw, "_odom", None)
@@ -451,11 +404,8 @@ def _artifact_gate(gw: Any, token: str) -> dict[str, Any]:
         "artifact": artifact_name,
         "ok": False,
         "endpoint_topic_required": False,
-        "ros2_topic_required": False,
         "transport": "saved_map_artifact",
-        "map_root": None,
-        "map_dir": None,
-        "active_map": active_name,
+        "map_id": active_name,
         "checked_required_artifacts": list(required_formats),
         "metadata": {},
         "artifacts": {},
@@ -468,7 +418,7 @@ def _artifact_gate(gw: Any, token: str) -> dict[str, Any]:
         return gate
 
     if not active_name:
-        blockers.append("active map unavailable from maps service")
+        blockers.append("active map unavailable from mapd")
         return gate
 
     validation_resp = validate_map_artifacts(
@@ -478,10 +428,9 @@ def _artifact_gate(gw: Any, token: str) -> dict[str, Any]:
         require_occupancy="occupancy_grid" in required_formats,
     )
     if validation_resp is None:
-        blockers.append("maps service artifact validation unavailable")
+        blockers.append("mapd artifact validation unavailable")
         return gate
     validation = dict(validation_resp.get("gate") or {})
-    gate["map_dir"] = validation_resp.get("map_dir")
     gate["metadata"] = dict(validation.get("metadata") or {})
     gate["artifacts"] = dict(validation.get("artifacts") or {})
     gate["checked_required_artifacts"] = list(validation.get("checked_required_artifacts") or required_formats)
@@ -731,7 +680,6 @@ def _topic_inspection(
         "write_interfaces": list(communication.get("interfaces") or []),
         "arbitrary_publish_supported": False,
         "endpoint_topic_required": False,
-        "ros2_topic_required": False,
         "policy": (
             "observe via ModulePort stats plus declared Gateway REST/SSE/WS "
             "payload channels; write only through whitelisted Gateway commands"
@@ -765,7 +713,6 @@ def _observability_summary(
         "has_fresh_module_sample": bool(observed_module_ports),
         "fresh_stale_ms_limit": LIVE_MODULE_SAMPLE_STALE_MS,
         "endpoint_topic_required": False,
-        "ros2_topic_required": False,
     }
 
 
@@ -1026,11 +973,6 @@ def _transport_layers(runtime_boundary: Mapping[str, Any]) -> dict[str, Any]:
             "primary": False,
             "description": ("Runtime endpoint bridge normalizes external sources into canonical LingTu streams."),
         },
-        "ros2_adapter": {
-            "primary": False,
-            "description": ("Compatibility alias for ROS2-backed endpoint transports; not the product boundary."),
-            "deprecated_by": "endpoint_adapter",
-        },
     }
 
 
@@ -1140,9 +1082,7 @@ def build_runtime_dataflow_snapshot(gw: Any) -> dict[str, Any]:
         "runtime_dataflow": "/api/v1/runtime/dataflow",
         "runtime_dataflow_topic": "/api/v1/runtime/dataflow/topic",
         "runtime_dataflow_subscribe": "/api/v1/runtime/dataflow/subscribe",
-        "runtime_switch_plan": "/api/v1/runtime/switch-plan",
         "field_check": "/api/v1/diagnostics/field-check",
-        "algorithm_benchmark_latest": "/api/v1/diagnostics/algorithm-benchmark/latest",
         "inspection_acceptance": "/api/v1/inspection/acceptance",
         "navigation_goal_candidate": "/api/v1/navigation/goal_candidate",
     }
@@ -1160,7 +1100,6 @@ def build_runtime_dataflow_snapshot(gw: Any) -> dict[str, Any]:
             "transport_layers": {},
             "motion_path": {},
             "endpoint_topic_required": False,
-            "ros2_topic_required": False,
             "module_ports": module_ports,
             "topics": [],
             "stage_evidence": [],
@@ -1216,7 +1155,6 @@ def build_runtime_dataflow_snapshot(gw: Any) -> dict[str, Any]:
         "transport_layers": _transport_layers(runtime_boundary),
         "motion_path": _motion_path(runtime_boundary),
         "endpoint_topic_required": False,
-        "ros2_topic_required": False,
         "module_ports": module_ports,
         "topics": topics,
         "stage_evidence": stage_evidence,
@@ -1271,7 +1209,6 @@ def build_runtime_dataflow_topic_detail(gw: Any, selector: str) -> dict[str, Any
                 "communicate": False,
                 "arbitrary_publish_supported": False,
                 "endpoint_topic_required": False,
-                "ros2_topic_required": False,
             },
             "error": snapshot_error,
             "available_topics": [
@@ -1329,7 +1266,6 @@ def build_runtime_dataflow_subscription(gw: Any, request: Any) -> dict[str, Any]
         "ts": time.time(),
         "read_only": True,
         "endpoint_topic_required": False,
-        "ros2_topic_required": False,
         "arbitrary_publish_supported": False,
         "publishes": [],
         "selector": selector,

@@ -44,15 +44,7 @@ class CloudSceneCache:
             1,
             int(os.environ.get("LINGTU_MAP_VIEWER_MAX_STALE_DROPS", "4096")),
         )
-        self._last_clean_map_layer_ts = 0.0
         self._last_map_scene_ts = 0.0
-        self._clean_map_layer_prefer_s = max(
-            0.0,
-            # VoxelGridModule publishes its accumulated clean snapshot every
-            # 2 s by default.  Keep that layer authoritative across the whole
-            # interval so raw Fast-LIO frames cannot replace it between ticks.
-            _env_float("LINGTU_CLEAN_MAP_LAYER_PREFER_S", 5.0),
-        )
 
     def set_voxel_size(self, value: float) -> None:
         self._map_voxel_size = max(0.02, float(value))
@@ -70,10 +62,6 @@ class CloudSceneCache:
             return len(self._map_points) if self._map_points is not None else 0
 
     def snapshot_points(self) -> np.ndarray | None:
-        with self._map_cloud_lock:
-            return None if self._map_points is None else np.asarray(self._map_points, dtype=np.float32).copy()
-
-    def copy_points(self) -> np.ndarray | None:
         with self._map_cloud_lock:
             return None if self._map_points is None else np.asarray(self._map_points, dtype=np.float32).copy()
 

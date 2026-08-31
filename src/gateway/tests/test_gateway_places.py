@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 pytestmark = [pytest.mark.sim]
@@ -11,16 +13,14 @@ class FakePlaceMapsService:
         self.records = {
             "floor-6-map": {
                 "map_id": "floor-6-map",
-                "version": 7,
-                "version_id": "version-7",
+                "content_epoch": 7,
                 "state": "READY",
                 "frame_id": "map",
                 "artifacts": [{"type": "POINTCLOUD", "hash": "hash-7"}],
             },
             "floor-5-map": {
                 "map_id": "floor-5-map",
-                "version": 5,
-                "version_id": "version-5",
+                "content_epoch": 5,
                 "state": "READY",
                 "frame_id": "map",
                 "artifacts": [{"type": "POINTCLOUD", "hash": "hash-5"}],
@@ -30,16 +30,14 @@ class FakePlaceMapsService:
             "floor-6-map": {
                 "success": True,
                 "map_id": "floor-6-map",
-                "version_id": "version-7",
-                "map_pcd_sha256": "hash-7",
+                "content_epoch": 7,
                 "frame_id": "map",
                 "points": [[0.0, 0.0, 0.0]],
             },
             "floor-5-map": {
                 "success": True,
                 "map_id": "floor-5-map",
-                "version_id": "version-5",
-                "map_pcd_sha256": "hash-5",
+                "content_epoch": 5,
                 "frame_id": "map",
                 "points": [[0.0, 0.0, 0.0]],
             },
@@ -82,6 +80,31 @@ class FakePlaceMapsService:
         }
         return {"success": True}
 
+    def service(self, action: str, **arguments):
+        if action == "list_maps":
+            return self.list_maps()
+        if action == "get_record":
+            return self.get_record(str(arguments.get("map_id") or ""))
+        if action == "list_poi":
+            return self.poi_list(str(arguments.get("map_id") or ""))
+        if action == "set_poi":
+            command = {
+                "map_id": str(arguments.get("map_id") or ""),
+                "name": str(arguments.get("name") or ""),
+                "x": float(arguments.get("x_m", 0.0)),
+                "y": float(arguments.get("y_m", 0.0)),
+                "z": float(arguments.get("z_m", 0.0)),
+                "yaw": (
+                    float(arguments.get("yaw_rad", 0.0))
+                    if arguments.get("has_yaw") is True
+                    else None
+                ),
+                "frame_id": str(arguments.get("frame_id") or "map"),
+                "tags": json.loads(str(arguments.get("tags_json") or "{}")),
+            }
+            return self.poi_set(command)
+        raise AssertionError(f"unexpected mapd action: {action}")
+
 
 def _gateway_with_maps(monkeypatch):
     from gateway.gateway_module import GatewayModule
@@ -90,7 +113,7 @@ def _gateway_with_maps(monkeypatch):
     gateway = GatewayModule()
     gateway.setup()
     maps = FakePlaceMapsService()
-    gateway.on_system_modules({"maps.service": maps})
+    gateway._map_client = maps
     return gateway, maps
 
 
@@ -124,14 +147,12 @@ def test_places_post_binds_version_from_native_maps(monkeypatch):
     payload = response.json()
     place = payload["place"]
     assert place["executable"] is True
-    assert place["map_version"] == 7
-    assert place["version_id"] == "version-7"
-    assert place["map_pcd_sha256"] == "hash-7"
+    assert place["content_epoch"] == 7
     assert place["frame_id"] == "map"
     assert place["floor_id"] == "floor-6"
     assert place["binding"]["status"] == "bound"
     assert maps.last_command is not None
-    assert maps.last_command["tags"]["version_id"] == "version-7"
+    assert maps.last_command["tags"]["content_epoch"] == 7
 
 
 def test_places_post_rejects_caller_supplied_map_binding_fields(monkeypatch):
@@ -140,7 +161,7 @@ def test_places_post_rejects_caller_supplied_map_binding_fields(monkeypatch):
     gateway, _maps = _gateway_with_maps(monkeypatch)
     response = TestClient(gateway._app).post(
         "/api/v1/places",
-        json=_place_payload(map_version=999, version_id="fake", map_pcd_sha256="fake"),
+        json=_place_payload(content_epoch=999),
     )
 
     assert response.status_code == 422
@@ -188,7 +209,7 @@ def test_places_post_reports_identity_conflict(monkeypatch):
     assert "another identity" in response.json()["detail"]
 
 
-def test_places_routes_return_503_without_maps_service(monkeypatch):
+def test_places_routes_return_503_when_mapd_is_unavailable(monkeypatch):
     from fastapi.testclient import TestClient
 
     from gateway.gateway_module import GatewayModule
@@ -197,10 +218,16 @@ def test_places_routes_return_503_without_maps_service(monkeypatch):
     gateway = GatewayModule()
     gateway.setup()
 
+    class UnavailableMapd:
+        def service(self, _action: str, **_arguments):
+            raise RuntimeError("mapd is unavailable")
+
+    gateway._map_client = UnavailableMapd()
+
     response = TestClient(gateway._app).get("/api/v1/places")
 
     assert response.status_code == 503
-    assert "maps.service is unavailable" in response.json()["detail"]
+    assert "mapd is unavailable" in response.json()["detail"]
 
 
 def test_places_list_and_resolve_ambiguity(monkeypatch):
@@ -250,11 +277,9 @@ def test_places_resolve_reports_stale_as_non_executable(monkeypatch):
     client = TestClient(gateway._app)
 
     assert client.post("/api/v1/places", json=_place_payload()).status_code == 200
-    maps.records["floor-6-map"]["version"] = 8
-    maps.records["floor-6-map"]["version_id"] = "version-8"
+    maps.records["floor-6-map"]["content_epoch"] = 8
     maps.records["floor-6-map"]["artifacts"] = [{"type": "POINTCLOUD", "hash": "hash-8"}]
-    maps.points["floor-6-map"]["version_id"] = "version-8"
-    maps.points["floor-6-map"]["map_pcd_sha256"] = "hash-8"
+    maps.points["floor-6-map"]["content_epoch"] = 8
 
     response = client.get("/api/v1/places/resolve", params={"q": "六层某公司"})
 

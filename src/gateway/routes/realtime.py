@@ -3,53 +3,33 @@
 import asyncio
 import json
 import logging
+import math
 import time
 
 from starlette.websockets import WebSocket as StarletteWebSocket
 from starlette.websockets import WebSocketDisconnect as StarletteWebSocketDisconnect
 
-from gateway.services.command_boundary import CommandBoundaryError
-from gateway.services.native_control import (
-    resume_autonomy as native_resume_autonomy,
-)
-from gateway.services.native_control import (
-    stop as native_stop,
-)
 from gateway.services.safety_status import safety_stop_active
-from gateway.services.teleop import (
-    quiesce_native_teleop,
-    resume_native_teleop,
-)
-from runtime.msgs.geometry import Twist
-from runtime.msgs.nav import OperatorMotionReceipt
+from gateway.services.teleop import NativeTeleopSession, TeleopSessionResult
 
 logger = logging.getLogger(__name__)
 
 REALTIME_SEND_TIMEOUT_S = 2.0
-TELEOP_LEASE_TTL_S = 1.0
-
-def _receipt_payload(receipt):
-    if isinstance(receipt, OperatorMotionReceipt):
-        return receipt.to_dict()
-    return None
 
 
-def _receipt_final_output_published(receipt) -> bool:
-    return isinstance(receipt, OperatorMotionReceipt) and receipt.final_output_published
-
-
-def _receipt_reason(receipt, fallback: str) -> str:
-    if isinstance(receipt, OperatorMotionReceipt) and receipt.reason:
-        return receipt.reason
-    return fallback
-
-
-def _teleop_sample_metadata(sequence: int) -> dict[str, int | str | bool]:
+def _public_control_rejection(result: TeleopSessionResult, *, request_id: str) -> dict[str, object]:
+    if result.reason in {"authority_busy", "not_active_source", "connection_in_use"}:
+        error = "control_in_use"
+        message = "Another controller currently owns robot motion."
+    else:
+        error = "control_unavailable"
+        message = "Robot motion control is temporarily unavailable."
+    logger.warning("Web teleop rejected internally: %s", result.reason)
     return {
-        "sample_accepted": True,
-        "sample_ack_expected": False,
-        "sample_ack_scope": "operator-motion-sample",
-        "sample_sequence": int(sequence),
+        "type": "control_rejected",
+        "error": error,
+        "message": message,
+        "request_id": request_id,
     }
 
 def register_realtime_routes(app, gw) -> None:
@@ -81,50 +61,11 @@ def register_realtime_routes(app, gw) -> None:
                 last_seq = seq
             await asyncio.sleep(0.1)
 
-    async def release_teleop(
-        *,
-        source_id: str = "gateway:teleop",
-        source_epoch: int = 1,
-        sequence: int = 1,
-        release_sequence: int | None = None,
-        request_id: str | None = None,
-        reason: str = "operator_hold",
-    ):
-        if bool(getattr(gw, "_teleop_dds_enabled", False)):
-            return await asyncio.to_thread(
-                gw._teleop_release,
-                source_id=source_id,
-                source_epoch=source_epoch,
-                sequence=sequence,
-                release_sequence=release_sequence,
-                request_id=request_id,
-                reason=reason,
-            )
-        return gw._teleop_release() is True
-
-    def release_teleop_on_disconnect(
-        *,
-        source_id: str = "gateway:teleop",
-        source_epoch: int = 1,
-        sequence: int = 1,
-        release_sequence: int | None = None,
-        request_id: str | None = None,
-    ):
-        """Run the bounded zero barrier synchronously so teardown cannot cancel it."""
-
-        return gw._teleop_release(
-            source_id=source_id,
-            source_epoch=source_epoch,
-            sequence=sequence,
-            release_sequence=release_sequence,
-            request_id=request_id,
-            reason="disconnect",
-        )
-
     async def ws_teleop_endpoint(ws: StarletteWebSocket):
         await ws.accept()
         client_id = str(ws.query_params.get("client_id") or f"teleop-ws-{id(ws)}")
         conn_id = f"teleop-{id(ws)}"
+        session = NativeTeleopSession(gw, f"web:{id(ws)}")
         client_ip = None
         try:
             client_ip = ws.client.host if ws.client else None
@@ -133,56 +74,23 @@ def register_realtime_routes(app, gw) -> None:
         registry = getattr(gw, "_ws_registry", None)
         if registry is not None:
             registry.register(conn_id, "/ws/teleop", client_id=client_id, client_ip=client_ip)
-        lease_token = f"ws:{id(ws)}:{client_id}"
-        adapter_source_id = lease_token
-        adapter_source_epoch = time.monotonic_ns()
-        operator_sequence = 0
-
-        def next_operator_sequence() -> int:
-            nonlocal operator_sequence
-            operator_sequence += 1
-            return operator_sequence
-
-        if not gw._lease.acquire(lease_token, TELEOP_LEASE_TTL_S):
+        opened = session.open()
+        if not opened.accepted:
             await ws.send_text(
                 json.dumps(
                     {
                         "type": "control_rejected",
-                        "error": "lease_conflict",
-                        "message": "Another operator currently owns teleoperation.",
+                        "error": "control_in_use",
+                        "message": "Another operator is connected.",
                     }
                 )
             )
             await ws.close(code=4409)
+            if registry is not None:
+                registry.unregister(conn_id)
             return
-        if bool(getattr(gw, "_teleop_dds_enabled", False)):
-            claimed = await asyncio.to_thread(
-                gw._teleop_claim,
-                source_id=adapter_source_id,
-                source_epoch=adapter_source_epoch,
-                sequence=next_operator_sequence(),
-                lease_ttl_ms=int(TELEOP_LEASE_TTL_S * 1000),
-                request_id=f"{adapter_source_id}:claim",
-            )
-            if not (isinstance(claimed, OperatorMotionReceipt) and claimed.source_accepted):
-                gw._lease.release(lease_token)
-                payload = {
-                    "type": "control_rejected",
-                    "error": "operator_motion_claim_failed",
-                    "message": _receipt_reason(
-                        claimed,
-                        "Native endpoint did not accept teleoperation authority.",
-                    ),
-                }
-                native_receipt = _receipt_payload(claimed)
-                if native_receipt is not None:
-                    payload["native_receipt"] = native_receipt
-                await ws.send_text(json.dumps(payload))
-                await ws.close(code=4510)
-                return
         client_count = gw._teleop_client_connected()
-        tm = gw._teleop_module
-        media_lifecycle = tm or getattr(gw, "_camera_module", None)
+        media_lifecycle = getattr(gw, "_camera_module", None)
         if media_lifecycle is not None:
             media_lifecycle.on_client_connect()
         logger.info("Teleop WS connected (%d clients)", client_count)
@@ -209,78 +117,91 @@ def register_realtime_routes(app, gw) -> None:
                 if not isinstance(data, dict):
                     continue
                 msg_type = data.get("type", "")
-                if msg_type == "joy":
-                    if not gw._lease.renew(lease_token, TELEOP_LEASE_TTL_S):
+                if msg_type == "velocity":
+                    request_id = str(data.get("request_id") or "") or (
+                        f"web-velocity-{time.monotonic_ns()}"
+                    )
+                    if data.get("deadman") is not True:
+                        held = await asyncio.to_thread(
+                            session.hold,
+                            request_id=request_id,
+                        )
+                        if held.accepted:
+                            await ws.send_text(
+                                json.dumps(
+                                    {
+                                        "type": "control_ack",
+                                        "action": "hold",
+                                        "accepted": True,
+                                        "request_id": request_id,
+                                        "stage": (
+                                            "final_zero_published"
+                                            if held.final_output_confirmed
+                                            else "no_active_command"
+                                        ),
+                                        "final_cmd_vel_confirmed": held.final_output_confirmed,
+                                        "motor_confirmed": False,
+                                    }
+                                )
+                            )
+                        else:
+                            logger.error("Web teleop hold failed internally: %s", held.reason)
+                            await ws.send_text(
+                                json.dumps(
+                                    {
+                                        "type": "control_rejected",
+                                        "error": "hold_unconfirmed",
+                                        "message": "Robot did not confirm the hold command.",
+                                        "request_id": request_id,
+                                        "final_cmd_vel_confirmed": False,
+                                        "motor_confirmed": False,
+                                    }
+                                )
+                            )
+                        continue
+                    raw_manual_mode = data.get("manual_mode", False)
+                    if not isinstance(raw_manual_mode, bool):
                         await ws.send_text(
                             json.dumps(
                                 {
                                     "type": "control_rejected",
-                                    "error": "lease_lost",
-                                    "message": "Teleoperation lease is no longer owned by this client.",
+                                    "error": "invalid_manual_mode",
+                                    "message": "manual_mode must be a boolean.",
+                                    "request_id": request_id,
                                 }
                             )
                         )
                         continue
-                    if data.get("deadman") is not True:
-                        hold_request_id = str(data.get("request_id") or "") or None
-                        hold_sequence = next_operator_sequence()
-                        if bool(getattr(gw, "_teleop_dds_enabled", False)) and hold_request_id is None:
-                            hold_request_id = f"{adapter_source_id}:manual_hold:{hold_sequence}"
-                        released = await release_teleop(
-                            source_id=adapter_source_id,
-                            source_epoch=adapter_source_epoch,
-                            sequence=hold_sequence,
-                            request_id=hold_request_id,
-                            reason="manual_hold",
-                        )
-                        native_teleop_path = bool(getattr(gw, "_teleop_dds_enabled", False))
-                        final_confirmed = (
-                            _receipt_final_output_published(released)
-                            if native_teleop_path
-                            else False
-                        )
-                        hold_accepted = final_confirmed if native_teleop_path else released is True
-                        native_receipt = _receipt_payload(released)
-                        if hold_accepted:
-                            payload = {
-                                "type": "control_ack",
-                                "action": "manual_hold",
-                                "accepted": True,
-                                "request_id": hold_request_id,
-                                "source_sequence": hold_sequence,
-                                "stage": (
-                                    "final_zero_published"
-                                    if native_teleop_path
-                                    else "compatibility_source_zero"
-                                ),
-                                "final_cmd_vel_confirmed": final_confirmed,
-                                "motor_confirmed": False,
-                            }
-                            if native_receipt is not None:
-                                payload["native_receipt"] = native_receipt
-                        else:
-                            payload = {
-                                "type": "control_rejected",
-                                "error": "manual_hold_unconfirmed",
-                                "message": _receipt_reason(
-                                    released,
-                                    "Native endpoint did not acknowledge the zero command.",
-                                ),
-                                "final_cmd_vel_confirmed": False,
-                                "motor_confirmed": False,
-                            }
-                            if native_receipt is not None:
-                                payload["native_receipt"] = native_receipt
-                        await ws.send_text(json.dumps(payload))
-                        continue
                     try:
-                        lx = float(data.get("lx", 0))
-                        ly = float(data.get("ly", 0))
-                        az = float(data.get("az", 0))
+                        vx_mps = float(data.get("vx_mps", 0))
+                        vy_mps = float(data.get("vy_mps", 0))
+                        yaw_rps = float(data.get("yaw_rps", 0))
                     except (TypeError, ValueError):
+                        await ws.send_text(
+                            json.dumps(
+                                {
+                                    "type": "control_rejected",
+                                    "error": "invalid_velocity",
+                                    "message": "Velocity fields must be numeric m/s and rad/s values.",
+                                    "request_id": request_id,
+                                }
+                            )
+                        )
+                        continue
+                    if not all(math.isfinite(value) for value in (vx_mps, vy_mps, yaw_rps)):
+                        await ws.send_text(
+                            json.dumps(
+                                {
+                                    "type": "control_rejected",
+                                    "error": "invalid_velocity",
+                                    "message": "Velocity fields must be finite.",
+                                    "request_id": request_id,
+                                }
+                            )
+                        )
                         continue
                     with gw._state_lock:
-                        safety = getattr(gw, "_safety", None)
+                        safety = getattr(gw, "_navigation_state", None)
                     if safety_stop_active(safety):
                         await ws.send_text(
                             json.dumps(
@@ -288,44 +209,22 @@ def register_realtime_routes(app, gw) -> None:
                                     "type": "control_rejected",
                                     "error": "safety_stop",
                                     "message": "Safety STOP is active.",
+                                    "request_id": request_id,
                                 }
                             )
                         )
                         continue
-                    sample_sequence = next_operator_sequence()
-                    request_id = str(data.get("request_id") or "") or None
-                    if request_id is None:
-                        request_id = f"{adapter_source_id}:joy:{sample_sequence}"
-                    sample_metadata = _teleop_sample_metadata(sample_sequence)
-                    submission_accepted = bool(
-                        gw._teleop_on_joy(
-                            lx,
-                            ly,
-                            az,
-                            request_id=request_id,
-                            source_id=adapter_source_id,
-                            source_epoch=adapter_source_epoch,
-                            sequence=sample_sequence,
-                        )
+                    submitted = await asyncio.to_thread(
+                        session.move,
+                        vx_mps,
+                        vy_mps,
+                        yaw_rps,
+                        request_id=request_id,
+                        manual_mode=raw_manual_mode,
                     )
-                    if not submission_accepted:
-                        publisher = getattr(gw, "_teleop_native_publisher", None)
+                    if not submitted.accepted:
                         await ws.send_text(
-                            json.dumps(
-                                {
-                                    "type": "control_rejected",
-                                    "error": "native_command_unavailable",
-                                    "request_id": request_id,
-                                    "source_sequence": sample_sequence,
-                                    "sample_accepted": submission_accepted,
-                                    "sample_ack_expected": sample_metadata["sample_ack_expected"],
-                                    "sample_ack_scope": sample_metadata["sample_ack_scope"],
-                                    "message": (
-                                        getattr(publisher, "last_error", None)
-                                        or "Native teleop command was not accepted."
-                                    ),
-                                }
-                            )
+                            json.dumps(_public_control_rejection(submitted, request_id=request_id))
                         )
                     else:
                         await ws.send_text(
@@ -336,192 +235,24 @@ def register_realtime_routes(app, gw) -> None:
                                     "ingress_accepted": True,
                                     "stage": "gateway_queue_accepted",
                                     "request_id": request_id,
-                                    "source_id": adapter_source_id,
-                                    "source_epoch": adapter_source_epoch,
-                                    "source_sequence": sample_sequence,
                                     "replaceable": True,
-                                    "sample_accepted": submission_accepted,
-                                    "sample_ack_expected": sample_metadata["sample_ack_expected"],
-                                    "sample_ack_scope": sample_metadata["sample_ack_scope"],
                                     "final_cmd_vel_confirmed": False,
                                     "motor_confirmed": False,
                                 }
                             )
                         )
-                elif msg_type == "stop":
-                    quiesced = False
-                    wrote_native = False
-                    stop_request_id = str(data.get("request_id") or "") or None
-                    stop_sequence = next_operator_sequence()
-                    native_stop_path = bool(getattr(gw, "_teleop_dds_enabled", False))
-                    if native_stop_path and stop_request_id is None:
-                        stop_request_id = f"{adapter_source_id}:stop:{stop_sequence}"
-                    final_cmd_vel_confirmed = False
-                    native_receipt = None
-                    try:
-
-                        def _stop_with_barrier(request_id=stop_request_id):
-                            held = quiesce_native_teleop(
-                                gw,
-                                source_id=adapter_source_id,
-                                source_epoch=adapter_source_epoch,
-                                sequence=stop_sequence,
-                                request_id=request_id,
-                                reason="websocket_stop",
-                            )
-                            wrote = native_stop(
-                                gw,
-                                "websocket_stop",
-                                request_id=request_id,
-                            )
-                            return held, wrote
-
-                        quiesced, wrote_native = await asyncio.to_thread(_stop_with_barrier)
-                        final_cmd_vel_confirmed = (
-                            _receipt_final_output_published(quiesced)
-                            if native_stop_path
-                            else quiesced is True
-                        )
-                        native_receipt = _receipt_payload(quiesced)
-                    except CommandBoundaryError as exc:
-                        await ws.send_text(
-                            json.dumps(
-                                {
-                                    "type": "control_rejected",
-                                    "error": "native_command_rejected",
-                                    "message": str(exc),
-                                }
-                            )
-                        )
-                        continue
-                    finally:
-                        if final_cmd_vel_confirmed and wrote_native is True:
-                            resume_native_teleop(gw)
-                    if native_stop_path and (
-                        wrote_native is not True or not final_cmd_vel_confirmed
-                    ):
-                        await ws.send_text(
-                            json.dumps(
-                                {
-                                    "type": "control_rejected",
-                                    "error": "native_stop_unconfirmed",
-                                    "request_id": stop_request_id,
-                                    "source_sequence": stop_sequence,
-                                    "final_cmd_vel_confirmed": final_cmd_vel_confirmed,
-                                    "motor_confirmed": False,
-                                    **({"native_receipt": native_receipt} if native_receipt is not None else {}),
-                                }
-                            )
-                        )
-                        continue
-                    if not native_stop_path:
-                        gw.stop_cmd.publish(2)
-                        if tm is not None:
-                            tm.force_release()
-                        else:
-                            gw.cmd_vel.publish(Twist())
+                else:
                     await ws.send_text(
                         json.dumps(
                             {
-                                "type": "control_ack",
-                                "action": "stop",
-                                "accepted": True,
-                                "request_id": stop_request_id,
-                                "source_sequence": stop_sequence,
-                                "stage": (
-                                    "native_stop_acknowledged"
-                                    if native_stop_path
-                                    else "local_zero_requested"
+                                "type": "control_rejected",
+                                "error": "unsupported_message",
+                                "message": "Web teleop accepts only velocity or hold input.",
+                                **(
+                                    {"request_id": str(data["request_id"])}
+                                    if data.get("request_id")
+                                    else {}
                                 ),
-                                "native_command_acknowledged": (
-                                    native_stop_path and wrote_native is True
-                                ),
-                                "final_cmd_vel_confirmed": final_cmd_vel_confirmed if native_stop_path else False,
-                                "motor_confirmed": False,
-                                **({"native_receipt": native_receipt} if native_stop_path and native_receipt is not None else {}),
-                            }
-                        )
-                    )
-                elif msg_type == "resume_autonomy":
-                    if not gw._lease.renew(lease_token, TELEOP_LEASE_TTL_S):
-                        await ws.send_text(
-                            json.dumps(
-                                {
-                                    "type": "control_rejected",
-                                    "error": "lease_lost",
-                                    "message": "Only the current teleoperation owner may resume autonomy.",
-                                }
-                            )
-                        )
-                        continue
-                    quiesced = False
-                    wrote_native = False
-                    resume_request_id = str(data.get("request_id") or "") or None
-                    resume_sequence = next_operator_sequence()
-                    if resume_request_id is None:
-                        resume_request_id = f"{adapter_source_id}:resume:{resume_sequence}"
-                    final_cmd_vel_confirmed = False
-                    native_receipt = None
-                    try:
-
-                        def _resume_with_barrier(request_id=resume_request_id):
-                            held = quiesce_native_teleop(
-                                gw,
-                                source_id=adapter_source_id,
-                                source_epoch=adapter_source_epoch,
-                                sequence=resume_sequence,
-                                request_id=request_id,
-                                reason="websocket_resume",
-                            )
-                            wrote = native_resume_autonomy(
-                                gw,
-                                "websocket_resume",
-                                request_id=request_id,
-                            )
-                            return held, wrote
-
-                        quiesced, wrote_native = await asyncio.to_thread(_resume_with_barrier)
-                        final_cmd_vel_confirmed = _receipt_final_output_published(quiesced)
-                        native_receipt = _receipt_payload(quiesced)
-                    except CommandBoundaryError as exc:
-                        await ws.send_text(
-                            json.dumps(
-                                {
-                                    "type": "control_rejected",
-                                    "error": "native_command_rejected",
-                                    "message": str(exc),
-                                }
-                            )
-                        )
-                        continue
-                    finally:
-                        if final_cmd_vel_confirmed and wrote_native is True:
-                            resume_native_teleop(gw)
-                    if not final_cmd_vel_confirmed or wrote_native is not True:
-                        await ws.send_text(
-                            json.dumps(
-                                {
-                                    "type": "control_rejected",
-                                    "error": "resume_autonomy_unconfirmed",
-                                    "request_id": resume_request_id,
-                                    "final_cmd_vel_confirmed": final_cmd_vel_confirmed,
-                                    "motor_confirmed": False,
-                                    **({"native_receipt": native_receipt} if native_receipt is not None else {}),
-                                }
-                            )
-                        )
-                        continue
-                    await ws.send_text(
-                        json.dumps(
-                            {
-                                "type": "control_ack",
-                                "action": "resume_autonomy",
-                                "accepted": True,
-                                "goal_reissue_required": True,
-                                "request_id": resume_request_id,
-                                "final_cmd_vel_confirmed": final_cmd_vel_confirmed,
-                                "motor_confirmed": False,
-                                **({"native_receipt": native_receipt} if native_receipt is not None else {}),
                             }
                         )
                     )
@@ -531,38 +262,21 @@ def register_realtime_routes(app, gw) -> None:
             if registry is not None:
                 registry.unregister(conn_id)
             client_count = gw._teleop_client_disconnected()
-            released_owner = gw._lease.release(lease_token)
-            if bool(getattr(gw, "_teleop_dds_enabled", False)) and (released_owner or client_count == 0):
-                try:
-                    released = release_teleop_on_disconnect(
-                        source_id=adapter_source_id,
-                        source_epoch=adapter_source_epoch,
-                        sequence=next_operator_sequence(),
-                        release_sequence=next_operator_sequence(),
-                        request_id=f"{adapter_source_id}:disconnect",
-                    )
-                except Exception as exc:
-                    logger.error("Teleop WS disconnect zero release failed: %s", exc)
-                    released = False
-                if not _receipt_final_output_published(released) and hasattr(gw, "push_event"):
-                    gw.push_event(
-                        {
-                            "type": "control_rejected",
-                            "data": {
-                                "error": "disconnect_zero_unconfirmed",
-                                "message": "Native endpoint did not acknowledge disconnect zero.",
-                                "client_id": client_id,
-                                **({"native_receipt": _receipt_payload(released)} if _receipt_payload(released) is not None else {}),
-                            },
-                        }
-                    )
-            elif tm is None and (released_owner or client_count == 0):
-                release_teleop_on_disconnect(
-                    source_id=adapter_source_id,
-                    source_epoch=adapter_source_epoch,
-                    sequence=next_operator_sequence(),
-                    release_sequence=next_operator_sequence(),
-                    request_id=f"{adapter_source_id}:disconnect",
+            try:
+                disconnected = session.disconnect(request_id=f"web-disconnect-{time.monotonic_ns()}")
+            except Exception as exc:
+                logger.error("Teleop WS disconnect zero release failed: %s", exc)
+                disconnected = TeleopSessionResult(False, "disconnect_failed")
+            if not disconnected.accepted and hasattr(gw, "push_event"):
+                gw.push_event(
+                    {
+                        "type": "control_rejected",
+                        "data": {
+                            "error": "disconnect_unconfirmed",
+                            "message": "Robot did not confirm the disconnect hold.",
+                            "client_id": client_id,
+                        },
+                    }
                 )
             if media_lifecycle is not None:
                 media_lifecycle.on_client_disconnect()
@@ -579,7 +293,7 @@ def register_realtime_routes(app, gw) -> None:
         registry = getattr(gw, "_ws_registry", None)
         if registry is not None:
             registry.register(conn_id, "/ws/camera", client_ip=client_ip)
-        tm = getattr(gw, "_camera_module", None) or gw._teleop_module
+        tm = getattr(gw, "_camera_module", None)
         if tm is not None and hasattr(tm, "on_camera_client_connect"):
             tm.on_camera_client_connect()
         try:

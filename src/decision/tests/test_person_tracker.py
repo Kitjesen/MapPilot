@@ -2,6 +2,7 @@
 
 import time
 
+import decision.vision.person as person_module
 from decision.vision.person import PersonTracker
 
 
@@ -51,6 +52,108 @@ class TestPersonTrackerUpdate:
         for label in ("person", "people", "human", "pedestrian"):
             tracker.reset()
             assert tracker.update([_person_obj(1, 1, label=label)]) is True
+
+    def test_different_non_empty_track_id_cannot_replace_the_locked_person_by_distance(self):
+        tracker = PersonTracker()
+        tracker.lock_target(
+            {
+                "id": "person-a",
+                "label": "person",
+                "position": [1.0, 0.0, 0.0],
+                "confidence": 0.9,
+                "ts": 20.0,
+            }
+        )
+
+        assert (
+            tracker.update(
+                [
+                    {
+                        "id": "person-b",
+                        "label": "person",
+                        "position": [1.2, 0.0, 0.0],
+                        "confidence": 0.9,
+                        "ts": 21.0,
+                    }
+                ]
+            )
+            is False
+        )
+        assert tracker._person.obj_id == "person-a"
+        assert tracker._person.position == [1.0, 0.0, 0.0]
+
+    def test_changed_track_id_requires_three_consistent_frames_to_reacquire(self):
+        tracker = PersonTracker()
+        tracker.lock_target(
+            {
+                "id": "person-a",
+                "label": "person",
+                "position": [1.0, 0.0, 0.0],
+                "confidence": 0.9,
+                "ts": 20.0,
+            }
+        )
+
+        for timestamp in (21.0, 22.0):
+            assert tracker.update(
+                [
+                    {
+                        "id": "person-b",
+                        "label": "person",
+                        "position": [1.1, 0.0, 0.0],
+                        "confidence": 0.9,
+                        "ts": timestamp,
+                    }
+                ]
+            ) is False
+            assert tracker._person.obj_id == "person-a"
+
+        assert tracker.update(
+            [
+                {
+                    "id": "person-b",
+                    "label": "person",
+                    "position": [1.2, 0.0, 0.0],
+                    "confidence": 0.9,
+                    "ts": 23.0,
+                }
+            ]
+        ) is True
+        assert tracker._person.obj_id == "person-b"
+
+    def test_two_nearby_new_tracks_do_not_replace_the_locked_person(self):
+        tracker = PersonTracker()
+        tracker.lock_target(
+            {
+                "id": "person-a",
+                "label": "person",
+                "position": [1.0, 0.0, 0.0],
+                "confidence": 0.9,
+                "ts": 20.0,
+            }
+        )
+
+        for timestamp in (21.0, 22.0, 23.0):
+            assert tracker.update(
+                [
+                    {
+                        "id": "person-b",
+                        "label": "person",
+                        "position": [1.1, 0.0, 0.0],
+                        "confidence": 0.9,
+                        "ts": timestamp,
+                    },
+                    {
+                        "id": "person-c",
+                        "label": "person",
+                        "position": [1.2, 0.0, 0.0],
+                        "confidence": 0.9,
+                        "ts": timestamp,
+                    },
+                ]
+            ) is False
+
+        assert tracker._person.obj_id == "person-a"
 
     def test_ema_smoothing(self):
         """Test ema smoothing."""
@@ -110,6 +213,14 @@ class TestPersonTrackerWaypoint:
 
             assert abs(wp["x"] - (10.0 - dist)) < 0.01
 
+    def test_person_inside_follow_distance_keeps_the_robot_in_place(self):
+        tracker = PersonTracker(follow_distance=1.5)
+        tracker.update([_person_obj(1.0, 0.0, 1.2)])
+
+        wp = tracker.get_follow_waypoint([0.0, 0.0, 0.2], predict_dt=0.0)
+
+        assert wp == {"x": 0.0, "y": 0.0, "z": 0.2}
+
 
 class TestPersonTrackerLostState:
     def test_is_lost_initially(self):
@@ -142,6 +253,61 @@ class TestPersonTrackerLostState:
 
 
 class TestVelocityPrediction:
+    def test_velocity_uses_source_observation_interval_not_callback_time(self, monkeypatch):
+        now = [100.0]
+        monkeypatch.setattr(person_module.time, "time", lambda: now[0])
+        tracker = PersonTracker()
+        first = _person_obj(0.0, 0.0)
+        first["id"] = "person-1"
+        first["ts"] = 20.0
+        tracker.update([first])
+
+        now[0] = 100.01
+        second = _person_obj(1.0, 0.0)
+        second["id"] = "person-1"
+        second["ts"] = 21.0
+        tracker.update([second])
+
+        assert tracker._person.velocity[0] == 0.3
+
+    def test_non_increasing_source_time_is_not_a_reliable_current_observation(
+        self,
+        monkeypatch,
+    ):
+        now = [100.0]
+        monkeypatch.setattr(person_module.time, "time", lambda: now[0])
+        tracker = PersonTracker()
+        tracker.lock_target(
+            {
+                "id": "person-1",
+                "label": "person",
+                "position": [1.0, 0.0, 0.0],
+                "confidence": 0.9,
+                "ts": 20.0,
+            }
+        )
+        original_last_seen = tracker._person.last_seen
+
+        now[0] = 101.0
+        assert (
+            tracker.update(
+                [
+                    {
+                        "id": "person-1",
+                        "label": "person",
+                        "position": [9.0, 0.0, 0.0],
+                        "confidence": 0.9,
+                        "ts": 20.0,
+                    }
+                ]
+            )
+            is False
+        )
+
+        assert tracker._person.position == [1.0, 0.0, 0.0]
+        assert tracker._person.velocity == [0.0, 0.0]
+        assert tracker._person.last_seen == original_last_seen
+
     def test_velocity_prediction(self):
         """Test velocity prediction."""
         tracker = PersonTracker(follow_distance=1.5)

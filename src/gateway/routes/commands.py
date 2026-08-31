@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
 import time
 from typing import Any
 
@@ -13,7 +12,6 @@ from fastapi.responses import JSONResponse
 from gateway.schemas import (
     CancelRequest,
     ClickNavRequest,
-    CmdVelRequest,
     ControlCommandResponse,
     GatewayErrorResponse,
     GoalCandidateRequest,
@@ -43,15 +41,17 @@ from gateway.services.native_control import (
     clear_estop as native_clear_estop,
 )
 from gateway.services.native_control import (
-    endpoint_only_enabled,
-)
-from gateway.services.native_control import (
     estop as native_estop,
 )
 from gateway.services.native_control import (
-    resume_autonomy as native_resume_autonomy,
+    motion_resume_context as native_motion_resume_context,
 )
-from runtime.msgs.geometry import Twist, Vector3
+from gateway.services.native_control import (
+    motion_resume_result as native_motion_resume_result,
+)
+from gateway.services.native_control import (
+    resume_control as native_resume_control,
+)
 
 CONTROL_COMMAND_ERROR_RESPONSES = {
     409: {"model": GatewayErrorResponse},
@@ -61,20 +61,6 @@ LEASE_ERROR_RESPONSES = {
     403: {"model": GatewayErrorResponse},
     409: {"model": GatewayErrorResponse},
 }
-
-
-def _native_commands_required(gw: Any | None = None) -> bool:
-    required_by_env = os.environ.get("LINGTU_NAV_COMMANDS_REQUIRED", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    try:
-        required = required_by_env or endpoint_only_enabled(gw)
-    except ValueError as exc:
-        raise CommandBoundaryError(str(exc)) from exc
-    return required
 
 
 def _publish_goal(
@@ -91,10 +77,7 @@ def _publish_goal(
         return dict(result)
     if result is True:
         return {"accepted": True, "success": True, "task_id": task_id}
-    if _native_commands_required(gw):
-        raise CommandBoundaryError("goal service is unavailable")
-    gw.goal_pose.publish(typed_goal)
-    return {"accepted": True, "success": True, "task_id": task_id}
+    raise CommandBoundaryError("goal service is unavailable")
 
 
 def _new_navigation_task_id() -> str:
@@ -107,11 +90,6 @@ def _new_navigation_request_id(action: str) -> str:
 
 def _active_navigation_task_id(gw: Any) -> str | None:
     with getattr(gw, "_state_lock", contextlib.nullcontext()):
-        mission = getattr(gw, "_mission", None)
-        if isinstance(mission, dict):
-            task_id = str(mission.get("active_task_id") or mission.get("task_id") or "").strip()
-            if task_id:
-                return task_id
         native_state = getattr(gw, "_navigation_state", None)
         if isinstance(native_state, dict):
             task_id = str(native_state.get("active_task_id") or "").strip()
@@ -131,7 +109,7 @@ def register_command_routes(app, gw) -> None:
         response_model=PlanPreviewResponse,
     )
     async def post_navigation_plan(body: PlanPreviewRequest):
-        return await asyncio.to_thread(command_service.preview_navigation_plan, body)
+        return await asyncio.to_thread(command_service.preview_plan, body)
 
     @app.post(
         "/api/v1/navigation/goal_candidate",
@@ -164,10 +142,21 @@ def register_command_routes(app, gw) -> None:
         status = "constructed"
         if body.preview:
             preview = await asyncio.to_thread(
-                command_service.preview_navigation_plan,
-                goal.preview_request(client_id=body.client_id),
+                command_service.preview_plan,
+                goal.preview_request(),
             )
             reasons = list(preview.get("reasons") or [])
+            if preview.get("ok") is not True:
+                return {
+                    "schema_version": 1,
+                    "ok": False,
+                    "status": "preview_unavailable",
+                    "target": goal.target_payload(ts=ts),
+                    "preview": preview,
+                    "reasons": reasons,
+                    "error": preview.get("error") or "preview_unavailable",
+                    "ts": ts,
+                }
             status = "preview_feasible" if bool(preview.get("feasible", False)) else "preview_infeasible"
 
         return {
@@ -268,48 +257,6 @@ def register_command_routes(app, gw) -> None:
         )
 
     @app.post(
-        "/api/v1/cmd_vel",
-        summary="Direct velocity command",
-        response_model=ControlCommandResponse,
-        responses=CONTROL_COMMAND_ERROR_RESPONSES,
-    )
-    async def post_cmd_vel(body: CmdVelRequest):
-        def _publish() -> dict[str, Any]:
-            twist = Twist(
-                linear=Vector3(body.vx, body.vy, 0),
-                angular=Vector3(0, 0, body.wz),
-            )
-            adapter_reported_write = False
-            if hasattr(gw, "publish_remote_velocity_request"):
-                adapter_reported_write = bool(
-                    gw.publish_remote_velocity_request(
-                        twist,
-                        request_id=body.request_id,
-                    )
-                )
-            else:
-                gw.cmd_vel.publish(twist)
-            return {
-                "accepted": True,
-                "status": "ok",
-                "stage": "source_request_accepted",
-                "source_request_accepted": True,
-                "adapter_reported_write": adapter_reported_write,
-                "endpoint_submission_confirmed": False,
-                "execution_confirmed": False,
-                "final_output_confirmed": False,
-                "dds": False,
-                "teleop_cmd_vel_dds": False,
-            }
-
-        return await asyncio.to_thread(
-            command_service.run_motion_guarded_command,
-            "cmd_vel",
-            body,
-            _publish,
-        )
-
-    @app.post(
         "/api/v1/stop",
         summary="Emergency stop",
         response_model=ControlCommandResponse,
@@ -323,17 +270,14 @@ def register_command_routes(app, gw) -> None:
                 "rest_emergency_stop",
                 request_id=request_id,
             )
-            if not wrote_dds and bool(getattr(gw, "_teleop_dds_enabled", False)):
-                raise CommandBoundaryError("native stop command boundary is unavailable")
             if not wrote_dds:
-                gw.stop_cmd.publish(2)
-                gw.cmd_vel.publish(Twist())
+                raise CommandBoundaryError("native stop command boundary is unavailable")
             return {
                 "accepted": True,
                 "status": "stopped",
-                "stage": "native_acknowledged" if wrote_dds else "local_published",
+                "stage": "native_acknowledged",
                 "dds": wrote_dds,
-                "native_control": "estop" if wrote_dds else "local_compat",
+                "native_control": "estop",
             }
 
         try:
@@ -408,14 +352,12 @@ def register_command_routes(app, gw) -> None:
                 request_id=command_body.request_id,
             )
             if not wrote_native:
-                if _native_commands_required(gw):
-                    raise CommandBoundaryError("goal service is unavailable")
-                gw.cancel.publish(command_body.reason)
+                raise CommandBoundaryError("goal service is unavailable")
             ack = dict(wrote_native) if isinstance(wrote_native, dict) else {}
             return {
                 "accepted": True,
                 "status": "cancel_requested",
-                "stage": "native_acknowledged" if wrote_native else "local_published",
+                "stage": "native_acknowledged",
                 "reason": command_body.reason,
                 "task_id": ack.get("task_id") or task_id,
                 "native_request_id": ack.get("native_request_id"),
@@ -615,7 +557,7 @@ def register_command_routes(app, gw) -> None:
 
     @app.post(
         "/api/v1/navigation/resume",
-        summary="Release manual takeover and require a fresh navigation goal/path",
+        summary="Release a native motion hold without replaying previous motion",
         response_model=ControlCommandResponse,
         responses=CONTROL_COMMAND_ERROR_RESPONSES,
     )
@@ -626,10 +568,10 @@ def register_command_routes(app, gw) -> None:
                 "navigation_resume",
                 body,
                 error="control_lease",
-                message="Only the active control owner may resume autonomy.",
+                message="Only the active control owner may resume motion control.",
                 detail=command_service.command_error_detail(
                     reason_code="control_lease",
-                    reason="Only the active control owner may resume autonomy.",
+                    reason="Only the active control owner may resume motion control.",
                     source="control_lease",
                     path="/api/v1/lease",
                     blockers=["control_lease"],
@@ -640,19 +582,21 @@ def register_command_routes(app, gw) -> None:
 
         def _publish() -> dict[str, Any]:
             request_id = body.request_id if body is not None else None
-            wrote_dds = native_resume_autonomy(
+            resume_context = native_motion_resume_context()
+            resume_delivery = native_resume_control(
                 gw,
                 "operator_resume",
                 request_id=request_id,
             )
-            if not wrote_dds and bool(getattr(gw, "_teleop_dds_enabled", False)):
-                raise CommandBoundaryError("native autonomy resume boundary is unavailable")
+            if resume_delivery is False:
+                raise CommandBoundaryError("native motion resume boundary is unavailable")
             return {
                 "accepted": True,
-                "status": "autonomy_resume_ready",
-                "stage": "native_acknowledged" if wrote_dds else "local_compat_ready",
-                "dds": wrote_dds,
-                "goal_reissue_required": True,
+                "status": "motion_resume_acknowledged",
+                "stage": "native_acknowledged",
+                "dds": True,
+                **native_motion_resume_result(resume_delivery, resume_context),
+                "previous_motion_restored": False,
             }
 
         try:
@@ -668,7 +612,7 @@ def register_command_routes(app, gw) -> None:
                 "navigation_resume",
                 body,
                 error="native_command_rejected",
-                message="Native navigation endpoint rejected autonomy resume.",
+                message=f"Native motion resume was rejected: {reason}",
                 detail=command_service.command_error_detail(
                     reason_code="native_command_rejected",
                     reason=reason,
@@ -702,13 +646,14 @@ def register_command_routes(app, gw) -> None:
 
     @app.post(
         "/api/v1/visual_servo",
-        summary="Hot-switch visual servo target",
+        summary="Set visual servo target",
         response_model=ControlCommandResponse,
         responses=CONTROL_COMMAND_ERROR_RESPONSES,
     )
     async def post_visual_servo(body: VisualServoRequest):
         modules = getattr(gw, "_all_modules", {}) or {}
-        if modules.get("VisualServoModule") is None:
+        visual_servo = modules.get("VisualServoModule")
+        if visual_servo is None:
             return command_service.rejected_response(
                 "visual_servo",
                 body,
@@ -718,12 +663,52 @@ def register_command_routes(app, gw) -> None:
                     reason_code="visual_servo_unavailable",
                     reason="VisualServoModule is not loaded in the current runtime profile.",
                     source="gateway_modules",
-                    path="/api/v1/runtime/switch-plan",
                     blockers=["visual_servo_unavailable"],
                 ),
             )
 
-        servo_target = "stop" if body.mode == "stop" else f"{body.mode}:{body.target}"
+        if body.mode != "stop":
+            perception = modules.get("PerceptionModule")
+            perception_health = (
+                perception.health()
+                if perception is not None and callable(getattr(perception, "health", None))
+                else {}
+            )
+            if perception_health.get("detector_ready") is not True:
+                return command_service.rejected_response(
+                    "visual_servo",
+                    body,
+                    error="visual_perception_unavailable",
+                    message="Current perception detector is unavailable.",
+                    detail=command_service.command_error_detail(
+                        reason_code="visual_perception_unavailable",
+                        reason="Current perception detector is unavailable.",
+                        source="perception_health",
+                        blockers=["visual_perception_unavailable"],
+                    ),
+                )
+            if body.mode == "follow" and not body.target_id:
+                can_select = getattr(visual_servo, "can_select_follow_target", None)
+                if not callable(can_select) or not can_select():
+                    return command_service.rejected_response(
+                        "visual_servo",
+                        body,
+                        error="target_selection_unavailable",
+                        message="Descriptive person selection is unavailable.",
+                        detail=command_service.command_error_detail(
+                            reason_code="target_selection_unavailable",
+                            reason="Descriptive person selection is unavailable.",
+                            source="visual_servo",
+                            blockers=["target_selection_unavailable"],
+                        ),
+                    )
+
+        if body.mode == "stop":
+            servo_target = "stop"
+        elif body.target_id:
+            servo_target = f"follow_id:{body.target_id}"
+        else:
+            servo_target = f"{body.mode}:{body.target}"
 
         def _publish() -> dict[str, Any]:
             gw.servo_target.publish(servo_target)
@@ -734,6 +719,7 @@ def register_command_routes(app, gw) -> None:
                 "execution_confirmed": False,
                 "mode": body.mode,
                 "visual_target": body.target,
+                "visual_target_id": body.target_id,
                 "servo_target": servo_target,
             }
 
@@ -759,11 +745,8 @@ def register_command_routes(app, gw) -> None:
                     "mode_estop",
                     request_id=body.request_id,
                 )
-                if not wrote_dds and bool(getattr(gw, "_teleop_dds_enabled", False)):
-                    raise CommandBoundaryError("native estop command boundary is unavailable")
                 if not wrote_dds:
-                    gw.stop_cmd.publish(2)
-                    gw.cmd_vel.publish(Twist())
+                    raise CommandBoundaryError("native estop command boundary is unavailable")
             with gw._state_lock:
                 gw._mode = body.mode
             gw.mode_cmd.publish(body.mode)
@@ -810,7 +793,7 @@ def register_command_routes(app, gw) -> None:
                 "operator_reset",
                 request_id=request_id,
             )
-            if not wrote_dds and bool(getattr(gw, "_teleop_dds_enabled", False)):
+            if not wrote_dds:
                 raise CommandBoundaryError("native estop reset boundary is unavailable")
             with gw._state_lock:
                 if gw._mode == "estop":
@@ -818,7 +801,7 @@ def register_command_routes(app, gw) -> None:
             return {
                 "accepted": True,
                 "status": "estop_cleared",
-                "stage": "native_acknowledged" if wrote_dds else "local_state_updated",
+                "stage": "native_acknowledged",
                 "dds": wrote_dds,
                 "mode": gw._mode,
             }

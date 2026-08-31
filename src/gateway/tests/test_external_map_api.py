@@ -11,9 +11,78 @@ from types import SimpleNamespace
 
 import pytest
 
+from gateway.schemas import MapSaveRequest
+
 
 def _endpoint(app, path: str):
     return next(route.endpoint for route in app.routes if route.path == path)
+
+
+def test_save_map_schema_rejects_public_optimizer_selection():
+    with pytest.raises(ValueError):
+        MapSaveRequest.model_validate({"name": "warehouse", "optimization": "auto"})
+
+
+def test_save_map_accepts_the_validated_http_request(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import gateway.routes.maps as map_routes
+
+    monkeypatch.setattr(
+        map_routes,
+        "_mapd_command",
+        lambda _gw, payload: {
+            "success": False,
+            "accepted": True,
+            "status": "running",
+            "request_id": payload["request_id"],
+            "job_id": "save_job_1",
+        },
+    )
+    app = FastAPI()
+    map_routes.register_map_routes(
+        app,
+        SimpleNamespace(_get_slam_profile=lambda: "native_dds"),
+    )
+
+    response = TestClient(app).post(
+        "/api/v1/map/save",
+        json={"name": "warehouse", "request_id": "request_1"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["operation_id"] == "save_job_1"
+
+
+def test_save_map_does_not_expose_optimizer_selection(monkeypatch):
+    from fastapi import FastAPI
+
+    import gateway.routes.maps as map_routes
+
+    captured: dict = {}
+
+    def submit(_gw, payload):
+        captured.update(payload)
+        return {
+            "success": False,
+            "status": "running",
+            "job_id": "save_job_1",
+            "job": {"state": "RUNNING"},
+        }
+
+    monkeypatch.setattr(map_routes, "_mapd_command", submit)
+    app = FastAPI()
+    map_routes.register_map_routes(
+        app,
+        SimpleNamespace(_get_slam_profile=lambda: "native_dds"),
+    )
+
+    response = asyncio.run(_endpoint(app, "/api/v1/map/save")({"name": "warehouse"}))
+
+    assert response.status_code == 202
+    assert "map_opt" not in captured
+    assert "optimization" not in captured
 
 
 def _payload(response) -> dict:
@@ -22,11 +91,11 @@ def _payload(response) -> dict:
 
 _PRIVATE_OPERATION_KEYS = {
     "capture_dir",
-    "version_dir",
-    "manifest_path",
     "source_report",
     "artifact_report",
     "map_dir",
+    "version",
+    "map_content_epoch",
     "manifest",
     "pcd",
     "occupancy",
@@ -59,7 +128,6 @@ def _private_operation_status() -> dict:
         "job_id": "save_job_1",
         "request_id": "save_job_1",
         "map_id": "warehouse",
-        "version": 3,
         "state": "RUNNING",
         "phase": "BUILD_ARTIFACTS",
         "progress": 0.6,
@@ -67,8 +135,7 @@ def _private_operation_status() -> dict:
         "created_at_ns": 10,
         "updated_at_ns": 20,
         "capture_dir": "/home/sunrise/data/lingtu/maps/.jobs/save_job_1/capture",
-        "version_dir": "/home/sunrise/data/lingtu/maps/warehouse/versions/3",
-        "manifest_path": "/home/sunrise/data/lingtu/maps/warehouse/versions/3/manifest.json",
+        "map_dir": "/home/sunrise/data/lingtu/maps/warehouse",
         "source_report": {
             "source": "/home/sunrise/private/raw.pcd",
             "record": {"path": "/home/sunrise/private/record.json"},
@@ -86,7 +153,7 @@ def test_save_map_response_recursively_hides_native_paths(monkeypatch):
 
     monkeypatch.setattr(
         map_routes,
-        "_map_service_command",
+        "_mapd_command",
         lambda _gw, _payload: {
             "success": False,
             "accepted": True,
@@ -120,7 +187,7 @@ def test_save_map_running_job_returns_stable_accepted_response(monkeypatch):
 
     monkeypatch.setattr(
         map_routes,
-        "_map_service_command",
+        "_mapd_command",
         lambda _gw, _payload: {
             "success": False,
             "status": "running",
@@ -153,7 +220,7 @@ def test_save_map_exposes_operation_identity_not_worker_job(monkeypatch):
 
     monkeypatch.setattr(
         map_routes,
-        "_map_service_command",
+        "_mapd_command",
         lambda _gw, _payload: {
             "success": False,
             "accepted": True,
@@ -223,7 +290,7 @@ def test_map_operation_translates_native_job_reason_codes(monkeypatch):
 
     monkeypatch.setattr(
         map_routes,
-        "_map_service_command",
+        "_mapd_command",
         lambda _gw, _request: {
             "success": False,
             "reason_code": "job_not_found",
@@ -241,63 +308,6 @@ def test_map_operation_translates_native_job_reason_codes(monkeypatch):
     assert payload["message"] == "Map-save operation was not found."
 
 
-def test_field_product_rejects_direct_map_activation(monkeypatch):
-    from fastapi import FastAPI
-
-    import gateway.routes.maps as map_routes
-
-    def fail_if_activated(*_args, **_kwargs):
-        raise AssertionError("field map selection must remain owned by ProductControl")
-
-    monkeypatch.setattr(map_routes, "activate_runtime_map", fail_if_activated)
-    gateway = SimpleNamespace(
-        _compiled_run_plan=SimpleNamespace(process_control="systemd"),
-    )
-    app = FastAPI()
-    map_routes.register_map_routes(app, gateway)
-
-    response = asyncio.run(_endpoint(app, "/api/v1/map/activate")({"name": "warehouse"}))
-    payload = _payload(response)
-
-    assert response.status_code == 409
-    assert payload["ok"] is False
-    assert payload["success"] is False
-    assert payload["reason_code"] == "product_map_switch_required"
-    assert payload["requested_map"] == "warehouse"
-    assert payload["switch_plan"] == "/api/v1/runtime/switch-plan"
-    assert "operator_command" not in payload
-
-
-def test_field_map_activation_returns_exact_product_control_command(monkeypatch):
-    from fastapi import FastAPI
-
-    import gateway.routes.maps as map_routes
-
-    def fail_if_activated(*_args, **_kwargs):
-        raise AssertionError("field map selection must remain owned by ProductControl")
-
-    monkeypatch.setattr(map_routes, "activate_runtime_map", fail_if_activated)
-    gateway = SimpleNamespace(
-        _compiled_run_plan=SimpleNamespace(
-            process_control="systemd",
-            product="map",
-            env="real",
-        ),
-    )
-    app = FastAPI()
-    map_routes.register_map_routes(app, gateway)
-
-    response = asyncio.run(_endpoint(app, "/api/v1/map/activate")({"name": "warehouse"}))
-    payload = _payload(response)
-
-    assert response.status_code == 409
-    assert payload["switch_plan"] == "/api/v1/runtime/switch-plan"
-    assert payload["operator_command"] == (
-        "python -m lingtu.control switch nav --env real "
-        "--current map --map warehouse --relocalize"
-    )
-
-
 def test_public_map_list_hides_internal_entries_and_paths(monkeypatch):
     from fastapi import FastAPI
 
@@ -305,21 +315,23 @@ def test_public_map_list_hides_internal_entries_and_paths(monkeypatch):
 
     monkeypatch.setattr(
         map_routes,
-        "_map_service_command",
+        "_mapd_command",
         lambda _gw, _payload: {
             "success": True,
             "active": "warehouse",
             "map_dir": "/home/sunrise/data/lingtu/maps",
             "maps": [
-                {
-                    "name": ".codex_backups",
-                    "has_pcd": True,
-                    "record": {"path": "/home/sunrise/private/backup.json"},
-                },
+                    {
+                        "name": ".codex_backups",
+                        "has_pcd": True,
+                        "can_activate": False,
+                        "record": {"path": "/home/sunrise/private/backup.json"},
+                    },
                 {
                     "name": "warehouse",
-                    "has_pcd": True,
-                    "has_octomap": True,
+                        "has_pcd": True,
+                        "has_octomap": True,
+                        "can_activate": True,
                     "state": "/home/sunrise/secret",
                     "record": {"path": "/home/sunrise/private/map_record.json"},
                     "artifacts": [{"path": "/home/sunrise/data/lingtu/maps/warehouse/map.pcd"}],
@@ -353,14 +365,14 @@ def test_delete_saved_map_uses_customer_lifecycle_contract(monkeypatch):
     def fake_command(_gw, request):
         calls.append(dict(request))
         return {
-            "action": "delete",
+            "action": "delete_map",
             "success": True,
             "map_id": "warehouse",
             "message": "deleted /home/sunrise/data/lingtu/maps/warehouse",
             "map_dir": "/home/sunrise/data/lingtu/maps/warehouse",
         }
 
-    monkeypatch.setattr(map_routes, "_map_service_command", fake_command)
+    monkeypatch.setattr(map_routes, "_mapd_command", fake_command)
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
 
@@ -368,13 +380,45 @@ def test_delete_saved_map_uses_customer_lifecycle_contract(monkeypatch):
     payload = response.json()
 
     assert response.status_code == 200
-    assert calls == [{"action": "delete", "name": "warehouse"}]
+    assert calls == [{"action": "delete_map", "map_id": "warehouse"}]
     assert payload["ok"] is True
     assert payload["success"] is True
     assert payload["name"] == "warehouse"
     assert payload["message"] == "Map deleted."
     assert {"action", "map_id", "map_dir"}.isdisjoint(payload)
     assert "/home/sunrise" not in json.dumps(payload)
+
+
+def test_build_saved_map_octomap_hides_native_paths(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import gateway.routes.maps as map_routes
+
+    monkeypatch.setattr(
+        map_routes,
+        "_mapd_command",
+        lambda _gw, request: {
+            "action": request["action"],
+            "success": True,
+            "map_id": request["map_id"],
+            "map_dir": "/var/lib/lingtu/maps/warehouse",
+            "octomap": "/var/lib/lingtu/maps/warehouse/octomap.ot",
+            "message": "wrote /var/lib/lingtu/maps/warehouse/octomap.ot",
+        },
+    )
+    app = FastAPI()
+    map_routes.register_map_routes(app, SimpleNamespace())
+
+    response = TestClient(app).post("/api/v1/maps/warehouse/build_octomap")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["name"] == "warehouse"
+    assert payload["message"] == "OctoMap built."
+    assert {"action", "map_id", "map_dir", "octomap"}.isdisjoint(payload)
+    assert "/var/lib/lingtu" not in json.dumps(payload)
 
 
 def test_build_saved_map_occupancy_uses_customer_lifecycle_contract(monkeypatch):
@@ -395,7 +439,7 @@ def test_build_saved_map_occupancy_uses_customer_lifecycle_contract(monkeypatch)
             "message": "wrote /home/sunrise/data/lingtu/maps/warehouse/occupancy.npz",
         }
 
-    monkeypatch.setattr(map_routes, "_map_service_command", fake_command)
+    monkeypatch.setattr(map_routes, "_mapd_command", fake_command)
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
 
@@ -403,7 +447,7 @@ def test_build_saved_map_occupancy_uses_customer_lifecycle_contract(monkeypatch)
     payload = response.json()
 
     assert response.status_code == 200
-    assert calls == [{"action": "build_occupancy", "name": "warehouse"}]
+    assert calls == [{"action": "build_occupancy_snapshot", "map_id": "warehouse"}]
     assert payload["ok"] is True
     assert payload["success"] is True
     assert payload["name"] == "warehouse"
@@ -433,7 +477,7 @@ def test_named_map_mutations_reject_reserved_operation_namespace(
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("reserved map names must fail before maps.service")
 
-    monkeypatch.setattr(map_routes, "_map_service_command", fail_if_called)
+    monkeypatch.setattr(map_routes, "_mapd_command", fail_if_called)
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
 
@@ -460,7 +504,7 @@ def test_save_map_keeps_gateway_event_loop_responsive(monkeypatch):
             "job_id": "save_job_1",
         }
 
-    monkeypatch.setattr(map_routes, "_map_service_command", slow_save)
+    monkeypatch.setattr(map_routes, "_mapd_command", slow_save)
     gateway = SimpleNamespace(_get_slam_profile=lambda: "native_dds")
     app = FastAPI()
     map_routes.register_map_routes(app, gateway)
@@ -480,23 +524,23 @@ def test_save_map_keeps_gateway_event_loop_responsive(monkeypatch):
 @pytest.mark.parametrize(
     ("path", "action", "args"),
     [
-        ("/api/v1/slam/maps", "list", ()),
-        ("/api/v1/maps/{name}", "delete", ("warehouse",)),
+        ("/api/v1/slam/maps", "list_maps", ()),
+        ("/api/v1/maps/{name}", "delete_map", ("warehouse",)),
         (
             "/api/v1/maps/{name}/build_occupancy",
-            "build_occupancy",
+            "build_occupancy_snapshot",
             ("warehouse",),
         ),
-        ("/api/v1/maps/operations", "list_save_jobs", ()),
-        ("/api/v1/maps/operations/{operation_id}", "save_status", ("save_job_1",)),
+        ("/api/v1/maps/operations", "list_save_map_jobs", ()),
+        ("/api/v1/maps/operations/{operation_id}", "get_save_map_status", ("save_job_1",)),
         (
             "/api/v1/maps/operations/{operation_id}/cancel",
-            "cancel_save",
+            "cancel_save_map",
             ("save_job_1",),
         ),
         (
             "/api/v1/maps/operations/{operation_id}/retry",
-            "retry_save",
+            "retry_save_map",
             ("save_job_1",),
         ),
     ],
@@ -519,15 +563,15 @@ def test_customer_map_queries_keep_gateway_event_loop_responsive(
         assert request["action"] == action
         command_started.set()
         released_while_waiting.append(release_command.wait(timeout=0.5))
-        if action == "list":
+        if action == "list_maps":
             return {"success": True, "active": "", "maps": []}
-        if action == "list_save_jobs":
+        if action == "list_save_map_jobs":
             return {"success": True, "jobs": [], "count": 0}
-        if action == "save_status":
+        if action == "get_save_map_status":
             return {"success": True, "status": {"state": "RUNNING"}}
         return {"success": True, "accepted": True, "job_id": "save_job_1"}
 
-    monkeypatch.setattr(map_routes, "_map_service_command", slow_command)
+    monkeypatch.setattr(map_routes, "_mapd_command", slow_command)
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
 
@@ -570,7 +614,7 @@ def test_map_operation_detail_route_wins_over_named_map_artifact_routes(
 
     def fake_command(_gw, request):
         calls.append(dict(request))
-        if request["action"] == "save_status":
+        if request["action"] == "get_save_map_status":
             return {
                 "success": True,
                 "job_id": operation_id,
@@ -602,16 +646,16 @@ def test_map_operation_detail_route_wins_over_named_map_artifact_routes(
 
     gateway = SimpleNamespace(
         _cloud_viewer=CloudViewer(),
-        _active_map_from_maps_service=lambda: "operations",
+        _active_map_from_mapd=lambda: "operations",
     )
-    monkeypatch.setattr(map_routes, "_map_service_command", fake_command)
+    monkeypatch.setattr(map_routes, "_mapd_command", fake_command)
     app = FastAPI()
     map_routes.register_map_routes(app, gateway)
 
     response = TestClient(app, raise_server_exceptions=False).get(f"/api/v1/maps/operations/{operation_id}")
 
     assert response.status_code == 200
-    assert calls == [{"action": "save_status", "job_id": operation_id}]
+    assert calls == [{"action": "get_save_map_status", "job_id": operation_id}]
     assert response.json()["operation_id"] == operation_id
 
 
@@ -623,7 +667,7 @@ def test_map_save_rejects_reserved_operation_namespace(monkeypatch):
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("reserved map names must fail before reaching maps.service")
 
-    monkeypatch.setattr(map_routes, "_map_service_command", fail_if_called)
+    monkeypatch.setattr(map_routes, "_mapd_command", fail_if_called)
     app = FastAPI()
     map_routes.register_map_routes(
         app,
@@ -656,7 +700,7 @@ def test_map_save_stops_before_map_service_when_explore_is_not_safely_parked(
             "message": "The native endpoint still owns motion.",
         },
     )
-    monkeypatch.setattr(map_routes, "_map_service_command", fail_if_called)
+    monkeypatch.setattr(map_routes, "_mapd_command", fail_if_called)
     app = FastAPI()
     map_routes.register_map_routes(
         app,
@@ -691,10 +735,10 @@ def test_map_save_operation_schema_exposes_only_customer_fields():
 @pytest.mark.parametrize(
     ("path", "action", "expected_status"),
     [
-        ("/api/v1/maps/operations", "list_save_jobs", 200),
-        ("/api/v1/maps/operations/{operation_id}", "save_status", 200),
-        ("/api/v1/maps/operations/{operation_id}/cancel", "cancel_save", 200),
-        ("/api/v1/maps/operations/{operation_id}/retry", "retry_save", 202),
+        ("/api/v1/maps/operations", "list_save_map_jobs", 200),
+        ("/api/v1/maps/operations/{operation_id}", "get_save_map_status", 200),
+        ("/api/v1/maps/operations/{operation_id}/cancel", "cancel_save_map", 200),
+        ("/api/v1/maps/operations/{operation_id}/retry", "retry_save_map", 202),
     ],
 )
 def test_map_operation_routes_recursively_hide_native_paths(
@@ -719,21 +763,25 @@ def test_map_operation_routes_recursively_hide_native_paths(
             "message": "read /home/sunrise/private/job.state",
             "map_dir": "/home/sunrise/data/lingtu/maps/warehouse",
         }
-        if action == "list_save_jobs":
+        if action == "list_save_map_jobs":
             return {**common, "jobs": [status], "count": 1}
         return {**common, "status": status}
 
-    monkeypatch.setattr(map_routes, "_map_service_command", fake_command)
+    monkeypatch.setattr(map_routes, "_mapd_command", fake_command)
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
     endpoint = _endpoint(app, path)
 
-    response = asyncio.run(endpoint()) if action == "list_save_jobs" else asyncio.run(endpoint("save_job_1"))
+    response = (
+        asyncio.run(endpoint())
+        if action == "list_save_map_jobs"
+        else asyncio.run(endpoint("save_job_1"))
+    )
     payload = _payload(response)
 
     assert response.status_code == expected_status
     assert payload["operation_id"] == "save_job_1"
-    item = payload["operations"][0] if action == "list_save_jobs" else payload["operation"]
+    item = payload["operations"][0] if action == "list_save_map_jobs" else payload["operation"]
     assert item["state"] == "RUNNING"
     assert item["phase"] == "BUILD_ARTIFACTS"
     _assert_external_operation_payload_is_path_free(payload)
@@ -746,11 +794,11 @@ def test_public_map_list_hides_invalid_active_map(monkeypatch):
 
     monkeypatch.setattr(
         map_routes,
-        "_map_service_command",
+        "_mapd_command",
         lambda _gw, _payload: {
             "success": True,
             "active": ".codex_backups",
-            "maps": [{"name": "warehouse", "has_pcd": True}],
+            "maps": [{"name": "warehouse", "has_pcd": True, "can_activate": True}],
         },
     )
     app = FastAPI()
@@ -772,7 +820,7 @@ def test_pcd_errors_never_echo_native_paths(monkeypatch, error_kind, expected_re
     from fastapi import FastAPI, HTTPException
 
     import gateway.routes.maps as map_routes
-    from maps.client import MapClientError
+    from runtime.endpoints.mapd import MapClientError
 
     error = (
         MapClientError("unexpected_native_error", "failed at /run/lingtu-mapd/mapd.sock")

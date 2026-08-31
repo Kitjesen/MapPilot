@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import time
@@ -25,7 +24,7 @@ def _request(**overrides: Any) -> InspectionEvidenceRequest:
         "route_id": "route-main",
         "route_revision": 7,
         "map_id": "field-map",
-        "map_version": 4,
+        "map_content_epoch": 4,
         "point_id": "point-01",
         "point_index": 0,
         "request_id": "request-001",
@@ -66,7 +65,7 @@ def test_overview_commit_persists_auditable_artifacts_and_manifest(tmp_path: Pat
         "action": "capture:overview",
         "deadline_s": 1_720_000_010.0,
         "map_id": "field-map",
-        "map_version": 4,
+        "map_content_epoch": 4,
         "point_id": "point-01",
         "point_index": 0,
         "request_id": "request-001",
@@ -89,14 +88,14 @@ def test_overview_commit_persists_auditable_artifacts_and_manifest(tmp_path: Pat
     for name, record in artifact_by_name.items():
         payload = (result.evidence_dir / name).read_bytes()
         assert record["bytes"] == len(payload)
-        assert record["sha256"] == hashlib.sha256(payload).hexdigest()
+        assert set(record) == {"kind", "path", "media_type", "bytes"}
 
-    manifest_bytes = result.manifest_path.read_bytes()
-    expected_manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
-    assert result.manifest_sha256 == expected_manifest_hash
-    assert (result.evidence_dir / "manifest.sha256").read_text(encoding="ascii") == (
-        expected_manifest_hash + "\n"
-    )
+    assert {path.name for path in result.evidence_dir.iterdir()} == {
+        "manifest.json",
+        "rgb.jpg",
+        "pose.json",
+        "detections.json",
+    }
     assert not list((tmp_path / "requests").glob(".staging-*"))
 
 
@@ -107,7 +106,7 @@ def test_request_mapping_is_supported_and_rejects_unknown_fields(tmp_path: Path)
         "route_id": "route-main",
         "route_revision": 7,
         "map_id": "field-map",
-        "map_version": 4,
+        "map_content_epoch": 4,
         "point_id": "point-01",
         "point_index": 0,
         "request_id": "request-mapping",
@@ -133,7 +132,6 @@ def test_same_request_id_is_idempotent_and_conflicting_identity_is_rejected(
 
     second = store.persist(request, rgb_bytes=b"different retry body", media_type="image/png")
 
-    assert second.manifest_sha256 == first.manifest_sha256
     assert second.manifest_path.read_bytes() == first_manifest
     assert (second.evidence_dir / "rgb.png").read_bytes() == b"first"
 
@@ -142,7 +140,7 @@ def test_same_request_id_is_idempotent_and_conflicting_identity_is_rejected(
         {"route_id": "route-alternate"},
         {"route_revision": 8},
         {"map_id": "field-map-v2"},
-        {"map_version": 5},
+        {"map_content_epoch": 5},
         {"point_id": "point-02"},
         {"point_index": 1},
         {"action": "capture:parking"},
@@ -178,7 +176,7 @@ def test_identifiers_and_actions_reject_path_traversal(
         "route_id": "route-main",
         "route_revision": 7,
         "map_id": "field-map",
-        "map_version": 4,
+        "map_content_epoch": 4,
         "point_id": "point-01",
         "point_index": 0,
         "request_id": "request-safe",
@@ -202,9 +200,9 @@ def test_identifiers_and_actions_reject_path_traversal(
         ("route_revision", 2**64),
         ("route_revision", 1.5),
         ("route_revision", True),
-        ("map_version", -1),
-        ("map_version", 1.5),
-        ("map_version", False),
+        ("map_content_epoch", -1),
+        ("map_content_epoch", 1.5),
+        ("map_content_epoch", False),
         ("point_index", -1),
         ("point_index", 2**32),
         ("point_index", 0.5),
@@ -241,7 +239,7 @@ def test_request_mapping_does_not_default_missing_audit_fields(tmp_path: Path) -
     for field in (
         "route_revision",
         "map_id",
-        "map_version",
+        "map_content_epoch",
         "point_index",
         "requested_at_s",
         "deadline_s",
@@ -398,14 +396,16 @@ def test_get_rejects_tampered_artifacts_and_manifest(tmp_path: Path) -> None:
     )
     (artifact_result.evidence_dir / "rgb.jpg").write_bytes(b"tampered")
 
-    with pytest.raises(EvidenceIntegrityError, match=r"artifact (byte count|sha256) mismatch"):
+    with pytest.raises(EvidenceIntegrityError, match="artifact byte count mismatch"):
         artifact_store.get("tampered-artifact")
 
     manifest_store = InspectionEvidenceStore(tmp_path / "manifest-case")
     manifest_result = manifest_store.persist(_request(request_id="tampered-manifest"))
-    manifest_result.manifest_path.write_bytes(manifest_result.manifest_path.read_bytes() + b" ")
+    manifest = _load_json(manifest_result.manifest_path)
+    manifest["schema_version"] = "unsupported"
+    manifest_result.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
-    with pytest.raises(EvidenceIntegrityError, match=r"manifest\.sha256"):
+    with pytest.raises(EvidenceIntegrityError, match="schema_version"):
         manifest_store.get("tampered-manifest")
 
 

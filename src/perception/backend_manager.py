@@ -40,8 +40,12 @@ class BackendManager:
         # Optional low-latency 2D tracker for detector outputs (BPU only)
         module._detector_tracker = self._init_detector_tracker()
 
-        # Visual/text encoder
-        module._clip_encoder = self._init_clip_encoder()
+        # The Product enables an encoder only when a current consumer needs it.
+        module._clip_encoder = (
+            self._init_clip_encoder()
+            if module._encoder_type != "none"
+            else None
+        )
 
     def stop(self) -> None:
         """Release GPU and native resources held by backends."""

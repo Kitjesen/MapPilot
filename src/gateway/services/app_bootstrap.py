@@ -7,18 +7,13 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-try:
-    from diagnostics.field.gates import runtime_validation_gates
-except ModuleNotFoundError:
-    # Field diagnostics are optional on deployed robots; bootstrap must still start.
-    def runtime_validation_gates() -> dict[str, Any]:
-        return {}
-
-
+from diagnostics.field.gates import gate_catalog
+from gateway.services.mapd_transport import map_management_available
 from gateway.services.media_status import build_media_status
 from gateway.services.runtime_status import (
     build_localization_status_from_parts,
     build_navigation_status,
+    runtime_identity,
 )
 from gateway.services.runtime_status import (
     safe_session as _safe_session,
@@ -30,7 +25,6 @@ from gateway.services.safety_status import (
 )
 from gateway.services.traffic import (
     DEFAULT_SSE_RASTER_MIN_INTERVAL_S,
-    DEFAULT_SSE_SLOPE_PAYLOAD_ENABLED,
     SSE_DIAGNOSTIC_EVENT_TYPES,
     SSE_EVENT_SCHEMA_VERSION,
     SSE_EVENT_TYPES,
@@ -62,16 +56,12 @@ CLIENT_LINKS: dict[str, str] = {
     "runtime_dataflow": "/api/v1/runtime/dataflow",
     "runtime_dataflow_topic": "/api/v1/runtime/dataflow/topic",
     "runtime_dataflow_subscribe": "/api/v1/runtime/dataflow/subscribe",
-    "runtime_switch_plan": "/api/v1/runtime/switch-plan",
-    "devices": "/api/v1/devices",
     "health": "/api/v1/health",
     "metrics": "/api/v1/metrics",
     "readiness": "/api/v1/readiness",
     "auth_login": "/api/v1/auth/login",
     "auth_check": "/api/v1/auth/check",
     "session": "/api/v1/session",
-    "session_start": "/api/v1/session/start",
-    "session_end": "/api/v1/session/end",
     "events": "/api/v1/events",
     "teleop_ws": "/ws/teleop",
     "camera_ws": "/ws/camera",
@@ -108,7 +98,6 @@ CLIENT_LINKS: dict[str, str] = {
     "maps": "/api/v1/slam/maps",
     "map_delete": "/api/v1/maps/{name}",
     "map_build_occupancy": "/api/v1/maps/{name}/build_occupancy",
-    "map_activate": "/api/v1/map/activate",
     "map_rename": "/api/v1/map/rename",
     "map_save": "/api/v1/map/save",
     "map_operations": "/api/v1/maps/operations",
@@ -120,7 +109,6 @@ CLIENT_LINKS: dict[str, str] = {
     "map_mark_zone": "/api/v1/maps/{name}/mark_zone",
     "map_build_octomap": "/api/v1/maps/{name}/build_octomap",
     "map_validate_plan": "/api/v1/maps/{name}/validate_plan",
-    "map_restore_predufo": "/api/v1/map/restore_predufo",
     "map_cloud_reset": "/api/v1/map_cloud/reset",
     "map_points": "/api/v1/map/points",
     "saved_map_points": "/api/v1/maps/{name}/points",
@@ -131,24 +119,17 @@ CLIENT_LINKS: dict[str, str] = {
     "explore_directed_clear": "/api/v1/explore/directed/clear",
     "service_status": "/api/v1/services/status",
     "slam_status": "/api/v1/slam/status",
-    "slam_switch": "/api/v1/slam/switch",
-    "slam_restart": "/api/v1/slam/restart",
-    "slam_auto_relocalize": "/api/v1/slam/auto_relocalize",
-    "slam_relocalize": "/api/v1/slam/relocalize",
-    "slam_track_against_map": "/api/v1/slam/track_against_map",
+    "localization_relocalize": "/api/v1/localization/relocalizations",
+    "localization_map_tracking": "/api/v1/localization/map-tracking",
     "recording_start": "/api/v1/recordings/start",
     "recording_stop": "/api/v1/recordings/stop",
     "recording_status": "/api/v1/recordings/status",
-    "bag_start": "/api/v1/bag/start",
-    "bag_stop": "/api/v1/bag/stop",
-    "bag_status": "/api/v1/bag/status",
     "memory_temporal": "/api/v1/memory/temporal",
     "memory_temporal_semantic": "/api/v1/memory/temporal/semantic",
     "diagnostic_pack": "/api/v1/diagnostic_pack",
     "field_check": "/api/v1/diagnostics/field-check",
     "routecheck_latest": "/api/v1/diagnostics/routecheck/latest",
     "real_runtime_evidence_latest": "/api/v1/diagnostics/real-runtime-evidence/latest",
-    "algorithm_benchmark_latest": "/api/v1/diagnostics/algorithm-benchmark/latest",
     "runtime_contract": "/api/v1/diagnostics/runtime-contract",
 }
 
@@ -190,7 +171,6 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
             "method": "POST",
             "path": CLIENT_LINKS["runtime_dataflow_subscribe"],
         },
-        "devices": {"method": "GET", "path": CLIENT_LINKS["devices"]},
         "health": {"method": "GET", "path": CLIENT_LINKS["health"]},
         "metrics": {"method": "GET", "path": CLIENT_LINKS["metrics"]},
         "readiness": {"method": "GET", "path": CLIENT_LINKS["readiness"]},
@@ -233,7 +213,6 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
             "method": "POST",
             "path": CLIENT_LINKS["map_build_occupancy"],
         },
-        "map_activate": {"method": "POST", "path": CLIENT_LINKS["map_activate"]},
         "map_rename": {"method": "POST", "path": CLIENT_LINKS["map_rename"]},
         "map_save": {"method": "POST", "path": CLIENT_LINKS["map_save"]},
         "map_operations": {
@@ -263,16 +242,10 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
             "method": "POST",
             "path": CLIENT_LINKS["map_validate_plan"],
         },
-        "map_restore_predufo": {
-            "method": "POST",
-            "path": CLIENT_LINKS["map_restore_predufo"],
-        },
         "map_cloud_reset": {"method": "POST", "path": CLIENT_LINKS["map_cloud_reset"]},
         "map_points": {"method": "GET", "path": CLIENT_LINKS["map_points"]},
         "saved_map_points": {"method": "GET", "path": CLIENT_LINKS["saved_map_points"]},
         "session": {"method": "GET", "path": CLIENT_LINKS["session"]},
-        "session_start": {"method": "POST", "path": CLIENT_LINKS["session_start"]},
-        "session_end": {"method": "POST", "path": CLIENT_LINKS["session_end"]},
         "explore_status": {"method": "GET", "path": CLIENT_LINKS["explore_status"]},
         "explore_start": {"method": "POST", "path": CLIENT_LINKS["explore_start"]},
         "explore_stop": {"method": "POST", "path": CLIENT_LINKS["explore_stop"]},
@@ -282,29 +255,28 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
             "path": CLIENT_LINKS["explore_directed_clear"],
         },
     },
+    "localization": {
+        "relocalize": {
+            "method": "POST",
+            "path": CLIENT_LINKS["localization_relocalize"],
+        },
+        "map_tracking": {
+            "method": "POST",
+            "path": CLIENT_LINKS["localization_map_tracking"],
+        },
+    },
     "ops": {
         "service_status": {"method": "GET", "path": CLIENT_LINKS["service_status"]},
         "slam_status": {"method": "GET", "path": CLIENT_LINKS["slam_status"]},
-        "slam_switch": {"method": "POST", "path": CLIENT_LINKS["slam_switch"]},
-        "slam_auto_relocalize": {"method": "POST", "path": CLIENT_LINKS["slam_auto_relocalize"]},
-        "slam_relocalize": {"method": "POST", "path": CLIENT_LINKS["slam_relocalize"]},
-        "slam_track_against_map": {"method": "POST", "path": CLIENT_LINKS["slam_track_against_map"]},
         "recording_start": {"method": "POST", "path": CLIENT_LINKS["recording_start"]},
         "recording_stop": {"method": "POST", "path": CLIENT_LINKS["recording_stop"]},
         "recording_status": {"method": "GET", "path": CLIENT_LINKS["recording_status"]},
-        "bag_start": {"method": "POST", "path": CLIENT_LINKS["bag_start"]},
-        "bag_stop": {"method": "POST", "path": CLIENT_LINKS["bag_stop"]},
-        "bag_status": {"method": "GET", "path": CLIENT_LINKS["bag_status"]},
         "memory_temporal": {"method": "GET", "path": CLIENT_LINKS["memory_temporal"]},
         "memory_temporal_semantic": {"method": "POST", "path": CLIENT_LINKS["memory_temporal_semantic"]},
         "diagnostic_pack": {"method": "GET", "path": CLIENT_LINKS["diagnostic_pack"]},
         "field_check": {
             "method": "POST",
             "path": CLIENT_LINKS["field_check"],
-        },
-        "runtime_switch_plan": {
-            "method": "POST",
-            "path": CLIENT_LINKS["runtime_switch_plan"],
         },
         "inspection_acceptance": {
             "method": "POST",
@@ -357,10 +329,6 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
             "method": "GET",
             "path": CLIENT_LINKS["real_runtime_evidence_latest"],
         },
-        "algorithm_benchmark_latest": {
-            "method": "GET",
-            "path": CLIENT_LINKS["algorithm_benchmark_latest"],
-        },
         "runtime_contract": {"method": "GET", "path": CLIENT_LINKS["runtime_contract"]},
     },
 }
@@ -397,7 +365,7 @@ def _map_summary(gw: Any, session: Mapping[str, Any]) -> dict[str, Any]:
         "has_live_cloud": live_points > 0,
         "live_points": live_points,
         "live_cloud_frames": _int_value(cloud_summary.get("live_cloud_frames"), 0),
-        "has_manager": getattr(gw, "_map_mgr", None) is not None,
+        "has_manager": False,
         "map_has_pcd": bool(session.get("map_has_pcd", False)),
         "map_has_octomap": bool(session.get("map_has_octomap", False)),
     }
@@ -463,19 +431,16 @@ def _traffic_warnings(traffic: Mapping[str, Any]) -> list[str]:
 
 
 def _large_event_policy(gw: Any) -> dict[str, Any]:
-    slope_inline = bool(getattr(gw, "_sse_slope_payload_enabled", DEFAULT_SSE_SLOPE_PAYLOAD_ENABLED))
     return {
         "raster_min_interval_s": float(getattr(gw, "_sse_raster_min_interval_s", DEFAULT_SSE_RASTER_MIN_INTERVAL_S)),
-        "costmap_payload": "inline_sse",
-        "slope_grid_payload": "inline_sse" if slope_inline else "metadata_sse",
+        "elevation_payload": "opt_in_include_elevation=1",
+        "native_traversability_payload": "bounded_latest_sse",
         "point_cloud_payload": "binary_websocket",
         "binary_cloud_endpoint": CLIENT_LINKS["cloud_ws"],
     }
 
 
 def _scene_layer_contract(gw: Any) -> dict[str, Any]:
-    clean_prefer_fn = getattr(gw, "clean_map_layer_prefer_s", None)
-    clean_prefer_s = clean_prefer_fn() if callable(clean_prefer_fn) else 0.0
     return {
         "schema_version": 1,
         "coordinate_frame": "map",
@@ -492,29 +457,28 @@ def _scene_layer_contract(gw: Any) -> dict[str, Any]:
             {
                 "id": "live_cloud",
                 "kind": "point_cloud",
-                "source": "voxel_cloud_preferred",
+                "source": "map_scene",
                 "transport": "websocket",
                 "endpoint": CLIENT_LINKS["cloud_ws"],
                 "role": "clean_live_map",
-                "fallback_source": "slam_map_cloud",
-                "prefer_clean_layer_s": float(clean_prefer_s),
             },
             {
-                "id": "costmap",
+                "id": "elevation",
                 "kind": "raster_texture",
-                "source": "costmap",
+                "source": "maps.elevation",
                 "transport": "sse",
                 "endpoint": CLIENT_LINKS["events"],
-                "role": "navigation_risk",
+                "role": "lowest_observed_z_not_ground",
+                "subscription": "include_elevation=1",
             },
             {
-                "id": "slope",
+                "id": "native_traversability",
                 "kind": "raster_texture",
-                "source": "slope_grid",
+                "source": "native_traversability",
                 "transport": "sse",
                 "endpoint": CLIENT_LINKS["events"],
-                "role": "terrain_slope",
-                "payload": "inline_sse" if bool(getattr(gw, "_sse_slope_payload_enabled", False)) else "metadata_sse",
+                "role": "control_risk_read_only_projection",
+                "value_semantics": "control_risk_0_100",
             },
             {
                 "id": "path",
@@ -597,19 +561,15 @@ def _auth_summary() -> dict[str, Any]:
 
 
 def _feature_flags(gw: Any) -> dict[str, bool]:
-    explorer_available = getattr(gw, "_frontier_explorer", None) is not None
-    if hasattr(gw, "_explorer_available"):
-        explorer_available = bool(gw._explorer_available())
+    explorer_available = bool(gw._explorer_available())
     return {
         "state": True,
         "health": True,
-        "devices": True,
         "mapping": True,
+        "map_management": map_management_available(gw),
         "localization": True,
         "navigation": True,
         "runtime_dataflow": True,
-        "runtime_switch_plan": True,
-        "algorithm_benchmark": True,
         "exploration": explorer_available,
         "teleop": True,
         "camera_snapshot": True,
@@ -617,6 +577,109 @@ def _feature_flags(gw: Any) -> dict[str, bool]:
         "scene_graph": True,
         "locations": True,
         "sessions": True,
+    }
+
+
+def _active_env_backend(gw: Any, env: str) -> str | None:
+    if env != "sim":
+        return None
+    plan = getattr(gw, "_compiled_run_plan", None)
+    simulation = getattr(plan, "simulation", None)
+    if not isinstance(simulation, Mapping):
+        return None
+    session = simulation.get("session")
+    if not isinstance(session, Mapping):
+        return None
+    runtime = session.get("runtime")
+    if not isinstance(runtime, Mapping):
+        return None
+    backend = runtime.get("backend")
+    if isinstance(backend, str) and backend and backend == backend.strip():
+        return backend
+    return None
+
+
+def _runtime_product_capabilities(gw: Any) -> dict[str, Any]:
+    """Return Product availability from the resolved Env/RunPlan source."""
+
+    from lingtu.products import OPERATOR_PRODUCT_LIFECYCLES
+    from runtime.graph.loader import load_runtime_graph, product_variant_names
+
+    identity = runtime_identity(gw)
+    env = str(identity["env"])
+    backend = _active_env_backend(gw, env)
+    run_plan_available = getattr(gw, "_compiled_run_plan", None) is not None
+    graph = load_runtime_graph()
+    env_spec = graph.envs.get(env, {})
+    availability_source = "env"
+    implementation = env_spec
+    backend_error: str | None = None
+    if env == "sim":
+        implementation = {}
+        availability_source = "env_backend"
+        backends = env_spec.get("backends")
+        if not backend:
+            backend_error = "sim backend is not resolved by the active RunPlan"
+        elif isinstance(backends, Mapping):
+            candidate = backends.get(backend)
+            if isinstance(candidate, Mapping):
+                implementation = candidate
+            else:
+                backend_error = (
+                    f"sim backend '{backend}' is not declared by the active Runtime Graph"
+                )
+        else:
+            backend_error = "sim backends are not declared by the active Runtime Graph"
+
+    supported = implementation.get("supported_products")
+    supported_products = {
+        str(item)
+        for item in supported
+        if isinstance(item, str)
+    } if isinstance(supported, (list, tuple)) else set()
+    variant_limits = implementation.get("supported_product_variants")
+    if not isinstance(variant_limits, Mapping):
+        variant_limits = {}
+
+    products: dict[str, dict[str, Any]] = {}
+    for product in sorted(OPERATOR_PRODUCT_LIFECYCLES):
+        product_spec = graph.products.get(product, {})
+        declared_variants = list(product_variant_names(product_spec))
+        allowed_variants = variant_limits.get(product)
+        if isinstance(allowed_variants, (list, tuple)):
+            variants = [str(item) for item in allowed_variants if isinstance(item, str)]
+        else:
+            variants = declared_variants
+        available = (
+            run_plan_available
+            and backend_error is None
+            and product in supported_products
+        )
+        reason = None
+        if not available:
+            if not run_plan_available:
+                reason = "active RunPlan is unavailable"
+            elif backend_error is not None:
+                reason = backend_error
+            elif env == "sim" and backend:
+                reason = f"Env 'sim' backend '{backend}' does not support Product '{product}'"
+            else:
+                reason = f"Env '{env}' does not support Product '{product}'"
+        products[product] = {
+            "product": product,
+            "available": available,
+            "reason": reason,
+            "variants": variants,
+        }
+
+    return {
+        "env": env,
+        "product": identity.get("product"),
+        "state": identity["state"],
+        "product_session_id": identity.get("product_session_id"),
+        "backend": backend,
+        "availability_source": availability_source,
+        "products": products,
     }
 
 
@@ -734,19 +797,6 @@ def _operation_contracts(gw: Any) -> dict[tuple[str, str], dict[str, Any]]:
         return contracts
 
 
-def prewarm_app_capability_contracts(gw: Any) -> bool:
-    """Precompute App/Web capabilities metadata and response-model caches."""
-    contracts_ready = bool(_operation_contracts(gw))
-    try:
-        from gateway.schemas import AppCapabilitiesResponse
-
-        payload = build_app_capabilities(gw)
-        AppCapabilitiesResponse.model_validate(payload).model_dump(mode="json")
-    except (AttributeError, TypeError, ValueError):
-        pass
-    return contracts_ready
-
-
 def _enrich_endpoint_specs(
     gw: Any,
     groups: Mapping[str, Mapping[str, Mapping[str, str]]],
@@ -783,9 +833,10 @@ def build_app_capabilities(gw: Any) -> dict[str, Any]:
         },
         "auth": _auth_summary(),
         "features": _feature_flags(gw),
+        "runtime_products": _runtime_product_capabilities(gw),
         "endpoints": _enrich_endpoint_specs(gw, CLIENT_ENDPOINTS),
         "probes": _enrich_endpoint_specs(gw, {"probes": PROBE_ENDPOINTS})["probes"],
-        "validation_gates": runtime_validation_gates(),
+        "validation_gates": gate_catalog(),
         "realtime": {
             "events": {
                 "path": CLIENT_LINKS["events"],
@@ -877,8 +928,7 @@ def build_app_bootstrap(gw: Any) -> dict[str, Any]:
     now = time.time()
     with gw._state_lock:
         odometry = gw._odom
-        mission = gw._mission
-        safety = gw._safety
+        safety = gw._navigation_state
         mode = gw._mode
         scene_graph_json = gw._sg_json
         path_len = len(gw._last_path)
@@ -895,6 +945,7 @@ def build_app_bootstrap(gw: Any) -> dict[str, Any]:
         localization_status,
     )
     navigation = build_navigation_status(gw)
+    mission = _mapping(_mapping(navigation.get("mission")).get("raw"))
     traffic = _traffic_summary(gw)
     control = dict(navigation.get("control", {}))
     nav_readiness = navigation.get("readiness", {})
@@ -907,10 +958,14 @@ def build_app_bootstrap(gw: Any) -> dict[str, Any]:
             "teleop": {
                 "active": bool(teleop_active),
                 "clients": int(teleop_clients),
+                "limits": {
+                    "linear_mps": float(gw._teleop_max_speed),
+                    "yaw_rad_s": float(gw._teleop_max_yaw),
+                },
             },
             "estop_clear": mode != "estop",
             "safety_clear": safety_clear,
-            "can_send_commands": (mode != "estop" and safety_clear and not bool(session.get("pending"))),
+            "can_send_commands": (mode != "estop" and safety_clear),
             "can_send_goal": (safety_clear and bool(navigation.get("can_accept_goal", False))),
             "goal_blockers": goal_blockers,
             "command_policy": _command_policy(gw),
@@ -954,6 +1009,7 @@ def build_app_bootstrap(gw: Any) -> dict[str, Any]:
             ),
         },
         "capabilities": _feature_flags(gw),
+        "runtime_products": _runtime_product_capabilities(gw),
         "capabilities_endpoint": CLIENT_LINKS["capabilities"],
         "links": dict(CLIENT_LINKS),
     }

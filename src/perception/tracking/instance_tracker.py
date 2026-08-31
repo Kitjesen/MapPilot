@@ -22,7 +22,6 @@
   }
 """
 
-import asyncio
 import logging
 import math
 import threading
@@ -231,6 +230,12 @@ class InstanceTracker(BeliefPropagationMixin):
     @property
     def views(self) -> dict[int, ViewNode]:
         return self._views
+
+    def _create_tracked_object(self, **fields) -> TrackedObject:
+        """Construct and enrich an object for memory-owned belief flows."""
+        obj = TrackedObject(**fields)
+        self._knowledge.enrich_from_kg(obj)
+        return obj
 
     def set_room_namer(self, namer: Callable) -> None:
         """Register the async LLM room-naming callback.

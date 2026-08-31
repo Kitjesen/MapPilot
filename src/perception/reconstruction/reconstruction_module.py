@@ -34,7 +34,7 @@ import threading
 import time
 from typing import Any
 
-from maps.taxonomy import load_semantic_taxonomy
+from perception.reconstruction.taxonomy import load_semantic_taxonomy
 from runtime import In, Module, Out
 from runtime.config import get_config
 from runtime.msgs.map import MapObservationFrame, SemanticLabelsFrame
@@ -226,9 +226,6 @@ class ReconstructionModule(Module, layer=3):
         mask_dynamic        bool  True   — skip pixels from dynamic-class detections
         dynamic_labels      list  [...] — override default dynamic label set
     """
-
-    _run_in_worker = True
-    _worker_group = "perception"
 
     color_image: In[Image]
     depth_image: In[Image]

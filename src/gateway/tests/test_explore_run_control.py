@@ -70,7 +70,7 @@ def _binding() -> dict[str, Any]:
     return {
         "valid": True,
         "blockers": [],
-        "session_id": "product-session-a",
+        "product_session_id": "product-session-a",
         "variant": "map",
         "native_status": {
             "boot_id": "explore-boot-a",
@@ -81,8 +81,7 @@ def _binding() -> dict[str, Any]:
             "pending_segment": None,
             "map": {
                 "map_id": "yard-a",
-                "map_version": 7,
-                "artifact_hash": "a" * 64,
+                "map_content_epoch": 7,
             },
         },
     }
@@ -103,8 +102,7 @@ def _run_event(*, state: str = "running", sequence: int = 1) -> dict[str, Any]:
         "state": state,
         "route": "map",
         "map_id": "yard-a",
-        "map_version": 7,
-        "artifact_hash": "a" * 64,
+        "map_content_epoch": 7,
         "reason": f"exploration_{state}",
         "motion_stop_confirmed": stopped,
         "motion_stop_reason": "nav_stop_gate" if stopped else "",
@@ -141,7 +139,7 @@ def test_start_reserves_before_dispatch_and_exact_retry_does_not_restart(
         "start",
         {
             "exploration_run_id": RUN_ID,
-            "session_id": "product-session-a",
+            "product_session_id": "product-session-a",
             "reason": "gateway_start",
             "request_id": "request-a",
         },
@@ -154,7 +152,7 @@ def test_changed_context_with_same_request_conflicts(
     gw, _commands = configured
     exploration.start_exploration_run(gw, "request-a")
     changed = _binding()
-    changed["session_id"] = "product-session-b"
+    changed["product_session_id"] = "product-session-b"
     monkeypatch.setattr(exploration, "external_explore_binding", lambda _gw: changed)
 
     with pytest.raises(exploration.ExplorationRunError) as captured:
@@ -181,7 +179,7 @@ def test_pause_is_bound_to_same_run_and_product_session(
         "pause",
         {
             "exploration_run_id": RUN_ID,
-            "session_id": "product-session-a",
+            "product_session_id": "product-session-a",
             "reason": "operator_pause",
             "request_id": "pause-request-a",
         },
@@ -230,7 +228,6 @@ def test_new_run_is_blocked_while_previous_run_truth_is_unresolved(
 ) -> None:
     gw, _commands = configured
     gw._exploring = False
-    gw._session_pending = False
     gw._session_mode = "exploring"
     gw._explorer_available = lambda: True
     gw._explore_runs.reserve_start(
@@ -239,8 +236,7 @@ def test_new_run_is_blocked_while_previous_run_truth_is_unresolved(
         route="map",
         map={
             "map_id": "yard-a",
-            "map_version": 7,
-            "artifact_hash": "a" * 64,
+            "map_content_epoch": 7,
         },
     )
     monkeypatch.setattr(exploration, "product_control_owns_explore", lambda _gw: True)
@@ -279,7 +275,9 @@ def test_endpoint_restart_marks_run_interrupted_and_blocks_new_start(
 
     assert captured.value.code == "exploration_run_interrupted"
     interrupted = gw._explore_runs.query(RUN_ID)
-    assert interrupted["state"] == "interrupted"
+    assert interrupted["state"] == "EXECUTING"
+    assert interrupted["state_available"] is False
+    assert interrupted["continuity"]["status"] == "interrupted"
     assert interrupted["terminal"] is False
     assert interrupted["motion_stop"]["confirmed"] is False
     assert [name for name, _kwargs in commands.calls] == ["start"]
@@ -344,7 +342,7 @@ def test_post_ack_journal_failure_requests_native_stop(
     assert [name for name, _kwargs in commands.calls] == ["start", "finish"]
     stop = commands.calls[-1][1]
     assert stop["exploration_run_id"] == RUN_ID
-    assert stop["session_id"] == "product-session-a"
+    assert stop["product_session_id"] == "product-session-a"
     assert stop["reason"] == "exploration_journal_write_failed"
     assert len(stop["request_id"]) == 26
     assert captured.value.detail["compensating_stop"]["accepted"] is True
@@ -429,8 +427,7 @@ def test_native_run_event_is_persisted_before_exact_sse_projection(
         route="map",
         map={
             "map_id": "yard-a",
-            "map_version": 7,
-            "artifact_hash": "a" * 64,
+            "map_content_epoch": 7,
         },
     )
     gw._explore_runs.record_admission(
@@ -442,7 +439,7 @@ def test_native_run_event_is_persisted_before_exact_sse_projection(
 
     handle_exploration_run_event(gw, event)
 
-    assert gw._explore_runs.query(RUN_ID)["state"] == "running"
+    assert gw._explore_runs.query(RUN_ID)["state"] == "EXECUTING"
     assert gw._exploring is True
     assert gw.events[-1] == {"type": "exploration_run_event", "data": event}
 
@@ -468,7 +465,7 @@ def test_native_run_event_journal_failure_requests_one_fail_safe_stop(
     assert [name for name, _kwargs in commands.calls] == ["finish"]
     stop = commands.calls[0][1]
     assert stop["exploration_run_id"] == RUN_ID
-    assert stop["session_id"] == "product-session-a"
+    assert stop["product_session_id"] == "product-session-a"
     assert stop["reason"] == "exploration_run_projection_failed"
     assert gw.events[0]["type"] == "exploration_run_journal_error"
     assert gw.events[0]["data"]["compensating_stop"]["accepted"] is True
@@ -494,7 +491,7 @@ def test_rejected_false_terminal_requests_stop_for_the_known_active_run(
     assert [name for name, _kwargs in commands.calls] == ["start", "finish"]
     stop = commands.calls[-1][1]
     assert stop["exploration_run_id"] == RUN_ID
-    assert stop["session_id"] == "product-session-a"
+    assert stop["product_session_id"] == "product-session-a"
     assert stop["reason"] == "exploration_run_projection_failed"
     assert gw.events[-1]["type"] == "exploration_run_event_rejected"
     assert gw.events[-1]["data"]["compensating_stop"]["accepted"] is True

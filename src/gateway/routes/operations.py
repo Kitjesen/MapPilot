@@ -28,14 +28,14 @@ from gateway.schemas import (
     ExplorationStatusResponse,
     GatewayErrorResponse,
     Go2RTCStatusResponse,
+    LocalizationMapTrackingRequest,
+    LocalizationOperationResponse,
+    LocalizationRelocalizationRequest,
     RecordingOperationResponse,
     RecordingStartRequest,
     RecordingStatusResponse,
     ServiceStatusResponse,
-    SlamOperationResponse,
-    SlamRelocalizeRequest,
     SlamStatusResponse,
-    SlamSwitchRequest,
     TemporalMemoryResponse,
     TemporalSemanticRequest,
 )
@@ -49,13 +49,9 @@ from gateway.services.exploration import (
     start_exploration_run,
 )
 from gateway.services.explore_runs import ensure_explore_runs
-from gateway.services.map_service import ensure_maps_service
+from gateway.services.mapd_transport import mapd_query, safe_map_name
 from gateway.services.recording import NativeRecordingError
-from maps.services.storage import safe_map_name
-from runtime.runtime_policy import (
-    is_supported_slam_profile,
-    normalize_slam_profile,
-)
+from gateway.services.runtime_status import runtime_identity
 from runtime.service_catalogs.thunder import (
     thunder_runtime_services,
     thunder_service_groups,
@@ -108,10 +104,6 @@ def _parse_since(since: str) -> float:
         return now - float(since)
     except ValueError:
         return now - 3600
-
-
-def _normalize_slam_profile(profile: Any) -> str:
-    return normalize_slam_profile(profile)
 
 
 def _parse_service_names(names: str | None) -> tuple[str, ...]:
@@ -329,8 +321,6 @@ def _service_status_snapshot(
     backend_service = {
         "native_dds": "slam",
         "fastlio2": "slam",
-        "localizer": "localizer",
-        "genz": "genz_icp",
     }.get(live_slam_profile)
     session_mode = str(getattr(gw, "_session_mode", "idle") or "idle").strip().lower()
     exploring = bool(getattr(gw, "_exploring", False))
@@ -343,10 +333,9 @@ def _service_status_snapshot(
         status = "declared" if declared else ("not_declared" if plan is not None else "unknown")
         observed: dict[str, Any] = {}
         if plan is not None:
-            observed["run_plan"] = {
+            observed["runtime"] = runtime_identity(gw)
+            observed["process"] = {
                 "declared": declared,
-                "product": str(getattr(plan, "product", "") or ""),
-                "fingerprint": str(getattr(plan, "fingerprint", "") or ""),
                 "target": str(getattr(process, "target", "") or "") if process is not None else None,
             }
 
@@ -368,7 +357,7 @@ def _service_status_snapshot(
 
         if name == "explore" and exploring:
             status = "running"
-        observed["session_cache"] = {
+        observed["product_view"] = {
             "mode": session_mode,
             "exploring": exploring,
         }
@@ -397,28 +386,7 @@ def _service_status_snapshot(
     return services, details
 
 
-def _body_mapping(body: Any) -> dict[str, Any]:
-    """Normalise request body to a plain dict.
-
-    Why raw dicts are accepted:
-      Pydantic models define fixed fields, but ROS2 frontends / WebSocket
-      messages send JSON with backend-variant keys (e.g. "map_name" vs.
-      "map", "slam_profile" vs. "slam_backend"). Accepting raw dicts avoids
-      per-endpoint model proliferation and keeps route handlers flexible.
-
-    Trade-off:
-      Pydantic type coercion (float, int, str trim) is bypassed at the
-      boundary. Call sites MUST manually coerce numeric fields with
-      float() / int() — see slam_relocalize (x, y, yaw) and bag_start
-      (duration) for examples.
-    """
-    if hasattr(body, "model_dump"):
-        return body.model_dump(exclude_none=True)
-    assert isinstance(body, dict), f"expected dict or Pydantic model, got {type(body).__name__}"
-    return body
-
-
-def slam_operation_payload(success: bool, **fields: Any) -> dict[str, Any]:
+def _operation_payload(success: bool, **fields: Any) -> dict[str, Any]:
     payload = {
         "schema_version": 1,
         "ok": bool(success),
@@ -429,7 +397,7 @@ def slam_operation_payload(success: bool, **fields: Any) -> dict[str, Any]:
     return payload
 
 
-def _slam_operation_response(
+def _localization_operation_response(
     success: bool,
     *,
     status_code: int,
@@ -438,50 +406,47 @@ def _slam_operation_response(
     from fastapi.responses import JSONResponse
 
     return JSONResponse(
-        slam_operation_payload(success, **fields),
+        _operation_payload(success, **fields),
         status_code=status_code,
-    )
-
-
-def _unsupported_saved_map_relocalization_response(gw) -> Any | None:
-    from gateway.services.runtime_status import build_localization_status
-
-    try:
-        status = build_localization_status(gw)
-    except Exception:
-        status = {}
-
-    raw = status.get("raw") if isinstance(status.get("raw"), dict) else {}
-    backend = (
-        raw.get("localization_backend")
-        or raw.get("backend")
-        or status.get("localization_backend")
-        or status.get("backend")
-    )
-    backend_name = str(backend or "").strip().lower()
-    saved_map_supported = raw.get(
-        "saved_map_relocalization_supported",
-        status.get("saved_map_relocalization_supported"),
-    )
-    if backend_name != "genz" or saved_map_supported is not False:
-        return None
-
-    recovery_method = status.get("recovery_method") or raw.get("recovery_method")
-    recovery_hint = f"; recovery_method={recovery_method}" if recovery_method else ""
-    return _slam_operation_response(
-        False,
-        message=(f"unsupported: saved map relocalization is not supported by {backend_name}{recovery_hint}"),
-        status_code=409,
     )
 
 
 def _relocalization_service_unavailable_response(gw) -> Any | None:
     if gw.localization.available:
         return None
-    return _slam_operation_response(
+    return _localization_operation_response(
         False,
         message="relocalization service unavailable",
         status_code=503,
+    )
+
+
+def _field_product_map_guard_response(
+    gw: Any,
+    map_name: str,
+) -> tuple[str, Any | None]:
+    """Keep field SLAM control aligned with ProductControl's active map."""
+
+    from gateway.routes.session import (
+        _external_product_map_guard,
+        _externally_owned_product,
+    )
+
+    current_product = _externally_owned_product(gw)
+    if current_product is None:
+        return map_name, None
+    resolved_map, blocker = _external_product_map_guard(
+        gw,
+        current_product=current_product,
+        requested_map=map_name,
+    )
+    if blocker is None:
+        return resolved_map, None
+    return resolved_map, _localization_operation_response(
+        False,
+        message="ProductControl must switch the active map before field relocalization",
+        details=blocker,
+        status_code=409,
     )
 
 
@@ -606,7 +571,7 @@ def register_operation_routes(app, gw) -> None:
         },
     )
     async def post_temporal_semantic(body: TemporalSemanticRequest):
-        payload = _body_mapping(body)
+        payload = body.model_dump(exclude_none=True)
         raw_emb = payload.get("embedding")
         if not raw_emb:
             return JSONResponse(
@@ -846,7 +811,10 @@ def register_operation_routes(app, gw) -> None:
                     ),
                     "detail": {
                         "reason": "parking_evidence_required",
-                        "operator_command": "scripts/lingtu explore stop",
+                        "operator_command": (
+                            "python -m lingtu.control stop "
+                            "--expected-product explore"
+                        ),
                     },
                 },
             )
@@ -993,7 +961,6 @@ def register_operation_routes(app, gw) -> None:
             "service_groups": _SLAM_SERVICE_GROUPS,
             "service_metadata": _SLAM_SERVICE_METADATA,
             "product_runtime": "native_dds",
-            "control_entrypoint": "lingtu svc status",
         }
 
     @app.get(
@@ -1022,17 +989,9 @@ def register_operation_routes(app, gw) -> None:
         if live_mode in {
             "native_dds",
             "fastlio2",
-            "genz",
-            "localizer",
             "none",
         }:
             mode = live_mode
-        elif services.get("genz_icp") in _ACTIVE_SERVICE_STATES:
-            mode = "genz"
-        elif services.get("slam_pgo") in _ACTIVE_SERVICE_STATES:
-            mode = "fastlio2"
-        elif services.get("localizer") in _ACTIVE_SERVICE_STATES:
-            mode = "localizer"
         elif services.get("slam") in _ACTIVE_SERVICE_STATES:
             mode = "native_dds"
         else:
@@ -1046,204 +1005,92 @@ def register_operation_routes(app, gw) -> None:
             "service_groups": _SLAM_SERVICE_GROUPS,
             "service_metadata": _SLAM_SERVICE_METADATA,
             "product_runtime": "native_dds",
-            "ros2_required": False,
             "manual_systemctl_required": False,
-            "control_entrypoint": "lingtu svc restart slam",
         }
 
-    @app.post(
-        "/api/v1/slam/switch",
-        summary="Hot-switch SLAM profile",
-        response_model=SlamOperationResponse,
-        responses={
-            400: {"model": SlamOperationResponse},
-            409: {"model": SlamOperationResponse},
-            500: {"model": SlamOperationResponse},
-        },
-    )
-    async def slam_switch(body: SlamSwitchRequest):
-        payload = _body_mapping(body)
-        requested_profile = payload.get("profile", "")
-        profile = _normalize_slam_profile(requested_profile)
-        if not is_supported_slam_profile(profile, allow_stop=True):
-            return _slam_operation_response(
-                False,
-                message=f"Unknown profile: {requested_profile}",
-                status_code=400,
-            )
-        plan = getattr(gw, "_compiled_run_plan", None)
-        field_owned = plan is not None and str(getattr(plan, "process_control", "") or "").strip() == "systemd"
-        try:
-            from gateway.services.native_control import endpoint_only_enabled
-
-            field_owned = field_owned or endpoint_only_enabled(gw)
-        except ValueError:
-            field_owned = True
-        if field_owned:
-            return _slam_operation_response(
-                False,
-                message=(
-                    "SLAM is owned by the active Product. Preview the required "
-                    "Product change with POST /api/v1/runtime/switch-plan, then run "
-                    "the resulting ProductControl command outside the Host"
-                ),
-                details={
-                    "reason_code": "operator_product_control_required",
-                    "switch_plan": "/api/v1/runtime/switch-plan",
-                },
-                status_code=409,
-            )
-        try:
-            result = gw.reconfigure_backend("slam", profile)
-            ok = isinstance(result, Mapping) and result.get("ok") is True
-            if ok:
-                gw._cached_slam_profile = "stopped" if profile == "stop" else profile
-                gw._slam_profile_ts = time.time()
-                return slam_operation_payload(
-                    True,
-                    profile=profile,
-                    message=f"Reconfigured in-process SLAM backend to {profile}",
-                    details=dict(result),
-                )
-            return _slam_operation_response(
-                False,
-                profile=profile,
-                message=("SLAM backend is not reconfigurable in this Host; switch the Product to change native SLAM"),
-                details=dict(result) if isinstance(result, Mapping) else None,
-                status_code=409,
-            )
-        except Exception as e:
-            return _slam_operation_response(False, message=str(e), status_code=500)
-
-    @app.post(
-        "/api/v1/slam/restart",
-        summary="Return the operator command for restarting native SLAM",
-        response_model=SlamOperationResponse,
-        responses={409: {"model": SlamOperationResponse}},
-    )
-    async def slam_restart():
-        plan = getattr(gw, "_compiled_run_plan", None)
-        if plan is None:
-            return _slam_operation_response(
-                False,
-                message=("SLAM restart requires the exact RunPlan; Gateway will not recompile or restart a Product"),
-                status_code=409,
-            )
-        env = str(getattr(plan, "env", "") or "").strip()
-        command = "python -m lingtu.control restart --process slam"
-        if env in {"real", "sim"}:
-            command += f" --env {env}"
-        return _slam_operation_response(
-            False,
-            profile="native_dds",
-            message=(f"Native SLAM restart is owned by ProductControl outside the Host: {command}"),
-            details={
-                "reason_code": "operator_product_control_required",
-                "operator_command": command,
-            },
-            status_code=409,
-        )
-
-    @app.post(
-        "/api/v1/slam/auto_relocalize",
-        summary="Global relocalize via 3D-BBS (no guess required)",
-        response_model=SlamOperationResponse,
-        responses={
-            409: {"model": SlamOperationResponse},
-            500: {"model": SlamOperationResponse},
-            503: {"model": SlamOperationResponse},
-            504: {"model": SlamOperationResponse},
-        },
-    )
-    async def slam_auto_relocalize():
-        unsupported_response = _unsupported_saved_map_relocalization_response(gw)
-        if unsupported_response is not None:
-            return unsupported_response
-        unavailable_response = _relocalization_service_unavailable_response(gw)
-        if unavailable_response is not None:
-            return unavailable_response
-
-        try:
-            result = gw.localization.trigger_global_relocalize(timeout_s=10.0)
-            if result.timed_out:
-                return _slam_operation_response(
-                    False,
-                    message=result.message,
-                    status_code=504,
-                )
-            return slam_operation_payload(
-                result.success,
-                message=result.message,
-                quality=result.quality,
-                details=dict(result.details),
-            )
-        except Exception as e:
-            return _slam_operation_response(False, message=str(e), status_code=500)
-
-    @app.post(
-        "/api/v1/slam/relocalize",
-        summary="Relocalize against a saved map",
-        response_model=SlamOperationResponse,
-        responses={
-            400: {"model": SlamOperationResponse},
-            404: {"model": SlamOperationResponse},
-            409: {"model": SlamOperationResponse},
-            500: {"model": SlamOperationResponse},
-            503: {"model": SlamOperationResponse},
-            504: {"model": SlamOperationResponse},
-        },
-    )
-    async def slam_relocalize(body: SlamRelocalizeRequest):
-        unsupported_response = _unsupported_saved_map_relocalization_response(gw)
-        if unsupported_response is not None:
-            return unsupported_response
-
-        payload = _body_mapping(body)
-        map_name = payload.get("map_name", "")
-        x = float(payload.get("x", 0.0))
-        y = float(payload.get("y", 0.0))
-        yaw = float(payload.get("yaw", 0.0))
-        if not map_name:
-            return _slam_operation_response(
-                False,
-                message="map_name required",
-                status_code=400,
-            )
+    def localization_map_id(map_name: str) -> tuple[str, Any | None]:
         name_error = safe_map_name(map_name)
         if name_error is not None:
-            return _slam_operation_response(
+            return map_name, _localization_operation_response(
                 False,
                 message=name_error,
                 status_code=400,
             )
+        resolved_map, map_guard_response = _field_product_map_guard_response(gw, map_name)
+        if map_guard_response is not None:
+            return resolved_map, map_guard_response
         try:
-            ensure_maps_service(gw)
-        except RuntimeError as exc:
-            return _slam_operation_response(False, message=str(exc), status_code=503)
-        pcd_path = gw._map_artifact_path_from_maps_service(
-            map_name,
-            "source_pointcloud",
-        )
-        if pcd_path is None:
-            return _slam_operation_response(
+            record = mapd_query(
+                gw,
+                {"action": "get_record", "map_id": resolved_map},
+            )
+        except Exception as exc:
+            return resolved_map, _localization_operation_response(
                 False,
-                message=f"Map source point cloud unavailable: {map_name}",
+                message=str(exc),
+                status_code=503,
+            )
+        if record.get("success") is not True:
+            return resolved_map, _localization_operation_response(
+                False,
+                map_name=resolved_map,
+                message=f"Map unavailable: {resolved_map}",
                 status_code=404,
             )
+        return resolved_map, None
+
+    @app.post(
+        "/api/v1/localization/relocalizations",
+        summary="Relocalize against the running Product's active map",
+        response_model=LocalizationOperationResponse,
+        responses={
+            400: {"model": LocalizationOperationResponse},
+            404: {"model": LocalizationOperationResponse},
+            409: {"model": LocalizationOperationResponse},
+            500: {"model": LocalizationOperationResponse},
+            503: {"model": LocalizationOperationResponse},
+            504: {"model": LocalizationOperationResponse},
+        },
+    )
+    async def localization_relocalize(body: LocalizationRelocalizationRequest):
+        request = (
+            body
+            if isinstance(body, LocalizationRelocalizationRequest)
+            else LocalizationRelocalizationRequest.model_validate(body)
+        )
+        map_id, map_response = localization_map_id(request.map_name)
+        if map_response is not None:
+            return map_response
         unavailable_response = _relocalization_service_unavailable_response(gw)
         if unavailable_response is not None:
             return unavailable_response
+
         try:
-            result = gw.localization.relocalize_saved_map(
-                pcd_path,
-                x,
-                y,
-                yaw,
-                timeout_s=30.0,
-            )
+            if request.mode == "global":
+                result = gw.localization.trigger_global_relocalize(timeout_s=10.0)
+            else:
+                if request.initial_pose is None:
+                    return _localization_operation_response(
+                        False,
+                        map_name=map_id,
+                        mode=request.mode,
+                        request_id=request.request_id,
+                        message="seeded relocalization requires an initial pose",
+                        status_code=400,
+                    )
+                result = gw.localization.relocalize_saved_map(
+                    map_id,
+                    request.initial_pose.x,
+                    request.initial_pose.y,
+                    request.initial_pose.yaw,
+                    timeout_s=30.0,
+                )
             if result.timed_out:
-                return _slam_operation_response(
+                return _localization_operation_response(
                     False,
+                    map_name=map_id,
+                    mode=request.mode,
+                    request_id=request.request_id,
                     message=result.message,
                     status_code=504,
                 )
@@ -1251,104 +1098,86 @@ def register_operation_routes(app, gw) -> None:
             quality = result.quality
             if quality is None and ok:
                 quality = float(getattr(gw, "_icp_quality", 0.0))
-            if ok:
-                gw._persist_last_nav_pose(map_name, x, y, yaw, quality)
-            msg = result.message if not ok else f"Relocalized to {map_name}"
-            return slam_operation_payload(
+            return _operation_payload(
                 ok,
-                message=msg,
+                map_name=map_id,
+                mode=request.mode,
+                request_id=request.request_id,
+                message=result.message if not ok else f"Relocalized to {map_id}",
                 quality=quality,
                 details=dict(result.details),
             )
-        except Exception as e:
-            return _slam_operation_response(False, message=str(e), status_code=500)
+        except Exception as exc:
+            return _localization_operation_response(
+                False,
+                map_name=map_id,
+                mode=request.mode,
+                request_id=request.request_id,
+                message=str(exc),
+                status_code=500,
+            )
 
     @app.post(
-        "/api/v1/slam/track_against_map",
-        summary="Start continuous saved-map tracking",
-        response_model=SlamOperationResponse,
+        "/api/v1/localization/map-tracking",
+        summary="Start continuous tracking against the running Product's active map",
+        response_model=LocalizationOperationResponse,
         responses={
-            400: {"model": SlamOperationResponse},
-            404: {"model": SlamOperationResponse},
-            409: {"model": SlamOperationResponse},
-            500: {"model": SlamOperationResponse},
-            503: {"model": SlamOperationResponse},
-            504: {"model": SlamOperationResponse},
+            400: {"model": LocalizationOperationResponse},
+            404: {"model": LocalizationOperationResponse},
+            409: {"model": LocalizationOperationResponse},
+            500: {"model": LocalizationOperationResponse},
+            503: {"model": LocalizationOperationResponse},
+            504: {"model": LocalizationOperationResponse},
         },
     )
-    async def slam_track_against_map(body: SlamRelocalizeRequest):
-        unsupported_response = _unsupported_saved_map_relocalization_response(gw)
-        if unsupported_response is not None:
-            return unsupported_response
-
-        payload = _body_mapping(body)
-        map_name = payload.get("map_name", "")
-        x = float(payload.get("x", 0.0))
-        y = float(payload.get("y", 0.0))
-        yaw = float(payload.get("yaw", 0.0))
-        if not map_name:
-            return _slam_operation_response(
-                False,
-                message="map_name required",
-                status_code=400,
-            )
-        name_error = safe_map_name(map_name)
-        if name_error is not None:
-            return _slam_operation_response(
-                False,
-                message=name_error,
-                status_code=400,
-            )
-        try:
-            ensure_maps_service(gw)
-        except RuntimeError as exc:
-            return _slam_operation_response(False, message=str(exc), status_code=503)
-        pcd_path = gw._map_artifact_path_from_maps_service(
-            map_name,
-            "source_pointcloud",
+    async def localization_map_tracking(body: LocalizationMapTrackingRequest):
+        request = (
+            body
+            if isinstance(body, LocalizationMapTrackingRequest)
+            else LocalizationMapTrackingRequest.model_validate(body)
         )
-        if pcd_path is None:
-            return _slam_operation_response(
-                False,
-                message=f"Map source point cloud unavailable: {map_name}",
-                status_code=404,
-            )
+        map_name, map_response = localization_map_id(request.map_name)
+        if map_response is not None:
+            return map_response
         unavailable_response = _relocalization_service_unavailable_response(gw)
         if unavailable_response is not None:
             return unavailable_response
         try:
-            result = gw.localization.track_against_map(
-                pcd_path,
-                x,
-                y,
-                yaw,
-                timeout_s=10.0,
-            )
+            result = gw.localization.start_map_tracking(timeout_s=10.0)
             if result.timed_out:
-                return _slam_operation_response(
+                return _localization_operation_response(
                     False,
+                    map_name=map_name,
+                    mode="tracking",
+                    request_id=request.request_id,
                     message=result.message,
                     status_code=504,
                 )
-            return slam_operation_payload(
+            return _operation_payload(
                 result.success,
+                map_name=map_name,
+                mode="tracking",
+                request_id=request.request_id,
                 message=result.message,
                 quality=result.quality,
                 details=dict(result.details),
             )
-        except Exception as e:
-            return _slam_operation_response(False, message=str(e), status_code=500)
+        except Exception as exc:
+            return _localization_operation_response(
+                False,
+                map_name=map_name,
+                mode="tracking",
+                request_id=request.request_id,
+                message=str(exc),
+                status_code=500,
+            )
 
-    @app.post(
-        "/api/v1/bag/start",
-        summary="Start native MCAP recording (deprecated path)",
-        response_model=RecordingOperationResponse,
-        responses={
-            409: {"model": RecordingOperationResponse},
-            503: {"model": RecordingOperationResponse},
-        },
-        deprecated=True,
-    )
+    def _recording_error_response(exc: NativeRecordingError):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": exc.code, "detail": None},
+        )
+
     @app.post(
         "/api/v1/recordings/start",
         summary="Start native MCAP recording",
@@ -1359,38 +1188,39 @@ def register_operation_routes(app, gw) -> None:
         },
     )
     async def recording_start(body: RecordingStartRequest = RecordingStartRequest()):
-        payload = _body_mapping(body)
-        duration = int(payload.get("duration", 600))
-        prefix = str(payload.get("name") or payload.get("prefix", "web"))
+        duration = body.duration
+        prefix = body.prefix
+        capture_profile = body.capture_profile
+        task_id = body.task_id
+        camera = body.camera
+        minimum_free_gib = body.minimum_free_gib
         try:
             snapshot = await asyncio.to_thread(
                 gw._recording.start,
                 duration=duration,
                 prefix=prefix,
+                capture_profile=capture_profile,
+                task_id=task_id,
+                camera=camera,
+                minimum_free_gib=minimum_free_gib,
             )
         except NativeRecordingError as exc:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"error": exc.code, "detail": exc.detail or str(exc)},
-            )
+            return _recording_error_response(exc)
         return {
             "status": "started",
             "state": snapshot.state,
             "backend": "native_mcap",
             "session_id": snapshot.session_id,
-            "path": snapshot.path,
-            "pid": snapshot.pid,
+            "path": None,
+            "pid": None,
             "duration": duration,
             "prefix": prefix,
+            "capture_profile": capture_profile,
+            "task_id": task_id,
+            "camera": camera,
+            "minimum_free_gib": minimum_free_gib,
         }
 
-    @app.post(
-        "/api/v1/bag/stop",
-        summary="Stop native MCAP recording (deprecated path)",
-        response_model=RecordingOperationResponse,
-        responses={404: {"model": RecordingOperationResponse}},
-        deprecated=True,
-    )
     @app.post(
         "/api/v1/recordings/stop",
         summary="Stop native MCAP recording",
@@ -1401,25 +1231,16 @@ def register_operation_routes(app, gw) -> None:
         try:
             snapshot = await asyncio.to_thread(gw._recording.stop)
         except NativeRecordingError as exc:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"error": exc.code, "detail": exc.detail or str(exc)},
-            )
+            return _recording_error_response(exc)
         return {
             "status": snapshot.state,
             "state": snapshot.state,
             "backend": "native_mcap",
             "session_id": snapshot.session_id,
-            "path": snapshot.path,
-            "pid": snapshot.pid,
+            "path": None,
+            "pid": None,
         }
 
-    @app.get(
-        "/api/v1/bag/status",
-        summary="Native MCAP recording status (deprecated path)",
-        response_model=RecordingStatusResponse,
-        deprecated=True,
-    )
     @app.get(
         "/api/v1/recordings/status",
         summary="Native MCAP recording status",
@@ -1429,8 +1250,9 @@ def register_operation_routes(app, gw) -> None:
         try:
             snapshot = await asyncio.to_thread(gw._recording.status)
         except NativeRecordingError as exc:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"error": exc.code, "detail": exc.detail or str(exc)},
-            )
-        return snapshot.as_payload()
+            return _recording_error_response(exc)
+        payload = snapshot.as_payload()
+        payload["path"] = None
+        payload["pid"] = None
+        payload["exit_code"] = None
+        return payload

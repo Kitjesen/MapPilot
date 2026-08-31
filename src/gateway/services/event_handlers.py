@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from typing import Any
 
@@ -21,49 +22,67 @@ def json_payload(value: Any) -> Any:
 def handle_scene_graph(gw: Any, sg: Any) -> None:
     with gw._state_lock:
         gw._sg_json = sg.to_json() if hasattr(sg, "to_json") else str(sg)
+    raw_objects = getattr(sg, "objects", None)
+    is_clear = isinstance(raw_objects, (list, tuple)) and not raw_objects
     gw._sg_throttle += 1
-    if gw._sg_throttle % 5 != 0:
+    # An empty graph is a deletion signal.  Never sample it away or leave old
+    # object markers visible after the producer has cleared its scene.
+    if not is_clear and gw._sg_throttle % 5 != 0:
         return
     try:
+        frame_id = getattr(sg, "frame_id", None)
+        frame_id = str(frame_id).strip() if frame_id else None
+        # ``runtime.msgs.semantic.SceneGraph`` uses ``ts``; older adapters
+        # exposed ``timestamp``. Preserve either source field instead of
+        # silently dropping the scene timestamp at the Gateway boundary.
+        stamp_s = getattr(sg, "timestamp", None)
+        if stamp_s is None:
+            stamp_s = getattr(sg, "ts", None)
+        try:
+            stamp_s = float(stamp_s) if stamp_s is not None else None
+        except (TypeError, ValueError):
+            stamp_s = None
         objects = [
             {
+                "id": str(getattr(obj, "id", "") or getattr(obj, "label", "")),
                 "label": obj.label,
-                "x": round(float(obj.position.x), 2),
-                "y": round(float(obj.position.y), 2),
-                "conf": round(float(obj.confidence), 2),
+                "x": round(float(getattr(getattr(obj, "position", None) or getattr(obj, "position_3d", None), "x")), 2),
+                "y": round(float(getattr(getattr(obj, "position", None) or getattr(obj, "position_3d", None), "y")), 2),
+                "z": round(
+                    float(
+                        getattr(
+                            getattr(obj, "position", None)
+                            or getattr(obj, "position_3d", None),
+                            "z",
+                            0.0,
+                        )
+                    ),
+                    2,
+                ),
+                "confidence": round(float(obj.confidence), 2),
             }
             for obj in sg.objects
             if obj.label and float(obj.confidence) > 0.25
         ]
-        if objects:
-            gw.push_event({"type": "scene_graph", "objects": objects})
+        # An empty object list is a clear event; do not retain vanished markers.
+        gw.push_event({
+            "type": "scene_graph",
+            "objects": objects,
+            "frame_id": frame_id,
+            "stamp_s": stamp_s,
+        })
     except Exception as exc:
         logger.debug("_on_scene_graph: failed to build objects list: %s", exc)
 
 
-def handle_safety(gw: Any, state: Any) -> None:
-    data = {"level": getattr(state, "level", 0), "ts": time.time()}
+def handle_visual_servo_status(gw: Any, status: Any) -> None:
+    """Cache and forward the current in-process visual task state."""
+    data = json_payload(status)
+    if not isinstance(data, dict):
+        return
     with gw._state_lock:
-        gw._safety = data
-    gw.push_event({"type": "safety", "data": data})
-
-
-def handle_mission(gw: Any, status: Any) -> None:
-    data = status if isinstance(status, dict) else {"raw": str(status)}
-    with gw._state_lock:
-        gw._mission = data
-    gw.push_event({"type": "mission", "data": data})
-    try:
-        from gateway.services.runtime_status import build_navigation_status
-
-        gw.push_event(
-            {
-                "type": "navigation_status",
-                "data": build_navigation_status(gw),
-            }
-        )
-    except Exception as exc:
-        logger.debug("_on_mission: build_navigation_status failed: %s", exc)
+        gw._visual_servo_status = data
+    gw.push_event({"type": "visual_servo_status", "data": data})
 
 
 def handle_navigation_state(gw: Any, state: Any) -> None:
@@ -89,6 +108,16 @@ def handle_navigation_state(gw: Any, state: Any) -> None:
 def handle_navigation_goal_status(gw: Any, status: Any) -> None:
     data = status.to_dict() if hasattr(status, "to_dict") else json_payload(status)
     if not isinstance(data, dict):
+        return
+    from gateway.services.navigation_lifecycle import (
+        NavigationTaskProjectionError,
+        project_navigation_goal_status,
+    )
+
+    try:
+        data = project_navigation_goal_status(data)
+    except NavigationTaskProjectionError as exc:
+        logger.warning("Rejected navigation goal status: %s", exc)
         return
     boot_id = str(data.get("boot_id") or "")
     sequence = int(data.get("sequence") or 0)
@@ -141,14 +170,82 @@ def handle_inspection_task_event(gw: Any, event: Any) -> None:
             }
         )
         return
-    if not accepted:
-        return
     if not task_id:
         return
-    projected = timeline.query(task_id).get("latest_event")
+    snapshot = timeline.query(task_id)
+    projected = snapshot.get("latest_event")
     if not isinstance(projected, dict):
         return
-    gw.push_event({"type": "inspection_task_event", "data": projected})
+    restored_terminal_replay = (
+        not accepted
+        and snapshot.get("delivery", {}).get("restored_from_journal") is True
+        and projected.get("terminal") is True
+        and isinstance(data, dict)
+        and projected.get("boot_id") == data.get("boot_id")
+        and projected.get("event_sequence") == data.get("event_sequence")
+    )
+    if not accepted and not restored_terminal_replay:
+        return
+    if accepted:
+        gw.push_event({"type": "inspection_task_event", "data": projected})
+    if projected.get("terminal") is not True:
+        return
+    try:
+        recording = timeline.claim_recording_stop(
+            task_id,
+            recover_stopping=restored_terminal_replay,
+        )
+    except InspectionTaskJournalUnavailable as exc:
+        journal = timeline.health()["journal"]
+        gw.push_event(
+            {
+                "type": "inspection_task_journal_error",
+                "data": {
+                    "task_id": task_id,
+                    "status": journal["status"],
+                    "error": str(exc),
+                },
+            }
+        )
+        return
+    if recording is None:
+        return
+    session_id = str(recording["session_id"])
+
+    def finish_recording() -> None:
+        try:
+            gw._recording.stop(expected_session_id=session_id)
+        except Exception as exc:
+            error = getattr(exc, "code", None) or str(exc) or "recording_stop_failed"
+            state = "failed" if error == "recording_session_mismatch" else "recording"
+        else:
+            state = "completed"
+            error = ""
+        try:
+            timeline.finish_recording_stop(
+                task_id=task_id,
+                expected_session_id=session_id,
+                state=state,
+                error=str(error),
+            )
+        except InspectionTaskJournalUnavailable as exc:
+            journal = timeline.health()["journal"]
+            gw.push_event(
+                {
+                    "type": "inspection_task_journal_error",
+                    "data": {
+                        "task_id": task_id,
+                        "status": journal["status"],
+                        "error": str(exc),
+                    },
+                }
+            )
+
+    threading.Thread(
+        target=finish_recording,
+        name="inspection-recording-stop",
+        daemon=True,
+    ).start()
 
 
 def _request_exploration_stop_after_projection_failure(
@@ -161,8 +258,8 @@ def _request_exploration_stop_after_projection_failure(
     from gateway.services.explore_runs import new_request_id
 
     run_id = str(data.get("exploration_run_id") or "").strip()
-    session_id = str(data.get("product_session_id") or "").strip()
-    if not run_id or not session_id:
+    product_session_id = str(data.get("product_session_id") or "").strip()
+    if not run_id or not product_session_id:
         return {"attempted": False, "accepted": False, "reason": "identity_missing"}
     requested = getattr(gw, "_explore_projection_stop_requests", None)
     if not isinstance(requested, set):
@@ -184,7 +281,7 @@ def _request_exploration_stop_after_projection_failure(
     try:
         receipt = stop(
             exploration_run_id=run_id,
-            session_id=session_id,
+            product_session_id=product_session_id,
             reason="exploration_run_projection_failed",
             request_id=request_id,
         )
@@ -226,7 +323,7 @@ def _request_exploration_stop_for_rejected_known_run(
     if not run.get("found") or run.get("terminal") is True:
         return {"attempted": False, "accepted": False, "reason": "run_not_active"}
     identity = run.get("identity")
-    session_id = (
+    product_session_id = (
         str(identity.get("product_session_id") or "").strip()
         if isinstance(identity, dict)
         else ""
@@ -235,7 +332,7 @@ def _request_exploration_stop_for_rejected_known_run(
         gw,
         {
             "exploration_run_id": run_id,
-            "product_session_id": session_id,
+            "product_session_id": product_session_id,
         },
     )
 
@@ -287,34 +384,15 @@ def handle_exploration_run_event(gw: Any, event: Any) -> None:
         )
         return
 
-    gw._exploring = str(projected.get("state") or "") in {
-        "submitted",
-        "admitted",
-        "running",
-        "pausing",
-        "paused",
-        "cancelling",
-    }
+    public_state = str(projected.get("state") or "").upper()
+    transition = projected.get("transition")
+    gw._exploring = public_state in {
+        "PLANNING",
+        "EXECUTING",
+        "PAUSED",
+        "RECOVERING",
+    } or isinstance(transition, dict)
     gw.push_event({"type": "exploration_run_event", "data": dict(data)})
-
-
-def handle_map_event(gw: Any, event: Any) -> None:
-    data = event if isinstance(event, dict) else {"raw": str(event)}
-    gw.push_event({"type": "map_event", "data": data})
-
-
-def handle_eval(gw: Any, ev: Any) -> None:
-    data = ev.to_dict() if hasattr(ev, "to_dict") else {"raw": str(ev)}
-    with gw._state_lock:
-        gw._eval = data
-    gw.push_event({"type": "eval", "data": data})
-
-
-def handle_dialogue(gw: Any, state: Any) -> None:
-    data = state if isinstance(state, dict) else {"raw": str(state)}
-    with gw._state_lock:
-        gw._dialogue = data
-    gw.push_event({"type": "dialogue", "data": data})
 
 
 def handle_gnss_fusion_health(gw: Any, state: Any) -> None:
@@ -335,20 +413,6 @@ def handle_exploration_supervisor(gw: Any, state: Any) -> None:
     with gw._state_lock:
         gw._exploration_supervisor_state = dict(data)
     gw.push_event({"type": "exploration_supervisor", "data": data})
-
-
-def handle_traversable_frontiers(gw: Any, candidates: Any) -> None:
-    data = json_payload(candidates if isinstance(candidates, list) else [])
-    with gw._state_lock:
-        gw._last_traversable_frontiers = list(data) if isinstance(data, list) else []
-    gw.push_event({"type": "traversable_frontiers", "data": data})
-
-
-def handle_frontier_candidate(gw: Any, candidate: Any) -> None:
-    data = json_payload(candidate if isinstance(candidate, dict) else {"raw": str(candidate)})
-    with gw._state_lock:
-        gw._last_frontier_candidate = dict(data) if isinstance(data, dict) else {"raw": str(data)}
-    gw.push_event({"type": "frontier_candidate", "data": data})
 
 
 def handle_agent_message(gw: Any, msg: Any) -> None:

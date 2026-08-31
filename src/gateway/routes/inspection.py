@@ -10,6 +10,7 @@ import os
 import stat
 import time
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ from gateway.schemas import (
     InspectionTaskStartRequest,
     InspectionTaskStatusResponse,
 )
+from gateway.services.environment_map_feedback import EnvironmentMapFeedback
 from gateway.services.inspection_boundary import (
     InspectionBoundaryError,
     InspectionCommandRejected,
@@ -39,8 +41,8 @@ from gateway.services.inspection_task_lifecycle import (
     InspectionTaskJournalUnavailable,
     ensure_inspection_task_timeline,
 )
-from gateway.services.map_service import map_service_query
-from maps.paths import active_map_name, nav_map_root
+from gateway.services.mapd_transport import active_map, mapd_query
+from gateway.services.recording import NativeRecordingError
 from runtime.contracts.inspection_evidence import (
     EvidenceIntegrityError,
     EvidenceValidationError,
@@ -97,6 +99,7 @@ def _task_command_rejected(
     action: str,
     task_id: str,
     request_id: str,
+    recording_cleanup: dict[str, Any] | None = None,
 ) -> JSONResponse:
     """Return a retry-safe conflict when the live endpoint declines a task command."""
 
@@ -109,15 +112,20 @@ def _task_command_rejected(
             "task_id": task_id,
             "request_id": request_id,
             "native_reason": str(exc) or "inspection_task_rejected",
+            **(
+                {"recording_cleanup": recording_cleanup}
+                if recording_cleanup is not None
+                else {}
+            ),
         },
     )
 
 
-def _resolve_map_id(value: str | None) -> str | JSONResponse:
+def _resolve_map_id(gw: Any, value: str | None) -> str | JSONResponse:
     requested = str(value or "").strip()
     if requested:
         return requested
-    resolved = active_map_name(nav_map_root())
+    resolved = active_map(gw)
     if resolved:
         return resolved
     return _error(
@@ -219,7 +227,6 @@ def _public_artifacts(result: InspectionEvidenceResult) -> list[dict[str, Any]]:
             "kind": record.get("kind"),
             "media_type": record.get("media_type"),
             "bytes": record.get("bytes"),
-            "sha256": record.get("sha256"),
         }
         public.append({key: value for key, value in item.items() if value is not None})
     return public
@@ -228,7 +235,6 @@ def _public_artifacts(result: InspectionEvidenceResult) -> list[dict[str, Any]]:
 def _evidence_summary(result: InspectionEvidenceResult) -> dict[str, Any]:
     return {
         "evidence_id": result.request.request_id,
-        "manifest_sha256": result.manifest_sha256,
         "request": result.manifest.get("request", {}),
         "analysis": result.manifest.get("analysis", {}),
         "persistence": {
@@ -307,16 +313,11 @@ def _read_evidence_artifact(
         if artifact_path.resolve().parent != evidence_root:
             raise EvidenceIntegrityError("artifact path escaped the evidence directory")
         expected_bytes = record.get("bytes")
-        expected_sha256 = record.get("sha256")
         if isinstance(expected_bytes, bool) or not isinstance(expected_bytes, int) or expected_bytes < 0:
             raise EvidenceIntegrityError(f"artifact byte count is invalid: {kind}")
-        if not isinstance(expected_sha256, str) or not expected_sha256:
-            raise EvidenceIntegrityError(f"artifact sha256 is invalid: {kind}")
         payload = _read_regular_file_bytes(artifact_path)
         if len(payload) != expected_bytes:
             raise EvidenceIntegrityError(f"artifact byte count mismatch: {kind}")
-        if _sha256_bytes(payload) != expected_sha256:
-            raise EvidenceIntegrityError(f"artifact sha256 mismatch: {kind}")
         media_type = record.get("media_type")
         if not isinstance(media_type, str) or not media_type:
             media_type = "application/octet-stream"
@@ -327,13 +328,6 @@ def _read_evidence_artifact(
         if exc.errno in _ARTIFACT_INTEGRITY_ERRNOS:
             return _evidence_integrity_error(exc)
         return _evidence_unavailable(exc)
-
-
-def _sha256_bytes(payload: bytes) -> str:
-    import hashlib
-
-    return hashlib.sha256(payload).hexdigest()
-
 
 def _read_regular_file_bytes(path: Path) -> bytes:
     flags = os.O_RDONLY
@@ -402,7 +396,7 @@ def _route_payload(body: InspectionRouteRequest) -> dict[str, Any]:
         "id": body.id,
         "name": body.name or body.id,
         "map_id": body.map_id,
-        "map_version": body.map_version,
+        "map_content_epoch": body.map_content_epoch,
         "revision": body.revision,
         "loop_count": body.loop_count,
         "failure_policy": body.failure_policy,
@@ -424,21 +418,24 @@ def _route_payload(body: InspectionRouteRequest) -> dict[str, Any]:
     }
 
 
-def _map_version(gw: Any, map_id: str) -> int | JSONResponse:
+def _map_content_epoch(gw: Any, map_id: str) -> int | JSONResponse:
     try:
-        response = map_service_query(gw, {"action": "get_record", "name": map_id})
+        response = mapd_query(gw, {"action": "get_record", "map_id": map_id})
     except Exception as exc:
         return _error(503, "inspection_map_query_failed", str(exc))
     record = response.get("record") if isinstance(response, dict) else None
     if not isinstance(record, dict) or response.get("success") is not True:
         return _error(404, "inspection_map_not_found", f"map not found: {map_id}")
     try:
-        return int(record["version"])
+        content_epoch = record["content_epoch"]
+        if isinstance(content_epoch, bool) or not isinstance(content_epoch, int) or content_epoch <= 0:
+            raise ValueError("content_epoch must be positive")
+        return content_epoch
     except (KeyError, TypeError, ValueError):
         return _error(
             503,
-            "inspection_map_version_unavailable",
-            f"map record has no valid version: {map_id}",
+            "inspection_map_content_epoch_unavailable",
+            f"map record has no valid content_epoch: {map_id}",
         )
 
 
@@ -690,6 +687,49 @@ def _validate_route_evidence_worker(route: dict[str, Any]) -> JSONResponse | Non
     return None
 
 
+def _inspection_environment_admission(gw: Any) -> dict[str, Any]:
+    feedback = getattr(gw, "_environment_map_feedback", None)
+    if not isinstance(feedback, EnvironmentMapFeedback):
+        return {
+            "ready": False,
+            "blockers": ["environment_map_feedback_unavailable"],
+        }
+
+    modules = getattr(gw, "_all_modules", None)
+    host_bus = modules.get("host.bus") if isinstance(modules, Mapping) else None
+    map_readiness_checked = False
+    map_readiness_reason: str | None = None
+    readiness = getattr(host_bus, "map_readiness", None)
+    if host_bus is None:
+        map_readiness_reason = "host_bus_missing"
+    elif not callable(readiness):
+        map_readiness_reason = "map_readiness_contract_missing"
+    else:
+        try:
+            raw_reason = readiness()
+            map_readiness_checked = True
+            if raw_reason is None:
+                map_readiness_reason = None
+            elif isinstance(raw_reason, str) and raw_reason.strip():
+                map_readiness_reason = raw_reason.strip()
+            else:
+                map_readiness_reason = "map_readiness_result_invalid"
+        except Exception as exc:
+            map_readiness_reason = f"map_readiness_error:{type(exc).__name__}"
+
+    try:
+        return feedback.inspection_admission(
+            map_readiness_checked=map_readiness_checked,
+            map_readiness_reason=map_readiness_reason,
+            product_session_id=os.environ.get("LINGTU_PRODUCT_SESSION_ID"),
+        )
+    except Exception as exc:
+        return {
+            "ready": False,
+            "blockers": [f"environment_map_feedback_error:{type(exc).__name__}"],
+        }
+
+
 def register_inspection_routes(app, gw) -> None:
     @app.get(
         "/api/v1/inspection/evidence",
@@ -742,7 +782,7 @@ def register_inspection_routes(app, gw) -> None:
         responses={400: {"model": GatewayErrorResponse}, 503: {"model": GatewayErrorResponse}},
     )
     async def list_inspection_routes(map_id: str | None = None):
-        resolved = _resolve_map_id(map_id)
+        resolved = _resolve_map_id(gw, map_id)
         if isinstance(resolved, JSONResponse):
             return resolved
         try:
@@ -766,18 +806,18 @@ def register_inspection_routes(app, gw) -> None:
         responses={400: {"model": GatewayErrorResponse}, 503: {"model": GatewayErrorResponse}},
     )
     async def put_inspection_route(body: InspectionRouteRequest):
-        version = await asyncio.to_thread(_map_version, gw, body.map_id)
+        version = await asyncio.to_thread(_map_content_epoch, gw, body.map_id)
         if isinstance(version, JSONResponse):
             return version
-        if body.map_version is not None and body.map_version != version:
+        if body.map_content_epoch is not None and body.map_content_epoch != version:
             return _error(
                 409,
-                "inspection_map_version_mismatch",
-                "route map_version does not match the current map record",
-                detail={"requested": body.map_version, "current": version},
+                "inspection_map_content_epoch_mismatch",
+                "route map_content_epoch does not match the current map record",
+                detail={"requested": body.map_content_epoch, "current": version},
             )
         payload = _route_payload(body)
-        payload["map_version"] = version
+        payload["map_content_epoch"] = version
         try:
             stored = await asyncio.to_thread(_run_store_operation, gw, "put", payload)
             route = _normalize_route(stored)
@@ -801,7 +841,7 @@ def register_inspection_routes(app, gw) -> None:
         },
     )
     async def get_inspection_route(route_id: str, map_id: str | None = None):
-        resolved = _resolve_map_id(map_id)
+        resolved = _resolve_map_id(gw, map_id)
         if isinstance(resolved, JSONResponse):
             return resolved
         try:
@@ -832,7 +872,7 @@ def register_inspection_routes(app, gw) -> None:
         },
     )
     async def delete_inspection_route(route_id: str, map_id: str | None = None):
-        resolved = _resolve_map_id(map_id)
+        resolved = _resolve_map_id(gw, map_id)
         if isinstance(resolved, JSONResponse):
             return resolved
         try:
@@ -889,7 +929,7 @@ def register_inspection_routes(app, gw) -> None:
             task_timeline.require_available()
         except InspectionTaskJournalUnavailable as exc:
             return _error(503, "inspection_task_journal_unavailable", str(exc))
-        resolved = _resolve_map_id(None)
+        resolved = _resolve_map_id(gw, None)
         if isinstance(resolved, JSONResponse):
             return resolved
         if body.map_id and body.map_id != resolved:
@@ -960,6 +1000,14 @@ def register_inspection_routes(app, gw) -> None:
         evidence_error = _validate_route_evidence_worker(route)
         if evidence_error is not None:
             return evidence_error
+        admission = _inspection_environment_admission(gw)
+        if admission.get("ready") is not True:
+            return _error(
+                503,
+                "inspection_environment_not_ready",
+                "inspection cannot start until the current environment map is admitted",
+                detail=admission,
+            )
         try:
             task_timeline.reserve_submission(
                 task_id=task_id,
@@ -980,6 +1028,172 @@ def register_inspection_routes(app, gw) -> None:
             )
         except InspectionTaskJournalUnavailable as exc:
             return _error(503, "inspection_task_journal_unavailable", str(exc))
+        recording_snapshot = task_timeline.query(task_id).get("recording")
+        new_recording_session_id = ""
+        rollback_recording_session_id = (
+            str(recording_snapshot.get("session_id") or "")
+            if isinstance(recording_snapshot, dict)
+            else ""
+        )
+        if not isinstance(recording_snapshot, dict):
+            recording_service = getattr(gw, "_recording", None)
+            if recording_service is None:
+                return _error(
+                    503,
+                    "inspection_recording_start_failed",
+                    "inspection evidence recording service is unavailable",
+                )
+            try:
+                started_recording = await asyncio.to_thread(
+                    recording_service.start,
+                    duration=0,
+                    prefix="inspection",
+                    capture_profile="evidence",
+                    task_id=task_id,
+                    camera=False,
+                )
+                new_recording_session_id = str(
+                    getattr(started_recording, "session_id", "") or ""
+                )
+                rollback_recording_session_id = new_recording_session_id
+                product_session_id = str(
+                    getattr(started_recording, "product_session_id", "") or ""
+                )
+                task_timeline.bind_recording(
+                    task_id=task_id,
+                    session_id=new_recording_session_id,
+                    product_session_id=product_session_id,
+                )
+            except NativeRecordingError as exc:
+                return _error(
+                    exc.status_code,
+                    "inspection_recording_start_failed",
+                    "inspection evidence recording could not be started",
+                    detail={"recording_error": exc.code},
+                )
+            except (InspectionTaskJournalUnavailable, ValueError) as exc:
+                cleanup_error = ""
+                if new_recording_session_id:
+                    try:
+                        await asyncio.to_thread(
+                            recording_service.stop,
+                            expected_session_id=new_recording_session_id,
+                        )
+                    except Exception as cleanup_exc:
+                        cleanup_error = str(
+                            getattr(cleanup_exc, "code", None)
+                            or cleanup_exc
+                            or "recording_stop_failed"
+                        )
+                return _error(
+                    503,
+                    "inspection_task_journal_commit_failed",
+                    str(exc),
+                    detail={
+                        "task_id": task_id,
+                        "request_id": request_id,
+                        **(
+                            {"orphan_cleanup_error": cleanup_error}
+                            if cleanup_error
+                            else {}
+                        ),
+                    },
+                )
+
+        async def rollback_recording() -> dict[str, Any]:
+            if not rollback_recording_session_id:
+                return {"attempted": False, "session_id": "", "state": "missing", "error": ""}
+            claimed = task_timeline.claim_recording_stop(task_id)
+            if claimed is None:
+                retained = task_timeline.query(task_id).get("recording")
+                return {
+                    "attempted": False,
+                    "session_id": rollback_recording_session_id,
+                    "state": str(retained.get("state") or "unknown")
+                    if isinstance(retained, dict)
+                    else "missing",
+                    "error": str(retained.get("error") or "")
+                    if isinstance(retained, dict)
+                    else "",
+                }
+            try:
+                await asyncio.to_thread(
+                    gw._recording.stop,
+                    expected_session_id=rollback_recording_session_id,
+                )
+            except NativeRecordingError as exc:
+                resulting_state = (
+                    "failed"
+                    if exc.code == "recording_session_mismatch"
+                    else "recording"
+                )
+                task_timeline.finish_recording_stop(
+                    task_id=task_id,
+                    expected_session_id=rollback_recording_session_id,
+                    state=resulting_state,
+                    error=exc.code,
+                )
+                return {
+                    "attempted": True,
+                    "session_id": rollback_recording_session_id,
+                    "state": resulting_state,
+                    "error": exc.code,
+                }
+            else:
+                task_timeline.finish_recording_stop(
+                    task_id=task_id,
+                    expected_session_id=rollback_recording_session_id,
+                    state="completed",
+                )
+                return {
+                    "attempted": True,
+                    "session_id": rollback_recording_session_id,
+                    "state": "completed",
+                    "error": "",
+                }
+
+        retained = task_timeline.query(task_id)
+        retained_recording = retained.get("recording")
+        recording_confirmed_active = (
+            isinstance(retained_recording, dict)
+            and retained_recording.get("state") == "recording"
+            and not str(retained_recording.get("error") or "")
+        )
+        if isinstance(retained_recording, dict) and not recording_confirmed_active:
+            submission = retained.get("last_submission")
+            if isinstance(submission, dict) and submission.get("request_id") == request_id:
+                return InspectionTaskCommandResponse(
+                    action="start",
+                    task_id=task_id,
+                    request_id=request_id,
+                    route_id=body.route_id,
+                    map_id=resolved,
+                    revision=current_revision,
+                )
+            if (
+                retained_recording.get("state") == "recording"
+                and retained_recording.get("error")
+            ):
+                cleanup = await rollback_recording()
+                return _task_command_rejected(
+                    RuntimeError("inspection recording requires exact-session cleanup"),
+                    action="start",
+                    task_id=task_id,
+                    request_id=request_id,
+                    recording_cleanup=cleanup,
+                )
+            return _task_command_rejected(
+                RuntimeError("inspection recording is not active after prior rejection"),
+                action="start",
+                task_id=task_id,
+                request_id=request_id,
+                recording_cleanup={
+                    "attempted": False,
+                    "session_id": str(retained_recording.get("session_id") or ""),
+                    "state": str(retained_recording.get("state") or "unknown"),
+                    "error": str(retained_recording.get("error") or ""),
+                },
+            )
         try:
             await asyncio.to_thread(
                 _run_native_task_command,
@@ -991,11 +1205,13 @@ def register_inspection_routes(app, gw) -> None:
                 request_id=request_id,
             )
         except InspectionCommandRejected as exc:
+            recording_cleanup = await rollback_recording()
             return _task_command_rejected(
                 exc,
                 action="start",
                 task_id=task_id,
                 request_id=request_id,
+                recording_cleanup=recording_cleanup,
             )
         except InspectionBoundaryError as exc:
             return _error(503, "inspection_native_unavailable", str(exc))
@@ -1006,7 +1222,7 @@ def register_inspection_routes(app, gw) -> None:
                 request_id=request_id,
                 route_id=body.route_id,
                 map_id=resolved,
-                map_version=int(route.get("map_version", 0) or 0),
+                map_content_epoch=int(route.get("map_content_epoch", 0) or 0),
                 route_revision=current_revision,
                 route_snapshot=route_snapshot,
             )

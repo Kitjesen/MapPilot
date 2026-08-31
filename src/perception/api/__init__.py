@@ -22,7 +22,6 @@ from .exceptions import (
     TrackerError,
 )
 from .factory import PerceptionFactory
-from .perception_api import PerceptionAPI
 from .tracker_api import TrackerAPI
 from .types import (
     BBox2D,
@@ -54,8 +53,6 @@ __all__ = [
     "InvalidCameraInfoError",
     "InvalidDepthError",
     "InvalidImageError",
-    # APIs
-    "PerceptionAPI",
     # Exceptions
     "PerceptionAPIError",
     "PerceptionConfig",

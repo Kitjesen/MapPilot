@@ -201,8 +201,6 @@ class _InstanceTrackerAdapter(TrackerAPI):
     ) -> list[APIDetection3D]:
         if not detections:
             return []
-        from ..tracking.projection import Detection3D as ProjDetection3D
-
         proj_dets = self._convert_to_projection(detections)
         tracked = self._impl.update(proj_dets)
         return self._convert_to_api(tracked)

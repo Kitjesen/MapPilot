@@ -8,42 +8,48 @@ import pytest
 pytest.importorskip("fastapi")
 
 
-def test_state_snapshot_preserves_legacy_fields_and_adds_client_contract():
+def test_state_snapshot_exposes_native_navigation_state_and_client_contract():
     from gateway.gateway_module import GatewayModule
     from gateway.services.state_snapshot import build_state_snapshot
 
     gateway = GatewayModule()
     with gateway._state_lock:
         gateway._odom = {"x": 1.0, "y": 2.0}
-        gateway._safety = {"level": 0}
-        gateway._mission = {"state": "running"}
-        gateway._eval = {"score": 0.9}
-        gateway._dialogue = {"last": "ok"}
+        gateway._navigation_state = {
+            "lifecycle_state_name": "EXECUTING",
+            "authority": "autonomy",
+        }
         gateway._mode = "autonomous"
         gateway._teleop_clients = 2
         gateway._sg_json = '{"nodes":[]}'
         gateway._last_path = [{"x": 0.0}, {"x": 1.0}]
         gateway._localization_status = {"state": "TRACKING", "confidence": 0.8}
-    gateway._teleop_module = type("TeleopStub", (), {"_active": True})()
+        gateway._visual_servo_status = {
+            "mode": "idle",
+            "target": "",
+            "follow_available": True,
+        }
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("gateway.gateway_module.native_teleop_active", lambda: True)
 
     payload = build_state_snapshot(gateway)
+    monkeypatch.undo()
 
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["ts"] > 0
     assert payload["server"]["time"] == payload["ts"]
     assert payload["server"]["api_version"] == "v1"
-    assert payload["odometry"] == {"x": 1.0, "y": 2.0}
-    assert payload["safety"] == {"level": 0}
-    assert payload["mission"] == {"state": "running"}
-    assert payload["eval"] == {"score": 0.9}
-    assert payload["dialogue"] == {"last": "ok"}
-    assert payload["mode"] == "autonomous"
+    assert payload["localization"]["odometry"] == {"x": 1.0, "y": 2.0}
+    assert payload["navigation"]["diagnostics"]["safety"]["stop_active"] is False
+    assert payload["navigation"]["navigation_state"]["lifecycle_state_name"] == "EXECUTING"
+    assert payload["session"]["mode"] == "idle"
     assert payload["lease"]["holder"] is None
     assert payload["teleop"] == {"active": True, "clients": 2}
     assert payload["localization"]["reported_state"] == "TRACKING"
     assert payload["localization"]["confidence"] == 0.8
-    assert payload["navigation"]["state"] == "running"
+    assert payload["navigation"]["state"] == "EXECUTING"
     assert payload["navigation"]["path"]["points"] == 2
+    assert payload["visual_servo"]["follow_available"] is True
     assert payload["scene"]["available"] is True
     assert payload["path"]["points"] == 2
     assert payload["links"]["capabilities"] == "/api/v1/app/capabilities"
@@ -60,9 +66,9 @@ def test_state_route_returns_stable_snapshot():
     route = next(route for route in gateway._app.routes if route.path == "/api/v1/state")
     payload = asyncio.run(route.endpoint())
 
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["ts"] > 0
-    assert "odometry" in payload
+    assert "odometry" in payload["localization"]
     assert "teleop" in payload
     assert "navigation" in payload
     assert payload["links"]["events"] == "/api/v1/events"

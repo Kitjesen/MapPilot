@@ -92,19 +92,11 @@ async def test_map_key_can_use_only_the_customer_map_workflow(method: str, path:
     assert response[0]["status"] == 200
 
 
-@pytest.mark.parametrize(
-    "api_key,rmf_api_key",
-    [
-        ("customer-map-secret", "rmf-secret"),
-        ("operator-secret", "customer-map-secret"),
-    ],
-)
-def test_map_key_must_differ_from_other_gateway_credentials(api_key: str, rmf_api_key: str) -> None:
+def test_map_key_must_differ_from_operator_key() -> None:
     with pytest.raises(ValueError, match="must differ"):
         APIKeyMiddleware(
             _ok_app,
-            api_key=api_key,
-            rmf_api_key=rmf_api_key,
+            api_key="customer-map-secret",
             map_api_key="customer-map-secret",
         )
 
@@ -113,9 +105,6 @@ def test_map_key_must_differ_from_other_gateway_credentials(api_key: str, rmf_ap
     "method,path",
     [
         ("GET", "/ws/teleop"),
-        ("POST", "/api/v1/cmd_vel"),
-        ("POST", "/api/v1/runtime/switch-plan"),
-        ("POST", "/api/v1/map/activate"),
         ("GET", "/api/v1/health"),
         ("GET", "/api/v1/map/save"),
         ("GET", "/api/v1/maps"),

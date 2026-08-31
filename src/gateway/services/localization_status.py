@@ -13,34 +13,26 @@ def handle_localization_status(gw: Any, state: dict[str, Any]) -> None:
     if not isinstance(state, dict):
         return
     data = dict(state)
-    profile = gw._slam_profile_from_status(data) or gw._get_slam_profile()
-    if profile and profile != "unknown" and not data.get("backend"):
+    reported_profile = gw._slam_profile_from_status(data)
+    configured_profile = gw._get_slam_profile()
+    native_runtime = (
+        configured_profile == "native_dds"
+        or str(data.get("health_source") or "").strip().lower() == "slam_runtime"
+    )
+    profile = "native_dds" if native_runtime else reported_profile or configured_profile
+    if native_runtime:
+        algorithm_profile = str(
+            data.get("algorithm_profile") or data.get("backend") or ""
+        ).strip().lower()
+        if algorithm_profile and algorithm_profile != "native_dds":
+            data["algorithm_profile"] = algorithm_profile
+        data["backend"] = "native_dds"
+    elif profile and profile != "unknown" and not data.get("backend"):
         data["backend"] = profile
+    slam_mode = str(data.get("slam_mode") or data.get("mode") or "").strip().lower()
+    if slam_mode:
+        data["slam_mode"] = slam_mode
     capability_defaults = backend_capability_defaults(profile)
-    if profile == "genz":
-        data.setdefault("health_source", "odom_map_cloud")
-        data["relocalization_supported"] = False
-        data["saved_map_relocalization_supported"] = False
-        data.setdefault("relocalization_state", "unsupported")
-        data["map_save_supported"] = False
-        if "map_state" not in data:
-            data["map_state"] = "live_map_cloud" if data.get("map_cloud_fresh") else "map_cloud_stale"
-        if "localizer_health" not in data:
-            state_name = str(data.get("state", "") or "").upper()
-            if state_name in {"LOST", "UNINIT", "UNINITIALIZED"}:
-                data["localizer_health"] = "LIO_LOST"
-            elif state_name in {"DIVERGED"}:
-                data["localizer_health"] = "LIO_DIVERGED"
-            elif state_name in {"DEGRADED", "FALLBACK_GNSS_ONLY"}:
-                data["localizer_health"] = "LIO_DEGRADED"
-            else:
-                data["localizer_health"] = "LIO_TRACKING"
-    elif profile == "localizer":
-        data.setdefault("relocalization_supported", True)
-        data.setdefault("saved_map_relocalization_supported", True)
-    elif profile == "fastlio2":
-        data.setdefault("relocalization_supported", False)
-        data.setdefault("saved_map_relocalization_supported", False)
     data.setdefault(
         "saved_map_relocalization_supported",
         data.get(
@@ -90,6 +82,6 @@ def handle_localization_status(gw: Any, state: dict[str, Any]) -> None:
         data["viewer_epoch_reset_reason"] = reset_reason
 
     with gw._state_lock:
-        gw._session_runtime.set_localization_status(data)
+        gw._localization_status = dict(data)
     gw._blackbox.record("slam_diag", data)
     gw.push_event({"type": "slam_diag", "data": data})

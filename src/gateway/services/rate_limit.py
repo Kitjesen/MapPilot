@@ -4,7 +4,7 @@ Pure ASGI middleware (consistent with auth.py) that enforces per-client
 request rate limits.  Limits are configurable via environment variables and
 differentiated by endpoint category:
 
-  - Control endpoints (goal, stop, cmd_vel, mode): stricter limits
+  - Control endpoints (goal, stop, mode): stricter limits
   - Query endpoints (state, health, status): moderate limits
   - SSE/WebSocket: exempt (long-lived connections)
 
@@ -43,15 +43,12 @@ _DEFAULT_BURST = 3
 # Paths subject to control rate limits (prefix match)
 _CONTROL_PREFIXES = (
     "/api/v1/goal",
-    "/api/v1/cmd_vel",
     "/api/v1/stop",
     "/api/v1/estop/reset",
     "/api/v1/mode",
     "/api/v1/instruction",
     "/api/v1/navigation/cancel",
     "/api/v1/lease",
-    "/api/v1/driver/swap",
-    "/api/v1/runtime/backend",
 )
 
 # Paths exempt from rate limiting (long-lived or probes)

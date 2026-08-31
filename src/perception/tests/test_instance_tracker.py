@@ -9,12 +9,14 @@ test_instance_tracker.py — 实例追踪器单元测试
 """
 
 import json
+import tempfile
 import unittest
 
 import numpy as np
 
 from perception.tracking.instance_tracker import (
     InstanceTracker,
+    PhantomNode,
     TrackedObject,
     infer_room_type,
 )
@@ -225,6 +227,28 @@ class TestInstanceTrackerUpdate(unittest.TestCase):
             tracker.update([det])
         self.assertLessEqual(len(tracker.objects), 10)  # 不超过内部上限
 
+    def test_promote_phantom_creates_tracked_object_with_inherited_prior(self):
+        phantom = PhantomNode(
+            phantom_id=7,
+            label="chair",
+            belief_alpha=3.0,
+            safety_level="caution",
+            source="kg_phantom:office",
+        )
+        self.tracker._phantom_nodes[phantom.phantom_id] = phantom
+
+        promoted = self.tracker.promote_phantom(
+            phantom.phantom_id,
+            _make_det(label="chair", pos=(2.0, 3.0, 0.5)),
+        )
+
+        self.assertIsInstance(promoted, TrackedObject)
+        self.assertEqual(promoted.kg_prior_alpha, phantom.belief_alpha)
+        self.assertEqual(promoted.kg_prior_source, phantom.source)
+        self.assertEqual(promoted.safety_level, phantom.safety_level)
+        self.assertNotIn(phantom.phantom_id, self.tracker._phantom_nodes)
+        self.assertIs(self.tracker.objects[promoted.object_id], promoted)
+
 
 class TestInstanceTrackerSceneGraph(unittest.TestCase):
 
@@ -265,6 +289,32 @@ class TestInstanceTrackerSceneGraph(unittest.TestCase):
         self.tracker.update([det1, det2])
         data = json.loads(self.tracker.get_scene_graph_json())
         self.assertIn("relations", data)
+
+
+class TestInstanceTrackerPersistence(unittest.TestCase):
+
+    def test_save_load_restores_object_fields_and_marks_loaded_source(self):
+        tracker = InstanceTracker()
+        original = tracker.update([_make_det(label="chair", pos=(1.0, 2.0, 0.5))])[0]
+        original.detection_count = 4
+        original.belief_alpha = 6.5
+        original.safety_level = "caution"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = f"{temp_dir}/scene.json"
+            tracker.save_to_file(path)
+
+            restored = InstanceTracker()
+            self.assertTrue(restored.load_from_file(path))
+
+        loaded = restored.objects[original.object_id]
+        self.assertIsInstance(loaded, TrackedObject)
+        self.assertEqual(loaded.label, original.label)
+        np.testing.assert_allclose(loaded.position, original.position)
+        self.assertEqual(loaded.detection_count, original.detection_count)
+        self.assertEqual(loaded.belief_alpha, original.belief_alpha)
+        self.assertEqual(loaded.safety_level, original.safety_level)
+        self.assertEqual(loaded.source, "loaded")
 
 
 if __name__ == "__main__":

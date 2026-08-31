@@ -14,6 +14,7 @@ from lingtu.sdk import (
     LingTuClient,
     MapList,
     NavigationStatus,
+    Pose2D,
     Position,
     RobotState,
     SessionInfo,
@@ -26,14 +27,130 @@ class TestLingTuClient(unittest.TestCase):
     def setUp(self) -> None:
         self.robot = LingTuClient()
 
-    def test_public_all_keeps_optional_async_out_of_star_import(self) -> None:
-        self.assertNotIn("AsyncLingTuClient", sdk_pkg.__all__)
+    def test_public_all_exports_both_clients(self) -> None:
+        self.assertIn("AsyncLingTuClient", sdk_pkg.__all__)
         self.assertIn("LingTuClient", sdk_pkg.__all__)
+        self.assertIn("LocalizationClient", sdk_pkg.__all__)
+        self.assertIn("AsyncLocalizationClient", sdk_pkg.__all__)
+        self.assertIn("Pose2D", sdk_pkg.__all__)
+
+    def test_removed_direct_runtime_mutations_are_not_sdk_methods(self) -> None:
+        for name in ("use_map", "restore_map", "start_session", "end_session", "drive"):
+            self.assertFalse(hasattr(LingTuClient, name), name)
+        async_source = (Path(__file__).parents[1] / "async_client.py").read_text(encoding="utf-8")
+        self.assertNotIn("async def use_map", async_source)
+        self.assertNotIn("async def restore_map", async_source)
+        self.assertNotIn("async def start_session", async_source)
+        self.assertNotIn("async def end_session", async_source)
+        self.assertNotIn("async def drive", async_source)
+
+    def test_removed_slam_relocalization_aliases_are_not_sdk_methods(self) -> None:
+        self.assertFalse(hasattr(LingTuClient, "slam_relocalize"))
+        self.assertFalse(hasattr(LingTuClient, "slam_auto_relocalize"))
 
     def _mock_http(self, mock_urlopen, response: dict) -> None:
         """Set up a mock that returns the given JSON dict."""
         mock_urlopen.return_value.__enter__.return_value.read.return_value = (
             json.dumps(response).encode("utf-8")
+        )
+
+    def test_simple_get_routes(self) -> None:
+        routes = (
+            (self.robot.scene, "/api/v1/scene_graph"),
+            (self.robot.locations, "/api/v1/locations"),
+            (self.robot.slam_status, "/api/v1/slam/status"),
+            (self.robot.explore_status, "/api/v1/explore/status"),
+            (self.robot.recording_status, "/api/v1/recordings/status"),
+            (self.robot.memory_temporal, "/api/v1/memory/temporal"),
+            (self.robot.capabilities, "/api/v1/app/capabilities"),
+            (self.robot.bootstrap, "/api/v1/app/bootstrap"),
+            (self.robot.readiness, "/api/v1/readiness"),
+            (self.robot.auth_check, "/api/v1/auth/check"),
+            (self.robot.map_points, "/api/v1/map/points"),
+            (self.robot.localization_status, "/api/v1/localization/status"),
+            (self.robot.path, "/api/v1/path"),
+            (self.robot.runtime_contract, "/api/v1/diagnostics/runtime-contract"),
+        )
+        for invoke, path in routes:
+            with self.subTest(path=path):
+                self.robot._get = Mock(return_value={})
+                self.assertEqual(invoke(), {})
+                self.robot._get.assert_called_once_with(path)
+
+    def test_simple_command_routes(self) -> None:
+        routes = (
+            (lambda: self.robot.rename_map("old", "new"), "/api/v1/map/rename", {"old_name": "old", "new_name": "new"}),
+            (lambda: self.robot.set_mode("autonomous"), "/api/v1/mode", {"mode": "autonomous"}),
+            (
+                lambda: self.robot.follow_person("person_01"),
+                "/api/v1/visual_servo",
+                {"mode": "follow", "target_id": "person_01"},
+            ),
+            (
+                self.robot.stop_following,
+                "/api/v1/visual_servo",
+                {"mode": "stop"},
+            ),
+            (lambda: self.robot.delete_location("test"), "/api/v1/locations/test", None),
+            (self.robot.explore_start, "/api/v1/explore/start", None),
+            (self.robot.explore_stop, "/api/v1/explore/stop", None),
+            (self.robot.reset_map_cloud, "/api/v1/map_cloud/reset", None),
+            (self.robot.field_check, "/api/v1/diagnostics/field-check", None),
+        )
+        for invoke, path, payload in routes:
+            with self.subTest(path=path):
+                expected = CommandResult(ok=True)
+                self.robot._command = Mock(return_value=expected)
+                self.assertIs(invoke(), expected)
+                if payload is None:
+                    self.robot._command.assert_called_once_with(path)
+                else:
+                    self.robot._command.assert_called_once_with(path, payload)
+
+    def test_slam_hot_switch_is_not_exposed(self) -> None:
+        self.assertFalse(hasattr(self.robot, "slam_switch"))
+
+    def test_seeded_relocalization_uses_domain_api(self) -> None:
+        expected = CommandResult(ok=True)
+        self.robot._command = Mock(return_value=expected)
+
+        result = self.robot.localization.relocalize(
+            "factory",
+            initial_pose=Pose2D(x=1.0, y=2.0, yaw=0.5),
+        )
+
+        self.assertIs(result, expected)
+        self.robot._command.assert_called_once_with(
+            "/api/v1/localization/relocalizations",
+            {
+                "mode": "seeded",
+                "map_name": "factory",
+                "initial_pose": {"x": 1.0, "y": 2.0, "yaw": 0.5},
+            },
+        )
+
+    def test_global_relocalization_uses_domain_api(self) -> None:
+        expected = CommandResult(ok=True)
+        self.robot._command = Mock(return_value=expected)
+
+        result = self.robot.localization.global_relocalize("factory")
+
+        self.assertIs(result, expected)
+        self.robot._command.assert_called_once_with(
+            "/api/v1/localization/relocalizations",
+            {"mode": "global", "map_name": "factory"},
+        )
+
+    def test_map_tracking_uses_domain_api(self) -> None:
+        expected = CommandResult(ok=True)
+        self.robot._command = Mock(return_value=expected)
+
+        result = self.robot.localization.start_map_tracking("factory")
+
+        self.assertIs(result, expected)
+        self.robot._command.assert_called_once_with(
+            "/api/v1/localization/map-tracking",
+            {"map_name": "factory"},
         )
 
     # ------------------------------------------------------------------
@@ -92,16 +209,6 @@ class TestLingTuClient(unittest.TestCase):
         self.assertIsInstance(r, CommandResult)
 
     # ------------------------------------------------------------------
-    # Drive
-    # ------------------------------------------------------------------
-
-    @patch("urllib.request.urlopen")
-    def test_drive(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.drive(vx=0.5, wz=0.3)
-        self.assertIsInstance(r, CommandResult)
-
-    # ------------------------------------------------------------------
     # State
     # ------------------------------------------------------------------
 
@@ -144,21 +251,18 @@ class TestLingTuClient(unittest.TestCase):
         self.assertEqual(h.modules_total, 8)
 
     @patch("urllib.request.urlopen")
-    def test_health_unreachable_returns_error_payload(self, mock_urlopen) -> None:
+    def test_health_unreachable_is_not_reported_as_zero_health(self, mock_urlopen) -> None:
         mock_urlopen.side_effect = urllib.error.URLError("connection refused")
 
-        h = self.robot.health()
-
-        self.assertEqual(h.modules_ok, 0)
-        self.assertEqual(h.raw["error"], "robot not reachable")
-        self.assertIn("/api/v1/health", h.raw["path"])
+        with self.assertRaises(ConnectionError):
+            self.robot.health()
 
     @patch("urllib.request.urlopen")
     def test_session(self, mock_urlopen) -> None:
         self._mock_http(mock_urlopen, {
             "mode": "navigating",
             "active_map": "factory_01",
-            "slam_profile": "localizer",
+            "slam_profile": "native_dds",
         })
         s = self.robot.session()
         self.assertIsInstance(s, SessionInfo)
@@ -294,13 +398,20 @@ class TestLingTuClient(unittest.TestCase):
         self.assertIs(result, completed)
         self.assertEqual(self.robot.navigation_status.call_count, 4)
 
-    @patch("lingtu.sdk.client.time.monotonic", side_effect=[0.0, 0.1, 1.1])
-    def test_wait_until_arrived_does_not_treat_initial_idle_as_arrival(
+    @patch(
+        "lingtu.sdk.client.time.monotonic",
+        side_effect=[0.0, 0.1, 0.2, 0.3, 1.1],
+    )
+    def test_wait_until_arrived_requires_explicit_success(
         self,
         _monotonic,
     ) -> None:
         self.robot.navigation_status = Mock(
-            return_value=NavigationStatus(state="IDLE", distance_to_goal=0.0)
+            side_effect=[
+                NavigationStatus(state="EXECUTING"),
+                NavigationStatus(state="IDLE", distance_to_goal=0.0),
+                NavigationStatus(state="ARRIVED", distance_to_goal=0.0),
+            ]
         )
 
         with self.assertRaises(TimeoutError):
@@ -310,28 +421,29 @@ class TestLingTuClient(unittest.TestCase):
                 expected_goal=(7.0, 8.0, 0.0),
             )
 
-    def test_wait_until_arrived_raises_for_failed_terminal(self) -> None:
-        self.robot.navigation_status = Mock(
-            side_effect=[
-                NavigationStatus(state="EXECUTING", goal=Position(2.0, 3.0)),
-                NavigationStatus(
-                    state="FAILED",
-                    goal=Position(2.0, 3.0),
-                    raw={
-                        "failure_reason": "planner_failed",
-                        "target": {"goal": {"x": 2.0, "y": 3.0}},
-                    },
-                ),
-            ]
-        )
+    def test_wait_until_arrived_raises_for_terminal_failure(self) -> None:
+        for state in ("FAILED", "CANCELLED"):
+            with self.subTest(state=state):
+                self.robot.navigation_status = Mock(
+                    side_effect=[
+                        NavigationStatus(state="EXECUTING", goal=Position(2.0, 3.0)),
+                        NavigationStatus(
+                            state=state,
+                            goal=Position(2.0, 3.0),
+                            raw={
+                                "failure_reason": "planner_failed",
+                                "target": {"goal": {"x": 2.0, "y": 3.0}},
+                            },
+                        ),
+                    ]
+                )
 
-        with self.assertRaisesRegex(RuntimeError, "FAILED.*planner_failed"):
-            self.robot.wait_until_arrived(
-                timeout=1.0,
-                poll_interval=0.0,
-                expected_goal=(2.0, 3.0, 0.0),
-            )
-
+                with self.assertRaisesRegex(RuntimeError, f"{state}.*planner_failed"):
+                    self.robot.wait_until_arrived(
+                        timeout=1.0,
+                        poll_interval=0.0,
+                        expected_goal=(2.0, 3.0, 0.0),
+                    )
     def test_wait_until_arrived_accepts_immediate_success_with_matching_request_id(self) -> None:
         baseline = NavigationStatus(
             state="IDLE",
@@ -535,7 +647,6 @@ class TestLingTuClient(unittest.TestCase):
 
         r = self.robot.save_map(
             "test_map",
-            optimization="auto",
             request_id="save-test-001",
         )
 
@@ -546,7 +657,6 @@ class TestLingTuClient(unittest.TestCase):
             json.loads(request.data),
             {
                 "name": "test_map",
-                "optimization": "auto",
                 "request_id": "save-test-001",
             },
         )
@@ -612,7 +722,6 @@ class TestLingTuClient(unittest.TestCase):
         self.assertIs(result, completed)
         self.robot.save_map.assert_called_once_with(
             "test_map",
-            optimization=None,
             request_id="request_1",
         )
         self.robot.get_map_operation.assert_called_once_with("operation_1")
@@ -664,8 +773,7 @@ class TestLingTuClient(unittest.TestCase):
             },
         }
 
-        def admit_save(_name, *, optimization, request_id):
-            self.assertIsNone(optimization)
+        def admit_save(_name, *, request_id):
             return CommandResult(
                 ok=True,
                 accepted=True,
@@ -1074,55 +1182,18 @@ class TestLingTuClient(unittest.TestCase):
             for partial in target.parent.glob(f".{target.name}.*.part"):
                 partial.unlink(missing_ok=True)
 
-    @patch("urllib.request.urlopen")
-    def test_use_map(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.use_map("test_map")
-        self.assertIsInstance(r, CommandResult)
-
-    @patch("urllib.request.urlopen")
-    def test_rename_map(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.rename_map("old", "new")
-        self.assertIsInstance(r, CommandResult)
-
     # ------------------------------------------------------------------
     # Mode
     # ------------------------------------------------------------------
-
-    @patch("urllib.request.urlopen")
-    def test_set_mode(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.set_mode("autonomous")
-        self.assertIsInstance(r, CommandResult)
 
     # ------------------------------------------------------------------
     # Perception
     # ------------------------------------------------------------------
 
     @patch("urllib.request.urlopen")
-    def test_scene(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"objects": []})
-        sg = self.robot.scene()
-        self.assertIsInstance(sg, dict)
-        self.assertEqual(sg.get("objects"), [])
-
-    @patch("urllib.request.urlopen")
-    def test_locations(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"locations": []})
-        locs = self.robot.locations()
-        self.assertIsInstance(locs, dict)
-
-    @patch("urllib.request.urlopen")
     def test_tag_location(self, mock_urlopen) -> None:
         self._mock_http(mock_urlopen, {"ok": True})
         r = self.robot.tag_location("test", use_current_pose=True)
-        self.assertIsInstance(r, CommandResult)
-
-    @patch("urllib.request.urlopen")
-    def test_delete_location(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.delete_location("test")
         self.assertIsInstance(r, CommandResult)
 
     # ------------------------------------------------------------------
@@ -1139,47 +1210,9 @@ class TestLingTuClient(unittest.TestCase):
     # SLAM
     # ------------------------------------------------------------------
 
-    @patch("urllib.request.urlopen")
-    def test_slam_status(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"state": "mapping"})
-        st = self.robot.slam_status()
-        self.assertEqual(st.get("state"), "mapping")
-
-    @patch("urllib.request.urlopen")
-    def test_slam_switch(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.slam_switch("localizer")
-        self.assertIsInstance(r, CommandResult)
-
-    @patch("urllib.request.urlopen")
-    def test_slam_relocalize(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.slam_relocalize()
-        self.assertIsInstance(r, CommandResult)
-
-    @patch("urllib.request.urlopen")
-    def test_slam_auto_relocalize(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.slam_auto_relocalize()
-        self.assertIsInstance(r, CommandResult)
-
     # ------------------------------------------------------------------
     # Exploration
     # ------------------------------------------------------------------
-
-    @patch("urllib.request.urlopen")
-    def test_explore(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.explore_start()
-        self.assertIsInstance(r, CommandResult)
-        r = self.robot.explore_stop()
-        self.assertIsInstance(r, CommandResult)
-
-    @patch("urllib.request.urlopen")
-    def test_explore_status(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"active": True})
-        st = self.robot.explore_status()
-        self.assertTrue(st.get("active"))
 
     # ------------------------------------------------------------------
     # Native recording
@@ -1188,36 +1221,46 @@ class TestLingTuClient(unittest.TestCase):
     @patch("urllib.request.urlopen")
     def test_recording(self, mock_urlopen) -> None:
         self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.recording_start("test", duration=60)
+        r = self.robot.recording_start(
+            "test",
+            duration=60,
+            capture_profile="evidence",
+            task_id="inspection-task-1",
+            camera=True,
+            minimum_free_gib=12,
+        )
         self.assertIsInstance(r, CommandResult)
         request = mock_urlopen.call_args.args[0]
         self.assertTrue(request.full_url.endswith("/api/v1/recordings/start"))
-        self.assertEqual(json.loads(request.data), {"duration": 60, "prefix": "test"})
+        self.assertEqual(
+            json.loads(request.data),
+            {
+                "duration": 60,
+                "prefix": "test",
+                "capture_profile": "evidence",
+                "task_id": "inspection-task-1",
+                "camera": True,
+                "minimum_free_gib": 12,
+            },
+        )
         r = self.robot.recording_stop()
         self.assertIsInstance(r, CommandResult)
 
     @patch("urllib.request.urlopen")
-    def test_recording_status(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"recording": True})
-        st = self.robot.recording_status()
-        self.assertTrue(st.get("recording"))
-
-    @patch("urllib.request.urlopen")
-    def test_bag_alias_uses_canonical_recording_api(self, mock_urlopen) -> None:
+    def test_recording_sensors_omits_task_id(self, mock_urlopen) -> None:
         self._mock_http(mock_urlopen, {"ok": True})
-        self.robot.bag_start("legacy")
+
+        self.robot.recording_start(capture_profile="sensors")
+
         request = mock_urlopen.call_args.args[0]
-        self.assertTrue(request.full_url.endswith("/api/v1/recordings/start"))
+        self.assertEqual(
+            json.loads(request.data),
+            {"duration": 600, "capture_profile": "sensors"},
+        )
 
     # ------------------------------------------------------------------
     # Memory
     # ------------------------------------------------------------------
-
-    @patch("urllib.request.urlopen")
-    def test_memory_temporal(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"observations": []})
-        mem = self.robot.memory_temporal()
-        self.assertIsInstance(mem, dict)
 
     @patch("urllib.request.urlopen")
     def test_memory_temporal_semantic(self, mock_urlopen) -> None:
@@ -1245,77 +1288,8 @@ class TestLingTuClient(unittest.TestCase):
         self.assertIsInstance(r, CommandResult)
 
     # ------------------------------------------------------------------
-    # Session lifecycle
-    # ------------------------------------------------------------------
-
-    @patch("urllib.request.urlopen")
-    def test_start_end_session(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True, "message": "started"})
-        r = self.robot.start_session("navigating", map_name="factory_01")
-        self.assertIsInstance(r, CommandResult)
-
-    @patch("urllib.request.urlopen")
-    def test_end_session(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.end_session()
-        self.assertIsInstance(r, CommandResult)
-
-    # ------------------------------------------------------------------
-    # Driver swap
-    # ------------------------------------------------------------------
-
-    @patch("urllib.request.urlopen")
-    def test_swap_driver(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {
-            "success": True, "message": "Swapped to stub", "swap_time_ms": 42,
-        })
-        r = self.robot.swap_driver("stub")
-        self.assertIsInstance(r, CommandResult)
-        self.assertTrue(r.ok)
-
-    @patch("urllib.request.urlopen")
-    def test_swap_alias(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"success": True, "message": "ok"})
-        r = self.robot.swap("stub")
-        self.assertIsInstance(r, CommandResult)
-
-    # ------------------------------------------------------------------
-    # Switch backend
-    # ------------------------------------------------------------------
-
-    @patch("urllib.request.urlopen")
-    def test_switch_backend(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.switch_backend("planner", "pct")
-        self.assertIsInstance(r, CommandResult)
-
-    # ------------------------------------------------------------------
     # App endpoints
     # ------------------------------------------------------------------
-
-    @patch("urllib.request.urlopen")
-    def test_capabilities(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"version": "1.0"})
-        caps = self.robot.capabilities()
-        self.assertEqual(caps.get("version"), "1.0")
-
-    @patch("urllib.request.urlopen")
-    def test_bootstrap(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"mode": "idle"})
-        b = self.robot.bootstrap()
-        self.assertIsInstance(b, dict)
-
-    @patch("urllib.request.urlopen")
-    def test_devices(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"devices": []})
-        d = self.robot.devices()
-        self.assertIsInstance(d, dict)
-
-    @patch("urllib.request.urlopen")
-    def test_readiness(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ready": True})
-        r = self.robot.readiness()
-        self.assertIsInstance(r, dict)
 
     # ------------------------------------------------------------------
     # Auth
@@ -1326,60 +1300,20 @@ class TestLingTuClient(unittest.TestCase):
         self._mock_http(mock_urlopen, {"ok": True, "token": "abc"})
         r = self.robot.auth_login("my-key")
         self.assertEqual(r.get("token"), "abc")
-
-    @patch("urllib.request.urlopen")
-    def test_auth_check(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"auth_required": True})
-        ac = self.robot.auth_check()
-        self.assertTrue(ac.get("auth_required"))
+        request = mock_urlopen.call_args.args[0]
+        self.assertEqual(json.loads(request.data), {"key": "my-key"})
 
     # ------------------------------------------------------------------
     # Map operations
     # ------------------------------------------------------------------
 
-    @patch("urllib.request.urlopen")
-    def test_restore_map(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.restore_map("test")
-        self.assertIsInstance(r, CommandResult)
-
-    @patch("urllib.request.urlopen")
-    def test_reset_map_cloud(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.reset_map_cloud()
-        self.assertIsInstance(r, CommandResult)
-
-    @patch("urllib.request.urlopen")
-    def test_map_points(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"points": [], "count": 0})
-        pts = self.robot.map_points()
-        self.assertEqual(pts.get("count"), 0)
-
     # ------------------------------------------------------------------
     # Navigation status / path / localization
     # ------------------------------------------------------------------
 
-    @patch("urllib.request.urlopen")
-    def test_localization_status(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"fix_quality": "fixed"})
-        loc = self.robot.localization_status()
-        self.assertEqual(loc.get("fix_quality"), "fixed")
-
-    @patch("urllib.request.urlopen")
-    def test_path(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"path": []})
-        p = self.robot.path()
-        self.assertEqual(p.get("path"), [])
-
     # ------------------------------------------------------------------
     # Diagnostics
     # ------------------------------------------------------------------
-
-    @patch("urllib.request.urlopen")
-    def test_field_check(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True, "message": "all good"})
-        r = self.robot.field_check()
-        self.assertIsInstance(r, CommandResult)
 
     @patch("urllib.request.urlopen")
     def test_command_unreachable_returns_failed_result(self, mock_urlopen) -> None:
@@ -1391,12 +1325,6 @@ class TestLingTuClient(unittest.TestCase):
         self.assertFalse(r.ok)
         self.assertEqual(r.message, "robot not reachable")
         self.assertEqual(r.raw["path"], "/api/v1/goal")
-
-    @patch("urllib.request.urlopen")
-    def test_runtime_contract(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"contract_version": 1})
-        rc = self.robot.runtime_contract()
-        self.assertIsInstance(rc, dict)
 
     # ------------------------------------------------------------------
     # Context manager

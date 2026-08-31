@@ -49,6 +49,7 @@ class _Port:
 class _Client:
     def __init__(self) -> None:
         self.commands = []
+        self.manual_modes = []
 
     def send_teleop(self, vx, vy, wz, *, request_id=None) -> bool:
         self.commands.append((vx, vy, wz, request_id))
@@ -67,9 +68,11 @@ class _Client:
         wz,
         *,
         deadman=True,
+        manual_mode=False,
         freshness_budget_ms=350,
         request_id=None,
     ) -> bool:
+        self.manual_modes.append(manual_mode)
         return self.send_teleop(vx, vy, wz, request_id=request_id)
 
     def hold(
@@ -109,6 +112,7 @@ class _Client:
 class _OperatorClient:
     def __init__(self) -> None:
         self.commands = []
+        self.manual_modes = []
 
     def claim(self, source_id, source_epoch, sequence, *, lease_ttl_ms, request_id=None) -> OperatorMotionReceipt:
         self.commands.append(("claim", source_id, source_epoch, sequence, lease_ttl_ms, request_id))
@@ -124,9 +128,11 @@ class _OperatorClient:
         wz,
         *,
         deadman=True,
+        manual_mode=False,
         freshness_budget_ms=350,
         request_id=None,
     ) -> bool:
+        self.manual_modes.append(manual_mode)
         self.commands.append(
             (
                 "sample",
@@ -192,6 +198,7 @@ class _IncompleteOperatorClient:
         wz,
         *,
         deadman=True,
+        manual_mode=False,
         freshness_budget_ms=350,
         request_id=None,
     ) -> bool:
@@ -302,8 +309,6 @@ def test_teleop_uses_typed_operator_motion_capability():
         max_speed=0.5,
         max_yaw=1.0,
         release_timeout=0.5,
-        bridge_addr_raw="",
-        dds_enabled=True,
     )
     teleop.bind_navigation_commands(gateway, client)
     command = Twist(
@@ -323,7 +328,6 @@ def test_teleop_uses_typed_operator_motion_capability():
         delivered = teleop.publish_remote_velocity_request(
             gateway,
             command,
-            publish_local_compat=False,
             source_id="rest:operator-a",
             source_epoch=42,
             sequence=2,
@@ -349,8 +353,6 @@ def test_field_remote_velocity_rejects_stateless_unclaimed_source():
         max_speed=0.5,
         max_yaw=1.0,
         release_timeout=0.5,
-        bridge_addr_raw="",
-        dds_enabled=True,
     )
     teleop.bind_navigation_commands(gateway, client)
     command = Twist(linear=Vector3(x=0.2), angular=Vector3(z=0.1))
@@ -419,8 +421,6 @@ def test_field_binding_rejects_incomplete_operator_motion_interface(monkeypatch)
         max_speed=0.5,
         max_yaw=1.0,
         release_timeout=0.5,
-        bridge_addr_raw="",
-        dds_enabled=True,
     )
 
     teleop.bind_navigation_commands(gateway, _IncompleteOperatorClient())
@@ -436,8 +436,6 @@ def test_field_binding_uses_only_assembled_commands_capability(monkeypatch):
         max_speed=0.5,
         max_yaw=1.0,
         release_timeout=0.5,
-        bridge_addr_raw="",
-        dds_enabled=True,
     )
     real_import = builtins.__import__
     nav_imports = []
@@ -496,8 +494,6 @@ def test_operator_motion_claim_fails_closed_on_explicit_rejection():
         max_speed=0.5,
         max_yaw=1.0,
         release_timeout=0.5,
-        bridge_addr_raw="",
-        dds_enabled=True,
     )
     teleop.bind_navigation_commands(gateway, client)
     try:
@@ -568,6 +564,25 @@ def test_typed_operator_motion_sample_rejects_non_literal_true_ack(ack):
         publisher.close()
 
 
+def test_typed_operator_motion_sample_preserves_manual_mode():
+    client = _OperatorClient()
+    publisher = teleop.LatestNativeTeleopPublisher(client)
+    try:
+        assert publisher.submit(
+            -0.2,
+            0.0,
+            0.0,
+            source_id="ws:operator-a",
+            source_epoch=42,
+            sequence=2,
+            request_id="manual-retreat-1",
+            manual_mode=True,
+        )
+        assert _wait_until(lambda: client.manual_modes == [True])
+    finally:
+        publisher.close()
+
+
 def test_field_teleop_fails_closed_when_native_capability_is_unavailable():
     gateway = SimpleNamespace(cmd_vel=_Port())
     teleop.init_teleop_state(
@@ -575,41 +590,17 @@ def test_field_teleop_fails_closed_when_native_capability_is_unavailable():
         max_speed=0.5,
         max_yaw=1.0,
         release_timeout=0.5,
-        bridge_addr_raw="",
-        dds_enabled=True,
     )
     command = Twist(linear=Vector3(x=0.2), angular=Vector3(z=0.1))
 
     with pytest.raises(CommandBoundaryError, match="capability is unavailable"):
         teleop.publish_remote_velocity_request(gateway, command)
 
-    teleop.on_joy(gateway, 0.4, 0.0, 0.1)
+    teleop.on_velocity(gateway, 0.4, 0.0, 0.1)
     assert gateway.cmd_vel.messages == []
 
 
-def test_endpoint_only_is_the_primary_native_command_policy():
-    assert (
-        teleop.resolve_native_command_boundary(
-            command_output_mode="endpoint_only",
-        )
-        is True
-    )
-    assert (
-        teleop.resolve_native_command_boundary(
-            command_output_mode="local_driver",
-        )
-        is False
-    )
-
-
-def test_native_command_policy_rejects_unknown_mode():
-    with pytest.raises(ValueError, match="unsupported command_output_mode"):
-        teleop.resolve_native_command_boundary(
-            command_output_mode="hybrid",
-        )
-
-
-def test_native_joystick_is_nonblocking_and_keeps_only_latest_pending():
+def test_native_velocity_is_nonblocking_and_keeps_only_latest_pending():
     client = _BlockingClient()
     gateway = SimpleNamespace(cmd_vel=_Port())
     teleop.init_teleop_state(
@@ -617,18 +608,16 @@ def test_native_joystick_is_nonblocking_and_keeps_only_latest_pending():
         max_speed=1.0,
         max_yaw=1.0,
         release_timeout=0.5,
-        bridge_addr_raw="",
-        dds_enabled=True,
     )
     teleop.bind_navigation_commands(gateway, client)
     try:
         started = time.monotonic()
-        teleop.on_joy(gateway, 0.1, 0.0, 0.0)
+        teleop.on_velocity(gateway, 0.1, 0.0, 0.0)
         assert time.monotonic() - started < 0.1
         assert client.entered.wait(timeout=1.0)
 
-        teleop.on_joy(gateway, 0.2, 0.0, 0.0)
-        teleop.on_joy(gateway, 0.7, 0.0, 0.0)
+        teleop.on_velocity(gateway, 0.2, 0.0, 0.0)
+        teleop.on_velocity(gateway, 0.7, 0.0, 0.0)
         client.unblock_write.set()
 
         assert _wait_until(lambda: len(client.commands) == 2)
@@ -645,15 +634,13 @@ def test_native_release_orders_zero_after_inflight_and_drops_pending():
         max_speed=1.0,
         max_yaw=1.0,
         release_timeout=0.5,
-        bridge_addr_raw="",
-        dds_enabled=True,
     )
     teleop.bind_navigation_commands(gateway, client)
     release_thread = None
     try:
-        teleop.on_joy(gateway, 0.3, 0.0, 0.0)
+        teleop.on_velocity(gateway, 0.3, 0.0, 0.0)
         assert client.entered.wait(timeout=1.0)
-        teleop.on_joy(gateway, 0.8, 0.0, 0.0)
+        teleop.on_velocity(gateway, 0.8, 0.0, 0.0)
 
         release_thread = threading.Thread(target=teleop.release, args=(gateway,))
         release_thread.start()
@@ -671,7 +658,60 @@ def test_native_release_orders_zero_after_inflight_and_drops_pending():
         teleop.shutdown_teleop(gateway)
 
 
-def test_native_publish_failure_disables_followup_joystick_commands():
+def test_web_session_disconnect_quiesces_delayed_sample_even_after_native_ttl():
+    client = _BlockingClient()
+    gateway = SimpleNamespace(cmd_vel=_Port())
+    teleop.init_teleop_state(
+        gateway,
+        max_speed=1.0,
+        max_yaw=1.0,
+        release_timeout=0.5,
+    )
+    teleop.bind_navigation_commands(gateway, client)
+    gateway._teleop_claim = lambda **kwargs: teleop.claim(gateway, **kwargs)
+    gateway._teleop_on_velocity = (
+        lambda vx, vy, wz, **kwargs: teleop.on_velocity_with_request_id(
+            gateway,
+            vx,
+            vy,
+            wz,
+            **kwargs,
+        )
+    )
+    gateway._teleop_release = lambda **kwargs: teleop.release(gateway, **kwargs)
+    session = teleop.NativeTeleopSession(gateway, "web:test-session")
+    disconnect_thread = None
+    results = []
+
+    try:
+        assert session.open().accepted is True
+        assert session.move(0.3, 0.0, 0.0, request_id="move-1").accepted is True
+        assert client.entered.wait(timeout=1.0)
+        time.sleep(teleop.NATIVE_TELEOP_LEASE_TTL_MS * 1e-3 + 0.05)
+
+        disconnect_thread = threading.Thread(
+            target=lambda: results.append(session.disconnect(request_id="disconnect-1"))
+        )
+        disconnect_thread.start()
+        time.sleep(0.02)
+        assert disconnect_thread.is_alive()
+
+        client.unblock_write.set()
+        disconnect_thread.join(timeout=2.0)
+
+        assert not disconnect_thread.is_alive()
+        assert results[0].accepted is True
+        assert results[0].final_output_confirmed is True
+        assert _wait_until(lambda: len(client.commands) == 2)
+        assert [command[0] for command in client.commands] == [0.3, 0.0]
+    finally:
+        client.unblock_write.set()
+        if disconnect_thread is not None:
+            disconnect_thread.join(timeout=1.0)
+        teleop.shutdown_teleop(gateway)
+
+
+def test_native_publish_failure_disables_followup_velocity_commands():
     client = _FailingClient()
     gateway = SimpleNamespace(cmd_vel=_Port())
     teleop.init_teleop_state(
@@ -679,14 +719,12 @@ def test_native_publish_failure_disables_followup_joystick_commands():
         max_speed=1.0,
         max_yaw=1.0,
         release_timeout=0.5,
-        bridge_addr_raw="",
-        dds_enabled=True,
     )
     teleop.bind_navigation_commands(gateway, client)
     try:
-        assert teleop.on_joy(gateway, 0.2, 0.0, 0.0) is True
+        assert teleop.on_velocity(gateway, 0.2, 0.0, 0.0) is True
         assert _wait_until(lambda: gateway._teleop_native_publisher.last_error is not None)
-        assert teleop.on_joy(gateway, 0.3, 0.0, 0.0) is False
+        assert teleop.on_velocity(gateway, 0.3, 0.0, 0.0) is False
     finally:
         teleop.shutdown_teleop(gateway)
 
@@ -699,8 +737,6 @@ def test_async_sample_failure_is_pushed_as_gateway_event():
         max_speed=1.0,
         max_yaw=1.0,
         release_timeout=0.5,
-        bridge_addr_raw="",
-        dds_enabled=True,
     )
     teleop.bind_navigation_commands(gateway, _FailingClient())
     command = Twist(linear=Vector3(x=0.2), angular=Vector3(z=0.1))
@@ -720,13 +756,10 @@ def test_async_sample_failure_is_pushed_as_gateway_event():
 
     assert events == [
         {
-            "type": "operator_motion_sample_failed",
+            "type": "teleop_command_failed",
             "data": {
-                "source_id": "ws:operator-a",
-                "source_epoch": 42,
-                "source_sequence": 7,
                 "request_id": "sample-fail-1",
-                "error": "endpoint rejected teleop",
+                "error": "control_unavailable",
                 "stage": "dds_submission_failed",
                 "final_cmd_vel_confirmed": False,
                 "motor_confirmed": False,

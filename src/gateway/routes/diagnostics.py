@@ -14,11 +14,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
-from sim.diagnostics.dataflow_report import build_runtime_dataflow_from_summary
-from sim.diagnostics.gap_report import build_dimos_gap_report
-
 from gateway.schemas import (
-    AlgorithmBenchmarkLatestResponse,
     InspectionAcceptanceRequest,
     InspectionAcceptanceResponse,
     ProductFieldCheckRequest,
@@ -27,7 +23,6 @@ from gateway.schemas import (
     RoutecheckLatestResponse,
     RuntimeContractResponse,
 )
-from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES, INSPECTION_MVP_REQUIRED_GATES
 
 # Simple TTL cache for expensive diagnostic builders.
 # Cache key: function name; cache value: (timestamp, result).
@@ -52,28 +47,7 @@ def clear_diagnostics_cache() -> None:
     _CACHE.clear()
 
 
-ALGORITHM_BENCHMARK_SCHEMA_VERSION = "lingtu.algorithm_benchmark_latest.v1"
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[3]
-ALGORITHM_BENCHMARK_VARIANTS: dict[str, dict[str, Any]] = {
-    "inspection_mvp": {
-        "label": "Inspection MVP",
-        "claim": "routine_inspection_simulation_readiness",
-        "purpose": (
-            "Product-facing patrol readiness through Gateway/ModulePorts; "
-            "ROS2 evidence is adapter evidence, not the product API."
-        ),
-        "required_gate_sequence": INSPECTION_MVP_REQUIRED_GATES,
-    },
-    "dimos_benchmark": {
-        "label": "Dimos benchmark",
-        "claim": "strict_full_algorithm_reference",
-        "purpose": (
-            "Strict reference suite for whole-algorithm closure across "
-            "mapping, localization, planning, dynamic obstacles, and saved maps."
-        ),
-        "required_gate_sequence": DIMOS_BENCHMARK_REQUIRED_GATES,
-    },
-}
 
 
 def _json_ready(value: Any) -> Any:
@@ -114,33 +88,19 @@ def _snapshot_or_error(name: str, builder) -> dict[str, Any]:
 
 
 def _maps_snapshot(gw: Any) -> dict[str, Any]:
-    from maps.paths import nav_map_root_str
+    source = "mapd"
+    try:
+        from runtime.endpoints.mapd import MapClient
 
-    root = pathlib.Path(nav_map_root_str())
-
-    manager_snapshot: dict[str, Any] | None = None
-    manager = getattr(gw, "_map_mgr", None)
-    if manager is not None and callable(getattr(manager, "list_maps", None)):
-        manager_snapshot = manager.list_maps()
-        source = "maps_module"
-    else:
-        source = "native_maps_service"
-        try:
-            from maps.adapters.python.service import NativeMapsService
-
-            native = NativeMapsService(root)
-            try:
-                manager_snapshot = native.list_maps()
-            finally:
-                native.close()
-        except Exception as exc:
-            manager_snapshot = {
-                "action": "list",
-                "success": False,
-                "message": str(exc),
-                "maps": [],
-                "active": "",
-            }
+        manager_snapshot = MapClient().service("list_maps")
+    except Exception as exc:
+        manager_snapshot = {
+            "action": "list_maps",
+            "success": False,
+            "message": str(exc),
+            "maps": [],
+            "active": "",
+        }
 
     maps = (
         manager_snapshot.get("maps")
@@ -151,11 +111,10 @@ def _maps_snapshot(gw: Any) -> dict[str, Any]:
 
     return {
         "schema_version": 1,
-        "map_dir": str(root),
         "active": active,
         "maps": maps,
         "count": len(maps),
-        "has_manager": manager is not None,
+        "has_manager": False,
         "source": source,
         "manager": manager_snapshot,
         "ts": time.time(),
@@ -415,319 +374,6 @@ def _load_json_file(path: pathlib.Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def _algorithm_benchmark_artifacts_root(
-    explicit: str | os.PathLike[str] | None = None,
-) -> pathlib.Path:
-    if explicit:
-        return pathlib.Path(explicit).expanduser()
-    env_root = os.environ.get("LINGTU_ALGORITHM_BENCHMARK_ROOT")
-    if env_root:
-        return pathlib.Path(env_root).expanduser()
-    env_artifacts = os.environ.get("LINGTU_ARTIFACT_ROOT")
-    if env_artifacts:
-        return pathlib.Path(env_artifacts).expanduser() / "server_sim_closure"
-    repo_root = pathlib.Path(__file__).resolve().parents[3]
-    return repo_root / "artifacts" / "server_sim_closure"
-
-
-def _algorithm_benchmark_max_age_s(explicit: float | None = None) -> float:
-    if explicit is not None:
-        return float(explicit)
-    raw = os.environ.get("LINGTU_ALGORITHM_BENCHMARK_MAX_AGE_SEC")
-    if raw:
-        try:
-            return float(raw)
-        except ValueError:
-            pass
-    return 86400.0
-
-
-def _is_algorithm_benchmark_summary(data: dict[str, Any]) -> bool:
-    validation = data.get("algorithm_validation")
-    if not isinstance(validation, dict):
-        return False
-    return isinstance(data.get("missing_or_failed"), list)
-
-
-def _algorithm_benchmark_candidates(
-    root: pathlib.Path,
-) -> list[tuple[float, pathlib.Path, dict[str, Any]]]:
-    patterns = (
-        "summary_inspection_mvp*.json",
-        "summary_dimos_benchmark*.json",
-        "summary_core_algorithm*.json",
-        "summary*.json",
-    )
-    seen: set[pathlib.Path] = set()
-    candidates: list[tuple[float, pathlib.Path, dict[str, Any]]] = []
-    if not root.is_dir():
-        return candidates
-    for pattern in patterns:
-        for summary_path in root.glob(pattern):
-            if summary_path in seen or not summary_path.is_file():
-                continue
-            seen.add(summary_path)
-            data = _load_json_file(summary_path)
-            if data is None or not _is_algorithm_benchmark_summary(data):
-                continue
-            try:
-                mtime = summary_path.stat().st_mtime
-            except OSError:
-                mtime = 0.0
-            candidates.append((mtime, summary_path, data))
-    return sorted(candidates, key=lambda item: item[0], reverse=True)
-
-
-def _benchmark_variants_unavailable(reason: str) -> dict[str, dict[str, Any]]:
-    variants: dict[str, dict[str, Any]] = {}
-    for name, variant in ALGORITHM_BENCHMARK_VARIANTS.items():
-        variants[name] = {
-            "name": name,
-            "label": variant["label"],
-            "claim": variant["claim"],
-            "purpose": variant["purpose"],
-            "ok": False,
-            "status": "FAIL",
-            "read_only": True,
-            "ros2_topic_required": False,
-            "publishes": [],
-            "claim_allowed": False,
-            "required_gate_sequence": list(variant["required_gate_sequence"]),
-            "missing_or_failed": list(variant["required_gate_sequence"]),
-            "blockers": [reason],
-        }
-    return variants
-
-
-def _missing_algorithm_benchmark_summary(reason: str) -> dict[str, Any]:
-    return {
-        "schema_version": "lingtu.server_sim_closure.summary.v1",
-        "ok": False,
-        "missing_or_failed": list(DIMOS_BENCHMARK_REQUIRED_GATES),
-        "gates": {},
-        "algorithm_validation": {
-            "claim_allowed": False,
-            "flow_ok": False,
-            "required_gate_sequence": list(DIMOS_BENCHMARK_REQUIRED_GATES),
-            "validation_flow": [],
-            "gate_categories": {gate: ["artifact_contract"] for gate in DIMOS_BENCHMARK_REQUIRED_GATES},
-            "claim_boundary": {
-                "global_planning_source": "static_saved_map_octomap",
-                "live_costmap_role": "local_planning_and_safety_only",
-                "simulation_only": True,
-                "field_readiness": False,
-            },
-            "stop_condition": reason,
-        },
-    }
-
-
-def _algorithm_gate_failing(gate: Mapping[str, Any]) -> bool:
-    status = str(gate.get("status") or "").lower()
-    return gate.get("ok") is False or status in {
-        "fail",
-        "failed",
-        "missing",
-        "stale",
-        "error",
-    }
-
-
-def _algorithm_benchmark_variant_status(
-    name: str,
-    variant: Mapping[str, Any],
-    *,
-    latest: Mapping[str, Any],
-    missing_or_failed: list[str],
-    required_sequence: list[str],
-    report_age_s: float,
-    freshness: float,
-    claim_boundary_ok: bool,
-) -> dict[str, Any]:
-    required = [str(item) for item in variant.get("required_gate_sequence") or () if item]
-    required_set = set(required_sequence)
-    missing_set = set(missing_or_failed)
-    gates = _mapping(latest.get("gates"))
-    variant_missing: list[str] = []
-    blockers: list[str] = []
-
-    if report_age_s > freshness:
-        blockers.append("algorithm benchmark summary is stale")
-    if not claim_boundary_ok:
-        blockers.append("algorithm claim boundary must keep live_costmap local-only")
-
-    for gate in required:
-        gate_payload = _mapping(gates.get(gate))
-        gate_failed = bool(gate_payload) and _algorithm_gate_failing(gate_payload)
-        if gate not in required_set:
-            variant_missing.append(gate)
-            blockers.append(f"benchmark variant required gate missing from summary: {gate}")
-        elif gate in missing_set or gate_failed:
-            variant_missing.append(gate)
-            blockers.append(f"benchmark variant required gate is not passing: {gate}")
-
-    if name == "dimos_benchmark" and latest.get("ok") is not True:
-        blockers.append("strict benchmark summary is not passing")
-
-    variant_missing = list(dict.fromkeys(variant_missing))
-    blockers = list(dict.fromkeys(blockers))
-    ok = not blockers and not variant_missing
-    return {
-        "name": name,
-        "label": variant.get("label") or name,
-        "claim": variant.get("claim") or name,
-        "purpose": variant.get("purpose") or "",
-        "ok": ok,
-        "status": "PASS" if ok else "FAIL",
-        "read_only": True,
-        "ros2_topic_required": False,
-        "publishes": [],
-        "claim_allowed": ok,
-        "required_gate_sequence": required,
-        "missing_or_failed": variant_missing,
-        "blockers": blockers,
-    }
-
-
-def build_algorithm_benchmark_latest_summary(
-    artifacts_root: str | os.PathLike[str] | None = None,
-    *,
-    max_age_s: float | None = None,
-) -> dict[str, Any]:
-    root = _algorithm_benchmark_artifacts_root(artifacts_root)
-    freshness = _algorithm_benchmark_max_age_s(max_age_s)
-    now = time.time()
-    candidates = _algorithm_benchmark_candidates(root)
-    base = {
-        "schema_version": ALGORITHM_BENCHMARK_SCHEMA_VERSION,
-        "ok": False,
-        "read_only": True,
-        "ros2_topic_required": False,
-        "publishes": [],
-        "artifacts_root": str(root),
-        "count": len(candidates),
-        "summary_path": None,
-        "report_mtime": None,
-        "report_age_s": None,
-        "max_age_s": freshness,
-        "preset": "dimos_benchmark",
-        "source": "server_sim_closure",
-        "active_benchmark_variant": "inspection_mvp",
-        "strict_benchmark_variant": "dimos_benchmark",
-        "summary_schema_version": None,
-        "claim_allowed": False,
-        "missing_or_failed": [],
-        "required_gate_sequence": list(DIMOS_BENCHMARK_REQUIRED_GATES),
-        "validation_flow": [],
-        "claim_boundary": {},
-        "benchmark_variants": _benchmark_variants_unavailable(
-            "algorithm benchmark summary not found"
-        ),
-        "dimos_gap": build_dimos_gap_report(
-            _missing_algorithm_benchmark_summary("algorithm benchmark summary not found"),
-            source="algorithm_benchmark_report_not_found",
-            include_summary=False,
-        ),
-        "blocking_categories": {},
-        "blockers": [],
-        "reason": None,
-        "latest": None,
-        "ts": now,
-    }
-    if not candidates:
-        base["reason"] = "algorithm_benchmark_report_not_found"
-        base["blockers"] = ["algorithm benchmark summary not found"]
-        return base
-
-    report_mtime, summary_path, latest = candidates[0]
-    report_age_s = max(0.0, now - report_mtime)
-    validation = latest.get("algorithm_validation")
-    validation = validation if isinstance(validation, dict) else {}
-    missing_or_failed = [str(item) for item in latest.get("missing_or_failed") or [] if item]
-    required_sequence = [
-        str(item)
-        for item in (
-            validation.get("required_gate_sequence") or latest.get("required") or DIMOS_BENCHMARK_REQUIRED_GATES
-        )
-        if item
-    ]
-    claim_boundary = _mapping(validation.get("claim_boundary"))
-    claim_allowed = validation.get("claim_allowed") is True
-    blockers: list[str] = []
-    if report_age_s > freshness:
-        blockers.append("algorithm benchmark summary is stale")
-    if latest.get("ok") is not True:
-        blockers.append("algorithm benchmark summary is not passing")
-    if claim_allowed is not True:
-        blockers.append("algorithm validation claim_allowed is not true")
-    if missing_or_failed:
-        blockers.append("algorithm benchmark missing_or_failed: " + ",".join(missing_or_failed))
-    if set(DIMOS_BENCHMARK_REQUIRED_GATES) - set(required_sequence):
-        blockers.append("algorithm benchmark required gate set is incomplete")
-    if (
-        claim_boundary.get("live_costmap_role") != "local_planning_and_safety_only"
-        or claim_boundary.get("global_planning_source") == "live_costmap"
-    ):
-        blockers.append("algorithm claim boundary must keep live_costmap local-only")
-    claim_boundary_ok = (
-        claim_boundary.get("live_costmap_role") == "local_planning_and_safety_only"
-        and claim_boundary.get("global_planning_source") != "live_costmap"
-    )
-    runtime_dataflow = build_runtime_dataflow_from_summary(
-        latest,
-        root=PROJECT_ROOT,
-    )
-    dimos_gap = build_dimos_gap_report(
-        latest,
-        source=str(summary_path),
-        summary_freshness={
-            "fresh": report_age_s <= freshness,
-            "report_age_s": report_age_s,
-            "max_age_s": freshness,
-            "blocker": ("algorithm benchmark summary is stale" if report_age_s > freshness else ""),
-        },
-        runtime_dataflow=runtime_dataflow,
-        include_summary=False,
-    )
-    benchmark_variants = {
-        name: _algorithm_benchmark_variant_status(
-            name,
-            variant,
-            latest=latest,
-            missing_or_failed=missing_or_failed,
-            required_sequence=required_sequence,
-            report_age_s=report_age_s,
-            freshness=freshness,
-            claim_boundary_ok=claim_boundary_ok,
-        )
-        for name, variant in ALGORITHM_BENCHMARK_VARIANTS.items()
-    }
-    reason = None
-    if blockers:
-        reason = "algorithm_benchmark_report_stale" if report_age_s > freshness else "algorithm_benchmark_not_passing"
-
-    return {
-        **base,
-        "ok": not blockers,
-        "summary_path": str(summary_path),
-        "report_mtime": report_mtime,
-        "report_age_s": report_age_s,
-        "summary_schema_version": latest.get("schema_version"),
-        "claim_allowed": claim_allowed,
-        "missing_or_failed": missing_or_failed,
-        "required_gate_sequence": required_sequence,
-        "validation_flow": list(validation.get("validation_flow") or []),
-        "claim_boundary": claim_boundary,
-        "benchmark_variants": benchmark_variants,
-        "dimos_gap": dimos_gap,
-        "blocking_categories": _mapping(validation.get("blocking_categories")),
-        "blockers": blockers,
-        "reason": reason,
-        "latest": latest,
-        "ts": now,
-    }
-
-
 def _real_runtime_report_candidates(root: pathlib.Path) -> list[pathlib.Path]:
     if not root.is_dir():
         return []
@@ -739,81 +385,6 @@ def _real_runtime_report_candidates(root: pathlib.Path) -> list[pathlib.Path]:
         if path.is_file() and path not in candidates:
             candidates.append(path)
     return candidates
-
-
-def _all_required_section_entries_ok(section: Any) -> bool:
-    if not isinstance(section, dict) or not section:
-        return False
-    for entry in section.values():
-        if isinstance(entry, dict):
-            if entry.get("required") is False:
-                continue
-            if entry.get("ok") is not True:
-                return False
-        elif entry is not True:
-            return False
-    return True
-
-
-def _preflight_live_topic_freshness_ok(section: Any) -> bool:
-    from runtime.runtime_interface import TOPICS
-
-    if not isinstance(section, dict) or not section:
-        return False
-    deferred_until_goal = {TOPICS.local_path, TOPICS.cmd_vel}
-    for topic, entry in section.items():
-        if topic in deferred_until_goal:
-            continue
-        if isinstance(entry, dict):
-            if entry.get("required") is False:
-                continue
-            if entry.get("ok") is not True:
-                return False
-        elif entry is not True:
-            return False
-    return True
-
-
-def _real_runtime_preflight_blockers(
-    *,
-    validation: dict[str, Any],
-    report: dict[str, Any],
-    contract_name: str | None,
-    age_s: float,
-    max_age_s: float,
-    freshness: Any,
-    data_flow: Any,
-    frame_links: Any,
-    hardware: dict[str, Any],
-) -> list[str]:
-    from runtime.runtime_interface import REAL_RUNTIME_CONTRACT
-
-    blockers: list[str] = []
-    if not validation:
-        blockers.append("real-runtime-evidence validation payload missing")
-    if contract_name != REAL_RUNTIME_CONTRACT:
-        blockers.append(f"real-runtime-evidence contract is not {REAL_RUNTIME_CONTRACT}")
-    if report.get("simulation_only") is not False:
-        blockers.append("real-runtime-evidence simulation_only is not false")
-    if age_s > max_age_s:
-        blockers.append("real-runtime-evidence is stale")
-    if not _preflight_live_topic_freshness_ok(freshness):
-        blockers.append("real-runtime-evidence live topic freshness missing or failed")
-    if not _all_required_section_entries_ok(frame_links):
-        blockers.append("real-runtime-evidence frame-link section missing or failed")
-    flow = data_flow if isinstance(data_flow, dict) else {}
-    for stage in ("endpoint_adapter", "slam_or_relayed_localization_map"):
-        if not isinstance(flow.get(stage), dict) or flow[stage].get("ok") is not True:
-            blockers.append(f"real-runtime-evidence {stage} section missing or failed")
-    route_observed = (
-        hardware.get("ok") is True
-        or hardware.get("hardware_command_route_observed") is True
-        or report.get("cmd_vel_sent_to_hardware") is True
-    )
-    hardware_required = validation.get("hardware_boundary_required") is not False
-    if hardware_required and not route_observed:
-        blockers.append("real-runtime-evidence hardware command route missing")
-    return list(dict.fromkeys(blockers))
 
 
 def _real_runtime_evidence_summary_from_report(
@@ -829,9 +400,6 @@ def _real_runtime_evidence_summary_from_report(
         return None
 
     validation = report.get("runtime_evidence")
-    validation_path = report_path.parent / "runtime_evidence.json"
-    if not isinstance(validation, dict) and validation_path.is_file():
-        validation = _load_json_file(validation_path)
     if not isinstance(validation, dict):
         validation = {}
 
@@ -839,26 +407,8 @@ def _real_runtime_evidence_summary_from_report(
         report_mtime = report_path.stat().st_mtime
     except OSError:
         report_mtime = 0.0
-    if validation_path.is_file():
-        try:
-            report_mtime = max(report_mtime, validation_path.stat().st_mtime)
-        except OSError:
-            pass
-
     age_s = max(0.0, now - report_mtime)
-    runtime_contract = report.get("runtime_contract")
-    runtime_contract = runtime_contract if isinstance(runtime_contract, dict) else {}
-    contract_name = (
-        runtime_contract.get("name") or validation.get("expected_contract") or validation.get("runtime_contract")
-    )
-    real_motion = validation.get("checked_real_motion_evidence")
-    real_motion = real_motion if isinstance(real_motion, dict) else {}
-    hardware = validation.get("checked_hardware_boundary_evidence")
-    hardware = hardware if isinstance(hardware, dict) else {}
-    freshness = validation.get("checked_live_topic_freshness")
-    data_flow = validation.get("checked_runtime_data_flow_evidence")
-    frame_links = validation.get("checked_frame_link_evidence")
-
+    contract_name = validation.get("expected_contract")
     blockers: list[str] = []
     if not validation:
         blockers.append("real-runtime-evidence validation payload missing")
@@ -875,37 +425,13 @@ def _real_runtime_evidence_summary_from_report(
         blockers.append("real-runtime-evidence cmd_vel_sent_to_hardware is not true")
     if age_s > max_age_s:
         blockers.append("real-runtime-evidence is stale")
-    if real_motion.get("ok") is not True:
-        blockers.append("real-runtime-evidence real motion section missing or failed")
-    if hardware.get("ok") is not True:
-        blockers.append("real-runtime-evidence hardware boundary section missing or failed")
-    if not _all_required_section_entries_ok(freshness):
-        blockers.append("real-runtime-evidence live topic freshness missing or failed")
-    if not _all_required_section_entries_ok(data_flow):
-        blockers.append("real-runtime-evidence data-flow section missing or failed")
-    if not _all_required_section_entries_ok(frame_links):
-        blockers.append("real-runtime-evidence frame-link section missing or failed")
-
-    preflight_blockers = _real_runtime_preflight_blockers(
-        validation=validation,
-        report=report,
-        contract_name=contract_name,
-        age_s=age_s,
-        max_age_s=max_age_s,
-        freshness=freshness,
-        data_flow=data_flow,
-        frame_links=frame_links,
-        hardware=hardware,
-    )
 
     return {
         "schema_version": 1,
         "ok": not blockers,
-        "preflight_ok": not preflight_blockers,
         "artifacts_root": str(report_path.parent.parent),
         "artifact_dir": str(report_path.parent),
         "report_path": str(report_path),
-        "validation_path": str(validation_path) if validation_path.is_file() else None,
         "report_mtime": report_mtime,
         "report_age_s": age_s,
         "max_age_s": max_age_s,
@@ -914,12 +440,6 @@ def _real_runtime_evidence_summary_from_report(
         "simulation_only": report.get("simulation_only"),
         "real_robot_motion": report.get("real_robot_motion"),
         "cmd_vel_sent_to_hardware": report.get("cmd_vel_sent_to_hardware"),
-        "checked_real_motion_evidence": real_motion,
-        "checked_hardware_boundary_evidence": hardware,
-        "checked_live_topic_freshness": freshness if isinstance(freshness, dict) else {},
-        "checked_runtime_data_flow_evidence": data_flow if isinstance(data_flow, dict) else {},
-        "checked_frame_link_evidence": frame_links if isinstance(frame_links, dict) else {},
-        "preflight_blockers": preflight_blockers,
         "blockers": list(dict.fromkeys(blockers)),
         "reason": blockers[0] if blockers else None,
         "ts": now,
@@ -958,7 +478,6 @@ def build_real_runtime_evidence_latest_summary(
             "count": 0,
             "artifact_dir": None,
             "report_path": None,
-            "validation_path": None,
             "report_mtime": None,
             "report_age_s": None,
             "max_age_s": age_limit,
@@ -967,11 +486,6 @@ def build_real_runtime_evidence_latest_summary(
             "simulation_only": None,
             "real_robot_motion": None,
             "cmd_vel_sent_to_hardware": None,
-            "checked_real_motion_evidence": {},
-            "checked_hardware_boundary_evidence": {},
-            "checked_live_topic_freshness": {},
-            "checked_runtime_data_flow_evidence": {},
-            "checked_frame_link_evidence": {},
             "blockers": ["real_runtime_evidence_report_not_found"],
             "reason": "real_runtime_evidence_report_not_found",
             "ts": generated_at,
@@ -992,20 +506,6 @@ def _runtime_contract_snapshot() -> dict[str, Any]:
         "source": "runtime.runtime_interface.runtime_contract_manifest",
         "manifest": runtime_contract_manifest(),
         "ts": time.time(),
-    }
-
-
-def _load_topic_contract() -> dict[str, Any]:
-    from runtime.yaml_helpers import load_yaml
-
-    path = pathlib.Path(__file__).resolve().parents[3] / "config" / "topic_contract.yaml"
-    data = load_yaml(path, default={})
-    if not isinstance(data, dict):
-        data = {}
-    return {
-        "path": str(path),
-        "exists": path.is_file(),
-        "data": data,
     }
 
 
@@ -1037,12 +537,6 @@ def _frame_contract_snapshot(gw: Any) -> dict[str, Any]:
     if not isinstance(runtime_links, dict):
         runtime_links = {}
 
-    contract = _load_topic_contract()
-    contract_data = contract["data"]
-    tf_contract = contract_data.get("tf", {}) if isinstance(contract_data, dict) else {}
-    if not isinstance(tf_contract, dict):
-        tf_contract = {}
-
     nav_status = build_navigation_status(gw)
     frames = nav_status.get("frames", {})
     if not isinstance(frames, dict):
@@ -1055,24 +549,24 @@ def _frame_contract_snapshot(gw: Any) -> dict[str, Any]:
 
     with gw._state_lock:
         odom = dict(gw._odom) if isinstance(gw._odom, dict) else gw._odom
-        mission = dict(gw._mission) if isinstance(gw._mission, dict) else gw._mission
+        mission = (
+            dict(gw._navigation_state)
+            if isinstance(gw._navigation_state, dict)
+            else gw._navigation_state
+        )
         localization = (
             dict(gw._localization_status) if isinstance(gw._localization_status, dict) else gw._localization_status
         )
         path = list(gw._last_path or [])
 
-    links = tf_contract.get("links")
-    if not isinstance(links, dict) or not links:
-        links = runtime_links
-
     return {
         "schema_version": 1,
-        "contract": contract,
+        "contract": manifest,
         "expected": {
-            "map_frame": tf_contract.get("map_frame") or runtime_frames.get("map"),
-            "odom_frame": tf_contract.get("odom_frame") or runtime_frames.get("odom"),
-            "body_frame": tf_contract.get("body_frame") or runtime_frames.get("body"),
-            "links": links,
+            "map_frame": runtime_frames.get("map"),
+            "odom_frame": runtime_frames.get("odom"),
+            "body_frame": runtime_frames.get("body"),
+            "links": runtime_links,
         },
         "observed": {
             "odometry_frame_id": (odom.get("frame_id") if isinstance(odom, dict) else None),
@@ -1176,10 +670,6 @@ def _build_app_web_snapshots(gw: Any) -> dict[str, dict[str, Any]]:
             "real_runtime_evidence",
             lambda: build_real_runtime_evidence_latest_summary(),
         ),
-        "algorithm_benchmark": _snapshot_or_error(
-            "algorithm_benchmark",
-            lambda: build_algorithm_benchmark_latest_summary(),
-        ),
         "frame_contract": _snapshot_or_error(
             "frame_contract",
             lambda: _frame_contract_snapshot(gw),
@@ -1206,64 +696,36 @@ def _gateway_acceptance_snapshots(gw: Any) -> dict[str, dict[str, Any]]:
         "runtime_dataflow": build_runtime_dataflow_snapshot(gw),
         "localization_status": build_localization_status(gw),
         "navigation_status": build_navigation_status(gw),
-        "routecheck_latest": build_routecheck_latest_summary(),
         "real_runtime_evidence": build_real_runtime_evidence_latest_summary(),
-        "algorithm_benchmark_latest": build_algorithm_benchmark_latest_summary(),
     }
 
 
 def _inspection_map_gate(gw: Any, body: Any) -> dict[str, Any] | None:
-    map_dir = getattr(body, "map_dir", None)
-    if not map_dir:
-        from gateway.services.map_service import (
-            active_map,
-            ensure_maps_service,
-            validate_map_artifacts,
-        )
-
-        try:
-            ensure_maps_service(gw)
-        except Exception:
-            return None
-        active_name = active_map(gw)
-        if not active_name:
-            return None
-        response = validate_map_artifacts(
-            gw,
-            active_name,
-            require_octomap=bool(getattr(body, "require_octomap", False)),
-            require_occupancy=bool(getattr(body, "require_occupancy", False)),
-            expected_data_source=getattr(body, "expected_data_source", None),
-            expected_source_profile=getattr(body, "expected_source_profile", None),
-            expected_frame_id=getattr(body, "expected_frame_id", None),
-        )
-        if response is None:
-            return None
-        gate = dict(response.get("gate") or {})
-        from diagnostics.field.gates import runtime_validation_gates
-
-        gate["validation_gate"] = runtime_validation_gates()["saved_map_artifact_gate"]
-        return gate
-    if not map_dir:
-        return None
-    from diagnostics.field.gates import runtime_validation_gates
-    from maps.artifacts import (
-        validate_saved_map_artifact_dir,
+    from gateway.services.mapd_transport import (
+        active_map,
+        validate_map_artifacts,
     )
 
-    gate = validate_saved_map_artifact_dir(
-        pathlib.Path(str(map_dir)),
+    map_name = active_map(gw)
+    if not map_name:
+        return None
+    response = validate_map_artifacts(
+        gw,
+        map_name,
         require_octomap=bool(getattr(body, "require_octomap", False)),
         require_occupancy=bool(getattr(body, "require_occupancy", False)),
         expected_data_source=getattr(body, "expected_data_source", None),
         expected_source_profile=getattr(body, "expected_source_profile", None),
         expected_frame_id=getattr(body, "expected_frame_id", None),
     )
-    gate["validation_gate"] = runtime_validation_gates()["saved_map_artifact_gate"]
+    if response is None:
+        return None
+    gate = dict(response.get("gate") or {})
+    gate["map_id"] = map_name
     return gate
 
 
-def _inspection_candidate(gw: Any, target: dict[str, Any], client_id: str) -> dict[str, Any]:
+def _inspection_candidate(gw: Any, target: dict[str, Any]) -> dict[str, Any]:
     from diagnostics.field.inspection import goal_candidate_body_for_target
     from gateway.schemas import GoalCandidateRequest
     from gateway.services.control_commands import ControlCommandService
@@ -1293,8 +755,6 @@ def _inspection_candidate(gw: Any, target: dict[str, Any], client_id: str) -> di
 
     ts = time.time()
     payload = goal_candidate_body_for_target(target)
-    if client_id and client_id != "unknown":
-        payload["client_id"] = client_id
     try:
         body = GoalCandidateRequest.model_validate(payload)
         goal = construct_goal_from_request(
@@ -1303,7 +763,7 @@ def _inspection_candidate(gw: Any, target: dict[str, Any], client_id: str) -> di
             default_source=body.source,
             default_target_type=body.target_type,
         )
-        preview = ControlCommandService(gw).preview_navigation_plan(goal.preview_request(client_id=body.client_id))
+        preview = ControlCommandService(gw).preview_plan(goal.preview_request())
     except Exception as exc:
         return {
             "schema_version": 1,
@@ -1317,6 +777,17 @@ def _inspection_candidate(gw: Any, target: dict[str, Any], client_id: str) -> di
         }
 
     reasons = list(preview.get("reasons") or [])
+    if preview.get("ok") is not True:
+        return {
+            "schema_version": 1,
+            "ok": False,
+            "status": "preview_unavailable",
+            "target": goal.target_payload(ts=ts),
+            "preview": preview,
+            "reasons": reasons,
+            "error": preview.get("error") or "preview_unavailable",
+            "ts": ts,
+        }
     return {
         "schema_version": 1,
         "ok": True,
@@ -1329,7 +800,7 @@ def _inspection_candidate(gw: Any, target: dict[str, Any], client_id: str) -> di
     }
 
 
-def build_product_field_check_gateway_summary(gw: Any, body: Any) -> dict[str, Any]:
+def field_check(gw: Any, body: Any) -> dict[str, Any]:
     from diagnostics.field.field_check import build_product_field_check
     from diagnostics.field.gateway_acceptance import evaluate_gateway_runtime_acceptance
 
@@ -1340,31 +811,29 @@ def build_product_field_check_gateway_summary(gw: Any, body: Any) -> dict[str, A
     return build_product_field_check(
         gateway_acceptance,
         map_gate=_inspection_map_gate(gw, body),
-        algorithm_gate=build_algorithm_benchmark_latest_summary(),
     )
 
 
-def build_inspection_acceptance_gateway_summary(gw: Any, body: Any) -> dict[str, Any]:
+def inspection_check(gw: Any, body: Any) -> dict[str, Any]:
     from diagnostics.field.inspection import (
         build_inspection_acceptance,
         inspection_targets_from_payload,
     )
     from gateway.services.telemetry_normalizers import build_locations_response
 
-    field_check = build_product_field_check_gateway_summary(gw, body)
+    product_check = field_check(gw, body)
     locations = build_locations_response(_location_entries(gw))
     targets = inspection_targets_from_payload(
         locations,
         points=list(getattr(body, "points", None) or []),
         tag=getattr(body, "tag", None),
     )
-    candidates = [_inspection_candidate(gw, target, str(getattr(body, "client_id", "unknown"))) for target in targets]
+    candidates = [_inspection_candidate(gw, target) for target in targets]
     return build_inspection_acceptance(
-        field_check=field_check,
+        field_check=product_check,
         targets=targets,
         candidates=candidates,
         locations=locations,
-        gateway_url="gateway://local",
     )
 
 
@@ -1388,14 +857,6 @@ def register_diagnostic_routes(app, gw) -> None:
     )
     async def real_runtime_evidence_latest():
         return build_real_runtime_evidence_latest_summary()
-
-    @app.get(
-        "/api/v1/diagnostics/algorithm-benchmark/latest",
-        response_model=AlgorithmBenchmarkLatestResponse,
-        summary="Read latest read-only algorithm benchmark summary",
-    )
-    async def algorithm_benchmark_latest():
-        return build_algorithm_benchmark_latest_summary()
 
     @app.get(
         "/api/v1/diagnostics/runtime-contract",
@@ -1422,7 +883,7 @@ def register_diagnostic_routes(app, gw) -> None:
     async def product_field_check(
         body: ProductFieldCheckRequest = Body(default_factory=ProductFieldCheckRequest),
     ):
-        return build_product_field_check_gateway_summary(gw, body)
+        return field_check(gw, body)
 
     @app.post(
         "/api/v1/inspection/acceptance",
@@ -1432,7 +893,7 @@ def register_diagnostic_routes(app, gw) -> None:
     async def inspection_acceptance(
         body: InspectionAcceptanceRequest = Body(default_factory=InspectionAcceptanceRequest),
     ):
-        return build_inspection_acceptance_gateway_summary(
+        return inspection_check(
             gw,
             body,
         )
@@ -1539,7 +1000,14 @@ def register_diagnostic_routes(app, gw) -> None:
                     ),
                 )
 
-            cfg_path = repo_root / "config" / "robot_config.yaml"
+            configured_path = os.environ.get("LINGTU_CONFIG_PATH")
+            cfg_path = (
+                pathlib.Path(configured_path)
+                if configured_path
+                else repo_root / "config" / "robots" / "unitree" / "go2" / "robot.yaml"
+            )
+            if not cfg_path.is_absolute():
+                cfg_path = repo_root / cfg_path
             if cfg_path.exists():
                 tar.add(str(cfg_path), arcname="diag/robot_config.yaml")
 

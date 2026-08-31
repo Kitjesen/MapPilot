@@ -20,7 +20,7 @@ Failure semantics (important):
 References:
   - TopoNav (2025): topology graph as spatial memory
   - Hierarchical Planning: layered planning reduces search space
-  - Legacy PCT A* behavior, kept here as a ROS-free implementation.
+  - Legacy grid A* behavior, kept here as a ROS-free implementation.
 """
 
 import heapq
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # ── Pure Python A* on traversability grid ───────────────────────────────────
 #
-# Ported from the legacy PCT A* node with ROS2 dependencies removed. Performs
+# Ported from the legacy grid A* implementation with ROS2 dependencies removed. Performs
 # 8-connected A* directly on a 2D traversability grid.
 
 
@@ -76,7 +76,7 @@ def _astar_on_grid(
     Args:
         trav:        2D float array; trav[i,j] < obs_thr means traversable
         start/goal:  (ix, iy) grid coordinates
-        obs_thr:     obstacle threshold (same as PCT default: 49.9)
+        obs_thr:     obstacle threshold
         timeout_sec: seconds before giving up; returns None on timeout (no exception)
 
     Returns:
@@ -204,7 +204,7 @@ class HybridPlanner:
                                If None, segment planning always returns None (path always fails).
             trav_res:          grid resolution (m/cell), default 0.2 m
             trav_cx/trav_cy:   world coordinates of the grid center (m)
-            obstacle_thr:      obstacle threshold (same as PCT default: 49.9)
+            obstacle_thr:      obstacle threshold
             astar_timeout_sec: per-segment A* timeout (seconds)
             min_downsample_dist: minimum cell distance between consecutive kept waypoints
 

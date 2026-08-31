@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from gateway.auth import APIKeyMiddleware
@@ -25,7 +27,7 @@ async def _request(headers):
         {
             "type": "http",
             "method": "POST",
-            "path": "/api/v1/voice/turns",
+            "path": "/api/v1/safety/modes/estop",
             "headers": headers,
             "query_string": b"",
             "client": ("127.0.0.1", 5050),
@@ -37,7 +39,7 @@ async def _request(headers):
 
 
 @pytest.mark.asyncio
-async def test_askme_bearer_key_is_accepted_for_gateway_service_call():
+async def test_bearer_key_is_accepted_for_gateway_service_call():
     sent = await _request([(b"authorization", b"Bearer shared-secret")])
 
     assert sent[0]["status"] == 200
@@ -71,3 +73,20 @@ async def test_explicit_x_api_key_keeps_precedence_over_bearer():
     )
 
     assert sent[0]["status"] == 403
+
+
+def test_auth_login_accepts_configured_key(monkeypatch):
+    from fastapi import FastAPI
+
+    from gateway.routes.auth import register_auth_routes
+    from gateway.schemas import AuthLoginRequest
+
+    monkeypatch.setattr("gateway.auth._get_configured_key", lambda: "shared-secret")
+    app = FastAPI()
+    register_auth_routes(app)
+    endpoint = next(route.endpoint for route in app.routes if route.path == "/api/v1/auth/login")
+
+    response = asyncio.run(endpoint(AuthLoginRequest(key="shared-secret")))
+
+    assert response.status_code == 200
+    assert "lingtu_api_key=shared-secret" in response.headers["set-cookie"]

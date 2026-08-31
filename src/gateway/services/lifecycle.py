@@ -19,16 +19,6 @@ def start_background_threads(gw: Any) -> None:
             name="gateway",
         )
         gw._server_thread.start()
-        gw._start_client_http_prewarm(stop_event, timeout_s=15.0)
-
-    if gw._saved_map_loader_thread is None or not gw._saved_map_loader_thread.is_alive():
-        gw._saved_map_loader_thread = threading.Thread(
-            target=gw._saved_map_loader_loop,
-            args=(stop_event,),
-            daemon=True,
-            name="saved_map_loader",
-        )
-        gw._saved_map_loader_thread.start()
 
     if gw._drift_watchdog_enabled and (gw._drift_watchdog_thread is None or not gw._drift_watchdog_thread.is_alive()):
         gw._drift_watchdog_thread = threading.Thread(
@@ -55,8 +45,6 @@ def stop_background_threads(gw: Any) -> None:
     current = threading.current_thread()
     for attr_name in (
         "_server_thread",
-        "_client_http_prewarm_thread",
-        "_saved_map_loader_thread",
         "_drift_watchdog_thread",
         "_brainstem_health_refresh_thread",
     ):

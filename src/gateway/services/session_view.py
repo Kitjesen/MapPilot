@@ -6,6 +6,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from gateway.services.mapd_transport import mapd_query
 from gateway.services.runtime_status import (
     backend_capability_defaults,
     classify_pose_freshness,
@@ -19,42 +20,63 @@ from gateway.services.safety_status import (
 )
 
 
-def recover_external_mapping_session(gw: Any) -> bool:
-    """Restore the stateless mapping session after an external-runtime restart.
+def _runtime_projection(gw: Any) -> dict[str, Any]:
+    """Project Product session identity from RunPlan and native mapd."""
 
-    The field ``map`` Product owns its SLAM process outside Gateway. Gateway's
-    in-memory session cache therefore disappears on a Gateway restart even
-    though the product graph and native SLAM stay in mapping mode.  Recovering
-    from the immutable RunPlan keeps the first incoming cloud in the
-    mapping lifecycle without attempting to start or stop robot services.
-    """
-    if str(getattr(gw, "_session_mode", "idle") or "idle").lower() != "idle":
-        return False
-
+    identity = runtime_identity(gw)
     plan = getattr(gw, "_compiled_run_plan", None)
-    if plan is None:
-        return False
-    product = str(getattr(plan, "product", "") or "").strip()
-    lifecycle = getattr(plan, "lifecycle", None)
-    if not isinstance(lifecycle, Mapping):
-        return False
-    if str(lifecycle.get("product") or "").strip() != product:
-        return False
-    if str(lifecycle.get("product_mode") or "").strip() != "mapping":
-        return False
+    lifecycle = getattr(plan, "lifecycle", None) if plan is not None else None
+    mode = "idle"
+    slam_profile = "stopped"
+    requires_map = False
+    if isinstance(lifecycle, Mapping):
+        product = str(getattr(plan, "product", "") or "").strip()
+        if str(lifecycle.get("product") or "").strip() != product:
+            raise RuntimeError("compiled RunPlan lifecycle Product mismatch")
+        declared_mode = str(lifecycle.get("session_mode") or "none").strip().lower()
+        mode = "idle" if declared_mode == "none" else declared_mode
+        slam_profile = str(lifecycle.get("slam_mode") or "none").strip().lower()
+        requires_map = lifecycle.get("requires_map") is True
 
-    gw._session_mode = "mapping"
-    gw._session_product = product
-    gw._session_product_session = str(lifecycle.get("product_session") or "").strip()
-    gw._session_map = None
-    gw._session_since = time.time()
-    return True
+    saved_active_map = gw._session_active_map_name()
+    active_map = (
+        saved_active_map
+        if mode in {"navigating", "exploring"} and requires_map
+        else None
+    )
+    return {
+        **identity,
+        "mode": mode,
+        "slam_profile": slam_profile,
+        "active_map": active_map,
+        "saved_active_map": saved_active_map,
+    }
 
 
-def recover_external_explore_session(gw: Any) -> bool:
-    """Recover only an exactly committed, native-backed Explore session."""
+def refresh_session_projection(gw: Any) -> dict[str, Any]:
+    """Refresh fields used by read-only Gateway consumers."""
 
-    if str(getattr(gw, "_session_mode", "idle") or "idle").lower() != "idle":
+    projection = _runtime_projection(gw)
+    key = (
+        projection["mode"],
+        projection["product"],
+        projection["active_map"],
+        projection["product_session_id"],
+    )
+    if getattr(gw, "_session_projection_key", None) != key:
+        gw._session_projection_key = key
+        gw._session_since = time.time()
+    gw._session_mode = projection["mode"]
+    gw._session_product = projection["product"]
+    gw._session_map = projection["active_map"]
+    gw._session_slam_profile = projection["slam_profile"]
+    return projection
+
+
+def reconcile_native_explore(gw: Any) -> bool:
+    """Reconcile native Explore state for an active Explore Product."""
+
+    if refresh_session_projection(gw)["mode"] != "exploring":
         return False
 
     from gateway.services.exploration import (
@@ -67,10 +89,8 @@ def recover_external_explore_session(gw: Any) -> bool:
     if not binding.get("valid"):
         return False
 
-    plan = getattr(gw, "_compiled_run_plan", None)
-    lifecycle = getattr(plan, "lifecycle", None)
     status = binding.get("native_status")
-    if not isinstance(lifecycle, Mapping) or not isinstance(status, Mapping):
+    if not isinstance(status, Mapping):
         return False
 
     try:
@@ -81,55 +101,55 @@ def recover_external_explore_session(gw: Any) -> bool:
         # prevents new motion admission.
         pass
 
-    gw._session_mode = "exploring"
-    gw._session_product = "explore"
-    gw._session_product_session = str(
-        lifecycle.get("product_session") or "exploration"
-    ).strip()
-    gw._session_map = binding.get("map_name") or binding.get("map_id")
-    gw._session_slam_profile = str(lifecycle.get("slam_mode") or "").strip()
-    committed_at = binding.get("committed_at")
-    try:
-        gw._session_since = float(committed_at)
-    except (TypeError, ValueError):
-        gw._session_since = time.time()
     gw._exploring = status.get("active") is True
     return True
 
 
 def detect_current_mode(gw: Any) -> tuple[str, str | None]:
-    """Return logical session state without inferring it from process state."""
-    recover_external_mapping_session(gw)
-    recover_external_explore_session(gw)
-    active_map = (
-        gw._session_map
-        if gw._session_mode in {"navigating", "exploring"} and gw._session_map
-        else None
-    )
-    return gw._session_mode, active_map
+    """Return the current RunPlan-derived session mode and native map."""
+
+    projection = refresh_session_projection(gw)
+    return projection["mode"], projection["active_map"]
 
 
 def session_snapshot(gw: Any) -> dict[str, Any]:
     """Build the product session payload for HTTP, SSE, and bootstrap views."""
-    saved_active_map = gw._session_active_map_name()
-    active_map = (
-        gw._session_map
-        if gw._session_mode in {"navigating", "exploring"} and gw._session_map
-        else None
-    )
+    projection = refresh_session_projection(gw)
+    saved_active_map = projection["saved_active_map"]
+    active_map = projection["active_map"]
     artifact_map = active_map or saved_active_map
     has_octomap = False
     has_pcd = False
+    can_activate = False
+    if saved_active_map:
+        try:
+            maps_response = mapd_query(gw, {"action": "list_maps"})
+        except Exception:
+            pass
+        else:
+            maps = maps_response.get("maps") if isinstance(maps_response, Mapping) else None
+            if isinstance(maps, list) and maps_response.get("success") is True:
+                target = next(
+                    (
+                        item
+                        for item in maps
+                        if isinstance(item, Mapping)
+                        and str(item.get("name") or "") == saved_active_map
+                    ),
+                    None,
+                )
+                if target is not None and type(target.get("can_activate")) is bool:
+                    can_activate = target["can_activate"]
     if artifact_map:
         has_pcd = (
-            gw._map_bundle_from_maps_service(
+            gw._map_bundle_from_mapd(
                 artifact_map,
                 "source_pointcloud",
             )
             is not None
         )
         has_octomap = (
-            gw._map_bundle_from_maps_service(
+            gw._map_bundle_from_mapd(
                 artifact_map,
                 "navigation_safety_3d",
             )
@@ -137,12 +157,8 @@ def session_snapshot(gw: Any) -> dict[str, Any]:
         )
     icp = gw._icp_quality
     localization_status = gw._localization_status or {}
-    session_profile = str(gw._session_slam_profile or "").strip().lower()
-    if gw._session_mode != "idle" and session_profile not in {"", "stopped"}:
-        slam_profile = session_profile
-    else:
-        slam_profile = gw._get_slam_profile()
-    backend = str(localization_status.get("backend") or slam_profile or gw._session_slam_profile or "stopped").lower()
+    slam_profile = gw._get_slam_profile()
+    backend = str(localization_status.get("backend") or slam_profile or "stopped").lower()
     if str(localization_status.get("health_source") or "").lower() == "slam_runtime":
         backend = "native_dds"
     pose_fresh, pose_freshness = classify_pose_freshness(localization_status)
@@ -168,17 +184,13 @@ def session_snapshot(gw: Any) -> dict[str, Any]:
     if map_save_source is None:
         map_save_source = capability_defaults["map_save_source"]
 
-    transition_pending = bool(gw._session_pending)
-    idle = gw._session_mode == "idle" and not transition_pending
-    can_start_mapping = idle
-    can_start_navigating = idle and saved_active_map is not None and has_pcd and has_octomap
     explorer_backend = gw._explorer_backend()
     explorer_available = explorer_backend != "none"
     explorer_detail = {} if explorer_available else gw._explorer_unavailable_detail()
     explorer_unavailable_reason = None if explorer_available else explorer_detail.get("reason")
     explorer_required_product = None if explorer_available else explorer_detail.get("required_product")
-    safety = safety_summary(gw._safety)
-    safety_clear = safety_clear_for_motion(gw._safety)
+    safety = safety_summary(gw._navigation_state)
+    safety_clear = safety_clear_for_motion(gw._navigation_state)
     exploration_blockers = _exploration_blockers(
         gw,
         explorer_available=explorer_available,
@@ -187,12 +199,11 @@ def session_snapshot(gw: Any) -> dict[str, Any]:
         pose_fresh=pose_fresh,
         algorithm_healthy=algorithm_healthy,
     )
-    identity = runtime_identity(gw)
     return {
-        "mode": gw._session_mode,
-        "env": identity["env"],
-        "product": gw._session_product or identity["product"],
-        "product_session": gw._session_product_session,
+        "mode": projection["mode"],
+        "env": projection["env"],
+        "product": projection["product"],
+        "product_session_id": projection["product_session_id"],
         "slam_profile": slam_profile,
         "localization_backend": backend,
         "health_source": localization_status.get("health_source"),
@@ -200,9 +211,8 @@ def session_snapshot(gw: Any) -> dict[str, Any]:
         "saved_active_map": saved_active_map,
         "map_has_pcd": has_pcd,
         "map_has_octomap": has_octomap,
+        "can_activate": can_activate,
         "since": gw._session_since,
-        "pending": transition_pending,
-        "error": gw._session_error,
         "icp_quality": icp,
         "localizer_ready": loc_ready,
         "localizer_algorithm_healthy": algorithm_healthy,
@@ -218,13 +228,9 @@ def session_snapshot(gw: Any) -> dict[str, Any]:
         "relocalization_state": localization_status.get("relocalization_state"),
         "recovery_signal": localization_status.get("recovery_signal"),
         "recovery_action": localization_status.get("recovery_action"),
-        "can_start_mapping": can_start_mapping,
-        "can_start_navigating": can_start_navigating,
-        "can_start_exploring": not exploration_blockers,
         "exploration_blockers": exploration_blockers,
         "safety_clear": safety_clear,
         "safety": safety,
-        "can_end": gw._session_mode != "idle" and not transition_pending,
         "explorer_backend": explorer_backend,
         "explorer_available": explorer_available,
         "explorer_unavailable_reason": explorer_unavailable_reason,
@@ -244,8 +250,6 @@ def _exploration_blockers(
     blockers: list[str] = []
     if not explorer_available:
         blockers.append("explorer_backend_not_running")
-    if gw._session_pending:
-        blockers.append("session_transition_pending")
     if gw._exploring:
         blockers.append("exploration_already_active")
     session_mode = str(gw._session_mode or "idle").lower()

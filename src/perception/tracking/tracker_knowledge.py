@@ -16,8 +16,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import numpy as np
-
 from .tracked_objects import (
     SAFETY_PRIOR_ALPHA_SCALE,
     SAFETY_THRESHOLDS_INTERACTION,

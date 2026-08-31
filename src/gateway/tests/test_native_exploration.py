@@ -60,7 +60,7 @@ def test_native_status_requires_schema_and_fresh_timestamp(tmp_path, monkeypatch
 
 def test_native_commands_require_status_for_start_but_not_for_stop(monkeypatch) -> None:
     commands = _Commands()
-    gateway = SimpleNamespace(_frontier_explorer=None, _tare_explorer=None)
+    gateway = SimpleNamespace()
     monkeypatch.setattr(exploration, "_native_commands", lambda _gw: commands)
     monkeypatch.setattr(exploration, "_native_status", lambda: {"active": False})
 
@@ -137,8 +137,6 @@ def test_start_route_rejects_malformed_ack_without_switching_exploring(
     commands = _Commands(ack)
     events: list[dict] = []
     gateway = SimpleNamespace(
-        _frontier_explorer=None,
-        _tare_explorer=None,
         _go2rtc_upstream="",
         _explorer_available=lambda: True,
         _exploration_start_readiness=lambda: {"can_start": True, "blockers": []},
@@ -169,8 +167,6 @@ def test_stop_route_rejects_malformed_ack_without_switching_exploring(
     commands = _Commands(ack)
     events: list[dict] = []
     gateway = SimpleNamespace(
-        _frontier_explorer=None,
-        _tare_explorer=None,
         _go2rtc_upstream="",
         _explorer_stop_available=lambda: True,
         _exploring=True,

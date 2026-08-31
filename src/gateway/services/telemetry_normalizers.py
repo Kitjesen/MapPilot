@@ -70,16 +70,8 @@ def _metadata(value: Any) -> dict[str, Any]:
     return raw if raw else {}
 
 
-def _nonnegative_int_or_none(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value if value >= 0 else None
-    if isinstance(value, str):
-        text = value.strip()
-        if text.isdigit():
-            return int(text)
-    return None
+def _positive_int_or_none(value: Any) -> int | None:
+    return value if not isinstance(value, bool) and isinstance(value, int) and value > 0 else None
 
 
 def _coerce_sequence(value: Any) -> list[Any]:
@@ -308,8 +300,8 @@ def build_locations_response(entries: Any) -> dict[str, Any]:
         map_id = _string_or_none(metadata.get("map_id", raw.get("map_id")))
         if map_id is not None:
             map_id = map_id.strip() or None
-        map_version = _nonnegative_int_or_none(
-            metadata.get("map_version", raw.get("map_version"))
+        map_content_epoch = _positive_int_or_none(
+            metadata.get("map_content_epoch", raw.get("map_content_epoch"))
         )
         frame_id = _string_or_none(metadata.get("frame_id", raw.get("frame_id")))
         frame_id = frame_id.strip() if frame_id else TELEMETRY_MAP_FRAME_ID
@@ -324,7 +316,7 @@ def build_locations_response(entries: Any) -> dict[str, Any]:
                 "source": _string_or_none(raw.get("source")),
                 "ts": _finite_float(raw.get("ts")),
                 "map_id": map_id,
-                "map_version": map_version,
+                "map_content_epoch": map_content_epoch,
                 "frame_id": frame_id,
                 "metadata": metadata,
             }

@@ -1,13 +1,9 @@
-"""Comprehensive tests for 6 memory modules.
-
-Pure unit tests -- no ROS2, no hardware, no external services.
-Follows the patterns established in test_semantic_modules.py and test_cmd_vel_mux.py.
-"""
+"""Unit tests for memory modules."""
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import tempfile
 import threading

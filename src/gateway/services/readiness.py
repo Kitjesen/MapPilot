@@ -109,10 +109,7 @@ def _run_plan_process_names(plan: Any | None) -> frozenset[str]:
 def _managed_run_plan_missing(gw: Any) -> bool:
     return bool(
         getattr(gw, "_compiled_run_plan", None) is None
-        and (
-            getattr(gw, "_compiled_run_plan_fingerprint", "")
-            or getattr(gw, "_compiled_command_output_mode", "") == "endpoint_only"
-        )
+        and getattr(gw, "_compiled_command_output_mode", "") == "endpoint_only"
     )
 
 
@@ -133,8 +130,8 @@ def _product_contract_summary(gw: Any) -> dict[str, Any]:
     product, contract = _compiled_product_contract(gw)
     return {
         "product": product or None,
-        "fingerprint": (
-            getattr(gw, "_compiled_run_plan_fingerprint", "") or None
+        "product_session_id": (
+            getattr(gw, "_compiled_product_session_id", "") or None
         ),
         "command_output_mode": (
             getattr(gw, "_compiled_command_output_mode", "") or None
@@ -178,8 +175,7 @@ def _requires_runtime_readiness(gw: Any, modules: Mapping[str, Any]) -> bool:
             "slam",
             "localizer",
             "navigation",
-            "cmdvelmux",
-            "cmd_vel_mux",
+            "host.bus",
         )
     ):
         return True
@@ -196,7 +192,7 @@ def _requires_runtime_readiness(gw: Any, modules: Mapping[str, Any]) -> bool:
             return (
                 getattr(gw, "_odom", None) is not None
                 or getattr(gw, "_localization_status", None) is not None
-                or getattr(gw, "_mission", None) is not None
+                or getattr(gw, "_navigation_state", None) is not None
             )
     except Exception:
         return False
@@ -268,7 +264,14 @@ def _runtime_readiness_modes(
     active_cmd_source = str(navigation.get("active_cmd_source") or "unknown")
     mission_state = str(navigation.get("state") or "unknown").upper()
     motion_active = mission_state in _MISSION_ACTIVE_STATES
-    command_source_idle = active_cmd_source.lower() in {"", "none", "unknown", "null"}
+    command_source_idle = active_cmd_source.lower() in {
+        "",
+        "none",
+        "unknown",
+        "null",
+        "manual_hold",
+        "estop",
+    }
     data_ready = not failed_modules and not data_reasons
     non_motion_safe = command_source_idle and not motion_active
     motion_ready = not failed_modules and not reasons
@@ -391,10 +394,8 @@ def _runtime_readiness_reasons(gw: Any) -> tuple[list[str], dict[str, Any]]:
                 "declared": boundary.get("declared"),
                 "env": boundary.get("env"),
                 "product": boundary.get("product"),
-                "run_plan_fingerprint": boundary.get(
-                    "run_plan_fingerprint"
-                ),
-                "identity_source": boundary.get("identity_source"),
+                "state": boundary.get("state"),
+                "product_session_id": boundary.get("product_session_id"),
                 "simulation_only": boundary.get("simulation_only"),
                 "data_source": boundary.get("data_source"),
                 "runtime_contract": boundary.get("runtime_contract"),
@@ -430,7 +431,7 @@ def _runtime_readiness_reasons(gw: Any) -> tuple[list[str], dict[str, Any]]:
 
     try:
         with gw._state_lock:
-            safety = getattr(gw, "_safety", None)
+            safety = getattr(gw, "_navigation_state", None)
         runtime["safety"] = safety_summary(safety)
         if safety_stop_active(safety):
             reasons.append("safety:stop")

@@ -17,25 +17,21 @@ from gateway.services.runtime_status import (
     safe_session,
 )
 
-
-STATE_SNAPSHOT_SCHEMA_VERSION = 1
+STATE_SNAPSHOT_SCHEMA_VERSION = 2
 
 
 def build_state_snapshot(gw: Any) -> dict[str, Any]:
-    """Return /api/v1/state while preserving legacy top-level fields."""
+    """Return the current session, localization, and navigation snapshot."""
     now = time.time()
     with gw._state_lock:
         odometry = gw._odom
-        safety = gw._safety
-        mission = gw._mission
-        navigation_state = getattr(gw, "_navigation_state", None)
-        eval_state = gw._eval
-        dialogue = gw._dialogue
-        mode = gw._mode
         teleop_active = gw._teleop_active
         scene_graph_json = gw._sg_json
         path_len = len(gw._last_path)
         localization_status = getattr(gw, "_localization_status", None)
+        visual_servo_status = getattr(gw, "_visual_servo_status", None)
+        if isinstance(visual_servo_status, dict):
+            visual_servo_status = dict(visual_servo_status)
     teleop_clients = gw._teleop_client_count()
 
     session = safe_session(gw)
@@ -46,7 +42,6 @@ def build_state_snapshot(gw: Any) -> dict[str, Any]:
         localization_status,
     )
     navigation = build_navigation_status(gw)
-
     return {
         "schema_version": STATE_SNAPSHOT_SCHEMA_VERSION,
         "ts": now,
@@ -54,23 +49,15 @@ def build_state_snapshot(gw: Any) -> dict[str, Any]:
             "api_version": "v1",
             "time": now,
         },
-        # Legacy fields kept stable for existing dashboards/scripts.
-        "odometry": odometry,
-        "safety": safety,
-        "mission": mission,
-        "navigation_state": navigation_state,
-        "eval": eval_state,
-        "dialogue": dialogue,
-        "mode": mode,
         "lease": safe_lease(gw),
         "teleop": {
             "active": bool(teleop_active),
             "clients": int(teleop_clients),
         },
-        # New app/web-friendly summaries.
         "session": session,
         "localization": localization,
         "navigation": navigation,
+        "visual_servo": visual_servo_status,
         "map": _map_summary(gw, session),
         "scene": {
             "available": bool(scene_graph_json) and scene_graph_json != "{}",

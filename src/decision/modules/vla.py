@@ -16,7 +16,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from decision.modules.vla_backends import MockVLABackend, VLABackend, create_vla_backend
+from decision.modules.vla_backends import VLABackend, create_vla_backend
 from runtime.module import Module, skill
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
 from runtime.msgs.nav import Odometry
@@ -55,8 +55,6 @@ class VLAModule(Module, layer=4):
     On low-confidence results the target is forwarded to VisualServoModule.
     """
 
-    _run_in_worker = True
-    _worker_group = "semantic"
     SOFT_DEPENDS = ["LLMModule", "PerceptionModule"]
 
     # -- Inputs --
