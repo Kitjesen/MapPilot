@@ -35,8 +35,7 @@ jobs:
             -DCMAKE_CXX_FLAGS="--coverage" \
             -DCMAKE_C_FLAGS="--coverage" \
             -DLINGTU_NAV_CPP_BUILD_TESTS=ON \
-            -DLINGTU_NAV_CPP_BUILD_ENDPOINT=OFF \
-            -DLINGTU_NAV_CPP_BUILD_PYTHON=OFF
+            -DLINGTU_NAV_CPP_BUILD_ENDPOINT=OFF
 
       - name: Build
         run: cmake --build build/nav-cpp --parallel 4

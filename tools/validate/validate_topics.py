@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate that runtime topic names are defined in topic_contract.yaml.
+"""Validate runtime topic names against ``runtime.runtime_interface``.
 
 Usage:
     python tools/validate/validate_topics.py
@@ -10,7 +10,7 @@ Exit codes:
     1 - topic(s) found that are not defined in the contract
 
 Validation scope:
-    1. config/topic_contract.yaml as source of truth
+    1. runtime.runtime_interface as source of truth
     2. src/remote_monitoring/config/grpc_gateway.yaml values when present
     3. launch/**/*.launch.py remappings
     4. critical runtime adapter/factory source files
@@ -29,7 +29,6 @@ from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", ".."))
 
-CONTRACT_PATH = os.path.join(ROOT_DIR, "config", "topic_contract.yaml")
 GATEWAY_PATH = os.path.join(
     ROOT_DIR,
     "src",
@@ -42,17 +41,11 @@ CONFIG_DIR = os.path.join(ROOT_DIR, "config")
 SOURCE_SCAN_PATHS = (
     os.path.join(ROOT_DIR, "sim", "engine", "bridge"),
     os.path.join(ROOT_DIR, "sim", "scripts"),
-    os.path.join(ROOT_DIR, "src", "adapters", "ros2", "rerun_bridge.py"),
-    os.path.join(ROOT_DIR, "src", "slam", "native_factories.py"),
-    os.path.join(ROOT_DIR, "src", "nav", "local", "legacy_ros"),
-    os.path.join(ROOT_DIR, "sim", "scripts", "gazebo_frontier_exploration_smoke.py"),
     os.path.join(ROOT_DIR, "sim", "planning"),
-    os.path.join(ROOT_DIR, "tests", "integration", "test_semantic_planner_live.py"),
-    os.path.join(ROOT_DIR, "tests", "integration", "test_topic_hz.py"),
 )
 SOURCE_SCAN_EXTENSIONS = (".py", ".launch.py", ".service", ".sh")
 CONFIG_SCAN_EXTENSIONS = (".yaml", ".yml")
-CONFIG_SCAN_EXCLUDES = {"topic_contract.yaml"}
+CONFIG_SCAN_EXCLUDES: set[str] = set()
 
 VERBOSE = "--verbose" in sys.argv
 RUNTIME_TOPIC_VALUE_RE = re.compile(
@@ -125,15 +118,19 @@ def info(msg: str) -> None:
         print(f"  [INFO] {msg}")
 
 
-def load_contract(path: str) -> dict[str, Any]:
-    """Load one YAML runtime-topic contract from disk."""
+def load_contract() -> dict[str, Any]:
+    """Load the canonical Python runtime-topic contract."""
 
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    root_src = os.path.join(ROOT_DIR, "src")
+    if root_src not in sys.path:
+        sys.path.insert(0, root_src)
+    from runtime.runtime_interface import runtime_contract_manifest
+
+    return runtime_contract_manifest()
 
 
 def load_contract_topics(data: dict[str, Any]) -> set[str]:
-    """Extract runtime topic names from topic_contract.yaml."""
+    """Extract runtime topic names from the canonical contract."""
 
     topics: set[str] = set()
 
@@ -160,8 +157,7 @@ def load_required_nav_topics(data: dict[str, Any], contract_topics: set[str]) ->
 
     required = {
         str(topic)
-        for topic in data.get("required_runtime_topics")
-        or data.get("required_nav_topics")
+        for topic in data.get("core_required_topics")
         or ()
         if isinstance(topic, str)
     }
@@ -190,17 +186,17 @@ def validate_tf_contract(data: dict[str, Any]) -> list[str]:
     """Validate the minimal map->odom->body topology declared in the contract."""
 
     errors: list[str] = []
-    tf = data.get("tf") or {}
+    frames = data.get("frames") or {}
     expected_frames = {
-        "map_frame": "map",
-        "odom_frame": "odom",
-        "body_frame": "body",
+        "map": "map",
+        "odom": "odom",
+        "body": "body",
     }
     for key, expected in expected_frames.items():
-        if tf.get(key) != expected:
-            errors.append(f"  ERROR: tf.{key} must be {expected!r}, got {tf.get(key)!r}")
+        if frames.get(key) != expected:
+            errors.append(f"  ERROR: frames.{key} must be {expected!r}, got {frames.get(key)!r}")
 
-    links = tf.get("links") or {}
+    links = data.get("frame_links") or {}
     expected_links = {
         "map_to_odom": ("map", "odom"),
         "odom_to_body": ("odom", "body"),
@@ -257,34 +253,16 @@ def _format_is_declared(format_name: str, declared_formats: set[str]) -> bool:
     )
 
 
-def _ros_types_for_formats(
-    formats: list[Any],
-    data_formats: dict[str, Any],
-) -> list[str]:
-    resolved: list[str] = []
-    for item in formats:
-        format_name = str(item)
-        spec = data_formats.get(format_name)
-        ros_type = str((spec or {}).get("ros_type") or format_name)
-        if ros_type not in resolved:
-            resolved.append(ros_type)
-    return resolved
-
-
 def validate_topic_format_contract(data: dict[str, Any]) -> list[str]:
     """Validate that contract endpoints also declare payload formats."""
 
     errors: list[str] = []
-    data_formats = data.get("data_formats") or {}
+    data_formats = data.get("message_formats") or {}
     declared_formats = set(data_formats)
     topic_formats = data.get("topic_formats") or {}
-    topic_ros_types = data.get("topic_ros_types") or {}
 
     if not topic_formats:
         return ["  ERROR: topic_formats must declare topic -> payload format mappings"]
-    if not topic_ros_types:
-        return ["  ERROR: topic_ros_types must declare topic -> ROS payload mappings"]
-
     for format_name, spec in data_formats.items():
         topic = (spec or {}).get("topic")
         if isinstance(topic, str) and topic.startswith("/"):
@@ -329,7 +307,7 @@ def validate_topic_format_contract(data: dict[str, Any]) -> list[str]:
             errors.append(f"  ERROR: {topic} has no topic_formats payload declaration")
 
     for topic, formats in sorted(topic_formats.items()):
-        if not isinstance(formats, list) or not formats:
+        if not isinstance(formats, (list, tuple)) or not formats:
             errors.append(f"  ERROR: topic_formats.{topic} must be a non-empty list")
             continue
         for format_name in formats:
@@ -337,17 +315,6 @@ def validate_topic_format_contract(data: dict[str, Any]) -> list[str]:
                 errors.append(
                     f"  ERROR: topic_formats.{topic} references unknown format {format_name!r}"
                 )
-
-        expected_ros_types = _ros_types_for_formats(formats, data_formats)
-        actual_ros_types = [str(item) for item in topic_ros_types.get(topic) or ()]
-        if actual_ros_types != expected_ros_types:
-            errors.append(
-                f"  ERROR: topic_ros_types.{topic} must be {expected_ros_types}, "
-                f"got {actual_ros_types or '<missing>'}"
-            )
-
-    for topic in sorted(set(topic_ros_types) - set(topic_formats)):
-        errors.append(f"  ERROR: topic_ros_types.{topic} has no topic_formats entry")
     return errors
 
 
@@ -461,11 +428,7 @@ def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
 
-    if not os.path.exists(CONTRACT_PATH):
-        print(f"ERROR: Contract file not found: {CONTRACT_PATH}")
-        return 1
-
-    contract = load_contract(CONTRACT_PATH)
+    contract = load_contract()
     contract_topics = load_contract_topics(contract)
     print(f"Contract: {len(contract_topics)} runtime topics defined")
     for topic in sorted(contract_topics):

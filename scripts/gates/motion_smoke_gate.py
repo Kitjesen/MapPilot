@@ -219,10 +219,8 @@ def run(args: argparse.Namespace) -> int:
     finally:
         if session_owned:
             try:
-                stop_args = ["stop-session", "--env", args.env]
-                if args.backend:
-                    stop_args.extend(("--backend", args.backend))
-                run_product_control(stop_args, artifact_dir / "stop_session.json")
+                stop_args = ["stop", "--env", args.env]
+                run_product_control(stop_args, artifact_dir / "stop.json")
             except GateError as exc:
                 failure = failure or str(exc)
         if evidence_process is not None:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install one verified native release and reapply the exact current RunPlan.
+# Install one verified native release and switch back to the current Product.
 
 set -euo pipefail
 
@@ -41,8 +41,7 @@ Usage: install_nav.sh [--dry-run] [--package-dir DIR]
                       [--state-dir DIR]
 
 The installer verifies native artifact checksums, stages a versioned release,
-and uses ProductControl with the immutable current RunPlan to quiesce and
-reapply the Product around the atomic current-link update.
+updates the current link, then switches back to the same Product and map.
 USAGE
       exit 0
       ;;
@@ -105,37 +104,51 @@ PY
 fi
 
 ACTIVE_REQUIRES_MAPD=0
-PERSISTENT_PROCESSES=()
+ACTIVE_PRODUCT=""
+ACTIVE_ENV=""
+ACTIVE_ROBOT=""
+ACTIVE_MAP=""
 if [[ -n "${RUN_PLAN_PATH}" ]]; then
-  ACTIVE_PROCESS_FACTS="$(
+  mapfile -d '' -t ACTIVE_PRODUCT_FACTS < <(
     PYTHONPATH="${PACKAGE_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}" \
-      python3 - "${RUN_PLAN_PATH}" <<'PY'
+      python3 - "${RUN_PLAN_PATH}" "${CURRENT_RECORD}" <<'PY'
+import json
 import sys
 
 from lingtu.run_plan import RunPlan
 
 plan = RunPlan.load(sys.argv[1])
+current = json.loads(open(sys.argv[2], encoding="utf-8").read())
+if current.get("product") != plan.product or current.get("env") != plan.env:
+    raise SystemExit("current Product identity does not match its RunPlan")
+robot = plan.robot
+map_name = current.get("map_name")
+if map_name is None:
+    map_name = ""
+elif not isinstance(map_name, str):
+    raise SystemExit("current Product map name is invalid")
 requires_mapd = any(
     process.name.lower() in {"maps", "mapd"} or "mapd" in process.target.lower()
     for process in plan.processes
 )
-print("1" if requires_mapd else "0")
-for process in plan.processes:
-    if process.lifecycle == "persistent":
-        print(process.name)
+values = (plan.product, plan.env, robot, map_name, "1" if requires_mapd else "0")
+sys.stdout.write("\0".join(values) + "\0")
 PY
-  )"
-  mapfile -t ACTIVE_PROCESS_FACT_LINES <<< "${ACTIVE_PROCESS_FACTS}"
-  ACTIVE_REQUIRES_MAPD="${ACTIVE_PROCESS_FACT_LINES[0]}"
-  if (( ${#ACTIVE_PROCESS_FACT_LINES[@]} > 1 )); then
-    PERSISTENT_PROCESSES=("${ACTIVE_PROCESS_FACT_LINES[@]:1}")
+  )
+  if [[ "${#ACTIVE_PRODUCT_FACTS[@]}" -ne 5 ]]; then
+    echo "Current Product identity could not be loaded" >&2
+    exit 1
   fi
+  ACTIVE_PRODUCT="${ACTIVE_PRODUCT_FACTS[0]}"
+  ACTIVE_ENV="${ACTIVE_PRODUCT_FACTS[1]}"
+  ACTIVE_ROBOT="${ACTIVE_PRODUCT_FACTS[2]}"
+  ACTIVE_MAP="${ACTIVE_PRODUCT_FACTS[3]}"
+  ACTIVE_REQUIRES_MAPD="${ACTIVE_PRODUCT_FACTS[4]}"
 fi
 
 if [[ "${ACTIVE_REQUIRES_MAPD}" == "1" ]] \
     && { [[ ! -x "${PACKAGE_DIR}/build/maps/mapd" ]] \
-      || [[ ! -x "${PACKAGE_DIR}/build/maps/lingtu-mapctl" ]] \
-      || [[ ! -f "${PACKAGE_DIR}/build/maps/liblingtu_maps.so" ]]; }; then
+      || [[ ! -x "${PACKAGE_DIR}/build/maps/lingtu-mapctl" ]]; }; then
   echo \
     "Active Product requires maps/mapd, but this release lacks mapd artifacts" \
     >&2
@@ -226,23 +239,25 @@ fi
 
 product_control() {
   local repo="$1"
-  local action="$2"
-  local process="${3:-}"
   local -a control_command
   if [[ "${TEST_MODE}" == "1" ]]; then
-    "${TEST_CONTROL}" "${repo}" "${action}" "${RUN_PLAN_PATH}" "${process}"
+    "${TEST_CONTROL}" \
+      "${repo}" switch "${CURRENT_LINK}" \
+      "${ACTIVE_ROBOT}" "${ACTIVE_PRODUCT}" "${ACTIVE_MAP}"
     return
   fi
   (
     cd "${repo}"
     control_command=(
       python3 -m lingtu.control
-      "${action}"
+      switch "${ACTIVE_PRODUCT}"
+      --robot "${ACTIVE_ROBOT}"
+      --env "${ACTIVE_ENV}"
       --state-dir "${STATE_DIR}"
       --json
     )
-    if [[ -n "${process}" ]]; then
-      control_command+=(--process "${process}")
+    if [[ -n "${ACTIVE_MAP}" ]]; then
+      control_command+=(--map "${ACTIVE_MAP}")
     fi
     PYTHONPATH="${repo}/src${PYTHONPATH:+:${PYTHONPATH}}" \
       "${control_command[@]}"
@@ -252,7 +267,6 @@ product_control() {
 restore_previous_release() {
   local rollback_failed=0
   local current_target=""
-  local process
   local target_real=""
 
   if [[ -L "${CURRENT_LINK}" ]]; then
@@ -261,12 +275,6 @@ restore_previous_release() {
   if [[ -e "${TARGET_DIR}" ]]; then
     target_real="$(readlink -f "${TARGET_DIR}" || true)"
   fi
-  if [[ "${current_target}" == "${target_real}" \
-      && -n "${target_real}" \
-      && -n "${RUN_PLAN_PATH}" ]]; then
-    product_control "${TARGET_DIR}" quiesce || rollback_failed=1
-  fi
-
   if [[ -n "${OLD_TARGET}" ]]; then
     if [[ "${current_target}" != "${OLD_TARGET}" ]]; then
       if ! rm -f -- "${NEW_LINK}"; then
@@ -291,11 +299,9 @@ restore_previous_release() {
       current_target="$(readlink -f "${CURRENT_LINK}" || true)"
     fi
     if [[ "${current_target}" == "${OLD_TARGET}" ]]; then
-      for process in "${PERSISTENT_PROCESSES[@]}"; do
-        product_control "${OLD_TARGET}" restart "${process}" \
-          || rollback_failed=1
-      done
-      product_control "${OLD_TARGET}" reapply || rollback_failed=1
+      if [[ -n "${RUN_PLAN_PATH}" ]]; then
+        product_control "${OLD_TARGET}" || rollback_failed=1
+      fi
     else
       echo \
         "Rollback did not restore current to the previous release; old Product was not started" \
@@ -316,16 +322,6 @@ restore_previous_release() {
   fi
   return "${rollback_failed}"
 }
-
-if [[ -n "${OLD_TARGET}" ]]; then
-  if ! product_control "${OLD_TARGET}" quiesce; then
-    echo "Previous Product failed to quiesce; restoring it" >&2
-    if ! restore_previous_release; then
-      echo "Rollback failed; operator intervention is required" >&2
-    fi
-    exit 1
-  fi
-fi
 
 if ! mv -- "${STAGE_DIR}" "${TARGET_DIR}"; then
   if ! restore_previous_release; then
@@ -365,19 +361,8 @@ if [[ "$(readlink -f "${CURRENT_LINK}" || true)" != \
 fi
 
 if [[ -n "${RUN_PLAN_PATH}" ]]; then
-  for process in "${PERSISTENT_PROCESSES[@]}"; do
-    if ! product_control "${TARGET_DIR}" restart "${process}"; then
-      echo \
-        "New release failed to restart persistent process ${process}; rolling back" \
-        >&2
-      if ! restore_previous_release; then
-        echo "Rollback failed; operator intervention is required" >&2
-      fi
-      exit 1
-    fi
-  done
-  if ! product_control "${TARGET_DIR}" reapply; then
-    echo "New release failed to reapply the active Product; restoring the previous release" >&2
+  if ! product_control "${TARGET_DIR}"; then
+    echo "New release failed to switch the active Product; restoring the previous release" >&2
     if ! restore_previous_release; then
       echo "Rollback failed; operator intervention is required" >&2
     fi

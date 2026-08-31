@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply calibration results to robot_config.yaml and SLAM configs.
+"""Apply calibration results to the Go2 RobotConfig and SLAM configs.
 
 Reads output from each calibration tool and writes the parameters into
 the appropriate config files. Backs up originals before overwriting.
@@ -37,9 +37,16 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ROBOT_CONFIG = REPO_ROOT / "config" / "robot_config.yaml"
-FASTLIO2_CONFIG = REPO_ROOT / "src" / "localization" / "fastlio2" / "config" / "mid360_s100p.yaml"
-POINTLIO_CONFIG = REPO_ROOT / "config" / "pointlio.yaml"
+ROBOT_CONFIG = REPO_ROOT / "config" / "robots" / "unitree" / "go2" / "robot.yaml"
+FASTLIO2_CONFIG = (
+    REPO_ROOT
+    / "config"
+    / "robots"
+    / "unitree"
+    / "go2"
+    / "sensors"
+    / "mid360_fastlio2.yaml"
+)
 
 
 class _LazyNumpy:
@@ -92,86 +99,6 @@ def save_yaml(path: Path, data: dict) -> None:
     except BaseException:
         temp_path.unlink(missing_ok=True)
         raise
-
-
-def _restore_bytes_atomically(path: Path, payload: bytes | None) -> None:
-    """Restore one file during a failed multi-file calibration update."""
-    if payload is None:
-        path.unlink(missing_ok=True)
-        return
-
-    fd, temp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.rollback.",
-        suffix=".tmp",
-        dir=path.parent,
-    )
-    temp_path = Path(temp_name)
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        if path.exists():
-            shutil.copymode(path, temp_path)
-        os.replace(temp_path, path)
-    except BaseException:
-        temp_path.unlink(missing_ok=True)
-        raise
-
-
-def save_yaml_batch(updates: list[tuple[Path, dict]]) -> None:
-    """Replace related YAML files and roll back earlier writes on failure.
-
-    Each individual replacement is atomic. Cross-file atomic rename is not
-    available, so the batch retains exact original bytes and restores every
-    already-replaced file if a later replacement fails.
-    """
-    normalized = [(Path(path), data) for path, data in updates]
-    paths = [path for path, _ in normalized]
-    if len(set(paths)) != len(paths):
-        raise ValueError("YAML batch contains duplicate target paths")
-
-    # Serialize all payloads before the first write so representation errors
-    # cannot leave a partially updated calibration set.
-    for _, data in normalized:
-        yaml.dump(
-            data,
-            default_flow_style=False,
-            sort_keys=False,
-            allow_unicode=True,
-        )
-
-    originals = {path: path.read_bytes() if path.exists() else None for path in paths}
-    replaced: list[Path] = []
-    try:
-        for path, data in normalized:
-            save_yaml(path, data)
-            replaced.append(path)
-    except BaseException as write_error:
-        rollback_errors: list[str] = []
-        for path in reversed(replaced):
-            try:
-                _restore_bytes_atomically(path, originals[path])
-            except BaseException as rollback_error:
-                rollback_errors.append(f"{path}: {rollback_error}")
-        if rollback_errors:
-            raise RuntimeError(
-                "calibration update failed and rollback was incomplete: " + "; ".join(rollback_errors)
-            ) from write_error
-        raise
-
-
-def pointlio_section(cfg: dict, section: str) -> dict:
-    """Return the nested ROS2 parameter section dict for pointlio.yaml.
-
-    pointlio.yaml uses the ROS2 parameter file layout
-    `/** -> ros__parameters -> {common,mapping,preprocess,...}`.
-    Writes into the dict returned here are reflected in the original tree.
-    Creates missing intermediate nodes.
-    """
-    root = cfg.setdefault("/**", {})
-    params = root.setdefault("ros__parameters", {})
-    return params.setdefault(section, {})
 
 
 def derive_body_from_imu(
@@ -339,9 +266,7 @@ def apply_imu_noise(calib_path: str, dry_run: bool = False) -> None:
     try:
         calib = load_yaml(Path(calib_path))
         fastlio_exists = FASTLIO2_CONFIG.exists()
-        pointlio_exists = POINTLIO_CONFIG.exists()
         fastlio_cfg = load_yaml(FASTLIO2_CONFIG) if fastlio_exists else {}
-        pointlio_cfg = load_yaml(POINTLIO_CONFIG) if pointlio_exists else {}
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         logger.error("  Cannot read calibration target configs: %s", exc)
         return
@@ -349,13 +274,9 @@ def apply_imu_noise(calib_path: str, dry_run: bool = False) -> None:
     if not isinstance(calib, dict):
         logger.error("  IMU calibration result in %s must contain a YAML mapping", calib_path)
         return
-    for name, cfg in (
-        (FASTLIO2_CONFIG.name, fastlio_cfg),
-        (POINTLIO_CONFIG.name, pointlio_cfg),
-    ):
-        if not isinstance(cfg, dict):
-            logger.error("  %s must contain a YAML mapping", name)
-            return
+    if not isinstance(fastlio_cfg, dict):
+        logger.error("  %s must contain a YAML mapping", FASTLIO2_CONFIG.name)
+        return
 
     # Kalibr-format YAML from allan_variance_ros2
     na = calib.get("accelerometer_noise_density", None)
@@ -382,8 +303,6 @@ def apply_imu_noise(calib_path: str, dry_run: bool = False) -> None:
     if nbg is not None:
         _sanity_check_imu_noise("nbg", float(nbg))
 
-    updates: list[tuple[Path, dict]] = []
-
     if fastlio_exists:
         fastlio_cfg["na"] = float(na)
         fastlio_cfg["ng"] = float(ng)
@@ -391,31 +310,15 @@ def apply_imu_noise(calib_path: str, dry_run: bool = False) -> None:
             fastlio_cfg["nba"] = float(nba)
         if nbg is not None:
             fastlio_cfg["nbg"] = float(nbg)
-        updates.append((FASTLIO2_CONFIG, fastlio_cfg))
-
-    if pointlio_exists:
-        try:
-            mapping = pointlio_section(pointlio_cfg, "mapping")
-        except (AttributeError, TypeError) as exc:
-            logger.error("  Invalid Point-LIO configuration structure: %s", exc)
-            return
-        mapping["imu_meas_acc_cov"] = float(na)
-        mapping["imu_meas_omg_cov"] = float(ng)
-        if nba is not None:
-            mapping["b_acc_cov"] = float(nba)
-        if nbg is not None:
-            mapping["b_gyr_cov"] = float(nbg)
-        updates.append((POINTLIO_CONFIG, pointlio_cfg))
 
     if dry_run:
-        logger.info("  [DRY RUN] Would update mid360_s100p.yaml and pointlio.yaml")
+        logger.info("  [DRY RUN] Would update %s", FASTLIO2_CONFIG.name)
         return
 
-    for path, _ in updates:
-        backup_file(path)
-    save_yaml_batch(updates)
-    for path, _ in updates:
-        logger.info("  Updated: %s", path.name)
+    if fastlio_exists:
+        backup_file(FASTLIO2_CONFIG)
+        save_yaml(FASTLIO2_CONFIG, fastlio_cfg)
+        logger.info("  Updated: %s", FASTLIO2_CONFIG.name)
 
 
 def apply_lidar_imu(calib_path: str, dry_run: bool = False) -> None:
@@ -424,10 +327,8 @@ def apply_lidar_imu(calib_path: str, dry_run: bool = False) -> None:
     try:
         calib = load_yaml(Path(calib_path))
         fastlio_exists = FASTLIO2_CONFIG.exists()
-        pointlio_exists = POINTLIO_CONFIG.exists()
         fastlio_cfg = load_yaml(FASTLIO2_CONFIG) if fastlio_exists else {}
         robot_cfg = load_yaml(ROBOT_CONFIG)
-        pointlio_cfg = load_yaml(POINTLIO_CONFIG) if pointlio_exists else {}
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         logger.error("  Cannot read calibration target configs: %s", exc)
         return
@@ -438,8 +339,6 @@ def apply_lidar_imu(calib_path: str, dry_run: bool = False) -> None:
     }
     if fastlio_exists:
         configs[FASTLIO2_CONFIG.name] = fastlio_cfg
-    if pointlio_exists:
-        configs[POINTLIO_CONFIG.name] = pointlio_cfg
     for name, cfg in configs.items():
         if not isinstance(cfg, dict):
             logger.error("  %s must contain a YAML mapping", name)
@@ -511,29 +410,10 @@ def apply_lidar_imu(calib_path: str, dry_run: bool = False) -> None:
         if write_time_offset:
             fastlio_cfg["time_diff_lidar_to_imu"] = round(time_offset, 6)
 
-    if pointlio_exists:
-        try:
-            mapping = pointlio_section(pointlio_cfg, "mapping")
-            mapping["extrinsic_R"] = effective_r_il
-            mapping["extrinsic_T"] = t_il
-            if write_time_offset:
-                common = pointlio_section(pointlio_cfg, "common")
-                common["time_diff_lidar_to_imu"] = round(time_offset, 6)
-        except (AttributeError, TypeError) as exc:
-            logger.error("  Invalid Point-LIO configuration structure: %s", exc)
-            return
-
-    updates: list[tuple[Path, dict]] = []
     if fastlio_exists:
         backup_file(FASTLIO2_CONFIG)
-        updates.append((FASTLIO2_CONFIG, fastlio_cfg))
-
-    if pointlio_exists:
-        backup_file(POINTLIO_CONFIG)
-        updates.append((POINTLIO_CONFIG, pointlio_cfg))
-    save_yaml_batch(updates)
-    for path, _ in updates:
-        logger.info("  Updated: %s", path.name)
+        save_yaml(FASTLIO2_CONFIG, fastlio_cfg)
+        logger.info("  Updated: %s", FASTLIO2_CONFIG.name)
 
 
 def _parse_camera_lidar_transform(calib: object, source: str):
@@ -685,6 +565,8 @@ def apply_camera_lidar(calib_path: str, dry_run: bool = False) -> None:
 
 
 def main():
+    global ROBOT_CONFIG, FASTLIO2_CONFIG
+
     parser = argparse.ArgumentParser(
         description="Apply calibration results to robot configuration",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -693,9 +575,21 @@ def main():
     parser.add_argument("--imu", help="IMU noise calibration YAML (Kalibr format)")
     parser.add_argument("--lidar-imu", help="LiDAR-IMU extrinsic calibration YAML")
     parser.add_argument("--camera-lidar", help="Camera-LiDAR extrinsic calibration JSON")
+    parser.add_argument(
+        "--robot-config",
+        default=str(ROBOT_CONFIG),
+        help="RobotConfig to update",
+    )
+    parser.add_argument(
+        "--slam-config",
+        default=str(FASTLIO2_CONFIG),
+        help="Robot-specific Fast-LIO2 MID-360 config to update",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Show what would change without writing")
 
     args = parser.parse_args()
+    ROBOT_CONFIG = Path(args.robot_config)
+    FASTLIO2_CONFIG = Path(args.slam_config)
 
     if not any([args.camera, args.imu, args.lidar_imu, args.camera_lidar]):
         parser.print_help()

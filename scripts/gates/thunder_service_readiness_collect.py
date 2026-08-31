@@ -26,14 +26,16 @@ if str(SRC) not in sys.path:
 
 from diagnostics.field.teleop_avoid_preflight import STAGES as TELEOP_AVOID_STAGES  # noqa: E402
 from diagnostics.field.teleop_avoid_preflight import evaluate_teleop_avoid_preflight  # noqa: E402
+from diagnostics.field.teleop_preflight import STAGES as TELEOP_STAGES  # noqa: E402
+from diagnostics.field.teleop_preflight import evaluate_teleop_preflight  # noqa: E402
 from lingtu.product_lock import resolve_current_run_path  # noqa: E402
 from lingtu.run_plan import RunPlan  # noqa: E402
 from runtime.config import load_config  # noqa: E402
 from runtime.service_catalogs.thunder import (  # noqa: E402
     thunder_runtime_dds_topics,
     thunder_runtime_native_binaries,
-    thunder_runtime_units,
     thunder_runtime_status_files,
+    thunder_runtime_units,
 )
 
 SERVICES = thunder_runtime_units()
@@ -51,7 +53,7 @@ LIDAR_IMU_EXPECTED_BINARY = "livox_dds"
 LIDAR_IMU_EXPECTED_SERVICE = "lidar"
 LIDAR_IMU_RAW_TOPIC = "rt/lidar/raw_frame"
 LIDAR_IMU_IMU_TOPIC = "rt/imu/raw"
-CAMERA_SERVICE_UNIT = "lingtu-camera-dds.service"
+CAMERA_SERVICE_UNIT = "lt-camera.service"
 CAMERA_STATUS_NAME = "camera"
 CAMERA_NATIVE_BINARIES = ("camera_dds", "orbbec_capture")
 CAMERA_DDS_TOPICS = ("rt/camera/info",)
@@ -61,7 +63,7 @@ CAMERA_SHM_SEQUENCE_KEYS = (
     "depth_shm_sequence",
     "info_shm_sequence",
 )
-DRIVER_SERVICE_UNIT = "lingtu-driver.service"
+DRIVER_SERVICE_UNIT = "lt-driver.service"
 DRIVER_STATUS_NAME = "driver"
 DRIVER_NATIVE_BINARY = "driver"
 DRIVER_DDS_TOPIC = "rt/nav/cmd_vel"
@@ -182,7 +184,7 @@ def _current_run_path() -> Path:
 
 
 def collect_current_run() -> dict[str, Any]:
-    """Read and cryptographically verify the current RunPlan record."""
+    """Read the current RunPlan record."""
 
     current_path = _current_run_path()
     result: dict[str, Any] = {
@@ -192,8 +194,8 @@ def collect_current_run() -> dict[str, Any]:
         "run_plan_path": "",
         "plan_exists": False,
         "plan_verified": False,
-        "verified_fingerprint": "",
         "run_plan": {},
+        "verified_contract": {},
         "error": "",
     }
     if not result["exists"]:
@@ -231,8 +233,15 @@ def collect_current_run() -> dict[str, Any]:
     result.update(
         {
             "plan_verified": True,
-            "verified_fingerprint": run_plan.fingerprint,
             "run_plan": run_plan.as_dict(),
+            "verified_contract": {
+                "product": run_plan.product,
+                "env": run_plan.env,
+                "required_topics": list(run_plan.required_topics),
+                "required_capabilities": list(run_plan.required_capabilities),
+                "native_nav": run_plan.native_nav,
+                "selected_roles": sorted({role for process in run_plan.processes for role in process.provides}),
+            },
         }
     )
     return result
@@ -342,7 +351,7 @@ def collect_processes() -> dict[str, Any]:
         "lingtu_camera_dds",
         "orbbec",
         LIDAR_IMU_EXPECTED_PROCESS,
-        "lingtu_slam",
+        "messages",
         "lingtu_nav",
         "lingtu_traversability",
         "lingtu_driver",
@@ -514,7 +523,9 @@ def collect_driver_readiness(
     binary = dict(native_binaries.get("binaries", {}).get(DRIVER_NATIVE_BINARY, {}))
     status = dict(status_files.get(DRIVER_STATUS_NAME, {}))
     payload = status.get("json", {}) if isinstance(status.get("json"), dict) else {}
-    brainstem = payload.get("brainstem", {}) if isinstance(payload.get("brainstem"), dict) else {}
+    backend = str(payload.get("backend") or "").strip().lower()
+    adapter = payload.get("adapter", {}) if isinstance(payload.get("adapter"), dict) else {}
+    control = payload.get("control", {}) if isinstance(payload.get("control"), dict) else {}
     blockers: list[str] = []
 
     if unit.get("missing"):
@@ -526,25 +537,45 @@ def collect_driver_readiness(
     if not status.get("exists", False):
         blockers.append(f"status_file_missing:{status.get('path', STATUS_FILES.get(DRIVER_STATUS_NAME, ''))}")
     else:
-        if payload.get("schema_version") != "lingtu.driver.status.v1":
+        if payload.get("schema_version") != "lingtu.driver.status.v2":
             blockers.append("status_schema_invalid:driver")
         if payload.get("connected") is not True:
-            blockers.append("brainstem_not_connected")
-        elif payload.get("ready") is not True:
+            blockers.append("driver_not_connected")
+        else:
+            expected_transport = {
+                "go2": ("unitree_sdk2", "none", False),
+                "doso": ("brainstem_grpc", "grpc", True),
+            }.get(backend)
+            if expected_transport is None:
+                blockers.append(f"driver_backend_unsupported:{backend or 'missing'}")
+            if not control:
+                blockers.append("driver_control_missing")
+            elif expected_transport is not None:
+                protocol, owner, requires_lease = expected_transport
+                if adapter.get("protocol") != protocol or adapter.get("control_owner") != owner:
+                    blockers.append("driver_backend_control_invalid")
+                if control.get("motors_enabled") is not True:
+                    blockers.append("driver_motors_disabled")
+                if control.get("critical_fault") is True:
+                    blockers.append("driver_critical_motor_fault")
+                if control.get("control_assured") is not True:
+                    blockers.append("driver_control_not_assured")
+                if requires_lease and (
+                    control.get("lease_valid") is not True
+                    or adapter.get("control_owner_id") != "lingtu-driver@robot"
+                ):
+                    blockers.append("driver_control_not_owned_by_lingtu")
+                if not requires_lease and (
+                    control.get("lease_valid") is not False
+                    or str(adapter.get("control_owner_id") or "")
+                ):
+                    blockers.append("driver_backend_control_invalid")
+                if control.get("initial_zero_acknowledged") is not True:
+                    blockers.append("driver_initial_zero_unconfirmed")
+                if control.get("fsm") not in {"standing", "walking"}:
+                    blockers.append("driver_fsm_not_ready")
+        if payload.get("ready") is not True:
             blockers.append("driver_not_ready")
-        if brainstem:
-            if brainstem.get("motors_enabled") is not True:
-                blockers.append("brainstem_motors_disabled")
-            if brainstem.get("critical_fault") is True:
-                blockers.append("brainstem_critical_motor_fault")
-            if (
-                brainstem.get("lease_valid") is not True
-                or brainstem.get("owner") != "grpc"
-                or brainstem.get("owner_id") != "lingtu-driver"
-            ):
-                blockers.append("brainstem_lease_not_owned_by_lingtu")
-            if brainstem.get("fsm") not in {"standing", "walking"}:
-                blockers.append("brainstem_fsm_not_ready")
         age_s = status.get("age_s")
         if not isinstance(age_s, (int, float)) or age_s > DRIVER_STATUS_MAX_AGE_S:
             blockers.append("driver_status_stale")
@@ -556,7 +587,9 @@ def collect_driver_readiness(
         "status_age_s": status.get("age_s"),
         "connected": payload.get("connected") is True,
         "ready": payload.get("ready") is True,
-        "brainstem": brainstem,
+        "backend": backend,
+        "adapter": adapter,
+        "control": control,
         "dds_topic": DRIVER_DDS_TOPIC,
         "dds_idle_allowed": True,
         "blockers": blockers,
@@ -644,10 +677,7 @@ def collect_dds(*, seconds: float = 0.0, domain_id: int = 0) -> dict[str, Any]:
             blockers.append(f"dds_topic_silent:{dds_topic}")
     for service, item in services.items():
         item["idle_allowed"] = service == DRIVER_STATUS_NAME
-        item["ok"] = all(
-            count > 0 or topic == DRIVER_DDS_TOPIC
-            for topic, count in item["samples"].items()
-        )
+        item["ok"] = all(count > 0 or topic == DRIVER_DDS_TOPIC for topic, count in item["samples"].items())
         if not item["ok"]:
             item.setdefault("blockers", []).extend(
                 f"dds_topic_silent:{topic}"
@@ -720,9 +750,12 @@ def build_report(
     gateway_url: str,
     dds_seconds: float = 0.0,
     dds_domain: int = 0,
+    teleop_stage: str | None = None,
     teleop_avoid_stage: str | None = None,
     status_max_age_s: float = DRIVER_STATUS_MAX_AGE_S,
 ) -> dict[str, Any]:
+    if teleop_stage is not None and teleop_avoid_stage is not None:
+        raise ValueError("teleop and teleop_avoid preflight gates are mutually exclusive")
     processes = collect_processes()
     dds = collect_dds(seconds=dds_seconds, domain_id=dds_domain)
     systemd = collect_systemd()
@@ -754,20 +787,19 @@ def build_report(
         "driver": driver_readiness,
     }
     report["summary"] = summarize_report(report)
-    if teleop_avoid_stage is not None:
+    selected_stage = teleop_stage if teleop_stage is not None else teleop_avoid_stage
+    if selected_stage is not None:
         current_run = collect_current_run()
         report["current_run"] = current_run
-        report["teleop_avoid_preflight"] = evaluate_teleop_avoid_preflight(
+        evaluator = evaluate_teleop_preflight if teleop_stage is not None else evaluate_teleop_avoid_preflight
+        report_key = "teleop_preflight" if teleop_stage is not None else "teleop_avoid_preflight"
+        report[report_key] = evaluator(
             {
                 "current_run": current_run,
                 "status_files": status_files,
                 "driver_readiness": driver_readiness,
-                "expected_brainstem_host": os.environ.get(
-                    "LINGTU_BRAINSTEM_EXPECTED_HOST", ""
-                )
-                or os.environ.get("LINGTU_BRAINSTEM_HOST", ""),
             },
-            stage=teleop_avoid_stage,
+            stage=selected_stage,
             status_max_age_s=status_max_age_s,
         )
     return report
@@ -778,6 +810,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gateway-url", default="http://127.0.0.1:5050")
     parser.add_argument("--dds-seconds", type=float, default=0.0)
     parser.add_argument("--dds-domain", type=int, default=0)
+    parser.add_argument(
+        "--teleop-stage",
+        choices=sorted(TELEOP_STAGES),
+        help="evaluate the selected read-only teleop gate",
+    )
     parser.add_argument(
         "--teleop-avoid-stage",
         choices=sorted(TELEOP_AVOID_STAGES),
@@ -801,10 +838,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.teleop_stage is not None and args.teleop_avoid_stage is not None:
+        raise SystemExit("--teleop-stage and --teleop-avoid-stage are mutually exclusive")
     report = build_report(
         gateway_url=args.gateway_url,
         dds_seconds=args.dds_seconds,
         dds_domain=args.dds_domain,
+        teleop_stage=args.teleop_stage,
         teleop_avoid_stage=args.teleop_avoid_stage,
         status_max_age_s=args.status_max_age_s,
     )
@@ -813,11 +853,12 @@ def main() -> int:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(text + "\n", encoding="utf-8")
     print(text)
-    selected_gate = (
-        report.get("teleop_avoid_preflight")
-        if args.teleop_avoid_stage is not None
-        else report.get("summary")
-    )
+    if args.teleop_stage is not None:
+        selected_gate = report.get("teleop_preflight")
+    elif args.teleop_avoid_stage is not None:
+        selected_gate = report.get("teleop_avoid_preflight")
+    else:
+        selected_gate = report.get("summary")
     return 1 if args.strict and not bool((selected_gate or {}).get("ok")) else 0
 
 

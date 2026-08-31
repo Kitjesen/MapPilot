@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate saved map artifact provenance for map.pcd/octomap/occupancy."""
+"""Ask mapd to validate one saved map's planning artifacts."""
 
 from __future__ import annotations
 
@@ -12,17 +12,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _ensure_import_path() -> None:
-    for candidate in (ROOT / "src", ROOT):
-        path = str(candidate)
-        if path not in sys.path:
-            sys.path.insert(0, path)
+    source = str(ROOT / "src")
+    if source not in sys.path:
+        sys.path.insert(0, source)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Validate saved-map metadata.json and artifact checksums.",
+        description="Validate one saved map through native mapd.",
     )
-    parser.add_argument("map_dir", type=Path, help="Directory containing metadata.json")
+    parser.add_argument("map_id", help="Saved map ID")
     parser.add_argument("--require-octomap", action="store_true")
     parser.add_argument("--require-occupancy", action="store_true")
     parser.add_argument("--expected-data-source")
@@ -37,21 +36,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(list(argv or sys.argv[1:]))
     _ensure_import_path()
 
-    from cli.runtime_display import format_saved_map_artifact_gate_payload
-    from diagnostics.field.gates import runtime_validation_gates
-    from maps.artifacts import (
-        validate_saved_map_artifact_dir,
-    )
+    from diagnostics.field.field_check import validate_map
+    from diagnostics.saved_map_display import format_saved_map_artifact_gate_payload
 
-    payload = validate_saved_map_artifact_dir(
-        args.map_dir,
+    payload = validate_map(
+        args.map_id,
         require_octomap=args.require_octomap,
         require_occupancy=args.require_occupancy,
         expected_data_source=args.expected_data_source,
         expected_source_profile=args.expected_source_profile,
         expected_frame_id=args.expected_frame_id,
     )
-    payload["validation_gate"] = runtime_validation_gates()["saved_map_artifact_gate"]
     text = json.dumps(payload, indent=2)
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)

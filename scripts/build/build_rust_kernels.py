@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 SCHEMA = "lingtu.rust_kernel_build.v1"
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -40,24 +39,6 @@ RUST_KERNEL_TARGETS: tuple[RustKernelTarget, ...] = (
         manifest=ROOT / "src" / "kernels" / "nav" / "path_safety" / "Cargo.toml",
         description="2D path safety C ABI kernel",
         required_libraries=("lingtu_path_safety",),
-    ),
-    RustKernelTarget(
-        key="pose_graph_opt",
-        manifest=ROOT / "src" / "kernels" / "slam" / "pose_graph_opt" / "Cargo.toml",
-        description="SE3 pose graph optimizer used by the PGO/HBA migration surface",
-        required_libraries=("lingtu_pose_graph_opt",),
-    ),
-    RustKernelTarget(
-        key="gpmp_trajectory_optimizer",
-        manifest=ROOT
-        / "src"
-        / "kernels"
-        / "planning"
-        / "gpmp_trajectory_optimizer"
-        / "Cargo.toml",
-        description="PCT/GPMP trajectory optimizer binary/library used by rust_process runtime",
-        required_binaries=("gpmp_optimize",),
-        required_libraries=("lingtu_gpmp_trajectory_optimizer",),
     ),
     RustKernelTarget(
         key="camera_lidar_optimizer",
@@ -195,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
             "dry_run": bool(args.dry_run),
             "targets": results,
         }
-    except Exception as exc:  # noqa: BLE001 - CLI should return structured failure.
+    except Exception as exc:
         payload = {
             "schema": SCHEMA,
             "ok": False,

@@ -1,5 +1,5 @@
 [package]
-name = "lingtu_pose_graph_opt"
+name = "pose_graph_opt"
 version = "0.1.0"
 edition = "2021"
 description = "Portable LingTu pose graph optimization kernel"

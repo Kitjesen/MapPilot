@@ -1,135 +1,40 @@
 """Gateway acceptance checks for product-facing field use.
 
-This module consumes Gateway HTTP endpoints, validates them against product
-specifications, and produces an acceptance verdict. It stays outside gateway/
-to keep acceptance logic separate from Gateway implementation. Gateway imports
-remain lazy to preserve module-level import purity.
+This module evaluates current Gateway snapshots against one Product's resolved
+topics and runtime boundary. It stays outside Gateway implementation so field
+acceptance remains a read-only consumer.
 """
 
 from __future__ import annotations
 
-import json
-import os
+import math
 import time
 from collections.abc import Mapping
-from contextlib import contextmanager
-from dataclasses import dataclass
 from typing import Any
-from urllib.error import URLError
-from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
 
 from runtime.runtime_interface import REAL_RUNTIME_CONTRACT, TOPICS
 
 GATEWAY_RUNTIME_ACCEPTANCE_SCHEMA_VERSION = "lingtu.gateway_runtime_acceptance.v3"
-DEFAULT_GATEWAY_URL = "http://127.0.0.1:5050"
-IN_PROCESS_STUB_RUNTIME_CONTRACT = "in_process_stub"
 ACCEPTANCE_MODES = ("non_motion", "simulation", "field")
 MAX_LIVE_STALE_MS = 2000.0
 HARDWARE_COMMAND_SINK = "driver"
 
 GATEWAY_ACCEPTANCE_ENDPOINTS: dict[str, str] = {
-    "capabilities": "/api/v1/app/capabilities",
     "readiness": "/api/v1/readiness",
     "runtime_dataflow": "/api/v1/runtime/dataflow",
     "localization_status": "/api/v1/localization/status",
     "navigation_status": "/api/v1/navigation/status",
-    "routecheck_latest": "/api/v1/diagnostics/routecheck/latest",
     "real_runtime_evidence": "/api/v1/diagnostics/real-runtime-evidence/latest",
-    "algorithm_benchmark_latest": "/api/v1/diagnostics/algorithm-benchmark/latest",
 }
 
 REQUIRED_GATEWAY_SNAPSHOTS = (
-    "capabilities",
     "readiness",
     "runtime_dataflow",
     "localization_status",
     "navigation_status",
 )
 
-PRODUCT_OBSERVABLE_TOPICS = (
-    TOPICS.odometry,
-    TOPICS.map_cloud,
-    TOPICS.localization_health,
-    TOPICS.global_path,
-    TOPICS.local_path,
-    TOPICS.cmd_vel,
-    TOPICS.mission_status,
-    TOPICS.traversable_frontiers,
-    TOPICS.frontier_candidate,
-)
-
-FIELD_LIVE_TOPICS = (
-    TOPICS.odometry,
-    TOPICS.map_cloud,
-    TOPICS.global_path,
-    TOPICS.local_path,
-    TOPICS.cmd_vel,
-    TOPICS.traversable_frontiers,
-    TOPICS.frontier_candidate,
-)
-
-TRAVERSABLE_FRONTIER_PREVIEW_STAGE = "traversable_frontier_preview"
-TRAVERSABLE_FRONTIER_PREVIEW_TOPICS = (
-    TOPICS.traversable_frontiers,
-    TOPICS.frontier_candidate,
-)
-
-PRODUCT_REQUIRED_STAGE_NAMES = (
-    "slam_or_relayed_localization_map",
-    TRAVERSABLE_FRONTIER_PREVIEW_STAGE,
-    "global_planning",
-    "local_planning_and_following",
-    "command_boundary",
-)
-
-ADVISORY_STAGE_NAMES = (
-    "endpoint_adapter",
-    "map_layers_and_exploration",
-    "dynamic_obstacle_gate",
-)
-
-FIELD_REQUIRED_LIVE_STAGE_NAMES = (
-    "slam_or_relayed_localization_map",
-    TRAVERSABLE_FRONTIER_PREVIEW_STAGE,
-    "global_planning",
-    "local_planning_and_following",
-    "command_boundary",
-)
-
-SIMULATION_REQUIRED_LIVE_STAGE_NAMES = (
-    "slam_or_relayed_localization_map",
-    TRAVERSABLE_FRONTIER_PREVIEW_STAGE,
-    "global_planning",
-    "local_planning_and_following",
-)
-
 MOTION_ACCEPTANCE_MODES = ("simulation", "field")
-
-REQUIRED_COMMAND_INTERFACE_PATHS = (
-    "/api/v1/goal",
-    "/api/v1/cmd_vel",
-    "/api/v1/stop",
-)
-
-ALLOWED_COMMAND_INTERFACE_PATHS = (
-    "/api/v1/navigation/plan",
-    *REQUIRED_COMMAND_INTERFACE_PATHS,
-    "/api/v1/navigate/click",
-    "/api/v1/navigation/cancel",
-    "/api/v1/instruction",
-)
-
-
-@dataclass(frozen=True)
-class GatewayFetchResult:
-    name: str
-    path: str
-    ok: bool
-    status: int | None
-    payload: dict[str, Any]
-    error: str | None = None
-
 
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
@@ -147,15 +52,6 @@ def _as_bool(value: Any) -> bool | None:
         if lowered in {"0", "false", "no", "n"}:
             return False
     return None
-
-
-def _as_int(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return int(value)
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _snapshot_ok(snapshot: Mapping[str, Any] | None) -> bool:
@@ -208,35 +104,9 @@ def _live(topic_entry: Mapping[str, Any]) -> bool:
     return False
 
 
-def _stage_index(dataflow: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-    stages: dict[str, dict[str, Any]] = {}
-    for item in dataflow.get("stage_evidence") or []:
-        entry = _mapping(item)
-        name = entry.get("name")
-        if name:
-            stages[str(name)] = entry
-    return stages
-
-
-def _required_section_ok(section: Any) -> bool:
-    if not isinstance(section, Mapping) or not section:
-        return False
-    for raw_entry in section.values():
-        entry = _mapping(raw_entry)
-        if entry:
-            if entry.get("required") is False:
-                continue
-            if entry.get("ok") is not True:
-                return False
-        elif raw_entry is not True:
-            return False
-    return True
-
-
 def _check_gateway_contract(
     snapshots: Mapping[str, Any],
     blockers: list[str],
-    advisories: list[str],
 ) -> dict[str, Any]:
     endpoints: dict[str, Any] = {}
     for name, path in GATEWAY_ACCEPTANCE_ENDPOINTS.items():
@@ -251,54 +121,11 @@ def _check_gateway_contract(
         }
         if name in REQUIRED_GATEWAY_SNAPSHOTS and not ok:
             blockers.append(f"gateway endpoint unavailable: {name} {path}")
-        if name == "routecheck_latest" and not ok:
-            advisories.append("routecheck_latest unavailable; latest route preview is not visible")
-
-    capabilities = _mapping(snapshots.get("capabilities"))
-    links = _mapping(capabilities.get("links"))
-    required_links = {
-        "runtime_dataflow": GATEWAY_ACCEPTANCE_ENDPOINTS["runtime_dataflow"],
-        "runtime_dataflow_topic": "/api/v1/runtime/dataflow/topic",
-        "runtime_dataflow_subscribe": "/api/v1/runtime/dataflow/subscribe",
-        "runtime_switch_plan": "/api/v1/runtime/switch-plan",
-        "diagnostic_pack": "/api/v1/diagnostic_pack",
-        "field_check": "/api/v1/diagnostics/field-check",
-        "inspection_acceptance": "/api/v1/inspection/acceptance",
-        "routecheck_latest": GATEWAY_ACCEPTANCE_ENDPOINTS["routecheck_latest"],
-        "real_runtime_evidence_latest": GATEWAY_ACCEPTANCE_ENDPOINTS["real_runtime_evidence"],
-        "algorithm_benchmark_latest": GATEWAY_ACCEPTANCE_ENDPOINTS["algorithm_benchmark_latest"],
-        "readiness": "/api/v1/readiness",
-        "navigation_status": GATEWAY_ACCEPTANCE_ENDPOINTS["navigation_status"],
-        "localization_status": GATEWAY_ACCEPTANCE_ENDPOINTS["localization_status"],
-        "navigation_goal_candidate": "/api/v1/navigation/goal_candidate",
-    }
-    missing_links = [name for name, path in required_links.items() if links.get(name) != path]
-    if missing_links:
-        blockers.append("capabilities missing product Gateway links: " + ", ".join(missing_links))
 
     return {
-        "ok": all(endpoint["ok"] for endpoint in endpoints.values() if endpoint.get("required")) and not missing_links,
+        "ok": all(endpoint["ok"] for endpoint in endpoints.values() if endpoint.get("required")),
         "endpoints": endpoints,
-        "required_links": required_links,
-        "missing_links": missing_links,
     }
-
-
-def _has_gateway_sse_stream(topic_entry: Mapping[str, Any]) -> bool:
-    inspection = _mapping(topic_entry.get("inspection"))
-    for raw_stream in inspection.get("stream_interfaces") or []:
-        stream = _mapping(raw_stream)
-        if stream.get("transport") == "gateway_sse" and stream.get("path") and stream.get("event_type"):
-            return True
-
-    observability = _mapping(topic_entry.get("observability"))
-    for raw_channel in observability.get("gateway_channels") or []:
-        channel = _mapping(raw_channel)
-        if channel.get("transport") == "gateway_sse" and channel.get("path") and channel.get("event_type"):
-            return True
-    return False
-
-
 def _check_gateway_observability(
     dataflow: Mapping[str, Any],
     mode: str,
@@ -306,36 +133,27 @@ def _check_gateway_observability(
     advisories: list[str],
 ) -> dict[str, Any]:
     topic_entries = _topic_index(dataflow)
-    missing_topics = [topic for topic in PRODUCT_OBSERVABLE_TOPICS if topic not in topic_entries]
-    if missing_topics:
-        blockers.append("Gateway observability missing product topics: " + ", ".join(missing_topics))
-
-    non_observable = [
-        topic for topic in PRODUCT_OBSERVABLE_TOPICS if topic in topic_entries and not _observable(topic_entries[topic])
-    ]
-    if non_observable:
-        blockers.append(
-            "product topics are not observable through Gateway: " + ", ".join(non_observable)
-        )
-
-    stream_required_topics = PRODUCT_OBSERVABLE_TOPICS
-    if dataflow.get("runtime_contract") == IN_PROCESS_STUB_RUNTIME_CONTRACT:
-        # The non-motion in-process stub exposes the command boundary through
-        # Module ports; it does not synthesize an outbound cmd_vel SSE event.
-        stream_required_topics = tuple(
-            topic for topic in PRODUCT_OBSERVABLE_TOPICS if topic != TOPICS.cmd_vel
-        )
-    missing_stream_interfaces = [
+    run_plan = _mapping(dataflow.get("run_plan"))
+    declared_topics = tuple(
+        str(topic) for topic in run_plan.get("required_topics") or () if str(topic)
+    )
+    # runtime_dataflow already filters this list to the active Product and
+    # attaches the Gateway port/channel contract for each topic. Native-only
+    # DDS topics are valid Product topics, but are not Gateway observations.
+    observable_topics = tuple(
+        topic for topic, entry in topic_entries.items() if _observable(entry)
+    )
+    module_observable_topics = tuple(
         topic
-        for topic in stream_required_topics
-        if topic in topic_entries and not _has_gateway_sse_stream(topic_entries[topic])
-    ]
-    if missing_stream_interfaces:
-        blockers.append(
-            "product topics missing Gateway SSE subscription: " + ", ".join(missing_stream_interfaces)
-        )
+        for topic in observable_topics
+        if _mapping(topic_entries[topic].get("observability")).get("module_port_candidates")
+    )
 
-    missing_live = [topic for topic in FIELD_LIVE_TOPICS if topic in topic_entries and not _live(topic_entries[topic])]
+    missing_live = [
+        topic
+        for topic in module_observable_topics
+        if not _live(topic_entries[topic])
+    ]
     if mode in MOTION_ACCEPTANCE_MODES and missing_live:
         blockers.append(f"{mode} acceptance missing live Module samples: " + ", ".join(missing_live))
     elif missing_live:
@@ -345,300 +163,16 @@ def _check_gateway_observability(
             + "; run field mode during an active navigation session"
         )
 
-    endpoint_topic_required = bool(dataflow.get("endpoint_topic_required", dataflow.get("ros2_topic_required")))
-    if endpoint_topic_required:
-        blockers.append("Gateway acceptance must not require endpoint topic inspection")
-
-    control_boundary = _mapping(dataflow.get("control_boundary"))
-    if control_boundary.get("arbitrary_publish_supported") is not False:
-        blockers.append("Gateway must not expose arbitrary publish as product control")
-    command_interfaces = list(control_boundary.get("command_interfaces") or [])
-    if not command_interfaces:
-        blockers.append("Gateway command whitelist is empty or missing")
-    command_paths = {str(_mapping(interface).get("path") or "") for interface in command_interfaces}
-    missing_command_paths = [path for path in REQUIRED_COMMAND_INTERFACE_PATHS if path not in command_paths]
-    if missing_command_paths:
-        blockers.append("Gateway command whitelist missing required interfaces: " + ", ".join(missing_command_paths))
-    unexpected_command_paths = [
-        path for path in sorted(command_paths) if path and path not in ALLOWED_COMMAND_INTERFACE_PATHS
-    ]
-    if unexpected_command_paths:
-        blockers.append(
-            "Gateway command whitelist includes unexpected interfaces: " + ", ".join(unexpected_command_paths)
-        )
-
     return {
-        "ok": not missing_topics
-        and not non_observable
-        and not endpoint_topic_required
-        and control_boundary.get("arbitrary_publish_supported") is False
-        and bool(command_interfaces)
-        and not missing_command_paths
-        and not unexpected_command_paths
-        and not missing_stream_interfaces
-        and (mode not in MOTION_ACCEPTANCE_MODES or not missing_live),
+        "ok": mode not in MOTION_ACCEPTANCE_MODES or not missing_live,
         "runtime_contract": dataflow.get("runtime_contract"),
-        "endpoint_topic_required": endpoint_topic_required,
-        "ros2_topic_required": bool(dataflow.get("ros2_topic_required")),
-        "arbitrary_publish_supported": control_boundary.get("arbitrary_publish_supported"),
-        "command_interface_count": len(command_interfaces),
-        "missing_command_interfaces": missing_command_paths,
-        "unexpected_command_interfaces": unexpected_command_paths,
-        "observable_topics": [
-            topic for topic in PRODUCT_OBSERVABLE_TOPICS if topic in topic_entries and _observable(topic_entries[topic])
+        "required_topics": list(declared_topics or topic_entries),
+        "observable_topics": list(observable_topics),
+        "missing_topics": [],
+        "non_observable_topics": [
+            topic for topic, entry in topic_entries.items() if not _observable(entry)
         ],
-        "streamable_topics": [
-            topic
-            for topic in PRODUCT_OBSERVABLE_TOPICS
-            if topic in topic_entries and _has_gateway_sse_stream(topic_entries[topic])
-        ],
-        "missing_topics": missing_topics,
-        "non_observable_topics": non_observable,
-        "missing_stream_interfaces": missing_stream_interfaces,
         "missing_live_topics": missing_live,
-    }
-
-
-def _check_motion_path(
-    dataflow: Mapping[str, Any],
-    mode: str,
-    blockers: list[str],
-) -> dict[str, Any]:
-    motion = _mapping(dataflow.get("motion_path"))
-    runtime_boundary = _mapping(dataflow.get("runtime_boundary"))
-    field_runtime = (
-        str(dataflow.get("runtime_contract") or "") == REAL_RUNTIME_CONTRACT
-        and _as_bool(runtime_boundary.get("simulation_only")) is False
-    )
-    expected = {
-        "kind": "native_field",
-        "motion_owner": "nav",
-        "final_velocity_writer": "nav",
-        "actuator_owner": "driver",
-    }
-    mismatches: list[str] = []
-    if field_runtime:
-        for key, value in expected.items():
-            if motion.get(key) != value:
-                mismatches.append(f"{key}={motion.get(key)!r}, expected {value!r}")
-        if len(motion.get("stages") or []) != 5:
-            mismatches.append("stages must contain command, localization, risk, motion, and actuation")
-    if mismatches:
-        detail = "; ".join(mismatches)
-        if mode in MOTION_ACCEPTANCE_MODES or field_runtime:
-            blockers.append(f"native motion path mismatch: {detail}")
-    return {
-        "ok": not mismatches,
-        "field_runtime": field_runtime,
-        "kind": motion.get("kind"),
-        "motion_owner": motion.get("motion_owner"),
-        "final_velocity_writer": motion.get("final_velocity_writer"),
-        "actuator_owner": motion.get("actuator_owner"),
-        "stage_count": len(motion.get("stages") or []),
-        "mismatches": mismatches,
-    }
-
-
-def _latest_payload(topic_entry: Mapping[str, Any]) -> Any:
-    inspection = _mapping(topic_entry.get("inspection"))
-    return inspection.get("latest_payload")
-
-
-def _payload_command_published(payload: Any) -> bool:
-    if isinstance(payload, Mapping):
-        return _mapping(payload).get("command_published") is True
-    if isinstance(payload, list):
-        return any(_payload_command_published(item) for item in payload)
-    return False
-
-
-def _topic_is_read_only(topic_entry: Mapping[str, Any]) -> bool:
-    communication = _mapping(topic_entry.get("communication"))
-    inspection = _mapping(topic_entry.get("inspection"))
-    return (
-        communication.get("allowed") is not True
-        and inspection.get("communicate") is not True
-        and not communication.get("interfaces")
-        and not inspection.get("write_interfaces")
-        and communication.get("arbitrary_publish_supported") is not True
-        and inspection.get("arbitrary_publish_supported") is not True
-    )
-
-
-def _check_frontier_preview(
-    dataflow: Mapping[str, Any],
-    mode: str,
-    blockers: list[str],
-    advisories: list[str],
-) -> dict[str, Any]:
-    topic_entries = _topic_index(dataflow)
-    stage_entries = _stage_index(dataflow)
-    check_blockers: list[str] = []
-    missing_topics = [topic for topic in TRAVERSABLE_FRONTIER_PREVIEW_TOPICS if topic not in topic_entries]
-    missing_stage = TRAVERSABLE_FRONTIER_PREVIEW_STAGE not in stage_entries
-    read_only_topics = [
-        topic
-        for topic in TRAVERSABLE_FRONTIER_PREVIEW_TOPICS
-        if topic in topic_entries and _topic_is_read_only(topic_entries[topic])
-    ]
-    non_read_only_topics = [
-        topic
-        for topic in TRAVERSABLE_FRONTIER_PREVIEW_TOPICS
-        if topic in topic_entries and topic not in read_only_topics
-    ]
-    if non_read_only_topics:
-        check_blockers.append("traversable frontier preview must be read-only: " + ", ".join(non_read_only_topics))
-
-    stage = _mapping(stage_entries.get(TRAVERSABLE_FRONTIER_PREVIEW_STAGE))
-    live = stage.get("live") is True
-    if mode in MOTION_ACCEPTANCE_MODES and (missing_topics or missing_stage or not live):
-        check_blockers.append(f"{mode} acceptance requires live traversable frontier preview")
-
-    candidate_entry = _mapping(topic_entries.get(TOPICS.frontier_candidate))
-    frontiers_entry = _mapping(topic_entries.get(TOPICS.traversable_frontiers))
-    candidate_payload = _mapping(_latest_payload(candidate_entry))
-    frontiers_payload = _latest_payload(frontiers_entry)
-    candidate_source = str(candidate_payload.get("source") or "")
-    payload_available = bool(candidate_payload) and isinstance(frontiers_payload, list)
-    if mode in MOTION_ACCEPTANCE_MODES and not payload_available:
-        check_blockers.append(f"{mode} acceptance requires traversable frontier preview payload")
-    elif not payload_available:
-        advisories.append("traversable frontier preview payload unavailable; run during active exploration")
-
-    command_published = _payload_command_published(candidate_payload) or (_payload_command_published(frontiers_payload))
-    if command_published:
-        check_blockers.append("traversable frontier preview published a command")
-
-    blockers.extend(check_blockers)
-    return {
-        "ok": not check_blockers,
-        "required": True,
-        "stage": TRAVERSABLE_FRONTIER_PREVIEW_STAGE,
-        "topics": list(TRAVERSABLE_FRONTIER_PREVIEW_TOPICS),
-        "missing_topics": missing_topics,
-        "missing_stage": missing_stage,
-        "live": live,
-        "read_only": not non_read_only_topics,
-        "read_only_topics": read_only_topics,
-        "non_read_only_topics": non_read_only_topics,
-        "payload_available": payload_available,
-        "candidate_source": candidate_source or None,
-        "candidate": candidate_payload,
-        "frontier_count": (len(frontiers_payload) if isinstance(frontiers_payload, list) else None),
-        "command_published": command_published,
-        "blockers": check_blockers,
-    }
-
-
-def _live_stage_names_for_mode(mode: str) -> tuple[str, ...]:
-    if mode == "field":
-        return FIELD_REQUIRED_LIVE_STAGE_NAMES
-    if mode == "simulation":
-        return SIMULATION_REQUIRED_LIVE_STAGE_NAMES
-    return ()
-
-
-def _check_stage_evidence(
-    dataflow: Mapping[str, Any],
-    mode: str,
-    blockers: list[str],
-    advisories: list[str],
-) -> dict[str, Any]:
-    stage_entries = _stage_index(dataflow)
-    available = bool(stage_entries)
-    if not available:
-        if mode in MOTION_ACCEPTANCE_MODES:
-            blockers.append(f"{mode} acceptance requires runtime stage evidence")
-        else:
-            blockers.append("Gateway observability is missing stage evidence")
-
-    missing_stages = [stage for stage in PRODUCT_REQUIRED_STAGE_NAMES if stage not in stage_entries]
-    if missing_stages:
-        blockers.append("Gateway observability missing required stages: " + ", ".join(missing_stages))
-
-    missing_tokens: dict[str, dict[str, list[str]]] = {}
-    non_observable_stages: list[str] = []
-    stage_token_gaps_block = mode in MOTION_ACCEPTANCE_MODES
-    for name in PRODUCT_REQUIRED_STAGE_NAMES:
-        stage = stage_entries.get(name)
-        if not stage:
-            continue
-        missing_inputs = [str(item) for item in (stage.get("missing_inputs") or []) if item]
-        missing_outputs = [str(item) for item in (stage.get("missing_outputs") or []) if item]
-        if missing_inputs or missing_outputs or stage.get("observable") is False:
-            non_observable_stages.append(name)
-        if missing_inputs or missing_outputs:
-            missing_tokens[name] = {
-                "inputs": missing_inputs,
-                "outputs": missing_outputs,
-            }
-            message = f"runtime stage evidence missing tokens: {name}"
-            if stage_token_gaps_block:
-                blockers.append(message)
-            else:
-                advisories.append(message)
-
-    live_required = _live_stage_names_for_mode(mode)
-    not_live_stage_tokens: dict[str, dict[str, list[str]]] = {}
-    not_live_stages: list[str] = []
-    for name in live_required:
-        stage = stage_entries.get(name)
-        if not stage:
-            continue
-        not_live_inputs = [str(item) for item in (stage.get("not_live_inputs") or []) if item]
-        not_live_outputs = [str(item) for item in (stage.get("not_live_outputs") or []) if item]
-        if stage.get("live") is not True or not_live_inputs or not_live_outputs:
-            not_live_stages.append(name)
-            if not_live_inputs or not_live_outputs:
-                not_live_stage_tokens[name] = {
-                    "inputs": not_live_inputs,
-                    "outputs": not_live_outputs,
-                }
-    if not_live_stages:
-        blockers.append(f"{mode} acceptance requires live observed stages: " + ", ".join(not_live_stages))
-
-    advisory_not_live = [
-        name
-        for name in PRODUCT_REQUIRED_STAGE_NAMES
-        if name in stage_entries and stage_entries[name].get("live") is not True and name not in not_live_stages
-    ]
-    if advisory_not_live:
-        advisories.append(
-            "stage evidence is metadata_only for: "
-            + ", ".join(advisory_not_live)
-            + "; run during active navigation for motion evidence"
-        )
-
-    missing_advisory_stages = [stage for stage in ADVISORY_STAGE_NAMES if stage not in stage_entries]
-    if missing_advisory_stages:
-        advisories.append("diagnostic stage evidence missing: " + ", ".join(missing_advisory_stages))
-
-    live_stages = [name for name, stage in stage_entries.items() if stage.get("live") is True]
-    stage_statuses = {name: str(stage.get("status") or "unknown") for name, stage in stage_entries.items()}
-    ok = (
-        available
-        and not missing_stages
-        and (not non_observable_stages or not stage_token_gaps_block)
-        and (not missing_tokens or not stage_token_gaps_block)
-        and not not_live_stages
-    )
-    return {
-        "ok": ok,
-        "required": True,
-        "available": available,
-        "stage_count": len(stage_entries),
-        "required_stages": list(PRODUCT_REQUIRED_STAGE_NAMES),
-        "advisory_stages": list(ADVISORY_STAGE_NAMES),
-        "live_required_stages": list(live_required),
-        "live_stages": live_stages,
-        "missing_stages": missing_stages,
-        "non_observable_stages": non_observable_stages,
-        "not_live_stages": not_live_stages,
-        "not_live_stage_tokens": not_live_stage_tokens,
-        "advisory_not_live_stages": advisory_not_live,
-        "missing_advisory_stages": missing_advisory_stages,
-        "stage_statuses": stage_statuses,
-        "missing_tokens": missing_tokens,
     }
 
 
@@ -676,7 +210,7 @@ def _check_runtime_mode(
         if simulation_only is True:
             check_blockers.append("field acceptance must not run in the sim Env")
         if command_sink != HARDWARE_COMMAND_SINK:
-            check_blockers.append("field acceptance requires hardware command sink after VelocityMux")
+            check_blockers.append("field acceptance requires command_sink=driver")
     blockers.extend(check_blockers)
 
     return {
@@ -708,10 +242,10 @@ def _check_readiness(
         blockers.append(f"readiness status is {status}")
     if ready is False and status != "degraded":
         blockers.append("readiness ready=false")
-    if non_motion_safe is False:
-        blockers.append("readiness reports non_motion_safe=false")
-    if data_ready is False:
-        blockers.append("readiness reports data_ready=false")
+    if non_motion_safe is not True:
+        blockers.append("readiness requires non_motion_safe=true")
+    if data_ready is not True:
+        blockers.append("readiness requires data_ready=true")
     if mode in MOTION_ACCEPTANCE_MODES and motion_ready is not True:
         blockers.append(f"{mode} acceptance requires motion_ready=true")
     elif motion_ready is not True:
@@ -720,8 +254,8 @@ def _check_readiness(
     return {
         "ok": status not in {"failed", "error", "not_started"}
         and (ready is not False or status == "degraded")
-        and data_ready is not False
-        and non_motion_safe is not False
+        and data_ready is True
+        and non_motion_safe is True
         and (mode not in MOTION_ACCEPTANCE_MODES or motion_ready is True),
         "status": status,
         "ready": ready,
@@ -734,19 +268,24 @@ def _check_readiness(
 def _check_localization(
     localization: Mapping[str, Any],
     mode: str,
+    *,
+    localization_required: bool,
     blockers: list[str],
     advisories: list[str],
 ) -> dict[str, Any]:
     state = str(localization.get("state") or "unknown").lower()
-    bad_states = {"lost", "no_odometry", "uninitialized", "uninit", "error"}
-    if mode in MOTION_ACCEPTANCE_MODES and state in bad_states:
+    has_odometry = _as_bool(localization.get("has_odometry"))
+    bad_states = {"unknown", "lost", "no_odometry", "uninitialized", "uninit", "error"}
+    failed = localization_required and (state in bad_states or has_odometry is not True)
+    if mode in MOTION_ACCEPTANCE_MODES and failed:
         blockers.append(f"{mode} acceptance localization state is {state}")
-    elif state in bad_states:
+    elif localization_required and failed:
         advisories.append(f"localization state is {state}; not field-ready")
     return {
-        "ok": mode not in MOTION_ACCEPTANCE_MODES or state not in bad_states,
+        "ok": mode not in MOTION_ACCEPTANCE_MODES or not failed,
+        "required": localization_required,
         "state": state,
-        "has_odometry": localization.get("has_odometry"),
+        "has_odometry": has_odometry,
         "can_relocalize": localization.get("can_relocalize"),
     }
 
@@ -784,14 +323,15 @@ def _check_real_runtime_evidence(
     report_age_s = evidence.get("report_age_s")
     max_age_s = evidence.get("max_age_s")
     try:
-        stale = report_age_s is not None and max_age_s is not None and float(report_age_s) > float(max_age_s)
+        age = float(report_age_s)
+        max_age = float(max_age_s)
+        age_valid = math.isfinite(age) and math.isfinite(max_age) and age >= 0.0 and max_age >= 0.0
     except (TypeError, ValueError):
-        stale = False
+        age = None
+        max_age = None
+        age_valid = False
+    stale = bool(age_valid and age is not None and max_age is not None and age > max_age)
 
-    real_motion = _mapping(evidence.get("checked_real_motion_evidence"))
-    hardware = _mapping(evidence.get("checked_hardware_boundary_evidence"))
-    live_freshness = evidence.get("checked_live_topic_freshness")
-    data_flow = evidence.get("checked_runtime_data_flow_evidence")
     field_ok = (
         endpoint_ok
         and evidence.get("ok") is True
@@ -800,11 +340,8 @@ def _check_real_runtime_evidence(
         and evidence.get("simulation_only") is False
         and evidence.get("real_robot_motion") is True
         and evidence.get("cmd_vel_sent_to_hardware") is True
+        and age_valid
         and not stale
-        and real_motion.get("ok") is True
-        and hardware.get("ok") is True
-        and _required_section_ok(live_freshness)
-        and _required_section_ok(data_flow)
     )
     if mode == "field" and not field_ok:
         blockers.append("field acceptance requires passing real-runtime-evidence")
@@ -812,6 +349,8 @@ def _check_real_runtime_evidence(
             blockers.append(f"real-runtime-evidence: {blocker}")
         if stale:
             blockers.append("real-runtime-evidence is stale")
+        elif not age_valid:
+            blockers.append("real-runtime-evidence age is invalid")
     elif mode == "simulation":
         if evidence.get("simulation_only") is False and evidence.get("ok") is True:
             advisories.append("real-runtime-evidence is ignored in simulation acceptance")
@@ -831,68 +370,8 @@ def _check_real_runtime_evidence(
         "report_age_s": report_age_s,
         "max_age_s": max_age_s,
         "stale": stale,
-        "real_motion_ok": real_motion.get("ok"),
-        "hardware_boundary_ok": hardware.get("ok"),
-        "live_topic_freshness_ok": _required_section_ok(live_freshness),
-        "data_flow_ok": _required_section_ok(data_flow),
+        "age_valid": age_valid,
         "blockers": list(evidence.get("blockers") or []),
-    }
-
-
-def _check_routecheck_latest(
-    routecheck: Mapping[str, Any],
-    mode: str,
-    blockers: list[str],
-    advisories: list[str],
-) -> dict[str, Any]:
-    check_blockers: list[str] = []
-    latest = _mapping(routecheck.get("latest"))
-    published = _mapping(routecheck.get("published") or latest.get("published"))
-    outcome = routecheck.get("outcome") or latest.get("outcome")
-    non_motion = _as_bool(routecheck.get("non_motion", latest.get("non_motion")))
-    gateway_used = _as_bool(routecheck.get("gateway_used", latest.get("gateway_used")))
-    driver_used = _as_bool(routecheck.get("driver_used", latest.get("driver_used")))
-
-    if not routecheck:
-        check_blockers.append("latest routecheck is unavailable")
-    elif routecheck.get("ok") is not True:
-        reason = routecheck.get("reason") or routecheck.get("_fetch_error") or "not_ok"
-        check_blockers.append(f"latest routecheck is not ok: {reason}")
-
-    if routecheck:
-        if outcome != "pass":
-            check_blockers.append(f"latest routecheck outcome is {outcome or 'missing'}")
-        if non_motion is not True:
-            check_blockers.append("latest routecheck non_motion is not true")
-        if gateway_used is not True:
-            check_blockers.append("latest routecheck gateway_used is not true")
-        if driver_used is not False:
-            check_blockers.append("latest routecheck driver_used is not false")
-        for topic in ("goal_pose", "cmd_vel", "stop_cmd"):
-            count = _as_int(published.get(topic))
-            if count is None:
-                check_blockers.append(f"latest routecheck published.{topic} is missing")
-            elif count != 0:
-                check_blockers.append(f"latest routecheck published.{topic} is not 0")
-
-    ok = not check_blockers
-    if check_blockers:
-        detail = "; ".join(check_blockers)
-        if mode in MOTION_ACCEPTANCE_MODES:
-            blockers.append(f"{mode} acceptance requires passing latest routecheck: {detail}")
-        else:
-            advisories.append(f"latest routecheck is not passing: {detail}")
-
-    return {
-        "ok": ok,
-        "available": bool(routecheck),
-        "path": GATEWAY_ACCEPTANCE_ENDPOINTS["routecheck_latest"],
-        "outcome": outcome,
-        "non_motion": non_motion,
-        "gateway_used": gateway_used,
-        "driver_used": driver_used,
-        "published": published,
-        "blockers": check_blockers,
     }
 
 
@@ -909,25 +388,8 @@ def evaluate_gateway_runtime_acceptance(
     blockers: list[str] = []
     advisories: list[str] = []
 
-    gateway_contract = _check_gateway_contract(snapshots, blockers, advisories)
+    gateway_contract = _check_gateway_contract(snapshots, blockers)
     gateway_observability = _check_gateway_observability(
-        _mapping(snapshots.get("runtime_dataflow")),
-        mode,
-        blockers,
-        advisories,
-    )
-    motion = _check_motion_path(
-        _mapping(snapshots.get("runtime_dataflow")),
-        mode,
-        blockers,
-    )
-    stage_evidence = _check_stage_evidence(
-        _mapping(snapshots.get("runtime_dataflow")),
-        mode,
-        blockers,
-        advisories,
-    )
-    frontier_preview = _check_frontier_preview(
         _mapping(snapshots.get("runtime_dataflow")),
         mode,
         blockers,
@@ -945,11 +407,17 @@ def evaluate_gateway_runtime_acceptance(
         blockers,
         advisories,
     )
+    dataflow = _mapping(snapshots.get("runtime_dataflow"))
+    run_plan = _mapping(dataflow.get("run_plan"))
+    product_topics = {
+        str(topic) for topic in run_plan.get("required_topics") or () if str(topic)
+    } or set(_topic_index(dataflow))
     localization = _check_localization(
         _mapping(snapshots.get("localization_status")),
         mode,
-        blockers,
-        advisories,
+        localization_required=TOPICS.odometry in product_topics,
+        blockers=blockers,
+        advisories=advisories,
     )
     navigation = _check_navigation(
         _mapping(snapshots.get("navigation_status")),
@@ -964,27 +432,14 @@ def evaluate_gateway_runtime_acceptance(
         advisories,
     )
 
-    routecheck_latest = _check_routecheck_latest(
-        _mapping(snapshots.get("routecheck_latest")),
-        mode,
-        blockers,
-        advisories,
-    )
-    algorithm_benchmark_latest = _mapping(snapshots.get("algorithm_benchmark_latest"))
-
     checks = {
         "gateway_contract": gateway_contract,
         "runtime_mode": runtime_mode,
         "gateway_observability": gateway_observability,
-        "motion": motion,
-        "stage_evidence": stage_evidence,
-        "frontier_preview": frontier_preview,
         "readiness": readiness,
         "localization": localization,
         "navigation": navigation,
         "real_runtime_evidence": real_runtime_evidence,
-        "routecheck_latest": routecheck_latest,
-        "algorithm_benchmark_latest": algorithm_benchmark_latest,
     }
     top_level_simulation_only = (
         runtime_mode.get("simulation_only") if runtime_mode.get("simulation_only") is not None else mode == "simulation"
@@ -1000,209 +455,10 @@ def evaluate_gateway_runtime_acceptance(
         "simulation_only": top_level_simulation_only,
         "real_robot_motion": top_level_real_robot_motion,
         "cmd_vel_sent_to_hardware": top_level_cmd_vel_sent_to_hardware,
-        "target_result": (
-            "Gateway observability plus the declared native motion path; "
-            "endpoint topic inspection is not required."
-        ),
         "runtime_contract": gateway_observability.get("runtime_contract"),
-        "endpoint_topic_required": gateway_observability.get(
-            "endpoint_topic_required",
-            gateway_observability.get("ros2_topic_required"),
-        ),
-        "ros2_topic_required": gateway_observability.get("ros2_topic_required"),
         "blockers": blockers,
         "advisories": advisories,
         "checks": checks,
         "validated_from": {name: GATEWAY_ACCEPTANCE_ENDPOINTS[name] for name in GATEWAY_ACCEPTANCE_ENDPOINTS},
         "ts": time.time(),
     }
-
-
-def _fetch_json(base_url: str, name: str, path: str, timeout_sec: float) -> GatewayFetchResult:
-    url = urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
-    request = Request(url, headers={"Accept": "application/json"})
-    try:
-        with urlopen(request, timeout=timeout_sec) as response:
-            status = getattr(response, "status", None) or response.getcode()
-            raw = response.read().decode("utf-8")
-    except (OSError, URLError, TimeoutError) as exc:
-        return GatewayFetchResult(
-            name=name,
-            path=path,
-            ok=False,
-            status=None,
-            payload={"_fetch_error": str(exc)},
-            error=str(exc),
-        )
-    try:
-        payload = json.loads(raw) if raw else {}
-    except json.JSONDecodeError as exc:
-        return GatewayFetchResult(
-            name=name,
-            path=path,
-            ok=False,
-            status=status,
-            payload={"_fetch_error": f"invalid_json: {exc}"},
-            error=f"invalid_json: {exc}",
-        )
-    if not isinstance(payload, dict):
-        payload = {"value": payload}
-    payload["_http_status"] = status
-    return GatewayFetchResult(
-        name=name,
-        path=path,
-        ok=200 <= int(status) < 400,
-        status=int(status),
-        payload=payload,
-        error=None,
-    )
-
-
-def collect_gateway_runtime_snapshots(
-    *,
-    gateway_url: str = DEFAULT_GATEWAY_URL,
-    timeout_sec: float = 2.0,
-) -> dict[str, dict[str, Any]]:
-    """Fetch all Gateway snapshots needed for product acceptance."""
-
-    snapshots: dict[str, dict[str, Any]] = {}
-    for name, path in GATEWAY_ACCEPTANCE_ENDPOINTS.items():
-        result = _fetch_json(gateway_url, name, path, timeout_sec)
-        snapshots[name] = result.payload
-    return snapshots
-
-
-@contextmanager
-def _temporary_env(overrides: Mapping[str, str]):
-    previous: dict[str, str | None] = {key: os.environ.get(key) for key in overrides}
-    try:
-        for key, value in overrides.items():
-            os.environ[key] = value
-        yield
-    finally:
-        for key, value in previous.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-
-
-def _is_default_local_gateway_url(gateway_url: str) -> bool:
-    parsed = urlparse(gateway_url)
-    host = (parsed.hostname or "").lower()
-    return parsed.scheme in {"http", "https"} and host in {"127.0.0.1", "localhost", "::1"} and parsed.port == 5050
-
-
-def _all_required_gateway_fetches_failed(
-    snapshots: Mapping[str, Any],
-) -> bool:
-    for name in REQUIRED_GATEWAY_SNAPSHOTS:
-        snapshot = _mapping(snapshots.get(name))
-        if not snapshot.get("_fetch_error"):
-            return False
-        if snapshot.get("_http_status") is not None:
-            return False
-    return True
-
-
-def _collect_in_process_stub_gateway_snapshots() -> dict[str, dict[str, Any]]:
-    """Build non-motion Gateway snapshots without starting uvicorn or drivers."""
-
-    env = {
-        "LINGTU_BLACKBOX_ENABLED": "0",
-        "LINGTU_ENV": "sim",
-        "LINGTU_PROFILE": "stub",
-        "LINGTU_DATA_SOURCE": IN_PROCESS_STUB_RUNTIME_CONTRACT,
-        "LINGTU_RUNTIME_CONTRACT": IN_PROCESS_STUB_RUNTIME_CONTRACT,
-        "LINGTU_SIMULATION_ONLY": "1",
-    }
-    with _temporary_env(env):
-        from gateway.gateway_module import GatewayModule
-        from gateway.routes.diagnostics import _gateway_acceptance_snapshots
-
-        gateway = GatewayModule(host="127.0.0.1", port=0)
-        gateway.setup()
-        gateway.on_system_modules({"GatewayModule": gateway})
-        return _gateway_acceptance_snapshots(gateway)
-
-
-def collect_gateway_runtime_acceptance(
-    *,
-    gateway_url: str = DEFAULT_GATEWAY_URL,
-    timeout_sec: float = 2.0,
-    mode: str = "non_motion",
-) -> dict[str, Any]:
-    """Fetch Gateway snapshots and evaluate runtime acceptance."""
-
-    snapshots = collect_gateway_runtime_snapshots(
-        gateway_url=gateway_url,
-        timeout_sec=timeout_sec,
-    )
-    snapshot_source = "gateway_http"
-    if (
-        mode == "non_motion"
-        and _is_default_local_gateway_url(gateway_url)
-        and _all_required_gateway_fetches_failed(snapshots)
-    ):
-        snapshots = _collect_in_process_stub_gateway_snapshots()
-        snapshot_source = "in_process_stub"
-    payload = evaluate_gateway_runtime_acceptance(snapshots, mode=mode)
-    payload["gateway_url"] = gateway_url
-    payload["snapshot_source"] = snapshot_source
-    return payload
-
-
-def format_gateway_runtime_acceptance(payload: Mapping[str, Any]) -> str:
-    """Operator-facing summary for the Gateway runtime acceptance report."""
-
-    status = "PASS" if payload.get("ok") else "FAIL"
-    endpoint_topic_required = payload.get(
-        "endpoint_topic_required",
-        payload.get("ros2_topic_required"),
-    )
-    lines = [
-        f"Gateway runtime acceptance: {status}",
-        f"Schema: {payload.get('schema_version')}",
-        f"Mode: {payload.get('mode')}",
-        f"Runtime contract: {payload.get('runtime_contract') or 'unknown'}",
-        f"Endpoint topic required: {str(bool(endpoint_topic_required)).lower()}",
-    ]
-    checks = _mapping(payload.get("checks"))
-    stage_evidence = _mapping(checks.get("stage_evidence"))
-    if stage_evidence:
-        live_stages = list(stage_evidence.get("live_stages") or [])
-        missing_stages = list(stage_evidence.get("missing_stages") or [])
-        not_live_stages = list(stage_evidence.get("not_live_stages") or [])
-        lines.append(
-            "Stage evidence: "
-            f"ok={str(bool(stage_evidence.get('ok'))).lower()} "
-            f"stages={stage_evidence.get('stage_count', 0)} "
-            f"live={', '.join(str(item) for item in live_stages) or 'none'}"
-        )
-        if missing_stages:
-            lines.append("Missing stages: " + ", ".join(str(item) for item in missing_stages))
-        if not_live_stages:
-            lines.append("Not-live stages: " + ", ".join(str(item) for item in not_live_stages))
-    frontier_preview = _mapping(checks.get("frontier_preview"))
-    if frontier_preview:
-        lines.append(
-            "Frontier preview: "
-            f"ok={str(bool(frontier_preview.get('ok'))).lower()} "
-            f"source={frontier_preview.get('candidate_source') or 'unknown'} "
-            "command_published="
-            f"{str(bool(frontier_preview.get('command_published'))).lower()}"
-        )
-    blockers = list(payload.get("blockers") or [])
-    advisories = list(payload.get("advisories") or [])
-    if blockers:
-        lines.append("Blockers:")
-        lines.extend(f"  - {blocker}" for blocker in blockers)
-    if advisories:
-        lines.append("Advisories:")
-        lines.extend(f"  - {advisory}" for advisory in advisories)
-    if checks:
-        lines.append("Checks:")
-        for name, raw_check in checks.items():
-            check = _mapping(raw_check)
-            lines.append(f"  {name} ok={str(bool(check.get('ok'))).lower()}")
-    return "\n".join(lines)

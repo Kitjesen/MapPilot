@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """One-click calibration verification.
 
-Checks all sensor calibration parameters in robot_config.yaml and SLAM configs
+Checks all sensor calibration parameters in the selected RobotConfig and SLAM configs
 for sanity. Reports pass/warn/fail for each sensor.
 
 Usage:
     python tools/calibration/verify.py
     python tools/calibration/verify.py --verbose
-    python tools/calibration/verify.py --config /path/to/robot_config.yaml
+    python tools/calibration/verify.py --config /path/to/robot_config.yaml \
+        --slam-config /path/to/mid360_fastlio2.yaml
 """
 
 import argparse
@@ -22,9 +23,16 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ROBOT_CONFIG = REPO_ROOT / "config" / "robot_config.yaml"
-FASTLIO2_CONFIG = REPO_ROOT / "src" / "localization" / "fastlio2" / "config" / "mid360_s100p.yaml"
-POINTLIO_CONFIG = REPO_ROOT / "config" / "pointlio.yaml"
+ROBOT_CONFIG = REPO_ROOT / "config" / "robots" / "unitree" / "go2" / "robot.yaml"
+FASTLIO2_CONFIG = (
+    REPO_ROOT
+    / "config"
+    / "robots"
+    / "unitree"
+    / "go2"
+    / "sensors"
+    / "mid360_fastlio2.yaml"
+)
 
 # ANSI colors
 GREEN = "\033[92m"
@@ -230,15 +238,6 @@ def check_imu(result: CheckResult, verbose: bool) -> None:
         elif verbose:
             result.warn("Gravity alignment: disabled — IMU init may be inaccurate")
 
-        checked = True
-
-    if POINTLIO_CONFIG.exists():
-        pio = load_yaml(POINTLIO_CONFIG)
-        mapping = pio.get("/**", {}).get("ros__parameters", {}).get("mapping", {})
-        acc_cov = mapping.get("imu_meas_acc_cov", 0.01)
-        omg_cov = mapping.get("imu_meas_omg_cov", 0.01)
-        if acc_cov > 0 and omg_cov > 0:
-            result.ok(f"Point-LIO: acc_cov={acc_cov}, omg_cov={omg_cov}")
         checked = True
 
     if not checked:
@@ -464,10 +463,18 @@ def check_lidar_camera_projection(cfg: dict, result: CheckResult, verbose: bool)
 
 
 def main() -> int:
+    global FASTLIO2_CONFIG
+
     parser = argparse.ArgumentParser(description="Verify sensor calibration")
     parser.add_argument("--config", default=str(ROBOT_CONFIG), help="Path to robot_config.yaml")
+    parser.add_argument(
+        "--slam-config",
+        default=str(FASTLIO2_CONFIG),
+        help="Robot-specific Fast-LIO2 MID-360 config",
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Show additional checks")
     args = parser.parse_args()
+    FASTLIO2_CONFIG = Path(args.slam_config)
 
     try:
         cfg = load_yaml(Path(args.config))

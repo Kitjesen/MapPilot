@@ -82,8 +82,6 @@ The current catalog is defined in `src/kernels/catalog.py`.
 Materialized targets:
 
 - `path_safety`
-- `pose_graph_optimizer`
-- `gpmp_trajectory_optimizer`
 - `camera_lidar_calibration_optimizer`
 
 Navigation C++ kernels that already live in `src/nav/cpp/` stay there.

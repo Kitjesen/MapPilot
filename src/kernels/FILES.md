@@ -15,12 +15,9 @@ Use this folder only for portable compute kernels and ABI contracts.
 | Path | Role |
 | --- | --- |
 | `nav/path_safety/` | 2D path safety C ABI kernel |
-| `slam/pose_graph_opt/` | SE3 pose-graph optimization kernel |
-| `planning/gpmp_trajectory_optimizer/` | GPMP trajectory optimizer kernel |
 | `calibration/camera_lidar_optimizer/` | Camera-LiDAR calibration optimizer kernel |
 
-The production navigation nanobind kernel lives with its owning domain at
-`src/nav/cpp/`; `src/nav/kernel/` only exposes the Python loader.
+The production navigation kernel lives with its owning domain at `src/nav/cpp/`.
 
 ## Do Not Commit
 

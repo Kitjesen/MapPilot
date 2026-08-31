@@ -814,12 +814,6 @@ def build_contract(repo_root: Path) -> dict[str, Any]:
     return {
         "schema": SCHEMA,
         "repo_root": str(root),
-        "covered_by_pose_graph_opt": False,
-        "reason_not_covered_by_pose_graph_opt": (
-            "Camera-LiDAR calibration uses continuous-time ICP/GICP Hessian factors, "
-            "NID pose perturbations, and calibration-specific nonlinear objectives, "
-            "not plain SE3 prior/between pose graph factors."
-        ),
         "current_gtsam_surfaces": {
             "build_packaging": [],
             "dynamic_point_cloud_integrator": [],
@@ -906,7 +900,6 @@ def print_text_report(contract: dict[str, Any]) -> None:
     status = "OK" if contract["ok"] else "FAILED"
     print(f"Camera-LiDAR calibration migration contract: {status}")
     print(f"  schema: {contract['schema']}")
-    print(f"  covered_by_pose_graph_opt: {contract['covered_by_pose_graph_opt']}")
     print(f"  Rust kernel: {contract['rust_kernel']['path']}")
     print("  required capability groups:")
     for group in contract["required_capability_groups"]:

@@ -1,0 +1,25 @@
+[Unit]
+Description=LingTu native hierarchical exploration endpoint
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+StateDirectory=lingtu
+WorkingDirectory=/opt/lingtu/current
+Environment=LINGTU_REPO=/opt/lingtu/current
+Environment=LINGTU_EXPLORE_DDS_BIN=/opt/lingtu/current/build/nav_endpoint/lingtu_explore_dds
+Environment=LINGTU_EXPLORE_STATUS_FILE=/dev/shm/lingtu/explore_status.json
+Environment=LINGTU_DDS_DOMAIN_ID=0
+Environment=LINGTU_CYCLONEDDS_PREFIX=
+EnvironmentFile=-/opt/lingtu/current/config/release-runtime.env
+EnvironmentFile=-/etc/lingtu/explore.env
+EnvironmentFile=/run/lingtu/session.env
+ExecStartPre=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh explore
+ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_explore_dds.sh
+# An Explore endpoint failure must not leave a previously dispatched navd path
+# moving without its supervisor.  nav_control performs the same native
+# zero/driver-ACK/odometry-still stop transaction used by ProductControl.
+ExecStopPost=/opt/lingtu/current/build/nav_endpoint/lingtu_nav_control stop explore_endpoint_exit --timeout-ms 7000
+KillSignal=SIGINT
+TimeoutStopSec=30

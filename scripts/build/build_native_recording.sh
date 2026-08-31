@@ -36,7 +36,7 @@ cmake -S "$ROOT/src/native/recording" -B "$BUILD_DIR" \
   -DLINGTU_RECORDING_BUILD_DDS="$BUILD_DDS" \
   -DLINGTU_RECORDING_BUILD_TESTS=ON
 cmake --build "$BUILD_DIR" --parallel "${BUILD_JOBS:-2}"
-ctest --test-dir "$BUILD_DIR" --output-on-failure
+(cd "$BUILD_DIR" && ctest --output-on-failure)
 
 printf '%s\n' \
   "$BUILD_DIR/lingtu_recorder" \

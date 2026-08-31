@@ -3,8 +3,11 @@ name: Native motion build and tests
 on:
   pull_request:
     paths:
-      - 'src/drivers/real/thunder/native/**'
+      - 'src/drivers/real/motion/**'
+      - 'tests/drivers/real/motion/**'
+      - 'tests/drivers/test_real_motion_driver_contract.py'
       - 'src/nav/cpp/**'
+      - 'src/nav/inspection/**'
       - 'src/maps/**'
       - 'src/message/**'
       - 'scripts/build/build_driver.sh'
@@ -14,8 +17,11 @@ on:
   push:
     branches: [main]
     paths:
-      - 'src/drivers/real/thunder/native/**'
+      - 'src/drivers/real/motion/**'
+      - 'tests/drivers/real/motion/**'
+      - 'tests/drivers/test_real_motion_driver_contract.py'
       - 'src/nav/cpp/**'
+      - 'src/nav/inspection/**'
       - 'src/maps/**'
       - 'src/message/**'
       - 'scripts/build/build_driver.sh'
@@ -35,6 +41,7 @@ jobs:
     timeout-minutes: 30
     env:
       LINGTU_BUILD_JOBS: '4'
+      LINGTU_DRIVER_BACKEND: doso
       LINGTU_DRIVER_RUN_TESTS: '1'
       LINGTU_NAV_ENDPOINT_RUN_TESTS: '1'
 
@@ -70,3 +77,35 @@ jobs:
 
       - name: Build and test native navigation endpoint
         run: bash scripts/build/build_nav_endpoint.sh
+
+      - name: Verify native navigation runtime install
+        run: |
+          install_root="$(mktemp -d)"
+          trap 'rm -rf -- "$install_root"' EXIT
+          cmake --install build/nav_endpoint --prefix "$install_root"
+
+          for executable in \
+            navd \
+            lingtu_traversability_dds \
+            lingtu_explore_dds \
+            lingtu_nav_control; do
+            test -x "$install_root/$executable"
+          done
+          for library in \
+            liblingtu_nav_client.so \
+            liblingtu_inspection_evidence_bridge.so \
+            inspection/liblingtu_inspection.so; do
+            test -f "$install_root/$library"
+          done
+
+          test -z "$(find "$install_root" -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.a' -o -name 'libnav_far.*' \) -print -quit)"
+          diff -u \
+            <(printf '%s\n' \
+              navd \
+              lingtu_traversability_dds \
+              lingtu_explore_dds \
+              lingtu_nav_control \
+              liblingtu_nav_client.so \
+              liblingtu_inspection_evidence_bridge.so \
+              inspection/liblingtu_inspection.so | sort) \
+            <(find "$install_root" -type f -printf '%P\n' | sort)

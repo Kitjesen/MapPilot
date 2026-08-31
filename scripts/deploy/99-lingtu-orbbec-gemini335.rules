@@ -1,0 +1,2 @@
+# Orbbec Gemini 335 (2bc5:0800)
+SUBSYSTEM=="usb", ATTR{idVendor}=="2bc5", ATTR{idProduct}=="0800", MODE:="0666", TAG+="uaccess"

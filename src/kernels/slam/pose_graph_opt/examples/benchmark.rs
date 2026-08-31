@@ -1,8 +1,8 @@
 use std::time::Instant;
 
-use lingtu_pose_graph_opt::geometry::{residual_between, residual_prior};
-use lingtu_pose_graph_opt::solver::{diagonal_information, optimize_pose_graph3};
-use lingtu_pose_graph_opt::{Information6, OptimizerConfig, Pose3, PoseGraph3, Vector6};
+use pose_graph_opt::geometry::{residual_between, residual_prior};
+use pose_graph_opt::solver::{diagonal_information, optimize_pose_graph3};
+use pose_graph_opt::{Information6, OptimizerConfig, Pose3, PoseGraph3, Vector6};
 
 fn main() {
     let pose_counts = parse_pose_counts();
@@ -12,7 +12,7 @@ fn main() {
         results.push(run_case("hba_full_info", pose_count, hba_full_info_graph));
     }
 
-    println!("{{\"benchmark\":\"lingtu_pose_graph_opt\",\"unit\":\"milliseconds\",\"cases\":[");
+    println!("{{\"benchmark\":\"pose_graph_opt\",\"unit\":\"milliseconds\",\"cases\":[");
     for (idx, result) in results.iter().enumerate() {
         let comma = if idx + 1 == results.len() { "" } else { "," };
         println!(

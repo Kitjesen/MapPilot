@@ -11,9 +11,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import urlparse
 from typing import Any
-
+from urllib.parse import urlparse
 
 READ_ONLY_ENDPOINT_NAMES = {
     "/ready": "ready",
@@ -27,7 +26,6 @@ READ_ONLY_ENDPOINT_NAMES = {
     "/api/v1/path": "path",
     "/api/v1/scene_graph": "scene_graph",
     "/api/v1/locations": "locations",
-    "/api/v1/devices": "devices",
 }
 READ_ONLY_ENDPOINTS = tuple(READ_ONLY_ENDPOINT_NAMES)
 SCHEMA_VERSIONED_ENDPOINTS = {
@@ -483,7 +481,12 @@ def sample_once(gateway: str, index: int, started_mono: float, limits: dict[str,
     return sample
 
 
-def collect_samples(gateway: str, duration_s: float, interval_s: float, limits: dict[str, float | int]) -> tuple[list[dict[str, Any]], float]:
+def collect_samples(
+    gateway: str,
+    duration_s: float,
+    interval_s: float,
+    limits: dict[str, float | int],
+) -> tuple[list[dict[str, Any]], float]:
     samples: list[dict[str, Any]] = []
     started = time.monotonic()
     deadline = started + duration_s
@@ -498,7 +501,11 @@ def collect_samples(gateway: str, duration_s: float, interval_s: float, limits: 
     return samples, round(max(0.0, time.monotonic() - started), 3)
 
 
-def summarize(samples: list[dict[str, Any]], elapsed_s: float, limits: dict[str, float | int]) -> tuple[dict[str, Any], list[str], list[str]]:
+def summarize(
+    samples: list[dict[str, Any]],
+    elapsed_s: float,
+    limits: dict[str, float | int],
+) -> tuple[dict[str, Any], list[str], list[str]]:
     poses = [sample["pose"] for sample in samples if sample.get("pose")]
     xy_drifts: list[float] = []
     yaw_drifts: list[float] = []

@@ -1,74 +1,55 @@
-# Deployment Script Index
+# Deployment
 
-`scripts/deploy/` is the executable deployment source for LingTu field installs
-and service installation helpers. Runbooks and explanatory material belong under
-`docs/04-deployment/`.
+`scripts/deploy/` owns release packaging, robot installation, and systemd
+assets. Product startup remains owned by ProductControl.
 
-## Canonical Thunder Entry Points
+## Main commands
 
-Use these paths for new deployment work:
+```bash
+# Build and deploy one Product to the configured robot
+bash scripts/deploy/deploy_robot.sh teleop_avoid
 
-- `deploy_thunder.sh` - canonical Thunder field deployment entrypoint. It builds/stages deployment artifacts; set `LINGTU_DEPLOY_PRODUCT=<product>` or pass a Product name only when activation should be delegated to `scripts/lingtu --env real mode switch`.
-- `thunder/install_services.sh` - canonical Thunder service installer entrypoint.
-- `thunder/install_explore_dds_service.sh` - installs the native exploration DDS
-  endpoint (lingtu-explore-dds.service); it starts idle and accepts only typed
-  exploration lifecycle commands.
-- `thunder/install_nav_dds_service.sh` - installs the native navigation DDS
-  endpoint service (`lingtu-nav-dds.service`).
-- `thunder/install_driver_service.sh` - installs the native Thunder driver
-  (`lingtu-driver.service`) that consumes `rt/nav/cmd_vel` and calls the remote
-  Brainstem gRPC endpoint from `/opt/lingtu/config/brainstem.env`.
-- `thunder/runtime-env.sh` - Thunder runtime defaults shared by service units.
-- `thunder/ros2-env.sh` - ROS 2 compatibility environment for legacy ROS-backed
-  services.
+# Install current Thunder services
+bash scripts/deploy/thunder/install_services.sh field-cpp
 
-## Removed Compatibility Surfaces
+# Package or install a native release
+bash scripts/deploy/package_native_release.sh <version> <output-dir>
+bash scripts/deploy/install_native_release.sh <release-dir>
 
-The field Python DDS deployment unit, installer, and wrapper were physically
-removed. The `env=real` process chain uses `lingtu-nav-dds.service` plus
-`lingtu-driver.service`; Python endpoint replay and smoke diagnostics run
-explicitly with `PYTHONPATH=src python -m runtime.endpoints.dds.endpoint_runner`.
-
-Exact legacy unit names remain only as negative cleanup tombstones in the real
-env conflicts, the driver unit conflicts, and driver installation cleanup. They
-are not catalog entries, install modes, release fallbacks, or startable files.
-
-The former S100P deploy alias, ROS2 installer, and unit templates are removed.
-`deploy_thunder.sh` is the only deployment entrypoint, and
-`thunder/install_services.sh` accepts catalog modes only. Do not recreate a
-parallel boot path under `scripts/deploy/s100p/`.
-## Documentation Boundary
-
-- Executable source: `scripts/deploy/thunder/`.
-- Runbooks, service inventories, OTA notes, and field procedures:
-  `docs/04-deployment/`.
-
-Do not copy scripts into `docs/04-deployment/`. Do not move service files as part
-of documentation-only hierarchy cleanup.
-
-## Windows x64 Prerequisite
-
-`windows/ensure_windows_vc_redist.ps1` is the deployment bootstrapper for the
-central Microsoft Visual C++ Redistributable x64 runtime. A packaged installer
-can check without mutation:
-
-```powershell
-powershell.exe -NoProfile -File scripts/deploy/windows/ensure_windows_vc_redist.ps1 `
-  -MinimumVersion 14.44.35207.0 `
-  -CheckOnly
+# Deploy one Product and package the resulting checkout
+bash scripts/deploy/cut_release.sh <version> <product>
 ```
 
-When installation is required, pass the official, Microsoft-signed
-`vc_redist.x64.exe` included by the packaging layer:
+For a Go2 real target, `deploy_robot.sh` first applies the
+`driver.network_interface` and `driver.network_address` from RobotConfig through
+`configure_go2_network.sh`. The generated NetworkManager connection has no
+gateway and cannot replace the target's normal default route. Deployment stops
+before building if the configured Go2 probe host is unreachable.
 
-```powershell
-powershell.exe -NoProfile -File scripts/deploy/windows/ensure_windows_vc_redist.ps1 `
-  -MinimumVersion 14.44.35207.0 `
-  -InstallerPath .\vc_redist.x64.exe `
-  -Quiet `
-  -LogPath .\logs\vc-redist.log
+The Product argument is required because its process roles determine the native
+build list. To inspect that plan without changing the target:
+
+```bash
+LINGTU_DEPLOY_PLAN_ONLY=1 bash scripts/deploy/deploy_robot.sh teleop_avoid
 ```
 
-This bootstrapper does not discover or copy application DLLs. CMake and vcpkg
-own application runtime staging; the bootstrapper only ensures the central
-Microsoft prerequisite and verifies the registered version after installation.
+## Thunder runtime
+
+`deploy/thunder/` contains:
+
+- `lt-*.service`: installed systemd units;
+- `install_services.sh`: catalog-driven installer for the complete stack or one service;
+- `install_catalog_service.sh`: shared unit installer;
+- `install_driver_service.sh`: driver installer with RobotConfig validation;
+- `run_*.sh`: process wrappers used by those units;
+- `runtime-env.sh` and `require_product_session.sh`: shared runtime setup.
+
+The native field units are `lt-lidar`, `lt-slam`, `lt-maps`, `lt-terrain`,
+`lt-nav`, `lt-driver`, `lt-camera`, `lt-explore`, `lt-gnss`, and `lt-host`.
+Installing services does not start a Product.
+
+`99-lingtu-orbbec-gemini335.rules` is the minimal USB permission rule installed
+by `tools/robot/setup_network.sh --permanent` for the field camera.
+
+Release runbooks live under `docs/04-deployment/`; developer-only sync and
+network utilities live under `tools/`.

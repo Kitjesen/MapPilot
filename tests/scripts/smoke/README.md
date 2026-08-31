@@ -1,22 +1,11 @@
 # Thunder Manual Smoke Scripts
 
-Run these manually from the repository root. They are compatibility smoke
-checks, not pytest tests, and may require ROS 2 compatibility services, Gateway,
-an active map, MCP, or robot/simulator access.
+Run these manually from the repository root. They are not pytest tests.
 
 ```bash
-# Mapping chain; requires Fast-LIO2/LiDAR compatibility services.
+# Observe an already-running native SLAM process through its Host adapter.
 python tests/scripts/smoke/mapping.py
 
-# Planning against an active tomogram under NAV_MAP_DIR.
-python tests/scripts/smoke/nav_planning.py
-
-# Compatibility full-system startup check.
-python tests/scripts/smoke/s100p_start.py
-
-# MCP JSON-RPC smoke; requires Gateway and MCP.
-python tests/scripts/smoke/mcp_full.py
+# Verify typed native navigation command request/ACK handling.
+bash tests/scripts/smoke/smoke_nav_command_ack.sh
 ```
-
-The script names are kept stable for compatibility. New product-facing docs
-should use Thunder naming and the Product/ProductControl entry points.

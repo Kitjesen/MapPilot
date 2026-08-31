@@ -1,2 +1,0 @@
-# Telegram monitor bot dependencies.
-python-telegram-bot>=20.0

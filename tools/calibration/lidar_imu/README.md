@@ -79,10 +79,13 @@ python tools/calibration/lidar_imu/ros2_adapter/parse_result.py \
 
 ```bash
 python tools/calibration/apply_calibration.py \
-  --lidar-imu tools/calibration/lidar_imu/output/lidar_imu_calib.yaml
+  --lidar-imu tools/calibration/lidar_imu/output/lidar_imu_calib.yaml \
+  --slam-config config/robots/unitree/go2/sensors/mid360_fastlio2.yaml
 ```
 
-Application writes `r_il`, `t_il`, and an available time offset to `src/localization/fastlio2/config/mid360_s100p.yaml` and `config/pointlio.yaml` when present. It reads, but does not rewrite, the mechanical `T_body_lidar` mount in `config/robot_config.yaml`.
+Application writes `r_il`, `t_il`, and an available time offset only to the
+Fast-LIO2 file selected by `--slam-config`. It reads, but does not rewrite, the
+mechanical `T_body_lidar` mount in the selected `--robot-config`.
 
 ## Config Adaptation
 

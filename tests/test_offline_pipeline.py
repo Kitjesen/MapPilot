@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NaviMind 离线全流程测试 — 不需要 ROS2, 不需要真机, 不需要 GPU。
+LingTu 离线语义流程测试 — 不需要 ROS2、真机或 GPU。
 
 验证:
   1. Fast Path 目标解析 (全部 108 条指令 × 多个模拟场景图)
@@ -17,7 +17,7 @@ NaviMind 离线全流程测试 — 不需要 ROS2, 不需要真机, 不需要 GP
 产出: 量化指标 (准确率、延迟、决策分布)，可直接填入论文。
 
 运行:
-  cd 3d_NAV
+  cd <lingtu-repository>
   python -m pytest tests/test_offline_pipeline.py -v --tb=short 2>&1
   # 或生成报告:
   python tests/test_offline_pipeline.py --report
@@ -217,7 +217,7 @@ def make_office_corridor_scene() -> dict:
 
 def load_instruction_set() -> dict:
     """加载指令集 JSON。"""
-    p = Path(__file__).resolve().parents[1] / "sim" / "experiments" / "instruction_set.json"
+    p = Path(__file__).resolve().parent / "fixtures" / "offline_instruction_set.json"
     with open(p, "r", encoding="utf-8") as f:
         return json.load(f)
 

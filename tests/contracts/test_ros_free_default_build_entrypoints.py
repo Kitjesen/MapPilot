@@ -14,7 +14,6 @@ DEFAULT_BUILD_ENTRYPOINTS = (
     ".github/workflows/release-navigation.yml",
     "docker/Dockerfile",
     "docker/Dockerfile.dev",
-    "docker-compose.yml",
     "docker-compose.dev.yml",
 )
 
@@ -40,58 +39,32 @@ def test_legacy_lingtu_shell_is_physically_absent() -> None:
     assert canonical_shell.is_file()
     assert not legacy_shell.exists()
 
-def test_field_doctor_requires_explicit_ros2_compatibility_mode() -> None:
-    """Default doctor diagnostics must stay on the native Product path."""
 
-    content = (ROOT / "scripts/lingtu").read_text(encoding="utf-8", errors="replace")
-    implementation = (ROOT / "src/diagnostics/field/doctor.py").read_text(
-        encoding="utf-8",
-        errors="replace",
-    )
-    doctor = content.split("cmd_doctor() {", maxsplit=1)[1].split(
-        "# -- Subcommand: soak --",
-        maxsplit=1,
-    )[0]
+def test_lingtu_shell_is_only_a_product_control_adapter() -> None:
+    """The shell must forward every argument to the canonical Python CLI."""
 
-    assert "ros2=0" in doctor
-    assert "--ros2)" in doctor
-    assert '[ "$ros2" = "1" ] && source_robot_env' in doctor
-    assert doctor.count("source_robot_env") == 1
-    assert '"$py" -m diagnostics.field.doctor' in doctor
-    assert "ROS2 compatibility graph checks skipped; use --ros2" in implementation
-    assert content.count("source_robot_env") == 2
-    for forbidden in (
-        "systemctl",
-        "journalctl",
-        "RunPlan.load",
-        "Runtime" + "Manifest.load",
-        "<<'PY'",
-        "cmd_doctor_json",
-    ):
-        assert forbidden not in doctor
+    content = (ROOT / "scripts/lingtu").read_text(encoding="utf-8")
+
+    assert 'exec "$LINGTU_PYTHON" -m lingtu.control "$@"' in content
+    assert "cmd_" not in content
+    assert "systemctl" not in content
 
 
-def test_real_runtime_evidence_defaults_to_gateway_collector() -> None:
-    """ROS2 evidence collection must require an explicit compatibility flag."""
+def test_real_runtime_evidence_uses_only_gateway() -> None:
+    """Field evidence must use the native Gateway path only."""
 
     content = (ROOT / "scripts/gates/real_runtime_evidence_collect.py").read_text(
         encoding="utf-8",
         errors="replace",
     )
-    collector_argument = content.split(
-        'parser.add_argument(\n        "--collector"',
-        maxsplit=1,
-    )[1].split("parser.add_argument", maxsplit=1)[0]
     dispatch = content.split("def run_collect(", maxsplit=1)[1].split(
         "def build_unavailable_real_runtime_report(",
         maxsplit=1,
     )[0]
 
-    assert 'choices=["gateway", "ros2"]' in collector_argument
-    assert 'default="gateway"' in collector_argument
-    assert 'if args.collector == "gateway":' in dispatch
-    assert 'if args.collector == "ros2":' in dispatch
-    assert "--collector ros2" in content
+    assert "return run_gateway_collect(args)" in dispatch
+    assert "--collector" not in content
+    assert "run_ros2_collect" not in content
 
 
 def test_default_build_release_and_container_entrypoints_are_ros_free() -> None:
@@ -113,7 +86,6 @@ def test_makefile_exposes_the_native_product_workflow() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 
     for native_builder in (
-        "scripts/build/build_native_runtime.sh",
         "scripts/build/build_livox_sdk2_stream.sh",
         "scripts/build/build_slam_core.sh",
         "scripts/build/build_dds_probe.sh",
@@ -154,47 +126,36 @@ def test_active_ci_and_tag_release_use_native_aarch64_artifacts() -> None:
     assert "build/dds_probe/lingtu_dds_probe" in package_script_text
     assert "git -C \"${ROOT}\" ls-files --error-unmatch" in package_script_text
     assert "build/maps/mapd" in package_script_text
-    assert "build/maps/liblingtu_maps.so" in package_script_text
+    assert "build/maps/liblingtu_maps.so" not in package_script_text
     assert 'INSTALLER_SOURCE="${SCRIPT_ROOT}/scripts/deploy/install_native_release.sh"' in package_script_text
     assert "Active Product requires maps/mapd" in installer_script_text
     assert "RunPlan.load" in installer_script_text
     assert "plan.processes" in installer_script_text
     assert 'process.get("lifecycle", "")' not in installer_script_text
-    assert 'product_control "${TARGET_DIR}" restart "${process}"' in installer_script_text
-    assert 'product_control "${TARGET_DIR}" reapply' in installer_script_text
-    assert 'product_control "${OLD_TARGET}" reapply' in installer_script_text
+    assert 'product_control "${TARGET_DIR}"' in installer_script_text
+    assert 'product_control "${OLD_TARGET}"' in installer_script_text
+    assert "restart" not in installer_script_text
+    assert "reapply" not in installer_script_text
     assert '--state-dir "${STATE_DIR}"' in installer_script_text
-    assert 'product_control "${TARGET_DIR}" apply' not in installer_script_text
-    assert 'product_control "${OLD_TARGET}" apply' not in installer_script_text
     assert "restore_previous_release" in installer_script_text
     assert "python3 -m lingtu.control" in installer_script_text
     assert "systemctl" not in installer_script_text
-    assert 'git -C "${ROOT}" ls-files -z' in package_script_text
+    assert 'git -C "${source_root}" ls-files --cached -z' in package_script_text
+    assert "--others --exclude-standard -z" in package_script_text
     assert "src/localization/fastlio2/config/self-test.yaml" in package_script_text
     assert '"install_script": "install_nav.sh"' in package_script_text
 
 
-def test_default_containers_reuse_the_native_build_seam() -> None:
-    """Container adapters must reuse the same native build and Gateway checks."""
+def test_development_containers_reuse_the_native_build_seam() -> None:
+    """Container adapters must reuse the same native build seam."""
 
     dockerfile = (ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
     dev_dockerfile = (ROOT / "docker/Dockerfile.dev").read_text(encoding="utf-8")
-    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     compose_dev = (ROOT / "docker-compose.dev.yml").read_text(encoding="utf-8")
 
     assert "RUN make build PYTHON=python3" in dockerfile
     assert "/app/build/dds_probe" in dockerfile
     assert "'.[gateway]'" in dockerfile
-    assert "http://127.0.0.1:5050/health" in dockerfile
     assert "'/tmp/lingtu[dev]'" in dev_dockerfile
-    assert "http://127.0.0.1:5050/health" in compose
-    assert "network_mode: host" not in compose
-    assert "devices:" not in compose
-    assert "cap_add:" not in compose
-    assert "/dev/ttyUSB0" not in compose
-    assert "/dev/ttyACM0" not in compose
-    assert "NET_ADMIN" not in compose
-    assert "ENABLE_LIDAR" not in compose
-    assert "SETUP_LIDAR_NET" not in compose
     compose_dev_model = yaml.safe_load(compose_dev)
     assert compose_dev_model["services"]["build-only"]["command"] == ["make", "build", "PYTHON=python3"]

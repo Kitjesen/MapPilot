@@ -1,2 +1,0 @@
-# Feishu/Lark monitor bot dependencies.
-lark-oapi>=1.5.3

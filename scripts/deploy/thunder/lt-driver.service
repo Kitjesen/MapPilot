@@ -1,0 +1,30 @@
+[Unit]
+Description=LingTu native field driver
+After=network-online.target
+Wants=network-online.target
+Conflicts=lingtu-driver.service lingtu-thunder-dds-endpoint.service thunder-dds-endpoint.service dds-endpoint.service driver.service
+
+[Service]
+Type=notify
+NotifyAccess=all
+WatchdogSec=6s
+WatchdogSignal=SIGTERM
+KillMode=control-group
+User=lingtu
+Group=lingtu
+WorkingDirectory=/opt/lingtu/current
+Environment=LINGTU_DRIVER_BIN=/opt/lingtu/current/build/driver/lingtu_driver
+Environment=LINGTU_DDS_DOMAIN_ID=0
+Environment=LINGTU_DRIVER_RPC_TIMEOUT_MS=100
+Environment=LINGTU_DRIVER_STATUS_FILE=/dev/shm/lingtu/driver_status.json
+EnvironmentFile=/run/lingtu/session.env
+ExecStartPre=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh driver
+ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_status_file_watchdog.sh --status-file ${LINGTU_DRIVER_STATUS_FILE} --startup-timeout-s 30 --poll-interval-s 0.5 -- /bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_driver.sh
+Restart=on-failure
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

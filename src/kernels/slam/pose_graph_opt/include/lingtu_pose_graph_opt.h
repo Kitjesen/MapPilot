@@ -31,6 +31,7 @@ extern "C" {
 #define LT_POSE_GRAPH_OPT_BUFFER_TOO_SMALL INT32_C(-6)
 #define LT_POSE_GRAPH_OPT_INVALID_CONFIG INT32_C(-7)
 #define LT_POSE_GRAPH_OPT_GAUGE_FREEDOM INT32_C(-8)
+#define LT_POSE_GRAPH_OPT_INVALID_INFORMATION INT32_C(-9)
 
 typedef struct lt_pose_graph_opt_handle lt_pose_graph_opt_handle;
 typedef int32_t lt_pose_graph_opt_result;

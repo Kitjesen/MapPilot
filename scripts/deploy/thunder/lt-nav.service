@@ -1,0 +1,29 @@
+[Unit]
+Description=LingTu native navigation DDS endpoint
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lingtu
+Group=lingtu
+StateDirectory=lingtu
+WorkingDirectory=/opt/lingtu/current
+Environment=LINGTU_REPO=/opt/lingtu/current
+Environment=LINGTU_NAV_DDS_BIN=/opt/lingtu/current/build/nav_endpoint/navd
+Environment=LINGTU_NAV_DDS_MAX_OBSTACLE_POINTS=5000
+Environment=LINGTU_NAV_TERRAIN_MAP_MAX_AGE_S=1.5
+Environment=LINGTU_NAV_STATUS_FILE=/dev/shm/lingtu/nav_endpoint_status.json
+Environment=LINGTU_NAV_ESTOP_LATCH_FILE=/var/lib/lingtu/nav_estop_latched
+Environment=LINGTU_NAV_GEOFENCE_FILE=/var/lib/lingtu/nav_geofences.dat
+Environment=LINGTU_INSPECTION_DIR=/var/lib/lingtu/inspection
+Environment=LINGTU_NAV_STATUS_S=0.2
+Environment=LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES=18
+Environment=LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS=640
+EnvironmentFile=-/opt/lingtu/current/config/release-runtime.env
+EnvironmentFile=-/etc/lingtu/nav.env
+EnvironmentFile=/run/lingtu/session.env
+ExecStartPre=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh nav
+ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_nav_dds.sh
+KillSignal=SIGINT
+TimeoutStopSec=20

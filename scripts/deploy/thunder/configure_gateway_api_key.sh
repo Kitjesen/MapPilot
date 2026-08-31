@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create protected, least-privilege credentials consumed by lingtu.service.
+# Create protected, least-privilege credentials consumed by lt-host.service.
 
 set -euo pipefail
 
@@ -18,7 +18,7 @@ Usage: configure_gateway_api_key.sh [--rotate | --rotate-map]
 
 Provision separate operator and customer-map credentials:
   /etc/lingtu/gateway.env    root:root    0600  LINGTU_API_KEY only
-  /etc/lingtu/map-client.env root:sunrise 0640  LINGTU_MAP_API_KEY only
+  /etc/lingtu/map-client.env root:lingtu  0640  LINGTU_MAP_API_KEY only
 
 A legacy one-key Gateway file gains a new map-client credential. A legacy
 Gateway file containing both keys is securely split without rotating either
@@ -85,8 +85,10 @@ if [[ "${map_target}" == "${DEFAULT_MAP_CLIENT_ENV_FILE}" ]]; then
   map_parent_uid=0
   map_parent_gid=0
   map_expected_uid=0
-  if ! map_expected_gid="$(id -g sunrise 2>/dev/null)"; then
-    printf 'The sunrise account is required to own the map-client credential group.\n' >&2
+  runtime_group="${LINGTU_RUNTIME_GROUP:-lingtu}"
+  if ! map_expected_gid="$(getent group "${runtime_group}" | cut -d: -f3)" ||
+      [[ -z "${map_expected_gid}" ]]; then
+    printf 'The %s group is required to own the map-client credential.\n' "${runtime_group}" >&2
     exit 78
   fi
 fi
@@ -281,10 +283,6 @@ elif ((rotate_map == 1)); then
     exit 78
   fi
   api_key="${existing_api_key}"
-  if [[ -n "${LINGTU_RMF_API_KEY:-}" && "${api_key}" == "${LINGTU_RMF_API_KEY}" ]]; then
-    printf 'Gateway operator and Open-RMF API keys must differ.\n' >&2
-    exit 78
-  fi
   need_generate_map=1
   change_map=1
   if [[ "${gateway_format}" == "embedded_map" ]]; then
@@ -308,16 +306,9 @@ else
       exit 78
     fi
     api_key="${existing_api_key}"
-    if [[ -n "${LINGTU_RMF_API_KEY:-}" && "${api_key}" == "${LINGTU_RMF_API_KEY}" ]]; then
-      printf 'Gateway operator and Open-RMF API keys must differ.\n' >&2
-      exit 78
-    fi
-
     if [[ "${gateway_format}" == "embedded_map" ]]; then
-      if [[ "${embedded_map_key}" == "${api_key}" \
-          || ( -n "${LINGTU_RMF_API_KEY:-}" \
-              && "${embedded_map_key}" == "${LINGTU_RMF_API_KEY}") ]]; then
-        printf 'Gateway operator, map, and Open-RMF API keys must differ.\n' >&2
+      if [[ "${embedded_map_key}" == "${api_key}" ]]; then
+        printf 'Gateway operator and map API keys must differ.\n' >&2
         exit 78
       fi
       map_api_key="${embedded_map_key}"
@@ -341,10 +332,8 @@ else
         exit 78
       fi
       map_api_key="${existing_map_key}"
-      if [[ "${map_api_key}" == "${api_key}" \
-          || ( -n "${LINGTU_RMF_API_KEY:-}" \
-              && "${map_api_key}" == "${LINGTU_RMF_API_KEY}") ]]; then
-        printf 'Gateway operator, map, and Open-RMF API keys must differ.\n' >&2
+      if [[ "${map_api_key}" == "${api_key}" ]]; then
+        printf 'Gateway operator and map API keys must differ.\n' >&2
         exit 78
       fi
       action="Unchanged"
@@ -375,8 +364,7 @@ if ((need_generate_api == 1)); then
   api_key="$(generate_key)"
   while [[ "${api_key}" == "${original_api_key}" \
       || "${api_key}" == "${original_map_key}" \
-      || "${api_key}" == "${original_embedded_map_key}" \
-      || "${api_key}" == "${LINGTU_RMF_API_KEY:-}" ]]; do
+      || "${api_key}" == "${original_embedded_map_key}" ]]; do
     api_key="$(generate_key)"
   done
 fi
@@ -384,8 +372,7 @@ if ((need_generate_map == 1)); then
   map_api_key="$(generate_key)"
   while [[ "${map_api_key}" == "${api_key}" \
       || "${map_api_key}" == "${original_map_key}" \
-      || "${map_api_key}" == "${original_embedded_map_key}" \
-      || "${map_api_key}" == "${LINGTU_RMF_API_KEY:-}" ]]; do
+      || "${map_api_key}" == "${original_embedded_map_key}" ]]; do
     map_api_key="$(generate_key)"
   done
 fi
@@ -605,5 +592,5 @@ case "${action}" in
     printf 'Scoped API key files already exist; left unchanged. Use --rotate or --rotate-map.\n' >&2
     ;;
 esac
-printf 'Secrets were not printed. Restart the Host through ProductControl after provisioning clients:\n'
-printf '  bash scripts/lingtu --env real svc restart host\n'
+printf 'Secrets were not printed. Switch the current Product after provisioning clients:\n'
+printf '  bash scripts/lingtu switch <product> --robot <vendor/model> --env real\n'

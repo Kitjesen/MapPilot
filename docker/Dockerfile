@@ -55,7 +55,6 @@ ENV CMAKE_BUILD_TYPE=Release \
     LINGTU_NAV_CPP_BUILD_TESTS=ON \
     LINGTU_NAV_ENDPOINT_RUN_TESTS=ON \
     LINGTU_SLAM_BUILD_DDS_RUNTIME=ON \
-    LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF \
     LINGTU_SLAM_BUILD_TESTS=ON
 
 RUN make build PYTHON=python3
@@ -92,15 +91,8 @@ RUN python3 -c "import sys; assert sys.version_info[:2] == (3, 10), sys.version"
     && python3 -m pip install --no-cache-dir '.[gateway]'
 
 ENV PYTHONPATH=/app/src:/app \
-    PATH=/app/build/native-runtime:/app/build/nav_endpoint:/app/build/slam_core:/app/build/maps:/app/build/dds_probe:/app/build/driver:/app/build/livox_sdk2_stream:${PATH} \
+    PATH=/app/build/nav_endpoint:/app/build/slam_core:/app/build/maps:/app/build/dds_probe:/app/build/driver:/app/build/livox_sdk2_stream:${PATH} \
     LD_LIBRARY_PATH=/app/build/nav_endpoint:/app/build/slam_core:/app/build/maps:/app/build/driver:/app/build/livox_sdk2_stream:/usr/local/lib
-
-EXPOSE 5050 8090
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5050/health', timeout=5).read()"
-
-CMD ["python3", "lingtu.py", "stub"]
 
 FROM runtime AS test
 

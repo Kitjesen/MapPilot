@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# Fetch the pure Orbbec SDK v2 package into the camera deps tree.
-#
-# This is the preferred camera dependency path.
+# Fetch the field-tested pure Orbbec SDK v2 package into the ignored build tree.
 
 set -euo pipefail
 
 REPO="${LINGTU_ORBBEC_SDK_REPO:-orbbec/OrbbecSDK_v2}"
-REF="${LINGTU_ORBBEC_SDK_REF:-latest}"
-DEST="${LINGTU_ORBBEC_SDK_DEST:-src/drivers/real/camera/deps/orbbec/OrbbecSDK}"
+REF="${LINGTU_ORBBEC_SDK_REF:-v2.8.7}"
+DEST="${LINGTU_ORBBEC_SDK_DEST:-build/deps/orbbec-sdk}"
 ARCH="${LINGTU_ORBBEC_SDK_ARCH:-$(uname -m)}"
 TMP="${LINGTU_ORBBEC_SDK_TMP:-${TMPDIR:-/tmp}/lingtu-orbbec-sdk}"
 
@@ -31,11 +29,7 @@ need find
 rm -rf "$TMP"
 mkdir -p "$TMP"
 
-if [[ "$REF" == "latest" ]]; then
-  API_URL="https://api.github.com/repos/${REPO}/releases/latest"
-else
-  API_URL="https://api.github.com/repos/${REPO}/releases/tags/${REF}"
-fi
+API_URL="https://api.github.com/repos/${REPO}/releases/tags/${REF}"
 
 ASSET_URL="$(
   RELEASE_JSON="${TMP}/release.json"

@@ -42,6 +42,12 @@ class TopicStats:
     last_ts: float = 0.0
     frame_id: str = ""
     points: int | None = None
+    measured_hz: float | None = None
+    max_gap_s: float = 0.0
+    reset_epoch: int | None = None
+    observation_sequence: int | None = None
+    generation: int | None = None
+    live: bool | None = None
 
     def observe(self, msg: Any) -> None:
         now = time.time()
@@ -54,6 +60,8 @@ class TopicStats:
         self.points = _point_count(msg, self.points)
 
     def hz(self) -> float:
+        if self.measured_hz is not None:
+            return self.measured_hz
         if self.samples < 2:
             return 0.0
         span = max(self.last_ts - self.first_ts, 1e-9)
@@ -107,6 +115,12 @@ def probe(topics: tuple[str, ...], *, seconds: float, domain_id: int) -> dict[st
             last_ts=float(row.get("last_ts", 0.0) or 0.0),
             frame_id=str(row.get("frame_id", "") or ""),
             points=_optional_int(row.get("points")),
+            measured_hz=_optional_float(row.get("hz")),
+            max_gap_s=float(row.get("max_gap_s", 0.0) or 0.0),
+            reset_epoch=_optional_int(row.get("reset_epoch")),
+            observation_sequence=_optional_int(row.get("observation_sequence")),
+            generation=_optional_int(row.get("generation")),
+            live=row.get("live") if isinstance(row.get("live"), bool) else None,
         )
         stats[topic] = item
     return {topic: stats.get(topic, TopicStats()) for topic in topics}
@@ -124,6 +138,15 @@ def _optional_int(value: Any) -> int | None:
         return None
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return None
 
@@ -187,8 +210,19 @@ def main(argv: list[str] | None = None) -> int:
                         "topic": topic,
                         "samples": item.samples,
                         "hz": item.hz(),
+                        "max_gap_s": item.max_gap_s,
                         "frame_id": item.frame_id,
                         "points": item.points,
+                        **(
+                            {
+                                "reset_epoch": item.reset_epoch,
+                                "observation_sequence": item.observation_sequence,
+                                "generation": item.generation,
+                            }
+                            if item.reset_epoch is not None
+                            else {}
+                        ),
+                        **({"live": item.live} if item.live is not None else {}),
                     }
                     for topic, item in stats.items()
                 ],

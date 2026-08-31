@@ -166,7 +166,7 @@ def save_calibration_yaml(result: dict, path: str) -> None:
     logger.info("Calibration saved to %s", path)
 
     # Print robot_config.yaml snippet
-    logger.info("\n── Copy into config/robot_config.yaml camera section ──")
+    logger.info("\n── Copy into config/robots/unitree/go2/robot.yaml camera section ──")
     logger.info("  fx: %.1f", K[0, 0])
     logger.info("  fy: %.1f", K[1, 1])
     logger.info("  cx: %.1f", K[0, 2])

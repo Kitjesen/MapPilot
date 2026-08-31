@@ -53,18 +53,8 @@ ROS_IMPORT_ROOTS: frozenset[str] = frozenset(
     }
 )
 ROS_SCAN_EXCLUDED_PREFIXES: tuple[str, ...] = (
-    "drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2/",
-    "nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/",
     "sim/diagnostics/gap_report.py",
 )
-
-# This read-only doctor invokes ``ros2`` only after the operator passes
-# ``--ros2``. Keep the exception narrower than the general ROS import scan so
-# product code cannot gain ROS imports through this diagnostic boundary.
-ROS_CLI_COMPATIBILITY_ALLOWLIST: frozenset[str] = frozenset(
-    {"diagnostics/field/doctor.py"}
-)
-
 
 def load_architecture_layers(path: Path = ARCHITECTURE_LAYERS_PATH) -> dict:
     """Load the repository architecture layer manifest."""
@@ -174,7 +164,6 @@ SCAN_EXCLUDED_PARTS = {
     "build_nb",
     "build_nb_win",
     "_deps",
-    "OrbbecSDK_ROS2",
 }
 
 
@@ -363,7 +352,11 @@ def validate_architecture_layer_manifest(
 
     owned_paths = [owned_path for _layer_id, owned_path in _manifest_owned_paths(manifest)]
     for src_root in sorted(path for path in SRC_DIR.iterdir() if path.is_dir()):
-        if src_root.name == "__pycache__" or src_root.name.startswith("."):
+        if (
+            src_root.name == "__pycache__"
+            or src_root.name.startswith(".")
+            or src_root.name.endswith(".egg-info")
+        ):
             continue
         if not _src_root_is_claimed(src_root, owned_paths):
             violations.append(
@@ -527,8 +520,7 @@ ROS_SETUP_MARKERS: tuple[str, ...] = (
 
 
 def _is_ros_coupling_allowlisted(path: Path) -> bool:
-    rel = path.relative_to(SRC_DIR).as_posix()
-    return _is_ros_scan_excluded(path) or rel in ROS_CLI_COMPATIBILITY_ALLOWLIST
+    return _is_ros_scan_excluded(path)
 
 
 def validate_ros_coupling_touchpoints() -> tuple[list[str], int]:

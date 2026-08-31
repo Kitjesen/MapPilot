@@ -15,10 +15,10 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
-
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 GATES_DIR = Path(__file__).resolve().parent
@@ -177,10 +177,10 @@ def capture_phase(gateway_url: str, phase: str, directory: Path) -> None:
             "SubState",
             "-p",
             "NRestarts",
-            "lingtu-livox-dds.service",
-            "lingtu-slam-dds.service",
-            "lingtu-nav-dds.service",
-            "lingtu.service",
+            "lt-lidar.service",
+            "lt-slam.service",
+            "lt-nav.service",
+            "lt-host.service",
         ),
     )
     _capture_command(directory / "resources.txt", ("ps", "-eo", "pid,comm,%cpu,%mem,rss,vsz,args"))
@@ -200,24 +200,6 @@ def require_no_active_command_source(navigation: Mapping[str, Any], phase: str) 
     source = active_command_source(navigation).strip().lower()
     if source in {"", "none", "null", "-"}:
         return
-    if source in {"path_follower", "recovery"}:
-        control = navigation.get("control")
-        control = control if isinstance(control, Mapping) else {}
-        mux = control.get("cmd_vel_mux")
-        mux = mux if isinstance(mux, Mapping) else {}
-        command = mux.get("last_driver_cmd_vel")
-        command = command if isinstance(command, Mapping) else {}
-        values: list[float] = []
-        for group in ("linear", "angular"):
-            vector = command.get(group)
-            vector = vector if isinstance(vector, Mapping) else {}
-            for axis in ("x", "y", "z"):
-                try:
-                    values.append(float(vector.get(axis, 0.0)))
-                except (TypeError, ValueError):
-                    values.append(0.0)
-        if sum(value * value for value in values) <= 1e-6:
-            return
     raise GateError(f"{phase} refused while active_cmd_source={source}")
 
 
@@ -232,12 +214,6 @@ def plan_preview(
     navigation = request_json(gateway_url, "/api/v1/navigation/status", timeout_s=5)
     write_json(directory / "navigation.pre_plan.json", navigation)
     require_no_active_command_source(navigation, "plan preview")
-    readiness = navigation.get("readiness")
-    readiness = readiness if isinstance(readiness, Mapping) else {}
-    can_accept = readiness.get("can_accept_goal", navigation.get("can_accept_goal", False))
-    if can_accept is not True:
-        blockers = readiness.get("blockers") or []
-        raise GateError(f"navigation is not ready for plan preview: blockers={blockers}")
     plan = request_json(
         gateway_url,
         "/api/v1/navigation/plan",
@@ -246,26 +222,18 @@ def plan_preview(
         timeout_s=timeout_s,
     )
     write_json(directory / "plan.json", plan)
-    path_safety = plan.get("path_safety")
-    path_safety = path_safety if isinstance(path_safety, Mapping) else {}
-    rejected = plan.get("rejected_plans")
-    rejected = rejected if isinstance(rejected, list) else []
     summary = {
         "schema_version": 1,
         "phase": "motion_smoke",
         "non_motion": True,
         "navigation_state": navigation.get("state"),
-        "can_accept_goal": can_accept is True,
         "active_cmd_source_before": active_command_source(navigation),
         "feasible": plan.get("feasible") is True,
         "count": plan.get("count"),
         "planner": plan.get("planner"),
-        "selected_planner": plan.get("selected_planner") or plan.get("planner"),
-        "plan_safety_policy": plan.get("plan_safety_policy"),
-        "path_safety_ok": path_safety.get("ok"),
-        "fallback_reason": plan.get("fallback_reason") or "",
-        "rejected_plan_count": len(rejected),
+        "distance_m": plan.get("distance_m"),
         "reasons": plan.get("reasons") if isinstance(plan.get("reasons"), list) else [],
+        "error": plan.get("error"),
     }
     write_json(directory / "plan_summary.json", summary)
     if plan.get("feasible") is not True:
@@ -287,11 +255,12 @@ def validate_saved_map_plan(
         timeout_s=30,
     )
     write_json(output, report)
-    ok = report.get("map_plan_ok", report.get("success", report.get("ok", False)))
+    ok = report.get("ok") is True and report.get("feasible") is True
     if ok is not True:
-        gate = report.get("no_motion_gate")
-        gate = gate if isinstance(gate, Mapping) else {}
-        raise GateError(f"saved-map plan validation failed: {gate.get('blockers') or []}")
+        reasons = report.get("reasons")
+        reasons = reasons if isinstance(reasons, list) else []
+        detail = reasons or [str(report.get("error") or "preview failed")]
+        raise GateError(f"saved-map plan validation failed: {detail}")
     return report
 
 

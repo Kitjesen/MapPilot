@@ -73,7 +73,7 @@ jobs:
       - name: Synchronize repository version
         run: |
           printf '%s\n' "${{ steps.version.outputs.version_clean }}" > VERSION
-          bash scripts/deploy/sync_versions.sh
+          bash tools/release/sync_versions.sh
 
       - name: Verify native aarch64 runner
         run: |
@@ -107,10 +107,8 @@ jobs:
       - name: Test native release packager
         run: bash scripts/deploy/package_native_release.sh --self-test
 
-      - name: Build and test tracked native runtime
-        run: |
-          make build PYTHON=python3
-          ctest --test-dir build/native-runtime --output-on-failure
+      - name: Build native product artifacts
+        run: make build PYTHON=python3
 
       - name: Package signed native release
         env:

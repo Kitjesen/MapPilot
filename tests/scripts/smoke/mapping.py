@@ -1,71 +1,55 @@
 #!/usr/bin/env python3
 # Thunder compatibility smoke; run from repository root:
 #   python tests/scripts/smoke/mapping.py
-import os
+# ruff: noqa: E402 - configure the repository source path before imports
+import logging
 import sys
 import time
 
 sys.path.insert(0, "src")
-for d in ["src/perception", "src/decision"]:
-    if os.path.isdir(d):
-        sys.path.insert(0, d)
-import logging
 
 logging.basicConfig(level=logging.INFO)
 
-from lingtu.assembly.profile_builder import blueprint_for_resolved_profile
+from lingtu.assembly.stacks.slam import slam as external_slam
 
-print("=== Starting mapping mode ===")
-bp = blueprint_for_resolved_profile(
-    "stub",
-    dict(
-        robot="stub",
-        slam_profile="fastlio2",
-        enable_native=False,
-        enable_semantic=False,
-        enable_gateway=False,
-    ),
+print("=== Observing external C++ mapping runtime ===")
+bp = external_slam(
+    "native_dds",
+    localization_adapter="cpp_slam_status",
 )
 system = bp.build()
 print("Modules: %d" % len(system.modules))
 
-# Check the native managed or endpoint-adapter SLAM entry.
-slam = system.modules.get("SlamAdapterModule") or system.modules.get("SlamModule")
-print("SLAM module: %s" % (slam is not None))
+slam = system.modules["SlamAdapterModule"]
+print("External SLAM adapter: yes")
 
 system.start()
-print("System started. Waiting for SLAM + LiDAR data...")
+print("Adapter started. Waiting for an already-running C++ slamd...")
 
 # Monitor for 15 seconds
 for i in range(15):
     time.sleep(1)
-    if slam:
-        odom_count = slam.odometry.msg_count
-        cloud_count = slam.map_cloud.msg_count
-        print("[%2ds] odom=%d  cloud=%d" % (i + 1, odom_count, cloud_count))
-        if odom_count > 0 and cloud_count > 0:
-            print("SLAM data flowing!")
-            break
+    odom_count = slam.odometry.msg_count
+    cloud_count = slam.map_cloud_frame.msg_count
+    print("[%2ds] odom=%d  cloud=%d" % (i + 1, odom_count, cloud_count))
+    if odom_count > 0 and cloud_count > 0:
+        print("SLAM data flowing!")
+        break
 
 # Final status
 print()
 print("=== SLAM Status ===")
-if slam:
-    h = slam.health()
-    slam_info = h.get("slam", {})
-    print("Backend: %s" % slam_info.get("backend"))
-    node_info = slam_info.get("node", {})
-    print("Node running: %s  pid: %s" % (node_info.get("running"), node_info.get("pid")))
-    if slam._pgo_node:
-        ph = slam._pgo_node.health().get("native", {})
-        print("PGO running: %s  pid: %s" % (ph.get("running"), ph.get("pid")))
-    print("Odometry msgs: %d" % slam.odometry.msg_count)
-    print("Cloud msgs: %d" % slam.map_cloud.msg_count)
+h = slam.health()
+print("Adapter backend: %s" % h.get("configured_backend"))
+print("Transport: %s" % h.get("transport"))
+print("Status snapshot stale: %s" % h.get("status_snapshot_stale"))
+print("Odometry msgs: %d" % slam.odometry.msg_count)
+print("Cloud msgs: %d" % slam.map_cloud_frame.msg_count)
 
-    if slam.odometry.msg_count > 0:
-        print("\nSLAM MAPPING: DATA FLOWING")
-    else:
-        print("\nSLAM MAPPING: NO DATA (check LiDAR + livox driver)")
+if slam.odometry.msg_count > 0:
+    print("\nSLAM MAPPING: DATA FLOWING")
+else:
+    print("\nSLAM MAPPING: NO DATA (check external slamd + LiDAR runtime)")
 
 system.stop()
 print("DONE")

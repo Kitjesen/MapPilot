@@ -512,4 +512,63 @@ mod tests {
         assert_eq!(status, LT_POSE_GRAPH_OPT_NON_FINITE_INPUT);
         unsafe { lt_pose_graph_opt_destroy(handle) };
     }
+
+    fn process_single_prior(information_upper: [f64; 21]) -> c_int {
+        let poses = [LtPoseGraphOptPose3::from(Pose3::identity())];
+        let priors = [LtPoseGraphOptPrior3 {
+            index: 0,
+            reserved0: 0,
+            pose: LtPoseGraphOptPose3::from(Pose3::identity()),
+            information_upper,
+        }];
+        let mut report = LtPoseGraphOptReport::default();
+        let handle = unsafe { lt_pose_graph_opt_create(core::ptr::null()) };
+        assert!(!handle.is_null());
+        let status = unsafe {
+            lt_pose_graph_opt_process_se3(
+                handle,
+                poses.as_ptr(),
+                poses.len() as u64,
+                priors.as_ptr(),
+                priors.len() as u64,
+                core::ptr::null(),
+                0,
+                &mut report,
+            )
+        };
+        assert_eq!(report.status, status);
+        unsafe { lt_pose_graph_opt_destroy(handle) };
+        status
+    }
+
+    #[test]
+    fn c_abi_accepts_rank_four_information() {
+        let information = diagonal_information([10.0, 0.0, 5.0, 3.0, 0.0, 2.0]);
+        assert_eq!(
+            process_single_prior(information_to_upper(&information)),
+            LT_POSE_GRAPH_OPT_OK
+        );
+    }
+
+    #[test]
+    fn c_abi_rejects_invalid_information() {
+        assert_eq!(
+            process_single_prior([0.0; 21]),
+            crate::LT_POSE_GRAPH_OPT_INVALID_INFORMATION
+        );
+
+        let negative = diagonal_information([10.0, 10.0, -1.0, 10.0, 10.0, 10.0]);
+        assert_eq!(
+            process_single_prior(information_to_upper(&negative)),
+            crate::LT_POSE_GRAPH_OPT_INVALID_INFORMATION
+        );
+
+        let mut indefinite = diagonal_information([1.0; 6]);
+        indefinite[(0, 1)] = 2.0;
+        indefinite[(1, 0)] = 2.0;
+        assert_eq!(
+            process_single_prior(information_to_upper(&indefinite)),
+            crate::LT_POSE_GRAPH_OPT_INVALID_INFORMATION
+        );
+    }
 }

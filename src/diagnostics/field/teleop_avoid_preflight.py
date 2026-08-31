@@ -8,23 +8,26 @@ state.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from typing import Any
 
-from lingtu.run_plan import CURRENT_RUN_SCHEMA
+from diagnostics.field import _preflight
+from lingtu.run_plan import CURRENT_RUN_SCHEMA, RUN_PLAN_SCHEMA
 
 SCHEMA_VERSION = "lingtu.teleop_avoid.preflight.v1"
 STAGES = frozenset({"contract", "motion"})
 
 _PRODUCT = "teleop_avoid"
 _ENV = "real"
-_NAV_STATUS_SCHEMA = "lingtu.nav.endpoint.status.v1"
-_DRIVER_STATUS_SCHEMA = "lingtu.driver.status.v1"
 _TRAVERSABILITY_STATUS_SCHEMA = "lingtu.traversability.status.v2"
 _MAPS_STATUS_SCHEMA = "lingtu.maps.runtime.v1"
-_STATUS_MAX_AGE_S = 3.0
-_ZERO_EPSILON = 1e-6
+_DRIVER_ACK_MAX_SEQUENCE_LAG = 2
+_TRAVERSABILITY_STATUS_MAX_AGE_S = 6.0
+_TWIST_ALIASES = (
+    ("vx_mps", "vx", "x"),
+    ("vy_mps", "vy", "y"),
+    ("yaw_rps", "wz", "z"),
+)
 _REQUIRED_CAPABILITIES = frozenset(
     {
         "operator_motion_typed_dds_interface",
@@ -53,28 +56,7 @@ _REQUIRED_TOPICS = frozenset(
         "/nav/cmd_vel",
     }
 )
-
-
-def _mapping(value: Any) -> Mapping[str, Any]:
-    return value if isinstance(value, Mapping) else {}
-
-
-def _text(value: Any) -> str:
-    return str(value or "").strip()
-
-
-def _number(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if math.isfinite(parsed) else None
-
-
-def _positive_int(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+_REQUIRED_ROLES = frozenset({"lidar", "slam", "maps", "traversability", "nav", "driver", "host"})
 
 
 def _zero_int(value: Any) -> bool:
@@ -85,132 +67,32 @@ def _non_negative_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
-def _fresh(entry: Mapping[str, Any], max_age_s: float) -> bool:
-    age_s = _number(entry.get("age_s"))
-    return bool(entry.get("exists") is True and age_s is not None and 0.0 <= age_s <= max_age_s)
-
-
-def _zero_twist(value: Any) -> bool:
-    twist = _mapping(value)
-    components = (
-        twist.get("vx", twist.get("x")),
-        twist.get("vy", twist.get("y")),
-        twist.get("wz", twist.get("z")),
-    )
-    parsed = tuple(_number(component) for component in components)
-    return all(component is not None and abs(component) <= _ZERO_EPSILON for component in parsed)
-
-
-class _Evaluation:
-    def __init__(self, stage: str) -> None:
-        self.stage = stage
-        self.checks: list[dict[str, Any]] = []
-        self.blockers: list[str] = []
-
-    def check(
-        self,
-        check_id: str,
-        ok: bool,
-        *,
-        expected: Any,
-        observed: Any,
-        required: bool = True,
-        detail: str = "",
-    ) -> None:
-        passed = bool(ok)
-        self.checks.append(
-            {
-                "id": check_id,
-                "required": required,
-                "ok": passed,
-                "expected": expected,
-                "observed": observed,
-                "detail": detail,
-            }
-        )
-        if required and not passed:
-            self.blockers.append(check_id)
-
-    def result(self, *, evidence: Mapping[str, Any]) -> dict[str, Any]:
-        nonzero_motion_allowed = self.stage == "motion" and not self.blockers
-        nonzero_motion_blockers = (
-            []
-            if nonzero_motion_allowed
-            else (
-                list(self.blockers)
-                if self.stage == "motion"
-                else ["motion_stage_not_evaluated"]
-            )
-        )
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "stage": self.stage,
-            "read_only": True,
-            "authority_acquired": False,
-            "command_published": False,
-            "nonzero_motion_allowed": nonzero_motion_allowed,
-            "nonzero_motion_blockers": nonzero_motion_blockers,
-            "ok": not self.blockers,
-            "blocker_count": len(self.blockers),
-            "blockers": list(self.blockers),
-            "checks": list(self.checks),
-            "evidence": dict(evidence),
-        }
-
-
 def _twist_equal(left: Any, right: Any) -> bool:
-    left_twist = _mapping(left)
-    right_twist = _mapping(right)
-    for aliases in (("vx", "x"), ("vy", "y"), ("wz", "z")):
-        left_value = _number(next((left_twist[key] for key in aliases if key in left_twist), None))
-        right_value = _number(next((right_twist[key] for key in aliases if key in right_twist), None))
+    left_twist = _preflight.mapping(left)
+    right_twist = _preflight.mapping(right)
+    for aliases in (("vx_mps", "vx", "x"), ("vy_mps", "vy", "y"), ("yaw_rps", "wz", "z")):
+        left_value = _preflight.number(next((left_twist[key] for key in aliases if key in left_twist), None))
+        right_value = _preflight.number(next((right_twist[key] for key in aliases if key in right_twist), None))
         if left_value is None or right_value is None:
             return False
-        if abs(left_value - right_value) > _ZERO_EPSILON:
+        if abs(left_value - right_value) > _preflight.ZERO_EPSILON:
             return False
     return True
 
 
 def _linear_motion(value: Any) -> bool:
-    twist = _mapping(value)
-    vx = _number(twist.get("vx", twist.get("x")))
-    vy = _number(twist.get("vy", twist.get("y")))
+    twist = _preflight.mapping(value)
+    vx = _preflight.number(twist.get("vx", twist.get("x")))
+    vy = _preflight.number(twist.get("vy", twist.get("y")))
     return bool(
         vx is not None
         and vy is not None
-        and (abs(vx) > _ZERO_EPSILON or abs(vy) > _ZERO_EPSILON)
+        and (abs(vx) > _preflight.ZERO_EPSILON or abs(vy) > _preflight.ZERO_EPSILON)
     )
-
-
-def _status_entry(
-    snapshot: Mapping[str, Any], name: str
-) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
-    status_files = _mapping(snapshot.get("status_files"))
-    entry = _mapping(status_files.get(name))
-    return entry, _mapping(entry.get("json"))
-
-
-def _required_strings(value: Any) -> frozenset[str]:
-    if not isinstance(value, (list, tuple, set, frozenset)):
-        return frozenset()
-    return frozenset(_text(item) for item in value if _text(item))
 
 
 def _observed(mapping: Mapping[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
     return {key: mapping.get(key) for key in keys}
-
-
-def _target_host(value: Any) -> str:
-    target = _text(value).lower()
-    if "://" in target:
-        target = target.split("://", 1)[1]
-    target = target.split("/", 1)[0]
-    if target.startswith("["):
-        closing = target.find("]")
-        return target[1:closing] if closing > 0 else target
-    if target.count(":") == 1:
-        return target.rsplit(":", 1)[0]
-    return target
 
 
 _LOOPBACK_OR_UNSPECIFIED_HOSTS = frozenset(
@@ -219,7 +101,7 @@ _LOOPBACK_OR_UNSPECIFIED_HOSTS = frozenset(
 
 
 def _evaluate_maps_status(
-    evaluation: _Evaluation,
+    evaluation: _preflight.Evaluation,
     maps: Mapping[str, Any],
 ) -> None:
     runtime_keys = ("process", "status", "ready", "running", "live")
@@ -253,12 +135,12 @@ def _evaluate_maps_status(
     dds_decoded = maps.get("dds_decoded")
     evaluation.check(
         "maps.observation_pipeline",
-        _positive_int(maps.get("generation"))
-        and _positive_int(accepted)
-        and _positive_int(processed)
+        _preflight.positive_int(maps.get("generation"))
+        and _preflight.positive_int(accepted)
+        and _preflight.positive_int(processed)
         and processed <= accepted
-        and _positive_int(dds_received)
-        and _positive_int(dds_decoded)
+        and _preflight.positive_int(dds_received)
+        and _preflight.positive_int(dds_decoded)
         and dds_decoded <= dds_received,
         expected=(
             "positive generation, accepted/processed observations, and DDS "
@@ -278,7 +160,7 @@ def _evaluate_maps_status(
     )
     evaluation.check(
         "maps.dds_health",
-        _positive_int(maps.get("dds_write_attempts"))
+        _preflight.positive_int(maps.get("dds_write_attempts"))
         and _zero_int(maps.get("dds_rejected"))
         and _zero_int(maps.get("dds_write_failures"))
         and _zero_int(maps.get("dds_serialization_rejections"))
@@ -293,20 +175,12 @@ def _evaluate_maps_status(
             "dds_unhealthy_writers": 0,
         },
         observed=_observed(maps, dds_health_keys),
-        detail=(
-            "voxel_snapshot_omitted_cells is reported as bounded-scene evidence; "
-            "it is not the /nav/traversability safety authority"
-        ),
     )
     evaluation.check(
         "maps.resource_accounting",
         _non_negative_int(maps.get("voxel_snapshot_omitted_cells")),
         expected="non-negative bounded voxel snapshot omission count",
-        observed={
-            "voxel_snapshot_omitted_cells": maps.get(
-                "voxel_snapshot_omitted_cells"
-            )
-        },
+        observed={"voxel_snapshot_omitted_cells": maps.get("voxel_snapshot_omitted_cells")},
     )
     resource_capacity_keys = (
         "capacity_limited",
@@ -324,10 +198,6 @@ def _evaluate_maps_status(
             "accumulated_capacity_rejections": 0,
         },
         observed=_observed(maps, resource_capacity_keys),
-        detail=(
-            "internal map storage exhaustion is a hard preflight blocker; "
-            "bounded scene snapshot omission remains separately accounted"
-        ),
     )
 
     generation = maps.get("generation")
@@ -342,23 +212,16 @@ def _evaluate_maps_status(
         "maps.required_publications",
         maps.get("required_publications_ready") is True
         and maps.get("current_generation_published") is True
-        and _positive_int(generation)
-        and all(
-            _positive_int(value) and value == generation
-            for value in publication_generations.values()
-        ),
+        and _preflight.positive_int(generation)
+        and all(_preflight.positive_int(value) and value == generation for value in publication_generations.values()),
         expected=(
             "all required mapd channels published at least once and each "
             "publication cursor equals the current generation"
         ),
         observed={
             "generation": generation,
-            "required_publications_ready": maps.get(
-                "required_publications_ready"
-            ),
-            "current_generation_published": maps.get(
-                "current_generation_published"
-            ),
+            "required_publications_ready": maps.get("required_publications_ready"),
+            "current_generation_published": maps.get("current_generation_published"),
             **publication_generations,
         },
     )
@@ -368,7 +231,7 @@ def evaluate_teleop_avoid_preflight(
     snapshot: Mapping[str, Any],
     *,
     stage: str = "contract",
-    status_max_age_s: float = _STATUS_MAX_AGE_S,
+    status_max_age_s: float = _preflight.STATUS_MAX_AGE_S,
 ) -> dict[str, Any]:
     """Evaluate collected field evidence without touching runtime state.
 
@@ -378,19 +241,20 @@ def evaluate_teleop_avoid_preflight(
     is not required in either stage.
     """
 
-    normalized_stage = _text(stage).lower()
+    normalized_stage = _preflight.text(stage).lower()
     if normalized_stage not in STAGES:
         raise ValueError(f"unsupported teleop_avoid preflight stage: {stage!r}")
-    max_age_s = _number(status_max_age_s)
+    max_age_s = _preflight.number(status_max_age_s)
     if max_age_s is None or max_age_s <= 0.0:
         raise ValueError("status_max_age_s must be a positive finite number")
 
-    evaluation = _Evaluation(normalized_stage)
-    current_run = _mapping(snapshot.get("current_run"))
-    state = _mapping(current_run.get("state"))
-    run_plan = _mapping(current_run.get("run_plan"))
-    current_fingerprint = _text(state.get("fingerprint"))
-    plan_fingerprint = _text(run_plan.get("fingerprint"))
+    evaluation = _preflight.Evaluation(normalized_stage, SCHEMA_VERSION)
+    current_run = _preflight.mapping(snapshot.get("current_run"))
+    state = _preflight.mapping(current_run.get("state"))
+    run_plan_payload = _preflight.mapping(current_run.get("run_plan"))
+    plan_identity = _preflight.mapping(run_plan_payload.get("identity"))
+    run_plan = _preflight.mapping(current_run.get("verified_contract"))
+    native_environment = _preflight.native_environment(current_run)
 
     evaluation.check(
         "product.current_run_present",
@@ -406,40 +270,43 @@ def evaluate_teleop_avoid_preflight(
     )
     evaluation.check(
         "product.run_plan_verified",
-        current_run.get("plan_verified") is True,
-        expected=True,
-        observed=current_run.get("plan_verified"),
-        detail=_text(current_run.get("error")),
+        current_run.get("plan_verified") is True and bool(run_plan) and plan_identity.get("schema") == RUN_PLAN_SCHEMA,
+        expected={"verified": True, "schema": RUN_PLAN_SCHEMA},
+        observed={
+            "verified": current_run.get("plan_verified"),
+            "schema": plan_identity.get("schema"),
+            "contract_projection": bool(run_plan),
+        },
+        detail=_preflight.text(current_run.get("error")),
     )
     evaluation.check(
         "product.identity",
-        state.get("product") == _PRODUCT and run_plan.get("product") == _PRODUCT,
+        state.get("product") == _PRODUCT
+        and plan_identity.get("product") == _PRODUCT
+        and run_plan.get("product") == _PRODUCT,
         expected=_PRODUCT,
-        observed={"current": state.get("product"), "run_plan": run_plan.get("product")},
+        observed={
+            "current": state.get("product"),
+            "run_plan": plan_identity.get("product"),
+            "verified_contract": run_plan.get("product"),
+        },
     )
     evaluation.check(
         "product.env",
-        state.get("env") == _ENV and run_plan.get("env") == _ENV,
+        state.get("env") == _ENV and plan_identity.get("env") == _ENV and run_plan.get("env") == _ENV,
         expected=_ENV,
-        observed={"current": state.get("env"), "run_plan": run_plan.get("env")},
-    )
-    evaluation.check(
-        "product.fingerprint_match",
-        bool(current_fingerprint)
-        and current_fingerprint == plan_fingerprint
-        and current_fingerprint == _text(current_run.get("verified_fingerprint")),
-        expected="current == verified run_plan",
         observed={
-            "current": current_fingerprint,
-            "run_plan": plan_fingerprint,
-            "verified": current_run.get("verified_fingerprint"),
+            "current": state.get("env"),
+            "run_plan": plan_identity.get("env"),
+            "verified_contract": run_plan.get("env"),
         },
     )
-
-    capabilities = _required_strings(run_plan.get("required_capabilities"))
-    topics = _required_strings(run_plan.get("required_topics"))
+    capabilities = _preflight.strings(run_plan.get("required_capabilities"))
+    topics = _preflight.strings(run_plan.get("required_topics"))
     missing_capabilities = sorted(_REQUIRED_CAPABILITIES - capabilities)
     missing_topics = sorted(_REQUIRED_TOPICS - topics)
+    selected_roles = _preflight.strings(run_plan.get("selected_roles"))
+    missing_roles = sorted(_REQUIRED_ROLES - selected_roles)
     evaluation.check(
         "product.required_capabilities",
         not missing_capabilities,
@@ -452,8 +319,14 @@ def evaluate_teleop_avoid_preflight(
         expected=sorted(_REQUIRED_TOPICS),
         observed={"missing": missing_topics},
     )
+    evaluation.check(
+        "product.selected_roles",
+        not missing_roles,
+        expected=sorted(_REQUIRED_ROLES),
+        observed={"missing": missing_roles, "selected": sorted(selected_roles)},
+    )
 
-    native_nav = _mapping(run_plan.get("native_nav"))
+    native_nav = _preflight.mapping(run_plan.get("native_nav"))
     expected_native_nav = {
         "control_mode": _PRODUCT,
         "publish_cmd_vel": True,
@@ -469,20 +342,25 @@ def evaluate_teleop_avoid_preflight(
         observed={key: native_nav.get(key) for key in expected_native_nav},
     )
 
-    nav_entry, nav = _status_entry(snapshot, "nav")
-    traversability_entry, traversability = _status_entry(snapshot, "traversability")
-    maps_entry, maps = _status_entry(snapshot, "maps")
-    driver_entry, driver = _status_entry(snapshot, "driver")
+    nav_entry, nav = _preflight.status_entry(snapshot, "nav")
+    traversability_entry, traversability = _preflight.status_entry(snapshot, "traversability")
+    maps_entry, maps = _preflight.status_entry(snapshot, "maps")
+    driver_entry, driver = _preflight.status_entry(snapshot, "driver")
     for name, entry, payload, schema in (
-        ("nav", nav_entry, nav, _NAV_STATUS_SCHEMA),
+        ("nav", nav_entry, nav, _preflight.NAV_STATUS_SCHEMA),
         ("traversability", traversability_entry, traversability, _TRAVERSABILITY_STATUS_SCHEMA),
         ("maps", maps_entry, maps, _MAPS_STATUS_SCHEMA),
-        ("driver", driver_entry, driver, _DRIVER_STATUS_SCHEMA),
+        ("driver", driver_entry, driver, _preflight.DRIVER_STATUS_SCHEMA),
     ):
+        entry_max_age_s = (
+            max(max_age_s, _TRAVERSABILITY_STATUS_MAX_AGE_S)
+            if name == "traversability"
+            else max_age_s
+        )
         evaluation.check(
             f"status.{name}.fresh",
-            _fresh(entry, max_age_s),
-            expected=f"exists and age_s <= {max_age_s:g}",
+            _preflight.fresh(entry, entry_max_age_s),
+            expected=f"exists and age_s <= {entry_max_age_s:g}",
             observed={"exists": entry.get("exists"), "age_s": entry.get("age_s")},
         )
         evaluation.check(
@@ -494,16 +372,12 @@ def evaluate_teleop_avoid_preflight(
 
     _evaluate_maps_status(evaluation, maps)
 
-    nav_runtime = _mapping(nav.get("native_product"))
+    nav_runtime = _preflight.mapping(nav.get("native_product"))
     evaluation.check(
         "nav.product_runtime_identity",
-        nav_runtime.get("product") == _PRODUCT
-        and _text(nav_runtime.get("config_fingerprint")) == current_fingerprint,
-        expected={"product": _PRODUCT, "config_fingerprint": current_fingerprint},
-        observed={
-            "product": nav_runtime.get("product"),
-            "config_fingerprint": nav_runtime.get("config_fingerprint"),
-        },
+        nav_runtime.get("product") == _PRODUCT,
+        expected={"product": _PRODUCT},
+        observed={"product": nav_runtime.get("product")},
     )
     runtime_policy_keys = (
         "control_mode",
@@ -525,7 +399,7 @@ def evaluate_teleop_avoid_preflight(
         observed=_observed(nav, runtime_policy_keys),
     )
 
-    operator_motion = _mapping(nav.get("operator_motion"))
+    operator_motion = _preflight.mapping(nav.get("operator_motion"))
     operator_contract_keys = (
         "interface_enabled",
         "authority_owner",
@@ -551,8 +425,7 @@ def evaluate_teleop_avoid_preflight(
     )
     evaluation.check(
         "nav.operator_motion_transport",
-        operator_motion.get("ack_publish_failed") == 0
-        and operator_motion.get("status_publish_failed") == 0,
+        operator_motion.get("ack_publish_failed") == 0 and operator_motion.get("status_publish_failed") == 0,
         expected={"ack_publish_failed": 0, "status_publish_failed": 0},
         observed={
             "ack_publish_failed": operator_motion.get("ack_publish_failed"),
@@ -565,16 +438,17 @@ def evaluate_teleop_avoid_preflight(
         expected="lingtu_traversability_dds",
         observed=traversability.get("endpoint"),
     )
-    driver_dds = _mapping(driver.get("dds"))
+    driver_dds = _preflight.mapping(driver.get("dds"))
+    driver_backend = _preflight.text(driver.get("backend")).lower()
     evaluation.check(
         "driver.boundary",
         driver.get("role") == "driver"
-        and driver.get("backend") == "thunder"
+        and driver_backend in _preflight.SUPPORTED_DRIVER_BACKENDS
         and driver_dds.get("topic") == "/nav/cmd_vel"
         and driver_dds.get("wire_topic") == "rt/nav/cmd_vel",
         expected={
             "role": "driver",
-            "backend": "thunder",
+            "backend": sorted(_preflight.SUPPORTED_DRIVER_BACKENDS),
             "topic": "/nav/cmd_vel",
             "wire_topic": "rt/nav/cmd_vel",
         },
@@ -593,88 +467,34 @@ def evaluate_teleop_avoid_preflight(
             nav=nav,
             traversability=traversability,
             driver=driver,
+            native_environment=native_environment,
         )
 
-    final_output = _mapping(nav.get("final_output"))
-    driver_ack = _mapping(driver.get("output_ack"))
-    return evaluation.result(
-        evidence={
-            "product": state.get("product"),
-            "env": state.get("env"),
-            "fingerprint": current_fingerprint,
-            "status_paths": {
-                "nav": nav_entry.get("path"),
-                "traversability": traversability_entry.get("path"),
-                "maps": maps_entry.get("path"),
-                "driver": driver_entry.get("path"),
-            },
-            "maps_runtime": {
-                "process": maps.get("process"),
-                "status": maps.get("status"),
-                "generation": maps.get("generation"),
-                "accepted_observations": maps.get("accepted_observations"),
-                "processed_observations": maps.get("processed_observations"),
-                "dds_received": maps.get("dds_received"),
-                "dds_decoded": maps.get("dds_decoded"),
-                "dds_rejected": maps.get("dds_rejected"),
-                "required_publications_ready": maps.get(
-                    "required_publications_ready"
-                ),
-                "current_generation_published": maps.get(
-                    "current_generation_published"
-                ),
-                "scene_published_generation": maps.get(
-                    "scene_published_generation"
-                ),
-                "voxel_snapshot_omitted_cells": maps.get(
-                    "voxel_snapshot_omitted_cells"
-                ),
-                "capacity_limited": maps.get("capacity_limited"),
-                "voxel_capacity_rejections": maps.get(
-                    "voxel_capacity_rejections"
-                ),
-                "accumulated_capacity_rejections": maps.get(
-                    "accumulated_capacity_rejections"
-                ),
-                "dds_scene_oversize_rejections": maps.get(
-                    "dds_scene_oversize_rejections"
-                ),
-            },
-            "final_output": {
-                "producer_boot_id": final_output.get("producer_boot_id"),
-                "output_sequence": final_output.get("output_sequence"),
-                "driver_acknowledged": final_output.get("driver_acknowledged"),
-            },
-            "driver_output_ack": {
-                "producer_boot_id": driver_ack.get("producer_boot_id"),
-                "output_sequence": driver_ack.get("output_sequence"),
-                "accepted": driver_ack.get("accepted"),
-            },
-        }
-    )
+    return evaluation.result()
 
 
 def _evaluate_motion_stage(
-    evaluation: _Evaluation,
+    evaluation: _preflight.Evaluation,
     *,
     snapshot: Mapping[str, Any],
     nav: Mapping[str, Any],
     traversability: Mapping[str, Any],
     driver: Mapping[str, Any],
+    native_environment: Mapping[str, Any],
 ) -> None:
-    nav_counters = _mapping(nav.get("counters"))
-    traversability_counters = _mapping(traversability.get("counters"))
+    nav_counters = _preflight.mapping(nav.get("counters"))
+    traversability_counters = _preflight.mapping(traversability.get("counters"))
     evaluation.check(
         "motion.sensor_chain",
         nav.get("has_odom") is True
         and nav.get("has_traversability") is True
-        and _positive_int(nav_counters.get("odom"))
-        and _positive_int(nav_counters.get("registered_clouds"))
-        and _positive_int(nav_counters.get("traversability"))
+        and _preflight.positive_int(nav_counters.get("odom"))
+        and _preflight.positive_int(nav_counters.get("registered_clouds"))
+        and _preflight.positive_int(nav_counters.get("traversability"))
         and traversability.get("has_odom") is True
-        and _positive_int(traversability_counters.get("odom"))
-        and _positive_int(traversability_counters.get("registered_clouds"))
-        and _positive_int(traversability_counters.get("published")),
+        and _preflight.positive_int(traversability_counters.get("odom"))
+        and _preflight.positive_int(traversability_counters.get("registered_clouds"))
+        and _preflight.positive_int(traversability_counters.get("published")),
         expected="positive odom/cloud/traversability evidence at both native endpoints",
         observed={
             "nav": {
@@ -693,7 +513,7 @@ def _evaluate_motion_stage(
         },
     )
 
-    input_gate = _mapping(nav.get("input_gate"))
+    input_gate = _preflight.mapping(nav.get("input_gate"))
     input_gate_keys = (
         "ready",
         "reason",
@@ -730,7 +550,7 @@ def _evaluate_motion_stage(
         },
         observed=_observed(input_gate, input_gate_keys),
     )
-    control_loop = _mapping(nav.get("control_loop_health"))
+    control_loop = _preflight.mapping(nav.get("control_loop_health"))
     evaluation.check(
         "motion.control_loop",
         control_loop.get("ready") is True and control_loop.get("healthy") is True,
@@ -742,7 +562,7 @@ def _evaluate_motion_stage(
         },
     )
 
-    driver_readiness = _mapping(snapshot.get("driver_readiness"))
+    driver_readiness = _preflight.mapping(snapshot.get("driver_readiness"))
     evaluation.check(
         "motion.driver_readiness",
         driver_readiness.get("ok") is True,
@@ -752,70 +572,107 @@ def _evaluate_motion_stage(
             "blockers": driver_readiness.get("blockers"),
         },
     )
-    brainstem = _mapping(driver.get("brainstem"))
-    target_host = _target_host(brainstem.get("target"))
-    expected_host = _target_host(snapshot.get("expected_brainstem_host"))
-    evaluation.check(
-        "motion.brainstem_control",
+    driver_backend = _preflight.text(driver.get("backend")).lower()
+    adapter = _preflight.mapping(driver.get("adapter"))
+    control = _preflight.mapping(driver.get("control"))
+    target = _preflight.text(adapter.get("target"))
+    target_host = _preflight.target_host(target)
+    expected_target = _preflight.text(native_environment.get("LINGTU_DRIVER_TARGET"))
+    expected_interface = _preflight.text(native_environment.get("LINGTU_DRIVER_NETWORK_INTERFACE"))
+    shared_control_ready = (
         driver.get("connected") is True
-        and target_host not in _LOOPBACK_OR_UNSPECIFIED_HOSTS
-        and (not expected_host or target_host == expected_host)
         and driver.get("ready") is True
-        and _mapping(driver.get("dds")).get("cmd_vel_writer_ready") is True
-        and _mapping(driver.get("dds")).get("matched_cmd_vel_writers") == 1
-        and brainstem.get("initial_zero_acknowledged") is True
-        and brainstem.get("motors_enabled") is True
-        and brainstem.get("critical_fault") is False
-        and brainstem.get("lease_valid") is True
-        and brainstem.get("owner") == "grpc"
-        and brainstem.get("owner_id") == "lingtu-driver"
-        and brainstem.get("fsm") in {"standing", "walking"},
-        expected=(
-            "connected ready remote Brainstem with motors, Lingtu lease, "
-            "and standing/walking FSM"
-        ),
+        and _preflight.mapping(driver.get("dds")).get("cmd_vel_writer_ready") is True
+        and _preflight.mapping(driver.get("dds")).get("matched_cmd_vel_writers") == 1
+        and control.get("initial_zero_acknowledged") is True
+        and control.get("motors_enabled") is True
+        and control.get("critical_fault") is False
+        and control.get("control_assured") is True
+        and _preflight.text(control.get("fsm")).lower() in {"standing", "walking"}
+    )
+    if driver_backend == "doso":
+        control_check_id = "motion.brainstem_control"
+        backend_control_ready = (
+            adapter.get("protocol") == "brainstem_grpc"
+            and adapter.get("control_owner") == "grpc"
+            and adapter.get("control_owner_id") == _preflight.DRIVER_MOTION_PRINCIPAL
+            and control.get("lease_valid") is True
+            and target_host not in _LOOPBACK_OR_UNSPECIFIED_HOSTS
+            and bool(expected_target)
+            and target == expected_target
+        )
+        expected_control = "connected ready remote Brainstem with motors, LingTu lease, and standing/walking FSM"
+    elif driver_backend == "go2":
+        control_check_id = "motion.go2_control"
+        backend_control_ready = (
+            bool(expected_interface)
+            and _preflight.sdk2_interface(target) == expected_interface
+            and adapter.get("protocol") == "unitree_sdk2"
+            and adapter.get("control_owner") == "none"
+            and not _preflight.text(adapter.get("control_owner_id"))
+            and control.get("lease_valid") is False
+        )
+        expected_control = (
+            "connected ready Unitree SDK2 control on one configured network "
+            "interface with standing/walking FSM and no fabricated lease"
+        )
+    else:
+        control_check_id = "motion.driver_control"
+        backend_control_ready = False
+        expected_control = "supported motion backend control evidence"
+    evaluation.check(
+        control_check_id,
+        shared_control_ready and backend_control_ready,
+        expected=expected_control,
         observed={
+            "backend": driver_backend,
             "connected": driver.get("connected"),
-            "target": brainstem.get("target"),
-            "expected_host": expected_host or None,
+            "protocol": adapter.get("protocol"),
+            "target": target,
+            "expected_target": expected_target or None,
+            "expected_interface": expected_interface or None,
             "ready": driver.get("ready"),
-            "cmd_vel_writer_ready": _mapping(driver.get("dds")).get("cmd_vel_writer_ready"),
-            "matched_cmd_vel_writers": _mapping(driver.get("dds")).get("matched_cmd_vel_writers"),
-            "initial_zero_acknowledged": brainstem.get("initial_zero_acknowledged"),
-            "motors_enabled": brainstem.get("motors_enabled"),
-            "critical_fault": brainstem.get("critical_fault"),
-            "lease_valid": brainstem.get("lease_valid"),
-            "owner": brainstem.get("owner"),
-            "owner_id": brainstem.get("owner_id"),
-            "fsm": brainstem.get("fsm"),
+            "cmd_vel_writer_ready": _preflight.mapping(driver.get("dds")).get("cmd_vel_writer_ready"),
+            "matched_cmd_vel_writers": _preflight.mapping(driver.get("dds")).get("matched_cmd_vel_writers"),
+            "initial_zero_acknowledged": control.get("initial_zero_acknowledged"),
+            "motors_enabled": control.get("motors_enabled"),
+            "critical_fault": control.get("critical_fault"),
+            "control_assured": control.get("control_assured"),
+            "lease_valid": control.get("lease_valid"),
+            "owner": adapter.get("control_owner"),
+            "owner_id": adapter.get("control_owner_id"),
+            "fsm": control.get("fsm"),
         },
     )
 
-    final_output = _mapping(nav.get("final_output"))
-    driver_control = _mapping(nav.get("driver_control"))
-    driver_ack = _mapping(driver.get("output_ack"))
-    producer_boot_id = _text(final_output.get("producer_boot_id"))
+    final_output = _preflight.mapping(nav.get("final_output"))
+    driver_control = _preflight.mapping(nav.get("driver_control"))
+    driver_ack = _preflight.mapping(driver.get("output_ack"))
+    producer_boot_id = _preflight.text(final_output.get("producer_boot_id"))
     output_sequence = final_output.get("output_sequence")
-    exact_ack = (
+    driver_control_sequence = driver_control.get("accepted_output_sequence")
+    driver_ack_sequence = driver_ack.get("output_sequence")
+    correlated_ack = (
         final_output.get("published") is True
         and bool(producer_boot_id)
-        and _positive_int(output_sequence)
-        and final_output.get("driver_acknowledged") is True
+        and _preflight.positive_int(output_sequence)
         and driver_control.get("received") is True
         and driver_control.get("ready") is True
         and driver_control.get("last_command_accepted") is True
         and driver_control.get("accepted_producer_boot_id") == producer_boot_id
-        and driver_control.get("accepted_output_sequence") == output_sequence
+        and _preflight.positive_int(driver_control_sequence)
+        and 0 <= output_sequence - driver_control_sequence <= _DRIVER_ACK_MAX_SEQUENCE_LAG
         and driver_ack.get("accepted") is True
         and driver_ack.get("producer_boot_id") == producer_boot_id
-        and driver_ack.get("output_sequence") == output_sequence
+        and _preflight.positive_int(driver_ack_sequence)
+        and driver_ack_sequence <= output_sequence + _DRIVER_ACK_MAX_SEQUENCE_LAG
     )
     evaluation.check(
-        "motion.exact_driver_ack",
-        exact_ack,
+        "motion.correlated_driver_ack",
+        correlated_ack,
         expected=(
-            "one exact producer_boot_id/output_sequence across nav publication, "
-            "driver control, and driver ACK"
+            "same producer, nav-embedded ACK no more than two outputs behind, "
+            "and a fresh driver status snapshot that accepted this producer without being more than two outputs ahead"
         ),
         observed={
             "nav": dict(final_output),
@@ -824,22 +681,19 @@ def _evaluate_motion_stage(
         },
     )
 
-    operator_motion = _mapping(nav.get("operator_motion"))
-    last_ack = _mapping(operator_motion.get("last_ack"))
-    operator_status = _mapping(operator_motion.get("status"))
+    operator_motion = _preflight.mapping(nav.get("operator_motion"))
+    last_ack = _preflight.mapping(operator_motion.get("last_ack"))
+    operator_status = _preflight.mapping(operator_motion.get("status"))
     evaluation.check(
         "motion.operator_status_mirror",
         operator_status.get("observed") is True
         and operator_status.get("published") is True
-        and (
-            last_ack.get("observed") is not True
-            or last_ack.get("published") is True
-        )
+        and (last_ack.get("observed") is not True or last_ack.get("published") is True)
         and operator_status.get("input_gate_reason") == input_gate.get("reason")
         and _twist_equal(operator_status.get("final_cmd_vel"), nav.get("final_cmd_vel"))
         and _twist_equal(
             operator_status.get("teleop_output"),
-            _mapping(nav.get("teleop")).get("output"),
+            _preflight.mapping(nav.get("teleop")).get("output"),
         ),
         expected="published operator status mirrors input gate, teleop output, and final output",
         observed={"last_ack": dict(last_ack), "status": dict(operator_status)},
@@ -849,12 +703,12 @@ def _evaluate_motion_stage(
         "motion.operator_sample_correlation",
         not active_sample
         or (
-            _positive_int(operator_status.get("admitted_sequence"))
+            _preflight.positive_int(operator_status.get("admitted_sequence"))
             and operator_status.get("final_output_sequence") == output_sequence
             and _twist_equal(operator_status.get("final_cmd_vel"), nav.get("final_cmd_vel"))
             and _twist_equal(
                 operator_status.get("teleop_output"),
-                _mapping(nav.get("teleop")).get("output"),
+                _preflight.mapping(nav.get("teleop")).get("output"),
             )
         ),
         expected="idle, or admitted operator sample correlated to the exact final output",
@@ -866,24 +720,21 @@ def _evaluate_motion_stage(
         },
     )
 
-    teleop = _mapping(nav.get("teleop"))
+    teleop = _preflight.mapping(nav.get("teleop"))
     linear_motion = active_sample and _linear_motion(teleop.get("request"))
-    last_local = _mapping(nav.get("last_local"))
-    final_safety = _mapping(last_local.get("final_safety"))
+    last_local = _preflight.mapping(nav.get("last_local"))
+    final_safety = _preflight.mapping(last_local.get("final_safety"))
     evaluation.check(
         "motion.assisted_local_path",
         not linear_motion
         or (
             teleop.get("seen") is True
             and teleop.get("published") is True
-            and _positive_int(nav.get("local_path_points"))
+            and _preflight.positive_int(nav.get("local_path_points"))
             and last_local.get("seen") is True
             and final_safety.get("applied") is True
         ),
-        expected=(
-            "idle/rotation-only, or linear operator motion with LocalPlanner path "
-            "and final safety evidence"
-        ),
+        expected=("idle/rotation-only, or linear operator motion with LocalPlanner path and final safety evidence"),
         observed={
             "active_sample": active_sample,
             "linear_motion": linear_motion,
@@ -901,16 +752,16 @@ def _evaluate_motion_stage(
         "motion.idle_zero",
         not idle
         or (
-            _zero_twist(nav.get("final_cmd_vel"))
-            and _zero_twist(operator_status.get("final_cmd_vel"))
-            and _zero_twist(driver.get("last_walk"))
+            _preflight.zero_twist(nav.get("final_cmd_vel"), _TWIST_ALIASES)
+            and _preflight.zero_twist(operator_status.get("final_cmd_vel"), _TWIST_ALIASES)
+            and _preflight.zero_twist(driver.get("last_velocity"), _TWIST_ALIASES)
         ),
         expected="when no active operator sample, nav/operator/driver outputs are zero",
         observed={
             "idle": idle,
             "nav_final_cmd_vel": nav.get("final_cmd_vel"),
             "operator_final_cmd_vel": operator_status.get("final_cmd_vel"),
-            "driver_last_walk": driver.get("last_walk"),
+            "driver_last_velocity": driver.get("last_velocity"),
         },
     )
 

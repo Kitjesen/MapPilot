@@ -50,10 +50,8 @@ def _process_rows() -> list[dict[str, Any]]:
 
     rows: list[dict[str, Any]] = []
     needles = (
-        "lingtu.py",
-        "fastlio",
-        "localizer",
-        "lio_node",
+        "lingtu.real.host",
+        "slamd",
     )
     for line in raw.splitlines()[1:]:
         if not any(needle in line for needle in needles):
@@ -64,12 +62,10 @@ def _process_rows() -> list[dict[str, Any]]:
         comm, pcpu, pmem, rss, cmdline = parts
         label = comm
         normalized = cmdline.lower().replace("-", "_")
-        if "lingtu.py" in cmdline:
-            label = "lingtu"
-        elif "localizer_node" in cmdline:
-            label = "localizer"
-        elif "lio_node" in cmdline or "fastlio" in normalized:
-            label = "fastlio2"
+        if "lingtu.real.host" in cmdline:
+            label = "host"
+        elif "slamd" in normalized:
+            label = "slamd"
         try:
             rows.append(
                 {

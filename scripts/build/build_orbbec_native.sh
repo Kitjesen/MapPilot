@@ -1,23 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -n "${LINGTU_ORBBEC_SDK_ROOT:-}" ]]; then
-  SDK_ROOT="$LINGTU_ORBBEC_SDK_ROOT"
-  SDK_SOURCE="configured"
-elif [[ -d "src/drivers/real/camera/deps/orbbec/OrbbecSDK" ]]; then
-  SDK_ROOT="src/drivers/real/camera/deps/orbbec/OrbbecSDK"
-  SDK_SOURCE="pure_sdk"
-else
-  ORBBEC_ROS2_DIR="${LINGTU_ORBBEC_ROS2_DIR:-src/drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2}"
-  if [[ ! -d "$ORBBEC_ROS2_DIR" && -d "src/drivers/real/camera/OrbbecSDK_ROS2" ]]; then
-    ORBBEC_ROS2_DIR="src/drivers/real/camera/OrbbecSDK_ROS2"
-  fi
-  SDK_ROOT="$ORBBEC_ROS2_DIR/orbbec_camera/SDK"
-  SDK_SOURCE="ros2_wrapper_fallback"
-fi
-
-if [[ "$SDK_SOURCE" == "ros2_wrapper_fallback" ]]; then
-  echo "[build_orbbec_native] using OrbbecSDK_ROS2 bundled SDK as compatibility fallback; set LINGTU_ORBBEC_SDK_ROOT or run scripts/build/fetch_orbbec_sdk.sh for the pure SDK path" >&2
+SDK_ROOT="${LINGTU_ORBBEC_SDK_ROOT:-build/deps/orbbec-sdk}"
+if [[ ! -d "$SDK_ROOT/include/libobsensor" ]]; then
+  echo "missing pure Orbbec SDK at $SDK_ROOT; run scripts/build/fetch_orbbec_sdk.sh" >&2
+  exit 1
 fi
 
 SRC_DIR="${LINGTU_ORBBEC_NATIVE_SOURCE_DIR:-src/drivers/real/camera/native}"
@@ -55,6 +42,9 @@ install_orbbec_runtime_lib() {
   fi
 
   cp -a "${libs[@]}" "$RUNTIME_LIB/"
+  if [[ -d "$SDK_LIB/extensions" ]]; then
+    cp -a "$SDK_LIB/extensions" "$RUNTIME_LIB/"
+  fi
 
   if [[ ! -e "$RUNTIME_LIB/libOrbbecSDK.so" ]]; then
     local primary

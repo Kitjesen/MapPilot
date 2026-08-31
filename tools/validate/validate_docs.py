@@ -36,8 +36,6 @@ SKIP_PARTS = {
 EXCLUDED_MARKDOWN_PREFIXES = (
     ROOT / "src" / "drivers" / "real" / "camera" / "deps",
     ROOT / "src" / "drivers" / "real" / "lidar" / "deps",
-    ROOT / "src" / "localization" / "genz_icp",
-    ROOT / "src" / "localization" / "pointlio" / "include" / "IKFoM",
 )
 FORBIDDEN_DOC_DIRS = (
     ROOT / "docs" / "archive",
@@ -153,7 +151,7 @@ def validate_repository(root: Path = ROOT) -> tuple[list[str], int]:
         errors.append(f"binary snapshot belongs outside docs or in generated artifacts: {_repo_rel(path)}")
 
     field_runs = root / "docs" / "07-testing" / "field-runs"
-    field_run_exceptions = {"README.md", "NATIVE_ENDPOINT_REFACTOR_FIELD_ACCEPTANCE.md"}
+    field_run_exceptions = {"README.md"}
     for path in field_runs.glob("*.md"):
         if path.name not in field_run_exceptions and not DATE_RECORD_RE.match(path.name):
             errors.append(f"field evidence must be date-prefixed: {_repo_rel(path)}")

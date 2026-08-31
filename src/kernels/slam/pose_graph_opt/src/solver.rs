@@ -8,7 +8,8 @@ use crate::geometry::{residual_between, residual_prior, Pose3, Vector6};
 use crate::{
     LT_POSE_GRAPH_OPT_EMPTY_GRAPH, LT_POSE_GRAPH_OPT_GAUGE_FREEDOM,
     LT_POSE_GRAPH_OPT_INVALID_CONFIG, LT_POSE_GRAPH_OPT_INVALID_INDEX,
-    LT_POSE_GRAPH_OPT_NON_FINITE_INPUT, LT_POSE_GRAPH_OPT_SINGULAR_SYSTEM,
+    LT_POSE_GRAPH_OPT_INVALID_INFORMATION, LT_POSE_GRAPH_OPT_NON_FINITE_INPUT,
+    LT_POSE_GRAPH_OPT_SINGULAR_SYSTEM,
 };
 
 pub type Information6 = SMatrix<f64, 6, 6>;
@@ -227,6 +228,7 @@ pub enum OptimizeError {
     SingularSystem,
     InvalidConfig,
     GaugeFreedom,
+    InvalidInformation,
 }
 
 impl OptimizeError {
@@ -238,6 +240,7 @@ impl OptimizeError {
             Self::SingularSystem => LT_POSE_GRAPH_OPT_SINGULAR_SYSTEM,
             Self::InvalidConfig => LT_POSE_GRAPH_OPT_INVALID_CONFIG,
             Self::GaugeFreedom => LT_POSE_GRAPH_OPT_GAUGE_FREEDOM,
+            Self::InvalidInformation => LT_POSE_GRAPH_OPT_INVALID_INFORMATION,
         }
     }
 }
@@ -255,6 +258,7 @@ pub fn information_from_upper(upper: &[f64; 21]) -> Result<Information6, Optimiz
             idx += 1;
         }
     }
+    validate_information(&matrix)?;
     Ok(matrix)
 }
 
@@ -391,23 +395,58 @@ fn validate_graph(graph: &PoseGraph3) -> Result<(), OptimizeError> {
         if prior.index >= graph.poses.len() {
             return Err(OptimizeError::InvalidIndex);
         }
-        if !prior.pose.is_finite() || !matrix_is_finite(&prior.information) {
+        if !prior.pose.is_finite() {
             return Err(OptimizeError::NonFiniteInput);
         }
+        validate_information(&prior.information)?;
     }
     for between in &graph.betweens {
         if between.from >= graph.poses.len() || between.to >= graph.poses.len() {
             return Err(OptimizeError::InvalidIndex);
         }
-        if !between.measurement.is_finite() || !matrix_is_finite(&between.information) {
+        if !between.measurement.is_finite() {
             return Err(OptimizeError::NonFiniteInput);
         }
+        validate_information(&between.information)?;
     }
     Ok(())
 }
 
 fn matrix_is_finite(matrix: &Information6) -> bool {
     matrix.iter().all(|value| value.is_finite())
+}
+
+fn validate_information(information: &Information6) -> Result<(), OptimizeError> {
+    if !matrix_is_finite(information) {
+        return Err(OptimizeError::NonFiniteInput);
+    }
+
+    let scale = information
+        .iter()
+        .fold(0.0_f64, |maximum, value| maximum.max(value.abs()));
+    if scale == 0.0 {
+        return Err(OptimizeError::InvalidInformation);
+    }
+
+    let tolerance = 1e-10 * scale;
+    for row in 0..6 {
+        for col in (row + 1)..6 {
+            if (information[(row, col)] - information[(col, row)]).abs() > tolerance {
+                return Err(OptimizeError::InvalidInformation);
+            }
+        }
+    }
+
+    let symmetric = 0.5 * (information + information.transpose());
+    if symmetric
+        .symmetric_eigen()
+        .eigenvalues
+        .iter()
+        .any(|eigenvalue| *eigenvalue < -tolerance)
+    {
+        return Err(OptimizeError::InvalidInformation);
+    }
+    Ok(())
 }
 
 fn resolved_fixed_pose(
@@ -1112,6 +1151,41 @@ mod tests {
         info[(4, 3)] = 1.0;
         let upper = information_to_upper(&info);
         assert_eq!(information_from_upper(&upper).unwrap(), info);
+    }
+
+    #[test]
+    fn rank_four_information_matrix_is_accepted() {
+        let info = diagonal_information([10.0, 0.0, 5.0, 3.0, 0.0, 2.0]);
+        let upper = information_to_upper(&info);
+        assert_eq!(information_from_upper(&upper).unwrap(), info);
+    }
+
+    #[test]
+    fn zero_information_matrix_is_rejected() {
+        assert_eq!(
+            information_from_upper(&[0.0; 21]).unwrap_err(),
+            OptimizeError::InvalidInformation
+        );
+    }
+
+    #[test]
+    fn negative_information_diagonal_is_rejected() {
+        let info = diagonal_information([10.0, 10.0, -1.0, 10.0, 10.0, 10.0]);
+        assert_eq!(
+            information_from_upper(&information_to_upper(&info)).unwrap_err(),
+            OptimizeError::InvalidInformation
+        );
+    }
+
+    #[test]
+    fn indefinite_information_with_positive_diagonal_is_rejected() {
+        let mut info = diagonal_information([1.0; 6]);
+        info[(0, 1)] = 2.0;
+        info[(1, 0)] = 2.0;
+        assert_eq!(
+            information_from_upper(&information_to_upper(&info)).unwrap_err(),
+            OptimizeError::InvalidInformation
+        );
     }
 
     #[test]

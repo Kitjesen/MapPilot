@@ -63,13 +63,33 @@ def _default_artifact_dir() -> Path:
     return Path.home() / "data" / "SLAM" / "navigation" / "artifacts" / f"system_acceptance_{stamp}"
 
 
-def _robot_cli(args: argparse.Namespace, *arguments: str) -> list[str]:
+def _doctor_command(args: argparse.Namespace) -> list[str]:
     return [
-        os.environ.get("BASH", "bash"),
-        str(ROOT / "scripts" / "lingtu"),
+        sys.executable,
+        "-m",
+        "diagnostics.field.doctor",
+        "--gateway-url",
+        args.gateway_url,
         "--env",
         args.env,
-        *arguments,
+        "--non-motion",
+        "--strict",
+        "--json",
+    ]
+
+
+def _soak_command(args: argparse.Namespace) -> list[str]:
+    return [
+        sys.executable,
+        str(ROOT / "scripts" / "diagnostics" / "soak.py"),
+        "--gateway",
+        args.gateway_url,
+        "--duration",
+        str(args.soak_duration),
+        "--interval",
+        str(args.soak_interval),
+        "--strict",
+        "--json",
     ]
 
 
@@ -88,7 +108,6 @@ def _write_summary(
         "map": map_name,
         "goal": {"x": args.goal[0], "y": args.goal[1], "yaw": args.goal[2]},
         "checks": {
-            "runtime_audit": str(root / "runtime_audit.json"),
             "doctor": str(root / "doctor.json"),
             "soak": str(root / "soak.json"),
             "saved_map_artifact_gate": str(root / "saved_map_artifact_gate.json"),
@@ -97,7 +116,7 @@ def _write_summary(
             "saved_map_relocalization": str(root / "relocalization") if args.with_relocalization else None,
             "motion_smoke": str(root / "motion_smoke") if args.allow_motion else None,
             "product_switch": str(root / "product_switch.json"),
-            "stop_session": str(root / "stop_session.json"),
+            "stop": str(root / "stop.json"),
         },
         "error": error,
     }
@@ -105,7 +124,7 @@ def _write_summary(
 
 
 def run(args: argparse.Namespace) -> int:
-    map_name, map_dir = safe_map_dir(args.maps_root, args.map_name)
+    map_name, _map_dir = safe_map_dir(args.maps_root, args.map_name)
     root = (args.artifact_dir or _default_artifact_dir()).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     goal = {"x": args.goal[0], "y": args.goal[1], "z": 0.0, "yaw": args.goal[2]}
@@ -120,41 +139,25 @@ def run(args: argparse.Namespace) -> int:
     session_owned = False
     failure: str | None = None
     try:
-        print("[1/6] Static runtime contract")
+        print("[1/5] Gateway/ModulePort readiness")
         run_command(
-            [sys.executable, str(ROOT / "lingtu.py"), "runtime-audit", "--json"],
-            stdout_path=root / "runtime_audit.json",
-            timeout_s=120,
-        )
-
-        print("[2/6] Gateway/ModulePort readiness")
-        run_command(
-            _robot_cli(args, "doctor", "--non-motion", "--strict", "--json"),
+            _doctor_command(args),
             stdout_path=root / "doctor.json",
             timeout_s=120,
         )
 
-        print("[3/6] Sensor -> SLAM soak")
+        print("[2/5] Sensor -> SLAM soak")
         run_command(
-            _robot_cli(
-                args,
-                "soak",
-                "--duration",
-                str(args.soak_duration),
-                "--interval",
-                str(args.soak_interval),
-                "--strict",
-                "--json",
-            ),
+            _soak_command(args),
             stdout_path=root / "soak.json",
             timeout_s=max(120, args.soak_duration + 60),
         )
 
-        print("[4/6] Saved-map artifacts")
+        print("[3/5] Saved-map artifacts")
         artifact_command = [
             sys.executable,
             str(GATES_DIR / "saved_map_artifact_gate.py"),
-            str(map_dir),
+            map_name,
             "--require-occupancy",
             "--expected-frame-id",
             "map",
@@ -168,7 +171,7 @@ def run(args: argparse.Namespace) -> int:
             timeout_s=120,
         )
 
-        print("[5/6] Product switch and requested global plan preview")
+        print("[4/5] Product switch and requested global plan preview")
         switch_args = ["switch", "nav", "--env", args.env, "--map", map_name]
         if args.backend:
             switch_args.extend(("--backend", args.backend))
@@ -195,15 +198,13 @@ def run(args: argparse.Namespace) -> int:
     finally:
         if session_owned:
             try:
-                stop_args = ["stop-session", "--env", args.env]
-                if args.backend:
-                    stop_args.extend(("--backend", args.backend))
-                run_product_control(stop_args, root / "stop_session.json")
+                stop_args = ["stop", "--env", args.env]
+                run_product_control(stop_args, root / "stop.json")
             except GateError as exc:
                 failure = failure or str(exc)
 
     if failure is None and args.allow_motion:
-        print("[6/6] Motion gate")
+        print("[5/5] Motion gate")
         motion_command = [
             sys.executable,
             str(GATES_DIR / "motion_smoke_gate.py"),
@@ -237,7 +238,7 @@ def run(args: argparse.Namespace) -> int:
         except GateError as exc:
             failure = str(exc)
     elif failure is None:
-        print("[6/6] Motion gate skipped; add --allow-motion only in a controlled test.")
+        print("[5/5] Motion gate skipped; add --allow-motion only in a controlled test.")
 
     _write_summary(
         root,

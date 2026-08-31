@@ -4,9 +4,10 @@ set -euo pipefail
 source /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh slam
 
 SLAM_BIN="${LINGTU_SLAM_BIN:-/opt/lingtu/current/build/slam_core/slamd}"
+SLAM_CONFIG="${LINGTU_SLAM_CONFIG:?LINGTU_SLAM_CONFIG is required from the Product session}"
 if [ ! -x "$SLAM_BIN" ]; then
   echo "ERROR: native SLAM DDS runtime is missing or not executable: $SLAM_BIN" >&2
-  echo "Build it with: LINGTU_SLAM_BUILD_DDS_RUNTIME=ON LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF bash scripts/build/build_slam_core.sh" >&2
+  echo "Build it with: LINGTU_SLAM_BUILD_DDS_RUNTIME=ON bash scripts/build/build_slam_core.sh" >&2
   exit 2
 fi
 
@@ -14,7 +15,7 @@ args=(
   "$SLAM_BIN"
   --backend "${LINGTU_SLAM_BACKEND:-fastlio2}"
   --mode "${LINGTU_SLAM_MODE:-mapping}"
-  --config "${LINGTU_SLAM_CONFIG:-/opt/lingtu/current/src/localization/fastlio2/config/mid360_s100p.yaml}"
+  --config "${SLAM_CONFIG}"
   --domain-id "${LINGTU_DDS_DOMAIN_ID:-0}"
   --tick-hz "${LINGTU_SLAM_TICK_HZ:-50}"
   --log-status-s "${LINGTU_SLAM_LOG_STATUS_S:-5}"

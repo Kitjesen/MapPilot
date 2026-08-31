@@ -6,10 +6,10 @@
 
 | 传感器 | 型号/来源 | 标定类型 | 结果去向 |
 | --- | --- | --- | --- |
-| 相机 | Orbbec RGB-D | 相机内参、畸变 | `config/robot_config.yaml` |
-| IMU | Livox Mid-360 内置 IMU | Allan Variance 噪声参数 | Fast-LIO2 / Point-LIO 配置 |
+| 相机 | Orbbec RGB-D | 相机内参、畸变 | `config/robots/unitree/go2/robot.yaml` |
+| IMU | Livox Mid-360 内置 IMU | Allan Variance 噪声参数 | Fast-LIO2 配置 |
 | LiDAR + IMU | Livox Mid-360 + 内置 IMU | 外参、时间偏移、初始 bias | SLAM/LIO 配置 |
-| 相机 + LiDAR | Orbbec + Livox Mid-360 | Camera-LiDAR 外参 | `config/robot_config.yaml` |
+| 相机 + LiDAR | Orbbec + Livox Mid-360 | Camera-LiDAR 外参 | `config/robots/unitree/go2/robot.yaml` |
 
 ## 目录结构
 
@@ -73,7 +73,7 @@ source install/setup.bash
 popd >/dev/null
 
 # 薄入口负责采集、分析和写入；默认采集 3 小时
-bash scripts/hardware/run_allan_variance.sh all
+bash tools/calibration/imu/run_allan_variance.sh all
 ```
 
 输出默认位于 `$HOME/data/imu_calib/<timestamp>/imu.yaml`，包含 `accelerometer_noise_density`、`gyroscope_noise_density` 和 random walk 参数。需要分阶段恢复时，可运行 `record`、`analyze <bag-path>` 或 `apply <imu.yaml>`。
@@ -155,17 +155,18 @@ python tools/calibration/verify.py
 
 ## 标定参数最终写到哪里
 
-`apply_calibration.py` 按输入类型写入不同目标；不是所有结果都写入 `config/robot_config.yaml`：
+`apply_calibration.py` 按输入类型写入不同目标；不是所有结果都写入 Go2 `robot.yaml`：
 
 | 输入 | 实际写入目标 | 保持不变 |
 | --- | --- | --- |
-| 相机内参 | `config/robot_config.yaml` 的 `camera` 内参和畸变字段 | LiDAR/IMU 配置 |
-| IMU 噪声 | `src/localization/fastlio2/config/mid360_s100p.yaml`、`config/pointlio.yaml`（存在时） | 不写 `config/robot_config.yaml` |
-| LiDAR-IMU 外参 | 上述 Fast-LIO2/Point-LIO 配置中的 `r_il`、`t_il` 和可用的时间偏移 | `config/robot_config.yaml` 中机械安装的 `T_body_lidar` |
-| Camera-LiDAR 外参 | `config/robot_config.yaml` 的 `camera` 位姿字段 | 机械 `T_body_lidar` |
+| 相机内参 | Go2 `robot.yaml` 的 `camera` 内参和畸变字段 | LiDAR/IMU 配置 |
+| IMU 噪声 | `--slam-config` 指定的机器人专属 MID-360 Fast-LIO2 配置 | 不写 `robot.yaml` |
+| LiDAR-IMU 外参 | 上述 Fast-LIO2 配置中的 `r_il`、`t_il` 和可用的时间偏移 | Go2 `robot.yaml` 中机械安装的 `T_body_lidar` |
+| Camera-LiDAR 外参 | Go2 `robot.yaml` 的 `camera` 位姿字段 | 机械 `T_body_lidar` |
 
 接受标定结果前至少完成：
 
 - `python tools/calibration/verify.py`
+- Thunder 标定时显式传入 `--robot-config` 和 `--slam-config`；默认目标是 Go2
 - Camera-LiDAR 点云投影目视检查
 - SLAM 启动后的静止漂移和短距离往返检查

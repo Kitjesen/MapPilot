@@ -32,6 +32,17 @@ def test_camera_only_build_can_skip_cyclonedds_and_idlc() -> None:
     assert '-DLINGTU_RECORDING_BUILD_DDS="$BUILD_DDS"' in script
 
 
+def test_linux_camera_shm_propagates_posix_realtime_library() -> None:
+    cmake = _read(RECORDING / "CMakeLists.txt")
+    camera_library = cmake.split(
+        "add_library(lingtu_recording_camera_linux",
+        1,
+    )[1].split("add_executable(lingtu_camera_recorder", 1)[0]
+
+    assert "target_link_libraries(lingtu_recording_camera_linux PUBLIC" in camera_library
+    assert "\n    rt)" in camera_library
+
+
 def test_camera_recorder_taps_shm_and_keeps_media_encoder_optional() -> None:
     recorder = _read(RECORDING / "src" / "camera_recorder_main.cpp")
     assert "/lingtu_camera_color" in recorder
@@ -46,7 +57,7 @@ def test_camera_recorder_taps_shm_and_keeps_media_encoder_optional() -> None:
 
 def test_field_camera_shm_ring_absorbs_segment_rotation_backlog() -> None:
     runner = _read(ROOT / "scripts" / "deploy" / "thunder" / "run_camera_dds.sh")
-    service = _read(ROOT / "scripts" / "deploy" / "thunder" / "lingtu-camera-dds.service")
+    service = _read(ROOT / "scripts" / "deploy" / "thunder" / "lt-camera.service")
 
     assert ': "${LINGTU_CAMERA_SHM_SLOT_COUNT:=16}"' in runner
     assert ': "${LINGTU_CAMERA_SHM_SLOT_CAPACITY_BYTES:=1048576}"' in runner
@@ -106,3 +117,19 @@ def test_camera_depth_is_not_misrepresented_as_lossy_video() -> None:
     assert "depth" in readme
     assert "lossless" in readme
     assert "not part of the default product" in readme
+
+
+def test_native_release_carries_the_camera_runtime_used_by_systemd() -> None:
+    package = _read(ROOT / "scripts" / "deploy" / "package_native_release.sh")
+    service = _read(ROOT / "scripts" / "deploy" / "thunder" / "lt-camera.service")
+
+    for relative in (
+        "build/camera_dds/lingtu_camera_dds",
+        "build/orbbec_native/orbbec_capture",
+    ):
+        assert relative in package
+        assert f"/opt/lingtu/current/{relative}" in service
+    assert 'ORBBEC_RUNTIME_SOURCE="${ROOT}/build/orbbec_native/lib"' in package
+    assert "libOrbbecSDK.so" in package
+    assert "extensions/depthengine" in package
+    assert 'rsync -aL "${ORBBEC_RUNTIME_SOURCE}/" "${ORBBEC_RUNTIME_DIR}/"' in package

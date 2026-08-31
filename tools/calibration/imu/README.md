@@ -8,10 +8,10 @@ This is an offline calibration workflow. It may use ROS 2 and rosbag on a calibr
 
 | Parameter | Symbol | Unit | Used by |
 | --- | --- | --- | --- |
-| Accelerometer noise density | `na` | m/s^2/sqrt(Hz) | Fast-LIO2, Point-LIO |
-| Gyroscope noise density | `ng` | rad/s/sqrt(Hz) | Fast-LIO2, Point-LIO |
-| Accelerometer random walk | `nba` | m/s^3/sqrt(Hz) | Fast-LIO2, Point-LIO |
-| Gyroscope random walk | `nbg` | rad/s^2/sqrt(Hz) | Fast-LIO2, Point-LIO |
+| Accelerometer noise density | `na` | m/s^2/sqrt(Hz) | Fast-LIO2 |
+| Gyroscope noise density | `ng` | rad/s/sqrt(Hz) | Fast-LIO2 |
+| Accelerometer random walk | `nba` | m/s^3/sqrt(Hz) | Fast-LIO2 |
+| Gyroscope random walk | `nbg` | rad/s^2/sqrt(Hz) | Fast-LIO2 |
 
 ## Prerequisites
 
@@ -29,7 +29,7 @@ Use this environment only for calibration data capture and analysis. Commit or d
 For the standard three-hour workflow, use the repository entry point:
 
 ```bash
-bash scripts/hardware/run_allan_variance.sh all
+bash tools/calibration/imu/run_allan_variance.sh all
 ```
 
 ## Procedure
@@ -40,7 +40,7 @@ Place the robot on a stable, level surface. Avoid vibration and motion.
 
 ```bash
 export LINGTU_AV_TS="$(date +%Y%m%d_%H%M%S)"
-bash scripts/hardware/run_allan_variance.sh record
+bash tools/calibration/imu/run_allan_variance.sh record
 ```
 
 The entry point records three hours by default. Override it with `LINGTU_AV_DURATION`; do not use less than two hours.
@@ -48,7 +48,7 @@ The entry point records three hours by default. Override it with `LINGTU_AV_DURA
 ### 2. Run Analysis
 
 ```bash
-bash scripts/hardware/run_allan_variance.sh analyze \
+bash tools/calibration/imu/run_allan_variance.sh analyze \
   "$HOME/data/imu_calib/$LINGTU_AV_TS/imu_static_bag"
 
 # Output: $HOME/data/imu_calib/$LINGTU_AV_TS/imu.yaml
@@ -61,16 +61,14 @@ The `analyze` phase runs both Allan Variance extraction and noise-model fitting.
 ### 4. Apply
 
 ```bash
-bash scripts/hardware/run_allan_variance.sh apply \
+bash tools/calibration/imu/run_allan_variance.sh apply \
   "$HOME/data/imu_calib/$LINGTU_AV_TS/imu.yaml"
 ```
 
-This updates, when present:
+This updates the robot-specific Fast-LIO2 file selected by `--slam-config`
+(`na`, `ng`, `nba`, `nbg`) when present.
 
-- `src/localization/fastlio2/config/mid360_s100p.yaml` (`na`, `ng`, `nba`, `nbg`)
-- `config/pointlio.yaml` (`imu_meas_acc_cov`, `imu_meas_omg_cov`, `b_acc_cov`, `b_gyr_cov`)
-
-IMU noise application does not write `config/robot_config.yaml`.
+IMU noise application does not write the model's `robot.yaml`.
 
 ## Important Notes
 
