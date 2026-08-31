@@ -3,15 +3,14 @@
 Status: current repository validation policy
 
 This policy is the project-facing checklist for every commit and push.
-`AGENTS.md` remains the authoritative agent contract and contains the required
-Lore Commit Protocol. This document explains how that protocol is applied in
-day-to-day engineering work.
+`AGENTS.md` remains the authoritative agent contract. This document defines
+the repository's day-to-day commit and push checks.
 
 ## Where the Rules Live
 
 | Surface | Purpose |
 | --- | --- |
-| `AGENTS.md` | Required agent behavior, repository boundaries, and Lore commit message format. |
+| `AGENTS.md` | Required agent behavior and repository boundaries. |
 | `docs/03-development/COMMIT_PUSH_POLICY.md` | Human-readable commit/push acceptance checklist. |
 | `docs/07-testing/README.md` | Regression suite overview and L1/L2/L3 testing layers. |
 
@@ -25,7 +24,9 @@ A commit is acceptable only when all of these are true:
 - New or changed behavior has a focused test, or the commit explains why it cannot.
 - Gateway/App/Web API changes update response schemas, manifest coverage, and client types when relevant.
 - Robot-control changes identify the affected safety/control path and include the narrowest useful regression test.
-- The commit message follows the Lore Commit Protocol from `AGENTS.md`: the first line explains why, and useful trailers record constraints, rejected alternatives, confidence, scope risk, tested evidence, and known gaps.
+- The commit subject explains the coherent reason for the change. Add a body or
+  trailers when constraints, safety impact, test evidence, or known gaps are not
+  already clear from the diff and final engineering report.
 
 Minimum local check before committing:
 

@@ -13,8 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from nav.adapters.native.operator_motion import NativeOperatorMotionClient
-
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -288,7 +286,11 @@ class ViewerInput:
             self._client = None
 
 
-def viewer_input_from_run_plan(plan: Any) -> ViewerInput | None:
+def viewer_input_from_run_plan(
+    plan: Any,
+    *,
+    client_type: Callable[..., _OperatorClient],
+) -> ViewerInput | None:
     """Build viewer input from the already-resolved simulation RunPlan."""
 
     if os.name != "nt" or str(plan.product) not in {"teleop", "teleop_avoid"}:
@@ -323,7 +325,7 @@ def viewer_input_from_run_plan(plan: Any) -> ViewerInput | None:
             yaw_speed_rad_s=yaw_speed,
         ),
         keys=ViewerKeys(),
-        client_factory=lambda: NativeOperatorMotionClient(
+        client_factory=lambda: client_type(
             library_path,
             domain_id=domain_id,
             timeout_ms=1000,

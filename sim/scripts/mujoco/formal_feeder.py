@@ -90,6 +90,7 @@ from drivers.sim.mujoco.sensors import (
     world_xyzi_to_body_xyzi,
     world_xyzi_to_sensor_xyzi,
 )
+from nav.adapters.native.operator_motion import NativeOperatorMotionClient
 from lingtu.run_plan import RunPlan
 from lingtu.sim.viewer_input import ViewerInput, viewer_input_from_run_plan
 from lingtu.sim.readiness import SIM_FEEDER_SCHEMA, validate_feeder_readiness
@@ -2426,7 +2427,10 @@ def _execute(
             viewer = launch_presentation_viewer(engine.model, engine.data)
             focus_presentation_viewer(viewer, config.robot.position_m, initialize=True)
             viewer.sync()
-            viewer_input = viewer_input_from_run_plan(plan)
+            viewer_input = viewer_input_from_run_plan(
+                plan,
+                client_type=NativeOperatorMotionClient,
+            )
             if viewer_input is not None:
                 viewer_input.start()
         endpoint_files = dict(_SENSOR_ENDPOINTS)
