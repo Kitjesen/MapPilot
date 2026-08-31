@@ -6,7 +6,7 @@
 #include <thread>
 
 #include "dds/dds.h"
-#include "lingtu_slam.h"
+#include "messages.h"
 
 int main(int argc, char **argv) {
   if (argc != 2) {

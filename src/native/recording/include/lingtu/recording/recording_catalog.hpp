@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace lingtu::recording {
 
@@ -31,6 +32,9 @@ struct RecordingManifestSnapshot {
 
 struct RecordingCatalogSnapshot {
   std::filesystem::path root;
+  // All validated sessions, newest first.  The selected session remains the
+  // active session (or newest terminal session) for the status command.
+  std::vector<RecordingManifestSnapshot> sessions;
   std::optional<RecordingManifestSnapshot> selected;
   std::uint64_t selected_size_bytes{0};
   bool selected_size_truncated{false};

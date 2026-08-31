@@ -107,7 +107,7 @@ verify_inspection_task_timeline(const std::string &task_id,
     if (event->boot_id != identity.boot_id) {
       add_error(report, "inspection task crossed a native endpoint boot boundary");
     }
-    if (event->map_id != identity.map_id || event->map_version != identity.map_version ||
+    if (event->map_id != identity.map_id || event->map_content_epoch != identity.map_content_epoch ||
         event->route_id != identity.route_id || event->route_revision != identity.route_revision) {
       add_error(report, "inspection task identity changed during the timeline");
     }

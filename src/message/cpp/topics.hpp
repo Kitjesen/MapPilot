@@ -12,266 +12,263 @@ struct TopicContract {
   std::string_view topic;
   std::string_view dds_topic;
   std::string_view idl_type;
-  std::string_view cpp_type;
 };
 
 inline constexpr TopicContract kLidarRawFrame{
     // Native SLAM wire: scan-level LivoxFrame, not one SDK packet.
     "/lidar/raw_frame", "rt/lidar/raw_frame",
-    "lingtu.dds.LivoxFrame", "lingtu::dds::LivoxFrame"};
+    "lingtu.dds.LivoxFrame"};
 inline constexpr TopicContract kLidarRawPacket{
     // Diagnostic-only SDK packet stream. Do not feed this into SLAM.
     "/lidar/raw_packet", "rt/lidar/raw_packet",
-    "lingtu.dds.LivoxFrame", "lingtu::dds::LivoxFrame"};
+    "lingtu.dds.LivoxFrame"};
 inline constexpr TopicContract kTf{
-    "/tf", "rt/tf", "lingtu.dds.TFMessage", "lingtu::dds::TFMessage"};
+    "/tf", "rt/tf", "lingtu.dds.TFMessage"};
 inline constexpr TopicContract kTfStatic{
-    "/tf_static", "rt/tf_static", "lingtu.dds.TFMessage",
-    "lingtu::dds::TFMessage"};
+    "/tf_static", "rt/tf_static", "lingtu.dds.TFMessage"};
 inline constexpr TopicContract kImuRaw{
-    "/imu/raw", "rt/imu/raw", "lingtu.dds.Imu", "lingtu::dds::Imu"};
+    "/imu/raw", "rt/imu/raw", "lingtu.dds.Imu"};
+inline constexpr TopicContract kSimImu{
+    "/sim/imu", "rt/sim/imu", "lingtu.dds.Imu"};
+inline constexpr TopicContract kSimTruthOdometry{
+    "/sim/truth/odom", "rt/sim/truth/odom",
+    "lingtu.dds.Odometry"};
+inline constexpr TopicContract kSimLidarRawFrame{
+    "/sim/lidar/raw_frame", "rt/sim/lidar/raw_frame",
+    "lingtu.dds.LivoxFrame"};
 inline constexpr TopicContract kSlamOdomPrior{
     "/slam/odom_prior", "rt/slam/odom_prior",
-    "lingtu.dds.Odometry", "lingtu::dds::Odometry"};
+    "lingtu.dds.Odometry"};
 inline constexpr TopicContract kDriverOdometry{
     "/driver/odometry", "rt/driver/odometry",
-    "lingtu.dds.Odometry", "lingtu::dds::Odometry"};
+    "lingtu.dds.Odometry"};
 inline constexpr TopicContract kDriverControlState{
     "/driver/control_state", "rt/driver/control_state",
-    "lingtu.dds.DriverControlState", "lingtu::dds::DriverControlState"};
+    "lingtu.dds.DriverControlState"};
 inline constexpr TopicContract kSlamOdometry{
     "/slam/odometry", "rt/slam/odometry",
-    "lingtu.dds.Odometry", "lingtu::dds::Odometry"};
+    "lingtu.dds.Odometry"};
 inline constexpr TopicContract kSlamStateAtScan{
     "/slam/state_at_scan", "rt/slam/state_at_scan",
-    "lingtu.dds.Odometry", "lingtu::dds::Odometry"};
+    "lingtu.dds.Odometry"};
 inline constexpr TopicContract kSlamRegisteredCloud{
     "/slam/registered_cloud", "rt/slam/registered_cloud",
-    "lingtu.dds.PointCloud2", "lingtu::dds::PointCloud2"};
+    "lingtu.dds.PointCloud2"};
 inline constexpr TopicContract kSlamMapObservation{
     "/slam/map_observation", "rt/slam/map_observation",
-    "lingtu.dds.MapObservation", "lingtu::dds::MapObservation"};
+    "lingtu.dds.MapObservation"};
 inline constexpr TopicContract kSlamMapCloud{
     "/slam/map_cloud", "rt/slam/map_cloud",
-    "lingtu.dds.PointCloud2", "lingtu::dds::PointCloud2"};
+    "lingtu.dds.PointCloud2"};
 inline constexpr TopicContract kSlamCumulativeMapCloud{
     "/slam/cumulative_map_cloud", "rt/slam/cumulative_map_cloud",
-    "lingtu.dds.PointCloud2", "lingtu::dds::PointCloud2"};
+    "lingtu.dds.PointCloud2"};
 inline constexpr TopicContract kSlamSavedMapCloud{
     "/slam/saved_map_cloud", "rt/slam/saved_map_cloud",
-    "lingtu.dds.PointCloud2", "lingtu::dds::PointCloud2"};
+    "lingtu.dds.PointCloud2"};
 inline constexpr TopicContract kMapsState{
     "/maps/state", "rt/maps/state",
-    "lingtu.dds.MapRuntimeState", "lingtu::dds::MapRuntimeState"};
+    "lingtu.dds.MapRuntimeState"};
 inline constexpr TopicContract kMapsLiveCloud{
     "/maps/live_cloud", "rt/maps/live_cloud",
-    "lingtu.dds.MapCloudLayer", "lingtu::dds::MapCloudLayer"};
+    "lingtu.dds.MapCloudLayer"};
 inline constexpr TopicContract kMapsVoxelCloud{
     "/maps/voxel_cloud", "rt/maps/voxel_cloud",
-    "lingtu.dds.MapCloudLayer", "lingtu::dds::MapCloudLayer"};
+    "lingtu.dds.MapCloudLayer"};
+inline constexpr TopicContract kMapsLocalCollision{
+    "/maps/local_collision", "rt/maps/local_collision",
+    "lingtu.dds.MapCollisionLayer"};
 inline constexpr TopicContract kMapsAccumulatedCloud{
     "/maps/accumulated_cloud", "rt/maps/accumulated_cloud",
-    "lingtu.dds.MapCloudLayer", "lingtu::dds::MapCloudLayer"};
+    "lingtu.dds.MapCloudLayer"};
 inline constexpr TopicContract kMapsOccupancy{
     "/maps/occupancy", "rt/maps/occupancy",
-    "lingtu.dds.MapGrid", "lingtu::dds::MapGrid"};
+    "lingtu.dds.MapGrid"};
 inline constexpr TopicContract kMapsElevation{
     "/maps/elevation", "rt/maps/elevation",
-    "lingtu.dds.MapGrid", "lingtu::dds::MapGrid"};
+    "lingtu.dds.MapGrid"};
 inline constexpr TopicContract kMapsEsdf{
     "/maps/esdf", "rt/maps/esdf",
-    "lingtu.dds.MapGrid", "lingtu::dds::MapGrid"};
+    "lingtu.dds.MapGrid"};
 inline constexpr TopicContract kMapsScene{
     "/maps/scene", "rt/maps/scene",
-    "lingtu.dds.MapScene", "lingtu::dds::MapScene"};
+    "lingtu.dds.MapScene"};
 inline constexpr TopicContract kMapsActivationRequest{
     "/maps/activation/request", "rt/maps/activation/request",
-    "lingtu.dds.MapActivationRequest", "lingtu::dds::MapActivationRequest"};
+    "lingtu.dds.MapActivationRequest"};
 inline constexpr TopicContract kMapsActivationAck{
     "/maps/activation/ack", "rt/maps/activation/ack",
-    "lingtu.dds.MapActivationAck", "lingtu::dds::MapActivationAck"};
+    "lingtu.dds.MapActivationAck"};
 inline constexpr TopicContract kCameraColor{
     "/camera/color/image_raw", "rt/camera/color",
-    "lingtu.dds.Image", "lingtu::dds::Image"};
+    "lingtu.dds.Image"};
 inline constexpr TopicContract kCameraDepth{
     "/camera/depth/image_raw", "rt/camera/depth",
-    "lingtu.dds.Image", "lingtu::dds::Image"};
+    "lingtu.dds.Image"};
 inline constexpr TopicContract kCameraInfo{
     "/camera/color/camera_info", "rt/camera/info",
-    "lingtu.dds.CameraInfo", "lingtu::dds::CameraInfo"};
+    "lingtu.dds.CameraInfo"};
 inline constexpr TopicContract kGnssFix{
     "/gnss/fix", "rt/gnss/fix",
-    "lingtu.dds.GnssFix", "lingtu::dds::GnssFix"};
+    "lingtu.dds.GnssFix"};
 inline constexpr TopicContract kGnssStatus{
     "/gnss/status", "rt/gnss/status",
-    "lingtu.dds.GnssStatus", "lingtu::dds::GnssStatus"};
+    "lingtu.dds.GnssStatus"};
 inline constexpr TopicContract kGnssOdom{
     "/gnss/odom", "rt/gnss/odom",
-    "lingtu.dds.Odometry", "lingtu::dds::Odometry"};
-inline constexpr TopicContract kSlamMapCommand{
+    "lingtu.dds.Odometry"};
+inline constexpr TopicContract kSlamMapSnapshotRequest{
     "/slam/map_command", "rt/slam/map_command",
-    "lingtu.dds.Text", "lingtu::dds::Text"};
-inline constexpr TopicContract kSlamMapEvent{
+    "lingtu.dds.SlamMapSnapshotRequest"};
+inline constexpr TopicContract kSlamMapSnapshotAck{
     "/slam/map_event", "rt/slam/map_event",
-    "lingtu.dds.Text", "lingtu::dds::Text"};
+    "lingtu.dds.SlamMapSnapshotAck"};
 inline constexpr TopicContract kSlamRelocalizationRequest{
     "/slam/relocalization/request", "rt/slam/relocalization/request",
-    "lingtu.dds.RelocalizationRequest", "lingtu::dds::RelocalizationRequest"};
+    "lingtu.dds.RelocalizationRequest"};
 inline constexpr TopicContract kSlamRelocalizationResponse{
     "/slam/relocalization/response", "rt/slam/relocalization/response",
-    "lingtu.dds.RelocalizationResponse", "lingtu::dds::RelocalizationResponse"};
+    "lingtu.dds.RelocalizationResponse"};
 inline constexpr TopicContract kSlamLocalizationQuality{
     "/slam/localization_quality", "rt/slam/localization_quality",
-    "lingtu.dds.Float32", "lingtu::dds::Float32"};
+    "lingtu.dds.Float32"};
 inline constexpr TopicContract kSlamLocalizationHealth{
     "/slam/localization_health", "rt/slam/localization_health",
-    "lingtu.dds.Text", "lingtu::dds::Text"};
+    "lingtu.dds.Text"};
 inline constexpr TopicContract kNavGlobalPath{
     "/nav/global_path", "rt/nav/global_path",
-    "lingtu.dds.Path", "lingtu::dds::Path"};
+    "lingtu.dds.Path"};
 inline constexpr TopicContract kNavLocalPath{
     "/nav/local_path", "rt/nav/local_path",
-    "lingtu.dds.Path", "lingtu::dds::Path"};
+    "lingtu.dds.Path"};
 inline constexpr TopicContract kNavWayPoint{
     "/nav/way_point", "rt/nav/way_point",
-    "lingtu.dds.PoseStamped", "lingtu::dds::PoseStamped"};
-inline constexpr TopicContract kNavGoalPose{
-    "/nav/goal_pose", "rt/nav/goal_pose",
-    "lingtu.dds.PoseStamped", "lingtu::dds::PoseStamped"};
-inline constexpr TopicContract kNavCancel{
-    "/nav/cancel", "rt/nav/cancel", "lingtu.dds.Text", "lingtu::dds::Text"};
+    "lingtu.dds.PoseStamped"};
 inline constexpr TopicContract kNavCommandRequest{
     "/nav/command/request", "rt/nav/command/request",
-    "lingtu.dds.NavigationCommandRequest",
-    "lingtu::dds::NavigationCommandRequest"};
+    "lingtu.dds.NavigationCommandRequest"};
 inline constexpr TopicContract kNavCommandAck{
     "/nav/command/ack", "rt/nav/command/ack",
-    "lingtu.dds.NavigationCommandAck",
-    "lingtu::dds::NavigationCommandAck"};
+    "lingtu.dds.NavigationCommandAck"};
+inline constexpr TopicContract kNavPlanRequest{
+    "/nav/plan/request", "rt/nav/plan/request",
+    "lingtu.dds.PlanRequest"};
+inline constexpr TopicContract kNavPlanResult{
+    "/nav/plan/result", "rt/nav/plan/result",
+    "lingtu.dds.PlanResult"};
+inline constexpr TopicContract kNavGeofenceCommand{
+    "/nav/geofence/command", "rt/nav/geofence/command",
+    "lingtu.dds.GeofenceCommandRequest"};
+inline constexpr TopicContract kNavGeofenceResponse{
+    "/nav/geofence/response", "rt/nav/geofence/response",
+    "lingtu.dds.GeofenceCommandAck"};
+inline constexpr TopicContract kNavGeofenceAlert{
+    "/nav/geofence/alert", "rt/nav/geofence/alert",
+    "lingtu.dds.GeofenceAlert"};
 inline constexpr TopicContract kOperatorMotionControl{
     "/nav/operator_motion/control", "rt/nav/operator_motion/control",
-    "lingtu.dds.OperatorMotionControl",
-    "lingtu::dds::OperatorMotionControl"};
+    "lingtu.dds.OperatorMotionControl"};
 inline constexpr TopicContract kOperatorMotionSample{
     "/nav/operator_motion/sample", "rt/nav/operator_motion/sample",
-    "lingtu.dds.OperatorMotionSample",
-    "lingtu::dds::OperatorMotionSample"};
+    "lingtu.dds.OperatorMotionSample"};
 inline constexpr TopicContract kOperatorMotionAck{
     "/nav/operator_motion/ack", "rt/nav/operator_motion/ack",
-    "lingtu.dds.OperatorMotionAck",
-    "lingtu::dds::OperatorMotionAck"};
+    "lingtu.dds.OperatorMotionAck"};
 inline constexpr TopicContract kOperatorMotionStatus{
     "/nav/operator_motion/status", "rt/nav/operator_motion/status",
-    "lingtu.dds.OperatorMotionStatus",
-    "lingtu::dds::OperatorMotionStatus"};
+    "lingtu.dds.OperatorMotionStatus"};
 inline constexpr TopicContract kNavGoalStatus{
     "/nav/goal/status", "rt/nav/goal/status",
-    "lingtu.dds.NavigationGoalStatus",
-    "lingtu::dds::NavigationGoalStatus"};
+    "lingtu.dds.NavigationGoalStatus"};
 inline constexpr TopicContract kNavState{
     "/nav/state", "rt/nav/state",
-    "lingtu.dds.NavigationState",
-    "lingtu::dds::NavigationState"};
+    "lingtu.dds.NavigationState"};
 inline constexpr TopicContract kNavExplorationCommand{
     "/nav/exploration/command", "rt/nav/exploration/command",
-    "lingtu.dds.ExplorationCommandRequest",
-    "lingtu::dds::ExplorationCommandRequest"};
+    "lingtu.dds.ExplorationCommandRequest"};
 inline constexpr TopicContract kNavExplorationAck{
     "/nav/exploration/ack", "rt/nav/exploration/ack",
-    "lingtu.dds.ExplorationCommandAck",
-    "lingtu::dds::ExplorationCommandAck"};
+    "lingtu.dds.ExplorationCommandAck"};
 inline constexpr TopicContract kNavExplorationRunEvent{
     "/nav/exploration/run/event", "rt/nav/exploration/run/event",
-    "lingtu.dds.ExplorationRunEvent",
-    "lingtu::dds::ExplorationRunEvent"};
+    "lingtu.dds.ExplorationRunEvent"};
 inline constexpr TopicContract kNavExplorationSegmentRequest{
     "/nav/exploration_segment/request", "rt/nav/exploration_segment/request",
-    "lingtu.dds.ExplorationSegmentRequest",
-    "lingtu::dds::ExplorationSegmentRequest"};
+    "lingtu.dds.ExplorationSegmentRequest"};
 inline constexpr TopicContract kNavExplorationSegmentAck{
     "/nav/exploration_segment/ack", "rt/nav/exploration_segment/ack",
-    "lingtu.dds.ExplorationSegmentAck",
-    "lingtu::dds::ExplorationSegmentAck"};
+    "lingtu.dds.ExplorationSegmentAck"};
 inline constexpr TopicContract kNavExplorationSegmentStatus{
     "/nav/exploration_segment/status", "rt/nav/exploration_segment/status",
-    "lingtu.dds.ExplorationSegmentStatus",
-    "lingtu::dds::ExplorationSegmentStatus"};
+    "lingtu.dds.ExplorationSegmentStatus"};
 inline constexpr TopicContract kNavInspectionTaskRequest{
     "/nav/inspection/task/request", "rt/nav/inspection/task/request",
-    "lingtu.dds.InspectionTaskRequest",
-    "lingtu::dds::InspectionTaskRequest"};
+    "lingtu.dds.InspectionTaskRequest"};
 inline constexpr TopicContract kNavInspectionTaskAck{
     "/nav/inspection/task/ack", "rt/nav/inspection/task/ack",
-    "lingtu.dds.InspectionTaskAck",
-    "lingtu::dds::InspectionTaskAck"};
+    "lingtu.dds.InspectionTaskAck"};
 inline constexpr TopicContract kNavInspectionEvidenceRequest{
     "/nav/inspection/evidence/request", "rt/nav/inspection/evidence/request",
-    "lingtu.dds.InspectionEvidenceRequest",
-    "lingtu::dds::InspectionEvidenceRequest"};
+    "lingtu.dds.InspectionEvidenceRequest"};
 inline constexpr TopicContract kNavInspectionEvidenceResult{
     "/nav/inspection/evidence/result", "rt/nav/inspection/evidence/result",
-    "lingtu.dds.InspectionEvidenceResult",
-    "lingtu::dds::InspectionEvidenceResult"};
+    "lingtu.dds.InspectionEvidenceResult"};
 inline constexpr TopicContract kNavInspectionStatus{
     "/nav/inspection/status", "rt/nav/inspection/status",
-    "lingtu.dds.InspectionStatus",
-    "lingtu::dds::InspectionStatus"};
+    "lingtu.dds.InspectionStatus"};
 inline constexpr TopicContract kNavInspectionTaskEvent{
     "/nav/inspection/task/event", "rt/nav/inspection/task/event",
-    "lingtu.dds.InspectionTaskEvent",
-    "lingtu::dds::InspectionTaskEvent"};
+    "lingtu.dds.InspectionTaskEvent"};
 inline constexpr TopicContract kNavSemanticInstruction{
     "/nav/semantic/instruction", "rt/nav/semantic/instruction",
-    "lingtu.dds.Text", "lingtu::dds::Text"};
+    "lingtu.dds.Text"};
 inline constexpr TopicContract kNavTraversability{
     "/nav/traversability", "rt/nav/traversability",
-    "lingtu.dds.OccupancyGrid", "lingtu::dds::OccupancyGrid"};
+    "lingtu.dds.OccupancyGrid"};
+inline constexpr TopicContract kNavLocalTraversability{
+    "/nav/local_traversability", "rt/nav/local_traversability",
+    "lingtu.dds.OccupancyGrid"};
 inline constexpr TopicContract kNavTerrainMap{
     "/nav/terrain_map", "rt/nav/terrain_map",
-    "lingtu.dds.PointCloud2", "lingtu::dds::PointCloud2"};
+    "lingtu.dds.PointCloud2"};
 inline constexpr TopicContract kNavTerrainMapExt{
     "/nav/terrain_map_ext", "rt/nav/terrain_map_ext",
-    "lingtu.dds.PointCloud2", "lingtu::dds::PointCloud2"};
+    "lingtu.dds.PointCloud2"};
 inline constexpr TopicContract kNavMapClearing{
     "/nav/map_clearing", "rt/nav/map_clearing",
-    "lingtu.dds.Bool", "lingtu::dds::Bool"};
+    "lingtu.dds.Bool"};
 inline constexpr TopicContract kNavCloudClearing{
     "/nav/cloud_clearing", "rt/nav/cloud_clearing",
-    "lingtu.dds.Bool", "lingtu::dds::Bool"};
+    "lingtu.dds.Bool"};
 inline constexpr TopicContract kNavCmdVel{
     "/nav/cmd_vel", "rt/nav/cmd_vel",
-    "lingtu.dds.FinalVelocityCommand",
-    "lingtu::dds::FinalVelocityCommand"};
-inline constexpr TopicContract kNavTeleopCmdVel{
-    "/nav/teleop_cmd_vel", "rt/nav/teleop_cmd_vel",
-    "lingtu.dds.TwistStamped", "lingtu::dds::TwistStamped"};
+    "lingtu.dds.FinalVelocityCommand"};
 inline constexpr TopicContract kNavExplorationGrid{
     "/nav/exploration_grid", "rt/nav/exploration_grid",
-    "lingtu.dds.OccupancyGrid", "lingtu::dds::OccupancyGrid"};
+    "lingtu.dds.OccupancyGrid"};
 inline constexpr TopicContract kNavExplorationSnapshot{
     "/nav/exploration_snapshot", "rt/nav/exploration_snapshot",
-    "lingtu.dds.ExplorationGrid", "lingtu::dds::ExplorationGrid"};
+    "lingtu.dds.ExplorationGrid"};
 inline constexpr TopicContract kNavExplorationExecutionSnapshot{
     "/nav/exploration_execution_snapshot", "rt/nav/exploration_execution_snapshot",
-    "lingtu.dds.ExplorationExecutionGrid",
-    "lingtu::dds::ExplorationExecutionGrid"};
+    "lingtu.dds.ExplorationExecutionGrid"};
 
 // ── Exploration planner topics ────────────────────────────────────────
 inline constexpr TopicContract kExplorationWayPoint{
     "/exploration/way_point", "rt/exploration/way_point",
-    "lingtu.dds.PointStamped", "lingtu::dds::PointStamped"};
+    "lingtu.dds.PointStamped"};
 inline constexpr TopicContract kExplorationLocalPath{
     "/exploration/local_path", "rt/exploration/local_path",
-    "lingtu.dds.Path", "lingtu::dds::Path"};
+    "lingtu.dds.Path"};
 inline constexpr TopicContract kExplorationRuntime{
     "/exploration/runtime", "rt/exploration/runtime",
-    "lingtu.dds.Float32", "lingtu::dds::Float32"};
+    "lingtu.dds.Float32"};
 inline constexpr TopicContract kExplorationFinish{
     "/exploration/finish", "rt/exploration/finish",
-    "lingtu.dds.Bool", "lingtu::dds::Bool"};
+    "lingtu.dds.Bool"};
 inline constexpr TopicContract kExplorationStart{
     "/exploration/start", "rt/exploration/start",
-    "lingtu.dds.Bool", "lingtu::dds::Bool"};
+    "lingtu.dds.Bool"};
 
 inline constexpr TopicContract kTopicContracts[] = {
     kTf,
@@ -279,6 +276,9 @@ inline constexpr TopicContract kTopicContracts[] = {
     kLidarRawFrame,
     kLidarRawPacket,
     kImuRaw,
+    kSimImu,
+    kSimTruthOdometry,
+    kSimLidarRawFrame,
     kSlamOdomPrior,
     kDriverOdometry,
     kDriverControlState,
@@ -292,6 +292,7 @@ inline constexpr TopicContract kTopicContracts[] = {
     kMapsState,
     kMapsLiveCloud,
     kMapsVoxelCloud,
+    kMapsLocalCollision,
     kMapsAccumulatedCloud,
     kMapsOccupancy,
     kMapsElevation,
@@ -305,8 +306,8 @@ inline constexpr TopicContract kTopicContracts[] = {
     kGnssFix,
     kGnssStatus,
     kGnssOdom,
-    kSlamMapCommand,
-    kSlamMapEvent,
+    kSlamMapSnapshotRequest,
+    kSlamMapSnapshotAck,
     kSlamRelocalizationRequest,
     kSlamRelocalizationResponse,
     kSlamLocalizationQuality,
@@ -314,10 +315,13 @@ inline constexpr TopicContract kTopicContracts[] = {
     kNavGlobalPath,
     kNavLocalPath,
     kNavWayPoint,
-    kNavGoalPose,
-    kNavCancel,
     kNavCommandRequest,
     kNavCommandAck,
+    kNavPlanRequest,
+    kNavPlanResult,
+    kNavGeofenceCommand,
+    kNavGeofenceResponse,
+    kNavGeofenceAlert,
     kOperatorMotionControl,
     kOperatorMotionSample,
     kOperatorMotionAck,
@@ -338,12 +342,12 @@ inline constexpr TopicContract kTopicContracts[] = {
     kNavInspectionTaskEvent,
     kNavSemanticInstruction,
     kNavTraversability,
+    kNavLocalTraversability,
     kNavTerrainMap,
     kNavTerrainMapExt,
     kNavMapClearing,
     kNavCloudClearing,
     kNavCmdVel,
-    kNavTeleopCmdVel,
     kNavExplorationGrid,
     kNavExplorationSnapshot,
     kNavExplorationExecutionSnapshot,

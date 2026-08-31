@@ -68,6 +68,12 @@ struct Point {
 };
 
 @final
+struct PointStamped {
+  Header header;
+  Point point;
+};
+
+@final
 struct Pose {
   Point position;
   Quaternion orientation;
@@ -188,16 +194,14 @@ enum MapActivationOperation {
 struct MapArtifactIdentity {
   string type;
   string uri;
-  string sha256;
 };
 
 @final
 struct MapIdentity {
   boolean present;
   string map_id;
-  string version_id;
+  long long content_epoch;
   string frame_id;
-  string map_dir;
   sequence<MapArtifactIdentity> artifacts;
 };
 
@@ -286,6 +290,7 @@ struct DriverControlState {
   boolean ready;
   boolean motors_enabled;
   boolean critical_fault;
+  boolean control_assured;
   boolean lease_valid;
   unsigned long lease_remaining_ms;
   unsigned long long accepted_sequence;
@@ -336,6 +341,64 @@ struct NavigationCommandAck {
 };
 
 @final
+struct PlanRequest {
+  Header header;
+  string request_id;
+  Point goal;
+};
+
+@final
+struct PlanResult {
+  Header header;
+  string request_id;
+  boolean feasible;
+  boolean start_valid;
+  string reason;
+  double elapsed_ms;
+  string planner;
+  Point start;
+  Point goal;
+  sequence<Point> path;
+};
+
+@final
+struct GeofenceCommandRequest {
+  Header header;
+  string request_id;
+  long action;
+  string name;
+  sequence<Point> polygon;
+};
+
+@final
+struct GeofenceZoneSummary {
+  string name;
+  boolean enabled;
+  unsigned long vertex_count;
+};
+
+@final
+struct GeofenceCommandAck {
+  Header header;
+  string request_id;
+  long action;
+  boolean accepted;
+  string reason;
+  unsigned long long revision;
+  sequence<GeofenceZoneSummary> zones;
+};
+
+@final
+struct GeofenceAlert {
+  Header header;
+  boolean active;
+  string name;
+  Point robot_position;
+  unsigned long long revision;
+  string reason;
+};
+
+@final
 struct OperatorMotionControl {
   Header header;
   string source_id;
@@ -355,6 +418,7 @@ struct OperatorMotionSample {
   unsigned long long source_sequence;
   string request_id;
   boolean deadman;
+  boolean manual_mode;
   Twist velocity;
   unsigned long freshness_budget_ms;
   unsigned long long source_stamp_ns;
@@ -417,8 +481,7 @@ struct NavigationState {
   string active_request_id;
   unsigned long long goal_epoch;
   string map_id;
-  long long map_version;
-  string map_hash;
+  long long map_content_epoch;
   long planning_state;
   long execution_state;
   long recovery_state;
@@ -434,7 +497,7 @@ struct ExplorationCommandRequest {
   string request_id;
   string exploration_run_id;
   long kind;
-  string session_id;
+  string product_session_id;
   boolean has_directed_target;
   double directed_target_x;
   double directed_target_y;
@@ -451,7 +514,7 @@ struct ExplorationCommandAck {
   boolean accepted;
   boolean duplicate;
   string reason;
-  string session_id;
+  string product_session_id;
   unsigned long long intent_revision;
 };
 
@@ -472,8 +535,7 @@ struct ExplorationRunEvent {
   long state;
   string route;
   string map_id;
-  long long map_version;
-  string artifact_hash;
+  long long map_content_epoch;
   string reason;
   boolean motion_stop_confirmed;
   string motion_stop_reason;
@@ -552,7 +614,7 @@ struct InspectionEvidenceRequest {
   string route_id;
   unsigned long long revision;
   string map_id;
-  long long map_version;
+  long long map_content_epoch;
   unsigned long point_index;
   string point_id;
   string action;
@@ -602,7 +664,7 @@ struct InspectionTaskEvent {
   string command_request_id;
   long state;
   string map_id;
-  long long map_version;
+  long long map_content_epoch;
   string route_id;
   unsigned long long route_revision;
   unsigned long point_index;
@@ -655,6 +717,37 @@ struct RelocalizationResponse {
   long track_against_map_failures;
 };
 
+// Typed save-time handoff between mapd and the native SLAM owner. The request
+// selects the exact product session and output location; the acknowledgement
+// carries the runtime identity and observation epoch captured by that save.
+@final
+struct SlamMapSnapshotRequest {
+  string request_id;
+  string map_id;
+  string product_session_id;
+  string output_path;
+  boolean save_patches;
+};
+
+@final
+struct SlamMapSnapshotAck {
+  string request_id;
+  string map_id;
+  boolean success;
+  string message;
+  string output_path;
+  string runtime_instance_id;
+  string product_session_id;
+  unsigned long long reset_epoch;
+  unsigned long long observation_sequence;
+  unsigned long long captured_at_ns;
+  string frame_id;
+  unsigned long long point_count;
+  string state;
+  boolean healthy;
+  string health_message;
+};
+
 @final
 struct Path {
   Header header;
@@ -703,6 +796,23 @@ struct MapCloudLayer {
   unsigned long long generation;
   boolean live;
   PointCloud2 cloud;
+};
+
+// Planner-only sparse view of one complete rolling occupancy AABB. `complete`
+// means no OccupancyState::kOccupied voxel inside the AABB was omitted; it
+// does not reinterpret unknown cells as observed free space.
+@final
+struct MapCollisionLayer {
+  Header header;
+  unsigned long long reset_epoch;
+  unsigned long long observation_sequence;
+  unsigned long long generation;
+  boolean live;
+  float resolution;
+  Point aabb_min;
+  Point aabb_max;
+  boolean complete;
+  PointCloud2 occupied;
 };
 
 @final
@@ -792,8 +902,7 @@ struct ExplorationGrid {
   sequence<octet> data;
   string session_id;
   string map_id;
-  long long map_version;
-  string artifact_hash;
+  long long map_content_epoch;
   unsigned long long reset_epoch;
   unsigned long long generation;
   boolean live;

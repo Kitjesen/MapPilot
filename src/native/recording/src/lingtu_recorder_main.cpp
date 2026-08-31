@@ -55,7 +55,7 @@ struct Options {
   std::filesystem::path output_directory;
   std::string session_id;
   std::string product;
-  std::string run_plan_fingerprint;
+  std::string product_session_id;
   std::string robot_id;
   std::string task_id;
   double seconds{0.0};
@@ -87,6 +87,17 @@ struct StopOptions {
 struct RootOptions {
   std::filesystem::path root;
   std::uint64_t timeout_ms{15000};
+  std::string expected_session_id;
+};
+
+struct ListOptions {
+  std::filesystem::path root;
+  std::size_t limit{100};
+};
+
+struct RootSessionOptions {
+  std::filesystem::path root;
+  std::string session_id;
 };
 
 struct StartOptions {
@@ -102,6 +113,9 @@ void print_help(std::ostream &output, const char *program) {
          << "  " << program << " start --root RECORDING_ROOT [--prefix NAME] [options]\n"
          << "  " << program << " status SESSION_DIR\n"
          << "  " << program << " status --root RECORDING_ROOT\n"
+         << "  " << program << " list --root RECORDING_ROOT [--limit N]\n"
+         << "  " << program << " manifest --root RECORDING_ROOT --session-id ID\n"
+         << "  " << program << " remove --root RECORDING_ROOT --session-id ID\n"
          << "  " << program << " stop SESSION_DIR [--timeout-ms MS]\n"
          << "  " << program << " stop --root RECORDING_ROOT [--timeout-ms MS]\n\n"
          << "Native LingTu recording supervisor. It coordinates the existing DDS and\n"
@@ -110,7 +124,7 @@ void print_help(std::ostream &output, const char *program) {
          << "  --output-dir DIR             New session directory (required)\n"
          << "  --session-id ID              Default: output directory name\n"
          << "  --product NAME               Default: LINGTU_PRODUCT or manual\n"
-         << "  --run-plan-fingerprint VALUE Default: LINGTU_RUN_PLAN_FINGERPRINT\n"
+         << "  --product-session-id ID      Default: LINGTU_PRODUCT_SESSION_ID\n"
          << "  --robot-id ID                Default: LINGTU_ROBOT_ID or hostname\n"
          << "  --inspection-task-id ID     Verify one complete native inspection task\n"
          << "  --seconds SEC                0 waits for SIGINT/SIGTERM (default: 0)\n"
@@ -136,6 +150,7 @@ void print_help(std::ostream &output, const char *program) {
          << "  --camera-codec NAME          Default: libx264 (generic software)\n\n"
          << "Stop options:\n"
          << "  --timeout-ms MS              Wait for final manifest (default: 15000)\n\n"
+         << "  --expected-session-id ID     Stop only this exact root session\n\n"
          << "Exit status: 0 completed/live, 2 usage, 3 inspection/start error,\n"
          << "             4 failed/stale session, 5 stop timeout.\n";
 }
@@ -212,7 +227,7 @@ Selection parse_selection(const std::string &value, std::string_view option, boo
 Options parse_record_options(int argc, char **argv) {
   Options options;
   options.product = environment_or("LINGTU_PRODUCT", "manual");
-  options.run_plan_fingerprint = environment_or("LINGTU_RUN_PLAN_FINGERPRINT");
+  options.product_session_id = environment_or("LINGTU_PRODUCT_SESSION_ID");
   options.robot_id = environment_or("LINGTU_ROBOT_ID", hostname());
   for (int index = 2; index < argc; ++index) {
     const std::string_view argument(argv[index]);
@@ -226,8 +241,8 @@ Options parse_record_options(int argc, char **argv) {
       options.session_id = require_value(index, argc, argv, argument);
     } else if (argument == "--product") {
       options.product = require_value(index, argc, argv, argument);
-    } else if (argument == "--run-plan-fingerprint") {
-      options.run_plan_fingerprint = require_value(index, argc, argv, argument);
+    } else if (argument == "--product-session-id") {
+      options.product_session_id = require_value(index, argc, argv, argument);
     } else if (argument == "--robot-id") {
       options.robot_id = require_value(index, argc, argv, argument);
     } else if (argument == "--inspection-task-id") {
@@ -306,8 +321,8 @@ Options parse_record_options(int argc, char **argv) {
   if (!options.task_id.empty() && options.product != "inspection") {
     throw std::invalid_argument("--inspection-task-id requires --product inspection");
   }
-  if (!options.task_id.empty() && options.run_plan_fingerprint.empty()) {
-    throw std::invalid_argument("--inspection-task-id requires --run-plan-fingerprint");
+  if (!options.task_id.empty() && options.product_session_id.empty()) {
+    throw std::invalid_argument("--inspection-task-id requires --product-session-id");
   }
   return options;
 }
@@ -330,6 +345,8 @@ StopOptions parse_stop_options(int argc, char **argv) {
   return options;
 }
 
+bool safe_session_id(std::string_view value);
+
 RootOptions parse_root_options(int argc, char **argv, std::string_view command,
                                bool allow_timeout) {
   RootOptions options;
@@ -343,6 +360,12 @@ RootOptions parse_root_options(int argc, char **argv, std::string_view command,
     } else if (allow_timeout && argument == "--timeout-ms") {
       options.timeout_ms =
           parse_uint64(require_value(index, argc, argv, argument), argument, 300000);
+    } else if (allow_timeout && argument == "--expected-session-id") {
+      if (!options.expected_session_id.empty()) {
+        throw std::invalid_argument(std::string(command) +
+                                    " accepts --expected-session-id only once");
+      }
+      options.expected_session_id = require_value(index, argc, argv, argument);
     } else {
       throw std::invalid_argument("unknown " + std::string(command) +
                                   " option: " + std::string(argument));
@@ -350,6 +373,66 @@ RootOptions parse_root_options(int argc, char **argv, std::string_view command,
   }
   if (options.root.empty()) {
     throw std::invalid_argument(std::string(command) + " requires --root RECORDING_ROOT");
+  }
+  options.root = std::filesystem::absolute(options.root).lexically_normal();
+  if (!options.expected_session_id.empty() && !safe_session_id(options.expected_session_id)) {
+    throw std::invalid_argument("--expected-session-id is invalid");
+  }
+  return options;
+}
+
+ListOptions parse_list_options(int argc, char **argv) {
+  ListOptions options;
+  for (int index = 2; index < argc; ++index) {
+    const std::string_view argument(argv[index]);
+    if (argument == "--root") {
+      if (!options.root.empty()) {
+        throw std::invalid_argument("list accepts --root only once");
+      }
+      options.root = require_value(index, argc, argv, argument);
+    } else if (argument == "--limit") {
+      const auto value = parse_uint64(require_value(index, argc, argv, argument), argument, 256);
+      if (value == 0) {
+        throw std::invalid_argument("--limit must be positive");
+      }
+      options.limit = static_cast<std::size_t>(value);
+    } else {
+      throw std::invalid_argument("unknown list option: " + std::string(argument));
+    }
+  }
+  if (options.root.empty()) {
+    throw std::invalid_argument("list requires --root RECORDING_ROOT");
+  }
+  options.root = std::filesystem::absolute(options.root).lexically_normal();
+  return options;
+}
+
+RootSessionOptions parse_root_session_options(int argc, char **argv,
+                                              std::string_view command) {
+  RootSessionOptions options;
+  for (int index = 2; index < argc; ++index) {
+    const std::string_view argument(argv[index]);
+    if (argument == "--root") {
+      if (!options.root.empty()) {
+        throw std::invalid_argument(std::string(command) + " accepts --root only once");
+      }
+      options.root = require_value(index, argc, argv, argument);
+    } else if (argument == "--session-id") {
+      if (!options.session_id.empty()) {
+        throw std::invalid_argument(std::string(command) +
+                                    " accepts --session-id only once");
+      }
+      options.session_id = require_value(index, argc, argv, argument);
+    } else {
+      throw std::invalid_argument("unknown " + std::string(command) +
+                                  " option: " + std::string(argument));
+    }
+  }
+  if (options.root.empty()) {
+    throw std::invalid_argument(std::string(command) + " requires --root RECORDING_ROOT");
+  }
+  if (options.session_id.empty()) {
+    throw std::invalid_argument(std::string(command) + " requires --session-id ID");
   }
   options.root = std::filesystem::absolute(options.root).lexically_normal();
   return options;
@@ -362,6 +445,37 @@ bool safe_session_prefix(std::string_view value) {
   return std::all_of(value.begin(), value.end(), [](unsigned char character) {
     return std::isalnum(character) != 0 || character == '-' || character == '_';
   });
+}
+
+bool safe_session_id(std::string_view value) {
+  if (value.empty() || value.size() > 128 || std::isalnum(static_cast<unsigned char>(value.front())) == 0) {
+    return false;
+  }
+  return std::all_of(value.begin(), value.end(), [](unsigned char character) {
+    return std::isalnum(character) != 0 || character == '-' || character == '_' || character == '.';
+  });
+}
+
+std::filesystem::path validated_session_path(const std::filesystem::path &root,
+                                              std::string_view session_id) {
+  if (!safe_session_id(session_id)) {
+    throw recording::RecordingCatalogError(
+        "recording_session_invalid",
+        "recording session id must use letters, digits, '.', '-' or '_'");
+  }
+  std::error_code error;
+  const auto normalized_root = std::filesystem::weakly_canonical(root, error);
+  if (error) {
+    throw recording::RecordingCatalogError(
+        "recording_catalog_unreadable", "recording root cannot be normalized");
+  }
+  const auto candidate = root / std::string(session_id);
+  const auto normalized_candidate = std::filesystem::weakly_canonical(candidate, error);
+  if (error || normalized_candidate.parent_path() != normalized_root) {
+    throw recording::RecordingCatalogError(
+        "recording_session_invalid", "recording session is outside the recording root");
+  }
+  return normalized_candidate;
 }
 
 StartOptions parse_start_options(int argc, char **argv) {
@@ -426,7 +540,7 @@ recording::RecordingSpec build_spec(const Options &options, const char *self) {
   spec.session_directory = options.output_directory;
   spec.session_id = options.session_id;
   spec.context.product = options.product;
-  spec.context.run_plan_fingerprint = options.run_plan_fingerprint;
+  spec.context.product_session_id = options.product_session_id;
   spec.context.robot_id = options.robot_id;
   spec.context.task_id = options.task_id;
   spec.minimum_free_bytes = options.minimum_free_bytes;
@@ -553,6 +667,22 @@ std::string json_string(std::string_view value) {
   return output.str();
 }
 
+bool manifest_has_inspection_identity(const recording::RecordingManifestSnapshot &manifest,
+                                      const recording::RecordingSpec &spec) {
+  const auto &product = spec.context.product;
+  const auto &product_session_id = spec.context.product_session_id;
+  const auto &task_id = spec.context.task_id;
+  if (product != "inspection" || product_session_id.empty() || task_id.empty()) {
+    return false;
+  }
+  return manifest.manifest_json.find("\"product\":" + json_string(product)) !=
+             std::string::npos &&
+         manifest.manifest_json.find("\"product_session_id\":" +
+                                     json_string(product_session_id)) != std::string::npos &&
+         manifest.manifest_json.find("\"task_id\":" + json_string(task_id)) !=
+             std::string::npos;
+}
+
 using ManifestSnapshot = recording::RecordingManifestSnapshot;
 
 ManifestSnapshot read_manifest(const std::filesystem::path &session_directory) {
@@ -662,7 +792,15 @@ int print_catalog_status(const recording::RecordingCatalogSnapshot &catalog) {
     state = catalog.selected->state;
     if (state == "failed") {
       healthy = false;
-      error = "recording session failed";
+      if (catalog.selected->manifest_json.find("\"error\":\"recording_storage_low") !=
+          std::string::npos) {
+        error = "recording_storage_low";
+      } else if (catalog.selected->manifest_json.find(
+                     "\"error\":\"recording_storage_status_unavailable") != std::string::npos) {
+        error = "recording_storage_status_unavailable";
+      } else {
+        error = "recording session failed";
+      }
     } else if (active_state(state)) {
       const auto identity_error =
           manager_identity_error(static_cast<pid_t>(catalog.selected->manager_process_id),
@@ -697,6 +835,49 @@ int print_catalog_status(const recording::RecordingCatalogSnapshot &catalog) {
 
 int print_root_status(const std::filesystem::path &root) {
   return print_catalog_status(recording::inspect_recording_catalog(root));
+}
+
+int print_catalog_list(const ListOptions &options) {
+  const auto catalog = recording::inspect_recording_catalog(options.root);
+  std::cout << "{\"control_version\":1,\"ok\":true,\"root\":"
+            << json_string(catalog.root.generic_string()) << ",\"sessions\":[";
+  const auto count = std::min(options.limit, catalog.sessions.size());
+  for (std::size_t index = 0; index < count; ++index) {
+    if (index != 0) {
+      std::cout << ',';
+    }
+    const auto &session = catalog.sessions[index];
+    std::cout << "{\"session_id\":" << json_string(session.session_id)
+              << ",\"state\":" << json_string(session.state)
+              << ",\"manager_pid\":" << session.manager_process_id
+              << ",\"session_directory\":"
+              << json_string(session.session_directory.generic_string()) << "}";
+  }
+  std::cout << "],\"truncated\":" << (catalog.sessions.size() > count ? "true" : "false")
+            << ",\"disk_free\":" << catalog.disk_free_bytes
+            << ",\"disk_total\":" << catalog.disk_total_bytes << "}\n";
+  return 0;
+}
+
+int print_root_manifest(const RootSessionOptions &options) {
+  const auto catalog = recording::inspect_recording_catalog(options.root);
+  const auto found = std::find_if(
+      catalog.sessions.begin(), catalog.sessions.end(), [&](const auto &session) {
+        return session.session_id == options.session_id;
+      });
+  if (found == catalog.sessions.end()) {
+    throw recording::RecordingCatalogError("recording_not_found",
+                                           "recording session was not found");
+  }
+  const auto session_directory = validated_session_path(options.root, options.session_id);
+  if (session_directory != found->session_directory) {
+    throw recording::RecordingCatalogError("recording_manifest_invalid",
+                                           "recording session identity does not match its root");
+  }
+  const auto manifest = recording::read_recording_manifest(session_directory);
+  std::cout << "{\"control_version\":1,\"ok\":true,\"session\":"
+            << manifest.manifest_json << "}\n";
+  return 0;
 }
 
 void print_control_error(const recording::RecordingCatalogError &error) {
@@ -757,6 +938,43 @@ class RootControlLock {
   int descriptor_{-1};
 };
 
+int remove_root_session(const RootSessionOptions &options) {
+  RootControlLock lock(options.root);
+  const auto catalog = recording::inspect_recording_catalog(options.root);
+  const auto found = std::find_if(
+      catalog.sessions.begin(), catalog.sessions.end(), [&](const auto &session) {
+        return session.session_id == options.session_id;
+      });
+  if (found == catalog.sessions.end()) {
+    throw recording::RecordingCatalogError("recording_not_found",
+                                           "recording session was not found");
+  }
+  if (recording::recording_state_is_active(found->state)) {
+    throw recording::RecordingCatalogError(
+        "recording_in_progress", "an active recording session cannot be removed");
+  }
+  const auto session_directory = validated_session_path(options.root, options.session_id);
+  if (session_directory != found->session_directory) {
+    throw recording::RecordingCatalogError("recording_manifest_invalid",
+                                           "recording session identity does not match its root");
+  }
+  std::error_code error;
+  const auto status = std::filesystem::symlink_status(session_directory, error);
+  if (error || std::filesystem::is_symlink(status) || !std::filesystem::is_directory(status)) {
+    throw recording::RecordingCatalogError("recording_catalog_unsafe",
+                                           "recording session directory is not safe");
+  }
+  std::filesystem::remove_all(session_directory, error);
+  if (error) {
+    throw recording::RecordingCatalogError("recording_remove_failed",
+                                           "recording session could not be removed: " +
+                                               error.message());
+  }
+  std::cout << "{\"control_version\":1,\"ok\":true,\"session_id\":"
+            << json_string(options.session_id) << "}\n";
+  return 0;
+}
+
 std::string generated_session_id(std::string_view prefix) {
   const auto now = std::chrono::system_clock::now();
   const auto time = std::chrono::system_clock::to_time_t(now);
@@ -775,7 +993,8 @@ std::string generated_session_id(std::string_view prefix) {
 
 std::vector<std::string> record_command(const StartOptions &options, const char *self,
                                         const std::filesystem::path &session_directory,
-                                        const std::string &session_id) {
+                                        const std::string &session_id,
+                                        recording::RecordingSpec *validated_spec = nullptr) {
   std::vector<std::string> command{recording::recording_executable_path(self).string(),
                                    "record",
                                    "--output-dir",
@@ -790,7 +1009,10 @@ std::vector<std::string> record_command(const StartOptions &options, const char 
     arguments.push_back(argument.data());
   }
   const auto parsed = parse_record_options(static_cast<int>(arguments.size()), arguments.data());
-  static_cast<void>(build_spec(parsed, self));
+  auto spec = build_spec(parsed, self);
+  if (validated_spec != nullptr) {
+    *validated_spec = std::move(spec);
+  }
   return command;
 }
 
@@ -857,19 +1079,24 @@ void terminate_starting_manager(pid_t process_id) {
 
 int start_root_recording(const StartOptions &options, const char *self) {
   RootControlLock lock(options.root);
+  const auto session_id = generated_session_id(options.prefix);
+  const auto session_directory = options.root / session_id;
+  recording::RecordingSpec requested_spec;
+  const auto command =
+      record_command(options, self, session_directory, session_id, &requested_spec);
   const auto existing = recording::inspect_recording_catalog(options.root);
   if (existing.selected && active_state(existing.selected->state)) {
+    if (manifest_has_inspection_identity(*existing.selected, requested_spec)) {
+      return print_catalog_status(existing);
+    }
     throw recording::RecordingCatalogError("recording_in_progress",
                                            "recording catalog already contains an active session");
   }
 
-  const auto session_id = generated_session_id(options.prefix);
-  const auto session_directory = options.root / session_id;
   if (std::filesystem::exists(session_directory)) {
     throw recording::RecordingCatalogError("native_recorder_start_failed",
                                            "generated recording session already exists");
   }
-  const auto command = record_command(options, self, session_directory, session_id);
   const auto temporary_log = options.root / ("." + session_id + ".manager.log");
   const pid_t child = launch_detached_recording(command, temporary_log);
   bool log_promoted = false;
@@ -1065,6 +1292,19 @@ int stop_recording(const StopOptions &options, bool print_manifest = true) {
 int stop_root_recording(const RootOptions &options) {
   RootControlLock lock(options.root);
   const auto catalog = recording::inspect_recording_catalog(options.root);
+  if (!options.expected_session_id.empty()) {
+    if (!catalog.selected || catalog.selected->session_id != options.expected_session_id) {
+      throw recording::RecordingCatalogError(
+          "recording_session_mismatch",
+          "selected recording session does not match --expected-session-id");
+    }
+    if (catalog.selected->state == "completed") {
+      return print_catalog_status(catalog);
+    }
+    if (catalog.selected->state == "failed") {
+      return print_catalog_status(catalog);
+    }
+  }
   if (!catalog.selected || !active_state(catalog.selected->state)) {
     throw recording::RecordingCatalogError("not_recording",
                                            "recording catalog has no active session");
@@ -1100,6 +1340,15 @@ int main(int argc, char **argv) {
         throw std::invalid_argument("status requires exactly one session directory");
       }
       return print_status(argv[2]);
+    }
+    if (command == "list") {
+      return print_catalog_list(parse_list_options(argc, argv));
+    }
+    if (command == "manifest") {
+      return print_root_manifest(parse_root_session_options(argc, argv, command));
+    }
+    if (command == "remove") {
+      return remove_root_session(parse_root_session_options(argc, argv, command));
     }
     if (command == "stop") {
       if (argc >= 3 && std::string_view(argv[2]) == "--root") {

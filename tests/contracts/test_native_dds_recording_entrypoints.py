@@ -20,6 +20,16 @@ def test_native_recording_build_entrypoint_is_ros_free() -> None:
     assert "idlc" in text
 
 
+def test_dds_recorder_links_its_writer_thread_runtime() -> None:
+    cmake = _read(RECORDING / "CMakeLists.txt")
+    recorder_block = cmake.split("add_executable(lingtu_dds_recorder", 1)[1].split(
+        "add_executable(lingtu_dds_player", 1
+    )[0]
+
+    assert "target_link_libraries(lingtu_dds_recorder PRIVATE" in recorder_block
+    assert "Threads::Threads" in recorder_block
+
+
 def test_player_defaults_to_an_isolated_domain_and_requires_live_opt_in() -> None:
     text = _read(RECORDING / "src" / "player_main.cpp")
     assert "int domain_id{84}" in text
@@ -35,8 +45,6 @@ def test_replay_allowlist_excludes_motion_and_control_topics() -> None:
     assert '"/slam/registered_cloud"' in allowed_block
     for forbidden in (
         "/nav/cmd_vel",
-        "/nav/goal_pose",
-        "/nav/cancel",
         "/nav/command/request",
         "/nav/operator_motion/control",
     ):

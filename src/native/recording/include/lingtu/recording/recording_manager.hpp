@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -32,7 +33,7 @@ struct RecordingChildSpec {
 
 struct RecordingContext {
   std::string product;
-  std::string run_plan_fingerprint;
+  std::string product_session_id;
   std::string robot_id;
   std::string task_id;
 };
@@ -74,6 +75,8 @@ class RecordingProcessFactory {
 
   virtual std::unique_ptr<RecordingProcess> start(const RecordingProcessSpec &spec) = 0;
 };
+using RecordingStorageProbe =
+    std::function<std::uint64_t(const std::filesystem::path &directory)>;
 
 struct RecordingChildStatus {
   std::string name;
@@ -107,6 +110,9 @@ struct RecordingStatus {
 class RecordingManager {
  public:
   explicit RecordingManager(RecordingProcessFactory &process_factory);
+  RecordingManager(RecordingProcessFactory &process_factory,
+                   RecordingStorageProbe storage_probe,
+                   std::chrono::milliseconds storage_probe_interval);
   ~RecordingManager();
 
   RecordingManager(const RecordingManager &) = delete;

@@ -15,7 +15,7 @@ struct InspectionTaskEventFact {
   std::string task_id;
   std::string request_id;
   std::string map_id;
-  std::int64_t map_version{0};
+  std::int64_t map_content_epoch{0};
   std::string route_id;
   std::uint64_t route_revision{0};
   std::int32_t state{0};

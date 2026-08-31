@@ -53,19 +53,9 @@ def test_root_release_build_builds_native_recording() -> None:
     ) in makefile
 
 
-def test_robot_release_cutter_builds_installs_and_hashes_recording_tools() -> None:
+def test_release_cutter_delegates_recording_packaging_to_native_packager() -> None:
     release = _read("scripts/deploy/cut_release.sh")
 
-    assert (
-        'RECORDING_BUILD_DIR="${LINGTU_NATIVE_RECORDING_BUILD_DIR:-'
-        '$DEV_DIR/build/native-recording}"'
-    ) in release
-    assert 'LINGTU_NATIVE_RECORDING_BUILD_DIR="$RECORDING_BUILD_DIR"' in release
-    assert "LINGTU_RECORDING_BUILD_DDS=ON" in release
-    assert 'bash "$DEV_DIR/scripts/build/build_native_recording.sh"' in release
-    assert "install_native_recording_package" in release
-    assert (
-        'cmake --install "$RECORDING_BUILD_DIR" --prefix "$install_dir"'
-    ) in release
+    assert "package_native_release.sh" in release
     for executable in RECORDING_EXECUTABLES:
-        assert f"build/native-recording/{executable}" in release
+        assert executable not in release

@@ -7,6 +7,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 #include "dds/ddsi/ddsi_serdata.h"
@@ -161,6 +162,79 @@ std::vector<RecordedMessage> take_cdr_messages(dds_entity_t reader, std::string_
     }
   }
   return messages;
+}
+
+bool bounded_drain_cdr_messages(
+    const std::vector<CdrDrainReader> &readers, std::chrono::steady_clock::duration maximum_wait,
+    const std::function<bool()> &complete,
+    const std::function<void(std::size_t, RecordedMessage &&)> &consume,
+    const CdrTakeOne &take_one) {
+  if (!complete || !consume) {
+    throw std::invalid_argument("bounded CDR drain callbacks are required");
+  }
+  for (const auto &reader : readers) {
+    if (reader.reader <= 0 || reader.wire_topic.empty() || reader.next_sequence == nullptr) {
+      throw std::invalid_argument("bounded CDR drain reader is invalid");
+    }
+  }
+  if (complete()) {
+    return true;
+  }
+
+  const auto deadline = std::chrono::steady_clock::now() + maximum_wait;
+  while (true) {
+    bool received = false;
+    for (std::size_t index = 0; index < readers.size(); ++index) {
+      if (complete()) {
+        return true;
+      }
+      if (std::chrono::steady_clock::now() >= deadline) {
+        return complete();
+      }
+      const auto &reader = readers[index];
+      auto messages = take_one ? take_one(reader.reader, reader.wire_topic, *reader.next_sequence)
+                               : take_cdr_messages(reader.reader, reader.wire_topic,
+                                                   *reader.next_sequence, 1);
+      if (messages.size() > 1) {
+        throw std::logic_error("bounded CDR take-one callback returned multiple messages");
+      }
+      received = received || !messages.empty();
+      for (auto &message : messages) {
+        consume(index, std::move(message));
+        if (complete()) {
+          return true;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+          return complete();
+        }
+      }
+      if (complete()) {
+        return true;
+      }
+      if (std::chrono::steady_clock::now() >= deadline) {
+        return complete();
+      }
+    }
+    if (complete()) {
+      return true;
+    }
+    if (!received) {
+      const auto remaining = deadline - std::chrono::steady_clock::now();
+      if (remaining <= std::chrono::steady_clock::duration::zero()) {
+        break;
+      }
+      std::this_thread::sleep_for(
+          std::min(remaining, std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                  std::chrono::milliseconds(2))));
+      if (complete()) {
+        return true;
+      }
+      if (std::chrono::steady_clock::now() >= deadline) {
+        return complete();
+      }
+    }
+  }
+  return complete();
 }
 
 std::string validate_cdr_payload(const TopicBinding &binding, const std::byte *payload,

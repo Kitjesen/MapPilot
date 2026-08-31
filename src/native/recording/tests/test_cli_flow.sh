@@ -16,12 +16,16 @@ REPLAY_DOMAIN=200
 TMP_DIR="$(mktemp -d)"
 RECORDER_PID=""
 SUBSCRIBER_PID=""
+PUBLISHER_PID=""
 cleanup() {
   if [ -n "$RECORDER_PID" ]; then
     kill "$RECORDER_PID" 2>/dev/null || true
   fi
   if [ -n "$SUBSCRIBER_PID" ]; then
     kill "$SUBSCRIBER_PID" 2>/dev/null || true
+  fi
+  if [ -n "$PUBLISHER_PID" ]; then
+    kill "$PUBLISHER_PID" 2>/dev/null || true
   fi
   rm -rf -- "$TMP_DIR"
 }
@@ -118,3 +122,38 @@ grep -Fq 'required recording topic captured no samples: /slam/odometry' \
   "$TMP_DIR/incomplete.log"
 test ! -e "$TMP_DIR/incomplete.mcap"
 test -e "$TMP_DIR/incomplete.mcap.tmp"
+
+DRAIN_DOMAIN=203
+DRAIN_FIXTURE="$(dirname "$RECORDER")/test_inspection_timeline_cdr"
+"$RECORDER" \
+  --output "$TMP_DIR/inspection.mcap" \
+  --idl "$IDL" \
+  --domain "$DRAIN_DOMAIN" \
+  --inspection-task-id inspection-task-1 \
+  /nav/inspection/task/event /nav/cmd_vel /driver/control_state \
+  >"$TMP_DIR/inspection-recorder.log" 2>&1 &
+RECORDER_PID=$!
+"$DRAIN_FIXTURE" --publish-drain-fixture "$DRAIN_DOMAIN" \
+  "$TMP_DIR/drain-ready" "$TMP_DIR/drain-go" \
+  >"$TMP_DIR/drain-publisher.log" 2>&1 &
+PUBLISHER_PID=$!
+for _ in $(seq 1 500); do
+  if [ -e "$TMP_DIR/drain-ready" ]; then
+    break
+  fi
+  sleep 0.01
+done
+test -e "$TMP_DIR/drain-ready"
+kill -TERM "$RECORDER_PID"
+touch "$TMP_DIR/drain-go"
+wait "$PUBLISHER_PID"
+PUBLISHER_PID=""
+if ! wait "$RECORDER_PID"; then
+  cat "$TMP_DIR/inspection-recorder.log" >&2
+  echo "inspection recorder missed the terminal event during bounded shutdown drain" >&2
+  exit 1
+fi
+RECORDER_PID=""
+test -s "$TMP_DIR/inspection.mcap"
+grep -Fq 'inspection_task_id=inspection-task-1 terminal_state=9' \
+  "$TMP_DIR/inspection-recorder.log"

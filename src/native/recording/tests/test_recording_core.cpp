@@ -154,11 +154,11 @@ void test_recording_idl_resolution_precedence() {
   const auto root = std::filesystem::temp_directory_path() /
                     ("lingtu-recording-idl-resolution-" + std::to_string(nonce));
   const auto executable = root / "build" / "native-recording" / "lingtu_dds_player";
-  const auto executable_idl = root / "src" / "message" / "idl" / "lingtu_slam.idl";
+  const auto executable_idl = root / "src" / "message" / "idl" / "messages.idl";
   const auto repository = root / "repository";
-  const auto repository_idl = repository / "src" / "message" / "idl" / "lingtu_slam.idl";
-  const auto environment_idl = root / "environment" / "lingtu_slam.idl";
-  const auto fallback_idl = root / "fallback" / "lingtu_slam.idl";
+  const auto repository_idl = repository / "src" / "message" / "idl" / "messages.idl";
+  const auto environment_idl = root / "environment" / "messages.idl";
+  const auto fallback_idl = root / "fallback" / "messages.idl";
   for (const auto &path : {executable_idl, repository_idl, environment_idl, fallback_idl}) {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream(path) << "module lingtu {};";

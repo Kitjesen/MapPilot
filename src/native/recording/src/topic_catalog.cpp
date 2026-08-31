@@ -2,7 +2,7 @@
 
 #include <string_view>
 
-#include "lingtu_slam.h"
+#include "messages.h"
 
 namespace lingtu::recording {
 namespace {

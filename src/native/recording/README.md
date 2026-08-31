@@ -16,7 +16,7 @@ than copied into ordinary DDS samples.
 The on-disk format is MCAP profile `lingtu.dds.v1`:
 
 - message encoding: `cdr` (the RTPS serialized-payload header is retained);
-- schema encoding: `omgidl` with the self-contained `lingtu_slam.idl`;
+- schema encoding: `omgidl` with the self-contained `messages.idl`;
 - `logTime`: recorder receive wall time;
 - `publishTime`: DDS source timestamp;
 - uncompressed, indexed MCAP chunks with CRCs;
@@ -51,7 +51,7 @@ build/native-recording/lingtu_recorder start \
   --prefix inspection \
   --seconds 600 \
   --product inspection \
-  --run-plan-fingerprint "$LINGTU_RUN_PLAN_FINGERPRINT" \
+  --product-session-id "$LINGTU_PRODUCT_SESSION_ID" \
   --dds on --camera off
 
 build/native-recording/lingtu_recorder status \
@@ -60,6 +60,18 @@ build/native-recording/lingtu_recorder status \
 build/native-recording/lingtu_recorder stop \
   --root "$HOME/data/lingtu/recordings" \
   --timeout-ms 15000
+
+build/native-recording/lingtu_recorder list \
+  --root "$HOME/data/lingtu/recordings" \
+  --limit 100
+
+build/native-recording/lingtu_recorder manifest \
+  --root "$HOME/data/lingtu/recordings" \
+  --session-id inspection_20260804T010203Z_1234_abcd
+
+build/native-recording/lingtu_recorder remove \
+  --root "$HOME/data/lingtu/recordings" \
+  --session-id inspection_20260804T010203Z_1234_abcd
 ```
 
 Python does not scan recording directories, choose an active manifest, create
@@ -74,7 +86,7 @@ together:
 build/native-recording/lingtu_recorder record \
   --output-dir /data/runs/field-001 \
   --product nav \
-  --run-plan-fingerprint "$LINGTU_RUN_PLAN_FINGERPRINT" \
+  --product-session-id "$LINGTU_PRODUCT_SESSION_ID" \
   --robot-id s100p-01
 ```
 
@@ -150,7 +162,7 @@ implicitly by a Product and does not replace separately named ROS compatibility
 tools.
 
 Product context and capture policy are deliberately separate. `--product`
-only records the active Product name and RunPlan fingerprint in the session manifest; it
+only records the active Product name and Product session ID in the session manifest; it
 does not compile another Product policy inside the C++ tool. The explicit
 `--dds-preset inspection-evidence-v1` capability records native task events,
 navigation state, driver control state, goal status, operator-motion status,
@@ -164,7 +176,7 @@ Bind a complete recording to the same stable task identity exposed by Gateway:
 lingtu_recorder record \
   --output-dir /data/recordings/inspection-task-123 \
   --product inspection \
-  --run-plan-fingerprint "$LINGTU_RUN_PLAN_FINGERPRINT" \
+  --product-session-id "$LINGTU_PRODUCT_SESSION_ID" \
   --dds-preset inspection-evidence-v1 \
   --inspection-task-id inspection-task-123
 ```
@@ -216,7 +228,7 @@ logical velocity, and driver state are record-only: they can be captured and
 validated but never enter the sensor replay allowlist.
 
 An explicit `--idl` or `--dds-idl` path wins. Otherwise the tools resolve IDL
-from `LINGTU_RECORDING_IDL`, then `LINGTU_REPO/src/message/idl/lingtu_slam.idl`,
+from `LINGTU_RECORDING_IDL`, then `LINGTU_REPO/src/message/idl/messages.idl`,
 then the executable-relative repository layout, and finally the compiled path.
 
 Supported DDS channels are:
@@ -384,7 +396,8 @@ The remaining product gaps are explicit:
 - DDS MCAP rotation by elapsed time or file size and a continuous runtime disk
   watermark. The current `--min-free-gib` check is startup-only.
 - crash recovery for an interrupted `.mcap.tmp`, including reindex/salvage;
-- typed live discovery, an explicit record-all policy, and session listing;
+- typed live discovery and an explicit record-all policy (session listing and
+  terminal-session removal are available through the root catalog commands);
 - automatic task-to-session start/stop binding plus restart reconciliation;
 - real S100P sensor-stream and camera acceptance in addition to the synthetic
   typed DDS test.

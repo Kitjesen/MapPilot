@@ -5,8 +5,8 @@
 
 #include "dds/dds.h"
 #include "lingtu/recording/mcap_session.hpp"
-#include "message/cpp/dds_qos_profiles.hpp"
-#include "message/cpp/dds_topics.hpp"
+#include "message/cpp/qos.hpp"
+#include "message/cpp/topics.hpp"
 
 namespace lingtu::recording {
 

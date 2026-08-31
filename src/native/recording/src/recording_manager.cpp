@@ -38,6 +38,22 @@ std::int64_t current_process_id() noexcept {
   return static_cast<std::int64_t>(::getpid());
 #endif
 }
+constexpr auto kDefaultStorageProbeInterval = std::chrono::seconds(1);
+constexpr auto kRuntimeFailureGracePeriod = std::chrono::seconds(2);
+
+std::uint64_t default_storage_probe(const std::filesystem::path &directory) {
+  std::error_code storage_error;
+  const auto storage = std::filesystem::space(directory, storage_error);
+  if (storage_error) {
+    throw std::runtime_error("failed to query recording storage for " + directory.string() +
+                             ": " + storage_error.message());
+  }
+  const auto maximum_bytes = (std::numeric_limits<std::uint64_t>::max)();
+  return storage.available > static_cast<std::uintmax_t>(maximum_bytes)
+             ? maximum_bytes
+             : static_cast<std::uint64_t>(storage.available);
+}
+
 
 bool safe_name(std::string_view value) {
   if (value.empty() || value.size() > 128 || value == "." || value == "..") {
@@ -48,6 +64,19 @@ bool safe_name(std::string_view value) {
            (character >= '0' && character <= '9') || character == '-' || character == '_' ||
            character == '.';
   });
+}
+
+bool valid_product_session_id(std::string_view value) {
+  return !value.empty() && value.size() <= 63 &&
+         ((value.front() >= 'a' && value.front() <= 'z') ||
+          (value.front() >= 'A' && value.front() <= 'Z') ||
+          (value.front() >= '0' && value.front() <= '9')) &&
+         std::all_of(value.begin(), value.end(), [](unsigned char character) {
+           return (character >= 'a' && character <= 'z') ||
+                  (character >= 'A' && character <= 'Z') ||
+                  (character >= '0' && character <= '9') || character == '-' ||
+                  character == '_' || character == '.';
+         });
 }
 
 bool relative_artifact_path(const std::filesystem::path &path) {
@@ -76,9 +105,10 @@ void validate_spec(const RecordingSpec &spec) {
     return value.size() <= 256 && value.find('\0') == std::string::npos;
   };
   if (!valid_context_value(spec.context.product) ||
-      !valid_context_value(spec.context.run_plan_fingerprint) ||
+      (!spec.context.product_session_id.empty() &&
+       !valid_product_session_id(spec.context.product_session_id)) ||
       !valid_context_value(spec.context.robot_id) || !valid_context_value(spec.context.task_id)) {
-    throw std::invalid_argument("recording context values must be at most 256 bytes");
+    throw std::invalid_argument("recording context values are invalid");
   }
   std::set<std::string> names;
   for (const auto &child : spec.children) {
@@ -168,7 +198,7 @@ std::string manifest_json(const RecordingStatus &status) {
          << ",\"state\":" << json_string(recording_state_name(status.state))
          << ",\"session_directory\":" << json_string(status.session_directory.generic_string())
          << ",\"context\":{\"product\":" << json_string(status.context.product)
-         << ",\"run_plan_fingerprint\":" << json_string(status.context.run_plan_fingerprint)
+         << ",\"product_session_id\":" << json_string(status.context.product_session_id)
          << ",\"robot_id\":" << json_string(status.context.robot_id)
          << ",\"task_id\":" << json_string(status.context.task_id) << "}"
          << ",\"storage\":{\"minimum_free_bytes\":" << status.minimum_free_bytes
@@ -344,7 +374,18 @@ const char *recording_state_name(RecordingState state) noexcept {
 
 class RecordingManager::Impl {
  public:
-  explicit Impl(RecordingProcessFactory &input_factory) : process_factory(input_factory) {}
+  Impl(RecordingProcessFactory &input_factory, RecordingStorageProbe input_storage_probe,
+       std::chrono::milliseconds input_storage_probe_interval)
+      : process_factory(input_factory),
+        storage_probe(std::move(input_storage_probe)),
+        storage_probe_interval(input_storage_probe_interval) {
+    if (!storage_probe) {
+      throw std::invalid_argument("recording storage probe must not be empty");
+    }
+    if (storage_probe_interval.count() < 0) {
+      throw std::invalid_argument("recording storage probe interval must not be negative");
+    }
+  }
 
   ~Impl() {
     if (current.state == RecordingState::kRecording ||
@@ -369,17 +410,7 @@ class RecordingManager::Impl {
       std::filesystem::create_directories(parent);
     }
     const auto storage_directory = parent.empty() ? std::filesystem::path(".") : parent;
-    std::error_code storage_error;
-    const auto storage = std::filesystem::space(storage_directory, storage_error);
-    if (storage_error) {
-      throw std::runtime_error("failed to query recording storage for " +
-                               storage_directory.string() + ": " + storage_error.message());
-    }
-    const auto maximum_bytes = (std::numeric_limits<std::uint64_t>::max)();
-    const auto available_bytes =
-        storage.available > static_cast<std::uintmax_t>(maximum_bytes)
-            ? maximum_bytes
-            : static_cast<std::uint64_t>(storage.available);
+    const auto available_bytes = storage_probe(storage_directory);
     if (available_bytes < spec.minimum_free_bytes) {
       throw std::runtime_error("insufficient recording storage: required=" +
                                std::to_string(spec.minimum_free_bytes) + " available=" +
@@ -393,6 +424,7 @@ class RecordingManager::Impl {
     sync_directory(parent);
 
     current.session_id = spec.session_id;
+    this->storage_directory = storage_directory;
     current.session_directory = spec.session_directory;
     current.context = spec.context;
     current.manager_process_id = current_process_id();
@@ -440,6 +472,8 @@ class RecordingManager::Impl {
       }
       current.started_at_unix_ns = unix_time_ns();
       current.state = RecordingState::kRecording;
+      next_storage_probe_at =
+          std::chrono::steady_clock::now() + storage_probe_interval;
       write_manifest(current);
       return current;
     } catch (const std::exception &error) {
@@ -467,13 +501,16 @@ class RecordingManager::Impl {
     }
     if (failed_required_child) {
       fail_unexpected_exit(*failed_required_child);
+    } else if (const auto storage_failure = runtime_storage_failure()) {
+      return stop(kRuntimeFailureGracePeriod, *storage_failure);
     } else if (changed) {
       write_manifest(current);
     }
     return current;
   }
 
-  RecordingStatus stop(std::chrono::milliseconds grace_period) {
+  RecordingStatus stop(std::chrono::milliseconds grace_period,
+                       std::string terminal_failure = {}) {
     if (grace_period.count() < 0) {
       throw std::invalid_argument("recording stop grace period must not be negative");
     }
@@ -484,8 +521,9 @@ class RecordingManager::Impl {
     current.state = RecordingState::kStopping;
     write_manifest(current);
 
-    bool required_failed = false;
-    std::string error;
+    const bool preserve_terminal_failure = !terminal_failure.empty();
+    bool required_failed = preserve_terminal_failure;
+    std::string error = std::move(terminal_failure);
     for (std::size_t index = processes.size(); index-- > 0;) {
       try {
         processes[index]->request_stop();
@@ -512,8 +550,10 @@ class RecordingManager::Impl {
         current.children[index].exit_code = exit_code;
         if (current.children[index].required && exit_code != 0) {
           required_failed = true;
-          error = "required recorder exited with code " + std::to_string(exit_code) + ": " +
-                  current.children[index].name;
+          if (!preserve_terminal_failure || error.empty()) {
+            error = "required recorder exited with code " + std::to_string(exit_code) + ": " +
+                    current.children[index].name;
+          }
         }
       } catch (const std::exception &wait_error) {
         current.children[index].running = false;
@@ -533,12 +573,16 @@ class RecordingManager::Impl {
         const auto artifact_status = std::filesystem::symlink_status(artifact_path, artifact_error);
         if (artifact_error || !std::filesystem::is_regular_file(artifact_status)) {
           required_failed = true;
-          error = "required recording artifact is missing or not a regular file: " +
-                  artifact.generic_string();
+          if (!preserve_terminal_failure || error.empty()) {
+            error = "required recording artifact is missing or not a regular file: " +
+                    artifact.generic_string();
+          }
         } else if (std::filesystem::file_size(artifact_path, artifact_error) == 0 ||
                    artifact_error) {
           required_failed = true;
-          error = "required recording artifact is empty: " + artifact.generic_string();
+          if (!preserve_terminal_failure || error.empty()) {
+            error = "required recording artifact is empty: " + artifact.generic_string();
+          }
         }
       }
     }
@@ -550,6 +594,31 @@ class RecordingManager::Impl {
   }
 
  private:
+  std::optional<std::string> runtime_storage_failure() {
+    if (current.state != RecordingState::kRecording || current.minimum_free_bytes == 0) {
+      return std::nullopt;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now < next_storage_probe_at) {
+      return std::nullopt;
+    }
+    next_storage_probe_at = now + storage_probe_interval;
+    std::uint64_t available_bytes = 0;
+    try {
+      available_bytes = storage_probe(storage_directory);
+    } catch (const std::exception &) {
+      return "recording_storage_status_unavailable";
+    } catch (...) {
+      return "recording_storage_status_unavailable";
+    }
+    if (available_bytes >= current.minimum_free_bytes) {
+      return std::nullopt;
+    }
+    return "recording_storage_low: minimum_free_bytes=" +
+           std::to_string(current.minimum_free_bytes) +
+           " available_bytes=" + std::to_string(available_bytes);
+  }
+
   void fail_unexpected_exit(std::size_t failed_index) {
     const auto failed_name = current.children[failed_index].name;
     const auto failed_code = current.children[failed_index].exit_code;
@@ -616,10 +685,21 @@ class RecordingManager::Impl {
   RecordingProcessFactory &process_factory;
   RecordingStatus current;
   std::vector<std::unique_ptr<RecordingProcess>> processes;
+  RecordingStorageProbe storage_probe;
+  std::chrono::milliseconds storage_probe_interval;
+  std::chrono::steady_clock::time_point next_storage_probe_at;
+  std::filesystem::path storage_directory;
 };
 
 RecordingManager::RecordingManager(RecordingProcessFactory &process_factory)
-    : impl_(std::make_unique<Impl>(process_factory)) {}
+    : impl_(std::make_unique<Impl>(process_factory, default_storage_probe,
+                                   kDefaultStorageProbeInterval)) {}
+
+RecordingManager::RecordingManager(RecordingProcessFactory &process_factory,
+                                   RecordingStorageProbe storage_probe,
+                                   std::chrono::milliseconds storage_probe_interval)
+    : impl_(std::make_unique<Impl>(process_factory, std::move(storage_probe),
+                                   storage_probe_interval)) {}
 
 RecordingManager::~RecordingManager() = default;
 

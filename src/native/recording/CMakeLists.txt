@@ -49,7 +49,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     "${LINGTU_ROOT}/src")
   target_link_libraries(lingtu_recording_camera_linux PUBLIC
     lingtu_recording_core
-    Threads::Threads)
+    Threads::Threads
+    rt)
 
   add_executable(lingtu_camera_recorder src/camera_recorder_main.cpp)
   target_link_libraries(lingtu_camera_recorder PRIVATE
@@ -61,7 +62,7 @@ if(LINGTU_RECORDING_BUILD_DDS)
   include("${LINGTU_ROOT}/src/message/cpp/CMakeLists.txt")
   lingtu_add_dds_c_messages(
     lingtu_recording_dds_messages
-    "${LINGTU_ROOT}/src/message/idl/lingtu_slam.idl")
+    "${LINGTU_ROOT}/src/message/idl/messages.idl")
 
   add_library(lingtu_recording_dds STATIC
     src/cyclone_cdr.cpp
@@ -72,19 +73,21 @@ if(LINGTU_RECORDING_BUILD_DDS)
     "${LINGTU_ROOT}/src")
   target_link_libraries(lingtu_recording_dds PUBLIC
     CycloneDDS::ddsc
-    lingtu_dds_qos_profiles
+    lingtu_dds_contracts
     lingtu_recording_core
     lingtu_recording_dds_messages)
 
   add_executable(lingtu_dds_recorder src/recorder_main.cpp)
-  target_link_libraries(lingtu_dds_recorder PRIVATE lingtu_recording_dds)
+  target_link_libraries(lingtu_dds_recorder PRIVATE
+    lingtu_recording_dds
+    Threads::Threads)
   target_compile_definitions(lingtu_dds_recorder PRIVATE
-    LINGTU_RECORDING_DEFAULT_IDL="${LINGTU_ROOT}/src/message/idl/lingtu_slam.idl")
+    LINGTU_RECORDING_DEFAULT_IDL="${LINGTU_ROOT}/src/message/idl/messages.idl")
 
   add_executable(lingtu_dds_player src/player_main.cpp)
   target_link_libraries(lingtu_dds_player PRIVATE lingtu_recording_dds)
   target_compile_definitions(lingtu_dds_player PRIVATE
-    LINGTU_RECORDING_DEFAULT_IDL="${LINGTU_ROOT}/src/message/idl/lingtu_slam.idl")
+    LINGTU_RECORDING_DEFAULT_IDL="${LINGTU_ROOT}/src/message/idl/messages.idl")
 
   if(LINGTU_RECORDING_BUILD_TESTS)
     add_executable(test_cyclone_cdr tests/test_cyclone_cdr.cpp)
@@ -108,7 +111,7 @@ if(LINGTU_RECORDING_BUILD_DDS)
         "$<TARGET_FILE:lingtu_dds_player>"
         "$<TARGET_FILE:test_imu_publisher>"
         "$<TARGET_FILE:test_imu_subscriber>"
-        "${LINGTU_ROOT}/src/message/idl/lingtu_slam.idl")
+        "${LINGTU_ROOT}/src/message/idl/messages.idl")
   endif()
 endif()
 
@@ -117,7 +120,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_libraries(lingtu_recorder PRIVATE
     lingtu_recording_process_linux)
   target_compile_definitions(lingtu_recorder PRIVATE
-    LINGTU_RECORDING_DEFAULT_IDL="${LINGTU_ROOT}/src/message/idl/lingtu_slam.idl")
+    LINGTU_RECORDING_DEFAULT_IDL="${LINGTU_ROOT}/src/message/idl/messages.idl")
   if(LINGTU_RECORDING_BUILD_DDS)
     target_compile_definitions(lingtu_recorder PRIVATE LINGTU_RECORDING_HAS_DDS=1)
     add_dependencies(lingtu_recorder lingtu_dds_recorder)

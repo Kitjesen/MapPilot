@@ -348,6 +348,7 @@ RecordingCatalogSnapshot inspect_recording_catalog(const std::filesystem::path &
   std::sort(sessions.begin(), sessions.end(), [](const auto &left, const auto &right) {
     return left.modified_at > right.modified_at;
   });
+  catalog.sessions = sessions;
   std::vector<const RecordingManifestSnapshot *> active;
   for (const auto &session : sessions) {
     if (recording_state_is_active(session.state)) {

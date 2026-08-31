@@ -19,6 +19,7 @@
 #include "lingtu/recording/mcap_session.hpp"
 #include "lingtu/recording/recording_core.hpp"
 #include "lingtu/recording/topic_catalog.hpp"
+#include "message/cpp/topics.hpp"
 
 namespace {
 
@@ -253,6 +254,36 @@ int main(int argc, char **argv) {
         if (!received) {
           std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
+      }
+
+      if (stop_requested.load() && !options.inspection_task_id.empty() &&
+          !timeline_capture.verify(options.inspection_task_id).ok) {
+        std::vector<lingtu::recording::CdrDrainReader> drain_readers;
+        std::vector<std::size_t> drain_reader_indexes;
+        drain_readers.reserve(readers.size());
+        drain_reader_indexes.reserve(readers.size());
+        for (std::size_t index = 0; index < readers.size(); ++index) {
+          auto &reader = readers[index];
+          const auto *contract = reader.binding->contract;
+          if (contract != &lingtu::message::kNavInspectionTaskEvent &&
+              contract != &lingtu::message::kNavCmdVel &&
+              contract != &lingtu::message::kDriverControlState) {
+            continue;
+          }
+          drain_readers.push_back({reader.reader,
+                                   std::string(reader.binding->contract->dds_topic),
+                                   &reader.sequence});
+          drain_reader_indexes.push_back(index);
+        }
+        static_cast<void>(lingtu::recording::bounded_drain_cdr_messages(
+            drain_readers, std::chrono::milliseconds(500),
+            [&] { return timeline_capture.verify(options.inspection_task_id).ok; },
+            [&](std::size_t index, lingtu::recording::RecordedMessage &&message) {
+              auto &reader = readers.at(drain_reader_indexes.at(index));
+              ++reader.captured;
+              timeline_capture.observe(*reader.binding, message);
+              queue.try_push(std::move(message));
+            }));
       }
 
       for (const auto &reader : readers) {

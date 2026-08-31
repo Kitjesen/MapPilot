@@ -3,7 +3,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -123,7 +122,7 @@ void test_start_creates_one_observable_session() {
   spec.session_directory = root;
   spec.session_id = "field-001";
   spec.context.product = "nav";
-  spec.context.run_plan_fingerprint = "sha256:abc123";
+  spec.context.product_session_id = "product-session-test";
   spec.context.robot_id = "s100p-01";
   spec.context.task_id = "inspection-task-1";
   spec.minimum_free_bytes = 1;
@@ -169,7 +168,7 @@ void test_start_creates_one_observable_session() {
               std::string::npos,
           "manifest omitted the storage admission evidence");
   require(manifest.find("\"product\":\"nav\"") != std::string::npos &&
-              manifest.find("\"run_plan_fingerprint\":\"sha256:abc123\"") != std::string::npos &&
+              manifest.find("\"product_session_id\":\"product-session-test\"") != std::string::npos &&
               manifest.find("\"robot_id\":\"s100p-01\"") != std::string::npos &&
               manifest.find("\"task_id\":\"inspection-task-1\"") != std::string::npos,
           "manifest omitted the Product recording context");
@@ -196,12 +195,14 @@ void test_start_creates_one_observable_session() {
 void test_start_rejects_insufficient_storage_before_session_or_children() {
   const auto root = unique_directory("insufficient-storage");
   FakeProcessFactory factory;
-  recording::RecordingManager manager(factory);
+  recording::RecordingManager manager(
+      factory, [](const std::filesystem::path &) { return std::uint64_t{9}; },
+      std::chrono::milliseconds(0));
 
   recording::RecordingSpec spec;
   spec.session_directory = root;
   spec.session_id = "field-no-space";
-  spec.minimum_free_bytes = std::numeric_limits<std::uint64_t>::max();
+  spec.minimum_free_bytes = 10;
   spec.children = {{"dds", {"lingtu_dds_recorder"}, true, {"dds/sensors.mcap"}}};
 
   bool rejected = false;
@@ -217,6 +218,141 @@ void test_start_rejects_insufficient_storage_before_session_or_children() {
   require(factory.started.empty(), "manager started a recorder before storage admission");
   require(!std::filesystem::exists(root),
           "manager created the session directory before storage admission");
+}
+
+void test_runtime_storage_low_stops_children_and_persists_failed_state() {
+  const auto root = unique_directory("runtime-storage-low");
+  FakeProcessFactory factory;
+  std::size_t storage_probe_count = 0;
+  recording::RecordingManager manager(
+      factory,
+      [&](const std::filesystem::path &) {
+        ++storage_probe_count;
+        return storage_probe_count == 1 ? std::uint64_t{10} : std::uint64_t{9};
+      },
+      std::chrono::milliseconds(0));
+
+  recording::RecordingSpec spec;
+  spec.session_directory = root;
+  spec.session_id = "field-runtime-storage-low";
+  spec.minimum_free_bytes = 10;
+  spec.children = {
+      {"dds", {"lingtu_dds_recorder"}, true, {"dds/sensors.mcap"}},
+      {"camera_color", {"lingtu_camera_recorder"}, true, {"camera_color.mcap"}},
+  };
+  static_cast<void>(manager.start(spec));
+  write_artifact(root / "dds" / "sensors.mcap");
+  write_artifact(root / "camera_color.mcap");
+  factory.processes.front()->wait_delay = std::chrono::milliseconds(30);
+
+  const auto status = manager.status();
+  require(status.state == recording::RecordingState::kFailed,
+          "runtime low storage did not fail the recording session");
+  require(status.error.find("recording_storage_low") != std::string::npos,
+          "runtime low-storage failure did not expose its stable reason");
+  require(factory.processes.front()->stop_requested() && factory.processes.back()->stop_requested(),
+          "runtime low storage did not stop every recorder");
+  require(!factory.processes.front()->wait_timeouts.empty() &&
+              !factory.processes.back()->wait_timeouts.empty() &&
+              factory.processes.back()->wait_timeouts.front() <
+                  factory.processes.front()->wait_timeouts.front(),
+          "runtime low-storage shutdown did not use one shared grace deadline");
+  require(!status.children.front().running && !status.children.back().running,
+          "runtime low storage left a recorder running in status");
+  require(status.ended_at_unix_ns >= status.started_at_unix_ns,
+          "runtime low-storage failure did not persist a terminal time");
+
+  const auto manifest = read_text(root / "session.json");
+  require(manifest.find("\"state\":\"failed\"") != std::string::npos &&
+              manifest.find("recording_storage_low") != std::string::npos,
+          "runtime low-storage failure was not persisted in the manifest");
+  const auto terminal = manager.status();
+  require(terminal.state == recording::RecordingState::kFailed,
+          "runtime low-storage session later claimed a non-failed state");
+  require(storage_probe_count == 2,
+          "terminal low-storage session continued probing the filesystem");
+
+  std::filesystem::remove_all(root);
+}
+
+void test_runtime_storage_query_failure_stops_children_and_persists_failed_state() {
+  const auto root = unique_directory("runtime-storage-unavailable");
+  FakeProcessFactory factory;
+  std::size_t storage_probe_count = 0;
+  recording::RecordingManager manager(
+      factory,
+      [&](const std::filesystem::path &) -> std::uint64_t {
+        ++storage_probe_count;
+        if (storage_probe_count == 1) {
+          return 100;
+        }
+        throw std::runtime_error("intentional storage query failure");
+      },
+      std::chrono::milliseconds(0));
+
+  recording::RecordingSpec spec;
+  spec.session_directory = root;
+  spec.session_id = "field-runtime-storage-unavailable";
+  spec.minimum_free_bytes = 10;
+  spec.children = {
+      {"dds", {"lingtu_dds_recorder"}, true, {"dds/sensors.mcap"}},
+      {"camera_color", {"lingtu_camera_recorder"}, true, {"camera_color.mcap"}},
+  };
+  static_cast<void>(manager.start(spec));
+  write_artifact(root / "dds" / "sensors.mcap");
+  write_artifact(root / "camera_color.mcap");
+
+  recording::RecordingStatus status;
+  bool query_escaped = false;
+  try {
+    status = manager.status();
+  } catch (const std::exception &) {
+    query_escaped = true;
+  }
+  require(!query_escaped, "runtime storage query failure escaped the recording manager");
+  require(status.state == recording::RecordingState::kFailed,
+          "runtime storage query failure did not fail the recording session");
+  require(status.error == "recording_storage_status_unavailable",
+          "runtime storage query failure did not expose its stable reason");
+  require(factory.processes.front()->stop_requested() && factory.processes.back()->stop_requested(),
+          "runtime storage query failure did not stop every recorder");
+  require(read_text(root / "session.json").find("recording_storage_status_unavailable") !=
+              std::string::npos,
+          "runtime storage query failure was not persisted in the manifest");
+
+  std::filesystem::remove_all(root);
+}
+
+void test_runtime_storage_probe_is_throttled() {
+  const auto root = unique_directory("runtime-storage-throttle");
+  FakeProcessFactory factory;
+  std::size_t storage_probe_count = 0;
+  recording::RecordingManager manager(
+      factory,
+      [&](const std::filesystem::path &) {
+        ++storage_probe_count;
+        return std::uint64_t{100};
+      },
+      std::chrono::milliseconds(3600000));
+
+  recording::RecordingSpec spec;
+  spec.session_directory = root;
+  spec.session_id = "field-runtime-storage-throttle";
+  spec.minimum_free_bytes = 10;
+  spec.children = {{"dds", {"lingtu_dds_recorder"}, true, {"dds/sensors.mcap"}}};
+  static_cast<void>(manager.start(spec));
+
+  const auto first = manager.status();
+  const auto second = manager.status();
+  require(first.state == recording::RecordingState::kRecording &&
+              second.state == recording::RecordingState::kRecording,
+          "throttled storage checks changed a healthy recording state");
+  require(storage_probe_count == 1,
+          "runtime storage probe ignored its throttle interval");
+
+  write_artifact(root / "dds" / "sensors.mcap");
+  static_cast<void>(manager.stop(std::chrono::milliseconds(10)));
+  std::filesystem::remove_all(root);
 }
 
 void test_required_recorder_exit_fails_session_and_stops_peers() {
@@ -363,6 +499,27 @@ void test_stop_fails_when_required_artifact_is_missing() {
   std::filesystem::remove_all(root);
 }
 
+void test_stop_fails_when_required_artifact_is_not_a_regular_file() {
+  const auto root = unique_directory("non-regular-artifact");
+  FakeProcessFactory factory;
+  recording::RecordingManager manager(factory);
+
+  recording::RecordingSpec spec;
+  spec.session_directory = root;
+  spec.session_id = "field-non-regular-artifact";
+  spec.children = {{"dds", {"lingtu_dds_recorder"}, true, {"dds/sensors.mcap"}}};
+  static_cast<void>(manager.start(spec));
+  std::filesystem::create_directories(root / "dds" / "sensors.mcap");
+
+  const auto status = manager.stop(std::chrono::milliseconds(10));
+  require(status.state == recording::RecordingState::kFailed,
+          "non-regular required artifact completed the session");
+  require(status.error.find("not a regular file") != std::string::npos,
+          "non-regular required artifact failure is not diagnosable");
+
+  std::filesystem::remove_all(root);
+}
+
 void test_optional_recorder_exit_is_visible_without_failing_required_recording() {
   const auto root = unique_directory("optional-exit");
   FakeProcessFactory factory;
@@ -478,11 +635,15 @@ int main() {
   try {
     test_start_creates_one_observable_session();
     test_start_rejects_insufficient_storage_before_session_or_children();
+    test_runtime_storage_low_stops_children_and_persists_failed_state();
+    test_runtime_storage_query_failure_stops_children_and_persists_failed_state();
+    test_runtime_storage_probe_is_throttled();
     test_required_recorder_exit_fails_session_and_stops_peers();
     test_failed_start_rolls_back_started_recorders_and_persists_truth();
     test_failed_start_cleanup_does_not_snapshot_after_successful_wait();
     test_stop_completes_only_after_required_artifacts_exist();
     test_stop_fails_when_required_artifact_is_missing();
+    test_stop_fails_when_required_artifact_is_not_a_regular_file();
     test_optional_recorder_exit_is_visible_without_failing_required_recording();
     test_stop_grace_period_is_one_session_deadline();
     test_stop_continues_after_one_required_signal_failure();

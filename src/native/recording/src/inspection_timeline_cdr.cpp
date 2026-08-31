@@ -8,7 +8,7 @@
 #include <string>
 #include <utility>
 
-#include "message/cpp/dds_topics.hpp"
+#include "message/cpp/topics.hpp"
 
 namespace lingtu::recording {
 namespace {
@@ -161,7 +161,7 @@ InspectionTaskEventFact decode_inspection_event(const RecordedMessage &message) 
   (void)reader.read_string();
   fact.state = reader.read_int32();
   fact.map_id = reader.read_string();
-  fact.map_version = reader.read_int64();
+  fact.map_content_epoch = reader.read_int64();
   fact.route_id = reader.read_string();
   fact.route_revision = reader.read_uint64();
   (void)reader.read_uint32();

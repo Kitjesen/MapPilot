@@ -1,8 +1,8 @@
 #pragma once
-// Unified DDS QoS Profiles for LingTu native services.
-// Semantically aligned with config/qos_profiles.yaml.
+// DDS QoS profiles used by LingTu native services.
 
 #include "dds/dds.h"
+#include "message/cpp/topics.hpp"
 #include <memory>
 #include <string_view>
 
@@ -13,6 +13,7 @@ enum class QosProfile {
   SensorStream,     // lidar/imu: BEST_EFFORT, KEEP_LAST=256
   RawLidarStream,   // raw lidar: BEST_EFFORT, KEEP_LAST=2, lifespan=350ms
   HighFreqState,    // odometry/state: BEST_EFFORT, KEEP_LAST=5, deadline=20ms
+  LocalizationHealth,  // localization health: RELIABLE, VOLATILE, KEEP_LAST=10
   ControlCommand,   // stop/control: RELIABLE, KEEP_LAST=1, deadline=50ms
   FinalVelocityCommand,  // final cmd_vel plus a 200ms DDS lifespan
   CommandRequest,   // typed requests: RELIABLE, VOLATILE, KEEP_LAST=32
@@ -29,12 +30,12 @@ enum class QosProfile {
   SystemStatus,     // health/state: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=1
   Event,            // low-rate nav/semantic events: RELIABLE, TRANSIENT_LOCAL
   MapGrid,          // traversability/exploration grids: RELIABLE, TRANSIENT_LOCAL
+  LocalRiskGrid,    // local odom risk: RELIABLE, VOLATILE, KEEP_LAST=1, lifespan=500ms
   TfDynamic,        // tf: BEST_EFFORT, KEEP_LAST=100
   TfStatic,         // tf_static: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=1
   LidarPointcloud,  // registered_cloud/terrain_map: BEST_EFFORT, KEEP_LAST=2, lifespan=200ms
   MapCloud,         // live map clouds: BEST_EFFORT, VOLATILE, KEEP_LAST=1
   MapScene,         // coherent scene: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=1
-  SemanticScene,    // scene_graph: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=2, lifespan=5s
 };
 
 /// Apply a named QoS profile to an existing dds_qos_t*.
@@ -60,6 +61,11 @@ inline void apply_qos_profile(dds_qos_t* qos, QosProfile profile) {
       dds_qset_durability(qos, DDS_DURABILITY_VOLATILE);
       dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 5);
       dds_qset_deadline(qos, DDS_MSECS(20));
+      break;
+    case QosProfile::LocalizationHealth:
+      dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
+      dds_qset_durability(qos, DDS_DURABILITY_VOLATILE);
+      dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 10);
       break;
     case QosProfile::ControlCommand:
       dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
@@ -148,6 +154,13 @@ inline void apply_qos_profile(dds_qos_t* qos, QosProfile profile) {
       dds_qset_durability(qos, DDS_DURABILITY_TRANSIENT_LOCAL);
       dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 1);
       break;
+    case QosProfile::LocalRiskGrid:
+      dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
+      dds_qset_durability(qos, DDS_DURABILITY_VOLATILE);
+      dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 1);
+      dds_qset_lifespan(qos, DDS_MSECS(500));
+      dds_qset_resource_limits(qos, 1, 1, 1);
+      break;
     case QosProfile::TfDynamic:
       dds_qset_reliability(qos, DDS_RELIABILITY_BEST_EFFORT, DDS_SECS(1));
       dds_qset_durability(qos, DDS_DURABILITY_VOLATILE);
@@ -178,128 +191,132 @@ inline void apply_qos_profile(dds_qos_t* qos, QosProfile profile) {
       dds_qset_lifespan(qos, DDS_SECS(2));
       dds_qset_resource_limits(qos, 1, 1, 1);
       break;
-    case QosProfile::SemanticScene:
-      dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
-      dds_qset_durability(qos, DDS_DURABILITY_TRANSIENT_LOCAL);
-      dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 2);
-      dds_qset_lifespan(qos, DDS_SECS(5));
-      break;
   }
 }
 
 /// Lookup recommended QoS profile by DDS topic name (rt/ prefix).
 inline QosProfile qos_for_topic(std::string_view dds_topic) {
+  const auto is = [dds_topic](const message::TopicContract& topic) {
+    return dds_topic == topic.dds_topic;
+  };
+
   // Sensor streams
-  if (dds_topic == "rt/lidar/raw_frame" ||
-      dds_topic == "rt/lidar/raw_packet")
+  if (is(message::kLidarRawFrame) ||
+      is(message::kSimLidarRawFrame) ||
+      is(message::kLidarRawPacket))
     return QosProfile::RawLidarStream;
-  if (dds_topic == "rt/imu/raw" ||
-      dds_topic == "rt/slam/odom_prior")
+  if (is(message::kImuRaw) || is(message::kSlamOdomPrior))
     return QosProfile::SensorStream;
   // Camera
-  if (dds_topic == "rt/camera/color" || dds_topic == "rt/camera/depth")
+  if (is(message::kCameraColor) || is(message::kCameraDepth))
     return QosProfile::CameraStream;
-  if (dds_topic == "rt/camera/info")
+  if (is(message::kCameraInfo))
     return QosProfile::CameraInfo;
   // High freq state
-  if (dds_topic == "rt/driver/odometry" ||
-      dds_topic == "rt/slam/odometry" ||
-      dds_topic == "rt/gnss/fix" ||
-      dds_topic == "rt/gnss/odom")
+  if (is(message::kDriverOdometry) ||
+      is(message::kSlamOdometry) ||
+      is(message::kSlamStateAtScan) ||
+      is(message::kSlamLocalizationQuality) ||
+      is(message::kGnssFix) ||
+      is(message::kGnssOdom))
     return QosProfile::HighFreqState;
+  if (is(message::kSlamLocalizationHealth))
+    return QosProfile::LocalizationHealth;
   // Control
-  if (dds_topic == "rt/nav/cmd_vel")
+  if (is(message::kNavCmdVel))
     return QosProfile::FinalVelocityCommand;
-  if (dds_topic == "rt/nav/stop")
-    return QosProfile::ControlCommand;
-  if (dds_topic == "rt/nav/command/request" ||
-      dds_topic == "rt/maps/activation/request" ||
-      dds_topic == "rt/nav/exploration/command" ||
-      dds_topic == "rt/nav/exploration_segment/request" ||
-      dds_topic == "rt/nav/inspection/task/request")
+  if (is(message::kNavCommandRequest) ||
+      is(message::kNavPlanRequest) ||
+      is(message::kNavPlanResult) ||
+      is(message::kNavGeofenceCommand) ||
+      is(message::kMapsActivationRequest) ||
+      is(message::kSlamMapSnapshotRequest) ||
+      is(message::kSlamRelocalizationRequest) ||
+      is(message::kNavExplorationCommand) ||
+      is(message::kNavExplorationSegmentRequest) ||
+      is(message::kNavInspectionTaskRequest))
     return QosProfile::CommandRequest;
-  if (dds_topic == "rt/nav/operator_motion/control")
+  if (is(message::kOperatorMotionControl))
     return QosProfile::OperatorMotionControl;
-  if (dds_topic == "rt/nav/operator_motion/sample")
+  if (is(message::kOperatorMotionSample))
     return QosProfile::OperatorMotionSample;
-  if (dds_topic == "rt/nav/operator_motion/ack")
+  if (is(message::kOperatorMotionAck))
     return QosProfile::OperatorMotionAck;
-  if (dds_topic == "rt/nav/operator_motion/status")
+  if (is(message::kOperatorMotionStatus))
     return QosProfile::OperatorMotionStatus;
-  if (dds_topic == "rt/nav/command/ack" ||
-      dds_topic == "rt/maps/activation/ack" ||
-      dds_topic == "rt/nav/goal/status" ||
-      dds_topic == "rt/nav/exploration/ack" ||
-      dds_topic == "rt/nav/exploration_segment/ack" ||
-      dds_topic == "rt/nav/exploration_segment/status" ||
-      dds_topic == "rt/nav/inspection/task/ack")
+  if (is(message::kNavCommandAck) ||
+      is(message::kNavGeofenceResponse) ||
+      is(message::kMapsActivationAck) ||
+      is(message::kSlamMapSnapshotAck) ||
+      is(message::kSlamRelocalizationResponse) ||
+      is(message::kNavGoalStatus) ||
+      is(message::kNavExplorationAck) ||
+      is(message::kNavExplorationSegmentAck) ||
+      is(message::kNavExplorationSegmentStatus) ||
+      is(message::kNavInspectionTaskAck))
     return QosProfile::CommandAck;
-  if (dds_topic == "rt/nav/inspection/evidence/request" ||
-      dds_topic == "rt/nav/inspection/evidence/result")
+  if (is(message::kNavInspectionEvidenceRequest) ||
+      is(message::kNavInspectionEvidenceResult))
     return QosProfile::InspectionEvidence;
-  if (dds_topic == "rt/nav/inspection/task/event" ||
-      dds_topic == "rt/nav/exploration/run/event")
+  if (is(message::kNavInspectionTaskEvent) ||
+      is(message::kNavExplorationRunEvent))
     return QosProfile::TaskEvent;
-  if (dds_topic == "rt/nav/inspection/status" ||
-      dds_topic == "rt/nav/state" ||
-      dds_topic == "rt/maps/state" ||
-      dds_topic == "rt/driver/control_state")
+  if (is(message::kNavInspectionStatus) ||
+      is(message::kNavState) ||
+      is(message::kNavGeofenceAlert) ||
+      is(message::kMapsState) ||
+      is(message::kDriverControlState))
     return QosProfile::SystemStatus;
-  if (dds_topic == "rt/nav/way_point" ||
-      dds_topic == "rt/nav/teleop_cmd_vel" ||
-      dds_topic == "rt/nav/cancel" ||
-      dds_topic == "rt/nav/map_clearing" ||
-      dds_topic == "rt/nav/cloud_clearing")
+  if (is(message::kNavWayPoint) ||
+      is(message::kNavMapClearing) ||
+      is(message::kNavCloudClearing))
     return QosProfile::ControlCommand;
   // Paths
-  if (dds_topic == "rt/nav/global_path" || dds_topic == "rt/nav/local_path")
+  if (is(message::kNavGlobalPath) || is(message::kNavLocalPath))
     return QosProfile::GlobalPath;
   // System status
-  if (dds_topic == "rt/robot_state" ||
-      dds_topic == "rt/gnss/status")
+  if (is(message::kGnssStatus))
     return QosProfile::SystemStatus;
   // Event and grid state
-  if (dds_topic == "rt/nav/goal_pose" ||
-      dds_topic == "rt/nav/semantic/instruction" ||
-      dds_topic == "rt/nav/semantic/status")
+  if (is(message::kNavSemanticInstruction))
     return QosProfile::Event;
-  if (dds_topic == "rt/nav/traversability" ||
-      dds_topic == "rt/nav/exploration_grid" ||
-      dds_topic == "rt/nav/exploration_snapshot" ||
-      dds_topic == "rt/nav/exploration_execution_snapshot" ||
-      dds_topic == "rt/maps/occupancy" ||
-      dds_topic == "rt/maps/elevation" ||
-      dds_topic == "rt/maps/esdf")
+  if (is(message::kNavLocalTraversability) ||
+      is(message::kMapsLocalCollision))
+    return QosProfile::LocalRiskGrid;
+  if (is(message::kNavTraversability) ||
+      is(message::kNavExplorationGrid) ||
+      is(message::kNavExplorationSnapshot) ||
+      is(message::kNavExplorationExecutionSnapshot) ||
+      is(message::kMapsOccupancy) ||
+      is(message::kMapsElevation) ||
+      is(message::kMapsEsdf))
     return QosProfile::MapGrid;
   // TF
-  if (dds_topic == "rt/tf")
+  if (is(message::kTf))
     return QosProfile::TfDynamic;
-  if (dds_topic == "rt/tf_static")
+  if (is(message::kTfStatic))
     return QosProfile::TfStatic;
   // Point clouds
-  if (dds_topic == "rt/slam/registered_cloud" ||
-      dds_topic == "rt/slam/map_observation" ||
-      dds_topic == "rt/slam/map_cloud" ||
-      dds_topic == "rt/slam/cumulative_map_cloud" ||
-      dds_topic == "rt/slam/saved_map_cloud" ||
-      dds_topic == "rt/nav/terrain_map" ||
-      dds_topic == "rt/nav/terrain_map_ext")
+  if (is(message::kSlamRegisteredCloud) ||
+      is(message::kSlamMapObservation) ||
+      is(message::kSlamMapCloud) ||
+      is(message::kSlamCumulativeMapCloud) ||
+      is(message::kSlamSavedMapCloud) ||
+      is(message::kNavTerrainMap) ||
+      is(message::kNavTerrainMapExt))
     return QosProfile::LidarPointcloud;
-  if (dds_topic == "rt/maps/live_cloud" ||
-      dds_topic == "rt/maps/voxel_cloud" ||
-      dds_topic == "rt/maps/accumulated_cloud")
+  if (is(message::kMapsLiveCloud) ||
+      is(message::kMapsVoxelCloud) ||
+      is(message::kMapsAccumulatedCloud))
     return QosProfile::MapCloud;
-  if (dds_topic == "rt/maps/scene")
+  if (is(message::kMapsScene))
     return QosProfile::MapScene;
-  // Semantic
-  if (dds_topic == "rt/nav/semantic/scene_graph")
-    return QosProfile::SemanticScene;
   // Exploration planner (low-rate, reliable, latching)
-  if (dds_topic == "rt/exploration/way_point" ||
-      dds_topic == "rt/exploration/local_path" ||
-      dds_topic == "rt/exploration/runtime" ||
-      dds_topic == "rt/exploration/finish" ||
-      dds_topic == "rt/exploration/start")
+  if (is(message::kExplorationWayPoint) ||
+      is(message::kExplorationLocalPath) ||
+      is(message::kExplorationRuntime) ||
+      is(message::kExplorationFinish) ||
+      is(message::kExplorationStart))
     return QosProfile::Event;
 
   return QosProfile::Default;

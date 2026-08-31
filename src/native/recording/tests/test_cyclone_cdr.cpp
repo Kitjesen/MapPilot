@@ -10,7 +10,7 @@
 #include "lingtu/recording/cyclone_cdr.hpp"
 #include "lingtu/recording/recording_core.hpp"
 #include "lingtu/recording/topic_catalog.hpp"
-#include "lingtu_slam.h"
+#include "messages.h"
 
 namespace {
 

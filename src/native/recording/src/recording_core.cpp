@@ -103,10 +103,10 @@ std::filesystem::path resolve_recording_idl(
   if (const char *repository = std::getenv("LINGTU_REPO");
       repository != nullptr && *repository != '\0') {
     candidates.emplace_back(std::filesystem::path(repository) / "src" / "message" / "idl" /
-                            "lingtu_slam.idl");
+                            "messages.idl");
   }
   candidates.emplace_back(executable_path.parent_path() / ".." / ".." / "src" / "message" /
-                          "idl" / "lingtu_slam.idl");
+                          "idl" / "messages.idl");
   candidates.push_back(compile_time_fallback);
 
   std::string checked;

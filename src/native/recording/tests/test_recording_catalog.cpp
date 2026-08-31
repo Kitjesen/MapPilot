@@ -67,6 +67,7 @@ void test_active_session_wins_over_newer_history() {
   const auto catalog = recording::inspect_recording_catalog(temporary.path);
   require(catalog.selected.has_value(), "catalog omitted active session");
   require(catalog.selected->session_id == "active", "history replaced active session");
+  require(catalog.sessions.size() == 2, "catalog omitted terminal session history");
 }
 
 void test_multiple_active_sessions_fail_closed() {
