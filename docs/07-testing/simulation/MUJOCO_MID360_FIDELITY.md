@@ -46,7 +46,6 @@ Within the simulation sensor-adapter boundary, the nominal profile uses:
 ```text
 backend                         mujoco_lidar
 require_product_backend          true
-allow_legacy_fallback            false
 scan pattern                     official pinned mid360.csv conversion
 samples_per_frame                20,000
 frame rate                       10 Hz

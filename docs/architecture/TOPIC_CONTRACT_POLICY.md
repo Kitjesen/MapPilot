@@ -78,7 +78,6 @@ src/runtime/endpoints/
 src/runtime/adapters/
 src/runtime/transport/
 src/runtime/tf/
-src/runtime/remote_ports.py
 src/localization/adapters/
 src/localization/launch/
 src/perception/adapters/
@@ -207,7 +206,7 @@ Latest result:
 
 Next guards should cover:
 
-- C++ endpoint topic literals: require `src/message/cpp/dds_topics.hpp` or an
+- C++ endpoint topic literals: require `src/message/cpp/topics.hpp` or an
   equivalent generated constant source;
 - `config/runtime_graph/*.yaml`: require all topics to match
   `runtime_interface.TOPICS` and route-contract declarations;

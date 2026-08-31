@@ -84,6 +84,7 @@ and ownership model.
 | Prepare a field target without exposing target-specific details | [Field deployment](./04-deployment/WEB_GUIDE.md) |
 | Run tests, simulation gates, or no-motion field validation | [Testing and validation](./07-testing/WEB_GUIDE.md) |
 | Find the CLI, REST, MCP, configuration, or contract reference | [Reference](./08-reference/README.md) |
+| Resume long-running agent work after chat compaction | [Session worklogs](./worklogs/README.md) |
 
 ## How to read this documentation
 
@@ -96,6 +97,7 @@ and ownership model.
 | Validation evidence | Records what a named test, simulation gate, or field run demonstrated. | `07-testing/` and `07-testing/field-runs/` |
 | Active plan | Describes intended work, not shipped behavior. | `plans/current-roadmap.md` |
 | Research note | Records an upstream evaluation or algorithm investigation; it is not acceptance evidence. | `research/` |
+| Session worklog | Preserves task context across chat compaction; it is not an implementation authority. | `worklogs/` |
 
 Every current task page identifies its audience and environment. A command or
 claim that only applies to simulation must say so. A procedure that can create

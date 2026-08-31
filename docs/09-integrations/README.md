@@ -19,10 +19,10 @@ Module 图提交意图；它们不能取代规划器、安全栈或原生现场�
 flowchart LR
     C["Dashboard, service, or agent"] --> G["Gateway REST :5050"]
     C --> M["MCP JSON-RPC :8090"]
-    G --> B["Module / Blueprint graph"]
+    G --> B["Host command / goal / skill surface"]
     M --> B
-    B --> S["SafetyRing and CmdVelMux"]
-    S --> N["Native command boundary or driver"]
+    B --> N["Typed native command -> navd safety and authority"]
+    N --> D["/nav/cmd_vel -> driver"]
     B --> T["Status, map, and semantic telemetry"]
     T --> G
     T --> M
@@ -31,12 +31,12 @@ flowchart LR
 | 需求 | 首选接口 | 原因 | 影响类别 |
 | --- | --- | --- | --- |
 | 渲染健康、就绪度、会话、地图、路径或遥测 | Gateway REST、SSE 或只读 WebSocket | 无需选择机器人动作，即可获得类型化 HTTP 契约和实时状态。 | 只读 |
-| 预览坐标目标或已保存地图的路线 | Gateway 无运动规划路由 | 服务端会评估当前地图、位姿、就绪度和规划器，而不是要求客户端编造路径。 | 无实体运动 |
+| 验证已保存地图上的路线 | Gateway 地图 `validate_plan` 路由 | 原生地图/规划边界评估活动地图、位姿和目标；通用 navigation preview 不可用时会明确拒绝。 | 无实体运动 |
 | 发送经人工批准的坐标、语义或速度命令 | Gateway REST 或遥操作 WebSocket | 这些控制面受运行时租约、安全、就绪度和命令边界保护。 | 可能驱动硬件 |
 | 向智能体提供动态发现的能力集合 | MCP `tools/list`，再调用 `tools/call` | 工具从已加载 Module 的 `@skill` 方法收集；当前 profile 决定哪些工具存在。 | 取决于工具 |
 | 构建进程内 Python 客户端 | 源码检出的 `lingtu.sdk` | 同步客户端仅使用标准库；类型化响应辅助器可减少重复的请求解析。 | 取决于方法 |
 
-不要编写自行计算机器人路径、绕过 `CmdVelMux` 发布，或把缓存的仪表盘状态
+不要编写自行计算机器人路径、绕过原生命令边界发布，或把缓存的仪表盘状态
 当作命令授权的客户端。Gateway 是产品边界，不是第二套导航栈。
 
 ## 权威来源
@@ -51,7 +51,7 @@ flowchart LR
 | 鉴权行为 | [API-key 中间件](../../src/gateway/auth.py) 与 [鉴权路由](../../src/gateway/routes/auth.py) |
 | Python 同步/异步/MCP 辅助器行为 | [SDK 包](../../src/lingtu/sdk/) |
 | MCP 传输、工具发现和服务端强制约束 | [MCPServerModule](../../src/gateway/mcp_server.py) 与 [MCP 工具清单](../api/mcp_tools.md) |
-| Profile、端点和能力选择 | [运行时 profile 目录](../../src/runtime/profiles/catalog/) |
+| Product、端点和能力选择 | [Runtime Graph](../../config/runtime_graph/) 与 [Product assembly](../../src/lingtu/assembly/) |
 | 客户端动作安全性 | [安全与控制边界](../10-safety/README.md)、[任务指南](../05-guides/README.md) 与 [运维](../06-operations/README.md) |
 
 生成的 API 清单描述仓库中的路由/工具定义。针对某一台机器人，运行中的服务仍是
@@ -128,7 +128,7 @@ API key 就把机器人控制端口直接暴露到公网。
 | **只读** | `GET /api/v1/app/capabilities`、`/api/v1/readiness`、`/api/v1/health`、`/api/v1/state`、`/api/v1/session`、`/api/v1/navigation/status`、`/api/v1/path`、`/api/v1/slam/maps`；`GET /api/v1/events` | 展示时间戳和阻塞因素；可由 SSE 提供更新时，避免高频轮询。 |
 | **无实体运动** | `POST /api/v1/navigation/plan`、`POST /api/v1/navigation/goal_candidate`、`POST /api/v1/maps/{name}/validate_plan` | 将可行性、坐标系、地图身份和路径安全输出视为门槛。预览不是运动授权。 |
 | **不含目标/速度请求的状态变更** | 租约 acquire/renew/release；地图 import/crop/build/activate/restore；会话 start/end；SLAM/重定位；driver/backend/runtime 切换；录制控制 | 要求明确的操作员意图、静止机器人，以及变更后的能力/就绪度检查。这些操作可改变持久数据、进程所有权或上下文。 |
-| **可运动** | `POST /api/v1/goal`、`/api/v1/navigate/click`、`/api/v1/instruction`、`/api/v1/cmd_vel`、非 stop 的 `/api/v1/visual_servo`、探索启动，以及 `/ws/teleop` 摇杆消息 | 调用前设置明确的人类/自动化授权门；整个生命周期内始终可见 stop/cancel/status。 |
+| **可运动** | `/ws/teleop` 物理速度消息、`POST /api/v1/goal`、`/api/v1/navigate/click`、`/api/v1/instruction`、非 stop 的 `/api/v1/visual_servo`，以及探索启动 | 调用前设置明确的人类/自动化授权门；整个生命周期内始终可见 `/api/v1/stop`、cancel 和 status。 |
 | **停止或恢复控制** | `POST /api/v1/stop`、`/api/v1/navigation/cancel`、`/api/v1/estop/reset`、`/api/v1/navigation/resume`、会话结束、visual-servo stop | 这些会改变控制状态；它们不能证明物理危险、传感器故障或定位故障已解决。 |
 
 ### 安全的路线预览示例
@@ -187,9 +187,8 @@ $env:PYTHONPATH = (Join-Path (Get-Location) 'src')
 python -c "from lingtu.sdk import LingTuClient; print(LingTuClient().base_url)"
 ```
 
-同步 `LingTuClient` 仅使用 Python 标准库。其构造器接受 `host`、`port` 和可选
-`api_key`；默认目标是默认 Gateway 端口上的本地 loopback Gateway。`LingTuConfig`
-是连接设置 dataclass，并不是 `LingTuClient` 接受的构造器参数。
+同步 `LingTuClient` 仅使用 Python 标准库。其构造器接受 `host`、`port`、可选
+`api_key` 和 `timeout`；默认目标是默认 Gateway 端口上的本地 loopback Gateway。
 
 ### 只读 SDK 启动
 
@@ -211,28 +210,54 @@ with LingTuClient(
 ```
 
 SDK 提供 `Position`、`HealthStatus`、`NavigationStatus`、`MapList`、`SessionInfo`、
-`RobotState` 和 `CommandResult` 等类型化辅助器。`state()`、`health()`、`maps()`、
+`RobotState`、`Pose2D` 和 `CommandResult` 等类型化辅助器。`state()`、`health()`、`maps()`、
 `navigation_status()`、`path()`、`capabilities()` 和 `readiness()` 等方法属于观察方法；
 其结果仍需经过新鲜度和能力检查。
 
-对不可达目标，同步辅助器会返回稳定的错误载荷，而不是抛出传输错误。对于命令辅助器，
-请同时检查 `CommandResult.ok` **和** `CommandResult.raw`；绝不可把尽力而为的传输
-结果变成自动运动重试。
+只读辅助器在目标不可达时抛出 `ConnectionError`，不会把未知位姿或健康状态填成零值。
+命令辅助器返回 `CommandResult`；请同时检查 `CommandResult.ok` **和**
+`CommandResult.raw`，绝不可把传输失败变成自动运动重试。
+
+### 定位 SDK
+
+定位命令统一位于 `client.localization` 领域 facade 下，不向调用方暴露当前使用的
+matcher 名称：
+
+```python
+from lingtu.sdk import LingTuClient, Pose2D
+
+with LingTuClient(host="<robot>", port=5050) as robot:
+    seeded = robot.localization.relocalize(
+        "warehouse",
+        initial_pose=Pose2D(x=1.0, y=2.0, yaw=0.5),
+    )
+    global_result = robot.localization.global_relocalize("warehouse")
+    tracking = robot.localization.start_map_tracking("warehouse")
+```
+
+这些方法分别调用 `POST /api/v1/localization/relocalizations` 的 `seeded`/`global`
+模式，以及 `POST /api/v1/localization/map-tracking`。旧的扁平
+`slam_relocalize` 方法和旧 `/api/v1/slam/*relocalize*` 路由不保留长期兼容层。
+
+三个方法的 `map_name` 都必须等于当前 Product 的 active map。这不是任选地图文件的
+参数：SLAM target、mapd live map 和规划器共享同一不可变 `MapIdentity`。不一致的请求
+会被拒绝；需要切地图时，使用 `scripts/lingtu` 或 `python -m lingtu.control` 进入新的
+ProductControl transaction，再对新的 active map 调用定位 API。
 
 ### SDK 动作地图
 
 | SDK 接口 | 影响 | 说明 |
 | --- | --- | --- |
 | `state`、`health`、`position`、`session`、`navigation_status`、`path`、`maps`、`scene`、`locations`、`capabilities`、`bootstrap`、`devices`、`readiness`、`runtime_contract`、`auth_check` | 只读 | 用于观察和 UI 状态，不能单独用作运动授权。 |
-| `save_map`、`use_map`、`rename_map`、`restore_map`、`reset_map_cloud`、`tag_location`、`delete_location`、`slam_switch`、`slam_relocalize`、`start_session`、`end_session`、`swap_driver`、`switch_backend`、租约方法、bag 控制 | 状态变更或无运动诊断 | 这些方法可能改变地图数据、会话、进程/backend 选择或控制所有权。`start_session`/`end_session` 只用于本地 Profile；现场 Product 生命周期必须通过 `scripts/lingtu` 或 `python -m lingtu.control`，Gateway 会拒绝绕过 ProductControl 的会话结束请求。 |
+| `save_map`、`rename_map`、`reset_map_cloud`、`tag_location`、`delete_location`、`localization.relocalize`、`localization.global_relocalize`、`localization.start_map_tracking` 和租约方法 | 状态变更或无运动诊断 | 这些方法可能改变地图数据或控制所有权。`session` 仅用于读取当前 Product 运行投影；地图选择和 Product 生命周期必须通过 `scripts/lingtu` 或 `python -m lingtu.control`，Gateway 不提供独立 session、地图激活、backend 或 SLAM profile 热切换入口。 |
 | `go`、`go_to`、`navigate_click`、`drive`、`explore_start` | 可运动 | 不要从无人值守循环、后台重试或初始连通性测试中调用。 |
 | `stop`、`cancel`、`explore_stop` | 控制状态 | `stop` 在 REST 边界具有紧急停止语义；`cancel` 是平缓的任务取消。恢复语义请参阅安全文档。 |
 
 ### 异步和 MCP 辅助器
 
-`AsyncLingTuClient` 为可选组件，并导入 `aiohttp`；项目声明了 `sdk-async` extra，
-但其包安装路径在此同样未验证。异步客户端设计为 async context manager，并接受
-`timeout` 构造器参数（默认 10 秒）。同步客户端不提供 timeout 构造器参数。
+`AsyncLingTuClient` 是同步客户端的轻量异步适配器。它通过
+`asyncio.to_thread` 调用同一套请求和解析逻辑，不需要另一套 HTTP 依赖或配置。
+同步与异步客户端都接受 `timeout` 构造器参数（默认 10 秒）。
 
 ```python
 from lingtu.sdk import AsyncLingTuClient
@@ -242,15 +267,10 @@ async with AsyncLingTuClient(host="<robot>", port=5050) as robot:
     status = await robot.navigation_status()
 ```
 
-`LingTuMCP` 也是可选组件，并导入 `httpx`。其当前源码创建普通 HTTP 请求，没有
+`LingTuMCP` 使用标准库发送普通 HTTP 请求，没有
 API-key/header 参数。因此它当前并非受支持的已鉴权 MCP 客户端：除非已验证并实现
 鉴权路径，否则不要用它连接 API-key 保护的远程 MCP 服务。请改用可提供所需
 `X-API-Key` header 的 MCP/JSON-RPC 客户端。
-
-还有第二处源码不匹配需要明确说明：SDK `auth_login()` 辅助器提交 `api_key` 字段，
-而 Gateway 当前的 `AuthLoginRequest` 模型定义的是 `key`。不要把 login 辅助器当作
-已鉴权部署的凭据启动契约。请优先使用 `X-API-Key` header，并验证运行中的 OpenAPI
-schema。
 
 ## 4. 将 MCP 作为能力发现协议集成
 
@@ -290,8 +310,8 @@ API key 时会以 fail closed 方式失败。这比 Gateway 方便开发的默�
 | 可运动 | navigation、语义 instruction、patrol、visual follow、exploration | 与 Gateway 运动命令完全相同对待：操作员授权、主动监控和停止路径。 |
 | 停止/恢复 | emergency stop、cancel/stop navigation、servo stop | 它们是控制操作，而非危险已经消除的证据。 |
 
-MCP 智能体可以调用已暴露的工具，但不能绕过 Module 图、原生现场命令边界、
-`SafetyRing` 或 `CmdVelMux`。不要给智能体提供一个对失败运动工具进行笼统重试的
+MCP 智能体可以调用已暴露的工具，但不能绕过 Host 命令面、原生现场命令边界、
+`navd` 最终安全或控制权。不要给智能体提供一个对失败运动工具进行笼统重试的
 循环；错误/拒绝本身就是需要检查的运行证据。
 
 ## 5. 流、仪表盘 UI 与遥操作
@@ -300,9 +320,13 @@ MCP 智能体可以调用已暴露的工具，但不能绕过 Module 图、原�
   在可行情况下优先使用它而非激进轮询。
 - `/ws/camera`、`/ws/cloud` 与 `/ws/scan` 是可观测性流。视频或点云可见并不能证明
   地图身份、定位、规划或安全性有效。
-- `/ws/teleop` 是可运动控制面。服务端分配短生命周期租约，要求带 `deadman: true`
-  的摇杆消息才会驱动，并在 Safety STOP 活动时拒绝摇杆命令。断开的客户端会经由
-  控制路径被释放/归零。详见[安全与控制边界](../10-safety/README.md)的细节和停止语义。
+- `/ws/teleop` 是可运动控制面。一个显式连接的浏览器拥有连接级控制会话，直到其
+  断开；这不是带超时的 Web Lease。只有带 `deadman: true` 的 `type: "velocity"`
+  消息才会驱动，`deadman: false` 表示保持；`vx_mps`、`vy_mps`、`yaw_rps` 分别使用
+  `m/s`、`m/s`、`rad/s`。Safety STOP 活动时拒绝速度命令。闲置浏览器不发送
+  heartbeat；原生 Lease、CLAIM、source epoch 和序列只存在于 Gateway 与 `navd`
+  之间，过期后由下一条新速度自动恢复。断开会执行零速屏障并释放原生控制权。
+  详见[安全与控制边界](../10-safety/README.md)的细节和停止语义。
 
 为保持仪表盘清晰，请让 UI 状态机可见：
 

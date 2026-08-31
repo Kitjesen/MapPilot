@@ -1,7 +1,7 @@
 # Core Concepts
 
 LingTu uses a Product boundary around a scoped Python Host. ProductControl is
-fixed to `env=real` or `env=sim` and resolves a Product into one fingerprinted
+fixed to `env=real` or `env=sim` and resolves a Product into one
 `RunPlan`; ProductControl applies its native processes. A
 `Blueprint` only assembles typed `Module` ports
 and wires inside the Host. DDS, shared memory, simulators, and ROS 2 are
@@ -11,14 +11,14 @@ boundary mechanisms, not the business API.
 > **Audience:** Developers, integration engineers, and reviewers<br>
 > **Runs on:** Local development hosts, simulations, and field deployments
 > **Start here:** Read this page before changing a Module, Blueprint, backend,
-> transport, or profile.
+> transport, Product, or env.
 
 ## The model in one picture
 
 ```text
 env + Product
   -> Assembly
-  -> fingerprinted RunPlan
+  -> resolved RunPlan
      -> ProductControl -> native processes + Host
      -> Host -> Blueprint -> Module ports and local calls
 
@@ -34,7 +34,6 @@ main way LingTu stays replaceable across a stub, simulation, and field robot.
 
 | Term | Answers | Does not answer |
 | --- | --- | --- |
-| **Profile** | Which local development configuration is requested? | Field Product or deployment identity. |
 | **env** | Is this runtime `real` or `sim`? | Product behavior or a communication endpoint. |
 | **Product** | Which env-independent Host graph, logical native roles, topics, and capabilities form one mode? | Concrete deployment targets or runtime side effects. |
 | **RunPlan** | What exact Host config and processes result from resolving Product + env? | User intent or side effects. |
@@ -178,7 +177,7 @@ Module, service, adapter, or kernel.
 from runtime.blueprint import Blueprint
 
 bp = (
-    Blueprint("sample-flow")
+    Blueprint()
     .add(SampleSource)
     .add(SampleFilter)
     .wire("SampleSource", "sample", "SampleFilter", "sample")
@@ -208,21 +207,20 @@ explicit safety, navigation, hardware, or external-boundary wiring.
 Critical full-stack wires are organized under
 [`src/lingtu/assembly/wires/`](../../src/lingtu/assembly/wires/). The
 [Blueprint guide](../../src/lingtu/assembly/README.md) explains the intended
-order: profile -> product Blueprint -> stack factories -> explicit wires ->
+order: Product -> Blueprint -> stack factories -> explicit wires ->
 route contract -> build.
 
 ### Stack factories and product assembly
 
 Stack factories in `src/lingtu/assembly/stacks/` add small reusable groups,
 such as maps, safety, navigation, or gateway. They do not decide a product
-mission. Product-level assembly lives in `products/`. `profile_builder.py` has
-separate local Profile and Product+env entry points; field startup consumes a
-RunPlan rather than resolving a Profile again.
+mission. Product-level assembly lives in `products/`. `compiler.py` resolves
+Product+env into the RunPlan consumed by startup.
 
 This split makes a change reviewable:
 
 ```text
-profile configuration
+Product declaration
   -> product assembly chooses modules
   -> stack factories add module groups
   -> wire files declare important data flow
@@ -240,7 +238,7 @@ Most Module-to-Module traffic remains in process and uses direct callbacks or
 | Two Modules in one process | Typed `In`/`Out` plus an explicit wire | Lowest complexity and no serialization boundary. |
 | High-volume traffic on one host | Explicit shared-memory adapter when the schema and performance gate exist | Avoid unnecessary copies while keeping ownership explicit. |
 | Field service or cross-language boundary | Typed CycloneDDS endpoint contract | Stable IDL/schema/QoS ownership across processes. |
-| Replay, test, or compatibility seam | Explicit local/LCM/ROS adapter selected by its endpoint/profile | Keeps legacy format out of product business code. |
+| Replay, test, or compatibility seam | Explicit local/LCM/ROS adapter | Keeps legacy format out of product business code. |
 
 `Blueprint.wire(..., delivery=..., topic=...)` can select a per-wire delivery
 mechanism for an explicit experiment or compatibility seam. New product sensor,
@@ -248,39 +246,21 @@ SLAM, and navigation paths must **not** become generic `delivery="dds"` wires
 sprinkled throughout the graph. They use typed endpoint contracts and native
 adapters with fixed message schemas and QoS.
 
-### Route contract versus routed delivery
+### Route contract
 
-These two APIs intentionally have different effects.
+`route_contract(...)` attaches external topic/schema/ownership metadata and
+validates the native boundary. It never changes ordinary Module delivery.
 
-| API | Effect |
-| --- | --- |
-| `route_contract(...)` | Attaches external topic/schema/ownership metadata and validates the boundary. It does not move ordinary Module wires off local delivery. |
-| `routed_delivery(...)` | Explicitly routes selected, explicitly topiced Module wires through the chosen backend. Use only when that transport move is the deliberate feature. |
-
-The legacy `Blueprint.route(...)` spelling means routed delivery and is
-deprecated for new code. The transport package and
-[runtime bus decision](../architecture/LINGTU_RUNTIME_BUS_DECISION.md) provide
-the full policy.
-
-## Profiles, Product/env, endpoints, and sessions
+## Product/env, endpoints, and sessions
 
 These concepts are commonly collapsed into a single word such as "mode." They
 should not be.
 
 ```text
-local Profile -> development Host configuration
 Product -> env-independent operating mode
 env -> real or sim outer runtime implementation
 RobotConfig -> static real-env robot/device/calibration data
 endpoint -> concrete HTTP, DDS, or native-service communication boundary
-```
-
-Use canonical names in new documentation and configuration. Ask the running CLI
-for the current local Profile catalog instead of copying a stale profile list:
-
-```bash
-uv run --locked python lingtu.py --list
-uv run --locked python lingtu.py --list --all
 ```
 
 The active runtime also has separate operator-facing state:
@@ -289,9 +269,9 @@ The active runtime also has separate operator-facing state:
 | --- | --- | --- |
 | `env` | Outer runtime environment. | `real` or `sim` |
 | `product` | Operator-selected operating mode. | `nav` |
-| `endpoint` | Concrete HTTP, DDS, or native-service communication address/contract. | `http://robot:5050` or `thunder_dds_v1` |
+| `endpoint` | Concrete HTTP, DDS, or native-service communication address/contract. | `http://robot:5050` or `field_dds_v1` |
 | `session_mode` | Coarse resource session. | `mapping`, `navigating`, `exploring` |
-| `product_session` | Operator task shown in the product. | `navigation`, `inspection`, `teleop` |
+| `product_session_id` | One Product run, shown only for diagnostics. | `product-<uuid>` |
 | `slam_mode` | SLAM is mapping or localizing. | `mapping`, `localization` |
 
 For the `nav` Product in `env=real`, the usual shape is a local Python Host
@@ -299,10 +279,10 @@ graph plus typed DDS service boundaries. That does not mean every Python Module
 speaks DDS. Native services own cross-process communication while Modules
 retain their normal local contracts.
 
-See the [field Product guide](../architecture/FIELD_PRODUCTS.md)
-for Product/session rules and
-[`src/runtime/profiles/resolver.py`](../../src/runtime/profiles/resolver.py)
-for the resolution order.
+See the [field Product guide](../architecture/FIELD_PRODUCTS.md) for
+Product/session rules and
+[`src/lingtu/assembly/compiler.py`](../../src/lingtu/assembly/compiler.py) for
+Product assembly.
 
 ## Backends and the registry
 

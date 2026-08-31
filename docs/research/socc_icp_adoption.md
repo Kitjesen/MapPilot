@@ -64,7 +64,7 @@ The native map product is implemented in:
 - `src/maps/include/lingtu/maps/layers/semantic_occupancy.hpp`
 - `src/maps/cpp/layers/semantic_occupancy.cpp`
 - `src/maps/tests/cpp/semantic_occupancy_test.cpp`
-- `src/maps/include/lingtu/maps/c_api/semantic_occupancy.h`
+- `src/maps/include/lingtu/maps/layers/semantic_occupancy.hpp`
 - `src/maps/include/lingtu/maps/semantic_map_persistence.hpp`
 
 `SemanticOccupancyLayerCore` currently provides:

@@ -57,7 +57,7 @@ algorithm chains stay in-process.
   LocalPlanner, PathFollower, and command arbitration call each other directly
   when they live inside one endpoint process.
 - Cross-process or cross-language Product traffic must use typed DDS. The
-  Thunder `env=real` Product runtime uses the `thunder_dds_v1` typed
+  `env=real` Product runtime uses the `field_dds_v1` typed
   CycloneDDS contract.
 - LCM is limited to replay, debug, legacy adapters, or external benchmark
   shims. It must not be required by `nav`, `teleop_avoid`, `map`, `tracking`,
@@ -104,17 +104,17 @@ Legacy ROS names remain adapter aliases only:
 | `/nav/state_estimation_at_scan` | `localization.scan_synced_odometry` | Canonical ROS adapter alias. |
 | `/cloud_registered` | `perception.registered_cloud` or `mapping.map_cloud` | Adapter must declare frame semantics. |
 | `/registered_scan` | `mapping.map_cloud` | TARE/CMU adapter alias. |
-| `/sensor_scan` | `perception.sensor_frame_scan` | Legacy optional output; not part of the `lite` Profile. |
+| `/sensor_scan` | `perception.sensor_frame_scan` | Legacy optional output; not part of the current Product data plane. |
 | `/terrain_map_ext` | `mapping.terrain_map_ext` | Adapter alias only. |
 | `/cmd_vel` | `control.cmd_vel` | Adapter alias; hardware safety must stay explicit. |
 
-`/sensor_scan` is not a core `lite` Profile dependency. If the transform logic is
+`/sensor_scan` is not a current Product dependency. If the transform logic is
 still needed, extract it as a pure kernel and keep ROS publication in an
 adapter.
 
 ## Transport Direction
 
-`lite` Profile:
+Local Blueprint development path:
 
 - In-process only by default.
 - Uses `ModulePort + LocalTransport`.
@@ -123,47 +123,29 @@ adapter.
 Thunder Endpoint/Nav:
 
 - Keeps the module graph local where possible.
-- Uses the native typed DDS endpoint contract (`thunder_dds_v1`) and
+- Uses the native typed DDS endpoint contract (`field_dds_v1`) and
   `cpp_slam_status` localization adapter for the production field boundary
   (native Livox SDK2 ingest + C++ CycloneDDS SLAM/status).
 - Uses LCM endpoint adapters for smoke/replay bridges and optional
   smoke/replay checks that do not require the native DDS sensor stack.
 - Uses ROS 2 only when integrating legacy SLAM, simulator, TARE, or existing
   external services.
-- Resolves a `route_contract` in addition to `module_transport` and
-  `endpoint_transport`. For the Thunder `env=real` RunPlan, the
-  expected shape is
-  `module_transport=local`, `endpoint_transport=dds`,
-  `endpoint_contract=thunder_dds_v1`, and `route_contract=robot`.
+- Resolves a `route_contract` in addition to `endpoint_transport`. For the
+  `env=real` RunPlan, the expected shape is `endpoint_transport=dds`,
+  `endpoint_contract=field_dds_v1`, and `route_contract=robot`.
   The route contract validates canonical topic ownership and DDS schema
-  bindings; it does not by itself make ordinary Modules import or speak DDS.
-  Use `Blueprint.route_contract(...)` for metadata-only contracts and reserve
-  `Blueprint.routed_delivery(...)` for deliberate internal routed transport.
+  bindings; it never makes ordinary Modules import or speak DDS.
 
 Future hot-path streams:
 
 - Use shared memory or binary schemas only for large point cloud/image paths.
 - Do not make shared memory the default control-plane transport.
 
-## Remaining cyclonedds-python Surface
+## Python DDS surface
 
-Python navigation DDS input/output adapters have been deleted. A regression
-test now keeps the remaining `runtime.adapters.dds.reader` imports bounded to:
-
-- camera DDS ingestion;
-- GNSS DDS ingestion;
-- optional IMU and LiDAR compatibility adapters;
-- the legacy Python TARE bridge.
-
-Navigation goal/cancel/teleop writers are no longer part of this list. Their
-field owner is `liblingtu_nav_client.so`, reused by Gateway and `GoalService`.
-
-The remaining migration order is GNSS, TARE, then compatibility adapters.
-Camera high-volume color/depth frames are now a native SHM data plane with
-low-rate metadata and health on typed DDS/status. GNSS and TARE should move
-their consumers into C++ endpoints. Diagnostic scripts may keep
-cyclonedds-python as an optional tool; it must never become a robot startup
-dependency.
+There is none. Python Hosts use local callbacks or SHM. Native lidar, SLAM,
+maps, navigation, simulation adapters, recording, and the DDS probe use the
+CycloneDDS C API with IDL-generated types.
 
 ## Implementation Order
 
@@ -189,7 +171,7 @@ dependency.
    a versioned SHM ring; keep low-rate camera info/health on typed DDS.
 8. **Next:** make MuJoCo publish sensor DDS and consume final `/nav/cmd_vel`
    through the same C++ services and learned locomotion sink used by field
-   acceptance, with no Python planner substitute.
+   acceptance, using the same native planner ownership.
 9. **Then:** migrate GNSS and TARE readers, and delete remaining field-ineligible
    compatibility adapters after equivalent acceptance evidence exists.
 

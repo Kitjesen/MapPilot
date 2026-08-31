@@ -31,7 +31,7 @@ selecting a field target for you.
 
 | I need to… | Start here | Physical-motion boundary |
 | --- | --- | --- |
-| Verify code, ports, or a Blueprint | [Prove it without a robot](#1-prove-an-integration-without-a-robot) | `stub`, `dev`, `sim_nav`, and `sim` do not command a physical robot. |
+| Verify code, ports, or a Blueprint | [Prove it without a robot](#1-prove-an-integration-without-a-robot) | `stub`, `dev`, and `sim` do not command a physical robot. |
 | Build and preserve a field map | [Create a navigation map](#2-create-and-validate-a-navigation-map) | Manual collection can move hardware; saving and artifact checks do not. |
 | Check whether a saved map can route to a target | [Validate a saved map and route](#3-validate-a-saved-map-and-route-without-motion) | Use no-motion previews first. |
 | Navigate to coordinates | [Run an approved navigation session](#4-run-an-approved-navigation-session) | A submitted goal can move the robot. |
@@ -39,7 +39,7 @@ selecting a field target for you.
 | Explore an unknown area | [Run exploration](#6-run-exploration) | Exploration creates autonomous motion. |
 | Build a web, service, or agent integration | [Integrate an external client](#7-integrate-an-external-client) | Clients submit intent and observe state; they never own the final control path. |
 
-The [Quick Start](../QUICKSTART.md) remains the Profile/Product and CLI source of
+The [Quick Start](../QUICKSTART.md) remains the Product/env and CLI source of
 truth. The [field Product guide](../architecture/FIELD_PRODUCTS.md)
 defines which chain owns each field Product, and the [testing index](../07-testing/README.md)
 defines the validation evidence needed for a claim.
@@ -53,19 +53,19 @@ keeps software and wiring work separate from a field-motion claim.
 | --- | --- | --- |
 | Framework, Module lifecycle, and graph wiring | `stub` | The framework can assemble without robot I/O. |
 | Semantic pipeline with deterministic behavior | `dev` | Semantic modules can be exercised with mock backends. |
-| Pure Python navigation behavior | `sim_nav` | Navigation logic can run without physical hardware. |
+| Simulated navigation behavior | `sim` | Navigation logic can run without physical hardware. |
 | Full simulated stack | `sim` | MuJoCo and the selected simulated integration path can run. |
 
 **No physical motion:**
 
 ```bash
 uv sync --locked
-uv run --locked python lingtu.py --list
-uv run --locked python lingtu.py stub
+uv run --locked python -m lingtu.control --help
+uv run --locked python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim --dry-run
 ```
 
 Use the locked `uv` invocation for development-host work. Follow the
-[Get Started path](../01-getting-started/README.md) for profile selection and
+[Get Started path](../01-getting-started/README.md) for Product/env selection and
 the [development guide](../03-development/README.md) for the owning package
 and focused test. A successful simulation run is evidence for the simulated
 path only; it does not authorize deployment or physical motion.
@@ -91,8 +91,8 @@ Before beginning a field collection session:
 
    ```bash
    bash scripts/lingtu status
-   bash scripts/lingtu doctor --non-motion --json --strict
-   bash scripts/lingtu soak --duration 120 --interval 2 --json --strict
+   PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
+   PYTHONPATH=src python scripts/diagnostics/soak.py --duration 120 --interval 2 --json --strict
    ```
 
    These checks do not command a route, but they must pass before data is
@@ -103,7 +103,7 @@ Before beginning a field collection session:
 1. **State-changing, no autonomous motion:** enter the mapping product mode.
 
    ```bash
-   bash scripts/lingtu map start
+   bash scripts/lingtu switch map
    ```
 
    This switches the native SLAM path to mapping mode. It does not make the
@@ -116,11 +116,9 @@ Before beginning a field collection session:
 3. **State-changing, no physical motion:** commit the map under a meaningful,
    unique name.
 
-   ```bash
-   bash scripts/lingtu map save <map-name>
-   ```
-
-   Save produces a durable map package and may run optimization, cleanup, and
+   Submit the authenticated Gateway map-save request documented in the
+   [Gateway map reference](../api/gateway_rest.md). Save produces a durable map
+   package and may run optimization, cleanup, and
    artifact builds. If a save is asynchronous, keep its returned
    `operation_id` and follow the map-save operation through
    `GET /api/v1/maps/operations/{operation_id}` rather than issuing a
@@ -130,7 +128,7 @@ Before beginning a field collection session:
 4. **Read-only:** inspect the result before treating it as a navigation map.
 
    ```bash
-   bash scripts/lingtu map list
+   curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/maps"
    bash scripts/lingtu status
    ```
 
@@ -145,18 +143,13 @@ Before beginning a field collection session:
    endpoints:
 
    ```bash
-   bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
-   bash scripts/lingtu system-acceptance \
+   python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy
+   python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" \
      --map <map-name> --goal <x> <y> <yaw>
    ```
 
    The first command is offline and read-only. `system-acceptance` is stateful
    but sends no motion unless `--allow-motion` is explicitly provided.
-
-`map restore <map-name>` is a recovery operation for a preserved pre-filter
-map. It replaces the current navigation point cloud and rebuilds downstream
-artifacts. Use it only after inspecting the save result and following the
-[operations recovery guidance](../06-operations/README.md).
 
 ## 3. Validate a saved map and route without motion
 
@@ -165,37 +158,37 @@ answers the question.
 
 | Question | Command or API | Effect |
 | --- | --- | --- |
-| Is the selected saved-map package complete for planning? | `saved-map-artifact-gate <map-directory> --require-occupancy` | Offline artifact validation: no service, Gateway, goal, or velocity output. |
+| Is the selected saved-map package complete for planning? | `python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy` | Native mapd validation; no goal or velocity output. |
 | Is the currently running system ready and is this route safe? | Gateway `POST /api/v1/navigation/plan` | No published goal; evaluates the running navigation path. |
-| Can the native field path, map bundle, localization, and a requested route pass together? | `system-acceptance` | No physical motion by default; it is stateful because it samples runtime readiness and may start/end a session or relocalize. |
+| Can the native field path, map bundle, localization, and a requested route pass together? | `python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT"` | No physical motion by default; it is stateful because it samples runtime readiness and may start/end a session or relocalize. |
 
-**Offline saved-map artifact validation:**
+**Native saved-map artifact validation:**
 
 ```bash
-bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
+python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy
 ```
 
-Use the full saved-map directory. The command validates artifact provenance and
-the required occupancy product without calling Gateway or publishing a goal.
+Use the saved map ID known by mapd. The command validates artifact provenance
+and the required occupancy product without calling Gateway or publishing a goal.
 It does not evaluate a route or prove that live localization is ready.
 
 **Field-ready route evidence, no physical motion by default:**
 
 ```bash
-bash scripts/lingtu system-acceptance \
+python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" \
   --map <map-name> \
   --goal <x> <y> <yaw> \
   --with-relocalization
 ```
 
-This gate records runtime audit, Gateway readiness, sensor/SLAM soak, saved-map
+This gate starts with Gateway readiness, then records sensor/SLAM soak, saved-map
 artifact evidence, relocalization, and a requested route preview. It omits a
 motion smoke test unless `--allow-motion` is explicitly supplied. Treat
 `--allow-motion` as a separate field-test authorization, never as the normal
 next step after a preview.
 
 The operations CLI does not expose a localization-backend A/B switch. Resolve
-one Product inside one env and use `system-acceptance` for integrated evidence;
+one Product inside one env and use `system_acceptance_gate.py` for integrated evidence;
 ProductControl owns every Product transition and rollback.
 
 A successful preview means the requested path was feasible under the reported
@@ -213,8 +206,8 @@ can move the robot.
 1. **Read-only:** verify service, localization, safety, and map readiness.
 
    ```bash
-   bash scripts/lingtu svc status
-   bash scripts/lingtu health
+   systemctl --no-pager --full status 'lt-*.service'
+   curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
    bash scripts/lingtu status
    ```
 
@@ -226,7 +219,7 @@ can move the robot.
 2. **State-changing, no goal yet:** load the map into a navigation session.
 
    ```bash
-   bash scripts/lingtu nav start <map-name> --initial-pose <x> <y> <yaw>
+   bash scripts/lingtu switch nav --map <map-name> --initial-pose <x> <y> <yaw>
    ```
 
    Omit `--initial-pose` only when the approved global/reusable localization
@@ -240,11 +233,9 @@ can move the robot.
 4. **Can move hardware:** only an authorized operator may submit the mission
    goal.
 
-   ```bash
-   bash scripts/lingtu nav goal <x> <y> <yaw>
-   ```
-
-   The goal is in the map/planning frame and yaw is in radians. It enters the
+   Submit the authenticated navigation goal through the Gateway API documented
+   in [gateway_rest.md](../api/gateway_rest.md). The goal is in the
+   map/planning frame and yaw is in radians. It enters the
    mission/planner path; it is not a direct motor command. In the field
    endpoint, the native navigation service owns the final `/nav/cmd_vel`
    writer, and the unique `lingtu-driver` service forwards checked commands to
@@ -271,8 +262,8 @@ safety boundary. They are not permission to bypass the route or velocity path.
 
 ### Natural-language and agent requests
 
-In a local Profile or field Product that includes the semantic stack, a REPL request such as
-`go <instruction>` or `agent <instruction>` may resolve tags, scene objects,
+In a Product that includes the semantic stack, an instruction request may
+resolve tags, scene objects,
 vector memory, topology/frontiers, and visual servo before it submits a
 navigation goal. Therefore it is **can move hardware** once it is accepted by a
 live field Product. Use it only after the navigation gate above and keep a
@@ -280,16 +271,21 @@ supervisor able to stop the mission.
 
 For client integrations, `POST /api/v1/instruction` and MCP
 `send_instruction` are the corresponding request surfaces. Check the active
-Profile/Product capability and the generated [MCP inventory](../api/mcp_tools.md)
+Product capability and the generated [MCP inventory](../api/mcp_tools.md)
 before relying on a method.
 
 ### Visual servo
 
 Visual-servo `find` and `follow` requests can generate motion and are rejected
-when Safety is stopped. `stop` releases visual servo and remains available as a
-stop action. The feature hot-switches only when the active profile already
-loads `VisualServoModule`; lightweight teleop or mapping profiles do not create
-that module on demand. Use the [visual-servo API entry](../api/gateway_rest.md)
+when Safety is stopped. Changing the target first cancels the previous visual
+intent, then waits for a current target lock before submitting another goal.
+`stop` requests cancellation of every native navigation task still owned by
+VisualServo; native navigation status remains the source of truth for
+terminal/parking confirmation. `follow` also requires an image-capable target
+selector, and both modes require a ready detector. The feature is available only
+when the resolved Product already loads `VisualServoModule`; ProductControl does
+not create that module on demand.
+Use the [visual-servo API entry](../api/gateway_rest.md)
 for current request schemas and the [field Product guide](../architecture/FIELD_PRODUCTS.md)
 for its control boundary.
 
@@ -300,14 +296,14 @@ same readiness discipline as navigation. There is one operator Product:
 `explore`.
 
 ```bash
-lingtu explore start                 # live mapping, no saved map
-lingtu explore start --map yard      # saved-map localization and coverage
-lingtu explore task start            # begin motion only after readiness
+bash scripts/lingtu switch explore             # live mapping
+bash scripts/lingtu switch explore --map yard  # saved-map localization
 ```
 
 The route is selected by the presence of `--map`; TARE is an internal policy
 name, not another Product. Start the Product only after a no-motion readiness
-check and an approved field plan. Then observe status and stop exploration
+check and an approved field plan. Start the motion-capable exploration task
+through authenticated `POST /api/v1/explore/start`. Then observe status and stop exploration
 promptly if localization, safety, or area conditions change. The REST
 endpoints `POST /api/v1/explore/start` and
 `POST /api/v1/explore/stop` are motion-capable control operations, while
@@ -329,7 +325,7 @@ robot controller.
 5. Surface stop/cancel, current command source, localization loss, and
    readiness blockers prominently in the client UI or automation log.
 
-External clients must not choose a path directly, publish around `CmdVelMux`,
+External clients must not choose a path directly, bypass the native command boundary,
 or assume that a successful HTTP response proves a safe completed mission. See
 [Reference](../08-reference/README.md) for transport, generated schema, and
 tool-discovery guidance.

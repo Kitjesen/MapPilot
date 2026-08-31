@@ -8,21 +8,23 @@ This document records the frame and topic contract used by the navigation
 stack. It describes the boundary that modules, ROS 2 launch files, simulators,
 and App/Web telemetry must preserve.
 
-The canonical Python source is `src/runtime/runtime_interface.py`. The
-human-readable mirror is `config/topic_contract.yaml`. Real hardware, Gazebo,
-MuJoCo, and CMU Unity must differ only at the source-adapter layer; every
-adapter normalizes into the same runtime frames, topics, and algorithm inputs.
+The canonical Python source is `src/runtime/runtime_interface.py`; concrete
+native topic ownership lives in `config/runtime_graph/topics.yaml`. Real hardware, Gazebo,
+and MuJoCo differ only at the source-adapter layer; every supported runtime
+adapter normalizes into the same frames, topics, and algorithm inputs. Unity is
+an offline semantic-map import source and has no ROS/runtime frame contract.
 
 ## Canonical Frames
 
 | Frame | Meaning | Owner |
 | --- | --- | --- |
 | `map` | Saved-map and global planning frame. Goals and global paths are expressed here. | localizer / map manager |
-| `odom` | Continuous local odometry frame. LIO publishes odometry here before global relocalization correction. | Fast-LIO2 / Point-LIO / simulation bridge |
+| `odom` | Continuous local odometry frame. LIO publishes odometry here before global relocalization correction. | Fast-LIO2 / simulation bridge |
 | `body` | LingTu control body frame. Local planner paths and velocity commands are body-relative. | runtime contract |
 | `base_link` | Robot model root link used by URDF/MJCF/Gazebo assets. | robot model |
 | `lidar_link` | LingTu canonical LiDAR frame after source-adapter normalization. | runtime contract |
 | `livox_frame` | Physical MID-360/raw driver frame alias accepted only at adapter/calibration boundaries. | hardware adapter |
+| `imu_link` | LingTu canonical raw IMU frame after source-adapter normalization. | runtime contract |
 | `camera_link` | LingTu canonical camera frame. | runtime contract |
 | `gnss_antenna` | LingTu canonical GNSS antenna frame. | runtime contract |
 | `world` | Simulator world frame only. It must be aliased into `map` or `odom` before entering LingTu runtime topics. | simulator |
@@ -41,6 +43,7 @@ bridge contract:  base_link == body, published as odom -> body
 ```text
 map -> odom -> body
                  -> lidar_link
+                 -> imu_link
                  -> camera_link
                  -> gnss_antenna
 ```
@@ -69,7 +72,7 @@ table and the mirror tests.
 | --- | --- | --- | --- | --- |
 | `/lidar/raw_frame` | `lidar_link` | `lidar_link` | yes | `lidar_link` |
 | `/lidar/raw_packet` | `lidar_link` | `lidar_link` | no | `lidar_link` |
-| `/imu/raw` | `lidar_link` | `lidar_link` | yes | `lidar_link` |
+| `/imu/raw` | `imu_link` | `imu_link` | yes | `imu_link` |
 | `/slam/odom_prior` | `odom` | `odom` | no | `odom` |
 | `/driver/odometry` | `odom` | `odom` | no | `odom` |
 | `/slam/odometry` | `odom` | `odom`, `map` | yes | `odom`, `map` |
@@ -95,13 +98,11 @@ table and the mirror tests.
 | `/nav/exploration_grid` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/nav/exploration_snapshot` | `map` | `map` | no | `map` |
 | `/nav/exploration_execution_snapshot` | `map` | `map` | no | `map` |
-| `/nav/traversable_frontiers` | `map` | `map`, `odom` | no | `map` |
-| `/nav/frontier_candidate` | `map` | `map`, `odom` | no | `map` |
 | `/nav/terrain_map` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/nav/terrain_map_ext` | `map` | `map`, `odom` | no | `map`, `odom` |
-| `/nav/traversability` | `map` | `map`, `odom` | no | `map`, `odom` |
+| `/nav/traversability` | `map` | `map` | no | `map` |
+| `/nav/local_traversability` | `odom` | `odom` | no | `odom` |
 | `/nav/height_rays` | `body` | `body` | no | `body` |
-| `/nav/teleop_cmd_vel` | `body` | `body` | no | `body` |
 | `/nav/command/request` | `map` | `map`, `body` | no | `map`, `body` |
 | `/nav/command/ack` | `map` | `map` | no | `map` |
 | `/nav/operator_motion/control` | `n/a` | `n/a` | no | `n/a` |
@@ -123,8 +124,8 @@ table and the mirror tests.
 | `/nav/inspection/evidence/result` | `map` | `map` | no | `map` |
 | `/nav/global_path` | `map` | `map`, `odom` | yes | `map` |
 | `/nav/local_path` | `map` | `map`, `odom`, `body` | yes | `map`, `odom`, `body` |
+| `/nav/exploration/run/event` | `map` | `map` | no | `map` |
 | `/exploration/way_point` | `map` | `map`, `odom` | no | `map`, `odom` |
-| `/nav/goal_pose` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/nav/way_point` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/nav/cmd_vel` | `body` | `body` | yes | `body` |
 
@@ -144,18 +145,17 @@ product.
 | Fast-LIO mapping/localization | `/lidar/raw_frame`, `/imu/raw` | `/slam/odometry`, `/slam/registered_cloud`, `/slam/map_cloud` | SLAM |
 | Fast-LIO raw validation | `/lidar/raw_frame`, `/imu/raw` | `/slam/odometry`, `/slam/registered_cloud`, `/slam/map_cloud` | MuJoCo/raw-sensor gate |
 | Exploration strategy | `/slam/odometry`, `/slam/map_cloud`, `/nav/exploration_grid` | `/exploration/way_point` | TARE or frontier |
-| Global planning | `/slam/odometry`, `/slam/map_cloud`, `/exploration/way_point` or `/nav/goal_pose` | `/nav/global_path`, `/nav/way_point` | LingTu navigation |
+| Global planning | `/slam/odometry`, `/slam/map_cloud`, `/exploration/way_point` or `/nav/command/request` | `/nav/global_path`, `/nav/way_point` | LingTu navigation |
 | Local planning/following | `/slam/odometry`, `/slam/registered_cloud`, `/nav/global_path` | `/nav/local_path`, `/nav/cmd_vel` | LingTu autonomy |
 
-The Python `NavigationModule` deliberately rejects goals, costmaps, and
-odometry that do not match its configured `planning_frame_id`. Product saved-map
-navigation fixes that frame to `map`: 3D goals, PCT inputs, global paths, and
-Navigation odometry are all consumed in `map`.
+The native navigation endpoint rejects goals, map inputs, and odometry that do
+not match its configured planning frame. Product saved-map navigation fixes
+that frame to `map`: 3-D goals, active map artifacts, global paths, and
+localization are consumed in `map`.
 
-SLAM, native local planners, and lower-level ROS components may still operate in
-`odom`, but the `map -> odom` correction must be applied by the SLAM
-bridge/localizer/adapter before data enters Python Navigation. Navigation must
-not silently mix `odom` odometry with `map` goals or PCT paths.
+SLAM and native local planning may use `odom`, but the configured transform must
+be available before `navd` combines odometry with `map` goals or routes. The
+endpoint must not silently mix frames.
 
 ## Gazebo/GZ Integration Boundary
 

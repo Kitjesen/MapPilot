@@ -170,7 +170,7 @@ the same time. Idle readiness is based on a fresh
 an idle `/nav/cmd_vel` topic is not treated as a failure.
 
 All native motion publishers now stamp `/nav/cmd_vel` and
-`/nav/teleop_cmd_vel` with the canonical `body` frame. The driver still accepts
+`/nav/operator_motion/sample` with the canonical `body` frame. The driver still accepts
 `base_link` only as a compatibility input. Its main loop also sends a
 best-effort zero command with reason `fault` before propagating an unexpected
 C++ exception; normal service shutdown uses reason `shutdown`.

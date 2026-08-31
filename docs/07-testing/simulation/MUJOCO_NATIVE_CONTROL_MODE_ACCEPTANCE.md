@@ -1,6 +1,6 @@
 # MuJoCo Native Control-Mode Acceptance
 
-Status: current control-mode promotion contract as of 2026-07-18.
+Status: current control-mode promotion contract as of 2026-08-11.
 
 This entry has two explicit actions:
 
@@ -50,44 +50,35 @@ processes, native inputs, quality thresholds, and executable harness adapter.
 | Mode | Configured executable | Real coverage today | Promotion result today |
 | --- | --- | --- | --- |
 | `autonomy` | `native_navigation_acceptance.py --mode motion` | Real MuJoCo sensor/policy process plus native SLAM, traversability, navigation, typed Goal/ACK, final DDS command tap, motion, and cleanup | Fails closed: the reused harness does not yet run the forbidden-Teleop probe, native Stop/no-resume probe, or provide long-run ATE/scale/map-match observations |
-| `teleop` | none | No reusable full MuJoCo + native DDS teleop harness exists in the repository | `runner_unavailable:full_mujoco_native_teleop_harness_not_implemented` |
-| `teleop_avoid` | `teleop_avoid_gate.py --strict` | Executable MuJoCo geometry/config mirror only | Supplemental evidence only; fails the native DDS control-chain, product-integration, and SLAM/map gates |
+| `teleop` | `teleop_native_acceptance.py` | Native typed operator claim/sample/hold/release, simulated physical driver bridge, Driver ACK, forbidden Goal probe, stop, cleanup, and zero barrier in MuJoCo | A dated diagnostic-component PASS exists for 2026-08-10; still not a Brainstem or Sunrise field pass |
+| `teleop_avoid` | `teleop_avoid_native_acceptance.py` | Product RunPlan resolves the assisted native chain with mapping SLAM, mapd, standalone traversability, navd, host, and simulated driver bridge after the local native endpoint artifacts are built | Runner exists, but no current accepted Product report is recorded; the latest local attempts remain evidence of wiring/fail-closed behavior, not promotion |
 
 This matrix is intentional. A missing product harness is reported as a blocker;
 the evaluator never converts a mirror test or a hand-authored summary into a
 passing product gate.
 
-## Runner artifact and provenance
+## Runner artifact
 
 `run` writes `runner_artifact.json` containing:
 
-- producer schema, control mode, UUID, and start/finish timestamps;
-- SHA-256 of the exact mode manifest;
+- producer schema, control mode, run ID, and start/finish timestamps;
 - exact harness command and exit code;
-- a UUID-scoped `runs/<run-id>/harness` directory so a timeout or crash cannot
-  reuse a previous run's `report.json`;
-- expected harness script path and SHA-256;
-- raw harness report path, schema, and SHA-256;
-- normalized observations and their SHA-256.
+- a run-scoped harness directory;
+- raw harness report path and schema;
+- normalized observations and runner blockers.
 
-`evaluate` reopens the raw report, checks these paths, schemas, and digests, and
-recomputes normalized observations. The observations stored in the runner
-artifact are compared with the recomputed observations, not trusted as a
-second summary. Any edit to the source report, script, manifest, or normalized
-observations invalidates the artifact.
+`evaluate` reopens the raw report, checks its schema and run-scoped paths, and
+recomputes normalized observations. It does not trust a hand-written second
+summary.
 Any nonzero harness exit code also invalidates promotion, even if a report file
 was produced.
-
-This is integrity/provenance validation for the local acceptance workflow, not
-a cryptographic signature against an attacker who already has arbitrary write
-access to the workspace.
 
 ## Three independent gate layers
 
 | Gate | Question | Required observations |
 | --- | --- | --- |
 | `control_chain` | Did the selected native mode receive and ACK its typed command, reject the mutually exclusive command kind, execute native Stop, prove no old motion resumed, and alone publish final `rt/nav/cmd_vel`? | request/ACK event records, forbidden-kind rejection event, Stop event plus post-Stop zero window, C++ DDS tap |
-| `product_integration` | Did the exact process set run without Python CmdVelMux/planners, load the ThunderV4 policy, move MuJoCo, and clean up? | launched process inventory, command source, policy report, motion observations, cleanup report |
+| `product_integration` | Did the exact process set use native `navd` as the only planner/final command owner, load the ThunderV4 policy, move MuJoCo, and clean up? | launched process inventory, command source, policy report, motion observations, cleanup report |
 | `slam_map_quality` | Is localization/map evidence good enough for the selected function? | health/cloud/traversability freshness plus the mode-specific localization metrics |
 
 All applicable layers and provenance must pass for `promotion_eligible=true`.
@@ -122,8 +113,8 @@ quality because its trajectory scale ratio is `6.22` and near-field match is
 - source-stamp stale/future rejection and command timeout to zero;
 - native Stop and Cancel with a measured post-command zero/no-resume window;
 - Goal rejection;
-- MuJoCo policy motion with no SLAM, traversability, Python CmdVelMux, or
-  Python planner process;
+- MuJoCo policy motion with no SLAM or traversability process and with `navd`
+  as the only final command owner;
 - owned-process cleanup.
 
 ### `teleop_avoid`
@@ -134,7 +125,14 @@ quality because its trajectory scale ratio is `6.22` and near-field match is
   dropout/recovery sequences measured through the native endpoint;
 - Goal rejection and map-pose error.
 
-The current `teleop_avoid_gate.py` covers only the geometry/config mirror.
+The executable path is `python -m sim.scripts.mujoco.product_acceptance` with
+an exact `--run-plan`, the teleop-avoid `--runner` and `--manifest`, and an
+isolated `--state-root`. The dispatcher verifies the RunPlan, owns the complete
+ProductControl switch/stop transaction, and calls
+`teleop_avoid_native_acceptance.py` as an attached scenario adapter. That
+adapter is not a standalone runner. The former Python geometry/config mirror
+was removed because it duplicated native safety without exercising the Product
+chain.
 
 ### `autonomy`
 

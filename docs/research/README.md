@@ -17,10 +17,8 @@ lives in `../plans/current-roadmap.md`; acceptance evidence lives in
 | [`octoplanner3d_multifloor_occupancy.md`](./octoplanner3d_multifloor_occupancy.md) | Multi-floor execution limitations around OctoPlanner3D. |
 | [`octoplanner3d_pcd_octomap_mujoco.md`](./octoplanner3d_pcd_octomap_mujoco.md) | PCD/OctoMap versus MuJoCo map-gap investigation. |
 | [`perception_sota_evaluation.md`](./perception_sota_evaluation.md) | Dated perception-stack comparison. |
-| [`portable_lean_package_matrix.md`](./portable_lean_package_matrix.md) | Portable dependency audit supporting the package validator. |
-| [`pose_graph_opt_gtsam_coverage.md`](./pose_graph_opt_gtsam_coverage.md) | Detailed pose-graph optimization migration coverage. |
 | [`socc_icp_adoption.md`](./socc_icp_adoption.md) | SOCC-ICP adoption record and remaining evidence gates. |
-| [`travexplorer_adoption.md`](./travexplorer_adoption.md) | TravExplorer upstream-availability and adoption boundary. |
+| [`visual_person_following.md`](./visual_person_following.md) | Verified person-following papers, code availability, and LingTu execution plan. |
 
 ## Rules
 

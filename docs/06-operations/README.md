@@ -1,8 +1,8 @@
 # Operations
 
 This page is the operating playbook for a running LingTu system: observe first,
-separate a no-motion diagnosis from a state change, restart the narrowest
-affected component, and re-run the gate that justified the next action. It is
+separate a no-motion diagnosis from a state change, recover through the Product
+lifecycle, and re-run the gate that justified the next action. It is
 not a replacement for the robot's local emergency procedure or supervision
 rules.
 
@@ -12,17 +12,17 @@ rules.
 
 ## Operating principles
 
-- Use `bash scripts/lingtu` as the robot-side operations surface. It collects
-  the service, Gateway, map, session, and evidence actions that would otherwise
-  be scattered across shell commands.
+- Use `bash scripts/lingtu` only for Product `switch`, `status`, and
+  `stop`. Use Gateway routes for application operations and native
+  `systemctl`/`journalctl` for service state and logs.
 - Start every investigation with observation. A process being active does not
   prove that localization, map artifacts, planner inputs, or safety are ready.
 - A no-motion check can still change state. For example, a comparative route
   check may switch and roll back localization, while map validation can rebuild
   an artifact. Run those checks only while the robot is stationary and clients
   do not hold control.
-- Treat a restart as recovery of a process, not proof that navigation is safe.
-  Repeat readiness, localization, map, and route gates after every restart.
+- Treat a Product switch as recovery, not proof that navigation is safe.
+  Repeat readiness, localization, map, and route gates afterward.
 - The normal field product path is native DDS. Do not start ROS 2 compatibility
   services beside it unless an explicit compatibility test requires that
   ownership change.
@@ -35,9 +35,9 @@ is the authority for every subcommand and its arguments.
 
 | Class | What it may do | Examples |
 | --- | --- | --- |
-| **Observe** | Reads state only; does not intentionally publish motion or change a session. | `status`, `health`, `svc status`, `log`, `dataflow`, `doctor --non-motion`, `soak`, and saved-map artifact checks. |
-| **No physical motion, stateful** | Does not publish a goal or velocity command, but can change Product/session state or create artifacts. | `system-acceptance` without `--allow-motion`, map checks, and relocalization. |
-| **State-changing recovery** | Restarts a service, changes a map/session, switches Product, or releases a lease. | `svc restart …`, map restore, session start/end, and backend switching. |
+| **Observe** | Reads state only; does not intentionally publish motion or change a session. | `status`, `health`, `log`, `dataflow`, `doctor --non-motion`, `soak`, and saved-map artifact checks. |
+| **No physical motion, stateful** | Does not publish a goal or velocity command, but can change Product/session state or create artifacts. | `system-acceptance` without `--allow-motion` and relocalization. |
+| **State-changing recovery** | Changes a Product, map/session, backend, or lease. | `switch`, `stop`, session start/end, and backend switching. |
 | **Can move hardware** | Can submit a velocity/goal or activate autonomous behavior. | Teleop, `nav goal`, semantic instruction, visual-servo find/follow, and exploration start. |
 
 For an emergency, follow the site emergency procedure first. Software
@@ -54,10 +54,9 @@ service:
 
 ```bash
 bash scripts/lingtu status
-bash scripts/lingtu health
-bash scripts/lingtu svc status
-bash scripts/lingtu doctor --non-motion --json --strict
-bash scripts/lingtu soak --duration 120 --interval 2 --json --strict
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
+PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
+PYTHONPATH=src python scripts/diagnostics/soak.py --duration 120 --interval 2 --json --strict
 ```
 
 `status` is a one-screen snapshot of session, SLAM, robot pose, mission,
@@ -83,12 +82,12 @@ exploration action:
 Use the appropriate artifact or field gate before an action that can move hardware:
 
 ```bash
-# Offline saved-map artifact check: no Gateway, goal, or cmd_vel.
-bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
+# Native mapd artifact check: no goal or cmd_vel.
+python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy
 
 # Full native/Gateway acceptance for one map and target: no motion unless
 # --allow-motion is explicitly added.
-bash scripts/lingtu system-acceptance \
+python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" \
   --map <map-name> \
   --goal <x> <y> <yaw> \
   --with-relocalization
@@ -124,7 +123,7 @@ Unexpected behavior or failed gate
        |     -> Hold motion; inspect control/safety state; do not restart blindly.
        |
        +-- Required service or Gateway unavailable?
-       |     -> Capture status + logs; restart the narrowest service; re-run doctor/soak.
+       |     -> Capture status + logs; switch the Product again; re-run doctor/soak.
        |
        +-- Sensor or localization stale/lost?
        |     -> Inspect dataflow and map-frame state; repair/relocalize; re-run map/route gate.
@@ -144,50 +143,43 @@ Unexpected behavior or failed gate
 **Observe first:**
 
 ```bash
-bash scripts/lingtu svc status
-bash scripts/lingtu health
-bash scripts/lingtu log error
-bash scripts/lingtu log tail
+bash scripts/lingtu status
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
+journalctl -u 'lt-*' -p err -n 100 --no-pager
+journalctl -u 'lt-*' -f
 ```
 
-If the problem is isolated to one process, use its RunPlan logical label.
-For example, `svc restart host` restarts only the application/Gateway process;
-`svc restart slam` restarts only the native SLAM process; and
-`svc restart lidar` restarts only the native LiDAR input process. Every one is
-**state-changing recovery**:
+After preserving status and logs, recover through the Product lifecycle:
 
 ```bash
-bash scripts/lingtu svc restart <lidar|slam|maps|traversability|nav|driver|camera|explore|host>
+bash scripts/lingtu --robot <vendor/model> --env real switch <product> [--map <name>]
 ```
 
-The CLI passes that one logical label unchanged to ProductControl. It does not
-accept backend names or systemd unit names and does not expand a restart into a
-backend chain. Use `svc reapply` (equivalently, `svc restart all`) only when the
-exact committed Product must be reapplied. After any restart, repeat
-`svc status`, `doctor --non-motion`, and a short `soak`; then repeat the map or
-route gate that the interrupted operation required.
+ProductControl resolves the Product, owns process ordering, and waits for
+readiness. After switching, repeat `status`, `doctor --non-motion`, and a short
+`soak`; then repeat the map or route gate that the interrupted operation
+required.
 
 ### LiDAR, IMU, odometry, or map-cloud data is missing
 
 **Observe:**
 
 ```bash
-bash scripts/lingtu dataflow /nav/lidar_scan
-bash scripts/lingtu dataflow /nav/imu
-bash scripts/lingtu dataflow /nav/odometry
-bash scripts/lingtu dataflow /nav/map_cloud
-bash scripts/lingtu doctor --non-motion --json --strict
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/lidar_scan"
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/imu"
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/odometry"
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/map_cloud"
+PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
 ```
 
-Correlate dataflow with the native service logs before restarting anything. The
-product chain has one owner for a physical input. Do not start a legacy ROS 2
-LiDAR/SLAM service merely to make a topic appear; parallel owners can fight for
-the same hardware and produce ambiguous data. ROS 2 inspection is an explicit
-compatibility path (`doctor --ros2`), not the normal product diagnostic path.
+Correlate dataflow with the native service logs before changing the Product. The
+product chain has one owner for a physical input. Do not start an external
+LiDAR/SLAM service merely to make data appear; parallel owners can fight for
+the same hardware and produce ambiguous data.
 
-When a targeted input restart is justified, capture the preceding logs, restart
-the smallest service, then verify freshness again. If the same condition
-recurs, stop the recovery loop and escalate with the collected diagnostics.
+When recovery is justified, capture the preceding logs, switch the Product,
+then verify freshness again. If the same condition recurs, stop the recovery
+loop and escalate with the collected diagnostics.
 
 ### Localization is degraded, lost, or not aligned to the map
 
@@ -195,9 +187,9 @@ recurs, stop the recovery loop and escalate with the collected diagnostics.
 
 ```bash
 bash scripts/lingtu status
-bash scripts/lingtu health
-bash scripts/lingtu dataflow /nav/odometry
-bash scripts/lingtu dataflow /nav/map_cloud
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/odometry"
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/map_cloud"
 ```
 
 For saved-map navigation, `TRACKING` alone is insufficient. The runtime must
@@ -210,11 +202,10 @@ The recovery order is:
 1. Hold/cancel the current mission and confirm there is no active command
    source.
 2. Inspect the active map, frame, and localization status.
-3. Restart the logical SLAM process only when that process or its dataflow is
-   the problem:
+3. Switch the Product again only after preserving the failure evidence:
 
    ```bash
-   bash scripts/lingtu svc restart slam
+   bash scripts/lingtu --robot <vendor/model> --env real switch <product> [--map <name>]
    ```
 
 4. If the service is healthy but the pose needs recovery, use the documented
@@ -222,8 +213,8 @@ The recovery order is:
    a stationary, supervised condition.
 5. Re-run the no-motion map/route gate before accepting another goal.
 
-Restarting localization and relocalizing are different claims: the first shows
-the service can publish status again; the second shows the current pose can be
+Switching the Product and relocalizing are different claims: the first shows
+the Product can become ready again; the second shows the current pose can be
 aligned to the selected saved map.
 
 ### Map package or route preview fails
@@ -232,15 +223,14 @@ Keep motion disabled. Start with the map and route evidence rather than
 modifying files in the map directory:
 
 ```bash
-bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
-bash scripts/lingtu map check <map-name> --goal <x> <y> <yaw>
+python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy
+python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" --map <map-name> --goal <x> <y> <yaw>
 ```
 
-The map service owns map versions, activation, rollback, artifact building, and
-integrity. A source PCD edit invalidates derived planning artifacts; restoring
-or rebuilding must go through the map operation so it is published atomically.
-`map check` and map restore are **state-changing, no physical motion** actions,
-not read-only diagnostics. See the [map service contract](../architecture/MAP_SERVICE_CONTRACT.md)
+The map service owns map versions, rollback, artifact building, and integrity.
+A source PCD edit invalidates derived planning artifacts; rebuilding must go
+through the map operation so it is published atomically. ProductControl owns
+active-map changes. See the [map service contract](../architecture/MAP_SERVICE_CONTRACT.md)
 for the underlying invariants.
 
 ### Navigation is rejected, blocked, or repeatedly recovers
@@ -249,7 +239,7 @@ Read the navigation status and path-safety details before sending another goal:
 
 ```bash
 bash scripts/lingtu status
-bash scripts/lingtu health
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
 ```
 
 Then query the Gateway's read-only navigation/status/path surfaces or run the
@@ -272,38 +262,32 @@ entire stack unless the local procedure directs that recovery. A stop/cancel
 action changes control state but does not prove that the underlying sensor,
 localization, or physical hazard has cleared.
 
-## Service ownership and restart scope
+## Product lifecycle
 
-`svc status` reports the nine real-env RunPlan logical labels: `lidar`, `slam`,
-`maps`, `traversability`, `nav`, `driver`, `camera`, `explore`, and `host`.
-A Product may use only a subset, but the operator vocabulary remains the same.
-
-| Scope | Preferred action | Follow-up evidence |
+| Need | Command | Follow-up evidence |
 | --- | --- | --- |
-| Application/Gateway process | `svc restart host` | Gateway readiness and application health. |
-| Native SLAM process | `svc restart slam` | SLAM status and fresh odometry/map cloud, then the relocalization/route gate. |
-| Native LiDAR input process | `svc restart lidar` | Sensor dataflow, then downstream SLAM and localization freshness. |
-| Exact committed Product | `svc reapply` or `svc restart all` | All readiness gates declared by the committed RunPlan. |
+| Observe | `status` | Current Product, processes, map, and readiness. |
+| Activate or recover | `switch <product> [--map <name>]` | All readiness gates declared by the resolved Product. |
+| Stop | `stop` | Product processes and current lifecycle state are cleared. |
 
-ProductControl resolves each logical label against the committed RunPlan and
-owns the restart/readiness transaction. The shell does not infer a backend
-chain or add extra unit restarts.
+ProductControl owns the complete switch and stop transactions. The shell does
+not select units or reproduce process ordering.
 
 ## Preserve useful evidence
 
-Capture evidence before it scrolls away, especially before a restart:
+Capture evidence before it scrolls away, especially before a Product switch:
 
 ```bash
 bash scripts/lingtu status
-bash scripts/lingtu health
-bash scripts/lingtu log error
-bash scripts/lingtu log drift
-bash scripts/lingtu log tail
-bash scripts/lingtu evidence --duration 20 --json-out <report.json>
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
+journalctl -u 'lt-*' -p err -n 100 --no-pager
+journalctl -u 'lt-*' -n 200 --no-pager | grep -i drift
+journalctl -u 'lt-*' -f
+python scripts/gates/real_runtime_evidence_collect.py --duration-sec 20 --json-out <report.json>
 ```
 
 `evidence` is a read-only runtime dataflow/frame collection command. Store the
-report together with the active Product and RunPlan fingerprint, map version/name, intended goal frame, time
+report together with the active Product and Product session ID, map version/name, intended goal frame, time
 window, and whether any physical motion occurred. For a field validation
 campaign, record `PASS`, `FAIL`, or `BLOCKED` and the reason in the relevant
 [field-run record](../07-testing/field-runs/README.md). A log excerpt without
@@ -322,7 +306,7 @@ Escalate rather than repeatedly restarting when any of these is true:
   service;
 - a no-motion gate fails and the reason is not clear from its saved evidence.
 
-Include the command output, timestamp, Product session, RunPlan fingerprint, active map,
+Include the command output, timestamp, Product session ID, RunPlan path, active map,
 Gateway health, relevant dataflow, and the exact recovery action already taken.
 This lets the next maintainer reproduce the state without guessing or exposing
 the robot to another uncontrolled retry.

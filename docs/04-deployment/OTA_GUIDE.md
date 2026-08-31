@@ -16,8 +16,7 @@ The repository owns:
 - inner per-file SHA-256 verification;
 - versioned installation under `/opt/lingtu/releases/<version>`;
 - atomic activation through `/opt/lingtu/current`;
-- ProductControl quiesce, persistent-process restart, RunPlan reapply, and
-  rollback.
+- ProductControl Product switch and rollback.
 
 The repository does not contain a robot-side polling agent or fleet rollout
 controller. The release workflow may upload an
@@ -69,14 +68,12 @@ The installer:
 
 1. validates `metadata.json` and every file in
    `config/native-release-sha256.txt`;
-2. refuses to replace an active release when its current fingerprinted RunPlan
+2. refuses to replace an active release when its current resolved RunPlan
    is unavailable;
 3. stages a new immutable version directory;
-4. asks ProductControl to quiesce the current Product;
-5. atomically moves `/opt/lingtu/current` to the new release;
-6. restarts persistent processes declared by the current RunPlan;
-7. asks ProductControl to reapply that exact RunPlan and wait for readiness;
-8. restores the previous link, persistent processes, and Product if activation
+4. atomically moves `/opt/lingtu/current` to the new release;
+5. switches the same Product through ProductControl and waits for readiness;
+6. restores the previous link and switches the previous Product if activation
    fails.
 
 No install step may select systemd units, infer a Product, or reproduce
@@ -88,21 +85,13 @@ For an explicitly reviewed development checkout already on the robot:
 
 ```bash
 cd ~/data/SLAM/navigation
-bash scripts/deploy/cut_release.sh v2.1.1
+bash scripts/deploy/cut_release.sh v2.1.1 nav
 ```
 
-This command first loads ProductControl's canonical `current.json` and strictly
-validates its referenced RunPlan. It refuses to continue when that state is
-missing or when its fingerprint, Product, or Env disagrees with the plan. It then
-builds and validates the declared native artifacts, snapshots them under
-`/opt/lingtu/releases/v2.1.1`, installs the release-owned unit files, atomically
-changes `/opt/lingtu/current`, and reapplies the same RunPlan through
-ProductControl. Product/control identity and selected process targets are never
-reconstructed from ambient variables or a shell-owned unit catalog. ROS2
-compatibility builds and services are not part of this canonical release path.
-
-Use `package_native_release.sh` plus the packaged installer for normal
-distribution. `cut_release.sh` is the direct, on-robot engineering path.
+This convenience command runs `deploy_robot.sh nav` and then
+`package_native_release.sh v2.1.1 dist`. Product resolution, building, activation,
+packaging, and rollback remain owned by those existing entrypoints; the cutter
+does not duplicate them.
 
 ## Rollback
 
@@ -112,22 +101,22 @@ also update systemd unit and runtime environment files.
 
 If automatic rollback reports that operator intervention is required, restore
 the previous release's activation files, run `systemctl daemon-reload`, restore
-the `/opt/lingtu/current` link, and then reapply the committed Product:
+the `/opt/lingtu/current` link, and then switch the previous Product:
 
 ```bash
-bash /opt/lingtu/current/scripts/lingtu --env real svc reapply
+bash /opt/lingtu/current/scripts/lingtu --robot <vendor/model> --env real switch <product> [--map <name>]
 ```
 
-Do not recover by restarting `lingtu.service` or a hand-written list of native
+Do not recover by restarting `lt-host.service` or a hand-written list of native
 units. That can leave the Host and native processes on different RunPlans.
 
 ## Post-release evidence
 
-After a successful ProductControl reapply:
+After a successful ProductControl switch:
 
 ```bash
 bash /opt/lingtu/current/scripts/lingtu status
-bash /opt/lingtu/current/scripts/lingtu doctor --non-motion --strict
+PYTHONPATH=/opt/lingtu/current/src python -m diagnostics.field.doctor --non-motion --strict
 ```
 
 Hardware motion acceptance remains a separate operator-controlled gate. A

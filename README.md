@@ -30,7 +30,7 @@ The main runtime concepts are:
 | --- | --- |
 | `env` | The outer runtime environment: exactly `real` or `sim`. A simulator backend is internal env configuration. |
 | `Product` | An env-independent declaration of one mode's Host graph, logical native roles, topics, and capabilities. |
-| `RunPlan` | The immutable, fingerprinted result of resolving one Product inside one env. |
+| `RunPlan` | The immutable result of resolving one Product inside one env. |
 | `ProductControl` | The only apply, switch, quiesce, restart, stop, readiness, and rollback transaction inside one fixed env. |
 | `Host` | The Python process containing Gateway, Agent, MCP, semantic logic, and selected adapters. |
 | `Module` | A Host-local runtime component with typed input and output ports. |
@@ -50,7 +50,7 @@ The runtime is split by responsibility:
 | Layer | Owns |
 | --- | --- |
 | Hardware | Robot driver, LiDAR, camera, GNSS, IMU ingress. |
-| Localization | Fast-LIO2, Point-LIO, saved-map localization, SLAM status. |
+| Localization | Fast-LIO2, saved-map localization, SLAM status. |
 | Maps | Native `mapd` live layers/scene and native saved-map records/artifacts; Python layers are development/simulation compatibility. |
 | Perception | Detection, embeddings, reconstruction, scene graph. |
 | Decision | Semantic planner, LLM/tool loop, goal grounding, visual servo intent. |
@@ -125,62 +125,32 @@ Common stack factories:
 
 ## Quick Start
 
-Local framework checks:
+Resolve a simulation Product without starting it:
 
 ```bash
-python lingtu.py --list
-python lingtu.py stub
-python lingtu.py dev
-python lingtu.py sim
+python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim --dry-run --json
 ```
 
 Common lifecycle commands:
 
 ```bash
-python lingtu.py status
-python lingtu.py health
-python lingtu.py log -f
-python lingtu.py stop
+python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim
+python -m lingtu.control status --robot doso/thunder_v4 --env sim --json
+python -m lingtu.control stop --robot doso/thunder_v4 --env sim
 ```
 
-`lingtu.py` is the local application entry for development and simulation.
-ProductControl-managed field products intentionally reject direct startup so they
-cannot run with missing native processes.
+`python -m lingtu.control` is the local and robot-side Product lifecycle entry.
 
 Robot-side operations should be run on the target Linux controller:
 
 ```bash
-bash scripts/lingtu status
-bash scripts/lingtu map start
-bash scripts/lingtu map save building_a
-bash scripts/lingtu nav start building_a
-bash scripts/lingtu nav goal 5 3
-bash scripts/lingtu svc status
+bash scripts/lingtu --robot unitree/go2 --env real status --json
+bash scripts/lingtu --robot unitree/go2 --env real switch map
+bash scripts/lingtu --robot unitree/go2 --env real switch nav --map building_a
+bash scripts/lingtu --robot unitree/go2 --env real stop
 ```
 
 ## Runtime Selections
-
-Use `python lingtu.py --list` for the normal profile list and
-`python lingtu.py --list --all` for the full registered catalog in the current
-checkout.
-
-Profiles are configuration inputs. Field Products are operator-managed runtime
-contracts; the two concepts share resolver machinery but are not one
-architecture category.
-
-### Local And Validation Profiles
-
-| Profile | Purpose |
-| --- | --- |
-| `stub` | Framework-only local test profile. |
-| `dev` | Semantic pipeline with mock dependencies. |
-| `lite` | Local Thunder hardware diagnostic Host; no independent systemd lifecycle. |
-| `sim` | MuJoCo simulation path. |
-| `sim_nav` | No-ROS navigation simulation; uses native planner extensions when built. |
-| `portable_mujoco` | Portable no-ROS MuJoCo planning/sensor path. |
-| `sim_mujoco_live`, `sim_mujoco_octo_live` | Legacy MuJoCo validation harnesses shown only by `--list --all`. |
-
-### Field Products
 
 `teleop`, `teleop_avoid`, `map`, `explore`, `nav`, `tracking`, and
 `inspection` are declared under
@@ -190,9 +160,8 @@ graph.
 
 TARE remains an internal exploration policy; it is not a separate Product.
 
-Some compatibility and validation profiles are intentionally visible only in
-the full catalog. They are useful for replay, ROS 2 checks, and algorithm
-comparisons, but they are not the default physical-robot path.
+MuJoCo component scripts are explicit developer tools. They do not introduce a
+second lifecycle or a third environment beyond `real` and `sim`.
 
 ## Runtime Dataflow
 
@@ -235,33 +204,32 @@ interfaces. Do not collapse them into one generic "map" concept.
 ```text
 SLAM scan/map output
   -> keyframe patches + poses
-  -> map optimization / cleanup
-  -> optimized map.pcd + metadata
-  -> occupancy / octomap / cost layers
+  -> native map cleanup
+  -> occupancy / octomap / cost artifact build
+  -> canonical <map_root>/<map_id>/ map package
 ```
 
 Typical saved-map artifacts:
 
 | Artifact | Meaning |
 | --- | --- |
-| `map.pcd` | Optimized navigation map. |
-| `map.raw.pcd` | Raw SLAM or builder output. |
-| `patches/*.pcd` | Keyframe/scan patches for optimization and cleanup. |
-| `poses.txt` | Patch poses for optimization and occupancy raycasting. |
-| `map_optimization.json` | Optimization status and schema metadata. |
+| `map.pcd` | Cleaned navigation map and source for derived artifacts. |
+| `patches/*.pcd` | Keyframe/scan patches used by cleanup and artifact builders. |
+| `poses.txt` | Patch poses used for occupancy raycasting. |
 | `metadata.json` | Map package metadata and planner artifact status. |
 | `occupancy.npz` | 2D occupancy/cost artifact. |
 | `octomap.ot` | OctoPlanner3D 3D map artifact. |
-| `tomogram.pickle` | Optional legacy/PCT artifact. |
 
 ## Source Layout
 
 ```text
-cli/                    CLI, profiles, REPL, daemon lifecycle
-src/runtime/            Module, Blueprint, ports, registry, transports, devices
+src/lingtu/             ProductControl, RunPlan, real/sim lifecycle, assembly
+src/runtime/            Module, Blueprint, ports, registry, transports
 src/drivers/            Robot, simulation, LiDAR, camera, teleop backends
-src/localization/       SLAM modules, native adapters, bridges, GNSS/NTRIP
-src/nav/                Navigation, safety, maps, planning, exploration
+src/localization/       SLAM modules and native localization adapters
+src/nav/                Host navigation surface and native C++ navigation
+src/maps/               Saved maps, map layers, artifacts, native map adapters
+src/explore/            Wavefront/TARE exploration algorithms and adapters
 src/perception/         Detection, encoding, reconstruction, scene perception
 src/decision/           Semantic planner, goal resolver, LLM, visual servo
 src/memory/             Semantic, episodic, tagged, vector, temporal memories
@@ -288,8 +256,7 @@ Canonical C++ navigation core (path follower, local planner, FAR, and tests):
 ```bash
 cmake -S src/nav/cpp -B build/nav-cpp -DCMAKE_BUILD_TYPE=Release \
   -DLINGTU_NAV_CPP_BUILD_TESTS=ON \
-  -DLINGTU_NAV_CPP_BUILD_ENDPOINT=OFF \
-  -DLINGTU_NAV_CPP_BUILD_PYTHON=OFF
+  -DLINGTU_NAV_CPP_BUILD_ENDPOINT=OFF
 cmake --build build/nav-cpp -j
 ctest --test-dir build/nav-cpp --output-on-failure
 ```
@@ -304,10 +271,9 @@ Start here:
 - [`docs/architecture/FIELD_PRODUCTS.md`](docs/architecture/FIELD_PRODUCTS.md)
 - [`docs/architecture/NAVIGATION_RUNTIME_DATAFLOW.md`](docs/architecture/NAVIGATION_RUNTIME_DATAFLOW.md)
 - [`docs/architecture/MAP_SERVICE_CONTRACT.md`](docs/architecture/MAP_SERVICE_CONTRACT.md)
-- [`docs/07-testing/MUJOCO_NAVIGATION_ACCEPTANCE.md`](docs/07-testing/MUJOCO_NAVIGATION_ACCEPTANCE.md)
-- [`docs/07-testing/MUJOCO_NATIVE_CONTROL_MODE_ACCEPTANCE.md`](docs/07-testing/MUJOCO_NATIVE_CONTROL_MODE_ACCEPTANCE.md)
+- [`docs/07-testing/simulation/MUJOCO_NAVIGATION_ACCEPTANCE.md`](docs/07-testing/simulation/MUJOCO_NAVIGATION_ACCEPTANCE.md)
+- [`docs/07-testing/simulation/MUJOCO_NATIVE_CONTROL_MODE_ACCEPTANCE.md`](docs/07-testing/simulation/MUJOCO_NATIVE_CONTROL_MODE_ACCEPTANCE.md)
 - [`docs/04-deployment/lingtu_cli.md`](docs/04-deployment/lingtu_cli.md)
-- [`docs/07-testing/ALGORITHM_VALIDATION_FLOW.md`](docs/07-testing/ALGORITHM_VALIDATION_FLOW.md)
 - [`sim/README.md`](sim/README.md)
 
 ## Known Boundaries
@@ -319,8 +285,6 @@ Start here:
 - The accepted MuJoCo native-DDS navigation gate proves a bounded simulated
   navigation/control chain. It is not a substitute for field fault injection or
   a hardware motion campaign.
-- ROS 2 PGO/HBA/PCT paths are compatibility or experiment surfaces unless a
-  profile explicitly selects them.
 - ChromaDB, LLMs, WebRTC, Rerun, and heavy perception backends are optional.
 - TARE requires its external binary/submodule build when using the external
   runtime.
@@ -336,7 +300,6 @@ the license files inside vendored subtrees.
 | --- | --- |
 | [DimOS](https://github.com/dimensionalOS/dimos) | Evidence bar and benchmark inspiration for simulation closure, runtime dataflow checks, and readiness gating. LingTu uses DimOS-style validation ideas; DimOS is not a runtime dependency. |
 | FAST-LIO2 | LiDAR-inertial odometry and mapping reference under `src/localization/fastlio2/`, with LingTu wrapping the runtime boundary for native/DDS use. |
-| Point-LIO | High-bandwidth LiDAR-inertial odometry reference under `src/localization/pointlio/` and `config/pointlio.yaml`. |
 | Livox SDK2 / livox_ros_driver2 | MID-360 LiDAR device protocol, SDK integration, and ROS compatibility source under `src/drivers/real/lidar/`. |
 | CycloneDDS | Typed DDS transport used by native services and message definitions. |
 | OctoPlanner3D / OctoMap | 3D saved-map global planning backend and occupancy-map runtime. |

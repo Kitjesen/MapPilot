@@ -110,7 +110,7 @@ cmd_vel publishing disabled.
 Seeded relocalization then recovered domain 0:
 
 ```text
-lingtu_slam_control relocalize ... --x 0 --y 0 --z 0 --yaw -0.496
+messages_control relocalize ... --x 0 --y 0 --z 0 --yaw -0.496
 success = true
 relocalization_state = completed
 relocalization_quality = 0.012587
@@ -197,7 +197,7 @@ runtime could stay in `track_against_map_enabled=false` after three earlier
 tracking failures, so `map->odom` stopped being refreshed and nav start drifted
 out of the map.
 
-Fix: `lingtu_slam_cyclone_runtime` now restarts track-against-map after any
+Fix: `messages_cyclone_runtime` now restarts track-against-map after any
 successful seeded/global relocalize.
 
 Sunrise verification:
@@ -257,8 +257,8 @@ python -m pytest src/localization/tests/test_native_slam_contract.py -q
 18 passed
 
 bash scripts/build/build_slam_core.sh
-lingtu_slam_contract ok
-lingtu_slam_cyclone_runtime linked
+messages_contract ok
+messages_cyclone_runtime linked
 ```
 
 Runtime verification after restarting `lingtu-slam-dds.service`:
@@ -461,7 +461,7 @@ LINGTU_SLAM_MAP=/home/sunrise/data/nova/maps/active/map.pcd
 and the C++ runtime now starts track-against-map automatically when launched in
 localization mode with a map path.
 
-Restart verification after rebuilding `lingtu_slam_cyclone_runtime`:
+Restart verification after rebuilding `messages_cyclone_runtime`:
 
 ```text
 8 samples over ~40s

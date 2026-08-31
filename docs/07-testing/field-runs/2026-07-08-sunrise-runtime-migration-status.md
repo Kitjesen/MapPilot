@@ -111,7 +111,7 @@ Status files:
   `has_odom=true`, `has_map_odom_tf=true`, `cmd_vel_published=0`.
 - `/dev/shm/lingtu/traversability_status.json`: present; `has_odom=true`,
   `published=72928`, `errors=0`.
-- `/tmp/lingtu_slam_status.json`: present; `state=TRACKING`,
+- `/tmp/messages_status.json`: present; `state=TRACKING`,
   `alive=true`, `has_odom=true`, `map_loaded=true`,
   `lidar_input_hz=9.997736`, `imu_input_hz=204.585034`,
   `processed_scan_hz=10.027072`.
@@ -125,7 +125,7 @@ Gateway:
 Observed native processes:
 
 - `livox_sdk2_stream --dds`
-- `lingtu_slam_cyclone_runtime`
+- `messages_cyclone_runtime`
 - `lingtu_traversability_dds`
 - `lingtu_nav_native_endpoint --publish-cmd-vel 0`
 
@@ -192,7 +192,7 @@ Camera deployment state:
 Native process evidence:
 
 - Running: `livox_sdk2_stream --dds --domain-id 0`.
-- Running: `lingtu_slam_cyclone_runtime --backend fastlio2 --mode localization`.
+- Running: `messages_cyclone_runtime --backend fastlio2 --mode localization`.
 - Running: `lingtu_traversability_dds`.
 - Running: `lingtu_nav_native_endpoint --publish-cmd-vel 0`.
 - Not observed in process list: `livox_ros_driver2`, `lingtu_camera_dds`,
@@ -200,7 +200,7 @@ Native process evidence:
 
 Status snapshots:
 
-- `/tmp/lingtu_slam_status.json`: present; `state=TRACKING`,
+- `/tmp/messages_status.json`: present; `state=TRACKING`,
   `alive=true`, `has_odom=true`, `lidar_input_hz=7.271335`,
   `imu_input_hz=197.596545`, `processed_scan_hz=6.989590`.
 - `/dev/shm/lingtu/nav_endpoint_status.json`: present;
@@ -289,7 +289,7 @@ Native binary readiness:
 
 - Present and executable:
   - `/opt/lingtu/current/build/livox_sdk2_stream/livox_sdk2_stream`
-  - `/opt/lingtu/current/build/slam_core/lingtu_slam_cyclone_runtime`
+  - `/opt/lingtu/current/build/slam_core/messages_cyclone_runtime`
   - `/opt/lingtu/current/build/nav_endpoint/lingtu_nav_native_endpoint`
   - `/opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds`
 - Missing:
@@ -313,7 +313,7 @@ LiDAR/IMU/SLAM evidence:
 - Running process:
   `livox_sdk2_stream --dds --domain-id 0 --publish-freq 10`.
 - `livox_ros_driver2`: not observed in process list.
-- `/tmp/lingtu_slam_status.json`: present; `state=TRACKING`,
+- `/tmp/messages_status.json`: present; `state=TRACKING`,
   `alive=true`, `has_odom=true`, `lidar_input_hz=9.130011`,
   `imu_input_hz=200.539856`, `processed_scan_hz=8.927502`.
 
@@ -426,9 +426,9 @@ Fixes made during testing:
 
 - `nav_native_endpoint.cpp`, `traversability_dds.cpp`, and `nav_control.cpp`
   still had local hard-coded DDS QoS. They now include
-  `message/cpp/dds_qos_profiles.hpp` and resolve QoS from the shared catalog by
+  `message/cpp/qos.hpp` and resolve QoS from the shared catalog by
   topic.
-- `qos_profiles.yaml` and `dds_qos_profiles.hpp` now cover nav control,
+- `qos_profiles.yaml` and `qos.hpp` now cover nav control,
   teleop, clear/cancel, event, grid, terrain-map-ext, and scan-cloud topic
   mappings.
 - Remote `build_nav_endpoint.sh` initially failed because

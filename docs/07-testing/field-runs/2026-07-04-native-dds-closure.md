@@ -384,7 +384,7 @@ Relocalization control was tested without motion:
 
 | Command | Result |
 | --- | --- |
-| `lingtu_slam_control status` | reports map loaded and `relocalization_map_body` near origin, but `map_odom_tf` still does not reconcile the huge odom pose |
+| `messages_control status` | reports map loaded and `relocalization_map_body` near origin, but `map_odom_tf` still does not reconcile the huge odom pose |
 | `global-relocalize active/map.pcd` | failed: `native_relocalizer_icp_failed` |
 | `track-against-map active/map.pcd` | starts, but status returns to `relocalization_state=failed` and failure count increases |
 
@@ -439,7 +439,7 @@ The fix path was:
 - Publish a stationary warmup before driving so Fast-LIO initializes at rest.
 - Change ZUPT detection to require both low IMU variance and a near-static mean.
 - Add a MuJoCo-specific Fast-LIO config:
-  `src/localization/fastlio2/config/mid360_mujoco_native_dds.yaml`.
+  `src/localization/fastlio2/config/sim_mid360_slam.yaml`.
 - Use the native DDS sensor bridge `imu_acc_axis_scale=auto`, which resolves to
   `[-0.43, 1.0, 1.0]` only for kinematic finite-difference MuJoCo IMU samples.
 - Use physical rolling scan timing and a 5 second kinematic command ramp.
@@ -701,7 +701,7 @@ Current accepted and rejected boundaries:
   quality gate is closed on sunrise for the dense industrial scene.
 - Accepted configuration: physical rolling scan, LiDAR timestamp `wall`, IMU
   timestamp `sim`, auto MuJoCo finite-difference acceleration compensation,
-  gyro scale `1,1,1`, and `mid360_mujoco_native_dds.yaml` with
+  gyro scale `1,1,1`, and `sim_mid360_slam.yaml` with
   `t_il=[0,0,0]`.
 - Rejected fixes: physical `t_il=0.28` without lever-arm-consistent samples,
   a single `sim` timestamp clock, a single identity acceleration scale,
@@ -773,7 +773,7 @@ Real robot note: the physical MID-360/IMU stack does not have MuJoCo
 issues, but those are different: driver/device clock skew, incorrect receive
 time stamping, inaccurate `time_diff_lidar_to_imu`, or extrinsic calibration
 error. Do not copy the MuJoCo `sim_hardware` acceleration compensation into
-`mid360_s100p.yaml`.
+`config/robots/doso/thunder_v4/sensors/mid360_fastlio2.yaml`.
 
 ### Domain132-134 long-trajectory map quality regression
 
@@ -899,7 +899,7 @@ MuJoCo odom-prior diagnostic map artifact run:
 
 Key sunrise results:
 
-- Native C++ `livox_sdk2_stream` and `lingtu_slam_cyclone_runtime` rebuilt
+- Native C++ `livox_sdk2_stream` and `messages_cyclone_runtime` rebuilt
   successfully on sunrise.
 - Focused runtime tests passed on sunrise:
   `8 passed, 150 deselected` before the motion-gate fix and

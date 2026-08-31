@@ -1,43 +1,38 @@
 # Local Planner I/O Contract
 
-Status: current for Python Module-owned local-planner I/O; physical `env=real` embeds local planning inside `lingtu-nav-dds`
-Audience: navigation Module and compatibility-profile maintainers
-Replaced by: not replaced
+Status: current native Product contract
 
-Canonical implementation document:
+The local planner is an in-process C++ boundary inside `navd`. Its public code
+contract is `src/nav/cpp/planning/local/planner.hpp`; endpoint input assembly is
+under `src/nav/cpp/endpoint/nav/input/`.
 
-- `src/nav/local/README.md`
+## Input
 
-Code references:
+One planning call receives one coherent frame containing:
 
-- Module ports: `src/nav/local/local_planner.py`
-- Port contract: `src/nav/services/plan/contracts.py`
-- Navigation wires: `src/lingtu/assembly/wires/navigation.py`
-- SLAM/odometry wires: `src/lingtu/assembly/wires/slam.py`
-- Map/traversability wires: `src/lingtu/assembly/wires/mapping.py`
+- current body pose and measured motion;
+- the active global-route slice or assisted-motion intent;
+- obstacle and collision evidence;
+- optional traversability evidence;
+- frame and source generations;
+- a monotonic receiver timestamp.
 
-Current status:
+An omitted or stale input is not replaced with retained data from an older
+planning frame.
 
-| Area | Status |
-| --- | --- |
-| Mission inputs | Wired: `waypoint`, `global_path`, `clear_path`. |
-| Localization inputs | Wired: `odometry`; `map_frame_jump_event` when SLAM/localization is active. |
-| Terrain inputs | Wired: `terrain_map`, `terrain_map_ext`, `traversability`; traversability now feeds native C++ grid scoring/near-field stop and the Python fallback scorer. |
-| ESDF input | Wired through `TraversabilityCostModule.esdf_field`, but still reserved by the local planner. |
-| Optional obstacle overlays | Ports exist, but `boundary`, `added_obstacles`, and `check_obstacle` have no default producer. |
-| Outputs | Wired: `local_path` to path follower/safety, `control_hint` to path follower. |
+## Output
 
-Main remaining gap:
+CMU returns a body-relative geometric path. SCAN returns an exact body-relative
+B-spline for execution plus sampled path/trajectory telemetry. Both use the same
+local planner entry point and are selected explicitly.
 
-`esdf`, `boundary`, `added_obstacles`, and `check_obstacle` need cleanup:
-`esdf` is stored but not scored, and the three optional obstacle overlay ports
-do not have default producers.
+The result passes directly to the native `Follower`. `/nav/local_path` is
+telemetry and is not re-subscribed as the internal control handoff.
 
-Traversability status:
+## Assets and safety
 
-- Python fallback: `cmu_py` samples the risk grid on candidate path groups.
-- C++ backend: `LocalPlannerCore` exposes `setTraversabilityGrid()` and applies
-  the same hard/soft risk thresholds in native scoring and near-field stop.
-- Shared obstacle cloud: high-risk virtual traversability obstacles are kept
-  only for the `cmu_py` fallback and direct-track clearance checks. The
-  preferred `nanobind` backend uses the native C++ grid port instead.
+The CMU path bank lives at `src/nav/cpp/planning/local/cmu/paths/`. Local planner
+output is pre-safety intent: final obstacle, traversability, freshness, speed,
+authority, and stop gates remain under `src/nav/cpp/endpoint/nav/`.
+
+See `LOCAL_PLANNING_AND_TRACKING_CONTRACT.md` for algorithm and tracking details.

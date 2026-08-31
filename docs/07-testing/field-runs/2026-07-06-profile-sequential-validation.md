@@ -72,7 +72,7 @@ lingtu_nav_native_endpoint
   --publish-cmd-vel 1
   --use-traversability-cost 1
 
-lingtu_slam_cyclone_runtime
+messages_cyclone_runtime
   --mode localization
   --map /home/sunrise/data/nova/maps/accept_ready_20260702_162847/map.pcd
   --track-against-map-seed-file .../track_seed.json
@@ -101,13 +101,13 @@ Saved-map artifact gate:
 ```text
 ok = true
 frame = map
-map_pcd sha256_ok = true
-octomap sha256_ok = true
-occupancy_grid sha256_ok = true
+map_pcd exists = true, format_ok = true
+octomap exists = true, format_ok = true
+occupancy_grid exists = true, format_ok = true
 blockers = none
 ```
 
-Map planning check:
+Map planning check (historical; the `map check` command is now retired):
 
 ```text
 command = bash scripts/lingtu map check active --forward 0.8

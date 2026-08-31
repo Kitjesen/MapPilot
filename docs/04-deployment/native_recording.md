@@ -2,8 +2,8 @@
 
 Status: product operator guide for the native C++ recording path.
 
-LingTu records field data without ROS. The operator entry point is
-`scripts/lingtu`; the implementation is the C++ `lingtu_recorder` session
+LingTu records field data without ROS. The operator entry point is the C++
+`lingtu_recorder` session
 manager plus native CycloneDDS and camera workers. DDS samples and the camera
 timeline use MCAP. Color image payloads stay on POSIX shared memory and are
 written to segmented MKV files.
@@ -17,27 +17,32 @@ catalog and developer details remain in
 Start a foreground DDS recording and stop it cleanly with Ctrl-C:
 
 ```bash
-scripts/lingtu record
+build/native-recording/lingtu_recorder record \
+  --output-dir /data/recordings/run-001 --dds on --camera off
 ```
 
 Add the color camera only when video is required:
 
 ```bash
-scripts/lingtu record --camera
+build/native-recording/lingtu_recorder record \
+  --output-dir /data/recordings/run-001 --dds on --camera on
 ```
 
 Use a second terminal for session operations:
 
 ```bash
-scripts/lingtu record status /data/recordings/run-001
-scripts/lingtu record stop /data/recordings/run-001
-scripts/lingtu record info /data/recordings/run-001
-scripts/lingtu record topics
-scripts/lingtu record verify /data/recordings/run-001
-scripts/lingtu play /data/recordings/run-001
+build/native-recording/lingtu_recorder status /data/recordings/run-001
+build/native-recording/lingtu_recorder stop /data/recordings/run-001
+build/native-recording/lingtu_dds_player --list-topics
+build/native-recording/lingtu_dds_player \
+  --info /data/recordings/run-001/dds/sensors.mcap
+build/native-recording/lingtu_dds_player \
+  /data/recordings/run-001/dds/sensors.mcap --dry-run
+build/native-recording/lingtu_dds_player \
+  /data/recordings/run-001/dds/sensors.mcap --domain 84
 ```
 
-`record` and `play` are short native commands; they do not source a ROS
+`lingtu_recorder` and `lingtu_dds_player` do not source a ROS
 environment. `replay` is the long alias for `play`. Replay defaults to
 isolated DDS domain `84`, so a normal verification run cannot command the
 live robot.
@@ -61,8 +66,8 @@ Build them in a checkout with:
 bash scripts/build/build_native_recording.sh
 ```
 
-The managed Gateway/ProductControl boundary accepts an exact
-`LINGTU_RECORDING_BIN`; otherwise it and `scripts/lingtu` resolve binaries in
+The managed Gateway boundary accepts an exact
+`LINGTU_RECORDING_BIN`; otherwise it resolves binaries in
 this order:
 
 1. `LINGTU_RECORDING_BIN_DIR`;
@@ -82,7 +87,8 @@ Without an explicit path, sessions are created under
 session directory as the first argument:
 
 ```bash
-scripts/lingtu record /data/recordings/run-001 --camera
+build/native-recording/lingtu_recorder record \
+  --output-dir /data/recordings/run-001 --dds on --camera on
 ```
 
 A complete DDS-plus-camera session has this layout:
@@ -121,13 +127,15 @@ session or starts a worker. `--min-free-gib` defaults to `5`, meaning at
 least 5 GiB must be available on the target filesystem:
 
 ```bash
-scripts/lingtu record /data/recordings/run-001 --min-free-gib 20
+build/native-recording/lingtu_recorder record \
+  --output-dir /data/recordings/run-001 --min-free-gib 20
 ```
 
 A value of `0` disables this admission threshold:
 
 ```bash
-scripts/lingtu record /data/recordings/run-001 --min-free-gib 0
+build/native-recording/lingtu_recorder record \
+  --output-dir /data/recordings/run-001 --min-free-gib 0
 ```
 
 Disabling it is an explicit diagnostic choice, not a safe field default. The
@@ -149,10 +157,12 @@ The default DDS capture is intentionally small:
 Select a different compiled topic set by repeating `--dds-topic`:
 
 ```bash
-scripts/lingtu record /data/recordings/imu-odom   --dds-topic /imu/raw   --dds-topic /slam/odometry
+build/native-recording/lingtu_recorder record \
+  --output-dir /data/recordings/imu-odom \
+  --dds-topic /imu/raw --dds-topic /slam/odometry
 ```
 
-`scripts/lingtu record topics` prints the compiled support catalog and replay
+`build/native-recording/lingtu_dds_player --list-topics` prints the compiled support catalog and replay
 policy. It is not live DDS discovery. Unknown topics fail validation; they are
 not guessed from the wire.
 
@@ -179,9 +189,9 @@ to `record-only` and pass the replay-safety contracts before release.
 
 The player uses domain `84` by default. Live domain `0` is rejected unless
 the native player receives its separate explicit live-domain opt-in. Even that
-opt-in cannot bypass the sensor-only allowlist. `record verify` is safer than
+opt-in cannot bypass the sensor-only allowlist. `lingtu_dds_player --dry-run` is safer than
 live playback: it checks MCAP structure, IDL/channel identity, and CDR
-envelopes without publishing DDS. Generic `record verify` is an integrity
+envelopes without publishing DDS. Generic `--dry-run` is an integrity
 check, not semantic decoding of every record-only body. Supplying an inspection
 `task_id` additionally parses the declared task-event, final-output, and
 driver-confirmation bodies and applies the task evidence rules.
@@ -200,9 +210,9 @@ every required artifact is a non-empty regular file.
   camera MCAP index is not promoted.
 - A crash or verification failure leaves logs and `.mcap.tmp` artifacts for
   diagnosis; their presence is not proof of a valid recording.
-- `record status` detects a stale manager identity instead of trusting a PID
+- `lingtu_recorder status` detects a stale manager identity instead of trusting a PID
   copied from an old manifest.
-- `record stop` signals only the verified session manager. The manager owns
+- `lingtu_recorder stop` signals only the verified session manager. The manager owns
   child shutdown, the shared deadline, artifact checks, and the final state.
 
 Automatic `reindex/recovery` for interrupted DDS MCAP or camera timeline files
@@ -238,17 +248,50 @@ contract:
 - `GET /api/v1/recordings/status`;
 - `POST /api/v1/recordings/stop`.
 
-The old paths remain deprecated compatibility aliases only:
-
-- `POST /api/v1/bag/start`;
-- `GET /api/v1/bag/status`;
-- `POST /api/v1/bag/stop`.
-
-Both routes invoke `lingtu_recorder start|status|stop --root`. The implementation
+These routes invoke `lingtu_recorder start|status|stop --root`. The implementation
 does not invoke Bash, source ROS, run rosbag2, scan `session.json` in Python, or
 spawn a Python-owned recorder. It starts DDS-only capture by default.
-`scripts/lingtu record` remains the foreground operator interface and supports
+`lingtu_recorder record` remains the foreground operator interface and supports
 explicit camera recording and advanced native options.
+
+The dashboard exposes recording from the **Scene** toolbar, not as a separate
+product page. Its start request has only bounded, product-level choices:
+
+```json
+{
+  "duration": 600,
+  "prefix": "web",
+  "capture_profile": "sensors",
+  "camera": false,
+  "minimum_free_gib": 5
+}
+```
+
+The Scene panel starts only the `sensors` profile. Task-bound inspection code
+may start the `evidence` profile through the same Gateway endpoint, but must
+provide the active inspection `task_id`; the Gateway rejects unbound evidence
+requests. It maps both profiles to compiled native presets, keeps DDS enabled,
+and does not expose raw topics, domain IDs, SHM names, or worker paths. Camera
+selection is admitted only when the native camera recorder can start; otherwise
+the whole session rejects rather than silently recording less data.
+
+The Scene recording panel uses the same native catalog for history and files:
+
+- `GET /api/v1/recordings?limit=100` lists validated sessions (newest first);
+- `GET /api/v1/recordings/{session_id}` returns the public manifest for one
+  terminal session;
+- `GET /api/v1/recordings/{session_id}/files/{artifact_path}` downloads one
+  artifact declared by that manifest;
+- `DELETE /api/v1/recordings/{session_id}` removes one terminal session.
+
+The Gateway never enumerates the recording directory, accepts an arbitrary
+filesystem path, or treats a client-supplied filename as authoritative. The
+native manager validates the session ID and manifest first; downloads are
+limited to declared regular files below that session directory, and an active
+recording cannot be deleted. The API is therefore a file-management adapter,
+not a second recording database. Automatic retention and quota enforcement are
+not enabled yet; keep the existing startup free-space check and external disk
+monitoring for long runs.
 
 ## rosbag2 behavior we adopt
 
@@ -279,18 +322,18 @@ runtime.
 
 The table is a roadmap, not a command reference. In particular, record-all,
 split, pause, snapshot, reindex, convert, and live discovery are not currently
-available `scripts/lingtu` subcommands.
+available native tool commands.
 
 ## Acceptance checklist
 
 Before relying on a field recording:
 
-1. `record status` reports the intended session and Product context.
+1. `lingtu_recorder status` reports the intended session and Product context.
 2. The effective topic list contains the required sensor/evidence channels.
 3. Free-space admission passed for the target filesystem.
-4. Ctrl-C or `record stop` leads to a terminal manifest.
-5. `record verify` exits successfully.
-6. `record info` reports the expected channels and time range.
+4. Ctrl-C or `lingtu_recorder stop` leads to a terminal manifest.
+5. `lingtu_dds_player FILE --dry-run` exits successfully.
+6. `lingtu_dds_player --info FILE` reports the expected channels and time range.
 7. Camera sessions contain a verified `camera_color.mcap` and referenced MKV
    segments.
 8. Replay is performed on domain `84` unless an approved live-domain test

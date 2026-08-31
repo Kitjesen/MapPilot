@@ -20,7 +20,7 @@ def test_generated_api_documentation_is_current() -> None:
     """Generated route and MCP inventories must match current source."""
 
     result = subprocess.run(
-        [sys.executable, "scripts/docs/extract_api_docs.py", "--check"],
+        [sys.executable, "tools/docs/extract_api_docs.py", "--check"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -30,12 +30,11 @@ def test_generated_api_documentation_is_current() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_gateway_inventory_preserves_canonical_and_deprecated_recording_routes() -> None:
-    """Stacked compatibility decorators must not hide the canonical API."""
+def test_gateway_inventory_preserves_canonical_recording_routes() -> None:
+    """The generated inventory must expose the canonical recording API."""
 
     inventory = (ROOT / "docs" / "api" / "gateway_rest.md").read_text(
         encoding="utf-8"
     )
-    for prefix in ("/api/v1/recordings", "/api/v1/bag"):
-        for action in ("start", "status", "stop"):
-            assert f"{prefix}/{action}" in inventory
+    for action in ("start", "status", "stop"):
+        assert f"/api/v1/recordings/{action}" in inventory

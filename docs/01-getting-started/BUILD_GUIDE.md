@@ -7,7 +7,7 @@ authorization to start a robot service or issue a motion command.
 
 > **Status:** Current<br>
 > **Audience:** Contributors, integrators, and deployment maintainers<br>
-> **Runs on:** Local development hosts, Linux/WSL native-build hosts, and supported field robots
+> **Runs on:** Windows x64 native-MuJoCo hosts, Linux/WSL native-build hosts, and supported field robots
 
 ## Build tracks at a glance
 
@@ -15,6 +15,7 @@ authorization to start a robot service or issue a motion command.
 | --- | --- | --- | --- |
 | Portable Python | Framework, docs, contracts, and unit tests | No | C++ artifacts, simulation, or field runtime |
 | MuJoCo simulation | In-process simulation and simulation tests | No | Real sensor timing, calibration, gait, or field readiness |
+| Windows native MuJoCo | Native CycloneDDS simulation processes and Windows Product-port work | No | Linux/S100P support or Product acceptance until the exact Windows transaction passes |
 | Linux/WSL native | Navigation kernel, SLAM, planner, and endpoint artifacts | No during build | A deployed robot service or safe motion |
 | Field deployment | Installing the native DDS product services on a target | Supported target, controlled session | Readiness until no-motion and field gates pass |
 
@@ -38,7 +39,7 @@ Use a supported `uv` installation to create the environment.
 ```bash
 uv --version
 uv sync --locked --extra dev
-uv run --locked python lingtu.py --list --all
+uv run --locked python -m lingtu.control --help
 ```
 
 Expected result:
@@ -56,8 +57,8 @@ workaround.
 
 | Host | Supported first work | Notes |
 | --- | --- | --- |
-| Windows | Portable Python, documentation, static checks, selected tooling | Build Linux-native C++ planner/endpoint artifacts in WSL or Linux. |
-| Linux/WSL | Portable work plus native C++ build tracks | OctoPlanner3D's headless wrapper is a Linux/WSL/S100P build. |
+| Windows x64 | Portable work, native MuJoCo DDS/SLAM artifacts, and all declared Product RunPlan targets | First-class MuJoCo target. W1-W3 build and compile gates pass; exact Product execution remains pending. |
+| Linux/WSL x86_64 | Portable work plus the native ELF build tracks | Parallel MuJoCo target and the closest workstation ABI shape to the S100P deployment; it does not substitute for Windows-native evidence. |
 | S100P/Linux controller | Native services and supervised field deployment | Treat as a controlled deployment target, not a general development shell. |
 
 ## Select the Python environment
@@ -78,39 +79,39 @@ profile or test you intend to run.
 After changing extras, verify configuration without starting a profile:
 
 ```bash
-uv run --locked python lingtu.py show-config stub --json
-uv run --locked python lingtu.py runtime-audit
+uv run --locked python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim --dry-run --json
+uv run --locked python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
 ```
 
 The local command convention remains:
 
 ```bash
-uv run --locked python lingtu.py <command-or-profile> [options]
+uv run --locked python -m lingtu.control <switch|status|stop> [product] [options]
 ```
 
 ## Portable Python verification
 
 Use this track before native work. It is the fastest way to prove that the
-checkout, profile resolver, and Module contracts are coherent.
+checkout, Product compiler, and Module contracts are coherent.
 
 ```bash
 uv run --locked python -m pytest src/runtime/tests/ -q
-uv run --locked python lingtu.py --list --all
-uv run --locked python lingtu.py runtime-contract
-uv run --locked python lingtu.py runtime-audit
+uv run --locked python -m lingtu.control --help
+uv run --locked python tools/validate/validate_architecture_boundaries.py
+uv run --locked python tools/validate/validate_topics.py
 ```
 
 Expected result:
 
 - Framework tests cover the runtime surface without needing hardware.
-- `runtime-contract` and `runtime-audit` inspect declarations and contracts;
-  they do not create a robot session.
+- Runtime graph, architecture, and topic validators inspect declarations and
+  contracts; they do not create a robot session.
 - Passing this track does not prove the simulation or field runtime.
 
 For a safe interactive framework smoke after the checks pass:
 
 ```bash
-uv run --locked python lingtu.py stub --no-gateway
+uv run --locked python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim --dry-run
 ```
 
 Use `health`, `connections`, and `quit` in the TTY REPL. See
@@ -124,8 +125,8 @@ simulated robot, but it has no permission to command field hardware.
 
 ```bash
 uv sync --locked --extra dev --extra sim-mujoco
-uv run --locked python lingtu.py runtime-spec sim --json
-uv run --locked python lingtu.py sim
+uv run --locked python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim --dry-run --json
+uv run --locked python sim/scripts/mujoco/native_navigation_acceptance.py --help
 ```
 
 Before recording an evaluation result, verify that the resolved runtime uses the
@@ -137,11 +138,293 @@ quality gates, and simulation claim boundaries. The
 [simulation integration contract](../architecture/SIMULATION_INTEGRATION_CONTRACT.md)
 defines the adapter and command-sink rules.
 
+## Windows native MuJoCo artifacts
+
+Windows-native Product parity is an active P0 requirement. The transport layer
+is already buildable without WSL. Use the existing helper with a complete
+Windows CycloneDDS SDK prefix:
+
+```powershell
+$env:LINGTU_CYCLONEDDS_PREFIX = "D:\inovxio\brain\lingtu\third_party\integration\cyclonedds-windows-20260817-d\sdk"
+pwsh -NoProfile -File scripts\build\build_mujoco_native_dds_windows.ps1 `
+  -BuildDirectory "D:\inovxio\brain\lingtu\build\windows-native-dds-adapter"
+```
+
+The helper configures a Windows-only build tree, compiles the MuJoCo native DDS
+runtime, runs CTest, and stages `ddsc.dll` beside the executables. The Product
+chain uses, among other generated targets:
+
+```text
+build/windows-native-dds-adapter/Release/lingtu_mujoco_sensor_publisher.exe
+build/windows-native-dds-adapter/Release/lingtu_mujoco_driver_bridge.exe
+```
+
+The canonical Windows outputs use application-local CycloneDDS runtime
+closure. These four files must exist beside, or in the staged `bin` directory
+with, their corresponding executables:
+
+```text
+build/windows-native-dds-adapter/Release/ddsc.dll
+build/nav-cpp/windows-x64-nav-endpoint/Release/ddsc.dll
+build/maps-windows/Release/ddsc.dll
+build/slam-core-windows-x64/stage/bin/ddsc.dll
+```
+
+All four current copies have SHA-256
+`203ece8c0b2c00380f632c0d85380f5381354957e0fb78155e1de8cf7d996887`.
+This closes the canonical Windows `0xC0000135` missing-`ddsc.dll` failure
+class. It does not repair an executable copied out of these directories. The
+old `-root-d` trees are quarantined under
+`C:/Users/99563/.codex/tmp/lingtu-stale-builds`; no configuration, fallback,
+alias, or junction may select them.
+
+With `PATH` reduced to the real Windows `System32`, the staged command smokes
+reach their documented usage output instead of failing in the loader. A usage
+exit proves dependency loading only; it is not a Product pass.
+
+The Windows navigation preset requires both dependency prefixes. Configure,
+build, and test the one canonical navigation tree with:
+
+```powershell
+$env:LINGTU_CYCLONEDDS_PREFIX = "D:\inovxio\brain\lingtu\third_party\integration\cyclonedds-windows-20260817-d\sdk"
+$env:LINGTU_OCTOMAP_PREFIX = "C:\opt\octomap-1.10.0-msvc-x64"
+Push-Location src\nav\cpp
+cmake --preset windows-x64-nav-endpoint --fresh
+cmake --build --preset windows-x64-nav-endpoint
+ctest --preset windows-x64-nav-endpoint
+Pop-Location
+```
+
+The preset writes only to
+`build/nav-cpp/windows-x64-nav-endpoint`. Use compatible MSVC x64 CycloneDDS
+and OctoMap prefixes; do not add a second build-directory name to distinguish
+which dependency copy was used.
+
+Install the official Microsoft Visual C++ Redistributable x64 on the host.
+CycloneDDS is app-local, but the MSVC runtime is a central prerequisite; these
+outputs are therefore not fully self-contained. Do not copy the Microsoft CRT
+into the application directories. The Windows helper and ProductControl fail
+closed before build/test or child startup unless the 64-bit runtime is
+registered and `System32` contains these PE32+/x64 files:
+
+```text
+msvcp140.dll
+msvcp140_2.dll
+vcruntime140.dll
+vcruntime140_1.dll
+vcomp140.dll
+```
+
+The build helper derives its minimum runtime version from the configured MSVC
+toolset. Product startup derives the requirement from the exact SHA-bound PE
+artifacts and their declared dependencies, so upgrading the toolset cannot
+silently leave an older runtime preflight behind.
+
+This proves the Windows CycloneDDS transport boundary; the separate W2 wrapper
+below produces `slamd.exe`. The Fast-LIO ikd-tree no longer directly uses
+`pthread`, `unistd`, or `usleep`. It uses the C++17 standard-library thread,
+mutex, condition-variable, atomic, and clock facilities. The port also fixes
+split-axis equal-point deletion, `working_flag` lifetime, empty rebuild replay,
+and the required rebuild/read synchronization. The cleanup removed swallowed
+background exceptions, 100-microsecond polling, a global range-query lock, the
+unused benchmark, and excessive fault injection. The focused concurrency test
+passed 20 repetitions on Windows and 20 on Linux; Linux ASan/UBSan and leak
+checks also pass. Native Linux TSan and dedicated S100P performance evidence
+remain open. W1B is complete; a DDS production runtime can no longer configure
+with the real Fast-LIO2 backend disabled, and its focused contract suite passes
+45 tests.
+
+W2 uses PowerShell 7 (`pwsh`) and three fail-closed steps. First prepare and
+verify the source-locked CycloneDDS 11.0.1 SDK:
+
+```powershell
+pwsh -NoProfile -File scripts\build\prepare_cyclonedds_windows.ps1 `
+  -SourceRoot "D:\inovxio\brain\lingtu\third_party\integration\cyclonedds-windows-20260817-d\source" `
+  -BuildRoot "D:\inovxio\brain\lingtu\third_party\integration\cyclonedds-windows-20260817-d\build" `
+  -InstallRoot "D:\inovxio\brain\lingtu\third_party\integration\cyclonedds-windows-20260817-d\install" `
+  -SdkRoot "D:\inovxio\brain\lingtu\third_party\integration\cyclonedds-windows-20260817-d\sdk" `
+  -PreflightOnly
+
+pwsh -NoProfile -File scripts\build\prepare_cyclonedds_windows.ps1 `
+  -SourceRoot "D:\inovxio\brain\lingtu\third_party\integration\cyclonedds-windows-20260817-d\source" `
+  -BuildRoot "D:\inovxio\brain\lingtu\third_party\integration\cyclonedds-windows-20260817-d\build" `
+  -InstallRoot "D:\inovxio\brain\lingtu\third_party\integration\cyclonedds-windows-20260817-d\install" `
+  -SdkRoot "D:\inovxio\brain\lingtu\third_party\integration\cyclonedds-windows-20260817-d\sdk"
+```
+
+Then prepare the pinned vcpkg x64-windows dependency prefix:
+
+```powershell
+pwsh -NoProfile -File scripts\build\prepare_slam_dependencies_windows.ps1 `
+  -VcpkgRoot "D:\inovxio\brain\lingtu\third_party\toolchains\vcpkg" `
+  -InstallRoot "D:\inovxio\brain\lingtu\third_party\install\slam-windows" `
+  -BinaryCache "D:\inovxio\brain\lingtu\third_party\cache\vcpkg" `
+  -PreflightOnly
+
+pwsh -NoProfile -File scripts\build\prepare_slam_dependencies_windows.ps1 `
+  -VcpkgRoot "D:\inovxio\brain\lingtu\third_party\toolchains\vcpkg" `
+  -InstallRoot "D:\inovxio\brain\lingtu\third_party\install\slam-windows" `
+  -BinaryCache "D:\inovxio\brain\lingtu\third_party\cache\vcpkg"
+```
+
+Finally run the SLAM wrapper with all five required absolute prefixes. The
+dependency prefix must be the `x64-windows` child of the vcpkg install root:
+
+```powershell
+pwsh -NoProfile -File scripts\build\build_slam_core_windows.ps1 `
+  -DependencyPrefix "D:\inovxio\brain\lingtu\third_party\install\slam-windows\x64-windows" `
+  -CycloneDDSPrefix "D:\inovxio\brain\lingtu\third_party\integration\cyclonedds-windows-20260817-d\sdk" `
+  -VcpkgRoot "D:\inovxio\brain\lingtu\third_party\toolchains\vcpkg" `
+  -VcpkgInstallRoot "D:\inovxio\brain\lingtu\third_party\install\slam-windows" `
+  -VcpkgBinaryCache "D:\inovxio\brain\lingtu\third_party\cache\vcpkg" `
+  -BuildDir "D:\inovxio\brain\lingtu\build\slam-core-windows-x64" `
+  -PreflightOnly
+
+pwsh -NoProfile -File scripts\build\build_slam_core_windows.ps1 `
+  -DependencyPrefix "D:\inovxio\brain\lingtu\third_party\install\slam-windows\x64-windows" `
+  -CycloneDDSPrefix "D:\inovxio\brain\lingtu\third_party\integration\cyclonedds-windows-20260817-d\sdk" `
+  -VcpkgRoot "D:\inovxio\brain\lingtu\third_party\toolchains\vcpkg" `
+  -VcpkgInstallRoot "D:\inovxio\brain\lingtu\third_party\install\slam-windows" `
+  -VcpkgBinaryCache "D:\inovxio\brain\lingtu\third_party\cache\vcpkg" `
+  -BuildDir "D:\inovxio\brain\lingtu\build\slam-core-windows-x64"
+```
+
+`-DependencyPrefix` must contain the MSVC x64 Eigen, PCL, and yaml-cpp CMake
+packages. `-CycloneDDSPrefix` must contain the pinned CycloneDDS 11.0.1 SDK,
+including its verified build-source/file-inventory record, x64 `idlc.exe`, and
+`ddsc.dll`. The vcpkg root
+must be a clean detached checkout at the manifest baseline; the install root
+and binary cache are separate mandatory inputs. `-BuildDir` must be an
+absolute, Windows-only Visual Studio 2022 x64 tree. `-PreflightOnly` is
+read-only: it validates inputs and any existing cache, then exits before CMake
+configure.
+
+The authoritative fresh CycloneDDS SDK for this evidence run is
+`D:\inovxio\brain\lingtu\third_party\integration\cyclonedds-windows-20260817-d\sdk`.
+It was built from the pinned official 11.0.1 source with Visual Studio 2022
+`v143`, x64, Release, and `/MD`. Its build-source/file-inventory record binds commit
+`e54e991f75a3e67f8e628da3171122e36ea5b872` and tree
+`56508d35826c362782fc8a388cad351a3d491f51`; PE/x64, DLL closure, IDL smoke,
+consumer compile/link, and sanitized DLL-search checks passed. The pinned vcpkg
+MSVC x64 prefix and the real Fast-LIO-enabled `slamd.exe`/`slamctl.exe` build
+are complete; the native suite passed 7/7 CTest.
+
+The formal runtime stage is
+`build/slam-core-windows-x64/stage`. Its `evidence/` directory contains the
+stage build-source/file-inventory record `stage-receipt.json`,
+`stage-files.sha256`, `runtime-dependencies.tsv`, and
+`sbom.spdx.json`; package notices live under `licenses/`. The fresh stage has
+exactly 42 files. Its audit passed all 21 PE files as x64, found zero unresolved
+non-system imports, and passed the unchanged-input reuse path. The SPDX 2.3
+inventory contains 13 packages, 35 files, and 52 relationships, including the
+exact `LingTu -> CycloneDDS` `DYNAMIC_LINK` relationship. The staged closure
+attributes 18 runtime DLLs to their vcpkg packages, `ddsc.dll` to CycloneDDS,
+and only `slamd.exe` plus `slamctl.exe` to the LingTu local build. A real raw
+LiDAR/IMU loopback reached Fast-LIO `TRACKING`; typed `slamctl` status and the
+repository readiness loader passed, while a DDS domain mismatch failed closed.
+
+The active implementation order is maintained in
+[`current-roadmap.md`](../plans/current-roadmap.md): W1-W3 are complete at their
+code/build/RunPlan compile gates; use the W4 exact coordinator for real Product
+evidence and run the W5 Windows and Linux/WSL matrices independently.
+
+The Windows SLAM dependency closure is complete for the current development
+evidence. W2 pins one package baseline, rejects mixed MinGW/Conda/MSVC binaries,
+and records the selected architecture, versions, paths, DLLs, and artifact
+hashes. This build evidence still does not clear the distribution release gate.
+
+Never configure a Linux build directory with Visual Studio or a Windows build
+directory with a Linux, WSL, MinGW, MSYS, or UCRT64 generator/toolchain. Do not
+pass MinGW/MSYS package prefixes to the Windows wrapper. In particular, the
+RunPlan-selected Windows tree is `build/windows-native-dds-adapter`;
+`build/mujoco_native_dds` is reserved for Linux. In the current checkout that
+second directory contains a Visual Studio cache and is not Linux build
+evidence; recreate it from Linux in a clean, dedicated tree before using the
+canonical path. Use a fresh build directory whenever its generator or target
+platform changes, and never treat a mixed CMake cache as release evidence.
+
+Windows Product support is complete only after all seven Products pass their
+exact ProductControl transaction with PE/DLL-only native artifacts, with
+`explore` accepted separately in `live` and `map` variants. Shared
+RunPlan-declared Python feeder/Host processes remain interpreter-owned. A WSL
+process launched from PowerShell is Linux evidence, not Windows-native
+evidence.
+
+W3 compiles all seven Products on Windows, with `explore` resolved in both
+`live` and `map` variants, for eight selected RunPlan targets. The canonical chain
+covers sensor, driver, mapd, traversability, navd, exploration, and the Host
+navigation client alongside the staged SLAM runtime. Fresh contract evidence is
+86 Product-compile tests, 141 runtime-graph tests, and 55 RunPlan
+identity/environment tests. Startup stages are 10 for sensor/driver; 20 for
+feeder, SLAM, traversability, and nav; 30 for mapd; and 50 for
+exploration/Host.
+
+RunPlan uses schema v4 and rejects v3 with an instruction to switch the Product
+again. It binds each selected artifact and dependency by its real path and
+SHA-256 digest, then checks PE32+/x64 and the registered 64-bit VC++ runtime
+before startup. There is no separate per-process MSVC build record and no set
+of four extra JSON files. This is intentionally different from the CycloneDDS
+SDK and formal SLAM-stage build-source/file-inventory records, which document
+how those packages were assembled.
+
+Windows Product processes use DDS domain `17`; Linux Product processes use
+domain `231`. The MuJoCo adapter CTests use low-domain slots `10`-`16`, `18`,
+and `19`. Their configuration rejects Product domain `17` and any domain whose
+CycloneDDS fixed ports reach the Windows dynamic-port range. Do not override a
+Product RunPlan with a test domain.
+
+Run the contract checks with the repository virtual environment:
+
+```powershell
+.venv\Scripts\python.exe -m pytest src\lingtu\assembly\tests\test_compile.py -q
+.venv\Scripts\python.exe -m pytest src\runtime\tests\test_runtime_graph_contract.py -q
+.venv\Scripts\python.exe -m pytest src\lingtu\tests\test_run_plan.py -q
+```
+
+W4's `teleop` exact coordinator has passed code review and focused tests. W5
+has started, and the fresh Windows exact-`teleop` technical report has
+`ok=true`, `blockers=[]`, all four readiness gates, a passing attach-only
+scenario, 0.164 m path/0.158 m net physical motion, terminal zero, stop,
+cleanup, and rollback. The report still declares
+`evidence_scope=component_e2e`, the manifest remains `coverage=component`, and
+`product_acceptance_passed=false`. Repeatability remains in progress; the exact
+Product PASS count is zero.
+
+Fresh component verification is: maps 32/32; the 17 selected navigation tests
+passed three consecutive runs; SLAM 7/7 plus the formal stage audit; adapter
+endpoint apply/ACK 50/50, bridge stress 20/20, and the fresh complete adapter
+suite 18/18. The IMU test fix adds only best-effort DDS discovery warm-up and a
+read condition; production code is unchanged. Treat the screenshot-class
+loader error as closed only for canonical outputs; do not treat it as full
+navigation or W5 Product acceptance.
+
+The build is also subject to the release provenance and license gate. The
+official FAST_LIO, ikd-Tree, and IKFoM repositories publish GPL-2.0 licenses;
+porting or replacing only the ikd-tree concurrency layer does not by itself
+authorize a closed-source `slamd` distribution. Record the bundled source
+origin, exact revision, modifications, notices, and the licenses of Fast-LIO,
+ikd-tree, IKFoM, PCL, Eigen, yaml-cpp, and CycloneDDS. Before distributing either
+platform's artifacts, document commercial authorization for the complete
+copyright chain, a reviewed GPL-compliant release boundary, or a clean-room
+replacement decision. A successful compile does not clear unresolved
+provenance or license obligations. Upstream license and origin notices are kept
+under `scripts/build/provenance/slam/legal/`; no local checksum receipt is
+treated as release authorization.
+
+Linux and the S100P board do not have the Windows header-availability failure:
+their toolchains provide `pthread` and `unistd`. They can still encounter
+platform-independent worker shutdown, join, race, or destruction defects. The
+current Linux W1A lifecycle and sanitizer gates passed; native Linux TSan and
+dedicated S100P performance evidence remain open. Windows and Linux/WSL
+evidence remain target-specific and cannot satisfy each other's Product gates.
+
 ## Native Linux/WSL prerequisites
 
-Native builds should run in Linux, WSL, or the target S100P environment. The
-exact package set depends on the selected artifacts; the following baseline is
-grounded in the native SLAM, navigation endpoint, and driver build scripts.
+Linux-native builds should run in Linux, WSL, or the target S100P environment.
+This is a parallel build track, not the replacement for the Windows-native
+MuJoCo target. The exact package set depends on the selected artifacts; the
+following baseline is grounded in the native SLAM, navigation endpoint, and
+driver build scripts.
 
 ```bash
 sudo apt update
@@ -165,7 +448,7 @@ Why these packages matter:
 
 | Dependency | Native surface |
 | --- | --- |
-| C++ compiler, CMake, Python headers | Navigation kernel and nanobind extension build |
+| C++ compiler, CMake | Native navigation and service builds |
 | Eigen3, PCL, yaml-cpp | ROS-free Fast-LIO2 SLAM core |
 | CycloneDDS development/tools | Typed DDS SLAM, navigation endpoint, and diagnostics |
 | gRPC and protobuf toolchain | Native Thunder driver integration |
@@ -181,20 +464,7 @@ changing CMake cache entries.
 Run all commands below from the repository root. They build artifacts and run
 their configured tests; they do not install or start field services.
 
-### 1. Optional local navigation kernel
-
-Use this for the nanobind navigation-kernel extension on a Linux/WSL build
-host. It requires CMake, a C++17 compiler, and Python development headers.
-
-```bash
-bash scripts/build/build_nav_kernel.sh --clean
-```
-
-The script verifies the generated `lingtu_nav_kernel` import after building. It
-uses the host Python selected by the script, so do not assume that an artifact
-built under one interpreter can be imported by an unrelated environment.
-
-### 2. Native SLAM and Livox DDS ingress
+### 1. Native SLAM and Livox DDS ingress
 
 Build the process-split native path when the target will ingest real MID-360
 data through typed DDS:
@@ -204,7 +474,6 @@ LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS=ON \
   bash scripts/build/build_livox_sdk2_stream.sh
 
 LINGTU_SLAM_BUILD_DDS_RUNTIME=ON \
-LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF \
   bash scripts/build/build_slam_core.sh
 ```
 
@@ -220,13 +489,13 @@ bash scripts/build/build_3d_bbs.sh
 LINGTU_REQUIRE_BBS3D=ON bash scripts/build/build_slam_core.sh
 ```
 
-### 3. Native navigation and driver boundaries
+### 2. Native navigation and driver boundaries
 
 Build the navigation endpoint and the Thunder driver:
 
 ```bash
 bash scripts/build/build_nav_endpoint.sh
-bash scripts/build/build_driver.sh
+LINGTU_DRIVER_BACKEND=<go2|doso> bash scripts/build/build_driver.sh
 ```
 
 `build_nav_endpoint.sh` runs CTest by default and requires its navigation,
@@ -255,12 +524,6 @@ The repository includes a separate vendored-PCL flow for this converter scope;
 follow [`scripts/build/README.md`](../../scripts/build/README.md) when a
 system PCL installation is not appropriate.
 
-For the native map-save optimizer commands used by deployed services:
-
-```bash
-bash scripts/build/build_native_runtime.sh --install-user-bin
-```
-
 For LingTu's default clean-room saved-map cleaner:
 
 ```bash
@@ -277,12 +540,13 @@ Use the smallest checks that validate the artifacts you built:
 
 ```bash
 uv run --locked python -m pytest src/runtime/tests/ -q
-uv run --locked python lingtu.py runtime-audit
-python -m lingtu.control switch nav --env real --map MAP_NAME --dry-run --json
+uv run --locked python tools/validate/validate_architecture_boundaries.py
+uv run --locked python tools/validate/validate_topics.py
+python -m lingtu.control switch nav --robot unitree/go2 --env real --map MAP_NAME --dry-run --json
 bash scripts/build/build_octoplanner3d.sh --diagnose
 ```
 
-The first three commands inspect Python contracts and the resolved Product
+The first four commands inspect Python contracts and the resolved Product
 boundary; the ProductControl command is a dry run and does not start a field
 session. The final diagnostic reports the
 configured planner build and linkage state. Native build scripts also run their
@@ -312,10 +576,10 @@ to `/opt/lingtu/config/brainstem.env`.
 The normal product service chain is native DDS:
 
 ```text
-lingtu-livox-dds
-  -> lingtu-slam-dds
+lt-lidar
+  -> lt-slam
   -> LingTu Modules / Gateway / MCP
-  -> lingtu-nav-dds
+  -> lt-nav
   -> typed DDS command boundary
 ```
 
@@ -323,11 +587,11 @@ After the deployment procedure starts the services, use the robot-side CLI for
 observation before making any session change:
 
 ```bash
-bash scripts/lingtu svc status
+systemctl --no-pager --full status 'lt-*.service'
 bash scripts/lingtu status
-bash scripts/lingtu doctor
-bash scripts/lingtu dataflow /nav/odometry
-bash scripts/lingtu dataflow /nav/map_cloud
+PYTHONPATH=src python -m diagnostics.field.doctor
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/odometry"
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/map_cloud"
 ```
 
 These checks are necessary but do not authorize motion. Continue with saved-map
@@ -351,7 +615,7 @@ applicable field gate as described in
 ## Related references
 
 - [Get Started](./README.md) — staged onboarding and motion boundaries.
-- [Quick Start](../QUICKSTART.md) — profile selection, lifecycle, and field
+- [Quick Start](../QUICKSTART.md) — Product/env selection, lifecycle, and field
   preflight.
 - [`scripts/build/README.md`](../../scripts/build/README.md) — detailed
   build-script behavior and specialized native flows.

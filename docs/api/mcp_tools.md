@@ -1,7 +1,7 @@
 # MCP Tools (Auto-Discovered @skill Methods)
 
 > Auto-generated from `@skill` decorators across all Module files.
-> Deterministic generated inventory; run `python scripts/docs/extract_api_docs.py --check` to verify freshness.
+> Deterministic generated inventory; run `python tools/docs/extract_api_docs.py --check` to verify freshness.
 
 These tools are auto-discovered by `MCPServerModule` and exposed via JSON-RPC
 at `http://<robot>:8090/mcp`. They are also available in the AgentLoop for
@@ -75,15 +75,6 @@ _Visual servo Module._
 **Return type:** `dict`
 **Parameters:** None
 
-### `tune_bbox_gains`
-**Module:** `VisualServoModule`
-**Description:** Report that live bbox gain tuning is not available from this module.
-**Return type:** `dict`
-**Parameters:**
-| Parameter | Type |
-|-----------|------|
-| `duration` | `float` |
-
 ## src/decision/modules/vla.py
 _VLA navigation module._
 
@@ -100,48 +91,6 @@ _VLA navigation module._
 **Module:** `VLAModule`
 **Description:** Return current VLA health and metrics.
 **Return type:** `dict`
-**Parameters:** None
-
-## src/drivers/real/teleop_module.py
-_TeleopModule — joystick remote control with live camera stream._
-
-### `get_teleop_status`
-**Module:** `TeleopModule`
-**Description:** Return current teleop status.
-**Return type:** `str`
-**Parameters:** None
-
-### `force_release`
-**Module:** `TeleopModule`
-**Description:** Force-release teleop control and resume autonomy.
-**Return type:** `str`
-**Parameters:** None
-
-## src/explore/frontier.py
-_WavefrontFrontierExplorer — autonomous frontier-based exploration planner._
-
-### `begin_exploration`
-**Module:** `WavefrontFrontierExplorer`
-**Description:** Start autonomous frontier exploration. Returns status string.
-**Return type:** `str`
-**Parameters:** None
-
-### `end_exploration`
-**Module:** `WavefrontFrontierExplorer`
-**Description:** Stop autonomous frontier exploration. Returns status string.
-**Return type:** `str`
-**Parameters:** None
-
-### `get_frontiers`
-**Module:** `WavefrontFrontierExplorer`
-**Description:** Return the most recently computed frontier cluster list.
-**Return type:** `str`
-**Parameters:** None
-
-### `clear_frontier_blocks`
-**Module:** `WavefrontFrontierExplorer`
-**Description:** Clear navigation-failed frontier goals from the local block list.
-**Return type:** `str`
 **Parameters:** None
 
 ## src/explore/tare/module.py
@@ -177,21 +126,6 @@ _ExplorationSupervisorModule — cross-process watchdog for TARE exploration._
 ### `clear_exploration_fallback`
 **Module:** `ExplorationSupervisorModule`
 **Description:** Reset the fallback_requested flag (use after operator handled).
-**Return type:** `str`
-**Parameters:** None
-
-## src/explore/traversable_frontier.py
-_Traversable frontier candidate generation for inspection/exploration preview._
-
-### `get_traversable_frontiers`
-**Module:** `TraversableFrontierModule`
-**Description:** Return ranked frontier candidates enriched with traversability evidence.
-**Return type:** `str`
-**Parameters:** None
-
-### `refresh_candidates`
-**Module:** `TraversableFrontierModule`
-**Description:** Compute and publish candidates without publishing any motion command.
 **Return type:** `str`
 **Parameters:** None
 
@@ -293,104 +227,6 @@ _LingTu MCP Server -Model Context Protocol for AI agent control._
 | Parameter | Type |
 |-----------|------|
 | `mode` | `str` |
-
-### `switch_backend`
-**Module:** `MCPServerModule`
-**Description:** Switch a low-risk runtime backend; motion backends require navigation IDLE.
-**Return type:** `str`
-**Parameters:**
-| Parameter | Type |
-|-----------|------|
-| `category` | `str` |
-| `backend` | `str` |
-| `config_json` | `str` |
-
-## src/gateway/visualization/rerun_bridge.py
-_RerunBridgeModule — on-demand Rerun visualization as a Module._
-
-### `start_rerun`
-**Module:** `RerunBridgeModule`
-**Description:** Start Rerun web viewer. Returns URL.
-**Return type:** `str`
-**Parameters:** None
-
-### `stop_rerun`
-**Module:** `RerunBridgeModule`
-**Description:** Stop Rerun visualization and release resources.
-**Return type:** `str`
-**Parameters:** None
-
-### `rerun_status`
-**Module:** `RerunBridgeModule`
-**Description:** Return Rerun status.
-**Return type:** `str`
-**Parameters:** None
-
-## src/localization/ntrip_client_module.py
-_NtripClientModule — pull RTCM differential corrections from a NTRIP caster_
-
-### `get_ntrip_status`
-**Module:** `NtripClientModule`
-**Description:** Return NTRIP caster connection state: host, mount, bytes received,
-**Return type:** `str`
-**Parameters:** None
-
-## src/maps/modules/voxel_grid.py
-_VoxelGridModule - native C++ 3D voxel layer from LiDAR point clouds._
-
-### `get_voxel_stats`
-**Module:** `VoxelGridModule`
-**Description:** Return stats about the current native voxel map.
-**Return type:** `str`
-**Parameters:** None
-
-### `checkpoint_voxels`
-**Module:** `VoxelGridModule`
-**Description:** Save the configured native voxel state file.
-**Return type:** `str`
-**Parameters:** None
-
-### `clear_voxels`
-**Module:** `VoxelGridModule`
-**Description:** Reset the native voxel map.
-**Return type:** `str`
-**Parameters:** None
-
-### `query_voxel`
-**Module:** `VoxelGridModule`
-**Description:** Check whether the voxel containing (x, y, z) is occupied.
-**Return type:** `str`
-**Parameters:**
-| Parameter | Type |
-|-----------|------|
-| `x` | `float` |
-| `y` | `float` |
-| `z` | `float` |
-
-## src/maps/services/facade.py
-_Maps Module public skills and health facade._
-
-### `list_maps`
-**Module:** `MapsFacadeMixin`
-**Description:** List saved maps and which one is active.
-**Return type:** `str`
-**Parameters:** None
-
-### `list_map_types`
-**Module:** `MapsFacadeMixin`
-**Description:** List supported map classes, artifacts, and capabilities.
-**Return type:** `str`
-**Parameters:** None
-
-### `save_map`
-**Module:** `MapsFacadeMixin`
-**Description:** Save current SLAM map as *name* and build all artifacts.
-**Return type:** `str`
-**Parameters:**
-| Parameter | Type |
-|-----------|------|
-| `name` | `str` |
-| `slam_profile` | `str | None` |
 
 ## src/memory/modules/episodic_module.py
 _EpisodicMemoryModule — 时空情节记忆模块 (Module 模式封装)。_
@@ -512,27 +348,6 @@ _VectorMemoryModule — CLIP embedding + ChromaDB vector search for fuzzy spatia
 **Return type:** `str`
 **Parameters:** None
 
-## src/nav/services/safety/safety_ring.py
-_SafetyRing -unified safety + evaluation + dialogue in one Module._
-
-### `get_safety_status`
-**Module:** `SafetyRing`
-**Description:** Get current safety state: level, cross-track error, distance to goal, and module health.
-**Return type:** `str`
-**Parameters:** None
-
-### `emergency_stop`
-**Module:** `SafetyRing`
-**Description:** Trigger an emergency stop (safety level STOP). Use for immediate halt.
-**Return type:** `str`
-**Parameters:** None
-
-### `reset_emergency_stop`
-**Module:** `SafetyRing`
-**Description:** Clear a latched emergency stop only when base safety checks allow it.
-**Return type:** `str`
-**Parameters:** None
-
 ## src/nav/skills/skills_module.py
 
 ### `navigate_to`
@@ -551,7 +366,10 @@ _SafetyRing -unified safety + evaluation + dialogue in one Module._
 **Module:** `NavSkills`
 **Description:** Stop the active navigation mission without invoking hardware E-stop.
 **Return type:** `str`
-**Parameters:** None
+**Parameters:**
+| Parameter | Type |
+|-----------|------|
+| `task_id` | `str` |
 
 ### `cancel_mission`
 **Module:** `NavSkills`
@@ -560,6 +378,7 @@ _SafetyRing -unified safety + evaluation + dialogue in one Module._
 **Parameters:**
 | Parameter | Type |
 |-----------|------|
+| `task_id` | `str` |
 | `reason` | `str` |
 
 ### `get_navigation_status`
@@ -577,15 +396,15 @@ _SafetyRing -unified safety + evaluation + dialogue in one Module._
 |-----------|------|
 | `request_id` | `str` |
 
-### `start_patrol`
+### `start_inspection`
 **Module:** `NavSkills`
-**Description:** Submit a structured map-frame patrol route.
+**Description:** Start a stored native inspection route.
 **Return type:** `str`
 **Parameters:**
 | Parameter | Type |
 |-----------|------|
-| `waypoints` | `list[dict[(str, Any)]]` |
-| `loop` | `bool` |
+| `route_id` | `str` |
+| `revision` | `int` |
 
 ### `navigate_to_deg`
 **Module:** `NavSkills`
@@ -608,22 +427,5 @@ _SafetyRing -unified safety + evaluation + dialogue in one Module._
 ### `get_navigation_progress`
 **Module:** `NavSkills`
 **Description:** Return a concise progress summary derived from mission status.
-**Return type:** `str`
-**Parameters:** None
-
-### `navigate_relative`
-**Module:** `NavSkills`
-**Description:** Submit a goal relative to the current robot pose.
-**Return type:** `str`
-**Parameters:**
-| Parameter | Type |
-|-----------|------|
-| `dx` | `float` |
-| `dy` | `float` |
-| `dyaw` | `float` |
-
-### `get_robot_pose`
-**Module:** `NavSkills`
-**Description:** Return the latest robot pose in the planning frame.
 **Return type:** `str`
 **Parameters:** None

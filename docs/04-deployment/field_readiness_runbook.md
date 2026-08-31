@@ -18,28 +18,25 @@ driver **native DDS 服务**的现场部署验证流程。
 ## 2. Camera Service Catalog 安装（工作流 #18）
 
 通过 Thunder service catalog 统一安装 camera native DDS 服务，替代手工复制 systemd unit。
-安装器只安装服务；ProductControl 通过 Product switch 或重新应用已提交的
-RunPlan 激活进程。
+安装器只安装服务；ProductControl 通过 Product switch 激活进程。
 
 ```bash
-export LINGTU_HOST=ROBOT_IP_OR_HOSTNAME
-ssh sunrise@"$LINGTU_HOST"
+export LINGTU_TARGET_HOST=ROBOT_IP_OR_HOSTNAME
+export LINGTU_TARGET_USER=ROBOT_SSH_USER
+ssh "${LINGTU_TARGET_USER}@${LINGTU_TARGET_HOST}"
 cd /opt/lingtu/current
 
 # 通过 catalog 安装（替代手工复制 service，不直接激活进程）
 sudo bash scripts/deploy/thunder/install_catalog_service.sh camera
 
 # 首次激活：切换到声明 camera 进程的 Product
-bash scripts/lingtu --env real mode switch <product> [--map <name>]
-
-# 已有 committed RunPlan 时，改为重新应用该计划
-# bash scripts/lingtu --env real svc reapply
+bash scripts/lingtu --robot <vendor/model> --env real switch <product> [--map <name>]
 
 # 验证服务状态
-systemctl status lingtu-camera-dds.service
+systemctl status lt-camera.service
 
 # 确认该 Product 的 RunPlan 已激活 camera
-systemctl is-active lingtu-camera-dds.service
+systemctl is-active lt-camera.service
 # 期望输出：active
 ```
 
@@ -58,7 +55,7 @@ camera 服务支持以下环境变量覆盖（在 systemd unit 的 `[Service]` �
 覆盖示例：
 
 ```bash
-sudo systemctl edit lingtu-camera-dds.service
+sudo systemctl edit lt-camera.service
 # 在编辑器中添加：
 # [Service]
 # Environment="LINGTU_CAMERA_STATUS_FILE=/dev/shm/lingtu/camera_status.json"
@@ -82,11 +79,11 @@ curl -s "http://${LINGTU_HOST}:5050/api/v1/services/status?names=camera,lidar,sl
 {
   "schema_version": 1,
   "services": {
-    "camera": {"status": "running", "systemd_unit": "lingtu-camera-dds.service"},
-    "lidar": {"status": "running", "systemd_unit": "lingtu-livox-dds.service"},
-    "slam": {"status": "running", "systemd_unit": "lingtu-slam-dds.service"},
-    "nav": {"status": "running", "systemd_unit": "lingtu-nav-dds.service"},
-    "driver": {"status": "running", "systemd_unit": "lingtu-driver.service"}
+    "camera": {"status": "running", "systemd_unit": "lt-camera.service"},
+    "lidar": {"status": "running", "systemd_unit": "lt-lidar.service"},
+    "slam": {"status": "running", "systemd_unit": "lt-slam.service"},
+    "nav": {"status": "running", "systemd_unit": "lt-nav.service"},
+    "driver": {"status": "running", "systemd_unit": "lt-driver.service"}
   },
   "readiness": {
     "camera": {"ready": true, "blockers": []},
@@ -113,15 +110,19 @@ curl -s "http://${LINGTU_HOST}:5050/api/v1/services/status?names=camera,lidar,sl
 
 ## 4. Field Readiness Collector 采样（工作流 #17）
 
-一次性采样所有 native DDS topic，验证数据链路连通性。
+一次性采样当前 Product 需要的 native DDS Topic，验证数据链路连通性。Topic 必须显式指定，避免检查并未由当前 Product 启动的传感器或算法。
 
 ```bash
 cd ~/data/SLAM/navigation
 
-# 一次性采样所有 native DDS topic
-PYTHONPATH=src:. python -m diagnostics.field.field_readiness_collector \
+# 以包含 camera、LiDAR、SLAM 和 navigation 的 Product 为例
+PYTHONPATH=src:. python -m diagnostics.field.dds_readiness \
     --seconds 5 \
     --domain 0 \
+    --topics rt/camera/color rt/camera/depth rt/camera/info \
+             rt/lidar/raw_frame rt/imu/raw \
+             rt/slam/odometry rt/slam/map_cloud rt/slam/localization_health \
+             rt/nav/traversability rt/nav/terrain_map \
     --json artifacts/field/readiness.json
 ```
 
@@ -225,7 +226,7 @@ ps aux | grep -E "livox|lidar" | grep -v grep
 
 # 确认无 livox_ros_driver2 或重复 IMU publisher
 systemctl list-units | grep -E "livox|imu"
-# 期望：仅 lingtu-livox-dds.service（active），无 livox_ros_driver2 相关 unit
+# 期望：仅 lt-lidar.service（active），无 livox_ros_driver2 相关 unit
 
 # 如发现遗留进程，执行清理
 # sudo systemctl stop livox_ros_driver2.service 2>/dev/null
@@ -248,25 +249,28 @@ systemctl list-units | grep -E "livox|imu"
 ```bash
 # 1. 服务安装与启动
 # Product mode units are not boot owners; disabled or static is expected.
-for unit in lingtu-camera-dds lingtu-livox-dds lingtu-slam-dds lingtu-nav-dds; do
+for unit in lt-camera lt-lidar lt-slam lt-nav; do
   systemctl is-enabled "${unit}.service" 2>/dev/null || true
 done
 # Only a RunPlan-declared persistent role may be boot-enabled.
-systemctl is-enabled lingtu-driver.service      # → enabled
-bash scripts/lingtu status --explain             # active roles match current RunPlan
+systemctl is-enabled lt-driver.service      # → enabled
+bash scripts/lingtu status --json | python3 -m json.tool  # active Product and RunPlan
 
 # 2. LiDAR/IMU 收口
 ps aux | grep -E "livox|lidar" | grep -v grep  # → 仅 livox_sdk2_stream
 
 # 3. Gateway 端点
-curl -sf http://127.0.0.1:5050/api/v1/services/status?names=camera,lidar,slam,nav,driver | python3 -m json.tool
+curl -sf http://localhost:5050/api/v1/services/status?names=camera,lidar,slam,nav,driver | python3 -m json.tool
 
 # 4. Native endpoint and driver status files
 jq . /dev/shm/lingtu/nav_endpoint_status.json
 jq . /dev/shm/lingtu/driver_status.json
 
 # 5. Field readiness 采样
-PYTHONPATH=src:. python -m diagnostics.field.field_readiness_collector --seconds 5 --domain 0 --json /tmp/readiness.json
+PYTHONPATH=src:. python -m diagnostics.field.dds_readiness \
+  --seconds 5 --domain 0 \
+  --topics rt/lidar/raw_frame rt/imu/raw rt/slam/odometry rt/slam/map_cloud rt/slam/localization_health rt/nav/cmd_vel \
+  --json /tmp/readiness.json
 cat /tmp/readiness.json | python3 -m json.tool
 ```
 

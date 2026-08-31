@@ -14,7 +14,7 @@ quality gate. It complements the short-window closure in
 - Bridge contract: Fast-LIO-only (`imu_acc_mode=sensor`,
   `imu_acc_conditioning=realistic`, `publish_odom_prior=false`,
   `timestamp_clock=sim_hardware`, physical rolling subscan)
-- SLAM config: `src/localization/fastlio2/config/mid360_mujoco_native_dds.yaml`
+- SLAM config: `src/localization/fastlio2/config/sim_mid360_slam.yaml`
 
 ## Gate Groups
 
@@ -125,7 +125,7 @@ odometry path-length scale drift** on long `box_explore` trajectories:
 Next tuning experiments (not gate work):
 
 1. Compare `arc` vs `box_explore` at 120–180 s under the same continuous gate.
-2. Review Fast-LIO velocity/ZUPT constraints in `mid360_mujoco_native_dds.yaml`.
+2. Review Fast-LIO velocity/ZUPT constraints in `sim_mid360_slam.yaml`.
 3. Evaluate exporting loop-optimized poses into `trajectory.txt` for convergence
    checks vs keeping raw odometry as the motion truth signal.
 
@@ -160,7 +160,7 @@ python -m pytest sim/tests/test_continuous_mapping_quality_gate.py -q
 ## Related Docs
 
 - Requirements and thresholds:
-  `docs/07-testing/thunderv4_mujoco_lidar_recording_requirements.md`
+  `docs/07-testing/simulation/thunderv4_mujoco_lidar_recording_requirements.md`
 - Short-window native DDS closure history:
   `docs/07-testing/field-runs/2026-07-04-native-dds-closure.md`
 - Simulation entrypoints: `sim/README.md`

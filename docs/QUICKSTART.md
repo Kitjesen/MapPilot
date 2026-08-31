@@ -1,350 +1,121 @@
 # LingTu Quick Start
 
-This is the executable reference for starting a local profile, selecting a
-simulation, or preparing a field session. It keeps local, simulated, and
-physical command boundaries separate so a convenient test command cannot be
-mistaken for authorization to move a robot.
-
-> **Status:** Current<br>
-> **Audience:** Developers, integrators, and supervised robot operators<br>
-> **Runs on:** Local development hosts, simulation, and supported field robots
-
-## Read this before running a profile
-
-LingTu's product model is:
+LingTu has one user-facing runtime model:
 
 ```text
-env + Product -> RunPlan -> ProductControl -> Host + native processes
+Robot + env(real | sim) + Product
+                 ↓
+          switch / status / stop
 ```
 
-A local Profile starts a development Host graph. A Product is an
-env-independent operating mode. ProductControl resolves one Product inside
-`env=real` or `env=sim` into the RunPlan consumed by Host and ProductControl's internal systemd runner.
-The native field path uses typed DDS and native C++ services at its process
-boundaries. ROS 2 is available only as an explicit compatibility or evaluation
-surface.
+Products are `teleop`, `teleop_avoid`, `map`, `explore`, `nav`, `tracking`, and
+`inspection`. The resolved process plan is internal; users do not write it.
+Robot and Env are selected independently. A combination starts only when its
+concrete physical configuration or simulation session is present.
 
-For the current physical Thunder `env=real` runtime, `lingtu-nav-dds` publishes
-`/nav/cmd_vel`, the single `lingtu-driver` service consumes it, and that driver
-sends checked gRPC commands to a remote Brainstem controller from
-`brainstem.env`.
+## Setup
 
-The following statement is always true:
-
-- A local test does not prove a simulation.
-- A simulation result does not prove a field robot.
-- A running process does not prove localization, map provenance, route safety,
-  or readiness for motion.
-- A navigation goal must still traverse planning, safety, and velocity
-  arbitration before it can reach the driver.
-
-Read [Get Started](./01-getting-started/README.md) for the staged onboarding
-path and [Core concepts](./02-concepts/README.md) for the architectural model.
-
-## Command convention
-
-Run local LingTu CLI commands from the repository root with this exact form:
-
-```bash
-uv run --locked python lingtu.py <command-or-profile> [options]
-```
-
-This documentation intentionally does not use an unqualified `lingtu` console
-script for local runs. The locked form uses the checked-in entry point and
-fails if dependency metadata and `uv.lock` are inconsistent.
-
-Robot-side service operations are different: on the deployed Linux target, use
-the checked-in shell CLI:
-
-```bash
-bash scripts/lingtu <subcommand>
-```
-
-Do not substitute ad-hoc HTTP calls, `systemctl` sequences, or a sourced ROS 2
-overlay for the robot-side operations CLI.
-
-## Prepare and inspect the checkout
-
-Install the development toolchain and inspect configuration before starting any
-runtime:
+From the repository root:
 
 ```bash
 uv sync --locked --extra dev
-uv run --locked python lingtu.py --list --all
-uv run --locked python lingtu.py show-config stub --json
-uv run --locked python lingtu.py runtime-contract
-uv run --locked python lingtu.py runtime-audit
+uv run --locked python -m lingtu.control --help
 ```
 
-| Check | Expected result | Motion boundary |
-| --- | --- | --- |
-| `uv sync --locked --extra dev` | The locked environment resolves without rewriting `uv.lock`. | None |
-| `--list --all` | Current field Products plus simulation, development, and compatibility Profiles are listed. | None |
-| `show-config ... --json` | A profile resolves without starting its modules. | None |
-| `runtime-contract` | The canonical frame, stream, and command-boundary summary is printed. | None |
-| `runtime-audit` | Repository contracts are checked for drift. | None |
+The installed `lingtu` command and `python -m lingtu.control` use the same
+implementation. `scripts/lingtu` is the thin robot-side adapter.
 
-If a locked command reports that `uv.lock` needs updating, do not rerun it
-without `--locked`. Restore the intended checkout or make an explicit,
-reviewed dependency change first. A lock mismatch is an environment-integrity
-failure, not a profile failure.
+## Simulation
 
-## Select a profile deliberately
-
-Use `--list` for common local Profiles and `--list --all` for the full catalog,
-including field Products. The table below is a decision aid, not a replacement
-for the runtime catalog.
-
-| Selection or family | Primary use | Command sink | Hardware motion |
-| --- | --- | --- | --- |
-| `stub` | Framework and Blueprint/port/wire checks | Stub driver | No |
-| `dev` | Semantic and planning development with a mock LLM | Local/stub graph | No |
-| `sim_nav` | No-ROS navigation simulation | Simulation graph | No physical motion |
-| `sim` | In-process MuJoCo Module stack | MuJoCo driver | Simulated motion only |
-| `portable_mujoco` | Portable no-ROS MuJoCo planning/sensor path | MuJoCo driver | Simulated motion only |
-| `lite` | Local Thunder hardware diagnostic Profile | Local Blueprint/driver graph | Potentially; explicit lab use only |
-| `teleop`, `teleop_avoid` | Field Products with different operator/control scope | ProductControl-selected RunPlan | Potentially |
-| `map` | Build a saved map | ProductControl-selected RunPlan | Mapping session may involve supervised manual motion |
-| `tracking`, `nav`, `inspection` | Saved-map tracking, navigation, or inspection | ProductControl-selected RunPlan | Potentially |
-| `explore` | Live-map or saved-map autonomous exploration | ProductControl-selected RunPlan | Potentially |
-| `sim_mujoco_live`, `sim_mujoco_octo_live` | Advanced MuJoCo validation profiles | Simulator or replay endpoint | Simulated motion only |
-
-The `map`, `nav`, and `explore` names describe product tasks, not safe local
-demos. `explore` without a map builds and explores a live map; `explore` with
-a map localizes against that saved map before coverage exploration. Do not
-launch them just to test a workstation.
-First inspect the selected local Profile or Product/env and then follow the
-appropriate simulation or field gate.
-
-## Local: prove the framework path
-
-### 1. Start the no-hardware profile
+Inspect a Product without starting it:
 
 ```bash
-uv run --locked python lingtu.py stub --no-gateway
+uv run --locked python -m lingtu.control switch teleop \
+  --robot doso/thunder_v4 --env sim --dry-run --json
 ```
 
-When started in a TTY, the process opens the interactive REPL. Use inspection
-commands only:
-
-```text
-health
-connections
-config
-quit
-```
-
-Expected result: a Module graph starts with the stub driver, reports local
-health and wiring, and exits cleanly. No robot connection, native field service,
-or hardware velocity writer is used.
-
-`--no-gateway` makes this first exercise independent of the HTTP/Gateway
-optional dependency and local port availability. Omit it only when you
-intentionally want to test the local Gateway surface.
-
-### 2. Start semantic development with deterministic behavior
+Start, inspect, and stop the Product:
 
 ```bash
-uv run --locked python lingtu.py dev --llm mock --no-gateway
+uv run --locked python -m lingtu.control switch teleop \
+  --robot doso/thunder_v4 --env sim
+uv run --locked python -m lingtu.control status \
+  --robot doso/thunder_v4 --env sim --json
+uv run --locked python -m lingtu.control stop \
+  --robot doso/thunder_v4 --env sim
 ```
 
-The `dev` profile enables the semantic path while retaining a mock LLM. It is
-appropriate for Module and message-flow development. It is not evidence that a
-selected detector, a cloud model, a camera, or physical navigation is working.
-
-If an intentionally selected backend reports a missing optional package, install
-only its required extra. The available groups are described in the
-[Build Guide](./01-getting-started/BUILD_GUIDE.md#select-the-python-environment).
-
-### 3. Local lifecycle and diagnostics
-
-These commands inspect or manage a locally started daemon. They do not create a
-field session by themselves:
+MuJoCo component experiments use their explicit scripts; they are not a second
+Product lifecycle:
 
 ```bash
-uv run --locked python lingtu.py status
-uv run --locked python lingtu.py health
-uv run --locked python lingtu.py log -f
-uv run --locked python lingtu.py stop
+uv run --locked python sim/scripts/mujoco/native_navigation_acceptance.py --help
+uv run --locked python sim/scripts/mujoco/native_control_mode_acceptance.py --help
 ```
 
-`--daemon` is a Unix background-process option. Do not use it as a substitute
-for robot service management; deployed field services are managed through
-`scripts/lingtu` and the deployment runbook.
+## Field Robot
 
-## Simulation: prove a named simulation boundary
-
-### 1. Install the simulation dependency group
+Run read-only status first on the robot:
 
 ```bash
-uv sync --locked --extra dev --extra sim-mujoco
-uv run --locked python lingtu.py runtime-spec sim --json
+python -m lingtu.control status --robot unitree/go2 --env real --json
+# or
+bash scripts/lingtu --robot unitree/go2 --env real status --json
 ```
 
-The preflight output should identify a simulation data source/command sink. If
-it instead identifies a physical endpoint, stop and resolve the configuration
-before launch.
-
-### 2. Run a simulation
+A field switch may start native services and permit motion. Use the exact
+Product needed for the supervised task:
 
 ```bash
-uv run --locked python lingtu.py sim
+python -m lingtu.control switch map \
+  --robot unitree/go2 --env real
+
+python -m lingtu.control switch nav \
+  --robot unitree/go2 --env real --map building_a
+
+python -m lingtu.control stop \
+  --robot unitree/go2 --env real
 ```
 
-For the no-ROS navigation-oriented profile:
+The examples above use the combinations with current runnable evidence:
+Thunder V4 with `sim`, and Go2 with `real`. Go2 still needs a Go2 simulation
+session and robot assets; Thunder V4 still needs an adjacent `robot.yaml` for
+field use. These are missing inputs, not model-level Env restrictions.
+
+## Keyboard Teleop
+
+Start `teleop` for direct operator control or `teleop_avoid` for live local
+avoidance, then open the Web scene's **遥控** panel and click **连接**:
 
 ```bash
-uv run --locked python lingtu.py sim_nav
+python -m lingtu.control switch teleop \
+  --robot unitree/go2 --env real
 ```
 
-A simulation may produce `cmd_vel`, but it remains inside the selected
-simulated driver or adapter. Never append a physical endpoint to either command
-as a shortcut to field testing.
+Hold `W/S` for forward/backward, `A/D` for lateral motion, and `Q/E` to turn.
+Hold `Shift` for 40% precision. Release the last movement key or press `Space`
+or **保持** to publish hold; **停车** requests the native stop path. Active Web
+samples publish at 50 Hz and the native navigation/safety loop runs at 20 Hz.
 
-For scene selection, MuJoCo drive modes, saved-map quality gates, and the
-meaning of individual simulation claims, read
-[`sim/README.md`](../sim/README.md) and the
-[simulation integration contract](./architecture/SIMULATION_INTEGRATION_CONTRACT.md).
+In `teleop_avoid` only, hold `M` or **按住脱困** together with a movement key
+to issue a momentary manual escape command when localization is unavailable or
+CMU has no path. Local planning and obstacle/traversability checks are disabled
+only while held. Release it to resume CMU on the next sample. E-stop, deadman,
+command limits, control-loop health, operator lease, and driver readiness are
+never bypassed.
 
-## Field: prepare, validate, then supervise
+Use `lingtu-drive` only for a supervised single-direction check of at most five
+seconds; it is not the continuous keyboard controller. See
+[Operator Teleop](./04-deployment/operator_drive.md).
 
-Field work is a separate, operator-controlled workflow. Run its shell commands
-on the target controller or an approved remote session after completing
-[deployment](./04-deployment/README.md). A successful local or simulation
-command does not remove any of these requirements.
+## What Each Result Proves
 
-### Field preconditions
+- `--dry-run` proves Product resolution only.
+- `status` reports the current lifecycle state; it does not authorize motion.
+- A running process is not the same as DDS/readiness evidence.
+- Simulation evidence does not prove field behavior.
+- Stopping a motion Product still requires the runtime's real stop/zero
+  confirmation.
 
-Before changing product mode, mapping, or navigation state:
-
-1. Confirm that the native DDS field services and the LingTu application were
-   installed according to the deployment guide.
-2. Confirm the responsible operator, clear operating area, stop mechanism,
-   recovery plan, and the absence of a competing command source.
-3. Verify that the selected map and localization source are correct for the
-   robot and test area.
-4. Run no-motion checks before any route or motion procedure.
-
-Start with the robot-side status and diagnostics:
-
-```bash
-bash scripts/lingtu status
-bash scripts/lingtu doctor
-bash scripts/lingtu dataflow /nav/odometry
-bash scripts/lingtu dataflow /nav/map_cloud
-```
-
-Healthy status is necessary but insufficient. For saved-map work, validate the
-complete map package before considering a route:
-
-```bash
-bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
-```
-
-The artifact gate is offline and does not publish a command. It validates the
-saved-map inputs; it does not evaluate a route or authorize motion.
-
-### Mapping workflow
-
-The following commands change robot/session state and must be performed by an
-authorized operator. They do not request autonomous navigation by themselves:
-
-```bash
-bash scripts/lingtu map start
-bash scripts/lingtu map save <map-name>
-bash scripts/lingtu map end
-bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
-```
-
-A saved map is a package. The map workflow produces and validates artifacts
-such as the optimized `map.pcd`, metadata, and planner artifacts. Use the
-[map service contract](./architecture/MAP_SERVICE_CONTRACT.md) for provenance
-and artifact rules; do not copy one file out of a package and call it a
-navigation map.
-
-### Navigation session preflight
-
-Run the integrated no-motion acceptance first, then prepare the operator-owned
-navigation session:
-
-```bash
-bash scripts/lingtu system-acceptance \
-  --map <map-name> --goal <x> <y> <yaw> \
-  --with-relocalization --initial-pose <x> <y> <yaw>
-bash scripts/lingtu nav start <map-name> --initial-pose <x> <y> <yaw>
-bash scripts/lingtu field-check <map-directory> --acceptance-mode field
-```
-
-`nav start` is a state-changing operation: it loads the map and initializes or
-checks relocalization, but it does not submit a navigation goal itself. Treat
-failed relocalization, invalid `map->odom`, missing map artifacts, a safety
-blocker, or a failed route preview as a stop condition.
-
-Actual robot motion is deliberately not a Quick Start step. The robot-side
-motion-smoke workflow requires an explicit `--allow-motion` flag and must be
-performed only under the controlled conditions in the
-[robot operations CLI](./04-deployment/lingtu_cli.md) and the applicable
-[testing/field gate](./07-testing/README.md).
-
-## Common safe overrides
-
-Use overrides to make an experiment explicit. Re-run `show-config`, a
-ProductControl dry run, or the appropriate RunPlan audit after changing
-a boundary-affecting option.
-
-| Option | Use | Boundary |
-| --- | --- | --- |
-| `--llm mock` | Remove cloud-LLM dependency for local/simulation work. | Does not validate a production LLM. |
-| `--no-gateway` | Omit the HTTP/Gateway stack in a local framework check. | No REST, MCP, teleop, or web status surface. |
-| `--no-semantic` | Run a geometric-only graph where the profile supports it. | Does not validate semantic navigation. |
-| `--planner pct` | Select the explicit legacy/manual planner experiment. | Not the default product planner. |
-| `--backend <name>` | Select an internal `env=sim` backend for ProductControl when simulation has more than one implementation. | Not a Product, public env, or field deployment selector. |
-| `--rerun` | Enable optional visualization. | Adds visualization only; it is not a safety or readiness check. |
-
-The product default global planner is OctoPlanner3D. PCT remains an explicit
-compatibility/experiment selection; do not silently treat a fallback as product
-planner validation.
-
-`direct` is a lightweight/direct compatibility planner used by profiles such
-as `lite`, `teleop`, and `map` where map-backed global planning is not the
-primary task. It is not evidence that the OctoPlanner3D saved-map navigation
-path is healthy.
-
-## Optional interfaces
-
-When the active profile includes Gateway, the default ports are:
-
-| Port | Surface | Use |
-| --- | --- | --- |
-| 5050 | Gateway REST, SSE, and WebSocket | Status, maps, goals, teleop, media |
-| 8090 | MCP JSON-RPC | Auto-discovered Module `@skill` tools |
-| 9090 | Rerun web UI | Only when started with `--rerun` |
-
-A reachable port is not a readiness result. Check the active profile,
-localization, map, route preview, and safety state before using an interface
-that can change robot state. See [Reference](./08-reference/README.md) for REST,
-MCP, and CLI details.
-
-## Troubleshooting first responses
-
-| Symptom | First response | Do not do |
-| --- | --- | --- |
-| `uv --locked` reports lock drift | Restore or explicitly reconcile the intended dependency change. | Run the project unlocked. |
-| A local profile cannot bind Gateway port | Re-run the framework path with `--no-gateway`, then identify the local port owner. | Kill robot or field services from a workstation tutorial. |
-| A selected backend is unavailable | Install only the documented extra or native prerequisite for that backend. | Add an undeclared dependency ad hoc. |
-| `No active map` or map artifact validation fails | Stop navigation preparation and repair/validate the saved map package. | Send a goal or substitute a raw point cloud. |
-| Localization is degraded or lost | Treat it as a field stop condition and use the deployment recovery runbook. | Continue a navigation session because a process is still alive. |
-| A ROS command is missing | Confirm whether the task is an explicit compatibility check. | Install or source ROS 2 as a normal native-product requirement. |
-
-## Next steps
-
-- [Get Started](./01-getting-started/README.md) — staged onboarding and clear
-  local/simulation/field boundaries.
-- [Build Guide](./01-getting-started/BUILD_GUIDE.md) — optional Python extras,
-  native artifacts, and verification.
-- [Task guides](./05-guides/README.md) — outcome-oriented mapping, navigation,
-  semantic, and exploration references.
-- [Operations](./06-operations/README.md) — deployed-system observation and
-  recovery.
-- [Reference](./08-reference/README.md) — CLI, REST, MCP, configuration, and
-  architecture references.
+For deployment details see [Robot-side CLI](./04-deployment/lingtu_cli.md). For
+validation levels see [Testing](./07-testing/README.md).

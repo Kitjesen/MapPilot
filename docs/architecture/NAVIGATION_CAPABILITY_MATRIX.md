@@ -1,7 +1,7 @@
 # Navigation Capability Evidence Matrix
 
 Status: current evidence ledger
-Audited: 2026-07-28
+Audited: 2026-08-17
 Scope: native field products, portable C++ cores, Host adapters, simulation, and field acceptance
 
 This document answers two different questions separately:
@@ -25,19 +25,24 @@ A product capability is complete only when it has C, P, T and the appropriate S/
 evidence. "Partial" below does not mean absent; it means a specific layer or
 acceptance gate is still missing.
 
+The MuJoCo backend now compiles exact RunPlans for all seven Products, with
+separate exact `explore:live` and `explore:map` manifests. Every MuJoCo manifest
+currently selected by that backend still declares `coverage=component`.
+RunPlan wiring is implementation evidence; it is not a Product pass.
+
 ## Current Capability Matrix
 
 | Capability | Current implementation | Evidence | Verdict | Remaining product gap |
 | --- | --- | --- | --- | --- |
 | Map Server | Native map store, records, artifacts, active slots, map graph, save transactions, mapd realtime layers and scene publication under `src/maps`. | C, P, T; S partial; F pending | Strong partial | Persistent control/query still crosses a thin Python Host facade in some paths. The typed mapd control/query endpoint and field save/recovery evidence are not yet the only path. |
 | Route Server | `maps::MapGraph` provides persisted nodes/edges and shortest routes; `src/nav/building` adds multi-map/floor orchestration. | C, T; P only in building flow | Partial | No independent typed route request/status/event lifecycle, route-operation plugin contract, traffic closure updates, or route progress telemetry. |
-| Waypoint Follower | Native inspection store/executor and endpoint runtime support multi-point routes, dwell/actions, retries, skip/stop policies, pause/resume/cancel, revisions, and evidence. | C, P, T | Complete for inspection | It is not a generic waypoint server. GPS waypoints and arbitrary per-waypoint task plugins are separate future capabilities. |
+| Waypoint Follower | Native inspection store/executor and endpoint runtime support multi-point routes, dwell/actions, retries, skip/stop policies, pause/resume/cancel, revisions, and evidence. | C, P, T; S substrate only; F pending | Implemented for inspection; Product acceptance pending | Archive one exact ProductControl MuJoCo report covering the typed task/event/evidence lifecycle, then field evidence. It is not a generic waypoint server. |
 | Lifecycle Manager | `ProductControl -> RunPlan -> systemd` owns apply, switch, stop, readiness, rollback, and immutable Product plans. | C, P, T; F partial | LingTu equivalent implemented | Do not import the ROS lifecycle manager. Continue crash/restart and release rollback evidence on S100P. |
 | Collision Monitor | Native swept-footprint safety evaluates cloud/traversability and produces stop/slow/limited commands. Local planning also checks the full footprint. | C, P, T; S not currently accepted; F pending | Strong partial | The current safety chain needs a passing end-to-end MuJoCo report and field proof. A reusable multi-zone/TTC policy contract is still missing. |
-| Velocity Smoother | Portable ROS-free C++ core in `nav_kernel::VelocitySmoother`: component limits, accel/decel, open/closed loop, timeout, deadband, proportional scaling, and hard-stop bypass. | C, T | Kernel implemented | It is deliberately not yet in the final command path. Product wiring, diagnostics, configuration, MuJoCo tuning, and field evidence remain. |
+| Velocity Smoother | Portable ROS-free C++ core in `nav_kernel::VelocitySmoother`, shared by direct teleop, assisted teleop, and autonomy before final safety. RunPlan configuration reaches `navd`; hard-zero paths reset state and safety-limited commands rebase it to the applied output. | C, T; native endpoint build proven; P/S/F pending | Integrated, default disabled | No Product enables it yet. Add status diagnostics, tune and accept a MuJoCo canary, then collect field ramp/reversal/takeover/stop evidence before promotion. Closed-loop mode remains unavailable until a typed velocity-feedback source exists. |
 | Path Smoother | Some planners and path followers smooth implicitly or limit steering. | Internal behavior only | Missing as an independent capability | Add a typed, replaceable, collision-aware smoother contract between global planning and path activation. Never smooth through an obstacle or destroy planner kinematic constraints. |
 | Docking / Charging | No formal Product, dock database, detector contract, final approach controller, or charging proof. | None | Missing | Requires hardware contact/charge evidence, a dock pose source, staged navigation, final control, retry/undock lifecycle, and a simulation fixture. |
-| Target Following | Perception tracking/ReID, visual servo foundations, and `sim/following` exist. The current `tracking` Product tracks a map-frame goal, not a person/object. | C/T for foundations; no P | Partial foundation | Add a typed target observation, independent follow lifecycle, lost-target search, standoff controller, safety ownership, Product declaration, and acceptance suite. |
+| Target Following | The `tracking` Product selects a stable RGB-D person ID, tracks/ReIDs the person in Host, and sends bounded map-frame goals to native navigation. Native navigation remains the only motion owner. | C, P, T; static S wiring; dynamic S/F pending | Integrated, not dynamically accepted | Add moving-person MuJoCo evidence for continuity, occlusion/reacquisition and physical standoff, then supervised field timing and safety evidence. |
 
 ## What Is Already Real
 
@@ -62,7 +67,7 @@ Inspection is the product-grade multi-waypoint implementation:
 
 - `src/nav/inspection/inspection.cpp`
 - `src/nav/inspection/store.cpp`
-- `src/nav/cpp/endpoint/inspection/`
+- `src/nav/cpp/endpoint/nav/runtime/inspection/`
 - `config/runtime_graph/products/inspection.yaml`
 
 Calling this capability "missing" would be inaccurate. The accurate statement
@@ -95,7 +100,7 @@ The algorithms exist:
   cleared by later rays, current hit retention, static-cell protection,
   dynamic-track confirmation, and expiry.
 
-The current Product-chain moving-person gate now exists:
+The current native component-chain moving-person gate now exists:
 
 - `sim/scripts/mujoco/teleop_avoid_native_acceptance.py` defines the optional
   `moving_person_clear` scenario.
@@ -110,7 +115,8 @@ The current Product-chain moving-person gate now exists:
 This closes the old test-design gap, but it is not field evidence. A current
 strict MuJoCo report and a long-running MID-360 report are still required.
 The 2026-07-28 strict preflight did not start the scene because the selected
-sensor publisher, SLAM, mapd, traversability, navd, navigation-control/client,
+LiDAR/IMU/camera publisher processes, SLAM, mapd, traversability, navd,
+navigation-control/client,
 and cmd-velocity tap binaries were older than their current source/IDL closure.
 That fail-closed result is a release-provenance blocker, not simulation
 evidence and not proof that clearing passed or failed.
@@ -120,7 +126,7 @@ Therefore:
 column carving code: implemented
 decay code: implemented
 rolling obstacle layer: implemented
-person residual product acceptance: gate implemented; passing run not yet archived
+person residual component acceptance: gate implemented; Product report not yet archived
 long-duration resource acceptance: not complete
 ```
 
@@ -137,31 +143,58 @@ long-duration resource acceptance: not complete
 | 30-60 minute loop | Voxel cells, memory, CPU, DDS bytes, and clear latency remain bounded. |
 | Epoch reset/relocalization | Old obstacle generation is cleared atomically. |
 
-Use the existing runners as the starting point:
+Use ProductControl to verify exact RunPlan delegation and
+wiring. The selected manifest still controls the evidence class, so the current
+result remains component evidence:
 
 ```bash
-python sim/scripts/moving_obstacle_sweep_gate.py
-python sim/scripts/mujoco/teleop_avoid_native_acceptance.py \
+python -m sim.scripts.mujoco.product_acceptance \
+  --run-plan <published-teleop-avoid-run-plan.json> \
+  --runner sim/scripts/mujoco/teleop_avoid_native_acceptance.py \
   --manifest config/runtime_graph/acceptance/mujoco_teleop_avoid_native_acceptance.json \
-  --scenario moving_person_clear \
+  --state-root <isolated-product-state-dir> --json
+```
+
+`teleop_avoid_native_acceptance.py` is the attached scenario adapter used by
+that Product transaction; it is not a standalone executable. The focused
+Explore runners below remain component diagnostics. A verified RunPlan does
+not promote them while their manifests declare `coverage=component`:
+
+```bash
+python sim/scripts/mujoco/explore_native_acceptance.py \
+  --manifest config/runtime_graph/acceptance/mujoco_explore_native_acceptance.json \
+  --artifact-dir artifacts/mujoco-explore-live \
   --strict
 
 python sim/scripts/mujoco/explore_native_acceptance.py \
-  --manifest config/runtime_graph/acceptance/mujoco_explore_native_acceptance.json \
-  --artifact-dir artifacts/mujoco-explore \
+  --manifest config/runtime_graph/acceptance/mujoco_explore_map_native_acceptance.json \
+  --artifact-dir artifacts/mujoco-explore-map \
   --strict
 ```
-Important: `moving_obstacle_sweep_gate.py --run-matrix` still launches
-`launch_fastlio2_live.sh` and requires the legacy PCT inspection report shape.
-It is an evidence aggregator and migration source, not an accepted current
-`mapd/navd` Product gate. Use `moving_person_clear` for the current typed-DDS
-chain. That scenario fails unless the person is observed, both voxel and
+`moving_person_clear` is the current typed-DDS dynamic-obstacle case. It fails
+unless the person is observed, both voxel and
 accumulated layers return near their pre-person baseline after the configured
 decay grace, scene identity stays fixed, and generations remain monotonic.
 
 
-A report is accepted only when it records exact source/binary provenance,
-scenario metrics, cleanup/zero evidence, and no blockers.
+A component report is accepted only when it records exact source/binary
+provenance, scenario metrics, cleanup/zero evidence, and no blockers. Product
+acceptance additionally requires a `coverage=product` manifest and the complete
+ProductControl transaction.
+
+The source and RunPlan topology assign raw LiDAR/IMU publication and native
+Fast-LIO `slamd` to independent processes. The MuJoCo catalog declares private
+Windows and Linux commands, and compilation selects one host platform before
+artifact hashing or lifecycle work. A RunPlan therefore cannot mix PE and ELF
+processes. Full Windows-native parity is an active P0 target. Today the
+Fast-LIO `slamd.exe` artifact and its verified Windows dependency closure are
+missing, so SLAM-dependent Products fail during Windows RunPlan compilation;
+pure `teleop` is only the first Windows slice, not the accepted platform scope.
+Linux/WSL separately needs the shared native DDS publisher binary (started as
+separate LiDAR, IMU, and camera processes) and driver bridge rebuilt under
+`build/mujoco_native_dds/`; missing artifacts fail closed. Each
+platform still requires its own fresh exact ProductControl report. WSL is not
+Windows-native evidence, and simulator-truth odometry is not SLAM evidence.
 
 ### Dataset Replay
 
@@ -222,8 +255,9 @@ checking would turn a stop into a deceleration ramp and is forbidden.
 
 ### P0: Evidence Before More Features
 
-1. Keep the new velocity smoother as a tested core until endpoint integration
-   has explicit authority-transition and hard-stop tests.
+1. Keep velocity smoothing opt-in per Product. `teleop` and `teleop_avoid`
+   enable it, while field-readiness claims still require authority-transition,
+   hard-stop, and Product acceptance evidence.
 2. Make the portable MotionLayer residual test part of normal CTest.
 3. Run the MuJoCo dynamic matrix and archive one provenance-complete report.
 4. Run HeLiMOS and Dynamic Map Benchmark replay for filter quality.
@@ -231,15 +265,17 @@ checking would turn a stop into a deceleration ramp and is forbidden.
 
 ### P1: Product Velocity Smoothing
 
-1. Add Product configuration for x/y/yaw limits, open/closed loop, timeout,
-   feedback age, deadband, and proportional scaling.
-2. Keep one smoother state across autonomy/teleop authority transitions.
-3. Run smoothing before final safety.
-4. Publish limited/timed-out/feedback-age diagnostics.
-5. Add MuJoCo step, reversal, stale-feedback, takeover, and emergency-stop
-   acceptance.
-6. Enable in a field Product only after the current unsmoothed chain remains
-   available as an explicit rollback Product version.
+1. Product/RunPlan configuration for x/y/yaw limits, timeout, deadband, and
+   proportional scaling is implemented; enabled closed-loop configuration is
+   rejected until a typed feedback source exists.
+2. One native smoother instance is shared across autonomy and teleop.
+3. Smoothing runs before final safety; emergency, stale, cancel, raw-zero, and
+   publish-failure paths still stop immediately.
+4. Publish explicit limited/timed-out/reset/applied-output diagnostics.
+5. Add MuJoCo step, reversal, stale-target, takeover, safety-slowdown, and
+   emergency-stop acceptance for `teleop` first, then `teleop_avoid`.
+6. Enable a field canary only after the unsmoothed configuration remains the
+   explicit rollback and the Product report is accepted.
 
 ### P2: Path Smoother
 
@@ -286,7 +322,7 @@ Do not claim any of the following until the corresponding evidence is archived:
 - "Dynamic people never leave residuals."
 - "Velocity smoothing is active in the field command path."
 - "Docking is supported."
-- "The tracking Product is target following."
+- "The tracking Product continuously follows and reacquires a person in MuJoCo or the field" without archived dynamic evidence.
 - "Map Server is fully native end to end" while a required control/query path
   still depends on the Python Host facade.
 - "Product complete" based only on unit tests.

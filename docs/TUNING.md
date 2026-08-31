@@ -1,25 +1,20 @@
 # LingTu Tuning Cheat Sheet
 
-Runtime parameters are owned by `config/robot_config.yaml`. Module-specific
-files such as `config/perception.yaml`, `config/decision.yaml`,
-`config/semantic_scoring.yaml`, `config/pointlio.yaml`, and `config/dufomap.toml`
-are secondary overrides.
+Runtime parameters are owned by the selected `config/robots/<vendor>/<model>/robot.yaml` and the Product
+runtime graph. The remaining secondary inputs are purpose-specific:
+`config/semantic_scoring.yaml` owns semantic scoring; the selected robot's
+`mid360_fastlio2.yaml` owns LiDAR/IMU calibration inputs. Retired ROS node
+parameter files are not runtime configuration.
 
-After editing, restart only the affected logical process through the robot-side
-operations CLI. The thin `scripts/lingtu` adapter delegates restart, readiness,
-rollback, and current `RunPlan` ownership to `ProductControl`; do not restart
-field RunPlan units with `systemctl` directly:
+After editing, switch the Product again through the robot-side operations CLI.
+ProductControl owns process ordering and readiness; do not restart field units
+with `systemctl` directly:
 
 ```bash
-bash scripts/lingtu svc restart lidar           # LiDAR source
-bash scripts/lingtu svc restart slam            # SLAM / localization
-bash scripts/lingtu svc restart traversability
-bash scripts/lingtu svc restart nav             # native planner and tracker
-bash scripts/lingtu svc restart driver          # unique Brainstem speed exit
-bash scripts/lingtu svc restart host            # gateway and product modules
+bash scripts/lingtu --robot <vendor/model> --env real switch <product> [--map <name>]
 ```
 
-## 1. Robot Speed Inputs - `config/robot_config.yaml`
+## 1. Robot Speed Inputs - selected `robot.yaml`
 
 | Key | Default | Range | Effect |
 | --- | --- | --- | --- |
@@ -35,9 +30,8 @@ Module's `speed.max_speed` as its command ceiling.
 ## 2. Local Planner - `local_planner.*`
 
 In the physical `env=real` Product runtime, the production local planner runs
-inside the native C++ nav endpoint and uses the `nav_kernel` planning cores. The
-Python `LocalPlannerModule` remains available for simulation, development, and
-explicit compatibility profiles. Neither product path is a ROS2 node. The exact
+inside the native C++ nav endpoint and uses the `nav_kernel` planning cores.
+This is also the simulation Product boundary; it is not a ROS2 node. The exact
 algorithm and runtime-lane differences are defined in
 [Local Planning and Tracking Contract](architecture/LOCAL_PLANNING_AND_TRACKING_CONTRACT.md).
 
@@ -92,7 +86,9 @@ constructor/profile settings.
 | `baseLookAheadDis` | 0.3 m | Lookahead at zero velocity |
 | `lookAheadRatio` | 0.5 | Extra lookahead per m/s |
 | `yawRateGain` | 7.5 | Turning gain |
-| `maxYawRate` | 45 deg/s | Yaw-rate limit |
+| `maxYawRateRadS` | 0.8 rad/s | Yaw-rate limit in public physical units |
+| `headingAlignEnterRad` | 0.785 rad | Enter pure heading alignment |
+| `headingAlignExitRad` | 0.35 rad | Resume translation; must remain below enter angle |
 | `maxSpeed` | 0.4 m/s | Native endpoint velocity ceiling |
 | `maxAccel` | 1.0 m/s^2 | Native endpoint signed scalar-speed ramp |
 | `stopDisThre` | 0.2 m | Follower stop band around the tracked path end |
@@ -102,6 +98,28 @@ measured odometry speed. With the native endpoint's `0.4 m/s` ceiling, the
 reachable lookahead is `0.30-0.50 m`. `max_accel` does not limit yaw
 acceleration, jerk, or `vx/vy` components independently.
 
+Autonomous recovery is configured in the Product's `native_nav.recovery`
+mapping and compiled to `LINGTU_NAV_RECOVERY_*` environment values. The `nav`
+Product defaults are:
+
+| Field | Default | Effect |
+| --- | --- | --- |
+| `behavior_order` | `[translate, rotate]` | Round-robin action order; failure or successful-but-ineffective recovery advances to the next entry |
+| `translation_speed_mps` | 0.15 | Tracked side-step/reverse recovery speed |
+| `rotation_rate_rad_s` | 0.25 | Requested recovery yaw rate |
+| `min_rotation_rad` / `max_rotation_rad` | 0.20 / 1.20 | Adaptive candidate-angle interval |
+| `rotation_candidate_step_rad` | 0.20 | Candidate-angle spacing |
+| `rotation_sample_step_rad` | 0.05 | Footprint-sweep validation spacing |
+| `rotation_timeout_s` / `translation_timeout_s` | 2.5 / 1.5 | No-odometry-progress timeouts, not total action duration |
+| `max_attempts` | 3 | Bounded total action attempts before terminal recovery exhaustion |
+
+Do not add a navigation-side "clear map" recovery action. Mapd owns live map
+state; after a successful recovery action Executor waits for fresh cloud and
+traversability evidence and then invokes the ordinary planner again. If that
+replan is still blocked, recovery continues at the next `behavior_order` entry;
+the cursor resets only after ordinary planning succeeds, a new task resets the
+controller, or recovery exhausts its bounded attempts.
+
 Do not confuse the follower stop band with `local_planner.near_field_stop_dis`
 (`0.5 m`) or the native mission goal-reached threshold (`0.35 m`). Profile and
 endpoint overrides must be checked from the resolved runtime config instead of
@@ -109,17 +127,13 @@ copying historical `thunder_nav` values into field deployments.
 
 ## 4. Global Planner Backend
 
-Primary backends:
+Supported native backends:
 
-- `octoplanner3d`: default for product, simulation, development, map, navigation, and exploration profiles.
-- `pct`: compatibility/experiment backend, selected explicitly with `--planner pct`.
-- `astar`: legacy unit-test/benchmark backend only.
+- `octoplanner3d`: default saved-map 3-D planner.
+- `far`: explicit 2-D occupancy planner.
 
-Switch with:
-
-```bash
-python lingtu.py sim_nav --planner pct
-```
+Select the backend in the Product's `native_nav.global_planner` declaration.
+Do not start a Python planner beside `navd`.
 
 ## 5. Verification
 
@@ -127,7 +141,7 @@ python lingtu.py sim_nav --planner pct
 python -m pytest src/runtime/tests/ -q
 export LINGTU_HOST=ROBOT_IP_OR_HOSTNAME
 ssh sunrise@${LINGTU_HOST} 'bash /opt/lingtu/current/scripts/lingtu status'
-ssh sunrise@${LINGTU_HOST} 'bash /opt/lingtu/current/scripts/lingtu health'
+ssh sunrise@${LINGTU_HOST} 'curl -fsS http://localhost:5050/api/v1/health'
 ```
 
 Gateway config snapshot: `http://<robot-ip>:5050/api/v1/config`.

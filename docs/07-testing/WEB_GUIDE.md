@@ -20,6 +20,12 @@ LingTu 的验证是分层的。通过的检查只证明它实际覆盖的边界�
 
 不要把结果改写为更宽泛的结论。仿真通过不能验证物理传感器生命周期，Gateway 可达也不能验证定位或路径安全。
 
+详细入口：
+
+- [实机验证](field/README.md)
+- [仿真验证](simulation/README.md)
+- [带日期的验证记录](field-runs/README.md)
+
 ## 1. 验证文档和源码
 
 先运行最小相关检查，再扩大测试范围。文档检查会保持精选链接、元数据、端点脱敏、格式和 Web 指南源码注册的一致性：
@@ -38,7 +44,7 @@ LingTu 的验证是分层的。通过的检查只证明它实际覆盖的边界�
 
 使用 stub profile 验证不依赖硬件或现场 Gateway 的 Module 图：
 
-    uv run --locked python lingtu.py stub --no-gateway
+    uv run --locked python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim --dry-run
 
 在 REPL 中，仅使用检查命令：
 
@@ -49,23 +55,17 @@ LingTu 的验证是分层的。通过的检查只证明它实际覆盖的边界�
 
 **预期结果：** 该图以 stub driver 启动，报告连接/健康状态，并正常退出。它不会连接机器人，也不证明相机、检测器、SLAM 服务或物理命令写入端可用。
 
-对于语义消息流工作，使用刻意指定的 mock 后端使结果可重复：
-
-    uv run --locked python lingtu.py dev --llm mock --no-gateway
-
 ## 3. 验证具名仿真门槛
 
 只安装所选 profile 所需的仿真 extra；启动前检查选定的数据源和命令接收端：
 
     uv sync --locked --extra dev --extra sim-mujoco
-    uv run --locked python lingtu.py runtime-spec sim --json
-    uv run --locked python lingtu.py sim
+    uv run --locked python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim --dry-run --json
+    uv run --locked python sim/scripts/mujoco/native_navigation_acceptance.py --manifest config/runtime_graph/acceptance/mujoco_industrial_park_60m_navigation_acceptance.json --preflight-only --strict
 
-对于纯 Python 导航仿真，请使用显式 profile：
-
-    uv run --locked python lingtu.py sim_nav
-
-**预期结果：** runtime-spec 会标识模拟的命令接收端，且仿真保持在选定的模拟器/适配器内。若预检识别出物理端点，请停止并在启动前修正配置。
+**预期结果：** Product dry-run 标识模拟命令接收端；native acceptance
+preflight 验证当前场景、地图和原生进程输入，但不会启动运动阶段。若预检
+识别出物理端点，请停止并在启动前修正配置。
 
 请将场景、profile、修订、可选 extra、命令接收端和断言随结果一起记录，使读者能理解被验证的范围。
 
@@ -74,13 +74,13 @@ LingTu 的验证是分层的。通过的检查只证明它实际覆盖的边界�
 在获授权的机器人侧 shell 或操作会话中，先使用无运动门槛：
 
     bash scripts/lingtu status
-    bash scripts/lingtu health
-    bash scripts/lingtu doctor --non-motion --json --strict
+    curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
+    PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
 
 对于已保存地图工作，请在考虑目标之前验证完整地图包并预览精确路线：
 
-    bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
-    bash scripts/lingtu system-acceptance --map <map-name> --goal <x> <y> <yaw>
+    python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy
+    python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" --map <map-name> --goal <x> <y> <yaw>
 
 **预期结果：** 每个门槛都会为选定的 profile、端点、地图、定位状态和规划器报告可追溯结果。请将原始输出、时间戳、修订和拒绝原因随验证记录保存。
 

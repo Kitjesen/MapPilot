@@ -18,7 +18,7 @@ LingTu topics are runtime stream names, not ROS 2 topics.
 Do not write or ship Python SLAM. MuJoCo may simulate the robot, MID-360 raw
 frames, and IMU, but pose estimation, map building, and saved-map
 relocalization must come from the same native C++ SLAM/localization runtime used
-on the robot (`slamd` / `lingtu-slam-dds.service`) or an
+on the robot (`slamd` / `lt-slam.service`) or an
 explicit external native SLAM service. Python code may adapt streams, status,
 reports, and test evidence only; it must not become a SLAM backend.
 
@@ -33,9 +33,8 @@ Windows/WSL `CLOCK_REALTIME` steps. Real MID-360 input uses neither replay mode.
 
 | Boundary | Transport | Payload shape | ROS 2 required |
 | --- | --- | --- | --- |
-| Hardware / external runtime to LingTu | typed DDS | IDL structs under `message.dds_types` | no |
+| Hardware / external runtime to LingTu | typed DDS | IDL-generated native C types | no |
 | LingTu module to module, same process | `Out.publish()` to wired `In._deliver()` callback | Python objects | no |
-| LingTu worker subprocess boundary | SHM transport when enabled | serialized runtime messages | no |
 | Field OctoPlanner3D global planner | direct C++ call inside `navd` | `PlanRequest` / `PlanResult` in memory | no |
 | Dev/compat OctoPlanner3D wrapper | subprocess stdin/stdout | JSON request/result | no |
 | Map artifact conversion | subprocess + files | `map.pcd` to `octomap.ot` | no |
@@ -68,8 +67,8 @@ LingTu `/nav/cmd_vel` becomes DDS `rt/nav/cmd_vel`.
 | SLAM -> map/UI | `/slam/saved_map_cloud` | `lingtu.dds.PointCloud2` | saved-map snapshot |
 | SLAM -> safety/UI | `/slam/localization_health` | `lingtu.dds.Text` | structured localization health |
 | SLAM -> safety/UI | `/slam/localization_quality` | `lingtu.dds.Float32` | quality in `[0,1]` |
-| C++ command client -> nav | `/nav/command/request` | `lingtu.dds.NavigationCommandRequest` | typed goal, cancel, or operator velocity request with `request_id` |
-| nav -> C++ command client | /nav/command/ack | lingtu.dds.NavigationCommandAck | authoritative admission acceptance/rejection for the matching request; not task completion |
+| native command clients -> nav | `/nav/command/request` | `lingtu.dds.NavigationCommandRequest` | typed goal, cancel, or operator velocity request with `request_id` |
+| nav -> native command clients | /nav/command/ack | lingtu.dds.NavigationCommandAck | authoritative admission acceptance/rejection for the matching request; not task completion |
 | Gateway -> native explore | /nav/exploration/command | lingtu.dds.ExplorationCommandRequest | typed START/PAUSE/RESUME/STOP with request and session identity |
 | native explore -> Gateway | /nav/exploration/ack | lingtu.dds.ExplorationCommandAck | authoritative exploration FSM transition acceptance/rejection |
 | map/terrain control -> nav | `/nav/map_clearing` | `lingtu.dds.Bool` | clear map-derived planner caches |
@@ -107,10 +106,10 @@ Web coordinate goal / CLI / MCP resolved goal
   -> validate frame, authority, localization, map, and goal admission
   -> DDS /nav/command/ack (accepted=true, reason=planning_started)
   -> OctoPlanner3D::runPlan(request)
-  -> NavLoop::setGlobalPath(path)
-  -> NavLoop::tick(...)
+  -> Executor::setRoute(path)
+  -> Executor::tick(...)
        -> select look-ahead point from global path
-       -> LocalPlannerCore::plan(obstacles, traversability)
+       -> local::Planner::plan(obstacles, traversability)
        -> PathFollower::computeControl(local_path_body)
   -> DDS /nav/cmd_vel
   -> Thunder native driver -> Brainstem WalkChecked
@@ -126,7 +125,7 @@ The global path and local path are ordinary C++ vectors inside this endpoint.
 There is no DDS or LCM hop between OctoPlanner3D, LocalPlanner, and
 PathFollower.
 
-Input freshness is checked before `NavLoop::tick()`, collision/traversability
+Input freshness is checked before `Executor::tick()`, collision/traversability
 is checked while selecting the local path, PathFollower applies speed and
 acceleration limits, and the resulting non-zero autonomous command passes the
 same independent `CommandSafety` stop/slow/limit gate used for operator
@@ -135,12 +134,12 @@ requests before `/nav/cmd_vel` can be published.
 The final motion gate also requires fresh driver-control evidence from
 `lingtu-driver`: connected, ready, motors enabled, no critical motor fault,
 valid Brainstem lease, owner `grpc`, and owner id `lingtu-driver`. If that
-readiness becomes stale or false, `lingtu-nav-dds` clears endpoint motion and
+readiness becomes stale or false, `lt-nav` clears endpoint motion and
 publishes/holds zero rather than continuing to emit stale non-zero commands.
 
-`/nav/local_path` is not the control hand-off. `LocalPlannerCore::plan()`
+`/nav/local_path` is not the control hand-off. `local::Planner::plan()`
 returns `local_path_body` in memory and `PathFollower::computeControl()`
-consumes that vector in the same `NavLoop::tick()`. The DDS local-path writer
+consumes that vector in the same `Executor::tick()`. The DDS local-path writer
 only exposes the map-frame copy to Web, recorders, and acceptance tools.
 
 In localization mode, global pose is:
@@ -159,7 +158,7 @@ stale transform instead of continuing on an old global pose.
 ### Pure Teleoperation
 
 ```text
-Web joystick / hand controller / MCP velocity request
+Web keyboard / hand controller / MCP physical velocity request
   -> NavigationCommandClient::sendTeleop()
   -> DDS /nav/command/request (kind=teleop)
   -> endpoint (control_mode=teleop)
@@ -182,15 +181,15 @@ and external global paths while this mode owns control.
   -> endpoint (control_mode=teleop_avoid)
   -> InputGate (fresh pose/cloud)
   -> command age + finite-value + speed-limit precheck
-  -> NavLoop::tickTeleopIntent()
-  -> LocalPlannerCore::planIntent() (operator direction/speed, no recovery)
+  -> Executor::tickIntent()
+  -> local::Planner::plan(LocalPlanRequest{MotionIntentTarget})
   -> PathFollowerCore
   -> curved-path final safety gate
   -> DDS /nav/cmd_vel
 ```
 
 `teleop_avoid` fails closed without current localization or obstacle context.
-With `LINGTU_TELEOP_LOCAL_PLANNER=1`, translational joystick intent is a short
+With `LINGTU_TELEOP_LOCAL_PLANNER=1`, translational velocity intent is a short
 rolling local-planning target. LocalPlanner may select a safe path within
 `LINGTU_TELEOP_PLANNER_MAX_DEVIATION_DEG` of the requested direction, and the
 PathFollower tracks that path without exceeding the requested speed. The
@@ -215,7 +214,7 @@ TARE exploration lifecycle  -> /nav/exploration/command -> native ExploreControl
 saved-map exploration        -> selected target -> typed Goal -> GlobalPlanner -> local chain
 map-free exploration         -> selected target -> typed live segment -> rolling planner -> local chain
 semantic instruction         -> SemanticPlanner -> resolved goal -> typed request -> autonomous chain
-explicit tracking path       -> /nav/global_path -> NavLoop -> LocalPlanner -> PathFollower
+explicit tracking path       -> /nav/global_path -> Executor -> LocalPlanner -> PathFollower
 ```
 
 For `explore --map MAP`, the native exploration endpoint uses route `Map`. For
@@ -261,7 +260,7 @@ stale odometry / TF / registered cloud
 
 ## Why `/nav/local_path` Is Not Re-subscribed
 
-`NavLoop::tick()` calls `LocalPlannerCore::plan()` and immediately passes the
+`Executor::tick()` calls `local::Planner::plan()` and immediately passes the
 returned `local_path_body` to `computeControl()` in the same call. The endpoint
 then publishes `local_path_map` for Web, diagnostics, recording, and acceptance
 tests. Re-subscribing to `/nav/local_path` inside the same process would add
@@ -270,7 +269,7 @@ latency, duplicate ownership, and a stale-path race.
 ## Module Fallback Dataflow
 
 The table below describes the Python Module/dev compatibility graph. It is not
-the Thunder field command path when `lingtu-nav-dds.service` owns navigation.
+the Thunder field command path when `lt-nav.service` owns navigation.
 
 | Step | Producer | Consumer | Data | Type | Transport |
 | ---: | --- | --- | --- | --- | --- |
@@ -282,27 +281,19 @@ the Thunder field command path when `lingtu-nav-dds.service` owns navigation.
 | 6 | SLAM/localizer | localization adapter | localization health/quality | `dict`, `float` | DDS |
 | 7 | localization adapter | Navigation, maps, local planner, path follower, safety, Gateway | odometry fan-out | `Odometry` | callback |
 | 8 | localization adapter | MapService, occupancy, elevation, voxel, terrain, Gateway | map cloud fan-out | `PointCloud2` / `MapCloudFrame` | callback |
-| 9 | MapsServiceCore / SaveMapEngine | version staging area | saved source map | `map.pcd` | C ABI -> native transaction |
-| 10 | MapPipelineCore | committed map version | OctoMap artifact | `octomap.ot` or explicit compatibility `octomap.bt` | native builder or C++-owned converter |
-| 11 | SaveMapEngine | committed map version | manifest, checksums, provenance | `save_manifest.json`, `metadata.json` | atomic version commit |
-| 12 | MapPipelineCore | committed map version | occupancy, ESDF, traversability | typed map artifacts | native C++ build |
-| 13 | Gateway/MCP/DDS | GoalService or Navigation | goal | `PoseStamped` | HTTP/MCP/DDS then callback |
-| 14 | Navigation | OctoPlanner3D runtime | global plan request | JSON | subprocess |
-| 15 | OctoPlanner3D runtime | Navigation | global path result | JSON -> `Path` | subprocess |
-| 16 | Navigation | LocalPlanner | global path | `Path` | callback |
-| 17 | Navigation | LocalPlanner | current waypoint | `PoseStamped` | callback |
-| 18 | Terrain | LocalPlanner | near-field terrain cloud | `PointCloud2` | callback |
-| 19 | Terrain | LocalPlanner | traversability | `dict` | callback |
-| 20 | Map layers | TraversabilityCost | occupancy/elevation/ESDF | `OccupancyGrid`, `dict` | callback |
-| 21 | TraversabilityCost | Navigation | global risk gate | `dict` | callback |
-| 22 | TraversabilityCost | LocalPlanner | ESDF relay | `dict` | callback |
-| 23 | LocalPlanner | PathFollower, SafetyRing, Gateway | local path | `Path` | callback |
-| 24 | LocalPlanner | PathFollower | control hint | `dict` | callback |
-| 25 | PathFollower | CmdVelMux | autonomous velocity | `Twist` | callback |
-| 26 | Teleop / VisualServo / Navigation recovery | CmdVelMux | override or recovery velocity | `Twist` | callback |
-| 27 | command arbiter | native `driver` | final velocity | DDS `FinalVelocityCommand` | DDS |
-| 28 | native `driver` | Brainstem | sequence-checked normalized walk command | gRPC `WalkChecked(seq, Vector3)` | gRPC |
-| 29 | SafetyRing / Geofence | Navigation and driver | stop command | `int` (`0`, `1`, `2`) | callback |
+| 9 | MapsServiceCore / SaveMapEngine | MapPipelineCore | saved source map | `map.pcd`, patches, poses | C ABI -> native transaction |
+| 10 | MapPipelineCore | native cleanup | filtered source map | `map.pcd` | direct C++ call |
+| 11 | MapPipelineCore | artifact builders | occupancy, OctoMap, ESDF, traversability | typed map artifacts | native C++ build |
+| 12 | SaveMapEngine | canonical map package | cleaned source, metadata, and built artifacts | `<map_root>/<map_id>/` | direct map replacement |
+| 13 | Gateway/MCP/native client | `navd` command ingress | goal/cancel/stop/teleop intent | typed DDS command | DDS |
+| 14 | `navd` map gate | native global planner | current pose, goal, active map snapshot | direct C++ call | in-process |
+| 15 | native global planner | `Executor` | verified global route | native route result | in-process |
+| 16 | live cloud/traversability inputs | native local planner | collision and terrain evidence | native views | in-process |
+| 17 | `Executor` | native local planner | active route slice or assisted intent | `LocalPlanRequest` | in-process |
+| 18 | native local planner | native follower | local path or exact B-spline | native result | in-process |
+| 19 | native follower | final control | pre-safety body velocity | native `Twist` | in-process |
+| 20 | final safety and authority | native driver | checked final velocity | DDS `FinalVelocityCommand` | DDS |
+| 21 | native driver | Brainstem | sequence-checked body velocity (`m/s`, `rad/s`) | gRPC `WalkChecked(seq, Vector3)` | gRPC |
 
 ## Live Map Cloud Cleanup
 
@@ -337,8 +328,8 @@ Rules:
   scene sizes have configured hard limits and expose rejection counters.
 - `/maps/scene` is visualization/state data. `/nav/traversability` remains the
   sole control-risk map and has one standalone native writer.
-- Gateway consumes the coherent native scene. Raw cloud accumulation and
-  Python `VoxelGridModule` remain development/simulation compatibility only.
+- Gateway consumes the coherent native scene. mapd is the only live map-layer
+  owner in field and simulation; the retired Python layer wrappers are absent.
 - The navd endpoint keeps its own short-horizon collision/motion state. It may
   consume the current registered cloud and traversability product, but it must
   not become a persistent map manager.
@@ -368,15 +359,20 @@ The contract is intentionally transport-aware, not viewer-specific:
 | Layer | Kind | Transport | Source | Role |
 | --- | --- | --- | --- | --- |
 | `saved_map` | point cloud | HTTP | saved map points endpoint | static reference |
-| `live_cloud` | point cloud | WebSocket | `voxel_cloud` preferred, raw `map_cloud` fallback | clean live map |
-| `costmap` | raster texture | SSE | `costmap` event | navigation risk |
-| `slope` | raster texture | SSE | `slope_grid` event | terrain slope |
+| `live_cloud` | point cloud | WebSocket | `map_scene` point-cloud layer | clean live map |
+| `elevation` | raster texture | opt-in SSE | `maps.elevation` scene layer | lowest observed Z only; not ground or walkability |
+| `native_traversability` | raster texture | SSE | `native_traversability` event | native 0..100 control-risk projection |
 | `path` | polyline | SSE | `global_path` / `local_path` events | navigation plan |
 | `robot` | pose marker | SSE | `odometry` event | robot pose |
 
-Web clients should treat `live_cloud.source=voxel_cloud_preferred` as the clean
-map product. If only raw `map_cloud` is available, Gateway may show the raw
-fallback but must not claim it is the canonical live map.
+The internal terrain module may still compute `slope_grid` for local planning,
+but slope is not a Gateway/Web layer and must not be presented as a field
+control truth.  The native traversability layer is the only Web projection that
+may be labelled as control risk, and it remains read-only.
+
+Web clients treat the point-cloud layer in `map_scene` as the live map product.
+Raw SLAM clouds remain available to explicit development tools such as Rerun,
+but are not a Product Gateway fallback.
 
 ## Rerun-Style Point Cloud Display
 
@@ -405,11 +401,8 @@ Current implementations:
   `Float32Array` positions and colors.
 - `web/src/components/scene3d/layers/liveCloudLayer.ts` renders live point
   clouds as Three.js `Points`.
-- `src/gateway/visualization/rerun_bridge.py` logs `world/point_cloud` as
-  Rerun `Points3D` with per-point colors and radii.
-
 For the `nav` Product in `env=real`, the DDS navigation boundary is owned
-by the C++ `lingtu-nav-dds` service, not Python `nav.in` / `nav.out` adapters.
+by the C++ `lt-nav` service, not Python `nav.in` / `nav.out` adapters.
 It subscribes to `rt/nav/command/request`, `rt/slam/odometry`,
 `rt/slam/registered_cloud`, `rt/nav/traversability`,
 `rt/nav/terrain_map`, and `rt/nav/terrain_map_ext`; it publishes
@@ -425,12 +418,12 @@ were systemd process boundaries, not necessarily one algorithm per service.
 | Service | Current state on 2026-07-05 | Responsibility | Inputs | Outputs | Required for `/nav/cmd_vel` |
 | --- | --- | --- | --- | --- | --- |
 | `nav-lidar-network.service` | active, exited | Configure LiDAR Ethernet (`eth1`, `192.168.1.5/24`) | none | LiDAR network reachable | yes |
-| `lingtu-livox-dds.service` | active | Livox MID-360 and IMU DDS producer | Livox hardware | `/lidar/raw_frame`, `/imu/raw` | yes |
-| `lingtu-slam-dds.service` | active | Native SLAM/localization DDS runtime | `/lidar/raw_frame`, `/imu/raw` | `/slam/odometry`, `/slam/registered_cloud`, `/slam/map_cloud`, `/tf`, localization health/quality | yes |
-| `lingtu-traversability-dds.service` | active, disabled | Native traversability grid producer | `/slam/odometry`, `/slam/registered_cloud` | `/nav/traversability` | yes for obstacle/risk-aware local planning |
-| `lingtu-nav-dds.service` | active | Native navigation endpoint: global planning, local planning, path following, DDS output | odometry, TF, goal, traversability, cloud, OctoMap | `/nav/global_path`, `/nav/local_path`, `/nav/way_point`, `/nav/cmd_vel` | yes |
-| `lingtu.service` | active | Python Gateway/API/MCP/task/status process | user/task commands, module state | Gateway `5050`, MCP, navigation command entry | yes for external command entry |
-| `lingtu-driver.service` | product default | Native hardware command sink and Brainstem lease owner | `/nav/cmd_vel` | Brainstem `WalkChecked`, driver control status | no for cmd_vel-only validation; yes for real motion validation |
+| `lt-lidar.service` | active | Livox MID-360 and IMU DDS producer | Livox hardware | `/lidar/raw_frame`, `/imu/raw` | yes |
+| `lt-slam.service` | active | Native SLAM/localization DDS runtime | `/lidar/raw_frame`, `/imu/raw` | `/slam/odometry`, `/slam/registered_cloud`, `/slam/map_cloud`, `/tf`, localization health/quality | yes |
+| `lt-terrain.service` | active, disabled | Native traversability grid producer | `/slam/odometry`, `/slam/registered_cloud` | `/nav/traversability` | yes for obstacle/risk-aware local planning |
+| `lt-nav.service` | active | Native navigation endpoint: global planning, local planning, path following, DDS output | odometry, TF, goal, traversability, cloud, OctoMap | `/nav/global_path`, `/nav/local_path`, `/nav/way_point`, `/nav/cmd_vel` | yes |
+| `lt-host.service` | active | Python Gateway/API/MCP/task/status process | user/task commands, module state | Gateway `5050`, MCP, navigation command entry | yes for external command entry |
+| `lt-driver.service` | product default | Native hardware command sink and Brainstem lease owner | `/nav/cmd_vel` | Brainstem `WalkChecked`, driver control status | no for cmd_vel-only validation; yes for real motion validation |
 | `lingtu-thunder-dds-endpoint.service` | compatibility-only historical observation; unit now removed | Historical Python endpoint/sink | `/nav/cmd_vel` | legacy Brainstem command path | no |
 | `robot-brainstem.service` | not found / inactive | Real robot low-level control bridge | hardware command | robot control | no for cmd_vel-only validation |
 | `can-setup.service` | failed | CAN interface setup | none | `can0..can3` available | no for cmd_vel-only validation |
@@ -438,17 +431,16 @@ were systemd process boundaries, not necessarily one algorithm per service.
 
 The Python field unit, installer, and deployment wrapper in that historical
 observation have since been physically removed. Exact legacy unit names remain
-only as stop/conflict cleanup tombstones; local Python DDS diagnostics use
-`PYTHONPATH=src python -m runtime.endpoints.dds.endpoint_runner` directly.
+only as stop/conflict cleanup tombstones. Diagnostics use the native DDS probe.
 
 The field navigation process is:
 
 ```text
 nav-lidar-network
-  -> lingtu-livox-dds
-  -> lingtu-slam-dds
-  -> lingtu-traversability-dds
-  -> lingtu-nav-dds
+  -> lt-lidar
+  -> lt-slam
+  -> lt-terrain
+  -> lt-nav
   -> /nav/cmd_vel
 ```
 
@@ -458,7 +450,7 @@ stack can produce a speed command.
 
 ## Native Traversability DDS
 
-`lingtu-traversability-dds.service` runs:
+`lt-terrain.service` runs:
 
 ```text
 /opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds
@@ -496,7 +488,7 @@ rt/slam/registered_cloud
 
 This does not delete points from the raw LiDAR or SLAM streams. It only filters
 the local planning terrain product so stopped scans do not leave stale obstacle
-residue. `lingtu-nav-dds` treats negative-height `terrain_map_ext` points as a
+residue. `lt-nav` treats negative-height `terrain_map_ext` points as a
 diagnostic overlay and does not merge them into the planner obstacle cloud.
 Current runtime settings on sunrise:
 
@@ -519,7 +511,7 @@ LINGTU_TRAVERSABILITY_DYNAMIC_CLEAR_RAYCAST_MAX_RANGE=6.0
 ```
 
 `LINGTU_TRAVERSABILITY_MAX_POINTS` limits the published terrain cloud before DDS
-write. This keeps `/nav/terrain_map(_ext)` fresh enough for `lingtu-nav-dds`
+write. This keeps `/nav/terrain_map(_ext)` fresh enough for `lt-nav`
 while retaining the rolling terrain cache internally.
 `LINGTU_TRAVERSABILITY_TERRAIN_CACHE_MAX_POINTS` is a hard global limit on the
 rolling cache. Compaction keeps the highest point in each compacted cell, uses
@@ -535,8 +527,8 @@ reported in the traversability status file so a frequency regression is visible
 without disabling the safety layer.
 
 `prune` is not in this realtime path. It is the optional saved-map cleaner used
-after a mapping run, before rebuilt artifacts such as occupancy, OctoMap, and
-tomogram are accepted. It should not be treated as better than DUFOMap or
+after a mapping run, before rebuilt occupancy and OctoMap artifacts are
+accepted. It should not be treated as better than DUFOMap or
 ERASOR2; those are stronger references for map cleaning.
 
 Realtime dynamic handling has two native C++ layers:
@@ -544,14 +536,27 @@ Realtime dynamic handling has two native C++ layers:
 | Layer | File | Stage | Role |
 | --- | --- | --- | --- |
 | `DynamicClearCore` | `src/nav/cpp/include/nav_kernel/dynamic_clear_core.hpp` | traversability producer | filters stale rolling terrain points before publishing `rt/nav/terrain_map` |
-| `motion` / `LiveVoxelLayer` | `src/nav/cpp/endpoint/motion_layer.*` | nav consumer | keeps explicit unknown/free/occupied/static/cleared voxel evidence plus separate moving-object tracks |
-| `LiveObstacleLayer` | `src/nav/cpp/endpoint/live_obstacle_layer.*` | compatibility API | preserves existing endpoint calls while delegating to `motion` |
+| dynamic obstacle layer / `MotionLayer` | `src/nav/cpp/endpoint/nav/input/obstacle.*` | nav consumer | keeps explicit unknown/free/occupied/static/cleared voxel evidence plus separate moving-object tracks |
 
-`motion` is the realtime local-planner layer. It raycasts free space from the
+`MotionLayer` is the realtime obstacle layer. It raycasts free space from the
 current robot pose to current scan endpoints, does not clear cells hidden behind
 a nearer endpoint, requires repeated free evidence before demoting static
-structure, and preserves current dynamic objects in the planner obstacle
-snapshot for collision avoidance. Registered clouds use message-time pose
+structure, and preserves current dynamic objects in the measured obstacle
+snapshot for collision avoidance. Confirmed moving tracks also produce a bounded
+one-second constant-velocity future-occupancy envelope. Measured obstacles and
+terrain are merged first; future occupancy is stored separately and appended
+afterwards, with at most 800 points. Prediction therefore adds risk but can
+never consume or replace the measured-obstacle budget. A confirmed track
+survives a brief missed scan until its 0.6 s track TTL expires, so one occluded
+frame does not immediately remove the predicted risk.
+
+This is a conservative possible-occupancy envelope, not time-aligned TTC,
+velocity-obstacle negotiation, or MPC. It affects LocalPlanner and the final
+path safety gate. It intentionally does not enter the global active-path replan
+admission, which continues to use current measured blockage only. Native status
+reports `motion_layer.predicted_points`, `prediction_clusters`, and
+`prediction_horizon_s` so field tests can prove whether prediction participated.
+Registered clouds use message-time pose
 sampling from `PoseBuffer`; a cloud without a pose inside the configured gap is
 rejected and cannot refresh the navigation input gate. Producer header stamps
 must be finite, positive, and ordered inside their source epoch; a large rollback
@@ -559,13 +564,12 @@ opens a new source epoch. They are not compared with the receiver wall clock.
 Odom, TF, cloud, traversability, localization-health, and driver-control
 freshness instead use local steady-clock receipt timestamps, including the
 future/stale tolerance checks. Moving-object tracks expire after their TTL even
-when no newer scan arrives.
-`LiveObstacleLayer` is no longer a separate algorithm; it is the old name kept
-for native endpoint compatibility.
+when no newer scan arrives. The endpoint uses `MotionLayer` directly; there is
+no second compatibility wrapper or duplicate obstacle algorithm.
 
-## `lingtu-nav-dds` Internal Nodes
+## `lt-nav` Internal Nodes
 
-`lingtu-nav-dds.service` runs one binary:
+`lt-nav.service` runs one binary:
 
 ```text
 /opt/lingtu/current/build/nav_endpoint/navd
@@ -578,8 +582,8 @@ That binary contains the native planning and command pipeline:
 | Command receiver | `navd` | Validate typed goal/cancel/teleop requests and emit business ACK | `/nav/command/request` | internal command + `/nav/command/ack` |
 | OctoPlanner3D global planner | `navd` | Plan a 3D saved-map route | current `map` pose, goal, `octomap.ot` | internal global path |
 | Global path publisher | `navd` | Publish accepted global path | internal global path | `/nav/global_path` |
-| NavLoop target selector | `navd` | Pick the next lookahead target from global path | current pose, global path | internal target waypoint |
-| LocalPlannerCore | `navd` | Generate near-field local path | target, current pose, obstacle cloud, `/nav/traversability` | internal local path |
+| Executor target selector | `navd` | Pick the next lookahead target from global path | current pose, global path | internal target waypoint |
+| local::Planner | `navd` | Generate near-field local path | target, current pose, obstacle cloud, `/nav/traversability` | internal local path |
 | Local path publisher | `navd` | Publish the local path | internal local path | `/nav/local_path` |
 | PathFollowerCore | `navd` | Convert local path to velocity | local path, follower state | internal `cmd_vel` |
 | Waypoint publisher | `navd` | Publish current target waypoint | internal target waypoint | `/nav/way_point` |
@@ -591,17 +595,17 @@ Runtime order inside `navd`:
 /nav/command/request (kind=goal)
   -> validate request_id and control mode
   -> OctoPlanner3D with octomap.ot
-  -> nav.setGlobalPath(...)
+  -> nav.setRoute(...)
   -> /nav/global_path
-  -> NavLoop::tick(...)
-  -> LocalPlannerCore::plan(...)
+  -> Executor::tick(...)
+  -> local::Planner::plan(...)
   -> PathFollowerCore::computeControl(...)
-  -> NavLoopOutput {local_path, waypoint, cmd_vel}
+  -> ExecutionOutput {local_path, waypoint, cmd_vel}
   -> DDS /nav/command/ack + /nav/local_path + /nav/way_point + /nav/cmd_vel
 ```
 
-There is no DDS hop between `LocalPlannerCore` and `PathFollowerCore`. They run
-sequentially in the same `NavLoop::tick()` call. DDS publishes the accepted
+There is no DDS hop between `local::Planner` and `PathFollowerCore`. They run
+sequentially in the same `Executor::tick()` call. DDS publishes the accepted
 global path, local-path telemetry, waypoint telemetry, and the final command;
 it is not the internal planner-to-follower transport.
 
@@ -626,7 +630,8 @@ The native chain enforces these invariants:
   resume command timestamp becomes a strict not-before boundary for subsequent
   goals and external paths, preventing queued pre-takeover requests from being
   reactivated after resume.
-- `/ws/teleop` requires `deadman: true` on every motion sample and gives each
+- `/ws/teleop` accepts physical `vx_mps`, `vy_mps`, and `yaw_rps` values and
+  requires `deadman: true` on every motion sample. Each
   WebSocket connection a unique, expiring control lease. Missing/false deadman,
   disconnect, or command timeout produces a zero command and keeps the endpoint
   in manual hold. A zero-command delivery failure is reported as rejected and
@@ -656,7 +661,7 @@ future constraints if field tuning shows that the robot needs them.
 The isolated-DDS and field evidence for these rules is recorded in
 `docs/07-testing/field-runs/2026-07-10-local-planner-path-follower.md`.
 
-`NavLoop::tick(...)` only runs when both are true:
+`Executor::tick(...)` only runs when both are true:
 
 ```text
 map_body pose is available
@@ -717,7 +722,7 @@ Required TF links:
 
 | Link | Producer | Consumer | Required for |
 | --- | --- | --- | --- |
-| `map -> odom` | SLAM/localizer | `lingtu-nav-dds`, Gateway, evidence gates | converting odometry pose into map frame for saved-map planning |
+| `map -> odom` | SLAM/localizer | `lt-nav`, Gateway, evidence gates | converting odometry pose into map frame for saved-map planning |
 | `odom -> body` | SLAM/localizer | local planning, path following, Gateway | current robot pose and yaw |
 | `body -> lidar_link` | calibration/static TF from SLAM runtime | cloud normalization and evidence gates | aligning LiDAR points to body/map |
 | `body -> camera_link` | calibration/static TF | perception/inspection | camera geometry |
@@ -727,7 +732,7 @@ Topic frame expectations:
 | Topic | Expected frame |
 | --- | --- |
 | `/lidar/raw_frame` | `lidar_link` |
-| `/imu/raw` | `lidar_link` |
+| `/imu/raw` | `imu_link` |
 | `/slam/odometry` | header `odom`, child `body` |
 | `/slam/registered_cloud` | `body` |
 | `/slam/map_cloud` | `map` |
@@ -792,10 +797,10 @@ the live voxel layer radius is zero to avoid double inflation.
 Live domain `0` after the terrain migration:
 
 ```text
-lingtu-livox-dds.service active
-lingtu-slam-dds.service active
-lingtu-traversability-dds.service active
-lingtu-nav-dds.service active
+lt-lidar.service active
+lt-slam.service active
+lt-terrain.service active
+lt-nav.service active
 SLAM state = TRACKING
 relocalization_state = completed
 traversability publish_hz = 10
@@ -855,7 +860,7 @@ Interpretation:
 ```text
 SLAM, TF, registered cloud, and traversability are online.
 No active global path is currently loaded.
-Because has_path=false, NavLoop::tick(...) is not effectively running.
+Because has_path=false, Executor::tick(...) is not effectively running.
 Because publish_cmd_vel=false, /nav/cmd_vel will not be published even if a
 local command is computed.
 ```
@@ -884,7 +889,8 @@ The next cmd_vel-only validation should ignore real motion and check only:
 
 `dict` payloads are used for diagnostics, risk grids, and metadata-heavy state:
 `localization_status`, `mission_status`, `traversability`, `fused_cost`,
-`esdf_field`, `slope_grid`, and `control_hint`.
+`esdf_field`, internal `slope_grid`, and `control_hint`.  Internal slope data
+is not part of the Gateway/Web scene contract.
 
 ## OctoPlanner3D Map Inputs
 
@@ -896,129 +902,41 @@ Required for a valid OctoPlanner3D plan:
 | Input | Required | Source | Purpose |
 | --- | --- | --- | --- |
 | `octomap.ot`, `octomap.bt`, or `.octomap` | yes | built from saved `map.pcd` | 3D occupancy tree used by OctoPlanner3D |
-| `metadata.json` | yes | MapPipelineCore / SaveMapEngine | records source, frame, and artifact provenance inside the verified version |
-| `map.pcd` | yes for artifact gate | SLAM map save | source map and same-source hash anchor |
+| `metadata.json` | yes | MapPipelineCore / SaveMapEngine | records frame and built-artifact status inside the canonical map package |
+| `map.pcd` | yes for artifact gate | SLAM map save | source map used by the saved-map package |
 | metadata `frame_id` | yes | metadata | must match expected saved-map/planning frame, normally `map` |
-| metadata `artifacts.map_pcd.sha256` | yes | metadata | source hash for same-source validation |
 | metadata `artifacts.map_pcd.point_count` | yes | metadata | must be positive |
 | metadata `artifacts.octomap.uri` | yes | metadata | points to the OctoMap file |
-| metadata `artifacts.octomap.sha256` | yes | metadata | verifies the OctoMap file |
-| metadata `artifacts.octomap.source_map_sha256` | yes | metadata | must match `map_pcd.sha256` |
+| native artifact `exists` / `format_ok` | yes | mapd | verifies required files are present and readable in their declared format |
+| metadata artifact source/profile/frame fields | yes | metadata | must be consistent across required artifacts |
 | `occupancy.npz` | optional | MapService | loaded when present as static 2D occupancy/preblocked context |
 
-The runtime request sent to `octoplanner3d_headless` is JSON:
+The active map snapshot and goal are passed to the selected global planner by a
+direct C++ call inside `navd`. The verified result is retained by `Executor`
+and published as `/nav/global_path` telemetry.
 
-```json
-{
-  "planner": "octoplanner3d",
-  "protocol_version": 1,
-  "map_path": "/path/to/octomap.ot",
-  "map_source": {
-    "kind": "octomap_file",
-    "path": "/path/to/octomap.ot",
-    "format": "ot",
-    "frame": "map"
-  },
-  "start": [0.0, 0.0, 0.0],
-  "goal": [2.0, 1.0, 0.0],
-  "options": {
-    "planner_family": "octoplanner3d_constrained_global_planner",
-    "search_algorithm": "octomap_3d_astar",
-    "constraint_model": "quadruped_bounding_cylinder_ground_support",
-    "robot_radius": 0.25,
-    "max_iterations": 800000,
-    "snap_search_radius_cells": 12,
-    "require_ground_support": true,
-    "floor_change_penalty": 4.0,
-    "max_step_height": 0.45,
-    "same_floor_preference": true,
-    "obstacle_clearance_radius_cells": 4
-  }
-}
-```
+## Local Planning, Tracking, and Command Output
 
-The result is JSON:
-
-```json
-{
-  "planner": "octoplanner3d",
-  "protocol_version": 1,
-  "ok": true,
-  "path": [[0.0, 0.0, 0.0], [1.0, 0.5, 0.0], [2.0, 1.0, 0.0]],
-  "reached_goal": true,
-  "diagnostics": {}
-}
-```
-
-`Navigation` converts the returned `path` into runtime `Path` and publishes it
-as `global_path`.
-
-## Local Planner Inputs
-
-Local planning uses live runtime data. It does not require the saved map package
-to run, although it follows the `global_path` created from the saved map.
-
-| LocalPlanner port | Type | Required for normal navigation | Producer | Notes |
-| --- | --- | --- | --- | --- |
-| `odometry` | `Odometry` | yes | SLAM/localizer or driver fallback | robot pose and yaw |
-| `waypoint` | `PoseStamped` | yes | Navigation | current target selected from global path |
-| `global_path` | `Path` | yes | Navigation | corridor reference |
-| `terrain_map` | `PointCloud2` | yes for obstacle-aware planning | Terrain | near-field terrain cloud |
-| `terrain_map_ext` | `PointCloud2` | diagnostics only | Terrain | removed-candidate overlay; never a planner obstacle input |
-| `traversability` | `dict` | yes for risk scoring | Terrain | native backend uses traversability grid |
-| `clear_path` | `bool` | optional | Navigation | reset/clear local path |
-| `map_odom_tf` | `dict` | required when map/odom differ | SLAM/localizer | map-to-odom transform |
-| `map_frame_jump_event` | `dict` | optional | SLAM/localizer | clears stale path state after relocalization jumps |
-| `boundary` | `PointCloud2` | optional | no default producer | reserved overlay |
-| `added_obstacles` | `PointCloud2` | optional | no default producer | manual/dynamic obstacle overlay |
-| `check_obstacle` | `bool` | optional | no default producer | toggles overlay checking |
-| `esdf` | `dict` | wired but reserved | TraversabilityCost | stored, not yet primary native scoring input |
-
-LocalPlanner outputs:
-
-| Output | Type | Consumer |
-| --- | --- | --- |
-| `local_path` | `Path` | PathFollower, SafetyRing, Gateway/nav out |
-| `control_hint` | `dict` | PathFollower |
-| `alive` | `bool` | health/diagnostics |
-
-## Path Follower and Command Outputs
-
-| Module | Input | Type | Output | Type |
-| --- | --- | --- | --- | --- |
-| PathFollower | `odometry`, `local_path`, `control_hint`, `map_odom_tf`, `map_frame_jump_event` | `Odometry`, `Path`, `dict` | `cmd_vel` | `Twist` |
-| CmdVelMux | `teleop_cmd_vel`, `visual_servo_cmd_vel`, `recovery_cmd_vel`, `path_follower_cmd_vel` | `Twist` | `driver_cmd_vel` | `Twist` |
-| SafetyRing | `odometry`, `path`, `cmd_vel`, `mission_status`, `localization_status` | mixed | `stop_cmd`, `safety_state`, `execution_eval` | `int`, structured status |
-
-CmdVelMux priority:
-
-| Source | Priority |
-| --- | ---: |
-| teleop | 100 |
-| visual servo | 80 |
-| recovery | 60 |
-| path follower | 40 |
+One local planning tick combines the active route slice or assisted-motion
+intent with coherent odometry, transform, obstacle, collision, and optional
+traversability evidence. CMU returns a geometric local path; SCAN also returns
+the exact B-spline used by the follower. Sampled trajectory points remain
+telemetry. The handoff stays in memory.
 
 Final command path:
 
 ```text
-PathFollower.cmd_vel
-  -> CmdVelMux.path_follower_cmd_vel
-  -> CmdVelMux.driver_cmd_vel
-  -> local simulation/development driver
-  -> compatibility driver sink
-```
-
-The `nav` Product in `env=real` does not use this Python command chain;
-the C++ command chain is:
-
-```text
-lingtu-nav-dds PathFollower
-  -> native command arbiter and safety
+navd Executor
+  -> CMU or SCAN Local Planner
+  -> native Follower
+  -> final safety and control authority
   -> rt/nav/cmd_vel
   -> lingtu-driver
   -> Brainstem WalkChecked(seq, Vector3)
 ```
+
+`/nav/local_path` is output telemetry. The Host does not subscribe to it to run
+another follower or publish another velocity command.
 
 ## What Must Be Validated On The Robot
 

@@ -44,6 +44,7 @@ outlier-aware status, and recovery policy.
 | `TEASER-plusplus/` | `https://github.com/MIT-SPARK/TEASER-plusplus.git` | `52a9c52` | MIT | Optional robust global registration backend after feature matching. |
 | `hdl_localization/` | `https://github.com/koide3/hdl_localization.git` | `de2dc77` | BSD-2-Clause | Architecture reference for map-based continuous localization and status metrics. |
 | `FAST_LIO_LOCALIZATION/` | `https://github.com/HViktorTsoi/FAST_LIO_LOCALIZATION.git` | `2bc274e` | GPL-2.0 | Concept reference only; do not migrate code into LingTu core. |
+| `STD/` | `https://github.com/hku-mars/STD.git` | `6e5903c` | GPLv2; commercial use requires a separate agreement | Benchmark/reference for 3D place recognition, loop-candidate geometry, and the FAST-LIO2 + pose-graph demo; do not link it into Product code. |
 
 `hdl_global_localization` is referenced by `hdl_localization` and GitHub search,
 but direct `git clone https://github.com/koide3/hdl_global_localization` returned
@@ -60,6 +61,7 @@ reference, not a local source asset.
 | `TEASER-plusplus` | Certifiably robust registration with many outliers. | `teaser/include/teaser/registration.h`, `teaser/src/registration.cc`, `teaser/src/fpfh.cc`. | Yes, MIT. | Useful only if LingTu adds FPFH/correspondence generation. Not the first migration. |
 | `hdl_localization` | Continuous map-based localization design: prediction + NDT/GICP correction + status. | `src/hdl_localization/pose_estimator.cpp`, `apps/`, `launch/`. | Small design pieces only; it is ROS/catkin-heavy. | Strong reference for the service contract: `/odom`, aligned cloud, scan matching status, relocalize service. |
 | `FAST_LIO_LOCALIZATION` | Product idea: low-rate global localization fused with high-rate FAST-LIO odometry to suppress drift. | `README.md`, launch/config flow, `src/laserMapping.cpp`. | No, GPL-2.0 and Python2/ROS-era code. | Keep as architecture evidence, not implementation source. |
+| `STD` | Stable Triangle Descriptor place recognition: descriptor retrieval, triangle-correspondence pose hypothesis, plane verification, and optional plane ICP refinement. | `include/STDesc.h`, `src/STDesc.cpp`, `demo/online_demo.cpp`. | No direct Product integration: upstream declares GPLv2 and asks commercial users to negotiate a separate license. | Useful as an offline benchmark for the existing LingTu loop detector. Its online demo consumes FAST-LIO2 ROS topics and applies GTSAM pose-graph correction, but it is not the unpublished complete online SLAM pipeline. |
 
 ## Recommended LingTu Migration
 
@@ -111,7 +113,7 @@ Current path:
 ```text
 Gateway HTTP
   -> Python NativeSlamRelocalizationService
-  -> subprocess lingtu_slam_control
+  -> subprocess messages_control
   -> typed DDS /slam/relocalization/request
   -> C++ SLAM runtime
   -> typed DDS /slam/relocalization/response

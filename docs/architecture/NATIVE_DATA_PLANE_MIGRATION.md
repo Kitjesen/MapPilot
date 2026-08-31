@@ -29,14 +29,14 @@ topology, navigation algorithms, or high-rate map computation.
 | Gateway, Agent, MCP | Python Host |
 
 Field products fail closed when `HostBus` or its native ABI is unavailable.
-There is no Python navigation-state fallback at product startup. Development
-profiles may retain Python implementations of the same contracts.
+There is no Python navigation-state fallback at Product startup. Development
+and simulation Blueprints may retain Python implementations of the same contracts.
 
 ## Native Navigation Batch
 
 ### Completed
 
-1. `lingtu_slam.idl` defines `MapObservation` and `NavigationState`.
+1. `messages.idl` defines `MapObservation` and `NavigationState`.
 2. C++ SLAM publishes `/slam/map_observation` once per accepted scan.
 3. C++ `navd` publishes authoritative `/nav/state`.
 4. The persistent native navigation client exposes the latest state through a
@@ -64,11 +64,9 @@ profiles may retain Python implementations of the same contracts.
 14. Native global/local path telemetry uses a two-stage C ABI copy. A sample
     is retained when the caller's buffer is too small; paths are never
     silently truncated.
-15. Field `nav`, `explore`, `inspection`, `tracking`, and
-    native localization Products do not instantiate `nav.mission`, the Python
-    local planner/path follower, or Python frontier executors.
-16. `dev`, `sim_nav`, and the explicit local `lite` Host Profile retain the Python
-    mission chain for development and simulation.
+15. Field and simulation Products use the native navigation endpoint. The Host
+    retains command, goal, skill, and status adapters rather than a second
+    planner and motion-control implementation.
 
 OMG IDL reserves `sequence`. Wire members therefore use
 `state_sequence`, `event_sequence`, and `observation_sequence`; C++ and Host
@@ -106,7 +104,7 @@ a process-local monotonic counter. A SLAM reset advances it.
 ```text
 header / boot_id / sequence / control_mode
 lifecycle_state / active_request_id / goal_epoch
-map_id / map_version / map_hash
+map_id / map_content_epoch
 planning_state / execution_state / recovery_state
 progress / authority / hold_reason / failure_code
 ```
@@ -207,11 +205,11 @@ target.
 The current batches are covered by:
 
 - IDL/codegen and QoS tests;
-- Runtime Graph, endpoint, route, Product compile, and HostGraph tests;
+- Runtime Graph, endpoint, route, Product compile, and Blueprint tests;
 - generated IDL plus real CycloneDDS C++ navigation state, goal-status, and
   path/MapScene telemetry tests under WSL;
 - C++ SLAM epoch/sequence contract tests;
-- C++ mapd engine, DDS, service C ABI, storage-capacity, atomic-ray, decay,
+- C++ mapd engine, DDS, local service endpoint, storage-capacity, atomic-ray, decay,
   cross-floor carving, and scene publication tests;
 - Python HostBus, Gateway readiness, Product compilation, and scene projection
   tests;

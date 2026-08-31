@@ -97,7 +97,6 @@ Command profile:
 --scene-preset multifloor_stack_3
 --map-source mujoco_lidar
 --trajectory-support-radius-m 0
---n-rays 12800
 --lidar-duration 8
 --resolution 0.09
 ```
@@ -138,10 +137,14 @@ the robot trajectory.
 Relevant files:
 
 ```text
-sim/scripts/mujoco/saved_map_plan_gate.py
-sim/scripts/mujoco/saved_map_tracking_gate.py
-sim/scripts/mujoco/diagnose_octoplanner3d_map_quality.py
+sim/scripts/mujoco/saved_map_quality_gate.py
+sim/scripts/saved_map_relocalize_runtime_gate.py
+sim/scripts/mujoco/native_navigation_acceptance.py
 ```
+
+The earlier Python combined plan/tracking experiment was removed. Current
+Product evidence keeps saved-map quality, native relocalization, and native
+navigation acceptance as separate gates.
 
 ## Next Fix
 

@@ -1,207 +1,101 @@
 # Global Planning Contract
 
-Status: current contract
-Audience: navigation/planner maintainers, Gateway/UI preview maintainers
-Replaced by: not replaced
+Status: current native Product contract
 
-This document defines LingTu's global planning boundary. The goal is fast
-backend replacement without leaking OctoPlanner3D, PCT, subprocess, or payload
-details into Navigation, Gateway, UI, or transport code.
+Global planning runs inside C++ `navd` for both `real` and `sim`. The Host sends
+a typed goal and consumes lifecycle status and path telemetry; it does not load
+maps or execute a second planner.
 
-## 1. Location
+## Source of truth
 
 | Surface | Path |
 | --- | --- |
-| Public planning contracts | `src/nav/services/plan/contracts.py` |
-| Planner service factory | `src/nav/services/plan/factory.py` |
-| Map-backed planner service | `src/nav/services/plan/global_planner/service.py` |
-| Saved-map bundle lookup | `src/nav/services/plan/global_planner/artifacts.py` |
-| Mapless/direct service | `src/nav/services/plan/mapless/direct.py` |
-| Backend runtime adapter | `src/nav/services/plan/global_planner/backend_runtime.py` |
-| OctoPlanner3D backend | `src/nav/services/plan/global_planner/algorithm/octoplanner3d_planner.py` |
-| Native planning contract | `src/nav/cpp/planning/global/global_planner_contract.hpp` |
-| Native OctoPlanner3D | `src/nav/cpp/planning/global/octoplanner/` |
-| Native FAR option | `src/nav/cpp/planning/global/far/` |
-| Active map gates | `src/nav/cpp/endpoint/active_octomap_gate.*`, `active_occupancy_gate.*` |
-| PCT legacy backend | `src/nav/services/plan/global_planner/algorithm/pct/planner.py` |
-| Preview API helper | `src/nav/services/plan/preview.py` |
-| Mission integration | `src/nav/runtime/planning.py` |
+| Backend-neutral request/result | `src/nav/cpp/planning/global/contract.hpp` |
+| OctoPlanner3D | `src/nav/cpp/planning/global/octoplanner/` |
+| FAR | `src/nav/cpp/planning/global/far/` |
+| Active OctoMap gate | `src/nav/cpp/endpoint/nav/input/active/octomap.*` |
+| Active occupancy gate | `src/nav/cpp/endpoint/nav/input/active/occupancy.*` |
+| Goal planning lifecycle | `src/nav/cpp/endpoint/nav/runtime/goal/` |
+| Route execution | `src/nav/cpp/navigation/` |
 
-## 2. Boundary
-
-Global planning is the saved-map Goal route. It requires a current pose and a
-target in the planning frame plus a validated active map artifact. Map-free
-exploration does not enter this boundary; it uses the native `Live` rolling
-segment route.
-
-Navigation calls the planner through one method:
+## Runtime flow
 
 ```text
-PlannerService.plan_request(GlobalPlanRequest) -> GlobalPlanResult
+typed goal command
+  -> navd goal admission
+  -> current localization + declared active map
+  -> OctoPlanner3D or explicit FAR
+  -> request/map identity check
+  -> admitted map-frame route
+  -> Executor
 ```
 
-Backends implement the same logical contract. A backend may also keep a legacy
-`plan(start, goal)` method, but that is compatibility only.
+The command acknowledgement means only that `navd` admitted the request. The
+correlated goal-status lifecycle reports planning, active path, reached,
+cancelled, or failed.
 
-## 3. Input
+## Inputs
 
-Saved-map input is selected before backend construction:
+A saved-map request requires:
 
-```text
-active map_record.json
-  -> map.bundle capability lookup
-  -> planner artifact uri
-  -> backend constructor
-```
+- a finite target in the configured planning frame;
+- current localization;
+- one declared active map;
+- the artifact required by the selected backend;
+- a request identity used to reject completion from an older goal or map.
 
-For OctoPlanner3D, the selected product artifact is the
-`navigation_safety_3d` capability, currently backed by `octomap.ot`. `map.pcd`
-is the source point-cloud artifact and rebuild input; it is not the normal
-planning-time input once the bundle has a valid 3D occupancy artifact.
+OctoPlanner3D consumes the active 3-D OctoMap artifact. FAR consumes the active
+trinary occupancy artifact. Map storage and activation remain owned by the maps
+service; the planner reads a private validated snapshot.
 
-FAR consumes the active `occupancy.npz` trinary grid. It is an explicit 2D
-option, not an automatic fallback from OctoPlanner3D. Both native backends must
-validate the active Maps record, artifact hash, source, frame, and version and
-plan from a private immutable snapshot.
+ProductControl resolves the saved-map bundle once and publishes paths by
+consumer responsibility:
 
-Explicit map paths still win for tests and emergency operation. Legacy active
-filenames remain fallback for older saved maps.
+| Runtime value | Consumer | Meaning |
+| --- | --- | --- |
+| `LINGTU_SLAM_MAP` | localization | Exact saved point cloud used for relocalization. |
+| `NAV_GLOBAL_PLANNER` | `navd` | Explicit global-planner selector: `octoplanner3d` or `far`. |
+| `OCTOPLANNER_MAP_PATH` | OctoPlanner3D | Exact 3-D OctoMap artifact. Set only when OctoPlanner3D is selected. |
+| `FAR_OCCUPANCY_PATH` | FAR | Exact trinary occupancy artifact. Set only when FAR is selected. |
+| `EXPLORE_OCCUPANCY_PATH` | Explore map route | Exact occupancy artifact used to restore saved coverage state. |
+| `LINGTU_MAP_ID`, `LINGTU_MAP_CONTENT_EPOCH`, `LINGTU_MAP_FRAME` | every saved-map consumer | Identity checked against the selected artifact and planning result. |
 
-```text
-GlobalPlanRequest
-  start: [x, y, z]
-  goal: [x, y, z]
-  safe_goal_tolerance: float
-  frame_id: string
-  request_id: string
-  map_version: string
-  map_generation: uint64
-  expected_map_identity: MapIdentity
-```
+`NAV_MAP_DIR` is the maps service storage root; it is not a planner or Explore
+input. `navd` also retains explicit `--map` for standalone tools and tests, but
+Product execution receives exactly the map variable required by
+`NAV_GLOBAL_PLANNER`; it never infers an artifact type from a generic path.
 
-All coordinates are in the planning frame. Frame mismatch is blocked before
-planning; the planner must not guess transforms.
+Frame mismatch is rejected before planning. The planner never guesses a
+transform or silently switches map artifacts.
 
-Live map updates use:
-
-```text
-GlobalPlanningMap
-  grid: 2-D float grid
-  resolution: meters per cell
-  origin: [x, y] | null
-  frame_id: string
-  map_version: string
-  generation: uint64
-  source: string
-```
-
-## 4. Output
-
-The canonical output is both Python-friendly and UI/SDK-friendly:
-
-```text
-GlobalPlanResult
-  schema_version: lingtu.global_plan.v1
-  path: [[x, y, z], ...]
-  plan_ms: float
-  reached_goal: bool
-  error: string
-  frame_id: string
-  request_id: string
-  map_version: string
-  adjusted_goal: [x, y, z] | null
-  diagnostics: object
-  report: object
-```
-
-`GlobalPlanResult.to_wire()` is the JSON payload for Gateway, UI, SDK, Dart,
-Rust, or replay consumers.
-
-## 5. Service Responsibilities
-
-`GlobalPlanner` may do these orchestration steps:
-
-1. validate saved-map artifacts;
-2. update or validate live planning grid;
-3. adjust unsafe goals to nearby reachable cells;
-4. call the selected backend;
-5. evaluate path safety;
-6. repair partial or unsafe paths when policy allows;
-7. downsample path output;
-8. report selected planner, fallback, adjusted goal, diagnostics, and policy.
-
-It must not:
-
-- own mission state;
-- publish robot commands;
-- expose backend subprocess schemas to UI;
-- import Gateway or driver code;
-- treat ROS 2 topics as its public API.
-
-## 6. Backend Responsibilities
-
-Backends are algorithm implementations. They should accept `GlobalPlanRequest`
-and return `GlobalPlanResult`.
+## Backends
 
 | Backend | Role |
 | --- | --- |
-| `octoplanner3d` | Default map-backed product planner. |
-| `far` | Explicit native 2D visibility-graph planner over validated occupancy. |
-| `pct` | Legacy/manual experiment planner. |
-| `direct` | Development-only mapless helper; never a field Goal fallback. |
+| `octoplanner3d` | Default saved-map 3-D planner. |
+| `far` | Explicit 2-D visibility-graph planner over active occupancy. |
 
-Backend-specific map formats, native libraries, subprocesses, or diagnostics
-must be normalized before leaving the planner service boundary.
+FAR is a configured alternative, not an automatic recovery path from an
+OctoPlanner3D failure. Live exploration beyond the saved-map boundary uses the
+native rolling-segment contract; it is not another saved-map planner backend.
 
-## 7. Runtime Data Flow
+## Output and ownership
 
-The physical product path is native:
+A successful result is a verified route in the configured planning frame.
+`navd` publishes `/nav/global_path` for telemetry and passes the route directly
+to `Executor` in memory.
 
-```text
-typed Goal DDS
-  -> navd
-  -> selected active artifact gate
-  -> OctoPlanner3D or FAR
-  -> GlobalPlanResult identity/epoch check
-  -> NavLoop
-  -> final safety and control authority
-  -> /nav/cmd_vel
-```
+Global planning does not:
 
-Python `Navigation -> PlannerService -> LocalPlanner -> PathFollower` remains
-the Module/simulation path. It is not the owner of the field endpoint.
+- publish robot commands;
+- own local planning or tracking;
+- own map storage;
+- import Gateway or driver code;
+- expose planner-specific payloads as a Product API.
 
-The preview path is non-motion:
+## Acceptance
 
-```text
-Gateway preview command
-  -> Navigation.preview_plan()
-  -> PlanPreviewService
-  -> PlannerService.plan_request()
-  -> global_plan wire payload
-```
-
-## 8. Transport Policy
-
-Global planning uses module ports in-process by default. Cross-process or
-cross-language delivery must wrap the wire payload with an explicit transport
-contract.
-
-| Transport | Policy |
-| --- | --- |
-| local port | default Navigation to local planner path. |
-| Gateway JSON | UI/SDK preview and status payloads. |
-| DDS/LCM | Adapter boundary only; must preserve schema version, frame, and timestamp. |
-| ROS 2 | Compatibility bridge only, not the planner contract. |
-
-## 9. Acceptance Checks
-
-```bash
-python -m pytest src/nav/tests/test_global_planner_contracts.py -q
-python -m pytest src/nav/tests/test_planning_service_factory.py -q
-python -m pytest src/nav/tests/test_global_planner_diagnostics.py -q
-python -m pytest src/runtime/tests/test_nav_chain_efficiency.py -q
-python -m pytest src/gateway/tests/test_gateway_commands.py -k "preview or click_navigation" -q
-python -m pytest tests/contracts/test_nav_cpp_build_boundaries.py -q
-bash scripts/build/build_nav_endpoint.sh
-```
+Changes must prove the selected backend, map gate, goal correlation, stale-result
+rejection, cancellation, and failure status through the native C++ tests and the
+native endpoint Product acceptance flow. Simulation evidence uses the same
+endpoint contract but does not replace field evidence.

@@ -35,7 +35,7 @@ MID-360
   -> lt-slam: odometry + registered cloud
   -> lt-maps + lt-terrain: live scene + traversability
                                       |
-Web / lingtu-drive                    v
+Web Teleop / lingtu-drive             v
   -> typed operator motion -> lt-nav (teleop_avoid)
   -> LocalPlanner -> PathFollower -> final safety
   -> rt/nav/cmd_vel                   # 唯一最终速度流
@@ -47,10 +47,17 @@ Web / lingtu-drive                    v
 `teleop_avoid` 的声明进程必须恰好覆盖 `lidar`、`imu`、`slam`、`maps`、
 `traversability`、`nav`、`driver` 和 `host`。相机不属于这条链。
 
-Web 活动速度样本以 50 Hz 发布；原生导航安全与局部规划循环为 20 Hz；
-Go2 驱动控制循环为 50 Hz。400 ms 是空闲时的控制权续约间隔，不是释放
-超时；一秒内既无速度样本也无 heartbeat 时，Web lease 才过期。松开最后
-一个方向键、按 Space、页面失焦或连接断开都必须立即进入零速/hold。
+Web 和 `lingtu-drive` 的活动速度样本以 50 Hz 发布；原生导航安全与局部规划循环为 20 Hz；
+Go2 驱动控制循环为 50 Hz。Web 是持续键盘控制入口；`lingtu-drive` 只用于
+最长 5 秒的单方向监督动作检查。Web 空闲时不发送 heartbeat，也没有独立 Web
+Lease。`navd` 内部的一秒原生 Lease 只负责失联归零；下一次按键需要时由 Gateway
+自动完成 CLAIM、epoch 和零速屏障恢复。松开最后一个方向键、按 Space、页面失焦或
+连接断开都必须立即进入零速/hold；不再使用“恢复控制”按钮。
+
+Web 操作顺序是：打开场景中的“遥控”面板，确认当前 Product 为
+`teleop_avoid`，点击“连接”，按住 W/S/A/D/Q/E 移动；Shift 是 40% 精细
+模式，Space 或“保持”立即归零，“停车”进入原生停止路径。Gateway 显示的
+入口回执只说明意图已排队，必须继续查看最终速度和电机确认。
 
 ## 3. 网络和设备地址
 
@@ -100,13 +107,14 @@ T_body_lidar.rpy = [0.0, 0.22689280275926285, 0.0] rad
 
 配置写入位置：
 
-- `config/robot_config.yaml`：机械 `T_body_lidar`。
+- `config/robots/unitree/go2/robot.yaml`：机械 `T_body_lidar`。
 - `config/robots/unitree/go2/sensors/mid360_fastlio2.yaml`：Fast-LIO2
   包内 `T_imu_lidar` 与求解后的 `T_body_imu`。
 - `src/runtime/runtime_interface.py`：运行时 `go2_mid360` 外参 profile。
 
-这些文件目前在数值上保持一致，但 `calibration.status` 必须继续为
-`unverified`，直到安装在这台 Go2 上的支架通过静态平面和原地旋转验证。
+这些文件目前在数值上保持一致。`calibration.slam.status` 只代表这台 Go2
+的 MID-360/LiDAR-IMU 外参；`calibration.camera.status` 独立维护，禁止用
+SLAM 证据批准相机。
 `tools/calibration/verify.py` 只能检查配置数值和变换链一致性，不能证明
 物理支架安装正确。
 
@@ -119,7 +127,7 @@ T_body_lidar.rpy = [0.0, 0.22689280275926285, 0.0] rad
 | Go2/DOSO Thunder V4 MID-360 外参隔离 | 已实现并有定向测试 | 配置没有串线 |
 | 地形服务读取 RunPlan 外参 | 已实现并有定向测试 | 不再硬编码 Thunder 位姿 |
 | 外置 MID-360 物理标定 | 未完成 | 阻止实机避障放行 |
-| NX 一键部署 | 未完成 | `deploy_robot.sh` 构建清单仍不完整 |
+| NX Product 部署入口 | 已按 Product 生成构建清单 | 仍需 NX 实机执行证据 |
 | NX Python 运行时 | 必须现场确认并固定同一个 Python 3.10+ 虚拟环境 | 部署前必须收口 |
 | Go2 端到端避障实机报告 | 没有 | 当前不能宣称功能已交付 |
 
@@ -128,10 +136,10 @@ T_body_lidar.rpy = [0.0, 0.22689280275926285, 0.0] rad
 本节描述进入实机步骤前必须满足的条件，不在这里维护研发排期。跨 Product
 的实施优先级和完成状态统一记录在 `docs/plans/current-roadmap.md`。
 
-### 前置条件 1：补全 `deploy_robot.sh`
+### 已完成 1：`deploy_robot.sh` 按 Product 构建
 
-当前脚本只构建 maps C API、导航 kernel/endpoint、相机和驱动，不能产出
-`teleop_avoid` 的完整进程闭包。它必须按 Product 选择并验证至少以下产物：
+脚本现在从 Product 声明的逻辑进程角色生成构建列表。`teleop_avoid` 会构建
+以下原生运行时：
 
 ```text
 build/livox_sdk2_stream/livox_sdk2_stream
@@ -141,35 +149,43 @@ build/dds_probe/lingtu_dds_probe
 build/nav_endpoint/navd
 build/nav_endpoint/lingtu_traversability_dds
 build/driver/lingtu_driver
+build/native-recording/lingtu_recorder
 ```
 
-相机只应在 Product 声明 `camera` 时构建；`teleop_avoid` 不应无条件构建
-Orbbec。修复前不要把 `deploy_robot.sh` 当成可重复的一键生产部署。
+相机只在 Product 声明 `camera` 时构建；`teleop_avoid` 跳过 Orbbec，`map`
+和 `inspection` 保留相机构建。代码路径和无副作用计划模式已验证，完整原生
+编译仍需在 NX 上执行后才能形成实机部署证据。
 
-### 前置条件 2：固定 Python 3.10+ 解释器
+### 已完成 2：统一 Python 3.10+ 解释器
 
-LingTu 要求 Python 3.10 或更高，但 `deploy_robot.sh` 默认使用 `python3`，
-`lt-host.service` 也把 `LINGTU_PYTHON` 写成 `python3`。必须让构建、
-ProductControl、Host 和诊断命令统一指向 NX 上同一个受控虚拟环境，不能
-依赖系统 Python 版本或交互 shell 的 PATH。
+字段部署入口现在统一解析并验证 `LINGTU_PYTHON`，要求 Python 3.10 或更高，
+且保留虚拟环境的 `bin/python` 路径而不解引用到系统 Python。service 安装器
+把该路径写入 `/opt/lingtu/config/python.env`；Host、Product session guard 和
+Livox 配置生成复用同一解释器。DDS readiness 直接调用原生 probe，不再额外
+启动 `dds_probe.py`。
 
-### 前置条件 3：解除 SLAM 与相机标定的错误耦合
+### 已完成 3：SLAM 与相机标定已解耦
 
-当前启动预检把“启用任意 SLAM profile”同时解释为“必须有相机标定”。
-`teleop_avoid` 明确不使用相机，因此预检必须根据 Product 的真实 camera
-能力决定 `require_camera`，根据 SLAM 决定 `require_slam`，不能把两者绑定。
+启动预检现在仅在语义/相机能力启用时要求相机标定；SLAM profile 只控制
+`require_slam`。`teleop_avoid` 因启用 SLAM 而错误要求相机标定的问题已有
+回归测试覆盖。
 
-### 前置条件 4：提供无运动的物理标定入口
+### 已完成 4：无运动传感采集入口
 
 传感器相关 Product 会在物理标定未批准时 fail closed，但采集静态平面和
-原地旋转证据又需要启动 MID-360/SLAM。需要提供一个明确的无运动标定入口：
+原地旋转证据又需要启动 MID-360/SLAM。专用入口为：
 
-- 只启动或直接运行 LiDAR、IMU、SLAM 和记录工具。
-- 不启动运动驱动，不产生 `rt/nav/cmd_vel`。
-- 输出静态平面、旋转一致性和时间同步证据。
-- 验证通过后才人工更新 `calibration.status: verified`。
+- `scripts/gates/field/go2_mid360_no_motion.sh` 只启动 LiDAR 和 SLAM，并在
+  同一进程内采样 native DDS Topic。
+- 启动前和采样后都拒绝存在 `navd`、`lingtu_driver` 或对应 systemd unit。
+- 必须看到持续点云、IMU、里程计、registered cloud，同时
+  `rt/nav/cmd_vel` 存在探测结果且样本数严格为零。
+- 把生成的 Livox JSON、SLAM 状态、点云快照、日志和 `report.json`
+  保存在独立证据目录，退出时停止两个临时进程。
+- 此 gate 不自动批准物理外参；证据人工确认后才更新
+  `calibration.slam.status: verified`，相机状态不会随之改变。
 
-在这个入口落地之前，不允许用临时修改 `calibration.status` 的方式绕过预检。
+不允许用临时修改 `calibration.slam.status` 的方式绕过预检。
 
 ### 后续隔离项：清理 Go2 机器人配置
 
@@ -219,29 +235,31 @@ ping -c 3 192.168.123.20
 
 ### C. 构建和安装原生服务
 
-在 `deploy_robot.sh` 修复前，使用明确的构建清单：
+先用无副作用模式检查 `teleop_avoid` 的构建计划，再执行部署：
 
 ```bash
-bash scripts/build/build_livox_sdk2_stream.sh
-LINGTU_SLAM_BUILD_DDS_RUNTIME=ON bash scripts/build/build_slam_core.sh
-bash scripts/build/build_mapd.sh
-bash scripts/build/build_dds_probe.sh
-bash scripts/build/build_nav_endpoint.sh
-LINGTU_DRIVER_BACKEND=go2 bash scripts/build/build_driver.sh
-
-# 使用浏览器键盘时还需要 Web 静态资源
-(cd web && npm ci && npm run build)
-
-# 只安装 unit；不要手工启动整组服务
-LINGTU_DRIVER_BACKEND=go2 \
-  bash scripts/deploy/thunder/install_services.sh field-cpp
+LINGTU_DEPLOY_PLAN_ONLY=1 bash scripts/deploy/deploy_robot.sh teleop_avoid
+bash scripts/deploy/deploy_robot.sh teleop_avoid
 ```
 
 `scripts/deploy/thunder/` 是当前共享 field service catalog 的历史目录名，
 并不表示 Go2 运行 Thunder 后端。机器人实现仍由 RobotConfig 和 RunPlan
 选择。
 
-### D. 无运动启动与数据就绪
+### D. 无运动传感链与外参证据
+
+保持 Go2 不动，且不要启动任何 Product：
+
+```bash
+bash scripts/gates/field/go2_mid360_no_motion.sh --seconds 10 --json
+```
+
+通过条件：报告 `ok=true`，四条传感/SLAM Topic 达到最低频率，
+`rt/nav/cmd_vel.samples=0`，SLAM 为 `TRACKING`。随后检查证据目录中的点云
+快照，完成静态地面与旋转一致性记录。该命令不会修改
+`calibration.slam.status`。
+
+### E. Product 无运动启动与数据就绪
 
 完成前置条件 3、前置条件 4 和物理标定后，机器人支撑稳固、周围清空并
 准备物理急停：
@@ -256,6 +274,13 @@ PYTHONPATH=/opt/lingtu/current/src "${LINGTU_PYTHON}" \
 jq . /dev/shm/lingtu/driver_status.json
 jq . /dev/shm/lingtu/nav_endpoint_status.json
 jq . /dev/shm/lingtu/traversability_status.json
+jq . /dev/shm/lingtu/mapd_status.json
+
+# 连续采样地图链路；输出包含 hz、max_gap_s、reset_epoch、sequence、generation 和 live
+build/dds_probe/lingtu_dds_probe --json --seconds 5 \
+  --domain "${LINGTU_DDS_DOMAIN_ID:-0}" \
+  /slam/map_observation /maps/state /maps/local_collision \
+  /maps/occupancy /maps/scene | tee /tmp/go2-mapd-dds.json
 
 # 只读契约 gate：验证 exact RunPlan、角色、topic 和运行策略
 PYTHONPATH=/opt/lingtu/current/src "${LINGTU_PYTHON}" \
@@ -263,7 +288,7 @@ PYTHONPATH=/opt/lingtu/current/src "${LINGTU_PYTHON}" \
   --teleop-avoid-stage contract --strict --pretty \
   --json-out /tmp/go2-teleop-avoid-contract.json
 
-# 只读运动 gate：验证传感新鲜度、InputGate、Go2 控制状态、最终零速和精确 driver ACK
+# 只读运动 gate：验证传感新鲜度、InputGate、Go2 控制状态、最终零速和同源时序关联 driver ACK
 PYTHONPATH=/opt/lingtu/current/src "${LINGTU_PYTHON}" \
   scripts/gates/thunder_service_readiness_collect.py \
   --teleop-avoid-stage motion --strict --pretty \
@@ -281,15 +306,19 @@ SDK2 控制，不会切换到 Thunder/DOSO。两个 gate 都是只读的，不�
   `lt-host` 就绪，`lt-camera` 未被选择。
 - MID-360 点云和 IMU 持续更新。
 - SLAM 处于 `TRACKING`，里程计、registered cloud 和 traversability 新鲜。
+- 连续 10 Hz SLAM 观测期间，`/maps/local_collision` 应接近 10 Hz，至少达到
+  `8 Hz`，且 `max_gap_s <= 0.5`；`/maps/state`、occupancy 和 scene 正常约为
+  `2 Hz`。所有地图输出的 `reset_epoch` 一致，sequence/generation 不倒退。
 - `/nav/cmd_vel` 为零，且只有 `navd` 是最终命令写入者。
 - Go2 驱动报告状态新鲜、SDK2 调用可确认，未出现旧命令恢复。
 - 两份 gate 报告均为 `ok=true`、`blockers=[]`；motion gate 另外必须是
   `nonzero_motion_allowed=true`、`command_published=false` 和
   `authority_acquired=false`。
 
-### E. 开阔区域的限界运动
+### F. 开阔区域的限界运动
 
-先验证停止，再验证运动。操作员必须能直接看到机器人：
+先验证停止，再验证运动。操作员必须能直接看到机器人。首次六方向检查可
+使用下面的短动作工具；持续操控使用 Web 遥控面板：
 
 ```bash
 lingtu-drive forward --speed 0.15 --seconds 1 --robot unitree/go2
@@ -303,7 +332,7 @@ lingtu-drive turn-right --speed 0.20 --seconds 1 --robot unitree/go2
 通过条件：运动连续、不再“走一下停一下”；每次命令结束、页面失焦、断开
 WebSocket 或按 Space 后，都在配置的 deadman/command timeout 内归零。
 
-### F. 单障碍局部绕障
+### G. 单障碍局部绕障
 
 1. 在平整开阔地放置 MID-360 能稳定观测的实体障碍物。
 2. 从障碍物约 2–3 m 前方，以 `0.15–0.20 m/s` 请求向前。
@@ -315,9 +344,41 @@ WebSocket 或按 Space 后，都在配置的 deadman/command timeout 内归零�
 
 - 有安全候选路径时，LocalPlanner 在当前 `2.0 m` horizon 和 `55 deg` 最大
   偏转范围内绕行。
+- 正前方近障进入安全膨胀区、但没有侵入 Go2 物理足迹时，优先生成
+  “侧移 -> 向前越障 -> 回归原意图线”的全向路径；该段保持机身朝向，
+  由 `vy` 完成侧移，不要求先原地转向。
+- 绕行路径在连续控制周期中保持提交状态，直到回归原意图线、操作员改变
+  方向、松开控制或最终安全层否决，不能每周期重新选择一条平行偏移线。
+- 自主导航使用同一全向近障策略；局部路径回归全局路线后继续执行原目标，
+  不因一次近场障碍取消目标。
 - 没有安全候选路径或任一关键数据过期时，最终输出保持零，不允许盲目前进。
-- `teleop_avoid` 不自动倒车、不自动恢复；阻塞时由操作员重新给出意图。
+- 最终安全层是路径执行前的最后否决边界：新障碍、硬地形、真实足迹碰撞或
+  两侧通道都封堵时停车；它不替代 LocalPlanner 生成绕行路径。
+- `teleop_avoid` 不自动倒车；两侧都封堵并停车后，由操作员重新给出意图。
 - 障碍移除后风险栅格能恢复，不留下永久幽灵障碍。
+
+### H. 自主导航恢复旋转（`nav` Product）
+
+这项不是 `teleop_avoid` 的自动行为；必须切换到获批准的 `nav` Product，使用
+低速短目标并由操作员全程看护。先在开阔区域验证左右原地旋转和 Space/取消
+立即归零，再布置“平移候选被封堵、至少一侧旋转走廊开放”的障碍形状。
+
+目标 50 Hz 控制层记录每个 20 ms 样本；若现场版本仍为 20 Hz，则明确按
+实际 50 ms 周期记录，不得把插值结果当作实测。同步记录
+里程计 yaw、`recovery_action`、`recovery_attempt`、
+`recovery_rotation_target_rad`、`recovery_progress`、`recovery_reason`、
+最终 `cmd_vel` 和 driver ACK。通过条件：
+
+- 旋转方向和角度来自已验证的开放走廊，不固定为约 20°；
+- yaw 里程计持续推进，动作完成后立即输出零，并等待新 cloud 与
+  traversability generation 后才重新规划；
+- 若新观测下仍无路径，`recovery_action` 按配置进入下一动作且
+  `recovery_attempt` 单调增加；达到 `max_attempts` 后保持零速并报告耗尽，
+  不能重新从第一个动作无限循环；
+- 旋转期间任何足迹角点障碍、硬地形、地图覆盖不足或数据过期都使最终安全层
+  归零；
+- 记录实际角速度、角加速度、停止延迟和停止后 yaw 超调。当前软件测试覆盖
+  50 Hz 角速度整形与足迹/距离边界，但这些记录仍是 Go2 实机验收必需证据。
 
 ## 8. 最终交付证据
 
@@ -326,7 +387,7 @@ Go2 避障只有在以下证据同时存在时才算完成：
 - 目标 NX 的版本、构建日志和完整原生二进制清单。
 - 激活的 `teleop_avoid` RunPlan 和 product session ID。
 - 网卡、MID-360、Go2 运动主机连通性记录。
-- 安装支架的外参验证记录和 `calibration.status: verified` 审批依据。
+- 安装支架的外参验证记录和 `calibration.slam.status: verified` 审批依据。
 - 无运动 doctor 报告。
 - 开阔地六方向限界运动记录及全部停止场景。
 - 单障碍绕行、无路可走时零输出、障碍清除后的恢复记录。

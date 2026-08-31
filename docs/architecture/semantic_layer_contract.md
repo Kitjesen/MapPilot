@@ -30,8 +30,8 @@ inside `PerceptionModule`, not peer layers in the default full-stack runtime.
 
 ## Capability Components
 
-`DetectorModule` and `EncoderModule` remain valid standalone modules for
-experiments and isolated tests. They are not the default full-stack path.
+`DetectorModule` remains available for isolated detector experiments.
+Encoding used by Products stays inside `PerceptionModule`.
 
 `PerceptionModule` owns the production scene-perception pipeline:
 
@@ -94,12 +94,10 @@ natural-language instruction
 ```
 
 The tracker already computes hierarchical `floors`, `rooms`, and
-`topology_edges`, and object/tagged-location goals can preserve XYZ. A ROS-free
-building mission core now exists under `src/nav/building/`, including explicit
-lift transition, active-map switching, native relocalization, and target-floor
-verification gates. The current production `SceneGraph` boundary and
-semantic-memory topology still do not preserve and route the complete
-floor/connector model, and no site lift adapter is configured. Therefore
+`topology_edges`, and object/tagged-location goals can preserve XYZ. The current
+production `SceneGraph` boundary and semantic-memory topology do not preserve
+and route the complete floor/connector model, and no site lift adapter is
+configured. Therefore
 instructions such as "go to the second-floor meeting room" are still not an
 enabled product capability today.
 

@@ -36,13 +36,22 @@ SKIP_PARTS = {
 EXCLUDED_MARKDOWN_PREFIXES = (
     ROOT / "src" / "drivers" / "real" / "camera" / "deps",
     ROOT / "src" / "drivers" / "real" / "lidar" / "deps",
+    ROOT / "tools" / "calibration" / "camera_lidar",
+    ROOT / "tools" / "calibration" / "lidar_imu" / "LiDAR_IMU_Init",
 )
 FORBIDDEN_DOC_DIRS = (
     ROOT / "docs" / "archive",
     ROOT / "docs" / "references",
     ROOT / "docs" / "superpowers",
 )
-ALLOWED_PLAN_FILES = {"README.md", "current-roadmap.md"}
+ALLOWED_PLAN_FILES = {
+    "README.md",
+    "current-roadmap.md",
+    "message-dds-cleanup.md",
+    "robot-mounted-weapon-gameplay-tdd.md",
+    "sensor-noise-injection-tdd.md",
+    "ue5-playable-vertical-slice.md",
+}
 STATUS_RE = re.compile(r"^(?:Status|状态)\s*[:：]", re.IGNORECASE)
 DATE_RECORD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:-|\.md$)")
 INLINE_LINK_RE = re.compile(r"!?\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+['\"][^)]*['\"])?\s*\)")

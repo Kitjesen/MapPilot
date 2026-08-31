@@ -1,31 +1,41 @@
 # tools/ - developer utilities
 
-`tools/` only holds developer-side utilities: validation, benchmarks, model
-conversion, offline reconstruction, and one-shot packaging.
+`tools/` holds one-shot developer and operator utilities: validation,
+calibration, diagnostics, release maintenance, and robot setup.
 
 It is not a robot runtime entrypoint and not a systemd service directory.
-Long-running commands, build/deploy/OTA flows, and field operations belong
-under `scripts/`; runtime code belongs under `src/`.
+Build, release installation, and Product lifecycle entrypoints belong under
+`scripts/`; runtime code belongs under `src/`.
 
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
-| `bench/` | Native kernel, PCT/GPMP, pose graph, and camera-LiDAR parity/benchmark scripts. |
+| `bench/` | Native navigation, pose-graph, and camera-LiDAR parity/benchmark scripts. |
 | `calibration/` | Offline sensor calibration, result application, and configuration verification tools. |
+| `datasets/` | Offline SLAM dataset capture and conversion. |
+| `deploy/` | Workstation helpers for updating a robot checkout. |
+| `diagnostics/` | Read-only field comparison and inspection tools. |
+| `docs/` | Documentation generation helpers. |
+| `maps/` | Optional saved-map cleanup and comparison tools. |
 | `perception/` | BPU model export and ONNX-to-HBM conversion. |
 | `reconstruction/` | Offline 3D reconstruction and recorded dataset replay helpers. |
-| `validate/` | Static contract validators for config, topics, architecture, packages, and migration gates. |
-| `package_lite.py` | `lite` Profile package builder; runs its validator first. |
+| `release/` | Repository release metadata maintenance. |
+| `robot/` | One-shot robot hardware and network setup tools. |
+| `simstudio/` | Local simulation authoring and run-inspection application; not a robot Product. |
+| `validate/` | Static contract validators for config, topics, architecture, and migration gates. |
+| `visualization/` | Rerun viewers for Gateway and native DDS streams. |
+
+`scaffold_robot.py` creates a new vendor/model configuration skeleton; it is a
+developer tool, not a runtime loader.
 
 Generated code, caches, and long-running robot services do not belong here.
-Protobuf generation belongs under `scripts/proto/`; Python bytecode caches stay
-untracked.
+Python bytecode caches stay untracked.
 
 ## Common Commands
 
 ```bash
-# robot_config.yaml structure validation
+# selected RobotConfig structure validation
 python tools/validate/validate_config.py
 
 # Offline sensor calibration result application and verification
@@ -35,15 +45,14 @@ python tools/calibration/verify.py
 # Topic contract validation
 python tools/validate/validate_topics.py
 
-# Product, Host, and package boundary validation
+# Product and Host boundary validation
 python tools/validate/validate_architecture_boundaries.py
-
-# `lite` Profile package contract + package build
-python tools/validate/validate_lite_package.py
-python tools/package_lite.py --output artifacts/lite-package --force
 
 # Thunder field native DDS / systemd deployment contract
 python tools/validate/validate_real_deployment.py
+
+# Local simulation authoring UI/API
+python -m tools.simstudio
 
 # YOLO-World -> ONNX -> BPU
 python tools/perception/export_yoloworld_bpu.py

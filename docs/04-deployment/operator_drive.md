@@ -1,15 +1,40 @@
-# Bounded Operator Drive
+# Operator Teleop
 
-`lingtu-drive` is the short operator command for a supervised motion check. It
-keeps `lingtu_nav_control` as an internal native tool and sends every request
-through the active LingTu `teleop` or `teleop_avoid` Product:
+The Web Teleop panel is the normal interactive keyboard controller. Start either
+`teleop` for direct operator control or `teleop_avoid` for operator control with
+live local avoidance, then open the Web scene and press **连接**.
+
+- Hold `W/S` to move forward/backward, `A/D` to move laterally, and `Q/E` to turn.
+- Hold `Shift` for 40% precision speed.
+- Release the last movement key or press `Space` / **保持** to publish hold.
+- Press **断开** when this browser should stop owning the Web control session.
+  A new direction input after **保持** automatically reclaims native authority;
+  there is no Web-facing Lease, heartbeat, CLAIM, epoch, or “恢复控制” operation.
+- Page blur, page hide, disconnect, and closing the panel also publish hold.
+
+The native one-second authority timeout remains a fail-safe inside `navd`: if
+velocity samples stop, `navd` publishes zero. Gateway renews or recreates that
+native authority only when the same connected browser sends a fresh movement
+input, so an idle browser sends no control traffic. The Web client refreshes a
+missing teleop bootstrap while a teleop Product is active and reconnects after
+a Host/WebSocket restart; a connection owned by another browser requires an
+explicit retry instead of an automatic retry loop.
+
+The Web panel publishes active operator samples at 50 Hz. The native navigation
+and safety loop consumes them at 20 Hz; the robot driver keeps its own 50 Hz
+control loop. A Gateway ingress acknowledgement means the intent was queued,
+not that the final velocity or motor command executed.
+
+`lingtu-drive` is not a second teleop UI. It is a bounded command for one
+supervised motion check and sends every request through the active `teleop` or
+`teleop_avoid` Product:
 
 ```text
 lingtu-drive
   -> typed operator-motion request
   -> navd arbitration and final safety
   -> rt/nav/cmd_vel
-  -> lingtu_driver
+  -> lingtu-driver
   -> selected robot adapter
 ```
 
@@ -58,10 +83,8 @@ Supported directions are:
 forward  backward  left  right  turn-left  turn-right
 ```
 
-The Product lifecycle lock covers the exact RunPlan read and native operator
-claim. It is released as soon as the caller observes claim confirmation and
-does not span the bounded motion or cleanup, so a lifecycle `stop` remains
-available. The native client streams at 20 Hz, then sends hold and release
-before returning success. A non-teleop Product, rejected typed ACK, missing
-native client, excessive speed, admission timeout, or cleanup failure returns
-nonzero.
+The command reads the active Product limits, claims native operator control,
+streams at 50 Hz, then sends hold and release before returning success. The
+claim does not block a Product `stop`. A non-teleop Product, rejected typed ACK,
+missing native client, excessive speed, admission timeout, or cleanup failure
+returns nonzero.

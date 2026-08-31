@@ -17,8 +17,11 @@ It is not an architecture or runtime contract.
 | `docs/api/` | Generated API inventories and generation instructions. | Hand-maintained API snapshots. |
 | `docs/plans/` | The single active roadmap. | Completed plans or historical PRDs. |
 | `docs/research/` | Upstream reviews, algorithm investigations, and migration studies. | Product claims or acceptance evidence. |
-| `docs/07-testing/` | Executable acceptance definitions and reusable checklists. | One-off design proposals. |
-| `docs/07-testing/field-runs/` | Immutable, date-prefixed run evidence. | Current backlog or architecture truth. |
+| `docs/07-testing/` | Validation index plus reader-facing guide. | Unclassified gates, executable scripts, or one-off proposals. |
+| `docs/07-testing/field/` | Reusable real-robot and target-compute gates. | Dated results or simulation contracts. |
+| `docs/07-testing/simulation/` | Reusable simulator gates and fidelity contracts. | Field-readiness claims. |
+| `docs/07-testing/field-runs/` | Immutable, date-prefixed validation evidence. | Reusable gates, current backlog, or architecture truth. |
+| `scripts/gates/field/`, `scripts/gates/simulation/` | Executable validation procedures. | Prose-only acceptance definitions. |
 
 Package-local `README.md` files explain only that package's public boundary,
 build, and focused tests. They link to central contracts instead of copying
@@ -56,6 +59,14 @@ Moved without changing their conclusions:
 - upstream and algorithm investigations into `docs/research/`;
 - reusable semantic-memory validation into `docs/07-testing/`;
 - dated MuJoCo policy evidence into `docs/07-testing/field-runs/`.
+
+## Cleanup Performed On 2026-08-23
+
+- grouped reusable field and simulation gates under dedicated indexes;
+- moved executable P0 and simulation wrapper scripts from `docs/` to
+  `scripts/gates/`;
+- moved contributor commit/push policy to `docs/03-development/`;
+- moved the undated native endpoint checklist out of the dated evidence folder.
 
 ## Placement Checklist
 

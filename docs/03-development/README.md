@@ -9,7 +9,7 @@ correct change, and collect evidence at the right level.
 > **Audience:** Contributors, maintainers, and integration engineers<br>
 > **Runs on:** Local development hosts, simulations, and field-targeted builds
 > **Prerequisite:** Read [Core concepts](../02-concepts/README.md) before
-> changing Module wiring, transports, profiles, or backends.
+> changing Module wiring, transports, Products, or backends.
 
 ## Start from the requested outcome
 
@@ -19,14 +19,15 @@ in the wrong layer is still a maintenance problem.
 | Requested change | Primary owner | Typical supporting surface |
 | --- | --- | --- |
 | New runtime lifecycle or typed port behavior | `src/runtime/` | Runtime unit tests and a Blueprint/wire change if the graph changes. |
-| Local Profile composition, Product declarations, or runtime defaults | `src/runtime/profiles/`, `config/runtime_graph/products/`, and `src/lingtu/assembly/` | Profile graph snapshots, Product resolution, and resolver tests. |
-| Navigation mission, goals, global/local planning, safety, or velocity policy | `src/nav/` | Maps/localization contracts and navigation tests. |
+| Product declarations or runtime defaults | `config/runtime_graph/products/` and `src/lingtu/assembly/` | Product resolution and focused compiler tests. |
+| Navigation commands, goals, Agent skills, inspection, or building flow | `src/nav/commands/`, `src/nav/services/`, `src/nav/skills/`, `src/nav/inspection/`, or `src/nav/building/` | Typed native-client and Host wiring tests. |
+| Global/local planning, tracking, recovery, or final motion safety | `src/nav/cpp/` | Native CMake tests plus Host/native boundary tests. |
 | Saved maps, map artifacts, or persistent map lifecycle | `src/maps/` | Map service/artifact contract and no-motion validation. |
 | Perception, semantic reasoning, LLM, memory, or visual servo behavior | `src/perception/`, `src/decision/`, or `src/memory/` | Runtime messages and explicit full-stack wires. |
 | Device SDK, robot connection, camera/LiDAR/IMU source | `src/drivers/` or a native endpoint | Explicit hardware/DDS adapter contract. |
 | Localization/SLAM behavior or native localization status | `src/localization/` | Native endpoint/service contract and frame validation. |
 | REST, SSE, WebSocket, MCP, or dashboard API behavior | `src/gateway/` | Typed request/status contract; never planner internals. |
-| C++ hot-path algorithm | `src/nav/cpp/`, `src/nav/services/plan/`, or the owning native package | CMake/native tests plus Python boundary tests. |
+| C++ hot-path algorithm | `src/nav/cpp/` or the owning native package | CMake/native tests plus Python boundary tests. |
 
 The repository map in [REPO_LAYOUT.md](../REPO_LAYOUT.md) is the authoritative
 directory index. Package-level READMEs are the first source for local ownership:
@@ -66,8 +67,8 @@ The detailed source-of-truth documents are the
 Use this sequence for ordinary changes. It prevents architecture drift while
 keeping the diff small and reviewable.
 
-1. **Name the user-visible contract.** State what input, output, local Profile,
-   Product, or safety behavior changes. Identify whether it is local,
+1. **Name the user-visible contract.** State what input, output, Product, or
+   safety behavior changes. Identify whether it is local,
    simulation-only, or affects the field `env=real` RunPlan.
 2. **Find the current owner.** Read the package README, current architecture
    contract, and existing tests before adding an abstraction or import.
@@ -98,19 +99,16 @@ test as proof of field safety. Those are different claims with different gates.
 ### Runtime and product assembly
 
 `src/runtime/` owns the small shared framework: `Module`, `In`/`Out`,
-`Blueprint`, the registry, shared messages, transport abstractions, profile
-resolution, and graph introspection. It must stay free of navigation policy,
+`Blueprint`, the registry, shared messages, transport abstractions, and graph
+introspection. It must stay free of navigation policy,
 device SDK behavior, gateway routes, and ROS-node business logic.
 
-For a profile-driven change, trace this path:
+For a Product change, trace this path:
 
 ```text
-runtime/profiles/catalog/       local Profiles and Host defaults
-  -> runtime/profiles/resolver.py
-                               resolve local Profile configuration
-  -> config/runtime_graph/products/ + envs/
+config/runtime_graph/products/ + envs/
                                resolve Product + env into RunPlan
-  -> lingtu/assembly/profile_builder.py
+  -> lingtu/assembly/compiler.py
                                select product Blueprint and validate route contract
   -> lingtu/assembly/products/
                                product-level Module composition
@@ -120,15 +118,15 @@ runtime/profiles/catalog/       local Profiles and Host defaults
                                explicit critical connections
 ```
 
-`profile_builder.py` is the normal profile-to-Blueprint entry point used by the
-CLI, SDK, smoke tests, and robot-side startup. Do not introduce a parallel
+`compiler.py` is the Product-to-RunPlan entry used by ProductControl and
+robot-side startup. Do not introduce a parallel
 "special" builder for a new product feature.
 
 ### Domain packages
 
 | Package | Owns | Must not absorb |
 | --- | --- | --- |
-| `src/nav/` | Mission state, goals, planning dispatch, local autonomy, safety, velocity arbitration, exploration integration. | Gateway/UI logic, device SDKs, perception/decision implementation. |
+| `src/nav/` | Host commands, goals, skills, inspection/building facades, native adapters, and the native C++ navigation implementation. | Gateway/UI logic, device SDKs, perception/decision implementation. |
 | `src/maps/` | Map packages, artifacts, map queries/control, and saved-map lifecycle. | Per-tick navigation policy or gateway presentation. |
 | `src/perception/` | Detection, encoding, tracking, reconstruction, scene products. | Navigation mission decisions or robot drivers. |
 | `src/decision/` | Goal resolution, LLM tools, semantic planning, visual servo intent. | Direct driver control or navigation implementation imports. |
@@ -208,8 +206,8 @@ for the behavior of `SystemHandle` and `In` policies.
 
 ### 3. Place the Module in the graph
 
-Adding a Python class alone does not make it product behavior. Place it through
-the existing profile/product/stacks/wires path and give every critical input
+Adding a Python class alone does not make it Product behavior. Place it through
+the existing Product/assembly/stacks/wires path and give every critical input
 and output an explicit wire.
 
 ```python
@@ -225,11 +223,11 @@ graph snapshots, diagnostics, and external contracts can rely on it.
 ### 4. Test the behavior and the wiring separately
 
 Test a Module's decision logic with direct `runtime.msgs` values or its input
-port. Test product graph selection and critical wires through the owning
-Blueprint/profile tests. This keeps a failure actionable: either the Module is
+port. Test Product graph selection and critical wires through the owning
+assembly tests. This keeps a failure actionable: either the Module is
 wrong, or the graph is wrong.
 
-## Change Blueprint, profiles, or wires
+## Change Products, Blueprints, or wires
 
 ### Blueprint rules
 
@@ -244,22 +242,17 @@ For a graph change:
 2. Reuse or extend a small factory in `stacks/` for a reusable Module group.
 3. Add critical cross-stack data flow in `wires/` rather than a constructor
    lookup or a new direct import.
-4. Add/adjust a graph snapshot or targeted wire test.
-5. Confirm the selected profile does not create duplicate hardware, sensor, or
+4. Add/adjust a targeted graph or wire test.
+5. Confirm the selected Product does not create duplicate hardware, sensor, or
    command owners.
 
 `Blueprint.auto_wire()` is only a convenience for unique same-name,
 same-type matches. Use explicit `wire()` calls for safety, command, map,
 localization, external-boundary, and ambiguous connections.
 
-### Profiles are local configuration, not Product identity
-
-Local Profile resolution applies local defaults and explicit overrides for
-development Host runs. Field operation uses Product + env resolution instead:
+### Products resolve inside one env
 
 ```text
-local Profile -> Host defaults -> explicit local overrides
-
 Product + env -> RunPlan -> ProductControl -> systemd
 ```
 
@@ -272,59 +265,45 @@ Module branch on simulator/ROS/DDS details.
 Current Thunder field command ownership is:
 
 ```text
-lingtu-nav-dds -> /nav/cmd_vel -> lingtu-driver -> remote Brainstem gRPC
+lt-nav -> /nav/cmd_vel -> lingtu-driver -> remote Brainstem gRPC
 ```
 
-`lingtu-driver.service` conflicts with legacy Python Thunder DDS endpoint
+`lt-driver.service` conflicts with legacy Python Thunder DDS endpoint
 units by design. A different physical command writer or a localhost Brainstem
 target is an architecture change, not an ordinary development shortcut.
-
-Use canonical profile names in new code and docs. Discover the current catalog
-instead of maintaining copied lists:
-
-```bash
-uv run --locked python lingtu.py --list
-uv run --locked python lingtu.py --list --all
-```
 
 For field-side resolution evidence, use the operations CLI's non-motion
 inspection surface:
 
 ```bash
-python -m lingtu.control switch nav --env real --map MAP_NAME --dry-run --json
-bash scripts/lingtu runtime-contract --json
-bash scripts/lingtu runtime-audit --json
+python -m lingtu.control switch nav --robot unitree/go2 --env real --map MAP_NAME --dry-run --json
+python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
+python tools/validate/validate_architecture_boundaries.py
+python tools/validate/validate_topics.py
 ```
 
-These commands describe and validate the selected contract; they are not a
+These commands describe the selected Product and validate its repository contracts; they are not a
 replacement for a field-readiness or motion authorization gate.
 
 ### Route contracts do not silently change local delivery
 
 Use `Blueprint.route_contract(...)` to declare external topic/schema ownership
-for a graph. It is metadata and validation; it does not make every Module port
-use DDS. Use `Blueprint.routed_delivery(...)` only for an intentional,
-explicitly topiced transport move that has a schema/QoS/ownership rationale.
+for a graph. It is metadata and validation; it never changes Module delivery.
 
 The default physical field runtime is a typed native DDS endpoint boundary.
 Do not model it by adding generic `delivery="dds"` to ordinary navigation wires.
-The exact policy is in [`src/runtime/transport/README.md`](../../src/runtime/transport/README.md)
+The exact policy is in [runtime bus decision](../architecture/LINGTU_RUNTIME_BUS_DECISION.md)
 and [Native runtime](../architecture/NATIVE_RUNTIME.md).
 
 ## Add a selectable backend
 
-Use the registry and the owning factory when an implementation is intentionally
-pluggable. A registry entry is not enough by itself; the factory, catalog,
-configuration, and tests must agree on the stable interface.
+Use the registry and the owning factory when a Host implementation is
+intentionally pluggable. A registry entry is not enough by itself; the factory,
+catalog, configuration, and tests must agree on the stable interface.
 
-```python
-from runtime.registry import register
-
-
-@register("local_planner", "my_backend", description="Example backend")
-class MyLocalPlanner:
-    ...
-```
+Native global and local planners are not Python registry plugins. Select their
+supported backend in the Product's `native_nav` declaration and implement the
+backend behind the native C++ planner interface in `src/nav/cpp/`.
 
 Before registering a backend, answer:
 
@@ -333,7 +312,7 @@ Before registering a backend, answer:
 | What stable interface does the owner call? | Name the protocol/methods and error behavior. |
 | Which category and canonical name identify it? | Reuse an existing category unless a new domain contract is justified. |
 | Where is it seeded/resolved? | Identify the owning stack/factory or runtime registration path. |
-| Which profiles may select it? | Make capability/platform restrictions explicit. |
+| Which Products may select it? | Make capability/platform restrictions explicit. |
 | Can it switch at runtime? | Assume no; `reconfigure_backend()` is fail-closed unless explicitly implemented and tested. |
 | How is it validated? | Add contract and selected-backend tests, then the relevant performance/native gate. |
 
@@ -371,10 +350,9 @@ connecting it to a Product/env declaration:
 - QoS/backpressure and startup ordering;
 - error, timeout, stale-data, and restart behavior;
 - safety consequences and whether the boundary can influence motion;
-- local Profile or Product/env selection and diagnostic evidence.
+- Product/env selection and diagnostic evidence.
 
-Use the [transport guide](../../src/runtime/transport/README.md),
-[runtime bus decision](../architecture/LINGTU_RUNTIME_BUS_DECISION.md), and
+Use the [runtime bus decision](../architecture/LINGTU_RUNTIME_BUS_DECISION.md) and
 [topic/frame contracts](../architecture/TOPIC_CONTRACT_POLICY.md) as design
 inputs. Do not add a dependency just to make a boundary easier to prototype.
 
@@ -397,11 +375,11 @@ Navigation changes deserve an extra ownership review. The normal flow is:
 
 ```text
 external intent
-  -> goal service / Navigation
-  -> global plan
-  -> local planning and path following where the selected local Profile or Product RunPlan owns them
-  -> velocity arbitration and safety gate
-  -> selected native endpoint or driver boundary
+  -> Host navigation command/goal/skill surface
+  -> typed native command
+  -> navd: global planning -> local planning -> tracking -> final safety
+  -> /nav/cmd_vel
+  -> driver
 ```
 
 Do not bypass an earlier stage because an API already has coordinates or a
@@ -410,7 +388,7 @@ velocity-shaped value. In particular:
 - Gateway, MCP, web, semantic planner, and visual servo code submit intent to
   the correct command/goal surface.
 - Global planning produces a path, not `cmd_vel`.
-- Any velocity source uses the designated mux/safety path.
+- Operator motion uses the native operator-motion command boundary.
 - Field native navigation preserves one final command writer.
 - Map frame, artifact provenance, localization freshness, and safety state
   remain input gates rather than optional diagnostics.
@@ -424,7 +402,7 @@ changing mission, map, planning, or safety code.
 
 - Put durable robot/device calibration and product configuration in the
   existing `config/` sources. Do not copy hardware addresses or credentials
-  into Python code, docs, or profile defaults.
+  into Python code, docs, or duplicate defaults.
 - Keep API keys in environment variables; use the documented mock backend for
   deterministic/offline development.
 - Treat a saved map as a package with provenance and planner artifacts, not a
@@ -442,7 +420,7 @@ when a dependency requires it.
 | Change | Minimum fresh evidence |
 | --- | --- |
 | `Module`, port, stream policy, registry, or runtime helper | Focused test in the owning package; for core runtime changes, start with `python -m pytest src/runtime/tests/test_runtime.py src/runtime/tests/test_registry.py -q`. |
-| Stack factory, wire, profile resolver, or product graph | Targeted runtime tests such as `python -m pytest src/runtime/tests/test_stack_registry_resolution.py -q` and the relevant profile graph snapshot test. |
+| Stack factory, wire, Product compiler, or Product graph | Targeted assembly and graph tests for the changed Product. |
 | Navigation/domain behavior | Focused `src/nav/tests/` test, then a wider navigation test only if the changed contract spans the package. |
 | C++ hot path | Owning CMake build/test target plus a Python boundary/contract test if exposed to Python. |
 | Map artifact or planner integration | Saved-map artifact gate in the relevant environment. |
@@ -453,16 +431,16 @@ when a dependency requires it.
 Useful contract checks include:
 
 ```bash
-python -m pytest src/runtime/tests/test_profile_graph_snapshots.py::test_product_modes_required_wires_are_contract_locked -q
+python -m pytest src/lingtu/assembly/tests/test_compile.py -q
 python -m pytest src/nav/tests/ -q
 ```
 
 For field-side, non-motion diagnosis use:
 
 ```bash
-bash scripts/lingtu doctor --non-motion --json --strict
-bash scripts/lingtu soak --duration 120 --interval 2 --json --strict
-bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
+PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
+PYTHONPATH=src python scripts/diagnostics/soak.py --duration 120 --interval 2 --json --strict
+python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy
 ```
 
 Only run a command that changes a robot session, sends a goal, publishes a
@@ -483,7 +461,7 @@ Before asking for review or declaring a change complete, confirm:
 - [ ] Field command ownership is unchanged unless the task explicitly changes
       it and includes safety evidence.
 - [ ] Backend selection goes through the owning registry/factory.
-- [ ] Tests cover both changed behavior and graph/profile selection where
+- [ ] Tests cover both changed behavior and Product/graph selection where
       relevant.
 - [ ] Any limitation is documented as a limitation, not implied away by a
       local or simulation pass.
@@ -499,6 +477,7 @@ Before asking for review or declaring a change complete, confirm:
 | Current runtime architecture contracts | [Architecture index](../architecture/README.md) |
 | Navigation, planning, map, and safety boundaries | [Task guides](../05-guides/README.md) |
 | Native-first field diagnostics and explicit ROS compatibility | [Troubleshooting](./TROUBLESHOOTING.md) |
+| Commit and push acceptance | [Commit and push policy](./COMMIT_PUSH_POLICY.md) |
 | Deployment services and operator actions | [Deployment](../04-deployment/README.md) |
 | Tests, simulation closure, and field evidence | [Testing and validation](../07-testing/README.md) |
 | REST, MCP, and interface inventory | [Reference](../08-reference/README.md) |

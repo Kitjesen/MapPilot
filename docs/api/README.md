@@ -16,8 +16,8 @@ or tool counts.
 ## Regenerate
 
 ```bash
-python scripts/docs/extract_api_docs.py
-python scripts/docs/extract_api_docs.py --check
+python tools/docs/extract_api_docs.py
+python tools/docs/extract_api_docs.py --check
 ```
 
 ## Runtime boundary

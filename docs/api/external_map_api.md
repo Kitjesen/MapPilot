@@ -37,7 +37,7 @@ X-API-Key: <secret>
 
 ```bash
 sudo bash /opt/lingtu/current/scripts/deploy/thunder/configure_gateway_api_key.sh
-bash /opt/lingtu/current/scripts/lingtu --env real svc restart host
+sudo systemctl restart lt-host.service
 ```
 
 脚本使用 Python `secrets` 分别生成两组 48 字节随机值，并按最小权限分别写入：
@@ -47,13 +47,15 @@ bash /opt/lingtu/current/scripts/lingtu --env real svc restart host
 /etc/lingtu/map-client.env  root:sunrise 0640  LINGTU_MAP_API_KEY only
 ```
 
-`gateway.env` 只保存管理员密钥，客户程序和地图 CLI 不得读取它。`map-client.env` 只保存地图权限密钥；Sunrise 上的 `scripts/lingtu` 在 `env=real` 时从该文件读取凭据，外部客户程序则通过安全交付得到同一类地图密钥并存入自己的 secret manager。脚本不会打印密钥；发现旧版把两把密钥写在 `gateway.env` 时，会把地图密钥迁入独立文件。物理 `env=real` Product 缺少必要凭据时仍然 fail closed。
+`gateway.env` 只保存管理员密钥，客户程序不得读取它。`map-client.env`
+只保存地图权限密钥；外部客户程序通过安全交付得到地图密钥并存入自己的
+secret manager。配置脚本不会打印密钥。
 
 只轮换交给客户程序的地图 key（不会影响设备运维 key）：
 
 ```bash
 sudo bash /opt/lingtu/current/scripts/deploy/thunder/configure_gateway_api_key.sh --rotate-map
-bash /opt/lingtu/current/scripts/lingtu --env real svc restart host
+sudo systemctl restart lt-host.service
 ```
 
 `--rotate-map` 只更新 `/etc/lingtu/map-client.env`，不会改变管理员 `gateway.env`。轮换后应通过客户认可的安全渠道交付新地图密钥；客户端和地图 CLI 仍不得读取管理员文件。
@@ -62,10 +64,10 @@ bash /opt/lingtu/current/scripts/lingtu --env real svc restart host
 
 ```bash
 sudo bash /opt/lingtu/current/scripts/deploy/thunder/configure_gateway_api_key.sh --rotate
-bash /opt/lingtu/current/scripts/lingtu --env real svc restart host
+sudo systemctl restart lt-host.service
 ```
 
-重启后被轮换的旧 key 立即失效。地图 key 应通过客户认可的安全渠道交付，并存入客户后端的 secret manager 或不进 Git 的私密环境文件。不要把长期有效的 key 写进网页 JavaScript、手机 App 安装包、源码、URL 查询参数、浏览器历史、截图或日志。浏览器接入时，推荐由客户自己的后端代为调用机器人；需要多用户登录、审计或公网访问时，应在 Gateway 前增加客户的身份网关，而不是给每位用户复制设备管理员 key。
+重启 Host 后，被轮换的旧 key 立即失效。地图 key 应通过客户认可的安全渠道交付，并存入客户后端的 secret manager 或不进 Git 的私密环境文件。不要把长期有效的 key 写进网页 JavaScript、手机 App 安装包、源码、URL 查询参数、浏览器历史、截图或日志。浏览器接入时，推荐由客户自己的后端代为调用机器人；需要多用户登录、审计或公网访问时，应在 Gateway 前增加客户的身份网关，而不是给每位用户复制设备管理员 key。
 
 ## 2. 客户端连接
 
@@ -95,7 +97,7 @@ curl -fsS \
   "${LINGTU_GATEWAY}/api/v1/slam/maps"
 ```
 
-响应包括 `maps`、`count` 和 `active`。调用方应检查每张地图的 `navigation_ready` 和 `state`，不能只根据名称判断地图能否用于导航。响应不会暴露 Sunrise 的地图目录、artifact 文件路径或隐藏维护目录。
+响应包括 `maps`、`count` 和 `active`。调用方应检查每张地图的 `activation_ready` 和 `state`，不能只根据名称判断地图产物能否激活。`activation_ready` 只表示 `map.pcd`、规划 artifact 和 `metadata.json` 已具备，不表示定位、传感器、控制链或运行时导航已经就绪。响应不会暴露 Sunrise 的地图目录、artifact 文件路径或隐藏维护目录。
 
 ### 提交保存地图
 
@@ -105,14 +107,18 @@ Content-Type: application/json
 
 {
   "name": "warehouse",
-  "optimization": "auto",
   "request_id": "01K1M9S4FX27T8XMY6QJNBAV3W"
 }
 ```
 
 - `name` 可省略，由服务端生成。
-- `optimization` 支持 `auto`、`pgo`、`hba`、`none`。
 - `request_id` 由调用方稳定生成。同一次业务请求发生网络重试时必须复用同一个 ID；新接入程序应使用 26 字符大写 ULID，LingTu SDK 会自动生成。
+- HTTP 不暴露 loop、PGO 或 HBA 参数。Fast-LIO2 捕获只冻结地图、位姿、body-local
+  patches 与 manifest；SaveMap 在完整 patch bundle 上自动调用 native
+  `lt_pgo --auto-constraints`。只有完整相邻链和至少一个可信 loop 同时存在时才优化；
+  否则保留 raw source，并在 `map_optimization.json` 中记录具体 skip code。
+  `pose_graph.constraints` 是优化器私有临时输入，不是 API 输出。旧 ROS2 PGO/HBA
+  不在运行时链路中；现场回环质量与 S100P 性能尚未验收。
 
 ```bash
 curl -fsS -X POST \
@@ -120,7 +126,6 @@ curl -fsS -X POST \
   -H 'Content-Type: application/json' \
   --data '{
     "name": "warehouse",
-    "optimization": "auto",
     "request_id": "01K1M9S4FX27T8XMY6QJNBAV3W"
   }' \
   "${LINGTU_GATEWAY}/api/v1/map/save"
@@ -174,30 +179,17 @@ curl -fL \
   "${LINGTU_GATEWAY}/api/v1/maps/warehouse/pcd"
 ```
 
-这是二进制流，不要按 JSON 解析。成功响应包含 `Content-Length`，可用时还包含基于 SHA-256 的 `ETag`。PCD 下载响应不包含、客户端也不得依赖 Sunrise 地图文件路径。
+这是二进制流，不要按 JSON 解析。成功响应包含 `Content-Length`。PCD 下载响应不包含、客户端也不得依赖 Sunrise 地图文件路径。
 
 ## 4. 现场地图切换
 
-旧接口 `POST /api/v1/map/activate` 只保留给本地开发/模拟兼容路径。ProductControl 管理的现场 Product 调用它会返回：
-
-```json
-{
-  "ok": false,
-  "success": false,
-  "reason_code": "product_map_switch_required",
-  "requested_map": "warehouse",
-  "switch_plan": "/api/v1/runtime/switch-plan",
-  "operator_command": "python -m lingtu.control switch nav --env real --current map --map warehouse --relocalize"
-}
-```
-
-这是刻意的安全边界。现场切图同时涉及停车、旧 Product 退出、地图身份、定位、规划进程和 readiness，必须由 ProductControl 完成。`switch_plan` 只用于无副作用预览；实际操作必须在机器人上执行响应中的精确 `operator_command`。例如：
+Gateway 不提供独立的地图激活或恢复接口。切图同时涉及旧 Product 退出、地图身份、定位、规划进程和 readiness，统一由 ProductControl 完成：
 
 ```bash
-python -m lingtu.control switch nav --env real --current map --map warehouse --relocalize
+python -m lingtu.control switch nav --robot unitree/go2 --env real --map warehouse --relocalize
 ```
 
-合作方不得通过 Gateway 远程执行 Product 切换，也不得直接修改 active map。需要切图时，由获授权的操作者执行 ProductControl 命令，再重新查询 readiness。
+合作方不得通过 Gateway 直接修改 active map。需要切图时，由获授权的操作者执行 ProductControl 命令，再重新查询 readiness。
 
 ## 5. 错误处理
 
@@ -239,7 +231,6 @@ robot = LingTuClient(
 
 result = robot.save_map_and_wait(
     "warehouse",
-    optimization="auto",
     timeout=300,
 )
 

@@ -15,6 +15,7 @@ from urllib.parse import unquote
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DOCS_ROOT = REPOSITORY_ROOT / "docs"
+VALIDATION_ROOT = DOCS_ROOT / "07-testing"
 
 LANDING_PAGES = (
     DOCS_ROOT / "README.md",
@@ -82,6 +83,26 @@ def _has_exact_local_path_case(source: Path, target: str) -> bool:
 def test_curated_documentation_landing_pages_exist() -> None:
     missing = [path.relative_to(REPOSITORY_ROOT).as_posix() for path in LANDING_PAGES if not path.is_file()]
     assert not missing, f"missing documentation landing pages: {missing}"
+
+
+def test_validation_documentation_has_one_routing_level() -> None:
+    top_level_markdown = {path.name for path in VALIDATION_ROOT.glob("*.md")}
+    assert top_level_markdown == {"README.md", "WEB_GUIDE.md"}
+    assert not list(VALIDATION_ROOT.glob("*.sh")), (
+        "executable validation procedures belong under scripts/gates"
+    )
+
+    expected_indexes = (
+        VALIDATION_ROOT / "field" / "README.md",
+        VALIDATION_ROOT / "simulation" / "README.md",
+        VALIDATION_ROOT / "field-runs" / "README.md",
+    )
+    missing = [
+        path.relative_to(REPOSITORY_ROOT).as_posix()
+        for path in expected_indexes
+        if not path.is_file()
+    ]
+    assert not missing, f"missing validation section indexes: {missing}"
 
 
 def test_curated_documentation_links_resolve() -> None:

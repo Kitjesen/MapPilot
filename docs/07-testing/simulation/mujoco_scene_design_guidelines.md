@@ -164,65 +164,28 @@ report.json
 
 ## 8. 当前可运行命令
 
-只验证地图和 OctoPlanner3D：
+验证 saved-map 质量、重定位输入与 native 跟踪链：
 
 ```bash
-python sim/scripts/mujoco/saved_map_plan_gate.py \
-  --scene-preset stair_limit_23cm \
-  --out-dir artifacts/mujoco_nav_suite/stair_limit_23cm \
-  --map-source synthetic_hits \
-  --spacing 0.16 \
-  --resolution 0.16 \
-  --planner-clearance-cells 2 \
-  --planner-robot-radius 0.25 \
-  --planner-goal-tolerance-m 0.45 \
-  --planner-goal-xy-tolerance-m 0.45 \
-  --planner-goal-z-tolerance-m 0.7 \
+python sim/scripts/mujoco/saved_map_quality_gate.py \
+  --pcd artifacts/<run>/same_source_map/map.pcd \
+  --json-out artifacts/<run>/saved_map_quality.json
+
+python sim/scripts/saved_map_relocalize_runtime_gate.py \
+  --map-pcd artifacts/<run>/same_source_map/map.pcd \
+  --preflight-only \
+  --strict
+
+python sim/scripts/mujoco/native_navigation_acceptance.py \
+  --manifest config/runtime_graph/acceptance/mujoco_industrial_park_60m_navigation_acceptance.json \
+  --preflight-only \
   --strict
 ```
 
-多楼层三维体素楼：
-
-```bash
-python sim/scripts/mujoco/saved_map_plan_gate.py \
-  --scene-preset multifloor_stack_3 \
-  --out-dir artifacts/mujoco_nav_suite/multifloor_stack_3_plan \
-  --map-source synthetic_hits \
-  --spacing 0.18 \
-  --resolution 0.18 \
-  --planner-clearance-cells 2 \
-  --planner-robot-radius 0.25 \
-  --planner-goal-tolerance-m 0.55 \
-  --planner-goal-xy-tolerance-m 0.55 \
-  --planner-goal-z-tolerance-m 0.8 \
-  --strict
-```
-
-验证跟踪、局部规划和可穿越性：
-
-```bash
-python sim/scripts/mujoco/saved_map_tracking_gate.py \
-  --scene-preset stair_limit_23cm \
-  --out-dir artifacts/mujoco_nav_suite/stair_limit_23cm_tracking \
-  --map-source synthetic_hits \
-  --use-traversability-grid \
-  --check-obstacle \
-  --local-obstacle-source live_lidar \
-  --drive-mode policy \
-  --product-acceptance
-```
-
-负例：
-
-```bash
-python sim/scripts/mujoco/saved_map_plan_gate.py \
-  --scene-preset stair_blocked_30cm \
-  --out-dir artifacts/mujoco_nav_suite/stair_blocked_30cm \
-  --map-source synthetic_hits \
-  --strict
-```
-
-`stair_blocked_30cm` 的正确结果不是成功到达，而是明确拒绝或产生 blocker。
+旧的 Python `saved_map_plan_gate.py` 和 `saved_map_tracking_gate.py` 已移除。
+自动生成 `stair_limit_23cm`、`multifloor_stack_3`、`stair_blocked_30cm`
+规划资产的入口尚未迁移完成，因此这些命令当前不能列为可运行验收。
+负例的产品判定仍不变：`stair_blocked_30cm` 应明确拒绝或产生 blocker。
 
 ## 9. 对当前状态的评价
 

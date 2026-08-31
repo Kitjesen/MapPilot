@@ -13,9 +13,9 @@ entry and records dated evidence under `docs/07-testing/field-runs/`.
   effect coordinator, inspection command coordinator, and control-loop health
   tests.
 - Run the native Python contracts and preserve the result in the release log.
-- Confirm `nav_native_endpoint.cpp` still owns process lifecycle, ordered DDS
-  drains, the 20 Hz motion/safety schedule, effect adapters, and shutdown-zero
-  confirmation.
+- Confirm `main.cpp` owns process composition and lifecycle, while
+  `runtime/loop.cpp` owns ordered DDS drains, the 20 Hz motion/safety schedule,
+  effect adapters, and shutdown-zero confirmation.
 - Do not raise the 20 Hz loop rate without ready field measurements showing
   both a need and sufficient utilization/overrun headroom.
 
@@ -23,8 +23,8 @@ entry and records dated evidence under `docs/07-testing/field-runs/`.
 
 - Use a clear, bounded test area and the normal field deployment.
 - Verify the physical E-stop and a second operator before enabling motion.
-- Apply the approved low-speed field limits; do not bypass SafetyRing,
-  traversability, near-field stop, driver authority, or CmdVel ownership.
+- Apply the approved low-speed field limits; do not bypass `navd` final safety,
+  traversability, near-field stop, control authority, or driver ownership.
 - Confirm localization, active saved-map identity, LiDAR, odometry, TF,
   traversability, and driver-control readiness before sending a command.
 - Start every case stationary and confirm a fresh accepted zero command before

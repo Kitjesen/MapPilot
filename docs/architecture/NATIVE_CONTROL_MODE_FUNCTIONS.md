@@ -6,8 +6,8 @@ Replaced by: not replaced
 
 This document assigns each control issue to a product function. The native
 endpoint owns exactly one process-level control mode at a time:
-`autonomy`, `teleop`, or `teleop_avoid`. Python `CmdVelMux` is not part of any
-field command path.
+`autonomy`, `teleop`, or `teleop_avoid`. The Host has no competing command
+arbiter or motion writer.
 
 ## Functional decomposition
 
@@ -18,7 +18,7 @@ field command path.
 | Command freshness | Validate producer timestamps; expire stale velocity intent and reject replayed ClearEstop | yes | yes | yes |
 | Motion context readiness | Gate motion on required localization/cloud/terrain inputs | yes | no | yes |
 | Goal completion | Plan, follow, arrive, and align final yaw | yes | no | no |
-| Compatibility isolation | Reject legacy goal/path/teleop inputs in product mode | yes | yes | yes |
+| Input isolation | Reject undeclared goal/path/teleop inputs in product mode | yes | yes | yes |
 | Localization/map quality | Long-run localization scale and saved-map match | product gate | not applicable | localization gate only |
 
 ## Problem ownership and environment
@@ -31,9 +31,9 @@ field command path.
 | Emergency stop is not latched | Command lifecycle | yes | yes | Add a software latch that rejects new Goal/Teleop until explicit clear and persists across endpoint service restarts. This does not replace the hardware E-stop. |
 | Delayed ClearEstop can release a newer stop | Command freshness | yes | yes; transport delay/replay is possible | Reject invalid, future, or stale ClearEstop source timestamps. Keep the latch if zero publication or persistent-marker removal fails. |
 | Teleop age starts at endpoint receive time | Command freshness | yes | yes; DDS delay makes it more likely | Use `NavigationCommandRequest.header.stamp`; reject missing, future, and stale requests. |
-| A DDS protocol ACK timeout aborts the client before the typed application ACK is checked | Command lifecycle | yes; WSL2 made it reproducible | yes; a busy endpoint or transport jitter can trigger it | Treat the matching `NavigationCommandAck(request_id, kind)` as the command authority. Reject clock samples above `100 ms` RTT, resample with a typed safe Stop, and retry one Teleop/ClearEstop after a real stale/future application rejection. Endpoint freshness limits remain unchanged. Gateway joystick traffic uses a background latest-value slot; release/stop quiesces it before synchronously confirming zero/Stop. |
+| A DDS protocol ACK timeout aborts the client before the typed application ACK is checked | Command lifecycle | yes; WSL2 made it reproducible | yes; a busy endpoint or transport jitter can trigger it | Treat the matching `NavigationCommandAck(request_id, kind)` as the command authority. Reject clock samples above `100 ms` RTT, resample with a typed safe Stop, and retry one Teleop/ClearEstop after a real stale/future application rejection. Endpoint freshness limits remain unchanged. Gateway operator velocity traffic uses a background latest-value slot; release/stop quiesces it before synchronously confirming zero/Stop. |
 | Wall clock steps while a command is in flight | Command freshness | yes; WSL2 stepped about `2.65 s` during acceptance | yes; NTP/PTP correction or a poorly synchronized remote operator can reproduce it | Record endpoint-clock offset and RTT for audit. A request crossing the step is rejected by the endpoint, then the client performs one safe re-sync and sends a traceable retry request id. Do not widen the endpoint's stale/future window. |
-| Python `CmdVelMux` exists beside the endpoint | Control authority | visible in graph | yes | Remove it from `endpoint_only` product graphs; acceptance forbids it even when its output is disconnected. |
+| A second command writer exists beside the endpoint | Control authority | visible in graph | yes | Product acceptance forbids competing motion writers even when their output appears disconnected. |
 | Pure Teleop starts SLAM/traversability | Product process ownership | harness can hide it | yes, through RunPlan membership and ProductControl | Pure Teleop acceptance forbids both processes. ProductControl stops conflicting mode targets, applies the exact RunPlan in order, and commits it. Product mode units remain boot-disabled; only declared persistent roles may own boot lifecycle. |
 | Traversability silently degrades when stale | Motion context readiness | yes | yes | `teleop_avoid` and configured autonomy fail closed on stale/missing traversability. |
 | Recovery counts endpoint ticks instead of new sensor evidence | Motion context readiness | yes | yes | Track accepted DDS generations for odom, required TF, registered cloud, traversability, and localization health. Every required source must advance before one recovery frame is counted. |

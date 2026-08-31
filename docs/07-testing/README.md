@@ -1,114 +1,91 @@
-# LingTu Validation Gates
+# LingTu Testing and Validation
 
-Status: current validation index
-Updated: 2026-07-28
+Status: current validation index as of 2026-08-23.
 
-This directory contains reusable gates. Dated results belong in
-[`field-runs/`](field-runs/README.md). A passing lower-level gate never implies
-a higher-level Product or field claim.
+This directory contains reusable acceptance definitions and dated validation
+evidence. It does not own Product behavior, deployment topology, or the active
+roadmap.
+
+## Directory
+
+```text
+docs/07-testing/
+  README.md          this engineering index
+  WEB_GUIDE.md       curated reader-facing guide
+  field/             reusable real-robot and target-compute gates
+  simulation/        reusable simulator gates and fidelity contracts
+  field-runs/        immutable date-prefixed evidence records
+
+scripts/gates/
+  field/             executable P0 field procedures
+  simulation/        executable simulation compatibility gates
+```
+
+Commit and push checks are contributor workflow, so they live in
+[`docs/03-development/COMMIT_PUSH_POLICY.md`](../03-development/COMMIT_PUSH_POLICY.md).
 
 ## Evidence Levels
 
 | Level | Proves | Does not prove |
 | --- | --- | --- |
-| Local contract | Schema, algorithm, fail-closed behavior, and process ownership in focused tests. | Cross-process timing or robot behavior. |
-| Native MuJoCo | The named Product chain with native processes and typed DDS in simulation. | MID-360 artifacts, Brainstem execution, or physical safety. |
-| Field no-motion | Release provenance, topic writers, readiness, route preview, and stop barriers on target. | Safe commanded locomotion. |
-| Supervised field motion | The named bounded motion scenario on the physical robot. | Any untested environment or capability. |
+| Local contract | The named schema, algorithm, ownership rule, or fail-closed behavior in focused tests. | Cross-process timing, simulation physics, or robot behavior. |
+| Native simulation | The named native component chain in the selected simulator and platform. | Field calibration, networking, or physical safety. |
+| Field no-motion | Release identity, process ownership, topic freshness, readiness, and stop barriers on the target. | Permission or evidence for locomotion. |
+| Supervised field motion | Only the recorded bounded scenario on the named physical robot. | Untested environments, speeds, maps, or future releases. |
 
-The capability-level evidence ledger is
-[`NAVIGATION_CAPABILITY_MATRIX.md`](../architecture/NAVIGATION_CAPABILITY_MATRIX.md).
+A lower level never implies a higher one. A running process is not the same as
+Product readiness, and component evidence is not a Product pass.
 
-## Current Gate Index
+## Start Here
 
-| Document | Purpose |
+| Goal | Entry |
 | --- | --- |
-| [`ALGORITHM_VALIDATION_FLOW.md`](ALGORITHM_VALIDATION_FLOW.md) | Separates algorithm tests, simulation evidence, and field claims. |
-| [`FIELD_MAPPING_ACCEPTANCE.md`](FIELD_MAPPING_ACCEPTANCE.md) | Product map/save/restore acceptance. |
-| [`MUJOCO_NAVIGATION_ACCEPTANCE.md`](MUJOCO_NAVIGATION_ACCEPTANCE.md) | Native-DDS navigation acceptance. |
-| [`MUJOCO_NATIVE_CONTROL_MODE_ACCEPTANCE.md`](MUJOCO_NATIVE_CONTROL_MODE_ACCEPTANCE.md) | `autonomy`, `teleop`, and `teleop_avoid` promotion rules. |
-| [`MUJOCO_MID360_FIDELITY.md`](MUJOCO_MID360_FIDELITY.md) | Optical and scan-time fidelity, separate from navigation success. |
-| [`SEMANTIC_MEMORY_FIELD_CHECKLIST.md`](SEMANTIC_MEMORY_FIELD_CHECKLIST.md) | Reusable semantic-memory field checklist. |
-| [`thunderv4_mujoco_lidar_recording_requirements.md`](thunderv4_mujoco_lidar_recording_requirements.md) | Required sensor recording evidence for ThunderV4 MuJoCo work. |
-| [`mujoco_scene_design_guidelines.md`](mujoco_scene_design_guidelines.md) | Scene construction constraints for reproducible tests. |
-| [`COMMIT_PUSH_POLICY.md`](COMMIT_PUSH_POLICY.md) | Local commit/push checks. |
+| Prepare or validate a physical robot | [Field validation](field/README.md) |
+| Run MuJoCo or another simulator gate | [Simulation validation](simulation/README.md) |
+| Read previous results | [Validation run records](field-runs/README.md) |
+| Understand the general validation ladder | [Reader-facing guide](WEB_GUIDE.md) |
+| Check current capability evidence | [Navigation capability matrix](../architecture/NAVIGATION_CAPABILITY_MATRIX.md) |
 
-## Native Product Acceptance
+The Go2 EDU + external MID-360 deployment and assisted-avoidance procedure is
+maintained in
+[`go2_edu_mid360_teleop_avoid.md`](../04-deployment/go2_edu_mid360_teleop_avoid.md).
+Its actual results belong in a new dated record under `field-runs/`.
 
-Every accepted native Product report must include:
+## Focused Local Checks
 
-- the exact Product declaration, env, RunPlan fingerprint, and artifact source;
-- selected executable/library paths, hashes, and source/IDL freshness;
-- writer ownership for critical DDS topics;
-- input freshness and frame/epoch/sequence evidence;
-- cleanup, zero-command barrier, and process exit results;
-- explicit blockers, including tests that did not start.
-
-Strict preflight is fail-closed. A stale or missing native artifact is a release
-blocker, not a failed scenario and not permission to use a Python fallback.
-
-For `teleop_avoid`, the authoritative Product contract is
-`config/runtime_graph/products/teleop_avoid.yaml`: SLAM runs in `mapping`, a
-saved map is not required, standalone native traversability owns
-`/nav/traversability`, and mapd provides scene/map state without becoming the
-control-risk writer.
-
-Dynamic residual acceptance uses the `moving_person_clear` scenario in
-`sim/scripts/mujoco/teleop_avoid_native_acceptance.py`. It must prove that the
-person was observed, vacated voxel/accumulated occupancy returned near baseline,
-generations stayed monotonic, resource limits held, and no stale obstacle epoch
-survived reset. Code for column carving and decay alone is not this evidence.
-
-## Focused Local Gates
-
-Start with the narrowest affected suite. Common baselines are:
+Run the smallest check that can expose the failure under review. Common entry
+points are:
 
 ```bash
+python tools/validate/validate_docs.py
+python -m pytest tests/docs/test_documentation_navigation.py -q
 python -m pytest src/runtime/tests/ -q
-python -m pytest tests/contracts/ -q
-
-cmake -S src/nav/cpp -B build/nav-cpp \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DLINGTU_NAV_CPP_BUILD_TESTS=ON \
-  -DLINGTU_NAV_CPP_BUILD_ENDPOINT=OFF \
-  -DLINGTU_NAV_CPP_BUILD_PYTHON=OFF
-cmake --build build/nav-cpp -j
-ctest --test-dir build/nav-cpp --output-on-failure
 ```
 
-Run subsystem-specific build scripts and tests for maps, SLAM, drivers, or web
-changes. Do not replace a failed native build with a mock-only test.
+Subsystem changes should use their owning package build and test instructions.
+Do not replace a failed native build with a mock-only result.
 
-## Hardware P0 Scripts
+## Record A Result
 
-These scripts are operator-driven gates, not general development commands:
+Create one immutable file:
 
-| Script | Scope |
-| --- | --- |
-| `p0_cold_boot.sh` | Cold-start process and readiness check. |
-| `p0_mapping.sh` | Mapping, save, validation, and activation. |
-| `p0_route_safety.sh` | No-motion route preview and command-source check. |
-| `p0_goto.sh` | Supervised point-goal motion after preview. |
-| `p0_estop.sh` | Stop latency under commanded motion. |
-| `p0_explore.sh` | Exploration start/stop in a prepared area. |
-| `p0_all.sh` | Ordered wrapper; motion and exploration remain explicit. |
+```text
+docs/07-testing/field-runs/YYYY-MM-DD-brief-name.md
+```
 
-Each run writes a new date-prefixed note in `field-runs/`. Never edit an old
-record to make a current build look successful.
-
-## Legacy Aggregate
-
-`l25_fresh_closure.sh` remains a compatibility aggregator for older simulation,
-replay, and benchmark reports. It is not the acceptance authority for the
-current typed-DDS `mapd/navd` Product chain. New native claims must use the
-dedicated MuJoCo/Product gates above.
+Record the target, platform, Product, env, Product session ID, RunPlan, selected
+binaries, exact commands, observed inputs/outputs, PASS/FAIL/BLOCKED result, and
+remaining blocker. Label simulation, field-compute, field no-motion, and field
+motion explicitly.
 
 ## Rules
 
-- Never describe MuJoCo evidence as field evidence.
-- Never use unit-test success to claim a Product capability is complete.
-- Never bypass strict provenance, topic ownership, or freshness checks.
-- Never publish a motion command merely to diagnose readiness.
-- Record blocked gates as blocked; do not manufacture maps, samples, or mtimes.
-- Update `docs/plans/current-roadmap.md` only when priority or completion state
-  changes; keep run details in `field-runs/`.
+- Never present local or simulation evidence as field evidence.
+- Never use unit-test success to claim a Product capability is delivered.
+- Field motion starts only after the applicable no-motion gate passes and an
+  operator explicitly begins a supervised scenario.
+- Record blocked gates as blocked; do not manufacture samples or timestamps.
+- Keep plans in `docs/plans/current-roadmap.md`, current contracts in
+  `docs/architecture/`, and one-off results in `field-runs/`.
+- When a reusable gate changes, update its owning section index and repair all
+  repository links in the same change.

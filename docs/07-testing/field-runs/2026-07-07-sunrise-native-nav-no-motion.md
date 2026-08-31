@@ -38,7 +38,7 @@ This was corrected for the run by making `active` point to `accept_ready_2026070
 
 ## SLAM Stationary Check
 
-30 second sample from `/tmp/lingtu_slam_status.json`:
+30 second sample from `/tmp/messages_status.json`:
 
 - State: `TRACKING` for all samples
 - XY drift: `0.00178 m`

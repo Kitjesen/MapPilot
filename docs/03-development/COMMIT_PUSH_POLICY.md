@@ -12,9 +12,8 @@ day-to-day engineering work.
 | Surface | Purpose |
 | --- | --- |
 | `AGENTS.md` | Required agent behavior, repository boundaries, and Lore commit message format. |
-| `docs/07-testing/COMMIT_PUSH_POLICY.md` | Human-readable commit/push acceptance checklist. |
+| `docs/03-development/COMMIT_PUSH_POLICY.md` | Human-readable commit/push acceptance checklist. |
 | `docs/07-testing/README.md` | Regression suite overview and L1/L2/L3 testing layers. |
-| `docs/07-testing/install_hooks.sh` | Local hook installer for the L1 pre-commit and L2 pre-push gates. |
 
 ## Commit Gate
 
@@ -47,7 +46,7 @@ A push is acceptable only when all commit-gate rules are satisfied and:
 - Web changes pass `npm run build` from `web/`.
 - Gateway/API changes pass the Gateway contract tests listed below.
 - Simulation-backed navigation, planning, localization, tracking, exploration,
-  or Gateway command-safety claims include a strict `server_sim_closure.py`
+  or Gateway command-safety claims include a strict `sim_diagnostics.py`
   summary for the affected gates.
 - Hardware-facing behavior is not claimed as verified unless an S100P L3 script or field test actually ran.
 
@@ -71,19 +70,21 @@ cd web
 npm run build
 ```
 
-Recommended server simulation closure check when navigation behavior is part of
+Recommended simulation diagnostics check when navigation behavior is part of
 the claim:
 
 ```bash
-bash docs/07-testing/l25_fresh_closure.sh
+python sim/scripts/sim_diagnostics.py \
+  --required-only \
+  --strict \
+  --max-report-age-s 21600
 ```
 
-Closure summaries include `report_age_s` per gate. The wrapper enforces
-`--max-report-age-s`, defaulting to 21600 seconds, so older passing artifacts do
-not silently support new simulation-backed claims.
+Closure summaries include `report_age_s` per gate. `--max-report-age-s` keeps
+older passing artifacts from supporting new simulation-backed claims.
 
 For setup-only validation, `sim/scripts/setup_linux_validation_host.sh` writes the
-setup-safe subset summary to `artifacts/server_sim_closure_summary_setup.json`.
+setup-safe subset summary to `artifacts/sim_diagnostics_summary_setup.json`.
 When Gateway is running, `/api/v1/diagnostics/routecheck/latest` also exposes
 the latest routecheck `report_age_s`, no-motion flags, and `published` counters
 for operator review.

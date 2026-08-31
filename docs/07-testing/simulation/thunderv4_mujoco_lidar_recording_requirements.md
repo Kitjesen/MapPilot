@@ -27,12 +27,12 @@ recordings in MuJoCo.
 - Video rendering may sample points for readability, but the report must keep the real scan counts.
 - XYZI intensity is the current simulation proxy, not true material reflectance.
 - Current intensity model: `180/(1+(range_m/25)^2)+N(0,3)`, clipped to `[1,255]`.
-- The report must include `product_lidar_backend_verified=true`, `fallback_used=false`, `ground_projected_pattern=false`, `rays_drawn=false`, `point_source=engine.get_lidar_points() XYZI raycast hits`, and `intensity.min/p50/mean/p95/max`.
+- The report must include `product_lidar_backend_verified=true`, `ground_projected_pattern=false`, `rays_drawn=false`, `point_source=engine.get_lidar_points() XYZI raycast hits`, and `intensity.min/p50/mean/p95/max`.
 
 ## IMU And SLAM Requirements
 
 - The MuJoCo engine must expose `imu_gyro`, `imu_projected_gravity`, and `imu_linear_acceleration`.
-- `MujocoDriverModule` must publish runtime `raw_scan` and `imu` outputs aligned with `/lidar/raw_frame` / `TOPICS.raw_lidar_points` and `/imu/raw` / `TOPICS.imu`; frame is `lidar_link`.
+- The native MuJoCo sensor publisher must publish `/lidar/raw_frame` and `/imu/raw`; the Python `MujocoDriverModule` does not duplicate the IMU stream.
 - The recording script is not the runtime topic publisher. It only records in the report whether IMU samples and driver IMU outputs are available.
 - A video recording alone does not prove SLAM input is wired. Direct Fast-LIO validation still needs raw LiDAR frame, IMU, time sync, and DDS/portable adapter input checks.
 - If the report has `ready_for_direct_slam=false`, do not claim direct SLAM is ready.
@@ -47,10 +47,10 @@ Run the sensor bridge against a temporary C++ SLAM runtime on an isolated domain
 ```bash
 export PYTHONPATH="$PWD/src:$PWD"
 
-build/slam_core/lingtu_slam_cyclone_runtime \
+build/slam_core/slamd \
   --backend fastlio2 \
   --mode mapping \
-  --config src/localization/fastlio2/config/mid360_mujoco_native_dds.yaml \
+  --config src/localization/fastlio2/config/sim_mid360_slam.yaml \
   --domain-id 83 \
   --status-json /tmp/lingtu_mujoco_slam_status_domain83.json \
   --cloud-snapshot-dir /dev/shm/lingtu_mujoco_slam_domain83 &
@@ -83,7 +83,7 @@ Expected pass evidence:
 
 - `/lidar/raw_frame` and `/imu/raw` are published by
   `livox_sdk2_stream --stdin-records --dds`.
-- `lingtu_slam_cyclone_runtime` reaches `state=TRACKING`.
+- `slamd` reaches `state=TRACKING`.
 - `observed_slam_outputs` includes `/slam/odometry`, `/slam/registered_cloud`,
   `/slam/map_cloud`, and `/slam/localization_health`.
 - `motion.sim_xy_m` records nonzero MuJoCo motion and
@@ -99,8 +99,9 @@ Expected pass evidence:
   decoded as `runtime.msgs.sensor.PointCloud2`.
 - Do not stack `/slam/map_cloud` snapshots and call that a complete map.
   `/slam/map_cloud` is the current map-frame scan output. For a saved map image,
-  send `lingtu_slam_control save-map <map.pcd>` and render that PCD. A saved PCD
-  proves the native map-builder wrote a cumulative artifact, but it is usable
+  call `POST /api/v1/map/save` while the `map` Product is active, then render the
+  committed map artifact exposed by `mapd`. A saved PCD proves the native
+  map-builder wrote a cumulative artifact, but it is usable
   navigation evidence only after both the motion-consistency gate and the saved
   map quality gate pass.
 
@@ -113,6 +114,21 @@ python3 sim/scripts/mujoco/saved_map_quality_gate.py \
   --json-out artifacts/<run>/native_saved_map_quality_gate.json \
   --plot-out artifacts/<run>/native_saved_map_quality_gate.png
 ```
+
+Before running saved-map relocalization, use the native DDS preflight. It checks
+the saved-map contract and required native inputs without starting MuJoCo,
+`slamd`, or a relocalization request:
+
+```bash
+python3 sim/scripts/saved_map_relocalize_runtime_gate.py \
+  --map-pcd artifacts/<run>/native_saved_map.pcd \
+  --preflight-only \
+  --strict \
+  --json-out artifacts/<run>/saved_map_relocalize_preflight.json
+```
+
+The preflight must report `ok=true` before the live gate. This is host and
+artifact readiness only; it does not validate localization behavior.
 
 The gate filters obstacle-height cells (`0.30 <= z <= 1.60`), drops sparse and
 small isolated components, and reports both raw scene-frame overlap and bounded
@@ -184,18 +200,21 @@ python3 sim/scripts/mujoco/continuous_mapping_quality_gate.py \
   --duration 180 \
   --domain-id 231 \
   --drive-profile box_explore \
+  --saved-map-dir /path/to/mapd/saved/map \
   --run-dir artifacts/mujoco_continuous_mapping_gate_<timestamp>
 ```
 
-The gate orchestrates one isolated native DDS session and fails unless all of
-the following pass:
+The gate does not call `slamctl save-map` or write a PCD directly. Save the map
+first through the public SDK/Gateway -> native `mapd save_map` Product chain,
+then pass that map directory with `--saved-map-dir`. It fails unless all of the
+following pass:
 
 | Group | What it checks |
 | --- | --- |
 | Bridge | MuJoCo policy drive publishes `/imu/raw` + `/lidar/raw_frame`; native SLAM outputs exist at end |
 | Continuity | Periodic `status.json` samples stay `TRACKING`; zero dropped LiDAR/IMU; zero rollbacks; no scan stall; bounded odom/velocity |
 | Convergence | `sim_motion.jsonl` vs saved `trajectory.txt`: windowed path-length ratios, cumulative path ratio, rigid-aligned ATE |
-| Map quality | Native `save-map` PCD passes `saved_map_quality_gate.py` aligned obstacle overlap |
+| Map quality | Externally supplied mapd PCD passes `saved_map_quality_gate.py` aligned obstacle overlap |
 
 Artifacts written under `--run-dir`:
 
@@ -204,8 +223,8 @@ summary.json
 bridge_report.json
 sim_motion.jsonl
 slam_status_samples.jsonl
-saved_map/map.pcd
-saved_map/trajectory.txt
+<saved-map-dir>/map.pcd
+<saved-map-dir>/trajectory.txt
 saved_map_quality.json
 scale_convergence.png
 trajectory_overlay.png
@@ -233,7 +252,7 @@ python sim/scripts/run_sunrise_continuous_mapping_gate.py \
 ```
 
 Field-run record with the first 180 s verdict matrix:
-[2026-07-06-mujoco-continuous-mapping-gate.md](./field-runs/2026-07-06-mujoco-continuous-mapping-gate.md).
+[2026-07-06-mujoco-continuous-mapping-gate.md](../field-runs/2026-07-06-mujoco-continuous-mapping-gate.md).
 
 Keep `--domain-id` in **`200–232`**. Domain **234** fails CycloneDDS startup on
 sunrise (multicast port out of range).
@@ -250,8 +269,8 @@ Interpretation:
   old kinematic finite-difference result and the old gravity-only result are
   superseded. Saved-map acceptance now requires the policy sensor-conditioned
   bridge plus the saved-map quality gate.
-- Use `mid360_mujoco_native_dds.yaml` for this simulation gate. Do not run
-  MuJoCo synthetic IMU through the real-board `mid360_s100p.yaml` acceleration
+- Use `sim_mid360_slam.yaml` for this simulation gate. Do not run
+  MuJoCo synthetic IMU through the Thunder-specific `mid360_fastlio2.yaml` acceleration
   scale.
 - Keep the current MuJoCo gate extrinsic colocated (`t_il=[0,0,0]`) because the
   simulation bridge now publishes a single simulated MID-360 package: raw LiDAR
@@ -334,13 +353,13 @@ Key results:
 - Minimum visible wheel clearance: about `1.1 mm`.
 - LiDAR source: real MuJoCo-LiDAR hit points.
 - No rays or ground-projected pattern used.
-- IMU/raw LiDAR are available inside the engine; `MujocoDriverModule` has runtime `raw_scan`/`imu` outputs. Direct SLAM still requires raw LiDAR/IMU input validation.
+- IMU/raw LiDAR are available inside the engine and are published by the native sensor process. Direct SLAM still requires raw LiDAR/IMU input validation.
 
 ## No Python SLAM
 
 Do not write or ship Python SLAM for MuJoCo validation. Python may render
 MuJoCo, record videos, publish simulated raw MID-360/IMU frames, and collect
 diagnostic reports. Pose estimation, map building, and relocalization must be
-provided by native C++ SLAM/localization (`lingtu_slam_cyclone_runtime` or an
+provided by native C++ SLAM/localization (`slamd` or an
 explicit external native service). Reports must keep `no_python_slam=true` when
 this path is used.

@@ -48,10 +48,10 @@ native LiDAR/IMU service
 The usual native service set, subject to the selected profile, is:
 
 ```text
-lingtu-livox-dds
-lingtu-slam-dds
-lingtu-traversability-dds
-lingtu-nav-dds
+lt-lidar
+lt-slam
+lt-terrain
+lt-nav
 lingtu
 ```
 
@@ -73,7 +73,7 @@ Use this order before changing state. It makes the result useful to the next
 person who reads the incident.
 
 ```text
-1. Identify the expected local Profile or Product/env contract.
+1. Identify the expected Product/env contract.
 2. Observe session, health, native services, and data flow.
 3. Isolate the first missing or stale boundary.
 4. Validate map/localization/planner readiness without motion.
@@ -88,17 +88,17 @@ person who reads the incident.
 bash scripts/lingtu status
 
 # Gateway's detailed health summary.
-bash scripts/lingtu health
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
 
 # Native services plus Gateway/dataflow checks; no ROS graph required.
-bash scripts/lingtu doctor --non-motion --json --strict
+PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
 
 # Sample readiness without commanding motion.
-bash scripts/lingtu soak --duration 120 --interval 2 --json --strict
+PYTHONPATH=src python scripts/diagnostics/soak.py --duration 120 --interval 2 --json --strict
 
 # Review recent errors and then collect a bounded log window if needed.
-bash scripts/lingtu log error
-bash scripts/lingtu log all
+journalctl -u 'lt-*' -p err -n 100 --no-pager
+journalctl -u 'lt-*' -n 200 --no-pager
 ```
 
 `doctor --non-motion` checks the native/Gateway runtime without using ROS topic
@@ -109,24 +109,25 @@ authorization.
 
 ### Confirm the expected contract before changing anything
 
-If the observed system does not match the intended local Profile or Product/env,
-diagnose configuration first. Do not fix a profile mismatch by starting
+If the observed system does not match the intended Product/env,
+diagnose configuration first. Do not fix a Product mismatch by starting
 unrelated services.
 
 ```bash
 # Replace MAP_NAME with the saved map under investigation.
-python -m lingtu.control switch nav --env real --map MAP_NAME --dry-run --json
-bash scripts/lingtu runtime-contract --json
-bash scripts/lingtu runtime-audit --json
+python -m lingtu.control switch nav --robot unitree/go2 --env real --map MAP_NAME --dry-run --json
+python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
+python tools/validate/validate_architecture_boundaries.py
+python tools/validate/validate_topics.py
 ```
 
 The ProductControl dry run answers which RunPlan, env, process roles,
-map staging, and ownership model would be applied. The audit checks that the
-source and documentation contracts agree. For a local developer catalog, use:
+map staging, and ownership model would be applied. The validators check the
+runtime graph, package boundaries, and topic declarations. For a local developer catalog, use:
 
 ```bash
-uv run --locked python lingtu.py --list
-uv run --locked python lingtu.py --list --all
+uv run --locked python -m lingtu.control --help
+uv run --locked python -m lingtu.control --help
 ```
 
 ## Symptom: native runtime is not ready
@@ -136,62 +137,61 @@ uv run --locked python lingtu.py --list --all
 - `lingtu status` reports no session, missing localization, failed module, or
   unexpected product mode.
 - `doctor --non-motion --strict` returns blockers.
-- `lingtu health` cannot return a healthy Gateway summary.
+- `curl -fsS http://localhost:5050/api/v1/health` cannot return a healthy
+  Gateway summary.
 - A native service is inactive, repeatedly restarting, or missing its binary.
 
 ### Diagnose
 
 ```bash
-bash scripts/lingtu svc status
-bash scripts/lingtu doctor --non-motion --json --strict
-bash scripts/lingtu health
+bash scripts/lingtu status
+PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
 journalctl -u lingtu -n 100 --no-pager
-journalctl -u lingtu-slam-dds -n 100 --no-pager
-journalctl -u lingtu-nav-dds -n 100 --no-pager
+journalctl -u lt-slam -n 100 --no-pager
+journalctl -u lt-nav -n 100 --no-pager
 ```
 
 Read the first failing boundary rather than the last visible symptom. Examples:
 
 | First failure | Likely owner | Next check |
 | --- | --- | --- |
-| Gateway unavailable | `lingtu` process or its configuration | `journalctl -u lingtu`, then `lingtu health`. |
-| SLAM status missing/stale | Native LiDAR/SLAM chain | `lingtu-livox-dds`, `lingtu-slam-dds`, and localization dataflow. |
+| Gateway unavailable | `lt-host` process or its configuration | `journalctl -u lt-host.service`, then `curl -fsS http://localhost:5050/api/v1/health`. |
+| SLAM status missing/stale | Native LiDAR/SLAM chain | `lt-lidar`, `lt-slam`, and localization dataflow. |
 | Navigation endpoint unavailable | Native nav/traversability process or selected map/profile | Nav service logs, runtime spec, map artifact gate. |
 | Module failed preflight | Missing declared artifact/configuration | Read the named Module failure reason; repair that prerequisite, not a random dependency. |
 
 ### Recover deliberately
 
-If service restart is authorized and the fault is confined to the logical SLAM
-process, prefer the narrow recovery:
+After preserving status and logs, switch the active Product again through
+ProductControl:
 
 ```bash
-bash scripts/lingtu svc restart slam
+bash scripts/lingtu --robot <vendor/model> --env real switch <product> [--map <name>]
 ```
 
-Use `svc reapply` (equivalently, `svc restart all`) only after evidence shows
-that the exact committed Product must be reapplied. Re-run `status`,
-`doctor --non-motion`, and a bounded `soak` afterward. A restarted process is
-not automatically navigation-ready.
+Re-run `status`, `doctor --non-motion`, and a bounded `soak` afterward. A
+successful switch is not automatically navigation-ready.
 
 ## Symptom: LiDAR, IMU, or map-cloud data is missing
 
 ### Diagnose the native data path first
 
 ```bash
-bash scripts/lingtu dataflow /nav/lidar_scan
-bash scripts/lingtu dataflow /nav/imu
-bash scripts/lingtu dataflow /nav/odometry
-bash scripts/lingtu dataflow /nav/map_cloud
-journalctl -u lingtu-livox-dds -n 100 --no-pager
-journalctl -u lingtu-slam-dds -n 100 --no-pager
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/lidar_scan"
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/imu"
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/odometry"
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/map_cloud"
+journalctl -u lt-lidar -n 100 --no-pager
+journalctl -u lt-slam -n 100 --no-pager
 ```
 
 Interpret the first absent stage:
 
 | Observation | Meaning | Next action |
 | --- | --- | --- |
-| LiDAR/IMU boundary has no samples | Sensor service, device ownership, NIC/clock, or native source issue. | Inspect `lingtu-livox-dds` logs and the deployment/device configuration. |
-| Raw sensors arrive but odometry is absent | SLAM ingest, calibration, or native SLAM process issue. | Inspect `lingtu-slam-dds` logs; do not start ROS Fast-LIO as a generic fix. |
+| LiDAR/IMU boundary has no samples | Sensor service, device ownership, NIC/clock, or native source issue. | Inspect `lt-lidar` logs and the deployment/device configuration. |
+| Raw sensors arrive but odometry is absent | SLAM ingest, calibration, or native SLAM process issue. | Inspect `lt-slam` logs; do not start ROS Fast-LIO as a generic fix. |
 | Odometry arrives but map cloud is stale | Mapping/session mode or map-cloud producer issue. | Check session mode, `dataflow /nav/map_cloud`, and map-related blockers. |
 | Gateway status is stale while native data is live | Adapter/Gateway/module boundary issue. | Inspect `lingtu` logs and the relevant ModulePort/dataflow report. |
 
@@ -205,10 +205,10 @@ source ownership.
 
 ```bash
 bash scripts/lingtu status
-bash scripts/lingtu dataflow /nav/odometry
-bash scripts/lingtu dataflow /nav/map_cloud
-bash scripts/lingtu soak --duration 120 --interval 2 --json --strict
-bash scripts/lingtu log drift
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/odometry"
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/map_cloud"
+PYTHONPATH=src python scripts/diagnostics/soak.py --duration 120 --interval 2 --json --strict
+journalctl -u 'lt-*' -n 200 --no-pager | grep -i drift
 ```
 
 For saved-map navigation, process liveness or a `TRACKING` label is not enough.
@@ -217,27 +217,28 @@ Confirm that localization is fresh, the active map is correct, and the
 identity-like transform that does not establish the selected map frame is a
 localization blocker even if SLAM is still publishing a heartbeat.
 
-### Separate restart from relocalization
+### Distinguish a plain Product switch from a nav switch with relocalization
 
 | Operation | What it proves | When to use it |
 | --- | --- | --- |
-| `svc restart slam` | The single logical SLAM process can restart and publish status. | That process or its dataflow is stale or failed. |
-| `nav relocalize <map> X Y YAW` | A saved map accepts an operator-provided initial pose. | A known approximate pose is available. |
-| `nav global-relocalize <map>` | The backend can seek a saved-map alignment without a provided seed. | The relevant saved-map workflow authorizes it. |
+| `switch <product> [--map <name>]` | The Product can start and pass declared readiness. | The active Product must be recovered after preserving evidence. |
+| `nav relocalize <map> X Y YAW` | A full field nav Product cold switch succeeds and the loaded map accepts the seed. | A known approximate pose is available. |
+| `nav global-relocalize <map>` | A full field nav Product cold switch succeeds and BBS3D + MapIcp aligns the loaded map. | No useful seed is available. |
 | `doctor --non-motion --strict` | The active RunPlan and declared services pass stationary readiness checks. | A no-motion runtime acceptance check is required. |
 
-Relocalization and session start change runtime state. Use them only under the
-correct field procedure; after either one, re-check status and readiness before
-sending a goal.
+These CLI relocalization commands change Product/session state. Gateway
+relocalization endpoints instead retry against the already loaded Product map;
+they do not start `slamd` or select another map. After either path, re-check
+status and readiness before sending a goal.
 
 ```bash
 # Recovery actions; do not run these merely to inspect state.
-bash scripts/lingtu svc restart slam
-bash scripts/lingtu nav relocalize <map> <x> <y> <yaw>
-bash scripts/lingtu nav global-relocalize <map>
+bash scripts/lingtu --robot <vendor/model> --env real switch <product> [--map <name>]
+bash scripts/lingtu switch nav --map <map> --initial-pose <x> <y> <yaw>
+bash scripts/lingtu switch nav --map <map> --relocalize
 ```
 
-If stationary drift repeats after a clean restart, preserve the log/dataflow
+If stationary drift repeats after a clean Product switch, preserve the log/dataflow
 evidence and inspect calibration, timestamp alignment, sensor visibility, map
 quality, and saved-map optimization before relaxing any safety threshold.
 
@@ -250,17 +251,16 @@ part of the contract.
 ### Artifact and integrated field checks
 
 ```bash
-# Use the full saved-map directory, not only the point-cloud file.
-bash scripts/lingtu saved-map-artifact-gate <map-dir> --require-occupancy --json
+# Use the saved map ID known by mapd.
+python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy --json
 
 # Integrated field evidence; no motion unless --allow-motion is supplied.
-bash scripts/lingtu system-acceptance --map <map> --goal <x> <y> <yaw>
+python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" --map <map> --goal <x> <y> <yaw>
 ```
 
 For OctoPlanner3D navigation, expect a valid map package with `map.pcd`,
-`metadata.json`, and `octomap.ot`; `occupancy.npz` is required by workflows
-that explicitly request occupancy validation. `tomogram.pickle` is a legacy/PCT
-artifact unless a profile explicitly selects PCT.
+`metadata.json`, and `octomap.ot`; `occupancy.npz` is required by FAR and
+workflows that explicitly request occupancy validation.
 
 | Failure | What to inspect | Do not do |
 | --- | --- | --- |
@@ -280,10 +280,10 @@ evidence that one of the required readiness gates is working.
 
 ```bash
 bash scripts/lingtu status
-bash scripts/lingtu health
-bash scripts/lingtu doctor --non-motion --strict
-bash scripts/lingtu system-acceptance --map <map> --goal <x> <y> <yaw>
-bash scripts/lingtu log error
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
+PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --strict
+python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" --map <map> --goal <x> <y> <yaw>
+journalctl -u 'lt-*' -p err -n 100 --no-pager
 ```
 
 Work through this order:
@@ -311,10 +311,10 @@ starting legacy command services next to the native endpoint.
 
 ```bash
 bash scripts/lingtu status
-bash scripts/lingtu health
-bash scripts/lingtu dataflow /nav/odometry
-bash scripts/lingtu dataflow /nav/traversability
-journalctl -u lingtu-nav-dds -n 100 --no-pager
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/odometry"
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/traversability"
+journalctl -u lt-nav -n 100 --no-pager
 ```
 
 Check these conditions:
@@ -342,8 +342,8 @@ The Gateway runs inside `lingtu`; there is no separate product Gateway service
 to restart. Start with the application and local listener state:
 
 ```bash
-bash scripts/lingtu health
-bash scripts/lingtu svc status
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
+bash scripts/lingtu status
 journalctl -u lingtu -n 100 --no-pager
 ss -tnlp | grep -E '5050|8090'
 ```
@@ -351,40 +351,39 @@ ss -tnlp | grep -E '5050|8090'
 | Observation | Likely boundary | Next step |
 | --- | --- | --- |
 | No listener for the expected API/MCP port | `lingtu` failed to start or port ownership conflict. | Read `lingtu` logs and resolve the first startup error. |
-| Listener exists but health fails | Gateway/module readiness or configuration. | Use `lingtu health`, `doctor --non-motion`, and the failed Module reason. |
-| Gateway works but one MCP tool is absent | Active profile did not load its owning Module or its method is not an intended `@skill`. | Check profile/module health and the MCP tool contract; do not expose internal unsafe methods as a quick fix. |
+| Listener exists but health fails | Gateway/module readiness or configuration. | Use the Gateway health route, `PYTHONPATH=src python -m diagnostics.field.doctor --non-motion`, and the failed Module reason. |
+| Gateway works but one MCP tool is absent | The active Product did not load its owning Module or its method is not an intended `@skill`. | Check Product/module health and the MCP tool contract; do not expose internal unsafe methods as a quick fix. |
 | API accepts a request but behavior is blocked | Downstream goal/map/localization/safety gate. | Treat the response as a diagnostic, then follow the relevant symptom section. |
 
 See [API reference](../08-reference/README.md) for interface inventory. A
 network listener being alive does not imply that navigation is ready.
 
-## Symptom: Profile, Product/env, frame, or transport mismatch
+## Symptom: Product/env, frame, or transport mismatch
 
 Symptoms include a correct-looking process graph paired with the wrong map
 frame, an incompatible RunPlan, unexpected local-vs-DDS behavior, or
 a simulation adapter active in `env=real`.
 
 ```bash
-python -m lingtu.control switch <product> --env real --dry-run --json
-python -m lingtu.control switch <product> --env sim --backend <backend> --dry-run --json
-bash scripts/lingtu runtime-contract --json
-bash scripts/lingtu runtime-audit --json
-bash scripts/lingtu dataflow <topic-or-channel>
+python -m lingtu.control switch <product> --robot unitree/go2 --env real --dry-run --json
+python -m lingtu.control switch <product> --robot doso/thunder_v4 --env sim --dry-run --json
+python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
+python tools/validate/validate_architecture_boundaries.py
+python tools/validate/validate_topics.py
+curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=<topic-or-channel>"
 ```
 
 Fix the source of truth in this order:
 
-1. local Profile, if this is a local development run;
-2. Product declaration in `config/runtime_graph/products/`;
-3. env implementation in `config/runtime_graph/envs/`;
-4. `RobotConfig`, only as internal static `env=real` robot data;
-5. explicit user override;
-6. Product Blueprint/wire or native endpoint contract.
+1. Product declaration in `config/runtime_graph/products/`;
+2. env implementation in `config/runtime_graph/envs/`;
+3. `RobotConfig`, only as internal static `env=real` robot data;
+4. explicit user override;
+5. Product Blueprint/wire or native endpoint contract.
 
 Do not work around a mismatch by putting a transport-specific conditional into
 navigation, perception, decision, or gateway business logic. Route contracts
-describe external topic/schema ownership; normal Module wires stay local unless
-`routed_delivery(...)` was deliberately selected.
+describe external topic/schema ownership; normal Module wires stay local.
 
 ## Symptom: build, import, or native-extension failure
 
@@ -392,53 +391,24 @@ describe external topic/schema ownership; normal Module wires stay local unless
 
 ```bash
 uv sync --locked
-uv run --locked python lingtu.py --list
+uv run --locked python -m lingtu.control --help
 uv run --locked python -m pytest src/runtime/tests/test_runtime.py src/runtime/tests/test_registry.py -q
 ```
 
-If a profile reports that the native navigation kernel or OctoPlanner3D runtime
-is required, treat that as a failed prerequisite, not an invitation to silently
-use a slower or incompatible Python fallback. Use the build guide and the exact
-build hint emitted by the profile preflight:
+If the native navigation endpoint or OctoPlanner3D runtime is missing, treat
+that as a failed prerequisite. Use the build guide and the exact build hint:
 
 ```bash
-bash scripts/build/build_nav_kernel.sh
 bash scripts/build/build_nav_endpoint.sh
 ```
 
 Then run the focused test or CMake target for the changed component. Do not
 solve a native product build failure by installing a broad ROS desktop stack or
-random global Python packages. ROS and `cyclonedds-python` are optional
-compatibility/diagnostic surfaces in parts of the repository, not a general
-main-path fix.
+random global Python packages. The supported DDS runtime is native CycloneDDS;
+there is no `cyclonedds-python` fallback to install.
 
 See [Build guide](../01-getting-started/BUILD_GUIDE.md) for supported host and
 native build prerequisites.
-
-## ROS 2 compatibility only
-
-Use this section only when the task explicitly targets a legacy ROS service,
-adapter, replay/simulator bridge, or comparison gate. It is not the first
-diagnostic branch for the normal native field product runtime.
-
-```bash
-# Explicit compatibility inspection only.
-bash scripts/lingtu doctor --ros2
-```
-
-Rules:
-
-- A missing `ros2` command is normal for a native-only product installation.
-- Do not source a ROS overlay or enable legacy services as a general recovery
-  step.
-- Do not run legacy LiDAR/SLAM/command owners beside the native DDS chain
-  unless the test plan explicitly requires the comparison.
-- Keep ROS-facing code in explicit `*/adapters/ros2/`, simulator bridges, or
-  legacy deployment paths; it must not become an import requirement of product
-  Modules.
-
-The supported install and service boundaries are documented under
-[Legacy ROS2 compatibility](../04-deployment/README.md#legacy-ros2-compatibility).
 
 ## Collect a useful incident evidence pack
 
@@ -449,16 +419,15 @@ address.
 ```bash
 # Read-only runtime summary and dataflow evidence.
 bash scripts/lingtu status
-bash scripts/lingtu doctor --non-motion --json --strict
-bash scripts/lingtu runtime-contract --json
-bash scripts/lingtu runtime-audit --json
-bash scripts/lingtu evidence --duration 20 --json-out runtime-evidence.json
-bash scripts/lingtu log all
+PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
+PYTHONPATH=src python scripts/diagnostics/soak.py --duration 120 --interval 2 --json --strict
+python scripts/gates/real_runtime_evidence_collect.py --duration-sec 20 --json-out runtime-evidence.json
+journalctl -u 'lt-*' -n 200 --no-pager
 ```
 
 Include in an incident report:
 
-- selected local Profile or Product/env, product session, and active map name;
+- selected Product/env, product session, and active map name;
 - exact command and timestamp of the first failure;
 - the first blocker/error, not only the last cascading error;
 - native service state and relevant bounded journal excerpt;

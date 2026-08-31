@@ -44,9 +44,9 @@ MCP 和低频适配器。LiDAR、SLAM、实时地图、导航和驱动通过原�
 
 | 配置 | 用途 | 部署前复核 |
 | --- | --- | --- |
-| config/robot_config.yaml | 几何、标定、坐标系和物理参数。 | 目标身份、标定修订和坐标系假设。 |
-| config/devices.yaml | 硬件/设备注册表。 | 选定 profile 使用的设备归属和名称。 |
-| config/dufomap.toml | 地图清理/构建行为。 | 地图工作流兼容性与存储影响。 |
+| config/robots/<vendor>/<model>/robot.yaml | 几何、标定、坐标系和物理参数。 | 目标身份、标定修订和坐标系假设。 |
+| config/devices.yaml | 硬件资产与相机启动配置。 | 只读诊断和相机配置，不决定 Product 数据流。 |
+| config/runtime_graph/ | Product、进程和数据边界。 | 进程归属、启动顺序和运行环境映射。 |
 | Profile 和端点配置 | 产品图与外部进程边界。 | 命令接收端、SLAM 归属，以及仿真或现场选择。 |
 
 绝不要在公开示例中放入 API key、现场地址、凭据或复制的生产地图。请通过经批准的目标配置或受保护环境提供密钥，而不是放入源代码管理或 shell 历史。
@@ -67,8 +67,8 @@ MCP 和低频适配器。LiDAR、SLAM、实时地图、导航和驱动通过原�
 请在已部署目标或经批准的远程操作会话中运行以下命令。它们只检查控制/数据流状态，不会提交目标或速度命令。
 
     bash scripts/lingtu status
-    bash scripts/lingtu health
-    bash scripts/lingtu doctor --non-motion --json --strict
+    curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
+    PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
 
 **预期结果：** 每个命令都会标识选定运行边界，并报告受限的健康状态或具体阻塞项。请将输出随部署记录保存。
 
@@ -78,8 +78,8 @@ MCP 和低频适配器。LiDAR、SLAM、实时地图、导航和驱动通过原�
 
 对于基于已保存地图的导航，请在不下发运动命令的情况下检查地图溯源，并评估精确路线：
 
-    bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
-    bash scripts/lingtu system-acceptance --map <map-name> --goal <x> <y> <yaw>
+    python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy
+    python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" --map <map-name> --goal <x> <y> <yaw>
 
 `system-acceptance` 默认不下发运动命令，并由 ProductControl 管理所需的 Product 切换与清理。其成功仅表明所选地图、位姿、规划器与目标足够兼容；它不授权导航目标。应修复地图、定位或配置边界，而不是用原始速度绕过规划器。
 

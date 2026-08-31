@@ -54,7 +54,7 @@ the default target set, and ran every test registered by that tree.
    DDS message target explicitly.
 3. `test_nav_client` had the same hidden generated-header dependency and now
    links the message target directly.
-4. The first full test archive omitted `src/nav/local/paths`; after adding the
+4. The first full test archive omitted `src/nav/cpp/planning/local/cmu/paths`; after adding the
    real path library, both affected tests passed and the final suite was 32/32.
 
 ## Not validated

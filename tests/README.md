@@ -16,7 +16,7 @@ operator to inspect `ros2 topic` output. The primary field-facing evidence is:
 - Gateway readiness and runtime status
 - Gateway runtime dataflow over Module `In/Out` ports
 - Non-motion route preview and diagnostic pack
-- Saved-map artifact provenance when a tomogram or occupancy artifact is used
+- Saved-map metadata and required artifact formats
 - Real S100P runtime evidence before claiming real robot readiness
 
 ## Fast Checks
@@ -24,35 +24,19 @@ operator to inspect `ros2 topic` output. The primary field-facing evidence is:
 ```bash
 python -m pytest src/runtime/tests/ -q
 python -m pytest src/runtime/tests/test_gateway_runtime_acceptance.py -q
-python lingtu.py runtime-audit
+python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
+python tools/validate/validate_architecture_boundaries.py
+python tools/validate/validate_topics.py
 ```
 
-## Gateway-Only Runtime Acceptance
+## Gateway Runtime Inspection
 
-Use this when the Gateway is running and the question is whether a customer or
-field engineer can understand the runtime without ROS tooling:
+Use ProductControl `status`, the field doctor, and the Gateway diagnostic
+routes. They expose the runtime without requiring ROS tooling:
 
 ```bash
 export LINGTU_GATEWAY_URL=http://ROBOT_IP_OR_HOSTNAME:5050
-
-python lingtu.py field-check \
-  --gateway-url "$LINGTU_GATEWAY_URL" \
-  maps/active \
-  --require-tomogram \
-  --require-occupancy
-
-python lingtu.py inspection-check \
-  --gateway-url "$LINGTU_GATEWAY_URL" \
-  maps/active \
-  --point pump_room \
-  --point dock \
-  --require-tomogram \
-  --require-occupancy
-
-python lingtu.py gateway-runtime-acceptance
-python lingtu.py gateway-runtime-acceptance --acceptance-mode simulation
-python lingtu.py gateway-runtime-acceptance --acceptance-mode field
-python lingtu.py gateway-runtime-acceptance --gateway-url "$LINGTU_GATEWAY_URL" --json
+PYTHONPATH=src python -m diagnostics.field.doctor --json --strict
 ```
 
 For one stream, use the Gateway dataflow detail route instead of `ros2 topic`:
@@ -89,39 +73,35 @@ builds Gateway snapshots in-process, resolves saved locations, previews plans,
 and returns the canonical inspection acceptance schema without writing to
 `goal_pose`, `cmd_vel`, `stop_cmd`, or arbitrary ROS/ModulePort channels.
 
-## Runtime Contract Gates
+## Contract And Field Gates
 
 ```bash
-python lingtu.py runtime-audit \
-  --json-out artifacts/runtime_contract_audit.json
+python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
+python tools/validate/validate_architecture_boundaries.py
+python tools/validate/validate_topics.py
 
-python lingtu.py saved-map-artifact-gate <map-dir> \
-  --require-tomogram \
+python scripts/gates/saved_map_artifact_gate.py <map-dir> \
+  --require-octomap \
   --require-occupancy \
   --json-out artifacts/saved_map_artifacts/report.json
 
-python lingtu.py real-runtime-evidence \
+python scripts/gates/real_runtime_evidence_collect.py \
   --duration-sec 20 \
   --json-out artifacts/real_runtime/report.json
 
-python lingtu.py gateway-runtime-acceptance \
-  --acceptance-mode field \
-  --gateway-url "$LINGTU_GATEWAY_URL"
 ```
 
-The first two commands are non-motion. `real-runtime-evidence` is also a
+The validators and saved-map gate are non-motion. Runtime evidence collection is also a
 read-only collector, but it must run during an operator-controlled real S100P
-session to prove real runtime readiness. The final command consumes that
-evidence through Gateway; it should not require the operator to inspect
-`ros2 topic` output directly.
+session to prove real runtime readiness.
 
 ## Simulation Closure
 
 Server-side simulation closure is tracked by:
 
 ```bash
-python sim/scripts/server_sim_closure.py --required-only --strict
-python -m pytest sim/tests/test_server_sim_closure.py -q
+python sim/scripts/sim_diagnostics.py --required-only --strict
+python -m pytest sim/tests/test_sim_diagnostics.py -q
 ```
 
 Simulation closure is useful algorithm evidence. It is not a substitute for
@@ -136,9 +116,3 @@ Script-related checks are split by how they should be run:
   from the old `scripts/test_*.py` paths. They are not pytest tests.
 - `tests/scripts/*.sh` are legacy/manual shell integration helpers; read each
   script before running it on hardware.
-
-## Legacy Integration Tests
-
-The scripts under `tests/integration` may still be useful for ROS-node or legacy
-deployment checks, but they are no longer the canonical product acceptance path.
-Prefer the Gateway/runtime gates above for Product field validation.

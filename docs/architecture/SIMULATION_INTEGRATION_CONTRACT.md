@@ -15,7 +15,7 @@ The canonical runtime identity is:
 ```text
 env + Product
   -> Assembly
-  -> fingerprinted RunPlan
+  -> resolved RunPlan
   -> ProductControl
   -> ProductControl's internal systemd runner or declared simulation runner
   -> native processes + Host
@@ -26,9 +26,9 @@ MuJoCo or Gazebo is an internal backend of `env=sim`; it is not a public `env`,
 Product, or endpoint selector. `ProductControl` is constructed for one fixed
 env and switches one env-independent Product inside that env.
 
-CMU Unity is not a current `env=sim` backend. The retained upstream baseline
-launcher and pure topic adapter are external experiments; ProductControl does
-not resolve them and they neither consume nor publish a RunPlan.
+CMU Unity is not a runtime backend. Its launcher, ROS 2 topic adapter, runtime
+manifest, and evidence path have been removed. Unity input is supported only by
+the offline `lingtu-maps-import-unity` semantic-map import tool.
 
 Products remain the operator modes:
 
@@ -40,9 +40,8 @@ Products remain the operator modes:
 - `tracking`
 - `inspection`
 
-Local Profiles such as `stub`, `dev`, `sim`, and `sim_nav` are development
-Host entry points. They do not replace field Products and do not publish a
-RunPlan for field startup.
+Component scripts are development entry points. They do not replace Products
+and do not publish a RunPlan.
 
 ## Env Configuration
 
@@ -51,38 +50,111 @@ Runtime Graph source of truth:
 | Source | Owns |
 | --- | --- |
 | `config/runtime_graph/products/*.yaml` | Env-independent Product declarations: Host graph, logical native roles, topics, and capabilities. |
-| `config/runtime_graph/envs/real.yaml` | Physical Thunder implementation mapping, process list, and the `thunder_dds_v1` DDS contract. |
+| `config/runtime_graph/envs/real.yaml` | Physical robot implementation mapping, process list, and the `field_dds_v1` DDS contract. |
 | `config/runtime_graph/envs/sim.yaml` | Simulation implementation backends and their acceptance runners. |
-| `config/robot_config.yaml` | Static physical robot/device/calibration data referenced internally by the real env. |
+| `config/robots/<vendor>/<model>/robot.yaml` | Static physical robot/device/calibration data selected by the real robot model. |
 
 The current `sim` env backends are internal configuration keys:
 
 | Backend | Products | Evidence class |
 | --- | --- | --- |
-| `mujoco_native` | `nav`, `teleop_avoid` | Native-DDS-like MuJoCo acceptance using the same typed DDS contract shape as the field path. |
-| `mujoco_host` | `map`, `explore` | Host simulation wiring and downstream map/navigation checks; `explore` covers live and saved-map variants. |
+| `mujoco` | `teleop`, `teleop_avoid`, `map`, `explore`, `nav`, `tracking`, `inspection` | Typed-DDS MuJoCo component targets using field process boundaries. Native hot-path services are C++; the MuJoCo feeder and Product Host remain the RunPlan-declared Python processes. `explore` has separate exact `live` and `map` targets. |
 | `gazebo` | `explore` | Gazebo industrial smoke and demo integration. |
 
 Backend names may appear in env configuration, acceptance artifacts, and
 operator diagnostics. They must not be described as public endpoints or
 deployment identities.
 
+The canonical backend has an acceptance target for every Product it lists and
+for every declared Product variant. All current MuJoCo manifests declare
+`acceptance_scope.coverage=component`; none is Product acceptance. A runner,
+manifest, successful compile, or verified exact RunPlan does not upgrade that
+coverage label.
+
+## RunPlan Wiring Versus Product Acceptance
+
+The MuJoCo catalog declares all seven Products. On a host with a complete
+platform-specific native catalog, Assembly and ProductControl can resolve each
+one under `env=sim, backend=mujoco` into one exact resolved RunPlan. The
+`explore` variant selects its exact `live` or `map` runner/manifest pair. A host
+missing a required platform implementation is rejected instead of receiving a
+partial RunPlan. This is the runtime wiring boundary.
+
+Product acceptance is a separate evidence boundary. It additionally requires
+one report to prove the exact ProductControl switch, process readiness,
+startup-zero acknowledgement, current-plan commit, rollback behavior, terminal
+stop, and managed cleanup, plus the Product-specific lifecycle. Until a
+manifest declares `coverage=product` and the report satisfies that contract,
+the result remains component evidence.
+
+The declared topology runs separate `lidar_publisher`, `imu_publisher`, and
+`camera_publisher` processes from one shared publisher binary. Each process has
+its own authenticated local endpoint and publishes only its assigned raw sensor
+stream; SLAM remains an independent native Fast-LIO `slamd` process.
+Direct-process definitions may declare private `windows` and `linux`
+implementations, but RunPlan compilation selects exactly one host platform.
+Only the selected artifact and command enter the RunPlan; an
+unselected PE or ELF artifact is never parsed as part of the executable plan.
+
+Windows-native parity for all MuJoCo Products is a fixed P0 target, not an
+optional Linux follow-up. The current Windows catalog already declares PE
+implementations for the native DDS publisher/driver bridge and the downstream
+map/navigation/exploration/Host processes, but it has no built, tested, and
+registered Fast-LIO `slamd.exe`. Therefore every SLAM-dependent Product is
+currently rejected while compiling its Windows RunPlan, before reconciliation,
+map staging, journal publication, quiesce, or child startup. Pure `teleop` does
+not select `slamd` and is the only currently compilable Windows exact-chain
+candidate; that is a temporary implementation state, not the accepted Windows
+scope.
+
+Linux/WSL selects the ELF catalog, but catalog compilation still requires the
+generated `build/mujoco_native_dds/lingtu_mujoco_sensor_publisher` binary used
+by all three sensor roles and the `lingtu_mujoco_driver_bridge` artifact; their
+absence fails closed. A complete
+catalog is not evidence that an exact ProductControl run completed.
+Planning and control qualification uses MuJoCo truth as the simulation
+localization authority. The feeder publishes that pose only as the typed SLAM
+odometry prior; the selected native `slamd` remains the sole owner of canonical
+SLAM odometry, registered cloud, health, and TF outputs. This isolates planning,
+tracking, and locomotion results from estimator error without creating a second
+output writer. It is simulation evidence, never Fast-LIO accuracy evidence or a
+field-runtime fallback.
+
+Cross-platform parity preserves one architecture:
+
+- Windows and Linux use the same Product declarations, process roles, DDS
+  topics, typed readiness, identity, lifecycle, and acceptance manifest;
+- platform-private command/artifact paths may differ, but selected native
+  artifacts in Windows RunPlans are PE/DLL-only and selected native artifacts
+  in Linux RunPlans are ELF/SO-only; explicitly declared Python feeder/Host
+  processes remain interpreter-owned;
+- a Windows Product must not hide WSL/Linux subprocesses behind its RunPlan;
+- neither platform may add a Python SLAM implementation or a second direct
+  simulator-truth writer; estimator qualification uses its dedicated no-prior
+  profile instead of the Product planning/control profile; and
+- Product evidence is platform-specific. A Linux/WSL PASS cannot promote
+  Windows, and a Windows PASS cannot promote Linux/WSL.
+
+The active portability and build sequence belongs to
+`docs/plans/current-roadmap.md`; this contract fixes the invariants rather than
+duplicating implementation steps.
+
 ## Command Shape
 
 Use ProductControl for Product operations:
 
 ```bash
-python -m lingtu.control switch nav --env real --map MAP_NAME --dry-run --json
-python -m lingtu.control switch nav --env sim --backend mujoco_native --map MAP_NAME --dry-run --json
-bash scripts/lingtu --env real mode switch nav --map MAP_NAME
+python -m lingtu.control switch nav --robot unitree/go2 --env real --map MAP_NAME --dry-run --json
+python -m lingtu.control switch nav --robot doso/thunder_v4 --env sim --map MAP_NAME --dry-run --json
+bash scripts/lingtu --robot unitree/go2 --env real switch nav --map MAP_NAME
 ```
 
-Use local Profiles only for local development and simulation Host runs:
+Use explicit component scripts for local simulation work:
 
 ```bash
-uv run --locked python lingtu.py runtime-spec sim --json
-uv run --locked python lingtu.py sim
-uv run --locked python lingtu.py sim_nav
+uv run --locked python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim --dry-run --json
+uv run --locked python sim/scripts/mujoco/native_navigation_acceptance.py --help
+uv run --locked python sim/scripts/mujoco/native_control_mode_acceptance.py --help
 ```
 
 Do not use endpoint flags, combined Product/env names, or current/target
@@ -97,7 +169,7 @@ Simulation may enter only through declared `env=sim` backend boundaries:
 1. The backend provides sensor, odometry, map, terrain, waypoint, command, or
    acceptance-runner processes declared by `config/runtime_graph/envs/sim.yaml`.
 2. Assembly resolves the requested Product inside `env=sim` into one
-   fingerprinted RunPlan.
+   resolved RunPlan.
 3. ProductControl applies that RunPlan or delegates to the declared
    simulation acceptance runner.
 4. Host and native services consume the exact resolved contract; they must not
@@ -112,10 +184,10 @@ inside the simulator; it must not forward it to the field driver.
 Use `endpoint` only for concrete communication access points or contracts:
 
 - HTTP: `http://<robot>:5050`, `/api/v1/runtime/dataflow`
-- DDS: `thunder_dds_v1`, `/nav/cmd_vel`, `/slam/odometry`
-- native service boundary: `lingtu-nav-dds`, `mapd`, `lingtu-driver`
+- DDS: `field_dds_v1`, `/nav/cmd_vel`, `/slam/odometry`
+- native service boundary: `lt-nav`, `mapd`, `lingtu-driver`
 
-The field DDS contract name `thunder_dds_v1` is valid because it names a
+The field DDS contract name `field_dds_v1` is valid because it names a
 typed communication contract. Do not use the former unversioned field label as
 a deployment identity, public env, Product, RobotConfig selector, or CLI
 endpoint selector.
@@ -129,14 +201,14 @@ Every simulation backend must declare:
 - frame mapping to `map`, `odom`, `body`, and `lidar_link`;
 - topic mapping to Product topic contracts;
 - command boundary and proof that `cmd_vel_sent_to_hardware=false`;
-- artifact provenance for saved maps, occupancy, tomograms, and reports;
+- selected saved-map artifacts and acceptance reports;
 - forbidden fallbacks, especially Python or ROS fallbacks that would weaken a
   native-DDS equivalence claim.
 
 Simulation must not:
 
 - add simulator-specific Product architectures;
-- disable SafetyRing, stop, stale-input, or command-owner gates;
+- disable native stop, stale-input, final safety, or command-authority gates;
 - enable direct-goal or direct-track bypasses in Product graphs;
 - relay `/nav/cmd_vel` to physical hardware;
 - use cumulative debug clouds as proof of SLAM quality;
@@ -173,30 +245,30 @@ topic `frame_id` validation is topic-specific, not a single global assertion.
 
 | Backend or env | World/sensors | SLAM/localization | Planning/control | Command sink | Allowed claim |
 | --- | --- | --- | --- | --- | --- |
-| `env=real` | Thunder MID-360/IMU through native services | Native C++ SLAM/localizer over `thunder_dds_v1` | Product-native `navd`/`mapd`/traversability where declared | `lingtu-driver` to remote Brainstem | Field evidence only after robot-side readiness gates. |
-| `mujoco_native` | MuJoCo MID-360/IMU records through native DDS shape | Native-DDS-like SLAM/status contract | Native navigation endpoint acceptance | MuJoCo DDS command tap | Native-DDS simulation evidence; not robot readiness. |
-| `mujoco_host` | MuJoCo Host simulation adapters | Host simulation odometry/map-cloud source | Python Host/downstream simulation wiring | MuJoCo adapter or gate motion | Host simulation and downstream wiring evidence. |
+| `env=real` | Robot sensors through native services | Native C++ SLAM/localizer over `field_dds_v1` | Product-native `navd`/`mapd`/traversability where declared | `lingtu-driver` through the selected robot backend | Field evidence only after robot-side readiness gates. |
+| `mujoco` | MuJoCo MID-360/IMU records through typed DDS | Native C++ SLAM/localization and mapd | Product-selected typed-DDS chain: native C++ hot-path services plus the declared Python feeder/Host | MuJoCo DDS command tap | Field-architecture simulation evidence; not robot readiness. |
 | `gazebo` | Gazebo world, physics, rendered sensors | Gazebo-derived state/map into LingTu contracts | LingTu simulation navigation/exploration chain | Isolated Gazebo command relay | ROS/GZ integration and closed-loop smoke evidence. |
 
 Forbidden claims are part of the contract:
 
-- CMU Unity baseline or adapter experiments must not be reported as a LingTu
-  Product, ProductControl/RunPlan execution, LingTu-built SLAM, or Product
-  acceptance evidence.
-- `mujoco_host` evidence must not be reported as native-DDS raw-sensor
-  equivalence.
-- `mujoco_native` evidence must not be reported as field readiness without a
+- Retired simulator bridges must not be reported as ProductControl/RunPlan
+  execution or Product acceptance evidence. Offline Unity semantic import does
+  not execute a simulator or prove runtime behavior.
+- Local MuJoCo component evidence must not be reported as native-DDS
+  raw-sensor equivalence.
+- `mujoco` evidence must not be reported as field readiness without a
   separate robot-side gate.
-- PCT is a planner backend. TARE is an exploration strategy. A gate may prove
-  that a planner can plan on a same-source map, but that is separate from
+- Global planning and TARE exploration are separate capabilities. A gate may
+  prove that `navd` can plan on a same-source map, but that is separate from
   proving TARE exploration quality.
 
 ## Runtime Evidence Required
 
 A simulation run can support a Product claim only when the report proves:
 
+- the selected manifest declares `acceptance_scope.coverage=product`;
 - `env=sim`;
-- the selected Product and RunPlan fingerprint;
+- the selected Product, Product session ID, and RunPlan path;
 - the internal sim backend and acceptance artifact path;
 - `simulation_only=true`;
 - `real_robot_motion=false`;
