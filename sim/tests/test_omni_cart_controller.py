@@ -48,18 +48,18 @@ MUJOCO_HOST = (
 HEADLESS_RUNNER = (
     REPO_ROOT
     / "sim"
-    / "packages"
     / "controllers"
-    / "omni_cart_differential_drive"
+    / "omni_cart"
+    / "differential_drive"
     / "headless.py"
 )
 _CONTROLLER_RUNTIME = runpy.run_path(
     str(
         REPO_ROOT
         / "sim"
-        / "packages"
         / "controllers"
-        / "omni_cart_differential_drive"
+        / "omni_cart"
+        / "differential_drive"
         / "runtime.py"
     )
 )

@@ -8,7 +8,6 @@ are reused by the simulation engine and validation scripts.
 | File | Role |
 | --- | --- |
 | `livox_mid360.py` | Livox MID-360 style scan pattern and Python fallback LiDAR interface. |
-| `wtrtk980_sim.py` | Simulated WTRTK980 GNSS/RTK source for navigation tests. |
 
 ## Contract
 
