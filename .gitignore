@@ -5,12 +5,11 @@
 # 鈹€鈹€ Third-party reference code (local only, not tracked) 鈹€鈹€
 third_party/
 
-# 鈹€鈹€ ROS 2 build artifacts 鈹€鈹€
+# Build artifacts
 build/
 install/
 log/
 !scripts/build/
-!scripts/build/build_ros_workspace.sh
 
 # 鈹€鈹€ ROS bag files 鈹€鈹€
 *.bag
@@ -114,8 +113,6 @@ src/nav/services/plan/**/CMakeFiles/
 !/tools/calibration/lidar_imu/LiDAR_IMU_Init/Log/
 /tools/calibration/lidar_imu/LiDAR_IMU_Init/Log/*
 !/tools/calibration/lidar_imu/LiDAR_IMU_Init/Log/plot.py
-src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/
-
 # C++ build artifacts in global_planning
 src/global_planning/**/build/
 src/global_planning/**/CMakeFiles/
@@ -129,6 +126,8 @@ src/global_planning/**/*.a
 *.engine
 *.bin
 !sim/worlds/factory_park_hf/generated/heightfield_f32.bin
+!sim/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx
+!sim/packages/worlds/factory_park_robot_yard_safety/1.0.0/artifacts/heightfield_f32.bin
 *.hbm
 mobileclip2_b.ts
 
@@ -193,7 +192,7 @@ client/flutter_monitor/build/
 client/flutter_monitor/linux/flutter/ephemeral/
 client/flutter_monitor/web/.dart_tool/
 
-# 鈹€鈹€ Third-party (use scripts/build/clone_semantic_deps.sh to restore) 鈹€鈹€
+# Third-party checkouts
 third_party/
 !third_party/.gitkeep
 !third_party/MANIFEST.md
@@ -216,6 +215,8 @@ pipeline_videos/
 functional_test_output/
 test_results/
 artifacts/
+!sim/packages/worlds/factory_park_robot_yard_safety/1.0.0/artifacts/
+!sim/packages/worlds/factory_park_robot_yard_safety/1.0.0/artifacts/**
 src/semantic_perception/test_results/
 det_*.jpg
 det_*.png
@@ -255,7 +256,9 @@ web/node_modules
 # AI tool caches and ephemeral development artifacts
 # ──────────────────────────────────────────────
 .codex-tmp/
+.codex-temp-*
 .codex-web-vite*.log
+/.pnpm-store/
 CUsers*/
 .mypy_cache/
 .cursor/
@@ -263,5 +266,4 @@ CUsers*/
 /.tmp-inspection-pytest/
 /.tripo/
 /sim/.promotion-locks/
-/nav_endpoint_config.obj
-/test_nav_endpoint_config.obj
+/*.obj

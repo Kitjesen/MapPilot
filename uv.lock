@@ -2227,15 +2227,6 @@ perception = [
     { name = "torch" },
     { name = "ultralytics" },
 ]
-robot-thunder = [
-    { name = "brainstem-api" },
-]
-sdk-async = [
-    { name = "aiohttp" },
-]
-sdk-mcp = [
-    { name = "httpx" },
-]
 sim-mujoco = [
     { name = "mujoco" },
     { name = "mujoco-lidar" },
@@ -2254,21 +2245,18 @@ vision = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", marker = "extra == 'sdk-async'", specifier = ">=3.8" },
     { name = "anthropic", marker = "extra == 'llm'" },
-    { name = "brainstem-api", marker = "extra == 'robot-thunder'", git = "https://github.com/Kitjesen/brainstem_api.git?subdirectory=python&rev=v2.0.0" },
     { name = "brainstem-api", marker = "extra == 'thunder'", git = "https://github.com/Kitjesen/brainstem_api.git?subdirectory=python&rev=v2.0.0" },
     { name = "chromadb", marker = "extra == 'vector'" },
     { name = "fastapi", marker = "extra == 'dev'" },
     { name = "fastapi", marker = "extra == 'gateway'" },
-    { name = "httpx", marker = "extra == 'sdk-mcp'", specifier = ">=0.24" },
     { name = "jieba", marker = "extra == 'nlp'", specifier = ">=0.42" },
     { name = "langchain", marker = "extra == 'agent'", specifier = ">=0.2" },
     { name = "langchain-core", marker = "extra == 'agent'", specifier = ">=0.2" },
     { name = "langchain-openai", marker = "extra == 'agent'", specifier = ">=0.1" },
     { name = "lingtu", extras = ["gateway", "vision", "ml", "llm", "nlp", "agent", "perception", "vector"], marker = "extra == 'all'" },
     { name = "mujoco", marker = "extra == 'sim-mujoco'", specifier = ">=3.2" },
-    { name = "mujoco-lidar", marker = "extra == 'sim-mujoco'", specifier = ">=0.3.3" },
+    { name = "mujoco-lidar", marker = "extra == 'sim-mujoco'", specifier = "==0.3.3" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24,<2.0" },
     { name = "onnxruntime", marker = "python_full_version == '3.10.*' and extra == 'sim-mujoco'", specifier = ">=1.17,<1.24" },
@@ -2291,7 +2279,7 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'dev'" },
     { name = "websockets", marker = "extra == 'gateway'" },
 ]
-provides-extras = ["lite", "core-portable", "portable", "sim-mujoco", "endpoint-portable", "pcl-ops", "gateway", "sdk", "sdk-async", "sdk-mcp", "vision", "ml", "llm", "nlp", "agent", "perception", "vector", "dev", "thunder", "robot-thunder", "ros-compat", "slam-native", "all"]
+provides-extras = ["sim-mujoco", "gateway", "vision", "ml", "llm", "nlp", "agent", "perception", "vector", "dev", "thunder", "all"]
 
 [[package]]
 name = "markdown-it-py"

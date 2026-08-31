@@ -1,7 +1,6 @@
-[submodule "src/drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2"]
-	path = src/drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2
-	url = https://github.com/orbbec/OrbbecSDK_ROS2.git
-	ignore = dirty
+[submodule "research/core_planner"]
+	path = research/core_planner
+	url = https://github.com/BBD00/core_planner.git
 [submodule "research/semantic_map_refs/DualMap"]
 	path = research/semantic_map_refs/DualMap
 	url = https://github.com/Eku127/DualMap.git

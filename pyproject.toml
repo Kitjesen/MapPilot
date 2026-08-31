@@ -16,27 +16,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Portable package tiers.  These extras make the dependency boundary explicit so
-# Windows and Ubuntu deployments do not accidentally install ROS/Gateway/ML stacks.
-lite = []
-core-portable = []
-portable = []
 # ONNX Runtime 1.24.x has no CPython 3.10 wheels, while the product still
 # supports Python 3.10 and the ThunderV4 MuJoCo policy is an ONNX model.
 sim-mujoco = [
     "mujoco>=3.2",
-    "mujoco-lidar>=0.3.3",
+    "mujoco-lidar==0.3.3",
     "onnxruntime>=1.17,<1.24; python_version == '3.10'",
     "onnxruntime>=1.24; python_version >= '3.11'",
 ]
-endpoint-portable = []
-# Optional native PCL plugin marker. The runtime looks for a separately built
-# `lingtu_pcl_ops` wheel/module and falls back to NumPy when it is absent.
-pcl-ops = []
 gateway = ["fastapi", "uvicorn", "websockets"]
-sdk = []
-sdk-async = ["aiohttp>=3.8"]
-sdk-mcp = ["httpx>=0.24"]
 vision = ["opencv-python-headless>=4.5"]
 ml = ["scikit-learn>=1.0"]
 llm = ["openai>=1.0", "anthropic"]
@@ -46,19 +34,13 @@ perception = ["torch", "ultralytics", "open-clip-torch"]
 vector = ["chromadb"]
 dev = ["pytest", "pytest-cov", "pytest-asyncio", "ruff", "mypy", "fastapi", "uvicorn", "websockets"]
 # ThunderDriver requires brainstem gRPC contract package brainstem_api (v2.0.0).
-# Install on real robot / sunrise deploy: pip install -e '.[lite,thunder]'
+# Install on a real robot target: pip install -e '.[thunder]'
 # stub / sim mode does not need this.
 thunder = ["brainstem-api @ git+https://github.com/Kitjesen/brainstem_api.git@v2.0.0#subdirectory=python"]
-robot-thunder = ["brainstem-api @ git+https://github.com/Kitjesen/brainstem_api.git@v2.0.0#subdirectory=python"]
-# ROS2/native SLAM dependencies are intentionally not pip-installed by the core package.
-# These extras are markers for explicit compatibility/capability surfaces whose system
-# packages are installed by their own deployment docs or sidecar build steps.
-ros-compat = []
-slam-native = []
 all = ["lingtu[gateway,vision,ml,llm,nlp,agent,perception,vector]"]
 
 [project.scripts]
-lingtu = "lingtu_cli:main"
+lingtu = "lingtu.control:main"
 lingtu-drive = "lingtu.operator_drive:main"
 lingtu-sdk = "lingtu.sdk.cli:main"
 
@@ -75,16 +57,13 @@ requires-dist = [
     "protobuf==6.33.0",
 ]
 
-[tool.setuptools]
-py-modules = ["lingtu_cli"]
-
 [tool.setuptools.packages.find]
-where = [".", "src"]
+where = ["src"]
 include = [
-    "cli*",
     "runtime*",
     "drivers*",
-    "external_adapters*",
+    "diagnostics*",
+    "explore*",
     "gateway*",
     "kernels*",
     "lingtu*",
@@ -93,16 +72,15 @@ include = [
     "perception*",
     "decision*",
     "localization*",
+    "maps*",
+    "message*",
 ]
 
 [tool.ruff]
 target-version = "py310"
 line-length = 120
-src = ["src", "cli"]
-exclude = [
-    "src/external_adapters/pct/pct_planner/**",
-    "**/legacy/*",
-]
+src = ["src"]
+exclude = ["**/legacy/*"]
 
 [tool.ruff.lint]
 select = [
@@ -139,14 +117,16 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = [
-    "cli",
     "runtime",
     "drivers",
-    "external_adapters",
+    "diagnostics",
+    "explore",
     "gateway",
     "kernels",
     "lingtu",
+    "maps",
     "memory",
+    "message",
     "nav",
     "perception",
     "decision",
@@ -159,7 +139,7 @@ known-first-party = [
 "src/perception/*/test*" = ["F811", "E402", "D"]
 "src/decision/*/test*" = ["F811", "E402", "D"]
 "src/decision/tests/*" = ["S101"]
-"src/*/tests/*" = ["D", "E402"]
+"src/*/tests/*" = ["D", "E402", "S101"]
 "sim/tests/*" = ["D"]
 "scripts/*" = ["D"]
 "third_party/*" = ["D", "B", "S"]
@@ -179,10 +159,11 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false  # gradual adoption
 ignore_missing_imports = true   # many deps lack stubs
-exclude = ["src/external_adapters/pct/pct_planner/planner/lib/3rdparty/", "third_party/", "research/"]
+exclude = ["third_party/", "research/"]
 
 [tool.pytest.ini_options]
 addopts = "-p no:anyio"
+cache_dir = "build/pytest-cache"
 testpaths = [
     "tests/contracts",
     "src/runtime/tests",
@@ -190,9 +171,13 @@ testpaths = [
     "src/gateway/tests",
     "tests/drivers",
     "src/lingtu/tests",
+    "src/lingtu/real/tests",
+    "src/lingtu/sim/tests",
+    "src/lingtu/assembly/tests",
     "src/lingtu/sdk/tests",
     "src/memory/tests",
     "sim/tests",
+    "tools/simstudio/tests",
     "src/localization/tests",
     "src/perception/tests",
     "src/decision/tests",
@@ -200,7 +185,6 @@ testpaths = [
 # tests/ contains default contracts plus root-level integration tests run separately:
 #   python -m pytest tests/ -q
 norecursedirs = [
-    "src/external_adapters/pct/pct_planner/planner/lib/3rdparty",
     "third_party",
     "research",
     ".venv",
@@ -213,7 +197,6 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 markers = [
-    "ros2: tests that require ROS2 runtime",
     "slow: tests that take >5 seconds",
     "sim: tests that require MuJoCo simulation",
 ]
