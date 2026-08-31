@@ -787,10 +787,18 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
     resetTeleopRotation();
   }
   const double configured_horizon = std::max(0.5, config_.teleop_intent_horizon_m);
-  if (!teleop_reference_.has_value() ||
+  const bool teleop_direction_changed =
+      teleop_reference_.has_value() &&
       std::abs(nav_kernel::normalizeAngle(
           input_direction_body - teleop_reference_->directionBody)) >
-          kTeleopIntentToleranceRad) {
+          kTeleopIntentToleranceRad;
+  if (!teleop_reference_.has_value() || teleop_direction_changed) {
+    if (teleop_direction_changed) {
+      resetLocalPlanning();
+      intent_mode_ = true;
+      traj_clock_s_ = timestamp_s;
+    }
+    ++generation;
     follower_.resetIntent();
     teleop_reference_ = TeleopReference{
         odom_map_body.position,
@@ -837,7 +845,7 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
                           : config_.teleop_intent_max_deviation_deg,
   };
   const nav_kernel::LocalPlanRequest plan_request = makeLocalPlanRequest(
-      odom_map_body, intent_route, 0, false, kinematics, observation,
+      odom_map_body, intent_route, generation, false, kinematics, observation,
       obstacle_xyzh, obstacle_count, timestamp_s,
       timestamp_s - std::max(0.0, traj_delay_s_), traversability, &motion_intent);
 
@@ -861,7 +869,7 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   const bool spline_provided = spline != nullptr;
   const bool path_provided = std::holds_alternative<nav_kernel::PathTarget>(plan.target());
   output.path_found = plan_ready;
-  output.hold_body_heading = pure_lateral_intent && plan_ready && path_provided;
+  output.hold_body_heading = pure_lateral_intent && plan_ready;
   output.slow_down = std::clamp(plan.hints().slowdownLevel, 0, 3);
   output.recovery_state = 0;
   output.local_path_body = plan.previewPath();

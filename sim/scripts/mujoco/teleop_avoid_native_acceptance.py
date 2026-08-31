@@ -483,8 +483,11 @@ def _binary_source_provenance(
         "navigation": [
             endpoint_cpp,
             nav_cpp / "planning",
-            nav_cpp / "control",
-            nav_cpp / "engine",
+            nav_cpp / "execution",
+            nav_cpp / "navigation",
+            nav_cpp / "platform",
+            nav_cpp / "tracking",
+            nav_cpp / "trajectory",
             nav_cpp / "include",
             nav_cpp / "CMakeLists.txt",
             nav_cpp / "cmake" / "NavCoreTargets.cmake",
@@ -867,7 +870,7 @@ def _policy_runtime_evidence(*, required: bool) -> dict[str, Any]:
 
 
 def prepare_runtime(args: argparse.Namespace) -> dict[str, Any]:
-    """Prepare the map-free teleop_avoid Product and resolve native dependencies."""
+    """Prepare saved-map-free teleop_avoid and resolve native dependencies."""
 
     from sim.scripts.mujoco import native_navigation_acceptance as native
 
@@ -887,10 +890,9 @@ def prepare_runtime(args: argparse.Namespace) -> dict[str, Any]:
     policy_runtime = _policy_runtime_evidence(required=policy_path.is_file())
     blockers.extend(policy_runtime["blockers"])
     state_provider = str(((manifest.get("slam_runtime") or {}).get("provider") or "fastlio2")).strip().lower()
-    if state_provider == "mujoco_navigation_fixture":
-        binaries.pop("mapd", None)
     required_binaries = {
         "sensor_publisher",
+        "mapd",
         "navigation",
         "navigation_control",
         "driver_bridge",
@@ -1241,6 +1243,11 @@ def _attached_metrics(
     ]
     teleop = [item.get("teleop") for item in ready if isinstance(item.get("teleop"), Mapping)]
     local = [item.get("last_local") for item in ready if isinstance(item.get("last_local"), Mapping)]
+    planner = [
+        item.get("local_planner_debug")
+        for item in ready
+        if isinstance(item.get("local_planner_debug"), Mapping)
+    ]
     events = parse_operator_motion_events(f"{motion.get('stdout') or ''}\n{motion.get('stderr') or ''}")
 
     def counts(values: Sequence[str]) -> dict[str, int]:
@@ -1248,18 +1255,6 @@ def _attached_metrics(
         for value in values:
             result[value] = result.get(value, 0) + 1
         return result
-
-    def command_samples(values: Sequence[Mapping[str, Any]], key: str) -> list[list[float]]:
-        samples: list[list[float]] = []
-        for value in values:
-            command = value.get(key)
-            if not isinstance(command, Mapping):
-                continue
-            axes = [command.get(axis) for axis in ("vx", "vy", "wz")]
-            if not all(_finite_number(axis) for axis in axes):
-                continue
-            samples.append([float(axis) for axis in axes])
-        return samples
 
     offsets = [
         _path_lateral_offset_m(item.get("local_path"), command_heading_rad)
@@ -1269,6 +1264,10 @@ def _attached_metrics(
         "ready_samples": len(ready),
         "teleop_reasons": counts([str(item.get("reason") or "") for item in teleop]),
         "local_reasons": counts([str(item.get("reason") or "") for item in local]),
+        "planner_reasons": counts([str(item.get("search_reason") or "") for item in planner]),
+        "continuity_reused_samples": sum(
+            1 for item in planner if item.get("continuity_reused") is True
+        ),
         "max_local_path_points": max(
             (max(int(item.get("local_path_points") or 0), len(item.get("local_path") or ())) for item in ready),
             default=0,
@@ -1277,8 +1276,6 @@ def _attached_metrics(
         "nonzero_output_samples": sum(
             1 for item in teleop if _twist_is_nonzero(item.get("output"))
         ),
-        "path_follower_command_samples": command_samples(local, "path_follower_cmd_vel"),
-        "final_command_samples": command_samples(local, "cmd_vel"),
         "resume_required_samples": sum(
             1
             for item in ready
@@ -1441,7 +1438,7 @@ def run_attached(
         "run_plan": str(run_plan_path.expanduser().resolve()),
         "product_session_id": product_session_id,
         "sensor_processes": list(sensors),
-        "timeline": timeline,
+        "timeline_samples": len(timeline),
         "operator_motion": result,
         "stop": stop,
         "post_stop_samples": post_stop,

@@ -247,7 +247,8 @@ def run(
     }
     selected_local_planner = (
         str(expected_plan.native_nav.get("local_planner") or "").strip() or None
-        if expected_plan is not None and product == "nav"
+        if expected_plan is not None
+        and expected_plan.native_nav.get("teleop_local_planner") is True
         else None
     )
     try:

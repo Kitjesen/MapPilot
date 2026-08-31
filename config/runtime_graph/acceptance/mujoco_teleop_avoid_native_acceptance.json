@@ -1,7 +1,7 @@
 {
   "schema_version": "lingtu.mujoco.teleop_avoid_native_acceptance.v1",
   "name": "mujoco_teleop_avoid_native",
-  "description": "Product-specific MuJoCo acceptance for map-free CMU teleop_avoid using MuJoCo state and live LiDAR obstacles.",
+  "description": "Product-specific MuJoCo acceptance for saved-map-free SCAN teleop_avoid using MuJoCo truth state, native Mapd, and live LiDAR obstacles.",
   "product_contract": {
     "product": "teleop_avoid",
     "source": "config/runtime_graph/products/teleop_avoid.yaml",
@@ -37,15 +37,16 @@
     "publish_odom_prior": true
   },
   "navigation_runtime": {
+    "local_planner": "scan",
+    "scan_time_forward_s": 0.55,
+    "scan_heading_error_rad": 0.8,
+    "scan_position_gain": 0.9,
+    "scan_yaw_gain": 1.2,
+    "scan_max_vx_mps": 0.5,
+    "scan_max_vy_mps": 0.5,
+    "scan_max_yaw_rate_rad_s": 1.0,
     "debug_candidate_limit": 36,
     "debug_local_map_points": 640
-  },
-  "driver_bridge": {
-    "max_linear_mps": 1.0,
-    "max_angular_rps": 1.0,
-    "command_timeout_ms": 200,
-    "heartbeat_timeout_ms": 500,
-    "apply_timeout_ms": 500
   },
   "teleop_command": {
     "linear_mps": 0.5,
@@ -94,7 +95,6 @@
   },
   "paths": {
     "slam_config": "src/localization/fastlio2/config/sim_mid360_slam.yaml",
-    "path_library": "src/nav/cpp/planning/local/cmu/paths/thunder",
     "sensor_runner": "sim/scripts/mujoco/native_dds_sensors.py"
   },
   "binaries": {
@@ -179,12 +179,18 @@
       "rt/slam/map_observation",
       "rt/slam/localization_health"
     ],
+    "mapd_input": "rt/slam/map_observation",
+    "mapd_outputs": [
+      "rt/maps/state",
+      "rt/maps/local_collision"
+    ],
     "navigation_inputs": [
       "rt/nav/operator_motion/control",
       "rt/nav/operator_motion/sample",
       "rt/slam/odometry",
       "rt/slam/registered_cloud",
-      "rt/slam/localization_health"
+      "rt/slam/localization_health",
+      "rt/maps/local_collision"
     ],
     "operator_motion_ack": "rt/nav/operator_motion/ack",
     "operator_motion_status": "rt/nav/operator_motion/status",
@@ -196,8 +202,8 @@
       "rt/nav/way_point"
     ],
     "locomotion_input": "rt/nav/cmd_vel",
-    "local_path_role": "dds_telemetry_and_preview",
-    "path_follower_role": "embedded_before_final_cmd_vel_gate",
+    "local_path_role": "sampled_spline_dds_telemetry_and_preview",
+    "path_follower_role": "embedded_scan_spline_follower_before_final_cmd_vel_gate",
     "forbidden_runtime_inputs": [
       "saved SLAM map",
       "planner octomap",
@@ -215,8 +221,8 @@
     "claims": [
       "native typed operator-motion admission",
       "mapping-mode SLAM live inputs",
-      "native local detour planning",
-      "embedded PathFollower output",
+      "native SCAN local detour planning",
+      "embedded SCAN spline follower output",
       "final cmd_vel freshness and velocity limits without duplicate path collision arbitration",
       "MuJoCo physical driver bridge applies commands before typed ACK"
     ],

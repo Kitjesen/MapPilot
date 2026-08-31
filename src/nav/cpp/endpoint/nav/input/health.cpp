@@ -82,6 +82,10 @@ InputGateState InputProjector::evaluateGate(double now_steady_s, SteadyClock::ti
   input.traversability_stamp_s = state_.last_traversability_s;
   input.traversability_receive_s = state_.last_traversability_receive_s;
   input.traversability_generation = state_.traversability_generation;
+  input.local_collision_stamp_s = state_.last_local_collision_s;
+  input.local_collision_receive_s = state_.last_local_collision_receive_s;
+  input.local_collision_generation = state_.local_collision_map.generation;
+  input.local_collision_complete = state_.local_collision_map.complete;
   input.localization_health_stamp_s = state_.localization_health.stamp_s;
   input.localization_health_receive_s = state_.localization_health_receive_s;
   input.localization_health_generation = state_.localization_health_generation;

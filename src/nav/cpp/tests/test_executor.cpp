@@ -451,6 +451,57 @@ TEST(Executor, ScanTeleopIntentPublishesTelemetryAndTracksSpline) {
   EXPECT_EQ(out.reason, "teleop_assist_spline_ready");
 }
 
+TEST(Executor, ScanLateralIntentTracksSplineWithoutTurningBody) {
+  auto executor = makeScanExecutor();
+  nav_kernel::Twist intent;
+  intent.vy = 0.25;
+  const auto observation = emptyScanObservation(1.0);
+
+  const auto out = awaitScanOutput([&]() {
+    return executor.tick(intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, nullptr, 0,
+                                     1.0, {}, observation));
+  });
+
+  ASSERT_TRUE(out.path_found) << out.reason;
+  EXPECT_TRUE(out.hold_body_heading);
+  EXPECT_FALSE(out.trajectory_frozen);
+  EXPECT_NEAR(out.cmd_vel.vx, 0.0, 1e-6);
+  EXPECT_GT(out.cmd_vel.vy, 0.0);
+  EXPECT_NEAR(out.cmd_vel.wz, 0.0, 1e-6);
+  EXPECT_EQ(out.reason, "teleop_assist_lateral_ready");
+}
+
+TEST(Executor, ScanDirectionChangeNeverExecutesThePreviousIntentSpline) {
+  auto executor = makeScanExecutor();
+  nav_kernel::Twist forward;
+  forward.vx = 0.25;
+  auto observation = emptyScanObservation(1.0);
+  const auto moving = awaitScanOutput([&]() {
+    return executor.tick(intentInput(pose(0.0, 0.0, 0.0, 0.0), forward, nullptr, 0,
+                                     1.0, {}, observation));
+  });
+  ASSERT_TRUE(moving.path_found) << moving.reason;
+  ASSERT_GT(moving.cmd_vel.vx, 0.0);
+
+  nav_kernel::Twist lateral;
+  lateral.vy = 0.25;
+  const auto transition = executor.tick(intentInput(
+      pose(0.0, 0.0, 0.0, 0.0), lateral, nullptr, 0, 1.05, {}, observation));
+
+  EXPECT_LE(std::abs(transition.cmd_vel.vx), 1e-9)
+      << "a new intent must not execute the previous forward spline";
+
+  observation = emptyScanObservation(1.05, 2);
+  const auto switched = awaitScanOutput([&]() {
+    return executor.tick(intentInput(pose(0.0, 0.0, 0.0, 0.0), lateral, nullptr, 0,
+                                     1.05, {}, observation));
+  });
+  ASSERT_TRUE(switched.path_found) << switched.reason;
+  EXPECT_TRUE(switched.hold_body_heading);
+  EXPECT_GT(switched.cmd_vel.vy, 0.0);
+  EXPECT_GT(std::abs(switched.cmd_vel.vy), std::abs(switched.cmd_vel.vx));
+}
+
 TEST(Executor, ScanFreezesTrajectoryClockWhileAligningHeading) {
   auto executor = makeScanExecutor();
   executor.setRoute(route({
@@ -556,6 +607,46 @@ TEST(Executor, ScanKeepsSafeIntentOnMapChange) {
   EXPECT_FALSE(during_replan.near_field_stop) << during_replan.reason;
   EXPECT_NE(during_replan.reason, "local_intent_pending");
   EXPECT_GT(during_replan.cmd_vel.vx, 0.0);
+}
+
+TEST(Executor, ScanKeepsSafeIntentWhileBodyTurnsAlongDetour) {
+  auto executor = makeScanExecutor();
+  nav_kernel::Twist intent;
+  intent.vx = 0.25;
+  auto observation = emptyScanObservation(1.0);
+
+  const auto ready = awaitScanOutput([&]() {
+    return executor.tick(
+        intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, nullptr, 0, 1.0, {}, observation));
+  });
+  ASSERT_TRUE(ready.path_found) << ready.reason;
+
+  const auto turning = executor.tick(
+      intentInput(pose(0.0, 0.0, 0.0, -0.20), intent, nullptr, 0, 1.05, {}, observation));
+
+  EXPECT_TRUE(turning.path_found) << turning.reason;
+  EXPECT_FALSE(turning.near_field_stop) << turning.reason;
+  EXPECT_NE(turning.reason, "local_intent_pending");
+}
+
+TEST(Executor, ScanKeepsSafeIntentWhileReturningToTeleopCorridor) {
+  auto executor = makeScanExecutor();
+  nav_kernel::Twist intent;
+  intent.vx = 0.25;
+  const auto observation = emptyScanObservation(1.0);
+
+  const auto ready = awaitScanOutput([&]() {
+    return executor.tick(
+        intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, nullptr, 0, 1.0, {}, observation));
+  });
+  ASSERT_TRUE(ready.path_found) << ready.reason;
+
+  const auto detouring = executor.tick(
+      intentInput(pose(0.2, 0.8, 0.0, -0.20), intent, nullptr, 0, 1.05, {}, observation));
+
+  EXPECT_TRUE(detouring.path_found) << detouring.reason;
+  EXPECT_FALSE(detouring.near_field_stop) << detouring.reason;
+  EXPECT_NE(detouring.reason, "local_intent_pending");
 }
 
 TEST(Executor, ScanStopsUnsafeIntentOnMapChange) {

@@ -280,6 +280,50 @@ def _role_process(
     )
 
 
+def test_readiness_retirement_retries_a_windows_sharing_violation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository_root = tmp_path / "repository"
+    session_root = tmp_path / "session"
+    repository_root.mkdir()
+    session_root.mkdir()
+    artifact = repository_root / "worker.py"
+    artifact.write_text("raise SystemExit(0)\n", encoding="utf-8")
+    plan = _plan(
+        repository_root,
+        artifact,
+        readiness=ProcessReadiness("file", "worker.ready.json"),
+    )
+    manager = SimProcessManager(repository_root)
+    manager.bind(
+        plan,
+        run_plan_path=_publish_plan(session_root, plan),
+        product_session_id=PRODUCT_SESSION_ID,
+    )
+    ready_path = session_root / "worker.ready.json"
+    ready_path.write_text("{}", encoding="utf-8")
+    original_unlink = Path.unlink
+    attempts = 0
+    sleeps: list[float] = []
+
+    def flaky_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        nonlocal attempts
+        if path == ready_path and attempts < 2:
+            attempts += 1
+            raise PermissionError("sharing violation")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+    monkeypatch.setattr("lingtu.sim.process.time.sleep", sleeps.append)
+
+    manager._retire_readiness(plan.processes[0])
+
+    assert attempts == 2
+    assert sleeps == [0.05, 0.05]
+    assert not ready_path.exists()
+
+
 def test_run_plan_dependency_round_trip_is_strict(tmp_path: Path) -> None:
     repository_root = tmp_path / "repository"
     repository_root.mkdir()

@@ -22,6 +22,18 @@ from sim.scripts.mujoco.teleop_avoid_native_acceptance import (
 )
 
 
+def test_manifest_uses_scan_with_live_mapd_collision() -> None:
+    manifest = json.loads(
+        Path("config/runtime_graph/acceptance/mujoco_teleop_avoid_native_acceptance.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert manifest["navigation_runtime"]["local_planner"] == "scan"
+    assert "path_library" not in manifest["paths"]
+    assert "rt/maps/local_collision" in manifest["contracts"]["navigation_inputs"]
+
+
 def test_local_detour_is_measured_from_command_corridor_not_path_chord() -> None:
     diagonal_detour = [
         [0.0, 0.0, 0.0],
@@ -690,7 +702,7 @@ def test_native_teleop_wsl_command_keeps_env_wrapper_for_linux_child(monkeypatch
     assert env == {}
 
 
-def test_prepare_runtime_without_slam_mapd_for_navigation_fixture(
+def test_prepare_runtime_keeps_mapd_but_omits_slam_for_truth_fixture(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -717,6 +729,7 @@ def test_prepare_runtime_without_slam_mapd_for_navigation_fixture(
         name: tmp_path / name
         for name in (
             "sensor_publisher",
+            "mapd",
             "traversability",
             "navigation",
             "navigation_control",
@@ -759,7 +772,8 @@ def test_prepare_runtime_without_slam_mapd_for_navigation_fixture(
     prepared = prepare_runtime(args)
 
     assert all(
-        blocker not in prepared["blockers"] for blocker in ("native_binary_missing:mapd", "native_binary_missing:slam")
+        blocker not in prepared["blockers"]
+        for blocker in ("native_binary_missing:mapd", "native_binary_missing:slam")
     )
     assert prepared["details"]["binaries"] == {key: str(path) for key, path in binaries.items()}
 
@@ -874,7 +888,7 @@ def test_policy_runtime_preflight_fails_before_launch_when_onnxruntime_is_missin
     assert evidence["blockers"] == ["python_runtime_dependency_missing:onnxruntime"]
 
 
-def test_teleop_preflight_requires_local_path_library(
+def test_scan_teleop_preflight_does_not_require_cmu_path_library(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -894,6 +908,7 @@ def test_teleop_preflight_requires_local_path_library(
             "requires_map": False,
         },
         "slam_runtime": {"provider": "fastlio2", "mode": "mapping"},
+        "navigation_runtime": {"local_planner": "scan"},
         "asset_builder": {"kind": "scene_only"},
         "binaries": {},
     }
@@ -901,6 +916,7 @@ def test_teleop_preflight_requires_local_path_library(
         name: tmp_path / name
         for name in (
             "sensor_publisher",
+            "mapd",
             "traversability",
             "navigation",
             "navigation_control",
@@ -919,10 +935,7 @@ def test_teleop_preflight_requires_local_path_library(
         lambda _manifest: (
             binaries,
             paths,
-            [
-                "runtime_path_missing:path_library:/unused/paths",
-                "native_binary_missing:autonomy_only_tool",
-            ],
+            ["native_binary_missing:autonomy_only_tool"],
             {"map_contract": {"required": False}},
         ),
     )
@@ -945,8 +958,8 @@ def test_teleop_preflight_requires_local_path_library(
     )
     prepared = prepare_runtime(args)
 
-    assert prepared["ok"] is False
-    assert prepared["blockers"] == ["runtime_path_missing:path_library:/unused/paths"]
+    assert prepared["ok"] is True
+    assert "path_library" not in prepared["paths"]
     assert prepared["details"]["out_of_scope_preflight_findings"] == ["native_binary_missing:autonomy_only_tool"]
 
 
@@ -970,6 +983,7 @@ def test_product_preflight_requires_native_mapd_binary(
             "requires_map": False,
         },
         "slam_runtime": {"provider": "fastlio2", "mode": "mapping"},
+        "navigation_runtime": {"local_planner": "scan"},
         "asset_builder": {"kind": "scene_only"},
         "binaries": {},
     }
@@ -987,7 +1001,6 @@ def test_product_preflight_requires_native_mapd_binary(
     paths = {
         "world": world,
         "slam_config": tmp_path / "slam.yaml",
-        "path_library": tmp_path / "paths",
         "sensor_runner": tmp_path / "sensor.py",
         "policy": tmp_path / "policy.onnx",
     }

@@ -20,6 +20,7 @@ variants:
     native_nav:
       global_planner: octoplanner3d
       local_planner: cmu
+      local_planners: [cmu, scan]
   map:
     contracts:
       - lingtu.product.explore.map.v1
@@ -39,6 +40,7 @@ variants:
     native_nav:
       global_planner: octoplanner3d
       local_planner: cmu
+      local_planners: [cmu, scan]
       allow_teleop_takeover: true
       teleop_local_planner: true
 parameters:

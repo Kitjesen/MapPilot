@@ -30,7 +30,8 @@ FollowerOutput followPath(Follower &follower, const std::vector<Vec3> &path,
 FollowerOutput followSpline(Follower &follower, const SplineTarget &spline,
                              const FollowerParams &params, double time, Twist measured = {},
                              double slow_factor = 1.0, int safety_stop = 0,
-                             double goal_distance = -1.0) {
+                             double goal_distance = -1.0,
+                             bool hold_body_heading = false) {
   FollowerState state;
   state.measuredBodyTwist = measured;
   state.currentTime = time;
@@ -38,6 +39,7 @@ FollowerOutput followSpline(Follower &follower, const SplineTarget &spline,
   state.safetyStop = safety_stop;
   state.params = params;
   state.goalDistance = goal_distance;
+  state.holdBodyHeading = hold_body_heading;
   return follower.follow(LocalPlan::spline(spline), state);
 }
 
@@ -684,6 +686,31 @@ TEST(FollowerSpline, FreezesTranslationUntilPlannedHeadingIsAligned) {
   EXPECT_DOUBLE_EQ(output.cmd.vy, 0.0);
   EXPECT_GT(output.cmd.wz, 0.0);
   EXPECT_FALSE(output.canAccelerate);
+}
+
+TEST(FollowerSpline, LateralIntentCanHoldBodyHeadingWithoutFreezingTranslation) {
+  FollowerParams params;
+  params.maxSpeed = 0.5;
+  params.maxAccel = 100.0;
+  params.maxYawRateRadS = 1.0;
+  params.spline.maxVx = 0.5;
+  params.spline.maxVy = 0.5;
+  params.spline.timeForward = 0.20;
+  const SplineTarget trajectory{
+      {{0.0, 0.0, 0.0}, {0.0, 0.4, 0.0}, {0.0, 0.8, 0.0}},
+      1,
+      0.20,
+      0.0,
+  };
+  Follower follower;
+
+  const auto output =
+      followSpline(follower, trajectory, params, 1.0, {}, 1.0, 0, -1.0, true);
+
+  EXPECT_FALSE(output.executionFrozen);
+  EXPECT_NEAR(output.cmd.vx, 0.0, 1e-9);
+  EXPECT_GT(output.cmd.vy, 0.0);
+  EXPECT_NEAR(output.cmd.wz, 0.0, 1e-9);
 }
 
 TEST(FollowerSpline, ProjectsCubicSplineFromRobotPosition) {

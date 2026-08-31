@@ -400,21 +400,26 @@ class SplineAlgorithm final : public Algorithm {
       heading_y = current_velocity.y;
     }
     const double desired_yaw =
-        heading_x * heading_x + heading_y * heading_y >=
-                kLookaheadDirectionSquaredThreshold
-            ? std::atan2(heading_y, heading_x)
-            : 0.0;
+        input.holdBodyHeading
+            ? 0.0
+            : (heading_x * heading_x + heading_y * heading_y >=
+                       kLookaheadDirectionSquaredThreshold
+                   ? std::atan2(heading_y, heading_x)
+                   : 0.0);
     const double yaw_error = wrapPi(desired_yaw);
     const double yaw_limit =
         std::min(std::max(0.0, params.maxYawRateRadS), std::max(0.0, scan.maxYawRateRadS));
     // Match SCAN's closed-loop controller: use look-ahead heading error for
     // yaw control. The sampled spline yaw rate is a finite-difference
     // diagnostic and becomes noisy near low-speed control points.
-    double yaw_command =
-        clamp(std::max(0.0, scan.yawGain) * yaw_error, -yaw_limit, yaw_limit);
+    double yaw_command = input.holdBodyHeading
+                             ? 0.0
+                             : clamp(std::max(0.0, scan.yawGain) * yaw_error,
+                                     -yaw_limit, yaw_limit);
     if (params.noRotAtGoal)
       yaw_command *= terminal_scale;
-    if (std::abs(yaw_error) > std::max(0.0, scan.headingErrorThreshold)) {
+    if (!input.holdBodyHeading &&
+        std::abs(yaw_error) > std::max(0.0, scan.headingErrorThreshold)) {
       state_.command.vx = 0.0;
       state_.command.vy = 0.0;
       state_.command.wz = input.safetyStop >= 2 ? 0.0 : limitYaw(input, yaw_command);

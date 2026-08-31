@@ -34,6 +34,8 @@ struct InputGateConfig {
   bool require_localization_health{false};
   bool require_driver_control{false};
   double odom_max_speed_mps{3.0};
+  double local_collision_max_age_s{0.5};
+  bool require_local_collision{false};
 };
 
 struct InputSnapshot {
@@ -51,6 +53,10 @@ struct InputSnapshot {
   double traversability_stamp_s{0.0};
   double traversability_receive_s{0.0};
   std::uint64_t traversability_generation{0};
+  double local_collision_stamp_s{0.0};
+  double local_collision_receive_s{0.0};
+  std::uint64_t local_collision_generation{0};
+  bool local_collision_complete{false};
   double localization_health_stamp_s{0.0};
   double localization_health_receive_s{0.0};
   std::uint64_t localization_health_generation{0};
@@ -121,6 +127,7 @@ struct InputGateState {
   double tf_age_s{-1.0};
   double cloud_age_s{-1.0};
   double traversability_age_s{-1.0};
+  double local_collision_age_s{-1.0};
   double localization_health_age_s{-1.0};
   double driver_control_age_s{-1.0};
   bool localization_healthy{false};
@@ -138,8 +145,9 @@ inline bool manualModeMayBypassInputGate(const InputGateState &state) noexcept {
     return reason.size() >= prefix.size() && reason.substr(0, prefix.size()) == prefix;
   };
   return state.ready || reason == "recovering" || starts_with("odom_") ||
-         starts_with("tf_") || starts_with("cloud_") ||
-         starts_with("traversability_") || starts_with("localization_");
+          starts_with("tf_") || starts_with("cloud_") ||
+          starts_with("traversability_") || starts_with("local_collision_") ||
+          starts_with("localization_");
 }
 
 class InputGate {
@@ -156,6 +164,7 @@ class InputGate {
     std::uint64_t tf{0};
     std::uint64_t cloud{0};
     std::uint64_t traversability{0};
+    std::uint64_t local_collision{0};
     std::uint64_t localization_health{0};
     std::uint64_t driver_control{0};
   };

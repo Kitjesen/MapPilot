@@ -703,7 +703,7 @@ def test_presentation_viewer_prefers_native_local_obstacles_over_raw_lidar() -> 
     overlay = draw_navigation_paths(
         viewer,
         {
-            "local_planner": "cmu",
+            "local_planner": "scan",
             "local_map": {
                 "enabled": True,
                 "frame_id": "map",

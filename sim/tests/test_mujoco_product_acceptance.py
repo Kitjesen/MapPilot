@@ -754,7 +754,7 @@ def test_persistent_teleop_run_plan_binds_its_acceptance_target(
 def test_persistent_teleop_avoid_run_plan_has_the_native_assisted_chain(
     linux_sim_plan: Callable[..., RunPlan],
 ) -> None:
-    plan = linux_sim_plan("teleop_avoid")
+    plan = linux_sim_plan("teleop_avoid", local_planner="scan")
 
     assert plan.process_control == "subprocess"
     assert "acceptance" not in plan.as_dict()["launch"]
@@ -767,7 +767,6 @@ def test_persistent_teleop_avoid_run_plan_has_the_native_assisted_chain(
         "map_runtime",
         "mujoco_feeder",
         "nav_runtime",
-        "traversability_runtime",
         "host_runtime",
     }
     assert {role for process in plan.processes for role in process.provides} == {
@@ -778,7 +777,6 @@ def test_persistent_teleop_avoid_run_plan_has_the_native_assisted_chain(
         "maps",
         "nav",
         "slam",
-        "traversability",
     }
     assert plan.host_config["enable_camera"] is False
     assert "camera_backend" not in plan.host_config
@@ -829,7 +827,6 @@ def test_mujoco_saved_map_navigation_products_resolve_exact_chain(
         "map_runtime",
         "mujoco_feeder",
         "nav_runtime",
-        "traversability_runtime",
         "host_runtime",
     }
     if product in {"inspection", "tracking"}:
@@ -898,7 +895,7 @@ def test_mujoco_product_acceptance_scopes_do_not_overclaim_partial_gates() -> No
     assert scopes["inspection"]["coverage"] == "component"
     assert "capture:overview route submission and business acknowledgement" in scopes["inspection"]["claims"]
     assert "stable scene-graph person identity selection" in scopes["tracking"]["claims"]
-    assert "native navigation goal acceptance or path execution" in scopes["tracking"]["excluded_claims"]
+    assert "exact target_id visual follow producing a map-frame native navigation task" in scopes["tracking"]["claims"]
     for product in ("nav", "tracking", "explore"):
         assert scopes[product]["coverage"] == "component"
 
@@ -1019,7 +1016,8 @@ def test_run_owns_switch_scenario_stop_and_cleanup_for_component_acceptance(
 ) -> None:
     state_root = (tmp_path / product).resolve()
     state_root.mkdir()
-    plan = linux_sim_plan(product)
+    local_planner = "scan" if product == "teleop_avoid" else None
+    plan = linux_sim_plan(product, local_planner=local_planner)
     monkeypatch.setattr(
         product_acceptance,
         "load_motion_evidence",
@@ -1038,8 +1036,9 @@ def test_run_owns_switch_scenario_stop_and_cleanup_for_component_acceptance(
         process_env={},
         simulation_runner=runner,
     )
-    def resolve(requested: str, *_args: object, **_kwargs: object) -> RunPlan:
+    def resolve(requested: str, *_args: object, **kwargs: object) -> RunPlan:
         assert requested == product
+        assert kwargs["local_planner"] == local_planner
         return plan
 
     monkeypatch.setattr(control, "_resolve", resolve)
@@ -1065,6 +1064,7 @@ def test_run_owns_switch_scenario_stop_and_cleanup_for_component_acceptance(
         state_root,
         scenario,
         check=(product_acceptance._check_motion if product == "teleop" else None),
+        expected_plan=plan,
     )
 
     assert report["ok"] is True, report
@@ -2906,7 +2906,10 @@ def test_mujoco_product_dispatcher_resolves_persistent_product_run_plans(
     capsys: pytest.CaptureFixture[str],
     linux_sim_plan: Callable[..., RunPlan],
 ) -> None:
-    plan = linux_sim_plan(product)
+    plan = linux_sim_plan(
+        product,
+        local_planner="scan" if product == "teleop_avoid" else None,
+    )
     plan_path = plan.write(tmp_path / f"plan-{PRODUCT_SESSION_ID}.json")
 
     assert product_acceptance.main(
@@ -2940,7 +2943,6 @@ def test_mujoco_product_dispatcher_resolves_persistent_product_run_plans(
             "maps",
             "nav",
             "slam",
-            "traversability",
         ]
         assert "roles" not in payload
 
@@ -3051,7 +3053,10 @@ def test_dispatcher_runs_component_lifecycle_without_a_rollback_process_owner(
     monkeypatch: pytest.MonkeyPatch,
     linux_sim_plan: Callable[..., RunPlan],
 ) -> None:
-    plan = linux_sim_plan(product)
+    plan = linux_sim_plan(
+        product,
+        local_planner="scan" if product == "teleop_avoid" else None,
+    )
     plan_path = plan.write(tmp_path / f"plan-{PRODUCT_SESSION_ID}.json")
     state_root = (tmp_path / "exact-cli").resolve()
     runner = _Runner(state_root)

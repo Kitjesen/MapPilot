@@ -927,7 +927,9 @@ def test_sim_mujoco_driver_deadlines_cover_scheduler_jitter(
     argv = driver.command.argv
 
     assert argv[argv.index("--command-timeout-ms") + 1] == "500"
-    assert argv[argv.index("--heartbeat-timeout-ms") + 1] == "2000"
+    assert argv[argv.index("--heartbeat-timeout-ms") + 1] == (
+        "10000" if process_platform == "windows" else "2000"
+    )
     assert argv[argv.index("--apply-timeout-ms") + 1] == "30000"
 
 
@@ -1422,7 +1424,7 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
     assert plan.lifecycle["slam_mode"] == "localization"
     assert plan.lifecycle["requires_map"] is True
     assert plan.native_process_environment["LINGTU_SLAM_MODE"] == "localization"
-    selected_local_planner = local_planner or "cmu"
+    selected_local_planner = local_planner or plan.native_nav["local_planner"]
     assert plan.product == product
     assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == selected_local_planner
     nav_argv = plan.process("nav").command.argv

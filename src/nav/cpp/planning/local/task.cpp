@@ -143,11 +143,8 @@ bool sameIntent(const std::optional<LocalMotionIntent> &left,
     return false;
   if (!left)
     return true;
-  const double direction_error = std::abs(normalizeAngle(
-      (left->directionBodyDeg - right->directionBodyDeg) * M_PI / 180.0));
-  return direction_error <= 2.0 * M_PI / 180.0 &&
-         std::abs(left->speedNormalized - right->speedNormalized) <= 0.05 &&
-         std::abs(left->horizonM - right->horizonM) <= 0.05 &&
+  // Guide generation owns direction and horizon identity; both move with the robot.
+  return std::abs(left->speedNormalized - right->speedNormalized) <= 0.05 &&
          std::abs(left->maxDirectionDeviationDeg - right->maxDirectionDeviationDeg) <= 1e-6;
 }
 

@@ -1141,14 +1141,22 @@ class SimProcessManager:
         if readiness.kind != "file":
             return
         ready_path = self._readiness_path(readiness.target)
-        try:
-            ready_path.unlink()
-        except FileNotFoundError:
-            return
-        except OSError as exc:
-            raise ProcessError(
-                f"direct process readiness file cannot be retired: {process.name}"
-            ) from exc
+        for attempt in range(10):
+            try:
+                ready_path.unlink()
+                return
+            except FileNotFoundError:
+                return
+            except PermissionError as exc:
+                if attempt == 9:
+                    raise ProcessError(
+                        f"direct process readiness file cannot be retired: {process.name}"
+                    ) from exc
+                time.sleep(0.05)
+            except OSError as exc:
+                raise ProcessError(
+                    f"direct process readiness file cannot be retired: {process.name}"
+                ) from exc
 
     def _readiness_path(self, target: str | None) -> Path:
         if target is None:  # pragma: no cover - ProcessReadiness invariant

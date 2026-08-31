@@ -232,7 +232,7 @@ def test_product_control_selects_scan_in_sim_without_changing_product_identity()
     assert teleop.native_nav["local_planner"] == "cmu"
 
 
-def test_product_control_rejects_unqualified_scan_for_teleop_avoid() -> None:
+def test_product_control_exposes_scan_for_teleop_avoid_and_keeps_cmu_default() -> None:
     control = ProductControl(
         FakeRunner(),  # type: ignore[arg-type]
         robot="doso/thunder_v4",
@@ -241,14 +241,14 @@ def test_product_control_rejects_unqualified_scan_for_teleop_avoid() -> None:
         process_env={},
     )
 
-    with pytest.raises(
-        ValueError,
-        match="does not support local planner 'scan'",
-    ):
-        control._resolve("teleop_avoid", local_planner="scan")
+    default = control._resolve("teleop_avoid")
+    scan = control._resolve("teleop_avoid", local_planner="scan")
+
+    assert default.native_nav["local_planner"] == "cmu"
+    assert scan.native_nav["local_planner"] == "scan"
 
 
-def test_product_control_rejects_unqualified_scan_on_real_robot() -> None:
+def test_product_control_keeps_cmu_on_real_until_scan_is_field_qualified() -> None:
     control = ProductControl(
         FakeRunner(),  # type: ignore[arg-type]
         robot="unitree/go2",
@@ -256,6 +256,9 @@ def test_product_control_rejects_unqualified_scan_on_real_robot() -> None:
         process_env={},
     )
 
+    default = control._resolve("nav")
+
+    assert default.native_nav["local_planner"] == "cmu"
     with pytest.raises(ValueError, match="has not qualified local planner 'scan'"):
         control._resolve("nav", local_planner="scan")
 

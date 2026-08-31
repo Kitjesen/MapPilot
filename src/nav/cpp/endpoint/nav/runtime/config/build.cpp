@@ -90,6 +90,10 @@ InputGateConfig inputGateConfig(const CliConfig &cfg) {
   out.require_odom = true;
   out.require_cloud = cfg.check_obstacle;
   out.require_traversability = cfg.use_traversability_cost;
+  out.require_local_collision =
+      cfg.check_obstacle &&
+      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan;
+  out.local_collision_max_age_s = nav_kernel::ScanPlannerParams{}.collisionMaxAge;
   out.require_localization_health = cfg.control_mode == ControlMode::Autonomy;
   return out;
 }

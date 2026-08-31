@@ -17,6 +17,7 @@ host:
 native_nav:
   global_planner: octoplanner3d
   local_planner: cmu
+  local_planners: [cmu, scan]
   use_traversability_cost: false
   allow_teleop_takeover: true
   teleop_local_planner: true

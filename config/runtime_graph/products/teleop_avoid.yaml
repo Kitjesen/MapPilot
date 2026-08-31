@@ -2,7 +2,7 @@ schema_version: lingtu.runtime_graph.product.v2
 name: teleop_avoid
 contracts:
   - lingtu.product.teleop_avoid.v1
-summary: Operator-assisted teleoperation with native CMU local planning and live LiDAR obstacle checks.
+summary: Operator-assisted teleoperation with selectable native local planning and live LiDAR obstacle checks.
 operator_switchable: true
 session_mode: navigating
 native_control_mode: teleop_avoid
@@ -17,6 +17,7 @@ native_nav:
   local_planner: cmu
   local_planners:
     - cmu
+    - scan
   check_obstacle: true
   use_traversability_cost: false
   teleop_local_planner: true
@@ -29,12 +30,21 @@ native_nav:
   teleop_max_yaw_rate_rad_s: 1.0
   teleop_planner_horizon_m: 3.5
   teleop_planner_max_deviation_deg: 90.0
+  scan_follower:
+    time_forward_s: 0.55
+    heading_error_rad: 0.8
+    position_gain: 0.9
+    yaw_gain: 1.2
+    max_vx_mps: 0.5
+    max_vy_mps: 0.5
+    max_yaw_rate_rad_s: 1.0
   recovery:
     max_attempts: 0
 processes:
   - lidar
   - imu
   - slam
+  - maps
   - nav
   - driver
   - host

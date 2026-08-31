@@ -238,6 +238,7 @@ InputGate::InputGate(InputGateConfig config) : config_(config) {
   config_.tf_max_age_s = std::max(0.0, config_.tf_max_age_s);
   config_.cloud_max_age_s = std::max(0.0, config_.cloud_max_age_s);
   config_.traversability_max_age_s = std::max(0.0, config_.traversability_max_age_s);
+  config_.local_collision_max_age_s = std::max(0.0, config_.local_collision_max_age_s);
   config_.localization_health_max_age_s = std::max(0.0, config_.localization_health_max_age_s);
   config_.driver_control_max_age_s = std::max(0.0, config_.driver_control_max_age_s);
   config_.odom_max_speed_mps = std::max(0.0, config_.odom_max_speed_mps);
@@ -263,6 +264,11 @@ InputGateState InputGate::evaluate(const InputSnapshot &inputs) {
       config_.require_traversability
           ? age(inputs.now_s, receiveOrSource(inputs.traversability_receive_s,
                                               inputs.traversability_stamp_s))
+          : -1.0;
+  state.local_collision_age_s =
+      config_.require_local_collision
+          ? age(inputs.now_s, receiveOrSource(inputs.local_collision_receive_s,
+                                              inputs.local_collision_stamp_s))
           : -1.0;
   state.localization_health_age_s =
       config_.require_localization_health
@@ -322,6 +328,16 @@ InputGateState InputGate::evaluate(const InputSnapshot &inputs) {
   } else if (config_.require_cloud && config_.cloud_max_age_s > 0.0 &&
              state.cloud_age_s > config_.cloud_max_age_s) {
     stop_reason = "cloud_stale";
+  } else if (config_.require_local_collision && inputs.local_collision_stamp_s <= 0.0) {
+    stop_reason = "local_collision_missing";
+  } else if (config_.require_local_collision &&
+             state.local_collision_age_s < -config_.future_tolerance_s) {
+    stop_reason = "local_collision_future";
+  } else if (config_.require_local_collision && config_.local_collision_max_age_s > 0.0 &&
+             state.local_collision_age_s > config_.local_collision_max_age_s) {
+    stop_reason = "local_collision_stale";
+  } else if (config_.require_local_collision && !inputs.local_collision_complete) {
+    stop_reason = "local_collision_incomplete";
   } else if (config_.require_traversability && inputs.traversability_stamp_s <= 0.0) {
     stop_reason = "traversability_missing";
   } else if (config_.require_traversability &&
@@ -382,6 +398,7 @@ InputGate::InputGenerations InputGate::generations(const InputSnapshot &inputs) 
       inputs.tf_generation,
       inputs.cloud_generation,
       inputs.traversability_generation,
+      inputs.local_collision_generation,
       inputs.localization_health_generation,
       inputs.driver_control_generation,
   };
@@ -400,6 +417,10 @@ bool InputGate::allRequiredInputsAdvanced(const InputSnapshot &inputs) const {
   }
   if (config_.require_traversability &&
       inputs.traversability_generation <= recovery_generations_.traversability) {
+    return false;
+  }
+  if (config_.require_local_collision &&
+      inputs.local_collision_generation <= recovery_generations_.local_collision) {
     return false;
   }
   if (config_.require_localization_health &&

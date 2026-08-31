@@ -192,6 +192,44 @@ void testOdometryAndCloudCanBeOptionalForPureTeleop() {
   require(state.cloud_age_s < 0.0, "optional cloud must be reported as not required");
 }
 
+void testScanRequiresCompleteFreshLocalCollision() {
+  lingtu::nav::endpoint::InputGateConfig cfg;
+  cfg.recovery_frames = 1;
+  cfg.require_odom = false;
+  cfg.require_cloud = false;
+  cfg.require_local_collision = true;
+  cfg.local_collision_max_age_s = 0.5;
+  lingtu::nav::endpoint::InputGate gate(cfg);
+
+  lingtu::nav::endpoint::InputSnapshot inputs;
+  inputs.now_s = 10.0;
+  auto state = gate.evaluate(inputs);
+  require(!state.ready && state.reason == "local_collision_missing",
+          "SCAN must wait for Mapd local collision input");
+  require(lingtu::nav::endpoint::manualModeMayBypassInputGate(state),
+          "manual escape must remain available while SCAN collision input is missing");
+
+  inputs.local_collision_stamp_s = 10.0;
+  inputs.local_collision_receive_s = 10.0;
+  inputs.local_collision_generation = 1;
+  state = gate.evaluate(inputs);
+  require(!state.ready && state.reason == "local_collision_incomplete",
+          "SCAN must reject a truncated collision snapshot");
+
+  inputs.local_collision_complete = true;
+  inputs.local_collision_stamp_s = 9.0;
+  inputs.local_collision_receive_s = 9.0;
+  state = gate.evaluate(inputs);
+  require(!state.ready && state.reason == "local_collision_stale",
+          "SCAN must reject a stale collision snapshot");
+
+  inputs.local_collision_stamp_s = 10.0;
+  inputs.local_collision_receive_s = 10.0;
+  ++inputs.local_collision_generation;
+  state = gate.evaluate(inputs);
+  require(state.ready, "complete fresh Mapd collision input must open the SCAN gate");
+}
+
 void testTeleopAvoidRequiresFreshTraversabilityAndHealthyLocalization() {
   lingtu::nav::endpoint::InputGateConfig cfg;
   cfg.recovery_frames = 1;
@@ -618,6 +656,7 @@ void testLocalizationHealthJsonCarriesSourceStateAndStamp() {
 }  // namespace
 
 int main() {
+  try {
   testRequiresConsecutiveFreshFrames();
   testRecoveryAdvancesOnlyAfterEveryRequiredInputHasANewGeneration();
   testCoordinateEpochForcesFreshDdsRecovery();
@@ -626,6 +665,7 @@ int main() {
   testFutureInputsCloseTheGate();
   testCloudCanBeOptional();
   testOdometryAndCloudCanBeOptionalForPureTeleop();
+  testScanRequiresCompleteFreshLocalCollision();
   testTeleopAvoidRequiresFreshTraversabilityAndHealthyLocalization();
   testDivergentOdometryVelocityClosesTheGate();
   testSingleSampleOdometryPoseImpulseDoesNotCloseTheGate();
@@ -645,4 +685,8 @@ int main() {
   testLocalizationHealthJsonCarriesSourceStateAndStamp();
   std::cout << "test_input_gate passed\n";
   return 0;
+  } catch (const std::exception &error) {
+    std::cerr << error.what() << '\n';
+    return 1;
+  }
 }

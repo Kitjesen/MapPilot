@@ -137,7 +137,9 @@ backends:
         provides: [driver]
         platforms:
           windows:
-            argv: [build/windows-native-dds-adapter/Release/lingtu_mujoco_driver_bridge.exe, --domain-id, "17", --local-endpoint, --command-timeout-ms, "500", --heartbeat-timeout-ms, "2000", --apply-timeout-ms, "30000"]
+            # ONNX policy and LiDAR work can stall the Windows feeder for several seconds;
+            # command freshness still fails closed after 500 ms.
+            argv: [build/windows-native-dds-adapter/Release/lingtu_mujoco_driver_bridge.exe, --domain-id, "17", --local-endpoint, --command-timeout-ms, "500", --heartbeat-timeout-ms, "10000", --apply-timeout-ms, "30000"]
             cwd: .
             env: {LINGTU_DDS_DOMAIN_ID: "17"}
             artifact: {path: build/windows-native-dds-adapter/Release/lingtu_mujoco_driver_bridge.exe}

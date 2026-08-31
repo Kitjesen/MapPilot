@@ -89,7 +89,7 @@ def test_teleop_avoid_compilation_uses_native_operator_motion_without_python_aut
     assert "maps.service" not in plan.modules
     assert "nav.commands" in plan.modules
     assert plan.process_control == "systemd"
-    assert not plan.has_process("maps")
+    assert plan.has_process("maps")
     assert plan.has_process("nav")
     assert plan.has_process("driver")
     assert OPERATOR_MOTION_TOPICS <= set(plan.required_topics)
