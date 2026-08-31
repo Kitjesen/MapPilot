@@ -141,7 +141,9 @@ struct SemanticMapChunk {
   std::uint32_t taxonomy_version{0U};
   std::shared_ptr<const SemanticMapChunkSoA> data;
 
-  std::size_t Size() const noexcept;
+  std::size_t Size() const noexcept {
+    return data == nullptr ? 0U : data->center_x_m.size();
+  }
 };
 
 struct SemanticMapMetadata {

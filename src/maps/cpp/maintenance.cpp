@@ -1,26 +1,32 @@
 #include "lingtu/maps/maintenance.hpp"
 
-#include "lingtu/maps/hash.hpp"
 #include "lingtu/maps/lock.hpp"
 #include "lingtu/maps/store.hpp"
-#include "lingtu/maps/version.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdio>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
 
+#if defined(_WIN32)
+#  define NOMINMAX
+#  include <windows.h>
+#else
+#  include <fcntl.h>
+#  include <unistd.h>
+#endif
+
 namespace lingtu::maps {
 namespace {
 
-constexpr const char* kVersionsDir = ".versions";
-constexpr const char* kCurrentVersionFile = "current_version.txt";
 constexpr const char* kPackageManifest = "package_manifest.txt";
-constexpr const char* kPackageIndex = "file_index.tsv";
 constexpr const char* kSchemaFile = "schema_version.txt";
+constexpr const char* kPackageExchangeLockId = "__map_packages__";
 
 std::string Trim(std::string value) {
   while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())) != 0) {
@@ -30,14 +36,6 @@ std::string Trim(std::string value) {
     return std::isspace(ch) != 0;
   });
   return std::string(begin, value.end());
-}
-
-std::string VersionName(std::int64_t version) {
-  std::ostringstream out;
-  out.width(20);
-  out.fill('0');
-  out << version;
-  return out.str();
 }
 
 std::int64_t ParsePositiveInt(const std::string& value) {
@@ -53,11 +51,45 @@ std::int64_t ParsePositiveInt(const std::string& value) {
   }
 }
 
-std::string ReadFirstLine(const std::filesystem::path& path) {
-  std::ifstream file(path, std::ios::binary);
-  std::string line;
-  std::getline(file, line);
-  return Trim(line);
+void SyncPath(const std::filesystem::path& path, bool directory) {
+#if defined(_WIN32)
+  const DWORD flags = directory ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL;
+  HANDLE handle = CreateFileW(
+      path.wstring().c_str(),
+      GENERIC_READ,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+      nullptr,
+      OPEN_EXISTING,
+      flags,
+      nullptr);
+  if (handle != INVALID_HANDLE_VALUE) {
+    FlushFileBuffers(handle);
+    CloseHandle(handle);
+  }
+#else
+  const int flags = directory ? (O_RDONLY | O_DIRECTORY) : O_RDONLY;
+  const int fd = open(path.c_str(), flags);
+  if (fd >= 0) {
+    fsync(fd);
+    close(fd);
+  }
+#endif
+}
+
+void AtomicReplace(const std::filesystem::path& source, const std::filesystem::path& target) {
+#if defined(_WIN32)
+  if (MoveFileExW(
+          source.wstring().c_str(),
+          target.wstring().c_str(),
+          MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == 0) {
+    throw std::runtime_error("failed to atomically replace " + target.string());
+  }
+#else
+  if (::rename(source.c_str(), target.c_str()) != 0) {
+    throw std::runtime_error("failed to atomically replace " + target.string());
+  }
+#endif
+  SyncPath(target.parent_path(), true);
 }
 
 void WriteTextAtomic(const std::filesystem::path& path, const std::string& value) {
@@ -75,7 +107,14 @@ void WriteTextAtomic(const std::filesystem::path& path, const std::string& value
       throw std::runtime_error("failed to flush temp file: " + tmp.string());
     }
   }
-  std::filesystem::rename(tmp, path);
+  try {
+    SyncPath(tmp, false);
+    AtomicReplace(tmp, path);
+  } catch (...) {
+    std::error_code ignored;
+    std::filesystem::remove(tmp, ignored);
+    throw;
+  }
 }
 
 bool IsQuarantineOrLockDir(const std::filesystem::path& path, const MapMaintenanceConfig& config) {
@@ -115,107 +154,85 @@ void CopyTreeChecked(
   }
 }
 
-std::vector<std::pair<std::string, std::string>> HashTree(const std::filesystem::path& root) {
-  std::vector<std::pair<std::string, std::string>> hashes;
-  for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
-    if (IsSymlink(entry)) {
-      throw std::runtime_error("symlink rejected in package tree: " + entry.path().string());
-    }
-    if (!entry.is_regular_file()) {
-      continue;
-    }
-    const auto rel = std::filesystem::relative(entry.path(), root);
-    if (!IsSafePackageRelativePath(rel)) {
-      throw std::runtime_error("unsafe package path: " + rel.generic_string());
-    }
-    const auto rel_text = rel.generic_string();
-    if (rel_text == kPackageIndex) {
-      continue;
-    }
-    hashes.push_back({rel_text, Sha256File(entry.path())});
+void ReplaceDirectoryRecoverably(
+    const std::filesystem::path& staged,
+    const std::filesystem::path& target) {
+  const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+  const auto backup = target.parent_path() /
+      (target.filename().string() + ".backup-" + std::to_string(stamp));
+  const bool had_target = std::filesystem::exists(target);
+  if (had_target) {
+    std::filesystem::rename(target, backup);
   }
-  std::sort(hashes.begin(), hashes.end());
-  return hashes;
+  try {
+    std::filesystem::rename(staged, target);
+  } catch (...) {
+    if (had_target) {
+      std::error_code rollback_error;
+      std::filesystem::rename(backup, target, rollback_error);
+      if (rollback_error) {
+        throw std::runtime_error(
+            "package publish failed and previous package restore failed: " +
+            rollback_error.message());
+      }
+    }
+    throw;
+  }
+  if (had_target) {
+    std::error_code ignored;
+    std::filesystem::remove_all(backup, ignored);
+  }
 }
 
 std::map<std::string, std::string> ReadKeyValueFile(const std::filesystem::path& path) {
   std::map<std::string, std::string> out;
   std::ifstream file(path, std::ios::binary);
+  if (!file) {
+    throw std::runtime_error("package manifest is unreadable");
+  }
   std::string line;
   while (std::getline(file, line)) {
     const auto pos = line.find('=');
-    if (pos == std::string::npos) {
-      continue;
+    if (pos == std::string::npos || pos == 0U ||
+        line.find('=', pos + 1U) != std::string::npos) {
+      throw std::runtime_error("package manifest contains a malformed entry");
     }
-    out[Trim(line.substr(0, pos))] = Trim(line.substr(pos + 1));
+    const auto key = Trim(line.substr(0, pos));
+    const auto value = Trim(line.substr(pos + 1));
+    if (key.empty() || value.empty() || key != line.substr(0, pos) ||
+        value != line.substr(pos + 1) || !out.emplace(key, value).second) {
+      throw std::runtime_error("package manifest contains an invalid or duplicate entry");
+    }
+  }
+  if (file.bad()) {
+    throw std::runtime_error("package manifest could not be read completely");
   }
   return out;
 }
 
-std::int64_t ReadSchema(const std::filesystem::path& version_dir) {
-  const auto schema = ParsePositiveInt(ReadFirstLine(version_dir / kSchemaFile));
-  return schema > 0 ? schema : 1;
-}
-
-void WritePackageIndex(const std::filesystem::path& package_dir) {
-  const auto hashes = HashTree(package_dir);
-  std::ostringstream out;
-  for (const auto& item : hashes) {
-    out << item.second << '\t' << item.first << '\n';
+std::int64_t ReadSchema(const std::filesystem::path& map_dir) {
+  const auto path = map_dir / kSchemaFile;
+  std::error_code status_error;
+  if (!std::filesystem::exists(path, status_error)) {
+    return status_error ? -1 : 1;
   }
-  WriteTextAtomic(package_dir / kPackageIndex, out.str());
-}
-
-bool VerifyPackageIndex(const std::filesystem::path& package_dir, std::string* error) {
-  std::ifstream file(package_dir / kPackageIndex, std::ios::binary);
-  if (!file) {
-    if (error != nullptr) *error = "package file index is missing";
-    return false;
+  if (!std::filesystem::is_regular_file(path, status_error) || status_error) {
+    return -1;
   }
-  std::vector<std::pair<std::string, std::string>> indexed;
+  std::ifstream file(path, std::ios::binary);
   std::string line;
-  while (std::getline(file, line)) {
-    if (line.empty()) {
-      continue;
-    }
-    const auto sep = line.find('\t');
-    if (sep == std::string::npos) {
-      if (error != nullptr) *error = "invalid package index entry";
-      return false;
-    }
-    const auto hash = line.substr(0, sep);
-    const auto rel_text = line.substr(sep + 1);
-    const auto rel = std::filesystem::path(rel_text);
-    if (rel_text.find('\t') != std::string::npos || rel_text.find('\n') != std::string::npos ||
-        !IsSafePackageRelativePath(rel)) {
-      if (error != nullptr) *error = "unsafe package index path: " + rel_text;
-      return false;
-    }
-    const auto path = package_dir / rel;
-    if (!std::filesystem::is_regular_file(path)) {
-      if (error != nullptr) *error = "indexed package file is missing: " + rel_text;
-      return false;
-    }
-    if (hash != Sha256File(path)) {
-      if (error != nullptr) *error = "package hash mismatch: " + rel_text;
-      return false;
-    }
-    indexed.push_back({rel.generic_string(), hash});
+  if (!file || !std::getline(file, line) || line != Trim(line)) {
+    return -1;
   }
-  std::sort(indexed.begin(), indexed.end());
-  auto actual = HashTree(package_dir);
-  std::vector<std::pair<std::string, std::string>> actual_by_path;
-  actual_by_path.reserve(actual.size());
-  for (const auto& item : actual) {
-    actual_by_path.push_back({item.first, item.second});
+  std::string trailing;
+  if (std::getline(file, trailing) || file.bad()) {
+    return -1;
   }
-  std::sort(actual_by_path.begin(), actual_by_path.end());
-  if (indexed != actual_by_path) {
-    if (error != nullptr) *error = "package file index does not match package contents";
-    return false;
+  if (line == "0") {
+    return 1;
   }
-  if (error != nullptr) error->clear();
-  return true;
+  const auto schema = ParsePositiveInt(line);
+  return schema > 0 ? schema : -1;
 }
 
 }  // namespace
@@ -249,30 +266,33 @@ MapPackageMaintenance::MapPackageMaintenance(MapMaintenanceConfig config)
   std::filesystem::create_directories(root_dir_);
 }
 
-void MapPackageMaintenance::RegisterMigration(
-    std::int64_t from_schema,
-    std::int64_t to_schema,
-    MigrationHook hook) {
-  if (from_schema <= 0 || to_schema <= from_schema || !hook) {
-    throw std::invalid_argument("invalid map schema migration hook");
-  }
-  migrations_[{from_schema, to_schema}] = std::move(hook);
-}
-
-MaintenanceReport MapPackageMaintenance::AuditImmutableVersions(bool dry_run) const {
+MaintenanceReport MapPackageMaintenance::AuditMaps(bool dry_run) const {
   MaintenanceReport report;
   report.dry_run = dry_run;
-  for (const auto& ref : ListVersions()) {
-    std::string error;
-    if (!VerifyMapVersion(ref.dir, &error)) {
-      report.AddIssue({"version_integrity_failed", ref.map_id, ref.version, ref.dir, error});
+  MapStore store(MapStoreConfig{root_dir_, config_.active_state_filename});
+  std::string active_state_error;
+  if (!store.ValidateActiveState(&active_state_error)) {
+    report.AddIssue({
+        "active_state_corrupt", {},
+        root_dir_ / config_.active_state_filename,
+        active_state_error});
+  }
+  for (const auto& ref : ListMaps()) {
+    if (!std::filesystem::is_regular_file(ref.dir / "map.pcd")) {
+      report.AddIssue({"map_artifact_missing", ref.map_id, ref.dir, "map.pcd is missing"});
     }
     const auto schema = ReadSchema(ref.dir);
+    if (schema <= 0) {
+      report.AddIssue({
+          "schema_invalid", ref.map_id, ref.dir / kSchemaFile,
+          "schema version is malformed"});
+      continue;
+    }
     if (schema < config_.min_supported_schema) {
-      report.AddIssue({"schema_too_old", ref.map_id, ref.version, ref.dir, "schema is older than supported minimum"});
+      report.AddIssue({"schema_too_old", ref.map_id, ref.dir, "schema is older than supported minimum"});
     }
     if (schema > config_.max_supported_schema) {
-      report.AddIssue({"schema_too_new", ref.map_id, ref.version, ref.dir, "schema is newer than supported maximum"});
+      report.AddIssue({"schema_too_new", ref.map_id, ref.dir, "schema is newer than supported maximum"});
     }
   }
   for (const auto& map_id : std::vector<std::string>{ActiveMapId()}) {
@@ -280,32 +300,30 @@ MaintenanceReport MapPackageMaintenance::AuditImmutableVersions(bool dry_run) co
       continue;
     }
     const auto map_dir = MapPath(map_id);
-    const auto current = CurrentVersion(map_dir);
-    if (current <= 0 || !std::filesystem::is_directory(map_dir / kVersionsDir / VersionName(current))) {
-      report.AddIssue({"active_current_missing", map_id, current, map_dir, "active map has no verified current version"});
+    if (!std::filesystem::is_directory(map_dir)) {
+      report.AddIssue({"active_map_missing", map_id, map_dir, "active map directory is missing"});
     }
   }
   return report;
 }
 
-MaintenanceReport MapPackageMaintenance::QuarantineCorruptVersions(bool dry_run) {
+MaintenanceReport MapPackageMaintenance::QuarantineCorruptMaps(bool dry_run) {
   MaintenanceReport report;
   report.dry_run = dry_run;
-  for (const auto& ref : ListVersions()) {
+  for (const auto& ref : ListMaps()) {
     if (IsProtected(ref)) {
       continue;
     }
-    std::string error;
-    if (VerifyMapVersion(ref.dir, &error)) {
+    if (std::filesystem::is_regular_file(ref.dir / "map.pcd")) {
       continue;
     }
     const auto lock = MapLock::TryAcquire(root_dir_, ref.map_id, "quarantine-corrupt");
     if (!lock.has_value()) {
-      report.AddIssue({"lock_busy", ref.map_id, ref.version, ref.dir, "map write lock is busy"});
+      report.AddIssue({"lock_busy", ref.map_id, ref.dir, "map write lock is busy"});
       continue;
     }
     const auto target = QuarantinePath(ref);
-    report.AddChange({MaintenanceAction::kQuarantine, ref.map_id, ref.version, ref.dir, target, error});
+    report.AddChange({MaintenanceAction::kQuarantine, ref.map_id, ref.dir, target, "map.pcd is missing"});
     if (!dry_run) {
       std::filesystem::create_directories(target.parent_path());
       std::filesystem::rename(ref.dir, target);
@@ -314,44 +332,8 @@ MaintenanceReport MapPackageMaintenance::QuarantineCorruptVersions(bool dry_run)
   return report;
 }
 
-MaintenanceReport MapPackageMaintenance::GarbageCollectVersions(bool dry_run) {
-  MaintenanceReport report;
-  report.dry_run = dry_run;
-  std::map<std::string, std::vector<VersionRef>> by_map;
-  for (const auto& ref : ListVersions()) {
-    by_map[ref.map_id].push_back(ref);
-  }
-  for (auto& item : by_map) {
-    auto& versions = item.second;
-    std::sort(versions.begin(), versions.end(), [](const auto& lhs, const auto& rhs) {
-      return lhs.version > rhs.version;
-    });
-    std::size_t retained = 0;
-    for (const auto& ref : versions) {
-      const bool keep_by_count = retained < config_.retain_latest_versions;
-      if (keep_by_count) {
-        ++retained;
-      }
-      if (keep_by_count || IsProtected(ref)) {
-        continue;
-      }
-      const auto lock = MapLock::TryAcquire(root_dir_, ref.map_id, "gc-version");
-      if (!lock.has_value()) {
-        report.AddIssue({"lock_busy", ref.map_id, ref.version, ref.dir, "map write lock is busy"});
-        continue;
-      }
-      report.AddChange({MaintenanceAction::kGarbageCollect, ref.map_id, ref.version, ref.dir, {}, "retention delete"});
-      if (!dry_run) {
-        std::filesystem::remove_all(ref.dir);
-      }
-    }
-  }
-  return report;
-}
-
-MaintenanceReport MapPackageMaintenance::ExportMapVersion(
+MaintenanceReport MapPackageMaintenance::ExportMapPackage(
     const std::string& map_id,
-    std::int64_t version,
     const std::filesystem::path& package_dir,
     bool dry_run) const {
   MaintenanceReport report;
@@ -360,24 +342,43 @@ MaintenanceReport MapPackageMaintenance::ExportMapVersion(
   try {
     id = MapStore::NormalizeMapId(map_id);
   } catch (const std::exception& exc) {
-    report.AddIssue({"invalid_map_id", map_id, version, {}, exc.what()});
-    return report;
-  }
-  if (version <= 0) {
-    report.AddIssue({"invalid_version", id, version, {}, "version must be positive"});
+    report.AddIssue({"invalid_map_id", map_id, {}, exc.what()});
     return report;
   }
   if (package_dir.empty()) {
-    report.AddIssue({"invalid_package_path", id, version, package_dir, "package path is required"});
+    report.AddIssue({"invalid_package_path", id, package_dir, "package path is required"});
     return report;
   }
-  const auto source = MapPath(id) / kVersionsDir / VersionName(version);
-  std::string integrity_error;
-  if (!VerifyMapVersion(source, &integrity_error)) {
-    report.AddIssue({"version_integrity_failed", id, version, source, integrity_error});
+  std::optional<MapLock> package_lock;
+  std::optional<MapLock> map_lock;
+  if (!dry_run) {
+    package_lock = MapLock::TryAcquire(root_dir_, kPackageExchangeLockId, "export-map-package");
+    if (!package_lock.has_value()) {
+      report.AddIssue({
+          "package_exchange_busy", id, package_dir,
+          "another map package operation is in progress"});
+      return report;
+    }
+    map_lock = MapLock::TryAcquire(root_dir_, id, "export-map-package");
+    if (!map_lock.has_value()) {
+      report.AddIssue({"lock_busy", id, package_dir, "map write lock is busy"});
+      return report;
+    }
+  }
+  const auto source = MapPath(id);
+  if (!std::filesystem::is_directory(source) ||
+      !std::filesystem::is_regular_file(source / "map.pcd")) {
+    report.AddIssue({"map_artifact_missing", id, source, "map.pcd is missing"});
     return report;
   }
-  report.AddChange({MaintenanceAction::kExport, id, version, source, package_dir, "export verified map package"});
+  const auto source_schema = ReadSchema(source);
+  if (source_schema <= 0) {
+    report.AddIssue({
+        "schema_invalid", id, source / kSchemaFile,
+        "schema version is malformed"});
+    return report;
+  }
+  report.AddChange({MaintenanceAction::kExport, id, source, package_dir, "export verified map package"});
   if (dry_run) {
     return report;
   }
@@ -385,15 +386,13 @@ MaintenanceReport MapPackageMaintenance::ExportMapVersion(
       (package_dir.filename().string() + ".staging-" +
        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   std::filesystem::remove_all(stage);
-  std::filesystem::create_directories(stage / "version");
-  CopyTreeChecked(source, stage / "version", source);
+  std::filesystem::create_directories(stage / "map");
+  CopyTreeChecked(source, stage / "map", source);
   WriteTextAtomic(
       stage / kPackageManifest,
-      "format=lingtu-map-package-v1\nmap_id=" + id + "\nversion=" +
-          std::to_string(version) + "\nschema=" + std::to_string(ReadSchema(source)) + "\n");
-  WritePackageIndex(stage);
-  std::filesystem::remove_all(package_dir);
-  std::filesystem::rename(stage, package_dir);
+      "format=lingtu-map-package-v1\nmap_id=" + id +
+          "\nschema=" + std::to_string(source_schema) + "\n");
+  ReplaceDirectoryRecoverably(stage, package_dir);
   return report;
 }
 
@@ -403,103 +402,103 @@ PackageImportResult MapPackageMaintenance::ImportMapPackage(
     bool dry_run) {
   PackageImportResult result;
   result.report.dry_run = dry_run;
-  std::string package_error;
-  if (!VerifyPackageIndex(package_dir, &package_error)) {
-    result.report.AddIssue({"package_integrity_failed", {}, 0, package_dir, package_error});
+  if (!std::filesystem::is_directory(package_dir)) {
+    result.report.AddIssue({
+        "package_integrity_failed", {}, package_dir, "package directory is missing"});
     return result;
   }
-  const auto manifest = ReadKeyValueFile(package_dir / kPackageManifest);
-  if (manifest.find("format") == manifest.end() ||
-      manifest.at("format") != "lingtu-map-package-v1") {
-    result.report.AddIssue({"unsupported_package_format", {}, 0, package_dir, "unsupported package format"});
+  std::optional<MapLock> package_lock;
+  if (!dry_run) {
+    package_lock = MapLock::TryAcquire(root_dir_, kPackageExchangeLockId, "import-map-package");
+    if (!package_lock.has_value()) {
+      result.report.AddIssue({
+          "package_exchange_busy", {}, package_dir,
+          "another map package operation is in progress"});
+      return result;
+    }
+  }
+  std::map<std::string, std::string> manifest;
+  try {
+    manifest = ReadKeyValueFile(package_dir / kPackageManifest);
+  } catch (const std::exception& exc) {
+    result.report.AddIssue({"package_manifest_invalid", {}, package_dir, exc.what()});
     return result;
   }
-  const std::string source_id = manifest.count("map_id") ? manifest.at("map_id") : "";
+  const std::vector<std::string> required_manifest_keys = {
+      "format", "map_id", "schema"};
+  if (manifest.size() != required_manifest_keys.size() ||
+      !std::all_of(required_manifest_keys.begin(), required_manifest_keys.end(),
+                   [&](const std::string& key) { return manifest.count(key) == 1U; })) {
+    result.report.AddIssue({
+        "package_manifest_invalid", {}, package_dir,
+        "package manifest fields do not match the required schema"});
+    return result;
+  }
+  if (manifest.at("format") != "lingtu-map-package-v1") {
+    result.report.AddIssue({"unsupported_package_format", {}, package_dir, "unsupported package format"});
+    return result;
+  }
+  std::string source_id;
+  try {
+    source_id = MapStore::NormalizeMapId(manifest.at("map_id"));
+  } catch (const std::exception& exc) {
+    result.report.AddIssue({"package_manifest_invalid", {}, package_dir, exc.what()});
+    return result;
+  }
   std::string id;
   try {
     id = requested_map_id.empty()
         ? MapStore::NormalizeMapId(source_id)
         : MapStore::NormalizeMapId(requested_map_id);
   } catch (const std::exception& exc) {
-    result.report.AddIssue({"invalid_map_id", requested_map_id.empty() ? source_id : requested_map_id, 0, package_dir, exc.what()});
+    result.report.AddIssue({"invalid_map_id", requested_map_id.empty() ? source_id : requested_map_id, package_dir, exc.what()});
     return result;
   }
-  const auto source_version = ParsePositiveInt(manifest.count("version") ? manifest.at("version") : "");
-  const auto version_source = package_dir / "version";
-  std::string integrity_error;
-  if (!VerifyMapVersion(version_source, &integrity_error)) {
-    result.report.AddIssue({"version_integrity_failed", id, source_version, version_source, integrity_error});
+  const auto map_source = package_dir / "map";
+  const auto manifest_schema = ParsePositiveInt(manifest.at("schema"));
+  if (manifest_schema <= 0 ||
+      manifest_schema != ReadSchema(map_source)) {
+    result.report.AddIssue({
+        "package_manifest_invalid", id, package_dir,
+        "package schema is invalid or inconsistent"});
+    return result;
+  }
+  if (!std::filesystem::is_directory(map_source) ||
+      !std::filesystem::is_regular_file(map_source / "map.pcd")) {
+    result.report.AddIssue({"map_artifact_missing", id, map_source, "map.pcd is missing"});
+    return result;
+  }
+  const auto map_dir = MapPath(id);
+  result.map_id = id;
+  result.report.AddChange({
+      MaintenanceAction::kImport,
+      id,
+      map_source,
+      map_dir,
+      "import verified map package"});
+  if (dry_run) {
     return result;
   }
   const auto lock = MapLock::TryAcquire(root_dir_, id, "import-map-package");
   if (!lock.has_value()) {
-    result.report.AddIssue({"lock_busy", id, source_version, package_dir, "map write lock is busy"});
+    result.report.AddIssue({"lock_busy", id, package_dir, "map write lock is busy"});
     return result;
   }
-  const auto map_dir = MapPath(id);
-  const auto versions_dir = map_dir / kVersionsDir;
-  std::filesystem::create_directories(versions_dir);
-  std::int64_t version = source_version;
-  while (version <= 0 || std::filesystem::exists(versions_dir / VersionName(version))) {
-    ++version;
-  }
-  const auto target = versions_dir / VersionName(version);
-  result.map_id = id;
-  result.version = version;
-  result.report.AddChange({MaintenanceAction::kImport, id, version, version_source, target, "import verified map package"});
-  if (dry_run) {
-    return result;
-  }
-  const auto stage = versions_dir / (".import-staging-" + std::to_string(version));
+  const auto stage = root_dir_ /
+      (".import-staging-" + id + "-" +
+       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   std::filesystem::remove_all(stage);
-  CopyTreeChecked(version_source, stage, version_source);
-  if (!VerifyMapVersion(stage, &integrity_error)) {
-    std::filesystem::remove_all(stage);
-    result.report.AddIssue({"version_integrity_failed", id, version, stage, integrity_error});
-    return result;
-  }
-  std::filesystem::rename(stage, target);
-  if (CurrentVersion(map_dir) <= 0) {
-    WriteTextAtomic(map_dir / kCurrentVersionFile, VersionName(version) + "\n");
-  }
+  CopyTreeChecked(map_source, stage, map_source);
+  MapStore epoch_store(MapStoreConfig{root_dir_});
+  WriteTextAtomic(
+      stage / MapStore::ContentEpochFilename(),
+      std::to_string(epoch_store.AllocateContentEpoch()) + "\n");
+  ReplaceDirectoryRecoverably(stage, map_dir);
   return result;
 }
 
-MaintenanceReport MapPackageMaintenance::MigrateSchemas(bool dry_run) {
-  MaintenanceReport report;
-  report.dry_run = dry_run;
-  for (const auto& ref : ListVersions()) {
-    const auto schema = ReadSchema(ref.dir);
-    if (schema >= config_.min_supported_schema) {
-      continue;
-    }
-    const auto migration = migrations_.find({schema, config_.min_supported_schema});
-    if (migration == migrations_.end()) {
-      report.AddIssue({"missing_migration", ref.map_id, ref.version, ref.dir, "no schema migration hook registered"});
-      continue;
-    }
-    if (IsProtected(ref)) {
-      report.AddIssue({"protected_version_migration_blocked", ref.map_id, ref.version, ref.dir, "protected/current versions are not modified in place"});
-      continue;
-    }
-    const auto lock = MapLock::TryAcquire(root_dir_, ref.map_id, "migrate-schema");
-    if (!lock.has_value()) {
-      report.AddIssue({"lock_busy", ref.map_id, ref.version, ref.dir, "map write lock is busy"});
-      continue;
-    }
-    report.AddChange({MaintenanceAction::kMigrate, ref.map_id, ref.version, ref.dir, ref.dir, "schema migration"});
-    if (!dry_run) {
-      std::string error;
-      if (!migration->second(ref.dir, schema, config_.min_supported_schema, &error)) {
-        report.AddIssue({"migration_failed", ref.map_id, ref.version, ref.dir, error});
-      }
-    }
-  }
-  return report;
-}
-
-std::vector<MapPackageMaintenance::VersionRef> MapPackageMaintenance::ListVersions() const {
-  std::vector<VersionRef> out;
+std::vector<MapPackageMaintenance::MapRef> MapPackageMaintenance::ListMaps() const {
+  std::vector<MapRef> out;
   if (!std::filesystem::is_directory(root_dir_)) {
     return out;
   }
@@ -512,55 +511,31 @@ std::vector<MapPackageMaintenance::VersionRef> MapPackageMaintenance::ListVersio
     if (!MapStore::IsValidMapId(map_id)) {
       continue;
     }
-    const auto map_dir = map_entry.path();
-    const auto current = CurrentVersion(map_dir);
-    const auto versions_dir = map_dir / kVersionsDir;
-    if (!std::filesystem::is_directory(versions_dir)) {
-      continue;
-    }
-    for (const auto& version_entry : std::filesystem::directory_iterator(versions_dir)) {
-      if (!version_entry.is_directory()) {
-        continue;
-      }
-      const auto version = ParsePositiveInt(version_entry.path().filename().string());
-      if (version <= 0) {
-        continue;
-      }
-      VersionRef ref;
-      ref.map_id = map_id;
-      ref.version = version;
-      ref.dir = version_entry.path();
-      ref.current = (map_id == active && version == current) || version == current;
-      ref.protected_version = IsProtected(ref);
-      out.push_back(ref);
-    }
+    MapRef ref;
+    ref.map_id = map_id;
+    ref.dir = map_entry.path();
+    ref.active = map_id == active;
+    ref.protected_map = IsProtected(ref);
+    out.push_back(ref);
   }
   return out;
 }
 
 std::string MapPackageMaintenance::ActiveMapId() const {
-  const auto active = ReadFirstLine(root_dir_ / config_.active_state_filename);
-  return MapStore::IsValidMapId(active) ? active : std::string{};
+  MapStore store(MapStoreConfig{root_dir_, config_.active_state_filename});
+  return store.ActiveMapId();
 }
 
-std::int64_t MapPackageMaintenance::CurrentVersion(const std::filesystem::path& map_dir) const {
-  return ParsePositiveInt(ReadFirstLine(map_dir / kCurrentVersionFile));
-}
-
-bool MapPackageMaintenance::IsProtected(const VersionRef& ref) const {
-  if (ref.current || config_.protected_map_ids.count(ref.map_id) != 0U) {
-    return true;
-  }
-  const auto found = config_.protected_versions.find(ref.map_id);
-  return found != config_.protected_versions.end() && found->second.count(ref.version) != 0U;
+bool MapPackageMaintenance::IsProtected(const MapRef& ref) const {
+  return ref.active || config_.protected_map_ids.count(ref.map_id) != 0U;
 }
 
 std::filesystem::path MapPackageMaintenance::MapPath(const std::string& map_id) const {
   return root_dir_ / MapStore::NormalizeMapId(map_id);
 }
 
-std::filesystem::path MapPackageMaintenance::QuarantinePath(const VersionRef& ref) const {
-  return root_dir_ / config_.quarantine_dir_name / ref.map_id / VersionName(ref.version);
+std::filesystem::path MapPackageMaintenance::QuarantinePath(const MapRef& ref) const {
+  return root_dir_ / config_.quarantine_dir_name / ref.map_id;
 }
 
 }  // namespace lingtu::maps

@@ -22,10 +22,6 @@ SemanticGenerationMismatch::SemanticGenerationMismatch(std::uint64_t expected_ge
       expected_generation_(expected_generation),
       actual_generation_(actual_generation) {}
 
-std::size_t SemanticMapChunk::Size() const noexcept {
-  return data == nullptr ? 0U : data->center_x_m.size();
-}
-
 namespace {
 
 constexpr std::size_t kSemanticBinCount = 4U;

@@ -25,8 +25,6 @@ import logging
 import time
 from collections import defaultdict
 
-from runtime.msgs.numpy_compat import np
-
 from memory.spatial.topology_types import (
     _FRONTIER_BASE_PRIOR,
     _MIN_FRONTIER_DISTANCE,
@@ -46,6 +44,7 @@ from memory.spatial.topology_types import (
     tsg_to_dict,
     tsg_to_prompt_context,
 )
+from runtime.msgs.numpy_compat import np
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +84,7 @@ class TopologySemGraph:
     # ── 图构建 ──────────────────────────────────────────────────
 
     def set_geometry_extractor(self, geometry_extractor) -> None:
-        """设置几何提取器 (连接到 Tomogram)。"""
+        """设置几何提取器。"""
         self._geometry_extractor = geometry_extractor
         logger.info("Geometry extractor connected to topology graph")
 

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "lingtu/maps/store.hpp"
@@ -16,7 +18,6 @@ enum class ActivationOperation {
 struct ArtifactIdentity {
   std::string type;
   std::string uri;
-  std::string sha256;
 
   bool operator==(const ArtifactIdentity &other) const noexcept;
   bool operator!=(const ArtifactIdentity &other) const noexcept { return !(*this == other); }
@@ -25,9 +26,8 @@ struct ArtifactIdentity {
 struct MapIdentity {
   bool present{false};
   std::string map_id;
-  std::string version_id;
+  std::int64_t content_epoch{0};
   std::string frame_id;
-  std::string map_dir;
   std::vector<ArtifactIdentity> artifacts;
 
   bool operator==(const MapIdentity &other) const noexcept;
@@ -60,10 +60,11 @@ struct ActivationResult {
 
 class ActivationCoordinator final {
  public:
-  explicit ActivationCoordinator(MapStore &store) : store_(store) {}
+  explicit ActivationCoordinator(MapStore &store);
 
   MapIdentity IdentityFor(const std::string &map_id) const;
   MapIdentity ActiveIdentity() const;
+  ActivationRequest PrepareStage(const std::string &map_id) const;
   ActivationResult Execute(const ActivationRequest &request);
 
  private:
@@ -73,9 +74,11 @@ class ActivationCoordinator final {
   ActivationResult Reject(const ActivationRequest &request, std::string message) const;
 
   MapStore &store_;
+  mutable MapIdentity staged_identity_;
 };
 
-const char *ActivationOperationName(ActivationOperation operation) noexcept;
 bool IsCanonicalIdentity(const MapIdentity &identity) noexcept;
+std::string EncodeActivationToken(const MapIdentity &target, const MapIdentity &previous);
+std::pair<MapIdentity, MapIdentity> DecodeActivationToken(const std::string &token);
 
 }  // namespace lingtu::maps::mapd

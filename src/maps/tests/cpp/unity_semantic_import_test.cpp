@@ -1,3 +1,4 @@
+#include "lingtu/maps/json.hpp"
 #include "lingtu/maps/semantic_map_persistence.hpp"
 #include "lingtu/maps/semantic_taxonomy.hpp"
 #include "lingtu/maps/sources/unity_scene.hpp"
@@ -91,6 +92,31 @@ void TestTaxonomy(const std::filesystem::path& root) {
   assert(taxonomy.Find(6U)->name == "chair");
 }
 
+void TestStrictJsonNumberGrammar() {
+  assert(lingtu::maps::IsValidJsonObject(
+      R"JSON({"fraction":0.125,"exponent":-1.5e+2})JSON"));
+  assert(!lingtu::maps::IsValidJsonObject(R"JSON({"overflow":1e9999})JSON"));
+  assert(!lingtu::maps::IsValidJsonObject(R"JSON({"leading_zero":01})JSON"));
+
+  const std::string object =
+      R"JSON({"schema_version":"example.v1","flags":{"enabled":false}})JSON";
+  assert(lingtu::maps::JsonObjectStringAtPath(object, {"schema_version"}) == "example.v1");
+  const auto enabled = lingtu::maps::JsonObjectBoolAtPath(object, {"flags", "enabled"});
+  assert(enabled.has_value() && !*enabled);
+  const auto number = lingtu::maps::JsonObjectNumberAtPath(
+      R"JSON({"metrics":{"resolution":0.125}})JSON",
+      {"metrics", "resolution"});
+  assert(number.has_value() && *number == 0.125);
+  assert(!lingtu::maps::JsonObjectNumberAtPath(object, {"schema_version"}).has_value());
+  assert(!lingtu::maps::JsonObjectBoolAtPath(object, {"enabled"}).has_value());
+  assert(!lingtu::maps::JsonObjectStringAtPath(
+      R"JSON({"schema_version":"a","schema_version":"b"})JSON",
+      {"schema_version"}).has_value());
+  const std::string nested_success =
+      R"JSON({"success":false,"detail":{"success":true}})JSON";
+  assert(lingtu::maps::JsonObjectBoolAtPath(nested_success, {"success"}) == false);
+}
+
 void TestImportAndDeterminism(const std::filesystem::path& root) {
   const auto first = root / "first.bin";
   const auto second = root / "second.bin";
@@ -160,6 +186,7 @@ int main() {
   const auto root = TempRoot();
   WriteScene(root);
   TestTaxonomy(root);
+  TestStrictJsonNumberGrammar();
   TestImportAndDeterminism(root);
   TestFailureDoesNotExposePartialArtifact(root);
   TestMalformedObjectFailsClosed(root);

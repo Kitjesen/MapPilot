@@ -1,6 +1,4 @@
-#include "lingtu/maps/api.hpp"
 #include "lingtu/maps/build/artifacts.hpp"
-#include "lingtu/maps/build/optimizer.hpp"
 #include "lingtu/maps/build/pipeline.hpp"
 #include "lingtu/maps/cloud.hpp"
 #include "lingtu/maps/frame.hpp"
@@ -37,10 +35,6 @@ int main() {
   lingtu::maps::layers::TraversabilityGridView traversability;
   traversability.frame_id = record.scope.frame_id;
 
-  lingtu::maps::MapBundle bundle;
-  bundle.map_id = record.map_id;
-  bundle.capability = lingtu::maps::MapCapability::kVisualization;
-
   lingtu::maps::layers::VoxelLayerCore voxel_layer;
   voxel_layer.Update(frame);
 
@@ -49,7 +43,7 @@ int main() {
   observation.frame = frame;
   semantic_layer.Update(observation);
 
-  return (bundle.map_id == "smoke" && voxel_layer.VoxelCount() == 0 &&
+  return (record.map_id == "smoke" && voxel_layer.VoxelCount() == 0 &&
           semantic_layer.VoxelCount() == 0)
              ? 0
              : 1;

@@ -1,6 +1,7 @@
 #include "lingtu/maps/build/pcd.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cctype>
 #include <cstdint>
@@ -21,6 +22,15 @@ struct PcdHeader {
   std::vector<int> counts;
   std::string data;
   int64_t points{0};
+  int64_t width{0};
+  int64_t height{0};
+  bool fields_declared{false};
+  bool sizes_declared{false};
+  bool types_declared{false};
+  bool counts_declared{false};
+  bool points_declared{false};
+  bool width_declared{false};
+  bool height_declared{false};
 };
 
 struct ScalarLayout {
@@ -78,12 +88,30 @@ std::string Lower(std::string value) {
   return value;
 }
 
-int ParseInt(const std::string& value, int fallback) {
-  try {
-    return std::stoi(value);
-  } catch (...) {
-    return fallback;
+bool ParsePositiveInt(const std::string& value, int* output) {
+  if (output == nullptr || value.empty()) {
+    return false;
   }
+  int parsed = 0;
+  const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed);
+  if (result.ec != std::errc{} || result.ptr != value.data() + value.size() || parsed <= 0) {
+    return false;
+  }
+  *output = parsed;
+  return true;
+}
+
+bool ParseNonNegativeInt64(const std::string& value, int64_t* output) {
+  if (output == nullptr || value.empty()) {
+    return false;
+  }
+  int64_t parsed = 0;
+  const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed);
+  if (result.ec != std::errc{} || result.ptr != value.data() + value.size() || parsed < 0) {
+    return false;
+  }
+  *output = parsed;
+  return true;
 }
 
 bool IsFinitePoint(const PointXyz& point) {
@@ -98,8 +126,15 @@ bool InBounds(const PointXyz& point, const PcdBounds& bounds) {
 }
 
 bool BuildLayout(const PcdHeader& header, ScalarLayout* layout, std::string* error) {
+  constexpr int kMaxFields = 256;
+  constexpr int kMaxScalars = 65'536;
+  constexpr int kMaxStrideBytes = 1'048'576;
   if (header.fields.empty()) {
     *error = "PCD missing FIELDS";
+    return false;
+  }
+  if (header.fields.size() > static_cast<std::size_t>(kMaxFields)) {
+    *error = "PCD has too many fields";
     return false;
   }
   std::vector<int> sizes = header.sizes;
@@ -126,19 +161,51 @@ bool BuildLayout(const PcdHeader& header, ScalarLayout* layout, std::string* err
   int byte_offset = 0;
   for (size_t i = 0; i < header.fields.size(); ++i) {
     const std::string field = Lower(header.fields[i]);
-    const int count = std::max(1, counts[i]);
+    const int count = counts[i];
     const int size = sizes[i];
+    const std::string type = Upper(types[i]);
+    const bool valid_type_size =
+        (type == "F" && (size == 4 || size == 8)) ||
+        ((type == "I" || type == "U") &&
+         (size == 1 || size == 2 || size == 4 || size == 8));
+    if (count <= 0 || size <= 0 || !valid_type_size) {
+      *error = "PCD field layout is invalid";
+      return false;
+    }
+    if (count > kMaxScalars || scalar > kMaxScalars - count ||
+        size > kMaxStrideBytes / count ||
+        byte_offset > kMaxStrideBytes - size * count) {
+      *error = "PCD field layout exceeds parser limits";
+      return false;
+    }
     if (count == 1) {
       if (field == "x") {
+        if (layout->x_scalar >= 0) {
+          *error = "PCD contains duplicate x field";
+          return false;
+        }
         layout->x_scalar = scalar;
         layout->x_byte = byte_offset;
       } else if (field == "y") {
+        if (layout->y_scalar >= 0) {
+          *error = "PCD contains duplicate y field";
+          return false;
+        }
         layout->y_scalar = scalar;
         layout->y_byte = byte_offset;
       } else if (field == "z") {
+        if (layout->z_scalar >= 0) {
+          *error = "PCD contains duplicate z field";
+          return false;
+        }
         layout->z_scalar = scalar;
         layout->z_byte = byte_offset;
       }
+    }
+    if ((field == "x" || field == "y" || field == "z") &&
+        (count != 1 || type != "F" || size != static_cast<int>(sizeof(float)))) {
+      *error = "PCD x/y/z fields must be scalar float32";
+      return false;
     }
     scalar += count;
     byte_offset += size * count;
@@ -198,9 +265,21 @@ PcdIoResult LoadBinaryPoints(std::istream& stream, const PcdHeader& header) {
   }
   std::ostringstream payload_stream;
   payload_stream << stream.rdbuf();
+  if (stream.bad()) {
+    result.message = "PCD binary payload is unreadable";
+    return result;
+  }
   const std::string payload = payload_stream.str();
+  if (payload.size() % static_cast<size_t>(layout.byte_stride) != 0U) {
+    result.message = "PCD binary payload does not match its stride";
+    return result;
+  }
   int64_t available = static_cast<int64_t>(payload.size() / static_cast<size_t>(layout.byte_stride));
-  int64_t point_count = header.points > 0 ? std::min(header.points, available) : available;
+  if (header.points_declared && header.points != available) {
+    result.message = "PCD binary payload does not match declared point count";
+    return result;
+  }
+  const int64_t point_count = header.points_declared ? header.points : available;
   for (int64_t i = 0; i < point_count; ++i) {
     const char* base = payload.data() + i * layout.byte_stride;
     PointXyz point;
@@ -245,26 +324,88 @@ PcdIoResult LoadPcdXyz(const std::filesystem::path& path) {
     }
     const std::string key = Upper(parts[0]);
     if (key == "FIELDS") {
+      if (header.fields_declared || parts.size() <= 1U) {
+        return MakeError("PCD FIELDS declaration is invalid or duplicated");
+      }
+      header.fields_declared = true;
       header.fields.assign(parts.begin() + 1, parts.end());
     } else if (key == "SIZE") {
+      if (header.sizes_declared || parts.size() <= 1U) {
+        return MakeError("PCD SIZE declaration is invalid or duplicated");
+      }
+      header.sizes_declared = true;
       header.sizes.clear();
       for (size_t i = 1; i < parts.size(); ++i) {
-        header.sizes.push_back(ParseInt(parts[i], 4));
+        int parsed = 0;
+        if (!ParsePositiveInt(parts[i], &parsed)) {
+          return MakeError("PCD SIZE contains an invalid integer");
+        }
+        header.sizes.push_back(parsed);
       }
     } else if (key == "TYPE") {
-      header.types.assign(parts.begin() + 1, parts.end());
+      if (header.types_declared || parts.size() <= 1U) {
+        return MakeError("PCD TYPE declaration is invalid or duplicated");
+      }
+      header.types_declared = true;
+      header.types.clear();
+      for (size_t i = 1; i < parts.size(); ++i) {
+        header.types.push_back(Upper(parts[i]));
+      }
     } else if (key == "COUNT") {
+      if (header.counts_declared || parts.size() <= 1U) {
+        return MakeError("PCD COUNT declaration is invalid or duplicated");
+      }
+      header.counts_declared = true;
       header.counts.clear();
       for (size_t i = 1; i < parts.size(); ++i) {
-        header.counts.push_back(ParseInt(parts[i], 1));
+        int parsed = 0;
+        if (!ParsePositiveInt(parts[i], &parsed)) {
+          return MakeError("PCD COUNT contains an invalid integer");
+        }
+        header.counts.push_back(parsed);
       }
-    } else if (key == "POINTS" && parts.size() > 1U) {
-      header.points = ParseInt(parts[1], 0);
-    } else if (key == "WIDTH" && header.points <= 0 && parts.size() > 1U) {
-      header.points = ParseInt(parts[1], 0);
-    } else if (key == "DATA" && parts.size() > 1U) {
+    } else if (key == "POINTS") {
+      if (header.points_declared || parts.size() != 2U ||
+          !ParseNonNegativeInt64(parts[1], &header.points)) {
+        return MakeError("PCD POINTS declaration is invalid or duplicated");
+      }
+      header.points_declared = true;
+    } else if (key == "WIDTH") {
+      if (header.width_declared || parts.size() != 2U ||
+          !ParseNonNegativeInt64(parts[1], &header.width)) {
+        return MakeError("PCD WIDTH declaration is invalid or duplicated");
+      }
+      header.width_declared = true;
+    } else if (key == "HEIGHT") {
+      if (header.height_declared || parts.size() != 2U ||
+          !ParseNonNegativeInt64(parts[1], &header.height)) {
+        return MakeError("PCD HEIGHT declaration is invalid or duplicated");
+      }
+      header.height_declared = true;
+    } else if (key == "DATA") {
+      if (!header.data.empty() || parts.size() != 2U) {
+        return MakeError("PCD DATA declaration is invalid or duplicated");
+      }
       header.data = Lower(parts[1]);
       break;
+    }
+  }
+
+  if (header.width_declared != header.height_declared) {
+    return MakeError("PCD WIDTH and HEIGHT must be declared together");
+  }
+  if (header.width_declared) {
+    if (header.height != 0 &&
+        header.width > std::numeric_limits<int64_t>::max() / header.height) {
+      return MakeError("PCD WIDTH x HEIGHT overflows point count");
+    }
+    const int64_t dimensions = header.width * header.height;
+    if (header.points_declared && header.points != dimensions) {
+      return MakeError("PCD POINTS does not match WIDTH x HEIGHT");
+    }
+    if (!header.points_declared) {
+      header.points = dimensions;
+      header.points_declared = true;
     }
   }
 
@@ -305,6 +446,13 @@ bool WriteBinaryXyzPcd(
     file.write(reinterpret_cast<const char*>(&point.x), sizeof(float));
     file.write(reinterpret_cast<const char*>(&point.y), sizeof(float));
     file.write(reinterpret_cast<const char*>(&point.z), sizeof(float));
+  }
+  file.flush();
+  if (!file) {
+    if (error != nullptr) {
+      *error = "failed to finish writing PCD: " + path.string();
+    }
+    return false;
   }
   return true;
 }

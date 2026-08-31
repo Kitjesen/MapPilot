@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -20,8 +22,17 @@
 #include "lingtu/maps/build/grid_artifacts.hpp"
 #include "lingtu/maps/build/occupancy_snapshot.hpp"
 #include "lingtu/maps/build/process.hpp"
-#include "lingtu/maps/hash.hpp"
+#include "lingtu/maps/json.hpp"
+#include "lingtu/maps/lock.hpp"
 #include "lingtu/maps/semantic_map_persistence.hpp"
+
+#if defined(_WIN32)
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
 #include <octomap/OcTree.h>
@@ -29,6 +40,14 @@
 
 namespace lingtu::maps {
 namespace {
+
+std::uint64_t CurrentProcessIdValue() {
+#if defined(_WIN32)
+  return static_cast<std::uint64_t>(GetCurrentProcessId());
+#else
+  return static_cast<std::uint64_t>(getpid());
+#endif
+}
 
 std::string JsonEscape(const std::string &value) {
   std::ostringstream stream;
@@ -91,62 +110,6 @@ std::string Lower(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
                  [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
   return value;
-}
-
-struct UpstreamSlamOptimization {
-  bool present{false};
-  bool valid{false};
-  bool refine_applied{false};
-  bool loop_closure_applied{false};
-};
-
-bool ReadJsonBoolField(const std::string &text, const std::string &field, bool *value) {
-  const auto key = text.find("\"" + field + "\"");
-  if (key == std::string::npos) {
-    return false;
-  }
-  const auto colon = text.find(':', key + field.size() + 2U);
-  if (colon == std::string::npos) {
-    return false;
-  }
-  const auto token = text.find_first_not_of(" \t\r\n", colon + 1U);
-  if (token == std::string::npos) {
-    return false;
-  }
-  if (text.compare(token, 4U, "true") == 0) {
-    *value = true;
-    return true;
-  }
-  if (text.compare(token, 5U, "false") == 0) {
-    *value = false;
-    return true;
-  }
-  return false;
-}
-
-UpstreamSlamOptimization ReadUpstreamSlamOptimization(
-    const std::filesystem::path &source_dir) {
-  const auto report_path = source_dir / "map_optimization.json";
-  std::ifstream report(report_path, std::ios::binary);
-  if (!report) {
-    return {};
-  }
-  UpstreamSlamOptimization state;
-  state.present = true;
-  constexpr std::size_t kMaxReportBytes = 64U * 1024U;
-  std::string text(kMaxReportBytes + 1U, '\0');
-  report.read(text.data(), static_cast<std::streamsize>(text.size()));
-  text.resize(static_cast<std::size_t>(report.gcount()));
-  if (text.size() > kMaxReportBytes ||
-      text.find("lingtu.slam.map_optimization.v1") == std::string::npos) {
-    return state;
-  }
-  const bool has_refine =
-      ReadJsonBoolField(text, "refine_applied", &state.refine_applied);
-  const bool has_loop =
-      ReadJsonBoolField(text, "loop_closure_applied", &state.loop_closure_applied);
-  state.valid = has_refine && has_loop;
-  return state;
 }
 
 int PcdPointCount(const std::filesystem::path &path) {
@@ -338,8 +301,8 @@ std::string BuildConverterShellCommand(std::string command, const std::filesyste
 
 std::string MetadataJson(const std::string &map_id, const std::filesystem::path &map_dir,
                          const std::filesystem::path &pcd_path,
-                         const std::filesystem::path &octomap_path, const std::string &pcd_sha,
-                         const std::string &octomap_sha, const OctomapBuildOptions &options,
+                         const std::filesystem::path &octomap_path,
+                         const OctomapBuildOptions &options,
                          bool manual_voxel_edit = false, std::size_t manual_edit_count = 0U,
                          const std::string &last_edit_json = "null") {
   const std::filesystem::path occupancy_path = map_dir / "occupancy.npz";
@@ -358,7 +321,6 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
   std::ostringstream artifacts;
   artifacts << "\"map_pcd\":{"
             << "\"path\":\"map.pcd\","
-            << "\"sha256\":" << JsonString(pcd_sha) << ","
             << "\"source_profile\":" << JsonString(source_profile) << ","
             << "\"data_source\":" << JsonString(data_source) << ","
             << "\"slam_source\":" << JsonString(slam_source) << ","
@@ -367,16 +329,12 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
   if (has_occupancy) {
     artifacts << "\"occupancy_grid\":{"
               << "\"path\":\"occupancy.npz\","
-              << "\"sha256\":" << JsonString(Sha256File(occupancy_path)) << ","
-              << "\"source_map_sha256\":" << JsonString(pcd_sha) << ","
               << "\"source_profile\":" << JsonString(source_profile) << ","
               << "\"data_source\":" << JsonString(data_source) << ","
               << "\"frame_id\":" << JsonString(options.frame_id) << "},";
   }
   artifacts << "\"octomap\":{"
             << "\"path\":" << JsonString(octomap_path.filename().string()) << ","
-            << "\"sha256\":" << JsonString(octomap_sha) << ","
-            << "\"source_map_sha256\":" << JsonString(pcd_sha) << ","
             << "\"source_profile\":" << JsonString(source_profile) << ","
             << "\"data_source\":" << JsonString(data_source) << ","
             << "\"frame_id\":" << JsonString(options.frame_id) << ","
@@ -448,31 +406,37 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
          ","
          "\"builder\":{\"name\":\"LingTu MapsPipelineCore\",\"version\":\"0.2.0\"},"
          "\"builder_version\":\"0.2.0\","
-         "\"source_hashes\":{\"map_pcd\":" +
-         JsonString(pcd_sha) +
-         "},"
-         "\"octomap\":{\"path\":" + JsonString(octomap_path.filename().string()) +
-         ",\"sha256\":" +
-         JsonString(octomap_sha) + ",\"source_map_sha256\":" + JsonString(pcd_sha) +
-         "}"
+         "\"octomap\":{\"path\":" + JsonString(octomap_path.filename().string()) + "}"
          "}\n";
 }
 
-bool ExistingMetadataMatchesOctomap(const std::filesystem::path &metadata_path,
-                                    const std::string &pcd_sha, const std::string &octomap_sha) {
+bool ExistingMetadataAllowsReuse(const std::filesystem::path &metadata_path) {
   if (!std::filesystem::is_regular_file(metadata_path)) {
     return false;
   }
+  std::error_code size_error;
+  const auto metadata_size = std::filesystem::file_size(metadata_path, size_error);
+  if (size_error || metadata_size > 4U * 1024U * 1024U) {
+    return false;
+  }
   std::ifstream file(metadata_path, std::ios::binary);
+  if (!file) {
+    return false;
+  }
   std::ostringstream stream;
   stream << file.rdbuf();
+  if (file.bad()) {
+    return false;
+  }
   const std::string text = stream.str();
-  return text.find(pcd_sha) != std::string::npos && text.find(octomap_sha) != std::string::npos &&
-         text.find("\"octomap\"") != std::string::npos;
+  return JsonObjectStringAtPath(text, {"schema_version"}) ==
+             "lingtu.saved_map_artifacts.v1" &&
+         JsonObjectBoolAtPath(text, {"invalidated"}) != true &&
+         JsonObjectStringAtPath(text, {"octomap", "path"}) == "octomap.ot";
 }
 
 bool JsonSucceeded(const std::string &json) {
-  return json.find("\"success\":true") != std::string::npos;
+  return JsonObjectBoolAtPath(json, {"success"}) == true;
 }
 
 struct TransactionArtifactBackup {
@@ -481,6 +445,31 @@ struct TransactionArtifactBackup {
   std::filesystem::path backup_path;
   bool existed{false};
 };
+
+enum class TransactionPhase {
+  kPrepared,
+  kPublishing,
+  kCommitted,
+};
+
+struct PersistentTransaction {
+  std::string map_id;
+  TransactionPhase phase{TransactionPhase::kPrepared};
+  std::int64_t base_epoch{0};
+  std::int64_t next_epoch{0};
+  std::vector<TransactionArtifactBackup> artifacts;
+};
+
+bool WriteTransactionManifest(
+    const std::filesystem::path &transaction_dir,
+    const PersistentTransaction &transaction,
+    std::string *error);
+
+bool ReadTransactionManifest(
+    const std::filesystem::path &transaction_dir,
+    const std::filesystem::path &map_dir,
+    PersistentTransaction *transaction,
+    std::string *error);
 
 bool CopyPathRecursive(const std::filesystem::path &from, const std::filesystem::path &to,
                        std::string *error) {
@@ -554,7 +543,7 @@ std::vector<std::string> SourceMapMutationArtifactNames() {
   return {
       "map.pcd",       "occupancy.npz",      "map.pgm",
       "map.yaml",      "octomap.ot",         "octomap.bt",
-      "metadata.json", "tomogram.pickle",    "voxel_edits.json",
+      "metadata.json", "voxel_edits.json",
       "voxel_edits.jsonl",
       "esdf.npz",      "traversability.npz",
   };
@@ -565,22 +554,27 @@ std::vector<std::string> SavedSourceArtifactNames() {
   names.push_back("poses.txt");
   names.push_back("trajectory.txt");
   names.push_back("patches");
-  names.push_back("map.raw.pcd");
+  names.push_back("patch_bundle.manifest");
   names.push_back("map.clean.pcd");
   names.push_back("map.removed.pcd");
-  names.push_back("map.pcd.preclean");
   names.push_back("map_optimization.json");
   return names;
 }
 
 std::vector<TransactionArtifactBackup>
-BackupNamedArtifacts(const std::filesystem::path &map_dir,
+BackupNamedArtifacts(MapStore &store, const std::string &map_id,
+                     const std::filesystem::path &map_dir,
                      const std::filesystem::path &transaction_dir,
                      const std::vector<std::string> &names) {
   std::vector<TransactionArtifactBackup> backups;
   const auto backup_dir = transaction_dir / "backup";
   std::filesystem::create_directories(backup_dir);
-  for (const auto &filename : names) {
+  std::vector<std::string> transaction_names = names;
+  if (std::find(transaction_names.begin(), transaction_names.end(),
+                MapStore::ContentEpochFilename()) == transaction_names.end()) {
+    transaction_names.push_back(MapStore::ContentEpochFilename());
+  }
+  for (const auto &filename : transaction_names) {
     TransactionArtifactBackup backup;
     backup.filename = filename;
     backup.final_path = map_dir / filename;
@@ -594,27 +588,74 @@ BackupNamedArtifacts(const std::filesystem::path &map_dir,
     }
     backups.push_back(std::move(backup));
   }
+  PersistentTransaction transaction;
+  transaction.map_id = map_id;
+  transaction.phase = TransactionPhase::kPrepared;
+  transaction.base_epoch = store.ContentEpoch(map_id);
+  if (transaction.base_epoch <= 0) {
+    throw std::runtime_error("map content epoch is invalid: " + map_id);
+  }
+  transaction.artifacts = backups;
+  std::string manifest_error;
+  if (!WriteTransactionManifest(transaction_dir, transaction, &manifest_error)) {
+    throw std::runtime_error(manifest_error);
+  }
   return backups;
 }
 
 std::vector<TransactionArtifactBackup>
-BackupTransactionArtifacts(const std::filesystem::path &map_dir,
+BackupTransactionArtifacts(MapStore &store, const std::string &map_id,
+                           const std::filesystem::path &map_dir,
                            const std::filesystem::path &transaction_dir, bool include_esdf,
                            bool include_traversability) {
-  return BackupNamedArtifacts(map_dir, transaction_dir,
+  return BackupNamedArtifacts(store, map_id, map_dir, transaction_dir,
                               NavigationPackageArtifactNames(include_esdf, include_traversability));
 }
 
-void RollbackTransactionArtifacts(const std::vector<TransactionArtifactBackup> &backups) {
+bool RollbackTransactionArtifacts(const std::vector<TransactionArtifactBackup> &backups) {
   std::error_code ec;
+  bool ok = true;
   for (const auto &backup : backups) {
     std::filesystem::remove_all(backup.final_path, ec);
+    if (ec) {
+      ok = false;
+    }
     ec.clear();
-    if (backup.existed && std::filesystem::exists(backup.backup_path)) {
+    if (backup.existed && !std::filesystem::exists(backup.backup_path)) {
+      ok = false;
+      continue;
+    }
+    if (backup.existed) {
       std::string error;
-      CopyPathRecursive(backup.backup_path, backup.final_path, &error);
+      if (!CopyPathRecursive(backup.backup_path, backup.final_path, &error)) {
+        ok = false;
+      }
     }
   }
+  return ok;
+}
+
+bool RollbackTransactionArtifactsVerified(
+    MapStore &store, const std::string &map_id,
+    const std::vector<TransactionArtifactBackup> &backups,
+    std::int64_t base_epoch, std::string *error) {
+  const bool inject_failure =
+      std::getenv("LINGTU_MAPS_INJECT_ROLLBACK_FAILURE") != nullptr;
+  const bool complete = !inject_failure &&
+      RollbackTransactionArtifacts(backups) &&
+      store.ContentEpoch(map_id) == base_epoch;
+  if (!complete && error != nullptr) {
+    *error = "rollback incomplete: " + *error;
+  }
+  return complete;
+}
+
+bool TransactionNeedsRecovery(const std::string &error) {
+  return error.rfind("rollback incomplete:", 0U) == 0U;
+}
+
+std::string TransactionRolledBackJson(const std::string &error) {
+  return TransactionNeedsRecovery(error) ? "false" : "true";
 }
 
 std::string ArtifactPathJson(const std::filesystem::path &map_dir, const std::string &filename) {
@@ -628,7 +669,212 @@ bool WriteTextFile(const std::filesystem::path &path, const std::string &text) {
   if (!file) {
     return false;
   }
-  file << text;
+  file.write(text.data(), static_cast<std::streamsize>(text.size()));
+  file.flush();
+  return file.good();
+}
+
+const char *TransactionPhaseName(TransactionPhase phase) {
+  switch (phase) {
+    case TransactionPhase::kPrepared:
+      return "PREPARED";
+    case TransactionPhase::kPublishing:
+      return "PUBLISHING";
+    case TransactionPhase::kCommitted:
+      return "COMMITTED";
+  }
+  return "PREPARED";
+}
+
+bool IsSafeTransactionArtifactName(const std::string &filename) {
+  return !filename.empty() && filename != "." && filename != ".." &&
+      filename.find('/') == std::string::npos &&
+      filename.find('\\') == std::string::npos &&
+      filename.find('\t') == std::string::npos &&
+      filename.find('\n') == std::string::npos &&
+      (filename.front() != '.' || filename == MapStore::ContentEpochFilename());
+}
+
+bool WriteTransactionManifest(
+    const std::filesystem::path &transaction_dir,
+    const PersistentTransaction &transaction,
+    std::string *error) {
+  std::ostringstream out;
+  out << "LINGTU_MAP_TRANSACTION\t1\n"
+      << "map_id\t" << transaction.map_id << "\n"
+      << "phase\t" << TransactionPhaseName(transaction.phase) << "\n"
+      << "base_epoch\t" << transaction.base_epoch << "\n"
+      << "next_epoch\t" << transaction.next_epoch << "\n";
+  for (const auto &artifact : transaction.artifacts) {
+    if (!IsSafeTransactionArtifactName(artifact.filename)) {
+      if (error != nullptr) {
+        *error = "transaction contains an unsafe artifact name";
+      }
+      return false;
+    }
+    out << "artifact\t" << artifact.filename << '\t'
+        << (artifact.existed ? '1' : '0') << "\n";
+  }
+
+  const auto path = transaction_dir / "transaction.state";
+  const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+  const auto temp = transaction_dir /
+      ("transaction.state.tmp-" + std::to_string(CurrentProcessIdValue()) + "-" +
+       std::to_string(stamp));
+  if (!WriteTextFile(temp, out.str())) {
+    if (error != nullptr) {
+      *error = "failed to write map transaction manifest";
+    }
+    return false;
+  }
+  bool replaced = false;
+#if defined(_WIN32)
+  replaced = MoveFileExW(
+      temp.wstring().c_str(), path.wstring().c_str(),
+      MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+  replaced = ::rename(temp.c_str(), path.c_str()) == 0;
+#endif
+  if (!replaced) {
+    std::error_code ignored;
+    std::filesystem::remove(temp, ignored);
+    if (error != nullptr) {
+      *error = "failed to publish map transaction manifest";
+    }
+    return false;
+  }
+  return true;
+}
+
+bool ParsePositiveEpoch(const std::string &text, std::int64_t *value) {
+  if (value == nullptr || text.empty()) {
+    return false;
+  }
+  std::int64_t parsed_value = 0;
+  const auto parsed = std::from_chars(
+      text.data(), text.data() + text.size(), parsed_value);
+  if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() ||
+      parsed_value <= 0 || parsed_value > 9'007'199'254'740'991LL) {
+    return false;
+  }
+  *value = parsed_value;
+  return true;
+}
+
+std::vector<std::string> SplitTabs(const std::string &line) {
+  std::vector<std::string> fields;
+  std::size_t start = 0U;
+  for (;;) {
+    const auto delimiter = line.find('\t', start);
+    fields.push_back(line.substr(start, delimiter - start));
+    if (delimiter == std::string::npos) {
+      return fields;
+    }
+    start = delimiter + 1U;
+  }
+}
+
+bool ReadTransactionManifest(
+    const std::filesystem::path &transaction_dir,
+    const std::filesystem::path &map_dir,
+    PersistentTransaction *transaction,
+    std::string *error) {
+  if (transaction == nullptr) {
+    return false;
+  }
+  std::ifstream file(transaction_dir / "transaction.state", std::ios::binary);
+  if (!file) {
+    if (error != nullptr) {
+      *error = "map transaction manifest is missing";
+    }
+    return false;
+  }
+  std::string line;
+  if (!std::getline(file, line) || line != "LINGTU_MAP_TRANSACTION\t1") {
+    if (error != nullptr) {
+      *error = "map transaction manifest header is invalid";
+    }
+    return false;
+  }
+
+  PersistentTransaction parsed;
+  bool have_map_id = false;
+  bool have_phase = false;
+  bool have_base_epoch = false;
+  bool have_next_epoch = false;
+  std::unordered_set<std::string> artifact_names;
+  while (std::getline(file, line)) {
+    const auto fields = SplitTabs(line);
+    if (fields.size() == 2U && fields[0] == "map_id" && !have_map_id) {
+      parsed.map_id = fields[1];
+      have_map_id = true;
+    } else if (fields.size() == 2U && fields[0] == "phase" && !have_phase) {
+      if (fields[1] == "PREPARED") {
+        parsed.phase = TransactionPhase::kPrepared;
+      } else if (fields[1] == "PUBLISHING") {
+        parsed.phase = TransactionPhase::kPublishing;
+      } else if (fields[1] == "COMMITTED") {
+        parsed.phase = TransactionPhase::kCommitted;
+      } else {
+        if (error != nullptr) {
+          *error = "map transaction phase is invalid";
+        }
+        return false;
+      }
+      have_phase = true;
+    } else if (fields.size() == 2U && fields[0] == "base_epoch" &&
+               !have_base_epoch) {
+      have_base_epoch = ParsePositiveEpoch(fields[1], &parsed.base_epoch);
+      if (!have_base_epoch) {
+        if (error != nullptr) {
+          *error = "map transaction base epoch is invalid";
+        }
+        return false;
+      }
+    } else if (fields.size() == 2U && fields[0] == "next_epoch" &&
+               !have_next_epoch) {
+      if (fields[1] == "0") {
+        parsed.next_epoch = 0;
+        have_next_epoch = true;
+      } else {
+        have_next_epoch = ParsePositiveEpoch(fields[1], &parsed.next_epoch);
+      }
+      if (!have_next_epoch) {
+        if (error != nullptr) {
+          *error = "map transaction next epoch is invalid";
+        }
+        return false;
+      }
+    } else if (fields.size() == 3U && fields[0] == "artifact" &&
+               IsSafeTransactionArtifactName(fields[1]) &&
+               (fields[2] == "0" || fields[2] == "1") &&
+               artifact_names.insert(fields[1]).second) {
+      TransactionArtifactBackup artifact;
+      artifact.filename = fields[1];
+      artifact.final_path = map_dir / fields[1];
+      artifact.backup_path = transaction_dir / "backup" / fields[1];
+      artifact.existed = fields[2] == "1";
+      parsed.artifacts.push_back(std::move(artifact));
+    } else {
+      if (error != nullptr) {
+        *error = "map transaction manifest contains an invalid field";
+      }
+      return false;
+    }
+  }
+  if (file.bad() || !have_map_id || !have_phase || !have_base_epoch ||
+      !have_next_epoch || parsed.map_id != map_dir.filename().string() ||
+      parsed.artifacts.empty() ||
+      parsed.artifacts.back().filename != MapStore::ContentEpochFilename() ||
+      (parsed.phase == TransactionPhase::kPrepared && parsed.next_epoch != 0) ||
+      (parsed.phase != TransactionPhase::kPrepared &&
+       parsed.next_epoch <= parsed.base_epoch)) {
+    if (error != nullptr) {
+      *error = "map transaction manifest is incomplete";
+    }
+    return false;
+  }
+  *transaction = std::move(parsed);
   return true;
 }
 
@@ -664,69 +910,32 @@ bool ReadTextFileLimited(const std::filesystem::path &path, std::uint64_t max_by
   }
   std::ostringstream stream;
   stream << file.rdbuf();
+  if (file.bad()) {
+    if (error != nullptr) {
+      *error = "failed to read " + path.string();
+    }
+    return false;
+  }
   *text = stream.str();
   return true;
 }
 
-std::size_t JsonValueStart(const std::string &json, const std::string &key) {
-  const auto key_pos = json.find("\"" + key + "\"");
-  if (key_pos == std::string::npos) {
-    return std::string::npos;
-  }
-  const auto colon = json.find(':', key_pos + key.size() + 2U);
-  if (colon == std::string::npos) {
-    return std::string::npos;
-  }
-  std::size_t pos = colon + 1U;
-  while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos])) != 0) {
-    ++pos;
-  }
-  return pos;
-}
-
 std::string JsonStringField(const std::string &json, const std::string &key,
                             const std::string &fallback) {
-  const auto start = JsonValueStart(json, key);
-  if (start == std::string::npos || start >= json.size() || json[start] != '"') {
-    return fallback;
-  }
-  std::string out;
-  bool escaped = false;
-  for (std::size_t i = start + 1U; i < json.size(); ++i) {
-    const char ch = json[i];
-    if (escaped) {
-      switch (ch) {
-        case 'n': out.push_back('\n'); break;
-        case 'r': out.push_back('\r'); break;
-        case 't': out.push_back('\t'); break;
-        default: out.push_back(ch); break;
-      }
-      escaped = false;
-    } else if (ch == '\\') {
-      escaped = true;
-    } else if (ch == '"') {
-      return out;
-    } else {
-      out.push_back(ch);
-    }
-  }
-  return fallback;
+  const auto value = JsonObjectStringAtPath(json, {key});
+  return value.has_value() ? *value : fallback;
 }
 
 double JsonNumberField(const std::string &json, const std::string &key, double fallback) {
-  const auto start = JsonValueStart(json, key);
-  if (start == std::string::npos || start >= json.size()) {
-    return fallback;
-  }
-  char *end = nullptr;
-  const double value = std::strtod(json.c_str() + start, &end);
-  return end == json.c_str() + start || !std::isfinite(value) ? fallback : value;
+  const auto value = JsonObjectNumberAtPath(json, {key});
+  return value.has_value() ? *value : fallback;
 }
 
 std::int64_t JsonIntegerField(const std::string &json, const std::string &key,
                               std::int64_t fallback) {
   const auto value = JsonNumberField(json, key, static_cast<double>(fallback));
-  if (value < 0.0 || value > static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+  if (value < 0.0 || std::floor(value) != value ||
+      value > static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
     return fallback;
   }
   return static_cast<std::int64_t>(value);
@@ -1122,10 +1331,9 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
            "\"map_id\":" +
            JsonString(map_id) + "}";
   }
-  const std::string pcd_sha = Sha256File(pcd_path);
-  const std::string octomap_sha = Sha256File(octomap_path);
-  if (!WriteTextFile(metadata_path, MetadataJson(map_id, map_dir, pcd_path, octomap_path, pcd_sha,
-                                                 octomap_sha, options))) {
+  if (!WriteTextFile(
+          metadata_path,
+          MetadataJson(map_id, map_dir, pcd_path, octomap_path, options))) {
     return "{"
            "\"action\":\"build_octomap\","
            "\"success\":false,"
@@ -1227,11 +1435,9 @@ std::string BuildOctomapArtifactInDirectory(const std::string &map_id,
            JsonString(map_id) + "}";
   }
 
-  const std::string pcd_sha = Sha256File(pcd_path);
   if (allow_reuse && std::filesystem::is_regular_file(octomap_path) &&
-      std::filesystem::file_size(octomap_path) > 0U) {
-    const std::string octomap_sha = Sha256File(octomap_path);
-    if (ExistingMetadataMatchesOctomap(metadata_path, pcd_sha, octomap_sha)) {
+      std::filesystem::file_size(octomap_path) > 0U &&
+      ExistingMetadataAllowsReuse(metadata_path)) {
       return "{"
              "\"action\":\"build_octomap\","
              "\"success\":true,"
@@ -1273,7 +1479,6 @@ std::string BuildOctomapArtifactInDirectory(const std::string &map_id,
              JsonString(options.frame_id) +
              "}"
              "}";
-    }
   }
 
   const std::string converter = ResolveConverterCommand(options);
@@ -1383,9 +1588,9 @@ std::string BuildOctomapArtifactInDirectory(const std::string &map_id,
            JsonString(map_id) + "}";
   }
 
-  const std::string octomap_sha = Sha256File(octomap_path);
-  if (!WriteTextFile(metadata_path, MetadataJson(map_id, map_dir, pcd_path, octomap_path, pcd_sha,
-                                                 octomap_sha, options))) {
+  if (!WriteTextFile(
+          metadata_path,
+          MetadataJson(map_id, map_dir, pcd_path, octomap_path, options))) {
     return "{"
            "\"action\":\"build_octomap\","
            "\"success\":false,"
@@ -1435,16 +1640,9 @@ std::string BuildOctomapArtifactInDirectory(const std::string &map_id,
          "\"frame_id\":" +
          JsonString(options.frame_id) +
          ","
-         "\"source_hashes\":{\"map_pcd\":" +
-         JsonString(pcd_sha) +
-         "},"
          "\"artifacts\":{"
-         "\"map_pcd\":{\"path\":\"map.pcd\",\"sha256\":" +
-         JsonString(pcd_sha) +
-         "},"
-         "\"octomap\":{\"path\":\"octomap.ot\",\"sha256\":" +
-         JsonString(octomap_sha) + ",\"source_map_sha256\":" + JsonString(pcd_sha) +
-         "}"
+         "\"map_pcd\":{\"path\":\"map.pcd\"},"
+         "\"octomap\":{\"path\":\"octomap.ot\"}"
          "},"
          "\"converter\":{\"command\":" +
          JsonString(command) +
@@ -1469,9 +1667,39 @@ std::string BuildOctomapArtifactInDirectory(const std::string &map_id,
          "}";
 }
 
-bool PublishTransactionArtifacts(const std::filesystem::path &staging_map_dir,
+bool PublishTransactionArtifacts(MapStore &store, const std::string &map_id,
+                                 const std::filesystem::path &staging_map_dir,
                                  const std::vector<TransactionArtifactBackup> &backups,
                                  std::string *error) {
+  if (backups.empty()) {
+    if (error != nullptr) {
+      *error = "map transaction has no artifacts";
+    }
+    return false;
+  }
+  PersistentTransaction transaction;
+  transaction.map_id = map_id;
+  transaction.phase = TransactionPhase::kPublishing;
+  transaction.base_epoch = store.ContentEpoch(map_id);
+  transaction.next_epoch = store.AllocateContentEpoch();
+  transaction.artifacts = backups;
+  const auto transaction_dir = backups.front().backup_path.parent_path().parent_path();
+  if (!WriteTransactionManifest(transaction_dir, transaction, error)) {
+    return false;
+  }
+  const auto fail_before_commit = [&]() {
+    static_cast<void>(RollbackTransactionArtifactsVerified(
+        store, map_id, backups, transaction.base_epoch, error));
+    return false;
+  };
+  if (!WriteTextFile(
+          staging_map_dir / MapStore::ContentEpochFilename(),
+          std::to_string(transaction.next_epoch) + "\n")) {
+    if (error != nullptr) {
+      *error = "failed to stage map content epoch";
+    }
+    return fail_before_commit();
+  }
   std::error_code ec;
   int published = 0;
   for (const auto &backup : backups) {
@@ -1482,7 +1710,7 @@ bool PublishTransactionArtifacts(const std::filesystem::path &staging_map_dir,
         if (error != nullptr) {
           *error = "injected publish failure after " + std::to_string(published) + " artifacts";
         }
-        return false;
+        return fail_before_commit();
       }
     }
     const auto staged_path = staging_map_dir / backup.filename;
@@ -1492,7 +1720,7 @@ bool PublishTransactionArtifacts(const std::filesystem::path &staging_map_dir,
       if (error != nullptr) {
         *error = "failed to replace " + backup.filename + ": " + ec.message();
       }
-      return false;
+      return fail_before_commit();
     }
     ec.clear();
     if (!staged_exists) {
@@ -1503,7 +1731,7 @@ bool PublishTransactionArtifacts(const std::filesystem::path &staging_map_dir,
       if (error != nullptr) {
         *error = "failed to create artifact directory: " + ec.message();
       }
-      return false;
+      return fail_before_commit();
     }
     ec.clear();
     std::filesystem::rename(staged_path, backup.final_path, ec);
@@ -1511,19 +1739,29 @@ bool PublishTransactionArtifacts(const std::filesystem::path &staging_map_dir,
       if (error != nullptr) {
         *error = "failed to publish " + backup.filename + ": " + ec.message();
       }
-      return false;
+      return fail_before_commit();
     }
     ++published;
+  }
+  // Publishing .content_epoch is the irreversible commit point. If the final
+  // manifest update fails, recovery observes PUBLISHING + next_epoch and keeps
+  // the fully published generation.
+  transaction.phase = TransactionPhase::kCommitted;
+  const bool inject_committed_manifest_failure =
+      std::getenv("LINGTU_MAPS_INJECT_COMMITTED_MANIFEST_FAILURE") != nullptr;
+  if (inject_committed_manifest_failure ||
+      !WriteTransactionManifest(transaction_dir, transaction, error)) {
+    if (inject_committed_manifest_failure && error != nullptr) {
+      *error = "injected committed manifest failure";
+    }
+    return true;
   }
   return true;
 }
 
 std::string InvalidatedSourceMetadataJson(const std::string &map_id,
                                           const std::filesystem::path &staging_map_dir,
-                                          const std::filesystem::path &staged_pcd_path,
                                           const std::string &reason) {
-  const std::string pcd_sha =
-      std::filesystem::is_regular_file(staged_pcd_path) ? Sha256File(staged_pcd_path) : "";
   return "{"
          "\"schema_version\":\"lingtu.saved_map_artifacts.v1\","
          "\"metadata_state\":\"invalidated\","
@@ -1541,42 +1779,40 @@ std::string InvalidatedSourceMetadataJson(const std::string &map_id,
          JsonString(staging_map_dir.string()) +
          ","
          "\"source\":\"lingtu_maps_pipeline\","
-         "\"source_hashes\":{\"map_pcd\":" +
-         JsonString(pcd_sha) +
-         "},"
-         "\"artifacts\":{\"map_pcd\":{\"path\":\"map.pcd\",\"sha256\":" +
-         JsonString(pcd_sha) +
-         "}},"
-         "\"navigation_ready\":false,"
-         "\"navigation_ready_reason\":\"octomap.ot and metadata.json must be rebuilt after source "
+         "\"artifacts\":{\"map_pcd\":{\"path\":\"map.pcd\"}},"
+         "\"activation_ready\":false,"
+         "\"activation_ready_reason\":\"octomap.ot and metadata.json must be rebuilt after source "
          "mutation\""
          "}\n";
 }
 
-bool PublishSourceMapTransaction(const std::string &map_id,
+bool PublishSourceMapTransaction(MapStore &store, const std::string &map_id,
                                  const std::filesystem::path &staging_map_dir,
                                  const std::filesystem::path &map_dir,
                                  const std::filesystem::path &transaction_dir, std::string *error) {
-  auto backups = BackupNamedArtifacts(map_dir, transaction_dir, SourceMapMutationArtifactNames());
+  auto backups =
+      BackupNamedArtifacts(store, map_id, map_dir, transaction_dir, SourceMapMutationArtifactNames());
+  const std::int64_t base_epoch = store.ContentEpoch(map_id);
   const auto staged_pcd_path = staging_map_dir / "map.pcd";
   if (!std::filesystem::is_regular_file(staged_pcd_path)) {
     if (error != nullptr) {
       *error = "missing staged map.pcd";
     }
-    RollbackTransactionArtifacts(backups);
+    static_cast<void>(RollbackTransactionArtifactsVerified(
+        store, map_id, backups, base_epoch, error));
     return false;
   }
   if (!WriteTextFile(staging_map_dir / "metadata.json",
-                     InvalidatedSourceMetadataJson(map_id, staging_map_dir, staged_pcd_path,
-                                                   "source_map_mutated"))) {
+                     InvalidatedSourceMetadataJson(
+                         map_id, staging_map_dir, "source_map_mutated"))) {
     if (error != nullptr) {
       *error = "failed to write invalidated metadata.json";
     }
-    RollbackTransactionArtifacts(backups);
+    static_cast<void>(RollbackTransactionArtifactsVerified(
+        store, map_id, backups, base_epoch, error));
     return false;
   }
-  if (!PublishTransactionArtifacts(staging_map_dir, backups, error)) {
-    RollbackTransactionArtifacts(backups);
+  if (!PublishTransactionArtifacts(store, map_id, staging_map_dir, backups, error)) {
     return false;
   }
   return true;
@@ -1683,9 +1919,7 @@ std::string ResolvePruneCommand(const SourceCommitOptions &options) {
   if (!options.dynamic_filter_command.empty()) {
     return options.dynamic_filter_command;
   }
-  const std::string env_bin = !EnvValue("LINGTU_PRUNE_BIN").empty()
-                                  ? EnvValue("LINGTU_PRUNE_BIN")
-                                  : EnvValue("LINGTU_STATIC_CLEANER_BIN");
+  const std::string env_bin = EnvValue("LINGTU_PRUNE_BIN");
   if (!env_bin.empty()) {
     return ShellQuote(env_bin);
   }
@@ -1694,14 +1928,6 @@ std::string ResolvePruneCommand(const SourceCommitOptions &options) {
            std::filesystem::current_path() / "build" / "prune" / "prune",
            std::filesystem::current_path() / "build" / "prune_wsl" / "prune",
            std::filesystem::path("/opt/lingtu/current/build/prune/prune"),
-           std::filesystem::current_path() / "build" / "lingtu_map_cleaning" / "Release" /
-               "lingtu_static_cleaner.exe",
-           std::filesystem::current_path() / "build" / "lingtu_map_cleaning" /
-               "lingtu_static_cleaner",
-           std::filesystem::current_path() / "build" / "lingtu_map_cleaning_wsl" /
-               "lingtu_static_cleaner",
-           std::filesystem::path(
-               "/opt/lingtu/current/build/lingtu_map_cleaning/lingtu_static_cleaner"),
        }) {
     if (std::filesystem::is_regular_file(candidate)) {
       return ShellQuote(candidate.string());
@@ -1725,31 +1951,6 @@ std::string RunSavedSourceCleanerJson(const std::filesystem::path &source_dir,
            "\"message\":\"dynamic filtering disabled\""
            "}";
   }
-  const auto upstream = ReadUpstreamSlamOptimization(source_dir);
-  if (upstream.present &&
-      (!upstream.valid || upstream.refine_applied || upstream.loop_closure_applied)) {
-    if (required_failure != nullptr && options.dynamic_filter_required) {
-      *required_failure = true;
-    }
-    const std::string reason = upstream.valid
-        ? "upstream_pose_map_consistency_unproven"
-        : "upstream_optimization_report_invalid";
-    const std::string message = upstream.valid
-        ? "dynamic filtering skipped because upstream map correction was not written to poses.txt"
-        : "dynamic filtering skipped because upstream optimization report is incomplete or unrecognized";
-    return "{"
-           "\"success\":false,"
-           "\"status\":\"skipped\","
-           "\"performed\":false,"
-           "\"backend\":\"prune\","
-           "\"reason_code\":" +
-           JsonString(reason) +
-           ",\"message\":" +
-           JsonString(message) +
-           ","
-           "\"changed\":false"
-           "}";
-  }
   if (!HasSavedSourceTrajectory(source_dir)) {
     if (required_failure != nullptr && options.dynamic_filter_required) {
       *required_failure = true;
@@ -1765,9 +1966,6 @@ std::string RunSavedSourceCleanerJson(const std::filesystem::path &source_dir,
            std::to_string(CountPatchPcds(source_dir)) + "}";
   }
 
-  const auto before = std::filesystem::is_regular_file(source_dir / "map.pcd")
-                          ? Sha256File(source_dir / "map.pcd")
-                          : std::string{};
   const std::string command =
       BuildMapDirShellCommand(ResolvePruneCommand(options), source_dir, "prune", " --map-dir") +
       " --overwrite --apply";
@@ -1780,11 +1978,8 @@ std::string RunSavedSourceCleanerJson(const std::filesystem::path &source_dir,
   const auto process = RunShellCommand(command, run_options);
   const double elapsed =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-  const auto after = std::filesystem::is_regular_file(source_dir / "map.pcd")
-                         ? Sha256File(source_dir / "map.pcd")
-                         : std::string{};
-  const bool ok =
-      !process.timed_out && !process.launch_failed && process.exit_code == 0 && !after.empty();
+  const bool ok = !process.timed_out && !process.launch_failed && process.exit_code == 0 &&
+      std::filesystem::is_regular_file(source_dir / "map.pcd");
   if (!ok && required_failure != nullptr && options.dynamic_filter_required) {
     *required_failure = true;
   }
@@ -1833,215 +2028,7 @@ std::string RunSavedSourceCleanerJson(const std::filesystem::path &source_dir,
          std::string(process.stdout_truncated ? "true" : "false") +
          ","
          "\"stderr_truncated\":" +
-         std::string(process.stderr_truncated ? "true" : "false") +
-         ","
-         "\"map_sha_before\":" +
-         JsonString(before) +
-         ","
-         "\"map_sha_after\":" +
-         JsonString(after) +
-         ","
-         "\"changed\":" +
-         std::string((!before.empty() && !after.empty() && before != after) ? "true" : "false") +
-         "}";
-}
-
-std::string RunSavedSourceOptimizerJson(const std::filesystem::path &source_dir,
-                                        const SourceCommitOptions &options,
-                                        bool *required_failure,
-                                        bool *performed_out) {
-  if (required_failure != nullptr) {
-    *required_failure = false;
-  }
-  if (performed_out != nullptr) {
-    *performed_out = false;
-  }
-  const std::string strategy =
-      Lower(options.optimizer_strategy.empty() ? "pgo" : options.optimizer_strategy);
-  if (strategy.empty() || strategy == "none" || strategy == "off" || strategy == "disabled" ||
-      strategy == "false" || strategy == "0") {
-    if (required_failure != nullptr && options.optimizer_required) {
-      *required_failure = true;
-    }
-    return "{"
-           "\"success\":false,"
-           "\"status\":\"disabled\","
-           "\"performed\":false,"
-           "\"strategy\":" +
-           JsonString(strategy) +
-           ","
-           "\"required\":" +
-           std::string(options.optimizer_required ? "true" : "false") +
-           ","
-           "\"reason_code\":\"optimization_disabled\","
-           "\"message\":\"map optimization disabled\""
-           "}";
-  }
-  if (!HasSavedSourceTrajectory(source_dir)) {
-    if (required_failure != nullptr && options.optimizer_required) {
-      *required_failure = true;
-    }
-    return "{"
-           "\"success\":false,"
-           "\"status\":\"skipped\","
-           "\"performed\":false,"
-           "\"strategy\":" +
-           JsonString(strategy) +
-           ","
-           "\"required\":" +
-           std::string(options.optimizer_required ? "true" : "false") +
-           ","
-           "\"reason_code\":\"missing_trajectory\","
-           "\"message\":\"map optimization requires map.pcd, poses.txt, and patches/*.pcd\","
-           "\"patch_count\":" +
-           std::to_string(CountPatchPcds(source_dir)) + "}";
-  }
-  const auto upstream = ReadUpstreamSlamOptimization(source_dir);
-  if (upstream.present &&
-      (!upstream.valid || upstream.refine_applied || upstream.loop_closure_applied)) {
-    if (required_failure != nullptr && options.optimizer_required) {
-      *required_failure = true;
-    }
-    const auto map_sha = std::filesystem::is_regular_file(source_dir / "map.pcd")
-                             ? Sha256File(source_dir / "map.pcd")
-                             : std::string{};
-    return "{"
-           "\"success\":false,"
-           "\"status\":\"skipped\","
-           "\"performed\":false,"
-           "\"strategy\":" +
-           JsonString(strategy) +
-           ",\"required\":" +
-           std::string(options.optimizer_required ? "true" : "false") +
-           ",\"reason_code\":" +
-           JsonString(upstream.valid ? "upstream_slam_optimization_preserved"
-                                     : "upstream_optimization_report_invalid") +
-           ",\"message\":" +
-           JsonString(upstream.valid
-                          ? "preserved upstream SLAM map; no verified independent constraints are available for a safe rebuild"
-                          : "preserved source map because upstream optimization report is incomplete or unrecognized") +
-           ","
-           "\"map_sha_before\":" +
-           JsonString(map_sha) +
-           ",\"map_sha_after\":" +
-           JsonString(map_sha) +
-           ",\"changed\":false,"
-           "\"patch_count\":" +
-           std::to_string(CountPatchPcds(source_dir)) + "}";
-  }
-  if (options.optimizer_command.empty()) {
-    if (required_failure != nullptr && options.optimizer_required) {
-      *required_failure = true;
-    }
-    return "{"
-           "\"success\":false,"
-           "\"status\":\"unavailable\","
-           "\"performed\":false,"
-           "\"strategy\":" +
-           JsonString(strategy) +
-           ","
-           "\"required\":" +
-           std::string(options.optimizer_required ? "true" : "false") +
-           ","
-           "\"reason_code\":\"optimizer_unavailable\","
-           "\"message\":\"map optimizer command is not configured\","
-           "\"patch_count\":" +
-           std::to_string(CountPatchPcds(source_dir)) + "}";
-  }
-
-  const auto before = std::filesystem::is_regular_file(source_dir / "map.pcd")
-                          ? Sha256File(source_dir / "map.pcd")
-                          : std::string{};
-  const std::string command = BuildMapDirShellCommand(options.optimizer_command, source_dir,
-                                                      strategy, " --map {map} --out {out}");
-  ProcessRunOptions run_options;
-  run_options.cwd = source_dir;
-  run_options.timeout_sec =
-      options.optimizer_timeout_sec > 0.0 ? options.optimizer_timeout_sec : 120.0;
-  run_options.cancel_requested = options.cancel_requested;
-  const auto started = std::chrono::steady_clock::now();
-  const auto process = RunShellCommand(command, run_options);
-  const double elapsed =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-  const auto after = std::filesystem::is_regular_file(source_dir / "map.pcd")
-                         ? Sha256File(source_dir / "map.pcd")
-                         : std::string{};
-  const bool ok =
-      !process.timed_out && !process.launch_failed && process.exit_code == 0 && !after.empty();
-  const bool skipped_no_constraints =
-      ok && process.stdout_text.find("\"code\":\"skipped_no_independent_constraints\"") !=
-          std::string::npos;
-  const bool performed = ok && !skipped_no_constraints;
-  if (performed_out != nullptr) {
-    *performed_out = performed;
-  }
-  if ((!ok || skipped_no_constraints) && required_failure != nullptr &&
-      options.optimizer_required) {
-    *required_failure = true;
-  }
-  const std::string reason =
-      process.timed_out
-          ? "optimizer_timeout"
-          : (process.launch_failed
-                 ? "optimizer_launch_failed"
-                 : (process.exit_code == 0 ? "optimizer_missing_output" : "optimizer_failed"));
-  return "{"
-         "\"success\":" +
-         std::string(performed ? "true" : "false") +
-         ","
-         "\"status\":" +
-         JsonString(skipped_no_constraints ? "skipped" : (ok ? "ok" : "failed")) +
-         ","
-         "\"performed\":" +
-         std::string(performed ? "true" : "false") +
-         ","
-         "\"strategy\":" +
-         JsonString(strategy) +
-         ","
-         "\"required\":" +
-         std::string(options.optimizer_required ? "true" : "false") +
-         ","
-         "\"reason_code\":" +
-         JsonString(skipped_no_constraints ? "no_independent_constraints"
-                                           : (ok ? "optimized" : reason)) +
-         ","
-         "\"message\":" +
-         JsonString(skipped_no_constraints
-                        ? "map optimization skipped: no independent constraints"
-                        : (ok ? "map optimization finished" : "map optimizer failed")) +
-         ","
-         "\"command\":" +
-         JsonString(command) +
-         ","
-         "\"returncode\":" +
-         std::to_string(process.exit_code) +
-         ","
-         "\"stdout\":" +
-         JsonString(process.stdout_text) +
-         ","
-         "\"stderr\":" +
-         JsonString(process.stderr_text) +
-         ","
-         "\"stdout_truncated\":" +
-         std::string(process.stdout_truncated ? "true" : "false") +
-         ","
-         "\"stderr_truncated\":" +
-         std::string(process.stderr_truncated ? "true" : "false") +
-         ","
-         "\"map_sha_before\":" +
-         JsonString(before) +
-         ","
-         "\"map_sha_after\":" +
-         JsonString(after) +
-         ","
-         "\"changed\":" +
-         std::string((!before.empty() && !after.empty() && before != after) ? "true" : "false") +
-         ","
-         "\"patch_count\":" +
-         std::to_string(CountPatchPcds(source_dir)) +
-         ","
-         "\"elapsed_sec\":" +
-         std::to_string(elapsed) + "}";
+         std::string(process.stderr_truncated ? "true" : "false") + "}";
 }
 
 void CopySavedSourceAuxiliaryArtifacts(const std::filesystem::path &source_dir,
@@ -2050,10 +2037,9 @@ void CopySavedSourceAuxiliaryArtifacts(const std::filesystem::path &source_dir,
            "poses.txt",
            "trajectory.txt",
            "patches",
-           "map.raw.pcd",
+           "patch_bundle.manifest",
            "map.clean.pcd",
            "map.removed.pcd",
-           "map.pcd.preclean",
            "map_optimization.json",
        }) {
     const auto source = source_dir / filename;
@@ -2069,148 +2055,102 @@ void CopySavedSourceAuxiliaryArtifacts(const std::filesystem::path &source_dir,
 
 }  // namespace
 
-MapPipelineCore::MapPipelineCore(MapStore &store) : store_(store) {}
+MapPipelineCore::MapPipelineCore(MapStore &store) : store_(store) {
+  RecoverInterruptedBuilds();
+}
 
-std::string MapPipelineCore::BeginBuildJson(const std::string &map_id,
-                                            const std::string &artifact_type) {
-  try {
-    const std::string id = MapStore::NormalizeMapId(map_id);
-    if (!store_.GetMapRecord(id).has_value()) {
-      return FailureJson("begin_build", "map not found: " + id, "map_not_found");
-    }
-    if (artifact_type.empty()) {
-      return FailureJson("begin_build", "missing artifact_type", "missing_artifact_type");
-    }
-    if (std::filesystem::exists(LockPath(id))) {
-      const std::string running = FirstLine(ReadLockText(id));
-      return "{"
-             "\"action\":\"begin_build\","
-             "\"success\":false,"
-             "\"reason_code\":\"build_in_progress\","
-             "\"message\":" +
-             JsonString("map build already running: " + running) +
-             ","
-             "\"map_id\":" +
-             JsonString(id) +
-             ","
-             "\"build_id\":" +
-             JsonString(running) + "}";
-    }
-    const std::string build_id = MakeBuildId(artifact_type);
-    std::filesystem::create_directories(BuildDir(id));
-    if (!std::filesystem::create_directory(LockPath(id))) {
-      return FailureJson("begin_build", "map build already running", "build_in_progress");
-    }
-    WriteText(LockInfoPath(id), build_id + "\n" + artifact_type + "\n");
-    WriteStatus(id, build_id, artifact_type, "RUNNING", 0.0, "build started");
-    return "{"
-           "\"action\":\"begin_build\","
-           "\"success\":true,"
-           "\"map_id\":" +
-           JsonString(id) +
-           ","
-           "\"build_id\":" +
-           JsonString(build_id) +
-           ","
-           "\"artifact_type\":" +
-           JsonString(artifact_type) +
-           ","
-           "\"status\":\"RUNNING\","
-           "\"progress\":0.0,"
-           "\"message\":\"build started\""
-           "}";
-  } catch (const std::exception &exc) {
-    return FailureJson("begin_build", exc.what(), "invalid_map_name");
+void MapPipelineCore::RecoverInterruptedBuilds() const {
+  for (const auto &map_id : store_.ListMapIds()) {
+    static_cast<void>(RecoverInterruptedBuild(map_id));
   }
 }
 
-std::string MapPipelineCore::FinishBuildJson(const std::string &map_id, const std::string &build_id,
-                                             bool success, const std::string &message) {
-  try {
-    const std::string id = MapStore::NormalizeMapId(map_id);
-    if (!store_.GetMapRecord(id).has_value()) {
-      return FailureJson("finish_build", "map not found: " + id, "map_not_found");
-    }
-    if (build_id.empty()) {
-      return FailureJson("finish_build", "missing build_id", "missing_build_id");
-    }
-    const auto lock = LockPath(id);
-    if (!std::filesystem::exists(lock)) {
-      return FailureJson("finish_build", "no active build for map: " + id, "no_active_build");
-    }
-    const std::string lock_text = ReadLockText(id);
-    const std::string locked = FirstLine(lock_text);
-    if (locked != build_id) {
-      return "{"
-             "\"action\":\"finish_build\","
-             "\"success\":false,"
-             "\"reason_code\":\"build_id_mismatch\","
-             "\"message\":" +
-             JsonString("active build is " + locked + ", not " + build_id) +
-             ","
-             "\"map_id\":" +
-             JsonString(id) +
-             ","
-             "\"build_id\":" +
-             JsonString(build_id) +
-             ","
-             "\"active_build_id\":" +
-             JsonString(locked) + "}";
-    }
-    const auto newline = lock_text.find('\n');
-    const std::string clean_artifact =
-        newline == std::string::npos ? "artifact" : FirstLine(lock_text.substr(newline + 1U));
-    const std::string status = success ? "SUCCEEDED" : "FAILED";
-    WriteStatus(id, build_id, clean_artifact, status, success ? 1.0 : 0.0, message);
-    std::filesystem::remove_all(lock);
-    return "{"
-           "\"action\":\"finish_build\","
-           "\"success\":true,"
-           "\"map_id\":" +
-           JsonString(id) +
-           ","
-           "\"build_id\":" +
-           JsonString(build_id) +
-           ","
-           "\"artifact_type\":" +
-           JsonString(clean_artifact) +
-           ","
-           "\"status\":" +
-           JsonString(status) +
-           ","
-           "\"progress\":" +
-           (success ? "1.0" : "0.0") +
-           ","
-           "\"message\":" +
-           JsonString(message) + "}";
-  } catch (const std::exception &exc) {
-    return FailureJson("finish_build", exc.what(), "invalid_map_name");
+bool MapPipelineCore::RecoverInterruptedBuild(const std::string &map_id) const {
+  const std::string id = MapStore::NormalizeMapId(map_id);
+  const auto lock_path = LockPath(id);
+  const auto owner_state = MapLock::InspectPersistentOwner(lock_path);
+  if (owner_state == PersistentOwnerState::kMissing) {
+    return true;
   }
-}
+  if (owner_state != PersistentOwnerState::kStale) {
+    return false;
+  }
+  auto recovery_lock = MapLock::TryAcquireForBuildRecovery(
+      store_.RootDir(), id, "map-pipeline-recovery");
+  if (!recovery_lock.has_value()) {
+    return false;
+  }
 
-std::string MapPipelineCore::GetBuildStatusJson(const std::string &map_id) const {
   try {
-    const std::string id = MapStore::NormalizeMapId(map_id);
-    if (!store_.GetMapRecord(id).has_value()) {
-      return FailureJson("get_build_status", "map not found: " + id, "map_not_found");
+    std::istringstream lock_info(ReadLockText(id));
+    std::string build_id;
+    std::getline(lock_info, build_id);
+    if (build_id.empty() ||
+        !std::all_of(build_id.begin(), build_id.end(), [](unsigned char character) {
+          return std::isalnum(character) != 0 || character == '_';
+        })) {
+      return false;
     }
-    const auto lock = LockPath(id);
-    const bool running = std::filesystem::exists(lock);
-    const auto latest = LatestPath(id);
-    if (!std::filesystem::is_regular_file(latest)) {
-      return "{"
-             "\"action\":\"get_build_status\","
-             "\"success\":true,"
-             "\"map_id\":" +
-             JsonString(id) +
-             ","
-             "\"has_build\":false,"
-             "\"running\":" +
-             std::string(running ? "true" : "false") + "}";
+
+    const auto build_root = BuildDir(id);
+    std::vector<std::filesystem::path> candidates;
+    for (const auto &suffix : {"_transaction", "_source_transaction"}) {
+      const auto candidate = build_root / (build_id + suffix);
+      if (std::filesystem::is_directory(candidate)) {
+        candidates.push_back(candidate);
+      }
     }
-    return ReadText(latest);
-  } catch (const std::exception &exc) {
-    return FailureJson("get_build_status", exc.what(), "invalid_map_name");
+    if (candidates.size() > 1U) {
+      return false;
+    }
+    if (candidates.empty()) {
+      std::filesystem::remove_all(lock_path);
+      return true;
+    }
+
+    const auto transaction_dir = candidates.front();
+    const auto manifest_path = transaction_dir / "transaction.state";
+    if (!std::filesystem::is_regular_file(manifest_path)) {
+      const auto backup_dir = transaction_dir / "backup";
+      if (std::filesystem::is_directory(backup_dir) &&
+          std::filesystem::directory_iterator(backup_dir) !=
+              std::filesystem::directory_iterator()) {
+        return false;
+      }
+      std::filesystem::remove_all(transaction_dir);
+      std::filesystem::remove_all(lock_path);
+      return true;
+    }
+
+    PersistentTransaction transaction;
+    std::string manifest_error;
+    if (!ReadTransactionManifest(
+            transaction_dir, store_.MapPath(id), &transaction, &manifest_error)) {
+      return false;
+    }
+    if (transaction.phase == TransactionPhase::kPrepared) {
+      std::filesystem::remove_all(transaction_dir);
+      std::filesystem::remove_all(lock_path);
+      return true;
+    }
+
+    const std::int64_t current_epoch = store_.ContentEpoch(id);
+    if (transaction.phase == TransactionPhase::kCommitted &&
+        current_epoch != transaction.next_epoch) {
+      return false;
+    }
+    if (transaction.phase == TransactionPhase::kPublishing &&
+        current_epoch != transaction.next_epoch) {
+      if (!RollbackTransactionArtifacts(transaction.artifacts) ||
+          store_.ContentEpoch(id) != transaction.base_epoch) {
+        return false;
+      }
+    }
+    std::filesystem::remove_all(transaction_dir);
+    std::filesystem::remove_all(lock_path);
+    return true;
+  } catch (const std::exception &) {
+    return false;
   }
 }
 
@@ -2252,6 +2192,7 @@ std::string MapPipelineCore::ImportPcdJson(const std::string &map_id,
     const auto map_dir = store_.MapPath(id);
     std::filesystem::create_directories(map_dir);
     const auto pcd_path = map_dir / "map.pcd";
+    static_cast<void>(RecoverInterruptedBuild(id));
     if (std::filesystem::exists(LockPath(id))) {
       const std::string running = FirstLine(ReadLockText(id));
       return "{"
@@ -2270,10 +2211,9 @@ std::string MapPipelineCore::ImportPcdJson(const std::string &map_id,
 
     build_id = MakeBuildId("SOURCE_MAP_IMPORT");
     std::filesystem::create_directories(BuildDir(id));
-    if (!std::filesystem::create_directory(LockPath(id))) {
+    if (!TryCreateBuildLock(id, build_id + "\nSOURCE_MAP_IMPORT\n")) {
       return FailureJson("import_pcd", "map build already running", "build_in_progress");
     }
-    WriteText(LockInfoPath(id), build_id + "\nSOURCE_MAP_IMPORT\n");
     WriteStatus(id, build_id, "SOURCE_MAP_IMPORT", "RUNNING", 0.0, "source map import started");
 
     transaction_dir = BuildDir(id) / (build_id + "_source_transaction");
@@ -2289,11 +2229,13 @@ std::string MapPipelineCore::ImportPcdJson(const std::string &map_id,
     }
     const std::filesystem::path backup;
     std::string publish_error;
-    if (!PublishSourceMapTransaction(id, staging_map_dir, map_dir, transaction_dir,
+    if (!PublishSourceMapTransaction(store_, id, staging_map_dir, map_dir, transaction_dir,
                                      &publish_error)) {
       WriteStatus(id, build_id, "SOURCE_MAP_IMPORT", "FAILED", 0.0, publish_error);
-      std::filesystem::remove_all(LockPath(id));
-      std::filesystem::remove_all(transaction_dir);
+      if (!TransactionNeedsRecovery(publish_error)) {
+        std::filesystem::remove_all(LockPath(id));
+        std::filesystem::remove_all(transaction_dir);
+      }
       return "{"
              "\"action\":\"import_pcd\","
              "\"success\":false,"
@@ -2308,7 +2250,7 @@ std::string MapPipelineCore::ImportPcdJson(const std::string &map_id,
              JsonString(build_id) +
              ","
              "\"transactional_visibility\":\"staged_until_commit\","
-             "\"rolled_back\":true"
+             "\"rolled_back\":" + TransactionRolledBackJson(publish_error) +
              "}";
     }
     MarkSourceAuxiliaryArtifactsStale(map_dir);
@@ -2342,8 +2284,8 @@ std::string MapPipelineCore::ImportPcdJson(const std::string &map_id,
            "\"backup\":" +
            (backup.empty() ? "null" : JsonString(backup.string())) +
            ","
-           "\"navigation_ready\":false,"
-           "\"navigation_ready_reason\":\"octomap.ot and metadata.json are required for "
+           "\"activation_ready\":false,"
+           "\"activation_ready_reason\":\"octomap.ot and metadata.json are required for "
            "OctoPlanner3D\""
            "}";
   } catch (const std::exception &exc) {
@@ -2378,18 +2320,10 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
                          "source map.pcd not found: " + source_pcd_path.string(),
                          "source_pcd_not_found");
     }
-    auto initial = LoadPcdXyz(source_pcd_path);
-    if (!initial.ok || initial.points.empty()) {
-      return FailureJson("commit_saved_source",
-                         initial.message.empty() ? "source map.pcd has no readable XYZ points: " +
-                                                       source_pcd_path.string()
-                                                 : initial.message,
-                         "source_pcd_unreadable");
-    }
-
     const auto map_dir = store_.MapPath(id);
     std::filesystem::create_directories(map_dir);
     const auto pcd_path = map_dir / "map.pcd";
+    static_cast<void>(RecoverInterruptedBuild(id));
     if (std::filesystem::exists(LockPath(id))) {
       const std::string running = FirstLine(ReadLockText(id));
       return "{"
@@ -2408,56 +2342,11 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
 
     build_id = MakeBuildId("SOURCE_MAP_SAVE");
     std::filesystem::create_directories(BuildDir(id));
-    if (!std::filesystem::create_directory(LockPath(id))) {
+    if (!TryCreateBuildLock(id, build_id + "\nSOURCE_MAP_SAVE\n")) {
       return FailureJson("commit_saved_source", "map build already running", "build_in_progress");
     }
-    WriteText(LockInfoPath(id), build_id + "\nSOURCE_MAP_SAVE\n");
     WriteStatus(id, build_id, "SOURCE_MAP_SAVE", "RUNNING", 0.0, "saved source commit started");
 
-    bool optimizer_required_failure = false;
-    bool optimizer_performed = false;
-    const auto optimizer =
-        RunSavedSourceOptimizerJson(
-            source_dir, options, &optimizer_required_failure, &optimizer_performed);
-    if (optimizer_required_failure) {
-      WriteStatus(id, build_id, "SOURCE_MAP_SAVE", "FAILED", 0.0, "map optimization failed");
-      std::filesystem::remove_all(LockPath(id));
-      return "{"
-             "\"action\":\"commit_saved_source\","
-             "\"success\":false,"
-             "\"reason_code\":\"map_optimization_failed\","
-             "\"message\":\"required map optimization failed\","
-             "\"map_id\":" +
-             JsonString(id) +
-             ","
-             "\"build_id\":" +
-             JsonString(build_id) +
-             ","
-             "\"map_optimization\":" +
-             optimizer + "}";
-    }
-    auto after_optimization = LoadPcdXyz(source_pcd_path);
-    if (!after_optimization.ok || after_optimization.points.empty()) {
-      WriteStatus(id, build_id, "SOURCE_MAP_SAVE", "FAILED", 0.0, "optimizer removed map.pcd");
-      std::filesystem::remove_all(LockPath(id));
-      return "{"
-             "\"action\":\"commit_saved_source\","
-             "\"success\":false,"
-             "\"reason_code\":\"map_pcd_missing_after_optimization\","
-             "\"message\":\"map optimization removed or emptied map.pcd\","
-             "\"map_id\":" +
-             JsonString(id) +
-             ","
-             "\"build_id\":" +
-             JsonString(build_id) +
-             ","
-             "\"map_optimization\":" +
-             optimizer + "}";
-    }
-
-    // PGO reconstructs map.pcd from the original scan patches.  Dynamic
-    // filtering must therefore run after optimization; otherwise PGO restores
-    // the self-points and transient objects that the cleaner just removed.
     bool dynamic_filter_required_failure = false;
     const auto dynamic_filter =
         RunSavedSourceCleanerJson(source_dir, options, &dynamic_filter_required_failure);
@@ -2476,13 +2365,18 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
              JsonString(build_id) +
              ","
              "\"dynamic_filter\":" +
-             dynamic_filter +
-             ","
-             "\"map_optimization\":" +
-             optimizer + "}";
+             dynamic_filter + "}";
     }
     auto loaded = LoadPcdXyz(source_pcd_path);
-    if (!loaded.ok || loaded.points.empty()) {
+    if (!loaded.ok) {
+      const auto message = loaded.message.empty()
+          ? "source map.pcd has no readable XYZ points: " + source_pcd_path.string()
+          : loaded.message;
+      WriteStatus(id, build_id, "SOURCE_MAP_SAVE", "FAILED", 0.0, message);
+      std::filesystem::remove_all(LockPath(id));
+      return FailureJson("commit_saved_source", message, "source_pcd_unreadable");
+    }
+    if (loaded.points.empty()) {
       WriteStatus(id, build_id, "SOURCE_MAP_SAVE", "FAILED", 0.0, "dynamic filter removed map.pcd");
       std::filesystem::remove_all(LockPath(id));
       return "{"
@@ -2497,10 +2391,7 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
              JsonString(build_id) +
              ","
              "\"dynamic_filter\":" +
-             dynamic_filter +
-             ","
-             "\"map_optimization\":" +
-             optimizer + "}";
+             dynamic_filter + "}";
     }
 
     PcdFilterOptions filter;
@@ -2521,10 +2412,7 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
              JsonString(build_id) +
              ","
              "\"dynamic_filter\":" +
-             dynamic_filter +
-             ","
-             "\"map_optimization\":" +
-             optimizer + "}";
+             dynamic_filter + "}";
     }
 
     transaction_dir = BuildDir(id) / (build_id + "_source_transaction");
@@ -2539,13 +2427,15 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
       return FailureJson("commit_saved_source", error, "pcd_write_failed");
     }
     CopySavedSourceAuxiliaryArtifacts(source_dir, staging_map_dir);
-    backups = BackupNamedArtifacts(map_dir, transaction_dir, SavedSourceArtifactNames());
+    backups =
+        BackupNamedArtifacts(store_, id, map_dir, transaction_dir, SavedSourceArtifactNames());
     std::string publish_error;
-    if (!PublishTransactionArtifacts(staging_map_dir, backups, &publish_error)) {
-      RollbackTransactionArtifacts(backups);
+    if (!PublishTransactionArtifacts(store_, id, staging_map_dir, backups, &publish_error)) {
       WriteStatus(id, build_id, "SOURCE_MAP_SAVE", "FAILED", 0.0, publish_error);
-      std::filesystem::remove_all(LockPath(id));
-      std::filesystem::remove_all(transaction_dir);
+      if (!TransactionNeedsRecovery(publish_error)) {
+        std::filesystem::remove_all(LockPath(id));
+        std::filesystem::remove_all(transaction_dir);
+      }
       return "{"
              "\"action\":\"commit_saved_source\","
              "\"success\":false,"
@@ -2560,14 +2450,12 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
              JsonString(build_id) +
              ","
              "\"transactional_visibility\":\"staged_until_commit\","
-             "\"rolled_back\":true,"
+             "\"rolled_back\":" + TransactionRolledBackJson(publish_error) + ","
              "\"dynamic_filter\":" +
-             dynamic_filter +
-             ","
-             "\"map_optimization\":" +
-             optimizer + "}";
+             dynamic_filter + "}";
     }
 
+    backups.clear();
     WriteStatus(id, build_id, "SOURCE_MAP_SAVE", "SUCCEEDED", 1.0, "saved source committed");
     std::filesystem::remove_all(LockPath(id));
     std::filesystem::remove_all(transaction_dir);
@@ -2597,19 +2485,10 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
            std::to_string(filtered.size()) +
            ","
            "\"source_point_count\":" +
-           std::to_string(after_optimization.points.size()) +
+           std::to_string(loaded.points.size()) +
            ","
            "\"dynamic_filter\":" +
            dynamic_filter +
-           ","
-           "\"map_optimization\":" +
-           optimizer +
-           ","
-           "\"map_optimization_ok\":" +
-           std::string(optimizer_performed ? "true" : "false") +
-           ","
-           "\"map_optimization_performed\":" +
-           std::string(optimizer_performed ? "true" : "false") +
            ","
            "\"published_auxiliary\":{"
            "\"poses\":" +
@@ -2617,14 +2496,9 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
            ","
            "\"patches\":" +
            std::string(std::filesystem::is_directory(map_dir / "patches") ? "true" : "false") +
-           ","
-           "\"map_optimization\":" +
-           std::string(std::filesystem::is_regular_file(map_dir / "map_optimization.json")
-                           ? "true"
-                           : "false") +
            "},"
-           "\"navigation_ready\":false,"
-           "\"navigation_ready_reason\":\"octomap.ot and metadata.json are required for "
+           "\"activation_ready\":false,"
+           "\"activation_ready_reason\":\"octomap.ot and metadata.json are required for "
            "OctoPlanner3D\""
            "}";
   } catch (const std::exception &exc) {
@@ -2676,6 +2550,7 @@ std::string MapPipelineCore::CropPcdJson(const std::string &map_id, const PcdBou
       return FailureJson("crop", "crop would remove all map points", "empty_after_crop");
     }
 
+    static_cast<void>(RecoverInterruptedBuild(id));
     if (std::filesystem::exists(LockPath(id))) {
       const std::string running = FirstLine(ReadLockText(id));
       return "{"
@@ -2694,10 +2569,9 @@ std::string MapPipelineCore::CropPcdJson(const std::string &map_id, const PcdBou
 
     build_id = MakeBuildId("SOURCE_MAP_CROP");
     std::filesystem::create_directories(BuildDir(id));
-    if (!std::filesystem::create_directory(LockPath(id))) {
+    if (!TryCreateBuildLock(id, build_id + "\nSOURCE_MAP_CROP\n")) {
       return FailureJson("crop", "map build already running", "build_in_progress");
     }
-    WriteText(LockInfoPath(id), build_id + "\nSOURCE_MAP_CROP\n");
     WriteStatus(id, build_id, "SOURCE_MAP_CROP", "RUNNING", 0.0, "source map crop started");
 
     transaction_dir = BuildDir(id) / (build_id + "_source_transaction");
@@ -2713,11 +2587,13 @@ std::string MapPipelineCore::CropPcdJson(const std::string &map_id, const PcdBou
     }
     const std::filesystem::path backup;
     std::string publish_error;
-    if (!PublishSourceMapTransaction(id, staging_map_dir, map_dir, transaction_dir,
+    if (!PublishSourceMapTransaction(store_, id, staging_map_dir, map_dir, transaction_dir,
                                      &publish_error)) {
       WriteStatus(id, build_id, "SOURCE_MAP_CROP", "FAILED", 0.0, publish_error);
-      std::filesystem::remove_all(LockPath(id));
-      std::filesystem::remove_all(transaction_dir);
+      if (!TransactionNeedsRecovery(publish_error)) {
+        std::filesystem::remove_all(LockPath(id));
+        std::filesystem::remove_all(transaction_dir);
+      }
       return "{"
              "\"action\":\"crop\","
              "\"success\":false,"
@@ -2732,7 +2608,7 @@ std::string MapPipelineCore::CropPcdJson(const std::string &map_id, const PcdBou
              JsonString(build_id) +
              ","
              "\"transactional_visibility\":\"staged_until_commit\","
-             "\"rolled_back\":true"
+             "\"rolled_back\":" + TransactionRolledBackJson(publish_error) +
              "}";
     }
     MarkSourceAuxiliaryArtifactsStale(map_dir);
@@ -2768,8 +2644,8 @@ std::string MapPipelineCore::CropPcdJson(const std::string &map_id, const PcdBou
            "\"backup\":" +
            (backup.empty() ? "null" : JsonString(backup.string())) +
            ","
-           "\"navigation_ready\":false,"
-           "\"navigation_ready_reason\":\"octomap.ot and metadata.json must be rebuilt after crop\""
+           "\"activation_ready\":false,"
+           "\"activation_ready_reason\":\"octomap.ot and metadata.json must be rebuilt after crop\""
            "}";
   } catch (const std::exception &exc) {
     if (!id.empty() && !build_id.empty()) {
@@ -2780,114 +2656,6 @@ std::string MapPipelineCore::CropPcdJson(const std::string &map_id, const PcdBou
       std::filesystem::remove_all(transaction_dir);
     }
     return FailureJson("crop", exc.what(), "invalid_map_name");
-  }
-}
-
-std::string MapPipelineCore::RestoreSourceBackupJson(const std::string &map_id) {
-  std::string id;
-  std::string build_id;
-  std::filesystem::path transaction_dir;
-  bool active_cleared = false;
-  try {
-    id = MapStore::NormalizeMapId(map_id);
-    const auto map_dir = store_.MapPath(id);
-    if (!std::filesystem::is_directory(map_dir)) {
-      return FailureJson("restore_source", "map not found: " + id, "map_not_found");
-    }
-    std::filesystem::path source_backup;
-    for (const auto &filename : {"map.pcd.preclean", "map.pcd.predufo"}) {
-      const auto candidate = map_dir / filename;
-      if (std::filesystem::is_regular_file(candidate)) {
-        source_backup = candidate;
-        break;
-      }
-    }
-    if (source_backup.empty()) {
-      return FailureJson("restore_source", "no pre-clean source backup for map: " + id,
-                         "source_backup_missing");
-    }
-    auto loaded = LoadPcdXyz(source_backup);
-    if (!loaded.ok || loaded.points.empty()) {
-      return FailureJson(
-          "restore_source",
-          loaded.message.empty() ? "source backup has no readable XYZ points" : loaded.message,
-          "source_backup_unreadable");
-    }
-    if (std::filesystem::exists(LockPath(id))) {
-      return FailureJson("restore_source",
-                         "map build already running: " + FirstLine(ReadLockText(id)),
-                         "build_in_progress");
-    }
-
-    build_id = MakeBuildId("SOURCE_MAP_RESTORE");
-    std::filesystem::create_directories(BuildDir(id));
-    if (!std::filesystem::create_directory(LockPath(id))) {
-      return FailureJson("restore_source", "map build already running", "build_in_progress");
-    }
-    WriteText(LockInfoPath(id), build_id + "\nSOURCE_MAP_RESTORE\n");
-    WriteStatus(id, build_id, "SOURCE_MAP_RESTORE", "RUNNING", 0.0,
-                "source backup restore started");
-
-    transaction_dir = BuildDir(id) / (build_id + "_source_transaction");
-    const auto staging_map_dir = transaction_dir / "staging_map";
-    std::filesystem::create_directories(staging_map_dir);
-    std::string stage_error;
-    if (!CopyPathRecursive(source_backup, staging_map_dir / "map.pcd", &stage_error)) {
-      WriteStatus(id, build_id, "SOURCE_MAP_RESTORE", "FAILED", 0.0, stage_error);
-      std::filesystem::remove_all(LockPath(id));
-      std::filesystem::remove_all(transaction_dir);
-      return FailureJson("restore_source", stage_error, "staging_failed");
-    }
-
-    const bool was_active = store_.ActiveMapId() == id;
-    if (was_active) {
-      store_.ClearActiveMap();
-      active_cleared = true;
-    }
-    std::string publish_error;
-    if (!PublishSourceMapTransaction(id, staging_map_dir, map_dir, transaction_dir,
-                                     &publish_error)) {
-      if (active_cleared) {
-        (void)store_.SetActiveMap(id, false);
-        active_cleared = false;
-      }
-      WriteStatus(id, build_id, "SOURCE_MAP_RESTORE", "FAILED", 0.0, publish_error);
-      std::filesystem::remove_all(LockPath(id));
-      std::filesystem::remove_all(transaction_dir);
-      return "{\"action\":\"restore_source\",\"success\":false,"
-             "\"reason_code\":\"source_map_commit_failed\",\"message\":" +
-          JsonString(publish_error) +
-          ",\"map_id\":" + JsonString(id) +
-          ",\"transactional_visibility\":\"staged_until_commit\","
-          "\"rolled_back\":true}";
-    }
-    MarkSourceAuxiliaryArtifactsStale(map_dir);
-    WriteStatus(id, build_id, "SOURCE_MAP_RESTORE", "SUCCEEDED", 1.0,
-                "source backup restored transactionally");
-    std::filesystem::remove_all(LockPath(id));
-    std::filesystem::remove_all(transaction_dir);
-    return "{\"action\":\"restore_source\",\"success\":true,"
-           "\"map_id\":" +
-        JsonString(id) +
-        ",\"build_id\":" + JsonString(build_id) +
-        ",\"state\":\"STALE\","
-        "\"source_backup\":" + JsonString(source_backup.string()) +
-        ",\"deactivated\":" + std::string(was_active ? "true" : "false") +
-        ",\"transactional_visibility\":\"staged_until_commit\","
-        "\"rolled_back\":false,\"navigation_ready\":false,"
-        "\"message\":\"source backup restored; rebuild planning artifacts before activation\"}";
-  } catch (const std::exception &exc) {
-    if (active_cleared && !id.empty()) {
-      (void)store_.SetActiveMap(id, false);
-    }
-    if (!id.empty() && !build_id.empty()) {
-      WriteStatus(id, build_id, "SOURCE_MAP_RESTORE", "FAILED", 0.0, exc.what());
-      std::filesystem::remove_all(LockPath(id));
-    }
-    if (!transaction_dir.empty()) {
-      std::filesystem::remove_all(transaction_dir);
-    }
-    return FailureJson("restore_source", exc.what(), "restore_failed");
   }
 }
 
@@ -2908,6 +2676,7 @@ std::string MapPipelineCore::BuildOccupancySnapshotJson(const std::string &map_i
                          "missing required source map.pcd at " + pcd_path.string(),
                          "missing_map_pcd");
     }
+    static_cast<void>(RecoverInterruptedBuild(id));
     if (std::filesystem::exists(LockPath(id))) {
       const std::string running = FirstLine(ReadLockText(id));
       return "{"
@@ -2926,11 +2695,10 @@ std::string MapPipelineCore::BuildOccupancySnapshotJson(const std::string &map_i
 
     build_id = MakeBuildId("OCCUPANCY_SNAPSHOT");
     std::filesystem::create_directories(BuildDir(id));
-    if (!std::filesystem::create_directory(LockPath(id))) {
+    if (!TryCreateBuildLock(id, build_id + "\nOCCUPANCY_SNAPSHOT\n")) {
       return FailureJson("build_occupancy_snapshot", "map build already running",
                          "build_in_progress");
     }
-    WriteText(LockInfoPath(id), build_id + "\nOCCUPANCY_SNAPSHOT\n");
     WriteStatus(id, build_id, "OCCUPANCY_SNAPSHOT", "RUNNING", 0.0,
                 "occupancy snapshot build started");
 
@@ -2960,7 +2728,8 @@ std::string MapPipelineCore::BuildOccupancySnapshotJson(const std::string &map_i
              "\"rolled_back\":true"
              "}";
     }
-    backups = BackupNamedArtifacts(map_dir, transaction_dir, OccupancySnapshotArtifactNames());
+    backups = BackupNamedArtifacts(
+        store_, id, map_dir, transaction_dir, OccupancySnapshotArtifactNames());
 
     const auto result = BuildOccupancyProjectionSnapshot(staging_map_dir, true);
     if (!result.ok) {
@@ -2986,11 +2755,12 @@ std::string MapPipelineCore::BuildOccupancySnapshotJson(const std::string &map_i
              "}";
     }
     std::string publish_error;
-    if (!PublishTransactionArtifacts(staging_map_dir, backups, &publish_error)) {
-      RollbackTransactionArtifacts(backups);
+    if (!PublishTransactionArtifacts(store_, id, staging_map_dir, backups, &publish_error)) {
       WriteStatus(id, build_id, "OCCUPANCY_SNAPSHOT", "FAILED", 0.0, publish_error);
-      std::filesystem::remove_all(LockPath(id));
-      std::filesystem::remove_all(transaction_dir);
+      if (!TransactionNeedsRecovery(publish_error)) {
+        std::filesystem::remove_all(LockPath(id));
+        std::filesystem::remove_all(transaction_dir);
+      }
       return "{"
              "\"action\":\"build_occupancy_snapshot\","
              "\"success\":false,"
@@ -3005,9 +2775,10 @@ std::string MapPipelineCore::BuildOccupancySnapshotJson(const std::string &map_i
              JsonString(build_id) +
              ","
              "\"transactional_visibility\":\"staged_until_commit\","
-             "\"rolled_back\":true"
+             "\"rolled_back\":" + TransactionRolledBackJson(publish_error) +
              "}";
     }
+    backups.clear();
     WriteStatus(id, build_id, "OCCUPANCY_SNAPSHOT", "SUCCEEDED", 1.0,
                 "occupancy snapshot built");
     std::filesystem::remove_all(LockPath(id));
@@ -3086,6 +2857,7 @@ std::string MapPipelineCore::BuildOctomapArtifactJson(const std::string &map_id,
                          "missing required source map.pcd at " + pcd_path.string(),
                          "missing_map_pcd");
     }
+    static_cast<void>(RecoverInterruptedBuild(id));
     if (std::filesystem::exists(LockPath(id))) {
       const std::string running = FirstLine(ReadLockText(id));
       return "{"
@@ -3104,10 +2876,9 @@ std::string MapPipelineCore::BuildOctomapArtifactJson(const std::string &map_id,
 
     build_id = MakeBuildId("OCTOMAP_ARTIFACT");
     std::filesystem::create_directories(BuildDir(id));
-    if (!std::filesystem::create_directory(LockPath(id))) {
+    if (!TryCreateBuildLock(id, build_id + "\nOCTOMAP_ARTIFACT\n")) {
       return FailureJson("build_octomap", "map build already running", "build_in_progress");
     }
-    WriteText(LockInfoPath(id), build_id + "\nOCTOMAP_ARTIFACT\n");
     WriteStatus(id, build_id, "OCTOMAP_ARTIFACT", "RUNNING", 0.0,
                 "octomap artifact build started");
 
@@ -3138,7 +2909,8 @@ std::string MapPipelineCore::BuildOctomapArtifactJson(const std::string &map_id,
              "\"rolled_back\":true"
              "}";
     }
-    backups = BackupNamedArtifacts(map_dir, transaction_dir, OctomapArtifactNames());
+    backups =
+        BackupNamedArtifacts(store_, id, map_dir, transaction_dir, OctomapArtifactNames());
 
     const auto octomap = BuildOctomapArtifactInDirectory(id, staging_map_dir, options, true);
     if (!JsonSucceeded(octomap)) {
@@ -3163,11 +2935,12 @@ std::string MapPipelineCore::BuildOctomapArtifactJson(const std::string &map_id,
              octomap + "}";
     }
     std::string publish_error;
-    if (!PublishTransactionArtifacts(staging_map_dir, backups, &publish_error)) {
-      RollbackTransactionArtifacts(backups);
+    if (!PublishTransactionArtifacts(store_, id, staging_map_dir, backups, &publish_error)) {
       WriteStatus(id, build_id, "OCTOMAP_ARTIFACT", "FAILED", 0.0, publish_error);
-      std::filesystem::remove_all(LockPath(id));
-      std::filesystem::remove_all(transaction_dir);
+      if (!TransactionNeedsRecovery(publish_error)) {
+        std::filesystem::remove_all(LockPath(id));
+        std::filesystem::remove_all(transaction_dir);
+      }
       return "{"
              "\"action\":\"build_octomap\","
              "\"success\":false,"
@@ -3182,9 +2955,10 @@ std::string MapPipelineCore::BuildOctomapArtifactJson(const std::string &map_id,
              JsonString(build_id) +
              ","
              "\"transactional_visibility\":\"staged_until_commit\","
-             "\"rolled_back\":true"
+             "\"rolled_back\":" + TransactionRolledBackJson(publish_error) +
              "}";
     }
+    backups.clear();
     WriteStatus(id, build_id, "OCTOMAP_ARTIFACT", "SUCCEEDED", 1.0, "octomap artifact built");
     std::filesystem::remove_all(LockPath(id));
     std::filesystem::remove_all(transaction_dir);
@@ -3290,7 +3064,7 @@ std::string MapPipelineCore::EditOctomapVoxelsJson(
       return FailureJson(
           "edit_voxels",
           "manual OctoMap edits require map.pcd and validated metadata.json",
-          "map_not_navigation_ready");
+          "map_not_activation_ready");
     }
     std::filesystem::path octomap_path;
     for (const auto &filename : {"octomap.ot", "octomap.bt"}) {
@@ -3304,6 +3078,7 @@ std::string MapPipelineCore::EditOctomapVoxelsJson(
       return FailureJson("edit_voxels", "map has no octomap.ot or octomap.bt artifact",
                          "octomap_missing");
     }
+    static_cast<void>(RecoverInterruptedBuild(id));
     if (std::filesystem::exists(LockPath(id))) {
       return FailureJson("edit_voxels", "map build already running: " + FirstLine(ReadLockText(id)),
                          "build_in_progress");
@@ -3311,10 +3086,9 @@ std::string MapPipelineCore::EditOctomapVoxelsJson(
 
     build_id = MakeBuildId("OCTOMAP_EDIT");
     std::filesystem::create_directories(BuildDir(id));
-    if (!std::filesystem::create_directory(LockPath(id))) {
+    if (!TryCreateBuildLock(id, build_id + "\nOCTOMAP_EDIT\n")) {
       return FailureJson("edit_voxels", "map build already running", "build_in_progress");
     }
-    WriteText(LockInfoPath(id), build_id + "\nOCTOMAP_EDIT\n");
     WriteStatus(id, build_id, "OCTOMAP_EDIT", "RUNNING", 0.0,
                 "transactional OctoMap edit started");
 
@@ -3362,7 +3136,6 @@ std::string MapPipelineCore::EditOctomapVoxelsJson(
           ",\"stderr\":" + JsonString(edit_run.process.stderr_text) + "}";
     }
 
-    const std::string before_sha = Sha256File(staged_octomap);
     std::error_code ec;
     std::filesystem::remove(staged_octomap, ec);
     if (ec) {
@@ -3373,7 +3146,6 @@ std::string MapPipelineCore::EditOctomapVoxelsJson(
     if (ec) {
       throw std::runtime_error("failed to publish edited staged OctoMap: " + ec.message());
     }
-    const std::string after_sha = Sha256File(staged_octomap);
     std::ostringstream edit_json;
     edit_json << "{"
               << "\"ts\":" << std::setprecision(17) << UnixSecondsNow() << ","
@@ -3384,9 +3156,7 @@ std::string MapPipelineCore::EditOctomapVoxelsJson(
               << ",\"z\":" << options.z_m << "},"
               << "\"radius\":" << options.radius_m << ","
               << "\"edited_voxels\":" << edit_run.edited_voxels << ","
-              << "\"mode\":" << JsonString(edit_run.mode) << ","
-              << "\"octomap_before_sha256\":" << JsonString(before_sha) << ","
-              << "\"octomap_after_sha256\":" << JsonString(after_sha)
+              << "\"mode\":" << JsonString(edit_run.mode)
               << "}";
 
     std::vector<std::string> edits;
@@ -3408,26 +3178,28 @@ std::string MapPipelineCore::EditOctomapVoxelsJson(
     if (!WriteTextFile(
             staging_map_dir / "metadata.json",
             MetadataJson(id, staging_map_dir, staging_map_dir / "map.pcd", staged_octomap,
-                         Sha256File(staging_map_dir / "map.pcd"), after_sha, metadata_options,
-                         true, edits.size(), edit_json.str()))) {
+                         metadata_options, true, edits.size(), edit_json.str()))) {
       throw std::runtime_error("failed to stage edited metadata.json");
     }
 
-    backups = BackupNamedArtifacts(map_dir, transaction_dir, OctomapEditArtifactNames());
+    backups =
+        BackupNamedArtifacts(store_, id, map_dir, transaction_dir, OctomapEditArtifactNames());
     std::string publish_error;
-    if (!PublishTransactionArtifacts(staging_map_dir, backups, &publish_error)) {
-      RollbackTransactionArtifacts(backups);
+    if (!PublishTransactionArtifacts(store_, id, staging_map_dir, backups, &publish_error)) {
       WriteStatus(id, build_id, "OCTOMAP_EDIT", "FAILED", 0.0, publish_error);
-      std::filesystem::remove_all(LockPath(id));
-      std::filesystem::remove_all(transaction_dir);
+      if (!TransactionNeedsRecovery(publish_error)) {
+        std::filesystem::remove_all(LockPath(id));
+        std::filesystem::remove_all(transaction_dir);
+      }
       return "{\"action\":\"edit_voxels\",\"success\":false,"
              "\"reason_code\":\"transaction_commit_failed\",\"message\":" +
           JsonString(publish_error) +
           ",\"map_id\":" + JsonString(id) +
           ",\"transactional_visibility\":\"staged_until_commit\","
-          "\"rolled_back\":true}";
+          "\"rolled_back\":" + TransactionRolledBackJson(publish_error) + "}";
     }
 
+    backups.clear();
     WriteStatus(id, build_id, "OCTOMAP_EDIT", "SUCCEEDED", 1.0,
                 "transactional OctoMap edit committed");
     std::filesystem::remove_all(LockPath(id));
@@ -3477,6 +3249,7 @@ std::string MapPipelineCore::BuildNavigationPackageJson(const std::string &map_i
                          "missing required source map.pcd at " + pcd_path.string(),
                          "missing_map_pcd");
     }
+    static_cast<void>(RecoverInterruptedBuild(id));
     if (std::filesystem::exists(LockPath(id))) {
       const std::string running = FirstLine(ReadLockText(id));
       return "{"
@@ -3495,11 +3268,10 @@ std::string MapPipelineCore::BuildNavigationPackageJson(const std::string &map_i
 
     build_id = MakeBuildId("NAVIGATION_PACKAGE");
     std::filesystem::create_directories(BuildDir(id));
-    if (!std::filesystem::create_directory(LockPath(id))) {
+    if (!TryCreateBuildLock(id, build_id + "\nNAVIGATION_PACKAGE\n")) {
       return FailureJson("build_navigation_package", "map build already running",
                          "build_in_progress");
     }
-    WriteText(LockInfoPath(id), build_id + "\nNAVIGATION_PACKAGE\n");
     WriteStatus(id, build_id, "NAVIGATION_PACKAGE", "RUNNING", 0.0,
                 "navigation package build started");
 
@@ -3531,8 +3303,8 @@ std::string MapPipelineCore::BuildNavigationPackageJson(const std::string &map_i
              "\"rolled_back\":true"
              "}";
     }
-    backups =
-        BackupTransactionArtifacts(map_dir, transaction_dir, include_esdf, include_traversability);
+    backups = BackupTransactionArtifacts(
+        store_, id, map_dir, transaction_dir, include_esdf, include_traversability);
 
     const auto occupancy = BuildOccupancyProjectionSnapshot(staging_map_dir, true);
     if (!occupancy.ok) {
@@ -3636,11 +3408,12 @@ std::string MapPipelineCore::BuildNavigationPackageJson(const std::string &map_i
     }
 
     std::string publish_error;
-    if (!PublishTransactionArtifacts(staging_map_dir, backups, &publish_error)) {
-      RollbackTransactionArtifacts(backups);
+    if (!PublishTransactionArtifacts(store_, id, staging_map_dir, backups, &publish_error)) {
       WriteStatus(id, build_id, "NAVIGATION_PACKAGE", "FAILED", 0.0, publish_error);
-      std::filesystem::remove_all(LockPath(id));
-      std::filesystem::remove_all(transaction_dir);
+      if (!TransactionNeedsRecovery(publish_error)) {
+        std::filesystem::remove_all(LockPath(id));
+        std::filesystem::remove_all(transaction_dir);
+      }
       return "{"
              "\"action\":\"build_navigation_package\","
              "\"success\":false,"
@@ -3655,10 +3428,11 @@ std::string MapPipelineCore::BuildNavigationPackageJson(const std::string &map_i
              JsonString(build_id) +
              ","
              "\"transactional_visibility\":\"staged_until_commit\","
-             "\"rolled_back\":true"
+             "\"rolled_back\":" + TransactionRolledBackJson(publish_error) +
              "}";
     }
 
+    backups.clear();
     WriteStatus(id, build_id, "NAVIGATION_PACKAGE", "SUCCEEDED", 1.0, "navigation package built");
     std::filesystem::remove_all(LockPath(id));
     std::filesystem::remove_all(transaction_dir);
@@ -3746,6 +3520,7 @@ std::string MapPipelineCore::BuildEsdfArtifactJson(const std::string &map_id) {
                          "occupancy.npz is required before building esdf.npz",
                          "missing_occupancy");
     }
+    static_cast<void>(RecoverInterruptedBuild(id));
     if (std::filesystem::exists(LockPath(id))) {
       const std::string running = FirstLine(ReadLockText(id));
       return "{"
@@ -3764,10 +3539,9 @@ std::string MapPipelineCore::BuildEsdfArtifactJson(const std::string &map_id) {
 
     build_id = MakeBuildId("ESDF_ARTIFACT");
     std::filesystem::create_directories(BuildDir(id));
-    if (!std::filesystem::create_directory(LockPath(id))) {
+    if (!TryCreateBuildLock(id, build_id + "\nESDF_ARTIFACT\n")) {
       return FailureJson("build_esdf_artifact", "map build already running", "build_in_progress");
     }
-    WriteText(LockInfoPath(id), build_id + "\nESDF_ARTIFACT\n");
     WriteStatus(id, build_id, "ESDF_ARTIFACT", "RUNNING", 0.0, "esdf artifact build started");
 
     transaction_dir = BuildDir(id) / (build_id + "_transaction");
@@ -3796,7 +3570,8 @@ std::string MapPipelineCore::BuildEsdfArtifactJson(const std::string &map_id) {
              "\"rolled_back\":true"
              "}";
     }
-    backups = BackupNamedArtifacts(map_dir, transaction_dir, EsdfArtifactNames());
+    backups =
+        BackupNamedArtifacts(store_, id, map_dir, transaction_dir, EsdfArtifactNames());
 
     const auto result = BuildEsdfArtifact(staging_map_dir, true);
     if (!result.ok) {
@@ -3822,11 +3597,12 @@ std::string MapPipelineCore::BuildEsdfArtifactJson(const std::string &map_id) {
              "}";
     }
     std::string publish_error;
-    if (!PublishTransactionArtifacts(staging_map_dir, backups, &publish_error)) {
-      RollbackTransactionArtifacts(backups);
+    if (!PublishTransactionArtifacts(store_, id, staging_map_dir, backups, &publish_error)) {
       WriteStatus(id, build_id, "ESDF_ARTIFACT", "FAILED", 0.0, publish_error);
-      std::filesystem::remove_all(LockPath(id));
-      std::filesystem::remove_all(transaction_dir);
+      if (!TransactionNeedsRecovery(publish_error)) {
+        std::filesystem::remove_all(LockPath(id));
+        std::filesystem::remove_all(transaction_dir);
+      }
       return "{"
              "\"action\":\"build_esdf_artifact\","
              "\"success\":false,"
@@ -3841,9 +3617,10 @@ std::string MapPipelineCore::BuildEsdfArtifactJson(const std::string &map_id) {
              JsonString(build_id) +
              ","
              "\"transactional_visibility\":\"staged_until_commit\","
-             "\"rolled_back\":true"
+             "\"rolled_back\":" + TransactionRolledBackJson(publish_error) +
              "}";
     }
+    backups.clear();
     WriteStatus(id, build_id, "ESDF_ARTIFACT", "SUCCEEDED", 1.0, "esdf artifact built");
     std::filesystem::remove_all(LockPath(id));
     std::filesystem::remove_all(transaction_dir);
@@ -3903,6 +3680,7 @@ std::string MapPipelineCore::BuildTraversabilityArtifactJson(const std::string &
                          "occupancy.npz is required before building traversability.npz",
                          "missing_occupancy");
     }
+    static_cast<void>(RecoverInterruptedBuild(id));
     if (std::filesystem::exists(LockPath(id))) {
       const std::string running = FirstLine(ReadLockText(id));
       return "{"
@@ -3921,11 +3699,10 @@ std::string MapPipelineCore::BuildTraversabilityArtifactJson(const std::string &
 
     build_id = MakeBuildId("TRAVERSABILITY_ARTIFACT");
     std::filesystem::create_directories(BuildDir(id));
-    if (!std::filesystem::create_directory(LockPath(id))) {
+    if (!TryCreateBuildLock(id, build_id + "\nTRAVERSABILITY_ARTIFACT\n")) {
       return FailureJson("build_traversability_artifact", "map build already running",
                          "build_in_progress");
     }
-    WriteText(LockInfoPath(id), build_id + "\nTRAVERSABILITY_ARTIFACT\n");
     WriteStatus(id, build_id, "TRAVERSABILITY_ARTIFACT", "RUNNING", 0.0,
                 "traversability artifact build started");
 
@@ -3956,7 +3733,8 @@ std::string MapPipelineCore::BuildTraversabilityArtifactJson(const std::string &
              "\"rolled_back\":true"
              "}";
     }
-    backups = BackupNamedArtifacts(map_dir, transaction_dir, TraversabilityArtifactNames());
+    backups =
+        BackupNamedArtifacts(store_, id, map_dir, transaction_dir, TraversabilityArtifactNames());
 
     const auto result = BuildTraversabilityArtifact(staging_map_dir, true);
     if (!result.ok) {
@@ -3982,11 +3760,12 @@ std::string MapPipelineCore::BuildTraversabilityArtifactJson(const std::string &
              "}";
     }
     std::string publish_error;
-    if (!PublishTransactionArtifacts(staging_map_dir, backups, &publish_error)) {
-      RollbackTransactionArtifacts(backups);
+    if (!PublishTransactionArtifacts(store_, id, staging_map_dir, backups, &publish_error)) {
       WriteStatus(id, build_id, "TRAVERSABILITY_ARTIFACT", "FAILED", 0.0, publish_error);
-      std::filesystem::remove_all(LockPath(id));
-      std::filesystem::remove_all(transaction_dir);
+      if (!TransactionNeedsRecovery(publish_error)) {
+        std::filesystem::remove_all(LockPath(id));
+        std::filesystem::remove_all(transaction_dir);
+      }
       return "{"
              "\"action\":\"build_traversability_artifact\","
              "\"success\":false,"
@@ -4001,9 +3780,10 @@ std::string MapPipelineCore::BuildTraversabilityArtifactJson(const std::string &
              JsonString(build_id) +
              ","
              "\"transactional_visibility\":\"staged_until_commit\","
-             "\"rolled_back\":true"
+             "\"rolled_back\":" + TransactionRolledBackJson(publish_error) +
              "}";
     }
+    backups.clear();
     WriteStatus(id, build_id, "TRAVERSABILITY_ARTIFACT", "SUCCEEDED", 1.0,
                 "traversability artifact built");
     std::filesystem::remove_all(LockPath(id));
@@ -4048,139 +3828,6 @@ std::string MapPipelineCore::BuildTraversabilityArtifactJson(const std::string &
   }
 }
 
-std::string MapPipelineCore::ImportUnitySemanticArtifactJson(
-    const std::string &map_id,
-    const std::filesystem::path &scene_dir,
-    const sources::UnitySemanticImportConfig &options) {
-  std::filesystem::path transaction_dir;
-  std::vector<TransactionArtifactBackup> backups;
-  std::string id;
-  std::string build_id;
-  try {
-    id = MapStore::NormalizeMapId(map_id);
-    const auto map_dir = store_.MapPath(id);
-    if (!std::filesystem::is_directory(map_dir)) {
-      return FailureJson(
-          "import_unity_semantic_artifact", "map not found: " + id, "map_not_found");
-    }
-    if (!std::filesystem::is_directory(scene_dir)) {
-      return FailureJson(
-          "import_unity_semantic_artifact",
-          "Unity scene directory not found: " + scene_dir.string(),
-          "unity_scene_not_found");
-    }
-    if (std::filesystem::exists(LockPath(id))) {
-      const std::string running = FirstLine(ReadLockText(id));
-      return "{"
-             "\"action\":\"import_unity_semantic_artifact\","
-             "\"success\":false,"
-             "\"reason_code\":\"build_in_progress\","
-             "\"message\":" +
-             JsonString("map build already running: " + running) +
-             ",\"map_id\":" + JsonString(id) +
-             ",\"build_id\":" + JsonString(running) + "}";
-    }
-
-    build_id = MakeBuildId("SEMANTIC_UNITY_IMPORT");
-    std::filesystem::create_directories(BuildDir(id));
-    if (!std::filesystem::create_directory(LockPath(id))) {
-      return FailureJson(
-          "import_unity_semantic_artifact", "map build already running",
-          "build_in_progress");
-    }
-    WriteText(LockInfoPath(id), build_id + "\nSEMANTIC_UNITY_IMPORT\n");
-    WriteStatus(
-        id, build_id, "SEMANTIC_UNITY_IMPORT", "RUNNING", 0.0,
-        "Unity semantic import started");
-
-    transaction_dir = BuildDir(id) / (build_id + "_transaction");
-    const auto staging_map_dir = transaction_dir / "staging_map";
-    std::filesystem::create_directories(staging_map_dir);
-    const auto staged_artifact = staging_map_dir / kSemanticMapArtifactFilename;
-    const auto stats = sources::ImportUnitySemanticMap(scene_dir, staged_artifact, options);
-    const auto semantic_map = ReadSemanticMapBinary(staged_artifact);
-
-    backups = BackupNamedArtifacts(map_dir, transaction_dir, SemanticArtifactNames());
-    std::string publish_error;
-    if (!PublishTransactionArtifacts(staging_map_dir, backups, &publish_error)) {
-      RollbackTransactionArtifacts(backups);
-      WriteStatus(
-          id, build_id, "SEMANTIC_UNITY_IMPORT", "FAILED", 0.0, publish_error);
-      std::filesystem::remove_all(LockPath(id));
-      std::filesystem::remove_all(transaction_dir);
-      return "{"
-             "\"action\":\"import_unity_semantic_artifact\","
-             "\"success\":false,"
-             "\"reason_code\":\"transaction_commit_failed\","
-             "\"message\":" +
-             JsonString(publish_error) +
-             ",\"map_id\":" + JsonString(id) +
-             ",\"build_id\":" + JsonString(build_id) +
-             ",\"transactional_visibility\":\"staged_until_commit\","
-             "\"rolled_back\":true}";
-    }
-    WriteStatus(
-        id, build_id, "SEMANTIC_UNITY_IMPORT", "SUCCEEDED", 1.0,
-        "Unity semantic artifact committed");
-    std::filesystem::remove_all(LockPath(id));
-    std::filesystem::remove_all(transaction_dir);
-
-    std::ostringstream unmapped;
-    unmapped << '[';
-    for (std::size_t index = 0U; index < stats.unmapped_labels.size(); ++index) {
-      if (index != 0U) unmapped << ',';
-      unmapped << JsonString(stats.unmapped_labels[index]);
-    }
-    unmapped << ']';
-    return "{"
-           "\"action\":\"import_unity_semantic_artifact\","
-           "\"success\":true,"
-           "\"mode\":\"native_transaction\","
-           "\"map_id\":" +
-           JsonString(id) +
-           ",\"build_id\":" + JsonString(build_id) +
-           ",\"artifact_type\":\"SEMANTIC\","
-           "\"semantic\":" + ArtifactPathJson(map_dir, kSemanticMapArtifactFilename) +
-           ",\"sha256\":" +
-           JsonString(Sha256File(map_dir / kSemanticMapArtifactFilename)) +
-           ",\"generation\":" + std::to_string(semantic_map.generation) +
-           ",\"voxel_count\":" + std::to_string(semantic_map.Size()) +
-           ",\"frame_id\":" + JsonString(semantic_map.frame_id) +
-           ",\"taxonomy\":" + JsonString(semantic_map.taxonomy) +
-           ",\"taxonomy_version\":" + std::to_string(semantic_map.taxonomy_version) +
-           ",\"source\":{\"scene_dir\":" + JsonString(scene_dir.string()) +
-           ",\"category_rows\":" + std::to_string(stats.category_rows) +
-           ",\"object_rows\":" + std::to_string(stats.object_rows) +
-           ",\"accepted_objects\":" + std::to_string(stats.accepted_objects) +
-           ",\"skipped_unmapped_objects\":" +
-           std::to_string(stats.skipped_unmapped_objects) +
-           ",\"skipped_dynamic_objects\":" +
-           std::to_string(stats.skipped_dynamic_objects) +
-           ",\"candidate_voxel_checks\":" +
-           std::to_string(stats.candidate_voxel_checks) +
-           ",\"semantic_conflicts\":" + std::to_string(stats.semantic_conflicts) +
-           ",\"unmapped_labels\":" + unmapped.str() + "},"
-           "\"transactional_visibility\":\"staged_until_commit\","
-           "\"rolled_back\":false,"
-           "\"navigation_ready\":false,"
-           "\"navigation_ready_reason\":\"semantic_map.bin is query-only and is not a "
-           "planning artifact\"}";
-  } catch (const std::exception &exc) {
-    if (!backups.empty()) {
-      RollbackTransactionArtifacts(backups);
-    }
-    if (!id.empty() && !build_id.empty()) {
-      WriteStatus(id, build_id, "SEMANTIC_UNITY_IMPORT", "FAILED", 0.0, exc.what());
-      std::filesystem::remove_all(LockPath(id));
-    }
-    if (!transaction_dir.empty()) {
-      std::filesystem::remove_all(transaction_dir);
-    }
-    return FailureJson(
-        "import_unity_semantic_artifact", exc.what(), "invalid_unity_semantic_source");
-  }
-}
-
 std::string MapPipelineCore::BuildSemanticArtifactJson(const std::string &map_id) {
   std::filesystem::path transaction_dir;
   std::vector<TransactionArtifactBackup> backups;
@@ -4199,6 +3846,7 @@ std::string MapPipelineCore::BuildSemanticArtifactJson(const std::string &map_id
                          validation_error.empty() ? "invalid semantic_map.bin" : validation_error,
                          "invalid_semantic_source");
     }
+    static_cast<void>(RecoverInterruptedBuild(id));
     if (std::filesystem::exists(LockPath(id))) {
       const std::string running = FirstLine(ReadLockText(id));
       return "{"
@@ -4217,11 +3865,10 @@ std::string MapPipelineCore::BuildSemanticArtifactJson(const std::string &map_id
 
     build_id = MakeBuildId("SEMANTIC_ARTIFACT");
     std::filesystem::create_directories(BuildDir(id));
-    if (!std::filesystem::create_directory(LockPath(id))) {
+    if (!TryCreateBuildLock(id, build_id + "\nSEMANTIC_ARTIFACT\n")) {
       return FailureJson("build_semantic_artifact", "map build already running",
                          "build_in_progress");
     }
-    WriteText(LockInfoPath(id), build_id + "\nSEMANTIC_ARTIFACT\n");
     WriteStatus(id, build_id, "SEMANTIC_ARTIFACT", "RUNNING", 0.0,
                 "semantic artifact build started");
 
@@ -4252,7 +3899,8 @@ std::string MapPipelineCore::BuildSemanticArtifactJson(const std::string &map_id
              "\"rolled_back\":true"
              "}";
     }
-    backups = BackupNamedArtifacts(map_dir, transaction_dir, SemanticArtifactNames());
+    backups =
+        BackupNamedArtifacts(store_, id, map_dir, transaction_dir, SemanticArtifactNames());
     if (!ValidateSemanticMapBinary(staging_map_dir / kSemanticMapArtifactFilename,
                                    &validation_error)) {
       RollbackTransactionArtifacts(backups);
@@ -4278,11 +3926,12 @@ std::string MapPipelineCore::BuildSemanticArtifactJson(const std::string &map_id
     }
     const auto semantic_map = ReadSemanticMapBinary(staging_map_dir / kSemanticMapArtifactFilename);
     std::string publish_error;
-    if (!PublishTransactionArtifacts(staging_map_dir, backups, &publish_error)) {
-      RollbackTransactionArtifacts(backups);
+    if (!PublishTransactionArtifacts(store_, id, staging_map_dir, backups, &publish_error)) {
       WriteStatus(id, build_id, "SEMANTIC_ARTIFACT", "FAILED", 0.0, publish_error);
-      std::filesystem::remove_all(LockPath(id));
-      std::filesystem::remove_all(transaction_dir);
+      if (!TransactionNeedsRecovery(publish_error)) {
+        std::filesystem::remove_all(LockPath(id));
+        std::filesystem::remove_all(transaction_dir);
+      }
       return "{"
              "\"action\":\"build_semantic_artifact\","
              "\"success\":false,"
@@ -4297,9 +3946,10 @@ std::string MapPipelineCore::BuildSemanticArtifactJson(const std::string &map_id
              JsonString(build_id) +
              ","
              "\"transactional_visibility\":\"staged_until_commit\","
-             "\"rolled_back\":true"
+             "\"rolled_back\":" + TransactionRolledBackJson(publish_error) +
              "}";
     }
+    backups.clear();
     WriteStatus(id, build_id, "SEMANTIC_ARTIFACT", "SUCCEEDED", 1.0,
                 "semantic artifact validated");
     std::filesystem::remove_all(LockPath(id));
@@ -4318,9 +3968,6 @@ std::string MapPipelineCore::BuildSemanticArtifactJson(const std::string &map_id
            "\"semantic\":" +
            ArtifactPathJson(map_dir, kSemanticMapArtifactFilename) +
            ","
-           "\"sha256\":" +
-           JsonString(Sha256File(map_dir / kSemanticMapArtifactFilename)) +
-           ","
            "\"generation\":" +
            std::to_string(semantic_map.generation) +
            ","
@@ -4338,8 +3985,8 @@ std::string MapPipelineCore::BuildSemanticArtifactJson(const std::string &map_id
            ","
            "\"transactional_visibility\":\"staged_until_commit\","
            "\"rolled_back\":false,"
-           "\"navigation_ready\":false,"
-           "\"navigation_ready_reason\":\"semantic_map.bin is query-only and is not a planning "
+           "\"activation_ready\":false,"
+           "\"activation_ready_reason\":\"semantic_map.bin is query-only and is not a planning "
            "artifact\""
            "}";
   } catch (const std::exception &exc) {
@@ -4369,6 +4016,32 @@ std::filesystem::path MapPipelineCore::LockInfoPath(const std::string &map_id) c
   return LockPath(map_id) / "metadata.txt";
 }
 
+bool MapPipelineCore::TryCreateBuildLock(
+    const std::string &map_id,
+    const std::string &metadata) const {
+  static_cast<void>(RecoverInterruptedBuild(map_id));
+  auto coordination_lock =
+      MapLock::TryAcquire(store_.RootDir(), map_id, "map-pipeline-build-lock");
+  if (!coordination_lock.has_value()) {
+    return false;
+  }
+  const auto lock_path = LockPath(map_id);
+  if (!std::filesystem::create_directory(lock_path)) {
+    return false;
+  }
+  try {
+    WriteText(
+        lock_path / "owner.state",
+        "owner=map-pipeline\npid=" + std::to_string(CurrentProcessIdValue()) + "\n");
+    WriteText(LockInfoPath(map_id), metadata);
+  } catch (...) {
+    std::error_code ignored;
+    std::filesystem::remove_all(lock_path, ignored);
+    throw;
+  }
+  return true;
+}
+
 std::filesystem::path MapPipelineCore::LatestPath(const std::string &map_id) const {
   return BuildDir(map_id) / "latest.json";
 }
@@ -4393,7 +4066,6 @@ std::filesystem::path MapPipelineCore::BackupExisting(const std::filesystem::pat
 
 void MapPipelineCore::ClearDerivedArtifacts(const std::filesystem::path &map_dir) const {
   for (const auto *filename : {
-           "tomogram.pickle",
            "occupancy.npz",
            "octomap.ot",
            "octomap.bt",
@@ -4445,11 +4117,49 @@ std::string MapPipelineCore::ReadText(const std::filesystem::path &path) const {
 
 void MapPipelineCore::WriteText(const std::filesystem::path &path, const std::string &text) const {
   std::filesystem::create_directories(path.parent_path());
-  std::ofstream file(path, std::ios::binary | std::ios::trunc);
-  if (!file) {
-    throw std::runtime_error("failed to write: " + path.string());
+  const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+  const auto temp = path.parent_path() /
+      (path.filename().string() + ".tmp-" + std::to_string(CurrentProcessIdValue()) + "-" +
+       std::to_string(stamp));
+  try {
+    {
+      std::ofstream file(temp, std::ios::binary | std::ios::trunc);
+      if (!file) {
+        throw std::runtime_error("failed to write: " + temp.string());
+      }
+      file.write(text.data(), static_cast<std::streamsize>(text.size()));
+      file.flush();
+      if (!file) {
+        throw std::runtime_error("failed to flush: " + temp.string());
+      }
+    }
+#if defined(_WIN32)
+    if (MoveFileExW(
+            temp.wstring().c_str(),
+            path.wstring().c_str(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == 0) {
+      throw std::runtime_error("failed to atomically replace: " + path.string());
+    }
+#else
+    const int file_fd = open(temp.c_str(), O_RDONLY);
+    if (file_fd >= 0) {
+      fsync(file_fd);
+      close(file_fd);
+    }
+    if (::rename(temp.c_str(), path.c_str()) != 0) {
+      throw std::runtime_error("failed to atomically replace: " + path.string());
+    }
+    const int directory_fd = open(path.parent_path().c_str(), O_RDONLY | O_DIRECTORY);
+    if (directory_fd >= 0) {
+      fsync(directory_fd);
+      close(directory_fd);
+    }
+#endif
+  } catch (...) {
+    std::error_code ignored;
+    std::filesystem::remove(temp, ignored);
+    throw;
   }
-  file << text;
 }
 
 void MapPipelineCore::WriteStatus(const std::string &map_id, const std::string &build_id,

@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <csignal>
@@ -8,8 +10,10 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -21,12 +25,14 @@
 #include "dds.hpp"
 #include "lingtu/maps/mapd/query_core.hpp"
 #include "lingtu/maps/mapd/query_server.hpp"
-#include "lingtu/maps/store.hpp"
-#include "message/cpp/snapshot_file.hpp"
+#include "lingtu/maps/mapd/save_coordinator.hpp"
+#include "lingtu/maps/service.hpp"
+#include "native/snapshot_file.hpp"
 
 namespace {
 
-using lingtu::maps::MapStore;
+using lingtu::maps::MapsServiceConfig;
+using lingtu::maps::MapsServiceCore;
 using lingtu::maps::MapStoreConfig;
 using lingtu::maps::mapd::ActivationCoordinator;
 using lingtu::maps::mapd::ActivationRequest;
@@ -39,6 +45,9 @@ using lingtu::maps::mapd::DdsOutputState;
 using lingtu::maps::mapd::LiveMapEngine;
 using lingtu::maps::mapd::PublicationCursor;
 using lingtu::maps::mapd::PublicationProgress;
+using lingtu::maps::mapd::SaveCoordinator;
+using lingtu::maps::mapd::SaveCoordinatorConfig;
+using lingtu::maps::mapd::SnapshotDetail;
 using lingtu::maps::mapd::State;
 using lingtu::maps::mapd::query::DefaultQuerySocketPath;
 using lingtu::maps::mapd::query::MapQueryCore;
@@ -51,23 +60,56 @@ void StopSignal(int) {
   g_running = false;
 }
 
+void AdvanceDeadline(std::chrono::steady_clock::time_point &deadline,
+                     std::chrono::steady_clock::duration period,
+                     std::chrono::steady_clock::time_point now) {
+  do {
+    deadline += period;
+  } while (deadline <= now);
+}
+
 struct Options {
   int domain_id{0};
+  std::string product;
+  std::string product_session_id;
   std::filesystem::path status_file;
   double state_hz{2.0};
   double cloud_hz{10.0};
   double map_hz{2.0};
   double scene_hz{2.0};
   std::filesystem::path map_root;
+  bool query_enabled{true};
   std::filesystem::path query_socket;
   std::size_t query_max_json_bytes{lingtu::maps::mapd::query::kDefaultMaxJsonBytes};
   Config engine;
   DdsLimits dds;
+  SaveCoordinatorConfig save;
 };
 
 std::string EnvOr(const char *name, std::string fallback) {
   const char *value = std::getenv(name);
   return value == nullptr || value[0] == '\0' ? std::move(fallback) : std::string{value};
+}
+
+bool EnvEnabled(const char *name, bool fallback) {
+  std::string value = EnvOr(name, fallback ? "1" : "0");
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  if (value == "1" || value == "true" || value == "yes" || value == "on")
+    return true;
+  if (value.empty() || value == "0" || value == "false" || value == "no" || value == "off") {
+    return false;
+  }
+  throw std::invalid_argument(std::string(name) + " is invalid");
+}
+
+std::string FirstConfigured(std::initializer_list<const char *> names) {
+  for (const char *name : names) {
+    const std::string value = EnvOr(name, "");
+    if (!value.empty())
+      return value;
+  }
+  return {};
 }
 
 double ParseDouble(const std::string &value, const char *name) {
@@ -105,21 +147,10 @@ std::filesystem::path ResolveMapRoot() {
   if (home == nullptr || home[0] == '\0') {
     home = std::getenv("USERPROFILE");
   }
-  const std::filesystem::path fallback =
-      home == nullptr || home[0] == '\0' ? std::filesystem::current_path() / "maps"
-                                         : std::filesystem::path(home) / "data" / "nova" / "maps";
-  if (home != nullptr && home[0] != '\0') {
-    const std::filesystem::path nova = std::filesystem::path(home) / "data" / "nova" / "maps";
-    if (std::filesystem::exists(nova)) {
-      return nova.lexically_normal();
-    }
-    const std::filesystem::path lingtu = std::filesystem::path(home) / "data" / "lingtu" / "maps";
-    if (std::filesystem::exists(lingtu)) {
-      return lingtu.lexically_normal();
-    }
-    return lingtu.lexically_normal();
+  if (home == nullptr || home[0] == '\0') {
+    return (std::filesystem::current_path() / "maps").lexically_normal();
   }
-  return fallback;
+  return (std::filesystem::path(home) / "data" / "lingtu" / "maps").lexically_normal();
 }
 
 int ParseInt(const std::string &value, const char *name) {
@@ -132,17 +163,87 @@ int ParseInt(const std::string &value, const char *name) {
   return static_cast<int>(parsed);
 }
 
+double Probability(double log_odds) {
+  return 1.0 / (1.0 + std::exp(-log_odds));
+}
+
+float LogOdds(double probability, const char *name) {
+  if (!(probability > 0.0) || !(probability < 1.0)) {
+    throw std::invalid_argument(std::string(name) + " must be in (0, 1)");
+  }
+  return static_cast<float>(std::log(probability / (1.0 - probability)));
+}
+
+int RollMargin(int size, double resolution, double threshold) {
+  if (size <= 0 || !(resolution > 0.0) || !(threshold > 0.0)) {
+    throw std::invalid_argument("mapd occupancy geometry is invalid");
+  }
+  const int threshold_cells = std::max(1, static_cast<int>(std::ceil(threshold / resolution)));
+  return std::clamp(size / 2 - threshold_cells, 0, (size - 1) / 2);
+}
+
+void ConfigureOccupancy(Config *engine) {
+  if (engine == nullptr) {
+    throw std::invalid_argument("mapd occupancy engine is required");
+  }
+  auto &occupancy = engine->occupancy;
+  const double default_slide =
+      static_cast<double>(occupancy.size_x / 2 - occupancy.roll_margin_x) * occupancy.resolution_m;
+  occupancy.resolution_m = static_cast<float>(ParseDouble(
+      EnvOr("LINGTU_MAPD_OCCUPANCY_RESOLUTION_M", std::to_string(occupancy.resolution_m)),
+      "LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"));
+  occupancy.size_x =
+      ParseInt(EnvOr("LINGTU_MAPD_OCCUPANCY_SIZE_X", std::to_string(occupancy.size_x)),
+               "LINGTU_MAPD_OCCUPANCY_SIZE_X");
+  occupancy.size_y =
+      ParseInt(EnvOr("LINGTU_MAPD_OCCUPANCY_SIZE_Y", std::to_string(occupancy.size_y)),
+               "LINGTU_MAPD_OCCUPANCY_SIZE_Y");
+  occupancy.size_z =
+      ParseInt(EnvOr("LINGTU_MAPD_OCCUPANCY_SIZE_Z", std::to_string(occupancy.size_z)),
+               "LINGTU_MAPD_OCCUPANCY_SIZE_Z");
+  const double slide =
+      ParseDouble(EnvOr("LINGTU_MAPD_OCCUPANCY_SLIDE_M", std::to_string(default_slide)),
+                  "LINGTU_MAPD_OCCUPANCY_SLIDE_M");
+  occupancy.roll_margin_x = RollMargin(occupancy.size_x, occupancy.resolution_m, slide);
+  occupancy.roll_margin_y = RollMargin(occupancy.size_y, occupancy.resolution_m, slide);
+  occupancy.roll_margin_z = RollMargin(occupancy.size_z, occupancy.resolution_m, slide);
+  occupancy.max_ray_range_m = static_cast<float>(
+      ParseDouble(EnvOr("LINGTU_MAPD_OCCUPANCY_RAY_M", std::to_string(occupancy.max_ray_range_m)),
+                  "LINGTU_MAPD_OCCUPANCY_RAY_M"));
+
+  const double hit_probability = ParseDouble(
+      EnvOr("LINGTU_MAPD_OCCUPANCY_P_HIT", std::to_string(Probability(occupancy.hit_log_odds))),
+      "LINGTU_MAPD_OCCUPANCY_P_HIT");
+  const double miss_probability = ParseDouble(
+      EnvOr("LINGTU_MAPD_OCCUPANCY_P_MISS", std::to_string(Probability(-occupancy.miss_log_odds))),
+      "LINGTU_MAPD_OCCUPANCY_P_MISS");
+  const double min_probability = ParseDouble(
+      EnvOr("LINGTU_MAPD_OCCUPANCY_P_MIN", std::to_string(Probability(occupancy.min_log_odds))),
+      "LINGTU_MAPD_OCCUPANCY_P_MIN");
+  const double max_probability = ParseDouble(
+      EnvOr("LINGTU_MAPD_OCCUPANCY_P_MAX", std::to_string(Probability(occupancy.max_log_odds))),
+      "LINGTU_MAPD_OCCUPANCY_P_MAX");
+  occupancy.hit_log_odds = LogOdds(hit_probability, "LINGTU_MAPD_OCCUPANCY_P_HIT");
+  occupancy.miss_log_odds = -LogOdds(miss_probability, "LINGTU_MAPD_OCCUPANCY_P_MISS");
+  occupancy.min_log_odds = LogOdds(min_probability, "LINGTU_MAPD_OCCUPANCY_P_MIN");
+  occupancy.max_log_odds = LogOdds(max_probability, "LINGTU_MAPD_OCCUPANCY_P_MAX");
+  occupancy.occupied_probability = static_cast<float>(ParseDouble(
+      EnvOr("LINGTU_MAPD_OCCUPANCY_P_OCC", std::to_string(occupancy.occupied_probability)),
+      "LINGTU_MAPD_OCCUPANCY_P_OCC"));
+}
+
 void PrintUsage() {
   std::cout << "mapd [options]\n"
             << "  --domain-id N       CycloneDDS domain id\n"
             << "  --status-file PATH  atomic readiness/status snapshot\n"
             << "  --map-root PATH     map asset root directory\n"
             << "  --state-hz HZ       /maps/state publish rate\n"
-            << "  --cloud-hz HZ       live/voxel cloud rate limit\n"
+            << "  --cloud-hz HZ       live/voxel/local-collision rate limit\n"
             << "  --map-hz HZ         accumulated/grid layer rate limit\n"
             << "  --scene-hz HZ       coherent /maps/scene publish rate\n"
-            << "  --query-socket PATH read-only AF_UNIX map query socket\n"
-            << "  --query-max-json-bytes N maximum UDS query JSON response bytes\n"
+            << "  --query-socket PATH local AF_UNIX map management socket\n"
+            << "  --disable-query     disable the local query endpoint explicitly\n"
+            << "  --query-max-json-bytes N maximum UDS request/response JSON bytes\n"
             << "  --max-points N      maximum points in one MapObservation\n"
             << "  --max-cloud-bytes N maximum PointCloud2 payload bytes\n"
             << "  --max-fields N      maximum PointCloud2 field descriptors\n"
@@ -150,6 +251,7 @@ void PrintUsage() {
             << "  --max-string-bytes N maximum DDS string bytes\n"
             << "  --max-scene-bytes N maximum serialized MapScene payload bytes\n"
             << "  --max-voxel-snapshot-points N bounded scene voxel points\n"
+            << "  --max-collision-snapshot-points N complete local collision voxel cap\n"
             << "  --voxel-snapshot-radius M local voxel scene radius\n"
             << "  --max-voxels N     live voxel runtime hard limit\n"
             << "  --max-accumulated-cells N accumulated runtime cell hard limit\n"
@@ -165,16 +267,67 @@ void PrintUsage() {
 Options ParseOptions(int argc, char **argv) {
   Options options;
   options.domain_id = ParseInt(EnvOr("LINGTU_DDS_DOMAIN_ID", "0"), "LINGTU_DDS_DOMAIN_ID");
+  options.product = EnvOr("LINGTU_PRODUCT", "");
+  options.save.product = options.product;
+  options.product_session_id = EnvOr("LINGTU_PRODUCT_SESSION_ID", "");
+  options.save.product_session_id = options.product_session_id;
+  options.engine.build_extended_layers = EnvEnabled("LINGTU_MAPD_EXTENDED_LAYERS", true);
+  options.save.save_patches = EnvEnabled("LINGTU_MAP_SAVE_PATCHES", true);
+  auto &save_request = options.save.request_defaults;
+  const bool build_octomap = EnvEnabled("LINGTU_MAP_SAVE_BUILD_OCTOMAP", true);
+  save_request.require.occupancy = true;
+  save_request.require.octomap = build_octomap;
+  save_request.require.esdf = build_octomap;
+  save_request.require.traversability = build_octomap;
+  save_request.require.semantic = false;
+  save_request.source.dynamic_filter_enabled = EnvEnabled("LINGTU_SAVE_DYNAMIC_FILTER", true);
+  save_request.source.dynamic_filter_required =
+      EnvEnabled("LINGTU_SAVE_DYNAMIC_FILTER_REQUIRED", true);
+  save_request.source.dynamic_filter_command = EnvOr("LINGTU_SAVE_DYNAMIC_FILTER_COMMAND", "");
+  save_request.source.dynamic_filter_timeout_sec =
+      ParseDouble(EnvOr("LINGTU_MAP_SAVE_DYNAMIC_FILTER_TIMEOUT_SEC", "300"),
+                  "LINGTU_MAP_SAVE_DYNAMIC_FILTER_TIMEOUT_SEC");
+  save_request.octomap.converter_command =
+      FirstConfigured({"LINGTU_MAP_ARTIFACT_CONVERTER", "LINGTU_OCTOPLANNER3D_PCD_CONVERTER",
+                       "LINGTU_OCTOMAP_CONVERTER"});
+  save_request.octomap.build_mode =
+      EnvOr("LINGTU_MAP_SAVE_OCTOMAP_BUILD_MODE", "external_pcl_converter");
+  save_request.octomap.resolution = ParseDouble(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_RESOLUTION", "0.20"),
+                                                "LINGTU_MAP_SAVE_OCTOMAP_RESOLUTION");
+  save_request.octomap.support_dilation_cells =
+      ParseInt(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_SUPPORT_DILATION_CELLS", "1"),
+               "LINGTU_MAP_SAVE_OCTOMAP_SUPPORT_DILATION_CELLS");
+  save_request.octomap.free_layers_above =
+      ParseInt(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_FREE_LAYERS_ABOVE", "3"),
+               "LINGTU_MAP_SAVE_OCTOMAP_FREE_LAYERS_ABOVE");
+  save_request.octomap.free_dilation_cells =
+      ParseInt(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_FREE_DILATION_CELLS", "1"),
+               "LINGTU_MAP_SAVE_OCTOMAP_FREE_DILATION_CELLS");
+  save_request.octomap.frame_id = EnvOr("LINGTU_MAP_FRAME", "map");
+  save_request.octomap.source_profile = EnvOr("LINGTU_PROFILE", "native_dds");
+  save_request.octomap.data_source = EnvOr("LINGTU_DATA_SOURCE", "field");
+  save_request.octomap.slam_source = "native_dds";
+  save_request.octomap.localization_source = "native_dds";
+  save_request.octomap.mapping_source = "save_map_product_chain";
+  save_request.octomap.timeout_sec = ParseDouble(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_TIMEOUT_SEC", "60"),
+                                                 "LINGTU_MAP_SAVE_OCTOMAP_TIMEOUT_SEC");
+  if (EnvOr("LINGTU_ENV", "") == "sim" && options.product_session_id.empty()) {
+    throw std::invalid_argument("LINGTU_PRODUCT_SESSION_ID is required in simulation");
+  }
 #if defined(_WIN32)
-  const std::string default_status = "mapd_status.json";
+  const std::string platform_default_status = "mapd_status.json";
 #else
-  const std::string default_status = "/dev/shm/lingtu/mapd_status.json";
+  const std::string platform_default_status = "/dev/shm/lingtu/mapd_status.json";
 #endif
+  const std::string session_root = EnvOr("LINGTU_SESSION_ROOT", "");
+  const std::string default_status =
+      session_root.empty() ? platform_default_status
+                           : (std::filesystem::path(session_root) / "mapd.status.json").string();
   options.status_file = EnvOr("LINGTU_MAPD_STATUS_FILE", default_status);
   options.map_root = ResolveMapRoot();
   options.query_socket = DefaultQuerySocketPath();
-  options.query_max_json_bytes = ParseSize(
-      EnvOr("LINGTU_MAPD_QUERY_MAX_JSON_BYTES", "1048576"), "LINGTU_MAPD_QUERY_MAX_JSON_BYTES");
+  options.query_max_json_bytes = ParseSize(EnvOr("LINGTU_MAPD_QUERY_MAX_JSON_BYTES", "1048576"),
+                                           "LINGTU_MAPD_QUERY_MAX_JSON_BYTES");
   options.dds.max_cloud_bytes =
       ParseSize(EnvOr("LINGTU_MAPD_MAX_CLOUD_BYTES", "16777216"), "LINGTU_MAPD_MAX_CLOUD_BYTES");
   options.dds.max_point_fields =
@@ -188,6 +341,9 @@ Options ParseOptions(int argc, char **argv) {
   options.engine.max_voxel_snapshot_points =
       ParseSize(EnvOr("LINGTU_MAPD_MAX_VOXEL_SNAPSHOT_POINTS", "200000"),
                 "LINGTU_MAPD_MAX_VOXEL_SNAPSHOT_POINTS");
+  options.engine.max_collision_snapshot_points =
+      ParseSize(EnvOr("LINGTU_MAPD_MAX_COLLISION_SNAPSHOT_POINTS", "200000"),
+                "LINGTU_MAPD_MAX_COLLISION_SNAPSHOT_POINTS");
   options.engine.voxel_snapshot_radius_m = static_cast<float>(ParseDouble(
       EnvOr("LINGTU_MAPD_VOXEL_SNAPSHOT_RADIUS_M", "30"), "LINGTU_MAPD_VOXEL_SNAPSHOT_RADIUS_M"));
   options.engine.voxel.max_voxels =
@@ -200,6 +356,7 @@ Options ParseOptions(int argc, char **argv) {
       ParseDouble(EnvOr("LINGTU_MAPD_CARVE_MIN_Z_M", "-0.7"), "LINGTU_MAPD_CARVE_MIN_Z_M"));
   options.engine.column_carving_max_height_from_sensor_m = static_cast<float>(
       ParseDouble(EnvOr("LINGTU_MAPD_CARVE_MAX_Z_M", "1.8"), "LINGTU_MAPD_CARVE_MAX_Z_M"));
+  ConfigureOccupancy(&options.engine);
 
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];
@@ -229,6 +386,8 @@ Options ParseOptions(int argc, char **argv) {
       options.scene_hz = ParseDouble(next(), "--scene-hz");
     } else if (argument == "--query-socket") {
       options.query_socket = next();
+    } else if (argument == "--disable-query") {
+      options.query_enabled = false;
     } else if (argument == "--query-max-json-bytes") {
       options.query_max_json_bytes = ParseSize(next(), "--query-max-json-bytes");
     } else if (argument == "--max-points") {
@@ -245,6 +404,9 @@ Options ParseOptions(int argc, char **argv) {
       options.dds.max_scene_bytes = ParseSize(next(), "--max-scene-bytes");
     } else if (argument == "--max-voxel-snapshot-points") {
       options.engine.max_voxel_snapshot_points = ParseSize(next(), "--max-voxel-snapshot-points");
+    } else if (argument == "--max-collision-snapshot-points") {
+      options.engine.max_collision_snapshot_points =
+          ParseSize(next(), "--max-collision-snapshot-points");
     } else if (argument == "--voxel-snapshot-radius") {
       options.engine.voxel_snapshot_radius_m =
           static_cast<float>(ParseDouble(next(), "--voxel-snapshot-radius"));
@@ -276,9 +438,19 @@ Options ParseOptions(int argc, char **argv) {
   }
   if (options.domain_id < 0 || options.state_hz <= 0.0 || options.cloud_hz <= 0.0 ||
       options.map_hz <= 0.0 || options.scene_hz <= 0.0 || options.status_file.empty() ||
-      options.query_socket.empty() || options.query_max_json_bytes == 0U) {
+      (options.query_enabled && options.query_socket.empty()) ||
+      options.query_max_json_bytes == 0U) {
     throw std::invalid_argument("mapd options are invalid");
   }
+  constexpr std::size_t kCollisionPointBytes = 3U * sizeof(float);
+  const std::size_t collision_byte_cap = options.dds.max_cloud_bytes / kCollisionPointBytes;
+  if (collision_byte_cap == 0U) {
+    throw std::invalid_argument("mapd max cloud bytes cannot hold one collision point");
+  }
+  // BuildCollisionLayer must mark the layer incomplete before DDS encoding can
+  // hit its byte limit. A configured point cap may only tighten this bound.
+  options.engine.max_collision_snapshot_points =
+      std::min(options.engine.max_collision_snapshot_points, collision_byte_cap);
   options.dds.max_points_per_observation = options.engine.max_points_per_observation;
   return options;
 }
@@ -312,21 +484,40 @@ std::string JsonEscape(const std::string &value) {
 }
 
 std::string StatusJson(const State &state, const DdsInputState &input, const DdsOutputState &output,
-                       const PublicationProgress &publications,
-                       const std::string &producer_boot_id) {
+                       const PublicationProgress &publications, const std::string &producer_boot_id,
+                       const Options &options) {
   const bool publications_ready = publications.BootComplete();
   const bool current_generation_published = publications.CurrentGenerationPublished(state);
   const auto readiness = lingtu::maps::mapd::EvaluateReadiness(state, output, publications);
   return std::string{"{"} + "\"schema_version\":\"lingtu.maps.runtime.v1\"," +
-         "\"process\":\"mapd\"," + "\"producer_boot_id\":\"" + JsonEscape(producer_boot_id) +
-         "\"," + "\"status\":\"" + readiness.status + "\"," +
-         "\"ready\":" + (readiness.ready ? "true" : "false") + "," +
+         "\"process\":\"mapd\"," + "\"native_product\":{\"product\":\"" +
+         JsonEscape(options.product) + "\",\"product_session_id\":\"" +
+         JsonEscape(options.product_session_id) + "\"}," +
+         "\"producer_boot_id\":\"" + JsonEscape(producer_boot_id) + "\"," + "\"status\":\"" +
+         readiness.status + "\"," + "\"ready\":" + (readiness.ready ? "true" : "false") + "," +
          "\"running\":" + (state.running ? "true" : "false") + "," +
          "\"live\":" + (state.live ? "true" : "false") + "," +
+         "\"config\":{" +
+         "\"occupancy_resolution_m\":" +
+         std::to_string(options.engine.occupancy.resolution_m) + "," +
+         "\"occupancy_size_x\":" + std::to_string(options.engine.occupancy.size_x) + "," +
+         "\"occupancy_size_y\":" + std::to_string(options.engine.occupancy.size_y) + "," +
+         "\"occupancy_size_z\":" + std::to_string(options.engine.occupancy.size_z) + "," +
+         "\"occupancy_ray_m\":" +
+         std::to_string(options.engine.occupancy.max_ray_range_m) + "," +
+         "\"max_collision_snapshot_points\":" +
+         std::to_string(options.engine.max_collision_snapshot_points) + "}," +
+         "\"extended_layers_enabled\":" +
+         (state.extended_layers_enabled ? "true" : "false") + "," +
          "\"reset_epoch\":" + std::to_string(state.reset_epoch) + "," +
          "\"observation_sequence\":" + std::to_string(state.sequence) + "," +
          "\"generation\":" + std::to_string(state.generation) + "," +
-         "\"queue_depth\":" + std::to_string(state.queue_depth) + "," +
+         "\"realtime_snapshot_generation\":" + std::to_string(state.realtime_snapshot_generation) +
+         "," +
+         "\"complete_snapshot_generation\":" + std::to_string(state.complete_snapshot_generation) +
+         "," + "\"realtime_snapshot_builds\":" + std::to_string(state.realtime_snapshot_builds) +
+         "," + "\"complete_snapshot_builds\":" + std::to_string(state.complete_snapshot_builds) +
+         "," + "\"queue_depth\":" + std::to_string(state.queue_depth) + "," +
          "\"live_points\":" + std::to_string(state.live_points) + "," +
          "\"voxel_points\":" + std::to_string(state.voxel_points) + "," +
          "\"voxel_cells\":" + std::to_string(state.voxel_cells) + "," +
@@ -391,7 +582,7 @@ bool WriteStatus(const std::filesystem::path &path, const std::string &payload,
         throw std::runtime_error("failed to write mapd status temporary file");
       }
     }
-    if (!lingtu::message::replaceSnapshotFile(temporary, path, &ec)) {
+    if (!lingtu::native::replaceSnapshotFile(temporary, path, &ec)) {
       throw std::filesystem::filesystem_error("failed to publish mapd status", temporary, path, ec);
     }
     if (error != nullptr) {
@@ -420,14 +611,19 @@ int main(int argc, char **argv) {
     const Options options = ParseOptions(argc, argv);
     LiveMapEngine engine(options.engine);
     Dds dds(options.domain_id, options.dds);
-    MapStore map_store(MapStoreConfig{options.map_root});
-    ActivationCoordinator activation(map_store);
-    MapQueryCore query_core(map_store);
-    QueryServer query_server(
-        query_core,
-        QueryServerConfig{options.query_socket, options.query_max_json_bytes});
+    MapsServiceCore maps_service(MapsServiceConfig{MapStoreConfig{options.map_root}});
+    ActivationCoordinator activation(maps_service.Store());
+    SaveCoordinator save_coordinator(maps_service, dds, options.save);
+    MapQueryCore query_core(maps_service, &save_coordinator);
+    std::unique_ptr<QueryServer> query_server;
+    if (options.query_enabled) {
+      query_server = std::make_unique<QueryServer>(
+          query_core, QueryServerConfig{options.query_socket, options.query_max_json_bytes});
+    }
     engine.Start();
-    query_server.Start();
+    if (query_server) {
+      query_server->Start();
+    }
 
     auto next_state = std::chrono::steady_clock::now();
     auto next_cloud = next_state;
@@ -447,6 +643,7 @@ int main(int argc, char **argv) {
       if (auto observation = dds.TakeLatestObservation(); observation.has_value()) {
         static_cast<void>(engine.Submit(std::move(*observation)));
       }
+      save_coordinator.Poll();
       for (const auto &request : dds.TakeActivationRequests()) {
         const auto cached = activation_results.find(request.request_id);
         if (cached != activation_results.end()) {
@@ -479,76 +676,87 @@ int main(int argc, char **argv) {
 
       const auto now = std::chrono::steady_clock::now();
       State state = engine.GetState();
-      std::optional<lingtu::maps::mapd::EngineView> view;
-      const auto current_view = [&]() -> const lingtu::maps::mapd::EngineView & {
+      std::optional<lingtu::maps::mapd::EngineView> realtime_view;
+      std::optional<lingtu::maps::mapd::EngineView> complete_view;
+      const auto current_view =
+          [&](SnapshotDetail detail) -> const lingtu::maps::mapd::EngineView & {
+        auto &view = detail == SnapshotDetail::kRealtime ? realtime_view : complete_view;
         if (!view.has_value()) {
-          view = engine.GetView();
+          view = engine.GetView(detail);
         }
         return *view;
       };
-      if (publications.realtime_clouds.Pending(state) && now >= next_cloud) {
-        const auto &value = current_view();
+      const bool realtime_pending = publications.realtime_clouds.Pending(state);
+      const bool map_pending = publications.map_layers.Pending(state);
+      const bool scene_pending = publications.scene.Pending(state);
+      const bool complete_due = (map_pending && now >= next_map) ||
+                                (scene_pending && now >= next_scene) || now >= next_state;
+      if (realtime_pending && now >= next_cloud) {
+        const auto &value =
+            current_view(complete_due ? SnapshotDetail::kComplete : SnapshotDetail::kRealtime);
         publications.realtime_clouds.Complete(
             dds.PublishRealtimeClouds(value.state, value.snapshot), value.snapshot.generation,
             value.state.live);
-        next_cloud = now + Period(options.cloud_hz);
+        AdvanceDeadline(next_cloud, Period(options.cloud_hz), now);
       }
-      if (publications.map_layers.Pending(state) && now >= next_map) {
-        const auto &value = current_view();
+      if (map_pending && now >= next_map) {
+        const auto &value = current_view(SnapshotDetail::kComplete);
         publications.map_layers.Complete(dds.PublishMapLayers(value.state, value.snapshot),
                                          value.snapshot.generation, value.state.live);
-        next_map = now + Period(options.map_hz);
+        AdvanceDeadline(next_map, Period(options.map_hz), now);
       }
-      if (state.generation > 0U && now >= next_scene) {
-        const auto &value = current_view();
+      if (scene_pending && now >= next_scene) {
+        const auto &value = current_view(SnapshotDetail::kComplete);
         publications.scene.Complete(dds.PublishScene(value.state, value.snapshot),
                                     value.snapshot.generation, value.state.live);
-        next_scene = now + Period(options.scene_hz);
+        AdvanceDeadline(next_scene, Period(options.scene_hz), now);
       }
       if (now >= next_state) {
-        const auto &value = current_view();
+        const auto &value = current_view(SnapshotDetail::kComplete);
         state = value.state;
         if (!publications.realtime_clouds.PublishedFor(state)) {
           publications.realtime_clouds.Complete(dds.PublishRealtimeClouds(state, value.snapshot),
                                                 value.snapshot.generation, state.live);
-          next_cloud = now + Period(options.cloud_hz);
+          AdvanceDeadline(next_cloud, Period(options.cloud_hz), now);
         }
         if (!publications.map_layers.PublishedFor(state)) {
           publications.map_layers.Complete(dds.PublishMapLayers(state, value.snapshot),
                                            value.snapshot.generation, state.live);
-          next_map = now + Period(options.map_hz);
+          AdvanceDeadline(next_map, Period(options.map_hz), now);
         }
         if (!publications.scene.PublishedFor(state)) {
           publications.scene.Complete(dds.PublishScene(state, value.snapshot),
                                       value.snapshot.generation, state.live);
-          next_scene = now + Period(options.scene_hz);
+          AdvanceDeadline(next_scene, Period(options.scene_hz), now);
         }
         publications.state.Complete(
             dds.PublishState(state, publications, activation.ActiveIdentity()), state.generation,
             state.live);
-        const bool status_written =
-            WriteStatus(options.status_file,
-                        StatusJson(state, dds.GetInputState(), dds.GetOutputState(), publications,
-                                   dds.ProducerBootId()),
-                        &status_error);
+        const bool status_written = WriteStatus(
+            options.status_file,
+            StatusJson(state, dds.GetInputState(), dds.GetOutputState(), publications,
+                       dds.ProducerBootId(), options),
+            &status_error);
         if (!status_written && now >= next_status_error_log) {
           std::cerr << "mapd: status snapshot unavailable: " << status_error << '\n';
           next_status_error_log = now + std::chrono::seconds(10);
         }
-        next_state = now + Period(options.state_hz);
+        AdvanceDeadline(next_state, Period(options.state_hz), now);
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 
     engine.Stop();
-    query_server.Stop();
+    if (query_server) {
+      query_server->Stop();
+    }
     const State final_state = engine.GetState();
     publications.state.Complete(
         dds.PublishState(final_state, publications, activation.ActiveIdentity()),
         final_state.generation, final_state.live);
     if (!WriteStatus(options.status_file,
                      StatusJson(final_state, dds.GetInputState(), dds.GetOutputState(),
-                                publications, dds.ProducerBootId()),
+                                publications, dds.ProducerBootId(), options),
                      &status_error)) {
       std::cerr << "mapd: final status snapshot unavailable: " << status_error << '\n';
     }

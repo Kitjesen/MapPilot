@@ -130,9 +130,6 @@ Options parseArgs(int argc, char **argv) {
   const fs::path self = argc > 0 ? fs::absolute(argv[0]) : fs::path();
   const fs::path bin_dir = self.empty() ? fs::current_path() : self.parent_path();
   options.stage_bin = exePath(bin_dir / "erasor2_stage");
-  if (!fs::exists(options.stage_bin)) {
-    options.stage_bin = exePath(bin_dir / "lingtu_erasor2_stage");
-  }
   options.erasor2_bin = defaultErasor2Bin(bin_dir);
 
   for (int i = 1; i < argc; ++i) {

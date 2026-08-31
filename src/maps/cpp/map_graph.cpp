@@ -300,6 +300,31 @@ MapGraphResult MapGraph::AddEdge(MapGraphEdge edge) {
   return {true, false, "edge added"};
 }
 
+MapGraphResult MapGraph::RemoveEdge(const std::string& edge_id) {
+  const auto found = edges_.find(edge_id);
+  if (found == edges_.end()) {
+    return {false, false, "edge not found: " + edge_id};
+  }
+  edges_.erase(found);
+  Touch();
+  return {true, false, "removed"};
+}
+
+MapGraphResult MapGraph::RemoveNodeIfUnreferenced(const std::string& node_id) {
+  const auto found = nodes_.find(node_id);
+  if (found == nodes_.end()) {
+    return {false, false, "node not found: " + node_id};
+  }
+  for (const auto& [_, edge] : edges_) {
+    if (edge.from_node_id == node_id || edge.to_node_id == node_id) {
+      return {false, false, "node is still referenced: " + node_id};
+    }
+  }
+  nodes_.erase(found);
+  Touch();
+  return {true, false, "removed"};
+}
+
 MapGraphResult MapGraph::SetEdgeEnabled(const std::string& edge_id, bool enabled) {
   auto it = edges_.find(edge_id);
   if (it == edges_.end()) return {false, false, "edge not found: " + edge_id};
@@ -331,6 +356,13 @@ const MapGraphNode* MapGraph::FindNode(const std::string& node_id) const {
 const MapGraphEdge* MapGraph::FindEdge(const std::string& edge_id) const {
   const auto it = edges_.find(edge_id);
   return it == edges_.end() ? nullptr : &it->second;
+}
+
+bool MapGraph::ReferencesMap(const std::string& map_id) const {
+  return std::any_of(
+      nodes_.begin(),
+      nodes_.end(),
+      [&map_id](const auto& item) { return item.second.map_id == map_id; });
 }
 
 MapGraphRoute MapGraph::ShortestRoute(
@@ -585,6 +617,9 @@ MapGraphResult MapGraph::Load(const std::filesystem::path& path) {
       } else {
         return {false, true, "unknown map graph record"};
       }
+    }
+    if (file.bad()) {
+      return {false, true, "failed while reading map graph"};
     }
     for (auto& edge : parsed_edges) {
       auto added = parsed.AddEdge(std::move(edge));

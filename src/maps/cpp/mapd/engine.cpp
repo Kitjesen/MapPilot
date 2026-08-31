@@ -94,6 +94,77 @@ std::string UpperAscii(std::string value) {
   return value;
 }
 
+Snapshot::CollisionLayer BuildCollisionLayer(
+    const layers::RollingOccupancySnapshot& occupancy,
+    std::size_t max_points) {
+  occupancy.Validate();
+  Snapshot::CollisionLayer layer;
+  layer.resolution_m = occupancy.resolution_m;
+  layer.min_x_m = occupancy.origin_x_m;
+  layer.min_y_m = occupancy.origin_y_m;
+  layer.min_z_m = occupancy.origin_z_m;
+  layer.max_x_m = occupancy.origin_x_m +
+      static_cast<float>(occupancy.size_x) * occupancy.resolution_m;
+  layer.max_y_m = occupancy.origin_y_m +
+      static_cast<float>(occupancy.size_y) * occupancy.resolution_m;
+  layer.max_z_m = occupancy.origin_z_m +
+      static_cast<float>(occupancy.size_z) * occupancy.resolution_m;
+  layer.occupied.frame_id = occupancy.frame_id;
+  layer.occupied.stamp_ns = occupancy.stamp_ns;
+  layer.occupied.layout = CloudLayout::kXyzF32Interleaved;
+  layer.occupied.interleaved.reserve(
+      std::min(max_points, occupancy.CellCount()) * 3U);
+
+  for (std::int32_t z = 0; z < occupancy.size_z; ++z) {
+    for (std::int32_t y = 0; y < occupancy.size_y; ++y) {
+      for (std::int32_t x = 0; x < occupancy.size_x; ++x) {
+        if (static_cast<layers::OccupancyState>(
+                occupancy.state[occupancy.Index(x, y, z)]) !=
+            layers::OccupancyState::kOccupied) {
+          continue;
+        }
+        ++layer.total_occupied_cells;
+        if (layer.occupied.point_count >= max_points) continue;
+        layer.occupied.interleaved.push_back(
+            occupancy.origin_x_m +
+            (static_cast<float>(x) + 0.5F) * occupancy.resolution_m);
+        layer.occupied.interleaved.push_back(
+            occupancy.origin_y_m +
+            (static_cast<float>(y) + 0.5F) * occupancy.resolution_m);
+        layer.occupied.interleaved.push_back(
+            occupancy.origin_z_m +
+            (static_cast<float>(z) + 0.5F) * occupancy.resolution_m);
+        ++layer.occupied.point_count;
+      }
+    }
+  }
+  layer.complete = layer.total_occupied_cells <= max_points;
+  return layer;
+}
+
+Snapshot::CollisionLayer BuildCollisionLayer(
+    layers::RollingOccupiedSnapshot occupancy) {
+  Snapshot::CollisionLayer layer;
+  layer.resolution_m = occupancy.resolution_m;
+  layer.min_x_m = occupancy.origin_x_m;
+  layer.min_y_m = occupancy.origin_y_m;
+  layer.min_z_m = occupancy.origin_z_m;
+  layer.max_x_m = occupancy.origin_x_m +
+      static_cast<float>(occupancy.size_x) * occupancy.resolution_m;
+  layer.max_y_m = occupancy.origin_y_m +
+      static_cast<float>(occupancy.size_y) * occupancy.resolution_m;
+  layer.max_z_m = occupancy.origin_z_m +
+      static_cast<float>(occupancy.size_z) * occupancy.resolution_m;
+  layer.total_occupied_cells = occupancy.total_cells;
+  layer.complete = occupancy.centers_xyz.size() / 3U == occupancy.total_cells;
+  layer.occupied.frame_id = occupancy.frame_id;
+  layer.occupied.stamp_ns = occupancy.stamp_ns;
+  layer.occupied.layout = CloudLayout::kXyzF32Interleaved;
+  layer.occupied.interleaved = std::move(occupancy.centers_xyz);
+  layer.occupied.point_count = layer.occupied.interleaved.size() / 3U;
+  return layer;
+}
+
 }  // namespace
 
 LiveMapEngine::LiveMapEngine(Config config)
@@ -134,7 +205,8 @@ LiveMapEngine::LiveMapEngine(Config config)
       !IsFinite(config_.voxel_snapshot_max_z_from_sensor_m) ||
       config_.voxel_snapshot_min_z_from_sensor_m >
           config_.voxel_snapshot_max_z_from_sensor_m ||
-      config_.max_voxel_snapshot_points == 0U) {
+      config_.max_voxel_snapshot_points == 0U ||
+      config_.max_collision_snapshot_points == 0U) {
     throw std::invalid_argument("mapd LiveMapEngine configuration is invalid");
   }
   snapshot_.frame_id = "map";
@@ -203,90 +275,101 @@ SubmitResult LiveMapEngine::Submit(Observation observation) {
 }
 
 State LiveMapEngine::GetState() const {
-  State state;
   const std::int64_t now_ns = SteadyTimeNs();
+  QueueState queue;
   {
-    std::lock_guard<std::mutex> queue_lock(queue_mutex_);
-    state.running = running_ && !stop_requested_;
-    state.accepted_observations = accepted_observations_;
-    state.replaced_observations = replaced_observations_;
-    state.stale_observations = stale_observations_;
-    state.invalid_observations = invalid_observations_;
-    state.queue_depth = has_pending_ ? 1U : 0U;
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    queue = QueueStateLocked();
   }
-  {
-    std::lock_guard<std::mutex> data_lock(data_mutex_);
-    state.reset_epoch = processed_epoch_;
-    state.sequence = processed_sequence_;
-    state.generation = generation_;
-    state.processed_observations = processed_observations_;
-    state.epoch_resets = epoch_resets_;
-    state.live = state.running && last_processed_steady_ns_ > 0 &&
-        now_ns - last_processed_steady_ns_ <=
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                config_.stale_after)
-                .count();
-    state.live_points = snapshot_.live_cloud.point_count;
-    state.voxel_points = snapshot_.voxel_cloud.point_count;
-    state.voxel_cells = voxel_total_cells_;
-    state.voxel_snapshot_omitted_cells =
-        voxel_snapshot_omitted_cells_;
-    state.voxel_capacity_rejections = voxel_capacity_rejections_;
-    state.accumulated_cells = accumulated_total_cells_;
-    state.accumulated_snapshot_cells =
-        snapshot_.accumulated_cloud.Size();
-    state.accumulated_capacity_rejections =
-        accumulated_capacity_rejections_;
-    state.capacity_limited = capacity_limited_;
-    state.pose_quality = pose_quality_;
-    state.pose_state = pose_state_;
-    state.pose_reason = pose_reason_;
-    state.last_error = last_error_;
-  }
-  return state;
+  std::lock_guard<std::mutex> lock(data_mutex_);
+  return BuildStateLocked(now_ns, queue);
 }
 
 Snapshot LiveMapEngine::GetSnapshot() const {
   std::lock_guard<std::mutex> lock(data_mutex_);
+  EnsureCompleteSnapshotLocked();
   return snapshot_;
 }
 
-EngineView LiveMapEngine::GetView() const {
-  EngineView view;
+EngineView LiveMapEngine::GetView(SnapshotDetail detail) const {
   const std::int64_t now_ns = SteadyTimeNs();
-  std::scoped_lock lock(queue_mutex_, data_mutex_);
-  view.state.running = running_ && !stop_requested_;
-  view.state.accepted_observations = accepted_observations_;
-  view.state.replaced_observations = replaced_observations_;
-  view.state.stale_observations = stale_observations_;
-  view.state.invalid_observations = invalid_observations_;
-  view.state.queue_depth = has_pending_ ? 1U : 0U;
-  view.state.reset_epoch = processed_epoch_;
-  view.state.sequence = processed_sequence_;
-  view.state.generation = generation_;
-  view.state.processed_observations = processed_observations_;
-  view.state.epoch_resets = epoch_resets_;
-  view.state.live = view.state.running && last_processed_steady_ns_ > 0 &&
+  QueueState queue;
+  {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    queue = QueueStateLocked();
+  }
+  std::lock_guard<std::mutex> lock(data_mutex_);
+  if (detail == SnapshotDetail::kRealtime) {
+    EnsureRealtimeSnapshotLocked();
+  } else {
+    EnsureCompleteSnapshotLocked();
+  }
+  EngineView view;
+  view.state = BuildStateLocked(now_ns, queue);
+  view.snapshot = detail == SnapshotDetail::kRealtime
+      ? RealtimeSnapshotLocked()
+      : snapshot_;
+  return view;
+}
+
+LiveMapEngine::QueueState LiveMapEngine::QueueStateLocked() const {
+  return {
+      running_,
+      stop_requested_,
+      has_pending_,
+      accepted_observations_,
+      replaced_observations_,
+      stale_observations_,
+      invalid_observations_,
+  };
+}
+
+State LiveMapEngine::BuildStateLocked(std::int64_t now_ns, const QueueState& queue) const {
+  State state;
+  state.running = queue.running && !queue.stop_requested;
+  state.live = state.running && last_processed_steady_ns_ > 0 &&
       now_ns - last_processed_steady_ns_ <=
           std::chrono::duration_cast<std::chrono::nanoseconds>(
               config_.stale_after)
               .count();
-  view.state.live_points = snapshot_.live_cloud.point_count;
-  view.state.voxel_points = snapshot_.voxel_cloud.point_count;
-  view.state.voxel_cells = voxel_total_cells_;
-  view.state.voxel_snapshot_omitted_cells = voxel_snapshot_omitted_cells_;
-  view.state.voxel_capacity_rejections = voxel_capacity_rejections_;
-  view.state.accumulated_cells = accumulated_total_cells_;
-  view.state.accumulated_snapshot_cells = snapshot_.accumulated_cloud.Size();
-  view.state.accumulated_capacity_rejections =
+  state.extended_layers_enabled = config_.build_extended_layers;
+  state.reset_epoch = processed_epoch_;
+  state.sequence = processed_sequence_;
+  state.generation = generation_;
+  state.realtime_snapshot_generation = realtime_snapshot_generation_;
+  state.complete_snapshot_generation = complete_snapshot_generation_;
+  state.realtime_snapshot_builds = realtime_snapshot_builds_;
+  state.complete_snapshot_builds = complete_snapshot_builds_;
+  state.accepted_observations = queue.accepted_observations;
+  state.processed_observations = processed_observations_;
+  state.replaced_observations = queue.replaced_observations;
+  state.stale_observations = queue.stale_observations;
+  state.invalid_observations = queue.invalid_observations;
+  state.epoch_resets = epoch_resets_;
+  state.queue_depth = queue.has_pending ? 1U : 0U;
+  state.live_points = snapshot_.live_cloud.point_count;
+  const bool realtime_current =
+      generation_ > 0U && realtime_snapshot_generation_ == generation_;
+  const bool complete_current =
+      generation_ > 0U && complete_snapshot_generation_ == generation_;
+  state.voxel_points =
+      realtime_current ? snapshot_.voxel_cloud.point_count : 0U;
+  state.voxel_cells = voxel_total_cells_;
+  state.voxel_snapshot_omitted_cells =
+      realtime_current ? voxel_snapshot_omitted_cells_ : 0U;
+  state.voxel_capacity_rejections = voxel_capacity_rejections_;
+  state.accumulated_cells = accumulated_total_cells_;
+  state.accumulated_snapshot_cells =
+      complete_current ? snapshot_.accumulated_cloud.Size() : 0U;
+  state.accumulated_capacity_rejections =
       accumulated_capacity_rejections_;
-  view.state.capacity_limited = capacity_limited_;
-  view.state.pose_quality = pose_quality_;
-  view.state.pose_state = pose_state_;
-  view.state.pose_reason = pose_reason_;
-  view.state.last_error = last_error_;
-  view.snapshot = snapshot_;
-  return view;
+  state.capacity_limited = capacity_limited_ ||
+      (realtime_current && !snapshot_.collision.complete);
+  state.pose_quality = pose_quality_;
+  state.pose_state = pose_state_;
+  state.pose_reason = pose_reason_;
+  state.last_error = last_error_;
+  return state;
 }
 
 bool LiveMapEngine::WaitUntilProcessed(
@@ -463,17 +546,22 @@ layers::Grid2D LiveMapEngine::ProjectOccupancy(
       sensor_z_m + config.occupancy_min_height_from_sensor_m;
   const float max_z =
       sensor_z_m + config.occupancy_max_height_from_sensor_m;
+  const float inverse_resolution = 1.0F / occupancy.resolution_m;
+  const std::int32_t min_layer = std::clamp(
+      static_cast<std::int32_t>(std::ceil(
+          (min_z - occupancy.origin_z_m) * inverse_resolution - 0.5F)),
+      0,
+      occupancy.size_z);
+  const std::int32_t max_layer_exclusive = std::clamp(
+      static_cast<std::int32_t>(std::floor(
+          (max_z - occupancy.origin_z_m) * inverse_resolution - 0.5F)) + 1,
+      0,
+      occupancy.size_z);
   for (std::int32_t y = 0; y < occupancy.size_y; ++y) {
     for (std::int32_t x = 0; x < occupancy.size_x; ++x) {
       bool observed_free = false;
       bool occupied = false;
-      for (std::int32_t z = 0; z < occupancy.size_z; ++z) {
-        const float center_z =
-            occupancy.origin_z_m +
-            (static_cast<float>(z) + 0.5F) * occupancy.resolution_m;
-        if (center_z < min_z || center_z > max_z) {
-          continue;
-        }
+      for (std::int32_t z = min_layer; z < max_layer_exclusive; ++z) {
         const auto state = static_cast<layers::OccupancyState>(
             occupancy.state[occupancy.Index(x, y, z)]);
         occupied = occupied || state == layers::OccupancyState::kOccupied;
@@ -626,17 +714,21 @@ void LiveMapEngine::Process(Observation observation) {
       observation.sensor_origin_z_m +
       config_.column_carving_max_height_from_sensor_m;
   frame.incremental = true;
-  voxel_.Update(frame);
-  const auto voxel_stats = voxel_.LastStats();
-  voxel_capacity_rejections_ +=
-      voxel_stats.capacity_rejected_voxels;
-  capacity_limited_ =
-      capacity_limited_ || voxel_stats.capacity_rejected_voxels > 0U;
+  if (config_.build_extended_layers) {
+    voxel_.Update(frame);
+    const auto voxel_stats = voxel_.LastStats();
+    voxel_total_cells_ = voxel_.VoxelCount();
+    voxel_capacity_rejections_ += voxel_stats.capacity_rejected_voxels;
+    capacity_limited_ =
+        capacity_limited_ || voxel_stats.capacity_rejected_voxels > 0U;
+  }
   occupancy_.Update(frame);
 
-  accumulated_.SetFrame(observation.map_frame);
-  accumulated_.SetStampNs(observation.stamp_ns);
-  if (transformed.point_count > 0U) {
+  if (config_.build_extended_layers) {
+    accumulated_.SetFrame(observation.map_frame);
+    accumulated_.SetStampNs(observation.stamp_ns);
+  }
+  if (config_.build_extended_layers && transformed.point_count > 0U) {
     if (config_.accumulated_column_carving) {
       std::unordered_set<std::uint64_t> columns;
       std::vector<float> columns_xy;
@@ -675,7 +767,8 @@ void LiveMapEngine::Process(Observation observation) {
     capacity_limited_ =
         capacity_limited_ || accumulated_stats.capacity_rejections > 0U;
   }
-  accumulated_total_cells_ = accumulated_.CellCount();
+  accumulated_total_cells_ =
+      config_.build_extended_layers ? accumulated_.CellCount() : 0U;
 
   processed_epoch_ = observation.reset_epoch;
   processed_sequence_ = observation.sequence;
@@ -693,7 +786,6 @@ void LiveMapEngine::Process(Observation observation) {
   snapshot_.generation = generation_;
   snapshot_.map_sensor = observation.map_sensor;
   snapshot_.live_cloud = std::move(transformed);
-  RefreshSnapshotLocked();
   processed_cv_.notify_all();
 }
 
@@ -702,25 +794,27 @@ void LiveMapEngine::Decay(std::int64_t now_ns) {
   if (processed_epoch_ == 0U) {
     return;
   }
-  const std::size_t voxel_before = voxel_.VoxelCount();
-  voxel_.Decay();
+  const std::size_t voxel_before = voxel_total_cells_;
+  if (config_.build_extended_layers) {
+    voxel_.Decay();
+    voxel_total_cells_ = voxel_.VoxelCount();
+  }
   const std::size_t occupancy_changed = occupancy_.Decay(now_ns);
-  const std::uint64_t accumulated_generation =
-      accumulated_.Generation();
-  if (config_.accumulated_decay_factor < 1.0F) {
+  const std::uint64_t accumulated_generation = accumulated_.Generation();
+  if (config_.build_extended_layers && config_.accumulated_decay_factor < 1.0F) {
     static_cast<void>(
         accumulated_.Decay(config_.accumulated_decay_factor));
   }
-  const bool accumulated_changed =
+  const bool accumulated_changed = config_.build_extended_layers &&
       accumulated_.Generation() != accumulated_generation;
-  if (voxel_before == voxel_.VoxelCount() &&
+  if (voxel_before == voxel_total_cells_ &&
       occupancy_changed == 0U && !accumulated_changed) {
     return;
   }
-  accumulated_total_cells_ = accumulated_.CellCount();
+  accumulated_total_cells_ =
+      config_.build_extended_layers ? accumulated_.CellCount() : 0U;
   ++generation_;
   snapshot_.generation = generation_;
-  RefreshSnapshotLocked();
 }
 
 void LiveMapEngine::ResetForEpoch(const Observation& observation) {
@@ -745,28 +839,69 @@ void LiveMapEngine::ResetForEpoch(const Observation& observation) {
   pose_reason_ = observation.pose_reason;
   snapshot_ = {};
   snapshot_.frame_id = observation.map_frame;
+  realtime_snapshot_generation_ = 0U;
+  complete_snapshot_generation_ = 0U;
   processed_epoch_ = observation.reset_epoch;
   processed_sequence_ = 0U;
   ++epoch_resets_;
 }
 
-void LiveMapEngine::RefreshSnapshotLocked() {
-  layers::VoxelSnapshotRequest voxel_request;
-  voxel_request.center_x_m = static_cast<float>(snapshot_.map_sensor.x);
-  voxel_request.center_y_m = static_cast<float>(snapshot_.map_sensor.y);
-  voxel_request.radius_m = config_.voxel_snapshot_radius_m;
-  voxel_request.min_z_m =
-      static_cast<float>(snapshot_.map_sensor.z) +
-      config_.voxel_snapshot_min_z_from_sensor_m;
-  voxel_request.max_z_m =
-      static_cast<float>(snapshot_.map_sensor.z) +
-      config_.voxel_snapshot_max_z_from_sensor_m;
-  voxel_request.max_points = config_.max_voxel_snapshot_points;
-  layers::VoxelSnapshotStats voxel_stats;
-  snapshot_.voxel_cloud =
-      voxel_.SnapshotCloud(voxel_request, &voxel_stats);
-  voxel_total_cells_ = voxel_stats.total_voxels;
-  voxel_snapshot_omitted_cells_ = voxel_stats.omitted_voxels;
+void LiveMapEngine::EnsureRealtimeSnapshotLocked() const {
+  if (generation_ == 0U || realtime_snapshot_generation_ == generation_) {
+    return;
+  }
+  BuildRealtimeSnapshotLocked();
+}
+
+void LiveMapEngine::BuildRealtimeSnapshotLocked(
+    const layers::RollingOccupancySnapshot* occupancy) const {
+  if (config_.build_extended_layers) {
+    layers::VoxelSnapshotRequest voxel_request;
+    voxel_request.center_x_m = static_cast<float>(snapshot_.map_sensor.x);
+    voxel_request.center_y_m = static_cast<float>(snapshot_.map_sensor.y);
+    voxel_request.radius_m = config_.voxel_snapshot_radius_m;
+    voxel_request.min_z_m =
+        static_cast<float>(snapshot_.map_sensor.z) +
+        config_.voxel_snapshot_min_z_from_sensor_m;
+    voxel_request.max_z_m =
+        static_cast<float>(snapshot_.map_sensor.z) +
+        config_.voxel_snapshot_max_z_from_sensor_m;
+    voxel_request.max_points = config_.max_voxel_snapshot_points;
+    layers::VoxelSnapshotStats voxel_stats;
+    snapshot_.voxel_cloud = voxel_.SnapshotCloud(voxel_request, &voxel_stats);
+    voxel_snapshot_omitted_cells_ = voxel_stats.omitted_voxels;
+  } else {
+    snapshot_.voxel_cloud = {};
+    voxel_snapshot_omitted_cells_ = 0U;
+  }
+  snapshot_.collision = occupancy != nullptr
+      ? BuildCollisionLayer(*occupancy, config_.max_collision_snapshot_points)
+      : BuildCollisionLayer(
+            occupancy_.OccupiedSnapshot(config_.max_collision_snapshot_points));
+  realtime_snapshot_generation_ = generation_;
+  ++realtime_snapshot_builds_;
+}
+
+void LiveMapEngine::EnsureCompleteSnapshotLocked() const {
+  if (generation_ == 0U || complete_snapshot_generation_ == generation_) {
+    return;
+  }
+  if (!config_.build_extended_layers) {
+    if (realtime_snapshot_generation_ != generation_) {
+      BuildRealtimeSnapshotLocked();
+    }
+    snapshot_.accumulated_cloud = {};
+    snapshot_.occupancy = {};
+    snapshot_.elevation = {};
+    snapshot_.esdf = {};
+    complete_snapshot_generation_ = generation_;
+    ++complete_snapshot_builds_;
+    return;
+  }
+  const auto occupancy_snapshot = occupancy_.Snapshot();
+  if (realtime_snapshot_generation_ != generation_) {
+    BuildRealtimeSnapshotLocked(&occupancy_snapshot);
+  }
   BlockGridRoi accumulated_roi;
   accumulated_roi.enabled = true;
   accumulated_roi.min_x_m =
@@ -790,7 +925,6 @@ void LiveMapEngine::RefreshSnapshotLocked() {
   accumulated_roi.max_cells =
       config_.max_accumulated_snapshot_cells;
   snapshot_.accumulated_cloud = accumulated_.Snapshot(accumulated_roi);
-  const auto occupancy_snapshot = occupancy_.Snapshot();
   snapshot_.occupancy = ProjectOccupancy(
       occupancy_snapshot,
       static_cast<float>(snapshot_.map_sensor.z),
@@ -805,6 +939,22 @@ void LiveMapEngine::RefreshSnapshotLocked() {
     }
   }
   snapshot_.esdf = layers::computeEsdf(collision_cost, 50.0F);
+  complete_snapshot_generation_ = generation_;
+  ++complete_snapshot_builds_;
+}
+
+Snapshot LiveMapEngine::RealtimeSnapshotLocked() const {
+  Snapshot realtime;
+  realtime.frame_id = snapshot_.frame_id;
+  realtime.stamp_ns = snapshot_.stamp_ns;
+  realtime.reset_epoch = snapshot_.reset_epoch;
+  realtime.sequence = snapshot_.sequence;
+  realtime.generation = snapshot_.generation;
+  realtime.map_sensor = snapshot_.map_sensor;
+  realtime.live_cloud = snapshot_.live_cloud;
+  realtime.voxel_cloud = snapshot_.voxel_cloud;
+  realtime.collision = snapshot_.collision;
+  return realtime;
 }
 
 }  // namespace lingtu::maps::mapd

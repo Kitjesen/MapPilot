@@ -43,6 +43,7 @@ struct Observation {
 };
 
 struct Config {
+  bool build_extended_layers{true};
   std::size_t max_points_per_observation{300000U};
   float min_range_m{0.25F};
   float max_range_m{30.0F};
@@ -65,6 +66,7 @@ struct Config {
   float voxel_snapshot_min_z_from_sensor_m{-3.0F};
   float voxel_snapshot_max_z_from_sensor_m{5.0F};
   std::size_t max_voxel_snapshot_points{200000U};
+  std::size_t max_collision_snapshot_points{200000U};
   layers::VoxelLayerConfig voxel = [] {
     layers::VoxelLayerConfig value;
     value.max_range_m = 0.0F;
@@ -101,9 +103,14 @@ struct SubmitResult {
 struct State {
   bool running{false};
   bool live{false};
+  bool extended_layers_enabled{true};
   std::uint64_t reset_epoch{0U};
   std::uint64_t sequence{0U};
   std::uint64_t generation{0U};
+  std::uint64_t realtime_snapshot_generation{0U};
+  std::uint64_t complete_snapshot_generation{0U};
+  std::uint64_t realtime_snapshot_builds{0U};
+  std::uint64_t complete_snapshot_builds{0U};
   std::uint64_t accepted_observations{0U};
   std::uint64_t processed_observations{0U};
   std::uint64_t replaced_observations{0U};
@@ -135,6 +142,18 @@ struct Snapshot {
   Pose map_sensor;
   OwnedPointCloud live_cloud;
   OwnedPointCloud voxel_cloud;
+  struct CollisionLayer {
+    float resolution_m{0.0F};
+    float min_x_m{0.0F};
+    float min_y_m{0.0F};
+    float min_z_m{0.0F};
+    float max_x_m{0.0F};
+    float max_y_m{0.0F};
+    float max_z_m{0.0F};
+    std::size_t total_occupied_cells{0U};
+    bool complete{false};
+    OwnedPointCloud occupied;
+  } collision;
   BlockGridSnapshot accumulated_cloud;
   layers::Grid2D occupancy;
   layers::ElevationMapResult elevation;
@@ -144,6 +163,11 @@ struct Snapshot {
 struct EngineView {
   State state;
   Snapshot snapshot;
+};
+
+enum class SnapshotDetail {
+  kRealtime,
+  kComplete,
 };
 
 class LiveMapEngine final {
@@ -160,13 +184,24 @@ class LiveMapEngine final {
 
   State GetState() const;
   Snapshot GetSnapshot() const;
-  EngineView GetView() const;
+  EngineView GetView(
+      SnapshotDetail detail = SnapshotDetail::kComplete) const;
   bool WaitUntilProcessed(
       std::uint64_t reset_epoch,
       std::uint64_t sequence,
       std::chrono::milliseconds timeout) const;
 
  private:
+  struct QueueState {
+    bool running{false};
+    bool stop_requested{false};
+    bool has_pending{false};
+    std::uint64_t accepted_observations{0U};
+    std::uint64_t replaced_observations{0U};
+    std::uint64_t stale_observations{0U};
+    std::uint64_t invalid_observations{0U};
+  };
+
   static bool ValidateObservation(
       const Observation& observation,
       const Config& config,
@@ -186,7 +221,13 @@ class LiveMapEngine final {
   void Process(Observation observation);
   void Decay(std::int64_t now_ns);
   void ResetForEpoch(const Observation& observation);
-  void RefreshSnapshotLocked();
+  QueueState QueueStateLocked() const;
+  State BuildStateLocked(std::int64_t now_ns, const QueueState& queue) const;
+  void EnsureRealtimeSnapshotLocked() const;
+  void EnsureCompleteSnapshotLocked() const;
+  void BuildRealtimeSnapshotLocked(
+      const layers::RollingOccupancySnapshot* occupancy = nullptr) const;
+  Snapshot RealtimeSnapshotLocked() const;
 
   Config config_;
   layers::VoxelLayerCore voxel_;
@@ -216,7 +257,7 @@ class LiveMapEngine final {
   std::uint64_t epoch_resets_{0U};
   std::size_t accumulated_total_cells_{0U};
   std::size_t voxel_total_cells_{0U};
-  std::size_t voxel_snapshot_omitted_cells_{0U};
+  mutable std::size_t voxel_snapshot_omitted_cells_{0U};
   std::uint64_t voxel_capacity_rejections_{0U};
   std::uint64_t accumulated_capacity_rejections_{0U};
   bool capacity_limited_{false};
@@ -225,7 +266,11 @@ class LiveMapEngine final {
   std::string pose_state_;
   std::string pose_reason_;
   std::string last_error_;
-  Snapshot snapshot_;
+  mutable Snapshot snapshot_;
+  mutable std::uint64_t realtime_snapshot_generation_{0U};
+  mutable std::uint64_t complete_snapshot_generation_{0U};
+  mutable std::uint64_t realtime_snapshot_builds_{0U};
+  mutable std::uint64_t complete_snapshot_builds_{0U};
 };
 
 }  // namespace lingtu::maps::mapd

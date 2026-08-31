@@ -39,7 +39,6 @@ struct SpatialScope {
 struct MapArtifact {
   ArtifactType type{ArtifactType::kPointCloud};
   std::string uri;
-  std::string sha256;
   std::string source_map_id;
   std::string generator;
   std::unordered_map<std::string, std::string> build_config;
@@ -56,7 +55,7 @@ struct MapHealth {
 struct MapRecord {
   std::string map_id;
   std::string lineage_id;
-  std::int64_t version{0};
+  std::int64_t content_epoch{0};
   MapState state{MapState::kDraft};
   SpatialScope scope;
   std::vector<MapArtifact> artifacts;

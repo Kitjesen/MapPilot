@@ -73,7 +73,7 @@ int main() {
     AddGoodLocalization(model, 10.0, 3);
     AddPlanning(model, 20.0, true, false);
     model.SetSourceBuildTimestamps(SourceBuildTimestamps{5.0, 6.0, 7.0, "map.pcd", "builder"});
-    model.IngestArtifactValidation(ArtifactValidation{21.0, "map.pcd", true, true, "sha256", ""});
+    model.IngestArtifactValidation(ArtifactValidation{21.0, "map.pcd", true, true, "format", ""});
     model.IngestArtifactValidation(
         ArtifactValidation{22.0, "occupancy.npz", true, false, "shape", "missing cells"});
     auto snapshot = model.Snapshot(25.0);

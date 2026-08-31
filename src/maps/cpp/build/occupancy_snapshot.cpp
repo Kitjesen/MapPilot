@@ -170,7 +170,8 @@ bool WriteStoredZip(const std::filesystem::path& path, std::vector<ZipEntry> ent
     return false;
   }
   file.write(reinterpret_cast<const char*>(out.data()), static_cast<std::streamsize>(out.size()));
-  return true;
+  file.flush();
+  return file.good();
 }
 
 bool WritePgm(const std::filesystem::path& path, const std::vector<std::int8_t>& grid, int rows, int cols) {
@@ -191,7 +192,8 @@ bool WritePgm(const std::filesystem::path& path, const std::vector<std::int8_t>&
       file.write(reinterpret_cast<const char*>(&out), sizeof(out));
     }
   }
-  return true;
+  file.flush();
+  return file.good();
 }
 
 bool WriteYaml(
@@ -211,7 +213,8 @@ bool WriteYaml(
       << "occupied_thresh: 0.65\n"
       << "free_thresh: 0.196\n"
       << "mode: trinary\n";
-  return true;
+  file.flush();
+  return file.good();
 }
 
 std::filesystem::path MakeStagingDir(const std::filesystem::path& map_dir) {
@@ -294,7 +297,10 @@ OccupancySnapshotResult BuildOccupancyProjectionSnapshot(
     return Error("grid size out of range: " + std::to_string(rows) + "x" + std::to_string(cols));
   }
 
-  std::vector<std::int8_t> grid(static_cast<size_t>(rows * cols), 0);
+  // A projected point cloud contains obstacle hits, but no sensor-origin rays
+  // from which free space can be inferred. Keep every cell unknown until there
+  // is direct occupancy evidence instead of presenting unobserved space as free.
+  std::vector<std::int8_t> grid(static_cast<size_t>(rows * cols), -1);
   for (const auto& point : loaded.points) {
     if (static_cast<double>(point.z) < z_lo || static_cast<double>(point.z) > z_hi) {
       continue;

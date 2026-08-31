@@ -20,35 +20,34 @@ struct MapStoreResult {
   bool ok{false};
   std::string message;
   std::optional<MapRecord> record;
+  std::string previous_active_map_id;
 };
 
 struct ArtifactValidationOptions {
   bool require_octomap{false};
   bool require_occupancy{false};
-  bool require_runtime_planning_artifact{false};
+  bool validate_metadata_identity{false};
   std::string expected_frame_id;
+  std::string expected_data_source;
+  std::string expected_source_profile;
 };
 
 struct ArtifactCheck {
   bool exists{false};
-  bool sha256_ok{false};
-  bool source_map_sha256_matches_map{false};
+  bool format_ok{false};
   std::filesystem::path path;
-  std::string sha256;
 };
 
 struct DeclaredArtifactIdentity {
   std::string map_id;
-  std::int64_t version{0};
+  std::int64_t content_epoch{0};
   ArtifactType type{ArtifactType::kPointCloud};
   std::filesystem::path map_dir;
   std::filesystem::path artifact_path;
-  std::string artifact_sha256;
   std::string frame_id;
 
   bool valid() const {
-    return !map_id.empty() && version > 0 && !artifact_sha256.empty() &&
-        !frame_id.empty() && !artifact_path.empty();
+    return !map_id.empty() && content_epoch > 0 && !frame_id.empty() && !artifact_path.empty();
   }
 };
 
@@ -63,15 +62,18 @@ struct ArtifactValidationResult {
   bool ok{false};
   bool map_found{false};
   bool metadata_ok{false};
-  bool version_integrity_ok{true};
+  bool metadata_identity_ok{false};
   std::string map_id;
+  std::int64_t content_epoch{0};
   std::filesystem::path map_dir;
   std::string checked_frame_id;
   std::string expected_frame_id;
-  std::string version_integrity_message;
+  std::string checked_data_source;
+  std::string checked_source_profile;
   ArtifactCheck map_pcd;
   ArtifactCheck octomap;
   ArtifactCheck occupancy_grid;
+  std::vector<std::string> metadata_blockers;
   std::vector<std::string> blockers;
 };
 
@@ -81,16 +83,19 @@ class MapStore {
 
   static bool IsValidMapId(const std::string& map_id);
   static std::string NormalizeMapId(const std::string& map_id);
+  static constexpr const char* ContentEpochFilename() { return ".content_epoch"; }
 
   const std::filesystem::path& RootDir() const { return root_dir_; }
   std::filesystem::path MapPath(const std::string& map_id) const;
   std::filesystem::path ContentPath(const std::string& map_id) const;
-  std::int64_t CurrentVersion(const std::string& map_id) const;
+  std::int64_t ContentEpoch(const std::string& map_id) const;
+  std::int64_t AllocateContentEpoch() const;
 
   std::vector<std::string> ListMapIds() const;
   std::optional<MapRecord> GetMapRecord(const std::string& map_id) const;
   std::optional<MapRecord> GetActiveMap() const;
   std::string ActiveMapId() const;
+  bool ValidateActiveState(std::string* error = nullptr) const;
 
   MapStoreResult CreateMap(const std::string& map_id);
   MapStoreResult DeleteMap(const std::string& map_id);
@@ -103,12 +108,21 @@ class MapStore {
   ArtifactValidationResult ValidateArtifacts(
       const std::string& map_id,
       const ArtifactValidationOptions& options) const;
-  MapStoreResult SetActiveMap(const std::string& map_id, bool strict);
+  ArtifactValidationResult CheckMapActivation(const std::string& map_id) const;
+  ArtifactValidationResult CheckMapActivationWhileLocked(
+      const std::string& map_id,
+      const MapLock& map_lock) const;
+  MapStoreResult SetActiveMap(
+      const std::string& map_id,
+      bool strict,
+      const std::optional<std::string>& expected_active_map_id = std::nullopt);
   MapStoreResult SetActiveMapWhileLocked(
       const std::string& map_id,
       bool strict,
-      const MapLock& map_lock);
-  void ClearActiveMap();
+      const MapLock& map_lock,
+      const std::optional<std::string>& expected_active_map_id = std::nullopt);
+  MapStoreResult ClearActiveMap(
+      const std::optional<std::string>& expected_active_map_id = std::nullopt);
 
  private:
   std::filesystem::path ActiveStatePath() const;
@@ -116,12 +130,17 @@ class MapStore {
   std::vector<MapArtifact> ScanArtifacts(
       const std::filesystem::path& map_dir,
       const std::string& map_id) const;
-  bool HasRuntimePlanningArtifact(const std::filesystem::path& map_dir) const;
+  bool HasNavigationArtifacts(const std::filesystem::path& map_dir) const;
   ArtifactValidationResult ValidateArtifactsUnlocked(
       const std::string& map_id,
       const ArtifactValidationOptions& options) const;
-  MapStoreResult SetActiveMapUnlocked(const std::string& map_id, bool strict);
+  ArtifactValidationResult CheckMapActivationUnlocked(const std::string& map_id) const;
+  MapStoreResult SetActiveMapUnlocked(
+      const std::string& map_id,
+      bool strict,
+      const std::optional<std::string>& expected_active_map_id);
   bool LockProtectsMap(const MapLock& map_lock, const std::string& map_id) const;
+  std::optional<std::string> ReadActiveMapIdStrict(std::string* error) const;
   void WriteActiveMapId(const std::string& map_id) const;
 
   MapStoreConfig config_;

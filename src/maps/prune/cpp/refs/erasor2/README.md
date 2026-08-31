@@ -16,12 +16,6 @@ Upstream source:
 third_party/research_nav/ERASOR2
 ```
 
-Local copied core snapshot for migration reading:
-
-```text
-src/maps/prune/cpp/refs/erasor2/upstream
-```
-
 Important upstream files:
 
 ```text
@@ -30,9 +24,6 @@ third_party/research_nav/ERASOR2/include/dataloader/dataloader.h
 third_party/research_nav/ERASOR2/src/dataloader/
 third_party/research_nav/ERASOR2/src/erasor2/erasor2.cpp
 ```
-
-The copied snapshot contains the same core files plus `Licence`, but it remains
-GPL-3.0-only and is not linked into the default `prune` target.
 
 License:
 
@@ -100,7 +91,7 @@ building an interactive visualization binary with network access.
 
 ```bash
 build/prune/erasor2_clean \
-  --map-dir /home/sunrise/data/nova/maps/<map> \
+  --map-dir /var/lib/lingtu/maps/<map> \
   --stage-dir /tmp/erasor2_stage/<map> \
   --overwrite
 ```

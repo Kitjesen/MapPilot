@@ -1,13 +1,16 @@
 #include "lingtu/maps/semantic_taxonomy.hpp"
 
+#include "lingtu/maps/json.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <locale>
 #include <map>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
@@ -299,9 +302,12 @@ class JsonParser final {
       }
     }
     const std::string text(input_.substr(begin, cursor_ - begin));
-    char* end = nullptr;
-    const double value = std::strtod(text.c_str(), &end);
-    if (end == nullptr || *end != '\0' || !std::isfinite(value)) {
+    std::istringstream stream(text);
+    stream.imbue(std::locale::classic());
+    double value = 0.0;
+    stream >> value;
+    if (!stream || stream.peek() != std::char_traits<char>::eof() ||
+        !std::isfinite(value)) {
       Fail("invalid finite number");
     }
     return value;
@@ -326,7 +332,126 @@ const JsonValue& Required(
   return found->second;
 }
 
+const JsonValue* JsonValueAtPath(
+    const JsonValue& root,
+    std::initializer_list<std::string_view> path) {
+  if (path.size() == 0U) {
+    return nullptr;
+  }
+  const JsonValue* current = &root;
+  for (const auto key : path) {
+    const auto* object = std::get_if<JsonValue::Object>(&current->value);
+    if (object == nullptr) {
+      return nullptr;
+    }
+    const auto found = object->find(std::string(key));
+    if (found == object->end()) {
+      return nullptr;
+    }
+    current = &found->second;
+  }
+  return current;
+}
+
 }  // namespace
+
+bool IsValidJsonObject(std::string_view input) noexcept {
+  try {
+    static_cast<void>(JsonParser(input).Parse().AsObject("JSON value"));
+    return true;
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+
+bool JsonObjectHasPath(
+    std::string_view input,
+    std::initializer_list<std::string_view> path) noexcept {
+  try {
+    const JsonValue root = JsonParser(input).Parse();
+    return std::holds_alternative<JsonValue::Object>(root.value) &&
+        JsonValueAtPath(root, path) != nullptr;
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+
+std::optional<bool> JsonObjectBoolAtPath(
+    std::string_view input,
+    std::initializer_list<std::string_view> path) noexcept {
+  try {
+    const JsonValue root = JsonParser(input).Parse();
+    if (!std::holds_alternative<JsonValue::Object>(root.value)) {
+      return std::nullopt;
+    }
+    const JsonValue* value = JsonValueAtPath(root, path);
+    if (value == nullptr) {
+      return std::nullopt;
+    }
+    const auto* boolean = std::get_if<bool>(&value->value);
+    return boolean == nullptr ? std::nullopt : std::optional<bool>(*boolean);
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+std::optional<double> JsonObjectNumberAtPath(
+    std::string_view input,
+    std::initializer_list<std::string_view> path) noexcept {
+  try {
+    const JsonValue root = JsonParser(input).Parse();
+    if (!std::holds_alternative<JsonValue::Object>(root.value)) {
+      return std::nullopt;
+    }
+    const JsonValue* value = JsonValueAtPath(root, path);
+    if (value == nullptr) {
+      return std::nullopt;
+    }
+    const auto* number = std::get_if<double>(&value->value);
+    return number == nullptr ? std::nullopt : std::optional<double>(*number);
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+std::optional<std::string> JsonObjectStringAtPath(
+    std::string_view input,
+    std::initializer_list<std::string_view> path) noexcept {
+  try {
+    const JsonValue root = JsonParser(input).Parse();
+    if (!std::holds_alternative<JsonValue::Object>(root.value)) {
+      return std::nullopt;
+    }
+    const JsonValue* value = JsonValueAtPath(root, path);
+    if (value == nullptr) {
+      return std::nullopt;
+    }
+    const auto* text = std::get_if<std::string>(&value->value);
+    return text == nullptr ? std::nullopt : std::optional<std::string>(*text);
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+std::optional<std::vector<std::string>> JsonObjectPathList(
+    std::string_view input,
+    std::string_view key) noexcept {
+  try {
+    const auto root = JsonParser(input).Parse().AsObject("JSON value");
+    const auto found = root.find(std::string(key));
+    if (found == root.end()) return std::nullopt;
+    std::vector<std::string> paths;
+    for (const auto& item : found->second.AsArray(key)) {
+      const auto& object = item.AsObject(key);
+      const auto path = object.find("path");
+      if (path == object.end()) return std::nullopt;
+      paths.push_back(path->second.AsString("path"));
+    }
+    return paths;
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
 
 std::string SemanticTaxonomy::NormalizeLabel(std::string_view label) {
   std::string normalized;

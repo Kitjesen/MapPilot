@@ -11,6 +11,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "lingtu/maps/json.hpp"
+
 #if defined(__linux__)
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -27,8 +29,8 @@ struct Request {
   Opcode opcode{Opcode::kPing};
   std::uint16_t flags{0U};
   std::uint32_t deadline_ms{0U};
-  std::string map_id;
-  std::string capability;
+  std::string request_id;
+  std::string json;
 };
 
 struct Response {
@@ -142,7 +144,7 @@ bool SendAll(int fd, const char* data, std::size_t size) {
   return true;
 }
 
-std::optional<Request> ReadRequest(int fd, std::string* error) {
+std::optional<Request> ReadRequest(int fd, std::size_t max_json_bytes, std::string* error) {
   unsigned char header[kRequestHeaderSize]{};
   if (!RecvAll(fd, header, sizeof(header))) {
     *error = "short request header";
@@ -160,31 +162,36 @@ std::optional<Request> ReadRequest(int fd, std::string* error) {
   request.opcode = static_cast<Opcode>(header[5]);
   request.flags = ReadU16(header + 6);
   request.deadline_ms = ReadU32(header + 8);
-  const std::uint16_t map_id_len = ReadU16(header + 12);
-  const std::uint16_t capability_len = ReadU16(header + 14);
+  const std::uint16_t request_id_len = ReadU16(header + 12);
+  const std::uint32_t json_len = ReadU32(header + 14);
   if (request.flags != 0U) {
     *error = "request flags must be zero";
     return std::nullopt;
   }
-  if (map_id_len > kMaxMapIdBytes || capability_len > kMaxCapabilityBytes) {
+  if (request_id_len > kMaxRequestIdBytes || json_len > max_json_bytes) {
     *error = "request fields exceed protocol bounds";
     return std::nullopt;
   }
   std::string fields;
-  fields.resize(static_cast<std::size_t>(map_id_len) + capability_len);
+  fields.resize(static_cast<std::size_t>(request_id_len) + json_len);
   if (!fields.empty() &&
       !RecvAll(fd, reinterpret_cast<unsigned char*>(fields.data()), fields.size())) {
     *error = "short request fields";
     return std::nullopt;
   }
-  request.map_id = fields.substr(0U, map_id_len);
-  request.capability = fields.substr(map_id_len, capability_len);
-  if (!IsCleanField(request.map_id) || !IsCleanField(request.capability)) {
-    *error = "request fields contain control bytes";
+  request.request_id = fields.substr(0U, request_id_len);
+  request.json = fields.substr(request_id_len, json_len);
+  if (!IsCleanField(request.request_id)) {
+    *error = "request id contains control bytes";
+    return std::nullopt;
+  }
+  if (!lingtu::maps::IsValidJsonObject(request.json)) {
+    *error = "request JSON must be an object";
     return std::nullopt;
   }
   switch (request.opcode) {
     case Opcode::kPing:
+    case Opcode::kService:
     case Opcode::kOpenArtifact:
       break;
     default:
@@ -222,6 +229,7 @@ bool SendResponse(int fd, Response response, std::size_t max_json_bytes) {
   header[5] = static_cast<std::uint8_t>(response.status);
   WriteU16(header + 6, response.flags);
   WriteU32(header + 8, static_cast<std::uint32_t>(response.json.size()));
+  WriteU32(header + 12, 0U);
 
   struct iovec iov {};
   iov.iov_base = header;
@@ -274,6 +282,10 @@ std::string DefaultQuerySocketPath() {
   const char* configured = std::getenv("LINGTU_MAPD_QUERY_SOCKET");
   if (configured != nullptr && configured[0] != '\0') {
     return configured;
+  }
+  const char* session_root = std::getenv("LINGTU_SESSION_ROOT");
+  if (session_root != nullptr && session_root[0] != '\0') {
+    return (std::filesystem::path(session_root) / "mapd.sock").string();
   }
   return kDefaultSocketPath;
 }
@@ -422,7 +434,7 @@ void QueryServer::HandleClient(int client_fd) noexcept {
     ::setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &initial_timeout, sizeof(initial_timeout));
     ::setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &initial_timeout, sizeof(initial_timeout));
     std::string error;
-    const auto request = ReadRequest(client_fd, &error);
+    const auto request = ReadRequest(client_fd, config_.max_json_bytes, &error);
     if (!request.has_value()) {
       static_cast<void>(
           SendResponse(client_fd, {Status::kError, 0U, ErrorJson("bad_request", error), -1},
@@ -444,8 +456,27 @@ void QueryServer::HandleClient(int client_fd) noexcept {
             client_fd, {Status::kOk, 0U, query_.PingJson(), -1},
             config_.max_json_bytes));
         return;
+      case Opcode::kService: {
+        const auto result = query_.ServiceJson(request->json);
+        static_cast<void>(SendResponse(
+            client_fd,
+            {result.ok ? Status::kOk : Status::kError, 0U, result.json, -1},
+            config_.max_json_bytes));
+        return;
+      }
       case Opcode::kOpenArtifact: {
-        const auto opened = query_.OpenArtifact(request->map_id, request->capability);
+        const auto map_id = lingtu::maps::JsonObjectStringAtPath(request->json, {"map_id"});
+        const auto capability =
+            lingtu::maps::JsonObjectStringAtPath(request->json, {"capability"});
+        if (!map_id.has_value() || !capability.has_value()) {
+          static_cast<void>(SendResponse(
+              client_fd,
+              {Status::kError, 0U,
+               ErrorJson("bad_request", "open_artifact requires string map_id and capability"), -1},
+              config_.max_json_bytes));
+          return;
+        }
+        const auto opened = query_.OpenArtifact(*map_id, *capability);
         if (!opened.ok) {
           static_cast<void>(SendResponse(
               client_fd,

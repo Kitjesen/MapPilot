@@ -1,15 +1,23 @@
 #include "lingtu/maps/store.hpp"
 
-#include "lingtu/maps/hash.hpp"
+#include "lingtu/maps/build/grid_artifacts.hpp"
+#include "lingtu/maps/build/pcd.hpp"
+#include "lingtu/maps/json.hpp"
 #include "lingtu/maps/lock.hpp"
-#include "lingtu/maps/version.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cctype>
 #include <fstream>
+#include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <unordered_map>
+
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+#  include <octomap/OcTree.h>
+#endif
 
 #if defined(_WIN32)
 #  define NOMINMAX
@@ -41,6 +49,61 @@ constexpr ArtifactSpec kArtifactSpecs[] = {
 };
 
 constexpr const char* kLifecycleStateFilename = "lifecycle_state.txt";
+constexpr const char* kActiveMapLockId = "__active_map__";
+constexpr const char* kContentEpochLockId = "__content_epoch__";
+constexpr const char* kDeletedMapsDirectory = ".deleted";
+constexpr const char* kContentEpochCounterFilename = ".content_epoch_counter";
+constexpr std::int64_t kMaxExactJsonInteger = 9'007'199'254'740'991LL;
+
+bool IsValidPcd(const std::filesystem::path& path) {
+  return LoadPcdXyz(path).ok;
+}
+
+bool IsValidOccupancy(const std::filesystem::path& path) {
+  try {
+    const auto occupancy = LoadOccupancyArtifact(path);
+    return occupancy.rows > 0 && occupancy.cols > 0 && !occupancy.grid.empty();
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+
+bool HasOctomapHeader(const std::filesystem::path& path) {
+  std::ifstream file(path, std::ios::binary);
+  std::string line;
+  if (!std::getline(file, line) || line.rfind("# Octomap OcTree", 0U) != 0U) {
+    return false;
+  }
+  for (int index = 0; index < 8 && std::getline(file, line); ++index) {
+    if (line == "data" || line == "data\r") {
+      return file.peek() != std::char_traits<char>::eof();
+    }
+  }
+  return false;
+}
+
+bool IsValidOctomap(const std::filesystem::path& path) {
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+  octomap::OcTree tree(0.1);
+  return tree.readBinary(path.string());
+#else
+  return HasOctomapHeader(path);
+#endif
+}
+
+bool IsValidArtifact(const MapArtifact& artifact) {
+  switch (artifact.type) {
+    case ArtifactType::kPointCloud:
+      return IsValidPcd(artifact.uri);
+    case ArtifactType::kOccupancy2D:
+      return IsValidOccupancy(artifact.uri);
+    case ArtifactType::kOctomap3D:
+      return IsValidOctomap(artifact.uri);
+    default:
+      return std::filesystem::is_regular_file(artifact.uri) &&
+          std::filesystem::file_size(artifact.uri) > 0U;
+  }
+}
 
 std::string Trim(const std::string& value) {
   const auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char ch) {
@@ -112,142 +175,52 @@ void WriteTextAtomic(const std::filesystem::path& path, const std::string& value
   AtomicReplace(temp, path);
 }
 
+std::filesystem::path UniqueDeletionStage(
+    const std::filesystem::path& root_dir,
+    const std::string& map_id) {
+  const auto trash = root_dir / kDeletedMapsDirectory;
+  std::filesystem::create_directories(trash);
+  const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+  for (std::uint32_t attempt = 0; attempt < 1024U; ++attempt) {
+    const auto candidate = trash /
+        (map_id + "-" + std::to_string(stamp) + "-" + std::to_string(attempt));
+    if (!std::filesystem::exists(candidate)) {
+      return candidate;
+    }
+  }
+  throw std::runtime_error("failed to allocate map deletion stage");
+}
+
 MapHealth UnknownHealth() {
   MapHealth health;
   return health;
 }
 
-bool IsRetiredMap(const std::filesystem::path& map_dir) {
-  std::ifstream file(map_dir / kLifecycleStateFilename, std::ios::binary);
-  if (!file) {
-    return false;
+enum class LifecycleMarker {
+  kMissing,
+  kRetired,
+  kCorrupt,
+};
+
+LifecycleMarker ReadLifecycleMarker(const std::filesystem::path& map_dir) {
+  const auto path = map_dir / kLifecycleStateFilename;
+  std::error_code status_error;
+  if (!std::filesystem::exists(path, status_error)) {
+    return status_error ? LifecycleMarker::kCorrupt : LifecycleMarker::kMissing;
   }
+  if (!std::filesystem::is_regular_file(path, status_error) || status_error) {
+    return LifecycleMarker::kCorrupt;
+  }
+  std::ifstream file(path, std::ios::binary);
   std::string value;
-  std::getline(file, value);
-  return Trim(value) == "RETIRED";
-}
-
-std::size_t JsonValueStart(const std::string& json, const std::string& key) {
-  int object_depth = 0;
-  int array_depth = 0;
-  for (std::size_t index = 0; index < json.size();) {
-    const char ch = json[index];
-    if (ch == '{') {
-      ++object_depth;
-      ++index;
-      continue;
-    }
-    if (ch == '}') {
-      --object_depth;
-      ++index;
-      continue;
-    }
-    if (ch == '[') {
-      ++array_depth;
-      ++index;
-      continue;
-    }
-    if (ch == ']') {
-      --array_depth;
-      ++index;
-      continue;
-    }
-    if (ch != '"') {
-      ++index;
-      continue;
-    }
-
-    std::string token;
-    bool escaped = false;
-    std::size_t cursor = index + 1U;
-    for (; cursor < json.size(); ++cursor) {
-      const char token_ch = json[cursor];
-      if (escaped) {
-        escaped = false;
-        token.push_back(token_ch);
-      } else if (token_ch == '\\') {
-        escaped = true;
-      } else if (token_ch == '"') {
-        break;
-      } else {
-        token.push_back(token_ch);
-      }
-    }
-    if (cursor >= json.size()) {
-      return std::string::npos;
-    }
-    ++cursor;
-    if (object_depth == 1 && array_depth == 0 && token == key) {
-      while (cursor < json.size() &&
-             std::isspace(static_cast<unsigned char>(json[cursor]))) {
-        ++cursor;
-      }
-      if (cursor < json.size() && json[cursor] == ':') {
-        ++cursor;
-        while (cursor < json.size() &&
-               std::isspace(static_cast<unsigned char>(json[cursor]))) {
-          ++cursor;
-        }
-        return cursor;
-      }
-    }
-    index = cursor;
+  if (!file || !std::getline(file, value) || Trim(value) != "RETIRED") {
+    return LifecycleMarker::kCorrupt;
   }
-  return std::string::npos;
-}
-
-std::string JsonObjectField(const std::string& json, const std::string& key) {
-  const std::size_t start = JsonValueStart(json, key);
-  if (start == std::string::npos || start >= json.size() || json[start] != '{') {
-    return {};
+  std::string trailing;
+  if (std::getline(file, trailing) || file.bad()) {
+    return LifecycleMarker::kCorrupt;
   }
-  int depth = 0;
-  bool in_string = false;
-  bool escaped = false;
-  for (std::size_t index = start; index < json.size(); ++index) {
-    const char ch = json[index];
-    if (in_string) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch == '\\') {
-        escaped = true;
-      } else if (ch == '"') {
-        in_string = false;
-      }
-      continue;
-    }
-    if (ch == '"') {
-      in_string = true;
-    } else if (ch == '{') {
-      ++depth;
-    } else if (ch == '}' && --depth == 0) {
-      return json.substr(start, index - start + 1U);
-    }
-  }
-  return {};
-}
-
-std::string JsonStringField(const std::string& json, const std::string& key) {
-  const std::size_t start = JsonValueStart(json, key);
-  if (start == std::string::npos || start >= json.size() || json[start] != '"') {
-    return {};
-  }
-  std::string value;
-  bool escaped = false;
-  for (std::size_t index = start + 1U; index < json.size(); ++index) {
-    const char ch = json[index];
-    if (escaped) {
-      return {};
-    }
-    if (ch == '\\') {
-      escaped = true;
-    } else if (ch == '"') {
-      return value;
-    } else {
-      value.push_back(ch);
-    }
-  }
-  return {};
+  return LifecycleMarker::kRetired;
 }
 
 std::string ReadSmallTextFile(const std::filesystem::path& path) {
@@ -260,9 +233,10 @@ std::string ReadSmallTextFile(const std::filesystem::path& path) {
   if (!stream) {
     return {};
   }
-  return std::string(
-      std::istreambuf_iterator<char>(stream),
-      std::istreambuf_iterator<char>());
+  const auto begin = std::istreambuf_iterator<char>(stream);
+  const auto end = std::istreambuf_iterator<char>();
+  std::string text(begin, end);
+  return stream.bad() ? std::string{} : text;
 }
 
 
@@ -301,51 +275,41 @@ const ArtifactSpec* ArtifactSpecForType(ArtifactType type) {
   return nullptr;
 }
 
+std::optional<std::int64_t> ReadPersistedContentEpoch(
+    const std::filesystem::path& map_dir) {
+  const auto path = map_dir / MapStore::ContentEpochFilename();
+  std::error_code error;
+  if (!std::filesystem::exists(path, error)) {
+    return error ? std::optional<std::int64_t>{0} : std::nullopt;
+  }
+  if (!std::filesystem::is_regular_file(path, error) || error) {
+    return 0;
+  }
+  const std::string text = Trim(ReadSmallTextFile(path));
+  std::int64_t value = 0;
+  const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+  if (text.empty() || parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() ||
+      value <= 0 || value > kMaxExactJsonInteger) {
+    return 0;
+  }
+  return value;
+}
+
+std::int64_t FileContentEpoch(const std::filesystem::path& map_dir) {
+  if (!std::filesystem::is_directory(map_dir)) {
+    return 0;
+  }
+  const auto persisted = ReadPersistedContentEpoch(map_dir);
+  return persisted.has_value() ? *persisted : 1;
+}
+
 std::filesystem::path CheapContentPath(
     const std::filesystem::path& map_dir,
-    std::int64_t* version) {
-  if (version != nullptr) {
-    *version = 0;
+    std::int64_t* content_epoch) {
+  if (content_epoch != nullptr) {
+    *content_epoch = FileContentEpoch(map_dir);
   }
-  if (!std::filesystem::is_directory(map_dir)) {
-    return {};
-  }
-  const auto version_path = map_dir / "current_version.txt";
-  if (!std::filesystem::is_regular_file(version_path)) {
-    if (version != nullptr) {
-      *version = 1;
-    }
-    return map_dir;
-  }
-  std::ifstream file(version_path, std::ios::binary);
-  std::string text;
-  if (!file) {
-    return {};
-  }
-  std::getline(file, text);
-  text = Trim(text);
-  if (text.empty() || !std::all_of(text.begin(), text.end(), [](unsigned char ch) {
-        return std::isdigit(ch) != 0;
-      })) {
-    return {};
-  }
-  std::int64_t parsed = 0;
-  try {
-    parsed = std::stoll(text);
-  } catch (...) {
-    return {};
-  }
-  if (parsed <= 0) {
-    return {};
-  }
-  const auto content = map_dir / ".versions" / text;
-  if (!std::filesystem::is_directory(content)) {
-    return {};
-  }
-  if (version != nullptr) {
-    *version = parsed;
-  }
-  return content;
+  return std::filesystem::is_directory(map_dir) ? map_dir : std::filesystem::path{};
 }
 
 
@@ -354,7 +318,9 @@ std::string MetadataFrameId(const std::filesystem::path& map_dir) {
   if (!std::filesystem::is_regular_file(metadata_path)) {
     return {};
   }
-  return JsonStringField(ReadSmallTextFile(metadata_path), "frame_id");
+  const auto metadata = ReadSmallTextFile(metadata_path);
+  const auto frame_id = JsonObjectStringAtPath(metadata, {"frame_id"});
+  return frame_id.has_value() ? *frame_id : std::string{};
 }
 
 std::string JoinBlockers(const std::vector<std::string>& blockers) {
@@ -412,34 +378,56 @@ std::filesystem::path MapStore::MapPath(const std::string& map_id) const {
 }
 
 std::filesystem::path MapStore::ContentPath(const std::string& map_id) const {
-  const auto map_dir = MapPath(map_id);
-  std::ifstream file(map_dir / "current_version.txt");
-  std::string version;
-  if (file) {
-    std::getline(file, version);
-    version = Trim(version);
-  }
-  if (!version.empty() &&
-      std::all_of(version.begin(), version.end(), [](unsigned char ch) {
-        return std::isdigit(ch) != 0;
-      })) {
-    const auto content = map_dir / ".versions" / version;
-    if (std::filesystem::is_directory(content) && VerifyMapVersion(content)) return content;
-    return map_dir / ".versions" / ".invalid-current-version";
-  }
-  return map_dir;
+  return MapPath(map_id);
 }
 
-std::int64_t MapStore::CurrentVersion(const std::string& map_id) const {
-  const auto content = ContentPath(map_id);
-  if (content == MapPath(map_id)) {
-    return std::filesystem::is_directory(content) ? 1 : 0;
+std::int64_t MapStore::ContentEpoch(const std::string& map_id) const {
+  return FileContentEpoch(MapPath(map_id));
+}
+
+std::int64_t MapStore::AllocateContentEpoch() const {
+  auto counter_lock = MapLock::TryAcquire(
+      root_dir_, kContentEpochLockId, "allocate-content-epoch");
+  if (!counter_lock.has_value()) {
+    throw std::runtime_error("map content epoch allocator is busy");
   }
-  try {
-    return std::stoll(content.filename().string());
-  } catch (...) {
-    return 0;
+
+  std::int64_t floor = 0;
+  const auto counter_path = root_dir_ / kContentEpochCounterFilename;
+  std::error_code error;
+  if (std::filesystem::exists(counter_path, error)) {
+    const std::string text = Trim(ReadSmallTextFile(counter_path));
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), floor);
+    if (text.empty() || parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() ||
+        floor <= 0 || floor >= kMaxExactJsonInteger) {
+      throw std::runtime_error("map content epoch counter is invalid");
+    }
+  } else if (error) {
+    throw std::runtime_error("map content epoch counter is unreadable");
   }
+
+  for (const auto& entry : std::filesystem::directory_iterator(root_dir_)) {
+    if (!entry.is_directory()) {
+      continue;
+    }
+    const std::string name = entry.path().filename().string();
+    if (!IsValidMapId(name)) {
+      continue;
+    }
+    floor = std::max(floor, FileContentEpoch(entry.path()));
+  }
+  const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+  floor = std::max(
+      floor,
+      std::clamp<std::int64_t>(
+          static_cast<std::int64_t>(now_ms), 1, kMaxExactJsonInteger - 1));
+  if (floor >= kMaxExactJsonInteger) {
+    throw std::runtime_error("map content epoch counter is exhausted");
+  }
+  const std::int64_t next = floor + 1;
+  WriteTextAtomic(counter_path, std::to_string(next) + "\n");
+  return next;
 }
 
 std::filesystem::path MapStore::ActiveStatePath() const {
@@ -473,20 +461,35 @@ std::optional<MapRecord> MapStore::GetMapRecord(const std::string& map_id) const
   if (!std::filesystem::is_directory(dir)) {
     return std::nullopt;
   }
+  const auto build_lock = dir / ".build_lock";
+  if (std::filesystem::exists(build_lock)) {
+    return std::nullopt;
+  }
+  const std::int64_t epoch_before = FileContentEpoch(dir);
+  if (epoch_before <= 0) {
+    return std::nullopt;
+  }
   const auto content = ContentPath(id);
+  const auto lifecycle = ReadLifecycleMarker(dir);
   MapState state = MapState::kDraft;
-  if (!std::filesystem::is_directory(content)) {
+  if (!std::filesystem::is_directory(content) || lifecycle == LifecycleMarker::kCorrupt) {
     state = MapState::kFailed;
-  } else if (IsRetiredMap(dir)) {
+  } else if (lifecycle == LifecycleMarker::kRetired) {
     state = MapState::kRetired;
   } else if (ActiveMapId() == id) {
     state = MapState::kActive;
-  } else if (HasRuntimePlanningArtifact(content)) {
+  } else if (HasNavigationArtifacts(content)) {
     state = MapState::kValidated;
   } else if (std::filesystem::is_regular_file(content / "map.pcd")) {
     state = MapState::kStale;
   }
-  return ScanRecord(id, state);
+  auto record = ScanRecord(id, state);
+  if (std::filesystem::exists(build_lock) ||
+      FileContentEpoch(dir) != epoch_before ||
+      record.content_epoch != epoch_before) {
+    return std::nullopt;
+  }
+  return record;
 }
 
 std::optional<MapRecord> MapStore::GetActiveMap() const {
@@ -498,14 +501,12 @@ std::optional<MapRecord> MapStore::GetActiveMap() const {
 }
 
 std::string MapStore::ActiveMapId() const {
-  std::ifstream file(ActiveStatePath());
-  if (!file) {
-    return {};
-  }
-  std::string value;
-  std::getline(file, value);
-  value = Trim(value);
-  return IsValidMapId(value) ? value : std::string{};
+  const auto active = ReadActiveMapIdStrict(nullptr);
+  return active.has_value() ? *active : std::string{};
+}
+
+bool MapStore::ValidateActiveState(std::string* error) const {
+  return ReadActiveMapIdStrict(error).has_value();
 }
 
 MapStoreResult MapStore::CreateMap(const std::string& map_id) {
@@ -518,8 +519,17 @@ MapStoreResult MapStore::CreateMap(const std::string& map_id) {
   if (std::filesystem::exists(dir)) {
     return {false, "map exists: " + id, std::nullopt};
   }
-  std::filesystem::create_directories(dir);
-  return {true, "created", ScanRecord(id, MapState::kDraft)};
+  try {
+    std::filesystem::create_directories(dir);
+    WriteTextAtomic(
+        dir / ContentEpochFilename(),
+        std::to_string(AllocateContentEpoch()) + "\n");
+    return {true, "created", ScanRecord(id, MapState::kDraft)};
+  } catch (const std::exception& exc) {
+    std::error_code ignored;
+    std::filesystem::remove_all(dir, ignored);
+    return {false, exc.what(), std::nullopt};
+  }
 }
 
 MapStoreResult MapStore::DeleteMap(const std::string& map_id) {
@@ -532,11 +542,53 @@ MapStoreResult MapStore::DeleteMap(const std::string& map_id) {
   if (!std::filesystem::is_directory(dir)) {
     return {false, "map not found: " + id, std::nullopt};
   }
-  std::filesystem::remove_all(dir);
-  if (ActiveMapId() == id) {
-    WriteActiveMapId("");
+  auto active_lock = MapLock::TryAcquire(root_dir_, kActiveMapLockId, "delete-map-active-state");
+  if (!active_lock.has_value()) {
+    return {false, "active map write in progress", std::nullopt};
   }
-  return {true, "deleted", std::nullopt};
+  std::string active_error;
+  const auto active = ReadActiveMapIdStrict(&active_error);
+  if (!active.has_value()) {
+    return {false, active_error, std::nullopt};
+  }
+  const bool was_active = *active == id;
+  try {
+    const auto staged = UniqueDeletionStage(root_dir_, id);
+    if (was_active) {
+      // Clearing first prevents a crash from leaving active_map.txt pointing at
+      // a directory that has already been moved or deleted.
+      WriteActiveMapId("");
+    }
+    try {
+      std::filesystem::rename(dir, staged);
+    } catch (...) {
+      if (was_active) {
+        try {
+          WriteActiveMapId(id);
+        } catch (...) {
+          return {
+              false,
+              "map deletion failed and active map restore failed: " + id,
+              std::nullopt,
+              *active};
+        }
+      }
+      throw;
+    }
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(staged, cleanup_error);
+    if (!cleanup_error) {
+      std::error_code ignored;
+      std::filesystem::remove(root_dir_ / kDeletedMapsDirectory, ignored);
+    }
+    return {
+        true,
+        cleanup_error ? "deleted; staged cleanup pending" : "deleted",
+        std::nullopt,
+        *active};
+  } catch (const std::exception& exc) {
+    return {false, exc.what(), std::nullopt, *active};
+  }
 }
 
 MapStoreResult MapStore::RenameMap(const std::string& map_id, const std::string& new_map_id) {
@@ -558,21 +610,88 @@ MapStoreResult MapStore::RenameMap(const std::string& map_id, const std::string&
   if (std::filesystem::exists(dst)) {
     return {false, "target exists: " + dst_id, std::nullopt};
   }
-  const bool was_active = ActiveMapId() == src_id;
-  std::filesystem::rename(src, dst);
-  if (was_active) {
-    WriteActiveMapId(dst_id);
+  auto active_lock = MapLock::TryAcquire(root_dir_, kActiveMapLockId, "rename-map-active-state");
+  if (!active_lock.has_value()) {
+    return {false, "active map write in progress", std::nullopt};
+  }
+  std::string active_error;
+  const auto active = ReadActiveMapIdStrict(&active_error);
+  if (!active.has_value()) {
+    return {false, active_error, std::nullopt};
+  }
+  const bool was_active = *active == src_id;
+  try {
+    if (was_active) {
+      // Keep every crash-visible intermediate state non-dangling. The active
+      // map is briefly empty while the directory identity changes.
+      WriteActiveMapId("");
+    }
+    try {
+      std::filesystem::rename(src, dst);
+    } catch (...) {
+      if (was_active) {
+        try {
+          WriteActiveMapId(src_id);
+        } catch (...) {
+          return {
+              false,
+              "map rename failed and active map restore failed: " + src_id,
+              std::nullopt,
+              *active};
+        }
+      }
+      throw;
+    }
+    if (was_active) {
+      try {
+        WriteActiveMapId(dst_id);
+      } catch (const std::exception& exc) {
+        std::error_code rollback_error;
+        std::filesystem::rename(dst, src, rollback_error);
+        if (!rollback_error) {
+          try {
+            WriteActiveMapId(src_id);
+          } catch (...) {
+            return {
+                false,
+                std::string(exc.what()) + "; active map restore failed",
+                std::nullopt,
+                *active};
+          }
+          return {
+              false,
+              std::string(exc.what()) + "; map rename rolled back",
+              std::nullopt,
+              *active};
+        }
+        return {
+            false,
+            std::string(exc.what()) + "; map rename rollback failed: " +
+                rollback_error.message(),
+            std::nullopt,
+            *active};
+      }
+    }
+  } catch (const std::exception& exc) {
+    return {false, exc.what(), std::nullopt, *active};
   }
   const auto content = ContentPath(dst_id);
-  const MapState renamed_state = IsRetiredMap(dst)
+  const auto lifecycle = ReadLifecycleMarker(dst);
+  const MapState renamed_state = lifecycle == LifecycleMarker::kCorrupt
+      ? MapState::kFailed
+      : lifecycle == LifecycleMarker::kRetired
       ? MapState::kRetired
       : was_active
       ? MapState::kActive
-      : (HasRuntimePlanningArtifact(content) ? MapState::kValidated
+      : (HasNavigationArtifacts(content) ? MapState::kValidated
                                          : (std::filesystem::is_regular_file(content / "map.pcd")
                                                 ? MapState::kStale
                                                 : MapState::kDraft));
-  return {true, "renamed", ScanRecord(dst_id, renamed_state)};
+  return {
+      true,
+      "renamed",
+      ScanRecord(dst_id, renamed_state),
+      *active};
 }
 
 MapStoreResult MapStore::RetireMap(const std::string& map_id) {
@@ -585,11 +704,44 @@ MapStoreResult MapStore::RetireMap(const std::string& map_id) {
   if (!std::filesystem::is_directory(dir)) {
     return {false, "map not found: " + id, std::nullopt};
   }
-  if (ActiveMapId() == id) {
-    WriteActiveMapId("");
+  auto active_lock = MapLock::TryAcquire(root_dir_, kActiveMapLockId, "retire-map-active-state");
+  if (!active_lock.has_value()) {
+    return {false, "active map write in progress", std::nullopt};
   }
-  WriteTextAtomic(dir / kLifecycleStateFilename, "RETIRED\n");
-  return {true, "retired", ScanRecord(id, MapState::kRetired)};
+  std::string active_error;
+  const auto active = ReadActiveMapIdStrict(&active_error);
+  if (!active.has_value()) {
+    return {false, active_error, std::nullopt};
+  }
+  const bool was_active = *active == id;
+  try {
+    if (was_active) {
+      WriteActiveMapId("");
+    }
+    try {
+      WriteTextAtomic(dir / kLifecycleStateFilename, "RETIRED\n");
+    } catch (...) {
+      if (was_active) {
+        try {
+          WriteActiveMapId(id);
+        } catch (...) {
+          return {
+              false,
+              "map retirement failed and active map restore failed: " + id,
+              std::nullopt,
+              *active};
+        }
+      }
+      throw;
+    }
+  } catch (const std::exception& exc) {
+    return {false, exc.what(), std::nullopt, *active};
+  }
+  return {
+      true,
+      "retired",
+      ScanRecord(id, MapState::kRetired),
+      *active};
 }
 
 DeclaredArtifactIdentityResult MapStore::ReadDeclaredArtifactIdentity(
@@ -602,8 +754,12 @@ DeclaredArtifactIdentityResult MapStore::ReadDeclaredArtifactIdentity(
     return {std::nullopt, "unsupported artifact type"};
   }
   const auto map_dir = root_dir_ / id;
-  std::int64_t version = 0;
-  const auto content = CheapContentPath(map_dir, &version);
+  const auto build_lock = map_dir / ".build_lock";
+  if (std::filesystem::exists(build_lock)) {
+    return {std::nullopt, "map write in progress: " + id};
+  }
+  std::int64_t content_epoch = 0;
+  const auto content = CheapContentPath(map_dir, &content_epoch);
   if (content.empty()) {
     return {std::nullopt, "map content unavailable: " + id};
   }
@@ -612,28 +768,25 @@ DeclaredArtifactIdentityResult MapStore::ReadDeclaredArtifactIdentity(
     return {std::nullopt, "metadata.json is missing"};
   }
   const std::string metadata = ReadSmallTextFile(metadata_path);
-  if (metadata.empty()) {
-    return {std::nullopt, "metadata.json is unreadable"};
+  if (metadata.empty() || !IsValidJsonObject(metadata)) {
+    return {std::nullopt, "metadata.json is unreadable or invalid"};
   }
-  const std::string frame_id = JsonStringField(metadata, "frame_id");
+  const std::string frame_id =
+      JsonObjectStringAtPath(metadata, {"frame_id"}).value_or(std::string{});
   if (frame_id.empty()) {
     return {std::nullopt, "metadata frame_id is missing"};
   }
   if (!expected_frame_id.empty() && frame_id != expected_frame_id) {
     return {std::nullopt, "frame mismatch: expected " + expected_frame_id + ", got " + frame_id};
   }
-  const std::string artifacts = JsonObjectField(metadata, "artifacts");
-  const std::string artifact = JsonObjectField(artifacts, spec->name);
-  if (artifact.empty()) {
+  const auto declared_path_value =
+      JsonObjectStringAtPath(metadata, {"artifacts", spec->name, "path"});
+  if (!declared_path_value.has_value()) {
     return {std::nullopt, std::string(spec->name) + " metadata is missing"};
   }
-  const std::string declared_path = JsonStringField(artifact, "path");
-  const std::string declared_sha = JsonStringField(artifact, "sha256");
+  const std::string& declared_path = *declared_path_value;
   if (declared_path.empty()) {
     return {std::nullopt, std::string(spec->name) + " path is missing"};
-  }
-  if (declared_sha.size() != 64U) {
-    return {std::nullopt, std::string(spec->name) + " sha256 is missing"};
   }
   const std::filesystem::path declared_relative_path(declared_path);
   if (!IsSafeDeclaredRelativePath(declared_relative_path)) {
@@ -654,14 +807,16 @@ DeclaredArtifactIdentityResult MapStore::ReadDeclaredArtifactIdentity(
   }
   DeclaredArtifactIdentity identity;
   identity.map_id = id;
-  identity.version = version;
+  identity.content_epoch = content_epoch;
   identity.type = type;
   identity.map_dir = content;
   identity.artifact_path = artifact_path;
-  identity.artifact_sha256 = declared_sha;
   identity.frame_id = frame_id;
   if (!identity.valid()) {
     return {std::nullopt, "declared artifact identity is incomplete"};
+  }
+  if (std::filesystem::exists(build_lock) || FileContentEpoch(map_dir) != content_epoch) {
+    return {std::nullopt, "map content changed while reading: " + id};
   }
   return {std::move(identity), {}};
 }
@@ -684,6 +839,44 @@ ArtifactValidationResult MapStore::ValidateArtifacts(
   return ValidateArtifactsUnlocked(id, options);
 }
 
+ArtifactValidationResult MapStore::CheckMapActivation(const std::string& map_id) const {
+  const std::string id = NormalizeMapId(map_id);
+  auto map_lock = MapLock::TryAcquire(root_dir_, id, "check-map-activation");
+  if (!map_lock.has_value()) {
+    ArtifactValidationResult result;
+    result.map_id = id;
+    result.map_found = std::filesystem::is_directory(root_dir_ / id);
+    result.map_dir = result.map_found ? ContentPath(id) : root_dir_ / id;
+    result.content_epoch = result.map_found ? ContentEpoch(id) : 0;
+    result.expected_frame_id = "map";
+    result.blockers.push_back("map write in progress: " + id);
+    return result;
+  }
+  return CheckMapActivationUnlocked(id);
+}
+
+ArtifactValidationResult MapStore::CheckMapActivationWhileLocked(
+    const std::string& map_id,
+    const MapLock& map_lock) const {
+  const std::string id = NormalizeMapId(map_id);
+  if (!LockProtectsMap(map_lock, id)) {
+    ArtifactValidationResult result;
+    result.map_id = id;
+    result.expected_frame_id = "map";
+    result.blockers.push_back("map lock does not protect map: " + id);
+    return result;
+  }
+  return CheckMapActivationUnlocked(id);
+}
+
+ArtifactValidationResult MapStore::CheckMapActivationUnlocked(const std::string& map_id) const {
+  ArtifactValidationOptions options;
+  options.require_octomap = true;
+  options.require_occupancy = false;
+  options.expected_frame_id = "map";
+  return ValidateArtifactsUnlocked(map_id, options);
+}
+
 ArtifactValidationResult MapStore::ValidateArtifactsUnlocked(
     const std::string& map_id,
     const ArtifactValidationOptions& options) const {
@@ -704,6 +897,7 @@ ArtifactValidationResult MapStore::ValidateArtifactsUnlocked(
     result.blockers.push_back("map not found: " + id);
     return result;
   }
+  result.content_epoch = record->content_epoch;
   const auto content = result.map_dir;
   result.checked_frame_id = MetadataFrameId(content);
   const auto find_artifact = [&](ArtifactType type) -> const MapArtifact* {
@@ -720,116 +914,156 @@ ArtifactValidationResult MapStore::ValidateArtifactsUnlocked(
   result.metadata_ok = std::filesystem::is_regular_file(metadata_path);
   const std::string metadata =
       result.metadata_ok ? ReadSmallTextFile(metadata_path) : std::string{};
-  const std::string metadata_artifacts = JsonObjectField(metadata, "artifacts");
-  const auto metadata_artifact = [&](const std::string& name) {
-    return JsonObjectField(metadata_artifacts, name);
-  };
-  const auto fill_check = [&](
-      const MapArtifact* artifact,
-      const std::string& name,
-      bool derived,
-      ArtifactCheck* check) {
+  result.metadata_ok = result.metadata_ok && IsValidJsonObject(metadata);
+  result.metadata_identity_ok = result.metadata_ok;
+  if (options.validate_metadata_identity) {
+    const auto add_metadata_blocker = [&](const std::string& blocker) {
+      result.metadata_identity_ok = false;
+      result.metadata_blockers.push_back(blocker);
+      result.blockers.push_back(blocker);
+    };
+    if (!result.metadata_ok) {
+      result.metadata_identity_ok = false;
+      result.metadata_blockers.push_back("metadata.json is missing or invalid");
+    } else {
+      result.checked_data_source =
+          JsonObjectStringAtPath(metadata, {"data_source"}).value_or("");
+      result.checked_source_profile =
+          JsonObjectStringAtPath(metadata, {"source_profile"}).value_or("");
+      if (result.checked_data_source.empty()) {
+        add_metadata_blocker("metadata.data_source missing");
+      }
+      if (result.checked_source_profile.empty()) {
+        add_metadata_blocker("metadata.source_profile missing");
+      }
+      if (!options.expected_data_source.empty() &&
+          result.checked_data_source != options.expected_data_source) {
+        add_metadata_blocker("metadata.data_source does not match expected data source");
+      }
+      if (!options.expected_source_profile.empty() &&
+          result.checked_source_profile != options.expected_source_profile) {
+        add_metadata_blocker("metadata.source_profile does not match expected source profile");
+      }
+      if (result.checked_frame_id != "map" && result.checked_frame_id != "odom") {
+        add_metadata_blocker("metadata.frame_id is not supported");
+      }
+      if (!options.expected_frame_id.empty() &&
+          result.checked_frame_id != options.expected_frame_id) {
+        add_metadata_blocker(
+            "frame mismatch: expected " + options.expected_frame_id + ", got " +
+            result.checked_frame_id);
+      }
+      for (const char* artifact_name : {"map_pcd", "octomap", "occupancy_grid"}) {
+        if (!JsonObjectHasPath(metadata, {"artifacts", artifact_name})) continue;
+        const auto artifact_data_source =
+            JsonObjectStringAtPath(metadata, {"artifacts", artifact_name, "data_source"});
+        const auto artifact_source_profile =
+            JsonObjectStringAtPath(metadata, {"artifacts", artifact_name, "source_profile"});
+        const auto artifact_frame =
+            JsonObjectStringAtPath(metadata, {"artifacts", artifact_name, "frame_id"});
+        const std::string prefix = std::string("metadata.artifacts.") + artifact_name;
+        if (!artifact_data_source.has_value() || artifact_data_source->empty()) {
+          add_metadata_blocker(prefix + ".data_source missing");
+        } else if (*artifact_data_source != result.checked_data_source) {
+          add_metadata_blocker(prefix + ".data_source does not match metadata.data_source");
+        }
+        if (!artifact_source_profile.has_value() || artifact_source_profile->empty()) {
+          add_metadata_blocker(prefix + ".source_profile missing");
+        } else if (*artifact_source_profile != result.checked_source_profile) {
+          add_metadata_blocker(prefix + ".source_profile does not match metadata.source_profile");
+        }
+        if (!artifact_frame.has_value() || artifact_frame->empty()) {
+          add_metadata_blocker(prefix + ".frame_id missing");
+        } else if (*artifact_frame != result.checked_frame_id) {
+          add_metadata_blocker(prefix + ".frame_id does not match metadata.frame_id");
+        }
+      }
+    }
+  }
+  const auto fill_check = [&](const MapArtifact* artifact, ArtifactCheck* check) {
     if (artifact == nullptr) {
       return;
     }
     check->path = artifact->uri;
     check->exists = std::filesystem::is_regular_file(artifact->uri);
-    check->sha256 = artifact->sha256;
-    const std::string metadata_entry = metadata_artifact(name);
-    const std::string expected_sha = JsonStringField(metadata_entry, "sha256");
-    check->sha256_ok = check->exists && expected_sha.size() == 64U &&
-        expected_sha == check->sha256;
-    if (derived) {
-      const std::string source_sha = JsonStringField(metadata_entry, "source_map_sha256");
-      check->source_map_sha256_matches_map = source_sha.size() == 64U &&
-          pointcloud != nullptr && source_sha == pointcloud->sha256;
-    }
+    check->format_ok = check->exists && IsValidArtifact(*artifact);
   };
-  fill_check(pointcloud, "map_pcd", false, &result.map_pcd);
-  fill_check(octomap, "octomap", true, &result.octomap);
-  fill_check(occupancy, "occupancy_grid", true, &result.occupancy_grid);
+  fill_check(pointcloud, &result.map_pcd);
+  fill_check(octomap, &result.octomap);
+  fill_check(occupancy, &result.occupancy_grid);
 
   if (record->state == MapState::kRetired) result.blockers.push_back("map_is_retired");
   if (record->state == MapState::kFailed) result.blockers.push_back("map_record_failed");
   if (pointcloud == nullptr) result.blockers.push_back("map.pcd is missing");
-  if (!result.metadata_ok) result.blockers.push_back("metadata.json is missing");
-  if (options.require_runtime_planning_artifact && !HasRuntimePlanningArtifact(content)) {
-    result.blockers.push_back("runtime planning artifact is missing");
+  if (pointcloud != nullptr && !result.map_pcd.format_ok) {
+    result.blockers.push_back("map.pcd is empty or unreadable");
   }
+  if (!result.metadata_ok) result.blockers.push_back("metadata.json is missing or invalid");
   if (options.require_octomap && octomap == nullptr) {
     result.blockers.push_back("octomap artifact is missing");
+  }
+  if (options.require_octomap && octomap != nullptr && !result.octomap.format_ok) {
+    result.blockers.push_back("octomap artifact is empty or unreadable");
   }
   if (options.require_occupancy && occupancy == nullptr) {
     result.blockers.push_back("occupancy artifact is missing");
   }
-  if (pointcloud != nullptr && !result.map_pcd.sha256_ok) {
-    result.blockers.push_back("map.pcd sha256 does not match metadata");
+  if (options.require_occupancy && occupancy != nullptr && !result.occupancy_grid.format_ok) {
+    result.blockers.push_back("occupancy artifact is empty or unreadable");
   }
-  if (octomap != nullptr && !result.octomap.sha256_ok) {
-    result.blockers.push_back("octomap sha256 does not match metadata");
-  }
-  if (octomap != nullptr && !result.octomap.source_map_sha256_matches_map) {
-    result.blockers.push_back(
-        "octomap source_map_sha256 does not match current map_pcd sha256");
-  }
-  if (occupancy != nullptr && !result.occupancy_grid.sha256_ok) {
-    result.blockers.push_back("occupancy_grid sha256 does not match metadata");
-  }
-  if (occupancy != nullptr && !result.occupancy_grid.source_map_sha256_matches_map) {
-    result.blockers.push_back(
-        "occupancy_grid source_map_sha256 does not match current map_pcd sha256");
-  }
-  if (!options.expected_frame_id.empty() &&
+  if (!options.validate_metadata_identity && !options.expected_frame_id.empty() &&
       result.checked_frame_id != options.expected_frame_id) {
     result.blockers.push_back(
         "frame mismatch: expected " + options.expected_frame_id + ", got " +
         result.checked_frame_id);
   }
-  if (std::filesystem::is_regular_file(dir / "current_version.txt")) {
-    result.version_integrity_ok = VerifyMapVersion(content, &result.version_integrity_message);
-    if (!result.version_integrity_ok) {
-      result.blockers.push_back(
-          "version integrity failed: " + result.version_integrity_message);
-    }
-  }
   result.ok = result.blockers.empty();
   return result;
 }
 
-MapStoreResult MapStore::SetActiveMap(const std::string& map_id, bool strict) {
+MapStoreResult MapStore::SetActiveMap(
+    const std::string& map_id,
+    bool strict,
+    const std::optional<std::string>& expected_active_map_id) {
   const std::string id = NormalizeMapId(map_id);
   auto map_lock = MapLock::TryAcquire(root_dir_, id, "set-active-map");
   if (!map_lock.has_value()) {
     return {false, "map write in progress: " + id, std::nullopt};
   }
-  return SetActiveMapUnlocked(id, strict);
+  return SetActiveMapUnlocked(id, strict, expected_active_map_id);
 }
 
 MapStoreResult MapStore::SetActiveMapWhileLocked(
     const std::string& map_id,
     bool strict,
-    const MapLock& map_lock) {
+    const MapLock& map_lock,
+    const std::optional<std::string>& expected_active_map_id) {
   const std::string id = NormalizeMapId(map_id);
   if (!LockProtectsMap(map_lock, id)) {
     return {false, "map lock does not protect map: " + id, std::nullopt};
   }
-  return SetActiveMapUnlocked(id, strict);
+  return SetActiveMapUnlocked(id, strict, expected_active_map_id);
 }
 
-MapStoreResult MapStore::SetActiveMapUnlocked(const std::string& map_id, bool strict) {
+MapStoreResult MapStore::SetActiveMapUnlocked(
+    const std::string& map_id,
+    bool strict,
+    const std::optional<std::string>& expected_active_map_id) {
   const std::string id = NormalizeMapId(map_id);
   const auto dir = root_dir_ / id;
   if (!std::filesystem::is_directory(dir)) {
     return {false, "map not found: " + id, std::nullopt};
   }
-  if (IsRetiredMap(dir)) {
+  const auto lifecycle = ReadLifecycleMarker(dir);
+  if (lifecycle == LifecycleMarker::kCorrupt) {
+    return {false, "map lifecycle state is corrupt: " + id,
+            ScanRecord(id, MapState::kFailed)};
+  }
+  if (lifecycle == LifecycleMarker::kRetired) {
     return {false, "map is retired: " + id, ScanRecord(id, MapState::kRetired)};
   }
   if (strict) {
-    ArtifactValidationOptions options;
-    options.require_runtime_planning_artifact = true;
-    options.expected_frame_id = "map";
-    const auto gate = ValidateArtifactsUnlocked(id, options);
+    const auto gate = CheckMapActivationUnlocked(id);
     if (!gate.ok) {
       return {
           false,
@@ -837,8 +1071,33 @@ MapStoreResult MapStore::SetActiveMapUnlocked(const std::string& map_id, bool st
           ScanRecord(id, MapState::kFailed)};
     }
   }
-  WriteActiveMapId(id);
-  return {true, "active map changed", ScanRecord(id, MapState::kActive)};
+  auto active_lock = MapLock::TryAcquire(root_dir_, kActiveMapLockId, "set-active-map-state");
+  if (!active_lock.has_value()) {
+    return {false, "active map write in progress", std::nullopt};
+  }
+  std::string active_error;
+  const auto active = ReadActiveMapIdStrict(&active_error);
+  if (!active.has_value()) {
+    return {false, active_error, std::nullopt};
+  }
+  const std::string previous_active = *active;
+  if (expected_active_map_id.has_value() && previous_active != *expected_active_map_id) {
+    return {
+        false,
+        "active map changed: expected " + *expected_active_map_id + ", got " + previous_active,
+        std::nullopt,
+        previous_active};
+  }
+  try {
+    WriteActiveMapId(id);
+  } catch (const std::exception& exc) {
+    return {false, exc.what(), std::nullopt, previous_active};
+  }
+  return {
+      true,
+      "active map changed",
+      ScanRecord(id, MapState::kActive),
+      previous_active};
 }
 
 bool MapStore::LockProtectsMap(const MapLock& map_lock, const std::string& map_id) const {
@@ -852,8 +1111,35 @@ bool MapStore::LockProtectsMap(const MapLock& map_lock, const std::string& map_i
   return !error && actual == expected && std::filesystem::is_directory(actual);
 }
 
-void MapStore::ClearActiveMap() {
-  WriteActiveMapId("");
+MapStoreResult MapStore::ClearActiveMap(
+    const std::optional<std::string>& expected_active_map_id) {
+  auto active_lock = MapLock::TryAcquire(root_dir_, kActiveMapLockId, "clear-active-map-state");
+  if (!active_lock.has_value()) {
+    return {false, "active map write in progress", std::nullopt};
+  }
+  std::string active_error;
+  const auto active = ReadActiveMapIdStrict(&active_error);
+  if (!active.has_value()) {
+    return {false, active_error, std::nullopt};
+  }
+  const std::string previous_active = *active;
+  if (expected_active_map_id.has_value() && previous_active != *expected_active_map_id) {
+    return {
+        false,
+        "active map changed: expected " + *expected_active_map_id + ", got " + previous_active,
+        std::nullopt,
+        previous_active};
+  }
+  try {
+    WriteActiveMapId("");
+  } catch (const std::exception& exc) {
+    return {false, exc.what(), std::nullopt, previous_active};
+  }
+  return {
+      true,
+      "active map cleared",
+      std::nullopt,
+      previous_active};
 }
 
 MapRecord MapStore::ScanRecord(const std::string& map_id, MapState state) const {
@@ -862,13 +1148,12 @@ MapRecord MapStore::ScanRecord(const std::string& map_id, MapState state) const 
   MapRecord record;
   record.map_id = map_id;
   record.lineage_id = map_id;
-  record.version = CurrentVersion(map_id);
+  record.content_epoch = ContentEpoch(map_id);
   record.state = state;
   record.scope.frame_id = MetadataFrameId(content);
   record.artifacts = artifacts;
   record.health = UnknownHealth();
   record.metadata["content_dir"] = content.string();
-  record.metadata["version_id"] = map_id + ":v" + std::to_string(record.version);
   return record;
 }
 
@@ -884,11 +1169,6 @@ std::vector<MapArtifact> MapStore::ScanArtifacts(
     MapArtifact artifact;
     artifact.type = spec.type;
     artifact.uri = path.string();
-    try {
-      artifact.sha256 = Sha256File(path);
-    } catch (const std::exception&) {
-      artifact.sha256.clear();
-    }
     artifact.source_map_id = map_id;
     artifact.generator = "lingtu_maps_store";
     artifact.build_config["name"] = spec.name;
@@ -919,7 +1199,7 @@ std::vector<MapArtifact> MapStore::ScanArtifacts(
   return out;
 }
 
-bool MapStore::HasRuntimePlanningArtifact(const std::filesystem::path& map_dir) const {
+bool MapStore::HasNavigationArtifacts(const std::filesystem::path& map_dir) const {
   return std::filesystem::is_regular_file(map_dir / "octomap.ot") ||
       std::filesystem::is_regular_file(map_dir / "octomap.bt") ||
       std::filesystem::is_regular_file(map_dir / "occupancy.npz") ||
@@ -929,6 +1209,50 @@ bool MapStore::HasRuntimePlanningArtifact(const std::filesystem::path& map_dir) 
 
 void MapStore::WriteActiveMapId(const std::string& map_id) const {
   WriteTextAtomic(ActiveStatePath(), map_id + "\n");
+}
+
+std::optional<std::string> MapStore::ReadActiveMapIdStrict(std::string* error) const {
+  const auto path = ActiveStatePath();
+  if (!std::filesystem::exists(path)) {
+    return std::string{};
+  }
+  std::ifstream file(path, std::ios::binary);
+  if (!file) {
+    if (error != nullptr) {
+      *error = "active map state is unreadable";
+    }
+    return std::nullopt;
+  }
+  std::string value;
+  if (!std::getline(file, value)) {
+    if (error != nullptr) {
+      *error = "active map state is corrupt";
+    }
+    return std::nullopt;
+  }
+  value = Trim(value);
+  if (!value.empty() && !IsValidMapId(value)) {
+    if (error != nullptr) {
+      *error = "active map state is corrupt";
+    }
+    return std::nullopt;
+  }
+  std::string trailing;
+  while (std::getline(file, trailing)) {
+    if (!Trim(trailing).empty()) {
+      if (error != nullptr) {
+        *error = "active map state is corrupt";
+      }
+      return std::nullopt;
+    }
+  }
+  if (file.bad()) {
+    if (error != nullptr) {
+      *error = "active map state is unreadable";
+    }
+    return std::nullopt;
+  }
+  return value;
 }
 
 }  // namespace lingtu::maps

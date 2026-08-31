@@ -75,6 +75,21 @@ struct RollingOccupancySnapshot {
   void Validate() const;
 };
 
+struct RollingOccupiedSnapshot {
+  std::string frame_id{"map"};
+  std::int64_t stamp_ns{0};
+  std::uint64_t generation{0U};
+  float resolution_m{0.25F};
+  std::int32_t size_x{0};
+  std::int32_t size_y{0};
+  std::int32_t size_z{0};
+  float origin_x_m{0.0F};
+  float origin_y_m{0.0F};
+  float origin_z_m{0.0F};
+  std::size_t total_cells{0U};
+  std::vector<float> centers_xyz;
+};
+
 struct RollingOccupancyUpdateStats {
   std::size_t input_points{0U};
   std::size_t accepted_points{0U};
@@ -116,6 +131,7 @@ class RollingOccupancyGrid final {
   bool Contains(float x_m, float y_m, float z_m) const;
 
   RollingOccupancySnapshot Snapshot() const;
+  RollingOccupiedSnapshot OccupiedSnapshot(std::size_t max_points) const;
   RollingOccupancyCellChunk ObservedCells() const;
   RollingOccupancyCellChunk LastRolledOut() const;
   RollingOccupancyUpdateStats LastStats() const;
@@ -155,6 +171,8 @@ class RollingOccupancyGrid final {
   std::size_t PhysicalIndex(const CellCoord& logical) const;
   OccupancyState StateFor(const Cell& cell) const;
   CellCoord PhysicalToLogical(std::size_t physical_index) const;
+  void RefreshMembership(std::size_t physical_index);
+  void ClearCell(std::size_t physical_index);
   void InitializeOrigin(float center_x_m, float center_y_m, float center_z_m);
   RollResult RollToCenterLocked(
       float center_x_m,
@@ -191,9 +209,13 @@ class RollingOccupancyGrid final {
   std::size_t DecayLocked(std::int64_t now_ns);
 
   RollingOccupancyConfig config_;
+  float free_log_odds_threshold_{0.0F};
+  float occupied_log_odds_threshold_{0.0F};
   std::vector<Cell> cells_;
   std::vector<std::uint32_t> free_marks_;
   std::vector<std::uint32_t> hit_marks_;
+  std::vector<std::uint64_t> observed_bits_;
+  std::vector<std::uint64_t> occupied_bits_;
   std::uint32_t mark_epoch_{0U};
   std::int32_t ring_x_{0};
   std::int32_t ring_y_{0};

@@ -15,9 +15,9 @@
 #include <vector>
 
 #include "dds/dds.h"
-#include "lingtu_slam.h"
-#include "message/cpp/dds_qos_profiles.hpp"
-#include "message/cpp/dds_topics.hpp"
+#include "messages.h"
+#include "message/cpp/qos.hpp"
+#include "message/cpp/topics.hpp"
 
 #if defined(_WIN32)
 #include <process.h>
@@ -109,13 +109,10 @@ bool DecodeMapIdentity(const lingtu_dds_MapIdentity &message, const DdsLimits &l
     return false;
   }
   identity->present = message.present;
+  identity->content_epoch = message.content_epoch;
   if (!CopyBoundedString(message.map_id, limits.max_string_bytes, field, &identity->map_id,
                          error) ||
-      !CopyBoundedString(message.version_id, limits.max_string_bytes, field, &identity->version_id,
-                         error) ||
       !CopyBoundedString(message.frame_id, limits.max_string_bytes, field, &identity->frame_id,
-                         error) ||
-      !CopyBoundedString(message.map_dir, limits.max_string_bytes, field, &identity->map_dir,
                          error)) {
     return false;
   }
@@ -125,9 +122,7 @@ bool DecodeMapIdentity(const lingtu_dds_MapIdentity &message, const DdsLimits &l
     const auto &source = message.artifacts._buffer[index];
     ArtifactIdentity artifact;
     if (!CopyBoundedString(source.type, limits.max_string_bytes, field, &artifact.type, error) ||
-        !CopyBoundedString(source.uri, limits.max_string_bytes, field, &artifact.uri, error) ||
-        !CopyBoundedString(source.sha256, limits.max_string_bytes, field, &artifact.sha256,
-                           error)) {
+        !CopyBoundedString(source.uri, limits.max_string_bytes, field, &artifact.uri, error)) {
       return false;
     }
     identity->artifacts.push_back(std::move(artifact));
@@ -139,16 +134,14 @@ void FillMapIdentity(const MapIdentity &identity, lingtu_dds_MapIdentity *messag
                      std::vector<lingtu_dds_MapArtifactIdentity> *artifacts) {
   message->present = identity.present;
   message->map_id = const_cast<char *>(identity.map_id.c_str());
-  message->version_id = const_cast<char *>(identity.version_id.c_str());
+  message->content_epoch = identity.content_epoch;
   message->frame_id = const_cast<char *>(identity.frame_id.c_str());
-  message->map_dir = const_cast<char *>(identity.map_dir.c_str());
   artifacts->resize(identity.artifacts.size());
   for (std::size_t index = 0U; index < identity.artifacts.size(); ++index) {
     const auto &source = identity.artifacts[index];
     auto &destination = (*artifacts)[index];
     destination.type = const_cast<char *>(source.type.c_str());
     destination.uri = const_cast<char *>(source.uri.c_str());
-    destination.sha256 = const_cast<char *>(source.sha256.c_str());
   }
   message->artifacts._maximum = static_cast<std::uint32_t>(artifacts->size());
   message->artifacts._length = static_cast<std::uint32_t>(artifacts->size());
@@ -470,6 +463,32 @@ struct CloudMessage {
   }
 };
 
+struct CollisionMessage {
+  lingtu_dds_MapCollisionLayer message{};
+  CloudMessage occupied;
+  std::string frame;
+
+  CollisionMessage(const Snapshot &snapshot, bool live)
+      : occupied("occupied", snapshot.collision.occupied, snapshot.reset_epoch, snapshot.sequence,
+                 snapshot.generation, live, false),
+        frame(snapshot.frame_id.empty() ? "map" : snapshot.frame_id) {
+    FillHeader(message.header, snapshot.stamp_ns, frame.c_str());
+    message.reset_epoch = snapshot.reset_epoch;
+    message.observation_sequence = snapshot.sequence;
+    message.generation = snapshot.generation;
+    message.live = live;
+    message.resolution = snapshot.collision.resolution_m;
+    message.aabb_min.x = snapshot.collision.min_x_m;
+    message.aabb_min.y = snapshot.collision.min_y_m;
+    message.aabb_min.z = snapshot.collision.min_z_m;
+    message.aabb_max.x = snapshot.collision.max_x_m;
+    message.aabb_max.y = snapshot.collision.max_y_m;
+    message.aabb_max.z = snapshot.collision.max_z_m;
+    message.complete = snapshot.collision.complete;
+    message.occupied = occupied.message.cloud;
+  }
+};
+
 struct GridMessage {
   lingtu_dds_MapGrid message{};
   std::string layer;
@@ -514,10 +533,11 @@ bool AddPointCloudBytes(const OwnedPointCloud &cloud, std::size_t stride, std::s
   return AddBytes(cloud.point_count * bytes_per_point, total);
 }
 
-std::optional<std::size_t> EstimateSceneBytes(const Snapshot &snapshot) {
+std::optional<std::size_t> EstimateSceneBytes(const State &state, const Snapshot &snapshot) {
   std::size_t total = 0U;
-  if (!AddPointCloudBytes(snapshot.live_cloud, 3U, &total) ||
-      !AddPointCloudBytes(snapshot.voxel_cloud, 3U, &total) ||
+  if ((state.extended_layers_enabled &&
+       (!AddPointCloudBytes(snapshot.live_cloud, 3U, &total) ||
+        !AddPointCloudBytes(snapshot.voxel_cloud, 3U, &total))) ||
       snapshot.accumulated_cloud.Size() >
           std::numeric_limits<std::size_t>::max() / (4U * sizeof(float)) ||
       !AddBytes(snapshot.accumulated_cloud.Size() * 4U * sizeof(float), &total)) {
@@ -558,12 +578,16 @@ struct Dds::Impl {
                                 &lingtu_dds_MapObservation_desc);
     activation_request_reader = Reader(lingtu::message::kMapsActivationRequest.dds_topic.data(),
                                        &lingtu_dds_MapActivationRequest_desc);
+    snapshot_ack_reader = Reader(lingtu::message::kSlamMapSnapshotAck.dds_topic.data(),
+                                 &lingtu_dds_SlamMapSnapshotAck_desc);
     state_writer =
         Writer(lingtu::message::kMapsState.dds_topic.data(), &lingtu_dds_MapRuntimeState_desc);
     live_cloud_writer =
         Writer(lingtu::message::kMapsLiveCloud.dds_topic.data(), &lingtu_dds_MapCloudLayer_desc);
     voxel_cloud_writer =
         Writer(lingtu::message::kMapsVoxelCloud.dds_topic.data(), &lingtu_dds_MapCloudLayer_desc);
+    local_collision_writer = Writer(lingtu::message::kMapsLocalCollision.dds_topic.data(),
+                                    &lingtu_dds_MapCollisionLayer_desc);
     accumulated_cloud_writer = Writer(lingtu::message::kMapsAccumulatedCloud.dds_topic.data(),
                                       &lingtu_dds_MapCloudLayer_desc);
     occupancy_writer =
@@ -574,6 +598,8 @@ struct Dds::Impl {
     scene_writer = Writer(lingtu::message::kMapsScene.dds_topic.data(), &lingtu_dds_MapScene_desc);
     activation_ack_writer = Writer(lingtu::message::kMapsActivationAck.dds_topic.data(),
                                    &lingtu_dds_MapActivationAck_desc);
+    snapshot_request_writer = Writer(lingtu::message::kSlamMapSnapshotRequest.dds_topic.data(),
+                                     &lingtu_dds_SlamMapSnapshotRequest_desc);
   }
 
   ~Impl() {
@@ -647,15 +673,18 @@ struct Dds::Impl {
   dds_entity_t publisher{0};
   dds_entity_t observation_reader{0};
   dds_entity_t activation_request_reader{0};
+  dds_entity_t snapshot_ack_reader{0};
   dds_entity_t state_writer{0};
   dds_entity_t live_cloud_writer{0};
   dds_entity_t voxel_cloud_writer{0};
+  dds_entity_t local_collision_writer{0};
   dds_entity_t accumulated_cloud_writer{0};
   dds_entity_t occupancy_writer{0};
   dds_entity_t elevation_writer{0};
   dds_entity_t esdf_writer{0};
   dds_entity_t scene_writer{0};
   dds_entity_t activation_ack_writer{0};
+  dds_entity_t snapshot_request_writer{0};
 };
 
 Dds::Dds(int domain_id, std::size_t max_points_per_observation)
@@ -817,14 +846,93 @@ bool Dds::PublishState(const State &state, const PublicationProgress &publicatio
 }
 
 bool Dds::PublishRealtimeClouds(const State &state, const Snapshot &snapshot) {
-  CloudMessage live("live", snapshot.live_cloud, snapshot.reset_epoch, snapshot.sequence,
+  OwnedPointCloud empty_cloud;
+  empty_cloud.frame_id = snapshot.frame_id;
+  empty_cloud.stamp_ns = snapshot.stamp_ns;
+  const OwnedPointCloud &live_cloud =
+      state.extended_layers_enabled ? snapshot.live_cloud : empty_cloud;
+  const OwnedPointCloud &voxel_cloud =
+      state.extended_layers_enabled ? snapshot.voxel_cloud : empty_cloud;
+  CloudMessage live("live", live_cloud, snapshot.reset_epoch, snapshot.sequence,
                     snapshot.generation, state.live, false);
-  CloudMessage voxel("voxel", snapshot.voxel_cloud, snapshot.reset_epoch, snapshot.sequence,
+  CloudMessage voxel("voxel", voxel_cloud, snapshot.reset_epoch, snapshot.sequence,
                      snapshot.generation, state.live, false);
+  CollisionMessage collision(snapshot, state.live);
   bool success = true;
   success = impl_->Write(impl_->live_cloud_writer, &live.message, "live_cloud") && success;
   success = impl_->Write(impl_->voxel_cloud_writer, &voxel.message, "voxel_cloud") && success;
+  if (collision.occupied.bytes.size() > impl_->limits.max_cloud_bytes) {
+    success = impl_->RejectSerialization("local_collision",
+                                         "local collision payload exceeds mapd cloud byte limit",
+                                         false) &&
+              success;
+  } else {
+    success = impl_->Write(impl_->local_collision_writer, &collision.message, "local_collision") &&
+              success;
+  }
   return success;
+}
+
+std::vector<SlamSnapshotAck> Dds::TakeAcks() {
+  void *samples[kTakeBatch]{};
+  dds_sample_info_t infos[kTakeBatch]{};
+  for (void *&sample : samples) {
+    sample = dds_alloc(sizeof(lingtu_dds_SlamMapSnapshotAck));
+    std::memset(sample, 0, sizeof(lingtu_dds_SlamMapSnapshotAck));
+  }
+  const dds_return_t count =
+      dds_take(impl_->snapshot_ack_reader, samples, infos, kTakeBatch, kTakeBatch);
+  std::vector<SlamSnapshotAck> acks;
+  if (count < 0) {
+    impl_->input_state.last_error = dds_strretcode(-count);
+  } else {
+    for (dds_return_t index = 0; index < count; ++index) {
+      if (!infos[index].valid_data) {
+        continue;
+      }
+      ++impl_->input_state.received_samples;
+      const auto *sample = static_cast<lingtu_dds_SlamMapSnapshotAck *>(samples[index]);
+      SlamSnapshotAck ack;
+      std::string output_path;
+      std::string error;
+      if (!CopyBoundedString(sample->request_id, impl_->limits.max_string_bytes,
+                             "snapshot ack request_id", &ack.request_id, &error) ||
+          !CopyBoundedString(sample->map_id, impl_->limits.max_string_bytes, "snapshot ack map_id",
+                             &ack.map_id, &error) ||
+          !CopyBoundedString(sample->message, impl_->limits.max_string_bytes,
+                             "snapshot ack message", &ack.message, &error) ||
+          !CopyBoundedString(sample->output_path, impl_->limits.max_string_bytes,
+                             "snapshot ack output_path", &output_path, &error) ||
+          !CopyBoundedString(sample->runtime_instance_id, impl_->limits.max_string_bytes,
+                             "snapshot ack runtime_instance_id", &ack.runtime_instance_id,
+                             &error) ||
+          !CopyBoundedString(sample->product_session_id, impl_->limits.max_string_bytes,
+                             "snapshot ack product_session_id", &ack.product_session_id, &error) ||
+          !CopyBoundedString(sample->frame_id, impl_->limits.max_string_bytes,
+                             "snapshot ack frame_id", &ack.frame_id, &error) ||
+          !CopyBoundedString(sample->state, impl_->limits.max_string_bytes, "snapshot ack state",
+                             &ack.state, &error) ||
+          !CopyBoundedString(sample->health_message, impl_->limits.max_string_bytes,
+                             "snapshot ack health_message", &ack.health_message, &error)) {
+        ++impl_->input_state.rejected_samples;
+        impl_->input_state.last_error = std::move(error);
+        continue;
+      }
+      ack.output_path = std::move(output_path);
+      ack.success = sample->success;
+      ack.reset_epoch = sample->reset_epoch;
+      ack.observation_sequence = sample->observation_sequence;
+      ack.captured_at_ns = sample->captured_at_ns;
+      ack.point_count = sample->point_count;
+      ack.healthy = sample->healthy;
+      ++impl_->input_state.decoded_samples;
+      acks.push_back(std::move(ack));
+    }
+  }
+  for (void *sample : samples) {
+    dds_sample_free(sample, &lingtu_dds_SlamMapSnapshotAck_desc, DDS_FREE_ALL);
+  }
+  return acks;
 }
 
 bool Dds::PublishMapLayers(const State &state, const Snapshot &snapshot) {
@@ -845,7 +953,7 @@ bool Dds::PublishMapLayers(const State &state, const Snapshot &snapshot) {
 }
 
 bool Dds::PublishScene(const State &state, const Snapshot &snapshot) {
-  const auto estimated_bytes = EstimateSceneBytes(snapshot);
+  const auto estimated_bytes = EstimateSceneBytes(state, snapshot);
   if (!estimated_bytes.has_value()) {
     return impl_->RejectSerialization("scene", "scene serialized size overflows size_t", true);
   }
@@ -853,9 +961,16 @@ bool Dds::PublishScene(const State &state, const Snapshot &snapshot) {
     return impl_->RejectSerialization("scene", "scene serialized payload exceeds mapd limit", true);
   }
   const OwnedPointCloud accumulated = AccumulatedAsCloud(snapshot.accumulated_cloud);
-  CloudMessage live("live", snapshot.live_cloud, snapshot.reset_epoch, snapshot.sequence,
+  OwnedPointCloud empty_cloud;
+  empty_cloud.frame_id = snapshot.frame_id;
+  empty_cloud.stamp_ns = snapshot.stamp_ns;
+  const OwnedPointCloud &live_cloud =
+      state.extended_layers_enabled ? snapshot.live_cloud : empty_cloud;
+  const OwnedPointCloud &voxel_cloud =
+      state.extended_layers_enabled ? snapshot.voxel_cloud : empty_cloud;
+  CloudMessage live("live", live_cloud, snapshot.reset_epoch, snapshot.sequence,
                     snapshot.generation, state.live, false);
-  CloudMessage voxel("voxel", snapshot.voxel_cloud, snapshot.reset_epoch, snapshot.sequence,
+  CloudMessage voxel("voxel", voxel_cloud, snapshot.reset_epoch, snapshot.sequence,
                      snapshot.generation, state.live, false);
   CloudMessage accumulated_message("accumulated", accumulated, snapshot.reset_epoch,
                                    snapshot.sequence, snapshot.generation, state.live, true);
@@ -902,6 +1017,17 @@ bool Dds::PublishActivationAck(const ActivationResult &ack) {
   FillMapIdentity(ack.active, &message.active, &active_artifacts);
   message.producer_boot_id = const_cast<char *>(ack.producer_boot_id.c_str());
   return impl_->Write(impl_->activation_ack_writer, &message, "activation_ack");
+}
+
+bool Dds::Publish(const SlamSnapshotRequest &request) {
+  lingtu_dds_SlamMapSnapshotRequest message{};
+  const std::string output_path = request.output_path.string();
+  message.request_id = const_cast<char *>(request.request_id.c_str());
+  message.map_id = const_cast<char *>(request.map_id.c_str());
+  message.product_session_id = const_cast<char *>(request.product_session_id.c_str());
+  message.output_path = const_cast<char *>(output_path.c_str());
+  message.save_patches = request.save_patches;
+  return impl_->Write(impl_->snapshot_request_writer, &message, "slam_snapshot_request");
 }
 
 const std::string &Dds::ProducerBootId() const {

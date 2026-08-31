@@ -64,6 +64,9 @@ void TestRayProducesFreeAndOccupiedEvidence() {
   assert(grid.StateAt(3.2F, 0.1F, 0.1F) == OccupancyState::kOccupied);
   assert(grid.StateAt(0.1F, 0.1F, 0.1F) == OccupancyState::kFree);
   assert(grid.OccupancyProbability(3.2F, 0.1F, 0.1F) > 0.8F);
+  const auto occupied = grid.OccupiedSnapshot(8U);
+  assert(occupied.total_cells == 1U);
+  assert(occupied.centers_xyz.size() == 3U);
 }
 
 void TestDenseFrameDoesNotOverweightDuplicateVoxels() {
@@ -110,6 +113,9 @@ void TestWindowRollEmitsOutgoingAndPreservesOverlap() {
   assert(outgoing_hit);
   assert(grid.StateAt(-3.2F, 0.1F, 0.1F) == OccupancyState::kUnknown);
   assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kOccupied);
+  const auto occupied = grid.OccupiedSnapshot(8U);
+  assert(occupied.total_cells == 1U);
+  assert(occupied.centers_xyz.size() == 3U);
 
   const auto snapshot = grid.Snapshot();
   assert(std::fabs(snapshot.origin_x_m - -1.0F) < 0.01F);
@@ -141,6 +147,7 @@ void TestDecayAndOutOfOrderGate() {
   assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kOccupied);
   assert(grid.Decay(200) > 0U);
   assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kUnknown);
+  assert(grid.OccupiedSnapshot(8U).total_cells == 0U);
 
   // Decay uses the runtime clock and must not advance the sensor observation
   // cursor. A newer observation remains valid even when its stamp is below the

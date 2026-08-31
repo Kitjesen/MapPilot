@@ -11,6 +11,7 @@ namespace lingtu::maps::layers {
 namespace {
 
 constexpr float kLogOddsScale = 256.0F;
+constexpr std::size_t kBitsPerWord = 64U;
 
 bool IsFinite(float value) {
   return std::isfinite(static_cast<double>(value));
@@ -72,6 +73,50 @@ std::size_t CheckedCellCount(const RollingOccupancyConfig& config) {
     throw std::length_error("rolling occupancy grid exceeds the 64M cell product limit");
   }
   return static_cast<std::size_t>(count);
+}
+
+std::size_t BitWordCount(std::size_t cell_count) {
+  return (cell_count + kBitsPerWord - 1U) / kBitsPerWord;
+}
+
+void SetBit(std::vector<std::uint64_t>& bits, std::size_t index, bool value) {
+  const std::size_t word = index / kBitsPerWord;
+  const std::uint64_t mask = std::uint64_t{1} << (index % kBitsPerWord);
+  if (value) {
+    bits[word] |= mask;
+  } else {
+    bits[word] &= ~mask;
+  }
+}
+
+template <typename Callback>
+void ForEachSetBit(
+    const std::vector<std::uint64_t>& bits,
+    std::size_t cell_count,
+    Callback&& callback) {
+  for (std::size_t word_index = 0U; word_index < bits.size(); ++word_index) {
+    std::uint64_t word = bits[word_index];
+    if (word == 0U) {
+      continue;
+    }
+    const std::size_t base = word_index * kBitsPerWord;
+    for (std::size_t bit = 0U; bit < kBitsPerWord && word != 0U; ++bit, word >>= 1U) {
+      if ((word & 1U) != 0U && base + bit < cell_count) {
+        callback(base + bit);
+      }
+    }
+  }
+}
+
+std::size_t CountSetBits(const std::vector<std::uint64_t>& bits) {
+  std::size_t count = 0U;
+  for (std::uint64_t word : bits) {
+    while (word != 0U) {
+      word &= word - 1U;
+      ++count;
+    }
+  }
+  return count;
 }
 
 }  // namespace
@@ -157,12 +202,18 @@ void RollingOccupancyGrid::ValidateConfig(const RollingOccupancyConfig& config) 
 }
 
 RollingOccupancyGrid::RollingOccupancyGrid(RollingOccupancyConfig config)
-    : config_(config) {
+    : config_(config),
+      free_log_odds_threshold_(
+          std::log(config.free_probability / (1.0F - config.free_probability))),
+      occupied_log_odds_threshold_(
+          std::log(config.occupied_probability / (1.0F - config.occupied_probability))) {
   ValidateConfig(config_);
   const std::size_t count = CheckedCellCount(config_);
   cells_.resize(count);
   free_marks_.assign(count, 0U);
   hit_marks_.assign(count, 0U);
+  observed_bits_.assign(BitWordCount(count), 0U);
+  occupied_bits_.assign(BitWordCount(count), 0U);
   InitializeOrigin(0.0F, 0.0F, 0.0F);
   generation_ = 1U;
 }
@@ -209,6 +260,8 @@ void RollingOccupancyGrid::Reset(
   std::fill(cells_.begin(), cells_.end(), Cell{});
   std::fill(free_marks_.begin(), free_marks_.end(), 0U);
   std::fill(hit_marks_.begin(), hit_marks_.end(), 0U);
+  std::fill(observed_bits_.begin(), observed_bits_.end(), 0U);
+  std::fill(occupied_bits_.begin(), occupied_bits_.end(), 0U);
   mark_epoch_ = 0U;
   ring_x_ = 0;
   ring_y_ = 0;
@@ -277,14 +330,28 @@ OccupancyState RollingOccupancyGrid::StateFor(const Cell& cell) const {
   if (!cell.observed) {
     return OccupancyState::kUnknown;
   }
-  const float probability = Probability(cell.log_odds);
-  if (probability >= config_.occupied_probability) {
+  if (cell.log_odds >= occupied_log_odds_threshold_) {
     return OccupancyState::kOccupied;
   }
-  if (probability <= config_.free_probability) {
+  if (cell.log_odds <= free_log_odds_threshold_) {
     return OccupancyState::kFree;
   }
   return OccupancyState::kUnknown;
+}
+
+void RollingOccupancyGrid::RefreshMembership(std::size_t physical_index) {
+  const Cell& cell = cells_[physical_index];
+  SetBit(observed_bits_, physical_index, cell.observed);
+  SetBit(
+      occupied_bits_,
+      physical_index,
+      cell.observed && StateFor(cell) == OccupancyState::kOccupied);
+}
+
+void RollingOccupancyGrid::ClearCell(std::size_t physical_index) {
+  cells_[physical_index] = {};
+  SetBit(observed_bits_, physical_index, false);
+  SetBit(occupied_bits_, physical_index, false);
 }
 
 RollingOccupancyCellChunk RollingOccupancyGrid::ChunkFromPhysicalIndices(
@@ -345,60 +412,29 @@ RollingOccupancyCellChunk RollingOccupancyGrid::RollByLocked(
   std::vector<std::size_t> outgoing;
   const bool full_reset = std::abs(shift_x) >= config_.size_x ||
       std::abs(shift_y) >= config_.size_y || std::abs(shift_z) >= config_.size_z;
-  if (full_reset) {
-    outgoing.reserve(cells_.size());
-    for (std::size_t index = 0U; index < cells_.size(); ++index) {
-      if (cells_[index].observed) {
-        outgoing.push_back(index);
-      }
+  outgoing.reserve(CountSetBits(observed_bits_));
+  ForEachSetBit(observed_bits_, cells_.size(), [&](std::size_t physical) {
+    const CellCoord logical = PhysicalToLogical(physical);
+    const bool out_x = (shift_x > 0 && logical.x < shift_x) ||
+        (shift_x < 0 && logical.x >= config_.size_x + shift_x);
+    const bool out_y = (shift_y > 0 && logical.y < shift_y) ||
+        (shift_y < 0 && logical.y >= config_.size_y + shift_y);
+    const bool out_z = (shift_z > 0 && logical.z < shift_z) ||
+        (shift_z < 0 && logical.z >= config_.size_z + shift_z);
+    if (full_reset || out_x || out_y || out_z) {
+      outgoing.push_back(physical);
     }
-  } else {
-    for (std::int32_t z = 0; z < config_.size_z; ++z) {
-      const bool out_z = (shift_z > 0 && z < shift_z) ||
-          (shift_z < 0 && z >= config_.size_z + shift_z);
-      for (std::int32_t y = 0; y < config_.size_y; ++y) {
-        const bool out_y = (shift_y > 0 && y < shift_y) ||
-            (shift_y < 0 && y >= config_.size_y + shift_y);
-        for (std::int32_t x = 0; x < config_.size_x; ++x) {
-          const bool out_x = (shift_x > 0 && x < shift_x) ||
-              (shift_x < 0 && x >= config_.size_x + shift_x);
-          if (!(out_x || out_y || out_z)) {
-            continue;
-          }
-          const std::size_t physical = PhysicalIndex({x, y, z});
-          if (cells_[physical].observed) {
-            outgoing.push_back(physical);
-          }
-        }
-      }
-    }
-  }
+  });
 
   RollingOccupancyCellChunk chunk =
       ChunkFromPhysicalIndices(outgoing, stamp_ns, generation_ + 1U);
   if (full_reset) {
     std::fill(cells_.begin(), cells_.end(), Cell{});
+    std::fill(observed_bits_.begin(), observed_bits_.end(), 0U);
+    std::fill(occupied_bits_.begin(), occupied_bits_.end(), 0U);
   } else {
     for (const std::size_t index : outgoing) {
-      cells_[index] = {};
-    }
-    // Incoming cells that were unknown are represented by the same physical
-    // slabs as outgoing cells. Clear the complete outgoing slabs, including
-    // cells that were already unknown and therefore absent from the chunk.
-    for (std::int32_t z = 0; z < config_.size_z; ++z) {
-      const bool out_z = (shift_z > 0 && z < shift_z) ||
-          (shift_z < 0 && z >= config_.size_z + shift_z);
-      for (std::int32_t y = 0; y < config_.size_y; ++y) {
-        const bool out_y = (shift_y > 0 && y < shift_y) ||
-            (shift_y < 0 && y >= config_.size_y + shift_y);
-        for (std::int32_t x = 0; x < config_.size_x; ++x) {
-          const bool out_x = (shift_x > 0 && x < shift_x) ||
-              (shift_x < 0 && x >= config_.size_x + shift_x);
-          if (out_x || out_y || out_z) {
-            cells_[PhysicalIndex({x, y, z})] = {};
-          }
-        }
-      }
+      ClearCell(index);
     }
   }
 
@@ -583,16 +619,22 @@ std::vector<RollingOccupancyGrid::CellCoord> RollingOccupancyGrid::TraceRay(
   const std::size_t max_steps = cells_.size();
   constexpr float kTieEpsilon = 1.0e-6F;
   while (!(current == target) && cells.size() <= max_steps) {
-    const float next_t = std::min({t_max_x, t_max_y, t_max_z});
-    if (t_max_x <= next_t + kTieEpsilon) {
+    const float next_x = current.x == target.x ? infinity : t_max_x;
+    const float next_y = current.y == target.y ? infinity : t_max_y;
+    const float next_z = current.z == target.z ? infinity : t_max_z;
+    const float next_t = std::min({next_x, next_y, next_z});
+    if (!std::isfinite(next_t)) {
+      break;
+    }
+    if (current.x != target.x && t_max_x <= next_t + kTieEpsilon) {
       current.x += step_x;
       t_max_x += t_delta_x;
     }
-    if (t_max_y <= next_t + kTieEpsilon) {
+    if (current.y != target.y && t_max_y <= next_t + kTieEpsilon) {
       current.y += step_y;
       t_max_y += t_delta_y;
     }
-    if (t_max_z <= next_t + kTieEpsilon) {
+    if (current.z != target.z && t_max_z <= next_t + kTieEpsilon) {
       current.z += step_z;
       t_max_z += t_delta_z;
     }
@@ -618,10 +660,11 @@ std::size_t RollingOccupancyGrid::DecayLocked(std::int64_t now_ns) {
     return 0U;
   }
   std::size_t changed = 0U;
-  for (Cell& cell : cells_) {
+  ForEachSetBit(observed_bits_, cells_.size(), [&](std::size_t physical) {
+    Cell& cell = cells_[physical];
     if (!cell.observed || cell.last_observed_ns <= 0 ||
         now_ns - cell.last_observed_ns < config_.decay_after_ns) {
-      continue;
+      return;
     }
     const float previous = cell.log_odds;
     cell.log_odds *= config_.decay_factor;
@@ -630,10 +673,11 @@ std::size_t RollingOccupancyGrid::DecayLocked(std::int64_t now_ns) {
     } else {
       cell.last_observed_ns = now_ns;
     }
+    RefreshMembership(physical);
     if (cell.log_odds != previous) {
       ++changed;
     }
-  }
+  });
   return changed;
 }
 
@@ -728,7 +772,8 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
     }
     ++stats.accepted_points;
     ++stats.unique_rays;
-    const std::size_t free_count = has_hit && !ray.empty() ? ray.size() - 1U : ray.size();
+    const bool reached_hit = has_hit && ray.back() == hit_coord;
+    const std::size_t free_count = reached_hit ? ray.size() - 1U : ray.size();
     for (std::size_t index = 0U; index < free_count; ++index) {
       const std::size_t physical = PhysicalIndex(ray[index]);
       if (free_marks_[physical] != mark_epoch_) {
@@ -736,7 +781,7 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
         free_indices.push_back(physical);
       }
     }
-    if (has_hit) {
+    if (reached_hit) {
       const std::size_t physical = PhysicalIndex(ray.back());
       if (hit_marks_[physical] != mark_epoch_) {
         hit_marks_[physical] = mark_epoch_;
@@ -754,6 +799,7 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
     cell.log_odds = std::max(config_.min_log_odds, cell.log_odds - config_.miss_log_odds);
     cell.misses = SaturatingIncrement(cell.misses);
     cell.last_observed_ns = decay_stamp_ns;
+    RefreshMembership(physical);
     ++stats.free_updates;
   }
   for (const std::size_t physical : hit_indices) {
@@ -762,6 +808,7 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
     cell.log_odds = std::min(config_.max_log_odds, cell.log_odds + config_.hit_log_odds);
     cell.hits = SaturatingIncrement(cell.hits);
     cell.last_observed_ns = decay_stamp_ns;
+    RefreshMembership(physical);
     ++stats.hit_updates;
   }
   // Update is the externally committed rolling-map transaction. Auto-roll,
@@ -824,34 +871,59 @@ RollingOccupancySnapshot RollingOccupancyGrid::Snapshot() const {
   snapshot.origin_x_m = origin_x_m_;
   snapshot.origin_y_m = origin_y_m_;
   snapshot.origin_z_m = origin_z_m_;
-  snapshot.state.resize(cells_.size());
-  snapshot.log_odds_q8.resize(cells_.size());
-  for (std::int32_t z = 0; z < config_.size_z; ++z) {
-    for (std::int32_t y = 0; y < config_.size_y; ++y) {
-      for (std::int32_t x = 0; x < config_.size_x; ++x) {
-        const Cell& cell = cells_[PhysicalIndex({x, y, z})];
-        const std::size_t logical =
-            (static_cast<std::size_t>(z) * static_cast<std::size_t>(config_.size_y) +
-             static_cast<std::size_t>(y)) *
-                static_cast<std::size_t>(config_.size_x) +
-            static_cast<std::size_t>(x);
-        snapshot.state[logical] = static_cast<std::uint8_t>(StateFor(cell));
-        snapshot.log_odds_q8[logical] = QuantizeLogOdds(cell.log_odds);
-      }
-    }
-  }
+  snapshot.state.assign(cells_.size(), static_cast<std::uint8_t>(OccupancyState::kUnknown));
+  snapshot.log_odds_q8.assign(cells_.size(), 0);
+  ForEachSetBit(observed_bits_, cells_.size(), [&](std::size_t physical) {
+    const CellCoord logical_coord = PhysicalToLogical(physical);
+    const std::size_t logical =
+        (static_cast<std::size_t>(logical_coord.z) * static_cast<std::size_t>(config_.size_y) +
+         static_cast<std::size_t>(logical_coord.y)) *
+            static_cast<std::size_t>(config_.size_x) +
+        static_cast<std::size_t>(logical_coord.x);
+    const Cell& cell = cells_[physical];
+    snapshot.state[logical] = static_cast<std::uint8_t>(StateFor(cell));
+    snapshot.log_odds_q8[logical] = QuantizeLogOdds(cell.log_odds);
+  });
   snapshot.Validate();
+  return snapshot;
+}
+
+RollingOccupiedSnapshot RollingOccupancyGrid::OccupiedSnapshot(std::size_t max_points) const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  RollingOccupiedSnapshot snapshot;
+  snapshot.frame_id = frame_id_;
+  snapshot.stamp_ns = stamp_ns_;
+  snapshot.generation = generation_;
+  snapshot.resolution_m = config_.resolution_m;
+  snapshot.size_x = config_.size_x;
+  snapshot.size_y = config_.size_y;
+  snapshot.size_z = config_.size_z;
+  snapshot.origin_x_m = origin_x_m_;
+  snapshot.origin_y_m = origin_y_m_;
+  snapshot.origin_z_m = origin_z_m_;
+  snapshot.total_cells = CountSetBits(occupied_bits_);
+  snapshot.centers_xyz.reserve(std::min(max_points, snapshot.total_cells) * 3U);
+  ForEachSetBit(occupied_bits_, cells_.size(), [&](std::size_t physical) {
+    if (snapshot.centers_xyz.size() / 3U >= max_points) {
+      return;
+    }
+    const CellCoord logical = PhysicalToLogical(physical);
+    snapshot.centers_xyz.push_back(
+        origin_x_m_ + (static_cast<float>(logical.x) + 0.5F) * config_.resolution_m);
+    snapshot.centers_xyz.push_back(
+        origin_y_m_ + (static_cast<float>(logical.y) + 0.5F) * config_.resolution_m);
+    snapshot.centers_xyz.push_back(
+        origin_z_m_ + (static_cast<float>(logical.z) + 0.5F) * config_.resolution_m);
+  });
   return snapshot;
 }
 
 RollingOccupancyCellChunk RollingOccupancyGrid::ObservedCellsLocked() const {
   std::vector<std::size_t> indices;
-  indices.reserve(cells_.size() / 4U);
-  for (std::size_t index = 0U; index < cells_.size(); ++index) {
-    if (cells_[index].observed) {
-      indices.push_back(index);
-    }
-  }
+  indices.reserve(CountSetBits(observed_bits_));
+  ForEachSetBit(observed_bits_, cells_.size(), [&](std::size_t physical) {
+    indices.push_back(physical);
+  });
   return ChunkFromPhysicalIndices(indices, stamp_ns_, generation_);
 }
 

@@ -9,6 +9,7 @@
 
 #include "lingtu/maps/mapd/activation.hpp"
 #include "lingtu/maps/mapd/engine.hpp"
+#include "lingtu/maps/mapd/save_coordinator.hpp"
 
 namespace lingtu::maps::mapd {
 
@@ -111,7 +112,7 @@ struct DdsLimits {
   std::size_t max_scene_bytes{32U * 1024U * 1024U};
 };
 
-class Dds final {
+class Dds final : public SlamSnapshotExchange {
  public:
   Dds(int domain_id, std::size_t max_points_per_observation);
   Dds(int domain_id, DdsLimits limits);
@@ -128,6 +129,8 @@ class Dds final {
   bool PublishScene(const State &state, const Snapshot &snapshot);
   std::vector<ActivationRequest> TakeActivationRequests();
   bool PublishActivationAck(const ActivationResult &ack);
+  bool Publish(const SlamSnapshotRequest &request) override;
+  std::vector<SlamSnapshotAck> TakeAcks() override;
 
   const std::string &ProducerBootId() const;
   DdsInputState GetInputState() const;

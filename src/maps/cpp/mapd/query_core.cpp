@@ -6,9 +6,10 @@
 #include <filesystem>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
-#include "lingtu/maps/hash.hpp"
 #include "lingtu/maps/lock.hpp"
+#include "lingtu/maps/mapd/service_dispatch.hpp"
 
 #if defined(__linux__)
 #include <fcntl.h>
@@ -19,7 +20,7 @@
 namespace lingtu::maps::mapd::query {
 namespace {
 
-std::string JsonEscape(const std::string& value) {
+std::string JsonEscape(const std::string &value) {
   std::ostringstream out;
   for (const unsigned char ch : value) {
     switch (ch) {
@@ -51,7 +52,7 @@ std::string JsonEscape(const std::string& value) {
   return out.str();
 }
 
-std::string JsonString(const std::string& value) {
+std::string JsonString(const std::string &value) {
   return "\"" + JsonEscape(value) + "\"";
 }
 
@@ -76,25 +77,26 @@ std::string ArtifactTypeName(ArtifactType type) {
 }  // namespace
 
 std::string MapQueryCore::PingJson() const {
-  return "{\"action\":\"ping\",\"success\":true,\"schema_version\":\"mapd.query.v1\"}";
+  return "{\"action\":\"ping\",\"success\":true,\"schema_version\":\"mapd.query.v2\"}";
 }
 
-std::string MapQueryCore::FailureJson(
-    const std::string& action,
-    const std::string& message,
-    const std::string& reason_code) const {
+ServiceResult MapQueryCore::ServiceJson(const std::string &request_json) {
+  auto result = DispatchServiceJson(service_, save_coordinator_, request_json);
+  return {result.ok, std::move(result.json)};
+}
+
+std::string MapQueryCore::FailureJson(const std::string &action, const std::string &message,
+                                      const std::string &reason_code) const {
   return "{"
-      "\"action\":" + JsonString(action) + "," +
-      "\"success\":false," +
-      "\"reason_code\":" + JsonString(reason_code) + "," +
-      "\"message\":" + JsonString(message) +
-      "}";
+         "\"action\":" +
+         JsonString(action) + "," + "\"success\":false," +
+         "\"reason_code\":" + JsonString(reason_code) + "," + "\"message\":" + JsonString(message) +
+         "}";
 }
 
-std::optional<DeclaredArtifactIdentity> MapQueryCore::DeclaredIdentityFor(
-    const std::string& map_id,
-    const std::string& capability,
-    std::string* error) const {
+std::optional<DeclaredArtifactIdentity>
+MapQueryCore::DeclaredIdentityFor(const std::string &map_id, const std::string &capability,
+                                  std::string *error) const {
   if (map_id.empty()) {
     *error = "missing map name";
     return std::nullopt;
@@ -108,7 +110,7 @@ std::optional<DeclaredArtifactIdentity> MapQueryCore::DeclaredIdentityFor(
     *error = "unknown capability";
     return std::nullopt;
   }
-  const auto identity = store_.ReadDeclaredArtifactIdentity(map_id, *type, "");
+  const auto identity = service_.Store().ReadDeclaredArtifactIdentity(map_id, *type, "");
   if (!identity.ok()) {
     *error = identity.reason;
     return std::nullopt;
@@ -116,47 +118,45 @@ std::optional<DeclaredArtifactIdentity> MapQueryCore::DeclaredIdentityFor(
   return identity.identity;
 }
 
-std::string MapQueryCore::BundleJsonFromIdentity(
-    const DeclaredArtifactIdentity& identity,
-    const std::string& capability,
-    std::uint64_t size_bytes) const {
+std::string MapQueryCore::BundleJsonFromIdentity(const DeclaredArtifactIdentity &identity,
+                                                 const std::string &capability,
+                                                 std::uint64_t size_bytes) const {
   return "{"
-      "\"action\":\"open_artifact\","
-      "\"success\":true,"
-      "\"schema_version\":\"mapd.artifact.v1\","
-      "\"map_id\":" + JsonString(identity.map_id) + "," +
-      "\"version\":" + std::to_string(identity.version) + "," +
-      "\"frame_id\":" + JsonString(identity.frame_id) + "," +
-      "\"capability\":" + JsonString(capability) + "," +
-      "\"artifact\":{\"type\":" + JsonString(ArtifactTypeName(identity.type)) +
-      ",\"sha256\":" + JsonString(identity.artifact_sha256) +
-      ",\"size_bytes\":" + std::to_string(size_bytes) + "}" +
-      "}";
+         "\"action\":\"open_artifact\","
+         "\"success\":true,"
+         "\"schema_version\":\"mapd.artifact.v1\","
+         "\"map_id\":" +
+         JsonString(identity.map_id) + "," +
+         "\"content_epoch\":" + std::to_string(identity.content_epoch) + "," +
+         "\"frame_id\":" + JsonString(identity.frame_id) + "," +
+         "\"capability\":" + JsonString(capability) + "," +
+         "\"artifact\":{\"type\":" + JsonString(ArtifactTypeName(identity.type)) +
+         ",\"size_bytes\":" + std::to_string(size_bytes) + "}" + "}";
 }
 
-OpenArtifactResult MapQueryCore::OpenArtifact(
-    const std::string& map_id,
-    const std::string& capability) const {
+OpenArtifactResult MapQueryCore::OpenArtifact(const std::string &map_id,
+                                              const std::string &capability) const {
 #if defined(__linux__)
   std::string id;
   try {
     id = MapStore::NormalizeMapId(map_id);
-  } catch (const std::exception& exc) {
+  } catch (const std::exception &exc) {
     return {false, FailureJson("open_artifact", exc.what(), "invalid_map_id"), -1};
   }
   try {
     if (capability.empty() || !ArtifactTypeForCapability(capability).has_value()) {
-      return {false, FailureJson("open_artifact", "capability unavailable: " + capability,
-                                 "missing_capability"),
+      return {false,
+              FailureJson("open_artifact", "capability unavailable: " + capability,
+                          "missing_capability"),
               -1};
     }
-    auto map_lock = MapLock::TryAcquire(store_.RootDir(), id, "mapd-open-artifact");
+    auto map_lock = MapLock::TryAcquire(service_.Store().RootDir(), id, "mapd-open-artifact");
     if (!map_lock.has_value()) {
-      return {false, FailureJson("open_artifact", "map write in progress: " + id,
-                                 "map_write_in_progress"),
+      return {false,
+              FailureJson("open_artifact", "map write in progress: " + id, "map_write_in_progress"),
               -1};
     }
-    if (!std::filesystem::is_directory(store_.MapPath(id))) {
+    if (!std::filesystem::is_directory(service_.Store().MapPath(id))) {
       return {false, FailureJson("open_artifact", "map not found: " + id, "map_not_found"), -1};
     }
     std::string error;
@@ -171,39 +171,27 @@ OpenArtifactResult MapQueryCore::OpenArtifact(
                           "artifact_not_found"),
               -1};
     }
-    struct stat statbuf {};
+    struct stat statbuf{};
     if (::fstat(fd, &statbuf) != 0 || !S_ISREG(statbuf.st_mode)) {
       ::close(fd);
-      return {false, FailureJson("open_artifact", "opened artifact is not a regular file",
-                                 "artifact_not_found"),
-              -1};
-    }
-    std::string actual_sha;
-    try {
-      actual_sha = Sha256FileDescriptor(fd);
-    } catch (const std::exception& exc) {
-      ::close(fd);
-      return {false, FailureJson("open_artifact", exc.what(), "artifact_open_failed"), -1};
-    }
-    if (actual_sha != identity->artifact_sha256) {
-      ::close(fd);
       return {false,
-              FailureJson("open_artifact", "opened artifact sha256 does not match declaration",
-                          "artifact_identity_mismatch"),
+              FailureJson("open_artifact", "opened artifact is not a regular file",
+                          "artifact_not_found"),
               -1};
     }
-    return {true,
-            BundleJsonFromIdentity(
-                *identity, capability, static_cast<std::uint64_t>(statbuf.st_size)),
-            fd};
-  } catch (const std::exception& exc) {
+    return {
+        true,
+        BundleJsonFromIdentity(*identity, capability, static_cast<std::uint64_t>(statbuf.st_size)),
+        fd};
+  } catch (const std::exception &exc) {
     return {false, FailureJson("open_artifact", exc.what(), "internal_error"), -1};
   }
 #else
   (void)map_id;
   (void)capability;
-  return {false, FailureJson("open_artifact", "file descriptor passing requires Linux",
-                             "unsupported_platform"),
+  return {false,
+          FailureJson("open_artifact", "file descriptor passing requires Linux",
+                      "unsupported_platform"),
           -1};
 #endif
 }

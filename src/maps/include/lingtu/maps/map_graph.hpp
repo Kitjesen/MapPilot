@@ -81,11 +81,16 @@ class MapGraph {
 
   MapGraphResult AddNode(MapGraphNode node);
   MapGraphResult AddEdge(MapGraphEdge edge);
+  MapGraphResult RemoveEdge(const std::string& edge_id);
+  MapGraphResult RemoveNodeIfUnreferenced(const std::string& node_id);
   MapGraphResult SetEdgeEnabled(const std::string& edge_id, bool enabled);
   MapGraphResult SetEdgeHealth(const std::string& edge_id, double health);
 
   const MapGraphNode* FindNode(const std::string& node_id) const;
   const MapGraphEdge* FindEdge(const std::string& edge_id) const;
+  bool ReferencesMap(const std::string& map_id) const;
+  const std::unordered_map<std::string, MapGraphNode>& Nodes() const noexcept { return nodes_; }
+  const std::unordered_map<std::string, MapGraphEdge>& Edges() const noexcept { return edges_; }
 
   MapGraphRoute ShortestRoute(
       const std::string& start_node_id,

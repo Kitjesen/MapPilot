@@ -7,16 +7,16 @@ namespace lingtu::maps::mapd::query {
 
 constexpr char kRequestMagic[4] = {'L', 'T', 'M', 'P'};
 constexpr char kResponseMagic[4] = {'L', 'T', 'M', 'R'};
-constexpr std::uint8_t kVersion = 1U;
-constexpr std::size_t kRequestHeaderSize = 16U;
-constexpr std::size_t kResponseHeaderSize = 12U;
-constexpr std::size_t kMaxMapIdBytes = 128U;
-constexpr std::size_t kMaxCapabilityBytes = 64U;
+constexpr std::uint8_t kVersion = 2U;
+constexpr std::size_t kRequestHeaderSize = 18U;
+constexpr std::size_t kResponseHeaderSize = 16U;
+constexpr std::size_t kMaxRequestIdBytes = 128U;
 constexpr std::size_t kDefaultMaxJsonBytes = 1024U * 1024U;
 constexpr const char* kDefaultSocketPath = "/run/lingtu-mapd/mapd.sock";
 
 enum class Opcode : std::uint8_t {
   kPing = 1U,
+  kService = 2U,
   kOpenArtifact = 5U,
 };
 

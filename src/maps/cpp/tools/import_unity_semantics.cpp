@@ -41,6 +41,9 @@ float ParseFloat(const std::string& text, const std::string& option) {
 }
 
 std::uint64_t ParseUnsigned(const std::string& text, const std::string& option) {
+  if (text.empty() || text.front() == '-') {
+    throw std::invalid_argument(option + " requires a non-negative integer");
+  }
   std::size_t consumed = 0U;
   const auto value = std::stoull(text, &consumed);
   if (consumed != text.size()) {

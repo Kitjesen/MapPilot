@@ -131,6 +131,16 @@ int main() {
   auto degraded = graph.ShortestRoute("start", "goal");
   assert(degraded.found);
   assert(degraded.total_cost == 6.0);
+  assert(graph.ReferencesMap("building_1f"));
+  assert(graph.ReferencesMap("building_2f"));
+  assert(!graph.ReferencesMap("missing"));
+  assert(!graph.RemoveNodeIfUnreferenced("door_1f").ok);
+  assert(graph.RemoveEdge("risky_garage").ok);
+  assert(graph.FindEdge("risky_garage") == nullptr);
+  assert(graph.RemoveNodeIfUnreferenced("garage").ok);
+  assert(graph.FindNode("garage") == nullptr);
+  assert(!graph.ReferencesMap("garage"));
+  assert(!graph.RemoveEdge("risky_garage").ok);
 
   const auto root = TempRoot();
   const auto path = root / "graph.ltg";

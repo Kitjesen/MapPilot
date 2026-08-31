@@ -21,8 +21,8 @@ licensed clean: the product path reimplements the ERASOR2 workflow
 **without bringing ERASOR2 GPLv3 code** into the product tree.
 
 - Product implementation: `cpp/prune` (this directory's C++ sources).
-- Reference material: `third_party/research_nav/ERASOR2` and
-  `cpp/refs/erasor2/upstream` are read-only research references.
+- Reference material: `third_party/research_nav/ERASOR2` is an optional external
+  checkout and does not enter the default product build.
 - Do not include upstream ERASOR2 headers in `cpp/prune` sources; the product
   path must stay license-clean.
 

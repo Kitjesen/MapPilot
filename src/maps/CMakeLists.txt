@@ -8,6 +8,15 @@ option(LINGTU_MAPS_ENABLE_NATIVE_OCTOMAP "Enable embedded OctoMap artifact build
 
 if(LINGTU_MAPS_ENABLE_NATIVE_OCTOMAP)
   find_package(octomap QUIET)
+  if(NOT octomap_FOUND)
+    find_path(OCTOMAP_INCLUDE_DIRS NAMES octomap/OcTree.h)
+    find_library(OCTOMAP_LIBRARY NAMES octomap)
+    find_library(OCTOMATH_LIBRARY NAMES octomath)
+    if(OCTOMAP_INCLUDE_DIRS AND OCTOMAP_LIBRARY AND OCTOMATH_LIBRARY)
+      set(octomap_FOUND TRUE)
+      set(OCTOMAP_LIBRARIES "${OCTOMAP_LIBRARY};${OCTOMATH_LIBRARY}")
+    endif()
+  endif()
 endif()
 
 add_library(lingtu_maps_contract INTERFACE)
@@ -19,15 +28,11 @@ target_include_directories(
 target_compile_features(lingtu_maps_contract INTERFACE cxx_std_17)
 
 add_library(lingtu_maps STATIC
-  cpp/active_slots.cpp
-  cpp/artifact_jobs.cpp
   cpp/block_grid.cpp
-  cpp/hash.cpp
   cpp/health.cpp
   cpp/lock.cpp
   cpp/maintenance.cpp
   cpp/map_graph.cpp
-  cpp/scene.cpp
   cpp/semantic_taxonomy.cpp
   cpp/build/grid_artifacts.cpp
   cpp/build/occupancy_snapshot.cpp
@@ -37,8 +42,10 @@ add_library(lingtu_maps STATIC
   cpp/semantic_map_persistence.cpp
   cpp/save.cpp
   cpp/service.cpp
+  cpp/service_jobs.cpp
+  cpp/service_lifecycle.cpp
+  cpp/service_places.cpp
   cpp/store.cpp
-  cpp/version.cpp
   cpp/layers/rolling_occupancy.cpp
   cpp/layers/exploration_projection.cpp
   cpp/layers/semantic_occupancy.cpp
@@ -47,7 +54,8 @@ add_library(lingtu_maps STATIC
   cpp/mapd/engine.cpp
   cpp/mapd/query_core.cpp
   cpp/mapd/query_server.cpp
-  cpp/sources/unity_scene.cpp
+  cpp/mapd/save_coordinator.cpp
+  cpp/mapd/service_dispatch.cpp
 )
 target_link_libraries(lingtu_maps PUBLIC lingtu_maps_contract Threads::Threads)
 if(octomap_FOUND)
@@ -65,35 +73,36 @@ set_target_properties(lingtu_maps PROPERTIES
   OUTPUT_NAME "lingtu_maps_core"
   POSITION_INDEPENDENT_CODE ON
 )
-
-add_library(lingtu_maps_c_api SHARED
-  cpp/grid_layers_c_api.cpp
-  cpp/pcd_c_api.cpp
-  cpp/rolling_occupancy_c_api.cpp
-  cpp/semantic_c_api.cpp
-  cpp/service_c_api.cpp
-  cpp/store_c_api.cpp
-  cpp/voxel_c_api.cpp
-)
-target_link_libraries(lingtu_maps_c_api PRIVATE lingtu_maps)
-target_compile_definitions(lingtu_maps_c_api PRIVATE LINGTU_MAPS_C_API_BUILD)
-set_target_properties(lingtu_maps_c_api PROPERTIES
-  OUTPUT_NAME "lingtu_maps"
-)
+if(MSVC)
+  target_compile_options(lingtu_maps PRIVATE /FS)
+endif()
 
 option(LINGTU_MAPS_BUILD_MAPD "Build the native typed-DDS mapd process" OFF)
 
 if(LINGTU_MAPS_BUILD_MAPD)
   enable_language(C)
   find_package(CycloneDDS REQUIRED)
-  if(NOT TARGET lingtu_dds_qos_profiles)
+  function(lingtu_maps_bundle_cyclonedds target)
+    if(WIN32)
+      add_custom_command(
+        TARGET ${target}
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          $<TARGET_FILE:CycloneDDS::ddsc>
+          $<TARGET_FILE_DIR:${target}>
+        COMMENT "Bundling the CycloneDDS runtime DLL for ${target}"
+        VERBATIM
+      )
+    endif()
+  endfunction()
+  if(NOT TARGET lingtu_dds_contracts)
     add_subdirectory(
       "${CMAKE_CURRENT_SOURCE_DIR}/../message/cpp"
       "${CMAKE_CURRENT_BINARY_DIR}/message_cpp"
     )
   endif()
   set(_LINGTU_MAPD_IDL
-    "${CMAKE_CURRENT_SOURCE_DIR}/../message/idl/lingtu_slam.idl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../message/idl/messages.idl"
   )
   lingtu_add_dds_c_messages(lingtu_mapd_dds_messages "${_LINGTU_MAPD_IDL}")
 
@@ -110,7 +119,7 @@ if(LINGTU_MAPS_BUILD_MAPD)
     PUBLIC
       lingtu_maps
       lingtu_mapd_dds_messages
-      lingtu_dds_qos_profiles
+      lingtu_dds_contracts
       Threads::Threads
   )
   set_target_properties(
@@ -124,6 +133,7 @@ if(LINGTU_MAPS_BUILD_MAPD)
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.."
   )
   target_link_libraries(mapd PRIVATE lingtu_maps_mapd_dds)
+  lingtu_maps_bundle_cyclonedds(mapd)
   add_executable(lingtu_mapctl cpp/tools/mapctl.cpp)
   target_include_directories(
     lingtu_mapctl
@@ -134,10 +144,11 @@ if(LINGTU_MAPS_BUILD_MAPD)
     PRIVATE
       lingtu_maps
       lingtu_mapd_dds_messages
-      lingtu_dds_qos_profiles
+      lingtu_dds_contracts
       Threads::Threads
   )
   set_target_properties(lingtu_mapctl PROPERTIES OUTPUT_NAME "lingtu-mapctl")
+  lingtu_maps_bundle_cyclonedds(lingtu_mapctl)
   if(MSVC)
     target_compile_options(lingtu_maps_mapd_dds PRIVATE /W4)
     target_compile_options(mapd PRIVATE /W4)
@@ -153,14 +164,22 @@ if(LINGTU_MAPS_BUILD_MAPD)
   install(TARGETS mapd lingtu_mapctl RUNTIME DESTINATION bin)
 endif()
 
-option(LINGTU_MAPS_BUILD_TOOLS "Build LingTu maps command-line tools" ON)
+option(LINGTU_MAPS_BUILD_TOOLS "Build LingTu maps offline command-line tools" OFF)
 
 if(LINGTU_MAPS_BUILD_TOOLS)
   add_executable(
     lingtu_maps_import_unity
     cpp/tools/import_unity_semantics.cpp
+    cpp/sources/unity_scene.cpp
+    cpp/semantic_taxonomy.cpp
+    cpp/semantic_map_persistence.cpp
   )
-  target_link_libraries(lingtu_maps_import_unity PRIVATE lingtu_maps)
+  target_link_libraries(
+    lingtu_maps_import_unity
+    PRIVATE
+      lingtu_maps_contract
+      Threads::Threads
+  )
   set_target_properties(lingtu_maps_import_unity PROPERTIES
     OUTPUT_NAME "lingtu-maps-import-unity"
   )
@@ -204,21 +223,6 @@ if(LINGTU_MAPS_BUILD_TESTS)
   )
 
   add_executable(
-    lingtu_maps_rolling_occupancy_c_api_test
-    tests/cpp/rolling_occupancy_c_api_test.cpp
-  )
-  target_link_libraries(
-    lingtu_maps_rolling_occupancy_c_api_test
-    PRIVATE
-      lingtu_maps_c_api
-      lingtu_maps_contract
-  )
-  add_test(
-    NAME lingtu_maps_rolling_occupancy_c_api_test
-    COMMAND lingtu_maps_rolling_occupancy_c_api_test
-  )
-
-  add_executable(
     lingtu_maps_semantic_occupancy_test
     tests/cpp/semantic_occupancy_test.cpp
   )
@@ -236,27 +240,21 @@ if(LINGTU_MAPS_BUILD_TESTS)
   add_executable(
     lingtu_maps_unity_semantic_import_test
     tests/cpp/unity_semantic_import_test.cpp
+    cpp/sources/unity_scene.cpp
+    cpp/semantic_taxonomy.cpp
+    cpp/semantic_map_persistence.cpp
   )
-  target_link_libraries(lingtu_maps_unity_semantic_import_test PRIVATE lingtu_maps)
+  target_link_libraries(
+    lingtu_maps_unity_semantic_import_test
+    PRIVATE
+      lingtu_maps_contract
+      Threads::Threads
+  )
   add_test(
     NAME lingtu_maps_unity_semantic_import_test
     COMMAND lingtu_maps_unity_semantic_import_test
   )
 
-  add_executable(
-    lingtu_maps_unity_semantic_service_c_api_test
-    tests/cpp/unity_semantic_service_c_api_test.cpp
-  )
-  target_link_libraries(
-    lingtu_maps_unity_semantic_service_c_api_test
-    PRIVATE
-      lingtu_maps_c_api
-      lingtu_maps_contract
-  )
-  add_test(
-    NAME lingtu_maps_unity_semantic_service_c_api_test
-    COMMAND lingtu_maps_unity_semantic_service_c_api_test
-  )
   target_link_libraries(lingtu_maps_semantic_map_persistence_test PRIVATE lingtu_maps)
   add_test(
     NAME lingtu_maps_semantic_map_persistence_test
@@ -281,23 +279,13 @@ if(LINGTU_MAPS_BUILD_TESTS)
   target_link_libraries(lingtu_maps_map_health_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_map_health_test COMMAND lingtu_maps_map_health_test)
 
-  add_executable(lingtu_maps_artifact_jobs_test tests/cpp/artifact_jobs_test.cpp)
-  target_link_libraries(lingtu_maps_artifact_jobs_test PRIVATE lingtu_maps)
-  add_test(NAME lingtu_maps_artifact_jobs_test COMMAND lingtu_maps_artifact_jobs_test)
-
   add_executable(lingtu_maps_process_test tests/cpp/process_test.cpp)
   target_link_libraries(lingtu_maps_process_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_process_test COMMAND lingtu_maps_process_test)
 
-  add_executable(
-    lingtu_maps_block_grid_scene_test
-    tests/cpp/block_grid_scene_test.cpp
-  )
-  target_link_libraries(lingtu_maps_block_grid_scene_test PRIVATE lingtu_maps)
-  add_test(
-    NAME lingtu_maps_block_grid_scene_test
-    COMMAND lingtu_maps_block_grid_scene_test
-  )
+  add_executable(lingtu_maps_block_grid_test tests/cpp/block_grid_test.cpp)
+  target_link_libraries(lingtu_maps_block_grid_test PRIVATE lingtu_maps)
+  add_test(NAME lingtu_maps_block_grid_test COMMAND lingtu_maps_block_grid_test)
 
   add_executable(
     lingtu_maps_mapd_engine_test
@@ -313,11 +301,38 @@ if(LINGTU_MAPS_BUILD_TESTS)
     lingtu_maps_map_activation_test
     tests/cpp/map_activation_test.cpp
   )
-  target_link_libraries(lingtu_maps_map_activation_test PRIVATE lingtu_maps)
-  add_test(
-    NAME lingtu_maps_map_activation_test
-    COMMAND lingtu_maps_map_activation_test
+
+  add_executable(
+    lingtu_maps_mapd_service_dispatch_test
+    tests/cpp/mapd_service_dispatch_test.cpp
   )
+  target_link_libraries(lingtu_maps_mapd_service_dispatch_test PRIVATE lingtu_maps)
+  add_test(
+    NAME lingtu_maps_mapd_service_dispatch_test
+    COMMAND lingtu_maps_mapd_service_dispatch_test
+  )
+  add_executable(
+    lingtu_maps_mapd_save_coordinator_test
+    tests/cpp/mapd_save_coordinator_test.cpp
+  )
+  target_link_libraries(lingtu_maps_mapd_save_coordinator_test PRIVATE lingtu_maps)
+  add_test(
+    NAME lingtu_maps_mapd_save_coordinator_test
+    COMMAND lingtu_maps_mapd_save_coordinator_test
+  )
+  target_link_libraries(lingtu_maps_map_activation_test PRIVATE lingtu_maps)
+  if(LINGTU_MAPS_BUILD_MAPD)
+    add_dependencies(lingtu_maps_map_activation_test lingtu_mapctl)
+    add_test(
+      NAME lingtu_maps_map_activation_test
+      COMMAND lingtu_maps_map_activation_test $<TARGET_FILE:lingtu_mapctl>
+    )
+  else()
+    add_test(
+      NAME lingtu_maps_map_activation_test
+      COMMAND lingtu_maps_map_activation_test
+    )
+  endif()
 
   if(LINGTU_MAPS_BUILD_MAPD)
     add_executable(
@@ -335,6 +350,7 @@ if(LINGTU_MAPS_BUILD_TESTS)
       PRIVATE
         lingtu_maps_mapd_dds
     )
+    lingtu_maps_bundle_cyclonedds(lingtu_maps_mapd_dds_test)
     add_test(
       NAME lingtu_maps_mapd_dds_test
       COMMAND lingtu_maps_mapd_dds_test
@@ -367,68 +383,22 @@ if(LINGTU_MAPS_BUILD_TESTS)
   target_link_libraries(lingtu_maps_map_graph_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_map_graph_test COMMAND lingtu_maps_map_graph_test)
 
-  add_executable(lingtu_maps_active_slots_test tests/cpp/active_slots_test.cpp)
-  target_link_libraries(lingtu_maps_active_slots_test PRIVATE lingtu_maps)
-  add_test(NAME lingtu_maps_active_slots_test COMMAND lingtu_maps_active_slots_test)
-
   add_executable(lingtu_maps_save_map_test tests/cpp/save_map_test.cpp)
   target_link_libraries(lingtu_maps_save_map_test PRIVATE lingtu_maps)
+  if(octomap_FOUND)
+    target_compile_definitions(lingtu_maps_save_map_test PRIVATE LINGTU_MAPS_HAS_OCTOMAP=1)
+  endif()
   add_test(NAME lingtu_maps_save_map_test COMMAND lingtu_maps_save_map_test)
 
-  add_executable(lingtu_maps_save_map_c_api_test tests/cpp/save_map_c_api_test.cpp)
-  target_link_libraries(
-    lingtu_maps_save_map_c_api_test
-    PRIVATE
-      lingtu_maps_c_api
-      lingtu_maps_contract
+  add_executable(
+    lingtu_maps_grid_artifact_io_test
+    tests/cpp/grid_artifact_io_test.cpp
   )
-  add_test(NAME lingtu_maps_save_map_c_api_test COMMAND lingtu_maps_save_map_c_api_test)
-
-  add_executable(lingtu_maps_store_c_api_test tests/cpp/store_c_api_test.cpp)
-  target_link_libraries(
-    lingtu_maps_store_c_api_test
-    PRIVATE
-      lingtu_maps_c_api
-      lingtu_maps_contract
+  target_link_libraries(lingtu_maps_grid_artifact_io_test PRIVATE lingtu_maps)
+  add_test(
+    NAME lingtu_maps_grid_artifact_io_test
+    COMMAND lingtu_maps_grid_artifact_io_test
   )
-  add_test(NAME lingtu_maps_store_c_api_test COMMAND lingtu_maps_store_c_api_test)
-
-  add_executable(lingtu_maps_service_c_api_test tests/cpp/service_c_api_test.cpp)
-  target_link_libraries(
-    lingtu_maps_service_c_api_test
-    PRIVATE
-      lingtu_maps_c_api
-      lingtu_maps_contract
-  )
-  add_test(NAME lingtu_maps_service_c_api_test COMMAND lingtu_maps_service_c_api_test)
-
-  add_executable(lingtu_maps_voxel_c_api_test tests/cpp/voxel_c_api_test.cpp)
-  target_link_libraries(
-    lingtu_maps_voxel_c_api_test
-    PRIVATE
-      lingtu_maps_c_api
-      lingtu_maps_contract
-  )
-  add_test(NAME lingtu_maps_voxel_c_api_test COMMAND lingtu_maps_voxel_c_api_test)
-
-  add_executable(lingtu_maps_pcd_c_api_test tests/cpp/pcd_c_api_test.cpp)
-  target_link_libraries(
-    lingtu_maps_pcd_c_api_test
-    PRIVATE
-      lingtu_maps_c_api
-      lingtu_maps_contract
-      lingtu_maps
-  )
-  add_test(NAME lingtu_maps_pcd_c_api_test COMMAND lingtu_maps_pcd_c_api_test)
-
-  add_executable(lingtu_maps_semantic_c_api_test tests/cpp/semantic_c_api_test.cpp)
-  target_link_libraries(
-    lingtu_maps_semantic_c_api_test
-    PRIVATE
-      lingtu_maps_c_api
-      lingtu_maps_contract
-  )
-  add_test(NAME lingtu_maps_semantic_c_api_test COMMAND lingtu_maps_semantic_c_api_test)
 
   add_executable(
     lingtu_maps_semantic_localization_client_test
@@ -443,58 +413,34 @@ if(LINGTU_MAPS_BUILD_TESTS)
   target_link_libraries(
     lingtu_maps_semantic_localization_client_test
     PRIVATE
-      lingtu_maps_c_api
-      lingtu_maps_contract
-      ${CMAKE_DL_LIBS}
+      lingtu_maps
   )
   add_test(
     NAME lingtu_maps_semantic_localization_client_test
     COMMAND lingtu_maps_semantic_localization_client_test
   )
-  set_tests_properties(
-    lingtu_maps_semantic_localization_client_test
-    PROPERTIES ENVIRONMENT "LINGTU_MAPS_LIB=$<TARGET_FILE:lingtu_maps_c_api>"
-  )
-
-  add_executable(lingtu_maps_grid_c_api_test tests/cpp/grid_c_api_test.cpp)
-  target_link_libraries(
-    lingtu_maps_grid_c_api_test
-    PRIVATE
-      lingtu_maps_c_api
-      lingtu_maps_contract
-  )
-  add_test(NAME lingtu_maps_grid_c_api_test COMMAND lingtu_maps_grid_c_api_test)
-
   set(LINGTU_MAPS_TEST_TARGETS
     lingtu_maps_header_smoke
     lingtu_maps_grid_layers_test
     lingtu_maps_voxel_layer_test
     lingtu_maps_rolling_occupancy_test
-    lingtu_maps_rolling_occupancy_c_api_test
     lingtu_maps_semantic_occupancy_test
     lingtu_maps_semantic_map_persistence_test
     lingtu_maps_unity_semantic_import_test
-    lingtu_maps_unity_semantic_service_c_api_test
     lingtu_maps_semantic_performance_test
     lingtu_maps_store_test
     lingtu_maps_map_health_test
-    lingtu_maps_artifact_jobs_test
     lingtu_maps_process_test
-    lingtu_maps_block_grid_scene_test
+    lingtu_maps_block_grid_test
     lingtu_maps_mapd_engine_test
+    lingtu_maps_mapd_service_dispatch_test
+    lingtu_maps_mapd_save_coordinator_test
     lingtu_maps_map_activation_test
     lingtu_maps_maintenance_test
     lingtu_maps_map_graph_test
-    lingtu_maps_active_slots_test
     lingtu_maps_save_map_test
-    lingtu_maps_save_map_c_api_test
-    lingtu_maps_store_c_api_test
-    lingtu_maps_service_c_api_test
-    lingtu_maps_voxel_c_api_test
-    lingtu_maps_pcd_c_api_test
-    lingtu_maps_semantic_c_api_test
+    lingtu_maps_grid_artifact_io_test
     lingtu_maps_semantic_localization_client_test
-    lingtu_maps_grid_c_api_test
   )
   if(LINGTU_MAPS_BUILD_MAPD)
     list(APPEND LINGTU_MAPS_TEST_TARGETS lingtu_maps_mapd_dds_test)
@@ -504,7 +450,7 @@ if(LINGTU_MAPS_BUILD_TESTS)
   endif()
   foreach(test_target IN LISTS LINGTU_MAPS_TEST_TARGETS)
     if(MSVC)
-      target_compile_options(${test_target} PRIVATE /UNDEBUG)
+      target_compile_options(${test_target} PRIVATE /UNDEBUG /FS)
     else()
       target_compile_options(${test_target} PRIVATE -UNDEBUG)
     endif()

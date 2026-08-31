@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -15,6 +16,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lingtu::maps {
@@ -107,9 +109,13 @@ std::vector<std::uint8_t> ReadFile(const std::filesystem::path& path) {
   if (!file) {
     throw std::runtime_error("failed to open " + path.string());
   }
-  return std::vector<std::uint8_t>(
-      std::istreambuf_iterator<char>(file),
-      std::istreambuf_iterator<char>());
+  const auto begin = std::istreambuf_iterator<char>(file);
+  const auto end = std::istreambuf_iterator<char>();
+  std::vector<std::uint8_t> bytes(begin, end);
+  if (file.bad()) {
+    throw std::runtime_error("failed to read " + path.string());
+  }
+  return bytes;
 }
 
 bool WriteFile(const std::filesystem::path& path, const std::vector<std::uint8_t>& data) {
@@ -119,7 +125,8 @@ bool WriteFile(const std::filesystem::path& path, const std::vector<std::uint8_t
     return false;
   }
   file.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
-  return true;
+  file.flush();
+  return file.good();
 }
 
 std::map<std::string, std::vector<std::uint8_t>> ReadStoredNpz(
@@ -150,7 +157,7 @@ std::map<std::string, std::vector<std::uint8_t>> ReadStoredNpz(
     }
     const size_t name_offset = offset + 30U;
     const size_t data_offset = name_offset + name_len + extra_len;
-    if (data_offset + compressed > bytes.size()) {
+    if (data_offset > bytes.size() || compressed > bytes.size() - data_offset) {
       throw std::runtime_error("truncated npz entry in " + path.string());
     }
     if (compressed != uncompressed) {
@@ -159,9 +166,16 @@ std::map<std::string, std::vector<std::uint8_t>> ReadStoredNpz(
     std::string name(
         reinterpret_cast<const char*>(bytes.data() + name_offset),
         static_cast<size_t>(name_len));
-    out[name] = std::vector<std::uint8_t>(
+    std::vector<std::uint8_t> entry(
         bytes.begin() + static_cast<std::ptrdiff_t>(data_offset),
         bytes.begin() + static_cast<std::ptrdiff_t>(data_offset + compressed));
+    const std::uint32_t expected_crc = ReadU32(bytes, offset + 14U);
+    if (Crc32(entry) != expected_crc) {
+      throw std::runtime_error("npz entry CRC mismatch: " + name);
+    }
+    if (!out.emplace(name, std::move(entry)).second) {
+      throw std::runtime_error("duplicate npz entry: " + name);
+    }
     offset = data_offset + compressed;
   }
   return out;
@@ -285,7 +299,7 @@ NpyArray ParseNpy(const std::vector<std::uint8_t>& bytes) {
   } else {
     throw std::runtime_error("unsupported npy version");
   }
-  if (header_offset + header_len > bytes.size()) {
+  if (header_offset > bytes.size() || header_len > bytes.size() - header_offset) {
     throw std::runtime_error("truncated npy header");
   }
   const std::string header(
@@ -316,14 +330,51 @@ NpyArray ParseNpy(const std::vector<std::uint8_t>& bytes) {
   }
   const std::string shape_text = header.substr(open + 1U, close - open - 1U);
   std::vector<int> shape;
-  std::string token;
-  std::stringstream stream(shape_text);
-  while (std::getline(stream, token, ',')) {
-    token.erase(std::remove_if(token.begin(), token.end(), [](unsigned char ch) {
-      return std::isspace(ch) != 0;
-    }), token.end());
-    if (!token.empty()) {
-      shape.push_back(std::stoi(token));
+  std::size_t cursor = 0U;
+  while (cursor < shape_text.size()) {
+    const auto comma = shape_text.find(',', cursor);
+    const auto end = comma == std::string::npos ? shape_text.size() : comma;
+    std::string_view token(shape_text.data() + cursor, end - cursor);
+    while (!token.empty() &&
+           std::isspace(static_cast<unsigned char>(token.front())) != 0) {
+      token.remove_prefix(1U);
+    }
+    while (!token.empty() &&
+           std::isspace(static_cast<unsigned char>(token.back())) != 0) {
+      token.remove_suffix(1U);
+    }
+    if (token.empty()) {
+      throw std::runtime_error("npy shape contains an empty dimension");
+    }
+    int dimension = 0;
+    const auto parsed = std::from_chars(
+        token.data(), token.data() + token.size(), dimension);
+    if (parsed.ec != std::errc{} || parsed.ptr != token.data() + token.size() ||
+        dimension <= 0) {
+      throw std::runtime_error("npy shape contains an invalid dimension");
+    }
+    shape.push_back(dimension);
+    if (shape.size() > 8U) {
+      throw std::runtime_error("npy shape rank exceeds parser limits");
+    }
+    if (comma == std::string::npos) {
+      break;
+    }
+    cursor = comma + 1U;
+    if (cursor == shape_text.size()) {
+      if (shape.size() != 1U) {
+        throw std::runtime_error("npy shape has an invalid trailing comma");
+      }
+      break;
+    }
+    const auto remaining = std::string_view(shape_text).substr(cursor);
+    if (std::all_of(remaining.begin(), remaining.end(), [](unsigned char ch) {
+          return std::isspace(ch) != 0;
+        })) {
+      if (shape.size() != 1U) {
+        throw std::runtime_error("npy shape has an invalid trailing comma");
+      }
+      break;
     }
   }
   NpyArray array;
@@ -332,6 +383,19 @@ NpyArray ParseNpy(const std::vector<std::uint8_t>& bytes) {
   const size_t payload_offset = header_offset + header_len;
   array.payload.assign(bytes.begin() + static_cast<std::ptrdiff_t>(payload_offset), bytes.end());
   return array;
+}
+
+std::size_t CheckedGridCells(int rows, int cols, const std::string& context) {
+  constexpr std::size_t kMaxGridCells = 25'000'000U;
+  if (rows <= 0 || cols <= 0) {
+    throw std::runtime_error(context + " grid is empty");
+  }
+  const auto rows_size = static_cast<std::size_t>(rows);
+  const auto cols_size = static_cast<std::size_t>(cols);
+  if (rows_size > kMaxGridCells / cols_size) {
+    throw std::runtime_error(context + " grid exceeds parser limits");
+  }
+  return rows_size * cols_size;
 }
 
 const std::vector<std::uint8_t>& Entry(
@@ -385,10 +449,8 @@ OccupancyArtifactData LoadOccupancyImpl(const std::filesystem::path& path) {
   OccupancyArtifactData out;
   out.rows = grid.shape[0];
   out.cols = grid.shape[1];
-  if (out.rows <= 0 || out.cols <= 0) {
-    throw std::runtime_error("occupancy grid is empty");
-  }
-  out.grid = PayloadAs<std::int8_t>(grid, "|i1", static_cast<size_t>(out.rows * out.cols));
+  const auto cells = CheckedGridCells(out.rows, out.cols, "occupancy");
+  out.grid = PayloadAs<std::int8_t>(grid, "|i1", cells);
   out.resolution = ScalarF64(ParseNpy(Entry(entries, "resolution.npy")));
   const auto origin = OriginF64(ParseNpy(Entry(entries, "origin.npy")));
   out.origin_x = origin[0];
@@ -414,28 +476,35 @@ EsdfArray LoadEsdf(const std::filesystem::path& path) {
   EsdfArray out;
   out.rows = distance.shape[0];
   out.cols = distance.shape[1];
+  const auto cells = CheckedGridCells(out.rows, out.cols, "esdf");
   out.distance = PayloadAs<float>(
       distance,
       "<f4",
-      static_cast<size_t>(out.rows * out.cols));
+      cells);
   const auto grad_x_entry = entries.find("grad_x.npy");
   const auto grad_y_entry = entries.find("grad_y.npy");
   if (grad_x_entry != entries.end()) {
-    out.grad_x = PayloadAs<float>(
-        ParseNpy(grad_x_entry->second),
-        "<f4",
-        static_cast<size_t>(out.rows * out.cols));
+    const auto grad_x = ParseNpy(grad_x_entry->second);
+    if (grad_x.shape != distance.shape) {
+      throw std::runtime_error("esdf grad_x shape does not match distance");
+    }
+    out.grad_x = PayloadAs<float>(grad_x, "<f4", cells);
   }
   if (grad_y_entry != entries.end()) {
-    out.grad_y = PayloadAs<float>(
-        ParseNpy(grad_y_entry->second),
-        "<f4",
-        static_cast<size_t>(out.rows * out.cols));
+    const auto grad_y = ParseNpy(grad_y_entry->second);
+    if (grad_y.shape != distance.shape) {
+      throw std::runtime_error("esdf grad_y shape does not match distance");
+    }
+    out.grad_y = PayloadAs<float>(grad_y, "<f4", cells);
   }
   out.resolution = ScalarF64(ParseNpy(Entry(entries, "resolution.npy")));
   const auto origin = OriginF64(ParseNpy(Entry(entries, "origin.npy")));
   out.origin_x = origin[0];
   out.origin_y = origin[1];
+  if (!std::isfinite(out.resolution) || out.resolution <= 0.0 ||
+      !std::isfinite(out.origin_x) || !std::isfinite(out.origin_y)) {
+    throw std::runtime_error("esdf grid geometry is invalid");
+  }
   return out;
 }
 

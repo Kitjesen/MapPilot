@@ -15,9 +15,9 @@
 
 #include "dds.hpp"
 #include "dds/dds.h"
-#include "lingtu_slam.h"
-#include "message/cpp/dds_qos_profiles.hpp"
-#include "message/cpp/dds_topics.hpp"
+#include "messages.h"
+#include "message/cpp/qos.hpp"
+#include "message/cpp/topics.hpp"
 
 namespace {
 
@@ -195,36 +195,41 @@ void TestMapdDdsRoundTrip() {
   const auto scene_reader =
       CreateReader(participant, subscriber, lingtu::message::kMapsScene.dds_topic.data(),
                    &lingtu_dds_MapScene_desc);
+  const auto collision_reader =
+      CreateReader(participant, subscriber, lingtu::message::kMapsLocalCollision.dds_topic.data(),
+                   &lingtu_dds_MapCollisionLayer_desc);
   const auto activation_writer =
       CreateWriter(participant, publisher, lingtu::message::kMapsActivationRequest.dds_topic.data(),
                    &lingtu_dds_MapActivationRequest_desc);
   const auto activation_ack_reader =
       CreateReader(participant, subscriber, lingtu::message::kMapsActivationAck.dds_topic.data(),
                    &lingtu_dds_MapActivationAck_desc);
+  const auto snapshot_request_reader = CreateReader(
+      participant, subscriber, lingtu::message::kSlamMapSnapshotRequest.dds_topic.data(),
+      &lingtu_dds_SlamMapSnapshotRequest_desc);
+  const auto snapshot_ack_writer =
+      CreateWriter(participant, publisher, lingtu::message::kSlamMapSnapshotAck.dds_topic.data(),
+                   &lingtu_dds_SlamMapSnapshotAck_desc);
   std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
   lingtu_dds_MapArtifactIdentity target_artifact{};
   target_artifact.type = const_cast<char *>("pointcloud");
   target_artifact.uri = const_cast<char *>("/maps/office/map.pcd");
-  target_artifact.sha256 =
-      const_cast<char *>("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   lingtu_dds_MapActivationRequest activation_message{};
   activation_message.request_id = const_cast<char *>("activation-roundtrip");
   activation_message.operation = lingtu_dds_MAP_ACTIVATION_STAGE;
   activation_message.target.present = true;
   activation_message.target.map_id = const_cast<char *>("office");
-  activation_message.target.version_id = const_cast<char *>("office:v7");
+  activation_message.target.content_epoch = 7;
   activation_message.target.frame_id = const_cast<char *>("map");
-  activation_message.target.map_dir = const_cast<char *>("/maps/office");
   activation_message.target.artifacts._maximum = 1U;
   activation_message.target.artifacts._length = 1U;
   activation_message.target.artifacts._buffer = &target_artifact;
   activation_message.target.artifacts._release = false;
   activation_message.previous.present = false;
   activation_message.previous.map_id = const_cast<char *>("");
-  activation_message.previous.version_id = const_cast<char *>("");
+  activation_message.previous.content_epoch = 0;
   activation_message.previous.frame_id = const_cast<char *>("");
-  activation_message.previous.map_dir = const_cast<char *>("");
   activation_message.caller = const_cast<char *>("mapd-dds-test");
   activation_message.reason = const_cast<char *>("roundtrip");
   std::vector<lingtu::maps::mapd::ActivationRequest> activation_requests;
@@ -237,7 +242,7 @@ void TestMapdDdsRoundTrip() {
   assert(activation_requests.size() == 1U);
   assert(activation_requests.front().operation == ActivationOperation::kStage);
   assert(activation_requests.front().target.map_id == "office");
-  assert(activation_requests.front().target.version_id == "office:v7");
+  assert(activation_requests.front().target.content_epoch == 7);
   assert(activation_requests.front().target.artifacts.size() == 1U);
   assert(!activation_requests.front().previous.present);
 
@@ -268,6 +273,60 @@ void TestMapdDdsRoundTrip() {
   assert(std::string(activation_ack.active.map_id) == "office");
   assert(activation_ack.active.artifacts._length == 1U);
   FreeTaken(&activation_ack, &lingtu_dds_MapActivationAck_desc);
+
+  lingtu::maps::mapd::SlamSnapshotRequest snapshot_request;
+  snapshot_request.request_id = "snapshot-roundtrip";
+  snapshot_request.map_id = "office";
+  snapshot_request.product_session_id = "product-session-1";
+  snapshot_request.output_path = "/tmp/snapshot-roundtrip/map.pcd";
+  snapshot_request.save_patches = true;
+  lingtu_dds_SlamMapSnapshotRequest snapshot_request_message{};
+  bool received_snapshot_request = false;
+  const auto snapshot_request_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (!received_snapshot_request &&
+         std::chrono::steady_clock::now() < snapshot_request_deadline) {
+    assert(mapd.Publish(snapshot_request));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    received_snapshot_request =
+        TakeOne(snapshot_request_reader, &lingtu_dds_SlamMapSnapshotRequest_desc,
+                &snapshot_request_message);
+  }
+  assert(received_snapshot_request);
+  assert(std::string(snapshot_request_message.request_id) == "snapshot-roundtrip");
+  assert(std::string(snapshot_request_message.map_id) == "office");
+  assert(std::string(snapshot_request_message.product_session_id) == "product-session-1");
+  assert(std::string(snapshot_request_message.output_path) == "/tmp/snapshot-roundtrip/map.pcd");
+  assert(snapshot_request_message.save_patches);
+  FreeTaken(&snapshot_request_message, &lingtu_dds_SlamMapSnapshotRequest_desc);
+
+  lingtu_dds_SlamMapSnapshotAck snapshot_ack_message{};
+  snapshot_ack_message.request_id = const_cast<char *>("snapshot-roundtrip");
+  snapshot_ack_message.map_id = const_cast<char *>("office");
+  snapshot_ack_message.success = true;
+  snapshot_ack_message.message = const_cast<char *>("captured");
+  snapshot_ack_message.output_path = const_cast<char *>("/tmp/snapshot-roundtrip/map.pcd");
+  snapshot_ack_message.runtime_instance_id = const_cast<char *>("fastlio2:boot:1");
+  snapshot_ack_message.product_session_id = const_cast<char *>("product-session-1");
+  snapshot_ack_message.reset_epoch = 4U;
+  snapshot_ack_message.observation_sequence = 9U;
+  snapshot_ack_message.captured_at_ns = 100000000025ULL;
+  snapshot_ack_message.frame_id = const_cast<char *>("map");
+  snapshot_ack_message.point_count = 42U;
+  snapshot_ack_message.state = const_cast<char *>("tracking");
+  snapshot_ack_message.healthy = true;
+  snapshot_ack_message.health_message = const_cast<char *>("");
+  std::vector<lingtu::maps::mapd::SlamSnapshotAck> snapshot_acks;
+  const auto snapshot_ack_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (snapshot_acks.empty() && std::chrono::steady_clock::now() < snapshot_ack_deadline) {
+    assert(dds_write(snapshot_ack_writer, &snapshot_ack_message) >= 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    snapshot_acks = mapd.TakeAcks();
+  }
+  assert(snapshot_acks.size() == 1U);
+  assert(snapshot_acks.front().request_id == "snapshot-roundtrip");
+  assert(snapshot_acks.front().map_id == "office");
+  assert(snapshot_acks.front().runtime_instance_id == "fastlio2:boot:1");
+  assert(snapshot_acks.front().point_count == 42U);
 
   ObservationMessage observation;
   std::optional<lingtu::maps::mapd::Observation> decoded;
@@ -308,22 +367,36 @@ void TestMapdDdsRoundTrip() {
   snapshot.map_sensor.x = 10.0;
   snapshot.live_cloud = OnePointCloud();
   snapshot.voxel_cloud = OnePointCloud();
+  snapshot.collision.resolution_m = 0.2F;
+  snapshot.collision.min_x_m = -1.0F;
+  snapshot.collision.min_y_m = -2.0F;
+  snapshot.collision.min_z_m = -0.5F;
+  snapshot.collision.max_x_m = 3.0F;
+  snapshot.collision.max_y_m = 2.0F;
+  snapshot.collision.max_z_m = 1.5F;
+  snapshot.collision.total_occupied_cells = 1U;
+  snapshot.collision.complete = true;
+  snapshot.collision.occupied = OnePointCloud();
   snapshot.occupancy = lingtu::maps::layers::makeGrid2D(2, 2, 0.2, 0.0, 0.0, 0.0F);
   snapshot.elevation.minZ = lingtu::maps::layers::makeGrid2D(2, 2, 0.2, 0.0, 0.0, 0.1F);
   snapshot.esdf.distance = lingtu::maps::layers::makeGrid2D(2, 2, 0.2, 0.0, 0.0, 1.0F);
 
   lingtu_dds_MapRuntimeState state_message{};
   lingtu_dds_MapScene scene_message{};
+  lingtu_dds_MapCollisionLayer collision_message{};
   bool received_state = false;
   bool received_scene = false;
+  bool received_collision = false;
   const auto state_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-  while ((!received_state || !received_scene) &&
+  while ((!received_state || !received_scene || !received_collision) &&
          std::chrono::steady_clock::now() < state_deadline) {
     PublicationProgress publications;
     publications.realtime_clouds.Complete(true, state.generation, state.live);
     publications.map_layers.Complete(true, state.generation, state.live);
     publications.scene.Complete(true, state.generation, state.live);
     assert(mapd.PublishState(state, publications, activation_requests.front().target));
+    assert(mapd.PublishRealtimeClouds(state, snapshot));
+    assert(mapd.PublishMapLayers(state, snapshot));
     assert(mapd.PublishScene(state, snapshot));
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     if (!received_state) {
@@ -331,6 +404,10 @@ void TestMapdDdsRoundTrip() {
     }
     if (!received_scene) {
       received_scene = TakeOne(scene_reader, &lingtu_dds_MapScene_desc, &scene_message);
+    }
+    if (!received_collision) {
+      received_collision =
+          TakeOne(collision_reader, &lingtu_dds_MapCollisionLayer_desc, &collision_message);
     }
   }
   assert(received_state);
@@ -356,14 +433,26 @@ void TestMapdDdsRoundTrip() {
   assert(state_message.active_map.present);
   assert(state_message.active_map.map_id != nullptr);
   assert(std::string(state_message.active_map.map_id) == "office");
-  assert(state_message.active_map.version_id != nullptr);
-  assert(std::string(state_message.active_map.version_id) == "office:v7");
+  assert(state_message.active_map.content_epoch == 7);
   assert(received_scene);
   assert(scene_message.generation == 12U);
   assert(scene_message.live_cloud.cloud.width == 1U);
   assert(scene_message.occupancy.data._length == 4U);
+  assert(received_collision);
+  assert(collision_message.reset_epoch == 4U);
+  assert(collision_message.observation_sequence == 9U);
+  assert(collision_message.generation == 12U);
+  assert(collision_message.live);
+  assert(collision_message.complete);
+  assert(collision_message.resolution == 0.2F);
+  assert(collision_message.aabb_min.x == -1.0);
+  assert(collision_message.aabb_max.z == 1.5);
+  assert(collision_message.occupied.width == 1U);
+  assert(collision_message.occupied.point_step == 12U);
+  assert(collision_message.occupied.data._length == 12U);
   FreeTaken(&state_message, &lingtu_dds_MapRuntimeState_desc);
   FreeTaken(&scene_message, &lingtu_dds_MapScene_desc);
+  FreeTaken(&collision_message, &lingtu_dds_MapCollisionLayer_desc);
   dds_delete(participant);
 }
 

@@ -14,6 +14,7 @@ using lingtu::maps::OwnedPointCloud;
 using lingtu::maps::mapd::Config;
 using lingtu::maps::mapd::LiveMapEngine;
 using lingtu::maps::mapd::Observation;
+using lingtu::maps::mapd::SnapshotDetail;
 using lingtu::maps::mapd::SubmitCode;
 
 std::int64_t WallTimeNs() {
@@ -155,19 +156,19 @@ void TestIndependentDecayWithoutNewObservations() {
       MakeObservation(1U, 1U, 0.0, 0.0, 0.0, {2.0F, 0.0F, 0.0F}))
              .accepted());
   assert(engine.WaitUntilProcessed(1U, 1U, std::chrono::seconds(2)));
-  assert(engine.GetState().voxel_points == 1U);
+  assert(engine.GetState().voxel_cells == 1U);
 
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (std::chrono::steady_clock::now() < deadline) {
     const auto state = engine.GetState();
-    if (state.voxel_points == 0U && state.accumulated_cells == 0U) {
+    if (state.voxel_cells == 0U && state.accumulated_cells == 0U) {
       break;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   const auto state = engine.GetState();
-  assert(state.voxel_points == 0U);
+  assert(state.voxel_cells == 0U);
   assert(state.accumulated_cells == 0U);
   assert(state.generation > 1U);
   engine.Stop();
@@ -306,6 +307,198 @@ void TestRuntimeMapCapacityLimitsFailClosed() {
   accumulated_engine.Stop();
 }
 
+void TestCollisionSnapshotCompletenessAndAabb() {
+  Config complete_config = TestConfig();
+  complete_config.max_collision_snapshot_points = 8U;
+  LiveMapEngine complete_engine(complete_config);
+  complete_engine.Start();
+  assert(complete_engine.Submit(MakeObservation(
+      1U,
+      1U,
+      0.0,
+      0.0,
+      0.0,
+      {1.0F, 0.0F, 0.0F, 2.0F, 0.0F, 0.0F})).accepted());
+  assert(complete_engine.WaitUntilProcessed(
+      1U, 1U, std::chrono::seconds(2)));
+  auto snapshot = complete_engine.GetSnapshot();
+  assert(snapshot.collision.complete);
+  assert(snapshot.collision.total_occupied_cells == 2U);
+  assert(snapshot.collision.occupied.point_count == 2U);
+  assert(snapshot.collision.occupied.interleaved.size() == 6U);
+  assert(std::fabs(
+      snapshot.collision.max_x_m - snapshot.collision.min_x_m -
+      complete_config.occupancy.size_x *
+          complete_config.occupancy.resolution_m) < 1.0e-5F);
+  assert(std::fabs(
+      snapshot.collision.max_y_m - snapshot.collision.min_y_m -
+      complete_config.occupancy.size_y *
+          complete_config.occupancy.resolution_m) < 1.0e-5F);
+  assert(std::fabs(
+      snapshot.collision.max_z_m - snapshot.collision.min_z_m -
+      complete_config.occupancy.size_z *
+          complete_config.occupancy.resolution_m) < 1.0e-5F);
+  assert(!complete_engine.GetState().capacity_limited);
+  complete_engine.Stop();
+
+  Config capped_config = TestConfig();
+  capped_config.max_collision_snapshot_points = 1U;
+  LiveMapEngine capped_engine(capped_config);
+  capped_engine.Start();
+  assert(capped_engine.Submit(MakeObservation(
+      1U,
+      1U,
+      0.0,
+      0.0,
+      0.0,
+      {1.0F, 0.0F, 0.0F, 2.0F, 0.0F, 0.0F})).accepted());
+  assert(capped_engine.WaitUntilProcessed(
+      1U, 1U, std::chrono::seconds(2)));
+  snapshot = capped_engine.GetSnapshot();
+  assert(!snapshot.collision.complete);
+  assert(snapshot.collision.total_occupied_cells == 2U);
+  assert(snapshot.collision.occupied.point_count == 1U);
+  assert(capped_engine.GetState().capacity_limited);
+  capped_engine.Stop();
+}
+
+void TestCollisionSnapshotKeepsNearbyGroundInNearbyCells() {
+  Config config;
+  config.max_points_per_observation = 1000U;
+  config.min_range_m = 0.0F;
+  config.max_range_m = 12.0F;
+  config.max_collision_snapshot_points = 1000U;
+  config.accumulated_decay_factor = 1.0F;
+  LiveMapEngine engine(config);
+  engine.Start();
+
+  std::vector<float> ground;
+  for (int ix = -5; ix <= 20; ++ix) {
+    for (int iy = -9; iy <= 9; ++iy) {
+      ground.push_back(static_cast<float>(ix) * 0.2F);
+      ground.push_back(static_cast<float>(iy) * 0.2F);
+      ground.push_back(-0.48F);
+    }
+  }
+  auto observation = MakeObservation(1U, 1U, 0.0, 0.0, 0.0, ground);
+  observation.map_sensor.z = 0.48;
+  observation.sensor_origin_z_m = 0.48F;
+  assert(engine.Submit(std::move(observation)).accepted());
+  assert(engine.WaitUntilProcessed(1U, 1U, std::chrono::seconds(2)));
+
+  const auto snapshot = engine.GetSnapshot();
+  assert(snapshot.collision.complete);
+  assert(snapshot.collision.occupied.point_count > 0U);
+  assert(snapshot.live_cloud.point_count == ground.size() / 3U);
+  for (std::size_t index = 0U; index < snapshot.live_cloud.point_count; ++index) {
+    const std::size_t offset = index * 3U;
+    assert(snapshot.live_cloud.interleaved[offset] >= -1.01F &&
+           snapshot.live_cloud.interleaved[offset] <= 4.01F);
+    assert(snapshot.live_cloud.interleaved[offset + 1U] >= -1.81F &&
+           snapshot.live_cloud.interleaved[offset + 1U] <= 1.81F);
+    assert(std::fabs(snapshot.live_cloud.interleaved[offset + 2U]) < 1.0e-4F);
+  }
+  for (std::size_t index = 0U; index < snapshot.collision.occupied.point_count; ++index) {
+    const std::size_t offset = index * 3U;
+    const float x = snapshot.collision.occupied.interleaved[offset];
+    const float y = snapshot.collision.occupied.interleaved[offset + 1U];
+    const float z = snapshot.collision.occupied.interleaved[offset + 2U];
+    assert(x >= -1.25F && x <= 4.25F);
+    assert(y >= -2.0F && y <= 2.0F);
+    assert(z >= -0.25F && z <= 0.25F);
+  }
+  engine.Stop();
+}
+
+void TestRealtimeAndCompleteSnapshotsAreBuiltOnDemand() {
+  LiveMapEngine engine(TestConfig());
+  engine.Start();
+  assert(engine.Submit(MakeObservation(
+      1U, 1U, 0.0, 0.0, 0.0, {1.0F, 0.0F, 0.0F})).accepted());
+  assert(engine.WaitUntilProcessed(1U, 1U, std::chrono::seconds(2)));
+
+  auto state = engine.GetState();
+  assert(state.realtime_snapshot_builds == 0U);
+  assert(state.complete_snapshot_builds == 0U);
+  assert(state.realtime_snapshot_generation == 0U);
+  assert(state.complete_snapshot_generation == 0U);
+
+  const auto realtime = engine.GetView(SnapshotDetail::kRealtime);
+  assert(realtime.snapshot.generation == state.generation);
+  assert(realtime.snapshot.voxel_cloud.point_count == 1U);
+  assert(realtime.snapshot.collision.occupied.point_count == 1U);
+  assert(realtime.snapshot.accumulated_cloud.Size() == 0U);
+  assert(realtime.snapshot.occupancy.empty());
+  assert(realtime.snapshot.elevation.valid.empty());
+  assert(realtime.snapshot.esdf.distance.empty());
+  assert(realtime.state.realtime_snapshot_builds == 1U);
+  assert(realtime.state.complete_snapshot_builds == 0U);
+  assert(
+      realtime.state.realtime_snapshot_generation ==
+      realtime.state.generation);
+  assert(realtime.state.complete_snapshot_generation == 0U);
+
+  const auto repeated_realtime = engine.GetView(SnapshotDetail::kRealtime);
+  assert(repeated_realtime.state.realtime_snapshot_builds == 1U);
+  assert(repeated_realtime.state.complete_snapshot_builds == 0U);
+
+  const auto complete = engine.GetView(SnapshotDetail::kComplete);
+  assert(complete.snapshot.generation == realtime.snapshot.generation);
+  assert(complete.snapshot.accumulated_cloud.Size() > 0U);
+  assert(!complete.snapshot.occupancy.empty());
+  assert(!complete.snapshot.esdf.distance.empty());
+  assert(complete.state.realtime_snapshot_builds == 1U);
+  assert(complete.state.complete_snapshot_builds == 1U);
+  assert(
+      complete.state.complete_snapshot_generation ==
+      complete.state.generation);
+
+  const auto repeated_complete = engine.GetView(SnapshotDetail::kComplete);
+  assert(repeated_complete.state.realtime_snapshot_builds == 1U);
+  assert(repeated_complete.state.complete_snapshot_builds == 1U);
+
+  assert(engine.Submit(MakeObservation(
+      1U, 2U, 0.0, 0.0, 0.0, {2.0F, 0.0F, 0.0F})).accepted());
+  assert(engine.WaitUntilProcessed(1U, 2U, std::chrono::seconds(2)));
+  state = engine.GetState();
+  assert(state.generation > complete.state.generation);
+  assert(state.realtime_snapshot_builds == 1U);
+  assert(state.complete_snapshot_builds == 1U);
+  assert(state.realtime_snapshot_generation < state.generation);
+  assert(state.complete_snapshot_generation < state.generation);
+
+  const auto next_realtime = engine.GetView(SnapshotDetail::kRealtime);
+  assert(next_realtime.state.realtime_snapshot_builds == 2U);
+  assert(next_realtime.state.complete_snapshot_builds == 1U);
+  assert(next_realtime.snapshot.occupancy.empty());
+  engine.Stop();
+}
+
+void TestCollisionOnlyRuntimeSkipsExtendedLayers() {
+  Config config = TestConfig();
+  config.build_extended_layers = false;
+  LiveMapEngine engine(config);
+  engine.Start();
+  assert(engine.Submit(MakeObservation(
+      1U, 1U, 0.0, 0.0, 0.0, {1.0F, 0.0F, 0.0F})).accepted());
+  assert(engine.WaitUntilProcessed(1U, 1U, std::chrono::seconds(2)));
+
+  const auto realtime = engine.GetView(SnapshotDetail::kRealtime);
+  assert(realtime.snapshot.live_cloud.point_count == 1U);
+  assert(realtime.snapshot.collision.complete);
+  assert(realtime.snapshot.collision.occupied.point_count == 1U);
+  assert(realtime.snapshot.voxel_cloud.point_count == 0U);
+
+  const auto complete = engine.GetView(SnapshotDetail::kComplete);
+  assert(complete.snapshot.accumulated_cloud.Size() == 0U);
+  assert(complete.snapshot.occupancy.empty());
+  assert(complete.snapshot.elevation.valid.empty());
+  assert(complete.snapshot.esdf.distance.empty());
+  assert(complete.state.voxel_cells == 0U);
+  assert(complete.state.accumulated_cells == 0U);
+  engine.Stop();
+}
+
 }  // namespace
 
 int main() {
@@ -317,5 +510,9 @@ int main() {
   TestVoxelSnapshotHasHardPointAndRoiBounds();
   TestColumnCarvingDoesNotClearAdjacentFloorHeight();
   TestRuntimeMapCapacityLimitsFailClosed();
+  TestCollisionSnapshotCompletenessAndAabb();
+  TestCollisionSnapshotKeepsNearbyGroundInNearbyCells();
+  TestRealtimeAndCompleteSnapshotsAreBuiltOnDemand();
+  TestCollisionOnlyRuntimeSkipsExtendedLayers();
   return 0;
 }

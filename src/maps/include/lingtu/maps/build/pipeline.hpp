@@ -5,7 +5,6 @@
 #include <string>
 
 #include "lingtu/maps/build/pcd.hpp"
-#include "lingtu/maps/sources/unity_scene.hpp"
 #include "lingtu/maps/store.hpp"
 
 namespace lingtu::maps {
@@ -33,10 +32,6 @@ struct SourceCommitOptions {
   bool dynamic_filter_required{false};
   std::string dynamic_filter_command;
   double dynamic_filter_timeout_sec{300.0};
-  std::string optimizer_strategy{"off"};
-  bool optimizer_required{false};
-  std::string optimizer_command;
-  double optimizer_timeout_sec{120.0};
   std::function<bool()> cancel_requested;
 };
 
@@ -56,13 +51,6 @@ class MapPipelineCore {
  public:
   explicit MapPipelineCore(MapStore& store);
 
-  std::string BeginBuildJson(const std::string& map_id, const std::string& artifact_type);
-  std::string FinishBuildJson(
-      const std::string& map_id,
-      const std::string& build_id,
-      bool success,
-      const std::string& message);
-  std::string GetBuildStatusJson(const std::string& map_id) const;
   std::string ImportPcdJson(
       const std::string& map_id,
       const std::filesystem::path& source_path,
@@ -77,7 +65,6 @@ class MapPipelineCore {
       const PcdBounds& bounds,
       bool invert,
       double voxel_size);
-  std::string RestoreSourceBackupJson(const std::string& map_id);
   std::string BuildOccupancySnapshotJson(const std::string& map_id);
   std::string BuildOctomapArtifactJson(
       const std::string& map_id,
@@ -94,15 +81,13 @@ class MapPipelineCore {
   std::string BuildEsdfArtifactJson(const std::string& map_id);
   std::string BuildTraversabilityArtifactJson(const std::string& map_id);
   std::string BuildSemanticArtifactJson(const std::string& map_id);
-  std::string ImportUnitySemanticArtifactJson(
-      const std::string& map_id,
-      const std::filesystem::path& scene_dir,
-      const sources::UnitySemanticImportConfig& options);
-
  private:
   std::filesystem::path BuildDir(const std::string& map_id) const;
   std::filesystem::path LockPath(const std::string& map_id) const;
   std::filesystem::path LockInfoPath(const std::string& map_id) const;
+  void RecoverInterruptedBuilds() const;
+  bool RecoverInterruptedBuild(const std::string& map_id) const;
+  bool TryCreateBuildLock(const std::string& map_id, const std::string& metadata) const;
   std::filesystem::path LatestPath(const std::string& map_id) const;
   std::filesystem::path StatusPath(const std::string& map_id, const std::string& build_id) const;
 
