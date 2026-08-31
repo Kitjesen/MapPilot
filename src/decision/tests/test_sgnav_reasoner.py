@@ -2,12 +2,14 @@
 
 import asyncio
 import json
+import logging
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 from decision.frontiers.scorer import Frontier
-from decision.goals.sgnav import SGNavReasoner
+from decision.goals.sgnav import SGNavReasoner, SubgraphCandidate
 
 
 class TestSGNavReasoner(unittest.TestCase):
@@ -226,6 +228,43 @@ class TestSGNavReasoner(unittest.TestCase):
 
         score_map = {s.subgraph_id: s.score for s in scores}
         self.assertGreater(score_map.get("group_0", 0.0), score_map.get("group_1", 0.0))
+
+
+class TestSGNavScoringWeights(unittest.TestCase):
+    def test_loads_weights_from_yaml(self):
+        import decision.goals.sgnav as sgnav
+
+        sgnav._sgnav_weights_loaded = False
+        sgnav._SGNAV_WEIGHTS = dict(sgnav._DEFAULTS_SGNAV)
+        config = {"sgnav_heuristic": {"keyword": 0.6, "relation": 0.15, "distance": 0.15, "richness": 0.1}}
+        with patch.object(sgnav, "_load_semantic_scoring_yaml", return_value=config):
+            sgnav._load_sgnav_weights()
+
+        self.assertAlmostEqual(sgnav._SGNAV_WEIGHTS["keyword"], 0.6)
+        self.assertAlmostEqual(sgnav._SGNAV_WEIGHTS["relation"], 0.15)
+
+    def test_scoring_emits_candidate_audit_log(self):
+        reasoner = SGNavReasoner()
+        candidate = SubgraphCandidate(
+            subgraph_id="sg_0",
+            level="room",
+            center=np.array([1.0, 1.0]),
+            object_ids=[1, 2],
+            object_labels=["chair", "table"],
+            relation_count=2,
+        )
+
+        with self.assertLogs(level=logging.DEBUG) as logs:
+            scores, _reasons = reasoner._score_subgraphs_heuristic(
+                instruction="find the chair",
+                candidates=[candidate],
+                robot_position={"x": 0.0, "y": 0.0},
+            )
+
+        output = "\n".join(logs.output)
+        self.assertIn("sgnav_heuristic", output)
+        self.assertIn("sg_0", output)
+        self.assertIn("sg_0", scores)
 
 
 if __name__ == "__main__":

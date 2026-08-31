@@ -65,11 +65,12 @@ def test_native_odom_local_risk_wiring_preserves_map_safety_authority() -> None:
 
     topics = _read("src/message/cpp/topics.hpp")
     qos = _read("src/message/cpp/qos.hpp")
-    producer = _read("src/nav/cpp/endpoint/traversability/traversability_dds.cpp")
-    projector = _read("src/nav/cpp/endpoint/input/map.cpp")
-    loop = _read("src/nav/cpp/endpoint/runtime/loop.cpp")
-    navd = _read("src/nav/cpp/endpoint/main.cpp")
-    decoder = _read("src/nav/cpp/endpoint/dds/codec.cpp")
+    producer = _read("src/nav/cpp/endpoint/traversability/main.cpp")
+    projector = _read("src/nav/cpp/endpoint/nav/input/map.cpp")
+    dds = _read("src/nav/cpp/endpoint/nav/dds/runtime.cpp")
+    loop = _read("src/nav/cpp/endpoint/nav/runtime/loop.cpp")
+    navd = _read("src/nav/cpp/endpoint/nav/main.cpp")
+    decoder = _read("src/nav/cpp/endpoint/nav/dds/codec.cpp")
 
     assert '"/nav/local_traversability", "rt/nav/local_traversability"' in topics
     assert "QosProfile::LocalRiskGrid" in qos
@@ -77,11 +78,12 @@ def test_native_odom_local_risk_wiring_preserves_map_safety_authority() -> None:
     assert "DDS_MSECS(500)" in qos
     assert 'toOccupancyMessage(grid, source_stamp_s, "odom")' in producer
     assert "projectRollingRiskGridToOdom" in producer
-    assert "decodeLocalRiskGrid" in projector
-    assert "drainLocalTraversability" in loop
-    assert "projectLocalTraversability" in loop
+    assert "projectLocalTraversability" in projector
+    assert 'copyGridSample(message, "odom")' in dds
+    assert "inputs.apply(dds.takeSensors" in loop
     assert "state.odom_requires_tf" in navd
-    assert "navigator.tickOdom(" in navd
+    assert "ExecutionMode::Route" in navd
+    assert "local_traversability" in navd
     assert "kLocalTraversabilityMaxAgeS = 0.5" in navd
     assert "std::min(cfg.traversability_max_age_s, kLocalTraversabilityMaxAgeS)" in navd
     assert "decodeGrid" in decoder and 'if (frame != "map")' in decoder

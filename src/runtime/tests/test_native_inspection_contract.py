@@ -357,10 +357,9 @@ def test_inspection_periodic_file_io_is_off_the_motion_loop() -> None:
     assert "inspection_store->PutStatus" not in endpoint
     assert "inspection_store->PutStatus" not in bootstrap
     assert "GetActiveMap()" not in motion_loop
-    assert "active_inspection_map_cache->snapshot(steadySeconds())" in bootstrap
-    assert "ActiveInspectionMapCache" in bootstrap
+    assert "InspectionActiveMap{cfg.map_identity.map_id" in bootstrap
+    assert "ActiveInspectionMapCache" not in bootstrap
     assert "nav/status/inspection_status_file_writer.cpp" in cmake
-    assert "nav/status/active_inspection_map_cache.cpp" in cmake
 
 
 def test_endpoint_feeds_final_inspection_point_progress_to_watchdog() -> None:

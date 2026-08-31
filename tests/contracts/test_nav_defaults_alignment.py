@@ -6,10 +6,10 @@ from pathlib import Path
 
 from lingtu.assembly.compiler import compile_run_plan
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 NAV_SERVICE = REPO_ROOT / "scripts" / "deploy" / "thunder" / "lt-nav.service"
 NAV_RUNNER = REPO_ROOT / "scripts" / "deploy" / "thunder" / "run_nav_dds.sh"
-NAV_ENDPOINT_CONFIG = REPO_ROOT / "src" / "nav" / "cpp" / "endpoint" / "config" / "parse.cpp"
+NAV_ENDPOINT_CONFIG = REPO_ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "runtime" / "config" / "parse.cpp"
 
 def test_native_navd_consumes_the_compiled_octoplanner_environment() -> None:
     plan = compile_run_plan("nav", "real", robot="unitree/go2")

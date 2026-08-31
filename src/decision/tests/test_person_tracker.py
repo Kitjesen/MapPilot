@@ -1,9 +1,15 @@
 """Decision module."""
 
+import math
 import time
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pytest
 
 import decision.vision.person as person_module
-from decision.vision.person import PersonTracker
+from decision.vision.person import PersonTracker, TrackedPerson
+from decision.vision.reid import OSNetReIDEncoder
 
 
 def _person_obj(x: float, y: float, z: float = 0.0, conf: float = 0.9, label: str = "person"):
@@ -323,3 +329,71 @@ class TestVelocityPrediction:
         ema_x = tracker.get_person_position()[0]
 
         assert wp["x"] > ema_x - tracker.follow_distance - 1.0  # loose bound
+
+
+class TestOSNetReIDEncoder:
+    def test_raises_when_no_backend_is_available(self):
+        with (
+            patch("decision.vision.reid._try_load_bpu", return_value=None),
+            patch("decision.vision.reid._try_load_torchreid", return_value=None),
+        ):
+            try:
+                OSNetReIDEncoder()
+            except RuntimeError as exc:
+                assert "no backend available" in str(exc)
+            else:
+                raise AssertionError("OSNetReIDEncoder must reject a missing backend")
+
+    def test_bpu_encode_returns_normalized_512d_feature(self):
+        model = MagicMock()
+        model.forward.return_value = np.random.default_rng(7).standard_normal(512).astype(np.float32)
+        with patch("decision.vision.reid._try_load_bpu", return_value=model):
+            encoder = OSNetReIDEncoder()
+
+        feature = encoder.encode(np.zeros((256, 128, 3), dtype=np.uint8))
+        assert encoder.backend == "bpu"
+        assert encoder.feature_dim == 512
+        assert feature.shape == (512,)
+        assert feature.dtype == np.float32
+        assert float(np.linalg.norm(feature)) == pytest.approx(1.0)
+
+
+class TestPersonTrackerReID:
+    def test_adaptive_threshold_tracks_crowd_density(self):
+        tracker = PersonTracker()
+        assert tracker._adaptive_reid_threshold(2) == pytest.approx(0.55)
+        assert tracker._adaptive_reid_threshold(3) == pytest.approx(0.60)
+        assert tracker._adaptive_reid_threshold(5) == pytest.approx(0.70)
+
+    def test_osnet_match_stat_increments_on_reidentification(self):
+        tracker = PersonTracker()
+        feature = np.ones(512, dtype=np.float32) / math.sqrt(512)
+        tracker._osnet_encoder = MagicMock(encode=MagicMock(return_value=feature))
+        tracker._person = TrackedPerson(
+            position=[1.0, 1.0, 0.0],
+            velocity=[0.0, 0.0],
+            osnet_feat=feature.copy(),
+        )
+        candidates = [{
+            "id": "unknown",
+            "label": "person",
+            "position": [6.0, 6.0, 0.0],
+            "bbox": [100, 100, 200, 300],
+            "confidence": 0.9,
+        }]
+
+        tracker._match_person(candidates, np.zeros((480, 640, 3), dtype=np.uint8))
+        assert tracker._reid_stats["osnet_match"] == 1
+
+    def test_motion_prediction_advances_by_velocity(self):
+        tracker = PersonTracker()
+        tracker._person = TrackedPerson(position=[2.0, 3.0, 0.0], velocity=[1.0, -0.5])
+        assert tracker._predict_position(dt=0.3) == pytest.approx([2.3, 2.85, 0.0])
+
+    def test_reid_stats_start_at_zero(self):
+        assert PersonTracker()._reid_stats == {
+            "osnet_match": 0,
+            "clip_fallback": 0,
+            "motion_dominant": 0,
+            "lost": 0,
+        }

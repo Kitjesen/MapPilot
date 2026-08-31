@@ -28,6 +28,7 @@ CLIENT_C_HEADER = CLIENT_DIR / "client_c.h"
 CLIENT_C_SOURCE = CLIENT_DIR / "client_c.cpp"
 ENDPOINT_CMAKE = ENDPOINT_DIR / "CMakeLists.txt"
 NAV_CPP_CMAKE = ROOT / "src" / "nav" / "cpp" / "CMakeLists.txt"
+NAV_TEST_CMAKE = ROOT / "src" / "nav" / "cpp" / "tests" / "endpoint" / "CMakeLists.txt"
 BUILD_SCRIPT = ROOT / "scripts" / "build" / "build_nav_endpoint.sh"
 ENDPOINT_README = ENDPOINT_DIR / "README.md"
 
@@ -84,7 +85,7 @@ def test_endpoint_cmake_builds_coordinator_into_navd() -> None:
 
 
 def test_portable_cmake_registers_command_coordinator_ctest() -> None:
-    cmake = _read(NAV_CPP_CMAKE)
+    cmake = _read(NAV_TEST_CMAKE)
 
     assert "test_inspection_command_coordinator.cpp" in cmake
     assert "inspection/inspection_command_coordinator.cpp" in cmake

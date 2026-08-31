@@ -61,5 +61,66 @@ class TestBPUDetectorRecallTuning(unittest.TestCase):
         self.assertEqual(keep, [1, 2])
 
 
+def _mask_detector(proto_name="proto", proto_tensor_name="proto"):
+    detector = BPUDetector.__new__(BPUDetector)
+    detector._proto_tensor_name_override = proto_tensor_name
+    detector._proto_name = proto_name
+    detector._proto_missing_logged = False
+    return detector
+
+
+def _raw_detections(count=2):
+    raw = [
+        (np.array([50 + index * 60, 50, 100 + index * 60, 100], dtype=np.float32), 0.9, 0)
+        for index in range(count)
+    ]
+    coefficients = np.random.default_rng(7).standard_normal((count, 32)).astype(np.float32)
+    return raw, coefficients
+
+
+def _proto_outputs(name="proto"):
+    proto = np.random.default_rng(42).standard_normal((160, 160, 32)).astype(np.float32)
+    return {name: np.expand_dims(proto, 0)}
+
+
+class TestGenerateMasks(unittest.TestCase):
+    def test_masks_are_boolean_bbox_crops(self):
+        detector = _mask_detector()
+        raw, coefficients = _raw_detections()
+        masks = detector._generate_masks(raw, coefficients, _proto_outputs(), 1.0, 0, 0)
+
+        self.assertEqual(len(masks), 2)
+        for mask, detection in zip(masks, raw, strict=True):
+            self.assertIsNotNone(mask)
+            crop, _x, _y = mask
+            box = detection[0].astype(int)
+            self.assertEqual(crop.dtype, bool)
+            self.assertEqual(crop.shape, (box[3] - box[1], box[2] - box[0]))
+
+    def test_missing_proto_logs_once_and_returns_none_masks(self):
+        detector = _mask_detector(proto_name=None)
+        raw, coefficients = _raw_detections(3)
+
+        with self.assertLogs("perception.detection.bpu_detector", level="ERROR") as logs:
+            first = detector._generate_masks(raw, coefficients, {}, 1.0, 0, 0)
+            second = detector._generate_masks(raw, coefficients, {}, 1.0, 0, 0)
+
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("proto", logs.records[0].message.lower())
+        self.assertEqual(first, [None, None, None])
+        self.assertEqual(second, [None, None, None])
+
+    def test_none_coefficients_return_none_masks(self):
+        detector = _mask_detector()
+        raw, _coefficients = _raw_detections()
+        self.assertEqual(detector._generate_masks(raw, None, _proto_outputs(), 1.0, 0, 0), [None, None])
+
+    def test_proto_name_override_is_used_as_fallback(self):
+        detector = _mask_detector(proto_name=None, proto_tensor_name="my_proto")
+        raw, coefficients = _raw_detections(1)
+        masks = detector._generate_masks(raw, coefficients, _proto_outputs("my_proto"), 1.0, 0, 0)
+        self.assertIsNotNone(masks[0])
+
+
 if __name__ == "__main__":
     unittest.main()

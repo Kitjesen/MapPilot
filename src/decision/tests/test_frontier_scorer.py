@@ -2,6 +2,7 @@
 
 import math
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -247,6 +248,22 @@ class TestKGRoomScore(unittest.TestCase):
             nearby_labels=["chair"],
         )
         self.assertEqual(score, 0.0)
+
+
+class TestFrontierScoringWeights(unittest.TestCase):
+    def test_loads_semantic_prior_weight_from_yaml(self):
+        import decision.frontiers.scorer as scorer_module
+
+        scorer_module._frontier_weights_loaded = False
+        scorer_module._frontier_config_weight = scorer_module._DEFAULT_SEMANTIC_PRIOR_WEIGHT
+        with patch.object(
+            scorer_module,
+            "_load_semantic_scoring_yaml",
+            return_value={"frontier_scorer": {"semantic_prior_weight": 0.25}},
+        ):
+            scorer_module._load_frontier_weights()
+
+        self.assertAlmostEqual(scorer_module._frontier_config_weight, 0.25)
 
 
 if __name__ == "__main__":

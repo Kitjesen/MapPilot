@@ -121,7 +121,6 @@ struct EndpointLoopContext {
   NavigationStateTracker &navigation_state;
 
   // -- Callbacks wired in the setup phase -----------------------------------
-  std::function<std::optional<std::pair<std::string, std::int64_t>>()> active_map_identity;
   std::function<GoalPlanMapIdentityResult()> current_map_identity;
   std::function<void()> sync_goal_plan_diagnostics;
   std::function<bool()> control_loop_guard_latched;

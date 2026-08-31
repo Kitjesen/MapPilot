@@ -81,10 +81,11 @@ def test_navigation_runtime_install_does_not_publish_internal_headers() -> None:
 
 def test_endpoint_links_navigation_targets_instead_of_recompiling_sources() -> None:
     endpoint = _read("src/nav/cpp/endpoint/CMakeLists.txt")
+    targets = _read("src/nav/cpp/cmake/NavCoreTargets.cmake")
 
     assert '"${_NAV_PLAN_CPP_DIR}/nav_loop.cpp"' not in endpoint
     assert "lingtu_nav_navigation" in endpoint
-    assert "lingtu_nav_follower" in endpoint
+    assert "lingtu_nav_follower" in targets
 
 
 def test_navigation_algorithms_follow_domain_boundaries() -> None:
@@ -120,10 +121,10 @@ def test_endpoint_cmake_uses_portable_threads_and_compiler_options() -> None:
     assert "find_package(Threads REQUIRED)" in endpoint
     assert "Threads::Threads" in endpoint
     assert "pthread" not in endpoint
-    assert "function(lingtu_endpoint_enable_warnings target)" in endpoint
-    assert "if(MSVC)" in endpoint
-    assert "/W4" in endpoint
-    assert "-Wall -Wextra -Wpedantic" in endpoint
+    assert "function(lingtu_endpoint_enable_warnings target)" in root_cmake
+    assert "if(MSVC)" in root_cmake
+    assert "/W4" in root_cmake
+    assert "-Wall -Wextra -Wpedantic" in root_cmake
 
 
 def test_dds_types_are_compiled_once_per_endpoint_build_tree() -> None:
@@ -211,10 +212,12 @@ def test_navigation_map_identity_is_runtime_bound_not_store_discovered() -> None
 
 def test_far_is_optional_native_backend_with_active_map_gate() -> None:
     root_cmake = _read("src/nav/cpp/CMakeLists.txt")
+    targets = _read("src/nav/cpp/cmake/NavCoreTargets.cmake")
     endpoint = _read("src/nav/cpp/endpoint/nav/main.cpp")
     gate = _read("src/nav/cpp/endpoint/nav/input/active/occupancy.cpp")
 
-    assert "lingtu_nav_far" in root_cmake
+    assert "include(cmake/NavCoreTargets.cmake)" in root_cmake
+    assert "lingtu_nav_far" in targets
     assert "GlobalPlannerBackend::Far" in endpoint
     assert "runWithActiveOccupancy" in endpoint
     assert "LoadOccupancyArtifact" in gate

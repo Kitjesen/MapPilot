@@ -133,7 +133,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto &operator_motion_authority = ctx.operator_motion_authority;
   auto &command_ingress = ctx.command_ingress;
   auto &navigation_state = ctx.navigation_state;
-  auto &active_map_identity = ctx.active_map_identity;
   auto &current_map_identity = ctx.current_map_identity;
   auto &sync_goal_plan_diagnostics = ctx.sync_goal_plan_diagnostics;
   auto &control_loop_guard_latched = ctx.control_loop_guard_latched;
@@ -1279,9 +1278,9 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
           inspection_tick_input.path_active = control_authority.pathActive();
           inspection_tick_input.goal_plan_busy =
               goal_plan.snapshot().busy || navigation_runtime_controller.terminalPending();
-          if (const auto active_map = active_map_identity()) {
-            inspection_tick_input.active_map =
-                InspectionRuntimeMapIdentity{active_map->first, active_map->second};
+          if (cfg.map_identity.valid()) {
+            inspection_tick_input.active_map = InspectionRuntimeMapIdentity{
+                cfg.map_identity.map_id, cfg.map_identity.content_epoch};
           }
           inspection_tick_input.evidence_worker_matched =
               dds_status.inspection_evidence_worker_matched;

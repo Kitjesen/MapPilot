@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 from launch import LaunchDescription
 from launch.actions import (
@@ -21,7 +22,7 @@ from launch.actions import (
 from launch.substitutions import LaunchConfiguration
 
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT = str(Path(__file__).resolve().parents[3])
 _DEFAULT_WORLD = os.path.join(
     _REPO_ROOT,
     "sim",

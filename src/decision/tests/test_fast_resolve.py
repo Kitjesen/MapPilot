@@ -1,7 +1,9 @@
 """Decision module."""
 
 import json
+import logging
 import unittest
+from unittest.mock import patch
 
 from decision.goals.resolver import GoalResolver
 from decision.llm.client import LLMConfig
@@ -372,6 +374,37 @@ class TestRoomFallback(unittest.TestCase):
         sg = self._make_sg_with_rooms(rooms=[])
         result = self.resolver.fast_resolve("去厨房", sg)
         self.assertIsNone(result)
+
+
+class TestFastPathScoringWeights(unittest.TestCase):
+    def test_loads_weights_from_yaml(self):
+        import decision.goals.fast as fast
+
+        fast._fast_path_weights_loaded = False
+        config = {"fast_path_fusion": {"label": 0.4, "clip": 0.3, "detector": 0.2, "spatial": 0.1}}
+        with patch.object(fast, "_load_semantic_scoring_yaml", return_value=config):
+            fast._load_fast_path_weights()
+
+        self.assertAlmostEqual(fast.WEIGHT_LABEL_MATCH, 0.4)
+        self.assertAlmostEqual(fast.WEIGHT_CLIP_SIM, 0.3)
+        self.assertAlmostEqual(fast.WEIGHT_DETECTOR_SCORE, 0.2)
+        self.assertAlmostEqual(fast.WEIGHT_SPATIAL_HINT, 0.1)
+
+    def test_missing_section_uses_defaults_and_logs(self):
+        import decision.goals.fast as fast
+
+        fast._fast_path_weights_loaded = False
+        fast.WEIGHT_LABEL_MATCH = fast._DEFAULTS_FAST_PATH["label"]
+        fast.WEIGHT_CLIP_SIM = fast._DEFAULTS_FAST_PATH["clip"]
+        fast.WEIGHT_DETECTOR_SCORE = fast._DEFAULTS_FAST_PATH["detector"]
+        fast.WEIGHT_SPATIAL_HINT = fast._DEFAULTS_FAST_PATH["spatial"]
+
+        with self.assertLogs(level=logging.INFO) as logs:
+            with patch.object(fast, "_load_semantic_scoring_yaml", return_value={}):
+                fast._load_fast_path_weights()
+
+        self.assertAlmostEqual(fast.WEIGHT_LABEL_MATCH, 0.35)
+        self.assertIn("default weights", "\n".join(logs.output))
 
 
 if __name__ == "__main__":

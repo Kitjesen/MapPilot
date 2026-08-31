@@ -1392,8 +1392,9 @@ def test_native_dds_build_scripts_check_service_binaries() -> None:
     assert "test_local_planner_core" in nav
     assert "test_nav_client" in nav
     assert "test_teleop_safety" in nav
-    assert "test_nav_endpoint_config" in _read("src/nav/cpp/endpoint/CMakeLists.txt")
-    nav_cmake = _read("src/nav/cpp/CMakeLists.txt")
+    endpoint_tests = _read("src/nav/cpp/tests/endpoint/CMakeLists.txt")
+    assert "test_nav_endpoint_config" in endpoint_tests
+    nav_cmake = _read("src/nav/cpp/tests/CMakeLists.txt")
     assert "test_path_follower_core" in nav_cmake
     assert "test_local_planner_core" in nav_cmake
 
@@ -1464,6 +1465,7 @@ def test_typed_navigation_client_uses_application_ack_as_authority() -> None:
 def test_native_nav_endpoint_uses_shared_dds_qos_catalog() -> None:
     runtime_source = _read("src/nav/cpp/endpoint/nav/dds/runtime.cpp")
     cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
+    tests = _read("src/nav/cpp/tests/endpoint/CMakeLists.txt")
 
     assert '#include "message/cpp/qos.hpp"' in runtime_source
     assert "qos_for_topic(topic_name)" in runtime_source
@@ -1471,10 +1473,10 @@ def test_native_nav_endpoint_uses_shared_dds_qos_catalog() -> None:
     assert "navd" in cmake
     assert "lingtu_dds_contracts" in cmake
     assert "nav/input/obstacle.cpp" in cmake
-    assert "test_motion_layer" in cmake
-    assert "test_nav_endpoint_messages" in cmake
-    assert "test_input_gate" in cmake
-    assert "test_pose_buffer" in cmake
+    assert "test_motion_layer" in tests
+    assert "test_nav_endpoint_messages" in tests
+    assert "test_input_gate" in tests
+    assert "test_pose_buffer" in tests
 
 
 def test_native_motion_publishers_use_canonical_body_frame() -> None:

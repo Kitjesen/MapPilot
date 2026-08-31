@@ -50,7 +50,6 @@
 #include "safety/command.hpp"
 #include "safety/geofence.hpp"
 #include "safety/stop.hpp"
-#include "status/active_inspection_map_cache.hpp"
 #include "status/control_loop_health.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
 #include "status/inspection_status_file_writer.hpp"
@@ -67,8 +66,6 @@ std::atomic_bool g_running{true};
 // cache must never outlive that contract, even if the map-risk gate allows a
 // longer age.
 constexpr double kLocalTraversabilityMaxAgeS = 0.5;
-using lingtu::nav::endpoint::ActiveInspectionMapCache;
-using lingtu::nav::endpoint::ActiveInspectionMapIdentity;
 using lingtu::nav::endpoint::ActiveOccupancyGate;
 using lingtu::nav::endpoint::ActiveOctomapGate;
 using lingtu::nav::endpoint::ActivePathBlockagePolicy;
@@ -238,15 +235,6 @@ int main(int argc, char **argv) {
     std::unique_ptr<lingtu::nav::inspection::Store> inspection_store;
     if (!cfg.inspection_dir.empty()) {
       inspection_store = std::make_unique<lingtu::nav::inspection::Store>(cfg.inspection_dir);
-    }
-    std::unique_ptr<ActiveInspectionMapCache> active_inspection_map_cache;
-    if (cfg.map_identity.valid()) {
-      const auto map_identity = cfg.map_identity;
-      active_inspection_map_cache = std::make_unique<ActiveInspectionMapCache>(
-          [map_identity]() -> std::optional<ActiveInspectionMapIdentity> {
-            return ActiveInspectionMapIdentity{map_identity.map_id,
-                                               map_identity.content_epoch};
-          });
     }
     std::fprintf(stderr, "navd startup: creating_dds_runtime\n");
     std::fflush(stderr);
@@ -424,17 +412,6 @@ int main(int argc, char **argv) {
       std::fprintf(stderr, "nav_native: restored persisted software estop: %s\n",
                    persisted_estop->c_str());
     }
-    auto active_map_identity = [&]() -> std::optional<std::pair<std::string, std::int64_t>> {
-      if (!active_inspection_map_cache) {
-        return std::nullopt;
-      }
-      const auto snapshot = active_inspection_map_cache->snapshot(steadySeconds());
-      if (!snapshot.fresh || !snapshot.identity) {
-        return std::nullopt;
-      }
-      return std::pair<std::string, std::int64_t>{snapshot.identity->map_id,
-                                                  snapshot.identity->version};
-    };
     CommandIngressController command_ingress;
     OperatorMotionAuthority operator_motion_authority;
     const bool operator_motion_interface_enabled =
@@ -1049,11 +1026,10 @@ int main(int argc, char **argv) {
       return inspection_store != nullptr;
     };
     inspection_command_actions.active_map = [&]() -> std::optional<InspectionActiveMap> {
-      const auto identity = active_map_identity();
-      if (!identity) {
+      if (!cfg.map_identity.valid()) {
         return std::nullopt;
       }
-      return InspectionActiveMap{identity->first, identity->second};
+      return InspectionActiveMap{cfg.map_identity.map_id, cfg.map_identity.content_epoch};
     };
     inspection_command_actions.load_route =
         [&](const std::string &map_id,
@@ -1288,7 +1264,6 @@ int main(int argc, char **argv) {
         operator_motion_authority,
         command_ingress,
         navigation_state,
-        active_map_identity,
         current_map_identity,
         sync_goal_plan_diagnostics,
         control_loop_guard_latched,

@@ -7,7 +7,10 @@ Follows patterns from test_memory_modules.py.
 from __future__ import annotations
 
 import json
+import sys
+import types
 import unittest
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 
@@ -180,6 +183,99 @@ class TestVectorMemoryState(unittest.TestCase):
         for mode in ("none", "lexical_hash"):
             m._encoder_type = mode
             self.assertFalse(m._semantic_encoder_ready())
+
+
+class TestVectorMemoryEncoderSelection(unittest.TestCase):
+    def _module(self):
+        from memory.modules.vector_memory_module import VectorMemoryModule
+
+        return VectorMemoryModule()
+
+    @staticmethod
+    def _provider(*, load_error=None, dimensions=512):
+        encoder = MagicMock()
+        if load_error is not None:
+            encoder.load_model.side_effect = load_error
+        encoder.encode_text.return_value = np.ones((1, dimensions), dtype=np.float32)
+        provider = MagicMock()
+        provider.create.return_value = encoder
+        return provider, encoder
+
+    def test_mobileclip_is_loaded_before_use(self):
+        module = self._module()
+        provider, encoder = self._provider()
+
+        with (
+            patch("runtime.plugin_seed.seed_registered_plugins"),
+            patch("memory.modules.vector_memory_module.get", return_value=provider),
+        ):
+            module._init_encoder()
+
+        encoder.load_model.assert_called_once()
+        self.assertEqual(module._encoder_type, "mobileclip")
+        self.assertIs(module._encoder, encoder)
+
+    def test_clip_fallback_loads_when_mobileclip_fails(self):
+        module = self._module()
+        mobileclip, _ = self._provider(load_error=RuntimeError("unavailable"))
+        clip, clip_encoder = self._provider()
+
+        with (
+            patch("runtime.plugin_seed.seed_registered_plugins"),
+            patch(
+                "memory.modules.vector_memory_module.get",
+                side_effect=lambda _kind, backend: {"mobileclip": mobileclip, "clip": clip}[backend],
+            ),
+        ):
+            module._init_encoder()
+
+        clip_encoder.load_model.assert_called_once()
+        self.assertEqual(module._encoder_type, "clip")
+
+    def test_sentence_transformer_fallback_encodes_unit_vector(self):
+        module = self._module()
+        sentence_transformers = types.ModuleType("sentence_transformers")
+
+        class SentenceTransformer:
+            def __init__(self, _model_name):
+                pass
+
+            def encode(self, _text, normalize_embeddings=False):
+                vector = np.ones(384, dtype=np.float32)
+                return vector / np.linalg.norm(vector)
+
+        sentence_transformers.SentenceTransformer = SentenceTransformer
+        with (
+            patch("runtime.plugin_seed.seed_registered_plugins"),
+            patch("memory.modules.vector_memory_module.get", side_effect=KeyError),
+            patch.dict(sys.modules, {"sentence_transformers": sentence_transformers}),
+        ):
+            module._init_encoder()
+
+        vector = module._encode_text("backpack near the entrance")
+        self.assertEqual(module._encoder_type, "sentence_transformers")
+        self.assertEqual(vector.shape, (384,))
+        self.assertEqual(vector.dtype, np.float32)
+        self.assertAlmostEqual(float(np.linalg.norm(vector)), 1.0, places=5)
+        self.assertEqual(module.health()["encoder_type"], "sentence_transformers")
+
+    def test_missing_encoders_use_lexical_hash(self):
+        module = self._module()
+        real_import = __import__
+
+        def block_sentence_transformers(name, *args, **kwargs):
+            if name == "sentence_transformers":
+                raise ImportError("blocked for test")
+            return real_import(name, *args, **kwargs)
+
+        with (
+            patch("runtime.plugin_seed.seed_registered_plugins"),
+            patch("memory.modules.vector_memory_module.get", side_effect=KeyError),
+            patch("builtins.__import__", side_effect=block_sentence_transformers),
+        ):
+            module._init_encoder()
+
+        self.assertEqual(module._encoder_type, "lexical_hash")
 
 
 # ===========================================================================

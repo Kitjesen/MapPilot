@@ -256,6 +256,25 @@ class TestSemanticMapperObservationGate(unittest.TestCase):
         self.assertEqual(m._dm_counts["kitchen"]["chair"], 1)
         m._kg.observe_room.assert_not_called()
 
+    def test_observation_counts_accumulate_before_commit(self):
+        m = self._make(min_observations_for_commit=5)
+        m._kg = MagicMock()
+        sg = _scene_graph(["robot_arm"], region_name="lab")
+        for _ in range(4):
+            m._update_kg(sg)
+
+        self.assertEqual(m._obs_counts[("lab", "robot_arm")], 4)
+        m._kg.observe_room.assert_not_called()
+
+    def test_dirichlet_counts_accumulate_for_each_label(self):
+        m = self._make(min_observations_for_commit=10)
+        m._kg = MagicMock()
+        sg = _scene_graph(["sign", "door"], region_name="corridor")
+        m._update_kg(sg)
+        m._update_kg(sg)
+
+        self.assertEqual(m._dm_counts["corridor"], {"sign": 2, "door": 2})
+
     def test_get_posterior_unseen_room(self):
         m = self._make()
         self.assertEqual(m.get_posterior("unknown", "chair"), 0.0)

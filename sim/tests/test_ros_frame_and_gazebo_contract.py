@@ -490,7 +490,7 @@ def test_gazebo_bridge_config_exposes_lingtu_runtime_topics():
 
 
 def test_gazebo_launch_is_optional_but_ros_native():
-    launch = _read("launch/gazebo_simulation.launch.py")
+    launch = _read("sim/engine/bridge/gazebo_simulation.launch.py")
     normalized_launch = launch.replace("\r\n", "\n")
 
     assert "lingtu_gazebo_demo_room.sdf" in launch

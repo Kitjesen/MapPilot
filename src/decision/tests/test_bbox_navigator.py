@@ -1,8 +1,12 @@
 """Decision module."""
 
+import math
+import tempfile
 import time
+from pathlib import Path
 
 import numpy as np
+import pytest
 
 from decision.vision.bbox import (
     STATE_ARRIVED,
@@ -11,6 +15,7 @@ from decision.vision.bbox import (
     STATE_TRACKING,
     BBoxNavConfig,
     BBoxNavigator,
+    GainAutoTuner,
 )
 
 # ---------------------------------------------------------------------------
@@ -100,6 +105,23 @@ class Test3DProjection:
         assert abs(pt[0] - 0.15) < 0.05, f"Expected X≈0.15, got {pt[0]}"
         assert abs(pt[1]) < 0.05, f"Expected Y≈0.0, got {pt[1]}"
         assert abs(pt[2] - 1.45) < 0.1, f"Expected Z≈1.45, got {pt[2]}"
+
+    def test_depth_confidence_is_one_for_clean_samples(self):
+        depth = _make_depth_image(100, 100, 2.0)
+        assert self.nav.compute_3d_from_bbox([10, 10, 90, 90], depth, 500, 500, 50, 50) is not None
+        assert self.nav.depth_confidence == 1.0
+
+    def test_invalid_depth_returns_none_with_zero_confidence(self):
+        depth = np.zeros((100, 100), dtype=np.float32)
+        assert self.nav.compute_3d_from_bbox([10, 10, 90, 90], depth, 500, 500, 50, 50) is None
+        assert self.nav.depth_confidence == 0.0
+
+    def test_depth_sampling_rejects_center_outlier(self):
+        depth = _make_depth_image(100, 100, 2.0)
+        depth[50, 50] = 200.0
+        point = self.nav.compute_3d_from_bbox([10, 10, 90, 90], depth, 500, 500, 50, 50)
+        assert point is not None
+        assert float(point[2]) == pytest.approx(2.0, abs=0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -255,3 +277,54 @@ class TestConfig:
         assert 0.0 < cfg.max_angular_speed <= 3.0
         assert cfg.lost_timeout > 0.0
         assert 0.0 < cfg.arrived_threshold <= 1.0
+
+
+class TestGainAutoTuner:
+    def test_zn_math_on_known_values(self):
+        tuner = GainAutoTuner(relay_amplitude=0.3)
+        ku, kp, kd, converged = tuner.compute_zn_pd(2.0, 0.5)
+
+        expected_ku = 4.0 * tuner.relay_amplitude / (math.pi * 0.5)
+        assert ku == pytest.approx(expected_ku)
+        assert kp == pytest.approx(0.6 * expected_ku)
+        assert kd == pytest.approx(kp * 2.0 / 8.0)
+        assert converged == 1.0
+
+    def test_degenerate_oscillation_returns_safe_defaults(self):
+        _ku, kp, _kd, converged = GainAutoTuner().compute_zn_pd(0.0, 0.5)
+        assert converged == 0.0
+        assert kp > 0.0
+
+    def test_analyse_oscillation_detects_period(self):
+        tuner = GainAutoTuner()
+        dt = 0.02
+        t = np.arange(0, 4.0, dt)
+        period, amplitude = tuner.analyse_oscillation(np.sin(2 * math.pi * t).tolist(), dt)
+
+        assert period == pytest.approx(1.0, rel=0.1)
+        assert amplitude == pytest.approx(1.0, abs=0.05)
+
+
+class TestGainPersistence:
+    def test_gain_file_save_and_load_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gains_path = Path(tmpdir) / "gains.json"
+            nav = BBoxNavigator(BBoxNavConfig(), robot_id="test_robot", gains_path=gains_path)
+            dt = 0.02
+            t = np.arange(0, 4.0, dt)
+            report = nav.tune_bbox_gains((0.5 * np.sin(2 * math.pi * t)).tolist(), dt)
+            reloaded = BBoxNavigator(BBoxNavConfig(), robot_id="test_robot", gains_path=gains_path)
+
+            assert gains_path.exists()
+            if report.get("converged"):
+                assert reloaded._cfg.angular_gain == pytest.approx(nav._cfg.angular_gain)
+
+    def test_missing_gains_file_uses_defaults(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nav = BBoxNavigator(
+                BBoxNavConfig(linear_gain=0.8, angular_gain=1.5),
+                gains_path=Path(tmpdir) / "missing" / "gains.json",
+            )
+
+        assert nav._cfg.linear_gain == pytest.approx(0.8)
+        assert nav._cfg.angular_gain == pytest.approx(1.5)

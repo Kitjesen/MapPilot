@@ -1,5 +1,10 @@
 """Decision module."""
 
+import asyncio
+from unittest import mock
+
+import decision.vision.vlm_bbox as vlm_bbox
+
 from decision.vision.vlm_bbox import (
     _build_bbox_prompt,
     _extract_bbox_from_response,
@@ -161,3 +166,42 @@ class TestBuildBboxPrompt:
         """Test build prompt en not null fallback."""
         system, _ = _build_bbox_prompt("target", "en")
         assert "null" in system
+
+
+def _mock_client(responses):
+    client = mock.MagicMock()
+
+    async def chat_with_image(**_kwargs):
+        response = responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    client.chat_with_image = chat_with_image
+    return client
+
+
+class TestQueryObjectBboxRetryCache:
+    def setup_method(self):
+        vlm_bbox._bbox_cache.clear()
+
+    def test_retry_succeeds_on_second_attempt(self):
+        client = _mock_client([RuntimeError("timeout"), '{"bbox": [10, 20, 100, 200]}'])
+        with mock.patch("asyncio.sleep", new_callable=mock.AsyncMock):
+            result = asyncio.run(vlm_bbox.query_object_bbox(client, "img_b64", "chair"))
+        assert result == [10.0, 20.0, 100.0, 200.0]
+
+    def test_stale_cache_is_returned_when_retries_fail(self):
+        key = vlm_bbox._cache_key("chair", "img_b64")
+        vlm_bbox._cache_put(key, [5.0, 6.0, 55.0, 66.0], confidence=1.0)
+        client = _mock_client([RuntimeError("one"), RuntimeError("two"), RuntimeError("three")])
+
+        with mock.patch("asyncio.sleep", new_callable=mock.AsyncMock):
+            result = asyncio.run(vlm_bbox.query_object_bbox(client, "img_b64", "chair"))
+        assert result == [5.0, 6.0, 55.0, 66.0]
+
+    def test_no_cache_returns_none_when_retries_fail(self):
+        client = _mock_client([RuntimeError("one"), RuntimeError("two"), RuntimeError("three")])
+        with mock.patch("asyncio.sleep", new_callable=mock.AsyncMock):
+            result = asyncio.run(vlm_bbox.query_object_bbox(client, "fresh_img", "sofa"))
+        assert result is None

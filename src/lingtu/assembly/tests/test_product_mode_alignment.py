@@ -19,7 +19,7 @@ from runtime.contracts.product_runtime import resolve_product_spec_contracts
 from runtime.graph.loader import RuntimeGraph, load_runtime_graph, resolve_product_variant_spec
 from runtime.runtime_interface import TOPICS
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 
 
 def test_operator_products_come_from_the_runtime_graph() -> None:
@@ -160,8 +160,8 @@ def test_field_traversability_has_one_native_control_writer() -> None:
     topics = load_runtime_graph().topic_contracts
     nav_contract = topics[TOPICS.traversability]
     mapd_dds = (ROOT / "src" / "maps" / "cpp" / "mapd" / "dds.cpp").read_text(encoding="utf-8")
-    traversability_dds = (
-        ROOT / "src" / "nav" / "cpp" / "endpoint" / "traversability" / "traversability_dds.cpp"
+    traversability_main = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "traversability" / "main.cpp"
     ).read_text(encoding="utf-8")
 
     assert nav_contract["field_producer"] == "native_traversability_endpoint"
@@ -169,13 +169,13 @@ def test_field_traversability_has_one_native_control_writer() -> None:
     assert "/maps/traversability" not in topics
     assert "kMapsTraversability" not in mapd_dds
     assert "kNavTraversability" not in mapd_dds
-    assert "kNavTraversability" in traversability_dds
-    assert "kMapsTraversability" not in traversability_dds
+    assert "kNavTraversability" in traversability_main
+    assert "kMapsTraversability" not in traversability_main
 
 
 def test_native_control_modes_match_the_cpp_endpoint_enum() -> None:
     source = (
-        ROOT / "src" / "nav" / "cpp" / "endpoint" / "config" / "build.cpp"
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "runtime" / "config" / "build.cpp"
     ).read_text(encoding="utf-8")
     block = source.split("controlModeName(ControlMode mode)", 1)[1].split(
         "globalPlannerBackendName",
@@ -218,7 +218,7 @@ def test_teleop_avoid_is_map_free_native_assisted_teleop() -> None:
     assert lifecycle.requires_map is False
     assert lifecycle.native_control_mode == "teleop_avoid"
     assert lifecycle.slam_mode == "mapping"
-    assert "/nav/traversability" in contract.topics
+    assert "/nav/local_path" in contract.topics
     assert "operator_assisted_local_planner_control" in contract.capabilities
 
 
