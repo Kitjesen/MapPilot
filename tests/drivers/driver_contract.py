@@ -16,13 +16,13 @@ the production ``drivers`` package.
 
 Contract tiers
 --------------
-* MotionDriver (REQUIRED for every profile-selectable motion driver):
+* MotionDriver (REQUIRED for every Product-selectable motion driver):
     In  : cmd_vel: In[Twist], stop_signal: In[int]
     Out : odometry: Out[Odometry]
 * CameraSource (OPTIONAL capability):
     Out : (camera_image | color_image): Out[Image], depth_image, camera_info
 * PointcloudSource (OPTIONAL capability):
-    Out : map_cloud: Out[PointCloud2]
+    Out : map_cloud_frame: Out[MapCloudFrame]
 
 A backend is a "full sensor driver" (mujoco / ros2_sim) when it satisfies
 MotionDriver + CameraSource + PointcloudSource. A "minimal driver" (stub /
@@ -77,7 +77,7 @@ CAMERA_COLOR_OUTPUTS: frozenset[str] = frozenset({"camera_image", "color_image"}
 CAMERA_EXTRA_OUTPUTS: frozenset[str] = frozenset({"depth_image", "camera_info"})
 
 #: A pointcloud source must expose the map cloud feeding maps/terrain.
-POINTCLOUD_OUTPUTS: frozenset[str] = frozenset({"map_cloud"})
+POINTCLOUD_OUTPUTS: frozenset[str] = frozenset({"map_cloud_frame"})
 
 
 # ── Protocols (documentation + optional runtime isinstance) ────────────────
@@ -94,7 +94,7 @@ class MotionDriver(Protocol):
 
 @runtime_checkable
 class PointcloudSource(Protocol):
-    map_cloud: Any
+    map_cloud_frame: Any
 
 
 @runtime_checkable

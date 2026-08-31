@@ -7,7 +7,7 @@
 - `sdk2_stream/` is the product hot path: C++ Livox SDK2 capture plus optional
   CycloneDDS publishing.
 - `deps/livox/Livox-SDK2/` is the only vendor SDK kept under `real/lidar`.
-- `lingtu-livox-dds.service` should run the C++ stream binary in field builds.
+- `lt-lidar.service` should run the C++ stream binary in field builds.
 
 ## Folder layout
 
@@ -54,8 +54,7 @@ Python here is not the high-rate device driver.
 - `impl/livox/sdk2_stream_source.py` starts the C++ stream process for managed
   local runs and tests.
 - The removed Python ROS/Livox DDS mirror is not a field or Host runtime path.
-  Diagnostics that need typed DDS use `message.dds_types` and the explicit
-  diagnostic reader instead of a second LiDAR implementation.
+  Diagnostics use the native DDS probe instead of a second LiDAR reader.
 
 ## ROS2 fallback
 

@@ -1,9 +1,10 @@
-#include "message/cpp/dds_topics.hpp"
-#include "message/cpp/dds_qos_profiles.hpp"
+#include "camera_record.hpp"
+#include "message/cpp/topics.hpp"
+#include "message/cpp/qos.hpp"
 #include "shm_frame_ring.hpp"
 
 #include "dds/dds.h"
-#include "lingtu_slam.h"
+#include "messages.h"
 
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -31,40 +32,11 @@ namespace {
 
 std::atomic_bool g_running{true};
 
-constexpr char kMagic[4] = {'L', 'T', 'O', 'B'};
-constexpr std::uint16_t kVersion = 2;
-constexpr std::uint16_t kKindIntrinsics = 1;
-constexpr std::uint16_t kKindColor = 2;
-constexpr std::uint16_t kKindDepth = 3;
-constexpr std::uint32_t kFmtRgb8 = 1;
-constexpr std::uint32_t kFmtBgr8 = 2;
-constexpr std::uint32_t kFmtDepthU16 = 3;
-
-#pragma pack(push, 1)
-struct RecordHeader {
-  char magic[4];
-  std::uint16_t version;
-  std::uint16_t kind;
-  std::uint32_t width;
-  std::uint32_t height;
-  std::uint32_t channels;
-  std::uint32_t format;
-  double timestamp_s;
-  double fx;
-  double fy;
-  double cx;
-  double cy;
-  double depth_scale_m;
-  std::uint32_t payload_size;
-  double dist_k1;
-  double dist_k2;
-  double dist_p1;
-  double dist_p2;
-  double dist_k3;
-};
-#pragma pack(pop)
-
-static_assert(sizeof(RecordHeader) == 116, "unexpected camera record header size");
+namespace camera_record = lingtu::drivers::camera::record;
+using camera_record::RecordHeader;
+using camera_record::kKindColor;
+using camera_record::kKindDepth;
+using camera_record::kKindIntrinsics;
 
 void stopSignal(int) {
   g_running = false;
@@ -76,8 +48,8 @@ double nowSeconds() {
 }
 
 void fillHeader(lingtu_dds_Header& header, double stamp_s, const char* frame_id) {
-  if (stamp_s <= 0.0) {
-    stamp_s = nowSeconds();
+  if (!camera_record::isValidTimestampSeconds(stamp_s)) {
+    throw std::runtime_error("camera_record_timestamp_invalid");
   }
   header.stamp.sec = static_cast<std::int32_t>(stamp_s);
   header.stamp.nanosec =
@@ -98,6 +70,15 @@ void logDdsError(dds_return_t value, const char* what) {
   }
 }
 
+enum class RecordSource {
+  kChild,
+  kStdin,
+};
+
+const char* recordSourceName(RecordSource source) noexcept {
+  return source == RecordSource::kStdin ? "stdin" : "child";
+}
+
 struct CliConfig {
   std::string capture_bin{"build/orbbec_native/orbbec_capture"};
   std::string frame_id{"camera_link"};
@@ -109,6 +90,8 @@ struct CliConfig {
   std::string depth_shm{"/lingtu_camera_depth"};
   std::string info_shm{"/lingtu_camera_info"};
   std::vector<std::string> capture_args;
+  RecordSource record_source{RecordSource::kChild};
+  bool capture_bin_explicit{false};
   int domain_id{0};
   int capture_stale_timeout_ms{15000};
   std::uint32_t shm_slot_count{lingtu::drivers::camera::shm::kDefaultSlotCount};
@@ -130,8 +113,19 @@ CliConfig parseArgs(int argc, char** argv) {
     };
     if (arg == "--domain-id" || arg == "--domain") {
       cfg.domain_id = std::stoi(next());
+    } else if (arg == "--record-source") {
+      const std::string source = next();
+      if (source == "child") {
+        cfg.record_source = RecordSource::kChild;
+      } else if (source == "stdin") {
+        cfg.record_source = RecordSource::kStdin;
+      } else {
+        throw std::runtime_error(
+            "unsupported camera record source '" + source + "'; expected child or stdin");
+      }
     } else if (arg == "--capture-bin") {
       cfg.capture_bin = next();
+      cfg.capture_bin_explicit = true;
     } else if (arg == "--frame-id") {
       cfg.frame_id = next();
     } else if (arg == "--color-topic") {
@@ -165,7 +159,8 @@ CliConfig parseArgs(int argc, char** argv) {
       break;
     } else if (arg == "--help" || arg == "-h") {
       std::fprintf(stderr,
-                   "usage: lingtu_camera_dds [--domain-id N] [--capture-bin PATH]\n"
+                   "usage: lingtu_camera_dds [--domain-id N] [--record-source child|stdin]\n"
+                   "                         [--capture-bin PATH]\n"
                    "                         [--frame-id FRAME] [--color-topic TOPIC]\n"
                    "                         [--depth-topic TOPIC] [--info-topic TOPIC]\n"
                    "                         [--status-file PATH] [--max-frames N]\n"
@@ -180,18 +175,36 @@ CliConfig parseArgs(int argc, char** argv) {
       cfg.capture_args.push_back(arg);
     }
   }
+  if (!camera_record::isValidRecordTimeoutMs(cfg.capture_stale_timeout_ms)) {
+    throw std::runtime_error(
+        "--capture-stale-timeout-ms must be between " +
+        std::to_string(camera_record::kMinRecordTimeoutMs) + " and " +
+        std::to_string(camera_record::kMaxRecordTimeoutMs));
+  }
+  if (cfg.record_source == RecordSource::kStdin &&
+      (cfg.capture_bin_explicit || !cfg.capture_args.empty())) {
+    throw std::runtime_error(
+        "stdin camera record source rejects capture command and arguments");
+  }
   return cfg;
 }
 
 struct CaptureProcess {
   pid_t pid{-1};
   int fd{-1};
+  bool owns_fd{false};
 
   ~CaptureProcess() {
     close();
   }
 
   void start(const CliConfig& cfg) {
+    if (cfg.record_source == RecordSource::kStdin) {
+      fd = STDIN_FILENO;
+      owns_fd = false;
+      return;
+    }
+
     int pipefd[2] = {-1, -1};
     if (pipe(pipefd) != 0) {
       throw std::runtime_error(std::string("pipe: ") + std::strerror(errno));
@@ -221,59 +234,72 @@ struct CaptureProcess {
     }
     ::close(pipefd[1]);
     fd = pipefd[0];
+    owns_fd = true;
   }
 
-  bool readExact(void* out, std::size_t size, int stale_timeout_ms) {
-    auto* dst = static_cast<std::uint8_t*>(out);
-    std::size_t got = 0;
-    while (got < size && g_running) {
+  bool readExact(
+      void* out,
+      std::size_t size,
+      camera_record::RecordDeadline deadline) {
+    const auto wait_readable = [&](int timeout_ms) {
+      if (!g_running) {
+        return camera_record::RecordWaitResult::kEndOfStream;
+      }
       pollfd pfd{};
       pfd.fd = fd;
       pfd.events = POLLIN;
-      const int wait_rc = ::poll(&pfd, 1, stale_timeout_ms);
+      const int wait_rc = ::poll(&pfd, 1, timeout_ms);
       if (wait_rc == 0) {
-        throw std::runtime_error(
-            "camera capture produced no bytes before stale timeout");
+        return camera_record::RecordWaitResult::kTimeout;
       }
       if (wait_rc < 0) {
         if (errno == EINTR) {
-          continue;
+          return camera_record::RecordWaitResult::kRetry;
         }
-        throw std::runtime_error(std::string("poll camera capture: ") + std::strerror(errno));
+        throw std::runtime_error(
+            std::string("poll camera capture: ") + std::strerror(errno));
       }
       if ((pfd.revents & (POLLERR | POLLNVAL)) != 0) {
         throw std::runtime_error("camera capture pipe error");
       }
       if ((pfd.revents & POLLHUP) != 0 && (pfd.revents & POLLIN) == 0) {
-        return false;
+        return camera_record::RecordWaitResult::kEndOfStream;
       }
-      const ssize_t n = ::read(fd, dst + got, size - got);
-      if (n > 0) {
-        got += static_cast<std::size_t>(n);
-        continue;
-      }
-      if (n == 0) {
-        return false;
+      return camera_record::RecordWaitResult::kReady;
+    };
+    const auto read_some = [&](void* destination, std::size_t remaining) {
+      const ssize_t count = ::read(fd, destination, remaining);
+      if (count >= 0) {
+        return static_cast<std::ptrdiff_t>(count);
       }
       if (errno == EINTR) {
-        continue;
+        return static_cast<std::ptrdiff_t>(-1);
       }
-      throw std::runtime_error(std::string("read camera capture: ") + std::strerror(errno));
+      throw std::runtime_error(
+          std::string("read camera capture: ") + std::strerror(errno));
+    };
+    const auto result = camera_record::readExactUntil(
+        out, size, deadline, wait_readable, read_some);
+    if (result == camera_record::RecordReadResult::kTimeout) {
+      throw std::runtime_error(
+          "camera record exceeded absolute read deadline");
     }
-    return got == size;
+    return result == camera_record::RecordReadResult::kComplete;
   }
 
-  bool readHeader(RecordHeader& header, int stale_timeout_ms) {
+  bool readHeader(
+      RecordHeader& header,
+      camera_record::RecordDeadline deadline) {
     std::size_t matched = 0;
     std::uint64_t skipped = 0;
     while (g_running) {
       char ch = 0;
-      if (!readExact(&ch, 1, stale_timeout_ms)) {
+      if (!readExact(&ch, 1, deadline)) {
         return false;
       }
-      if (ch == kMagic[matched]) {
+      if (ch == camera_record::kMagic[matched]) {
         ++matched;
-        if (matched == sizeof(kMagic)) {
+        if (matched == camera_record::kMagic.size()) {
           break;
         }
         continue;
@@ -281,19 +307,20 @@ struct CaptureProcess {
       if (matched > 0) {
         skipped += matched;
       }
-      if (ch == kMagic[0]) {
+      if (ch == camera_record::kMagic[0]) {
         matched = 1;
         continue;
       }
       matched = 0;
       skipped += 1;
     }
-    if (matched != sizeof(kMagic)) {
+    if (matched != camera_record::kMagic.size()) {
       return false;
     }
-    std::memcpy(header.magic, kMagic, sizeof(kMagic));
-    auto* rest = reinterpret_cast<std::uint8_t*>(&header) + sizeof(kMagic);
-    if (!readExact(rest, sizeof(header) - sizeof(kMagic), stale_timeout_ms)) {
+    std::copy(
+        camera_record::kMagic.begin(), camera_record::kMagic.end(), header.magic);
+    auto* rest = reinterpret_cast<std::uint8_t*>(&header) + camera_record::kMagic.size();
+    if (!readExact(rest, sizeof(header) - camera_record::kMagic.size(), deadline)) {
       return false;
     }
     if (skipped > 0) {
@@ -306,8 +333,11 @@ struct CaptureProcess {
 
   void close() {
     if (fd >= 0) {
-      ::close(fd);
+      if (owns_fd) {
+        ::close(fd);
+      }
       fd = -1;
+      owns_fd = false;
     }
     if (pid > 0) {
       int status = 0;
@@ -430,28 +460,30 @@ void writeStatus(const std::string& path, const Status& status) {
 }
 
 std::string encodingFor(std::uint32_t format) {
-  if (format == kFmtRgb8) {
+  if (format == camera_record::kFormatRgb8) {
     return "rgb8";
   }
-  if (format == kFmtBgr8) {
+  if (format == camera_record::kFormatBgr8) {
     return "bgr8";
   }
-  if (format == kFmtDepthU16) {
+  if (format == camera_record::kFormatDepthU16) {
     return "16UC1";
   }
   return "";
 }
 
 std::uint32_t stepFor(const RecordHeader& header) {
-  if (header.format == kFmtDepthU16) {
+  if (header.format == camera_record::kFormatDepthU16) {
     return header.width * 2;
   }
   return header.width * std::max<std::uint32_t>(1, header.channels);
 }
 
 std::uint64_t timestampNs(double timestamp_s) {
-  const double value = timestamp_s > 0.0 ? timestamp_s : nowSeconds();
-  return static_cast<std::uint64_t>(value * 1e9);
+  if (!camera_record::isValidTimestampSeconds(timestamp_s)) {
+    throw std::runtime_error("camera_record_timestamp_invalid");
+  }
+  return static_cast<std::uint64_t>(timestamp_s * 1e9);
 }
 
 lingtu::drivers::camera::shm::FrameMetadata toShmMetadata(
@@ -574,14 +606,10 @@ lingtu_dds_CameraInfo toCameraInfoMsg(
 }
 
 void validateHeader(const RecordHeader& header) {
-  if (std::memcmp(header.magic, kMagic, 4) != 0) {
-    throw std::runtime_error("invalid camera record magic");
-  }
-  if (header.version != kVersion) {
-    throw std::runtime_error("unsupported camera record version");
-  }
-  if (header.payload_size > 128u * 1024u * 1024u) {
-    throw std::runtime_error("camera record payload too large");
+  const auto validation = camera_record::validateRecordHeader(header);
+  if (validation != camera_record::RecordValidation::kValid) {
+    throw std::runtime_error(
+        camera_record::recordValidationReason(validation));
   }
 }
 
@@ -621,19 +649,22 @@ int main(int argc, char** argv) {
     double next_info_publish_s = 0.0;
     std::fprintf(stderr,
                  "lingtu_camera_dds: domain=%d color_shm=%s depth_shm=%s info_shm=%s "
-                 "image_dds=%s capture=%s\n",
+                 "image_dds=%s record_source=%s capture=%s\n",
                  cfg.domain_id,
                  cfg.color_shm.c_str(),
                  cfg.depth_shm.c_str(),
                  cfg.info_shm.c_str(),
                  cfg.publish_image_dds ? "enabled" : "disabled",
-                 cfg.capture_bin.c_str());
+                 recordSourceName(cfg.record_source),
+                 cfg.record_source == RecordSource::kStdin ? "stdin" : cfg.capture_bin.c_str());
 
     while (g_running) {
       RecordHeader header{};
       std::vector<std::uint8_t> payload;
       try {
-        if (!capture.readHeader(header, cfg.capture_stale_timeout_ms)) {
+        const auto record_deadline =
+            camera_record::makeRecordDeadline(cfg.capture_stale_timeout_ms);
+        if (!capture.readHeader(header, record_deadline)) {
           if (g_running && (cfg.max_frames == 0 || records < cfg.max_frames)) {
             status.last_error = "camera capture ended before publishing the next record";
             writeStatus(cfg.status_file, status);
@@ -642,9 +673,15 @@ int main(int argc, char** argv) {
           break;
         }
         validateHeader(header);
+        const auto sequence_validation =
+            camera_record::validateRecordSequence(header, has_info);
+        if (sequence_validation != camera_record::RecordValidation::kValid) {
+          throw std::runtime_error(
+              camera_record::recordValidationReason(sequence_validation));
+        }
         payload.resize(header.payload_size);
         if (!payload.empty() &&
-            !capture.readExact(payload.data(), payload.size(), cfg.capture_stale_timeout_ms)) {
+            !capture.readExact(payload.data(), payload.size(), record_deadline)) {
           status.last_error = "camera capture ended before publishing full payload";
           writeStatus(cfg.status_file, status);
           throw std::runtime_error(status.last_error);

@@ -17,11 +17,11 @@ from typing import BinaryIO
 from runtime.msgs.geometry import Quaternion, Vector3
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import Imu
-from runtime.runtime_interface import real_lidar_frame_id
+from runtime.runtime_interface import TOPICS, topic_default_frame_id
 from runtime.utils.livox_config import ensure_mid360_config_file
 
 from ...api.frame_stream import LidarFrameStream
-from ...api.frames import POINT_DTYPE, LivoxPointFrame
+from runtime.msgs.sensor import POINT_DTYPE, LivoxPointFrame
 from ...native.model import LidarHealth, LidarState
 
 logger = logging.getLogger(__name__)
@@ -261,7 +261,7 @@ def _parse_record(stream: BinaryIO, header: bytes):
             angular_velocity=Vector3(gx, gy, gz),
             linear_acceleration=Vector3(ax, ay, az),
             ts=int(timestamp_ns) * 1e-9,
-            frame_id=real_lidar_frame_id(),
+            frame_id=topic_default_frame_id(TOPICS.imu),
         )
     return None
 

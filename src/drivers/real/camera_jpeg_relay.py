@@ -1,8 +1,7 @@
 """Camera-only JPEG relay for Gateway WebSocket and snapshot fallbacks.
 
-This module intentionally has no joystick input, velocity output, teleop state,
-or motion RPC. Field Products use it instead of ``TeleopModule`` so the Python
-Host graph cannot become a second motion authority.
+This module intentionally has no operator-velocity input, velocity output,
+teleop state, or motion RPC. Operator motion is owned by the native DDS path.
 """
 
 from __future__ import annotations

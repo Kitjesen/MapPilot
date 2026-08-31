@@ -220,6 +220,7 @@ def test_lidar_module_reads_mock_sdk2_process_stream(monkeypatch, tmp_path) -> N
     assert raw_scans[0].points["tag"].tolist() == [9, 10]
     assert abs(imus[0].ts - 1.001) < 1e-9
     assert abs(imus[0].angular_velocity.z - 0.3) < 1e-6
+    assert imus[0].frame_id == "imu_link"
     assert imus[0].orientation_covariance[0] == -1.0
 
 
@@ -228,7 +229,7 @@ def test_lidar_module_reads_software_livox_device_process(monkeypatch, tmp_path)
     from runtime.config import reset_config
 
     repo_root = Path(__file__).resolve().parents[2]
-    simulator = repo_root / "scripts" / "diagnostics" / "livox_stream_sim.py"
+    simulator = repo_root / "sim" / "tools" / "livox_stream_sim.py"
     monkeypatch.setenv("LINGTU_LIVOX_SDK2_STREAM_BIN", str(simulator))
     monkeypatch.setenv("LINGTU_LIVOX_SIM_FRAMES", "2")
     monkeypatch.setenv("LINGTU_LIVOX_SIM_POINTS", "32")

@@ -1,0 +1,390 @@
+// brainstem_api/cms.proto
+//
+// RobotControl — brainstem 对外的主控 gRPC 服务。
+// 提供运动控制指令和实时传感器数据流。
+//
+// API Version: 2.1.0 (2026-07-15)
+//
+// 兼容性承诺 (within 2.x):
+//   - 现有 RPC 的签名和语义不会改变
+//   - 现有 message 的字段编号不会改变
+//   - 新增 RPC 和字段使用新编号，不影响已有客户端
+//   - 废弃功能至少保留 2 个大版本后才移除
+//   - 破坏性变更只在大版本号升级时发生 (v3.0.0)
+//
+// v2.0.0 breaking changes from 1.0.0 (legacy han_dog_message):
+//   - proto package: han_dog → brainstem.api.v1
+//   - service:       Cms → RobotControl
+//   - Dart package:  han_dog_message → brainstem_api
+//   - Python pkg:    han_dog_message → brainstem_api
+
+syntax = "proto3";
+
+import "google/protobuf/empty.proto";
+import "brainstem_api/common.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+package brainstem.api.v1;
+
+// 四足机器人命令与监控服务。
+//
+// 控制类 RPC（受仲裁器限制，遥控器优先级更高）：
+//   Enable / Disable / Walk / StandUp / SitDown
+//
+// 仿真类 RPC（仅在 sim 模式下使用）：
+//   Tick / Step
+//
+// 监控类 RPC（不受仲裁限制，任何客户端均可订阅）：
+//   ListenHistory / ListenImu / ListenJoint / GetStartTime / GetParams
+service RobotControl {
+  // ──── 硬件控制 ────
+
+  // 使能所有电机（硬件级操作，不经仲裁）。
+  rpc Enable(google.protobuf.Empty) returns (google.protobuf.Empty);
+  // 禁用所有电机（硬件级操作，不经仲裁）。
+  rpc Disable(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // ──── 运动指令（经仲裁器，可能被拒绝） ────
+
+  // 行走：传入方向向量 (x=前后, y=左右, z=旋转)，范围 [-1, 1]。
+  rpc Walk(Vector3) returns (google.protobuf.Empty);
+  // Lease-aware walking command. Autonomous clients must use this RPC so a
+  // transport-level OK can be distinguished from an accepted motor command.
+  rpc WalkChecked(WalkRequest) returns (CommandAck);
+  rpc AcquireControl(AcquireControlRequest) returns (ControlLease);
+  rpc RenewControlLease(ControlLeaseRequest) returns (ControlLease);
+  rpc ReleaseControl(ControlLeaseRequest) returns (ControlStatus);
+  // 从坐姿过渡到站立姿态。
+  rpc StandUp(google.protobuf.Empty) returns (google.protobuf.Empty);
+  // 从站立过渡到坐姿。
+  rpc SitDown(google.protobuf.Empty) returns (google.protobuf.Empty);
+  // 设置速度模式。NORMAL=默认, HIGH_SPEED=高速模式(最大 2.5m/s)。
+  rpc SetSpeedMode(SpeedModeRequest) returns (google.protobuf.Empty);
+  // 获取当前速度模式。
+  rpc GetSpeedMode(google.protobuf.Empty) returns (SpeedModeRequest);
+
+  // ──── 仿真专用 ────
+
+  // 推进一个仿真步（sim 模式），返回当前 History。
+  rpc Tick(google.protobuf.Empty) returns (History);
+  // 向控制器注入仿真传感器数据。
+  rpc Step(SimState) returns (google.protobuf.Empty);
+
+  // ──── 查询与监控 ────
+
+  // 获取服务启动时间（UTC）。
+  rpc GetStartTime(google.protobuf.Empty) returns (google.protobuf.Timestamp);
+  rpc GetCmsState(google.protobuf.Empty) returns (CmsState);
+  rpc GetControlStatus(google.protobuf.Empty) returns (ControlStatus);
+
+  // 实时推理历史流：每个推理周期（~20ms）发送一帧。
+  rpc ListenHistory(google.protobuf.Empty) returns (stream History);
+  rpc ListenCmsState(google.protobuf.Empty) returns (stream CmsState);
+  // 实时 IMU 数据流。
+  rpc ListenImu(google.protobuf.Empty) returns (stream Imu);
+  // 实时关节数据流（单关节上报或全关节快照）。
+  rpc ListenJoint(google.protobuf.Empty) returns (stream Joint);
+
+  // 获取机器人模型参数。
+  rpc GetParams(google.protobuf.Empty) returns (Params);
+
+  // ──── 策略切换 ────
+
+  // 切换到指定策略。机器人必须在 Grounded 状态。
+  rpc SwitchProfile(ProfileRequest) returns (ProfileInfo);
+  // 获取当前策略信息。
+  rpc GetProfile(google.protobuf.Empty) returns (ProfileInfo);
+
+  // ──── 动作系统 ────
+
+  // 播放预设动作（鞠躬/点头/扭动/伸展/跳舞等）。机器人必须在 Standing 状态。
+  rpc PlayGesture(GestureRequest) returns (google.protobuf.Empty);
+  // 获取所有可用的预设动作列表。
+  rpc ListGestures(google.protobuf.Empty) returns (GestureList);
+
+  // ──── 诊断 ────
+
+  // 读取全部 16 个电机的总线电压 (V)。
+  rpc GetVoltage(google.protobuf.Empty) returns (Voltage);
+  // 查询全部 16 个电机的健康状态。
+  rpc GetMotorStatus(google.protobuf.Empty) returns (MotorStatusResponse);
+  // 清除电机故障。joint_ids 为空则清除全部，否则只清指定关节。
+  rpc ClearMotorFault(ClearFaultRequest) returns (google.protobuf.Empty);
+  // 电机清零：把当前位置标记为零点并保存。必须在 Grounded 状态。
+  rpc SetZero(google.protobuf.Empty) returns (google.protobuf.Empty);
+}
+
+// 电机总线电压（16 个关节，单位 V）。
+message Voltage {
+  // 16 个电机总线电压，顺序同 Matrix4 关节索引。
+  repeated double values = 1;
+}
+
+// 单个电机状态。
+message MotorState {
+  // 关节索引（0-15，顺序同 Matrix4）。
+  uint32 id = 1;
+  // 是否在线（CAN 通信频率 > 0）。
+  bool online = 2;
+  // 电机状态码（具体含义取决于电机驱动协议）。
+  uint32 status_code = 3;
+  // 电机温度 (°C)。
+  double temperature = 4;
+  // 总线电压 (V)。
+  double voltage = 5;
+  // 当前关节角度 (rad)。
+  double position = 6;
+  // 当前关节角速度 (rad/s)。
+  double velocity = 7;
+  // 当前关节力矩 (N·m)。
+  double torque = 8;
+  // 故障码列表（空 = 无故障）。
+  repeated uint32 errors = 9;
+}
+
+// 全部电机状态响应。
+message MotorStatusResponse {
+  // 16 个电机状态。
+  repeated MotorState motors = 1;
+}
+
+// 清除电机故障请求。
+message ClearFaultRequest {
+  // 要清除的关节索引（0-15）。为空则清除全部。
+  repeated uint32 joint_ids = 1;
+}
+
+// 单次推理周期的完整观测数据（RL policy 的输入/输出）。
+message History {
+  // IMU 角速度 (rad/s)，body frame。
+  Vector3 gyroscope = 1;
+  // 重力在 body frame 下的投影（单位向量，静止时为 [0, 0, -1]）。
+  Vector3 projected_gravity = 2;
+  // 当前运动指令。
+  Command command = 3;
+  // 当前关节角度 (rad)。
+  Matrix4 joint_position = 4;
+  // 当前关节角速度 (rad/s)。
+  Matrix4 joint_velocity = 5;
+  // 上一步 policy 输出的目标关节角度 (rad)。
+  Matrix4 action = 6;
+  // 当前步 policy 输出的目标关节角度 (rad)。
+  Matrix4 next_action = 7;
+  // 相对于会话开始时间的时间戳。
+  google.protobuf.Duration timestamp = 8;
+  // 当前 PD 控制器的比例增益（16 个关节）。
+  Matrix4 kp = 9;
+  // 当前 PD 控制器的微分增益（16 个关节）。
+  Matrix4 kd = 10;
+  // [debug] ONNX 输入 buffer（285 维 = 5帧×57维）。
+  // 仅在 Walking 时填充，用于对比验证。
+  repeated double observation = 11;
+}
+
+// IMU 传感器数据。
+message Imu {
+  // 角速度 (rad/s)，body frame。
+  Vector3 gyroscope = 1;
+  // 姿态四元数（world → body 旋转）。
+  Quaternion quaternion = 2;
+  // 相对于会话开始时间的时间戳。
+  google.protobuf.Duration timestamp = 3;
+}
+
+// 关节数据（支持单关节上报和全关节快照两种模式）。
+message Joint {
+  oneof data {
+    // 单个关节的状态上报（CAN 总线逐个上报时使用）。
+    SingleJoint single_joint = 1;
+    // 全部 16 个关节的聚合快照。
+    AllJoints all_joints = 2;
+  }
+  // 相对于会话开始时间的时间戳。
+  google.protobuf.Duration timestamp = 3;
+}
+
+// 单个关节的状态。
+message SingleJoint {
+  // 关节 ID（参见 Matrix4 的关节索引 0-15）。
+  uint32 id = 1;
+  // 关节角度 (rad)。
+  double position = 2;
+  // 关节角速度 (rad/s)。
+  double velocity = 3;
+  // 关节力矩 (N·m)。
+  double torque = 4;
+  // 电机状态码（具体含义取决于电机驱动协议）。
+  uint32 status = 5;
+}
+
+// 全部关节的聚合快照。
+message AllJoints {
+  // 16 个关节角度 (rad)。
+  Matrix4 position = 1;
+  // 16 个关节角速度 (rad/s)。
+  Matrix4 velocity = 2;
+  // 16 个关节力矩 (N·m)。
+  Matrix4 torque = 3;
+  // 16 个电机状态码。
+  Matrix4Int32 status = 4;
+}
+
+// 机器人参数查询响应。
+message Params {
+  // 当前机器人模型参数。
+  RobotModel robot = 1;
+}
+
+// 策略切换请求。
+message ProfileRequest {
+  // 目标策略名称。
+  string name = 1;
+}
+
+// 策略信息（当前策略名称 + 可用策略列表 + 说明）。
+message ProfileInfo {
+  // 当前激活的策略名称。
+  string current = 1;
+  // 所有可用策略名称（与 descriptions 按索引对应）。
+  repeated string available = 2;
+  // 各策略的说明（与 available 并列）。
+  repeated string descriptions = 3;
+  // 当前策略的说明。
+  string current_description = 4;
+}
+
+// 运动指令。
+enum CmsStateKind {
+  CMS_STATE_KIND_ZERO = 0;
+  CMS_STATE_KIND_GROUNDED = 1;
+  CMS_STATE_KIND_STANDING = 2;
+  CMS_STATE_KIND_WALKING = 3;
+  CMS_STATE_KIND_TRANSITIONING = 4;
+}
+
+enum CmsTransitionKind {
+  CMS_TRANSITION_KIND_NONE = 0;
+  CMS_TRANSITION_KIND_STAND_UP = 1;
+  CMS_TRANSITION_KIND_SIT_DOWN = 2;
+  CMS_TRANSITION_KIND_GESTURE = 3;
+}
+
+message CmsState {
+  CmsStateKind kind = 1;
+  CmsTransitionKind transition = 2;
+  string gesture_name = 3;
+}
+
+enum ControlOwner {
+  CONTROL_OWNER_NONE = 0;
+  CONTROL_OWNER_GRPC = 1;
+  CONTROL_OWNER_YUNZHUO = 2;
+}
+
+enum CommandRejectReason {
+  COMMAND_REJECT_REASON_NONE = 0;
+  COMMAND_REJECT_REASON_INVALID_VECTOR = 1;
+  COMMAND_REJECT_REASON_RATE_LIMITED = 2;
+  COMMAND_REJECT_REASON_FSM_NOT_READY = 3;
+  COMMAND_REJECT_REASON_MOTORS_DISABLED = 4;
+  COMMAND_REJECT_REASON_MOTOR_FAULT = 5;
+  COMMAND_REJECT_REASON_CONTROL_BUSY = 6;
+  COMMAND_REJECT_REASON_LEASE_MISSING = 7;
+  COMMAND_REJECT_REASON_LEASE_EXPIRED = 8;
+  COMMAND_REJECT_REASON_PREEMPTED = 9;
+}
+
+message AcquireControlRequest {
+  string client_id = 1;
+}
+
+message ControlLeaseRequest {
+  string token = 1;
+}
+
+message ControlLease {
+  bool accepted = 1;
+  string token = 2;
+  uint32 lease_duration_ms = 3;
+  CommandRejectReason reason = 4;
+  ControlStatus status = 5;
+}
+
+message WalkRequest {
+  string token = 1;
+  uint64 sequence = 2;
+  Vector3 direction = 3;
+}
+
+message CommandAck {
+  bool accepted = 1;
+  CommandRejectReason reason = 2;
+  uint64 sequence = 3;
+  ControlStatus status = 4;
+}
+
+message ControlStatus {
+  CmsState fsm = 1;
+  bool motor_output_enabled = 2;
+  ControlOwner owner = 3;
+  bool critical_motor_fault = 4;
+  bool grpc_lease_active = 5;
+  uint32 lease_remaining_ms = 6;
+  uint64 last_accepted_sequence = 7;
+  CommandRejectReason last_decision = 8;
+  bool ready_for_walk = 9;
+  string owner_id = 10;
+  uint64 accepted_count = 11;
+  uint64 rejected_count = 12;
+}
+
+message Command {
+  oneof data {
+    // 空闲：保持当前姿态，不进行推理。
+    google.protobuf.Empty idle = 1;
+    // 站起：从坐姿平滑过渡到站立姿态。
+    google.protobuf.Empty stand_up = 2;
+    // 坐下：从站立平滑过渡到坐姿。
+    google.protobuf.Empty sit_down = 3;
+    // 行走：(x=前后, y=左右, z=旋转)，范围 [-1, 1]。
+    Vector3 walk = 4;
+  }
+}
+
+// ──── 动作系统消息 ────
+
+// 播放动作请求。
+message GestureRequest {
+  // 动作名称（见 ListGestures 返回的列表）。
+  string name = 1;
+}
+
+// 可用动作列表。
+message GestureList {
+  repeated GestureInfo gestures = 1;
+}
+
+// 单个动作的信息。
+message GestureInfo {
+  // 动作名称（用于 PlayGesture 的 name 字段）。
+  string name = 1;
+  // 动作描述。
+  string description = 2;
+  // 预计执行时长（毫秒）。
+  int32 duration_ms = 3;
+}
+
+// ──── 速度模式 ────
+
+enum SpeedMode {
+  // 标准模式（默认）。
+  SPEED_MODE_NORMAL = 0;
+  // 高速模式，最大速度 2.5m/s。需要开阔平坦场地。
+  SPEED_MODE_HIGH = 1;
+}
+
+// 速度模式设置请求。
+message SpeedModeRequest {
+  SpeedMode mode = 1;
+}

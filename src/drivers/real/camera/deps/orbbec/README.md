@@ -1,22 +1,12 @@
 # Orbbec deps
 
-Preferred dependency:
+The native camera uses the pure Orbbec SDK v2 package fetched into the ignored
+build tree:
 
 ```text
-OrbbecSDK/
+build/deps/orbbec-sdk/
 ```
 
-This should be the pure Orbbec SDK package, without ROS2 wrapper code.
-
-Temporary fallback:
-
-```text
-OrbbecSDK_ROS2/
-```
-
-`OrbbecSDK_ROS2` is still accepted during migration because it contains the
-pure SDK under:
-
-```text
-OrbbecSDK_ROS2/orbbec_camera/SDK
-```
+Run `scripts/build/fetch_orbbec_sdk.sh` to fetch the field-tested v2.8.7
+package. Override the location with `LINGTU_ORBBEC_SDK_ROOT` when needed.
+ROS2 wrapper sources are not part of the native camera dependency path.

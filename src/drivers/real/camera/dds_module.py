@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import cast
 
-from message.dds import dds_topic_name
+from message.topics import dds_topic_name
 from runtime.contracts import CAMERA_BACKEND_DDS, CAMERA_ROLE
 from runtime.module import Module
 from runtime.msgs.numpy_compat import np
@@ -43,8 +43,25 @@ _DEFAULT_DEPTH_SHM = "/lingtu_camera_depth"
 _DEFAULT_INFO_SHM = "/lingtu_camera_info"
 
 
-def _configured_shm_path(argument: str | None, env_name: str, fallback: str) -> Path:
-    value = (argument or os.environ.get(env_name, "") or fallback).strip()
+def _sim_session_shm_path(filename: str, fallback: str) -> Path:
+    if os.environ.get("LINGTU_ENV", "").strip() != "sim":
+        return posix_shm_path(fallback)
+    session_root = os.environ.get("LINGTU_SESSION_ROOT", "").strip()
+    if not session_root:
+        return posix_shm_path(fallback)
+    root = Path(session_root)
+    if not root.is_absolute():
+        return posix_shm_path(fallback)
+    return root / filename
+
+
+def _configured_shm_path(argument: str | None, env_name: str, fallback: Path) -> Path:
+    if argument is not None and argument.strip():
+        return Path(argument.strip())
+    value = (os.environ.get(env_name, "") or str(fallback)).strip()
+    path = Path(value)
+    if path.is_absolute() and not (value.startswith("/") and value.count("/") == 1):
+        return path
     if value.startswith(f"{POSIX_SHM_DIRECTORY}/"):
         return Path(value)
     return posix_shm_path(value)
@@ -75,13 +92,25 @@ class DdsCameraModule(Module, layer=1):  # type: ignore[call-arg]
     ) -> None:
         super().__init__(**kw)
         self._domain_id = domain_id
-        self._color_topic = color_topic or dds_topic_name(TOPICS.camera_color, typed=True)
-        self._depth_topic = depth_topic or dds_topic_name(TOPICS.camera_depth, typed=True)
-        self._info_topic = info_topic or dds_topic_name(TOPICS.camera_info, typed=True)
+        self._color_topic = color_topic or dds_topic_name(TOPICS.camera_color)
+        self._depth_topic = depth_topic or dds_topic_name(TOPICS.camera_depth)
+        self._info_topic = info_topic or dds_topic_name(TOPICS.camera_info)
         self._shm_paths = {
-            "color": _configured_shm_path(color_shm_path, "LINGTU_CAMERA_COLOR_SHM", _DEFAULT_COLOR_SHM),
-            "depth": _configured_shm_path(depth_shm_path, "LINGTU_CAMERA_DEPTH_SHM", _DEFAULT_DEPTH_SHM),
-            "info": _configured_shm_path(info_shm_path, "LINGTU_CAMERA_INFO_SHM", _DEFAULT_INFO_SHM),
+            "color": _configured_shm_path(
+                color_shm_path,
+                "LINGTU_CAMERA_COLOR_SHM",
+                _sim_session_shm_path("camera_color.shm", _DEFAULT_COLOR_SHM),
+            ),
+            "depth": _configured_shm_path(
+                depth_shm_path,
+                "LINGTU_CAMERA_DEPTH_SHM",
+                _sim_session_shm_path("camera_depth.shm", _DEFAULT_DEPTH_SHM),
+            ),
+            "info": _configured_shm_path(
+                info_shm_path,
+                "LINGTU_CAMERA_INFO_SHM",
+                _sim_session_shm_path("camera_info.shm", _DEFAULT_INFO_SHM),
+            ),
         }
         self._stale_timeout_s = max(0.001, float(stale_timeout_s))
         self._poll_interval_s = max(0.001, float(poll_interval_s))
@@ -97,20 +126,28 @@ class DdsCameraModule(Module, layer=1):  # type: ignore[call-arg]
         self._running = False
 
     def setup(self) -> None:
-        """Start the non-blocking mmap polling thread."""
+        """Open the SHM readers before the runtime starts modules."""
 
         self._stop_event.clear()
         self._readers = {
-            name: ShmFrameReader(path, max_age_s=self._stale_timeout_s) for name, path in self._shm_paths.items()
+            name: ShmFrameReader(
+                path,
+                max_age_s=None if name == "info" else self._stale_timeout_s,
+            )
+            for name, path in self._shm_paths.items()
         }
-        self._running = True
+
+    def start(self) -> None:
+        """Start polling after every consumer has registered its callbacks."""
+
+        super().start()
         self._thread = threading.Thread(
             target=self._read_loop,
             name="camera-shm-reader",
             daemon=True,
         )
-        self._thread.start()
         self.alive.publish(True)
+        self._thread.start()
 
     def stop(self) -> None:
         """Stop polling and close all mapped SHM objects."""
@@ -166,7 +203,11 @@ class DdsCameraModule(Module, layer=1):  # type: ignore[call-arg]
             "depth": self._age_ms(now, self._last_depth_ts),
             "info": self._age_ms(now, self._last_info_ts),
         }
-        fresh = all(value is not None and value <= int(self._stale_timeout_s * 1000) for value in stale_ms.values())
+        fresh = all(
+            stale_ms[name] is not None
+            and stale_ms[name] <= int(self._stale_timeout_s * 1000)
+            for name in ("color", "depth")
+        )
         ready = self._running and fresh and all(value > 0 for value in self._frames.values())
         info["role"] = CAMERA_ROLE
         info["backend"] = CAMERA_BACKEND_DDS
@@ -188,7 +229,7 @@ class DdsCameraModule(Module, layer=1):  # type: ignore[call-arg]
             "info": self._info_topic,
         }
         info["source_service"] = "camera"
-        info["source_unit"] = "lingtu-camera-dds.service"
+        info["source_unit"] = "lt-camera.service"
         info["stream_contract"] = {
             "color": "color_image",
             "depth": "depth_image",
@@ -196,6 +237,30 @@ class DdsCameraModule(Module, layer=1):  # type: ignore[call-arg]
         }
         info["stale_ms"] = stale_ms
         return info
+
+    def startup_readiness(self) -> str | None:
+        """Require one recent frame from every critical RGB-D stream."""
+
+        if not self._running:
+            return "not_running"
+        missing = [name for name, count in self._frames.items() if count <= 0]
+        if missing:
+            return f"camera_streams_missing:{','.join(missing)}"
+        now = time.time()
+        timestamps = {
+            "color": self._last_color_ts,
+            "depth": self._last_depth_ts,
+            "info": self._last_info_ts,
+        }
+        stale = [
+            name
+            for name in ("color", "depth")
+            if timestamps[name] <= 0.0
+            or now - timestamps[name] > self._stale_timeout_s
+        ]
+        if stale:
+            return f"camera_streams_stale:{','.join(stale)}"
+        return None
 
     def _read_loop(self) -> None:
         try:

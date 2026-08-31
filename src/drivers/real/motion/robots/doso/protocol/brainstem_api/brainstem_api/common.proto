@@ -1,0 +1,90 @@
+// brainstem_api/common.proto
+//
+// 四足机器人通用数据类型定义。
+// 所有角度单位为 rad，角速度为 rad/s，力矩为 N·m。
+
+syntax = "proto3";
+import "google/protobuf/duration.proto";
+
+package brainstem.api.v1;
+
+// 三维向量，含义由使用场景决定（见各字段注释）。
+message Vector3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+// 可变长度浮点数组。
+message ArrayFloat {
+  repeated double values = 1;
+}
+
+// 四足机器人 16 个关节值的扁平数组。
+//
+// 关节顺序（索引 0-15）：
+//   [ 0] FR_hip    [ 1] FR_thigh  [ 2] FR_calf
+//   [ 3] FL_hip    [ 4] FL_thigh  [ 5] FL_calf
+//   [ 6] RR_hip    [ 7] RR_thigh  [ 8] RR_calf
+//   [ 9] RL_hip    [10] RL_thigh  [11] RL_calf
+//   [12] FR_foot   [13] FL_foot   [14] RR_foot   [15] RL_foot
+//
+// 其中 FR=前右, FL=前左, RR=后右, RL=后左。
+// hip=髋关节, thigh=大腿, calf=小腿, foot=脚踝。
+message Matrix4 {
+  repeated double values = 1;
+}
+
+// 与 Matrix4 结构相同，但存储 uint32（用于关节状态码等）。
+message Matrix4Int32 {
+  repeated uint32 values = 1;
+}
+
+// 四元数，用于描述 IMU 姿态。
+// 遵循 Hamilton 约定：q = w + xi + yj + zk。
+message Quaternion {
+  double w = 1;
+  double x = 2;
+  double y = 3;
+  double z = 4;
+}
+
+// 带时间戳的关节目标角度。
+message Action {
+  // 目标关节角度 (rad)，16 个关节。
+  Matrix4 data = 1;
+  // 相对于会话开始时间的时间戳。
+  google.protobuf.Duration timestamp = 2;
+}
+
+// 机器人型号枚举。
+enum RobotType {
+  SKINNY = 0; // Skinny Dog（原型机）
+  HAN    = 1; // Han Dog（标准版）
+  MINI   = 2; // Mini Dog（小型版）
+  MINI2  = 3; // Mini Dog 2（小型版第二代）
+}
+
+// 机器人模型参数，用于仿真初始化或参数查询。
+message RobotModel {
+  // 机器人型号。
+  RobotType type = 1;
+  // 初始关节角度 (rad)。
+  Matrix4 initial_joint_position = 2;
+  // 初始关节角速度 (rad/s)，通常为全零。
+  Matrix4 initial_joint_velocity = 3;
+}
+
+// 仿真器发送给控制器的传感器状态。
+message SimState {
+  // IMU 角速度 (rad/s)，body frame。
+  Vector3 gyroscope = 1;
+  // IMU 四元数姿态（world → body 旋转）。
+  Quaternion quaternion = 2;
+  // 当前关节角度 (rad)。
+  Matrix4 joint_position = 3;
+  // 当前关节角速度 (rad/s)。
+  Matrix4 joint_velocity = 4;
+  // 仿真时间戳。
+  google.protobuf.Duration timestamp = 5;
+}

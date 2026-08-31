@@ -2,11 +2,9 @@
 #
 # This file describes hardware assets and low-rate discovery/status metadata.
 # It must not decide runtime sensor wiring. Camera images, LiDAR point clouds,
-# IMU samples, and GNSS fixes are owned by the camera/lidar/imu/gnss roles.
-#
-# The hw role may use this inventory for discovery, status, hotplug, open, and
-# close operations. Products decide dataflow through explicit runtime
-# roles and service catalog entries, not through this file.
+# IMU samples, and GNSS fixes are owned by native Product services. Camera
+# startup and read-only field diagnostics may read this inventory; it never
+# opens devices or decides Product dataflow.
 
 version: 1
 
@@ -15,7 +13,7 @@ devices:
   - id: wtrtk980_main
     type: gnss
     enabled: true
-    driver: serial_nmea0183  # inventory probe only; product dataflow is C++ gnss
+    driver: wtrtk980_native
     description: "WitMotion WTRTK-980 RTK GNSS"
     udev_match:
       vendor_id: "1a86"
@@ -33,7 +31,7 @@ devices:
     driver: livox_sdk2
     description: "Livox MID-360 360-degree 3D LiDAR"
     network:
-      ip: "192.168.1.178"
+      ip: "192.168.123.20"
       port: 56100
     capabilities: [pointcloud, imu]
 

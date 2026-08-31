@@ -31,15 +31,25 @@ def test_native_camera_layer_has_no_vendor_dependency() -> None:
         assert "OrbbecSDK" not in text
 
 
-def test_orbbec_dependency_path_is_below_deps() -> None:
-    clone_script = (ROOT / "scripts" / "build" / "clone_orbbec_ros2.sh").read_text(encoding="utf-8")
+def test_orbbec_dependency_uses_ignored_build_tree() -> None:
     fetch_script = (ROOT / "scripts" / "build" / "fetch_orbbec_sdk.sh").read_text(encoding="utf-8")
     build_script = (ROOT / "scripts" / "build" / "build_orbbec_native.sh").read_text(encoding="utf-8")
 
-    assert "src/drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2" in clone_script
-    assert "src/drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2" in build_script
-    assert "src/drivers/real/camera/deps/orbbec/OrbbecSDK" in fetch_script
+    assert "build/deps/orbbec-sdk" in fetch_script
+    assert "build/deps/orbbec-sdk" in build_script
+    assert 'REF="${LINGTU_ORBBEC_SDK_REF:-v2.8.7}"' in fetch_script
     assert "orbbec/OrbbecSDK_v2" in fetch_script
     assert "dpkg-deb -x" in fetch_script
     assert ".lingtu-orbbec-sdk" in fetch_script
-    assert "OrbbecSDK_ROS2" not in fetch_script
+
+
+def test_gemini335_udev_rule_is_installed_by_robot_setup() -> None:
+    rule = ROOT / "scripts" / "deploy" / "99-lingtu-orbbec-gemini335.rules"
+    setup = (ROOT / "tools" / "robot" / "setup_network.sh").read_text(encoding="utf-8")
+    text = rule.read_text(encoding="utf-8")
+
+    assert 'ATTR{idVendor}=="2bc5"' in text
+    assert 'ATTR{idProduct}=="0800"' in text
+    assert 'MODE:="0666"' in text
+    assert "GROUP=" not in text
+    assert rule.name in setup

@@ -9,13 +9,9 @@ Blueprint usage::
 
     bp.add(LidarModule)                             # default config
     bp.add(LidarModule, ip="192.168.1.120")         # override IP
-    bp.wire("LidarModule", "scan", "nav.terrain", "cloud")
 
-Stack factory usage (in blueprints/stacks/)::
-
-    from drivers.real.lidar import LidarModule
-    bp.add(LidarModule, ip=ip)
-    # SLAM consumes raw_scan/imu regardless of the selected LiDAR source.
+Native Product processes consume MID-360 data through typed DDS. This Module
+remains the explicit Host/development adapter.
 """
 
 from __future__ import annotations
@@ -53,8 +49,8 @@ class LidarModule(Module, layer=1):
     Config from robot_config.yaml::
 
         lidar:
-          lidar_ip: "192.168.1.115"
-          host_ip:  "192.168.1.5"
+          lidar_ip: "192.168.123.20"
+          host_ip:  "192.168.123.18"
           publish_freq: 10.0
     """
 

@@ -81,6 +81,16 @@ diagnostics. CameraInfo remains available over typed DDS. The Python Module can
 override paths with `LINGTU_CAMERA_COLOR_SHM`, `LINGTU_CAMERA_DEPTH_SHM`, and
 `LINGTU_CAMERA_INFO_SHM`.
 
+## Orbbec SDK
+
+`scripts/build/fetch_orbbec_sdk.sh` fetches the field-tested standalone Orbbec
+SDK v2.8.7 into ignored `build/deps/orbbec-sdk/`. The native build copies its
+runtime library and extensions into `build/orbbec_native/lib/`; no ROS2 camera
+wrapper is used. `LINGTU_ORBBEC_SDK_ROOT` may point at another pure SDK install.
+
+`tools/robot/setup_network.sh --permanent` installs the Gemini 335 USB rule from
+`scripts/deploy/99-lingtu-orbbec-gemini335.rules`.
+
 ## Verification
 
 ```bash

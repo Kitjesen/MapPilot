@@ -8,9 +8,10 @@ only.
 
 from __future__ import annotations
 
-import pytest
+import importlib
+from pathlib import Path
 
-pytestmark = [pytest.mark.sim]
+import pytest
 
 from runtime.registry import get
 from tests.drivers.driver_contract import (
@@ -21,14 +22,23 @@ from tests.drivers.driver_contract import (
     is_pointcloud_source,
 )
 
+pytestmark = [pytest.mark.sim]
+
 _DRIVER_MODULES = (
-    "drivers.real.thunder.han_dog_module",
     "lingtu.assembly.stub",
     "drivers.sim.mujoco.driver",
     "drivers.sim.endpoint",
 )
 
-_MOTION_DRIVER_BACKENDS = ("stub", "thunder", "sim_mujoco", "sim_endpoint")
+_MOTION_DRIVER_BACKENDS = ("stub", "sim_mujoco", "sim_endpoint")
+
+
+def test_python_thunder_motion_driver_is_physically_retired() -> None:
+    source = Path("src/drivers/real/thunder/han_dog_module.py")
+    package = importlib.import_module("drivers.real.thunder")
+
+    assert not source.exists()
+    assert not hasattr(package, "ThunderDriver")
 
 
 def _ensure_drivers_registered() -> None:
@@ -62,16 +72,16 @@ def test_sim_drivers_expose_sensors(name):
     cls = _get_driver(name)
     assert is_motion_driver(cls)
     assert is_camera_source(cls), f"{name} should expose camera source ports"
-    assert is_pointcloud_source(cls), f"{name} should expose map_cloud"
+    assert is_pointcloud_source(cls), f"{name} should expose map_cloud_frame"
 
 
-@pytest.mark.parametrize("name", ["stub", "thunder"])
+@pytest.mark.parametrize("name", ["stub"])
 def test_minimal_drivers_expose_motion_only(name):
     cls = _get_driver(name)
     assert is_motion_driver(cls)
     # Minimal drivers delegate sensors to camera-bridge / lidar modules.
     assert not is_pointcloud_source(cls), (
-        f"{name} unexpectedly bundles map_cloud; update spec tiers if intentional"
+        f"{name} unexpectedly bundles map_cloud_frame; update spec tiers if intentional"
     )
 
 

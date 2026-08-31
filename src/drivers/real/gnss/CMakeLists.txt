@@ -14,9 +14,9 @@ add_subdirectory(
   "${_LINGTU_ROOT}/src/message/cpp"
   "${CMAKE_CURRENT_BINARY_DIR}/message_cpp")
 
-set(_LINGTU_SLAM_IDL "${_LINGTU_ROOT}/src/message/idl/lingtu_slam.idl")
-set(_LINGTU_SLAM_IDL_HEADER "${CMAKE_CURRENT_BINARY_DIR}/lingtu_slam.h")
-set(_LINGTU_SLAM_IDL_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/lingtu_slam.c")
+set(_LINGTU_SLAM_IDL "${_LINGTU_ROOT}/src/message/idl/messages.idl")
+set(_LINGTU_SLAM_IDL_HEADER "${CMAKE_CURRENT_BINARY_DIR}/messages.h")
+set(_LINGTU_SLAM_IDL_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/messages.c")
 
 add_custom_command(
   OUTPUT "${_LINGTU_SLAM_IDL_HEADER}" "${_LINGTU_SLAM_IDL_SOURCE}"
@@ -48,7 +48,7 @@ target_include_directories(lingtu_gnss_dds PRIVATE
 
 target_link_libraries(lingtu_gnss_dds PRIVATE
   CycloneDDS::ddsc
-  lingtu_dds_qos_profiles)
+  lingtu_dds_contracts)
 
 if(UNIX)
   target_compile_options(lingtu_gnss_dds PRIVATE -Wall -Wextra)

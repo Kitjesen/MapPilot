@@ -1,9 +1,9 @@
 #include "native/dds_module.hpp"
 
-#include "message/cpp/dds_qos_profiles.hpp"
+#include "message/cpp/qos.hpp"
 
 #include "dds/dds.h"
-#include "lingtu_slam.h"
+#include "messages.h"
 
 #include <algorithm>
 #include <cstdint>

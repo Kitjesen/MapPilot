@@ -1,6 +1,6 @@
 #include "native/module.hpp"
 
-#include "message/cpp/dds_topics.hpp"
+#include "message/cpp/topics.hpp"
 
 #include <algorithm>
 #include <chrono>

@@ -3,8 +3,6 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 
-import yaml
-
 from drivers.real.camera.module import (
     _FMT_DEPTH_U16,
     _FMT_RGB8,
@@ -18,11 +16,8 @@ from drivers.real.camera.module import (
     _default_executable,
     _runtime_library_paths,
     orbbec_native_build_dir,
-    orbbec_sdk_root,
-    orbbec_sdk_source,
 )
 from runtime.contracts import CAMERA_BACKEND_ORBBEC, CAMERA_ROLE
-from runtime.registry import clear, get, restore, snapshot
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -80,26 +75,14 @@ def test_orbbec_native_records_publish_lingtu_streams() -> None:
     assert int(depths[-1].data[0, 0]) == 1000
 
 
-def test_orbbec_native_paths_use_vendored_sdk_and_driver_build_dir() -> None:
-    sdk_root = orbbec_sdk_root()
+def test_orbbec_native_runtime_uses_packaged_build_dir() -> None:
     build_dir = orbbec_native_build_dir()
     executable = _default_executable()
     library_paths = _runtime_library_paths()
 
-    assert sdk_root.as_posix().endswith("src/drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2/orbbec_camera/SDK")
     assert build_dir.as_posix().endswith("build/orbbec_native")
     assert executable.parent == build_dir
-    assert library_paths[0] == build_dir / "lib"
-    assert library_paths[1].parent == sdk_root / "lib"
-
-
-def test_orbbec_native_prefers_pure_sdk_root_over_ros2_wrapper(monkeypatch, tmp_path) -> None:
-    pure_sdk = tmp_path / "OrbbecSDK"
-    pure_sdk.mkdir()
-    monkeypatch.setenv("LINGTU_ORBBEC_SDK_ROOT", str(pure_sdk))
-
-    assert orbbec_sdk_root() == pure_sdk
-    assert orbbec_sdk_source() == "configured"
+    assert library_paths == (build_dir / "lib", build_dir / "lib" / "extensions")
 
 
 def test_orbbec_native_health_reports_sdk_boundary() -> None:
@@ -111,11 +94,6 @@ def test_orbbec_native_health_reports_sdk_boundary() -> None:
     assert health["camera_backend"] == CAMERA_BACKEND_ORBBEC
     assert health["backend"] == "native_orbbec"
     assert health["native_executable"].endswith(("orbbec_capture", "orbbec_capture.exe"))
-    assert health["sdk_root"].endswith(
-        "src\\drivers\\real\\camera\\deps\\orbbec\\OrbbecSDK_ROS2\\orbbec_camera\\SDK"
-    ) or health["sdk_root"].endswith("src/drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2/orbbec_camera/SDK")
-    assert health["sdk_source"] == "ros2_wrapper_fallback"
-    assert health["ros2_wrapper_fallback"] is True
     assert health["runtime_library_paths"]
 
 
@@ -257,13 +235,9 @@ def test_orbbec_native_build_includes_service_sdk() -> None:
 
     assert 'SDK_SRC="${LINGTU_ORBBEC_NATIVE_SDK_SOURCE:-$SRC_DIR/sdk.cpp}"' in build_script
     assert "LINGTU_ORBBEC_SDK_ROOT" in build_script
-    assert 'SDK_SOURCE="configured"' in build_script
-    assert 'SDK_SOURCE="pure_sdk"' in build_script
-    assert 'SDK_SOURCE="ros2_wrapper_fallback"' in build_script
-    assert "using OrbbecSDK_ROS2 bundled SDK as compatibility fallback" in build_script
     assert "scripts/build/fetch_orbbec_sdk.sh" in build_script
-    assert 'src/drivers/real/camera/deps/orbbec/OrbbecSDK"' in build_script
-    assert "OrbbecSDK_ROS2" in build_script
+    assert "build/deps/orbbec-sdk" in build_script
+    assert 'cp -a "$SDK_LIB/extensions" "$RUNTIME_LIB/"' in build_script
     assert 'IMPL_DIR="${LINGTU_ORBBEC_IMPL_SOURCE_DIR:-src/drivers/real/camera/impl/orbbec}"' in build_script
     assert 'CAMERA_SRC="${LINGTU_ORBBEC_NATIVE_CAMERA_SOURCE:-$IMPL_DIR/camera.cpp}"' in build_script
     assert '"$SDK_SRC"' in build_script
@@ -312,17 +286,79 @@ def test_camera_dds_cpp_publisher_has_typed_writers_and_build_target() -> None:
         assert write_call in camera_dds_source
 
 
-def test_camera_dds_resyncs_capture_stdout_noise() -> None:
+def test_camera_dds_uses_one_absolute_deadline_for_each_complete_record() -> None:
     camera_dds_source = (_REPO_ROOT / "src" / "drivers" / "real" / "camera" / "native" / "camera_dds.cpp").read_text(
         encoding="utf-8"
     )
 
-    assert "bool readHeader(RecordHeader& header, int stale_timeout_ms)" in camera_dds_source
+    contract_source = (
+        _REPO_ROOT / "src" / "drivers" / "real" / "camera" / "native" / "camera_record.hpp"
+    ).read_text(encoding="utf-8")
+    deadline_test = (
+        _REPO_ROOT
+        / "src"
+        / "drivers"
+        / "real"
+        / "camera"
+        / "native"
+        / "tests"
+        / "test_camera_record_deadline.cpp"
+    ).read_text(encoding="utf-8")
+
+    assert "camera_record::RecordDeadline deadline" in camera_dds_source
+    assert "camera_record::readExactUntil(" in camera_dds_source
+    assert "remainingRecordTimeoutMs(deadline)" in contract_source
+    assert "testTrickleBytesCannotExtendRecordDeadline" in deadline_test
+    assert "std::this_thread::sleep_for(std::chrono::milliseconds(20))" in deadline_test
+    assert "record::makeRecordDeadline(75)" in deadline_test
     assert "non-record camera capture bytes" in camera_dds_source
-    assert "capture.readHeader(header, cfg.capture_stale_timeout_ms)" in camera_dds_source
-    assert "capture.readExact(&header, sizeof(header))" not in camera_dds_source
-    assert "camera capture produced no bytes before stale timeout" in camera_dds_source
-    assert "--capture-stale-timeout-ms" in camera_dds_source
+    assert "camera_record::makeRecordDeadline(cfg.capture_stale_timeout_ms)" in camera_dds_source
+    assert "capture.readHeader(header, record_deadline)" in camera_dds_source
+    assert "capture.readExact(payload.data(), payload.size(), record_deadline)" in camera_dds_source
+    assert "capture.readHeader(header, cfg.capture_stale_timeout_ms)" not in camera_dds_source
+    assert "camera record exceeded absolute read deadline" in camera_dds_source
+    assert "camera_record::kMinRecordTimeoutMs" in camera_dds_source
+    assert "camera_record::kMaxRecordTimeoutMs" in camera_dds_source
+    assert "--capture-stale-timeout-ms must be between" in camera_dds_source
+
+
+def test_camera_record_validation_precedes_allocation_publish_and_counting() -> None:
+    native = _REPO_ROOT / "src" / "drivers" / "real" / "camera" / "native"
+    camera_dds_source = (native / "camera_dds.cpp").read_text(encoding="utf-8")
+    capture_source = (native / "capture_process.cpp").read_text(encoding="utf-8")
+    contract_source = (native / "camera_record.hpp").read_text(encoding="utf-8")
+
+    validation = camera_dds_source.index("validateHeader(header);")
+    intrinsics_gate = camera_dds_source.index("validateRecordSequence(header, has_info)")
+    allocation = camera_dds_source.index("payload.resize(header.payload_size)")
+    assert validation < intrinsics_gate < allocation
+    assert intrinsics_gate < camera_dds_source.index("color_shm.publish")
+    assert intrinsics_gate < camera_dds_source.index("records += 1")
+    assert "validateRecordHeader(header)" in camera_dds_source
+    header_validation = capture_source.index("validateRecordHeader(header)")
+    payload_validation = capture_source.index("validateRecordPayloadPointer(header, payload)")
+    header_write = capture_source.index("std::cout.write(reinterpret_cast<const char *>(&header)")
+    assert header_validation < payload_validation < header_write
+    assert "camera_record::kDepthScaleMetersPerMillimeter" in capture_source
+    depth_layout_validation = capture_source.index("validateCanonicalDepthLayout(")
+    depth_allocation = capture_source.index("millimeters.resize(layout.pixel_count)")
+    assert depth_layout_validation < depth_allocation
+    assert "static_cast<const std::uint16_t*>(depth.data)" not in capture_source
+    assert "normalizeDepthSampleMillimeters(" in capture_source
+    assert 'throw std::runtime_error("camera_record_output_failed")' in capture_source
+    assert "timestamp_s > 0.0 ? timestamp_s : nowSeconds()" not in camera_dds_source
+    for token in (
+        "kUnsupportedKind",
+        "kInvalidDimensions",
+        "kInvalidColorFormat",
+        "kInvalidColorChannels",
+        "kInvalidDepthFormat",
+        "kInvalidDepthChannels",
+        "kPayloadSizeMismatch",
+        "kWireByteOrder",
+        "offsetof(RecordHeader, payload_size) == 72",
+    ):
+        assert token in contract_source
 
 
 def test_orbbec_connect_options_are_exposed_to_native_process() -> None:
@@ -372,7 +408,7 @@ def test_orbbec_capture_fails_fast_when_no_frames() -> None:
         encoding="utf-8"
     )
     runner = (_REPO_ROOT / "scripts" / "deploy" / "thunder" / "run_camera_dds.sh").read_text(encoding="utf-8")
-    service = (_REPO_ROOT / "scripts" / "deploy" / "thunder" / "lingtu-camera-dds.service").read_text(encoding="utf-8")
+    service = (_REPO_ROOT / "scripts" / "deploy" / "thunder" / "lt-camera.service").read_text(encoding="utf-8")
 
     assert "startup_frame_timeout_ms" in capture_source
     assert "no valid Orbbec frames before startup timeout" in capture_source
@@ -383,27 +419,10 @@ def test_orbbec_capture_fails_fast_when_no_frames() -> None:
 
 def test_orbbec_module_uses_device_inventory_and_robot_mount_config() -> None:
     module = OrbbecNativeCameraModule()
-    robot = yaml.safe_load((_REPO_ROOT / "config" / "robot_config.yaml").read_text(encoding="utf-8"))
 
     assert module._product_id == 0x0800
     assert module._color_width == 640
     assert module._depth_width == 640
     assert module._connect_timeout_ms == 10000
-    assert module._rotate == robot["camera"]["rotate"]
+    assert module._rotate == 0
     assert module._frame_id == "camera_link"
-
-
-def test_camera_module_resolves_native_orbbec_backend() -> None:
-    from lingtu.plugin_seed import seed_builtin_plugins
-    from runtime.adapters.perception_gateway import camera_module
-
-    state = snapshot()
-    try:
-        clear()
-        seed_builtin_plugins(groups=("camera",), reload_loaded=True, strict=True)
-        generic_cls = get(CAMERA_ROLE, CAMERA_BACKEND_ORBBEC)
-        assert generic_cls.__name__ == "OrbbecNativeCameraModule"
-        assert generic_cls.__module__ == "drivers.real.camera.module"
-        assert camera_module() is generic_cls
-    finally:
-        restore(state)

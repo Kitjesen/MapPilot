@@ -88,6 +88,262 @@ class FrameSnapshot:
         return self.timestamp_ns * 1e-9
 
 
+class ShmFrameWriter:
+    """Publish camera frames to a portable file-backed LTCSHM01 ring."""
+
+    def __init__(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        stream_kind: StreamKind,
+        slot_capacity: int,
+        slot_count: int = 2,
+    ) -> None:
+        self.path = Path(path)
+        self.stream_kind = StreamKind(stream_kind)
+        self.slot_capacity = int(slot_capacity)
+        self.slot_count = int(slot_count)
+        if self.slot_count < 2 or self.slot_count > 0xFFFF:
+            raise ValueError("camera SHM slot_count must be in [2, 65535]")
+        if self.slot_capacity <= 0 or self.slot_capacity > 0xFFFFFFFF:
+            raise ValueError("camera SHM slot_capacity must be in [1, 2^32 - 1]")
+        if not self.path.parent.is_dir():
+            raise FileNotFoundError(f"camera SHM parent directory is missing: {self.path.parent}")
+        self._fd: int | None = None
+        self._mapping: mmap.mmap | None = None
+        self._last_sequence = 0
+        self._generation_ns = 0
+        self._open()
+
+    @property
+    def last_sequence(self) -> int:
+        """Return the newest sequence committed by this writer."""
+
+        return self._last_sequence
+
+    @property
+    def generation_ns(self) -> int:
+        """Return the generation identifier written to the superblock."""
+
+        return self._generation_ns
+
+    def __enter__(self) -> ShmFrameWriter:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Flush and close the mapped ring while leaving its file available."""
+
+        mapping, fd = self._mapping, self._fd
+        self._mapping = None
+        self._fd = None
+        if mapping is not None:
+            mapping.flush()
+            mapping.close()
+        if fd is not None:
+            os.close(fd)
+
+    def publish(
+        self,
+        *,
+        timestamp_ns: int,
+        width: int,
+        height: int,
+        stride: int,
+        encoding: str,
+        frame_id: str,
+        payload: bytes | bytearray | memoryview,
+        fx: float = 0.0,
+        fy: float = 0.0,
+        cx: float = 0.0,
+        cy: float = 0.0,
+        depth_scale: float = 0.001,
+        dist_k1: float = 0.0,
+        dist_k2: float = 0.0,
+        dist_p1: float = 0.0,
+        dist_p2: float = 0.0,
+        dist_k3: float = 0.0,
+    ) -> int:
+        """Validate and atomically commit one complete frame."""
+
+        mapping = self._mapping
+        if mapping is None:
+            raise RuntimeError("camera SHM writer is closed")
+        payload_bytes = bytes(payload)
+        timestamp = int(timestamp_ns)
+        width_value = int(width)
+        height_value = int(height)
+        stride_value = int(stride)
+        self._validate_frame(
+            timestamp_ns=timestamp,
+            width=width_value,
+            height=height_value,
+            stride=stride_value,
+            encoding=encoding,
+            frame_id=frame_id,
+            payload_size=len(payload_bytes),
+        )
+        if self._last_sequence >= (0xFFFFFFFFFFFFFFFF - 1) // 2:
+            raise RuntimeError("camera SHM sequence exhausted")
+
+        sequence = self._last_sequence + 1
+        slot_index = (sequence - 1) % self.slot_count
+        slot_offset = SUPERBLOCK.size + slot_index * (SLOT_HEADER.size + self.slot_capacity)
+        dirty_token = sequence * 2 + 1
+        committed_token = sequence * 2
+        struct.pack_into("<Q", mapping, slot_offset, dirty_token)
+        struct.pack_into("<Q", mapping, slot_offset + SLOT_HEADER.size - 8, 0)
+        encoding_bytes = encoding.encode("ascii")
+        frame_id_bytes = frame_id.encode("utf-8")
+        SLOT_HEADER.pack_into(
+            mapping,
+            slot_offset,
+            dirty_token,
+            sequence,
+            timestamp,
+            width_value,
+            height_value,
+            stride_value,
+            len(payload_bytes),
+            self.slot_capacity,
+            zlib.crc32(payload_bytes) & 0xFFFFFFFF,
+            0,
+            0,
+            int(self.stream_kind),
+            len(encoding_bytes),
+            SHM_SCHEMA_VERSION,
+            SLOT_HEADER.size,
+            encoding_bytes.ljust(16, b"\0"),
+            frame_id_bytes.ljust(64, b"\0"),
+            float(fx),
+            float(fy),
+            float(cx),
+            float(cy),
+            float(depth_scale),
+            float(dist_k1),
+            float(dist_k2),
+            float(dist_p1),
+            float(dist_p2),
+            float(dist_k3),
+            bytes(24),
+            0,
+        )
+        payload_offset = slot_offset + SLOT_HEADER.size
+        mapping[payload_offset : payload_offset + len(payload_bytes)] = payload_bytes
+        struct.pack_into("<Q", mapping, slot_offset + SLOT_HEADER.size - 8, committed_token)
+        struct.pack_into("<Q", mapping, slot_offset, committed_token)
+        heartbeat_ns = time.time_ns()
+        SUPERBLOCK.pack_into(
+            mapping,
+            0,
+            SHM_MAGIC,
+            SHM_SCHEMA_VERSION,
+            SUPERBLOCK.size,
+            SLOT_HEADER.size,
+            self.slot_count,
+            self.slot_capacity,
+            slot_index,
+            0,
+            0,
+            sequence,
+            self._generation_ns,
+            heartbeat_ns,
+            0,
+        )
+        mapping.flush()
+        self._last_sequence = sequence
+        return sequence
+
+    def _open(self) -> None:
+        previous_generation = 0
+        try:
+            with self.path.open("rb") as existing:
+                header = existing.read(SUPERBLOCK.size)
+            if len(header) == SUPERBLOCK.size:
+                values = SUPERBLOCK.unpack(header)
+                if values[0] == SHM_MAGIC:
+                    previous_generation = int(values[10])
+        except FileNotFoundError:
+            pass
+        expected_size = SUPERBLOCK.size + self.slot_count * (SLOT_HEADER.size + self.slot_capacity)
+        fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            os.chmod(self.path, 0o600)
+            os.ftruncate(fd, expected_size)
+            mapping = mmap.mmap(fd, expected_size, access=mmap.ACCESS_WRITE)
+        except Exception:
+            os.close(fd)
+            raise
+        self._fd = fd
+        self._mapping = mapping
+        self._generation_ns = max(time.time_ns(), previous_generation + 1)
+        mapping[:] = bytes(expected_size)
+        SUPERBLOCK.pack_into(
+            mapping,
+            0,
+            SHM_MAGIC,
+            SHM_SCHEMA_VERSION,
+            SUPERBLOCK.size,
+            SLOT_HEADER.size,
+            self.slot_count,
+            self.slot_capacity,
+            0,
+            0,
+            0,
+            0,
+            self._generation_ns,
+            self._generation_ns,
+            0,
+        )
+        mapping.flush()
+
+    def _validate_frame(
+        self,
+        *,
+        timestamp_ns: int,
+        width: int,
+        height: int,
+        stride: int,
+        encoding: str,
+        frame_id: str,
+        payload_size: int,
+    ) -> None:
+        if timestamp_ns <= 0:
+            raise ValueError("camera SHM timestamp must be positive")
+        if not 0 < width <= 0xFFFFFFFF or not 0 < height <= 0xFFFFFFFF:
+            raise ValueError("camera SHM dimensions must be positive uint32 values")
+        if not 0 <= stride <= 0xFFFFFFFF:
+            raise ValueError("camera SHM stride must be a uint32 value")
+        try:
+            encoding_bytes = encoding.encode("ascii")
+            frame_id_bytes = frame_id.encode("utf-8")
+        except UnicodeError as exc:
+            raise ValueError("camera SHM encoding and frame_id must be encodable") from exc
+        if not encoding_bytes or len(encoding_bytes) > 15 or len(frame_id_bytes) > 63:
+            raise ValueError("camera SHM encoding or frame_id exceeds its fixed field")
+        if payload_size > self.slot_capacity:
+            raise ValueError("camera SHM payload exceeds slot capacity")
+        if self.stream_kind is StreamKind.INFO:
+            if stride != 0 or payload_size != 0:
+                raise ValueError("camera info SHM frame must not carry image bytes")
+            return
+        if stride <= 0 or payload_size != stride * height:
+            raise ValueError("camera image SHM payload must equal stride * height")
+        bytes_per_pixel = {
+            "rgb8": 3,
+            "bgr8": 3,
+            "rgba8": 4,
+            "mono8": 1,
+            "8UC1": 1,
+            "16UC1": 2,
+            "32FC1": 4,
+        }.get(encoding)
+        if bytes_per_pixel is None or stride < width * bytes_per_pixel:
+            raise ValueError("camera image SHM encoding or stride is invalid")
+
+
 def posix_shm_path(name: str) -> Path:
     """Return the Linux filesystem path for a POSIX SHM object name."""
 

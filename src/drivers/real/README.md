@@ -1,17 +1,20 @@
 # Real Hardware Drivers
 
 This package holds physical robot and sensor drivers. Normal business modules
-should consume their Module ports, not ROS topics or vendor SDK APIs directly.
+should consume their Module ports or native typed contracts, not vendor SDK APIs
+directly.
 
-## `thunder/` - Thunder Robot
+## `motion/` - Native Robot Motion
 
-- `native/` - canonical product C++ `driver`: reads typed DDS
-  `rt/nav/cmd_vel`, enforces frame/finite/watchdog/sequence rules, acquires
-  the `lingtu-driver` Brainstem control lease, and calls the checked
-  Brainstem `RobotControl.WalkChecked` RPC. It never enables motors or changes
-  pose.
-- `han_dog_module.py` - local/Host `ThunderDriver`, registered as
-  `("driver", "thunder")` for lite and development Module graphs.
+- The common C++ driver reads typed DDS `rt/nav/cmd_vel`, enforces
+  frame/finite/watchdog/sequence and single-writer rules, and owns status plus
+  fail-closed shutdown behavior.
+- `motion/robots/unitree/go2/` translates the common contract to Unitree SDK2 Sport API.
+- `motion/robots/doso/` translates it to the checked Brainstem Client SDK.
+- `RobotConfig.driver.backend` selects one adapter at build and runtime; Products
+  do not encode robot vendor identity. See `motion/README.md`.
+- Python Host code has no physical motion client. Real motion is owned by the
+  Product's native `lingtu_driver` process under `lt-driver.service`.
 
 ## `camera/` - Orbbec RGB-D Camera
 
@@ -23,18 +26,16 @@ should consume their Module ports, not ROS topics or vendor SDK APIs directly.
   reads the native SHM/DDS path. Full image payloads use POSIX SHM by default;
   typed DDS image publishing is opt-in diagnostics, while CameraInfo can
   remain on DDS.
-- `native/capture_process.cpp` - no-ROS Orbbec SDK capture process.
+- `native/capture_process.cpp` - native Orbbec SDK capture process.
 - `native/camera.cpp`, `native/camera_dds.cpp` - C++ camera and DDS
   publishing sources; `native/shm_frame_ring.hpp` defines the binary SHM ring.
 - `native/sdk.cpp` / `sdk.hpp` - C++ SDK wrapper.
 - `impl/orbbec/camera.cpp` / `camera.hpp` - Orbbec SDK C++ implementation.
-- `deps/orbbec/OrbbecSDK/` - preferred no-ROS Orbbec SDK checkout.
-- `deps/orbbec/OrbbecSDK_ROS2/` - quarantined vendor-source fallback used only
-  to locate the bundled Orbbec SDK when the standalone SDK checkout is absent.
+- `build/deps/orbbec-sdk/` - ignored Orbbec SDK package fetched by
+  `scripts/build/fetch_orbbec_sdk.sh`.
 
-The camera runtime has no ROS2 bridge or Python DDS-reader fallback. Product
-dataflow selects the canonical `camera` role with the `orbbec` or `dds`
-backend.
+The camera runtime uses the native capture and SHM/DDS path. Product dataflow
+selects the canonical `camera` role with the `orbbec` or `dds` backend.
 
 ## `lidar/` - Livox MID-360 LiDAR
 
@@ -50,17 +51,12 @@ backend.
 - `api/frame_stream.py` - `LidarFrameStream` ring buffer.
 - `native/dds_module.hpp` / `dds_module.cpp` - C++ native DDS publisher.
 - `deps/livox/Livox-SDK2/` - official Livox SDK2 source.
-- The former ROS2 Livox compatibility fallback has been removed. Product
-  LiDAR transport is native CycloneDDS through `sdk2_stream/`.
+- Product LiDAR transport is native CycloneDDS through `sdk2_stream/`.
 
-## `imu/` - IMU (Livox MID-360 Facade)
+## IMU ownership
 
-- `module.py` - `ImuModule`: documents the field IMU role without opening a
-  second hardware reader. The actual IMU stream is carried by the LiDAR source.
-  Registered as `("imu", "livox")`.
-- `dds_module.py` - native DDS IMU subscriber for cross-process consumers.
-- `native/sdk.py` - IMU source interface.
-- `impl/livox/` - Livox IMU backend placeholder (data flows through LiDAR).
+The Livox MID-360 native service publishes LiDAR and IMU DDS topics from one
+device connection. There is no separate Python IMU Module or second reader.
 
 ## `gnss/` - GNSS Native DDS
 
@@ -70,12 +66,12 @@ backend.
 - `native/gnss_dds.cpp` - process entrypoint.
 - `native/sdk.hpp` - C++ `FixSample`, `StatusSample`, and `FixType` types.
 - `impl/wtrtk980/` - WTRTK-980 serial/NMEA backend (`nmea.cpp`, `serial.cpp`).
-- ROS2 GNSS readers are legacy compatibility assets only and are not present in
-  the real GNSS product tree.
+- The real GNSS Product uses only this native DDS path.
 
-## `teleop_module.py` - Joystick Teleop
+## Teleop ownership
 
-- `TeleopModule`: joystick remote control with live camera stream. Scales
-  joystick inputs to `Twist`, manages active/idle state (3s auto-release),
-  and encodes camera frames for Gateway. Ports: `color_image`, `joy_input`
-  (in); `cmd_vel`, `teleop_active` (out).
+Field teleop does not use a Python driver Module. The Web panel sends typed
+physical velocity intent through Gateway to the native navigation endpoint;
+the native endpoint owns arbitration and final safety, and `lingtu_driver` is
+the only physical motion writer. See
+[`docs/04-deployment/operator_drive.md`](../../../docs/04-deployment/operator_drive.md).

@@ -15,6 +15,7 @@ from typing import Any
 
 from runtime.module import Module
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
+from runtime.msgs.map import MapCloudFrame
 from runtime.msgs.nav import Odometry
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat, PointCloud2
@@ -47,7 +48,7 @@ class SimEndpointDriverModule(Module, layer=1):
 
     odometry: Out[Odometry]
     lidar_cloud: Out[PointCloud2]
-    map_cloud: Out[PointCloud2]
+    map_cloud_frame: Out[MapCloudFrame]
     camera_image: Out[Image]
     depth_image: Out[Image]
     camera_info: Out[CameraIntrinsics]
@@ -72,7 +73,7 @@ class SimEndpointDriverModule(Module, layer=1):
         self._cmd_wz = 0.0
         self._odom_count = 0
         self._registered_cloud_count = 0
-        self._map_cloud_count = 0
+        self._map_cloud_frame_count = 0
         self._camera_image_count = 0
         self._depth_image_count = 0
         self._camera_info_count = 0
@@ -124,8 +125,8 @@ class SimEndpointDriverModule(Module, layer=1):
         self._registered_cloud_count += 1
         self.lidar_cloud.publish(cloud)
 
-    def publish_map_cloud_from_ros(self, msg: Any) -> None:
-        """Publish a core map cloud from a ROS-like PointCloud2 object."""
+    def publish_map_cloud_frame_from_ros(self, msg: Any) -> None:
+        """Publish a typed map frame from a ROS-like PointCloud2 object."""
 
         cloud = self._pointcloud_from_ros_like(
             msg,
@@ -133,8 +134,15 @@ class SimEndpointDriverModule(Module, layer=1):
         )
         if cloud is None:
             return
-        self._map_cloud_count += 1
-        self.map_cloud.publish(cloud)
+        self._map_cloud_frame_count += 1
+        self.map_cloud_frame.publish(
+            MapCloudFrame.from_pointcloud2(
+                cloud,
+                mode="FULL",
+                source="sim_endpoint",
+                sequence=self._map_cloud_frame_count,
+            )
+        )
 
     def publish_goal_pose_from_ros(self, msg: Any) -> None:
         pose = getattr(msg, "pose", None)
@@ -320,7 +328,7 @@ class SimEndpointDriverModule(Module, layer=1):
             "stopped": self._stopped,
             "odom_count": self._odom_count,
             "registered_cloud_count": self._registered_cloud_count,
-            "map_cloud_count": self._map_cloud_count,
+            "map_cloud_frame_count": self._map_cloud_frame_count,
             "camera_image_count": self._camera_image_count,
             "depth_image_count": self._depth_image_count,
             "camera_info_count": self._camera_info_count,

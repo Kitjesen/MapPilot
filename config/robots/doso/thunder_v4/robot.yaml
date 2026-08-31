@@ -1,0 +1,81 @@
+# DOSO Thunder V4 physical configuration used only by env=real.
+
+robot:
+  id: thunder_v4_001
+  hw_id: doso_thunder_v4
+  firmware_version: unknown
+
+geometry:
+  vehicle_height: 0.5
+  vehicle_width: 0.6
+  vehicle_length: 1.0
+  collision_cylinder_radius: 0.40
+  collision_cylinder_offset: 0.25
+  collision_hard_margin: 0.15
+  collision_clearance_below: 0.25
+  collision_clearance_above: 0.35
+  sensor_offset_x: 0.3
+  sensor_offset_y: 0.0
+
+speed:
+  max_linear: 1.0
+  max_angular: 1.0
+  max_speed: 0.875
+  autonomy_speed: 0.875
+
+safety:
+  obstacle_height_thre: 0.2
+  ground_height_thre: 0.1
+  stop_distance: 0.8
+  slow_distance: 2.0
+  deadman_timeout_ms: 300.0
+  cmd_vel_timeout_ms: 200.0
+  tilt_limit_deg: 30.0
+
+driver:
+  backend: doso
+  target: 192.168.66.12:13145
+  network_interface: ""
+  network_address: ""
+  probe_ip: ""
+  dog_host: 192.168.66.12
+  dog_port: 13145
+  control_rate: 50.0
+  auto_enable: false
+  auto_standup: false
+  reconnect_interval: 3.0
+  slam_reset_interval: 5.0
+  tls_ca_file: ""
+  tls_cert_file: ""
+  tls_key_file: ""
+  tls_server_name: ""
+
+lidar:
+  frame_id: livox_frame
+  publish_freq: 10.0
+  network_interface: eth1
+  lidar_ip: 192.168.1.178
+  host_ip: 192.168.1.5
+  offset_x: 0.402876074867229
+  offset_y: 0.0
+  offset_z: 0.0582019450665819
+  roll: -3.141592653589793
+  pitch: -0.7853981633974483
+  yaw: 0.0
+  camera_offset_z: 0.0
+
+camera:
+  position_x: 0.423358800364963
+  position_y: -0.000496202974186816
+  position_z: 0.11370714960317
+  roll: -1.91986217719376
+  pitch: 0.0
+  yaw: -1.57079632501758
+  fx: 615.0
+  fy: 615.0
+  cx: 320.0
+  cy: 240.0
+  width: 640
+  height: 480
+  depth_scale: 0.001
+  rotate: 180

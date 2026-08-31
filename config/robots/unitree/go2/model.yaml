@@ -1,0 +1,4 @@
+sensors:
+  mid360:
+    fastlio2_config: sensors/mid360_fastlio2.yaml
+    extrinsic_profile: go2_mid360

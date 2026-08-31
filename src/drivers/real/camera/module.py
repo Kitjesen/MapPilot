@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import os
-import platform
 import struct
 import subprocess
 import threading
@@ -49,60 +48,6 @@ def _path_from_env(env_name: str, fallback: Path) -> Path:
     return path
 
 
-def _orbbec_ros2_root() -> Path:
-    new_root = _repo_root() / "src" / "drivers" / "real" / "camera" / "deps" / "orbbec" / "OrbbecSDK_ROS2"
-    old_root = _repo_root() / "src" / "drivers" / "real" / "camera" / "OrbbecSDK_ROS2"
-    configured = os.environ.get("LINGTU_ORBBEC_ROS2_DIR", "").strip()
-    if configured:
-        return _path_from_env("LINGTU_ORBBEC_ROS2_DIR", new_root)
-    return new_root if new_root.exists() else old_root
-
-
-def _orbbec_sdk_root() -> Path:
-    configured = os.environ.get("LINGTU_ORBBEC_SDK_ROOT", "").strip()
-    if configured:
-        return _path_from_env("LINGTU_ORBBEC_SDK_ROOT", Path("/usr/local"))
-
-    pure_root = _repo_root() / "src" / "drivers" / "real" / "camera" / "deps" / "orbbec" / "OrbbecSDK"
-    if pure_root.exists():
-        return pure_root
-
-    return _orbbec_ros2_root() / "orbbec_camera" / "SDK"
-
-
-def orbbec_sdk_source() -> str:
-    """Classify the SDK source for health/readiness reports."""
-    if os.environ.get("LINGTU_ORBBEC_SDK_ROOT", "").strip():
-        return "configured"
-    pure_root = _repo_root() / "src" / "drivers" / "real" / "camera" / "deps" / "orbbec" / "OrbbecSDK"
-    if pure_root.exists():
-        return "pure_sdk"
-    return "ros2_wrapper_fallback"
-
-
-def _sdk_arch() -> str:
-    machine = platform.machine().lower()
-    if machine in {"aarch64", "arm64"}:
-        return "arm64"
-    return "x64"
-
-
-def orbbec_sdk_root() -> Path:
-    return _orbbec_sdk_root()
-
-
-def _sdk_library_dir() -> Path:
-    sdk_root = orbbec_sdk_root()
-    for path in (
-        sdk_root / "lib" / _sdk_arch(),
-        sdk_root / "lib",
-        sdk_root / "lib64",
-    ):
-        if path.exists():
-            return path
-    return sdk_root / "lib" / _sdk_arch()
-
-
 def orbbec_native_build_dir() -> Path:
     return _path_from_env(
         "LINGTU_ORBBEC_NATIVE_BUILD_DIR",
@@ -116,11 +61,10 @@ def _default_executable() -> Path:
 
 
 def _runtime_library_paths() -> tuple[Path, ...]:
-    sdk_lib = _sdk_library_dir()
+    runtime_lib = orbbec_native_build_dir() / "lib"
     return (
-        orbbec_native_build_dir() / "lib",
-        sdk_lib,
-        sdk_lib / "extensions",
+        runtime_lib,
+        runtime_lib / "extensions",
     )
 
 
@@ -134,7 +78,6 @@ def _with_runtime_library_env() -> dict[str, str]:
     paths = [str(path) for path in _runtime_library_paths() if path.exists()]
     if paths:
         env[key] = os.pathsep.join([*paths, existing] if existing else paths)
-    env.setdefault("ORBBEC_SDK_ROOT", str(orbbec_sdk_root()))
     return env
 
 
@@ -157,16 +100,12 @@ def _default_camera_config() -> dict[str, Any]:
                 config.setdefault("driver", item.get("driver") or CAMERA_BACKEND_ORBBEC)
                 break
 
-    # Camera mounting orientation is physical calibration. Keep it in
-    # robot_config.yaml rather than duplicating it in the device inventory.
-    mount_path = _repo_root() / "config" / "robot_config.yaml"
-    try:
-        mount_data = yaml.safe_load(mount_path.read_text(encoding="utf-8")) or {}
-        camera_mount = mount_data.get("camera") or {}
-        if "rotate" in camera_mount:
-            config["rotate"] = int(camera_mount["rotate"])
-    except Exception:
-        pass
+    # Camera mounting orientation comes from the selected RobotConfig.
+    from runtime.config import get_config
+
+    camera_mount = get_config().raw.get("camera") or {}
+    if "rotate" in camera_mount:
+        config["rotate"] = int(camera_mount["rotate"])
     return config
 
 
@@ -346,10 +285,6 @@ class OrbbecNativeCameraModule(Module, layer=1):
         info["backend"] = self._backend
         info["error"] = self._error
         info["native_executable"] = str(self._executable)
-        info["sdk_root"] = str(orbbec_sdk_root())
-        info["sdk_source"] = orbbec_sdk_source()
-        info["ros2_wrapper_fallback"] = orbbec_sdk_source() == "ros2_wrapper_fallback"
-        info["sdk_root_exists"] = orbbec_sdk_root().exists()
         info["runtime_library_paths"] = [str(path) for path in _runtime_library_paths()]
         info["camera_info_topics"] = ["native_orbbec"]
         info["camera_info_preferred_topic"] = "native_orbbec"

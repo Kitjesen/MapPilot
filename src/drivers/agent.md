@@ -116,7 +116,7 @@ rt/driver/odometry     # typed DDS wire topic
 Rules:
 
 - New code stores canonical runtime topics in `runtime.runtime_interface.TOPICS`.
-- New code uses `message.dds.dds_topic_name(..., typed=True)` for DDS names.
+- Host metadata uses `message.topics.dds_topic_name(...)` for DDS names.
 - Do not put animal, robot-shape, or product nicknames in topic names.
 - `/nav/dog_odometry` is legacy. New code must use `/driver/odometry`.
 - `nav` owns navigation state and commands, not base odometry.
@@ -192,7 +192,7 @@ Current backends:
 ```text
 real/lidar/impl/livox       # Sdk2Source - C++ Livox SDK2 stream process
 sim/lidar/impl/mujoco       # MuJoCo simulated LiDAR (ray casting)
-sim/lidar/mujoco_lidar/     # High-fidelity MuJoCo LiDAR cores (CPU, JAX, Warp, TI)
+PyPI mujoco-lidar==0.3.3    # Official high-fidelity MuJoCo LiDAR implementation
 ```
 
 The `LidarModule` in `real/lidar/module.py` is the canonical runtime module.
@@ -202,28 +202,11 @@ The default source factory creates an `Sdk2Source` from `impl/livox/`.
 The upper SLAM stack must not know whether raw LiDAR came from Livox hardware,
 MuJoCo, DDS, or replay.
 
-## 8. IMU Contract
+## 8. IMU Ownership
 
-IMU output ports:
-
-```text
-imu
-status
-alive
-```
-
-Current backends:
-
-```text
-real/imu/module.py          # Livox MID-360 IMU facade (no duplicate publisher)
-real/imu/dds_module.py      # Native DDS IMU subscriber
-sim/imu/impl/mujoco         # MuJoCo simulated IMU
-```
-
-The current field IMU is carried by the Livox MID-360 LiDAR source. The
-`real/imu/` module is a facade that documents the IMU role without opening a
-second hardware reader. Runtime IMU publishing remains in `drivers.real.lidar`
-until the IMU stream is split from the LiDAR module wiring.
+The field IMU is published by the native Livox MID-360 service. Formal
+simulation uses the native MuJoCo sensor publisher. Host Blueprints do not add
+a separate IMU Module.
 
 ## 9. Driver Contract
 
@@ -253,8 +236,7 @@ navigation logic
 Current driver backends:
 
 ```text
-real/thunder/native/             # Product C++ DDS -> Brainstem driver
-real/thunder/han_dog_module.py   # Local/Host Module driver
+real/motion/                     # Product C++ DDS -> selected robot backend
 sim/mujoco/driver.py             # MuJoCo in-process driver
 sim/endpoint.py                  # Externally owned simulation streams
 ```
@@ -302,7 +284,7 @@ gateway
 lingtu
 ```
 
-Systemd owns long-running native services. `lingtu.service` owns the Python
+Systemd owns long-running native services. `lt-host.service` owns the Python
 runtime/gateway/orchestration layer. Python modules must not secretly start
 product hardware daemons unless a compatibility flag explicitly enables that.
 

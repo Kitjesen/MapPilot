@@ -1,0 +1,4 @@
+sensors:
+  mid360:
+    fastlio2_config: sensors/mid360_fastlio2.yaml
+    extrinsic_profile: thunder_v4_mid360

@@ -23,36 +23,24 @@ target_link_libraries(livox_sdk2_stream PRIVATE livox_lidar_sdk_static)
 if(LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS)
   find_package(iceoryx_binding_c QUIET)
   find_package(CycloneDDS REQUIRED)
-  find_program(CYCLONEDDS_IDLC_EXECUTABLE NAMES idlc REQUIRED)
 
   set(_LINGTU_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../..")
 
   add_subdirectory(
     "${_LINGTU_ROOT}/src/message/cpp"
     "${CMAKE_CURRENT_BINARY_DIR}/message_cpp")
-  set(_LINGTU_SLAM_IDL "${_LINGTU_ROOT}/src/message/idl/lingtu_slam.idl")
-  set(_LINGTU_SLAM_IDL_HEADER "${CMAKE_CURRENT_BINARY_DIR}/lingtu_slam.h")
-  set(_LINGTU_SLAM_IDL_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/lingtu_slam.c")
-  add_custom_command(
-    OUTPUT "${_LINGTU_SLAM_IDL_HEADER}" "${_LINGTU_SLAM_IDL_SOURCE}"
-    COMMAND "${CYCLONEDDS_IDLC_EXECUTABLE}"
-            -l c
-            "${_LINGTU_SLAM_IDL}"
-    DEPENDS "${_LINGTU_SLAM_IDL}"
-    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-    VERBATIM)
-  add_custom_target(livox_sdk2_stream_idl_generate
-    DEPENDS "${_LINGTU_SLAM_IDL_HEADER}" "${_LINGTU_SLAM_IDL_SOURCE}")
-  add_dependencies(livox_sdk2_stream livox_sdk2_stream_idl_generate)
+  set(_LINGTU_SLAM_IDL "${_LINGTU_ROOT}/src/message/idl/messages.idl")
+  lingtu_add_dds_c_messages(
+    livox_sdk2_stream_messages "${_LINGTU_SLAM_IDL}")
   target_sources(livox_sdk2_stream PRIVATE
-    "${_LINGTU_SLAM_IDL_SOURCE}"
     "${CMAKE_CURRENT_LIST_DIR}/../native/dds_module.cpp")
   target_compile_definitions(livox_sdk2_stream PRIVATE
     LINGTU_LIVOX_SDK2_STREAM_HAS_DDS=1)
   target_include_directories(livox_sdk2_stream PRIVATE
-    "${CMAKE_CURRENT_BINARY_DIR}"
     "${_LINGTU_ROOT}/src")
-  target_link_libraries(livox_sdk2_stream PRIVATE CycloneDDS::ddsc lingtu_dds_qos_profiles)
+  target_link_libraries(livox_sdk2_stream PRIVATE
+    livox_sdk2_stream_messages
+    lingtu_dds_contracts)
 endif()
 
 if(UNIX)

@@ -1,0 +1,75 @@
+# Fast-LIO2 configuration for the Unitree Go2 official MID-360 bracket.
+# Target: Go2 expansion Linux host, >= 10 Hz processed LiDAR scans.
+
+imu_topic: /imu/raw
+lidar_topic: /lidar/raw_frame
+body_frame: body
+world_frame: odom
+
+print_time_cost: false
+
+lidar_type: 1
+scan_line: 4
+timestamp_unit: 3
+
+# MID-360 reports acceleration in g.
+acc_scale: 9.91
+time_diff_lidar_to_imu: 0.0
+max_imu_gap_s: 0.25
+
+lidar_filter_num: 2
+lidar_min_range: 0.5
+lidar_max_range: 20.0
+scan_resolution: 0.25
+map_resolution: 0.2
+
+cube_len: 1000
+det_range: 30
+move_thresh: 1.5
+
+max_map_points: 1000000
+stationary_thresh: 0.08
+
+na: 0.01
+ng: 0.01
+nba: 0.0001
+nbg: 0.0001
+
+imu_init_num: 400
+near_search_num: 3
+ieskf_max_iter: 5
+reject_nonconverged_update: false
+reject_degenerate_nonconverged_update: true
+max_update_velocity_mps: 3.0
+max_update_velocity_delta_mps: 1.0
+fastlio_max_pos_cov_trace: 100.0
+
+relocalization_min_evaluated_points: 100
+track_against_map_max_translation_m: 0.15
+track_against_map_max_yaw_deg: 2.0
+track_against_map_max_tilt_deg: 5.0
+
+gravity_align: true
+esti_il: false
+
+# MID-360 package-internal IMU -> LiDAR calibration.
+r_il: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+t_il: [-0.011, -0.02329, 0.04412]
+
+# Unitree official Go2 MID-360 bracket nominal. These values are T_body_imu,
+# solved from T_body_lidar and the package-internal T_imu_lidar:
+#   T_body_imu = T_body_lidar * inverse(T_imu_lidar)
+# The adjacent RobotConfig records the current field-validation status.
+navigation_body_from_imu_rotation: [0.9743700647852352, 0.0, 0.224951054343865, 0.0, 1.0, 0.0, -0.224951054343865, 0.0, 0.9743700647852352]
+navigation_body_from_imu_translation: [0.16222323019498625, 0.02329, 0.07715633114389292]
+
+lidar_cov_inv: 1000.0
+
+imu_static_acc_thresh: 0.25
+imu_static_gyro_thresh: 0.02
+zupt_min_static_frames: 5
+zupt_sigma_v: 0.02
+zupt_sigma_pos: 0.1
+
+vertical_velocity_constraint_enabled: false
+vertical_velocity_sigma_v: 0.05

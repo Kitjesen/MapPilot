@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 # ruff: noqa: D103,S101
+import os
+import stat
 import struct
+import threading
 import time
 import zlib
 from pathlib import Path
@@ -11,8 +14,10 @@ import pytest
 from drivers.real.camera.shm import (
     FrameChanged,
     FrameCorrupt,
+    FrameNotReady,
     FrameStale,
     ShmFrameReader,
+    ShmFrameWriter,
     StreamKind,
 )
 
@@ -162,11 +167,157 @@ def test_shm_reader_accepts_same_sequence_from_a_new_writer_generation(tmp_path)
     assert restarted.timestamp_ns == second_timestamp
 
 
+def test_portable_writer_publishes_complete_consecutive_frames(tmp_path):
+    path = tmp_path / "camera_color.shm"
+    writer = ShmFrameWriter(path, stream_kind=StreamKind.COLOR, slot_capacity=128)
+    reader = ShmFrameReader(path, max_age_s=None)
+    first = bytes(range(12))
+    second = bytes(reversed(range(12)))
+
+    try:
+        assert writer.publish(
+            timestamp_ns=time.time_ns(),
+            width=2,
+            height=2,
+            stride=6,
+            encoding="rgb8",
+            frame_id="camera_link",
+            payload=first,
+        ) == 1
+        assert reader.read_latest().payload == first
+
+        assert writer.publish(
+            timestamp_ns=time.time_ns(),
+            width=2,
+            height=2,
+            stride=6,
+            encoding="rgb8",
+            frame_id="camera_link",
+            payload=second,
+        ) == 2
+        frame = reader.read_latest()
+        assert frame is not None
+        assert frame.sequence == 2
+        assert frame.payload == second
+        assert writer.last_sequence == 2
+        assert path.stat().st_size == _SUPERBLOCK.size + 2 * (_SLOT.size + 128)
+        if os.name != "nt":
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_portable_writer_generation_changes_when_ring_is_recreated(tmp_path):
+    path = tmp_path / "camera_info.shm"
+    with ShmFrameWriter(path, stream_kind=StreamKind.INFO, slot_capacity=1) as first:
+        first_generation = first.generation_ns
+        first.publish(
+            timestamp_ns=time.time_ns(),
+            width=640,
+            height=480,
+            stride=0,
+            encoding="camera_info",
+            frame_id="camera_link",
+            payload=b"",
+            fx=500.0,
+            fy=501.0,
+            cx=320.0,
+            cy=240.0,
+        )
+    time.sleep(0.001)
+    with ShmFrameWriter(path, stream_kind=StreamKind.INFO, slot_capacity=1) as second:
+        assert second.generation_ns > first_generation
+        assert second.last_sequence == 0
+
+
+def test_portable_writer_and_reader_never_expose_partial_concurrent_frames(tmp_path):
+    path = tmp_path / "camera_color.shm"
+    writer = ShmFrameWriter(path, stream_kind=StreamKind.COLOR, slot_capacity=192)
+    reader = ShmFrameReader(path, max_age_s=None, consistency_attempts=20)
+    expected_payloads = {bytes([value]) * 192 for value in range(1, 31)}
+    observed: list[bytes] = []
+    done = threading.Event()
+
+    def publish() -> None:
+        try:
+            for value in range(1, 31):
+                writer.publish(
+                    timestamp_ns=time.time_ns(),
+                    width=8,
+                    height=8,
+                    stride=24,
+                    encoding="rgb8",
+                    frame_id="camera_link",
+                    payload=bytes([value]) * 192,
+                )
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=publish)
+    thread.start()
+    try:
+        while not done.is_set() or reader.last_sequence < writer.last_sequence:
+            try:
+                frame = reader.read_latest()
+            except FrameChanged:
+                continue
+            if frame is not None:
+                observed.append(frame.payload)
+        thread.join(timeout=1.0)
+        assert observed
+        assert set(observed) <= expected_payloads
+        assert all(len(set(payload)) == 1 for payload in observed)
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_portable_writer_validates_before_publishing_partial_frame(tmp_path):
+    path = tmp_path / "camera_color.shm"
+    with ShmFrameWriter(path, stream_kind=StreamKind.COLOR, slot_capacity=128) as writer:
+        with pytest.raises(ValueError, match=r"stride \* height"):
+            writer.publish(
+                timestamp_ns=time.time_ns(),
+                width=2,
+                height=2,
+                stride=6,
+                encoding="rgb8",
+                frame_id="camera_link",
+                payload=b"partial",
+            )
+
+        with pytest.raises(FrameNotReady, match="no committed frame"):
+            ShmFrameReader(path, max_age_s=None).read_latest()
+
+
+def test_portable_writer_rejects_zero_timestamp_without_committing(tmp_path):
+    path = tmp_path / "camera_color.shm"
+    with ShmFrameWriter(path, stream_kind=StreamKind.COLOR, slot_capacity=128) as writer:
+        with pytest.raises(ValueError, match="timestamp must be positive"):
+            writer.publish(
+                timestamp_ns=0,
+                width=2,
+                height=2,
+                stride=6,
+                encoding="rgb8",
+                frame_id="camera_link",
+                payload=bytes(12),
+            )
+
+        assert writer.last_sequence == 0
+        with pytest.raises(FrameNotReady, match="no committed frame"):
+            ShmFrameReader(path, max_age_s=None).read_latest()
+
+
 def test_cpp_camera_service_uses_shm_as_default_image_data_plane():
     source = Path("src/drivers/real/camera/native/camera_dds.cpp").read_text(encoding="utf-8")
     contract = Path("src/drivers/real/camera/native/shm_frame_ring.hpp").read_text(encoding="utf-8")
+    service = Path("scripts/deploy/thunder/lt-camera.service").read_text(encoding="utf-8")
 
     assert "publish_image_dds{false}" in source
+    assert "Environment=LINGTU_CAMERA_PUBLISH_IMAGE_DDS=0" in service
+    assert "Environment=LINGTU_CAMERA_PUBLISH_IMAGE_DDS=1" not in service
     assert 'arg == "--publish-image-dds"' in source
     assert "FrameWriter color_shm" in source
     assert "FrameWriter depth_shm" in source

@@ -9,13 +9,21 @@
 
 namespace lingtu::drivers::lidar {
 
+enum class DdsOutput {
+  All,
+  Lidar,
+  Imu,
+};
+
 class DdsModule {
  public:
   DdsModule(
       int domain_id,
       std::string lidar_frame,
       std::string imu_frame,
-      bool navigation_fixture = false);
+      bool navigation_fixture = false,
+      DdsOutput output = DdsOutput::All,
+      bool publish_raw_packets = true);
   ~DdsModule();
 
   DdsModule(const DdsModule&) = delete;

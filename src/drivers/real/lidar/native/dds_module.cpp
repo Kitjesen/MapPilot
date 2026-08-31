@@ -1,9 +1,11 @@
 #include "native/dds_module.hpp"
 
+#include "native/navigation_fixture_observation.hpp"
+
 #include "dds/dds.h"
-#include "lingtu_slam.h"
-#include "message/cpp/dds_qos_profiles.hpp"
-#include "message/cpp/dds_topics.hpp"
+#include "messages.h"
+#include "message/cpp/qos.hpp"
+#include "message/cpp/topics.hpp"
 
 #include <array>
 #include <chrono>
@@ -25,18 +27,26 @@ class DdsModule::Impl {
       int domain_id,
       std::string lidar_frame,
       std::string imu_frame,
-      bool navigation_fixture)
+      bool navigation_fixture,
+      DdsOutput output,
+      bool publish_raw_packets)
       : lidar_frame_(std::move(lidar_frame)),
         imu_frame_(std::move(imu_frame)),
         navigation_fixture_(navigation_fixture),
+        output_(output),
+        publish_raw_packets_(publish_raw_packets),
         diagnostics_enabled_(diagnostics_enabled_from_environment()) {
+    if (navigation_fixture_ && output_ == DdsOutput::Imu) {
+      throw std::runtime_error("navigation fixture requires lidar DDS output");
+    }
     participant_ = checked(
         dds_create_participant(static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
         "dds_create_participant");
     publisher_ = checked(
         dds_create_publisher(participant_, nullptr, nullptr),
         "dds_create_publisher");
-    lidar_topic_ = checked(
+    if (output_ != DdsOutput::Imu) {
+      lidar_topic_ = checked(
         dds_create_topic(
             participant_,
             &lingtu_dds_LivoxFrame_desc,
@@ -44,15 +54,47 @@ class DdsModule::Impl {
             nullptr,
             nullptr),
         "dds_create_topic(lidar)");
-    raw_packet_topic_ = checked(
-        dds_create_topic(
-            participant_,
-            &lingtu_dds_LivoxFrame_desc,
-            lingtu::message::kLidarRawPacket.dds_topic.data(),
-            nullptr,
-            nullptr),
-        "dds_create_topic(raw_packet)");
-    imu_topic_ = checked(
+      if (publish_raw_packets_) {
+        raw_packet_topic_ = checked(
+          dds_create_topic(
+              participant_,
+              &lingtu_dds_LivoxFrame_desc,
+              lingtu::message::kLidarRawPacket.dds_topic.data(),
+              nullptr,
+              nullptr),
+          "dds_create_topic(raw_packet)");
+      }
+      odom_prior_topic_ = checked(
+          dds_create_topic(
+              participant_,
+              &lingtu_dds_Odometry_desc,
+              lingtu::message::kSlamOdomPrior.dds_topic.data(),
+              nullptr,
+              nullptr),
+          "dds_create_topic(odom_prior)");
+      auto lidar_qos = lingtu::dds::make_qos(
+          lingtu::dds::qos_for_topic(lingtu::message::kLidarRawFrame.dds_topic));
+      auto sensor_qos = lingtu::dds::make_qos(lingtu::dds::QosProfile::SensorStream);
+      lidar_writer_ = checked(
+          dds_create_writer(publisher_, lidar_topic_, lidar_qos.get(), nullptr),
+          "dds_create_writer(lidar)");
+      if (publish_raw_packets_) {
+        auto raw_packet_qos = lingtu::dds::make_qos(
+            lingtu::dds::qos_for_topic(lingtu::message::kLidarRawPacket.dds_topic));
+        raw_packet_writer_ = checked(
+            dds_create_writer(publisher_, raw_packet_topic_, raw_packet_qos.get(), nullptr),
+            "dds_create_writer(raw_packet)");
+      }
+      odom_prior_writer_ = checked(
+          dds_create_writer(publisher_, odom_prior_topic_, sensor_qos.get(), nullptr),
+          "dds_create_writer(odom_prior)");
+      log_writer_qos(lidar_writer_, "raw_frame");
+      if (publish_raw_packets_) {
+        log_writer_qos(raw_packet_writer_, "raw_packet");
+      }
+    }
+    if (output_ != DdsOutput::Lidar) {
+      imu_topic_ = checked(
         dds_create_topic(
             participant_,
             &lingtu_dds_Imu_desc,
@@ -60,35 +102,11 @@ class DdsModule::Impl {
             nullptr,
             nullptr),
         "dds_create_topic(imu)");
-    odom_prior_topic_ = checked(
-        dds_create_topic(
-            participant_,
-            &lingtu_dds_Odometry_desc,
-            lingtu::message::kSlamOdomPrior.dds_topic.data(),
-            nullptr,
-            nullptr),
-        "dds_create_topic(odom_prior)");
-
-    auto lidar_qos = lingtu::dds::make_qos(
-        lingtu::dds::qos_for_topic(lingtu::message::kLidarRawFrame.dds_topic));
-    auto raw_packet_qos = lingtu::dds::make_qos(
-        lingtu::dds::qos_for_topic(lingtu::message::kLidarRawPacket.dds_topic));
-    auto sensor_qos = lingtu::dds::make_qos(lingtu::dds::QosProfile::SensorStream);
-    lidar_writer_ = checked(
-        dds_create_writer(publisher_, lidar_topic_, lidar_qos.get(), nullptr),
-        "dds_create_writer(lidar)");
-    raw_packet_writer_ = checked(
-        dds_create_writer(publisher_, raw_packet_topic_, raw_packet_qos.get(), nullptr),
-        "dds_create_writer(raw_packet)");
-    imu_writer_ = checked(
-        dds_create_writer(publisher_, imu_topic_, sensor_qos.get(), nullptr),
-        "dds_create_writer(imu)");
-    odom_prior_writer_ = checked(
-        dds_create_writer(publisher_, odom_prior_topic_, sensor_qos.get(), nullptr),
-        "dds_create_writer(odom_prior)");
-
-    log_writer_qos(lidar_writer_, "raw_frame");
-    log_writer_qos(raw_packet_writer_, "raw_packet");
+      auto sensor_qos = lingtu::dds::make_qos(lingtu::dds::QosProfile::SensorStream);
+      imu_writer_ = checked(
+          dds_create_writer(publisher_, imu_topic_, sensor_qos.get(), nullptr),
+          "dds_create_writer(imu)");
+    }
 
     if (navigation_fixture_) {
       slam_odom_topic_ = create_topic(
@@ -107,6 +125,10 @@ class DdsModule::Impl {
           lingtu::message::kSlamLocalizationHealth,
           &lingtu_dds_Text_desc,
           "localization_health");
+      map_observation_topic_ = create_topic(
+          lingtu::message::kSlamMapObservation,
+          &lingtu_dds_MapObservation_desc,
+          "map_observation");
       slam_odom_writer_ = create_writer(
           slam_odom_topic_, lingtu::message::kSlamOdometry, "slam_odom");
       tf_writer_ = create_writer(tf_topic_, lingtu::message::kTf, "tf");
@@ -118,6 +140,10 @@ class DdsModule::Impl {
           localization_health_topic_,
           lingtu::message::kSlamLocalizationHealth,
           "localization_health");
+      map_observation_writer_ = create_writer(
+          map_observation_topic_,
+          lingtu::message::kSlamMapObservation,
+          "map_observation");
     }
   }
 
@@ -131,6 +157,7 @@ class DdsModule::Impl {
       std::uint8_t lidar_id,
       std::uint64_t timestamp_ns,
       const std::vector<Point>& points) {
+    require_lidar();
     publish_cloud_to(lidar_writer_, "raw_frame", lidar_id, timestamp_ns, points);
   }
 
@@ -138,11 +165,18 @@ class DdsModule::Impl {
       std::uint8_t lidar_id,
       std::uint64_t timestamp_ns,
       const std::vector<Point>& points) {
+    require_lidar();
+    if (!publish_raw_packets_) {
+      return;
+    }
     publish_cloud_to(
         raw_packet_writer_, "raw_packet", lidar_id, timestamp_ns, points);
   }
 
   void publish_imu(std::uint64_t timestamp_ns, const ImuSample& imu) {
+    if (output_ == DdsOutput::Lidar) {
+      throw std::runtime_error("IMU publishing is disabled");
+    }
     std::lock_guard<std::mutex> lock(write_mutex_);
     lingtu_dds_Imu msg{};
     fill_header(msg.header, timestamp_ns, imu_frame_);
@@ -157,6 +191,10 @@ class DdsModule::Impl {
   }
 
   void publish_odom_prior(std::uint64_t timestamp_ns, const OdomPrior& prior) {
+    require_lidar();
+    if (navigation_fixture_) {
+      observation_state_.recordPose(timestamp_ns, prior);
+    }
     std::lock_guard<std::mutex> lock(write_mutex_);
     lingtu_dds_Odometry msg{};
     fill_odometry(msg, timestamp_ns, prior);
@@ -193,10 +231,14 @@ class DdsModule::Impl {
   void publish_registered_cloud(
       std::uint64_t timestamp_ns,
       const std::vector<Point>& points) {
+    require_lidar();
     if (!navigation_fixture_) {
       throw std::runtime_error(
           "registered cloud publishing requires navigation fixture mode");
     }
+
+    const NavigationFixtureObservation observation =
+        observation_state_.matchScan(timestamp_ns);
 
     std::array<lingtu_dds_PointField, 4> fields{};
     fill_point_fields(fields);
@@ -232,9 +274,39 @@ class DdsModule::Impl {
     checked(
         dds_write(registered_cloud_writer_, &msg),
         "dds_write(registered_cloud)");
+
+    lingtu_dds_MapObservation map_observation{};
+    fill_header(map_observation.header, timestamp_ns, map_frame_);
+    map_observation.observation_sequence = observation.sequence;
+    map_observation.reset_epoch = observation.reset_epoch;
+    map_observation.sensor_frame = const_cast<char*>(body_frame_.c_str());
+    map_observation.map_sensor.translation.x = observation.pose.x;
+    map_observation.map_sensor.translation.y = observation.pose.y;
+    map_observation.map_sensor.translation.z = observation.pose.z;
+    map_observation.map_sensor.rotation.x = observation.pose.qx;
+    map_observation.map_sensor.rotation.y = observation.pose.qy;
+    map_observation.map_sensor.rotation.z = observation.pose.qz;
+    map_observation.map_sensor.rotation.w = observation.pose.qw;
+    map_observation.sensor_origin.x = observation.pose.x;
+    map_observation.sensor_origin.y = observation.pose.y;
+    map_observation.sensor_origin.z = observation.pose.z;
+    map_observation.scan = msg;
+    map_observation.pose_confidence = 1.0F;
+    map_observation.localization_quality = 1.0F;
+    map_observation.pose_state = const_cast<char*>(fixture_pose_state_.c_str());
+    map_observation.pose_reason = const_cast<char*>(fixture_pose_reason_.c_str());
+    checked(
+        dds_write(map_observation_writer_, &map_observation),
+        "dds_write(map_observation)");
   }
 
  private:
+  void require_lidar() const {
+    if (output_ == DdsOutput::Imu) {
+      throw std::runtime_error("lidar publishing is disabled");
+    }
+  }
+
   dds_entity_t create_topic(
       const lingtu::message::TopicContract& contract,
       const dds_topic_descriptor_t* descriptor,
@@ -509,10 +581,15 @@ class DdsModule::Impl {
   std::string lidar_frame_;
   std::string imu_frame_;
   bool navigation_fixture_{false};
+  DdsOutput output_{DdsOutput::All};
+  bool publish_raw_packets_{true};
   bool diagnostics_enabled_{false};
   std::string map_frame_{"map"};
   std::string odom_frame_{"odom"};
   std::string body_frame_{"body"};
+  std::string fixture_pose_state_{"TRACKING"};
+  std::string fixture_pose_reason_{"mujoco_navigation_fixture"};
+  NavigationFixtureObservationState observation_state_;
   dds_entity_t participant_{DDS_RETCODE_ERROR};
   dds_entity_t publisher_{DDS_RETCODE_ERROR};
   dds_entity_t lidar_topic_{DDS_RETCODE_ERROR};
@@ -523,6 +600,7 @@ class DdsModule::Impl {
   dds_entity_t tf_topic_{DDS_RETCODE_ERROR};
   dds_entity_t registered_cloud_topic_{DDS_RETCODE_ERROR};
   dds_entity_t localization_health_topic_{DDS_RETCODE_ERROR};
+  dds_entity_t map_observation_topic_{DDS_RETCODE_ERROR};
   dds_entity_t lidar_writer_{DDS_RETCODE_ERROR};
   dds_entity_t raw_packet_writer_{DDS_RETCODE_ERROR};
   dds_entity_t imu_writer_{DDS_RETCODE_ERROR};
@@ -531,6 +609,7 @@ class DdsModule::Impl {
   dds_entity_t tf_writer_{DDS_RETCODE_ERROR};
   dds_entity_t registered_cloud_writer_{DDS_RETCODE_ERROR};
   dds_entity_t localization_health_writer_{DDS_RETCODE_ERROR};
+  dds_entity_t map_observation_writer_{DDS_RETCODE_ERROR};
   std::mutex write_mutex_;
 };
 
@@ -538,12 +617,16 @@ DdsModule::DdsModule(
     int domain_id,
     std::string lidar_frame,
     std::string imu_frame,
-    bool navigation_fixture)
+    bool navigation_fixture,
+    DdsOutput output,
+    bool publish_raw_packets)
     : impl_(std::make_unique<Impl>(
           domain_id,
           std::move(lidar_frame),
           std::move(imu_frame),
-          navigation_fixture)) {}
+          navigation_fixture,
+          output,
+          publish_raw_packets)) {}
 
 DdsModule::~DdsModule() = default;
 

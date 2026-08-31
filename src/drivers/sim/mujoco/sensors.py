@@ -15,14 +15,23 @@ import numpy as np
 
 from runtime.runtime_interface import FRAME_LINKS, TOPICS, topic_default_frame_id
 
-
 MUJOCO_ODOM_FRAME_ID = topic_default_frame_id(TOPICS.odometry)
 MUJOCO_BODY_FRAME_ID = FRAME_LINKS["odom_to_body"].child
 MUJOCO_RAW_IMU_FRAME_ID = MUJOCO_BODY_FRAME_ID
+_NAVIGATION_FIXTURE_GROUND_X_MIN_M = -1.0
+_NAVIGATION_FIXTURE_GROUND_X_MAX_M = 4.0
+NAVIGATION_FIXTURE_GROUND_Y_HALF_M = 1.6
+NAVIGATION_FIXTURE_GROUND_RESOLUTION_M = 0.2
+_NAVIGATION_FIXTURE_GROUND_INTENSITY = 12.0
+_NAVIGATION_FIXTURE_RAW_OVERLAY_MIN_ABOVE_GROUND_M = 0.05
 
 
 def quat_xyzw_to_matrix(q: np.ndarray) -> np.ndarray:
-    x, y, z, w = [float(v) for v in q[:4]]
+    quat = np.asarray(q, dtype=np.float64).reshape(4)
+    norm = float(np.linalg.norm(quat))
+    if norm <= 1e-12:
+        return np.eye(3, dtype=np.float64)
+    x, y, z, w = [float(v) for v in quat / norm]
     xx, yy, zz = x * x, y * y, z * z
     xy, xz, yz = x * y, x * z, y * z
     wx, wy, wz = w * x, w * y, w * z
@@ -36,7 +45,33 @@ def quat_xyzw_to_matrix(q: np.ndarray) -> np.ndarray:
     )
 
 
-def world_xyzi_to_sensor_xyzi(engine: Any, pts_xyzi_world: np.ndarray) -> np.ndarray:
+def world_points_to_body_frame(
+    points: Any,
+    position_xyz: Any,
+    orientation_xyzw: Any,
+) -> np.ndarray:
+    """Transform world-frame points to the body frame, preserving extra columns."""
+
+    cloud = np.asarray(points, dtype=np.float32).copy()
+    if cloud.ndim != 2 or cloud.shape[1] < 3:
+        return cloud
+    rotation_body_to_world = quat_xyzw_to_matrix(
+        np.asarray(orientation_xyzw, dtype=np.float64)
+    )
+    relative_world = cloud[:, :3].astype(np.float64) - np.asarray(
+        position_xyz,
+        dtype=np.float64,
+    ).reshape(3)
+    cloud[:, :3] = (relative_world @ rotation_body_to_world).astype(np.float32)
+    return cloud
+
+
+def world_xyzi_to_sensor_xyzi(
+    engine: Any,
+    pts_xyzi_world: np.ndarray,
+    *,
+    data: Any | None = None,
+) -> np.ndarray:
     """Convert MuJoCo world-frame XYZI points into the LiDAR sensor frame."""
 
     pts = np.asarray(pts_xyzi_world, dtype=np.float32)
@@ -45,7 +80,7 @@ def world_xyzi_to_sensor_xyzi(engine: Any, pts_xyzi_world: np.ndarray) -> np.nda
     if pts.ndim != 2 or pts.shape[1] < 3:
         raise ValueError(f"expected point cloud shape (N, >=3), got {pts.shape}")
 
-    data = getattr(engine, "_data", None)
+    data = getattr(engine, "_data", None) if data is None else data
     model = getattr(engine, "_model", None)
     sensor_pos = None
     sensor_rmat = None
@@ -83,6 +118,194 @@ def world_xyzi_to_sensor_xyzi(engine: Any, pts_xyzi_world: np.ndarray) -> np.nda
         np.float32,
         copy=False,
     )
+
+
+def world_xyzi_to_body_xyzi(state: Any, pts_xyzi_world: np.ndarray) -> np.ndarray:
+    """Convert world-frame XYZI endpoints into the body's scan-time frame."""
+
+    pts = np.asarray(pts_xyzi_world, dtype=np.float32)
+    if pts.size == 0:
+        return np.zeros((0, 4), dtype=np.float32)
+    if pts.ndim != 2 or pts.shape[1] < 3:
+        raise ValueError(f"expected point cloud shape (N, >=3), got {pts.shape}")
+    position = np.asarray(state.position, dtype=np.float64).reshape(-1)
+    orientation = np.asarray(state.orientation, dtype=np.float64).reshape(-1)
+    if position.size != 3 or orientation.size != 4:
+        raise ValueError("body pose must contain XYZ and XYZW")
+    if not bool(np.isfinite(position).all()) or not bool(np.isfinite(orientation).all()):
+        raise ValueError("body pose must be finite")
+    body_points = world_points_to_body_frame(pts, position, orientation)
+    intensity = (
+        pts[:, 3:4].astype(np.float32)
+        if pts.shape[1] >= 4
+        else np.full((len(pts), 1), 100.0, dtype=np.float32)
+    )
+    return np.hstack([body_points[:, :3], intensity]).astype(
+        np.float32,
+        copy=False,
+    )
+
+
+def navigation_fixture_ground_body_points(
+    robot_z_m: float,
+    *,
+    orientation_xyzw: Any = (0.0, 0.0, 0.0, 1.0),
+    resolution_m: float = NAVIGATION_FIXTURE_GROUND_RESOLUTION_M,
+    y_half_m: float = NAVIGATION_FIXTURE_GROUND_Y_HALF_M,
+) -> np.ndarray:
+    """Build deterministic world-horizontal ground in the scan-time body frame."""
+
+    robot_z = float(robot_z_m)
+    resolution = float(resolution_m)
+    y_half = float(y_half_m)
+    if not math.isfinite(robot_z):
+        raise ValueError("robot_z_m must be finite")
+    if not math.isfinite(resolution) or resolution <= 0.0 or resolution > 0.2:
+        raise ValueError("navigation fixture ground resolution must be in (0, 0.2]")
+    if not math.isfinite(y_half) or y_half <= 0.0:
+        raise ValueError("navigation fixture ground y half-width must be positive and finite")
+    xs = np.arange(
+        _NAVIGATION_FIXTURE_GROUND_X_MIN_M,
+        _NAVIGATION_FIXTURE_GROUND_X_MAX_M + resolution * 0.5,
+        resolution,
+        dtype=np.float64,
+    )
+    ys = np.arange(
+        -y_half,
+        y_half + resolution * 0.5,
+        resolution,
+        dtype=np.float64,
+    )
+    grid_x, grid_y = np.meshgrid(xs, ys, indexing="xy")
+    count = int(grid_x.size)
+    orientation = np.asarray(orientation_xyzw, dtype=np.float64).reshape(-1)
+    if orientation.size != 4 or not bool(np.isfinite(orientation).all()):
+        raise ValueError("body orientation must contain finite XYZW")
+    rotation_body_to_world = quat_xyzw_to_matrix(orientation)
+    yaw = yaw_from_quat_xyzw(orientation)
+    cos_yaw = math.cos(yaw)
+    sin_yaw = math.sin(yaw)
+    horizontal_body_grid_world = np.column_stack(
+        (
+            grid_x.reshape(count) * cos_yaw - grid_y.reshape(count) * sin_yaw,
+            grid_x.reshape(count) * sin_yaw + grid_y.reshape(count) * cos_yaw,
+            np.full(count, -robot_z, dtype=np.float64),
+        )
+    )
+    xyz_body = horizontal_body_grid_world @ rotation_body_to_world
+    return np.column_stack(
+        (
+            xyz_body,
+            np.full(count, _NAVIGATION_FIXTURE_GROUND_INTENSITY, dtype=np.float64),
+        )
+    ).astype(np.float32, copy=False)
+
+
+def navigation_fixture_registered_body_points(
+    raw_body_points: Any,
+    state: Any,
+    *,
+    max_points: int,
+    raw_overlay_enabled: bool = True,
+    ground_resolution_m: float = NAVIGATION_FIXTURE_GROUND_RESOLUTION_M,
+    ground_y_half_m: float = NAVIGATION_FIXTURE_GROUND_Y_HALF_M,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Compose fixture ground and an optional obstacle-preserving raw overlay."""
+
+    def bounded(points: Any, maximum: int) -> np.ndarray:
+        values = np.asarray(points, dtype=np.float32)
+        if values.size == 0:
+            return np.zeros((0, 4), dtype=np.float32)
+        if values.ndim != 2 or values.shape[1] < 3:
+            raise ValueError(f"expected point cloud shape (N, >=3), got {values.shape}")
+        if values.shape[1] == 3:
+            values = np.column_stack(
+                (values, np.full((len(values),), 100.0, dtype=np.float32))
+            )
+        else:
+            values = values[:, :4]
+        if not bool(np.isfinite(values).all()):
+            raise ValueError("navigation fixture raw points must be finite")
+        if maximum == 0:
+            return np.zeros((0, 4), dtype=np.float32)
+        if values.shape[0] > maximum:
+            stride = math.ceil(values.shape[0] / maximum)
+            values = values[::stride][:maximum]
+        return values.astype(np.float32, copy=False)
+
+    if isinstance(max_points, bool) or not isinstance(max_points, int) or max_points <= 0:
+        raise ValueError("navigation fixture max_points must be a positive integer")
+    if not isinstance(raw_overlay_enabled, bool):
+        raise TypeError("navigation fixture raw_overlay_enabled must be bool")
+
+    raw = bounded(raw_body_points, max_points)
+    robot_z = float(np.asarray(state.position, dtype=np.float64).reshape(3)[2])
+    orientation = np.asarray(
+        getattr(state, "orientation", (0.0, 0.0, 0.0, 1.0)),
+        dtype=np.float64,
+    ).reshape(-1)
+    if orientation.size != 4 or not bool(np.isfinite(orientation).all()):
+        raise ValueError("body orientation must contain finite XYZW")
+    rotation_body_to_world = quat_xyzw_to_matrix(orientation)
+    ground = navigation_fixture_ground_body_points(
+        robot_z,
+        orientation_xyzw=orientation,
+        resolution_m=ground_resolution_m,
+        y_half_m=ground_y_half_m,
+    )
+    ground_count = int(ground.shape[0])
+    if max_points < ground_count:
+        raise ValueError(
+            "navigation fixture cloud point budget must fit synthetic ground coverage"
+        )
+    raw_budget = max_points - ground_count
+    height_above_ground = (
+        robot_z + raw[:, :3].astype(np.float64) @ rotation_body_to_world[2, :]
+    )
+    obstacle_mask = (
+        height_above_ground > _NAVIGATION_FIXTURE_RAW_OVERLAY_MIN_ABOVE_GROUND_M
+    )
+    if not raw_overlay_enabled or raw.shape[0] == 0:
+        raw_overlay = np.zeros((0, 4), dtype=np.float32)
+        obstacle_overlay = np.zeros((0, 4), dtype=np.float32)
+        context_overlay = np.zeros((0, 4), dtype=np.float32)
+    elif raw.shape[0] <= raw_budget:
+        raw_overlay = raw
+        obstacle_overlay = raw[obstacle_mask]
+        context_overlay = raw[~obstacle_mask]
+    else:
+        raw_obstacles = raw[obstacle_mask]
+        raw_context = raw[~obstacle_mask]
+        obstacle_budget = min(int(raw_obstacles.shape[0]), raw_budget)
+        obstacle_overlay = bounded(raw_obstacles, obstacle_budget)
+        context_budget = max(0, raw_budget - int(obstacle_overlay.shape[0]))
+        context_overlay = bounded(raw_context, context_budget)
+        raw_overlay = (
+            np.vstack((obstacle_overlay, context_overlay))
+            if obstacle_overlay.shape[0] or context_overlay.shape[0]
+            else np.zeros((0, 4), dtype=np.float32)
+        )
+    combined = (
+        np.vstack((ground, raw_overlay)).astype(np.float32, copy=False)
+        if raw_overlay.shape[0]
+        else ground
+    )
+    return combined, {
+        "enabled": True,
+        "synthetic_ground_points": ground_count,
+        "raw_body_points": int(raw.shape[0]),
+        "raw_overlay_points": int(raw_overlay.shape[0]),
+        "raw_obstacle_overlay_points": int(obstacle_overlay.shape[0]),
+        "raw_context_overlay_points": int(context_overlay.shape[0]),
+        "raw_overlay_enabled": raw_overlay_enabled,
+        "published_points": int(combined.shape[0]),
+        "max_points": max_points,
+        "x_min_m": _NAVIGATION_FIXTURE_GROUND_X_MIN_M,
+        "x_max_m": _NAVIGATION_FIXTURE_GROUND_X_MAX_M,
+        "y_half_m": float(ground_y_half_m),
+        "resolution_m": float(ground_resolution_m),
+        "z_m": -robot_z,
+    }
 
 
 def sensor_xyzi_to_body_xyzi(pts_xyzi_sensor: np.ndarray, extrinsic: Any) -> np.ndarray:

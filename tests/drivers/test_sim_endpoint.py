@@ -6,13 +6,14 @@ import types
 import numpy as np
 import pytest
 
-pytestmark = [pytest.mark.sim]
-
+from drivers.sim.endpoint import SimEndpointDriverModule
 from runtime.msgs.geometry import Twist, Vector3
+from runtime.msgs.map import MapCloudFrame
 from runtime.msgs.nav import Odometry
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat, PointCloud2
 from runtime.registry import get
-from drivers.sim.endpoint import SimEndpointDriverModule
+
+pytestmark = [pytest.mark.sim]
 
 
 def _header(frame_id: str = "odom"):
@@ -105,14 +106,14 @@ def test_sim_endpoint_driver_publishes_core_messages_from_ros_like_inputs():
     module = SimEndpointDriverModule()
     odom_messages: list[Odometry] = []
     lidar_messages: list[PointCloud2] = []
-    map_messages: list[PointCloud2] = []
+    map_messages: list[MapCloudFrame] = []
     module.odometry._add_callback(odom_messages.append)
     module.lidar_cloud._add_callback(lidar_messages.append)
-    module.map_cloud._add_callback(map_messages.append)
+    module.map_cloud_frame._add_callback(map_messages.append)
 
     module.publish_odometry_from_ros(_odom_msg())
     module.publish_registered_cloud_from_ros(_cloud_msg(frame_id="base_link"))
-    module.publish_map_cloud_from_ros(_cloud_msg(frame_id="odom", point_step=20))
+    module.publish_map_cloud_frame_from_ros(_cloud_msg(frame_id="odom", point_step=20))
 
     assert odom_messages[0].x == pytest.approx(1.0)
     assert odom_messages[0].vx == pytest.approx(0.4)
@@ -122,6 +123,9 @@ def test_sim_endpoint_driver_publishes_core_messages_from_ros_like_inputs():
 
     assert lidar_messages[0].frame_id == "base_link"
     assert map_messages[0].frame_id == "odom"
+    assert map_messages[0].mode == "FULL"
+    assert map_messages[0].source == "sim_endpoint"
+    assert map_messages[0].sequence == 1
     np.testing.assert_allclose(
         lidar_messages[0].points[:, :3],
         np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32),

@@ -1,0 +1,9 @@
+{
+  "url": "https://github.com/Kitjesen/brainstem_api.git",
+  "commit": "e252d4125c4ac5d045143148d999249d796e8f54",
+  "version": "2.1.0",
+  "files": {
+    "brainstem_api/cms.proto": "fbd9a858ab986eb6d72e85281cfa940712d01af886c5f84aab583ddbfa230aca",
+    "brainstem_api/common.proto": "b4b0616642bbe41111995b2d8efa2585889e609d9e11cb5acf9281cecfdd6efc"
+  }
+}

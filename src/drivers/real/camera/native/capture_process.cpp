@@ -1,10 +1,10 @@
 #include <chrono>
-#include <cstdlib>
 #include <cstdint>
-#include <cstring>
+#include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <fcntl.h>
@@ -12,6 +12,7 @@
 #endif
 
 #include "camera.hpp"
+#include "camera_record.hpp"
 
 namespace {
 
@@ -21,36 +22,24 @@ using lingtu::drivers::orbbec::Frame;
 using lingtu::drivers::orbbec::Intrinsics;
 using lingtu::drivers::orbbec::PixelFormat;
 
-constexpr uint16_t kVersion = 2;
-constexpr uint16_t kKindIntrinsics = 1;
-constexpr uint16_t kKindColor = 2;
-constexpr uint16_t kKindDepth = 3;
+namespace camera_record = lingtu::drivers::camera::record;
+using camera_record::RecordHeader;
+using camera_record::kKindColor;
+using camera_record::kKindDepth;
+using camera_record::kKindIntrinsics;
 
-#pragma pack(push, 1)
-struct RecordHeader {
-  char magic[4];
-  uint16_t version;
-  uint16_t kind;
-  uint32_t width;
-  uint32_t height;
-  uint32_t channels;
-  uint32_t format;
-  double timestamp_s;
-  double fx;
-  double fy;
-  double cx;
-  double cy;
-  double depth_scale_m;
-  uint32_t payload_size;
-  double dist_k1;
-  double dist_k2;
-  double dist_p1;
-  double dist_p2;
-  double dist_k3;
-};
-#pragma pack(pop)
-
-static_assert(sizeof(RecordHeader) == 116, "unexpected Orbbec stream header size");
+static_assert(
+    static_cast<std::uint32_t>(PixelFormat::kUnknown) ==
+    camera_record::kFormatUnknown);
+static_assert(
+    static_cast<std::uint32_t>(PixelFormat::kRgb8) ==
+    camera_record::kFormatRgb8);
+static_assert(
+    static_cast<std::uint32_t>(PixelFormat::kBgr8) ==
+    camera_record::kFormatBgr8);
+static_assert(
+    static_cast<std::uint32_t>(PixelFormat::kDepthU16) ==
+    camera_record::kFormatDepthU16);
 
 struct Options {
   std::string sdk_config_path;
@@ -200,16 +189,13 @@ void write_record(
     double fy = 0.0,
     double cx = 0.0,
     double cy = 0.0,
-    double depth_scale_m = 0.001,
+    double depth_scale_m = camera_record::kDepthScaleMetersPerMillimeter,
     double dist_k1 = 0.0,
     double dist_k2 = 0.0,
     double dist_p1 = 0.0,
     double dist_p2 = 0.0,
     double dist_k3 = 0.0) {
-  RecordHeader header{};
-  std::memcpy(header.magic, "LTOB", 4);
-  header.version = kVersion;
-  header.kind = kind;
+  RecordHeader header = camera_record::makeRecordHeader(kind);
   header.width = width;
   header.height = height;
   header.channels = channels;
@@ -227,11 +213,24 @@ void write_record(
   header.dist_p2 = dist_p2;
   header.dist_k3 = dist_k3;
 
+  const auto validation = camera_record::validateRecordHeader(header);
+  if (validation != camera_record::RecordValidation::kValid) {
+    throw std::runtime_error(camera_record::recordValidationReason(validation));
+  }
+  const auto payload_validation =
+      camera_record::validateRecordPayloadPointer(header, payload);
+  if (payload_validation != camera_record::RecordValidation::kValid) {
+    throw std::runtime_error(
+        camera_record::recordValidationReason(payload_validation));
+  }
   std::cout.write(reinterpret_cast<const char *>(&header), sizeof(header));
   if (payload_size > 0 && payload != nullptr) {
     std::cout.write(reinterpret_cast<const char *>(payload), payload_size);
   }
   std::cout.flush();
+  if (!std::cout.good()) {
+    throw std::runtime_error("camera_record_output_failed");
+  }
 }
 
 void emit_intrinsics_record(const Intrinsics &intrinsics) {
@@ -247,7 +246,7 @@ void emit_intrinsics_record(const Intrinsics &intrinsics) {
       intrinsics.fy,
       intrinsics.cx,
       intrinsics.cy,
-      intrinsics.depth_scale_m,
+      camera_record::kDepthScaleMetersPerMillimeter,
       intrinsics.dist_k1,
       intrinsics.dist_k2,
       intrinsics.dist_p1,
@@ -269,23 +268,49 @@ void emit_color_record(const Frame &color) {
       color.data_size);
 }
 
-void emit_depth_record(const Frame &depth, double depth_scale_m) {
+void emit_depth_record(const Frame &depth, double source_depth_scale_m) {
   if (!depth.valid()) {
     return;
   }
+  const auto layout = camera_record::validateCanonicalDepthLayout(
+      depth.width,
+      depth.height,
+      depth.channels,
+      static_cast<std::uint32_t>(depth.format),
+      depth.data_size);
+  if (layout.validation != camera_record::RecordValidation::kValid) {
+    throw std::runtime_error(
+        camera_record::recordValidationReason(layout.validation));
+  }
+  if (!camera_record::isValidSourceDepthScale(source_depth_scale_m)) {
+    throw std::runtime_error("camera_source_depth_scale_invalid");
+  }
+
+  const void* payload = depth.data;
+  std::vector<std::uint16_t> millimeters;
+  if (source_depth_scale_m != camera_record::kDepthScaleMetersPerMillimeter) {
+    const auto* source = static_cast<const std::uint8_t*>(depth.data);
+    millimeters.resize(layout.pixel_count);
+    for (std::size_t index = 0; index < millimeters.size(); ++index) {
+      millimeters[index] = camera_record::normalizeDepthSampleMillimeters(
+          source + index * sizeof(std::uint16_t), source_depth_scale_m);
+    }
+    payload = millimeters.data();
+  }
+
   write_record(
       kKindDepth,
       depth.width,
       depth.height,
       depth.channels,
       depth.format,
-      depth.data,
+      payload,
       depth.data_size,
       0.0,
       0.0,
       0.0,
       0.0,
-      depth_scale_m);
+      camera_record::kDepthScaleMetersPerMillimeter);
 }
 
 void emit_self_test() {
@@ -306,7 +331,7 @@ void emit_self_test() {
       500.0,
       1.0,
       1.0,
-      0.001,
+      camera_record::kDepthScaleMetersPerMillimeter,
       0.1,
       0.2,
       0.3,
@@ -333,7 +358,7 @@ int main(int argc, char **argv) {
     Camera camera;
     camera.connect(camera_config(options));
 
-    double depth_scale_m = 0.001;
+    double depth_scale_m = camera_record::kDepthScaleMetersPerMillimeter;
     bool emitted_intrinsics = false;
     uint64_t frame_count = 0;
     const auto frame_start = std::chrono::steady_clock::now();
