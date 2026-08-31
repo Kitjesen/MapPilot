@@ -10,10 +10,20 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Kitjesen/MapPilot/actions/workflows/test-python.yml"><img src="https://github.com/Kitjesen/MapPilot/actions/workflows/test-python.yml/badge.svg?branch=main" alt="Python Tests and Lint"></a>
+  <a href="https://github.com/Kitjesen/MapPilot/actions/workflows/nav-core-tests.yml"><img src="https://github.com/Kitjesen/MapPilot/actions/workflows/nav-core-tests.yml/badge.svg?branch=main" alt="Navigation C++ Tests"></a>
+  <a href="https://github.com/Kitjesen/MapPilot/actions/workflows/native-motion-build.yml"><img src="https://github.com/Kitjesen/MapPilot/actions/workflows/native-motion-build.yml/badge.svg?branch=main" alt="Native Motion Build"></a>
+  <a href="https://github.com/Kitjesen/MapPilot/actions/workflows/slam-aarch64-build.yml"><img src="https://github.com/Kitjesen/MapPilot/actions/workflows/slam-aarch64-build.yml/badge.svg?branch=main" alt="Native SLAM aarch64 Build"></a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/version-2.3.0-00C7D9" alt="Version 2.3.0">
+  <img src="https://img.shields.io/badge/field%20core-ROS--free-00A67E" alt="ROS-free field core">
+  <img src="https://img.shields.io/badge/transport-CycloneDDS-18232B" alt="CycloneDDS">
   <img src="https://img.shields.io/badge/Python-%E2%89%A53.10-18232B" alt="Python 3.10 or newer">
   <img src="https://img.shields.io/badge/C%2B%2B-17-18232B" alt="C++17">
-  <img src="https://img.shields.io/badge/env-real%20%7C%20sim-FFB000" alt="Real and simulation environments">
+  <img src="https://img.shields.io/badge/target-S100P%20%7C%20aarch64-FFB000" alt="S100P aarch64 target">
+  <a href="#project-license"><img src="https://img.shields.io/badge/license-not%20declared-lightgrey" alt="Project license not declared"></a>
 </p>
 
 <p align="center">
@@ -23,18 +33,41 @@
   <a href="docs/07-testing/README.md">Validation</a>
 </p>
 
+## Overview
+
 LingTu is an autonomous navigation platform for quadruped robots. A compiled
 Product declares native field processes plus one Python Host; typed DDS joins
 the field processes, while Modules and wires organize Host-local behavior.
 
-The physical robot path is not a ROS 2 application graph. The robot-side hot
-path uses native C++ services and typed DDS for high-rate sensor, SLAM, and
-navigation data. ROS 2 remains available for compatibility, replay, and
-algorithm checks, but it is not the default product API.
-ROS2 Humble is optional for compatibility services, not a requirement for the
-native Thunder product path.
+> [!IMPORTANT]
+> **The field runtime is ROS-free by default.** LiDAR, SLAM, maps, navigation,
+> final motion control, and the robot driver run as native C++ services over
+> typed CycloneDDS contracts. ROS 2 Humble is optional and limited to explicit
+> compatibility, replay, and algorithm-validation paths.
 
-## What LingTu Does
+## At a Glance
+
+| Item | Current contract |
+| --- | --- |
+| Version | `2.3.0` (`VERSION` and `pyproject.toml`) |
+| Field target | S100P / RDK X5, `aarch64`, Ubuntu |
+| Runtime environments | Exactly `real` and `sim` |
+| Native data plane | CycloneDDS with IDL-generated typed messages |
+| Main implementation | C++17 hot paths, Python 3.10+ Host and semantic/API layer |
+| Simulation | MuJoCo 3.10 physics; optional Unreal presentation workspace |
+| ROS status | Not required by the production field runtime; compatibility only |
+| Operating Products | `teleop`, `teleop_avoid`, `map`, `explore`, `nav`, `tracking`, `inspection` |
+
+## Key Capabilities
+
+- Native LiDAR, IMU, camera, GNSS, SLAM, map, navigation, and driver endpoints.
+- Saved-map localization, 2D occupancy, 3D OctoMap, global planning, and local avoidance.
+- CMU and SCAN local-planning backends behind one Product-selected navigation runtime.
+- Assisted teleoperation, autonomous navigation, exploration, tracking, and inspection modes.
+- MuJoCo sensor/control simulation with the same typed command and data contracts used by field services.
+- Gateway, Web UI, MCP, semantic planning, perception, memory, and mission-level orchestration.
+
+## Runtime Pipeline
 
 ```text
 LiDAR / IMU / camera
@@ -46,6 +79,8 @@ LiDAR / IMU / camera
   -> safety arbitration
   -> robot command boundary
 ```
+
+### Core Concepts
 
 The main runtime concepts are:
 
@@ -262,7 +297,7 @@ web/                    React/Vite dashboard
 config/                 Robot, device, DDS, DUFOMap, semantic configuration
 tools/calibration/      Offline camera, IMU, LiDAR-IMU, camera-LiDAR calibration
 scripts/                Build, deploy, diagnostics, robot-side operations
-docs/                   Architecture, deployment, testing, plans, archives
+docs/                   Architecture, deployment, testing, plans, and worklogs
 ```
 
 ## Build And Test
@@ -335,6 +370,17 @@ the license files inside vendored subtrees.
 Thanks to the DimOS project in particular for setting a stronger standard for
 robotics evidence: claims should be backed by explicit runtime gates, dataflow
 proof, and reproducible artifacts instead of only code-path inspection.
+
+## Contributing
+
+1. Read [`AGENTS.md`](AGENTS.md) and the
+   [development guide](docs/03-development/README.md).
+2. Keep field hot paths native and ROS-free; add ROS only through an explicit
+   compatibility boundary.
+3. Run the narrowest affected tests first, then the relevant native, Python,
+   Web, or simulation gate.
+4. Do not claim real-robot readiness without target-side S100P evidence.
+5. Open changes from a focused branch and include known validation gaps.
 
 ## Project License
 
