@@ -1,8 +1,11 @@
-"""Regression guards for the ROS-free LingTu product runtime."""
+"""Regression guards for the native field Product runtime.
+
+ROS2 compatibility, replay, calibration, simulation, and diagnostic tools are
+intentionally retained outside this Product-owned runtime tree.
+"""
 
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -28,52 +31,34 @@ def test_product_source_tree_has_no_owned_ros2_adapter_packages() -> None:
     assert leftovers == []
 
 
-def test_retired_remote_tare_verifiers_and_ros2_adapter_stay_removed() -> None:
-    retired_paths = (
-        "scripts/remote/verify_remote.sh",
-        "scripts/remote/remote_verify.ps1",
-        "src/nav/adapters/ros2/tare_bridge.py",
-    )
+def test_retired_ros2_tare_adapter_stays_removed() -> None:
+    retired_paths = ("src/nav/adapters/ros2/tare_bridge.py",)
 
     leftovers = [path for path in retired_paths if (ROOT / path).exists()]
     assert leftovers == []
 
 
 def test_product_plugin_catalog_has_no_ros2_compat_loader() -> None:
-    source = (ROOT / "src/lingtu/plugin_seed.py").read_text(encoding="utf-8")
+    source = (ROOT / "src/lingtu/assembly/plugins.py").read_text(encoding="utf-8")
 
     assert "ros2_plugin_seed" not in source
     assert "LINGTU_ENABLE_ROS2_COMPAT" not in source
     assert "LINGTU_ENABLE_LEGACY_ROS2_SERVICES" not in source
 
 
-def test_cli_shutdown_has_no_ros2_runtime_hook() -> None:
-    source = (ROOT / "cli/main.py").read_text(encoding="utf-8")
+def test_product_control_has_no_ros2_runtime_hook() -> None:
+    source = (ROOT / "src/lingtu/control.py").read_text(encoding="utf-8")
 
     assert "ros2_shutdown" not in source
     assert "shutdown_ros2_runtime" not in source
 
 
-def test_python_dds_reader_dependencies_are_explicit_and_bounded() -> None:
-    """Do not let the optional cyclonedds-python surface spread silently."""
-
-    expected = {
-        "src/drivers/real/imu/dds_module.py",
-        "src/localization/gnss_module.py",
-        "src/nav/adapters/dds/tare_bridge.py",
-    }
-    users = set()
+def test_product_python_has_no_cyclonedds_runtime() -> None:
+    users = []
     for path in (ROOT / "src").rglob("*.py"):
-        relative = path.relative_to(ROOT).as_posix()
-        if "/tests/" in relative or relative == "src/runtime/adapters/dds/reader.py":
+        if "/tests/" in path.as_posix():
             continue
         source = path.read_text(encoding="utf-8-sig")
-        if "runtime.adapters.dds.reader" not in source:
-            continue
-        tree = ast.parse(source, filename=str(path))
-        if any(
-            isinstance(node, ast.ImportFrom) and node.module == "runtime.adapters.dds.reader" for node in ast.walk(tree)
-        ):
-            users.add(relative)
-
-    assert users == expected
+        if "import cyclonedds" in source or "from cyclonedds" in source:
+            users.append(path.relative_to(ROOT).as_posix())
+    assert users == []

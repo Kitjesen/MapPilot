@@ -21,6 +21,15 @@ from runtime.config import (
 class TestLoadConfigDefaults:
     """load_config() with no file returns sensible dataclass defaults."""
 
+    def test_no_robot_is_selected_implicitly(self, monkeypatch):
+        monkeypatch.delenv("LINGTU_CONFIG_PATH", raising=False)
+
+        cfg = load_config()
+
+        assert cfg.raw == {}
+        assert cfg.driver.backend == ""
+        assert cfg.lidar.lidar_ip == ""
+
     def test_returns_robot_config(self):
         cfg = load_config(path="/nonexistent/path.yaml")
         assert isinstance(cfg, RobotConfig)
@@ -51,22 +60,26 @@ class TestLoadConfigDefaults:
 
 
 class TestLoadConfigFromYAML:
-    """load_config() reads the actual repo config/robot_config.yaml."""
+    """load_config() reads the actual Go2 RobotConfig."""
 
     def test_reads_real_config(self):
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-        real_path = os.path.join(repo_root, "config", "robot_config.yaml")
+        real_path = os.path.join(
+            repo_root, "config", "robots", "unitree", "go2", "robot.yaml"
+        )
         if not os.path.isfile(real_path):
-            pytest.skip("config/robot_config.yaml not found")
+            pytest.skip("Go2 RobotConfig not found")
 
         cfg = load_config(path=real_path)
         # These values come from the actual YAML, not defaults
         assert cfg.speed.max_speed == 0.875
-        assert cfg.geometry.vehicle_width == 0.6
+        assert cfg.geometry.vehicle_length == 0.76
+        assert cfg.geometry.vehicle_width == 0.31
+        assert cfg.geometry.collision_hard_margin == 0.10
         assert cfg.driver.dog_host == "127.0.0.1"
         assert cfg.safety.obstacle_height_thre == 0.2
-        assert cfg.lidar.lidar_ip == "192.168.1.178"
-        assert cfg.lidar.host_ip == "192.168.1.5"
+        assert cfg.lidar.lidar_ip == "192.168.123.20"
+        assert cfg.lidar.host_ip == "192.168.123.18"
         assert "robot" in cfg.raw  # raw dict contains full YAML
 
     def test_custom_yaml(self, tmp_path):

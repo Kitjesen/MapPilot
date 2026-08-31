@@ -965,7 +965,7 @@ class Transform:
     # -- composition ---------------------------------------------------------
 
     def __add__(self, other: Transform) -> Transform:
-        """Compose transforms: self * other (apply self then other)."""
+        """Compose ``T_A_from_B * T_B_from_C`` into ``T_A_from_C``."""
         if not isinstance(other, Transform):
             raise TypeError(f"Cannot compose Transform with {type(other)}")
         new_r = self.rotation * other.rotation
@@ -978,7 +978,7 @@ class Transform:
         )
 
     def inverse(self) -> Transform:
-        """Inverse: if self is A→B, returns B→A."""
+        """Invert ``T_A_from_B`` into ``T_B_from_A``."""
         inv_r = self.rotation.inverse()
         inv_t = -(inv_r.rotate_vector(self.translation))
         return Transform(
@@ -1013,7 +1013,8 @@ class Transform:
 
     def __str__(self) -> str:
         return (
-            f"{self.frame_id} -> {self.child_frame_id}: "
+            f"{self.frame_id} -> {self.child_frame_id} "
+            f"(T_{self.frame_id}_from_{self.child_frame_id}): "
             f"t={self.translation!r}, r={self.rotation!r}"
         )
 

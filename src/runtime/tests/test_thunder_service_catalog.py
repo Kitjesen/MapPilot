@@ -1,21 +1,23 @@
 from __future__ import annotations
 
-import json
-import os
-import time
-from pathlib import Path
 
-import pytest
-
-
-def test_thunder_catalog_classifies_pgo_and_hba_as_optimization_services():
+def test_thunder_catalog_exposes_only_the_native_slam_runtime():
     from runtime.service_catalogs.thunder import (
-        thunder_optimization_services,
         thunder_service_groups,
         thunder_service_metadata,
+        thunder_slam_status_services,
     )
 
-    assert thunder_optimization_services() == ("slam_pgo", "hba")
+    retired_slam_services = {
+        "slam_pgo",
+        "localizer",
+        "legacy_slam",
+        "legacy_localizer",
+        "genz_icp",
+        "hba",
+    }
+    assert retired_slam_services.isdisjoint(thunder_service_metadata())
+    assert retired_slam_services.isdisjoint(thunder_slam_status_services())
 
     groups = thunder_service_groups()
     assert groups["native_dds"] == [
@@ -29,15 +31,15 @@ def test_thunder_catalog_classifies_pgo_and_hba_as_optimization_services():
     ]
     assert groups["host"] == ["gateway", "lingtu"]
     assert groups["hardware"][:1] == ["camera"]
-    assert "slam_pgo" in groups["legacy_ros2_compat"]
-    assert "hba" in groups["experimental"]
     assert "nav_dds" not in groups["native_dds"]
 
     metadata = thunder_service_metadata()
     assert metadata["nav"]["role"] == "navigation_runtime"
     assert metadata["nav"]["product_default"] is True
     assert metadata["nav"]["install_enable_default"] is False
-    assert metadata["nav_dds"]["catalog_alias"] is True
+    assert "nav_dds" not in metadata
+    assert "host" not in metadata
+    assert "legacy_lidar" not in metadata
     assert metadata["driver"]["role"] == "motion_output"
     assert metadata["driver"]["product_default"] is True
     assert metadata["driver"]["install_enable_default"] is True
@@ -53,50 +55,28 @@ def test_thunder_catalog_classifies_pgo_and_hba_as_optimization_services():
     assert metadata["gnss"]["role"] == "sensor_input"
     assert metadata["gnss"]["ros2_compat"] is False
     assert metadata["traversability"]["install_enable_default"] is False
-    assert metadata["slam_pgo"]["role"] == "map_optimization"
-    assert metadata["slam_pgo"]["ros2_compat"] is True
-    assert metadata["slam_pgo"]["product_default"] is False
-    assert metadata["hba"]["role"] == "map_optimization"
-    assert metadata["hba"]["experimental"] is True
-    assert metadata["hba"]["product_default"] is False
+    assert retired_slam_services.isdisjoint(metadata)
 
 
 def test_optional_super_lio_integration_is_not_in_the_active_service_catalog():
     from runtime.service_catalogs.thunder import (
         thunder_service_groups,
-        thunder_service_specs,
+        thunder_service_metadata,
+        thunder_service_spec,
         thunder_slam_status_services,
     )
 
     integration_names = {"super_lio", "super_lio_relocation"}
-    specs = thunder_service_specs()
+    metadata = thunder_service_metadata()
 
-    assert integration_names.isdisjoint(spec.name for spec in specs)
-    assert integration_names.isdisjoint(thunder_service_groups()["experimental"])
+    assert integration_names.isdisjoint(metadata)
+    assert "experimental" not in thunder_service_groups()
     assert integration_names.isdisjoint(thunder_slam_status_services())
-    for spec in specs:
+    for name in metadata:
+        spec = thunder_service_spec(name)
+        assert spec is not None
         assert all("super_lio" not in unit and "super-lio" not in unit for unit in spec.units)
 
-
-def test_service_manager_uses_thunder_catalog_aliases():
-    from runtime.service_catalogs.thunder import thunder_service_aliases
-    from runtime.service_manager import SERVICE_ALIASES
-
-    aliases = thunder_service_aliases()
-    assert SERVICE_ALIASES["slam_pgo"] == aliases["slam_pgo"]
-    assert SERVICE_ALIASES["hba"] == aliases["hba"]
-    assert SERVICE_ALIASES["slam"][0] == "lingtu-slam-dds.service"
-    assert SERVICE_ALIASES["maps"][0] == "mapd.service"
-    assert SERVICE_ALIASES["nav"][0] == "lingtu-nav-dds.service"
-    assert SERVICE_ALIASES["nav_dds"][0] == "lingtu-nav-dds.service"
-    assert SERVICE_ALIASES["driver"][0] == "lingtu-driver.service"
-    assert SERVICE_ALIASES["camera"][0] == "lingtu-camera-dds.service"
-    assert SERVICE_ALIASES["traversability"][0] == "lingtu-traversability-dds.service"
-    assert SERVICE_ALIASES["explore"][0] == "lingtu-explore-dds.service"
-    assert SERVICE_ALIASES["gateway"][0] == "lingtu.service"
-    assert SERVICE_ALIASES["lingtu"][0] == "lingtu.service"
-    assert SERVICE_ALIASES["host"][0] == "lingtu.service"
-    assert "runtime" not in SERVICE_ALIASES
 
 
 def test_thunder_catalog_declares_product_readiness_contracts():
@@ -105,6 +85,12 @@ def test_thunder_catalog_declares_product_readiness_contracts():
 
     metadata = thunder_service_metadata()
 
+    assert metadata["nav"]["retired_units"] == [
+        "lingtu-nav-dds.service",
+        "nav-dds.service",
+        "nav.service",
+    ]
+    assert metadata["driver"]["retired_units"] == ["lingtu-driver.service"]
     assert metadata["camera"]["checks"] == ["systemd", "native_binary", "dds", "status_file"]
     assert metadata["camera"]["topics"] == [TOPICS.camera_info]
     assert metadata["camera"]["dds_topics"] == ["rt/camera/info"]
@@ -163,6 +149,7 @@ def test_thunder_catalog_declares_product_readiness_contracts():
         TOPICS.maps_state,
         TOPICS.maps_live_cloud,
         TOPICS.maps_voxel_cloud,
+        TOPICS.maps_local_collision,
         TOPICS.maps_accumulated_cloud,
         TOPICS.maps_occupancy,
         TOPICS.maps_elevation,
@@ -173,6 +160,7 @@ def test_thunder_catalog_declares_product_readiness_contracts():
         "rt/maps/state",
         "rt/maps/live_cloud",
         "rt/maps/voxel_cloud",
+        "rt/maps/local_collision",
         "rt/maps/accumulated_cloud",
         "rt/maps/occupancy",
         "rt/maps/elevation",
@@ -198,13 +186,11 @@ def test_thunder_catalog_declares_product_readiness_contracts():
         TOPICS.traversability,
         TOPICS.terrain_map,
         TOPICS.terrain_map_ext,
-        TOPICS.exploration_execution_snapshot,
     ]
     assert metadata["traversability"]["dds_topics"] == [
         "rt/nav/traversability",
         "rt/nav/terrain_map",
         "rt/nav/terrain_map_ext",
-        "rt/nav/exploration_execution_snapshot",
     ]
     assert metadata["traversability"]["binaries"] == [
         {
@@ -250,628 +236,17 @@ def test_thunder_catalog_declares_product_readiness_contracts():
     assert metadata["gateway"]["checks"] == ["systemd", "http"]
 
 
-def test_service_manager_status_details_include_readiness_contract(monkeypatch):
-    from runtime.service_manager import ServiceManager
 
-    manager = ServiceManager()
-
-    def exists(unit: str) -> bool:
-        return unit in {"lingtu-camera-dds.service", "lingtu-livox-dds.service"}
-
-    def active(unit: str) -> bool:
-        return unit == "lingtu-camera-dds.service"
-
-    def status_file(files: list[str]) -> dict[str, object]:
-        return {
-            "ok": True,
-            "files": [{"path": item, "exists": True, "status": "running"} for item in files],
-            "blockers": [],
-        }
-
-    monkeypatch.setattr(manager, "_unit_exists", exists)
-    monkeypatch.setattr(manager, "_is_active_unit", active)
-    monkeypatch.setattr(manager, "_status_file_observation", status_file)
-    monkeypatch.setattr(
-        manager,
-        "_native_binary_observation",
-        lambda binaries: {"ok": True, "binaries": binaries, "blockers": []},
-    )
-
-    details = manager.status_details("camera", "lidar")
-
-    camera = details["camera"]
-    assert camera["status"] == "running"
-    assert camera["ready"] is False
-    assert camera["observed"]["systemd"] is True
-    assert camera["observed"]["native_binary"]["ok"] is True
-    assert camera["observed"]["status_file"]["ok"] is True
-    assert camera["observed"]["dds"] == {
-        "ok": False,
-        "checked": False,
-        "enabled": False,
-        "reason": "set LINGTU_SERVICE_DDS_CHECK=1 to sample DDS topics",
-        "topics": ["rt/camera/info"],
-        "samples": {},
-        "blockers": ["dds_unchecked"],
-    }
-    assert camera["blockers"] == ["dds_unchecked"]
-    assert camera["contract"]["checks"] == ["systemd", "native_binary", "dds", "status_file"]
-    assert camera["contract"]["topics"] == ["/camera/color/camera_info"]
-    assert camera["contract"]["shm_topics"] == [
-        "/camera/color/image_raw",
-        "/camera/depth/image_raw",
-        "/camera/color/camera_info",
-    ]
-    assert camera["contract"]["shm_channels"] == [
-        "/lingtu_camera_color",
-        "/lingtu_camera_depth",
-        "/lingtu_camera_info",
-    ]
-    assert camera["contract"]["dds_topics"] == ["rt/camera/info"]
-    assert camera["contract"]["binaries"][0]["name"] == "camera_dds"
-
-    lidar = details["lidar"]
-    assert lidar["status"] == "stopped"
-    assert lidar["ready"] is False
-    assert lidar["observed"] == {
-        "systemd": False,
-        "native_binary": {
-            "ok": True,
-            "binaries": [
-                {
-                    "name": "livox_dds",
-                    "env": "LINGTU_LIVOX_BIN",
-                    "path": "/opt/lingtu/current/build/livox_sdk2_stream/livox_sdk2_stream",
-                }
-            ],
-            "blockers": [],
-        },
-        "dds": {
-            "ok": False,
-            "checked": False,
-            "enabled": False,
-            "reason": "set LINGTU_SERVICE_DDS_CHECK=1 to sample DDS topics",
-            "topics": ["rt/lidar/raw_frame", "rt/imu/raw"],
-            "samples": {},
-            "blockers": ["dds_unchecked"],
-        },
-    }
-    assert lidar["blockers"] == ["systemd_inactive", "dds_unchecked"]
-    assert lidar["contract"]["topics"] == ["/lidar/raw_frame", "/imu/raw"]
-
-
-def test_service_manager_dds_check_uses_native_probe(monkeypatch):
-    import runtime.service_manager as service_manager
-    from runtime.service_manager import ServiceManager
-
-    manager = ServiceManager()
-    calls = []
-
-    class Result:
-        returncode = 0
-        stderr = ""
-        stdout = json.dumps(
-            [
-                {
-                    "topic": "rt/camera/color",
-                    "samples": 3,
-                    "hz": 25.0,
-                    "frame_id": "camera_link",
-                    "points": 307200,
-                }
-            ]
-        )
-
-    def fake_run(command, **_kwargs):
-        calls.append(command)
-        return Result()
-
-    monkeypatch.setenv("LINGTU_SERVICE_DDS_CHECK", "1")
-    monkeypatch.setenv("LINGTU_SERVICE_DDS_CHECK_TIMEOUT", "0.1")
-    monkeypatch.setattr(service_manager.subprocess, "run", fake_run)
-
-    observed = manager._dds_topic_observation(
-        ["/camera/color/image_raw"],
-        ["rt/camera/color"],
-    )
-
-    assert observed["ok"] is True
-    assert observed["checked"] is True
-    assert observed["samples"] == {"rt/camera/color": 3}
-    assert observed["blockers"] == []
-    assert "dds_probe.py" in calls[0][1]
-    assert "--json" in calls[0]
-
-
-def test_service_manager_status_file_missing_blocks_readiness(monkeypatch):
-    from runtime.service_manager import ServiceManager
-
-    manager = ServiceManager()
-
-    monkeypatch.setattr(
-        manager,
-        "_unit_exists",
-        lambda unit: unit == "lingtu-camera-dds.service",
-    )
-    monkeypatch.setattr(
-        manager,
-        "_is_active_unit",
-        lambda unit: unit == "lingtu-camera-dds.service",
-    )
-    monkeypatch.setattr(
-        manager,
-        "_status_file_observation",
-        lambda files: {
-            "ok": False,
-            "files": [{"path": item, "exists": False} for item in files],
-            "blockers": [f"status_file_missing:{item}" for item in files],
-        },
-    )
-    monkeypatch.setattr(
-        manager,
-        "_native_binary_observation",
-        lambda binaries: {"ok": True, "binaries": binaries, "blockers": []},
-    )
-
-    camera = manager.status_details("camera")["camera"]
-
-    assert camera["status"] == "running"
-    assert camera["ready"] is False
-    assert camera["observed"]["status_file"]["ok"] is False
-    assert camera["blockers"] == [
-        "status_file_missing:/dev/shm/lingtu/camera_status.json",
-        "dds_unchecked",
-    ]
-
-
-def test_driver_status_requires_ready_and_fresh_heartbeat(monkeypatch, tmp_path):
-    import runtime.service_manager as service_manager
-
-    status_path = tmp_path / "driver_status.json"
-    status_path.write_text(
-        json.dumps(
-            {
-                "schema_version": "lingtu.driver.status.v1",
-                "ready": False,
-                "connected": False,
-            }
-        ),
-        encoding="utf-8",
-    )
-    metadata = dict(service_manager.SERVICE_METADATA["driver"])
-    metadata.update(
-        {
-            "checks": ["status_file"],
-            "files": [str(status_path)],
-            "binaries": [],
-            "status_max_age_s": 3.0,
-        }
-    )
-    monkeypatch.setitem(service_manager.SERVICE_METADATA, "driver", metadata)
-    manager = service_manager.ServiceManager()
-    monkeypatch.setattr(manager, "_unit_exists", lambda _unit: False)
-    monkeypatch.setattr(manager, "_is_active_unit", lambda _unit: False)
-
-    disconnected = manager.status_details("driver")["driver"]
-    assert disconnected["ready"] is False
-    assert disconnected["blockers"] == [f"status_file_not_ready:{status_path}"]
-
-    status_path.write_text(
-        json.dumps(
-            {
-                "schema_version": "lingtu.driver.status.v1",
-                "ready": True,
-                "connected": True,
-            }
-        ),
-        encoding="utf-8",
-    )
-    old = time.time() - 10.0
-    os.utime(status_path, (old, old))
-    stale = manager.status_details("driver")["driver"]
-    assert stale["ready"] is False
-    assert stale["blockers"] == [f"status_file_stale:{status_path}"]
-
-
-def test_service_manager_missing_unit_blocks_readiness_with_concrete_unit(monkeypatch):
-    from runtime.service_manager import ServiceManager
-
-    manager = ServiceManager()
-
-    monkeypatch.setattr(manager, "_unit_exists", lambda unit: False)
-    monkeypatch.setattr(manager, "_is_active_unit", lambda unit: False)
-    monkeypatch.setattr(
-        manager,
-        "_status_file_observation",
-        lambda files: {"ok": True, "files": [], "blockers": []},
-    )
-    monkeypatch.setattr(
-        manager,
-        "_native_binary_observation",
-        lambda binaries: {"ok": True, "binaries": binaries, "blockers": []},
-    )
-
-    camera = manager.status_details("camera")["camera"]
-
-    assert camera["status"] == "stopped"
-    assert camera["ready"] is False
-    assert camera["canonical_unit"] == "lingtu-camera-dds.service"
-    assert camera["installed_units"] == []
-    assert camera["blockers"] == [
-        "systemd_unit_missing:lingtu-camera-dds.service",
-        "dds_unchecked",
-    ]
-
-
-def test_service_manager_http_unchecked_blocks_gateway_readiness(monkeypatch):
-    from runtime.service_manager import ServiceManager
-
-    manager = ServiceManager()
-    monkeypatch.delenv("LINGTU_SERVICE_HTTP_CHECK", raising=False)
-    monkeypatch.setattr(
-        manager,
-        "_unit_exists",
-        lambda unit: unit == "lingtu.service",
-    )
-    monkeypatch.setattr(
-        manager,
-        "_is_active_unit",
-        lambda unit: unit == "lingtu.service",
-    )
-
-    gateway = manager.status_details("gateway")["gateway"]
-
-    assert gateway["status"] == "running"
-    assert gateway["ready"] is False
-    assert gateway["observed"]["systemd"] is True
-    assert gateway["observed"]["http"] == {
-        "ok": False,
-        "checked": False,
-        "enabled": False,
-        "reason": "set LINGTU_SERVICE_HTTP_CHECK=1 to probe HTTP readiness",
-        "url": "http://127.0.0.1:5050/api/v1/readiness",
-        "blockers": ["http_unchecked"],
-    }
-    assert gateway["blockers"] == ["http_unchecked"]
-
-
-class _HttpResponse:
-    def __init__(self, payload, *, status=200):
-        self.status = status
-        self._body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args):
-        return False
-
-    def read(self):
-        return self._body
-
-
-def _readiness_payload(**overrides):
-    payload = {
-        "ready": False,
-        "motion_ready": False,
-        "data_ready": True,
-        "non_motion_safe": True,
-        "failed_modules": [],
-        "critical_failed_modules": [],
-    }
-    payload.update(overrides)
-    return payload
-
-
-def test_service_manager_http_requires_readiness_payload_not_motion_ready(monkeypatch):
-    from runtime.service_manager import ServiceManager
-
-    seen = {}
-    payload = _readiness_payload()
-
-    def urlopen(url, timeout):
-        seen.update(url=url, timeout=timeout)
-        return _HttpResponse(payload)
-
-    monkeypatch.setenv("LINGTU_SERVICE_HTTP_CHECK", "1")
-    monkeypatch.setenv("LINGTU_SERVICE_HTTP_URL", "http://127.0.0.1:5051/custom-ready")
-    monkeypatch.setattr("urllib.request.urlopen", urlopen)
-
-    observation = ServiceManager()._http_observation("gateway")
-
-    assert observation["ok"] is True
-    assert observation["blockers"] == []
-    assert observation["payload"] == payload
-    assert seen["url"] == "http://127.0.0.1:5051/custom-ready"
-
-
-@pytest.mark.parametrize(
-    ("payload", "expected_blocker"),
-    [
-        (b"not-json", "http_invalid_json"),
-        ({}, "http_payload_missing:data_ready"),
-        (_readiness_payload(data_ready=1), "http_payload_invalid_type:data_ready"),
-        (_readiness_payload(data_ready=False), "http_data_not_ready"),
-        (
-            _readiness_payload(non_motion_safe=False),
-            "http_non_motion_safe_false",
-        ),
-        (
-            _readiness_payload(non_motion_safe=1),
-            "http_payload_invalid_type:non_motion_safe",
-        ),
-        (
-            _readiness_payload(critical_failed_modules=None),
-            "http_payload_invalid_type:critical_failed_modules",
-        ),
-        (
-            _readiness_payload(failed_modules="A"),
-            "http_payload_invalid_type:failed_modules",
-        ),
-        (
-            _readiness_payload(failed_modules=[1]),
-            "http_payload_invalid_type:failed_modules",
-        ),
-        (
-            _readiness_payload(failed_modules=["A"]),
-            "http_failed_modules:A",
-        ),
-        (
-            _readiness_payload(critical_failed_modules=["A"]),
-            "http_critical_failed_modules:A",
-        ),
-    ],
-)
-def test_service_manager_http_readiness_payload_fails_closed(
-    monkeypatch,
-    payload,
-    expected_blocker,
-):
-    from runtime.service_manager import ServiceManager
-
-    monkeypatch.setenv("LINGTU_SERVICE_HTTP_CHECK", "1")
-    monkeypatch.setattr(
-        "urllib.request.urlopen",
-        lambda _url, timeout: _HttpResponse(payload),
-    )
-
-    observation = ServiceManager()._http_observation("gateway")
-
-    assert observation["ok"] is False
-    assert expected_blocker in observation["blockers"]
-
-
-def test_service_manager_http_error_fails_closed(monkeypatch):
-    import urllib.error
-
-    from runtime.service_manager import ServiceManager
-
-    def raise_http_error(url, timeout):
-        raise urllib.error.HTTPError(url, 503, "unavailable", {}, None)
-
-    monkeypatch.setenv("LINGTU_SERVICE_HTTP_CHECK", "1")
-    monkeypatch.setattr("urllib.request.urlopen", raise_http_error)
-
-    observation = ServiceManager()._http_observation("gateway")
-
-    assert observation["ok"] is False
-    assert observation["status_code"] == 503
-    assert observation["payload"] is None
-    assert observation["blockers"] == ["http_status:503"]
-
-
-def test_service_manager_http_url_override_rejects_non_http_scheme(monkeypatch):
-    from runtime.service_manager import ServiceManager
-
-    def unexpected_urlopen(_url, timeout):
-        raise AssertionError("non-HTTP URL must not be opened")
-
-    monkeypatch.setenv("LINGTU_SERVICE_HTTP_CHECK", "1")
-    monkeypatch.setenv("LINGTU_SERVICE_HTTP_URL", "file:///tmp/readiness.json")
-    monkeypatch.setattr("urllib.request.urlopen", unexpected_urlopen)
-
-    observation = ServiceManager()._http_observation("gateway")
-
-    assert observation["ok"] is False
-    assert observation["status_code"] is None
-    assert observation["blockers"] == ["http_url_invalid_scheme:file"]
-
-
-def test_service_manager_dds_silence_blocks_readiness_when_check_enabled(monkeypatch):
-    from runtime.service_manager import ServiceManager
-
-    manager = ServiceManager()
-
-    monkeypatch.setenv("LINGTU_SERVICE_DDS_CHECK", "1")
-    monkeypatch.setattr(
-        manager,
-        "_unit_exists",
-        lambda unit: unit == "lingtu-camera-dds.service",
-    )
-    monkeypatch.setattr(
-        manager,
-        "_is_active_unit",
-        lambda unit: unit == "lingtu-camera-dds.service",
-    )
-    monkeypatch.setattr(
-        manager,
-        "_status_file_observation",
-        lambda files: {
-            "ok": True,
-            "files": [{"path": item, "exists": True, "status": "running"} for item in files],
-            "blockers": [],
-        },
-    )
-    monkeypatch.setattr(
-        manager,
-        "_native_binary_observation",
-        lambda binaries: {"ok": True, "binaries": binaries, "blockers": []},
-    )
-    monkeypatch.setattr(
-        manager,
-        "_dds_topic_observation",
-        lambda topics, dds_topics, **_kwargs: {
-            "ok": False,
-            "checked": True,
-            "enabled": True,
-            "topics": dds_topics,
-            "samples": {item: 0 for item in dds_topics},
-            "blockers": [f"dds_topic_silent:{item}" for item in dds_topics],
-        },
-    )
-
-    camera = manager.status_details("camera")["camera"]
-
-    assert camera["status"] == "running"
-    assert camera["ready"] is False
-    assert camera["observed"]["dds"]["checked"] is True
-    assert camera["observed"]["dds"]["enabled"] is True
-    assert camera["blockers"] == ["dds_topic_silent:rt/camera/info"]
-
-
-def test_service_manager_camera_native_binary_missing_blocks_readiness(monkeypatch):
-    from runtime.service_manager import ServiceManager
-
-    manager = ServiceManager()
-
-    monkeypatch.setattr(
-        manager,
-        "_unit_exists",
-        lambda unit: unit == "lingtu-camera-dds.service",
-    )
-    monkeypatch.setattr(
-        manager,
-        "_is_active_unit",
-        lambda unit: unit == "lingtu-camera-dds.service",
-    )
-    monkeypatch.setattr(
-        manager,
-        "_status_file_observation",
-        lambda files: {"ok": True, "files": [], "blockers": []},
-    )
-    monkeypatch.setattr(
-        manager,
-        "_dds_topic_observation",
-        lambda topics, dds_topics, **_kwargs: {
-            "ok": True,
-            "topics": dds_topics,
-            "blockers": [],
-        },
-    )
-    monkeypatch.delenv("LINGTU_CAMERA_DDS_BIN", raising=False)
-    monkeypatch.delenv("LINGTU_ORBBEC_CAPTURE_BIN", raising=False)
-
-    camera = manager.status_details("camera")["camera"]
-
-    assert camera["ready"] is False
-    assert camera["observed"]["native_binary"]["ok"] is False
-    assert camera["blockers"] == [
-        "native_binary_missing_or_not_executable:camera_dds:/opt/lingtu/current/build/camera_dds/lingtu_camera_dds",
-        "native_binary_missing_or_not_executable:orbbec_capture:/opt/lingtu/current/build/orbbec_native/orbbec_capture",
-    ]
-
-
-def test_service_manager_core_native_binary_missing_blocks_readiness(monkeypatch):
-    from runtime.service_manager import ServiceManager
-
-    manager = ServiceManager()
-
-    monkeypatch.setattr(
-        manager,
-        "_unit_exists",
-        lambda unit: unit == "lingtu-nav-dds.service",
-    )
-    monkeypatch.setattr(
-        manager,
-        "_is_active_unit",
-        lambda unit: unit == "lingtu-nav-dds.service",
-    )
-    monkeypatch.setattr(
-        manager,
-        "_status_file_observation",
-        lambda files: {"ok": True, "files": [], "blockers": []},
-    )
-    monkeypatch.setattr(
-        manager,
-        "_dds_topic_observation",
-        lambda topics, dds_topics, **_kwargs: {
-            "ok": True,
-            "topics": dds_topics,
-            "blockers": [],
-        },
-    )
-    monkeypatch.delenv("LINGTU_NAV_DDS_BIN", raising=False)
-
-    nav = manager.status_details("nav")["nav"]
-
-    assert nav["ready"] is False
-    assert nav["observed"]["native_binary"]["ok"] is False
-    assert nav["blockers"] == [
-        "native_binary_missing_or_not_executable:nav_dds:/opt/lingtu/current/build/nav_endpoint/navd"
-    ]
-
-
-def test_thunder_installer_covers_cataloged_product_and_optional_services():
+def test_thunder_install_services_and_runtime_order():
     from runtime.service_catalogs.thunder import (
-        thunder_install_plan,
         thunder_install_services,
         thunder_runtime_dds_topics,
         thunder_runtime_native_binaries,
         thunder_runtime_services,
-        thunder_runtime_shm_channels,
         thunder_runtime_status_files,
         thunder_runtime_units,
         thunder_service_install_unit,
-        thunder_service_installers,
-        thunder_service_specs,
-    )
-
-    installer = Path("scripts/deploy/thunder/install_services.sh").read_text(encoding="utf-8")
-
-    expected_installers = {
-        "driver": "install_driver_service.sh",
-        "camera": "install_camera_dds_service.sh",
-        "gnss": "install_gnss_dds_service.sh",
-        "lidar": "install_livox_dds_service.sh",
-        "slam": "install_slam_dds_service.sh",
-        "maps": "install_mapd_service.sh",
-        "traversability": "install_traversability_dds_service.sh",
-        "nav": "install_nav_dds_service.sh",
-        "explore": "install_explore_dds_service.sh",
-        "lingtu": "install_lingtu_service.sh",
-        "gateway": "install_lingtu_service.sh",
-    }
-    catalog_names = {
-        spec.name
-        for spec in thunder_service_specs()
-        if (spec.product_default or spec.optional)
-        and not spec.catalog_alias
-        and not spec.ros2_compat
-        and not spec.experimental
-    }
-    catalog_names.add("explore")
-
-    assert "endpoint" not in {spec.name for spec in thunder_service_specs()}
-    assert "endpoint" not in thunder_service_installers()
-    assert catalog_names <= set(expected_installers)
-    for name in sorted(catalog_names):
-        assert thunder_service_installers()[name] == expected_installers[name]
-        assert expected_installers[name] not in installer
-
-    assert "install-services" in installer
-    assert "runtime.service_catalogs.thunder installer" in installer
-    assert 'catalog_installer "${service}"' in installer
-    assert 'bash "${SCRIPT_DIR}/${installer}"' in installer
-
-    assert thunder_install_plan("field-cpp") == (
-        "install_livox_dds_service.sh",
-        "install_camera_dds_service.sh",
-        "install_slam_dds_service.sh",
-        "install_mapd_service.sh",
-        "install_traversability_dds_service.sh",
-        "install_nav_dds_service.sh",
-        "install_driver_service.sh",
-        "install_lingtu_service.sh",
+        thunder_service_metadata,
     )
     assert thunder_install_services("field-cpp") == (
         "lidar",
@@ -881,6 +256,7 @@ def test_thunder_installer_covers_cataloged_product_and_optional_services():
         "traversability",
         "nav",
         "driver",
+        "explore",
         "lingtu",
     )
     assert thunder_runtime_services() == (
@@ -891,17 +267,19 @@ def test_thunder_installer_covers_cataloged_product_and_optional_services():
         "traversability",
         "nav",
         "driver",
+        "explore",
         "lingtu",
     )
     assert thunder_runtime_units() == (
-        "lingtu-livox-dds.service",
-        "lingtu-camera-dds.service",
-        "lingtu-slam-dds.service",
-        "mapd.service",
-        "lingtu-traversability-dds.service",
-        "lingtu-nav-dds.service",
-        "lingtu-driver.service",
-        "lingtu.service",
+        "lt-lidar.service",
+        "lt-camera.service",
+        "lt-slam.service",
+        "lt-maps.service",
+        "lt-terrain.service",
+        "lt-nav.service",
+        "lt-driver.service",
+        "lt-explore.service",
+        "lt-host.service",
     )
     assert thunder_runtime_status_files() == {
         "camera": "/dev/shm/lingtu/camera_status.json",
@@ -910,6 +288,7 @@ def test_thunder_installer_covers_cataloged_product_and_optional_services():
         "traversability": "/dev/shm/lingtu/traversability_status.json",
         "nav": "/dev/shm/lingtu/nav_endpoint_status.json",
         "driver": "/dev/shm/lingtu/driver_status.json",
+        "explore": "/dev/shm/lingtu/explore_status.json",
     }
     assert thunder_runtime_native_binaries() == {
         "livox_dds": {
@@ -952,22 +331,28 @@ def test_thunder_installer_covers_cataloged_product_and_optional_services():
             "env": "LINGTU_DRIVER_BIN",
             "path": "/opt/lingtu/current/build/driver/lingtu_driver",
         },
+        "explore_dds": {
+            "service": "explore",
+            "env": "LINGTU_EXPLORE_DDS_BIN",
+            "path": "/opt/lingtu/current/build/nav_endpoint/lingtu_explore_dds",
+        },
     }
     assert thunder_runtime_dds_topics()["lidar"]["dds_topics"] == (
         "rt/lidar/raw_frame",
         "rt/imu/raw",
     )
     assert thunder_runtime_dds_topics()["camera"]["dds_topics"] == ("rt/camera/info",)
-    assert thunder_runtime_shm_channels()["camera"]["topics"] == (
+    camera = thunder_service_metadata()["camera"]
+    assert camera["shm_topics"] == [
         "/camera/color/image_raw",
         "/camera/depth/image_raw",
         "/camera/color/camera_info",
-    )
-    assert thunder_runtime_shm_channels()["camera"]["shm_channels"] == (
+    ]
+    assert camera["shm_channels"] == [
         "/lingtu_camera_color",
         "/lingtu_camera_depth",
         "/lingtu_camera_info",
-    )
+    ]
     assert thunder_runtime_dds_topics()["slam"]["dds_topics"] == (
         "rt/slam/odometry",
         "rt/slam/map_cloud",
@@ -977,6 +362,7 @@ def test_thunder_installer_covers_cataloged_product_and_optional_services():
         "rt/maps/state",
         "rt/maps/live_cloud",
         "rt/maps/voxel_cloud",
+        "rt/maps/local_collision",
         "rt/maps/accumulated_cloud",
         "rt/maps/occupancy",
         "rt/maps/elevation",
@@ -987,24 +373,15 @@ def test_thunder_installer_covers_cataloged_product_and_optional_services():
         "rt/nav/traversability",
         "rt/nav/terrain_map",
         "rt/nav/terrain_map_ext",
-        "rt/nav/exploration_execution_snapshot",
     )
     assert "nav" not in thunder_runtime_dds_topics()
     assert thunder_runtime_dds_topics()["driver"]["dds_topics"] == (
         "rt/nav/cmd_vel",
         "rt/driver/control_state",
     )
-    assert thunder_install_plan("lidar-dds") == ("install_livox_dds_service.sh",)
     for retired_mode in ("dds", "dds-endpoint", "endpoint-only", "endpoint"):
-        assert thunder_install_plan(retired_mode) == ()
         assert thunder_install_services(retired_mode) == ()
         assert thunder_service_install_unit(retired_mode) == ""
-    assert thunder_install_plan("native-driver") == ("install_driver_service.sh",)
-    assert thunder_install_plan("camera-dds") == ("install_camera_dds_service.sh",)
-    assert thunder_install_plan("gnss-dds") == ("install_gnss_dds_service.sh",)
-    assert thunder_install_plan("maps-dds") == ("install_mapd_service.sh",)
-    assert thunder_install_plan("explore-dds") == ("install_explore_dds_service.sh",)
-    assert thunder_install_plan("unknown") == ()
     assert thunder_install_services("lidar-dds") == ("lidar",)
     assert thunder_install_services("native-driver") == ("driver",)
     assert thunder_install_services("camera-dds") == ("camera",)
@@ -1013,15 +390,15 @@ def test_thunder_installer_covers_cataloged_product_and_optional_services():
     assert thunder_install_services("explore-dds") == ("explore",)
     assert thunder_install_services("unknown") == ()
 
-    assert thunder_service_install_unit("lidar") == "lingtu-livox-dds.service"
-    assert thunder_service_install_unit("camera-dds") == "lingtu-camera-dds.service"
-    assert thunder_service_install_unit("gnss-dds") == "lingtu-gnss-dds.service"
-    assert thunder_service_install_unit("slam") == "lingtu-slam-dds.service"
-    assert thunder_service_install_unit("maps-dds") == "mapd.service"
-    assert thunder_service_install_unit("traversability") == ("lingtu-traversability-dds.service")
-    assert thunder_service_install_unit("nav-dds") == "lingtu-nav-dds.service"
-    assert thunder_service_install_unit("driver") == "lingtu-driver.service"
-    assert thunder_service_install_unit("lingtu") == "lingtu.service"
+    assert thunder_service_install_unit("lidar") == "lt-lidar.service"
+    assert thunder_service_install_unit("camera-dds") == "lt-camera.service"
+    assert thunder_service_install_unit("gnss-dds") == "lt-gnss.service"
+    assert thunder_service_install_unit("slam") == "lt-slam.service"
+    assert thunder_service_install_unit("maps-dds") == "lt-maps.service"
+    assert thunder_service_install_unit("traversability") == ("lt-terrain.service")
+    assert thunder_service_install_unit("nav-dds") == "lt-nav.service"
+    assert thunder_service_install_unit("driver") == "lt-driver.service"
+    assert thunder_service_install_unit("lingtu") == "lt-host.service"
     assert thunder_service_install_unit("unknown") == ""
 
     from runtime.service_catalogs.thunder import thunder_service_install_enable_default
@@ -1047,6 +424,7 @@ def test_thunder_catalog_cli_exports_field_readiness_targets(capsys):
         "traversability",
         "nav",
         "driver",
+        "explore",
         "lingtu",
     ]
 
@@ -1079,19 +457,28 @@ def test_thunder_catalog_cli_exports_field_readiness_targets(capsys):
         "traversability",
         "nav",
         "driver",
+        "explore",
         "lingtu",
     ]
 
     assert _main(["thunder", "readiness-units"]) == 0
     assert capsys.readouterr().out.splitlines() == [
-        "lingtu-livox-dds.service",
-        "lingtu-camera-dds.service",
-        "lingtu-slam-dds.service",
-        "mapd.service",
-        "lingtu-traversability-dds.service",
+        "lt-lidar.service",
+        "lt-camera.service",
+        "lt-slam.service",
+        "lt-maps.service",
+        "lt-terrain.service",
+        "lt-nav.service",
+        "lt-driver.service",
+        "lt-explore.service",
+        "lt-host.service",
+    ]
+
+    assert _main(["thunder", "retired-units", "nav"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
         "lingtu-nav-dds.service",
-        "lingtu-driver.service",
-        "lingtu.service",
+        "nav-dds.service",
+        "nav.service",
     ]
 
     assert _main(["thunder", "status-files"]) == 0
@@ -1102,6 +489,7 @@ def test_thunder_catalog_cli_exports_field_readiness_targets(capsys):
         "traversability=/dev/shm/lingtu/traversability_status.json",
         "nav=/dev/shm/lingtu/nav_endpoint_status.json",
         "driver=/dev/shm/lingtu/driver_status.json",
+        "explore=/dev/shm/lingtu/explore_status.json",
     ]
 
     assert _main(["thunder", "readiness-dds-topics"]) == 0
@@ -1109,14 +497,10 @@ def test_thunder_catalog_cli_exports_field_readiness_targets(capsys):
         "lidar=rt/lidar/raw_frame,rt/imu/raw",
         "camera=rt/camera/info",
         "slam=rt/slam/odometry,rt/slam/map_cloud,rt/slam/localization_health",
-        "maps=rt/maps/state,rt/maps/live_cloud,rt/maps/voxel_cloud,rt/maps/accumulated_cloud,rt/maps/occupancy,rt/maps/elevation,rt/maps/esdf,rt/maps/scene",
-        "traversability=rt/nav/traversability,rt/nav/terrain_map,rt/nav/terrain_map_ext,rt/nav/exploration_execution_snapshot",
+        "maps=rt/maps/state,rt/maps/live_cloud,rt/maps/voxel_cloud,rt/maps/local_collision,rt/maps/accumulated_cloud,rt/maps/occupancy,rt/maps/elevation,rt/maps/esdf,rt/maps/scene",
+        "traversability=rt/nav/traversability,rt/nav/terrain_map,rt/nav/terrain_map_ext",
         "driver=rt/nav/cmd_vel,rt/driver/control_state",
-    ]
-
-    assert _main(["thunder", "readiness-shm-channels"]) == 0
-    assert capsys.readouterr().out.splitlines() == [
-        "camera=/lingtu_camera_color,/lingtu_camera_depth,/lingtu_camera_info",
+        "explore=rt/slam/odometry,rt/nav/exploration_snapshot",
     ]
 
     assert _main(["thunder", "readiness-binaries"]) == 0
@@ -1129,4 +513,5 @@ def test_thunder_catalog_cli_exports_field_readiness_targets(capsys):
         "traversability_dds=traversability|LINGTU_TRAVERSABILITY_DDS_BIN|/opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds",
         "nav_dds=nav|LINGTU_NAV_DDS_BIN|/opt/lingtu/current/build/nav_endpoint/navd",
         "driver=driver|LINGTU_DRIVER_BIN|/opt/lingtu/current/build/driver/lingtu_driver",
+        "explore_dds=explore|LINGTU_EXPLORE_DDS_BIN|/opt/lingtu/current/build/nav_endpoint/lingtu_explore_dds",
     ]

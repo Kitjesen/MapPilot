@@ -2,29 +2,28 @@
 
 Why this exists
 ---------------
-LingTu deploys to **both indoor and outdoor** environments (~50/50). The two
-have different optimal SLAM strategies:
+LingTu deploys to both indoor and outdoor environments. This compatibility
+utility classifies that environment for policy and diagnostics:
 
-* **Outdoor**: GNSS Factor in PGO is the dominant global anchor; map↔ENU
-  Kabsch yaw alignment is necessary; speed limits more permissive.
-* **Indoor**: GNSS unavailable, so Scan Context loop closure (N1) is the
-  only global anchor; tighter speed limits because no absolute reference.
+* **Outdoor**: sustained healthy GNSS observations may select ``outdoor``.
+* **Indoor**: sustained missing/unhealthy GNSS observations may select
+  ``indoor``.
 
-Hard-coding either strategy gives bad behaviour in the other regime. We
-need a runtime mode switch with two channels:
+The current Product-native ``slamd`` does not consume this mode to enable GNSS
+factors or Scan Context. Those algorithms exist only in legacy/experimental
+surfaces. The classifier has two input channels:
 
 1. **Manual** override via env / API (the user knows the deployment).
 2. **Auto** detection from GNSS health (sustained RTK_FIXED → outdoor;
    sustained NO_FIX → indoor).
 
-This module owns *only* the classification logic, not the wiring. The
-The active SLAM module feeds GnssOdom samples and reads the current mode; other
-modules subscribe through a port for state-change notifications.
+This module owns only classification logic, not field SLAM wiring. Compatibility
+modules may feed GNSS samples and subscribe to state-change notifications.
 
 Mode states
 -----------
-* ``outdoor`` — GNSS factor active, Kabsch yaw alignment running.
-* ``indoor``  — GNSS factor disabled, Scan Context primary, tighter speed.
+* ``outdoor`` — classification result only; no implied GNSS fusion.
+* ``indoor``  — classification result only; no implied loop closure.
 * ``unknown`` — initial state until enough samples accumulate (~5 s default).
 
 Hysteresis

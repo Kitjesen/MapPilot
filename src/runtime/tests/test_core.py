@@ -15,7 +15,6 @@
 
 import json
 import logging
-import sys
 from typing import Any
 
 import pytest
@@ -27,10 +26,6 @@ from runtime.msgs.semantic import Detection3D, GoalResult, SceneGraph
 from runtime.runtime_interface import TOPICS
 from runtime.stream import In, Out
 from runtime.transport.local import LocalTransport
-
-# Windows spawns worker processes slowly (multiprocessing 'spawn' re-imports the
-# module tree); allow more time for cross-process replies there.
-_WORKER_TIMEOUT = 20.0 if sys.platform == "win32" else 5.0
 
 # ============================================================================
 # Test Fixtures — 测试用模块定义
@@ -688,39 +683,6 @@ class TestBlueprint:
         sg1 = SceneGraph(objects=[Detection3D(label="from_src1")])
         src1.scene_graph.publish(sg1)
         assert sink.scene_graph.latest is sg1
-
-    def test_worker_build_failure_shuts_down_coordinator(self, monkeypatch):
-        """Worker-mode build failures release the started coordinator."""
-
-        class WorkerModule(Module, layer=1):
-            _run_in_worker = True
-            data: Out[Vector3]
-
-        instances = []
-
-        class FakeCoordinator:
-            def __init__(self, n_workers):
-                self.n_workers = n_workers
-                self.shutdown_called = False
-                instances.append(self)
-
-            def start(self):
-                pass
-
-            def deploy(self, *args, **kwargs):
-                raise RuntimeError("deploy failed")
-
-            def shutdown(self):
-                self.shutdown_called = True
-
-        import runtime.coordinator as coordinator_mod
-
-        monkeypatch.setattr(coordinator_mod, "ModuleCoordinator", FakeCoordinator)
-        with pytest.raises(RuntimeError, match="deploy failed"):
-            Blueprint().add(WorkerModule).build(n_workers=1)
-
-        assert instances
-        assert instances[0].shutdown_called
 
     def test_build_with_custom_transport(self):
         """build 接受自定义 Transport。"""
@@ -1526,10 +1488,6 @@ class TestRpc:
 
 
 # ============================================================================
-# TestWorker — Worker process and WorkerManager
-# ============================================================================
-
-# ============================================================================
 # TestSkillSchema - @skill schema generation
 # ============================================================================
 
@@ -1544,222 +1502,3 @@ class TestSkillSchema:
 
         assert schema["properties"]["z"]["type"] == "number"
         assert "z" not in schema["required"]
-
-
-class _SkillModDoThing(Module):
-    """Module with a @skill method — must be module-level for multiprocessing pickle."""
-    @skill
-    def do_thing(self, x: int) -> str:
-        """Do a thing with x."""
-        return str(x)
-
-
-class _SkillModPing(Module):
-    """Module with a @skill method — must be module-level for multiprocessing pickle."""
-    @skill
-    def ping(self) -> str:
-        """Ping the module."""
-        return "pong"
-
-
-class _WorkerTestModule(Module):
-    """Minimal module used to verify cross-process RPC calls."""
-    value: Out[int]
-
-    def __init__(self, initial=0, **kw):
-        super().__init__(**kw)
-        self._val = initial
-
-    @rpc
-    def get_value(self) -> int:
-        return self._val
-
-    @rpc
-    def set_value(self, v: int) -> None:
-        self._val = v
-
-
-class TestWorker:
-    """Tests for Worker and WorkerManager IPC."""
-
-    def test_worker_list_empty(self):
-        """Fresh worker returns empty module list."""
-        import multiprocessing
-
-        from runtime.worker import Worker
-
-        cmd_q: multiprocessing.Queue = multiprocessing.Queue()
-        resp_q: multiprocessing.Queue = multiprocessing.Queue()
-        w = Worker(worker_id="test", cmd_queue=cmd_q, resp_queue=resp_q)
-        w.start()
-
-        cmd_q.put(("LIST",))
-        resp = resp_q.get(timeout=_WORKER_TIMEOUT)
-        assert resp[0] == "RESULT"
-        assert resp[1] == []
-
-        cmd_q.put(("SHUTDOWN",))
-        resp_q.get(timeout=_WORKER_TIMEOUT)
-        w.join(timeout=_WORKER_TIMEOUT)
-
-    def test_worker_deploy_module(self):
-        """DEPLOY instantiates a module inside the worker."""
-        import multiprocessing
-
-        from runtime.worker import Worker
-
-        cmd_q: multiprocessing.Queue = multiprocessing.Queue()
-        resp_q: multiprocessing.Queue = multiprocessing.Queue()
-        w = Worker(worker_id="test", cmd_queue=cmd_q, resp_queue=resp_q)
-        w.start()
-
-        cmd_q.put(("DEPLOY", _WorkerTestModule, "mod1", (), {"initial": 42}))
-        resp = resp_q.get(timeout=_WORKER_TIMEOUT)
-        assert resp[0] == "OK"
-        assert resp[1] == "mod1"
-
-        # Confirm the module appears in the list
-        cmd_q.put(("LIST",))
-        resp = resp_q.get(timeout=_WORKER_TIMEOUT)
-        assert "mod1" in resp[1]
-
-        cmd_q.put(("SHUTDOWN",))
-        resp_q.get(timeout=_WORKER_TIMEOUT)
-        w.join(timeout=_WORKER_TIMEOUT)
-
-    def test_worker_rpc_call_across_process(self):
-        """RPC call crosses the process boundary and returns the correct value."""
-        import multiprocessing
-
-        from runtime.worker import Worker
-
-        cmd_q: multiprocessing.Queue = multiprocessing.Queue()
-        resp_q: multiprocessing.Queue = multiprocessing.Queue()
-        w = Worker(worker_id="test", cmd_queue=cmd_q, resp_queue=resp_q)
-        w.start()
-
-        # Deploy with initial=7
-        cmd_q.put(("DEPLOY", _WorkerTestModule, "mod1", (), {"initial": 7}))
-        resp_q.get(timeout=_WORKER_TIMEOUT)
-
-        # get_value should return 7
-        cmd_q.put(("RPC_CALL", "mod1", "get_value", (), {}))
-        resp = resp_q.get(timeout=_WORKER_TIMEOUT)
-        assert resp[0] == "RESULT"
-        assert resp[1] == 7
-
-        # set_value then get_value
-        cmd_q.put(("RPC_CALL", "mod1", "set_value", (), {"v": 99}))
-        resp_q.get(timeout=_WORKER_TIMEOUT)
-
-        cmd_q.put(("RPC_CALL", "mod1", "get_value", (), {}))
-        resp = resp_q.get(timeout=_WORKER_TIMEOUT)
-        assert resp[1] == 99
-
-        cmd_q.put(("SHUTDOWN",))
-        resp_q.get(timeout=_WORKER_TIMEOUT)
-        w.join(timeout=_WORKER_TIMEOUT)
-
-    def test_worker_shutdown_graceful(self):
-        """SHUTDOWN stops all modules and the worker process exits cleanly."""
-        import multiprocessing
-
-        from runtime.worker import Worker
-
-        cmd_q: multiprocessing.Queue = multiprocessing.Queue()
-        resp_q: multiprocessing.Queue = multiprocessing.Queue()
-        w = Worker(worker_id="test", cmd_queue=cmd_q, resp_queue=resp_q)
-        w.start()
-        assert w.is_alive()
-
-        cmd_q.put(("DEPLOY", _WorkerTestModule, "m", (), {}))
-        resp_q.get(timeout=_WORKER_TIMEOUT)
-
-        cmd_q.put(("SHUTDOWN",))
-        resp = resp_q.get(timeout=_WORKER_TIMEOUT)
-        assert resp[0] == "OK"
-
-        w.join(timeout=_WORKER_TIMEOUT)
-        assert not w.is_alive()
-
-    def test_worker_manager_multiple_workers(self):
-        """WorkerManager starts multiple workers and routes commands correctly."""
-        from runtime.worker_manager import WorkerManager
-
-        mgr = WorkerManager(n_workers=2)
-        mgr.start()
-        assert mgr.is_started
-        assert mgr.n_workers == 2
-
-        mgr.deploy(0, _WorkerTestModule, "m0", kwargs={"initial": 10})
-        mgr.deploy(1, _WorkerTestModule, "m1", kwargs={"initial": 20})
-
-        assert mgr.list_modules(0) == ["m0"]
-        assert mgr.list_modules(1) == ["m1"]
-
-        assert mgr.rpc_call(0, "m0", "get_value") == 10
-        assert mgr.rpc_call(1, "m1", "get_value") == 20
-
-        mgr.shutdown()
-        assert not mgr.is_started
-
-    def test_worker_manager_setup_start_stop_lifecycle(self):
-        """WorkerManager setup/start_module/stop_module calls module lifecycle."""
-        from runtime.worker_manager import WorkerManager
-
-        mgr = WorkerManager(n_workers=1)
-        mgr.start()
-
-        mgr.deploy(0, _WorkerTestModule, "mod", kwargs={"initial": 5})
-        mgr.setup(0, "mod")
-        mgr.start_module(0, "mod")
-
-        # Module is running — get_value still works
-        assert mgr.rpc_call(0, "mod", "get_value") == 5
-
-        mgr.stop_module(0, "mod")
-        mgr.shutdown()
-
-    def test_worker_get_skills_command(self):
-        """GET_SKILLS returns serialized SkillInfo list for a deployed module."""
-        import multiprocessing
-
-        from runtime.worker import Worker
-
-        cmd_q: multiprocessing.Queue = multiprocessing.Queue()
-        resp_q: multiprocessing.Queue = multiprocessing.Queue()
-        w = Worker(worker_id="sk", cmd_queue=cmd_q, resp_queue=resp_q)
-        w.start()
-
-        cmd_q.put(("DEPLOY", _SkillModDoThing, "skmod", (), {}))
-        resp_q.get(timeout=_WORKER_TIMEOUT)
-
-        cmd_q.put(("GET_SKILLS", "skmod"))
-        resp = resp_q.get(timeout=_WORKER_TIMEOUT)
-        assert resp[0] == "RESULT"
-        skills = resp[1]
-        assert isinstance(skills, list)
-        assert len(skills) == 1
-        assert skills[0]["func_name"] == "do_thing"
-        assert skills[0]["class_name"] == "_SkillModDoThing"
-        assert "args_schema" in skills[0]
-
-        cmd_q.put(("SHUTDOWN",))
-        resp_q.get(timeout=_WORKER_TIMEOUT)
-        w.join(timeout=_WORKER_TIMEOUT)
-
-    def test_worker_manager_get_skills(self):
-        """WorkerManager.get_skills() aggregates skill info from a worker module."""
-        from runtime.worker_manager import WorkerManager
-
-        mgr = WorkerManager(n_workers=1)
-        mgr.start()
-        mgr.deploy(0, _SkillModPing, "sm", kwargs={})
-
-        skills = mgr.get_skills(0, "sm")
-        assert isinstance(skills, list)
-        assert len(skills) == 1
-        assert skills[0]["func_name"] == "ping"
-        assert skills[0]["class_name"] == "_SkillModPing"
-
-        mgr.shutdown()

@@ -4,7 +4,8 @@ import re
 
 ROOT = Path(__file__).resolve().parents[3]
 ENDPOINT_DIR = ROOT / "src" / "nav" / "cpp" / "endpoint"
-INSPECTION_DIR = ENDPOINT_DIR / "inspection"
+NAV_ENDPOINT_DIR = ENDPOINT_DIR / "nav"
+INSPECTION_DIR = NAV_ENDPOINT_DIR / "runtime" / "inspection"
 COORDINATOR_HEADER = INSPECTION_DIR / "inspection_command_coordinator.hpp"
 COORDINATOR_SOURCE = INSPECTION_DIR / "inspection_command_coordinator.cpp"
 COORDINATOR_TEST = (
@@ -16,10 +17,10 @@ COORDINATOR_TEST = (
     / "endpoint"
     / "test_inspection_command_coordinator.cpp"
 )
-ENDPOINT = ENDPOINT_DIR / "nav_native_endpoint.cpp"
-ENDPOINT_LOOP = ENDPOINT_DIR / "endpoint_loop.cpp"
-DDS_HEADER = ENDPOINT_DIR / "nav_dds_runtime.hpp"
-DDS_SOURCE = ENDPOINT_DIR / "nav_dds_runtime.cpp"
+ENDPOINT = NAV_ENDPOINT_DIR / "main.cpp"
+ENDPOINT_LOOP = NAV_ENDPOINT_DIR / "runtime" / "loop.cpp"
+DDS_HEADER = NAV_ENDPOINT_DIR / "dds" / "runtime.hpp"
+DDS_SOURCE = NAV_ENDPOINT_DIR / "dds" / "runtime.cpp"
 CLIENT_DIR = ROOT / "src" / "nav" / "cpp" / "client"
 CLIENT_HEADER = CLIENT_DIR / "client.hpp"
 CLIENT_SOURCE = CLIENT_DIR / "client.cpp"
@@ -62,13 +63,13 @@ def test_dds_runtime_reports_inspection_task_ack_write_success() -> None:
         header,
     )
     assert re.search(
-        r"bool\s+DdsRuntime::writeInspectionTaskAck\s*\(",
+        r"bool\s+Dds::writeInspectionTaskAck\s*\(",
         source,
     )
     ack_body = _block_after(
         source,
-        "DdsRuntime::writeInspectionTaskAck(",
-        "void DdsRuntime::writeInspectionStatus",
+        "Dds::writeInspectionTaskAck(",
+        "bool Dds::writeInspectionStatus",
     )
     assert "const dds_return_t result = dds_write(inspection_task_ack_writer_, &msg)" in ack_body
     assert 'logDdsError(result, "dds_write(inspection_task_ack)")' in ack_body
@@ -101,16 +102,17 @@ def test_native_endpoint_only_forwards_inspection_command_requests_to_coordinato
     endpoint_loop = _read(ENDPOINT_LOOP)
     command_block = _block_after(
         endpoint_loop,
-        "dds.drainInspectionTaskRequests(",
-        "input_gate_state =",
+        "auto process_inspection_command =",
+        "auto process_geofence_command =",
     )
 
-    assert '#include "inspection/inspection_command_coordinator.hpp"' in endpoint
+    assert '#include "runtime/inspection/inspection_command_coordinator.hpp"' in endpoint
     assert "InspectionCommandCoordinator inspection_command_coordinator" in endpoint
     assert "inspection_command_coordinator.handle" in command_block
-    assert "dds.writeInspectionTaskAck" in endpoint
+    assert "InspectionTaskAckOutput" in endpoint
+    assert "dds.publish" in endpoint
     assert "inspection_runtime.requestStatus()" in endpoint
-    assert "dds.writeInspectionTaskAck" not in command_block
+    assert "InspectionTaskAckOutput" not in command_block
     assert "inspection_runtime.requestStatus()" not in command_block
 
     forbidden_command_ownership = (
@@ -155,10 +157,10 @@ def test_command_coordinator_stays_transport_free() -> None:
         "DdsRuntime",
         "dds_",
         "dds/dds.h",
-        "lingtu_slam.h",
+        "messages.h",
         "lingtu_dds_",
         "nav_dds_runtime",
-        "NavLoop",
+        "navigation/executor.hpp",
     )
     for token in forbidden_tokens:
         assert token not in combined
@@ -221,6 +223,6 @@ def test_taskless_inspection_client_and_endpoint_wire_are_removed() -> None:
 def test_endpoint_readme_documents_completed_command_coordinator_split() -> None:
     readme = _read(ENDPOINT_README)
 
-    assert "InspectionCommandCoordinator" in readme
-    assert "inspection command" in readme
-    assert "completed" in readme.lower()
+    assert "nav/runtime/" in readme
+    assert "inspection" in readme
+    assert "command admission" in readme

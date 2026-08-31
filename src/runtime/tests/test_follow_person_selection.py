@@ -8,6 +8,7 @@ Covers the "person in red" selection path added across:
 """
 
 import asyncio
+import threading
 
 import numpy as np
 
@@ -15,7 +16,7 @@ from decision.modules.semantic_planner import SemanticPlannerModule
 from decision.modules.visual_servo import VisualServoModule
 from decision.vision.person import PersonTracker
 from runtime.msgs.geometry import Vector3
-from runtime.msgs.semantic import Detection3D, SceneGraph
+from runtime.msgs.semantic import Detection3D
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,6 +47,11 @@ class _TextOnlyClip:
         return np.array([[1.0, 0.0]])
 
 
+class _ImageOnlyClip:
+    def encode_image(self, crop):
+        return np.array([1.0, 0.0])
+
+
 # ── CLIPEncoder.encode_image (interface-gap fix) ──────────────────────────────
 
 
@@ -58,6 +64,25 @@ def test_clip_encoder_has_encode_image():
     # Model unavailable → empty feature, but no AttributeError (the bug we fixed).
     assert hasattr(out, "size")
     assert out.size == 0
+
+
+def test_perception_exposes_only_an_image_capable_encoder():
+    from perception.perception_module import PerceptionModule
+
+    module = PerceptionModule()
+    image_encoder = _FakeClip([1.0, 0.0], {1: [1.0, 0.0]})
+    module._clip_encoder = image_encoder
+    assert module.image_encoder is image_encoder
+
+    module._clip_encoder = _TextOnlyClip()
+    assert module.image_encoder is None
+
+    module._clip_encoder = _ImageOnlyClip()
+    assert module.image_encoder is None
+
+    tracker = PersonTracker()
+    tracker.set_clip_encoder(_ImageOnlyClip())
+    assert tracker.has_image_selector is False
 
 
 # ── PersonTracker.select_by_clip ──────────────────────────────────────────────
@@ -144,49 +169,57 @@ def test_build_vlm_select_messages_structure():
 # ── VisualServoModule injection + selection ───────────────────────────────────
 
 
-def test_vs_injects_image_capable_encoder():
-    vs = VisualServoModule()
-
-    class _Enc:
-        _backend = _FakeClip([1.0, 0.0], {1: [1.0, 0.0]})
-
-    vs.on_system_modules({"EncoderModule": _Enc()})
-    assert vs._person_tracker._clip_encoder is not None
-
-
-def test_vs_skips_text_only_encoder():
-    vs = VisualServoModule()
-
-    class _Enc:
-        _backend = _TextOnlyClip()  # no encode_image
-
-    vs.on_system_modules({"EncoderModule": _Enc()})
-    assert vs._person_tracker._clip_encoder is None
-
-
-def test_vs_attaches_vision_client():
+def test_vs_discovers_vision_client_after_module_setup():
     vs = VisualServoModule()
 
     class OpenAIClient:
+        supports_vision = True
+
         async def chat(self, messages, temperature=None):
             return "1"
 
     class _LLM:
-        _client = OpenAIClient()
+        client = None
 
-    vs.on_system_modules({"LLMModule": _LLM()})
+    llm = _LLM()
+    vs.on_system_modules({"LLMModule": llm})
+    assert vs.can_select_follow_target() is False
+
+    llm.client = OpenAIClient()
+    assert vs.can_select_follow_target() is True
     assert vs._vision_client is not None
+    statuses = []
+    vs.servo_status._add_callback(statuses.append)
+    vs.start()
+    try:
+        assert statuses[-1]["follow_available"] is True
+    finally:
+        vs.stop()
+
+
+def test_vs_discovers_perception_image_encoder_after_module_setup():
+    encoder = _FakeClip([1.0, 0.0], {1: [1.0, 0.0]})
+
+    class _Perception:
+        image_encoder = encoder
+
+    vs = VisualServoModule()
+    vs.on_system_modules({"PerceptionModule": _Perception()})
+
+    assert vs.can_select_follow_target() is True
 
 
 def test_vs_rejects_text_only_llm():
     vs = VisualServoModule()
 
     class MoonshotClient:
+        supports_vision = False
+
         async def chat(self, messages, temperature=None):
             return "1"
 
     class _LLM:
-        _client = MoonshotClient()
+        client = MoonshotClient()
 
     vs.on_system_modules({"LLMModule": _LLM()})
     assert vs._vision_client is None
@@ -198,11 +231,9 @@ def _person(obj_id, label, x, bbox):
 
 def test_vs_try_select_follow_locks_via_clip():
     vs = VisualServoModule()
-
-    class _Enc:
-        _backend = _FakeClip([1.0, 0.0], {1: [1.0, 0.0], 2: [0.0, 1.0]})
-
-    vs.on_system_modules({"EncoderModule": _Enc()})
+    vs._person_tracker.set_clip_encoder(
+        _FakeClip([1.0, 0.0], {1: [1.0, 0.0], 2: [0.0, 1.0]})
+    )
     vs._target_label = "person in red"
     vs._follow_select_pending = True
 
@@ -222,7 +253,7 @@ def test_vs_try_select_follow_locks_via_clip():
     assert vs._person_tracker._person.obj_id == "red"
 
 
-def test_vs_try_select_follow_degraded_without_clip_or_vlm():
+def test_vs_rejects_descriptive_follow_without_clip_or_vlm():
     vs = VisualServoModule()  # no encoder, no vision client
     vs._target_label = "person in red"
     vs._follow_select_pending = True
@@ -230,10 +261,16 @@ def test_vs_try_select_follow_degraded_without_clip_or_vlm():
     bgr[0:20, 0:20] = 1
     vs._latest_bgr = bgr
 
-    vs._try_select_follow_target([_person("a", "person", 1.0, [0, 0, 20, 20])])
+    vs._try_select_follow_target(
+        [
+            _person("a", "person", 1.0, [0, 0, 20, 20]),
+            _person("b", "person", 2.0, [20, 0, 40, 20]),
+        ]
+    )
 
     assert vs._follow_select_pending is False
-    assert vs._follow_select_method == "degraded"
+    assert vs._follow_select_method == "unavailable"
+    assert vs._person_tracker.target_selected is False
 
 
 def test_vs_follow_command_arms_selection():
@@ -244,13 +281,57 @@ def test_vs_follow_command_arms_selection():
     assert vs._follow_select_pending is True
 
 
+def test_late_vlm_result_cannot_lock_a_previous_follow_intent():
+    started = threading.Event()
+    release = threading.Event()
+
+    class OpenAIClient:
+        supports_vision = True
+
+        async def chat(self, messages, temperature=None):
+            started.set()
+            while not release.is_set():
+                await asyncio.sleep(0.001)
+            return "1"
+
+    class _LLM:
+        client = OpenAIClient()
+
+    vs = VisualServoModule()
+    vs.on_system_modules({"LLMModule": _LLM()})
+    vs._on_servo_target("follow:person in red")
+    generation = vs._intent_generation
+    persons = [_person("red", "person", 2.0, [0, 0, 30, 30])]
+    crops = [np.ones((30, 30, 3), dtype=np.uint8)]
+    vs._follow_select_running = True
+    worker = threading.Thread(
+        target=vs._run_vlm_select_sync,
+        args=("person in red", crops, persons, generation),
+    )
+    worker.start()
+    assert started.wait(timeout=1.0)
+
+    vs._on_servo_target("follow:person in blue")
+    release.set()
+    worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    assert vs._target_label == "person in blue"
+    assert vs._person_tracker.target_selected is False
+    assert vs._follow_select_pending is True
+
+
 def test_vs_client_supports_vision():
     assert VisualServoModule._client_supports_vision(None) is False
 
     class Moonshot:
+        supports_vision = False
+
         def chat(self): ...
 
     class OpenAI:
+        supports_vision = True
+
         def chat(self): ...
 
     assert VisualServoModule._client_supports_vision(Moonshot()) is False
@@ -278,14 +359,16 @@ def test_detect_follow_intent_negative():
 # ── Follow re-selection after target lost ─────────────────────────────────────
 
 
-def _follow_sg():
-    return SceneGraph(
-        objects=[
-            Detection3D(
-                id="p", label="person", confidence=0.9, position=Vector3(1.0, 0.0, 0.0), bbox_2d=[0, 0, 10, 10]
-            ),
-        ]
-    )
+def _follow_detections():
+    return [
+        Detection3D(
+            id="p",
+            label="person",
+            confidence=0.9,
+            position=Vector3(1.0, 0.0, 0.0),
+            bbox_2d=[0, 0, 10, 10],
+        )
+    ]
 
 
 def test_vs_reselects_after_target_lost():
@@ -302,7 +385,7 @@ def test_vs_reselects_after_target_lost():
     vs._person_tracker.get_follow_waypoint = lambda robot_pos: None
 
     vs._latest_bgr = np.zeros((20, 20, 3), dtype=np.uint8)
-    vs._latest_sg = _follow_sg()
+    vs._latest_detections = _follow_detections()
 
     vs._tick_follow()
 
@@ -324,7 +407,7 @@ def test_vs_no_reselect_before_first_lock():
     vs._person_tracker.update = lambda o, f: None
     vs._person_tracker.get_follow_waypoint = lambda robot_pos: None
     vs._latest_bgr = np.zeros((20, 20, 3), dtype=np.uint8)
-    vs._latest_sg = _follow_sg()
+    vs._latest_detections = _follow_detections()
 
     vs._tick_follow()
 

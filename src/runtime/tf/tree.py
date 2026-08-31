@@ -11,9 +11,10 @@ from __future__ import annotations
 import math
 from bisect import bisect_left
 from collections import deque
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Any, Callable, Iterable
+from typing import Any
 
 from ..msgs.geometry import Pose, PoseStamped, Quaternion, Transform, Vector3
 from ..msgs.nav import Odometry
@@ -106,10 +107,10 @@ class _EdgeHistory:
 class FrameTree:
     """Current-transform tree with TF-style parent/child semantics.
 
-    ``Transform(frame_id="body", child_frame_id="lidar")`` means body->lidar:
-    applying the transform converts a point from the child frame into the
-    parent frame. Lookups return the transform from ``source_frame`` coordinates
-    into ``target_frame`` coordinates.
+    ``Transform(frame_id="body", child_frame_id="lidar")`` has topology
+    ``body -> lidar`` and numeric direction ``body <- lidar``. Applying it
+    converts a point from the child frame into the parent frame. Lookups return
+    ``T_target_from_source``.
 
     Dynamic edges keep a small timestamped cache and support interpolation.
     Static edges are valid for all timestamps.
@@ -292,6 +293,28 @@ class FrameTree:
                     continue
                 self._remove_direct_edge(child, parent)
                 self._remove_direct_edge(parent, child)
+
+    def remove_transform(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        *,
+        dynamic_only: bool = False,
+    ) -> bool:
+        """Remove one direct parent/child transform, if present."""
+
+        parent = self._frame_id(parent_frame, "parent_frame")
+        child = self._frame_id(child_frame, "child_frame")
+        with self._lock:
+            if self._parent_by_child.get(child) != parent:
+                return False
+            history = self._histories.get((child, parent))
+            if history is None or (dynamic_only and history.is_static):
+                return False
+            self._parent_by_child.pop(child, None)
+            self._remove_direct_edge(child, parent)
+            self._remove_direct_edge(parent, child)
+            return True
 
     def set_alias(self, canonical_frame: str, alias_frame: str) -> None:
         """Treat two frame names as the same physical coordinate frame."""

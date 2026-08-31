@@ -127,9 +127,9 @@ class MapControlRequest:
 class MapCloudFrame:
     """Map point-cloud frame.
 
-    ``PointCloud2`` remains the legacy point-cloud compatibility shape.
-    ``MapCloudFrame`` is the map data-plane shape: callers say whether the
-    points are a complete map replacement, a keyframe, or an incremental update.
+    This is the Host map data-plane shape: callers say whether the points are a
+    complete map replacement, a keyframe, or an incremental update. Native DDS
+    adapters may translate to or from ``PointCloud2`` only at their boundary.
     """
 
     msg_name: ClassVar[str] = "map.MapCloudFrame"
@@ -196,7 +196,7 @@ class MapCloudFrame:
         return xyz[valid].astype(np.float32, copy=True)
 
     def to_pointcloud2(self) -> PointCloud2:
-        """Convert to the compatibility point-cloud message."""
+        """Encode this frame for a PointCloud2 transport or point-cloud kernel."""
         return PointCloud2.from_numpy(
             np.asarray(self.points, dtype=np.float32),
             frame_id=self.frame_id,

@@ -4,8 +4,6 @@ contracts:
   - lingtu.product.map.v1
 summary: Build live map artifacts from native LiDAR-inertial SLAM output.
 operator_switchable: true
-product_mode: mapping
-product_session: mapping
 session_mode: mapping
 default_for_session_mode: true
 native_control_mode: teleop
@@ -13,18 +11,9 @@ slam_mode: mapping
 requires_map: false
 switch_policy: cold_restart
 online_hot_switch_supported: false
-data_plane: typed_dds
-control_owner: operator
-autonomy_owner: none
-native_nav:
-  control_mode: teleop
-  publish_cmd_vel: true
-  check_obstacle: false
-  use_traversability_cost: false
-  allow_teleop_takeover: false
-  teleop_local_planner: false
 processes:
   - lidar
+  - imu
   - slam
   - maps
   - nav
@@ -33,24 +22,8 @@ processes:
   - host
 critical_modules:
   - host.bus
-  - maps.service
   - camera
   - nav.commands
   - GatewayModule
 forbidden_modules:
-  - TeleopModule
-  - nav.velocity_mux
   - SimEndpointDriverModule
-  - nav.mission
-  - nav.local_planner
-  - nav.path_follower
-  - OccupancyGridModule
-  - VoxelGridModule
-  - ElevationMapModule
-  - ESDFModule
-  - TraversabilityCostModule
-  - SemanticMapModule
-forbidden_claims:
-  - module_sim_real_equivalence
-  - ros2_bridge_required
-  - autonomous_navigation

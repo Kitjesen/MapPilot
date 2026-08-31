@@ -5,7 +5,17 @@ runtime data plane and must not start sensors, SLAM, navigation, or drivers.
 """
 
 from .loader import RuntimeGraph, load_runtime_graph
-from .processes import ProcessSpec, resolve_env_implementation, resolve_processes
+from .processes import (
+    ProcessArtifact,
+    ProcessCommand,
+    ProcessReadiness,
+    ProcessShutdown,
+    ProcessSpec,
+    resolve_env_implementation,
+    resolve_processes,
+    resolve_stop_before_start,
+    valid_process_name,
+)
 from .render import render_env_mermaid, render_product_markdown
 from .validator import (
     RuntimeGraphIssue,
@@ -14,6 +24,10 @@ from .validator import (
 )
 
 __all__ = [
+    "ProcessArtifact",
+    "ProcessCommand",
+    "ProcessReadiness",
+    "ProcessShutdown",
     "ProcessSpec",
     "RuntimeGraph",
     "RuntimeGraphIssue",
@@ -23,5 +37,7 @@ __all__ = [
     "render_product_markdown",
     "resolve_env_implementation",
     "resolve_processes",
+    "resolve_stop_before_start",
+    "valid_process_name",
     "validate_runtime_graph",
 ]

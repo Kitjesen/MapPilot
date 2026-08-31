@@ -1,7 +1,6 @@
 """Exploration stack: LingTu module bridges for exploration goal sources.
 
-Wavefront frontier still lives in the navigation stack for the `explore`
-profile. TARE has exactly one runtime owner:
+TARE has exactly one runtime owner:
 
 - `owner="native"` mounts no Python goal producer; Product owns the native
   exploration endpoint.
@@ -39,22 +38,21 @@ def exploration(backend: str = "tare", *, owner: str = "module", **kw) -> Bluepr
         logger.info("TARE exploration is owned by the native endpoint; Python producer omitted")
         return bp
 
-    if backend == "tare":
-        kw.setdefault("configured_backend", "tare")
-        kw.setdefault("transport_mode", "in_process")
-        _add_tare_bridge(bp, **kw)
-        return bp
-
-    if backend == "tare_external":
-        kw.setdefault("configured_backend", "tare_external")
-        kw.setdefault("transport_mode", "dds")
-        _add_tare_bridge(bp, **kw)
+    transport = {"tare": "in_process", "tare_external": "dds"}.get(backend)
+    if transport is not None:
+        _add_tare_bridge(
+            bp,
+            **{
+                "configured_backend": backend,
+                "transport_mode": transport,
+                **kw,
+            },
+        )
         return bp
 
     raise ValueError(
         f"Unknown exploration backend {backend!r}. "
-        "Options: 'tare', 'tare_external', 'none'. "
-        "'wavefront' lives in explore.frontier and is enabled by navigation()."
+        "Options: 'tare', 'tare_external', 'none'."
     )
 
 
@@ -73,7 +71,7 @@ def _add_tare_bridge(bp: Blueprint, **kw) -> None:
         fallback="explore.tare.supervisor.ExplorationSupervisorModule",
     )
 
-    kw.setdefault("prefer_path_strategy", False)
+    kw = {"prefer_path_strategy": False, **kw}
     bp.add(TAREExplorerModule, alias="TAREExplorerModule", **_tare_kwargs(kw))
     bp.add(
         ExplorationSupervisorModule,

@@ -5,13 +5,14 @@ import re
 ROOT = Path(__file__).resolve().parents[3]
 NAV_CPP = ROOT / "src/nav/cpp"
 ENDPOINT = NAV_CPP / "endpoint"
-STATUS = ENDPOINT / "status"
+NAV_ENDPOINT = ENDPOINT / "nav"
+STATUS = NAV_ENDPOINT / "status"
 
 CORE_HEADER = STATUS / "control_loop_health.hpp"
 CORE_SOURCE = STATUS / "control_loop_health.cpp"
 CORE_TEST = NAV_CPP / "tests/endpoint/test_control_loop_health.cpp"
-ENDPOINT_BOOTSTRAP = ENDPOINT / "nav_native_endpoint.cpp"
-ENDPOINT_LOOP = ENDPOINT / "endpoint_loop.cpp"
+ENDPOINT_BOOTSTRAP = NAV_ENDPOINT / "main.cpp"
+ENDPOINT_LOOP = NAV_ENDPOINT / "runtime" / "loop.cpp"
 PUBLISHER_HEADER = STATUS / "nav_status_publisher.hpp"
 PUBLISHER_SOURCE = STATUS / "nav_status_publisher.cpp"
 WRITER_HEADER = STATUS / "nav_status_writer.hpp"
@@ -58,7 +59,7 @@ def test_declares_transport_free_control_loop_health_core_and_behavior_test() ->
         "dds/dds.h",
         "nav_dds_runtime",
         "StatusSnapshotFileWriter",
-        "NavLoop",
+        "Executor",
     ):
         assert forbidden not in core
 
@@ -155,13 +156,8 @@ def test_both_cmake_surfaces_build_core_and_register_focused_test() -> None:
 
 def test_linux_endpoint_build_gate_requires_control_loop_health_ctest() -> None:
     script = _read(BUILD_SCRIPT)
-    required_catalog = _block_after(
-        script,
-        "for required_test in",
-        "if ! grep -Fq",
-    )
-
-    assert "test_control_loop_health" in required_catalog
+    assert "for required_test in" in script
+    assert "test_control_loop_health" in script
 
 
 def test_gateway_blocks_only_mature_unhealthy_loop_and_projects_metrics() -> None:

@@ -1,7 +1,7 @@
 """Tests for PerceptionModule -- core Module wrapper around perception.
 
 Covers:
-- Port declarations (4 In, 2 Out)
+- Port declarations (5 In, 2 Out)
 - Layer assignment (L3)
 - Setup wires subscriptions
 - Mock detector path: synthetic Detection2D -> 3D fallback -> scene_graph Out
@@ -25,7 +25,7 @@ from perception.perception_module import (
     _quat_to_rotation,
 )
 from runtime import Blueprint, In, Module
-from runtime.msgs.geometry import Pose, Quaternion, Vector3
+from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.msgs.nav import Odometry
 from runtime.msgs.semantic import Detection3D as CoreDetection3D
 from runtime.msgs.semantic import SceneGraph
@@ -34,24 +34,69 @@ from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat
 # -- helpers -------------------------------------------------------------------
 
 
-def _make_bgr(h: int = 480, w: int = 640) -> Image:
+def _make_bgr(
+    h: int = 480,
+    w: int = 640,
+    *,
+    ts: float | None = None,
+    frame_id: str = "camera",
+) -> Image:
     """Synthetic BGR image with non-zero data (passes Laplacian filter)."""
     data = np.random.randint(0, 255, (h, w, 3), dtype=np.uint8)
-    return Image(data=data, format=ImageFormat.BGR)
+    kwargs = {"ts": ts} if ts is not None else {}
+    return Image(data=data, format=ImageFormat.BGR, frame_id=frame_id, **kwargs)
 
 
-def _make_depth(h: int = 480, w: int = 640, depth_mm: int = 2000) -> Image:
+def _make_depth(
+    h: int = 480,
+    w: int = 640,
+    depth_mm: int = 2000,
+    *,
+    ts: float | None = None,
+    frame_id: str = "camera",
+) -> Image:
     """Synthetic depth image (uint16, millimetres)."""
     data = np.full((h, w), depth_mm, dtype=np.uint16)
-    return Image(data=data, format=ImageFormat.DEPTH_U16)
+    kwargs = {"ts": ts} if ts is not None else {}
+    return Image(data=data, format=ImageFormat.DEPTH_U16, frame_id=frame_id, **kwargs)
 
 
 def _make_intrinsics() -> CameraIntrinsics:
     return CameraIntrinsics(fx=600.0, fy=600.0, cx=320.0, cy=240.0, width=640, height=480)
 
 
-def _make_odom(x: float = 1.0, y: float = 2.0, z: float = 0.35) -> Odometry:
-    return Odometry(pose=Pose(Vector3(x, y, z), Quaternion()))
+def _make_odom(
+    x: float = 1.0,
+    y: float = 2.0,
+    z: float = 0.35,
+    *,
+    ts: float | None = None,
+    frame_id: str = PERCEPTION_MAP_FRAME_ID,
+) -> Odometry:
+    kwargs = {"ts": ts} if ts is not None else {}
+    return Odometry(pose=Pose(Vector3(x, y, z), Quaternion()), frame_id=frame_id, **kwargs)
+
+
+def _make_map_odom_tf(
+    *,
+    x: float = 0.0,
+    y: float = 0.0,
+    yaw: float = 0.0,
+    ts: float = 5.0,
+) -> dict:
+    return {
+        "valid": True,
+        "frame_id": PERCEPTION_MAP_FRAME_ID,
+        "child_frame_id": "odom",
+        "tx": x,
+        "ty": y,
+        "tz": 0.0,
+        "qx": 0.0,
+        "qy": 0.0,
+        "qz": np.sin(yaw / 2.0),
+        "qw": np.cos(yaw / 2.0),
+        "ts": ts,
+    }
 
 
 @dataclass
@@ -70,7 +115,7 @@ class FakeDetector:
     """Detector that returns canned 2D detections."""
 
     def __init__(self, detections=None):
-        self._dets = detections or [FakeDetection2D()]
+        self._dets = [FakeDetection2D()] if detections is None else detections
         self._shutdown_called = False
 
     def detect(self, bgr, classes):
@@ -112,15 +157,25 @@ class FakeSimObserver:
 
 
 class TestPortDeclarations:
-    def test_has_four_inputs(self):
+    def test_has_five_inputs(self):
         mod = PerceptionModule()
-        assert len(mod.ports_in) == 4
-        assert set(mod.ports_in.keys()) == {"color_image", "depth_image", "camera_info", "odometry"}
+        assert len(mod.ports_in) == 5
+        assert set(mod.ports_in.keys()) == {
+            "color_image",
+            "depth_image",
+            "camera_info",
+            "odometry",
+            "map_odom_tf",
+        }
 
-    def test_has_two_outputs(self):
+    def test_has_three_outputs(self):
         mod = PerceptionModule()
-        assert len(mod.ports_out) == 2
-        assert set(mod.ports_out.keys()) == {"scene_graph", "detections_3d"}
+        assert len(mod.ports_out) == 3
+        assert set(mod.ports_out.keys()) == {
+            "scene_graph",
+            "detections_3d",
+            "robot_pose",
+        }
 
     def test_layer_is_3(self):
         mod = PerceptionModule()
@@ -130,6 +185,7 @@ class TestPortDeclarations:
         mod = PerceptionModule()
         assert mod.scene_graph.msg_type is SceneGraph
         assert mod.detections_3d.msg_type is list
+        assert mod.robot_pose.msg_type is PoseStamped
 
     def test_input_types(self):
         mod = PerceptionModule()
@@ -137,6 +193,57 @@ class TestPortDeclarations:
         assert mod.depth_image.msg_type is Image
         assert mod.camera_info.msg_type is CameraIntrinsics
         assert mod.odometry.msg_type is Odometry
+        assert mod.map_odom_tf.msg_type is dict
+
+    def test_localization_wires_map_odom_correction_to_perception(self):
+        from types import SimpleNamespace
+
+        from lingtu.assembly.wires.slam import localization_specs
+
+        specs = localization_specs(
+            SimpleNamespace(
+                slam_module="SlamAdapterModule",
+                camera_src="camera",
+                color_out="color_image",
+            )
+        )
+        assert any(
+            spec.out_module == "SlamAdapterModule"
+            and spec.out_port == "map_odom_tf"
+            and spec.in_module == "PerceptionModule"
+            and spec.in_port == "map_odom_tf"
+            for spec in specs
+        )
+
+    def test_visual_servo_wires_current_map_observation_not_scene_memory(self):
+        from types import SimpleNamespace
+
+        from lingtu.assembly.wires.semantic import (
+            semantic_scene_specs,
+            visual_servo_specs,
+        )
+
+        specs = visual_servo_specs(
+            SimpleNamespace(camera_src="camera", color_out="color_image")
+        )
+        assert any(
+            spec.out_module == "PerceptionModule"
+            and spec.out_port == "detections_3d"
+            and spec.in_module == "VisualServoModule"
+            and spec.in_port == "detections_3d"
+            for spec in specs
+        )
+        assert any(
+            spec.out_module == "PerceptionModule"
+            and spec.out_port == "robot_pose"
+            and spec.in_module == "VisualServoModule"
+            and spec.in_port == "robot_pose"
+            for spec in specs
+        )
+        assert not any(
+            spec.in_module == "VisualServoModule"
+            for spec in semantic_scene_specs()
+        )
 
 
 # -- Setup and lifecycle tests -------------------------------------------------
@@ -144,13 +251,14 @@ class TestPortDeclarations:
 
 class TestSetupLifecycle:
     def test_setup_registers_subscriptions(self):
-        """After setup(), all four In ports should have callbacks."""
+        """After setup(), all five In ports should have callbacks."""
         mod = PerceptionModule()
         mod.setup()
         assert mod.color_image.connected
         assert mod.depth_image.connected
         assert mod.camera_info.connected
         assert mod.odometry.connected
+        assert mod.map_odom_tf.connected
 
     def test_stop_calls_detector_shutdown(self):
         mod = PerceptionModule()
@@ -199,6 +307,27 @@ class TestDataCaching:
         assert mat[1, 3] == pytest.approx(2.0)
         assert mat[2, 3] == pytest.approx(0.35)
 
+    def test_odom_pose_is_composed_with_map_correction(self):
+        mod = PerceptionModule()
+        mod._on_map_odom_tf(_make_map_odom_tf(x=10.0, y=-2.0))
+        mod._on_odometry(_make_odom(1.0, 2.0, 0.35, frame_id="odom"))
+
+        mat = mod._latest_odom_matrix
+        assert mat is not None
+        assert mat[0, 3] == pytest.approx(11.0)
+        assert mat[1, 3] == pytest.approx(0.0)
+        assert mat[2, 3] == pytest.approx(0.35)
+
+    def test_invalid_map_correction_clears_resolved_odom_pose(self):
+        mod = PerceptionModule()
+        mod._on_map_odom_tf(_make_map_odom_tf())
+        mod._on_odometry(_make_odom(frame_id="odom"))
+        assert mod._latest_odom_matrix is not None
+
+        mod._on_map_odom_tf({"valid": False})
+
+        assert mod._latest_odom_matrix is None
+
 
 # -- Pipeline tests (mock detector, no real YOLO/CLIP) -------------------------
 
@@ -207,88 +336,116 @@ class TestPipeline:
     def _setup_module_with_fake_detector(self):
         """Create a PerceptionModule with a fake detector, feed intrinsics+depth."""
         mod = PerceptionModule(depth_scale=0.001, min_depth=0.3, max_depth=6.0)
-        mod.setup()
+        source_ts = 7.0
         mod._detector = FakeDetector()
-        mod.camera_info._deliver(_make_intrinsics())
-        mod.depth_image._deliver(_make_depth(depth_mm=2000))
-        mod.odometry._deliver(_make_odom())
-        return mod
+        mod._on_camera_info(_make_intrinsics())
+        mod._on_depth(_make_depth(depth_mm=2000, ts=source_ts))
+        mod._on_odometry(_make_odom(ts=source_ts))
+        return mod, source_ts
 
     def test_scene_graph_published_on_color_frame(self):
-        mod = self._setup_module_with_fake_detector()
+        mod, source_ts = self._setup_module_with_fake_detector()
         received_sg = []
         mod.scene_graph._add_callback(received_sg.append)
 
-        mod.color_image._deliver(_make_bgr())
+        mod._on_color_frame(_make_bgr(ts=source_ts))
         assert len(received_sg) == 1
         assert isinstance(received_sg[0], SceneGraph)
+        assert len(received_sg[0].objects) >= 1
+        assert received_sg[0].ts == pytest.approx(source_ts)
 
     def test_detections_3d_published(self):
-        mod = self._setup_module_with_fake_detector()
+        mod, source_ts = self._setup_module_with_fake_detector()
         received_dets = []
         mod.detections_3d._add_callback(received_dets.append)
 
-        mod.color_image._deliver(_make_bgr())
+        mod._on_color_frame(_make_bgr(ts=source_ts))
         assert len(received_dets) == 1
         dets = received_dets[0]
         assert isinstance(dets, list)
         assert len(dets) >= 1
         assert isinstance(dets[0], CoreDetection3D)
         assert dets[0].label == "chair"
+        assert dets[0].ts == pytest.approx(source_ts)
+
+    def test_synchronized_map_robot_pose_is_published_before_detections(self):
+        mod, source_ts = self._setup_module_with_fake_detector()
+        events = []
+        mod.robot_pose._add_callback(lambda pose: events.append(("pose", pose)))
+        mod.detections_3d._add_callback(
+            lambda detections: events.append(("detections", detections))
+        )
+
+        mod._on_color_frame(_make_bgr(ts=source_ts))
+
+        assert [event[0] for event in events] == ["pose", "detections"]
+        pose = events[0][1]
+        assert pose.frame_id == "map"
+        assert pose.ts == pytest.approx(source_ts)
+        assert pose.x == pytest.approx(1.0)
+        assert pose.y == pytest.approx(2.0)
 
     def test_skip_frames(self):
         """With skip_frames=2, only every other frame produces output."""
         mod = PerceptionModule(skip_frames=2)
-        mod.setup()
+        source_ts = 9.0
         mod._detector = FakeDetector()
-        mod.camera_info._deliver(_make_intrinsics())
-        mod.depth_image._deliver(_make_depth())
-        mod.odometry._deliver(_make_odom())
+        mod._on_camera_info(_make_intrinsics())
+        mod._on_depth(_make_depth(ts=source_ts))
+        mod._on_odometry(_make_odom(ts=source_ts))
 
         received = []
         mod.detections_3d._add_callback(received.append)
 
-        mod.color_image._deliver(_make_bgr())  # frame 1 -> skipped
+        mod._on_color_frame(_make_bgr(ts=source_ts))  # frame 1 -> skipped
         assert len(received) == 0
-        mod.color_image._deliver(_make_bgr())  # frame 2 -> processed
+        mod._on_color_frame(_make_bgr(ts=source_ts))  # frame 2 -> processed
         assert len(received) == 1
-        mod.color_image._deliver(_make_bgr())  # frame 3 -> skipped
+        mod._on_color_frame(_make_bgr(ts=source_ts))  # frame 3 -> skipped
         assert len(received) == 1
 
     def test_no_output_without_intrinsics(self):
-        """No output if camera_info has not been received."""
+        """Missing camera_info clears stale semantic outputs."""
         mod = PerceptionModule()
-        mod.setup()
         mod._detector = FakeDetector()
-        mod.depth_image._deliver(_make_depth())
-        mod.odometry._deliver(_make_odom())
+        mod._on_depth(_make_depth(ts=6.0))
+        mod._on_odometry(_make_odom(ts=6.0))
 
         received = []
+        received_sg = []
         mod.detections_3d._add_callback(received.append)
-        mod.color_image._deliver(_make_bgr())
-        assert len(received) == 0
+        mod.scene_graph._add_callback(received_sg.append)
+        mod._on_color_frame(_make_bgr(ts=6.0))
+        assert received == [[]]
+        assert len(received_sg) == 1
+        assert received_sg[0].objects == []
+        assert mod.health()["last_drop_reason"] == "missing_rgbd_calibration"
 
     def test_no_output_without_depth(self):
-        """No output if depth has not been received."""
+        """Missing depth clears stale semantic outputs."""
         mod = PerceptionModule()
-        mod.setup()
         mod._detector = FakeDetector()
-        mod.camera_info._deliver(_make_intrinsics())
-        mod.odometry._deliver(_make_odom())
+        mod._on_camera_info(_make_intrinsics())
+        mod._on_odometry(_make_odom(ts=6.0))
 
         received = []
+        received_sg = []
         mod.detections_3d._add_callback(received.append)
-        mod.color_image._deliver(_make_bgr())
-        assert len(received) == 0
+        mod.scene_graph._add_callback(received_sg.append)
+        mod._on_color_frame(_make_bgr(ts=6.0))
+        assert received == [[]]
+        assert len(received_sg) == 1
+        assert received_sg[0].objects == []
+        assert mod.health()["last_drop_reason"] == "missing_rgbd_calibration"
 
     def test_sim_scene_backend_bypasses_blur_filter(self):
         mod = PerceptionModule(detector_type="sim_scene")
-        mod.setup()
         mod._tracker = None
         mod._sim_scene_observer = FakeSimObserver()
-        mod.camera_info._deliver(_make_intrinsics())
-        mod.depth_image._deliver(_make_depth(depth_mm=10000))
-        mod.odometry._deliver(_make_odom(2.0, 3.0, 0.5))
+        source_ts = 11.0
+        mod._on_camera_info(_make_intrinsics())
+        mod._on_depth(_make_depth(depth_mm=10000, ts=source_ts))
+        mod._on_odometry(_make_odom(2.0, 3.0, 0.5, ts=source_ts))
 
         received = []
         mod.detections_3d._add_callback(received.append)
@@ -296,23 +453,245 @@ class TestPipeline:
         blurry = Image(
             data=np.full((480, 640, 3), 127, dtype=np.uint8),
             format=ImageFormat.BGR,
+            ts=source_ts,
+            frame_id="camera",
         )
-        mod.color_image._deliver(blurry)
+        mod._on_color_frame(blurry)
 
         assert len(received) == 1
         assert received[0][0].label == "stairs"
+        assert mod.health()["detector_ready"] is True
 
     def test_fallback_projection_position(self):
         """Fallback 3D projection produces reasonable world-frame positions."""
-        mod = self._setup_module_with_fake_detector()
+        mod, source_ts = self._setup_module_with_fake_detector()
         received_dets = []
         mod.detections_3d._add_callback(received_dets.append)
-        mod.color_image._deliver(_make_bgr())
+        mod._on_color_frame(_make_bgr(ts=source_ts))
 
         det = received_dets[0][0]
         # Position should be non-zero with 2m depth
         pos = det.position
         assert pos.z != 0.0 or pos.x != 0.0 or pos.y != 0.0
+
+    def test_missing_odometry_publishes_empty_scene_graph_without_3d_detections(self):
+        mod = PerceptionModule(depth_scale=0.001, min_depth=0.3, max_depth=6.0)
+        mod._detector = FakeDetector()
+        mod._tracker = object()
+        mod._tracking_service.tracker = mod._tracker
+        mod._tracking_service.update = MagicMock(return_value=[])
+        mod._on_camera_info(_make_intrinsics())
+        mod._on_depth(_make_depth(depth_mm=2000))
+
+        received_dets = []
+        received_sg = []
+        mod.detections_3d._add_callback(received_dets.append)
+        mod.scene_graph._add_callback(received_sg.append)
+
+        mod._on_color_frame(_make_bgr(ts=7.0))
+
+        assert received_dets == [[]]
+        assert len(received_sg) == 1
+        assert received_sg[0].objects == []
+        assert received_sg[0].frame_id == PERCEPTION_MAP_FRAME_ID
+        assert received_sg[0].ts == pytest.approx(7.0)
+        mod._tracking_service.update.assert_not_called()
+
+    def test_stale_depth_publishes_empty_scene_graph(self):
+        mod = PerceptionModule(
+            depth_scale=0.001,
+            min_depth=0.3,
+            max_depth=6.0,
+            max_rgbd_skew_s=0.1,
+        )
+        mod._detector = FakeDetector()
+        mod._on_camera_info(_make_intrinsics())
+        mod._on_depth(_make_depth(depth_mm=2000, ts=10.0))
+        mod._on_odometry(_make_odom(ts=10.25))
+
+        received_dets = []
+        received_sg = []
+        mod.detections_3d._add_callback(received_dets.append)
+        mod.scene_graph._add_callback(received_sg.append)
+
+        mod._on_color_frame(_make_bgr(ts=10.25))
+
+        assert received_dets == [[]]
+        assert len(received_sg) == 1
+        assert received_sg[0].objects == []
+        assert received_sg[0].ts == pytest.approx(10.25)
+
+    def test_depth_frame_mismatch_publishes_empty_scene_graph(self):
+        mod = PerceptionModule(depth_scale=0.001, min_depth=0.3, max_depth=6.0)
+        mod._detector = FakeDetector()
+        mod._on_camera_info(_make_intrinsics())
+        mod._on_depth(_make_depth(depth_mm=2000, ts=5.0, frame_id="depth_camera"))
+        mod._on_odometry(_make_odom(ts=5.0))
+
+        received_dets = []
+        received_sg = []
+        mod.detections_3d._add_callback(received_dets.append)
+        mod.scene_graph._add_callback(received_sg.append)
+
+        mod._on_color_frame(_make_bgr(ts=5.0, frame_id="rgb_camera"))
+
+        assert received_dets == [[]]
+        assert len(received_sg) == 1
+        assert received_sg[0].objects == []
+        assert received_sg[0].ts == pytest.approx(5.0)
+
+    def test_odom_frame_without_map_correction_publishes_empty_map_scene_graph(self):
+        mod = PerceptionModule(depth_scale=0.001, min_depth=0.3, max_depth=6.0)
+        mod._detector = FakeDetector()
+        mod._on_camera_info(_make_intrinsics())
+        mod._on_depth(_make_depth(depth_mm=2000, ts=5.0))
+        mod._on_odometry(_make_odom(ts=5.0, frame_id="odom"))
+
+        received_dets = []
+        received_sg = []
+        mod.detections_3d._add_callback(received_dets.append)
+        mod.scene_graph._add_callback(received_sg.append)
+
+        mod._on_color_frame(_make_bgr(ts=5.0))
+
+        assert received_dets == [[]]
+        assert len(received_sg) == 1
+        assert received_sg[0].objects == []
+        assert received_sg[0].frame_id == PERCEPTION_MAP_FRAME_ID
+        assert received_sg[0].ts == pytest.approx(5.0)
+        assert mod.health()["last_drop_reason"] == "missing_map_odom_transform"
+
+    def test_odom_frame_with_map_correction_publishes_map_scene_graph(self):
+        mod = PerceptionModule(depth_scale=0.001, min_depth=0.3, max_depth=6.0)
+        mod._detector = FakeDetector()
+        mod._on_camera_info(_make_intrinsics())
+        mod._on_depth(_make_depth(depth_mm=2000, ts=5.0))
+        mod._on_map_odom_tf(_make_map_odom_tf(x=3.0))
+        mod._on_odometry(_make_odom(ts=5.0, frame_id="odom"))
+
+        received_sg = []
+        mod.scene_graph._add_callback(received_sg.append)
+        mod._on_color_frame(_make_bgr(ts=5.0))
+
+        assert len(received_sg) == 1
+        assert len(received_sg[0].objects) == 1
+        assert received_sg[0].frame_id == PERCEPTION_MAP_FRAME_ID
+
+    def test_stale_map_odom_correction_publishes_empty_scene_graph(self):
+        mod = PerceptionModule(
+            depth_scale=0.001,
+            min_depth=0.3,
+            max_depth=6.0,
+            max_map_odom_age_s=0.2,
+        )
+        mod._detector = FakeDetector()
+        mod._on_camera_info(_make_intrinsics())
+        mod._on_depth(_make_depth(depth_mm=2000, ts=5.0))
+        mod._on_map_odom_tf(_make_map_odom_tf(ts=4.0))
+        mod._on_odometry(_make_odom(ts=5.0, frame_id="odom"))
+
+        received_sg = []
+        mod.scene_graph._add_callback(received_sg.append)
+        mod._on_color_frame(_make_bgr(ts=5.0))
+
+        assert len(received_sg) == 1
+        assert received_sg[0].objects == []
+        assert mod.health()["last_drop_reason"] == "map_odom_time_skew"
+
+    def test_frame_processing_uses_one_atomic_sample_snapshot(self):
+        mod = PerceptionModule(depth_scale=0.001, min_depth=0.3, max_depth=6.0)
+        mod._detector = FakeDetector()
+        mod._on_camera_info(_make_intrinsics())
+        original_depth = _make_depth(depth_mm=2000, ts=5.0)
+        mod._on_depth(original_depth)
+        mod._on_odometry(_make_odom(1.0, 2.0, 0.35, ts=5.0))
+        original_pose = mod._latest_odom_matrix.copy()
+        original_sync = mod._samples_are_synchronized
+
+        def update_inputs_after_snapshot(*args, **kwargs):
+            mod._on_depth(_make_depth(depth_mm=5000, ts=5.0))
+            mod._on_odometry(_make_odom(99.0, 98.0, 0.35, ts=5.0))
+            return original_sync(*args, **kwargs)
+
+        mod._samples_are_synchronized = MagicMock(side_effect=update_inputs_after_snapshot)
+        mod._process_frame = MagicMock()
+        mod._on_color_frame(_make_bgr(ts=5.0))
+
+        mod._process_frame.assert_called_once()
+        args = mod._process_frame.call_args.args
+        assert args[1] is original_depth.data
+        np.testing.assert_allclose(args[3], original_pose @ mod._camera_body_transform())
+
+    def test_empty_detector_result_advances_tracker_negative_observation(self):
+        mod = PerceptionModule(depth_scale=0.001, min_depth=0.3, max_depth=6.0)
+        mod._detector = FakeDetector(detections=[])
+        mod._tracker = object()
+        mod._tracking_service.tracker = mod._tracker
+        mod._tracking_service.update = MagicMock(return_value=[])
+        mod._on_camera_info(_make_intrinsics())
+        mod._on_depth(_make_depth(depth_mm=2000, ts=8.0))
+        mod._on_odometry(_make_odom(ts=8.0))
+
+        received_sg = []
+        received_dets = []
+        mod.detections_3d._add_callback(received_dets.append)
+        mod.scene_graph._add_callback(received_sg.append)
+
+        mod._on_color_frame(_make_bgr(ts=8.0))
+
+        mod._tracking_service.update.assert_called_once()
+        args, kwargs = mod._tracking_service.update.call_args
+        assert args == ([],)
+        assert kwargs["camera_pos"].shape == (3,)
+        assert kwargs["camera_forward"].shape == (3,)
+        assert kwargs["intrinsics_fx"] == pytest.approx(600.0)
+        assert mod._latest_core_detections == []
+        assert received_dets == [[]]
+        assert len(received_sg) == 1
+        assert received_sg[0].objects == []
+        assert received_sg[0].ts == pytest.approx(8.0)
+
+    def test_processing_exception_clears_scene_graph_and_detections(self):
+        mod = PerceptionModule(depth_scale=0.001, min_depth=0.3, max_depth=6.0)
+        mod._detector = FakeDetector()
+        mod._tracker = object()
+        mod._tracking_service.tracker = mod._tracker
+        mod._tracking_service.update = MagicMock(return_value=[])
+        mod._process_frame = MagicMock(side_effect=RuntimeError("boom"))
+        mod._on_camera_info(_make_intrinsics())
+        mod._on_depth(_make_depth(depth_mm=2000, ts=13.0))
+        mod._on_odometry(_make_odom(ts=13.0))
+
+        received_dets = []
+        received_sg = []
+        mod.detections_3d._add_callback(received_dets.append)
+        mod.scene_graph._add_callback(received_sg.append)
+
+        mod._on_color_frame(_make_bgr(ts=13.0))
+
+        assert received_dets == [[]]
+        assert len(received_sg) == 1
+        assert received_sg[0].objects == []
+        assert received_sg[0].ts == pytest.approx(13.0)
+        assert mod.health()["last_drop_reason"] == "frame_processing_error"
+        mod._tracking_service.update.assert_not_called()
+
+    def test_valid_scene_graph_uses_rgb_source_timestamp(self):
+        mod = PerceptionModule(depth_scale=0.001, min_depth=0.3, max_depth=6.0)
+        mod._detector = FakeDetector()
+        mod._tracker = None
+        mod._on_camera_info(_make_intrinsics())
+        mod._on_depth(_make_depth(depth_mm=2000, ts=12.0))
+        mod._on_odometry(_make_odom(ts=12.0))
+
+        received_sg = []
+        mod.scene_graph._add_callback(received_sg.append)
+
+        mod._on_color_frame(_make_bgr(ts=12.0))
+
+        assert len(received_sg) == 1
+        assert len(received_sg[0].objects) == 1
+        assert received_sg[0].ts == pytest.approx(12.0)
 
 
 # -- Graceful degradation tests ------------------------------------------------
@@ -322,16 +701,15 @@ class TestGracefulDegradation:
     def test_no_detector_no_crash(self):
         """Module works even with no detector -- just produces no output."""
         mod = PerceptionModule()
-        mod.setup()
         # _detector remains None
-        mod.camera_info._deliver(_make_intrinsics())
-        mod.depth_image._deliver(_make_depth())
-        mod.odometry._deliver(_make_odom())
+        mod._on_camera_info(_make_intrinsics())
+        mod._on_depth(_make_depth(ts=14.0))
+        mod._on_odometry(_make_odom(ts=14.0))
 
         received = []
         mod.detections_3d._add_callback(received.append)
-        mod.color_image._deliver(_make_bgr())
-        assert len(received) == 0  # No crash, no output
+        mod._on_color_frame(_make_bgr(ts=14.0))
+        assert received == [[]]  # No crash; stale detections are cleared.
 
     def test_no_tracker_still_publishes_detections(self):
         """Without tracker, detections are still published."""

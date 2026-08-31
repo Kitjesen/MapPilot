@@ -9,9 +9,10 @@ from runtime.plugin_seed import seed_registered_plugins
 from runtime.registry import get
 
 _SIM_DRIVER_KEYS = frozenset({"sim", "sim_mujoco", "mujoco_inproc", "sim_endpoint"})
+_RETIRED_FIELD_DRIVER_KEYS = frozenset(
+    {"thunder", "thunder_remote", "grpc_brainstem"}
+)
 _DRIVER_KEY_ALIASES = {
-    "thunder_remote": "thunder",
-    "grpc_brainstem": "thunder",
     "sim": "sim_mujoco",
     "mujoco_inproc": "sim_mujoco",
 
@@ -20,15 +21,6 @@ _DRIVER_KEY_ALIASES = {
 _DRIVER_FALLBACK_MODULES: dict[str, tuple[str, ...]] = {
     "auto": ("drivers.sim.stub",),
     "stub": ("drivers.sim.stub",),
-    "thunder": (
-        "drivers.real.thunder.han_dog_module",
-    ),
-    "thunder_remote": (
-        "drivers.real.thunder.han_dog_module",
-    ),
-    "grpc_brainstem": (
-        "drivers.real.thunder.han_dog_module",
-    ),
     "sim": ("drivers.sim.mujoco.driver",),
     "sim_mujoco": ("drivers.sim.mujoco.driver",),
     "mujoco_inproc": ("drivers.sim.mujoco.driver",),
@@ -76,6 +68,16 @@ def ensure_driver_runtime_registered(category: str, key: str) -> str:
     seeded next. Direct module fallback is reserved for local compatibility
     modules that may not be present in an installed catalog.
     """
+
+    if (
+        category == "driver" and key in _RETIRED_FIELD_DRIVER_KEYS
+    ) or (
+        category == "driver_protocol" and key == "grpc_brainstem"
+    ):
+        raise RuntimeError(
+            f"Python driver {key!r} was removed; start a real Product through "
+            "ProductControl so the native lingtu-driver owns motion"
+        )
 
     registered = _registered_key(category, key)
     if registered is not None:

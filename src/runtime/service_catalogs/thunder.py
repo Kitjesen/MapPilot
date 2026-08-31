@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from message.dds import dds_topic_name
+from message.topics import dds_topic_name
 from runtime.runtime_interface import TOPICS
 
 
@@ -20,8 +20,8 @@ class ThunderServiceSpec:
     role: str
     units: tuple[str, ...]
     group: str
+    retired_units: tuple[str, ...] = ()
     start_units: tuple[str, ...] = ()
-    installer: str = ""
     product_default: bool = False
     install_enable_default: bool = False
     ros2_compat: bool = False
@@ -42,9 +42,9 @@ class ThunderServiceSpec:
         return {
             "role": self.role,
             "group": self.group,
+            "retired_units": list(self.retired_units),
             "product_default": self.product_default,
             "install_enable_default": self.install_enable_default,
-            "installer": self.installer,
             "ros2_compat": self.ros2_compat,
             "experimental": self.experimental,
             "optional": self.optional,
@@ -62,22 +62,21 @@ class ThunderServiceSpec:
 
 
 def _dds(*topics: str) -> tuple[str, ...]:
-    return tuple(dds_topic_name(topic, typed=True) for topic in topics)
+    return tuple(dds_topic_name(topic) for topic in topics)
 
 
 THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
     ThunderServiceSpec(
         name="lidar",
         role="sensor_input",
-        units=(
+        units=("lt-lidar.service",),
+        start_units=("lt-lidar.service",),
+        group="native_dds",
+        retired_units=(
             "lingtu-livox-dds.service",
             "robot-lidar.service",
             "lidar.service",
-            "lidar",
         ),
-        start_units=("lingtu-livox-dds.service",),
-        installer="install_livox_dds_service.sh",
-        group="native_dds",
         product_default=True,
         checks=("systemd", "native_binary", "dds"),
         topics=(TOPICS.raw_lidar_points, TOPICS.raw_imu),
@@ -94,14 +93,10 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
     ThunderServiceSpec(
         name="driver",
         role="motion_output",
-        units=(
-            "lingtu-driver.service",
-            "driver.service",
-            "driver",
-        ),
-        start_units=("lingtu-driver.service",),
-        installer="install_driver_service.sh",
+        units=("lt-driver.service",),
+        start_units=("lt-driver.service",),
         group="native_dds",
+        retired_units=("lingtu-driver.service",),
         product_default=True,
         install_enable_default=True,
         checks=("systemd", "native_binary", "status_file"),
@@ -116,20 +111,15 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
                 "/opt/lingtu/current/build/driver/lingtu_driver",
             ),
         ),
-        description="Native DDS to Brainstem motion driver.",
+        description="Native DDS motion driver using the RobotConfig-selected backend.",
     ),
     ThunderServiceSpec(
         name="camera",
         role="sensor_input",
-        units=(
-            "lingtu-camera-dds.service",
-            "robot-camera.service",
-            "camera.service",
-            "camera",
-        ),
-        start_units=("lingtu-camera-dds.service",),
-        installer="install_camera_dds_service.sh",
+        units=("lt-camera.service",),
+        start_units=("lt-camera.service",),
         group="hardware",
+        retired_units=("lingtu-camera-dds.service",),
         optional=True,
         checks=("systemd", "native_binary", "dds", "status_file"),
         topics=(TOPICS.camera_info,),
@@ -165,15 +155,10 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
     ThunderServiceSpec(
         name="gnss",
         role="sensor_input",
-        units=(
-            "lingtu-gnss-dds.service",
-            "robot-gnss.service",
-            "gnss.service",
-            "gnss",
-        ),
-        start_units=("lingtu-gnss-dds.service",),
-        installer="install_gnss_dds_service.sh",
+        units=("lt-gnss.service",),
+        start_units=("lt-gnss.service",),
         group="hardware",
+        retired_units=("lingtu-gnss-dds.service",),
         optional=True,
         checks=("systemd", "native_binary", "dds", "status_file"),
         topics=(TOPICS.gnss_fix, TOPICS.gnss_status),
@@ -191,10 +176,14 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
     ThunderServiceSpec(
         name="nav",
         role="navigation_runtime",
-        units=("lingtu-nav-dds.service", "nav-dds.service", "nav.service", "nav"),
-        start_units=("lingtu-nav-dds.service",),
-        installer="install_nav_dds_service.sh",
+        units=("lt-nav.service",),
+        start_units=("lt-nav.service",),
         group="native_dds",
+        retired_units=(
+            "lingtu-nav-dds.service",
+            "nav-dds.service",
+            "nav.service",
+        ),
         product_default=True,
         checks=("systemd", "native_binary", "status_file"),
         files=("/dev/shm/lingtu/nav_endpoint_status.json",),
@@ -208,36 +197,16 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
         description="Native DDS navigation runtime.",
     ),
     ThunderServiceSpec(
-        name="nav_dds",
-        role="navigation_runtime",
-        units=("lingtu-nav-dds.service", "nav-dds.service", "nav_dds"),
-        start_units=("lingtu-nav-dds.service",),
-        installer="install_nav_dds_service.sh",
-        group="native_dds",
-        catalog_alias=True,
-        checks=("systemd", "native_binary", "status_file"),
-        files=("/dev/shm/lingtu/nav_endpoint_status.json",),
-        binaries=(
-            (
-                "nav_dds",
-                "LINGTU_NAV_DDS_BIN",
-                "/opt/lingtu/current/build/nav_endpoint/navd",
-            ),
-        ),
-        description="Compatibility alias for the short nav service.",
-    ),
-    ThunderServiceSpec(
         name="traversability",
         role="terrain_runtime",
-        units=(
+        units=("lt-terrain.service",),
+        start_units=("lt-terrain.service",),
+        group="native_dds",
+        retired_units=(
             "lingtu-traversability-dds.service",
             "traversability-dds.service",
             "traversability.service",
-            "traversability",
         ),
-        start_units=("lingtu-traversability-dds.service",),
-        installer="install_traversability_dds_service.sh",
-        group="native_dds",
         product_default=True,
         install_enable_default=False,
         checks=("systemd", "native_binary", "dds", "status_file"),
@@ -245,13 +214,11 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
             TOPICS.traversability,
             TOPICS.terrain_map,
             TOPICS.terrain_map_ext,
-            TOPICS.exploration_execution_snapshot,
         ),
         dds_topics=_dds(
             TOPICS.traversability,
             TOPICS.terrain_map,
             TOPICS.terrain_map_ext,
-            TOPICS.exploration_execution_snapshot,
         ),
         files=("/dev/shm/lingtu/traversability_status.json",),
         binaries=(
@@ -266,15 +233,14 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
     ThunderServiceSpec(
         name="explore",
         role="exploration_runtime",
-        units=(
+        units=("lt-explore.service",),
+        start_units=("lt-explore.service",),
+        group="native_dds",
+        retired_units=(
             "lingtu-explore-dds.service",
             "explore-dds.service",
             "explore.service",
-            "explore",
         ),
-        start_units=("lingtu-explore-dds.service",),
-        installer="install_explore_dds_service.sh",
-        group="native_dds",
         optional=True,
         checks=("systemd", "native_binary", "dds", "status_file"),
         topics=(
@@ -309,10 +275,10 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
     ThunderServiceSpec(
         name="gateway",
         role="interface_runtime",
-        units=("lingtu.service", "gateway.service", "gateway"),
-        start_units=("lingtu.service",),
-        installer="install_lingtu_service.sh",
+        units=("lt-host.service",),
+        start_units=("lt-host.service",),
         group="host",
+        retired_units=("lingtu.service",),
         product_default=True,
         checks=("systemd", "http"),
         description="LingTu Python runtime and Gateway process.",
@@ -320,37 +286,27 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
     ThunderServiceSpec(
         name="lingtu",
         role="orchestrator_runtime",
-        units=("lingtu.service", "lingtu"),
-        start_units=("lingtu.service",),
-        installer="install_lingtu_service.sh",
+        units=("lt-host.service",),
+        start_units=("lt-host.service",),
         group="host",
+        retired_units=("lingtu.service",),
         product_default=True,
         checks=("systemd", "http"),
         description="LingTu Python runtime service.",
     ),
     ThunderServiceSpec(
-        name="host",
-        role="application_host",
-        units=("lingtu.service",),
-        start_units=("lingtu.service",),
-        group="host",
-        catalog_alias=True,
-        checks=("systemd", "http"),
-        description="Product process alias for the Python application Host.",
-    ),
-    ThunderServiceSpec(
         name="slam",
         role="localization_runtime",
-        units=(
+        units=("lt-slam.service",),
+        start_units=("lt-slam.service",),
+        group="native_dds",
+        retired_units=(
             "lingtu-slam-dds.service",
+            "robot-localizer.service",
             "robot-fastlio2.service",
             "localization.service",
             "slam.service",
-            "slam",
         ),
-        start_units=("lingtu-slam-dds.service",),
-        installer="install_slam_dds_service.sh",
-        group="native_dds",
         product_default=True,
         checks=("systemd", "native_binary", "dds", "status_file"),
         topics=(
@@ -376,16 +332,17 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
     ThunderServiceSpec(
         name="maps",
         role="maps_runtime",
-        units=("mapd.service", "maps.service", "mapd", "maps"),
-        start_units=("mapd.service",),
-        installer="install_mapd_service.sh",
+        units=("lt-maps.service",),
+        start_units=("lt-maps.service",),
         group="native_dds",
+        retired_units=("mapd.service",),
         product_default=True,
         checks=("systemd", "native_binary", "dds", "status_file"),
         topics=(
             TOPICS.maps_state,
             TOPICS.maps_live_cloud,
             TOPICS.maps_voxel_cloud,
+            TOPICS.maps_local_collision,
             TOPICS.maps_accumulated_cloud,
             TOPICS.maps_occupancy,
             TOPICS.maps_elevation,
@@ -396,6 +353,7 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
             TOPICS.maps_state,
             TOPICS.maps_live_cloud,
             TOPICS.maps_voxel_cloud,
+            TOPICS.maps_local_collision,
             TOPICS.maps_accumulated_cloud,
             TOPICS.maps_occupancy,
             TOPICS.maps_elevation,
@@ -413,73 +371,6 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
         ),
         description="Native live maps, bounded scene, and map service runtime.",
     ),
-    ThunderServiceSpec(
-        name="slam_pgo",
-        role="map_optimization",
-        units=("robot-pgo.service", "slam_pgo.service", "slam_pgo"),
-        group="legacy_ros2_compat",
-        ros2_compat=True,
-        description="Legacy ROS 2 pose-graph optimizer. Not part of native live localization.",
-    ),
-    ThunderServiceSpec(
-        name="localizer",
-        role="saved_map_relocalization",
-        units=("robot-localizer.service", "localizer.service", "localizer"),
-        start_units=("lingtu-slam-dds.service",),
-        group="legacy_ros2_compat",
-        ros2_compat=True,
-        description="Compatibility saved-map localizer entry.",
-    ),
-    ThunderServiceSpec(
-        name="legacy_lidar",
-        role="sensor_input",
-        units=("robot-lidar.service", "lidar.service", "lidar"),
-        group="legacy_ros2_compat",
-        ros2_compat=True,
-        description="Explicit ROS 2 compatibility LiDAR owner.",
-    ),
-    ThunderServiceSpec(
-        name="legacy_slam",
-        role="localization_runtime",
-        units=(
-            "robot-fastlio2.service",
-            "localization.service",
-            "slam.service",
-            "slam",
-        ),
-        group="legacy_ros2_compat",
-        ros2_compat=True,
-        description="Explicit ROS 2 compatibility Fast-LIO owner.",
-    ),
-    ThunderServiceSpec(
-        name="legacy_localizer",
-        role="saved_map_relocalization",
-        units=("robot-localizer.service", "localizer.service", "localizer"),
-        group="legacy_ros2_compat",
-        ros2_compat=True,
-        description="Explicit ROS 2 compatibility localizer owner.",
-    ),
-    ThunderServiceSpec(
-        name="genz_icp",
-        role="experimental_localization",
-        units=(
-            "robot-genz-icp.service",
-            "genz_icp.service",
-            "genz-icp.service",
-            "genz_icp",
-        ),
-        group="experimental",
-        experimental=True,
-        description="Experimental GenZ ICP odometry/localization service.",
-    ),
-    ThunderServiceSpec(
-        name="hba",
-        role="map_optimization",
-        units=("robot-hba.service", "hba.service", "hba"),
-        group="experimental",
-        experimental=True,
-        description="Experimental HBA offline map optimizer. Not part of native live localization.",
-    ),
 )
 
 THUNDER_GROUP_ORDER: dict[str, tuple[str, ...]] = {
@@ -493,8 +384,6 @@ THUNDER_GROUP_ORDER: dict[str, tuple[str, ...]] = {
         "explore",
     ),
     "host": ("gateway", "lingtu"),
-    "experimental": ("genz_icp", "hba"),
-    "legacy_ros2_compat": ("slam_pgo", "localizer"),
     "hardware": ("camera", "gnss", "brainstem"),
 }
 
@@ -506,6 +395,7 @@ THUNDER_RUNTIME_INSTALL_ORDER: tuple[str, ...] = (
     "traversability",
     "nav",
     "driver",
+    "explore",
     "lingtu",
 )
 
@@ -541,24 +431,8 @@ THUNDER_INSTALL_MODE_ALIASES: dict[str, str] = {
 THUNDER_RUNTIME_MODE_ALIASES: frozenset[str] = frozenset({"field", "nav", "thunder-nav", "field-cpp", "dds-cpp"})
 
 
-def thunder_service_specs() -> tuple[ThunderServiceSpec, ...]:
-    return THUNDER_SERVICE_SPECS
-
-
-def thunder_service_aliases() -> dict[str, tuple[str, ...]]:
-    return {spec.name: spec.units for spec in THUNDER_SERVICE_SPECS}
-
-
-def thunder_service_start_aliases() -> dict[str, tuple[str, ...]]:
-    return {spec.name: spec.start_units for spec in THUNDER_SERVICE_SPECS if spec.start_units}
-
-
 def thunder_service_metadata() -> dict[str, dict[str, Any]]:
     return {spec.name: spec.metadata() for spec in THUNDER_SERVICE_SPECS}
-
-
-def thunder_service_installers() -> dict[str, str]:
-    return {spec.name: spec.installer for spec in THUNDER_SERVICE_SPECS if spec.installer}
 
 
 def thunder_service_spec(name: str) -> ThunderServiceSpec | None:
@@ -571,10 +445,9 @@ def thunder_service_spec(name: str) -> ThunderServiceSpec | None:
 
 def thunder_service_install_unit(name: str) -> str:
     spec = thunder_service_spec(name)
-    if spec is None:
+    if spec is None or not spec.start_units:
         return ""
-    units = spec.start_units or spec.units
-    return units[0] if units else ""
+    return spec.start_units[0]
 
 
 def thunder_service_install_enable_default(name: str) -> str:
@@ -584,16 +457,6 @@ def thunder_service_install_enable_default(name: str) -> str:
     return "1" if spec.install_enable_default else "0"
 
 
-def thunder_install_plan(mode: str = "field-cpp") -> tuple[str, ...]:
-    mode = (mode or "field-cpp").strip()
-    installers = thunder_service_installers()
-    if mode in THUNDER_RUNTIME_MODE_ALIASES:
-        return tuple(installers[name] for name in THUNDER_RUNTIME_INSTALL_ORDER)
-    service = THUNDER_INSTALL_MODE_ALIASES.get(mode, mode)
-    installer = installers.get(service)
-    return (installer,) if installer else ()
-
-
 def thunder_install_services(mode: str = "field-cpp") -> tuple[str, ...]:
     """Logical service names to install for a product install mode."""
     mode = (mode or "field-cpp").strip()
@@ -601,7 +464,7 @@ def thunder_install_services(mode: str = "field-cpp") -> tuple[str, ...]:
         return THUNDER_RUNTIME_INSTALL_ORDER
     service = THUNDER_INSTALL_MODE_ALIASES.get(mode, mode)
     spec = thunder_service_spec(service)
-    if spec is None or not spec.installer:
+    if spec is None or not spec.start_units or spec.catalog_alias:
         return ()
     return (spec.name,)
 
@@ -659,26 +522,10 @@ def thunder_runtime_dds_topics() -> dict[str, dict[str, tuple[str, ...]]]:
     return topics
 
 
-def thunder_runtime_shm_channels() -> dict[str, dict[str, tuple[str, ...]]]:
-    """Shared-memory channels expected from field product services."""
-    channels: dict[str, dict[str, tuple[str, ...]]] = {}
-    for name in thunder_runtime_services():
-        spec = thunder_service_spec(name)
-        if spec is None or not spec.shm_channels:
-            continue
-        channels[name] = {
-            "topics": spec.shm_topics,
-            "shm_channels": spec.shm_channels,
-        }
-    return channels
-
-
 def thunder_service_groups() -> dict[str, list[str]]:
     collected: dict[str, list[str]] = {
         "native_dds": [],
         "host": [],
-        "experimental": [],
-        "legacy_ros2_compat": [],
         "hardware": [],
     }
     for spec in THUNDER_SERVICE_SPECS:
@@ -701,27 +548,12 @@ def thunder_slam_status_services() -> tuple[str, ...]:
         "traversability",
         "nav",
         "explore",
-        "slam_pgo",
-        "localizer",
-        "genz_icp",
-        "hba",
     )
 
 
-def thunder_optimization_services() -> tuple[str, ...]:
-    return tuple(spec.name for spec in THUNDER_SERVICE_SPECS if spec.role == "map_optimization")
-
-
 def _main(argv: list[str]) -> int:
-    command = argv[1] if len(argv) > 1 else "install-plan"
+    command = argv[1] if len(argv) > 1 else "install-services"
     mode = argv[2] if len(argv) > 2 else "field-cpp"
-    if command == "install-plan":
-        plan = thunder_install_plan(mode)
-        if not plan:
-            return 2
-        for installer in plan:
-            print(installer)
-        return 0
     if command == "install-services":
         services = thunder_install_services(mode)
         if not services:
@@ -741,17 +573,18 @@ def _main(argv: list[str]) -> int:
             return 2
         print(unit)
         return 0
-    if command == "installer":
-        spec = thunder_service_spec(mode)
-        if spec is None or not spec.installer:
-            return 2
-        print(spec.installer)
-        return 0
     if command == "install-enable-default":
         default = thunder_service_install_enable_default(mode)
         if default == "":
             return 2
         print(default)
+        return 0
+    if command == "retired-units":
+        spec = thunder_service_spec(mode)
+        if spec is None:
+            return 2
+        for unit in spec.retired_units:
+            print(unit)
         return 0
     if command == "readiness-services":
         for service in thunder_runtime_services():
@@ -772,10 +605,6 @@ def _main(argv: list[str]) -> int:
     if command == "readiness-dds-topics":
         for name, contract in thunder_runtime_dds_topics().items():
             print(f"{name}={','.join(contract['dds_topics'])}")
-        return 0
-    if command == "readiness-shm-channels":
-        for name, contract in thunder_runtime_shm_channels().items():
-            print(f"{name}={','.join(contract['shm_channels'])}")
         return 0
     return 2
 

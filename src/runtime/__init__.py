@@ -1,12 +1,12 @@
 """lingtu.core — lazily loaded Module orchestration framework facade.
 
 Core components:
-- transport — Pluggable transport layer (Transport, LocalTransport, SHM, DDS, Dual)
+- transport — Process-local Module transport (Transport, LocalTransport)
 - msgs      — Unified message types (Vector3, Odometry, SceneGraph, ...)
 - stream    — Typed data-flow ports (Out[T], In[T]) and transport abstraction
 - module    — Module base class with automatic port scanning
 - blueprint — Declarative orchestration blueprint (Blueprint, autoconnect, SystemHandle)
-- config    — Unified configuration loader (config/robot_config.yaml)
+- config    — Typed RobotConfig loader
 - clock     — Switchable real-time / simulation clock
 Importing a contract submodule such as :mod:`runtime.graph.processes` must not
 load Blueprint or construct the Module framework.  Public facade symbols stay
@@ -36,14 +36,8 @@ __all__ = [
     "Module",
     "NoTransformError",
     "StaticTransformBroadcaster",
-    # coordinator (imported lazily — requires WorkerManager)
-    "ModuleCoordinator",
     # stream
     "Out",
-    # rpc / remote
-    "RPCClient",
-    "RemoteIn",
-    "RemoteOut",
     # resource monitor (imported lazily)
     "ResourceMonitor",
     # config
@@ -57,16 +51,10 @@ __all__ = [
     "TransformBroadcaster",
     "TransformListener",
     "UnknownFrameError",
-    "WorkerSystemHandle",
     "autoconnect",
     "clock",
     "get_config",
     "load_config",
-    "render_dot",
-    "render_png",
-    "render_svg",
-    # introspection (imported lazily)
-    "render_text",
     "reset_config",
     "rpc",
     "skill",
@@ -76,7 +64,6 @@ __all__ = [
 _LAZY_EXPORTS = {
     "Blueprint": (".blueprint", "Blueprint"),
     "SystemHandle": (".blueprint", "SystemHandle"),
-    "WorkerSystemHandle": (".blueprint", "WorkerSystemHandle"),
     "autoconnect": (".blueprint", "autoconnect"),
     "Clock": (".clock", "Clock"),
     "clock": (".clock", "clock"),
@@ -101,21 +88,12 @@ _LAZY_EXPORTS = {
     "SkillInfo": (".module", "SkillInfo"),
     "rpc": (".module", "rpc"),
     "skill": (".module", "skill"),
-    "RemoteIn": (".remote_ports", "RemoteIn"),
-    "RemoteOut": (".remote_ports", "RemoteOut"),
-    "RPCClient": (".rpc_client", "RPCClient"),
     "In": (".stream", "In"),
     "Out": (".stream", "Out"),
     "LocalTransport": (".transport.local", "LocalTransport"),
     "Transport": (".transport.local", "Transport"),
-    "ModuleCoordinator": (".coordinator", "ModuleCoordinator"),
     "ResourceMonitor": (".resource_monitor", "ResourceMonitor"),
 }
-
-_INTROSPECTION_EXPORTS = frozenset(
-    {"render_text", "render_dot", "render_svg", "render_png", "render_connections"}
-)
-
 
 def __getattr__(name: str) -> Any:
     target = _LAZY_EXPORTS.get(name)
@@ -124,12 +102,8 @@ def __getattr__(name: str) -> Any:
         value = getattr(importlib.import_module(module_name, package=__name__), attribute)
         globals()[name] = value
         return value
-    if name in _INTROSPECTION_EXPORTS:
-        value = getattr(importlib.import_module(".introspection", package=__name__), name)
-        globals()[name] = value
-        return value
     raise AttributeError(f"module 'core' has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:
-    return sorted({*globals(), *__all__, *_INTROSPECTION_EXPORTS})
+    return sorted({*globals(), *__all__})

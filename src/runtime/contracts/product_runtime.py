@@ -97,9 +97,6 @@ _CONTRACTS = (
             "/slam/registered_cloud",
             "/slam/map_observation",
             "/slam/localization_health",
-            "/maps/state",
-            "/maps/scene",
-            "/nav/traversability",
             "/nav/local_path",
             "/nav/way_point",
             "/nav/cmd_vel",
@@ -110,8 +107,6 @@ _CONTRACTS = (
             "native_operator_motion_authority",
             "localization_health_gate",
             "registered_cloud_collision_check",
-            "traversability_costmap",
-            "local_planner_collision_and_traversability_scoring",
             "path_follower_pre_command_output",
             "operator_assisted_local_planner_control",
             "final_cmd_vel_single_writer",
@@ -409,7 +404,7 @@ def resolve_product_spec_contracts(
     *,
     product_variant: str | None = None,
 ) -> ResolvedProductRuntimeContracts:
-    """Resolve a Product declaration and verify any transitional YAML mirrors."""
+    """Resolve the named runtime contracts declared by one Product."""
 
     from runtime.graph.loader import resolve_product_variant_spec
 
@@ -418,41 +413,10 @@ def resolve_product_spec_contracts(
         spec,
         product_variant=product_variant,
     )
-    resolved = resolve_product_runtime_contracts(
+    return resolve_product_runtime_contracts(
         spec.get("contracts"),
         owner=f"Product {product!r}",
     )
-    _verify_mirror(product, spec, "required_topics", resolved.topics)
-    _verify_mirror(
-        product,
-        spec,
-        "required_capabilities",
-        resolved.capabilities,
-    )
-    return resolved
-
-
-def contract_catalog_snapshot(contract_ids: Sequence[str]) -> dict[str, Any]:
-    """Return the selected code contract definitions for compatibility hashing."""
-
-    resolved = resolve_product_runtime_contracts(tuple(contract_ids))
-    return {contract_id: PRODUCT_RUNTIME_CONTRACTS[contract_id].as_dict() for contract_id in resolved.contract_ids}
-
-
-def _verify_mirror(
-    product: str,
-    spec: Mapping[str, Any],
-    field: str,
-    expected: tuple[str, ...],
-) -> None:
-    if field not in spec:
-        return
-    raw = spec[field]
-    if not isinstance(raw, list | tuple):
-        raise ValueError(f"Product {product!r} {field} mirror must be a list")
-    observed = tuple(str(item) for item in raw)
-    if observed != expected:
-        raise ValueError(f"Product {product!r} {field} mirror disagrees with its named contracts")
 
 
 __all__ = [
@@ -461,7 +425,6 @@ __all__ = [
     "PRODUCT_SESSION_ID_ENV",
     "ProductRuntimeContract",
     "ResolvedProductRuntimeContracts",
-    "contract_catalog_snapshot",
     "resolve_product_runtime_contracts",
     "resolve_product_spec_contracts",
 ]

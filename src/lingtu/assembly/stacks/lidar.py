@@ -20,7 +20,7 @@ def lidar(
 
     Args:
         ip: LiDAR IP address override (default from robot_config.yaml).
-        enabled: Set to False for stub/dev profiles that don't need hardware.
+        enabled: Set to False for local stacks that do not need LiDAR.
         backend: Registered LiDAR backend. Use ``mid360`` for real Livox and
             ``mujoco`` for same-process simulation.
 
@@ -37,20 +37,16 @@ def lidar(
         raise ValueError(f"Unsupported lidar backend: {backend!r}; expected one of {LIDAR_BACKENDS}")
     if backend not in {LIDAR_BACKEND_MID360, LIDAR_BACKEND_MUJOCO}:
         raise ValueError(f"LiDAR backend {backend!r} is declared but not implemented by this stack")
-    try:
-        LidarModule = stack_module(
-            "lidar",
-            backend,
-            seed_group="lidar",
-            fallback=(
-                "drivers.sim.lidar.MujocoLidarModule"
-                if backend == LIDAR_BACKEND_MUJOCO
-                else "drivers.real.lidar.LidarModule"
-            ),
-        )
-    except ImportError as e:
-        logger.warning("LiDAR stack: lidar backend not available: %s", e)
-        return bp
+    LidarModule = stack_module(
+        "lidar",
+        backend,
+        seed_group="lidar",
+        fallback=(
+            "drivers.sim.lidar.MujocoLidarModule"
+            if backend == LIDAR_BACKEND_MUJOCO
+            else "drivers.real.lidar.LidarModule"
+        ),
+    )
 
     kw = {}
     if ip:

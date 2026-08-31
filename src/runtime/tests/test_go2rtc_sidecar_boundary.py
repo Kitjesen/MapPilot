@@ -34,7 +34,7 @@ def test_go2rtc_is_not_a_product_or_readiness_service() -> None:
 
 
 def test_go2rtc_installer_documents_machine_level_sidecar_boundary() -> None:
-    installer = _read("scripts/webrtc/install_go2rtc.sh")
+    installer = _read("scripts/deploy/thunder/install_go2rtc.sh")
     contract = " ".join(line.removeprefix("# ").strip() for line in installer.splitlines())
 
     assert "optional machine-level external media sidecar" in contract

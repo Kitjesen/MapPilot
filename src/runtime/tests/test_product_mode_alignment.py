@@ -4,21 +4,23 @@ import re
 from pathlib import Path
 from typing import get_args
 
-from lingtu.assembly.graph import graph_for_product
+from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.native_nav import compile_native_nav_config
+from lingtu.assembly.products import resolve_product_host_runtime
 from lingtu.assembly.products.host_defaults import FIELD_PRODUCT_NAMES
-from runtime.contracts.product_runtime import resolve_product_spec_contracts
-from runtime.graph.loader import load_runtime_graph, resolve_product_variant_spec
-from runtime.profiles.product_lifecycle import (
+from lingtu.products import (
     OPERATOR_PRODUCT_LIFECYCLES,
     ProductName,
     product_lifecycle,
 )
+from runtime.contracts.product_runtime import resolve_product_spec_contracts
+from runtime.graph.loader import load_runtime_graph, resolve_product_variant_spec
 from runtime.runtime_interface import TOPICS
 
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_product_name_type_covers_every_operator_product() -> None:
+def test_product_name_type_covers_every_runtime_graph_product() -> None:
     assert set(get_args(ProductName)) == {
         "teleop",
         "teleop_avoid",
@@ -51,17 +53,17 @@ def test_explore_product_declares_live_and_map_variants() -> None:
     assert mapped["product_variant"] == "map"
     assert mapped["slam_mode"] == "localization"
     assert mapped["requires_map"] is True
-    assert live["autonomy_owner"] == mapped["autonomy_owner"] == "explore_endpoint"
     assert live["processes"] == mapped["processes"]
     assert live["switch_policy"] == mapped["switch_policy"] == "cold_restart"
 
 
-def test_runtime_graph_is_the_product_mode_source_of_truth() -> None:
+def test_runtime_graph_is_the_operator_product_source_of_truth() -> None:
     products = load_runtime_graph().products
     switchable = {name for name, product in products.items() if product.get("operator_switchable") is True}
 
-    assert switchable == set(FIELD_PRODUCT_NAMES)
+    assert set(FIELD_PRODUCT_NAMES) == set(products)
     assert switchable == set(OPERATOR_PRODUCT_LIFECYCLES)
+    assert switchable == set(products)
 
     defaults = {
         contract.session_mode: profile
@@ -88,15 +90,6 @@ def test_explore_lifecycle_resolves_the_requested_internal_variant() -> None:
     assert mapped.requires_map is True
 
 
-def test_field_modes_do_not_mount_python_motion_safety() -> None:
-    for profile in FIELD_PRODUCT_NAMES:
-        modules = set(graph_for_product(profile, env="real").modules)
-
-        assert "nav.safety" not in modules, profile
-        assert "GeofenceManagerModule" not in modules, profile
-        assert "nav.velocity_mux" not in modules, profile
-
-
 def test_field_mapd_modes_do_not_mount_python_live_map_layers() -> None:
     products = load_runtime_graph().products
     python_layers = {
@@ -110,24 +103,24 @@ def test_field_mapd_modes_do_not_mount_python_live_map_layers() -> None:
     for profile, product in products.items():
         if "maps" not in product.get("processes", []):
             continue
-        modules = set(graph_for_product(profile, env="real").modules)
+        resolved = resolve_product_host_runtime(profile, "real", robot="unitree/go2")
+        modules = set(
+            compile_run_plan(
+                resolved.product,
+                resolved.env,
+                robot="unitree/go2",
+                product_variant=resolved.product_variant,
+            ).modules
+        )
         assert not (python_layers & modules), profile
 
 
 def test_field_traversability_has_one_native_control_writer() -> None:
     topics = load_runtime_graph().topic_contracts
     nav_contract = topics[TOPICS.traversability]
-    mapd_dds = (ROOT / "src" / "maps" / "cpp" / "mapd" / "dds.cpp").read_text(
-        encoding="utf-8"
-    )
+    mapd_dds = (ROOT / "src" / "maps" / "cpp" / "mapd" / "dds.cpp").read_text(encoding="utf-8")
     traversability_dds = (
-        ROOT
-        / "src"
-        / "nav"
-        / "cpp"
-        / "endpoint"
-        / "traversability"
-        / "traversability_dds.cpp"
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "traversability" / "traversability_dds.cpp"
     ).read_text(encoding="utf-8")
 
     assert nav_contract["field_producer"] == "native_traversability_endpoint"
@@ -140,26 +133,25 @@ def test_field_traversability_has_one_native_control_writer() -> None:
 
 
 def test_native_control_modes_match_the_cpp_endpoint_enum() -> None:
-    source = (ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav_endpoint_config.cpp").read_text(encoding="utf-8")
+    source = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "config" / "build.cpp"
+    ).read_text(encoding="utf-8")
     block = source.split("controlModeName(ControlMode mode)", 1)[1].split(
         "globalPlannerBackendName",
         1,
     )[0]
     cpp_modes = set(re.findall(r'return "([^"]+)";', block)) - {"unknown"}
     products = load_runtime_graph().products
-    contract_modes = {
-        str(product["native_control_mode"]) for product in products.values()
-    }
+    contract_modes = {str(product["native_control_mode"]) for product in products.values()}
 
     assert cpp_modes == contract_modes
 
 
 def test_product_native_nav_contract_matches_operator_mode() -> None:
-    for _profile, product in load_runtime_graph().products.items():
-        native_nav = product["native_nav"]
+    for profile, product in load_runtime_graph().products.items():
+        native_nav = compile_native_nav_config(profile, product).native_nav
         native_control_mode = product["native_control_mode"]
 
-        assert native_nav["control_mode"] == native_control_mode
         assert native_nav["publish_cmd_vel"] is True
         if native_control_mode == "teleop":
             assert native_nav["check_obstacle"] is False
@@ -167,7 +159,7 @@ def test_product_native_nav_contract_matches_operator_mode() -> None:
             assert native_nav["teleop_local_planner"] is False
         if native_control_mode == "teleop_avoid":
             assert native_nav["check_obstacle"] is True
-            assert native_nav["use_traversability_cost"] is True
+            assert native_nav["use_traversability_cost"] is False
             assert native_nav["teleop_local_planner"] is True
 
 
@@ -175,7 +167,6 @@ def test_operator_mode_switches_match_the_cold_restart_executor() -> None:
     for contract in OPERATOR_PRODUCT_LIFECYCLES.values():
         assert contract.switch_policy == "cold_restart", contract.product
         assert contract.online_hot_switch_supported is False, contract.product
-        assert not contract.hot_switch_candidates, contract.product
 
 
 def test_teleop_avoid_is_map_free_native_assisted_teleop() -> None:

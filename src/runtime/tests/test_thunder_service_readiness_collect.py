@@ -22,22 +22,20 @@ def test_thunder_service_readiness_collector_is_read_only() -> None:
     module = _load_module()
     source = SCRIPT.read_text(encoding="utf-8")
 
-    assert "lingtu-camera-dds.service" in module.SERVICES
+    assert "lt-camera.service" in module.SERVICES
     assert module.STATUS_FILES["camera"] == "/dev/shm/lingtu/camera_status.json"
     assert module.STATUS_FILES["driver"] == "/dev/shm/lingtu/driver_status.json"
     assert module.SERVICES == (
-        "lingtu-livox-dds.service",
-            "lingtu-camera-dds.service",
-            "lingtu-slam-dds.service",
-            "mapd.service",
-            "lingtu-traversability-dds.service",
-        "lingtu-nav-dds.service",
-        "lingtu-driver.service",
-        "lingtu.service",
+        "lt-lidar.service",
+        "lt-camera.service",
+        "lt-slam.service",
+        "lt-maps.service",
+        "lt-terrain.service",
+        "lt-nav.service",
+        "lt-driver.service",
+        "lt-host.service",
     )
-    assert module.NATIVE_BINARY_DEFAULTS["nav_dds"] == (
-        "/opt/lingtu/current/build/nav_endpoint/navd"
-    )
+    assert module.NATIVE_BINARY_DEFAULTS["nav_dds"] == ("/opt/lingtu/current/build/nav_endpoint/navd")
     assert module.NATIVE_BINARY_ENV["nav_dds"] == "LINGTU_NAV_DDS_BIN"
     assert module.NATIVE_BINARY_DEFAULTS["driver"] == ("/opt/lingtu/current/build/driver/lingtu_driver")
     assert module.NATIVE_BINARY_ENV["driver"] == "LINGTU_DRIVER_BIN"
@@ -71,7 +69,7 @@ def test_thunder_service_readiness_report_shape(monkeypatch) -> None:
     monkeypatch.setattr(
         module,
         "collect_systemd",
-        lambda: {"lingtu-camera-dds.service": {"active_state": "inactive"}},
+        lambda: {"lt-camera.service": {"active_state": "inactive"}},
     )
     monkeypatch.setattr(
         module,
@@ -143,11 +141,11 @@ def test_thunder_service_readiness_report_shape(monkeypatch) -> None:
     report = module.build_report(gateway_url="http://127.0.0.1:5050")
 
     assert report["schema"] == "lingtu.thunder.service_readiness.v1"
-    assert report["systemd"]["lingtu-camera-dds.service"]["active_state"] == "inactive"
+    assert report["systemd"]["lt-camera.service"]["active_state"] == "inactive"
     assert report["status_files"]["camera"]["exists"] is False
     assert report["native_binaries"]["binaries"]["camera_dds"]["exists"] is False
     assert report["camera"]["ok"] is False
-    assert report["camera"]["unit"] == "lingtu-camera-dds.service"
+    assert report["camera"]["unit"] == "lt-camera.service"
     assert "camera:status_file_missing:/dev/shm/lingtu/camera_status.json" in report["summary"]["blockers"]
     assert report["gnss"]["blockers"] == ["gnss_device_missing:/dev/wtrtk980"]
     assert report["dds"]["blockers"] == ["dds_unchecked"]
@@ -172,12 +170,12 @@ def test_thunder_service_readiness_collector_marks_missing_systemd_units(monkeyp
 
     def fake_run(command, *, timeout=5.0):
         unit = command[2]
-        if unit == "lingtu-camera-dds.service":
+        if unit == "lt-camera.service":
             return {
                 "ok": True,
                 "returncode": 0,
                 "stdout": (
-                    "Id=lingtu-camera-dds.service\n"
+                    "Id=lt-camera.service\n"
                     "LoadState=not-found\n"
                     "ActiveState=inactive\n"
                     "SubState=dead\n"
@@ -203,12 +201,12 @@ def test_thunder_service_readiness_collector_marks_missing_systemd_units(monkeyp
     monkeypatch.setattr(module, "_run", fake_run)
 
     systemd = module.collect_systemd()
-    camera = systemd["lingtu-camera-dds.service"]
+    camera = systemd["lt-camera.service"]
 
     assert camera["load_state"] == "not-found"
     assert camera["active_state"] == "inactive"
     assert camera["missing"] is True
-    assert systemd["lingtu-livox-dds.service"]["missing"] is False
+    assert systemd["lt-lidar.service"]["missing"] is False
 
 
 def test_thunder_service_readiness_collector_marks_missing_gnss_device(monkeypatch):
@@ -451,7 +449,7 @@ def test_thunder_service_readiness_accepts_camera_closed_loop_evidence() -> None
 
     camera = module.collect_camera_readiness(
         systemd={
-            "lingtu-camera-dds.service": {
+            "lt-camera.service": {
                 "missing": False,
                 "active_state": "active",
             }
@@ -524,7 +522,7 @@ def test_thunder_service_readiness_blocks_incomplete_camera_closed_loop() -> Non
 
     camera = module.collect_camera_readiness(
         systemd={
-            "lingtu-camera-dds.service": {
+            "lt-camera.service": {
                 "missing": False,
                 "active_state": "failed",
             }
@@ -580,7 +578,7 @@ def test_thunder_service_readiness_blocks_incomplete_camera_closed_loop() -> Non
 
     assert camera["ok"] is False
     assert camera["blockers"] == [
-        "systemd_unit_inactive:lingtu-camera-dds.service:failed",
+        "systemd_unit_inactive:lt-camera.service:failed",
         "native_binary_missing_or_not_executable:camera_dds:/missing/lingtu_camera_dds",
         "native_binary_missing_or_not_executable:orbbec_capture:/missing/orbbec_capture",
         "status_no_color_frames:/dev/shm/lingtu/camera_status.json",
@@ -598,11 +596,11 @@ def test_thunder_service_readiness_summary_aggregates_blockers() -> None:
 
     report = {
         "systemd": {
-            "lingtu-camera-dds.service": {
+            "lt-camera.service": {
                 "missing": True,
                 "active_state": "inactive",
             },
-            "lingtu.service": {
+            "lt-host.service": {
                 "missing": False,
                 "active_state": "active",
             },
@@ -636,7 +634,7 @@ def test_thunder_service_readiness_summary_aggregates_blockers() -> None:
     assert summary["ok"] is False
     assert summary["blocker_count"] == 8
     assert summary["blockers"] == [
-        "systemd:unit_missing:lingtu-camera-dds.service",
+        "systemd:unit_missing:lt-camera.service",
         "status_file:missing:camera:/dev/shm/lingtu/camera_status.json",
         "native_binaries:native_binary_missing_or_not_executable:camera_dds:/opt/lingtu/current/build/camera_dds/lingtu_camera_dds",
         "gnss:gnss_device_missing:/dev/wtrtk980",
@@ -652,7 +650,7 @@ def test_driver_readiness_uses_connection_heartbeat_not_idle_cmd_samples() -> No
 
     ready = module.collect_driver_readiness(
         systemd={
-            "lingtu-driver.service": {
+            "lt-driver.service": {
                 "missing": False,
                 "active_state": "active",
             }
@@ -671,16 +669,23 @@ def test_driver_readiness_uses_connection_heartbeat_not_idle_cmd_samples() -> No
                 "exists": True,
                 "age_s": 0.5,
                 "json": {
-                    "schema_version": "lingtu.driver.status.v1",
+                    "schema_version": "lingtu.driver.status.v2",
+                    "backend": "doso",
                     "ready": True,
                     "connected": True,
-                    "brainstem": {
+                    "adapter": {
+                        "protocol": "brainstem_grpc",
+                        "target": "192.168.66.9:50051",
+                        "control_owner": "grpc",
+                        "control_owner_id": "lingtu-driver@robot",
+                    },
+                    "control": {
+                        "control_assured": True,
                         "fsm": "standing",
                         "motors_enabled": True,
                         "critical_fault": False,
                         "lease_valid": True,
-                        "owner": "grpc",
-                        "owner_id": "lingtu-driver",
+                        "initial_zero_acknowledged": True,
                         "decision": "none",
                     },
                 },
@@ -695,7 +700,7 @@ def test_driver_readiness_uses_connection_heartbeat_not_idle_cmd_samples() -> No
 
     disconnected = module.collect_driver_readiness(
         systemd={
-            "lingtu-driver.service": {
+            "lt-driver.service": {
                 "missing": False,
                 "active_state": "active",
             }
@@ -706,7 +711,7 @@ def test_driver_readiness_uses_connection_heartbeat_not_idle_cmd_samples() -> No
                 "exists": True,
                 "age_s": 5.0,
                 "json": {
-                    "schema_version": "lingtu.driver.status.v1",
+                    "schema_version": "lingtu.driver.status.v2",
                     "ready": False,
                     "connected": False,
                 },
@@ -715,7 +720,8 @@ def test_driver_readiness_uses_connection_heartbeat_not_idle_cmd_samples() -> No
     )
     assert disconnected["ok"] is False
     assert disconnected["blockers"] == [
-        "brainstem_not_connected",
+        "driver_not_connected",
+        "driver_not_ready",
         "driver_status_stale",
     ]
 
@@ -724,7 +730,7 @@ def test_driver_readiness_requires_motor_enable_and_lingtu_lease() -> None:
     module = _load_module()
     result = module.collect_driver_readiness(
         systemd={
-            "lingtu-driver.service": {
+            "lt-driver.service": {
                 "missing": False,
                 "active_state": "active",
             }
@@ -735,16 +741,23 @@ def test_driver_readiness_requires_motor_enable_and_lingtu_lease() -> None:
                 "exists": True,
                 "age_s": 0.1,
                 "json": {
-                    "schema_version": "lingtu.driver.status.v1",
+                    "schema_version": "lingtu.driver.status.v2",
+                    "backend": "doso",
                     "ready": False,
                     "connected": True,
-                    "brainstem": {
+                    "adapter": {
+                        "protocol": "brainstem_grpc",
+                        "target": "192.168.66.9:50051",
+                        "control_owner": "yunzhuo",
+                        "control_owner_id": "",
+                    },
+                    "control": {
+                        "control_assured": False,
                         "fsm": "standing",
                         "motors_enabled": False,
                         "critical_fault": False,
                         "lease_valid": False,
-                        "owner": "yunzhuo",
-                        "owner_id": "",
+                        "initial_zero_acknowledged": True,
                         "decision": "control_busy",
                     },
                 },
@@ -753,10 +766,50 @@ def test_driver_readiness_requires_motor_enable_and_lingtu_lease() -> None:
     )
     assert result["ok"] is False
     assert result["blockers"] == [
+        "driver_backend_control_invalid",
+        "driver_motors_disabled",
+        "driver_control_not_assured",
+        "driver_control_not_owned_by_lingtu",
         "driver_not_ready",
-        "brainstem_motors_disabled",
-        "brainstem_lease_not_owned_by_lingtu",
     ]
+
+
+def test_driver_readiness_accepts_go2_sdk2_control() -> None:
+    module = _load_module()
+    result = module.collect_driver_readiness(
+        systemd={"lt-driver.service": {"missing": False, "active_state": "active"}},
+        native_binaries={"binaries": {"driver": {"executable": True}}},
+        status_files={
+            "driver": {
+                "exists": True,
+                "age_s": 0.1,
+                "json": {
+                    "schema_version": "lingtu.driver.status.v2",
+                    "backend": "go2",
+                    "ready": True,
+                    "connected": True,
+                    "adapter": {
+                        "protocol": "unitree_sdk2",
+                        "target": "dds://eth0/rt/api/sport/request",
+                        "control_owner": "none",
+                        "control_owner_id": "",
+                    },
+                    "control": {
+                        "control_assured": True,
+                        "fsm": "standing",
+                        "motors_enabled": True,
+                        "critical_fault": False,
+                        "lease_valid": False,
+                        "initial_zero_acknowledged": True,
+                    },
+                },
+            }
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["backend"] == "go2"
+    assert result["adapter"]["protocol"] == "unitree_sdk2"
 
 
 def test_thunder_service_readiness_collector_lists_catalog_dds_topics() -> None:
@@ -781,7 +834,6 @@ def test_thunder_service_readiness_collector_lists_catalog_dds_topics() -> None:
         "rt/nav/traversability",
         "rt/nav/terrain_map",
         "rt/nav/terrain_map_ext",
-        "rt/nav/exploration_execution_snapshot",
     ]
     assert report["services"]["driver"]["dds_topics"] == [
         "rt/nav/cmd_vel",

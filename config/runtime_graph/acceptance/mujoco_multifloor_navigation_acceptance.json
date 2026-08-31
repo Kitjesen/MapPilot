@@ -2,12 +2,13 @@
   "schema_version": "lingtu.mujoco.native_navigation_acceptance.v1",
   "extends": "mujoco_native_navigation_acceptance.json",
   "name": "mujoco_multifloor_native_navigation",
-  "description": "Three-level ThunderV4 navigation acceptance using the field C++ typed-DDS SLAM, terrain, OctoPlanner3D, LocalPlanner, PathFollower, safety, and RL locomotion chain.",
-  "start": [7.0, -1.2, 0.55, 0.0],
+  "description": "Three-level ThunderV4 planning-motion acceptance using MuJoCo truth pose, OctoPlanner3D, SCAN, native tracking, and the RL locomotion chain.",
+  "start": [7.0, -0.8, 0.55, 3.141592653589793],
   "goal": [7.4, 2.8, 4.15, 0.0],
   "asset_builder": {
     "scene_preset": "multifloor_stack_3",
     "resolution": 0.09,
+    "support_dilation_cells": 2,
     "map_source": "mujoco_lidar",
     "lidar_timeout_s": 90.0,
     "mid360_samples_per_frame": 15000
@@ -16,21 +17,56 @@
     "publish_hz": 10.0,
     "imu_hz": 200.0,
     "mid360_samples_per_frame": 6000,
+    "scan_time_profile": "instantaneous",
     "physical_rolling_sample_mode": "subscan",
-    "publish_odom_prior": false
+    "publish_odom_prior": true
+  },
+  "mapd_runtime": {
+    "stale_ms": 3000
+  },
+  "slam_runtime": {
+    "provider": "mujoco_navigation_fixture",
+    "mode": "localization"
+  },
+  "navigation_runtime": {
+    "local_planner": "scan",
+    "use_traversability_cost": false,
+    "route_snap_m": 0.20,
+    "goal_reached_m": 0.10,
+    "path_follower_goal_tolerance_m": 0.05,
+    "path_follower_max_speed_mps": 0.5,
+    "path_follower_min_speed_mps": 0.0,
+    "path_follower_max_accel_mps2": 0.30,
+    "path_follower_max_yaw_rate_rad_s": 1.0,
+    "scan_follower": {
+      "time_forward_s": 0.55,
+      "heading_error_rad": 0.80,
+      "position_gain": 0.90,
+      "yaw_gain": 1.20,
+      "max_vx_mps": 0.50,
+      "max_vy_mps": 0.25,
+      "max_yaw_rate_rad_s": 1.00
+    }
+  },
+  "driver_runtime": {
+    "max_linear_mps": 1.0,
+    "max_angular_rps": 1.0,
+    "command_timeout_ms": 200,
+    "heartbeat_timeout_ms": 500,
+    "apply_timeout_ms": 1500
   },
   "paths": {
-    "policy": "sim/robots/thunderv4/policy/history_285.onnx"
+    "policy": "sim/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx"
   },
   "planner_constraints": {
-    "robot_radius_m": 0.25,
-    "body_clearance_below_m": 0.18,
+    "robot_radius_m": 0.35,
+    "body_clearance_below_m": 0.15,
     "body_clearance_above_m": 0.30,
     "max_iterations": 240000,
     "snap_radius_cells": 16,
     "require_ground_support": true,
     "strict_ground_support": false,
-    "ground_support_xy_radius_cells": 1,
+    "ground_support_xy_radius_cells": 0,
     "ground_support_depth_cells": 8,
     "support_height_m": 0.55,
     "support_height_tolerance_m": 0.05,
@@ -46,8 +82,8 @@
     "same_floor_preference": true,
     "same_floor_z_tolerance_m": 0.75,
     "max_same_floor_z_excursion_m": 2.0,
-    "obstacle_clearance_radius_cells": 0,
-    "obstacle_clearance_weight": 0.0,
+    "obstacle_clearance_radius_cells": 4,
+    "obstacle_clearance_weight": 2.0,
     "terminal_goal_tolerance_m": 0.35,
     "terminal_goal_xy_tolerance_m": 0.35,
     "terminal_goal_z_tolerance_m": 0.18
@@ -64,6 +100,18 @@
       "start_anchor": "warmup"
     }
   },
+  "telemetry_log": {
+    "enabled": true,
+    "hz": 10.0,
+    "lidar_points": 640
+  },
+  "acceptance_video": {
+    "enabled": true,
+    "width": 1280,
+    "height": 720,
+    "fps": 24.0,
+    "lidar_points": 640
+  },
   "thresholds": {
     "startup_timeout_s": 35.0,
     "plan_timeout_s": 100.0,
@@ -71,6 +119,47 @@
     "min_local_path_points": 20,
     "min_cmd_vel_samples": 20,
     "min_motion_m": 4.0,
-    "min_goal_distance_reduction_m": 1.0
+    "min_goal_distance_reduction_m": null,
+    "require_slam_tracking": false,
+    "require_slam_accuracy": false,
+    "require_continuous_map_tracking": false,
+    "require_traversability": false,
+    "require_goal_reached": true,
+    "require_video_artifact": true,
+    "min_tracking_samples": 50,
+    "max_tracking_xy_error_p95_m": 0.75,
+    "max_goal_error_xy_m": 0.50,
+    "max_goal_error_z_m": 0.50,
+    "max_goal_error_3d_m": 0.70
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": [
+      "the same three-level scene and route are planned by OctoPlanner3D and locally replanned by SCAN",
+      "MuJoCo truth pose isolates planning and tracking from localization error",
+      "Mapd supplies the live robot-centred collision window without a traversability hard gate",
+      "the report contains elapsed motion time, travelled distance, XY/Z/3D terminal error, truth-to-local-trajectory error, and video",
+      "terminal exact Driver stop acknowledgement, zero command, authority clear, and owned-process cleanup"
+    ],
+    "excluded_claims": [
+      "Fast-LIO2 localization quality",
+      "S100P timing qualification",
+      "Brainstem motor execution",
+      "physical robot motion"
+    ]
+  },
+  "contracts": {
+    "terrain_output": null,
+    "navigation_traversability_authority": null,
+    "navigation_inputs": [
+      "rt/nav/command/request",
+      "rt/nav/operator_motion/control",
+      "rt/nav/operator_motion/sample",
+      "rt/slam/odometry",
+      "rt/tf",
+      "rt/slam/registered_cloud",
+      "rt/slam/localization_health",
+      "rt/maps/local_collision"
+    ]
   }
 }

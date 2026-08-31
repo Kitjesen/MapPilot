@@ -4,12 +4,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 NAV_CPP = ROOT / "src" / "nav" / "cpp"
 ENDPOINT = NAV_CPP / "endpoint"
-MOTION = ENDPOINT / "motion"
+NAV_ENDPOINT = ENDPOINT / "nav"
+CONTROL = NAV_ENDPOINT / "control"
 
-ENDPOINT_BOOTSTRAP = ENDPOINT / "nav_native_endpoint.cpp"
-ENDPOINT_LOOP = ENDPOINT / "endpoint_loop.cpp"
-GUARD_HEADER = MOTION / "control_loop_runtime_guard.hpp"
-GUARD_SOURCE = MOTION / "control_loop_runtime_guard.cpp"
+ENDPOINT_BOOTSTRAP = NAV_ENDPOINT / "main.cpp"
+ENDPOINT_LOOP = NAV_ENDPOINT / "runtime" / "loop.cpp"
+GUARD_HEADER = CONTROL / "guard.hpp"
+GUARD_SOURCE = CONTROL / "guard.cpp"
 GUARD_TEST = NAV_CPP / "tests" / "endpoint" / "test_control_loop_runtime_guard.cpp"
 PORTABLE_CMAKE = NAV_CPP / "CMakeLists.txt"
 ENDPOINT_CMAKE = ENDPOINT / "CMakeLists.txt"
@@ -54,9 +55,9 @@ def test_declares_transport_free_runtime_guard_core_and_behavior_test() -> None:
         "DdsRuntime",
         "dds/dds.h",
         "nav_dds_runtime",
-        "MotionStopCoordinator",
+        "MotionStopBarrier",
         "ControlAuthority",
-        "NavLoop",
+        "Executor",
     ):
         assert forbidden not in core
 
@@ -76,11 +77,11 @@ def test_cmake_and_linux_build_gate_require_runtime_guard_test() -> None:
 
     for cmake in (portable, endpoint):
         assert "test_control_loop_runtime_guard.cpp" in cmake
-        assert "control_loop_runtime_guard.cpp" in cmake
+        assert "control/guard.cpp" in cmake
         assert re.search(r"add_test\s*\(\s*NAME\s+test_control_loop_runtime_guard\b", cmake)
 
     navd_target = _block_after(endpoint, "add_executable(navd", "target_link_libraries(navd")
-    assert "motion/control_loop_runtime_guard.cpp" in navd_target
+    assert "control/guard.cpp" in navd_target
     assert "test_control_loop_runtime_guard" in script
 
 
@@ -89,7 +90,7 @@ def test_navd_evaluates_completed_health_before_motion_tick_work() -> None:
     loop_source = _read(ENDPOINT_LOOP)
     loop = _block_after(loop_source, "while (running) {", "const auto input_start")
 
-    assert '#include "motion/control_loop_runtime_guard.hpp"' in bootstrap
+    assert '#include "control/guard.hpp"' in bootstrap
     assert re.search(r"ControlLoopRuntimeGuard\s+control_loop_guard\s*[({]", bootstrap)
     wiring = _block_after(bootstrap, "EndpointLoopContext loop_ctx{", "};")
     assert "control_loop_health" in wiring
@@ -109,19 +110,19 @@ def test_hold_decision_latches_takeover_and_clears_motion_before_autonomy_work()
     hold_block = _block_after(
         loop,
         "if (loop_guard_decision.hold_motion)",
-        "if (!loop_guard_decision.clear_motion",
+        "(void)rolling_segment_effect_coordinator.apply",
     )
 
     assert "control_authority.holdOperatorTakeover()" in hold_block
     assert "operator_resume_required = true" in hold_block
     assert '"control_loop_unhealthy:"' in loop
     assert re.search(
-        r"control_loop_hold_reason\s*=.*loop_guard_decision\.reason",
+        r"hold_reason\s*=.*loop_guard_decision\.reason",
         loop,
         re.DOTALL,
     )
     assert re.search(
-        r"motion_stop\.clearEndpointMotion\s*\(\s*control_loop_hold_reason\s*\)",
+        r"motion_stop\.clearEndpointMotion\s*\(\s*hold_reason\s*\)",
         hold_block,
     )
     assert hold_block.index("control_authority.holdOperatorTakeover") < hold_block.index(
@@ -133,22 +134,21 @@ def test_hold_decision_latches_takeover_and_clears_motion_before_autonomy_work()
 def test_latched_guard_ticks_keep_zero_fresh_without_reentering_autonomy() -> None:
     loop_source = _read(ENDPOINT_LOOP)
     loop = _block_after(loop_source, "while (running) {", "const auto before_sleep")
-    fresh_zero_block = _block_after(
+    hold_block = _block_after(
         loop,
-        "if (!loop_guard_decision.clear_motion && loop_guard_decision.hold_motion)",
+        "if (loop_guard_decision.hold_motion)",
         "(void)rolling_segment_effect_coordinator.apply",
     )
 
-    assert "if (!loop_guard_decision.clear_motion && loop_guard_decision.hold_motion)" in loop
-    assert "motion_stop.keepZeroFresh()" in fresh_zero_block
-    assert "autonomy_tick.tick" not in fresh_zero_block
-    assert "teleop_tick.tick" not in fresh_zero_block
+    assert "else if (!motion_stop.keepZeroFresh())" in hold_block
+    assert "autonomy_tick.tick" not in hold_block
+    assert "teleop_tick.tick" not in hold_block
 
 
 def test_every_motion_admission_checks_runtime_guard_latch() -> None:
     bootstrap = _read(ENDPOINT_BOOTSTRAP)
     loop = _read(ENDPOINT_LOOP)
-    submit_goal = _block_after(loop, "auto submit_goal = [&]", "dds.drainCloud")
+    submit_goal = _block_after(loop, "auto submit_goal = [&]", "auto task_resume_context")
     handle_teleop = _block_after(
         loop,
         "auto handle_teleop = [&]",
@@ -160,20 +160,15 @@ def test_every_motion_admission_checks_runtime_guard_latch() -> None:
         "InspectionCommandCoordinator inspection_command_coordinator",
     )
     rolling_context = _block_after(loop, "auto rolling_segment_context = [&]()", "};")
-    rolling_commands = _block_after(
-        loop,
-        "dds.drainExplorationSegmentRequests",
-        "if (inspectionPostArrivalState",
-    )
     advance = _block_after(
         loop,
         "GoalReplanRuntimeFrameInput runtime_frame;",
-        "const auto runtime_advance_result",
+        "const NavigationRuntimeFrameResult runtime_frame_result",
     )
     autonomy = _block_after(
         loop,
-        "auto autonomy_result = autonomy_tick.tick",
-        "if (autonomy_result.handled)",
+        "runtime_actions.run_autonomy = [&]",
+        "runtime_actions.apply_autonomy_outputs = [&]",
     )
 
     guarded_blocks = {
@@ -191,7 +186,6 @@ def test_every_motion_admission_checks_runtime_guard_latch() -> None:
         ), f"{name} must turn the guard state into an admission decision"
 
     assert "drain" + "Legacy" not in loop
-    assert "rolling_segment_context()" in rolling_commands
     assert "control_loop_guard" in rolling_context
     assert re.search(
         r"hold_motion|resume_allowed|motionAllowed|operatorTakeoverLatched|requestResume",
@@ -201,13 +195,24 @@ def test_every_motion_admission_checks_runtime_guard_latch() -> None:
 
 def test_resume_command_passes_through_guard_before_motion_stop_resume() -> None:
     loop = _read(ENDPOINT_LOOP)
-    resume_block = _block_after(loop, "auto handle_resume_autonomy =", "auto handle_teleop =")
+    input_gate_helper = _block_after(
+        loop,
+        "auto evaluate_input_gate =",
+        "const auto tick_period =",
+    )
+    resume_block = _block_after(loop, "auto handle_resume_motion =", "auto handle_teleop =")
 
+    assert "inputs.evaluateGate" in input_gate_helper
     assert "control_loop_guard.requestResume" in resume_block
     assert "motion_stop.resumeAutonomy" in resume_block
+    assert "motion_stop.resumeTeleop" in resume_block
+    assert resume_block.count("evaluate_input_gate()") >= 2
     assert "control_loop_guard.completeResume" in resume_block
     assert resume_block.index("control_loop_guard.requestResume") < resume_block.index("motion_stop.resumeAutonomy")
     assert resume_block.index("motion_stop.resumeAutonomy") < resume_block.index("control_loop_guard.completeResume")
+    assert resume_block.index("evaluate_input_gate()") < resume_block.index("motion_stop.resumeTeleop")
+    assert resume_block.rindex("evaluate_input_gate()") > resume_block.index("motion_stop.resumeTeleop")
+    assert resume_block.index("motion_stop.resumeTeleop") < resume_block.index("control_loop_guard.completeResume")
     assert re.search(r"completeResume\s*\(\s*result\.accepted", resume_block)
 
 
@@ -217,9 +222,9 @@ def test_operator_resume_required_clears_only_after_accepted_guard_resume() -> N
     motion_actions = _block_after(
         bootstrap,
         "MotionStopActions motion_stop_actions;",
-        "MotionStopCoordinator motion_stop(",
+        "MotionStopBarrier motion_stop(",
     )
-    resume_block = _block_after(loop, "auto handle_resume_autonomy =", "auto handle_teleop =")
+    resume_block = _block_after(loop, "auto handle_resume_motion =", "auto handle_teleop =")
 
     assert "motion_stop_actions.clear_operator_resume_required" in motion_actions
     assert "control_loop_guard.completeResume" in resume_block

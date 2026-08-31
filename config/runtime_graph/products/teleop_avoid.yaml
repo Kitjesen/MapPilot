@@ -2,31 +2,33 @@ schema_version: lingtu.runtime_graph.product.v1
 name: teleop_avoid
 contracts:
   - lingtu.product.teleop_avoid.v1
-summary: Operator-assisted teleoperation with native local detour planning, live obstacle/traversability checks, and final command arbitration.
+summary: Operator-assisted teleoperation with native CMU local planning and live LiDAR obstacle checks.
 operator_switchable: true
-product_mode: teleop_avoid
-product_session: teleop_avoid
 session_mode: navigating
 native_control_mode: teleop_avoid
 slam_mode: mapping
 requires_map: false
 switch_policy: cold_restart
 online_hot_switch_supported: false
-data_plane: typed_dds
-control_owner: operator
-autonomy_owner: none
 native_nav:
-  control_mode: teleop_avoid
-  publish_cmd_vel: true
+  local_planner: cmu
+  local_planners:
+    - cmu
   check_obstacle: true
-  use_traversability_cost: true
-  allow_teleop_takeover: false
+  use_traversability_cost: false
   teleop_local_planner: true
+  # Local Planner followers own acceleration and curvature. A second generic
+  # per-axis smoother would distort the path command after planning.
+  smoothing: false
+  path_follower_max_yaw_rate_rad_s: 1.0
+  teleop_planner_horizon_m: 3.5
+  teleop_planner_max_deviation_deg: 90.0
+  recovery:
+    max_attempts: 0
 processes:
   - lidar
+  - imu
   - slam
-  - maps
-  - traversability
   - nav
   - driver
   - host
@@ -36,24 +38,5 @@ critical_modules:
   - nav.commands
   - GatewayModule
 forbidden_modules:
-  - TeleopModule
-  - nav.velocity_mux
   - SimEndpointDriverModule
-  - nav.mission
-  - nav.local_planner
-  - nav.path_follower
   - SemanticPlannerModule
-  - OccupancyGridModule
-  - VoxelGridModule
-  - ElevationMapModule
-  - ESDFModule
-  - TraversabilityCostModule
-  - SemanticMapModule
-forbidden_claims:
-  - autonomous_navigation
-  - global_planning
-  - module_sim_real_equivalence
-transport_rules:
-  product_bus: typed_dds
-  same_process_algorithms: direct_function_calls
-  lcm_allowed: false

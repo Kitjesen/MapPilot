@@ -4,11 +4,18 @@ from types import SimpleNamespace
 import pytest
 
 from runtime import FrameTree as ExportedFrameTree
-from runtime.tf import ExtrapolationError, FrameTree, NoTransformError, UnknownFrameError
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Transform, Vector3
 from runtime.msgs.nav import Odometry
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import PointCloud2
+from runtime.tf import (
+    ExtrapolationError,
+    FrameTree,
+    NoTransformError,
+    UnknownFrameError,
+    map_from_odom_transform_from_mapping,
+    map_from_odom_transform_to_dict,
+)
 
 
 def test_frame_tree_composes_sensor_mount_and_odometry() -> None:
@@ -188,6 +195,127 @@ def test_lookup_composes_rotation_translation_and_inverse() -> None:
     assert back_in_body.z == pytest.approx(0.0)
 
 
+def test_map_from_odom_mapping_has_one_direction_and_schema() -> None:
+    transform = map_from_odom_transform_from_mapping(
+        {
+            "valid": True,
+            "frame_id": "map",
+            "child_frame_id": "odom",
+            "translation": {"x": 10.0, "y": 0.0, "z": 0.0},
+            "rotation": Quaternion.from_yaw(math.pi / 2.0).to_dict(),
+            "stamp_s": 5.0,
+        }
+    )
+
+    assert transform is not None
+    point_in_map = transform.translation + transform.rotation.rotate_vector(Vector3(2.0, 0.0, 0.0))
+    assert point_in_map.x == pytest.approx(10.0)
+    assert point_in_map.y == pytest.approx(2.0)
+    assert map_from_odom_transform_to_dict(transform) == {
+        "valid": True,
+        "frame_id": "map",
+        "child_frame_id": "odom",
+        "tx": 10.0,
+        "ty": 0.0,
+        "tz": 0.0,
+        "qx": transform.rotation.x,
+        "qy": transform.rotation.y,
+        "qz": transform.rotation.z,
+        "qw": transform.rotation.w,
+        "ts": 5.0,
+    }
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"valid": False},
+        {"frame_id": "odom", "child_frame_id": "map"},
+        {"frame_id": "/map"},
+        {"child_frame_id": "/odom"},
+        {"child_frame_id": "camera"},
+        {"translation": {}},
+        {"qw": 0.0},
+        {"stamp_s": 0.0},
+        {"ts": 6.0},
+    ],
+)
+def test_map_from_odom_mapping_rejects_ambiguous_payloads(change) -> None:
+    payload = {
+        "valid": True,
+        "frame_id": "map",
+        "child_frame_id": "odom",
+        "tx": 0.0,
+        "ty": 0.0,
+        "tz": 0.0,
+        "qx": 0.0,
+        "qy": 0.0,
+        "qz": 0.0,
+        "qw": 1.0,
+        "stamp_s": 5.0,
+    }
+    payload.update(change)
+
+    assert map_from_odom_transform_from_mapping(payload) is None
+
+
+def test_map_from_odom_mapping_rejects_dual_schema() -> None:
+    payload = {
+        "valid": True,
+        "frame_id": "map",
+        "child_frame_id": "odom",
+        "translation": {"x": 0.0, "y": 0.0, "z": 0.0},
+        "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+        "tx": 0.0,
+        "ty": 0.0,
+        "tz": 0.0,
+        "qx": 0.0,
+        "qy": 0.0,
+        "qz": 0.0,
+        "qw": 1.0,
+        "ts": 5.0,
+    }
+
+    assert map_from_odom_transform_from_mapping(payload) is None
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        Transform(frame_id="odom", child_frame_id="map", ts=5.0),
+        Transform(
+            translation=Vector3(math.nan, 0.0, 0.0),
+            frame_id="map",
+            child_frame_id="odom",
+            ts=5.0,
+        ),
+        Transform(
+            rotation=Quaternion(math.inf, 0.0, 0.0, 1.0),
+            frame_id="map",
+            child_frame_id="odom",
+            ts=5.0,
+        ),
+        Transform(
+            rotation=Quaternion(0.0, 0.0, 0.0, 0.0),
+            frame_id="map",
+            child_frame_id="odom",
+            ts=5.0,
+        ),
+    ],
+)
+def test_map_from_odom_serializer_rejects_invalid_transform(transform) -> None:
+    with pytest.raises(ValueError):
+        map_from_odom_transform_to_dict(transform)
+
+
+def test_map_from_odom_serializer_rejects_nonpositive_timestamp() -> None:
+    transform = Transform(frame_id="map", child_frame_id="odom", ts=5.0)
+    transform.ts = 0.0
+
+    with pytest.raises(ValueError):
+        map_from_odom_transform_to_dict(transform)
+
+
 def test_frame_tree_is_exported_from_core_package() -> None:
     assert ExportedFrameTree is FrameTree
 
@@ -230,6 +358,28 @@ def test_lookup_path_snapshot_parent_and_clear_dynamic() -> None:
     assert tree.can_transform("body", "lidar")
     with pytest.raises(NoTransformError):
         tree.lookup("odom", "body")
+
+
+def test_remove_transform_can_target_one_dynamic_edge() -> None:
+    tree = FrameTree()
+    tree.set_transform(Transform(frame_id="map", child_frame_id="odom", ts=1.0))
+    tree.set_transform(Transform(frame_id="odom", child_frame_id="body", ts=1.0))
+
+    assert tree.remove_transform("map", "odom", dynamic_only=True)
+
+    assert tree.parent_of("odom") is None
+    assert tree.parent_of("body") == "odom"
+    with pytest.raises(NoTransformError):
+        tree.lookup("map", "odom")
+    assert tree.can_transform("odom", "body", ts=1.0)
+
+
+def test_remove_transform_dynamic_only_preserves_static_edge() -> None:
+    tree = FrameTree()
+    tree.set_static_transform(Transform(frame_id="body", child_frame_id="camera"))
+
+    assert tree.remove_transform("body", "camera", dynamic_only=True) is False
+    assert tree.can_transform("body", "camera")
 
 
 def test_static_transform_is_valid_for_any_lookup_time() -> None:

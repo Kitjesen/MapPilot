@@ -2,13 +2,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ENDPOINT_DIR = REPO_ROOT / "src/nav/cpp/endpoint"
-MAIN_PATH = ENDPOINT_DIR / "nav_native_endpoint.cpp"
-LOOP_PATH = ENDPOINT_DIR / "endpoint_loop.cpp"
+MAIN_PATH = ENDPOINT_DIR / "main.cpp"
+LOOP_PATH = ENDPOINT_DIR / "runtime" / "loop.cpp"
 CMAKE_PATH = ENDPOINT_DIR / "CMakeLists.txt"
 ENDPOINT_BUILD_SCRIPT = REPO_ROOT / "scripts/build/build_nav_endpoint.sh"
 NATIVE_MOTION_WORKFLOW = REPO_ROOT / ".github/workflows/native-motion-build.yml"
-PROJECTOR_HPP = ENDPOINT_DIR / "input/nav_input_state_projector.hpp"
-PROJECTOR_CPP = ENDPOINT_DIR / "input/nav_input_state_projector.cpp"
+PROJECTOR_HPP = ENDPOINT_DIR / "input/projector.hpp"
+PROJECTOR_SOURCES = tuple(
+    ENDPOINT_DIR / "input" / name for name in ("pose.cpp", "map.cpp", "health.cpp")
+)
 
 
 def _read(path: Path) -> str:
@@ -30,47 +32,75 @@ def _block_after(source: str, start: str, end: str) -> str:
     return tail.split(end, 1)[0]
 
 
-def _global_input_loop() -> str:
+def _main_loop() -> str:
     return _block_after(
         _read(LOOP_PATH),
         "while (running)",
-        "dds.drainExplorationSegmentRequests(",
+        "current_timing = nullptr;",
     )
 
 
-def test_native_input_state_projector_files_exist() -> None:
+def _sensor_drain_stage() -> str:
+    return _block_after(
+        _read(LOOP_PATH),
+        "auto drain_sensors =",
+        "auto drain_operator_motion =",
+    )
+
+
+def _operator_motion_drain_stage() -> str:
+    return _block_after(
+        _read(LOOP_PATH),
+        "auto drain_operator_motion =",
+        "auto drain_commands =",
+    )
+
+
+def _command_drain_stage() -> str:
+    return _block_after(
+        _read(LOOP_PATH),
+        "auto drain_commands =",
+        "auto advance_runtime =",
+    )
+
+
+def test_native_input_projector_files_exist() -> None:
     assert PROJECTOR_HPP.exists()
-    assert PROJECTOR_CPP.exists()
+    assert all(path.exists() for path in PROJECTOR_SOURCES)
 
 
-def test_navd_build_wires_input_state_projector_and_endpoint_loop() -> None:
+def test_navd_build_wires_input_projector_and_endpoint_loop() -> None:
     cmake = _read(CMAKE_PATH)
     navd_target = _block_after(cmake, "add_executable(navd", "target_link_libraries(navd")
-    assert "input/nav_input_state_projector.cpp" in navd_target
-    assert "endpoint_loop.cpp" in navd_target
+    for source in ("input/pose.cpp", "input/map.cpp", "input/health.cpp"):
+        assert source in navd_target
+    assert "runtime/loop.cpp" in navd_target
 
 
 def test_linux_endpoint_build_requires_input_projector_regression_test() -> None:
     build_script = _read(ENDPOINT_BUILD_SCRIPT)
     workflow = _read(NATIVE_MOTION_WORKFLOW)
-    assert "test_nav_input_state_projector" in build_script
+    assert "test_input_projector" in build_script
     assert "bash scripts/build/build_nav_endpoint.sh" in workflow
 
 
-def test_nav_native_main_includes_and_constructs_input_state_projector() -> None:
+def test_nav_native_main_includes_and_constructs_input_projector() -> None:
     main = _read(MAIN_PATH)
     main_body = main.split("int main(int argc, char **argv)", 1)[1]
 
-    assert '#include "input/nav_input_state_projector.hpp"' in main
-    assert "NavInputStateProjector" in main_body
-    assert "input_projector" in main_body
+    assert '#include "input/projector.hpp"' in main
+    assert "InputProjector" in main_body
+    assert "InputProjector inputs(" in main_body
 
 
 def test_endpoint_loop_keeps_globally_interleaved_dds_drain_order() -> None:
-    loop = _global_input_loop()
+    sensors = _sensor_drain_stage()
+    operator_motion = _operator_motion_drain_stage()
+    commands = _command_drain_stage()
+    loop = _main_loop()
 
     _assert_in_order(
-        loop,
+        sensors,
         [
             "dds.drainTf(",
             "dds.drainOdometry(",
@@ -82,17 +112,41 @@ def test_endpoint_loop_keeps_globally_interleaved_dds_drain_order() -> None:
             "dds.drainMapClearing(",
             "dds.drainCloudClearing(",
             "dds.drainTraversability(",
+            "dds.drainLocalTraversability(",
+            "dds.drainLocalCollision(",
             "dds.drainLocalizationHealth(",
+        ],
+    )
+    _assert_in_order(
+        operator_motion,
+        [
             "dds.drainOperatorMotionControls(",
             "dds.drainOperatorMotionSamples(",
+        ],
+    )
+    _assert_in_order(
+        commands,
+        [
             "dds.drainCommandRequests(",
             "dds.drainInspectionTaskRequests(",
+            "dds.drainGeofenceCommands(",
+            "dds.drainExplorationSegmentRequests(",
+        ],
+    )
+    _assert_in_order(
+        loop,
+        [
+            "drain_sensors(timing);",
+            "drain_operator_motion();",
+            "drain_commands();",
+            "const double publish_now = advance_runtime(input_start, timing);",
+            "publish_state(publish_now, timing);",
         ],
     )
 
 
-def test_sensor_drains_delegate_projection_to_input_state_projector() -> None:
-    loop = _global_input_loop()
+def test_sensor_drains_delegate_projection_to_input_projector() -> None:
+    sensors = _sensor_drain_stage()
     sensor_drain_starts = [
         "dds.drainTf(",
         "dds.drainOdometry(",
@@ -107,18 +161,22 @@ def test_sensor_drains_delegate_projection_to_input_state_projector() -> None:
     ]
 
     for start in sensor_drain_starts:
-        block = _block_after(loop, start, "});")
-        assert "input_projector." in block, f"{start} must delegate to input_projector"
+        block = _block_after(sensors, start, "});")
+        assert "inputs." in block, f"{start} must delegate to inputs"
 
 
 def test_endpoint_loop_uses_projector_and_only_typed_motion_inputs() -> None:
     main = _read(MAIN_PATH)
     main_body = main.split("int main(int argc, char **argv)", 1)[1]
-    loop = _global_input_loop()
+    sensors = _sensor_drain_stage()
+    operator_motion = _operator_motion_drain_stage()
+    commands = _command_drain_stage()
+    loop = _main_loop()
+    endpoint_input = sensors + operator_motion + commands + loop
     input_assembly = _block_after(
         _read(LOOP_PATH),
-        "dds.drainCommandRequests(",
-        "dds.drainExplorationSegmentRequests(",
+        "auto drain_commands =",
+        "auto advance_runtime =",
     )
 
     assert "InputSnapshot input_snapshot" not in input_assembly
@@ -129,7 +187,7 @@ def test_endpoint_loop_uses_projector_and_only_typed_motion_inputs() -> None:
         "clear_planner_terrain_inputs()",
         "live_obstacles.updateFromScan",
     ]:
-        assert marker not in loop
+        assert marker not in sensors
 
     assert "runEndpointLoop(loop_ctx, g_running)" in main_body
     for marker in (
@@ -138,8 +196,8 @@ def test_endpoint_loop_uses_projector_and_only_typed_motion_inputs() -> None:
         "dds.drainCommandRequests(",
         "dds.drainInspectionTaskRequests(",
     ):
-        assert marker in loop
-    assert "drain" + "Legacy" not in loop
+        assert marker in endpoint_input
+    assert "drain" + "Legacy" not in endpoint_input
 
 
 def test_epoch_reset_keeps_synchronous_external_side_effects_in_main() -> None:
@@ -147,7 +205,7 @@ def test_epoch_reset_keeps_synchronous_external_side_effects_in_main() -> None:
     reset_block = _block_after(
         main,
         "auto reset_navigation_epoch = [&](",
-        "NavInputStateProjectorActions input_projector_actions;",
+        "InputActions inputs_actions;",
     )
 
     assert "rolling_segment.step(RollingSegmentObserveInvalidInput" in reset_block
@@ -155,7 +213,8 @@ def test_epoch_reset_keeps_synchronous_external_side_effects_in_main() -> None:
     assert "goal_replan_runtime_ptr->interrupt" in reset_block
     assert "sync_goal_plan_diagnostics" in reset_block
     assert "clear_motion_outputs" in reset_block
-    assert "path_echo.reset" in reset_block
+    assert "PathEcho" not in main
+    assert "path_echo" not in main
 
 
 def test_stop_confirm_loop_reuses_driver_projection_without_full_odometry_projection() -> None:
@@ -174,15 +233,15 @@ def test_stop_confirm_loop_reuses_driver_projection_without_full_odometry_projec
 
 def test_projector_owns_sensor_input_projection_only() -> None:
     assert PROJECTOR_HPP.exists()
-    assert PROJECTOR_CPP.exists()
-    projector = _read(PROJECTOR_HPP) + "\n" + _read(PROJECTOR_CPP)
+    assert all(path.exists() for path in PROJECTOR_SOURCES)
+    projector = "\n".join(_read(path) for path in (PROJECTOR_HPP, *PROJECTOR_SOURCES))
 
     for marker in [
         "InputGate",
         "SensorOrigin",
         "cloudToXyzh",
         "clearPlannerInputs",
-        "LiveObstacleLayer",
+        "MotionLayer",
         "projectTf",
         "projectOdometry",
         "projectDriverControl",

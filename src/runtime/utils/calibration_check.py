@@ -22,8 +22,15 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-FASTLIO2_CONFIG = REPO_ROOT / "src" / "localization" / "fastlio2" / "config" / "mid360_s100p.yaml"
-POINTLIO_CONFIG = REPO_ROOT / "config" / "pointlio.yaml"
+FASTLIO2_CONFIG = (
+    REPO_ROOT
+    / "config"
+    / "robots"
+    / "unitree"
+    / "go2"
+    / "sensors"
+    / "mid360_fastlio2.yaml"
+)
 
 # Plausible LiDAR↔IMU clock offset range (seconds). Hardware-synchronised systems
 # typically calibrate to <10 ms; values beyond this likely indicate a parsing bug
@@ -111,9 +118,11 @@ class CalibrationReport:
 
     @property
     def ok(self) -> bool:
+        """Return whether calibration has no hard errors."""
         return len(self.errors) == 0
 
     def summary(self) -> str:
+        """Return a compact operator-facing report summary."""
         parts = []
         if self.errors:
             parts.append(f"{len(self.errors)} ERROR(s)")
@@ -151,6 +160,12 @@ def run_calibration_check(
 
     report = CalibrationReport()
 
+    _check_calibration_approval(
+        config,
+        report,
+        require_camera=require_camera,
+        require_slam=require_slam,
+    )
     _check_camera_intrinsics(config, report, require_camera)
     _check_camera_extrinsics(config, report, require_camera)
     _check_lidar_extrinsics(config, report)
@@ -168,6 +183,37 @@ def run_calibration_check(
         logger.info("CALIB OK: %s", msg)
 
     return report
+
+
+def _check_calibration_approval(
+    config,
+    report: CalibrationReport,
+    *,
+    require_camera: bool,
+    require_slam: bool,
+) -> None:
+    raw = getattr(config, "raw", {})
+    calibration = raw.get("calibration") if isinstance(raw, dict) else None
+    if not isinstance(calibration, dict):
+        return
+
+    for scope, label, required in (
+        ("slam", "SLAM/LiDAR-IMU", require_slam),
+        ("camera", "Camera", require_camera),
+    ):
+        approval = calibration.get(scope)
+        if not isinstance(approval, dict):
+            if required:
+                report.errors.append(f"{label} calibration has no verification record")
+            continue
+        status = str(approval.get("status") or "unverified").strip().lower()
+        reason = str(approval.get("reason") or "no verification record").strip()
+        if status == "verified":
+            report.info.append(f"{label} calibration is marked verified: {reason}")
+        elif required:
+            report.errors.append(f"{label} calibration is {status}: {reason}")
+        else:
+            report.warnings.append(f"{label} calibration is {status}: {reason}")
 
 
 def _check_camera_intrinsics(config, report: CalibrationReport, required: bool) -> None:
@@ -362,44 +408,8 @@ def _check_lidar_imu_consistency(config, report: CalibrationReport, required: bo
         report.warnings.append(f"High IMU noise: na={na}, ng={ng} — consider Allan variance calibration")
 
 
-def _extract_pointlio_time_offset() -> tuple[float | None, str | None]:
-    """Read time_diff_lidar_to_imu from pointlio.yaml.
-
-    Supports both ROS2 parameter file layout (`/** -> ros__parameters -> common`)
-    and flat-key layout. Returns ``(value, diagnostic)``; a missing optional
-    value has no diagnostic, while an unreadable or malformed file does.
-    """
-    if not POINTLIO_CONFIG.exists():
-        return None, None
-    try:
-        import yaml
-
-        with open(POINTLIO_CONFIG, encoding="utf-8") as f:
-            pl = yaml.safe_load(f) or {}
-    except Exception as exc:
-        return None, f"Cannot read pointlio.yaml calibration data: {exc}"
-
-    if not isinstance(pl, dict):
-        return None, "pointlio.yaml must contain a YAML mapping"
-
-    # Search common locations in priority order.
-    for node in (
-        pl,
-        pl.get("/**", {}).get("ros__parameters", {}).get("common", {}) if isinstance(pl.get("/**"), dict) else {},
-        pl.get("common", {}) if isinstance(pl.get("common"), dict) else {},
-        pl.get("ros__parameters", {}).get("common", {}) if isinstance(pl.get("ros__parameters"), dict) else {},
-    ):
-        if isinstance(node, dict) and "time_diff_lidar_to_imu" in node:
-            try:
-                return float(node["time_diff_lidar_to_imu"]), None
-            except (TypeError, ValueError):
-                return None, "pointlio.yaml time_diff_lidar_to_imu must be numeric"
-    return None, None
-
-
 def _check_time_offset(report: CalibrationReport, required: bool) -> None:
-    """Validate LiDAR↔IMU time offset is within physical range and consistent
-    between fastlio2 and pointlio configs."""
+    """Validate the Fast-LIO2 LiDAR↔IMU time offset physical range."""
     import yaml
 
     lio_offset = None
@@ -408,42 +418,30 @@ def _check_time_offset(report: CalibrationReport, required: bool) -> None:
             with open(FASTLIO2_CONFIG, encoding="utf-8") as f:
                 lio = yaml.safe_load(f) or {}
             lio_offset = lio.get("time_diff_lidar_to_imu")
-        except Exception:
-            pass
+        except (OSError, UnicodeError, yaml.YAMLError, AttributeError) as exc:
+            message = f"Cannot read Fast-LIO2 calibration data: {exc}"
+            if required:
+                report.errors.append(message)
+            else:
+                report.warnings.append(message)
+            return
 
-    pointlio_offset, pointlio_diagnostic = _extract_pointlio_time_offset()
-    if pointlio_diagnostic:
+    if lio_offset is None:
+        return
+    try:
+        lio_offset = float(lio_offset)
+    except (TypeError, ValueError):
+        report.errors.append("lio.yaml time_diff_lidar_to_imu must be numeric")
+        return
+    if abs(lio_offset) > TIME_OFFSET_MAX_ABS_S:
+        msg = (
+            f"lio.yaml time_diff_lidar_to_imu = {lio_offset:.6f}s exceeds plausible "
+            f"±{TIME_OFFSET_MAX_ABS_S}s range — calibration likely wrong"
+        )
         if required:
-            report.errors.append(pointlio_diagnostic)
+            report.errors.append(msg)
         else:
-            report.warnings.append(pointlio_diagnostic)
-
-    for name, val in (("lio.yaml", lio_offset), ("pointlio.yaml", pointlio_offset)):
-        if val is None:
-            continue
-        if abs(val) > TIME_OFFSET_MAX_ABS_S:
-            msg = (
-                f"{name} time_diff_lidar_to_imu = {val:.6f}s exceeds plausible "
-                f"±{TIME_OFFSET_MAX_ABS_S}s range — calibration likely wrong"
-            )
-            if required:
-                report.errors.append(msg)
-            else:
-                report.warnings.append(msg)
-
-    if lio_offset is not None and pointlio_offset is not None:
-        if abs(lio_offset - pointlio_offset) > 1e-4:
-            msg = (
-                f"time_diff_lidar_to_imu mismatch: lio.yaml={lio_offset:.6f}s "
-                f"vs pointlio.yaml={pointlio_offset:.6f}s. "
-                "Run: python tools/calibration/apply_calibration.py to sync."
-            )
-            if required:
-                report.errors.append(msg)
-            else:
-                report.warnings.append(msg)
-        else:
-            report.info.append(f"time_diff_lidar_to_imu consistent across configs ({lio_offset:.6f}s)")
+            report.warnings.append(msg)
 
 
 def _check_rotation_validity(report: CalibrationReport) -> None:

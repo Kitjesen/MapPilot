@@ -1,12 +1,14 @@
 """Tests for runtime.utils.blackbox_recorder — drift watchdog crash recorder."""
 
 import json
+import os
 import shutil
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from runtime.utils.blackbox_recorder import BlackBoxRecorder, _json_default
 
@@ -70,6 +72,36 @@ class TestBlackBoxRecorderBasics(unittest.TestCase):
         # No channels recorded → no jsonl files.
         jsonls = list(out.glob("*.jsonl"))
         self.assertEqual(jsonls, [])
+
+    def test_managed_product_uses_session_owned_blackbox_directory(self):
+        session_root = self.tmp / "session"
+        session_root.mkdir()
+        environment = {
+            "LINGTU_SESSION_ROOT": str(session_root.resolve()),
+            "LINGTU_BLACKBOX_ENABLED": "1",
+        }
+        with patch.dict(os.environ, environment, clear=True), patch.object(
+            Path,
+            "home",
+            side_effect=RuntimeError("home unavailable"),
+        ):
+            recorder = BlackBoxRecorder.from_env()
+
+        self.assertEqual(recorder.base_dir, session_root.resolve() / "blackbox")
+        self.assertTrue(recorder.base_dir.is_dir())
+
+    def test_enabled_recorder_without_owned_storage_fails_closed(self):
+        with patch.dict(
+            os.environ,
+            {"LINGTU_BLACKBOX_ENABLED": "1"},
+            clear=True,
+        ), patch.object(
+            Path,
+            "home",
+            side_effect=RuntimeError("home unavailable"),
+        ):
+            with self.assertRaisesRegex(ValueError, "LINGTU_BLACKBOX_DIR"):
+                BlackBoxRecorder.from_env()
 
 
 class TestBlackBoxRetention(unittest.TestCase):

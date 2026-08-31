@@ -1,0 +1,56 @@
+{
+  "schema_version": "lingtu.mujoco.explore_map_native_acceptance.v1",
+  "extends": "mujoco_native_navigation_acceptance.json",
+  "name": "mujoco_explore_map_native",
+  "description": "Saved-map MuJoCo component acceptance for the native Explore map route.",
+  "product_contract": {
+    "product": "explore",
+    "source": "config/runtime_graph/products/explore.yaml",
+    "native_control_mode": "autonomy",
+    "slam_mode": "localization",
+    "requires_map": true,
+    "route": "map"
+  },
+  "binaries": {
+    "explore": {
+      "env": "LINGTU_MUJOCO_EXPLORE_BIN",
+      "candidates": [
+        "build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_explore_dds.exe",
+        "build/mujoco_native_nav/lingtu_explore_dds",
+        "build/nav_endpoint/lingtu_explore_dds"
+      ]
+    }
+  },
+  "contracts": {
+    "route": "map",
+    "required_flow": [
+      "rt/nav/exploration_snapshot",
+      "rt/nav/command/request",
+      "rt/nav/command/ack",
+      "rt/nav/goal/status",
+      "rt/nav/global_path",
+      "rt/nav/local_path",
+      "rt/nav/cmd_vel",
+      "rt/driver/control_state"
+    ],
+    "forbidden_compute": [
+      "live-map exploration segment execution",
+      "Python navigation"
+    ]
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": [
+      "saved-map Fast-LIO2 localization",
+      "saved-map occupancy coverage planning",
+      "typed exploration goal command and acknowledgement",
+      "native global and local planning with final command safety",
+      "MuJoCo physical driver bridge applies commands before typed ACK"
+    ],
+    "excluded_claims": [
+      "exact ProductControl RunPlan process realization",
+      "live-map exploration route",
+      "physical robot motion"
+    ]
+  }
+}

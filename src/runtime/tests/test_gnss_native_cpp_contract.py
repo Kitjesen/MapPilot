@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from runtime.service_catalogs.thunder import thunder_service_spec
+
 GNSS_ROOT = Path("src/drivers/real/gnss")
 
 
@@ -64,35 +66,41 @@ def test_gnss_native_dds_entrypoint_is_product_service() -> None:
     cmake = _read("src/drivers/real/gnss/CMakeLists.txt")
     build = _read("scripts/build/build_gnss_dds.sh")
     run = _read("scripts/deploy/thunder/run_gnss_dds.sh")
-    service = _read("scripts/deploy/thunder/lingtu-gnss-dds.service")
-    installer = _read("scripts/deploy/thunder/install_gnss_dds_service.sh")
+    service = _read("scripts/deploy/thunder/lt-gnss.service")
+    installer = _read("scripts/deploy/thunder/install_catalog_service.sh")
+    catalog_entry = thunder_service_spec("gnss")
 
     assert '#include "native/dds_module.hpp"' in entry
     assert '#include "native/module.hpp"' in entry
     assert '#include "dds/dds.h"' not in entry
-    assert '#include "message/cpp/dds_topics.hpp"' in module
+    assert '#include "message/cpp/topics.hpp"' in module
     assert '#include "dds/dds.h"' in dds_module
-    assert '#include "message/cpp/dds_qos_profiles.hpp"' in dds_module
+    assert '#include "message/cpp/qos.hpp"' in dds_module
     assert "lingtu_dds_GnssFix_desc" in dds_module
     assert "lingtu_dds_GnssStatus_desc" in dds_module
     assert "add_executable(lingtu_gnss_dds" in cmake
     assert "native/module.cpp" in cmake
     assert "native/dds_module.cpp" in cmake
     assert "CycloneDDS::ddsc" in cmake
-    assert "lingtu_dds_qos_profiles" in cmake
+    assert "lingtu_dds_contracts" in cmake
     assert "build/gnss_dds" in build
     assert "lingtu_gnss_dds" in build
     assert "LINGTU_GNSS_DDS_BIN" in run
     assert "LINGTU_GNSS_DEVICE" in service
     assert "LINGTU_GNSS_PUBLISH_ODOM=0" in service
-    assert 'install_catalog_service.sh" gnss' in installer
+    assert catalog_entry is not None
+    assert catalog_entry.start_units == ("lt-gnss.service",)
+    assert catalog_entry.retired_units == ("lingtu-gnss-dds.service",)
+    assert 'catalog install-unit "${SERVICE}"' in installer
+    assert 'catalog retired-units "${SERVICE}"' in installer
 
 
-def test_python_gnss_module_is_not_wtrtk980_product_backend() -> None:
-    source = _read("src/localization/gnss_module.py")
-    stack = _read("src/lingtu/assembly/stacks/system.py")
+def test_native_service_is_the_only_gnss_runtime_implementation() -> None:
+    retired_python_paths = (
+        "src/localization/gnss_module.py",
+        "src/localization/gnss_bridge.py",
+        "src/localization/gnss_serial_driver.py",
+        "src/localization/ntrip_client_module.py",
+    )
 
-    assert '@register("gnss", "wtrtk980"' not in source
-    assert '@register("gnss", "compat"' in source
-    assert "lingtu-gnss-dds.service" in stack
-    assert "skipping Python GnssModule serial ownership" in stack
+    assert [path for path in retired_python_paths if Path(path).exists()] == []

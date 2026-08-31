@@ -56,10 +56,6 @@ def driver_stack_config(
             "publish_lidar",
             bool(driver_config.get("use_driver_lidar", False)),
         )
-        driver_config.setdefault(
-            "publish_imu",
-            bool(driver_config.get("use_driver_imu", False)),
-        )
     return driver_config
 
 
@@ -95,8 +91,4 @@ def exploration_stack_config(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def needs_lidar_for_slam(slam_profile: str) -> bool:
-    return slam_profile not in (
-        "",
-        "none",
-        "bridge",
-    )
+    return slam_profile == "native_dds"

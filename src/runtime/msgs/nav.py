@@ -363,7 +363,7 @@ class InspectionTaskEvent:
     command_request_id: str = ""
     state: int = int(InspectionTaskState.IDLE)
     map_id: str = ""
-    map_version: int = 0
+    map_content_epoch: int = 0
     route_id: str = ""
     route_revision: int = 0
     point_index: int = 0
@@ -396,7 +396,7 @@ class InspectionTaskEvent:
         InspectionTaskEventKind(_require_int(self.kind, "InspectionTaskEvent.kind"))
         InspectionTaskState(_require_int(self.state, "InspectionTaskEvent.state"))
         for field_name in (
-            "map_version",
+            "map_content_epoch",
             "route_revision",
             "point_index",
             "point_count",
@@ -439,7 +439,7 @@ class InspectionTaskEvent:
             "state_name": self.state_name,
             "terminal": self.terminal,
             "map_id": self.map_id,
-            "map_version": int(self.map_version),
+            "map_content_epoch": int(self.map_content_epoch),
             "route_id": self.route_id,
             "route_revision": int(self.route_revision),
             "point_index": int(self.point_index),
@@ -455,7 +455,6 @@ class InspectionTaskEvent:
 
 
 _ULID_PATTERN = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
-_SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 @dataclass(frozen=True)
@@ -476,8 +475,7 @@ class ExplorationRunEvent:
     state: int = int(ExplorationRunState.ADMITTED)
     route: str = ""
     map_id: str = ""
-    map_version: int = 0
-    artifact_hash: str = ""
+    map_content_epoch: int = 0
     reason: str = ""
     motion_stop_confirmed: bool = False
     motion_stop_reason: str = ""
@@ -516,22 +514,21 @@ class ExplorationRunEvent:
             _require_int(self.kind, "ExplorationRunEvent.kind")
         )
         state = ExplorationRunState(_require_int(self.state, "ExplorationRunEvent.state"))
-        map_version = _require_int(self.map_version, "ExplorationRunEvent.map_version")
+        map_content_epoch = _require_int(self.map_content_epoch, "ExplorationRunEvent.map_content_epoch")
         if not isinstance(self.route, str) or self.route not in {"live", "map"}:
             raise ValueError("ExplorationRunEvent.route must be 'live' or 'map'")
-        if not isinstance(self.map_id, str) or not isinstance(self.artifact_hash, str):
-            raise ValueError("ExplorationRunEvent map identity fields must be strings")
+        if not isinstance(self.map_id, str):
+            raise ValueError("ExplorationRunEvent.map_id must be a string")
         if self.route == "map":
             if (
                 not self.map_id.strip()
-                or map_version <= 0
-                or not _SHA256_PATTERN.fullmatch(self.artifact_hash)
+                or map_content_epoch <= 0
             ):
                 raise ValueError(
                     "ExplorationRunEvent map identity requires map_id, positive "
-                    "map_version, and SHA-256 artifact_hash"
+                    "map_content_epoch"
                 )
-        elif self.map_id or map_version != 0 or self.artifact_hash:
+        elif self.map_id or map_content_epoch != 0:
             raise ValueError(
                 "ExplorationRunEvent live route cannot claim a saved-map identity"
             )
@@ -628,8 +625,7 @@ class ExplorationRunEvent:
             "terminal": self.terminal,
             "route": self.route,
             "map_id": self.map_id,
-            "map_version": int(self.map_version),
-            "artifact_hash": self.artifact_hash,
+            "map_content_epoch": int(self.map_content_epoch),
             "reason": self.reason,
             "motion_stop_confirmed": self.motion_stop_confirmed,
             "motion_stop_reason": self.motion_stop_reason,
@@ -652,8 +648,7 @@ class NavigationState:
     active_request_id: str = ""
     goal_epoch: int = 0
     map_id: str = ""
-    map_version: int = 0
-    map_hash: str = ""
+    map_content_epoch: int = 0
     planning_state: int = int(NavigationPlanningState.IDLE)
     execution_state: int = int(NavigationExecutionState.IDLE)
     recovery_state: int = int(NavigationRecoveryState.IDLE)
@@ -671,7 +666,7 @@ class NavigationState:
             raise ValueError("NavigationState.boot_id is required")
         if int(self.sequence) <= 0:
             raise ValueError("NavigationState.sequence must be positive")
-        if int(self.goal_epoch) < 0 or int(self.map_version) < 0:
+        if int(self.goal_epoch) < 0 or int(self.map_content_epoch) < 0:
             raise ValueError("NavigationState epochs and versions cannot be negative")
         if bool(self.active_task_id.strip()) != bool(self.active_request_id.strip()):
             raise ValueError(
@@ -695,8 +690,7 @@ class NavigationState:
             "active_request_id": self.active_request_id,
             "goal_epoch": int(self.goal_epoch),
             "map_id": self.map_id,
-            "map_version": int(self.map_version),
-            "map_hash": self.map_hash,
+            "map_content_epoch": int(self.map_content_epoch),
             "planning_state": int(self.planning_state),
             "planning_state_name": _enum_name(NavigationPlanningState, self.planning_state),
             "execution_state": int(self.execution_state),

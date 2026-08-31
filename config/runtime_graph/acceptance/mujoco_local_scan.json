@@ -1,0 +1,41 @@
+{
+  "extends": "mujoco_local_common.json",
+  "name": "mujoco_local_scan",
+  "description": "Saved-map navigation qualification for the SCAN local-planner backend.",
+  "product_contract": {
+    "product": "nav",
+    "source": "config/runtime_graph/products/nav.yaml",
+    "native_control_mode": "autonomy",
+    "slam_mode": "localization",
+    "requires_map": true
+  },
+  "domain_id_base": 227,
+  "navigation_runtime": {
+    "local_planner": "scan",
+    "path_follower_lookahead_m": 0.35,
+    "path_follower_max_accel_mps2": 1.0,
+    "path_follower_max_speed_mps": 0.6,
+    "path_follower_min_speed_mps": 0.0,
+    "path_follower_max_yaw_rate_rad_s": 0.8,
+    "path_follower_heading_align_enter_rad": 1.0,
+    "path_follower_heading_align_exit_rad": 0.5
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": [
+      "the nav RunPlan explicitly selects the SCAN local-planner backend",
+      "MuJoCo truth odometry isolates local planning and tracking from SLAM error",
+      "the simulated MuJoCo robot base reaches at least 0.5 m/s planar speed during the long-range run",
+      "SCAN consumes the complete Mapd local collision snapshot and the global route shape",
+      "the native SCAN trajectory is followed through the common Executor and Driver chain",
+      "terminal exact Driver stop acknowledgement, zero command, authority clear, and owned-process cleanup"
+    ],
+    "excluded_claims": [
+      "promotion of SCAN to the default local-planner backend",
+      "Fast-LIO2 localization quality",
+      "S100P timing qualification",
+      "Brainstem motor execution",
+      "physical robot motion"
+    ]
+  }
+}

@@ -1,38 +1,13 @@
-"""Tests for nav_services and reconstruction Module conversions.
+"""Tests for active service and reconstruction Module conversions.
 
-Covers:
-- Port declarations for all 5 modules (MapManager, Patrol, Geofence, TaskScheduler, Reconstruction)
-- MapsModule basic command handling (list, delete, poi)
-- PatrolManagerModule port types (In[str], In[Odometry], Out[list], Out[str])
+Covers port declarations for the remaining Host service modules.
 """
 
-import json
-import os
-import tempfile
-
-from maps.modules.service import MapsModule
-from nav.services.geofence import GeofenceManagerModule
+from drivers.real.camera import dds_module as camera_module
 from nav.services.goals import GoalService
-from nav.services.patrol import PatrolManagerModule
-from nav.services.scheduler import TaskSchedulerModule
 from perception.reconstruction.reconstruction_module import ReconstructionModule
-from runtime import In, Out
-from runtime.msgs.map import MapControlRequest
-from runtime.msgs.nav import Odometry
 from runtime.msgs.semantic import SceneGraph
 from runtime.msgs.sensor import CameraIntrinsics, Image
-
-# ============================================================================
-# Helpers
-# ============================================================================
-
-
-def _collect(module, port_name):
-    """Attach a collector callback to an Out port and return the events list."""
-    events = []
-    port = getattr(module, port_name)
-    port._add_callback(events.append)
-    return events
 
 
 # ============================================================================
@@ -41,56 +16,14 @@ def _collect(module, port_name):
 
 
 class TestPortDeclarations:
-    def test_map_manager_ports(self):
-        m = MapsModule(data_dir=tempfile.mkdtemp(), map_dir=tempfile.mkdtemp())
-        assert "map_command" in m.ports_in
-        assert "map_response" in m.ports_out
-        assert m.ports_in["map_command"].msg_type is MapControlRequest
-        assert m.ports_out["map_response"].msg_type is dict
-        assert m.layer == 6
-
-    def test_patrol_manager_ports(self):
-        m = PatrolManagerModule(routes_dir=tempfile.mkdtemp())
-        assert "patrol_command" in m.ports_in
-        assert "odometry" in m.ports_in
-        assert "patrol_goals" in m.ports_out
-        assert "patrol_status" in m.ports_out
-        assert m.ports_in["patrol_command"].msg_type is str
-        assert m.ports_in["odometry"].msg_type is Odometry
-        assert m.ports_out["patrol_goals"].msg_type is list
-        assert m.ports_out["patrol_status"].msg_type is str
-        assert m.layer == 6
-
-    def test_geofence_manager_ports(self):
-        m = GeofenceManagerModule(geofence_file=os.path.join(tempfile.mkdtemp(), "gf.yaml"))
-        assert "odometry" in m.ports_in
-        assert "geofence_command" in m.ports_in
-        assert "geofence_alert" in m.ports_out
-        assert m.ports_in["odometry"].msg_type is Odometry
-        assert m.layer == 6
-
-    def test_task_scheduler_ports(self):
-        m = TaskSchedulerModule(schedule_file=os.path.join(tempfile.mkdtemp(), "sched.yaml"))
-        assert "schedule_command" in m.ports_in
-        assert "scheduled_task" in m.ports_out
-        assert "patrol_command" in m.ports_out
-        assert m.ports_in["schedule_command"].msg_type is str
-        assert m.ports_out["scheduled_task"].msg_type is dict
-        assert m.ports_out["patrol_command"].msg_type is str
-        assert m.layer == 6
-
     def test_goal_service_ports(self):
         m = GoalService()
         assert "goal_command" in m.ports_in
         assert "goal_request" in m.ports_in
         assert "cancel_request" in m.ports_in
-        assert "goal_pose" in m.ports_out
-        assert "patrol_goals" in m.ports_out
-        assert "cancel" in m.ports_out
         assert "goal_status" in m.ports_out
         assert m.ports_in["goal_command"].msg_type is str
-        assert m.ports_out["patrol_goals"].msg_type is list
-        assert m.ports_out["cancel"].msg_type is str
+        assert set(m.ports_out) == {"goal_status"}
         assert m.ports_out["goal_status"].msg_type is dict
         assert m.layer == 6
 
@@ -109,82 +42,42 @@ class TestPortDeclarations:
         assert m.layer == 3
 
 
-# ============================================================================
-# MapsModule functional tests
-# ============================================================================
+def test_camera_reader_starts_after_consumers_can_subscribe(monkeypatch, tmp_path):
+    class Reader:
+        def __init__(self, *_args, **_kwargs):
+            pass
 
+        def close(self):
+            pass
 
-class TestMapsModule:
-    def test_list_empty(self):
-        m = MapsModule(data_dir=tempfile.mkdtemp(), map_dir=tempfile.mkdtemp())
-        m.setup()
-        events = _collect(m, "map_response")
-        m.map_command._deliver(MapControlRequest.from_mapping({"action": "list"}))
-        assert len(events) == 1
-        assert events[0]["success"] is True
-        assert events[0]["maps"] == []
+    monkeypatch.setattr(camera_module, "ShmFrameReader", Reader)
+    module = camera_module.DdsCameraModule(
+        color_shm_path=str(tmp_path / "color.shm"),
+        depth_shm_path=str(tmp_path / "depth.shm"),
+        info_shm_path=str(tmp_path / "info.shm"),
+    )
+    received = []
 
-    def test_delete_nonexistent(self):
-        m = MapsModule(data_dir=tempfile.mkdtemp(), map_dir=tempfile.mkdtemp())
-        m.setup()
-        events = _collect(m, "map_response")
-        m.map_command._deliver(MapControlRequest.from_mapping({"action": "delete", "name": "ghost"}))
-        assert events[0]["success"] is False
-
-    def test_poi_crud(self):
-        m = MapsModule(data_dir=tempfile.mkdtemp(), map_dir=tempfile.mkdtemp())
-        m.setup()
-        events = _collect(m, "map_response")
-
-        m.map_command._deliver(MapControlRequest.from_mapping({"action": "create", "name": "poi_map"}))
-        assert events[-1]["success"] is True
-
-        m.map_command._deliver(
-            MapControlRequest.from_mapping(
-                {
-                    "action": "poi_set",
-                    "map_id": "poi_map",
-                    "name": "office",
-                    "x": 1.0,
-                    "y": 2.0,
-                }
+    def publish_once():
+        module.camera_info.publish(
+            CameraIntrinsics(
+                fx=600.0,
+                fy=600.0,
+                cx=320.0,
+                cy=240.0,
+                width=640,
+                height=480,
             )
         )
-        assert events[-1]["success"] is True
 
-        m.map_command._deliver(MapControlRequest.from_mapping({"action": "poi_list", "map_id": "poi_map"}))
-        assert "office" in events[-1]["pois"]
+    monkeypatch.setattr(module, "_read_loop", publish_once)
 
-        m.map_command._deliver(
-            MapControlRequest.from_mapping(
-                {
-                    "action": "poi_delete",
-                    "map_id": "poi_map",
-                    "name": "office",
-                }
-            )
-        )
-        assert events[-1]["success"] is True
+    module.setup()
+    assert module._thread is None
+    module.camera_info.subscribe(received.append)
+    module.start()
+    assert module._thread is not None
+    module._thread.join(timeout=1.0)
 
-
-# ============================================================================
-# PatrolManagerModule port type tests
-# ============================================================================
-
-
-class TestPatrolManagerModule:
-    def test_port_types_correct(self):
-        m = PatrolManagerModule(routes_dir=tempfile.mkdtemp())
-        assert isinstance(m.patrol_command, In)
-        assert isinstance(m.odometry, In)
-        assert isinstance(m.patrol_goals, Out)
-        assert isinstance(m.patrol_status, Out)
-
-    def test_list_empty_routes(self):
-        m = PatrolManagerModule(routes_dir=tempfile.mkdtemp())
-        m.setup()
-        events = _collect(m, "patrol_status")
-        m.patrol_command._deliver(json.dumps({"action": "list"}))
-        resp = json.loads(events[0])
-        assert resp["success"] is True
-        assert resp["routes"] == []
+    assert len(received) == 1
+    module.stop()

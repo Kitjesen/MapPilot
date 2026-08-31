@@ -68,19 +68,7 @@ OLD_PATH_TOKENS = (
 )
 
 OLD_NAME_TOKENS = (
-    "NavigationModule",
-    "GoalServiceModule",
     "MapManagerModule",
-    "LocalPlannerModule",
-    "PathFollowerModule",
-    "TerrainModule",
-    "SafetyRingModule",
-    "CmdVelMux",
-    "GlobalPlannerService",
-    "navigation_module",
-    "global_planner_service",
-    "cmd_vel_mux_module",
-    "safety_ring_module",
     "nav.core",
     "kernels.nav_core",
     "_nav_core",
@@ -89,8 +77,6 @@ OLD_NAME_TOKENS = (
 TOKEN_SCAN_ALLOWLIST = {
     "tests/contracts/test_runtime_architecture_boundaries.py",
     "tests/contracts/test_source_domain_migration.py",
-    # This file describes an external CMU Unity workspace layout, not LingTu src.
-    "sim/scripts/launch_cmu_unity_baseline.sh",
     # Explains, by name, that src/semantic/ was retired and stays deleted -- the
     # token appears as historical/explanatory prose, not a live reference.
     "src/perception/README.md",

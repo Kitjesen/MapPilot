@@ -98,6 +98,52 @@ class TestCalibrationCheck(unittest.TestCase):
         report = self._run(cfg)
         self.assertTrue(any("fx" in w and "fy" in w for w in report.warnings))
 
+    def test_slam_approval_does_not_approve_unverified_camera(self):
+        from runtime.utils import calibration_check as cc
+
+        cfg = MockRobotConfig(
+            raw={
+                "calibration": {
+                    "slam": {"status": "verified", "reason": "field evidence"},
+                    "camera": {"status": "unverified", "reason": "not measured"},
+                }
+            }
+        )
+        report = cc.CalibrationReport()
+
+        cc._check_calibration_approval(
+            cfg,
+            report,
+            require_camera=False,
+            require_slam=True,
+        )
+
+        self.assertEqual(report.errors, [])
+        self.assertTrue(any("SLAM/LiDAR-IMU" in item for item in report.info))
+        self.assertTrue(any("Camera calibration is unverified" in item for item in report.warnings))
+
+    def test_camera_product_stays_blocked_when_only_slam_is_verified(self):
+        from runtime.utils import calibration_check as cc
+
+        cfg = MockRobotConfig(
+            raw={
+                "calibration": {
+                    "slam": {"status": "verified", "reason": "field evidence"},
+                    "camera": {"status": "unverified", "reason": "not measured"},
+                }
+            }
+        )
+        report = cc.CalibrationReport()
+
+        cc._check_calibration_approval(
+            cfg,
+            report,
+            require_camera=True,
+            require_slam=False,
+        )
+
+        self.assertTrue(any("Camera calibration is unverified" in item for item in report.errors))
+
 
 class TestCameraExtrinsics(unittest.TestCase):
     def _run(self, config, **kw):
@@ -163,17 +209,17 @@ class TestLidarExtrinsics(unittest.TestCase):
         from runtime.utils import calibration_check as cc
 
         self.assertTrue(cc.FASTLIO2_CONFIG.is_file(), cc.FASTLIO2_CONFIG)
-        self.assertEqual(cc.FASTLIO2_CONFIG.name, "mid360_s100p.yaml")
-        self.assertIn("src/localization/fastlio2/config", cc.FASTLIO2_CONFIG.as_posix())
+        self.assertEqual(cc.FASTLIO2_CONFIG.name, "mid360_fastlio2.yaml")
+        self.assertIn("config/robots/unitree/go2/sensors", cc.FASTLIO2_CONFIG.as_posix())
 
-    def test_v4_body_lidar_transform_matches_fastlio_runtime(self):
+    def test_go2_body_lidar_transform_matches_fastlio_runtime(self):
         cfg = MockRobotConfig(
             lidar=MockLidarConfig(
-                offset_x=0.402876074867229,
+                offset_x=0.16143,
                 offset_y=0.0,
-                offset_z=0.0582019450665819,
-                roll=-math.pi,
-                pitch=-math.pi / 4.0,
+                offset_z=0.12262,
+                roll=0.0,
+                pitch=math.radians(13.0),
                 yaw=0.0,
             )
         )
@@ -190,12 +236,12 @@ class TestLidarExtrinsics(unittest.TestCase):
             report.info,
         )
 
-    def test_v4_body_lidar_rotation_mismatch_is_error_when_slam_required(self):
+    def test_go2_body_lidar_rotation_mismatch_is_error_when_slam_required(self):
         cfg = MockRobotConfig(
             lidar=MockLidarConfig(
-                offset_x=0.402876074867229,
+                offset_x=0.16143,
                 offset_y=0.0,
-                offset_z=0.0582019450665819,
+                offset_z=0.12262,
                 roll=0.0,
                 pitch=0.0,
                 yaw=0.0,
@@ -270,9 +316,9 @@ class TestCalibrationReport(unittest.TestCase):
 
 
 class TestTimeOffset(unittest.TestCase):
-    """Tests for the LiDAR↔IMU time offset cross-config consistency check."""
+    """Tests for the Fast-LIO2 LiDAR↔IMU time-offset check."""
 
-    def _run_check(self, lio_offset=None, pointlio_offset=None, required=False):
+    def _run_check(self, lio_offset=None, required=False):
         """Invoke _check_time_offset with mocked yaml loads."""
         from runtime.utils import calibration_check as cc
 
@@ -286,48 +332,43 @@ class TestTimeOffset(unittest.TestCase):
             payload = {}
             if str(path) == str(cc.FASTLIO2_CONFIG) and lio_offset is not None:
                 payload = {"time_diff_lidar_to_imu": lio_offset}
-            elif str(path) == str(cc.POINTLIO_CONFIG) and pointlio_offset is not None:
-                payload = {"time_diff_lidar_to_imu": pointlio_offset}
             return StringIO(_y.dump(payload))
 
         with patch("pathlib.Path.exists", return_value=True), patch("builtins.open", side_effect=fake_open):
             cc._check_time_offset(report, required=required)
         return report
 
-    def test_consistent_offsets_pass(self):
-        report = self._run_check(lio_offset=0.005, pointlio_offset=0.005)
+    def test_in_range_offset_passes(self):
+        report = self._run_check(lio_offset=0.005)
         self.assertEqual(len(report.errors), 0)
         self.assertEqual(len(report.warnings), 0)
-        self.assertTrue(any("consistent" in i for i in report.info))
-
-    def test_mismatched_offsets_warn(self):
-        report = self._run_check(lio_offset=0.005, pointlio_offset=0.020)
-        self.assertEqual(len(report.errors), 0)
-        self.assertTrue(any("mismatch" in w for w in report.warnings))
-
-    def test_mismatched_offsets_error_when_required(self):
-        report = self._run_check(lio_offset=0.005, pointlio_offset=0.020, required=True)
-        self.assertTrue(any("mismatch" in e for e in report.errors))
 
     def test_out_of_range_warns(self):
-        report = self._run_check(lio_offset=0.5, pointlio_offset=0.5)
+        report = self._run_check(lio_offset=0.5)
         self.assertTrue(any("exceeds plausible" in w for w in report.warnings))
 
     def test_out_of_range_errors_when_required(self):
-        report = self._run_check(lio_offset=0.5, pointlio_offset=0.5, required=True)
+        report = self._run_check(lio_offset=0.5, required=True)
         self.assertTrue(any("exceeds plausible" in e for e in report.errors))
 
     def test_missing_offsets_silent(self):
-        report = self._run_check(lio_offset=None, pointlio_offset=None)
+        report = self._run_check(lio_offset=None)
         self.assertEqual(len(report.errors), 0)
         self.assertEqual(len(report.warnings), 0)
         self.assertEqual(len(report.info), 0)
 
-    def test_only_one_config_present(self):
-        """If only one of the two configs has a value, range still checked, no mismatch."""
-        report = self._run_check(lio_offset=0.005, pointlio_offset=None)
-        self.assertEqual(len(report.errors), 0)
-        self.assertEqual(len(report.warnings), 0)
+    def test_unreadable_fastlio_config_warns(self):
+        from runtime.utils import calibration_check as cc
+
+        report = cc.CalibrationReport()
+        with patch("pathlib.Path.exists", return_value=True), patch(
+            "builtins.open",
+            side_effect=UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid"),
+        ):
+            cc._check_time_offset(report, required=False)
+
+        self.assertTrue(any("Cannot read Fast-LIO2 calibration data" in warning for warning in report.warnings))
+
 
 
 if __name__ == "__main__":

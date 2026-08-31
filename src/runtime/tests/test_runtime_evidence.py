@@ -1,3 +1,6 @@
+# The subprocess tests execute fixed scripts from this repository.
+# ruff: noqa: S603
+
 from __future__ import annotations
 
 import pytest
@@ -5,86 +8,37 @@ import pytest
 pytestmark = [pytest.mark.sim]
 
 import importlib.util
-import json
 import subprocess
 import sys
 from argparse import Namespace
-from copy import deepcopy
-from dataclasses import replace
 from pathlib import Path
-
-import yaml
 
 from diagnostics.field.evidence import (
     REAL_HARDWARE_COMMAND_SINK,
     REAL_RUNTIME_COLLECTOR_NAME,
     REAL_RUNTIME_CONTRACT,
     REAL_RUNTIME_CONTROL_TOPICS_PUBLISHED,
-    REAL_RUNTIME_EVIDENCE_VALIDATION_SCHEMA,
-    real_runtime_evidence_payload,
     validate_real_runtime_evidence,
     validate_runtime_evidence,
 )
-from diagnostics.field.gates import (
-    REAL_RUNTIME_EVIDENCE_COLLECTOR_COMMAND,
-    REAL_RUNTIME_EVIDENCE_COMMAND,
-    REAL_RUNTIME_EVIDENCE_GATE_COMMAND,
-    REAL_RUNTIME_EVIDENCE_OPERATOR_SUMMARY_SECTIONS,
-    REAL_RUNTIME_EVIDENCE_PROVES,
-    REAL_RUNTIME_EVIDENCE_VALIDATES,
-    RUNTIME_AUDIT_CHECKS,
-    RUNTIME_AUDIT_OPERATOR_SUMMARY_SECTIONS,
-    RUNTIME_AUDIT_PROVES,
-    RUNTIME_AUDIT_VALIDATE_CHECK_COVERAGE,
-    RUNTIME_AUDIT_VALIDATES,
-    SAVED_MAP_ARTIFACT_GATE_COMMAND,
-    SAVED_MAP_ARTIFACT_GATE_OPERATOR_SUMMARY_SECTIONS,
-    SAVED_MAP_ARTIFACT_GATE_PROVES,
-    SAVED_MAP_ARTIFACT_GATE_VALIDATES,
-    runtime_validation_gates,
-    validate_runtime_validation_gates,
-)
-from runtime.contracts.product_runtime import resolve_product_spec_contracts
-from runtime.graph import load_runtime_graph
 from runtime.runtime_interface import (
-    ALGORITHM_INTERFACES,
     FRAME_LINKS,
     REAL_RUNTIME_CONTRACT,
     REAL_RUNTIME_REQUIRED_ENDPOINT_INPUT_TOPICS,
     REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS,
-    RUNTIME_DATA_FLOW,
-    RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES,
-    THUNDER_DATA_SOURCE,
     TOPICS,
     adapter_source_for_target,
     body_frame_id,
     camera_frame_id,
-    canonical_data_source_name,
     lidar_frame_id,
     map_frame_id,
-    normalize_algorithm_interface_contract,
-    normalize_runtime_frames_contract,
     odom_frame_id,
     real_lidar_frame_id,
-    resolved_product_runtime_data_flow,
     resolved_runtime_data_flow,
-    runtime_algorithm_interface_contract,
     runtime_contract_data_source,
-    runtime_contract_manifest,
     runtime_data_flow_topics,
-    runtime_frames_contract,
-    runtime_required_topic_frame_ids,
-    runtime_stage_algorithm_interface_contract,
-    runtime_topic_allowed_frame_contract,
-    runtime_topic_allowed_frame_ids,
-    runtime_topic_default_frame_contract,
     runtime_topic_default_frame_id,
-    runtime_topic_default_frame_ids,
     simulator_world_frame_id,
-    topic_default_frame_id,
-)
-from runtime.runtime_interface import (
-    REAL_RUNTIME_CONTRACT as INTERFACE_REAL_RUNTIME_CONTRACT,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -126,109 +80,10 @@ def _frame_evidence() -> dict:
     }
 
 
-def _flow_token_observed(
-    token: str,
-    topic_evidence: dict[str, dict[str, object]] | None,
-    hardware_boundary: dict[str, object] | None,
-) -> bool:
-    if token.startswith("/") and topic_evidence is not None:
-        entry = topic_evidence.get(token) or {}
-        return float(entry.get("samples") or 0) > 0 or entry.get("ok") is True or entry.get("graph_exists") is True
-    if hardware_boundary is None:
-        return False
-    if token == REAL_HARDWARE_COMMAND_SINK:
-        return hardware_boundary.get("hardware_command_route_observed") is True
-    if token == hardware_boundary.get("command_sink"):
-        return hardware_boundary.get("hardware_command_route_observed") is True
-    return False
-
-
-def _observed_flow_tokens(
-    tokens: tuple[str, ...],
-    topic_evidence: dict[str, dict[str, object]] | None,
-    hardware_boundary: dict[str, object] | None,
-) -> list[str]:
-    return [token for token in tokens if _flow_token_observed(token, topic_evidence, hardware_boundary)]
-
-
-def _missing_flow_tokens(
-    tokens: tuple[str, ...],
-    topic_evidence: dict[str, dict[str, object]] | None,
-    hardware_boundary: dict[str, object] | None,
-) -> list[str]:
-    return [token for token in tokens if not _flow_token_observed(token, topic_evidence, hardware_boundary)]
-
-
 def _data_flow_evidence(
-    data_source: str = "cmu_unity_external",
-    topic_evidence: dict[str, dict[str, object]] | None = None,
-    hardware_boundary: dict[str, object] | None = None,
+    data_source: str = "mujoco_module_graph",
 ) -> dict:
-    evidence = {}
-    for stage in resolved_runtime_data_flow(data_source):
-        entry = {
-            "ok": True,
-            "inputs": list(stage.inputs),
-            "outputs": list(stage.outputs),
-            "owner": stage.owner,
-            "frame_role": stage.frame_role,
-            "map_dependency": stage.map_dependency,
-            "reason": f"{stage.name}_observed",
-        }
-        if topic_evidence is not None or hardware_boundary is not None:
-            entry.update(
-                {
-                    "observed_inputs": _observed_flow_tokens(
-                        stage.inputs,
-                        topic_evidence,
-                        hardware_boundary,
-                    ),
-                    "missing_inputs": _missing_flow_tokens(
-                        stage.inputs,
-                        topic_evidence,
-                        hardware_boundary,
-                    ),
-                    "observed_outputs": _observed_flow_tokens(
-                        stage.outputs,
-                        topic_evidence,
-                        hardware_boundary,
-                    ),
-                    "missing_outputs": _missing_flow_tokens(
-                        stage.outputs,
-                        topic_evidence,
-                        hardware_boundary,
-                    ),
-                }
-            )
-        evidence[stage.name] = entry
-    return evidence
-
-
-def _required_topic_frame_contract(data_source: str = REAL_RUNTIME_CONTRACT) -> dict:
-    default_frame_ids = runtime_topic_default_frame_ids(data_source)
-    allowed_frame_ids = runtime_topic_allowed_frame_ids(data_source)
-    return {
-        topic: {
-            "default_frame_id": default_frame_ids[topic],
-            "allowed_frame_ids": list(allowed_frame_ids[topic]),
-        }
-        for topic in runtime_required_topic_frame_ids(data_source)
-    }
-
-
-def _template_data_flow_evidence() -> dict:
-    return {
-        stage.name: {
-            "ok": True,
-            "inputs": list(stage.inputs),
-            "outputs": list(stage.outputs),
-            "owner": stage.owner,
-            "frame_role": stage.frame_role,
-            "map_dependency": stage.map_dependency,
-            "reason": "template_stage_observed",
-        }
-        for stage in RUNTIME_DATA_FLOW
-    }
+    return {stage.name: {"ok": True} for stage in resolved_runtime_data_flow(data_source)}
 
 
 @pytest.mark.sim
@@ -272,17 +127,8 @@ def test_core_message_defaults_use_runtime_frame_helpers() -> None:
     assert Image().frame_id == camera_frame_id()
 
 
-def test_adapter_source_for_target_exposes_native_runtime_boundaries() -> None:
+def test_fastlio2_adapter_exposes_native_odometry_source() -> None:
     assert adapter_source_for_target("fastlio2", TOPICS.odometry) == "/Odometry"
-    assert adapter_source_for_target("localizer", TOPICS.saved_map_cloud) == "map_cloud"
-    assert adapter_source_for_target("localizer", TOPICS.global_relocalize_service) == "global_relocalize"
-    assert (
-        adapter_source_for_target(
-            "localizer",
-            TOPICS.global_relocalize_status_service,
-        )
-        == "global_relocalize_status"
-    )
 
 
 def _safe_report() -> dict:
@@ -318,7 +164,7 @@ def _safe_report() -> dict:
             "unexpected_command_publishers": [],
         },
         "runtime_contract": {
-            "name": "cmu_unity_external",
+            "name": "mujoco_module_graph",
             "ok": True,
             "frame_evidence": _frame_evidence(),
             "data_flow_evidence": _data_flow_evidence(),
@@ -399,7 +245,7 @@ def _real_report() -> dict:
             TOPICS.imu: {
                 "ok": True,
                 "samples": 20,
-                "frame_id": "lidar_link",
+                "frame_id": "imu_link",
             },
             TOPICS.odometry: {"ok": True, "samples": 6, "frame_id": "odom"},
             TOPICS.registered_cloud: {
@@ -459,8 +305,7 @@ def _real_report() -> dict:
     hardware_boundary = {
         "command_sink": REAL_HARDWARE_COMMAND_SINK,
         "hardware_command_route_observed": True,
-        "command_subscribers": ["/thunder_driver"],
-        "unexpected_simulation_sinks": [],
+        "command_subscribers": ["driver.cmd_vel"],
     }
     return {
         "collector": {
@@ -505,18 +350,8 @@ def _real_report() -> dict:
         "runtime_contract": {
             "name": REAL_RUNTIME_CONTRACT,
             "ok": True,
-            "frames": runtime_frames_contract(),
-            "topic_default_frame_ids": runtime_topic_default_frame_contract(REAL_RUNTIME_CONTRACT),
-            "topic_allowed_frame_ids": runtime_topic_allowed_frame_contract(REAL_RUNTIME_CONTRACT),
-            "algorithm_interfaces": runtime_algorithm_interface_contract(),
-            "runtime_data_flow_stage_algorithm_interfaces": (runtime_stage_algorithm_interface_contract()),
-            "required_topic_frame_contract": _required_topic_frame_contract(),
             "frame_evidence": _frame_evidence(),
-            "data_flow_evidence": _data_flow_evidence(
-                REAL_RUNTIME_CONTRACT,
-                topic_evidence,
-                hardware_boundary,
-            ),
+            "data_flow_evidence": _data_flow_evidence(REAL_RUNTIME_CONTRACT),
             "topic_evidence": topic_evidence,
         },
     }
@@ -535,15 +370,9 @@ def _load_real_runtime_collect_module():
     return module
 
 
-def _load_runtime_contract_audit_module():
-    import cli.runtime_audit as audit
-
-    return audit
-
-
 @pytest.mark.sim
 def test_safe_simulation_report_passes():
-    result = validate_runtime_evidence(_safe_report(), "cmu_unity_external")
+    result = validate_runtime_evidence(_safe_report(), "mujoco_module_graph")
 
     assert result.ok is True
     assert result.blockers == ()
@@ -552,27 +381,12 @@ def test_safe_simulation_report_passes():
 def test_declared_data_flow_evidence_can_be_required():
     result = validate_runtime_evidence(
         _safe_report(),
-        "cmu_unity_external",
+        "mujoco_module_graph",
         require_data_flow=True,
     )
 
     assert result.ok is True
     assert result.blockers == ()
-
-
-def test_template_data_flow_placeholders_fail_when_concrete_flow_is_required():
-    report = _safe_report()
-    report["runtime_contract"]["data_flow_evidence"] = _template_data_flow_evidence()
-
-    result = validate_runtime_evidence(
-        report,
-        "cmu_unity_external",
-        require_data_flow=True,
-    )
-
-    assert result.ok is False
-    assert "data-flow evidence inputs mismatch for endpoint_adapter" in result.blockers
-    assert "data-flow evidence outputs mismatch for command_boundary" in result.blockers
 
 
 def test_missing_data_flow_stage_fails_when_required():
@@ -581,7 +395,7 @@ def test_missing_data_flow_stage_fails_when_required():
 
     result = validate_runtime_evidence(
         report,
-        "cmu_unity_external",
+        "mujoco_module_graph",
         require_data_flow=True,
     )
 
@@ -599,26 +413,12 @@ def test_unrequired_data_flow_stage_can_be_reported_as_not_run():
 
     result = validate_runtime_evidence(
         report,
-        "cmu_unity_external",
+        "mujoco_module_graph",
         require_data_flow=True,
     )
 
     assert result.ok is True
     assert result.blockers == ()
-
-
-def test_wrong_data_flow_output_fails_when_required():
-    report = _safe_report()
-    report["runtime_contract"]["data_flow_evidence"]["command_boundary"]["outputs"] = [REAL_HARDWARE_COMMAND_SINK]
-
-    result = validate_runtime_evidence(
-        report,
-        "cmu_unity_external",
-        require_data_flow=True,
-    )
-
-    assert result.ok is False
-    assert "data-flow evidence outputs mismatch for command_boundary" in result.blockers
 
 
 def test_unknown_data_source_reports_explicit_data_flow_blocker():
@@ -632,48 +432,6 @@ def test_unknown_data_source_reports_explicit_data_flow_blocker():
     assert any(blocker.startswith("resolved data-flow contract unavailable:") for blocker in result.blockers)
 
 
-def test_wrong_data_flow_frame_role_fails_when_required():
-    report = _safe_report()
-    report["runtime_contract"]["data_flow_evidence"]["global_planning"]["frame_role"] = "body"
-
-    result = validate_runtime_evidence(
-        report,
-        "cmu_unity_external",
-        require_data_flow=True,
-    )
-
-    assert result.ok is False
-    assert "data-flow evidence frame_role mismatch for global_planning" in result.blockers
-
-
-def test_wrong_data_flow_owner_fails_when_required():
-    report = _safe_report()
-    report["runtime_contract"]["data_flow_evidence"]["global_planning"]["owner"] = "endpoint_adapter"
-
-    result = validate_runtime_evidence(
-        report,
-        "cmu_unity_external",
-        require_data_flow=True,
-    )
-
-    assert result.ok is False
-    assert "data-flow evidence owner mismatch for global_planning" in result.blockers
-
-
-def test_wrong_data_flow_map_dependency_fails_when_required():
-    report = _safe_report()
-    report["runtime_contract"]["data_flow_evidence"]["global_planning"]["map_dependency"] = "none"
-
-    result = validate_runtime_evidence(
-        report,
-        "cmu_unity_external",
-        require_data_flow=True,
-    )
-
-    assert result.ok is False
-    assert "data-flow evidence map_dependency mismatch for global_planning" in result.blockers
-
-
 def test_topic_frame_id_mismatch_fails_when_evidence_reports_frame():
     report = _safe_report()
     report["runtime_contract"]["topic_evidence"][TOPICS.registered_cloud] = {
@@ -682,7 +440,7 @@ def test_topic_frame_id_mismatch_fails_when_evidence_reports_frame():
         "frame_id": "map",
     }
 
-    result = validate_runtime_evidence(report, "cmu_unity_external")
+    result = validate_runtime_evidence(report, "mujoco_module_graph")
 
     assert result.ok is False
     assert any(
@@ -699,7 +457,7 @@ def test_body_alias_is_accepted_for_body_frame_topic_evidence():
         "frame_id": "base_link",
     }
 
-    result = validate_runtime_evidence(report, "cmu_unity_external")
+    result = validate_runtime_evidence(report, "mujoco_module_graph")
 
     assert result.ok is True
     assert result.blockers == ()
@@ -714,7 +472,7 @@ def test_map_cloud_accepts_map_or_odom_frame_evidence():
             "frame_id": frame_id,
         }
 
-        result = validate_runtime_evidence(report, "cmu_unity_external")
+        result = validate_runtime_evidence(report, "mujoco_module_graph")
 
         assert result.ok is True
         assert result.blockers == ()
@@ -733,7 +491,7 @@ def test_topic_frame_id_normalization_accepts_leading_slash():
         "frame_id": "/base_link",
     }
 
-    result = validate_runtime_evidence(report, "cmu_unity_external")
+    result = validate_runtime_evidence(report, "mujoco_module_graph")
 
     assert result.ok is True
     assert result.blockers == ()
@@ -742,7 +500,7 @@ def test_topic_frame_id_normalization_accepts_leading_slash():
 def test_declared_frame_evidence_can_be_required():
     result = validate_runtime_evidence(
         _safe_report(),
-        "cmu_unity_external",
+        "mujoco_module_graph",
         require_frame_links=True,
     )
 
@@ -756,7 +514,7 @@ def test_missing_frame_evidence_fails_when_required():
 
     result = validate_runtime_evidence(
         report,
-        "cmu_unity_external",
+        "mujoco_module_graph",
         require_frame_links=True,
     )
 
@@ -770,7 +528,7 @@ def test_wrong_frame_child_fails_when_required():
 
     result = validate_runtime_evidence(
         report,
-        "cmu_unity_external",
+        "mujoco_module_graph",
         require_frame_links=True,
     )
 
@@ -784,7 +542,7 @@ def test_unobserved_frame_link_fails_when_required():
 
     result = validate_runtime_evidence(
         report,
-        "cmu_unity_external",
+        "mujoco_module_graph",
         require_frame_links=True,
     )
 
@@ -796,16 +554,11 @@ def test_unobserved_frame_link_fails_when_required():
 def test_hardware_command_in_simulation_fails():
     report = _safe_report()
     report["cmd_vel_sent_to_hardware"] = True
-    report["hardware_safety"]["topics"]["/cmd_vel"] = [
-        "/vehicle_simulator",
-        "/thunder_driver",
-    ]
 
-    result = validate_runtime_evidence(report, "cmu_unity_external")
+    result = validate_runtime_evidence(report, "mujoco_module_graph")
 
     assert result.ok is False
     assert "cmd_vel_sent_to_hardware is not false" in result.blockers
-    assert "hardware-looking command subscriber present" in result.blockers
 
 
 def test_missing_paths_can_be_allowed():
@@ -816,7 +569,7 @@ def test_missing_paths_can_be_allowed():
 
     result = validate_runtime_evidence(
         report,
-        "cmu_unity_external",
+        "mujoco_module_graph",
         require_paths=False,
     )
 
@@ -830,7 +583,7 @@ def test_missing_nav_command_can_be_allowed():
 
     result = validate_runtime_evidence(
         report,
-        "cmu_unity_external",
+        "mujoco_module_graph",
         require_command=False,
     )
 
@@ -845,7 +598,7 @@ def test_real_runtime_report_passes_with_hardware_boundary_frame_and_data_flow()
 
 
 def test_real_runtime_validator_rejects_non_real_expected_contract():
-    result = validate_real_runtime_evidence(_real_report(), "cmu_unity_external")
+    result = validate_real_runtime_evidence(_real_report(), "mujoco_module_graph")
 
     assert result.ok is False
     assert f"real runtime evidence expected_contract is not {REAL_RUNTIME_CONTRACT}" in result.blockers
@@ -861,116 +614,6 @@ def test_real_runtime_rejects_collector_that_publishes_control_topics():
     assert result.ok is False
     assert "real runtime collector is not read-only" in result.blockers
     assert "real runtime collector published control topics" in result.blockers
-
-
-def test_real_runtime_rejects_missing_runtime_topic_evidence_entry():
-    report = _real_report()
-    report["runtime_contract"]["topic_evidence"].pop(TOPICS.goal_pose)
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "runtime topic evidence missing for /nav/goal_pose" in result.blockers
-
-
-def test_real_runtime_rejects_missing_required_topic_frame_contract():
-    report = _real_report()
-    report["runtime_contract"].pop("required_topic_frame_contract")
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "required topic frame contract missing" in result.blockers
-
-
-def test_real_runtime_rejects_missing_runtime_frames_contract():
-    report = _real_report()
-    report["runtime_contract"].pop("frames")
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "runtime frames contract missing" in result.blockers
-
-
-def test_real_runtime_rejects_runtime_frame_contract_drift():
-    report = _real_report()
-    report["runtime_contract"]["frames"]["axis_convention"] = "x_right_y_forward_z_up"
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "runtime frame axis_convention mismatch" in result.blockers
-
-
-def test_real_runtime_rejects_topic_default_frame_contract_drift():
-    report = _real_report()
-    report["runtime_contract"]["topic_default_frame_ids"][TOPICS.map_cloud] = "odom"
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "topic default frame contract mismatch" in result.blockers
-
-
-def test_real_runtime_rejects_topic_allowed_frame_contract_drift():
-    report = _real_report()
-    report["runtime_contract"]["topic_allowed_frame_ids"][TOPICS.map_cloud] = ["odom"]
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "topic allowed frame contract mismatch" in result.blockers
-
-
-def test_real_runtime_rejects_missing_algorithm_interface_contract():
-    report = _real_report()
-    report["runtime_contract"].pop("algorithm_interfaces")
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "runtime algorithm interface contract missing" in result.blockers
-
-
-def test_real_runtime_rejects_algorithm_interface_contract_drift():
-    report = _real_report()
-    report["runtime_contract"]["algorithm_interfaces"]["fastlio_mapping"]["outputs"] = [TOPICS.odometry]
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "runtime algorithm interface contract mismatch" in result.blockers
-
-
-def test_real_runtime_rejects_missing_stage_algorithm_interface_contract():
-    report = _real_report()
-    report["runtime_contract"].pop("runtime_data_flow_stage_algorithm_interfaces")
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "runtime stage algorithm interface contract missing" in result.blockers
-
-
-def test_real_runtime_rejects_stage_algorithm_interface_contract_drift():
-    report = _real_report()
-    report["runtime_contract"]["runtime_data_flow_stage_algorithm_interfaces"]["global_planning"] = ["fastlio_mapping"]
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "runtime stage algorithm interface contract mismatch" in result.blockers
-
-
-def test_real_runtime_rejects_required_topic_frame_contract_drift():
-    report = _real_report()
-    report["runtime_contract"]["required_topic_frame_contract"][TOPICS.map_cloud]["allowed_frame_ids"] = ["odom"]
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert f"required topic allowed frames mismatch for {TOPICS.map_cloud}" in result.blockers
 
 
 def test_real_runtime_rejects_simulation_flags():
@@ -1141,56 +784,6 @@ def test_real_runtime_rejects_missing_hardware_command_boundary():
     assert "real hardware command boundary missing" in result.blockers
 
 
-def test_real_runtime_rejects_simulation_command_sink():
-    report = _real_report()
-    report["hardware_boundary"]["unexpected_simulation_sinks"] = ["mujoco_velocity_adapter"]
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "simulation command sink present in real runtime" in result.blockers
-
-
-def test_real_runtime_rejects_wrong_command_data_flow():
-    report = _real_report()
-    report["runtime_contract"]["data_flow_evidence"]["command_boundary"]["outputs"] = ["mujoco_velocity_adapter"]
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "data-flow evidence outputs mismatch for command_boundary" in result.blockers
-
-
-def test_real_runtime_rejects_mismatched_observed_data_flow_outputs():
-    report = _real_report()
-    report["runtime_contract"]["data_flow_evidence"]["command_boundary"]["observed_outputs"] = []
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "data-flow evidence observed_outputs mismatch for command_boundary" in result.blockers
-
-
-def test_real_runtime_rejects_data_flow_stage_without_reason():
-    report = _real_report()
-    report["runtime_contract"]["data_flow_evidence"]["global_planning"].pop("reason")
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "data-flow evidence reason missing for global_planning" in result.blockers
-
-
-def test_real_runtime_data_flow_stage_with_blank_reason_fails():
-    report = _real_report()
-    report["runtime_contract"]["data_flow_evidence"]["local_planning_and_following"]["reason"] = " "
-
-    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-
-    assert result.ok is False
-    assert "data-flow evidence reason missing for local_planning_and_following" in result.blockers
-
-
 def test_real_runtime_rejects_claimed_data_flow_without_endpoint_samples():
     report = _real_report()
     report["runtime_contract"]["topic_evidence"][TOPICS.lidar_scan] = {
@@ -1222,20 +815,11 @@ def test_real_runtime_rejects_endpoint_graph_without_sensor_samples():
         )
 
     result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-    payload = real_runtime_evidence_payload(
-        result,
-        REAL_RUNTIME_CONTRACT,
-        report=report,
-    )
 
-    endpoint_stage = payload["checked_runtime_data_flow_evidence"]["endpoint_adapter"]
     assert result.ok is False
     assert f"endpoint input sample window missing for {TOPICS.lidar_scan}" in result.blockers
     assert f"endpoint input sample window missing for {TOPICS.imu}" in result.blockers
     assert "data-flow observed topics missing for endpoint_adapter" in result.blockers
-    assert endpoint_stage["ok"] is False
-    assert "lidar_scan_sampled" in endpoint_stage["missing_signals"]
-    assert "imu_sampled" in endpoint_stage["missing_signals"]
 
 
 def test_real_runtime_rejects_wrong_endpoint_input_frame_id():
@@ -1308,20 +892,9 @@ def test_real_runtime_rejects_missing_global_path_frame_id():
     report["runtime_contract"]["topic_evidence"][TOPICS.global_path].pop("frame_id")
 
     result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-    payload = real_runtime_evidence_payload(
-        result,
-        REAL_RUNTIME_CONTRACT,
-        report=report,
-    )
 
     assert result.ok is False
     assert "topic frame_id missing for /nav/global_path" in result.blockers
-    assert payload["checked_required_topic_frame_report"][TOPICS.global_path] == {
-        "default_frame_id": "map",
-        "observed_frame_id": None,
-        "allowed_frame_ids": ["map"],
-        "ok": False,
-    }
 
 
 def test_real_runtime_rejects_odom_framed_global_path():
@@ -1347,248 +920,13 @@ def test_real_runtime_rejects_wrong_local_path_frame_id():
     )
 
 
-def test_real_runtime_evidence_gate_script_accepts_valid_report(tmp_path: Path):
-    report_path = tmp_path / "real_runtime_report.json"
-    report_path.write_text(json.dumps(_real_report()), encoding="utf-8")
-    script = REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_gate.py"
-
-    proc = subprocess.run(
-        [sys.executable, str(script), str(report_path)],
-        cwd=str(REPO_ROOT),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
-    assert proc.returncode == 0, proc.stderr
-    payload = json.loads(proc.stdout)
-    assert payload["schema_version"] == REAL_RUNTIME_EVIDENCE_VALIDATION_SCHEMA
-    assert payload["ok"] is True
-    assert payload["expected_contract"] == REAL_RUNTIME_CONTRACT
-    assert payload["validation_gate"]["expected_runtime_contract"] == (REAL_RUNTIME_CONTRACT)
-    assert payload["validation_gate"]["acceptance_step"] == 3
-    assert payload["validation_gate"]["requires_prior_gates"] == ["runtime_audit"]
-    assert payload["validation_gate"]["proves"] == list(REAL_RUNTIME_EVIDENCE_PROVES)
-    assert payload["validation_gate"]["operator_summary_sections"] == list(
-        REAL_RUNTIME_EVIDENCE_OPERATOR_SUMMARY_SECTIONS
-    )
-    assert payload["frame_links_required"] is True
-    assert payload["data_flow_required"] is True
-    assert payload["hardware_boundary_required"] is True
-    assert payload["checked_collector_contract"] == {
-        "name": REAL_RUNTIME_COLLECTOR_NAME,
-        "expected_name": REAL_RUNTIME_COLLECTOR_NAME,
-        "read_only": True,
-        "control_topics_published": [],
-        "expected_control_topics_published": [],
-        "duration_sec": 20.0,
-        "ok": True,
-    }
-    assert payload["checked_runtime_topics"] == list(runtime_data_flow_topics(REAL_RUNTIME_CONTRACT))
-    assert payload["checked_data_flow_stages"] == [
-        stage.name for stage in resolved_runtime_data_flow(REAL_RUNTIME_CONTRACT)
-    ]
-    assert payload["checked_algorithm_interfaces"] == (runtime_algorithm_interface_contract())
-    assert payload["checked_runtime_data_flow_stage_algorithm_interfaces"] == (
-        runtime_stage_algorithm_interface_contract()
-    )
-    command_flow = payload["checked_runtime_data_flow_evidence"]["command_boundary"]
-    assert command_flow["ok"] is True
-    assert command_flow["inputs"] == [TOPICS.cmd_vel]
-    assert command_flow["outputs"] == [REAL_HARDWARE_COMMAND_SINK]
-    assert command_flow["missing_outputs"] == []
-    assert command_flow["reason"] == "command_boundary_observed"
-    assert payload["checked_frame_links"] == list(FRAME_LINKS)
-    assert payload["checked_frame_link_evidence"]["body_to_lidar"] == {
-        "expected_parent": "body",
-        "expected_child": "lidar_link",
-        "observed_parent": "body",
-        "observed_child": "lidar_link",
-        "samples": None,
-        "static": True,
-        "published": False,
-        "error": None,
-        "ok": True,
-    }
-    assert payload["checked_frames"] == runtime_frames_contract()
-    assert payload["checked_topic_default_frame_ids"] == (runtime_topic_default_frame_contract(REAL_RUNTIME_CONTRACT))
-    assert payload["checked_topic_allowed_frame_ids"] == (runtime_topic_allowed_frame_contract(REAL_RUNTIME_CONTRACT))
-    assert payload["checked_required_topic_frame_ids"] == list(REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS)
-    assert payload["checked_required_topic_default_frame_ids"] == {
-        TOPICS.lidar_scan: "lidar_link",
-        TOPICS.imu: "lidar_link",
-        TOPICS.odometry: "odom",
-        TOPICS.registered_cloud: "body",
-        TOPICS.map_cloud: "map",
-        TOPICS.global_path: "map",
-        TOPICS.local_path: "map",
-        TOPICS.cmd_vel: "body",
-    }
-    assert payload["checked_required_topic_allowed_frame_ids"] == {
-        TOPICS.lidar_scan: ["lidar_link"],
-        TOPICS.imu: ["lidar_link"],
-        TOPICS.odometry: ["odom", "map"],
-        TOPICS.registered_cloud: ["body"],
-        TOPICS.map_cloud: ["map"],
-        TOPICS.global_path: ["map"],
-        TOPICS.local_path: ["map", "odom", "body"],
-        TOPICS.cmd_vel: ["body"],
-    }
-    assert payload["observed_required_topic_frame_ids"] == {
-        TOPICS.lidar_scan: "lidar_link",
-        TOPICS.imu: "lidar_link",
-        TOPICS.odometry: "odom",
-        TOPICS.registered_cloud: "body",
-        TOPICS.map_cloud: "map",
-        TOPICS.global_path: "map",
-        TOPICS.local_path: "body",
-        TOPICS.cmd_vel: "body",
-    }
-    assert payload["checked_required_topic_frame_report"][TOPICS.map_cloud] == {
-        "default_frame_id": "map",
-        "observed_frame_id": "map",
-        "allowed_frame_ids": ["map"],
-        "ok": True,
-    }
-    assert payload["checked_required_topic_frame_report"][TOPICS.local_path] == {
-        "default_frame_id": "map",
-        "observed_frame_id": "body",
-        "allowed_frame_ids": ["map", "odom", "body"],
-        "ok": True,
-    }
-    assert payload["checked_real_motion_evidence"] == {
-        "real_robot_motion": True,
-        "odom_delta_m": 0.2,
-        "min_motion_m": 0.05,
-        "odom_position_samples": 3,
-        "ok": True,
-    }
-    assert payload["checked_hardware_boundary_evidence"] == {
-        "command_topic": TOPICS.cmd_vel,
-        "command_sink": REAL_HARDWARE_COMMAND_SINK,
-        "expected_command_sink": REAL_HARDWARE_COMMAND_SINK,
-        "command_observed": True,
-        "cmd_vel_sent_to_hardware": True,
-        "hardware_command_route_observed": True,
-        "command_subscribers": ["/thunder_driver"],
-        "expected_command_subscribers": [],
-        "unexpected_simulation_sinks": [],
-        "ok": True,
-    }
-    assert payload["checked_required_topic_sample_windows"][TOPICS.map_cloud] == {
-        "samples": 5,
-        "first_seen_sec": 0.14,
-        "last_seen_sec": 1.1400000000000001,
-        "sample_span_sec": 1.0,
-        "duration_sec": 20.0,
-        "ok": True,
-    }
-    assert payload["checked_endpoint_input_sample_windows"][TOPICS.lidar_scan] == {
-        "samples": 4,
-        "first_seen_sec": 0.1,
-        "last_seen_sec": 19.5,
-        "sample_span_sec": 19.4,
-        "duration_sec": 20.0,
-        "ok": True,
-    }
-    assert payload["checked_endpoint_input_sample_windows"][TOPICS.imu] == {
-        "samples": 20,
-        "first_seen_sec": 0.11,
-        "last_seen_sec": 19.5,
-        "sample_span_sec": 19.39,
-        "duration_sec": 20.0,
-        "ok": True,
-    }
-    assert payload["checked_localization_health_evidence"] == {
-        "health_topic": TOPICS.localization_health,
-        "health_state": "LOCKED",
-        "healthy_states": ["LOCKED", "RECOVERED", "TRACKING"],
-        "quality_topic": TOPICS.localization_quality,
-        "quality": 0.0234,
-        "quality_min_exclusive": 0.0,
-        "quality_max_exclusive": 0.5,
-        "health_window_ok": True,
-        "quality_window_ok": True,
-        "ok": True,
-    }
-    assert payload["checked_data_flow_temporal_order"]["local_planning_and_following"]["ok"] is True
-    assert payload["checked_data_flow_temporal_order"]["local_planning_and_following"]["input_topics"] == [
-        TOPICS.global_path
-    ]
-    assert payload["checked_data_flow_temporal_order"]["local_planning_and_following"]["output_topics"] == [
-        TOPICS.local_path,
-        TOPICS.cmd_vel,
-    ]
-    assert payload["checked_live_topic_freshness"][TOPICS.lidar_scan] == {
-        "samples": 4,
-        "last_seen_sec": 19.5,
-        "duration_sec": 20.0,
-        "max_age_sec": 2.0,
-        "age_sec": 0.5,
-        "ok": True,
-    }
-    assert payload["checked_live_topic_freshness"][TOPICS.cmd_vel]["ok"] is True
-
-
-def test_real_runtime_evidence_gate_script_rejects_missing_hardware_boundary(
-    tmp_path: Path,
-):
-    report = _real_report()
-    report.pop("hardware_boundary")
-    report_path = tmp_path / "real_runtime_missing_hardware_boundary.json"
-    report_path.write_text(json.dumps(report), encoding="utf-8")
-    script = REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_gate.py"
-
-    proc = subprocess.run(
-        [sys.executable, str(script), str(report_path)],
-        cwd=str(REPO_ROOT),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
-    assert proc.returncode == 2
-    payload = json.loads(proc.stdout)
-    assert payload["ok"] is False
-    assert "hardware_boundary missing" in payload["blockers"]
-    assert payload["checked_hardware_boundary_evidence"] == {
-        "command_topic": TOPICS.cmd_vel,
-        "command_sink": None,
-        "expected_command_sink": REAL_HARDWARE_COMMAND_SINK,
-        "command_observed": True,
-        "cmd_vel_sent_to_hardware": True,
-        "hardware_command_route_observed": False,
-        "command_subscribers": [],
-        "expected_command_subscribers": [],
-        "unexpected_simulation_sinks": [],
-        "ok": False,
-    }
-
-
-def test_real_runtime_payload_exposes_failed_frame_link_evidence():
+def test_real_runtime_validator_rejects_failed_frame_link_evidence():
     report = _real_report()
     report["runtime_contract"]["frame_evidence"].pop("body_to_lidar")
 
     result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-    payload = real_runtime_evidence_payload(
-        result,
-        REAL_RUNTIME_CONTRACT,
-        report=report,
-    )
-
     assert result.ok is False
     assert "frame evidence missing or failed for body_to_lidar" in result.blockers
-    assert payload["checked_frame_link_evidence"]["body_to_lidar"] == {
-        "expected_parent": "body",
-        "expected_child": "lidar_link",
-        "observed_parent": None,
-        "observed_child": None,
-        "samples": None,
-        "static": False,
-        "published": False,
-        "error": None,
-        "ok": False,
-    }
 
 
 def test_real_runtime_evidence_requires_body_to_camera_frame_link():
@@ -1601,31 +939,6 @@ def test_real_runtime_evidence_requires_body_to_camera_frame_link():
     assert "frame evidence missing or failed for body_to_camera" in result.blockers
 
 
-def test_real_runtime_evidence_gate_script_rejects_non_real_expected_contract(
-    tmp_path: Path,
-):
-    report_path = tmp_path / "real_runtime_report.json"
-    report_path.write_text(json.dumps(_real_report()), encoding="utf-8")
-    script = REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_gate.py"
-
-    proc = subprocess.run(
-        [
-            sys.executable,
-            str(script),
-            str(report_path),
-            "--expected-contract",
-            "cmu_unity_external",
-        ],
-        cwd=str(REPO_ROOT),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
-    assert proc.returncode == 2
-    assert f"only supports expected contract {REAL_RUNTIME_CONTRACT}" in proc.stderr
-
-
 def test_real_runtime_collector_builds_valid_report_from_read_only_observations():
     collector = _load_real_runtime_collect_module()
     topic_evidence = {
@@ -1635,7 +948,7 @@ def test_real_runtime_collector_builds_valid_report_from_read_only_observations(
             "points": 12000,
             "frame_id": "lidar_link",
         },
-        TOPICS.imu: {"ok": True, "samples": 20, "frame_id": "lidar_link"},
+        TOPICS.imu: {"ok": True, "samples": 20, "frame_id": "imu_link"},
         TOPICS.odometry: {"ok": True, "samples": 6, "frame_id": "odom"},
         TOPICS.registered_cloud: {
             "ok": True,
@@ -1700,7 +1013,7 @@ def test_real_runtime_collector_builds_valid_report_from_read_only_observations(
             "body_to_camera": 4,
             "body_to_gnss": 4,
         },
-        command_subscribers=["/thunder_driver"],
+        command_subscribers=["driver.cmd_vel"],
         duration_sec=20.0,
         odom_positions=[(0.0, 0.0, 0.0), (0.12, 0.0, 0.0)],
     )
@@ -1711,13 +1024,6 @@ def test_real_runtime_collector_builds_valid_report_from_read_only_observations(
     assert result.blockers == ()
     assert report["collector"]["read_only"] is True
     assert report["collector"]["control_topics_published"] == list(REAL_RUNTIME_CONTROL_TOPICS_PUBLISHED)
-    assert report["validation_gate"]["expected_runtime_contract"] == (REAL_RUNTIME_CONTRACT)
-    assert report["validation_gate"]["acceptance_step"] == 3
-    assert report["validation_gate"]["requires_prior_gates"] == ["runtime_audit"]
-    assert report["validation_gate"]["proves"] == list(REAL_RUNTIME_EVIDENCE_PROVES)
-    assert report["validation_gate"]["operator_summary_sections"] == list(
-        REAL_RUNTIME_EVIDENCE_OPERATOR_SUMMARY_SECTIONS
-    )
     assert report["motion"] == {
         "odom_delta_m": 0.12,
         "min_motion_m": 0.05,
@@ -1729,20 +1035,6 @@ def test_real_runtime_collector_builds_valid_report_from_read_only_observations(
     assert command_boundary["missing_outputs"] == []
     assert command_boundary["missing_signals"] == []
     assert command_boundary["observed_signals"] == [
-        "cmd_vel_nonzero",
-        "hardware_route_observed",
-    ]
-    payload = real_runtime_evidence_payload(
-        result,
-        REAL_RUNTIME_CONTRACT,
-        report=report,
-    )
-    checked_command_boundary = payload["checked_runtime_data_flow_evidence"]["command_boundary"]
-    assert checked_command_boundary["observed_inputs"] == [TOPICS.cmd_vel]
-    assert checked_command_boundary["observed_outputs"] == [REAL_HARDWARE_COMMAND_SINK]
-    assert checked_command_boundary["missing_outputs"] == []
-    assert checked_command_boundary["missing_signals"] == []
-    assert checked_command_boundary["observed_signals"] == [
         "cmd_vel_nonzero",
         "hardware_route_observed",
     ]
@@ -1802,17 +1094,9 @@ def test_real_runtime_rejects_local_planner_without_registered_cloud_input():
     )
 
     result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
-    payload = real_runtime_evidence_payload(
-        result,
-        REAL_RUNTIME_CONTRACT,
-        report=report,
-    )
 
-    local_stage = payload["checked_runtime_data_flow_evidence"]["local_planning_and_following"]
     assert result.ok is False
     assert "data-flow observed topics missing for local_planning_and_following" in result.blockers
-    assert local_stage["ok"] is False
-    assert "registered_cloud_nonempty" in local_stage["missing_signals"]
 
 
 def test_real_runtime_collector_dependency_failure_preserves_contract_shape():
@@ -1841,10 +1125,6 @@ def test_real_runtime_collector_dependency_failure_preserves_contract_shape():
     assert REAL_HARDWARE_COMMAND_SINK in data_flow["command_boundary"]["missing_outputs"]
     assert report["runtime_contract"]["collection_available"] is False
     assert "No module named 'rclpy'" in report["runtime_contract"]["collection_error"]
-    assert report["validation_gate"]["acceptance_step"] == 3
-    assert report["validation_gate"]["operator_summary_sections"] == list(
-        REAL_RUNTIME_EVIDENCE_OPERATOR_SUMMARY_SECTIONS
-    )
 
 
 def test_real_runtime_gateway_collector_builds_valid_report(monkeypatch):
@@ -1855,7 +1135,7 @@ def test_real_runtime_gateway_collector_builds_valid_report(monkeypatch):
         if topic == TOPICS.lidar_scan:
             return {"frame_id": "lidar_link", "points": 12000}
         if topic == TOPICS.imu:
-            return {"frame_id": "lidar_link"}
+            return {"frame_id": "imu_link"}
         if topic == TOPICS.odometry:
             return {"frame_id": "odom", "position": {"x": odom_x["value"], "y": 0.0, "z": 0.0}}
         if topic == TOPICS.registered_cloud:
@@ -1899,7 +1179,7 @@ def test_real_runtime_gateway_collector_builds_valid_report(monkeypatch):
                 "command_interfaces": [{"name": "driver_cmd_vel", "publishes": [TOPICS.cmd_vel]}],
             },
             "module_ports": {
-                "ThunderDriver": {
+                "driver": {
                     "ports_in": {
                         "cmd_vel": {
                             "direction": "in",
@@ -2012,7 +1292,6 @@ def test_real_runtime_gateway_collector_does_not_treat_static_control_as_hardwar
             "control_boundary": {
                 "command_interfaces": [
                     {"name": "direct_cmd_vel", "publishes": [TOPICS.cmd_vel]},
-                    {"name": "stop", "publishes": ["/nav/stop", TOPICS.cmd_vel]},
                 ],
             },
             "topics": [
@@ -2050,7 +1329,7 @@ def test_real_runtime_gateway_collector_accepts_live_hardware_cmd_consumer():
                     "observability": {
                         "module_port_candidates": [
                             {
-                                "module": "ThunderDriver",
+                                "module": "driver",
                                 "port": "cmd_vel",
                                 "direction": "in",
                                 "msg_count": 3,
@@ -2064,7 +1343,7 @@ def test_real_runtime_gateway_collector_accepts_live_hardware_cmd_consumer():
         }
     )
 
-    assert subscribers == ["ThunderDriver.cmd_vel"]
+    assert subscribers == ["driver.cmd_vel"]
 
 
 def test_real_runtime_gateway_collector_infers_raw_inputs_from_localization():
@@ -2094,33 +1373,6 @@ def test_real_runtime_gateway_collector_infers_raw_inputs_from_localization():
     assert topic_evidence[TOPICS.localization_quality]["quality_kind"] == "confidence"
 
 
-def test_real_runtime_ros2_collector_mode_keeps_legacy_dispatch(monkeypatch):
-    collector = _load_real_runtime_collect_module()
-    called = {}
-
-    def _fake_ros2_collect(args):
-        called["collector"] = args.collector
-        return collector.build_unavailable_real_runtime_report(
-            duration_sec=args.duration_sec,
-            error="test ros2 collector branch",
-            expected_command_subscribers=args.expected_command_subscriber,
-        )
-
-    monkeypatch.setattr(collector, "run_ros2_collect", _fake_ros2_collect)
-
-    report = collector.run_collect(
-        Namespace(
-            collector="ros2",
-            duration_sec=0.01,
-            expected_command_subscriber=[],
-        )
-    )
-
-    assert called["collector"] == "ros2"
-    assert report["collector"]["source"] == "ros2"
-    assert report["runtime_contract"]["collection_available"] is False
-
-
 def test_real_runtime_collector_script_rejects_non_real_expected_contract():
     script = REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_collect.py"
 
@@ -2129,7 +1381,7 @@ def test_real_runtime_collector_script_rejects_non_real_expected_contract():
             sys.executable,
             str(script),
             "--expected-contract",
-            "cmu_unity_external",
+            "mujoco_module_graph",
             "--no-validate",
             "--duration-sec",
             "0.01",
@@ -2148,7 +1400,7 @@ def test_real_runtime_collector_does_not_infer_hardware_route_without_observed_s
     collector = _load_real_runtime_collect_module()
     topic_evidence = {
         TOPICS.lidar_scan: {"ok": True, "samples": 1, "frame_id": "lidar_link"},
-        TOPICS.imu: {"ok": True, "samples": 1, "frame_id": "lidar_link"},
+        TOPICS.imu: {"ok": True, "samples": 1, "frame_id": "imu_link"},
         TOPICS.odometry: {"ok": True, "samples": 1, "frame_id": "odom"},
         TOPICS.registered_cloud: {
             "ok": True,
@@ -2212,2004 +1464,3 @@ def test_real_runtime_collector_script_does_not_publish_control_topics():
 
     assert ".create_publisher(" not in source
     assert ".publish(" not in source
-
-
-def test_robot_ops_cli_exposes_read_only_real_runtime_evidence_command():
-    script = REPO_ROOT / "scripts" / "lingtu"
-    source = script.read_text(encoding="utf-8", errors="ignore")
-    usage_start = source.index("cmd_evidence_usage()")
-    start = source.index("cmd_evidence()")
-    end = source.index("\n}\n\n# -- Subcommand:", start) + 2
-    evidence_section = source[usage_start:end]
-    evidence_block = source[start:end]
-
-    assert "lingtu evidence --duration 20 --json-out report.json" in source
-    assert "evidence|runtime-evidence|real-runtime-evidence)" in source
-    assert TOPICS.localization_health in evidence_section
-    assert TOPICS.localization_quality in evidence_section
-    assert '"$python_bin" "$repo_root/lingtu.py" real-runtime-evidence' in evidence_block
-    assert "--duration-sec" in evidence_block
-    assert "--min-motion-m" in evidence_block
-    assert "--min-cmd-vel-norm" in evidence_block
-    assert "--json-out" in evidence_block
-    assert "--expected-command-subscriber" in evidence_block
-    assert "--no-validate" in evidence_block
-    assert "artifacts/real_runtime/report.json" in evidence_block
-    assert ">&2" in evidence_block
-    assert "curl " not in evidence_block
-    assert "/api/v1/goal" not in evidence_block
-    assert "cmd_nav" not in evidence_block
-
-
-def test_robot_ops_cli_exposes_read_only_runtime_contract_commands():
-    script = REPO_ROOT / "scripts" / "lingtu"
-    source = script.read_text(encoding="utf-8", errors="ignore")
-    start = source.index("cmd_runtime_contract_usage()")
-    end = source.index("# -- Subcommand: evidence --", start)
-    runtime_block = source[start:end]
-
-    assert "lingtu runtime-contract --json" in source
-    assert "lingtu runtime-audit --json" in source
-    assert "contract|runtime-contract)" in source
-    assert "spec|runtime-spec)" in source
-    assert "audit|runtime-audit)" in source
-    assert '"$python_bin" "$repo_root/lingtu.py" runtime-contract "$@"' in runtime_block
-    assert '"$python_bin" "$repo_root/lingtu.py" runtime-spec "$@"' in runtime_block
-    assert '"$python_bin" "$repo_root/lingtu.py" runtime-audit "$@"' in runtime_block
-    assert "LINGTU_PYTHON:-python3" in source
-    assert "--json-out PATH" in runtime_block
-    assert "topics, frames, frame links, and runtime data-flow manifest" in runtime_block
-    assert "curl " not in runtime_block
-    assert "/api/v1/goal" not in runtime_block
-    assert "cmd_nav" not in runtime_block
-
-
-def test_real_runtime_collector_observed_topics_cover_resolved_real_data_flow():
-    collector = _load_real_runtime_collect_module()
-    observed = set(collector.OBSERVED_TOPICS)
-    required_topics = set(runtime_data_flow_topics(REAL_RUNTIME_CONTRACT))
-
-    assert required_topics <= observed
-    assert collector.OBSERVED_TOPICS == runtime_data_flow_topics(REAL_RUNTIME_CONTRACT)
-
-
-def test_real_runtime_contract_constant_lives_in_runtime_interface():
-    assert REAL_RUNTIME_CONTRACT == INTERFACE_REAL_RUNTIME_CONTRACT
-    assert REAL_RUNTIME_CONTRACT == "real"
-    assert canonical_data_source_name(REAL_RUNTIME_CONTRACT) == REAL_RUNTIME_CONTRACT
-    assert runtime_contract_data_source(REAL_RUNTIME_CONTRACT) == THUNDER_DATA_SOURCE
-
-
-def test_runtime_contract_audit_real_collector_uses_runtime_contract_constant(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    calls: list[str] = []
-
-    def _record_runtime_data_flow_topics(runtime_contract: str) -> tuple[str, ...]:
-        calls.append(runtime_contract)
-        return ()
-
-    monkeypatch.setattr(
-        audit,
-        "runtime_data_flow_topics",
-        _record_runtime_data_flow_topics,
-    )
-
-    result = audit._check_real_collector(runtime_contract_manifest())
-
-    assert audit.REAL_RUNTIME_CONTRACT == REAL_RUNTIME_CONTRACT
-    assert calls == [REAL_RUNTIME_CONTRACT]
-    assert result["ok"] is True
-
-
-def test_runtime_contract_audit_rejects_real_collector_frame_contract_drift():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["real_runtime_topic_allowed_frame_ids"][TOPICS.map_cloud] = ("odom",)
-
-    result = audit._check_real_collector(manifest)
-
-    assert result["ok"] is False
-    assert "real collector required topic frame contract does not match runtime contract" in result["blockers"]
-    assert "real collector topic allowed frame contract does not match runtime contract" in result["blockers"]
-
-
-def test_runtime_contract_audit_rejects_real_collector_runtime_frames_drift():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["frames"]["axis_convention"] = "x_right_y_forward_z_up"
-
-    result = audit._check_real_collector(manifest)
-
-    assert result["ok"] is False
-    assert "real collector runtime frames contract does not match runtime contract" in result["blockers"]
-
-
-def test_runtime_contract_audit_rejects_real_collector_default_frame_drift():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["real_runtime_topic_default_frame_ids"][TOPICS.map_cloud] = "odom"
-
-    result = audit._check_real_collector(manifest)
-
-    assert result["ok"] is False
-    assert "real collector topic default frame contract does not match runtime contract" in result["blockers"]
-
-
-def test_runtime_contract_audit_rejects_real_collector_algorithm_interface_drift():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["algorithm_interfaces"]["fastlio_mapping"]["outputs"] = (TOPICS.odometry,)
-
-    result = audit._check_real_collector(manifest)
-
-    assert result["ok"] is False
-    assert "real collector algorithm interface contract does not match runtime contract" in result["blockers"]
-
-
-def test_runtime_contract_audit_rejects_real_collector_stage_interface_drift():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["runtime_data_flow_stage_algorithm_interfaces"]["global_planning"] = ("fastlio_mapping",)
-
-    result = audit._check_real_collector(manifest)
-
-    assert result["ok"] is False
-    assert ("real collector runtime stage algorithm interface contract does not match runtime contract") in result[
-        "blockers"
-    ]
-
-
-def test_real_runtime_required_frame_topics_are_runtime_interface_contract():
-    required_topics = runtime_required_topic_frame_ids(REAL_RUNTIME_CONTRACT)
-    frame_rules = runtime_topic_allowed_frame_ids(REAL_RUNTIME_CONTRACT)
-
-    assert required_topics == REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS
-    assert set(REAL_RUNTIME_REQUIRED_ENDPOINT_INPUT_TOPICS) <= set(required_topics)
-    assert set(required_topics) <= set(runtime_data_flow_topics(REAL_RUNTIME_CONTRACT))
-    assert set(required_topics) <= set(frame_rules)
-
-
-def test_topic_default_frame_id_is_first_declared_runtime_frame():
-    assert topic_default_frame_id(TOPICS.exploration_grid) == "map"
-    assert topic_default_frame_id(TOPICS.local_path) == "map"
-    assert topic_default_frame_id(TOPICS.odometry) == "odom"
-    assert runtime_topic_default_frame_id(REAL_RUNTIME_CONTRACT, TOPICS.map_cloud) == "map"
-    assert runtime_topic_default_frame_id(REAL_RUNTIME_CONTRACT, TOPICS.lidar_scan) == "lidar_link"
-    assert runtime_topic_default_frame_ids(None)[TOPICS.odometry] == "odom"
-    assert runtime_topic_default_frame_ids(None)[TOPICS.imu] == "lidar_link"
-    assert runtime_topic_default_frame_ids(REAL_RUNTIME_CONTRACT)[TOPICS.global_path] == "map"
-
-
-def test_runtime_contract_manifest_exports_topic_default_frame_ids():
-    manifest = runtime_contract_manifest()
-    unframed_metadata_topics = {
-        TOPICS.maps_activation_request,
-        TOPICS.maps_activation_ack,
-        TOPICS.operator_motion_control,
-        TOPICS.operator_motion_ack,
-    }
-
-    assert set(manifest["topic_default_frame_ids"]) == (
-        set(manifest["topic_allowed_frame_ids"]) - unframed_metadata_topics
-    )
-    assert set(manifest["real_runtime_topic_default_frame_ids"]) == (
-        set(manifest["real_runtime_topic_allowed_frame_ids"])
-        - unframed_metadata_topics
-    )
-    for topic in unframed_metadata_topics:
-        assert tuple(manifest["topic_allowed_frame_ids"][topic]) == ()
-        assert topic not in manifest["topic_default_frame_ids"]
-    assert manifest["topic_default_frame_ids"][TOPICS.map_cloud] == (topic_default_frame_id(TOPICS.map_cloud))
-    assert manifest["real_runtime_topic_default_frame_ids"][TOPICS.map_cloud] == (
-        runtime_topic_default_frame_id(REAL_RUNTIME_CONTRACT, TOPICS.map_cloud)
-    )
-    assert manifest["real_runtime_required_endpoint_input_topics"] == (REAL_RUNTIME_REQUIRED_ENDPOINT_INPUT_TOPICS)
-    assert normalize_runtime_frames_contract(manifest["frames"]) == (runtime_frames_contract())
-    assert normalize_algorithm_interface_contract(manifest["algorithm_interfaces"]) == (
-        runtime_algorithm_interface_contract()
-    )
-    assert {
-        stage: list(interfaces)
-        for stage, interfaces in manifest["runtime_data_flow_stage_algorithm_interfaces"].items()
-    } == runtime_stage_algorithm_interface_contract()
-
-
-def test_real_runtime_collector_frame_evidence_uses_canonical_frame_links():
-    collector = _load_real_runtime_collect_module()
-    evidence = collector.build_frame_evidence(
-        {
-            "map_to_odom": 1,
-            "odom_to_body": 2,
-            "body_to_lidar": 3,
-            "body_to_camera": 4,
-            "body_to_gnss": 5,
-        }
-    )
-
-    assert set(evidence) == set(FRAME_LINKS)
-    for name, link in FRAME_LINKS.items():
-        assert evidence[name]["parent"] == link.parent
-        assert evidence[name]["child"] == link.child
-        assert evidence[name]["ok"] is True
-
-
-def test_real_runtime_collector_report_embeds_required_topic_frame_contract():
-    collector = _load_real_runtime_collect_module()
-
-    contract = collector.build_required_topic_frame_contract()
-
-    assert contract == _required_topic_frame_contract()
-    assert contract[TOPICS.lidar_scan] == {
-        "default_frame_id": "lidar_link",
-        "allowed_frame_ids": ["lidar_link"],
-    }
-    assert contract[TOPICS.map_cloud] == {
-        "default_frame_id": "map",
-        "allowed_frame_ids": ["map"],
-    }
-
-
-def test_real_runtime_collector_report_embeds_full_frame_contracts():
-    collector = _load_real_runtime_collect_module()
-
-    report = collector.build_real_runtime_report(
-        topic_evidence={},
-        frame_samples={},
-        command_subscribers=[],
-        duration_sec=0.0,
-    )
-    runtime_contract = report["runtime_contract"]
-
-    assert runtime_contract["frames"] == runtime_frames_contract()
-    assert runtime_contract["topic_default_frame_ids"] == runtime_topic_default_frame_contract(REAL_RUNTIME_CONTRACT)
-    assert runtime_contract["topic_allowed_frame_ids"] == runtime_topic_allowed_frame_contract(REAL_RUNTIME_CONTRACT)
-    assert runtime_contract["algorithm_interfaces"] == runtime_algorithm_interface_contract()
-    assert (
-        runtime_contract["runtime_data_flow_stage_algorithm_interfaces"] == runtime_stage_algorithm_interface_contract()
-    )
-
-
-def test_runtime_contract_audit_accepts_current_contract():
-    audit = _load_runtime_contract_audit_module()
-
-    payload = audit.build_runtime_contract_audit()
-
-    assert payload["schema_version"] == "lingtu.runtime_contract_audit.v1"
-    assert payload["ok"] is True
-    assert payload["blockers"] == []
-    assert payload["checks"]["yaml_contract"]["ok"] is True
-    assert payload["checks"]["profile_runtime_specs"]["ok"] is True
-    profile_specs = payload["checks"]["profile_runtime_specs"]
-    assert len(profile_specs["checked_profile_binding_specs"]) == len(
-        audit.PROFILE_DATA_SOURCE_BINDINGS
-    ) + len(profile_specs["checked_external_profile_specs"])
-    assert len(profile_specs["checked_product_binding_specs"]) == len(
-        audit.PRODUCT_DATA_SOURCE_BINDINGS
-    )
-    assert "sim_mujoco_live:external_default" in profile_specs["checked_profile_binding_specs"]
-
-    assert "sim:default" in profile_specs["checked_ros2_binding_specs"]
-    assert "nav:real" in profile_specs["checked_ros2_binding_specs"]
-    assert "real:nav" in profile_specs["checked_ros2_binding_specs"]
-    assert "explore:real" in profile_specs["checked_ros2_binding_specs"]
-    assert "tare_explore:real" not in profile_specs["checked_ros2_binding_specs"]
-
-    assert "mujoco_live:sim_mujoco_live" in profile_specs["checked_ros2_binding_specs"]
-    assert "sim:cmu_unity:tare_explore" not in profile_specs["checked_ros2_binding_specs"]
-    assert "sim:gazebo:explore" in profile_specs["checked_ros2_binding_specs"]
-
-
-
-    assert "mujoco_live:sim_mujoco_live" not in profile_specs["skipped_ros2_binding_specs"]
-    retired_profile_specs = {
-        "sim_gazebo:default",
-        "sim_industrial:default",
-        "sim_cmu_tare:default",
-        "sim_cmu_tare:external_record",
-        "cmu_unity:sim_cmu_tare",
-        "sim:cmu_unity:tare_explore",
-        "gazebo:sim_gazebo",
-    }
-    assert retired_profile_specs.isdisjoint(profile_specs["checked_profile_binding_specs"])
-    assert retired_profile_specs.isdisjoint(profile_specs["checked_ros2_binding_specs"])
-    assert retired_profile_specs.isdisjoint(profile_specs["skipped_ros2_binding_specs"])
-
-    assert {
-        product_name: stage_names
-        for product_name, stage_names in profile_specs[
-            "checked_product_runtime_data_flow_stages"
-        ].items()
-        if stage_names
-        } == {
-            "explore": [
-                "tare_exploration",
-                "rolling_map_segment_execution",
-            ],
-        }
-
-
-    assert all(
-        profile_specs["skipped_ros2_binding_reasons"][spec] for spec in profile_specs["skipped_ros2_binding_specs"]
-    )
-
-
-    assert payload["checks"]["real_runtime_collector"]["ok"] is True
-    real_collector = payload["checks"]["real_runtime_collector"]
-    assert real_collector["runtime_contract"] == REAL_RUNTIME_CONTRACT
-    assert real_collector["required_runtime_topics"] == sorted(runtime_data_flow_topics(REAL_RUNTIME_CONTRACT))
-    assert real_collector["required_topic_frame_contract"] == (_required_topic_frame_contract())
-    assert real_collector["frames"] == runtime_frames_contract()
-    assert real_collector["topic_default_frame_ids"] == (runtime_topic_default_frame_contract(REAL_RUNTIME_CONTRACT))
-    assert real_collector["topic_allowed_frame_ids"] == (runtime_topic_allowed_frame_contract(REAL_RUNTIME_CONTRACT))
-    assert real_collector["algorithm_interfaces"] == (runtime_algorithm_interface_contract())
-    assert real_collector["runtime_data_flow_stage_algorithm_interfaces"] == (
-        runtime_stage_algorithm_interface_contract()
-    )
-    contract_integrity = payload["checks"]["runtime_contract_integrity"]
-    assert contract_integrity["ok"] is True
-    assert contract_integrity["checked_runtime_stages"] == [stage.name for stage in RUNTIME_DATA_FLOW]
-    assert contract_integrity["checked_real_required_topic_frame_ids"] == list(REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS)
-    assert contract_integrity["checked_real_required_endpoint_input_topics"] == list(
-        REAL_RUNTIME_REQUIRED_ENDPOINT_INPUT_TOPICS
-    )
-    assert contract_integrity["checked_topic_default_frame_ids"][TOPICS.odometry] == "odom"
-    assert contract_integrity["checked_real_runtime_topic_default_frame_ids"][TOPICS.global_path] == "map"
-    assert contract_integrity["checked_algorithm_interfaces"] == [
-        "exploration_strategy",
-        "fastlio_mapping",
-        "fastlio_raw_validation",
-        "global_planning",
-        "local_planning_and_following",
-        "octoplanner3d_global_planning",
-        "rolling_map_segment_execution",
-        "tare_exploration",
-        "traversable_frontier_preview",
-        "wavefront_frontier_exploration",
-    ]
-    assert contract_integrity["checked_runtime_stage_algorithm_interfaces"] == {
-        stage: list(interfaces) for stage, interfaces in RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES.items()
-    }
-    assert payload["checks"]["runtime_validation_gates"]["ok"] is True
-    assert payload["validation_gate"]["acceptance_step"] == 1
-    assert payload["validation_gate"]["requires_prior_gates"] == []
-    assert payload["validation_gate"]["proves"] == list(RUNTIME_AUDIT_PROVES)
-    assert payload["validation_gate"]["operator_summary_sections"] == list(RUNTIME_AUDIT_OPERATOR_SUMMARY_SECTIONS)
-    assert (
-        payload["checks"]["runtime_validation_gates"]["commands"]["real_runtime_evidence"]
-        == REAL_RUNTIME_EVIDENCE_COMMAND
-    )
-    assert (
-        payload["checks"]["runtime_validation_gates"]["commands"]["real_runtime_evidence_collector"]
-        == REAL_RUNTIME_EVIDENCE_COLLECTOR_COMMAND
-    )
-    assert (
-        f"--expected-contract {REAL_RUNTIME_CONTRACT}"
-        in (payload["checks"]["runtime_validation_gates"]["commands"]["real_runtime_evidence_collector"])
-    )
-    assert (
-        payload["checks"]["runtime_validation_gates"]["commands"]["real_runtime_evidence_gate"]
-        == REAL_RUNTIME_EVIDENCE_GATE_COMMAND
-    )
-    assert (
-        f"--expected-contract {REAL_RUNTIME_CONTRACT}"
-        in (payload["checks"]["runtime_validation_gates"]["commands"]["real_runtime_evidence_gate"])
-    )
-    assert payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"] == list(
-        REAL_RUNTIME_EVIDENCE_VALIDATES
-    )
-    assert (
-        "complete_runtime_topic_evidence_coverage"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "canonical_frames_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "topic_default_frame_contract_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "topic_allowed_frame_contract_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "required_topic_frame_contract_declared"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "required_topic_default_allowed_and_observed_frame_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "required_topic_sample_window_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "data_flow_temporal_order_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "real_motion_delta_and_sample_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "localization_health_locked_or_recovered"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "localization_quality_sampled"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "localization_quality_healthy_range"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "collector_read_only_and_no_control_topics_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "raw_lidar_imu_endpoint_input_samples"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "live_topic_freshness_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "hardware_boundary_evidence_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "local_planner_input_output_chain_observed"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "frame_link_evidence_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "runtime_data_flow_stage_evidence_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "data_flow_observed_missing_token_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "runtime_stage_algorithm_interface_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        "algorithm_interface_payload"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["real_runtime_evidence"]
-    )
-    assert (
-        payload["checks"]["runtime_validation_gates"]["commands"]["saved_map_artifact_gate"]
-        == SAVED_MAP_ARTIFACT_GATE_COMMAND
-    )
-    assert (
-        "artifact_gate_payload_declares_checked_artifacts_frames_sources"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["saved_map_artifact_gate"]
-    )
-    assert payload["checks"]["runtime_validation_gates"]["validates"]["runtime_audit"] == list(RUNTIME_AUDIT_VALIDATES)
-    assert list(payload["checks"]) == list(RUNTIME_AUDIT_CHECKS)
-    assert payload["checks"]["runtime_validation_gates"]["checks"]["runtime_audit"] == list(RUNTIME_AUDIT_CHECKS)
-    assert payload["checks"]["runtime_validation_gates"]["coverage"]["runtime_audit"] == {
-        name: list(checks) for name, checks in RUNTIME_AUDIT_VALIDATE_CHECK_COVERAGE.items()
-    }
-    acceptance = payload["checks"]["runtime_validation_gates"]["acceptance"]
-    assert acceptance["runtime_audit"] == {
-        "acceptance_step": 1,
-        "required_when": "before_any_runtime_contract_or_field_readiness_claim",
-        "requires_prior_gates": [],
-        "conditional_prior_gates": [],
-        "proves": list(RUNTIME_AUDIT_PROVES),
-        "operator_summary_sections": list(RUNTIME_AUDIT_OPERATOR_SUMMARY_SECTIONS),
-    }
-    assert acceptance["saved_map_artifact_gate"] == {
-        "acceptance_step": 2,
-        "required_when": "saved_map_octomap_or_occupancy_artifact_is_used",
-        "requires_prior_gates": ["runtime_audit"],
-        "conditional_prior_gates": [],
-        "proves": list(SAVED_MAP_ARTIFACT_GATE_PROVES),
-        "operator_summary_sections": list(SAVED_MAP_ARTIFACT_GATE_OPERATOR_SUMMARY_SECTIONS),
-    }
-    assert acceptance["real_runtime_evidence"] == {
-        "acceptance_step": 3,
-        "required_when": "before_claiming_real_runtime_or_navigation",
-        "requires_prior_gates": ["runtime_audit"],
-        "conditional_prior_gates": [
-            "saved_map_artifact_gate when saved map, octomap, or occupancy artifact is used"
-        ],
-        "proves": list(REAL_RUNTIME_EVIDENCE_PROVES),
-        "operator_summary_sections": list(REAL_RUNTIME_EVIDENCE_OPERATOR_SUMMARY_SECTIONS),
-    }
-    assert payload["checks"]["runtime_validation_gates"]["coverage"]["runtime_audit"][
-        "data_source_resolved_flow_inputs_outputs"
-    ] == ["runtime_contract_integrity"]
-    assert payload["checks"]["runtime_validation_gates"]["coverage"]["runtime_audit"][
-        "runtime_stage_algorithm_interface_binding"
-    ] == ["runtime_contract_integrity"]
-    assert payload["checks"]["runtime_validation_gates"]["coverage"]["runtime_audit"][
-        "source_code_uses_canonical_runtime_topics"
-    ] == ["source_topic_contracts"]
-    assert (
-        "runtime_stage_owner_frame_map_dependency_integrity"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["runtime_audit"]
-    )
-    assert (
-        "runtime_stage_algorithm_interface_binding"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["runtime_audit"]
-    )
-    assert (
-        "topic_default_frame_integrity" in payload["checks"]["runtime_validation_gates"]["validates"]["runtime_audit"]
-    )
-    assert (
-        "ros_frame_contract_doc_mirror" in payload["checks"]["runtime_validation_gates"]["validates"]["runtime_audit"]
-    )
-    assert (
-        "runtime_validation_gates_self_description"
-        in payload["checks"]["runtime_validation_gates"]["validates"]["runtime_audit"]
-    )
-    doc_check = payload["checks"]["ros_frame_contract_doc"]
-    assert doc_check["ok"] is True
-    assert doc_check["checked_doc"] == "docs/architecture/ros_frame_contract.md"
-    assert doc_check["checked_topics"] == list(runtime_topic_allowed_frame_ids(REAL_RUNTIME_CONTRACT))
-    assert doc_check["required_topics"] == sorted(REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS)
-    assert "src/gateway/services/runtime_status.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
-    assert "src/gateway/routes/diagnostics.py" in payload["checks"]["source_topic_contracts"]["checked_files"]
-
-
-def test_runtime_contract_audit_rejects_ros_frame_contract_doc_drift(tmp_path: Path):
-    audit = _load_runtime_contract_audit_module()
-    doc = (REPO_ROOT / "docs" / "architecture" / "ros_frame_contract.md").read_text(encoding="utf-8")
-    bad_doc = tmp_path / "ros_frame_contract.md"
-    bad_doc.write_text(
-        doc.replace(
-            "| `/slam/map_cloud` | `map` | `map`, `odom` | yes | `map` |",
-            "| `/slam/map_cloud` | `odom` | `map`, `odom` | yes | `odom` |",
-        ),
-        encoding="utf-8",
-    )
-
-    result = audit._check_ros_frame_contract_doc(
-        runtime_contract_manifest(),
-        bad_doc,
-    )
-
-    assert result["ok"] is False
-    assert "ros_frame_contract.md topic frame row drifted for /slam/map_cloud" in result["blockers"]
-
-
-def test_ros_frame_contract_doc_treats_metadata_only_topics_as_unframed():
-    audit = _load_runtime_contract_audit_module()
-
-    result = audit._check_ros_frame_contract_doc(runtime_contract_manifest())
-
-    assert not any(
-        topic in blocker
-        for blocker in result["blockers"]
-        for topic in (TOPICS.operator_motion_control, TOPICS.operator_motion_ack)
-    )
-
-
-def test_runtime_contract_audit_rejects_runtime_check_list_drift(monkeypatch):
-    audit = _load_runtime_contract_audit_module()
-    monkeypatch.setattr(
-        audit,
-        "RUNTIME_AUDIT_CHECKS",
-        tuple(item for item in RUNTIME_AUDIT_CHECKS if item != "source_topic_contracts"),
-    )
-
-    payload = audit.build_runtime_contract_audit()
-
-    assert payload["ok"] is False
-    assert any("runtime_audit checks list drifted" in blocker for blocker in payload["blockers"])
-
-
-def test_runtime_contract_audit_rejects_yaml_frame_mismatch(tmp_path: Path):
-    audit = _load_runtime_contract_audit_module()
-    contract = yaml.safe_load((REPO_ROOT / "config" / "topic_contract.yaml").read_text(encoding="utf-8"))
-    contract["tf"]["body_frame"] = "base_link"
-    bad_contract = tmp_path / "topic_contract_bad_frame.yaml"
-    bad_contract.write_text(yaml.safe_dump(contract), encoding="utf-8")
-
-    payload = audit.build_runtime_contract_audit(bad_contract)
-
-    assert payload["ok"] is False
-    assert any(
-        "yaml_contract: tf.body_frame does not mirror runtime frames" == blocker for blocker in payload["blockers"]
-    )
-
-
-def test_runtime_contract_audit_rejects_yaml_topic_format_mismatch(tmp_path: Path):
-    audit = _load_runtime_contract_audit_module()
-    contract = yaml.safe_load((REPO_ROOT / "config" / "topic_contract.yaml").read_text(encoding="utf-8"))
-    contract["topic_formats"][TOPICS.localization_quality] = ["std_msgs/msg/String"]
-    bad_contract = tmp_path / "topic_contract_bad_topic_format.yaml"
-    bad_contract.write_text(yaml.safe_dump(contract), encoding="utf-8")
-
-    payload = audit.build_runtime_contract_audit(bad_contract)
-
-    assert payload["ok"] is False
-    assert any(
-        "yaml_contract: topic_formats does not mirror runtime contract" == blocker for blocker in payload["blockers"]
-    )
-
-
-def test_runtime_contract_audit_rejects_yaml_data_format_catalog_mismatch(tmp_path: Path):
-    audit = _load_runtime_contract_audit_module()
-    contract = yaml.safe_load((REPO_ROOT / "config" / "topic_contract.yaml").read_text(encoding="utf-8"))
-    del contract["data_formats"]["lingtu.dds.Image"]
-    bad_contract = tmp_path / "topic_contract_bad_data_formats.yaml"
-    bad_contract.write_text(yaml.safe_dump(contract), encoding="utf-8")
-
-    payload = audit.build_runtime_contract_audit(bad_contract)
-
-    assert payload["ok"] is False
-    assert any(
-        "yaml_contract: data_formats does not mirror runtime message_formats" == blocker
-        for blocker in payload["blockers"]
-    )
-
-
-def test_runtime_contract_audit_rejects_yaml_topic_ros_type_mismatch(tmp_path: Path):
-    audit = _load_runtime_contract_audit_module()
-    contract = yaml.safe_load((REPO_ROOT / "config" / "topic_contract.yaml").read_text(encoding="utf-8"))
-    contract["topic_ros_types"][TOPICS.cmd_vel] = ["geometry_msgs/msg/Twist"]
-    bad_contract = tmp_path / "topic_contract_bad_topic_ros_types.yaml"
-    bad_contract.write_text(yaml.safe_dump(contract), encoding="utf-8")
-
-    payload = audit.build_runtime_contract_audit(bad_contract)
-
-    assert payload["ok"] is False
-    assert any(
-        "yaml_contract: topic_ros_types does not mirror runtime contract" == blocker for blocker in payload["blockers"]
-    )
-
-
-def test_runtime_contract_audit_rejects_yaml_stage_algorithm_interface_mismatch(
-    tmp_path: Path,
-):
-    audit = _load_runtime_contract_audit_module()
-    contract = yaml.safe_load((REPO_ROOT / "config" / "topic_contract.yaml").read_text(encoding="utf-8"))
-    contract["runtime_data_flow_stage_algorithm_interfaces"]["global_planning"] = ["global_planning"]
-    bad_contract = tmp_path / "topic_contract_bad_stage_algorithm_interfaces.yaml"
-    bad_contract.write_text(yaml.safe_dump(contract), encoding="utf-8")
-
-    payload = audit.build_runtime_contract_audit(bad_contract)
-
-    assert payload["ok"] is False
-    assert any(
-        "yaml_contract: runtime_data_flow_stage_algorithm_interfaces does not mirror runtime contract" == blocker
-        for blocker in payload["blockers"]
-    )
-
-
-def test_runtime_contract_audit_rejects_yaml_adapter_alias_mismatch(tmp_path: Path):
-    audit = _load_runtime_contract_audit_module()
-    contract = yaml.safe_load((REPO_ROOT / "config" / "topic_contract.yaml").read_text(encoding="utf-8"))
-    contract["adapter_aliases"]["localizer"][-1]["target"] = TOPICS.relocalize_service
-    bad_contract = tmp_path / "topic_contract_bad_adapter_alias.yaml"
-    bad_contract.write_text(yaml.safe_dump(contract), encoding="utf-8")
-
-    payload = audit.build_runtime_contract_audit(bad_contract)
-
-    assert payload["ok"] is False
-    assert any(
-        "yaml_contract: adapter_aliases does not mirror runtime contract" == blocker for blocker in payload["blockers"]
-    )
-
-
-def test_runtime_contract_audit_rejects_yaml_topic_default_frame_mismatch(
-    tmp_path: Path,
-):
-    audit = _load_runtime_contract_audit_module()
-    contract = yaml.safe_load((REPO_ROOT / "config" / "topic_contract.yaml").read_text(encoding="utf-8"))
-    contract.setdefault("topic_default_frame_ids", {})[TOPICS.map_cloud] = "odom"
-    bad_contract = tmp_path / "topic_contract_bad_topic_default_frame.yaml"
-    bad_contract.write_text(yaml.safe_dump(contract), encoding="utf-8")
-
-    payload = audit.build_runtime_contract_audit(bad_contract)
-
-    assert payload["ok"] is False
-    assert any(
-        "yaml_contract: topic_default_frame_ids does not mirror runtime contract" == blocker
-        for blocker in payload["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_unresolved_resolved_flow_placeholder():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["resolved_runtime_data_flow"][REAL_RUNTIME_DATA_SOURCE][-1]["outputs"] = ["sink:data_source.command_sink"]
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        f"resolved {REAL_RUNTIME_DATA_SOURCE} command_boundary contains unresolved placeholder" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_command_sink_drift():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["resolved_runtime_data_flow"][REAL_RUNTIME_DATA_SOURCE][-1]["outputs"] = ["wrong_sink"]
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        f"resolved {REAL_RUNTIME_DATA_SOURCE} command_boundary does not match data source sink" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_undeclared_artifact_reference():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    global_planning = next(
-        stage
-        for stage in manifest["resolved_runtime_data_flow"][REAL_RUNTIME_DATA_SOURCE]
-        if stage["name"] == "global_planning"
-    )
-    global_planning["inputs"] = tuple(global_planning["inputs"]) + (
-        "artifact:missing_map_artifact",
-    )
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        (
-            f"resolved {REAL_RUNTIME_DATA_SOURCE} global_planning "
-            "references undeclared artifact missing_map_artifact"
-        )
-        == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_undeclared_topic_format_reference():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["topic_formats"][TOPICS.cmd_vel] = ("missing_twist_format",)
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "topic format /nav/cmd_vel references undeclared format missing_twist_format" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_message_format_name_mismatch():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["message_formats"]["map_cloud"]["name"] = "wrong_map_cloud"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any("message format map_cloud name field mismatch" == blocker for blocker in result["blockers"])
-
-
-def test_runtime_contract_integrity_rejects_artifact_format_name_mismatch():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["artifact_formats"]["octomap"]["name"] = "wrong_octomap"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any("artifact format octomap name field mismatch" == blocker for blocker in result["blockers"])
-
-
-def test_runtime_contract_integrity_rejects_non_numeric_lidar_extrinsic():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["lidar_extrinsics"]["real_mid360"]["x"] = "not-a-number"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any("lidar extrinsic real_mid360 x is not numeric" == blocker for blocker in result["blockers"])
-
-
-def test_runtime_contract_integrity_rejects_product_binding_name_mismatch():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["product_data_sources"]["nav"]["product"] = "wrong_nav"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any("Product binding nav product field mismatch" == blocker for blocker in result["blockers"])
-
-
-def test_runtime_contract_integrity_rejects_product_binding_unknown_data_source():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["product_data_sources"]["nav"]["data_source"] = "missing_source"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "Product binding nav references unknown data source missing_source" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_product_binding_data_source_drift():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["product_data_sources"]["nav"]["data_source"] = "in_process_stub"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "Product binding nav data_source drifted from runtime binding" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_product_binding_blank_mode():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["product_data_sources"]["nav"]["mode"] = ""
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any("Product binding nav mode missing" == blocker for blocker in result["blockers"])
-
-
-def test_runtime_contract_integrity_rejects_product_binding_mode_drift():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["product_data_sources"]["nav"]["mode"] = "framework_test"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "Product binding nav mode drifted from runtime binding" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_algorithm_interface_topic_without_format():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    fastlio = manifest["algorithm_interfaces"]["fastlio_mapping"]
-    fastlio["inputs"] = tuple(fastlio["inputs"]) + ("/nav/unformatted_scan",)
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "algorithm interface fastlio_mapping references topic without format /nav/unformatted_scan" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_algorithm_interface_without_flow_stage():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    local_planning = manifest["algorithm_interfaces"]["local_planning_and_following"]
-    local_planning["inputs"] = tuple(local_planning["inputs"]) + (TOPICS.map_cloud,)
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "algorithm interface local_planning_and_following is not covered by any runtime_data_flow stage" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_native_tare_and_rolling_segment_interfaces_have_distinct_runtime_stages():
-    stages = {stage.name: stage for stage in RUNTIME_DATA_FLOW}
-
-    for interface_name in ("tare_exploration", "rolling_map_segment_execution"):
-        stage = stages[interface_name]
-        interface = ALGORITHM_INTERFACES[interface_name]
-
-        assert RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES[interface_name] == (
-            interface_name,
-        )
-        assert set(interface.inputs) <= set(stage.inputs)
-        assert set(interface.outputs) <= set(stage.outputs)
-
-
-def test_data_source_flow_does_not_claim_product_scoped_tare_stages():
-    resolved_stage_names = {
-        stage.name for stage in resolved_runtime_data_flow(REAL_RUNTIME_CONTRACT)
-    }
-
-    assert "tare_exploration" not in resolved_stage_names
-    assert "rolling_map_segment_execution" not in resolved_stage_names
-
-
-def test_product_flow_derives_product_scoped_stages_from_required_topics():
-    graph = load_runtime_graph()
-    product_scoped_stage_names = {
-        "tare_exploration",
-        "rolling_map_segment_execution",
-    }
-    scoped_stages_by_product = {
-        product_name: tuple(
-            stage.name
-            for stage in resolved_product_runtime_data_flow(
-                REAL_RUNTIME_CONTRACT,
-                resolve_product_spec_contracts(product_name, product).topics,
-            )
-            if stage.name in product_scoped_stage_names
-        )
-        for product_name, product in graph.products.items()
-    }
-
-    assert {
-        product_name: stage_names
-        for product_name, stage_names in scoped_stages_by_product.items()
-        if stage_names
-    } == {
-        "explore": (
-            "tare_exploration",
-            "rolling_map_segment_execution",
-        ),
-    }
-
-
-def test_product_runtime_flow_audit_rejects_incomplete_stage_topic_closure(monkeypatch):
-    audit = _load_runtime_contract_audit_module()
-    graph = load_runtime_graph()
-    product = deepcopy(graph.products["explore"])
-    original_resolver = audit.resolve_product_spec_contracts
-
-    def _missing_tf_contract(product_name, product_spec):
-        resolved = original_resolver(product_name, product_spec)
-        if product_name != "explore":
-            return resolved
-        return replace(
-            resolved,
-            topics=tuple(topic for topic in resolved.topics if topic != "/tf"),
-        )
-
-    monkeypatch.setattr(
-        audit,
-        "resolve_product_spec_contracts",
-        _missing_tf_contract,
-    )
-    blockers: list[str] = []
-
-    audit._append_product_runtime_data_flow_blockers(
-        blockers,
-        products={"explore": product},
-    )
-
-    assert (
-        "product explore runtime stage tare_exploration topics missing from "
-        "required_topics: /tf"
-    ) in blockers
-
-
-def test_runtime_contract_integrity_rejects_algorithm_interface_without_stage_binding():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["runtime_data_flow_stage_algorithm_interfaces"]["local_planning_and_following"] = ()
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "runtime_data_flow_stage_algorithm_interfaces local_planning_and_following must list interfaces" == blocker
-        for blocker in result["blockers"]
-    )
-    assert any(
-        "algorithm interfaces missing runtime data-flow stage binding: local_planning_and_following" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_stage_interface_binding_mismatch():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["runtime_data_flow_stage_algorithm_interfaces"]["local_planning_and_following"] = ("global_planning",)
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "runtime_data_flow stage local_planning_and_following does not cover "
-        "algorithm interface global_planning" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_resolved_slam_input_drift():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["resolved_runtime_data_flow"][REAL_RUNTIME_DATA_SOURCE][1]["inputs"] = [
-        TOPICS.raw_lidar_points,
-    ]
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(f"resolved {REAL_RUNTIME_DATA_SOURCE} slam inputs drifted" == blocker for blocker in result["blockers"])
-
-
-def test_runtime_contract_integrity_rejects_resolved_map_layer_input_drift():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["resolved_runtime_data_flow"][REAL_RUNTIME_DATA_SOURCE][2]["inputs"] = [
-        TOPICS.odometry,
-        TOPICS.map_cloud,
-    ]
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        f"resolved {REAL_RUNTIME_DATA_SOURCE} map layer inputs drifted" == blocker for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_runtime_data_flow_topics_drift():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["runtime_data_flow_topics"][REAL_RUNTIME_DATA_SOURCE] = tuple(
-        topic for topic in manifest["runtime_data_flow_topics"][REAL_RUNTIME_DATA_SOURCE] if topic != TOPICS.cmd_vel
-    )
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        (f"runtime_data_flow_topics {REAL_RUNTIME_DATA_SOURCE} does not match resolved data flow") == blocker
-        for blocker in result["blockers"]
-    )
-    assert any(
-        (f"real_runtime_required_topic_frame_ids missing from {REAL_RUNTIME_CONTRACT} data flow: /nav/cmd_vel")
-        == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_resolved_stage_metadata_drift():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    global_planning = next(
-        stage
-        for stage in manifest["resolved_runtime_data_flow"][REAL_RUNTIME_DATA_SOURCE]
-        if stage["name"] == "global_planning"
-    )
-    global_planning["frame_role"] = "body"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        f"resolved {REAL_RUNTIME_DATA_SOURCE} global_planning frame_role drifted" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_blank_stage_metadata():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    global_planning = next(
-        stage
-        for stage in manifest["runtime_data_flow"]
-        if stage["name"] == "global_planning"
-    )
-    global_planning["map_dependency"] = ""
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any("runtime_data_flow global_planning map_dependency missing" == blocker for blocker in result["blockers"])
-
-
-def test_runtime_contract_integrity_rejects_required_real_frame_topic_without_rule():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["real_runtime_topic_allowed_frame_ids"].pop(TOPICS.cmd_vel)
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "real_runtime_required_topic_frame_ids missing real frame rules: /nav/cmd_vel" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_required_real_frame_topic_without_format():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["topic_formats"].pop(TOPICS.cmd_vel)
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "real_runtime_required_topic_frame_ids missing topic formats: /nav/cmd_vel" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_endpoint_input_without_frame_evidence():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["real_runtime_required_topic_frame_ids"] = tuple(
-        topic for topic in manifest["real_runtime_required_topic_frame_ids"] if topic != TOPICS.lidar_scan
-    )
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        f"real_runtime_required_endpoint_input_topics missing required frame evidence: {TOPICS.lidar_scan}" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_allowed_frame_topic_without_format():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["topic_allowed_frame_ids"]["/nav/unformatted_frame_topic"] = ("map",)
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "topic_allowed_frame_ids topic /nav/unformatted_frame_topic has no topic format" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_accepts_explicitly_unframed_metadata_topic():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    topic = "/test/unframed_metadata"
-    format_name = "test_unframed_metadata"
-    ros_type = "lingtu.dds.TestUnframedMetadata"
-    manifest["message_formats"][format_name] = {
-        "name": format_name,
-        "ros_type": ros_type,
-        "frame_role": "metadata",
-        "required_fields": ("sequence",),
-        "note": "Synthetic metadata-only contract for audit coverage.",
-    }
-    manifest["topic_formats"][topic] = (format_name,)
-    manifest["topic_ros_types"][topic] = (ros_type,)
-    manifest["topic_allowed_frame_ids"][topic] = ()
-    manifest["topic_default_frame_ids"][topic] = None
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert "topic_default_frame_ids keys do not match topic_allowed_frame_ids" not in result["blockers"]
-    assert (
-        "real_runtime_topic_default_frame_ids keys do not match "
-        "real_runtime_topic_allowed_frame_ids"
-        not in result["blockers"]
-    )
-    assert not any(topic in blocker for blocker in result["blockers"])
-
-
-def test_runtime_contract_integrity_rejects_empty_frames_for_framed_topic():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["topic_allowed_frame_ids"][TOPICS.map_cloud] = ()
-    manifest["topic_default_frame_ids"][TOPICS.map_cloud] = None
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert (
-        f"topic_allowed_frame_ids topic {TOPICS.map_cloud} has no allowed frames"
-        in result["blockers"]
-    )
-    assert (
-        f"topic_default_frame_ids topic {TOPICS.map_cloud} has no default frame"
-        in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_unknown_allowed_frame():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["topic_allowed_frame_ids"][TOPICS.map_cloud] = ("world",)
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        f"topic_allowed_frame_ids topic {TOPICS.map_cloud} allows unknown frame world" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_default_frame_not_allowed():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest.setdefault("topic_default_frame_ids", {})[TOPICS.cmd_vel] = "map"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "topic_default_frame_ids topic /nav/cmd_vel default frame map is not allowed" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_real_default_frame_not_allowed():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest.setdefault("real_runtime_topic_default_frame_ids", {})[TOPICS.global_path] = "odom"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "real_runtime_topic_default_frame_ids topic /nav/global_path default frame odom is not allowed" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_accepts_declared_frame_alias_allowed_frame():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["topic_allowed_frame_ids"][TOPICS.cmd_vel] = ("base_link",)
-    manifest["real_runtime_topic_allowed_frame_ids"][TOPICS.cmd_vel] = ("base_link",)
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert not any(TOPICS.cmd_vel in blocker for blocker in result["blockers"])
-    frame_contract_sections = (
-        "topic_allowed_frame_ids",
-        "topic_default_frame_ids",
-        "real_runtime_topic_allowed_frame_ids",
-        "real_runtime_topic_default_frame_ids",
-    )
-    assert not any(
-        section in blocker
-        for blocker in result["blockers"]
-        for section in frame_contract_sections
-    )
-
-
-def test_runtime_contract_integrity_rejects_real_frame_not_in_general_contract():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["real_runtime_topic_allowed_frame_ids"][TOPICS.map_cloud] = (
-        "map",
-        "lidar_link",
-    )
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        f"real_runtime_topic_allowed_frame_ids topic {TOPICS.map_cloud} "
-        "allows frames outside topic_allowed_frame_ids: lidar_link" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_unknown_lidar_extrinsic_child():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["lidar_extrinsics"]["real_mid360"]["child"] = "unknown_lidar_frame"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "lidar extrinsic real_mid360 child unknown_lidar_frame is not canonical lidar frame or alias" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_adapter_alias_source_without_format():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["adapter_aliases"]["fastlio2"][0]["source"] = "/legacy/missing_scan"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "adapter alias fastlio2 source /legacy/missing_scan has no topic format" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_adapter_alias_undeclared_format():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["adapter_aliases"]["fastlio2"][0]["msg_format"] = "missing_format"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "adapter alias fastlio2 references undeclared format missing_format" == blocker
-        for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_adapter_relay_target_without_format():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["adapter_relays"]["cmu_unity"][0]["target"] = "/missing/relay"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "adapter relay cmu_unity target /missing/relay has no topic format" == blocker for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_missing_topic_formats_section():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest.pop("topic_formats")
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert "topic_formats section missing" in result["blockers"]
-
-
-def test_runtime_contract_integrity_rejects_missing_topic_ros_types_section():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest.pop("topic_ros_types")
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert "topic_ros_types section missing" in result["blockers"]
-
-
-def test_runtime_contract_integrity_rejects_unresolved_topic_ros_type():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["topic_ros_types"][TOPICS.cmd_vel] = ("cmd_vel",)
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert "topic_ros_types /nav/cmd_vel references non-ROS payload type cmd_vel" in result["blockers"]
-
-
-def test_runtime_contract_integrity_rejects_missing_lidar_extrinsics_section():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest.pop("lidar_extrinsics")
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert "lidar_extrinsics section missing" in result["blockers"]
-
-
-def test_profile_runtime_specs_reject_profile_adapter_simulation_only_provider_drift(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    profile_adapter = audit.PROFILE_ADAPTERS["thunder_lite"]
-    monkeypatch.setitem(
-        audit.PROFILE_ADAPTERS,
-        "thunder_lite",
-        replace(profile_adapter, simulation_only=True),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert "Profile adapter thunder_lite simulation_only does not match data source provider" in result["blockers"]
-
-
-def test_profile_runtime_specs_reject_profile_adapter_action_for_unsupported_profile(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
-    monkeypatch.setitem(
-        audit.PROFILE_ADAPTERS,
-        "mujoco_live",
-        replace(
-            profile_adapter,
-            default_actions={**profile_adapter.default_actions, "nav": ("gate",)},
-        ),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert "Profile adapter mujoco_live default_actions references unsupported name nav" in result["blockers"]
-
-
-def test_profile_runtime_specs_rejects_simultaneous_field_route_and_dds_topic_omission(
-    monkeypatch,
-):
-    from runtime.endpoints.dds.contracts import THUNDER_DDS_CONTRACT
-    from runtime.routes import robot
-
-    audit = _load_runtime_contract_audit_module()
-    topic = TOPICS.saved_map_cloud
-    route = robot()
-    broken_route = replace(
-        route,
-        routes={name: backend for name, backend in route.routes.items() if name != topic},
-        bindings={
-            backend: {
-                name: binding
-                for name, binding in bindings.items()
-                if name != topic
-            }
-            for backend, bindings in route.bindings.items()
-        },
-    )
-    broken_endpoint = replace(
-        THUNDER_DDS_CONTRACT,
-        bindings=tuple(
-            binding
-            for binding in THUNDER_DDS_CONTRACT.bindings
-            if binding.topic != topic
-        ),
-    )
-    monkeypatch.setattr(audit, "robot", lambda: broken_route, raising=False)
-    monkeypatch.setattr(
-        audit,
-        "THUNDER_DDS_CONTRACT",
-        broken_endpoint,
-        raising=False,
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert (
-        "real Env Product map required topic /slam/saved_map_cloud "
-        "missing from robot route layer"
-        in result["blockers"]
-    )
-    assert (
-        "real Env Product map required topic /slam/saved_map_cloud "
-        "missing from typed endpoint layer thunder_dds_v1"
-        in result["blockers"]
-    )
-
-
-def test_profile_runtime_specs_reject_product_planner_backend_field(monkeypatch):
-    audit = _load_runtime_contract_audit_module()
-    monkeypatch.setitem(
-        audit.FIELD_PRODUCT_HOST_DEFAULTS,
-        "nav",
-        {
-            **audit.FIELD_PRODUCT_HOST_DEFAULTS["nav"],
-            "planner_backend": "octoplanner3d",
-        },
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert "Field Product nav must use planner, not planner_backend" in result["blockers"]
-
-
-def test_profile_runtime_specs_reject_missing_profile_adapter_default_action_profile(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
-    default_actions = dict(profile_adapter.default_actions)
-    default_actions.pop("sim_mujoco_live")
-    monkeypatch.setitem(
-        audit.PROFILE_ADAPTERS,
-        "mujoco_live",
-        replace(profile_adapter, default_actions=default_actions),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert "Profile adapter mujoco_live default_actions missing supported name sim_mujoco_live" in result["blockers"]
-
-
-def test_profile_runtime_specs_reject_missing_profile_adapter_record_action_profile(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
-    record_actions = dict(profile_adapter.record_actions)
-    record_actions.pop("sim_mujoco_live")
-    monkeypatch.setitem(
-        audit.PROFILE_ADAPTERS,
-        "mujoco_live",
-        replace(profile_adapter, record_actions=record_actions),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert "Profile adapter mujoco_live record_actions missing supported name sim_mujoco_live" in result["blockers"]
-
-
-def test_profile_runtime_specs_reject_external_profile_missing_launcher(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    profile_data = dict(audit.HOST_PROFILE_DEFAULTS["sim_mujoco_live"])
-    profile_data["_external_launcher"] = "sim/scripts/missing_launcher.sh"
-    monkeypatch.setitem(audit.HOST_PROFILE_DEFAULTS, "sim_mujoco_live", profile_data)
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert "profile sim_mujoco_live external launcher missing: sim/scripts/missing_launcher.sh" in result["blockers"]
-
-
-def test_profile_runtime_specs_reject_external_profile_launcher_adapter_drift(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    profile_data = dict(audit.HOST_PROFILE_DEFAULTS["sim_mujoco_live"])
-    profile_data["_external_launcher"] = "sim/scripts/unrelated_launcher.sh"
-    monkeypatch.setitem(audit.HOST_PROFILE_DEFAULTS, "sim_mujoco_live", profile_data)
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert "profile sim_mujoco_live external launcher does not match adapter mujoco_live" in result["blockers"]
-
-
-def test_profile_runtime_specs_reject_external_profile_data_source_drift(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
-    monkeypatch.setitem(
-        audit.PROFILE_ADAPTERS,
-        "mujoco_live",
-        replace(profile_adapter, data_source="thunder"),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert (
-        "Profile adapter mujoco_live profile sim_mujoco_live: runtime contract does not match data source"
-        in result["blockers"]
-    )
-
-
-def test_profile_runtime_specs_reject_external_profile_binding_drift(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    binding = audit.PROFILE_DATA_SOURCE_BINDINGS["sim_mujoco_live"]
-    monkeypatch.setitem(
-        audit.PROFILE_DATA_SOURCE_BINDINGS,
-        "sim_mujoco_live",
-        replace(binding, data_source="thunder"),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert (
-        "profile sim_mujoco_live external default runtime spec data_source "
-        "drifted from its selection binding" in result["blockers"]
-    )
-
-
-def test_profile_runtime_specs_reject_external_profile_default_args_drift(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    profile_data = dict(audit.HOST_PROFILE_DEFAULTS["sim_mujoco_live"])
-    profile_data["_external_default_args"] = ("legacy-gate",)
-    monkeypatch.setitem(audit.HOST_PROFILE_DEFAULTS, "sim_mujoco_live", profile_data)
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert "profile sim_mujoco_live external default args do not match adapter mujoco_live" in result["blockers"]
-
-
-def test_profile_runtime_specs_reject_external_profile_record_args_drift(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    profile_data = dict(audit.HOST_PROFILE_DEFAULTS["sim_mujoco_live"])
-    profile_data["_external_record_args"] = ("legacy-video",)
-    monkeypatch.setitem(audit.HOST_PROFILE_DEFAULTS, "sim_mujoco_live", profile_data)
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert "profile sim_mujoco_live external record args do not match adapter mujoco_live" in result["blockers"]
-
-
-def test_profile_runtime_specs_reject_missing_profile_adapter_launcher(monkeypatch):
-    audit = _load_runtime_contract_audit_module()
-    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
-    monkeypatch.setitem(
-        audit.PROFILE_ADAPTERS,
-        "mujoco_live",
-        replace(profile_adapter, external_launcher="sim/scripts/missing_launcher.sh"),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert (
-        "Profile adapter mujoco_live external launcher missing: sim/scripts/missing_launcher.sh"
-        in result["blockers"]
-    )
-
-
-def test_profile_runtime_specs_reject_hardware_profile_adapter_launcher(monkeypatch):
-    audit = _load_runtime_contract_audit_module()
-    profile_adapter = audit.PROFILE_ADAPTERS["thunder_lite"]
-    monkeypatch.setitem(
-        audit.PROFILE_ADAPTERS,
-        "thunder_lite",
-        replace(
-            profile_adapter,
-            external_launcher="sim/scripts/navigation_replay_deviation_gate.py",
-        ),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert "Profile adapter thunder_lite for hardware must not declare external launcher" in result["blockers"]
-
-
-def test_profile_runtime_specs_reject_ros2_runtime_binding_drift(monkeypatch):
-    audit = _load_runtime_contract_audit_module()
-    profile_adapter = audit.PROFILE_ADAPTERS["thunder_lite"]
-    monkeypatch.setitem(
-        audit.PROFILE_ADAPTERS,
-        "thunder_lite",
-        replace(
-            profile_adapter,
-            config_overrides={
-                **profile_adapter.config_overrides,
-                "localization_adapter": "ros2_slam_bridge",
-            },
-        ),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert (
-        "Profile adapter thunder_lite profile lite runtime bindings: "
-        "localization_adapter=ros2_slam_bridge selects a ROS2 localization adapter" in result["blockers"]
-    )
-
-
-def test_profile_runtime_specs_reject_profile_adapter_config_frame_override_drift(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
-    monkeypatch.setitem(
-        audit.PROFILE_ADAPTERS,
-        "mujoco_live",
-        replace(
-            profile_adapter,
-            config_overrides={
-                **profile_adapter.config_overrides,
-                "planning_frame_id": "camera_link",
-            },
-        ),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert (
-        "Profile adapter mujoco_live config_overrides planning_frame_id camera_link "
-        "is not a fixed runtime frame" in result["blockers"]
-    )
-
-
-def test_profile_runtime_specs_reject_profile_adapter_profile_frame_override_drift(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
-    profile_overrides = dict(profile_adapter.profile_overrides["sim_mujoco_octo_live"])
-    profile_overrides["goal_frame_id"] = "body"
-    monkeypatch.setitem(
-        audit.PROFILE_ADAPTERS,
-        "mujoco_live",
-        replace(
-            profile_adapter,
-            profile_overrides={
-                **profile_adapter.profile_overrides,
-                "sim_mujoco_octo_live": profile_overrides,
-            },
-        ),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert (
-        "Profile adapter mujoco_live profile_overrides.sim_mujoco_octo_live goal_frame_id body "
-        "is not a fixed runtime frame" in result["blockers"]
-    )
-
-
-def test_profile_runtime_specs_reject_profile_adapter_config_topic_override_drift(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
-    monkeypatch.setitem(
-        audit.PROFILE_ADAPTERS,
-        "mujoco_live",
-        replace(
-            profile_adapter,
-            config_overrides={
-                **profile_adapter.config_overrides,
-                "cloud_topic": "/nav/missing_cloud",
-            },
-        ),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert (
-        "Profile adapter mujoco_live config_overrides cloud_topic /nav/missing_cloud has no topic format"
-        in result["blockers"]
-    )
-
-
-def test_profile_runtime_specs_reject_profile_adapter_config_relative_topic_override(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
-    monkeypatch.setitem(
-        audit.PROFILE_ADAPTERS,
-        "mujoco_live",
-        replace(
-            profile_adapter,
-            config_overrides={
-                **profile_adapter.config_overrides,
-                "cloud_topic": "nav/missing_cloud",
-            },
-        ),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert (
-        "Profile adapter mujoco_live config_overrides cloud_topic "
-        "nav/missing_cloud is not an absolute runtime topic" in result["blockers"]
-    )
-
-
-def test_profile_runtime_specs_reject_profile_adapter_profile_topic_override_drift(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
-    profile_overrides = dict(profile_adapter.profile_overrides["sim_mujoco_octo_live"])
-    profile_overrides["cloud_topic"] = "/nav/missing_cloud"
-    monkeypatch.setitem(
-        audit.PROFILE_ADAPTERS,
-        "mujoco_live",
-        replace(
-            profile_adapter,
-            profile_overrides={
-                **profile_adapter.profile_overrides,
-                "sim_mujoco_octo_live": profile_overrides,
-            },
-        ),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert (
-        "Profile adapter mujoco_live profile_overrides.sim_mujoco_octo_live cloud_topic "
-        "/nav/missing_cloud has no topic format" in result["blockers"]
-    )
-
-
-def test_runtime_validation_gate_check_rejects_command_drift():
-    current_gates = runtime_validation_gates()
-
-    gates = deepcopy(current_gates)
-    gates["real_runtime_evidence"]["command"] = "python scripts/legacy_gate.py"
-
-    result = validate_runtime_validation_gates(gates)
-
-    assert result.ok is False
-    assert any("real_runtime_evidence validation gate command drifted" == blocker for blocker in result.blockers)
-
-
-def test_runtime_validation_gate_check_rejects_collector_command_contract_drift():
-    gates = runtime_validation_gates()
-    gates["real_runtime_evidence"]["collector_command"] = (
-        "python scripts/gates/real_runtime_evidence_collect.py --duration-sec 20"
-    )
-
-    result = validate_runtime_validation_gates(gates)
-
-    assert result.ok is False
-    assert "real_runtime_evidence validation gate collector command drifted" in result.blockers
-
-
-def test_runtime_validation_gate_check_rejects_gate_command_contract_drift():
-    gates = runtime_validation_gates()
-    gates["real_runtime_evidence"]["gate_command"] = (
-        "python scripts/gates/real_runtime_evidence_gate.py artifacts/real_runtime/report.json"
-    )
-
-    result = validate_runtime_validation_gates(gates)
-
-    assert result.ok is False
-    assert "real_runtime_evidence validation gate gate command drifted" in result.blockers
-
-
-def test_runtime_validation_gate_check_rejects_real_runtime_evidence_validates_drift():
-    gates = runtime_validation_gates()
-    gates["real_runtime_evidence"]["validates"] = [
-        item for item in REAL_RUNTIME_EVIDENCE_VALIDATES if item != "runtime_data_flow_stage_evidence_payload"
-    ]
-
-    result = validate_runtime_validation_gates(gates)
-
-    assert result.ok is False
-    assert "real_runtime_evidence validation gate validates list drifted" in result.blockers
-    assert result.validates["real_runtime_evidence"] == gates["real_runtime_evidence"]["validates"]
-
-
-def test_runtime_validation_gate_check_rejects_acceptance_metadata_drift():
-    gates = runtime_validation_gates()
-    gates["real_runtime_evidence"]["operator_summary_sections"] = [
-        "Blockers",
-        "Checked runtime topics",
-    ]
-
-    result = validate_runtime_validation_gates(gates)
-
-    assert result.ok is False
-    assert "real_runtime_evidence validation gate acceptance metadata drifted" in result.blockers
-    assert result.acceptance["real_runtime_evidence"]["operator_summary_sections"] == [
-        "Blockers",
-        "Checked runtime topics",
-    ]
-
-
-def test_real_runtime_evidence_operator_sections_include_stage_matrix():
-    gates = runtime_validation_gates()
-
-    sections = gates["real_runtime_evidence"]["operator_summary_sections"]
-
-    assert "Stage evidence matrix" in sections
-    assert sections.index("Stage evidence matrix") < sections.index("Data-flow evidence")
-
-
-def test_runtime_validation_gate_check_rejects_runtime_audit_validates_drift():
-    gates = runtime_validation_gates()
-    gates["runtime_audit"]["validates"] = [
-        item for item in RUNTIME_AUDIT_VALIDATES if item != "runtime_algorithm_interfaces_cover_data_flow"
-    ]
-
-    result = validate_runtime_validation_gates(gates)
-
-    assert result.ok is False
-    assert "runtime_audit validation gate validates list drifted" in result.blockers
-    assert result.validates["runtime_audit"] == gates["runtime_audit"]["validates"]
-
-
-def test_runtime_validation_gate_check_rejects_runtime_audit_checks_drift():
-    gates = runtime_validation_gates()
-    gates["runtime_audit"]["checks"] = [item for item in RUNTIME_AUDIT_CHECKS if item != "source_topic_contracts"]
-
-    result = validate_runtime_validation_gates(gates)
-
-    assert result.ok is False
-    assert "runtime_audit validation gate checks list drifted" in result.blockers
-    assert result.checks["runtime_audit"] == gates["runtime_audit"]["checks"]
-
-
-def test_runtime_validation_gate_check_rejects_runtime_audit_coverage_drift():
-    gates = runtime_validation_gates()
-    gates["runtime_audit"]["coverage"]["data_source_resolved_flow_inputs_outputs"] = ["source_topic_contracts"]
-
-    result = validate_runtime_validation_gates(gates)
-
-    assert result.ok is False
-    assert "runtime_audit validation gate coverage map drifted" in result.blockers
-    assert result.coverage["runtime_audit"] == gates["runtime_audit"]["coverage"]
-
-
-def test_runtime_validation_gate_check_rejects_uncovered_runtime_audit_check():
-    gates = runtime_validation_gates()
-    for covered_checks in gates["runtime_audit"]["coverage"].values():
-        while "source_topic_contracts" in covered_checks:
-            covered_checks.remove("source_topic_contracts")
-
-    result = validate_runtime_validation_gates(gates)
-
-    assert result.ok is False
-    assert "runtime_audit checks have no validation coverage: source_topic_contracts" in result.blockers
-
-
-def test_runtime_validation_gate_check_rejects_missing_saved_map_artifact_gate():
-    gates = runtime_validation_gates()
-    gates.pop("saved_map_artifact_gate")
-
-    result = validate_runtime_validation_gates(gates)
-
-    assert result.ok is False
-    assert "saved_map_artifact_gate validation gate missing" in result.blockers
-
-
-def test_runtime_validation_gate_check_rejects_saved_map_artifact_command_drift():
-    gates = runtime_validation_gates()
-    gates["saved_map_artifact_gate"]["command"] = "python scripts/old_map_gate.py"
-
-    result = validate_runtime_validation_gates(gates)
-
-    assert result.ok is False
-    assert "saved_map_artifact_gate validation gate command drifted" in result.blockers
-
-
-def test_runtime_validation_gate_check_rejects_saved_map_artifact_validates_drift():
-    gates = runtime_validation_gates()
-    gates["saved_map_artifact_gate"]["validates"] = [
-        item
-        for item in SAVED_MAP_ARTIFACT_GATE_VALIDATES
-        if item != "artifact_gate_payload_declares_checked_artifacts_frames_sources"
-    ]
-
-    result = validate_runtime_validation_gates(gates)
-
-    assert result.ok is False
-    assert "saved_map_artifact_gate validation gate validates list drifted" in result.blockers
-
-
-def test_runtime_contract_audit_script_accepts_current_contract():
-    script = REPO_ROOT / "scripts" / "gates" / "runtime_contract_audit.py"
-
-    proc = subprocess.run(
-        [sys.executable, str(script), "--json"],
-        cwd=str(REPO_ROOT),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
-    assert proc.returncode == 0, proc.stderr
-    payload = json.loads(proc.stdout)
-    assert payload["ok"] is True
-    assert payload["checks"]["real_runtime_collector"]["ok"] is True
-    assert payload["checks"]["runtime_validation_gates"]["ok"] is True

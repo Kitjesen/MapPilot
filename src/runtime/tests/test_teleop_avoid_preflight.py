@@ -8,12 +8,12 @@ from types import SimpleNamespace
 import pytest
 
 from diagnostics.field.teleop_avoid_preflight import evaluate_teleop_avoid_preflight
-from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
+from lingtu.run_plan import CURRENT_RUN_SCHEMA, RUN_PLAN_SCHEMA, RunPlan
 
 ROOT = Path(__file__).resolve().parents[3]
 COLLECTOR = ROOT / "scripts" / "gates" / "thunder_service_readiness_collect.py"
 LINGTU_CLI = ROOT / "scripts" / "lingtu"
-FINGERPRINT = "a" * 64
+PRODUCT_SESSION_ID = "a" * 32
 
 
 def _load_collector():
@@ -67,7 +67,6 @@ def _snapshot() -> dict:
         "control_mode": "teleop_avoid",
         "native_product": {
             "product": "teleop_avoid",
-            "config_fingerprint": FINGERPRINT,
         },
         **native_nav,
         "operator_motion": {
@@ -118,7 +117,7 @@ def _snapshot() -> dict:
             "published": True,
             "producer_boot_id": "nav-boot-1",
             "output_sequence": 17,
-            "driver_acknowledged": True,
+            "driver_delivery_accepted": True,
         },
         "driver_control": {
             "received": True,
@@ -173,10 +172,18 @@ def _snapshot() -> dict:
         "voxel_capacity_rejections": 0,
         "accumulated_capacity_rejections": 0,
     }
+    control = {
+        "control_assured": True,
+        "motors_enabled": True,
+        "critical_fault": False,
+        "lease_valid": True,
+        "initial_zero_acknowledged": True,
+        "fsm": "standing",
+    }
     driver = {
-        "schema_version": "lingtu.driver.status.v1",
+        "schema_version": "lingtu.driver.status.v2",
         "role": "driver",
-        "backend": "thunder",
+        "backend": "doso",
         "connected": True,
         "ready": True,
         "dds": {
@@ -185,17 +192,14 @@ def _snapshot() -> dict:
             "cmd_vel_writer_ready": True,
             "matched_cmd_vel_writers": 1,
         },
-        "brainstem": {
+        "adapter": {
+            "protocol": "brainstem_grpc",
             "target": "192.168.66.12:13145",
-            "motors_enabled": True,
-            "critical_fault": False,
-            "lease_valid": True,
-            "initial_zero_acknowledged": True,
-            "owner": "grpc",
-            "owner_id": "lingtu-driver",
-            "fsm": "standing",
+            "control_owner": "grpc",
+            "control_owner_id": "lingtu-driver@robot",
         },
-        "last_walk": {"x": 0.0, "y": 0.0, "z": 0.0},
+        "control": control,
+        "last_velocity": {"vx_mps": 0.0, "vy_mps": 0.0, "yaw_rps": 0.0},
         "output_ack": {
             "accepted": True,
             "producer_boot_id": "nav-boot-1",
@@ -209,17 +213,38 @@ def _snapshot() -> dict:
                 "schema_version": CURRENT_RUN_SCHEMA,
                 "product": "teleop_avoid",
                 "env": "real",
-                "fingerprint": FINGERPRINT,
+                "product_session_id": PRODUCT_SESSION_ID,
+                "run_plan_path": "/run/lingtu/plans/plan-session.json",
             },
             "plan_verified": True,
-            "verified_fingerprint": FINGERPRINT,
             "run_plan": {
+                "identity": {
+                    "schema": RUN_PLAN_SCHEMA,
+                    "product": "teleop_avoid",
+                    "env": "real",
+                },
+                "launch": {
+                    "native_process_environment": {
+                        "LINGTU_DRIVER_TARGET": "192.168.66.12:13145",
+                        "LINGTU_DRIVER_NETWORK_INTERFACE": "",
+                    }
+                },
+            },
+            "verified_contract": {
                 "product": "teleop_avoid",
                 "env": "real",
-                "fingerprint": FINGERPRINT,
                 "required_capabilities": sorted(required_capabilities),
                 "required_topics": sorted(required_topics),
                 "native_nav": native_nav,
+                "selected_roles": [
+                    "driver",
+                    "host",
+                    "lidar",
+                    "maps",
+                    "nav",
+                    "slam",
+                    "traversability",
+                ],
             },
         },
         "status_files": {
@@ -252,6 +277,23 @@ def _snapshot() -> dict:
     }
 
 
+def _go2_snapshot() -> dict:
+    snapshot = _snapshot()
+    driver = snapshot["status_files"]["driver"]["json"]
+    driver["backend"] = "go2"
+    driver["adapter"] = {
+        "protocol": "unitree_sdk2",
+        "target": "dds://eth0/rt/api/sport/request",
+        "control_owner": "none",
+        "control_owner_id": "",
+    }
+    driver["control"]["lease_valid"] = False
+    environment = snapshot["current_run"]["run_plan"]["launch"]["native_process_environment"]
+    environment["LINGTU_DRIVER_TARGET"] = ""
+    environment["LINGTU_DRIVER_NETWORK_INTERFACE"] = "eth0"
+    return snapshot
+
+
 def test_contract_stage_accepts_verified_runtime_contract_without_motion() -> None:
     result = evaluate_teleop_avoid_preflight(_snapshot(), stage="contract")
 
@@ -264,19 +306,18 @@ def test_contract_stage_accepts_verified_runtime_contract_without_motion() -> No
     assert not any(check["id"].startswith("motion.") for check in result["checks"])
 
 
-def test_contract_stage_rejects_active_manifest_fingerprint_mismatch() -> None:
+def test_contract_stage_rejects_current_product_mismatch() -> None:
     snapshot = _snapshot()
-    snapshot["current_run"]["state"]["fingerprint"] = "b" * 64
+    snapshot["current_run"]["state"]["product"] = "nav"
 
     result = evaluate_teleop_avoid_preflight(snapshot, stage="contract")
 
-    assert "product.fingerprint_match" in result["blockers"]
-    assert "nav.product_runtime_identity" in result["blockers"]
+    assert "product.identity" in result["blockers"]
 
 
 def test_contract_stage_requires_native_mapd_topics() -> None:
     snapshot = _snapshot()
-    required_topics = snapshot["current_run"]["run_plan"]["required_topics"]
+    required_topics = snapshot["current_run"]["verified_contract"]["required_topics"]
     required_topics.remove("/slam/map_observation")
 
     result = evaluate_teleop_avoid_preflight(snapshot, stage="contract")
@@ -333,9 +374,7 @@ def test_contract_stage_requires_native_mapd_topics() -> None:
         ),
     ],
 )
-def test_contract_stage_rejects_unready_or_degraded_mapd(
-    path: tuple[str, ...], value: object, blocker: str
-) -> None:
+def test_contract_stage_rejects_unready_or_degraded_mapd(path: tuple[str, ...], value: object, blocker: str) -> None:
     snapshot = _snapshot()
     target = snapshot["status_files"]["maps"]
     for key in path[:-1]:
@@ -356,11 +395,27 @@ def test_contract_stage_allows_bounded_voxel_snapshot_omissions() -> None:
     assert result["ok"] is True
 
 
+def test_contract_stage_accepts_traversability_five_second_status_cadence() -> None:
+    snapshot = _snapshot()
+    snapshot["status_files"]["traversability"]["age_s"] = 5.2
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="contract", status_max_age_s=3.0)
+
+    assert result["ok"] is True
+
+
+def test_contract_stage_rejects_traversability_status_older_than_its_cadence() -> None:
+    snapshot = _snapshot()
+    snapshot["status_files"]["traversability"]["age_s"] = 6.1
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="contract", status_max_age_s=3.0)
+
+    assert "status.traversability.fresh" in result["blockers"]
+
+
 def test_motion_stage_keeps_nav_traversability_as_distinct_safety_authority() -> None:
     snapshot = _snapshot()
-    snapshot["current_run"]["run_plan"]["required_topics"].remove(
-        "/nav/traversability"
-    )
+    snapshot["current_run"]["verified_contract"]["required_topics"].remove("/nav/traversability")
 
     result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
 
@@ -379,7 +434,7 @@ def test_motion_stage_rejects_degraded_mapd() -> None:
     assert "maps.runtime" in result["blockers"]
 
 
-def test_motion_stage_accepts_idle_exact_zero_ack_without_active_sample() -> None:
+def test_motion_stage_accepts_idle_correlated_zero_ack_without_active_sample() -> None:
     result = evaluate_teleop_avoid_preflight(_snapshot(), stage="motion")
 
     assert result["ok"] is True
@@ -388,7 +443,64 @@ def test_motion_stage_accepts_idle_exact_zero_ack_without_active_sample() -> Non
     checks = {check["id"]: check for check in result["checks"]}
     assert checks["motion.operator_sample_correlation"]["ok"] is True
     assert checks["motion.idle_zero"]["ok"] is True
-    assert checks["motion.exact_driver_ack"]["ok"] is True
+    assert checks["motion.correlated_driver_ack"]["ok"] is True
+
+
+def test_motion_stage_accepts_one_tick_nav_ack_lag() -> None:
+    snapshot = _go2_snapshot()
+    nav = snapshot["status_files"]["nav"]["json"]
+    nav["final_output"]["driver_delivery_accepted"] = False
+    nav["driver_control"]["accepted_output_sequence"] = 16
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert result["ok"] is True
+    checks = {check["id"]: check for check in result["checks"]}
+    assert checks["motion.correlated_driver_ack"]["ok"] is True
+
+
+def test_motion_stage_accepts_lagging_driver_status_snapshot() -> None:
+    snapshot = _go2_snapshot()
+    snapshot["status_files"]["driver"]["json"]["output_ack"]["output_sequence"] = 3
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert result["ok"] is True
+
+
+def test_motion_stage_rejects_stale_nav_ack() -> None:
+    snapshot = _go2_snapshot()
+    snapshot["status_files"]["nav"]["json"]["driver_control"]["accepted_output_sequence"] = 14
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert "motion.correlated_driver_ack" in result["blockers"]
+
+
+def test_motion_stage_rejects_driver_ack_too_far_ahead() -> None:
+    snapshot = _go2_snapshot()
+    snapshot["status_files"]["driver"]["json"]["output_ack"]["output_sequence"] = 20
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert "motion.correlated_driver_ack" in result["blockers"]
+
+
+def test_motion_stage_accepts_go2_sdk2_control() -> None:
+    result = evaluate_teleop_avoid_preflight(_go2_snapshot(), stage="motion")
+
+    assert result["ok"] is True
+    checks = {check["id"]: check for check in result["checks"]}
+    assert checks["motion.go2_control"]["ok"] is True
+
+
+def test_motion_stage_rejects_go2_with_fabricated_sdk2_owner() -> None:
+    snapshot = _go2_snapshot()
+    snapshot["status_files"]["driver"]["json"]["adapter"]["control_owner"] = "sdk2"
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert "motion.go2_control" in result["blockers"]
 
 
 def test_motion_stage_rejects_unrelated_operator_output_sequence() -> None:
@@ -409,9 +521,7 @@ def test_motion_stage_rejects_unrelated_operator_output_sequence() -> None:
 
 def test_motion_stage_rejects_loopback_brainstem() -> None:
     snapshot = _snapshot()
-    snapshot["status_files"]["driver"]["json"]["brainstem"]["target"] = (
-        "127.0.0.1:13145"
-    )
+    snapshot["status_files"]["driver"]["json"]["adapter"]["target"] = "127.0.0.1:13145"
 
     result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
 
@@ -420,27 +530,28 @@ def test_motion_stage_rejects_loopback_brainstem() -> None:
     assert "motion.brainstem_control" in result["nonzero_motion_blockers"]
 
 
-def test_motion_stage_honors_explicit_expected_brainstem_host() -> None:
+def test_motion_stage_rejects_driver_target_that_differs_from_run_plan() -> None:
     snapshot = _snapshot()
-    snapshot["expected_brainstem_host"] = "192.168.66.99"
+    snapshot["current_run"]["run_plan"]["launch"]["native_process_environment"][
+        "LINGTU_DRIVER_TARGET"
+    ] = "192.168.66.99:13145"
 
     result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
 
     assert "motion.brainstem_control" in result["blockers"]
 
 
-def test_current_run_collector_verifies_manifest_fingerprint(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_current_run_collector_loads_current_run_plan(monkeypatch, tmp_path: Path) -> None:
     module = _load_collector()
     run_plan = RunPlan.create(
         product="teleop_avoid",
         env="real",
+        robot="unitree/go2",
         process_control="systemd",
         modules=(),
         processes=(),
         available_processes=(),
-        stop_targets=(),
+        stop_before_start=(),
         contracts=("lingtu.product.teleop_avoid.v1",),
         critical_modules=(),
         native_nav={
@@ -450,12 +561,11 @@ def test_current_run_collector_verifies_manifest_fingerprint(
             "use_traversability_cost": True,
             "allow_teleop_takeover": False,
             "teleop_local_planner": True,
+            "global_planner": "octoplanner3d",
         },
         route_contract="robot",
-        module_transport="local",
         host_config={},
         lifecycle={"product": "teleop_avoid"},
-        compiled_against={"schema_version": "test"},
     )
     run_plan_path = tmp_path / "runtime.json"
     run_plan.write(run_plan_path)
@@ -466,8 +576,8 @@ def test_current_run_collector_verifies_manifest_fingerprint(
                 "schema_version": CURRENT_RUN_SCHEMA,
                 "product": "teleop_avoid",
                 "env": "real",
-                "fingerprint": run_plan.fingerprint,
                 "run_plan_path": str(run_plan_path),
+                "product_session_id": PRODUCT_SESSION_ID,
             }
         ),
         encoding="utf-8",
@@ -477,13 +587,12 @@ def test_current_run_collector_verifies_manifest_fingerprint(
     result = module.collect_current_run()
 
     assert result["plan_verified"] is True
-    assert result["verified_fingerprint"] == run_plan.fingerprint
-    assert result["run_plan"]["identity"]["fingerprint"] == run_plan.fingerprint
+    assert result["state"]["product_session_id"] == PRODUCT_SESSION_ID
+    assert result["run_plan"]["identity"] == run_plan.as_dict()["identity"]
+    assert result["verified_contract"]["native_nav"]["control_mode"] == "teleop_avoid"
 
 
-def test_collector_strict_uses_selected_preflight_not_general_summary(
-    monkeypatch, capsys
-) -> None:
+def test_collector_strict_uses_selected_preflight_not_general_summary(monkeypatch, capsys) -> None:
     module = _load_collector()
     monkeypatch.setattr(
         module,
@@ -492,6 +601,7 @@ def test_collector_strict_uses_selected_preflight_not_general_summary(
             gateway_url="http://127.0.0.1:5050",
             dds_seconds=0.0,
             dds_domain=0,
+            teleop_stage=None,
             teleop_avoid_stage="contract",
             status_max_age_s=3.0,
             json_out=None,
@@ -515,8 +625,7 @@ def test_collector_strict_uses_selected_preflight_not_general_summary(
 def test_lingtu_cli_exposes_thin_read_only_preflight_adapter() -> None:
     source = LINGTU_CLI.read_text(encoding="utf-8")
 
-    function = source[source.index("cmd_teleop_preflight()") : source.index("cmd_health()")]
-    assert "thunder_service_readiness_collect.py" in function
-    assert '--teleop-avoid-stage "$stage"' in function
-    assert "operator_motion" not in function
-    assert "curl" not in function
+    assert '-m lingtu.control "$@"' in source
+    assert "thunder_service_readiness_collect.py" not in source
+    assert "operator_motion" not in source
+    assert "curl" not in source

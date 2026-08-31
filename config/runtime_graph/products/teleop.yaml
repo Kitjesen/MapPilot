@@ -4,24 +4,14 @@ contracts:
   - lingtu.product.teleop.v1
 summary: Operator teleoperation without autonomous navigation decisions.
 operator_switchable: true
-product_mode: teleop
-product_session: teleop
 session_mode: none
 native_control_mode: teleop
 slam_mode: none
 requires_map: false
 switch_policy: cold_restart
 online_hot_switch_supported: false
-data_plane: typed_dds
-control_owner: operator
-autonomy_owner: none
 native_nav:
-  control_mode: teleop
-  publish_cmd_vel: true
-  check_obstacle: false
-  use_traversability_cost: false
-  allow_teleop_takeover: false
-  teleop_local_planner: false
+  smoothing: true
 processes:
   - nav
   - driver
@@ -31,20 +21,5 @@ critical_modules:
   - nav.commands
   - GatewayModule
 forbidden_modules:
-  - TeleopModule
-  - nav.velocity_mux
   - SimEndpointDriverModule
-  - nav.mission
-  - nav.local_planner
-  - nav.path_follower
   - SemanticPlannerModule
-forbidden_claims:
-  - autonomous_navigation
-  - global_planning
-  - local_path_tracking
-  - module_sim_real_equivalence
-  - ros2_bridge_required
-transport_rules:
-  product_bus: typed_dds
-  same_process_algorithms: direct_function_calls
-  lcm_allowed: false

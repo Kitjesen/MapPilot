@@ -20,7 +20,7 @@ from lingtu.product_lock import ProductControlLock
 _TRANSLATION_SPEED_MPS = 0.20
 _TURN_RATE_RAD_S = 0.35
 _DURATION_S = 2.0
-_PUBLISH_RATE_HZ = 20.0
+_PUBLISH_RATE_HZ = 50.0
 _MAX_DURATION_S = 5.0
 _ADMISSION_TIMEOUT_S = 5.0
 _DIRECTIONS: Mapping[str, tuple[float, float, float, bool]] = {
@@ -56,6 +56,12 @@ def _parser() -> argparse.ArgumentParser:
         "--robot",
         default=os.environ.get("LINGTU_ROBOT"),
         help="Robot model, for example unitree/go2",
+    )
+    parser.add_argument(
+        "--env",
+        choices=("real", "sim"),
+        default=os.environ.get("LINGTU_ENV") or "real",
+        help="Environment owning the active Product",
     )
     parser.add_argument("--state-dir", type=Path)
     parser.add_argument("--dry-run", action="store_true")
@@ -116,11 +122,12 @@ def _drive(
     speed: float | None,
     seconds: float,
     robot: str | None,
+    env: str,
     state_dir: Path | None,
     dry_run: bool,
     environment: Mapping[str, str],
 ) -> dict[str, Any]:
-    control = ProductControl(robot=robot, env="real", process_env=environment)
+    control = ProductControl(robot=robot, env=env, process_env=environment)
     lock = ProductControlLock(state_dir, environment=environment)
     process: subprocess.Popen[str] | None = None
     ready_path: Path | None = None
@@ -143,11 +150,17 @@ def _drive(
             raise ValueError(f"seconds must not exceed {_MAX_DURATION_S:g}")
 
         native_environment = plan.native_process_environment
-        limit_key = (
-            "LINGTU_DRIVER_MAX_LINEAR_MPS"
+        limit_keys = (
+            ("LINGTU_DRIVER_MAX_LINEAR_MPS", "LINGTU_TELEOP_MAX_SPEED_MPS")
             if translation
-            else "LINGTU_DRIVER_MAX_ANGULAR_RPS"
+            else ("LINGTU_DRIVER_MAX_ANGULAR_RPS", "LINGTU_TELEOP_MAX_YAW_RATE")
         )
+        limit_key = next(
+            (key for key in limit_keys if native_environment.get(key) is not None),
+            None,
+        )
+        if limit_key is None:
+            raise RuntimeError("active RunPlan is missing the operator speed limit")
         limit = _finite_positive(float(native_environment[limit_key]), limit_key)
         if selected_speed > limit:
             unit = "m/s" if translation else "rad/s"
@@ -159,6 +172,12 @@ def _drive(
         vy = axis_y * selected_speed
         yaw = axis_yaw * selected_speed
         domain_id = str(native_environment.get("LINGTU_DDS_DOMAIN_ID") or "").strip()
+        if not domain_id:
+            nav_process = plan.process("nav")
+            if nav_process is not None and nav_process.command is not None:
+                domain_id = str(
+                    dict(nav_process.command.env).get("LINGTU_DDS_DOMAIN_ID") or ""
+                ).strip()
         if not domain_id:
             raise RuntimeError("active RunPlan is missing LINGTU_DDS_DOMAIN_ID")
         binary = Path(
@@ -274,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
             speed=args.speed,
             seconds=args.seconds,
             robot=args.robot,
+            env=args.env,
             state_dir=args.state_dir,
             dry_run=args.dry_run,
             environment=os.environ,

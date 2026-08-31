@@ -23,15 +23,13 @@ def _load_module():
     return module
 
 
-def test_contract_declares_camera_lidar_outside_pose_graph_opt() -> None:
+def test_contract_declares_camera_lidar_rust_kernel() -> None:
     module = _load_module()
 
     contract = module.build_contract(ROOT)
 
     assert contract["schema"] == "lingtu.camera_lidar_calibration_migration_contract.v1"
     assert contract["ok"] is True
-    assert contract["covered_by_pose_graph_opt"] is False
-    assert "continuous-time ICP/GICP" in contract["reason_not_covered_by_pose_graph_opt"]
     assert contract["rust_kernel"]["crate"] == "lingtu_camera_lidar_optimizer"
     assert "CT-ICP fixed-correspondence point-to-plane residuals" in (
         contract["rust_kernel"]["covered_capabilities"]

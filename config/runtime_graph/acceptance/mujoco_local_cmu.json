@@ -1,0 +1,12 @@
+{
+  "extends": "mujoco_local_common.json",
+  "name": "mujoco_local_cmu",
+  "description": "Industrial-park local-planning qualification with the CMU backend.",
+  "domain_id_base": 226,
+  "paths": {
+    "path_library": "src/nav/cpp/planning/local/cmu/paths/thunder"
+  },
+  "navigation_runtime": {
+    "local_planner": "cmu"
+  }
+}

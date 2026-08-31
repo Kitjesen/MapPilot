@@ -7,11 +7,9 @@ scene_graph and detections_3d.
 
 from __future__ import annotations
 
-import logging
-
-from runtime.adapters.perception_gateway import camera_module
 from runtime.blueprint import Blueprint
 from runtime.contracts import (
+    CAMERA_BACKEND_DDS,
     CAMERA_BACKEND_ORBBEC,
     CAMERA_BACKEND_SIM,
     CAMERA_CONFIG_FORCE,
@@ -22,8 +20,6 @@ from runtime.plugin_resolution import (
     optional_stack_module,
     stack_module,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def camera(**config) -> Blueprint:
@@ -36,86 +32,78 @@ def camera(**config) -> Blueprint:
     needs_camera = camera_enabled and (force_camera or not use_driver_camera)
 
     if needs_camera:
-        try:
-            default_backend = CAMERA_BACKEND_SIM if drv_name == "MujocoDriverModule" else CAMERA_BACKEND_ORBBEC
-            CameraModule = camera_module(backend=str(config.get("camera_backend", default_backend)))
-            if CameraModule is None:
-                raise ImportError("no registered camera adapter")
-            # Read camera rotation from robot_config.yaml
-            cam_rotate = config.get("camera_rotate", 0)
-            if cam_rotate == 0:
-                try:
-                    from runtime.config import get_config
+        default_backend = (
+            CAMERA_BACKEND_SIM
+            if drv_name == "MujocoDriverModule"
+            else CAMERA_BACKEND_ORBBEC
+        )
+        backend = str(config.get("camera_backend", default_backend))
+        fallback = {
+            CAMERA_BACKEND_SIM: "drivers.sim.camera.module.MujocoCameraModule",
+            CAMERA_BACKEND_ORBBEC: "drivers.real.camera.module.OrbbecNativeCameraModule",
+            CAMERA_BACKEND_DDS: "drivers.real.camera.dds_module.DdsCameraModule",
+        }.get(backend)
+        if fallback is None:
+            raise ValueError(f"unsupported camera backend: {backend}")
+        CameraModule = stack_module(
+            CAMERA_ROLE,
+            backend,
+            seed_group="camera_sim" if backend == CAMERA_BACKEND_SIM else "camera",
+            fallback=fallback,
+        )
+        cam_rotate = config.get("camera_rotate", 0)
+        if cam_rotate == 0:
+            from runtime.config import get_config
 
-                    cam_rotate = get_config().raw.get("camera", {}).get("rotate", 0)
-                except Exception:
-                    pass
-            bp.add(CameraModule, alias=CAMERA_ROLE, rotate=int(cam_rotate))
-        except ImportError:
-            pass
+            cam_rotate = get_config().raw.get("camera", {}).get("rotate", 0)
+        bp.add(CameraModule, alias=CAMERA_ROLE, rotate=int(cam_rotate))
 
     return bp
 
 
-def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -> Blueprint:
+def perception(detector: str = "yoloe", encoder: str = "none", **config) -> Blueprint:
     """RGB-D scene perception plus optional reconstruction and standalone tools."""
     bp = camera(**config)
 
-    try:
-        PerceptionModule = stack_module(
-            "perception",
-            "scene",
-            seed_group="perception",
-            fallback="perception.perception_module.PerceptionModule",
-        )
+    PerceptionModule = stack_module(
+        "perception",
+        "scene",
+        seed_group="perception",
+        fallback="perception.perception_module.PerceptionModule",
+    )
 
-        bp.add(
-            PerceptionModule,
-            alias="PerceptionModule",
-            detector_type=detector,
-            encoder_type=encoder,
-            confidence_threshold=config.get("confidence", 0.3),
-            tracking_iou_threshold=config.get(
-                "tracking_iou_threshold",
-                config.get("iou_threshold", 0.3),
-            ),
-            detector_iou_threshold=config.get(
-                "detector_iou_threshold",
-                config.get("iou_threshold", 0.45),
-            ),
-            detector_max_detections=config.get(
-                "detector_max_detections",
-                config.get("max_detections", 64),
-            ),
-            detector_min_box_size_px=config.get(
-                "detector_min_box_size_px",
-                config.get("min_box_size_px", 12),
-            ),
-            detector_model_size=config.get("model_size", "l"),
-            detector_device=config.get("device", ""),
-            detector_model_path=config.get(
-                "detector_model_path",
-                config.get("model_path", ""),
-            ),
-            skip_frames=config.get("perception_skip_frames", 1),
-            world=config.get("world", ""),
-        )
-    except ImportError as e:
-        logger.warning("Perception modules not available: %s", e)
-
-    if config.get("enable_standalone_encoder", False):
-        EncoderModule = optional_stack_module(
-            "encoder",
-            "pluggable",
-            seed_group="perception",
-            fallback="perception.encoding.encoder_module.EncoderModule",
-        )
-        if EncoderModule is not None:
-            # Experimental tool module; the full-stack scene graph path uses
-            # PerceptionModule's internal encoder capability.
-            bp.add(EncoderModule, alias="EncoderModule", encoder=encoder)
-        else:
-            logger.warning("Standalone encoder module not available")
+    bp.add(
+        PerceptionModule,
+        alias="PerceptionModule",
+        detector_type=detector,
+        encoder_type=encoder,
+        confidence_threshold=config.get("confidence", 0.3),
+        tracking_iou_threshold=config.get(
+            "tracking_iou_threshold",
+            config.get("iou_threshold", 0.3),
+        ),
+        detector_iou_threshold=config.get(
+            "detector_iou_threshold",
+            config.get("iou_threshold", 0.45),
+        ),
+        detector_max_detections=config.get(
+            "detector_max_detections",
+            config.get("max_detections", 64),
+        ),
+        detector_min_box_size_px=config.get(
+            "detector_min_box_size_px",
+            config.get("min_box_size_px", 12),
+        ),
+        detector_model_size=config.get("model_size", "l"),
+        detector_device=config.get("device", ""),
+        detector_model_path=config.get(
+            "detector_model_path",
+            config.get("model_path", ""),
+        ),
+        skip_frames=config.get("perception_skip_frames", 1),
+        world=config.get("world", ""),
+        scenario_entities=config.get("scenario_entities", ()),
+    )
 
     if config.get("enable_inspection_evidence", False):
         InspectionEvidenceModule = optional_stack_module(
@@ -131,21 +119,26 @@ def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -
                 domain_id=int(config.get("dds_domain_id", config.get("domain_id", 0))),
                 evidence_root=config.get("inspection_evidence_root"),
                 status_file=config.get("inspection_evidence_status_file"),
+                max_rgb_odom_skew_s=float(
+                    config.get("inspection_evidence_max_rgb_odom_skew_s", 0.2)
+                ),
             )
         else:
-            logger.warning("Inspection evidence module not available")
+            raise ImportError("inspection evidence module not available")
 
-    ReconstructionModule = optional_fallback_module(
-        "reconstruction",
-        "default",
-        fallback="perception.reconstruction.reconstruction_module.ReconstructionModule",
-    )
-    if ReconstructionModule is not None:
-        bp.add(ReconstructionModule, alias="ReconstructionModule")
+    recon_save_dir = config.get("recon_save_dir", "")
+    recon_server_url = config.get("recon_server_url", "")
+    if recon_save_dir or recon_server_url:
+        ReconstructionModule = optional_fallback_module(
+            "reconstruction",
+            "default",
+            fallback="perception.reconstruction.reconstruction_module.ReconstructionModule",
+        )
+        if ReconstructionModule is not None:
+            bp.add(ReconstructionModule, alias="ReconstructionModule")
 
     # Optional: record keyframes to disk for offline reconstruction
     # Enabled when recon_save_dir is provided in config
-    recon_save_dir = config.get("recon_save_dir", "")
     if recon_save_dir:
         DatasetRecorderModule = optional_stack_module(
             "reconstruction",
@@ -168,7 +161,6 @@ def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -
 
     # Optional: stream keyframes to a remote reconstruction server
     # Enabled when recon_server_url is provided in config
-    recon_server_url = config.get("recon_server_url", "")
     if recon_server_url:
         ReconKeyframeExporterModule = optional_stack_module(
             "reconstruction",

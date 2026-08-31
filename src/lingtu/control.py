@@ -1,34 +1,45 @@
-"""Resolve Product intent and operate exact RunPlan artifacts."""
+"""Switch, report, and stop one Product for one Robot in real or sim."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
-import subprocess
-import sys
-import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
-from lingtu.assembly.products import resolve_product_host_runtime
-from lingtu.assembly.profile_builder import compile_run_plan
-from lingtu.product_lock import ProductControlLock, resolve_current_run_path
-from lingtu.product_switch import (
-    FieldBackend,
-    SwitchBackend,
+import lingtu.sim.switch as sim_switch
+from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.native_nav import local_planner_name
+from lingtu.product_lock import (
+    CURRENT_RUN_FILE_NAME,
+    ProductControlLock,
+    resolve_current_run_path,
+)
+from lingtu.products import product_name
+from lingtu.real.backend import FieldBackend, SwitchBackend
+from lingtu.real.switch import execute_switch
+from lingtu.real.systemd import SystemdRunner
+from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
+from lingtu.sim.daemon import ensure_sim_supervisor
+from lingtu.switch_contracts import (
+    ProcessFailed,
+    ProcessReport,
     SwitchFailed,
     SwitchReport,
     SwitchRequest,
-    execute_switch,
+    is_product_session_id,
 )
-from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
-from lingtu.systemd import ProcessFailed, ProcessReport, SystemdRunner
-from runtime.profiles.product_lifecycle import product_name
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+_SIM_SUPERVISOR_START_TIMEOUT_S = 30.0
+
+
+class _CurrentProductNotFound(RuntimeError):
+    pass
 
 
 class ExpectedProductMismatch(RuntimeError):
@@ -45,188 +56,38 @@ class ExpectedProductMismatch(RuntimeError):
 
 
 class ProductControl:
-    """Operate the current product without reconstructing process targets."""
+    """Public Product lifecycle for one fixed Robot and Env."""
 
     def __init__(
         self,
         runner: SystemdRunner | None = None,
         *,
+        robot: str | None = None,
         env: str | None = None,
         env_config: Mapping[str, Any] | None = None,
         process_env: Mapping[str, str] | None = None,
-        operation_runner: Callable[..., Any] | None = None,
+        simulation_runner: sim_switch.SimSwitchRunner | None = None,
     ) -> None:
         self._runner_impl = runner
+        self._simulation_runner_impl = simulation_runner
         self._process_env = process_env if process_env is not None else os.environ
         self.env = _env_name(env or self._process_env.get("LINGTU_ENV") or "real")
+        self.robot = str(
+            robot or self._process_env.get("LINGTU_ROBOT") or ""
+        ).strip()
         self._env_config = dict(env_config or {})
-        self._operation_runner = operation_runner or subprocess.run
         if self.env == "sim" and "backend" not in self._env_config:
-            env_backend = str(self._process_env.get("LINGTU_ENV_BACKEND") or "").strip()
+            env_backend = str(
+                self._process_env.get("LINGTU_ENV_BACKEND")
+                or self._process_env.get("LINGTU_SIM_BACKEND")
+                or ""
+            ).strip()
             if env_backend:
                 self._env_config["backend"] = env_backend
-        self._plans: dict[tuple[str, str | None], RunPlan] = {}
         self._mutation_state_dir: ContextVar[Path | None] = ContextVar(
             f"lingtu_product_control_state_dir_{id(self)}",
             default=None,
         )
-
-    def submit_switch(
-        self,
-        request: SwitchRequest,
-        *,
-        request_id: str | None = None,
-        state_dir: str | Path | None = None,
-    ) -> dict[str, Any]:
-        """Submit a switch outside the managed Host process.
-
-        The transient unit is deliberately owned here rather than by Gateway.
-        A field switch replaces ``lingtu.service`` itself, so executing the
-        transaction inside Gateway would terminate the caller before the
-        ProductControl transaction can commit or roll back.
-        """
-
-        plan = self.resolve(
-            request.target_product,
-            product_variant=request.product_variant,
-        )
-        if plan.process_control != "systemd":
-            raise RuntimeError(
-                "ProductControl.submit_switch requires process_control=systemd"
-            )
-        operation_id = _operation_id(request_id)
-        unit = "lingtu-product-control-switch.service"
-        command = self._switch_command(request, state_dir=state_dir)
-        invocation = self._systemd_submission_command(
-            command,
-            unit=unit,
-            operation_id=operation_id,
-            state_dir=state_dir,
-        )
-        result = self._operation_runner(
-            invocation,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10.0,
-        )
-        if int(getattr(result, "returncode", 1)) != 0:
-            detail = str(
-                getattr(result, "stderr", "")
-                or getattr(result, "stdout", "")
-                or "systemd rejected the ProductControl operation"
-            ).strip()
-            raise RuntimeError(f"ProductControl switch submission failed: {detail}")
-        return {
-            "schema_version": "lingtu.product_control_submission.v1",
-            "ok": True,
-            "accepted": True,
-            "status": "submitted",
-            "operation_id": operation_id,
-            "unit": unit,
-            "product": plan.product,
-            "product_variant": plan.product_variant,
-            "env": plan.env,
-            "run_plan_fingerprint": plan.fingerprint,
-        }
-
-    def _switch_command(
-        self,
-        request: SwitchRequest,
-        *,
-        state_dir: str | Path | None,
-    ) -> list[str]:
-        python = str(self._process_env.get("LINGTU_PYTHON") or sys.executable).strip()
-        command = [
-            python,
-            "-m",
-            "lingtu.control",
-            "switch",
-            str(request.target_product),
-            "--env",
-            self.env,
-            "--json",
-        ]
-        backend = str(self._env_config.get("backend") or "").strip()
-        if backend:
-            command.extend(["--backend", backend])
-        if request.current_product is not None:
-            command.extend(["--current", str(request.current_product)])
-        if request.map_name:
-            command.extend(["--map", str(request.map_name)])
-        command.append("--relocalize" if request.relocalize else "--no-relocalize")
-        if request.initial_pose is not None:
-            command.extend(
-                ["--initial-pose", *(str(value) for value in request.initial_pose)]
-            )
-        for key, value in sorted(request.parameter_overrides.items()):
-            command.extend(["--set", f"{key}={value}"])
-        if state_dir is not None:
-            command.extend(["--state-dir", str(Path(state_dir).expanduser().resolve())])
-        return command
-
-    def _systemd_submission_command(
-        self,
-        command: list[str],
-        *,
-        unit: str,
-        operation_id: str,
-        state_dir: str | Path | None,
-    ) -> list[str]:
-        repo_root = Path(__file__).resolve().parents[2]
-        user = str(self._process_env.get("USER") or "sunrise").strip()
-        group = str(self._process_env.get("GROUP") or user).strip()
-        home = str(
-            self._process_env.get("HOME")
-            or ("/root" if user == "root" else f"/home/{user}")
-        ).strip()
-        python_path = str(repo_root / "src")
-        existing_python_path = str(self._process_env.get("PYTHONPATH") or "").strip()
-        if existing_python_path:
-            python_path = f"{python_path}{os.pathsep}{existing_python_path}"
-        operation_env = {
-            "HOME": home,
-            "USER": user,
-            "LOGNAME": user,
-            "PYTHONPATH": python_path,
-            "LINGTU_ENV": self.env,
-            "LINGTU_CONTROL_OPERATION_ID": operation_id,
-            "GW": str(self._process_env.get("GW") or "http://localhost:5050"),
-        }
-        backend = str(self._env_config.get("backend") or "").strip()
-        if backend:
-            operation_env["LINGTU_ENV_BACKEND"] = backend
-        configured_state = state_dir or self._process_env.get("LINGTU_SESSION_ROOT")
-        if configured_state is not None:
-            operation_env["LINGTU_SESSION_ROOT"] = str(
-                Path(configured_state).expanduser().resolve()
-            )
-        for name in ("NAV_MAP_DIR",):
-            value = str(self._process_env.get(name) or "").strip()
-            if value:
-                operation_env[name] = value
-        env_args = [
-            f"--setenv={name}={value}"
-            for name, value in operation_env.items()
-        ]
-        return [
-            "sudo",
-            "-n",
-            "systemd-run",
-            f"--unit={unit}",
-            "--collect",
-            "--no-block",
-            "--service-type=exec",
-            f"--working-directory={repo_root}",
-            f"--property=User={user}",
-            f"--property=Group={group}",
-            "--property=EnvironmentFile=-/etc/lingtu/gateway.env",
-            "--property=EnvironmentFile=-/opt/lingtu/current/config/release-runtime.env",
-            f"--description=LingTu ProductControl switch {operation_id}",
-            *env_args,
-            "--",
-            *command,
-        ]
 
     @contextmanager
     def _mutation(
@@ -247,11 +108,12 @@ class ProductControl:
         finally:
             self._mutation_state_dir.reset(token)
 
-    def resolve(
+    def _resolve(
         self,
         product: str | None = None,
         *,
         product_variant: str | None = None,
+        local_planner: str | None = None,
     ) -> RunPlan:
         """Resolve one Product inside this control plane's fixed Env."""
 
@@ -264,49 +126,67 @@ class ProductControl:
         selected_variant = (
             str(product_variant).strip() if product_variant is not None else None
         )
-        cache_key = (selected_product, selected_variant)
-        cached = self._plans.get(cache_key)
-        if cached is not None:
-            return cached
-        resolved = resolve_product_host_runtime(
+        selected_local_planner = (
+            local_planner_name(local_planner) if local_planner is not None else None
+        )
+        plan = compile_run_plan(
             selected_product,
             self.env,
+            robot=self.robot or None,
+            local_planner=selected_local_planner,
             env_config=self._env_config or None,
             product_variant=selected_variant,
         )
-        effective_key = (selected_product, resolved.product_variant)
-        cached = self._plans.get(effective_key)
-        if cached is not None:
-            self._plans[cache_key] = cached
-            return cached
-        plan = compile_run_plan(
-            resolved.product,
-            resolved.env,
-            resolved.config,
-            env_config=self._env_config or None,
-            environment=self._process_env,
-            product_variant=resolved.product_variant,
-        )
-        self._plans[cache_key] = plan
-        self._plans[effective_key] = plan
+        self._require_plan_robot(plan)
         return plan
 
-    def write_plan(
-        self,
-        path: str | Path,
-        *,
-        product: str | None = None,
-        product_variant: str | None = None,
-        state_dir: str | Path | None = None,
-    ) -> RunPlan:
-        """Compile once and atomically publish the resulting contract."""
-
-        with self._mutation(state_dir):
-            plan = self.resolve(product, product_variant=product_variant)
-            plan.write(path)
-            return plan
-
     def switch(
+        self,
+        product: str,
+        *,
+        map_name: str | None = None,
+        relocalize: bool = True,
+        initial_pose: tuple[float, float, float] | None = None,
+        local_planner: str | None = None,
+        parameter_overrides: Mapping[str, Any] | None = None,
+        state_dir: str | Path | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Switch to one Product and return the operator-facing state."""
+
+        selected_local_planner = (
+            local_planner_name(local_planner) if local_planner is not None else None
+        )
+        report = self._switch(
+            SwitchRequest(
+                target_product=product_name(product),
+                map_name=map_name,
+                relocalize=relocalize,
+                initial_pose=initial_pose,
+                local_planner=selected_local_planner,
+                parameter_overrides=dict(parameter_overrides or {}),
+            ),
+            state_dir=state_dir,
+            dry_run=dry_run,
+        )
+        return {
+            "ok": report.ok,
+            "status": report.status,
+            "robot": self.robot,
+            "env": report.env,
+            "product": report.target_product,
+            "product_variant": report.product_variant,
+            "local_planner": report.local_planner,
+            "product_session_id": report.product_session_id,
+            "phases": list(report.phases),
+            "cleanup": list(report.cleanup),
+            "readiness": (
+                dict(report.readiness) if report.readiness is not None else None
+            ),
+            "error": report.error,
+        }
+
+    def _switch(
         self,
         request: SwitchRequest,
         *,
@@ -316,27 +196,46 @@ class ProductControl:
     ) -> SwitchReport:
         """Apply one complete fail-closed Product transition."""
 
-        plan = self.resolve(
+        plan = self._resolve(
             request.target_product,
             product_variant=request.product_variant,
+            local_planner=request.local_planner,
         )
+        if plan.process_control == "subprocess":
+            if self.env != "sim" or plan.env != "sim":
+                raise RuntimeError(
+                    "subprocess Product switch requires ProductControl env=sim"
+                )
+            if backend is not None:
+                raise RuntimeError(
+                    "sim subprocess switch does not accept a field SwitchBackend"
+                )
+            if dry_run:
+                return sim_switch._plan_switch(request, resolved_plan=plan)
+            with self._mutation(state_dir) as root:
+                return sim_switch._execute_locked_switch(
+                    request,
+                    runner=self._simulation_runner(root),
+                    environment=self._process_env,
+                    state_root=root,
+                    resolved_plan=plan,
+                )
         if plan.process_control != "systemd":
             if dry_run:
                 return SwitchReport(
-                    current_product=request.current_product,
+                    current_product=None,
                     target_product=product_name(plan.product),
+                    product_variant=plan.product_variant,
+                    local_planner=plan.native_nav.get("local_planner"),
                     env=plan.env,
                     dry_run=True,
                     ok=True,
                     status="planned",
                     phases=["preflight"],
-                    run_plan=plan.as_dict(),
-                    fingerprint=plan.fingerprint,
                 )
             raise RuntimeError(
                 "ProductControl.switch cannot execute a RunPlan controlled by "
-                f"{plan.process_control!r}; use the corresponding "
-                f"{plan.process_control} simulation runner"
+                f"{plan.process_control!r}"
             )
         if dry_run:
             return execute_switch(
@@ -359,184 +258,129 @@ class ProductControl:
                 resolved_plan=plan,
             )
 
-    def apply(
+    def status(
         self,
         *,
-        product: str | None = None,
         state_dir: str | Path | None = None,
-        dry_run: bool = False,
-    ) -> ProcessReport:
-        """Compile and apply one Product."""
+    ) -> dict[str, Any]:
+        """Return the current Product without changing runtime state."""
 
-        return self.apply_plan(
-            self.resolve(product),
-            state_dir=state_dir,
-            dry_run=dry_run,
-        )
+        root = ProductControlLock(
+            state_dir,
+            environment=self._process_env,
+        ).state_dir
+        try:
+            plan, _plan_path, _product_session_id = self._current_plan_and_path(root)
+        except _CurrentProductNotFound:
+            return {
+                "ok": True,
+                "status": "stopped",
+                "robot": self.robot,
+                "env": self.env,
+                "product": None,
+                "local_planner": None,
+                "error": None,
+            }
+        return {
+            "ok": True,
+            "status": "active",
+            "robot": self.robot,
+            "env": plan.env,
+            "product": plan.product,
+            "local_planner": plan.native_nav.get("local_planner"),
+            "error": None,
+        }
 
-    def apply_plan(
+    def stop(
         self,
-        plan: RunPlan,
         *,
+        expected_product: str | None = None,
+        expected_product_session_id: str | None = None,
         state_dir: str | Path | None = None,
         dry_run: bool = False,
-    ) -> ProcessReport:
-        """Apply one already resolved RunPlan."""
+    ) -> dict[str, Any]:
+        """Stop the current Product, optionally guarded by its exact run identity."""
 
-        if plan.process_control == "systemd":
-            raise RuntimeError(
-                "field Product requires ProductControl.switch; "
-                "direct apply would bypass plan publication and runtime staging"
+        try:
+            report = self._stop(
+                expected_product=expected_product,
+                expected_product_session_id=expected_product_session_id,
+                state_dir=state_dir,
+                dry_run=dry_run,
             )
-        with self._mutation(state_dir):
-            return self._systemd_runner().apply(plan, dry_run=dry_run)
+        except _CurrentProductNotFound:
+            if expected_product is not None or expected_product_session_id is not None:
+                raise RuntimeError("expected Product session is not active") from None
+            return {
+                "ok": True,
+                "status": "stopped",
+                "robot": self.robot,
+                "env": self.env,
+                "product": None,
+                "error": None,
+            }
+        return {
+            "ok": report.ok,
+            "status": report.status,
+            "robot": self.robot,
+            "env": report.env,
+            "product": report.product,
+            "stopped": list(report.stopped),
+            "stop_evidence": dict(report.stop_evidence),
+            "error": report.error,
+        }
 
     def _apply_plan_for_switch(
         self,
         path: str | Path,
         *,
+        previous_plan: RunPlan | None = None,
         dry_run: bool = False,
     ) -> ProcessReport:
-        """Internal switch primitive for the fingerprinted preflight artifact."""
+        """Internal switch primitive for the resolved preflight artifact."""
 
         plan = RunPlan.load(path)
-        return self._systemd_runner().apply(plan, dry_run=dry_run)
-
-    def stop(
-        self,
-        *,
-        product: str | None = None,
-        state_dir: str | Path | None = None,
-        dry_run: bool = False,
-    ) -> ProcessReport:
-        """Compile and stop one Product's mode-owned processes."""
-
-        return self.stop_plan(
-            self.resolve(product),
-            state_dir=state_dir,
+        runner = self._systemd_runner()
+        if previous_plan is None:
+            return runner.apply_deferred(plan, dry_run=dry_run)
+        return runner.transition(
+            previous_plan,
+            plan,
             dry_run=dry_run,
+            defer_rollback=True,
         )
 
-    def stop_plan(
+    def _quiesce_plan_for_switch(
         self,
         plan: RunPlan,
         *,
         state_dir: str | Path | None = None,
         dry_run: bool = False,
     ) -> ProcessReport:
-        """Stop mode-owned processes declared by one RunPlan."""
+        """Internal rollback primitive for one resolved switch target."""
 
-        with self._mutation(state_dir):
-            return self._systemd_runner().stop(plan, dry_run=dry_run)
-
-    def quiesce_plan(
-        self,
-        plan: RunPlan,
-        *,
-        state_dir: str | Path | None = None,
-        dry_run: bool = False,
-    ) -> ProcessReport:
-        """Stop every mode process that may conflict with this plan."""
-
+        if plan.process_control == "subprocess":
+            raise RuntimeError(
+                "subprocess lifecycle requires the committed current RunPlan"
+            )
         with self._mutation(state_dir):
             return self._systemd_runner().quiesce(plan, dry_run=dry_run)
 
-    def restart(
-        self,
-        process_name: str,
-        *,
-        product: str | None = None,
-        state_dir: str | Path | None = None,
-        dry_run: bool = False,
-    ) -> ProcessReport:
-        """Compile a Product and restart one declared process."""
-
-        return self.restart_process(
-            self.resolve(product),
-            process_name,
-            state_dir=state_dir,
-            dry_run=dry_run,
-        )
-
-    def restart_process(
-        self,
-        plan: RunPlan,
-        process_name: str,
-        *,
-        state_dir: str | Path | None = None,
-        dry_run: bool = False,
-    ) -> ProcessReport:
-        """Restart one process declared by one RunPlan."""
-
-        with self._mutation(state_dir):
-            return self._systemd_runner().restart(
-                plan,
-                process_name,
-                dry_run=dry_run,
-            )
-
-    def reapply_current(
-        self,
-        *,
-        state_dir: str | Path | None = None,
-        dry_run: bool = False,
-    ) -> ProcessReport:
-        """Reapply the exact RunPlan committed as current."""
-
-        with self._mutation(state_dir) as root:
-            plan = self._current_plan(root)
-            if plan.process_control != "systemd":
-                raise RuntimeError("reapply requires process_control=systemd")
-            return self._systemd_runner().apply(plan, dry_run=dry_run)
-
-    def quiesce_current(
-        self,
-        *,
-        state_dir: str | Path | None = None,
-        dry_run: bool = False,
-    ) -> ProcessReport:
-        """Stop current mode processes while preserving the run identity.
-
-        Release activation uses this boundary so the exact committed RunPlan
-        remains available for reapply or rollback after the release symlink is
-        switched.
-        """
-
-        with self._mutation(state_dir) as root:
-            plan = self._current_plan(root)
-            return self._systemd_runner().quiesce(plan, dry_run=dry_run)
-
-    def restart_current(
-        self,
-        process_name: str,
-        *,
-        state_dir: str | Path | None = None,
-        dry_run: bool = False,
-    ) -> ProcessReport:
-        """Restart one logical process in the committed RunPlan."""
-
-        with self._mutation(state_dir) as root:
-            plan = self._current_plan(root)
-            return self._systemd_runner().restart(
-                plan,
-                process_name,
-                dry_run=dry_run,
-            )
-
-    def stop_current(
+    def _stop(
         self,
         *,
         expected_product: str | None = None,
+        expected_product_session_id: str | None = None,
         backend: SwitchBackend | None = None,
         state_dir: str | Path | None = None,
         dry_run: bool = False,
     ) -> ProcessReport:
         """Safely stop the committed Product and remove its session config.
 
-        ``expected_product`` is an optional compare-and-stop guard.  The
-        committed Product is loaded, compared, and stopped while holding the
-        same ProductControl mutation lock, so callers cannot accidentally stop
-        a Product that replaced the one they intended to stop.
+        The optional expected identity fields form one compare-and-stop guard.
+        The trusted current Product is loaded, compared, and stopped while
+        holding the same mutation lock, so callers cannot stop a replacement
+        session even when it uses the same Product.
         """
 
         expected = (
@@ -544,21 +388,65 @@ class ProductControl:
             if expected_product is not None
             else None
         )
+        expected_session = (
+            str(expected_product_session_id)
+            if expected_product_session_id is not None
+            else None
+        )
+        if expected_session is not None and not is_product_session_id(expected_session):
+            raise ValueError("expected Product session ID is invalid")
 
         with self._mutation(state_dir) as root:
-            plan = self._current_plan(root)
+            plan, plan_path, product_session_id = self._current_plan_and_path(root)
             current = product_name(plan.product)
             if expected is not None and current != expected:
                 raise ExpectedProductMismatch(
                     expected_product=expected,
                     current_product=current,
                 )
+            if expected_session is not None and product_session_id != expected_session:
+                raise RuntimeError(
+                    "current Product session does not match the compare-and-stop identity"
+                )
+            if plan.process_control == "subprocess" and plan.env == "sim":
+                if backend is not None:
+                    raise RuntimeError(
+                        "sim subprocess stop does not accept a field SwitchBackend"
+                    )
+                if dry_run:
+                    return ProcessReport(
+                        product=plan.product,
+                        env=plan.env,
+                        action="stop",
+                        dry_run=True,
+                        ok=True,
+                        status="planned",
+                        planned=[
+                            process.target for process in plan.managed_processes
+                        ],
+                    )
+                report = self._simulation_runner(root).stop(
+                    plan_path,
+                    product_session_id=product_session_id,
+                )
+                if report.ok:
+                    (root / CURRENT_RUN_FILE_NAME).unlink(missing_ok=True)
+                    try:
+                        plan_path.unlink(missing_ok=True)
+                    except OSError:
+                        # The stopped Product is already gone; a stale plan is harmless.
+                        pass
+                return report
+            if plan.process_control != "systemd":
+                raise RuntimeError(
+                    "stop requires process_control=systemd or sim subprocess"
+                )
             active_backend: SwitchBackend | None = None
             if not dry_run:
                 field_environment = dict(self._process_env)
                 field_environment["LINGTU_SESSION_ROOT"] = str(root)
                 active_backend = backend or FieldBackend(environment=field_environment)
-                active_backend.stop_motion_and_session(current)
+                active_backend.stop_motion(current)
             report = self._systemd_runner().stop(plan, dry_run=dry_run)
             if report.ok and active_backend is not None:
                 active_backend.remove_session(plan)
@@ -573,14 +461,44 @@ class ProductControl:
 
         return self._runner_impl or SystemdRunner(environment=self._process_env)
 
-    def _current_plan(self, state_dir: Path) -> RunPlan:
+    def _simulation_runner(self, state_root: Path) -> sim_switch.SimSwitchRunner:
+        """Return the private path-bound runner for the locked sim session."""
+
+        return self._simulation_runner_impl or ensure_sim_supervisor(
+            state_root,
+            _REPOSITORY_ROOT,
+            timeout_s=_SIM_SUPERVISOR_START_TIMEOUT_S,
+        )
+
+    def _current_plan_and_path(
+        self,
+        state_dir: Path,
+    ) -> tuple[RunPlan, Path, str]:
+        """Load one validated snapshot of the committed RunPlan identity."""
+
+        if self.env == "sim":
+            committed = sim_switch._load_committed_plan(
+                state_dir,
+                self._process_env,
+            )
+            if committed is None:
+                raise _CurrentProductNotFound(
+                    f"current run record not found: {state_dir / CURRENT_RUN_FILE_NAME}"
+                )
+            self._require_plan_robot(committed.plan)
+            return committed.plan, committed.path, committed.product_session_id
+
         current = _load_current_run(state_dir, self._process_env)
         plan_path = Path(_current_text(current, "run_plan_path")).expanduser()
         if not plan_path.is_absolute():
             raise RuntimeError("current RunPlan path must be absolute")
-        plan = RunPlan.load(plan_path.resolve())
-        if _current_text(current, "fingerprint") != plan.fingerprint:
-            raise RuntimeError("current RunPlan fingerprint does not match its record")
+        recorded_env = _current_text(current, "env")
+        if recorded_env != self.env:
+            raise RuntimeError(
+                f"current RunPlan belongs to Env {recorded_env!r}, not {self.env!r}"
+            )
+        exact_plan_path = plan_path.resolve()
+        plan = RunPlan.load(exact_plan_path)
         if _current_text(current, "product") != plan.product:
             raise RuntimeError("current Product does not match RunPlan")
         recorded_variant = current.get("product_variant")
@@ -592,47 +510,60 @@ class ProductControl:
             raise RuntimeError("current Product variant does not match RunPlan")
         if _current_text(current, "env") != plan.env:
             raise RuntimeError("current Env does not match RunPlan")
-        if plan.env != self.env:
+        self._require_plan_robot(plan)
+        product_session_id = _current_text(current, "product_session_id")
+        if not is_product_session_id(product_session_id):
+            raise RuntimeError("current Product session id is invalid")
+        return plan, exact_plan_path, product_session_id
+
+    def _require_plan_robot(self, plan: RunPlan) -> None:
+        recorded = plan.robot
+        if self.robot and recorded != self.robot:
             raise RuntimeError(
-                f"current RunPlan belongs to Env {plan.env!r}, not {self.env!r}"
+                f"current Product belongs to Robot {recorded!r}, not {self.robot!r}"
             )
-        return plan
-
-    def stop_session(
-        self,
-        *,
-        backend: SwitchBackend | None = None,
-        state_dir: str | Path | None = None,
-        dry_run: bool = False,
-    ) -> dict[str, Any]:
-        """Cancel native navigation and end the Gateway session without switching Product."""
-
-        with self._mutation(state_dir) as root:
-            if not dry_run:
-                field_environment = dict(self._process_env)
-                field_environment["LINGTU_SESSION_ROOT"] = str(root)
-                active_backend = backend or FieldBackend(environment=field_environment)
-                active_backend.stop_motion_and_session(active_backend.current_product())
-        return {
-            "ok": True,
-            "action": "stop-session",
-            "status": "planned" if dry_run else "stopped",
-        }
-
+        self.robot = recorded
 
 def _load_current_run(
     state_dir: Path,
     environment: Mapping[str, str],
 ) -> Mapping[str, Any]:
     path = resolve_current_run_path(state_dir, environment=environment)
-    if not path.is_file():
-        raise RuntimeError(f"current run record not found: {path}")
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError as exc:
+        raise _CurrentProductNotFound(f"current run record not found: {path}") from exc
+    payload = _decode_current_run(raw, path)
+    return payload
+
+
+def _decode_current_run(raw: bytes, path: Path) -> Mapping[str, Any]:
+    try:
+        payload = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_strict_object_pairs,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError(f"current run record is invalid JSON: {path}") from exc
     if not isinstance(payload, Mapping):
         raise RuntimeError(f"current run record must be a JSON object: {path}")
     if payload.get("schema_version") != CURRENT_RUN_SCHEMA:
         raise RuntimeError("current run record has unsupported schema")
     return payload
+
+
+def _strict_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if not isinstance(key, str) or key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> Any:
+    raise ValueError(f"invalid JSON constant: {value}")
 
 
 def _current_text(payload: Mapping[str, Any], field: str) -> str:
@@ -649,28 +580,22 @@ def _env_name(value: Any) -> str:
     return env
 
 
-def _operation_id(value: str | None) -> str:
-    raw = str(value or uuid.uuid4().hex).strip()
-    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "-", raw).strip("-.")
-    if not normalized:
-        raise ValueError("ProductControl operation id must contain a safe character")
-    return normalized[:96]
-
-
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "action",
         choices=(
             "switch",
-            "reapply",
-            "quiesce",
-            "restart",
+            "status",
             "stop",
-            "stop-session",
         ),
     )
     parser.add_argument("product", nargs="?", help="Field Product name")
+    parser.add_argument(
+        "--robot",
+        default=os.environ.get("LINGTU_ROBOT"),
+        help="Robot model, for example doso/thunder_v4 or unitree/go2",
+    )
     parser.add_argument(
         "--env",
         choices=("real", "sim"),
@@ -678,12 +603,19 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--backend",
-        default=os.environ.get("LINGTU_ENV_BACKEND"),
-        help="Required implementation backend for --env sim (default: LINGTU_ENV_BACKEND)",
+        help="Concrete simulation backend, for example mujoco",
     )
-    parser.add_argument("--current")
+    parser.add_argument(
+        "--viewer",
+        action="store_true",
+        help="Open the MuJoCo viewer for a simulation Product",
+    )
+    parser.add_argument(
+        "--local-planner",
+        choices=("cmu", "scan"),
+        help="Select the local-planner backend without changing the Product",
+    )
     parser.add_argument("--map", dest="map_name")
-    parser.add_argument("--process")
     parser.add_argument(
         "--expected-product",
         help=(
@@ -719,17 +651,33 @@ def _print(payload: Mapping[str, Any], *, json_output: bool) -> None:
         or payload.get("target_product")
         or "unknown"
     )
+    robot = str(payload.get("robot") or "unknown")
     env = str(payload.get("env") or "unknown")
-    print(f"{status}: {product} in {env}")
+    print(f"{status}: {product} on {robot} in {env}")
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run Product control outside the managed Host process."""
 
     args = _parser().parse_args(argv)
+    control: ProductControl | None = None
     try:
-        env_config = {"backend": args.backend} if args.backend else None
-        control = ProductControl(env=args.env, env_config=env_config)
+        if args.local_planner and args.action != "switch":
+            raise ValueError("--local-planner is only valid with switch")
+        if args.backend and (args.action != "switch" or args.env != "sim"):
+            raise ValueError("--backend is only valid with switch --env sim")
+        if args.viewer and (args.action != "switch" or args.env != "sim"):
+            raise ValueError("--viewer is only valid with switch --env sim")
+        env_config: dict[str, Any] = {}
+        if args.backend:
+            env_config["backend"] = args.backend
+        if args.viewer:
+            env_config["viewer"] = True
+        control = ProductControl(
+            robot=args.robot,
+            env=args.env,
+            env_config=env_config or None,
+        )
         if args.expected_product and args.action != "stop":
             raise ValueError("--expected-product is only valid with stop")
         if args.action == "switch":
@@ -740,65 +688,68 @@ def main(argv: list[str] | None = None) -> int:
             if not requested_product:
                 raise ValueError("switch requires PRODUCT or LINGTU_PRODUCT")
             payload = control.switch(
-                SwitchRequest(
-                    target_product=product_name(requested_product),
-                    current_product=(
-                        product_name(args.current)
-                        if args.current
-                        else None
-                    ),
-                    map_name=args.map_name,
-                    relocalize=bool(args.relocalize),
-                    initial_pose=initial_pose,
-                    parameter_overrides=_parameter_overrides(args.set),
-                ),
-                state_dir=args.state_dir,
-                dry_run=args.dry_run,
-            ).as_dict()
-        elif args.action == "reapply":
-            if args.product:
-                raise ValueError("reapply does not accept a Product selector")
-            payload = control.reapply_current(
-                state_dir=args.state_dir,
-                dry_run=args.dry_run,
-            ).as_dict()
-        elif args.action == "restart":
-            if args.product:
-                raise ValueError("restart does not accept a Product selector")
-            if not args.process:
-                raise ValueError("restart requires --process <logical-name>")
-            payload = control.restart_current(
-                args.process,
-                state_dir=args.state_dir,
-                dry_run=args.dry_run,
-            ).as_dict()
-        elif args.action == "quiesce":
-            if args.product:
-                raise ValueError("quiesce does not accept a Product selector")
-            payload = control.quiesce_current(
-                state_dir=args.state_dir,
-                dry_run=args.dry_run,
-            ).as_dict()
-        elif args.action == "stop":
-            if args.product:
-                raise ValueError("stop does not accept a Product selector")
-            payload = control.stop_current(
-                expected_product=args.expected_product,
-                state_dir=args.state_dir,
-                dry_run=args.dry_run,
-            ).as_dict()
-        else:
-            if args.product:
-                raise ValueError("stop-session does not accept a Product selector")
-            payload = control.stop_session(
+                requested_product,
+                map_name=args.map_name,
+                relocalize=bool(args.relocalize),
+                initial_pose=initial_pose,
+                local_planner=args.local_planner,
+                parameter_overrides=_parameter_overrides(args.set),
                 state_dir=args.state_dir,
                 dry_run=args.dry_run,
             )
+        elif args.action == "status":
+            if args.product:
+                raise ValueError("status does not accept a Product selector")
+            payload = control.status(state_dir=args.state_dir)
+        elif args.action == "stop":
+            if args.product:
+                raise ValueError("stop does not accept a Product selector")
+            if args.expected_product:
+                payload = control._stop(
+                    expected_product=args.expected_product,
+                    state_dir=args.state_dir,
+                    dry_run=args.dry_run,
+                ).as_dict()
+            else:
+                payload = control.stop(
+                    state_dir=args.state_dir,
+                    dry_run=args.dry_run,
+                )
+        else:
+            raise AssertionError(f"unsupported ProductControl action: {args.action}")
     except SwitchFailed as exc:
-        print(json.dumps(exc.report.as_dict(), ensure_ascii=False, indent=2))
+        report = exc.report
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "status": report.status,
+                    "robot": control.robot if control is not None else args.robot,
+                    "env": report.env,
+                    "product": report.target_product,
+                    "error": report.error,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 1
     except ProcessFailed as exc:
-        print(json.dumps(exc.report.as_dict(), ensure_ascii=False, indent=2))
+        report = exc.report
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "status": report.status,
+                    "robot": control.robot if control is not None else args.robot,
+                    "env": report.env,
+                    "product": report.product,
+                    "error": report.error,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 1
     except ExpectedProductMismatch as exc:
         print(

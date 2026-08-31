@@ -46,32 +46,32 @@ def _write_shell(path: Path, source: str) -> None:
 
 
 PRODUCT_MODE_UNITS = (
-    "lingtu-livox-dds.service",
-    "lingtu-slam-dds.service",
-    "mapd.service",
-    "lingtu-traversability-dds.service",
-    "lingtu-nav-dds.service",
-    "lingtu-explore-dds.service",
-    "lingtu-camera-dds.service",
-    "lingtu.service",
+    "lt-lidar.service",
+    "lt-slam.service",
+    "lt-maps.service",
+    "lt-terrain.service",
+    "lt-nav.service",
+    "lt-explore.service",
+    "lt-camera.service",
+    "lt-host.service",
 )
 
 
 def test_host_runtime_no_longer_pulls_in_product_role_units() -> None:
-    text = _read("lingtu.service")
+    text = _read("lt-host.service")
     wants = next(line for line in text.splitlines() if line.startswith("Wants="))
 
     assert wants == "Wants=network-online.target"
-    assert "lingtu-slam-dds.service" not in wants
-    assert "lingtu-nav-dds.service" not in wants
-    assert "lingtu-driver.service" not in wants
+    assert "lt-slam.service" not in wants
+    assert "lt-nav.service" not in wants
+    assert "lt-driver.service" not in wants
     assert "brainstem.service" not in wants
     assert "robot-brainstem.service" not in wants
     assert "slam.service" not in wants
 
 
 def test_gateway_runtime_is_direct_product_control_process() -> None:
-    text = _read("lingtu.service")
+    text = _read("lt-host.service")
 
     assert "Type=simple" in text
     assert "NotifyAccess=all" not in text
@@ -94,7 +94,7 @@ def test_product_mode_units_do_not_self_manage_lifecycle(unit_name: str) -> None
 
 
 def test_persistent_driver_keeps_motion_output_supervision() -> None:
-    text = _read("lingtu-driver.service")
+    text = _read("lt-driver.service")
 
     assert "Type=notify" in text
     assert "NotifyAccess=all" in text
@@ -105,43 +105,47 @@ def test_persistent_driver_keeps_motion_output_supervision() -> None:
     assert "run_status_file_watchdog.sh --status-file ${LINGTU_DRIVER_STATUS_FILE}" in text
     assert "After=network-online.target" in text
     assert "Wants=network-online.target" in text
-    assert "lingtu-nav-dds.service" not in text
+    assert "lt-nav.service" not in text
     assert "WantedBy=multi-user.target" in text
 
 
-def test_field_driver_requires_an_explicit_remote_brainstem_endpoint() -> None:
-    text = _read("lingtu-driver.service")
+def test_field_driver_reads_selected_backend_from_product_session() -> None:
+    text = _read("lt-driver.service")
 
     assert "Environment=LINGTU_BRAINSTEM_HOST=127.0.0.1" not in text
-    assert (
-        "-- /bin/bash /opt/lingtu/current/scripts/deploy/thunder/"
-        "run_driver.sh --require-remote"
-    ) in text
+    assert "EnvironmentFile=/run/lingtu/session.env" in text
+    assert "require_product_session.sh driver" in text
+    assert "run_driver.sh --require-remote" not in text
 
 
-def test_driver_installation_uses_service_specific_safety_hook_and_remote_config() -> None:
+def test_go2_launcher_validates_network_routing_without_rewriting_dds() -> None:
+    text = _read("run_driver.sh")
+
+    assert '[[ ! -r "/sys/class/net/${GO2_INTERFACE}/carrier" ]]' in text
+    assert '[[ "${LINGTU_DDS_NETWORK_INTERFACE:-}" != "${GO2_INTERFACE}" ]]' in text
+    assert "<NetworkInterfaceAddress>${GO2_INTERFACE}</NetworkInterfaceAddress>" not in text
+    assert 'export LINGTU_DDS_NETWORK_INTERFACE=' not in text
+    assert 'export CYCLONEDDS_URI=' not in text
+
+
+def test_driver_installation_uses_robot_config_and_the_service_catalog() -> None:
     install_all = _read("install_services.sh")
     install_driver = _read("install_driver_service.sh")
 
-    assert "catalog installer" in install_all
-    assert 'bash "${SCRIPT_DIR}/${installer}"' in install_all
-    assert "brainstem.env" in install_driver
-    assert "LINGTU_BRAINSTEM_HOST" in install_driver
-    assert "LINGTU_BRAINSTEM_PORT" in install_driver
-    assert "LINGTU_BRAINSTEM_TLS_CA_FILE" in install_driver
-    assert "LINGTU_BRAINSTEM_TLS_CERT_FILE" in install_driver
-    assert "LINGTU_BRAINSTEM_TLS_KEY_FILE" in install_driver
-    assert 'install -o root -g root -m 0644' in install_driver
-    assert "configured_port" in install_driver
+    assert '[ "${service}" = "driver" ]' in install_all
+    assert 'bash "${SCRIPT_DIR}/install_driver_service.sh"' in install_all
+    assert 'bash "${SCRIPT_DIR}/install_catalog_service.sh" "${service}"' in install_all
+    assert "load_config" in install_driver
+    assert "validate_config" in install_driver
+    assert 'install_catalog_service.sh" driver' in install_driver
+    assert "brainstem.env" not in install_driver
     assert "systemctl disable --now" in install_driver
     assert '"driver.service"' in install_driver
-    assert "driver.service" in _read("lingtu-driver.service")
+    assert "driver.service" in _read("lt-driver.service")
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is required")
-@pytest.mark.parametrize(
-    "host", ("", "localhost", "127.0.0.1", "::1", "brainstem.local")
-)
+@pytest.mark.parametrize("host", ("", "localhost", "127.0.0.1", "::1", "brainstem.local"))
 def test_field_driver_launcher_rejects_missing_or_loopback_brainstem(
     tmp_path: Path,
     host: str,
@@ -161,9 +165,9 @@ def test_field_driver_launcher_rejects_missing_or_loopback_brainstem(
         f"""
         #!/usr/bin/env bash
         export LINGTU_DRIVER_BIN={shlex.quote(_bash_path(fake_driver))}
-        export LINGTU_BRAINSTEM_REQUIRE_REMOTE=0
+        export LINGTU_DRIVER_BACKEND=doso
         export LINGTU_BRAINSTEM_HOST={shlex.quote(host)}
-        exec bash {shlex.quote(_bash_path(THUNDER_DEPLOY / "run_driver.sh"))} --require-remote
+        exec bash {shlex.quote(_bash_path(THUNDER_DEPLOY / "run_driver.sh"))}
         """,
     )
 
@@ -208,12 +212,12 @@ def test_field_driver_launcher_accepts_explicit_remote_brainstem(
         f"""
         #!/usr/bin/env bash
         export LINGTU_DRIVER_BIN={shlex.quote(_bash_path(fake_driver))}
-        export LINGTU_BRAINSTEM_REQUIRE_REMOTE=0
+        export LINGTU_DRIVER_BACKEND=doso
         export LINGTU_BRAINSTEM_HOST=192.168.114.50
-        export LINGTU_BRAINSTEM_TLS_CA_FILE={shlex.quote(_bash_path(ca_file))}
-        export LINGTU_BRAINSTEM_TLS_CERT_FILE={shlex.quote(_bash_path(cert_file))}
-        export LINGTU_BRAINSTEM_TLS_KEY_FILE={shlex.quote(_bash_path(key_file))}
-        exec bash {shlex.quote(_bash_path(THUNDER_DEPLOY / "run_driver.sh"))} --require-remote
+        export LINGTU_DRIVER_TLS_CA_FILE={shlex.quote(_bash_path(ca_file))}
+        export LINGTU_DRIVER_TLS_CERT_FILE={shlex.quote(_bash_path(cert_file))}
+        export LINGTU_DRIVER_TLS_KEY_FILE={shlex.quote(_bash_path(key_file))}
+        exec bash {shlex.quote(_bash_path(THUNDER_DEPLOY / "run_driver.sh"))}
         """,
     )
 
@@ -229,6 +233,47 @@ def test_field_driver_launcher_accepts_explicit_remote_brainstem(
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is required")
+def test_field_driver_launcher_accepts_go2_network_interface(tmp_path: Path) -> None:
+    observed_interface = tmp_path / "observed-interface"
+    observed_dds_uri = tmp_path / "observed-dds-uri"
+    fake_driver = tmp_path / "lingtu_driver"
+    harness = tmp_path / "go2-driver-launcher-harness.sh"
+    _write_shell(
+        fake_driver,
+        f"""
+        #!/usr/bin/env bash
+        printf '%s' "${{LINGTU_DRIVER_NETWORK_INTERFACE:-}}" > {_bash_path(observed_interface)!r}
+        printf '%s' "${{CYCLONEDDS_URI:-}}" > {_bash_path(observed_dds_uri)!r}
+        """,
+    )
+    _write_shell(
+        harness,
+        f"""
+        #!/usr/bin/env bash
+        export LINGTU_DRIVER_BIN={shlex.quote(_bash_path(fake_driver))}
+        export LINGTU_DRIVER_BACKEND=go2
+        export LINGTU_DRIVER_NETWORK_INTERFACE=lo
+        export LINGTU_DRIVER_NETWORK_ADDRESS=127.0.0.1/8
+        export LINGTU_DRIVER_PROBE_IP=127.0.0.1
+        export LINGTU_DDS_NETWORK_INTERFACE=lo
+        export CYCLONEDDS_URI=file:///run/lingtu/cyclonedds.xml
+        exec bash {shlex.quote(_bash_path(THUNDER_DEPLOY / "run_driver.sh"))}
+        """,
+    )
+
+    result = subprocess.run(
+        ["bash", _bash_path(harness)],
+        cwd=REPO_ROOT,
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert observed_interface.read_text(encoding="utf-8") == "lo"
+    assert observed_dds_uri.read_text(encoding="utf-8") == "file:///run/lingtu/cyclonedds.xml"
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is required")
 def test_field_driver_launcher_rejects_remote_brainstem_without_mtls(
     tmp_path: Path,
 ) -> None:
@@ -240,11 +285,12 @@ def test_field_driver_launcher_rejects_remote_brainstem_without_mtls(
         f"""
         #!/usr/bin/env bash
         export LINGTU_DRIVER_BIN={shlex.quote(_bash_path(fake_driver))}
+        export LINGTU_DRIVER_BACKEND=doso
         export LINGTU_BRAINSTEM_HOST=192.168.114.50
-        unset LINGTU_BRAINSTEM_TLS_CA_FILE
-        unset LINGTU_BRAINSTEM_TLS_CERT_FILE
-        unset LINGTU_BRAINSTEM_TLS_KEY_FILE
-        exec bash {shlex.quote(_bash_path(THUNDER_DEPLOY / "run_driver.sh"))} --require-remote
+        unset LINGTU_DRIVER_TLS_CA_FILE
+        unset LINGTU_DRIVER_TLS_CERT_FILE
+        unset LINGTU_DRIVER_TLS_KEY_FILE
+        exec bash {shlex.quote(_bash_path(THUNDER_DEPLOY / "run_driver.sh"))}
         """,
     )
 
@@ -262,120 +308,6 @@ def test_field_driver_launcher_rejects_remote_brainstem_without_mtls(
 
     assert result.returncode == 64
     assert "mTLS" in result.stderr
-
-
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is required")
-def test_driver_installer_validates_port_from_existing_brainstem_env(
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "brainstem.env").write_text(
-        "LINGTU_BRAINSTEM_HOST=192.168.114.50\n"
-        "LINGTU_BRAINSTEM_PORT=70000\n",
-        encoding="utf-8",
-        newline="\n",
-    )
-    harness = tmp_path / "installer-harness.sh"
-    _write_shell(
-        harness,
-        f"""
-        #!/usr/bin/env bash
-        export LINGTU_CONFIG_DIR={shlex.quote(_bash_path(tmp_path))}
-        exec bash {shlex.quote(_bash_path(THUNDER_DEPLOY / 'install_driver_service.sh'))}
-        """,
-    )
-
-    result = subprocess.run(
-        ["bash", _bash_path(harness)],
-        cwd=REPO_ROOT,
-        timeout=10,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-
-    assert result.returncode == 64
-    assert "PORT must be within" in result.stderr
-
-
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is required")
-def test_driver_installer_canonicalizes_existing_environment_file(
-    tmp_path: Path,
-) -> None:
-    ca_file = tmp_path / "ca.pem"
-    cert_file = tmp_path / "client.pem"
-    key_file = tmp_path / "client.key"
-    for path in (ca_file, cert_file, key_file):
-        path.write_text("test-only-pem", encoding="utf-8")
-    expected_lines = [
-        "LINGTU_BRAINSTEM_HOST=192.168.114.50",
-        "LINGTU_BRAINSTEM_PORT=13145",
-        f"LINGTU_BRAINSTEM_TLS_CA_FILE={_bash_path(ca_file)}",
-        f"LINGTU_BRAINSTEM_TLS_CERT_FILE={_bash_path(cert_file)}",
-        f"LINGTU_BRAINSTEM_TLS_KEY_FILE={_bash_path(key_file)}",
-        "LINGTU_BRAINSTEM_TLS_SERVER_NAME=brainstem.local",
-    ]
-    env_file = tmp_path / "brainstem.env"
-    env_file.write_text(
-        "\n".join([*expected_lines, "LD_PRELOAD=/tmp/not-allowed.so", ""]),
-        encoding="utf-8",
-        newline="\n",
-    )
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    (tmp_path / "systemd").mkdir()
-    _write_shell(
-        fake_bin / "sudo",
-        """
-        #!/usr/bin/env bash
-        set -euo pipefail
-        if [[ "$1" == "systemctl" ]]; then
-          exit 0
-        fi
-        if [[ "$1" == "install" ]]; then
-          shift
-          args=()
-          while [[ $# -gt 0 ]]; do
-            case "$1" in
-              -o|-g) shift 2 ;;
-              *) args+=("$1"); shift ;;
-            esac
-          done
-          exec install "${args[@]}"
-        fi
-        exec "$@"
-        """,
-    )
-    _write_shell(fake_bin / "systemctl", "#!/usr/bin/env bash\nexit 0\n")
-    harness = tmp_path / "installer-canonical-harness.sh"
-    _write_shell(
-        harness,
-        f"""
-        #!/usr/bin/env bash
-        set -euo pipefail
-        export PATH={shlex.quote(_bash_path(fake_bin))}:$PATH
-        export LINGTU_CONFIG_DIR={shlex.quote(_bash_path(tmp_path))}
-        export LINGTU_SYSTEMD_DIR={shlex.quote(_bash_path(tmp_path / 'systemd'))}
-        export LINGTU_ENABLE_SERVICE=0
-        exec bash {shlex.quote(_bash_path(THUNDER_DEPLOY / 'install_driver_service.sh'))}
-        """,
-    )
-
-    subprocess.run(
-        ["bash", _bash_path(harness)],
-        cwd=REPO_ROOT,
-        timeout=30,
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-
-    assert env_file.read_text(encoding="utf-8").splitlines() == expected_lines
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is required")
@@ -421,18 +353,18 @@ def test_status_watchdog_pings_only_when_heartbeat_advances_and_forwards_stop(
         f"""
         #!/usr/bin/env bash
         set -euo pipefail
-        export LINGTU_SYSTEMD_NOTIFY_BIN={shlex.quote(f'{temp_dir}/systemd-notify')}
-        export NOTIFY_LOG={shlex.quote(f'{temp_dir}/notify.log')}
+        export LINGTU_SYSTEMD_NOTIFY_BIN={shlex.quote(f"{temp_dir}/systemd-notify")}
+        export NOTIFY_LOG={shlex.quote(f"{temp_dir}/notify.log")}
         bash {shlex.quote(wrapper_path)} \\
-            --status-file {shlex.quote(f'{temp_dir}/status.json')} \\
+            --status-file {shlex.quote(f"{temp_dir}/status.json")} \\
             --startup-timeout-s 3 --poll-interval-s 0.02 -- \\
-            bash {shlex.quote(f'{temp_dir}/heartbeat-child.sh')} \\
-            {shlex.quote(f'{temp_dir}/status.json')} \\
-            {shlex.quote(f'{temp_dir}/child.stopped')} &
+            bash {shlex.quote(f"{temp_dir}/heartbeat-child.sh")} \\
+            {shlex.quote(f"{temp_dir}/status.json")} \\
+            {shlex.quote(f"{temp_dir}/child.stopped")} &
         wrapper_pid=$!
         observed=0
         for _ in $(seq 1 250); do
-            observed=$(grep -c 'WATCHDOG=1' {shlex.quote(f'{temp_dir}/notify.log')} 2>/dev/null || true)
+            observed=$(grep -c 'WATCHDOG=1' {shlex.quote(f"{temp_dir}/notify.log")} 2>/dev/null || true)
             if [ "${{observed}}" -ge 2 ]; then
                 break
             fi
@@ -492,10 +424,10 @@ def test_status_watchdog_fails_startup_and_stops_child_without_heartbeat(
         set -u
         export LINGTU_SYSTEMD_NOTIFY_BIN=/bin/true
         bash {shlex.quote(wrapper_path)} \\
-            --status-file {shlex.quote(f'{temp_dir}/missing-status.json')} \\
+            --status-file {shlex.quote(f"{temp_dir}/missing-status.json")} \\
             --startup-timeout-s 1 --poll-interval-s 0.02 -- \\
-            bash {shlex.quote(f'{temp_dir}/silent-child.sh')} \\
-            {shlex.quote(f'{temp_dir}/child.stopped')}
+            bash {shlex.quote(f"{temp_dir}/silent-child.sh")} \\
+            {shlex.quote(f"{temp_dir}/child.stopped")}
         code=$?
         [ "${{code}}" -eq 70 ]
         """,

@@ -9,7 +9,6 @@ inspection model ran or that it reached a conclusion.
 from __future__ import annotations
 
 import errno
-import hashlib
 import json
 import math
 import os
@@ -39,7 +38,7 @@ _REQUEST_FIELDS = frozenset(
         "route_id",
         "route_revision",
         "map_id",
-        "map_version",
+        "map_content_epoch",
         "point_id",
         "point_index",
         "request_id",
@@ -127,10 +126,6 @@ def _canonical_json_bytes(value: Any, *, field_name: str) -> bytes:
     return (text + "\n").encode("utf-8")
 
 
-def _sha256(payload: bytes) -> str:
-    return hashlib.sha256(payload).hexdigest()
-
-
 def _write_bytes_fsync(path: Path, payload: bytes) -> None:
     """Create one file, flush Python buffers, then flush the file descriptor."""
 
@@ -176,7 +171,7 @@ class InspectionEvidenceRequest:
     route_id: str
     route_revision: int
     map_id: str
-    map_version: int
+    map_content_epoch: int
     point_id: str
     point_index: int
     request_id: str
@@ -194,7 +189,7 @@ class InspectionEvidenceRequest:
             maximum=_UINT64_MAX,
         )
         _validate_identifier("map_id", self.map_id)
-        _validate_integer("map_version", self.map_version, minimum=0)
+        _validate_integer("map_content_epoch", self.map_content_epoch, minimum=0)
         _validate_identifier("point_id", self.point_id)
         _validate_integer("point_index", self.point_index, minimum=0, maximum=_UINT32_MAX)
         _validate_identifier("request_id", self.request_id)
@@ -238,7 +233,7 @@ class InspectionEvidenceRequest:
             "route_id": self.route_id,
             "route_revision": self.route_revision,
             "map_id": self.map_id,
-            "map_version": self.map_version,
+            "map_content_epoch": self.map_content_epoch,
             "point_id": self.point_id,
             "point_index": self.point_index,
             "request_id": self.request_id,
@@ -303,7 +298,6 @@ class InspectionEvidenceResult:
     request: InspectionEvidenceRequest
     evidence_dir: Path
     manifest_path: Path
-    manifest_sha256: str
     manifest: dict[str, Any]
     persistence_status: str
     analysis_support: str
@@ -413,12 +407,7 @@ class InspectionEvidenceStore:
                 "analysis": self._analysis_for(normalized_request.action, trusted_observation),
             }
             manifest_bytes = _canonical_json_bytes(manifest, field_name="manifest")
-            manifest_hash = _sha256(manifest_bytes)
             _write_bytes_fsync(staging_dir / "manifest.json", manifest_bytes)
-            _write_bytes_fsync(
-                staging_dir / "manifest.sha256",
-                (manifest_hash + "\n").encode("ascii"),
-            )
             _fsync_directory(staging_dir)
 
             try:
@@ -491,7 +480,6 @@ class InspectionEvidenceStore:
             "path": name,
             "media_type": media_type,
             "bytes": len(payload),
-            "sha256": _sha256(payload),
         }
 
     def _validate_payload(
@@ -588,24 +576,18 @@ class InspectionEvidenceStore:
             raise EvidenceIntegrityError("evidence directory escaped the configured root")
 
         manifest_path = directory / "manifest.json"
-        checksum_path = directory / "manifest.sha256"
-        for label, path in (("manifest", manifest_path), ("manifest checksum", checksum_path)):
-            try:
-                file_stat = path.lstat()
-            except OSError as exc:
-                raise EvidenceIntegrityError(f"cannot inspect committed {label}: {exc}") from exc
-            if path.is_symlink() or not stat.S_ISREG(file_stat.st_mode):
-                raise EvidenceIntegrityError(f"{label} is not a regular file: {path.name}")
-            if path.resolve().parent != directory.resolve():
-                raise EvidenceIntegrityError(f"{label} escaped the evidence directory")
+        try:
+            file_stat = manifest_path.lstat()
+        except OSError as exc:
+            raise EvidenceIntegrityError(f"cannot inspect committed manifest: {exc}") from exc
+        if manifest_path.is_symlink() or not stat.S_ISREG(file_stat.st_mode):
+            raise EvidenceIntegrityError(f"manifest is not a regular file: {manifest_path.name}")
+        if manifest_path.resolve().parent != directory.resolve():
+            raise EvidenceIntegrityError("manifest escaped the evidence directory")
         try:
             manifest_bytes = manifest_path.read_bytes()
-            checksum = checksum_path.read_text(encoding="ascii").strip()
-        except (OSError, UnicodeError) as exc:
+        except OSError as exc:
             raise EvidenceIntegrityError(f"cannot read committed manifest: {exc}") from exc
-        actual_checksum = _sha256(manifest_bytes)
-        if checksum != actual_checksum:
-            raise EvidenceIntegrityError("manifest.sha256 does not match manifest.json")
         try:
             manifest = json.loads(manifest_bytes)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -640,7 +622,6 @@ class InspectionEvidenceStore:
             request=request,
             evidence_dir=directory,
             manifest_path=manifest_path,
-            manifest_sha256=actual_checksum,
             manifest=manifest,
             persistence_status="persisted",
             analysis_support=support,
@@ -667,14 +648,18 @@ class InspectionEvidenceStore:
                 raise EvidenceIntegrityError(f"artifact is not a regular file: {name}")
             if artifact_path.resolve().parent != directory.resolve():
                 raise EvidenceIntegrityError(f"artifact escaped the evidence directory: {name}")
-            try:
-                payload = artifact_path.read_bytes()
-            except OSError as exc:
-                raise EvidenceIntegrityError(f"cannot read artifact {name}: {exc}") from exc
-            if record.get("bytes") != len(payload):
+            expected_bytes = record.get("bytes")
+            if (
+                isinstance(expected_bytes, bool)
+                or not isinstance(expected_bytes, int)
+                or expected_bytes < 0
+            ):
+                raise EvidenceIntegrityError(f"artifact byte count is invalid: {name}")
+            if expected_bytes != file_stat.st_size:
                 raise EvidenceIntegrityError(f"artifact byte count mismatch: {name}")
-            if record.get("sha256") != _sha256(payload):
-                raise EvidenceIntegrityError(f"artifact sha256 mismatch: {name}")
+            media_type = record.get("media_type")
+            if not isinstance(media_type, str) or not media_type:
+                raise EvidenceIntegrityError(f"artifact media type is invalid: {name}")
 
 
 def _is_safe_artifact_name(value: str) -> bool:

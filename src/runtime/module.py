@@ -175,18 +175,6 @@ class Module:
     # class-level layer tag; subclasses may override
     _layer: int | None = None
 
-    # Modules that host network servers (HTTP, WebSocket) set this True so
-    # Blueprint._build_worker_mode() keeps them in the main process where they
-    # can receive RPCClient proxies via on_system_modules() directly.
-    _run_in_main: bool = False
-
-    # Heavy ML modules set this True to be deployed into a Worker subprocess
-    # with its own GIL, preventing slow inference from blocking the Gateway.
-    # _worker_group groups related modules into the same subprocess (e.g.
-    # "perception" 鈫?PerceptionModule + EncoderModule share one worker).
-    _run_in_worker: bool = False
-    _worker_group: str = ""
-
     # Optional soft dependencies - Blueprint warns if missing at startup, but
     # the module still starts and related features degrade gracefully.
     SOFT_DEPENDS: list[str] = []
@@ -329,16 +317,6 @@ class Module:
     def all_ports(self) -> dict[str, Any]:
         """All ports (In + Out)."""
         return {**self._ports_in, **self._ports_out}
-
-    @property
-    def outputs(self) -> dict[str, Out[Any]]:
-        """Alias for ports_out 鈥?dimos API compatibility."""
-        return self._ports_out
-
-    @property
-    def inputs(self) -> dict[str, In[Any]]:
-        """Alias for ports_in 鈥?dimos API compatibility."""
-        return self._ports_in
 
     @property
     def rpcs(self) -> dict[str, Any]:

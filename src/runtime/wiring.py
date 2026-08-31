@@ -17,8 +17,6 @@ class WireDelivery(str, Enum):
 
     CALLBACK = "callback"
     LOCAL = "local"
-    DDS = "dds"
-    SHM = "shm"
 
 
 @dataclass(frozen=True)
@@ -70,10 +68,6 @@ def resolve_wire_delivery(spec: Any) -> Transport | None:
         normalized = spec.strip().lower()
         if normalized in {"", WireDelivery.CALLBACK.value}:
             return None
-        if normalized in {WireDelivery.DDS.value, WireDelivery.SHM.value}:
-            from runtime.transport.factory import create_transport_adapter
-
-            return create_transport_adapter(normalized)
         if normalized == WireDelivery.LOCAL.value:
             return LocalTransport()
         raise ValueError(f"Unknown wire delivery spec: '{spec}'")

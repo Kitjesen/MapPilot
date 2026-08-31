@@ -3,13 +3,9 @@ name: explore
 parameter_profile: rolling_explore
 summary: Grow a map and navigate to exploration goals through the native runtime contract.
 operator_switchable: true
-product_mode: exploration
-product_session: exploration
 session_mode: exploring
 default_for_session_mode: true
 native_control_mode: autonomy
-data_plane: typed_dds
-control_owner: autonomy
 default_variant: live
 variants:
   live:
@@ -19,14 +15,9 @@ variants:
     requires_map: false
     switch_policy: cold_restart
     online_hot_switch_supported: false
-    autonomy_owner: explore_endpoint
     native_nav:
-      control_mode: autonomy
-      publish_cmd_vel: true
-      check_obstacle: true
-      use_traversability_cost: true
-      allow_teleop_takeover: false
-      teleop_local_planner: false
+      global_planner: octoplanner3d
+      local_planner: cmu
   map:
     contracts:
       - lingtu.product.explore.map.v1
@@ -34,16 +25,14 @@ variants:
     requires_map: true
     switch_policy: cold_restart
     online_hot_switch_supported: false
-    autonomy_owner: explore_endpoint
     native_nav:
-      control_mode: autonomy
-      publish_cmd_vel: true
-      check_obstacle: true
-      use_traversability_cost: true
+      global_planner: octoplanner3d
+      local_planner: cmu
       allow_teleop_takeover: true
       teleop_local_planner: true
 processes:
   - lidar
+  - imu
   - slam
   - maps
   - traversability
@@ -56,27 +45,4 @@ critical_modules:
   - nav.commands
   - GatewayModule
 forbidden_modules:
-  - TeleopModule
-  - nav.mission
-  - nav.velocity_mux
   - SimEndpointDriverModule
-  - WavefrontFrontierExplorer
-  - nav.local_planner
-  - nav.path_follower
-  - OccupancyGridModule
-  - VoxelGridModule
-  - ElevationMapModule
-  - ESDFModule
-  - TraversabilityCostModule
-  - SemanticMapModule
-forbidden_claims:
-  - module_sim_real_equivalence
-  - ros2_bridge_required
-transport_rules:
-  product_bus: typed_dds
-  same_process_algorithms: direct_function_calls
-  lcm_allowed: false
-exploration_run_event_stream:
-  topic: /nav/exploration/run/event
-  ordering_cursor: [boot_id, event_sequence]
-  terminal_truth: native_motion_stop_confirmation_before_terminal

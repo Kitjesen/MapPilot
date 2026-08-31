@@ -1,7 +1,7 @@
 schema_version: lingtu.architecture_layers.v1
 description: >
-  Canonical folder ownership and import-boundary contract for the Thunder
-  decoupling work. Layers describe where a seam belongs; import_boundaries
+  Canonical folder ownership and import-boundary contract for LingTu.
+  Layers describe where a seam belongs; import_boundaries
   define the static guards enforced by tools/validate/validate_architecture_boundaries.py.
 
 layers:
@@ -21,17 +21,14 @@ layers:
       - src/runtime/utils/
       - src/runtime/clock.py
       - src/runtime/config.py
-      - src/runtime/config_loader.py
       - src/runtime/yaml_helpers.py
 
   - id: L1_runtime_model
     title: Runtime Model
-    intent: Local Profile and Host defaults, driver backends, run specs, frame/topic/communication contracts, and runtime policies.
+    intent: Frame/topic/communication contracts and runtime policies.
     owns:
-      - src/runtime/profiles/
       - src/runtime/runtime_interface.py
       - src/runtime/runtime_policy.py
-      - src/runtime/runtime_switch.py
       - src/diagnostics/
       - src/diagnostics/field/gates.py
       - src/diagnostics/field/evidence.py
@@ -40,10 +37,7 @@ layers:
       - src/diagnostics/field/field_check.py
       - src/diagnostics/field/gateway_acceptance.py
       - src/diagnostics/field/inspection.py
-      - config/topic_contract.yaml
-      - config/endpoints.yaml
       - config/devices.yaml
-      - config/robot_config.yaml
       - config/robots/
 
   - id: L2_product_composition
@@ -52,9 +46,8 @@ layers:
     owns:
       - src/lingtu/assembly/
       - src/lingtu/run_plan.py
-      - src/lingtu/run_plan_contract.py
-      - src/lingtu/runtime_parameters.py
-      - src/lingtu/runtime.py
+      - src/lingtu/products.py
+      - src/lingtu/assembly/parameters.py
 
   - id: L3_adapter_layer
     title: Adapter Layer
@@ -63,8 +56,7 @@ layers:
       - src/runtime/adapters/
       - src/nav/adapters/
       - src/localization/adapters/
-      - src/maps/adapters/
-      - src/lingtu/host_bus.py
+      - src/lingtu/assembly/host_bus.py
 
   - id: L4_capability_modules
     title: Capability Modules
@@ -81,9 +73,7 @@ layers:
       - src/maps/
       - src/lingtu/__init__.py
       - src/lingtu/README.md
-      - src/lingtu/robot.py
       - src/lingtu/tests/
-      - src/nav/local/
 
   - id: L5_algorithm_kernels
     title: Algorithm Kernels
@@ -91,28 +81,23 @@ layers:
     owns:
       - src/kernels/
       - src/native/
-      - src/nav/kernel/
       - src/nav/cpp/
-      - src/nav/local/paths/
-      - src/nav/services/plan/
+      - src/nav/cpp/planning/local/cmu/paths/
 
   - id: L6_cli_deploy
     title: Product Control And Deploy
     intent: ProductControl side effects, internal systemd execution, command-line lifecycle, packaging, validation, and deployment.
     owns:
-      - lingtu.py
-      - cli/
       - scripts/
       - tools/
       - pyproject.toml
-      - config/lite_package.yaml
-      - src/lingtu/plugin_seed.py
+      - src/lingtu/assembly/plugins.py
       - src/lingtu/control.py
-      - src/lingtu/explain.py
+      - src/lingtu/operator_drive.py
       - src/lingtu/product_lock.py
-      - src/lingtu/product_switch.py
-      - src/lingtu/systemd.py
-      - src/lingtu/map_runtime_transaction.py
+      - src/lingtu/real/
+      - src/lingtu/switch_contracts.py
+      - src/lingtu/sim/
       - src/lingtu/sdk/
 
 import_boundaries:
@@ -158,14 +143,11 @@ import_boundaries:
       - memory
   composition_exceptions:
     - lingtu/assembly/
-    - lingtu/runtime.py
-    - lingtu/host_bus.py
+    - lingtu/assembly/host_bus.py
     - diagnostics/field/gateway_acceptance.py
     - runtime/msgs/scene.py
     - diagnostics/field/field_check.py
     - gateway/routes/maps.py
-    - nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/launch/system_launch.py
-    - nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/
   hardware_compat_forbidden_import_roots:
     - runtime.adapters.ros2
   hardware_compat_forbidden_dirs:

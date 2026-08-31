@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,14 +10,18 @@ from runtime.contracts.product_runtime import resolve_product_spec_contracts
 from runtime.runtime_interface import TOPICS
 
 from .loader import RuntimeGraph, load_runtime_graph, resolve_product_variant_spec
+from .processes import (
+    _parse_conflict_targets,
+    _parse_process_platform_variants,
+    _support_process_names,
+    resolve_stop_before_start,
+)
 
 ENV_SCHEMA_VERSION = "lingtu.runtime_graph.env.v1"
 PRODUCT_SCHEMA_VERSION = "lingtu.runtime_graph.product.v1"
 REQUIRED_ENVS = frozenset({"real", "sim"})
-SIM_BACKENDS = frozenset({"mujoco_native", "mujoco_host", "gazebo"})
+SIM_BACKENDS = frozenset({"mujoco"})
 PRODUCT_MODE_REQUIRED_FIELDS = (
-    "product_mode",
-    "product_session",
     "session_mode",
     "native_control_mode",
     "slam_mode",
@@ -29,6 +33,7 @@ PRODUCT_MODE_REQUIRED_FIELDS = (
 PRODUCT_SWITCH_POLICIES = frozenset({"cold_restart", "hot_switch"})
 PRODUCT_SESSION_MODES = frozenset({"none", "mapping", "navigating", "exploring"})
 PRODUCT_SLAM_MODES = frozenset({"none", "mapping", "localization"})
+LOCAL_PLANNER_BACKENDS = frozenset({"cmu", "scan"})
 PRODUCT_CONTROL_MODES = frozenset({"teleop", "teleop_avoid", "autonomy"})
 OPERATOR_MOTION_TOPICS = frozenset(
     {
@@ -45,17 +50,6 @@ OPERATOR_MOTION_CAPABILITIES = frozenset(
     }
 )
 OPERATOR_MOTION_CRITICAL_MODULES = frozenset({"nav.commands", "GatewayModule"})
-PYTHON_MOTION_AUTHORITY_MODULES = frozenset({"TeleopModule", "nav.velocity_mux"})
-PYTHON_REALTIME_MAP_MODULES = frozenset(
-    {
-        "OccupancyGridModule",
-        "VoxelGridModule",
-        "ElevationMapModule",
-        "ESDFModule",
-        "TraversabilityCostModule",
-        "SemanticMapModule",
-    }
-)
 ResolvedProductVariants = dict[
     str,
     tuple[tuple[str | None, dict[str, Any]], ...],
@@ -103,9 +97,7 @@ def validate_runtime_graph(graph: RuntimeGraph | None = None) -> list[RuntimeGra
                 )
             )
 
-    resolved_products, variant_issues = _resolve_products_for_validation(
-        graph.products
-    )
+    resolved_products, variant_issues = _resolve_products_for_validation(graph.products)
     issues.extend(variant_issues)
     for name, variants in resolved_products.items():
         for variant, product in variants:
@@ -125,8 +117,7 @@ def validate_runtime_graph(graph: RuntimeGraph | None = None) -> list[RuntimeGra
         issues.append(
             _issue(
                 "env_catalog_invalid",
-                f"Runtime Graph Envs must be exactly real and sim; "
-                f"missing={missing}, unexpected={unexpected}",
+                f"Runtime Graph Envs must be exactly real and sim; missing={missing}, unexpected={unexpected}",
                 scope="envs",
             )
         )
@@ -142,12 +133,8 @@ def validate_runtime_graph(graph: RuntimeGraph | None = None) -> list[RuntimeGra
             )
         )
 
-    issues.extend(
-        _validate_real_product_topic_closure(graph, resolved_products)
-    )
-    issues.extend(
-        _validate_real_product_process_closure(graph, resolved_products)
-    )
+    issues.extend(_validate_real_product_topic_closure(graph, resolved_products))
+    issues.extend(_validate_real_product_process_closure(graph, resolved_products))
     issues.extend(_validate_native_contract_parity(graph))
     return issues
 
@@ -239,11 +226,7 @@ def _tag_variant_issues(
         RuntimeGraphIssue(
             code=issue.code,
             message=f"Product {product} variant {variant!r}: {issue.message}",
-            scope=(
-                _product_variant_scope(product, variant)
-                if issue.scope == f"product:{product}"
-                else issue.scope
-            ),
+            scope=(_product_variant_scope(product, variant) if issue.scope == f"product:{product}" else issue.scope),
             severity=issue.severity,
         )
         for issue in issues
@@ -316,46 +299,41 @@ def _validate_product(
             capabilities,
         )
     )
-    issues.extend(
-        _validate_native_final_writer_contract(name, product, capabilities)
-    )
-    issues.extend(_validate_native_map_ownership(name, product))
-    if product.get("operator_switchable") is True:
-        for field in PRODUCT_MODE_REQUIRED_FIELDS:
-            if field not in product or product.get(field) in (None, ""):
-                issues.append(
-                    _issue(
-                        "product_mode_field_missing",
-                        f"operator-switchable product {name} is missing {field}",
-                        scope=f"product:{name}",
-                    )
-                )
-        switch_policy = str(product.get("switch_policy") or "")
-        if switch_policy and switch_policy not in PRODUCT_SWITCH_POLICIES:
+    for field in PRODUCT_MODE_REQUIRED_FIELDS:
+        if field not in product or product.get(field) in (None, ""):
             issues.append(
                 _issue(
-                    "product_switch_policy_invalid",
-                    f"product {name} has unsupported switch policy {switch_policy!r}",
+                    "product_lifecycle_field_missing",
+                    f"product {name} is missing {field}",
                     scope=f"product:{name}",
                 )
             )
-        online_hot_switch = bool(product.get("online_hot_switch_supported", False))
-        if online_hot_switch and switch_policy != "hot_switch":
-            issues.append(
-                _issue(
-                    "product_hot_switch_policy_conflict",
-                    f"product {name} enables online hot switch but requires {switch_policy!r}",
-                    scope=f"product:{name}",
-                )
-            )
-        issues.extend(
-            _validate_product_mode_semantics(
-                name,
-                product,
-                required,
-                capabilities,
+    switch_policy = str(product.get("switch_policy") or "")
+    if switch_policy and switch_policy not in PRODUCT_SWITCH_POLICIES:
+        issues.append(
+            _issue(
+                "product_switch_policy_invalid",
+                f"product {name} has unsupported switch policy {switch_policy!r}",
+                scope=f"product:{name}",
             )
         )
+    online_hot_switch = bool(product.get("online_hot_switch_supported", False))
+    if online_hot_switch and switch_policy != "hot_switch":
+        issues.append(
+            _issue(
+                "product_hot_switch_policy_conflict",
+                f"product {name} enables online hot switch but requires {switch_policy!r}",
+                scope=f"product:{name}",
+            )
+        )
+    issues.extend(
+        _validate_product_semantics(
+            name,
+            product,
+            required,
+            capabilities,
+        )
+    )
     if name == "nav":
         for topic in (TOPICS.odometry, TOPICS.map_cloud, TOPICS.localization_health):
             if topic not in required:
@@ -377,16 +355,16 @@ def _validate_operator_motion_contract(
 ) -> list[RuntimeGraphIssue]:
     """Require the typed motion boundary when native mode permits operators.
 
-    The requirement is derived from ``native_nav`` policy rather than from a
+    The requirement is derived from Product control policy rather than from a
     capability flag, so deleting the capability cannot make the validation
     requirement disappear.
     """
 
-    native_nav = product.get("native_nav")
+    native_nav = product.get("native_nav") or {}
     if not isinstance(native_nav, dict):
         return []
 
-    control_mode = str(native_nav.get("control_mode") or "").strip()
+    control_mode = str(product.get("native_control_mode") or "").strip()
     allow_takeover = native_nav.get("allow_teleop_takeover") is True
     requires_operator_motion = control_mode in {"teleop", "teleop_avoid"} or (
         control_mode == "autonomy" and allow_takeover
@@ -437,51 +415,6 @@ def _validate_operator_motion_contract(
     return issues
 
 
-def _validate_native_final_writer_contract(
-    name: str,
-    product: dict[str, Any],
-    required_capabilities: tuple[str, ...],
-) -> list[RuntimeGraphIssue]:
-    capabilities = set(required_capabilities)
-    if "final_cmd_vel_single_writer" not in capabilities:
-        return []
-
-    forbidden_modules = set(_string_tuple(product.get("forbidden_modules")))
-    missing = sorted(PYTHON_MOTION_AUTHORITY_MODULES - forbidden_modules)
-    if not missing:
-        return []
-    return [
-        _issue(
-            "product_python_motion_authority_not_forbidden",
-            f"native final-writer product {name} must forbid Python motion authorities: "
-            f"{', '.join(missing)}",
-            scope=f"product:{name}",
-        )
-    ]
-
-
-def _validate_native_map_ownership(
-    name: str,
-    product: dict[str, Any],
-) -> list[RuntimeGraphIssue]:
-    """Keep Python realtime map layers out of Products with a native maps role."""
-
-    if "maps" not in set(_string_tuple(product.get("processes"))):
-        return []
-    forbidden_modules = set(_string_tuple(product.get("forbidden_modules")))
-    missing = sorted(PYTHON_REALTIME_MAP_MODULES - forbidden_modules)
-    if not missing:
-        return []
-    return [
-        _issue(
-            "product_python_realtime_map_not_forbidden",
-            f"native maps product {name} must forbid Python realtime map modules: "
-            f"{', '.join(missing)}",
-            scope=f"product:{name}",
-        )
-    ]
-
-
 def _validate_real_product_topic_closure(
     graph: RuntimeGraph,
     resolved_products: ResolvedProductVariants,
@@ -525,7 +458,11 @@ def _validate_real_product_process_closure(
     if real is None:
         return []
     definitions = real.get("processes")
-    mapped = set(definitions) if isinstance(definitions, dict) else set()
+    mapped: set[str] = set()
+    if isinstance(definitions, dict):
+        for process_name, definition in definitions.items():
+            provides = definition.get("provides") if isinstance(definition, dict) else None
+            mapped.update(provides if isinstance(provides, list) else (process_name,))
     issues: list[RuntimeGraphIssue] = []
     for name, variants in sorted(resolved_products.items()):
         for variant, product in variants:
@@ -562,9 +499,7 @@ def _validate_real_product_process_closure(
 
 def _validate_product_session_defaults(graph: RuntimeGraph) -> list[RuntimeGraphIssue]:
     switchable = {
-        name: product
-        for name, product in graph.products.items()
-        if product.get("operator_switchable") is True
+        name: product for name, product in graph.products.items() if product.get("operator_switchable") is True
     }
     active_modes = {
         str(product.get("session_mode") or "")
@@ -576,8 +511,7 @@ def _validate_product_session_defaults(graph: RuntimeGraph) -> list[RuntimeGraph
         defaults = [
             name
             for name, product in switchable.items()
-            if product.get("default_for_session_mode") is True
-            and str(product.get("session_mode") or "") == mode
+            if product.get("default_for_session_mode") is True and str(product.get("session_mode") or "") == mode
         ]
         if len(defaults) != 1:
             issues.append(
@@ -590,7 +524,7 @@ def _validate_product_session_defaults(graph: RuntimeGraph) -> list[RuntimeGraph
     return issues
 
 
-def _validate_product_mode_semantics(
+def _validate_product_semantics(
     name: str,
     product: dict[str, Any],
     required_topics: tuple[str, ...],
@@ -599,7 +533,6 @@ def _validate_product_mode_semantics(
     issues: list[RuntimeGraphIssue] = []
     topics = set(required_topics)
     capabilities = set(required_capabilities)
-    product_mode = str(product.get("product_mode") or "")
     session_mode = str(product.get("session_mode") or "")
     slam_mode = str(product.get("slam_mode") or "")
     control_mode = str(product.get("native_control_mode") or "")
@@ -615,6 +548,30 @@ def _validate_product_mode_semantics(
             )
         )
         native_nav = {}
+    selectable_local_planners = native_nav.get("local_planners")
+    if selectable_local_planners is not None:
+        default_local_planner = str(native_nav.get("local_planner") or "").strip()
+        if (
+            not isinstance(selectable_local_planners, (list, tuple))
+            or not selectable_local_planners
+            or any(
+                not isinstance(planner, str)
+                or planner not in LOCAL_PLANNER_BACKENDS
+                for planner in selectable_local_planners
+            )
+            or len(set(selectable_local_planners)) != len(selectable_local_planners)
+            or default_local_planner not in selectable_local_planners
+        ):
+            issues.append(
+                _issue(
+                    "product_local_planners_invalid",
+                    (
+                        f"product {name} native_nav.local_planners must be unique "
+                        "supported backends containing its default"
+                    ),
+                    scope=f"product:{name}",
+                )
+            )
 
     for field, value, allowed in (
         ("session_mode", session_mode, PRODUCT_SESSION_MODES),
@@ -624,7 +581,7 @@ def _validate_product_mode_semantics(
         if value and value not in allowed:
             issues.append(
                 _issue(
-                    "product_mode_value_invalid",
+                    "product_lifecycle_value_invalid",
                     f"product {name} has unsupported {field} {value!r}",
                     scope=f"product:{name}",
                 )
@@ -639,7 +596,7 @@ def _validate_product_mode_semantics(
             )
         )
 
-    if product_mode == "exploration" and not requires_map:
+    if name == "explore" and not requires_map:
         if "rolling_map_segment_execution" not in capabilities:
             issues.append(
                 _issue(
@@ -656,7 +613,7 @@ def _validate_product_mode_semantics(
                     scope=f"product:{name}",
                 )
             )
-    elif product_mode == "exploration" and "octoplanner3d_global_planning" not in capabilities:
+    elif name == "explore" and "octoplanner3d_global_planning" not in capabilities:
         issues.append(
             _issue(
                 "explore_map_missing",
@@ -670,7 +627,7 @@ def _validate_product_mode_semantics(
     # is an architecture/package name and is not a deployable process target.
     expected_processes = {"nav", "driver", "host"}
     if slam_mode != "none":
-        expected_processes.update(("lidar", "slam"))
+        expected_processes.update(("lidar", "imu", "slam"))
     if "local_planner_collision_and_traversability_scoring" in capabilities:
         expected_processes.add("traversability")
     if "inspection_evidence_capture_and_result_ack" in capabilities:
@@ -696,7 +653,7 @@ def _validate_product_mode_semantics(
         issues.append(
             _issue(
                 "product_command_boundary_incomplete",
-                f"operator-switchable product {name} misses command boundary topics: {missing_command_topics}",
+                f"product {name} misses command boundary topics: {missing_command_topics}",
                 scope=f"product:{name}",
             )
         )
@@ -715,61 +672,58 @@ def _validate_product_mode_semantics(
             issues.append(
                 _issue(
                     "product_exploration_boundary_incomplete",
-                    f"exploration product {name} misses topics: "
-                    f"{', '.join(sorted(missing_exploration_topics))}",
+                    f"exploration product {name} misses topics: {', '.join(sorted(missing_exploration_topics))}",
                     scope=f"product:{name}",
                 )
             )
 
-    local_planner = "local_planner_collision_and_traversability_scoring" in capabilities
-    if control_mode in PRODUCT_CONTROL_MODES:
-        native_control_mode = str(native_nav.get("control_mode") or "").strip()
-        if native_control_mode != control_mode:
-            issues.append(
-                _issue(
-                    "product_native_control_mode_mismatch",
-                    f"product {name} native_nav.control_mode must be {control_mode!r}",
-                    scope=f"product:{name}",
-                )
-            )
+    local_planner = (
+        "local_planner_collision_and_traversability_scoring" in capabilities
+        or "operator_assisted_local_planner_control" in capabilities
+    )
     if local_planner:
-        if native_nav.get("check_obstacle") is not True:
+        if native_nav.get("check_obstacle", control_mode != "teleop") is not True:
             issues.append(
                 _issue(
                     "product_native_obstacle_check_missing",
-                    f"product {name} must explicitly enable native obstacle checks",
+                    f"product {name} must enable native obstacle checks",
                     scope=f"product:{name}",
                 )
             )
-        if native_nav.get("use_traversability_cost") is not True:
+        uses_traversability = (
+            "local_planner_collision_and_traversability_scoring" in capabilities
+        )
+        if uses_traversability and native_nav.get(
+            "use_traversability_cost", control_mode != "teleop"
+        ) is not True:
             issues.append(
                 _issue(
                     "product_native_traversability_check_missing",
-                    f"product {name} must explicitly enable native traversability checks",
+                    f"product {name} must enable native traversability checks",
                     scope=f"product:{name}",
                 )
             )
-        planner_topics = {
-            TOPICS.registered_cloud,
-            TOPICS.traversability,
-            TOPICS.local_path,
-        }
+        planner_topics = {TOPICS.registered_cloud, TOPICS.local_path}
+        if uses_traversability:
+            planner_topics.add(TOPICS.traversability)
         missing_planner_topics = sorted(planner_topics - topics)
         if missing_planner_topics:
             issues.append(
                 _issue(
                     "product_local_planner_boundary_incomplete",
-                    f"product {name} claims native local planning but misses: "
-                    f"{', '.join(missing_planner_topics)}",
+                    f"product {name} claims native local planning but misses: {', '.join(missing_planner_topics)}",
                     scope=f"product:{name}",
                 )
             )
 
-    if "operator_assisted_local_planner_control" in capabilities and native_nav.get("teleop_local_planner") is not True:
+    if (
+        "operator_assisted_local_planner_control" in capabilities
+        and native_nav.get("teleop_local_planner", control_mode == "teleop_avoid") is not True
+    ):
         issues.append(
             _issue(
                 "product_native_teleop_local_planner_missing",
-                f"product {name} must explicitly enable the native teleop local planner",
+                f"product {name} must enable the native teleop local planner",
                 scope=f"product:{name}",
             )
         )
@@ -778,7 +732,7 @@ def _validate_product_mode_semantics(
         issues.append(
             _issue(
                 "product_final_writer_capability_missing",
-                f"operator-switchable product {name} must declare final_cmd_vel_single_writer",
+                f"product {name} must declare final_cmd_vel_single_writer",
                 scope=f"product:{name}",
             )
         )
@@ -814,11 +768,11 @@ def _validate_env(
         )
 
     if name == "real":
-        if env.get("robot_config_ref") != "config/robot_config.yaml":
+        if "robot_config_ref" in env:
             issues.append(
                 _issue(
                     "real_robot_config_ref_invalid",
-                    "real Env must reference config/robot_config.yaml",
+                    "real Env must not choose a RobotConfig; the selected Robot model owns it",
                     scope=scope,
                 )
             )
@@ -876,8 +830,7 @@ def _validate_env(
         issues.append(
             _issue(
                 "sim_backend_catalog_invalid",
-                f"sim backends must be exactly {sorted(SIM_BACKENDS)}; "
-                f"found {sorted(actual_backends)}",
+                f"sim backends must be exactly {sorted(SIM_BACKENDS)}; found {sorted(actual_backends)}",
                 scope=scope,
             )
         )
@@ -900,7 +853,7 @@ def _validate_env(
                 resolved_products=resolved_products,
                 topics=topics,
                 native_topics=native_topics,
-                native_contract_required=backend_name == "mujoco_native",
+                native_contract_required=backend_name == "mujoco",
             )
         )
     return issues
@@ -973,12 +926,44 @@ def _validate_env_implementation(
 
     process_control = str(implementation.get("process_control") or "").strip()
     process_definitions = implementation.get("processes")
-    if process_control == "systemd":
+    if process_control not in {"systemd", "subprocess"} and "support_processes" in implementation:
+        issues.append(
+            _issue(
+                "env_support_processes_invalid",
+                f"{label} support_processes are only valid for a ProductControl-managed implementation",
+                scope=scope,
+            )
+        )
+    legacy_acceptance_fields = sorted(
+        {"acceptance_runner", "acceptance_runners", "acceptance_manifests"} & set(implementation)
+    )
+    if legacy_acceptance_fields:
+        issues.append(
+            _issue(
+                "env_legacy_acceptance_catalog",
+                f"{label} must use nested acceptance metadata; remove: {', '.join(legacy_acceptance_fields)}",
+                scope=scope,
+            )
+        )
+    issues.extend(
+        _validate_acceptance_catalog(
+            label,
+            implementation.get("acceptance"),
+            supported_products=set(supported),
+            product_specs=products,
+            scope=scope,
+        )
+    )
+    if process_control in {"systemd", "subprocess"}:
         issues.extend(
-            _validate_systemd_processes(
+            _validate_managed_processes(
                 label,
                 implementation,
+                expected_manager=("systemd" if process_control == "systemd" else "direct"),
                 provided_roles=set(roles),
+                supported_products=set(supported),
+                resolved_products=resolved_products,
+                variant_limits=variant_limits,
                 scope=scope,
             )
         )
@@ -991,20 +976,11 @@ def _validate_env_implementation(
                     scope=scope,
                 )
             )
-        if not str(implementation.get("acceptance_runner") or "").strip():
+        if implementation.get("acceptance") is None:
             issues.append(
                 _issue(
-                    "env_acceptance_runner_missing",
-                    f"{label} must declare its acceptance runner",
-                    scope=scope,
-                )
-            )
-        manifests = implementation.get("acceptance_manifests")
-        if not isinstance(manifests, dict) or not manifests:
-            issues.append(
-                _issue(
-                    "env_acceptance_manifests_missing",
-                    f"{label} must declare Product acceptance manifests",
+                    "env_acceptance_catalog_missing",
+                    f"{label} must declare nested acceptance metadata",
                     scope=scope,
                 )
             )
@@ -1058,10 +1034,7 @@ def _validate_env_implementation(
         for product_name in sorted(set(supported) & set(products)):
             for variant, product in resolved_products.get(product_name, ()):
                 allowed_variants = variant_limits.get(product_name)
-                if (
-                    allowed_variants is not None
-                    and variant not in allowed_variants
-                ):
+                if allowed_variants is not None and variant not in allowed_variants:
                     continue
                 try:
                     required_topics = set(
@@ -1149,12 +1122,7 @@ def _validate_supported_product_variants(
                 )
             )
             continue
-        if any(
-            not isinstance(item, str)
-            or not item.strip()
-            or item != item.strip()
-            for item in raw_variants
-        ):
+        if any(not isinstance(item, str) or not item.strip() or item != item.strip() for item in raw_variants):
             issues.append(
                 _issue(
                     "env_supported_product_variants_invalid",
@@ -1178,8 +1146,7 @@ def _validate_supported_product_variants(
             issues.append(
                 _issue(
                     "env_supported_product_variant_unknown",
-                    f"{label} Product {product} references unknown variants: "
-                    f"{', '.join(unknown)}",
+                    f"{label} Product {product} references unknown variants: {', '.join(unknown)}",
                     scope=scope,
                 )
             )
@@ -1189,8 +1156,7 @@ def _validate_supported_product_variants(
             issues.append(
                 _issue(
                     "env_default_product_variant_unsupported",
-                    f"{label} Product {product} must support its default variant "
-                    f"{default_variant!r}",
+                    f"{label} Product {product} must support its default variant {default_variant!r}",
                     scope=scope,
                 )
             )
@@ -1209,11 +1175,15 @@ def _validate_supported_product_variants(
     return limits, issues
 
 
-def _validate_systemd_processes(
+def _validate_managed_processes(
     label: str,
     implementation: dict[str, Any],
     *,
+    expected_manager: str,
     provided_roles: set[str],
+    supported_products: set[str],
+    resolved_products: ResolvedProductVariants,
+    variant_limits: dict[str, frozenset[str]],
     scope: str,
 ) -> list[RuntimeGraphIssue]:
     issues: list[RuntimeGraphIssue] = []
@@ -1226,83 +1196,385 @@ def _validate_systemd_processes(
                 scope=scope,
             )
         ]
-    process_roles = set(process_definitions)
-    if process_roles != provided_roles:
-        issues.append(
-            _issue(
-                "env_role_ownership_mismatch",
-                f"{label} provided_roles must exactly match its process role owners",
-                scope=scope,
-            )
-        )
-    manager = str(implementation.get("process_manager") or "").strip()
-    if manager not in {"systemd", "direct", "external"}:
+    manager = implementation.get("process_manager")
+    if manager != expected_manager:
         issues.append(
             _issue(
                 "env_process_manager_invalid",
-                f"{label} has invalid process manager {manager!r}",
+                f"{label} process manager must be {expected_manager!r}",
                 scope=scope,
             )
         )
-    orders: dict[int, str] = {}
     targets: dict[str, str] = {}
+    role_owners: dict[str, str] = {}
+    resolved_processes: dict[str, Any] = {}
     for process_name, process in process_definitions.items():
-        if not isinstance(process, dict):
+        try:
+            variants = _parse_process_platform_variants(
+                process_name,
+                process,
+                owner=label,
+                manager=expected_manager,
+                repository_root=None,
+            )
+        except ValueError as exc:
             issues.append(
                 _issue(
                     "env_process_invalid",
-                    f"{label} process role {process_name} must be a mapping",
+                    f"{label} process {process_name!r} is invalid: {exc}",
                     scope=scope,
                 )
             )
             continue
-        target = str(process.get("target") or "").strip()
-        lifecycle = str(process.get("lifecycle") or "").strip()
-        order = process.get("order")
-        timeout_s = process.get("timeout_s")
-        if not target or lifecycle not in {"mode", "persistent"}:
-            issues.append(
-                _issue(
-                    "env_process_invalid",
-                    f"{label} process role {process_name} has invalid target or lifecycle",
-                    scope=scope,
-                )
-            )
-        if target in targets:
+        resolved = next(iter(variants.values()))
+        resolved_processes[resolved.name] = resolved
+        if resolved.target in targets:
             issues.append(
                 _issue(
                     "env_process_owner_duplicate",
-                    f"{label} roles {targets[target]} and {process_name} share one process owner",
-                    scope=scope,
-                )
-            )
-        elif target:
-            targets[target] = str(process_name)
-        if (
-            isinstance(order, bool)
-            or not isinstance(order, int)
-            or order < 0
-            or isinstance(timeout_s, bool)
-            or not isinstance(timeout_s, int)
-            or timeout_s <= 0
-        ):
-            issues.append(
-                _issue(
-                    "env_process_invalid",
-                    f"{label} process role {process_name} has invalid order or timeout_s",
-                    scope=scope,
-                )
-            )
-        elif order in orders:
-            issues.append(
-                _issue(
-                    "env_process_order_duplicate",
-                    f"{label} process roles {orders[order]} and {process_name} share order {order}",
+                    f"{label} physical owners {targets[resolved.target]} and "
+                    f"{resolved.name} share target {resolved.target}",
                     scope=scope,
                 )
             )
         else:
-            orders[order] = str(process_name)
+            targets[resolved.target] = resolved.name
+        for role in resolved.provides:
+            existing = role_owners.setdefault(role, resolved.name)
+            if existing != resolved.name:
+                issues.append(
+                    _issue(
+                        "env_process_role_duplicate",
+                        f"{label} logical role {role} is owned by both {existing} and {resolved.name}",
+                        scope=scope,
+                    )
+                )
+    if set(role_owners) != provided_roles:
+        issues.append(
+            _issue(
+                "env_role_ownership_mismatch",
+                f"{label} provided_roles must exactly match the union of process provides",
+                scope=scope,
+            )
+        )
+    try:
+        support_processes = _support_process_names(
+            implementation.get("support_processes", []),
+            owner=label,
+        )
+    except ValueError as exc:
+        issues.append(
+            _issue(
+                "env_support_processes_invalid",
+                f"{label} support_processes are invalid: {exc}",
+                scope=scope,
+            )
+        )
+        support_processes = ()
+    missing_support = sorted(set(support_processes) - set(resolved_processes))
+    invalid_support = sorted(
+        process_name
+        for process_name in support_processes
+        if process_name in resolved_processes
+        and (resolved_processes[process_name].provides or resolved_processes[process_name].lifecycle != "mode")
+    )
+    support_role_overlap = sorted(set(support_processes) & provided_roles)
+    if missing_support or invalid_support or support_role_overlap:
+        details: list[str] = []
+        if missing_support:
+            details.append(f"unknown={missing_support}")
+        if invalid_support:
+            details.append(f"not_mode_or_role_free={invalid_support}")
+        if support_role_overlap:
+            details.append(f"provided_roles={support_role_overlap}")
+        issues.append(
+            _issue(
+                "env_support_processes_invalid",
+                f"{label} support_processes violate the support contract ({', '.join(details)})",
+                scope=scope,
+            )
+        )
+    orphan_support = sorted(
+        process.name
+        for process in resolved_processes.values()
+        if process.manager == "direct" and not process.provides and process.name not in support_processes
+    )
+    if orphan_support:
+        issues.append(
+            _issue(
+                "env_support_processes_invalid",
+                f"{label} direct processes without logical roles must be declared "
+                f"as support_processes: {', '.join(orphan_support)}",
+                scope=scope,
+            )
+        )
+    conflicts: tuple[str, ...] = ()
+    conflicts_valid = True
+    try:
+        conflicts = _parse_conflict_targets(
+            implementation.get("conflicts"),
+            owner=label,
+            manager=expected_manager,
+        )
+    except ValueError as exc:
+        conflicts_valid = False
+        issues.append(
+            _issue(
+                "env_process_conflicts_invalid",
+                f"{label} conflicts are invalid: {exc}",
+                scope=scope,
+            )
+        )
+    else:
+        overlap = sorted(set(conflicts).intersection(targets))
+        if overlap:
+            issues.append(
+                _issue(
+                    "env_process_conflict_overlap",
+                    f"{label} process targets also appear as conflicts: {', '.join(overlap)}",
+                    scope=scope,
+                )
+            )
+    if conflicts_valid and len(resolved_processes) == len(process_definitions):
+        try:
+            resolve_stop_before_start(
+                implementation,
+                tuple(resolved_processes.values()),
+                conflicts,
+                owner=label,
+            )
+        except ValueError as exc:
+            issues.append(
+                _issue(
+                    "env_stop_before_start_invalid",
+                    f"{label} stop_before_start is invalid: {exc}",
+                    scope=scope,
+                )
+            )
+    available_roles = set(role_owners)
+    for product_name in sorted(supported_products):
+        for variant, product in resolved_products.get(product_name, ()):
+            allowed_variants = variant_limits.get(product_name)
+            if allowed_variants is not None and variant not in allowed_variants:
+                continue
+            required_roles = set(_string_tuple(product.get("processes")))
+            support_declared_as_role = sorted(required_roles & set(support_processes))
+            if support_declared_as_role:
+                issues.append(
+                    _issue(
+                        "env_support_processes_invalid",
+                        f"{label} Product "
+                        f"{_product_variant_label(product_name, variant)} declares "
+                        "physical support process names as logical roles: "
+                        f"{', '.join(support_declared_as_role)}",
+                        scope=scope,
+                    )
+                )
+            missing_roles = sorted(required_roles - available_roles)
+            if missing_roles:
+                issues.append(
+                    _issue(
+                        "env_product_process_missing",
+                        f"{label} cannot provide Product "
+                        f"{_product_variant_label(product_name, variant)} roles: "
+                        f"{', '.join(missing_roles)}",
+                        scope=scope,
+                    )
+                )
+    return issues
+
+
+def _validate_acceptance_catalog(
+    label: str,
+    catalog: Any,
+    *,
+    supported_products: set[str],
+    product_specs: Mapping[str, Mapping[str, Any]],
+    scope: str,
+) -> list[RuntimeGraphIssue]:
+    if catalog is None:
+        return []
+    if not isinstance(catalog, dict) or set(catalog) != {"entrypoint", "products"}:
+        return [
+            _issue(
+                "env_acceptance_catalog_invalid",
+                f"{label} acceptance must contain exactly entrypoint and products",
+                scope=scope,
+            )
+        ]
+
+    issues: list[RuntimeGraphIssue] = []
+    if not str(catalog.get("entrypoint") or "").strip():
+        issues.append(
+            _issue(
+                "env_acceptance_path_invalid",
+                f"{label} acceptance entrypoint must be a non-empty path",
+                scope=scope,
+            )
+        )
+    products = catalog.get("products")
+    if not isinstance(products, dict):
+        issues.append(
+            _issue(
+                "env_acceptance_catalog_invalid",
+                f"{label} acceptance products must be a mapping",
+                scope=scope,
+            )
+        )
+        return issues
+
+    declared_products = {str(product) for product in products}
+    if declared_products != supported_products:
+        issues.append(
+            _issue(
+                "env_acceptance_product_coverage_invalid",
+                f"{label} acceptance products must cover exactly "
+                f"{sorted(supported_products)}; found {sorted(declared_products)}",
+                scope=scope,
+            )
+        )
+    for product, target in products.items():
+        product_spec = product_specs.get(product)
+        raw_variants = product_spec.get("variants") if isinstance(product_spec, Mapping) else None
+        declared_variants = {str(variant) for variant in raw_variants} if isinstance(raw_variants, Mapping) else set()
+        if declared_variants:
+            if not isinstance(target, dict) or set(target) != {"variants"}:
+                issues.append(
+                    _issue(
+                        "env_acceptance_target_invalid",
+                        f"{label} acceptance target {product!r} must contain exactly variants",
+                        scope=scope,
+                    )
+                )
+                continue
+            variant_targets = target["variants"]
+            if not isinstance(variant_targets, dict):
+                issues.append(
+                    _issue(
+                        "env_acceptance_target_invalid",
+                        f"{label} acceptance target {product!r} variants must be a mapping",
+                        scope=scope,
+                    )
+                )
+                continue
+            found_variants = {str(variant) for variant in variant_targets}
+            if found_variants != declared_variants:
+                issues.append(
+                    _issue(
+                        "env_acceptance_variant_coverage_invalid",
+                        f"{label} acceptance target {product!r} variants must cover "
+                        f"exactly {sorted(declared_variants)}; found "
+                        f"{sorted(found_variants)}",
+                        scope=scope,
+                    )
+                )
+            acceptance_targets: Iterable[tuple[Any, Any]] = variant_targets.items()
+        else:
+            acceptance_targets = ((None, target),)
+        for variant, variant_target in acceptance_targets:
+            target_label = repr(product) if variant is None else f"{product!r} variant {variant!r}"
+            selected_spec = product_spec
+            if variant is not None and isinstance(product_spec, Mapping):
+                try:
+                    selected_spec = resolve_product_variant_spec(
+                        str(product),
+                        product_spec,
+                        product_variant=str(variant),
+                    )
+                except ValueError:
+                    selected_spec = product_spec
+            native_nav = (
+                selected_spec.get("native_nav")
+                if isinstance(selected_spec, Mapping)
+                else None
+            )
+            selectable = (
+                native_nav.get("local_planners")
+                if isinstance(native_nav, Mapping)
+                else None
+            )
+            declared_local_planners = (
+                {str(planner) for planner in selectable}
+                if isinstance(selectable, (list, tuple))
+                else set()
+            )
+            leaf_targets: Iterable[tuple[str | None, Any]] = ((None, variant_target),)
+            if isinstance(variant_target, dict) and set(variant_target) == {"local_planners"}:
+                local_planners = variant_target["local_planners"]
+                if not isinstance(local_planners, dict) or not local_planners:
+                    issues.append(
+                        _issue(
+                            "env_acceptance_target_invalid",
+                            f"{label} acceptance target {target_label} local_planners must be a non-empty mapping",
+                            scope=scope,
+                        )
+                    )
+                    continue
+                planner_names = tuple(local_planners)
+                if any(
+                    not isinstance(name, str) or not name.strip() or name != name.strip()
+                    for name in planner_names
+                ):
+                    issues.append(
+                        _issue(
+                            "env_acceptance_target_invalid",
+                            f"{label} acceptance target {target_label} has invalid local-planner names",
+                            scope=scope,
+                        )
+                    )
+                    continue
+                if set(planner_names) != declared_local_planners:
+                    issues.append(
+                        _issue(
+                            "env_acceptance_target_invalid",
+                            (
+                                f"{label} acceptance target {target_label} local_planners "
+                                "must match the Product declaration"
+                            ),
+                            scope=scope,
+                        )
+                    )
+                    continue
+                leaf_targets = local_planners.items()
+            elif len(declared_local_planners) > 1:
+                issues.append(
+                    _issue(
+                        "env_acceptance_target_invalid",
+                        f"{label} acceptance target {target_label} must select local_planners",
+                        scope=scope,
+                    )
+                )
+                continue
+            for local_planner, leaf_target in leaf_targets:
+                leaf_label = (
+                    target_label
+                    if local_planner is None
+                    else f"{target_label} local planner {local_planner!r}"
+                )
+                if not isinstance(leaf_target, dict) or set(leaf_target) != {
+                    "runner",
+                    "manifest",
+                }:
+                    issues.append(
+                        _issue(
+                            "env_acceptance_target_invalid",
+                            f"{label} acceptance target {leaf_label} must contain exactly runner and manifest",
+                            scope=scope,
+                        )
+                    )
+                    continue
+                if not any(
+                    not str(leaf_target.get(field) or "").strip()
+                    for field in ("runner", "manifest")
+                ):
+                    continue
+                issues.append(
+                    _issue(
+                        "env_acceptance_path_invalid",
+                        f"{label} acceptance target {leaf_label} paths must be non-empty",
+                        scope=scope,
+                    )
+                )
     return issues
 
 
@@ -1362,14 +1634,14 @@ def _validate_native_contract_parity(graph: RuntimeGraph) -> list[RuntimeGraphIs
     real = graph.envs.get("real")
     sim = graph.envs.get("sim")
     backends = sim.get("backends") if isinstance(sim, dict) else None
-    mujoco_native = backends.get("mujoco_native") if isinstance(backends, dict) else None
-    if not isinstance(real, dict) or not isinstance(mujoco_native, dict):
+    mujoco = backends.get("mujoco") if isinstance(backends, dict) else None
+    if not isinstance(real, dict) or not isinstance(mujoco, dict):
         return []
 
     native_topics = set(graph.native_contract_topics)
     contracts = (
         ("real", _env_endpoint_contract(real)),
-        ("sim", _env_endpoint_contract(mujoco_native)),
+        ("sim", _env_endpoint_contract(mujoco)),
     )
     issues: list[RuntimeGraphIssue] = []
     for env_name, contract in contracts:
@@ -1378,8 +1650,7 @@ def _validate_native_contract_parity(graph: RuntimeGraph) -> list[RuntimeGraphIs
             issues.append(
                 _issue(
                     "native_endpoint_parity_missing",
-                    f"{env_name} Env does not expose native contract topics: "
-                    f"{', '.join(missing_topics)}",
+                    f"{env_name} Env does not expose native contract topics: {', '.join(missing_topics)}",
                     scope=f"env:{env_name}",
                 )
             )

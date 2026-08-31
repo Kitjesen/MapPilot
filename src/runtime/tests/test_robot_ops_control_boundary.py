@@ -18,19 +18,13 @@ def _function(source: str, name: str) -> str:
 
 def test_robot_ops_uses_env_as_the_outer_runtime_selector() -> None:
     source = _source()
-    mode = _function(source, "cmd_mode")
+    switch = _function(source, "cmd_switch")
 
     assert 'LINGTU_ENV="${LINGTU_ENV:-real}"' in source
-    assert "--env real|sim" in source
-    assert '"$py" -m lingtu.control switch "$target" --env "$LINGTU_ENV"' in mode
-    assert "--adapter" not in _function(source, "mode_switch_usage")
-
-
-def test_runtime_spec_uses_a_profile_adapter_not_a_top_level_endpoint() -> None:
-    usage = _function(_source(), "cmd_runtime_spec_usage")
-
-    assert "--adapter PROFILE_ADAPTER" in usage
-    assert "--endpoint" not in usage
+    assert 'LINGTU_ROBOT="${LINGTU_ROBOT:-}"' in source
+    assert "--env real|sim" in _function(source, "product_switch_usage")
+    assert 'lingtu_control switch "$target" --env "$LINGTU_ENV"' in switch
+    assert "--adapter" not in _function(source, "product_switch_usage")
 
 
 def test_doctor_bash_wrapper_is_thin_and_read_only() -> None:
@@ -48,76 +42,48 @@ def test_doctor_bash_wrapper_is_thin_and_read_only() -> None:
         assert forbidden not in doctor
 
 
-def test_svc_mutations_delegate_to_active_product_control() -> None:
+def test_svc_is_read_only_process_status() -> None:
     source = _source()
     svc = _function(source, "cmd_svc")
 
-    assert "lingtu_control reapply" in svc
-    assert 'lingtu_control restart --process "$target"' in svc
-    assert "lingtu_control stop" in svc
-    assert "svc_process() {" not in source
-    assert "lidar|slam|maps|traversability|nav|driver|camera|explore|host)" in svc
-    restart = svc.split("\n        restart)", 1)[1].split("\n        reapply)", 1)[0]
-    for rejected in (
-        "lingtu-nav-dds.service",
-        "fastlio2",
-        "localization",
-        "nav_dds",
-    ):
-        assert rejected not in restart
-    assert "\n        start)" not in svc
-    assert "\n        apply)" not in svc
-    assert "start|apply" not in svc
-    assert "svc|service)" not in source
-    assert "reapply" + "-active" not in svc
-    assert "restart" + "-active" not in svc
-    assert "stop" + "-active" not in svc
-    for forbidden in (
-        "systemctl restart",
-        "systemctl stop",
-        "svc_force_stop_unit",
-        "svc_restart_robot_stack",
-        "svc_restart_localization_chain",
-        "svc_restart_lidar_chain",
-    ):
+    for forbidden in ("lingtu_control", "systemctl restart", "systemctl stop"):
         assert forbidden not in svc
+    assert "Usage: lingtu svc status" in svc
 
 
 def test_svc_status_uses_the_real_run_plan_process_inventory() -> None:
     svc = _function(_source(), "cmd_svc")
 
     expected_rows = {
-        "lidar": "lingtu-livox-dds.service",
-        "slam": "lingtu-slam-dds.service",
-        "maps": "mapd.service",
-        "traversability": "lingtu-traversability-dds.service",
-        "nav": "lingtu-nav-dds.service",
-        "driver": "lingtu-driver.service",
-        "camera": "lingtu-camera-dds.service",
-        "explore": "lingtu-explore-dds.service",
-        "host": "lingtu.service",
+        "lidar": "lt-lidar.service",
+        "slam": "lt-slam.service",
+        "maps": "lt-maps.service",
+        "traversability": "lt-terrain.service",
+        "nav": "lt-nav.service",
+        "driver": "lt-driver.service",
+        "camera": "lt-camera.service",
+        "explore": "lt-explore.service",
+        "host": "lt-host.service",
     }
     for label, unit in expected_rows.items():
         assert f"print_service_row {unit} {label}" in svc
 
 
-def test_status_and_inspect_delegate_explanation_to_run_plan_owner() -> None:
+def test_field_cli_does_not_expose_the_retired_explain_surface() -> None:
     source = _source()
     status = _function(source, "cmd_status")
-    inspect = _function(source, "cmd_inspect")
 
-    assert '"$py" -m lingtu.explain status --explain' in status
-    assert '"$py" -m lingtu.explain inspect "$@" --env "$LINGTU_ENV"' in inspect
-    assert "python - <<" not in status
-    assert "python - <<" not in inspect
+    assert "lingtu.explain" not in source
+    assert "\ncmd_inspect() {" not in source
+    assert "Usage: lingtu status" in status
 
 
 def test_nav_relocalization_is_a_product_switch() -> None:
     source = _source()
     nav = _function(source, "cmd_nav")
 
-    assert 'cmd_mode switch nav --map "$map" --initial-pose "$x" "$y" "$yaw"' in nav
-    assert 'cmd_mode switch nav --map "$map" --relocalize' in nav
+    assert 'cmd_switch nav --map "$map" --initial-pose "$x" "$y" "$yaw"' in nav
+    assert 'cmd_switch nav --map "$map" --relocalize' in nav
     assert "/api/v1/slam/relocalize" not in nav
     assert "/api/v1/slam/auto_relocalize" not in nav
 
@@ -215,10 +181,10 @@ def test_python_gates_own_motion_and_acceptance_orchestration() -> None:
     assert "lingtu.control" in support
     assert "run_product_control" in motion
     assert '"switch", "nav", "--env"' in motion
-    assert '"stop-session"' in motion
+    assert '"stop"' in motion
     assert "motion_smoke_summary.json" in motion
     assert "run_product_control" in acceptance
     assert '"switch", "nav", "--env"' in acceptance
-    assert '"stop-session"' in acceptance
+    assert '"stop"' in acceptance
     assert 'root / "summary.json"' in acceptance
 

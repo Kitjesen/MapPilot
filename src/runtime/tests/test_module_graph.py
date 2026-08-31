@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 
 from runtime.blueprint import Blueprint
-from lingtu.assembly.graph import WireEdge, blueprint_for_profile, graph_for_profile
-from lingtu.assembly.wires.types import WireSpec
 from runtime.module import Module
 from runtime.stream import In, Out
 
@@ -48,7 +46,6 @@ def test_blueprint_exports_portable_module_graph_without_building_modules():
             topic="/source/frames",
         )
         .auto_wire()
-        .global_config(n_workers=2, runtime="portable")
     )
 
     graph = bp.export_graph(profile="unit")
@@ -66,7 +63,6 @@ def test_blueprint_exports_portable_module_graph_without_building_modules():
         "tags": ["lidar", "portable"],
     }
     assert manifest["auto_wire"] is True
-    assert manifest["global_config"] == {"n_workers": 2, "runtime": "portable"}
     assert manifest["explicit_wires"][0]["topic"] == "/source/frames"
     assert manifest["explicit_wires"][0]["delivery"] == "dds"
     assert manifest["explicit_wires"][0]["transport"] == "dds"
@@ -124,21 +120,6 @@ def test_blueprint_wire_records_delivery_mode():
     assert manifest["explicit_wires"][0]["transport"] == "local"
 
 
-def test_profile_wire_edge_preserves_string_delivery_name():
-    spec = WireSpec(
-        "Source",
-        "frames",
-        "SinkModule",
-        "frames_in",
-        delivery="local",
-        topic="/source/frames",
-    )
-
-    edge = WireEdge.from_blueprint_spec(spec)
-
-    assert edge.as_snapshot() == "Source.frames->SinkModule.frames_in[local]@/source/frames"
-
-
 def test_module_graph_reflects_namespace_and_merge():
     first = Blueprint().add(SourceModule, alias="Source")
     first.wire("Source", "frames", "SinkModule", "frames_in")
@@ -160,12 +141,3 @@ def test_module_graph_reports_dangling_wires_before_runtime_build():
     graph = bp.export_graph()
 
     assert [wire.in_module for wire in graph.dangling_wires()] == ["MissingModule"]
-
-
-def test_profile_runtime_graph_uses_blueprint_export_graph():
-    bp = blueprint_for_profile("stub")
-    exported = bp.export_graph(profile="stub")
-    runtime_graph = graph_for_profile("stub", mode="runtime")
-
-    assert runtime_graph.modules == exported.module_names
-    assert runtime_graph.as_snapshot() == exported.as_snapshot()

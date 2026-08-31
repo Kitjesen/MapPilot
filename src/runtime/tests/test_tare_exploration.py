@@ -123,17 +123,13 @@ class TestTAREExplorerModulePorts(unittest.TestCase):
         self.assertIn("tare_stats", m.ports_out)
         self.assertIn("alive", m.ports_out)
 
-    def test_exploration_goal_port_mirrors_wavefront(self):
-        """Drop-in: port name + msg type must match the wavefront module
-        so autoconnect can wire either backend to nav.mission."""
-        from explore.frontier import WavefrontFrontierExplorer
+    def test_exploration_goal_uses_shared_pose_contract(self):
         from explore.tare.module import TAREExplorerModule
+        from runtime.msgs.geometry import PoseStamped
 
         tare = TAREExplorerModule()
-        wave = WavefrontFrontierExplorer()
         tare_port = tare.ports_out["exploration_goal"]
-        wave_port = wave.ports_out["exploration_goal"]
-        self.assertEqual(tare_port.msg_type, wave_port.msg_type)
+        self.assertEqual(tare_port.msg_type, PoseStamped)
 
     def test_stub_mode_no_crash(self):
         """No DDS path should still setup/start/stop cleanly."""
@@ -699,16 +695,6 @@ class TestExplorationStackFactory(unittest.TestCase):
         with self.assertRaises(ValueError):
             exploration(backend="bogus")
 
-    def test_wavefront_backend_removed(self):
-        """commit 1c457f3 moved 'wavefront' out of this stack; wavefront
-        now lives only in explore.frontier (added separately
-        via navigation(enable_frontier=True)). exploration() should reject
-        the legacy backend name explicitly."""
-        from lingtu.assembly.stacks.exploration import exploration
-
-        with self.assertRaises(ValueError):
-            exploration(backend="wavefront")
-
     def test_tare_external_adds_bridge_without_native_binary(self):
         from lingtu.assembly.stacks.exploration import exploration
 
@@ -723,9 +709,9 @@ class TestExplorationStackFactory(unittest.TestCase):
         self.assertEqual(tare.config["configured_backend"], "tare_external")
 
     def test_full_stack_forwards_external_tare_supervisor_timeout(self):
-        from lingtu.assembly.products.thunder import thunder_blueprint
+        from lingtu.assembly.products.host import host_blueprint
 
-        bp = thunder_blueprint(
+        bp = host_blueprint(
             robot="stub",
             slam_profile="none",
             llm="mock",
@@ -733,7 +719,6 @@ class TestExplorationStackFactory(unittest.TestCase):
             enable_native=False,
             enable_semantic=False,
             enable_gateway=False,
-            enable_map_modules=False,
             run_startup_checks=False,
             exploration_backend="tare_external",
             exploration_auto_start=False,
@@ -746,144 +731,6 @@ class TestExplorationStackFactory(unittest.TestCase):
         self.assertEqual(supervisor.config["warn_timeout_s"], 45.0)
         self.assertEqual(supervisor.config["fallback_timeout_s"], 180.0)
         self.assertEqual(supervisor.config["poll_hz"], 2.0)
-
-    def test_full_stack_forwards_external_tare_navigation_fallback(self):
-        from lingtu.assembly.products.thunder import thunder_blueprint
-
-        bp = thunder_blueprint(
-            robot="stub",
-            slam_profile="none",
-            llm="mock",
-            planner_backend="astar",
-            enable_native=False,
-            enable_semantic=False,
-            enable_gateway=False,
-            enable_map_modules=False,
-            run_startup_checks=False,
-            exploration_backend="tare_external",
-            exploration_auto_start=False,
-            allow_direct_goal_fallback=True,
-            direct_goal_fallback_on_planner_failure=True,
-        )
-
-        navigation = next(e for e in bp._entries if e.name == "nav.mission")
-        self.assertIs(navigation.config["allow_direct_goal_fallback"], True)
-        self.assertIs(
-            navigation.config["direct_goal_fallback_on_planner_failure"],
-            True,
-        )
-
-    def test_full_stack_forwards_external_tare_strategy_path_control(self):
-        from lingtu.assembly.products.thunder import thunder_blueprint
-
-        bp = thunder_blueprint(
-            robot="stub",
-            slam_profile="none",
-            llm="mock",
-            planner_backend="astar",
-            enable_native=False,
-            enable_semantic=False,
-            enable_gateway=False,
-            enable_map_modules=False,
-            run_startup_checks=False,
-            exploration_backend="tare_external",
-            exploration_auto_start=False,
-            external_strategy_path_control=True,
-        )
-
-        navigation = next(e for e in bp._entries if e.name == "nav.mission")
-        self.assertIs(navigation.config["external_strategy_path_control"], True)
-
-    def test_full_stack_forwards_external_tare_strategy_path_config(self):
-        from lingtu.assembly.products.thunder import thunder_blueprint
-
-        bp = thunder_blueprint(
-            robot="stub",
-            slam_profile="none",
-            llm="mock",
-            planner_backend="astar",
-            enable_native=False,
-            enable_semantic=False,
-            enable_gateway=False,
-            enable_map_modules=False,
-            run_startup_checks=False,
-            exploration_backend="tare_external",
-            exploration_auto_start=False,
-            external_strategy_start_tolerance_m=0.8,
-            path_start_tolerance_m=0.8,
-            path_max_goal_count=6,
-            path_strategy_timeout_s=2.5,
-            path_strategy_fallback_to_waypoint=False,
-        )
-
-        navigation = next(e for e in bp._entries if e.name == "nav.mission")
-        tare = next(e for e in bp._entries if e.name == "TAREExplorerModule")
-        self.assertEqual(navigation.config["external_strategy_start_tolerance_m"], 0.8)
-        self.assertEqual(tare.config["path_start_tolerance_m"], 0.8)
-        self.assertEqual(tare.config["path_max_goal_count"], 6)
-        self.assertEqual(tare.config["path_strategy_timeout_s"], 2.5)
-        self.assertIs(tare.config["path_strategy_fallback_to_waypoint"], False)
-
-    def test_full_stack_forwards_partial_goal_progress_for_tare(self):
-        from lingtu.assembly.products.thunder import thunder_blueprint
-
-        bp = thunder_blueprint(
-            robot="stub",
-            slam_profile="none",
-            llm="mock",
-            planner_backend="astar",
-            enable_native=False,
-            enable_semantic=False,
-            enable_gateway=False,
-            enable_map_modules=False,
-            run_startup_checks=False,
-            exploration_backend="tare_external",
-            exploration_auto_start=False,
-            accept_partial_goal_progress=True,
-        )
-
-        navigation = next(e for e in bp._entries if e.name == "nav.mission")
-        self.assertIs(navigation.config["accept_partial_goal_progress"], True)
-
-    def test_external_tare_strategy_path_is_wired_to_navigation_patrol(self):
-        from lingtu.assembly.products.thunder import thunder_blueprint
-
-        system = thunder_blueprint(
-            robot="stub",
-            slam_profile="none",
-            llm="mock",
-            planner_backend="astar",
-            enable_native=False,
-            enable_semantic=False,
-            enable_gateway=False,
-            enable_map_modules=False,
-            run_startup_checks=False,
-            exploration_backend="tare_external",
-            exploration_auto_start=False,
-        ).build()
-
-        self.assertIn(
-            (
-                "TAREExplorerModule",
-                "exploration_path",
-                "nav.mission",
-                "patrol_goals",
-            ),
-            system.connections,
-        )
-        self.assertTrue(
-            any(conn[1:] == ("odometry", "TAREExplorerModule", "odometry") for conn in system.connections),
-            system.connections,
-        )
-        self.assertIn(
-            (
-                "nav.mission",
-                "mission_status",
-                "TAREExplorerModule",
-                "navigation_status",
-            ),
-            system.connections,
-        )
 
     def test_tare_adds_bridge_without_native_binary(self):
         """LingTu TARE is in-process by default; no native binary required."""
@@ -906,9 +753,9 @@ class TestExplorationStackFactory(unittest.TestCase):
         self.assertEqual(_module_names(bp), set())
 
     def test_native_field_stack_mounts_command_client_not_python_tare(self):
-        from lingtu.assembly.products.thunder import thunder_blueprint
+        from lingtu.assembly.products.host import host_blueprint
 
-        bp = thunder_blueprint(
+        bp = host_blueprint(
             robot="stub",
             slam_profile="none",
             llm="mock",
@@ -916,7 +763,6 @@ class TestExplorationStackFactory(unittest.TestCase):
             enable_native=False,
             enable_semantic=False,
             enable_gateway=False,
-            enable_map_modules=False,
             run_startup_checks=False,
             native_navigation_endpoint="lingtu-nav-dds",
             command_output_mode="endpoint_only",

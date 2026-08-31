@@ -1,4 +1,4 @@
-schema_version: lingtu.runtime_parameters.v1
+schema_version: lingtu.parameters.v1
 
 # Parameter profiles contain only deliberate behavior choices. Platform limits
 # belong to Env overrides, while values absent from both layers use the C++

@@ -1,0 +1,106 @@
+{
+  "schema_version": "lingtu.mujoco.teleop_native_acceptance.v1",
+  "name": "mujoco_teleop_native",
+  "description": "Map-free native teleoperation through navd and the MuJoCo physical driver bridge.",
+  "product_contract": {
+    "product": "teleop",
+    "source": "config/runtime_graph/products/teleop.yaml",
+    "native_control_mode": "teleop",
+    "slam_mode": "none",
+    "requires_map": false
+  },
+  "world": "",
+  "start": [0.0, 0.0, 0.48, 0.0],
+  "asset_builder": {
+    "kind": "scene_only",
+    "scene_preset": "corridor",
+    "length": 8.0,
+    "width": 4.0
+  },
+  "sensor_runtime": {
+    "publish_hz": 10.0,
+    "imu_hz": 200.0,
+    "mid360_samples_per_frame": 15000,
+    "physics_timestep_s": 0.002,
+    "policy_cpu_threads": 1,
+    "scan_time_profile": "physical_rolling",
+    "physical_rolling_sample_mode": "subscan",
+    "publish_odom_prior": false
+  },
+  "driver_bridge": {
+    "max_linear_mps": 1.0,
+    "max_angular_rps": 1.0,
+    "command_timeout_ms": 200,
+    "heartbeat_timeout_ms": 500,
+    "apply_timeout_ms": 500
+  },
+  "paths": {
+    "path_library": "src/nav/cpp/planning/local/cmu/paths/thunder",
+    "sensor_runner": "sim/scripts/mujoco/native_dds_sensors.py"
+  },
+  "binaries": {
+    "sensor_publisher": {
+      "env": "LINGTU_MUJOCO_NATIVE_DDS_PUBLISHER_BIN",
+      "candidates": [
+        "build/windows-native-dds-adapter/Release/lingtu_mujoco_sensor_publisher.exe",
+        "build/mujoco_native_livox/livox_sdk2_stream",
+        "build/livox_sdk2_stream/livox_sdk2_stream"
+      ]
+    },
+    "navigation": {
+      "env": "LINGTU_MUJOCO_NAV_BIN",
+      "candidates": [
+        "build/nav-cpp/windows-x64-nav-endpoint/Release/navd.exe",
+        "build/mujoco_native_nav/navd",
+        "build/nav_endpoint/navd"
+      ]
+    },
+    "navigation_control": {
+      "env": "LINGTU_MUJOCO_NAV_CONTROL_BIN",
+      "candidates": [
+        "build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_nav_control.exe",
+        "build/mujoco_native_nav/lingtu_nav_control",
+        "build/nav_endpoint/lingtu_nav_control"
+      ]
+    },
+    "driver_bridge": {
+      "env": "LINGTU_MUJOCO_DRIVER_BRIDGE_BIN",
+      "candidates": [
+        "build/windows-native-dds-adapter/Release/lingtu_mujoco_driver_bridge.exe",
+        "build/mujoco_native_dds/lingtu_mujoco_driver_bridge"
+      ]
+    }
+  },
+  "contracts": {
+    "operator_motion_control": "rt/nav/operator_motion/control",
+    "operator_motion_sample": "rt/nav/operator_motion/sample",
+    "operator_motion_ack": "rt/nav/operator_motion/ack",
+    "operator_motion_status": "rt/nav/operator_motion/status",
+    "final_velocity": "rt/nav/cmd_vel",
+    "driver_ack": "rt/driver/control_state",
+    "locomotion_execution": "normalized command -> MuJoCo physics step -> physical APPLIED -> typed driver ACK",
+    "forbidden_runtime": [
+      "SLAM",
+      "mapd",
+      "traversability",
+      "global planner",
+      "Python CmdVelMux"
+    ]
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": [
+      "typed operator-motion lifecycle",
+      "teleop rejects autonomous goals",
+      "navd is the final cmd_vel writer",
+      "MuJoCo physical driver bridge applies commands before typed ACK",
+      "native stop produces a sustained zero-output barrier"
+    ],
+    "excluded_claims": [
+      "exact ProductControl RunPlan process realization",
+      "ProductControl readiness, current commit, rollback, and managed cleanup",
+      "Brainstem motor execution",
+      "physical robot motion"
+    ]
+  }
+}

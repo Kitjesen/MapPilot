@@ -34,16 +34,6 @@ def test_validate_architecture_boundaries_script_passes() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_validate_lite_package_script_passes() -> None:
-    result = _run_validator("tools/validate/validate_lite_package.py")
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
 def test_validate_real_deployment_script_passes() -> None:
     result = _run_validator("tools/validate/validate_real_deployment.py")
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-def test_validate_portable_lean_package_script_passes() -> None:
-    result = _run_validator("tools/validate/validate_portable_lean_package.py")
     assert result.returncode == 0, result.stdout + result.stderr

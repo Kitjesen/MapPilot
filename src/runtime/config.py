@@ -1,17 +1,18 @@
 """Unified configuration loader.
 
-Reads config/robot_config.yaml as single source of truth.
+Reads the selected robot model's RobotConfig.
 Modules access config via: cfg = load_config(); cfg.speed.max_speed
 
-Environment variable LINGTU_CONFIG_PATH overrides the default config path.
+ProductControl sets ``LINGTU_CONFIG_PATH`` for a selected real robot. Without
+an explicit path, this module returns neutral development defaults.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import math
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -20,11 +21,6 @@ if TYPE_CHECKING:
 import yaml
 
 from .msgs.numpy_compat import np, numpy_import_is_safe
-from .runtime_interface import LIDAR_EXTRINSICS
-
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_DEFAULT_CONFIG = _REPO_ROOT / "config" / "robot_config.yaml"
-_DEFAULT_REAL_LIDAR = LIDAR_EXTRINSICS["real_mid360"]
 
 
 @dataclass
@@ -44,14 +40,24 @@ class GeometryConfig:
     vehicle_height: float = 0.5
     vehicle_width: float = 0.6
     vehicle_length: float = 1.0
+    collision_cylinder_radius: float = 0.40
+    collision_cylinder_offset: float = 0.25
+    collision_hard_margin: float = 0.15
+    collision_clearance_below: float = 0.25
+    collision_clearance_above: float = 0.35
     sensor_offset_x: float = 0.3
     sensor_offset_y: float = 0.0
 
 
 @dataclass
 class DriverConfig:
-    """Brainstem CMS connection and control parameters."""
+    """Physical robot driver selected by the real environment."""
 
+    backend: str = ""
+    target: str = ""
+    network_interface: str = ""
+    network_address: str = ""
+    probe_ip: str = ""
     dog_host: str = "127.0.0.1"
     dog_port: int = 13145
     control_rate: float = 50.0
@@ -59,6 +65,10 @@ class DriverConfig:
     auto_standup: bool = False
     reconnect_interval: float = 3.0
     slam_reset_interval: float = 5.0
+    tls_ca_file: str = ""
+    tls_cert_file: str = ""
+    tls_key_file: str = ""
+    tls_server_name: str = ""
 
 
 @dataclass
@@ -150,17 +160,18 @@ class LidarConfig:
     used by static_transform_publisher and C++ coordinate transforms.
     """
 
-    frame_id: str = _DEFAULT_REAL_LIDAR.child
+    frame_id: str = "livox_frame"
     publish_freq: float = 10.0
     # Network (Livox MID-360). These are consumed by the Livox driver JSON generator.
-    lidar_ip: str = "192.168.1.115"
-    host_ip: str = "192.168.1.5"
-    offset_x: float = _DEFAULT_REAL_LIDAR.x
-    offset_y: float = _DEFAULT_REAL_LIDAR.y
-    offset_z: float = _DEFAULT_REAL_LIDAR.z
-    roll: float = _DEFAULT_REAL_LIDAR.roll
-    pitch: float = _DEFAULT_REAL_LIDAR.pitch
-    yaw: float = _DEFAULT_REAL_LIDAR.yaw
+    network_interface: str = ""
+    lidar_ip: str = ""
+    host_ip: str = ""
+    offset_x: float = 0.0
+    offset_y: float = 0.0
+    offset_z: float = 0.0
+    roll: float = 0.0
+    pitch: float = 0.0
+    yaw: float = 0.0
     camera_offset_z: float = 0.0
 
 
@@ -175,7 +186,7 @@ class GnssAntennaOffset:
 
 @dataclass
 class GnssQualityConfig:
-    """Quality gate applied by GnssModule before forwarding fixes downstream."""
+    """Quality settings consumed by the native GNSS/localization path."""
 
     min_sat_used: int = 8
     max_hdop: float = 2.5
@@ -195,7 +206,7 @@ class GnssFusionRuntime:
     factor_weight_fix: float = 1.0
     factor_weight_float: float = 0.3
     factor_weight_single: float = 0.05
-    enabled: bool = True
+    enabled: bool = False
     alpha_healthy: float = 0.05
     alpha_degraded: float = 0.5
     rtk_float_scale: float = 0.3
@@ -311,11 +322,11 @@ class PerceptionConfig:
 
 @dataclass
 class RobotConfig:
-    """Top-level robot configuration, mirroring config/robot_config.yaml.
+    """Top-level physical robot configuration.
 
     Sub-configs hold typed fields for the most commonly accessed sections.
     The full parsed YAML dict is available via ``raw`` for sections not
-    explicitly modelled (e.g. terrain, local_planner, pct_planner).
+    explicitly modelled.
     """
 
     speed: SpeedConfig = field(default_factory=SpeedConfig)
@@ -407,16 +418,19 @@ def load_config(path: str | None = None) -> RobotConfig:
     Resolution order for the config file path:
     1. Explicit ``path`` argument.
     2. ``LINGTU_CONFIG_PATH`` environment variable.
-    3. ``config/robot_config.yaml`` relative to repo root.
 
-    Returns a ``RobotConfig`` with defaults if the file is missing.
+    Returns a neutral ``RobotConfig`` when neither path is set or the selected
+    file is missing.
     """
-    config_path = path or os.environ.get("LINGTU_CONFIG_PATH") or str(_DEFAULT_CONFIG)
+    config_path = path or os.environ.get("LINGTU_CONFIG_PATH")
 
-    try:
-        with open(config_path, encoding="utf-8") as fh:
-            raw = yaml.safe_load(fh) or {}
-    except (FileNotFoundError, OSError):
+    if config_path:
+        try:
+            with open(config_path, encoding="utf-8") as fh:
+                raw = yaml.safe_load(fh) or {}
+        except (FileNotFoundError, OSError):
+            raw = {}
+    else:
         raw = {}
 
     cfg = RobotConfig(
@@ -462,6 +476,23 @@ def validate_config(cfg: RobotConfig) -> list[str]:
         errors.append(f"geometry.vehicle_length must be > 0, got {cfg.geometry.vehicle_length}")
     if cfg.geometry.vehicle_height <= 0:
         errors.append(f"geometry.vehicle_height must be > 0, got {cfg.geometry.vehicle_height}")
+    if cfg.geometry.collision_cylinder_radius <= 0:
+        errors.append(
+            "geometry.collision_cylinder_radius must be > 0, got "
+            f"{cfg.geometry.collision_cylinder_radius}"
+        )
+    if cfg.geometry.collision_cylinder_offset < 0:
+        errors.append(
+            "geometry.collision_cylinder_offset must be >= 0, got "
+            f"{cfg.geometry.collision_cylinder_offset}"
+        )
+    if cfg.geometry.collision_hard_margin < 0:
+        errors.append(
+            "geometry.collision_hard_margin must be >= 0, got "
+            f"{cfg.geometry.collision_hard_margin}"
+        )
+    if cfg.geometry.collision_clearance_below < 0 or cfg.geometry.collision_clearance_above < 0:
+        errors.append("geometry collision clearances must be non-negative")
 
     # Safety distances must be positive and ordered
     if cfg.safety.stop_distance <= 0:
@@ -471,9 +502,35 @@ def validate_config(cfg: RobotConfig) -> list[str]:
             f"safety.slow_distance ({cfg.safety.slow_distance}) must be > stop_distance ({cfg.safety.stop_distance})"
         )
 
-    # Driver control rate must be positive
-    if cfg.driver.control_rate <= 0:
-        errors.append(f"driver.control_rate must be > 0, got {cfg.driver.control_rate}")
+    # The native loop must be able to execute its 100 ms control-lease refresh.
+    if cfg.driver.backend and cfg.driver.backend not in {"go2", "doso"}:
+        errors.append(
+            "driver.backend must be one of go2, doso, "
+            f"got {cfg.driver.backend!r}"
+        )
+    if cfg.driver.backend == "go2":
+        if not cfg.driver.network_interface.strip():
+            errors.append("driver.network_interface is required for the go2 backend")
+        network = None
+        try:
+            network = ipaddress.ip_interface(cfg.driver.network_address)
+            if network.version != 4:
+                raise ValueError
+        except ValueError:
+            errors.append(
+                "driver.network_address must be an IPv4 interface CIDR for the go2 backend"
+            )
+        probe = None
+        try:
+            probe = ipaddress.ip_address(cfg.driver.probe_ip)
+            if probe.version != 4:
+                raise ValueError
+        except ValueError:
+            errors.append("driver.probe_ip must be an IPv4 address for the go2 backend")
+        if network is not None and probe is not None and probe not in network.network:
+            errors.append("driver.probe_ip must be in the same subnet as driver.network_address")
+    if not math.isfinite(cfg.driver.control_rate) or cfg.driver.control_rate < 10.0:
+        errors.append(f"driver.control_rate must be finite and >= 10 Hz, got {cfg.driver.control_rate}")
 
     # GNSS — only check when enabled; unset robots skip these
     if cfg.gnss.enabled:

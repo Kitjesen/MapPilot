@@ -31,41 +31,51 @@
     "physical_rolling_sample_mode": "subscan",
     "publish_odom_prior": false
   },
+  "driver_bridge": {
+    "max_linear_mps": 1.0,
+    "max_angular_rps": 1.0,
+    "command_timeout_ms": 200,
+    "heartbeat_timeout_ms": 500,
+    "apply_timeout_ms": 500
+  },
   "paths": {
-    "slam_config": "src/localization/fastlio2/config/mid360_mujoco_native_dds.yaml",
-    "path_library": "src/nav/local/paths",
+    "slam_config": "src/localization/fastlio2/config/sim_mid360_slam.yaml",
+    "path_library": "src/nav/cpp/planning/local/cmu/paths/thunder",
     "sensor_runner": "sim/scripts/mujoco/native_dds_sensors.py"
   },
   "binaries": {
     "sensor_publisher": {
       "env": "LINGTU_MUJOCO_NATIVE_DDS_PUBLISHER_BIN",
       "candidates": [
+        "build/windows-native-dds-adapter/Release/lingtu_mujoco_sensor_publisher.exe",
         "build/mujoco_native_livox/livox_sdk2_stream",
         "build/livox_sdk2_stream/livox_sdk2_stream"
       ]
     },
     "slam": {
       "env": "LINGTU_MUJOCO_SLAM_BIN",
-      "candidates": ["build/mujoco_native_slam/slamd", "build/slam_core/slamd"]
+      "candidates": ["build/slam-core-windows-x64/stage/bin/slamd.exe", "build/mujoco_native_slam/slamd", "build/slam_core/slamd"]
     },
     "mapd": {
       "env": "LINGTU_MUJOCO_MAPD_BIN",
-      "candidates": ["build/maps/mapd", "build/mujoco_native_maps/mapd"]
+      "candidates": ["build/maps-windows/Release/mapd.exe", "build/maps/mapd", "build/mujoco_native_maps/mapd"]
     },
     "traversability": {
       "env": "LINGTU_MUJOCO_TRAVERSABILITY_BIN",
       "candidates": [
+        "build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_traversability_dds.exe",
         "build/mujoco_native_nav/lingtu_traversability_dds",
         "build/nav_endpoint/lingtu_traversability_dds"
       ]
     },
     "navigation": {
       "env": "LINGTU_MUJOCO_NAV_BIN",
-      "candidates": ["build/mujoco_native_nav/navd", "build/nav_endpoint/navd"]
+      "candidates": ["build/nav-cpp/windows-x64-nav-endpoint/Release/navd.exe", "build/mujoco_native_nav/navd", "build/nav_endpoint/navd"]
     },
     "explore": {
       "env": "LINGTU_MUJOCO_EXPLORE_BIN",
       "candidates": [
+        "build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_explore_dds.exe",
         "build/mujoco_native_nav/lingtu_explore_dds",
         "build/nav_endpoint/lingtu_explore_dds"
       ]
@@ -73,13 +83,17 @@
     "navigation_control": {
       "env": "LINGTU_MUJOCO_NAV_CONTROL_BIN",
       "candidates": [
+        "build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_nav_control.exe",
         "build/mujoco_native_nav/lingtu_nav_control",
         "build/nav_endpoint/lingtu_nav_control"
       ]
     },
-    "cmd_vel_tap": {
-      "env": "LINGTU_MUJOCO_CMD_VEL_TAP_BIN",
-      "candidates": ["build/mujoco_native_dds/lingtu_mujoco_cmd_vel_tap"]
+    "driver_bridge": {
+      "env": "LINGTU_MUJOCO_DRIVER_BRIDGE_BIN",
+      "candidates": [
+        "build/windows-native-dds-adapter/Release/lingtu_mujoco_driver_bridge.exe",
+        "build/mujoco_native_dds/lingtu_mujoco_driver_bridge"
+      ]
     }
   },
   "runtime_tolerances": {
@@ -102,8 +116,24 @@
       "rt/nav/exploration_segment/ack",
       "rt/nav/exploration_segment/status",
       "rt/nav/local_path",
-      "rt/nav/cmd_vel"
+      "rt/nav/cmd_vel",
+      "rt/driver/control_state"
     ],
     "forbidden_compute": ["global planner", "saved-map localization", "Python navigation"]
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": [
+      "mapping-mode native SLAM and mapd",
+      "typed exploration run command and acknowledgement",
+      "native frontier selection and rolling segment execution",
+      "native local planning, path following, and command safety",
+      "MuJoCo physical driver bridge applies commands before typed ACK"
+    ],
+    "excluded_claims": [
+      "exact ProductControl RunPlan process realization",
+      "saved-map exploration route",
+      "physical robot motion"
+    ]
   }
 }

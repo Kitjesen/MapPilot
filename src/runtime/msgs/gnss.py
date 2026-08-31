@@ -5,7 +5,7 @@ Classes
 GnssFixType    — RTK fix quality enum (matches NMEA GGA field 6 + Unicore extensions)
 GnssFix        — WGS84 position + covariance + fix quality (like sensor_msgs/NavSatFix)
 GnssStatus     — constellation / satellite count / HDOP / link quality (diagnostic)
-GnssOdom       — ENU-frame position + velocity (pre-converted, ready for PGO factors)
+GnssOdom       — ENU-frame position + velocity for native global constraints
 
 Coordinate convention
 ---------------------
@@ -346,10 +346,11 @@ _ODOM_FMT = struct.Struct("<9d")  # 3 pos + 3 vel + 3 pos_cov_diag (ENU), 72 byt
 
 @dataclass
 class GnssOdom:
-    """GNSS position + velocity in local ENU frame, ready as PGO global factor.
+    """GNSS position + velocity in local ENU frame for native global correction.
 
-    Produced by ``GnssModule`` after LLA→ENU conversion against a configured
-    map origin. Downstream SLAM backends ingest this as a global constraint.
+    Produced by the native GNSS service after LLA→ENU conversion against a
+    configured map origin. Downstream SLAM backends ingest this as a global
+    constraint.
 
     Parameters
     ----------

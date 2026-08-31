@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from runtime.wiring import WireSpec
+
 from .context import (
     RECON_RECORDERS,
     SEMANTIC_CAMERA_CONSUMERS,
     WiringContext,
 )
-from .types import WireSpec
 
 
 def semantic_camera_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
@@ -26,18 +27,16 @@ def semantic_camera_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
 
 def semantic_command_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     """Wire commands and planner outputs for semantic planning."""
-    goal_sink = "nav.goals" if "nav.goals" in ctx.names else "nav.mission"
-    goal_port = "goal_request" if goal_sink == "nav.goals" else "goal_pose"
     specs = [
         WireSpec("GatewayModule", "instruction", "SemanticPlannerModule", "instruction"),
         WireSpec("MCPServerModule", "instruction", "SemanticPlannerModule", "instruction"),
-        WireSpec("SemanticPlannerModule", "goal_pose", goal_sink, goal_port),
-        WireSpec("AgentPlannerModule", "goal_pose", goal_sink, goal_port),
+        WireSpec("host.bus", "navigation_state", "SemanticPlannerModule", "navigation_state"),
+        WireSpec("SemanticPlannerModule", "goal_pose", "nav.goals", "goal_request"),
+        WireSpec("AgentPlannerModule", "goal_pose", "nav.goals", "goal_request"),
         WireSpec("PerceptionModule", "detections_3d", "SemanticPlannerModule", "detections"),
         WireSpec("PerceptionModule", "detections_3d", "InspectionEvidenceModule", "detections_3d"),
     ]
-    if "nav.goals" in ctx.names:
-        specs.append(WireSpec("SemanticPlannerModule", "nav_command", "nav.goals", "goal_command"))
+    specs.append(WireSpec("SemanticPlannerModule", "nav_command", "nav.goals", "goal_command"))
     if "LLMModule" in ctx.names:
         specs.extend(
             [
@@ -54,14 +53,12 @@ def semantic_scene_specs() -> tuple[WireSpec, ...]:
         WireSpec("PerceptionModule", "scene_graph", "GatewayModule", "scene_graph"),
         WireSpec("PerceptionModule", "scene_graph", "MCPServerModule", "scene_graph"),
         WireSpec("PerceptionModule", "scene_graph", "ReconstructionModule", "scene_graph"),
-        WireSpec("PerceptionModule", "scene_graph", "TraversableFrontierModule", "scene_graph"),
         WireSpec("PerceptionModule", "scene_graph", "SemanticMapperModule", "scene_graph"),
         WireSpec("PerceptionModule", "scene_graph", "EpisodicMemoryModule", "scene_graph"),
         WireSpec("PerceptionModule", "scene_graph", "VectorMemoryModule", "scene_graph"),
         WireSpec("PerceptionModule", "scene_graph", "TemporalMemoryModule", "scene_graph"),
         WireSpec("PerceptionModule", "scene_graph", "SemanticPlannerModule", "scene_graph"),
         WireSpec("PerceptionModule", "scene_graph", "AgentPlannerModule", "scene_graph"),
-        WireSpec("PerceptionModule", "scene_graph", "VisualServoModule", "scene_graph"),
         WireSpec("SemanticMapperModule", "topo_summary", "SemanticPlannerModule", "topo_summary"),
         WireSpec("SemanticMapperModule", "room_graph", "SemanticPlannerModule", "room_graph"),
     )
@@ -84,24 +81,23 @@ def recorder_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
 
 def visual_servo_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     """Wire visual servo inputs and outputs."""
-    goal_sink = "nav.goals" if "nav.goals" in ctx.names else "nav.mission"
-    goal_port = "goal_request" if goal_sink == "nav.goals" else "goal_pose"
     specs = [
+        WireSpec("PerceptionModule", "detections_3d", "VisualServoModule", "detections_3d"),
+        WireSpec("PerceptionModule", "robot_pose", "VisualServoModule", "robot_pose"),
+        WireSpec(ctx.camera_src, ctx.color_out, "VisualServoModule", "color_image"),
         WireSpec("GatewayModule", "servo_target", "VisualServoModule", "servo_target"),
         WireSpec("SemanticPlannerModule", "servo_target", "VisualServoModule", "servo_target"),
         WireSpec("AgentPlannerModule", "servo_target", "VisualServoModule", "servo_target"),
-        WireSpec("VisualServoModule", "goal_pose", goal_sink, goal_port),
-        WireSpec("VisualServoModule", "cmd_vel", "nav.velocity_mux", "visual_servo_cmd_vel"),
+        WireSpec("VisualServoModule", "goal_pose", "nav.goals", "visual_goal_request"),
+        WireSpec("VisualServoModule", "goal_cancel", "nav.goals", "visual_cancel_request"),
+        WireSpec("nav.goals", "goal_status", "VisualServoModule", "goal_status"),
+        WireSpec("VisualServoModule", "servo_status", "GatewayModule", "visual_servo_status"),
     ]
-    if "nav.mission" in ctx.names:
-        specs.append(WireSpec("VisualServoModule", "nav_stop", "nav.mission", "stop_signal"))
     return tuple(specs)
 
 
 def vla_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     """VLA module input/output wiring."""
-    goal_sink = "nav.goals" if "nav.goals" in ctx.names else "nav.mission"
-    goal_port = "goal_request" if goal_sink == "nav.goals" else "goal_pose"
     return (
         WireSpec(ctx.camera_src, ctx.color_out, "VLAModule", "color_image"),
         WireSpec(ctx.camera_src, "depth_image", "VLAModule", "depth_image"),
@@ -110,6 +106,5 @@ def vla_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
         WireSpec("PerceptionModule", "scene_graph", "VLAModule", "scene_graph"),
         WireSpec("GatewayModule", "instruction", "VLAModule", "instruction"),
         WireSpec("MCPServerModule", "instruction", "VLAModule", "instruction"),
-        WireSpec("VLAModule", "goal_pose", goal_sink, goal_port),
-        WireSpec("VLAModule", "cmd_vel", "nav.velocity_mux", "vla_cmd_vel"),
+        WireSpec("VLAModule", "goal_pose", "nav.goals", "goal_request"),
     )

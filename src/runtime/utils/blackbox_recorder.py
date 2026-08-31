@@ -21,7 +21,8 @@ flush. JSON-encoding is best-effort: numpy arrays are converted via
 Configuration via environment variables (read by ``BlackBoxRecorder.from_env``):
 
 * ``LINGTU_BLACKBOX_ENABLED``       — "0" disables; default enabled.
-* ``LINGTU_BLACKBOX_DIR``           — base directory; default ``~/data/slam/crashes``.
+* ``LINGTU_BLACKBOX_DIR``           — explicit base directory.
+* ``LINGTU_SESSION_ROOT``           — managed Product fallback; writes ``blackbox/``.
 * ``LINGTU_BLACKBOX_MAX_PER_CHANNEL``— ring-buffer depth; default 600 (≈60 s @10 Hz).
 * ``LINGTU_BLACKBOX_RETENTION``     — number of dump directories to keep; default 20.
 """
@@ -91,10 +92,25 @@ class BlackBoxRecorder:
     @classmethod
     def from_env(cls) -> BlackBoxRecorder:
         enabled = os.environ.get("LINGTU_BLACKBOX_ENABLED", "1") != "0"
-        base = Path(os.environ.get(
-            "LINGTU_BLACKBOX_DIR",
-            str(Path.home() / "data" / "slam" / "crashes"),
-        ))
+        configured = str(os.environ.get("LINGTU_BLACKBOX_DIR") or "").strip()
+        session_root = str(os.environ.get("LINGTU_SESSION_ROOT") or "").strip()
+        if configured:
+            base = Path(configured)
+        elif session_root:
+            root = Path(session_root)
+            if not root.is_absolute():
+                raise ValueError("LINGTU_SESSION_ROOT must be an absolute path")
+            base = root / "blackbox"
+        elif enabled:
+            try:
+                base = Path.home() / "data" / "slam" / "crashes"
+            except RuntimeError as exc:
+                raise ValueError(
+                    "LINGTU_BLACKBOX_DIR is required when no Product session "
+                    "or user home is available"
+                ) from exc
+        else:
+            base = Path(".")
         max_per_ch = int(os.environ.get("LINGTU_BLACKBOX_MAX_PER_CHANNEL", "600"))
         retention = int(os.environ.get("LINGTU_BLACKBOX_RETENTION", "20"))
         return cls(base, max_per_channel=max_per_ch, retention=retention, enabled=enabled)

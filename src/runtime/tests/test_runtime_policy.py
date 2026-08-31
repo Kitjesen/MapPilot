@@ -13,7 +13,7 @@ from runtime.runtime_policy import (
 
 @pytest.mark.parametrize(
     "profile",
-    ("none", "native_dds", "fastlio2", "genz", "localizer"),
+    ("none", "native_dds"),
 )
 def test_canonical_slam_profiles_are_supported(profile: str):
     assert normalize_slam_profile(f" {profile.upper()} ") == profile
@@ -27,7 +27,7 @@ def test_canonical_slam_profiles_are_supported(profile: str):
         "native",
         "native_slam",
         "cpp_dds_slam",
-        "lingtu_slam_dds",
+        "messages_dds",
         "lingtu-slam-dds",
         "genz-icp",
         "genz_icp",
@@ -39,25 +39,29 @@ def test_legacy_slam_profile_aliases_are_not_supported(alias: str):
     assert slam_backend_contract(alias)["backend"] == alias
 
 
-def test_stop_is_only_supported_for_explicit_switch_validation():
-    assert is_supported_slam_profile("stop", allow_stop=True)
+def test_stop_is_not_a_runtime_profile():
     assert not is_supported_slam_profile("stop")
+
+
+@pytest.mark.parametrize("profile", ("fastlio2", "localizer", "pointlio", "genz"))
+def test_algorithm_and_placeholder_names_are_not_product_selectable(profile: str):
+    assert not is_supported_slam_profile(profile)
 
 
 def test_field_mode_defaults_to_native_dds_slam():
     assert default_slam_profile_for_mode("navigating") == "native_dds"
     assert default_slam_profile_for_mode("mapping") == "native_dds"
+    assert default_slam_profile_for_mode("none") == "none"
 
 
 def test_backend_capabilities_preserve_supported_contracts():
-    genz = backend_capability_defaults("genz")
     localizer = backend_capability_defaults("localizer")
     native = backend_capability_defaults("native_dds")
     unknown = backend_capability_defaults("unknown_backend")
 
-    assert genz["recovery_method"] == "restart_genz_icp"
-    assert localizer["relocalization_supported"] is True
-    assert native["map_save_source"] == "native_dds_slam_runtime"
+    assert localizer["relocalization_supported"] is False
+    assert localizer["recovery_method"] == "unknown_backend"
+    assert native["map_save_source"] == "native_slam_dds_control"
     assert native["saved_map_relocalization_supported"] is True
     assert unknown["relocalization_supported"] is False
 
@@ -66,10 +70,15 @@ def test_retired_slam_alias_uses_unknown_backend_capabilities():
     assert backend_capability_defaults("slam") == backend_capability_defaults("unknown_backend")
 
 
-def test_slam_bridge_contract_adds_health_source_and_recovery_action():
-    contract = slam_backend_contract("genz")
+def test_slam_bridge_contract_preserves_native_and_unknown_defaults():
+    native = slam_backend_contract("native_dds")
+    unknown = slam_backend_contract("unknown_backend")
 
-    assert contract["backend"] == "genz"
-    assert contract["health_source"] == "odom_map_cloud"
-    assert contract["map_save_source"] is None
-    assert contract["recovery_action"] == "restart_genz_icp"
+    assert native["backend"] == "native_dds"
+    assert native["health_source"] == "slam_runtime"
+    assert native["map_save_source"] == "native_slam_dds_control"
+    assert native["recovery_action"] == "restart_native_dds_slam"
+    assert unknown["backend"] == "unknown_backend"
+    assert unknown["health_source"] == "unknown"
+    assert unknown["map_save_source"] is None
+    assert unknown["recovery_action"] == "none"

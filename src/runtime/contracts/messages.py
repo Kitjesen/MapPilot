@@ -7,11 +7,10 @@ matter for wiring and control-loop safety.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass
-import math
 from typing import Any, Callable
-
 
 CURRENT_SCHEMA_VERSION = 1
 
@@ -177,9 +176,17 @@ MISSION_STATES = frozenset(
 LOCALIZATION_STATES = frozenset(
     {
         "UNINIT",
+        "UNCONFIGURED",
+        "INITIALIZING",
+        "MAPPING",
+        "LOCALIZING",
         "TRACKING",
+        "LOCKED",
         "DEGRADED",
         "LOST",
+        "FAILED",
+        "STALE",
+        "DIVERGED",
         "FALLBACK_GNSS_ONLY",
         "RELOCALIZING",
         "OK",
@@ -423,9 +430,9 @@ def _validate_traversability(msg: Mapping[str, Any]) -> list[ValidationIssue]:
 
 def _validate_scene_graph(msg: Mapping[str, Any]) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
-    for field in ("objects", "relations", "regions"):
-        if field in msg:
-            issue = _sequence_issue(msg, field, min_len=0)
+    for field_name in ("objects", "relations", "regions"):
+        if field_name in msg:
+            issue = _sequence_issue(msg, field_name, min_len=0)
             if issue:
                 issues.append(issue)
     if "frame_id" in msg and not isinstance(msg["frame_id"], str):
@@ -439,34 +446,34 @@ def _validate_scene_graph(msg: Mapping[str, Any]) -> list[ValidationIssue]:
 def _validate_height_rays(msg: Mapping[str, Any]) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     lengths: dict[str, int] = {}
-    for field in ("heights", "points_body", "points_world", "valid_mask"):
-        value = msg.get(field)
+    for field_name in ("heights", "points_body", "points_world", "valid_mask"):
+        value = msg.get(field_name)
         if value is None:
             continue
         length = _array_len(value)
         if length is None:
-            issues.append(ValidationIssue(field, "invalid_array", "must be array-like"))
+            issues.append(ValidationIssue(field_name, "invalid_array", "must be array-like"))
         else:
-            lengths[field] = length
+            lengths[field_name] = length
 
     expected = lengths.get("heights")
     if expected is not None:
-        for field, length in lengths.items():
+        for field_name, length in lengths.items():
             if length != expected:
                 issues.append(
                     ValidationIssue(
-                        field,
+                        field_name,
                         "shape_mismatch",
                         f"first dimension must match heights length {expected}",
                     )
                 )
 
-    for field in ("points_body", "points_world"):
-        if field in msg:
-            width = _point_array_width(msg[field])
+    for field_name in ("points_body", "points_world"):
+        if field_name in msg:
+            width = _point_array_width(msg[field_name])
             if width != 3:
                 issues.append(
-                    ValidationIssue(field, "shape_mismatch", "must have shape [N, 3]")
+                    ValidationIssue(field_name, "shape_mismatch", "must have shape [N, 3]")
                 )
 
     if "frame_id" in msg and not isinstance(msg["frame_id"], str):

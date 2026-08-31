@@ -6,56 +6,364 @@ parameter_overrides:
   map_input.max_cells: 262144
   map_input.max_age_s: 0.50
 supported_products:
+  - teleop
   - teleop_avoid
   - map
   - nav
+  - tracking
+  - inspection
   - explore
 backends:
-  mujoco_native:
-    summary: MuJoCo sensors and ThunderV4 locomotion around the native C++ typed-DDS chain.
+  mujoco:
+    summary: Persistent MuJoCo runtime around the native C++ typed-DDS control chain.
+    local_planners: [cmu, scan]
     supported_products:
-      - nav
+      - teleop
       - teleop_avoid
-    process_control: acceptance_runner
-    acceptance_runner: sim/scripts/mujoco/native_navigation_acceptance.py
-    acceptance_manifests:
-      nav: config/runtime_graph/acceptance/mujoco_native_navigation_acceptance.json
-      teleop_avoid: config/runtime_graph/acceptance/mujoco_teleop_avoid_native_acceptance.json
-    control_mode_manifest: config/runtime_graph/acceptance/mujoco_native_control_mode_acceptance.json
+      - map
+      - nav
+      - tracking
+      - inspection
+      - explore
+    process_control: subprocess
+    process_manager: direct
+    presets:
+      doso/thunder_v4:
+        default: sim/presets/doso/thunder_v4/default.yaml
+        nav: sim/presets/doso/thunder_v4/nav.yaml
+        teleop_avoid: sim/presets/doso/thunder_v4/teleop_avoid.yaml
+        tracking: sim/presets/doso/thunder_v4/tracking.yaml
     provided_roles:
       - lidar
+      - imu
       - slam
       - maps
       - traversability
       - nav
       - driver
+      - camera
+      - explore
+      - host
+    support_processes:
+      - mujoco_feeder
+    stop_before_start:
+      - host_runtime
+      - explore_runtime
+      - nav_runtime
+      - traversability_runtime
+      - map_runtime
+      - slam_runtime
+      - mujoco_feeder
+      - camera_publisher
+      - imu_publisher
+      - lidar_publisher
+      - driver_bridge
+    processes:
+      lidar_publisher:
+        target: lidar_publisher
+        lifecycle: mode
+        order: 10
+        timeout_s: 15
+        provides: [lidar]
+        platforms:
+          windows:
+            argv: [build/windows-native-dds-adapter/Release/lingtu_mujoco_sensor_publisher.exe, --stream, lidar, --domain-id, "17", --local-endpoint, --dds, --scan-window, "0"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "17"}
+            artifact: {path: build/windows-native-dds-adapter/Release/lingtu_mujoco_sensor_publisher.exe}
+            dependencies:
+              - path: build/windows-native-dds-adapter/Release/ddsc.dll
+            readiness: {kind: file, target: lidar.ready.json}
+            shutdown: {kind: process}
+          linux:
+            argv: [build/mujoco_native_dds/lingtu_mujoco_sensor_publisher, --stream, lidar, --domain-id, "231", --local-endpoint, --dds, --scan-window, "0"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "231"}
+            artifact: {path: build/mujoco_native_dds/lingtu_mujoco_sensor_publisher}
+            readiness: {kind: file, target: lidar.ready.json}
+            shutdown: {kind: process}
+      imu_publisher:
+        target: imu_publisher
+        lifecycle: mode
+        order: 10
+        timeout_s: 15
+        provides: [imu]
+        platforms:
+          windows:
+            argv: [build/windows-native-dds-adapter/Release/lingtu_mujoco_sensor_publisher.exe, --stream, imu, --domain-id, "17", --local-endpoint, --dds, --scan-window, "0"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "17"}
+            artifact: {path: build/windows-native-dds-adapter/Release/lingtu_mujoco_sensor_publisher.exe}
+            dependencies:
+              - path: build/windows-native-dds-adapter/Release/ddsc.dll
+            readiness: {kind: file, target: imu.ready.json}
+            shutdown: {kind: process}
+          linux:
+            argv: [build/mujoco_native_dds/lingtu_mujoco_sensor_publisher, --stream, imu, --domain-id, "231", --local-endpoint, --dds, --scan-window, "0"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "231"}
+            artifact: {path: build/mujoco_native_dds/lingtu_mujoco_sensor_publisher}
+            readiness: {kind: file, target: imu.ready.json}
+            shutdown: {kind: process}
+      camera_publisher:
+        target: camera_publisher
+        lifecycle: mode
+        order: 10
+        timeout_s: 15
+        provides: [camera]
+        platforms:
+          windows:
+            argv: [build/windows-native-dds-adapter/Release/lingtu_mujoco_sensor_publisher.exe, --stream, camera, --domain-id, "17", --local-endpoint, --dds, --scan-window, "0"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "17"}
+            artifact: {path: build/windows-native-dds-adapter/Release/lingtu_mujoco_sensor_publisher.exe}
+            dependencies:
+              - path: build/windows-native-dds-adapter/Release/ddsc.dll
+            readiness: {kind: file, target: camera.ready.json}
+            shutdown: {kind: process}
+          linux:
+            argv: [build/mujoco_native_dds/lingtu_mujoco_sensor_publisher, --stream, camera, --domain-id, "231", --local-endpoint, --dds, --scan-window, "0"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "231"}
+            artifact: {path: build/mujoco_native_dds/lingtu_mujoco_sensor_publisher}
+            readiness: {kind: file, target: camera.ready.json}
+            shutdown: {kind: process}
+      driver_bridge:
+        target: driver_bridge
+        lifecycle: mode
+        order: 10
+        timeout_s: 15
+        provides: [driver]
+        platforms:
+          windows:
+            argv: [build/windows-native-dds-adapter/Release/lingtu_mujoco_driver_bridge.exe, --domain-id, "17", --local-endpoint, --command-timeout-ms, "500", --heartbeat-timeout-ms, "2000", --apply-timeout-ms, "30000"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "17"}
+            artifact: {path: build/windows-native-dds-adapter/Release/lingtu_mujoco_driver_bridge.exe}
+            dependencies:
+              - path: build/windows-native-dds-adapter/Release/ddsc.dll
+            readiness: {kind: file, target: driver.ready.json}
+            shutdown: {kind: process}
+          linux:
+            argv: [build/mujoco_native_dds/lingtu_mujoco_driver_bridge, --domain-id, "231", --local-endpoint, --command-timeout-ms, "500", --heartbeat-timeout-ms, "2000", --apply-timeout-ms, "30000"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "231"}
+            artifact: {path: build/mujoco_native_dds/lingtu_mujoco_driver_bridge}
+            readiness: {kind: file, target: driver.ready.json}
+            shutdown: {kind: process}
+      mujoco_feeder:
+        target: mujoco_feeder
+        lifecycle: mode
+        order: 20
+        timeout_s: 60
+        provides: []
+        command:
+          argv:
+            - python
+            - sim/scripts/mujoco/formal_feeder.py
+            - --mid360-samples-per-frame
+            - "4000"
+          cwd: .
+          env: {}
+          artifact:
+            path: sim/scripts/mujoco/formal_feeder.py
+          readiness:
+            kind: file
+            target: mujoco_feeder.ready.json
+          shutdown:
+            kind: file
+            target: mujoco_feeder.stop.json
+            schema: lingtu.sim.motion_stop.v2
+      slam_runtime:
+        target: slam_runtime
+        lifecycle: mode
+        order: 20
+        timeout_s: 60
+        provides: [slam]
+        platforms:
+          windows:
+            argv: [build/slam-core-windows-x64/stage/bin/slamd.exe, --backend, fastlio2, --domain-id, "17", --tick-hz, "50", --status-json-hz, "10", --track-against-map-period-s, "0"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "17"}
+            artifact: {path: build/slam-core-windows-x64/stage/bin/slamd.exe}
+            dependencies:
+              - path: build/slam-core-windows-x64/stage/bin/boost_filesystem-vc143-mt-x64-1_91.dll
+              - path: build/slam-core-windows-x64/stage/bin/boost_iostreams-vc143-mt-x64-1_91.dll
+              - path: build/slam-core-windows-x64/stage/bin/bz2.dll
+              - path: build/slam-core-windows-x64/stage/bin/ddsc.dll
+              - path: build/slam-core-windows-x64/stage/bin/liblzma.dll
+              - path: build/slam-core-windows-x64/stage/bin/libpng16.dll
+              - path: build/slam-core-windows-x64/stage/bin/lz4.dll
+              - path: build/slam-core-windows-x64/stage/bin/pcl_common.dll
+              - path: build/slam-core-windows-x64/stage/bin/pcl_filters.dll
+              - path: build/slam-core-windows-x64/stage/bin/pcl_io.dll
+              - path: build/slam-core-windows-x64/stage/bin/pcl_io_ply.dll
+              - path: build/slam-core-windows-x64/stage/bin/pcl_kdtree.dll
+              - path: build/slam-core-windows-x64/stage/bin/pcl_octree.dll
+              - path: build/slam-core-windows-x64/stage/bin/pcl_registration.dll
+              - path: build/slam-core-windows-x64/stage/bin/pcl_sample_consensus.dll
+              - path: build/slam-core-windows-x64/stage/bin/pcl_search.dll
+              - path: build/slam-core-windows-x64/stage/bin/yaml-cpp.dll
+              - path: build/slam-core-windows-x64/stage/bin/z.dll
+              - path: build/slam-core-windows-x64/stage/bin/zstd.dll
+            readiness: {kind: file, target: slam.status.json}
+            shutdown: {kind: process}
+          linux:
+            argv: [build/slam_core/slamd, --backend, fastlio2, --domain-id, "231", --tick-hz, "50", --status-json-hz, "10", --track-against-map-period-s, "0"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "231"}
+            artifact: {path: build/slam_core/slamd}
+            readiness: {kind: file, target: slam.status.json}
+            shutdown: {kind: process}
+      map_runtime:
+        target: map_runtime
+        lifecycle: mode
+        order: 20
+        timeout_s: 60
+        provides: [maps]
+        platforms:
+          windows:
+            argv: [build/maps-windows/Release/mapd.exe, --domain-id, "17", --disable-query]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "17"}
+            artifact: {path: build/maps-windows/Release/mapd.exe}
+            dependencies:
+              - path: build/maps-windows/Release/ddsc.dll
+            readiness: {kind: file, target: mapd.status.json}
+            shutdown: {kind: process}
+          linux:
+            argv: [build/maps/mapd, --domain-id, "231"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "231"}
+            artifact: {path: build/maps/mapd}
+            readiness: {kind: file, target: mapd.status.json}
+            shutdown: {kind: process}
+      traversability_runtime:
+        target: traversability_runtime
+        lifecycle: mode
+        order: 20
+        timeout_s: 30
+        provides: [traversability]
+        platforms:
+          windows:
+            argv: [build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_traversability_dds.exe, --domain-id, "17", --observed-free-ttl-s, "0.60", --observed-free-inflation-radius-m, "0.75"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "17"}
+            artifact: {path: build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_traversability_dds.exe}
+            dependencies:
+              - path: build/nav-cpp/windows-x64-nav-endpoint/Release/ddsc.dll
+            readiness: {kind: file, target: traversability.status.json}
+            shutdown: {kind: process}
+          linux:
+            argv: [build/nav_endpoint/lingtu_traversability_dds, --domain-id, "231", --observed-free-ttl-s, "0.60", --observed-free-inflation-radius-m, "0.75"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "231"}
+            artifact: {path: build/nav_endpoint/lingtu_traversability_dds}
+            readiness: {kind: file, target: traversability.status.json}
+            shutdown: {kind: process}
+      nav_runtime:
+        target: nav_runtime
+        lifecycle: mode
+        order: 20
+        timeout_s: 60
+        provides: [nav]
+        platforms:
+          windows:
+            argv: [build/nav-cpp/windows-x64-nav-endpoint/Release/navd.exe, --domain-id, "17", --status-s, "0.1"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "17", LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS: "600"}
+            artifact: {path: build/nav-cpp/windows-x64-nav-endpoint/Release/navd.exe}
+            dependencies:
+              - path: build/nav-cpp/windows-x64-nav-endpoint/Release/ddsc.dll
+            readiness: {kind: file, target: nav.status.json}
+            shutdown: {kind: process}
+          linux:
+            argv: [build/nav_endpoint/navd, --domain-id, "231", --status-s, "0.1"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "231", LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS: "600"}
+            artifact: {path: build/nav_endpoint/navd}
+            readiness: {kind: file, target: nav.status.json}
+            shutdown: {kind: process}
+      explore_runtime:
+        target: explore_runtime
+        lifecycle: mode
+        order: 50
+        timeout_s: 30
+        provides: [explore]
+        platforms:
+          windows:
+            argv: [build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_explore_dds.exe, --domain, "17", --tick-hz, "2"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "17"}
+            artifact: {path: build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_explore_dds.exe}
+            dependencies:
+              - path: build/nav-cpp/windows-x64-nav-endpoint/Release/ddsc.dll
+            readiness: {kind: file, target: explore.status.json}
+            shutdown: {kind: process}
+          linux:
+            argv: [build/nav_endpoint/lingtu_explore_dds, --domain, "231", --tick-hz, "2"]
+            cwd: .
+            env: {LINGTU_DDS_DOMAIN_ID: "231"}
+            artifact: {path: build/nav_endpoint/lingtu_explore_dds}
+            readiness: {kind: file, target: explore.status.json}
+            shutdown: {kind: process}
+      host_runtime:
+        target: host_runtime
+        lifecycle: mode
+        order: 50
+        timeout_s: 45
+        provides: [host]
+        platforms:
+          windows:
+            argv: [python, src/lingtu/sim/host.py]
+            cwd: .
+            env:
+              LINGTU_DDS_DOMAIN_ID: "17"
+              LINGTU_NAV_CLIENT_LIB: build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_nav_client.dll
+              LINGTU_SLAM_CONTROL: build/slam-core-windows-x64/stage/bin/slamctl.exe
+            artifact: {path: src/lingtu/sim/host.py}
+            dependencies:
+              - path: build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_nav_client.dll
+              - path: build/nav-cpp/windows-x64-nav-endpoint/Release/ddsc.dll
+              - path: build/slam-core-windows-x64/stage/bin/slamctl.exe
+            readiness: {kind: file, target: host.ready.json}
+            shutdown: {kind: process}
+          linux:
+            argv: [python, src/lingtu/sim/host.py]
+            cwd: .
+            env:
+              LINGTU_DDS_DOMAIN_ID: "231"
+              LINGTU_NAV_CLIENT_LIB: build/nav_endpoint/liblingtu_nav_client.so
+            artifact: {path: src/lingtu/sim/host.py}
+            dependencies:
+              - path: build/nav_endpoint/liblingtu_nav_client.so
+            readiness: {kind: file, target: host.ready.json}
+            shutdown: {kind: process}
     host_config:
       robot: sim_endpoint
-      _module_transport: local
       _endpoint_transport: dds
-      _endpoint_contract: thunder_dds_v1
-      enable_hw: false
-      enable_visual_backup: false
+      _endpoint_contract: field_dds_v1
       enable_robot_driver: false
       enable_lidar: false
-      enable_imu: false
       command_output_mode: endpoint_only
       hardware_control_boundary: driver
       localization_adapter: cpp_slam_status
       native_navigation_endpoint: lingtu-nav-dds
-      enable_map_out: false
-      enable_map_layers: false
       enable_camera: false
       use_driver_camera: false
+      run_startup_checks: false
     endpoints:
       contract:
-        name: mujoco_native_dds_acceptance_v1
+        name: field_dds_v1
         transport: dds
         runtime_class: native_dds
         data_plane: native_dds
         real_equivalent: true
-        sensor_publisher: livox_sdk2_stream --stdin-records --dds
-        simulation_command_consumer: ThunderV4 RL policy via C++ typed-DDS cmd_vel tap
+        sensor_publishers:
+          lidar: lingtu_mujoco_sensor_publisher --stream lidar
+          imu: lingtu_mujoco_sensor_publisher --stream imu
+          camera: lingtu_mujoco_sensor_publisher --stream camera
+        simulation_command_consumer: ThunderV4 RL policy via lingtu_mujoco_driver_bridge; never forwards to Brainstem or hardware
         navigation_command_boundary:
           request: /nav/command/request
           ack: /nav/command/ack
@@ -101,18 +409,16 @@ backends:
           request: /nav/inspection/evidence/request
           result: /nav/inspection/evidence/result
           client_completion: matching_persisted_result_required
+        plan_boundary:
+          request: /nav/plan/request
+          result: /nav/plan/result
         map_activation_boundary:
           request: /maps/activation/request
           ack: /maps/activation/ack
           client_completion: matching_business_ack_required
-          operations: [STAGE, RESTORE, VERIFY]
+          operations: [stage, restore, verify]
           request_identity_fields: [target, previous]
           stale_rollback_policy: reject_unless_active_exactly_matches_target
-        in_process_navigation_chain:
-          - OctoPlanner3D
-          - LocalPlanner
-          - PathFollower
-          - final command safety gate
         local_path_role: dds_telemetry_and_preview
         path_follower_role: embedded_before_cmd_vel_gate
         source_topics:
@@ -120,7 +426,10 @@ backends:
           - /tf_static
           - /lidar/raw_frame
           - /imu/raw
+          - /slam/map_command
+          - /slam/relocalization/request
           - /nav/command/request
+          - /nav/plan/request
           - /nav/operator_motion/control
           - /nav/operator_motion/sample
           - /nav/exploration/command
@@ -130,13 +439,17 @@ backends:
           - /maps/activation/request
         exposed_topics:
           - /slam/odometry
+          - /slam/state_at_scan
           - /slam/registered_cloud
           - /slam/map_observation
           - /slam/map_cloud
           - /slam/saved_map_cloud
+          - /slam/map_event
+          - /slam/relocalization/response
           - /slam/localization_health
           - /slam/localization_quality
           - /maps/state
+          - /maps/local_collision
           - /maps/scene
           - /maps/activation/ack
           - /nav/exploration_grid
@@ -145,11 +458,13 @@ backends:
           - /nav/exploration_segment/request
           - /nav/exploration_segment/ack
           - /nav/exploration_segment/status
+          - /nav/local_traversability
           - /nav/global_path
           - /nav/local_path
           - /nav/way_point
           - /nav/cmd_vel
           - /nav/command/ack
+          - /nav/plan/result
           - /nav/operator_motion/ack
           - /nav/operator_motion/status
           - /nav/goal/status
@@ -160,10 +475,6 @@ backends:
           - /nav/inspection/status
           - /nav/inspection/task/event
           - /nav/inspection/evidence/request
-        compatibility_topics:
-          - /nav/teleop_cmd_vel
-          - /nav/goal_pose
-          - /nav/cancel
         forbidden_modules:
           - SimEndpointDriverModule
           - Python GlobalPlanner
@@ -172,154 +483,3 @@ backends:
         forbidden_claims:
           - module_sim_real_equivalence
           - python_slam
-          - ros2_bridge_required
-  mujoco_host:
-    summary: MuJoCo Host simulation fed by normalized odometry and map-cloud adapters.
-    supported_products:
-      - map
-      - explore
-    process_control: external_runner
-    runner: sim/scripts/mujoco/launch_fastlio2_live.sh
-    provided_roles:
-      - lidar
-      - slam
-      - maps
-      - traversability
-      - nav
-      - driver
-      - explore
-      - host
-    host_config:
-      robot: sim_endpoint
-      _module_transport: local
-      _endpoint_transport: local
-      enable_hw: false
-      enable_native: false
-      enable_map_modules: true
-      enable_map_out: false
-      enable_camera: false
-      use_driver_camera: false
-      enable_gateway: true
-    endpoints:
-      contract:
-        name: mujoco_host_adapter_v1
-        transport: local
-        runtime_class: host_simulation
-        data_plane: python_module_wiring
-        real_equivalent: false
-        source_topics:
-          - /slam/odometry
-          - /slam/map_cloud
-        exposed_topics:
-          - /nav/global_path
-          - /nav/local_path
-          - /nav/cmd_vel
-        provided_topics:
-          - /tf
-          - /lidar/raw_frame
-          - /imu/raw
-          - /slam/odometry
-          - /slam/registered_cloud
-          - /slam/map_observation
-          - /slam/map_cloud
-          - /slam/saved_map_cloud
-          - /slam/localization_health
-          - /maps/state
-          - /maps/scene
-          - /maps/activation/request
-          - /maps/activation/ack
-          - /nav/exploration/command
-          - /nav/exploration/ack
-          - /nav/exploration/run/event
-          - /nav/command/request
-          - /nav/command/ack
-          - /nav/goal/status
-          - /nav/state
-          - /nav/operator_motion/control
-          - /nav/operator_motion/sample
-          - /nav/operator_motion/ack
-          - /nav/operator_motion/status
-          - /nav/traversability
-          - /nav/exploration_snapshot
-          - /nav/exploration_execution_snapshot
-          - /nav/exploration_segment/request
-          - /nav/exploration_segment/ack
-          - /nav/exploration_segment/status
-          - /nav/global_path
-          - /nav/local_path
-          - /nav/way_point
-          - /nav/cmd_vel
-        allowed_modules:
-          - SimEndpointDriverModule
-        forbidden_claims:
-          - real_robot_readiness
-          - native_dds_raw_sensor_equivalence
-          - field_runtime_equivalence
-  gazebo:
-    summary: Gazebo industrial simulation connected through the Host simulation adapter.
-    supported_products:
-      - explore
-    supported_product_variants:
-      explore:
-        - live
-    process_control: external_runner
-    runner: sim/scripts/launch_lingtu_gazebo_industrial_demo.sh
-    provided_roles:
-      - lidar
-      - slam
-      - maps
-      - traversability
-      - nav
-      - driver
-      - explore
-      - host
-    host_config:
-      robot: sim_endpoint
-      _module_transport: local
-      _endpoint_transport: local
-      enable_hw: false
-      enable_native: false
-      enable_map_modules: true
-      enable_map_out: false
-      enable_camera: true
-      use_driver_camera: true
-      enable_gateway: true
-    endpoints:
-      contract:
-        name: gazebo_industrial_adapter_v1
-        transport: local
-        runtime_class: host_simulation
-        data_plane: python_module_wiring
-        real_equivalent: false
-        provided_topics:
-          - /tf
-          - /lidar/raw_frame
-          - /imu/raw
-          - /slam/odometry
-          - /slam/registered_cloud
-          - /slam/map_observation
-          - /slam/map_cloud
-          - /slam/localization_health
-          - /maps/state
-          - /maps/scene
-          - /nav/exploration/command
-          - /nav/exploration/ack
-          - /nav/exploration/run/event
-          - /nav/command/request
-          - /nav/command/ack
-          - /nav/goal/status
-          - /nav/state
-          - /nav/traversability
-          - /nav/exploration_snapshot
-          - /nav/exploration_execution_snapshot
-          - /nav/exploration_segment/request
-          - /nav/exploration_segment/ack
-          - /nav/exploration_segment/status
-          - /nav/global_path
-          - /nav/local_path
-          - /nav/cmd_vel
-        allowed_modules:
-          - SimEndpointDriverModule
-        forbidden_claims:
-          - native_dds_raw_sensor_equivalence
-          - field_runtime_equivalence

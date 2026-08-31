@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from drivers.real.lidar.api.frames import POINT_DTYPE, LivoxPointFrame
 from drivers.real.lidar.impl.livox.sdk2_stream_source import (
     _HEADER,
     _IMU_PAYLOAD,
@@ -16,7 +15,7 @@ from drivers.real.lidar.impl.livox.sdk2_stream_source import (
 )
 from drivers.real.lidar.native.sdk import create_lidar_source
 from runtime.msgs.numpy_compat import np
-from runtime.msgs.sensor import Imu
+from runtime.msgs.sensor import POINT_DTYPE, Imu, LivoxPointFrame
 
 
 def test_create_lidar_source_selects_sdk2_source() -> None:
@@ -73,7 +72,7 @@ def test_sdk2_stream_declares_optional_native_dds_publisher() -> None:
     assert "LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS" in cmake
     assert "CycloneDDS::ddsc" in cmake
     assert "CycloneDDS-CXX" not in cmake
-    assert "src/message/idl/lingtu_slam.idl" in cmake
+    assert "src/message/idl/messages.idl" in cmake
     assert "LINGTU_LIVOX_SDK2_STREAM_HAS_DDS=1" in cmake
     assert '#include "native/dds_module.hpp"' in main
     assert '#include "dds/dds.h"' not in main

@@ -25,14 +25,6 @@ class TestVisualServoModuleInstantiation(unittest.TestCase):
         m = self._make()
         self.assertEqual(m._mode, "idle")
 
-    def test_initial_servo_not_active(self):
-        m = self._make()
-        self.assertFalse(m._servo_active)
-
-    def test_custom_takeover_distance(self):
-        m = self._make(servo_takeover_distance=5.0)
-        self.assertAlmostEqual(m._takeover_dist, 5.0)
-
     def test_target_label_initially_empty(self):
         m = self._make()
         self.assertEqual(m._target_label, "")
@@ -77,11 +69,14 @@ class TestVisualServoModeTransitions(unittest.TestCase):
         self.assertEqual(m._mode, "find")
         self.assertEqual(m._target_label, "red cup")
 
-    def test_cancel_tracking_releases_servo(self):
+    def test_cancel_tracking_cancels_owned_goal(self):
         m = self._make()
-        m._servo_active = True
+        cancels = []
+        m.goal_cancel._add_callback(cancels.append)
+        m._goal_published = True
         m._cancel_tracking()
-        self.assertFalse(m._servo_active)
+        self.assertEqual(cancels, ["visual_servo_stop"])
+        self.assertFalse(m._goal_published)
         self.assertEqual(m._mode, "idle")
 
 
@@ -102,21 +97,19 @@ class TestVisualServoHealth(unittest.TestCase):
         self.assertEqual(h["mode"], "idle")
         self.assertFalse(h["tracking_active"])
 
-    def test_health_far_mode(self):
+    def test_health_find_mode(self):
         m = self._make()
         m._mode = "find"
-        m._servo_active = False
         h = m.health()
         self.assertTrue(h["tracking_active"])
-        self.assertEqual(h["mode"], "far")
+        self.assertEqual(h["mode"], "find")
 
-    def test_health_near_mode(self):
+    def test_health_follow_mode(self):
         m = self._make()
-        m._mode = "find"
-        m._servo_active = True
+        m._mode = "follow"
         h = m.health()
         self.assertTrue(h["tracking_active"])
-        self.assertEqual(h["mode"], "near")
+        self.assertEqual(h["mode"], "follow")
 
     def test_health_has_module_key(self):
         m = self._make()
@@ -145,6 +138,16 @@ class TestVisualServoSkills(unittest.TestCase):
 
     def test_follow_person_skill(self):
         m = self._make()
+        m._person_tracker.set_clip_encoder(
+            type(
+                "ImageSelector",
+                (),
+                {
+                    "encode_text": lambda self, texts: texts,
+                    "encode_image": lambda self, image: image,
+                },
+            )()
+        )
         result = m.follow_person("person in hat")
         self.assertIn("person in hat", result)
         self.assertEqual(m._mode, "follow")
@@ -164,13 +167,11 @@ class TestVisualServoSkills(unittest.TestCase):
         self.assertEqual(status["mode"], "find")
         self.assertEqual(status["target"], "table")
 
-    def test_tune_bbox_gains_reports_unavailable_without_motion_authority(self):
+    def test_status_reports_hot_switch_and_goal_ownership(self):
         m = self._make()
-        report = m.tune_bbox_gains(duration=0.0)
-        self.assertFalse(report["converged"])
-        self.assertEqual(report["status"], "unavailable")
-        self.assertIn("not implemented", report["error"])
-        self.assertIn("requires", report)
+        status = m.get_servo_status()
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(status["navigation_state"], "idle")
 
 
 # ---------------------------------------------------------------------------

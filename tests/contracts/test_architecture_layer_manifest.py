@@ -1,3 +1,5 @@
+# ruff: noqa: D103, S101
+
 from __future__ import annotations
 
 import ast
@@ -70,45 +72,25 @@ def test_architecture_layer_manifest_rejects_equal_paths_with_trailing_slash_dri
     tmp_path: Path,
 ) -> None:
     manifest = copy.deepcopy(load_architecture_layers())
-    manifest["layers"][3]["owns"].append("src/nav/kernel")
+    manifest["layers"][3]["owns"].append("src/nav/cpp")
 
     violations, _manifest = validate_architecture_layer_manifest(_write_manifest(tmp_path, manifest))
 
-    assert any("owns duplicate path" in item and "src/nav/kernel" in item for item in violations)
+    assert any("owns duplicate path" in item and "src/nav/cpp" in item for item in violations)
 
 
 def test_architecture_layer_manifest_uses_most_specific_path_owner() -> None:
-    assert architecture_layer_for_path("src/nav/local/path_follower.py")["id"] == "L4_capability_modules"
-    assert architecture_layer_for_path("src/nav/local/paths")["id"] == "L5_algorithm_kernels"
+    assert architecture_layer_for_path("src/nav/commands/module.py")["id"] == "L4_capability_modules"
+    assert architecture_layer_for_path("src/nav/services/goals.py")["id"] == "L4_capability_modules"
+    assert architecture_layer_for_path("src/nav/skills/skills_module.py")["id"] == "L4_capability_modules"
+    assert architecture_layer_for_path("src/nav/cpp/planning/local/cmu/paths")["id"] == "L5_algorithm_kernels"
     assert architecture_layer_for_path("src/runtime/adapters/dds/reader.py")["id"] == "L3_adapter_layer"
-    assert architecture_layer_for_path("src/maps/adapters/native/map_save.py")["id"] == "L3_adapter_layer"
     assert architecture_layer_for_path("src/nav/cpp/CMakeLists.txt")["id"] == ("L5_algorithm_kernels")
     assert architecture_layer_for_path("src/nav/adapters/dds/nav/path_bridge.py")["id"] == ("L3_adapter_layer")
 
 
-def test_lite_manifest_does_not_carry_retired_ros2_adapter_paths() -> None:
-    lite_manifest = yaml.safe_load((ROOT / "config" / "lite_package.yaml").read_text(encoding="utf-8-sig"))
-    lite_excludes = set(lite_manifest["package"]["exclude_paths"])
-    lite_omits = set(lite_manifest["package"]["omit_paths"])
-
-    assert "src/nav/adapters/dds/" in lite_excludes
-    retired = {
-        "src/runtime/adapters/ros2/",
-        "src/localization/adapters/ros2/",
-        "src/perception/adapters/ros2/",
-        "src/lingtu/ros2_plugin_seed.py",
-        "src/lingtu/ros2_shutdown.py",
-    }
-    assert retired.isdisjoint(lite_excludes)
-    assert retired.isdisjoint(lite_omits)
-
-
 def test_product_composition_does_not_import_runtime_bootstrap_surfaces() -> None:
     forbidden = {
-        "cli.bootstrap",
-        "cli.runtime_bootstrap",
-        "cli.runtime_extra",
-        "cli.runtime_audit",
         "lingtu.ros2_plugin_seed",
         "lingtu.ros2_shutdown",
     }

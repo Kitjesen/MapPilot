@@ -4,11 +4,11 @@ import re
 
 ROOT = Path(__file__).resolve().parents[3]
 NAV_CPP = ROOT / "src" / "nav" / "cpp"
-PLAN_DIR = NAV_CPP / "endpoint" / "plan"
-COORDINATOR_HEADER = PLAN_DIR / "rolling_segment_effect_coordinator.hpp"
-COORDINATOR_SOURCE = PLAN_DIR / "rolling_segment_effect_coordinator.cpp"
+ROLLING_DIR = NAV_CPP / "endpoint" / "nav" / "runtime" / "rolling"
+COORDINATOR_HEADER = ROLLING_DIR / "effects.hpp"
+COORDINATOR_SOURCE = ROLLING_DIR / "effects.cpp"
 COORDINATOR_TEST = NAV_CPP / "tests" / "endpoint" / "test_rolling_segment_effect_coordinator.cpp"
-ENDPOINT = NAV_CPP / "endpoint" / "nav_native_endpoint.cpp"
+ENDPOINT = NAV_CPP / "endpoint" / "nav" / "main.cpp"
 NAV_CPP_CMAKE = NAV_CPP / "CMakeLists.txt"
 BUILD_SCRIPT = ROOT / "scripts" / "build" / "build_nav_endpoint.sh"
 README = NAV_CPP / "README.md"
@@ -31,10 +31,10 @@ def test_adds_portable_cpp_test_for_rolling_segment_effect_coordinator():
 
 def test_cmake_compiles_effect_coordinator_into_rolling_segment_library():
     cmake = _read(NAV_CPP_CMAKE)
-    assert "rolling_segment_effect_coordinator.cpp" in cmake
+    assert '"${_LINGTU_ROLLING_ENDPOINT_DIR}/effects.cpp"' in cmake
     assert re.search(
         r"add_library\s*\(\s*lingtu_nav_rolling_segment\b[\s\S]*"
-        r"rolling_segment_effect_coordinator\.cpp",
+        r"effects\.cpp",
         cmake,
     )
 
@@ -50,7 +50,7 @@ def test_cmake_registers_portable_effect_coordinator_ctest():
 
 def test_native_endpoint_includes_and_constructs_named_effect_coordinator():
     source = _read(ENDPOINT)
-    assert '#include "plan/rolling_segment_effect_coordinator.hpp"' in source
+    assert '#include "runtime/rolling/effects.hpp"' in source
     assert re.search(
         r"RollingSegmentEffectCoordinator\s+rolling_segment_effect_coordinator\b",
         source,
@@ -73,10 +73,10 @@ def test_effect_coordinator_stays_transport_free():
     combined = "\n".join((_read(COORDINATOR_HEADER), _read(COORDINATOR_SOURCE)))
     forbidden_tokens = (
         "DdsRuntime",
-        "NavLoop",
-        "lingtu_slam",
+        "Executor",
+        "messages",
         "nav_dds_runtime",
-        "nav_loop.hpp",
+        "navigation/executor.hpp",
     )
     for token in forbidden_tokens:
         assert token not in combined

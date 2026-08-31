@@ -119,10 +119,10 @@ def test_33_no_api_key_startup():
     for k in ["MOONSHOT_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DASHSCOPE_API_KEY"]:
         os.environ.pop(k, None)
 
-    from lingtu.assembly.products.thunder import thunder_blueprint
+    from lingtu.assembly.products.host import host_blueprint
 
     # Build dev profile: stub driver, no C++ nodes, semantic enabled, mock LLM
-    system = thunder_blueprint(
+    system = host_blueprint(
         robot="stub",
         slam_profile="none",
         detector="yoloe",
@@ -151,53 +151,6 @@ def test_33_no_api_key_startup():
         assert system._started, "System should be started without crash"
     finally:
         system.stop()
-
-
-# =========================================================================
-# Test 34: No CLIP startup �?EncoderModule doesn't crash
-# =========================================================================
-def test_34_no_clip_startup():
-    from unittest.mock import patch
-
-    from perception.encoding.encoder_module import EncoderModule
-    from lingtu.assembly.products.thunder import thunder_blueprint
-
-    # Build dev profile �?on Windows, open_clip is typically not installed.
-    # EncoderModule should catch ImportError and set _backend = None.
-    class MissingClipBackend:
-        def load_model(self):
-            raise ImportError("open_clip unavailable in test")
-
-    system = None
-    with patch.object(
-        EncoderModule,
-        "_create_backend",
-        return_value=MissingClipBackend(),
-    ):
-        system = thunder_blueprint(
-            robot="stub",
-            slam_profile="none",
-            detector="yoloe",
-            encoder="clip",
-            llm="mock",
-            planner="astar",
-            enable_native=False,
-            enable_semantic=True,
-            enable_standalone_encoder=True,
-            enable_gateway=False,
-        ).build()
-
-        try:
-            system.start()
-            assert system._started, "System should start even without CLIP"
-
-            # EncoderModule should exist and degrade to a disabled backend.
-            enc = system.get_module("EncoderModule")
-            assert enc is not None, "EncoderModule should be in system"
-            assert enc._backend is None, "EncoderModule should disable missing CLIP"
-        finally:
-            if system is not None:
-                system.stop()
 
 
 # =========================================================================
@@ -235,38 +188,6 @@ def test_35_empty_scene_graph():
 
 
 # =========================================================================
-# Test 36: WaypointTracker stuck detection
-# =========================================================================
-def test_36_waypoint_tracker_stuck():
-    from nav.tracking.waypoint_tracker import EV_STUCK, EV_STUCK_WARN, WaypointTracker
-
-    tracker = WaypointTracker(
-        threshold=1.5,
-        stuck_timeout=0.1,  # very short for testing
-        stuck_dist=0.15,
-    )
-
-    # Set up a path with one waypoint far away
-    path = [np.array([10.0, 10.0, 0.0])]
-    robot_pos = np.array([0.0, 0.0, 0.0])
-    tracker.reset(path, robot_pos)
-
-    # Update with same position repeatedly �?should trigger stuck
-    events_seen = []
-    deadline = time.time() + 2.0  # safety timeout
-    while time.time() < deadline:
-        status = tracker.update(robot_pos)
-        if status.event:
-            events_seen.append(status.event)
-        if EV_STUCK in events_seen:
-            break
-        time.sleep(0.02)
-
-    assert EV_STUCK_WARN in events_seen, f"Expected EV_STUCK_WARN, got events: {events_seen}"
-    assert EV_STUCK in events_seen, f"Expected EV_STUCK, got events: {events_seen}"
-
-
-# =========================================================================
 # Run all tests
 # =========================================================================
 if __name__ == "__main__":
@@ -275,9 +196,7 @@ if __name__ == "__main__":
     run_test("31. SemanticMapper persistence", test_31_semantic_mapper_persistence)
     run_test("32. VectorMemory numpy fallback", test_32_vector_memory_numpy)
     run_test("33. No API key startup", test_33_no_api_key_startup)
-    run_test("34. No CLIP startup", test_34_no_clip_startup)
     run_test("35. Empty SceneGraph", test_35_empty_scene_graph)
-    run_test("36. WaypointTracker stuck detection", test_36_waypoint_tracker_stuck)
 
     # Summary
     passed = sum(1 for _, ok, _ in results if ok)

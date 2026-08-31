@@ -2,6 +2,13 @@
   "schema_version": "lingtu.mujoco.native_navigation_acceptance.v1",
   "name": "mujoco_native_navigation",
   "description": "MuJoCo sensors and ThunderV4 locomotion around the same C++ typed-DDS SLAM, native maps (mapd), traversability, and navigation processes used by the field runtime.",
+  "product_contract": {
+    "product": "nav",
+    "source": "config/runtime_graph/products/nav.yaml",
+    "native_control_mode": "autonomy",
+    "slam_mode": "localization",
+    "requires_map": true
+  },
   "domain_id_base": 220,
   "world": "",
   "start": [0.0, 0.0, 0.48, 0.0],
@@ -29,14 +36,15 @@
     "metadata": "metadata.json"
   },
   "paths": {
-    "slam_config": "src/localization/fastlio2/config/mid360_mujoco_native_dds.yaml",
-    "path_library": "src/nav/local/paths",
+    "slam_config": "src/localization/fastlio2/config/sim_mid360_slam.yaml",
+    "path_library": "src/nav/cpp/planning/local/cmu/paths/thunder",
     "sensor_runner": "sim/scripts/mujoco/native_dds_sensors.py"
   },
   "binaries": {
     "sensor_publisher": {
       "env": "LINGTU_MUJOCO_NATIVE_DDS_PUBLISHER_BIN",
       "candidates": [
+        "build/windows-native-dds-adapter/Release/lingtu_mujoco_sensor_publisher.exe",
         "build/mujoco_native_livox/livox_sdk2_stream",
         "build/livox_sdk2_stream/livox_sdk2_stream"
       ]
@@ -44,6 +52,7 @@
     "slam": {
       "env": "LINGTU_MUJOCO_SLAM_BIN",
       "candidates": [
+        "build/slam-core-windows-x64/stage/bin/slamd.exe",
         "build/mujoco_native_slam/slamd",
         "build/slam_core/slamd"
       ]
@@ -51,6 +60,7 @@
     "mapd": {
       "env": "LINGTU_MUJOCO_MAPD_BIN",
       "candidates": [
+        "build/maps-windows/Release/mapd.exe",
         "build/maps/mapd",
         "build/mujoco_native_maps/mapd",
         "/opt/lingtu/current/build/maps/mapd"
@@ -59,6 +69,7 @@
     "traversability": {
       "env": "LINGTU_MUJOCO_TRAVERSABILITY_BIN",
       "candidates": [
+        "build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_traversability_dds.exe",
         "build/mujoco_native_nav/lingtu_traversability_dds",
         "build/nav_endpoint/lingtu_traversability_dds"
       ]
@@ -66,6 +77,7 @@
     "navigation": {
       "env": "LINGTU_MUJOCO_NAV_BIN",
       "candidates": [
+        "build/nav-cpp/windows-x64-nav-endpoint/Release/navd.exe",
         "build/mujoco_native_nav/navd",
         "build/nav_endpoint/navd",
         "/home/thunder/lingtu_nav_mode_verify/navd"
@@ -74,16 +86,37 @@
     "navigation_control": {
       "env": "LINGTU_MUJOCO_NAV_CONTROL_BIN",
       "candidates": [
+        "build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_nav_control.exe",
         "build/mujoco_native_nav/lingtu_nav_control",
         "build/nav_endpoint/lingtu_nav_control"
       ]
     },
-    "cmd_vel_tap": {
-      "env": "LINGTU_MUJOCO_CMD_VEL_TAP_BIN",
+    "driver_bridge": {
+      "env": "LINGTU_MUJOCO_DRIVER_BRIDGE_BIN",
       "candidates": [
-        "build/mujoco_native_dds/lingtu_mujoco_cmd_vel_tap"
+        "build/windows-native-dds-adapter/Release/lingtu_mujoco_driver_bridge.exe",
+        "build/mujoco_native_dds/lingtu_mujoco_driver_bridge"
       ]
     }
+  },
+  "driver_runtime": {
+    "max_linear_mps": 1.0,
+    "max_angular_rps": 1.0,
+    "command_timeout_ms": 200,
+    "heartbeat_timeout_ms": 500,
+    "apply_timeout_ms": 500
+  },
+  "mapd_runtime": {
+    "state_hz": 5.0,
+    "cloud_hz": 5.0,
+    "map_hz": 5.0,
+    "scene_hz": 2.0,
+    "max_points": 5000,
+    "max_collision_snapshot_points": 50000,
+    "min_range_m": 0.1,
+    "max_range_m": 12.0,
+    "decay_ms": 250,
+    "stale_ms": 1000
   },
   "phases": {
     "no_motion": {
@@ -168,12 +201,29 @@
       "rt/nav/local_path"
     ],
     "locomotion_input": "rt/nav/cmd_vel",
+    "locomotion_state": "rt/driver/control_state",
+    "locomotion_ack_source": "physical_mujoco_step",
     "local_path_role": "dds_telemetry_and_preview",
     "path_follower_role": "embedded_before_cmd_vel_gate",
     "forbidden_compute": [
       "Python global planner",
       "Python local planner",
       "Python path follower"
+    ]
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": [
+      "saved-map native localization",
+      "typed goal command and acknowledgement",
+      "native global and local planning",
+      "embedded path following and final command safety",
+      "terminal exact Driver stop acknowledgement, zero command, authority clear, and owned-process cleanup"
+    ],
+    "excluded_claims": [
+      "exact ProductControl RunPlan process realization",
+      "Brainstem motor execution",
+      "physical robot motion"
     ]
   }
 }

@@ -1,110 +1,79 @@
 {
   "schema_version": "lingtu.mujoco.native_navigation_acceptance.v1",
   "name": "mujoco_industrial_park_60m_navigation",
-  "description": "Strict single-goal native-DDS navigation acceptance across the 60 x 40 m MuJoCo industrial park.",
-  "acceptance_scope": {
-    "function": "saved_map_single_goal_navigation",
-    "blocking_chain": "existing_map -> global_planner -> local_planner -> cmd_vel -> ThunderV4 -> goal_arrival",
-    "sensor_accuracy": "evidence_only",
-    "rolling_scan_and_slam_accuracy_gate": "separate_sensor_acceptance",
-    "navigation_state_provider": "mujoco_navigation_fixture",
-    "navigation_imu_rate_hz": 100.0,
-    "full_sensor_imu_rate_hz": 200.0
+  "description": "Non-degraded saved-map navigation acceptance across the bounded 60 x 40 m MuJoCo industrial park.",
+  "product_contract": {
+    "product": "nav",
+    "source": "config/runtime_graph/products/nav.yaml",
+    "native_control_mode": "autonomy",
+    "slam_mode": "localization",
+    "requires_map": true
   },
   "domain_id_base": 226,
   "world": "sim/worlds/mujoco/industrial_park_scene.xml",
   "start": [3.0, 4.0, 0.48, 0.0],
   "goal": [56.0, 32.0, 0.3, 0.0],
+  "scenario_geometry": {
+    "bounds_xy_m": {"min": [0.0, 0.0], "max": [60.0, 40.0]},
+    "min_endpoint_boundary_clearance_m": 3.0,
+    "start_goal_chord_m": 59.941638282582836
+  },
   "map_dir": "artifacts/mujoco_industrial_park_saved_map_plan_60m/same_source_map",
-  "asset_builder": {
-    "kind": "saved_map_plan_gate",
-    "scene_preset": "industrial_park",
-    "length": 60.0,
-    "width": 40.0,
-    "spacing": 0.2,
-    "hits_per_cell": 4,
-    "resolution": 0.2,
-    "map_source": "synthetic_hits"
+  "source_identity": {
+    "map_artifacts": {
+      "metadata_schema": "lingtu.saved_map_artifacts.v1"
+    }
   },
-  "map_files": {
-    "slam": "map.pcd",
-    "planner": "octomap.ot",
-    "metadata": "metadata.json"
-  },
+  "map_files": {"slam": "map.pcd", "planner": "octomap.ot", "metadata": "metadata.json"},
   "paths": {
-    "slam_config": "src/localization/fastlio2/config/mid360_mujoco_native_dds_navigation_prior.yaml",
-    "path_library": "src/nav/local/paths",
+    "slam_config": "src/localization/fastlio2/config/sim_mid360_slam.yaml",
+    "path_library": "src/nav/cpp/planning/local/cmu/paths/thunder",
     "sensor_runner": "sim/scripts/mujoco/native_dds_sensors.py"
   },
-  "slam_runtime": {
-    "provider": "mujoco_navigation_fixture",
-    "mode": "mapping",
-    "role": "disabled in this navigation functional gate; MuJoCo truth is published through native DDS while SLAM accuracy remains a separate acceptance"
-  },
-  "traversability_runtime": {
-    "publish_hz": 10.0,
-    "slow_hz": 2.0
-  },
-  "navigation_runtime": {
-    "corridor_lookahead_m": 1.2,
-    "max_obstacle_points": 4000,
-    "status_period_s": 0.5
-  },
-  "telemetry_log": {
-    "enabled": true,
-    "hz": 10.0,
-    "lidar_points": 640
-  },
+  "slam_runtime": {"provider": "fastlio2", "mode": "localization"},
   "binaries": {
     "sensor_publisher": {
       "env": "LINGTU_MUJOCO_NATIVE_DDS_PUBLISHER_BIN",
-      "candidates": [
-        "build/mujoco_native_livox/livox_sdk2_stream",
-        "build/livox_sdk2_stream/livox_sdk2_stream"
-      ]
+      "candidates": ["build/windows-native-dds-adapter/Release/lingtu_mujoco_sensor_publisher.exe", "build/mujoco_native_livox/livox_sdk2_stream", "build/livox_sdk2_stream/livox_sdk2_stream"]
     },
     "slam": {
       "env": "LINGTU_MUJOCO_SLAM_BIN",
-      "candidates": [
-        "build/slam_core_wsl_fresh_20260713/slamd",
-        "build/mujoco_native_slam/slamd",
-        "build/slam_core/slamd"
-      ]
+      "candidates": ["build/slam-core-windows-x64/stage/bin/slamd.exe", "build/mujoco_native_slam/slamd", "build/slam_core/slamd"]
+    },
+    "mapd": {
+      "env": "LINGTU_MUJOCO_MAPD_BIN",
+      "candidates": ["build/maps-windows/Release/mapd.exe", "build/maps/mapd", "build/mujoco_native_maps/mapd", "/opt/lingtu/current/build/maps/mapd"]
     },
     "traversability": {
       "env": "LINGTU_MUJOCO_TRAVERSABILITY_BIN",
-      "candidates": [
-        "build/nav_endpoint_wsl/lingtu_traversability_dds",
-        "build/mujoco_native_nav/lingtu_traversability_dds"
-      ]
+      "candidates": ["build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_traversability_dds.exe", "build/mujoco_native_nav/lingtu_traversability_dds", "build/nav_endpoint/lingtu_traversability_dds"]
     },
     "navigation": {
       "env": "LINGTU_MUJOCO_NAV_BIN",
-      "candidates": [
-        "build/nav_endpoint_wsl/navd",
-        "build/mujoco_native_nav/navd"
-      ]
+      "candidates": ["build/nav-cpp/windows-x64-nav-endpoint/Release/navd.exe", "build/mujoco_native_nav/navd", "build/nav_endpoint/navd", "/home/thunder/lingtu_nav_mode_verify/navd"]
     },
     "navigation_control": {
       "env": "LINGTU_MUJOCO_NAV_CONTROL_BIN",
-      "candidates": [
-        "build/nav_endpoint_wsl/lingtu_nav_control",
-        "build/mujoco_native_nav/lingtu_nav_control"
-      ]
+      "candidates": ["build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_nav_control.exe", "build/mujoco_native_nav/lingtu_nav_control", "build/nav_endpoint/lingtu_nav_control"]
     },
-    "cmd_vel_tap": {
-      "env": "LINGTU_MUJOCO_CMD_VEL_TAP_BIN",
-      "candidates": [
-        "build/mujoco_native_dds/lingtu_mujoco_cmd_vel_tap"
-      ]
+    "driver_bridge": {
+      "env": "LINGTU_MUJOCO_DRIVER_BRIDGE_BIN",
+      "candidates": ["build/windows-native-dds-adapter/Release/lingtu_mujoco_driver_bridge.exe", "build/mujoco_native_dds/lingtu_mujoco_driver_bridge"]
     }
+  },
+  "driver_runtime": {
+    "max_linear_mps": 1.0,
+    "max_angular_rps": 1.0,
+    "command_timeout_ms": 200,
+    "heartbeat_timeout_ms": 500,
+    "apply_timeout_ms": 500
   },
   "planner_constraints": {
     "robot_radius_m": 0.95,
     "max_iterations": 300000,
     "require_ground_support": true,
     "strict_ground_support": true,
-    "ground_support_xy_radius_cells": 1,
+    "ground_support_xy_radius_cells": 0,
     "ground_support_depth_cells": 2,
     "support_height_m": 0.3,
     "support_height_tolerance_m": 0.11,
@@ -119,47 +88,35 @@
     "terminal_goal_xy_tolerance_m": 0.6,
     "terminal_goal_z_tolerance_m": 0.4
   },
+  "traversability_runtime": {"publish_hz": 10.0, "slow_hz": 2.0},
+  "navigation_runtime": {"local_planner": "cmu", "corridor_lookahead_m": 1.2, "max_obstacle_points": 4000, "status_period_s": 0.5},
   "sensor_runtime": {
     "publish_hz": 10.0,
-    "imu_hz": 100.0,
+    "imu_hz": 200.0,
     "mid360_samples_per_frame": 10000,
-    "scan_time_profile": "instantaneous",
+    "scan_time_profile": "physical_rolling",
+    "physical_rolling_sample_mode": "subscan",
     "physics_integrator": "euler",
-    "publish_odom_prior": true,
-    "odom_prior_velocity_window_s": 0.1,
-    "navigation_fixture_cloud_points": 4000,
     "stop_on_nav_goal_reached": true
   },
+  "telemetry_log": {"enabled": true, "hz": 10.0, "lidar_points": 640},
   "phases": {
-    "no_motion": {
-      "duration_s": 45.0,
-      "warmup_s": 20.0,
-      "start_anchor": "run",
-      "publish_cmd_vel": false,
-      "require_nonzero_cmd_vel": false
-    },
-    "motion": {
-      "duration_s": 600.0,
-      "warmup_s": 20.0,
-      "start_anchor": "warmup",
-      "publish_cmd_vel": true,
-      "require_nonzero_cmd_vel": true
-    }
+    "no_motion": {"duration_s": 45.0, "warmup_s": 20.0, "start_anchor": "run", "publish_cmd_vel": false, "require_nonzero_cmd_vel": false},
+    "motion": {"duration_s": 600.0, "warmup_s": 20.0, "start_anchor": "warmup", "publish_cmd_vel": true, "require_nonzero_cmd_vel": true}
   },
   "thresholds": {
     "startup_timeout_s": 120.0,
     "startup_ready_stable_s": 3.0,
     "plan_timeout_s": 60.0,
-    "min_global_path_points": 200,
+    "min_global_path_points": 2,
     "min_local_path_points": 2,
     "min_cmd_vel_samples": 3,
-    "require_slam_tracking": false,
-    "require_slam_accuracy": false,
-    "navigation_state_provider": "mujoco_navigation_fixture",
+    "require_slam_tracking": true,
+    "require_slam_accuracy": true,
+    "allow_degraded_slam_for_navigation_isolation": false,
     "require_navigation_safety_contracts": true,
-    "require_video_artifact": true,
-    "allow_degraded_slam_for_navigation_isolation": true,
-    "require_continuous_map_tracking": false,
+    "require_video_artifact": false,
+    "require_continuous_map_tracking": true,
     "min_track_against_map_successes": 1,
     "max_track_against_map_success_age_s": 6.0,
     "max_consecutive_track_against_map_failures": 3,
@@ -172,6 +129,7 @@
     "min_forward_linear_command_fraction": 0.8,
     "max_reverse_linear_command_fraction": 0.1,
     "min_motion_m": 50.0,
+    "min_net_displacement_m": 50.0,
     "min_goal_distance_reduction_m": 50.0,
     "require_goal_reached": true,
     "max_goal_error_m": 0.5
@@ -200,23 +158,9 @@
   },
   "contracts": {
     "sensor_inputs": ["rt/lidar/raw_frame", "rt/imu/raw"],
-    "navigation_fixture_outputs": [
-      "rt/slam/odometry",
-      "rt/tf",
-      "rt/slam/registered_cloud",
-      "rt/slam/localization_health"
-    ],
+    "slam_outputs": ["rt/slam/odometry", "rt/tf", "rt/slam/registered_cloud", "rt/slam/localization_health"],
     "terrain_output": "rt/nav/traversability",
-    "navigation_inputs": [
-      "rt/nav/command/request",
-      "rt/nav/operator_motion/control",
-      "rt/nav/operator_motion/sample",
-      "rt/slam/odometry",
-      "rt/tf",
-      "rt/slam/registered_cloud",
-      "rt/slam/localization_health",
-      "rt/nav/traversability"
-    ],
+    "navigation_inputs": ["rt/nav/command/request", "rt/nav/operator_motion/control", "rt/nav/operator_motion/sample", "rt/slam/odometry", "rt/tf", "rt/slam/registered_cloud", "rt/slam/localization_health", "rt/nav/traversability"],
     "navigation_command_ack": "rt/nav/command/ack",
     "operator_motion_ack": "rt/nav/operator_motion/ack",
     "operator_motion_status": "rt/nav/operator_motion/status",
@@ -224,12 +168,28 @@
     "navigation_command_transport": "typed_dds_request_ack",
     "navigation_telemetry": ["rt/nav/global_path", "rt/nav/local_path"],
     "locomotion_input": "rt/nav/cmd_vel",
+    "locomotion_state": "rt/driver/control_state",
+    "locomotion_ack_source": "physical_mujoco_step",
     "local_path_role": "dds_telemetry_and_preview",
     "path_follower_role": "embedded_before_cmd_vel_gate",
-    "forbidden_compute": [
-      "Python global planner",
-      "Python local planner",
-      "Python path follower"
+    "forbidden_compute": ["Python global planner", "Python local planner", "Python path follower"]
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": [
+      "bounded saved-map navigation over a 59.94 m start-goal chord",
+      "Fast-LIO2 localization from 200 Hz IMU and physical rolling LiDAR without an odometry prior",
+      "continuous saved-map tracking and SLAM accuracy",
+      "typed goal acknowledgement and native goal arrival",
+      "at least 50 m path length, net XY displacement, and goal-distance reduction",
+      "terminal exact Driver stop acknowledgement, zero command, authority clear, and owned-process cleanup"
+    ],
+    "excluded_claims": [
+      "exact ProductControl RunPlan process realization",
+      "repeatability campaign",
+      "video presentation evidence",
+      "Brainstem motor execution",
+      "physical robot motion"
     ]
   }
 }

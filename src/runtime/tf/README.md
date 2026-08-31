@@ -4,17 +4,16 @@ ROS-free transform support for normal LingTu modules.
 
 ## Where It Is Used
 
-- `src/localization/adapters/ros2/slam_bridge.py`: parses ROS/DDS-shaped `/tf` messages and feeds `map -> odom`.
-- DDS localization adapters feed `map -> odom` from endpoint localization health.
-- `src/localization/portable/localization_adapter.py`: installs static `map -> odom` identity for portable runs.
-- `src/gateway/gateway_module.py`: caches `map -> odom` for viewer/map-cloud alignment.
+- Native DDS localization adapters feed `map <- odom` from endpoint localization health.
+- `src/gateway/gateway_module.py`: caches `map <- odom` for viewer/map-cloud alignment.
 - `src/gateway/routes/diagnostics.py`: exposes `FrameTree.snapshot()` in frame diagnostics.
 
 ## Math Contract
 
 `Transform(frame_id=P, child_frame_id=C)` stores the pose of child frame `C`
-in parent frame `P`. Applying it converts child-frame data into parent-frame
-data:
+in parent frame `P`. Tree topology writes this as `P -> C`; numeric transform
+direction writes it as `P <- C` or `T_P_from_C`. Applying it converts
+child-frame data into parent-frame data:
 
 ```text
 p_P = R_PC * p_C + t_PC
@@ -27,7 +26,16 @@ Composition follows the same convention:
 T_AC = T_AB * T_BC
 ```
 
-`lookup(target, source)` returns `T_target_source`.
+`lookup(target, source)` returns `T_target_from_source`.
+
+For localization, `map_odom_tf` is the compatibility field name for
+`T_map_from_odom`: the pose of `odom` expressed in `map`. It is not a map and
+not an odometry pose. Module ports serialize it with one `ts` source-time field.
+The canonical chain is:
+
+```text
+T_map_from_body = T_map_from_odom * T_odom_from_body
+```
 
 Dynamic edges are timestamped and interpolated. Static edges are valid for any
 timestamp.

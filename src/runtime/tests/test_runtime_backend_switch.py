@@ -137,30 +137,6 @@ def test_motion_backend_reconfigure_is_unsupported_by_default():
     }
 
 
-@pytest.mark.parametrize(
-    ("module_path", "class_name", "category", "backend"),
-    [
-        ("nav.navigation", "Navigation", "planner", "astar"),
-        ("nav.local.local_planner", "LocalPlanner", "local_planner", "cmu_py"),
-        ("nav.local.path_follower", "PathFollower", "path_follower", "pid"),
-        ("nav.local.terrain", "Terrain", "terrain", "simple"),
-    ],
-)
-def test_motion_modules_reconfigure_backend_fails_closed(module_path, class_name, category, backend):
-    module = __import__(module_path, fromlist=[class_name])
-    cls = getattr(module, class_name)
-    mod = cls()
-
-    result = mod.reconfigure_backend(category, backend)
-
-    assert result == {
-        "ok": False,
-        "category": category,
-        "requested_backend": backend,
-        "reason": "backend_reconfigure_unsupported",
-    }
-
-
 def test_perception_reconfigure_detector_rejects_unknown_backend():
     mod = PerceptionModule(detector_type="sim_scene", encoder_type="clip")
 

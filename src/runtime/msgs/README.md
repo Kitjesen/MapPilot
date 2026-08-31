@@ -19,9 +19,9 @@ Keep Python module ports typed with these message classes. Serialization is an
 adapter concern:
 
 - In-process module graph: pass the Python objects directly.
-- Endpoint replay: use versioned endpoint schemas under `runtime.adapters.endpoint_sources`.
-- DDS product topics: use `src/message/dds.py` and native C++ aliases from
-  `src/message/cpp/dds_topics.hpp`.
+- Recording/replay tools use MCAP and do not define a second message model.
+- DDS product topics: use `src/message/topics.py` and native C++ aliases from
+  `src/message/cpp/topics.hpp`.
 - Protobuf: add only for a real non-Python/non-DDS boundary that needs generated
   language bindings.
 
@@ -33,13 +33,11 @@ adapter concern:
   keyframe, and incremental map-cloud updates.
 - `nav.py` - Navigation messages: Path, Waypoint, GoalStatus, OccupancyGrid, and
   MapMetaData for planning and control.
-- `sensor.py` - Sensor data messages: Image, PointCloud2, Imu, LaserScan, and
-  CompressedImage for hardware input.
+- `sensor.py` - Sensor data messages: Image, PointCloud2, Imu, LaserScan,
+  CompressedImage, and the decoded Livox frame shared by real and sim sources.
 - `semantic.py` - Semantic messages: Detection, SceneGraph, ObjectLabel, and
   SemanticClass for perception output.
 - `scene.py` - Scene graph messages: SceneNode, Relationship, Room, and Topology
   for spatial-semantic hybrid maps.
-- `robot.py` - Robot state messages: RobotState, JointState, BatteryState, and
-  Temperature for hardware status.
 - `gnss.py` - GNSS messages: GpsFix, UtmPose, and NavSatFix for outdoor global
   positioning.

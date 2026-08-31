@@ -30,7 +30,6 @@ def _run_setup(
     if BASH is None:
         raise RuntimeError("bash is unavailable")
     env = os.environ.copy()
-    env.pop("LINGTU_RMF_API_KEY", None)
     env["LINGTU_GATEWAY_ENV_FILE"] = str(gateway_target)
     env["LINGTU_MAP_CLIENT_ENV_FILE"] = str(map_target)
     return subprocess.run(  # noqa: S603 - Runs a repository-owned helper in an isolated test.
@@ -390,7 +389,7 @@ def test_rotation_modes_are_mutually_exclusive(tmp_path: Path) -> None:
 
 def test_deployment_contract_uses_two_least_privilege_environment_files() -> None:
     script = SCRIPT.read_text(encoding="utf-8")
-    service_lines = (THUNDER_DEPLOY / "lingtu.service").read_text(
+    service_lines = (THUNDER_DEPLOY / "lt-host.service").read_text(
         encoding="utf-8"
     ).splitlines()
 
@@ -399,7 +398,7 @@ def test_deployment_contract_uses_two_least_privilege_environment_files() -> Non
     assert "gateway_expected_uid=0" in script
     assert "gateway_expected_gid=0" in script
     assert "map_expected_uid=0" in script
-    assert 'map_expected_gid="$(id -g sunrise 2>/dev/null)"' in script
+    assert 'runtime_group="${LINGTU_RUNTIME_GROUP:-lingtu}"' in script
     assert 'stat -c \'%u:%g:%a:%h\'' in script
     assert '"${expected_uid}:${expected_gid}:${expected_mode}:1"' in script
     assert '[[ -L "${target}" || ! -f "${target}" ]]' in script
@@ -417,4 +416,5 @@ def test_deployment_contract_uses_two_least_privilege_environment_files() -> Non
         '"${gateway_temp}" "${gateway_target}" "${gateway_exists}"'
     )
     assert map_install < gateway_install
-    assert "scripts/lingtu --env real svc restart host" in script
+    assert "scripts/lingtu switch <product> --robot <vendor/model> --env real" in script
+    assert "svc restart" not in script

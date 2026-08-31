@@ -18,16 +18,25 @@ def _write_current(
     *,
     product: str,
     domain_id: str | None = "0",
+    env: str = "real",
+    robot: str = "unitree/go2",
 ) -> None:
-    control = ProductControl(robot="unitree/go2", env="real", process_env={})
+    control = ProductControl(
+        robot=robot,
+        env=env,
+        env_config={"backend": "mujoco"} if env == "sim" else None,
+        process_env={},
+    )
     plan = control._resolve(product)
-    native_environment = plan.native_process_environment
-    if domain_id is None:
-        native_environment.pop("LINGTU_DDS_DOMAIN_ID", None)
-    else:
-        native_environment["LINGTU_DDS_DOMAIN_ID"] = domain_id
-    plan = plan.with_native_process_environment(native_environment)
-    plan_path = plan.write(tmp_path / "plan.json")
+    if env == "real":
+        native_environment = plan.native_process_environment
+        if domain_id is None:
+            native_environment.pop("LINGTU_DDS_DOMAIN_ID", None)
+        else:
+            native_environment["LINGTU_DDS_DOMAIN_ID"] = domain_id
+        plan = plan.with_native_process_environment(native_environment)
+    product_session_id = "1" * 32
+    plan_path = plan.write(tmp_path / f"plan-{product_session_id}.json")
     (tmp_path / "current.json").write_text(
         json.dumps(
             {
@@ -36,7 +45,7 @@ def _write_current(
                 "product_variant": plan.product_variant,
                 "env": plan.env,
                 "run_plan_path": str(plan_path),
-                "product_session_id": "1" * 32,
+                "product_session_id": product_session_id,
             }
         ),
         encoding="utf-8",
@@ -152,7 +161,7 @@ def test_drive_forward_hides_native_command_and_uses_bounded_default(
         "--duration-s",
         "2",
         "--rate-hz",
-        "20",
+        "50",
         "--source-id",
         "lingtu-drive",
         "--domain-id",
@@ -178,6 +187,34 @@ def test_drive_accepts_a_larger_explicit_bounded_range(
         "completed: forward at 0.30 m/s for 3.0 s "
         "(nominal open-loop distance 0.90 m)"
     )
+
+
+def test_drive_accepts_the_active_simulation_environment(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_current(
+        tmp_path,
+        product="teleop_avoid",
+        env="sim",
+        robot="doso/thunder_v4",
+    )
+
+    assert drive_main(
+        [
+            "forward",
+            "--robot",
+            "doso/thunder_v4",
+            "--env",
+            "sim",
+            "--state-dir",
+            str(tmp_path),
+            "--dry-run",
+            "--json",
+        ]
+    ) == 0
+
+    assert json.loads(capsys.readouterr().out)["env"] == "sim"
 
 
 def test_drive_accepts_teleop_avoid_and_uses_its_exact_dds_domain(

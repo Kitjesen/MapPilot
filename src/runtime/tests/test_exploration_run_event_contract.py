@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from runtime.contracts.product_runtime import resolve_product_spec_contracts
-from runtime.endpoints.dds.contracts import THUNDER_DDS_CONTRACT, binding_for_topic
+from runtime.endpoints.dds.contracts import FIELD_DDS_CONTRACT, binding_for_topic
 from runtime.graph import load_runtime_graph, resolve_env_implementation
 from runtime.msgs import (
     ExplorationRunEvent,
@@ -30,8 +30,7 @@ def _event(**overrides: object) -> ExplorationRunEvent:
         "state": int(ExplorationRunState.RUNNING),
         "route": "map",
         "map_id": "yard-a",
-        "map_version": 4,
-        "artifact_hash": "a" * 64,
+        "map_content_epoch": 4,
         "reason": "goal_active",
         "motion_stop_confirmed": False,
         "motion_stop_reason": "",
@@ -63,8 +62,7 @@ def test_exploration_run_event_preserves_distinct_lifecycle_identities() -> None
         "terminal": False,
         "route": "map",
         "map_id": "yard-a",
-        "map_version": 4,
-        "artifact_hash": "a" * 64,
+        "map_content_epoch": 4,
         "reason": "goal_active",
         "motion_stop_confirmed": False,
         "motion_stop_reason": "",
@@ -89,7 +87,7 @@ def test_exploration_run_event_rejects_invalid_identity_route_and_stop_failure()
     with pytest.raises(ValueError, match="route"):
         _event(route="legacy_tare")
     with pytest.raises(ValueError, match="map identity"):
-        _event(map_id="", map_version=0, artifact_hash="")
+        _event(map_id="", map_content_epoch=0)
     with pytest.raises(ValueError, match="STOP_CONFIRMATION_FAILED"):
         _event(
             kind=int(ExplorationRunEventKind.STOP_CONFIRMATION_FAILED),
@@ -119,13 +117,6 @@ def test_exploration_run_event_is_required_by_both_explore_variants() -> None:
             product_variant=variant,
         )
         assert topic in contract.topics
-
-    assert graph.products["explore"]["exploration_run_event_stream"] == {
-        "topic": topic,
-        "ordering_cursor": ["boot_id", "event_sequence"],
-        "terminal_truth": "native_motion_stop_confirmation_before_terminal",
-    }
-
 
 def test_exploration_run_event_is_one_native_writer_to_host_bus_stream() -> None:
     graph = load_runtime_graph()
@@ -161,7 +152,7 @@ def test_exploration_run_event_is_one_native_writer_to_host_bus_stream() -> None
     sim = resolve_env_implementation(
         "sim",
         graph=graph,
-        env_config={"backend": "mujoco_native"},
+        env_config={"backend": "mujoco"},
     )
     for implementation in (real, sim):
         endpoint = implementation["endpoints"]["contract"]
@@ -172,7 +163,7 @@ def test_exploration_run_event_is_one_native_writer_to_host_bus_stream() -> None
             "terminal_truth": "native_motion_stop_confirmation_before_terminal",
         }
 
-    binding = binding_for_topic(THUNDER_DDS_CONTRACT.name, topic)
+    binding = binding_for_topic(FIELD_DDS_CONTRACT.name, topic)
     assert binding.direction == "endpoint_to_lingtu"
     assert binding.idl_type == "lingtu.dds.ExplorationRunEvent"
     assert binding.frame_ids == ("map",)
@@ -194,20 +185,16 @@ def test_exploration_run_event_runtime_format_is_complete() -> None:
         "state",
         "route",
         "map_id",
-        "map_version",
-        "artifact_hash",
+        "map_content_epoch",
         "reason",
         "motion_stop_confirmed",
         "motion_stop_reason",
     )
 
 
-def test_exploration_run_event_has_a_resolvable_public_dds_type() -> None:
-    from message.dds import TOPIC_SPECS
-    from message.dds_types import DDS_ExplorationRunEvent
+def test_exploration_run_event_has_native_type_metadata() -> None:
+    from message.topics import TOPIC_SPECS
 
     spec = TOPIC_SPECS[TOPICS.exploration_run_event]
     assert spec.dds_topic == "rt/nav/exploration/run/event"
     assert spec.idl_type == "lingtu.dds.ExplorationRunEvent"
-    assert spec.cpp_type == "lingtu::dds::ExplorationRunEvent"
-    assert spec.dds_type() is DDS_ExplorationRunEvent

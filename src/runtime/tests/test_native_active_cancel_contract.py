@@ -3,21 +3,27 @@ import re
 
 
 ROOT = Path(__file__).resolve().parents[3]
-ENDPOINT_LOOP = ROOT / "src" / "nav" / "cpp" / "endpoint" / "endpoint_loop.cpp"
+ENDPOINT_LOOP = ROOT / "src" / "nav" / "cpp" / "endpoint" / "runtime" / "loop.cpp"
 TASK_CANCEL_ROUTER_SOURCE = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "motion" / "goal_task_cancel_router.cpp"
+    ROOT / "src" / "nav" / "cpp" / "endpoint" / "command" / "cancel.cpp"
+)
+NAVIGATION_RUNTIME_SOURCE = (
+    ROOT / "src" / "nav" / "cpp" / "endpoint" / "runtime" / "navigation.cpp"
+)
+TERMINAL_TRANSACTION_SOURCE = (
+    ROOT / "src" / "nav" / "cpp" / "endpoint" / "status" / "goal_terminal_transaction.cpp"
 )
 RUNTIME_HEADER = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal_replan_runtime_coordinator.hpp"
+    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal" / "runtime.hpp"
 )
 RUNTIME_SOURCE = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal_replan_runtime_coordinator.cpp"
+    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal" / "runtime.cpp"
 )
 GOAL_PLAN_HEADER = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal_plan_controller.hpp"
+    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal" / "plan.hpp"
 )
 GOAL_PLAN_SOURCE = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal_plan_controller.cpp"
+    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal" / "plan.cpp"
 )
 
 
@@ -87,15 +93,10 @@ def test_runtime_terminal_intent_carries_stop_policy_for_active_stop() -> None:
 def test_endpoint_replays_active_cancel_terminal_with_cancel_preserving_barrier() -> None:
     endpoint = _read(ENDPOINT_LOOP)
     router = _read(TASK_CANCEL_ROUTER_SOURCE)
-    service_block = _block_between(
-        endpoint,
-        "auto service_terminal_with_stop =",
-        "auto service_terminal =",
-    )
-    generic_service = _block_between(
-        endpoint,
-        "auto service_terminal =",
-        "auto preserve_pending_goal_terminal =",
+    transaction = _read(TERMINAL_TRANSACTION_SOURCE)
+    endpoint_router = _block_between(endpoint, "GoalTaskCancelRouter task_cancel_router(", "while (running)")
+    cancel_policy = _block_between(
+        transaction, "case TerminalStopPolicy::kCancel:", "break;"
     )
     cancel_block = _block_between(
         router,
@@ -103,38 +104,35 @@ def test_endpoint_replays_active_cancel_terminal_with_cancel_preserving_barrier(
         'return {false, "task_not_active"};',
     )
 
-    assert "terminal_stop_policy" in service_block
-    assert "TerminalStopPolicy::kCancel" in service_block
-    assert "motion_stop.cancelPreservingGoalTerminal" in service_block
-    assert "motion_stop.commitGoalTerminalAfterStop" in service_block
+    assert "motion_stop_.cancelPreservingGoalTerminal" in cancel_policy
     assert "motion_stop.cancelPreservingGoalTerminal" not in cancel_block
     assert "terminal_service_(runtime_result)" in cancel_block
-    assert "commitGoalTerminalAfterStop" not in generic_service
+    assert "navigation_runtime_controller.completeTerminal(runtime_result)" in endpoint_router
 
 
 def test_endpoint_services_terminal_from_planning_cycle_before_autonomy_tick() -> None:
-    endpoint = _read(ENDPOINT_LOOP)
+    runtime = _read(NAVIGATION_RUNTIME_SOURCE)
 
-    advance_index = endpoint.index("goal_replan_runtime.advancePlanningCycle(runtime_frame)")
-    autonomy_tick_index = endpoint.index("autonomy_tick.tick", advance_index)
-    service_index = endpoint.index("service_terminal", advance_index)
+    advance_index = runtime.index("goal_replan_runtime_.advancePlanningCycle(frame)")
+    autonomy_tick_index = runtime.index("actions.run_autonomy", advance_index)
+    service_index = runtime.index("completeTerminal(result.planning_result)", advance_index)
 
-    assert "runtime_advance_result.terminal_after_stop" in endpoint[advance_index:service_index]
+    assert "planning_schedule.service_terminal" in runtime[advance_index:service_index]
     assert service_index < autonomy_tick_index
 
 
 def test_endpoint_skips_autonomy_tick_while_terminal_delivery_is_pending() -> None:
-    endpoint = _read(ENDPOINT_LOOP)
+    runtime = _read(NAVIGATION_RUNTIME_SOURCE)
 
-    advance_index = endpoint.index("goal_replan_runtime.advancePlanningCycle(runtime_frame)")
-    autonomy_tick_index = endpoint.index("autonomy_tick.tick", advance_index)
-    pre_autonomy = endpoint[advance_index:autonomy_tick_index]
-    gate_start = endpoint.rfind("if (terminal_scheduling.run_autonomy_tick)", 0, autonomy_tick_index)
+    advance_index = runtime.index("goal_replan_runtime_.advancePlanningCycle(frame)")
+    autonomy_tick_index = runtime.index("actions.run_autonomy", advance_index)
+    pre_autonomy = runtime[advance_index:autonomy_tick_index]
+    gate_start = runtime.rfind("if (planning_schedule.run_autonomy_tick)", 0, autonomy_tick_index)
 
     assert "decideGoalTerminalScheduling" in pre_autonomy
-    assert "goal_replan_runtime.terminalPending()" in pre_autonomy
+    assert "goal_replan_runtime_.terminalPending()" in pre_autonomy
     assert gate_start > advance_index
-    assert "terminal_scheduling.run_autonomy_tick" in endpoint[gate_start:autonomy_tick_index]
+    assert "planning_schedule.run_autonomy_tick" in runtime[gate_start:autonomy_tick_index]
     assert "continue;" not in pre_autonomy
 
 
@@ -166,18 +164,21 @@ def test_runtime_interrupt_closes_deferred_replacement_before_legacy_interrupt_p
     assert "return result;" in interrupt[clear_index:switch_index]
 
 
-def test_endpoint_external_goal_rejects_after_terminal_interrupt_without_submit_bypass() -> None:
-    endpoint = _read(ENDPOINT_LOOP)
-    submit_goal = _block_between(endpoint, "auto submit_goal =", "dds.drainCloud")
+def test_runtime_external_goal_rejects_after_terminal_interrupt_without_submit_bypass() -> None:
+    runtime = _read(NAVIGATION_RUNTIME_SOURCE)
+    submit_goal = _block_between(
+        runtime,
+        "NavigationRuntimeController::submitGoal",
+        "GoalTerminalTransactionResult",
+    )
 
-    interrupt_index = submit_goal.index("goal_replan_runtime.interrupt")
-    service_index = submit_goal.index("service_terminal(interrupt_result)")
-    reject_index = submit_goal.index('return {false, "goal_terminal_pending"}')
-    submit_index = submit_goal.index("goal_plan.submit")
+    interrupt_index = submit_goal.index("interrupt(GoalReplanRuntimeInterruption::kNewGoal")
+    retain_index = submit_goal.index("result.preemption_terminal = preemption.terminal_transaction")
+    reject_index = submit_goal.index('"goal_terminal_pending"', retain_index)
+    submit_index = submit_goal.index("goal_plan_.submit")
 
-    assert interrupt_index < service_index < reject_index < submit_index
-    assert "interrupt_result.terminal_after_stop" in submit_goal[interrupt_index:reject_index]
-    assert "GoalReplanRuntimeInterruption::kNewGoal" in submit_goal[interrupt_index:reject_index]
+    assert interrupt_index < retain_index < reject_index < submit_index
+    assert "preemption.runtime_result.terminal_after_stop" in submit_goal[retain_index:reject_index]
 
 
 def test_endpoint_targeted_cancel_routes_hidden_replacement_before_task_not_active() -> None:
@@ -191,7 +192,7 @@ def test_endpoint_targeted_cancel_routes_hidden_replacement_before_task_not_acti
     endpoint_router = _block_between(
         endpoint,
         "GoalTaskCancelRouter task_cancel_router(",
-        "auto preserve_pending_goal_terminal =",
+        "while (running)",
     )
     typed_dispatch = _block_between(
         endpoint,
@@ -211,7 +212,7 @@ def test_endpoint_targeted_cancel_routes_hidden_replacement_before_task_not_acti
 
     assert deferred_match_index < interrupt_index < service_index < accepted_index < not_active_index
     assert "auto handle_cancel =" not in endpoint
-    assert "service_terminal(runtime_result)" in endpoint_router
+    assert "navigation_runtime_controller.completeTerminal(runtime_result)" in endpoint_router
     assert "task_cancel_router.handle" in typed_dispatch
     assert "GoalTaskCancelRequest" in typed_dispatch
     assert "deferred_replacement_request_id" in _read(GOAL_PLAN_HEADER)

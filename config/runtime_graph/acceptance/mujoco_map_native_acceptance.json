@@ -1,0 +1,37 @@
+{
+  "schema_version": "lingtu.mujoco.map_native_acceptance.v1",
+  "name": "mujoco_map_native",
+  "description": "Attach-only exact-session MuJoCo map component acceptance through ProductControl-owned children and the public Gateway SaveMap boundary.",
+  "product_contract": {
+    "product": "map",
+    "source": "config/runtime_graph/products/map.yaml",
+    "native_control_mode": "teleop",
+    "slam_mode": "mapping",
+    "requires_map": false
+  },
+  "contracts": {
+    "required_inputs": ["rt/lidar/raw_frame", "rt/imu/raw", "rt/slam/map_observation"],
+    "required_outputs": ["rt/maps/state", "rt/maps/scene"],
+    "forbidden_compute": ["Python SLAM", "Python map layers", "ROS2 map server"]
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": [
+      "native MuJoCo LiDAR and IMU input",
+      "trusted exact-session live child identities for feeder, sensor publisher, SLAM, and mapd",
+      "typed sensor, mapping-mode SLAM, and mapd readiness newer than each owning child start",
+      "mapping-mode native SLAM",
+      "scan-time MapObservation delivery",
+      "native mapd state and scene publication",
+      "fresh exact-session RGB-D camera SHM during map save",
+      "exact-session Gateway SaveMap success",
+      "Gateway map listing exposes a nonempty PCD"
+    ],
+    "excluded_claims": [
+      "typed operator-motion drive path",
+      "saved-map metadata and format validation",
+      "derived navigation artifact build",
+      "atomic saved-map activation"
+    ]
+  }
+}

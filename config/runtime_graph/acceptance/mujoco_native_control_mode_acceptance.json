@@ -12,7 +12,6 @@
         "mujoco_sensor_policy"
       ],
       "forbidden_processes": [
-        "python_cmd_vel_mux",
         "python_nav_mission",
         "python_local_planner",
         "python_path_follower"
@@ -51,22 +50,34 @@
       "command_kind": "teleop",
       "required_processes": [
         "navigation",
+        "driver",
         "mujoco_sensor_policy"
       ],
       "forbidden_processes": [
         "slam",
         "traversability",
-        "python_cmd_vel_mux",
         "python_nav_mission",
         "python_local_planner",
         "python_path_follower"
       ],
       "required_inputs": [
-        "rt/nav/command/request"
+        "rt/nav/operator_motion/control",
+        "rt/nav/operator_motion/sample",
+        "rt/driver/control_state"
       ],
       "runner": {
-        "kind": "unavailable",
-        "reason": "full_mujoco_native_teleop_harness_not_implemented"
+        "kind": "teleop_native_acceptance",
+        "script": "sim/scripts/mujoco/teleop_native_acceptance.py",
+        "report": "report.json",
+        "report_schema": "lingtu.mujoco.teleop_native_acceptance.v1",
+        "timeout_s": 300,
+        "arguments": [
+          "--manifest",
+          "config/runtime_graph/acceptance/mujoco_teleop_native_acceptance.json",
+          "--artifact-dir",
+          "{harness_dir}",
+          "--strict"
+        ]
       }
     },
     "teleop_avoid": {
@@ -80,7 +91,6 @@
         "mujoco_sensor_policy"
       ],
       "forbidden_processes": [
-        "python_cmd_vel_mux",
         "python_nav_mission",
         "python_local_planner",
         "python_path_follower",

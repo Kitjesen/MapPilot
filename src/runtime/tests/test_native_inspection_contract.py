@@ -1,16 +1,17 @@
-from dataclasses import fields
 from pathlib import Path
 
 from lingtu.assembly.products import resolve_product_host_config
 from nav.adapters.native import inspection_store as native_inspection
-from runtime.runtime_interface import TOPIC_ALLOWED_FRAME_IDS, TOPIC_ROS_TYPES, TOPICS
+from runtime.runtime_interface import TOPIC_ALLOWED_FRAME_IDS, TOPICS
 
 
 def test_inspection_profile_does_not_enable_python_patrol_runtime() -> None:
-    config = resolve_product_host_config("inspection")
+    config = resolve_product_host_config(
+        "inspection", "real", robot="doso/thunder_v4"
+    )
 
-    assert config["enable_patrol_routes"] is False
-    assert config["enable_scheduler"] is False
+    assert "enable_patrol_routes" not in config
+    assert "enable_scheduler" not in config
 
 
 def test_typed_inspection_topics_are_canonical() -> None:
@@ -21,11 +22,6 @@ def test_typed_inspection_topics_are_canonical() -> None:
     assert TOPICS.inspection_status == "/nav/inspection/status"
     assert TOPICS.inspection_evidence_request == "/nav/inspection/evidence/request"
     assert TOPICS.inspection_evidence_result == "/nav/inspection/evidence/result"
-    assert TOPIC_ROS_TYPES[TOPICS.inspection_task_request] == ("lingtu.dds.InspectionTaskRequest",)
-    assert TOPIC_ROS_TYPES[TOPICS.inspection_task_ack] == ("lingtu.dds.InspectionTaskAck",)
-    assert TOPIC_ROS_TYPES[TOPICS.inspection_status] == ("lingtu.dds.InspectionStatus",)
-    assert TOPIC_ROS_TYPES[TOPICS.inspection_evidence_request] == ("lingtu.dds.InspectionEvidenceRequest",)
-    assert TOPIC_ROS_TYPES[TOPICS.inspection_evidence_result] == ("lingtu.dds.InspectionEvidenceResult",)
     assert TOPIC_ALLOWED_FRAME_IDS[TOPICS.inspection_task_request] == ("map",)
     assert TOPIC_ALLOWED_FRAME_IDS[TOPICS.inspection_task_ack] == ("map",)
     assert TOPIC_ALLOWED_FRAME_IDS[TOPICS.inspection_status] == ("map",)
@@ -34,45 +30,17 @@ def test_typed_inspection_topics_are_canonical() -> None:
 
 
 def test_inspection_task_events_are_ordered_native_facts() -> None:
-    from dataclasses import fields
-
-    from message.dds import dds_topic_name, dds_type_for_topic, topic_spec
-    from message.dds_types.nav import InspectionTaskEvent
+    from message.topics import dds_topic_name, topic_spec
 
     topic = TOPICS.inspection_task_event
     assert topic == "/nav/inspection/task/event"
-    assert TOPIC_ROS_TYPES[topic] == ("lingtu.dds.InspectionTaskEvent",)
     assert TOPIC_ALLOWED_FRAME_IDS[topic] == ("map",)
     assert topic_spec(topic).dds_topic == "rt/nav/inspection/task/event"
-    assert dds_topic_name(topic, typed=True) == "rt/nav/inspection/task/event"
-    assert dds_type_for_topic(topic) is InspectionTaskEvent
-    assert [field.name for field in fields(InspectionTaskEvent)] == [
-        "header",
-        "boot_id",
-        "event_sequence",
-        "kind",
-        "task_id",
-        "request_id",
-        "command_request_id",
-        "state",
-        "map_id",
-        "map_version",
-        "route_id",
-        "route_revision",
-        "point_index",
-        "point_count",
-        "loop_index",
-        "retry_count",
-        "point_id",
-        "action",
-        "action_request_id",
-        "evidence_id",
-        "reason",
-    ]
+    assert dds_topic_name(topic) == "rt/nav/inspection/task/event"
 
-    idl = Path("src/message/idl/lingtu_slam.idl").read_text(encoding="utf-8")
-    endpoint = Path("src/nav/cpp/endpoint/endpoint_loop.cpp").read_text(encoding="utf-8")
-    runtime = Path("src/nav/cpp/endpoint/nav_dds_runtime.cpp").read_text(encoding="utf-8")
+    idl = Path("src/message/idl/messages.idl").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(encoding="utf-8")
+    runtime = Path("src/nav/cpp/endpoint/nav/dds/runtime.cpp").read_text(encoding="utf-8")
     assert "struct InspectionTaskEvent" in idl
     assert "FlushTaskEvents" in endpoint
     assert "InspectionTaskEventOutbox" in endpoint
@@ -80,10 +48,10 @@ def test_inspection_task_events_are_ordered_native_facts() -> None:
 
 
 def test_inspection_idl_and_native_endpoint_are_wired() -> None:
-    idl = Path("src/message/idl/lingtu_slam.idl").read_text(encoding="utf-8")
-    endpoint = Path("src/nav/cpp/endpoint/endpoint_loop.cpp").read_text(encoding="utf-8")
+    idl = Path("src/message/idl/messages.idl").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(encoding="utf-8")
     controller = Path(
-        "src/nav/cpp/endpoint/inspection/inspection_runtime_controller.cpp"
+        "src/nav/cpp/endpoint/nav/runtime/inspection/inspection_runtime_controller.cpp"
     ).read_text(encoding="utf-8")
     cmake = Path("src/nav/cpp/endpoint/CMakeLists.txt").read_text(encoding="utf-8")
 
@@ -92,25 +60,26 @@ def test_inspection_idl_and_native_endpoint_are_wired() -> None:
     assert "struct InspectionTaskRequest" in idl
     assert "struct InspectionTaskAck" in idl
     assert "struct InspectionStatus" in idl
-    assert "drainInspectionTaskRequests" in endpoint
+    assert "command_batch = dds.takeCommands" in endpoint
+    assert "std::get_if<InspectionCommandRequest>" in endpoint
     assert "inspection_runtime.tick(" in endpoint
     assert "inspection_runtime.onGoalReached" in endpoint
     assert "executor_.PendingGoal()" in controller
-    assert "inspection/inspection_runtime_controller.cpp" in cmake
+    assert "nav/runtime/inspection/inspection_runtime_controller.cpp" in cmake
     assert "lingtu_inspection_core" in cmake
 
 
 def test_inspection_action_deadline_is_started_before_evidence_publish() -> None:
-    endpoint = Path("src/nav/cpp/endpoint/endpoint_loop.cpp").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(encoding="utf-8")
     controller = Path(
-        "src/nav/cpp/endpoint/inspection/inspection_runtime_controller.cpp"
+        "src/nav/cpp/endpoint/nav/runtime/inspection/inspection_runtime_controller.cpp"
     ).read_text(encoding="utf-8")
     action_block = controller.split(
         "if (const auto action = executor_.PendingAction()) {", 1
     )[1].split("return result;", 1)[0]
     publish_block = endpoint.split(
         "if (inspection_result.evidence_dispatch) {", 1
-    )[1].split("const std::string driver_blocker", 1)[0]
+    )[1].split("(void)inputs.materializeObstacles", 1)[0]
     completion_block = controller.split(
         "InspectionRuntimeController::completeEvidenceDispatch", 1
     )[1].split("void InspectionRuntimeController::requestStatus", 1)[0]
@@ -120,9 +89,9 @@ def test_inspection_action_deadline_is_started_before_evidence_publish() -> None
     )
     assert "executor_.status().deadline_s" in action_block
     assert endpoint.index("inspection_runtime.tick") < endpoint.index(
-        "dds.writeInspectionEvidenceRequest"
+        "InspectionEvidenceRequestOutput{"
     )
-    assert publish_block.index("dds.writeInspectionEvidenceRequest") < publish_block.index(
+    assert publish_block.index("InspectionEvidenceRequestOutput{") < publish_block.index(
         "inspection_runtime.completeEvidenceDispatch"
     )
     assert "evidence_request_publish_failed" in completion_block
@@ -131,68 +100,22 @@ def test_inspection_action_deadline_is_started_before_evidence_publish() -> None
 
 
 def test_inspection_evidence_dds_contract_is_complete() -> None:
-    from message.dds import dds_topic_name, dds_type_for_topic, topic_spec
-    from message.dds_types.nav import (
-        InspectionEvidenceRequest,
-        InspectionEvidenceResult,
-        InspectionStatus,
-    )
+    from message.topics import dds_topic_name, topic_spec
 
     request_topic = TOPICS.inspection_evidence_request
     result_topic = TOPICS.inspection_evidence_result
     expected = {
-        request_topic: (
-            InspectionEvidenceRequest,
-            "rt/nav/inspection/evidence/request",
-            "InspectionEvidenceRequest",
-        ),
-        result_topic: (
-            InspectionEvidenceResult,
-            "rt/nav/inspection/evidence/result",
-            "InspectionEvidenceResult",
-        ),
+        request_topic: ("rt/nav/inspection/evidence/request", "InspectionEvidenceRequest"),
+        result_topic: ("rt/nav/inspection/evidence/result", "InspectionEvidenceResult"),
     }
 
-    for topic, (dds_type, wire_topic, type_name) in expected.items():
+    for topic, (wire_topic, type_name) in expected.items():
         spec = topic_spec(topic)
         assert spec is not None
         assert spec.type_name == type_name
         assert spec.dds_topic == wire_topic
         assert spec.idl_type == f"lingtu.dds.{type_name}"
-        assert spec.cpp_type == f"lingtu::dds::{type_name}"
-        assert dds_topic_name(topic, typed=True) == wire_topic
-        assert dds_type_for_topic(topic) is dds_type
-
-    assert [field.name for field in fields(InspectionEvidenceRequest)] == [
-        "header",
-        "request_id",
-        "run_id",
-        "route_id",
-        "revision",
-        "map_id",
-        "map_version",
-        "point_index",
-        "point_id",
-        "action",
-        "deadline_s",
-    ]
-    assert [field.name for field in fields(InspectionEvidenceResult)] == [
-        "header",
-        "request_id",
-        "evidence_id",
-        "persisted",
-        "reason",
-        "analysis_verdict",
-    ]
-    assert [field.name for field in fields(InspectionStatus)][-7:] == [
-        "action",
-        "action_request_id",
-        "evidence_id",
-        "phase_started_at",
-        "stable_since",
-        "deadline",
-        "reason",
-    ]
+        assert dds_topic_name(topic) == wire_topic
 
 
 def test_native_inspection_library_candidates_cover_repo_and_deployed_builds(
@@ -211,7 +134,7 @@ def test_native_inspection_library_candidates_cover_repo_and_deployed_builds(
 
 def test_inspection_resume_requires_autonomy_control_before_executor_resume() -> None:
     coordinator = Path(
-        "src/nav/cpp/endpoint/inspection/inspection_command_coordinator.cpp"
+        "src/nav/cpp/endpoint/nav/runtime/inspection/inspection_command_coordinator.cpp"
     ).read_text(encoding="utf-8")
     resume_block = coordinator.split("CommandKind::kResume", 1)[1].split(
         "CommandKind::kCancel", 1
@@ -223,9 +146,9 @@ def test_inspection_resume_requires_autonomy_control_before_executor_resume() ->
 
 
 def test_active_map_change_clears_inspection_motion_immediately() -> None:
-    endpoint = Path("src/nav/cpp/endpoint/endpoint_loop.cpp").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(encoding="utf-8")
     controller = Path(
-        "src/nav/cpp/endpoint/inspection/inspection_runtime_controller.cpp"
+        "src/nav/cpp/endpoint/nav/runtime/inspection/inspection_runtime_controller.cpp"
     ).read_text(encoding="utf-8")
     map_block = controller.split("const InspectionRunState state_before_map_check", 1)[1].split(
         "if (executor_.status().state != InspectionRunState::kPlanning)", 1
@@ -244,62 +167,67 @@ def test_active_map_change_clears_inspection_motion_immediately() -> None:
 
 
 def test_autonomy_input_gate_zero_intent_is_published_without_nav_output() -> None:
-    endpoint = Path("src/nav/cpp/endpoint/endpoint_loop.cpp").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(encoding="utf-8")
     controller = Path(
-        "src/nav/cpp/endpoint/motion/autonomy_tick_controller.cpp"
+        "src/nav/cpp/endpoint/nav/control/autonomy.cpp"
     ).read_text(encoding="utf-8")
 
     blocked_branch = controller.split(
         "if (input.path_active && !input.input_gate.ready) {", 1
     )[1].split("return result;", 1)[0]
-    projection = endpoint.split("auto autonomy_result = autonomy_tick.tick", 1)[1].split(
+    projection = endpoint.split("autonomy_result = autonomy_tick.tick", 1)[1].split(
         "switch (autonomy_result.outcome.kind)", 1
     )[0]
 
     assert "result.publish.cmd_vel = input.publish_cmd_vel" in blocked_branch
     assert "result.publish.command = {}" in blocked_branch
-    assert "dds.writeCmdVel(autonomy_result.publish.command)" in projection
-    assert "dds.writeCmdVel(out.cmd_vel)" not in projection
+    assert "FinalVelocityOutput{autonomy_result.publish.command}" in projection
+    assert "dds.writeCmdVel" not in projection
 
 
 def test_local_recovery_exhaustion_routes_into_inspection_failure_policy() -> None:
-    endpoint = Path("src/nav/cpp/endpoint/endpoint_loop.cpp").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(encoding="utf-8")
     controller = Path(
-        "src/nav/cpp/endpoint/motion/autonomy_tick_controller.cpp"
+        "src/nav/cpp/endpoint/nav/control/autonomy.cpp"
+    ).read_text(encoding="utf-8")
+    runtime = Path(
+        "src/nav/cpp/endpoint/nav/runtime/navigation.cpp"
     ).read_text(encoding="utf-8")
 
     assert "output.recovery_exhausted" in controller
     assert "AutonomyTickOutcomeKind::kGoalFailed" in controller
-    delivery_state_index = endpoint.index("bool terminal_delivery_acknowledged = false;")
-    outcome_index = endpoint.index("goal_replan_runtime.handleAutonomyOutcome")
-    delivery_assignment_index = endpoint.index(
-        "terminal_delivery_acknowledged =", outcome_index
+    outcome_index = runtime.index("goal_replan_runtime_.handleAutonomyOutcome")
+    deferred_index = runtime.index(
+        "deferred_inspection_completion_ = observation.outcome", outcome_index
     )
-    terminal_index = endpoint.index("service_terminal(terminal_runtime_result)", outcome_index)
-    acknowledgement_index = endpoint.index(".delivery_acknowledged", terminal_index)
-    failure_index = endpoint.index("inspection_executor.OnNavigationFailed", terminal_index)
-    assert (
-        delivery_state_index
-        < outcome_index
-        < delivery_assignment_index
-        < terminal_index
-        < acknowledgement_index
-        < failure_index
+    terminal_index = runtime.index("completeTerminal(terminal_candidate)", deferred_index)
+    acknowledgement_index = runtime.index(
+        "result.terminal_delivery_acknowledged && deferred_inspection_completion_",
+        terminal_index,
     )
-    assert "if (terminal_delivery_acknowledged && deferred_inspection_autonomy_outcome)" in endpoint
+    completion_index = endpoint.index("runtime_frame_result.inspection_completion")
+    failure_index = endpoint.index("inspection_executor.OnNavigationFailed", completion_index)
+    assert outcome_index < deferred_index < terminal_index < acknowledgement_index
+    assert completion_index < failure_index
     assert "goal_plan.deferFailure(" not in endpoint
     assert "goal_plan.deferActiveTerminal(" not in endpoint
 
 
 def test_safety_stop_transitions_use_single_coordinator() -> None:
-    endpoint = Path("src/nav/cpp/endpoint/endpoint_loop.cpp").read_text(
+    endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(
         encoding="utf-8"
     )
     cancel_router = Path(
-        "src/nav/cpp/endpoint/motion/goal_task_cancel_router.cpp"
+        "src/nav/cpp/endpoint/nav/command/cancel.cpp"
     ).read_text(encoding="utf-8")
     coordinator = Path(
-        "src/nav/cpp/endpoint/motion/motion_stop_coordinator.cpp"
+        "src/nav/cpp/endpoint/nav/safety/stop.cpp"
+    ).read_text(encoding="utf-8")
+    transaction = Path(
+        "src/nav/cpp/endpoint/nav/status/goal_terminal_transaction.cpp"
+    ).read_text(encoding="utf-8")
+    runtime = Path(
+        "src/nav/cpp/endpoint/nav/runtime/navigation.cpp"
     ).read_text(encoding="utf-8")
     cmake = Path("src/nav/cpp/endpoint/CMakeLists.txt").read_text(encoding="utf-8")
 
@@ -313,44 +241,45 @@ def test_safety_stop_transitions_use_single_coordinator() -> None:
     assert "motion_stop.cancel()" not in endpoint
     assert "motion_stop_.cancel()" not in cancel_router
     assert "GoalReplanRuntimeInterruption::kStop" in endpoint
-    assert "motion_stop.stopPreservingGoalTerminal(" in endpoint
-    assert "motion_stop.stopWithoutTerminalCommit(" in endpoint
+    assert "navigation_runtime_controller.interrupt(" in endpoint
+    assert "motion_stop_.stopPreservingGoalTerminal(" in transaction
+    assert "motion_stop_.stopWithoutTerminalCommit(" in transaction
     assert "motion_stop.stop()" not in endpoint
     assert "GoalReplanRuntimeInterruption::kEstop" in endpoint
-    assert "motion_stop.estopPreservingGoalTerminal(" in endpoint
+    assert "motion_stop_.estopPreservingGoalTerminal(" in transaction
     assert "motion_stop.estopWithoutTerminalCommit(" in endpoint
     assert "motion_stop.estop(reason)" not in endpoint
     assert "GoalReplanRuntimeInterruption::kDriverAuthorityLost" in endpoint
     assert 'motion_stop.clearEndpointMotion("driver_control_lost:" + driver_blocker)' in endpoint
     assert "motion_stop.driverAuthorityLost(driver_blocker)" not in endpoint
     assert "auto confirm_last_zero" not in endpoint
-    terminal_block = coordinator.split(
-        "MotionStopCoordinator::commitGoalTerminalAfterStop", 1
-    )[1].split("MotionStopResult MotionStopCoordinator::stop()", 1)[0]
+    assert "goal_terminal_transaction_.advance(runtime_result" in runtime
+    terminal_block = transaction.split(
+        "GoalTerminalTransaction::advance", 1
+    )[1].split("GoalTerminalTransaction::stopWhileTerminalPending", 1)[0]
     confirmation_block = coordinator.split(
-        "MotionStopCoordinator::confirmAndCommitTerminal", 1
-    )[1].split("MotionStopResult MotionStopCoordinator::confirmLastZero", 1)[0]
-    assert terminal_block.index("actions_.stop_control()") < terminal_block.index(
-        "clearMotionOutputs(reason)"
-    ) < terminal_block.index("confirmAndCommitTerminal")
+        "MotionStopBarrier::confirmAndCommitTerminal", 1
+    )[1].split("MotionStopResult MotionStopBarrier::confirmLastZero", 1)[0]
+    assert "motion_stop_.stopPreservingGoalTerminal(terminal.commit)" in terminal_block
+    assert "motion_stop_.commitGoalTerminalAfterStop" in terminal_block
     assert confirmation_block.index("confirmLastZero") < confirmation_block.index(
         "commit_terminal()"
     )
-    assert "motion/motion_stop_coordinator.cpp" in cmake
+    assert "nav/safety/stop.cpp" in cmake
 
 
 def test_shutdown_uses_ticketed_runtime_terminal_instead_of_direct_goal_abort() -> None:
     runtime_header = Path(
-        "src/nav/cpp/endpoint/plan/goal_replan_runtime_coordinator.hpp"
+        "src/nav/cpp/endpoint/nav/runtime/goal/runtime.hpp"
     ).read_text(encoding="utf-8")
     coordinator = Path(
-        "src/nav/cpp/endpoint/motion/motion_stop_coordinator.cpp"
+        "src/nav/cpp/endpoint/nav/safety/stop.cpp"
     ).read_text(encoding="utf-8")
     delivery_header = Path(
-        "src/nav/cpp/endpoint/status/goal_terminal_status_delivery.hpp"
+        "src/nav/cpp/endpoint/nav/status/goal_terminal_status_delivery.hpp"
     ).read_text(encoding="utf-8")
     transaction = Path(
-        "src/nav/cpp/endpoint/status/goal_terminal_status_delivery.cpp"
+        "src/nav/cpp/endpoint/nav/status/goal_terminal_status_delivery.cpp"
     ).read_text(encoding="utf-8")
 
     assert "kShutdown" in runtime_header
@@ -372,10 +301,12 @@ def test_shutdown_uses_ticketed_runtime_terminal_instead_of_direct_goal_abort() 
 
 
 def test_shutdown_post_loop_retries_stop_and_terminal_delivery_before_exit() -> None:
-    endpoint = Path("src/nav/cpp/endpoint/endpoint_loop.cpp").read_text(
+    endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(
         encoding="utf-8"
     )
-    shutdown_block = endpoint.split("// -- Post-loop shutdown", 1)[1]
+    shutdown_block = endpoint.split("auto shutdown = [&]() -> int {", 1)[1].split(
+        "auto drain_sensors", 1
+    )[0]
     shutdown_loop = shutdown_block.split("while (true) {", 1)[1]
 
     assert "while (true) {" in shutdown_block
@@ -387,15 +318,15 @@ def test_shutdown_post_loop_retries_stop_and_terminal_delivery_before_exit() -> 
     ) < shutdown_loop.index("motion_stop.keepZeroFresh()") < shutdown_loop.index(
         "std::this_thread::sleep_for(tick_period)"
     )
-    assert "kShutdownPendingLogInterval" in shutdown_block
-    assert "next_shutdown_pending_log" in shutdown_block
+    assert "kPendingLogInterval" in shutdown_block
+    assert "next_pending_log" in shutdown_block
     log_guard = shutdown_loop.index(
-        "if (shutdown_log_now >= next_shutdown_pending_log)"
+        "if (log_now >= next_pending_log)"
     )
     log_message = shutdown_loop.index("navd shutdown pending: %s")
-    log_reason = shutdown_loop.index("shutdown_transaction.reason.c_str()")
+    log_reason = shutdown_loop.index("transaction.reason.c_str()")
     log_advance = shutdown_loop.index(
-        "next_shutdown_pending_log = shutdown_log_now + kShutdownPendingLogInterval"
+        "next_pending_log = log_now + kPendingLogInterval"
     )
     assert log_guard < log_message < log_reason < log_advance
     assert "GoalReplanRuntimeInterruption::kShutdown" not in shutdown_block
@@ -412,27 +343,30 @@ def test_shutdown_post_loop_retries_stop_and_terminal_delivery_before_exit() -> 
 
 
 def test_inspection_periodic_file_io_is_off_the_motion_loop() -> None:
-    endpoint = Path("src/nav/cpp/endpoint/endpoint_loop.cpp").read_text(encoding="utf-8")
-    bootstrap = Path("src/nav/cpp/endpoint/nav_native_endpoint.cpp").read_text(
+    endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(encoding="utf-8")
+    bootstrap = Path("src/nav/cpp/endpoint/nav/main.cpp").read_text(
         encoding="utf-8"
     )
     cmake = Path("src/nav/cpp/endpoint/CMakeLists.txt").read_text(encoding="utf-8")
     motion_loop = endpoint.split("while (running) {", 1)[1]
 
-    assert "inspection_status_writer.submit(inspection_executor.status())" in motion_loop
+    assert "inspection_status_writer.submit(inspection_status)" in endpoint
+    assert endpoint.index("inspection_status_writer.submit(inspection_status)") < endpoint.index(
+        "while (running) {"
+    )
     assert "inspection_store->PutStatus" not in endpoint
     assert "inspection_store->PutStatus" not in bootstrap
     assert "GetActiveMap()" not in motion_loop
     assert "active_inspection_map_cache->snapshot(steadySeconds())" in bootstrap
     assert "ActiveInspectionMapCache" in bootstrap
-    assert "status/inspection_status_file_writer.cpp" in cmake
-    assert "status/active_inspection_map_cache.cpp" in cmake
+    assert "nav/status/inspection_status_file_writer.cpp" in cmake
+    assert "nav/status/active_inspection_map_cache.cpp" in cmake
 
 
 def test_endpoint_feeds_final_inspection_point_progress_to_watchdog() -> None:
-    endpoint = Path("src/nav/cpp/endpoint/endpoint_loop.cpp").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(encoding="utf-8")
     controller = Path(
-        "src/nav/cpp/endpoint/inspection/inspection_runtime_controller.cpp"
+        "src/nav/cpp/endpoint/nav/runtime/inspection/inspection_runtime_controller.cpp"
     ).read_text(encoding="utf-8")
 
     assert controller.count("executor_.OnNavigationProgress") == 1
@@ -444,12 +378,12 @@ def test_endpoint_feeds_final_inspection_point_progress_to_watchdog() -> None:
 
 
 def test_post_arrival_inspection_actions_fail_closed_on_localization_gate() -> None:
-    endpoint = Path("src/nav/cpp/endpoint/endpoint_loop.cpp").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(encoding="utf-8")
     controller = Path(
-        "src/nav/cpp/endpoint/inspection/inspection_runtime_controller.cpp"
+        "src/nav/cpp/endpoint/nav/runtime/inspection/inspection_runtime_controller.cpp"
     ).read_text(encoding="utf-8")
 
-    gate_index = endpoint.index("input_projector.evaluateInputGate(")
+    gate_index = endpoint.index("inputs.evaluateGate(")
     orchestration_index = endpoint.index("inspection_runtime.tick")
     assert gate_index < orchestration_index
     assert "inspectionPostArrivalState" in endpoint
@@ -463,14 +397,14 @@ def test_post_arrival_inspection_actions_fail_closed_on_localization_gate() -> N
 
 
 def test_periodic_nav_status_assembly_is_off_main_loop() -> None:
-    endpoint = Path("src/nav/cpp/endpoint/endpoint_loop.cpp").read_text(
+    endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(
         encoding="utf-8"
     )
     publisher = Path(
-        "src/nav/cpp/endpoint/status/nav_status_publisher.cpp"
+        "src/nav/cpp/endpoint/nav/status/nav_status_publisher.cpp"
     ).read_text(encoding="utf-8")
     adapter = Path(
-        "src/nav/cpp/endpoint/status/nav_status_endpoint_adapter.cpp"
+        "src/nav/cpp/endpoint/nav/status/nav_status_endpoint_adapter.cpp"
     ).read_text(encoding="utf-8")
     cmake = Path("src/nav/cpp/endpoint/CMakeLists.txt").read_text(encoding="utf-8")
 

@@ -41,7 +41,6 @@ def test_driver_stack_config_disables_mujoco_legacy_sensors_by_default() -> None
     )
 
     assert config["publish_lidar"] is False
-    assert config["publish_imu"] is False
 
 
 def test_driver_stack_config_enables_mujoco_camera_for_semantic_mode() -> None:
@@ -81,7 +80,7 @@ def test_driver_stack_config_disables_mujoco_driver_lidar_when_role_exists() -> 
 def test_driver_stack_config_disables_mujoco_driver_lidar_for_managed_slam() -> None:
     config = driver_stack_config(
         {},
-        slam_profile="fastlio2",
+        slam_profile="native_dds",
         driver_module="MujocoDriverModule",
         enable_semantic=False,
     )
@@ -98,28 +97,6 @@ def test_driver_stack_config_can_keep_legacy_mujoco_driver_lidar() -> None:
     )
 
     assert config["publish_lidar"] is True
-
-
-def test_driver_stack_config_disables_mujoco_driver_imu_when_role_exists() -> None:
-    config = driver_stack_config(
-        {"enable_imu": True},
-        slam_profile="none",
-        driver_module="MujocoDriverModule",
-        enable_semantic=False,
-    )
-
-    assert config["publish_imu"] is False
-
-
-def test_driver_stack_config_can_keep_legacy_mujoco_driver_imu() -> None:
-    config = driver_stack_config(
-        {"enable_imu": True, "use_driver_imu": True},
-        slam_profile="none",
-        driver_module="MujocoDriverModule",
-        enable_semantic=False,
-    )
-
-    assert config["publish_imu"] is True
 
 
 def test_perception_stack_config_records_driver_module() -> None:
@@ -174,9 +151,7 @@ def test_native_tare_endpoint_is_the_single_exploration_owner() -> None:
     assert exploration_stack_config(config)["owner"] == "native"
 
 
-def test_needs_lidar_for_slam_only_for_managed_lidar_slam() -> None:
-    assert needs_lidar_for_slam("fastlio2") is True
-    assert needs_lidar_for_slam("localizer") is True
-    assert needs_lidar_for_slam("genz") is True
-    assert needs_lidar_for_slam("bridge") is False
+def test_needs_lidar_for_external_native_slam_runtime() -> None:
+    assert needs_lidar_for_slam("native_dds") is True
+    assert needs_lidar_for_slam("unsupported") is False
     assert needs_lidar_for_slam("none") is False

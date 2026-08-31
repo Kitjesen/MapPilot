@@ -3,15 +3,13 @@ import re
 
 
 ROOT = Path(__file__).resolve().parents[3]
-ENDPOINT_LOOP = ROOT / "src" / "nav" / "cpp" / "endpoint" / "endpoint_loop.cpp"
-MOTION_HEADER = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "motion" / "motion_stop_coordinator.hpp"
-)
+ENDPOINT_LOOP = ROOT / "src" / "nav" / "cpp" / "endpoint" / "runtime" / "loop.cpp"
+STOP_HEADER = ROOT / "src" / "nav" / "cpp" / "endpoint" / "safety" / "stop.hpp"
 RUNTIME_HEADER = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal_replan_runtime_coordinator.hpp"
+    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal" / "runtime.hpp"
 )
 RUNTIME_SOURCE = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal_replan_runtime_coordinator.cpp"
+    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal" / "runtime.cpp"
 )
 
 
@@ -58,23 +56,37 @@ def test_active_estop_interrupt_owns_cancelled_terminal_with_latched_reason() ->
 
 
 def test_motion_stop_declares_estop_preserving_and_no_terminal_apis() -> None:
-    header = _read(MOTION_HEADER)
+    header = _read(STOP_HEADER)
 
     assert "estopPreservingGoalTerminal" in header
     assert "estopWithoutTerminalCommit" in header
 
 
-def test_endpoint_services_estop_terminal_through_estop_policy_barrier() -> None:
+def test_endpoint_routes_estop_through_runtime_terminal_policy_and_barrier() -> None:
     endpoint = _read(ENDPOINT_LOOP)
     service_block = _block_between(
         endpoint,
-        "auto service_terminal_with_stop =",
-        "auto service_terminal =",
+        "auto handle_estop =",
+        "auto handle_clear_estop =",
     )
 
-    assert re.search(r"case\s+TerminalStopPolicy::kEstop\s*:", service_block)
-    assert "motion_stop.estopPreservingGoalTerminal" in service_block
+    assert "GoalReplanRuntimeInterruption::kEstop" in service_block
+    assert "interruption.terminal_transaction" in service_block
+    assert "action_committed" in service_block
+    assert "motion_stop.estopWithoutTerminalCommit" in service_block
     assert "estop_latched" in service_block
+
+    transaction = _read(
+        ROOT
+        / "src"
+        / "nav"
+        / "cpp"
+        / "endpoint"
+        / "status"
+        / "goal_terminal_transaction.cpp"
+    )
+    assert re.search(r"case\s+TerminalStopPolicy::kEstop\s*:", transaction)
+    assert "motion_stop_.estopPreservingGoalTerminal" in transaction
 
 
 def test_endpoint_no_active_estop_uses_physical_only_estop_path() -> None:

@@ -1,0 +1,44 @@
+{
+  "schema_version": "lingtu.mujoco.inspection_native_acceptance.v1",
+  "extends": "mujoco_native_navigation_acceptance.json",
+  "name": "mujoco_inspection_native",
+  "description": "Attach-only exact-session MuJoCo inspection component acceptance through the public Gateway task boundary.",
+  "product_contract": {
+    "product": "inspection",
+    "source": "config/runtime_graph/products/inspection.yaml",
+    "native_control_mode": "autonomy",
+    "slam_mode": "localization",
+    "requires_map": true
+  },
+  "inspection_contract": {
+    "task_request": "/nav/inspection/task/request",
+    "task_ack": "/nav/inspection/task/ack",
+    "task_status": "/nav/inspection/status",
+    "task_event": "/nav/inspection/task/event",
+    "evidence_request": "/nav/inspection/evidence/request",
+    "evidence_result": "/nav/inspection/evidence/result",
+    "required_identity": ["task_id", "request_id"]
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": [
+      "exact committed inspection RunPlan and Gateway dataflow identity",
+      "capture:overview route submission and business acknowledgement",
+      "native terminal task projection with verified RGB evidence and ACCEPTABLE report",
+      "task-bound completed native recording with one nonempty MCAP and exact task/Product-session manifest identity",
+      "minimal MuJoCo displacement during inspection execution"
+    ],
+    "excluded_claims": [
+      "Product switch, rollback, and Product stop transaction",
+      "real Brainstem command forwarding",
+      "long-duration and injected-fault inspection endurance",
+      "semantic inspection evidence quality beyond persisted RGB integrity",
+      "offline MCAP replay or timeline verification"
+    ]
+  },
+  "thresholds": {
+    "minimum_displacement_m": 0.1,
+    "poll_interval_s": 0.25,
+    "timeout_s": 120.0
+  }
+}

@@ -19,11 +19,11 @@ def _read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
-def _write_current_run_plan(path: Path) -> None:
+def _write_current_run_plan(path: Path, current_path: Path) -> None:
     maps = ProcessSpec(
         name="maps",
         manager="systemd",
-        target="lingtu-mapd.service",
+        target="lingtu-lt-maps.service",
         order=10,
         timeout_s=30,
         lifecycle="mode",
@@ -31,28 +31,28 @@ def _write_current_run_plan(path: Path) -> None:
     driver = ProcessSpec(
         name="driver",
         manager="systemd",
-        target="lingtu-driver.service",
+        target="lt-driver.service",
         order=20,
         timeout_s=30,
-        lifecycle="persistent",
+        lifecycle="mode",
     )
     RunPlan.create(
-        product="map",
+        product="nav",
         env="real",
+        robot="unitree/go2",
         process_control="systemd",
         modules=(),
         processes=(maps, driver),
         available_processes=(maps, driver),
-        stop_targets=(),
-        contracts=("lingtu.product.map.v1",),
+        stop_before_start=(),
+        contracts=("lingtu.product.nav.v1",),
         critical_modules=(),
         route_contract=None,
-        module_transport="local",
         host_config={},
         lifecycle={},
-        compiled_against={},
         native_nav={
             "control_mode": "mapping",
+            "global_planner": "octoplanner3d",
             "publish_cmd_vel": False,
             "check_obstacle": False,
             "use_traversability_cost": False,
@@ -60,9 +60,22 @@ def _write_current_run_plan(path: Path) -> None:
             "teleop_local_planner": False,
         },
     ).write(path)
+    current_path.write_text(
+        json.dumps(
+            {
+                "product": "nav",
+                "env": "real",
+                "map_name": "plant-a",
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
-def _run_native_installer_plan_reader(path: Path) -> subprocess.CompletedProcess[str]:
+def _run_native_installer_plan_reader(
+    path: Path,
+    current_path: Path,
+) -> subprocess.CompletedProcess[str]:
     source = _read("scripts/deploy/install_native_release.sh")
     import_anchor = "from lingtu.run_plan import RunPlan"
     import_offset = source.index(import_anchor)
@@ -76,7 +89,7 @@ def _run_native_installer_plan_reader(path: Path) -> subprocess.CompletedProcess
         if item
     )
     return subprocess.run(  # noqa: S603 - executes the checked-in installer reader.
-        [sys.executable, "-", str(path)],
+        [sys.executable, "-", str(path), str(current_path)],
         input=program,
         text=True,
         capture_output=True,
@@ -86,21 +99,31 @@ def _run_native_installer_plan_reader(path: Path) -> subprocess.CompletedProcess
     )
 
 
-def test_native_release_installer_reads_current_run_plan_process_catalog() -> None:
+def test_native_release_installer_reads_current_product_identity() -> None:
     run_plan_path = ROOT / f".installer-run-plan-{uuid.uuid4().hex}.json"
+    current_path = ROOT / f".installer-current-{uuid.uuid4().hex}.json"
     try:
-        _write_current_run_plan(run_plan_path)
+        _write_current_run_plan(run_plan_path, current_path)
 
-        result = _run_native_installer_plan_reader(run_plan_path)
+        result = _run_native_installer_plan_reader(run_plan_path, current_path)
     finally:
         run_plan_path.unlink(missing_ok=True)
+        current_path.unlink(missing_ok=True)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ["1", "driver"]
+    assert result.stdout.split("\0") == [
+        "nav",
+        "real",
+        "unitree/go2",
+        "plant-a",
+        "1",
+        "",
+    ]
 
 
 def test_native_release_installer_rejects_legacy_run_plan_shape() -> None:
     run_plan_path = ROOT / f".installer-legacy-plan-{uuid.uuid4().hex}.json"
+    current_path = ROOT / f".installer-current-{uuid.uuid4().hex}.json"
     try:
         run_plan_path.write_text(
             json.dumps(
@@ -110,7 +133,7 @@ def test_native_release_installer_rejects_legacy_run_plan_shape() -> None:
                             "processes": [
                                 {
                                     "name": "maps",
-                                    "target": "lingtu-mapd.service",
+                                    "target": "lingtu-lt-maps.service",
                                     "lifecycle": "persistent",
                                 }
                             ]
@@ -120,10 +143,12 @@ def test_native_release_installer_rejects_legacy_run_plan_shape() -> None:
             ),
             encoding="utf-8",
         )
+        current_path.write_text("{}\n", encoding="utf-8")
 
-        result = _run_native_installer_plan_reader(run_plan_path)
+        result = _run_native_installer_plan_reader(run_plan_path, current_path)
     finally:
         run_plan_path.unlink(missing_ok=True)
+        current_path.unlink(missing_ok=True)
 
     assert result.returncode != 0
     assert "RunPlan top level has invalid fields" in result.stderr
@@ -141,9 +166,12 @@ def test_catalog_installer_does_not_activate_a_product_process() -> None:
     script = _read("scripts/deploy/thunder/install_catalog_service.sh")
 
     assert "systemctl start" not in script
+    assert "sudo chown lingtu:lingtu" in script
+    assert "/var/lib/lingtu/task_journal" in script
     assert "does not activate Product processes" in script
-    assert "scripts/lingtu --env real svc reapply" in script
-    assert "scripts/lingtu --env real mode switch <product>" in script
+    assert "scripts/lingtu switch <product>" in script
+    assert "--robot <vendor/model> --env real" in script
+    assert "reapply" not in script
 
 
 def test_catalog_installer_boot_enablement_is_catalog_gated() -> None:
@@ -155,20 +183,30 @@ def test_catalog_installer_boot_enablement_is_catalog_gated() -> None:
     assert "ProductControl owns Product role activation" in script
 
 
-def test_gateway_key_helper_delegates_host_restart_to_product_control() -> None:
+def test_catalog_installer_disables_retired_long_unit_names() -> None:
+    script = _read("scripts/deploy/thunder/install_catalog_service.sh")
+
+    assert 'SERVICE_NAME="${SERVICE_FILE}"' in script
+    assert "LINGTU_SERVICE_NAME" not in script
+    assert 'catalog retired-units "${SERVICE}"' in script
+    assert 'systemctl disable --now "${unit}"' in script
+
+
+def test_gateway_key_helper_points_to_product_switch() -> None:
     script = _read("scripts/deploy/thunder/configure_gateway_api_key.sh")
 
-    assert "systemctl restart lingtu.service" not in script
-    assert "scripts/lingtu --env real svc restart host" in script
+    assert "systemctl restart lt-host.service" not in script
+    assert "scripts/lingtu switch <product>" in script
+    assert "--robot <vendor/model> --env real" in script
+    assert "svc restart" not in script
 
 
-def test_slam_restart_documentation_keeps_bash_thin() -> None:
+def test_deployment_guide_uses_product_lifecycle_commands() -> None:
     guide = _read("docs/04-deployment/README.md")
 
-    assert "`svc restart slam` is a thin operator entry" in guide
-    assert "sends the logical `slam` label" in guide
-    assert "from the committed RunPlan and owns its readiness and failure handling" in guide
-    assert "does not select a backend, sequence a service chain, or poll readiness" in guide
+    assert "switch / status / stop" in guide
+    assert "svc restart" not in guide
+    assert "svc reapply" not in guide
 
 
 def test_web_guide_keeps_restart_ownership_in_product_control() -> None:

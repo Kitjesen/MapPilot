@@ -8,42 +8,20 @@ from __future__ import annotations
 
 INSPECTION_MVP_REQUIRED_GATES: tuple[str, ...] = (
     "gateway_runtime_acceptance",
-    "routecheck_preflight",
-    "large_terrain",
-    "fastlio2_dynamic_inspection",
-    "dynamic_obstacle_local_planner",
-    "moving_obstacle_sweep",
+    "navigation_replay_deviation",
+    "saved_map_relocalize",
 )
 
 DIMOS_BENCHMARK_REQUIRED_GATES: tuple[str, ...] = (
     "gateway_runtime_acceptance",
-    "routecheck_preflight",
-    "blocked_route_replan_preflight",
     "navigation_replay_deviation",
-    "large_terrain",
-    "native_pct_mujoco",
-    "dynamic_obstacle_local_planner",
-    "fastlio2_dynamic_inspection",
-    "moving_obstacle_sweep",
-    "large_loop_closure",
-    "gazebo_runtime",
     "saved_map_relocalize",
-    "pct_saved_map_navigation",
+    "bbs3d_kidnapped_relocalize",
 )
 
 G4_SERVER_FULL_SIM_REQUIRED_GATES: tuple[str, ...] = (
     "gateway_runtime_acceptance",
-    "routecheck_preflight",
-    "blocked_route_replan_preflight",
     "navigation_replay_deviation",
-    "multifloor_exploration",
-    "large_terrain",
-    "dynamic_obstacle_local_planner",
-    "policy_nav",
-    "fastlio2_dynamic_inspection",
-    "moving_obstacle_sweep",
-    "large_loop_closure",
-    "mujoco_tare_exploration",
     "saved_map_relocalize",
-    "gateway_dry_run",
+    "bbs3d_kidnapped_relocalize",
 )

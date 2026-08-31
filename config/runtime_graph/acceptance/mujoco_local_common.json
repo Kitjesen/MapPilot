@@ -1,0 +1,78 @@
+{
+  "extends": "mujoco_industrial_park_60m_navigation_acceptance.json",
+  "name": "mujoco_local_common",
+  "description": "Shared MuJoCo baseline for fair CMU and SCAN local-planner comparison.",
+  "start": [3.0, 4.0, 0.6, 0.0],
+  "windows_cpu_isolation": true,
+  "windows_navigation_physical_cores": 3,
+  "paths": {
+    "slam_config": "src/localization/fastlio2/config/sim_mid360.yaml",
+    "path_library": null
+  },
+  "asset_builder": {
+    "kind": "saved_map_plan_gate",
+    "scene_preset": "industrial_park",
+    "length": 60.0,
+    "width": 40.0,
+    "spacing": 0.1,
+    "hits_per_cell": 2,
+    "resolution": 0.2,
+    "map_source": "synthetic_hits"
+  },
+  "slam_runtime": {
+    "provider": "mujoco_navigation_fixture",
+    "mode": "localization"
+  },
+  "sensor_runtime": {
+    "publish_hz": 10.0,
+    "imu_hz": 200.0,
+    "publish_odom_prior": true,
+    "scan_time_profile": "instantaneous",
+    "mid360_samples_per_frame": 4000,
+    "physics_timestep_s": 0.005,
+    "physics_integrator": "euler",
+    "publisher_write_mode": "async_fifo",
+    "stop_on_nav_goal_reached": true
+  },
+  "navigation_runtime": {
+    "local_planner": null,
+    "use_traversability_cost": false
+  },
+  "thresholds": {
+    "require_slam_tracking": false,
+    "require_slam_accuracy": false,
+    "require_continuous_map_tracking": false,
+    "require_traversability": false,
+    "min_mujoco_truth_peak_xy_speed_mps": 0.5
+  },
+  "contracts": {
+    "terrain_output": null,
+    "navigation_traversability_authority": null,
+    "navigation_inputs": [
+      "rt/nav/command/request",
+      "rt/nav/operator_motion/control",
+      "rt/nav/operator_motion/sample",
+      "rt/slam/odometry",
+      "rt/tf",
+      "rt/slam/registered_cloud",
+      "rt/slam/localization_health",
+      "rt/maps/local_collision"
+    ]
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": [
+      "CMU and SCAN use the same industrial-park world, spawn, goal, map assets, truth pose, LiDAR sample count, scan timing, and physics timebase",
+      "MuJoCo truth odometry isolates local planning and tracking from Fast-LIO2 error",
+      "live MuJoCo LiDAR geometry remains present in the registered obstacle cloud",
+      "the simulated MuJoCo robot base reaches at least 0.5 m/s planar speed during the long-range run",
+      "terminal exact Driver stop acknowledgement, zero command, authority clear, and owned-process cleanup"
+    ],
+    "excluded_claims": [
+      "Fast-LIO2 localization quality",
+      "S100P timing qualification",
+      "Brainstem motor execution",
+      "physical robot motion"
+    ]
+  }
+}

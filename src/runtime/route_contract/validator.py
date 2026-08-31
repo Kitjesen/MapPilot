@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from message.dds import dds_topic_name, topic_spec
+from message.topics import dds_topic_name, topic_spec
 
 from .loader import REPO_ROOT, load_route_contract
 from .model import RouteBackend, RouteContract, TopicContract
@@ -141,7 +141,7 @@ def _validate_dds_binding(contract: RouteContract, topic: str, cpp_topics: str) 
     if spec is None:
         return [_issue("dds_topic_spec_missing", f"DDS-routed topic {topic} has no typed DDS spec", topic)]
 
-    expected_channel = dds_topic_name(topic, typed=True)
+    expected_channel = dds_topic_name(topic)
     binding = contract.route.binding_for(RouteBackend.DDS.value, topic)
     declared_channel = str(binding.get("channel") or expected_channel)
     if declared_channel != expected_channel:
@@ -206,7 +206,7 @@ def _validate_dds_endpoint_binding(contract_name: str, topic: str) -> list[Route
 
 
 def _read_cpp_topic_header() -> str:
-    path = REPO_ROOT / "src" / "message" / "cpp" / "dds_topics.hpp"
+    path = REPO_ROOT / "src" / "message" / "cpp" / "topics.hpp"
     try:
         return path.read_text(encoding="utf-8")
     except OSError:
@@ -221,11 +221,7 @@ def _is_external_diagnostics_stream(spec: TopicContract) -> bool:
     """Allow intentionally output-only observability streams, never commands."""
 
     role = str(spec.role).strip().lower()
-    schema = str(spec.schema).strip().lower()
     observability_role = role.endswith(
-        ("_status", "_telemetry", "_diagnostic", "_diagnostics", "_event", "_events")
-    )
-    observability_schema = schema.endswith(
         ("_status", "_telemetry", "_diagnostic", "_diagnostics", "_event", "_events")
     )
     output_only_boundary = bool(spec.port_bindings) and all(
@@ -234,7 +230,6 @@ def _is_external_diagnostics_stream(spec: TopicContract) -> bool:
     return bool(
         spec.external_diagnostics_subscribable
         and observability_role
-        and observability_schema
         and output_only_boundary
     )
 

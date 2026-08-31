@@ -2,7 +2,7 @@
 
 Enterprise-grade rule: single source of truth.
 
-We keep all network addresses in config/robot_config.yaml (RobotConfig.lidar),
+We keep all network addresses in the selected RobotConfig (RobotConfig.lidar),
 and generate one JSON file that both the ROS-free SDK2 source and the
 livox_ros_driver2 compatibility path can consume.
 
@@ -145,7 +145,7 @@ def build_mid360_config_dict(
                 "ip": resolved_lidar_ip,
                 "pcl_data_type": int(raw_lidar.get("livox_pcl_data_type", 1)),
                 "pattern_mode": int(raw_lidar.get("livox_pattern_mode", 0)),
-                # Keep extrinsics at zero here. SLAM uses config/robot_config.yaml
+                # Keep extrinsics at zero here. SLAM uses the selected RobotConfig
                 # as the unified TF source of truth.
                 "extrinsic_parameter": {
                     "roll": 0.0,

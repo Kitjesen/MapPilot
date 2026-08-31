@@ -30,23 +30,6 @@ def test_namespace_and_merge_preserve_critical_aliases() -> None:
     assert system.critical_modules == ("robot_a/core", "robot_b/core")
 
 
-def test_critical_modules_reject_worker_mode_before_worker_build(monkeypatch: pytest.MonkeyPatch) -> None:
-    from runtime.blueprint import SystemStartupError
-
-    blueprint = Blueprint().add(_ReadyModule, alias="core").require_modules("core")
-    worker_build_called = False
-
-    def _unexpected_worker_build(_n_workers: int):
-        nonlocal worker_build_called
-        worker_build_called = True
-        pytest.fail("worker mode must not start for critical modules")
-
-    monkeypatch.setattr(blueprint, "_build_worker_mode", _unexpected_worker_build)
-
-    with pytest.raises(SystemStartupError, match="worker"):
-        blueprint.build(n_workers=1)
-    assert worker_build_called is False
-
 class _TrackingTransport:
     def __init__(self) -> None:
         self.closed = False

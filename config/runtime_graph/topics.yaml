@@ -16,6 +16,8 @@ native_contract_topics:
   - /maps/activation/ack
   - /nav/command/request
   - /nav/command/ack
+  - /nav/plan/request
+  - /nav/plan/result
   - /nav/state
   - /nav/operator_motion/control
   - /nav/operator_motion/sample
@@ -31,6 +33,8 @@ native_contract_topics:
   - /nav/inspection/evidence/request
   - /nav/inspection/evidence/result
   - /nav/traversability
+  - /nav/local_traversability
+  - /maps/local_collision
   - /nav/exploration_grid
   - /nav/global_path
   - /nav/local_path
@@ -211,7 +215,7 @@ topics:
     role: native_navigation_command_request
     frame: request_dependent
     schema: navigation_command_request
-    producer: persistent_cpp_navigation_client
+    producer: native_navigation_command_client
     consumers:
       - native_nav_runtime
     qos: reliable_volatile_keep_last_32
@@ -221,6 +225,10 @@ topics:
         port: command_request
         direction: out
         boundary: native
+      - owner: native_explore_runtime
+        port: navigation_command_request
+        direction: out
+        boundary: endpoint
       - owner: native_nav_runtime
         port: command_request
         direction: in
@@ -233,6 +241,7 @@ topics:
     producer: native_nav_runtime
     consumers:
       - persistent_cpp_navigation_client
+      - native_explore_runtime
     qos: reliable_transient_local_keep_last_64
     semantics: business_accept_or_reject_for_matching_request_id
     port_bindings:
@@ -242,6 +251,48 @@ topics:
         boundary: endpoint
       - owner: persistent_cpp_navigation_client
         port: command_ack
+        direction: in
+        boundary: native
+      - owner: native_explore_runtime
+        port: navigation_command_ack
+        direction: in
+        boundary: endpoint
+
+  /nav/plan/request:
+    role: native_plan_request
+    frame: map
+    schema: plan_request
+    producer: persistent_cpp_navigation_client
+    consumers:
+      - native_nav_runtime
+    qos: reliable_volatile_keep_last_32
+    semantics: read_only_path_planning_request
+    port_bindings:
+      - owner: persistent_cpp_navigation_client
+        port: plan_request
+        direction: out
+        boundary: native
+      - owner: native_nav_runtime
+        port: plan_request
+        direction: in
+        boundary: endpoint
+
+  /nav/plan/result:
+    role: native_plan_result
+    frame: map
+    schema: plan_result
+    producer: native_nav_runtime
+    consumers:
+      - persistent_cpp_navigation_client
+    qos: reliable_volatile_keep_last_32
+    semantics: request_correlated_read_only_path_result
+    port_bindings:
+      - owner: native_nav_runtime
+        port: plan_result
+        direction: out
+        boundary: endpoint
+      - owner: persistent_cpp_navigation_client
+        port: plan_result
         direction: in
         boundary: native
 
@@ -439,7 +490,8 @@ topics:
   /lidar/raw_frame:
     role: raw_lidar_points
     frame: lidar_link
-    schema: livox_custom_or_pointcloud2
+    schema: lingtu.dds.LivoxFrame
+    nominal_rate_hz: 10.0
     producer: endpoint_sensor
     consumers:
       - native_slam_runtime
@@ -456,8 +508,9 @@ topics:
 
   /imu/raw:
     role: raw_imu
-    frame: lidar_link
-    schema: imu
+    frame: imu_link
+    schema: lingtu.dds.Imu
+    nominal_rate_hz: 200.0
     producer: endpoint_sensor
     consumers:
       - native_slam_runtime
@@ -472,6 +525,123 @@ topics:
         direction: in
         boundary: endpoint
 
+  /slam/odom_prior:
+    role: simulation_odom_prior
+    frame: odom
+    schema: odometry
+    producer: simulation_sensor_diagnostic
+    consumers:
+      - native_slam_runtime
+    real_equivalent_required: false
+    simulation_only: true
+    port_bindings:
+      - owner: simulation_sensor_diagnostic
+        port: odom_prior
+        direction: out
+        boundary: endpoint
+      - owner: native_slam_runtime
+        port: odom_prior
+        direction: in
+        boundary: endpoint
+
+  /camera/color/image_raw:
+    role: camera_color_image
+    frame: camera_link
+    schema: lingtu.dds.Image
+    nominal_rate_hz: 30.0
+    producer: camera_endpoint
+    consumers:
+      - gateway
+      - inspection_evidence
+    real_equivalent_required: false
+    transport_note: native image payload; compressed image is compatibility/export format.
+    port_bindings:
+      - owner: camera_endpoint
+        port: color_image
+        direction: out
+        boundary: endpoint
+      - owner: GatewayModule
+        port: color_image
+        direction: in
+        boundary: module
+
+  /camera/depth/image_raw:
+    role: camera_depth_image
+    frame: camera_link
+    schema: lingtu.dds.Image
+    nominal_rate_hz: 30.0
+    producer: camera_endpoint
+    consumers:
+      - perception
+      - inspection_evidence
+    real_equivalent_required: false
+    transport_note: native metric depth payload; PNG depth or Float32 are adapter/export formats.
+    port_bindings:
+      - owner: camera_endpoint
+        port: depth_image
+        direction: out
+        boundary: endpoint
+
+  /camera/color/camera_info:
+    role: camera_calibration
+    frame: camera_link
+    schema: lingtu.dds.CameraInfo
+    qos: reliable_transient_local_keep_last_1
+    semantics: latched_camera_calibration_published_once_per_endpoint_start_for_late_joiners
+    producer: camera_endpoint
+    consumers:
+      - perception
+      - gateway
+    real_equivalent_required: false
+    port_bindings:
+      - owner: camera_endpoint
+        port: camera_info
+        direction: out
+        boundary: endpoint
+
+  /gnss/fix:
+    role: gnss_fix
+    frame: gnss_antenna
+    schema: lingtu.dds.GnssFix
+    producer: gnss_endpoint
+    consumers:
+      - localization
+      - gateway
+    real_equivalent_required: false
+    port_bindings:
+      - owner: gnss_endpoint
+        port: fix
+        direction: out
+        boundary: endpoint
+
+  /gnss/status:
+    role: gnss_status
+    frame: gnss_antenna
+    schema: lingtu.dds.GnssStatus
+    producer: gnss_endpoint
+    consumers:
+      - gateway
+    real_equivalent_required: false
+    port_bindings:
+      - owner: gnss_endpoint
+        port: status
+        direction: out
+        boundary: endpoint
+
+  /gnss/odom:
+    role: gnss_odometry
+    frame: odom
+    schema: odometry
+    producer: gnss_endpoint
+    consumers:
+      - localization
+      - gateway
+    real_equivalent_required: false
+    port_bindings:
+      - owner: gnss_endpoint
+        port: odometry
+        direction: out
+        boundary: endpoint
   /slam/odometry:
     role: localization_pose
     frame: odom
@@ -492,26 +662,26 @@ topics:
         port: odometry
         direction: out
         boundary: module
-      - owner: nav.mission
-        port: odometry
-        direction: in
-        boundary: module
-      - owner: nav.local_planner
-        port: odometry
-        direction: in
-        boundary: module
-      - owner: nav.path_follower
-        port: odometry
-        direction: in
-        boundary: module
-      - owner: nav.safety
-        port: odometry
-        direction: in
-        boundary: module
       - owner: GatewayModule
         port: odometry
         direction: in
         boundary: module
+
+  /slam/state_at_scan:
+    role: scan_timestamp_state_estimate_diagnostic
+    frame: odom
+    schema: odometry
+    producer: native_slam_runtime
+    consumers: []
+    external_diagnostics_subscribable: true
+    qos: best_effort_volatile_keep_last_5_deadline_20ms
+    semantics: state_estimate_at_the_exact_accepted_lidar_scan_timestamp
+    real_equivalent_required: true
+    port_bindings:
+      - owner: native_slam_runtime
+        port: state_at_scan
+        direction: out
+        boundary: endpoint
 
   /slam/registered_cloud:
     role: registered_scan
@@ -635,6 +805,25 @@ topics:
         direction: out
         boundary: endpoint
 
+  /maps/local_collision:
+    role: complete_local_3d_collision_roi
+    frame: map
+    schema: map_collision_layer
+    producer: native_maps_runtime
+    consumers:
+      - native_nav_runtime
+    qos: reliable_volatile_keep_last_1_lifespan_500ms
+    semantics: sparse_occupied_voxel_centers_with_resolution_aabb_identity_and_explicit_completeness
+    port_bindings:
+      - owner: native_maps_runtime
+        port: local_collision
+        direction: out
+        boundary: endpoint
+      - owner: native_nav_runtime
+        port: local_collision
+        direction: in
+        boundary: endpoint
+
   /maps/accumulated_cloud:
     role: bounded_accumulated_map
     frame: map
@@ -717,6 +906,7 @@ topics:
       - maps
       - gateway
       - map_artifacts
+    qos: best_effort_volatile_keep_last_2_lifespan_200ms
     real_equivalent_required: true
     port_bindings:
       - owner: native_slam_runtime
@@ -724,19 +914,11 @@ topics:
         direction: out
         boundary: endpoint
       - owner: SlamAdapterModule
-        port: map_cloud
+        port: map_cloud_frame
         direction: out
         boundary: module
-      - owner: maps.service
-        port: map_cloud
-        direction: in
-        boundary: module
-      - owner: nav.terrain
-        port: map_cloud
-        direction: in
-        boundary: module
       - owner: GatewayModule
-        port: map_cloud
+        port: map_cloud_frame
         direction: in
         boundary: module
 
@@ -760,6 +942,89 @@ topics:
         direction: in
         boundary: native
 
+  /slam/map_command:
+    role: slam_map_snapshot_request
+    frame: none
+    schema: lingtu.dds.SlamMapSnapshotRequest
+    producer: native_mapd_runtime
+    consumers:
+      - native_slam_runtime
+    real_equivalent_required: true
+    qos: reliable_volatile_keep_last_32
+    semantics: request_correlated_typed_atomic_snapshot_request_from_mapd
+    port_bindings:
+      - owner: native_mapd_runtime
+        port: map_snapshot_request
+        direction: out
+        boundary: endpoint
+      - owner: native_slam_runtime
+        port: map_snapshot_request
+        direction: in
+        boundary: endpoint
+
+  /slam/map_event:
+    role: slam_map_snapshot_ack
+    frame: none
+    schema: lingtu.dds.SlamMapSnapshotAck
+    producer: native_slam_runtime
+    consumers:
+      - native_mapd_runtime
+      - slam_control_client
+    external_diagnostics_subscribable: true
+    real_equivalent_required: true
+    qos: reliable_transient_local_keep_last_64
+    semantics: request_correlated_typed_snapshot_receipt_consumed_by_mapd
+    port_bindings:
+      - owner: native_slam_runtime
+        port: map_snapshot_ack
+        direction: out
+        boundary: endpoint
+      - owner: native_mapd_runtime
+        port: map_snapshot_ack
+        direction: in
+        boundary: endpoint
+
+  /slam/relocalization/request:
+    role: slam_relocalization_request
+    frame: map
+    schema: lingtu.dds.RelocalizationRequest
+    producer: slam_control_client
+    consumers:
+      - native_slam_runtime
+    real_equivalent_required: true
+    qos: reliable_volatile_keep_last_32
+    semantics: request_correlated_global_seeded_or_saved_map_relocalization
+    port_bindings:
+      - owner: slam_control_client
+        port: relocalization_request
+        direction: out
+        boundary: endpoint
+      - owner: native_slam_runtime
+        port: relocalization_request
+        direction: in
+        boundary: endpoint
+
+  /slam/relocalization/response:
+    role: slam_relocalization_response
+    frame: map
+    schema: lingtu.dds.RelocalizationResponse
+    producer: native_slam_runtime
+    consumers:
+      - slam_control_client
+    external_diagnostics_subscribable: true
+    real_equivalent_required: true
+    qos: reliable_transient_local_keep_last_64
+    semantics: request_correlated_relocalization_acceptance_and_quality
+    port_bindings:
+      - owner: native_slam_runtime
+        port: relocalization_response
+        direction: out
+        boundary: endpoint
+      - owner: slam_control_client
+        port: relocalization_response
+        direction: in
+        boundary: endpoint
+
   /slam/saved_map_cloud:
     role: saved_map_cloud
     frame: map
@@ -767,16 +1032,12 @@ topics:
     producer: native_slam_runtime
     consumers:
       - map_artifacts
-      - gateway
+    qos: best_effort_volatile_keep_last_2_lifespan_200ms
     port_bindings:
       - owner: native_slam_runtime
         port: saved_map_cloud
         direction: out
         boundary: endpoint
-      - owner: GatewayModule
-        port: saved_map_cloud
-        direction: in
-        boundary: module
 
   /slam/localization_health:
     role: localization_health
@@ -787,6 +1048,7 @@ topics:
       - navigation
       - safety
       - gateway
+    qos: reliable_volatile_keep_last_10
     real_equivalent_required: true
     port_bindings:
       - owner: native_slam_runtime
@@ -796,14 +1058,6 @@ topics:
       - owner: SlamAdapterModule
         port: localization_status
         direction: out
-        boundary: module
-      - owner: nav.mission
-        port: localization_status
-        direction: in
-        boundary: module
-      - owner: nav.safety
-        port: localization_status
-        direction: in
         boundary: module
       - owner: GatewayModule
         port: localization_status
@@ -818,6 +1072,7 @@ topics:
     consumers:
       - gateway
       - diagnostics
+    qos: best_effort_volatile_keep_last_5_deadline_20ms
     port_bindings:
       - owner: native_slam_runtime
         port: localization_quality
@@ -829,50 +1084,6 @@ topics:
         boundary: module
       - owner: GatewayModule
         port: localization_quality
-        direction: in
-        boundary: module
-
-  /nav/goal_pose:
-    role: legacy_navigation_goal_compatibility
-    frame: map
-    schema: pose_stamped
-    producer: gateway_or_mcp
-    consumers:
-      - native_nav_runtime
-      - navigation
-    port_bindings:
-      - owner: endpoint_supervisor
-        port: goal_pose
-        direction: out
-        boundary: endpoint
-      - owner: GatewayModule
-        port: goal_pose
-        direction: out
-        boundary: module
-      - owner: nav.mission
-        port: goal_pose
-        direction: in
-        boundary: module
-
-  /nav/cancel:
-    role: legacy_navigation_cancel_compatibility
-    frame: none
-    schema: text
-    producer: gateway_or_mcp
-    consumers:
-      - native_nav_runtime
-      - navigation
-    port_bindings:
-      - owner: endpoint_supervisor
-        port: cancel
-        direction: out
-        boundary: endpoint
-      - owner: GatewayModule
-        port: cancel
-        direction: out
-        boundary: module
-      - owner: nav.mission
-        port: cancel
         direction: in
         boundary: module
 
@@ -936,14 +1147,6 @@ topics:
       - local_planner
       - native_nav_runtime
     port_bindings:
-      - owner: nav.mission
-        port: waypoint
-        direction: out
-        boundary: module
-      - owner: nav.local_planner
-        port: waypoint
-        direction: in
-        boundary: module
       - owner: endpoint_supervisor
         port: waypoint
         direction: in
@@ -955,24 +1158,40 @@ topics:
     schema: occupancy_grid
     producer: traversability_runtime
     field_producer: native_traversability_endpoint
-    module_dev_producer: nav.terrain
     single_writer_per_product: true
     semantics: control_risk_authority_distinct_from_maps_scene_traversability
     consumers:
       - local_planner
       - native_nav_runtime
-      - gateway
+      - host_bus
     port_bindings:
-      - owner: nav.terrain
-        port: traversability
-        direction: out
-        boundary: module
-      - owner: nav.local_planner
-        port: traversability
-        direction: in
-        boundary: module
       - owner: endpoint_supervisor
         port: traversability
+        direction: in
+        boundary: endpoint
+      - owner: host_bus
+        port: traversability
+        direction: in
+        boundary: native
+
+  /nav/local_traversability:
+    role: rolling_local_traversability_grid
+    frame: odom
+    schema: occupancy_grid
+    producer: traversability_runtime
+    field_producer: native_traversability_endpoint
+    single_writer_per_product: true
+    qos: reliable_volatile_keep_last_1_lifespan_500ms
+    semantics: latest_only_odom_rolling_control_risk_for_native_local_planning_not_map_persistence_or_gateway_projection
+    consumers:
+      - native_nav_runtime
+    port_bindings:
+      - owner: native_traversability_endpoint
+        port: local_traversability
+        direction: out
+        boundary: endpoint
+      - owner: endpoint_supervisor
+        port: local_traversability
         direction: in
         boundary: endpoint
 
@@ -982,8 +1201,7 @@ topics:
     schema: occupancy_grid
     producer: native_traversability_endpoint
     consumers:
-      - WavefrontFrontierExplorer
-      - TraversableFrontierModule
+      - TAREExplorerModule
     qos: reliable_keep_last_2
     semantics: observed_free_occupied_and_unknown_frontier_input
     port_bindings:
@@ -1047,38 +1265,7 @@ topics:
         direction: out
         boundary: native
         required: false
-      - owner: nav.velocity_mux
-        port: driver_cmd_vel
-        direction: out
-        boundary: module
-        required: false
-      - owner: nav.safety
-        port: cmd_vel
-        direction: in
-        boundary: module
       - owner: driver
         port: cmd_vel
         direction: in
         boundary: native
-
-  /nav/teleop_cmd_vel:
-    role: legacy_operator_velocity_request_compatibility
-    frame: body
-    schema: twist
-    producer: teleop
-    consumers:
-      - native_command_arbiter
-      - safety_monitor
-    port_bindings:
-      - owner: GatewayModule
-        port: cmd_vel
-        direction: out
-        boundary: module
-      - owner: TeleopModule
-        port: cmd_vel
-        direction: out
-        boundary: module
-      - owner: native_command_arbiter
-        port: teleop_cmd_vel
-        direction: in
-        boundary: endpoint

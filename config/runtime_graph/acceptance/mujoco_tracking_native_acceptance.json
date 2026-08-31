@@ -1,0 +1,38 @@
+{
+  "schema_version": "lingtu.mujoco.tracking_native_acceptance.v1",
+  "extends": "mujoco_native_navigation_acceptance.json",
+  "name": "mujoco_tracking_native",
+  "description": "Attach-only dynamic person-follow acceptance through the public Gateway and native navigation boundaries.",
+  "product_contract": {
+    "product": "tracking",
+    "source": "config/runtime_graph/products/tracking.yaml",
+    "native_control_mode": "autonomy",
+    "slam_mode": "localization",
+    "requires_map": true
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": [
+      "exact committed tracking RunPlan and Gateway dataflow identity",
+      "stable scene-graph person identity selection",
+      "exact target_id visual follow producing a map-frame native navigation task",
+      "moving scenario person remains visible while native navigation updates goals",
+      "the robot moves while follow distance does not diverge",
+      "visual follow stop waits for a terminal navigation state"
+    ],
+    "excluded_claims": [
+      "Product switch, rollback, and Product stop transaction",
+      "Driver stop acknowledgement or command forwarding",
+      "collision, steady-state distance, acceleration, or jerk quality",
+      "physical robot perception or motion"
+    ]
+  },
+  "thresholds": {
+    "poll_interval_s": 0.25,
+    "min_person_motion_m": 0.5,
+    "min_robot_motion_m": 0.2,
+    "min_goal_motion_m": 0.2,
+    "max_follow_distance_growth_m": 0.3,
+    "timeout_s": 30.0
+  }
+}
