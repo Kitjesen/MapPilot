@@ -1,7 +1,7 @@
 #include "tracking/follower.hpp"
 
 #include "planning/local/planner.hpp"
-#include "trajectory/spline.hpp"
+#include "planning/local/scan/upstream/plan_manage/closed_loop_controller.h"
 
 #include <algorithm>
 #include <cmath>
@@ -356,195 +356,82 @@ class SplineAlgorithm final : public Algorithm {
     FollowerOutput output;
     const auto *target =
         std::get_if<std::reference_wrapper<const SplineTarget>>(&input.target);
-    if (target == nullptr)
-      return output;
+    if (target == nullptr) return output;
     const SplineTarget &spline = target->get();
-    const FollowerParams &params = input.params;
-    const SplineView spline_view(spline);
-    if (!spline_view.valid())
-      return output;
 
-    const SplineFollowerParams &scan = params.spline;
-    const double duration = spline_view.duration();
-    // SCAN owns the trajectory clock. Do not jump that clock to an arbitrary
-    // nearest point: doing so can skip across bends or revisit an older branch
-    // when the local spline passes near the robot more than once.
-    const double time = clamp(spline.timeS, 0.0, duration);
-    const Vec3 current_position = spline_view.position(time);
-    const Vec3 current_velocity = spline_view.velocity(time);
-    const double lookahead = std::max(0.0, scan.timeForward);
-    const double lookahead_time = std::min(duration, time + lookahead);
-    const Vec3 lookahead_position = spline_view.position(lookahead_time);
-    const Vec3 endpoint = spline_view.position(duration);
-    if (!std::isfinite(current_position.x) || !std::isfinite(current_position.y) ||
-        !std::isfinite(current_velocity.x) || !std::isfinite(current_velocity.y) ||
-        !std::isfinite(lookahead_position.x) || !std::isfinite(lookahead_position.y) ||
-        !std::isfinite(endpoint.x) || !std::isfinite(endpoint.y)) {
-      return output;
-    }
-    const double end_distance = std::hypot(endpoint.x, endpoint.y);
-    double terminal_scale = 1.0;
-    if (std::isfinite(input.goalDistance) && input.goalDistance >= 0.0 &&
-        params.slowDwnDisThre > params.stopDisThre) {
-      terminal_scale = clamp((input.goalDistance - params.stopDisThre) /
-                                 (params.slowDwnDisThre - params.stopDisThre),
-                             0.0, 1.0);
+    if (!controller_.hasTrajectory() ||
+        controller_.trajectoryId() != spline.trajectoryId) {
+      local::scan::upstream::BsplineTrajectory trajectory;
+      trajectory.positionPoints.resize(
+          3, static_cast<Eigen::Index>(spline.controls.size()));
+      for (std::size_t index = 0; index < spline.controls.size(); ++index) {
+        trajectory.positionPoints(0, static_cast<Eigen::Index>(index)) =
+            spline.controls[index].x;
+        trajectory.positionPoints(1, static_cast<Eigen::Index>(index)) =
+            spline.controls[index].y;
+        trajectory.positionPoints(2, static_cast<Eigen::Index>(index)) =
+            spline.controls[index].z;
+      }
+      trajectory.knots.resize(static_cast<Eigen::Index>(spline.knots.size()));
+      for (std::size_t index = 0; index < spline.knots.size(); ++index) {
+        trajectory.knots(static_cast<Eigen::Index>(index)) =
+            spline.knots[index];
+      }
+      trajectory.order = spline.order;
+      trajectory.trajectoryId = spline.trajectoryId;
+      trajectory.startTimeS = spline.startTimeS;
+      if (!controller_.setTrajectory(trajectory, input.currentTime))
+        return output;
     }
 
-    double heading_x = lookahead_position.x - current_position.x;
-    double heading_y = lookahead_position.y - current_position.y;
-    constexpr double kLookaheadDirectionSquaredThreshold = 1e-4;
-    if (heading_x * heading_x + heading_y * heading_y <
-        kLookaheadDirectionSquaredThreshold) {
-      heading_x = current_velocity.x;
-      heading_y = current_velocity.y;
-    }
-    const double desired_yaw =
-        input.holdBodyHeading
-            ? 0.0
-            : (heading_x * heading_x + heading_y * heading_y >=
-                       kLookaheadDirectionSquaredThreshold
-                   ? std::atan2(heading_y, heading_x)
-                   : 0.0);
-    const double yaw_error = wrapPi(desired_yaw);
-    const double yaw_limit =
-        std::min(std::max(0.0, params.maxYawRateRadS), std::max(0.0, scan.maxYawRateRadS));
-    // Match SCAN's closed-loop controller: use look-ahead heading error for
-    // yaw control. The sampled spline yaw rate is a finite-difference
-    // diagnostic and becomes noisy near low-speed control points.
-    double yaw_command = input.holdBodyHeading
-                             ? 0.0
-                             : clamp(std::max(0.0, scan.yawGain) * yaw_error,
-                                     -yaw_limit, yaw_limit);
-    if (params.noRotAtGoal)
-      yaw_command *= terminal_scale;
-    if (!input.holdBodyHeading &&
-        std::abs(yaw_error) > std::max(0.0, scan.headingErrorThreshold)) {
-      state_.command.vx = 0.0;
-      state_.command.vy = 0.0;
-      state_.command.wz = input.safetyStop >= 2 ? 0.0 : limitYaw(input, yaw_command);
-      rememberControlTime(input);
-      output.cmd = state_.command;
-      output.endDistance = end_distance;
-      output.directionError = yaw_error;
-      output.executionFrozen = true;
-      return output;
-    }
+    local::scan::upstream::ClosedLoopControllerState state;
+    state.position = {input.vehicleRelative.x, input.vehicleRelative.y,
+                      input.vehicleRelative.z};
+    state.yaw = input.vehicleYawRelative;
+    state.nowS = input.currentTime;
 
-    const double gain = std::max(0.0, scan.positionGain);
-    Twist desired;
-    // Match SCAN's closed-loop controller: the look-ahead point selects yaw,
-    // while translation tracks the state at the current trajectory time.
-    // Driving toward the future state here cuts corners and overreacts at every
-    // replan boundary.
-    desired.vx = current_velocity.x + gain * current_position.x;
-    desired.vy = current_velocity.y + gain * current_position.y;
-    desired.wz = yaw_command;
+    const SplineFollowerParams &scan = input.params.spline;
+    local::scan::upstream::ClosedLoopControllerParams params;
+    params.timeForward = scan.timeForward;
+    params.headingErrorThreshold = scan.headingErrorThreshold;
+    params.positionGain = scan.positionGain;
+    params.yawGain = scan.yawGain;
+    params.maxVx = scan.maxVx;
+    params.maxVy = scan.maxVy;
+    params.maxYawRate = scan.maxYawRateRadS;
+    params.finishDistance = scan.finishDistance;
 
-    const double policy_limit = std::max(0.0, params.maxSpeed) *
-                                clamp(input.requestedSpeed, 0.0, 1.0) *
-                                clamp(input.slowFactor, 0.0, 1.0);
-    const double max_vx =
-        std::min(policy_limit, std::max(0.0, scan.maxVx)) * terminal_scale;
-    const double max_vy =
-        std::min(policy_limit, std::max(0.0, scan.maxVy)) * terminal_scale;
-    const double norm_limit = std::max(max_vx, max_vy);
-    const double speed = std::hypot(desired.vx, desired.vy);
-    if (speed > norm_limit && speed > 1e-9) {
-      const double scale = norm_limit / speed;
-      desired.vx *= scale;
-      desired.vy *= scale;
-    }
-    desired.vx = clamp(desired.vx, -max_vx, max_vx);
-    desired.vy = clamp(desired.vy, -max_vy, max_vy);
-    desired.wz = clamp(desired.wz, -yaw_limit, yaw_limit);
-
-    const double dt = controlDt(input);
-    const Twist base = state_.lastControlTime >= 0.0 ? state_.command : input.measuredBodyTwist;
-    const double delta_x = desired.vx - base.vx;
-    const double delta_y = desired.vy - base.vy;
-    const double delta_norm = std::hypot(delta_x, delta_y);
-    const double max_linear_delta = std::max(0.0, params.maxAccel) * dt;
-    if (delta_norm > max_linear_delta && delta_norm > 1e-9) {
-      const double scale = max_linear_delta / delta_norm;
-      state_.command.vx = base.vx + scale * delta_x;
-      state_.command.vy = base.vy + scale * delta_y;
-    } else {
-      state_.command.vx = desired.vx;
-      state_.command.vy = desired.vy;
-    }
-    state_.command.wz = limitYaw(input, desired.wz);
-    rememberControlTime(input);
-
-    if (spline.timeS >= duration &&
-        end_distance < std::max(0.0, scan.finishDistance)) {
-      state_.command = {};
-      output.finished = true;
-    }
-
-    if (input.safetyStop >= 1) {
-      state_.command.vx = 0.0;
-      state_.command.vy = 0.0;
-    }
-    if (input.safetyStop >= 2)
-      state_.command.wz = 0.0;
-
-    output.cmd = state_.command;
-    output.endDistance = end_distance;
-    output.directionError = yaw_error;
-    output.canAccelerate = norm_limit > 0.0;
+    const local::scan::upstream::ClosedLoopControllerOutput controlled =
+        controller_.step(state, params);
+    output.cmd = controlled.command;
+    output.directionError = controlled.yawError;
+    output.endDistance = controlled.endDistance;
+    output.executionFrozen = controlled.executionFrozen;
+    output.finished = controlled.finished;
+    output.canAccelerate =
+        std::hypot(output.cmd.vx, output.cmd.vy) > kSpeedEpsilon;
     return output;
   }
 
-  void stopLinear() override {
-    state_.command.vx = 0.0;
-    state_.command.vy = 0.0;
-  }
+  void stopLinear() override {}
 
-  void resetTarget() override {}
+  void resetTarget() override { controller_.reset(); }
 
-  void resetIntent() override { reset(); }
+  void resetIntent() override { controller_.reset(); }
 
-  void reset() override { state_ = {}; }
+  void reset() override { controller_.reset(); }
 
   FollowerDiagnostics diagnostics() const override {
     return {
-        true,
+        controller_.hasTrajectory(),
         FollowerAlgorithm::Spline,
-        std::hypot(state_.command.vx, state_.command.vy),
+        0.0,
         true,
     };
   }
 
  private:
-  double controlDt(const FollowerInput &input) const {
-    const double nominal = clamp(input.params.nominalDt, 1e-4, 1.0);
-    if (!std::isfinite(input.currentTime) || state_.lastControlTime < 0.0 ||
-        input.currentTime <= state_.lastControlTime) {
-      return nominal;
-    }
-    return clamp(input.currentTime - state_.lastControlTime, 1e-4,
-                 std::max(nominal, input.params.maxDt));
-  }
-
-  double limitYaw(const FollowerInput &input, double desired) const {
-    if (!(input.params.maxYawAccelRadS2 > 0.0))
-      return desired;
-    const double base = state_.lastControlTime >= 0.0 ? state_.command.wz
-                                                      : input.measuredBodyTwist.wz;
-    const double step = input.params.maxYawAccelRadS2 * controlDt(input);
-    return base + clamp(desired - base, -step, step);
-  }
-
-  void rememberControlTime(const FollowerInput &input) {
-    if (std::isfinite(input.currentTime))
-      state_.lastControlTime = input.currentTime;
-  }
-
-  struct State {
-    Twist command{};
-    double lastControlTime{-1.0};
-  } state_;
+  local::scan::upstream::ClosedLoopController controller_{};
 };
 
 using AlgorithmFactory = std::unique_ptr<Algorithm> (*)();

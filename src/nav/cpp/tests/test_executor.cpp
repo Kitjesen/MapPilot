@@ -7,6 +7,7 @@
 #include <thread>
 #include <vector>
 
+#include "collision_bitmap.hpp"
 #include "navigation/executor.hpp"
 
 namespace {
@@ -69,7 +70,8 @@ lingtu::nav::navigation::Executor makeCmuTeleopAvoidLoop(
   return makeConfiguredExecutor(std::move(config), planner, LINGTU_TEST_PATH_LIBRARY);
 }
 
-lingtu::nav::navigation::Executor makeScanExecutor(double corridor_lookahead_m = 3.0) {
+lingtu::nav::navigation::Executor makeScanExecutor(double corridor_lookahead_m = 3.0,
+                                                   double vehicle_length_m = 0.6) {
   lingtu::nav::navigation::ExecutorConfig config;
   nav_kernel::LocalPlannerParams planner;
   config.corridor_lookahead_m = corridor_lookahead_m;
@@ -80,6 +82,7 @@ lingtu::nav::navigation::Executor makeScanExecutor(double corridor_lookahead_m =
   planner.useTraversabilityCost = false;
   planner.autonomySpeed = 0.5;
   planner.maxSpeed = 1.0;
+  planner.vehicleLength = vehicle_length_m;
   planner.scan.voxelResolution = 0.10;
   planner.scan.horizontalRange = 4.0;
   config.follower.maxSpeed = 0.5;
@@ -189,17 +192,27 @@ lingtu::nav::navigation::ExecutionObservation observation(std::uint64_t frame_ep
 lingtu::nav::navigation::ExecutionObservation emptyScanObservation(double stamp_s,
                                                                    std::uint64_t generation = 1) {
   auto view = observation(1, generation, 0, stamp_s, stamp_s, 0.0);
-  view.collision.resolution = 0.10;
-  view.collision.aabbMin = {-10.0, -10.0, -2.0};
-  view.collision.aabbMax = {10.0, 10.0, 2.0};
-  view.collision.resetEpoch = 1;
-  view.collision.observationSequence = generation;
-  view.collision.generation = generation;
-  view.collision.stampS = stamp_s;
-  view.collision.receiveStampS = stamp_s;
-  view.collision.complete = true;
-  view.collision.live = true;
+  static thread_local lingtu::nav::tests::CollisionBitmap bitmap(
+      {-10.0, -10.0, -2.0}, {10.0, 10.0, 2.0}, 0.10);
+  bitmap.clear();
+  view.collision = bitmap.view(stamp_s, generation);
   return view;
+}
+
+void setScanCollision(lingtu::nav::navigation::ExecutionObservation &observation,
+                      const std::vector<float> &xyz) {
+  // ponytail: executor copies the view on submission, so serial gtest needs one owner.
+  static thread_local lingtu::nav::tests::CollisionBitmap bitmap;
+  const auto previous = observation.collision;
+  bitmap = lingtu::nav::tests::CollisionBitmap(
+      previous.aabbMin, previous.aabbMax, previous.resolution);
+  bitmap.occupyInflated(xyz, 0.40, 0.10, 0.10);
+  observation.collision = bitmap.view(previous.stampS, previous.generation);
+  observation.collision.resetEpoch = previous.resetEpoch;
+  observation.collision.observationSequence = previous.observationSequence;
+  observation.collision.receiveStampS = previous.receiveStampS;
+  observation.collision.complete = previous.complete;
+  observation.collision.live = previous.live;
 }
 
 void expectObservationWaitStopped(const lingtu::nav::navigation::ExecutionOutput &out) {
@@ -451,7 +464,7 @@ TEST(Executor, ScanTeleopIntentPublishesTelemetryAndTracksSpline) {
   EXPECT_EQ(out.reason, "teleop_assist_spline_ready");
 }
 
-TEST(Executor, ScanLateralIntentTracksSplineWithoutTurningBody) {
+TEST(Executor, ScanLateralIntentUsesOfficialHeadingAlignment) {
   auto executor = makeScanExecutor();
   nav_kernel::Twist intent;
   intent.vy = 0.25;
@@ -463,12 +476,51 @@ TEST(Executor, ScanLateralIntentTracksSplineWithoutTurningBody) {
   });
 
   ASSERT_TRUE(out.path_found) << out.reason;
-  EXPECT_TRUE(out.hold_body_heading);
-  EXPECT_FALSE(out.trajectory_frozen);
+  EXPECT_FALSE(out.hold_body_heading);
+  EXPECT_TRUE(out.trajectory_frozen);
   EXPECT_NEAR(out.cmd_vel.vx, 0.0, 1e-6);
+  EXPECT_NEAR(out.cmd_vel.vy, 0.0, 1e-6);
+  EXPECT_GT(out.cmd_vel.wz, 0.0);
+  EXPECT_LE(out.target_distance_m, 0.6 + 1e-6);
+}
+
+TEST(Executor, ScanDiagonalIntentUsesOfficialWorldVelocityControl) {
+  auto executor = makeScanExecutor();
+  nav_kernel::Twist intent;
+  intent.vx = 0.25;
+  intent.vy = 0.25;
+  const auto observation = emptyScanObservation(1.0);
+
+  const auto out = awaitScanOutput([&]() {
+    return executor.tick(intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, nullptr, 0,
+                                     1.0, {}, observation));
+  });
+
+  ASSERT_TRUE(out.path_found) << out.reason;
+  EXPECT_FALSE(out.hold_body_heading);
+  EXPECT_FALSE(out.trajectory_frozen);
+  EXPECT_GT(out.cmd_vel.vx, 0.0);
   EXPECT_GT(out.cmd_vel.vy, 0.0);
-  EXPECT_NEAR(out.cmd_vel.wz, 0.0, 1e-6);
-  EXPECT_EQ(out.reason, "teleop_assist_lateral_ready");
+  EXPECT_GT(out.cmd_vel.wz, 0.0);
+}
+
+TEST(Executor, ScanReverseUsesOfficialHeadingAlignment) {
+  auto executor = makeScanExecutor();
+  nav_kernel::Twist intent;
+  intent.vx = -0.25;
+  const auto observation = emptyScanObservation(1.0);
+
+  const auto out = awaitScanOutput([&]() {
+    return executor.tick(intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, nullptr, 0,
+                                     1.0, {}, observation));
+  });
+
+  ASSERT_TRUE(out.path_found) << out.reason;
+  EXPECT_FALSE(out.hold_body_heading);
+  EXPECT_TRUE(out.trajectory_frozen);
+  EXPECT_NEAR(out.cmd_vel.vx, 0.0, 1e-6);
+  EXPECT_NEAR(out.cmd_vel.vy, 0.0, 1e-6);
+  EXPECT_GT(std::abs(out.cmd_vel.wz), 0.0);
 }
 
 TEST(Executor, ScanDirectionChangeNeverExecutesThePreviousIntentSpline) {
@@ -497,12 +549,14 @@ TEST(Executor, ScanDirectionChangeNeverExecutesThePreviousIntentSpline) {
                                      1.05, {}, observation));
   });
   ASSERT_TRUE(switched.path_found) << switched.reason;
-  EXPECT_TRUE(switched.hold_body_heading);
-  EXPECT_GT(switched.cmd_vel.vy, 0.0);
-  EXPECT_GT(std::abs(switched.cmd_vel.vy), std::abs(switched.cmd_vel.vx));
+  EXPECT_FALSE(switched.hold_body_heading);
+  EXPECT_TRUE(switched.trajectory_frozen);
+  EXPECT_NEAR(switched.cmd_vel.vx, 0.0, 1e-6);
+  EXPECT_NEAR(switched.cmd_vel.vy, 0.0, 1e-6);
+  EXPECT_GT(switched.cmd_vel.wz, 0.0);
 }
 
-TEST(Executor, ScanFreezesTrajectoryClockWhileAligningHeading) {
+TEST(Executor, ScanOfficialControllerFreezesTrajectoryClockWhileAligningHeading) {
   auto executor = makeScanExecutor();
   executor.setRoute(route({
       {0.0, 0.0, 0.0},
@@ -517,25 +571,10 @@ TEST(Executor, ScanFreezesTrajectoryClockWhileAligningHeading) {
       [&]() { return executor.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, now, {}, observation)); });
   ASSERT_TRUE(first.path_found) << first.reason;
   ASSERT_GE(first.local_planner_debug.trajectoryPointCount, 2);
-  // The official controller keeps the current heading at a zero-speed spline
-  // boundary, then exposes the planned heading as trajectory time advances.
-  EXPECT_FALSE(first.trajectory_frozen);
-  EXPECT_GE(first.cmd_vel.vy, 0.0);
-
-  lingtu::nav::navigation::ExecutionOutput frozen;
-  for (int tick = 0; tick < 10 && !frozen.trajectory_frozen; ++tick) {
-    now += 0.05;
-    const auto fresh_observation = emptyScanObservation(now);
-    frozen = executor.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, now, {},
-                            fresh_observation));
-    ASSERT_TRUE(frozen.path_found) << "tick=" << tick << " reason=" << frozen.reason;
-    ASSERT_GE(frozen.local_planner_debug.trajectoryPointCount, 2);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
-  ASSERT_TRUE(frozen.trajectory_frozen);
-  EXPECT_DOUBLE_EQ(frozen.cmd_vel.vx, 0.0);
-  EXPECT_DOUBLE_EQ(frozen.cmd_vel.vy, 0.0);
-  EXPECT_GT(frozen.cmd_vel.wz, 0.0);
+  ASSERT_TRUE(first.trajectory_frozen);
+  EXPECT_DOUBLE_EQ(first.cmd_vel.vx, 0.0);
+  EXPECT_DOUBLE_EQ(first.cmd_vel.vy, 0.0);
+  EXPECT_GT(first.cmd_vel.wz, 0.0);
 
   now += 0.05;
   auto aligned_observation = emptyScanObservation(now);
@@ -562,20 +601,11 @@ TEST(Executor, ScanTeleopIntentReceivesCollisionSnapshot) {
   lingtu::nav::navigation::ExecutionObservation observation;
   observation.frame_epoch = 1;
   observation.cloud_generation = 1;
-  observation.collision = {
-      occupied_xyz.data(),
-      1,
-      0.1,
-      {-4.0, -4.0, -1.0},
-      {4.0, 4.0, 1.0},
-      1,
-      1,
-      1,
-      1.0,
-      1.0,
-      false,
-      true,
-  };
+  lingtu::nav::tests::CollisionBitmap collision(
+      {-4.0, -4.0, -1.0}, {4.0, 4.0, 1.0}, 0.1);
+  collision.occupyPoints(occupied_xyz);
+  observation.collision = collision.view();
+  observation.collision.complete = false;
 
   const auto out = awaitScanOutput([&]() {
     return executor.tick(intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, nullptr, 0, 1.0, {}, observation));
@@ -607,6 +637,48 @@ TEST(Executor, ScanKeepsSafeIntentOnMapChange) {
   EXPECT_FALSE(during_replan.near_field_stop) << during_replan.reason;
   EXPECT_NE(during_replan.reason, "local_intent_pending");
   EXPECT_GT(during_replan.cmd_vel.vx, 0.0);
+}
+
+TEST(Executor, ScanKeepsSafeIntentAcrossBodyHeightOscillation) {
+  auto executor = makeScanExecutor();
+  nav_kernel::Twist intent;
+  intent.vx = 0.25;
+  auto observation = emptyScanObservation(1.0);
+
+  const auto ready = awaitScanOutput([&]() {
+    return executor.tick(
+        intentInput(pose(0.0, 0.0, 0.34, 0.0), intent, nullptr, 0, 1.0, {}, observation));
+  });
+  ASSERT_TRUE(ready.path_found) << ready.reason;
+
+  observation = emptyScanObservation(1.05, 2);
+  const auto during_replan = executor.tick(
+      intentInput(pose(0.0, 0.0, 0.39, 0.0), intent, nullptr, 0, 1.05, {}, observation));
+
+  EXPECT_TRUE(during_replan.path_found) << during_replan.reason;
+  EXPECT_NE(during_replan.reason, "local_intent_pending");
+}
+
+TEST(Executor, ScanKeepsSafeIntentAcrossMillimeterPoseNoise) {
+  auto executor = makeScanExecutor();
+  nav_kernel::Twist intent;
+  intent.vx = 0.25;
+  auto observation = emptyScanObservation(1.0);
+
+  const auto ready = awaitScanOutput([&]() {
+    return executor.tick(
+        intentInput(pose(0.0, 0.0, 0.34, 0.0), intent, nullptr, 0, 1.0, {}, observation));
+  });
+  ASSERT_TRUE(ready.path_found) << ready.reason;
+
+  const std::vector<float> occupied_xyz{0.0F, 0.65F, 0.34F};
+  observation = emptyScanObservation(1.05, 2);
+  setScanCollision(observation, occupied_xyz);
+  const auto during_replan = executor.tick(
+      intentInput(pose(0.0, -0.006, 0.34, 0.0), intent, nullptr, 0, 1.05, {}, observation));
+
+  EXPECT_TRUE(during_replan.path_found) << during_replan.reason;
+  EXPECT_NE(during_replan.reason, "local_intent_pending");
 }
 
 TEST(Executor, ScanKeepsSafeIntentWhileBodyTurnsAlongDetour) {
@@ -649,7 +721,7 @@ TEST(Executor, ScanKeepsSafeIntentWhileReturningToTeleopCorridor) {
   EXPECT_NE(detouring.reason, "local_intent_pending");
 }
 
-TEST(Executor, ScanStopsUnsafeIntentOnMapChange) {
+TEST(Executor, ScanReplacesBlockedSplineAfterInflatedMapChanges) {
   auto executor = makeScanExecutor();
   nav_kernel::Twist intent;
   intent.vx = 0.25;
@@ -660,24 +732,51 @@ TEST(Executor, ScanStopsUnsafeIntentOnMapChange) {
   });
   ASSERT_TRUE(ready.path_found) << ready.reason;
 
-  const std::vector<float> occupied_xyz{0.50F, 0.0F, 0.0F};
+  std::vector<float> occupied_xyz;
+  for (int x = 4; x <= 8; ++x) {
+    for (int y = -4; y <= 4; ++y) {
+      for (int z = -3; z <= 3; ++z) {
+        occupied_xyz.push_back(0.10F * static_cast<float>(x));
+        occupied_xyz.push_back(0.10F * static_cast<float>(y));
+        occupied_xyz.push_back(0.10F * static_cast<float>(z));
+      }
+    }
+  }
   observation.cloud_generation = 2;
   observation.cloud_stamp_s = 1.05;
-  observation.collision.occupiedXyz = occupied_xyz.data();
-  observation.collision.occupiedCount = 1;
+  setScanCollision(observation, occupied_xyz);
   observation.collision.observationSequence = 2;
   observation.collision.generation = 2;
   observation.collision.stampS = 1.05;
   observation.collision.receiveStampS = 1.05;
 
-  const auto stopped =
-      executor.tick(intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, nullptr, 0, 1.05, {}, observation));
+  auto updated = executor.tick(
+      intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, nullptr, 0, 1.05, {}, observation));
+  const auto path_is_safe = [&](const auto &output) {
+    for (std::size_t index = 0; index < output.local_path_body.size(); ++index) {
+      const auto &point = output.local_path_body[index];
+      const auto &next = output.local_path_body[
+          std::min(index + 1U, output.local_path_body.size() - 1U)];
+      const double yaw = std::atan2(next.y - point.y, next.x - point.x);
+      for (const double sign : {-1.0, 1.0}) {
+        const nav_kernel::Vec3 cylinder{
+            point.x + sign * 0.25 * std::cos(yaw),
+            point.y + sign * 0.25 * std::sin(yaw), point.z};
+        if (observation.collision.occupied(cylinder))
+          return false;
+      }
+    }
+    return true;
+  };
+  for (int tick = 1; tick <= 500 && updated.path_found &&
+                     !path_is_safe(updated); ++tick) {
+    const double now = 1.05 + 0.01 * static_cast<double>(tick);
+    updated = executor.tick(
+        intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, nullptr, 0, now, {}, observation));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
 
-  EXPECT_FALSE(stopped.path_found);
-  EXPECT_TRUE(stopped.near_field_stop);
-  EXPECT_EQ(stopped.reason, "local_intent_pending");
-  EXPECT_DOUBLE_EQ(stopped.cmd_vel.vx, 0.0);
-  EXPECT_DOUBLE_EQ(stopped.cmd_vel.vy, 0.0);
+  EXPECT_TRUE(!updated.path_found || path_is_safe(updated)) << updated.reason;
 }
 
 TEST(Executor, CmuRotatesWhenNoPath) {
@@ -1367,23 +1466,11 @@ TEST(Executor, ScanRecoveryDoesNotRequireCmuPathLibrary) {
   executor.setRoute(route({{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}}));
 
   nav_kernel::Pose body;
-  lingtu::nav::navigation::ExecutionObservation observation;
-  observation.frame_epoch = 1;
-  observation.cloud_generation = 1;
+  auto observation = emptyScanObservation(1.0);
   observation.traversability_generation = 1;
   observation.odom_stamp_s = 1.0;
   observation.cloud_stamp_s = 1.0;
   observation.traversability_stamp_s = 1.0;
-  observation.collision.resolution = 0.10;
-  observation.collision.aabbMin = {-10.0, -10.0, -2.0};
-  observation.collision.aabbMax = {10.0, 10.0, 2.0};
-  observation.collision.resetEpoch = 1;
-  observation.collision.observationSequence = 1;
-  observation.collision.generation = 1;
-  observation.collision.stampS = 1.0;
-  observation.collision.receiveStampS = 1.0;
-  observation.collision.complete = true;
-  observation.collision.live = true;
 
   const auto moving =
       awaitScanOutput([&]() { return executor.tick(routeInput(body, nullptr, 0, 1.0, {}, observation)); });
@@ -1412,21 +1499,9 @@ TEST(Executor, ScanKeepsSafeTrajectoryWhileNewCollisionGenerationPlans) {
   executor.setRoute(route({{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}}));
 
   nav_kernel::Pose body;
-  lingtu::nav::navigation::ExecutionObservation observation;
-  observation.frame_epoch = 1;
-  observation.cloud_generation = 1;
+  auto observation = emptyScanObservation(1.0);
   observation.odom_stamp_s = 1.0;
   observation.cloud_stamp_s = 1.0;
-  observation.collision.resolution = 0.10;
-  observation.collision.aabbMin = {-10.0, -10.0, -2.0};
-  observation.collision.aabbMax = {10.0, 10.0, 2.0};
-  observation.collision.resetEpoch = 1;
-  observation.collision.observationSequence = 1;
-  observation.collision.generation = 1;
-  observation.collision.stampS = 1.0;
-  observation.collision.receiveStampS = 1.0;
-  observation.collision.complete = true;
-  observation.collision.live = true;
 
   const auto initial =
       awaitScanOutput([&]() { return executor.tick(routeInput(body, nullptr, 0, 1.0, {}, observation)); });
@@ -1460,8 +1535,7 @@ TEST(Executor, ScanContinuesSafePrefixDuringReplan) {
 
   std::vector<float> occupied_xyz{1.40F, 0.0F, 0.0F};
   observation = emptyScanObservation(1.05, 2U);
-  observation.collision.occupiedXyz = occupied_xyz.data();
-  observation.collision.occupiedCount = 1;
+  setScanCollision(observation, occupied_xyz);
 
   const auto handoff = executor.tick(routeInput(body, nullptr, 0, 1.05, {}, observation));
 
@@ -1492,13 +1566,10 @@ TEST(Executor, ScanAcceptsSafeCompletionWhileCollisionMapKeepsAdvancing) {
   }
 
   ASSERT_TRUE(output.path_found) << output.reason;
-  EXPECT_TRUE(output.local_planner_debug.continuityReused)
-      << "a completion planned against the previous collision generation must "
-         "be revalidated against the current map instead of starved";
   EXPECT_FALSE(output.near_field_stop);
 }
 
-TEST(Executor, ScanPreservesRouteBendsAndElevation) {
+TEST(Executor, ScanReferencePathPreservesEndpointAndElevation) {
   auto executor = makeScanExecutor();
   executor.setRoute(route({
       {0.0, 0.0, 0.0},
@@ -1515,12 +1586,12 @@ TEST(Executor, ScanPreservesRouteBendsAndElevation) {
   ASSERT_TRUE(output.path_found) << output.reason;
   ASSERT_GE(output.local_path_map.size(), 3U);
   ASSERT_GE(output.local_planner_debug.trajectoryPointCount, 3);
-  const auto lateral = std::max_element(output.local_path_map.begin(), output.local_path_map.end(),
-                                        [](const auto &a, const auto &b) { return a.y < b.y; });
   const auto elevated = std::max_element(output.local_path_map.begin(), output.local_path_map.end(),
                                          [](const auto &a, const auto &b) { return a.z < b.z; });
-  EXPECT_GT(lateral->y, 0.35);
   EXPECT_GT(elevated->z, 0.40);
+  EXPECT_NEAR(output.target.x, 2.4, 1e-6);
+  EXPECT_NEAR(output.target.y, 0.0, 1e-6);
+  EXPECT_NEAR(output.target.z, 0.55, 1e-6);
   EXPECT_EQ(output.reason, "spline_control_ready");
 }
 
@@ -1678,29 +1749,27 @@ TEST(Executor, OdomLocalFrameTransformsCompleteCollisionLayerAndAabb) {
   map_from_odom.yaw = right_angle;
 
   std::vector<float> occupied_map;
-  for (int lateral = -7; lateral <= 7; ++lateral) {
-    for (int vertical = -3; vertical <= 3; ++vertical) {
-      const double y_odom = static_cast<double>(lateral) * 0.10;
-      occupied_map.push_back(static_cast<float>(10.0 - y_odom));
-      occupied_map.push_back(-1.8F);
-      occupied_map.push_back(static_cast<float>(vertical) * 0.10F);
+  for (int forward = 8; forward <= 16; ++forward) {
+    for (int lateral = -11; lateral <= 11; ++lateral) {
+      for (int vertical = -4; vertical <= 4; ++vertical) {
+        const double x_odom = static_cast<double>(forward) * 0.10;
+        const double y_odom = static_cast<double>(lateral) * 0.10;
+        occupied_map.push_back(static_cast<float>(10.0 - y_odom));
+        occupied_map.push_back(static_cast<float>(-3.0 + x_odom));
+        occupied_map.push_back(static_cast<float>(vertical) * 0.10F);
+      }
     }
   }
   auto obs = observation(1U, 1U, 1U, 1.0, 1.0, 1.0);
-  obs.collision = {
-      occupied_map.data(),
-      static_cast<int>(occupied_map.size() / 3U),
-      0.10,
-      {5.0, -8.0, -2.0},
-      {15.0, 2.0, 2.0},
-      3U,
-      9U,
-      12U,
-      1.0,
-      1.0,
-      true,
-      true,
-  };
+  lingtu::nav::tests::CollisionBitmap collision(
+      {5.0, -8.0, -2.0}, {15.0, 2.0, 2.0}, 0.10);
+  collision.occupyPoints(occupied_map);
+  obs.collision = collision.view(1.0, 12U);
+  obs.collision.resetEpoch = 3U;
+  obs.collision.observationSequence = 9U;
+  obs.collision.gridFromPlanningTranslation = map_from_odom.translation;
+  obs.collision.gridFromPlanningYaw = map_from_odom.yaw;
+  ASSERT_TRUE(obs.collision.occupied({1.2, 0.0, 0.0}));
 
   const auto out = awaitScanOutput([&]() {
     return loop.tick(odomInput(pose(10.0, -3.0, 0.0, right_angle), pose(0.0, 0.0, 0.0, 0.0),
@@ -1708,11 +1777,17 @@ TEST(Executor, OdomLocalFrameTransformsCompleteCollisionLayerAndAabb) {
   });
 
   ASSERT_TRUE(out.path_found) << out.reason;
-  const auto lateral =
-      std::max_element(out.local_path_body.begin(), out.local_path_body.end(),
-                       [](const auto &a, const auto &b) { return std::abs(a.y) < std::abs(b.y); });
-  ASSERT_NE(lateral, out.local_path_body.end());
-  EXPECT_GT(std::abs(lateral->y), 0.75);
+  for (std::size_t index = 0; index < out.local_path_body.size(); ++index) {
+    const auto &point = out.local_path_body[index];
+    const auto &next = out.local_path_body[
+        std::min(index + 1U, out.local_path_body.size() - 1U)];
+    const double yaw = std::atan2(next.y - point.y, next.x - point.x);
+    for (const double sign : {-1.0, 1.0}) {
+      EXPECT_FALSE(obs.collision.occupied(
+          {point.x + sign * 0.25 * std::cos(yaw),
+           point.y + sign * 0.25 * std::sin(yaw), point.z}));
+    }
+  }
 }
 
 TEST(Executor, OdomLocalFrameKeepsTerminalGoalInMap) {

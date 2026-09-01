@@ -1,65 +1,26 @@
-// Adapted from SCAN-Planner UniformBspline at upstream commit 348e8a5.
-// Modified for LingTu: ROS/Eigen-free Vec3 storage and C++17 interfaces.
-// SPDX-License-Identifier: Apache-2.0
 #pragma once
 
-#include <array>
-#include <vector>
-
 #include "nav_kernel/types.hpp"
+#include "planning/local/scan/upstream/bspline_opt/uniform_bspline.h"
 
 namespace nav_kernel {
 
-class UniformSpline {
- public:
-  UniformSpline() = default;
-  UniformSpline(std::vector<Vec3> controls, int degree, double interval);
-
-  [[nodiscard]] bool valid() const noexcept;
-  [[nodiscard]] int degree() const noexcept;
-  [[nodiscard]] double interval() const noexcept;
-  [[nodiscard]] double duration() const noexcept;
-  [[nodiscard]] const std::vector<Vec3> &controls() const noexcept;
-
-  [[nodiscard]] Vec3 evaluate(double time_from_start_s) const;
-  [[nodiscard]] UniformSpline derivative() const;
-
-  // Returns the uniform time scale needed to satisfy component-wise limits.
-  [[nodiscard]] double feasibilityRatio(double max_speed, double max_acceleration,
-                                        double tolerance = 0.0) const;
-
-  // Cubic B-spline interpolation with start/end velocity and acceleration.
-  // Boundary order: start velocity, end velocity, start acceleration, end acceleration.
-  static std::vector<Vec3> parameterize(double interval, const std::vector<Vec3> &samples,
-                                        const std::array<Vec3, 4> &boundary_derivatives);
-
- private:
-  void rebuildKnots();
-  [[nodiscard]] Vec3 evaluateKnot(double knot) const;
-
-  std::vector<Vec3> controls_;
-  std::vector<double> knots_;
-  int degree_{0};
-  double interval_{0.0};
-};
-
-// Allocation-free evaluator for the cubic spline target used by the control
-// loop. Planning keeps the owning UniformSpline above; tracking only needs a
-// short-lived view over the already-owned control points.
+// Read-only view of the exact SCAN B-spline message carried by SplineTarget.
 class SplineView {
  public:
-  explicit SplineView(const SplineTarget &target) noexcept;
+  explicit SplineView(const SplineTarget &target);
 
   [[nodiscard]] bool valid() const noexcept;
   [[nodiscard]] double duration() const noexcept;
-  [[nodiscard]] Vec3 position(double time_from_start_s) const noexcept;
-  [[nodiscard]] Vec3 velocity(double time_from_start_s) const noexcept;
+  [[nodiscard]] double interval() const noexcept;
+  [[nodiscard]] Vec3 position(double timeFromStartS) const;
+  [[nodiscard]] Vec3 velocity(double timeFromStartS) const;
 
  private:
-  const std::vector<Vec3> *controls_{nullptr};
-  int degree_{0};
-  double interval_{0.0};
+  local::scan::upstream::UniformBspline position_{};
+  local::scan::upstream::UniformBspline velocity_{};
   double duration_{0.0};
+  double interval_{0.0};
   bool valid_{false};
 };
 

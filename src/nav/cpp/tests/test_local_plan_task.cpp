@@ -1,116 +1,111 @@
-#include <chrono>
 #include <gtest/gtest.h>
-#include <limits>
+
+#include <chrono>
 #include <thread>
 #include <vector>
 
+#include "collision_bitmap.hpp"
 #include "planning/local/task.hpp"
 
-TEST(LocalPlanTask, OwnsSubmittedInput) {
+namespace {
+
+nav_kernel::LocalPlannerParams scanParams() {
   nav_kernel::LocalPlannerParams params;
   params.backend = nav_kernel::LocalPlannerBackend::Scan;
-  params.checkObstacle = false;
-  params.useTraversabilityCost = false;
-  params.scan.voxelResolution = 0.10;
-  params.scan.horizontalRange = 4.0;
-
-  nav_kernel::local::LocalPlanTask task(params);
-  ASSERT_TRUE(task.configure());
-
-  std::vector<nav_kernel::Vec3> route{
-      {0.0, 0.0, 0.0},
-      {1.0, 0.2, 0.0},
-      {2.0, 0.2, 0.0},
-  };
-  nav_kernel::LocalPlanRequest input;
-  input.robot.pose = {{0.0, 0.0, 0.0}, 0.0};
-  input.objective = nav_kernel::RouteTarget{{
-      route.data(), static_cast<int>(route.size()), 7U, false}};
-  input.identity.frameEpoch = 3U;
-  input.identity.obstacleGeneration = 11U;
-  input.clock.timestampS = 1.0;
-  input.clock.executionTimeS = 0.75;
-
-  auto update = task.update(input);
-  EXPECT_EQ(update.plan.status(), nav_kernel::LocalPlanStatus::Pending);
-  route[1].x = std::numeric_limits<double>::quiet_NaN();
-
-  const std::vector<nav_kernel::Vec3> current_route{
-      {0.0, 0.0, 0.0},
-      {1.0, 0.2, 0.0},
-      {2.0, 0.2, 0.0},
-  };
-  nav_kernel::LocalPlanRequest current = input;
-  current.objective = nav_kernel::RouteTarget{{
-      current_route.data(), static_cast<int>(current_route.size()), 7U, false}};
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (std::chrono::steady_clock::now() < deadline && !update.plan.ready()) {
-    update = task.update(current);
-    if (!update.plan.ready()) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-  }
-
-  EXPECT_EQ(update.plan.status(), nav_kernel::LocalPlanStatus::Ready)
-      << update.debug.searchReason;
-  EXPECT_TRUE(update.plan.ready());
-  EXPECT_GE(update.plan.previewPath().size(), 2U);
-  EXPECT_TRUE(std::holds_alternative<nav_kernel::SplineTarget>(update.plan.target()));
-  EXPECT_FALSE(std::get<nav_kernel::SplineTarget>(update.plan.target()).controls.empty());
+  params.autonomySpeed = 0.5;
+  params.maxSpeed = 0.5;
+  params.adjacentRange = 2.5;
+  params.scan.voxelResolution = 0.1;
+  params.scan.controlPointSpacing = 0.2;
+  params.scan.cylinderOffset = 0.0;
+  params.scan.cylinderRadius = 0.1;
+  params.scan.maxAcceleration = 0.5;
+  return params;
 }
 
-TEST(LocalPlanTask, PublishesDeadlineFailureInsteadOfLatePlan) {
-  nav_kernel::LocalPlannerParams params;
-  params.backend = nav_kernel::LocalPlannerBackend::Scan;
-  params.checkObstacle = true;
-  params.useTraversabilityCost = false;
-  params.scan.voxelResolution = 0.10;
-  params.scan.horizontalRange = 4.0;
-  params.scan.planningDeadlineS = 0.01;
+struct RequestFixture {
+  RequestFixture()
+      : route{{0.0, 0.0, 0.5}, {2.0, 0.0, 0.5}},
+        bitmap({-5.0, -5.0, -1.0}, {5.0, 5.0, 2.0}, 0.1) {
+    request.robot.pose = {route.front(), 0.0};
+    request.objective = nav_kernel::RouteTarget{
+        {route.data(), static_cast<int>(route.size()), 1, false}};
+    request.identity = {1, 1, 0};
+    request.clock.timestampS = 1.0;
+    request.environment.collision = bitmap.view(1.0, 1);
+  }
 
-  nav_kernel::local::LocalPlanTask task(params);
+  void setGeneration(std::uint64_t generation) {
+    request.identity.obstacleGeneration = generation;
+    request.environment.collision =
+        bitmap.view(request.clock.timestampS, generation);
+  }
+
+  std::vector<nav_kernel::Vec3> route;
+  lingtu::nav::tests::CollisionBitmap bitmap;
+  nav_kernel::LocalPlanRequest request;
+};
+
+nav_kernel::LocalPlan waitForPlan(nav_kernel::local::LocalPlanTask &task,
+                                  RequestFixture &fixture) {
+  nav_kernel::LocalPlan plan;
+  for (int tick = 0; tick < 400 && !plan.ready(); ++tick) {
+    fixture.request.clock.timestampS = 1.0 + 0.01 * tick;
+    fixture.setGeneration(1);
+    plan = task.update(fixture.request).plan;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return plan;
+}
+
+}  // namespace
+
+TEST(LocalPlanTask, RejectsInvalidRouteWithoutStartingWork) {
+  nav_kernel::local::LocalPlanTask task(scanParams());
   ASSERT_TRUE(task.configure());
+  nav_kernel::LocalPlanRequest request;
+  EXPECT_EQ(task.update(request).plan.status(),
+            nav_kernel::LocalPlanStatus::InvalidInput);
+}
 
-  const std::vector<nav_kernel::Vec3> route{{0.0, 0.0, 0.0}, {2.0, 0.0, 0.0}};
-  std::vector<float> occupied_xyz(200000U * 3U);
-  for (std::size_t index = 0U; index < occupied_xyz.size(); index += 3U) {
-    occupied_xyz[index] = 3.0F;
-    occupied_xyz[index + 1U] = 3.0F;
-    occupied_xyz[index + 2U] = 0.5F;
+TEST(LocalPlanTask, KeepsOfficialWorldFrameSplineDuringMapRefresh) {
+  nav_kernel::local::LocalPlanTask task(scanParams());
+  ASSERT_TRUE(task.configure());
+  RequestFixture fixture;
+  const nav_kernel::LocalPlan ready = waitForPlan(task, fixture);
+  ASSERT_TRUE(ready.ready());
+  const auto &first = std::get<nav_kernel::SplineTarget>(ready.target());
+  ASSERT_FALSE(first.controls.empty());
+
+  fixture.request.robot.pose.position.x = 0.2;
+  fixture.request.clock.timestampS += 0.01;
+  fixture.setGeneration(2);
+  const nav_kernel::LocalPlan retained = task.update(fixture.request).plan;
+
+  ASSERT_TRUE(retained.ready());
+  const auto &second = std::get<nav_kernel::SplineTarget>(retained.target());
+  EXPECT_EQ(second.trajectoryId, first.trajectoryId);
+  EXPECT_DOUBLE_EQ(second.controls.front().x, first.controls.front().x);
+  EXPECT_DOUBLE_EQ(second.controls.front().y, first.controls.front().y);
+}
+
+TEST(LocalPlanTask, RefreshesCollisionSnapshotWhenResetEpochChanges) {
+  nav_kernel::local::LocalPlanTask task(scanParams());
+  ASSERT_TRUE(task.configure());
+  RequestFixture fixture;
+  ASSERT_TRUE(waitForPlan(task, fixture).ready());
+
+  fixture.bitmap.occupyInflated({0.5F, 0.0F, 0.5F}, 0.4, 0.2, 0.2);
+  nav_kernel::LocalPlan updated;
+  for (int tick = 0; tick < 400; ++tick) {
+    fixture.request.clock.timestampS += 0.01;
+    fixture.setGeneration(1);
+    fixture.request.environment.collision.resetEpoch = 2;
+    updated = task.update(fixture.request).plan;
+    if (updated.status() == nav_kernel::LocalPlanStatus::Blocked)
+      break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
-  nav_kernel::LocalPlanRequest input;
-  input.robot.pose = {{0.0, 0.0, 0.0}, 0.0};
-  input.objective = nav_kernel::RouteTarget{{
-      route.data(), static_cast<int>(route.size()), 1U, false}};
-  input.identity = {1U, 1U, 0U};
-  input.environment.collision = {
-      occupied_xyz.data(),
-      static_cast<int>(occupied_xyz.size() / 3U),
-      0.10,
-      {-5.0, -5.0, -2.0},
-      {5.0, 5.0, 2.0},
-      1U,
-      1U,
-      1U,
-      1.0,
-      1.0,
-      true,
-      true,
-  };
-  input.clock.timestampS = 1.0;
 
-  auto update = task.update(input);
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (std::chrono::steady_clock::now() < deadline &&
-         update.plan.status() == nav_kernel::LocalPlanStatus::Pending) {
-    update = task.update(input);
-    if (update.plan.status() == nav_kernel::LocalPlanStatus::Pending)
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
-
-  EXPECT_EQ(update.plan.status(), nav_kernel::LocalPlanStatus::Expired);
-  EXPECT_EQ(update.debug.searchReason, "planning_deadline_exceeded");
-  EXPECT_FALSE(update.plan.ready());
-  EXPECT_TRUE(std::get<nav_kernel::PathTarget>(update.plan.target()).points.empty());
-  EXPECT_EQ(update.plan.hints().slowdownLevel, 0);
+  EXPECT_EQ(updated.status(), nav_kernel::LocalPlanStatus::Blocked);
 }

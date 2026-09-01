@@ -15,8 +15,10 @@ host:
   capabilities: [gateway, operator_motion, navigation_skills, goal_commands]
   run_startup_checks: true
 native_nav:
+  # Match SCAN's upstream 100 Hz FSM and closed-loop controller cadence.
+  tick_hz: 100.0
   global_planner: octoplanner3d
-  local_planner: cmu
+  local_planner: scan
   local_planners: [cmu, scan]
   use_traversability_cost: false
   corridor_lookahead_m: 3.0
@@ -34,12 +36,12 @@ native_nav:
   path_follower_heading_align_enter_rad: 0.7853981633974483
   path_follower_heading_align_exit_rad: 0.35
   scan_follower:
-    time_forward_s: 0.55
+    time_forward_s: 0.8
     heading_error_rad: 0.8
-    position_gain: 0.9
-    yaw_gain: 1.2
-    max_vx_mps: 0.5
-    max_vy_mps: 0.25
+    position_gain: 0.8
+    yaw_gain: 1.5
+    max_vx_mps: 0.75
+    max_vy_mps: 0.35
     max_yaw_rate_rad_s: 1.0
   recovery:
     behavior_order: [translate, rotate]

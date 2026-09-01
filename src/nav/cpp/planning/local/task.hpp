@@ -13,9 +13,8 @@ struct LocalPlanUpdate {
   LocalPlannerDebugSnapshot debug{};
 };
 
-// Stateful latest-only planning task. It owns request copying, asynchronous
-// completion identity, body-frame relocation, stale-map revalidation and
-// refresh timing; callers only provide the current request and consume a plan.
+// Latest-only SCAN worker. It snapshots each collision generation once and
+// retains the last committed world-frame spline while the same guide replans.
 class LocalPlanTask {
  public:
   explicit LocalPlanTask(const LocalPlannerParams &params);

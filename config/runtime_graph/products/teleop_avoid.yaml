@@ -14,7 +14,9 @@ host:
   capabilities: [gateway, operator_motion]
   run_startup_checks: true
 native_nav:
-  local_planner: cmu
+  # Match SCAN's upstream 100 Hz FSM and closed-loop controller cadence.
+  tick_hz: 100.0
+  local_planner: scan
   local_planners:
     - cmu
     - scan
@@ -31,12 +33,12 @@ native_nav:
   teleop_planner_horizon_m: 3.5
   teleop_planner_max_deviation_deg: 90.0
   scan_follower:
-    time_forward_s: 0.55
+    time_forward_s: 0.8
     heading_error_rad: 0.8
-    position_gain: 0.9
-    yaw_gain: 1.2
-    max_vx_mps: 0.5
-    max_vy_mps: 0.5
+    position_gain: 0.8
+    yaw_gain: 1.5
+    max_vx_mps: 0.75
+    max_vy_mps: 0.35
     max_yaw_rate_rad_s: 1.0
   recovery:
     max_attempts: 0

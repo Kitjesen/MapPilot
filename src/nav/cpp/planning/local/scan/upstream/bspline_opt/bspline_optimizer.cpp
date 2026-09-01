@@ -1,17 +1,12 @@
 #include "planning/local/scan/upstream/bspline_opt/bspline_optimizer.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
-#include <iostream>
 #include <limits>
 
 #include "planning/local/scan/vendor/lbfgs.hpp"
 
-using std::cout;
-using std::endl;
 using std::vector;
 
 namespace nav_kernel::local::scan::upstream {
@@ -670,7 +665,6 @@ bool BsplineOptimizer::check_collision_and_rebound(void) {
     /*** check if the new collision will be valid ***/
     if (occ) {
       for (size_t k = 0; k < cps_.direction[i].size(); ++k) {
-        cout.precision(2);
         if ((cps_.points.col(i) - cps_.base_point[i][k]).dot(cps_.direction[i][k]) <
             1 * grid_map_->getResolution())  // current point is outside all the collision_points.
         {
@@ -875,10 +869,7 @@ bool BsplineOptimizer::rebound_optimize() {
   variable_num_ = 3 * (end_id - start_id);
   double final_cost;
 
-  const auto t0 = std::chrono::steady_clock::now();
-  std::chrono::steady_clock::time_point t1, t2;
   int restart_nums = 0, rebound_times = 0;
-  ;
   bool flag_force_return, flag_occ, success;
   new_lambda2_ = lambda2_;
   constexpr int MAX_RESART_NUMS_SET = 3;
@@ -890,8 +881,9 @@ bool BsplineOptimizer::rebound_optimize() {
     flag_occ = false;
     success = false;
 
-    double q[variable_num_];
-    memcpy(q, cps_.points.data() + 3 * start_id, variable_num_ * sizeof(q[0]));
+    std::vector<double> q(static_cast<std::size_t>(variable_num_));
+    memcpy(q.data(), cps_.points.data() + 3 * start_id,
+           static_cast<std::size_t>(variable_num_) * sizeof(q[0]));
 
     lbfgs::lbfgs_parameter_t lbfgs_params;
     lbfgs::lbfgs_load_default_parameters(&lbfgs_params);
@@ -900,14 +892,10 @@ bool BsplineOptimizer::rebound_optimize() {
     lbfgs_params.g_epsilon = 0.01;
 
     /* ---------- optimize ---------- */
-    t1 = std::chrono::steady_clock::now();
     int result =
-        lbfgs::lbfgs_optimize(variable_num_, q, &final_cost, BsplineOptimizer::costFunctionRebound,
+        lbfgs::lbfgs_optimize(variable_num_, q.data(), &final_cost,
+                              BsplineOptimizer::costFunctionRebound,
                               NULL, BsplineOptimizer::earlyExit, this, &lbfgs_params);
-    t2 = std::chrono::steady_clock::now();
-    double time_ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
-    double total_time_ms = std::chrono::duration<double, std::milli>(t2 - t0).count();
-
     /* ---------- success temporary, check collision again ---------- */
     if (result == lbfgs::LBFGS_CONVERGENCE || result == lbfgs::LBFGSERR_MAXIMUMITERATION ||
         result == lbfgs::LBFGS_ALREADY_MINIMIZED || result == lbfgs::LBFGS_STOP) {
@@ -929,10 +917,6 @@ bool BsplineOptimizer::rebound_optimize() {
 
           if (t <= bspline_interval_)  // First 3 control points in obstacles!
           {
-            cout << cps_.points.col(1).transpose() << "\n"
-                 << cps_.points.col(2).transpose() << "\n"
-                 << cps_.points.col(3).transpose() << "\n"
-                 << cps_.points.col(4).transpose() << endl;
             return false;
           }
 
@@ -941,8 +925,6 @@ bool BsplineOptimizer::rebound_optimize() {
       }
 
       if (!flag_occ) {
-        printf("\033[32miter(+1)=%d,time(ms)=%5.3f,total_t(ms)=%5.3f,cost=%5.3f\n\033[0m",
-               iter_num_, time_ms, total_time_ms, final_cost);
         success = true;
       } else  // restart
       {
@@ -950,12 +932,10 @@ bool BsplineOptimizer::rebound_optimize() {
         initControlPoints(cps_.points, false);
         new_lambda2_ *= 2;
 
-        printf("\033[32miter(+1)=%d,time(ms)=%5.3f,keep optimizing\n\033[0m", iter_num_, time_ms);
       }
     } else if (result == lbfgs::LBFGSERR_CANCELED) {
       flag_force_return = true;
       rebound_times++;
-      cout << "iter=" << iter_num_ << ",time(ms)=" << time_ms << ",rebound." << endl;
     } else {
     }
 
@@ -971,10 +951,11 @@ bool BsplineOptimizer::refine_optimize() {
   int end_id = this->cps_.points.cols() - order_;
   variable_num_ = 3 * (end_id - start_id);
 
-  double q[variable_num_];
+  std::vector<double> q(static_cast<std::size_t>(variable_num_));
   double final_cost;
 
-  memcpy(q, cps_.points.data() + 3 * start_id, variable_num_ * sizeof(q[0]));
+  memcpy(q.data(), cps_.points.data() + 3 * start_id,
+         static_cast<std::size_t>(variable_num_) * sizeof(q[0]));
 
   double origin_lambda4 = lambda4_;
   bool flag_safe = true;
@@ -987,7 +968,8 @@ bool BsplineOptimizer::refine_optimize() {
     lbfgs_params.g_epsilon = 0.001;
 
     int result =
-        lbfgs::lbfgs_optimize(variable_num_, q, &final_cost, BsplineOptimizer::costFunctionRefine,
+        lbfgs::lbfgs_optimize(variable_num_, q.data(), &final_cost,
+                              BsplineOptimizer::costFunctionRefine,
                               NULL, NULL, this, &lbfgs_params);
     if (result == lbfgs::LBFGS_CONVERGENCE || result == lbfgs::LBFGSERR_MAXIMUMITERATION ||
         result == lbfgs::LBFGS_ALREADY_MINIMIZED || result == lbfgs::LBFGS_STOP) {

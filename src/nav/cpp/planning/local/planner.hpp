@@ -6,6 +6,7 @@
  */
 #pragma once
 
+#include <cstddef>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -42,6 +43,8 @@ struct ScanPlannerParams {
   double controlPointSpacing = 0.20;
   double sampleSpacing = 0.08;
   double continuityHorizon = 0.50;
+  double replanDistance = 1.0;
+  double noReplanDistance = 0.10;
   double collisionMaxAge = 0.50;
   double planningDeadlineS = 0.10;
   double maxVerticalSpeed = 0.25;
@@ -119,8 +122,11 @@ struct LocalObstacleView {
 };
 
 struct LocalCollisionMapView {
-  const float *occupiedXyz{nullptr};
-  int occupiedCount{0};
+  const std::uint8_t *inflatedBits{nullptr};
+  std::size_t inflatedBytes{0U};
+  int sizeX{0};
+  int sizeY{0};
+  int sizeZ{0};
   double resolution{0.0};
   Vec3 aabbMin{};
   Vec3 aabbMax{};
@@ -131,82 +137,21 @@ struct LocalCollisionMapView {
   double receiveStampS{0.0};
   bool complete{false};
   bool live{false};
-  // Optional oriented coverage box in the planning frame. Mapd publishes an
-  // axis-aligned box in map; Executor preserves that exact box when planning
-  // in odom instead of pretending its enclosing AABB is fully observed.
-  Vec3 boxCenter{};
-  Vec3 boxHalf{};
-  double boxYaw{0.0};
-  bool hasBox{false};
+  // Rigid transform grid <- planning. Mapd remains in map while the local
+  // planner normally runs in odom, so the packed grid never needs resampling.
+  Vec3 gridFromPlanningTranslation{};
+  double gridFromPlanningYaw{0.0};
 
-  [[nodiscard]] bool present() const noexcept {
-    return occupiedXyz != nullptr || occupiedCount != 0 || resolution > 0.0 || resetEpoch != 0 ||
-           observationSequence != 0 || generation != 0;
-  }
-
-  [[nodiscard]] bool covers(const Vec3 &point, double tolerance = 0.0) const noexcept {
-    if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z) ||
-        !std::isfinite(tolerance)) {
-      return false;
-    }
-    const double allowance = tolerance > 0.0 ? tolerance : 0.0;
-    if (hasBox) {
-      if (!std::isfinite(boxCenter.x) || !std::isfinite(boxCenter.y) ||
-          !std::isfinite(boxCenter.z) || !std::isfinite(boxHalf.x) ||
-          !std::isfinite(boxHalf.y) || !std::isfinite(boxHalf.z) ||
-          !std::isfinite(boxYaw) || boxHalf.x <= 0.0 || boxHalf.y <= 0.0 ||
-          boxHalf.z <= 0.0) {
-        return false;
-      }
-      const double dx = point.x - boxCenter.x;
-      const double dy = point.y - boxCenter.y;
-      const double c = std::cos(boxYaw);
-      const double s = std::sin(boxYaw);
-      const double local_x = c * dx + s * dy;
-      const double local_y = -s * dx + c * dy;
-      return std::abs(local_x) <= boxHalf.x + allowance &&
-             std::abs(local_y) <= boxHalf.y + allowance &&
-             std::abs(point.z - boxCenter.z) <= boxHalf.z + allowance;
-    }
-    return point.x >= aabbMin.x - allowance && point.x <= aabbMax.x + allowance &&
-           point.y >= aabbMin.y - allowance && point.y <= aabbMax.y + allowance &&
-           point.z >= aabbMin.z - allowance && point.z <= aabbMax.z + allowance;
-  }
-
-  [[nodiscard]] bool coversCylinder(const Vec3 &center, double radius,
-                                    double below, double above) const noexcept {
-    if (!std::isfinite(center.x) || !std::isfinite(center.y) ||
-        !std::isfinite(center.z) || !std::isfinite(radius) ||
-        !std::isfinite(below) || !std::isfinite(above) || radius < 0.0 ||
-        below < 0.0 || above < 0.0) {
-      return false;
-    }
-    if (hasBox) {
-      if (!std::isfinite(boxCenter.x) || !std::isfinite(boxCenter.y) ||
-          !std::isfinite(boxCenter.z) || !std::isfinite(boxHalf.x) ||
-          !std::isfinite(boxHalf.y) || !std::isfinite(boxHalf.z) ||
-          !std::isfinite(boxYaw) || boxHalf.x <= 0.0 || boxHalf.y <= 0.0 ||
-          boxHalf.z <= 0.0) {
-        return false;
-      }
-      const double dx = center.x - boxCenter.x;
-      const double dy = center.y - boxCenter.y;
-      const double c = std::cos(boxYaw);
-      const double s = std::sin(boxYaw);
-      const double local_x = c * dx + s * dy;
-      const double local_y = -s * dx + c * dy;
-      return std::abs(local_x) + radius <= boxHalf.x + 1e-9 &&
-             std::abs(local_y) + radius <= boxHalf.y + 1e-9 &&
-             center.z - below >= boxCenter.z - boxHalf.z - 1e-9 &&
-             center.z + above <= boxCenter.z + boxHalf.z + 1e-9;
-    }
-    return center.x - radius >= aabbMin.x - 1e-9 &&
-           center.x + radius <= aabbMax.x + 1e-9 &&
-           center.y - radius >= aabbMin.y - 1e-9 &&
-           center.y + radius <= aabbMax.y + 1e-9 &&
-           center.z - below >= aabbMin.z - 1e-9 &&
-           center.z + above <= aabbMax.z + 1e-9;
-  }
+  [[nodiscard]] bool present() const noexcept;
+  [[nodiscard]] bool valid() const noexcept;
+  [[nodiscard]] std::size_t cellCount() const noexcept;
+  [[nodiscard]] std::size_t occupiedCount() const noexcept;
+  [[nodiscard]] bool covers(const Vec3 &planningPoint, double tolerance = 0.0) const noexcept;
+  [[nodiscard]] bool coversCylinder(const Vec3 &planningCenter, double radius,
+                                    double below, double above) const noexcept;
+  [[nodiscard]] bool occupied(const Vec3 &planningPoint) const noexcept;
+  [[nodiscard]] bool occupiedLinear(std::size_t linear) const noexcept;
+  [[nodiscard]] Vec3 planningCellCenter(std::size_t linear) const noexcept;
 };
 
 struct LocalTraversabilityView {
@@ -297,9 +242,7 @@ using PlanIdentity = LocalPlanIdentity;
 
 struct PlanClock {
   double timestampS{0.0};
-  // Unlike timestampS, this clock pauses while a spline tracker aligns heading.
-  // Negative means the caller does not provide a separate execution clock.
-  double executionTimeS{-1.0};
+  bool executionFrozen{false};
 };
 
 struct LocalPlanRequest {

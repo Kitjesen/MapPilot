@@ -18,8 +18,6 @@ class Backend {
 
   LocalPlan plan(const LocalPlanRequest &request);
   LocalPlan plan(const LocalPlanRequest &request, const LocalPlanCancel &cancel);
-  [[nodiscard]] bool pathSafe(const LocalPlanRequest &request,
-                              const std::vector<Vec3> &planningPath) const;
   void reset();
   LocalPlannerDebugSnapshot debugSnapshot() const;
 

@@ -140,21 +140,6 @@ class Executor {
     bool reachesGoal{false};
   };
 
-  struct CollisionCache {
-    bool valid{false};
-    std::uint64_t reset_epoch{0};
-    std::uint64_t sequence{0};
-    std::uint64_t generation{0};
-    int count{0};
-    MapFromOdomTransform transform{};
-    double transform_radius_m{0.0};
-    nav_kernel::Vec3 aabb_min{};
-    nav_kernel::Vec3 aabb_max{};
-    nav_kernel::Vec3 box_center{};
-    nav_kernel::Vec3 box_half{};
-    double box_yaw{0.0};
-  };
-
   struct TeleopReference {
     nav_kernel::Vec3 origin{};
     double headingMap{0.0};
@@ -215,7 +200,6 @@ class Executor {
   void resetAutonomyProgress();
   bool recoveryObservationAdvanced(const ExecutionObservation &observation) const;
   void clearRecoveryObservationWait();
-  void advanceTrajectoryClock(double timestamp_s);
 
   ExecutorConfig config_;
   nav_kernel::local::Planner local_planner_;
@@ -238,8 +222,6 @@ class Executor {
   double active_goal_yaw_tolerance_rad_{0.08726646259971647};
   std::size_t progress{0};
   std::vector<float> obstacle_xyzh_odom_scratch_;
-  std::vector<float> collision_xyz_odom_scratch_;
-  CollisionCache collision_cache_{};
   int recovery_action_{0};
   int recovery_attempt_{-1};
   bool recovery_observation_waiting_{false};
@@ -252,8 +234,6 @@ class Executor {
   double previous_kinematics_time_s_{-1.0};
   std::uint64_t previous_kinematics_frame_epoch_{0};
   double local_blocked_since_s_{-1.0};
-  double traj_delay_s_{0.0};
-  double traj_clock_s_{-1.0};
   bool traj_frozen_{false};
   bool intent_mode_{false};
 };

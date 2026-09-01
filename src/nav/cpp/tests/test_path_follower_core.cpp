@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "planning/local/planner.hpp"
+#include "planning/local/scan/upstream/bspline_opt/uniform_bspline.h"
 #include "tracking/follower.hpp"
 
 using namespace nav_kernel;
@@ -28,19 +29,33 @@ FollowerOutput followPath(Follower &follower, const std::vector<Vec3> &path,
 }
 
 FollowerOutput followSpline(Follower &follower, const SplineTarget &spline,
-                             const FollowerParams &params, double time, Twist measured = {},
-                             double slow_factor = 1.0, int safety_stop = 0,
-                             double goal_distance = -1.0,
-                             bool hold_body_heading = false) {
+                            const FollowerParams &params, double time,
+                            Vec3 vehicle = {}, double yaw = 0.0) {
   FollowerState state;
-  state.measuredBodyTwist = measured;
+  state.vehicleRelative = vehicle;
+  state.vehicleYawRelative = yaw;
   state.currentTime = time;
-  state.slowFactor = slow_factor;
-  state.safetyStop = safety_stop;
   state.params = params;
-  state.goalDistance = goal_distance;
-  state.holdBodyHeading = hold_body_heading;
   return follower.follow(LocalPlan::spline(spline), state);
+}
+
+SplineTarget scanSpline(std::vector<Vec3> controls, int degree, double interval,
+                        std::int64_t trajectory_id = 1) {
+  Eigen::MatrixXd matrix(3, static_cast<Eigen::Index>(controls.size()));
+  for (std::size_t index = 0; index < controls.size(); ++index) {
+    matrix(0, static_cast<Eigen::Index>(index)) = controls[index].x;
+    matrix(1, static_cast<Eigen::Index>(index)) = controls[index].y;
+    matrix(2, static_cast<Eigen::Index>(index)) = controls[index].z;
+  }
+  const local::scan::upstream::UniformBspline spline(matrix, degree, interval);
+  const Eigen::VectorXd knots = spline.getKnot();
+  SplineTarget target;
+  target.controls = std::move(controls);
+  target.order = degree;
+  target.startTimeS = 0.0;
+  target.knots.assign(knots.data(), knots.data() + knots.size());
+  target.trajectoryId = trajectory_id;
+  return target;
 }
 
 std::vector<Vec3> straightPath(double length = 3.0) {
@@ -392,429 +407,110 @@ TEST(FollowerPath, FixedOffsetCommandMatchesGolden) {
   EXPECT_NEAR(output.cmd.wz, -1.48046673, 1e-6);
 }
 
-TEST(FollowerSpline, RegisteredAlgorithmTracksExactSpline) {
-  FollowerParams params;
-  params.maxSpeed = 0.8;
-  params.maxAccel = 1.0;
-  params.nominalDt = 0.05;
-  params.spline.timeForward = 0.20;
-  params.spline.positionGain = 1.0;
-  const SplineTarget trajectory{
-      {{0.05, 0.01, 0.0}, {0.10, 0.05, 0.02}, {0.30, 0.12, 0.08}},
-      1,
-      0.20,
-      0.0,
-  };
-  Follower follower;
-
-  const auto output = followSpline(follower, trajectory, params, 1.0);
-
-  EXPECT_GT(output.cmd.vx, 0.0);
-  EXPECT_GT(output.cmd.vy, 0.0);
-  EXPECT_GT(output.cmd.wz, 0.0);
-  EXPECT_EQ(follower.diagnostics().algorithm, FollowerAlgorithm::Spline);
-}
-
-TEST(FollowerSpline, UsesCurrentSplineStateForTranslationAndLookaheadForHeading) {
-  FollowerParams params;
-  params.maxSpeed = 1.0;
-  params.maxAccel = 100.0;
-  params.spline.timeForward = 0.20;
-  params.spline.positionGain = 1.0;
-  const SplineTarget trajectory{
-      {{0.05, 0.0, 0.0}, {0.07, 0.0, 0.0}, {0.80, 0.0, 0.0}},
-      1,
-      0.20,
-      0.0,
-  };
-  Follower follower;
-
-  const auto output = followSpline(follower, trajectory, params, 1.0);
-
-  EXPECT_FALSE(output.executionFrozen);
-  EXPECT_NEAR(output.cmd.vx, 0.15, 1e-6);
-  EXPECT_NEAR(output.cmd.vy, 0.0, 1e-6);
-  EXPECT_NEAR(output.directionError, 0.0, 1e-6);
-}
-
-TEST(FollowerSpline, AppliesIndependentScanAxisLimits) {
-  FollowerParams params;
-  params.maxSpeed = 2.0;
-  params.maxAccel = 100.0;
-  params.maxYawRateRadS = 2.0;
-  params.spline.positionGain = 1.0;
-  params.spline.maxVx = 0.60;
-  params.spline.maxVy = 0.20;
-  const SplineTarget trajectory{
-      {{1.0, 1.0, 0.0}, {1.0, 1.0, 0.0}, {2.0, 1.0, 0.0}},
-      1,
-      0.80,
-      0.0,
-  };
-  Follower follower;
-
-  const auto output = followSpline(follower, trajectory, params, 1.0);
-
-  EXPECT_NEAR(output.cmd.vx, std::sqrt(0.18), 1e-6);
-  EXPECT_NEAR(output.cmd.vy, 0.20, 1e-6);
-}
-
-TEST(FollowerSpline, DefaultsMatchLegbotClosedLoopAdapter) {
+TEST(FollowerSpline, DefaultsMatchOfficialScanController) {
   const SplineFollowerParams params;
 
-  EXPECT_DOUBLE_EQ(params.timeForward, 0.55);
+  EXPECT_DOUBLE_EQ(params.timeForward, 0.8);
   EXPECT_DOUBLE_EQ(params.headingErrorThreshold, 0.8);
-  EXPECT_DOUBLE_EQ(params.positionGain, 0.9);
-  EXPECT_DOUBLE_EQ(params.yawGain, 1.2);
-  EXPECT_DOUBLE_EQ(params.maxVx, 0.5);
-  EXPECT_DOUBLE_EQ(params.maxVy, 0.25);
+  EXPECT_DOUBLE_EQ(params.positionGain, 0.8);
+  EXPECT_DOUBLE_EQ(params.yawGain, 1.5);
+  EXPECT_DOUBLE_EQ(params.maxVx, 0.75);
+  EXPECT_DOUBLE_EQ(params.maxVy, 0.35);
   EXPECT_DOUBLE_EQ(params.maxYawRateRadS, 1.0);
+  EXPECT_DOUBLE_EQ(params.finishDistance, 0.15);
 }
 
-TEST(FollowerSpline, UsesScanHeadingThresholdInsteadOfPathHysteresis) {
+TEST(FollowerSpline, UsesOfficialFeedForwardAndLiveWorldPoseError) {
   FollowerParams params;
-  params.maxSpeed = 1.0;
-  params.maxAccel = 100.0;
-  params.headingAlignEnterRad = 0.10;
-  params.headingAlignExitRad = 0.05;
-  params.spline.headingErrorThreshold = 0.80;
-  const SplineTarget trajectory{
-      {{0.05, 0.0, 0.0},
-       {0.05 + 0.16 * std::cos(0.50), 0.16 * std::sin(0.50), 0.0}},
-      1,
-      0.80,
-      0.0,
-  };
+  params.spline.positionGain = 0.8;
+  params.spline.headingErrorThreshold = 2.0;
+  const SplineTarget trajectory =
+      scanSpline({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, 1, 1.0);
   Follower follower;
 
-  const auto output = followSpline(follower, trajectory, params, 1.0);
+  (void)followSpline(follower, trajectory, params, 10.0,
+                     {-0.25, 0.0, 0.0});
+  const auto output =
+      followSpline(follower, trajectory, params, 10.1, {-0.25, 0.0, 0.0});
 
-  EXPECT_FALSE(output.executionFrozen);
-  EXPECT_GT(output.cmd.vx, 0.0);
-}
-
-TEST(FollowerSpline, LimitsCommandAccelerationBeforeTheLocomotionPolicy) {
-  FollowerParams params;
-  params.maxSpeed = 1.0;
-  params.maxAccel = 0.30;
-  params.nominalDt = 0.05;
-  params.spline.positionGain = 0.0;
-  const SplineTarget trajectory{
-      {{0.0, 0.0, 0.0}, {0.24, 0.0, 0.0}},
-      1,
-      0.80,
-      0.0,
-  };
-  Follower follower;
-
-  const auto output = followSpline(follower, trajectory, params, 1.0);
-
-  EXPECT_NEAR(output.cmd.vx, 0.015, 1e-6);
+  EXPECT_NEAR(output.cmd.vx, 0.75, 1e-9);
   EXPECT_NEAR(output.cmd.vy, 0.0, 1e-9);
+  EXPECT_NEAR(output.directionError, 0.0, 1e-9);
 }
 
-TEST(FollowerSpline, LimitsYawAccelerationBeforeTheLocomotionPolicy) {
+TEST(FollowerSpline, ConvertsWorldVelocityIntoCurrentBodyFrame) {
   FollowerParams params;
-  params.maxSpeed = 1.0;
-  params.maxAccel = 100.0;
-  params.maxYawRateRadS = 2.0;
-  params.maxYawAccelRadS2 = 1.0;
-  params.nominalDt = 0.05;
-  params.spline.headingErrorThreshold = 2.0;
-  params.spline.yawGain = 1.0;
-  const SplineTarget trajectory{
-      {{0.0, 0.0, 0.0}, {0.0, 1.0, 0.0}},
-      1,
-      1.0,
-      0.0,
-  };
-  Follower follower;
-
-  const auto output = followSpline(follower, trajectory, params, 1.0);
-
-  EXPECT_NEAR(output.cmd.wz, 0.05, 1e-6);
-}
-
-TEST(FollowerSpline, SlowsContinuouslyBeforeTheRouteGoal) {
-  FollowerParams params;
-  params.maxSpeed = 0.5;
-  params.maxAccel = 100.0;
-  params.nominalDt = 0.05;
-  params.stopDisThre = 0.20;
-  params.slowDwnDisThre = 1.0;
   params.spline.positionGain = 0.0;
-  const SplineTarget trajectory{
-      {{0.0, 0.0, 0.0}, {0.5, 0.0, 0.0}},
-      1,
-      1.0,
-      0.0,
-  };
-  Follower follower;
-
-  const auto output = followSpline(follower, trajectory, params, 1.0, {}, 1.0, 0, 0.60);
-
-  EXPECT_NEAR(output.cmd.vx, 0.25, 1e-6);
-}
-
-TEST(FollowerSpline, SuppressesUnrequestedYawNearTheRouteGoal) {
-  FollowerParams params;
-  params.maxSpeed = 0.5;
-  params.maxAccel = 100.0;
-  params.maxYawRateRadS = 1.0;
-  params.maxYawAccelRadS2 = 0.0;
-  params.stopDisThre = 0.20;
-  params.slowDwnDisThre = 1.0;
   params.spline.headingErrorThreshold = 2.0;
-  params.spline.yawGain = 1.0;
-  const SplineTarget trajectory{
-      {{0.0, 0.0, 0.0}, {0.0, 1.0, 0.0}},
-      1,
-      1.0,
-      0.0,
-  };
+  const SplineTarget trajectory =
+      scanSpline({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, 1, 1.0);
   Follower follower;
 
-  const auto output = followSpline(follower, trajectory, params, 1.0, {}, 1.0, 0, 0.60);
+  (void)followSpline(follower, trajectory, params, 2.0, {}, M_PI / 2.0);
+  const auto output =
+      followSpline(follower, trajectory, params, 2.1, {}, M_PI / 2.0);
 
-  EXPECT_NEAR(output.cmd.wz, 0.50, 1e-6);
+  EXPECT_NEAR(output.cmd.vx, 0.0, 1e-9);
+  EXPECT_NEAR(output.cmd.vy, -0.35, 1e-9);
 }
 
-TEST(FollowerSpline, StopsOnlyAfterFinishedSplineReachesEndpointTolerance) {
+TEST(FollowerSpline, FreezesOfficialExecutionClockWhileHeadingIsMisaligned) {
   FollowerParams params;
-  params.maxSpeed = 1.0;
-  params.spline.finishDistance = 0.15;
-  const SplineTarget trajectory{
-      {{-0.20, 0.0, 0.0}, {0.10, 0.0, 0.0}},
-      1,
-      1.0,
-      1.0,
-  };
+  params.spline.headingErrorThreshold = 0.8;
+  params.spline.positionGain = 0.0;
+  const SplineTarget trajectory =
+      scanSpline({{0.0, 0.0, 0.0}, {0.0, 1.0, 0.0}}, 1, 1.0);
   Follower follower;
 
-  const auto output = followSpline(follower, trajectory, params, 1.0);
+  const auto frozen = followSpline(follower, trajectory, params, 1.0);
+  const auto still_frozen = followSpline(follower, trajectory, params, 1.1);
+  const auto aligned =
+      followSpline(follower, trajectory, params, 1.2, {}, M_PI / 2.0);
 
+  EXPECT_TRUE(frozen.executionFrozen);
+  EXPECT_TRUE(still_frozen.executionFrozen);
+  EXPECT_DOUBLE_EQ(frozen.cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(frozen.cmd.vy, 0.0);
+  EXPECT_GT(frozen.cmd.wz, 0.0);
+  EXPECT_FALSE(aligned.executionFrozen);
+  EXPECT_GT(aligned.cmd.vx, 0.0);
+}
+
+TEST(FollowerSpline, ResetsExecutionOnlyForANewOfficialTrajectoryId) {
+  FollowerParams params;
+  params.spline.positionGain = 0.0;
+  params.spline.headingErrorThreshold = 2.0;
+  const SplineTarget first =
+      scanSpline({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, 1, 1.0, 7);
+  const SplineTarget replacement =
+      scanSpline({{0.0, 0.0, 0.0}, {0.0, 1.0, 0.0}}, 1, 1.0, 8);
+  Follower follower;
+
+  (void)followSpline(follower, first, params, 4.0);
+  const auto advanced = followSpline(follower, first, params, 4.2);
+  const auto reset = followSpline(follower, replacement, params, 4.2);
+
+  EXPECT_GT(advanced.cmd.vx, 0.0);
+  EXPECT_NEAR(reset.cmd.vx, 0.0, 1e-9);
+  EXPECT_GT(reset.cmd.vy, 0.0);
+}
+
+TEST(FollowerSpline, StopsAtOfficialFinishDistance) {
+  FollowerParams params;
+  params.spline.finishDistance = 0.15;
+  params.spline.headingErrorThreshold = 2.0;
+  const SplineTarget trajectory =
+      scanSpline({{0.0, 0.0, 0.0}, {0.1, 0.0, 0.0}}, 1, 0.1);
+  Follower follower;
+
+  (void)followSpline(follower, trajectory, params, 1.0);
+  const auto output =
+      followSpline(follower, trajectory, params, 1.2, {0.1, 0.0, 0.0});
+
+  EXPECT_TRUE(output.finished);
   EXPECT_DOUBLE_EQ(output.cmd.vx, 0.0);
   EXPECT_DOUBLE_EQ(output.cmd.vy, 0.0);
   EXPECT_DOUBLE_EQ(output.cmd.wz, 0.0);
-  EXPECT_TRUE(output.finished);
-}
-
-TEST(FollowerSpline, CorrectsEndpointErrorAfterSplineTimeEnds) {
-  FollowerParams params;
-  params.maxSpeed = 1.0;
-  params.spline.positionGain = 0.8;
-  params.spline.finishDistance = 0.15;
-  const SplineTarget trajectory{
-      {{0.10, 0.0, 0.0}, {0.30, 0.0, 0.0}},
-      1,
-      1.0,
-      1.0,
-  };
-  Follower follower;
-
-  const auto output = followSpline(follower, trajectory, params, 1.0);
-
-  EXPECT_FALSE(output.finished);
-  EXPECT_GT(output.cmd.vx, 0.0);
-}
-
-TEST(FollowerSpline, DerivesYawFromSplineGeometryLikeScanClosedLoopController) {
-  FollowerParams params;
-  params.maxSpeed = 1.0;
-  params.maxAccel = 100.0;
-  params.maxYawRateRadS = 0.8;
-  params.spline.timeForward = 0.20;
-  params.spline.yawGain = 1.5;
-  const SplineTarget trajectory{
-      {{0.0, 0.0, 0.0}, {0.02, 0.0, 0.0}},
-      1,
-      0.20,
-      0.0,
-  };
-  Follower follower;
-
-  const auto output = followSpline(follower, trajectory, params, 1.0);
-
-  EXPECT_NEAR(output.directionError, 0.0, 1e-9);
-  EXPECT_NEAR(output.cmd.wz, 0.0, 1e-9);
-}
-
-TEST(FollowerSpline, UsesCurrentVelocityWhenLookaheadDisplacementIsSmall) {
-  FollowerParams params;
-  params.maxSpeed = 1.0;
-  params.maxYawRateRadS = 1.0;
-  params.spline.timeForward = 0.005;
-  params.spline.positionGain = 0.0;
-  const SplineTarget trajectory{
-      {{0.0, 0.0, 0.0}, {0.005, 1.0, 0.0}},
-      1,
-      1.0,
-      0.0,
-  };
-  Follower follower;
-
-  const auto output = followSpline(follower, trajectory, params, 1.0);
-
-  EXPECT_TRUE(output.executionFrozen);
-  EXPECT_GT(output.directionError, 1.5);
-  EXPECT_DOUBLE_EQ(output.cmd.vx, 0.0);
-  EXPECT_DOUBLE_EQ(output.cmd.vy, 0.0);
-  EXPECT_GT(output.cmd.wz, 0.0);
-}
-
-TEST(FollowerSpline, FreezesTranslationUntilPlannedHeadingIsAligned) {
-  FollowerParams params;
-  params.maxSpeed = 0.8;
-  params.maxAccel = 1.0;
-  params.nominalDt = 0.05;
-  params.maxYawRateRadS = M_PI / 3.0;
-  params.spline.timeForward = 0.20;
-  params.headingAlignEnterRad = 0.40;
-  params.headingAlignExitRad = 0.20;
-  const SplineTarget trajectory{
-      {{0.0, 0.0, 0.0}, {0.0, 0.4, 0.0}, {0.0, 0.8, 0.0}},
-      1,
-      0.20,
-      0.0,
-  };
-  Follower follower;
-
-  const auto output = followSpline(follower, trajectory, params, 1.0);
-
-  EXPECT_TRUE(output.executionFrozen);
-  EXPECT_DOUBLE_EQ(output.cmd.vx, 0.0);
-  EXPECT_DOUBLE_EQ(output.cmd.vy, 0.0);
-  EXPECT_GT(output.cmd.wz, 0.0);
-  EXPECT_FALSE(output.canAccelerate);
-}
-
-TEST(FollowerSpline, LateralIntentCanHoldBodyHeadingWithoutFreezingTranslation) {
-  FollowerParams params;
-  params.maxSpeed = 0.5;
-  params.maxAccel = 100.0;
-  params.maxYawRateRadS = 1.0;
-  params.spline.maxVx = 0.5;
-  params.spline.maxVy = 0.5;
-  params.spline.timeForward = 0.20;
-  const SplineTarget trajectory{
-      {{0.0, 0.0, 0.0}, {0.0, 0.4, 0.0}, {0.0, 0.8, 0.0}},
-      1,
-      0.20,
-      0.0,
-  };
-  Follower follower;
-
-  const auto output =
-      followSpline(follower, trajectory, params, 1.0, {}, 1.0, 0, -1.0, true);
-
-  EXPECT_FALSE(output.executionFrozen);
-  EXPECT_NEAR(output.cmd.vx, 0.0, 1e-9);
-  EXPECT_GT(output.cmd.vy, 0.0);
-  EXPECT_NEAR(output.cmd.wz, 0.0, 1e-9);
-}
-
-TEST(FollowerSpline, ProjectsCubicSplineFromRobotPosition) {
-  FollowerParams params;
-  params.maxSpeed = 2.0;
-  params.maxYawRateRadS = 1.0;
-  params.spline.positionGain = 0.0;
-  params.spline.timeForward = 0.2;
-  const SplineTarget trajectory{
-      {{0.0, 0.0, 0.0},
-       {0.0, 0.0, 0.0},
-       {0.0, 0.0, 0.0},
-       {6.0, 0.0, 0.0}},
-      3,
-      1.0,
-      0.5,
-  };
-  Follower follower;
-  FollowerState state;
-  state.params = params;
-  state.standardPathProfile = false;
-
-  const auto output = follower.follow(LocalPlan::spline(trajectory), state);
-
-  EXPECT_FALSE(output.executionFrozen);
-  EXPECT_GT(output.cmd.vx, 0.0);
-  EXPECT_NEAR(output.cmd.vy, 0.0, 1e-9);
-}
-
-TEST(FollowerSpline, DoesNotSkipAheadAtAZeroSpeedSplineBoundary) {
-  FollowerParams params;
-  params.maxSpeed = 1.0;
-  params.maxAccel = 100.0;
-  params.maxYawRateRadS = 1.0;
-  params.spline.timeForward = 0.10;
-  params.spline.positionGain = 1.0;
-  const SplineTarget trajectory{
-      {{0.0, 0.0, 0.0},
-       {0.0, 0.0, 0.0},
-       {0.0, 0.0, 0.0},
-       {3.0, 0.0, 0.0}},
-      3,
-      1.0,
-      0.0,
-  };
-  Follower follower;
-
-  const auto output = followSpline(follower, trajectory, params, 1.0);
-
-  EXPECT_FALSE(output.executionFrozen);
-  EXPECT_NEAR(output.cmd.vx, 0.0, 1e-9);
-  EXPECT_NEAR(output.cmd.vy, 0.0, 1e-9);
-  EXPECT_NEAR(output.directionError, 0.0, 1e-9);
-}
-
-TEST(FollowerSpline, KeepsScheduledTimeWhenRobotLagsSpline) {
-  FollowerParams params;
-  params.maxSpeed = 1.0;
-  params.maxYawRateRadS = 1.0;
-  params.spline.timeForward = 0.20;
-  params.spline.headingErrorThreshold = 0.40;
-  params.spline.positionGain = 0.8;
-  const SplineTarget trajectory{
-      {{0.10, 0.0, 0.0},
-       {1.00, 0.0, 0.0},
-       {1.00, 1.0, 0.0},
-       {1.00, 2.0, 0.0}},
-      1,
-      1.0,
-      2.5,
-  };
-  Follower follower;
-
-  const auto output = followSpline(follower, trajectory, params, 2.5);
-
-  EXPECT_TRUE(output.executionFrozen);
-  EXPECT_DOUBLE_EQ(output.cmd.vx, 0.0);
-  EXPECT_DOUBLE_EQ(output.cmd.vy, 0.0);
-  EXPECT_NEAR(output.directionError, 1.5707963267948966, 1e-6);
-}
-
-TEST(FollowerSpline, DoesNotJumpBackwardToANearerSplineBranch) {
-  FollowerParams params;
-  params.maxSpeed = 1.0;
-  params.maxYawRateRadS = 2.0;
-  params.spline.timeForward = 0.20;
-  params.spline.headingErrorThreshold = 2.0;
-  params.spline.positionGain = 0.0;
-  const SplineTarget trajectory{
-      {{-0.50, 0.0, 0.0},
-       {0.05, 0.0, 0.0},
-       {0.20, 0.0, 0.0},
-       {0.20, 1.0, 0.0}},
-      1,
-      1.0,
-      2.10,
-  };
-  Follower follower;
-
-  const auto output = followSpline(follower, trajectory, params, 2.10);
-
-  EXPECT_FALSE(output.executionFrozen);
-  EXPECT_GT(output.cmd.vy, std::abs(output.cmd.vx));
-  EXPECT_NEAR(output.directionError, 1.5707963267948966, 1e-6);
 }
 
 TEST(FollowerRegistry, SwitchesAlgorithmsBehindOneFollowInterface) {
@@ -823,12 +519,8 @@ TEST(FollowerRegistry, SwitchesAlgorithmsBehindOneFollowInterface) {
   params.nominalDt = 0.05;
   Follower follower;
   const auto path = straightPath();
-  const SplineTarget trajectory{
-      {{0.0, 0.0, 0.0}, {0.5, 0.0, 0.0}},
-      1,
-      0.5,
-      0.0,
-  };
+  const SplineTarget trajectory =
+      scanSpline({{0.0, 0.0, 0.0}, {0.5, 0.0, 0.0}}, 1, 0.5);
 
   followPath(follower, path, params, 0.0);
   EXPECT_EQ(follower.diagnostics().algorithm, FollowerAlgorithm::Path);

@@ -34,6 +34,15 @@ endfunction()
 
 find_package(OpenMP QUIET)
 
+if(WIN32)
+  set(_LINGTU_EXISTING_NATIVE_DEPS
+    "${LINGTU_SRC_ROOT}/../third_party/install/slam-windows/x64-windows")
+  if(EXISTS "${_LINGTU_EXISTING_NATIVE_DEPS}/share/eigen3/Eigen3Config.cmake")
+    list(PREPEND CMAKE_PREFIX_PATH "${_LINGTU_EXISTING_NATIVE_DEPS}")
+  endif()
+endif()
+find_package(Eigen3 REQUIRED CONFIG)
+
 if(NOT TARGET lingtu_nav_far)
   add_library(lingtu_nav_far STATIC
     "${LINGTU_NAV_GLOBAL_PLANNING_DIR}/far/planner.cpp")
@@ -69,11 +78,14 @@ set(LINGTU_NAV_KERNEL_DIR "${LINGTU_NAV_CPP_ROOT}")
 
 if(NOT TARGET lingtu_nav_spline)
   add_library(lingtu_nav_spline STATIC
-    "${LINGTU_NAV_TRAJECTORY_DIR}/spline.cpp")
+    "${LINGTU_NAV_TRAJECTORY_DIR}/spline.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/bspline_opt/uniform_bspline.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/plan_manage/closed_loop_controller.cpp")
   target_compile_features(lingtu_nav_spline PUBLIC cxx_std_17)
   target_include_directories(lingtu_nav_spline PUBLIC
     "$<BUILD_INTERFACE:${LINGTU_NAV_CPP_ROOT}>"
     "$<BUILD_INTERFACE:${LINGTU_NAV_INCLUDE_DIR}>")
+  target_link_libraries(lingtu_nav_spline PUBLIC Eigen3::Eigen)
   set_target_properties(lingtu_nav_spline PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
   target_compile_options(lingtu_nav_spline PRIVATE
@@ -88,13 +100,14 @@ if(NOT TARGET lingtu_nav_local_planner)
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/planner.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/task.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/cmu/backend.cpp"
-    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/anchors.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/backend.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/grid.cpp"
-    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/optimizer.cpp"
-    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/search.cpp"
-    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/seed.cpp"
-    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/spline.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/bspline_opt/bspline_optimizer.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/path_searching/dyn_a_star.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/plan_env/grid_map.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/plan_manage/planner_manager.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/plan_manage/scan_replan_fsm.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/traj_utils/polynomial_traj.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/recovery.cpp")
   add_library(LingTuNav::local_planner ALIAS lingtu_nav_local_planner)
   add_library(local_planner_cpp ALIAS lingtu_nav_local_planner)
@@ -103,7 +116,10 @@ if(NOT TARGET lingtu_nav_local_planner)
     "$<BUILD_INTERFACE:${LINGTU_NAV_CPP_ROOT}>"
     "$<BUILD_INTERFACE:${LINGTU_NAV_INCLUDE_DIR}>")
   find_package(Threads REQUIRED)
-  target_link_libraries(lingtu_nav_local_planner PUBLIC Threads::Threads lingtu_nav_spline)
+  target_link_libraries(lingtu_nav_local_planner PUBLIC
+    Threads::Threads
+    Eigen3::Eigen
+    lingtu_nav_spline)
   set_target_properties(lingtu_nav_local_planner PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
   target_compile_options(lingtu_nav_local_planner PRIVATE

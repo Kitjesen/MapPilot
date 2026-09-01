@@ -1,5 +1,6 @@
 #include "planning/local/planner.hpp"
 #include "planning/local/scan/backend.hpp"
+#include "collision_bitmap.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -98,43 +99,27 @@ int main(int argc, char** argv) {
   };
   const std::vector<float> obstacles = obstacleCloud(obstacle_count);
   const std::vector<float> collision_xyz = collisionCenters(obstacles);
+  lingtu::nav::tests::CollisionBitmap collision(
+      {-5.0, -5.0, -3.0}, {5.0, 5.0, 3.0}, params.scan.voxelResolution);
+  collision.occupyInflated(collision_xyz, params.scan.cylinderRadius,
+                           params.scan.inflationZDown, params.scan.inflationZUp);
 
   std::vector<double> elapsed_ms;
   std::vector<double> grid_ms;
-  std::vector<double> search_ms;
-  std::vector<double> spline_ms;
   elapsed_ms.reserve(static_cast<std::size_t>(iterations));
   grid_ms.reserve(static_cast<std::size_t>(iterations));
-  search_ms.reserve(static_cast<std::size_t>(iterations));
-  spline_ms.reserve(static_cast<std::size_t>(iterations));
+  double last_search_ms = 0.0;
+  double last_spline_ms = 0.0;
   int successes = 0;
-  int astar_runs = 0;
-  int max_expanded = 0;
   for (int iteration = -5; iteration < iterations; ++iteration) {
     nav_kernel::LocalPlanRequest input;
     input.robot.pose = {route.front(), 0.0};
     input.objective = nav_kernel::RouteTarget{{
         route.data(), static_cast<int>(route.size()),
-        static_cast<std::uint64_t>(iteration + 6), false}};
-    input.identity = {1, static_cast<std::uint64_t>(iteration + 6), 0};
-    input.clock.timestampS = 1.0 + 0.05 * static_cast<double>(iteration + 5);
-    input.environment.collision.occupiedXyz = collision_xyz.data();
-    input.environment.collision.occupiedCount =
-        static_cast<int>(collision_xyz.size() / 3U);
-    input.environment.collision.resolution = params.scan.voxelResolution;
-    // The official SCAN profile advertises a complete 5 m-high rolling map.
-    // Keep this fixture's collision AABB large enough to cover that exact ROI.
-    input.environment.collision.aabbMin = {-5.0, -5.0, -3.0};
-    input.environment.collision.aabbMax = {5.0, 5.0, 3.0};
-    input.environment.collision.resetEpoch = 1;
-    input.environment.collision.observationSequence =
-        static_cast<std::uint64_t>(iteration + 6);
-    input.environment.collision.generation =
-        static_cast<std::uint64_t>(iteration + 6);
-    input.environment.collision.stampS = input.clock.timestampS;
-    input.environment.collision.receiveStampS = input.clock.timestampS;
-    input.environment.collision.complete = true;
-    input.environment.collision.live = true;
+        1, false}};
+    input.identity = {1, 1, 0};
+    input.clock.timestampS = 1.0 + 0.01 * static_cast<double>(iteration + 5);
+    input.environment.collision = collision.view(input.clock.timestampS, 1);
 
     const auto started = std::chrono::steady_clock::now();
     const auto result = planner.plan(input);
@@ -145,12 +130,9 @@ int main(int argc, char** argv) {
       elapsed_ms.push_back(elapsed);
       const auto debug = planner.debugSnapshot();
       grid_ms.push_back(debug.gridTimeMs);
-      search_ms.push_back(debug.searchTimeMs);
-      spline_ms.push_back(debug.splineTimeMs);
+      last_search_ms = debug.searchTimeMs;
+      last_spline_ms = debug.splineTimeMs;
       if (result.status() == nav_kernel::LocalPlanStatus::Ready) ++successes;
-      const int expanded = debug.expandedNodes;
-      if (expanded > 0) ++astar_runs;
-      max_expanded = std::max(max_expanded, expanded);
     }
   }
 
@@ -158,25 +140,21 @@ int main(int argc, char** argv) {
   const double max_ms = elapsed_ms.empty()
                             ? 0.0
                             : *std::max_element(elapsed_ms.begin(), elapsed_ms.end());
-  const bool meets_20hz = p95_ms <= 50.0 && max_ms <= 100.0;
+  const bool meets_100hz = p95_ms <= 10.0 && max_ms <= 50.0;
   std::cout << std::fixed << std::setprecision(3)
             << "{\"scenario\":\"mapd_collision_3d_detour\",\"iterations\":" << iterations
             << ",\"obstacles\":" << collision_xyz.size() / 3U
             << ",\"successes\":" << successes
-            << ",\"astar_runs\":" << astar_runs
             << ",\"p50_ms\":" << percentile(elapsed_ms, 0.50)
             << ",\"p95_ms\":" << p95_ms
             << ",\"grid_p50_ms\":" << percentile(grid_ms, 0.50)
             << ",\"grid_p95_ms\":" << percentile(grid_ms, 0.95)
-            << ",\"search_p50_ms\":" << percentile(search_ms, 0.50)
-            << ",\"search_p95_ms\":" << percentile(search_ms, 0.95)
-            << ",\"spline_p50_ms\":" << percentile(spline_ms, 0.50)
-            << ",\"spline_p95_ms\":" << percentile(spline_ms, 0.95)
+            << ",\"last_search_ms\":" << last_search_ms
+            << ",\"last_spline_ms\":" << last_spline_ms
             << ",\"max_ms\":" << max_ms
-            << ",\"max_expanded_nodes\":" << max_expanded
-            << ",\"budget_20hz_ms\":50.0"
-            << ",\"meets_20hz\":"
-            << (meets_20hz ? "true" : "false")
+            << ",\"budget_100hz_ms\":10.0"
+            << ",\"meets_100hz\":"
+            << (meets_100hz ? "true" : "false")
             << "}\n";
-  return successes == iterations && astar_runs == iterations && meets_20hz ? 0 : 1;
+  return successes == iterations && meets_100hz ? 0 : 1;
 }

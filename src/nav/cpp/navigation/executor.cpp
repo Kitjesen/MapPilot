@@ -18,13 +18,29 @@ double bodyDistance2D(const nav_kernel::Vec3 &point) {
   return std::hypot(point.x, point.y);
 }
 
+std::vector<nav_kernel::Vec3> planningPathToBody(
+    const nav_kernel::Pose &body,
+    const std::vector<nav_kernel::Vec3> &planningPath) {
+  std::vector<nav_kernel::Vec3> result;
+  result.reserve(planningPath.size());
+  const double c = std::cos(body.yaw);
+  const double s = std::sin(body.yaw);
+  for (const auto &point : planningPath) {
+    const double dx = point.x - body.position.x;
+    const double dy = point.y - body.position.y;
+    result.push_back({c * dx + s * dy, -s * dx + c * dy,
+                      point.z - body.position.z});
+  }
+  return result;
+}
+
 
 nav_kernel::LocalPlanRequest makeLocalPlanRequest(
     const nav_kernel::Pose &vehicle, const std::vector<nav_kernel::Vec3> &route,
     std::uint64_t route_generation, bool reaches_goal,
     nav_kernel::LocalKinematicState kinematics, const ExecutionObservation &observation,
     const float *obstacle_xyzh, int obstacle_count, double timestamp_s,
-    double execution_time_s, const TraversabilityGridView &traversability,
+    bool execution_frozen, const TraversabilityGridView &traversability,
     const nav_kernel::LocalMotionIntent *intent = nullptr) {
   nav_kernel::LocalRouteView route_view{
       route.empty() ? nullptr : route.data(),
@@ -46,7 +62,7 @@ nav_kernel::LocalPlanRequest makeLocalPlanRequest(
   };
   request.environment.obstacles = {obstacle_xyzh, obstacle_count};
   request.environment.collision = observation.collision;
-  request.clock = {timestamp_s, execution_time_s};
+  request.clock = {timestamp_s, execution_frozen};
   if (traversability.valid()) {
     request.environment.traversability = {
         traversability.values, traversability.rows, traversability.cols,
@@ -122,21 +138,8 @@ Executor::Executor(ExecutorConfig config, nav_kernel::local::Planner planner)
 
 void Executor::resetLocalPlanning() {
   local_planner_.reset();
-  traj_delay_s_ = 0.0;
-  traj_clock_s_ = -1.0;
   traj_frozen_ = false;
   intent_mode_ = false;
-}
-
-void Executor::advanceTrajectoryClock(double timestamp_s) {
-  if (!std::isfinite(timestamp_s))
-    return;
-  if (traj_clock_s_ >= 0.0 && timestamp_s >= traj_clock_s_) {
-    const double elapsed = timestamp_s - traj_clock_s_;
-    if (traj_frozen_ || elapsed > 0.20)
-      traj_delay_s_ += elapsed;
-  }
-  traj_clock_s_ = timestamp_s;
 }
 
 
@@ -318,134 +321,9 @@ ExecutionOutput Executor::tickRoute(const nav_kernel::Pose &map_body,
     obstacle_xyzh_odom_scratch_.push_back(obstacle_xyzh_map[index * 4 + 3]);
   }
 
-  if (observation.collision.present() && observation.collision.occupiedCount >= 0 &&
-      (observation.collision.occupiedCount == 0 || observation.collision.occupiedXyz != nullptr)) {
-    const auto &source = observation.collision;
-    const double translation_error =
-        collision_cache_.valid ? nav_kernel::distance3D(collision_cache_.transform.translation,
-                                                        map_from_odom.translation)
-                               : std::numeric_limits<double>::infinity();
-    const double yaw_error = collision_cache_.valid
-                                 ? std::abs(nav_kernel::normalizeAngle(
-                                       collision_cache_.transform.yaw - map_from_odom.yaw))
-                                 : std::numeric_limits<double>::infinity();
-    const double transform_tolerance = 0.05 * std::max(1e-3, source.resolution);
-    const double angular_displacement =
-        yaw_error * std::max(1.0, collision_cache_.transform_radius_m + translation_error);
-    const double skipped_displacement = translation_error + angular_displacement;
-    const bool transform_unchanged = skipped_displacement <= transform_tolerance;
-    const bool collision_unchanged = collision_cache_.valid &&
-                                     collision_cache_.reset_epoch == source.resetEpoch &&
-                                     collision_cache_.sequence == source.observationSequence &&
-                                     collision_cache_.generation == source.generation &&
-                                     collision_cache_.count == source.occupiedCount;
-    if (!transform_unchanged || !collision_unchanged) {
-      collision_xyz_odom_scratch_.clear();
-      collision_xyz_odom_scratch_.reserve(static_cast<std::size_t>(source.occupiedCount) * 3U);
-      const double c = std::cos(map_from_odom.yaw);
-      const double s = std::sin(map_from_odom.yaw);
-      double transform_radius = 0.0;
-      const auto point_to_odom = [&](const nav_kernel::Vec3 &point_map) {
-        const double dx = point_map.x - map_from_odom.translation.x;
-        const double dy = point_map.y - map_from_odom.translation.y;
-        return nav_kernel::Vec3{
-            c * dx + s * dy,
-            -s * dx + c * dy,
-            point_map.z - map_from_odom.translation.z,
-        };
-      };
-      for (int index = 0; index < source.occupiedCount; ++index) {
-        const float *point_xyz = source.occupiedXyz + index * 3;
-        transform_radius =
-            std::max(transform_radius,
-                     std::hypot(static_cast<double>(point_xyz[0]) - map_from_odom.translation.x,
-                                static_cast<double>(point_xyz[1]) - map_from_odom.translation.y));
-        const nav_kernel::Vec3 point = point_to_odom({point_xyz[0], point_xyz[1], point_xyz[2]});
-        collision_xyz_odom_scratch_.push_back(static_cast<float>(point.x));
-        collision_xyz_odom_scratch_.push_back(static_cast<float>(point.y));
-        collision_xyz_odom_scratch_.push_back(static_cast<float>(point.z));
-      }
-
-      nav_kernel::Vec3 aabb_min{
-          std::numeric_limits<double>::infinity(),
-          std::numeric_limits<double>::infinity(),
-          std::numeric_limits<double>::infinity(),
-      };
-      nav_kernel::Vec3 aabb_max{
-          -std::numeric_limits<double>::infinity(),
-          -std::numeric_limits<double>::infinity(),
-          -std::numeric_limits<double>::infinity(),
-      };
-      for (const double x : {source.aabbMin.x, source.aabbMax.x}) {
-        for (const double y : {source.aabbMin.y, source.aabbMax.y}) {
-          transform_radius =
-              std::max(transform_radius, std::hypot(x - map_from_odom.translation.x,
-                                                    y - map_from_odom.translation.y));
-          for (const double z : {source.aabbMin.z, source.aabbMax.z}) {
-            const nav_kernel::Vec3 point = point_to_odom({x, y, z});
-            aabb_min.x = std::min(aabb_min.x, point.x);
-            aabb_min.y = std::min(aabb_min.y, point.y);
-            aabb_min.z = std::min(aabb_min.z, point.z);
-            aabb_max.x = std::max(aabb_max.x, point.x);
-            aabb_max.y = std::max(aabb_max.y, point.y);
-            aabb_max.z = std::max(aabb_max.z, point.z);
-          }
-        }
-      }
-      const nav_kernel::Vec3 source_center{
-          0.5 * (source.aabbMin.x + source.aabbMax.x),
-          0.5 * (source.aabbMin.y + source.aabbMax.y),
-          0.5 * (source.aabbMin.z + source.aabbMax.z),
-      };
-      const nav_kernel::Vec3 source_half{
-          0.5 * (source.aabbMax.x - source.aabbMin.x),
-          0.5 * (source.aabbMax.y - source.aabbMin.y),
-          0.5 * (source.aabbMax.z - source.aabbMin.z),
-      };
-      collision_cache_ = {
-          true,
-          source.resetEpoch,
-          source.observationSequence,
-          source.generation,
-          source.occupiedCount,
-          map_from_odom,
-          transform_radius,
-          aabb_min,
-          aabb_max,
-          point_to_odom(source_center),
-          source_half,
-          nav_kernel::normalizeAngle(-map_from_odom.yaw),
-      };
-    }
-    const double conservative_margin =
-        transform_unchanged && collision_unchanged ? skipped_displacement : 0.0;
-    const double source_resolution = source.resolution;
-    observation.collision.occupiedXyz =
-        collision_xyz_odom_scratch_.empty() ? nullptr : collision_xyz_odom_scratch_.data();
-    observation.collision.resolution = source_resolution + 2.0 * conservative_margin;
-    observation.collision.aabbMin = {
-        collision_cache_.aabb_min.x - conservative_margin,
-        collision_cache_.aabb_min.y - conservative_margin,
-        collision_cache_.aabb_min.z - conservative_margin,
-    };
-    observation.collision.aabbMax = {
-        collision_cache_.aabb_max.x + conservative_margin,
-        collision_cache_.aabb_max.y + conservative_margin,
-        collision_cache_.aabb_max.z + conservative_margin,
-    };
-    observation.collision.boxCenter = collision_cache_.box_center;
-    observation.collision.boxHalf = {
-        std::max(0.0, collision_cache_.box_half.x - conservative_margin),
-        std::max(0.0, collision_cache_.box_half.y - conservative_margin),
-        std::max(0.0, collision_cache_.box_half.z - conservative_margin),
-    };
-    observation.collision.boxYaw = collision_cache_.box_yaw;
-    observation.collision.hasBox = observation.collision.boxHalf.x > 0.0 &&
-                                   observation.collision.boxHalf.y > 0.0 &&
-                                   observation.collision.boxHalf.z > 0.0;
-  } else {
-    collision_cache_.valid = false;
-    collision_xyz_odom_scratch_.clear();
+  if (observation.collision.present()) {
+    observation.collision.gridFromPlanningTranslation = map_from_odom.translation;
+    observation.collision.gridFromPlanningYaw = map_from_odom.yaw;
   }
 
   return tickInPlanningFrame(
@@ -461,7 +339,6 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
                                                int obstacle_count, double timestamp_s,
                                                TraversabilityGridView traversability,
                                                ExecutionObservation observation) {
-  advanceTrajectoryClock(timestamp_s);
   ExecutionOutput output;
   resetTeleopRotation();
   if (intent_mode_) {
@@ -538,7 +415,7 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   const nav_kernel::LocalPlanRequest plan_request = makeLocalPlanRequest(
       planning_body, segment, generation, target.reachesGoal, kinematics, observation,
       obstacle_xyzh_planning, obstacle_count, timestamp_s,
-      timestamp_s - std::max(0.0, traj_delay_s_), traversability);
+      traj_frozen_, traversability);
   nav_kernel::LocalPlan plan =
       planLocal(plan_request, map_from_odom, &output.local_planner_debug);
 
@@ -590,7 +467,12 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   output.recovery_progress = recovery.progress;
   output.recovery_reason = recovery.reason;
   output.recovery_exhausted = recovery.exhausted;
-  output.local_path_body = recovery.active ? recovery.path_body : plan.previewPath();
+  output.local_path_body =
+      recovery.active
+          ? recovery.path_body
+          : (std::holds_alternative<nav_kernel::SplineTarget>(plan.target())
+                 ? planningPathToBody(planning_body, plan.previewPath())
+                 : plan.previewPath());
   output.path_found = recovery.active
                           ? recovery.verified && recovery.path_body.size() >= 2
                           : plan_ready || output.local_path_body.size() >= 2;
@@ -731,6 +613,10 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
                               observation.body_linear_velocity.y, observation.body_yaw_rate}
           : nav_kernel::Twist{};
   follower_state.currentTime = timestamp_s;
+  if (spline_provided) {
+    follower_state.vehicleRelative = planning_body.position;
+    follower_state.vehicleYawRelative = planning_body.yaw;
+  }
   follower_state.slowFactor = slowFactor(output.slow_down);
   follower_state.goalDistance = std::hypot(route.back().x - map_body.position.x,
                                            route.back().y - map_body.position.y);
@@ -752,7 +638,6 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
                                       int obstacle_count, double timestamp_s,
                                       TraversabilityGridView traversability,
                                       ExecutionObservation observation) {
-  advanceTrajectoryClock(timestamp_s);
   ExecutionOutput output;
   clearRecoveryObservationWait();
 
@@ -780,13 +665,20 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   const double input_direction_body = std::atan2(intent.vy, intent.vx);
   const bool pure_lateral_intent =
       std::abs(intent.vx) <= 1e-6 && std::abs(intent.vy) > 1e-6 && std::abs(intent.wz) <= 1e-6;
+  const bool lateral_translation_intent =
+      std::abs(intent.vy) > 1e-6 && std::abs(intent.wz) <= 1e-6;
   if (teleop_recovery_intent_rad_.has_value() &&
       std::abs(nav_kernel::normalizeAngle(
           input_direction_body - *teleop_recovery_intent_rad_)) >
           kTeleopIntentToleranceRad) {
     resetTeleopRotation();
   }
-  const double configured_horizon = std::max(0.5, config_.teleop_intent_horizon_m);
+  const double requested_horizon = std::max(0.5, config_.teleop_intent_horizon_m);
+  const double configured_horizon =
+      pure_lateral_intent
+          ? std::min(requested_horizon,
+                     std::max(0.5, local_planner_.params().vehicleLength))
+          : requested_horizon;
   const bool teleop_direction_changed =
       teleop_reference_.has_value() &&
       std::abs(nav_kernel::normalizeAngle(
@@ -796,7 +688,6 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
     if (teleop_direction_changed) {
       resetLocalPlanning();
       intent_mode_ = true;
-      traj_clock_s_ = timestamp_s;
     }
     ++generation;
     follower_.resetIntent();
@@ -841,13 +732,12 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
       planning_direction_body * 180.0 / M_PI,
       speed_norm,
       planning_horizon,
-      pure_lateral_intent ? std::min(10.0, config_.teleop_intent_max_deviation_deg)
-                          : config_.teleop_intent_max_deviation_deg,
+      config_.teleop_intent_max_deviation_deg,
   };
   const nav_kernel::LocalPlanRequest plan_request = makeLocalPlanRequest(
       odom_map_body, intent_route, generation, false, kinematics, observation,
       obstacle_xyzh, obstacle_count, timestamp_s,
-      timestamp_s - std::max(0.0, traj_delay_s_), traversability, &motion_intent);
+      traj_frozen_, traversability, &motion_intent);
 
   if (teleop_recovery_.active()) {
     const RecoveryOutput recovery = teleop_recovery_.step(plan_request);
@@ -869,10 +759,13 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   const bool spline_provided = spline != nullptr;
   const bool path_provided = std::holds_alternative<nav_kernel::PathTarget>(plan.target());
   output.path_found = plan_ready;
-  output.hold_body_heading = pure_lateral_intent && plan_ready;
+  output.hold_body_heading =
+      path_provided && lateral_translation_intent && plan_ready;
   output.slow_down = std::clamp(plan.hints().slowdownLevel, 0, 3);
   output.recovery_state = 0;
-  output.local_path_body = plan.previewPath();
+  output.local_path_body =
+      spline_provided ? planningPathToBody(odom_map_body, plan.previewPath())
+                      : plan.previewPath();
   if (plan_ready && !near_field_stop && output.local_path_body.size() < 2) {
     if (output.local_path_body.size() == 1 &&
         bodyDistance2D(output.local_path_body.front()) > 0.05) {
@@ -935,6 +828,10 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
                               observation.body_linear_velocity.y, observation.body_yaw_rate}
           : nav_kernel::Twist{};
   follower_state.currentTime = timestamp_s;
+  if (spline_provided) {
+    follower_state.vehicleRelative = odom_map_body.position;
+    follower_state.vehicleYawRelative = odom_map_body.yaw;
+  }
   follower_state.slowFactor = slowFactor(output.slow_down);
   follower_state.params = config_.follower;
   follower_state.holdBodyHeading = output.hold_body_heading;
@@ -944,7 +841,7 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   }
   const nav_kernel::FollowerOutput control = follower_.follow(plan, follower_state);
   output.cmd_vel = control.cmd;
-  if (output.hold_body_heading && teleop_reference_.has_value()) {
+  if (path_provided && output.hold_body_heading && teleop_reference_.has_value()) {
     const double desired_body_yaw = nav_kernel::normalizeAngle(
         teleop_reference_->headingMap - teleop_reference_->directionBody);
     const double yaw_error =
@@ -956,11 +853,11 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   output.trajectory_frozen = control.executionFrozen;
   traj_frozen_ = control.executionFrozen;
   output.near_field_stop = false;
-  output.reason = control.executionFrozen && path_provided
+  output.reason = control.executionFrozen
                       ? (control.directionTransition
                              ? "teleop_assist_direction_transition"
                              : "teleop_assist_heading_alignment")
-                      : (output.hold_body_heading
+                      : (pure_lateral_intent
                              ? "teleop_assist_lateral_ready"
                              : (spline_provided ? "teleop_assist_spline_ready"
                                                 : "teleop_assist_control_ready"));
