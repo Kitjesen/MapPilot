@@ -11,6 +11,7 @@ namespace lingtu::maps::layers {
 namespace {
 
 constexpr float kLogOddsScale = 256.0F;
+constexpr float kUnknownLogOddsOffset = 0.01F;
 constexpr std::size_t kBitsPerWord = 64U;
 
 bool IsFinite(float value) {
@@ -256,7 +257,7 @@ RollingOccupancyGrid::RollingOccupancyGrid(RollingOccupancyConfig config)
           std::log(config.occupied_probability / (1.0F - config.occupied_probability))) {
   ValidateConfig(config_);
   const std::size_t count = CheckedCellCount(config_);
-  cells_.resize(count);
+  cells_.assign(count, Cell{config_.min_log_odds - kUnknownLogOddsOffset});
   ray_total_counts_.assign(count, 0U);
   ray_hit_counts_.assign(count, 0U);
   observed_bits_.assign(BitWordCount(count), 0U);
@@ -272,11 +273,6 @@ RollingOccupancyGrid::RollingOccupancyGrid(RollingOccupancyConfig config)
   const float radius_squared =
       config_.inflation_radius_m * config_.inflation_radius_m;
   for (int z = -z_cells_down; z <= z_cells_up; ++z) {
-    const float dz = static_cast<float>(z) * config_.resolution_m;
-    if ((z > 0 && dz > config_.inflation_z_up_m + 1.0e-6F) ||
-        (z < 0 && -dz > config_.inflation_z_down_m + 1.0e-6F)) {
-      continue;
-    }
     for (int y = -xy_cells; y <= xy_cells; ++y) {
       for (int x = -xy_cells; x <= xy_cells; ++x) {
         const float dx = static_cast<float>(x) * config_.resolution_m;
@@ -333,7 +329,8 @@ void RollingOccupancyGrid::Reset(
     throw std::invalid_argument("rolling occupancy reset arguments are invalid");
   }
   std::unique_lock<std::shared_mutex> lock(mutex_);
-  std::fill(cells_.begin(), cells_.end(), Cell{});
+  std::fill(cells_.begin(), cells_.end(),
+            Cell{config_.min_log_odds - kUnknownLogOddsOffset});
   std::fill(ray_total_counts_.begin(), ray_total_counts_.end(), 0U);
   std::fill(ray_hit_counts_.begin(), ray_hit_counts_.end(), 0U);
   std::fill(observed_bits_.begin(), observed_bits_.end(), 0U);
@@ -554,7 +551,8 @@ RollingOccupancyCellChunk RollingOccupancyGrid::RollByLocked(
   RollingOccupancyCellChunk chunk =
       ChunkFromPhysicalIndices(outgoing, stamp_ns, generation_ + 1U);
   if (full_reset) {
-    std::fill(cells_.begin(), cells_.end(), Cell{});
+    std::fill(cells_.begin(), cells_.end(),
+              Cell{config_.min_log_odds - kUnknownLogOddsOffset});
     std::fill(observed_bits_.begin(), observed_bits_.end(), 0U);
     std::fill(occupied_bits_.begin(), occupied_bits_.end(), 0U);
     std::fill(inflation_counts_.begin(), inflation_counts_.end(), 0U);
@@ -588,7 +586,7 @@ RollingOccupancyCellChunk RollingOccupancyGrid::RollByLocked(
           SetBit(inflated_bits_, target_index, count > 0U);
         }
       }
-      cells_[index] = {};
+      cells_[index] = Cell{config_.min_log_odds - kUnknownLogOddsOffset};
       SetBit(observed_bits_, index, false);
       SetBit(occupied_bits_, index, false);
       inflation_counts_[index] = 0U;
@@ -738,59 +736,50 @@ void RollingOccupancyGrid::TraceRay(
     float end_z_m,
     std::vector<CellCoord>* cells) const {
   cells->clear();
+  CellCoord sensor;
   CellCoord current;
-  CellCoord target;
-  if (!WorldToCell(origin_x_m, origin_y_m, origin_z_m, &current) ||
-      !WorldToCell(end_x_m, end_y_m, end_z_m, &target)) {
+  if (!WorldToCell(origin_x_m, origin_y_m, origin_z_m, &sensor) ||
+      !WorldToCell(end_x_m, end_y_m, end_z_m, &current)) {
     return;
   }
   cells->reserve(static_cast<std::size_t>(
-      std::abs(target.x - current.x) + std::abs(target.y - current.y) +
-      std::abs(target.z - current.z) + 1));
-  cells->push_back(current);
-  if (current == target) {
+      std::abs(sensor.x - current.x) + std::abs(sensor.y - current.y) +
+      std::abs(sensor.z - current.z)));
+  if (current == sensor) {
     return;
   }
 
-  const float direction_x = end_x_m - origin_x_m;
-  const float direction_y = end_y_m - origin_y_m;
-  const float direction_z = end_z_m - origin_z_m;
-  const int step_x = direction_x > 0.0F ? 1 : (direction_x < 0.0F ? -1 : 0);
-  const int step_y = direction_y > 0.0F ? 1 : (direction_y < 0.0F ? -1 : 0);
-  const int step_z = direction_z > 0.0F ? 1 : (direction_z < 0.0F ? -1 : 0);
-  const float infinity = std::numeric_limits<float>::infinity();
-  const auto initial_t_max = [this](
-                                 float origin,
-                                 float grid_origin,
-                                 std::int32_t cell,
-                                 float direction,
-                                 int step) {
-    if (step == 0) {
-      return std::numeric_limits<float>::infinity();
+  const double start_x = (end_x_m - origin_x_m_) / config_.resolution_m;
+  const double start_y = (end_y_m - origin_y_m_) / config_.resolution_m;
+  const double start_z = (end_z_m - origin_z_m_) / config_.resolution_m;
+  const double dx = static_cast<double>(sensor.x - current.x);
+  const double dy = static_cast<double>(sensor.y - current.y);
+  const double dz = static_cast<double>(sensor.z - current.z);
+  const auto sign = [](double value) { return value == 0.0 ? 0 : value < 0.0 ? -1 : 1; };
+  const auto integer_boundary = [](double value, double delta) {
+    if (delta < 0.0) {
+      value = -value;
+      delta = -delta;
     }
-    const float boundary = grid_origin +
-        static_cast<float>(cell + (step > 0 ? 1 : 0)) * config_.resolution_m;
-    return (boundary - origin) / direction;
+    value = std::fmod(std::fmod(value, 1.0) + 1.0, 1.0);
+    return (1.0 - value) / delta;
   };
-  float t_max_x = initial_t_max(origin_x_m, origin_x_m_, current.x, direction_x, step_x);
-  float t_max_y = initial_t_max(origin_y_m, origin_y_m_, current.y, direction_y, step_y);
-  float t_max_z = initial_t_max(origin_z_m, origin_z_m_, current.z, direction_z, step_z);
-  const float t_delta_x = step_x == 0 ? infinity : config_.resolution_m / std::fabs(direction_x);
-  const float t_delta_y = step_y == 0 ? infinity : config_.resolution_m / std::fabs(direction_y);
-  const float t_delta_z = step_z == 0 ? infinity : config_.resolution_m / std::fabs(direction_z);
+  const int step_x = sign(dx);
+  const int step_y = sign(dy);
+  const int step_z = sign(dz);
+  double t_max_x = integer_boundary(start_x, dx);
+  double t_max_y = integer_boundary(start_y, dy);
+  double t_max_z = integer_boundary(start_z, dz);
+  const double t_delta_x = static_cast<double>(step_x) / dx;
+  const double t_delta_y = static_cast<double>(step_y) / dy;
+  const double t_delta_z = static_cast<double>(step_z) / dz;
   const std::size_t max_steps = cells_.size();
-  while (!(current == target) && cells->size() <= max_steps) {
-    const float next_x = current.x == target.x ? infinity : t_max_x;
-    const float next_y = current.y == target.y ? infinity : t_max_y;
-    const float next_z = current.z == target.z ? infinity : t_max_z;
-    const float next_t = std::min({next_x, next_y, next_z});
-    if (!std::isfinite(next_t)) {
-      break;
-    }
-    if (next_x < next_y && next_x < next_z) {
+  while (!(current == sensor) && cells->size() <= max_steps) {
+    cells->push_back(current);
+    if (t_max_x < t_max_y && t_max_x < t_max_z) {
       current.x += step_x;
       t_max_x += t_delta_x;
-    } else if (next_y < next_z) {
+    } else if (t_max_y < t_max_z) {
       current.y += step_y;
       t_max_y += t_delta_y;
     } else {
@@ -800,7 +789,6 @@ void RollingOccupancyGrid::TraceRay(
     if (!InBounds(current)) {
       break;
     }
-    cells->push_back(current);
   }
 }
 
@@ -818,7 +806,7 @@ std::size_t RollingOccupancyGrid::DecayLocked(std::int64_t now_ns) {
     const float previous = cell.log_odds;
     cell.log_odds *= config_.decay_factor;
     if (std::fabs(cell.log_odds) < 1.0F / kLogOddsScale) {
-      cell = {};
+      cell = Cell{config_.min_log_odds - kUnknownLogOddsOffset};
     } else {
       cell.last_observed_ns = now_ns;
     }
@@ -868,6 +856,8 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
 
   std::vector<std::size_t> touched_indices;
   touched_indices.reserve(cloud.point_count * 8U);
+  std::vector<std::uint64_t> ray_endpoint_bits(BitWordCount(cells_.size()), 0U);
+  std::vector<std::uint64_t> ray_traverse_bits(BitWordCount(cells_.size()), 0U);
   const auto record_ray_evidence = [&](std::size_t physical, bool hit) {
     if (ray_total_counts_[physical] == 0U) {
       touched_indices.push_back(physical);
@@ -916,6 +906,11 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
       ++stats.rejected_points;
       continue;
     }
+    CellCoord endpoint_coord;
+    if (!WorldToCell(hit_x, hit_y, hit_z, &endpoint_coord)) {
+      ++stats.rejected_points;
+      continue;
+    }
     TraceRay(
         frame.sensor_origin_x_m,
         frame.sensor_origin_y_m,
@@ -924,26 +919,22 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
         hit_y,
         hit_z,
         &ray);
-    if (ray.empty()) {
-      ++stats.rejected_points;
+    ++stats.accepted_points;
+    const bool reached_hit = has_hit && endpoint_coord == hit_coord;
+    const std::size_t endpoint = PhysicalIndex(endpoint_coord);
+    record_ray_evidence(endpoint, reached_hit);
+    if (BitSet(ray_endpoint_bits, endpoint)) {
       continue;
     }
-    ++stats.accepted_points;
+    SetBit(ray_endpoint_bits, endpoint, true);
     ++stats.unique_rays;
-    const bool reached_hit = has_hit && ray.back() == hit_coord;
-    if (reached_hit) {
-      const std::size_t physical = PhysicalIndex(ray.back());
-      if (ray_hit_counts_[physical] == 0U) {
-        record_ray_evidence(physical, true);
-      }
-    }
-    const std::size_t free_count = reached_hit ? ray.size() - 1U : ray.size();
-    for (std::size_t remaining = free_count; remaining > 0U; --remaining) {
-      const std::size_t physical = PhysicalIndex(ray[remaining - 1U]);
-      if (ray_total_counts_[physical] > ray_hit_counts_[physical]) {
+    for (const CellCoord& traversed : ray) {
+      const std::size_t physical = PhysicalIndex(traversed);
+      record_ray_evidence(physical, false);
+      if (BitSet(ray_traverse_bits, physical)) {
         break;
       }
-      record_ray_evidence(physical, false);
+      SetBit(ray_traverse_bits, physical, true);
     }
   }
 

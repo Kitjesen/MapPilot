@@ -211,7 +211,7 @@ void testScanRequiresCompleteFreshLocalCollision() {
 
   inputs.local_collision_stamp_s = 10.0;
   inputs.local_collision_receive_s = 10.0;
-  inputs.local_collision_generation = 1;
+  inputs.local_collision_sequence = 1;
   state = gate.evaluate(inputs);
   require(!state.ready && state.reason == "local_collision_incomplete",
           "SCAN must reject a truncated collision snapshot");
@@ -225,7 +225,7 @@ void testScanRequiresCompleteFreshLocalCollision() {
 
   inputs.local_collision_stamp_s = 10.0;
   inputs.local_collision_receive_s = 10.0;
-  ++inputs.local_collision_generation;
+  ++inputs.local_collision_sequence;
   state = gate.evaluate(inputs);
   require(state.ready, "complete fresh Mapd collision input must open the SCAN gate");
 }

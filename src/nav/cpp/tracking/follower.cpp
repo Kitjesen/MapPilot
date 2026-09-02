@@ -396,8 +396,10 @@ class SplineAlgorithm final : public Algorithm {
     params.headingErrorThreshold = scan.headingErrorThreshold;
     params.positionGain = scan.positionGain;
     params.yawGain = scan.yawGain;
-    params.maxVx = scan.maxVx;
-    params.maxVy = scan.maxVy;
+    const double speed_scale = clamp(input.requestedSpeed, 0.0, 1.0) *
+                               clamp(input.slowFactor, 0.0, 1.0);
+    params.maxVx = scan.maxVx * speed_scale;
+    params.maxVy = scan.maxVy * speed_scale;
     params.maxYawRate = scan.maxYawRateRadS;
     params.finishDistance = scan.finishDistance;
 

@@ -23,7 +23,7 @@ RollingOccupancyConfig TestConfig() {
   config.size_z = 4;
   config.resolution_m = 1.0F;
   config.max_ray_range_m = 20.0F;
-  config.hit_log_odds = 2.0F;
+  config.hit_log_odds = 4.0F;
   config.miss_log_odds = 2.0F;
   config.inflation_radius_m = 0.0F;
   config.inflation_z_up_m = 0.0F;
@@ -63,9 +63,9 @@ void TestRayProducesFreeAndOccupiedEvidence() {
   assert(stats.input_points == 1U);
   assert(stats.accepted_points == 1U);
   assert(stats.hit_updates == 1U);
-  assert(stats.free_updates >= 3U);
+  assert(stats.free_updates == 2U);
   assert(grid.StateAt(3.2F, 0.1F, 0.1F) == OccupancyState::kOccupied);
-  assert(grid.StateAt(0.1F, 0.1F, 0.1F) == OccupancyState::kFree);
+  assert(grid.StateAt(0.1F, 0.1F, 0.1F) == OccupancyState::kUnknown);
   assert(grid.OccupancyProbability(3.2F, 0.1F, 0.1F) > 0.8F);
   const auto occupied = grid.InflatedSnapshot();
   assert(occupied.occupied_cells == 1U);
@@ -93,7 +93,28 @@ void TestDenseFrameDoesNotOverweightDuplicateVoxels() {
   assert(found_hit);
 }
 
-void TestRayFusionUsesOfficialHitWinsTie() {
+void TestOfficialUnknownPriorRequiresRepeatedHits() {
+  auto config = TestConfig();
+  config.auto_roll = false;
+  config.hit_log_odds = std::log(0.85F / 0.15F);
+  config.miss_log_odds = -std::log(0.30F / 0.70F);
+  config.min_log_odds = std::log(0.12F / 0.88F);
+  config.max_log_odds = std::log(0.98F / 0.02F);
+  config.occupied_probability = 0.80F;
+  RollingOccupancyGrid grid(config);
+  grid.Reset("map", 0.0F, 0.0F, 0.0F, 1);
+
+  const std::vector<float> point{2.2F, 0.1F, 0.1F};
+  grid.Update(Frame(point, 10));
+  assert(grid.StateAt(2.2F, 0.1F, 0.1F) != OccupancyState::kOccupied);
+  assert(!grid.InflatedContains(2.2F, 0.1F, 0.1F));
+
+  grid.Update(Frame(point, 20));
+  assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kOccupied);
+  assert(grid.InflatedContains(2.2F, 0.1F, 0.1F));
+}
+
+void TestRayFusionMatchesOfficialEndpointAndTraversalVotes() {
   auto config = TestConfig();
   config.auto_roll = false;
   RollingOccupancyGrid grid(config);
@@ -107,7 +128,7 @@ void TestRayFusionUsesOfficialHitWinsTie() {
   }, 10));
 
   assert(grid.StateAt(1.2F, 0.1F, 0.1F) == OccupancyState::kFree);
-  assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kOccupied);
+  assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kFree);
   assert(grid.StateAt(3.2F, 0.1F, 0.1F) == OccupancyState::kOccupied);
 }
 
@@ -119,8 +140,20 @@ void TestRayCornerTieMatchesOfficialSingleAxisStep() {
 
   grid.Update(Frame({2.2F, 2.2F, 0.1F}, 10, 0.1F, 0.1F, 0.1F));
 
-  assert(grid.StateAt(0.1F, 1.1F, 0.1F) == OccupancyState::kFree);
-  assert(grid.StateAt(1.1F, 0.1F, 0.1F) == OccupancyState::kUnknown);
+  assert(grid.StateAt(0.1F, 1.1F, 0.1F) == OccupancyState::kUnknown);
+  assert(grid.StateAt(1.1F, 0.1F, 0.1F) == OccupancyState::kFree);
+}
+
+void TestRayUsesOfficialVoxelDeltaTraversal() {
+  auto config = TestConfig();
+  config.auto_roll = false;
+  RollingOccupancyGrid grid(config);
+  grid.Reset("map", 0.0F, 0.0F, 0.0F, 1);
+
+  grid.Update(Frame({2.9F, 1.1F, 0.1F}, 10, 0.1F, 0.9F, 0.1F));
+
+  assert(grid.StateAt(0.1F, 1.1F, 0.1F) == OccupancyState::kUnknown);
+  assert(grid.StateAt(1.1F, 0.9F, 0.1F) == OccupancyState::kFree);
 }
 
 void TestOccupiedThresholdIsStrictLikeOfficialGridMap() {
@@ -405,7 +438,7 @@ void TestIncrementalInflationMatchesFullRebuildAcrossUpdates() {
   }
 }
 
-void TestSubVoxelVerticalInflationDoesNotGrowOneWholeCell() {
+void TestSubVoxelVerticalInflationUsesOfficialCeil() {
   auto config = TestConfig();
   config.resolution_m = 0.25F;
   config.inflation_z_up_m = 0.10F;
@@ -415,16 +448,18 @@ void TestSubVoxelVerticalInflationDoesNotGrowOneWholeCell() {
 
   grid.Update(Frame({0.1F, 0.1F, 0.1F}, 10));
   assert(grid.InflatedContains(0.1F, 0.1F, 0.1F));
-  assert(!grid.InflatedContains(0.1F, 0.1F, 0.35F));
+  assert(grid.InflatedContains(0.1F, 0.1F, 0.35F));
 }
 
 }  // namespace
 
 int main() {
+  TestOfficialUnknownPriorRequiresRepeatedHits();
   TestRayProducesFreeAndOccupiedEvidence();
   TestDenseFrameDoesNotOverweightDuplicateVoxels();
-  TestRayFusionUsesOfficialHitWinsTie();
+  TestRayFusionMatchesOfficialEndpointAndTraversalVotes();
   TestRayCornerTieMatchesOfficialSingleAxisStep();
+  TestRayUsesOfficialVoxelDeltaTraversal();
   TestOccupiedThresholdIsStrictLikeOfficialGridMap();
   TestInflationExcludesExactRadiusBoundary();
   TestCollisionGenerationAdvancesOnlyWhenInflatedGeometryChanges();
@@ -435,6 +470,6 @@ int main() {
   TestFrameMismatchFailsClosed();
   TestIncrementalInflationKeepsSharedCoverageUntilLastSourceClears();
   TestIncrementalInflationMatchesFullRebuildAcrossUpdates();
-  TestSubVoxelVerticalInflationDoesNotGrowOneWholeCell();
+  TestSubVoxelVerticalInflationUsesOfficialCeil();
   return 0;
 }

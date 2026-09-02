@@ -54,11 +54,14 @@ def local_planner_name(value: Any) -> str:
     return name
 
 
-def mapd_environment(local_planner: Any) -> dict[str, str]:
+def mapd_environment(native_environment: Mapping[str, str]) -> dict[str, str]:
     """Return the Mapd collision profile required by one local planner."""
 
-    if str(local_planner or "").strip().lower() != "scan":
+    if str(native_environment.get("LINGTU_NAV_LOCAL_PLANNER_BACKEND", "")).strip().lower() != "scan":
         return {}
+    radius = native_environment.get("LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M")
+    if radius is None:
+        raise ValueError("SCAN requires LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M")
     return {
         "LINGTU_MAPD_OCCUPANCY_RESOLUTION_M": "0.05",
         "LINGTU_MAPD_OCCUPANCY_SIZE_X": "200",
@@ -71,8 +74,9 @@ def mapd_environment(local_planner: Any) -> dict[str, str]:
         "LINGTU_MAPD_OCCUPANCY_P_MIN": "0.12",
         "LINGTU_MAPD_OCCUPANCY_P_MAX": "0.98",
         "LINGTU_MAPD_OCCUPANCY_P_OCC": "0.80",
-        "LINGTU_MAPD_MAX_COLLISION_SNAPSHOT_POINTS": "4000000",
-        "LINGTU_MAPD_MAX_CLOUD_BYTES": "67108864",
+        "LINGTU_MAPD_INFLATION_RADIUS_M": _env_number(float(radius)),
+        "LINGTU_MAPD_INFLATION_Z_UP_M": "0.10",
+        "LINGTU_MAPD_INFLATION_Z_DOWN_M": "0.10",
     }
 
 
@@ -243,6 +247,7 @@ class NativeNavConfig:
         native_nav = self.native_nav
         recovery = native_nav["recovery"]
         env = {
+            "LINGTU_NAV_DDS_TICK_HZ": _env_number(parameters["tick_hz"]),
             "LINGTU_NAV_CORRIDOR_LOOKAHEAD_M": _env_number(parameters["corridor_lookahead_m"]),
             "LINGTU_NAV_GOAL_REACHED_M": _env_number(parameters["goal_reached_m"]),
             "LINGTU_NAV_CONTROL_MODE": str(native_nav["control_mode"]),
@@ -402,6 +407,7 @@ def compile_native_nav_config(
         native_nav_config, "path_follower_goal_tolerance_m", 0.2
     )
     parameters = {
+        "tick_hz": _finite_number(native_nav_config, "tick_hz", 20.0),
         "corridor_lookahead_m": _finite_number(native_nav_config, "corridor_lookahead_m", 3.0),
         "dynamic_min_cells": _positive_integer(native_nav_config, "dynamic_min_cells", 8),
         "dynamic_min_speed_mps": _finite_number(
@@ -461,7 +467,7 @@ def compile_native_nav_config(
         "vehicle_length_m": vehicle_length_m,
         "vehicle_width_m": vehicle_width_m,
         "collision_hard_margin_m": _finite_number(
-            config, "collision_hard_margin_m", 0.15
+            config, "collision_hard_margin_m", 0.08
         ),
         "collision_cylinder_radius_m": _finite_number(
             config, "collision_cylinder_radius_m", default_cylinder_radius_m
@@ -493,6 +499,8 @@ def compile_native_nav_config(
         )
     if parameters["teleop_planner_horizon_m"] < 0.5:
         raise ValueError("teleop_planner_horizon_m must be at least 0.5")
+    if parameters["tick_hz"] <= 0.0:
+        raise ValueError("native_nav.tick_hz must be positive")
     if parameters["dynamic_confirm_frames"] < 2:
         raise ValueError("dynamic_confirm_frames must be at least 2")
     if parameters["teleop_planner_max_deviation_deg"] > 90.0:

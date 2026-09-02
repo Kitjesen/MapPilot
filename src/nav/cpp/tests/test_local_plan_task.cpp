@@ -41,6 +41,12 @@ struct RequestFixture {
         bitmap.view(request.clock.timestampS, generation);
   }
 
+  void setIntent(double directionBodyDeg) {
+    request.objective = nav_kernel::MotionIntentTarget{
+        {directionBodyDeg, 1.0, 2.0, 90.0},
+        {route.data(), static_cast<int>(route.size()), 1, false}};
+  }
+
   std::vector<nav_kernel::Vec3> route;
   lingtu::nav::tests::CollisionBitmap bitmap;
   nav_kernel::LocalPlanRequest request;
@@ -87,6 +93,30 @@ TEST(LocalPlanTask, KeepsOfficialWorldFrameSplineDuringMapRefresh) {
   EXPECT_EQ(second.trajectoryId, first.trajectoryId);
   EXPECT_DOUBLE_EQ(second.controls.front().x, first.controls.front().x);
   EXPECT_DOUBLE_EQ(second.controls.front().y, first.controls.front().y);
+}
+
+TEST(LocalPlanTask, StampsSplineWhenAsyncPlanningCompletes) {
+  nav_kernel::local::LocalPlanTask task(scanParams());
+  ASSERT_TRUE(task.configure());
+  RequestFixture fixture;
+  const nav_kernel::LocalPlan ready = waitForPlan(task, fixture);
+  ASSERT_TRUE(ready.ready());
+  const auto &spline = std::get<nav_kernel::SplineTarget>(ready.target());
+
+  EXPECT_NEAR(spline.startTimeS, fixture.request.clock.timestampS, 0.05);
+}
+
+TEST(LocalPlanTask, DirectionChangeDoesNotReuseOldIntentSpline) {
+  nav_kernel::local::LocalPlanTask task(scanParams());
+  ASSERT_TRUE(task.configure());
+  RequestFixture fixture;
+  fixture.setIntent(0.0);
+  ASSERT_TRUE(waitForPlan(task, fixture).ready());
+
+  fixture.setIntent(90.0);
+  fixture.request.clock.timestampS += 0.01;
+  EXPECT_EQ(task.update(fixture.request).plan.status(),
+            nav_kernel::LocalPlanStatus::Pending);
 }
 
 TEST(LocalPlanTask, RefreshesCollisionSnapshotWhenResetEpochChanges) {

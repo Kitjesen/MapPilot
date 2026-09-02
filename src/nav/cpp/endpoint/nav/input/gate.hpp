@@ -55,7 +55,7 @@ struct InputSnapshot {
   std::uint64_t traversability_generation{0};
   double local_collision_stamp_s{0.0};
   double local_collision_receive_s{0.0};
-  std::uint64_t local_collision_generation{0};
+  std::uint64_t local_collision_sequence{0};
   bool local_collision_complete{false};
   double localization_health_stamp_s{0.0};
   double localization_health_receive_s{0.0};

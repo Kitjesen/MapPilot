@@ -1,6 +1,7 @@
 #include "planning/local/task.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cmath>
 #include <exception>
@@ -23,7 +24,10 @@ bool sameIntent(const std::optional<LocalMotionIntent> &left,
     return false;
   if (!left)
     return true;
-  return std::abs(left->speedNormalized - right->speedNormalized) <= 0.05 &&
+  return std::abs(normalizeAngle(
+             left->directionBodyDeg * M_PI / 180.0 -
+             right->directionBodyDeg * M_PI / 180.0)) <= 10.0 * M_PI / 180.0 &&
+         std::abs(left->speedNormalized - right->speedNormalized) <= 0.05 &&
          std::abs(left->maxDirectionDeviationDeg -
                   right->maxDirectionDeviationDeg) <= 1e-6;
 }
@@ -85,13 +89,15 @@ struct Job {
   std::uint64_t epoch{0};
   OwnedRequest request;
   std::shared_ptr<std::atomic_bool> cancel;
+  std::chrono::steady_clock::time_point queuedAt;
 
   Job(std::uint64_t sequenceValue, std::uint64_t epochValue,
       OwnedRequest ownedRequest, std::shared_ptr<std::atomic_bool> cancelToken)
       : sequence(sequenceValue),
         epoch(epochValue),
         request(std::move(ownedRequest)),
-        cancel(std::move(cancelToken)) {}
+        cancel(std::move(cancelToken)),
+        queuedAt(std::chrono::steady_clock::now()) {}
 
   [[nodiscard]] bool cancelled() const noexcept {
     return cancel && cancel->load(std::memory_order_relaxed);
@@ -185,7 +191,6 @@ class LocalPlanTask::Impl {
     collisionSnapshot_.reset();
     collisionGeneration_ = 0;
     collisionResetEpoch_ = 0;
-    collisionObservationSequence_ = 0;
     if (!configured_)
       return;
     {
@@ -210,7 +215,6 @@ class LocalPlanTask::Impl {
       return {};
     if (collisionSnapshot_ && collisionGeneration_ == collision.generation &&
         collisionResetEpoch_ == collision.resetEpoch &&
-        collisionObservationSequence_ == collision.observationSequence &&
         collisionSnapshot_->size() == collision.inflatedBytes) {
       return collisionSnapshot_;
     }
@@ -219,7 +223,6 @@ class LocalPlanTask::Impl {
         collision.inflatedBits + collision.inflatedBytes);
     collisionGeneration_ = collision.generation;
     collisionResetEpoch_ = collision.resetEpoch;
-    collisionObservationSequence_ = collision.observationSequence;
     collisionSnapshot_ = snapshot;
     return snapshot;
   }
@@ -299,7 +302,9 @@ class LocalPlanTask::Impl {
       if (!job)
         continue;
 
-      const LocalPlanRequest request = job->request.view();
+      LocalPlanRequest request = job->request.view();
+      request.clock.timestampS += std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - job->queuedAt).count();
       Completion completion;
       completion.sequence = job->sequence;
       completion.frameEpoch = request.identity.frameEpoch;
@@ -353,7 +358,6 @@ class LocalPlanTask::Impl {
   std::shared_ptr<const std::vector<std::uint8_t>> collisionSnapshot_;
   std::uint64_t collisionGeneration_{0};
   std::uint64_t collisionResetEpoch_{0};
-  std::uint64_t collisionObservationSequence_{0};
 };
 
 LocalPlanTask::LocalPlanTask(const LocalPlannerParams &params)

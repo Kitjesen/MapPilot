@@ -222,6 +222,17 @@ class Backend::Impl {
     }
 
     FsmOutput output = fsm_->tick(fsmInput);
+    const auto retimeTrajectory = [&](FsmOutput &candidate) {
+      if (!candidate.trajectory)
+        return;
+      const double completedAtS =
+          input.clock.timestampS +
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+      manager_->local_data_.start_time_ = completedAtS;
+      candidate.trajectory->startTimeS = completedAtS;
+      fsmInput.nowS = completedAtS;
+    };
+    retimeTrajectory(output);
     if (output.targetAccepted)
       rememberReference(input, *route);
 
@@ -230,6 +241,7 @@ class Backend::Impl {
             SCANReplanFSM::kFutureCollisionPeriodS - 1e-6) {
       lastCollisionCheckS_ = input.clock.timestampS;
       FsmOutput collision = fsm_->checkFutureCollision(fsmInput);
+      retimeTrajectory(collision);
       if (collision.trajectory) {
         output.trajectory = std::move(collision.trajectory);
       } else if (collision.collisionDetected) {

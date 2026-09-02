@@ -398,7 +398,7 @@ InputGate::InputGenerations InputGate::generations(const InputSnapshot &inputs) 
       inputs.tf_generation,
       inputs.cloud_generation,
       inputs.traversability_generation,
-      inputs.local_collision_generation,
+      inputs.local_collision_sequence,
       inputs.localization_health_generation,
       inputs.driver_control_generation,
   };
@@ -420,7 +420,7 @@ bool InputGate::allRequiredInputsAdvanced(const InputSnapshot &inputs) const {
     return false;
   }
   if (config_.require_local_collision &&
-      inputs.local_collision_generation <= recovery_generations_.local_collision) {
+      inputs.local_collision_sequence <= recovery_generations_.local_collision) {
     return false;
   }
   if (config_.require_localization_health &&

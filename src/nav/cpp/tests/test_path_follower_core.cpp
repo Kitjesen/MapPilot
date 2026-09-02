@@ -30,11 +30,14 @@ FollowerOutput followPath(Follower &follower, const std::vector<Vec3> &path,
 
 FollowerOutput followSpline(Follower &follower, const SplineTarget &spline,
                             const FollowerParams &params, double time,
-                            Vec3 vehicle = {}, double yaw = 0.0) {
+                            Vec3 vehicle = {}, double yaw = 0.0,
+                            double requested_speed = 1.0, double slow_factor = 1.0) {
   FollowerState state;
   state.vehicleRelative = vehicle;
   state.vehicleYawRelative = yaw;
+  state.requestedSpeed = requested_speed;
   state.currentTime = time;
+  state.slowFactor = slow_factor;
   state.params = params;
   return follower.follow(LocalPlan::spline(spline), state);
 }
@@ -436,6 +439,20 @@ TEST(FollowerSpline, UsesOfficialFeedForwardAndLiveWorldPoseError) {
   EXPECT_NEAR(output.cmd.vx, 0.75, 1e-9);
   EXPECT_NEAR(output.cmd.vy, 0.0, 1e-9);
   EXPECT_NEAR(output.directionError, 0.0, 1e-9);
+}
+
+TEST(FollowerSpline, AppliesRequestedSpeedAndSlowFactor) {
+  FollowerParams params;
+  params.spline.positionGain = 0.0;
+  params.spline.headingErrorThreshold = 2.0;
+  const SplineTarget trajectory =
+      scanSpline({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, 1, 1.0);
+  Follower follower;
+
+  const auto output = followSpline(follower, trajectory, params, 0.1, {}, 0.0, 0.5, 0.5);
+
+  EXPECT_NEAR(output.cmd.vx, params.spline.maxVx * 0.25, 1e-9);
+  EXPECT_NEAR(output.cmd.vy, 0.0, 1e-9);
 }
 
 TEST(FollowerSpline, ConvertsWorldVelocityIntoCurrentBodyFrame) {

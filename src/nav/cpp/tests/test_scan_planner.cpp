@@ -136,6 +136,7 @@ TEST(ScanBackend, EmitsOfficialBsplineAfterFsmTransitions) {
   ASSERT_NE(spline, nullptr);
   EXPECT_EQ(spline->order, 3);
   EXPECT_GT(spline->trajectoryId, 0);
+  EXPECT_GT(spline->startTimeS, fixture.request.clock.timestampS);
   EXPECT_GE(spline->controls.size(), 4U);
   EXPECT_EQ(spline->knots.size(),
             spline->controls.size() + static_cast<std::size_t>(spline->order) + 1U);
