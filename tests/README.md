@@ -3,7 +3,7 @@
 Status: current test/acceptance map as of 2026-07-18.
 
 This directory contains legacy integration and planning tests. The current
-product acceptance path lives mostly under `src/runtime/tests`, `sim/scripts`, and
+product acceptance path lives mostly under `tests/runtime`, `sim/scripts`, and
 Gateway/CLI gates. Use this file as an operator-facing map, not as the only CI
 entry point.
 
@@ -22,9 +22,9 @@ operator to inspect `ros2 topic` output. The primary field-facing evidence is:
 ## Fast Checks
 
 ```bash
-python -m pytest src/runtime/tests/ -q
-python -m pytest src/runtime/tests/test_gateway_runtime_acceptance.py -q
-python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
+python -m pytest tests/runtime/ -q
+python -m pytest tests/runtime/test_gateway_runtime_acceptance.py -q
+python -m pytest tests/runtime/test_runtime_graph_contract.py -q
 python tools/validate/validate_architecture_boundaries.py
 python tools/validate/validate_topics.py
 ```
@@ -76,7 +76,7 @@ and returns the canonical inspection acceptance schema without writing to
 ## Contract And Field Gates
 
 ```bash
-python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
+python -m pytest tests/runtime/test_runtime_graph_contract.py -q
 python tools/validate/validate_architecture_boundaries.py
 python tools/validate/validate_topics.py
 

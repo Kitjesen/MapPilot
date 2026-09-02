@@ -80,7 +80,7 @@ After changing extras, verify configuration without starting a profile:
 
 ```bash
 uv run --locked python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim --dry-run --json
-uv run --locked python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
+uv run --locked python -m pytest tests/runtime/test_runtime_graph_contract.py -q
 ```
 
 The local command convention remains:
@@ -95,7 +95,7 @@ Use this track before native work. It is the fastest way to prove that the
 checkout, Product compiler, and Module contracts are coherent.
 
 ```bash
-uv run --locked python -m pytest src/runtime/tests/ -q
+uv run --locked python -m pytest tests/runtime/ -q
 uv run --locked python -m lingtu.control --help
 uv run --locked python tools/validate/validate_architecture_boundaries.py
 uv run --locked python tools/validate/validate_topics.py
@@ -377,9 +377,9 @@ Product RunPlan with a test domain.
 Run the contract checks with the repository virtual environment:
 
 ```powershell
-.venv\Scripts\python.exe -m pytest src\lingtu\assembly\tests\test_compile.py -q
-.venv\Scripts\python.exe -m pytest src\runtime\tests\test_runtime_graph_contract.py -q
-.venv\Scripts\python.exe -m pytest src\lingtu\tests\test_run_plan.py -q
+.venv\Scripts\python.exe -m pytest tests\lingtu\assembly\test_compile.py -q
+.venv\Scripts\python.exe -m pytest tests\runtime\test_runtime_graph_contract.py -q
+.venv\Scripts\python.exe -m pytest tests\lingtu\test_run_plan.py -q
 ```
 
 W4's `teleop` exact coordinator has passed code review and focused tests. W5
@@ -540,7 +540,7 @@ requires them.
 Use the smallest checks that validate the artifacts you built:
 
 ```bash
-uv run --locked python -m pytest src/runtime/tests/ -q
+uv run --locked python -m pytest tests/runtime/ -q
 uv run --locked python tools/validate/validate_architecture_boundaries.py
 uv run --locked python tools/validate/validate_topics.py
 python -m lingtu.control switch nav --robot unitree/go2 --env real --map MAP_NAME --dry-run --json

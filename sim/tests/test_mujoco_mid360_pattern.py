@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from runtime.tests.numpy_guard import import_numpy_or_skip
+from tests.runtime.numpy_guard import import_numpy_or_skip
 
 pytestmark = [pytest.mark.sim]
 

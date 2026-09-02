@@ -56,7 +56,7 @@ jobs:
         run: pip install -e '.[dev,sim-mujoco]'
       - name: Run framework tests
         run: |
-          python -m pytest src/runtime/tests/ tests/drivers/ src/gateway/tests/ \
+          python -m pytest tests/runtime/ tests/drivers/ tests/gateway/ \
             src/memory/tests/ src/nav/tests/ src/perception/tests/ \
             src/decision/tests/ src/localization/tests/ tests/contracts/ \
             -q --tb=short

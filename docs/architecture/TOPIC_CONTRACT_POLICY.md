@@ -103,7 +103,7 @@ logic, and diagnostics should use `TOPICS`.
 The guard lives in:
 
 ```text
-src/runtime/tests/test_message_contract_location.py
+tests/runtime/test_message_contract_location.py
 ```
 
 It scans ordinary Python sources under:
@@ -193,7 +193,7 @@ Implemented:
 Focused verification:
 
 ```powershell
-$env:PYTHONPATH='src'; python -m pytest src/runtime/tests/test_message_contract_location.py src/runtime/tests/test_runtime_graph_contract.py src/runtime/tests/test_route_contract.py -q
+$env:PYTHONPATH='src'; python -m pytest tests/runtime/test_message_contract_location.py tests/runtime/test_runtime_graph_contract.py tests/runtime/test_route_contract.py -q
 ```
 
 Latest result:

@@ -10,5 +10,5 @@ def test_native_validation_host_setup_prepares_current_runtime() -> None:
     assert "install_system_deps" in text
     assert "install_python_deps" in text
     assert "verify_mid360_pattern_asset" in text
-    assert "src/runtime/tests/test_sim_runtime_adapters.py" in text
+    assert "tests/runtime/test_sim_runtime_adapters.py" in text
     assert "np.load(path, mmap_mode=\"r\")" in text

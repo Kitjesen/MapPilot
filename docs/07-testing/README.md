@@ -58,7 +58,7 @@ points are:
 ```bash
 python tools/validate/validate_docs.py
 python -m pytest tests/docs/test_documentation_navigation.py -q
-python -m pytest src/runtime/tests/ -q
+python -m pytest tests/runtime/ -q
 ```
 
 Subsystem changes should use their owning package build and test instructions.

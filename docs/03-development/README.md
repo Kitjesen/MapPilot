@@ -277,7 +277,7 @@ inspection surface:
 
 ```bash
 python -m lingtu.control switch nav --robot unitree/go2 --env real --map MAP_NAME --dry-run --json
-python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
+python -m pytest tests/runtime/test_runtime_graph_contract.py -q
 python tools/validate/validate_architecture_boundaries.py
 python tools/validate/validate_topics.py
 ```
@@ -419,7 +419,7 @@ when a dependency requires it.
 
 | Change | Minimum fresh evidence |
 | --- | --- |
-| `Module`, port, stream policy, registry, or runtime helper | Focused test in the owning package; for core runtime changes, start with `python -m pytest src/runtime/tests/test_runtime.py src/runtime/tests/test_registry.py -q`. |
+| `Module`, port, stream policy, registry, or runtime helper | Focused test in the owning package; for core runtime changes, start with `python -m pytest tests/runtime/test_runtime.py tests/runtime/test_registry.py -q`. |
 | Stack factory, wire, Product compiler, or Product graph | Targeted assembly and graph tests for the changed Product. |
 | Navigation/domain behavior | Focused `tests/nav/` test, then a wider navigation test only if the changed contract spans the package. |
 | C++ hot path | Owning CMake build/test target plus a Python boundary/contract test if exposed to Python. |
@@ -431,7 +431,7 @@ when a dependency requires it.
 Useful contract checks include:
 
 ```bash
-python -m pytest src/lingtu/assembly/tests/test_compile.py -q
+python -m pytest tests/lingtu/assembly/test_compile.py -q
 python -m pytest tests/nav tests/explore -q
 ```
 

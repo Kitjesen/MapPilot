@@ -322,7 +322,7 @@ docs/                   Architecture, deployment, testing, plans, and worklogs
 Python framework and decision tests:
 
 ```bash
-python -m pytest src/runtime/tests/ -q
+python -m pytest tests/runtime/ -q
 python -m pytest src/decision/tests/ -q
 ```
 

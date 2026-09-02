@@ -63,9 +63,9 @@ navigation values to RunPlan v8 `launch.parameters`. ProductControl applies
 
 ```bash
 python -m pytest \
-  src/lingtu/tests \
-  src/lingtu/real/tests \
-  src/lingtu/sim/tests \
-  src/lingtu/assembly/tests \
-  src/lingtu/sdk/tests
+  tests/lingtu \
+  tests/lingtu/real \
+  tests/lingtu/sim \
+  tests/lingtu/assembly \
+  tests/lingtu/sdk
 ```

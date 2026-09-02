@@ -15,7 +15,7 @@ Robot + env + Product -> ProductControl -> switch / status / stop
 ```bash
 uv sync --locked --extra dev
 uv run --locked python -m lingtu.control --help
-uv run --locked python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
+uv run --locked python -m pytest tests/runtime/test_runtime_graph_contract.py -q
 ```
 
 ## Resolve a simulation Product

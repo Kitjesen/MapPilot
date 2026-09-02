@@ -138,7 +138,7 @@ Do not start a Python planner beside `navd`.
 ## 5. Verification
 
 ```bash
-python -m pytest src/runtime/tests/ -q
+python -m pytest tests/runtime/ -q
 export LINGTU_HOST=ROBOT_IP_OR_HOSTNAME
 ssh sunrise@${LINGTU_HOST} 'bash /opt/lingtu/current/scripts/lingtu status'
 ssh sunrise@${LINGTU_HOST} 'curl -fsS http://localhost:5050/api/v1/health'

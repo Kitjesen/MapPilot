@@ -209,9 +209,9 @@ export LINGTU_PYTHON=/ABSOLUTE/PATH/TO/LINGTU_VENV/bin/python
 
 ```bash
 "${LINGTU_PYTHON}" -m pytest -q \
-  src/runtime/tests/test_robot_sensor_mounts.py::test_mid360_contract_keeps_go2_and_thunder_mounts_distinct \
-  src/runtime/tests/test_robot_sensor_mounts.py::test_robot_specific_fastlio_config_reconstructs_its_lidar_mount \
-  src/runtime/tests/test_thunder_deployment_entrypoints.py::test_thunder_traversability_dds_service_runs_cpp_runtime
+  tests/runtime/test_robot_sensor_mounts.py::test_mid360_contract_keeps_go2_and_thunder_mounts_distinct \
+  tests/runtime/test_robot_sensor_mounts.py::test_robot_specific_fastlio_config_reconstructs_its_lidar_mount \
+  tests/runtime/test_thunder_deployment_entrypoints.py::test_thunder_traversability_dds_service_runs_cpp_runtime
 
 bash scripts/lingtu --robot unitree/go2 --env real \
   switch teleop_avoid --dry-run --json

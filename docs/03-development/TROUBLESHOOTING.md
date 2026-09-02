@@ -116,7 +116,7 @@ unrelated services.
 ```bash
 # Replace MAP_NAME with the saved map under investigation.
 python -m lingtu.control switch nav --robot unitree/go2 --env real --map MAP_NAME --dry-run --json
-python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
+python -m pytest tests/runtime/test_runtime_graph_contract.py -q
 python tools/validate/validate_architecture_boundaries.py
 python tools/validate/validate_topics.py
 ```
@@ -367,7 +367,7 @@ a simulation adapter active in `env=real`.
 ```bash
 python -m lingtu.control switch <product> --robot unitree/go2 --env real --dry-run --json
 python -m lingtu.control switch <product> --robot doso/thunder_v4 --env sim --dry-run --json
-python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
+python -m pytest tests/runtime/test_runtime_graph_contract.py -q
 python tools/validate/validate_architecture_boundaries.py
 python tools/validate/validate_topics.py
 curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=<topic-or-channel>"
@@ -392,7 +392,7 @@ describe external topic/schema ownership; normal Module wires stay local.
 ```bash
 uv sync --locked
 uv run --locked python -m lingtu.control --help
-uv run --locked python -m pytest src/runtime/tests/test_runtime.py src/runtime/tests/test_registry.py -q
+uv run --locked python -m pytest tests/runtime/test_runtime.py tests/runtime/test_registry.py -q
 ```
 
 If the native navigation endpoint or OctoPlanner3D runtime is missing, treat

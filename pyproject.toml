@@ -135,7 +135,7 @@ known-first-party = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"src/runtime/tests/*" = ["F811", "E402", "D", "S101"]
+"tests/runtime/*" = ["F811", "E402", "D", "S101"]
 "src/perception/*/test*" = ["F811", "E402", "D"]
 "src/decision/*/test*" = ["F811", "E402", "D"]
 "src/decision/tests/*" = ["S101"]
@@ -146,7 +146,7 @@ known-first-party = [
 "tools/calibration/**" = ["D", "W191", "E731", "F821"]
 "docs/**" = ["E702", "E701"]
 # E501 in test files with embedded shell scripts or \uXXXX docstrings
-"src/runtime/tests/test_deployment_service_contracts.py" = ["E501"]
+"tests/runtime/test_deployment_service_contracts.py" = ["E501"]
 "src/decision/tests/test_fast_slow_benchmark.py" = ["E501"]
 "src/decision/tests/test_fast_slow_efficiency.py" = ["E501"]
 "src/decision/tasking/task_rules.py" = ["E501"]
@@ -168,15 +168,10 @@ testpaths = [
     "tests/contracts",
     "tests/nav",
     "tests/explore",
-    "tests/runtime/messages",
-    "src/runtime/tests",
-    "src/gateway/tests",
+    "tests/runtime",
+    "tests/gateway",
     "tests/drivers",
-    "src/lingtu/tests",
-    "src/lingtu/real/tests",
-    "src/lingtu/sim/tests",
-    "src/lingtu/assembly/tests",
-    "src/lingtu/sdk/tests",
+    "tests/lingtu",
     "src/memory/tests",
     "sim/tests",
     "tools/simstudio/tests",

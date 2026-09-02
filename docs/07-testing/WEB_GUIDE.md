@@ -34,7 +34,7 @@ LingTu 的验证是分层的。通过的检查只证明它实际覆盖的边界�
 
 对于 Module/运行时变更，先运行框架测试集：
 
-    python -m pytest src/runtime/tests/ -q
+    python -m pytest tests/runtime/ -q
 
 **预期结果：** 选定测试在当前 checkout 中通过。失败是源码层阻塞项，不应通过更换 profile 或端点设置来规避。
 

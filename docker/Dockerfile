@@ -98,4 +98,4 @@ FROM runtime AS test
 
 RUN python3 -m pip install --no-cache-dir '.[dev]'
 
-CMD ["python3", "-m", "pytest", "src/runtime/tests/", "-q", "-x"]
+CMD ["python3", "-m", "pytest", "tests/runtime/", "-q", "-x"]

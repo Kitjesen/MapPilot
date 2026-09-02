@@ -210,7 +210,7 @@ from runtime.graph import assert_runtime_graph_valid
 assert_runtime_graph_valid()
 ```
 
-Focused tests live in `src/runtime/tests/test_runtime_graph_contract.py`.
+Focused tests live in `tests/runtime/test_runtime_graph_contract.py`.
 
 Route and DDS binding validation:
 
@@ -220,4 +220,4 @@ from runtime.route_contract import assert_route_contract_valid
 assert_route_contract_valid(route="robot")
 ```
 
-Focused route/DDS tests live in `src/runtime/tests/test_route_contract.py`.
+Focused route/DDS tests live in `tests/runtime/test_route_contract.py`.

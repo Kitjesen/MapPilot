@@ -175,11 +175,11 @@ single-writer, and control-owner gates pass. At minimum verify:
 Useful checks:
 
 ```bash
-uv run --locked python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
+uv run --locked python -m pytest tests/runtime/test_runtime_graph_contract.py -q
 uv run --locked python tools/validate/validate_architecture_boundaries.py
 uv run --locked python tools/validate/validate_topics.py
 uv run --locked python -m pytest tests/contracts/test_runtime_architecture_boundaries.py -q
-uv run --locked python -m pytest src/runtime/tests/test_profile_graph_snapshots.py -q
+uv run --locked python -m pytest tests/runtime/test_profile_graph_snapshots.py -q
 ```
 
 MuJoCo, replay, no-motion target checks, and supervised field motion are

@@ -439,16 +439,16 @@ native walking risk.
 The minimum validation surface is:
 
 ```bash
-python -m pytest src/runtime/tests/ -q
+python -m pytest tests/runtime/ -q
 python -m pytest tests/nav tests/explore tests/runtime/messages -q
-python -m pytest src/gateway/tests/ -q
+python -m pytest tests/gateway/ -q
 ```
 
 Focused checks for this architecture:
 
 ```bash
-python -m pytest src/runtime/tests/test_stack_registry_resolution.py -q
-python -m pytest src/runtime/tests/test_runtime_binding_policy.py -q
+python -m pytest tests/runtime/test_stack_registry_resolution.py -q
+python -m pytest tests/runtime/test_runtime_binding_policy.py -q
 python -m pytest tests/nav tests/explore tests/runtime/messages -q
 ```
 

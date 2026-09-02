@@ -206,7 +206,7 @@ cmake -S src\maps -B build\maps -DLINGTU_MAPS_BUILD_TESTS=ON
 cmake --build build\maps --config Release
 ctest --test-dir build\maps -C Release --output-on-failure
 
-.venv\Scripts\python.exe -m pytest src\runtime\tests\test_mapd_endpoint.py -q
+.venv\Scripts\python.exe -m pytest tests\runtime\test_mapd_endpoint.py -q
 ```
 
 ## Remaining Work

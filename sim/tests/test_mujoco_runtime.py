@@ -11,7 +11,7 @@ import pytest
 
 from drivers.sim.mujoco.driver import MujocoDriverModule
 from runtime.msgs.geometry import Twist, Vector3
-from runtime.tests.numpy_guard import import_numpy_or_skip
+from tests.runtime.numpy_guard import import_numpy_or_skip
 from sim.compat.engine.core.robot import RobotConfig
 
 pytestmark = [pytest.mark.sim]

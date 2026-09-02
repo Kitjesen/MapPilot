@@ -177,7 +177,7 @@ Keep field diagnostics focused on operator acceptance evidence.
 ## Quick Checks
 
 ```bash
-python -m pytest src/runtime/tests/test_runtime.py src/runtime/tests/test_registry.py -q
+python -m pytest tests/runtime/test_runtime.py tests/runtime/test_registry.py -q
 ```
 
 For a broader runtime check, use the targeted tests that match the files you

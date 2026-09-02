@@ -73,7 +73,7 @@ layers:
       - src/maps/
       - src/lingtu/__init__.py
       - src/lingtu/README.md
-      - src/lingtu/tests/
+      - tests/lingtu/
 
   - id: L5_algorithm_kernels
     title: Algorithm Kernels
