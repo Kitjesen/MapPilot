@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2] / "sim"
 PLUGIN = ROOT / "runtime" / "visual" / "RobotSimUE" / "Plugins" / "LingTuSim"
 FRONT_END = PLUGIN / "Resources" / "FrontEnd"
 BUILD_RULES = PLUGIN / "Source" / "LingTuSimUI" / "LingTuSimUI.Build.cs"

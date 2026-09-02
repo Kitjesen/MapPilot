@@ -1039,7 +1039,13 @@ def test_product_preflight_requires_native_mapd_binary(
 def test_direct_script_contract_adds_repo_root_before_runtime_import(
     tmp_path: Path,
 ) -> None:
-    script = Path(__file__).resolve().parents[1] / "scripts" / "mujoco" / "teleop_avoid_native_acceptance.py"
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "sim"
+        / "scripts"
+        / "mujoco"
+        / "teleop_avoid_native_acceptance.py"
+    )
     code = (
         "import importlib, runpy; "
         f"runpy.run_path({str(script)!r}, run_name='teleop_acceptance_import'); "

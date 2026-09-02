@@ -14,7 +14,7 @@ import pytest
 
 from sim.runtime.coordinator.live_snapshot import truth_snapshot_document
 from sim.runtime.replay.visual import _runtime_manifest as replay_runtime_manifest
-from sim.tests.test_sim_plan_schemas import SchemaError, _validate
+from tests.sim.test_sim_plan_schemas import SchemaError, _validate
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_ROOT = REPO_ROOT / "sim" / "contracts" / "schemas"

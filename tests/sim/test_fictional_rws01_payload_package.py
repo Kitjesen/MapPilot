@@ -41,7 +41,7 @@ def _manifest() -> dict:
 
 
 def test_payload_package_is_versioned_fictional_and_simulation_only() -> None:
-    from sim.tests.test_sim_plan_schemas import _validate
+    from tests.sim.test_sim_plan_schemas import _validate
 
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     manifest = _manifest()
@@ -101,7 +101,7 @@ def test_payload_mujoco_proxy_compiles_with_generic_mount_and_articulation_frame
 
 
 def test_payload_visual_projection_uses_the_clean_pbr_runtime_assets() -> None:
-    from sim.tests.test_sim_plan_schemas import _validate
+    from tests.sim.test_sim_plan_schemas import _validate
 
     projection = json.loads(PROJECTION_PATH.read_text(encoding="utf-8"))
     schema = json.loads(PROJECTION_SCHEMA_PATH.read_text(encoding="utf-8"))

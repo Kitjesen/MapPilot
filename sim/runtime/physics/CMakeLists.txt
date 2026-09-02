@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.16)
 
 project(lingtu_mujoco_runtime LANGUAGES CXX)
 
+set(LINGTU_MUJOCO_TESTS_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/sim/physics")
+
 option(LINGTU_MUJOCO_RUNTIME_BUILD_TESTS "Build MuJoCo runtime tests" ON)
 option(LINGTU_MUJOCO_RUNTIME_BUILD_HEADLESS "Build the headless smoke executable" ON)
 option(LINGTU_MUJOCO_RUNTIME_BUILD_CONTRACT_TESTS "Build dependency-free runtime contract tests" ON)
@@ -114,20 +117,20 @@ endif()
 
 if(LINGTU_MUJOCO_SDK_AVAILABLE AND LINGTU_MUJOCO_RUNTIME_BUILD_TESTS)
   add_executable(test_lingtu_mujoco_runtime
-    tests/test_mujoco_runtime.cpp
+    "${LINGTU_MUJOCO_TESTS_DIR}/test_mujoco_runtime.cpp"
   )
   target_link_libraries(test_lingtu_mujoco_runtime PRIVATE lingtu_mujoco_runtime)
   target_compile_definitions(test_lingtu_mujoco_runtime PRIVATE
-    LINGTU_MUJOCO_TEST_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/free_body.xml"
-    LINGTU_MUJOCO_THUNDER_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/../../robots/doso/thunder_v4/mjcf/thunderv4.xml"
-    LINGTU_MUJOCO_OMNI_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/../../robots/omni_cart/omni_cart.xml"
-    LINGTU_MUJOCO_OPEN_FIELD="${CMAKE_CURRENT_SOURCE_DIR}/../../worlds/mujoco/open_field.xml"
-    LINGTU_MUJOCO_SCENE_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/free_body.xml"
-    LINGTU_MUJOCO_ACTUATED_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/actuated_hinge.xml"
-    LINGTU_MUJOCO_SCENE_WORLD="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scene_world.xml"
-    LINGTU_MUJOCO_STATIC_BODY_WORLD="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scene_world_static_body.xml"
-    LINGTU_MUJOCO_MID360_RAYCAST="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mid360_raycast.xml"
-    LINGTU_MUJOCO_ROBOT_GLOBAL_OPTION="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/robot_global_option.xml"
+    LINGTU_MUJOCO_TEST_MODEL="${LINGTU_MUJOCO_TESTS_DIR}/fixtures/free_body.xml"
+    LINGTU_MUJOCO_THUNDER_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/../../packages/robots/doso/thunder_v4/mjcf/thunderv4.xml"
+    LINGTU_MUJOCO_OMNI_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/../../packages/robots/omni_cart/omni_cart.xml"
+    LINGTU_MUJOCO_OPEN_FIELD="${CMAKE_CURRENT_SOURCE_DIR}/../../packages/worlds/open_field/physics/open_field.xml"
+    LINGTU_MUJOCO_SCENE_MODEL="${LINGTU_MUJOCO_TESTS_DIR}/fixtures/free_body.xml"
+    LINGTU_MUJOCO_ACTUATED_MODEL="${LINGTU_MUJOCO_TESTS_DIR}/fixtures/actuated_hinge.xml"
+    LINGTU_MUJOCO_SCENE_WORLD="${LINGTU_MUJOCO_TESTS_DIR}/fixtures/scene_world.xml"
+    LINGTU_MUJOCO_STATIC_BODY_WORLD="${LINGTU_MUJOCO_TESTS_DIR}/fixtures/scene_world_static_body.xml"
+    LINGTU_MUJOCO_MID360_RAYCAST="${LINGTU_MUJOCO_TESTS_DIR}/fixtures/mid360_raycast.xml"
+    LINGTU_MUJOCO_ROBOT_GLOBAL_OPTION="${LINGTU_MUJOCO_TESTS_DIR}/fixtures/robot_global_option.xml"
     LINGTU_MUJOCO_KINEMATIC_PROXY="${CMAKE_CURRENT_SOURCE_DIR}/../../packages/scenarios/open_field_pedestrian_crossing/physics/pedestrian_capsule.xml"
   )
   lingtu_stage_mujoco_runtime(test_lingtu_mujoco_runtime)
@@ -135,12 +138,12 @@ if(LINGTU_MUJOCO_SDK_AVAILABLE AND LINGTU_MUJOCO_RUNTIME_BUILD_TESTS)
   add_test(NAME lingtu_mujoco_runtime COMMAND test_lingtu_mujoco_runtime)
 
   add_executable(test_lingtu_stable_frame_raycast
-    tests/test_stable_frame_raycast.cpp
+    "${LINGTU_MUJOCO_TESTS_DIR}/test_stable_frame_raycast.cpp"
   )
   target_link_libraries(test_lingtu_stable_frame_raycast PRIVATE lingtu_mujoco_runtime)
   target_compile_definitions(test_lingtu_stable_frame_raycast PRIVATE
-    LINGTU_MUJOCO_STABLE_FRAME_RAYCAST="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/stable_frame_raycast.xml"
-    LINGTU_MUJOCO_SCENE_WORLD="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scene_world.xml"
+    LINGTU_MUJOCO_STABLE_FRAME_RAYCAST="${LINGTU_MUJOCO_TESTS_DIR}/fixtures/stable_frame_raycast.xml"
+    LINGTU_MUJOCO_SCENE_WORLD="${LINGTU_MUJOCO_TESTS_DIR}/fixtures/scene_world.xml"
   )
   lingtu_stage_mujoco_runtime(test_lingtu_stable_frame_raycast)
 
@@ -150,7 +153,7 @@ endif()
 if(LINGTU_MUJOCO_RUNTIME_BUILD_CONTRACT_TESTS)
   find_package(Threads REQUIRED)
   add_executable(test_lingtu_runtime_contracts
-    tests/test_runtime_contracts.cpp
+    "${LINGTU_MUJOCO_TESTS_DIR}/test_runtime_contracts.cpp"
   )
   target_include_directories(test_lingtu_runtime_contracts PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"

@@ -6,8 +6,8 @@ with VIEWPOINT header = pose (what dufomap_run expects), runs the binary,
 and reports static vs original point count.
 
 Usage:
-    python3 tools/maps/dufomap_offline_test.py <map_name>
-    python3 tools/maps/dufomap_offline_test.py corrected_20260406_224020
+    python3 tools/maps/dufomap_offline.py <map_name>
+    python3 tools/maps/dufomap_offline.py corrected_20260406_224020
 """
 from __future__ import annotations
 

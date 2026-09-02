@@ -8,10 +8,12 @@ import mujoco
 import numpy as np
 
 MODEL = (
-    Path(__file__).resolve().parents[1]
+    Path(__file__).resolve().parents[2]
+    / "sim"
     / "packages"
     / "robots"
-    / "thunderv4"
+    / "doso"
+    / "thunder_v4"
     / "mjcf"
     / "thunderv4.xml"
 )

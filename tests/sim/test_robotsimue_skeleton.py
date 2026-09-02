@@ -5,7 +5,7 @@ import re
 import subprocess
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2] / "sim"
 PROJECT = ROOT / "runtime" / "visual" / "RobotSimUE"
 PLUGIN = PROJECT / "Plugins" / "LingTuSim"
 TRIPO_PLUGIN = PROJECT / "Plugins" / "Tripo3DUEBridge"

@@ -1,6 +1,6 @@
 # Simulation Tests
 
-`sim/tests/` contains simulation unit, contract, integration, packaging, and
+`tests/sim/` contains simulation unit, contract, integration, packaging, and
 acceptance regressions in one flat pytest suite.
 
 ## Contents
@@ -18,7 +18,7 @@ acceptance regressions in one flat pytest suite.
 ## Entry points
 
 ```powershell
-python -m pytest sim/tests/test_sim_layout_contract.py -q
+python -m pytest tests/sim/test_sim_layout_contract.py -q
 ```
 
 ## Boundary

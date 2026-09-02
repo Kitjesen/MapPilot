@@ -928,7 +928,7 @@ void testUnsafePublicIdentityIsRejected() {
 
 void servePythonCompatibilityClient(const std::filesystem::path &directory) {
   const auto readinessPath = directory / "python.ready.json";
-  const std::string product_session_id(64, '7');
+  const std::string product_session_id(63, '7');
   LocalEndpointServer server(
       ServerConfig{"driver_bridge", "line-v1", product_session_id, readinessPath, "python.auth"});
   server.start();

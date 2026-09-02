@@ -8,8 +8,8 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-SIM_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = SIM_ROOT.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SIM_ROOT = REPO_ROOT / "sim"
 ASSET_ROOT = SIM_ROOT / "packages" / "robots" / "doso" / "thunder_v4"
 MJCF_ROOT = ASSET_ROOT / "mjcf"
 

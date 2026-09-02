@@ -29,6 +29,7 @@ function(lingtu_mujoco_bundle_cyclonedds target)
 endfunction()
 
 get_filename_component(LINGTU_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+set(_LINGTU_MUJOCO_TESTS_DIR "${LINGTU_ROOT}/tests/sim/adapters/dds")
 set(_LINGTU_REAL_DRIVER_DIR
   "${LINGTU_ROOT}/src/drivers/real/motion")
 
@@ -96,7 +97,7 @@ if(BUILD_TESTING)
   find_package(Threads REQUIRED)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   add_executable(test_run_plan_process_environment
-    test_run_plan_process_environment.cpp)
+    "${_LINGTU_MUJOCO_TESTS_DIR}/test_run_plan_process_environment.cpp")
   target_include_directories(test_run_plan_process_environment PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}")
   target_compile_options(test_run_plan_process_environment PRIVATE
@@ -109,7 +110,7 @@ if(BUILD_TESTING)
   set_tests_properties(test_run_plan_process_environment PROPERTIES TIMEOUT 10)
 
   add_executable(test_local_endpoint_server
-    test_local_endpoint_server.cpp)
+    "${_LINGTU_MUJOCO_TESTS_DIR}/test_local_endpoint_server.cpp")
   target_link_libraries(test_local_endpoint_server PRIVATE
     lingtu_local_endpoint_server
     Threads::Threads)
@@ -137,14 +138,14 @@ repository = Path(sys.argv[2])
 sys.path.insert(0, str(repository / "src"))
 sys.path.insert(0, str(repository))
 
-from lingtu.local_secret import read_local_secret
 from sim.scripts.mujoco.native_runtime_endpoint import (
     _connect_authenticated,
+    _load_auth_key,
     load_local_endpoint,
 )
 
 
-product_session_id = "cpp-endpoint-session"
+product_session_id = "7" * 63
 with tempfile.TemporaryDirectory(prefix="lingtu-cpp-endpoint-") as temporary:
     directory = Path(temporary).resolve()
     readiness = directory / "python.ready.json"
@@ -164,7 +165,7 @@ with tempfile.TemporaryDirectory(prefix="lingtu-cpp-endpoint-") as temporary:
             product_session_id=product_session_id,
         )
         assert endpoint.host == "127.0.0.1"
-        assert len(read_local_secret(endpoint.auth_file)) == 32
+        assert len(_load_auth_key(endpoint.auth_file)) == 32
         connection, _ = _connect_authenticated(
             readiness,
             role="driver_bridge",
@@ -199,7 +200,7 @@ with tempfile.TemporaryDirectory(prefix="lingtu-cpp-endpoint-") as temporary:
   endif()
 
   add_executable(test_mujoco_driver_bridge_core
-    test_mujoco_driver_bridge_core.cpp)
+    "${_LINGTU_MUJOCO_TESTS_DIR}/test_mujoco_driver_bridge_core.cpp")
   target_link_libraries(test_mujoco_driver_bridge_core PRIVATE
     lingtu_mujoco_driver_bridge_core)
   target_compile_options(test_mujoco_driver_bridge_core PRIVATE
@@ -209,7 +210,7 @@ with tempfile.TemporaryDirectory(prefix="lingtu-cpp-endpoint-") as temporary:
     COMMAND test_mujoco_driver_bridge_core)
 
   add_executable(test_sensor_record_protocol
-    test_sensor_record_protocol.cpp)
+    "${_LINGTU_MUJOCO_TESTS_DIR}/test_sensor_record_protocol.cpp")
   target_link_libraries(test_sensor_record_protocol PRIVATE
     lingtu_mujoco_sensor_record_protocol)
   target_compile_options(test_sensor_record_protocol PRIVATE
@@ -219,7 +220,7 @@ with tempfile.TemporaryDirectory(prefix="lingtu-cpp-endpoint-") as temporary:
     COMMAND test_sensor_record_protocol)
 
   add_executable(test_navigation_fixture_observation
-    test_navigation_fixture_observation.cpp)
+    "${_LINGTU_MUJOCO_TESTS_DIR}/test_navigation_fixture_observation.cpp")
   target_include_directories(test_navigation_fixture_observation PRIVATE
     "${LINGTU_ROOT}/src/drivers/real/lidar")
   target_compile_options(test_navigation_fixture_observation PRIVATE
@@ -229,7 +230,7 @@ with tempfile.TemporaryDirectory(prefix="lingtu-cpp-endpoint-") as temporary:
     COMMAND test_navigation_fixture_observation)
 
   add_executable(test_truth_odom_protocol
-    test_truth_odom_protocol.cpp)
+    "${_LINGTU_MUJOCO_TESTS_DIR}/test_truth_odom_protocol.cpp")
   target_link_libraries(test_truth_odom_protocol PRIVATE
     lingtu_truth_odom_protocol)
   target_compile_options(test_truth_odom_protocol PRIVATE
@@ -239,7 +240,7 @@ with tempfile.TemporaryDirectory(prefix="lingtu-cpp-endpoint-") as temporary:
     COMMAND test_truth_odom_protocol)
 
   add_executable(test_imu_protocol
-    test_imu_protocol.cpp)
+    "${_LINGTU_MUJOCO_TESTS_DIR}/test_imu_protocol.cpp")
   target_link_libraries(test_imu_protocol PRIVATE lingtu_sim_imu_protocol)
   target_compile_options(test_imu_protocol PRIVATE
     ${_LINGTU_MUJOCO_WARNINGS})
@@ -407,7 +408,7 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
     endif()
 
     add_executable(test_mujoco_dds_loopback
-      test_mujoco_dds_loopback.cpp)
+      "${_LINGTU_MUJOCO_TESTS_DIR}/test_mujoco_dds_loopback.cpp")
     target_include_directories(test_mujoco_dds_loopback PRIVATE
       "${LINGTU_ROOT}/src")
     target_link_libraries(test_mujoco_dds_loopback PRIVATE
@@ -432,7 +433,7 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
     endif()
 
     add_executable(test_truth_odom_publisher_dds_process
-      test_truth_odom_publisher_dds_process.cpp)
+      "${_LINGTU_MUJOCO_TESTS_DIR}/test_truth_odom_publisher_dds_process.cpp")
     target_include_directories(test_truth_odom_publisher_dds_process PRIVATE
       "${LINGTU_ROOT}/src")
     target_link_libraries(test_truth_odom_publisher_dds_process PRIVATE
@@ -464,7 +465,7 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
     endif()
 
     add_executable(test_imu_publisher_dds_process
-      test_imu_publisher_dds_process.cpp)
+      "${_LINGTU_MUJOCO_TESTS_DIR}/test_imu_publisher_dds_process.cpp")
     target_include_directories(test_imu_publisher_dds_process PRIVATE
       "${LINGTU_ROOT}/src")
     target_link_libraries(test_imu_publisher_dds_process PRIVATE
@@ -491,7 +492,7 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
     endif()
 
     add_executable(test_sensor_publisher_dds_process
-      test_sensor_publisher_dds_process.cpp)
+      "${_LINGTU_MUJOCO_TESTS_DIR}/test_sensor_publisher_dds_process.cpp")
     target_include_directories(test_sensor_publisher_dds_process PRIVATE
       "${LINGTU_ROOT}/src"
       "${LINGTU_ROOT}/src/drivers/real/lidar")
@@ -526,7 +527,7 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
         NAME test_sensor_publisher_endpoint_process
         COMMAND
           "${Python3_EXECUTABLE}"
-          "${CMAKE_CURRENT_SOURCE_DIR}/test_sensor_publisher_endpoint_process.py"
+          "${_LINGTU_MUJOCO_TESTS_DIR}/test_sensor_publisher_endpoint_process.py"
           $<TARGET_FILE:lingtu_mujoco_sensor_publisher>
           $<TARGET_FILE:test_sensor_publisher_dds_process>
           "${LINGTU_ROOT}")
@@ -559,7 +560,7 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
         NAME test_sensor_topic_rate_probe
         COMMAND
           "${Python3_EXECUTABLE}"
-          "${CMAKE_CURRENT_SOURCE_DIR}/test_sensor_topic_rate_probe.py"
+          "${_LINGTU_MUJOCO_TESTS_DIR}/test_sensor_topic_rate_probe.py"
           $<TARGET_FILE:lingtu_mujoco_sensor_publisher>
           $<TARGET_FILE:sensor_topic_rate_probe>
           "${LINGTU_ROOT}")
@@ -574,7 +575,7 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
         NAME test_sensor_topic_rate_qualification
         COMMAND
           "${Python3_EXECUTABLE}"
-          "${CMAKE_CURRENT_SOURCE_DIR}/test_sensor_topic_rate_probe.py"
+          "${_LINGTU_MUJOCO_TESTS_DIR}/test_sensor_topic_rate_probe.py"
           $<TARGET_FILE:lingtu_mujoco_sensor_publisher>
           $<TARGET_FILE:sensor_topic_rate_probe>
           "${LINGTU_ROOT}")
@@ -589,7 +590,7 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
         NAME test_sensor_camera_payload_rate
         COMMAND
           "${Python3_EXECUTABLE}"
-          "${CMAKE_CURRENT_SOURCE_DIR}/test_sensor_topic_rate_probe.py"
+          "${_LINGTU_MUJOCO_TESTS_DIR}/test_sensor_topic_rate_probe.py"
           $<TARGET_FILE:lingtu_mujoco_sensor_publisher>
           $<TARGET_FILE:sensor_topic_rate_probe>
           "${LINGTU_ROOT}"
@@ -610,7 +611,7 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
     endif()
 
     add_executable(test_cmd_vel_tap_dds_process
-      test_cmd_vel_tap_dds_process.cpp)
+      "${_LINGTU_MUJOCO_TESTS_DIR}/test_cmd_vel_tap_dds_process.cpp")
     target_include_directories(test_cmd_vel_tap_dds_process PRIVATE
       "${LINGTU_ROOT}/src")
     target_link_libraries(test_cmd_vel_tap_dds_process PRIVATE
@@ -639,7 +640,7 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
     endif()
 
     add_executable(test_mujoco_driver_bridge_dds_process
-      test_mujoco_driver_bridge_dds_process.cpp)
+      "${_LINGTU_MUJOCO_TESTS_DIR}/test_mujoco_driver_bridge_dds_process.cpp")
     target_include_directories(test_mujoco_driver_bridge_dds_process PRIVATE
       "${LINGTU_ROOT}/src")
     target_link_libraries(test_mujoco_driver_bridge_dds_process PRIVATE
@@ -673,7 +674,7 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
         NAME test_mujoco_driver_bridge_endpoint_process
         COMMAND
           "${Python3_EXECUTABLE}"
-          "${CMAKE_CURRENT_SOURCE_DIR}/test_mujoco_driver_bridge_endpoint_process.py"
+          "${_LINGTU_MUJOCO_TESTS_DIR}/test_mujoco_driver_bridge_endpoint_process.py"
           $<TARGET_FILE:lingtu_mujoco_driver_bridge>
           $<TARGET_FILE:test_mujoco_driver_bridge_dds_process>
           "${LINGTU_ROOT}")

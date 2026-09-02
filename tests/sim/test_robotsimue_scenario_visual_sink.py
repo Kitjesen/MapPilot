@@ -7,7 +7,7 @@ from pathlib import Path
 
 from sim.runtime.qualification import production as production_qualification
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2] / "sim"
 PLUGIN_SOURCE = (
     ROOT
     / "runtime"

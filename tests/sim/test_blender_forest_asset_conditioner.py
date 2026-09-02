@@ -79,7 +79,7 @@ def test_visual_only_guard_fails_closed(path: tuple[str, ...], value: object) ->
 
 def test_script_contract_never_authors_collision_geometry() -> None:
     source = (
-        Path(__file__).parents[1]
+        Path(__file__).parents[2] / "sim"
         / "tools"
         / "assets"
         / "blender_forest_asset_conditioner.py"
@@ -95,7 +95,7 @@ def test_script_contract_never_authors_collision_geometry() -> None:
 
 def test_script_uses_exact_axis_fit_and_grounding() -> None:
     source = (
-        Path(__file__).parents[1]
+        Path(__file__).parents[2] / "sim"
         / "tools"
         / "assets"
         / "blender_forest_asset_conditioner.py"

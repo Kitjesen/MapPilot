@@ -5,7 +5,8 @@ from pathlib import Path
 # ruff: noqa: S101
 
 _SENSORS = (
-    Path(__file__).resolve().parents[1]
+    Path(__file__).resolve().parents[2]
+    / "sim"
     / "runtime"
     / "visual"
     / "RobotSimUE"

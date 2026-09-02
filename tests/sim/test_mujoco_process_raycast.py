@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
@@ -74,7 +73,7 @@ def _plan() -> PhysicsPlan:
         model_generation=11,
         reset_generation=0,
         repo_root=REPO_ROOT,
-        world_model_path=REPO_ROOT / "sim/runtime/physics/tests/fixtures/mid360_raycast.xml",
+        world_model_path=REPO_ROOT / "tests/sim/physics/fixtures/mid360_raycast.xml",
         global_policy=PhysicsGlobalPolicy(
             timestep_s=0.002,
             integrator="rk4",
@@ -85,7 +84,7 @@ def _plan() -> PhysicsPlan:
         robots=(
             PhysicsRobotPlan(
                 instance_id="robot",
-                model_path=REPO_ROOT / "sim/runtime/physics/tests/fixtures/free_body.xml",
+                model_path=REPO_ROOT / "tests/sim/physics/fixtures/free_body.xml",
                 attach_root="test_body",
                 initial_keyframe=None,
                 position_m=(2.0, 0.0, 1.0),
@@ -261,11 +260,9 @@ def test_mujoco_process_rejects_raycast_sequence_mismatch(
         )
 
 
-def test_mujoco_process_mid360_raycast_e2e() -> None:
+def test_mujoco_process_mid360_raycast_e2e(tmp_path: Path) -> None:
     process = MujocoProcess(_require_headless(), timeout_s=10.0)
-    temp_dir = REPO_ROOT / "sim/tests/_tmp_mujoco_raycast"
-    if temp_dir.exists():
-        shutil.rmtree(temp_dir)
+    temp_dir = tmp_path / "mujoco_raycast"
     try:
         ready = process.prepare(_plan(), _allocation(temp_dir))
         assert ready["event"] == "ready"
@@ -332,5 +329,3 @@ def test_mujoco_process_mid360_raycast_e2e() -> None:
         assert refreshed["hit_count"] == 1
     finally:
         process.stop()
-        if temp_dir.exists():
-            shutil.rmtree(temp_dir)

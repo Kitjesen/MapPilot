@@ -13,7 +13,7 @@ import yaml
 
 from sim.catalog.resolver import CatalogResolver
 from sim.catalog.importers import CatalogPromoter, ImportFailure, WorldImporter
-from sim.tests.test_world_importer import _request, _source_tree
+from tests.sim.test_world_importer import _request, _source_tree
 
 
 def _copy_resolvable_robot_fixture(repo_root: Path) -> None:

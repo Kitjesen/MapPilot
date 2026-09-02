@@ -560,7 +560,7 @@ def test_independent_process_publish_race_never_replaces_the_winner(
     result_paths = [barrier_root / f"result-{index}.json" for index in range(len(sources))]
     worker_code = (
         "import sys\n"
-        "from sim.tests.test_import_promotion import _publish_race_worker\n"
+        "from tests.sim.test_import_promotion import _publish_race_worker\n"
         "_publish_race_worker(*sys.argv[1:])\n"
     )
     processes = [

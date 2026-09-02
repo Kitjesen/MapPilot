@@ -1,4 +1,4 @@
-"""conftest.py for sim/tests/ -- add repo and src paths to sys.path."""
+"""Shared compatibility setup for simulation tests."""
 
 import asyncio
 import os

@@ -233,7 +233,7 @@ def test_projects_catalog_packages_and_quarantined_candidates_without_promotion(
 
 
 def test_asset_library_has_a_versioned_schema(tmp_path: Path) -> None:
-    from sim.tests.test_sim_plan_schemas import _validate
+    from tests.sim.test_sim_plan_schemas import _validate
 
     library = build_ue_asset_library(
         _catalog(),

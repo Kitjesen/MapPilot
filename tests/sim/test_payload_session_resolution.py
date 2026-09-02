@@ -128,7 +128,7 @@ def test_payload_instance_ids_are_session_unique(tmp_path: Path) -> None:
 
 
 def test_payload_v2_artifacts_satisfy_their_strict_schemas() -> None:
-    from sim.tests.test_sim_plan_schemas import _validate
+    from tests.sim.test_sim_plan_schemas import _validate
 
     resolved = _resolver().resolve(SESSION)
     for filename, document in (
