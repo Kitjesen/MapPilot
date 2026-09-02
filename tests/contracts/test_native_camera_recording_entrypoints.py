@@ -121,15 +121,13 @@ def test_camera_depth_is_not_misrepresented_as_lossy_video() -> None:
 
 def test_native_release_carries_the_camera_runtime_used_by_systemd() -> None:
     package = _read(ROOT / "scripts" / "deploy" / "package_native_release.sh")
-    service = _read(ROOT / "scripts" / "deploy" / "thunder" / "lt-camera.service")
+    runner = _read(ROOT / "scripts" / "deploy" / "thunder" / "run_camera_dds.sh")
 
-    for relative in (
-        "build/camera_dds/lingtu_camera_dds",
-        "build/orbbec_native/orbbec_capture",
-    ):
-        assert relative in package
-        assert f"/opt/lingtu/current/{relative}" in service
-    assert 'ORBBEC_RUNTIME_SOURCE="${ROOT}/build/orbbec_native/lib"' in package
+    assert "${LINGTU_REPO}/bin/lingtu_camera_dds" in runner
+    assert "${LINGTU_REPO}/bin/orbbec_capture" in runner
+    assert '"${ROOT}/build/orbbec_native/orbbec_capture"' in package
+    assert '"${INSTALL_PREFIX}/bin/orbbec_capture"' in package
     assert "libOrbbecSDK.so" in package
     assert "extensions/depthengine" in package
-    assert 'rsync -aL "${ORBBEC_RUNTIME_SOURCE}/" "${ORBBEC_RUNTIME_DIR}/"' in package
+    assert '"${ROOT}/build/orbbec_native/lib/"' in package
+    assert '"${INSTALL_PREFIX}/lib/"' in package

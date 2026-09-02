@@ -11,6 +11,30 @@ MODE="${1:-field-cpp}"
 source "${SCRIPT_DIR}/../python-runtime.sh"
 PYTHON_BIN="$(resolve_lingtu_python)"
 export LINGTU_PYTHON="${PYTHON_BIN}"
+CURRENT_RELEASE="${LINGTU_CURRENT_LINK:-/opt/lingtu/current}"
+
+require_dual_release_layout() {
+    if [ ! -e "${CURRENT_RELEASE}" ] && [ ! -L "${CURRENT_RELEASE}" ]; then
+        echo "Refusing to install canonical systemd units: ${CURRENT_RELEASE} is missing." >&2
+        echo "Install and activate a dual-layout release before switching systemd to canonical paths." >&2
+        return 2
+    fi
+
+    local relative
+    for relative in \
+        bin/navd \
+        lib/liblingtu_nav_client.so \
+        etc/lingtu \
+        share/lingtu \
+        build/nav_endpoint/navd \
+        build/nav_endpoint/liblingtu_nav_client.so; do
+        if [ ! -e "${CURRENT_RELEASE}/${relative}" ]; then
+            echo "Refusing to install canonical systemd units: ${CURRENT_RELEASE}/${relative} is missing." >&2
+            echo "Install and activate a dual-layout release before switching systemd to canonical paths." >&2
+            return 2
+        fi
+    done
+}
 
 catalog_services_for_mode() {
     local mode="$1"
@@ -47,11 +71,19 @@ run_catalog_services() {
     done
 }
 
-if service_text="$(catalog_services_for_mode "${MODE}")"; then
-    run_catalog_services "${service_text}"
-    exit 0
-fi
+main() {
+    local service_text
+    if service_text="$(catalog_services_for_mode "${MODE}")"; then
+        require_dual_release_layout
+        run_catalog_services "${service_text}"
+        return
+    fi
 
-echo "Unknown Thunder service install mode: ${MODE}" >&2
-usage
-exit 2
+    echo "Unknown Thunder service install mode: ${MODE}" >&2
+    usage
+    return 2
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

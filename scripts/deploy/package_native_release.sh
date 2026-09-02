@@ -700,6 +700,10 @@ case "${ARCH_RAW}" in
 esac
 
 PLATFORM="${LINGTU_NATIVE_RELEASE_PLATFORM:-linux}"
+if [[ "${PLATFORM}" != linux ]]; then
+  echo "Native OTA packaging supports Linux only; use CMake install for ${PLATFORM}." >&2
+  exit 2
+fi
 BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}"
 INSTALL_PREFIX="${LINGTU_NATIVE_RELEASE_INSTALL_SOURCE:-${ROOT}/install/${PLATFORM}-${ARCH}/${BUILD_TYPE}}"
 

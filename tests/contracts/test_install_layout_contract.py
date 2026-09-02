@@ -1,5 +1,6 @@
 # ruff: noqa: D103, S101
 
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -47,7 +48,7 @@ def test_native_release_uses_canonical_install_tree_with_phase_one_compat() -> N
     assert 'CURRENT_RELEASE="${LINGTU_CURRENT_LINK:-/opt/lingtu/current}"' in (
         service_installer
     )
-    assert "Install a dual-layout release before switching systemd" in (
+    assert "Install and activate a dual-layout release before switching systemd" in (
         service_installer
     )
     for sentinel in (
@@ -55,8 +56,53 @@ def test_native_release_uses_canonical_install_tree_with_phase_one_compat() -> N
         "lib/liblingtu_nav_client.so",
         "etc/lingtu",
         "share/lingtu",
+        "build/nav_endpoint/navd",
+        "build/nav_endpoint/liblingtu_nav_client.so",
     ):
         assert sentinel in service_installer
+
+
+def test_service_installer_accepts_only_a_dual_layout_release() -> None:
+    command = r"""
+source scripts/deploy/thunder/install_services.sh
+test_root="$(mktemp -d)"
+trap 'rm -rf -- "${test_root}"' EXIT
+
+make_canonical() {
+    mkdir -p "$1/bin" "$1/lib" "$1/etc/lingtu" "$1/share/lingtu"
+    : > "$1/bin/navd"
+    : > "$1/lib/liblingtu_nav_client.so"
+}
+make_legacy() {
+    mkdir -p "$1/build/nav_endpoint"
+    : > "$1/build/nav_endpoint/navd"
+    : > "$1/build/nav_endpoint/liblingtu_nav_client.so"
+}
+expect_rejected() {
+    CURRENT_RELEASE="$1"
+    if require_dual_release_layout >/dev/null 2>&1; then
+        return 1
+    fi
+}
+
+expect_rejected "${test_root}/missing"
+make_canonical "${test_root}/canonical"
+expect_rejected "${test_root}/canonical"
+make_legacy "${test_root}/legacy"
+expect_rejected "${test_root}/legacy"
+make_canonical "${test_root}/dual"
+make_legacy "${test_root}/dual"
+CURRENT_RELEASE="${test_root}/dual"
+    require_dual_release_layout
+    """
+    completed = subprocess.run(
+        ["bash"],  # noqa: S607 - repository-owned Bash contract
+        cwd=ROOT,
+        input=command.encode(),
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr.decode(errors="replace")
 
 
 def test_native_release_owners_install_only_published_executables() -> None:
