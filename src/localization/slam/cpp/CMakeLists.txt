@@ -70,37 +70,46 @@ endif()
 
 if(LINGTU_SLAM_BUILD_TESTS)
   enable_testing()
-  add_executable(test_slam_contract test_slam.cpp)
+  set(LINGTU_SLAM_TESTS_DIR
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../../../tests/localization/cpp/slam")
+  add_executable(test_slam_contract "${LINGTU_SLAM_TESTS_DIR}/test_slam.cpp")
   target_link_libraries(test_slam_contract PRIVATE messages_contract)
   add_test(NAME messages_contract COMMAND test_slam_contract)
-  add_executable(test_relocalization_gate test_relocalization_gate.cpp)
+  add_executable(test_relocalization_gate
+    "${LINGTU_SLAM_TESTS_DIR}/test_relocalization_gate.cpp")
   target_link_libraries(test_relocalization_gate PRIVATE messages_contract)
   add_test(
     NAME messages_relocalization_gate
     COMMAND test_relocalization_gate)
-  add_executable(test_map_tracking_health test_map_tracking_health.cpp)
+  add_executable(test_map_tracking_health
+    "${LINGTU_SLAM_TESTS_DIR}/test_map_tracking_health.cpp")
   target_link_libraries(test_map_tracking_health PRIVATE messages_contract)
   add_test(NAME messages_map_tracking_health COMMAND test_map_tracking_health)
-  add_executable(test_imu_frame_contract test_imu_frame_contract.cpp)
+  add_executable(test_imu_frame_contract
+    "${LINGTU_SLAM_TESTS_DIR}/test_imu_frame_contract.cpp")
   target_link_libraries(test_imu_frame_contract PRIVATE messages_contract)
   add_test(NAME messages_imu_frame_contract COMMAND test_imu_frame_contract)
   if(LINGTU_SLAM_FASTLIO2_BACKEND)
-    add_executable(test_semantic_map_loading tests/test_semantic_map_loading.cpp)
+    add_executable(test_semantic_map_loading
+      "${LINGTU_SLAM_TESTS_DIR}/test_semantic_map_loading.cpp")
     target_include_directories(test_semantic_map_loading PRIVATE
       "${CMAKE_CURRENT_SOURCE_DIR}/../../../maps/include")
     target_link_libraries(test_semantic_map_loading PRIVATE messages_contract)
     add_test(NAME messages_semantic_map_loading COMMAND test_semantic_map_loading)
-    add_executable(test_ikd_tree_concurrency test_ikd_tree_concurrency.cpp)
+    add_executable(test_ikd_tree_concurrency
+      "${LINGTU_SLAM_TESTS_DIR}/test_ikd_tree_concurrency.cpp")
     target_link_libraries(test_ikd_tree_concurrency PRIVATE fastlio2_core)
     add_test(NAME messages_ikd_tree_concurrency COMMAND test_ikd_tree_concurrency)
     set_tests_properties(messages_ikd_tree_concurrency PROPERTIES TIMEOUT 30)
-    add_executable(test_ieskf_initialization test_ieskf_initialization.cpp)
+    add_executable(test_ieskf_initialization
+      "${LINGTU_SLAM_TESTS_DIR}/test_ieskf_initialization.cpp")
     target_include_directories(test_ieskf_initialization PRIVATE
       "${FASTLIO2_DIR}/src"
       "${FASTLIO2_DIR}/src/map_builder")
     target_link_libraries(test_ieskf_initialization PRIVATE messages_contract)
     add_test(NAME messages_ieskf_initialization COMMAND test_ieskf_initialization)
-    add_executable(test_ieskf_update_diagnostics test_ieskf_update_diagnostics.cpp)
+    add_executable(test_ieskf_update_diagnostics
+      "${LINGTU_SLAM_TESTS_DIR}/test_ieskf_update_diagnostics.cpp")
     target_include_directories(test_ieskf_update_diagnostics PRIVATE
       "${FASTLIO2_DIR}/src"
       "${FASTLIO2_DIR}/src/map_builder")
@@ -108,16 +117,20 @@ if(LINGTU_SLAM_BUILD_TESTS)
     add_test(
       NAME messages_ieskf_update_diagnostics
       COMMAND test_ieskf_update_diagnostics)
-    add_executable(test_fastlio2_mock_flow test_fastlio2_mock_flow.cpp)
+    add_executable(test_fastlio2_mock_flow
+      "${LINGTU_SLAM_TESTS_DIR}/test_fastlio2_mock_flow.cpp")
     target_link_libraries(test_fastlio2_mock_flow PRIVATE messages_contract)
     add_test(NAME messages_fastlio2_mock_flow COMMAND test_fastlio2_mock_flow)
-    add_executable(test_initial_body_origin test_initial_body_origin.cpp)
+    add_executable(test_initial_body_origin
+      "${LINGTU_SLAM_TESTS_DIR}/test_initial_body_origin.cpp")
     target_link_libraries(test_initial_body_origin PRIVATE messages_contract)
     add_test(NAME messages_initial_body_origin COMMAND test_initial_body_origin)
-    add_executable(test_icp_diagnostics test_icp_diagnostics.cpp)
+    add_executable(test_icp_diagnostics
+      "${LINGTU_SLAM_TESTS_DIR}/test_icp_diagnostics.cpp")
     target_link_libraries(test_icp_diagnostics PRIVATE localizer)
     add_test(NAME messages_icp_diagnostics COMMAND test_icp_diagnostics)
-    add_executable(test_imu_acceleration_scale test_imu_acceleration_scale.cpp)
+    add_executable(test_imu_acceleration_scale
+      "${LINGTU_SLAM_TESTS_DIR}/test_imu_acceleration_scale.cpp")
     target_link_libraries(test_imu_acceleration_scale PRIVATE
       fastlio2_core
       ${LINGTU_YAML_CPP_TARGET})

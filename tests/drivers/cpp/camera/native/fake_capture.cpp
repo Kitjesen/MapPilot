@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <iostream>
 
-#include "../camera_record.hpp"
+#include "camera_record.hpp"
 
 namespace {
 

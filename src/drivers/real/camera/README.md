@@ -99,12 +99,14 @@ python -m pytest tests/drivers/test_camera_shm.py \
   tests/drivers/test_orbbec_camera_module.py -q
 
 g++ -std=c++17 -Wall -Wextra -Wpedantic -O2 \
-  src/drivers/real/camera/native/tests/test_shm_frame_ring.cpp \
+  -I src/drivers/real/camera/native \
+  tests/drivers/cpp/camera/native/test_shm_frame_ring.cpp \
   -o /tmp/test_camera_shm
 /tmp/test_camera_shm
 ```
 
-`native/tests/fake_capture.cpp` and `verify_shm_cross_language.py` exercise the
+`tests/drivers/cpp/camera/native/fake_capture.cpp` and
+`tests/drivers/cpp/camera/native/verify_shm_cross_language.py` exercise the
 actual C++ camera service and Python mmap reader against the same binary layout.
 
 ## Integration boundary

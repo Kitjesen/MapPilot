@@ -15,6 +15,7 @@ if(LINGTU_RECORDING_BUILD_TESTS)
 endif()
 
 set(LINGTU_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
+set(LINGTU_RECORDING_TESTS_DIR "${LINGTU_ROOT}/tests/native/recording")
 
 add_library(lingtu_recording_core STATIC
   src/camera_recording.cpp
@@ -92,23 +93,24 @@ if(LINGTU_RECORDING_BUILD_DDS)
     LINGTU_RECORDING_DEFAULT_IDL="${LINGTU_ROOT}/src/message/idl/messages.idl")
 
   if(LINGTU_RECORDING_BUILD_TESTS)
-    add_executable(test_cyclone_cdr tests/test_cyclone_cdr.cpp)
+    add_executable(test_cyclone_cdr "${LINGTU_RECORDING_TESTS_DIR}/test_cyclone_cdr.cpp")
     target_link_libraries(test_cyclone_cdr PRIVATE lingtu_recording_dds)
     add_test(NAME native_recording_cyclone_cdr COMMAND test_cyclone_cdr)
 
-    add_executable(test_inspection_timeline_cdr tests/test_inspection_timeline_cdr.cpp)
+    add_executable(test_inspection_timeline_cdr
+      "${LINGTU_RECORDING_TESTS_DIR}/test_inspection_timeline_cdr.cpp")
     target_link_libraries(test_inspection_timeline_cdr PRIVATE lingtu_recording_dds)
     add_test(NAME native_recording_inspection_timeline_cdr
              COMMAND test_inspection_timeline_cdr)
 
-    add_executable(test_imu_publisher tests/test_imu_publisher.cpp)
+    add_executable(test_imu_publisher "${LINGTU_RECORDING_TESTS_DIR}/test_imu_publisher.cpp")
     target_link_libraries(test_imu_publisher PRIVATE lingtu_recording_dds)
 
-    add_executable(test_imu_subscriber tests/test_imu_subscriber.cpp)
+    add_executable(test_imu_subscriber "${LINGTU_RECORDING_TESTS_DIR}/test_imu_subscriber.cpp")
     target_link_libraries(test_imu_subscriber PRIVATE lingtu_recording_dds)
     add_test(
       NAME native_recording_cli_flow
-      COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cli_flow.sh"
+      COMMAND bash "${LINGTU_RECORDING_TESTS_DIR}/test_cli_flow.sh"
         "$<TARGET_FILE:lingtu_dds_recorder>"
         "$<TARGET_FILE:lingtu_dds_player>"
         "$<TARGET_FILE:test_imu_publisher>"
@@ -141,10 +143,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         --camera on
         --dry-run)
 
-    add_executable(test_recording_worker tests/test_recording_worker.cpp)
+    add_executable(test_recording_worker
+      "${LINGTU_RECORDING_TESTS_DIR}/test_recording_worker.cpp")
     add_test(
       NAME native_recorder_control_flow
-      COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_recorder_control.sh"
+      COMMAND bash "${LINGTU_RECORDING_TESTS_DIR}/test_recorder_control.sh"
         "$<TARGET_FILE:lingtu_recorder>"
         "$<TARGET_FILE:test_recording_worker>")
     set_tests_properties(native_recorder_control_flow PROPERTIES TIMEOUT 20)
@@ -156,7 +159,7 @@ if(LINGTU_RECORDING_BUILD_TESTS)
   if(TARGET lingtu_camera_recorder)
     add_test(NAME native_camera_recorder_help COMMAND lingtu_camera_recorder --help)
 
-    add_executable(test_camera_linux tests/test_camera_linux.cpp)
+    add_executable(test_camera_linux "${LINGTU_RECORDING_TESTS_DIR}/test_camera_linux.cpp")
     target_include_directories(test_camera_linux PRIVATE "${LINGTU_ROOT}/src")
     target_link_libraries(test_camera_linux PRIVATE lingtu_recording_camera_linux)
     add_test(NAME native_camera_linux COMMAND test_camera_linux)
@@ -166,7 +169,8 @@ if(LINGTU_RECORDING_BUILD_TESTS)
     # prove that the supported software default can encode and decode a real MKV.
     find_program(LINGTU_RECORDING_FFMPEG_EXECUTABLE NAMES ffmpeg)
     if(LINGTU_RECORDING_FFMPEG_EXECUTABLE)
-      add_executable(test_camera_ffmpeg_software tests/test_camera_ffmpeg_software.cpp)
+      add_executable(test_camera_ffmpeg_software
+        "${LINGTU_RECORDING_TESTS_DIR}/test_camera_ffmpeg_software.cpp")
       target_link_libraries(test_camera_ffmpeg_software PRIVATE lingtu_recording_camera_linux)
       add_test(
         NAME native_camera_software_ffmpeg
@@ -178,25 +182,30 @@ if(LINGTU_RECORDING_BUILD_TESTS)
       message(STATUS "FFmpeg not found; skipping optional software camera integration test")
     endif()
 
-    add_executable(test_recording_process_linux tests/test_recording_process_linux.cpp)
+    add_executable(test_recording_process_linux
+      "${LINGTU_RECORDING_TESTS_DIR}/test_recording_process_linux.cpp")
     target_link_libraries(test_recording_process_linux PRIVATE
       lingtu_recording_process_linux)
     add_test(NAME native_recording_process_linux COMMAND test_recording_process_linux)
   endif()
 
-  add_executable(test_camera_recording tests/test_camera_recording.cpp)
+  add_executable(test_camera_recording
+    "${LINGTU_RECORDING_TESTS_DIR}/test_camera_recording.cpp")
   target_link_libraries(test_camera_recording PRIVATE lingtu_recording_core)
   add_test(NAME native_camera_recording COMMAND test_camera_recording)
 
-  add_executable(test_recording_core tests/test_recording_core.cpp)
+  add_executable(test_recording_core
+    "${LINGTU_RECORDING_TESTS_DIR}/test_recording_core.cpp")
   target_link_libraries(test_recording_core PRIVATE lingtu_recording_core)
   add_test(NAME native_recording_core COMMAND test_recording_core)
 
-  add_executable(test_recording_manager tests/test_recording_manager.cpp)
+  add_executable(test_recording_manager
+    "${LINGTU_RECORDING_TESTS_DIR}/test_recording_manager.cpp")
   target_link_libraries(test_recording_manager PRIVATE lingtu_recording_core)
   add_test(NAME native_recording_manager COMMAND test_recording_manager)
 
-  add_executable(test_recording_catalog tests/test_recording_catalog.cpp)
+  add_executable(test_recording_catalog
+    "${LINGTU_RECORDING_TESTS_DIR}/test_recording_catalog.cpp")
   target_link_libraries(test_recording_catalog PRIVATE lingtu_recording_core)
   add_test(NAME native_recording_catalog COMMAND test_recording_catalog)
 endif()

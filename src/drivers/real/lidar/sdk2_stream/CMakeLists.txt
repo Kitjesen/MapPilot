@@ -4,7 +4,6 @@ project(lingtu_livox_sdk2_stream LANGUAGES C CXX)
 include(GNUInstallDirs)
 
 option(LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS "Build native CycloneDDS publisher mode" OFF)
-option(LINGTU_LIVOX_SDK2_STREAM_BUILD_TESTS "Build Livox stream unit tests" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -53,11 +52,13 @@ install(TARGETS livox_sdk2_stream
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     COMPONENT lingtu_runtime)
 
-if(LINGTU_LIVOX_SDK2_STREAM_BUILD_TESTS)
-  enable_testing()
+include(CTest)
+if(BUILD_TESTING)
+  set(_LINGTU_LIVOX_TESTS_DIR
+    "${CMAKE_CURRENT_LIST_DIR}/../../../../../tests/drivers/cpp/lidar/sdk2_stream")
   add_executable(
     test_livox_fallback_timestamp_clock
-    tests/test_fallback_timestamp_clock.cpp)
+    "${_LINGTU_LIVOX_TESTS_DIR}/test_fallback_timestamp_clock.cpp")
   target_include_directories(
     test_livox_fallback_timestamp_clock
     PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
@@ -72,7 +73,7 @@ if(LINGTU_LIVOX_SDK2_STREAM_BUILD_TESTS)
 
   add_executable(
     test_livox_packet_timestamp_clock
-    tests/test_packet_timestamp_clock.cpp)
+    "${_LINGTU_LIVOX_TESTS_DIR}/test_packet_timestamp_clock.cpp")
   target_include_directories(
     test_livox_packet_timestamp_clock
     PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
@@ -87,7 +88,7 @@ if(LINGTU_LIVOX_SDK2_STREAM_BUILD_TESTS)
 
   add_executable(
     test_livox_single_lidar_handle_guard
-    tests/test_single_lidar_handle_guard.cpp)
+    "${_LINGTU_LIVOX_TESTS_DIR}/test_single_lidar_handle_guard.cpp")
   target_include_directories(
     test_livox_single_lidar_handle_guard
     PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
@@ -102,7 +103,7 @@ if(LINGTU_LIVOX_SDK2_STREAM_BUILD_TESTS)
 
   add_executable(
     test_livox_stream_exit_state
-    tests/test_stream_exit_state.cpp)
+    "${_LINGTU_LIVOX_TESTS_DIR}/test_stream_exit_state.cpp")
   target_include_directories(
     test_livox_stream_exit_state
     PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
@@ -118,7 +119,7 @@ if(LINGTU_LIVOX_SDK2_STREAM_BUILD_TESTS)
 
   add_executable(
     test_livox_replay_deadline_restamper
-    tests/test_replay_deadline_restamper.cpp)
+    "${_LINGTU_LIVOX_TESTS_DIR}/test_replay_deadline_restamper.cpp")
   target_include_directories(
     test_livox_replay_deadline_restamper
     PRIVATE "${CMAKE_CURRENT_LIST_DIR}")

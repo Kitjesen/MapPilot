@@ -1,4 +1,4 @@
-#include "../shm_frame_ring.hpp"
+#include "shm_frame_ring.hpp"
 
 #include <sys/mman.h>
 

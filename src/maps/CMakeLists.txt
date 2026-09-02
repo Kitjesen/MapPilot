@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(lingtu_maps LANGUAGES CXX)
 
+include(CTest)
 include(GNUInstallDirs)
 
 find_package(Threads REQUIRED)
@@ -189,26 +190,25 @@ if(LINGTU_MAPS_BUILD_TOOLS)
   )
 endif()
 
-option(LINGTU_MAPS_BUILD_TESTS "Build LingTu maps contract tests" OFF)
+if(BUILD_TESTING)
+  set(_LINGTU_MAPS_TEST_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/maps/cpp")
 
-if(LINGTU_MAPS_BUILD_TESTS)
-  enable_testing()
-
-  add_executable(lingtu_maps_header_smoke tests/cpp/header_smoke.cpp)
+  add_executable(lingtu_maps_header_smoke ${_LINGTU_MAPS_TEST_DIR}/header_smoke.cpp)
   target_link_libraries(lingtu_maps_header_smoke PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_header_smoke COMMAND lingtu_maps_header_smoke)
 
-  add_executable(lingtu_maps_grid_layers_test tests/cpp/grid_layers_test.cpp)
+  add_executable(lingtu_maps_grid_layers_test ${_LINGTU_MAPS_TEST_DIR}/grid_layers_test.cpp)
   target_link_libraries(lingtu_maps_grid_layers_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_grid_layers_test COMMAND lingtu_maps_grid_layers_test)
 
-  add_executable(lingtu_maps_voxel_layer_test tests/cpp/voxel_layer_test.cpp)
+  add_executable(lingtu_maps_voxel_layer_test ${_LINGTU_MAPS_TEST_DIR}/voxel_layer_test.cpp)
   target_link_libraries(lingtu_maps_voxel_layer_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_voxel_layer_test COMMAND lingtu_maps_voxel_layer_test)
 
   add_executable(
     lingtu_maps_rolling_occupancy_test
-    tests/cpp/rolling_occupancy_test.cpp
+    ${_LINGTU_MAPS_TEST_DIR}/rolling_occupancy_test.cpp
   )
   target_link_libraries(lingtu_maps_rolling_occupancy_test PRIVATE lingtu_maps)
   add_test(
@@ -218,7 +218,7 @@ if(LINGTU_MAPS_BUILD_TESTS)
 
   add_executable(
     lingtu_maps_exploration_projection_test
-    tests/cpp/exploration_projection_test.cpp
+    ${_LINGTU_MAPS_TEST_DIR}/exploration_projection_test.cpp
   )
   target_link_libraries(lingtu_maps_exploration_projection_test PRIVATE lingtu_maps)
   add_test(
@@ -228,7 +228,7 @@ if(LINGTU_MAPS_BUILD_TESTS)
 
   add_executable(
     lingtu_maps_semantic_occupancy_test
-    tests/cpp/semantic_occupancy_test.cpp
+    ${_LINGTU_MAPS_TEST_DIR}/semantic_occupancy_test.cpp
   )
   target_link_libraries(lingtu_maps_semantic_occupancy_test PRIVATE lingtu_maps)
   add_test(
@@ -238,12 +238,12 @@ if(LINGTU_MAPS_BUILD_TESTS)
 
   add_executable(
     lingtu_maps_semantic_map_persistence_test
-    tests/cpp/semantic_map_persistence_test.cpp
+    ${_LINGTU_MAPS_TEST_DIR}/semantic_map_persistence_test.cpp
   )
 
   add_executable(
     lingtu_maps_unity_semantic_import_test
-    tests/cpp/unity_semantic_import_test.cpp
+    ${_LINGTU_MAPS_TEST_DIR}/unity_semantic_import_test.cpp
     cpp/sources/unity_scene.cpp
     cpp/semantic_taxonomy.cpp
     cpp/semantic_map_persistence.cpp
@@ -267,7 +267,7 @@ if(LINGTU_MAPS_BUILD_TESTS)
 
   add_executable(
     lingtu_maps_semantic_performance_test
-    tests/cpp/semantic_performance_test.cpp
+    ${_LINGTU_MAPS_TEST_DIR}/semantic_performance_test.cpp
   )
   target_link_libraries(lingtu_maps_semantic_performance_test PRIVATE lingtu_maps)
   add_test(
@@ -275,25 +275,25 @@ if(LINGTU_MAPS_BUILD_TESTS)
     COMMAND lingtu_maps_semantic_performance_test
   )
 
-  add_executable(lingtu_maps_store_test tests/cpp/store_test.cpp)
+  add_executable(lingtu_maps_store_test ${_LINGTU_MAPS_TEST_DIR}/store_test.cpp)
   target_link_libraries(lingtu_maps_store_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_store_test COMMAND lingtu_maps_store_test)
 
-  add_executable(lingtu_maps_map_health_test tests/cpp/map_health_test.cpp)
+  add_executable(lingtu_maps_map_health_test ${_LINGTU_MAPS_TEST_DIR}/map_health_test.cpp)
   target_link_libraries(lingtu_maps_map_health_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_map_health_test COMMAND lingtu_maps_map_health_test)
 
-  add_executable(lingtu_maps_process_test tests/cpp/process_test.cpp)
+  add_executable(lingtu_maps_process_test ${_LINGTU_MAPS_TEST_DIR}/process_test.cpp)
   target_link_libraries(lingtu_maps_process_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_process_test COMMAND lingtu_maps_process_test)
 
-  add_executable(lingtu_maps_block_grid_test tests/cpp/block_grid_test.cpp)
+  add_executable(lingtu_maps_block_grid_test ${_LINGTU_MAPS_TEST_DIR}/block_grid_test.cpp)
   target_link_libraries(lingtu_maps_block_grid_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_block_grid_test COMMAND lingtu_maps_block_grid_test)
 
   add_executable(
     lingtu_maps_mapd_engine_test
-    tests/cpp/mapd_engine_test.cpp
+    ${_LINGTU_MAPS_TEST_DIR}/mapd_engine_test.cpp
   )
   target_link_libraries(lingtu_maps_mapd_engine_test PRIVATE lingtu_maps)
   add_test(
@@ -303,12 +303,12 @@ if(LINGTU_MAPS_BUILD_TESTS)
 
   add_executable(
     lingtu_maps_map_activation_test
-    tests/cpp/map_activation_test.cpp
+    ${_LINGTU_MAPS_TEST_DIR}/map_activation_test.cpp
   )
 
   add_executable(
     lingtu_maps_mapd_service_dispatch_test
-    tests/cpp/mapd_service_dispatch_test.cpp
+    ${_LINGTU_MAPS_TEST_DIR}/mapd_service_dispatch_test.cpp
   )
   target_link_libraries(lingtu_maps_mapd_service_dispatch_test PRIVATE lingtu_maps)
   add_test(
@@ -317,7 +317,7 @@ if(LINGTU_MAPS_BUILD_TESTS)
   )
   add_executable(
     lingtu_maps_mapd_save_coordinator_test
-    tests/cpp/mapd_save_coordinator_test.cpp
+    ${_LINGTU_MAPS_TEST_DIR}/mapd_save_coordinator_test.cpp
   )
   target_link_libraries(lingtu_maps_mapd_save_coordinator_test PRIVATE lingtu_maps)
   add_test(
@@ -341,7 +341,7 @@ if(LINGTU_MAPS_BUILD_TESTS)
   if(LINGTU_MAPS_BUILD_MAPD)
     add_executable(
       lingtu_maps_mapd_dds_test
-      tests/cpp/mapd_dds_test.cpp
+      ${_LINGTU_MAPS_TEST_DIR}/mapd_dds_test.cpp
     )
     target_include_directories(
       lingtu_maps_mapd_dds_test
@@ -364,7 +364,7 @@ if(LINGTU_MAPS_BUILD_TESTS)
   if(UNIX AND NOT APPLE)
     add_executable(
       lingtu_maps_mapd_uds_test
-      tests/cpp/mapd_uds_test.cpp
+      ${_LINGTU_MAPS_TEST_DIR}/mapd_uds_test.cpp
     )
     target_link_libraries(lingtu_maps_mapd_uds_test PRIVATE lingtu_maps)
     add_test(
@@ -375,7 +375,7 @@ if(LINGTU_MAPS_BUILD_TESTS)
 
   add_executable(
     lingtu_maps_maintenance_test
-    tests/cpp/map_maintenance_test.cpp
+    ${_LINGTU_MAPS_TEST_DIR}/map_maintenance_test.cpp
   )
   target_link_libraries(lingtu_maps_maintenance_test PRIVATE lingtu_maps)
   add_test(
@@ -383,11 +383,11 @@ if(LINGTU_MAPS_BUILD_TESTS)
     COMMAND lingtu_maps_maintenance_test
   )
 
-  add_executable(lingtu_maps_map_graph_test tests/cpp/map_graph_test.cpp)
+  add_executable(lingtu_maps_map_graph_test ${_LINGTU_MAPS_TEST_DIR}/map_graph_test.cpp)
   target_link_libraries(lingtu_maps_map_graph_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_map_graph_test COMMAND lingtu_maps_map_graph_test)
 
-  add_executable(lingtu_maps_save_map_test tests/cpp/save_map_test.cpp)
+  add_executable(lingtu_maps_save_map_test ${_LINGTU_MAPS_TEST_DIR}/save_map_test.cpp)
   target_link_libraries(lingtu_maps_save_map_test PRIVATE lingtu_maps)
   if(octomap_FOUND)
     target_compile_definitions(lingtu_maps_save_map_test PRIVATE LINGTU_MAPS_HAS_OCTOMAP=1)
@@ -396,7 +396,7 @@ if(LINGTU_MAPS_BUILD_TESTS)
 
   add_executable(
     lingtu_maps_grid_artifact_io_test
-    tests/cpp/grid_artifact_io_test.cpp
+    ${_LINGTU_MAPS_TEST_DIR}/grid_artifact_io_test.cpp
   )
   target_link_libraries(lingtu_maps_grid_artifact_io_test PRIVATE lingtu_maps)
   add_test(
@@ -406,7 +406,7 @@ if(LINGTU_MAPS_BUILD_TESTS)
 
   add_executable(
     lingtu_maps_semantic_localization_client_test
-    tests/cpp/semantic_localization_client_test.cpp
+    ${_LINGTU_MAPS_TEST_DIR}/semantic_localization_client_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../localization/slam/cpp/semantic_map_client.cpp
   )
   target_include_directories(

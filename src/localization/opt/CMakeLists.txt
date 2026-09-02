@@ -73,13 +73,17 @@ target_link_libraries(lt_loop_verify PRIVATE map_opt)
 
 include(CTest)
 if(BUILD_TESTING)
-  add_executable(pgo_test tests/pgo_test.cpp)
+  set(LINGTU_LOCALIZATION_OPT_TESTS_DIR
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/localization/cpp/opt")
+  add_executable(pgo_test "${LINGTU_LOCALIZATION_OPT_TESTS_DIR}/pgo_test.cpp")
   target_link_libraries(pgo_test PRIVATE map_opt)
   add_test(NAME pgo_core COMMAND pgo_test)
-  add_executable(loop_information_test tests/loop_information_test.cpp)
+  add_executable(loop_information_test
+    "${LINGTU_LOCALIZATION_OPT_TESTS_DIR}/loop_information_test.cpp")
   target_link_libraries(loop_information_test PRIVATE map_opt)
   add_test(NAME loop_information COMMAND loop_information_test)
-  add_executable(constraint_assembly_test tests/constraint_assembly_test.cpp)
+  add_executable(constraint_assembly_test
+    "${LINGTU_LOCALIZATION_OPT_TESTS_DIR}/constraint_assembly_test.cpp")
   target_link_libraries(constraint_assembly_test PRIVATE map_opt)
   add_dependencies(constraint_assembly_test lt_pgo)
   add_test(NAME constraint_assembly

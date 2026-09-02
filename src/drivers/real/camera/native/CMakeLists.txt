@@ -54,7 +54,11 @@ install(TARGETS lingtu_camera_dds
 include(CTest)
 if(BUILD_TESTING)
   find_package(Threads REQUIRED)
-  add_executable(test_camera_record tests/test_camera_record.cpp)
+  set(_LINGTU_CAMERA_TESTS_DIR
+    "${_LINGTU_ROOT}/tests/drivers/cpp/camera/native")
+  add_executable(
+    test_camera_record
+    "${_LINGTU_CAMERA_TESTS_DIR}/test_camera_record.cpp")
   target_include_directories(test_camera_record PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}")
   target_compile_definitions(test_camera_record PRIVATE NDEBUG)
@@ -67,7 +71,7 @@ if(BUILD_TESTING)
 
   add_executable(
     test_camera_record_deadline
-    tests/test_camera_record_deadline.cpp)
+    "${_LINGTU_CAMERA_TESTS_DIR}/test_camera_record_deadline.cpp")
   target_include_directories(test_camera_record_deadline PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}")
   target_compile_definitions(test_camera_record_deadline PRIVATE NDEBUG)

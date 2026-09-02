@@ -5,7 +5,7 @@
 #include <iostream>
 #include <limits>
 
-#include "../camera_record.hpp"
+#include "camera_record.hpp"
 
 namespace {
 

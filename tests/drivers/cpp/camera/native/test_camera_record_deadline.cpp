@@ -17,7 +17,7 @@
 #include <unistd.h>
 #endif
 
-#include "../camera_record.hpp"
+#include "camera_record.hpp"
 
 namespace {
 

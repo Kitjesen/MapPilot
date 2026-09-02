@@ -89,11 +89,11 @@ process lifecycle manager.
 
 The algorithms exist:
 
-- `src/maps/tests/cpp/voxel_layer_test.cpp`: column carving, adjacent-height
+- `tests/maps/cpp/voxel_layer_test.cpp`: column carving, adjacent-height
   isolation, voxel voting, and decay.
-- `src/maps/tests/cpp/rolling_occupancy_test.cpp`: ray clearing, rolling
+- `tests/maps/cpp/rolling_occupancy_test.cpp`: ray clearing, rolling
   bounds, independent time decay, and frame/order rejection.
-- `src/maps/tests/cpp/mapd_engine_test.cpp`: exact observation pose/origin,
+- `tests/maps/cpp/mapd_engine_test.cpp`: exact observation pose/origin,
   epoch/sequence handling, floor isolation, resource caps, and timer-driven
   decay.
 - `tests/nav/cpp/endpoint/test_motion_layer.cpp`: old obstacle residue

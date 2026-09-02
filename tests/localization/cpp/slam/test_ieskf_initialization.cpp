@@ -1,4 +1,4 @@
-#include "../../fastlio2/src/map_builder/ieskf.h"
+#include "map_builder/ieskf.h"
 
 #include <cmath>
 #include <cstdlib>
