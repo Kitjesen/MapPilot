@@ -90,5 +90,6 @@ planning contract below.
 ## Verification
 
 Python tests cover the retained Host command and facade surfaces under
-`src/nav/tests/`. Native planner, tracker, endpoint, and safety tests are built
-through the CMake presets documented in [`cpp/README.md`](cpp/README.md).
+`tests/nav/`; exploration tests live under `tests/explore/`. Native planner,
+tracker, endpoint, and safety tests are built through the CMake presets
+documented in [`cpp/README.md`](cpp/README.md).

@@ -96,7 +96,7 @@ The algorithms exist:
 - `src/maps/tests/cpp/mapd_engine_test.cpp`: exact observation pose/origin,
   epoch/sequence handling, floor isolation, resource caps, and timer-driven
   decay.
-- `src/nav/cpp/tests/endpoint/test_motion_layer.cpp`: old obstacle residue
+- `tests/nav/cpp/endpoint/test_motion_layer.cpp`: old obstacle residue
   cleared by later rays, current hit retention, static-cell protection,
   dynamic-track confirmation, and expiry.
 

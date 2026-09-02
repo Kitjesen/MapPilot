@@ -1055,7 +1055,7 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "cloud_stamp_rejected" in status
     assert "last_pose_gap_s" in status
     assert '\\"terrain_map_ext_role\\": \\"diagnostics\\"' in status
-    assert "cloud_stale" in _read("src/nav/cpp/tests/endpoint/test_input_gate.cpp")
+    assert "cloud_stale" in _read("tests/nav/cpp/endpoint/test_input_gate.cpp")
 
 
 def test_native_endpoint_accepts_only_typed_command_and_operator_motion_inputs() -> None:
@@ -1399,9 +1399,9 @@ def test_native_dds_build_scripts_check_service_binaries() -> None:
     assert "test_local_planner_core" in nav
     assert "test_nav_client" in nav
     assert "test_teleop_safety" in nav
-    endpoint_tests = _read("src/nav/cpp/tests/endpoint/CMakeLists.txt")
+    endpoint_tests = _read("tests/nav/cpp/endpoint/CMakeLists.txt")
     assert "test_nav_endpoint_config" in endpoint_tests
-    nav_cmake = _read("src/nav/cpp/tests/CMakeLists.txt")
+    nav_cmake = _read("tests/nav/cpp/CMakeLists.txt")
     assert "test_path_follower_core" in nav_cmake
     assert "test_local_planner_core" in nav_cmake
 
@@ -1472,7 +1472,7 @@ def test_typed_navigation_client_uses_application_ack_as_authority() -> None:
 def test_native_nav_endpoint_uses_shared_dds_qos_catalog() -> None:
     runtime_source = _read("src/nav/cpp/endpoint/nav/dds/runtime.cpp")
     cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
-    tests = _read("src/nav/cpp/tests/endpoint/CMakeLists.txt")
+    tests = _read("tests/nav/cpp/endpoint/CMakeLists.txt")
 
     assert '#include "message/cpp/qos.hpp"' in runtime_source
     assert "qos_for_topic(topic_name)" in runtime_source

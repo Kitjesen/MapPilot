@@ -10,7 +10,7 @@ STATUS = NAV_ENDPOINT / "status"
 
 CORE_HEADER = STATUS / "control_loop_health.hpp"
 CORE_SOURCE = STATUS / "control_loop_health.cpp"
-CORE_TEST = NAV_CPP / "tests/endpoint/test_control_loop_health.cpp"
+CORE_TEST = ROOT / "tests/nav/cpp/endpoint/test_control_loop_health.cpp"
 ENDPOINT_BOOTSTRAP = NAV_ENDPOINT / "main.cpp"
 ENDPOINT_LOOP = NAV_ENDPOINT / "runtime" / "loop.cpp"
 PUBLISHER_HEADER = STATUS / "nav_status_publisher.hpp"

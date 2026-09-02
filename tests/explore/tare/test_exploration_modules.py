@@ -11,10 +11,6 @@ internal implementation details or algorithmic correctness.
 
 from __future__ import annotations
 
-import pytest
-
-pytestmark = [pytest.mark.ros2]
-
 
 # =============================================================================
 # TAREExplorerModule
@@ -139,6 +135,21 @@ class TestTAREExplorerModule:
         assert "stop_tare_exploration" in skill_names, "missing stop_tare_exploration skill"
         assert "get_tare_status" in skill_names, "missing get_tare_status skill"
 
+    def test_start_stop_skills_publish_exploring_state(self):
+        from explore.tare.module import TAREExplorerModule
+
+        mod = TAREExplorerModule(auto_start=False)
+        exploring_values: list[bool] = []
+        mod.exploring._add_callback(exploring_values.append)
+
+        assert '"started"' in mod.start_tare_exploration()
+        assert mod._started_exploration is True
+        assert exploring_values[-1] is True
+
+        assert '"stopped"' in mod.stop_tare_exploration()
+        assert mod._started_exploration is False
+        assert exploring_values[-1] is False
+
 
 # =============================================================================
 # ExplorationSupervisorModule
@@ -236,6 +247,21 @@ class TestExplorationSupervisorModule:
         mode, reason, wp_age = mod._evaluate()
         assert mode == MODE_UNINIT
         assert "no tare_stats received yet" in reason
+        assert wp_age is None
+
+    def test_evaluate_starting(self):
+        from explore.tare.supervisor import (
+            MODE_STARTING,
+            ExplorationSupervisorModule,
+        )
+
+        mod = ExplorationSupervisorModule()
+        mod._last_stats = {"alive": True, "finished": False}
+
+        mode, reason, wp_age = mod._evaluate()
+
+        assert mode == MODE_STARTING
+        assert "waiting" in reason
         assert wp_age is None
 
     def test_evaluate_finished(self):

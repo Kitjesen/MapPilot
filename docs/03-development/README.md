@@ -421,7 +421,7 @@ when a dependency requires it.
 | --- | --- |
 | `Module`, port, stream policy, registry, or runtime helper | Focused test in the owning package; for core runtime changes, start with `python -m pytest src/runtime/tests/test_runtime.py src/runtime/tests/test_registry.py -q`. |
 | Stack factory, wire, Product compiler, or Product graph | Targeted assembly and graph tests for the changed Product. |
-| Navigation/domain behavior | Focused `src/nav/tests/` test, then a wider navigation test only if the changed contract spans the package. |
+| Navigation/domain behavior | Focused `tests/nav/` test, then a wider navigation test only if the changed contract spans the package. |
 | C++ hot path | Owning CMake build/test target plus a Python boundary/contract test if exposed to Python. |
 | Map artifact or planner integration | Saved-map artifact gate in the relevant environment. |
 | Field endpoint, localization, safety, or command path | Native service/dataflow evidence and the named field-readiness gate; simulation success is not field proof. |
@@ -432,7 +432,7 @@ Useful contract checks include:
 
 ```bash
 python -m pytest src/lingtu/assembly/tests/test_compile.py -q
-python -m pytest src/nav/tests/ -q
+python -m pytest tests/nav tests/explore -q
 ```
 
 For field-side, non-motion diagnosis use:

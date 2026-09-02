@@ -1,7 +1,7 @@
 # Test and benchmark targets are owned by this directory.
 if(LINGTU_NAV_CPP_BUILD_TESTS)
   add_executable(test_platform_runtime
-    "${LINGTU_NAV_CPP_ROOT}/tests/test_platform_runtime.cpp")
+    "${LINGTU_NAV_TESTS_DIR}/test_platform_runtime.cpp")
   target_include_directories(test_platform_runtime PRIVATE
     "${LINGTU_NAV_CPP_ROOT}")
   target_compile_options(test_platform_runtime PRIVATE

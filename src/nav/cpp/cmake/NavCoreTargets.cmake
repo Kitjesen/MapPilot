@@ -14,7 +14,6 @@ set(LINGTU_NAV_TRACKING_DIR "${LINGTU_NAV_CPP_ROOT}/tracking")
 set(LINGTU_NAV_TRAJECTORY_DIR "${LINGTU_NAV_CPP_ROOT}/trajectory")
 set(LINGTU_NAV_NAVIGATION_DIR "${LINGTU_NAV_CPP_ROOT}/navigation")
 set(LINGTU_NAV_CLIENT_CPP_DIR "${LINGTU_NAV_CPP_ROOT}/client")
-set(LINGTU_NAV_TESTS_DIR "${LINGTU_NAV_CPP_ROOT}/tests")
 
 include(CheckIPOSupported)
 check_ipo_supported(

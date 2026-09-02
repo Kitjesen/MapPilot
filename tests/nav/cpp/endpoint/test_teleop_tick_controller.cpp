@@ -8,7 +8,7 @@
 
 #include "control/teleop.hpp"
 #include "runtime/loop.hpp"
-#include "../../tracking/smoother.cpp"
+#include "tracking/smoother.cpp"
 
 namespace {
 

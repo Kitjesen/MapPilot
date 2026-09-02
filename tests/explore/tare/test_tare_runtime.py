@@ -8,18 +8,9 @@ contracts (ports, skills, waypoint to PoseStamped conversion).
 from __future__ import annotations
 
 import ast
-
-import pytest
-
-pytestmark = [pytest.mark.ros2]
-
 import os
-import sys
-import time
 import unittest
 from pathlib import Path
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.msgs.nav import Odometry
@@ -102,42 +93,6 @@ def _odom(x: float, y: float, z: float = 0.0) -> Odometry:
         ),
         frame_id="map",
     )
-
-
-# Bridge module
-
-
-class TestTAREExplorerModulePorts(unittest.TestCase):
-    def _make(self, **kw):
-        from explore.tare.module import TAREExplorerModule
-
-        return TAREExplorerModule(**kw)
-
-    def test_ports_declared(self):
-        m = self._make()
-        self.assertIn("odometry", m.ports_in)
-        self.assertIn("navigation_status", m.ports_in)
-        self.assertIn("exploration_goal", m.ports_out)
-        self.assertIn("exploration_path", m.ports_out)
-        self.assertIn("exploring", m.ports_out)
-        self.assertIn("tare_stats", m.ports_out)
-        self.assertIn("alive", m.ports_out)
-
-    def test_exploration_goal_uses_shared_pose_contract(self):
-        from explore.tare.module import TAREExplorerModule
-        from runtime.msgs.geometry import PoseStamped
-
-        tare = TAREExplorerModule()
-        tare_port = tare.ports_out["exploration_goal"]
-        self.assertEqual(tare_port.msg_type, PoseStamped)
-
-    def test_stub_mode_no_crash(self):
-        """No DDS path should still setup/start/stop cleanly."""
-        m = self._make(auto_start=False)
-        m.setup()
-        m.start()
-        time.sleep(0.05)  # let the watchdog tick once
-        m.stop()
 
 
 class TestTAREWaypointEmission(unittest.TestCase):
@@ -632,27 +587,7 @@ class TestTAREStatsSnapshot(unittest.TestCase):
                 os.environ["ROS_DOMAIN_ID"] = old
 
 
-class TestTAREskills(unittest.TestCase):
-    def test_skills_discoverable(self):
-        from explore.tare.module import TAREExplorerModule
-
-        m = TAREExplorerModule(auto_start=False)
-        names = {info.func_name for info in m.get_skill_infos()}
-        self.assertIn("start_tare_exploration", names)
-        self.assertIn("stop_tare_exploration", names)
-        self.assertIn("get_tare_status", names)
-
-    def test_start_stop_toggles_exploring_flag(self):
-        from explore.tare.module import TAREExplorerModule
-
-        m = TAREExplorerModule(auto_start=False)
-        received: list[bool] = []
-        m.exploring._add_callback(received.append)
-        m.start_tare_exploration()
-        m.stop_tare_exploration()
-        self.assertIn(True, received)
-        self.assertIn(False, received)
-
+class TestTARESkills(unittest.TestCase):
     def test_get_tare_status_returns_json(self):
         import json
 

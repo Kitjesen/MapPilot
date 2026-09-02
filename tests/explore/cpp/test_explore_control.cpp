@@ -25,7 +25,7 @@ void require(bool condition, const std::string &message) {
 void testProductSessionStatusFileFallbackContract() {
   const auto source_path =
       std::filesystem::path(__FILE__).parent_path() /
-      "../../../../explore/cpp/endpoint/main.cpp";
+      "../../../src/explore/cpp/endpoint/main.cpp";
   std::ifstream input(source_path);
   require(input.good(), "explore endpoint source must be readable");
   const std::string source((std::istreambuf_iterator<char>(input)),
@@ -51,7 +51,7 @@ void testProductSessionStatusFileFallbackContract() {
 void testProductIdentityStatusContract() {
   const auto source_path =
       std::filesystem::path(__FILE__).parent_path() /
-      "../../../../explore/cpp/endpoint/main.cpp";
+      "../../../src/explore/cpp/endpoint/main.cpp";
   std::ifstream input(source_path);
   require(input.good(), "explore endpoint source must be readable");
   const std::string source((std::istreambuf_iterator<char>(input)),

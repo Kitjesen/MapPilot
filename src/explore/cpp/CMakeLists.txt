@@ -59,10 +59,9 @@ endif()
 
 if(LINGTU_EXPLORE_CPP_BUILD_TESTS)
   enable_testing()
-  add_executable(test_tare_policy
-    test_tare_policy.cpp)
-  target_link_libraries(test_tare_policy PRIVATE lingtu_explore_core)
-  add_test(NAME test_tare_policy COMMAND test_tare_policy)
+  add_subdirectory(
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/explore/cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/tests")
 endif()
 
 # nanobind Python extension: exposes the C++ TarePolicy as lingtu_explore_kernel.

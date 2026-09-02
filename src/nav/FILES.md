@@ -16,7 +16,7 @@ This is a short index of the current navigation implementation.
 | Final safety and authority | `cpp/endpoint/nav/safety/`, `cpp/endpoint/nav/control/` |
 | DDS process boundary | `cpp/endpoint/nav/dds/`, `cpp/endpoint/nav/runtime/` |
 | Native command client | `cpp/client/` |
-| Tests | `tests/`, `cpp/tests/` |
+| Tests | `../../tests/nav/`, `../../tests/explore/` |
 
 ## Runtime split
 

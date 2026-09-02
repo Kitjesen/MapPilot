@@ -440,7 +440,7 @@ The minimum validation surface is:
 
 ```bash
 python -m pytest src/runtime/tests/ -q
-python -m pytest src/nav/tests/ -q
+python -m pytest tests/nav tests/explore tests/runtime/messages -q
 python -m pytest src/gateway/tests/ -q
 ```
 
@@ -449,8 +449,7 @@ Focused checks for this architecture:
 ```bash
 python -m pytest src/runtime/tests/test_stack_registry_resolution.py -q
 python -m pytest src/runtime/tests/test_runtime_binding_policy.py -q
-python -m pytest src/runtime/tests/test_nav_chain_efficiency.py -q
-python -m pytest src/nav/tests/test_global_planner_contracts.py -q
+python -m pytest tests/nav tests/explore tests/runtime/messages -q
 ```
 
 Current validation is server/simulation/endpoint evidence unless a hardware

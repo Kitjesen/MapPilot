@@ -104,5 +104,14 @@ if(LINGTU_NAV_CPP_BUILD_ENDPOINT)
 endif()
 
 if(LINGTU_NAV_CPP_BUILD_TESTS OR LINGTU_NAV_CPP_BUILD_BENCHMARKS)
-  add_subdirectory(tests)
+  set(LINGTU_NAV_TESTS_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/nav/cpp")
+  set(LINGTU_EXPLORE_TESTS_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/explore/cpp")
+  add_subdirectory(
+    "${LINGTU_NAV_TESTS_DIR}"
+    "${CMAKE_CURRENT_BINARY_DIR}/tests/nav")
+  add_subdirectory(
+    "${LINGTU_EXPLORE_TESTS_DIR}"
+    "${CMAKE_CURRENT_BINARY_DIR}/tests/explore")
 endif()

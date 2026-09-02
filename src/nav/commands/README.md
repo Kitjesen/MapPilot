@@ -41,8 +41,8 @@ commands as an alternative control route.
 
 ## Tests
 
-- `src/nav/tests/test_command_client.py`: navigation Python/C ABI contract.
-- `src/nav/tests/test_inspection_command_client.py`: inspection Python/C ABI
+- `tests/nav/adapters/test_command_client.py`: navigation Python/C ABI contract.
+- `tests/nav/adapters/test_inspection_command_client.py`: inspection Python/C ABI
   contract.
-- `cpp/test_client.cpp`: real CycloneDDS request/ACK behavior for both command
+- `tests/nav/cpp/test_client.cpp`: real CycloneDDS request/ACK behavior for both command
   interfaces.

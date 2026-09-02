@@ -166,8 +166,10 @@ addopts = "-p no:anyio"
 cache_dir = "build/pytest-cache"
 testpaths = [
     "tests/contracts",
+    "tests/nav",
+    "tests/explore",
+    "tests/runtime/messages",
     "src/runtime/tests",
-    "src/nav/tests",
     "src/gateway/tests",
     "tests/drivers",
     "src/lingtu/tests",

@@ -9,7 +9,7 @@
 #include "safety/command.hpp"
 #include "status/control_loop_health.hpp"
 #include "status/nav_status_publisher.hpp"
-#include "tests/collision_bitmap.hpp"
+#include "../collision_bitmap.hpp"
 
 namespace {
 
