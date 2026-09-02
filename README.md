@@ -323,7 +323,7 @@ Python framework and decision tests:
 
 ```bash
 python -m pytest tests/runtime/ -q
-python -m pytest src/decision/tests/ -q
+python -m pytest tests/decision/ -q
 ```
 
 Canonical C++ navigation core (path follower, local planner, FAR, and tests):

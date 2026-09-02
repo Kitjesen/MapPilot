@@ -136,9 +136,10 @@ known-first-party = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/runtime/*" = ["F811", "E402", "D", "S101"]
-"src/perception/*/test*" = ["F811", "E402", "D"]
+"tests/perception/*" = ["F811", "E402", "D", "S101"]
+"tests/perception/reconstruction/*" = ["F811", "E402", "D"]
 "src/decision/*/test*" = ["F811", "E402", "D"]
-"src/decision/tests/*" = ["S101"]
+"tests/decision/*" = ["D", "E402", "F811", "S101"]
 "src/*/tests/*" = ["D", "E402", "S101"]
 "sim/tests/*" = ["D"]
 "scripts/*" = ["D"]
@@ -147,8 +148,8 @@ known-first-party = [
 "docs/**" = ["E702", "E701"]
 # E501 in test files with embedded shell scripts or \uXXXX docstrings
 "tests/runtime/test_deployment_service_contracts.py" = ["E501"]
-"src/decision/tests/test_fast_slow_benchmark.py" = ["E501"]
-"src/decision/tests/test_fast_slow_efficiency.py" = ["E501"]
+"tests/decision/test_fast_slow_benchmark.py" = ["E501"]
+"tests/decision/test_fast_slow_efficiency.py" = ["E501"]
 "src/decision/tasking/task_rules.py" = ["E501"]
 "src/decision/llm/prompt_templates.py" = ["E501"]
 "src/runtime/msgs/scene.py" = ["E501"]
@@ -172,12 +173,12 @@ testpaths = [
     "tests/gateway",
     "tests/drivers",
     "tests/lingtu",
-    "src/memory/tests",
+    "tests/memory",
     "sim/tests",
     "tools/simstudio/tests",
-    "src/localization/tests",
-    "src/perception/tests",
-    "src/decision/tests",
+    "tests/localization",
+    "tests/perception",
+    "tests/decision",
 ]
 # tests/ contains default contracts plus root-level integration tests run separately:
 #   python -m pytest tests/ -q
