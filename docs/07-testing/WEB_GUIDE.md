@@ -42,18 +42,11 @@ LingTu 的验证是分层的。通过的检查只证明它实际覆盖的边界�
 
 ## 2. 验证本地产品路径
 
-使用 stub profile 验证不依赖硬件或现场 Gateway 的 Module 图：
+在不启动进程的情况下解析一个 `env=sim` Product：
 
     uv run --locked python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim --dry-run
 
-在 REPL 中，仅使用检查命令：
-
-    health
-    connections
-    config
-    quit
-
-**预期结果：** 该图以 stub driver 启动，报告连接/健康状态，并正常退出。它不会连接机器人，也不证明相机、检测器、SLAM 服务或物理命令写入端可用。
+**预期结果：** 命令打印解析后的 RunPlan 并退出。它不会启动 REPL、Module 图、仿真进程或机器人，也不证明相机、SLAM 或物理命令端可用。
 
 ## 3. 验证具名仿真门槛
 

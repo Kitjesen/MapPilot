@@ -47,7 +47,6 @@ FORBIDDEN_DOC_DIRS = (
 ALLOWED_PLAN_FILES = {
     "README.md",
     "current-roadmap.md",
-    "message-dds-cleanup.md",
     "robot-mounted-weapon-gameplay-tdd.md",
     "sensor-noise-injection-tdd.md",
     "ue5-playable-vertical-slice.md",

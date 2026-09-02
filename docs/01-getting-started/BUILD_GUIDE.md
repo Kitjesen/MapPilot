@@ -108,15 +108,15 @@ Expected result:
   contracts; they do not create a robot session.
 - Passing this track does not prove the simulation or field runtime.
 
-For a safe interactive framework smoke after the checks pass:
+Preview a simulation Product without starting processes:
 
 ```bash
 uv run --locked python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim --dry-run
 ```
 
-Use `health`, `connections`, and `quit` in the TTY REPL. See
-[Quick Start](../QUICKSTART.md#local-prove-the-framework-path) for expected
-behavior and boundaries.
+The command prints the resolved RunPlan and exits. It does not start a REPL,
+Module graph, simulator, or robot process. See
+[Quick Start](../QUICKSTART.md#simulation) for the real switch/status/stop flow.
 
 ## MuJoCo simulation setup
 
@@ -598,7 +598,7 @@ curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow
 These checks are necessary but do not authorize motion. Continue with saved-map
 artifact validation, relocalization, a no-motion route preview, and the
 applicable field gate as described in
-[Quick Start](../QUICKSTART.md#field-prepare-validate-then-supervise) and
+[Quick Start](../QUICKSTART.md#field-robot) and
 [`lingtu_cli.md`](../04-deployment/lingtu_cli.md).
 
 ## Troubleshooting by boundary

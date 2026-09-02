@@ -19,6 +19,7 @@ for using a state-changing or motion-capable action.
 | Monitor, diagnose, or restart a field system | [Operations](../06-operations/README.md) | It defines the observe → isolate → recover → revalidate sequence. |
 | Find REST request/response models and routes | [Gateway REST API](../api/gateway_rest.md) | It is generated from current route registrations. |
 | Find MCP methods and parameters | [MCP tools](../api/mcp_tools.md) | It is generated from `@skill` methods. |
+| Browse all generated and maintained API references | [API index](../api/README.md) | It links each inventory to its owning source and regeneration command. |
 | Understand Module, Blueprint, transport, map, planning, or frame ownership | [Architecture index](../architecture/README.md) | It links current architecture contracts rather than plans or historical evidence. |
 | Know whether a change is sufficiently verified | [Testing and validation](../07-testing/README.md) | It distinguishes local, simulation, and hardware evidence. |
 

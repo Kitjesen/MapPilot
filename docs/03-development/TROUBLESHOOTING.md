@@ -61,7 +61,8 @@ field endpoint owns final navigation command publication. Do not add a Python,
 ROS, or ad-hoc DDS command writer while investigating a field fault.
 
 ROS 2 services and topic tools are a different, explicit compatibility path.
-They are covered in [ROS 2 compatibility](#ros-2-compatibility-only) below.
+Use the [ROS role replacement map](../architecture/ROS_ROLE_REPLACEMENT_MAP.md)
+to identify its supported boundary.
 
 For service ownership and exact deployment layout, read
 [Deployment](../04-deployment/README.md) and the
@@ -392,7 +393,7 @@ describe external topic/schema ownership; normal Module wires stay local.
 ```bash
 uv sync --locked
 uv run --locked python -m lingtu.control --help
-uv run --locked python -m pytest tests/runtime/test_runtime.py tests/runtime/test_registry.py -q
+uv run --locked python -m pytest tests/runtime/test_core.py tests/runtime/test_registry.py -q
 ```
 
 If the native navigation endpoint or OctoPlanner3D runtime is missing, treat

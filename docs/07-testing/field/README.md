@@ -1,6 +1,6 @@
 # Field Validation
 
-Status: current reusable field-gate index as of 2026-08-23.
+Status: current reusable field-gate index as of 2026-09-03.
 
 These documents define checks that run on a physical robot or its production
 compute target. They are reusable procedures, not proof that a particular run

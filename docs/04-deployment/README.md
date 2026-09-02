@@ -1,10 +1,6 @@
 # LingTu Real-Robot Deployment
 
-Status: current real-environment deployment guide as of 2026-08-23.
-
-Current LingTu-authored Go2 EDU + external MID-360 assisted-teleoperation
-deployment manual:
-[`go2_edu_mid360_teleop_avoid.md`](go2_edu_mid360_teleop_avoid.md).
+Status: current `env=real` deployment guide as of 2026-09-03.
 
 How LingTu is laid out on the field robot, how to install, update, roll back,
 and diagnose the running stack. The product runtime is native DDS plus
@@ -12,6 +8,20 @@ Product-managed native services and scoped Host Modules; ROS 2 compatibility ser
 fallbacks and must be enabled explicitly.
 
 Public Product lifecycle commands are `switch / status / stop`.
+
+## Choose A Document
+
+| Need | Document |
+| --- | --- |
+| Public deployment sequence without target-specific details | [Field deployment guide](./WEB_GUIDE.md) |
+| Go2 EDU + external MID-360 assisted avoidance | [Go2 deployment and acceptance](./go2_edu_mid360_teleop_avoid.md) |
+| Product lifecycle and diagnostic commands | [`lingtu` CLI](./lingtu_cli.md) |
+| Supervised keyboard and bounded direction checks | [Operator drive](./operator_drive.md) |
+| Native DDS recording and replay | [Native recording](./native_recording.md) |
+| Release packaging, installation, and rollback | [OTA guide](./OTA_GUIDE.md) |
+
+Executable deployment sources live under [`scripts/deploy/`](../../scripts/deploy/README.md).
+This directory owns operator guidance, not a second deployment implementation.
 
 ## One-Liner Status
 
@@ -23,7 +33,7 @@ ssh "${LINGTU_TARGET_USER}@${LINGTU_TARGET_HOST}" 'bash /opt/lingtu/current/scri
 ```
 
 The `lingtu` CLI reports the active Product, RunPlan, process state, and
-readiness; see `lingtu_cli.md`.
+readiness; see the [`lingtu` CLI guide](./lingtu_cli.md).
 
 ## Robot Runtime
 
@@ -98,10 +108,14 @@ externally installed, disable or remove it before starting
 /opt/lingtu/
   current -> releases/vX.Y.Z/
   releases/
+    vX.Y.Z/
+      bin/                    native executables
+      lib/                    runtime libraries
+      etc/lingtu/             immutable release defaults
+      share/lingtu/           schemas and runtime assets
   config/
     thunder-runtime-env.sh
     brainstem.env             # Thunder only
-  nav/
   logs/
 
 /etc/systemd/system/
@@ -119,31 +133,31 @@ externally installed, disable or remove it before starting
   maps/
 ```
 
-Developer checkout on the robot usually lives at
-`~/data/SLAM/navigation` or `~/data/inovxio/lingtu`.
+The release symlink is the production root. Services must not resolve
+executables or libraries from a developer `build/` tree. Mutable maps and
+credentials stay outside the immutable release.
 
 ## Installing On A Robot
 
 ```bash
-# 1. Build native product modules
-cd ~/data/SLAM/navigation
 export LINGTU_ROBOT=unitree/go2
-export LINGTU_DRIVER_BACKEND=go2
-bash scripts/build/build_livox_sdk2_stream.sh
-LINGTU_SLAM_BUILD_DDS_RUNTIME=ON bash scripts/build/build_slam_core.sh
-bash scripts/build/build_mapd.sh
-bash scripts/build/build_dds_probe.sh
-bash scripts/build/build_nav_endpoint.sh
-LINGTU_DRIVER_BACKEND="${LINGTU_DRIVER_BACKEND}" bash scripts/build/build_driver.sh
-bash scripts/build/build_native_recording.sh
-bash scripts/build/build_octoplanner3d.sh --require-pcl
 
-# 2. Install native field services for the robot selected by RobotConfig.
-LINGTU_DRIVER_BACKEND="${LINGTU_DRIVER_BACKEND}" \
-  bash scripts/deploy/thunder/install_services.sh field-cpp
+# Inspect the Product-specific deployment plan without changing the target.
+LINGTU_DEPLOY_PLAN_ONLY=1 bash scripts/deploy/deploy_robot.sh nav
 
-# 3. Start the Product through ProductControl in env=real
-bash scripts/lingtu --robot "${LINGTU_ROBOT}" --env real switch nav --map MAP_NAME
+# Build the complete native release set on the aarch64 build host.
+LINGTU_DRIVER_BACKEND=go2 make build BUILD_TYPE=Release
+bash scripts/deploy/package_native_release.sh vX.Y.Z dist
+
+# Transfer the archive, then install it on the target.
+tar -xzf lingtu-X.Y.Z-aarch64-native-release.tar.gz -C /tmp
+sudo bash /tmp/lingtu-X.Y.Z-aarch64-native-release/install_nav.sh
+
+# On a first install, install the units before using ProductControl.
+export LINGTU_PYTHON=/ABSOLUTE/PATH/TO/LINGTU_VENV/bin/python
+bash /opt/lingtu/current/scripts/deploy/thunder/install_services.sh field-cpp
+bash /opt/lingtu/current/scripts/lingtu \
+  --robot "${LINGTU_ROBOT}" --env real switch nav --map MAP_NAME
 ```
 
 The Product command validates the map and RunPlan contract, removes stale
@@ -169,15 +183,28 @@ authenticated TLS session is rejected even when its IP is allowlisted.
 
 ## Release Flow
 
-```bash
-cd ~/data/SLAM/navigation
-bash scripts/deploy/deploy_robot.sh nav
-bash scripts/deploy/package_native_release.sh vX.Y.Z dist
+The three release stages are deliberately separate:
+
+```text
+make build -> build/
+package_native_release.sh -> install/ and dist/
+dist/.../install_nav.sh -> /opt/lingtu/releases/<version>/
+                           /opt/lingtu/current
 ```
 
-Deployment and artifact creation remain two explicit steps. `deploy_robot.sh`
-owns Product-specific build and activation; `package_native_release.sh` creates
-the reviewed release artifact.
+`make build` creates the complete native release input set. The packager then
+materializes `install/linux-<arch>/Release/{bin,lib,etc,share}` and assembles the
+reviewable archive under `dist/`; it never activates services. Windows uses its
+own CMake install prefix and is not packaged by the Linux OTA script.
+
+`deploy_robot.sh` is a separate checkout-based workflow: it builds only the
+selected Product's native owners and then activates that Product. It does not
+create the standard install prefix, and its Product-scoped `build/` output is
+not a complete input for `package_native_release.sh`.
+
+Use `LINGTU_DRIVER_BACKEND=doso` instead of `go2` when assembling a Thunder
+release. An architecture environment variable changes packaging metadata; it
+does not turn this native build into a cross-compile.
 
 ## Common Operations
 
@@ -256,12 +283,3 @@ Gateway's `/api/v1/slam/*relocalize` endpoints are a separate in-place retry
 surface for the already running Product and its already loaded map. They never
 start `slamd` or switch maps. See
 [`LOCALIZATION_RUNTIME.md`](../architecture/LOCALIZATION_RUNTIME.md).
-
-## References
-
-- [`go2_edu_mid360_teleop_avoid.md`](go2_edu_mid360_teleop_avoid.md) -
-  LingTu-authored Go2 EDU external MID-360 deployment, calibration, no-motion,
-  bounded-motion, and obstacle-avoidance gates
-- `lingtu_cli.md` - operations CLI subcommands
-- `native_recording.md` - native C++ recording, replay, safety, and recovery boundary
-- `OTA_GUIDE.md` - native release packaging, external OTA distribution boundary, installation, and rollback

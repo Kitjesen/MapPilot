@@ -30,6 +30,7 @@ and package-local implementation guides. Keep speculative plans in
 | [`ID_REGISTRY.md`](./ID_REGISTRY.md) | current guardrail | Cross-boundary ownership, generation, scope, lifecycle, retry, parent, exposure, and migration rules for canonical IDs. |
 | [`GLOBAL_PLANNING_CONTRACT.md`](./GLOBAL_PLANNING_CONTRACT.md) | current | Global planner request/result, backend, preview, and transport boundary. |
 | [`MAP_SERVICE_CONTRACT.md`](./MAP_SERVICE_CONTRACT.md) | current | Native mapd ownership, typed SaveMap snapshot handoff, saved-map lifecycle, artifact capabilities, activation boundary, and realtime layers. |
+| [`ENVIRONMENT_MAP.md`](./ENVIRONMENT_MAP.md) | current | Operator-visible environment-map layers, frames, identity, freshness, and presentation boundary. |
 | [`LOCALIZATION_RUNTIME.md`](./LOCALIZATION_RUNTIME.md) | current | Active localization sources and algorithms, ProductControl/Gateway/DDS ownership, relocalization, loop-closure status, semantic-map loading, topic inventory, and SaveMap flow. |
 | [`local_planner_io_contract.md`](./local_planner_io_contract.md) | current | Local planner inputs, outputs, and remaining traversability gap. |
 | [`LOCAL_PLANNING_AND_TRACKING_CONTRACT.md`](./LOCAL_PLANNING_AND_TRACKING_CONTRACT.md) | current | Local-planning algorithm, scoring, PathFollower boundary, and native-endpoint/Python-Module parameter surfaces; complements the I/O contract above. |

@@ -1,7 +1,7 @@
 # Documentation Policy And Cleanup Ledger
 
 Status: current documentation policy
-Updated: 2026-07-28
+Updated: 2026-09-03
 
 This file defines where documentation belongs and records destructive cleanup.
 It is not an architecture or runtime contract.
@@ -11,12 +11,15 @@ It is not an architecture or runtime contract.
 | Location | Owns | Must not contain |
 | --- | --- | --- |
 | `docs/README.md` | Public documentation entry and reading order. | Detailed contracts, plans, or dated evidence. |
-| `docs/CURRENT.md` | Authority map for current behavior. | Implementation history. |
+| `docs/CURRENT.md` | Current authority, support, and claim map. | Build logs or implementation history. |
 | `docs/01-*` through `docs/10-*` | Task-oriented guides and operator procedures. | Competing architecture definitions. |
+| `docs/product/` | Product intent and acceptance semantics. | Runtime implementation detail or evidence. |
 | `docs/architecture/` | Current contracts and accepted architecture decisions. | Research notes, abandoned proposals, dated run results. |
 | `docs/api/` | Generated API inventories and generation instructions. | Hand-maintained API snapshots. |
-| `docs/plans/` | The single active roadmap. | Completed plans or historical PRDs. |
+| `docs/plans/` | The active roadmap and explicitly indexed bounded plans. | Completed plans or historical PRDs. |
 | `docs/research/` | Upstream reviews, algorithm investigations, and migration studies. | Product claims or acceptance evidence. |
+| `docs/worklogs/` | Short session-continuity notes and reviewed recovered transcripts. | Runtime authority or acceptance evidence. |
+| `docs/assets/` | Images referenced by maintained documentation. | Unlinked screenshots or generated paper output. |
 | `docs/07-testing/` | Validation index plus reader-facing guide. | Unclassified gates, executable scripts, or one-off proposals. |
 | `docs/07-testing/field/` | Reusable real-robot and target-compute gates. | Dated results or simulation contracts. |
 | `docs/07-testing/simulation/` | Reusable simulator gates and fidelity contracts. | Field-readiness claims. |
@@ -67,6 +70,16 @@ Moved without changing their conclusions:
 - moved contributor commit/push policy to `docs/03-development/`;
 - moved the undated native endpoint checklist out of the dated evidence folder.
 
+## Cleanup Performed On 2026-09-03
+
+- reduced `CURRENT.md`, the roadmap, and known gaps to their declared roles;
+- removed completed Message/DDS planning, duplicate tuning guidance, stale
+  deployment workflow notes, and unreferenced media;
+- linked every current deployment guide, architecture contract, API index,
+  worklog, and dated evidence record from an owning index;
+- corrected current commands and heading links after runtime/test migrations;
+- kept all dated field-run evidence and recovered worklogs unchanged.
+
 ## Placement Checklist
 
 Before adding a document, answer these questions:
@@ -77,6 +90,9 @@ Before adding a document, answer these questions:
 3. What code/config/schema is the source of truth?
 4. What status and date make its authority unambiguous?
 5. Can an existing document be updated instead of creating another file?
+
+Every maintained page must be reachable from an owning index. Keep an image
+only when a maintained page or repository entry point references it.
 
 Run the repository documentation guard before review:
 

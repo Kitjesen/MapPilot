@@ -28,22 +28,22 @@ runtime. Its primary design rule is **scoped orchestration**:
 - `lingtu.assembly` declares the product Module graph.
 - `Blueprint` materializes one application graph; optional Python workers stay
   under the same Blueprint lifecycle.
-- Compiled `Product` owns the Host Blueprint declaration and the
-  endpoint-resolved process declaration; `ProductControl` owns product
-  operations and invokes one internal systemd runner for process effects.
+- Compiled `Product` owns the Host Blueprint and process declarations.
+  `ProductControl` owns Product operations and routes one RunPlan to the
+  `real` systemd runner or `sim` direct-child runner.
 - Typed ports and explicit wires are the Host-internal boundary. Native typed
   DDS is the field cross-process data boundary.
 - DDS, shared memory, simulators, and ROS 2 compatibility components are
   transports or adapters, not the business API.
 
-The product uses the same logical contract in three environments, but the
-execution boundary is different in each one:
+LingTu has two public runtime environments: `real` and `sim`. Local development
+is a verification context, not a third `env` value:
 
-| Environment | Primary use | What it proves | What it does not prove |
+| Context | Primary use | What it proves | What it does not prove |
 | --- | --- | --- | --- |
-| Local | Framework, unit tests, and integration development | Module composition and offline behavior | Simulator or robot behavior |
-| Simulation | Mission, planning, dataflow, and integration checks | The selected simulation gate | Field hardware readiness |
-| Field robot | Mapping, localization, navigation, and supervised operation | Evidence collected on the selected target | Behavior on every target or future deployment |
+| Local checkout | Framework, unit tests, and integration development | Module composition and offline behavior | `env=sim` or `env=real` behavior |
+| `env=sim` | Mission, planning, dataflow, and integration checks | The selected simulation gate | Field hardware readiness |
+| `env=real` | Mapping, localization, navigation, and supervised operation | Evidence collected on the selected target | Behavior on every target or future deployment |
 
 ## System at a glance
 
@@ -65,7 +65,8 @@ For the physical robot, high-rate sensor, SLAM, realtime maps, navigation, and
 final command paths use native C++ processes and typed DDS at explicit process
 boundaries. The Python Host owns Gateway, Agent, MCP, semantic behavior, and
 selected low-rate adapters; Blueprint only materializes that Host graph. The
-current command chain is `navd -> rt/nav/cmd_vel -> driver -> Brainstem`.
+current command chain is `navd -> rt/nav/cmd_vel -> lingtu-driver -> selected
+robot adapter`.
 Read [System design](./architecture/SYSTEM_DESIGN.md) for the complete layer
 and ownership model.
 
@@ -74,7 +75,7 @@ and ownership model.
 | I want to... | Start here |
 | --- | --- |
 | Understand the inspection product and operator acceptance model | [Product definition](./product/README.md) |
-| Run LingTu locally or choose a profile | [Get started](./01-getting-started/README.md) |
+| Prepare a checkout or choose Product + env | [Get started](./01-getting-started/README.md) |
 | Learn the Product, Host, Blueprint, Module, and DDS vocabulary | [Core concepts](./02-concepts/README.md) |
 | Understand control ownership, stop/recovery, and motion boundaries | [Safety and control boundaries](./10-safety/README.md) |
 | Change or extend the codebase | [Develop LingTu](./03-development/README.md) |
@@ -84,7 +85,24 @@ and ownership model.
 | Prepare a field target without exposing target-specific details | [Field deployment](./04-deployment/WEB_GUIDE.md) |
 | Run tests, simulation gates, or no-motion field validation | [Testing and validation](./07-testing/WEB_GUIDE.md) |
 | Find the CLI, REST, MCP, configuration, or contract reference | [Reference](./08-reference/README.md) |
+| Decide where a source, simulation, tool, or generated file belongs | [Repository layout](./REPO_LAYOUT.md) |
 | Resume long-running agent work after chat compaction | [Session worklogs](./worklogs/README.md) |
+
+## Directory map
+
+The numbered directories follow a reader's task. The named directories classify
+documents that need a stable owner or authority level.
+
+| Location | Owns |
+| --- | --- |
+| `01-*` through `10-*` | Getting started, concepts, development, deployment, task guides, operations, testing, reference, integrations, and safety |
+| [`product/`](./product/README.md) | Product intent and acceptance semantics |
+| [`architecture/`](./architecture/README.md) | Current contracts and accepted decisions |
+| [`api/`](./api/README.md) | Generated REST/MCP inventories and maintained external API contracts |
+| [`plans/`](./plans/README.md) | Active forward-looking work only |
+| [`research/`](./research/README.md) | Non-authoritative upstream and algorithm investigations |
+| [`worklogs/`](./worklogs/README.md) | Session continuity; never runtime authority |
+| `assets/` | Images that are referenced by maintained documentation |
 
 ## How to read this documentation
 
@@ -95,21 +113,21 @@ and ownership model.
 | Contract | Defines a current architecture or runtime boundary precisely. | `architecture/` |
 | Reference | Lists stable commands, schemas, APIs, configuration, or generated inventories. | `08-reference/`, `api/`, package READMEs |
 | Validation evidence | Records what a named test, simulation gate, or field run demonstrated. | `07-testing/` and `07-testing/field-runs/` |
-| Active plan | Describes intended work, not shipped behavior. | `plans/current-roadmap.md` |
+| Active plan | Describes intended work, not shipped behavior. | `plans/` |
 | Research note | Records an upstream evaluation or algorithm investigation; it is not acceptance evidence. | `research/` |
 | Session worklog | Preserves task context across chat compaction; it is not an implementation authority. | `worklogs/` |
 
-Every current task page identifies its audience and environment. A command or
-claim that only applies to simulation must say so. A procedure that can create
-robot motion must keep its no-motion inspection and route-preview steps
-separate from the final motion action.
+Every current task page identifies its audience and verification context. A
+runtime command must name `env=real` or `env=sim`. A procedure that can create
+robot motion keeps no-motion inspection and route preview separate from the
+final motion action.
 
 ## Recommended reading paths
 
 ### First local or simulation run
 
-1. [Choose a path and run a safe first profile](./01-getting-started/README.md).
-2. Read the detailed [Quick Start](./QUICKSTART.md) when you need profile,
+1. [Choose a path and preview a simulation Product](./01-getting-started/README.md).
+2. Read the detailed [Quick Start](./QUICKSTART.md) when you need Product, env,
    lifecycle, or command details.
 3. Continue with the relevant [task guide](./05-guides/README.md).
 
@@ -159,8 +177,8 @@ use the contract and update or demote the stale page.
 
 ## Documentation rules
 
-- Write task pages for an explicit audience and environment: local,
-  simulation, or field robot.
+- Write task pages for an explicit audience and verification context: local
+  checkout, `env=sim`, or `env=real`.
 - Keep commands that can move hardware separate from no-motion inspection and
   route-preview steps.
 - Link to contracts and generated references instead of duplicating their

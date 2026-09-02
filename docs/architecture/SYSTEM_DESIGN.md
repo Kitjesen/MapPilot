@@ -10,7 +10,8 @@ LingTu is an autonomous navigation runtime for outdoor quadruped robots. A
 `Product` declares an env-independent operating mode: logical native process
 roles and the scoped Host graph. `ProductControl` is fixed to `env=real` or
 `env=sim`, resolves that Product once into one immutable `RunPlan`, stages one
-transient session, and applies the plan through its internal systemd runner.
+transient session, and applies the plan through the selected env runner:
+SystemdRunner for `real`, direct child processes for `sim`.
 The Host reads that exact RunPlan and uses Blueprint to materialize typed
 Modules and explicit in-process wires. Blueprint never owns
 systemd or native-process lifecycle. The product data boundary is native
@@ -23,12 +24,12 @@ leaking into drivers, gateway, or UI code.
 
 ## 1. Problem Statement
 
-The system must keep the same navigation product contract across three
-environments:
+The system must keep the same Product contract across three work contexts while
+the public runtime `env` remains exactly `real` or `sim`:
 
-1. endpoint or hardware operation when explicitly scheduled;
-2. desktop or server simulation;
-3. developer and UI integration workflows.
+1. `env=real` endpoint and hardware operation;
+2. `env=sim` desktop or server simulation;
+3. local developer and UI integration checks that do not create a third env.
 
 The hard part is not only path planning. The hard part is keeping hardware
 drivers, SLAM, maps, global planning, local planning, safety, and UI telemetry
@@ -38,7 +39,7 @@ replaceable without turning every module into a ROS/DDS/topic-specific client.
 
 | Principle | Meaning |
 | --- | --- |
-| One resolved decision | ProductControl resolves Product + env once into a RunPlan; its internal systemd runner and Host use that exact artifact instead of resolving configuration again. |
+| One resolved decision | ProductControl resolves Product + env once into a RunPlan; the selected real or sim runner and Host use that exact artifact instead of resolving configuration again. |
 | Host graph | Blueprint constructs and wires typed Modules inside the Host process. It does not own Product switching, systemd, native endpoints, or DDS topology. |
 | Product assembly | `lingtu.assembly` resolves env-independent Product data against one env without side effects. |
 | RunPlan scope | The env maps logical Product roles to concrete targets; RunPlan is the resolved Host/process/startup/check input shared by one run. |
@@ -477,17 +478,7 @@ mux validation on the selected target.
 
 ## 11. Roadmap
 
-1. Finish the seven-state public Task projection for navigation, inspection,
-   exploration, CLI, Web, TaskLedger, and replay without changing internal
-   domain phases.
-2. Give native traversability an identity-bearing typed grid contract tied to
-   the accepted SLAM/map observation epoch; reject stale or cross-epoch risk.
-3. Make Task lookup durable across Gateway restart and preserve one execution
-   ID across DDS, path, command, stop, Evidence, and replay facts.
-4. Add the latest-only read-only native walking-risk projection to Gateway/Web,
-   explicitly separate from mapd elevation and Python fused planning cost.
-5. Complete typed planner/map/status contracts for UI and SDK consumption and
-   make transport selection visible in profile resolution.
-6. Keep ROS 2 and LCM compatibility only at explicit adapters; keep camera bulk
-   payloads on the SHM-backed native path with typed DDS metadata/status.
-7. Move stale design notes into `archive/` once a current replacement exists.
+This document defines current architecture and does not own future work. Use the
+[current roadmap](../plans/current-roadmap.md) for execution order and
+[known gaps](../known_gaps.md) for the concise open-gap list. Git history is the
+archive for superseded design text.

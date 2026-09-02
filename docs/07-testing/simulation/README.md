@@ -1,6 +1,6 @@
 # Simulation Validation
 
-Status: current simulation-gate index as of 2026-08-23.
+Status: current simulation-gate index as of 2026-09-03.
 
 These documents define simulator acceptance and fidelity boundaries. A passing
 simulation gate proves only the named simulator, platform, Product/component

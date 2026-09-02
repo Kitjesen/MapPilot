@@ -1,6 +1,6 @@
 # LingTu Testing and Validation
 
-Status: current validation index as of 2026-08-23.
+Status: current validation index as of 2026-09-03.
 
 This directory contains reusable acceptance definitions and dated validation
 evidence. It does not own Product behavior, deployment topology, or the active
@@ -49,6 +49,33 @@ The Go2 EDU + external MID-360 deployment and assisted-avoidance procedure is
 maintained in
 [`go2_edu_mid360_teleop_avoid.md`](../04-deployment/go2_edu_mid360_teleop_avoid.md).
 Its actual results belong in a new dated record under `field-runs/`.
+
+## Dated Evidence Index
+
+This is the complete record list, newest first. Open a record for its exact
+environment, scope, result, blockers, and evidence paths. The evidence files
+are immutable; corrections to current guidance belong outside `field-runs/`.
+
+| Date | Record |
+| --- | --- |
+| 2026-08-12 | [UE5 Playable Pre-Acceptance](field-runs/2026-08-12-ue5-playable-preacceptance.md) |
+| 2026-08-11 | [Current Teleop / Teleop-Avoid Evidence Check](field-runs/2026-08-11-current-teleop-avoid-status.md) |
+| 2026-08-10 | [MuJoCo Native Teleop Evidence](field-runs/2026-08-10-mujoco-teleop-native.md) |
+| 2026-07-27 | [Sunrise Navigation Read-Only Audit](field-runs/2026-07-27-sunrise-navigation-readonly-audit.md) |
+| 2026-07-20 | [FAR Native Endpoint aarch64 Validation](field-runs/2026-07-20-worm-aarch64-far-validation.md) |
+| 2026-07-20 | [Sunrise S100P Native Validation](field-runs/2026-07-20-sunrise-s100p-validation.md) |
+| 2026-07-19 | [Navigation C++ Contract Validation](field-runs/2026-07-19-nav-cpp-contract-validation.md) |
+| 2026-07-18 | [Worm aarch64 Native Validation](field-runs/2026-07-18-worm-aarch64-native-validation.md) |
+| 2026-07-10 | [LocalPlanner to PathFollower Field Audit](field-runs/2026-07-10-local-planner-path-follower.md) |
+| 2026-07-08 | [Sunrise Runtime Migration Status](field-runs/2026-07-08-sunrise-runtime-migration-status.md) |
+| 2026-07-07 | [Sunrise Native Nav No-Motion Run](field-runs/2026-07-07-sunrise-native-nav-no-motion.md) |
+| 2026-07-06 | [Sunrise Profile Sequential Validation](field-runs/2026-07-06-profile-sequential-validation.md) |
+| 2026-07-06 | [MuJoCo Continuous Mapping Quality Gate](field-runs/2026-07-06-mujoco-continuous-mapping-gate.md) |
+| 2026-07-05 | [Sunrise Native Nav CmdVel Smoke](field-runs/2026-07-05-sunrise-nav-cmd-vel-smoke.md) |
+| 2026-07-04 | [LiDAR to SLAM Field Session](field-runs/2026-07-04.md) |
+| 2026-07-04 | [Thunder V4 MuJoCo Policy Baseline](field-runs/2026-07-04-thunderv4-mujoco-policy.md) |
+| 2026-07-04 | [Native DDS Field Closure](field-runs/2026-07-04-native-dds-closure.md) |
+| 2026-04-17 | [Field Session](field-runs/2026-04-17.md) |
 
 ## Focused Local Checks
 

@@ -388,7 +388,7 @@ define the detailed planning, safety, and map boundaries.
 | Goal | Next page |
 | --- | --- |
 | Add or change product code safely | [Develop LingTu](../03-development/README.md) |
-| Build a first local/simulation environment | [Get Started](../01-getting-started/README.md) |
+| Prepare a local checkout or first simulation run | [Get Started](../01-getting-started/README.md) |
 | Run a map, route preview, navigation, or exploration workflow | [Task guides](../05-guides/README.md) |
 | Diagnose an existing system | [Troubleshooting](../03-development/TROUBLESHOOTING.md) |
 | Operate a deployed robot | [Operations](../06-operations/README.md) |

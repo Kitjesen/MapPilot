@@ -37,7 +37,7 @@ RunPlan wiring is implementation evidence; it is not a Product pass.
 | Map Server | Native map store, records, artifacts, active slots, map graph, save transactions, mapd realtime layers and scene publication under `src/maps`. | C, P, T; S partial; F pending | Strong partial | Persistent control/query still crosses a thin Python Host facade in some paths. The typed mapd control/query endpoint and field save/recovery evidence are not yet the only path. |
 | Route Server | `maps::MapGraph` provides persisted nodes/edges, map-qualified portal transitions, edge health/enabled state, and shortest routes. | C, T; P/S/F pending | Foundation only | No independent typed route request/status/event lifecycle, route-operation plugin contract, traffic closure updates, or route progress telemetry. |
 | Waypoint Follower | Native inspection store/executor and endpoint runtime support multi-point routes, dwell/actions, retries, skip/stop policies, pause/resume/cancel, revisions, and evidence. | C, P, T; S substrate only; F pending | Implemented for inspection; Product acceptance pending | Archive one exact ProductControl MuJoCo report covering the typed task/event/evidence lifecycle, then field evidence. It is not a generic waypoint server. |
-| Lifecycle Manager | `ProductControl -> RunPlan -> systemd` owns apply, switch, stop, readiness, rollback, and immutable Product plans. | C, P, T; F partial | LingTu equivalent implemented | Do not import the ROS lifecycle manager. Continue crash/restart and release rollback evidence on S100P. |
+| Lifecycle Manager | `ProductControl` owns apply, switch, stop, readiness, rollback, and immutable RunPlans. `real + systemd` uses `SystemdRunner`; `sim + subprocess` uses direct-child supervision. | C, P, T; S implemented; F partial | LingTu equivalent implemented | Do not import the ROS lifecycle manager. Continue crash/restart and release rollback evidence on S100P. |
 | Collision Monitor | Native swept-footprint safety evaluates cloud/traversability and produces stop/slow/limited commands. Local planning also checks the full footprint. | C, P, T; S not currently accepted; F pending | Strong partial | The current safety chain needs a passing end-to-end MuJoCo report and field proof. A reusable multi-zone/TTC policy contract is still missing. |
 | Velocity Smoother | Portable ROS-free C++ core in `nav_kernel::VelocitySmoother`, shared by direct teleop, assisted teleop, and autonomy before final safety. RunPlan configuration reaches `navd`; hard-zero paths reset state and safety-limited commands rebase it to the applied output. | C, T; native endpoint build proven; P/S/F pending | Integrated, default disabled | No Product enables it yet. Add status diagnostics, tune and accept a MuJoCo canary, then collect field ramp/reversal/takeover/stop evidence before promotion. Closed-loop mode remains unavailable until a typed velocity-feedback source exists. |
 | Path Smoother | Some planners and path followers smooth implicitly or limit steering. | Internal behavior only | Missing as an independent capability | Add a typed, replaceable, collision-aware smoother contract between global planning and path activation. Never smooth through an obstacle or destroy planner kinematic constraints. |
@@ -79,7 +79,9 @@ already exists.
 LingTu deliberately replaces ROS node lifecycle with product/process lifecycle:
 
 ```text
-ProductControl -> immutable RunPlan -> systemd
+Product + env -> immutable RunPlan -> ProductControl
+                                      |-- real + systemd -> SystemdRunner
+                                      `-- sim + subprocess -> direct children
 ```
 
 Blueprint remains active only inside the Python Host and is not the field
@@ -185,16 +187,16 @@ ProductControl transaction.
 The source and RunPlan topology assign raw LiDAR/IMU publication and native
 Fast-LIO `slamd` to independent processes. The MuJoCo catalog declares private
 Windows and Linux commands, and compilation selects one host platform before
-artifact hashing or lifecycle work. A RunPlan therefore cannot mix PE and ELF
-processes. Full Windows-native parity is an active P0 target. Today the
-Fast-LIO `slamd.exe` artifact and its verified Windows dependency closure are
-missing, so SLAM-dependent Products fail during Windows RunPlan compilation;
-pure `teleop` is only the first Windows slice, not the accepted platform scope.
-Linux/WSL separately needs the shared native DDS publisher binary (started as
-separate LiDAR, IMU, and camera processes) and driver bridge rebuilt under
-`build/mujoco_native_dds/`; missing artifacts fail closed. Each
-platform still requires its own fresh exact ProductControl report. WSL is not
-Windows-native evidence, and simulator-truth odometry is not SLAM evidence.
+artifact resolution or lifecycle work. A RunPlan therefore cannot mix PE and
+ELF processes.
+
+Windows x64 staging now includes the declared Fast-LIO `slamd.exe`, and the
+SLAM-dependent Product RunPlan compile contract is covered. This closes the old
+missing-artifact and compile-wiring gap; it does not prove full Windows-native
+Product acceptance. Linux/WSL separately needs the shared native DDS publisher
+binary and driver bridge rebuilt for that platform. Each platform still needs
+its own fresh exact ProductControl report. WSL is not Windows-native evidence,
+and simulator-truth odometry is not SLAM evidence.
 
 ### Dataset Replay
 
@@ -223,7 +225,7 @@ state/failure semantics, parameters, and tests.
 | Map Server | Keep LingTu maps. Nav2 is primarily a 2D map-server/lifecycle surface and is not a replacement for LingTu's 3D artifact service. |
 | Route Server | Adapt route operation, closure, reroute, and status semantics onto `maps::MapGraph`; do not import actions/pluginlib. |
 | Waypoint Follower | Keep native InspectionExecutor. Reuse only generic task-executor and failure-reporting ideas if a non-inspection server is later required. |
-| Lifecycle Manager | Do not import. ProductControl/systemd already owns this responsibility. |
+| Lifecycle Manager | Do not import. ProductControl already owns this responsibility through the real systemd and sim direct-child runners. |
 | Collision Monitor | Adapt configurable polygon/velocity-polygon and TTC policy semantics. Preserve the LingTu swept-footprint core and single final writer. |
 | Velocity Smoother | Adapted now as an original ROS-free portable core, following the public open/closed-loop and per-axis limit semantics. |
 | Smoother Server | Add a LingTu `PathSmoother` contract first. Select an algorithm only after collision and kinematic requirements are explicit. |
@@ -251,69 +253,11 @@ Emergency stop, stale safety input, authority loss, and cancel use an immediate
 zero command and bypass gradual smoothing. Putting a smoother after collision
 checking would turn a stop into a deceleration ramp and is forbidden.
 
-## Delivery Plan
+## Delivery Order
 
-### P0: Evidence Before More Features
-
-1. Keep velocity smoothing opt-in per Product. `teleop` and `teleop_avoid`
-   enable it, while field-readiness claims still require authority-transition,
-   hard-stop, and Product acceptance evidence.
-2. Make the portable MotionLayer residual test part of normal CTest.
-3. Run the MuJoCo dynamic matrix and archive one provenance-complete report.
-4. Run HeLiMOS and Dynamic Map Benchmark replay for filter quality.
-5. Run the same residual metrics on MID-360 data.
-
-### P1: Product Velocity Smoothing
-
-1. Product/RunPlan configuration for x/y/yaw limits, timeout, deadband, and
-   proportional scaling is implemented; enabled closed-loop configuration is
-   rejected until a typed feedback source exists.
-2. One native smoother instance is shared across autonomy and teleop.
-3. Smoothing runs before final safety; emergency, stale, cancel, raw-zero, and
-   publish-failure paths still stop immediately.
-4. Publish explicit limited/timed-out/reset/applied-output diagnostics.
-5. Add MuJoCo step, reversal, stale-target, takeover, safety-slowdown, and
-   emergency-stop acceptance for `teleop` first, then `teleop_avoid`.
-6. Enable a field canary only after the unsmoothed configuration remains the
-   explicit rollback and the Product report is accepted.
-
-### P2: Path Smoother
-
-Define:
-
-```text
-PathSmoother::Smooth(path, map_generation, constraints, deadline)
-  -> path | failure
-```
-
-The result must preserve start/goal, frame, map generation, collision clearance,
-maximum curvature, and planner direction/cusp semantics. Failure retains the
-original validated path or fails closed according to Product policy; it never
-publishes an unchecked path.
-
-### P3: Following Product
-
-Add:
-
-```text
-TargetObservation -> FollowController -> VelocitySmoother
-                  -> CommandSafety -> Driver
-```
-
-Required states: `IDLE, ACQUIRING, FOLLOWING, SEARCHING, PAUSED, SUCCESS,
-FAILED, CANCELLED`. Required evidence includes ID continuity, target timeout,
-occlusion recovery, standoff error, bystander rejection, and safety override.
-
-### P4: Docking Product
-
-Docking starts only after these contracts exist:
-
-- versioned dock database and staging pose;
-- detector/refiner output with covariance and freshness;
-- charging/contact/stall feedback from hardware;
-- collision-aware final approach;
-- retry, cancel, undock, and manual recovery;
-- MuJoCo dock fixture followed by real charger evidence.
+This file reports capability and evidence state; it does not own future work.
+Velocity/path smoothing, dynamic-obstacle, following, and docking delivery order
+lives in the [current roadmap](../plans/current-roadmap.md).
 
 ## Claims That Are Not Allowed Yet
 

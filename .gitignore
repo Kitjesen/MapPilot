@@ -138,8 +138,6 @@ assets/media/*.mp4
 
 # 鈹€鈹€ Maps & 3D assets (keep example files) 鈹€鈹€
 maps/*.pcd
-docs/media/videos/*.mp4
-docs/media/videos/*.gif
 # 鈹€鈹€ IDE / editor / tooling 鈹€鈹€
 .vscode/
 .idea/

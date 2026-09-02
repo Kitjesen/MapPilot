@@ -5,6 +5,12 @@ compacted or the desktop task index omits older messages. They are navigation
 aids only: code, tests, architecture contracts, and `docs/CURRENT.md` remain the
 sources of truth.
 
+## Current Worklogs
+
+| Worklog | Recovered transcript |
+| --- | --- |
+| [Explore session, 2026-08-24](./2026-08-24-explore-session.md) | Linked from the worklog when detailed visible history is needed |
+
 ## What to keep
 
 - One short dated worklog for decisions, completed edits, verification evidence,

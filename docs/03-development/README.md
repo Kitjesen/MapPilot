@@ -253,7 +253,9 @@ localization, external-boundary, and ambiguous connections.
 ### Products resolve inside one env
 
 ```text
-Product + env -> RunPlan -> ProductControl -> systemd
+Product + env -> RunPlan -> ProductControl
+                                  |-- real -> systemd
+                                  `-- sim  -> direct children
 ```
 
 Product declarations are env-independent. `env=real` references static
@@ -364,10 +366,10 @@ bridges, and comparison work. It is not the normal field product path. A
 failure. Conversely, sourcing ROS or starting a legacy ROS service is not a
 safe general repair: it can create duplicate sensor or command ownership.
 
-If the task explicitly targets the compatibility path, follow the deployment
-guide's [Legacy ROS2 compatibility](../04-deployment/README.md#legacy-ros2-compatibility)
-section and add a compatibility-specific test. Keep ROS imports confined to
-the adapter boundary.
+If the task explicitly targets compatibility, follow the
+[ROS role replacement map](../architecture/ROS_ROLE_REPLACEMENT_MAP.md) and add
+a compatibility-specific test. Keep ROS imports confined to the adapter
+boundary.
 
 ## Navigation and safety changes
 
@@ -419,7 +421,7 @@ when a dependency requires it.
 
 | Change | Minimum fresh evidence |
 | --- | --- |
-| `Module`, port, stream policy, registry, or runtime helper | Focused test in the owning package; for core runtime changes, start with `python -m pytest tests/runtime/test_runtime.py tests/runtime/test_registry.py -q`. |
+| `Module`, port, stream policy, registry, or runtime helper | Focused test in the owning package; for core runtime changes, start with `python -m pytest tests/runtime/test_core.py tests/runtime/test_registry.py -q`. |
 | Stack factory, wire, Product compiler, or Product graph | Targeted assembly and graph tests for the changed Product. |
 | Navigation/domain behavior | Focused `tests/nav/` test, then a wider navigation test only if the changed contract spans the package. |
 | C++ hot path | Owning CMake build/test target plus a Python boundary/contract test if exposed to Python. |

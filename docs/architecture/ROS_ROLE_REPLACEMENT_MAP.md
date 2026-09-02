@@ -50,8 +50,9 @@ optional compatibility adapter, not as the default runtime substrate.
   native services and Gateway/dataflow evidence.
 - Manager camera snapshots, navigation commands, and Rerun launch now use
   Gateway endpoints by default instead of direct ROS2 topic readers.
-- Release operators run `deploy_robot.sh` and then `package_native_release.sh`;
-  there is no second orchestration wrapper.
+- Release operators run the complete native build and then
+  `package_native_release.sh`. `deploy_robot.sh` remains a separate,
+  Product-scoped checkout build and activation path.
 - Build, deployment, and script index docs describe native planner kernels,
   Gateway/dataflow diagnostics, and native Product operations. The obsolete ROS
   compatibility and OTA script trees have been physically removed.

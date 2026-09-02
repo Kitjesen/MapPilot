@@ -1,6 +1,6 @@
 # LingTu Go2 EDU + 外置 MID-360 实机避障部署手册
 
-状态：2026-08-23，部署准备中，尚未完成 Go2 实机避障验收。
+状态：2026-09-03，部署准备中，尚未完成 Go2 实机避障验收。
 
 本文由 LingTu 项目自行编写，不是 Unitree 官方手册。Unitree 和 Livox
 资料只作为硬件接口与名义安装参数的参考来源。真正的运行契约由 LingTu
@@ -136,25 +136,29 @@ SLAM 证据批准相机。
 本节描述进入实机步骤前必须满足的条件，不在这里维护研发排期。跨 Product
 的实施优先级和完成状态统一记录在 `docs/plans/current-roadmap.md`。
 
-### 已完成 1：`deploy_robot.sh` 按 Product 构建
+### 已完成 1：Product 构建与发布安装已分层
 
-脚本现在从 Product 声明的逻辑进程角色生成构建列表。`teleop_avoid` 会构建
-以下原生运行时：
+`deploy_robot.sh` 从 Product 声明的逻辑进程角色生成构建列表。它把所选
+Product 的编译结果写入 `build/`，按显式开关安装 systemd unit，最后交给
+ProductControl 激活；它不生成 `install/` 发布树。
 
-```text
-build/livox_sdk2_stream/livox_sdk2_stream
-build/slam_core/slamd
-build/maps/mapd
-build/dds_probe/lingtu_dds_probe
-build/nav_endpoint/navd
-build/nav_endpoint/lingtu_traversability_dds
-build/driver/lingtu_driver
-build/native-recording/lingtu_recorder
+完整 Linux aarch64 发布必须在原生构建主机上单独执行：
+
+```bash
+make build BUILD_TYPE=Release
+bash scripts/deploy/package_native_release.sh vX.Y.Z dist
 ```
 
-相机只在 Product 声明 `camera` 时构建；`teleop_avoid` 跳过 Orbbec，`map`
-和 `inspection` 保留相机构建。代码路径和无副作用计划模式已验证，完整原生
-编译仍需在 NX 上执行后才能形成实机部署证据。
+打包器从完整 `build/` 输入生成
+`install/linux-aarch64/Release/{bin,lib,etc,share}` 和 `dist/` 归档。目标机安装器
+再把归档发布到 `/opt/lingtu/releases/<version>/`，并原子切换
+`/opt/lingtu/current`。机器人服务只从该发布根的 `bin/` 和 `lib/` 启动。
+
+Product-specific 构建中，相机只在 Product 声明 `camera` 时构建，
+`teleop_avoid` 会跳过 Orbbec。完整 native release 当前不是 Product-scoped；
+它还要求 camera、Orbbec 和 GNSS 构建产物，因此不能把一次
+`deploy_robot.sh teleop_avoid` 的输出直接交给打包器。无副作用计划模式已验证，
+完整原生编译仍需在 NX 上执行后才能形成实机部署证据。
 
 ### 已完成 2：统一 Python 3.10+ 解释器
 
@@ -235,12 +239,26 @@ ping -c 3 192.168.123.20
 
 ### C. 构建和安装原生服务
 
-先用无副作用模式检查 `teleop_avoid` 的构建计划，再执行部署：
+先无副作用检查 `teleop_avoid` 的 Product 构建计划。随后在 NX 上生成完整
+Go2 release，传输并安装打包产物：
 
 ```bash
 LINGTU_DEPLOY_PLAN_ONLY=1 bash scripts/deploy/deploy_robot.sh teleop_avoid
-bash scripts/deploy/deploy_robot.sh teleop_avoid
+
+LINGTU_DRIVER_BACKEND=go2 make build BUILD_TYPE=Release
+bash scripts/deploy/package_native_release.sh vX.Y.Z dist
+
+tar -xzf lingtu-X.Y.Z-aarch64-native-release.tar.gz -C /tmp
+sudo bash /tmp/lingtu-X.Y.Z-aarch64-native-release/install_nav.sh
+
+# 首次安装需要在 release 落到 /opt 后安装 canonical systemd units。
+export LINGTU_PYTHON=/ABSOLUTE/PATH/TO/LINGTU_VENV/bin/python
+bash /opt/lingtu/current/scripts/deploy/thunder/install_services.sh field-cpp
 ```
+
+`LINGTU_DEPLOY_PLAN_ONLY=1` 只证明 Product 构建清单可解析；它不会编译 release，
+也不会填充 `install/`。已有活动 Product 的升级由安装器按原 Product 和地图恢复；
+首次安装在下面 E 步显式执行第一次 ProductControl switch。
 
 `scripts/deploy/thunder/` 是当前共享 field service catalog 的历史目录名，
 并不表示 Go2 运行 Thunder 后端。机器人实现仍由 RobotConfig 和 RunPlan

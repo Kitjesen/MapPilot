@@ -55,12 +55,12 @@ Recommended Gateway/App/Web push check:
 
 ```bash
 python -m pytest \
-  tests/runtime/test_gateway_app_bootstrap.py \
-  tests/runtime/test_gateway_route_split.py \
-  tests/runtime/test_gateway_telemetry_contract.py \
-  tests/runtime/test_gateway_state_snapshot.py \
-  tests/runtime/test_gateway_runtime_status.py \
-  tests/runtime/test_gateway_readiness.py \
+  tests/gateway/test_gateway_app_bootstrap.py \
+  tests/gateway/test_gateway_route_split.py \
+  tests/gateway/test_gateway_telemetry_contract.py \
+  tests/gateway/test_gateway_state_snapshot.py \
+  tests/gateway/test_gateway_runtime_status.py \
+  tests/gateway/test_gateway_readiness.py \
   -q
 ```
 

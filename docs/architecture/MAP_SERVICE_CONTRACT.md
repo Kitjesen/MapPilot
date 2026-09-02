@@ -268,7 +268,6 @@ SLAM registered cloud + odometry
 cmake -S src\maps -B build\maps -DLINGTU_MAPS_BUILD_TESTS=ON
 cmake --build build\maps --config Release
 ctest --test-dir build\maps -C Release --output-on-failure
-python -m pytest src\maps\tests -q
 ```
 
 还必须通过 Gateway/runtime 合同测试和旧路径静态扫描。Windows CI 使用进程唯一的 pytest basetemp，不能依赖 pytest 的编号临时目录清理。
