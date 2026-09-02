@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# ruff: noqa: D103, S101, S106
+# ruff: noqa: S106
 import importlib.util
 import re
 import sys
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT_CONFTEST = Path(__file__).resolve().parents[2] / "conftest.py"
+ROOT_CONFTEST = Path(__file__).resolve().parents[1] / "conftest.py"
 
 
 def _load_root_conftest():

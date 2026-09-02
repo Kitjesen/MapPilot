@@ -117,7 +117,7 @@ boundaries use native typed DDS/SHM contracts.
 | `runtime/tests/` | Framework, profile, Blueprint, and cross-domain contract gates. |
 | `<domain>/tests/` | Domain-owned unit tests. |
 | `tests/contracts/` | Repository-wide migration and boundary scans. |
-| `sim/tests/` | Simulation integration and validation gates. |
+| `tests/sim/` | Simulation integration and validation gates. |
 
 Run the narrowest relevant tests first, then broaden when a change crosses
 domain boundaries.

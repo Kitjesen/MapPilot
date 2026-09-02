@@ -1,11 +1,15 @@
 # LingTu Test And Acceptance Map
 
-Status: current test/acceptance map as of 2026-07-18.
+Status: current test/acceptance map as of 2026-09-02.
 
-This directory contains legacy integration and planning tests. The current
-product acceptance path lives mostly under `tests/runtime`, `sim/scripts`, and
-Gateway/CLI gates. Use this file as an operator-facing map, not as the only CI
-entry point.
+`tests/` is the canonical home for repository-owned Python and ordinary C/C++
+tests. Its first level follows source ownership; a subsystem adds `cpp/` only
+for its native tests. Cross-owner tests belong in `integration/`, while source
+and wire contracts belong with their owner or in `contracts/`.
+
+The only tests intentionally kept outside this tree are Unreal plugin tests,
+`web/tests`, `tools/simstudio/ui/tests`, and tests owned by independent
+calibration/ROS packages.
 
 ## Product Direction
 
@@ -101,7 +105,7 @@ Server-side simulation closure is tracked by:
 
 ```bash
 python -m sim.diagnostics --required-only --strict
-python -m pytest sim/tests/test_sim_diagnostics.py -q
+python -m pytest tests/sim/test_sim_diagnostics.py -q
 ```
 
 Simulation closure is useful algorithm evidence. It is not a substitute for

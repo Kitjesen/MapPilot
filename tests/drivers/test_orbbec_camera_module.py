@@ -296,12 +296,11 @@ def test_camera_dds_uses_one_absolute_deadline_for_each_complete_record() -> Non
     ).read_text(encoding="utf-8")
     deadline_test = (
         _REPO_ROOT
-        / "src"
+        / "tests"
         / "drivers"
-        / "real"
+        / "cpp"
         / "camera"
         / "native"
-        / "tests"
         / "test_camera_record_deadline.cpp"
     ).read_text(encoding="utf-8")
 

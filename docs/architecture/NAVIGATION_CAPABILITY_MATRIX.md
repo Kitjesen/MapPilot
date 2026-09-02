@@ -109,7 +109,7 @@ The current native component-chain moving-person gate now exists:
 - `sim/scripts/mujoco/map_scene_roi_monitor.py` consumes the bounded native
   `MapScene` ABI and records only ROI counts for `live`, `voxel`, and
   `accumulated` clouds.
-- `sim/tests/test_mujoco_dynamic_obstacle_scene.py` checks detection, clearing,
+- `tests/sim/test_mujoco_dynamic_obstacle_scene.py` checks detection, clearing,
   persistent-residual failure, exact scene geometry, and map/control ownership.
 
 This closes the old test-design gap, but it is not field evidence. A current

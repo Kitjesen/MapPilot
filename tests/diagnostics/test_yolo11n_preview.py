@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
+pytest.importorskip("cv2")
+
 from tools.perception.yolo11n_preview import PersonLockTracker, WebSocketFrameSource
 
 

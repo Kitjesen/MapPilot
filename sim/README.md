@@ -143,7 +143,7 @@ and the boundary it must not cross.
 | [`distribution/`](distribution/README.md) | Windows cook, stage, package, smoke, and release policy. |
 | [`tools/`](tools/README.md) | Offline asset/world authoring, planning visualization, game-selection helpers, sensor stream simulation, and toolchains. |
 | [`scripts/`](scripts/README.md) | Stable MuJoCo Product/native acceptance entrypoints. |
-| [`tests/`](tests/README.md) | Simulation unit, contract, integration, and platform-boundary regression tests. |
+| [`tests/sim/`](../tests/README.md) | Simulation unit, contract, integration, and platform-boundary regression tests. |
 
 `sim/runtime/physics/` plus `sim/runtime/coordinator/` is the canonical generic
 MuJoCo Runtime path. `sim/scripts/mujoco/*` retains product acceptance and
@@ -489,15 +489,15 @@ quality checks. Sparse scenes can produce low hit counts and misleading videos.
 Fast contract tests:
 
 ```bash
-python -m pytest sim/tests/test_mujoco_saved_map_quality_gate.py -q
-python -m pytest sim/tests/test_continuous_mapping_quality_gate.py -q
-python -m pytest sim/tests/test_mujoco_native_navigation_acceptance.py -q
+python -m pytest tests/sim/test_mujoco_saved_map_quality_gate.py -q
+python -m pytest tests/sim/test_continuous_mapping_quality_gate.py -q
+python -m pytest tests/sim/test_mujoco_native_navigation_acceptance.py -q
 ```
 
 Broader Product acceptance tests:
 
 ```bash
-python -m pytest sim/tests/test_mujoco_product_acceptance.py -q
+python -m pytest tests/sim/test_mujoco_product_acceptance.py -q
 ```
 
 The broader suite may require MuJoCo assets, ONNX Runtime, policy checkpoints,

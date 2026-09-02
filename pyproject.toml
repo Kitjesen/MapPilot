@@ -135,13 +135,7 @@ known-first-party = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"tests/runtime/*" = ["F811", "E402", "D", "S101"]
-"tests/perception/*" = ["F811", "E402", "D", "S101"]
-"tests/perception/reconstruction/*" = ["F811", "E402", "D"]
-"src/decision/*/test*" = ["F811", "E402", "D"]
-"tests/decision/*" = ["D", "E402", "F811", "S101"]
-"src/*/tests/*" = ["D", "E402", "S101"]
-"sim/tests/*" = ["D"]
+"tests/**" = ["D", "E402", "F811", "S101"]
 "scripts/*" = ["D"]
 "third_party/*" = ["D", "B", "S"]
 "tools/calibration/**" = ["D", "W191", "E731", "F821"]
@@ -166,22 +160,8 @@ exclude = ["third_party/", "research/"]
 addopts = "-p no:anyio"
 cache_dir = "build/pytest-cache"
 testpaths = [
-    "tests/contracts",
-    "tests/nav",
-    "tests/explore",
-    "tests/runtime",
-    "tests/gateway",
-    "tests/drivers",
-    "tests/lingtu",
-    "tests/memory",
-    "sim/tests",
-    "tools/simstudio/tests",
-    "tests/localization",
-    "tests/perception",
-    "tests/decision",
+    "tests",
 ]
-# tests/ contains default contracts plus root-level integration tests run separately:
-#   python -m pytest tests/ -q
 norecursedirs = [
     "third_party",
     "research",

@@ -79,7 +79,7 @@ other: they are parsed by different layers.
 The narrow structural verification remains:
 
 ~~~powershell
-python -m pytest sim/tests/test_robotsimue_skeleton.py -q
+python -m pytest tests/sim/test_robotsimue_skeleton.py -q
 ~~~
 
 ## Unreal MCP and integrated Terminal

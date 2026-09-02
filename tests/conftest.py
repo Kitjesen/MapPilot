@@ -1,61 +1,73 @@
-"""tests/conftest.py — sys.path setup for root-level tests."""
+"""Repository-wide pytest setup."""
 
+from __future__ import annotations
+
+import asyncio
 import os
 import sys
-from inspect import signature
+import tempfile
+import uuid
+import warnings
+from pathlib import Path
 
-_repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-_src = os.path.join(_repo, "src")
+import pytest
 
-for _p in [
-    _repo,
-    _src,
-    os.path.join(_src, "semantic", "planner"),
-    os.path.join(_src, "semantic", "perception"),
-    os.path.join(_src, "semantic", "common"),
-]:
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+_REPO = Path(__file__).resolve().parents[1]
+_WINDOWS_BASETEMP_ROOT = "lingtu-pytest-basetemp"
 
-
-def _pytest_ignore_collect_impl(candidate):
-    """Skip 3rdparty and vendored directories to avoid import noise and leaks."""
-    _str_path = str(candidate)
-    _skip_patterns = [
-        "/3rdparty/",
-        "/third_party/",
-        "/.venv/",
-        "/venv/",
-        "/.omc/",
-        "/artifacts/",
-        "/build/",
-        "\\3rdparty\\",
-        "\\third_party\\",
-        "\\.venv\\",
-        "\\venv\\",
-        "\\.omc\\",
-        "\\artifacts\\",
-        "\\build\\",
-    ]
-    for pat in _skip_patterns:
-        if pat in _str_path:
-            return True
-    return None
+for _path in (_REPO, _REPO / "src"):
+    value = str(_path)
+    if value not in sys.path:
+        sys.path.insert(0, value)
 
 
-try:
-    from _pytest import hookspec as _pytest_hookspec
+class _CompatEventLoopPolicy(asyncio.DefaultEventLoopPolicy):
+    """Keep legacy get_event_loop() tests working on newer Python versions."""
 
-    _ignore_collect_params = signature(_pytest_hookspec.pytest_ignore_collect).parameters
-except Exception:
-    _ignore_collect_params = {}
+    def get_event_loop(self):
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="There is no current event loop",
+                    category=DeprecationWarning,
+                )
+                return super().get_event_loop()
+        except RuntimeError:
+            loop = self.new_event_loop()
+            self.set_event_loop(loop)
+            return loop
 
-if "collection_path" in _ignore_collect_params:
 
-    def pytest_ignore_collect(collection_path, config):
-        return _pytest_ignore_collect_impl(collection_path)
+asyncio.set_event_loop_policy(_CompatEventLoopPolicy())
 
-else:
 
-    def pytest_ignore_collect(path, config):
-        return _pytest_ignore_collect_impl(path)
+def _make_windows_basetemp(
+    *,
+    parent: Path | None = None,
+    pid: int | None = None,
+    token: str | None = None,
+) -> Path:
+    """Return a process-unique basetemp that bypasses pytest numbered dirs."""
+    root = Path(parent or os.environ.get("PYTEST_DEBUG_TEMPROOT") or tempfile.gettempdir()).joinpath(
+        _WINDOWS_BASETEMP_ROOT
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    process_id = pid if pid is not None else os.getpid()
+    unique = token or uuid.uuid4().hex
+    return root / f"pid-{process_id}-{unique}"
+
+
+def _should_assign_windows_basetemp(
+    config: pytest.Config,
+    *,
+    platform: str | None = None,
+) -> bool:
+    return (platform or sys.platform) == "win32" and getattr(config.option, "basetemp", None) is None
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config: pytest.Config) -> None:
+    """Set a Windows basetemp before pytest's tmpdir factory is configured."""
+    if _should_assign_windows_basetemp(config):
+        config.option.basetemp = _make_windows_basetemp()

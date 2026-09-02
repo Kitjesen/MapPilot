@@ -1,32 +1,10 @@
 """Runtime-specific pytest fixtures."""
 
-import asyncio
 import os
-import warnings
 from inspect import signature
 from pathlib import Path
 
 import pytest
-
-class _CompatEventLoopPolicy(asyncio.DefaultEventLoopPolicy):
-    """Keep legacy get_event_loop() tests working on newer Python versions."""
-
-    def get_event_loop(self):
-        try:
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message="There is no current event loop",
-                    category=DeprecationWarning,
-                )
-                return super().get_event_loop()
-        except RuntimeError:
-            loop = self.new_event_loop()
-            self.set_event_loop(loop)
-            return loop
-
-
-asyncio.set_event_loop_policy(_CompatEventLoopPolicy())
 
 
 @pytest.fixture(autouse=True)
