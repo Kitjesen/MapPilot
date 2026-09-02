@@ -87,7 +87,7 @@ build/mujoco-runtime/Release/lingtu_mujoco_headless.exe `
 Run a resolved multi-robot session through the Runtime Coordinator:
 
 ```powershell
-python -m sim.catalog `
+python -m sim.catalog resolve `
   sim/sessions/examples/thunder_omni_contract/session.yaml `
   --repo-root . --output-dir build/runtime-session
 

@@ -191,11 +191,11 @@ class TestModelIntegration:
         from perception.tracking.instance_tracker import InstanceTracker
         from perception.tracking.projection import Detection3D
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
-        from memory.knowledge.belief.network import _TORCH_AVAILABLE
+        from memory.knowledge.belief.network import HAS_TORCH
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
         self.KG = IndustrialKnowledgeGraph
-        self.torch_ok = _TORCH_AVAILABLE
+        self.torch_ok = HAS_TORCH
 
     def test_train_belief_model(self):
         """InstanceTracker should be able to train belief model."""

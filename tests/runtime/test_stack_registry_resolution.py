@@ -72,7 +72,7 @@ def test_driver_stack_rejects_retired_python_hardware_drivers(robot):
 
         with pytest.raises(
             RuntimeError,
-            match="real Product.*native lingtu-driver",
+            match=r"real Product.*native lingtu-driver",
         ):
             driver_name(robot)
     finally:
@@ -98,21 +98,21 @@ def test_driver_runtime_rejects_retired_python_hardware_keys(
 
         with pytest.raises(
             RuntimeError,
-            match="real Product.*native lingtu-driver",
+            match=r"real Product.*native lingtu-driver",
         ):
             ensure_driver_runtime_registered(category, key)
     finally:
         restore(saved)
 
 
-def test_driver_stack_does_not_resolve_removed_ros2_driver_backend():
+def test_driver_stack_rejects_retired_driver_backend_parameter():
     from lingtu.assembly.stacks.driver import driver
 
     saved = snapshot()
     try:
         clear()
 
-        with pytest.raises(KeyError):
+        with pytest.raises(TypeError, match="driver_backend= was removed"):
             driver(driver_backend="ros2")
     finally:
         restore(saved)

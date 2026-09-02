@@ -237,17 +237,6 @@ class RuntimeTopics:
     gnss_status: str = "/gnss/status"
     gnss_odom: str = "/gnss/odom"
 
-    @property
-    def dog_odometry(self) -> str:
-        """Legacy alias for the driver odometry stream.
-
-        New code must use ``driver_odometry``. This property exists for one
-        compatibility cycle so old imports do not need a flag day.
-        """
-
-        return self.driver_odometry
-
-
 @dataclass(frozen=True)
 class Transform3D:
     """Static child-frame mounting pose expressed in the parent frame.

@@ -1130,7 +1130,7 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
     Convenience factory for the composable-stack pattern::
 
         system = autoconnect(
-            driver("thunder", dog_host="192.168.66.190"),
+            driver("stub"),
             slam("localizer"),
             perception("bpu"),
             navigation("astar"),

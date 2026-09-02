@@ -8,7 +8,6 @@ only.
 
 from __future__ import annotations
 
-import importlib
 from pathlib import Path
 
 import pytest
@@ -24,8 +23,7 @@ from tests.drivers.driver_contract import (
 
 pytestmark = [pytest.mark.sim]
 
-_DRIVER_MODULES = (
-    "lingtu.assembly.stub",
+_OPTIONAL_DRIVER_MODULES = (
     "drivers.sim.mujoco.driver",
     "drivers.sim.endpoint",
 )
@@ -34,15 +32,12 @@ _MOTION_DRIVER_BACKENDS = ("stub", "sim_mujoco", "sim_endpoint")
 
 
 def test_python_thunder_motion_driver_is_physically_retired() -> None:
-    source = Path("src/drivers/real/thunder/han_dog_module.py")
-    package = importlib.import_module("drivers.real.thunder")
-
-    assert not source.exists()
-    assert not hasattr(package, "ThunderDriver")
+    assert not Path("src/drivers/real/thunder").exists()
 
 
 def _ensure_drivers_registered() -> None:
-    for mod in _DRIVER_MODULES:
+    __import__("drivers.sim.stub")
+    for mod in _OPTIONAL_DRIVER_MODULES:
         try:
             __import__(mod)
         except ImportError:
@@ -55,6 +50,8 @@ def _get_driver(name: str):
     try:
         return get("driver", name)
     except KeyError:
+        if name == "stub":
+            raise
         pytest.skip(f"driver '{name}' not registered in this environment")
 
 

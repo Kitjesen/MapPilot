@@ -1372,7 +1372,9 @@ def test_native_dds_build_scripts_check_service_binaries() -> None:
     livox = _read("scripts/build/build_livox_sdk2_stream.sh")
     nav = _read("scripts/build/build_nav_endpoint.sh")
 
-    assert "LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME:-ON" in slam
+    assert 'BUILD_DDS_RUNTIME="${LINGTU_SLAM_BUILD_DDS_RUNTIME:-ON}"' in slam
+    assert "LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME" in slam
+    assert "was removed; use" in slam
     assert "slamd" in slam
     assert "native SLAM DDS runtime is missing" in slam
     assert "LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME" not in slam

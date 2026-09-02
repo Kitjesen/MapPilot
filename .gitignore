@@ -18,6 +18,7 @@ log/
 
 # 鈹€鈹€ Runtime state 鈹€鈹€
 .lingtu/
+.local/
 artifacts/
 logs/
 output/
@@ -184,7 +185,6 @@ client/flutter_monitor/linux/flutter/ephemeral/
 client/flutter_monitor/web/.dart_tool/
 
 # Third-party checkouts
-third_party/
 !third_party/.gitkeep
 !third_party/MANIFEST.md
 
@@ -199,7 +199,6 @@ paper_figures/
 pipeline_videos/
 functional_test_output/
 test_results/
-artifacts/
 !sim/packages/worlds/factory_park_robot_yard_safety/1.0.0/artifacts/
 !sim/packages/worlds/factory_park_robot_yard_safety/1.0.0/artifacts/**
 src/semantic_perception/test_results/
@@ -241,7 +240,6 @@ web/node_modules
 /.pnpm-store/
 CUsers*/
 .mypy_cache/
-.cursor/
 /.forest-conditioning-smoke/
 /.tmp-inspection-pytest/
 /.tripo/

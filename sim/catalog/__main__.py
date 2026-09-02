@@ -13,16 +13,6 @@ from sim.catalog.diagnostics import CatalogDiagnostic, DiagnosticCode
 from sim.catalog.management import SimCatalog
 from sim.catalog.resolver import CatalogError, CatalogResolver
 
-_COMMANDS = {
-    "list",
-    "inspect",
-    "validate",
-    "dependencies",
-    "qualification",
-    "compose",
-    "resolve",
-}
-
 
 def _add_repo_root(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -71,13 +61,6 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _normalized_argv(argv: Sequence[str]) -> list[str]:
-    values = list(argv)
-    if values and values[0] not in _COMMANDS and not values[0].startswith("-"):
-        return ["resolve", *values]
-    return values
-
-
 def _json_line(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -86,7 +69,7 @@ def main(argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> 
     """Run one catalog command and emit a stable JSON response envelope."""
 
     output = stdout or sys.stdout
-    args = _parser().parse_args(_normalized_argv(sys.argv[1:] if argv is None else argv))
+    args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
     repo_root = (args.repo_root or Path.cwd()).resolve()
     try:
         resolver = CatalogResolver.from_repository(repo_root)

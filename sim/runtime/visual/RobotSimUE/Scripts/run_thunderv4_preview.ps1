@@ -203,7 +203,7 @@ if (-not (Test-Path -LiteralPath $headlessExe -PathType Leaf)) {
 }
 
 if (-not $SnapshotPath) {
-    & $python -m sim.catalog $sessionSpec `
+    & $python -m sim.catalog resolve $sessionSpec `
         --repo-root $repoRoot `
         --output-dir $sessionBundle
     if ($LASTEXITCODE -ne 0) {

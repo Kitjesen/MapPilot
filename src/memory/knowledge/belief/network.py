@@ -30,9 +30,6 @@ try:
 except ImportError:
     HAS_TORCH = False
 
-# Alias for backward compatibility with tests that import _TORCH_AVAILABLE
-_TORCH_AVAILABLE = HAS_TORCH
-
 logger = logging.getLogger(__name__)
 
 # ════════════════════════════════════════════════════════════
@@ -129,11 +126,6 @@ def build_affordance_vectors(kg, label2idx: dict[str, int]) -> np.ndarray:
 
 
 NUM_AFFORDANCES = 12
-# Alias for backward compatibility
-NUM_AFFORDANCE_TYPES = NUM_AFFORDANCES
-
-# Alias: build_affordance_matrix → build_affordance_vectors
-build_affordance_matrix = build_affordance_vectors
 
 
 def build_dangerous_mask(kg, label2idx: dict[str, int]) -> np.ndarray:

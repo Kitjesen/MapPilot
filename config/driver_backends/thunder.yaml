@@ -1,9 +1,0 @@
-schema_version: lingtu.driver_catalog.v1
-
-backends:
-  thunder:
-    robot: thunder
-
-protocols: {}
-
-modules: {}

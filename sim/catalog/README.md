@@ -22,13 +22,12 @@ The resolver does not launch MuJoCo, Unreal, DDS, or a controller process.
 Resolve the default Thunder V4 preset with:
 
 ```powershell
-python -m sim.catalog sim/sessions/products/doso/thunder_v4/default.yaml `
+python -m sim.catalog resolve sim/sessions/products/doso/thunder_v4/default.yaml `
   --repo-root . `
   --output-dir catalog-contract
 ```
 
-The legacy positional form above remains an alias for `resolve`. SimCatalog
-management and authoring commands use the same resolver instance and emit
+SimCatalog management and authoring commands use the same resolver instance and emit
 machine-readable JSON envelopes:
 
 ```powershell

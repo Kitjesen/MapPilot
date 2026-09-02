@@ -116,7 +116,7 @@ Inspected UE presentation evidence is
 21 body bindings, 21 visual links, 105 VisualOnly props, zero material compile
 errors, and SHA-256 `827fc3bf342ba49e0a16510119485c43e72812949d7874faf94db1666dc1c9fd`.
 
-See [`ROADMAP.md`](../ROADMAP.md) for the simulation roadmap.
+See [`current-roadmap.md`](../docs/plans/current-roadmap.md) for the current roadmap.
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the detailed architecture,
 authority matrix, migration tree, and delivery gates.
 
@@ -164,7 +164,7 @@ The generic runtime path starts from one resolved SessionBundle. Run-specific
 PIDs, logs, ports, and shared-memory names remain in `RunAllocation`:
 
 ```powershell
-python -m sim.catalog `
+python -m sim.catalog resolve `
   sim/sessions/examples/thunder_omni_contract/session.yaml `
   --repo-root . --output-dir build/runtime-session
 

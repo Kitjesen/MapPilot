@@ -1,12 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+for deprecated_var in \
+  LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME \
+  LINGTU_SLAM_BUILD_CYCLONE_DDS_RUNTIME \
+  LINGTU_SLAM_WITH_FASTLIO2; do
+  if [[ -v "$deprecated_var" ]]; then
+    if [[ "$deprecated_var" == "LINGTU_SLAM_WITH_FASTLIO2" ]]; then
+      replacement_var="LINGTU_SLAM_FASTLIO2"
+    else
+      replacement_var="LINGTU_SLAM_BUILD_DDS_RUNTIME"
+    fi
+    echo "ERROR: $deprecated_var was removed; use $replacement_var instead." >&2
+    exit 2
+  fi
+done
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${LINGTU_SLAM_CORE_BUILD_DIR:-$ROOT/build/slam_core}"
 BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}"
 JOBS="${LINGTU_BUILD_JOBS:-$(nproc 2>/dev/null || echo 4)}"
-FASTLIO2_BACKEND="${LINGTU_SLAM_FASTLIO2:-${LINGTU_SLAM_WITH_FASTLIO2:-ON}}"
-BUILD_DDS_RUNTIME="${LINGTU_SLAM_BUILD_DDS_RUNTIME:-${LINGTU_SLAM_BUILD_CYCLONE_DDS_RUNTIME:-${LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME:-ON}}}"
+FASTLIO2_BACKEND="${LINGTU_SLAM_FASTLIO2:-ON}"
+BUILD_DDS_RUNTIME="${LINGTU_SLAM_BUILD_DDS_RUNTIME:-ON}"
 DEFAULT_BBS3D_ROOT="$ROOT/third_party/3d_bbs/install"
 CPU_BBS3D_ROOT="${CPU_BBS3D_ROOT:-${LINGTU_BBS3D_PREFIX:-$DEFAULT_BBS3D_ROOT}}"
 DEFAULT_SMALL_GICP_ROOT="$ROOT/third_party/research_localization/small_gicp"

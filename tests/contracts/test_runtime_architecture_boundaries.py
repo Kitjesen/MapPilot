@@ -42,9 +42,6 @@ REMOVED_COMPATIBILITY_FACADE_PATHS = (
 
 REMOVED_DRIVER_CATALOG_PATHS = (
     ROOT / "config" / "robots" / "thunder.yaml",
-)
-
-CANONICAL_DRIVER_CATALOG_PATHS = (
     ROOT / "config" / "driver_backends" / "thunder.yaml",
     SRC / "drivers" / "backends.py",
     SRC / "drivers" / "catalog.py",
@@ -113,22 +110,12 @@ def test_runtime_boundary_sources_remain_core_owned() -> None:
         )
 
 
-def test_driver_backend_catalog_replaces_retired_hardware_catalog() -> None:
+def test_retired_python_driver_catalog_is_removed() -> None:
     assert [
         _repo_rel(path)
         for path in REMOVED_DRIVER_CATALOG_PATHS
         if path.exists()
     ] == []
-    assert [
-        _repo_rel(path)
-        for path in CANONICAL_DRIVER_CATALOG_PATHS
-        if not path.exists()
-    ] == []
-
-    source = CANONICAL_DRIVER_CATALOG_PATHS[0].read_text(encoding="utf-8")
-    assert "schema_version: lingtu.driver_catalog.v1" in source
-    for key in ("backends", "protocols", "modules"):
-        assert f"{key}:" in source
 
 
 def test_directory_stage_keeps_lcm_adapter_layer_removed() -> None:

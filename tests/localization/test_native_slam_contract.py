@@ -53,24 +53,23 @@ def test_native_slam_dds_runtime_requires_real_fastlio_backend() -> None:
 
 
 @pytest.mark.parametrize(
-    "deprecated_dds_option",
-    (
-        "LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME",
-        "LINGTU_SLAM_BUILD_CYCLONE_DDS_RUNTIME",
-    ),
+    ("deprecated_option", "replacement_option"),
+    [
+        ("LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME", "LINGTU_SLAM_BUILD_DDS_RUNTIME"),
+        ("LINGTU_SLAM_BUILD_CYCLONE_DDS_RUNTIME", "LINGTU_SLAM_BUILD_DDS_RUNTIME"),
+        ("LINGTU_SLAM_WITH_FASTLIO2", "LINGTU_SLAM_FASTLIO2_BACKEND"),
+    ],
 )
-def test_native_slam_deprecated_dds_aliases_require_real_fastlio_backend(
-    deprecated_dds_option: str,
+def test_native_slam_rejects_removed_cmake_options(
+    deprecated_option: str,
+    replacement_option: str,
 ) -> None:
-    result = _configure_native_slam(
-        f"-D{deprecated_dds_option}=ON",
-        "-DLINGTU_SLAM_FASTLIO2_BACKEND=OFF",
-    )
+    result = _configure_native_slam(f"-D{deprecated_option}=OFF")
 
     assert result.returncode != 0
-    assert "requires LINGTU_SLAM_FASTLIO2_BACKEND=ON" in (
-        result.stdout + result.stderr
-    )
+    output = " ".join((result.stdout + result.stderr).split())
+    assert f"{deprecated_option} was removed" in output
+    assert f"use {replacement_option} instead" in output
 
 
 def test_native_slam_contract_only_configure_remains_supported() -> None:
@@ -642,6 +641,10 @@ def test_slam_cpp_build_declares_native_dds_runtime() -> None:
     assert "CycloneDDS-CXX" not in cmake
     assert "add_executable(slamctl slam_control.cpp)" in cmake
     assert "LINGTU_SLAM_BUILD_DDS_RUNTIME" in build_script
+    assert "LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME" in build_script
+    assert "LINGTU_SLAM_BUILD_CYCLONE_DDS_RUNTIME" in build_script
+    assert "LINGTU_SLAM_WITH_FASTLIO2" in build_script
+    assert "was removed; use" in build_script
     assert "LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME" not in build_script
     assert "CPU_BBS3D_ROOT" in build_script
     assert "LINGTU_REQUIRE_BBS3D" in build_script

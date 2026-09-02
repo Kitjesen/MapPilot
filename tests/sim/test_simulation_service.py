@@ -106,6 +106,41 @@ def test_service_and_catalog_cli_return_the_same_core_catalog_result(tmp_path: P
     assert cli_result == service_result
 
 
+def test_catalog_cli_requires_explicit_resolve_command() -> None:
+    from sim.catalog import __main__ as cli
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["sim/sessions/example.yaml"])
+
+    assert exc_info.value.code == 2
+
+
+def test_catalog_cli_explicit_resolve_keeps_json_contract() -> None:
+    from sim.catalog import __main__ as cli
+
+    stdout = StringIO()
+    assert (
+        cli.main(
+            [
+                "resolve",
+                "sim/sessions/examples/thunder_omni_contract/session.yaml",
+                "--repo-root",
+                ".",
+            ],
+            stdout=stdout,
+        )
+        == 0
+    )
+    assert json.loads(stdout.getvalue()) == {
+        "ok": True,
+        "result": {
+            "bundle_dir": None,
+            "schema": "lingtu.sim.resolved-session-result.v1",
+            "session_id": "thunder_omni_contract",
+        },
+    }
+
+
 def test_service_can_inspect_scenario_packages_even_though_import_is_robot_world_only(
     tmp_path: Path,
 ) -> None:
