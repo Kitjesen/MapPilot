@@ -84,7 +84,7 @@ ProductControl 启动并进入相同 domain 后才会得到响应。现场优先
 ```bash
 systemctl --no-pager --full status 'lt-*.service'
 curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
-python scripts/diagnostics/dds_probe.py --seconds 5 \
+PYTHONPATH=src python -m diagnostics.field.dds_readiness --seconds 5 --topics \
   /slam/odometry /slam/state_at_scan \
   /slam/localization_quality /slam/localization_health
 ```

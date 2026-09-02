@@ -16,13 +16,15 @@ Those are not the per-point hot path.
 Build:
 
 ```bash
-bash scripts/build/build_pointcloud_codec.sh
+cmake -S src/kernels/gateway/pointcloud_codec -B src/kernels/gateway/pointcloud_codec/build
+cmake --build src/kernels/gateway/pointcloud_codec/build
 ```
 
 On Windows:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/build/build_pointcloud_codec.ps1
+cmake -S src/kernels/gateway/pointcloud_codec -B src/kernels/gateway/pointcloud_codec/build
+cmake --build src/kernels/gateway/pointcloud_codec/build --config Release
 ```
 
 At runtime, `runtime.utils.binary_codec` loads the shared library from this

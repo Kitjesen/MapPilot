@@ -19,6 +19,7 @@ MIN_BASE_HEIGHT_M = 0.20
 MAX_BASE_HEIGHT_M = 1.00
 MAX_BASE_HEIGHT_SPAN_M = 0.35
 MAX_ABS_TILT_RAD = math.radians(30.0)
+MAX_TRAJECTORY_SAMPLES = 4096
 _MOTION_FIELDS = frozenset(
     {
         "schema",
@@ -339,7 +340,11 @@ def _validate_motion(
         start_yaw = _finite_number(payload["start_yaw_rad"], "start_yaw_rad", SimMotionEvidenceError)
         end_yaw = _finite_number(payload["end_yaw_rad"], "end_yaw_rad", SimMotionEvidenceError)
         trajectory = payload["trajectory"]
-        if type(trajectory) is not list or len(trajectory) < 2 or len(trajectory) > 4096:
+        if (
+            type(trajectory) is not list
+            or len(trajectory) < 2
+            or len(trajectory) > MAX_TRAJECTORY_SAMPLES
+        ):
             raise SimMotionEvidenceError("motion trajectory is invalid")
         previous_step = -1.0
         for sample in trajectory:

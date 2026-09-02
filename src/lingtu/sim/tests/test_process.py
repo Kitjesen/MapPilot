@@ -122,7 +122,7 @@ def _minimal_simulation() -> dict[str, Any]:
             "kind": "world",
             "manifest": "sim/packages/worlds/test_world/world.package.yaml",
         },
-        "mjcf": "sim/worlds/test_world/world.xml",
+        "mjcf": "sim/packages/worlds/test_world/world.xml",
     }
     robots = [
         {
@@ -132,7 +132,7 @@ def _minimal_simulation() -> dict[str, Any]:
                 "id": "test_robot",
                 "version": "1.0.0",
                 "kind": "robot",
-                "manifest": "sim/robots/test_robot/robot.package.yaml",
+                "manifest": "sim/packages/robots/test_robot/robot.package.yaml",
             },
             "controller": None,
             "sensor_rig": None,
@@ -141,7 +141,7 @@ def _minimal_simulation() -> dict[str, Any]:
                 "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
             },
             "model": {
-                "mjcf": "sim/robots/test_robot/robot.xml",
+                "mjcf": "sim/packages/robots/test_robot/robot.xml",
                 "attach_root": "base_link",
                 "root_joint": "root",
                 "initial_keyframe": None,
@@ -1049,6 +1049,74 @@ def test_naturally_exited_child_is_removed_from_ledger(tmp_path: Path) -> None:
     assert not ledger.exists()
 
 
+def test_critical_child_exit_fails_product_and_stops_remaining_children(
+    tmp_path: Path,
+) -> None:
+    repository_root = tmp_path / "repository"
+    session_root = tmp_path / "session"
+    repository_root.mkdir()
+    session_root.mkdir()
+    artifact = repository_root / "worker.py"
+    artifact.write_text(
+        "import os\n"
+        "import signal\n"
+        "import time\n"
+        "running = True\n"
+        "def stop(_signum, _frame):\n"
+        "    global running\n"
+        "    running = False\n"
+        "signal.signal(signal.SIGTERM, stop)\n"
+        "if hasattr(signal, 'SIGBREAK'):\n"
+        "    signal.signal(signal.SIGBREAK, stop)\n"
+        "deadline = time.monotonic() + float(os.environ.get('EXIT_AFTER', '60'))\n"
+        "while running and time.monotonic() < deadline:\n"
+        "    time.sleep(0.01)\n",
+        encoding="utf-8",
+    )
+    relative_artifact = artifact.relative_to(repository_root).as_posix()
+    host = ProcessSpec(
+        name="host_runtime",
+        manager="direct",
+        target="host-runtime",
+        order=10,
+        timeout_s=2,
+        lifecycle="mode",
+        command=ProcessCommand(
+            argv=("python", relative_artifact),
+            cwd=".",
+            env=(),
+            artifact=ProcessArtifact(relative_artifact),
+            readiness=ProcessReadiness("process"),
+        ),
+        provides=("host",),
+    )
+    plan = _plan(
+        repository_root,
+        artifact,
+        process_name="driver_bridge",
+        process_target="driver-bridge",
+        provides=("driver",),
+        command_env=(("EXIT_AFTER", "0.1"),),
+        additional_processes=(host,),
+    )
+    manager = SimProcessManager(repository_root)
+    manager.bind(
+        plan,
+        run_plan_path=_publish_plan(session_root, plan),
+        product_session_id=PRODUCT_SESSION_ID,
+    )
+    manager.apply(plan)
+    _wait_for_inactive(manager, "driver-bridge")
+
+    with pytest.raises(ProcessFailed, match="critical simulation process exited") as failure:
+        manager.monitor(plan)
+
+    assert failure.value.report.status == "failed"
+    assert manager.active("driver-bridge") is False
+    assert manager.active("host-runtime") is False
+    assert SimChildLedger(session_root).load() is None
+
+
 def test_start_wraps_popen_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1239,7 +1307,7 @@ def test_subprocess_runner_starts_waits_and_stops_owned_child(
             time.sleep(0.02)
         identity = json.loads(ready_path.read_text(encoding="utf-8"))
         assert identity == {
-            **native_environment,
+            **plan.native_process_environment,
             "LINGTU_COMMAND_SETTING": "command-value",
             "LINGTU_ENV": "sim",
             "LINGTU_RUN_PLAN": str(plan_path.resolve()),

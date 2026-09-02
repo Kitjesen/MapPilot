@@ -12,7 +12,7 @@ import pytest
 from drivers.sim.mujoco.driver import MujocoDriverModule
 from runtime.msgs.geometry import Twist, Vector3
 from runtime.tests.numpy_guard import import_numpy_or_skip
-from sim.engine.core.robot import RobotConfig
+from sim.compat.engine.core.robot import RobotConfig
 
 pytestmark = [pytest.mark.sim]
 
@@ -37,8 +37,7 @@ def test_default_thunder_v4_resolves_current_robot_and_controller():
 def test_thunderv4_model_exposes_lidar_site_imu_package():
     model_path = (
         Path(__file__).resolve().parents[2]
-        / "sim"
-        / "robots"
+        / "sim" / "packages" / "robots"
         / "doso"
         / "thunder_v4"
         / "mjcf"
@@ -62,7 +61,7 @@ def test_thunderv4_model_exposes_lidar_site_imu_package():
 
 
 def test_mujoco_engine_prefers_lidar_site_imu_for_raw_slam_package():
-    from sim.engine.mujoco.engine import MuJoCoEngine
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
 
     class FakeSensor:
         def __init__(self, data):
@@ -1877,7 +1876,7 @@ def test_mujoco_native_dds_sensor_bridge_steps_engine_at_sensor_tick():
 def test_mujoco_engine_fast_static_clock_advance_skips_state_recompute():
     import threading
 
-    from sim.engine.mujoco.engine import MuJoCoEngine
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
 
     engine = object.__new__(MuJoCoEngine)
     engine._physics_dt = 0.001
@@ -1900,7 +1899,7 @@ def test_mujoco_engine_fast_static_clock_advance_skips_state_recompute():
 
 
 def test_mujoco_lidar_pattern_cursor_supports_subscan_sample_count():
-    from sim.engine.mujoco.lidar import MuJoCoLidar
+    from sim.compat.engine.mujoco.lidar import MuJoCoLidar
 
     lidar = object.__new__(MuJoCoLidar)
     lidar._ray_angles = np.asarray(
@@ -2015,9 +2014,9 @@ def test_mujoco_driver_raw_scan_uses_lidar_frame_for_native_slam():
 
 
 def test_thunder_v3_source_assets_are_resolvable():
-    sim_root = Path(__file__).resolve().parents[2] / "sim"
-    urdf_path = sim_root / "assets" / "urdf" / "thunder_v3.urdf"
-    xml_path = sim_root / "assets" / "xml" / "thunder_v3.xml"
+    asset_root = Path(__file__).resolve().parents[2] / "sim" / "compat" / "assets" / "thunder_v3"
+    urdf_path = asset_root / "urdf" / "thunder_v3.urdf"
+    xml_path = asset_root / "xml" / "thunder_v3.xml"
 
     assert urdf_path.exists()
     assert xml_path.exists()
@@ -2044,9 +2043,9 @@ def test_thunder_v3_source_assets_are_resolvable():
 
 
 def test_thunder_v3_mjcf_runtime_keeps_lingtu_sensor_and_control_contracts():
-    sim_root = Path(__file__).resolve().parents[2] / "sim"
-    upstream_path = sim_root / "assets" / "mjcf" / "thunder_v3_mujoco.xml"
-    runtime_path = sim_root / "assets" / "mjcf" / "thunder_v3_lingtu.xml"
+    asset_root = Path(__file__).resolve().parents[2] / "sim" / "compat" / "assets" / "thunder_v3"
+    upstream_path = asset_root / "mjcf" / "thunder_v3_mujoco.xml"
+    runtime_path = asset_root / "mjcf" / "thunder_v3_lingtu.xml"
 
     upstream = ET.parse(upstream_path).getroot()
     runtime = ET.parse(runtime_path).getroot()
@@ -2258,7 +2257,7 @@ def test_mujoco_native_dds_sensor_bridge_accepts_policy_path_override():
             "--drive-mode",
             "policy",
             "--policy-path",
-            "sim/controllers/doso/thunder_v4/locomotion/policy/pose_flat_low_kpkd_microterrain_model29600_policy.onnx",
+            "sim/packages/controllers/doso/thunder_v4/locomotion/policy/pose_flat_low_kpkd_microterrain_model29600_policy.onnx",
         ]
     )
     source = Path(bridge.__file__).read_text(encoding="utf-8")
@@ -3355,23 +3354,23 @@ def test_native_slam_status_adapter_ignores_status_without_odom_pose():
 
 
 def test_mujoco_world_registry_includes_industrial_demo_scene():
-    from drivers.sim.mujoco.driver import _WORLDS_DIR, WORLDS
+    from drivers.sim.mujoco.driver import WORLDS
 
     world_file = WORLDS["industrial_demo"]
 
-    assert world_file == "industrial_demo_scene.xml"
-    assert (_WORLDS_DIR / world_file).is_file()
-    assert "robot_placeholder" in (_WORLDS_DIR / world_file).read_text(encoding="utf-8")
+    assert world_file.name == "industrial_demo_scene.xml"
+    assert world_file.is_file()
+    assert "robot_placeholder" in world_file.read_text(encoding="utf-8")
 
 
 def test_mujoco_world_registry_includes_product_industrial_park_scene():
-    from drivers.sim.mujoco.driver import _WORLDS_DIR, WORLDS
+    from drivers.sim.mujoco.driver import WORLDS
 
     world_file = WORLDS["industrial_park"]
-    text = (_WORLDS_DIR / world_file).read_text(encoding="utf-8")
+    text = world_file.read_text(encoding="utf-8")
 
-    assert world_file == "industrial_park_scene.xml"
-    assert (_WORLDS_DIR / world_file).is_file()
+    assert world_file.name == "industrial_park_scene.xml"
+    assert world_file.is_file()
     assert text.isascii()
     assert "robot_placeholder" in text
 
@@ -3406,7 +3405,7 @@ class _FakeEngine:
 
 
 def test_mujoco_driver_setup_uses_selected_scene_and_real_robot(monkeypatch):
-    import sim.engine.mujoco.engine as mujoco_engine
+    import sim.compat.engine.mujoco.engine as mujoco_engine
 
     monkeypatch.setitem(sys.modules, "mujoco", types.SimpleNamespace(__version__="test"))
     monkeypatch.setattr(mujoco_engine, "MuJoCoEngine", _FakeEngine)
@@ -3418,7 +3417,15 @@ def test_mujoco_driver_setup_uses_selected_scene_and_real_robot(monkeypatch):
     )
     driver.setup()
 
-    expected_world = Path(__file__).resolve().parents[2] / "sim" / "worlds" / "mujoco" / "open_field.xml"
+    expected_world = (
+        Path(__file__).resolve().parents[2]
+        / "sim"
+        / "packages"
+        / "worlds"
+        / "open_field"
+        / "physics"
+        / "open_field.xml"
+    )
 
     assert driver._engine is not None
     assert Path(driver._engine.loaded_xml_path) == expected_world
@@ -3432,8 +3439,29 @@ def test_mujoco_driver_setup_uses_selected_scene_and_real_robot(monkeypatch):
     assert len(driver._engine.camera_configs) == 1
 
 
+def test_mujoco_driver_setup_accepts_absolute_world_path(monkeypatch, tmp_path):
+    import sim.compat.engine.mujoco.engine as mujoco_engine
+
+    world = tmp_path / "custom.xml"
+    world.write_text("<mujoco><worldbody /></mujoco>\n", encoding="utf-8")
+    monkeypatch.setitem(sys.modules, "mujoco", types.SimpleNamespace(__version__="test"))
+    monkeypatch.setattr(mujoco_engine, "MuJoCoEngine", _FakeEngine)
+
+    driver = MujocoDriverModule(
+        world=str(world),
+        render=False,
+        enable_camera=False,
+        drive_mode="kinematic",
+    )
+    driver.setup()
+
+    assert driver._engine is not None
+    assert Path(driver._engine.loaded_xml_path) == world.resolve()
+    assert Path(driver._engine.world_config.scene_xml) == world.resolve()
+
+
 def test_mujoco_driver_uses_scene_placeholder_start_pose(monkeypatch):
-    import sim.engine.mujoco.engine as mujoco_engine
+    import sim.compat.engine.mujoco.engine as mujoco_engine
 
     monkeypatch.setitem(sys.modules, "mujoco", types.SimpleNamespace(__version__="test"))
     monkeypatch.setattr(mujoco_engine, "MuJoCoEngine", _FakeEngine)
@@ -3487,7 +3515,7 @@ def test_sim_boundary_indexes_document_stable_contracts():
     indexes = {
         "simulation": repo_root / "sim" / "README.md",
         "scripts": repo_root / "sim" / "scripts" / "README.md",
-        "engine": repo_root / "sim" / "engine" / "README.md",
+        "engine": repo_root / "sim" / "compat" / "engine" / "README.md",
         "repository": repo_root / "docs" / "REPO_LAYOUT.md",
     }
     texts = {name: path.read_text(encoding="utf-8") for name, path in indexes.items()}
@@ -3503,9 +3531,12 @@ def test_sim_boundary_indexes_document_stable_contracts():
     assert "| `sim/` | Simulation engines" in texts["repository"]
 
     boundary_markers = {
-        "bridge": ("Legacy ROS2 redirect entrypoints were removed", "src/drivers/sim/"),
-        "datasets": ("offline replay inputs", "generated validation evidence", "artifacts/"),
-        "sensors": ("hardware-free", "sim/assets/livox/", "startup side effects"),
+        "evaluation/data": ("offline replay inputs", "generated validation evidence", "artifacts/"),
+        "packages/sensors": (
+            "Package assets stay with their owning SensorPackage",
+            "sim/packages/sensors/livox/mid360/assets/mid360.npy",
+            "startup side effects",
+        ),
     }
     for folder, markers in boundary_markers.items():
         text = (repo_root / "sim" / folder / "README.md").read_text(encoding="utf-8")
@@ -3516,23 +3547,25 @@ def test_mujoco_driver_resolves_repo_relative_paths(monkeypatch, tmp_path):
     import drivers.sim.mujoco.driver as driver_mod
 
     sim_root = tmp_path / "sim"
-    policy = sim_root / "controllers" / "doso" / "thunder_v4" / "locomotion" / "policy.onnx"
+    policy = sim_root / "packages" / "controllers" / "doso" / "thunder_v4" / "locomotion" / "policy.onnx"
     policy.parent.mkdir(parents=True)
     policy.write_bytes(b"policy")
 
     monkeypatch.setattr(driver_mod, "_SIM_ROOT", sim_root)
     explicit = MujocoDriverModule(
-        policy_path="controllers/doso/thunder_v4/locomotion/policy.onnx",
+        policy_path="packages/controllers/doso/thunder_v4/locomotion/policy.onnx",
         drive_mode="policy",
     )
     assert Path(explicit._policy_path) == policy.resolve()
 
-    missing = driver_mod._resolve_sim_path("sim/controllers/doso/thunder_v4/missing.onnx")
-    assert Path(missing) == (sim_root / "controllers" / "doso" / "thunder_v4" / "missing.onnx").resolve()
+    missing = driver_mod._resolve_sim_path("sim/packages/controllers/doso/thunder_v4/missing.onnx")
+    assert Path(missing) == (
+        sim_root / "packages" / "controllers" / "doso" / "thunder_v4" / "missing.onnx"
+    ).resolve()
 
 
 def test_mujoco_driver_applies_explicit_cmd_velocity_limits(monkeypatch):
-    import sim.engine.mujoco.engine as mujoco_engine
+    import sim.compat.engine.mujoco.engine as mujoco_engine
 
     monkeypatch.setitem(sys.modules, "mujoco", types.SimpleNamespace(__version__="test"))
     monkeypatch.setattr(mujoco_engine, "MuJoCoEngine", _FakeEngine)
@@ -3552,7 +3585,7 @@ def test_mujoco_driver_applies_explicit_cmd_velocity_limits(monkeypatch):
 
 
 def test_mujoco_driver_kinematic_mode_disables_policy(monkeypatch):
-    import sim.engine.mujoco.engine as mujoco_engine
+    import sim.compat.engine.mujoco.engine as mujoco_engine
 
     monkeypatch.setitem(sys.modules, "mujoco", types.SimpleNamespace(__version__="test"))
     monkeypatch.setattr(mujoco_engine, "MuJoCoEngine", _FakeEngine)
@@ -3587,21 +3620,21 @@ def test_mujoco_driver_stop_signal_zero_clears_soft_stop_latch():
 
 
 def test_mujoco_policy_runner_resolves_legacy_history_contracts():
-    from sim.engine.mujoco.robot_controller import OBS_DIM, PolicyRunner
+    from sim.compat.engine.mujoco.robot_controller import OBS_DIM, PolicyRunner
 
     assert PolicyRunner._resolve_history_len(OBS_DIM) == 1
     assert PolicyRunner._resolve_history_len(OBS_DIM * 5) == 5
 
 
 def test_mujoco_policy_runner_rejects_unknown_obs_contract():
-    from sim.engine.mujoco.robot_controller import PolicyRunner, UnsupportedPolicyInputError
+    from sim.compat.engine.mujoco.robot_controller import PolicyRunner, UnsupportedPolicyInputError
 
     with pytest.raises(UnsupportedPolicyInputError, match="76-D input"):
         PolicyRunner._resolve_history_len(76)
 
 
 def test_mujoco_policy_runner_does_not_pad_or_truncate_obs():
-    from sim.engine.mujoco.robot_controller import OBS_DIM, PolicyRunner
+    from sim.compat.engine.mujoco.robot_controller import OBS_DIM, PolicyRunner
 
     runner = object.__new__(PolicyRunner)
     runner._history_len = 1
@@ -3617,7 +3650,7 @@ def test_mujoco_policy_runner_does_not_pad_or_truncate_obs():
 
 
 def test_mujoco_policy_runner_clamp_matches_brainstem_noop():
-    from sim.engine.mujoco.robot_controller import PolicyRunner
+    from sim.compat.engine.mujoco.robot_controller import PolicyRunner
 
     action = np.array(
         [2.0, -3.0, 4.0, -2.0, 3.0, -4.0, 1.8, -2.8, 3.8, -1.8, 2.8, -3.8, 0.8, -0.9, 1.1, -1.2],
@@ -3630,32 +3663,38 @@ def test_mujoco_policy_runner_clamp_matches_brainstem_noop():
     assert clamped is not action
 
 
-def test_mujoco_thunderv4_onnx_policy_uses_thunderv4_runner():
-    from sim.engine.mujoco.robot_controller import _is_thunderv4_policy
+def test_mujoco_thunderv4_policy_identifier_accepts_canonical_layout():
+    from sim.compat.engine.mujoco.robot_controller import _is_thunderv4_policy
 
     assert _is_thunderv4_policy(
-        Path("sim/controllers/doso/thunder_v4/locomotion/policy/pose_flat_low_kpkd_microterrain_model29600_policy.onnx")
+        Path("sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx")
+    )
+    assert _is_thunderv4_policy(
+        Path("sim/packages/controllers/doso/thunder_v4/locomotion/policy/pose_flat_low_kpkd_microterrain_model29600_policy.onnx")
     )
     assert _is_thunderv4_policy(Path("pose_flat_low_kpkd_microterrain_model29600_policy.onnx"))
     assert not _is_thunderv4_policy(Path("model/policy_251119.onnx"))
 
 
-def test_mujoco_thunderv4_onnx_policy_infers_when_available():
+def test_mujoco_thunderv4_policy_1119_uses_history_runner():
     pytest.importorskip("onnxruntime")
-    from sim.engine.mujoco.robot_controller import (
+    from sim.compat.engine.mujoco.robot_controller import (
         OBS_DIM,
         THUNDERV4_STANDING_POSE,
-        ThunderV4OnnxPolicyRunner,
+        PolicyRunner,
         load_policy_runner,
     )
 
     policy = (
         Path(__file__).resolve().parents[2]
         / "sim"
-        / "robots"
-        / "thunderv4"
+        / "packages"
+        / "controllers"
+        / "doso"
+        / "thunder_v4"
+        / "locomotion"
         / "policy"
-        / "pose_flat_low_kpkd_microterrain_model29600_policy.onnx"
+        / "policy_1119.onnx"
     )
     if not policy.exists():
         pytest.skip(f"ThunderV4 ONNX policy missing: {policy}")
@@ -3663,13 +3702,14 @@ def test_mujoco_thunderv4_onnx_policy_infers_when_available():
     runner = load_policy_runner(str(policy))
     action = runner.infer(np.zeros(OBS_DIM, dtype=np.float32))
 
-    assert isinstance(runner, ThunderV4OnnxPolicyRunner)
+    assert type(runner) is PolicyRunner
+    assert runner._history_len == 5
     assert action.shape == (16,)
     assert np.allclose(action, THUNDERV4_STANDING_POSE)
 
 
 def test_mujoco_policy_idle_command_detection():
-    from sim.engine.mujoco.engine import MuJoCoEngine
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
 
     engine = MuJoCoEngine()
 
@@ -3679,7 +3719,7 @@ def test_mujoco_policy_idle_command_detection():
 
 
 def test_mujoco_policy_resume_does_not_restart_startup_hold(monkeypatch):
-    from sim.engine.mujoco.engine import MuJoCoEngine
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
 
     class FakePolicy:
         run_at_idle = False
@@ -3720,7 +3760,7 @@ def test_mujoco_policy_resume_does_not_restart_startup_hold(monkeypatch):
 
 
 def test_mujoco_camera_preserves_metric_depth_output():
-    from sim.engine.mujoco.camera import MuJoCoCamera
+    from sim.compat.engine.mujoco.camera import MuJoCoCamera
 
     raw = np.array([[0.4, 2.5, 25.0]], dtype=np.float32)
     depth = MuJoCoCamera._coerce_depth_meters(raw, near=0.1, far=10.0)
@@ -3751,7 +3791,7 @@ def test_mujoco_driver_default_pose_emits_lidar_points():
 
 def test_mujoco_driver_kinematic_cmd_vel_moves_free_base():
     pytest.importorskip("mujoco")
-    from sim.engine.core.engine import VelocityCommand
+    from sim.compat.engine.core.engine import VelocityCommand
 
     driver = MujocoDriverModule(
         world="open_field",
@@ -3782,8 +3822,8 @@ def test_mujoco_kinematic_step_sanitizes_post_physics_base_jitter(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    from sim.engine.core.engine import VelocityCommand
-    from sim.engine.mujoco.engine import MuJoCoEngine
+    from sim.compat.engine.core.engine import VelocityCommand
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
 
     engine = MuJoCoEngine(drive_mode="kinematic")
     engine._model = SimpleNamespace()
@@ -3823,8 +3863,8 @@ def test_mujoco_kinematic_step_integrates_yaw_from_cmd_vel(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    from sim.engine.core.engine import VelocityCommand
-    from sim.engine.mujoco.engine import MuJoCoEngine
+    from sim.compat.engine.core.engine import VelocityCommand
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
 
     engine = MuJoCoEngine(drive_mode="kinematic")
     engine._model = SimpleNamespace()
@@ -3861,8 +3901,7 @@ def test_mujoco_kinematic_step_integrates_yaw_from_cmd_vel(monkeypatch):
 def _real_policy_path_or_skip() -> Path:
     policy_path = (
         Path(__file__).resolve().parents[2]
-        / "sim"
-        / "controllers"
+        / "sim" / "packages" / "controllers"
         / "doso"
         / "thunder_v4"
         / "locomotion"
@@ -3890,7 +3929,7 @@ def _rpy_from_xyzw(q) -> tuple[float, float, float]:
 def test_mujoco_policy_cmd_vel_produces_stable_motion_when_real_policy_available():
     pytest.importorskip("mujoco")
     pytest.importorskip("onnxruntime")
-    from sim.engine.core.engine import VelocityCommand
+    from sim.compat.engine.core.engine import VelocityCommand
 
     policy_path = _real_policy_path_or_skip()
     driver = MujocoDriverModule(
@@ -3941,7 +3980,7 @@ def test_mujoco_policy_lateral_command_matches_body_left_convention(
 ):
     pytest.importorskip("mujoco")
     pytest.importorskip("onnxruntime")
-    from sim.engine.core.engine import VelocityCommand
+    from sim.compat.engine.core.engine import VelocityCommand
 
     driver = MujocoDriverModule(
         world="open_field",

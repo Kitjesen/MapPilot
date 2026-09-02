@@ -294,22 +294,18 @@ class Recovery::Impl {
                 : params_.maxRelZ;
         const double occupied_height =
             std::max(0.0, params_.obstacleHeightThre);
-        for (int index = 0;
-             index < request.environment.collision.occupiedCount; ++index) {
-          const float* point =
-              request.environment.collision.occupiedXyz + index * 3;
-          if (!std::isfinite(point[0]) || !std::isfinite(point[1]) ||
-              !std::isfinite(point[2])) {
-            *failure_reason = "recovery_collision_map_nonfinite";
-            return false;
+        const auto& collision = request.environment.collision;
+        for (std::size_t index = 0; index < collision.cellCount(); ++index) {
+          if (!collision.occupiedLinear(index)) {
+            continue;
           }
+          const nav_kernel::Vec3 point = collision.planningCellCenter(index);
           const double relative_z =
-              static_cast<double>(point[2]) - request.robot.pose.position.z;
+              point.z - request.robot.pose.position.z;
           if (relative_z < min_relative_z || relative_z > max_relative_z) {
             continue;
           }
-          if (!append_planning_obstacle(
-                  point[0], point[1], occupied_height)) {
+          if (!append_planning_obstacle(point.x, point.y, occupied_height)) {
             *failure_reason = "recovery_collision_map_nonfinite";
             return false;
           }
@@ -330,14 +326,7 @@ class Recovery::Impl {
                             std::string* failure_reason) const {
     const nav_kernel::LocalCollisionMapView& collision =
         request.environment.collision;
-    const bool structural_valid =
-        collision.occupiedCount >= 0 &&
-        (collision.occupiedCount == 0 || collision.occupiedXyz != nullptr) &&
-        std::isfinite(collision.resolution) && collision.resolution > 0.0 &&
-        finitePoint(collision.aabbMin) && finitePoint(collision.aabbMax) &&
-        collision.aabbMin.x < collision.aabbMax.x &&
-        collision.aabbMin.y < collision.aabbMax.y &&
-        collision.aabbMin.z < collision.aabbMax.z &&
+    const bool structural_valid = collision.valid() &&
         collision.resetEpoch > 0 && collision.observationSequence > 0 &&
         collision.generation > 0 && std::isfinite(collision.stampS) &&
         collision.stampS > 0.0 &&

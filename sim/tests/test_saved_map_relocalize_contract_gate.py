@@ -10,7 +10,7 @@ pytestmark = [pytest.mark.sim]
 
 
 def _saved_map_runtime_args(tmp_path: Path):
-    from sim.scripts.saved_map_relocalize_runtime_gate import _build_parser
+    from sim.scripts.mujoco.saved_map_relocalization import _build_parser
 
     map_pcd = tmp_path / "same_source_map/map.pcd"
     map_pcd.parent.mkdir(parents=True)
@@ -68,7 +68,7 @@ class _FakePopen:
 def test_saved_map_relocalize_runtime_gate_defaults_to_native_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    from sim.scripts.saved_map_relocalize_runtime_gate import (
+    from sim.scripts.mujoco.saved_map_relocalization import (
         _build_parser,
         _sensor_feed_timeout_s,
     )
@@ -99,7 +99,7 @@ def test_saved_map_relocalize_runtime_gate_defaults_to_native_runtime(
 def test_saved_map_relocalize_runtime_gate_uses_environment_dds_domain(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    from sim.scripts.saved_map_relocalize_runtime_gate import _build_parser
+    from sim.scripts.mujoco.saved_map_relocalization import _build_parser
 
     monkeypatch.setenv("LINGTU_DDS_DOMAIN_ID", "77")
 
@@ -111,7 +111,7 @@ def test_saved_map_relocalize_preflight_rejects_out_of_range_dds_domain(
     tmp_path: Path,
     domain_id: int,
 ):
-    import sim.scripts.saved_map_relocalize_runtime_gate as gate
+    import sim.scripts.mujoco.saved_map_relocalization as gate
 
     args = _saved_map_runtime_args(tmp_path)
     args.preflight_only = True
@@ -126,7 +126,7 @@ def test_saved_map_relocalize_preflight_rejects_out_of_range_dds_domain(
 def test_saved_map_relocalize_starts_native_dds_sensor_feed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    import sim.scripts.saved_map_relocalize_runtime_gate as gate
+    import sim.scripts.mujoco.saved_map_relocalization as gate
 
     args = _saved_map_runtime_args(tmp_path)
     status_path = tmp_path / "run/slamd.status.json"
@@ -155,7 +155,7 @@ def test_saved_map_relocalize_starts_native_dds_sensor_feed(
 def test_global_relocalize_starts_sensor_feed_from_kidnapped_position(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    import sim.scripts.saved_map_relocalize_runtime_gate as gate
+    import sim.scripts.mujoco.saved_map_relocalization as gate
 
     args = _saved_map_runtime_args(tmp_path)
     args.check_global_relocalize = True
@@ -180,7 +180,7 @@ def test_global_relocalize_starts_sensor_feed_from_kidnapped_position(
 def test_saved_map_relocalize_starts_slamd_in_localization_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    import sim.scripts.saved_map_relocalize_runtime_gate as gate
+    import sim.scripts.mujoco.saved_map_relocalization as gate
 
     args = _saved_map_runtime_args(tmp_path)
     map_pcd = Path(args.map_pcd)
@@ -213,7 +213,7 @@ def test_saved_map_relocalize_calls_native_slamctl(
     monkeypatch: pytest.MonkeyPatch,
     global_relocalize: bool,
 ):
-    import sim.scripts.saved_map_relocalize_runtime_gate as gate
+    import sim.scripts.mujoco.saved_map_relocalization as gate
 
     args = _saved_map_runtime_args(tmp_path)
     args.check_global_relocalize = global_relocalize
@@ -248,7 +248,7 @@ def test_saved_map_relocalize_calls_native_slamctl(
 
 
 def test_saved_map_relocalize_runtime_gate_is_free_of_old_ros_localizer_surface():
-    source = Path("sim/scripts/saved_map_relocalize_runtime_gate.py").read_text(
+    source = Path("sim/scripts/mujoco/saved_map_relocalization.py").read_text(
         encoding="utf-8"
     )
 
@@ -262,7 +262,7 @@ def test_saved_map_relocalize_runtime_gate_is_free_of_old_ros_localizer_surface(
 
 
 def test_saved_map_relocalize_runtime_gate_uses_same_source_metadata(tmp_path: Path):
-    from sim.scripts.saved_map_relocalize_runtime_gate import (
+    from sim.scripts.mujoco.saved_map_relocalization import (
         _load_map_metadata,
         _resolve_live_world_arg,
         _resolve_scan_time_profile_arg,
@@ -290,7 +290,7 @@ def test_saved_map_relocalize_runtime_gate_uses_same_source_metadata(tmp_path: P
 def test_saved_map_relocalize_metadata_contract_accepts_saved_map_schema(
     tmp_path: Path,
 ):
-    from sim.scripts.saved_map_relocalize_runtime_gate import _map_metadata_contract
+    from sim.scripts.mujoco.saved_map_relocalization import _map_metadata_contract
 
     args = _saved_map_runtime_args(tmp_path)
     map_pcd = Path(args.map_pcd)
@@ -309,7 +309,7 @@ def test_saved_map_relocalize_metadata_contract_accepts_saved_map_schema(
 def test_saved_map_relocalize_runtime_gate_preflight_accepts_native_artifacts(
     tmp_path: Path,
 ):
-    import sim.scripts.saved_map_relocalize_runtime_gate as gate
+    import sim.scripts.mujoco.saved_map_relocalization as gate
 
     args = _saved_map_runtime_args(tmp_path)
     args.preflight_only = True
@@ -335,7 +335,7 @@ def test_saved_map_relocalize_runtime_gate_preflight_accepts_native_artifacts(
 def test_saved_map_relocalize_runtime_dataflow_is_readable_by_diagnostics(
     tmp_path: Path,
 ):
-    import sim.scripts.saved_map_relocalize_runtime_gate as gate
+    import sim.scripts.mujoco.saved_map_relocalization as gate
     from sim.diagnostics.dataflow_report import runtime_dataflow_for_gate
 
     args = _saved_map_runtime_args(tmp_path)
@@ -368,7 +368,7 @@ def test_saved_map_relocalize_runtime_dataflow_is_readable_by_diagnostics(
 def test_bbs3d_success_requires_explicit_success_and_engine(
     response: dict[str, object], expected: bool
 ):
-    from sim.scripts.saved_map_relocalize_runtime_gate import _bbs3d_succeeded
+    from sim.scripts.mujoco.saved_map_relocalization import _bbs3d_succeeded
 
     assert _bbs3d_succeeded(response) is expected
 
@@ -376,7 +376,7 @@ def test_bbs3d_success_requires_explicit_success_and_engine(
 def test_saved_map_relocalize_runtime_gate_preflight_rejects_empty_map(
     tmp_path: Path,
 ):
-    import sim.scripts.saved_map_relocalize_runtime_gate as gate
+    import sim.scripts.mujoco.saved_map_relocalization as gate
 
     args = _saved_map_runtime_args(tmp_path)
     args.preflight_only = True
@@ -404,7 +404,7 @@ def test_saved_map_relocalize_runtime_gate_preflight_reports_missing_native_arti
     missing_attr: str,
     blocker_fragment: str,
 ):
-    import sim.scripts.saved_map_relocalize_runtime_gate as gate
+    import sim.scripts.mujoco.saved_map_relocalization as gate
 
     args = _saved_map_runtime_args(tmp_path)
     args.preflight_only = True
@@ -419,7 +419,7 @@ def test_saved_map_relocalize_runtime_gate_preflight_reports_missing_native_arti
 def test_saved_map_relocalize_latest_map_uses_newest_generic_native_artifact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    import sim.scripts.saved_map_relocalize_runtime_gate as gate
+    import sim.scripts.mujoco.saved_map_relocalization as gate
 
     old_map = tmp_path / "artifacts/sim_diagnostics/native_slam_capture/old/same_source_map/map.pcd"
     new_map = tmp_path / "artifacts/sim_diagnostics/native_slam_capture/new/same_source_map/map.pcd"

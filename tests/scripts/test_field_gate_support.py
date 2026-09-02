@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from scripts.gates.field_gate_support import GateError, require_no_active_command_source
+from diagnostics.field.gate_support import GateError, require_no_active_command_source
 
 
 def test_no_active_command_source_accepts_native_idle() -> None:

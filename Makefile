@@ -37,10 +37,12 @@ build:
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS=ON bash scripts/build/build_livox_sdk2_stream.sh
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" LINGTU_SLAM_BUILD_DDS_RUNTIME=ON bash scripts/build/build_slam_core.sh
 	@if [ -f scripts/build/build_mapd.sh ]; then CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_mapd.sh; fi
+	@if [ -f scripts/build/build_map_opt.sh ]; then CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_map_opt.sh; fi
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_dds_probe.sh
 	@if [ ! -d build/deps/orbbec-sdk/include/libobsensor ]; then bash scripts/build/fetch_orbbec_sdk.sh; fi
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_orbbec_native.sh
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_camera_dds.sh
+	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_gnss_dds.sh
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_nav_endpoint.sh
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_driver.sh
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" LINGTU_RECORDING_BUILD_DDS=ON bash scripts/build/build_native_recording.sh

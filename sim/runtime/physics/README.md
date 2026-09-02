@@ -81,14 +81,14 @@ Run the headless smoke executable against a real robot model:
 
 ```powershell
 build/mujoco-runtime/Release/lingtu_mujoco_headless.exe `
-  sim/robots/doso/thunder_v4/mjcf/thunderv4.xml 100
+  sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml 100
 ```
 
 Run a resolved multi-robot session through the Runtime Coordinator:
 
 ```powershell
 python -m sim.catalog `
-  sim/scenarios/catalog/thunder_omni_contract/session.yaml `
+  sim/sessions/examples/thunder_omni_contract/session.yaml `
   --repo-root . --output-dir build/runtime-session
 
 python -m sim.runtime.coordinator build/runtime-session `
@@ -107,6 +107,6 @@ consumer receives body truth only and does not parse the source model:
 
 ```powershell
 build/mujoco-runtime/Release/lingtu_mujoco_snapshot.exe `
-  sim/robots/doso/thunder_v4/mjcf/thunderv4.xml v4_nominal_stand `
+  sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml v4_nominal_stand `
   > build/unreal-assets/thunderv4-nominal.snapshot.json
 ```

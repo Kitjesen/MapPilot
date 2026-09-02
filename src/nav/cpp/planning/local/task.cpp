@@ -24,12 +24,9 @@ bool sameIntent(const std::optional<LocalMotionIntent> &left,
     return false;
   if (!left)
     return true;
-  return std::abs(normalizeAngle(
-             left->directionBodyDeg * M_PI / 180.0 -
-             right->directionBodyDeg * M_PI / 180.0)) <= 10.0 * M_PI / 180.0 &&
-         std::abs(left->speedNormalized - right->speedNormalized) <= 0.05 &&
+  return std::abs(left->speedNormalized - right->speedNormalized) <= 0.05 &&
          std::abs(left->maxDirectionDeviationDeg -
-                  right->maxDirectionDeviationDeg) <= 1e-6;
+                   right->maxDirectionDeviationDeg) <= 1e-6;
 }
 
 struct OwnedRequest {

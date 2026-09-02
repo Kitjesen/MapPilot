@@ -20,7 +20,7 @@ import yaml
 from sim.catalog import CatalogResolver
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_ROOT = REPO_ROOT / "schemas" / "simulation"
+SCHEMA_ROOT = REPO_ROOT / "sim" / "contracts" / "schemas"
 RELATIVE_PATH_SCHEMAS = (
     "entity-visual.v1.json",
     "qualification.v1.json",
@@ -45,14 +45,14 @@ PACKAGE_SCHEMAS = {
     "controller": SCHEMA_ROOT / "controller.v1.json",
 }
 SESSION_ID = "contract_session"
-THUNDER_UNREAL_SESSION = REPO_ROOT / "sim" / "scenarios" / "catalog" / "thunderv4_unreal" / "session.yaml"
+THUNDER_UNREAL_SESSION = REPO_ROOT / "sim" / "sessions" / "examples" / "thunderv4_unreal" / "session.yaml"
 THUNDER_PEDESTRIAN_CROSSING_SESSION = (
-    REPO_ROOT / "sim" / "scenarios" / "catalog" / "open_field_pedestrian_crossing" / "session.yaml"
+    REPO_ROOT / "sim" / "sessions" / "examples" / "open_field_pedestrian_crossing" / "session.yaml"
 )
 THUNDER_SENSOR_RIG_PACKAGE = (
-    REPO_ROOT / "sim" / "sensor_rigs" / "doso" / "thunder_v4" / "navigation" / "sensor-rig.package.yaml"
+    REPO_ROOT / "sim" / "packages" / "sensor_rigs" / "doso" / "thunder_v4" / "navigation" / "sensor-rig.package.yaml"
 )
-THUNDER_ROBOT_PACKAGE = REPO_ROOT / "sim" / "robots" / "doso" / "thunder_v4" / "robot.package.yaml"
+THUNDER_ROBOT_PACKAGE = REPO_ROOT / "sim" / "packages" / "robots" / "doso" / "thunder_v4" / "robot.package.yaml"
 
 
 class SchemaError(ValueError):
@@ -344,27 +344,27 @@ def _physics_plan() -> dict[str, Any]:
         },
         "world": {
             "package": _package_ref("open_field", "world", "sim/packages/worlds/open_field/world.package.yaml"),
-            "mjcf": "sim/worlds/mujoco/open_field.xml",
+            "mjcf": "sim/packages/worlds/open_field/physics/open_field.xml",
         },
         "robots": [
             {
                 "instance_id": "thunder_01",
                 "namespace": "thunder_01",
-                "package": _package_ref("thunderv4", "robot", "sim/robots/doso/thunder_v4/robot.package.yaml"),
+                "package": _package_ref("thunderv4", "robot", "sim/packages/robots/doso/thunder_v4/robot.package.yaml"),
                 "controller": _package_ref(
                     "thunderv4_locomotion",
                     "controller",
-                    "sim/controllers/doso/thunder_v4/locomotion/controller.package.yaml",
+                    "sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml",
                 ),
                 "sensor_rig": _package_ref(
                     "thunderv4_navigation",
                     "sensor_rig",
-                    "sim/sensor_rigs/doso/thunder_v4/navigation/sensor-rig.package.yaml",
+                    "sim/packages/sensor_rigs/doso/thunder_v4/navigation/sensor-rig.package.yaml",
                 ),
                 "semantic": {"class": "quadruped"},
                 "spawn": {"position_m": [0.0, 0.0, 0.0], "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0]},
                 "model": {
-                    "mjcf": "sim/robots/doso/thunder_v4/mjcf/thunderv4.xml",
+                    "mjcf": "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml",
                     "attach_root": "base_link",
                     "root_joint": "floating_base_joint",
                     "initial_keyframe": "v4_nominal_stand",
@@ -397,11 +397,11 @@ def _visual_plan() -> dict[str, Any]:
             {
                 "instance_id": "thunder_01",
                 "namespace": "thunder_01",
-                "package": _package_ref("thunderv4", "robot", "sim/robots/doso/thunder_v4/robot.package.yaml"),
+                "package": _package_ref("thunderv4", "robot", "sim/packages/robots/doso/thunder_v4/robot.package.yaml"),
                 "binding": "RobotVisual:ThunderV4",
                 "projection": {
                     "schema": "lingtu.sim.robot-visual-projection.v1",
-                    "path": "sim/robots/doso/thunder_v4/visual/robot.visual-projection.json",
+                    "path": "sim/packages/robots/doso/thunder_v4/visual/robot.visual-projection.json",
                 },
                 "spawn": {"position_m": [0.0, 0.0, 0.0], "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0]},
             }
@@ -507,13 +507,13 @@ def _control_plan() -> dict[str, Any]:
                         "id": "thunderv4_locomotion",
                         "version": "1.0.0",
                         "kind": "controller",
-                        "manifest": "sim/controllers/doso/thunder_v4/locomotion/controller.package.yaml",
+                        "manifest": "sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml",
                     },
                     "adapter": {"plugin": "quadruped_him", "abi": "lingtu.sim.controller-adapter.v1"},
                     "policy": {
                         "runtime": "torchscript",
-                        "artifact": "sim/controllers/doso/thunder_v4/locomotion/policy/policy.pt",
-                        "manifest": "sim/controllers/doso/thunder_v4/locomotion/policy/policy_manifest.json",
+                        "artifact": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy.pt",
+                        "manifest": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_manifest.json",
                     },
                     "timing": {"inference_hz": 50, "low_level_hz": 500},
                     "state_channels": [

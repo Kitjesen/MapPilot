@@ -58,7 +58,7 @@ struct StatusRuntimeState {
   const std::vector<nav_kernel::Vec3> *local_path{nullptr};
   const nav_kernel::LocalPlannerDebugSnapshot *local_planner_debug{nullptr};
   const TraversabilityGrid *local_map_traversability{nullptr};
-  LocalCollisionStatusView local_collision_map{};
+  nav_kernel::LocalCollisionMapView local_collision_map{};
 };
 
 struct StatusPlannerSample {

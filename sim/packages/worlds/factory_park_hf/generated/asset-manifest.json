@@ -1,0 +1,159 @@
+{
+  "asset_set_digest": "ff2c3f6d4f66ce1bc2f5d789a7383d64167c3cbaf2e93f47ef28845e1846cc2d",
+  "assets": [
+    {
+      "bytes": 66180,
+      "format": "canonical JSON",
+      "path": "sim/packages/worlds/factory_park_hf/generated/expanded-layout.json",
+      "role": "expanded_layout",
+      "sha256": "7122788eecfae526d615dba5f3fe002b97c7d5471fdc4ecc63342dfca5ad5cdc"
+    },
+    {
+      "bytes": 160012,
+      "format": "image/vnd.mujoco.hfield",
+      "path": "sim/packages/worlds/factory_park_hf/generated/heightfield_f32.bin",
+      "role": "mujoco_heightfield",
+      "row_order": "south_to_north_y_ascending",
+      "sha256": "6a0c00bc23b9c1437cb575631f3a40099b82f0a394460e81f0ed129f4af16cac"
+    },
+    {
+      "bytes": 80256,
+      "format": "16-bit grayscale PNG",
+      "path": "sim/packages/worlds/factory_park_hf/generated/heightfield_r16.png",
+      "role": "ue_heightfield",
+      "sha256": "d8639cc829b995df6be34a6f1df0df5e3fc6f68a9728ceb3e482c55737c686eb"
+    },
+    {
+      "bytes": 79572,
+      "format": "canonical JSON",
+      "path": "sim/packages/worlds/factory_park_hf/generated/semantic-entities.json",
+      "role": "semantic_entities",
+      "sha256": "f1cef019ab04f576c1e6efb733eca36e3f02cc9567a86a5f71fe46c98d27d45f"
+    },
+    {
+      "bytes": 31001,
+      "format": "SVG",
+      "path": "sim/packages/worlds/factory_park_hf/generated/site-plan.svg",
+      "role": "site_plan",
+      "sha256": "4d7dc35b3edbf51c4d033634680f0e7ae7ac0bf7c11a76de7bdbf3f2e5f8ff89"
+    },
+    {
+      "bytes": 2964956,
+      "format": "Wavefront OBJ in Unreal centimetres",
+      "path": "sim/packages/worlds/factory_park_hf/generated/terrain.obj",
+      "role": "unreal_terrain_mesh",
+      "sample_grid": [
+        221,
+        181
+      ],
+      "sha256": "7bc62ea9e6282d040867d392eb7a9527f09a216312aa429db2802d2d8b0ca654",
+      "triangle_count": 79200,
+      "vertex_count": 40001
+    },
+    {
+      "bytes": 28465,
+      "format": "MJCF XML",
+      "path": "sim/packages/worlds/factory_park_hf/physics/factory_park_hf.xml",
+      "role": "mujoco_world",
+      "sha256": "c23303d3d21d721c1575a26ad9f6da2145379f7cf944aa32797a9480aa3d5029"
+    },
+    {
+      "bytes": 15039,
+      "format": "canonical JSON",
+      "path": "sim/packages/worlds/factory_park_hf/visual/realism.recipe.json",
+      "role": "visual_realism_recipe",
+      "sha256": "35288e9b4d71bfe4ea9aebcedc8cb5eaafb0a133bd491539f566110710316619"
+    }
+  ],
+  "coordinate_contract": {
+    "axis_mapping": [
+      "x",
+      "-y",
+      "z"
+    ],
+    "extent_m": [
+      220.0,
+      180.0
+    ],
+    "grid_px": [
+      221,
+      181
+    ],
+    "height_encoding": {
+      "bit_depth": 16,
+      "elevation_scale_m": 0.75,
+      "formula": "world_height_m = sample_u16 / 65535 * elevation_scale_m + vertical_origin_m",
+      "range": [
+        0,
+        65535
+      ],
+      "type": "uint16_normalized"
+    },
+    "image_mapping": {
+      "column_0_x_m": -110.0,
+      "column_last_x_m": 110.0,
+      "row_0_y_m": 90.0,
+      "row_last_y_m": -90.0
+    },
+    "mujoco_hfield": {
+      "geom_position_m": [
+        0.0,
+        0.0,
+        -0.666674296177615
+      ],
+      "size": [
+        110.0,
+        90.0,
+        0.75,
+        1.0
+      ]
+    },
+    "origin": "site_center",
+    "sample_spacing_m": [
+      1.0,
+      1.0
+    ],
+    "source_frame": "mujoco_rh_z_up_m",
+    "spawn_reference": {
+      "sample_pixel": [
+        110,
+        166
+      ],
+      "sample_u16": 58254,
+      "world_position_m": [
+        0.0,
+        -76.0,
+        0.0
+      ]
+    },
+    "unreal_frame": "unreal_lh_z_up_cm",
+    "unreal_landscape": {
+      "location_cm": [
+        0.0,
+        0.0,
+        -29.1674296177615
+      ],
+      "scale_xyz": [
+        100.0,
+        100.0,
+        0.146484375
+      ]
+    },
+    "vertical_origin_m": -0.666674296177615
+  },
+  "element_batches": [
+    {
+      "batch_id": "operations_safety",
+      "digest": "6dc891d5c909f8b738aafae8db5416102e9ada325b6458ad21cd82909430f0bf",
+      "object_count": 19
+    }
+  ],
+  "generator": {
+    "algorithm": "lingtu_factory_park_layout.v2",
+    "module": "sim.tools.worlds.factory_park_hf.generate",
+    "seed": 20260808
+  },
+  "layout_digest": "1bb084b64a5d10baaddbee62bee879eec679cd666f0c331ac984542a74f9907f",
+  "schema": "lingtu.sim.world-asset-manifest.v1",
+  "world_package": "factory_park_hf@1.0.0"
+}

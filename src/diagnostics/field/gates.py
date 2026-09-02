@@ -8,12 +8,12 @@ from diagnostics.field.evidence import REAL_RUNTIME_CONTRACT
 
 REAL_RUNTIME_EVIDENCE_ARTIFACT = "artifacts/real_runtime/report.json"
 REAL_RUNTIME_EVIDENCE_COLLECTOR_COMMAND = (
-    "python scripts/gates/real_runtime_evidence_collect.py "
+    "python -m diagnostics.field.runtime_evidence "
     "--gateway-url http://<robot>:5050 --duration-sec 20 "
     f"--expected-contract {REAL_RUNTIME_CONTRACT} --json-out {REAL_RUNTIME_EVIDENCE_ARTIFACT}"
 )
 SAVED_MAP_ARTIFACT_GATE_COMMAND = (
-    "python scripts/gates/saved_map_artifact_gate.py <map-id> "
+    "python -m diagnostics.field.map_artifacts <map-id> "
     "[--require-octomap | --require-occupancy] "
     "--json-out artifacts/saved_map_artifacts/report.json"
 )

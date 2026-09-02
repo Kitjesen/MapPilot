@@ -25,7 +25,10 @@ robot lifecycle. The packaged `install_nav.sh` is the only installer.
 
 ## Build and package
 
-Build the required native artifacts first, then package one semantic version:
+Build the required native artifacts first, then package one semantic version.
+The packager stages the CMake installs and remaining native tools at
+`install/linux-<arch>/<config>/{bin,lib,etc,share}` and assembles the archive
+from that prefix:
 
 ```bash
 bash scripts/deploy/package_native_release.sh v2.1.1 dist
@@ -85,13 +88,20 @@ For an explicitly reviewed development checkout already on the robot:
 
 ```bash
 cd ~/data/SLAM/navigation
-bash scripts/deploy/cut_release.sh v2.1.1 nav
+bash scripts/deploy/deploy_robot.sh nav
+bash scripts/deploy/package_native_release.sh v2.1.1 dist
 ```
 
-This convenience command runs `deploy_robot.sh nav` and then
-`package_native_release.sh v2.1.1 dist`. Product resolution, building, activation,
-packaging, and rollback remain owned by those existing entrypoints; the cutter
-does not duplicate them.
+Inside an installed release, executables live in
+`/opt/lingtu/current/bin`, runtime libraries in `/opt/lingtu/current/lib`,
+defaults in `/opt/lingtu/current/etc/lingtu`, and assets in
+`/opt/lingtu/current/share/lingtu`. The first canonical-layout release also
+contains the previous `build/` paths so rollback to an older unit set remains
+atomic; current units do not use those paths.
+
+Run deployment and packaging explicitly in that order. Product resolution,
+building, activation, packaging, and rollback remain owned by those existing
+entrypoints.
 
 ## Rollback
 

@@ -24,8 +24,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-BUILDING_SCENE_XML = ROOT / "sim" / "worlds" / "mujoco" / "building_scene.xml"
-INDUSTRIAL_PARK_SCENE_XML = ROOT / "sim" / "worlds" / "mujoco" / "industrial_park_scene.xml"
+BUILDING_SCENE_XML = ROOT / "sim" / "packages" / "worlds" / "building" / "physics" / "building_scene.xml"
+INDUSTRIAL_PARK_SCENE_XML = (
+    ROOT / "sim" / "packages" / "worlds" / "industrial_park" / "physics" / "industrial_park_scene.xml"
+)
 CORRIDOR_DEFAULT_START = [0.0, 0.0, 0.0]
 CORRIDOR_DEFAULT_GOAL = [2.4, 0.0, 0.0]
 BUILDING_DEFAULT_START = [2.0, 3.0, 0.5]
@@ -1704,7 +1706,7 @@ def collect_mujoco_lidar_points(
     trajectory_support_spacing_m: float = 0.1,
     mapping_trajectory: list[list[float]] | None = None,
 ) -> tuple[list[tuple[float, float, float]], dict[str, Any]]:
-    from sim.engine.core.engine import VelocityCommand
+    from sim.compat.engine.core.engine import VelocityCommand
 
     from drivers.sim.mujoco.runtime import (
         DEFAULT_MID360_PATTERN,
@@ -2135,7 +2137,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="corridor",
         help=(
             "corridor keeps the tiny gate map; building reuses "
-            "sim/worlds/mujoco/building_scene.xml; stair_* and multifloor_* "
+            "sim/packages/worlds/building/physics/building_scene.xml; stair_* and multifloor_* "
             "are named multilevel acceptance scenes for OctoPlanner3D validation"
         ),
     )

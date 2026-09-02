@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCENE = ROOT / "sim" / "worlds" / "mujoco" / "lift_building_scene.xml"
+SCENE = ROOT / "sim" / "compat" / "engine" / "worlds" / "lift_building_scene.xml"
 
 
 def test_lift_building_scene_declares_deterministic_joint_contract() -> None:

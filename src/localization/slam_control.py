@@ -26,7 +26,7 @@ def slam_control_binary() -> str:
     else:
         candidates = (
             repo_root / "build" / "slam_core" / "slamctl",
-            Path("/opt/lingtu/current/build/slam_core/slamctl"),
+            Path("/opt/lingtu/current/bin/slamctl"),
         )
     for candidate in candidates:
         if candidate.exists():

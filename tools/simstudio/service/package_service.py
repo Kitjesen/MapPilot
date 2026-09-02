@@ -9,13 +9,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from sim.catalog.importers.contracts import ImportDraft, ImportFailure, file_records, sha256_file
+from sim.catalog.importers.intake import SourceIntake
+from sim.catalog.importers.promotion import CatalogPromoter
+from sim.catalog.importers.robot import RobotImporter
+from sim.catalog.importers.world import WorldImporter
 from sim.catalog.management import SimCatalog
 from sim.catalog.resolver import CatalogError
-from sim.importers.contracts import ImportDraft, ImportFailure, file_records, sha256_file
-from sim.importers.intake import SourceIntake
-from sim.importers.promotion import CatalogPromoter
-from sim.importers.robot import RobotImporter
-from sim.importers.world import WorldImporter
 
 from .models import ImportJobRecord, StoreError, StoreValidationError
 from .store import StudioStore
@@ -180,8 +180,7 @@ class PackageImportService:
         package_kind = self._import_kind(kind)
         schema_path = (
             self.repo_root
-            / "schemas"
-            / "simulation"
+            / "sim" / "contracts" / "schemas"
             / f"{package_kind}-import.v1.json"
         )
         if not schema_path.is_file():

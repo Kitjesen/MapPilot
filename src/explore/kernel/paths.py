@@ -45,7 +45,7 @@ def explore_kernel_candidate_dirs(anchor: str | Path | None = None) -> list[str]
 def explore_kernel_build_hint() -> str:
     """Return a human-readable hint for building ``lingtu_explore_kernel``."""
     return (
-        "Run:  bash scripts/build/build_explore_kernel.sh\n"
+        "Run:  bash scripts/build/build_explore_py.sh\n"
         "      (needs cmake, python3-dev, pip install nanobind)\n"
         "Windows local builds may use src/explore/cpp/build_nb_win."
     )

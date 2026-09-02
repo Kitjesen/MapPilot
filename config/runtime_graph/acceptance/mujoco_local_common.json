@@ -23,6 +23,11 @@
     "provider": "mujoco_navigation_fixture",
     "mode": "localization"
   },
+  "driver_runtime": {
+    "command_timeout_ms": 500,
+    "heartbeat_timeout_ms": 10000,
+    "apply_timeout_ms": 30000
+  },
   "sensor_runtime": {
     "publish_hz": 10.0,
     "imu_hz": 200.0,

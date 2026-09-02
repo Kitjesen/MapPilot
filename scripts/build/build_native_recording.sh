@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${LINGTU_NATIVE_RECORDING_BUILD_DIR:-$ROOT/build/native-recording}"
 BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}"
 BUILD_DDS="${LINGTU_RECORDING_BUILD_DDS:-ON}"
+JOBS="${LINGTU_BUILD_JOBS:-$(nproc 2>/dev/null || echo 2)}"
 
 case "$BUILD_DDS" in
   ON|OFF) ;;
@@ -35,7 +36,7 @@ cmake -S "$ROOT/src/native/recording" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
   -DLINGTU_RECORDING_BUILD_DDS="$BUILD_DDS" \
   -DLINGTU_RECORDING_BUILD_TESTS=ON
-cmake --build "$BUILD_DIR" --parallel "${BUILD_JOBS:-2}"
+cmake --build "$BUILD_DIR" --parallel "$JOBS"
 (cd "$BUILD_DIR" && ctest --output-on-failure)
 
 printf '%s\n' \

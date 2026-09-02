@@ -124,8 +124,8 @@ def test_retired_python_artifact_validator_is_absent() -> None:
     files = (
         REPO / "src" / "gateway" / "routes" / "diagnostics.py",
         REPO / "src" / "diagnostics" / "field" / "field_check.py",
-        REPO / "scripts" / "gates" / "saved_map_artifact_gate.py",
-        REPO / "scripts" / "gates" / "saved_map_field_acceptance.py",
+        REPO / "src" / "diagnostics" / "field" / "map_artifacts.py",
+        REPO / "src" / "diagnostics" / "field" / "map_acceptance.py",
     )
     for path in files:
         assert "validate_saved_map_artifact_dir" not in path.read_text(encoding="utf-8")

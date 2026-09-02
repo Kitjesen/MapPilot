@@ -15,14 +15,16 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from sim.engine.mujoco.lidar import (
+from sim.compat.engine.mujoco.lidar import (
     ROBOT_COLLISION_GEOM_GROUP,
     ROBOT_VISUAL_GEOM_GROUP,
 )
 
 ROOT = Path(__file__).resolve().parents[4]
 SIM_ROOT = ROOT / "sim"
-DEFAULT_MID360_PATTERN = SIM_ROOT / "assets" / "livox" / "mid360.npy"
+DEFAULT_MID360_PATTERN = (
+    SIM_ROOT / "packages" / "sensors" / "livox" / "mid360" / "assets" / "mid360.npy"
+)
 DEFAULT_MID360_SAMPLES_PER_FRAME = 20000
 POLICY_1119_PHYSICS_TIMESTEP_S = 0.005
 
@@ -258,13 +260,13 @@ def resolve_mid360_pattern(path: Path | str | None) -> Path | None:
 def resolve_world(world: str) -> Path:
     """Resolve a registered MuJoCo world name or filesystem path."""
 
-    from drivers.sim.mujoco.driver import _WORLDS_DIR, WORLDS
+    from drivers.sim.mujoco.driver import WORLDS
 
     candidate = Path(world)
     if candidate.exists():
         return candidate.resolve()
     mapped = WORLDS.get(world, world)
-    path = (_WORLDS_DIR / mapped).resolve()
+    path = Path(mapped).resolve()
     if not path.exists():
         raise FileNotFoundError(f"MuJoCo world not found: {world} -> {path}")
     return path
@@ -364,10 +366,10 @@ def build_engine(
 ):
     """Build the canonical in-process MuJoCo engine for live LingTu gates."""
 
-    from sim.engine.core.robot import RobotConfig
-    from sim.engine.core.sensor import LidarConfig
-    from sim.engine.core.world import WorldConfig
-    from sim.engine.mujoco.engine import MuJoCoEngine
+    from sim.compat.engine.core.robot import RobotConfig
+    from sim.compat.engine.core.sensor import LidarConfig
+    from sim.compat.engine.core.world import WorldConfig
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
 
     robot_cfg = RobotConfig.default_thunder_v4()
     robot_cfg.resolve_paths(base_dir=str(SIM_ROOT))

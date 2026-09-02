@@ -711,7 +711,6 @@ def test_native_slam_product_binary_names_hide_transport_details() -> None:
         Path("src/localization/slam/cpp/CMakeLists.txt"),
         Path("scripts/build/build_slam_core.sh"),
         Path("scripts/deploy/package_native_release.sh"),
-        Path("scripts/deploy/cut_release.sh"),
         Path("scripts/deploy/thunder/run_slam_dds.sh"),
         Path("scripts/deploy/thunder/lt-slam.service"),
         Path("src/runtime/service_catalogs/thunder.py"),

@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from sim.importers.contracts import digest_document
+from sim.catalog.importers.contracts import digest_document
 from sim.tools.assets.tripo_high_fidelity import PROFILE_PATH, validate_profile_document
 
 _IDENTITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")

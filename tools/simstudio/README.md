@@ -12,9 +12,9 @@ python -m tools.simstudio
 
 The application uses shared simulation code from `sim/`:
 
-- `sim/catalog/` and `sim/importers/` resolve and import simulation assets.
+- `sim/catalog/` and `sim/catalog/importers/` resolve and import simulation assets.
 - `sim/runtime/coordinator/` runs coordinated MuJoCo and RobotSimUE sessions.
-- `sim/worlds/` and `sim/packages/` remain the shared simulation assets.
+- `sim/packages/` is the single root for shared simulation packages and their assets.
 
 The field-style simulation lifecycle remains in `src/lingtu/sim/` and is
 started through ProductControl. SimStudio must not own or replace that path.

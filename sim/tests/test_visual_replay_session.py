@@ -22,9 +22,7 @@ from sim.runtime.replay.visual import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SESSION = (
     REPO_ROOT
-    / "sim"
-    / "scenarios"
-    / "catalog"
+    / "sim" / "sessions" / "examples"
     / "thunderv4_factory_park_motion"
     / "session.yaml"
 )

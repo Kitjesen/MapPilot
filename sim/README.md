@@ -1,8 +1,8 @@
 # LingTu Simulation
 
-Status: current simulation contract as of 2026-08-17. Simulation reports are
-not field evidence unless a dated field-run document says the same behavior was
-verified on a robot.
+Status: current repository contract. Dated capability evidence lives in
+[`ARCHITECTURE.md`](ARCHITECTURE.md) and does not prove field behavior unless a
+field-run document records the same behavior on a robot.
 
 `sim/` contains LingTu's hardware-free simulation platform and validation
 surfaces. **MuJoCo** is the sole simulation clock and physics authority: it owns
@@ -126,25 +126,24 @@ field runtime evidence.
 
 ## Stable Root Contract
 
-The stable root follows the full simulation product chain, while preserving the
-existing manifest-only/heavy-asset split.
+Each stable root is self-documenting. Open its README for contents, entrypoints,
+and the boundary it must not cross.
 
-| Layer | Path | Purpose |
-| --- | --- | --- |
-| Authoring/Import | `tools/`, `toolchains/` | Asset conditioning, deterministic import settings, provenance, license, and tool-version evidence; Blender/DCC is not runtime |
-| Package | `packages/` | Versioned Robot, Controller, Sensor, SensorRig, World, and Scenario manifests |
-| SessionSpec | `scenarios/catalog/` | User-authored session selections; SessionSpecs are not packages |
-| Catalog/Compiler | `catalog/` | Resolves `session.yaml` into module-specific plans that share one `session_id` |
-| Assets | `worlds/` | Canonical MuJoCo XML and Gazebo SDF scenes |
-| Assets | `assets/` | Thunder assets, meshes, MJCF/URDF, LiDAR scan-pattern assets |
-| Assets | `robots/` | Robot model, mesh, and policy assets used by simulation entrypoints |
-| Assets | `sensor_rigs/` | Sensor mounting asset directories; package manifests live under `packages/sensor_rigs/` |
-| Assets | `controllers/` | Controller asset directories; package manifests live under `packages/controllers/` |
-| SessionRuntime | `runtime/` | `runtime/physics/`, `runtime/control/`, `runtime/visual/RobotSimUE/`, `runtime/sensors/`, `runtime/scenario/`, and `runtime/coordinator/` |
-| Adapter | `adapters/` | Typed DDS, camera SHM, and related transport Adapters |
-| Compatibility | `engine/`, `bridge/`, `sensors/` | Existing in-process/fallback simulation surfaces; not the generic Runtime |
-| Validation | `scripts/`, `validation/`, `tests/` | Public launchers, gates, demos, benchmark entrypoints, and filesystem contracts |
-| Research/Data | `fixtures/`, `planning/`, `following/`, `datasets/`, `evaluation/`, `maps/`, `semantic/`, `external_scenes/`, `experiments/`, `diagnostics/` | Fixtures, offline datasets, evaluation helpers, and compatibility/research surfaces |
+| Path | Owns |
+| --- | --- |
+| [`packages/`](packages/README.md) | Versioned Robot, Controller, Sensor, SensorRig, World, Scenario, and Payload manifests with their package-owned assets. |
+| [`sessions/`](sessions/README.md) | Product-selected presets, example SessionSpecs, and game-selection declarations. |
+| [`catalog/`](catalog/README.md) | Package discovery, import/promotion, Session composition, and deterministic plan compilation. |
+| [`contracts/`](contracts/README.md) | Simulation timebase rules and versioned JSON Schemas. |
+| [`runtime/`](runtime/README.md) | Physics, control, sensors, scenario, visual, recording, replay, qualification, and process coordination. |
+| [`adapters/`](adapters/README.md) | Typed DDS, camera SHM, Gazebo compatibility, and other protocol seams. |
+| [`compat/`](compat/README.md) | The legacy in-process Python engine, fallback sensors, direct-engine scenes, and reference assets. |
+| [`diagnostics/`](diagnostics/README.md) | Read-only simulation diagnostics and gap reports. |
+| [`evaluation/`](evaluation/README.md) | Offline SLAM/replay evaluation, research data, and package qualification records. |
+| [`distribution/`](distribution/README.md) | Windows cook, stage, package, smoke, and release policy. |
+| [`tools/`](tools/README.md) | Offline asset/world authoring, planning visualization, game-selection helpers, sensor stream simulation, and toolchains. |
+| [`scripts/`](scripts/README.md) | Stable MuJoCo Product/native acceptance entrypoints. |
+| [`tests/`](tests/README.md) | Simulation unit, contract, integration, and platform-boundary regression tests. |
 
 `sim/runtime/physics/` plus `sim/runtime/coordinator/` is the canonical generic
 MuJoCo Runtime path. `sim/scripts/mujoco/*` retains product acceptance and
@@ -152,10 +151,10 @@ legacy/field-architecture simulation gates; it is not a second generic Runtime.
 Top-level MuJoCo compatibility wrappers are retired; dated field notes may keep
 their historical command text as evidence.
 
-Package migration is manifest-only: checked-in package manifests live under
-`sim/packages/{robots,controllers,sensors,sensor_rigs,worlds,scenarios}/...`, while MJCF,
-meshes, policies, world XML, and other heavy assets stay in `sim/robots/` and
-`sim/worlds/`. SessionSpecs are not packages and remain under `sim/scenarios/`.
+`sim/packages/` is the only catalog root. Package-owned MJCF, meshes, policies,
+world XML, generated terrain, and scan-pattern assets stay with their manifests.
+Direct-engine showcase assets that are not catalog packages live under
+`sim/compat/`; SessionSpecs live under `sim/sessions/`.
 
 ## Runtime Paths
 
@@ -166,7 +165,7 @@ PIDs, logs, ports, and shared-memory names remain in `RunAllocation`:
 
 ```powershell
 python -m sim.catalog `
-  sim/scenarios/catalog/thunder_omni_contract/session.yaml `
+  sim/sessions/examples/thunder_omni_contract/session.yaml `
   --repo-root . --output-dir build/runtime-session
 
 python -m sim.runtime.coordinator build/runtime-session `
@@ -186,13 +185,13 @@ Cooked delivery, and packaged smoke remain separate gates.
 Formal Windows live launcher:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/sim/run_robotsimue_live.ps1 `
-  -Bundle build/session-bundles/thunderv4-unreal `
-  -UnrealEditor "D:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" `
-  -MujocoHost build/mujoco-runtime-physics-win/Release/lingtu_mujoco_headless.exe `
-  -RunRoot build/live-runs `
-  -RunId thunderv4-ue-live-proof-YYYYMMDD `
-  -Gate visual-applied
+python -m sim.runtime.coordinator.live_visual `
+  build/session-bundles/thunderv4-unreal `
+  --unreal-editor "D:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" `
+  --mujoco-host build/mujoco-runtime-physics-win/Release/lingtu_mujoco_headless.exe `
+  --run-root build/live-runs `
+  --run-id thunderv4-ue-live-proof-YYYYMMDD `
+  --gate visual-applied
 ```
 
 ### MuJoCo Product Gate
@@ -270,7 +269,7 @@ zero plus stop and ends the stream if the operator process stalls; restart the
 demo before motion can resume. The native endpoint still owns LocalPlanner,
 PathFollower, final safety, and `/nav/cmd_vel`. Use
 `--scenario free|obstacle_slow|obstacle_stop|terrain_soft|terrain_hard`
-to compare behavior. `sim/controllers/doso/thunder_v4/locomotion/keyboard.py --keyboard` is a gait-policy
+to compare behavior. `sim/packages/controllers/doso/thunder_v4/locomotion/keyboard.py --keyboard` is a gait-policy
 debug tool that bypasses LingTu planning and must not be used as local-avoidance
 evidence.
 
@@ -379,7 +378,7 @@ PYTHONPATH=src:. python sim/scripts/mujoco/saved_map_quality_gate.py \
   --pcd path/to/map.pcd \
   --json-out artifacts/mujoco_saved_map_quality/report.json
 
-PYTHONPATH=src:. python sim/scripts/saved_map_relocalize_runtime_gate.py \
+PYTHONPATH=src:. python -m sim.scripts.mujoco.saved_map_relocalization \
   --map-pcd path/to/map.pcd \
   --preflight-only \
   --strict
@@ -414,7 +413,7 @@ bridge, continuity, scale convergence, and saved-map quality all pass.
 Sunrise remote runner:
 
 ```bash
-python sim/scripts/run_sunrise_continuous_mapping_gate.py \
+python -m sim.scripts.mujoco.sunrise_mapping run \
   --host "$LINGTU_SIM_HOST" \
   --duration 180 \
   --domain-id 231
@@ -462,24 +461,25 @@ PYTHONPATH=src:. python sim/scripts/mujoco/native_navigation_acceptance.py --hel
 Replay/deviation gate:
 
 ```bash
-PYTHONPATH=src:. python sim/scripts/navigation_replay_deviation_gate.py \
+PYTHONPATH=src:. python -m sim.evaluation.navigation_replay \
   --json-out artifacts/navigation_replay_deviation/report.json
 ```
 
-Server aggregate gates live in `sim/scripts/sim_diagnostics.py`. Treat
+Run server aggregate gates with `python -m sim.diagnostics`. Treat
 aggregate reports as simulation readiness only unless they reference real
 field evidence.
 
 ## Scenes
 
-Common MuJoCo scenes live under `sim/worlds/mujoco/`:
+Catalog-owned MuJoCo scenes live with their WorldPackages; direct-engine
+showcases live under `sim/compat/engine/worlds/`:
 
 | Scene | Purpose |
 | --- | --- |
-| `open_field.xml` | Flat basic validation |
-| `building_scene.xml` | Indoor room/corridor validation |
-| `factory_scene.xml` | Industrial obstacle validation |
-| `spiral_terrain.xml` | Elevation and terrain checks |
+| `packages/worlds/open_field/physics/open_field.xml` | Flat basic validation |
+| `packages/worlds/building/physics/building_scene.xml` | Indoor room/corridor validation |
+| `compat/engine/worlds/factory_scene.xml` | Direct-engine industrial obstacle validation |
+| `compat/engine/worlds/thunderv4_stair_showcase.xml` | Direct-engine stair showcase |
 
 Dense local industrial scenes are preferred for LiDAR visibility and saved-map
 quality checks. Sparse scenes can produce low hit counts and misleading videos.

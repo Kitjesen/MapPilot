@@ -10,8 +10,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from sim.importers import CatalogPromoter, WorldImporter
-from sim.importers.contracts import (
+from sim.catalog.importers import CatalogPromoter, WorldImporter
+from sim.catalog.importers.contracts import (
     ImportDraft,
     ImportFailure,
     canonical_json_bytes,
@@ -25,7 +25,7 @@ from .models import IdempotencyConflict, RevisionConflict, canonical_digest
 from .scene_tools import FACTORY_PARK_WORLD_PACKAGE, FactoryParkSceneTool
 from .store import StudioStore
 
-_BASE_HFIELD = Path("sim/worlds/factory_park_hf/generated/heightfield_f32.bin")
+_BASE_HFIELD = Path("sim/packages/worlds/factory_park_hf/generated/heightfield_f32.bin")
 _LICENSE_TEXT = "Copyright LingTu project contributors. Project-owned simulation content.\n"
 _FACTORY_PARK_RUNTIME_MATERIALS = {
     "concrete": ([0.42, 0.43, 0.41, 1.0], 0.0, 0.88),

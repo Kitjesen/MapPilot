@@ -16,7 +16,7 @@ import pytest
 
 from sim.catalog.composer import SessionComposer
 from sim.catalog.resolver import CatalogError, CatalogResolver
-from sim.importers import CatalogPromoter, ImportDraft, ImportFailure, RobotImporter
+from sim.catalog.importers import CatalogPromoter, ImportDraft, ImportFailure, RobotImporter
 
 _PROCESS_BARRIER_TIMEOUT_S = 60
 
@@ -115,7 +115,7 @@ entities: []
 
 def _targets(root: Path, package_id: str = "field", version: str = "1.0.0") -> tuple[Path, Path, Path]:
     package = root / "sim" / "packages" / "worlds" / package_id / version
-    qualification_parent = root / "sim" / "qualifications" / "world" / package_id
+    qualification_parent = root / "sim" / "evaluation" / "package_qualifications" / "world" / package_id
     return package, qualification_parent / f"{version}.qualification.json", qualification_parent / "evidence" / version
 
 

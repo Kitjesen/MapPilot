@@ -9,7 +9,7 @@ import mujoco
 import numpy as np
 
 from drivers.sim.mujoco.runtime import build_engine, focus_presentation_viewer
-from sim.engine.mujoco.engine import _freeze_scene_euler_orientations
+from sim.compat.engine.mujoco.engine import _freeze_scene_euler_orientations
 
 
 def test_scene_euler_is_preserved_across_robot_compiler_sequence() -> None:

@@ -20,9 +20,9 @@ in the wrong layer is still a maintenance problem.
 | --- | --- | --- |
 | New runtime lifecycle or typed port behavior | `src/runtime/` | Runtime unit tests and a Blueprint/wire change if the graph changes. |
 | Product declarations or runtime defaults | `config/runtime_graph/products/` and `src/lingtu/assembly/` | Product resolution and focused compiler tests. |
-| Navigation commands, goals, Agent skills, inspection, or building flow | `src/nav/commands/`, `src/nav/services/`, `src/nav/skills/`, `src/nav/inspection/`, or `src/nav/building/` | Typed native-client and Host wiring tests. |
+| Navigation commands, goals, Agent skills, or inspection | `src/nav/commands/`, `src/nav/services/`, `src/nav/skills/`, or `src/nav/inspection/` | Typed native-client and Host wiring tests. |
 | Global/local planning, tracking, recovery, or final motion safety | `src/nav/cpp/` | Native CMake tests plus Host/native boundary tests. |
-| Saved maps, map artifacts, or persistent map lifecycle | `src/maps/` | Map service/artifact contract and no-motion validation. |
+| Saved maps, map graph/routes, map artifacts, or persistent map lifecycle | `src/maps/` | MapGraph, map service/artifact, and no-motion validation. |
 | Perception, semantic reasoning, LLM, memory, or visual servo behavior | `src/perception/`, `src/decision/`, or `src/memory/` | Runtime messages and explicit full-stack wires. |
 | Device SDK, robot connection, camera/LiDAR/IMU source | `src/drivers/` or a native endpoint | Explicit hardware/DDS adapter contract. |
 | Localization/SLAM behavior or native localization status | `src/localization/` | Native endpoint/service contract and frame validation. |
@@ -439,8 +439,8 @@ For field-side, non-motion diagnosis use:
 
 ```bash
 PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
-PYTHONPATH=src python scripts/diagnostics/soak.py --duration 120 --interval 2 --json --strict
-python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy
+PYTHONPATH=src python -m diagnostics.field.soak --duration 120 --interval 2 --json --strict
+PYTHONPATH=src python -m diagnostics.field.map_artifacts <map-id> --require-occupancy
 ```
 
 Only run a command that changes a robot session, sends a goal, publishes a

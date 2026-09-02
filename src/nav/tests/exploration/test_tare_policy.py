@@ -9,7 +9,7 @@ from runtime.msgs.numpy_compat import np
 
 requires_explore_kernel = pytest.mark.skipif(
     not explore_kernel_available(),
-    reason="lingtu_explore_kernel not built; run scripts/build/build_explore_kernel.sh",
+    reason="lingtu_explore_kernel not built; run scripts/build/build_explore_py.sh",
 )
 
 

@@ -11,11 +11,11 @@ pytestmark = [pytest.mark.sim]
 
 np = import_numpy_or_skip()
 
-from sim.engine.mujoco.lidar import MuJoCoLidar  # noqa: E402
-from sim.sensors.livox_mid360 import read_plugin_lidar  # noqa: E402
+from sim.compat.engine.mujoco.lidar import MuJoCoLidar  # noqa: E402
+from sim.compat.sensors.livox_mid360 import read_plugin_lidar  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-MID360_PATTERN = ROOT / "sim/assets/livox/mid360.npy"
+MID360_PATTERN = ROOT / "sim/packages/sensors/livox/mid360/assets/mid360.npy"
 
 
 def test_repo_mid360_pattern_asset_is_official_converted_scan_mode() -> None:
@@ -33,7 +33,7 @@ def test_repo_mid360_pattern_asset_is_official_converted_scan_mode() -> None:
 
 def test_mid360_nominal_config_uses_conservative_official_envelope() -> None:
     from drivers.sim.mujoco.runtime import DEFAULT_MID360_SAMPLES_PER_FRAME
-    from sim.engine.core.sensor import LidarConfig
+    from sim.compat.engine.core.sensor import LidarConfig
 
     config = LidarConfig()
 
@@ -55,7 +55,7 @@ def test_mid360_nominal_config_uses_conservative_official_envelope() -> None:
 
 
 def test_lidar_config_preserves_the_existing_positional_surface() -> None:
-    from sim.engine.core.sensor import LidarConfig
+    from sim.compat.engine.core.sensor import LidarConfig
 
     config = LidarConfig("sensor_mount", "sensor_contract")
 
@@ -68,8 +68,8 @@ def test_failed_official_lidar_init_restores_robot_geom_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mujoco = pytest.importorskip("mujoco")
-    from sim.engine.core.sensor import LidarConfig
-    from sim.engine.mujoco import lidar as lidar_module
+    from sim.compat.engine.core.sensor import LidarConfig
+    from sim.compat.engine.mujoco import lidar as lidar_module
 
     model = mujoco.MjModel.from_xml_string(
         """
@@ -152,7 +152,7 @@ def test_formal_mid360_uses_declared_site_and_excludes_the_robot_root() -> None:
 
     engine = build_engine(
         world=ROOT / "sim/packages/worlds/open_field/1.1.0/physics/open_field.xml",
-        robot_xml=ROOT / "sim/robots/doso/thunder_v4/mjcf/thunderv4.xml",
+        robot_xml=ROOT / "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml",
         drive_mode="kinematic",
         start=[0.0, 0.0, 0.0],
         start_orientation_wxyz=[1.0, 0.0, 0.0, 0.0],
@@ -193,7 +193,7 @@ def test_saved_map_relocalize_discovers_generic_native_same_source_map(
     tmp_path,
     monkeypatch,
 ) -> None:
-    from sim.scripts import saved_map_relocalize_runtime_gate as gate
+    from sim.scripts.mujoco import saved_map_relocalization as gate
 
     map_pcd = tmp_path / "artifacts/sim_diagnostics/native_slam_capture/run-1/same_source_map/map.pcd"
     map_pcd.parent.mkdir(parents=True)
@@ -444,7 +444,7 @@ def test_mujoco_lidar_dependency_is_exactly_pinned() -> None:
 def test_official_mujoco_lidar_distribution_is_not_shadowed() -> None:
     import importlib.metadata
 
-    from sim.engine.mujoco.lidar import _load_official_mujoco_lidar_wrapper
+    from sim.compat.engine.mujoco.lidar import _load_official_mujoco_lidar_wrapper
 
     wrapper = _load_official_mujoco_lidar_wrapper()
     distribution = importlib.metadata.distribution("mujoco-lidar")

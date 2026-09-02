@@ -1927,7 +1927,7 @@ std::string ResolvePruneCommand(const SourceCommitOptions &options) {
            std::filesystem::current_path() / "build" / "prune" / "Release" / "prune.exe",
            std::filesystem::current_path() / "build" / "prune" / "prune",
            std::filesystem::current_path() / "build" / "prune_wsl" / "prune",
-           std::filesystem::path("/opt/lingtu/current/build/prune/prune"),
+           std::filesystem::path("/opt/lingtu/current/bin/prune"),
        }) {
     if (std::filesystem::is_regular_file(candidate)) {
       return ShellQuote(candidate.string());

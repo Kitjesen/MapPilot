@@ -26,7 +26,7 @@ OccupancyGridModule.exploration_grid
 The kernel is optional at runtime: `explore.explore_kernel_available()` reports
 whether the extension is importable. When it is not, the module stays in
 ``configured`` state and tests/DDS paths remain usable. Build it with
-`scripts/build/build_explore_kernel.sh`.
+`scripts/build/build_explore_py.sh`.
 
 The CMU C++/ROS TARE project is not vendored here. External benchmark runs must
 provide that runtime outside the LingTu Python package.

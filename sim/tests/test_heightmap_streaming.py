@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from sim.importers.heightmap import (
+from sim.catalog.importers.heightmap import (
     build_heightmap_artifacts,
     build_heightmap_artifacts_from_u16_file,
 )

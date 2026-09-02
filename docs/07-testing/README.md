@@ -18,7 +18,6 @@ docs/07-testing/
 
 scripts/gates/
   field/             executable P0 field procedures
-  simulation/        executable simulation compatibility gates
 ```
 
 Commit and push checks are contributor workflow, so they live in

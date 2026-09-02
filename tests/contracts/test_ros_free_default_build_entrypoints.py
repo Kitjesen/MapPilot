@@ -53,7 +53,7 @@ def test_lingtu_shell_is_only_a_product_control_adapter() -> None:
 def test_real_runtime_evidence_uses_only_gateway() -> None:
     """Field evidence must use the native Gateway path only."""
 
-    content = (ROOT / "scripts/gates/real_runtime_evidence_collect.py").read_text(
+    content = (ROOT / "src/diagnostics/field/runtime_evidence.py").read_text(
         encoding="utf-8",
         errors="replace",
     )

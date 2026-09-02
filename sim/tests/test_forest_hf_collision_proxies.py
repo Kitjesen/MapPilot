@@ -584,8 +584,8 @@ def test_full_resolution_materialization_promotes_manifest_and_resolves_session_
     } <= declared_files
 
     shutil.copytree(
-        REPO_ROOT / "sim/robots/omni_cart",
-        tmp_path / "sim/robots/omni_cart",
+        REPO_ROOT / "sim/packages/robots/omni_cart",
+        tmp_path / "sim/packages/robots/omni_cart",
     )
     session_path = tmp_path / "forest.session.yaml"
     session_path.write_text(

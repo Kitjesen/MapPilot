@@ -342,8 +342,11 @@ std::vector<float> terrainCloudToXyzh(const lingtu_dds_PointCloud2 &msg,
 
 nav_kernel::LocalCollisionMapView LocalCollisionMap::view() const noexcept {
   return {
-      occupied_xyz.empty() ? nullptr : occupied_xyz.data(),
-      static_cast<int>(occupied_xyz.size() / 3U),
+      inflated_occupied_bits.empty() ? nullptr : inflated_occupied_bits.data(),
+      inflated_occupied_bits.size(),
+      size_x,
+      size_y,
+      size_z,
       resolution,
       aabb_min,
       aabb_max,
@@ -361,8 +364,16 @@ Decoded<LocalCollisionMap> decodeLocalCollisionMap(
     const lingtu_dds_MapCollisionLayer &msg) {
   Decoded<LocalCollisionMap> decoded;
   const std::string frame = headerFrameId(msg.header);
-  const std::string occupied_frame = headerFrameId(msg.occupied.header);
   decoded.value.stamp_s = headerStampSeconds(msg.header);
+  if (msg.size_x > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ||
+      msg.size_y > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ||
+      msg.size_z > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+    decoded.error = "local_collision_dimensions_invalid";
+    return decoded;
+  }
+  decoded.value.size_x = static_cast<int>(msg.size_x);
+  decoded.value.size_y = static_cast<int>(msg.size_y);
+  decoded.value.size_z = static_cast<int>(msg.size_z);
   decoded.value.resolution = msg.resolution;
   decoded.value.aabb_min = {msg.aabb_min.x, msg.aabb_min.y, msg.aabb_min.z};
   decoded.value.aabb_max = {msg.aabb_max.x, msg.aabb_max.y, msg.aabb_max.z};
@@ -376,7 +387,7 @@ Decoded<LocalCollisionMap> decodeLocalCollisionMap(
     return std::isfinite(point.x) && std::isfinite(point.y) &&
         std::isfinite(point.z);
   };
-  if (frame != "map" || occupied_frame != "map") {
+  if (frame != "map") {
     decoded.error = "local_collision_frame_invalid";
     return decoded;
   }
@@ -386,33 +397,31 @@ Decoded<LocalCollisionMap> decodeLocalCollisionMap(
       decoded.value.aabb_min.x >= decoded.value.aabb_max.x ||
       decoded.value.aabb_min.y >= decoded.value.aabb_max.y ||
       decoded.value.aabb_min.z >= decoded.value.aabb_max.z ||
+      decoded.value.size_x <= 0 || decoded.value.size_y <= 0 || decoded.value.size_z <= 0 ||
       decoded.value.reset_epoch == 0U || decoded.value.observation_sequence == 0U ||
       decoded.value.generation == 0U) {
     decoded.error = "local_collision_metadata_invalid";
     return decoded;
   }
 
-  const std::size_t expected_points =
-      static_cast<std::size_t>(msg.occupied.width) *
-      static_cast<std::size_t>(msg.occupied.height);
-  if (expected_points == 0U) {
-    if (msg.occupied.data._length != 0U) {
-      decoded.error = "local_collision_empty_cloud_has_payload";
-    }
+  const std::size_t cells = decoded.value.view().cellCount();
+  if (cells == 0U) {
+    decoded.error = "local_collision_dimensions_invalid";
     return decoded;
   }
-  std::vector<float> xyz = cloudToXyzh(msg.occupied, 0U, std::nullopt, std::nullopt);
-  if (xyz.size() != expected_points * 4U) {
-    decoded.error = "local_collision_cloud_invalid";
+  const std::size_t expected_bytes = (cells + 7U) / 8U;
+  if (msg.inflated_occupied_bits._maximum < msg.inflated_occupied_bits._length ||
+      msg.inflated_occupied_bits._length != expected_bytes ||
+      (expected_bytes > 0U && msg.inflated_occupied_bits._buffer == nullptr)) {
+    decoded.error = "local_collision_bits_invalid";
     return decoded;
   }
-  for (std::size_t index = 0U; index < expected_points; ++index) {
-    xyz[index * 3U] = xyz[index * 4U];
-    xyz[index * 3U + 1U] = xyz[index * 4U + 1U];
-    xyz[index * 3U + 2U] = xyz[index * 4U + 2U];
+  decoded.value.inflated_occupied_bits.assign(
+      msg.inflated_occupied_bits._buffer,
+      msg.inflated_occupied_bits._buffer + msg.inflated_occupied_bits._length);
+  if (!decoded.value.view().valid()) {
+    decoded.error = "local_collision_geometry_invalid";
   }
-  xyz.resize(expected_points * 3U);
-  decoded.value.occupied_xyz = std::move(xyz);
   return decoded;
 }
 

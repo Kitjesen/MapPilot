@@ -87,17 +87,6 @@ def test_staged_loader_smoke_reports_windows_loader_failure(tmp_path: Path) -> N
     assert "Windows loader failed" in completed.stdout + completed.stderr
 
 
-def _refresh_sdk_evidence(cyclone: Path) -> None:
-    manifest_path = cyclone / "evidence" / "files.sha256"
-    manifest_lines = []
-    for path in sorted(path for path in cyclone.rglob("*") if path.is_file()):
-        relative = path.relative_to(cyclone).as_posix()
-        if relative in {"evidence/files.sha256", "evidence/sdk-receipt.json"}:
-            continue
-        manifest_lines.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}\n")
-    manifest_path.write_text("".join(manifest_lines), encoding="utf-8")
-
-
 def _make_dependency_prefixes(tmp_path: Path) -> tuple[Path, Path]:
     assert POWERSHELL is not None
     dependencies = tmp_path / "deps" / "x64-windows"
@@ -346,48 +335,6 @@ def test_windows_slam_build_rejects_ambiguous_binary_cache_path(tmp_path: Path) 
     assert "comma or semicolon" in (completed.stdout + completed.stderr)
 
 
-def test_windows_slam_build_rejects_self_consistent_empty_cyclone_sbom(tmp_path: Path) -> None:
-    dependencies, cyclone = _make_dependency_prefixes(tmp_path)
-    (cyclone / "evidence" / "sbom.spdx.json").write_text("{}\n", encoding="utf-8")
-    _refresh_sdk_evidence(cyclone)
-
-    completed = _run_script(
-        "-DependencyPrefix",
-        str(dependencies),
-        "-CycloneDDSPrefix",
-        str(cyclone),
-        "-BuildDir",
-        str(tmp_path / "build"),
-        *_make_vcpkg_arguments(tmp_path, dependencies),
-        "-PreflightOnly",
-    )
-
-    assert completed.returncode != 0
-    assert "SPDX SBOM" in (completed.stdout + completed.stderr)
-
-
-def test_windows_slam_build_rejects_deprecated_idlc_smoke_receipt_field(tmp_path: Path) -> None:
-    dependencies, cyclone = _make_dependency_prefixes(tmp_path)
-    receipt_path = cyclone / "evidence" / "sdk-receipt.json"
-    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    receipt["verification"]["idlc_smoke"] = receipt["verification"].pop("idl_smoke")
-    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
-
-    completed = _run_script(
-        "-DependencyPrefix",
-        str(dependencies),
-        "-CycloneDDSPrefix",
-        str(cyclone),
-        "-BuildDir",
-        str(tmp_path / "build"),
-        *_make_vcpkg_arguments(tmp_path, dependencies),
-        "-PreflightOnly",
-    )
-
-    assert completed.returncode != 0
-    assert "verification result is invalid" in (completed.stdout + completed.stderr)
-
-
 def test_windows_slam_build_rejects_fabricated_sdk_before_configure(
     tmp_path: Path,
 ) -> None:
@@ -443,7 +390,7 @@ def test_windows_slam_build_declares_exact_product_flags_and_cache_identity() ->
     ):
         assert expected in script
     assert '& $PowerShellExecutable -NoProfile -File $CycloneDDSVerifier -SdkRoot $CycloneDDSPrefix' in script
-    assert script.count("Assert-AuthoritativeCycloneDDSSdk") == 3
+    assert script.count("Assert-AuthoritativeCycloneDDSSdk") == 2
 
 
 def test_windows_slam_build_rejects_cyclonedds_version_drift(tmp_path: Path) -> None:

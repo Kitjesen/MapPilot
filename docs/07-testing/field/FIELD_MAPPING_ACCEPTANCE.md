@@ -30,12 +30,12 @@ Run this on the robot after saving a map:
 
 ```bash
 cd /opt/lingtu/current
-PYTHONPATH=src python3 scripts/gates/saved_map_artifact_gate.py \
+PYTHONPATH=src python3 -m diagnostics.field.map_artifacts \
   <map_name> \
   --require-octomap \
   --json
 
-PYTHONPATH=src python3 scripts/gates/saved_map_field_acceptance.py \
+PYTHONPATH=src python3 -m diagnostics.field.map_acceptance \
   /var/lib/lingtu/maps/<map_name> \
   --plot-out /tmp/<map_name>_field_acceptance.png \
   --json
@@ -100,7 +100,7 @@ patch coverage cannot be hidden by a zoomed subplot.
    - avoid saving after a long stationary wait
 
 5. Save the map from the UI with a unique name.
-6. Run `saved_map_field_acceptance.py` on the saved map.
+6. Run `python -m diagnostics.field.map_acceptance` on the saved map.
 7. Accept the map only if the field gate returns exit code `0`.
 8. Then test relocalization against the accepted map and send one short
    navigation goal.

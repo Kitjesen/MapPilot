@@ -4,7 +4,7 @@ version: 1.0.0
 kind: world
 description: Minimal MuJoCo open field used by catalog contract tests.
 physics:
-  mjcf: ../../../worlds/mujoco/open_field.xml
+  mjcf: physics/open_field.xml
   global_policy:
     timestep_s: 0.002
     integrator: rk4

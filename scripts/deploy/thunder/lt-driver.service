@@ -13,7 +13,6 @@ KillMode=control-group
 User=lingtu
 Group=lingtu
 WorkingDirectory=/opt/lingtu/current
-Environment=LINGTU_DRIVER_BIN=/opt/lingtu/current/build/driver/lingtu_driver
 Environment=LINGTU_DDS_DOMAIN_ID=0
 Environment=LINGTU_DRIVER_RPC_TIMEOUT_MS=100
 Environment=LINGTU_DRIVER_STATUS_FILE=/dev/shm/lingtu/driver_status.json

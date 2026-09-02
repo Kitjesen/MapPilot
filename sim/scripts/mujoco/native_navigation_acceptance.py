@@ -117,7 +117,7 @@ from lingtu.sim.acceptance import validate_runner_plan
 
 DEFAULT_MANIFEST = ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_native_navigation_acceptance.json"
 DEFAULT_THUNDERV4_MJCF = (
-    ROOT / "sim" / "robots" / "doso" / "thunder_v4" / "mjcf" / "thunderv4.xml"
+    ROOT / "sim" / "packages" / "robots" / "doso" / "thunder_v4" / "mjcf" / "thunderv4.xml"
 )
 
 
@@ -618,11 +618,6 @@ def _native_mapd_launch(
     runtime: Mapping[str, Any],
     environment: Mapping[str, str],
 ) -> tuple[list[str], Mapping[str, str]]:
-    collision_cap = int(
-        runtime.get("max_collision_snapshot_points")
-        or environment.get("LINGTU_MAPD_MAX_COLLISION_SNAPSHOT_POINTS")
-        or 50000
-    )
     command = _native_command(
         binary,
         "--domain-id",
@@ -642,8 +637,6 @@ def _native_mapd_launch(
         str(float(runtime.get("scene_hz") or 2.0)),
         "--max-points",
         str(int(runtime.get("max_points") or 5000)),
-        "--max-collision-snapshot-points",
-        str(collision_cap),
         "--min-range",
         str(float(runtime.get("min_range_m") or 0.1)),
         "--max-range",
@@ -2664,9 +2657,14 @@ def _evaluate_phase(
         input_gate = nav_status.get("input_gate") or {}
         required_inputs = [
             "require_odom",
-            "require_cloud",
             "require_localization_health",
         ]
+        if str(nav_status.get("local_planner") or "").strip().lower() == "cmu":
+            required_inputs.append("require_cloud")
+        else:
+            collision = ((nav_status.get("local_map") or {}).get("collision") or {})
+            if collision.get("complete") is not True or int(collision.get("generation") or 0) <= 0:
+                blockers.append("stale_fail_safe_contract_missing:map_collision")
         if require_traversability:
             required_inputs.append("require_traversability")
         for required_input in required_inputs:
@@ -3060,9 +3058,10 @@ def _run_phase(
         {
             "LINGTU_ENV": "sim",
             "LINGTU_PRODUCT": "nav",
+            "LINGTU_NAV_LOCAL_PLANNER_BACKEND": local_planner_backend,
         }
     )
-    native_map_env.update(mapd_environment(local_planner_backend))
+    native_map_env.update(mapd_environment(native_map_env))
     mapd_command, mapd_env = _native_mapd_launch(
         binary=binaries["mapd"],
         domain_id=domain_id,

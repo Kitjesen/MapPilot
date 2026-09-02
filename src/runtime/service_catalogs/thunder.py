@@ -85,7 +85,7 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
             (
                 "livox_dds",
                 "LINGTU_LIVOX_BIN",
-                "/opt/lingtu/current/build/livox_sdk2_stream/livox_sdk2_stream",
+                "/opt/lingtu/current/bin/livox_sdk2_stream",
             ),
         ),
         description="Native Livox DDS LiDAR input.",
@@ -108,7 +108,7 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
             (
                 "driver",
                 "LINGTU_DRIVER_BIN",
-                "/opt/lingtu/current/build/driver/lingtu_driver",
+                "/opt/lingtu/current/bin/lingtu_driver",
             ),
         ),
         description="Native DDS motion driver using the RobotConfig-selected backend.",
@@ -135,12 +135,12 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
             (
                 "camera_dds",
                 "LINGTU_CAMERA_DDS_BIN",
-                "/opt/lingtu/current/build/camera_dds/lingtu_camera_dds",
+                "/opt/lingtu/current/bin/lingtu_camera_dds",
             ),
             (
                 "orbbec_capture",
                 "LINGTU_ORBBEC_CAPTURE_BIN",
-                "/opt/lingtu/current/build/orbbec_native/orbbec_capture",
+                "/opt/lingtu/current/bin/orbbec_capture",
             ),
         ),
         description="Optional native camera service using SHM for frames and DDS for camera metadata.",
@@ -168,7 +168,7 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
             (
                 "gnss_dds",
                 "LINGTU_GNSS_DDS_BIN",
-                "/opt/lingtu/current/build/gnss_dds/lingtu_gnss_dds",
+                "/opt/lingtu/current/bin/lingtu_gnss_dds",
             ),
         ),
         description="Optional native WTRTK-980 GNSS stream service.",
@@ -191,7 +191,7 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
             (
                 "nav_dds",
                 "LINGTU_NAV_DDS_BIN",
-                "/opt/lingtu/current/build/nav_endpoint/navd",
+                "/opt/lingtu/current/bin/navd",
             ),
         ),
         description="Native DDS navigation runtime.",
@@ -225,7 +225,7 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
             (
                 "traversability_dds",
                 "LINGTU_TRAVERSABILITY_DDS_BIN",
-                "/opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds",
+                "/opt/lingtu/current/bin/lingtu_traversability_dds",
             ),
         ),
         description="Native DDS traversability producer.",
@@ -264,7 +264,7 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
             (
                 "explore_dds",
                 "LINGTU_EXPLORE_DDS_BIN",
-                "/opt/lingtu/current/build/nav_endpoint/lingtu_explore_dds",
+                "/opt/lingtu/current/bin/lingtu_explore_dds",
             ),
         ),
         description=(
@@ -324,7 +324,7 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
             (
                 "slam_dds",
                 "LINGTU_SLAM_BIN",
-                "/opt/lingtu/current/build/slam_core/slamd",
+                "/opt/lingtu/current/bin/slamd",
             ),
         ),
         description="Native DDS SLAM/localization owner.",
@@ -366,7 +366,7 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
             (
                 "mapd",
                 "LINGTU_MAPD_BIN",
-                "/opt/lingtu/current/build/maps/mapd",
+                "/opt/lingtu/current/bin/mapd",
             ),
         ),
         description="Native live maps, bounded scene, and map service runtime.",

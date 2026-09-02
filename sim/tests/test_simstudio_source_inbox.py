@@ -224,12 +224,12 @@ def test_import_contracts_supply_canonical_robot_and_world_templates(tmp_path: P
     assert robot["schema"] == "lingtu.sim.studio.import-contract.v1"
     assert robot["kind"] == "robot"
     assert robot["source_entry_owned_by"] == "simstudio"
-    assert robot["request_schema"]["path"] == "schemas/simulation/robot-import.v1.json"
+    assert robot["request_schema"]["path"] == "sim/contracts/schemas/robot-import.v1.json"
     assert "source" not in robot["request_template"]
     assert robot["request_template"]["schema"] == "lingtu.sim.robot-import-request.v1"
     assert robot["request_template"]["source_model"] == "robot.xml"
     assert world["kind"] == "world"
-    assert world["request_schema"]["path"] == "schemas/simulation/world-import.v1.json"
+    assert world["request_schema"]["path"] == "sim/contracts/schemas/world-import.v1.json"
     assert "path" not in world["request_template"]["source"]
     assert world["request_template"]["heightmap"]["path"] == "height.r16"
 

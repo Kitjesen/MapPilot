@@ -1,6 +1,6 @@
 <!-- Versioned timebase wrapper for the included 1.0.0 terrain; this package
      overrides only global physics. -->
 <mujoco model="open_field_hf_1ms">
-  <include file="../../../../../worlds/open_field_hf/open_field_hf.xml"/>
+  <include file="../../physics/open_field_hf.xml"/>
   <option gravity="0 0 -9.81" timestep="0.001" integrator="RK4" solver="Newton" iterations="100"/>
 </mujoco>

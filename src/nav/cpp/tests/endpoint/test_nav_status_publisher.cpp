@@ -9,6 +9,7 @@
 #include "safety/command.hpp"
 #include "status/control_loop_health.hpp"
 #include "status/nav_status_publisher.hpp"
+#include "tests/collision_bitmap.hpp"
 
 namespace {
 
@@ -66,7 +67,8 @@ struct Fixture {
   std::vector<nav_kernel::Vec3> local_path;
   nav_kernel::LocalPlannerDebugSnapshot local_debug;
   TraversabilityGrid traversability;
-  std::vector<float> collision_points{0.5F, 0.0F, 0.4F};
+  lingtu::nav::tests::CollisionBitmap collision_bitmap{
+      {-1.0, -1.0, -0.5}, {2.0, 1.0, 1.5}, 0.1};
   std::vector<float> obstacles{
       0.1F, 0.0F, 0.0F, -0.3F,
       1.0F, 2.0F, 3.0F, 0.5F,
@@ -164,10 +166,9 @@ struct Fixture {
     state.local_path = &local_path;
     state.local_planner_debug = &local_debug;
     state.local_map_traversability = &traversability;
-    state.local_collision_map = {
-        collision_points.data(), 1U, 0.1, {-1.0, -1.0, -0.5}, {2.0, 1.0, 1.5},
-        1U, 2U, 3U, 1234.0, true, true,
-    };
+    collision_bitmap.occupy({0.5, 0.0, 0.4});
+    state.local_collision_map = collision_bitmap.view(1234.0, 3U);
+    state.local_collision_map.observationSequence = 2U;
 
     commands.received = 3;
     commands.ack_sent = 2;
@@ -354,7 +355,7 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
           "planner freshness flags must map into the snapshot");
   require(contains(autonomy, "\"collision\": {\"enabled\": true") &&
               contains(autonomy, "\"occupied_points_total\": 1") &&
-              contains(autonomy, "\"occupied_points\": [[0.500000, 0.000000, 0.400000]]"),
+              contains(autonomy, "\"occupied_points\": [[0.550000, 0.050000, 0.450000]]"),
           "local-map diagnostics must expose the exact collision layer consumed by SCAN");
   require(contains(autonomy, "\"source_obstacle_points_total\": 2") &&
               contains(autonomy, "\"obstacle_filter\": \"cmu_height_envelope\"") &&

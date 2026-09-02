@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(octoplanner3d_runtime LANGUAGES C CXX)
 include(CTest)
+include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -237,3 +238,6 @@ set_target_properties(octoplanner3d_pcd_to_octomap PROPERTIES
   BUILD_RPATH "${OCTOPLANNER3D_SOURCE_DIR}/lib"
   INSTALL_RPATH "$ORIGIN"
 )
+install(TARGETS octoplanner3d_pcd_to_octomap
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT lingtu_runtime)

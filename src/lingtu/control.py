@@ -25,6 +25,7 @@ from lingtu.real.switch import execute_switch
 from lingtu.real.systemd import SystemdRunner
 from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
 from lingtu.sim.daemon import ensure_sim_supervisor
+from lingtu.sim.supervisor import SimulationSupervisorClient, SimulationSupervisorError
 from lingtu.switch_contracts import (
     ProcessFailed,
     ProcessReport,
@@ -273,7 +274,7 @@ class ProductControl:
             environment=self._process_env,
         ).state_dir
         try:
-            plan, _plan_path, _product_session_id = self._current_plan_and_path(root)
+            plan, plan_path, product_session_id = self._current_plan_and_path(root)
         except _CurrentProductNotFound:
             return {
                 "ok": True,
@@ -284,6 +285,33 @@ class ProductControl:
                 "local_planner": None,
                 "error": None,
             }
+        if plan.env == "sim" and plan.process_control == "subprocess":
+            try:
+                report = SimulationSupervisorClient(root).status(
+                    plan_path,
+                    product_session_id=product_session_id,
+                    timeout_s=1.0,
+                )
+            except SimulationSupervisorError as exc:
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "robot": self.robot,
+                    "env": plan.env,
+                    "product": plan.product,
+                    "local_planner": plan.native_nav.get("local_planner"),
+                    "error": str(exc),
+                }
+            if not report.ok:
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "robot": self.robot,
+                    "env": plan.env,
+                    "product": plan.product,
+                    "local_planner": plan.native_nav.get("local_planner"),
+                    "error": report.error,
+                }
         return {
             "ok": True,
             "status": "active",

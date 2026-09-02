@@ -1,7 +1,7 @@
 # LingTu SLAM Simulation Evaluation
 
 This package is the LingTu-owned boundary for simulated SLAM evaluation. It is
-kept separate from `src/localization/` runtime modules and from `sim/engine/` physics so
+kept separate from `src/localization/` runtime modules and from `sim/compat/engine/` physics so
 we can compare SLAM backends without changing robot behavior.
 
 ## Current Scope
@@ -105,7 +105,7 @@ Useful ideas to adapt into LingTu-owned code:
 ## Boundary
 
 - `sim/evaluation/slam/`: deterministic evaluation utilities and case manifests.
-- `sim/engine/`: robot/world stepping and sensor generation.
+- `sim/compat/engine/`: robot/world stepping and sensor generation.
 - `src/localization/`: runtime SLAM modules and bridges.
 - `src/lingtu/assembly/`: profile composition and wiring.
 

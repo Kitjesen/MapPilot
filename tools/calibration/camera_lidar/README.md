@@ -20,7 +20,6 @@ This directory is for offline calibration and comparison. ROS1/ROS2 tools here d
 
 ```bash
 # Build from repository root; requires PCL, OpenCV, Ceres, Rust/Cargo
-python scripts/build/build_rust_kernels.py --target camera_lidar_optimizer --release
 cd tools/calibration/camera_lidar/direct_visual_lidar_calibration
 source /opt/ros/humble/setup.bash
 colcon build --packages-select direct_visual_lidar_calibration

@@ -189,13 +189,14 @@ struct PointCloudFixture {
 
 struct CollisionFixture {
   PointCloudFixture cloud;
+  std::vector<std::uint8_t> bits;
   lingtu_dds_MapCollisionLayer message{};
 
   CollisionFixture(double stamp_s,
                    std::uint64_t observation_sequence,
                    std::uint64_t generation,
                    bool complete)
-      : cloud(stamp_s, "map", 1.0F, 2.0F, 0.5F) {
+      : cloud(stamp_s, "map", 1.0F, 2.0F, 0.5F), bits(50000U, 0U) {
     message.header = cloud.message.header;
     message.reset_epoch = 3;
     message.observation_sequence = observation_sequence;
@@ -208,8 +209,15 @@ struct CollisionFixture {
     message.aabb_max.x = 5.0;
     message.aabb_max.y = 5.0;
     message.aabb_max.z = 2.0;
+    message.size_x = 100U;
+    message.size_y = 100U;
+    message.size_z = 40U;
     message.complete = complete;
-    message.occupied = cloud.message;
+    const std::size_t linear = (25U * 100U + 70U) * 100U + 60U;
+    bits[linear / 8U] |= static_cast<std::uint8_t>(1U << (linear % 8U));
+    message.inflated_occupied_bits._length = static_cast<std::uint32_t>(bits.size());
+    message.inflated_occupied_bits._maximum = message.inflated_occupied_bits._length;
+    message.inflated_occupied_bits._buffer = bits.data();
   }
 };
 
@@ -824,8 +832,8 @@ void testLocalCollisionProjectionOwnsPayloadAndRejectsPreClearReplay() {
   projector.projectLocalCollision(layer.message, 202.0);
   require(state.local_collision_count == 1,
           "accepted collision layer must increment its counter");
-  require(state.local_collision_map.occupied_xyz.size() == 3,
-          "collision projection must own every occupied center");
+  require(state.local_collision_map.inflated_occupied_bits.size() == 50000U,
+          "collision projection must own the packed occupancy layer");
   require(!state.local_collision_map.complete,
           "an incomplete wire layer must remain explicitly incomplete");
   require(state.local_collision_map.observation_sequence == 7 &&
@@ -835,8 +843,8 @@ void testLocalCollisionProjectionOwnsPayloadAndRejectsPreClearReplay() {
           "collision freshness must use explicit steady receipt time");
   require(std::abs(state.local_collision_map.view().receiveStampS - 202.0) < 1e-9,
           "planner collision view must carry receiver-clock freshness");
-  layer.cloud.setPoint(9.0F, 9.0F, 9.0F);
-  require(std::abs(state.local_collision_map.occupied_xyz.front() - 1.0F) < 1e-6F,
+  std::fill(layer.bits.begin(), layer.bits.end(), 0U);
+  require(state.local_collision_map.view().occupied({1.05, 2.05, 0.55}),
           "collision projection must not retain the DDS payload loan");
 
   layer.message.live = false;
@@ -857,7 +865,7 @@ void testLocalCollisionProjectionOwnsPayloadAndRejectsPreClearReplay() {
   lingtu_dds_Bool clear{};
   clear.data = true;
   projector.clearPlannerInputs(clear, ClearSource::Map);
-  require(state.local_collision_map.occupied_xyz.empty() &&
+  require(state.local_collision_map.inflated_occupied_bits.empty() &&
               state.last_local_collision_receive_s == 0.0,
           "planner clear must discard collision payload and receiver freshness");
 

@@ -1,9 +1,9 @@
 {
   "name": "thunder_v4_factory_fastlio2",
-  "world": "sim/worlds/mujoco/factory_scene.xml",
+  "world": "sim/compat/engine/worlds/factory_scene.xml",
   "robot": {
     "name": "doso/thunder_v4",
-    "model_path": "sim/robots/doso/thunder_v4/mjcf/thunderv4.xml",
+    "model_path": "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml",
     "frame_id": "body"
   },
   "sensors": {

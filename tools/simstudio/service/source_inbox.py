@@ -10,8 +10,8 @@ from collections.abc import AsyncIterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from sim.importers.contracts import ImportFailure, SourceFile
-from sim.importers.intake import SourceIntake
+from sim.catalog.importers.contracts import ImportFailure, SourceFile
+from sim.catalog.importers.intake import SourceIntake
 from sim.runtime.coordinator.atomic_file import replace_file_with_retry
 
 from .store import StudioStore

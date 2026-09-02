@@ -20,7 +20,7 @@ from typing import Any
 
 import yaml
 from sim.catalog.resolver import CatalogResolver
-from sim.importers.contracts import canonical_json_bytes, digest_document
+from sim.catalog.importers.contracts import canonical_json_bytes, digest_document
 
 SELECTION_SPEC_SCHEMA = "lingtu.sim.game-selection-spec.v1"
 SELECTION_CATALOG_SCHEMA = "lingtu.sim.game-selection-catalog.v1"

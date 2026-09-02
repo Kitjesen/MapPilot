@@ -1,7 +1,9 @@
 # Native build entrypoints
 
-Run these commands from the repository root. Outputs go under `build/` unless a
-script documents an explicit SDK or third-party prefix.
+Run these commands from the repository root. Compilation outputs go under
+`build/`. Native release packaging installs them into the ignored standard
+prefix `install/linux-<arch>/<config>/{bin,lib,etc,share}` before assembling
+`dist/`; Product startup never resolves a `build/` path.
 
 ## Field runtime
 
@@ -11,7 +13,7 @@ script documents an explicit SDK or third-party prefix.
 | SLAM | `bash scripts/build/build_slam_core.sh` |
 | Map daemon | `bash scripts/build/build_mapd.sh` |
 | Navigation endpoint | `bash scripts/build/build_nav_endpoint.sh` |
-| Exploration endpoint | `bash scripts/build/build_explore_kernel.sh` |
+| Exploration Python binding | `bash scripts/build/build_explore_py.sh` |
 | Native DDS/MCAP recording | `bash scripts/build/build_native_recording.sh` |
 | Native map cleaner | `bash scripts/build/build_prune.sh` |
 
@@ -26,9 +28,10 @@ Select a driver for a target image with
 | Orbbec native stream | `bash scripts/build/build_orbbec_native.sh` |
 | Camera DDS endpoint | `bash scripts/build/build_camera_dds.sh` |
 | GNSS DDS endpoint | `bash scripts/build/build_gnss_dds.sh` |
-| Gateway point-cloud codec | `bash scripts/build/build_pointcloud_codec.sh` |
+| Gateway point-cloud codec | `cmake -S src/kernels/gateway/pointcloud_codec -B src/kernels/gateway/pointcloud_codec/build && cmake --build src/kernels/gateway/pointcloud_codec/build` |
 
-Windows uses the matching PowerShell entrypoint when one exists.
+On Windows, configure the same point-cloud codec source with a Visual Studio
+generator, then run `cmake --build src/kernels/gateway/pointcloud_codec/build --config Release`.
 
 ## Windows native simulation
 

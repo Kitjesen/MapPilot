@@ -129,7 +129,7 @@ def test_native_inspection_library_candidates_cover_repo_and_deployed_builds(
 
     assert repo_root / "src" / "nav" / "inspection" / "build" / library_name in candidates
     assert repo_root / "build" / "nav_endpoint" / "inspection" / library_name in candidates
-    assert Path("/opt/lingtu/current/build/nav_endpoint/inspection") / library_name in candidates
+    assert Path("/opt/lingtu/current/lib") / library_name in candidates
 
 
 def test_inspection_resume_requires_autonomy_control_before_executor_resume() -> None:

@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 import sim.tools.game_selection_launcher as launcher_module
-from sim.importers.contracts import canonical_json_bytes, digest_document
+from sim.catalog.importers.contracts import canonical_json_bytes, digest_document
 from sim.tools.game_selection_launcher import (
     GameSelectionLauncherError,
     build_playable_coordinator_argv,

@@ -65,7 +65,6 @@ def _library_candidates() -> list[Path]:
             [
                 root / "build" / "nav_endpoint" / name,
                 root / "build" / "nav_endpoint" / "Release" / name,
-                Path("/opt/lingtu/current/build/nav_endpoint") / name,
                 Path("/opt/lingtu/current/lib") / name,
             ]
         )

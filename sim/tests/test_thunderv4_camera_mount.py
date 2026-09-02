@@ -7,7 +7,14 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-MODEL = Path(__file__).resolve().parents[1] / "robots" / "thunderv4" / "mjcf" / "thunderv4.xml"
+MODEL = (
+    Path(__file__).resolve().parents[1]
+    / "packages"
+    / "robots"
+    / "thunderv4"
+    / "mjcf"
+    / "thunderv4.xml"
+)
 
 
 def test_front_camera_uses_the_real_mount_with_a_clear_forward_view() -> None:

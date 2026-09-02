@@ -78,8 +78,8 @@ MCP 和低频适配器。LiDAR、SLAM、实时地图、导航和驱动通过原�
 
 对于基于已保存地图的导航，请在不下发运动命令的情况下检查地图溯源，并评估精确路线：
 
-    python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy
-    python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" --map <map-name> --goal <x> <y> <yaw>
+    PYTHONPATH=src python -m diagnostics.field.map_artifacts <map-id> --require-occupancy
+    PYTHONPATH=src python -m diagnostics.field.system_acceptance --maps-root "$LINGTU_MAPS_ROOT" --map <map-name> --goal <x> <y> <yaw>
 
 `system-acceptance` 默认不下发运动命令，并由 ProductControl 管理所需的 Product 切换与清理。其成功仅表明所选地图、位姿、规划器与目标足够兼容；它不授权导航目标。应修复地图、定位或配置边界，而不是用原始速度绕过规划器。
 

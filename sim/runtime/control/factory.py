@@ -21,7 +21,7 @@ def _create_differential_drive_components(
 ) -> tuple[ControllerAdapter, ControllerPolicy]:
     """Load the optional analytic adapter only after the control package is initialized."""
 
-    from sim.controllers.omni_cart.differential_drive.runtime import (
+    from sim.packages.controllers.omni_cart.differential_drive.runtime import (
         create_components,
     )
 

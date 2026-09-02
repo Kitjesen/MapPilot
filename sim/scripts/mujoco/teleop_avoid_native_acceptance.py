@@ -483,7 +483,6 @@ def _binary_source_provenance(
         "navigation": [
             endpoint_cpp,
             nav_cpp / "planning",
-            nav_cpp / "execution",
             nav_cpp / "navigation",
             nav_cpp / "platform",
             nav_cpp / "tracking",

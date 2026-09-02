@@ -20,7 +20,8 @@ route contract:
 | Path | Role |
 | --- | --- |
 | `base.py` | Standardized `ExploreModule` base class (shared exploration port contract). |
-| `cpp/` | C++ exploration algorithm core. This is the primary place for field exploration algorithms. |
+| `cpp/` | C++ exploration algorithms, Python bindings, and native exploration process source. |
+| `cpp/endpoint/` | `lingtu_explore_dds` process entry and transport-free exploration lifecycle support. |
 | `kernel/` | Python loader for the `lingtu_explore_kernel` nanobind extension (mirrors `nav/kernel`). |
 | `tare/backend.py` | `create_nanobind_explore_backend` — wraps the native `TarePolicy` for Python callers. |
 | `tare/policy.py` | Thin Python data contract (`TAREPolicyConfig`/`TAREDecision`) + `PortableTAREPolicy` delegating to C++. |
@@ -39,7 +40,7 @@ and the Module port orchestration.
 The kernel is optional at runtime: `explore.explore_kernel_available()` reports
 whether the extension is importable. When it is not, the module stays in
 ``configured`` state and tests/DDS paths remain usable. Build it with
-`scripts/build/build_explore_kernel.sh`.
+`scripts/build/build_explore_py.sh`.
 
 Current C++ core:
 
@@ -82,6 +83,11 @@ Gateway / operator
   <- /nav/command/ack
   -> OctoPlanner3D / LocalPlanner / PathFollower / Safety
 ```
+
+The endpoint source lives with the exploration function under
+`src/explore/cpp/endpoint/`. It is still composed by
+`src/nav/cpp/endpoint/CMakeLists.txt` because it submits route requests to the
+navigation endpoint. The deployed executable remains `lingtu_explore_dds`.
 
 ## Field routes
 

@@ -47,7 +47,6 @@ def test_native_slam_has_no_python_binding_build_surface() -> None:
         ROOT / ".github" / "workflows" / "slam-aarch64-build.yml",
         ROOT / "scripts" / "build" / "build_slam_core.sh",
         ROOT / "scripts" / "build" / "build_slam_core_windows.ps1",
-        ROOT / "scripts" / "deploy" / "cut_release.sh",
         ROOT / "scripts" / "deploy" / "thunder" / "run_slam_dds.sh",
     )
     assert [

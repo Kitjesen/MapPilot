@@ -85,6 +85,22 @@ class SimulationSupervisorClient:
             timeout_s=timeout_s,
         )
 
+    def status(
+        self,
+        plan_path: str | os.PathLike[str],
+        *,
+        product_session_id: str,
+        timeout_s: float | None = None,
+    ) -> ProcessReport:
+        """Read the latest monitored Product process state."""
+
+        return self._execute(
+            "status",
+            plan_path,
+            product_session_id=product_session_id,
+            timeout_s=timeout_s,
+        )
+
     def _execute(
         self,
         action: str,
@@ -123,7 +139,7 @@ class SimulationSupervisorClient:
         return _process_report_from_payload(
             response.result,
             plan=plan,
-            action=action,
+            action="apply" if action == "status" else action,
         )
 
     def _exact_plan_path(self, plan_path: str | os.PathLike[str]) -> str:
@@ -166,6 +182,9 @@ def _default_operation_timeout_s(plan: RunPlan, action: str) -> float:
         process_budget = sum(
             float(process.timeout_s) for process in plan.managed_processes
         )
+    elif action == "status":
+        conflict_budget = 0.0
+        process_budget = 0.0
     else:
         raise SimulationSupervisorError(
             f"unsupported simulation supervisor action: {action}"

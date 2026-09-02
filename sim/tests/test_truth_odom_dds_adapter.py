@@ -268,7 +268,7 @@ def test_truth_odometry_dds_adapter_uses_run_allocation_and_waits_for_readiness(
 def test_truth_odometry_adapter_does_not_import_legacy_simulation_layers() -> None:
     source = Path("sim/runtime/sensors/dds_adapter.py").read_text(encoding="utf-8")
 
-    assert "sim.engine" not in source
+    assert "sim.compat.engine" not in source
     assert "sim.scripts" not in source
     assert "drivers.sim" not in source
     assert "from .samples import TruthOdometrySample" in source

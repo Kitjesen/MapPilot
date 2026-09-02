@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(lingtu_driver LANGUAGES C CXX)
+include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -127,6 +128,9 @@ if(LINGTU_DRIVER_BUILD_RUNTIME)
     target_link_options(lingtu_driver PRIVATE -Wl,--disable-new-dtags)
   endif()
   target_compile_options(lingtu_driver PRIVATE ${_LINGTU_DRIVER_WARNINGS})
+  install(TARGETS lingtu_driver
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+      COMPONENT lingtu_runtime)
 
   if(BUILD_TESTING AND NOT TARGET test_driver_status)
     add_executable(test_driver_status

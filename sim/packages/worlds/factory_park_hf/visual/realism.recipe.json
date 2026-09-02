@@ -192,11 +192,12 @@
     "physics_authority": "mujoco"
   },
   "inputs": {
-    "expanded_layout": "sim/worlds/factory_park_hf/generated/expanded-layout.json",
-    "mujoco_world": "sim/worlds/factory_park_hf/factory_park_hf.xml",
-    "semantic_entities": "sim/worlds/factory_park_hf/generated/semantic-entities.json",
-    "terrain_obj": "sim/worlds/factory_park_hf/generated/terrain.obj"
+    "expanded_layout": "sim/packages/worlds/factory_park_hf/generated/expanded-layout.json",
+    "mujoco_world": "sim/packages/worlds/factory_park_hf/physics/factory_park_hf.xml",
+    "semantic_entities": "sim/packages/worlds/factory_park_hf/generated/semantic-entities.json",
+    "terrain_obj": "sim/packages/worlds/factory_park_hf/generated/terrain.obj"
   },
+  "layout_digest": "1bb084b64a5d10baaddbee62bee879eec679cd666f0c331ac984542a74f9907f",
   "lighting": {
     "blender": {
       "ambient_occlusion": true,

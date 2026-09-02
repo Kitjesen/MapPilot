@@ -453,7 +453,7 @@ stack can produce a speed command.
 `lt-terrain.service` runs:
 
 ```text
-/opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds
+/opt/lingtu/current/bin/lingtu_traversability_dds
 ```
 
 The service subscribes:
@@ -572,7 +572,7 @@ no second compatibility wrapper or duplicate obstacle algorithm.
 `lt-nav.service` runs one binary:
 
 ```text
-/opt/lingtu/current/build/nav_endpoint/navd
+/opt/lingtu/current/bin/navd
 ```
 
 That binary contains the native planning and command pipeline:
@@ -676,7 +676,7 @@ effective tick.
 For no-hardware validation, the build now includes:
 
 ```text
-/opt/lingtu/current/build/nav_endpoint/lingtu_motion_mock_dds
+build/nav_endpoint/lingtu_motion_mock_dds
 ```
 
 It is not a field service. It is a manual test/simulation node for an isolated

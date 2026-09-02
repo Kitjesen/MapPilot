@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 import sim.tools.assets.tripo_visual_candidate as tripo_candidate_module
-from sim.importers.contracts import digest_document
+from sim.catalog.importers.contracts import digest_document
 from sim.tools.assets.tripo_high_fidelity import (
     PROFILE_PATH,
     build_multiview_payload,

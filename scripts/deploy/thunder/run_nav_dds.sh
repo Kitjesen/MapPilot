@@ -4,6 +4,8 @@ set -euo pipefail
 source /opt/lingtu/config/thunder-runtime-env.sh
 source /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh nav
 
+: "${LINGTU_REPO:=/opt/lingtu/current}"
+: "${LINGTU_NAV_DDS_BIN:=${LINGTU_REPO}/bin/navd}"
 : "${LINGTU_NAV_VEHICLE_LENGTH_M:?Product session is missing LINGTU_NAV_VEHICLE_LENGTH_M}"
 : "${LINGTU_NAV_VEHICLE_WIDTH_M:?Product session is missing LINGTU_NAV_VEHICLE_WIDTH_M}"
 : "${LINGTU_NAV_SENSOR_OFFSET_X_M:?Product session is missing LINGTU_NAV_SENSOR_OFFSET_X_M}"

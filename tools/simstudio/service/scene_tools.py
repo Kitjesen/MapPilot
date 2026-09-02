@@ -18,7 +18,7 @@ from sim.tools.worlds.factory_park_hf.elements import (
 
 FACTORY_PARK_SCENE_TOOL = "factory-park-hf"
 FACTORY_PARK_WORLD_PACKAGE = "factory_park_hf@1.0.0"
-_EXPANDED_LAYOUT = Path("sim/worlds/factory_park_hf/generated/expanded-layout.json")
+_EXPANDED_LAYOUT = Path("sim/packages/worlds/factory_park_hf/generated/expanded-layout.json")
 
 
 def _canonical_json_bytes(value: object) -> bytes:

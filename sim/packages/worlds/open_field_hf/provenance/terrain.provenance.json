@@ -1,5 +1,6 @@
 {
   "asset_id": "open_field_hf.terrain",
+  "asset_set_digest": "81c0de8f4266ae0dff6df28908361a779cc21f05716625d435d4b1e07dcf212e",
   "coordinate_contract": {
     "axis_mapping": [
       "x",
@@ -83,32 +84,39 @@
   },
   "outputs": [
     {
-      "bytes": 3427,
-      "path": "sim/packages/worlds/open_field_hf/visual/ue_import.recipe.json"
-    },
-    {
-      "bytes": 337,
-      "path": "sim/packages/worlds/open_field_hf/world.package.yaml"
-    },
-    {
-      "bytes": 2710,
-      "path": "sim/worlds/open_field_hf/generated/asset-manifest.json"
+      "bytes": 2737,
+      "path": "sim/packages/worlds/open_field_hf/generated/asset-manifest.json",
+      "sha256": "501f830cc2329db0b32ad833acfe7efc4a917fe724769a642345f7e4ffbee2c6"
     },
     {
       "bytes": 256044,
-      "path": "sim/worlds/open_field_hf/generated/heightfield_f32.bin"
+      "path": "sim/packages/worlds/open_field_hf/generated/heightfield_f32.bin",
+      "sha256": "3cc2fba6d0193d866f5140ae614b339a7656ba440bacd2e200cc1aa765a81c29"
     },
     {
       "bytes": 128344,
-      "path": "sim/worlds/open_field_hf/generated/heightfield_r16.png"
+      "path": "sim/packages/worlds/open_field_hf/generated/heightfield_r16.png",
+      "sha256": "65e1631acf8265ce5318384b9b1364ecd07d0f29e2bfaf7f7f59bd2e2bc229c9"
     },
     {
       "bytes": 4880616,
-      "path": "sim/worlds/open_field_hf/generated/terrain.obj"
+      "path": "sim/packages/worlds/open_field_hf/generated/terrain.obj",
+      "sha256": "9074c291d2bf67b9a2fcbddb5855a79d5b8de1d2d725a9fd8769aad7f9191a81"
     },
     {
-      "bytes": 936,
-      "path": "sim/worlds/open_field_hf/open_field_hf.xml"
+      "bytes": 972,
+      "path": "sim/packages/worlds/open_field_hf/physics/open_field_hf.xml",
+      "sha256": "0e72dbdff3f381bc309e81853c4b744702bdd22732fcc8af480f59d825c780e4"
+    },
+    {
+      "bytes": 3481,
+      "path": "sim/packages/worlds/open_field_hf/visual/ue_import.recipe.json",
+      "sha256": "e88108340607c99c51824df4a2a9145c803144d26cdd16c067f4b9d56eed7cda"
+    },
+    {
+      "bytes": 449,
+      "path": "sim/packages/worlds/open_field_hf/world.package.yaml",
+      "sha256": "4551e53eedcc8ccd80fab5fb80193a182493bba2ec8750be53422f8922c252a9"
     }
   ],
   "reproducibility": {

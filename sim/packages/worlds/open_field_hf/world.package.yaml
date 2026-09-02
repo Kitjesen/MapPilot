@@ -4,7 +4,7 @@ version: 1.0.0
 kind: world
 description: Deterministic same-source outdoor terrain foundation for MuJoCo and Unreal.
 physics:
-  mjcf: ../../../worlds/open_field_hf/open_field_hf.xml
+  mjcf: physics/open_field_hf.xml
   global_policy:
     timestep_s: 0.002
     integrator: rk4

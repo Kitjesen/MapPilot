@@ -41,6 +41,21 @@ def test_navigation_runtime_install_does_not_publish_internal_headers() -> None:
     assert "install(" not in targets
     assert "install(TARGETS ${_LINGTU_NAV_ENDPOINT_RUNTIME_TARGETS}" in endpoint
     assert "install(TARGETS lingtu_inspection" in inspection
+    assert "include(GNUInstallDirs)" in endpoint
+    assert "RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}" in endpoint
+    assert "LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}" in endpoint
+    assert endpoint.count("COMPONENT lingtu_runtime") == 3
+    assert 'INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"' in endpoint
+    assert "DESTINATION ${CMAKE_INSTALL_DATADIR}/lingtu/cmu_paths" in endpoint
+    assert "include(GNUInstallDirs)" in inspection
+    assert "LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}" in inspection
+    assert "RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}" in inspection
+    assert inspection.count("COMPONENT lingtu_runtime") == 2
+
+    maps = _read("src/maps/CMakeLists.txt")
+    assert "include(GNUInstallDirs)" in maps
+    assert "RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}" in maps
+    assert maps.count("COMPONENT lingtu_runtime") == 1
 
     runtime_targets = endpoint.split("foreach(_target IN ITEMS", 1)[1].split(
         ")", 1
@@ -57,7 +72,8 @@ def test_navigation_runtime_install_does_not_publish_internal_headers() -> None:
     octoplanner_cmake = _read(
         "src/nav/cpp/planning/global/octoplanner/CMakeLists.txt"
     )
-    assert "install(" not in octoplanner_cmake
+    assert "install(TARGETS octoplanner3d_pcd_to_octomap" in octoplanner_cmake
+    assert "install(TARGETS octoplanner3d_route_viz" not in octoplanner_cmake
 
     package_release = _read("scripts/deploy/package_native_release.sh")
     assert "navigation runtime install must not contain C/C++ headers" in package_release
@@ -285,18 +301,10 @@ def test_dds_services_delegate_to_checked_runners() -> None:
     assert 'exec "${LINGTU_NAV_DDS_BIN}"' in nav_runner
     assert 'exec "${LINGTU_EXPLORE_DDS_BIN}"' in explore_runner
 
-def test_release_cutter_only_sequences_deploy_and_package() -> None:
-    release = _read("scripts/deploy/cut_release.sh")
-
-    assert 'VERSION="v${RAW_VERSION#v}"' in release
-    assert 'PRODUCT="${LINGTU_DEPLOY_PRODUCT:-}"' in release
-    assert 'if [[ $# -gt 0 && "$1" != -* ]]; then' in release
-    assert 'bash "${SCRIPT_DIR}/deploy_robot.sh" "${PRODUCT}" "$@"' in release
-    assert 'bash "${SCRIPT_DIR}/package_native_release.sh" "${VERSION}" "${OUTPUT_DIR}"' in release
-    assert "systemctl" not in release
-    assert "RunPlan" not in release
-    assert "sha256" not in release.lower()
-    assert "rm -rf" not in release
+def test_release_uses_the_deployer_and_native_packager_directly() -> None:
+    assert not (ROOT / "scripts/deploy/cut_release.sh").exists()
+    assert (ROOT / "scripts/deploy/deploy_robot.sh").is_file()
+    assert (ROOT / "scripts/deploy/package_native_release.sh").is_file()
 
 
 def test_explore_map_variant_declares_saved_map_localization_capability() -> None:

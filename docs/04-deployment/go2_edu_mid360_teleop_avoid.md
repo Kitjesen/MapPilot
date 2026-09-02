@@ -277,25 +277,25 @@ jq . /dev/shm/lingtu/traversability_status.json
 jq . /dev/shm/lingtu/mapd_status.json
 
 # 连续采样地图链路；输出包含 hz、max_gap_s、reset_epoch、sequence、generation 和 live
-build/dds_probe/lingtu_dds_probe --json --seconds 5 \
+/opt/lingtu/current/bin/lingtu_dds_probe --json --seconds 5 \
   --domain "${LINGTU_DDS_DOMAIN_ID:-0}" \
   /slam/map_observation /maps/state /maps/local_collision \
   /maps/occupancy /maps/scene | tee /tmp/go2-mapd-dds.json
 
 # 只读契约 gate：验证 exact RunPlan、角色、topic 和运行策略
 PYTHONPATH=/opt/lingtu/current/src "${LINGTU_PYTHON}" \
-  scripts/gates/thunder_service_readiness_collect.py \
+  -m diagnostics.field.service_readiness \
   --teleop-avoid-stage contract --strict --pretty \
   --json-out /tmp/go2-teleop-avoid-contract.json
 
 # 只读运动 gate：验证传感新鲜度、InputGate、Go2 控制状态、最终零速和同源时序关联 driver ACK
 PYTHONPATH=/opt/lingtu/current/src "${LINGTU_PYTHON}" \
-  scripts/gates/thunder_service_readiness_collect.py \
+  -m diagnostics.field.service_readiness \
   --teleop-avoid-stage motion --strict --pretty \
   --json-out /tmp/go2-teleop-avoid-motion.json
 ```
 
-`thunder_service_readiness_collect.py` 是现有共享 field collector 的历史文件
+`diagnostics.field.service_readiness` 是共享 field collector
 名；`--teleop-avoid-stage motion` 会按状态中的 `backend=go2` 检查 Unitree
 SDK2 控制，不会切换到 Thunder/DOSO。两个 gate 都是只读的，不申请控制权、
 不发布命令。

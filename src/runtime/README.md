@@ -14,9 +14,9 @@ node logic.
 | --- | --- |
 | write or inspect a module | `module.py`, `stream.py` |
 | understand the graph mechanism | `blueprint.py`, `wiring.py` |
-| connect LingTu product modules | `../lingtu/assembly/wires/` |
-| understand product data flow | `../lingtu/assembly/products/thunder.py`, then `../lingtu/assembly/wires/full_stack.py` |
-| change Product/env defaults | `config/runtime_graph/`, `../lingtu/assembly/products/` |
+| connect LingTu product modules | `src/lingtu/assembly/wires/` |
+| understand Product data flow | `config/runtime_graph/products/`, then `src/lingtu/assembly/compiler.py` and `src/lingtu/assembly/stacks/` |
+| change Product/env declarations | `config/runtime_graph/products/` and `config/runtime_graph/envs/` |
 | find shared messages | `msgs/`, `contracts/` |
 | find topic, frame, or runtime contract names | `runtime_interface.py` |
 | register or resolve a backend | `registry.py` |

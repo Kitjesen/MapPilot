@@ -18,7 +18,7 @@ from sim.catalog.visual_projection import (
     VisualProjectionError,
     validate_robot_visual_projection_matches_manifest,
 )
-from sim.importers.contracts import write_json
+from sim.catalog.importers.contracts import write_json
 from sim.tools.assets.tripo_visual_candidate import validate_visual_candidate_manifest
 
 UE_ASSET_LIBRARY_SCHEMA = "lingtu.sim.ue-asset-library.v1"

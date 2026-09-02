@@ -39,12 +39,12 @@
     "path_follower_max_accel_mps2": 0.30,
     "path_follower_max_yaw_rate_rad_s": 1.0,
     "scan_follower": {
-      "time_forward_s": 0.55,
+      "time_forward_s": 0.80,
       "heading_error_rad": 0.80,
-      "position_gain": 0.90,
-      "yaw_gain": 1.20,
-      "max_vx_mps": 0.50,
-      "max_vy_mps": 0.25,
+      "position_gain": 0.80,
+      "yaw_gain": 1.50,
+      "max_vx_mps": 0.75,
+      "max_vy_mps": 0.35,
       "max_yaw_rate_rad_s": 1.00
     }
   },
@@ -56,7 +56,7 @@
     "apply_timeout_ms": 1500
   },
   "paths": {
-    "policy": "sim/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx"
+    "policy": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx"
   },
   "planner_constraints": {
     "robot_radius_m": 0.35,

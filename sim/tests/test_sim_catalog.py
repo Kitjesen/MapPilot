@@ -12,27 +12,24 @@ import pytest
 from sim.catalog import CatalogError, CatalogResolver, DiagnosticCode
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SESSION = REPO_ROOT / "sim" / "scenarios" / "catalog" / "thunder_omni_contract" / "session.yaml"
-THUNDER_UNREAL_SESSION = REPO_ROOT / "sim" / "scenarios" / "catalog" / "thunderv4_unreal" / "session.yaml"
+SESSION = REPO_ROOT / "sim" / "sessions" / "examples" / "thunder_omni_contract" / "session.yaml"
+THUNDER_UNREAL_SESSION = REPO_ROOT / "sim" / "sessions" / "examples" / "thunderv4_unreal" / "session.yaml"
 THUNDER_CONTROLLED_HEADLESS_SESSION = (
-    REPO_ROOT / "sim" / "scenarios" / "catalog" / "thunderv4_controlled_headless" / "session.yaml"
+    REPO_ROOT / "sim" / "sessions" / "examples" / "thunderv4_controlled_headless" / "session.yaml"
 )
 THUNDER_INDUSTRIAL_PARK_HEADLESS_SESSION = (
     REPO_ROOT
-    / "sim"
-    / "presets"
+    / "sim" / "sessions" / "products"
     / "doso"
     / "thunder_v4"
     / "default.yaml"
 )
 THUNDER_PEDESTRIAN_CROSSING_SESSION = (
-    REPO_ROOT / "sim" / "scenarios" / "catalog" / "open_field_pedestrian_crossing" / "session.yaml"
+    REPO_ROOT / "sim" / "sessions" / "examples" / "open_field_pedestrian_crossing" / "session.yaml"
 )
 THUNDER_FACTORY_PARK_PEDESTRIAN_SESSION = (
     REPO_ROOT
-    / "sim"
-    / "scenarios"
-    / "catalog"
+    / "sim" / "sessions" / "examples"
     / "thunderv4_factory_park_pedestrian_unreal"
     / "session.yaml"
 )
@@ -315,8 +312,8 @@ def test_catalog_rejects_robot_owned_global_options_before_projection_or_compose
     tmp_path: Path,
 ) -> None:
     fixture_root = tmp_path / "repository"
-    package_root = fixture_root / "sim" / "robots" / "omni_cart"
-    shutil.copytree(REPO_ROOT / "sim/robots/omni_cart", package_root)
+    package_root = fixture_root / "sim" / "packages" / "robots" / "omni_cart"
+    shutil.copytree(REPO_ROOT / "sim/packages/robots/omni_cart", package_root)
     mjcf = package_root / "omni_cart.xml"
     mjcf.write_text(
         mjcf.read_text(encoding="utf-8").replace(
@@ -366,10 +363,10 @@ def test_robot_semantic_class_projects_generically_into_scenario_plan(
 
 def _isolated_thunderv4_catalog(tmp_path: Path) -> tuple[Path, Path]:
     root = tmp_path / "repo"
-    package_dir = root / "sim" / "robots" / "doso" / "thunder_v4"
+    package_dir = root / "sim" / "packages" / "robots" / "doso" / "thunder_v4"
     package_dir.parent.mkdir(parents=True)
     shutil.copytree(
-        REPO_ROOT / "sim" / "robots" / "doso" / "thunder_v4",
+        REPO_ROOT / "sim" / "packages" / "robots" / "doso" / "thunder_v4",
         package_dir,
     )
     return root, package_dir
@@ -393,7 +390,7 @@ def test_robot_projection_path_is_required_safe_and_package_relative(
     manifest.write_text(source, encoding="utf-8")
 
     with pytest.raises(CatalogError, match=r"visual.*projection"):
-        CatalogResolver(root, [root / "sim" / "robots"])
+        CatalogResolver(root, [root / "sim" / "packages" / "robots"])
 
 
 def test_robot_projection_binding_must_match_package(tmp_path: Path) -> None:
@@ -404,24 +401,24 @@ def test_robot_projection_binding_must_match_package(tmp_path: Path) -> None:
     projection_path.write_text(json.dumps(document), encoding="utf-8")
 
     with pytest.raises(CatalogError, match=r"binding does not match RobotPackage"):
-        CatalogResolver(root, [root / "sim" / "robots"])
+        CatalogResolver(root, [root / "sim" / "packages" / "robots"])
 
 
 def test_catalog_discovers_packages_in_their_domain_directories() -> None:
     resolver = _resolver()
 
     assert resolver.find_package("thunderv4@1.0.3", kind="robot").manifest_path == (
-        REPO_ROOT / "sim/robots/doso/thunder_v4/robot.package.yaml"
+        REPO_ROOT / "sim/packages/robots/doso/thunder_v4/robot.package.yaml"
     )
     assert resolver.find_package(
         "thunderv4_locomotion@1.0.0", kind="controller"
     ).manifest_path == (
-        REPO_ROOT / "sim/controllers/doso/thunder_v4/locomotion/controller.package.yaml"
+        REPO_ROOT / "sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml"
     )
     assert resolver.find_package(
         "thunderv4_navigation@1.0.0", kind="sensor_rig"
     ).manifest_path == (
-        REPO_ROOT / "sim/sensor_rigs/doso/thunder_v4/navigation/sensor-rig.package.yaml"
+        REPO_ROOT / "sim/packages/sensor_rigs/doso/thunder_v4/navigation/sensor-rig.package.yaml"
     )
 
 
@@ -795,7 +792,7 @@ def test_industrial_park_headless_session_is_the_common_local_planner_world() ->
     assert resolved.session["world"] == "industrial_park@1.0.0"
     assert resolved.session["robots"][0]["package"] == "thunderv4@1.0.3"
     assert resolved.physics_plan["world"]["mjcf"] == (
-        "sim/worlds/mujoco/industrial_park_scene.xml"
+        "sim/packages/worlds/industrial_park/physics/industrial_park_scene.xml"
     )
     assert resolved.physics_plan["global_policy"] == {
         "owner": "world",
@@ -806,7 +803,7 @@ def test_industrial_park_headless_session_is_the_common_local_planner_world() ->
         "gravity_mps2": [0.0, 0.0, -9.81],
     }
     assert resolved.physics_plan["robots"][0]["model"]["mjcf"] == (
-        "sim/robots/doso/thunder_v4/mjcf/thunderv4.xml"
+        "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml"
     )
     assert resolved.physics_plan["robots"][0]["spawn"]["position_m"] == [3.0, 4.0, 0.0]
 
@@ -871,8 +868,8 @@ def test_thunderv4_unreal_session_resolves_full_sensor_control_transport_slice()
     assert controller["adapter"] == {"plugin": "quadruped_him", "abi": "lingtu.sim.controller-adapter.v1"}
     assert controller["policy"] == {
         "runtime": "onnxruntime",
-        "artifact": "sim/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx",
-        "manifest": "sim/controllers/doso/thunder_v4/locomotion/policy/policy_manifest.json",
+        "artifact": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx",
+        "manifest": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_manifest.json",
     }
     assert controller["timing"] == {"inference_hz": 50, "low_level_hz": 200}
     assert controller["command_channels"] == ["thunder_01.control.base_twist", "thunder_01.control.joint_torque"]

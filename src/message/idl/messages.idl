@@ -798,9 +798,8 @@ struct MapCloudLayer {
   PointCloud2 cloud;
 };
 
-// Planner-only sparse view of one complete rolling occupancy AABB. `complete`
-// means no OccupancyState::kOccupied voxel inside the AABB was omitted; it
-// does not reinterpret unknown cells as observed free space.
+// Planner-ready inflated occupancy for one complete rolling-map AABB. Bits
+// use logical x-fastest order: ((z * size_y) + y) * size_x + x.
 @final
 struct MapCollisionLayer {
   Header header;
@@ -809,10 +808,13 @@ struct MapCollisionLayer {
   unsigned long long generation;
   boolean live;
   float resolution;
+  unsigned long size_x;
+  unsigned long size_y;
+  unsigned long size_z;
   Point aabb_min;
   Point aabb_max;
   boolean complete;
-  PointCloud2 occupied;
+  sequence<octet> inflated_occupied_bits;
 };
 
 @final

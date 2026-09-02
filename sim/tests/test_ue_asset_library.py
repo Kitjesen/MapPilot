@@ -13,7 +13,7 @@ import pytest
 
 from sim.catalog.management import SimCatalog
 from sim.catalog.resolver import CatalogResolver
-from sim.importers.contracts import digest_document
+from sim.catalog.importers.contracts import digest_document
 from sim.tools.assets.build_ue_asset_library import (
     DEFAULT_PACKAGE_REFERENCES,
     UEAssetLibraryError,
@@ -23,7 +23,7 @@ from sim.tools.assets.build_ue_asset_library import (
 from sim.tools.assets.tripo_visual_candidate import build_visual_candidate_manifest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_PATH = REPO_ROOT / "schemas" / "simulation" / "ue-assets.v1.json"
+SCHEMA_PATH = REPO_ROOT / "sim" / "contracts" / "schemas" / "ue-assets.v1.json"
 
 
 def _catalog() -> SimCatalog:
@@ -286,9 +286,9 @@ def test_robot_projection_is_revalidated_after_catalog_construction(
     tmp_path: Path,
 ) -> None:
     package_root = tmp_path / "sim" / "packages" / "robots" / "omni_cart"
-    model_root = tmp_path / "sim" / "robots" / "omni_cart"
+    model_root = tmp_path / "sim" / "packages" / "robots" / "omni_cart"
     shutil.copytree(REPO_ROOT / "sim" / "packages" / "robots" / "omni_cart", package_root)
-    shutil.copytree(REPO_ROOT / "sim" / "robots" / "omni_cart", model_root)
+    shutil.copytree(REPO_ROOT / "sim" / "packages" / "robots" / "omni_cart", model_root)
     catalog = SimCatalog(CatalogResolver(tmp_path, (package_root,)))
 
     projection_path = package_root / "visual" / "robot.visual-projection.json"

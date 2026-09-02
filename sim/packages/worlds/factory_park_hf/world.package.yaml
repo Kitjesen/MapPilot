@@ -4,7 +4,7 @@ version: 1.0.0
 kind: world
 description: Deterministic 220x180 m modern factory park for MuJoCo and Unreal.
 physics:
-  mjcf: ../../../worlds/factory_park_hf/factory_park_hf.xml
+  mjcf: physics/factory_park_hf.xml
   global_policy:
     timestep_s: 0.002
     integrator: rk4
@@ -15,5 +15,5 @@ visual:
   binding: WorldVisual:FactoryParkHF
   level: /Game/RobotSim/Maps/FactoryPark_HF
 entities:
-  - source: ../../../worlds/factory_park_hf/generated/semantic-entities.json
+  - source: generated/semantic-entities.json
     role: static_semantics

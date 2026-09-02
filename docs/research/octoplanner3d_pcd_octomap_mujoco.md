@@ -24,7 +24,7 @@ planner implementation is intentionally changed.
 Input:
 
 ```text
-sim/fixtures/octoplanner3d/building2_9.pcd
+sim/evaluation/data/octoplanner3d/building2_9.pcd
 start = [7.9, -2.7, 0.3]
 goal  = [2.5, -0.3, 13.7]
 ```
@@ -138,7 +138,7 @@ Relevant files:
 
 ```text
 sim/scripts/mujoco/saved_map_quality_gate.py
-sim/scripts/saved_map_relocalize_runtime_gate.py
+python -m sim.scripts.mujoco.saved_map_relocalization
 sim/scripts/mujoco/native_navigation_acceptance.py
 ```
 

@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(messages_contract LANGUAGES C CXX)
+include(GNUInstallDirs)
 
 option(LINGTU_SLAM_BUILD_TESTS "Build native SLAM contract tests" ON)
 option(LINGTU_SLAM_FASTLIO2_BACKEND "Build the real Fast-LIO2 algorithm backend" OFF)
@@ -155,4 +156,8 @@ if(LINGTU_SLAM_BUILD_DDS_RUNTIME)
     messages_cyclone_idl
     lingtu_dds_contracts
     CycloneDDS::ddsc)
+
+  install(TARGETS slamd slamctl
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+      COMPONENT lingtu_runtime)
 endif()

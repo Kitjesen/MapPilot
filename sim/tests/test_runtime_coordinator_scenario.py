@@ -20,7 +20,7 @@ from sim.runtime.coordinator import (
 from sim.runtime.scenario import ScenarioSnapshot
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SESSION = REPO_ROOT / "sim" / "scenarios" / "catalog" / "thunder_omni_contract" / "session.yaml"
+SESSION = REPO_ROOT / "sim" / "sessions" / "examples" / "thunder_omni_contract" / "session.yaml"
 MUJOCO_HEADLESS = (
     REPO_ROOT
     / "build"

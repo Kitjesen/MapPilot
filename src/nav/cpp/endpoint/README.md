@@ -50,7 +50,7 @@ The deployed executable names remain:
 | `nav/runtime/` | The 20 Hz loop and endpoint-only goal, inspection, rolling, and configuration lifecycle. |
 | `nav/safety/` | E-stop, geofence, hard command limits, and confirmed zero motion. |
 | `nav/status/` | Typed lifecycle/status projection and asynchronous persistence. |
-| `explore/main.cpp` | Explore process entry; supporting files are transport-free explore lifecycle code. |
+| `src/explore/cpp/endpoint/` | Explore process entry and lifecycle source, composed here as `lingtu_explore_dds`. |
 | `traversability/main.cpp` | Traversability process entry; supporting files own terrain-grid production. |
 | `tools/` | Diagnostics only; never part of the robot command path. |
 

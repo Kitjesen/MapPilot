@@ -364,7 +364,7 @@ test("the client obtains importer-owned request templates", async () => {
           source_entry_owned_by: "simstudio",
           request_schema: {
             id: "lingtu.sim.robot-import-request.v1",
-            path: "schemas/simulation/robot-import.v1.json",
+            path: "sim/contracts/schemas/robot-import.v1.json",
             sha256: "f".repeat(64),
           },
           request_template: {
@@ -779,7 +779,7 @@ test("the client persists scene drafts through opaque ids and revision guards", 
       schema: "lingtu.sim.studio.world-publication.v1",
       package: { kind: "world", id: "safety_layout", version: "1.0.0", ref: "safety_layout@1.0.0" },
       package_root: "sim/packages/worlds/safety_layout/1.0.0",
-      qualification_path: "sim/qualifications/world/safety_layout/1.0.0.qualification.json",
+      qualification_path: "sim/evaluation/package_qualifications/world/safety_layout/1.0.0.qualification.json",
       content_digest: "d".repeat(64),
     },
     source: {

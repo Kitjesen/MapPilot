@@ -193,7 +193,7 @@ _ARTIFACT_GATEWAY_CHANNELS: dict[str, list[dict[str, Any]]] = {
         },
         {
             "transport": "gateway_cli",
-            "command": "python scripts/gates/saved_map_artifact_gate.py <map-id> --require-octomap",
+            "command": "python -m diagnostics.field.map_artifacts <map-id> --require-octomap",
         },
     ],
 }

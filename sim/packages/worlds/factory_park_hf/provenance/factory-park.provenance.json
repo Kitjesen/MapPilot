@@ -1,5 +1,6 @@
 {
   "asset_id": "factory_park_hf.world",
+  "asset_set_digest": "5d5d37c4626af24ef24139d2c0fde7488eeba6233a3f175d300f83645a11f07e",
   "checkpoint_count": 6,
   "coordinate_contract": {
     "axis_mapping": [
@@ -80,6 +81,7 @@
   "element_batches": [
     {
       "batch_id": "operations_safety",
+      "digest": "6dc891d5c909f8b738aafae8db5416102e9ada325b6458ad21cd82909430f0bf",
       "object_count": 19
     }
   ],
@@ -88,51 +90,63 @@
     "module": "sim.tools.worlds.factory_park_hf.generate",
     "seed": 20260808
   },
+  "layout_digest": "1bb084b64a5d10baaddbee62bee879eec679cd666f0c331ac984542a74f9907f",
   "object_count": 146,
   "outputs": [
     {
-      "bytes": 14995,
-      "path": "sim/packages/worlds/factory_park_hf/visual/realism.recipe.json"
+      "bytes": 4352,
+      "path": "sim/packages/worlds/factory_park_hf/generated/asset-manifest.json",
+      "sha256": "8bd808d401e06eb41643642c367cdd82f408e0982607311a408f155d5ec2ce27"
     },
     {
-      "bytes": 6513,
-      "path": "sim/packages/worlds/factory_park_hf/visual/ue_import.recipe.json"
-    },
-    {
-      "bytes": 569,
-      "path": "sim/packages/worlds/factory_park_hf/world.package.yaml"
-    },
-    {
-      "bytes": 28462,
-      "path": "sim/worlds/factory_park_hf/factory_park_hf.xml"
-    },
-    {
-      "bytes": 4281,
-      "path": "sim/worlds/factory_park_hf/generated/asset-manifest.json"
-    },
-    {
-      "bytes": 66153,
-      "path": "sim/worlds/factory_park_hf/generated/expanded-layout.json"
+      "bytes": 66180,
+      "path": "sim/packages/worlds/factory_park_hf/generated/expanded-layout.json",
+      "sha256": "7122788eecfae526d615dba5f3fe002b97c7d5471fdc4ecc63342dfca5ad5cdc"
     },
     {
       "bytes": 160012,
-      "path": "sim/worlds/factory_park_hf/generated/heightfield_f32.bin"
+      "path": "sim/packages/worlds/factory_park_hf/generated/heightfield_f32.bin",
+      "sha256": "6a0c00bc23b9c1437cb575631f3a40099b82f0a394460e81f0ed129f4af16cac"
     },
     {
       "bytes": 80256,
-      "path": "sim/worlds/factory_park_hf/generated/heightfield_r16.png"
+      "path": "sim/packages/worlds/factory_park_hf/generated/heightfield_r16.png",
+      "sha256": "d8639cc829b995df6be34a6f1df0df5e3fc6f68a9728ceb3e482c55737c686eb"
     },
     {
       "bytes": 79572,
-      "path": "sim/worlds/factory_park_hf/generated/semantic-entities.json"
+      "path": "sim/packages/worlds/factory_park_hf/generated/semantic-entities.json",
+      "sha256": "f1cef019ab04f576c1e6efb733eca36e3f02cc9567a86a5f71fe46c98d27d45f"
     },
     {
       "bytes": 31001,
-      "path": "sim/worlds/factory_park_hf/generated/site-plan.svg"
+      "path": "sim/packages/worlds/factory_park_hf/generated/site-plan.svg",
+      "sha256": "4d7dc35b3edbf51c4d033634680f0e7ae7ac0bf7c11a76de7bdbf3f2e5f8ff89"
     },
     {
       "bytes": 2964956,
-      "path": "sim/worlds/factory_park_hf/generated/terrain.obj"
+      "path": "sim/packages/worlds/factory_park_hf/generated/terrain.obj",
+      "sha256": "7bc62ea9e6282d040867d392eb7a9527f09a216312aa429db2802d2d8b0ca654"
+    },
+    {
+      "bytes": 28465,
+      "path": "sim/packages/worlds/factory_park_hf/physics/factory_park_hf.xml",
+      "sha256": "c23303d3d21d721c1575a26ad9f6da2145379f7cf944aa32797a9480aa3d5029"
+    },
+    {
+      "bytes": 15039,
+      "path": "sim/packages/worlds/factory_park_hf/visual/realism.recipe.json",
+      "sha256": "35288e9b4d71bfe4ea9aebcedc8cb5eaafb0a133bd491539f566110710316619"
+    },
+    {
+      "bytes": 6664,
+      "path": "sim/packages/worlds/factory_park_hf/visual/ue_import.recipe.json",
+      "sha256": "aa821094f447ef0ba461b355e132e84d473b3c034f4291e1b3820dd5fc49ef57"
+    },
+    {
+      "bytes": 513,
+      "path": "sim/packages/worlds/factory_park_hf/world.package.yaml",
+      "sha256": "aba6416d0ed09e93fa711090169814ef65976168db2cc41d67380e36c03034bf"
     }
   ],
   "reproducibility": {

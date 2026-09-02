@@ -21,7 +21,7 @@ It is not an architecture or runtime contract.
 | `docs/07-testing/field/` | Reusable real-robot and target-compute gates. | Dated results or simulation contracts. |
 | `docs/07-testing/simulation/` | Reusable simulator gates and fidelity contracts. | Field-readiness claims. |
 | `docs/07-testing/field-runs/` | Immutable, date-prefixed validation evidence. | Reusable gates, current backlog, or architecture truth. |
-| `scripts/gates/field/`, `scripts/gates/simulation/` | Executable validation procedures. | Prose-only acceptance definitions. |
+| `scripts/gates/field/` | Executable P0 field procedures. | Python diagnostics or prose-only acceptance definitions. |
 
 Package-local `README.md` files explain only that package's public boundary,
 build, and focused tests. They link to central contracts instead of copying
@@ -63,8 +63,7 @@ Moved without changing their conclusions:
 ## Cleanup Performed On 2026-08-23
 
 - grouped reusable field and simulation gates under dedicated indexes;
-- moved executable P0 and simulation wrapper scripts from `docs/` to
-  `scripts/gates/`;
+- moved executable P0 procedures from `docs/` to `scripts/gates/field/`;
 - moved contributor commit/push policy to `docs/03-development/`;
 - moved the undated native endpoint checklist out of the dated evidence folder.
 

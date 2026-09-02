@@ -55,12 +55,12 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "path_follower_heading_align_exit_rad": 0.35,
         "scan_finish_distance_m": 0.2,
         "scan_heading_error_rad": 0.8,
-        "scan_max_vx_mps": 0.5,
-        "scan_max_vy_mps": 0.25,
+        "scan_max_vx_mps": 0.75,
+        "scan_max_vy_mps": 0.35,
         "scan_max_yaw_rate_rad_s": 1.0,
-        "scan_position_gain": 0.9,
-        "scan_time_forward_s": 0.55,
-        "scan_yaw_gain": 1.2,
+        "scan_position_gain": 0.8,
+        "scan_time_forward_s": 0.8,
+        "scan_yaw_gain": 1.5,
         "teleop_max_speed_mps": 0.5,
         "teleop_max_yaw_rate_rad_s": 1.0,
         "teleop_planner_horizon_m": 3.5,
@@ -77,7 +77,7 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "LINGTU_NAV_GOAL_REACHED_M": "0.35",
         "LINGTU_NAV_CONTROL_MODE": "autonomy",
         "NAV_GLOBAL_PLANNER": "octoplanner3d",
-        "LINGTU_NAV_LOCAL_PLANNER_BACKEND": "cmu",
+        "LINGTU_NAV_LOCAL_PLANNER_BACKEND": "scan",
         "LINGTU_NAV_PUBLISH_CMD_VEL": "1",
         "LINGTU_NAV_CHECK_OBSTACLE": "1",
         "LINGTU_NAV_DYNAMIC_MIN_CELLS": "8",
@@ -120,7 +120,7 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
     }
     assert expected_environment.items() <= payload["environment"].items()
     assert payload["native_nav"]["global_planner"] == "octoplanner3d"
-    assert payload["native_nav"]["local_planner"] == "cmu"
+    assert payload["native_nav"]["local_planner"] == "scan"
     assert payload["native_nav"]["recovery"]["behavior_order"] == (
         "translate",
         "rotate",
@@ -159,12 +159,13 @@ def test_native_nav_config_accepts_scan_as_second_local_backend() -> None:
         "nav",
         {
             "native_control_mode": "autonomy",
-            "native_nav": {"local_planner": "scan"},
+            "native_nav": {"local_planner": "scan", "tick_hz": 100.0},
         },
     )
 
     assert compiled.native_nav["local_planner"] == "scan"
     assert compiled.environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == "scan"
+    assert compiled.environment["LINGTU_NAV_DDS_TICK_HZ"] == "100"
     assert compiled.native_nav["use_traversability_cost"] is False
 
     with pytest.raises(ValueError, match="local_planner"):

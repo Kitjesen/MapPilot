@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(map_opt LANGUAGES CXX)
+include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -63,6 +64,9 @@ endif()
 
 add_executable(lt_pgo pgo_cli.cpp)
 target_link_libraries(lt_pgo PRIVATE map_opt)
+install(TARGETS lt_pgo
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT lingtu_runtime)
 
 add_executable(lt_loop_verify loop_cli.cpp)
 target_link_libraries(lt_loop_verify PRIVATE map_opt)

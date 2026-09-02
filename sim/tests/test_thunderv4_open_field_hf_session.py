@@ -9,9 +9,7 @@ from sim.catalog import CatalogResolver
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SESSION = (
     REPO_ROOT
-    / "sim"
-    / "scenarios"
-    / "catalog"
+    / "sim" / "sessions" / "examples"
     / "thunderv4_open_field_hf"
     / "session.yaml"
 )

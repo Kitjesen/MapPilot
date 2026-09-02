@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-QUALIFICATION_SCHEMA = REPO_ROOT / "schemas" / "simulation" / "qualification.v1.json"
+QUALIFICATION_SCHEMA = REPO_ROOT / "sim" / "contracts" / "schemas" / "qualification.v1.json"
 
 
 def _asdict(value: Any) -> dict[str, Any]:
@@ -105,7 +105,7 @@ entities:
 
 
 def _qualification(root: Path) -> Path:
-    path = root / "sim" / "qualifications" / "world" / "field" / "1.0.0.qualification.json"
+    path = root / "sim" / "evaluation" / "package_qualifications" / "world" / "field" / "1.0.0.qualification.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     evidence_path = path.parent / "evidence" / "schema.json"
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
@@ -259,7 +259,7 @@ def test_package_artifact_content_is_not_fingerprinted_by_qualification(tmp_path
 
 def test_external_runtime_artifact_content_is_not_fingerprinted_by_qualification(tmp_path: Path) -> None:
     manifest = _world_manifest(tmp_path / "sim" / "packages" / "worlds" / "field")
-    external_model = tmp_path / "sim" / "worlds" / "field" / "world.xml"
+    external_model = tmp_path / "sim" / "packages" / "worlds" / "field" / "world.xml"
     external_model.parent.mkdir(parents=True, exist_ok=True)
     external_model.write_bytes((manifest.parent / "world.xml").read_bytes())
     manifest.write_text(

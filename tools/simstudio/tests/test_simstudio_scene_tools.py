@@ -88,7 +88,7 @@ def _write_authoritative_layout(
             + "\n"
         ).encode("utf-8")
         layout["layout_digest"] = hashlib.sha256(payload).hexdigest()
-    target = repo_root / "sim/worlds/factory_park_hf/generated/expanded-layout.json"
+    target = repo_root / "sim/packages/worlds/factory_park_hf/generated/expanded-layout.json"
     target.parent.mkdir(parents=True)
     target.write_text(json.dumps(layout), encoding="utf-8")
 
@@ -226,7 +226,7 @@ def test_factory_park_scene_tool_reports_compiler_geometry_diagnostics() -> None
 def test_factory_park_scene_tool_rejects_stale_authoritative_layout_digest(
     tmp_path: Path,
 ) -> None:
-    source = REPO_ROOT / "sim/worlds/factory_park_hf/generated/expanded-layout.json"
+    source = REPO_ROOT / "sim/packages/worlds/factory_park_hf/generated/expanded-layout.json"
     layout = json.loads(source.read_text(encoding="utf-8"))
     layout["checkpoints"][0]["label"] = "tampered-without-digest-update"
     _write_authoritative_layout(tmp_path, layout, refresh_digest=False)
@@ -245,7 +245,7 @@ def test_factory_park_scene_tool_rejects_stale_authoritative_layout_digest(
 def test_factory_park_scene_tool_attributes_malformed_layout_to_the_server(
     tmp_path: Path,
 ) -> None:
-    source = REPO_ROOT / "sim/worlds/factory_park_hf/generated/expanded-layout.json"
+    source = REPO_ROOT / "sim/packages/worlds/factory_park_hf/generated/expanded-layout.json"
     layout = json.loads(source.read_text(encoding="utf-8"))
     parking_apron = next(
         item for item in layout["objects"] if item["id"] == "parking_apron"

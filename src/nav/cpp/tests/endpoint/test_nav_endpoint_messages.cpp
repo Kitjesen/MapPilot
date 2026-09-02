@@ -242,17 +242,8 @@ void testPointCloudLayoutValidation() {
 }
 
 void testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity() {
-  lingtu_dds_PointField fields[3]{};
-  const char *names[3] = {"x", "y", "z"};
-  for (int index = 0; index < 3; ++index) {
-    fields[index].name = const_cast<char *>(names[index]);
-    fields[index].offset = static_cast<std::uint32_t>(index * 4);
-    fields[index].datatype = 7;
-    fields[index].count = 1;
-  }
-  const float xyz[6] = {1.0F, 2.0F, 0.5F, 3.0F, 4.0F, 0.75F};
-  std::vector<std::uint8_t> data(sizeof(xyz));
-  std::memcpy(data.data(), xyz, sizeof(xyz));
+  std::vector<std::uint8_t> bits(50000U, 0U);
+  bits[42] = 0x05U;
   lingtu_dds_MapCollisionLayer message{};
   message.header = header("map");
   message.reset_epoch = 4U;
@@ -266,23 +257,18 @@ void testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity() {
   message.aabb_max.x = 5.0;
   message.aabb_max.y = 5.0;
   message.aabb_max.z = 2.0;
+  message.size_x = 100U;
+  message.size_y = 100U;
+  message.size_z = 40U;
   message.complete = false;
-  message.occupied.header = header("map");
-  message.occupied.height = 1U;
-  message.occupied.width = 2U;
-  message.occupied.fields._length = 3U;
-  message.occupied.fields._maximum = 3U;
-  message.occupied.fields._buffer = fields;
-  message.occupied.point_step = 12U;
-  message.occupied.row_step = 24U;
-  message.occupied.data._length = static_cast<std::uint32_t>(data.size());
-  message.occupied.data._maximum = message.occupied.data._length;
-  message.occupied.data._buffer = data.data();
+  message.inflated_occupied_bits._length = static_cast<std::uint32_t>(bits.size());
+  message.inflated_occupied_bits._maximum = message.inflated_occupied_bits._length;
+  message.inflated_occupied_bits._buffer = bits.data();
 
   auto decoded = lingtu::nav::endpoint::decodeLocalCollisionMap(message);
   require(decoded.ok(), "structurally valid incomplete collision layer must decode");
-  require(decoded.value.occupied_xyz.size() == 6U,
-          "collision decoder must copy every occupied center");
+  require(decoded.value.inflated_occupied_bits == bits,
+          "collision decoder must copy the packed occupancy loan");
   const auto view = decoded.value.view();
   require(view.present(), "decoded collision view must be present");
   require(!view.complete, "wire completeness flag must survive the owning copy");
@@ -290,7 +276,7 @@ void testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity() {
               view.generation == 12U,
           "collision identity must survive the owning copy");
 
-  message.occupied.header = header("odom");
+  message.header = header("odom");
   decoded = lingtu::nav::endpoint::decodeLocalCollisionMap(message);
   require(!decoded.ok(), "collision payload outside map frame must fail closed");
 }

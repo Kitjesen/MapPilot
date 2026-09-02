@@ -4,9 +4,9 @@
 #include <string>
 #include <vector>
 
-#include "explore/run_event_outbox.hpp"
-#include "explore/run_lifecycle.hpp"
-#include "explore/status_identity.hpp"
+#include "endpoint/run_event_outbox.hpp"
+#include "endpoint/run_lifecycle.hpp"
+#include "endpoint/status_identity.hpp"
 
 namespace {
 

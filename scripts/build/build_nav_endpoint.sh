@@ -13,30 +13,6 @@ ROOT="$(realpath -m -- "$ROOT")"
 NAV_CPP_DIR="$(realpath -m -- "$NAV_CPP_DIR")"
 BUILD_DIR="$(realpath -m -- "$BUILD_DIR")"
 
-CMAKE_CACHE="$BUILD_DIR/CMakeCache.txt"
-if [[ -f "$CMAKE_CACHE" ]]; then
-  CACHE_SOURCE=""
-  while IFS= read -r cache_line; do
-    case "$cache_line" in
-      CMAKE_HOME_DIRECTORY:INTERNAL=*)
-        CACHE_SOURCE="${cache_line#CMAKE_HOME_DIRECTORY:INTERNAL=}"
-        ;;
-    esac
-  done < "$CMAKE_CACHE"
-  if [[ -z "$CACHE_SOURCE" ]]; then
-    echo "ERROR: cannot identify the CMake source recorded in $CMAKE_CACHE" >&2
-    exit 1
-  fi
-
-  CACHE_SOURCE="$(realpath -m -- "$CACHE_SOURCE")"
-  if [[ "$CACHE_SOURCE" != "$NAV_CPP_DIR" ]]; then
-    echo "ERROR: refusing to reuse navigation build directory configured from: $CACHE_SOURCE" >&2
-    echo "Expected source: $NAV_CPP_DIR" >&2
-    echo "Use a fresh build directory or remove $BUILD_DIR manually." >&2
-    exit 1
-  fi
-fi
-
 if [ -n "${LINGTU_CYCLONEDDS_PREFIX:-}" ]; then
   export CMAKE_PREFIX_PATH="${LINGTU_CYCLONEDDS_PREFIX}${CMAKE_PREFIX_PATH:+:${CMAKE_PREFIX_PATH}}"
   if [ -d "${LINGTU_CYCLONEDDS_PREFIX}/bin" ]; then

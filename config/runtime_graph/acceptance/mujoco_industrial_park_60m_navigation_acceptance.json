@@ -10,7 +10,7 @@
     "requires_map": true
   },
   "domain_id_base": 226,
-  "world": "sim/worlds/mujoco/industrial_park_scene.xml",
+  "world": "sim/packages/worlds/industrial_park/physics/industrial_park_scene.xml",
   "start": [3.0, 4.0, 0.48, 0.0],
   "goal": [56.0, 32.0, 0.3, 0.0],
   "scenario_geometry": {
@@ -42,7 +42,7 @@
     },
     "mapd": {
       "env": "LINGTU_MUJOCO_MAPD_BIN",
-      "candidates": ["build/maps-windows/Release/mapd.exe", "build/maps/mapd", "build/mujoco_native_maps/mapd", "/opt/lingtu/current/build/maps/mapd"]
+      "candidates": ["build/maps-windows/Release/mapd.exe", "build/maps/mapd", "build/mujoco_native_maps/mapd", "/opt/lingtu/current/bin/mapd"]
     },
     "traversability": {
       "env": "LINGTU_MUJOCO_TRAVERSABILITY_BIN",

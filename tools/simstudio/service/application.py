@@ -80,7 +80,7 @@ class SimulationStudioService:
         resolver = CatalogResolver.from_repository(resolved_root)
         catalog = SimCatalog(
             resolver,
-            qualification_roots=(resolved_root / "sim" / "qualifications",),
+            qualification_roots=(resolved_root / "sim" / "evaluation" / "package_qualifications",),
         )
         composer = SessionComposer(
             resolver,
@@ -491,7 +491,7 @@ class SimulationStudioService:
             resolver = CatalogResolver.from_repository(self.repo_root)
             catalog = SimCatalog(
                 resolver,
-                qualification_roots=(self.repo_root / "sim" / "qualifications",),
+                qualification_roots=(self.repo_root / "sim" / "evaluation" / "package_qualifications",),
             )
             self.resolver = resolver
             self.catalog = catalog

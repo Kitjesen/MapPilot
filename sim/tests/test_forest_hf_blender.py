@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from sim.importers.contracts import digest_document
+from sim.catalog.importers.contracts import digest_document
 
 
 def _author() -> ModuleType:

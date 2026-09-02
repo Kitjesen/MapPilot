@@ -23,11 +23,11 @@ GENERATED_PATHS = (
     Path("sim/packages/worlds/open_field_hf/world.package.yaml"),
     Path("sim/packages/worlds/open_field_hf/provenance/terrain.provenance.json"),
     Path("sim/packages/worlds/open_field_hf/visual/ue_import.recipe.json"),
-    Path("sim/worlds/open_field_hf/open_field_hf.xml"),
-    Path("sim/worlds/open_field_hf/generated/heightfield_r16.png"),
-    Path("sim/worlds/open_field_hf/generated/heightfield_f32.bin"),
-    Path("sim/worlds/open_field_hf/generated/terrain.obj"),
-    Path("sim/worlds/open_field_hf/generated/asset-manifest.json"),
+    Path("sim/packages/worlds/open_field_hf/physics/open_field_hf.xml"),
+    Path("sim/packages/worlds/open_field_hf/generated/heightfield_r16.png"),
+    Path("sim/packages/worlds/open_field_hf/generated/heightfield_f32.bin"),
+    Path("sim/packages/worlds/open_field_hf/generated/terrain.obj"),
+    Path("sim/packages/worlds/open_field_hf/generated/asset-manifest.json"),
 )
 
 
@@ -74,7 +74,16 @@ def test_world_package_is_catalog_legal_and_keeps_production_metadata_separate(
         "visual",
         "entities",
     }
-    assert manifest["physics"] == {"mjcf": "../../../worlds/open_field_hf/open_field_hf.xml"}
+    assert manifest["physics"] == {
+        "mjcf": "physics/open_field_hf.xml",
+        "global_policy": {
+            "timestep_s": 0.002,
+            "integrator": "rk4",
+            "solver": "newton",
+            "iterations": 100,
+            "gravity_mps2": [0.0, 0.0, -9.81],
+        },
+    }
     assert manifest["visual"] == {
         "binding": "WorldVisual:OpenFieldHF",
         "level": "/Game/RobotSim/Maps/OpenFieldRuntime",
@@ -114,7 +123,7 @@ def test_heightfield_and_obj_use_the_same_samples_and_coordinate_scale(
     tmp_path: Path,
 ) -> None:
     generate_open_field_hf(tmp_path)
-    generated_root = tmp_path / "sim/worlds/open_field_hf/generated"
+    generated_root = tmp_path / "sim/packages/worlds/open_field_hf/generated"
     asset_manifest = json.loads((generated_root / "asset-manifest.json").read_text(encoding="utf-8"))
     contract = asset_manifest["coordinate_contract"]
     width, height, bit_depth, color_type, samples = _read_png_u16(generated_root / "heightfield_r16.png")
@@ -182,7 +191,7 @@ def test_asset_manifest_and_provenance_digest_exact_generated_bytes(
     tmp_path: Path,
 ) -> None:
     generate_open_field_hf(tmp_path)
-    generated_root = tmp_path / "sim/worlds/open_field_hf/generated"
+    generated_root = tmp_path / "sim/packages/worlds/open_field_hf/generated"
     package_root = tmp_path / "sim/packages/worlds/open_field_hf"
     asset_manifest = json.loads((generated_root / "asset-manifest.json").read_text(encoding="utf-8"))
     provenance = json.loads((package_root / "provenance/terrain.provenance.json").read_text(encoding="utf-8"))
@@ -211,7 +220,7 @@ def test_mujoco_310_compiles_generated_world_when_available(
 ) -> None:
     mujoco = pytest.importorskip("mujoco")
     generate_open_field_hf(tmp_path)
-    model_path = tmp_path / "sim/worlds/open_field_hf/open_field_hf.xml"
+    model_path = tmp_path / "sim/packages/worlds/open_field_hf/physics/open_field_hf.xml"
 
     model = mujoco.MjModel.from_xml_path(str(model_path))
     hfield_id = mujoco.mj_name2id(
@@ -239,7 +248,7 @@ def test_mujoco_binary_hfield_preserves_the_authoritative_u16_samples(
 ) -> None:
     mujoco = pytest.importorskip("mujoco")
     generate_open_field_hf(tmp_path)
-    world_root = tmp_path / "sim/worlds/open_field_hf"
+    world_root = tmp_path / "sim/packages/worlds/open_field_hf"
     width, height, _, _, samples = _read_png_u16(world_root / "generated/heightfield_r16.png")
     binary_payload = (world_root / "generated/heightfield_f32.bin").read_bytes()
     nrow, ncol = struct.unpack_from("<ii", binary_payload)
@@ -254,7 +263,7 @@ def test_mujoco_binary_hfield_preserves_the_authoritative_u16_samples(
     assert max(samples) == 65_535
     assert binary_samples == pytest.approx(expected_internal, abs=1e-7)
 
-    model = mujoco.MjModel.from_xml_path(str(world_root / "open_field_hf.xml"))
+    model = mujoco.MjModel.from_xml_path(str(world_root / "physics" / "open_field_hf.xml"))
     hfield_id = mujoco.mj_name2id(
         model,
         mujoco.mjtObj.mjOBJ_HFIELD,
@@ -263,4 +272,6 @@ def test_mujoco_binary_hfield_preserves_the_authoritative_u16_samples(
     data_address = int(model.hfield_adr[hfield_id])
     loaded = model.hfield_data[data_address : data_address + width * height].tolist()
     assert loaded == pytest.approx(expected_internal, abs=1e-7)
-    assert 'file="generated/heightfield_f32.bin"' in (world_root / "open_field_hf.xml").read_text(encoding="utf-8")
+    assert 'file="../generated/heightfield_f32.bin"' in (
+        world_root / "physics" / "open_field_hf.xml"
+    ).read_text(encoding="utf-8")

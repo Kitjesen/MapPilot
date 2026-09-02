@@ -10,7 +10,7 @@ import numpy as np
 
 SIM_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = SIM_ROOT.parent
-ASSET_ROOT = SIM_ROOT / "robots" / "doso" / "thunder_v4"
+ASSET_ROOT = SIM_ROOT / "packages" / "robots" / "doso" / "thunder_v4"
 MJCF_ROOT = ASSET_ROOT / "mjcf"
 
 ACTUATOR_ORDER = (
@@ -51,8 +51,7 @@ def _joint_id(model: mujoco.MjModel, name: str) -> int:
 def _keyboard_module():
     script_path = (
         REPO_ROOT
-        / "sim"
-        / "controllers"
+        / "sim" / "packages" / "controllers"
         / "doso"
         / "thunder_v4"
         / "locomotion"

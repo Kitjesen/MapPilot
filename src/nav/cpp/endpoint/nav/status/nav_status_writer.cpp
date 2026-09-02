@@ -1,9 +1,11 @@
 #include "status/nav_status_writer.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <numeric>
 #include <ostream>
+#include <queue>
 #include <sstream>
 #include <utility>
 
@@ -195,33 +197,87 @@ void writeLocalCandidatesJson(std::ostream &out,
 }
 
 std::vector<float> copyCollisionDebugPoints(std::size_t point_limit,
-                                            const LocalCollisionStatusView &collision,
-                                            const SensorOrigin &sensor_origin) {
-  if (point_limit == 0U || collision.occupied_xyz == nullptr || collision.occupied_count == 0U) {
+                                            const nav_kernel::LocalCollisionMapView &collision,
+                                            const SensorOrigin &sensor_origin,
+                                            std::size_t total_points) {
+  if (point_limit == 0U || !collision.valid()) {
     return {};
   }
-  std::vector<std::size_t> indices(collision.occupied_count);
-  std::iota(indices.begin(), indices.end(), 0U);
   const bool has_debug_origin =
       sensor_origin.valid && std::isfinite(sensor_origin.x) && std::isfinite(sensor_origin.y);
-  const auto sampled = detail::sampleDebugIndices(
-      indices, point_limit, has_debug_origin, [&](std::size_t index) {
-        const std::size_t offset = index * 3U;
-        const double dx = static_cast<double>(collision.occupied_xyz[offset]) - sensor_origin.x;
-        const double dy = static_cast<double>(collision.occupied_xyz[offset + 1U]) - sensor_origin.y;
-        return dx * dx + dy * dy;
-      });
+  const std::size_t sample_count = std::min(point_limit, total_points);
+  if (sample_count == 0U) {
+    return {};
+  }
+  std::vector<std::size_t> sampled;
+  sampled.reserve(sample_count);
+  const std::size_t cells = collision.cellCount();
+  const std::size_t plane =
+      static_cast<std::size_t>(collision.sizeX) * static_cast<std::size_t>(collision.sizeY);
+  const auto occupied = [&](std::size_t index) {
+    return (collision.inflatedBits[index / 8U] &
+            static_cast<std::uint8_t>(1U << (index % 8U))) != 0U;
+  };
+  if (has_debug_origin) {
+    const double c = std::cos(collision.gridFromPlanningYaw);
+    const double s = std::sin(collision.gridFromPlanningYaw);
+    const double sensor_grid_x = collision.gridFromPlanningTranslation.x +
+                                 c * sensor_origin.x - s * sensor_origin.y;
+    const double sensor_grid_y = collision.gridFromPlanningTranslation.y +
+                                 s * sensor_origin.x + c * sensor_origin.y;
+    std::priority_queue<std::pair<double, std::size_t>> nearest;
+    for (std::size_t index = 0U; index < cells; ++index) {
+      if (!occupied(index))
+        continue;
+      const std::size_t remainder = index % plane;
+      const std::size_t y = remainder / static_cast<std::size_t>(collision.sizeX);
+      const std::size_t x = remainder % static_cast<std::size_t>(collision.sizeX);
+      const double dx = collision.aabbMin.x +
+                            (static_cast<double>(x) + 0.5) * collision.resolution -
+                        sensor_grid_x;
+      const double dy = collision.aabbMin.y +
+                            (static_cast<double>(y) + 0.5) * collision.resolution -
+                        sensor_grid_y;
+      const std::pair<double, std::size_t> candidate{dx * dx + dy * dy, index};
+      if (nearest.size() < sample_count) {
+        nearest.push(candidate);
+      } else if (sample_count > 0U && candidate < nearest.top()) {
+        nearest.pop();
+        nearest.push(candidate);
+      }
+    }
+    while (!nearest.empty()) {
+      sampled.push_back(nearest.top().second);
+      nearest.pop();
+    }
+    std::reverse(sampled.begin(), sampled.end());
+  } else {
+    std::size_t occupied_rank = 0U;
+    for (std::size_t index = 0U; index < cells && sampled.size() < sample_count; ++index) {
+      if (!occupied(index))
+        continue;
+      const std::size_t target_rank =
+          sample_count <= 1U
+              ? 0U
+              : sampled.size() * (total_points - 1U) / (sample_count - 1U);
+      if (occupied_rank == target_rank)
+        sampled.push_back(index);
+      ++occupied_rank;
+    }
+  }
   std::vector<float> points;
   points.reserve(sampled.size() * 3U);
   for (const std::size_t index : sampled) {
-    const float *point = collision.occupied_xyz + index * 3U;
-    points.insert(points.end(), point, point + 3U);
+    const nav_kernel::Vec3 point = collision.planningCellCenter(index);
+    points.push_back(static_cast<float>(point.x));
+    points.push_back(static_cast<float>(point.y));
+    points.push_back(static_cast<float>(point.z));
   }
   return points;
 }
 
 void writeCollisionMapJson(std::ostream &out, std::size_t point_limit,
-                           const LocalCollisionStatusView &collision,
+                           const nav_kernel::LocalCollisionMapView &collision,
                            std::size_t total_points, const std::vector<float> &occupied_xyz,
                            const SensorOrigin &sensor_origin) {
   const bool enabled = point_limit > 0;
@@ -236,13 +292,13 @@ void writeCollisionMapJson(std::ostream &out, std::size_t point_limit,
   out << "\"complete\": " << (collision.complete ? "true" : "false") << ", ";
   out << "\"resolution_m\": " << collision.resolution << ", ";
   out << "\"generation\": " << collision.generation << ", ";
-  out << "\"observation_sequence\": " << collision.observation_sequence << ", ";
-  out << "\"reset_epoch\": " << collision.reset_epoch << ", ";
-  out << "\"stamp_s\": " << collision.stamp_s << ", ";
+  out << "\"observation_sequence\": " << collision.observationSequence << ", ";
+  out << "\"reset_epoch\": " << collision.resetEpoch << ", ";
+  out << "\"stamp_s\": " << collision.stampS << ", ";
   out << "\"aabb_min\": ";
-  writeVec3Json(out, collision.aabb_min);
+  writeVec3Json(out, collision.aabbMin);
   out << ", \"aabb_max\": ";
-  writeVec3Json(out, collision.aabb_max);
+  writeVec3Json(out, collision.aabbMax);
   out << ", \"occupied_points_total\": " << total_points << ", ";
   out << "\"occupied_points_returned\": " << returned_points << ", ";
   out << "\"occupied_points_truncated\": " << (truncated ? "true" : "false") << ", ";
@@ -266,7 +322,7 @@ void writeCollisionMapJson(std::ostream &out, std::size_t point_limit,
 void writeLocalMapJson(std::ostream &out, const StatusWriterConfig &cfg,
                        const std::vector<float> &obstacle_xyzh,
                        const TraversabilityGrid &traversability,
-                       const LocalCollisionStatusView &collision,
+                       const nav_kernel::LocalCollisionMapView &collision,
                        std::size_t collision_total_points,
                        const std::vector<float> &collision_occupied_xyz,
                        const SensorOrigin &sensor_origin, bool obstacle_points_fresh,
@@ -471,13 +527,14 @@ void writeStatusSnapshot(
     const nav_kernel::LocalPlannerDebugSnapshot &local_planner_debug,
     const std::vector<float> &local_map_obstacle_xyzh,
     const TraversabilityGrid &local_map_traversability,
-    LocalCollisionStatusView local_collision_map) {
+    nav_kernel::LocalCollisionMapView local_collision_map) {
   if (cfg.status_file.empty()) {
     return;
   }
-  const std::size_t local_collision_total_points = local_collision_map.occupied_count;
+  const std::size_t local_collision_total_points = local_collision_map.occupiedCount();
   auto local_collision_occupied_xyz = copyCollisionDebugPoints(
-      cfg.local_map_debug_point_limit, local_collision_map, last_sensor_origin);
+      cfg.local_map_debug_point_limit, local_collision_map, last_sensor_origin,
+      local_collision_total_points);
   snapshot_writer.submitFactory(
       [=, local_collision_occupied_xyz = std::move(local_collision_occupied_xyz),
        snapshot_diagnostics = snapshot_writer.diagnostics()]() {

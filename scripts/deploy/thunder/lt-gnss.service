@@ -7,7 +7,6 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/lingtu/current
 Environment=LINGTU_REPO=/opt/lingtu/current
-Environment=LINGTU_GNSS_DDS_BIN=/opt/lingtu/current/build/gnss_dds/lingtu_gnss_dds
 Environment=LINGTU_GNSS_DEVICE=/dev/wtrtk980
 Environment=LINGTU_GNSS_BAUD=115200
 Environment=LINGTU_GNSS_TIMEOUT_MS=1000

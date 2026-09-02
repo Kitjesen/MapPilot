@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from sim.planning import octoplanner3d_route_viz as viz
+from sim.tools.planning import octoplanner3d_route_viz as viz
 
 
 def _write_binary_pcd(path: Path) -> None:
@@ -39,7 +39,7 @@ def test_default_route_viz_uses_octoplanner3d_pcd():
     default_pcd = viz.DEFAULT_PCD.as_posix()
 
     assert default_pcd.endswith(
-        "sim/fixtures/octoplanner3d/building2_9.pcd"
+        "sim/evaluation/data/octoplanner3d/building2_9.pcd"
     )
 def test_load_pcd_xyz_reads_binary_xyz_with_extra_fields(tmp_path: Path):
     pcd = tmp_path / "tiny.pcd"

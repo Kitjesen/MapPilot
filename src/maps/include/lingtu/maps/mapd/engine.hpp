@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "lingtu/maps/block_grid.hpp"
 #include "lingtu/maps/cloud.hpp"
@@ -66,7 +67,6 @@ struct Config {
   float voxel_snapshot_min_z_from_sensor_m{-3.0F};
   float voxel_snapshot_max_z_from_sensor_m{5.0F};
   std::size_t max_voxel_snapshot_points{200000U};
-  std::size_t max_collision_snapshot_points{200000U};
   layers::VoxelLayerConfig voxel = [] {
     layers::VoxelLayerConfig value;
     value.max_range_m = 0.0F;
@@ -143,16 +143,20 @@ struct Snapshot {
   OwnedPointCloud live_cloud;
   OwnedPointCloud voxel_cloud;
   struct CollisionLayer {
+    std::uint64_t generation{0U};
     float resolution_m{0.0F};
+    std::int32_t size_x{0};
+    std::int32_t size_y{0};
+    std::int32_t size_z{0};
     float min_x_m{0.0F};
     float min_y_m{0.0F};
     float min_z_m{0.0F};
     float max_x_m{0.0F};
     float max_y_m{0.0F};
     float max_z_m{0.0F};
-    std::size_t total_occupied_cells{0U};
+    std::size_t occupied_cells{0U};
     bool complete{false};
-    OwnedPointCloud occupied;
+    std::vector<std::uint8_t> occupied_bits;
   } collision;
   BlockGridSnapshot accumulated_cloud;
   layers::Grid2D occupancy;
@@ -225,8 +229,7 @@ class LiveMapEngine final {
   State BuildStateLocked(std::int64_t now_ns, const QueueState& queue) const;
   void EnsureRealtimeSnapshotLocked() const;
   void EnsureCompleteSnapshotLocked() const;
-  void BuildRealtimeSnapshotLocked(
-      const layers::RollingOccupancySnapshot* occupancy = nullptr) const;
+  void BuildRealtimeSnapshotLocked() const;
   Snapshot RealtimeSnapshotLocked() const;
 
   Config config_;

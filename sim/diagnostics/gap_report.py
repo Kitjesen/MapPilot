@@ -43,8 +43,8 @@ PIPELINE_TRACE = {
             "id": "offline_navigation_replay",
             "role": "Routecheck-derived or recorded navigation traces prove path, cmd_vel, odometry, and deviation consistency without hardware output",
             "code": [
-                "sim/scripts/navigation_replay_deviation_gate.py",
-                "sim/scripts/sim_diagnostics.py",
+                "sim/evaluation/navigation_replay.py",
+                "sim/diagnostics/summary.py",
             ],
             "runtime_evidence_gate": "navigation_replay_deviation",
         },
@@ -60,13 +60,13 @@ PIPELINE_TRACE = {
         {
             "id": "saved_map_relocalize",
             "role": "Saved-map relocalization prepares the current product navigation map",
-            "code": ["sim/scripts/saved_map_relocalize_runtime_gate.py"],
+            "code": ["sim/scripts/mujoco/saved_map_relocalization.py"],
             "runtime_evidence_gate": "saved_map_relocalize",
         },
         {
             "id": "bbs3d_kidnapped_relocalize",
             "role": "Native BBS3D recovers map pose after a simulated displacement",
-            "code": ["sim/scripts/saved_map_relocalize_runtime_gate.py"],
+            "code": ["sim/scripts/mujoco/saved_map_relocalization.py"],
             "runtime_evidence_gate": "bbs3d_kidnapped_relocalize",
         },
     ],

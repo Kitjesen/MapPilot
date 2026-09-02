@@ -56,7 +56,7 @@ service:
 bash scripts/lingtu status
 curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
 PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
-PYTHONPATH=src python scripts/diagnostics/soak.py --duration 120 --interval 2 --json --strict
+PYTHONPATH=src python -m diagnostics.field.soak --duration 120 --interval 2 --json --strict
 ```
 
 `status` is a one-screen snapshot of session, SLAM, robot pose, mission,
@@ -83,11 +83,11 @@ Use the appropriate artifact or field gate before an action that can move hardwa
 
 ```bash
 # Native mapd artifact check: no goal or cmd_vel.
-python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy
+PYTHONPATH=src python -m diagnostics.field.map_artifacts <map-id> --require-occupancy
 
 # Full native/Gateway acceptance for one map and target: no motion unless
 # --allow-motion is explicitly added.
-python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" \
+PYTHONPATH=src python -m diagnostics.field.system_acceptance --maps-root "$LINGTU_MAPS_ROOT" \
   --map <map-name> \
   --goal <x> <y> <yaw> \
   --with-relocalization
@@ -223,8 +223,8 @@ Keep motion disabled. Start with the map and route evidence rather than
 modifying files in the map directory:
 
 ```bash
-python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy
-python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" --map <map-name> --goal <x> <y> <yaw>
+PYTHONPATH=src python -m diagnostics.field.map_artifacts <map-id> --require-occupancy
+PYTHONPATH=src python -m diagnostics.field.system_acceptance --maps-root "$LINGTU_MAPS_ROOT" --map <map-name> --goal <x> <y> <yaw>
 ```
 
 The map service owns map versions, rollback, artifact building, and integrity.
@@ -283,7 +283,7 @@ curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
 journalctl -u 'lt-*' -p err -n 100 --no-pager
 journalctl -u 'lt-*' -n 200 --no-pager | grep -i drift
 journalctl -u 'lt-*' -f
-python scripts/gates/real_runtime_evidence_collect.py --duration-sec 20 --json-out <report.json>
+PYTHONPATH=src python -m diagnostics.field.runtime_evidence --duration-sec 20 --json-out <report.json>
 ```
 
 `evidence` is a read-only runtime dataflow/frame collection command. Store the

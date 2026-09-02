@@ -3,7 +3,7 @@ name: Python Tests + Lint
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'docs/**', 'config/**', 'tools/**', 'tests/contracts/**', 'scripts/deploy/package_native_release.sh', 'scripts/deploy/cut_release.sh', 'AGENTS.md', 'README.md', '.pre-commit-config.yaml', 'pyproject.toml', '.github/workflows/test-python.yml']
+    paths: ['src/**', 'docs/**', 'config/**', 'tools/**', 'tests/contracts/**', 'scripts/deploy/package_native_release.sh', 'AGENTS.md', 'README.md', '.pre-commit-config.yaml', 'pyproject.toml', '.github/workflows/test-python.yml']
   pull_request:
     branches: [main]
 

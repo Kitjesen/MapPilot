@@ -6,7 +6,9 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-PRODUCT_MUJOCO_WORLD = REPO_ROOT / "sim" / "worlds" / "mujoco" / "industrial_park_scene.xml"
+PRODUCT_MUJOCO_WORLD = (
+    REPO_ROOT / "sim" / "packages" / "worlds" / "industrial_park" / "physics" / "industrial_park_scene.xml"
+)
 
 
 def _read_strip_bom(path: Path) -> str:

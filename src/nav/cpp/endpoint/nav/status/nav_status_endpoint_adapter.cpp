@@ -42,21 +42,7 @@ StatusRuntimeState statusRuntimeStateFromEndpoint(const EndpointState &state) {
   result.local_path = &state.last_local_path;
   result.local_planner_debug = &state.last_local_planner_debug;
   result.local_map_traversability = &state.local_traversability_grid;
-  result.local_collision_map = {
-      state.local_collision_map.occupied_xyz.empty()
-          ? nullptr
-          : state.local_collision_map.occupied_xyz.data(),
-      state.local_collision_map.occupied_xyz.size() / 3U,
-      state.local_collision_map.resolution,
-      state.local_collision_map.aabb_min,
-      state.local_collision_map.aabb_max,
-      state.local_collision_map.reset_epoch,
-      state.local_collision_map.observation_sequence,
-      state.local_collision_map.generation,
-      state.local_collision_map.stamp_s,
-      state.local_collision_map.complete,
-      state.local_collision_map.live,
-  };
+  result.local_collision_map = state.local_collision_map.view();
   return result;
 }
 

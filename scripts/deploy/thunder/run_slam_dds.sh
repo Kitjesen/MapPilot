@@ -3,7 +3,8 @@ set -euo pipefail
 
 source /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh slam
 
-SLAM_BIN="${LINGTU_SLAM_BIN:-/opt/lingtu/current/build/slam_core/slamd}"
+: "${LINGTU_REPO:=/opt/lingtu/current}"
+SLAM_BIN="${LINGTU_SLAM_BIN:-${LINGTU_REPO}/bin/slamd}"
 SLAM_CONFIG="${LINGTU_SLAM_CONFIG:?LINGTU_SLAM_CONFIG is required from the Product session}"
 if [ ! -x "$SLAM_BIN" ]; then
   echo "ERROR: native SLAM DDS runtime is missing or not executable: $SLAM_BIN" >&2

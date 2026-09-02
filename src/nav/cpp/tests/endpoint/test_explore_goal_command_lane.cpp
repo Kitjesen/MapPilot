@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "explore/goal_command_lane.hpp"
+#include "endpoint/goal_command_lane.hpp"
 
 namespace {
 

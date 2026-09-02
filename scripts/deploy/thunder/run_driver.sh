@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BIN="${LINGTU_DRIVER_BIN:-/opt/lingtu/current/build/driver/lingtu_driver}"
+: "${LINGTU_REPO:=/opt/lingtu/current}"
+BIN="${LINGTU_DRIVER_BIN:-${LINGTU_REPO}/bin/lingtu_driver}"
 BACKEND="${LINGTU_DRIVER_BACKEND:?LINGTU_DRIVER_BACKEND is required from the Product session}"
 
 valid_ipv4() {

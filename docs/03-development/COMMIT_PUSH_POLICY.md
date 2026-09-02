@@ -47,7 +47,7 @@ A push is acceptable only when all commit-gate rules are satisfied and:
 - Web changes pass `npm run build` from `web/`.
 - Gateway/API changes pass the Gateway contract tests listed below.
 - Simulation-backed navigation, planning, localization, tracking, exploration,
-  or Gateway command-safety claims include a strict `sim_diagnostics.py`
+  or Gateway command-safety claims include a strict `python -m sim.diagnostics`
   summary for the affected gates.
 - Hardware-facing behavior is not claimed as verified unless an S100P L3 script or field test actually ran.
 
@@ -75,7 +75,7 @@ Recommended simulation diagnostics check when navigation behavior is part of
 the claim:
 
 ```bash
-python sim/scripts/sim_diagnostics.py \
+python -m sim.diagnostics \
   --required-only \
   --strict \
   --max-report-age-s 21600
@@ -84,7 +84,7 @@ python sim/scripts/sim_diagnostics.py \
 Closure summaries include `report_age_s` per gate. `--max-report-age-s` keeps
 older passing artifacts from supporting new simulation-backed claims.
 
-For setup-only validation, `sim/scripts/setup_linux_validation_host.sh` writes the
+For setup-only validation, `scripts/sim/setup_linux_validation_host.sh` writes the
 setup-safe subset summary to `artifacts/sim_diagnostics_summary_setup.json`.
 When Gateway is running, `/api/v1/diagnostics/routecheck/latest` also exposes
 the latest routecheck `report_age_s`, no-motion flags, and `published` counters

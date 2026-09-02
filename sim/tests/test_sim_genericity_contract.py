@@ -6,6 +6,8 @@ import ast
 import re
 from pathlib import Path
 
+from sim.catalog.resolver import CatalogResolver
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SIM_ROOT = REPO_ROOT / "sim"
 
@@ -33,10 +35,6 @@ EXPECTED_BODY_COUNT = re.compile(r"\bEXPECTED_[A-Z0-9_]*BODY_COUNT\b", re.IGNORE
 EQUALS_21 = re.compile(r"==\s*21\b")
 BODY_COUNT_21 = re.compile(r"\bbody_count\s*=\s*21\b", re.IGNORECASE)
 
-CANONICAL_MANIFEST_ROOTS = {
-    ("sim", "packages", kind)
-    for kind in ("controllers", "robots", "scenarios", "sensor_rigs", "sensors", "worlds")
-}
 LEGACY_MANIFEST_ROOTS = {"robots", "controllers", "sensor_rigs", "worlds"}
 LEGACY_MANIFEST_NAMES = {
     "robot.package.yaml",
@@ -144,19 +142,9 @@ def test_generic_compiler_and_runtime_sources_are_model_and_world_neutral() -> N
 
 def test_production_sources_use_canonical_manifests_and_keep_asset_roots_valid() -> None:
     """Only old manifest paths are forbidden; MJCF and mesh roots remain valid assets."""
+    resolver = CatalogResolver.from_repository(REPO_ROOT)
 
-    tree = ast.parse((SIM_ROOT / "catalog" / "resolver.py").read_text(encoding="utf-8"))
-    chains = {
-        chain
-        for node in ast.walk(tree)
-        if isinstance(node, ast.BinOp)
-        if (chain := _path_chain(node))
-    }
-    discovered_roots = {
-        chain for chain in chains if len(chain) == 3 and chain[:2] == ("sim", "packages")
-    }
-
-    assert discovered_roots == CANONICAL_MANIFEST_ROOTS
+    assert resolver.catalog_roots == ((SIM_ROOT / "packages").resolve(),)
     assert not any(_legacy_manifest_references(path) for path in _generic_source_files())
-    assert not _legacy_manifest_reference("sim/robots/doso/thunder_v4/mjcf/thunderv4.xml")
-    assert not _legacy_manifest_reference("sim/robots/doso/thunder_v4/meshes/base.stl")
+    assert not _legacy_manifest_reference("sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml")
+    assert not _legacy_manifest_reference("sim/packages/robots/doso/thunder_v4/meshes/base.stl")

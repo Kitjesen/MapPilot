@@ -171,13 +171,13 @@ authenticated TLS session is rejected even when its IP is allowlisted.
 
 ```bash
 cd ~/data/SLAM/navigation
-bash scripts/deploy/cut_release.sh vX.Y.Z nav
+bash scripts/deploy/deploy_robot.sh nav
+bash scripts/deploy/package_native_release.sh vX.Y.Z dist
 ```
 
-`cut_release.sh` is a thin convenience command. It delegates Product-specific
-build and activation to `deploy_robot.sh`, then delegates artifact creation to
-`package_native_release.sh`. It contains no second build, install, rollback, or
-Product-resolution implementation.
+Deployment and artifact creation remain two explicit steps. `deploy_robot.sh`
+owns Product-specific build and activation; `package_native_release.sh` creates
+the reviewed release artifact.
 
 ## Common Operations
 
@@ -187,9 +187,9 @@ Product-resolution implementation.
 | Watch status | `watch -n 2 bash scripts/lingtu status` |
 | Switch Product | `bash scripts/lingtu --robot "${LINGTU_ROBOT:?}" --env real switch "${LINGTU_PRODUCT:?}"` |
 | Stop Product | `bash scripts/lingtu --robot "${LINGTU_ROBOT:?}" --env real stop` |
-| Record native DDS | `build/native-recording/lingtu_recorder record --output-dir SESSION_DIR --dds on --camera off` |
-| Record native DDS and camera | `build/native-recording/lingtu_recorder record --output-dir SESSION_DIR --dds on --camera on` |
-| Verify a recording | `build/native-recording/lingtu_dds_player SESSION_DIR/dds/sensors.mcap --dry-run` |
+| Record native DDS | `/opt/lingtu/current/bin/lingtu_recorder record --output-dir SESSION_DIR --dds on --camera off` |
+| Record native DDS and camera | `/opt/lingtu/current/bin/lingtu_recorder record --output-dir SESSION_DIR --dds on --camera on` |
+| Verify a recording | `/opt/lingtu/current/bin/lingtu_dds_player SESSION_DIR/dds/sensors.mcap --dry-run` |
 | Tail app logs | `journalctl -u lt-host -f` |
 | Tail native SLAM logs | `journalctl -u lt-slam -f` |
 | Tail native Livox logs | `journalctl -u lt-lidar -f` |
@@ -228,11 +228,11 @@ ip -br addr | grep 192.168.1
 ```bash
 curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/odometry"
 curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/map_cloud"
-PYTHONPATH=src python scripts/diagnostics/soak.py --duration 120 --interval 2 --json --strict
+PYTHONPATH=src python -m diagnostics.field.soak --duration 120 --interval 2 --json --strict
 bash scripts/lingtu --robot "${LINGTU_ROBOT:?}" --env real switch "${LINGTU_PRODUCT:?}"
 ```
 
-`scripts/diagnostics/soak.py` is the preferred non-motion evidence command after boot or sensor
+`python -m diagnostics.field.soak` is the preferred non-motion evidence command after boot or sensor
 reconnects. It samples Gateway readiness, localization freshness, map-cloud
 stability, command-source idleness, and stationary odometry displacement.
 
@@ -245,7 +245,7 @@ in-place DDS command:
 | Seeded nav switch + relocalization | `bash scripts/lingtu --env real switch nav --map "${LINGTU_MAP:?}" --initial-pose X Y YAW` | the nav Product cold-starts on the exact map and accepts the operator seed |
 | Global nav switch + relocalization | `bash scripts/lingtu --env real switch nav --map "${LINGTU_MAP:?}" --relocalize` | the nav Product cold-starts on the exact map and performs global relocalization |
 | Stationary RunPlan gate | `PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --strict` | declared processes and live no-motion readiness agree |
-| Integrated saved-map/plan gate | `python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" --map "${LINGTU_MAP:?}" --goal X Y YAW` | map, localization, and requested plan evidence pass without motion |
+| Integrated saved-map/plan gate | `PYTHONPATH=src python -m diagnostics.field.system_acceptance --maps-root "$LINGTU_MAPS_ROOT" --map "${LINGTU_MAP:?}" --goal X Y YAW` | map, localization, and requested plan evidence pass without motion |
 
 Do not treat `TRACKING` alone as navigation-ready. For saved-map navigation,
 `map_odom_tf` must be valid and the odometry must be inside the active map

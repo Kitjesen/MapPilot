@@ -10,7 +10,8 @@ set -euo pipefail
 source /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh lidar
 source /opt/lingtu/config/thunder-runtime-env.sh
 
-: "${LINGTU_LIVOX_BIN:=/opt/lingtu/current/build/livox_sdk2_stream/livox_sdk2_stream}"
+: "${LINGTU_REPO:=/opt/lingtu/current}"
+: "${LINGTU_LIVOX_BIN:=${LINGTU_REPO}/bin/livox_sdk2_stream}"
 : "${LINGTU_LIVOX_CONFIG_DIR:=/opt/lingtu/config/livox}"
 : "${LINGTU_CONFIG_PATH:?LINGTU_CONFIG_PATH is required from the Product session}"
 : "${LINGTU_LIVOX_NET_IFACE:?LINGTU_LIVOX_NET_IFACE is required from the Product session}"

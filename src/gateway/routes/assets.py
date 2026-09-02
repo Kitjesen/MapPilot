@@ -19,7 +19,7 @@ def robot_mesh_path(filename: str) -> Path | None:
     repo_root = Path(__file__).resolve().parents[3]
     candidates = [
         Path(configured).expanduser() if configured else None,
-        repo_root / "sim" / "robots" / "doso" / "thunder_v4" / "meshes",
+        repo_root / "sim" / "packages" / "robots" / "doso" / "thunder_v4" / "meshes",
     ]
     for mesh_dir in candidates:
         if mesh_dir is not None and (mesh_dir / safe_name).is_file():

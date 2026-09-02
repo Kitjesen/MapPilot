@@ -24,23 +24,23 @@ def test_native_recording_cmake_installs_the_five_tools_as_siblings() -> None:
 
     for executable in RECORDING_EXECUTABLES:
         assert executable in cmake
+    assert "include(GNUInstallDirs)" in cmake
     assert "install(TARGETS ${LINGTU_RECORDING_EXECUTABLES}" in cmake
-    assert "RUNTIME DESTINATION ." in cmake
+    assert "RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}" in cmake
+    assert cmake.count("COMPONENT lingtu_runtime") == 1
 
 
 def test_native_release_packager_installs_and_verifies_recording_tools() -> None:
     package = _read("scripts/deploy/package_native_release.sh")
 
-    assert 'RECORDING_INSTALL_DIR="${PACKAGE_ROOT}/build/native-recording"' in package
-    assert 'LINGTU_NATIVE_RELEASE_RECORDING_INSTALL_SOURCE' in package
-    assert (
-        'cmake --install "${ROOT}/build/native-recording" '
-        '--prefix "${RECORDING_INSTALL_DIR}"'
-    ) in package
+    assert "LINGTU_NATIVE_RELEASE_INSTALL_SOURCE" in package
+    assert "native-recording" in package
+    assert 'install_cmake_tree "${ROOT}/build/${component}"' in package
     for executable in RECORDING_EXECUTABLES:
         assert executable in package
-    assert 'if [[ ! -x "${RECORDING_INSTALL_DIR}/${relative}" ]]' in package
-    assert "Native recording install is missing executable" in package
+    assert 'require_install_executable "${relative}"' in package
+    assert "Standard install prefix is missing executable" in package
+    assert '"${INSTALL_PREFIX}/bin/${relative}"' in package
     assert "build/native-recording/${relative}" in package
 
 
@@ -51,11 +51,3 @@ def test_root_release_build_builds_native_recording() -> None:
         'LINGTU_RECORDING_BUILD_DDS=ON '
         "bash scripts/build/build_native_recording.sh"
     ) in makefile
-
-
-def test_release_cutter_delegates_recording_packaging_to_native_packager() -> None:
-    release = _read("scripts/deploy/cut_release.sh")
-
-    assert "package_native_release.sh" in release
-    for executable in RECORDING_EXECUTABLES:
-        assert executable not in release

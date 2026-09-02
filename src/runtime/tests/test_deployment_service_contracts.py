@@ -3,8 +3,6 @@ from pathlib import Path
 
 import pytest
 
-from runtime.runtime_interface import TOPICS
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -15,7 +13,7 @@ def _read(path: str) -> str:
 def _load_soak_module():
     spec = importlib.util.spec_from_file_location(
         "lingtu_soak_under_test",
-        REPO_ROOT / "scripts" / "diagnostics" / "soak.py",
+        REPO_ROOT / "src" / "diagnostics" / "field" / "soak.py",
     )
     assert spec is not None
     assert spec.loader is not None
@@ -155,14 +153,30 @@ def test_soak_rejects_unsafe_ready_503_states():
     assert "active_cmd_source=teleop" in violations
 
 
-def test_static_localization_probe_only_tracks_native_slamd():
-    text = _read("scripts/diagnostics/static_localization_probe.py").lower()
+def test_soak_process_summary_only_tracks_native_slamd_and_host():
+    text = _read("src/diagnostics/field/soak.py").lower()
     assert "super_lio" not in text
     assert "super-lio" not in text
     assert "relocation_node" not in text
     assert "lio_node" not in text
     assert "fastlio" not in text
     assert '"slamd"' in text
+    assert '"host"' in text
+    assert '"avg_rss_mb"' in text
+    soak = _load_soak_module()
+    summary = soak.process_summary(
+        [
+            {"processes": [{"label": "slamd", "pcpu": 10.0, "pmem": 2.0, "rss_kb": 1024}]},
+            {"processes": [{"label": "slamd", "pcpu": 20.0, "pmem": 4.0, "rss_kb": 3072}]},
+        ]
+    )
+    assert summary["slamd"] == {
+        "avg_pcpu": 15.0,
+        "max_pcpu": 20.0,
+        "avg_rss_mb": 2.0,
+        "max_rss_mb": 3.0,
+        "avg_pmem": 3.0,
+    }
 
 
 def test_thunder_service_installer_has_no_s100p_ros2_dispatch():
@@ -175,7 +189,7 @@ def test_thunder_service_installer_has_no_s100p_ros2_dispatch():
 def test_explore_endpoint_exit_always_requests_native_motion_stop():
     unit = _read("scripts/deploy/thunder/lt-explore.service")
     assert (
-        "ExecStopPost=/opt/lingtu/current/build/nav_endpoint/"
+        "ExecStopPost=/opt/lingtu/current/bin/"
         "lingtu_nav_control stop explore_endpoint_exit --timeout-ms 7000"
     ) in unit
     assert "TimeoutStopSec=30" in unit

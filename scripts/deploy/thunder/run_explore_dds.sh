@@ -4,6 +4,8 @@ set -euo pipefail
 source /opt/lingtu/config/thunder-runtime-env.sh
 source /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh explore
 
+: "${LINGTU_REPO:=/opt/lingtu/current}"
+: "${LINGTU_EXPLORE_DDS_BIN:=${LINGTU_REPO}/bin/lingtu_explore_dds}"
 prepend_cyclonedds_libs
 
 if [ ! -x "${LINGTU_EXPLORE_DDS_BIN}" ]; then

@@ -10,7 +10,7 @@ import mujoco
 import numpy as np
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[4]
-MODEL_PATH = WORKSPACE_ROOT / "brain" / "lingtu" / "sim" / "robots" / "thunderv4" / "mjcf" / "thunderv4.xml"
+MODEL_PATH = WORKSPACE_ROOT / "brain" / "lingtu" / "sim" / "packages" / "robots" / "thunderv4" / "mjcf" / "thunderv4.xml"
 PLAYER_PATH = WORKSPACE_ROOT / "tools" / "rl_eval" / "mujoco_v86_recovery_play_aligned.py"
 
 

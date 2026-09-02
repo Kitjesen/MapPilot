@@ -53,7 +53,7 @@ def test_thunder_v4_has_real_and_sim_inputs() -> None:
     assert config.driver.network_interface == ""
     assert config.lidar.lidar_ip == "192.168.1.178"
     assert config.lidar.network_interface == "eth1"
-    assert (REPO_ROOT / "sim" / "presets" / "doso" / "thunder_v4" / "default.yaml").is_file()
+    assert (REPO_ROOT / "sim" / "sessions" / "products" / "doso" / "thunder_v4" / "default.yaml").is_file()
 
     plans = []
     for env, env_config in (("real", None), ("sim", {"backend": "mujoco"})):

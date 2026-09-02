@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(lingtu_prune_cpp LANGUAGES CXX)
+include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,6 +29,10 @@ add_executable(prune
 
 target_link_libraries(prune PRIVATE
   prune_core)
+
+install(TARGETS prune
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT lingtu_runtime)
 
 if(LINGTU_PRUNE_ERASOR2)
   add_library(erasor2_stage_core STATIC

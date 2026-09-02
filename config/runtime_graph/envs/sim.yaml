@@ -30,10 +30,10 @@ backends:
     process_manager: direct
     presets:
       doso/thunder_v4:
-        default: sim/presets/doso/thunder_v4/default.yaml
-        nav: sim/presets/doso/thunder_v4/nav.yaml
-        teleop_avoid: sim/presets/doso/thunder_v4/teleop_avoid.yaml
-        tracking: sim/presets/doso/thunder_v4/tracking.yaml
+        default: sim/sessions/products/doso/thunder_v4/default.yaml
+        nav: sim/sessions/products/doso/thunder_v4/nav.yaml
+        teleop_avoid: sim/sessions/products/doso/thunder_v4/teleop_avoid.yaml
+        tracking: sim/sessions/products/doso/thunder_v4/tracking.yaml
     provided_roles:
       - lidar
       - imu
@@ -274,7 +274,12 @@ backends:
           windows:
             argv: [build/nav-cpp/windows-x64-nav-endpoint/Release/navd.exe, --domain-id, "17", --status-s, "0.1"]
             cwd: .
-            env: {LINGTU_DDS_DOMAIN_ID: "17", LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS: "600"}
+            env:
+              LINGTU_DDS_DOMAIN_ID: "17"
+              LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS: "600"
+              LINGTU_NAV_ODOM_MAX_AGE_S: "0.60"
+              LINGTU_NAV_CLOUD_MAX_AGE_S: "0.60"
+              LINGTU_NAV_INPUT_RECOVERY_FRAMES: "1"
             artifact: {path: build/nav-cpp/windows-x64-nav-endpoint/Release/navd.exe}
             dependencies:
               - path: build/nav-cpp/windows-x64-nav-endpoint/Release/ddsc.dll
@@ -283,7 +288,12 @@ backends:
           linux:
             argv: [build/nav_endpoint/navd, --domain-id, "231", --status-s, "0.1"]
             cwd: .
-            env: {LINGTU_DDS_DOMAIN_ID: "231", LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS: "600"}
+            env:
+              LINGTU_DDS_DOMAIN_ID: "231"
+              LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS: "600"
+              LINGTU_NAV_ODOM_MAX_AGE_S: "0.60"
+              LINGTU_NAV_CLOUD_MAX_AGE_S: "0.60"
+              LINGTU_NAV_INPUT_RECOVERY_FRAMES: "1"
             artifact: {path: build/nav_endpoint/navd}
             readiness: {kind: file, target: nav.status.json}
             shutdown: {kind: process}

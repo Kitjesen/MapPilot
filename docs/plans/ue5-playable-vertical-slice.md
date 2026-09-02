@@ -324,9 +324,8 @@ Changes:
   - extract a reusable production visual-session assembly function; SimStudio and the
     playable runner consume the same function.
 - New `sim/runtime/coordinator/playable_vertical_slice.py`
-  - the only qualification runner and CLI.
-- New `scripts/sim/run_robotsimue_playable.ps1`
-  - thin path/argument validation and invocation only; no product or lifecycle policy.
+  - the only qualification runner and CLI, invoked with
+    `python -m sim.runtime.coordinator.playable_vertical_slice`.
 
 The existing `motion_recording.py` remains a controller/motion qualification utility.
 Its truth-derived maneuver evaluator and media helpers may be extracted into shared
@@ -530,7 +529,7 @@ GREEN implementation: runner, media, and atomic qualification writer.
 ### Slice 8 — native build and real acceptance
 
 1. Confirm no owned or foreign UBT/UAT/UnrealEditor/MuJoCo build/run conflict.
-2. Build only through `sim/toolchains/ue_build.py` with `-WaitMutex` ownership.
+2. Build only through `sim/tools/toolchains/ue_build.py` with `-WaitMutex` ownership.
 3. Run all `LingTuSim.UI`, Session, Visual, Sensors, Scenario, and new Control
    Automation tests.
 4. Launch the fixed FactoryPark bundle through the single playable runner.

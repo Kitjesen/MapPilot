@@ -32,17 +32,13 @@ from tools.simstudio.service.store import StudioStore
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SESSION = (
     REPO_ROOT
-    / "sim"
-    / "scenarios"
-    / "catalog"
+    / "sim" / "sessions" / "examples"
     / "thunderv4_unreal"
     / "session.yaml"
 )
 HEADLESS_SESSION = (
     REPO_ROOT
-    / "sim"
-    / "scenarios"
-    / "catalog"
+    / "sim" / "sessions" / "examples"
     / "omni_cart_controlled_headless"
     / "session.yaml"
 )

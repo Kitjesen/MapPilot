@@ -80,12 +80,12 @@ python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q
 python tools/validate/validate_architecture_boundaries.py
 python tools/validate/validate_topics.py
 
-python scripts/gates/saved_map_artifact_gate.py <map-dir> \
+PYTHONPATH=src python -m diagnostics.field.map_artifacts <map-dir> \
   --require-octomap \
   --require-occupancy \
   --json-out artifacts/saved_map_artifacts/report.json
 
-python scripts/gates/real_runtime_evidence_collect.py \
+PYTHONPATH=src python -m diagnostics.field.runtime_evidence \
   --duration-sec 20 \
   --json-out artifacts/real_runtime/report.json
 
@@ -100,7 +100,7 @@ session to prove real runtime readiness.
 Server-side simulation closure is tracked by:
 
 ```bash
-python sim/scripts/sim_diagnostics.py --required-only --strict
+python -m sim.diagnostics --required-only --strict
 python -m pytest sim/tests/test_sim_diagnostics.py -q
 ```
 

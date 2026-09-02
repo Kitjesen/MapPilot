@@ -38,13 +38,13 @@
   },
   "navigation_runtime": {
     "local_planner": "scan",
-    "scan_time_forward_s": 0.55,
+    "scan_time_forward_s": 0.8,
     "scan_heading_error_rad": 0.8,
-    "scan_position_gain": 0.9,
-    "scan_yaw_gain": 1.2,
-    "scan_max_vx_mps": 0.5,
-    "scan_max_vy_mps": 0.5,
-    "scan_max_yaw_rate_rad_s": 1.0,
+    "scan_position_gain": 0.8,
+    "scan_yaw_gain": 1.5,
+    "scan_max_vx_mps": 0.75,
+    "scan_max_vy_mps": 0.35,
+    "scan_max_yaw_rate_rad_s": 0.5,
     "debug_candidate_limit": 36,
     "debug_local_map_points": 640
   },
@@ -120,7 +120,7 @@
         "build/maps-windows/Release/mapd.exe",
         "build/maps/mapd",
         "build/mujoco_native_maps/mapd",
-        "/opt/lingtu/current/build/maps/mapd"
+        "/opt/lingtu/current/bin/mapd"
       ]
     },
     "traversability": {

@@ -11,7 +11,7 @@ from diagnostics.field.teleop_avoid_preflight import evaluate_teleop_avoid_prefl
 from lingtu.run_plan import CURRENT_RUN_SCHEMA, RUN_PLAN_SCHEMA, RunPlan
 
 ROOT = Path(__file__).resolve().parents[3]
-COLLECTOR = ROOT / "scripts" / "gates" / "thunder_service_readiness_collect.py"
+COLLECTOR = ROOT / "src" / "diagnostics" / "field" / "service_readiness.py"
 LINGTU_CLI = ROOT / "scripts" / "lingtu"
 PRODUCT_SESSION_ID = "a" * 32
 
@@ -626,6 +626,6 @@ def test_lingtu_cli_exposes_thin_read_only_preflight_adapter() -> None:
     source = LINGTU_CLI.read_text(encoding="utf-8")
 
     assert '-m lingtu.control "$@"' in source
-    assert "thunder_service_readiness_collect.py" not in source
+    assert "diagnostics.field.service_readiness" not in source
     assert "operator_motion" not in source
     assert "curl" not in source

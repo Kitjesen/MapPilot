@@ -104,7 +104,7 @@ def _write_map(
 
 
 def _run_gate(map_dir: Path) -> subprocess.CompletedProcess[str]:
-    script = REPO_ROOT / "scripts" / "gates" / "saved_map_field_acceptance.py"
+    script = REPO_ROOT / "src" / "diagnostics" / "field" / "map_acceptance.py"
     return subprocess.run(
         [sys.executable, str(script), str(map_dir), "--json"],
         cwd=str(REPO_ROOT),

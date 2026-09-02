@@ -22,7 +22,7 @@ fi
 : "${LINGTU_COMMAND_OUTPUT_MODE:=local_driver}"
 : "${LINGTU_HARDWARE_CONTROL_BOUNDARY:=module_graph_driver}"
 : "${LINGTU_GATEWAY_PORT:=5050}"
-: "${LINGTU_MAP_ARTIFACT_CONVERTER:=${LINGTU_REPO}/build/octoplanner3d_headless/octoplanner3d_pcd_to_octomap}"
+: "${LINGTU_MAP_ARTIFACT_CONVERTER:=${LINGTU_REPO}/bin/octoplanner3d_pcd_to_octomap}"
 : "${NAV_MAP_DIR:=/var/lib/lingtu/maps}"
 : "${LINGTU_LIVOX_CONFIG_DIR:=/opt/lingtu/config/livox}"
 : "${LINGTU_LIVOX_NET_IFACE:=}"

@@ -63,7 +63,7 @@ _CHECK_NAMES = (
 _SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}\Z")
 _FRAME_RE = re.compile(r"frame_([0-9]{6})\.png\Z")
-_THUNDERV4_CONTROLLER_MANIFEST_PATH = "sim/controllers/doso/thunder_v4/locomotion/controller.package.yaml"
+_THUNDERV4_CONTROLLER_MANIFEST_PATH = "sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml"
 
 _ALLOCATION_FIELDS = frozenset(
     {

@@ -4,7 +4,7 @@ from importlib import reload
 from types import SimpleNamespace
 
 import pytest
-from sim.engine.core.sensor import CameraConfig
+from sim.compat.engine.core.sensor import CameraConfig
 
 from drivers.sim.camera.impl.mujoco.camera import sample_from_camera
 from drivers.sim.camera.module import MujocoCameraModule

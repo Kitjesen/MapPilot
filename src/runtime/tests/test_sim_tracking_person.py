@@ -21,7 +21,7 @@ def test_tracking_sim_uses_walking_person_scenario() -> None:
         env_config={"backend": "mujoco"},
     )
 
-    assert plan.simulation["session_source"] == "sim/presets/doso/thunder_v4/tracking.yaml"
+    assert plan.simulation["session_source"] == "sim/sessions/products/doso/thunder_v4/tracking.yaml"
     assert plan.simulation["session"]["world"] == "industrial_park@1.0.0"
     assert plan.simulation["session"]["scenario"] == "industrial_park_walking_person@1.0.0"
     assert [

@@ -10,7 +10,7 @@ CANONICAL_ROOTS = (
     REPO_ROOT / "sim" / "adapters",
 )
 FORBIDDEN_PREFIXES = (
-    "sim.engine",
+    "sim.compat.engine",
     "sim.scripts",
     "drivers.sim",
     "src.drivers.sim",

@@ -350,9 +350,7 @@ def _native_process_environment(
             "live" if lifecycle["slam_mode"] == "mapping" else "map"
         )
     if "maps" in roles:
-        environment.update(
-            mapd_environment(environment.get("LINGTU_NAV_LOCAL_PLANNER_BACKEND"))
-        )
+        environment.update(mapd_environment(environment))
     if env_spec.name == "real":
         robot_config = env_spec.robot_config
         if robot_config is None:
@@ -417,7 +415,7 @@ def _native_process_environment(
                 f"Robot {env_spec.robot!r} has no CMU path library"
             ) from exc
         root = (
-            "build/nav_endpoint/cmu_paths"
+            "share/lingtu/cmu_paths"
             if env_spec.name == "real"
             else "src/nav/cpp/planning/local/cmu/paths"
         )

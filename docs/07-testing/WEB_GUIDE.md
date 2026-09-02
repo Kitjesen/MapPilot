@@ -79,8 +79,8 @@ preflight 验证当前场景、地图和原生进程输入，但不会启动运�
 
 对于已保存地图工作，请在考虑目标之前验证完整地图包并预览精确路线：
 
-    python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy
-    python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" --map <map-name> --goal <x> <y> <yaw>
+    PYTHONPATH=src python -m diagnostics.field.map_artifacts <map-id> --require-occupancy
+    PYTHONPATH=src python -m diagnostics.field.system_acceptance --maps-root "$LINGTU_MAPS_ROOT" --map <map-name> --goal <x> <y> <yaw>
 
 **预期结果：** 每个门槛都会为选定的 profile、端点、地图、定位状态和规划器报告可追溯结果。请将原始输出、时间戳、修订和拒绝原因随验证记录保存。
 

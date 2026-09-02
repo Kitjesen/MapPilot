@@ -113,7 +113,7 @@ _CAMERA_STREAMS = frozenset(
 )
 _WIDTH = 1920
 _HEIGHT = 1080
-_CONTROLLER_MANIFEST_PATH = "sim/controllers/doso/thunder_v4/locomotion/controller.package.yaml"
+_CONTROLLER_MANIFEST_PATH = "sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml"
 _CONTROLLER_COMMAND_CALIBRATION: Mapping[str, Any] = {
     "schema": "lingtu.sim.controller-command-calibration.v1",
     "scope": "quadruped_him_observation_only",

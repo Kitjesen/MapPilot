@@ -3,7 +3,7 @@
   "blender_mesh_import": {
     "coordinates": "unreal_lh_z_up_cm",
     "import_scale": 1.0,
-    "source": "sim/worlds/open_field_hf/generated/terrain.obj",
+    "source": "sim/packages/worlds/open_field_hf/generated/terrain.obj",
     "vertex_per_height_sample": true
   },
   "coordinate_contract": {
@@ -89,20 +89,24 @@
   "schema": "lingtu.sim.unreal-world-import-recipe.v1",
   "sources": {
     "asset_manifest": {
-      "bytes": 2710,
-      "path": "sim/worlds/open_field_hf/generated/asset-manifest.json"
+      "bytes": 2737,
+      "path": "sim/packages/worlds/open_field_hf/generated/asset-manifest.json",
+      "sha256": "501f830cc2329db0b32ad833acfe7efc4a917fe724769a642345f7e4ffbee2c6"
     },
     "heightfield_png": {
       "bytes": 128344,
-      "path": "sim/worlds/open_field_hf/generated/heightfield_r16.png"
+      "path": "sim/packages/worlds/open_field_hf/generated/heightfield_r16.png",
+      "sha256": "65e1631acf8265ce5318384b9b1364ecd07d0f29e2bfaf7f7f59bd2e2bc229c9"
     },
     "mujoco_heightfield": {
       "bytes": 256044,
-      "path": "sim/worlds/open_field_hf/generated/heightfield_f32.bin"
+      "path": "sim/packages/worlds/open_field_hf/generated/heightfield_f32.bin",
+      "sha256": "3cc2fba6d0193d866f5140ae614b339a7656ba440bacd2e200cc1aa765a81c29"
     },
     "terrain_obj": {
       "bytes": 4880616,
-      "path": "sim/worlds/open_field_hf/generated/terrain.obj"
+      "path": "sim/packages/worlds/open_field_hf/generated/terrain.obj",
+      "sha256": "9074c291d2bf67b9a2fcbddb5855a79d5b8de1d2d725a9fd8769aad7f9191a81"
     }
   },
   "status": "source_assets_only",
@@ -119,7 +123,7 @@
       -53.48592355230028
     ],
     "material_requirement": "Create project-owned grass, mud, and rock PBR layers.",
-    "recommended_source": "sim/worlds/open_field_hf/generated/heightfield_r16.png",
+    "recommended_source": "sim/packages/worlds/open_field_hf/generated/heightfield_r16.png",
     "scale_xyz": [
       63.49206349206349,
       63.49206349206349,

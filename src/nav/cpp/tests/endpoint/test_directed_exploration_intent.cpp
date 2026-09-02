@@ -3,7 +3,7 @@
 #include <string>
 #include <utility>
 
-#include "explore/directed_intent.hpp"
+#include "endpoint/directed_intent.hpp"
 
 namespace {
 

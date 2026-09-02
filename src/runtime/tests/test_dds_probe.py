@@ -5,8 +5,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from scripts.diagnostics import dds_probe
-from scripts.diagnostics.dds_probe import TopicStats
+
+from diagnostics.field import dds_readiness as dds_probe
+from diagnostics.field.dds_readiness import TopicStats
 
 
 def test_dds_probe_stats_extracts_frame_and_point_count() -> None:
@@ -27,7 +28,7 @@ def test_dds_probe_stats_extracts_frame_and_point_count() -> None:
 
 
 def test_dds_probe_uses_native_helper_not_cyclonedds_python() -> None:
-    source = Path("scripts/diagnostics/dds_probe.py").read_text(encoding="utf-8")
+    source = Path("src/diagnostics/field/dds_readiness.py").read_text(encoding="utf-8")
     native = Path("tools/diagnostics/dds_probe.cpp").read_text(encoding="utf-8")
     build = Path("scripts/build/build_dds_probe.sh").read_text(encoding="utf-8")
 
@@ -84,9 +85,11 @@ def test_dds_probe_parses_native_json(monkeypatch, tmp_path) -> None:
         )
 
     calls = []
+    run_kwargs = {}
 
-    def fake_run(command, **_kwargs):
+    def fake_run(command, **kwargs):
         calls.append(command)
+        run_kwargs.update(kwargs)
         return Result()
 
     monkeypatch.setattr(dds_probe.subprocess, "run", fake_run)
@@ -97,6 +100,7 @@ def test_dds_probe_parses_native_json(monkeypatch, tmp_path) -> None:
     assert "--json" in calls[0]
     assert "--domain" in calls[0]
     assert "7" in calls[0]
+    assert run_kwargs["timeout"] == 11.0
     assert stats["/lidar/raw_frame"].samples == 10
     assert stats["/lidar/raw_frame"].frame_id == "livox_frame"
     assert stats["/lidar/raw_frame"].points == 20064

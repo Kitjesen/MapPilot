@@ -20,9 +20,7 @@ from sim.runtime.sensors.evidence import THUNDERV4_NAVIGATION_STREAM_IDS
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SESSION = (
     REPO_ROOT
-    / "sim"
-    / "scenarios"
-    / "catalog"
+    / "sim" / "sessions" / "examples"
     / "thunderv4_open_field_pedestrian_unreal"
     / "session.yaml"
 )

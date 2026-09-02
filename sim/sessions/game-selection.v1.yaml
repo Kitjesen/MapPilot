@@ -1,0 +1,110 @@
+schema: lingtu.sim.game-selection-spec.v1
+title: 灵途工业巡检任务
+entries:
+  - id: factory_park_patrol
+    title: 工业园区巡检
+    description: Thunder V4 在 Factory Park 高保真园区内执行可驾驶巡检。
+    order: 10
+    session_spec: sim/sessions/examples/thunderv4_factory_park_hf/session.yaml
+    availability:
+      state: runnable
+      reason: 已绑定并校验编译后的 SessionBundle
+    presentation:
+      robot:
+        id: thunderv4
+        version: 1.0.1
+        label: thunderv4
+      world:
+        id: factory_park_hf
+        version: 1.2.1
+        label: factory_park_hf
+      scenario: null
+      mode: unreal
+    tags: [inspection, factory, robot]
+
+  - id: open_field_patrol
+    title: 开放地形巡检
+    description: Thunder V4 在高保真开放地形中进行基础操控与传感器巡检。
+    order: 20
+    session_spec: sim/sessions/examples/thunderv4_open_field_hf/session.yaml
+    availability:
+      state: runnable
+      reason: 已绑定并校验编译后的 SessionBundle
+    presentation:
+      robot:
+        id: thunderv4
+        version: 1.0.0
+        label: thunderv4
+      world:
+        id: open_field_hf
+        version: 1.1.0
+        label: open_field_hf
+      scenario: null
+      mode: unreal
+    tags: [inspection, open_field, robot]
+
+  - id: pedestrian_crossing_review
+    title: 行人横穿验证
+    description: 行人运动和 MuJoCo 胶囊代理已可验证；真实人物网格与行走动画尚未完成。
+    order: 30
+    session_spec: sim/sessions/examples/thunderv4_factory_park_pedestrian_unreal/session.yaml
+    availability:
+      state: preview_only
+      reason: 仅审阅：真实行人素材、动画与 Shipping smoke 尚未资格化
+    presentation:
+      robot:
+        id: thunderv4
+        version: 1.0.0
+        label: thunderv4
+      world:
+        id: factory_park_hf
+        version: 1.1.0
+        label: factory_park_hf
+      scenario:
+        id: factory_park_pedestrian_crossing
+        version: 1.1.0
+        label: factory_park_pedestrian_crossing
+      mode: unreal
+    tags: [pedestrian, dynamic, review]
+
+  - id: forest_patrol_review
+    title: 真实森林巡检
+    description: Forest HF 的树、石头、地表和林下素材可审阅；生产级 4033 地形与 UE 固化仍在收口。
+    order: 40
+    session_spec: sim/sessions/examples/thunderv4_forest_hf/session.yaml
+    availability:
+      state: preview_only
+      reason: 仅审阅：Forest HF production route、UE save/reload 与 packaged smoke 尚未资格化
+    presentation:
+      robot:
+        id: thunderv4
+        version: 1.0.3
+        label: Thunder V4
+      world:
+        id: forest_hf
+        version: 2.0.0
+        label: Forest HF 2 km
+      scenario: null
+      mode: unreal
+    tags: [forest, inspection, review]
+
+  - id: rws01_asset_review
+    title: RWS-01 载荷素材审阅
+    description: 浏览 Thunder V4 与 RWS-01 的视觉组合，不进入正式运行。
+    order: 50
+    session_spec: sim/sessions/examples/thunderv4_rws01_preview/session.yaml
+    availability:
+      state: quarantined
+      reason: 已隔离：Thunder 视觉网格仍有近零法线/副法线与可见破面
+    presentation:
+      robot:
+        id: thunderv4
+        version: 1.0.3
+        label: thunderv4
+      world:
+        id: open_field
+        version: 1.0.0
+        label: open_field
+      scenario: null
+      mode: unreal
+    tags: [payload, tripo, quarantined]

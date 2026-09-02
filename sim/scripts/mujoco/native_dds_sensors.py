@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence
 
 if TYPE_CHECKING:
-    from sim.engine.core.engine import VelocityCommand
+    from sim.compat.engine.core.engine import VelocityCommand
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
@@ -89,7 +89,7 @@ KINEMATIC_LEGACY_IMU_ACC_AXIS_SCALE = (-0.43, 1.0, 1.0)
 # acceleration is a control artifact, not a physical IMU force for Fast-LIO.
 KINEMATIC_SIM_HARDWARE_IMU_ACC_AXIS_SCALE = (0.0, 1.0, 1.0)
 _THUNDERV4_POLICY_DIR = (
-    ROOT / "sim" / "controllers" / "doso" / "thunder_v4" / "locomotion" / "policy"
+    ROOT / "sim" / "packages" / "controllers" / "doso" / "thunder_v4" / "locomotion" / "policy"
 )
 DEFAULT_THUNDERV4_ONNX_POLICY = _THUNDERV4_POLICY_DIR / "policy_1119.onnx"
 REQUIRED_SLAM_OUTPUT_TOPICS = (
@@ -3279,7 +3279,7 @@ class NativeDriverBridge:
             raise
 
     def prepare_step(self, *, wait_for_command_s: float = 0.0) -> PreparedDriverBridgeStep:
-        from sim.engine.core.engine import VelocityCommand
+        from sim.compat.engine.core.engine import VelocityCommand
 
         with self._condition:
             self._raise_if_failed_locked()
@@ -4925,7 +4925,8 @@ def _read_json_object(path: str | Path) -> dict[str, Any]:
 
 
 def _native_nav_goal_reached(status: dict[str, Any]) -> bool:
-    return bool((status.get("last_local") or {}).get("goal_reached"))
+    local = status.get("last_local") or {}
+    return bool(local.get("goal_reached")) or local.get("reason") == "goal_reached"
 
 
 def _slam_status_counts(path: str) -> tuple[Counter[str], dict[str, Any]]:
@@ -4978,7 +4979,7 @@ def _acceptance_contacts(model: Any, data: Any) -> list[dict[str, Any]]:
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
-    from sim.engine.core.engine import VelocityCommand
+    from sim.compat.engine.core.engine import VelocityCommand
 
     duration_s = max(0.0, float(args.duration))
     settle_s = max(0.0, float(args.settle_s))

@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 from sim.catalog.management import SimCatalog
-from sim.importers.world import WorldImporter
+from sim.catalog.importers.world import WorldImporter
 from tools.simstudio.service import package_service as package_service_module
 from tools.simstudio.service.package_service import PackageImportService, PackageServiceError
 from tools.simstudio.service.store import StudioStore
@@ -320,9 +320,9 @@ def test_ready_promote_idempotency_and_catalog_refresh(tmp_path: Path) -> None:
     assert promoted["status"] == "PROMOTED"
     assert repeated["id"] == promoted["id"]
     assert promoted["payload"]["promotion"]["package"]["ref"] == "studio_bot@1.0.0"
-    assert promoted["payload"]["promotion"]["package_root"] == "sim/robots/studio_bot"
+    assert promoted["payload"]["promotion"]["package_root"] == "sim/packages/robots/studio_bot"
     assert promoted["payload"]["promotion"]["qualification_path"] == (
-        "sim/qualifications/robot/studio_bot/1.0.0.qualification.json"
+        "sim/evaluation/package_qualifications/robot/studio_bot/1.0.0.qualification.json"
     )
     listed = fresh_service.list_packages(kind="robot")
     assert [item["package"]["ref"] for item in listed["packages"]] == ["studio_bot@1.0.0"]

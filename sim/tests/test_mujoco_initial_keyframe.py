@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from drivers.sim.mujoco.runtime import build_engine
-from sim.engine.core.engine import VelocityCommand
+from sim.compat.engine.core.engine import VelocityCommand
 from sim.runtime.control.thunderv4 import DART_ACTUATOR_ORDER
 
 
@@ -46,12 +46,12 @@ def test_reset_uses_keyframe_joints_or_standing_pose(
     expected_mj: np.ndarray,
 ) -> None:
     mujoco = pytest.importorskip("mujoco")
-    from sim.engine.core.robot import RobotConfig
-    from sim.engine.mujoco.engine import MuJoCoEngine
+    from sim.compat.engine.core.robot import RobotConfig
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
 
     root = Path(__file__).resolve().parents[2]
     config = RobotConfig.default_thunder_v4()
-    config.robot_xml = str(root / "sim/robots/doso/thunder_v4/mjcf/thunderv4.xml")
+    config.robot_xml = str(root / "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml")
     config.standing_pose = [0.0] * 16
     engine = MuJoCoEngine(
         robot_config=config,
@@ -74,8 +74,8 @@ def test_product_keyframe_and_spawn_offset_form_a_stable_base_pose() -> None:
     pytest.importorskip("mujoco")
     root = Path(__file__).resolve().parents[2]
     engine = build_engine(
-        world=root / "sim/worlds/mujoco/open_field.xml",
-        robot_xml=root / "sim/robots/doso/thunder_v4/mjcf/thunderv4.xml",
+        world=root / "sim/packages/worlds/open_field/physics/open_field.xml",
+        robot_xml=root / "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml",
         drive_mode="kinematic",
         start=[1.0, 2.0, 0.0],
         start_orientation_wxyz=[1.0, 0.0, 0.0, 0.0],
@@ -121,7 +121,7 @@ def test_policy_mode_requires_the_declared_thunderv4_baseline(
 def test_keyboard_entrypoint_loads_policy_1119_as_onnx() -> None:
     torch = pytest.importorskip("torch")
     pytest.importorskip("onnxruntime")
-    from sim.controllers.doso.thunder_v4.locomotion import keyboard
+    from sim.packages.controllers.doso.thunder_v4.locomotion import keyboard
 
     policy = keyboard._load_policy(str(keyboard.DEFAULT_POLICY_PATH))
     action = policy(torch.zeros((1, 57), dtype=torch.float32))
@@ -133,8 +133,8 @@ def test_keyboard_entrypoint_loads_policy_1119_as_onnx() -> None:
 
 def test_root_joint_resolution_uses_the_configured_base_body() -> None:
     mujoco = pytest.importorskip("mujoco")
-    from sim.engine.core.robot import RobotConfig
-    from sim.engine.mujoco.engine import MuJoCoEngine
+    from sim.compat.engine.core.robot import RobotConfig
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
 
     model = mujoco.MjModel.from_xml_string(
         """
@@ -178,14 +178,14 @@ def test_controller_channel_order_does_not_replace_physical_joint_order() -> Non
     pytest.importorskip("torch")
     root = Path(__file__).resolve().parents[2]
     engine = build_engine(
-        world=root / "sim/worlds/mujoco/open_field.xml",
-        robot_xml=root / "sim/robots/doso/thunder_v4/mjcf/thunderv4.xml",
+        world=root / "sim/packages/worlds/open_field/physics/open_field.xml",
+        robot_xml=root / "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml",
         drive_mode="policy",
         start=[0.0, 0.0, 0.0],
         start_orientation_wxyz=[1.0, 0.0, 0.0, 0.0],
         initial_keyframe="v4_nominal_stand",
         controller_actuator_names=list(DART_ACTUATOR_ORDER),
-        policy_path=(root / "sim/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx"),
+        policy_path=(root / "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx"),
         policy_freq_hz=50.0,
         mujoco_memory="64M",
         mid360_pattern=None,
@@ -216,13 +216,13 @@ def test_exact_package_policy_remains_upright_at_the_formal_sensor_period() -> N
         np.random.seed(1)
         engine = build_engine(
             world=(root / "sim/packages/worlds/open_field/1.1.0/physics/open_field.xml"),
-            robot_xml=(root / "sim/robots/doso/thunder_v4/mjcf/thunderv4.xml"),
+            robot_xml=(root / "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml"),
             drive_mode="policy",
             start=[0.0, 0.0, 0.0],
             start_orientation_wxyz=[1.0, 0.0, 0.0, 0.0],
             initial_keyframe="v4_nominal_stand",
             controller_actuator_names=list(DART_ACTUATOR_ORDER),
-            policy_path=(root / "sim/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx"),
+            policy_path=(root / "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx"),
             policy_freq_hz=50.0,
             physics_timestep_s=0.001,
             mujoco_memory="64M",

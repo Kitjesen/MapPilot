@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from sim.catalog.resolver import CatalogError, CatalogResolver
-from sim.importers import ImportCode, ImportFailure, WorldImporter
+from sim.catalog.importers import ImportCode, ImportFailure, WorldImporter
 
 
 def _source_tree(root: Path) -> Path:

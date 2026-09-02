@@ -42,7 +42,7 @@ native_nav:
     yaw_gain: 1.5
     max_vx_mps: 0.75
     max_vy_mps: 0.35
-    max_yaw_rate_rad_s: 1.0
+    max_yaw_rate_rad_s: 0.5
   recovery:
     behavior_order: [translate, rotate]
     blocked_interval_s: 2.0

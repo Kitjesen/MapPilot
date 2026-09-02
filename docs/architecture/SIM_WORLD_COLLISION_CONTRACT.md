@@ -233,7 +233,7 @@ the physics change is explicitly versioned and re-qualified.
 | --- | --- | --- |
 | `tools/simstudio/` | Scene editing commands and validated `SceneDraft` | Draft revision, draft digest, authoring metadata |
 | `ScenePublicationService` | Draft + publication request -> import/promotion result | Publication event and resulting package identity |
-| `sim/importers/world.py` | Canonical world source -> qualified `ImportDraft` | MJCF, hfield/proxies, visual projection, provenance, qualification report |
+| `sim/catalog/importers/world.py` | Canonical world source -> qualified `ImportDraft` | MJCF, hfield/proxies, visual projection, provenance, qualification report |
 | `CatalogPromoter` | Qualified draft -> immutable catalog package | Versioned `WorldPackage` and content digests |
 | `SessionCompiler` | `SessionSpec` + exact package versions -> plans | `session.yaml`, plans, shared `session_id` |
 | `PhysicsSceneComposer` | Typed `PhysicsScenePlan` -> `mjModel` + `ModelDescriptor` | No package mutation; generation-scoped runtime state only |

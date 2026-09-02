@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TOOLCHAINS = ROOT / "sim" / "toolchains"
+TOOLCHAINS = ROOT / "sim" / "tools" / "toolchains"
 SCHEMA_PATH = TOOLCHAINS / "windows-toolchain-lock.v1.schema.json"
 EXAMPLE_PATH = TOOLCHAINS / "windows.lock.example.json"
 SCRIPT_PATH = TOOLCHAINS / "detect_windows_toolchain.ps1"

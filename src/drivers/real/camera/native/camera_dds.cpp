@@ -80,7 +80,7 @@ const char* recordSourceName(RecordSource source) noexcept {
 }
 
 struct CliConfig {
-  std::string capture_bin{"build/orbbec_native/orbbec_capture"};
+  std::string capture_bin{"orbbec_capture"};
   std::string frame_id{"camera_link"};
   std::string color_topic{std::string(lingtu::message::kCameraColor.dds_topic)};
   std::string depth_topic{std::string(lingtu::message::kCameraDepth.dds_topic)};

@@ -4,7 +4,7 @@ version: 1.0.0
 kind: world
 description: Bounded 60 x 40 m industrial park used by local-planner comparison and navigation simulation.
 physics:
-  mjcf: ../../../worlds/mujoco/industrial_park_scene.xml
+  mjcf: physics/industrial_park_scene.xml
   global_policy:
     timestep_s: 0.005
     integrator: euler

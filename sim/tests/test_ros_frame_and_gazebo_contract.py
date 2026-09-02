@@ -41,8 +41,8 @@ from runtime.runtime_interface import (
     topic_formats,
     transform_xyz,
 )
-from sim.engine.bridge.gazebo_bridge import GazeboBridgeConfig
-from sim.engine.bridge.gazebo_runtime_adapter import Pose3, _odom_xyz_to_body, _transform_xyz
+from sim.adapters.gazebo.gazebo_bridge import GazeboBridgeConfig
+from sim.adapters.gazebo.gazebo_runtime_adapter import Pose3, _odom_xyz_to_body, _transform_xyz
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -490,7 +490,7 @@ def test_gazebo_bridge_config_exposes_lingtu_runtime_topics():
 
 
 def test_gazebo_launch_is_optional_but_ros_native():
-    launch = _read("sim/engine/bridge/gazebo_simulation.launch.py")
+    launch = _read("sim/adapters/gazebo/gazebo_simulation.launch.py")
     normalized_launch = launch.replace("\r\n", "\n")
 
     assert "lingtu_gazebo_demo_room.sdf" in launch
@@ -510,8 +510,8 @@ def test_gazebo_launch_is_optional_but_ros_native():
     assert "headless" in launch
     assert "-r -s" in launch
     assert 'else f"-r {world}"' in launch
-    assert "sim.engine.bridge.gazebo_cmd_vel_adapter" in launch
-    assert "sim.engine.bridge.gazebo_runtime_adapter" in launch
+    assert "sim.adapters.gazebo.gazebo_cmd_vel_adapter" in launch
+    assert "sim.adapters.gazebo.gazebo_runtime_adapter" in launch
     assert "additional_env=adapter_env" in launch
     assert "cwd=repo_root" in launch
     assert "world -> map -> odom -> body" in launch
@@ -521,7 +521,7 @@ def test_gazebo_launch_is_optional_but_ros_native():
 
 
 def test_gazebo_industrial_park_scene_is_first_class_product_scene():
-    world_path = REPO_ROOT / "sim/worlds/gazebo/lingtu_gazebo_industrial_park.sdf"
+    world_path = REPO_ROOT / "sim/adapters/gazebo/assets/worlds/lingtu_gazebo_industrial_park.sdf"
     tree = ET.parse(world_path)
     root = tree.getroot()
     text = world_path.read_text(encoding="utf-8")
@@ -559,7 +559,7 @@ def test_gazebo_industrial_park_scene_is_first_class_product_scene():
 
 
 def test_gazebo_proxy_model_matches_bridge_frame_and_topic_contract():
-    model_path = REPO_ROOT / "sim/assets/sdf/thunder_gazebo_proxy.sdf"
+    model_path = REPO_ROOT / "sim/adapters/gazebo/assets/models/thunder_gazebo_proxy.sdf"
     tree = ET.parse(model_path)
     root = tree.getroot()
     text = model_path.read_text(encoding="utf-8")
@@ -607,7 +607,7 @@ def test_gazebo_proxy_model_matches_bridge_frame_and_topic_contract():
 
 
 def test_gazebo_cmd_vel_adapter_preserves_lingtu_stamped_command_boundary():
-    adapter = _read("sim/engine/bridge/gazebo_cmd_vel_adapter.py")
+    adapter = _read("sim/adapters/gazebo/gazebo_cmd_vel_adapter.py")
 
     assert '"/nav/cmd_vel"' in adapter
     assert '"/lingtu/gazebo/cmd_vel"' in adapter
@@ -620,7 +620,7 @@ def test_gazebo_cmd_vel_adapter_preserves_lingtu_stamped_command_boundary():
 
 
 def test_gazebo_runtime_adapter_normalizes_frames_and_avoids_control_publication():
-    adapter = _read("sim/engine/bridge/gazebo_runtime_adapter.py")
+    adapter = _read("sim/adapters/gazebo/gazebo_runtime_adapter.py")
 
     assert '"/nav/odometry"' not in adapter
     assert "lingtu_odometry" in adapter
@@ -728,7 +728,7 @@ def test_gazebo_runtime_adapter_point_transform_math():
 
 
 def test_tf_contract_smoke_is_read_only_and_checks_runtime_chain():
-    smoke = _read("sim/scripts/tf_contract_smoke.py")
+    smoke = _read("sim/diagnostics/gazebo_tf.py")
 
     assert "map->odom->body" in smoke
     assert '"/slam/odometry"' in smoke

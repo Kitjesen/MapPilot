@@ -103,7 +103,6 @@ python tools/calibration/lidar_imu/ros2_adapter/parse_result.py \
 默认优先使用 `direct_visual_lidar_calibration` 做 target-less 标定；对于 Livox 专用对比或需要标定板的场景，可使用下面“第三方工具”表中的替代工具。
 
 ```bash
-python scripts/build/build_rust_kernels.py --target camera_lidar_optimizer --release
 cd tools/calibration/camera_lidar/direct_visual_lidar_calibration
 source /opt/ros/humble/setup.bash
 colcon build --packages-select direct_visual_lidar_calibration

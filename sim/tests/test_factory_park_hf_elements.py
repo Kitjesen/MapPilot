@@ -19,7 +19,7 @@ from sim.tools.worlds.factory_park_hf.generate import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ELEMENT_SCHEMA_PATH = (
-    REPO_ROOT / "schemas/simulation/factory-park.v1.json"
+    REPO_ROOT / "sim/contracts/schemas/factory-park.v1.json"
 )
 
 
@@ -248,7 +248,7 @@ def test_element_batch_flows_into_layout_semantics_and_mujoco(tmp_path) -> None:
             encoding="utf-8"
         )
     )
-    mjcf = (generated.world_root / "factory_park_hf.xml").read_text(encoding="utf-8")
+    mjcf = (generated.world_root / "physics" / "factory_park_hf.xml").read_text(encoding="utf-8")
 
     stable_id = "element__parking_safety__bollard_01"
     assert layout["element_batches"] == [
@@ -312,7 +312,7 @@ def test_visual_only_catalog_element_is_non_colliding_in_layout_and_mujoco(tmp_p
     assert item["collision"] is False
     assert item["visual_only"] is True
 
-    mjcf = (generated.world_root / "factory_park_hf.xml").read_text(encoding="utf-8")
+    mjcf = (generated.world_root / "physics" / "factory_park_hf.xml").read_text(encoding="utf-8")
     geom = mjcf[mjcf.index(f'name="{stable_id}"') :].split("/>", 1)[0]
     assert 'contype="0"' in geom
     assert 'conaffinity="0"' in geom
@@ -351,7 +351,7 @@ def test_generator_cli_accepts_repeatable_element_batch_files(tmp_path, capsys) 
     )
     result = json.loads(capsys.readouterr().out)
     layout = json.loads(
-        (tmp_path / "sim/worlds/factory_park_hf/generated/expanded-layout.json").read_text(
+        (tmp_path / "sim/packages/worlds/factory_park_hf/generated/expanded-layout.json").read_text(
             encoding="utf-8"
         )
     )
@@ -409,7 +409,7 @@ def test_catalog_materials_are_declared_for_mujoco(tmp_path) -> None:
         ),
     )
 
-    mjcf = (generated.world_root / "factory_park_hf.xml").read_text(encoding="utf-8")
+    mjcf = (generated.world_root / "physics" / "factory_park_hf.xml").read_text(encoding="utf-8")
     assert '<material name="pallet_wood"' in mjcf
 
 

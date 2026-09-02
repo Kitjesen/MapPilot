@@ -11,7 +11,7 @@ geometry:
   vehicle_length: 1.0
   collision_cylinder_radius: 0.40
   collision_cylinder_offset: 0.25
-  collision_hard_margin: 0.15
+  collision_hard_margin: 0.08
   collision_clearance_below: 0.25
   collision_clearance_above: 0.35
   sensor_offset_x: 0.3

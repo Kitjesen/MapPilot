@@ -109,12 +109,12 @@ def test_thunder_catalog_declares_product_readiness_contracts():
         {
             "name": "camera_dds",
             "env": "LINGTU_CAMERA_DDS_BIN",
-            "path": "/opt/lingtu/current/build/camera_dds/lingtu_camera_dds",
+            "path": "/opt/lingtu/current/bin/lingtu_camera_dds",
         },
         {
             "name": "orbbec_capture",
             "env": "LINGTU_ORBBEC_CAPTURE_BIN",
-            "path": "/opt/lingtu/current/build/orbbec_native/orbbec_capture",
+            "path": "/opt/lingtu/current/bin/orbbec_capture",
         },
     ]
 
@@ -125,7 +125,7 @@ def test_thunder_catalog_declares_product_readiness_contracts():
         {
             "name": "livox_dds",
             "env": "LINGTU_LIVOX_BIN",
-            "path": "/opt/lingtu/current/build/livox_sdk2_stream/livox_sdk2_stream",
+            "path": "/opt/lingtu/current/bin/livox_sdk2_stream",
         }
     ]
 
@@ -135,7 +135,7 @@ def test_thunder_catalog_declares_product_readiness_contracts():
         {
             "name": "slam_dds",
             "env": "LINGTU_SLAM_BIN",
-            "path": "/opt/lingtu/current/build/slam_core/slamd",
+            "path": "/opt/lingtu/current/bin/slamd",
         }
     ]
 
@@ -172,7 +172,7 @@ def test_thunder_catalog_declares_product_readiness_contracts():
         {
             "name": "mapd",
             "env": "LINGTU_MAPD_BIN",
-            "path": "/opt/lingtu/current/build/maps/mapd",
+            "path": "/opt/lingtu/current/bin/mapd",
         }
     ]
 
@@ -196,7 +196,7 @@ def test_thunder_catalog_declares_product_readiness_contracts():
         {
             "name": "traversability_dds",
             "env": "LINGTU_TRAVERSABILITY_DDS_BIN",
-            "path": "/opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds",
+            "path": "/opt/lingtu/current/bin/lingtu_traversability_dds",
         }
     ]
 
@@ -208,7 +208,7 @@ def test_thunder_catalog_declares_product_readiness_contracts():
         {
             "name": "nav_dds",
             "env": "LINGTU_NAV_DDS_BIN",
-            "path": "/opt/lingtu/current/build/nav_endpoint/navd",
+            "path": "/opt/lingtu/current/bin/navd",
         }
     ]
     assert metadata["explore"]["checks"] == [
@@ -294,47 +294,47 @@ def test_thunder_install_services_and_runtime_order():
         "livox_dds": {
             "service": "lidar",
             "env": "LINGTU_LIVOX_BIN",
-            "path": "/opt/lingtu/current/build/livox_sdk2_stream/livox_sdk2_stream",
+            "path": "/opt/lingtu/current/bin/livox_sdk2_stream",
         },
         "camera_dds": {
             "service": "camera",
             "env": "LINGTU_CAMERA_DDS_BIN",
-            "path": "/opt/lingtu/current/build/camera_dds/lingtu_camera_dds",
+            "path": "/opt/lingtu/current/bin/lingtu_camera_dds",
         },
         "orbbec_capture": {
             "service": "camera",
             "env": "LINGTU_ORBBEC_CAPTURE_BIN",
-            "path": "/opt/lingtu/current/build/orbbec_native/orbbec_capture",
+            "path": "/opt/lingtu/current/bin/orbbec_capture",
         },
         "slam_dds": {
             "service": "slam",
             "env": "LINGTU_SLAM_BIN",
-            "path": "/opt/lingtu/current/build/slam_core/slamd",
+            "path": "/opt/lingtu/current/bin/slamd",
         },
         "mapd": {
             "service": "maps",
             "env": "LINGTU_MAPD_BIN",
-            "path": "/opt/lingtu/current/build/maps/mapd",
+            "path": "/opt/lingtu/current/bin/mapd",
         },
         "traversability_dds": {
             "service": "traversability",
             "env": "LINGTU_TRAVERSABILITY_DDS_BIN",
-            "path": "/opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds",
+            "path": "/opt/lingtu/current/bin/lingtu_traversability_dds",
         },
         "nav_dds": {
             "service": "nav",
             "env": "LINGTU_NAV_DDS_BIN",
-            "path": "/opt/lingtu/current/build/nav_endpoint/navd",
+            "path": "/opt/lingtu/current/bin/navd",
         },
         "driver": {
             "service": "driver",
             "env": "LINGTU_DRIVER_BIN",
-            "path": "/opt/lingtu/current/build/driver/lingtu_driver",
+            "path": "/opt/lingtu/current/bin/lingtu_driver",
         },
         "explore_dds": {
             "service": "explore",
             "env": "LINGTU_EXPLORE_DDS_BIN",
-            "path": "/opt/lingtu/current/build/nav_endpoint/lingtu_explore_dds",
+            "path": "/opt/lingtu/current/bin/lingtu_explore_dds",
         },
     }
     assert thunder_runtime_dds_topics()["lidar"]["dds_topics"] == (
@@ -505,13 +505,13 @@ def test_thunder_catalog_cli_exports_field_readiness_targets(capsys):
 
     assert _main(["thunder", "readiness-binaries"]) == 0
     assert capsys.readouterr().out.splitlines() == [
-        "livox_dds=lidar|LINGTU_LIVOX_BIN|/opt/lingtu/current/build/livox_sdk2_stream/livox_sdk2_stream",
-        "camera_dds=camera|LINGTU_CAMERA_DDS_BIN|/opt/lingtu/current/build/camera_dds/lingtu_camera_dds",
-        "orbbec_capture=camera|LINGTU_ORBBEC_CAPTURE_BIN|/opt/lingtu/current/build/orbbec_native/orbbec_capture",
-        "slam_dds=slam|LINGTU_SLAM_BIN|/opt/lingtu/current/build/slam_core/slamd",
-        "mapd=maps|LINGTU_MAPD_BIN|/opt/lingtu/current/build/maps/mapd",
-        "traversability_dds=traversability|LINGTU_TRAVERSABILITY_DDS_BIN|/opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds",
-        "nav_dds=nav|LINGTU_NAV_DDS_BIN|/opt/lingtu/current/build/nav_endpoint/navd",
-        "driver=driver|LINGTU_DRIVER_BIN|/opt/lingtu/current/build/driver/lingtu_driver",
-        "explore_dds=explore|LINGTU_EXPLORE_DDS_BIN|/opt/lingtu/current/build/nav_endpoint/lingtu_explore_dds",
+        "livox_dds=lidar|LINGTU_LIVOX_BIN|/opt/lingtu/current/bin/livox_sdk2_stream",
+        "camera_dds=camera|LINGTU_CAMERA_DDS_BIN|/opt/lingtu/current/bin/lingtu_camera_dds",
+        "orbbec_capture=camera|LINGTU_ORBBEC_CAPTURE_BIN|/opt/lingtu/current/bin/orbbec_capture",
+        "slam_dds=slam|LINGTU_SLAM_BIN|/opt/lingtu/current/bin/slamd",
+        "mapd=maps|LINGTU_MAPD_BIN|/opt/lingtu/current/bin/mapd",
+        "traversability_dds=traversability|LINGTU_TRAVERSABILITY_DDS_BIN|/opt/lingtu/current/bin/lingtu_traversability_dds",
+        "nav_dds=nav|LINGTU_NAV_DDS_BIN|/opt/lingtu/current/bin/navd",
+        "driver=driver|LINGTU_DRIVER_BIN|/opt/lingtu/current/bin/lingtu_driver",
+        "explore_dds=explore|LINGTU_EXPLORE_DDS_BIN|/opt/lingtu/current/bin/lingtu_explore_dds",
     ]

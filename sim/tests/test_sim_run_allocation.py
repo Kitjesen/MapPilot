@@ -24,13 +24,11 @@ from sim.runtime.coordinator import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUN_ALLOCATION_SCHEMA = (
-    REPO_ROOT / "schemas" / "simulation" / "run-allocation.v1.json"
+    REPO_ROOT / "sim" / "contracts" / "schemas" / "run-allocation.v1.json"
 )
 CATALOG_SESSION = (
     REPO_ROOT
-    / "sim"
-    / "scenarios"
-    / "catalog"
+    / "sim" / "sessions" / "examples"
     / "thunder_omni_contract"
     / "session.yaml"
 )

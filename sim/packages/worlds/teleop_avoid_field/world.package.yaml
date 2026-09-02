@@ -4,7 +4,7 @@ version: 1.0.0
 kind: world
 description: Controlled headless field for physical teleop obstacle-detour acceptance.
 physics:
-  mjcf: ../../../worlds/mujoco/teleop_avoid_field.xml
+  mjcf: physics/teleop_avoid_field.xml
   global_policy:
     timestep_s: 0.005
     integrator: euler

@@ -12,13 +12,13 @@ import pytest
 import yaml
 
 from sim.catalog.resolver import CatalogResolver
-from sim.importers import CatalogPromoter, ImportFailure, WorldImporter
+from sim.catalog.importers import CatalogPromoter, ImportFailure, WorldImporter
 from sim.tests.test_world_importer import _request, _source_tree
 
 
 def _copy_resolvable_robot_fixture(repo_root: Path) -> None:
     source_root = Path(__file__).resolve().parents[2]
-    relative = "sim/robots/omni_cart"
+    relative = "sim/packages/robots/omni_cart"
     shutil.copytree(source_root / relative, repo_root / relative)
 
 
@@ -90,4 +90,4 @@ def test_world_import_promotion_rejects_an_unknown_qualification_field(tmp_path:
         CatalogPromoter(tmp_path).promote(draft)
 
     assert not (tmp_path / "sim" / "packages" / "worlds" / "field").exists()
-    assert not (tmp_path / "sim" / "qualifications" / "world" / "field").exists()
+    assert not (tmp_path / "sim" / "evaluation" / "package_qualifications" / "world" / "field").exists()

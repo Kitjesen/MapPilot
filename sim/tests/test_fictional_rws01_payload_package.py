@@ -12,9 +12,9 @@ import mujoco
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_PATH = REPO_ROOT / "schemas" / "simulation" / "payload.v1.json"
+SCHEMA_PATH = REPO_ROOT / "sim" / "contracts" / "schemas" / "payload.v1.json"
 PROJECTION_SCHEMA_PATH = (
-    REPO_ROOT / "schemas" / "simulation" / "payload-visual.v1.json"
+    REPO_ROOT / "sim" / "contracts" / "schemas" / "payload-visual.v1.json"
 )
 PACKAGE_ROOT = (
     REPO_ROOT / "sim" / "packages" / "payloads" / "fictional_rws_01" / "1.0.0"

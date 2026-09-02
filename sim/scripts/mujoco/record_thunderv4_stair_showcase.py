@@ -27,7 +27,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from drivers.sim.mujoco.driver import MujocoDriverModule
-from sim.engine.core.engine import VelocityCommand
+from sim.compat.engine.core.engine import VelocityCommand
 
 _FEET = {"FR_foot", "FL_foot", "RR_foot", "RL_foot"}
 

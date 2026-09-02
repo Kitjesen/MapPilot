@@ -11,9 +11,7 @@ from sim.catalog import CatalogResolver
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SESSION = (
     REPO_ROOT
-    / "sim"
-    / "scenarios"
-    / "catalog"
+    / "sim" / "sessions" / "examples"
     / "omni_cart_factory_park_hf"
     / "session.yaml"
 )

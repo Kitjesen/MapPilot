@@ -8,8 +8,6 @@ Type=simple
 Group=lingtu
 WorkingDirectory=/opt/lingtu/current
 Environment=LINGTU_REPO=/opt/lingtu/current
-Environment=LINGTU_CAMERA_DDS_BIN=/opt/lingtu/current/build/camera_dds/lingtu_camera_dds
-Environment=LINGTU_ORBBEC_CAPTURE_BIN=/opt/lingtu/current/build/orbbec_native/orbbec_capture
 Environment=LINGTU_CAMERA_STATUS_FILE=/dev/shm/lingtu/camera_status.json
 Environment=LINGTU_CAMERA_FRAME_ID=camera_link
 Environment=LINGTU_CAMERA_COLOR_TOPIC=rt/camera/color

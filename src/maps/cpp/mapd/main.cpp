@@ -230,6 +230,15 @@ void ConfigureOccupancy(Config *engine) {
   occupancy.occupied_probability = static_cast<float>(ParseDouble(
       EnvOr("LINGTU_MAPD_OCCUPANCY_P_OCC", std::to_string(occupancy.occupied_probability)),
       "LINGTU_MAPD_OCCUPANCY_P_OCC"));
+  occupancy.inflation_radius_m = static_cast<float>(ParseDouble(
+      EnvOr("LINGTU_MAPD_INFLATION_RADIUS_M", std::to_string(occupancy.inflation_radius_m)),
+      "LINGTU_MAPD_INFLATION_RADIUS_M"));
+  occupancy.inflation_z_up_m = static_cast<float>(ParseDouble(
+      EnvOr("LINGTU_MAPD_INFLATION_Z_UP_M", std::to_string(occupancy.inflation_z_up_m)),
+      "LINGTU_MAPD_INFLATION_Z_UP_M"));
+  occupancy.inflation_z_down_m = static_cast<float>(ParseDouble(
+      EnvOr("LINGTU_MAPD_INFLATION_Z_DOWN_M", std::to_string(occupancy.inflation_z_down_m)),
+      "LINGTU_MAPD_INFLATION_Z_DOWN_M"));
 }
 
 void PrintUsage() {
@@ -251,7 +260,6 @@ void PrintUsage() {
             << "  --max-string-bytes N maximum DDS string bytes\n"
             << "  --max-scene-bytes N maximum serialized MapScene payload bytes\n"
             << "  --max-voxel-snapshot-points N bounded scene voxel points\n"
-            << "  --max-collision-snapshot-points N complete local collision voxel cap\n"
             << "  --voxel-snapshot-radius M local voxel scene radius\n"
             << "  --max-voxels N     live voxel runtime hard limit\n"
             << "  --max-accumulated-cells N accumulated runtime cell hard limit\n"
@@ -341,9 +349,6 @@ Options ParseOptions(int argc, char **argv) {
   options.engine.max_voxel_snapshot_points =
       ParseSize(EnvOr("LINGTU_MAPD_MAX_VOXEL_SNAPSHOT_POINTS", "200000"),
                 "LINGTU_MAPD_MAX_VOXEL_SNAPSHOT_POINTS");
-  options.engine.max_collision_snapshot_points =
-      ParseSize(EnvOr("LINGTU_MAPD_MAX_COLLISION_SNAPSHOT_POINTS", "200000"),
-                "LINGTU_MAPD_MAX_COLLISION_SNAPSHOT_POINTS");
   options.engine.voxel_snapshot_radius_m = static_cast<float>(ParseDouble(
       EnvOr("LINGTU_MAPD_VOXEL_SNAPSHOT_RADIUS_M", "30"), "LINGTU_MAPD_VOXEL_SNAPSHOT_RADIUS_M"));
   options.engine.voxel.max_voxels =
@@ -404,9 +409,6 @@ Options ParseOptions(int argc, char **argv) {
       options.dds.max_scene_bytes = ParseSize(next(), "--max-scene-bytes");
     } else if (argument == "--max-voxel-snapshot-points") {
       options.engine.max_voxel_snapshot_points = ParseSize(next(), "--max-voxel-snapshot-points");
-    } else if (argument == "--max-collision-snapshot-points") {
-      options.engine.max_collision_snapshot_points =
-          ParseSize(next(), "--max-collision-snapshot-points");
     } else if (argument == "--voxel-snapshot-radius") {
       options.engine.voxel_snapshot_radius_m =
           static_cast<float>(ParseDouble(next(), "--voxel-snapshot-radius"));
@@ -442,15 +444,6 @@ Options ParseOptions(int argc, char **argv) {
       options.query_max_json_bytes == 0U) {
     throw std::invalid_argument("mapd options are invalid");
   }
-  constexpr std::size_t kCollisionPointBytes = 3U * sizeof(float);
-  const std::size_t collision_byte_cap = options.dds.max_cloud_bytes / kCollisionPointBytes;
-  if (collision_byte_cap == 0U) {
-    throw std::invalid_argument("mapd max cloud bytes cannot hold one collision point");
-  }
-  // BuildCollisionLayer must mark the layer incomplete before DDS encoding can
-  // hit its byte limit. A configured point cap may only tighten this bound.
-  options.engine.max_collision_snapshot_points =
-      std::min(options.engine.max_collision_snapshot_points, collision_byte_cap);
   options.dds.max_points_per_observation = options.engine.max_points_per_observation;
   return options;
 }
@@ -505,8 +498,12 @@ std::string StatusJson(const State &state, const DdsInputState &input, const Dds
          "\"occupancy_size_z\":" + std::to_string(options.engine.occupancy.size_z) + "," +
          "\"occupancy_ray_m\":" +
          std::to_string(options.engine.occupancy.max_ray_range_m) + "," +
-         "\"max_collision_snapshot_points\":" +
-         std::to_string(options.engine.max_collision_snapshot_points) + "}," +
+         "\"inflation_radius_m\":" +
+         std::to_string(options.engine.occupancy.inflation_radius_m) + "," +
+         "\"inflation_z_up_m\":" +
+         std::to_string(options.engine.occupancy.inflation_z_up_m) + "," +
+         "\"inflation_z_down_m\":" +
+         std::to_string(options.engine.occupancy.inflation_z_down_m) + "}," +
          "\"extended_layers_enabled\":" +
          (state.extended_layers_enabled ? "true" : "false") + "," +
          "\"reset_epoch\":" + std::to_string(state.reset_epoch) + "," +

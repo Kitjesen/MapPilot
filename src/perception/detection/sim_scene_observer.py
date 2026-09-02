@@ -10,16 +10,14 @@ from pathlib import Path
 
 import numpy as np
 
+_SIM_ROOT = Path(__file__).resolve().parents[3] / "sim"
 _WORLD_FILES = {
-    "building": "building_scene.xml",
-    "building_scene": "building_scene.xml",
-    "factory": "factory_scene.xml",
-    "factory_scene": "factory_scene.xml",
-    "open_field": "open_field.xml",
-    "spiral": "spiral_terrain.xml",
-    "spiral_terrain": "spiral_terrain.xml",
+    "building": _SIM_ROOT / "packages/worlds/building/physics/building_scene.xml",
+    "building_scene": _SIM_ROOT / "packages/worlds/building/physics/building_scene.xml",
+    "factory": _SIM_ROOT / "compat/engine/worlds/factory_scene.xml",
+    "factory_scene": _SIM_ROOT / "compat/engine/worlds/factory_scene.xml",
+    "open_field": _SIM_ROOT / "packages/worlds/open_field/physics/open_field.xml",
 }
-_SIM_WORLDS = Path(__file__).resolve().parents[3] / "sim" / "worlds" / "mujoco"
 _AGGREGATE_LABELS = {"stairs", "goal", "forklift"}
 
 
@@ -176,10 +174,10 @@ class SimSceneObserver:
 
     @classmethod
     def _load_objects(cls, world: str) -> list[_SceneObject]:
-        world_file = _WORLD_FILES.get(world, world)
-        if not world_file:
+        if not world:
             return []
-        scene_xml = _SIM_WORLDS / world_file
+        world_file = _WORLD_FILES.get(world, Path(world))
+        scene_xml = world_file
         if not scene_xml.exists():
             return []
 

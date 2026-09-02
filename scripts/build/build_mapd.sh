@@ -21,14 +21,13 @@ fi
 # SaveMap requires a real PCL-backed .pcd -> OctoMap converter by default.
 LINGTU_OCTOPLANNER3D_BUILD_DIR="${OCTOMAP_BUILD_DIR}" \
 JOBS="${JOBS}" \
-  "${ROOT}/scripts/build/build_octoplanner3d.sh" --require-pcl
+  bash "${ROOT}/scripts/build/build_octoplanner3d.sh" --require-pcl
 
-cmake -S "${ROOT}/src/maps/prune/cpp" -B "${PRUNE_BUILD_DIR}" \
-  -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-  -DLINGTU_PRUNE_ERASOR2=OFF
-cmake --build "${PRUNE_BUILD_DIR}" \
-  --target prune \
-  --parallel "${JOBS}"
+LINGTU_PRUNE_BUILD_DIR="${PRUNE_BUILD_DIR}" \
+LINGTU_BUILD_JOBS="${JOBS}" \
+LINGTU_PRUNE_ERASOR2=OFF \
+CMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+  bash "${ROOT}/scripts/build/build_prune.sh"
 
 cmake -S "${ROOT}/src/maps" -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \

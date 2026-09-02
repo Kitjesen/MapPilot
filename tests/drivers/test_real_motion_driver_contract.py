@@ -201,7 +201,6 @@ def test_driver_readiness_contract_is_backend_neutral() -> None:
 
 def test_active_deployment_files_have_no_sunrise_account_or_home() -> None:
     active_files = (
-        "scripts/deploy/cut_release.sh",
         "scripts/deploy/deploy_robot.sh",
         "tools/deploy/sync_robot.ps1",
         "scripts/deploy/thunder/configure_gateway_api_key.sh",

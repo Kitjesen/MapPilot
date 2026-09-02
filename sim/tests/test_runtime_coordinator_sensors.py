@@ -21,7 +21,7 @@ from sim.runtime.sensors import (
 from sim.runtime.sensors.session import SensorEndpoint
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SESSION = REPO_ROOT / "sim" / "scenarios" / "catalog" / "thunderv4_unreal" / "session.yaml"
+SESSION = REPO_ROOT / "sim" / "sessions" / "examples" / "thunderv4_unreal" / "session.yaml"
 ACTUATORS = (
     "FR_hip_joint",
     "FR_thigh_joint",

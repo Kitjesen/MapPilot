@@ -4,7 +4,7 @@ version: 1.0.0
 kind: world
 description: Two-floor MuJoCo building with explicit walls, obstacles, and a fourteen-step staircase.
 physics:
-  mjcf: ../../../worlds/mujoco/building_scene.xml
+  mjcf: physics/building_scene.xml
   global_policy:
     timestep_s: 0.005
     integrator: euler

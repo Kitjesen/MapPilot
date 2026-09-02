@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from sim.scripts.navigation_replay_deviation_gate import (
+from sim.evaluation.navigation_replay import (
     SCHEMA_VERSION,
     build_fixture_trace,
     build_report,
@@ -154,7 +154,8 @@ def test_navigation_replay_deviation_cli_fixture_writes_report(tmp_path: Path):
     probe = subprocess.run(
         [
             sys.executable,
-            str(REPO_ROOT / "sim/scripts/navigation_replay_deviation_gate.py"),
+            "-m",
+            "sim.evaluation.navigation_replay",
             "--fixture",
             "--json-out",
             str(report_path),
@@ -179,7 +180,8 @@ def test_navigation_replay_deviation_cli_topic_jsonl_writes_trace(tmp_path: Path
     probe = subprocess.run(
         [
             sys.executable,
-            str(REPO_ROOT / "sim/scripts/navigation_replay_deviation_gate.py"),
+            "-m",
+            "sim.evaluation.navigation_replay",
             "--topic-jsonl",
             str(topic_jsonl),
             "--write-trace",
@@ -208,7 +210,8 @@ def test_navigation_replay_deviation_cli_missing_trace_is_red(tmp_path: Path):
     probe = subprocess.run(
         [
             sys.executable,
-            str(REPO_ROOT / "sim/scripts/navigation_replay_deviation_gate.py"),
+            "-m",
+            "sim.evaluation.navigation_replay",
             "--trace",
             str(tmp_path / "missing_trace.json"),
             "--json-out",

@@ -220,7 +220,7 @@ def validate_gazebo_bridge_contract(contract_topics: set[str]) -> tuple[list[str
         for path in (ROOT_DIR, root_src):
             if path not in sys.path:
                 sys.path.insert(0, path)
-        from sim.engine.bridge.gazebo_bridge import GazeboBridgeConfig
+        from sim.adapters.gazebo.gazebo_bridge import GazeboBridgeConfig
     except Exception as exc:
         return [f"  ERROR: cannot import GazeboBridgeConfig: {exc}"], set()
 

@@ -13,7 +13,7 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Sequence
 
-from sim.importers.heightmap import build_heightmap_artifacts_from_u16_file
+from sim.catalog.importers.heightmap import build_heightmap_artifacts_from_u16_file
 
 DEFAULT_SEED = 20260813
 PRODUCTION_RESOLUTION_PX = 4033

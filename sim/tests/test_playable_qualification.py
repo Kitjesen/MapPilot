@@ -776,7 +776,7 @@ def _write_valid_run(root: Path) -> Path:
             **_identity_fields(),
             "controller_package_id": "thunderv4_locomotion",
             "controller_package_version": "1.0.0",
-            "controller_manifest_path": "sim/controllers/doso/thunder_v4/locomotion/controller.package.yaml",
+            "controller_manifest_path": "sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml",
             "command_calibration": {
                 "schema": "lingtu.sim.controller-command-calibration.v1",
                 "scope": "quadruped_him_observation_only",

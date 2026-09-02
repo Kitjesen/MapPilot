@@ -1,16 +1,28 @@
 # Simulation catalog
 
 The catalog resolves one simulation preset into deterministic runtime plans.
-Robot, controller, sensor, and sensor-rig manifests live beside their assets
-under `sim/robots/`, `sim/controllers/`, `sim/sensors/`, and
-`sim/sensor_rigs/`. Worlds, scenarios, and payloads remain under
-`sim/packages/`. The resolver does not launch MuJoCo, Unreal, DDS, or a
-controller process.
+
+## Contents
+
+| Path | Responsibility |
+| --- | --- |
+| `resolver.py` | Discover package manifests from the single `sim/packages/` root and compile one SessionSpec. |
+| `composer.py` | Turn a validated SessionIntent into `session.yaml` and the same compiled plans. |
+| `importers/` | Inspect external Robot/World sources, qualify drafts, and promote packages. |
+| `management.py` | Expose read-only package list, inspect, dependency, and qualification queries. |
+| `visual_binding.py`, `visual_projection.py` | Validate compiled visual bindings without launching a runtime. |
+
+## Boundary
+
+All package manifests and their owned assets live under `sim/packages/`.
+The resolver does not launch MuJoCo, Unreal, DDS, or a controller process.
+
+## Entry points
 
 Resolve the default Thunder V4 preset with:
 
 ```powershell
-python -m sim.catalog sim/presets/doso/thunder_v4/default.yaml `
+python -m sim.catalog sim/sessions/products/doso/thunder_v4/default.yaml `
   --repo-root . `
   --output-dir catalog-contract
 ```
@@ -30,7 +42,7 @@ python -m sim.catalog compose --repo-root . session.intent.yaml --output-dir aut
 `SimCatalog` is read-only: list, inspect, validation, dependency, and
 qualification queries never allocate ports or start MuJoCo, Unreal, DDS, or a
 controller process. External qualification evidence lives at
-`sim/qualifications/<kind>/<id>/<version>.qualification.json` and identifies the
+`sim/evaluation/package_qualifications/<kind>/<id>/<version>.qualification.json` and identifies the
 package by kind, ID, and version. Missing evidence is reported as `unverified`;
 invalid evidence fails closed with a stable diagnostic code.
 
@@ -81,9 +93,9 @@ headless physics sessions, the backend roles are still explicit:
 `{"physics": "mujoco", "visual": null}`. MuJoCo owns physics; Unreal is an
 optional visual/sensor role, not an alternate physics backend.
 
-Product-selected presets live under `sim/presets/<vendor>/<model>/`. A preset
+Product-selected presets live under `sim/sessions/products/<vendor>/<model>/`. A preset
 only composes a world, robot, sensor rig, controller, spawn, and runtime
-bindings; it does not own those assets. World, scenario, and payload manifests
-remain under `sim/packages/{worlds,scenarios,payloads}/`.
+bindings; it does not own those assets. Package manifests are discovered from
+the single `sim/packages/` root.
 Use `sim/tools/assets/build_robot_visual_projection.py` to build or refresh the
 robot projection files referenced by RobotPackage `visual.projection`.

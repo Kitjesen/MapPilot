@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 import pytest
-from scripts.sim.run_simstudio_visual_acceptance import (
+from sim.runtime.qualification.visual_acceptance import (
     AcceptanceError,
     _run_summary,
     diagnose_offline_startup,

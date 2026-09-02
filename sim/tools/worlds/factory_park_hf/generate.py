@@ -767,9 +767,9 @@ def _expanded_layout(
             "surface_id": "road_entry_boulevard",
         },
         "terrain": {
-            "heightfield_r16_png": "sim/worlds/factory_park_hf/generated/heightfield_r16.png",
-            "mujoco_heightfield": "sim/worlds/factory_park_hf/generated/heightfield_f32.bin",
-            "terrain_obj": "sim/worlds/factory_park_hf/generated/terrain.obj",
+            "heightfield_r16_png": "sim/packages/worlds/factory_park_hf/generated/heightfield_r16.png",
+            "mujoco_heightfield": "sim/packages/worlds/factory_park_hf/generated/heightfield_f32.bin",
+            "terrain_obj": "sim/packages/worlds/factory_park_hf/generated/terrain.obj",
             "grid_px": [spec.width_px, spec.height_px],
             "extent_m": [spec.size_x_m, spec.size_y_m],
             "elevation_scale_m": spec.elevation_scale_m,
@@ -886,7 +886,7 @@ def _mjcf(
         '  <option gravity="0 0 -9.81" timestep="0.002" integrator="RK4" solver="Newton" iterations="100"/>',
         '  <visual><headlight diffuse=".55 .55 .52" ambient=".28 .30 .32" specular=".05 .05 .05"/></visual>',
         "  <asset>",
-        '    <hfield name="factory_park_terrain" file="generated/heightfield_f32.bin" '
+        '    <hfield name="factory_park_terrain" file="../generated/heightfield_f32.bin" '
         'content_type="image/vnd.mujoco.hfield" '
         f'size="{spec.size_x_m / 2.0:g} {spec.size_y_m / 2.0:g} {spec.elevation_scale_m:g} {spec.base_depth_m:g}"/>',
         '    <texture name="terrain_grid" type="2d" builtin="checker" rgb1=".23 .25 .20" rgb2=".27 .28 .23" width="512" height="512"/>',
@@ -1263,10 +1263,10 @@ def _realism_recipe(layout_digest: str, seed: int) -> bytes:
         "seed": seed,
         "layout_digest": layout_digest,
         "inputs": {
-            "expanded_layout": "sim/worlds/factory_park_hf/generated/expanded-layout.json",
-            "semantic_entities": "sim/worlds/factory_park_hf/generated/semantic-entities.json",
-            "terrain_obj": "sim/worlds/factory_park_hf/generated/terrain.obj",
-            "mujoco_world": "sim/worlds/factory_park_hf/factory_park_hf.xml",
+            "expanded_layout": "sim/packages/worlds/factory_park_hf/generated/expanded-layout.json",
+            "semantic_entities": "sim/packages/worlds/factory_park_hf/generated/semantic-entities.json",
+            "terrain_obj": "sim/packages/worlds/factory_park_hf/generated/terrain.obj",
+            "mujoco_world": "sim/packages/worlds/factory_park_hf/physics/factory_park_hf.xml",
         },
         "authoring_contract": {
             "coordinate_frame": "mujoco_rh_z_up_m",
@@ -1405,7 +1405,7 @@ def _manifest() -> bytes:
         b"kind: world\n"
         b"description: Deterministic 220x180 m modern factory park for MuJoCo and Unreal.\n"
         b"physics:\n"
-        b"  mjcf: ../../../worlds/factory_park_hf/factory_park_hf.xml\n"
+        b"  mjcf: physics/factory_park_hf.xml\n"
         b"  global_policy:\n"
         b"    timestep_s: 0.002\n"
         b"    integrator: rk4\n"
@@ -1416,7 +1416,7 @@ def _manifest() -> bytes:
         b"  binding: WorldVisual:FactoryParkHF\n"
         b"  level: /Game/RobotSim/Maps/FactoryPark_HF\n"
         b"entities:\n"
-        b"  - source: ../../../worlds/factory_park_hf/generated/semantic-entities.json\n"
+        b"  - source: generated/semantic-entities.json\n"
         b"    role: static_semantics\n"
     )
 
@@ -1518,7 +1518,7 @@ def generate_factory_park_hf(
         raise TypeError("overwrite_existing must be a boolean")
     repo_root = Path(repo_root).resolve()
     package_root = repo_root / "sim" / "packages" / "worlds" / WORLD_ID
-    world_root = repo_root / "sim" / "worlds" / WORLD_ID
+    world_root = repo_root / "sim" / "packages" / "worlds" / WORLD_ID
     objects = _factory_objects()
     compiled_batches: list[CompiledElementBatch] = []
     element_layout: dict[str, object] = {
@@ -1555,15 +1555,15 @@ def generate_factory_park_hf(
         compiled_batches,
     )
 
-    png_path = Path("sim/worlds/factory_park_hf/generated/heightfield_r16.png")
-    binary_path = Path("sim/worlds/factory_park_hf/generated/heightfield_f32.bin")
-    obj_path = Path("sim/worlds/factory_park_hf/generated/terrain.obj")
-    layout_path = Path("sim/worlds/factory_park_hf/generated/expanded-layout.json")
-    semantics_path = Path("sim/worlds/factory_park_hf/generated/semantic-entities.json")
-    site_plan_path = Path("sim/worlds/factory_park_hf/generated/site-plan.svg")
-    asset_manifest_path = Path("sim/worlds/factory_park_hf/generated/asset-manifest.json")
+    png_path = Path("sim/packages/worlds/factory_park_hf/generated/heightfield_r16.png")
+    binary_path = Path("sim/packages/worlds/factory_park_hf/generated/heightfield_f32.bin")
+    obj_path = Path("sim/packages/worlds/factory_park_hf/generated/terrain.obj")
+    layout_path = Path("sim/packages/worlds/factory_park_hf/generated/expanded-layout.json")
+    semantics_path = Path("sim/packages/worlds/factory_park_hf/generated/semantic-entities.json")
+    site_plan_path = Path("sim/packages/worlds/factory_park_hf/generated/site-plan.svg")
+    asset_manifest_path = Path("sim/packages/worlds/factory_park_hf/generated/asset-manifest.json")
     package_manifest_path = Path("sim/packages/worlds/factory_park_hf/world.package.yaml")
-    mjcf_path = Path("sim/worlds/factory_park_hf/factory_park_hf.xml")
+    mjcf_path = Path("sim/packages/worlds/factory_park_hf/physics/factory_park_hf.xml")
     recipe_path = Path("sim/packages/worlds/factory_park_hf/visual/ue_import.recipe.json")
     realism_recipe_path = Path("sim/packages/worlds/factory_park_hf/visual/realism.recipe.json")
     provenance_path = Path("sim/packages/worlds/factory_park_hf/provenance/factory-park.provenance.json")

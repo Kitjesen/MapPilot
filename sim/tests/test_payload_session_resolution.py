@@ -15,9 +15,7 @@ from sim.catalog import CatalogError, CatalogResolver
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SESSION = (
     REPO_ROOT
-    / "sim"
-    / "scenarios"
-    / "catalog"
+    / "sim" / "sessions" / "examples"
     / "thunderv4_rws01_preview"
     / "session.yaml"
 )
@@ -138,6 +136,6 @@ def test_payload_v2_artifacts_satisfy_their_strict_schemas() -> None:
         ("visual-plan.v2.json", resolved.visual_plan),
     ):
         schema = json.loads(
-            (REPO_ROOT / "schemas" / "simulation" / filename).read_text(encoding="utf-8")
+            (REPO_ROOT / "sim" / "contracts" / "schemas" / filename).read_text(encoding="utf-8")
         )
         _validate(document, schema, schema)

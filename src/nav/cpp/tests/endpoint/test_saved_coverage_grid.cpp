@@ -2,7 +2,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "explore/saved_coverage_grid.hpp"
+#include "endpoint/saved_coverage_grid.hpp"
 #include "planning/global/far/planner.hpp"
 
 namespace {

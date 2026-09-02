@@ -26,13 +26,11 @@ from sim.runtime.sensors import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SESSION = REPO_ROOT / "sim" / "scenarios" / "catalog" / "thunderv4_controlled_headless" / "session.yaml"
-UNREAL_SESSION = REPO_ROOT / "sim" / "scenarios" / "catalog" / "thunderv4_unreal" / "session.yaml"
+SESSION = REPO_ROOT / "sim" / "sessions" / "examples" / "thunderv4_controlled_headless" / "session.yaml"
+UNREAL_SESSION = REPO_ROOT / "sim" / "sessions" / "examples" / "thunderv4_unreal" / "session.yaml"
 G007_SESSION = (
     REPO_ROOT
-    / "sim"
-    / "scenarios"
-    / "catalog"
+    / "sim" / "sessions" / "examples"
     / "thunderv4_open_field_pedestrian_unreal"
     / "session.yaml"
 )

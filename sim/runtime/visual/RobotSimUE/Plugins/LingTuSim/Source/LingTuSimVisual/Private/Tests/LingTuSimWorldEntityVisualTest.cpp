@@ -127,7 +127,7 @@ namespace
             TEXT("\"coordinate_system\":{\"source\":\"mujoco_rh_z_up_m\",\"target\":\"unreal_lh_z_up_cm\",\"position_scale\":100.0,\"axis_mapping\":[\"x\",\"-y\",\"z\"],\"quaternion_order\":\"wxyz\"},")
             TEXT("\"binding_policy\":{\"missing_asset\":\"fail\",\"data_asset_is_projection\":true},")
             TEXT("\"world\":{\"package\":{\"id\":\"factory_layout\",\"version\":\"1.0.0\",\"kind\":\"world\",\"manifest\":\"sim/packages/worlds/factory_layout/1.0.0/world.package.yaml\"},\"binding\":\"WorldVisual:FactoryLayout\",\"level\":\"/Game/RobotSim/Maps/Test\",\"projection\":{\"schema\":\"lingtu.sim.world-visual-projection.v1\",\"path\":\"%s\"}},")
-            TEXT("\"robots\":[{\"instance_id\":\"cart_01\",\"namespace\":\"cart_01\",\"package\":{\"id\":\"omni_cart\",\"version\":\"1.0.0\",\"kind\":\"robot\",\"manifest\":\"sim/robots/omni_cart/robot.package.yaml\"},\"binding\":\"RobotVisual:OmniCart\",\"projection\":{\"schema\":\"lingtu.sim.robot-visual-projection.v1\",\"path\":\"%s\"},\"spawn\":{\"position_m\":[0.0,0.0,0.0],\"quaternion_wxyz\":[1.0,0.0,0.0,0.0]}}]}"),
+            TEXT("\"robots\":[{\"instance_id\":\"cart_01\",\"namespace\":\"cart_01\",\"package\":{\"id\":\"omni_cart\",\"version\":\"1.0.0\",\"kind\":\"robot\",\"manifest\":\"sim/packages/robots/omni_cart/robot.package.yaml\"},\"binding\":\"RobotVisual:OmniCart\",\"projection\":{\"schema\":\"lingtu.sim.robot-visual-projection.v1\",\"path\":\"%s\"},\"spawn\":{\"position_m\":[0.0,0.0,0.0],\"quaternion_wxyz\":[1.0,0.0,0.0,0.0]}}]}"),
             *SessionId,
             *WorldRelative,
             *RobotRelative);

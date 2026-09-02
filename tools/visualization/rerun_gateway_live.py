@@ -3,7 +3,7 @@
 
 This viewer does not subscribe to ROS2 topics. It polls read-only Gateway
 endpoints and logs the available Product runtime state to Rerun.
-Native DDS inspection is handled by ``scripts/diagnostics/dds_probe.py``.
+Native DDS inspection is handled by ``python -m diagnostics.field.dds_readiness``.
 """
 
 from __future__ import annotations

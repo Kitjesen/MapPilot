@@ -145,7 +145,7 @@ def _valid_name(name: str) -> bool:
 
     Only lowercase alphanumeric and underscores are allowed.
     Hyphens are rejected because the directory name becomes a Python
-    package name for ``import_module("sim.robots.<name>")``, and hyphens
+    package name for ``import_module("sim.packages.robots.<name>")``, and hyphens
     are invalid in Python identifiers (PEP 8).
     """
     return bool(re.match(r"^[a-z][a-z0-9_]*$", name))
@@ -198,7 +198,7 @@ def register():
     # Example:
     # register_robot(
     #     name="{name}",
-    #     mjcf="sim/robots/{name}/{name}.xml",
+    #     mjcf="sim/packages/robots/{name}/{name}.xml",
     #     robot_type="{robot_type}",
     # )
     pass
@@ -299,7 +299,7 @@ def main() -> None:
     print(f"  1. Edit {mjcf_path} — adjust masses, inertias, geometry for your robot.")
     print(f"  2. Edit {init_path} — wire up the registration call.")
     if args.type == "quadruped":
-        print(f"  3. Add a gait policy manifest: sim/robots/{args.name}/policy_manifest.json")
+        print(f"  3. Add a gait policy manifest: sim/packages/robots/{args.name}/policy_manifest.json")
         print(
             "  4. Test in simulation: python -m lingtu.control switch teleop "
             f"--robot doso/{args.name} --env sim"
@@ -311,7 +311,7 @@ def main() -> None:
             f"--robot doso/{args.name} --env sim"
         )
     if args.meshes:
-        print(f"  5. Update mesh paths in {mjcf_path} to point to sim/robots/{args.name}/meshes/")
+        print(f"  5. Update mesh paths in {mjcf_path} to point to sim/packages/robots/{args.name}/meshes/")
     print()
 
 

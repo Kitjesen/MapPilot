@@ -10,6 +10,7 @@ import select
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -28,7 +29,7 @@ from lingtu.sim.rpc import (
     remove_discovery,
 )
 from lingtu.sim.supervisor import SimulationSupervisorClient, SimulationSupervisorError
-from lingtu.switch_contracts import ProcessFailed
+from lingtu.switch_contracts import ProcessFailed, ProcessReport
 
 DAEMON_SCHEMA = "lingtu.sim_supervisor.daemon.v1"
 
@@ -43,46 +44,86 @@ class _SimulationRequestHandler:
     def __init__(self, manager: SimProcessManager) -> None:
         self._manager = manager
         self._binding: tuple[RunPlan, str, str] | None = None
+        self._active = False
+        self._apply_report: ProcessReport | None = None
+        self._lock = threading.RLock()
 
     def handle(self, request: SupervisorRequest) -> SupervisorResponse:
-        try:
-            plan = RunPlan.load(request.run_plan_path)
-            binding = (plan, request.run_plan_path, request.product_session_id)
-            if binding == self._binding:
-                self._manager.assert_bound(plan)
-            else:
-                self._manager.bind(
-                    plan,
-                    run_plan_path=request.run_plan_path,
-                    product_session_id=request.product_session_id,
+        with self._lock:
+            try:
+                plan = RunPlan.load(request.run_plan_path)
+                binding = (plan, request.run_plan_path, request.product_session_id)
+                if binding == self._binding:
+                    self._manager.assert_bound(plan)
+                else:
+                    self._manager.bind(
+                        plan,
+                        run_plan_path=request.run_plan_path,
+                        product_session_id=request.product_session_id,
+                    )
+                    self._binding = binding
+                    self._apply_report = None
+                if request.action == "status":
+                    if self._apply_report is None:
+                        self._apply_report = self._manager.status(plan)
+                    report = self._apply_report
+                elif request.action == "apply":
+                    if self._apply_report is None:
+                        report = self._manager.apply(plan)
+                        self._apply_report = report
+                        self._active = report.ok
+                    else:
+                        report = self._apply_report
+                elif request.action == "quiesce":
+                    self._active = False
+                    report = self._manager.quiesce(plan)
+                    self._apply_report = None
+                else:
+                    self._active = False
+                    report = self._manager.stop_plan(plan)
+                    self._apply_report = None
+                return SupervisorResponse.ok(report.as_dict())
+            except ProcessFailed as exc:
+                self._active = False
+                return SupervisorResponse.ok(exc.report.as_dict())
+            except Exception as exc:
+                self._active = False
+                message = str(exc).strip() or type(exc).__name__
+                return SupervisorResponse.failed(
+                    code="operation_failed",
+                    message=message[:512],
                 )
-                self._binding = binding
-            if request.action == "apply":
-                report = self._manager.apply(plan)
-            elif request.action == "quiesce":
-                report = self._manager.quiesce(plan)
-            else:
-                report = self._manager.stop_plan(plan)
-            return SupervisorResponse.ok(report.as_dict())
-        except ProcessFailed as exc:
-            return SupervisorResponse.ok(exc.report.as_dict())
-        except Exception as exc:
-            message = str(exc).strip() or type(exc).__name__
-            return SupervisorResponse.failed(
-                code="operation_failed",
-                message=message[:512],
-            )
+
+    def poll(self) -> ProcessReport | None:
+        """Record one critical-child failure through the bound manager."""
+
+        with self._lock:
+            if not self._active or self._binding is None:
+                return (
+                    self._apply_report
+                    if self._apply_report is not None and not self._apply_report.ok
+                    else None
+                )
+            try:
+                self._manager.monitor(self._binding[0])
+            except ProcessFailed as exc:
+                self._active = False
+                self._apply_report = exc.report
+                return exc.report
+            return None
 
     def close(self) -> None:
-        if self._binding is None:
-            return
-        try:
-            self._manager.stop_plan(self._binding[0])
-        except Exception as exc:
-            raise SimulationSupervisorError(
-                "simulation process cleanup failed"
-            ) from exc
-        self._binding = None
+        with self._lock:
+            if self._binding is None:
+                return
+            self._active = False
+            try:
+                self._manager.stop_plan(self._binding[0])
+            except Exception as exc:
+                raise SimulationSupervisorError(
+                    "simulation process cleanup failed"
+                ) from exc
+            self._binding = None
 
 
 @dataclass(frozen=True)
@@ -177,6 +218,13 @@ def serve_supervisor(
     supervisor_dir = session / "supervisor"
     record_path = supervisor_dir / "daemon.json"
     handler = _SimulationRequestHandler(SimProcessManager(repository))
+    monitor_stop = threading.Event()
+    monitor = threading.Thread(
+        target=_monitor_handler,
+        args=(handler, monitor_stop),
+        name="lingtu-sim-supervisor-monitor",
+        daemon=True,
+    )
     try:
         with LocalRpcServer(session) as server:
             _write_record(
@@ -185,12 +233,16 @@ def serve_supervisor(
                     repository_root=repository,
                 ),
             )
+            monitor.start()
             while True:
                 try:
                     server.serve_once(handler.handle)
                 except SupervisorProtocolError:
                     continue
     finally:
+        monitor_stop.set()
+        if monitor.is_alive():
+            monitor.join(timeout=1.0)
         try:
             handler.close()
         finally:
@@ -199,6 +251,14 @@ def serve_supervisor(
                 supervisor_dir.rmdir()
             except OSError:
                 pass
+
+
+def _monitor_handler(
+    handler: _SimulationRequestHandler,
+    stop_event: threading.Event,
+) -> None:
+    while not stop_event.wait(0.02):
+        handler.poll()
 
 
 def ensure_sim_supervisor(

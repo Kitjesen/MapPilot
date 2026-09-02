@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-EXPLORE_DDS = ROOT / "src" / "nav" / "cpp" / "endpoint" / "explore" / "main.cpp"
+EXPLORE_DDS = ROOT / "src" / "explore" / "cpp" / "endpoint" / "main.cpp"
 
 
 def _source() -> str:

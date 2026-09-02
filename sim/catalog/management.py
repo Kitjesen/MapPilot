@@ -152,7 +152,7 @@ class SimCatalog:
     ) -> None:
         self.resolver = resolver
         self.repo_root = resolver.repo_root
-        roots = qualification_roots or (self.repo_root / "sim" / "qualifications",)
+        roots = qualification_roots or (self.repo_root / "sim" / "evaluation" / "package_qualifications",)
         self.qualification_roots = tuple(Path(root).resolve() for root in roots)
 
     @classmethod
@@ -162,7 +162,7 @@ class SimCatalog:
         resolved_root = Path(repo_root).resolve()
         return cls(
             CatalogResolver.from_repository(resolved_root),
-            qualification_roots=(resolved_root / "sim" / "qualifications",),
+            qualification_roots=(resolved_root / "sim" / "evaluation" / "package_qualifications",),
         )
 
     def list_packages(self, *, kind: str | None = None) -> dict[str, Any]:

@@ -12,8 +12,8 @@ if [ -f /opt/lingtu/config/thunder-runtime-env.sh ]; then
 fi
 
 : "${LINGTU_REPO:=/opt/lingtu/current}"
-: "${LINGTU_CAMERA_DDS_BIN:=${LINGTU_REPO}/build/camera_dds/lingtu_camera_dds}"
-: "${LINGTU_ORBBEC_CAPTURE_BIN:=${LINGTU_REPO}/build/orbbec_native/orbbec_capture}"
+: "${LINGTU_CAMERA_DDS_BIN:=${LINGTU_REPO}/bin/lingtu_camera_dds}"
+: "${LINGTU_ORBBEC_CAPTURE_BIN:=${LINGTU_REPO}/bin/orbbec_capture}"
 : "${LINGTU_CAMERA_STATUS_FILE:=/dev/shm/lingtu/camera_status.json}"
 : "${LINGTU_CAMERA_FRAME_ID:=camera_link}"
 : "${LINGTU_CAMERA_COLOR_TOPIC:=rt/camera/color}"

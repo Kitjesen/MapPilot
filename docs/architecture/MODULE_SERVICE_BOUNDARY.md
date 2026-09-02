@@ -14,7 +14,7 @@ internal service classes, and compatibility adapters.
 | Module | In-process LingTu runtime unit with typed `In` / `Out` ports. | `src/**` | Blueprint wires and callbacks. | `NavCommandModule`, `GatewayModule` |
 | System service | OS process supervised by systemd or an equivalent launcher. | `scripts/deploy/**`, robot host | DDS, HTTP, files, status JSON, hardware protocol. | `lt-slam.service`, `lt-maps.service`, `lt-nav.service` |
 | Internal service class | Plain helper object used by a Module or route layer. | `src/**/services/**` | Python or C++ function calls only. | `ControlCommandService` |
-| Adapter / bridge | Explicit protocol boundary to DDS, simulator, or hardware. | `src/**/adapters/**`, `sim/engine/bridge/**` | External protocol or compatibility API. | `CppSlamStatusAdapterModule`, camera DDS adapter |
+| Adapter / bridge | Explicit protocol boundary to DDS, simulator, or hardware. | `src/**/adapters/**`, `sim/adapters/gazebo/**` | External protocol or compatibility API. | `CppSlamStatusAdapterModule`, camera DDS adapter |
 | Native endpoint | C++ process that owns a native runtime boundary. | domain C++ tree, `scripts/deploy/**` | Typed DDS plus files/status. | `mapd`, `navd` |
 | Field diagnostics | Offline or Gateway-facing product evidence/audit helpers. | `src/diagnostics/field/**` | Read-only files, reports, HTTP diagnostics, and existing topics. | `evidence`, `gateway_acceptance` |
 | Simulation diagnostics | Sim-only closure and dataflow reports. | `sim/diagnostics/**` | Existing reports and simulation artifacts. | `gap_report`, `dataflow_report` |
@@ -127,7 +127,8 @@ Below `/nav/cmd_vel`:
 | `can-setup.service` | CAN setup for legacy/local bridge deployments. | no for current remote Brainstem gRPC deployment |
 
 The former Python DDS field unit, endpoint runner, installer, and deployment
-wrapper are removed. Native DDS diagnostics use `scripts/diagnostics/dds_probe.py`.
+wrapper are removed. Native DDS diagnostics use
+`python -m diagnostics.field.dds_readiness`.
 
 Current `lt-nav.service` still contains multiple internal parts:
 

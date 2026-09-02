@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from sim.importers.contracts import digest_document
+from sim.catalog.importers.contracts import digest_document
 from sim.tools.assets import blender_static_prop_conditioner as static_conditioner
 from sim.tools.assets import static_prop_conditioning as conditioning_contract
 from sim.tools.assets.static_prop_conditioning import (

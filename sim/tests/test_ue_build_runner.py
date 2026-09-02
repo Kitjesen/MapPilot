@@ -17,7 +17,7 @@ from typing import TypedDict
 
 import pytest
 
-from sim.toolchains.ue_build import (
+from sim.tools.toolchains.ue_build import (
     UnrealBuildLockTimeoutError,
     UnrealBuildTimeoutError,
     project_lock_path,
@@ -25,7 +25,7 @@ from sim.toolchains.ue_build import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RUNNER = REPO_ROOT / "sim" / "toolchains" / "ue_build.py"
+RUNNER = REPO_ROOT / "sim" / "tools" / "toolchains" / "ue_build.py"
 
 
 def _process_has_exited(pid: int) -> bool:

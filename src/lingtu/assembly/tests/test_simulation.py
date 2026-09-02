@@ -14,8 +14,8 @@ from lingtu.assembly.simulation import compile_simulation_snapshot
 from lingtu.run_plan import RunPlan
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SESSION_SOURCE = "sim/scenarios/catalog/thunder_omni_contract/session.yaml"
-SCENARIO_SESSION_SOURCE = "sim/scenarios/catalog/open_field_pedestrian_crossing/session.yaml"
+SESSION_SOURCE = "sim/sessions/examples/thunder_omni_contract/session.yaml"
+SCENARIO_SESSION_SOURCE = "sim/sessions/examples/open_field_pedestrian_crossing/session.yaml"
 SIMULATION_SCHEMA = "lingtu.run_plan.simulation.v1"
 REAL_ROBOT = "unitree/go2"
 SIM_ROBOT = "doso/thunder_v4"
@@ -282,7 +282,7 @@ def test_session_change_is_preserved_by_run_plan_parser() -> None:
 
 
 def test_physics_plan_schema_excludes_runtime_generation_fields() -> None:
-    schema = json.loads((REPO_ROOT / "schemas/simulation/physics-plan.v1.json").read_text(encoding="utf-8"))
+    schema = json.loads((REPO_ROOT / "sim/contracts/schemas/physics-plan.v1.json").read_text(encoding="utf-8"))
 
     assert "model_generation" not in schema["required"]
     assert "reset_generation" not in schema["required"]

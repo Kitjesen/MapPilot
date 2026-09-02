@@ -813,7 +813,7 @@ topics:
     consumers:
       - native_nav_runtime
     qos: reliable_volatile_keep_last_1_lifespan_500ms
-    semantics: sparse_occupied_voxel_centers_with_resolution_aabb_identity_and_explicit_completeness
+    semantics: packed_inflated_occupancy_bits_with_dimensions_resolution_aabb_identity_and_explicit_completeness
     port_bindings:
       - owner: native_maps_runtime
         port: local_collision

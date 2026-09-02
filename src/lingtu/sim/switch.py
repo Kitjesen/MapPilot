@@ -465,6 +465,14 @@ def _reconcile_incomplete_switch(
             raise RuntimeError(
                 "simulation switch child ownership matches neither target nor previous Product"
             )
+        elif not _committed_matches(current, journal.previous):
+            _require_success(
+                runner.quiesce(
+                    journal.previous.path,
+                    product_session_id=journal.previous.product_session_id,
+                ),
+                action="quiesce uncommitted previous Product",
+            )
     if current is None and owned_session is None:
         _remove_switch_journal(state_root, journal)
         for ref in (journal.target, journal.previous):
@@ -731,7 +739,7 @@ def _mapctl(
         / "Release"
         / "lingtu-mapctl.exe"
         if os.name == "nt"
-        else Path("/opt/lingtu/current/build/maps/lingtu-mapctl")
+        else Path("/opt/lingtu/current/bin/lingtu-mapctl")
     )
     binary = str(environment.get("LINGTU_MAPCTL_BIN") or default_binary)
     home = Path(environment.get("HOME") or Path.home())

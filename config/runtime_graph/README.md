@@ -136,15 +136,13 @@ endpoints own DDS communication.
 `operator_switchable` controls whether a Product appears in the normal
 operator/Gateway mode catalog; it does not decide whether the compiler can
 produce a RunPlan. Local-planner algorithms are not Products: `nav` remains the
-single saved-map navigation Product, defaults to CMU, and may compile with
-`local_planner="scan"`. MuJoCo acceptance scripts select their runner and
-manifest explicitly; passing the SCAN target is evidence for a future
-default-backend decision, not a second navigation mode.
+single saved-map navigation Product and defaults to SCAN; CMU is selected with
+`local_planner="cmu"` when required.
 
 Each Env implementation declares the algorithms it has qualified in
 `local_planners`. Resolution fails before launch when a Product selects an
-unqualified backend. The physical `real` Env currently qualifies only CMU;
-MuJoCo simulation qualifies both CMU and SCAN.
+unqualified backend. The physical `real` Env and MuJoCo simulation both expose
+CMU and SCAN.
 
 ## Real-Equivalent Rule
 

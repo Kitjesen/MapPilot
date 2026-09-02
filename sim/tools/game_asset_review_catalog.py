@@ -20,7 +20,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
-from sim.importers.contracts import canonical_json_bytes, digest_document
+from sim.catalog.importers.contracts import canonical_json_bytes, digest_document
 
 ASSET_REVIEW_SPEC_SCHEMA = "lingtu.sim.game-asset-review-spec.v1"
 ASSET_REVIEW_CATALOG_SCHEMA = "lingtu.sim.game-asset-review-catalog.v1"
@@ -130,13 +130,13 @@ DEFAULT_ASSET_REVIEW_SPEC: Mapping[str, Any] = {
             [
                 _evidence(
                     "package_manifest",
-                    "sim/robots/doso/thunder_v4/robot.package.yaml",
+                    "sim/packages/robots/doso/thunder_v4/robot.package.yaml",
                     1939,
                     "33fcb5e110d3fe08c5ee26cba4f6c7866d3bc60909eb8842faa5af45dc340bb0",
                 ),
                 _evidence(
                     "visual_projection",
-                    "sim/robots/doso/thunder_v4/visual/robot.visual-projection.json",
+                    "sim/packages/robots/doso/thunder_v4/visual/robot.visual-projection.json",
                     45909,
                     "20bf2a765724643412d26c8ba64dde59f10bc3a8bf1a634fa8b4fb6a9ecb9038",
                 ),

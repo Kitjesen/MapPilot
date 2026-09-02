@@ -121,7 +121,7 @@ def _subprocess_graph(*, include_support: bool = False) -> RuntimeGraph:
     backend.pop("support_processes", None)
     backend["presets"] = {
         SIM_ROBOT: {
-            "default": "sim/scenarios/catalog/thunder_omni_contract/session.yaml",
+            "default": "sim/sessions/examples/thunder_omni_contract/session.yaml",
         }
     }
     backend["provided_roles"] = [
@@ -307,10 +307,9 @@ def test_real_run_plan_selects_go2_mid360_config() -> None:
     assert plan.native_process_environment["LINGTU_CONFIG_PATH"] == (
         "config/robots/unitree/go2/robot.yaml"
     )
-    assert plan.native_process_environment["LINGTU_LOCAL_PLANNER_PATHS"] == (
-        "build/nav_endpoint/cmu_paths/go2"
-    )
-    assert plan.native_process_environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"] == "0.05"
+    assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == "scan"
+    assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
+    assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
     assert plan.native_process_environment["LINGTU_NAV_VEHICLE_LENGTH_M"] == "0.76"
     assert plan.native_process_environment["LINGTU_NAV_VEHICLE_WIDTH_M"] == "0.31"
     assert plan.native_process_environment["LINGTU_TELEOP_OBSTACLE_MARGIN_M"] == "0.1"
@@ -318,12 +317,19 @@ def test_real_run_plan_selects_go2_mid360_config() -> None:
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.18"
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] == "0.25"
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.35"
-    assert plan.host_config["teleop_max_speed_mps"] == 0.5
-    assert plan.host_config["teleop_max_yaw_rate_rad_s"] == 1.0
     assert plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"] == "0.5"
     assert plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_RATE_RAD_S"] == "1"
     assert plan.native_process_environment["LINGTU_TELEOP_MAX_SPEED_MPS"] == "0.5"
     assert plan.native_process_environment["LINGTU_TELEOP_MAX_YAW_RATE"] == "1"
+
+
+def test_real_cmu_override_selects_go2_path_library() -> None:
+    plan = compile_run_plan("teleop_avoid", "real", local_planner="cmu")
+
+    assert plan.native_process_environment["LINGTU_LOCAL_PLANNER_PATHS"] == (
+        "share/lingtu/cmu_paths/go2"
+    )
+    assert plan.native_process_environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"] == "0.05"
 
 
 def test_field_product_compiles_module_graph_and_processes_together() -> None:
@@ -338,7 +344,7 @@ def test_field_product_compiles_module_graph_and_processes_together() -> None:
     assert product.has_process("nav")
     assert product.has_process("driver")
     assert product.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"] == "0.5"
-    assert product.native_process_environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"] == "0.05"
+    assert product.native_process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
     assert "maps.service" not in product.modules
     assert not {
         "OccupancyGridModule",
@@ -768,7 +774,6 @@ def test_sim_mujoco_every_product_compiles_for_windows_with_complete_pe_chain_an
                 "mujoco_feeder",
                 "slam_runtime",
                 "map_runtime",
-                "traversability_runtime",
                 "nav_runtime",
                 "host_runtime",
             },
@@ -796,7 +801,6 @@ def test_sim_mujoco_every_product_compiles_for_windows_with_complete_pe_chain_an
                 "mujoco_feeder",
                 "slam_runtime",
                 "map_runtime",
-                "traversability_runtime",
                 "nav_runtime",
                 "host_runtime",
             },
@@ -811,7 +815,6 @@ def test_sim_mujoco_every_product_compiles_for_windows_with_complete_pe_chain_an
                 "mujoco_feeder",
                 "slam_runtime",
                 "map_runtime",
-                "traversability_runtime",
                 "nav_runtime",
                 "host_runtime",
             },
@@ -826,7 +829,6 @@ def test_sim_mujoco_every_product_compiles_for_windows_with_complete_pe_chain_an
                 "mujoco_feeder",
                 "slam_runtime",
                 "map_runtime",
-                "traversability_runtime",
                 "nav_runtime",
                 "host_runtime",
             },
@@ -1158,7 +1160,7 @@ def test_sim_mujoco_teleop_compiles_persistent_native_processes_and_host_guards(
     assert manifest.process_control == "subprocess"
     assert "acceptance" not in manifest.as_dict()["launch"]
     assert manifest.simulation["session_source"] == (
-        "sim/presets/doso/thunder_v4/default.yaml"
+        "sim/sessions/products/doso/thunder_v4/default.yaml"
     )
     assert manifest.simulation["session"]["world"] == "industrial_park@1.0.0"
     assert manifest.simulation["physics_plan"]["global_policy"]["timestep_s"] == 0.005
@@ -1185,7 +1187,7 @@ def test_sim_mujoco_teleop_compiles_persistent_native_processes_and_host_guards(
     assert host_dependencies[0].path == ("build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_nav_client.dll")
     assert host_dependencies[1].path.endswith("ddsc.dll")
     assert host_dependencies[2].path == "build/slam-core-windows-x64/stage/bin/slamctl.exe"
-    assert manifest.process("nav").timeout_s == 30
+    assert manifest.process("nav").timeout_s == 60
     assert manifest.process("nav").command.argv[-2:] == ("--status-s", "0.1")
     assert not manifest.has_process("camera")
     assert manifest.host_config["enable_camera"] is False
@@ -1220,7 +1222,7 @@ def test_sim_mujoco_teleop_avoid_compiles_complete_native_safety_chain(
 
     assert plan.process_control == "subprocess"
     assert plan.simulation["session_source"] == (
-        "sim/presets/doso/thunder_v4/teleop_avoid.yaml"
+        "sim/sessions/products/doso/thunder_v4/teleop_avoid.yaml"
     )
     assert plan.simulation["session"]["world"] == "teleop_avoid_field@1.0.0"
     assert plan.simulation["session"]["runtime"]["mode"] == "preview"
@@ -1229,6 +1231,7 @@ def test_sim_mujoco_teleop_avoid_compiles_complete_native_safety_chain(
         "driver_bridge",
         "imu_publisher",
         "lidar_publisher",
+        "map_runtime",
         "mujoco_feeder",
         "nav_runtime",
         "slam_runtime",
@@ -1239,6 +1242,7 @@ def test_sim_mujoco_teleop_avoid_compiles_complete_native_safety_chain(
         "driver_bridge": 10,
         "imu_publisher": 10,
         "lidar_publisher": 10,
+        "map_runtime": 20,
         "mujoco_feeder": 20,
         "nav_runtime": 20,
         "slam_runtime": 20,
@@ -1253,7 +1257,7 @@ def test_sim_mujoco_teleop_avoid_compiles_complete_native_safety_chain(
         "src/localization/fastlio2/config/sim_mid360.yaml"
     )
     assert "LINGTU_EXPLORE_ROUTE" not in plan.native_process_environment
-    assert "LINGTU_MAPD_EXTENDED_LAYERS" not in plan.native_process_environment
+    assert plan.native_process_environment["LINGTU_MAPD_EXTENDED_LAYERS"] == "0"
     mid360_stream = plan.simulation["sensor_plan"]["streams"]["mid360"]
     assert len(mid360_stream) == 1
     assert mid360_stream[0]["navigation_fixture_raw_overlay"] is True
@@ -1261,17 +1265,22 @@ def test_sim_mujoco_teleop_avoid_compiles_complete_native_safety_chain(
     changed["launch"]["simulation"]["sensor_plan"]["streams"]["mid360"][0]["navigation_fixture_raw_overlay"] = False
     restored = RunPlan.from_dict(changed)
     assert restored.simulation["sensor_plan"]["streams"]["mid360"][0]["navigation_fixture_raw_overlay"] is False
-    assert not plan.has_process("maps")
+    assert plan.process("maps").name == "map_runtime"
     assert not plan.has_process("traversability")
     nav_command = plan.process("nav").command
     assert "--path-library" not in nav_command.argv
-    assert dict(nav_command.env)["LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS"] == "600"
-    assert plan.native_process_environment["LINGTU_LOCAL_PLANNER_PATHS"] == (
-        "src/nav/cpp/planning/local/cmu/paths/thunder"
-    )
+    nav_environment = dict(nav_command.env)
+    assert nav_environment["LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS"] == "600"
+    assert nav_environment["LINGTU_NAV_ODOM_MAX_AGE_S"] == "0.60"
+    assert nav_environment["LINGTU_NAV_CLOUD_MAX_AGE_S"] == "0.60"
+    assert nav_environment["LINGTU_NAV_INPUT_RECOVERY_FRAMES"] == "1"
+    assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == "scan"
+    assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
+    assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
     assert plan.stop_before_start == (
         "host_runtime",
         "nav_runtime",
+        "map_runtime",
         "slam_runtime",
         "mujoco_feeder",
         "imu_publisher",
@@ -1443,8 +1452,11 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MIN"] == "0.12"
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MAX"] == "0.98"
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_OCC"] == "0.80"
-        assert plan.native_process_environment["LINGTU_MAPD_MAX_COLLISION_SNAPSHOT_POINTS"] == "4000000"
-        assert plan.native_process_environment["LINGTU_MAPD_MAX_CLOUD_BYTES"] == "67108864"
+        assert float(plan.native_process_environment["LINGTU_MAPD_INFLATION_RADIUS_M"]) == pytest.approx(
+            float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"])
+        )
+        assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.10"
+        assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.10"
         assert float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"]) == pytest.approx(
             (0.25**2 + 0.3**2) ** 0.5
         )
@@ -1558,7 +1570,7 @@ def test_subprocess_product_compiles_grouped_typed_processes_once() -> None:
     assert plan.process_control == "subprocess"
     assert "acceptance" not in plan.as_dict()["launch"]
     assert plan.simulation["schema"] == "lingtu.run_plan.simulation.v1"
-    assert plan.simulation["session_source"] == ("sim/scenarios/catalog/thunder_omni_contract/session.yaml")
+    assert plan.simulation["session_source"] == ("sim/sessions/examples/thunder_omni_contract/session.yaml")
     assert plan.simulation["session"]["session_id"]
     assert [process.name for process in plan.processes] == [
         "native_runtime",
@@ -1656,7 +1668,7 @@ def test_teleop_avoid_uses_native_operator_motion_not_python_session_module() ->
     assert "operator.motion" not in product.critical_modules
     assert "maps.service" not in product.modules
     assert "maps.service" not in product.critical_modules
-    assert not product.has_process("maps")
+    assert product.has_process("maps")
 
 
 @pytest.mark.parametrize("product_name", ["teleop", "teleop_avoid"])
@@ -1964,7 +1976,10 @@ def test_compiled_run_plan_returns_defensive_config_copies() -> None:
 def test_nav_octoplanner_radius_comes_from_native_nav_contract() -> None:
     plan = compile_run_plan("nav", "sim", env_config={"backend": "mujoco"})
 
-    assert plan.native_process_environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"] == "0.6"
+    assert float(plan.native_process_environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"]) == pytest.approx(
+        float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"])
+        + float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"])
+    )
 
 
 def test_product_compile_defers_startup_preflight(monkeypatch) -> None:

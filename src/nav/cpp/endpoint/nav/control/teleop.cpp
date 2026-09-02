@@ -167,9 +167,11 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
       const bool rotation_ready = isVerifiedRotation(assisted);
       if (path_ready || rotation_ready) {
         hard_zero_requested = isZeroCommand(assisted.cmd_vel);
+        CommandSafetyConfig path_safety = input.safety;
+        path_safety.min_motion_speed_mps = 0.0;
         const auto final = final_control_.finalize(FinalInput{
             FinalMode::kTeleopPath,
-            input.safety,
+            path_safety,
             assisted.cmd_vel,
             sample_publish_age(),
             input.config.teleop_cmd_max_age_s,

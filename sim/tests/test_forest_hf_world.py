@@ -15,7 +15,7 @@ import pytest
 import yaml
 
 from sim.catalog import CatalogResolver
-from sim.importers.heightmap import build_heightmap_artifacts
+from sim.catalog.importers.heightmap import build_heightmap_artifacts
 from sim.tools.worlds.forest_hf.generate import (
     DEFAULT_SEED,
     PRODUCTION_RESOLUTION_PX,

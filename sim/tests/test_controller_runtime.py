@@ -52,7 +52,7 @@ _CONTROL_PLAN: dict[str, Any] = {
                 "id": "thunderv4_locomotion",
                 "version": "1.0.0",
                 "kind": "controller",
-                "manifest": "sim/controllers/doso/thunder_v4/locomotion/controller.package.yaml",
+                "manifest": "sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml",
             },
             "adapter": {
                 "plugin": "quadruped_him",
@@ -60,8 +60,8 @@ _CONTROL_PLAN: dict[str, Any] = {
             },
             "policy": {
                 "runtime": "torchscript",
-                "artifact": "sim/controllers/doso/thunder_v4/locomotion/policy/controller.pt",
-                "manifest": "sim/controllers/doso/thunder_v4/locomotion/policy/policy_manifest.json",
+                "artifact": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/controller.pt",
+                "manifest": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_manifest.json",
             },
             "timing": {"inference_hz": 50, "low_level_hz": 500},
             "state_channels": [
@@ -135,7 +135,7 @@ def test_control_plan_retains_adapter_and_unloaded_policy_selection(
     assert controller.adapter.plugin == "quadruped_him"
     assert controller.adapter.abi == "lingtu.sim.controller-adapter.v1"
     assert controller.policy.runtime == "torchscript"
-    assert controller.policy.artifact == "sim/controllers/doso/thunder_v4/locomotion/policy/controller.pt"
+    assert controller.policy.artifact == "sim/packages/controllers/doso/thunder_v4/locomotion/policy/controller.pt"
 
 
 def test_control_plan_rejects_malformed_session_identity(

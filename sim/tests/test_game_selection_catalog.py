@@ -40,7 +40,7 @@ def _selection_entry(
         "title": f"Choice {entry_id}",
         "description": f"Run {entry_id}",
         "order": order,
-        "session_spec": session_spec or f"sim/scenarios/catalog/{entry_id}/session.yaml",
+        "session_spec": session_spec or f"sim/sessions/examples/{entry_id}/session.yaml",
         "availability": {
             "state": state,
             "reason": "Ready" if state == "runnable" else f"{state} asset review pending",
@@ -132,7 +132,7 @@ def catalog_module(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 def _write_session_specs(repo_root: Path, *entry_ids: str) -> None:
     for entry_id in entry_ids:
-        path = repo_root / "sim" / "scenarios" / "catalog" / entry_id / "session.yaml"
+        path = repo_root / "sim" / "sessions" / "examples" / entry_id / "session.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             f"schema: lingtu.sim.session.v1\nsession_id: {entry_id}\n",
@@ -369,8 +369,8 @@ def test_build_uses_one_canonical_resolver_for_all_runnable_choices(
 
     assert _RecordingResolver.repository_calls == [repo_root]
     assert _RecordingResolver.resolve_calls == [
-        repo_root / "sim/scenarios/catalog/first/session.yaml",
-        repo_root / "sim/scenarios/catalog/second/session.yaml",
+        repo_root / "sim/sessions/examples/first/session.yaml",
+        repo_root / "sim/sessions/examples/second/session.yaml",
     ]
 
 
@@ -561,7 +561,7 @@ def test_asset_review_metadata_binds_catalog_digest_without_changing_bundle(
 
 @pytest.mark.parametrize(
     "session_spec",
-    ["../outside/session.yaml", "sim/scenarios/../../outside.yaml", "C:/outside/session.yaml"],
+    ["../outside/session.yaml", "sim/sessions/examples/../../outside.yaml", "C:/outside/session.yaml"],
 )
 def test_session_spec_must_be_repo_relative_without_traversal(
     session_spec: str,

@@ -1054,9 +1054,7 @@ def test_canonical_factory_park_motion_session_is_recording_compatible(
     repo_root = Path(__file__).resolve().parents[2]
     session = (
         repo_root
-        / "sim"
-        / "scenarios"
-        / "catalog"
+        / "sim" / "sessions" / "examples"
         / "thunderv4_factory_park_motion"
         / "session.yaml"
     )

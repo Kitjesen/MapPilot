@@ -51,7 +51,10 @@ struct GridSample {
 };
 
 struct LocalCollisionMap {
-  std::vector<float> occupied_xyz;
+  std::vector<std::uint8_t> inflated_occupied_bits;
+  int size_x{0};
+  int size_y{0};
+  int size_z{0};
   double resolution{0.0};
   nav_kernel::Vec3 aabb_min{};
   nav_kernel::Vec3 aabb_max{};

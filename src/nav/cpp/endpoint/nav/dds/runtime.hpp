@@ -208,7 +208,8 @@ copyGeofenceCommand(const lingtu_dds_GeofenceCommandRequest &message);
 
 class Dds {
  public:
-  explicit Dds(int domain_id, DdsStatus *status = nullptr);
+  explicit Dds(int domain_id, DdsStatus *status = nullptr,
+               bool read_obstacle_cloud = true);
   ~Dds();
 
   Dds(const Dds &) = delete;

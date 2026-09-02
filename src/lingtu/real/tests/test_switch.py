@@ -942,7 +942,7 @@ def test_stop_confirms_native_zero_without_gateway_session_call(monkeypatch) -> 
 
     assert commands == [
         [
-            "/opt/lingtu/current/build/nav_endpoint/lingtu_nav_control",
+            "/opt/lingtu/current/bin/lingtu_nav_control",
             "stop",
             "product_mode_switch",
             "--timeout-ms",

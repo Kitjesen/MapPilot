@@ -6,8 +6,8 @@
 #include <string>
 #include <vector>
 
-#include "explore/input_gate.hpp"
-#include "explore/route.hpp"
+#include "endpoint/input_gate.hpp"
+#include "endpoint/route.hpp"
 
 namespace {
 

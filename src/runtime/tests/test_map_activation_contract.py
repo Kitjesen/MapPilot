@@ -120,7 +120,7 @@ def test_native_save_map_prune_is_required_in_field_releases() -> None:
     assert "lingtu_maps_save_map_test" in build
     assert "packager accepted a mapd bundle without prune" in package_release
     assert f"native-release/{artifact}" in package_release
-    assert f"LINGTU_PRUNE_BIN=/opt/lingtu/current/{artifact}" in mapd_unit
+    assert "LINGTU_PRUNE_BIN=/opt/lingtu/current/bin/prune" in mapd_unit
 
 
 def test_saved_map_products_declare_activation_boundary() -> None:

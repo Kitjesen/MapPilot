@@ -30,7 +30,7 @@ def _layout() -> dict[str, object]:
         },
         "extent_m": [40.0, 30.0],
         "terrain": {
-            "terrain_obj": "sim/worlds/factory_park_hf/generated/terrain.obj",
+            "terrain_obj": "sim/packages/worlds/factory_park_hf/generated/terrain.obj",
             "obj_frame": "unreal_lh_z_up_cm",
             "source_frame": "mujoco_rh_z_up_m",
             "extent_m": [40.0, 30.0],
@@ -353,7 +353,7 @@ def test_script_has_fail_closed_terrain_conversion_and_stable_outputs() -> None:
 
 
 def test_checked_in_layout_is_accepted_by_blender_authoring_contract() -> None:
-    layout_path = REPO_ROOT / "sim/worlds/factory_park_hf/generated/expanded-layout.json"
+    layout_path = REPO_ROOT / "sim/packages/worlds/factory_park_hf/generated/expanded-layout.json"
     layout, objects = blender_author.load_layout(layout_path)
 
     assert layout["schema"] == "lingtu.sim.expanded-world-layout.v1"

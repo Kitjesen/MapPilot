@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.16)
 
 project(lingtu_maps LANGUAGES CXX)
 
+include(GNUInstallDirs)
+
 find_package(Threads REQUIRED)
 
 option(LINGTU_MAPS_ENABLE_NATIVE_OCTOMAP "Enable embedded OctoMap artifact builder when OctoMap is available" ON)
@@ -161,7 +163,9 @@ if(LINGTU_MAPS_BUILD_MAPD)
     target_compile_options(mapd PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(lingtu_mapctl PRIVATE -Wall -Wextra -Wpedantic)
   endif()
-  install(TARGETS mapd lingtu_mapctl RUNTIME DESTINATION bin)
+  install(TARGETS mapd lingtu_mapctl
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+      COMPONENT lingtu_runtime)
 endif()
 
 option(LINGTU_MAPS_BUILD_TOOLS "Build LingTu maps offline command-line tools" OFF)

@@ -52,7 +52,7 @@ live robot.
 The field release contains five sibling C++ tools:
 
 ```text
-/opt/lingtu/current/build/native-recording/
+/opt/lingtu/current/bin/
   lingtu_recorder
   lingtu_dds_recorder
   lingtu_dds_player
@@ -71,7 +71,7 @@ The managed Gateway boundary accepts an exact
 this order:
 
 1. `LINGTU_RECORDING_BIN_DIR`;
-2. `/opt/lingtu/current/build/native-recording`;
+2. `/opt/lingtu/current/bin`;
 3. the checkout's `build/native-recording`;
 4. `PATH`.
 

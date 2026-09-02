@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(lingtu_camera_dds LANGUAGES C CXX)
+include(GNUInstallDirs)
 
 if(NOT UNIX)
   message(FATAL_ERROR "lingtu_camera_dds is a Linux robot-side runtime")
@@ -45,6 +46,10 @@ target_compile_options(lingtu_camera_dds PRIVATE
   -Wall
   -Wextra
   -Wpedantic)
+
+install(TARGETS lingtu_camera_dds
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT lingtu_runtime)
 
 include(CTest)
 if(BUILD_TESTING)

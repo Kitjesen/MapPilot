@@ -486,6 +486,34 @@ void testPlannerTerrainSlowdownDoesNotResetSmootherRamp() {
           "a valid composed ramp must advance instead of resetting smoother state");
 }
 
+void testPlannerRampBelowOperatorDeadbandKeepsAdvancing() {
+  Fixture fixture;
+  fixture.config.teleop_local_planner = true;
+  fixture.config.publish_cmd_vel = true;
+  fixture.safety.min_motion_speed_mps = 0.03;
+  fixture.request = {0.50, 0.50, 0.0};
+  fixture.planner_inputs.obstacles = &fixture.obstacles;
+  fixture.planner_output.active = true;
+  fixture.planner_output.path_found = true;
+  fixture.planner_output.reason = "teleop_assist_spline_ready";
+  fixture.planner_output.cmd_vel = {0.02, 0.01, 0.0};
+  fixture.planner_output.local_path_map = {
+      {0.0, 0.0, 0.0},
+      {1.0, 1.0, 0.0},
+  };
+  TeleopTickController controller(fixture.actions, fixture.control());
+
+  const auto result = controller.tick(fixture.input());
+
+  require(!result.teleop.stopped && result.teleop.reason == "teleop_assist_spline_ready",
+          "a valid follower ramp must not be stopped by the raw operator deadband");
+  require(std::abs(result.publish.command.vx - 0.02) < 1e-9 &&
+              std::abs(result.publish.command.vy - 0.01) < 1e-9,
+          "the follower ramp must reach the command boundary unchanged");
+  require(fixture.replan_calls == 0 && fixture.velocity_stop_calls == 0,
+          "a valid follower ramp must keep its planner and acceleration state");
+}
+
 void testPlannerTerrainScalePassesThroughUnchanged() {
   Fixture fixture;
   fixture.config.teleop_local_planner = true;
@@ -857,6 +885,7 @@ int main() {
     testVerifiedTeleopRotationPublishesWithoutPath();
     testPlannerSlowdownIsNotAppliedTwice();
     testPlannerTerrainSlowdownDoesNotResetSmootherRamp();
+    testPlannerRampBelowOperatorDeadbandKeepsAdvancing();
     testPlannerTerrainScalePassesThroughUnchanged();
     testPlannerAcceptedPathIsNotVetoedByDuplicateFinalSweep();
     testAssistedNoPathFailsClosedAndReplansOriginalIntent();

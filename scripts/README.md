@@ -1,7 +1,8 @@
 # Scripts
 
-`scripts/` contains durable executable entrypoints. Product implementation and
-offline utilities do not belong here.
+`scripts/` contains durable Shell and PowerShell entrypoints. It is not a
+Python package; Product implementation, diagnostics, acceptance logic, and
+offline utilities live with their owning packages.
 
 ## Product lifecycle
 
@@ -22,11 +23,9 @@ systemd logic.
 | Path | Contents |
 | --- | --- |
 | `build/` | Native component builds and required build inputs |
-| `codegen/` | DDS IDL code generation |
 | `deploy/` | Release packaging, robot installation, and systemd units |
-| `diagnostics/` | Current field and native component diagnostics |
-| `gates/` | Field acceptance and evidence commands |
-| `sim/` | Simulation launch, visual acceptance, and Windows packaging |
+| `gates/field/` | Stable P0 field Shell procedures |
+| `sim/` | Stable simulation Shell and PowerShell entrypoints |
 
 Developer-only, offline, and integration tools live under `tools/`,
 `tests/`, and `integrations/`.
@@ -46,11 +45,12 @@ bash scripts/deploy/thunder/install_services.sh field-cpp
 
 # Run explicit diagnostics and gates
 PYTHONPATH=src python -m diagnostics.field.doctor
+PYTHONPATH=src python -m diagnostics.field.soak --help
+PYTHONPATH=src python -m diagnostics.field.system_acceptance --help
 python tools/validate/validate_architecture_boundaries.py
 python tools/validate/validate_topics.py
-python scripts/gates/system_acceptance_gate.py --help
 ```
 
-Add a new script only when it is a stable build, deploy, field diagnostic,
-acceptance, or simulation entrypoint. Otherwise put it in the
-owning source, tool, integration, or test tree.
+Add a new script only when it is a stable build, deploy, P0 field, or
+simulation Shell/PowerShell entrypoint. Python commands belong in the owning
+package and run with `python -m`.

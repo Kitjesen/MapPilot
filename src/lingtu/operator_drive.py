@@ -182,7 +182,7 @@ def _drive(
             raise RuntimeError("active RunPlan is missing LINGTU_DDS_DOMAIN_ID")
         binary = Path(
             environment.get("LINGTU_NAV_CONTROL_BIN")
-            or "/opt/lingtu/current/build/nav_endpoint/lingtu_nav_control"
+            or "/opt/lingtu/current/bin/lingtu_nav_control"
         )
         command: list[str] = [
             str(binary),

@@ -57,7 +57,7 @@ EXPECTED_CONFIG = {
 }
 
 EXPECTED_SERVICE_ENV = {
-    "LINGTU_DRIVER_BIN": "/opt/lingtu/current/build/driver/lingtu_driver",
+    "LINGTU_DRIVER_BIN": "/opt/lingtu/current/bin/lingtu_driver",
     "LINGTU_DDS_DOMAIN_ID": "0",
     "LINGTU_DRIVER_STATUS_FILE": "/dev/shm/lingtu/driver_status.json",
 }

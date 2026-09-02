@@ -15,5 +15,5 @@ visual:
   binding: WorldVisual:FactoryParkHF
   level: /Game/RobotSim/Maps/FactoryPark_HF
 entities:
-  - source: ../../../../worlds/factory_park_hf/generated/semantic-entities.json
+  - source: ../generated/semantic-entities.json
     role: static_semantics

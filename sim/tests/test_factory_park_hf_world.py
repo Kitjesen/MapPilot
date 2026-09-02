@@ -20,7 +20,7 @@ from sim.tools.worlds.factory_park_hf.generate import generate_factory_park_hf
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LIVE_SESSION_RELATIVE_PATH = Path(
-    "sim/scenarios/catalog/thunderv4_factory_park_hf/session.yaml"
+    "sim/sessions/examples/thunderv4_factory_park_hf/session.yaml"
 )
 SESSION_PATH = REPO_ROOT / LIVE_SESSION_RELATIVE_PATH
 LIVE_WORLD_PACKAGE_PATH = (
@@ -32,14 +32,14 @@ GENERATOR_OWNED_PATHS = (
     Path("sim/packages/worlds/factory_park_hf/provenance/factory-park.provenance.json"),
     Path("sim/packages/worlds/factory_park_hf/visual/realism.recipe.json"),
     Path("sim/packages/worlds/factory_park_hf/visual/ue_import.recipe.json"),
-    Path("sim/worlds/factory_park_hf/factory_park_hf.xml"),
-    Path("sim/worlds/factory_park_hf/generated/heightfield_r16.png"),
-    Path("sim/worlds/factory_park_hf/generated/heightfield_f32.bin"),
-    Path("sim/worlds/factory_park_hf/generated/terrain.obj"),
-    Path("sim/worlds/factory_park_hf/generated/expanded-layout.json"),
-    Path("sim/worlds/factory_park_hf/generated/semantic-entities.json"),
-    Path("sim/worlds/factory_park_hf/generated/site-plan.svg"),
-    Path("sim/worlds/factory_park_hf/generated/asset-manifest.json"),
+    Path("sim/packages/worlds/factory_park_hf/physics/factory_park_hf.xml"),
+    Path("sim/packages/worlds/factory_park_hf/generated/heightfield_r16.png"),
+    Path("sim/packages/worlds/factory_park_hf/generated/heightfield_f32.bin"),
+    Path("sim/packages/worlds/factory_park_hf/generated/terrain.obj"),
+    Path("sim/packages/worlds/factory_park_hf/generated/expanded-layout.json"),
+    Path("sim/packages/worlds/factory_park_hf/generated/semantic-entities.json"),
+    Path("sim/packages/worlds/factory_park_hf/generated/site-plan.svg"),
+    Path("sim/packages/worlds/factory_park_hf/generated/asset-manifest.json"),
 )
 
 
@@ -155,7 +155,7 @@ def test_generator_owned_manifest_keeps_the_base_two_millisecond_policy(
 
     assert manifest["version"] == "1.0.0"
     assert manifest["physics"] == {
-        "mjcf": "../../../worlds/factory_park_hf/factory_park_hf.xml",
+        "mjcf": "physics/factory_park_hf.xml",
         "global_policy": {
             "timestep_s": 0.002,
             "integrator": "rk4",
@@ -398,7 +398,7 @@ def test_obj_png_and_mujoco_use_the_same_world_z(tmp_path: Path) -> None:
         world_z_m = _world_height_m(contract, samples[index])
         assert vertices[index] == pytest.approx([x_m * 100.0, -y_m * 100.0, world_z_m * 100.0], abs=1e-5)
 
-    xml_root = ET.parse(generated.world_root / "factory_park_hf.xml").getroot()
+    xml_root = ET.parse(generated.world_root / "physics" / "factory_park_hf.xml").getroot()
     terrain_geom = xml_root.find("./worldbody/geom[@name='terrain']")
     assert terrain_geom is not None
     assert [float(value) for value in terrain_geom.attrib["pos"].split()] == pytest.approx(
@@ -412,7 +412,7 @@ def test_mujoco_xml_contains_every_physics_shared_object(tmp_path: Path) -> None
     layout = json.loads(
         (generated.world_root / "generated/expanded-layout.json").read_text(encoding="utf-8")
     )
-    xml_root = ET.parse(generated.world_root / "factory_park_hf.xml").getroot()
+    xml_root = ET.parse(generated.world_root / "physics" / "factory_park_hf.xml").getroot()
     geoms = {geom.attrib["name"]: geom for geom in xml_root.findall("./worldbody/geom")}
 
     for item in layout["objects"]:
@@ -441,7 +441,7 @@ def test_layout_asset_and_provenance_digests_cover_exact_bytes(tmp_path: Path) -
 
     digest = layout.pop("layout_digest")
     assert digest == hashlib.sha256(_canonical_json(layout)).hexdigest()
-    assert digest == "30bc105663db22e192aeba9294b18882f4db111e1db3891f802ce5ca50b4619a"
+    assert digest == "1bb084b64a5d10baaddbee62bee879eec679cd666f0c331ac984542a74f9907f"
     assert (
         digest
         == manifest["layout_digest"]
@@ -542,9 +542,7 @@ def test_live_realtime_wrapper_owns_the_one_millisecond_implicitfast_policy() ->
         **expected_policy,
     }
     assert include is not None
-    assert include.attrib == {
-        "file": "../../../../../worlds/factory_park_hf/factory_park_hf.xml"
-    }
+    assert include.attrib == {"file": "../../physics/factory_park_hf.xml"}
     assert option is not None
     assert option.attrib == {
         "gravity": "0 0 -9.81",
@@ -569,7 +567,7 @@ def test_site_plan_is_valid_svg_with_routes_and_semantic_ids(tmp_path: Path) -> 
 def test_mujoco_compiles_generated_factory_when_available(tmp_path: Path) -> None:
     mujoco = pytest.importorskip("mujoco")
     generated = generate_factory_park_hf(tmp_path)
-    model = mujoco.MjModel.from_xml_path(str(generated.world_root / "factory_park_hf.xml"))
+    model = mujoco.MjModel.from_xml_path(str(generated.world_root / "physics" / "factory_park_hf.xml"))
 
     hfield_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_HFIELD, "factory_park_terrain")
     factory_geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "main_factory")

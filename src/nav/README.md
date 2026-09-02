@@ -55,7 +55,7 @@ to `navd` through typed DDS.
 
 The CMU local planner selects the robot-specific path bank under
 `src/nav/cpp/planning/local/cmu/paths/` (`go2/` or `thunder/`) in development.
-Native releases install the same banks under `build/nav_endpoint/cmu_paths/`.
+Native releases install the same banks under `share/lingtu/cmu_paths/`.
 Each bank carries its own collision `search_radius.txt`; `navd` validates and
 uses that radius when converting obstacle points into correspondence voxels.
 

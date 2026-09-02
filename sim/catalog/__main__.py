@@ -92,7 +92,7 @@ def main(argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> 
         resolver = CatalogResolver.from_repository(repo_root)
         catalog = SimCatalog(
             resolver,
-            qualification_roots=(repo_root / "sim" / "qualifications",),
+            qualification_roots=(repo_root / "sim" / "evaluation" / "package_qualifications",),
         )
         composer = SessionComposer(
             resolver,

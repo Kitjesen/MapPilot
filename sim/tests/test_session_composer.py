@@ -12,8 +12,8 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SESSION_INTENT_SCHEMA = REPO_ROOT / "schemas" / "simulation" / "session-intent.v1.json"
-SESSION_INTENT_V2_SCHEMA = REPO_ROOT / "schemas" / "simulation" / "session-intent.v2.json"
+SESSION_INTENT_SCHEMA = REPO_ROOT / "sim" / "contracts" / "schemas" / "session-intent.v1.json"
+SESSION_INTENT_V2_SCHEMA = REPO_ROOT / "sim" / "contracts" / "schemas" / "session-intent.v2.json"
 
 
 def _session() -> dict[str, Any]:

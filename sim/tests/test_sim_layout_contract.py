@@ -1,161 +1,162 @@
-"""Filesystem contract tests for the root sim/ layout."""
+"""Behavioral contracts for the root simulation layout."""
+
+from __future__ import annotations
 
 import importlib
+import subprocess
+import sys
 from pathlib import Path
+
+from sim.catalog.resolver import CatalogResolver
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SIM_ROOT = REPO_ROOT / "sim"
 
-# Managed sim/ roots, grouped by the layer they belong to
-# (SIM_RUNTIME_CONTRACT.md: Package / Runtime / Adapter / Visual / Tooling /
-# compatibility / gates). Each name is asserted to exist so that a layer can
-# never be silently removed.
-CANONICAL_ROOTS = (
-    # Package / static definition layer
+OWNED_ROOTS = (
     "packages",
-    "scenarios",
-    # Catalog / compile layer
+    "sessions",
     "catalog",
-    "worlds",
-    "assets",
-    "robots",
-    "sensors",
-    "sensor_rigs",
-    "controllers",
-    # Runtime / engine layer
+    "contracts",
     "runtime",
-    # Adapter layer
     "adapters",
-    # Tooling
-    "toolchains",
-    "tools",
-    # Compatibility, fixtures, and measurement surfaces
-    "fixtures",
-    "planning",
-    "following",
-    "datasets",
-    "evaluation",
-    "external_scenes",
-    "maps",
+    "compat",
     "diagnostics",
-    "engine",
-    "validation",
+    "evaluation",
+    "distribution",
+    "tools",
     "scripts",
     "tests",
 )
 
+RETIRED_ROOTS = (
+    "assets",
+    "controllers",
+    "datasets",
+    "engine",
+    "external_scenes",
+    "fixtures",
+    "following",
+    "importers",
+    "maps",
+    "planning",
+    "presets",
+    "qualifications",
+    "robots",
+    "scenarios",
+    "schemas",
+    "sensor_rigs",
+    "sensors",
+    "toolchains",
+    "validation",
+    "worlds",
+)
+
 CANONICAL_MUJOCO_ENTRYPOINTS = (
-    "mujoco/native_dds_sensors.py",
-    "mujoco/native_navigation_acceptance.py",
-    "mujoco/native_control_mode_acceptance.py",
-    "mujoco/product_acceptance.py",
-    "mujoco/map_native_acceptance.py",
-    "mujoco/explore_native_acceptance.py",
-    "mujoco/inspection_native_acceptance.py",
-    "mujoco/teleop_native_acceptance.py",
-    "mujoco/teleop_avoid_native_acceptance.py",
-    "mujoco/record_thunderv4_mid360_policy.py",
-    "mujoco/record_thunderv4_stair_showcase.py",
-    "mujoco/continuous_mapping_quality_gate.py",
+    "native_dds_sensors.py",
+    "native_navigation_acceptance.py",
+    "native_control_mode_acceptance.py",
+    "product_acceptance.py",
+    "map_native_acceptance.py",
+    "explore_native_acceptance.py",
+    "inspection_native_acceptance.py",
+    "teleop_native_acceptance.py",
+    "teleop_avoid_native_acceptance.py",
+    "record_thunderv4_mid360_policy.py",
+    "record_thunderv4_stair_showcase.py",
+    "continuous_mapping_quality_gate.py",
+    "saved_map_relocalization.py",
+    "sunrise_mapping.py",
 )
 
-PUBLIC_SCRIPT_ENTRYPOINTS = (
-    "sim_diagnostics.py",
-    "saved_map_relocalize_runtime_gate.py",
-)
 
-def test_sim_canonical_roots_exist():
-    for name in CANONICAL_ROOTS:
-        assert (SIM_ROOT / name).is_dir(), name
+def test_owned_roots_contain_real_files() -> None:
+    for name in OWNED_ROOTS:
+        root = SIM_ROOT / name
+        assert root.is_dir(), name
+        assert any(path.is_file() for path in root.rglob("*")), name
 
 
-def test_generic_runtime_uses_role_named_paths():
+def test_owned_roots_are_self_documenting() -> None:
+    index = (SIM_ROOT / "README.md").read_text(encoding="utf-8")
+
+    for name in OWNED_ROOTS:
+        readme = SIM_ROOT / name / "README.md"
+        assert readme.is_file(), name
+        assert f"{name}/README.md" in index, name
+
+
+def test_catalog_has_one_package_root() -> None:
+    resolver = CatalogResolver.from_repository(REPO_ROOT)
+
+    assert resolver.catalog_roots == ((SIM_ROOT / "packages").resolve(),)
+    assert resolver.records
+
+
+def test_runtime_uses_role_named_paths() -> None:
     assert (SIM_ROOT / "runtime" / "physics" / "CMakeLists.txt").is_file()
     assert (SIM_ROOT / "runtime" / "coordinator" / "coordinator.py").is_file()
-    assert (
-        SIM_ROOT / "runtime" / "visual" / "RobotSimUE" / "RobotSimUE.uproject"
-    ).is_file()
+    assert (SIM_ROOT / "runtime" / "visual" / "RobotSimUE" / "RobotSimUE.uproject").is_file()
     assert (SIM_ROOT / "adapters" / "dds" / "CMakeLists.txt").is_file()
 
-    for retired in (
-        SIM_ROOT / "runtime" / "cpp",
-        SIM_ROOT / "native_dds",
-        SIM_ROOT / "unreal",
-        SIM_ROOT / "engine" / "ue",
-    ):
-        assert not retired.exists(), retired
 
-
-def test_sim_public_script_entrypoints_stay_in_place():
-    scripts_root = SIM_ROOT / "scripts"
-
-    for name in PUBLIC_SCRIPT_ENTRYPOINTS:
-        assert (scripts_root / name).is_file(), name
-
-
-def test_retired_cmu_unity_runtime_is_absent():
-    retired = (
-        SIM_ROOT / "scripts" / "launch_cmu_unity_baseline.sh",
-        SIM_ROOT / "engine" / "bridge" / "cmu_unity_lingtu_adapter.py",
-        SIM_ROOT / "planning" / "cmu_unity_lingtu_runtime.rviz",
+def test_public_python_surfaces_import() -> None:
+    modules = (
+        "sim.catalog.importers",
+        "sim.compat.engine.mujoco",
+        "sim.adapters.gazebo",
+        "sim.diagnostics",
+        "sim.evaluation.navigation_replay",
+        "sim.tools.planning.octoplanner3d_route_viz",
     )
 
-    for path in retired:
-        assert not path.exists(), path
+    for name in modules:
+        assert importlib.import_module(name) is not None
 
 
-def test_sim_mujoco_scripts_have_canonical_implementation_paths():
-    scripts_root = SIM_ROOT / "scripts"
+def test_stable_mujoco_entrypoints_remain_in_place() -> None:
+    scripts_root = SIM_ROOT / "scripts" / "mujoco"
 
     for name in CANONICAL_MUJOCO_ENTRYPOINTS:
         assert (scripts_root / name).is_file(), name
 
-
-def test_native_sensor_bridge_imports():
-    module = importlib.import_module("sim.scripts.mujoco.native_dds_sensors")
-    assert callable(module._relative_times_for_scan)
-    assert callable(module._physical_rolling_scan_from_samples)
+    sensor_bridge = importlib.import_module("sim.scripts.mujoco.native_dds_sensors")
+    assert callable(sensor_bridge._relative_times_for_scan)
+    assert callable(sensor_bridge._physical_rolling_scan_from_samples)
 
 
-def test_retired_ros_sim_chains_are_absent():
-    retired = (
-        SIM_ROOT / "scripts" / "server_sim_closure.py",
-        SIM_ROOT / "engine" / "cli.py",
-        SIM_ROOT / "engine" / "bridge" / "ros2_bridge.py",
-        SIM_ROOT / "engine" / "scenarios" / "base.py",
-        SIM_ROOT / "engine" / "scenarios" / "navigation.py",
-        SIM_ROOT / "engine" / "scenarios" / "semantic_nav.py",
-        SIM_ROOT / "semantic" / "factory_stub_test.py",
-        SIM_ROOT / "experiments" / "eval_runner.py",
-        SIM_ROOT / "scripts" / "mujoco" / "live_gate.py",
-        SIM_ROOT / "scripts" / "mujoco" / "launch_fastlio2_live.sh",
-        SIM_ROOT / "scripts" / "mujoco_live",
-        SIM_ROOT / "scripts" / "moving_obstacle_sweep_gate.py",
-        SIM_ROOT / "scripts" / "large_loop_closure_gate.py",
-        SIM_ROOT / "scripts" / "render_slam_validation_screenshots.py",
+def test_recording_entrypoint_help_does_not_require_runtime_media_dependencies() -> None:
+    script = SIM_ROOT / "scripts" / "mujoco" / "record_thunderv4_mid360_policy.py"
+
+    completed = subprocess.run(
+        [sys.executable, "-B", str(script), "--help"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
-    for path in retired:
-        assert not path.exists(), path
+    assert completed.returncode == 0, completed.stderr
 
 
-def test_sim_canonical_assets_are_discoverable():
-    assert (SIM_ROOT / "robots" / "doso" / "thunder_v4" / "robot.package.yaml").is_file()
-    assert (SIM_ROOT / "packages" / "worlds" / "open_field" / "world.package.yaml").is_file()
-    assert (SIM_ROOT / "assets" / "livox" / "mid360.npy").is_file()
-    assert any((SIM_ROOT / "worlds" / "mujoco").glob("*.xml"))
-    assert any((SIM_ROOT / "worlds" / "gazebo").glob("*.sdf"))
+def test_retired_roots_are_absent() -> None:
+    for name in RETIRED_ROOTS:
+        assert not (SIM_ROOT / name).exists(), name
 
 
-def test_static_package_manifests_live_with_their_assets():
-    assert any((SIM_ROOT / "packages").rglob("*.package.yaml"))
-    assert any((SIM_ROOT / "robots").rglob("robot.package.yaml"))
-    assert any((SIM_ROOT / "controllers").rglob("controller.package.yaml"))
-    assert any((SIM_ROOT / "sensors").rglob("sensor.package.yaml"))
-    assert any((SIM_ROOT / "sensor_rigs").rglob("sensor-rig.package.yaml"))
-    assert not (SIM_ROOT / "packages" / "robots").exists()
-    assert not (SIM_ROOT / "packages" / "controllers").exists()
-    assert not (SIM_ROOT / "packages" / "sensors").exists()
-    assert not (SIM_ROOT / "packages" / "sensor_rigs").exists()
-    assert not any(path.name.endswith(".package.yaml") for path in (SIM_ROOT / "worlds").rglob("*.package.yaml"))
-    assert not any(path.name.endswith(".package.yaml") for path in (SIM_ROOT / "scenarios").rglob("*.package.yaml"))
+def test_packages_own_manifests_and_assets() -> None:
+    packages = SIM_ROOT / "packages"
+
+    assert any((packages / "robots").rglob("robot.package.yaml"))
+    assert any((packages / "controllers").rglob("controller.package.yaml"))
+    assert any((packages / "sensors").rglob("sensor.package.yaml"))
+    assert any((packages / "sensor_rigs").rglob("sensor-rig.package.yaml"))
+    assert any((packages / "worlds").rglob("world.package.yaml"))
+    assert any((packages / "scenarios").rglob("scenario.package.yaml"))
+    assert (packages / "sensors" / "livox" / "mid360" / "assets" / "mid360.npy").is_file()
+
+    outside = [
+        path
+        for path in SIM_ROOT.rglob("*.package.yaml")
+        if packages not in path.parents
+    ]
+    assert outside == []

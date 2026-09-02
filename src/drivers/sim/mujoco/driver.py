@@ -1,6 +1,6 @@
 """MujocoDriverModule exposes MuJoCo simulation as a Module.
 
-Wraps sim/engine/mujoco/engine.py directly in-process.
+Wraps sim/compat/engine/mujoco/engine.py directly in-process.
 No TCP bridge, no separate process. Data flows through In/Out ports.
 
 Provides motion outputs by default. Legacy in-driver camera and LiDAR ports
@@ -49,10 +49,18 @@ logger = logging.getLogger(__name__)
 
 # Resolve sim/ directory relative to this file
 _SIM_ROOT = Path(__file__).resolve().parents[4] / "sim"
-_WORLDS_DIR = _SIM_ROOT / "worlds" / "mujoco"
-_THUNDER_MJCF = _SIM_ROOT / "robots" / "doso" / "thunder_v4" / "mjcf" / "thunderv4.xml"
+_THUNDER_MJCF = (
+    _SIM_ROOT / "packages" / "robots" / "doso" / "thunder_v4" / "mjcf" / "thunderv4.xml"
+)
 _THUNDERV4_POLICY = (
-    _SIM_ROOT / "controllers" / "doso" / "thunder_v4" / "locomotion" / "policy" / "policy_1119.onnx"
+    _SIM_ROOT
+    / "packages"
+    / "controllers"
+    / "doso"
+    / "thunder_v4"
+    / "locomotion"
+    / "policy"
+    / "policy_1119.onnx"
 )
 _ROBOT_XML = _THUNDER_MJCF
 _DEFAULT_START_POS = (0.0, 0.0, 0.55)
@@ -166,24 +174,23 @@ def _xyzi_to_livox_frame(
     return frame
 
 
-# Known worlds
+# Known worlds. Package-owned scenes stay with their manifests; direct-engine
+# showcase scenes live under the explicit compatibility boundary.
 WORLDS = {
-    "building": "building_scene.xml",
-    "building_scene": "building_scene.xml",
-    "factory": "factory_scene.xml",
-    "factory_scene": "factory_scene.xml",
-    "flat_showcase": "flat_showcase.xml",
-    "industrial_park": "industrial_park_scene.xml",
-    "industrial_park_scene": "industrial_park_scene.xml",
-    "industrial_demo": "industrial_demo_scene.xml",
-    "industrial_demo_scene": "industrial_demo_scene.xml",
-    "lift_building": "lift_building_scene.xml",
-    "lift_building_scene": "lift_building_scene.xml",
-    "open_field": "open_field.xml",
-    "spiral": "spiral_terrain.xml",
-    "spiral_terrain": "spiral_terrain.xml",
-    "stair_showcase": "thunderv4_stair_showcase.xml",
-    "thunderv4_stair_showcase": "thunderv4_stair_showcase.xml",
+    "building": _SIM_ROOT / "packages/worlds/building/physics/building_scene.xml",
+    "building_scene": _SIM_ROOT / "packages/worlds/building/physics/building_scene.xml",
+    "factory": _SIM_ROOT / "compat/engine/worlds/factory_scene.xml",
+    "factory_scene": _SIM_ROOT / "compat/engine/worlds/factory_scene.xml",
+    "flat_showcase": _SIM_ROOT / "compat/engine/worlds/flat_showcase.xml",
+    "industrial_park": _SIM_ROOT / "packages/worlds/industrial_park/physics/industrial_park_scene.xml",
+    "industrial_park_scene": _SIM_ROOT / "packages/worlds/industrial_park/physics/industrial_park_scene.xml",
+    "industrial_demo": _SIM_ROOT / "compat/engine/worlds/industrial_demo_scene.xml",
+    "industrial_demo_scene": _SIM_ROOT / "compat/engine/worlds/industrial_demo_scene.xml",
+    "lift_building": _SIM_ROOT / "compat/engine/worlds/lift_building_scene.xml",
+    "lift_building_scene": _SIM_ROOT / "compat/engine/worlds/lift_building_scene.xml",
+    "open_field": _SIM_ROOT / "packages/worlds/open_field/physics/open_field.xml",
+    "stair_showcase": _SIM_ROOT / "compat/engine/worlds/thunderv4_stair_showcase.xml",
+    "thunderv4_stair_showcase": _SIM_ROOT / "compat/engine/worlds/thunderv4_stair_showcase.xml",
 }
 
 
@@ -288,19 +295,18 @@ class MujocoDriverModule(Module, layer=1):
                 self._engine = None
                 return
 
-            # Add the repo root to path so `sim.engine` imports work.
+            # Add the repo root to path so simulation compatibility imports work.
             repo_root = str(_SIM_ROOT.parent)
             if repo_root not in sys.path:
                 sys.path.insert(0, repo_root)
 
-            from sim.engine.core.robot import RobotConfig
-            from sim.engine.core.sensor import CameraConfig, DiscreteRayConfig, LidarConfig
-            from sim.engine.core.world import WorldConfig
-            from sim.engine.mujoco.engine import MuJoCoEngine
+            from sim.compat.engine.core.robot import RobotConfig
+            from sim.compat.engine.core.sensor import CameraConfig, DiscreteRayConfig, LidarConfig
+            from sim.compat.engine.core.world import WorldConfig
+            from sim.compat.engine.mujoco.engine import MuJoCoEngine
 
             # Resolve world XML
-            world_file = WORLDS.get(self._world_name, self._world_name)
-            world_path = _WORLDS_DIR / world_file
+            world_path = Path(WORLDS.get(self._world_name, self._world_name)).resolve()
             if not world_path.exists():
                 logger.error("World not found: %s", world_path)
                 return
@@ -327,7 +333,7 @@ class MujocoDriverModule(Module, layer=1):
             elif self._policy_path:
                 robot_cfg.policy_onnx = self._policy_path
 
-            from sim.engine.core.world import ObstacleConfig
+            from sim.compat.engine.core.world import ObstacleConfig
 
             obs_cfgs = []
             for o in self._obstacles:
@@ -422,7 +428,7 @@ class MujocoDriverModule(Module, layer=1):
 
     def _sim_loop(self):
         """Step physics and publish sensor data."""
-        from sim.engine.core.engine import VelocityCommand
+        from sim.compat.engine.core.engine import VelocityCommand
 
         dt = 1.0 / self._sim_rate
         step_count = 0

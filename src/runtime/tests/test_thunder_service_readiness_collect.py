@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = ROOT / "scripts" / "gates" / "thunder_service_readiness_collect.py"
+SCRIPT = ROOT / "src" / "diagnostics" / "field" / "service_readiness.py"
 
 
 def _load_module():
@@ -33,14 +32,15 @@ def test_thunder_service_readiness_collector_is_read_only() -> None:
         "lt-terrain.service",
         "lt-nav.service",
         "lt-driver.service",
+        "lt-explore.service",
         "lt-host.service",
     )
-    assert module.NATIVE_BINARY_DEFAULTS["nav_dds"] == ("/opt/lingtu/current/build/nav_endpoint/navd")
+    assert module.NATIVE_BINARY_DEFAULTS["nav_dds"] == ("/opt/lingtu/current/bin/navd")
     assert module.NATIVE_BINARY_ENV["nav_dds"] == "LINGTU_NAV_DDS_BIN"
-    assert module.NATIVE_BINARY_DEFAULTS["driver"] == ("/opt/lingtu/current/build/driver/lingtu_driver")
+    assert module.NATIVE_BINARY_DEFAULTS["driver"] == ("/opt/lingtu/current/bin/lingtu_driver")
     assert module.NATIVE_BINARY_ENV["driver"] == "LINGTU_DRIVER_BIN"
     assert module.NATIVE_BINARY_DEFAULTS["traversability_dds"] == (
-        "/opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds"
+        "/opt/lingtu/current/bin/lingtu_traversability_dds"
     )
     assert module.NATIVE_BINARY_ENV["traversability_dds"] == ("LINGTU_TRAVERSABILITY_DDS_BIN")
     assert module.NATIVE_BINARY_DEFAULTS == {name: item["path"] for name, item in module.NATIVE_BINARIES.items()}
@@ -83,14 +83,14 @@ def test_thunder_service_readiness_report_shape(monkeypatch) -> None:
             "ok": False,
             "binaries": {
                 "camera_dds": {
-                    "path": "/opt/lingtu/current/build/camera_dds/lingtu_camera_dds",
+                    "path": "/opt/lingtu/current/bin/lingtu_camera_dds",
                     "exists": False,
                     "executable": False,
                 }
             },
             "blockers": [
                 "native_binary_missing_or_not_executable:"
-                "camera_dds:/opt/lingtu/current/build/camera_dds/lingtu_camera_dds"
+                "camera_dds:/opt/lingtu/current/bin/lingtu_camera_dds"
             ],
         },
     )
@@ -151,7 +151,7 @@ def test_thunder_service_readiness_report_shape(monkeypatch) -> None:
     assert report["dds"]["blockers"] == ["dds_unchecked"]
     assert report["summary"]["ok"] is False
     assert (
-        "native_binaries:native_binary_missing_or_not_executable:camera_dds:/opt/lingtu/current/build/camera_dds/lingtu_camera_dds"
+        "native_binaries:native_binary_missing_or_not_executable:camera_dds:/opt/lingtu/current/bin/lingtu_camera_dds"
         in report["summary"]["blockers"]
     )
     assert "gnss:gnss_device_missing:/dev/wtrtk980" in report["summary"]["blockers"]
@@ -327,7 +327,7 @@ def test_thunder_service_readiness_blocks_legacy_livox_and_duplicate_imu_owner(m
                 [
                     " 101 livox_sdk2_stream /opt/lingtu/livox_sdk2_stream --dds",
                     " 202 livox_ros_driver2 /opt/ros/humble/lib/livox_ros_driver2/livox_ros_driver2_node",
-                    " 303 lingtu_imu_dds /opt/lingtu/current/build/imu/lingtu_imu_dds",
+                    " 303 lingtu_imu_dds /opt/lingtu/current/bin/lingtu_imu_dds",
                 ]
             ),
             "stderr": "",
@@ -457,11 +457,11 @@ def test_thunder_service_readiness_accepts_camera_closed_loop_evidence() -> None
         native_binaries={
             "binaries": {
                 "camera_dds": {
-                    "path": "/opt/lingtu/current/build/camera_dds/lingtu_camera_dds",
+                    "path": "/opt/lingtu/current/bin/lingtu_camera_dds",
                     "executable": True,
                 },
                 "orbbec_capture": {
-                    "path": "/opt/lingtu/current/build/orbbec_native/orbbec_capture",
+                    "path": "/opt/lingtu/current/bin/orbbec_capture",
                     "executable": True,
                 },
             }
@@ -613,7 +613,7 @@ def test_thunder_service_readiness_summary_aggregates_blockers() -> None:
         },
         "native_binaries": {
             "blockers": [
-                "native_binary_missing_or_not_executable:camera_dds:/opt/lingtu/current/build/camera_dds/lingtu_camera_dds"
+                "native_binary_missing_or_not_executable:camera_dds:/opt/lingtu/current/bin/lingtu_camera_dds"
             ]
         },
         "gnss": {"blockers": ["gnss_device_missing:/dev/wtrtk980"]},
@@ -636,7 +636,7 @@ def test_thunder_service_readiness_summary_aggregates_blockers() -> None:
     assert summary["blockers"] == [
         "systemd:unit_missing:lt-camera.service",
         "status_file:missing:camera:/dev/shm/lingtu/camera_status.json",
-        "native_binaries:native_binary_missing_or_not_executable:camera_dds:/opt/lingtu/current/build/camera_dds/lingtu_camera_dds",
+        "native_binaries:native_binary_missing_or_not_executable:camera_dds:/opt/lingtu/current/bin/lingtu_camera_dds",
         "gnss:gnss_device_missing:/dev/wtrtk980",
         "gateway:services_status:404",
         "processes:legacy_process_observed:livox_ros_driver2",
@@ -658,7 +658,7 @@ def test_driver_readiness_uses_connection_heartbeat_not_idle_cmd_samples() -> No
         native_binaries={
             "binaries": {
                 "driver": {
-                    "path": "/opt/lingtu/current/build/driver/lingtu_driver",
+                    "path": "/opt/lingtu/current/bin/lingtu_driver",
                     "executable": True,
                 }
             }
@@ -843,24 +843,22 @@ def test_thunder_service_readiness_collector_lists_catalog_dds_topics() -> None:
 
 def test_driver_dds_topic_may_be_silent_while_idle(monkeypatch) -> None:
     module = _load_module()
-    rows = []
-    for contract in module.DDS_TOPICS.values():
-        for topic in contract["dds_topics"]:
-            rows.append(
-                {
-                    "topic": topic,
-                    "samples": 0 if topic == "rt/nav/cmd_vel" else 1,
-                    "hz": 0.0 if topic == "rt/nav/cmd_vel" else 10.0,
-                }
+
+    def probe(topics, **_kwargs):
+        return {
+            topic: SimpleNamespace(
+                samples=0 if topic == "rt/nav/cmd_vel" else 1,
+                hz=lambda topic=topic: 0.0 if topic == "rt/nav/cmd_vel" else 10.0,
+                frame_id="map",
+                points=42,
             )
+            for topic in topics
+        }
+
     monkeypatch.setattr(
-        module.subprocess,
-        "run",
-        lambda *args, **kwargs: SimpleNamespace(
-            returncode=0,
-            stdout=json.dumps(rows),
-            stderr="",
-        ),
+        module,
+        "probe_dds",
+        probe,
     )
 
     report = module.collect_dds(seconds=0.1, domain_id=7)
@@ -869,3 +867,6 @@ def test_driver_dds_topic_may_be_silent_while_idle(monkeypatch) -> None:
     assert "dds_topic_silent:rt/nav/cmd_vel" not in report["blockers"]
     assert report["services"]["driver"]["ok"] is True
     assert report["services"]["driver"]["idle_allowed"] is True
+    slam_odometry = report["services"]["slam"]["details"]["rt/slam/odometry"]
+    assert slam_odometry["frame_id"] == "map"
+    assert slam_odometry["points"] == 42

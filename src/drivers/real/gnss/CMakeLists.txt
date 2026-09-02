@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 project(lingtu_gnss_dds LANGUAGES C CXX)
+include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -54,3 +55,7 @@ if(UNIX)
   target_compile_options(lingtu_gnss_dds PRIVATE -Wall -Wextra)
   target_link_libraries(lingtu_gnss_dds PRIVATE pthread)
 endif()
+
+install(TARGETS lingtu_gnss_dds
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT lingtu_runtime)

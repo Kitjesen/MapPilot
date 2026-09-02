@@ -38,8 +38,8 @@ def _prepare_direct_script_import_path() -> None:
 
 _prepare_direct_script_import_path()
 
-from sim.engine.core.engine import VelocityCommand
-from sim.engine.core.sensor import CameraConfig
+from sim.compat.engine.core.engine import VelocityCommand
+from sim.compat.engine.core.sensor import CameraConfig
 from sim.runtime.scenario.runtime import ScenarioClock, ScenarioRuntime
 from sim.runtime.windows_timing import deadline_waiter
 from sim.scripts.mujoco.driver_bridge_session import (
@@ -52,6 +52,7 @@ from sim.scripts.mujoco.evidence import (
     MAX_ABS_TILT_RAD,
     MAX_BASE_HEIGHT_M,
     MAX_BASE_HEIGHT_SPAN_M,
+    MAX_TRAJECTORY_SAMPLES,
     MIN_BASE_HEIGHT_M,
     MOTION_EVIDENCE_SCHEMA,
     publish_feeder_status,
@@ -314,7 +315,7 @@ class _Services:
     ) -> tuple[Path, Path, Path]:
         required = (config.world, config.robot.policy)
         snapshot_root = session_root / (f".formal-feeder-artifacts-{secrets.token_hex(16)}")
-        snapshot_root.mkdir(mode=0o700)
+        snapshot_root.mkdir(mode=0o700 if os.name != "nt" else 0o777)
         package_relative = PurePosixPath(config.robot.package_root)
         model_relative = PurePosixPath(config.robot.model)
         if (
@@ -819,9 +820,17 @@ class _PhysicalMotionEvidence:
             distance = math.hypot(position[0] - previous[1], position[1] - previous[2])
             if step_gap < 20 and distance < 0.025:
                 return
-        self.trajectory.append(
-            [float(step_seq), position[0], position[1], position[2], yaw]
-        )
+        self._append_trace(position, yaw, step_seq)
+
+    def _append_trace(
+        self,
+        position: tuple[float, float, float],
+        yaw: float,
+        step_seq: int,
+    ) -> None:
+        self.trajectory.append([float(step_seq), *position, yaw])
+        if len(self.trajectory) > MAX_TRAJECTORY_SAMPLES:
+            self.trajectory[:] = self.trajectory[::2]
         self.last_trace_step_seq = step_seq
 
     def observe_pose(self, state: Any) -> None:
@@ -910,14 +919,10 @@ class _PhysicalMotionEvidence:
                 )
                 > 1e-9
             ):
-                self.trajectory.append(
-                    [
-                        float(self.last_pose_step_seq),
-                        self.end_position[0],
-                        self.end_position[1],
-                        self.end_position[2],
-                        float(self.end_yaw_rad or 0.0),
-                    ]
+                self._append_trace(
+                    self.end_position,
+                    float(self.end_yaw_rad or 0.0),
+                    self.last_pose_step_seq,
                 )
         else:
             displacement = 0.0

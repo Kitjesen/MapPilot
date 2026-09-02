@@ -7,7 +7,6 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/lingtu/current
 Environment=LINGTU_REPO=/opt/lingtu/current
-Environment=LINGTU_LIVOX_BIN=/opt/lingtu/current/build/livox_sdk2_stream/livox_sdk2_stream
 Environment=LINGTU_LIVOX_CONFIG_DIR=/opt/lingtu/config/livox
 Environment=LINGTU_LIVOX_LIDAR_FRAME=lidar_link
 Environment=LINGTU_LIVOX_IMU_FRAME=imu_link

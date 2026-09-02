@@ -13,9 +13,9 @@ import numpy as np
 import pytest
 
 from lingtu.assembly.native_nav import mapd_environment
-from sim.engine.core.engine import VelocityCommand
-from sim.engine.mujoco import robot_controller
-from sim.engine.mujoco.engine import MuJoCoEngine
+from sim.compat.engine.core.engine import VelocityCommand
+from sim.compat.engine.mujoco import robot_controller
+from sim.compat.engine.mujoco.engine import MuJoCoEngine
 from sim.scripts.mujoco import native_dds_sensors as sensors
 from sim.scripts.mujoco import native_navigation_acceptance as acceptance
 from sim.scripts.mujoco import native_navigation_video as navigation_video
@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_navigation_acceptance_uses_current_thunder_mjcf() -> None:
     assert acceptance.DEFAULT_THUNDERV4_MJCF == (
-        ROOT / "sim" / "robots" / "doso" / "thunder_v4" / "mjcf" / "thunderv4.xml"
+        ROOT / "sim" / "packages" / "robots" / "doso" / "thunder_v4" / "mjcf" / "thunderv4.xml"
     )
     assert acceptance.DEFAULT_THUNDERV4_MJCF.is_file()
 
@@ -446,6 +446,9 @@ def test_local_planner_manifests_share_one_truth_lidar_baseline() -> None:
     assert scan["start"] == [3.0, 4.0, 0.6, 0.0]
     assert scan["navigation_runtime"]["path_follower_max_speed_mps"] >= 0.5
     assert scan["slam_runtime"]["provider"] == "mujoco_navigation_fixture"
+    assert scan["driver_runtime"] == cmu["driver_runtime"]
+    assert scan["driver_runtime"]["heartbeat_timeout_ms"] == 10000
+    assert scan["driver_runtime"]["apply_timeout_ms"] == 30000
     assert scan["paths"]["slam_config"] == cmu["paths"]["slam_config"]
     assert scan["paths"]["slam_config"] == (
         "src/localization/fastlio2/config/sim_mid360.yaml"
@@ -468,6 +471,7 @@ def test_local_planner_manifests_share_one_truth_lidar_baseline() -> None:
     assert scan["sensor_runtime"]["physics_integrator"] == "euler"
     assert scan["sensor_runtime"]["publisher_write_mode"] == "async_fifo"
     assert scan["thresholds"]["min_mujoco_truth_peak_xy_speed_mps"] >= 0.5
+
     assert scan["thresholds"]["require_traversability"] is False
     assert scan["navigation_runtime"]["use_traversability_cost"] is False
     assert scan["asset_builder"] == {
@@ -510,6 +514,34 @@ def test_local_planner_manifests_share_one_truth_lidar_baseline() -> None:
         {"mujoco_truth_velocity": {"max_xy_speed_mps": 0.51}},
         scan["thresholds"],
     ) is None
+
+
+def test_scan_safety_contract_uses_map_collision_instead_of_raw_cloud() -> None:
+    evidence = acceptance.NativeEvidence(
+        last_nav={
+            "control_mode": "autonomy",
+            "check_obstacle": True,
+            "local_planner": "scan",
+            "input_gate": {
+                "require_odom": True,
+                "require_cloud": False,
+                "require_localization_health": True,
+            },
+            "local_map": {"collision": {"complete": True, "generation": 1}},
+        }
+    )
+
+    _, blockers, _ = acceptance._evaluate_phase(
+        phase="no_motion",
+        phase_cfg={"publish_cmd_vel": False},
+        thresholds={"require_navigation_safety_contracts": True},
+        evidence=evidence,
+        sensor_report={},
+        goal=[0.0, 0.0, 0.0, 0.0],
+    )
+
+    assert "stale_fail_safe_contract_missing:require_cloud" not in blockers
+    assert "stale_fail_safe_contract_missing:map_collision" not in blockers
 
 
 def test_scan_acceptance_gives_navd_three_whole_cores_and_keeps_support_disjoint() -> None:
@@ -631,7 +663,12 @@ def test_run_plan_binding_replaces_component_candidates_and_env_override(
 
 
 def test_scan_mapd_launch_uses_run_plan_collision_profile(tmp_path: Path) -> None:
-    environment = mapd_environment("scan")
+    environment = mapd_environment(
+        {
+            "LINGTU_NAV_LOCAL_PLANNER_BACKEND": "scan",
+            "LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M": "0.4",
+        }
+    )
 
     command, process_environment = acceptance._native_mapd_launch(
         binary=Path("mapd.exe"),
@@ -642,11 +679,22 @@ def test_scan_mapd_launch_uses_run_plan_collision_profile(tmp_path: Path) -> Non
         environment=environment,
     )
 
-    cap_index = command.index("--max-collision-snapshot-points")
-    assert command[cap_index + 1] == "4000000"
+    assert "--max-collision-snapshot-points" not in command
     assert process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
+    assert process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_X"] == "200"
+    assert process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_Y"] == "200"
     assert process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_Z"] == "100"
-    assert mapd_environment("cmu") == {}
+    assert process_environment["LINGTU_MAPD_OCCUPANCY_RAY_M"] == "5.0"
+    assert process_environment["LINGTU_MAPD_INFLATION_RADIUS_M"] == "0.4"
+    assert mapd_environment({"LINGTU_NAV_LOCAL_PLANNER_BACKEND": "cmu"}) == {}
+
+
+def test_scan_mapd_profile_rejects_missing_run_plan_geometry() -> None:
+    with pytest.raises(
+        ValueError,
+        match="SCAN requires LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M",
+    ):
+        mapd_environment({"LINGTU_NAV_LOCAL_PLANNER_BACKEND": "scan"})
 
 
 def test_binary_candidate_resolver_skips_exe_on_non_windows():
@@ -1502,7 +1550,7 @@ def test_compiled_lidar_offset_uses_final_site_pose_not_local_site_pos(tmp_path)
 
 def test_thunderv4_compiled_lidar_offset_matches_body_frame_extrinsics():
     offset = acceptance._compiled_mujoco_site_offset_body(
-        ROOT / "sim" / "robots" / "thunderv4" / "mjcf" / "thunderv4.xml"
+        ROOT / "sim" / "packages" / "robots" / "thunderv4" / "mjcf" / "thunderv4.xml"
     )
 
     assert offset == pytest.approx((-0.30638, 0.0, 0.19417), abs=1e-6)
@@ -1834,6 +1882,7 @@ def test_motion_log_contract_captures_native_navigation_and_visual_state(tmp_pat
     assert sensors._read_json_object(status)["global_path"]
     assert sensors._read_json_object(tmp_path / "missing.json") == {}
     assert sensors._native_nav_goal_reached({"last_local": {"goal_reached": True}}) is True
+    assert sensors._native_nav_goal_reached({"last_local": {"reason": "goal_reached"}}) is True
     assert sensors._native_nav_goal_reached({}) is False
 
     sensor_source = (ROOT / "sim" / "scripts" / "mujoco" / "native_dds_sensors.py").read_text(encoding="utf-8")
@@ -2581,12 +2630,12 @@ def test_multifloor_merged_manifest_locks_runtime_octoplanner3d_constraints():
     assert runtime_args[runtime_args.index("--goal-reached-m") + 1] == "0.1"
     assert runtime_args[runtime_args.index("--waypoint-reached-m") + 1] == "0.2"
     assert acceptance._scan_follower_environment(manifest["navigation_runtime"]) == {
-        "LINGTU_NAV_SCAN_TIME_FORWARD_S": "0.55",
+        "LINGTU_NAV_SCAN_TIME_FORWARD_S": "0.8",
         "LINGTU_NAV_SCAN_HEADING_ERROR_RAD": "0.8",
-        "LINGTU_NAV_SCAN_POSITION_GAIN": "0.9",
-        "LINGTU_NAV_SCAN_YAW_GAIN": "1.2",
-        "LINGTU_NAV_SCAN_MAX_VX_MPS": "0.5",
-        "LINGTU_NAV_SCAN_MAX_VY_MPS": "0.25",
+        "LINGTU_NAV_SCAN_POSITION_GAIN": "0.8",
+        "LINGTU_NAV_SCAN_YAW_GAIN": "1.5",
+        "LINGTU_NAV_SCAN_MAX_VX_MPS": "0.75",
+        "LINGTU_NAV_SCAN_MAX_VY_MPS": "0.35",
         "LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S": "1",
     }
     assert manifest["driver_runtime"]["apply_timeout_ms"] == 1500

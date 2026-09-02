@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from sim.engine.mujoco.lidar import ROBOT_COLLISION_GEOM_GROUP
+from sim.compat.engine.mujoco.lidar import ROBOT_COLLISION_GEOM_GROUP
 
 _CANDIDATE_BGR = {
     "feasible": (188, 188, 188),

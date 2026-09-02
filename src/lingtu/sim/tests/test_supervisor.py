@@ -100,11 +100,11 @@ def _simulation_snapshot() -> dict[str, Any]:
         "id": "test_robot",
         "version": "1.0.0",
         "kind": "robot",
-        "manifest": "sim/robots/test_robot/robot.package.yaml",
+        "manifest": "sim/packages/robots/test_robot/robot.package.yaml",
     }
     world = {
         "package": world_package,
-        "mjcf": "sim/worlds/test_world/world.xml",
+        "mjcf": "sim/packages/worlds/test_world/world.xml",
     }
     robots = [
         {
@@ -118,7 +118,7 @@ def _simulation_snapshot() -> dict[str, Any]:
                 "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
             },
             "model": {
-                "mjcf": "sim/robots/test_robot/robot.xml",
+                "mjcf": "sim/packages/robots/test_robot/robot.xml",
                 "attach_root": "base_link",
                 "root_joint": "root",
                 "initial_keyframe": None,
@@ -617,6 +617,39 @@ def test_handler_preserves_strict_partial_readiness_from_process_failure(
 
     assert response.success is True
     assert response.result == failed.as_dict()
+
+
+def test_handler_retains_monitored_product_failure_truth(tmp_path: Path) -> None:
+    plan, path = _published_plan(tmp_path)
+    active = ProcessReport(
+        product=plan.product,
+        env=plan.env,
+        action="apply",
+        ok=True,
+        status="active",
+    )
+    failed = ProcessReport(
+        product=plan.product,
+        env=plan.env,
+        action="apply",
+        status="failed",
+        error="critical simulation process exited: driver_bridge",
+    )
+
+    class MonitoringOwner(FakeOwner):
+        def monitor(self, checked: RunPlan) -> None:
+            self.events.append(("monitor", checked.product))
+            raise ProcessFailed(failed)
+
+    owner = MonitoringOwner({"apply": active})
+    handler = _SimulationRequestHandler(owner)
+
+    assert handler.handle(_request(plan, path)).result == active.as_dict()
+    assert handler.handle(_request(plan, path)).result == active.as_dict()
+    assert owner.events.count(("apply", plan.product)) == 1
+    assert handler.poll() == failed
+    assert handler.handle(_request(plan, path, action="status")).result == failed.as_dict()
+    assert owner.events.count(("apply", plan.product)) == 1
 
 
 def test_handler_limits_operation_failure_message(tmp_path: Path) -> None:

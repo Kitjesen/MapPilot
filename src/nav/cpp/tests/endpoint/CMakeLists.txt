@@ -6,6 +6,7 @@ set(_NAV_COMMANDS_CPP_DIR "${LINGTU_NAV_CPP_ROOT}/client")
 set(_NAV_TESTS_DIR "${LINGTU_NAV_CPP_ROOT}/tests")
 set(_NAV_ENDPOINT_TESTS_DIR "${_NAV_TESTS_DIR}/endpoint")
 set(_EXPLORE_CPP_DIR "${LINGTU_SRC_ROOT}/explore/cpp")
+set(_EXPLORE_ENDPOINT_DIR "${_EXPLORE_CPP_DIR}/endpoint")
 set(_LINGTU_EXPLORE_CPP_DIR "${_EXPLORE_CPP_DIR}")
 set(_PERCEPTION_INSPECTION_DIR "${LINGTU_SRC_ROOT}/perception/inspection")
 set(_NAV_CPP_DIR "${LINGTU_NAV_CPP_ROOT}")
@@ -16,6 +17,7 @@ set(_OCTOPLANNER3D_RUNTIME_DIR
 set(_EP_DIRS
   "${_ENDPOINT_DIR}"
   "${_ENDPOINT_DIR}/nav"
+  "${_EXPLORE_CPP_DIR}"
   "${LINGTU_SRC_ROOT}")
 
 if(LINGTU_NAV_CPP_BUILD_ENDPOINT)
@@ -50,7 +52,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
       "${LINGTU_NAV_TESTS_DIR}/endpoint/test_directed_exploration_intent.cpp")
   add_executable(test_directed_exploration_intent
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_directed_exploration_intent.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/explore/directed_intent.cpp")
+    "${_EXPLORE_ENDPOINT_DIR}/directed_intent.cpp")
   target_include_directories(test_directed_exploration_intent PRIVATE
     "${LINGTU_SRC_ROOT}"
     "${LINGTU_SRC_ROOT}/explore/cpp"
@@ -71,9 +73,10 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
       "${LINGTU_NAV_TESTS_DIR}/endpoint/test_explore_goal_lifecycle.cpp")
   add_executable(test_explore_goal_lifecycle
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_explore_goal_lifecycle.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/explore/goal_lifecycle.cpp")
+    "${_EXPLORE_ENDPOINT_DIR}/goal_lifecycle.cpp")
   target_include_directories(test_explore_goal_lifecycle PRIVATE
     "${LINGTU_SRC_ROOT}"
+    "${_EXPLORE_CPP_DIR}"
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav")
   target_compile_options(test_explore_goal_lifecycle PRIVATE
@@ -91,9 +94,10 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
       "${LINGTU_NAV_TESTS_DIR}/endpoint/test_explore_goal_command_lane.cpp")
   add_executable(test_explore_goal_command_lane
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_explore_goal_command_lane.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/explore/goal_command_lane.cpp")
+    "${_EXPLORE_ENDPOINT_DIR}/goal_command_lane.cpp")
   target_include_directories(test_explore_goal_command_lane PRIVATE
     "${LINGTU_SRC_ROOT}"
+    "${_EXPLORE_CPP_DIR}"
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav")
   target_compile_options(test_explore_goal_command_lane PRIVATE
@@ -150,10 +154,11 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     AND EXISTS "${LINGTU_NAV_TESTS_DIR}/endpoint/test_explore_control.cpp")
   add_executable(test_explore_control
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_explore_control.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/explore/control.cpp")
+    "${_EXPLORE_ENDPOINT_DIR}/control.cpp")
   target_include_directories(test_explore_control PRIVATE
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
+    "${_EXPLORE_CPP_DIR}"
     "${LINGTU_SRC_ROOT}")
   target_compile_options(test_explore_control PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
@@ -167,11 +172,12 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
       "${LINGTU_NAV_TESTS_DIR}/endpoint/test_exploration_run_event_outbox.cpp")
   add_executable(test_exploration_run_event_outbox
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_exploration_run_event_outbox.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/explore/run_event_outbox.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/explore/run_lifecycle.cpp")
+    "${_EXPLORE_ENDPOINT_DIR}/run_event_outbox.cpp"
+    "${_EXPLORE_ENDPOINT_DIR}/run_lifecycle.cpp")
   target_include_directories(test_exploration_run_event_outbox PRIVATE
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
+    "${_EXPLORE_CPP_DIR}"
     "${LINGTU_SRC_ROOT}")
   target_compile_options(test_exploration_run_event_outbox PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
@@ -204,7 +210,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
       "${LINGTU_NAV_TESTS_DIR}/endpoint/test_saved_coverage_grid.cpp")
   add_executable(test_saved_coverage_grid
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_saved_coverage_grid.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/explore/saved_coverage_grid.cpp")
+    "${_EXPLORE_ENDPOINT_DIR}/saved_coverage_grid.cpp")
   target_include_directories(test_saved_coverage_grid PRIVATE
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
@@ -1323,6 +1329,7 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_endpoint_messages.cpp")
     "${_NAV_KERNEL_DIR}/include")
 
   target_link_libraries(test_nav_endpoint_messages PRIVATE
+    lingtu_nav_local_planner
     lingtu_dds_messages
     CycloneDDS::ddsc
     Threads::Threads)
@@ -1347,6 +1354,7 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_final_velocity_writer.cpp")
     ${_EP_DIRS})
   target_link_libraries(test_final_velocity_writer PRIVATE
     lingtu_inspection_core
+    lingtu_nav_local_planner
     lingtu_dds_messages
     CycloneDDS::ddsc
     lingtu_dds_contracts
@@ -1373,6 +1381,7 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_evidence_dds.cpp")
     ${_EP_DIRS})
   target_link_libraries(test_inspection_evidence_dds PRIVATE
     lingtu_inspection_core
+    lingtu_nav_local_planner
     lingtu_dds_messages
     CycloneDDS::ddsc
     lingtu_dds_contracts
@@ -1400,6 +1409,7 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_navigation_goal_status_dds.cpp")
     ${_EP_DIRS})
   target_link_libraries(test_navigation_goal_status_dds PRIVATE
     lingtu_inspection_core
+    lingtu_nav_local_planner
     lingtu_dds_messages
     CycloneDDS::ddsc
     lingtu_dds_contracts
@@ -1463,6 +1473,7 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_input_projector.cpp")
     "${_NAV_KERNEL_DIR}/include"
     ${_EP_DIRS})
   target_link_libraries(test_input_projector PRIVATE
+    lingtu_nav_local_planner
     lingtu_dds_messages
     CycloneDDS::ddsc
     Threads::Threads)
@@ -1531,6 +1542,7 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_operator_motion_dds.cpp")
     ${_EP_DIRS})
   target_link_libraries(test_operator_motion_dds PRIVATE
     lingtu_inspection_core
+    lingtu_nav_local_planner
     lingtu_dds_messages
     CycloneDDS::ddsc
     lingtu_dds_contracts
@@ -1912,7 +1924,7 @@ endif()
 if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_saved_coverage_grid.cpp")
   add_executable(test_saved_coverage_grid
     "${_NAV_ENDPOINT_TESTS_DIR}/test_saved_coverage_grid.cpp"
-    "${_ENDPOINT_DIR}/explore/saved_coverage_grid.cpp")
+    "${_EXPLORE_ENDPOINT_DIR}/saved_coverage_grid.cpp")
   target_include_directories(test_saved_coverage_grid PRIVATE
     "${_ENDPOINT_DIR}"
     "${_EXPLORE_CPP_DIR}"
@@ -2029,7 +2041,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
 if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_explore_control.cpp")
   add_executable(test_explore_control
     "${_NAV_ENDPOINT_TESTS_DIR}/test_explore_control.cpp"
-    "${_ENDPOINT_DIR}/explore/control.cpp")
+    "${_EXPLORE_ENDPOINT_DIR}/control.cpp")
   target_include_directories(test_explore_control PRIVATE
     "${_LINGTU_ROOT}/src"
     ${_EP_DIRS})
@@ -2041,8 +2053,8 @@ endif()
 if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_exploration_run_event_outbox.cpp")
   add_executable(test_exploration_run_event_outbox
     "${_NAV_ENDPOINT_TESTS_DIR}/test_exploration_run_event_outbox.cpp"
-    "${_ENDPOINT_DIR}/explore/run_event_outbox.cpp"
-    "${_ENDPOINT_DIR}/explore/run_lifecycle.cpp")
+    "${_EXPLORE_ENDPOINT_DIR}/run_event_outbox.cpp"
+    "${_EXPLORE_ENDPOINT_DIR}/run_lifecycle.cpp")
   target_include_directories(test_exploration_run_event_outbox PRIVATE
     "${_LINGTU_ROOT}/src"
     ${_EP_DIRS})
@@ -2070,7 +2082,7 @@ if(NOT TARGET test_directed_exploration_intent
     AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_directed_exploration_intent.cpp")
   add_executable(test_directed_exploration_intent
     "${_NAV_ENDPOINT_TESTS_DIR}/test_directed_exploration_intent.cpp"
-    "${_ENDPOINT_DIR}/explore/directed_intent.cpp")
+    "${_EXPLORE_ENDPOINT_DIR}/directed_intent.cpp")
   target_include_directories(test_directed_exploration_intent PRIVATE
     "${_LINGTU_ROOT}/src"
     "${_EXPLORE_CPP_DIR}"
@@ -2086,7 +2098,7 @@ if(NOT TARGET test_explore_goal_lifecycle
     AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_explore_goal_lifecycle.cpp")
   add_executable(test_explore_goal_lifecycle
     "${_NAV_ENDPOINT_TESTS_DIR}/test_explore_goal_lifecycle.cpp"
-    "${_ENDPOINT_DIR}/explore/goal_lifecycle.cpp")
+    "${_EXPLORE_ENDPOINT_DIR}/goal_lifecycle.cpp")
   target_include_directories(test_explore_goal_lifecycle PRIVATE
     "${_LINGTU_ROOT}/src"
     ${_EP_DIRS})
@@ -2101,7 +2113,7 @@ if(NOT TARGET test_explore_goal_command_lane
     AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_explore_goal_command_lane.cpp")
   add_executable(test_explore_goal_command_lane
     "${_NAV_ENDPOINT_TESTS_DIR}/test_explore_goal_command_lane.cpp"
-    "${_ENDPOINT_DIR}/explore/goal_command_lane.cpp")
+    "${_EXPLORE_ENDPOINT_DIR}/goal_command_lane.cpp")
   target_include_directories(test_explore_goal_command_lane PRIVATE
     "${_LINGTU_ROOT}/src"
     ${_EP_DIRS})
@@ -2117,7 +2129,7 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_explore_input.cpp")
     "${_NAV_ENDPOINT_TESTS_DIR}/test_explore_input.cpp"
     "${_ENDPOINT_DIR}/nav/dds/frame.cpp"
     "${_ENDPOINT_DIR}/nav/input/frame.cpp"
-    "${_ENDPOINT_DIR}/explore/input_gate.cpp")
+    "${_EXPLORE_ENDPOINT_DIR}/input_gate.cpp")
   target_include_directories(test_explore_input PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
     "${_LINGTU_ROOT}/src"

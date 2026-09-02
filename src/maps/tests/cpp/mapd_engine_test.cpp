@@ -42,6 +42,11 @@ Config TestConfig() {
   config.occupancy.size_y = 16;
   config.occupancy.size_z = 8;
   config.occupancy.resolution_m = 0.5F;
+  config.occupancy.hit_log_odds = 4.0F;
+  config.occupancy.miss_log_odds = 2.0F;
+  config.occupancy.inflation_radius_m = 0.0F;
+  config.occupancy.inflation_z_up_m = 0.0F;
+  config.occupancy.inflation_z_down_m = 0.0F;
   config.occupancy.roll_margin_x = 2;
   config.occupancy.roll_margin_y = 2;
   config.occupancy.roll_margin_z = 1;
@@ -309,7 +314,6 @@ void TestRuntimeMapCapacityLimitsFailClosed() {
 
 void TestCollisionSnapshotCompletenessAndAabb() {
   Config complete_config = TestConfig();
-  complete_config.max_collision_snapshot_points = 8U;
   LiveMapEngine complete_engine(complete_config);
   complete_engine.Start();
   assert(complete_engine.Submit(MakeObservation(
@@ -318,14 +322,23 @@ void TestCollisionSnapshotCompletenessAndAabb() {
       0.0,
       0.0,
       0.0,
-      {1.0F, 0.0F, 0.0F, 2.0F, 0.0F, 0.0F})).accepted());
+      {1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F})).accepted());
   assert(complete_engine.WaitUntilProcessed(
       1U, 1U, std::chrono::seconds(2)));
   auto snapshot = complete_engine.GetSnapshot();
   assert(snapshot.collision.complete);
-  assert(snapshot.collision.total_occupied_cells == 2U);
-  assert(snapshot.collision.occupied.point_count == 2U);
-  assert(snapshot.collision.occupied.interleaved.size() == 6U);
+  assert(snapshot.collision.occupied_cells == 2U);
+  const auto collision_generation = snapshot.collision.generation;
+  assert(collision_generation > 0U);
+  assert(snapshot.collision.size_x == complete_config.occupancy.size_x);
+  assert(snapshot.collision.size_y == complete_config.occupancy.size_y);
+  assert(snapshot.collision.size_z == complete_config.occupancy.size_z);
+  assert(snapshot.collision.occupied_bits.size() ==
+         (static_cast<std::size_t>(snapshot.collision.size_x) *
+              static_cast<std::size_t>(snapshot.collision.size_y) *
+              static_cast<std::size_t>(snapshot.collision.size_z) +
+          7U) /
+             8U);
   assert(std::fabs(
       snapshot.collision.max_x_m - snapshot.collision.min_x_m -
       complete_config.occupancy.size_x *
@@ -339,27 +352,19 @@ void TestCollisionSnapshotCompletenessAndAabb() {
       complete_config.occupancy.size_z *
           complete_config.occupancy.resolution_m) < 1.0e-5F);
   assert(!complete_engine.GetState().capacity_limited);
-  complete_engine.Stop();
 
-  Config capped_config = TestConfig();
-  capped_config.max_collision_snapshot_points = 1U;
-  LiveMapEngine capped_engine(capped_config);
-  capped_engine.Start();
-  assert(capped_engine.Submit(MakeObservation(
+  assert(complete_engine.Submit(MakeObservation(
       1U,
-      1U,
+      2U,
       0.0,
       0.0,
       0.0,
-      {1.0F, 0.0F, 0.0F, 2.0F, 0.0F, 0.0F})).accepted());
-  assert(capped_engine.WaitUntilProcessed(
-      1U, 1U, std::chrono::seconds(2)));
-  snapshot = capped_engine.GetSnapshot();
-  assert(!snapshot.collision.complete);
-  assert(snapshot.collision.total_occupied_cells == 2U);
-  assert(snapshot.collision.occupied.point_count == 1U);
-  assert(capped_engine.GetState().capacity_limited);
-  capped_engine.Stop();
+      {1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F})).accepted());
+  assert(complete_engine.WaitUntilProcessed(
+      1U, 2U, std::chrono::seconds(2)));
+  snapshot = complete_engine.GetSnapshot();
+  assert(snapshot.collision.generation == collision_generation);
+  complete_engine.Stop();
 }
 
 void TestCollisionSnapshotKeepsNearbyGroundInNearbyCells() {
@@ -367,7 +372,6 @@ void TestCollisionSnapshotKeepsNearbyGroundInNearbyCells() {
   config.max_points_per_observation = 1000U;
   config.min_range_m = 0.0F;
   config.max_range_m = 12.0F;
-  config.max_collision_snapshot_points = 1000U;
   config.accumulated_decay_factor = 1.0F;
   LiveMapEngine engine(config);
   engine.Start();
@@ -385,10 +389,15 @@ void TestCollisionSnapshotKeepsNearbyGroundInNearbyCells() {
   observation.sensor_origin_z_m = 0.48F;
   assert(engine.Submit(std::move(observation)).accepted());
   assert(engine.WaitUntilProcessed(1U, 1U, std::chrono::seconds(2)));
+  observation = MakeObservation(1U, 2U, 0.0, 0.0, 0.0, ground);
+  observation.map_sensor.z = 0.48;
+  observation.sensor_origin_z_m = 0.48F;
+  assert(engine.Submit(std::move(observation)).accepted());
+  assert(engine.WaitUntilProcessed(1U, 2U, std::chrono::seconds(2)));
 
   const auto snapshot = engine.GetSnapshot();
   assert(snapshot.collision.complete);
-  assert(snapshot.collision.occupied.point_count > 0U);
+  assert(snapshot.collision.occupied_cells > 0U);
   assert(snapshot.live_cloud.point_count == ground.size() / 3U);
   for (std::size_t index = 0U; index < snapshot.live_cloud.point_count; ++index) {
     const std::size_t offset = index * 3U;
@@ -398,14 +407,27 @@ void TestCollisionSnapshotKeepsNearbyGroundInNearbyCells() {
            snapshot.live_cloud.interleaved[offset + 1U] <= 1.81F);
     assert(std::fabs(snapshot.live_cloud.interleaved[offset + 2U]) < 1.0e-4F);
   }
-  for (std::size_t index = 0U; index < snapshot.collision.occupied.point_count; ++index) {
-    const std::size_t offset = index * 3U;
-    const float x = snapshot.collision.occupied.interleaved[offset];
-    const float y = snapshot.collision.occupied.interleaved[offset + 1U];
-    const float z = snapshot.collision.occupied.interleaved[offset + 2U];
-    assert(x >= -1.25F && x <= 4.25F);
-    assert(y >= -2.0F && y <= 2.0F);
-    assert(z >= -0.25F && z <= 0.25F);
+  const std::size_t plane = static_cast<std::size_t>(snapshot.collision.size_x) *
+                            static_cast<std::size_t>(snapshot.collision.size_y);
+  for (std::size_t index = 0U;
+       index < plane * static_cast<std::size_t>(snapshot.collision.size_z); ++index) {
+    if ((snapshot.collision.occupied_bits[index / 8U] &
+         static_cast<std::uint8_t>(1U << (index % 8U))) == 0U) {
+      continue;
+    }
+    const std::size_t z_index = index / plane;
+    const std::size_t remainder = index % plane;
+    const std::size_t y_index = remainder / static_cast<std::size_t>(snapshot.collision.size_x);
+    const std::size_t x_index = remainder % static_cast<std::size_t>(snapshot.collision.size_x);
+    const float x = snapshot.collision.min_x_m +
+                    (static_cast<float>(x_index) + 0.5F) * snapshot.collision.resolution_m;
+    const float y = snapshot.collision.min_y_m +
+                    (static_cast<float>(y_index) + 0.5F) * snapshot.collision.resolution_m;
+    const float z = snapshot.collision.min_z_m +
+                    (static_cast<float>(z_index) + 0.5F) * snapshot.collision.resolution_m;
+    assert(x >= -1.5F && x <= 4.5F);
+    assert(y >= -2.25F && y <= 2.25F);
+    assert(z >= -0.25F && z <= 0.5F);
   }
   engine.Stop();
 }
@@ -426,7 +448,7 @@ void TestRealtimeAndCompleteSnapshotsAreBuiltOnDemand() {
   const auto realtime = engine.GetView(SnapshotDetail::kRealtime);
   assert(realtime.snapshot.generation == state.generation);
   assert(realtime.snapshot.voxel_cloud.point_count == 1U);
-  assert(realtime.snapshot.collision.occupied.point_count == 1U);
+  assert(realtime.snapshot.collision.occupied_cells == 1U);
   assert(realtime.snapshot.accumulated_cloud.Size() == 0U);
   assert(realtime.snapshot.occupancy.empty());
   assert(realtime.snapshot.elevation.valid.empty());
@@ -486,7 +508,7 @@ void TestCollisionOnlyRuntimeSkipsExtendedLayers() {
   const auto realtime = engine.GetView(SnapshotDetail::kRealtime);
   assert(realtime.snapshot.live_cloud.point_count == 1U);
   assert(realtime.snapshot.collision.complete);
-  assert(realtime.snapshot.collision.occupied.point_count == 1U);
+  assert(realtime.snapshot.collision.occupied_cells == 1U);
   assert(realtime.snapshot.voxel_cloud.point_count == 0U);
 
   const auto complete = engine.GetView(SnapshotDetail::kComplete);

@@ -14,11 +14,19 @@ bash scripts/deploy/thunder/install_services.sh field-cpp
 
 # Package or install a native release
 bash scripts/deploy/package_native_release.sh <version> <output-dir>
-bash scripts/deploy/install_native_release.sh <release-dir>
+bash scripts/deploy/install_native_release.sh --package-dir <release-dir>
 
 # Deploy one Product and package the resulting checkout
-bash scripts/deploy/cut_release.sh <version> <product>
+bash scripts/deploy/deploy_robot.sh <product>
+bash scripts/deploy/package_native_release.sh <version> <output-dir>
 ```
+
+The packager consumes one standard prefix at
+`install/linux-<arch>/<config>/{bin,lib,etc,share}`. Set
+`LINGTU_NATIVE_RELEASE_INSTALL_SOURCE` only when CI provides an equivalent
+pre-staged prefix. Phase-one releases also carry the former `build/` layout for
+rollback compatibility, but current services use `/opt/lingtu/current/bin`
+and `/opt/lingtu/current/lib`.
 
 For a Go2 real target, `deploy_robot.sh` first applies the
 `driver.network_interface` and `driver.network_address` from RobotConfig through

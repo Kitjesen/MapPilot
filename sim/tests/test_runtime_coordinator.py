@@ -14,20 +14,16 @@ from sim.catalog import CatalogResolver
 from sim.runtime.coordinator import CoordinatorError, RuntimeCoordinator, RuntimeState
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SESSION = REPO_ROOT / "sim" / "scenarios" / "catalog" / "thunder_omni_contract" / "session.yaml"
+SESSION = REPO_ROOT / "sim" / "sessions" / "examples" / "thunder_omni_contract" / "session.yaml"
 PEDESTRIAN_SESSION = (
     REPO_ROOT
-    / "sim"
-    / "scenarios"
-    / "catalog"
+    / "sim" / "sessions" / "examples"
     / "open_field_pedestrian_crossing"
     / "session.yaml"
 )
 PAYLOAD_SESSION = (
     REPO_ROOT
-    / "sim"
-    / "scenarios"
-    / "catalog"
+    / "sim" / "sessions" / "examples"
     / "thunderv4_rws01_preview"
     / "session.yaml"
 )

@@ -32,7 +32,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised by normal Python imp
 
 BPY_AVAILABLE = bpy is not None
 WORLD_PACKAGE = "factory_park_hf@1.0.0"
-DEFAULT_LAYOUT = Path("sim/worlds/factory_park_hf/generated/expanded-layout.json")
+DEFAULT_LAYOUT = Path("sim/packages/worlds/factory_park_hf/generated/expanded-layout.json")
 DEFAULT_REALISM_RECIPE = Path("sim/packages/worlds/factory_park_hf/visual/realism.recipe.json")
 DEFAULT_OUTPUT_DIR = Path("build/factory-park-hf/blender-v2")
 REALISM_PROFILE = "industrial_realism_v2"

@@ -358,7 +358,7 @@ def _real_report() -> dict:
 
 
 def _load_real_runtime_collect_module():
-    script = REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_collect.py"
+    script = REPO_ROOT / "src" / "diagnostics" / "field" / "runtime_evidence.py"
     spec = importlib.util.spec_from_file_location(
         "real_runtime_evidence_collect_under_test",
         script,
@@ -1374,7 +1374,7 @@ def test_real_runtime_gateway_collector_infers_raw_inputs_from_localization():
 
 
 def test_real_runtime_collector_script_rejects_non_real_expected_contract():
-    script = REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_collect.py"
+    script = REPO_ROOT / "src" / "diagnostics" / "field" / "runtime_evidence.py"
 
     proc = subprocess.run(
         [
@@ -1459,7 +1459,7 @@ def test_real_runtime_collector_does_not_infer_hardware_route_without_observed_s
 
 
 def test_real_runtime_collector_script_does_not_publish_control_topics():
-    script = REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_collect.py"
+    script = REPO_ROOT / "src" / "diagnostics" / "field" / "runtime_evidence.py"
     source = script.read_text(encoding="utf-8")
 
     assert ".create_publisher(" not in source

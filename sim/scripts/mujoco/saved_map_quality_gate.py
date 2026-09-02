@@ -27,7 +27,9 @@ if str(SRC) not in sys.path:
 
 from runtime.msgs.numpy_compat import np  # noqa: E402
 
-DEFAULT_WORLD_XML = ROOT / "sim" / "worlds" / "mujoco" / "industrial_park_scene.xml"
+WORLD_PACKAGE_ROOT = ROOT / "sim" / "packages" / "worlds"
+COMPAT_WORLD_ROOT = ROOT / "sim" / "compat" / "engine" / "worlds"
+DEFAULT_WORLD_XML = WORLD_PACKAGE_ROOT / "industrial_park" / "physics" / "industrial_park_scene.xml"
 SCHEMA_VERSION = "lingtu.mujoco_saved_map_quality_gate.v1"
 _OBSTACLE_EXCLUDED_PREFIXES = (
     "ground",
@@ -171,11 +173,12 @@ def _world_xml_path(value: str | Path) -> Path:
     path = Path(text)
     if path.is_file():
         return path
-    candidate = ROOT / "sim" / "worlds" / "mujoco" / text
-    if candidate.is_file():
-        return candidate
-    if not text.endswith(".xml"):
-        candidate = ROOT / "sim" / "worlds" / "mujoco" / f"{text}_scene.xml"
+    names = (text,) if text.endswith(".xml") else (text, f"{text}_scene.xml")
+    for name in names:
+        matches = sorted(WORLD_PACKAGE_ROOT.glob(f"*/physics/{name}"))
+        if matches:
+            return matches[0]
+        candidate = COMPAT_WORLD_ROOT / name
         if candidate.is_file():
             return candidate
     return path

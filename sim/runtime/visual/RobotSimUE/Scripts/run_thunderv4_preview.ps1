@@ -82,12 +82,12 @@ $assetExporter = Join-Path $repoRoot 'sim\tools\assets\export_binary_stl_fbx.py'
 $mjcf = if ($RobotMjcfPath) {
     [System.IO.Path]::GetFullPath($RobotMjcfPath)
 } else {
-    Join-Path $repoRoot 'sim\robots\thunderv4\mjcf\thunderv4.xml'
+    Join-Path $repoRoot 'sim\packages\robots\doso\thunder_v4\mjcf\thunderv4.xml'
 }
 $robotPackage = if ($RobotPackagePath) {
     [System.IO.Path]::GetFullPath($RobotPackagePath)
 } else {
-    Join-Path $repoRoot 'sim\packages\robots\thunderv4'
+    Join-Path $repoRoot 'sim\packages\robots\doso\thunder_v4'
 }
 $visualMeshRoot = if ($VisualMeshRoot) {
     [System.IO.Path]::GetFullPath($VisualMeshRoot)
@@ -96,7 +96,7 @@ $visualMeshRoot = if ($VisualMeshRoot) {
 }
 $physicsSource = Join-Path $repoRoot 'sim\runtime\physics'
 $physicsBuild = Join-Path $repoRoot 'build\mujoco-runtime-physics-win'
-$sessionSpec = Join-Path $repoRoot 'sim\scenarios\catalog\thunderv4_controlled_headless\session.yaml'
+$sessionSpec = Join-Path $repoRoot 'sim\sessions\examples\thunderv4_controlled_headless\session.yaml'
 $sessionBundle = Join-Path $repoRoot 'build\runtime-session-preview'
 $runtimeRuns = Join-Path $repoRoot 'build\runtime-runs'
 $fbxDir = if ($FbxOutputDir) {
@@ -120,8 +120,8 @@ $errorSentinel = Join-Path $repoRoot 'build\unreal-preview\thunderv4-runtime.err
 $unrealLog = Join-Path $repoRoot 'build\unreal-preview\thunderv4-runtime.Unreal.log'
 $buildBat = Join-Path $UnrealRoot 'Engine\Build\BatchFiles\Build.bat'
 $editor = Join-Path $UnrealRoot 'Engine\Binaries\Win64\UnrealEditor.exe'
-$netFxSdkPreflight = Join-Path $repoRoot 'sim\toolchains\windows_netfxsdk.ps1'
-$ueBuildRunner = Join-Path $repoRoot 'sim\toolchains\ue_build.py'
+$netFxSdkPreflight = Join-Path $repoRoot 'sim\tools\toolchains\windows_netfxsdk.ps1'
+$ueBuildRunner = Join-Path $repoRoot 'sim\tools\toolchains\ue_build.py'
 
 if (-not $SkipUnrealBuild) {
     if (-not (Test-Path -LiteralPath $netFxSdkPreflight -PathType Leaf)) {

@@ -34,7 +34,7 @@ from runtime.graph import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SIMULATION_SESSION = "sim/scenarios/catalog/thunder_omni_contract/session.yaml"
+SIMULATION_SESSION = "sim/sessions/examples/thunder_omni_contract/session.yaml"
 OLD_PRODUCT_SESSION_ID = "1" * 32
 TARGET_PRODUCT_SESSION_ID = "2" * 32
 
@@ -2414,6 +2414,7 @@ def test_product_control_owns_sim_switch_under_its_mutation_lock(
         *,
         product_variant: str | None = None,
         local_planner: str | None = None,
+        **_kwargs: Any,
     ) -> RunPlan:
         resolve_calls.append((product, product_variant, local_planner))
         return target

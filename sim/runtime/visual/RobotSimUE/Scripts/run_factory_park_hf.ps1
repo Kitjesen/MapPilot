@@ -268,8 +268,8 @@ $pythonScript = Join-Path $PSScriptRoot 'build_factory_park_hf.py'
 $editor = Join-Path $UnrealRoot 'Engine\Binaries\Win64\UnrealEditor.exe'
 $buildBat = Join-Path $UnrealRoot 'Engine\Build\BatchFiles\Build.bat'
 $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
-$netFxSdkPreflight = Join-Path $repoRoot 'sim\toolchains\windows_netfxsdk.ps1'
-$ueBuildRunner = Join-Path $repoRoot 'sim\toolchains\ue_build.py'
+$netFxSdkPreflight = Join-Path $repoRoot 'sim\tools\toolchains\windows_netfxsdk.ps1'
+$ueBuildRunner = Join-Path $repoRoot 'sim\tools\toolchains\ue_build.py'
 if (-not $ValidateExistingEvidence -and -not $SkipUnrealBuild) {
     if (-not (Test-Path -LiteralPath $netFxSdkPreflight -PathType Leaf)) {
         throw "NETFXSDK preflight is missing: $netFxSdkPreflight"

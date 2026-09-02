@@ -10,8 +10,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from sim.scripts.qualification import thunderv4_continuous_walk as qualification_module
-from sim.scripts.qualification.thunderv4_continuous_walk import run_qualification
+from sim.scripts.mujoco import continuous_walk as qualification_module
+from sim.scripts.mujoco.continuous_walk import run_qualification
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 V101_ROBOT_XML = (
@@ -123,9 +123,9 @@ def test_explicit_v101_mjcf_is_loaded_and_cross_bound_in_the_report(
     assert observed["robot_xml"] == V101_ROBOT_XML
     assert observed["policy_path"] == qualification_module.POLICY
     assert report["artifacts"] == {
-        "world_mjcf": "sim/worlds/mujoco/open_field.xml",
-        "robot_mjcf": "sim/robots/doso/thunder_v4/mjcf/thunderv4.xml",
-        "policy": "sim/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx",
+        "world_mjcf": "sim/packages/worlds/open_field/physics/open_field.xml",
+        "robot_mjcf": "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml",
+        "policy": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx",
     }
 
 

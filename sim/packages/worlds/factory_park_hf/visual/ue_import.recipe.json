@@ -2,15 +2,15 @@
   "binding": "WorldVisual:FactoryParkHF",
   "blender_authoring": {
     "collision_authority_field": "collision",
-    "expanded_layout": "sim/worlds/factory_park_hf/generated/expanded-layout.json",
+    "expanded_layout": "sim/packages/worlds/factory_park_hf/generated/expanded-layout.json",
     "layout_coordinates": "mujoco_rh_z_up_m",
     "object_shapes": [
       "box",
       "cylinder"
     ],
-    "semantic_entities": "sim/worlds/factory_park_hf/generated/semantic-entities.json",
+    "semantic_entities": "sim/packages/worlds/factory_park_hf/generated/semantic-entities.json",
     "terrain_coordinates": "unreal_lh_z_up_cm",
-    "terrain_obj": "sim/worlds/factory_park_hf/generated/terrain.obj",
+    "terrain_obj": "sim/packages/worlds/factory_park_hf/generated/terrain.obj",
     "visual_only_authority_field": "visual_only"
   },
   "coordinate_contract": {
@@ -92,77 +92,88 @@
   "element_batches": [
     {
       "batch_id": "operations_safety",
+      "digest": "6dc891d5c909f8b738aafae8db5416102e9ada325b6458ad21cd82909430f0bf",
       "object_count": 19
     }
   ],
+  "layout_digest": "1bb084b64a5d10baaddbee62bee879eec679cd666f0c331ac984542a74f9907f",
   "limitations": [
     "No Unreal UMAP, production PBR texture set, foliage, lighting bake, Cook, or packaged build is generated.",
     "Dynamic pedestrians and forklifts are route intent only; a scenario executor must own their runtime motion."
   ],
   "physics_authority": {
     "backend": "mujoco",
-    "layout": "sim/worlds/factory_park_hf/generated/expanded-layout.json",
-    "mjcf": "sim/worlds/factory_park_hf/factory_park_hf.xml",
+    "layout": "sim/packages/worlds/factory_park_hf/generated/expanded-layout.json",
+    "mjcf": "sim/packages/worlds/factory_park_hf/physics/factory_park_hf.xml",
     "rule": "Every collision=true layout object is emitted as a MuJoCo geom; terrain modifiers are baked into the shared heightfield."
   },
   "schema": "lingtu.sim.unreal-world-import-recipe.v1",
   "sources": {
     "asset_manifest": {
-      "bytes": 4281,
-      "path": "sim/worlds/factory_park_hf/generated/asset-manifest.json"
+      "bytes": 4352,
+      "path": "sim/packages/worlds/factory_park_hf/generated/asset-manifest.json",
+      "sha256": "8bd808d401e06eb41643642c367cdd82f408e0982607311a408f155d5ec2ce27"
     },
     "expanded_layout": {
-      "bytes": 66153,
+      "bytes": 66180,
       "format": "canonical JSON",
-      "path": "sim/worlds/factory_park_hf/generated/expanded-layout.json",
-      "role": "expanded_layout"
+      "path": "sim/packages/worlds/factory_park_hf/generated/expanded-layout.json",
+      "role": "expanded_layout",
+      "sha256": "7122788eecfae526d615dba5f3fe002b97c7d5471fdc4ecc63342dfca5ad5cdc"
     },
     "heightfield_png": {
       "bytes": 80256,
       "format": "16-bit grayscale PNG",
-      "path": "sim/worlds/factory_park_hf/generated/heightfield_r16.png",
-      "role": "ue_heightfield"
+      "path": "sim/packages/worlds/factory_park_hf/generated/heightfield_r16.png",
+      "role": "ue_heightfield",
+      "sha256": "d8639cc829b995df6be34a6f1df0df5e3fc6f68a9728ceb3e482c55737c686eb"
     },
     "mujoco_heightfield": {
       "bytes": 160012,
       "format": "image/vnd.mujoco.hfield",
-      "path": "sim/worlds/factory_park_hf/generated/heightfield_f32.bin",
+      "path": "sim/packages/worlds/factory_park_hf/generated/heightfield_f32.bin",
       "role": "mujoco_heightfield",
-      "row_order": "south_to_north_y_ascending"
+      "row_order": "south_to_north_y_ascending",
+      "sha256": "6a0c00bc23b9c1437cb575631f3a40099b82f0a394460e81f0ed129f4af16cac"
     },
     "mujoco_world": {
-      "bytes": 28462,
+      "bytes": 28465,
       "format": "MJCF XML",
-      "path": "sim/worlds/factory_park_hf/factory_park_hf.xml",
-      "role": "mujoco_world"
+      "path": "sim/packages/worlds/factory_park_hf/physics/factory_park_hf.xml",
+      "role": "mujoco_world",
+      "sha256": "c23303d3d21d721c1575a26ad9f6da2145379f7cf944aa32797a9480aa3d5029"
     },
     "realism_recipe": {
-      "bytes": 14995,
+      "bytes": 15039,
       "format": "canonical JSON",
       "path": "sim/packages/worlds/factory_park_hf/visual/realism.recipe.json",
-      "role": "visual_realism_recipe"
+      "role": "visual_realism_recipe",
+      "sha256": "35288e9b4d71bfe4ea9aebcedc8cb5eaafb0a133bd491539f566110710316619"
     },
     "semantic_entities": {
       "bytes": 79572,
       "format": "canonical JSON",
-      "path": "sim/worlds/factory_park_hf/generated/semantic-entities.json",
-      "role": "semantic_entities"
+      "path": "sim/packages/worlds/factory_park_hf/generated/semantic-entities.json",
+      "role": "semantic_entities",
+      "sha256": "f1cef019ab04f576c1e6efb733eca36e3f02cc9567a86a5f71fe46c98d27d45f"
     },
     "site_plan_svg": {
       "bytes": 31001,
       "format": "SVG",
-      "path": "sim/worlds/factory_park_hf/generated/site-plan.svg",
-      "role": "site_plan"
+      "path": "sim/packages/worlds/factory_park_hf/generated/site-plan.svg",
+      "role": "site_plan",
+      "sha256": "4d7dc35b3edbf51c4d033634680f0e7ae7ac0bf7c11a76de7bdbf3f2e5f8ff89"
     },
     "terrain_obj": {
       "bytes": 2964956,
       "format": "Wavefront OBJ in Unreal centimetres",
-      "path": "sim/worlds/factory_park_hf/generated/terrain.obj",
+      "path": "sim/packages/worlds/factory_park_hf/generated/terrain.obj",
       "role": "unreal_terrain_mesh",
       "sample_grid": [
         221,
         181
       ],
+      "sha256": "7bc62ea9e6282d040867d392eb7a9527f09a216312aa429db2802d2d8b0ca654",
       "triangle_count": 79200,
       "vertex_count": 40001
     }
@@ -181,7 +192,7 @@
       -29.1674296177615
     ],
     "material_requirement": "Project-owned asphalt, concrete, gravel, soil, and drainage layers.",
-    "recommended_source": "sim/worlds/factory_park_hf/generated/heightfield_r16.png",
+    "recommended_source": "sim/packages/worlds/factory_park_hf/generated/heightfield_r16.png",
     "scale_xyz": [
       100.0,
       100.0,
@@ -203,7 +214,7 @@
       "collision",
       "visual_only"
     ],
-    "source": "sim/worlds/factory_park_hf/generated/expanded-layout.json",
+    "source": "sim/packages/worlds/factory_park_hf/generated/expanded-layout.json",
     "supported_shapes": [
       "box",
       "cylinder"

@@ -1,43 +1,67 @@
 # src/ - LingTu source layout
 
-`src/` is organized by runtime infrastructure, product assembly, and functional
-domains. Normal Modules depend on `runtime/`, communicate through typed ports,
-and are selected by `lingtu.assembly`. Domain packages should not import each
-other for control flow.
+`src/` uses one placement rule: code lives with the function that owns it.
+Products do not get parallel source trees. Product declarations live in
+[`config/runtime_graph/products/`](../config/runtime_graph/products/), while
+[`lingtu/`](lingtu/README.md) resolves those declarations and owns their
+lifecycle. A Product selects functional code; it does not own that code.
 
-## Top-level packages
+Normal Modules depend on `runtime/`, communicate through typed ports, and are
+selected by `lingtu.assembly`. Domain packages should not import each other for
+control flow.
 
-The physical layout stays flat; these are the five ownership groups:
+## Source families
 
-```text
-foundation       runtime/  message/
-product          lingtu/
-robot capability drivers/  localization/  maps/  nav/  explore/
-                 perception/  decision/  memory/
-external/ops     gateway/  diagnostics/
-shared native    native/  kernels/
-```
+The physical layout stays flat. The family names below are navigation labels,
+not directories: do not create `src/product_control/`, `src/capabilities/`,
+`src/platform/`, or `src/compute/`.
 
-| Package | Role | Put here |
-| --- | --- | --- |
-| `runtime/` | Module framework and runtime infrastructure. | `Module`, `In`/`Out`, messages, registry, Blueprint, profiles, transports, TF, device utilities. |
-| `lingtu/` | Product control, assembly, and runtime handoff. | `ProductControl`, RunPlan, real/sim lifecycle, Host assembly, remote SDK. |
-| `nav/` | Navigation domain. | Host commands/goals/skills, inspection integration, native C++ planning and endpoint code. |
-| `explore/` | Exploration domain. | Frontier selection, TARE integration, exploration SDK, and native exploration kernels. |
-| `perception/` | Scene perception domain. | Detectors, encoders, trackers, scene graph, reconstruction. |
-| `decision/` | Goal reasoning and semantic action domain. | Semantic planner, LLM wrapper, goal resolver, visual servo, task decomposition. |
-| `memory/` | Memory domain. | Semantic map, episodic/tagged/vector/temporal memories, KG-backed stores. |
-| `drivers/` | Hardware and simulation endpoints. | Real/sim robot drivers, LiDAR/camera/GNSS sources, driver adapters. |
-| `localization/` | SLAM and localization domain. | Native SLAM status/localization, relocalization, GNSS fusion, ROS-free and compatibility adapters. |
-| `maps/` | Map domain. | Map service facade, persistent map packages, C++ map store/build artifacts, live map-layer Modules. |
-| `message/` | Cross-process wire contracts. | Native topic metadata, IDL, and C++ topic/QoS contracts. |
-| `gateway/` | External interface domain. | REST/SSE/WS, MCP, media, visualization, command/status services. |
-| `kernels/` | Cross-domain portable compute kernels. | Rust/C ABI kernels that are not owned by one Python Module package. |
-| `native/` | Shared native services. | Cross-domain C++ runtime support, MCAP recording, and replay components. |
-| `diagnostics/` | Field diagnostics. | Readiness, inspection, deployment, and runtime evidence helpers. |
+### product_control — Product 控制面
 
-`src/nav/cpp/` is the canonical navigation implementation. `src/kernels/` is
-reserved for portable compute shared by more than one domain.
+| Package guide | Owns |
+| --- | --- |
+| [`lingtu/`](lingtu/README.md) | ProductControl, RunPlan, Product assembly, and real/sim lifecycle routing. |
+
+### capabilities — 机器人功能域
+
+| Package guide | Owns |
+| --- | --- |
+| [`decision/`](decision/README.md) | Goal reasoning, semantic planning, task decomposition, and visual servo. |
+| [`drivers/`](drivers/README.md) | Robot and sensor backends plus hardware/simulation adapters. |
+| [`explore/`](explore/README.md) | Frontier selection, TARE, exploration supervision, native policy, and the exploration endpoint source. |
+| [`localization/`](localization/README.md) | SLAM, localization, relocalization, and GNSS fusion. |
+| [`maps/`](maps/README.md) | Live and persistent map services, layers, stores, and native map components. |
+| [`memory/`](memory/README.md) | Semantic, episodic, tagged, vector, temporal, and graph-backed memory. |
+| [`nav/`](nav/README.md) | Navigation commands, goals, skills, planning, tracking, safety, and native endpoint composition. |
+| [`perception/`](perception/README.md) | Detection, encoding, tracking, scene graph, and reconstruction. |
+
+### platform — 共享平台与接口
+
+| Package guide | Owns |
+| --- | --- |
+| [`runtime/`](runtime/README.md) | Module, ports, registry, Blueprint, transports, TF, and runtime infrastructure. |
+| [`message/`](message/README.md) | Native cross-process topic metadata, IDL, QoS, and generated contracts. |
+| [`gateway/`](gateway/README.md) | REST, SSE, WebSocket, MCP, media, visualization, and external command/status services. |
+| [`diagnostics/`](diagnostics/README.md) | Field readiness, acceptance, and runtime evidence helpers. |
+
+### compute — 共享底层计算
+
+| Package guide | Owns |
+| --- | --- |
+| [`kernels/`](kernels/README.md) | Portable Rust/C ABI compute kernels shared across functional domains. |
+| [`native/`](native/README.md) | Shared native services that belong to neither one domain nor one portable kernel. |
+
+`real/` and `sim/` below an owner describe environment implementations, not
+Product ownership. `src/nav/cpp/` remains the canonical navigation
+implementation. Exploration endpoint sources live in
+`src/explore/cpp/endpoint/`; the existing nav endpoint CMake still composes the
+public `lingtu_explore_dds` executable. `src/kernels/` is reserved for portable
+compute shared by more than one domain.
+
+Create lower-level folders only when the owner needs them: `modules/`,
+`adapters/<protocol>/`, `cpp/` or `rust/`, `real/` or `sim/`, `tests/`, and
+`contracts/`. Do not add ambiguous buckets such as `common/`, `misc/`,
+`helpers/`, `new/`, or `v2/`.
 
 ## Runtime entries
 

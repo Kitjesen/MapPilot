@@ -3,6 +3,14 @@
 This directory owns field exploration algorithms that must not depend on
 Python, ROS, or the LingTu Module runtime.
 
+## Layout
+
+| Path | Owns |
+| --- | --- |
+| `bindings/` | Nanobind exposure for Python development and simulation. |
+| `endpoint/` | `lingtu_explore_dds` process entry and exploration lifecycle support. |
+| other sources | Transport-free exploration contracts and policies. |
+
 ## Current core
 
 `explore_contract.hpp` defines the interface all exploration algorithms must
@@ -52,7 +60,7 @@ extension. The bindings live in `bindings/`:
 Build with:
 
 ```bash
-scripts/build/build_explore_kernel.sh
+scripts/build/build_explore_py.sh
 ```
 
 This produces the extension under `src/explore/cpp/build_nb` (Linux) or
@@ -74,3 +82,7 @@ The robot-side runtime should use `lingtu_explore_dds`:
 
 Python wrappers may remain for compatibility tests and old profiles, but field
 behavior should be implemented here.
+
+`endpoint/` is built by `src/nav/cpp/endpoint/CMakeLists.txt`; this keeps the
+existing navigation linkage and public `lingtu_explore_dds` target while the
+source remains owned by the exploration domain.

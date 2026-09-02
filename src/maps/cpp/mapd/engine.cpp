@@ -95,11 +95,14 @@ std::string UpperAscii(std::string value) {
 }
 
 Snapshot::CollisionLayer BuildCollisionLayer(
-    const layers::RollingOccupancySnapshot& occupancy,
-    std::size_t max_points) {
+    layers::RollingInflatedSnapshot occupancy) {
   occupancy.Validate();
   Snapshot::CollisionLayer layer;
+  layer.generation = occupancy.generation;
   layer.resolution_m = occupancy.resolution_m;
+  layer.size_x = occupancy.size_x;
+  layer.size_y = occupancy.size_y;
+  layer.size_z = occupancy.size_z;
   layer.min_x_m = occupancy.origin_x_m;
   layer.min_y_m = occupancy.origin_y_m;
   layer.min_z_m = occupancy.origin_z_m;
@@ -109,59 +112,9 @@ Snapshot::CollisionLayer BuildCollisionLayer(
       static_cast<float>(occupancy.size_y) * occupancy.resolution_m;
   layer.max_z_m = occupancy.origin_z_m +
       static_cast<float>(occupancy.size_z) * occupancy.resolution_m;
-  layer.occupied.frame_id = occupancy.frame_id;
-  layer.occupied.stamp_ns = occupancy.stamp_ns;
-  layer.occupied.layout = CloudLayout::kXyzF32Interleaved;
-  layer.occupied.interleaved.reserve(
-      std::min(max_points, occupancy.CellCount()) * 3U);
-
-  for (std::int32_t z = 0; z < occupancy.size_z; ++z) {
-    for (std::int32_t y = 0; y < occupancy.size_y; ++y) {
-      for (std::int32_t x = 0; x < occupancy.size_x; ++x) {
-        if (static_cast<layers::OccupancyState>(
-                occupancy.state[occupancy.Index(x, y, z)]) !=
-            layers::OccupancyState::kOccupied) {
-          continue;
-        }
-        ++layer.total_occupied_cells;
-        if (layer.occupied.point_count >= max_points) continue;
-        layer.occupied.interleaved.push_back(
-            occupancy.origin_x_m +
-            (static_cast<float>(x) + 0.5F) * occupancy.resolution_m);
-        layer.occupied.interleaved.push_back(
-            occupancy.origin_y_m +
-            (static_cast<float>(y) + 0.5F) * occupancy.resolution_m);
-        layer.occupied.interleaved.push_back(
-            occupancy.origin_z_m +
-            (static_cast<float>(z) + 0.5F) * occupancy.resolution_m);
-        ++layer.occupied.point_count;
-      }
-    }
-  }
-  layer.complete = layer.total_occupied_cells <= max_points;
-  return layer;
-}
-
-Snapshot::CollisionLayer BuildCollisionLayer(
-    layers::RollingOccupiedSnapshot occupancy) {
-  Snapshot::CollisionLayer layer;
-  layer.resolution_m = occupancy.resolution_m;
-  layer.min_x_m = occupancy.origin_x_m;
-  layer.min_y_m = occupancy.origin_y_m;
-  layer.min_z_m = occupancy.origin_z_m;
-  layer.max_x_m = occupancy.origin_x_m +
-      static_cast<float>(occupancy.size_x) * occupancy.resolution_m;
-  layer.max_y_m = occupancy.origin_y_m +
-      static_cast<float>(occupancy.size_y) * occupancy.resolution_m;
-  layer.max_z_m = occupancy.origin_z_m +
-      static_cast<float>(occupancy.size_z) * occupancy.resolution_m;
-  layer.total_occupied_cells = occupancy.total_cells;
-  layer.complete = occupancy.centers_xyz.size() / 3U == occupancy.total_cells;
-  layer.occupied.frame_id = occupancy.frame_id;
-  layer.occupied.stamp_ns = occupancy.stamp_ns;
-  layer.occupied.layout = CloudLayout::kXyzF32Interleaved;
-  layer.occupied.interleaved = std::move(occupancy.centers_xyz);
-  layer.occupied.point_count = layer.occupied.interleaved.size() / 3U;
+  layer.occupied_cells = occupancy.occupied_cells;
+  layer.complete = true;
+  layer.occupied_bits = std::move(occupancy.occupied_bits);
   return layer;
 }
 
@@ -205,8 +158,7 @@ LiveMapEngine::LiveMapEngine(Config config)
       !IsFinite(config_.voxel_snapshot_max_z_from_sensor_m) ||
       config_.voxel_snapshot_min_z_from_sensor_m >
           config_.voxel_snapshot_max_z_from_sensor_m ||
-      config_.max_voxel_snapshot_points == 0U ||
-      config_.max_collision_snapshot_points == 0U) {
+      config_.max_voxel_snapshot_points == 0U) {
     throw std::invalid_argument("mapd LiveMapEngine configuration is invalid");
   }
   snapshot_.frame_id = "map";
@@ -853,8 +805,7 @@ void LiveMapEngine::EnsureRealtimeSnapshotLocked() const {
   BuildRealtimeSnapshotLocked();
 }
 
-void LiveMapEngine::BuildRealtimeSnapshotLocked(
-    const layers::RollingOccupancySnapshot* occupancy) const {
+void LiveMapEngine::BuildRealtimeSnapshotLocked() const {
   if (config_.build_extended_layers) {
     layers::VoxelSnapshotRequest voxel_request;
     voxel_request.center_x_m = static_cast<float>(snapshot_.map_sensor.x);
@@ -874,10 +825,7 @@ void LiveMapEngine::BuildRealtimeSnapshotLocked(
     snapshot_.voxel_cloud = {};
     voxel_snapshot_omitted_cells_ = 0U;
   }
-  snapshot_.collision = occupancy != nullptr
-      ? BuildCollisionLayer(*occupancy, config_.max_collision_snapshot_points)
-      : BuildCollisionLayer(
-            occupancy_.OccupiedSnapshot(config_.max_collision_snapshot_points));
+  snapshot_.collision = BuildCollisionLayer(occupancy_.InflatedSnapshot());
   realtime_snapshot_generation_ = generation_;
   ++realtime_snapshot_builds_;
 }
@@ -900,7 +848,7 @@ void LiveMapEngine::EnsureCompleteSnapshotLocked() const {
   }
   const auto occupancy_snapshot = occupancy_.Snapshot();
   if (realtime_snapshot_generation_ != generation_) {
-    BuildRealtimeSnapshotLocked(&occupancy_snapshot);
+    BuildRealtimeSnapshotLocked();
   }
   BlockGridRoi accumulated_roi;
   accumulated_roi.enabled = true;

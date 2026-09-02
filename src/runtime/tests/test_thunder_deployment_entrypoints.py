@@ -156,7 +156,7 @@ def test_thunder_runtime_env_has_no_hidden_profile_or_deployment_identity() -> N
     assert "LINGTU_LIVOX_HOST_IP:=192.168" not in text
     assert "LINGTU_LIVOX_NET_IFACE:=eth1" not in text
     assert (
-        "LINGTU_MAP_ARTIFACT_CONVERTER:=${LINGTU_REPO}/build/octoplanner3d_headless/octoplanner3d_pcd_to_octomap"
+        "LINGTU_MAP_ARTIFACT_CONVERTER:=${LINGTU_REPO}/bin/octoplanner3d_pcd_to_octomap"
     ) in text
     assert "LINGTU_MAPS_LIB" not in text
     assert "/opt/ros" not in text
@@ -220,12 +220,12 @@ def test_thunder_main_lingtu_service_consumes_product_control_runtime() -> None:
     assert "LINGTU_PROFILE_ADAPTER=" not in text
     assert "LINGTU_PRODUCT=" not in text
     assert "LINGTU_SERVICE_DDS_CHECK=1" in text
-    assert "LINGTU_DDS_PROBE_BIN=/opt/lingtu/current/build/dds_probe/lingtu_dds_probe" in text
+    assert "LINGTU_DDS_PROBE_BIN=/opt/lingtu/current/bin/lingtu_dds_probe" in text
     assert "LINGTU_SERVICE_READINESS_JSON=/tmp/lingtu_service_readiness.json" in text
-    assert "LINGTU_INSPECTION_LIBRARY=/opt/lingtu/current/build/nav_endpoint/inspection/liblingtu_inspection.so" in text
+    assert "LINGTU_INSPECTION_LIBRARY=/opt/lingtu/current/lib/liblingtu_inspection.so" in text
     assert (
         "LINGTU_INSPECTION_EVIDENCE_BRIDGE_LIBRARY="
-        "/opt/lingtu/current/build/nav_endpoint/liblingtu_inspection_evidence_bridge.so" in text
+        "/opt/lingtu/current/lib/liblingtu_inspection_evidence_bridge.so" in text
     )
     assert "LINGTU_INSPECTION_EVIDENCE_DIR=/var/lib/lingtu/inspection_evidence" in text
     assert "LINGTU_INSPECTION_EVIDENCE_STATUS_FILE=/dev/shm/lingtu/inspection_evidence_status.json" in text
@@ -266,7 +266,7 @@ def test_field_driver_service_is_native_product_entrypoint() -> None:
     assert "Description=LingTu native field driver" in unit
     assert "lt-nav.service" not in unit
     assert "lingtu-thunder-lite.service" not in unit
-    assert "LINGTU_DRIVER_BIN=/opt/lingtu/current/build/driver/lingtu_driver" in unit
+    assert "Environment=LINGTU_DRIVER_BIN=" not in unit
     assert "EnvironmentFile=/run/lingtu/session.env" in unit
     assert "LINGTU_DRIVER_STATUS_FILE=/dev/shm/lingtu/driver_status.json" in unit
     assert "lingtu-thunder-dds-endpoint.service" in unit
@@ -274,6 +274,7 @@ def test_field_driver_service_is_native_product_entrypoint() -> None:
     assert "python" not in unit.lower()
     assert "/opt/ros" not in unit
     assert "build_driver.sh" in runner
+    assert "${LINGTU_REPO}/bin/lingtu_driver" in runner
     assert 'exec "${BIN}"' in runner
     assert "find_package(CycloneDDS REQUIRED)" in cmake
     assert "find_package(BrainstemClient CONFIG REQUIRED)" in cmake
@@ -347,7 +348,7 @@ def test_thunder_slam_dds_service_runs_cpp_runtime() -> None:
     assert "time-sync.target" not in text
     assert "lt-lidar.service" not in text
     assert "robot-lidar.service" not in text
-    assert "LINGTU_SLAM_BIN=/opt/lingtu/current/build/slam_core/slamd" in text
+    assert "Environment=LINGTU_SLAM_BIN=" not in text
     assert "LINGTU_SLAM_BACKEND=fastlio2" in text
     assert "LINGTU_SLAM_MODE=localization" in text
     assert "NAV_MAP_DIR=" not in text
@@ -366,6 +367,7 @@ def test_thunder_slam_dds_service_runs_cpp_runtime() -> None:
     assert "run_slam_dds.sh" in text
     assert "native SLAM DDS runtime is missing or not executable" in runner
     assert "build_slam_core.sh" in runner
+    assert "${LINGTU_REPO}/bin/slamd" in runner
     assert "--domain-id" in runner
     assert "--mode" in runner
     assert '--map "$LINGTU_SLAM_MAP"' in runner
@@ -425,11 +427,11 @@ def test_native_mapd_service_is_packaged_as_a_strict_cpp_boundary() -> None:
     assert "Description=Native live maps and map service runtime" in unit
     assert "After=network-online.target" in unit
     assert "lt-slam.service" not in unit
-    assert "LINGTU_MAPD_BIN=/opt/lingtu/current/build/maps/mapd" in unit
-    assert "LINGTU_PRUNE_BIN=/opt/lingtu/current/build/prune/prune" in unit
+    assert "LINGTU_MAPD_BIN=/opt/lingtu/current/bin/mapd" in unit
+    assert "LINGTU_PRUNE_BIN=/opt/lingtu/current/bin/prune" in unit
     assert (
-        "LINGTU_MAP_ARTIFACT_CONVERTER=/opt/lingtu/current/build/"
-        "octoplanner3d_headless/octoplanner3d_pcd_to_octomap"
+        "LINGTU_MAP_ARTIFACT_CONVERTER=/opt/lingtu/current/bin/"
+        "octoplanner3d_pcd_to_octomap"
     ) in unit
     assert "LINGTU_MAPD_STATUS_FILE=/dev/shm/lingtu/mapd_status.json" in unit
     assert "LINGTU_MAPD_QUERY_SOCKET=/run/lingtu-mapd/mapd.sock" in unit
@@ -458,10 +460,11 @@ def test_native_mapd_service_is_packaged_as_a_strict_cpp_boundary() -> None:
     assert 'PRUNE="${PRUNE_BUILD_DIR}/prune"' in build
     assert 'OCTOMAP_BUILD_DIR="${LINGTU_OCTOPLANNER3D_BUILD_DIR:-' in build
     assert 'export CMAKE_PREFIX_PATH="${LINGTU_CYCLONEDDS_PREFIX}' in build
-    assert '-DLINGTU_PRUNE_ERASOR2=OFF' in build
-    assert '--target prune' in build
+    assert 'LINGTU_PRUNE_ERASOR2=OFF \\' in build
+    assert 'CMAKE_BUILD_TYPE="${BUILD_TYPE}" \\' in build
+    assert 'bash "${ROOT}/scripts/build/build_prune.sh"' in build
     assert "native map prune runtime is missing after build" in build
-    assert 'build_octoplanner3d.sh" --require-pcl' in build
+    assert 'bash "${ROOT}/scripts/build/build_octoplanner3d.sh" --require-pcl' in build
     assert "native OctoMap converter is missing after build" in build
     assert "lingtu_maps_mapd_save_coordinator_test" in build
     assert "lingtu_maps_save_map_test" in build
@@ -526,7 +529,7 @@ def test_thunder_traversability_dds_service_runs_cpp_runtime() -> None:
     assert "Description=LingTu native traversability DDS producer" in text
     assert "lt-slam.service" not in text
     assert "require_product_session.sh traversability" in text
-    assert "LINGTU_TRAVERSABILITY_DDS_BIN=/opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds" in text
+    assert "LINGTU_TRAVERSABILITY_DDS_BIN=/opt/lingtu/current/bin/lingtu_traversability_dds" in text
     assert "LINGTU_TRAVERSABILITY_PUBLISH_HZ=10" in text
     assert "LINGTU_TRAVERSABILITY_TERRAIN_MAP_HZ=5" in text
     assert '--slow-hz "${LINGTU_TRAVERSABILITY_TERRAIN_MAP_HZ}"' in text
@@ -710,13 +713,14 @@ def test_thunder_livox_dds_service_publishes_native_sdk2_stream() -> None:
     assert "continuing without synchronized wall clock" in time_sync_waiter
     assert "systemctl" not in time_sync_waiter
     assert time_sync_waiter.rstrip().endswith("exit 0")
-    assert "LINGTU_LIVOX_BIN=/opt/lingtu/current/build/livox_sdk2_stream/livox_sdk2_stream" in text
+    assert "Environment=LINGTU_LIVOX_BIN=" not in text
     assert "LINGTU_LIVOX_CONFIG_DIR=/opt/lingtu/config/livox" in text
     assert "Environment=LINGTU_LIVOX_NET_IFACE=" not in text
     assert "LINGTU_LIVOX_LIDAR_FRAME=lidar_link" in text
     assert "run_livox_dds.sh" in text
     assert "native Livox DDS publisher is missing or not executable" in runner
     assert "build_livox_sdk2_stream.sh" in runner
+    assert "${LINGTU_REPO}/bin/livox_sdk2_stream" in runner
     assert "Livox-SDK2/samples/livox_lidar_quick_start/mid360_config.json" not in text
     assert "ensure_mid360_config_file" in runner
     assert "select_livox_host_ip" not in runner
@@ -802,8 +806,8 @@ def test_thunder_camera_dds_service_is_optional_and_fails_without_native_publish
     idl = _read("src/message/idl/messages.idl")
 
     assert "Description=LingTu native camera DDS publisher" in text
-    assert "LINGTU_CAMERA_DDS_BIN=/opt/lingtu/current/build/camera_dds/lingtu_camera_dds" in text
-    assert "LINGTU_ORBBEC_CAPTURE_BIN=/opt/lingtu/current/build/orbbec_native/orbbec_capture" in text
+    assert "Environment=LINGTU_CAMERA_DDS_BIN=" not in text
+    assert "Environment=LINGTU_ORBBEC_CAPTURE_BIN=" not in text
     assert "LINGTU_ORBBEC_PRODUCT_ID=0x0800" in text
     assert "LINGTU_ORBBEC_DEVICE_INDEX=0" in text
     assert "LINGTU_ORBBEC_CONNECT_TIMEOUT_MS=10000" in text
@@ -813,6 +817,8 @@ def test_thunder_camera_dds_service_is_optional_and_fails_without_native_publish
     assert "native camera DDS publisher is missing or not executable" in runner
     assert "build_camera_dds.sh" in runner
     assert "build_orbbec_native.sh" in runner
+    assert "${LINGTU_REPO}/bin/lingtu_camera_dds" in runner
+    assert "${LINGTU_REPO}/bin/orbbec_capture" in runner
     assert "--domain-id" in runner
     assert "--capture-bin" in runner
     assert "--frame-id" in runner
@@ -942,9 +948,9 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
 
     assert "Description=LingTu native navigation DDS endpoint" in text
     assert "Wants=network-online.target lt-terrain.service" not in text
-    assert "LINGTU_NAV_DDS_BIN=/opt/lingtu/current/build/nav_endpoint/navd" in text
+    assert "Environment=LINGTU_NAV_DDS_BIN=" not in text
     assert [line for line in text.splitlines() if line.startswith("EnvironmentFile=")] == [
-        "EnvironmentFile=-/opt/lingtu/current/config/release-runtime.env",
+        "EnvironmentFile=-/opt/lingtu/current/etc/lingtu/release-runtime.env",
         "EnvironmentFile=-/etc/lingtu/nav.env",
         "EnvironmentFile=/run/lingtu/session.env",
     ]
@@ -973,6 +979,7 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "--max-speed-mps" in config_source
     assert "--max-accel-mps2" in config_source
     assert 'exec "${LINGTU_NAV_DDS_BIN}"' in runner
+    assert "${LINGTU_REPO}/bin/navd" in runner
     assert "nav_args" not in runner
     assert "--gateway-host" not in runner
     assert "--gateway-port" not in runner
@@ -1349,15 +1356,15 @@ def test_native_nav_endpoint_has_a_release_install_manifest() -> None:
     assert "_LINGTU_NAV_ENDPOINT_RUNTIME_TARGETS" in endpoint_cmake
     assert "lingtu_nav_client" in endpoint_cmake
     assert "lingtu_inspection_evidence_bridge" in endpoint_cmake
-    assert "LIBRARY DESTINATION ." in endpoint_cmake
-    assert "DESTINATION cmu_paths" in endpoint_cmake
+    assert "LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}" in endpoint_cmake
+    assert "DESTINATION ${CMAKE_INSTALL_DATADIR}/lingtu/cmu_paths" in endpoint_cmake
     assert 'set(_LINGTU_CMU_PATH_SOURCE "${_NAV_CPP_DIR}/planning/local/cmu/paths")' in endpoint_cmake
     assert '"${_LINGTU_CMU_PATH_SOURCE}/go2"' in endpoint_cmake
     assert '"${_LINGTU_CMU_PATH_SOURCE}/thunder"' in endpoint_cmake
     assert "CMU_PATH_PROFILES=(go2 thunder)" in packager
     assert "Native navigation install is missing CMU" in packager
-    assert "LIBRARY DESTINATION inspection" in inspection_cmake
-    assert "EnvironmentFile=-/opt/lingtu/current/config/release-runtime.env" in service
+    assert "LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}" in inspection_cmake
+    assert "EnvironmentFile=-/opt/lingtu/current/etc/lingtu/release-runtime.env" in service
 
 
 def test_native_dds_build_scripts_check_service_binaries() -> None:
@@ -1673,7 +1680,7 @@ def test_product_nav_switch_failure_never_commits_current_run() -> None:
 
 
 def test_motion_smoke_gate_delegates_runtime_setup_to_product_control() -> None:
-    gate = _read("scripts/gates/motion_smoke_gate.py")
+    gate = _read("src/diagnostics/field/motion_smoke.py")
 
     assert '["switch", "nav", "--env", args.env' in gate
     assert 'stop_args = ["stop", "--env", args.env]' in gate
@@ -1682,14 +1689,14 @@ def test_motion_smoke_gate_delegates_runtime_setup_to_product_control() -> None:
 
 
 def test_system_acceptance_gate_matches_that_nav_parity_plan() -> None:
-    gate = _read("scripts/gates/system_acceptance_gate.py")
-    motion_gate = _read("scripts/gates/motion_smoke_gate.py")
+    gate = _read("src/diagnostics/field/system_acceptance.py")
+    motion_gate = _read("src/diagnostics/field/motion_smoke.py")
 
     assert '["switch", "nav", "--env", args.env' in gate
     assert 'stop_args = ["stop", "--env", args.env]' in gate
     assert '"diagnostics.field.doctor"' in gate
-    assert '"diagnostics" / "soak.py"' in gate
-    assert "saved_map_artifact_gate.py" in gate
+    assert '"diagnostics.field.soak"' in gate
+    assert '"diagnostics.field.map_artifacts"' in gate
     assert '"--require-occupancy"' in gate
     assert '"--expected-data-source", "thunder"' in gate
     assert "validate_saved_map_plan" in gate
@@ -1698,10 +1705,10 @@ def test_system_acceptance_gate_matches_that_nav_parity_plan() -> None:
     assert '"saved_map_relocalization"' in gate
     assert "--with-relocalization" in gate
     assert "--initial-pose" in gate
-    assert "motion_smoke_gate.py" in gate
+    assert '"diagnostics.field.motion_smoke"' in gate
     assert "--allow-motion" in gate
     assert "motion-smoke requires --allow-motion" in motion_gate
-    assert "real_runtime_evidence_collect.py" in motion_gate
+    assert '"diagnostics.field.runtime_evidence"' in motion_gate
 
 
 def test_rerun_gateway_live_is_ros_free_gateway_viewer() -> None:

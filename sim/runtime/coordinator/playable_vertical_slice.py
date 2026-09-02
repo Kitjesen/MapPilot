@@ -77,7 +77,7 @@ PLAYABLE_LEVEL = (
 PLAYABLE_WORLD_PACKAGE = ("factory_park_hf", "1.2.1")
 PLAYABLE_ROBOT_PACKAGE = ("thunderv4", "1.0.3")
 PLAYABLE_CONTROLLER_PACKAGE = ("thunderv4_locomotion", "1.0.0")
-PLAYABLE_CONTROLLER_MANIFEST_PATH = "sim/controllers/doso/thunder_v4/locomotion/controller.package.yaml"
+PLAYABLE_CONTROLLER_MANIFEST_PATH = "sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml"
 PLAYABLE_CONTROLLER_COMMAND_CALIBRATION: Mapping[str, Any] = MappingProxyType(
     {
         "schema": "lingtu.sim.controller-command-calibration.v1",

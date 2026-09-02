@@ -171,7 +171,7 @@ python sim/scripts/mujoco/saved_map_quality_gate.py \
   --pcd artifacts/<run>/same_source_map/map.pcd \
   --json-out artifacts/<run>/saved_map_quality.json
 
-python sim/scripts/saved_map_relocalize_runtime_gate.py \
+python -m sim.scripts.mujoco.saved_map_relocalization \
   --map-pcd artifacts/<run>/same_source_map/map.pcd \
   --preflight-only \
   --strict

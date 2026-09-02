@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PREFLIGHT = REPO_ROOT / "sim" / "toolchains" / "windows_netfxsdk.ps1"
+PREFLIGHT = REPO_ROOT / "sim" / "tools" / "toolchains" / "windows_netfxsdk.ps1"
 UE_SCRIPTS = REPO_ROOT / "sim" / "runtime" / "visual" / "RobotSimUE" / "Scripts"
 
 
@@ -177,7 +177,7 @@ def test_ue_launcher_delegates_build_bat_to_the_owned_finite_runner(
     source = (UE_SCRIPTS / launcher_name).read_text(encoding="utf-8")
 
     assert "[int]$UnrealBuildTimeoutMinutes" in source
-    assert "sim\\toolchains\\ue_build.py" in source
+    assert "sim\\tools\\toolchains\\ue_build.py" in source
     assert "--timeout-seconds" in source
     assert "--target RobotSimUEEditor" in source
     assert "--platform Win64" in source

@@ -19,7 +19,7 @@ from drivers.sim.mujoco.runtime import (
     focus_presentation_viewer,
     launch_presentation_viewer,
 )
-from sim.engine.mujoco.lidar import (
+from sim.compat.engine.mujoco.lidar import (
     ROBOT_COLLISION_GEOM_GROUP,
     ROBOT_VISUAL_GEOM_GROUP,
 )

@@ -5,7 +5,8 @@ set -euo pipefail
 
 source /opt/lingtu/config/thunder-runtime-env.sh
 
-: "${LINGTU_GNSS_DDS_BIN:=/opt/lingtu/current/build/gnss_dds/lingtu_gnss_dds}"
+: "${LINGTU_REPO:=/opt/lingtu/current}"
+: "${LINGTU_GNSS_DDS_BIN:=${LINGTU_REPO}/bin/lingtu_gnss_dds}"
 : "${LINGTU_GNSS_DEVICE:=/dev/wtrtk980}"
 : "${LINGTU_GNSS_BAUD:=115200}"
 : "${LINGTU_GNSS_TIMEOUT_MS:=1000}"

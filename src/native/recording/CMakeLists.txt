@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(lingtu_native_recording LANGUAGES C CXX)
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -213,4 +215,5 @@ foreach(recording_target IN ITEMS
   endif()
 endforeach()
 install(TARGETS ${LINGTU_RECORDING_EXECUTABLES}
-  RUNTIME DESTINATION .)
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT lingtu_runtime)

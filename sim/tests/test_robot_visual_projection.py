@@ -25,7 +25,7 @@ def _pretty_projection(document: dict) -> str:
 
 
 def _schema() -> dict:
-    path = Path(__file__).resolve().parents[2] / "schemas" / "simulation" / "robot-visual.v1.json"
+    path = Path(__file__).resolve().parents[2] / "sim" / "contracts" / "schemas" / "robot-visual.v1.json"
     return json.loads(path.read_text(encoding="utf-8"))
 
 

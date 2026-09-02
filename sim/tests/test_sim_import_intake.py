@@ -16,10 +16,10 @@ from typing import IO
 
 import pytest
 
-from sim.importers import contracts as contracts_module
-from sim.importers import intake as intake_module
-from sim.importers.contracts import ImportFailure, safe_relative_path, validate_provenance
-from sim.importers.intake import SourceIntake
+from sim.catalog.importers import contracts as contracts_module
+from sim.catalog.importers import intake as intake_module
+from sim.catalog.importers.contracts import ImportFailure, safe_relative_path, validate_provenance
+from sim.catalog.importers.intake import SourceIntake
 
 
 def _code(error: BaseException) -> str:

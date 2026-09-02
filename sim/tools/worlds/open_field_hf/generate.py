@@ -333,7 +333,13 @@ def _manifest() -> bytes:
         b"kind: world\n"
         b"description: Deterministic same-source outdoor terrain foundation for MuJoCo and Unreal.\n"
         b"physics:\n"
-        b"  mjcf: ../../../worlds/open_field_hf/open_field_hf.xml\n"
+        b"  mjcf: physics/open_field_hf.xml\n"
+        b"  global_policy:\n"
+        b"    timestep_s: 0.002\n"
+        b"    integrator: rk4\n"
+        b"    solver: newton\n"
+        b"    iterations: 100\n"
+        b"    gravity_mps2: [0.0, 0.0, -9.81]\n"
         b"visual:\n"
         b"  binding: WorldVisual:OpenFieldHF\n"
         b"  level: /Game/RobotSim/Maps/OpenFieldRuntime\n"
@@ -349,7 +355,7 @@ def _mjcf(spec: TerrainSpec, vertical_origin_m: float) -> bytes:
         '  <option gravity="0 0 -9.81" timestep="0.002" integrator="RK4" solver="Newton" iterations="100"/>\n'
         "  <asset>\n"
         '    <hfield name="open_field_hf_terrain" '
-        'file="generated/heightfield_f32.bin" '
+        'file="../generated/heightfield_f32.bin" '
         'content_type="image/vnd.mujoco.hfield" '
         f'size="{spec.size_x_m / 2.0:g} {spec.size_y_m / 2.0:g} '
         f'{spec.elevation_scale_m:g} {spec.base_depth_m:g}"/>\n'
@@ -398,7 +404,7 @@ def generate_open_field_hf(
         raise TypeError("seed must be an integer")
     repo_root = Path(repo_root).resolve()
     package_root = repo_root / "sim" / "packages" / "worlds" / "open_field_hf"
-    world_root = repo_root / "sim" / "worlds" / "open_field_hf"
+    world_root = repo_root / "sim" / "packages" / "worlds" / "open_field_hf"
     generated_root = world_root / "generated"
     (package_root / "provenance").mkdir(parents=True, exist_ok=True)
     (package_root / "visual").mkdir(parents=True, exist_ok=True)
@@ -407,12 +413,12 @@ def generate_open_field_hf(
     samples = _height_samples(spec, seed)
     coordinate_contract = _coordinate_contract(spec, samples)
     vertical_origin_m = float(coordinate_contract["vertical_origin_m"])
-    png_path = Path("sim/worlds/open_field_hf/generated/heightfield_r16.png")
-    binary_path = Path("sim/worlds/open_field_hf/generated/heightfield_f32.bin")
-    obj_path = Path("sim/worlds/open_field_hf/generated/terrain.obj")
-    asset_manifest_path = Path("sim/worlds/open_field_hf/generated/asset-manifest.json")
+    png_path = Path("sim/packages/worlds/open_field_hf/generated/heightfield_r16.png")
+    binary_path = Path("sim/packages/worlds/open_field_hf/generated/heightfield_f32.bin")
+    obj_path = Path("sim/packages/worlds/open_field_hf/generated/terrain.obj")
+    asset_manifest_path = Path("sim/packages/worlds/open_field_hf/generated/asset-manifest.json")
     package_manifest_path = Path("sim/packages/worlds/open_field_hf/world.package.yaml")
-    mjcf_path = Path("sim/worlds/open_field_hf/open_field_hf.xml")
+    mjcf_path = Path("sim/packages/worlds/open_field_hf/physics/open_field_hf.xml")
     recipe_path = Path("sim/packages/worlds/open_field_hf/visual/ue_import.recipe.json")
     provenance_path = Path("sim/packages/worlds/open_field_hf/provenance/terrain.provenance.json")
 

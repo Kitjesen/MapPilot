@@ -14,7 +14,15 @@ from .contracts import DeadlinePolicy, ScheduledSensorSample
 from .dds_adapter import Mid360AdapterError
 from .samples import LivoxPointSample, Mid360FrameSample, SensorSampleStamp
 
-DEFAULT_PATTERN_PATH = Path(__file__).resolve().parents[2] / "assets" / "livox" / "mid360.npy"
+DEFAULT_PATTERN_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "packages"
+    / "sensors"
+    / "livox"
+    / "mid360"
+    / "assets"
+    / "mid360.npy"
+)
 DEFAULT_POINTS_PER_FRAME = 20_000
 DEFAULT_SCAN_PERIOD_NS = 100_000_000
 DEFAULT_REFLECTIVITY_PROXY = 15

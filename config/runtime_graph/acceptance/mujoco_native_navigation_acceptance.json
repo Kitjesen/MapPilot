@@ -63,7 +63,7 @@
         "build/maps-windows/Release/mapd.exe",
         "build/maps/mapd",
         "build/mujoco_native_maps/mapd",
-        "/opt/lingtu/current/build/maps/mapd"
+        "/opt/lingtu/current/bin/mapd"
       ]
     },
     "traversability": {
@@ -112,7 +112,6 @@
     "map_hz": 5.0,
     "scene_hz": 2.0,
     "max_points": 5000,
-    "max_collision_snapshot_points": 50000,
     "min_range_m": 0.1,
     "max_range_m": 12.0,
     "decay_ms": 250,

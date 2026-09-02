@@ -24,9 +24,7 @@ from sim.runtime.sensors import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SESSION_SPEC = (
     Path(__file__).resolve().parents[2]
-    / "sim"
-    / "scenarios"
-    / "catalog"
+    / "sim" / "sessions" / "examples"
     / "thunderv4_unreal"
     / "session.yaml"
 )

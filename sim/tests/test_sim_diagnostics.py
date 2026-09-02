@@ -12,7 +12,7 @@ from runtime.algorithm_gates import (
     G4_SERVER_FULL_SIM_REQUIRED_GATES,
     INSPECTION_MVP_REQUIRED_GATES,
 )
-from sim.scripts import sim_diagnostics
+from sim.diagnostics import summary as sim_diagnostics
 
 pytestmark = pytest.mark.sim
 
@@ -408,7 +408,7 @@ def test_product_diagnostics_stops_after_collection_failure(tmp_path: Path):
 def test_main_rejects_invalid_cli_combinations(
     monkeypatch: pytest.MonkeyPatch, arguments: list[str], message: str
 ):
-    monkeypatch.setattr(sys, "argv", ["sim_diagnostics.py", *arguments])
+    monkeypatch.setattr(sys, "argv", ["sim.diagnostics", *arguments])
 
     with pytest.raises(SystemExit, match=message):
         sim_diagnostics.main()
@@ -422,7 +422,7 @@ def test_main_host_preflight_writes_json(
         sys,
         "argv",
         [
-            "sim_diagnostics.py",
+            "sim.diagnostics",
             "--host-preflight",
             "--required",
             "gateway_runtime_acceptance",

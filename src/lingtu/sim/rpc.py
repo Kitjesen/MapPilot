@@ -34,7 +34,7 @@ _WORKER_RESULT_MAX_BYTES = MAX_MESSAGE_BYTES + 128
 _WORKER_PROCESS_PREFIX = "lingtu-sim-supervisor-client-"
 _NONCE_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
 _ERROR_CODE_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
-_ACTIONS = frozenset({"apply", "quiesce", "stop"})
+_ACTIONS = frozenset({"apply", "quiesce", "stop", "status"})
 
 
 class SupervisorProtocolError(RuntimeError):
@@ -302,7 +302,7 @@ def _normalized_session_root(session_root: str | os.PathLike[str]) -> Path:
 def _require_private_directory(path: Path, *, create: bool) -> None:
     try:
         if create:
-            path.mkdir(mode=0o700, exist_ok=True)
+            path.mkdir(mode=0o700 if os.name != "nt" else 0o777, exist_ok=True)
     except OSError as exc:
         raise SupervisorProtocolError("cannot prepare supervisor directory") from exc
     if not path.is_dir():

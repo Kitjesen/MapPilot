@@ -4,18 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import math
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-
-import cv2
-import imageio.v2 as imageio
-import mujoco
-import numpy as np
-
 
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src"
@@ -24,8 +19,14 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from drivers.sim.mujoco.runtime import build_engine
-from sim.engine.core.engine import VelocityCommand
+from sim.compat.engine.core.engine import VelocityCommand  # noqa: E402
+
+from drivers.sim.mujoco.runtime import build_engine  # noqa: E402
+
+cv2: Any
+imageio: Any
+mujoco: Any
+np: Any
 
 
 def _write_world(path: Path) -> None:
@@ -188,6 +189,12 @@ def _wheel_clearance(model: Any, data: Any) -> dict[str, float]:
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
+    global cv2, imageio, mujoco, np
+    cv2 = importlib.import_module("cv2")
+    imageio = importlib.import_module("imageio.v2")
+    mujoco = importlib.import_module("mujoco")
+    np = importlib.import_module("numpy")
+
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(args.out_dir or ROOT / "artifacts" / f"mujoco_thunderv4_mid360_policy_{stamp}").resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -323,7 +330,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "duration_s": float(args.duration_s),
         "fps": float(args.fps),
         "frame_count": int(frames),
-        "motion": "TorchScript .pt policy through MuJoCo physics",
+        "motion": "ThunderV4 ONNX policy through MuJoCo physics",
         "policy_used": bool(engine.has_policy),
         "policy_class": type(engine._policy).__name__ if engine._policy else None,
         "start_position": [float(v) for v in start_pos],

@@ -84,6 +84,7 @@ def test_architecture_layer_manifest_uses_most_specific_path_owner() -> None:
     assert architecture_layer_for_path("src/nav/services/goals.py")["id"] == "L4_capability_modules"
     assert architecture_layer_for_path("src/nav/skills/skills_module.py")["id"] == "L4_capability_modules"
     assert architecture_layer_for_path("src/nav/cpp/planning/local/cmu/paths")["id"] == "L5_algorithm_kernels"
+    assert architecture_layer_for_path("src/explore/cpp/endpoint/main.cpp")["id"] == "L5_algorithm_kernels"
     assert architecture_layer_for_path("src/runtime/adapters/dds/reader.py")["id"] == "L3_adapter_layer"
     assert architecture_layer_for_path("src/nav/cpp/CMakeLists.txt")["id"] == ("L5_algorithm_kernels")
     assert architecture_layer_for_path("src/nav/adapters/dds/nav/path_bridge.py")["id"] == ("L3_adapter_layer")

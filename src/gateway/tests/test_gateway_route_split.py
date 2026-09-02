@@ -187,7 +187,7 @@ def test_save_map_returns_accepted_while_native_job_is_running(monkeypatch):
     map_routes.register_map_routes(app, gateway)
     route = next(route for route in app.routes if route.path == "/api/v1/map/save")
 
-    response = asyncio.run(route.endpoint({"name": "warehouse"}))
+    response = asyncio.run(route.endpoint(map_routes.MapSaveRequest(name="warehouse")))
     payload = json.loads(response.body)
     assert response.status_code == 202
     assert payload["ok"] is True
@@ -217,7 +217,7 @@ def test_save_map_fails_closed_when_slam_profile_is_unavailable(monkeypatch):
     map_routes.register_map_routes(app, gateway)
     route = next(route for route in app.routes if route.path == "/api/v1/map/save")
 
-    response = asyncio.run(route.endpoint({"name": "warehouse"}))
+    response = asyncio.run(route.endpoint(map_routes.MapSaveRequest(name="warehouse")))
     payload = json.loads(response.body)
 
     assert response.status_code == 503
@@ -661,7 +661,7 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
     )
     validation_gates = snapshots["capabilities"]["data"]["validation_gates"]
     assert validation_gates["saved_map_artifact_gate"]["command"] == (
-        "python scripts/gates/saved_map_artifact_gate.py "
+        "python -m diagnostics.field.map_artifacts "
         "<map-id> "
         "[--require-octomap | --require-occupancy] "
         "--json-out artifacts/saved_map_artifacts/report.json"
@@ -670,7 +670,7 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
     assert validation_gates["saved_map_artifact_gate"]["acceptance_step"] == 1
     assert validation_gates["real_runtime_evidence"]["expected_runtime_contract"] == ("real")
     assert validation_gates["real_runtime_evidence"]["command"] == (
-        "python scripts/gates/real_runtime_evidence_collect.py "
+        "python -m diagnostics.field.runtime_evidence "
         "--gateway-url http://<robot>:5050 "
         "--duration-sec 20 "
         "--expected-contract real "

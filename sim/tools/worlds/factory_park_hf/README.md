@@ -76,7 +76,7 @@ fixtures. Additional batches are appended with a repeatable flag:
 ```powershell
 .\.venv\Scripts\python.exe -m sim.tools.worlds.factory_park_hf.generate `
   --repo-root . --seed 20260808 `
-  --element-batch sim/worlds/my_factory_elements.json `
+  --element-batch sim/packages/worlds/factory_park_hf/my_factory_elements.json `
   --force-overwrite
 ```
 
@@ -89,7 +89,7 @@ map. Use `--no-default-elements` to build without the canonical element batch.
 The supported v1 types are `equipment_cabinet`, `fire_cabinet`,
 `industrial_drum`, `jersey_barrier`, `lane_marker`, `pallet_stack`,
 `safety_bollard`, `safety_sign`, `traffic_cone`, and `wheel_stop`. The input
-schema is `schemas/simulation/factory-park.v1.json`.
+schema is `sim/contracts/schemas/factory-park.v1.json`.
 
 This is a structured-text interface. Free-form natural-language prompts should
 compile to this batch schema rather than writing Blender or Unreal actors

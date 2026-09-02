@@ -92,7 +92,7 @@ Before beginning a field collection session:
    ```bash
    bash scripts/lingtu status
    PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
-   PYTHONPATH=src python scripts/diagnostics/soak.py --duration 120 --interval 2 --json --strict
+   PYTHONPATH=src python -m diagnostics.field.soak --duration 120 --interval 2 --json --strict
    ```
 
    These checks do not command a route, but they must pass before data is
@@ -143,8 +143,8 @@ Before beginning a field collection session:
    endpoints:
 
    ```bash
-   python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy
-   python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" \
+   PYTHONPATH=src python -m diagnostics.field.map_artifacts <map-id> --require-occupancy
+   PYTHONPATH=src python -m diagnostics.field.system_acceptance --maps-root "$LINGTU_MAPS_ROOT" \
      --map <map-name> --goal <x> <y> <yaw>
    ```
 
@@ -158,14 +158,14 @@ answers the question.
 
 | Question | Command or API | Effect |
 | --- | --- | --- |
-| Is the selected saved-map package complete for planning? | `python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy` | Native mapd validation; no goal or velocity output. |
+| Is the selected saved-map package complete for planning? | `PYTHONPATH=src python -m diagnostics.field.map_artifacts <map-id> --require-occupancy` | Native mapd validation; no goal or velocity output. |
 | Is the currently running system ready and is this route safe? | Gateway `POST /api/v1/navigation/plan` | No published goal; evaluates the running navigation path. |
-| Can the native field path, map bundle, localization, and a requested route pass together? | `python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT"` | No physical motion by default; it is stateful because it samples runtime readiness and may start/end a session or relocalize. |
+| Can the native field path, map bundle, localization, and a requested route pass together? | `PYTHONPATH=src python -m diagnostics.field.system_acceptance --maps-root "$LINGTU_MAPS_ROOT"` | No physical motion by default; it is stateful because it samples runtime readiness and may start/end a session or relocalize. |
 
 **Native saved-map artifact validation:**
 
 ```bash
-python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy
+PYTHONPATH=src python -m diagnostics.field.map_artifacts <map-id> --require-occupancy
 ```
 
 Use the saved map ID known by mapd. The command validates artifact provenance
@@ -175,7 +175,7 @@ It does not evaluate a route or prove that live localization is ready.
 **Field-ready route evidence, no physical motion by default:**
 
 ```bash
-python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" \
+PYTHONPATH=src python -m diagnostics.field.system_acceptance --maps-root "$LINGTU_MAPS_ROOT" \
   --map <map-name> \
   --goal <x> <y> <yaw> \
   --with-relocalization
@@ -188,7 +188,7 @@ motion smoke test unless `--allow-motion` is explicitly supplied. Treat
 next step after a preview.
 
 The operations CLI does not expose a localization-backend A/B switch. Resolve
-one Product inside one env and use `system_acceptance_gate.py` for integrated evidence;
+one Product inside one env and use `diagnostics.field.system_acceptance` for integrated evidence;
 ProductControl owns every Product transition and rollback.
 
 A successful preview means the requested path was feasible under the reported

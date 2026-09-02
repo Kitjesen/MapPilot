@@ -297,7 +297,7 @@ std::string ResolvePgoExecutable(const PgoOptions &options) {
            cwd / "build" / "map_opt" / "Release" / "lt_pgo.exe",
            cwd / "build" / "map_opt" / "lt_pgo.exe",
            cwd / "build" / "map_opt" / "lt_pgo",
-           std::filesystem::path("/opt/lingtu/current/build/map_opt/lt_pgo"),
+           std::filesystem::path("/opt/lingtu/current/bin/lt_pgo"),
        }) {
     std::error_code error;
     if (std::filesystem::is_regular_file(candidate, error) && !error) {

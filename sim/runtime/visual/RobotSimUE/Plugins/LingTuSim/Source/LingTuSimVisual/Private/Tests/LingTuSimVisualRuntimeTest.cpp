@@ -324,7 +324,7 @@ namespace
     {
         return FString::Printf(
             TEXT("{\"instance_id\":\"%s\",\"namespace\":\"%s\",")
-            TEXT("\"package\":{\"id\":\"omni_cart\",\"version\":\"1.0.0\",\"kind\":\"robot\",\"manifest\":\"sim/robots/omni_cart/robot.package.yaml\"},")
+            TEXT("\"package\":{\"id\":\"omni_cart\",\"version\":\"1.0.0\",\"kind\":\"robot\",\"manifest\":\"sim/packages/robots/omni_cart/robot.package.yaml\"},")
             TEXT("\"binding\":\"RobotVisual:OmniCart\",")
             TEXT("\"projection\":{\"schema\":\"lingtu.sim.robot-visual-projection.v1\",\"path\":\"%s\"},")
             TEXT("\"spawn\":{\"position_m\":[0.0,0.0,0.0],\"quaternion_wxyz\":[1.0,0.0,0.0,0.0]}}"),
@@ -363,7 +363,7 @@ namespace
             TEXT("\"coordinate_system\":{\"source\":\"mujoco_rh_z_up_m\",\"target\":\"unreal_lh_z_up_cm\",\"position_scale\":100.0,\"axis_mapping\":[\"x\",\"-y\",\"z\"],\"quaternion_order\":\"wxyz\"},")
             TEXT("\"binding_policy\":{\"missing_asset\":\"fail\",\"data_asset_is_projection\":true},")
             TEXT("\"world\":{\"package\":{\"id\":\"open_field\",\"version\":\"1.0.0\",\"kind\":\"world\",\"manifest\":\"sim/packages/worlds/open_field/world.package.yaml\"},\"binding\":\"WorldVisual:OpenField\",\"level\":\"/Game/RobotSim/Maps/Test\"},")
-            TEXT("\"robots\":[{\"instance_id\":\"cart_01\",\"namespace\":\"cart_01\",\"package\":{\"id\":\"omni_cart\",\"version\":\"1.0.0\",\"kind\":\"robot\",\"manifest\":\"sim/robots/omni_cart/robot.package.yaml\"},\"binding\":\"RobotVisual:OmniCart\",\"projection\":{\"schema\":\"lingtu.sim.robot-visual-projection.v1\",\"path\":\"%s\"},\"spawn\":{\"position_m\":[0.0,0.0,0.0],\"quaternion_wxyz\":[1.0,0.0,0.0,0.0]},")
+            TEXT("\"robots\":[{\"instance_id\":\"cart_01\",\"namespace\":\"cart_01\",\"package\":{\"id\":\"omni_cart\",\"version\":\"1.0.0\",\"kind\":\"robot\",\"manifest\":\"sim/packages/robots/omni_cart/robot.package.yaml\"},\"binding\":\"RobotVisual:OmniCart\",\"projection\":{\"schema\":\"lingtu.sim.robot-visual-projection.v1\",\"path\":\"%s\"},\"spawn\":{\"position_m\":[0.0,0.0,0.0],\"quaternion_wxyz\":[1.0,0.0,0.0,0.0]},")
             TEXT("\"payloads\":[{\"instance_id\":\"payload_01\",\"namespace\":\"payload_01\",\"robot_instance_id\":\"cart_01\",\"package\":{\"id\":\"test_payload\",\"version\":\"1.0.0\",\"kind\":\"payload\",\"manifest\":\"sim/packages/payloads/test_payload/1.0.0/payload.package.yaml\"},\"parent_frame\":\"payload_top\",\"mount_transform\":{\"position_m\":[0.0,0.0,0.1],\"quaternion_wxyz\":[1.0,0.0,0.0,0.0]},\"binding\":\"PayloadVisual:Test\",\"projection\":{\"schema\":\"lingtu.sim.payload-visual-projection.v1\",\"path\":\"%s\"},\"authority\":\"mujoco\",\"ue_collision\":\"disabled\",\"frames\":[{\"name\":\"payload_base\",\"role\":\"payload_root\"}]%s}]}]}"),
             *Session,
             *RobotProjectionRelativePath,
@@ -487,7 +487,7 @@ namespace
             TEXT("\"coordinate_system\":{\"source\":\"mujoco_rh_z_up_m\",\"target\":\"unreal_lh_z_up_cm\",\"position_scale\":100.0,\"axis_mapping\":[\"x\",\"-y\",\"z\"],\"quaternion_order\":\"wxyz\"},")
             TEXT("\"binding_policy\":{\"missing_asset\":\"fail\",\"data_asset_is_projection\":true},")
             TEXT("\"world\":{\"package\":{\"id\":\"open_field\",\"version\":\"1.0.0\",\"kind\":\"world\",\"manifest\":\"sim/packages/worlds/open_field/world.package.yaml\"},\"binding\":\"WorldVisual:OpenField\",\"level\":\"/Game/RobotSim/Maps/Test\"},")
-            TEXT("\"robots\":[{\"instance_id\":\"cart_01\",\"namespace\":\"cart_01\",\"package\":{\"id\":\"omni_cart\",\"version\":\"1.0.0\",\"kind\":\"robot\",\"manifest\":\"sim/robots/omni_cart/robot.package.yaml\"},\"binding\":\"RobotVisual:OmniCart\",\"projection\":{\"schema\":\"lingtu.sim.robot-visual-projection.v1\",\"path\":\"%s\"},\"spawn\":{\"position_m\":[0.0,0.0,0.0],\"quaternion_wxyz\":[1.0,0.0,0.0,0.0]}}]}"),
+            TEXT("\"robots\":[{\"instance_id\":\"cart_01\",\"namespace\":\"cart_01\",\"package\":{\"id\":\"omni_cart\",\"version\":\"1.0.0\",\"kind\":\"robot\",\"manifest\":\"sim/packages/robots/omni_cart/robot.package.yaml\"},\"binding\":\"RobotVisual:OmniCart\",\"projection\":{\"schema\":\"lingtu.sim.robot-visual-projection.v1\",\"path\":\"%s\"},\"spawn\":{\"position_m\":[0.0,0.0,0.0],\"quaternion_wxyz\":[1.0,0.0,0.0,0.0]}}]}"),
             *Session,
             *ProjectionRelativePath);
         return FFileHelper::SaveStringToFile(

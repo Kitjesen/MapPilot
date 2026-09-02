@@ -46,8 +46,8 @@ CLI:
 
 ```bash
 PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
-python scripts/gates/saved_map_artifact_gate.py MAP_ID --require-occupancy
-python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" --map MAP --goal X Y YAW
+PYTHONPATH=src python -m diagnostics.field.map_artifacts MAP_ID --require-occupancy
+PYTHONPATH=src python -m diagnostics.field.system_acceptance --maps-root "$LINGTU_MAPS_ROOT" --map MAP --goal X Y YAW
 ```
 
 Use the platform tools for the platform state:
@@ -69,12 +69,12 @@ curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow
 Recording is owned by the native tools, not ProductControl:
 
 ```bash
-build/native-recording/lingtu_recorder record \
+/opt/lingtu/current/bin/lingtu_recorder record \
   --output-dir /data/recordings/run-001 --dds on --camera off
-build/native-recording/lingtu_recorder status /data/recordings/run-001
-build/native-recording/lingtu_recorder stop /data/recordings/run-001
-build/native-recording/lingtu_dds_player --info /data/recordings/run-001/dds/sensors.mcap
-build/native-recording/lingtu_dds_player \
+/opt/lingtu/current/bin/lingtu_recorder status /data/recordings/run-001
+/opt/lingtu/current/bin/lingtu_recorder stop /data/recordings/run-001
+/opt/lingtu/current/bin/lingtu_dds_player --info /data/recordings/run-001/dds/sensors.mcap
+/opt/lingtu/current/bin/lingtu_dds_player \
   /data/recordings/run-001/dds/sensors.mcap --dry-run
 ```
 

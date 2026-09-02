@@ -67,7 +67,7 @@ endif()
 
 # nanobind Python extension: exposes the C++ TarePolicy as lingtu_explore_kernel.
 # Mirrors the optional Python-binding mode in src/nav/cpp/CMakeLists.txt. Off by default; built by
-# scripts/build/build_explore_kernel.sh or by passing the option below.
+# scripts/build/build_explore_py.sh or by passing the option below.
 option(LINGTU_EXPLORE_CPP_BUILD_PYTHON_BINDINGS
   "Build lingtu_explore_kernel Python bindings" OFF)
 if(LINGTU_EXPLORE_CPP_BUILD_PYTHON_BINDINGS)

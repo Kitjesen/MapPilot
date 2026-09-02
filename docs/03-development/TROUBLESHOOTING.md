@@ -94,7 +94,7 @@ curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
 PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
 
 # Sample readiness without commanding motion.
-PYTHONPATH=src python scripts/diagnostics/soak.py --duration 120 --interval 2 --json --strict
+PYTHONPATH=src python -m diagnostics.field.soak --duration 120 --interval 2 --json --strict
 
 # Review recent errors and then collect a bounded log window if needed.
 journalctl -u 'lt-*' -p err -n 100 --no-pager
@@ -207,7 +207,7 @@ source ownership.
 bash scripts/lingtu status
 curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/odometry"
 curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/runtime/dataflow/topic?topic=/nav/map_cloud"
-PYTHONPATH=src python scripts/diagnostics/soak.py --duration 120 --interval 2 --json --strict
+PYTHONPATH=src python -m diagnostics.field.soak --duration 120 --interval 2 --json --strict
 journalctl -u 'lt-*' -n 200 --no-pager | grep -i drift
 ```
 
@@ -252,10 +252,10 @@ part of the contract.
 
 ```bash
 # Use the saved map ID known by mapd.
-python scripts/gates/saved_map_artifact_gate.py <map-id> --require-occupancy --json
+PYTHONPATH=src python -m diagnostics.field.map_artifacts <map-id> --require-occupancy --json
 
 # Integrated field evidence; no motion unless --allow-motion is supplied.
-python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" --map <map> --goal <x> <y> <yaw>
+PYTHONPATH=src python -m diagnostics.field.system_acceptance --maps-root "$LINGTU_MAPS_ROOT" --map <map> --goal <x> <y> <yaw>
 ```
 
 For OctoPlanner3D navigation, expect a valid map package with `map.pcd`,
@@ -282,7 +282,7 @@ evidence that one of the required readiness gates is working.
 bash scripts/lingtu status
 curl -fsS "${LINGTU_GATEWAY_URL:?set LINGTU_GATEWAY_URL}/api/v1/health"
 PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --strict
-python scripts/gates/system_acceptance_gate.py --maps-root "$LINGTU_MAPS_ROOT" --map <map> --goal <x> <y> <yaw>
+PYTHONPATH=src python -m diagnostics.field.system_acceptance --maps-root "$LINGTU_MAPS_ROOT" --map <map> --goal <x> <y> <yaw>
 journalctl -u 'lt-*' -p err -n 100 --no-pager
 ```
 
@@ -420,8 +420,8 @@ address.
 # Read-only runtime summary and dataflow evidence.
 bash scripts/lingtu status
 PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
-PYTHONPATH=src python scripts/diagnostics/soak.py --duration 120 --interval 2 --json --strict
-python scripts/gates/real_runtime_evidence_collect.py --duration-sec 20 --json-out runtime-evidence.json
+PYTHONPATH=src python -m diagnostics.field.soak --duration 120 --interval 2 --json --strict
+PYTHONPATH=src python -m diagnostics.field.runtime_evidence --duration-sec 20 --json-out runtime-evidence.json
 journalctl -u 'lt-*' -n 200 --no-pager
 ```
 

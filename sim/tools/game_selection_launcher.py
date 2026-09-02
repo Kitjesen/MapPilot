@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
-from sim.importers.contracts import canonical_json_bytes, digest_document
+from sim.catalog.importers.contracts import canonical_json_bytes, digest_document
 from sim.runtime.coordinator import STATIC_PLAN_FILES, load_resolved_session_bundle
 from sim.runtime.coordinator.run_allocation import RunAllocationError
 

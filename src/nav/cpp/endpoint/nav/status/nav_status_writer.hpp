@@ -10,6 +10,7 @@
 #include "command/ingress.hpp"
 #include "input/obstacle.hpp"
 #include "nav_kernel/types.hpp"
+#include "planning/local/planner.hpp"
 #include "input/gate.hpp"
 #include "status/control_loop_health.hpp"
 #include "status/status_snapshot_file_writer.hpp"
@@ -21,19 +22,6 @@ struct LocalPlannerDebugSnapshot;
 namespace lingtu::nav::endpoint {
 
 struct TraversabilityGrid;
-struct LocalCollisionStatusView {
-  const float *occupied_xyz{nullptr};
-  std::size_t occupied_count{0};
-  double resolution{0.0};
-  nav_kernel::Vec3 aabb_min{};
-  nav_kernel::Vec3 aabb_max{};
-  std::uint64_t reset_epoch{0};
-  std::uint64_t observation_sequence{0};
-  std::uint64_t generation{0};
-  double stamp_s{0.0};
-  bool complete{false};
-  bool live{false};
-};
 
 struct StatusWriterConfig {
   std::string control_mode{"autonomy"};
@@ -292,6 +280,6 @@ void writeStatusSnapshot(
     const nav_kernel::LocalPlannerDebugSnapshot &local_planner_debug,
     const std::vector<float> &local_map_obstacle_xyzh,
     const TraversabilityGrid &local_map_traversability,
-    LocalCollisionStatusView local_collision_map);
+    nav_kernel::LocalCollisionMapView local_collision_map);
 
 }  // namespace lingtu::nav::endpoint

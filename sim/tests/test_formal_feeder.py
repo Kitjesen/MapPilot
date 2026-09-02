@@ -36,6 +36,7 @@ from sim.scripts.mujoco.driver_bridge_session import (
 from sim.scripts.mujoco.evidence import (
     FEEDER_STATUS_FILENAME,
     FEEDER_STATUS_SCHEMA,
+    MAX_TRAJECTORY_SAMPLES,
     MOTION_EVIDENCE_FILENAME,
     MOTION_EVIDENCE_SCHEMA,
     load_motion_evidence,
@@ -60,7 +61,7 @@ CONTROLLER_BOOT_ID = "d" * 32
 
 def _minimal_simulation(
     *,
-    world_mjcf: str = "sim/worlds/runplan/world.xml",
+    world_mjcf: str = "sim/packages/worlds/runplan/world.xml",
     imu_hz: float = 200.0,
     mid360_hz: float = 10.0,
     include_sensors: bool = True,
@@ -101,13 +102,13 @@ def _minimal_simulation(
         "id": "test_robot",
         "version": "1.0.0",
         "kind": "robot",
-        "manifest": "sim/robots/test_robot/robot.package.yaml",
+        "manifest": "sim/packages/robots/test_robot/robot.package.yaml",
     }
     controller_package = {
         "id": "test_controller",
         "version": "1.0.0",
         "kind": "controller",
-        "manifest": "sim/controllers/test/controller.package.yaml",
+        "manifest": "sim/packages/controllers/test/controller.package.yaml",
     }
     world = {
         "package": world_package,
@@ -125,7 +126,7 @@ def _minimal_simulation(
                 "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
             },
             "model": {
-                "mjcf": "sim/robots/test_robot/robot.xml",
+                "mjcf": "sim/packages/robots/test_robot/robot.xml",
                 "attach_root": "base_link",
                 "root_joint": "root",
                 "initial_keyframe": initial_keyframe,
@@ -218,7 +219,7 @@ def _minimal_simulation(
                 "instance_id": "robot_01",
                 "controller_id": "robot_01.test_controller",
                 "package": controller_package,
-                "policy": {"artifact": "sim/robots/test_robot/policy.pt"},
+                "policy": {"artifact": "sim/packages/robots/test_robot/policy.pt"},
                 "timing": {"inference_hz": 50, "low_level_hz": 200},
                 "actuator_channels": ["joint_a", "joint_b"],
             }
@@ -1092,9 +1093,9 @@ def test_main_uses_one_identity_fixed_endpoints_and_exact_startup_order(
         "session_id": session_id,
     }
     assert services.build_kwargs is not None
-    assert services.build_kwargs["world"] == Path("sim/worlds/runplan/world.xml")
+    assert services.build_kwargs["world"] == Path("sim/packages/worlds/runplan/world.xml")
     assert services.build_kwargs["robot_xml"] == Path(
-        "sim/robots/test_robot/robot.xml"
+        "sim/packages/robots/test_robot/robot.xml"
     )
     assert services.build_kwargs["base_body_name"] == "base_link"
     assert services.build_kwargs["lidar_body_name"] == "lidar_link"
@@ -1104,7 +1105,7 @@ def test_main_uses_one_identity_fixed_endpoints_and_exact_startup_order(
     assert services.build_kwargs["start_orientation_wxyz"] == [1.0, 0.0, 0.0, 0.0]
     assert services.build_kwargs["initial_keyframe"] is None
     assert services.build_kwargs["policy_path"] == Path(
-        "sim/robots/test_robot/policy.pt"
+        "sim/packages/robots/test_robot/policy.pt"
     )
     assert services.build_kwargs["policy_freq_hz"] == 50.0
     assert services.build_kwargs["controller_actuator_names"] == [
@@ -1669,6 +1670,36 @@ def test_motion_evidence_includes_coasting_path_between_nonzero_commands(
     assert published["last_motion_step_seq"] == 3
 
 
+def test_motion_trajectory_decimates_without_changing_aggregate_metrics() -> None:
+    def state(x: float) -> Any:
+        return SimpleNamespace(
+            position=np.array([x, 0.0, 0.4], dtype=np.float64),
+            orientation=np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float64),
+        )
+
+    evidence = feeder._PhysicalMotionEvidence()
+    steps = 10_000
+    for step in range(1, steps + 1):
+        evidence.observe(
+            _command("nav", step, walk=(0.5, 0.0, 0.0)),
+            before=state((step - 1) * 0.1),
+            after=state(step * 0.1),
+            step_seq=step,
+        )
+
+    assert len(evidence.trajectory) <= MAX_TRAJECTORY_SAMPLES
+    assert evidence.trajectory[0][1:4] == [0.0, 0.0, 0.4]
+    assert evidence.trajectory[-1][1:4] == [steps * 0.1, 0.0, 0.4]
+    assert evidence.path_length_xy_m == pytest.approx(steps * 0.1)
+    assert evidence.pose_sample_count == steps
+    assert evidence.nonzero_command_count == steps
+    assert evidence.nonzero_physics_steps == steps
+    replay = feeder._PhysicalMotionEvidence()
+    for step in range(steps + 1):
+        replay._append_trace((step * 0.1, 0.0, 0.4), 0.0, step)
+    assert replay.trajectory == evidence.trajectory
+
+
 def test_shutdown_drains_one_protocol_pending_nav_before_exact_zero(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1911,12 +1942,11 @@ def test_truth_localization_publishes_pose_and_registered_cloud_with_one_timesta
         assert index > 0
         assert lidar_records[index - 1][4] == 1
         registered_stamp = int.from_bytes(record[8:16], "little")
-        matching_pose = next(
-            candidate
-            for candidate in reversed(lidar_records[:index])
-            if candidate[4] == 3
+        assert any(
+            candidate[4] == 3
+            and int.from_bytes(candidate[8:16], "little") == registered_stamp
+            for candidate in lidar_records[:index]
         )
-        assert int.from_bytes(matching_pose[8:16], "little") == registered_stamp
 
 
 def test_product_slam_process_receives_only_raw_lidar_and_imu_records(

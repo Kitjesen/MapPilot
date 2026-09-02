@@ -10,7 +10,7 @@ from diagnostics.field.teleop_preflight import evaluate_teleop_preflight
 from lingtu.run_plan import CURRENT_RUN_SCHEMA, RUN_PLAN_SCHEMA
 
 ROOT = Path(__file__).resolve().parents[3]
-COLLECTOR = ROOT / "scripts" / "gates" / "thunder_service_readiness_collect.py"
+COLLECTOR = ROOT / "src" / "diagnostics" / "field" / "service_readiness.py"
 LINGTU_CLI = ROOT / "scripts" / "lingtu"
 NAV_PRODUCER_BOOT_ID = "nav:boot:1"
 IDLE_ZERO_OUTPUT_SEQUENCE = 7

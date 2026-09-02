@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-build_dir="${1:-/opt/lingtu/current/build/nav_endpoint}"
 source_dir="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+build_dir="${1:-${source_dir}/build/nav_endpoint}"
 domain_id="${LINGTU_TEST_DDS_DOMAIN_ID:-191}"
 status_file="${TMPDIR:-/tmp}/lingtu_nav_command_ack_status.json"
 log_file="${TMPDIR:-/tmp}/lingtu_nav_command_ack.log"

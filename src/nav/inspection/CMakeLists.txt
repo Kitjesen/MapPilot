@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(lingtu_inspection LANGUAGES CXX)
 
 include(CTest)
+include(GNUInstallDirs)
 
 set(_LINGTU_SRC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 
@@ -20,8 +21,10 @@ target_include_directories(lingtu_inspection PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(lingtu_inspection PUBLIC cxx_std_17)
 
 install(TARGETS lingtu_inspection
-  LIBRARY DESTINATION inspection
-  RUNTIME DESTINATION inspection)
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    COMPONENT lingtu_runtime
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT lingtu_runtime)
 
 if(MSVC)
   target_compile_options(lingtu_inspection_core PRIVATE /W4)

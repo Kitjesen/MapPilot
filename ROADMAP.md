@@ -111,7 +111,7 @@ consumes MuJoCo's state and renders it photorealistically.
 - [ ] Reorganize `sim/` directory to separate engine, tests, bridge, assets
 - [ ] Add `src/message/` to architecture documentation
 - [x] Move former runtime-profile helpers to their actual Product, assembly, navigation, and driver owners
-- [ ] Add UE simulation placeholder under `sim/engine/ue/`
+- [ ] Add UE simulation placeholder under `sim/compat/engine/ue/`
 
 ### Known Gaps
 

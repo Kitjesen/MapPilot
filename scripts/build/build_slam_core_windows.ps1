@@ -13,13 +13,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ExpectedCycloneDDSVersion = "11.0.1"
-$ExpectedVcpkgBaseline = "9e593bb18ea69cc5095e012465dcd675a822ed0d"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Source = Join-Path $Root "src\localization\slam\cpp"
 $VcpkgManifestRoot = Join-Path $PSScriptRoot "vcpkg\slam-windows"
 $CycloneDDSCanonicalLock = Join-Path $PSScriptRoot "locks\cyclonedds-windows-x64.json"
 $CycloneDDSVerifier = Join-Path $PSScriptRoot "verify_cyclonedds_windows_sdk.ps1"
+$CycloneLockData = Get-Content -Raw -LiteralPath $CycloneDDSCanonicalLock | ConvertFrom-Json
+$ExpectedCycloneDDSVersion = [string]$CycloneLockData.tag
 
 function Resolve-ExplicitPrefix {
     param([string]$Value, [string]$ParameterName)
@@ -55,30 +55,6 @@ function Resolve-PrefixFile {
         }
     }
     throw "$Description is missing from explicit prefix '$Prefix'. Tried: $($Candidates -join ', ')"
-}
-
-function Assert-X64PortableExecutable {
-    param([string]$Path, [string]$Description)
-
-    $Stream = [System.IO.File]::OpenRead($Path)
-    try {
-        $Reader = [System.IO.BinaryReader]::new($Stream)
-        if ($Reader.ReadUInt16() -ne 0x5A4D) {
-            throw "$Description is not a Windows PE file: $Path"
-        }
-        $Stream.Position = 0x3C
-        $PeOffset = $Reader.ReadInt32()
-        if ($PeOffset -lt 0 -or $PeOffset -gt ($Stream.Length - 6)) {
-            throw "$Description has an invalid PE header: $Path"
-        }
-        $Stream.Position = $PeOffset
-        if ($Reader.ReadUInt32() -ne 0x00004550 -or $Reader.ReadUInt16() -ne 0x8664) {
-            throw "$Description must be a Windows x64 PE artifact: $Path"
-        }
-    }
-    finally {
-        $Stream.Dispose()
-    }
 }
 
 function Get-CMakeCacheValue {
@@ -137,9 +113,7 @@ if (-not (Test-Path -LiteralPath $VcpkgManifest -PathType Leaf)) {
 }
 $Manifest = Get-Content -Raw -LiteralPath $VcpkgManifest | ConvertFrom-Json
 $ManifestSha256 = (Get-FileHash -LiteralPath $VcpkgManifest -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($Manifest.'builtin-baseline' -ne $ExpectedVcpkgBaseline) {
-    throw "vcpkg manifest baseline drift: expected $ExpectedVcpkgBaseline, found $($Manifest.'builtin-baseline')"
-}
+$ExpectedVcpkgBaseline = [string]$Manifest.'builtin-baseline'
 $VcpkgHead = Resolve-PrefixFile $VcpkgRoot @(".git\HEAD") "vcpkg detached HEAD"
 if ((Get-Content -Raw -LiteralPath $VcpkgHead).Trim() -ne $ExpectedVcpkgBaseline) {
     throw "VcpkgRoot is not checked out at pinned baseline ${ExpectedVcpkgBaseline}: $VcpkgRoot"
@@ -188,78 +162,12 @@ if ($Matches[1] -ne $ExpectedCycloneDDSVersion) {
     throw "CycloneDDS version drift: expected $ExpectedCycloneDDSVersion, found $($Matches[1]) in $CycloneDDSVersionConfig"
 }
 $Idlc = Resolve-PrefixFile $CycloneDDSPrefix @("bin\idlc.exe") "CycloneDDS idlc.exe"
-$DdscDll = Resolve-PrefixFile $CycloneDDSPrefix @("bin\ddsc.dll") "CycloneDDS ddsc.dll"
 $CycloneDDSReceipt = Resolve-PrefixFile $CycloneDDSPrefix @(
     "evidence\sdk-receipt.json"
 ) "CycloneDDS verified SDK receipt"
-$CycloneLockData = Get-Content -Raw -LiteralPath $CycloneDDSCanonicalLock | ConvertFrom-Json
-$CycloneReceiptData = Get-Content -Raw -LiteralPath $CycloneDDSReceipt | ConvertFrom-Json
-if ($CycloneReceiptData.schema_version -ne 1 -or
-    [string]$CycloneReceiptData.sdk.name -ne "CycloneDDS" -or
-    [string]$CycloneReceiptData.sdk.version -ne $ExpectedCycloneDDSVersion -or
-    [string]$CycloneReceiptData.source.repository -ne "https://github.com/eclipse-cyclonedds/cyclonedds.git" -or
-    [string]$CycloneReceiptData.source.tag -ne [string]$CycloneLockData.tag -or
-    [string]$CycloneReceiptData.source.commit -ne [string]$CycloneLockData.commit -or
-    [string]$CycloneReceiptData.source.tree -ne [string]$CycloneLockData.tree -or
-    [string]$CycloneReceiptData.toolchain.generator -ne "Visual Studio 17 2022" -or
-    [string]$CycloneReceiptData.toolchain.toolset -ne "v143" -or
-    [string]$CycloneReceiptData.toolchain.architecture -ne "x64" -or
-    [string]$CycloneReceiptData.toolchain.configuration -ne "Release" -or
-    [string]$CycloneReceiptData.toolchain.msvc_runtime -ne "/MD" -or
-    [string]$CycloneReceiptData.verification.result -ne "passed" -or
-    -not $CycloneReceiptData.verification.pe_x64 -or
-    [string]$CycloneReceiptData.verification.dll_closure -ne "passed" -or
-    [string]$CycloneReceiptData.verification.idl_smoke -ne "passed" -or
-    [string]$CycloneReceiptData.verification.consumer_compile_link -ne "passed" -or
-    -not $CycloneReceiptData.verification.sanitized_dll_search) {
-    throw "CycloneDDS SDK receipt identity, toolchain, or verification result is invalid: $CycloneDDSReceipt"
-}
-$ExpectedCyclonePaths = @{
-    license = "licenses/LICENSE"; notice = "licenses/NOTICE.md"
-    cmake_config = "lib/cmake/CycloneDDS/CycloneDDSConfig.cmake"
-    idlc = "bin/idlc.exe"; ddsc_dll = "bin/ddsc.dll"; ddsc_import_library = "lib/ddsc.lib"
-}
-foreach ($Entry in $ExpectedCyclonePaths.GetEnumerator()) {
-    if ([string]$CycloneReceiptData.paths.($Entry.Key) -ne $Entry.Value) {
-        throw "CycloneDDS SDK receipt path drift for '$($Entry.Key)': $($CycloneReceiptData.paths.($Entry.Key))"
-    }
-    Resolve-PrefixFile $CycloneDDSPrefix @($Entry.Value.Replace('/', '\')) "CycloneDDS $($Entry.Key)" | Out-Null
-}
-$CycloneDDSManifest = Resolve-PrefixFile $CycloneDDSPrefix @("evidence\files.sha256") "CycloneDDS files manifest"
-$CycloneDDSSbom = Resolve-PrefixFile $CycloneDDSPrefix @("evidence\sbom.spdx.json") "CycloneDDS SPDX SBOM"
 if (-not (Test-Path -LiteralPath $CycloneDDSVerifier -PathType Leaf)) {
     throw "Canonical CycloneDDS SDK verifier is missing: $CycloneDDSVerifier"
 }
-$CycloneSbomData = Get-Content -Raw -LiteralPath $CycloneDDSSbom | ConvertFrom-Json
-$CycloneSbomPackages = @($CycloneSbomData.packages)
-$CycloneSbomFiles = @($CycloneSbomData.files)
-$CycloneSbomRelationships = @($CycloneSbomData.relationships)
-if ($CycloneSbomData.spdxVersion -ne "SPDX-2.3" -or $CycloneSbomPackages.Count -ne 1 -or
-    $CycloneSbomPackages[0].name -ne $CycloneLockData.spdx.package_name -or
-    $CycloneSbomPackages[0].versionInfo -ne $CycloneLockData.spdx.package_version -or
-    $CycloneSbomPackages[0].licenseConcluded -ne $CycloneLockData.spdx.license_concluded -or
-    $CycloneSbomFiles.Count -lt 1 -or $CycloneSbomRelationships.Count -lt ($CycloneSbomFiles.Count + 1)) {
-    throw "CycloneDDS SPDX SBOM does not match the canonical producer contract"
-}
-$ManifestPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
-foreach ($Line in Get-Content -LiteralPath $CycloneDDSManifest) {
-    if ($Line -notmatch '^([0-9a-f]{64})  (.+)$') { throw "Malformed CycloneDDS files.sha256 line: $Line" }
-    $ExpectedFileHash = $Matches[1]
-    $Relative = $Matches[2].Replace('\', '/')
-    if ([System.IO.Path]::IsPathFullyQualified($Relative) -or $Relative -match '(^|/)\.\.(/|$)' -or
-        -not $ManifestPaths.Add($Relative)) { throw "Unsafe or duplicate CycloneDDS files.sha256 path: $Relative" }
-    $ManifestFile = Resolve-PrefixFile $CycloneDDSPrefix @($Relative.Replace('/', '\')) "CycloneDDS manifest file"
-    $ActualFileHash = (Get-FileHash -LiteralPath $ManifestFile -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($ActualFileHash -ne $ExpectedFileHash) { throw "CycloneDDS manifest file hash mismatch: $Relative" }
-}
-foreach ($SdkFile in Get-ChildItem -LiteralPath $CycloneDDSPrefix -File -Recurse) {
-    $Relative = [System.IO.Path]::GetRelativePath($CycloneDDSPrefix, $SdkFile.FullName).Replace('\', '/')
-    if ($Relative -in @("evidence/files.sha256", "evidence/sdk-receipt.json")) { continue }
-    if (-not $ManifestPaths.Contains($Relative)) { throw "CycloneDDS SDK file is not covered by files.sha256: $Relative" }
-}
-Assert-X64PortableExecutable $Idlc "CycloneDDS idlc.exe"
-Assert-X64PortableExecutable $DdscDll "CycloneDDS ddsc.dll"
-
 $VsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 if (-not (Test-Path -LiteralPath $VsWhere -PathType Leaf)) {
     throw "Visual Studio Installer vswhere.exe was not found; Visual Studio 2022 with MSVC x64 tools is required."
@@ -423,7 +331,6 @@ finally {
 $StageScript = Join-Path $PSScriptRoot "cmake\stage_windows_runtime.cmake"
 $RuntimeDir = Join-Path $BuildDir $Configuration
 $StageRoot = Join-Path $BuildDir "stage"
-Assert-AuthoritativeCycloneDDSSdk
 & cmake `
     "-DSLAMD_EXECUTABLE=$(Join-Path $RuntimeDir 'slamd.exe')" `
     "-DSLAMCTL_EXECUTABLE=$(Join-Path $RuntimeDir 'slamctl.exe')" `

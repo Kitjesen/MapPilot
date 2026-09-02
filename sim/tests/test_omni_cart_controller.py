@@ -32,9 +32,7 @@ from sim.runtime.coordinator.mujoco_process import MujocoProcess
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SESSION = (
     REPO_ROOT
-    / "sim"
-    / "scenarios"
-    / "catalog"
+    / "sim" / "sessions" / "examples"
     / "omni_cart_controlled_headless"
     / "session.yaml"
 )
@@ -47,8 +45,7 @@ MUJOCO_HOST = (
 )
 HEADLESS_RUNNER = (
     REPO_ROOT
-    / "sim"
-    / "controllers"
+    / "sim" / "packages" / "controllers"
     / "omni_cart"
     / "differential_drive"
     / "headless.py"
@@ -56,8 +53,7 @@ HEADLESS_RUNNER = (
 _CONTROLLER_RUNTIME = runpy.run_path(
     str(
         REPO_ROOT
-        / "sim"
-        / "controllers"
+        / "sim" / "packages" / "controllers"
         / "omni_cart"
         / "differential_drive"
         / "runtime.py"

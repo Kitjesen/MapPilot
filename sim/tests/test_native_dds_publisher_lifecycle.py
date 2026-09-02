@@ -922,7 +922,7 @@ def test_driver_bridge_retains_historical_nav_ack_after_terminal_authority_is_cl
 
 
 def test_driver_bridge_shutdown_drains_pending_command_then_applies_terminal_zero():
-    from sim.engine.core.engine import VelocityCommand
+    from sim.compat.engine.core.engine import VelocityCommand
 
     events = []
     nav = bridge.DriverBridgeCommand(
@@ -978,7 +978,7 @@ def test_driver_bridge_shutdown_drains_pending_command_then_applies_terminal_zer
 
 
 def test_driver_bridge_shutdown_rejects_late_nav_without_physical_step():
-    from sim.engine.core.engine import VelocityCommand
+    from sim.compat.engine.core.engine import VelocityCommand
 
     events = []
     late_nav = bridge.DriverBridgeCommand(3, "nav", "host-a", 92, 0.2, 0.0, 0.0)

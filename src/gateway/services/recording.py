@@ -172,7 +172,7 @@ class NativeRecordingService:
             paths.append(Path(configured).expanduser() / "lingtu_recorder")
         paths.extend(
             (
-                Path("/opt/lingtu/current/build/native-recording/lingtu_recorder"),
+                Path("/opt/lingtu/current/bin/lingtu_recorder"),
                 self._repository_root / "build" / "native-recording" / "lingtu_recorder",
             )
         )

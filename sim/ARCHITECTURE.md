@@ -60,19 +60,19 @@ private configuration.
 
 | Layer | Canonical source | Owns | Does not own |
 | --- | --- | --- | --- |
-| Authoring/Import & Asset Conditioning | `tools/`, `toolchains/`, DCC export recipes | Frames, units, scale, stable link IDs, collision/LOD/material/sensor surfaces, deterministic import settings, provenance, license, and tool versions. Blender/DCC is offline tooling only. | Runtime lifecycle, Product resolution, ports, PIDs, SHM names, DDS domains. |
-| Robot Package | `robots/<vendor>/<model>/` | Robot identity, articulated bodies, stable links, actuator declarations, mesh/MJCF/URDF assets, package version. | Controller policy selection, runtime allocation, Product mode. |
-| Controller Package | `controllers/<vendor>/<model>/` | Controller identity, model/policy assets, actuator binding requirements, supported robot/package constraints. | Physics stepping, navigation Product selection. |
-| Sensor Package | `sensors/` | Sensor model, stream kind, timing contract, payload fields, transport intent. | Concrete runtime endpoint names or PIDs. |
-| SensorRig Package | `sensor_rigs/<vendor>/<model>/` | Sensor instances, mounts, frames, calibration references. | Runtime process allocation or scenario selection. |
+| Authoring/Import & Asset Conditioning | `tools/`, `catalog/importers/`, DCC export recipes | Frames, units, scale, stable link IDs, collision/LOD/material/sensor surfaces, deterministic import settings, provenance, license, and tool versions. Blender/DCC is offline tooling only. | Runtime lifecycle, Product resolution, ports, PIDs, SHM names, DDS domains. |
+| Robot Package | `packages/robots/<vendor>/<model>/` | Robot identity, articulated bodies, stable links, actuator declarations, mesh/MJCF/URDF assets, package version. | Controller policy selection, runtime allocation, Product mode. |
+| Controller Package | `packages/controllers/<vendor>/<model>/` | Controller identity, model/policy assets, actuator binding requirements, supported robot/package constraints. | Physics stepping, navigation Product selection. |
+| Sensor Package | `packages/sensors/` | Sensor model, stream kind, timing contract, payload fields, transport intent. | Concrete runtime endpoint names or PIDs. |
+| SensorRig Package | `packages/sensor_rigs/<vendor>/<model>/` | Sensor instances, mounts, frames, calibration references. | Runtime process allocation or scenario selection. |
 | World Package | `packages/worlds/` | World identity, static assets, physics/render references, provenance. | Dynamic scenario events. |
-| Scenario Package | `packages/scenarios/` and `scenarios/` | Scenario declarations, dynamic actors, events, stop conditions, qualification criteria. | Package version identity for Robot/World/Controller/Sensor, ports, PIDs, SHM, processes. |
-| Simulation preset | `presets/<vendor>/<model>/*.yaml` | Chooses package versions and scenario parameters for compilation. | A package. It contains no allocation values and owns no runtime side effects. |
+| Scenario Package | `packages/scenarios/` | Scenario declarations, dynamic actors, events, stop conditions, qualification criteria. | Session selection, ports, PIDs, SHM, processes. |
+| Session and Product preset | `sessions/` | Chooses package versions and scenario parameters for compilation. | A package. It contains no allocation values and owns no runtime side effects. |
 | Catalog/Compiler | `catalog/` | Resolves `session.yaml` into module-specific plans with one shared `session_id`, direct package identities, paths, schemas, and structures. | Runtime readiness, Product switching, mutable state. |
 | SessionRuntime | `runtime/` | Runs an already-resolved bundle through small Module Interfaces. | Product resolution or bundle compilation. |
-| Adapters | `adapters/`, RobotSimUE plugins | Transport translation to DDS, SHM, Pixel Streaming, and test endpoints. | Physics authority or configuration source. |
-| Recorder/Replay/Qualification | existing native recorder plus simulation hooks | Evidence capture, deterministic replay inputs, episode closure, qualification verdicts. | Simulation truth authority. |
-| Cook/Distribution/Operations | `runtime/visual/RobotSimUE/`, `scripts/`, release tooling | Editor/build/Cook/package/stage/smoke artifacts and operating procedures. | Recompiling or changing the qualified session plans. |
+| Adapters | `adapters/`, RobotSimUE plugins | Transport translation to DDS, SHM, Gazebo, Pixel Streaming, and test endpoints. | Physics authority or configuration source. |
+| Recorder/Replay/Qualification | `runtime/{recording,replay,qualification}/`, `evaluation/`, native recorder hooks | Evidence capture, deterministic replay inputs, episode closure, qualification verdicts. | Simulation truth authority. |
+| Cook/Distribution/Operations | `runtime/visual/RobotSimUE/`, `distribution/`, release tooling | Editor/build/Cook/package/stage/smoke artifacts and operating procedures. | Recompiling or changing the qualified session plans. |
 
 Robot, controller, sensor, and sensor-rig manifests stay with the assets they
 describe. Worlds, scenarios, and payloads remain versioned packages under
@@ -198,42 +198,45 @@ Canonical ownership:
 
 ```text
 sim/
-  tools/, toolchains/                 current+target: authoring/import conditioning
-  robots/                             Robot manifests, MJCF, meshes, visual projection
-  controllers/                        Controller manifests, policy and runtime adapter
-  sensors/                            Sensor manifests and simulation implementations
-  sensor_rigs/                        Model-specific sensor mounting and calibration
-  presets/                            Product-selected simulation compositions
   packages/
-    worlds/                           current+target: World package manifests
-    scenarios/                        current+target: Scenario package manifests
-    payloads/                         current+target: Payload package manifests
-  catalog/                            current+target: SessionCompiler/ResolvedSessionBundle
+    robots/                           Robot manifests, MJCF, meshes, visual projection
+    controllers/                      Controller manifests, policy and runtime adapter
+    sensors/                          Sensor manifests and package-owned assets
+    sensor_rigs/                      Model-specific sensor mounting and calibration
+    worlds/                           World manifests and package-owned assets
+    scenarios/                        Scenario packages
+    payloads/                         Payload packages
+  sessions/
+    products/                         Product-selected simulation compositions
+    examples/                         User-authored SessionSpec examples
+  catalog/
+    importers/                        Intake, qualification, and package promotion
+  contracts/schemas/                 Simulation JSON Schemas
   runtime/
-    coordinator/                      current+target: SessionRuntime lifecycle and RunAllocation
-    physics/                          current+target: MuJoCo Physics Module
-    control/                          current+target: Control Module
-    visual/RobotSimUE/                current+target: Visual Module and render sensors
-    sensors/                          current+target: Sensor Module scheduling/backends
-    scenario/                         current: evaluator + dispatcher seam; target: concrete Physics/Visual sinks
+    coordinator/                      SessionRuntime lifecycle and RunAllocation
+    physics/                          MuJoCo Physics Module
+    control/                          Control Module
+    visual/RobotSimUE/                Visual Module and render sensors
+    sensors/                          Sensor Module scheduling/backends
+    scenario/                         Evaluator and dispatcher seam
+    recording/                        Run-owned truth, command, episode, and payload records
+    replay/                           Timeline and UE-only visual replay
+    qualification/                    Verdict and evidence construction
   adapters/
-    dds/                              current+target: typed native DDS Adapters
-    shm/                              current+target: camera SHM Adapter
-  evidence/
-    recording/                        target-only logical home: recording docs and hooks; no empty scaffolding
-    replay/                           target-only logical home: replay docs and hooks; no empty scaffolding
-    episodes/                         target-only logical home: episode closure docs and hooks; no empty scaffolding
-  validation/qualification/           target-only logical home: qualification gates and verdicts; no empty scaffolding
-  distribution/                       target-only logical home: Cook/stage/package/DLC/Pak/ops docs and hooks; no empty scaffolding
-  worlds/, assets/                    current+target: shared world and visual assets
-  engine/, bridge/                    current: compatibility surfaces; target: compatibility/
-  tests/, validation/, scripts/       current+target: gates and launchers
-  datasets/, experiments/, planning/  current: validation/research; target: validation-owned or external artifact storage
+    dds/                              typed native DDS Adapters
+    shm/                              camera SHM Adapter
+    gazebo/                           explicit ROS/Gazebo compatibility
+  compat/                             direct Python engine and reference assets
+  diagnostics/                        simulation-only reports and Gazebo TF smoke
+  evaluation/                         SLAM, replay, data, and package qualification records
+  tools/                              asset/world authoring, game-selection, sensor, planning, and toolchain helpers
+  scripts/mujoco/                     stable Product/native acceptance entrypoints
+  distribution/windows/               Cook/stage/package/DLC/Pak/ops
+  tests/                              simulation regression contracts
 ```
 
-The catalog scans these canonical roots directly. It does not scan retired
-robot/controller/sensor package mirrors and does not provide compatibility
-aliases for them.
+The catalog scans only `sim/packages/`. It does not scan `sim/compat/` or
+provide aliases for retired package roots.
 
 ## Delivery Gates
 

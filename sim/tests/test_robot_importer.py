@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from sim.importers import CatalogPromoter, ImportCode, ImportDraft, ImportFailure, RobotImporter, validate_robot_package
-from sim.importers.contracts import file_records
+from sim.catalog.importers import CatalogPromoter, ImportCode, ImportDraft, ImportFailure, RobotImporter, validate_robot_package
+from sim.catalog.importers.contracts import file_records
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEST_ROOT = REPO_ROOT / "build" / "robot-importer-tests"
@@ -128,11 +128,11 @@ def _code(draft: ImportDraft) -> str:
 
 def test_existing_omnicart_and_thunder_validate_through_robot_importer() -> None:
     assert (
-        validate_robot_package(REPO_ROOT / "sim/robots/omni_cart", repo_root=REPO_ROOT)["package"]["id"]
+        validate_robot_package(REPO_ROOT / "sim/packages/robots/omni_cart", repo_root=REPO_ROOT)["package"]["id"]
         == "omni_cart"
     )
     assert (
-        validate_robot_package(REPO_ROOT / "sim/robots/doso/thunder_v4", repo_root=REPO_ROOT)["package"]["id"]
+        validate_robot_package(REPO_ROOT / "sim/packages/robots/doso/thunder_v4", repo_root=REPO_ROOT)["package"]["id"]
         == "thunderv4"
     )
 
@@ -244,7 +244,6 @@ def test_promoted_package_contained_visual_projection_resolves_in_fresh_catalog_
 
     tmp_path = _case_root("promoted-relocatable-visual")
     shutil.copytree(REPO_ROOT / "sim" / "packages" / "worlds", tmp_path / "sim" / "packages" / "worlds")
-    shutil.copytree(REPO_ROOT / "sim" / "worlds", tmp_path / "sim" / "worlds")
     source = _source(tmp_path, _primitive_xml())
     request = _request(source, id="g005_robot", visual={"binding": "RobotVisual:G005"})
     importer = RobotImporter(REPO_ROOT, work_root=tmp_path / "imports")
@@ -314,7 +313,7 @@ def test_promoted_package_contained_visual_projection_resolves_in_fresh_catalog_
     visual_projection = resolved.visual_plan["robots"][0]["projection"]
 
     assert visual_projection["schema"] == "lingtu.sim.robot-visual-projection.v1"
-    assert visual_projection["path"] == "sim/robots/g005_robot/visual/robot.visual-projection.json"
+    assert visual_projection["path"] == "sim/packages/robots/g005_robot/visual/robot.visual-projection.json"
     assert resolved.visual_plan["robots"][0]["binding"] == "RobotVisual:G005"
 
 

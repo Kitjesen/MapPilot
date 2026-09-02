@@ -57,6 +57,24 @@ the field processes, while Modules and wires organize Host-local behavior.
 | ROS status | Not required by the production field runtime; compatibility only |
 | Operating Products | `teleop`, `teleop_avoid`, `map`, `explore`, `nav`, `tracking`, `inspection` |
 
+## Repository Model
+
+The repository uses four independent axes; directory names do not duplicate
+them:
+
+| Path or value | Meaning |
+| --- | --- |
+| `src/` | Function-owned production source: localization, maps, navigation, perception, drivers, runtime, and Product control. |
+| `env=real` / `env=sim` | The two ProductControl runtime environments, resolved from `config/runtime_graph/envs/`. They are not source roots. |
+| `sim/` | The simulation workspace and `sim.*` Python namespace: packages, sessions, runtime, evaluation, tools, and tests. |
+| `build/` | Ignored developer compilation trees. Production paths must not point here. |
+| `install/` | Ignored staged installs at `install/<platform>-<arch>/<config>/{bin,lib,etc,share}`. |
+| `dist/` | Ignored final release archives and manifests. |
+
+There is intentionally no root `real/`, `environments/`, or tracked `bin/`.
+Python commands are generated from `pyproject.toml`; native release commands
+are installed into `bin/` under the selected install or release prefix.
+
 ## Key Capabilities
 
 - Native LiDAR, IMU, camera, GNSS, SLAM, map, navigation, and driver endpoints.

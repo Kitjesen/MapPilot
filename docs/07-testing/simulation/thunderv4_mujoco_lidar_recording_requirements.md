@@ -8,9 +8,9 @@ recordings in MuJoCo.
 ## Fixed Style
 
 - The main view must be a MuJoCo RGB render, not a Matplotlib point-cloud image.
-- The robot model must be `sim/robots/thunderv4/mjcf/thunderv4.xml`.
-- Motion must use `sim/robots/thunderv4/policy/pose_flat_low_kpkd_microterrain_model29600_policy.pt`.
-- The report must show `policy_class=TorchScriptPolicyRunner`.
+- The robot model must be `sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml`.
+- Motion must use `sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx`.
+- The report must show `policy_class=PolicyRunner` with a five-frame input history.
 - The scene should use a low-clutter gray MuJoCo background with shadows and simple obstacles.
 - Robot brightness may be adjusted for readability, but physics, joints, policy, and collision bodies must not change.
 - If trajectory is shown, it must be a continuous thin line, not scattered points.
@@ -20,7 +20,7 @@ recordings in MuJoCo.
 - The LiDAR backend must be MuJoCo-LiDAR: `backend=mujoco_lidar`.
 - Product reports must use `product_lidar_backend_verified`; do not introduce
   `mature_*` fields for this path.
-- The scan pattern must use `sim/assets/livox/mid360.npy`.
+- The scan pattern must use `sim/packages/sensors/livox/mid360/assets/mid360.npy`.
 - Point clouds must come from `engine.get_lidar_points()` XYZI raycast hit points.
 - Ground-projected patterns are not valid LiDAR point clouds.
 - Do not draw LiDAR rays; render only hit points.
@@ -120,7 +120,7 @@ the saved-map contract and required native inputs without starting MuJoCo,
 `slamd`, or a relocalization request:
 
 ```bash
-python3 sim/scripts/saved_map_relocalize_runtime_gate.py \
+python3 -m sim.scripts.mujoco.saved_map_relocalization \
   --map-pcd artifacts/<run>/native_saved_map.pcd \
   --preflight-only \
   --strict \
@@ -245,7 +245,7 @@ Sunrise remote runner (from dev machine on the same LAN):
 
 ```bash
 export LINGTU_HOST=ROBOT_IP_OR_HOSTNAME
-python sim/scripts/run_sunrise_continuous_mapping_gate.py \
+python -m sim.scripts.mujoco.sunrise_mapping run \
   --host ${LINGTU_HOST} \
   --duration 180 \
   --domain-id 231
@@ -340,7 +340,11 @@ artifacts/mujoco_thunderv4_mid360_policy_<timestamp>/
   report.json
 ```
 
-## Current Acceptance Sample
+## Legacy Acceptance Sample
+
+This July 2026 artifact predates the canonical package layout and ONNX policy.
+It remains historical evidence; current acceptance must be rerun with the paths
+and runner required above.
 
 ```text
 artifacts/mujoco_thunderv4_mid360_policy_20260704_074304/

@@ -5,9 +5,6 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ExpectedRepository = "https://github.com/eclipse-cyclonedds/cyclonedds.git"
-$ExpectedCommit = "e54e991f75a3e67f8e628da3171122e36ea5b872"
-$ExpectedTree = "56508d35826c362782fc8a388cad351a3d491f51"
 $ConvertFromJsonCommand = Get-Command ConvertFrom-Json -ErrorAction Stop
 if (-not $ConvertFromJsonCommand.Parameters.ContainsKey("DateKind")) {
     throw "verify_cyclonedds_windows_sdk.ps1 requires pwsh with ConvertFrom-Json -DateKind support"
@@ -16,6 +13,12 @@ function ConvertFrom-LingTuJson {
     param([Parameter(Mandatory = $true)][string]$Json)
     $Json | ConvertFrom-Json -DateKind String
 }
+$CanonicalLockPath = Join-Path $PSScriptRoot "locks\cyclonedds-windows-x64.json"
+$CanonicalLock = ConvertFrom-LingTuJson (Get-Content -Raw -LiteralPath $CanonicalLockPath)
+$ExpectedRepository = [string]$CanonicalLock.repository
+$ExpectedVersion = [string]$CanonicalLock.tag
+$ExpectedCommit = [string]$CanonicalLock.commit
+$ExpectedTree = [string]$CanonicalLock.tree
 
 if (-not [System.IO.Path]::IsPathFullyQualified($SdkRoot)) { throw "-SdkRoot must be absolute: $SdkRoot" }
 $SdkRoot = [System.IO.Path]::GetFullPath($SdkRoot)
@@ -99,7 +102,7 @@ if ($manifestFiles.Count -ne $actualFiles.Count -or -not $manifestFiles.Contains
 $sourceReceipt = ConvertFrom-LingTuJson (Get-Content -Raw -LiteralPath (Join-Path $SdkRoot "evidence\source.json"))
 $sourceLockPath = Join-Path $SdkRoot "evidence\source-lock.json"
 $sourceLock = ConvertFrom-LingTuJson (Get-Content -Raw -LiteralPath $sourceLockPath)
-if ($sourceLock.repository -ne $ExpectedRepository -or $sourceLock.tag -ne "11.0.1" -or
+if ($sourceLock.repository -ne $ExpectedRepository -or $sourceLock.tag -ne $ExpectedVersion -or
     $sourceLock.commit -ne $ExpectedCommit -or $sourceLock.tree -ne $ExpectedTree -or
     -not $sourceLock.install_system_runtime_libs_skip -or
     $sourceReceipt.repository -ne $sourceLock.repository -or $sourceReceipt.tag -ne $sourceLock.tag -or
@@ -126,8 +129,8 @@ if (-not $buildReceipt.build_shared_libs -or $buildReceipt.enable_security -or -
 function Assert-SdkReceipt {
     $sdkReceipt = ConvertFrom-LingTuJson (Get-Content -Raw -LiteralPath $receiptPath)
     if ($sdkReceipt.schema_version -ne 1 -or $sdkReceipt.sdk.name -ne "CycloneDDS" -or
-        $sdkReceipt.sdk.version -ne "11.0.1" -or $sdkReceipt.source.repository -ne $ExpectedRepository -or
-        $sdkReceipt.source.tag -ne "11.0.1" -or $sdkReceipt.source.commit -ne $ExpectedCommit -or
+        $sdkReceipt.sdk.version -ne $ExpectedVersion -or $sdkReceipt.source.repository -ne $ExpectedRepository -or
+        $sdkReceipt.source.tag -ne $ExpectedVersion -or $sdkReceipt.source.commit -ne $ExpectedCommit -or
         $sdkReceipt.source.tree -ne $ExpectedTree -or
         $sdkReceipt.toolchain.generator -ne "Visual Studio 17 2022" -or $sdkReceipt.toolchain.toolset -ne "v143" -or
         $sdkReceipt.toolchain.architecture -ne "x64" -or $sdkReceipt.toolchain.configuration -ne "Release" -or
@@ -148,14 +151,14 @@ if (-not $CreateReceipt) { Assert-SdkReceipt }
 $spdx = ConvertFrom-LingTuJson (Get-Content -Raw -LiteralPath (Join-Path $SdkRoot "evidence\sbom.spdx.json"))
 if ($spdx.spdxVersion -ne "SPDX-2.3" -or $spdx.SPDXID -ne "SPDXRef-DOCUMENT" -or
     $spdx.dataLicense -ne "CC0-1.0" -or $spdx.name -ne "cyclonedds-windows-x64-sdk" -or
-    $spdx.documentNamespace -notmatch "^https://inovxio\.example/spdx/cyclonedds/11\.0\.1/$ExpectedCommit/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" -or
+    $spdx.documentNamespace -notmatch "^https://inovxio\.example/spdx/cyclonedds/$([regex]::Escape($ExpectedVersion))/$ExpectedCommit/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" -or
     $spdx.creationInfo.created -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$' -or
     @($spdx.creationInfo.creators).Count -lt 1 -or @($spdx.packages).Count -ne 1) {
     throw "Invalid SPDX 2.3 document metadata"
 }
 $package = @($spdx.packages)[0]
 if ($package.SPDXID -ne "SPDXRef-Package-CycloneDDS" -or $package.name -ne "Eclipse Cyclone DDS" -or
-    $package.versionInfo -ne "11.0.1" -or $package.downloadLocation -ne $ExpectedRepository -or
+    $package.versionInfo -ne $ExpectedVersion -or $package.downloadLocation -ne $ExpectedRepository -or
     -not $package.filesAnalyzed -or $package.licenseConcluded -ne "EPL-2.0 OR BSD-3-Clause" -or
     $package.licenseDeclared -ne "EPL-2.0 OR BSD-3-Clause" -or -not $package.copyrightText) {
     throw "Invalid SPDX CycloneDDS package"
@@ -299,14 +302,16 @@ int main(void) {
   return dds_delete(domain) < 0;
 }
 '@ | Set-Content -LiteralPath (Join-Path $consumerSource "main.c") -Encoding utf8
-    @'
+    $consumerCmake = @'
 cmake_minimum_required(VERSION 3.27)
 project(cyclonedds_sdk_consumer LANGUAGES C)
-find_package(CycloneDDS 11.0.1 CONFIG REQUIRED)
+find_package(CycloneDDS __CYCLONEDDS_VERSION__ CONFIG REQUIRED)
 add_executable(cyclonedds_sdk_consumer main.c)
 target_link_libraries(cyclonedds_sdk_consumer PRIVATE CycloneDDS::ddsc)
 set_property(TARGET cyclonedds_sdk_consumer PROPERTY MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
-'@ | Set-Content -LiteralPath (Join-Path $consumerSource "CMakeLists.txt") -Encoding utf8
+'@
+    $consumerCmake.Replace("__CYCLONEDDS_VERSION__", $ExpectedVersion) |
+        Set-Content -LiteralPath (Join-Path $consumerSource "CMakeLists.txt") -Encoding utf8
     $cycloneDir = Join-Path $SdkRoot "lib\cmake\CycloneDDS"
     & $cmake -S $consumerSource -B $consumerBuild -G "Visual Studio 17 2022" -A x64 -T v143 `
         "-DCycloneDDS_DIR=$cycloneDir" "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"
@@ -335,9 +340,9 @@ if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
     if (-not $CreateReceipt -or -not $idlSmokePassed) { throw "A new SDK receipt requires explicit creation and a successful IDL smoke input" }
     $receipt = [ordered]@{
         schema_version = 1
-        sdk = [ordered]@{ name = "CycloneDDS"; version = "11.0.1" }
+        sdk = [ordered]@{ name = "CycloneDDS"; version = $ExpectedVersion }
         source = [ordered]@{
-            repository = $ExpectedRepository; tag = "11.0.1"; commit = $ExpectedCommit; tree = $ExpectedTree
+            repository = $ExpectedRepository; tag = $ExpectedVersion; commit = $ExpectedCommit; tree = $ExpectedTree
         }
         toolchain = [ordered]@{
             generator = "Visual Studio 17 2022"; toolset = "v143"; architecture = "x64"
@@ -357,4 +362,4 @@ if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
 }
 Assert-SdkReceipt
 
-Write-Output "Verified usable CycloneDDS 11.0.1 Windows x64 SDK: $SdkRoot"
+Write-Output "Verified usable CycloneDDS $ExpectedVersion Windows x64 SDK: $SdkRoot"

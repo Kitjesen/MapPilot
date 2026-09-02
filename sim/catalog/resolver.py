@@ -457,18 +457,7 @@ class CatalogResolver:
     @classmethod
     def from_repository(cls, repo_root: Path) -> CatalogResolver:
         root = Path(repo_root).resolve()
-        return cls(
-            root,
-            (
-                root / "sim" / "robots",
-                root / "sim" / "controllers",
-                root / "sim" / "sensors",
-                root / "sim" / "sensor_rigs",
-                root / "sim" / "packages" / "worlds",
-                root / "sim" / "packages" / "scenarios",
-                root / "sim" / "packages" / "payloads",
-            ),
-        )
+        return cls(root, (root / "sim" / "packages",))
 
     def _scan_catalog(self) -> None:
         candidates: set[Path] = set()

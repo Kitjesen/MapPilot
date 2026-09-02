@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Assemble a downloadable LingTu native release from already-built artifacts.
-# This script only reads the checkout and writes to a temporary staging tree
-# and the selected output directory. It never installs or activates services.
+# The default path stages built artifacts under install/ before assembling a
+# temporary package. It never installs or activates services.
 
 set -euo pipefail
 
@@ -17,6 +17,7 @@ NATIVE_EXECUTABLES=(
   build/driver/lingtu_driver
   build/camera_dds/lingtu_camera_dds
   build/orbbec_native/orbbec_capture
+  build/gnss_dds/lingtu_gnss_dds
 )
 
 NAV_EXECUTABLES=(
@@ -28,7 +29,7 @@ NAV_EXECUTABLES=(
 NAV_LIBRARIES=(
   liblingtu_nav_client.so
   liblingtu_inspection_evidence_bridge.so
-  inspection/liblingtu_inspection.so
+  liblingtu_inspection.so
 )
 CMU_PATH_PROFILES=(go2 thunder)
 CMU_PATH_FILES=(
@@ -155,8 +156,7 @@ run_self_test() {
   local PYTHONPATH="${SCRIPT_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
   local test_root
   local output_dir
-  local nav_install
-  local recording_install
+  local install_prefix
   local relative
   local tarball
   local manifest
@@ -169,6 +169,7 @@ run_self_test() {
   local mapd_missing_converter_output
   local map_opt_missing_output
   local preflight_output
+  local unexpected_root_output
   local fake_control
   local success_root
   local failure_root
@@ -181,8 +182,7 @@ run_self_test() {
 
   test_root="$(mktemp -d "${TMPDIR:-/tmp}/lingtu-native-release-test.XXXXXX")"
   output_dir="${test_root}/output"
-  nav_install="${test_root}/nav-install"
-  recording_install="${test_root}/recording-install"
+  install_prefix="${test_root}/install/linux-aarch64/Release"
   cleanup_self_test() {
     if [[ -d "${test_root}" \
         && "$(basename "${test_root}")" == lingtu-native-release-test.* ]]; then
@@ -193,22 +193,34 @@ run_self_test() {
 
   mkdir -p \
     "${test_root}/source/config" \
+    "${test_root}/source/sim/runtime/qualification" \
+    "${test_root}/source/src/diagnostics/field" \
     "${test_root}/source/src/localization/fastlio2/config" \
     "${test_root}/source/src/nav/cpp" \
     "${test_root}/source/src/nav/inspection" \
-    "${nav_install}" \
-    "${recording_install}"
+    "${install_prefix}/bin" \
+    "${install_prefix}/etc/lingtu" \
+    "${install_prefix}/lib/extensions/depthengine" \
+    "${install_prefix}/share/lingtu/cmu_paths" \
+    "${install_prefix}/share/lingtu/schemas"
   printf '0.0.0\n' > "${test_root}/source/VERSION"
   printf 'native release self-test\n' > "${test_root}/source/config/self-test.txt"
   printf 'native: true\n' \
     > "${test_root}/source/src/localization/fastlio2/config/self-test.yaml"
+  printf 'runtime_evidence = True\n' \
+    > "${test_root}/source/src/diagnostics/field/runtime_evidence.py"
+  : > "${test_root}/source/sim/__init__.py"
+  : > "${test_root}/source/sim/runtime/qualification/__init__.py"
+  install -m 0644 \
+    "${SCRIPT_ROOT}/sim/runtime/qualification/visual_acceptance.py" \
+    "${test_root}/source/sim/runtime/qualification/visual_acceptance.py"
   printf 'internal only\n' > "${test_root}/source/src/nav/cpp/internal.hpp"
   : > "${test_root}/source/src/nav/inspection/__init__.py"
   printf 'runtime = True\n' > "${test_root}/source/src/nav/inspection/service.py"
   printf 'internal only\n' > "${test_root}/source/src/nav/inspection/internal.hpp"
   printf 'removed before packaging\n' > "${test_root}/source/config/deleted.txt"
   git -C "${test_root}/source" init -q
-  git -C "${test_root}/source" add VERSION config src
+  git -C "${test_root}/source" add VERSION config sim src
   rm "${test_root}/source/config/deleted.txt"
   mkdir -p "${test_root}/source/src/message"
   printf 'CURRENT_CONTRACT = True\n' \
@@ -217,6 +229,7 @@ run_self_test() {
   for relative in "${NATIVE_EXECUTABLES[@]}"; do
     mkdir -p "$(dirname "${test_root}/source/${relative}")"
     install -m 0755 /dev/null "${test_root}/source/${relative}"
+    install -m 0755 /dev/null "${install_prefix}/bin/$(basename "${relative}")"
   done
   mkdir -p "${test_root}/source/build/orbbec_native/lib/extensions/depthengine"
   install -m 0644 /dev/null \
@@ -225,23 +238,27 @@ run_self_test() {
     "${test_root}/source/build/orbbec_native/lib/libOrbbecSDK.so"
   install -m 0644 /dev/null \
     "${test_root}/source/build/orbbec_native/lib/extensions/depthengine/libdepthengine.so"
+  install -m 0644 /dev/null "${install_prefix}/lib/libOrbbecSDK.so"
+  install -m 0644 /dev/null \
+    "${install_prefix}/lib/extensions/depthengine/libdepthengine.so"
   for relative in "${NAV_EXECUTABLES[@]}"; do
-    mkdir -p "$(dirname "${nav_install}/${relative}")"
-    install -m 0755 /dev/null "${nav_install}/${relative}"
+    install -m 0755 /dev/null "${install_prefix}/bin/${relative}"
   done
   for relative in "${NAV_LIBRARIES[@]}"; do
-    mkdir -p "$(dirname "${nav_install}/${relative}")"
-    install -m 0644 /dev/null "${nav_install}/${relative}"
+    install -m 0644 /dev/null "${install_prefix}/lib/${relative}"
   done
   for profile in "${CMU_PATH_PROFILES[@]}"; do
-    mkdir -p "${nav_install}/cmu_paths/${profile}"
+    mkdir -p "${install_prefix}/share/lingtu/cmu_paths/${profile}"
     for relative in "${CMU_PATH_FILES[@]}"; do
-      printf 'fixture\n' > "${nav_install}/cmu_paths/${profile}/${relative}"
+      printf 'fixture\n' \
+        > "${install_prefix}/share/lingtu/cmu_paths/${profile}/${relative}"
     done
   done
   for relative in "${RECORDING_EXECUTABLES[@]}"; do
-    install -m 0755 /dev/null "${recording_install}/${relative}"
+    install -m 0755 /dev/null "${install_prefix}/bin/${relative}"
   done
+  printf 'native release config\n' > "${install_prefix}/etc/lingtu/self-test.txt"
+  printf 'module lingtu {}\n' > "${install_prefix}/share/lingtu/schemas/messages.idl"
 
   # A map-optimizer build entrypoint makes lt_pgo a required release artifact.
   # Prove that omission fails before supplying the fixture binary.
@@ -249,8 +266,7 @@ run_self_test() {
   install -m 0755 /dev/null "${test_root}/source/scripts/build/build_map_opt.sh"
   if map_opt_missing_output="$(
     LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
-      LINGTU_NATIVE_RELEASE_NAV_INSTALL_SOURCE="${nav_install}" \
-      LINGTU_NATIVE_RELEASE_RECORDING_INSTALL_SOURCE="${recording_install}" \
+      LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
       LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
       SOURCE_DATE_EPOCH=1704067200 \
       bash "${BASH_SOURCE[0]}" v0.0.0 "${test_root}/output-map-opt-missing" 2>&1
@@ -259,10 +275,9 @@ run_self_test() {
     return 1
   fi
   grep -Fq \
-    "Required native executable is missing: ${test_root}/source/build/map_opt/lt_pgo" \
+    "Standard install prefix is missing executable: ${install_prefix}/bin/lt_pgo" \
     <<<"${map_opt_missing_output}"
-  mkdir -p "${test_root}/source/build/map_opt"
-  install -m 0755 /dev/null "${test_root}/source/build/map_opt/lt_pgo"
+  install -m 0755 /dev/null "${install_prefix}/bin/lt_pgo"
 
   key_file=""
   if python3 -c 'import cryptography' >/dev/null 2>&1; then
@@ -281,12 +296,11 @@ Path(sys.argv[1]).write_bytes(
 PY
   fi
 
-  mkdir -p "${nav_install}/include"
-  : > "${nav_install}/include/internal.hpp"
+  mkdir -p "${install_prefix}/include"
+  : > "${install_prefix}/include/internal.hpp"
   if header_output="$(
     LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
-      LINGTU_NATIVE_RELEASE_NAV_INSTALL_SOURCE="${nav_install}" \
-      LINGTU_NATIVE_RELEASE_RECORDING_INSTALL_SOURCE="${recording_install}" \
+      LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
       LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
       SOURCE_DATE_EPOCH=1704067200 \
       bash "${BASH_SOURCE[0]}" v0.0.0 "${test_root}/output-header" 2>&1
@@ -296,11 +310,26 @@ PY
   fi
   grep -Fq 'Native navigation runtime install must not contain C/C++ headers' \
     <<<"${header_output}"
-  rm -f "${nav_install}/include/internal.hpp"
+  rm -f "${install_prefix}/include/internal.hpp"
+  rmdir "${install_prefix}/include"
+
+  mkdir "${install_prefix}/debug"
+  if unexpected_root_output="$(
+    LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
+      LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
+      LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
+      SOURCE_DATE_EPOCH=1704067200 \
+      bash "${BASH_SOURCE[0]}" v0.0.0 "${test_root}/output-unexpected-root" 2>&1
+  )"; then
+    echo "packager accepted an unexpected install-prefix root" >&2
+    return 1
+  fi
+  grep -Fq 'Standard install prefix has an unexpected top-level entry' \
+    <<<"${unexpected_root_output}"
+  rmdir "${install_prefix}/debug"
 
   LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
-    LINGTU_NATIVE_RELEASE_NAV_INSTALL_SOURCE="${nav_install}" \
-    LINGTU_NATIVE_RELEASE_RECORDING_INSTALL_SOURCE="${recording_install}" \
+    LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
     LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
     LINGTU_NATIVE_RELEASE_SIGNING_KEY="${key_file}" \
     SOURCE_DATE_EPOCH=1704067200 \
@@ -340,6 +369,12 @@ PY
     <<<"${tar_listing}"
   grep -Fq \
     'lingtu-0.0.0-aarch64-native-release/src/message/current_contract.py' \
+    <<<"${tar_listing}"
+  grep -Fq \
+    'lingtu-0.0.0-aarch64-native-release/src/diagnostics/field/runtime_evidence.py' \
+    <<<"${tar_listing}"
+  grep -Fq \
+    'lingtu-0.0.0-aarch64-native-release/sim/runtime/qualification/visual_acceptance.py' \
     <<<"${tar_listing}"
   if grep -Fq 'lingtu-0.0.0-aarch64-native-release/config/deleted.txt' \
       <<<"${tar_listing}"; then
@@ -389,6 +424,11 @@ PY
   mkdir -p "${test_root}/extracted"
   tar -xzf "${tarball}" -C "${test_root}/extracted"
   extracted_package="${test_root}/extracted/lingtu-0.0.0-aarch64-native-release"
+  (
+    cd "${extracted_package}"
+    PYTHONPATH="${extracted_package}:${extracted_package}/src" \
+      python3 -m sim.runtime.qualification.visual_acceptance --help >/dev/null
+  )
   for relative in "${RECORDING_EXECUTABLES[@]}"; do
     test -x "${extracted_package}/build/native-recording/${relative}"
     grep -Fq \
@@ -445,15 +485,14 @@ PY
 
   # A checkout that exposes the mapd build entrypoint must produce a complete
   # maps runtime bundle; missing artifacts are fatal in the normal copy path.
-  mkdir -p "${test_root}/source/scripts/build" "${test_root}/source/build/maps"
+  mkdir -p "${test_root}/source/scripts/build"
   install -m 0755 /dev/null "${test_root}/source/scripts/build/build_mapd.sh"
   git -C "${test_root}/source" add scripts/build/build_mapd.sh
-  install -m 0755 /dev/null "${test_root}/source/build/maps/mapd"
-  install -m 0755 /dev/null "${test_root}/source/build/maps/lingtu-mapctl"
+  install -m 0755 /dev/null "${install_prefix}/bin/mapd"
+  install -m 0755 /dev/null "${install_prefix}/bin/lingtu-mapctl"
   if mapd_missing_output="$(
     LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
-      LINGTU_NATIVE_RELEASE_NAV_INSTALL_SOURCE="${nav_install}" \
-      LINGTU_NATIVE_RELEASE_RECORDING_INSTALL_SOURCE="${recording_install}" \
+      LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
       LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
       SOURCE_DATE_EPOCH=1704067200 \
       bash "${BASH_SOURCE[0]}" v0.0.1 "${test_root}/output-mapd-missing" 2>&1
@@ -462,14 +501,12 @@ PY
     return 1
   fi
   grep -Fq \
-    "Required native executable is missing: ${test_root}/source/build/prune/prune" \
+    "Standard install prefix is missing executable: ${install_prefix}/bin/prune" \
     <<<"${mapd_missing_output}"
-  mkdir -p "${test_root}/source/build/prune"
-  install -m 0755 /dev/null "${test_root}/source/build/prune/prune"
+  install -m 0755 /dev/null "${install_prefix}/bin/prune"
   if mapd_missing_converter_output="$(
     LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
-      LINGTU_NATIVE_RELEASE_NAV_INSTALL_SOURCE="${nav_install}" \
-      LINGTU_NATIVE_RELEASE_RECORDING_INSTALL_SOURCE="${recording_install}" \
+      LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
       LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
       SOURCE_DATE_EPOCH=1704067200 \
       bash "${BASH_SOURCE[0]}" v0.0.1 "${test_root}/output-mapd-missing-converter" 2>&1
@@ -478,14 +515,12 @@ PY
     return 1
   fi
   grep -Fq \
-    "Required native executable is missing: ${test_root}/source/build/octoplanner3d_headless/octoplanner3d_pcd_to_octomap" \
+    "Standard install prefix is missing executable: ${install_prefix}/bin/octoplanner3d_pcd_to_octomap" \
     <<<"${mapd_missing_converter_output}"
-  mkdir -p "${test_root}/source/build/octoplanner3d_headless"
   install -m 0755 /dev/null \
-    "${test_root}/source/build/octoplanner3d_headless/octoplanner3d_pcd_to_octomap"
+    "${install_prefix}/bin/octoplanner3d_pcd_to_octomap"
   LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
-    LINGTU_NATIVE_RELEASE_NAV_INSTALL_SOURCE="${nav_install}" \
-    LINGTU_NATIVE_RELEASE_RECORDING_INSTALL_SOURCE="${recording_install}" \
+    LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
     LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
     SOURCE_DATE_EPOCH=1704067200 \
     bash "${BASH_SOURCE[0]}" v0.0.1 "${test_root}/output-mapd"
@@ -664,6 +699,10 @@ case "${ARCH_RAW}" in
     ;;
 esac
 
+PLATFORM="${LINGTU_NATIVE_RELEASE_PLATFORM:-linux}"
+BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}"
+INSTALL_PREFIX="${LINGTU_NATIVE_RELEASE_INSTALL_SOURCE:-${ROOT}/install/${PLATFORM}-${ARCH}/${BUILD_TYPE}}"
+
 for command_name in cmake git install python3 rsync sha256sum tar gzip; do
   if ! command -v "${command_name}" >/dev/null 2>&1; then
     echo "Required packaging command is missing: ${command_name}" >&2
@@ -713,7 +752,11 @@ list_checkout_files "${ROOT}" \
   --exclude='/integrations/' \
   --exclude='/launch/' \
   --exclude='/research/' \
-  --exclude='/sim/' \
+  --include='/sim/' \
+  --include='/sim/__init__.py' \
+  --include='/sim/runtime/' \
+  --include='/sim/runtime/qualification/***' \
+  --exclude='/sim/***' \
   --exclude='/tests/' \
   --exclude='/third_party/' \
   --exclude='/docker/' \
@@ -734,7 +777,6 @@ list_checkout_files "${ROOT}" \
   --exclude='/src/nav/inspection/*.hpp' \
   --exclude='/src/nav/inspection/CMakeLists.txt' \
   --exclude='/src/nav/inspection/README.md' \
-  --exclude='/scripts/deploy/cut_release.sh' \
   --exclude='/scripts/deploy/s100p/***' \
   "${ROOT}/" "${PACKAGE_ROOT}/"
 
@@ -750,112 +792,217 @@ if find "${PACKAGE_ROOT}/src/nav/inspection" -type f \
   exit 1
 fi
 
-copy_executable() {
-  local relative="$1"
-  local source="${ROOT}/${relative}"
-  local destination="${PACKAGE_ROOT}/${relative}"
-  if [[ ! -x "${source}" ]]; then
-    echo "Required native executable is missing: ${source}" >&2
-    exit 1
-  fi
-  mkdir -p "$(dirname "${destination}")"
-  cp -L "${source}" "${destination}"
-  chmod 0755 "${destination}"
+reset_install_directory() {
+  local directory="$1"
+  mkdir -p "${directory}"
+  find "${directory}" -mindepth 1 -delete
 }
 
-copy_library() {
-  local relative="$1"
-  local source="${ROOT}/${relative}"
-  local destination="${PACKAGE_ROOT}/${relative}"
-  if [[ ! -f "${source}" ]]; then
-    echo "Required native library is missing: ${source}" >&2
+install_cmake_tree() {
+  local build_directory="$1"
+  if [[ ! -f "${build_directory}/cmake_install.cmake" ]]; then
+    echo "Native CMake build tree is not installable: ${build_directory}" >&2
     exit 1
   fi
-  mkdir -p "$(dirname "${destination}")"
-  cp -L "${source}" "${destination}"
-  chmod 0644 "${destination}"
+  cmake --install "${build_directory}" \
+    --prefix "${INSTALL_PREFIX}" \
+    --component lingtu_runtime
 }
 
-for relative in "${NATIVE_EXECUTABLES[@]}"; do
-  copy_executable "${relative}"
-done
-
-ORBBEC_RUNTIME_SOURCE="${ROOT}/build/orbbec_native/lib"
-ORBBEC_RUNTIME_DIR="${PACKAGE_ROOT}/build/orbbec_native/lib"
-orbbec_sdk_libraries=("${ORBBEC_RUNTIME_SOURCE}"/libOrbbecSDK.so*)
-if [[ ! -e "${orbbec_sdk_libraries[0]}" ]]; then
-  echo "Orbbec runtime is missing libOrbbecSDK.so: ${ORBBEC_RUNTIME_SOURCE}" >&2
-  exit 1
-fi
-if [[ ! -d "${ORBBEC_RUNTIME_SOURCE}/extensions/depthengine" ]] \
-    || [[ -z "$(find "${ORBBEC_RUNTIME_SOURCE}/extensions/depthengine" -type f -print -quit)" ]]; then
-  echo "Orbbec runtime is missing depthengine: ${ORBBEC_RUNTIME_SOURCE}/extensions/depthengine" >&2
-  exit 1
-fi
-mkdir -p "${ORBBEC_RUNTIME_DIR}"
-rsync -aL "${ORBBEC_RUNTIME_SOURCE}/" "${ORBBEC_RUNTIME_DIR}/"
-
-if git -C "${ROOT}" ls-files --error-unmatch -- \
-    scripts/build/build_mapd.sh >/dev/null 2>&1; then
-  echo "mapd build entrypoint detected; requiring mapd release artifacts"
-  for relative in "${MAPD_EXECUTABLES[@]}"; do
-    copy_executable "${relative}"
+prepare_default_install_prefix() {
+  if [[ "${INSTALL_PREFIX}" != "${ROOT}/install/"* ]]; then
+    echo "Default native install prefix must stay under ${ROOT}/install" >&2
+    exit 1
+  fi
+  for directory in bin lib etc share; do
+    reset_install_directory "${INSTALL_PREFIX}/${directory}"
   done
-fi
 
-if [[ -f "${ROOT}/scripts/build/build_map_opt.sh" ]]; then
-  echo "map optimizer build entrypoint detected; requiring lt_pgo release artifact"
-  for relative in "${MAP_OPT_EXECUTABLES[@]}"; do
-    copy_executable "${relative}"
+  for component in \
+    livox_sdk2_stream \
+    slam_core \
+    camera_dds \
+    gnss_dds \
+    nav_endpoint \
+    driver \
+    native-recording; do
+    install_cmake_tree "${ROOT}/build/${component}"
   done
+  cmake --install "${ROOT}/build/nav_endpoint" \
+    --prefix "${INSTALL_PREFIX}" \
+    --component cmu_paths
+  if git -C "${ROOT}" ls-files --error-unmatch -- \
+      scripts/build/build_mapd.sh >/dev/null 2>&1; then
+    install_cmake_tree "${ROOT}/build/maps"
+    install_cmake_tree "${ROOT}/build/prune"
+    install_cmake_tree "${ROOT}/build/octoplanner3d_headless"
+  fi
+  if [[ -f "${ROOT}/scripts/build/build_map_opt.sh" ]]; then
+    install_cmake_tree "${ROOT}/build/map_opt"
+  fi
+
+  install -m 0755 \
+    "${ROOT}/build/dds_probe/lingtu_dds_probe" \
+    "${INSTALL_PREFIX}/bin/lingtu_dds_probe"
+  install -m 0755 \
+    "${ROOT}/build/orbbec_native/orbbec_capture" \
+    "${INSTALL_PREFIX}/bin/orbbec_capture"
+  rsync -aL \
+    "${ROOT}/build/orbbec_native/lib/" \
+    "${INSTALL_PREFIX}/lib/"
+  rsync -a --delete "${ROOT}/config/" "${INSTALL_PREFIX}/etc/lingtu/"
+  mkdir -p "${INSTALL_PREFIX}/share/lingtu/schemas"
+  rsync -a \
+    "${ROOT}/src/message/idl/" \
+    "${INSTALL_PREFIX}/share/lingtu/schemas/"
+}
+
+if [[ -z "${LINGTU_NATIVE_RELEASE_INSTALL_SOURCE:-}" ]]; then
+  prepare_default_install_prefix
 fi
 
-NAV_INSTALL_DIR="${PACKAGE_ROOT}/build/nav_endpoint"
-if [[ -n "${LINGTU_NATIVE_RELEASE_NAV_INSTALL_SOURCE:-}" ]]; then
-  rsync -aL "${LINGTU_NATIVE_RELEASE_NAV_INSTALL_SOURCE}/" "${NAV_INSTALL_DIR}/"
-else
-  cmake --install "${ROOT}/build/nav_endpoint" --prefix "${NAV_INSTALL_DIR}"
-fi
-
-if find "${NAV_INSTALL_DIR}" -type f \( -name '*.h' -o -name '*.hpp' \) \
+if find "${INSTALL_PREFIX}" -type f \( -name '*.h' -o -name '*.hpp' \) \
     -print -quit | grep -q .; then
   echo "Native navigation runtime install must not contain C/C++ headers" >&2
   exit 1
 fi
+unexpected_install_root="$(
+  find "${INSTALL_PREFIX}" -mindepth 1 -maxdepth 1 \
+    ! -name bin ! -name lib ! -name etc ! -name share -print -quit
+)"
+if [[ -n "${unexpected_install_root}" ]]; then
+  echo "Standard install prefix has an unexpected top-level entry: ${unexpected_install_root}" >&2
+  exit 1
+fi
 
-for relative in "${NAV_EXECUTABLES[@]}"; do
-  if [[ ! -x "${NAV_INSTALL_DIR}/${relative}" ]]; then
-    echo "Native navigation install is missing executable: ${relative}" >&2
+require_install_executable() {
+  local name="$1"
+  if [[ ! -x "${INSTALL_PREFIX}/bin/${name}" ]]; then
+    echo "Standard install prefix is missing executable: ${INSTALL_PREFIX}/bin/${name}" >&2
     exit 1
   fi
+}
+
+require_install_library() {
+  local name="$1"
+  if [[ ! -f "${INSTALL_PREFIX}/lib/${name}" ]]; then
+    echo "Standard install prefix is missing library: ${INSTALL_PREFIX}/lib/${name}" >&2
+    exit 1
+  fi
+}
+
+for relative in "${NATIVE_EXECUTABLES[@]}"; do
+  require_install_executable "$(basename "${relative}")"
+done
+for relative in "${NAV_EXECUTABLES[@]}"; do
+  require_install_executable "${relative}"
 done
 for relative in "${NAV_LIBRARIES[@]}"; do
-  if [[ ! -f "${NAV_INSTALL_DIR}/${relative}" ]]; then
-    echo "Native navigation install is missing library: ${relative}" >&2
-    exit 1
-  fi
+  require_install_library "${relative}"
 done
+require_install_library libOrbbecSDK.so
+if [[ ! -s "${INSTALL_PREFIX}/share/lingtu/schemas/messages.idl" ]]; then
+  echo "Standard install prefix is missing the native DDS schema" >&2
+  exit 1
+fi
+if [[ ! -d "${INSTALL_PREFIX}/lib/extensions/depthengine" ]] \
+    || [[ -z "$(find "${INSTALL_PREFIX}/lib/extensions/depthengine" -type f -print -quit)" ]]; then
+  echo "Standard install prefix is missing Orbbec depthengine" >&2
+  exit 1
+fi
 for profile in "${CMU_PATH_PROFILES[@]}"; do
   for relative in "${CMU_PATH_FILES[@]}"; do
-    if [[ ! -s "${NAV_INSTALL_DIR}/cmu_paths/${profile}/${relative}" ]]; then
+    if [[ ! -s "${INSTALL_PREFIX}/share/lingtu/cmu_paths/${profile}/${relative}" ]]; then
       echo "Native navigation install is missing CMU ${profile} asset: ${relative}" >&2
       exit 1
     fi
   done
 done
-
-RECORDING_INSTALL_DIR="${PACKAGE_ROOT}/build/native-recording"
-if [[ -n "${LINGTU_NATIVE_RELEASE_RECORDING_INSTALL_SOURCE:-}" ]]; then
-  rsync -aL "${LINGTU_NATIVE_RELEASE_RECORDING_INSTALL_SOURCE}/" "${RECORDING_INSTALL_DIR}/"
-else
-  cmake --install "${ROOT}/build/native-recording" --prefix "${RECORDING_INSTALL_DIR}"
-fi
 for relative in "${RECORDING_EXECUTABLES[@]}"; do
-  if [[ ! -x "${RECORDING_INSTALL_DIR}/${relative}" ]]; then
-    echo "Native recording install is missing executable: ${relative}" >&2
-    exit 1
+  require_install_executable "${relative}"
+done
+
+if git -C "${ROOT}" ls-files --error-unmatch -- \
+    scripts/build/build_mapd.sh >/dev/null 2>&1; then
+  for relative in "${MAPD_EXECUTABLES[@]}"; do
+    require_install_executable "$(basename "${relative}")"
+  done
+fi
+if [[ -f "${ROOT}/scripts/build/build_map_opt.sh" ]]; then
+  for relative in "${MAP_OPT_EXECUTABLES[@]}"; do
+    require_install_executable "$(basename "${relative}")"
+  done
+fi
+
+for directory in bin lib etc share; do
+  if [[ -d "${INSTALL_PREFIX}/${directory}" ]]; then
+    rsync -aL "${INSTALL_PREFIX}/${directory}/" "${PACKAGE_ROOT}/${directory}/"
   fi
 done
+
+copy_legacy_file() {
+  local source="$1"
+  local relative="$2"
+  local mode="$3"
+  mkdir -p "$(dirname "${PACKAGE_ROOT}/${relative}")"
+  install -m "${mode}" "${source}" "${PACKAGE_ROOT}/${relative}"
+}
+
+stage_legacy_build_layout() {
+  local relative
+  for relative in "${NATIVE_EXECUTABLES[@]}"; do
+    copy_legacy_file \
+      "${INSTALL_PREFIX}/bin/$(basename "${relative}")" \
+      "${relative}" 0755
+  done
+  for relative in "${NAV_EXECUTABLES[@]}"; do
+    copy_legacy_file \
+      "${INSTALL_PREFIX}/bin/${relative}" \
+      "build/nav_endpoint/${relative}" 0755
+  done
+  copy_legacy_file \
+    "${INSTALL_PREFIX}/lib/liblingtu_nav_client.so" \
+    "build/nav_endpoint/liblingtu_nav_client.so" 0644
+  copy_legacy_file \
+    "${INSTALL_PREFIX}/lib/liblingtu_inspection_evidence_bridge.so" \
+    "build/nav_endpoint/liblingtu_inspection_evidence_bridge.so" 0644
+  copy_legacy_file \
+    "${INSTALL_PREFIX}/lib/liblingtu_inspection.so" \
+    "build/nav_endpoint/inspection/liblingtu_inspection.so" 0644
+  rsync -aL \
+    "${INSTALL_PREFIX}/share/lingtu/cmu_paths/" \
+    "${PACKAGE_ROOT}/build/nav_endpoint/cmu_paths/"
+  for relative in "${RECORDING_EXECUTABLES[@]}"; do
+    copy_legacy_file \
+      "${INSTALL_PREFIX}/bin/${relative}" \
+      "build/native-recording/${relative}" 0755
+  done
+  if git -C "${ROOT}" ls-files --error-unmatch -- \
+      scripts/build/build_mapd.sh >/dev/null 2>&1; then
+    for relative in "${MAPD_EXECUTABLES[@]}"; do
+      copy_legacy_file \
+        "${INSTALL_PREFIX}/bin/$(basename "${relative}")" \
+        "${relative}" 0755
+    done
+  fi
+  if [[ -f "${ROOT}/scripts/build/build_map_opt.sh" ]]; then
+    for relative in "${MAP_OPT_EXECUTABLES[@]}"; do
+      copy_legacy_file \
+        "${INSTALL_PREFIX}/bin/$(basename "${relative}")" \
+        "${relative}" 0755
+    done
+  fi
+  mkdir -p "${PACKAGE_ROOT}/build/orbbec_native/lib"
+  cp -aL "${INSTALL_PREFIX}/lib"/libOrbbecSDK.so* \
+    "${PACKAGE_ROOT}/build/orbbec_native/lib/"
+  rsync -aL \
+    "${INSTALL_PREFIX}/lib/extensions/" \
+    "${PACKAGE_ROOT}/build/orbbec_native/lib/extensions/"
+}
+
+# Phase 1 rollback compatibility. Remove this legacy copy after the rollback
+# horizon once every installed unit resolves release-owned bin/lib paths.
+stage_legacy_build_layout
 
 if [[ ! -f "${INSTALLER_SOURCE}" ]]; then
   echo "Native release installer source is missing: ${INSTALLER_SOURCE}" >&2
@@ -866,7 +1013,7 @@ install -m 0755 "${INSTALLER_SOURCE}" "${PACKAGE_ROOT}/install_nav.sh"
 mkdir -p "${PACKAGE_ROOT}/config"
 (
   cd "${PACKAGE_ROOT}"
-  find build -type f -print0 \
+  find bin lib etc share build -type f -print0 \
     | LC_ALL=C sort -z \
     | xargs -0 sha256sum
 ) > "${PACKAGE_ROOT}/config/native-release-sha256.txt"

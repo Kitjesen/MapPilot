@@ -19,7 +19,7 @@ def test_ros2_compatibility_entrypoints_are_absent() -> None:
 
 def test_native_field_tools_do_not_offer_ros2_modes() -> None:
     doctor = (ROOT / "src/diagnostics/field/doctor.py").read_text(encoding="utf-8")
-    collector = (ROOT / "scripts/gates/real_runtime_evidence_collect.py").read_text(
+    collector = (ROOT / "src/diagnostics/field/runtime_evidence.py").read_text(
         encoding="utf-8"
     )
 

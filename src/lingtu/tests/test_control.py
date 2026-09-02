@@ -232,7 +232,7 @@ def test_product_control_selects_scan_in_sim_without_changing_product_identity()
     assert teleop.native_nav["local_planner"] == "cmu"
 
 
-def test_product_control_exposes_scan_for_teleop_avoid_and_keeps_cmu_default() -> None:
+def test_product_control_defaults_teleop_avoid_to_scan_and_keeps_cmu_available() -> None:
     control = ProductControl(
         FakeRunner(),  # type: ignore[arg-type]
         robot="doso/thunder_v4",
@@ -242,13 +242,13 @@ def test_product_control_exposes_scan_for_teleop_avoid_and_keeps_cmu_default() -
     )
 
     default = control._resolve("teleop_avoid")
-    scan = control._resolve("teleop_avoid", local_planner="scan")
+    cmu = control._resolve("teleop_avoid", local_planner="cmu")
 
-    assert default.native_nav["local_planner"] == "cmu"
-    assert scan.native_nav["local_planner"] == "scan"
+    assert default.native_nav["local_planner"] == "scan"
+    assert cmu.native_nav["local_planner"] == "cmu"
 
 
-def test_product_control_keeps_cmu_on_real_until_scan_is_field_qualified() -> None:
+def test_product_control_defaults_real_nav_to_scan_and_keeps_cmu_available() -> None:
     control = ProductControl(
         FakeRunner(),  # type: ignore[arg-type]
         robot="unitree/go2",
@@ -257,10 +257,10 @@ def test_product_control_keeps_cmu_on_real_until_scan_is_field_qualified() -> No
     )
 
     default = control._resolve("nav")
+    cmu = control._resolve("nav", local_planner="cmu")
 
-    assert default.native_nav["local_planner"] == "cmu"
-    with pytest.raises(ValueError, match="has not qualified local planner 'scan'"):
-        control._resolve("nav", local_planner="scan")
+    assert default.native_nav["local_planner"] == "scan"
+    assert cmu.native_nav["local_planner"] == "cmu"
 
 
 def test_product_control_resolves_explore_variants_separately() -> None:
@@ -752,6 +752,54 @@ def test_product_control_status_reads_current_without_writing(tmp_path: Path) ->
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
 
 
+def test_sim_status_reports_monitored_process_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    control = ProductControl(
+        robot="doso/thunder_v4",
+        env="sim",
+        env_config={"backend": "mujoco"},
+        process_env={},
+    )
+    plan = control._resolve("teleop_avoid")
+    product_session_id = "2" * 32
+    plan_path = plan.write(tmp_path / f"plan-{product_session_id}.json")
+    _write_current(
+        tmp_path,
+        plan_path,
+        product="teleop_avoid",
+        env="sim",
+        product_session_id=product_session_id,
+    )
+    failed = ProcessReport(
+        product="teleop_avoid",
+        env="sim",
+        action="apply",
+        status="failed",
+        error="critical simulation process exited: mujoco_feeder",
+    )
+
+    class FailedSupervisor:
+        def __init__(self, _session_root: Path) -> None:
+            pass
+
+        def status(self, *_args, **_kwargs) -> ProcessReport:
+            return failed
+
+    monkeypatch.setattr("lingtu.control.SimulationSupervisorClient", FailedSupervisor)
+
+    assert control.status(state_dir=tmp_path) == {
+        "ok": False,
+        "status": "failed",
+        "robot": "doso/thunder_v4",
+        "env": "sim",
+        "product": "teleop_avoid",
+        "local_planner": "scan",
+        "error": failed.error,
+    }
+
+
 def test_product_control_rejects_current_for_another_robot(tmp_path: Path) -> None:
     control = ProductControl(robot="unitree/go2", env="real", process_env={})
     plan = control._resolve("teleop")
@@ -790,7 +838,7 @@ def test_real_current_plan_returns_the_exact_product_session_id(tmp_path: Path) 
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SIMULATION_SESSION = "sim/scenarios/catalog/thunder_omni_contract/session.yaml"
+SIMULATION_SESSION = "sim/sessions/examples/thunder_omni_contract/session.yaml"
 
 
 @lru_cache(maxsize=1)

@@ -1,0 +1,115 @@
+{
+  "asset_set_digest": "82059e279f66b4d7fbc37b63dd59e33b81023f7d6396187ffbc00d75ff2c9777",
+  "assets": [
+    {
+      "bytes": 128344,
+      "format": "16-bit grayscale PNG",
+      "path": "sim/packages/worlds/open_field_hf/generated/heightfield_r16.png",
+      "role": "ue_heightfield",
+      "sha256": "65e1631acf8265ce5318384b9b1364ecd07d0f29e2bfaf7f7f59bd2e2bc229c9"
+    },
+    {
+      "bytes": 256044,
+      "format": "image/vnd.mujoco.hfield",
+      "path": "sim/packages/worlds/open_field_hf/generated/heightfield_f32.bin",
+      "role": "mujoco_heightfield",
+      "row_order": "south_to_north_y_ascending",
+      "sha256": "3cc2fba6d0193d866f5140ae614b339a7656ba440bacd2e200cc1aa765a81c29"
+    },
+    {
+      "bytes": 4880616,
+      "path": "sim/packages/worlds/open_field_hf/generated/terrain.obj",
+      "role": "unreal_mesh",
+      "sample_grid": [
+        253,
+        253
+      ],
+      "sha256": "9074c291d2bf67b9a2fcbddb5855a79d5b8de1d2d725a9fd8769aad7f9191a81",
+      "triangle_count": 127008,
+      "vertex_count": 64009
+    }
+  ],
+  "coordinate_contract": {
+    "axis_mapping": [
+      "x",
+      "-y",
+      "z"
+    ],
+    "extent_m": [
+      160.0,
+      160.0
+    ],
+    "grid_px": [
+      253,
+      253
+    ],
+    "height_encoding": {
+      "bit_depth": 16,
+      "elevation_scale_m": 8.0,
+      "formula": "world_height_m = sample_u16 / 65535 * elevation_scale_m + vertical_origin_m",
+      "range": [
+        0,
+        65535
+      ],
+      "type": "uint16_normalized"
+    },
+    "image_mapping": {
+      "column_0_x_m": -80.0,
+      "column_last_x_m": 80.0,
+      "row_0_y_m": 80.0,
+      "row_last_y_m": -80.0
+    },
+    "mujoco_hfield": {
+      "geom_position_m": [
+        0.0,
+        0.0,
+        -4.534859235523003
+      ],
+      "size": [
+        80.0,
+        80.0,
+        8.0,
+        1.0
+      ]
+    },
+    "origin": "terrain_center",
+    "sample_spacing_m": [
+      0.6349206349206349,
+      0.6349206349206349
+    ],
+    "source_frame": "mujoco_rh_z_up_m",
+    "spawn_reference": {
+      "sample_pixel": [
+        126,
+        126
+      ],
+      "sample_u16": 37149,
+      "world_position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "unreal_frame": "unreal_lh_z_up_cm",
+    "unreal_landscape": {
+      "location_cm": [
+        0.0,
+        0.0,
+        -53.48592355230028
+      ],
+      "scale_xyz": [
+        63.49206349206349,
+        63.49206349206349,
+        1.5625
+      ]
+    },
+    "vertical_origin_m": -4.534859235523003
+  },
+  "generator": {
+    "algorithm": "lingtu_integer_value_noise.v2",
+    "module": "sim.tools.worlds.open_field_hf.generate",
+    "seed": 20260807
+  },
+  "schema": "lingtu.sim.world-asset-manifest.v1",
+  "world_package": "open_field_hf@1.0.0"
+}

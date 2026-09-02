@@ -465,19 +465,19 @@ struct CloudMessage {
 
 struct CollisionMessage {
   lingtu_dds_MapCollisionLayer message{};
-  CloudMessage occupied;
   std::string frame;
 
   CollisionMessage(const Snapshot &snapshot, bool live)
-      : occupied("occupied", snapshot.collision.occupied, snapshot.reset_epoch, snapshot.sequence,
-                 snapshot.generation, live, false),
-        frame(snapshot.frame_id.empty() ? "map" : snapshot.frame_id) {
+      : frame(snapshot.frame_id.empty() ? "map" : snapshot.frame_id) {
     FillHeader(message.header, snapshot.stamp_ns, frame.c_str());
     message.reset_epoch = snapshot.reset_epoch;
     message.observation_sequence = snapshot.sequence;
-    message.generation = snapshot.generation;
+    message.generation = snapshot.collision.generation;
     message.live = live;
     message.resolution = snapshot.collision.resolution_m;
+    message.size_x = static_cast<std::uint32_t>(snapshot.collision.size_x);
+    message.size_y = static_cast<std::uint32_t>(snapshot.collision.size_y);
+    message.size_z = static_cast<std::uint32_t>(snapshot.collision.size_z);
     message.aabb_min.x = snapshot.collision.min_x_m;
     message.aabb_min.y = snapshot.collision.min_y_m;
     message.aabb_min.z = snapshot.collision.min_z_m;
@@ -485,7 +485,13 @@ struct CollisionMessage {
     message.aabb_max.y = snapshot.collision.max_y_m;
     message.aabb_max.z = snapshot.collision.max_z_m;
     message.complete = snapshot.collision.complete;
-    message.occupied = occupied.message.cloud;
+    message.inflated_occupied_bits._maximum =
+        static_cast<std::uint32_t>(snapshot.collision.occupied_bits.size());
+    message.inflated_occupied_bits._length =
+        static_cast<std::uint32_t>(snapshot.collision.occupied_bits.size());
+    message.inflated_occupied_bits._buffer =
+        const_cast<std::uint8_t *>(snapshot.collision.occupied_bits.data());
+    message.inflated_occupied_bits._release = false;
   }
 };
 
@@ -861,15 +867,8 @@ bool Dds::PublishRealtimeClouds(const State &state, const Snapshot &snapshot) {
   bool success = true;
   success = impl_->Write(impl_->live_cloud_writer, &live.message, "live_cloud") && success;
   success = impl_->Write(impl_->voxel_cloud_writer, &voxel.message, "voxel_cloud") && success;
-  if (collision.occupied.bytes.size() > impl_->limits.max_cloud_bytes) {
-    success = impl_->RejectSerialization("local_collision",
-                                         "local collision payload exceeds mapd cloud byte limit",
-                                         false) &&
-              success;
-  } else {
-    success = impl_->Write(impl_->local_collision_writer, &collision.message, "local_collision") &&
-              success;
-  }
+  success = impl_->Write(impl_->local_collision_writer, &collision.message, "local_collision") &&
+            success;
   return success;
 }
 

@@ -312,7 +312,7 @@ def test_adapter_rejects_non_finite_policy_yaw_observation_inputs(yaw: float) ->
 
 
 def test_thunderv4_controller_package_does_not_rewrite_base_twist() -> None:
-    manifest = Path("sim/controllers/doso/thunder_v4/locomotion/controller.package.yaml").read_text(
+    manifest = Path("sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml").read_text(
         encoding="utf-8"
     )
 

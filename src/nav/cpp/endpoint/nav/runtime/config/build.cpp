@@ -88,7 +88,9 @@ InputGateConfig inputGateConfig(const CliConfig &cfg) {
   }
 
   out.require_odom = true;
-  out.require_cloud = cfg.check_obstacle;
+  out.require_cloud =
+      cfg.check_obstacle &&
+      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu;
   out.require_traversability = cfg.use_traversability_cost;
   out.require_local_collision =
       cfg.check_obstacle &&

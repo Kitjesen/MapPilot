@@ -55,6 +55,7 @@ _WINDOWS_BOOTSTRAP_ENV = frozenset(
 
 _PROCESS_LOG_LIMIT_BYTES = 128 * 1024
 _PROCESS_LOG_READ_BYTES = 16 * 1024
+_CRITICAL_SIM_ROLES = frozenset({"driver", "lidar", "imu", "camera"})
 
 
 def _repository_path(
@@ -392,6 +393,61 @@ class SimProcessManager:
             plan,
             action="stop",
             processes=self._stop_order(plan, tuple(plan.managed_processes)),
+        )
+
+    def monitor(self, plan: RunPlan) -> None:
+        """Fail and stop the Product when one critical child exits."""
+
+        self.assert_bound(plan)
+        support = set(plan.support_processes)
+        critical = tuple(
+            process
+            for process in plan.managed_processes
+            if process.name in support
+            or not _CRITICAL_SIM_ROLES.isdisjoint(process.provides)
+        )
+        for process in critical:
+            owned = self._children.get(process.target)
+            if owned is not None and self.active(process.target):
+                continue
+            report = ProcessReport(
+                product=plan.product,
+                env=plan.env,
+                action="apply",
+                status="failed",
+                planned=[item.target for item in plan.managed_processes],
+                error=(
+                    f"critical simulation process exited: {process.target}"
+                    f"{self._diagnostic_suffix(owned) if owned is not None else ''}"
+                ),
+            )
+            failures = self._stop_processes(
+                self._stop_order(plan, tuple(plan.managed_processes)),
+                report,
+                completed=report.stopped,
+                continue_on_error=True,
+            )
+            report.rollback_errors.extend(
+                f"{target}: {error}" for target, error in failures
+            )
+            raise ProcessFailed(report)
+
+    def status(self, plan: RunPlan) -> ProcessReport:
+        """Return active only while every critical owned child is alive."""
+
+        self.monitor(plan)
+        return ProcessReport(
+            product=plan.product,
+            env=plan.env,
+            action="apply",
+            ok=True,
+            status="active",
+            planned=[process.target for process in plan.managed_processes],
+            preserved=[
+                process.target
+                for process in plan.managed_processes
+                if self.active(process.target)
+            ],
         )
 
     def _stop_report(

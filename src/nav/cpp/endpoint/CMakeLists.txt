@@ -4,6 +4,7 @@ find_package(iceoryx_binding_c QUIET)
 find_package(CycloneDDS REQUIRED)
 find_package(Threads REQUIRED)
 find_package(OpenMP QUIET)
+include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,6 +20,7 @@ set(_NAV_COMMANDS_CPP_DIR "${_NAV_CPP_DIR}/client")
 set(_NAV_TESTS_DIR "${_NAV_CPP_DIR}/tests")
 set(_NAV_ENDPOINT_TESTS_DIR "${_NAV_TESTS_DIR}/endpoint")
 set(_EXPLORE_CPP_DIR "${_LINGTU_ROOT}/src/explore/cpp")
+set(_EXPLORE_ENDPOINT_DIR "${_EXPLORE_CPP_DIR}/endpoint")
 set(_PERCEPTION_INSPECTION_DIR "${_LINGTU_ROOT}/src/perception/inspection")
 set(_OCTOPLANNER3D_RUNTIME_DIR
   "${_NAV_CPP_DIR}/planning/global/octoplanner")
@@ -29,6 +31,7 @@ set(_NAV_KERNEL_DIR "${LINGTU_NAV_KERNEL_DIR}")
 set(_EP_DIRS
   "${CMAKE_CURRENT_LIST_DIR}"
   "${CMAKE_CURRENT_LIST_DIR}/nav"
+  "${_EXPLORE_CPP_DIR}"
   "${_LINGTU_ROOT}/src")
 
 if(NOT TARGET lingtu_maps)
@@ -255,15 +258,15 @@ add_executable(lingtu_traversability_dds
 add_executable(lingtu_explore_dds
     nav/dds/frame.cpp
     nav/input/frame.cpp
-    explore/main.cpp
-    explore/control.cpp
-    explore/run_event_outbox.cpp
-    explore/run_lifecycle.cpp
-    explore/directed_intent.cpp
-    explore/goal_command_lane.cpp
-    explore/goal_lifecycle.cpp
-    explore/input_gate.cpp
-    explore/saved_coverage_grid.cpp
+    "${_EXPLORE_ENDPOINT_DIR}/main.cpp"
+    "${_EXPLORE_ENDPOINT_DIR}/control.cpp"
+    "${_EXPLORE_ENDPOINT_DIR}/run_event_outbox.cpp"
+    "${_EXPLORE_ENDPOINT_DIR}/run_lifecycle.cpp"
+    "${_EXPLORE_ENDPOINT_DIR}/directed_intent.cpp"
+    "${_EXPLORE_ENDPOINT_DIR}/goal_command_lane.cpp"
+    "${_EXPLORE_ENDPOINT_DIR}/goal_lifecycle.cpp"
+    "${_EXPLORE_ENDPOINT_DIR}/input_gate.cpp"
+    "${_EXPLORE_ENDPOINT_DIR}/saved_coverage_grid.cpp"
     nav/input/active/occupancy.cpp
     nav/input/active/declared.cpp
     nav/status/status_snapshot_file_writer.cpp
@@ -338,12 +341,13 @@ foreach(_target IN ITEMS
   if(TARGET ${_target})
     list(APPEND _LINGTU_NAV_ENDPOINT_RUNTIME_TARGETS ${_target})
     set_target_properties(${_target} PROPERTIES
-      INSTALL_RPATH "$ORIGIN")
+      INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
   endif()
 endforeach()
 if(_LINGTU_NAV_ENDPOINT_RUNTIME_TARGETS)
   install(TARGETS ${_LINGTU_NAV_ENDPOINT_RUNTIME_TARGETS}
-    RUNTIME DESTINATION .)
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+      COMPONENT lingtu_runtime)
 endif()
 
 set(_LINGTU_CMU_PATH_SOURCE "${_NAV_CPP_DIR}/planning/local/cmu/paths")
@@ -361,7 +365,7 @@ add_custom_target(lingtu_cmu_paths ALL
 install(DIRECTORY
   "${_LINGTU_CMU_PATH_SOURCE}/go2"
   "${_LINGTU_CMU_PATH_SOURCE}/thunder"
-  DESTINATION cmu_paths
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/lingtu/cmu_paths
   COMPONENT cmu_paths)
 
 if(WIN32)
@@ -395,5 +399,7 @@ endif()
 install(TARGETS
   lingtu_nav_client
   lingtu_inspection_evidence_bridge
-  LIBRARY DESTINATION .
-  RUNTIME DESTINATION .)
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    COMPONENT lingtu_runtime
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT lingtu_runtime)

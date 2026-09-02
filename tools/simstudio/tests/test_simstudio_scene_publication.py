@@ -15,7 +15,7 @@ import yaml
 from sim.catalog.composer import SessionComposer
 from sim.catalog.management import SimCatalog
 from sim.catalog.resolver import CatalogResolver
-from sim.importers import ImportCode, ImportFailure
+from sim.catalog.importers import ImportCode, ImportFailure
 from sim.runtime.coordinator.run_allocation import load_resolved_session_bundle
 from tools.simstudio.http.app import create_app
 from tools.simstudio.service.application import SimulationStudioService
@@ -49,9 +49,9 @@ def _batch(*, x_m: float = 24.0) -> dict[str, Any]:
 
 def _repository(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
-    generated = repo / "sim" / "worlds" / "factory_park_hf" / "generated"
+    generated = repo / "sim" / "packages" / "worlds" / "factory_park_hf" / "generated"
     generated.mkdir(parents=True)
-    source = REPO_ROOT / "sim" / "worlds" / "factory_park_hf" / "generated"
+    source = REPO_ROOT / "sim" / "packages" / "worlds" / "factory_park_hf" / "generated"
     for name in ("expanded-layout.json", "heightfield_f32.bin"):
         shutil.copyfile(source / name, generated / name)
     return repo
@@ -287,10 +287,10 @@ def test_published_world_is_immediately_composable_with_integrity_bound_projecti
 ) -> None:
     repo = _repository(tmp_path)
     for relative in (
-        "sim/robots/doso/thunder_v4",
-        "sim/controllers/doso/thunder_v4/locomotion",
-        "sim/sensor_rigs/doso/thunder_v4/navigation",
-        "sim/sensors",
+        "sim/packages/robots/doso/thunder_v4",
+        "sim/packages/controllers/doso/thunder_v4/locomotion",
+        "sim/packages/sensor_rigs/doso/thunder_v4/navigation",
+        "sim/packages/sensors",
     ):
         shutil.copytree(REPO_ROOT / relative, repo / relative)
     store = StudioStore(tmp_path / "studio")

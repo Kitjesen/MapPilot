@@ -10,7 +10,7 @@ import pytest
 
 from lingtu.assembly.compiler import compile_run_plan
 from perception.detection.sim_scene_observer import SimSceneObserver
-from sim.engine.mujoco.engine import MuJoCoEngine
+from sim.compat.engine.mujoco.engine import MuJoCoEngine
 from sim.runtime.scenario.runtime import ScenarioClock, ScenarioRuntime
 from sim.scripts.mujoco import tracking_native_acceptance as tracking
 from sim.scripts.mujoco.formal_feeder import (

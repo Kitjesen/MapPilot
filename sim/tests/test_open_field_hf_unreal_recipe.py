@@ -31,7 +31,7 @@ def test_open_field_hf_builder_validates_same_source_recipe_and_digest() -> None
     assert recipe["blender_mesh_import"] == {
         "coordinates": "unreal_lh_z_up_cm",
         "import_scale": 1.0,
-        "source": "sim/worlds/open_field_hf/generated/terrain.obj",
+        "source": "sim/packages/worlds/open_field_hf/generated/terrain.obj",
         "vertex_per_height_sample": True,
     }
     assert world["terrain_digest"] == recipe["sources"]["terrain_obj"]["sha256"]

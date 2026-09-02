@@ -251,7 +251,7 @@ GeofenceCommandView copyGeofenceCommand(const lingtu_dds_GeofenceCommandRequest 
   return view;
 }
 
-Dds::Dds(int domain_id, DdsStatus *status)
+Dds::Dds(int domain_id, DdsStatus *status, bool read_obstacle_cloud)
     : host_boot_id_(readHostBootId()),
       producer_boot_id_(makeProducerBootId(host_boot_id_, boottimeNanoseconds())),
       status_(status) {
@@ -269,8 +269,10 @@ Dds::Dds(int domain_id, DdsStatus *status)
   odom_reader_ =
       reader(lingtu::message::kSlamOdometry.dds_topic.data(), &lingtu_dds_Odometry_desc, "odom");
   tf_reader_ = reader(lingtu::message::kTf.dds_topic.data(), &lingtu_dds_TFMessage_desc, "tf");
-  cloud_reader_ = reader(lingtu::message::kSlamRegisteredCloud.dds_topic.data(),
-                         &lingtu_dds_PointCloud2_desc, "registered_cloud");
+  if (read_obstacle_cloud) {
+    cloud_reader_ = reader(lingtu::message::kSlamRegisteredCloud.dds_topic.data(),
+                           &lingtu_dds_PointCloud2_desc, "registered_cloud");
+  }
   terrain_map_reader_ = reader(lingtu::message::kNavTerrainMap.dds_topic.data(),
                                &lingtu_dds_PointCloud2_desc, "terrain_map");
   terrain_map_ext_reader_ = reader(lingtu::message::kNavTerrainMapExt.dds_topic.data(),

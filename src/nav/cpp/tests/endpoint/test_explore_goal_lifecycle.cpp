@@ -3,8 +3,8 @@
 #include <stdexcept>
 #include <string>
 
-#include "explore/segment_lifecycle.hpp"
-#include "explore/goal_lifecycle.hpp"
+#include "endpoint/segment_lifecycle.hpp"
+#include "endpoint/goal_lifecycle.hpp"
 
 namespace {
 

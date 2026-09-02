@@ -69,8 +69,7 @@ c++ -std=c++17 -O2 \
   "$SDK_SRC" \
   "$CAMERA_SRC" \
   -L"$RUNTIME_LIB" \
-  -Wl,-rpath,"$PWD/$RUNTIME_LIB" \
-  -Wl,-rpath,"$PWD/$SDK_LIB" \
+  -Wl,-rpath,'$ORIGIN/lib:$ORIGIN/../lib' \
   -lOrbbecSDK \
   -o "$OUT_DIR/orbbec_capture"
 

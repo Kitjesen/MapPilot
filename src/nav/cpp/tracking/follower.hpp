@@ -23,12 +23,12 @@ namespace nav_kernel {
 class LocalPlan;
 
 struct SplineFollowerParams {
-  double timeForward = 0.55;
+  double timeForward = 0.8;
   double headingErrorThreshold = 0.8;
-  double positionGain = 0.9;
-  double yawGain = 1.2;
-  double maxVx = 0.5;
-  double maxVy = 0.25;
+  double positionGain = 0.8;
+  double yawGain = 1.5;
+  double maxVx = 0.75;
+  double maxVy = 0.35;
   double maxYawRateRadS = 1.0;
   double finishDistance = 0.15;
 };

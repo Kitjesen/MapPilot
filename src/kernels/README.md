@@ -36,6 +36,12 @@ The production C++/nanobind navigation kernel is already owned by the nav
 domain at `src/nav/cpp/`; this folder tracks portable kernels with active
 consumers.
 
+Build the path-safety kernel directly with Cargo:
+
+```bash
+cargo build --manifest-path src/kernels/nav/path_safety/Cargo.toml --release
+```
+
 ## Boundary Rule
 
 Put code here only when it is algorithm compute that can be called through a

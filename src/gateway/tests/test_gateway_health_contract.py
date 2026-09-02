@@ -170,7 +170,7 @@ def test_service_status_includes_fresh_field_readiness_summary(monkeypatch, tmp_
                     "summary": {
                     "ok": False,
                     "blockers": [
-                        "native_binaries:native_binary_missing_or_not_executable:camera_dds:/opt/lingtu/current/build/camera_dds/lingtu_camera_dds"
+                        "native_binaries:native_binary_missing_or_not_executable:camera_dds:/opt/lingtu/current/bin/lingtu_camera_dds"
                     ],
                         "blocker_count": 1,
                     },
@@ -201,7 +201,7 @@ def test_service_status_includes_fresh_field_readiness_summary(monkeypatch, tmp_
     assert model.field_readiness["summary"]["blocker_count"] == 1
     assert model.readiness["ok"] is False
     assert model.readiness["blockers"] == [
-        "field_readiness:native_binaries:native_binary_missing_or_not_executable:camera_dds:/opt/lingtu/current/build/camera_dds/lingtu_camera_dds"
+        "field_readiness:native_binaries:native_binary_missing_or_not_executable:camera_dds:/opt/lingtu/current/bin/lingtu_camera_dds"
     ]
 
 

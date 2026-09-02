@@ -342,7 +342,7 @@ class FieldBackend:
         configured_dir = _text(self._environment.get("LINGTU_RECORDING_BIN_DIR"))
         if configured_dir is not None:
             candidates.append(Path(configured_dir).expanduser() / "lingtu_recorder")
-        candidates.append(Path("/opt/lingtu/current/build/native-recording/lingtu_recorder"))
+        candidates.append(Path("/opt/lingtu/current/bin/lingtu_recorder"))
         for candidate in candidates:
             if candidate.is_file() and os.access(candidate, os.X_OK):
                 return candidate.resolve()
@@ -368,7 +368,7 @@ class FieldBackend:
         if nav_active:
             nav_control = str(
                 self._environment.get("LINGTU_NAV_CONTROL_BIN")
-                or "/opt/lingtu/current/build/nav_endpoint/lingtu_nav_control"
+                or "/opt/lingtu/current/bin/lingtu_nav_control"
             )
             client_timeout_ms, subprocess_timeout_s = _nav_stop_timeout_budget(self._environment)
             command = [nav_control, "stop", "product_mode_switch"]
@@ -417,7 +417,7 @@ class FieldBackend:
             raise RuntimeError("native active map identity changed before Product commit")
 
     def _mapctl(self, operation: str, operand: str, *, timeout_s: float) -> Mapping[str, Any]:
-        binary = str(self._environment.get("LINGTU_MAPCTL_BIN") or "/opt/lingtu/current/build/maps/lingtu-mapctl")
+        binary = str(self._environment.get("LINGTU_MAPCTL_BIN") or "/opt/lingtu/current/bin/lingtu-mapctl")
         command = [
             binary,
             operation,

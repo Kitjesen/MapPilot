@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 project(lingtu_livox_sdk2_stream LANGUAGES C CXX)
+include(GNUInstallDirs)
 
 option(LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS "Build native CycloneDDS publisher mode" OFF)
 option(LINGTU_LIVOX_SDK2_STREAM_BUILD_TESTS "Build Livox stream unit tests" OFF)
@@ -47,6 +48,10 @@ if(UNIX)
   target_compile_options(livox_sdk2_stream PRIVATE -Wall -Wextra)
   target_link_libraries(livox_sdk2_stream PRIVATE pthread)
 endif()
+
+install(TARGETS livox_sdk2_stream
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT lingtu_runtime)
 
 if(LINGTU_LIVOX_SDK2_STREAM_BUILD_TESTS)
   enable_testing()

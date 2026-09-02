@@ -36,9 +36,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h|--help)
       cat <<'USAGE'
-Usage: install_nav.sh [--dry-run] [--package-dir DIR]
-                      [--releases-dir DIR] [--current-link PATH]
-                      [--state-dir DIR]
+Usage: install_native_release.sh [--dry-run] [--package-dir DIR]
+                                 [--releases-dir DIR] [--current-link PATH]
+                                 [--state-dir DIR]
 
 The installer verifies native artifact checksums, stages a versioned release,
 updates the current link, then switches back to the same Product and map.
@@ -147,8 +147,8 @@ PY
 fi
 
 if [[ "${ACTIVE_REQUIRES_MAPD}" == "1" ]] \
-    && { [[ ! -x "${PACKAGE_DIR}/build/maps/mapd" ]] \
-      || [[ ! -x "${PACKAGE_DIR}/build/maps/lingtu-mapctl" ]]; }; then
+    && { [[ ! -x "${PACKAGE_DIR}/bin/mapd" ]] \
+      || [[ ! -x "${PACKAGE_DIR}/bin/lingtu-mapctl" ]]; }; then
   echo \
     "Active Product requires maps/mapd, but this release lacks mapd artifacts" \
     >&2
