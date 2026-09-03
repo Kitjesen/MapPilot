@@ -784,9 +784,7 @@ def test_navigation_task_cancel_targets_task_and_only_acknowledges_request():
     assert result["status"] == "cancel_requested"
     assert result["execution_confirmed"] is False
     assert "cancelled" not in str(result).lower()
-    assert gateway.cancel.msg_count == 0
-    assert gateway.stop_cmd.msg_count == 0
-    assert gateway.cmd_vel.msg_count == 0
+    assert {"cancel", "stop_cmd", "cmd_vel"}.isdisjoint(gateway.ports_out)
 
 
 def test_navigation_task_cancel_rejects_blank_route_task_identity():
@@ -1332,8 +1330,7 @@ def test_field_emergency_stop_uses_native_estop_latch(monkeypatch):
     assert model.ok is True
     assert model.status == "stopped"
     assert calls == [("rest_emergency_stop", "native-stop")]
-    assert gateway.cmd_vel.msg_count == 0
-    assert gateway.stop_cmd.msg_count == 0
+    assert {"cmd_vel", "stop_cmd"}.isdisjoint(gateway.ports_out)
 
 
 def test_native_stop_ack_does_not_block_gateway_event_loop(monkeypatch):
@@ -1438,20 +1435,33 @@ def test_field_estop_mode_failure_does_not_claim_mode_change(monkeypatch):
     assert gateway._mode != "estop"
 
 
-def test_navigation_cancel_publishes_cancel_without_motion_outputs():
+def test_navigation_cancel_uses_goal_service_without_legacy_motion_outputs():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import CancelRequest, ControlCommandResponse
 
+    class FakeGoals:
+        def __init__(self) -> None:
+            self.cancels = []
+
+        def submit_cancel(self, reason, *, task_id=None, request_id=None):
+            self.cancels.append((reason, task_id, request_id))
+            return {
+                "accepted": True,
+                "task_id": task_id,
+                "request_id": request_id,
+            }
+
     gateway = GatewayModule()
     gateway.setup()
-    cancel_msgs: list[str] = []
-    gateway.cancel.subscribe(cancel_msgs.append)
+    goals = FakeGoals()
+    gateway.on_system_modules({"nav.goals": goals})
     post_cancel = _endpoint(gateway, "/api/v1/navigation/cancel")
 
     result = asyncio.run(
         post_cancel(
             CancelRequest(
                 reason="operator_cancel",
+                task_id="navigation-task-1",
                 request_id="cancel-001",
                 client_id="web",
             )
@@ -1464,11 +1474,8 @@ def test_navigation_cancel_publishes_cancel_without_motion_outputs():
     assert model.reason == "operator_cancel"
     assert model.command.name == "navigation_cancel"
     assert model.command.request_id == "cancel-001"
-    assert gateway.cancel.msg_count == 1
-    assert cancel_msgs == ["operator_cancel"]
-    assert gateway.goal_pose.msg_count == 0
-    assert gateway.cmd_vel.msg_count == 0
-    assert gateway.stop_cmd.msg_count == 0
+    assert goals.cancels == [("operator_cancel", "navigation-task-1", "cancel-001")]
+    assert {"cancel", "goal_pose", "cmd_vel", "stop_cmd"}.isdisjoint(gateway.ports_out)
 
 
 def test_navigation_resume_releases_takeover_without_replaying_old_motion(
@@ -1509,9 +1516,7 @@ def test_navigation_resume_releases_takeover_without_replaying_old_motion(
     assert result["fresh_operator_command_required"] is False
     assert result["previous_motion_restored"] is False
     assert calls == [("operator_resume", "resume-001")]
-    assert gateway.goal_pose.msg_count == 0
-    assert gateway.cmd_vel.msg_count == 0
-    assert gateway.stop_cmd.msg_count == 0
+    assert {"goal_pose", "cmd_vel", "stop_cmd"}.isdisjoint(gateway.ports_out)
 
 
 def test_navigation_resume_in_teleop_avoid_requires_fresh_operator_command(
@@ -1666,10 +1671,20 @@ def test_active_control_lease_blocks_other_rest_resume_clients(monkeypatch):
     assert calls == []
 
 
-def test_commands_without_request_id_preserve_existing_execute_every_time_behavior():
+def test_commands_without_request_id_preserve_existing_execute_every_time_behavior(monkeypatch):
     from gateway.gateway_module import GatewayModule
+    from gateway.routes import commands
     from gateway.schemas import ControlCommandResponse
 
+    calls: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        commands,
+        "native_estop",
+        lambda _gw, reason="estop", *, request_id=None: calls.append(
+            (reason, request_id)
+        )
+        or True,
+    )
     gateway = GatewayModule()
     gateway.setup()
     post_stop = _endpoint(gateway, "/api/v1/stop")
@@ -1678,8 +1693,11 @@ def test_commands_without_request_id_preserve_existing_execute_every_time_behavi
     second = asyncio.run(post_stop())
     model = ControlCommandResponse.model_validate(first)
 
-    assert gateway.stop_cmd.msg_count == 2
-    assert gateway.cmd_vel.msg_count == 2
+    assert calls == [
+        ("rest_emergency_stop", None),
+        ("rest_emergency_stop", None),
+    ]
+    assert {"stop_cmd", "cmd_vel"}.isdisjoint(gateway.ports_out)
     assert model.schema_version == 1
     assert model.ok is True
     assert model.status == "stopped"
