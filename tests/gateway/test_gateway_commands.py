@@ -265,11 +265,11 @@ def test_product_field_check_endpoint_is_read_only_and_typed(mode: str):
     assert model.schema_version == "lingtu.product_field_check.v1"
     assert model.mode == mode
     assert isinstance(model.ok, bool)
-    assert model.algorithm["strict_benchmark"]["read_only"] is True
-    assert gateway.goal_pose.msg_count == 0
-    assert gateway.cmd_vel.msg_count == 0
-    assert gateway.stop_cmd.msg_count == 0
+    assert model.evidence["mode"] == mode
+    assert set(model.navigation) == {"can_send_goal", "driver_command"}
     assert gateway.instruction.msg_count == 0
+    assert gateway.servo_target.msg_count == 0
+    assert gateway.mode_cmd.msg_count == 0
 
 
 
