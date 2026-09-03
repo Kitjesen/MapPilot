@@ -32,7 +32,7 @@ def test_windows_basetemp_is_unique_and_not_pytest_numbered(tmp_path):
     second = root_conftest._make_windows_basetemp(parent=tmp_path, pid=1234, token="b")
 
     assert first != second
-    assert first.parent == second.parent == tmp_path / "lingtu-pytest-basetemp"
+    assert first.parent == second.parent == tmp_path / "ltp"
     assert "pytest-current" not in first.parts
     assert re.fullmatch(r"pytest-\d+", first.name) is None
 
@@ -46,8 +46,8 @@ def test_windows_default_assigns_basetemp_when_option_is_absent(monkeypatch, tmp
 
     root_conftest.pytest_configure(config)
 
-    assert config.option.basetemp.parent == tmp_path / "lingtu-pytest-basetemp"
-    assert config.option.basetemp.name.startswith(f"pid-{root_conftest.os.getpid()}-")
+    assert config.option.basetemp.parent == tmp_path / "ltp"
+    assert config.option.basetemp.name.startswith(f"{root_conftest.os.getpid()}-")
 
 
 def test_explicit_basetemp_is_preserved_on_windows(monkeypatch, tmp_path):
@@ -84,6 +84,6 @@ def test_pytest_tmp_path_factory_uses_root_hook_basetemp(pytestconfig, tmp_path_
 
     assert given_basetemp is not None
     assert Path(given_basetemp) == Path(pytestconfig.option.basetemp)
-    assert "lingtu-pytest-basetemp" in basetemp.parts
+    assert "ltp" in basetemp.parts
     assert "pytest-current" not in basetemp.parts
     assert re.fullmatch(r"pytest-\d+", basetemp.name) is None
