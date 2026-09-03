@@ -57,6 +57,7 @@ def test_tracking_product_builds_only_the_person_following_host(
     env: str,
     robot: str | None,
     env_config: dict[str, str] | None,
+    allow_unbuilt_process_artifacts: None,
 ) -> None:
     plan = compile_run_plan(
         "tracking",
