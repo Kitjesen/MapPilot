@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Focused contracts for the externally supported map API."""
 
 from __future__ import annotations
@@ -78,7 +77,9 @@ def test_save_map_does_not_expose_optimizer_selection(monkeypatch):
         SimpleNamespace(_get_slam_profile=lambda: "native_dds"),
     )
 
-    response = asyncio.run(_endpoint(app, "/api/v1/map/save")({"name": "warehouse"}))
+    response = asyncio.run(
+        _endpoint(app, "/api/v1/map/save")(MapSaveRequest(name="warehouse"))
+    )
 
     assert response.status_code == 202
     assert "map_opt" not in captured
@@ -171,7 +172,9 @@ def test_save_map_response_recursively_hides_native_paths(monkeypatch):
         SimpleNamespace(_get_slam_profile=lambda: "native_dds"),
     )
 
-    response = asyncio.run(_endpoint(app, "/api/v1/map/save")({"name": "warehouse"}))
+    response = asyncio.run(
+        _endpoint(app, "/api/v1/map/save")(MapSaveRequest(name="warehouse"))
+    )
     payload = _payload(response)
 
     assert response.status_code == 202
@@ -201,7 +204,9 @@ def test_save_map_running_job_returns_stable_accepted_response(monkeypatch):
     app = FastAPI()
     map_routes.register_map_routes(app, gateway)
 
-    response = asyncio.run(_endpoint(app, "/api/v1/map/save")({"name": "warehouse"}))
+    response = asyncio.run(
+        _endpoint(app, "/api/v1/map/save")(MapSaveRequest(name="warehouse"))
+    )
     payload = _payload(response)
 
     assert response.status_code == 202
@@ -240,7 +245,11 @@ def test_save_map_exposes_operation_identity_not_worker_job(monkeypatch):
         SimpleNamespace(_get_slam_profile=lambda: "native_dds"),
     )
 
-    response = asyncio.run(_endpoint(app, "/api/v1/map/save")({"name": "warehouse", "request_id": "request_1"}))
+    response = asyncio.run(
+        _endpoint(app, "/api/v1/map/save")(
+            MapSaveRequest(name="warehouse", request_id="request_1")
+        )
+    )
     payload = _payload(response)
 
     assert response.status_code == 202
@@ -510,7 +519,9 @@ def test_save_map_keeps_gateway_event_loop_responsive(monkeypatch):
     map_routes.register_map_routes(app, gateway)
 
     async def exercise():
-        save_task = asyncio.create_task(_endpoint(app, "/api/v1/map/save")({"name": "warehouse"}))
+        save_task = asyncio.create_task(
+            _endpoint(app, "/api/v1/map/save")(MapSaveRequest(name="warehouse"))
+        )
         await asyncio.sleep(0)
         order.append("gateway_responsive")
         return await save_task
@@ -674,7 +685,9 @@ def test_map_save_rejects_reserved_operation_namespace(monkeypatch):
         SimpleNamespace(_get_slam_profile=lambda: "native_dds"),
     )
 
-    response = asyncio.run(_endpoint(app, "/api/v1/map/save")({"name": "operations"}))
+    response = asyncio.run(
+        _endpoint(app, "/api/v1/map/save")(MapSaveRequest(name="operations"))
+    )
 
     assert response.status_code == 400
     assert _payload(response)["reason_code"] == "invalid_map_name"
@@ -707,7 +720,9 @@ def test_map_save_stops_before_map_service_when_explore_is_not_safely_parked(
         SimpleNamespace(_get_slam_profile=lambda: "native_dds"),
     )
 
-    response = asyncio.run(_endpoint(app, "/api/v1/map/save")({"name": "warehouse"}))
+    response = asyncio.run(
+        _endpoint(app, "/api/v1/map/save")(MapSaveRequest(name="warehouse"))
+    )
 
     assert response.status_code == 409
     assert _payload(response)["reason_code"] == "native_exploration_motion_not_idle"
