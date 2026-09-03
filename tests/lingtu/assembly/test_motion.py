@@ -6,7 +6,12 @@ from lingtu.assembly.compiler import blueprint_from_run_plan, compile_run_plan
 from lingtu.assembly.native_nav import compile_native_nav_config
 from lingtu.assembly.products import resolve_product_host_runtime
 from runtime.contracts.product_runtime import resolve_product_spec_contracts
-from runtime.graph import RuntimeGraph, load_runtime_graph, validate_runtime_graph
+from runtime.graph import (
+    ProcessArtifact,
+    RuntimeGraph,
+    load_runtime_graph,
+    validate_runtime_graph,
+)
 from runtime.runtime_interface import TOPICS
 
 OPERATOR_MOTION_TOPICS = frozenset(
@@ -104,7 +109,7 @@ def test_teleop_avoid_compiles_native_motion_settings() -> None:
     expected_native = {
         "control_mode": "teleop_avoid",
         "global_planner": "octoplanner3d",
-        "local_planner": "cmu",
+        "local_planner": "scan",
         "publish_cmd_vel": True,
         "check_obstacle": True,
         "use_traversability_cost": False,
@@ -130,7 +135,12 @@ def test_only_raw_operator_motion_uses_native_velocity_smoothing() -> None:
     assert assisted.native_process_environment["LINGTU_NAV_SMOOTHER_ENABLED"] == "0"
 
 
-def test_nav_uses_practical_terminal_tolerances() -> None:
+def test_nav_uses_practical_terminal_tolerances(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ProcessArtifact,
+        "from_repository_path",
+        classmethod(lambda cls, root, path: cls(str(path))),
+    )
     plan = compile_run_plan("nav", "sim", robot="doso/thunder_v4")
 
     assert plan.native_process_environment["LINGTU_NAV_GOAL_REACHED_M"] == "0.35"
