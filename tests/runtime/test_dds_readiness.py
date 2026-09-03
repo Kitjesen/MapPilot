@@ -51,7 +51,7 @@ def test_collect_readiness_keeps_real_probe_observations(monkeypatch) -> None:
         frame_id="lidar_link",
         points=24000,
     )
-    monkeypatch.setattr(readiness, "_load_probe", lambda: lambda *_args, **_kwargs: {topic: stat})
+    monkeypatch.setattr(readiness, "probe", lambda *_args, **_kwargs: {topic: stat})
 
     report = readiness.collect_readiness((topic,), seconds=5.0, domain_id=7)
 
@@ -78,7 +78,7 @@ def test_collect_readiness_keeps_real_probe_observations(monkeypatch) -> None:
 def test_collect_readiness_reports_missing_and_unknown_topics(monkeypatch) -> None:
     live = "rt/imu/raw"
     unknown = "rt/not/a/topic"
-    monkeypatch.setattr(readiness, "_load_probe", lambda: lambda *_args, **_kwargs: {live: _Stat()})
+    monkeypatch.setattr(readiness, "probe", lambda *_args, **_kwargs: {live: _Stat()})
 
     report = readiness.collect_readiness((live, unknown))
 
@@ -91,7 +91,7 @@ def test_collect_readiness_reports_probe_failure(monkeypatch) -> None:
     def fail_probe(*_args, **_kwargs):
         raise RuntimeError("native probe unavailable")
 
-    monkeypatch.setattr(readiness, "_load_probe", lambda: fail_probe)
+    monkeypatch.setattr(readiness, "probe", fail_probe)
 
     report = readiness.collect_readiness(("rt/imu/raw",))
 
