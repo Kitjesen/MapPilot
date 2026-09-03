@@ -72,7 +72,7 @@ def test_location_create_binds_active_map_and_rejects_caller_spoof(monkeypatch):
         "mapd_query",
         lambda _gw, request: {
             "success": True,
-            "record": {"name": request["name"], "content_epoch": 7},
+            "record": {"name": request["map_id"], "content_epoch": 7},
         },
     )
     body = LocationUpsertRequest(
@@ -232,8 +232,8 @@ def test_location_binding_retries_when_active_map_changes_mid_request(monkeypatc
         lambda _gw, request: {
             "success": True,
             "record": {
-                "name": request["name"],
-                "content_epoch": 1 if request["name"] == "old-map" else 2,
+                "name": request["map_id"],
+                "content_epoch": 1 if request["map_id"] == "old-map" else 2,
             },
         },
     )
