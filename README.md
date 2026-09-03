@@ -190,7 +190,7 @@ Common stack factories:
 | `lidar(enabled=True)` | Livox MID-360 module. |
 | `slam(profile)` | SLAM/localization module or adapter. |
 | `maps()` | Development/simulation map layers plus the low-rate Host map adapter. |
-| `perception(detector, encoder)` | Detection, embeddings, reconstruction. |
+| `perception(detector)` | RGB-D detection, tracking, scene graph, and optional reconstruction. |
 | `memory()` | Semantic, episodic, tagged, vector, and temporal memory modules. |
 | `planner(llm)` | Semantic planner, LLM module, visual servo module. |
 | `navigation(planner_backend)` | Development/simulation navigation Modules; field Products use native `navd`. |

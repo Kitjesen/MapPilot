@@ -1,6 +1,6 @@
 """SemanticMapperModule -drives RoomObjectKG + TopologySemGraph from live SceneGraph.
 
-Subscribes to the scene_graph (SceneGraph) published by PerceptionService and
+Subscribes to the scene_graph (SceneGraph) published by PerceptionModule and
 odometry from the driver.  On every scene-graph update:
 
   1. Converts SceneGraph.regions ->TopologySemGraph room nodes (stable int IDs)
