@@ -176,7 +176,7 @@ _CONTRACTS = (
         capabilities=(
             "saved_map_relocalization",
             "explicit_goal_tracking",
-            "local_planner_collision_and_traversability_scoring",
+            "local_planner_collision_scoring",
             "path_follower_pre_command_output",
             "final_cmd_vel_single_writer",
             "operator_motion_typed_dds_interface",
@@ -215,7 +215,7 @@ _CONTRACTS = (
         capabilities=(
             "saved_map_relocalization",
             "octoplanner3d_global_planning",
-            "local_planner_collision_and_traversability_scoring",
+            "local_planner_collision_scoring",
             "path_follower_pre_command_output",
             "final_cmd_vel_single_writer",
             "operator_motion_typed_dds_interface",
@@ -261,7 +261,7 @@ _CONTRACTS = (
             "saved_map_relocalization",
             "operator_or_semantic_goal_source",
             "octoplanner3d_global_planning",
-            "local_planner_collision_and_traversability_scoring",
+            "local_planner_collision_scoring",
             "final_cmd_vel_single_writer",
             "operator_motion_typed_dds_interface",
             "native_operator_motion_authority",

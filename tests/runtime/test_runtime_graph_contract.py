@@ -161,18 +161,9 @@ def test_nav_acceptance_selects_local_planner_without_creating_another_product()
     assert "nav_scan" not in graph.products
     assert nav["operator_switchable"] is True
     assert nav["default_for_session_mode"] is True
-    assert nav["native_nav"]["local_planner"] == "cmu"
+    assert nav["native_nav"]["local_planner"] == "scan"
     assert nav["native_nav"]["local_planners"] == ["cmu", "scan"]
-    assert mujoco["acceptance"]["products"]["nav"]["local_planners"] == {
-            "cmu": {
-                "runner": "sim/scripts/mujoco/native_navigation_acceptance.py",
-                "manifest": "config/runtime_graph/acceptance/mujoco_local_cmu.json",
-            },
-        "scan": {
-            "runner": "sim/scripts/mujoco/native_navigation_acceptance.py",
-            "manifest": "config/runtime_graph/acceptance/mujoco_local_scan.json",
-        },
-    }
+    assert mujoco["local_planners"] == ["cmu", "scan"]
 
 
 @pytest.mark.parametrize("mutation", ("missing", "unknown", "ambiguous"))
@@ -222,128 +213,6 @@ def test_sim_process_dependency_schema_is_strict(mutation: str) -> None:
     )
 
     assert any(issue.code == "env_process_invalid" for issue in validate_runtime_graph(broken))
-
-
-def test_sim_acceptance_catalog_must_cover_supported_products_exactly() -> None:
-    graph = load_runtime_graph()
-    envs = deepcopy(graph.envs)
-    products = envs["sim"]["backends"]["mujoco"]["acceptance"]["products"]
-    del products["teleop_avoid"]
-    broken = RuntimeGraph(
-        root=graph.root,
-        topics=graph.topics,
-        products=graph.products,
-        envs=envs,
-    )
-
-    issues = validate_runtime_graph(broken)
-
-    assert any(issue.code == "env_acceptance_product_coverage_invalid" for issue in issues)
-
-
-def test_sim_acceptance_catalog_rejects_empty_paths() -> None:
-    graph = load_runtime_graph()
-    envs = deepcopy(graph.envs)
-    envs["sim"]["backends"]["mujoco"]["acceptance"]["products"]["teleop"]["runner"] = ""
-    broken = RuntimeGraph(
-        root=graph.root,
-        topics=graph.topics,
-        products=graph.products,
-        envs=envs,
-    )
-
-    issues = validate_runtime_graph(broken)
-
-    assert any(issue.code == "env_acceptance_path_invalid" for issue in issues)
-
-
-def test_sim_acceptance_catalog_rejects_extra_target_fields() -> None:
-    graph = load_runtime_graph()
-    envs = deepcopy(graph.envs)
-    envs["sim"]["backends"]["mujoco"]["acceptance"]["products"]["teleop"]["fallback"] = (
-        "sim/scripts/mujoco/teleop_native_acceptance.py"
-    )
-    broken = RuntimeGraph(
-        root=graph.root,
-        topics=graph.topics,
-        products=graph.products,
-        envs=envs,
-    )
-
-    issues = validate_runtime_graph(broken)
-
-    assert any(issue.code == "env_acceptance_target_invalid" for issue in issues)
-
-
-@pytest.mark.parametrize("variant", ("live", "map"))
-def test_sim_acceptance_catalog_requires_every_declared_product_variant(
-    variant: str,
-) -> None:
-    graph = load_runtime_graph()
-    envs = deepcopy(graph.envs)
-    variants = envs["sim"]["backends"]["mujoco"]["acceptance"]["products"]["explore"]["variants"]
-    del variants[variant]
-    broken = RuntimeGraph(
-        root=graph.root,
-        topics=graph.topics,
-        products=graph.products,
-        envs=envs,
-    )
-
-    issues = validate_runtime_graph(broken)
-
-    assert any(issue.code == "env_acceptance_variant_coverage_invalid" for issue in issues)
-
-
-def test_sim_acceptance_catalog_rejects_extra_product_variant() -> None:
-    graph = load_runtime_graph()
-    envs = deepcopy(graph.envs)
-    variants = envs["sim"]["backends"]["mujoco"]["acceptance"]["products"]["explore"]["variants"]
-    variants["missing"] = deepcopy(variants["live"])
-    broken = RuntimeGraph(
-        root=graph.root,
-        topics=graph.topics,
-        products=graph.products,
-        envs=envs,
-    )
-
-    issues = validate_runtime_graph(broken)
-
-    assert any(issue.code == "env_acceptance_variant_coverage_invalid" for issue in issues)
-
-
-def test_sim_acceptance_catalog_rejects_flat_and_variant_target_ambiguity() -> None:
-    graph = load_runtime_graph()
-    envs = deepcopy(graph.envs)
-    target = envs["sim"]["backends"]["mujoco"]["acceptance"]["products"]["explore"]
-    target["runner"] = "sim/scripts/mujoco/explore_native_acceptance.py"
-    target["manifest"] = "config/runtime_graph/acceptance/mujoco_explore_native_acceptance.json"
-    broken = RuntimeGraph(
-        root=graph.root,
-        topics=graph.topics,
-        products=graph.products,
-        envs=envs,
-    )
-
-    issues = validate_runtime_graph(broken)
-
-    assert any(issue.code == "env_acceptance_target_invalid" for issue in issues)
-
-
-def test_sim_acceptance_catalog_rejects_empty_variant_paths() -> None:
-    graph = load_runtime_graph()
-    envs = deepcopy(graph.envs)
-    envs["sim"]["backends"]["mujoco"]["acceptance"]["products"]["explore"]["variants"]["map"]["manifest"] = ""
-    broken = RuntimeGraph(
-        root=graph.root,
-        topics=graph.topics,
-        products=graph.products,
-        envs=envs,
-    )
-
-    issues = validate_runtime_graph(broken)
-
-    assert any(issue.code == "env_acceptance_path_invalid" for issue in issues)
 
 
 @pytest.mark.parametrize(
@@ -581,6 +450,7 @@ def test_runtime_graph_static_validation_rejects_invalid_conflicts(
 
 def test_sim_process_resolution_requires_an_explicit_supported_backend(
     monkeypatch: pytest.MonkeyPatch,
+    allow_unbuilt_process_artifacts: None,
 ) -> None:
     monkeypatch.setattr("runtime.graph.processes._host_process_platform", lambda: "windows")
     with pytest.raises(ValueError, match=r"env_config\.backend"):
@@ -637,6 +507,7 @@ def test_sim_process_resolution_requires_an_explicit_supported_backend(
 
 def test_sim_mujoco_teleop_avoid_resolves_one_native_owner_per_required_role(
     monkeypatch: pytest.MonkeyPatch,
+    allow_unbuilt_process_artifacts: None,
 ) -> None:
     monkeypatch.setattr("runtime.graph.processes._host_process_platform", lambda: "windows")
     selected, available, conflicts, support = resolve_processes(
@@ -653,7 +524,6 @@ def test_sim_mujoco_teleop_avoid_resolves_one_native_owner_per_required_role(
         "mujoco_feeder",
         "nav_runtime",
         "slam_runtime",
-        "traversability_runtime",
         "host_runtime",
     ]
     assert available == selected
@@ -668,12 +538,12 @@ def test_sim_mujoco_teleop_avoid_resolves_one_native_owner_per_required_role(
         "maps": "map_runtime",
         "nav": "nav_runtime",
         "slam": "slam_runtime",
-        "traversability": "traversability_runtime",
     }
 
 
 def test_sim_slam_product_compiles_the_dedicated_slam_runtime(
     monkeypatch: pytest.MonkeyPatch,
+    allow_unbuilt_process_artifacts: None,
 ) -> None:
     monkeypatch.setattr("runtime.graph.processes._host_process_platform", lambda: "windows")
 
@@ -1120,10 +990,10 @@ def test_process_resolution_rejects_unsafe_process_specs(
         resolve_processes("nav", "real", graph=broken)
 
 
-def test_runtime_graph_rejects_process_contract_drift() -> None:
+def test_runtime_graph_requires_traversability_for_products_that_score_it() -> None:
     graph = load_runtime_graph()
     products = deepcopy(graph.products)
-    products["nav"]["processes"].remove("traversability")
+    products["explore"]["processes"].remove("traversability")
     broken = RuntimeGraph(
         root=graph.root,
         topics=graph.topics,

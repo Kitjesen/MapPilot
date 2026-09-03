@@ -744,9 +744,12 @@ def _validate_product_semantics(
                 )
             )
 
-    local_planner = (
-        "local_planner_collision_and_traversability_scoring" in capabilities
-        or "operator_assisted_local_planner_control" in capabilities
+    local_planner = bool(
+        {
+            "local_planner_collision_scoring",
+            "local_planner_collision_and_traversability_scoring",
+            "operator_assisted_local_planner_control",
+        }.intersection(capabilities)
     )
     if local_planner:
         if native_nav.get("check_obstacle", control_mode != "teleop") is not True:
