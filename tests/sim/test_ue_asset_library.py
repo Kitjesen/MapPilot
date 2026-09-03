@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Contracts for the offline UE5.8 robot asset-library projection."""
 
 from __future__ import annotations
@@ -10,10 +9,9 @@ import struct
 from pathlib import Path
 
 import pytest
-
+from sim.catalog.importers.contracts import digest_document
 from sim.catalog.management import SimCatalog
 from sim.catalog.resolver import CatalogResolver
-from sim.catalog.importers.contracts import digest_document
 from sim.tools.assets.build_ue_asset_library import (
     DEFAULT_PACKAGE_REFERENCES,
     UEAssetLibraryError,
@@ -286,9 +284,7 @@ def test_robot_projection_is_revalidated_after_catalog_construction(
     tmp_path: Path,
 ) -> None:
     package_root = tmp_path / "sim" / "packages" / "robots" / "omni_cart"
-    model_root = tmp_path / "sim" / "packages" / "robots" / "omni_cart"
     shutil.copytree(REPO_ROOT / "sim" / "packages" / "robots" / "omni_cart", package_root)
-    shutil.copytree(REPO_ROOT / "sim" / "packages" / "robots" / "omni_cart", model_root)
     catalog = SimCatalog(CatalogResolver(tmp_path, (package_root,)))
 
     projection_path = package_root / "visual" / "robot.visual-projection.json"

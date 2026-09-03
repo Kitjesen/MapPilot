@@ -25,7 +25,6 @@ OWNED_ROOTS = (
     "distribution",
     "tools",
     "scripts",
-    "tests",
 )
 
 RETIRED_ROOTS = (

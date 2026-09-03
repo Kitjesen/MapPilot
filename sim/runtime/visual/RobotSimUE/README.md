@@ -54,7 +54,7 @@ presentation/input adapter and not an algorithm sensor interface.
 
 The current camera/Session/Visual/UI/Sensors worktree was rebuilt on 2026-08-12 with
 Unreal Engine 5.8.1, Visual Studio 2022 17.14/MSVC 14.44, and Windows SDK
-10.0.26100.0. The camera Automation report passed 11/11 and the full `LingTuSim`
+10.0.26100.0 against MuJoCo 3.10.0. The camera Automation report passed 11/11 and the full `LingTuSim`
 report passed 86/86. This is current Editor build and contract evidence, not a claim
 that cooking, packaging, or the end-to-end playable run is complete.
 

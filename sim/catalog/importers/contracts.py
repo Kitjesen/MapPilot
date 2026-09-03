@@ -405,7 +405,7 @@ def validate_provenance(
     source_root: Path,
     context: str = "provenance",
 ) -> dict[str, Any]:
-    """Require explicit source ownership and a content-bound license file."""
+    """Require explicit source ownership and a non-empty license file."""
 
     provenance = require_mapping(value, context)
     strict_keys(

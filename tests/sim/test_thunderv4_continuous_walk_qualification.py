@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -9,18 +8,17 @@ from typing import Any
 
 import numpy as np
 import pytest
-
 from sim.scripts.mujoco import continuous_walk as qualification_module
 from sim.scripts.mujoco.continuous_walk import run_qualification
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-V101_ROBOT_XML = (
+CANONICAL_ROBOT_XML = (
     REPO_ROOT
     / "sim"
     / "packages"
     / "robots"
-    / "thunderv4"
-    / "1.0.1"
+    / "doso"
+    / "thunder_v4"
     / "mjcf"
     / "thunderv4.xml"
 )
@@ -102,7 +100,7 @@ def test_thunderv4_headless_qualification_is_repeatable_for_a_fixed_seed() -> No
     )
 
 
-def test_explicit_v101_mjcf_is_loaded_and_cross_bound_in_the_report(
+def test_explicit_robot_mjcf_is_loaded_and_cross_bound_in_the_report(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pytest.importorskip("mujoco")
@@ -117,10 +115,10 @@ def test_explicit_v101_mjcf_is_loaded_and_cross_bound_in_the_report(
 
     monkeypatch.setattr(qualification_module, "build_engine", recording_build_engine)
 
-    report = run_qualification(seed=7, robot_xml=V101_ROBOT_XML)
+    report = run_qualification(seed=7, robot_xml=CANONICAL_ROBOT_XML)
 
     assert observed["world"] == qualification_module.WORLD_XML
-    assert observed["robot_xml"] == V101_ROBOT_XML
+    assert observed["robot_xml"] == CANONICAL_ROBOT_XML
     assert observed["policy_path"] == qualification_module.POLICY
     assert report["artifacts"] == {
         "world_mjcf": "sim/packages/worlds/open_field/physics/open_field.xml",
@@ -185,8 +183,8 @@ def test_robot_xml_cli_forwards_explicit_path_and_preserves_the_legacy_default(
 
     monkeypatch.setattr(qualification_module, "run_qualification", fake_run_qualification)
 
-    assert qualification_module.main(["--robot-xml", V101_ROBOT_XML.as_posix()]) == 0
-    assert calls[-1]["robot_xml"] == V101_ROBOT_XML
+    assert qualification_module.main(["--robot-xml", CANONICAL_ROBOT_XML.as_posix()]) == 0
+    assert calls[-1]["robot_xml"] == CANONICAL_ROBOT_XML
     assert qualification_module.main([]) == 0
     assert calls[-1]["robot_xml"] == qualification_module.ROBOT_XML
     capsys.readouterr()

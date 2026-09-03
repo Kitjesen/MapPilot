@@ -17,19 +17,6 @@ class UnrealPreviewError(ValueError):
     """Raised when a preview recipe cannot be built without guessing."""
 
 
-def _robot_asset_root(robot_package: Path) -> Path:
-    """Return the repository asset root for a catalog RobotPackage directory."""
-
-    robot_package = Path(robot_package).resolve()
-    if (
-        len(robot_package.parents) >= 4
-        and robot_package.parents[1].name == "packages"
-        and robot_package.parents[2].name == "sim"
-    ):
-        return robot_package.parents[3]
-    return robot_package
-
-
 def _vector(value: Any, size: int, context: str) -> tuple[float, ...]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or len(value) != size:
         raise UnrealPreviewError(f"{context} must contain exactly {size} values")
@@ -214,7 +201,7 @@ def stage_unreal_preview_recipe(
 
     robot_package = Path(robot_package).resolve()
     manifest = compile_robot_visual_manifest(robot_package).to_dict()
-    mjcf_path = _robot_asset_root(robot_package) / str(manifest["mjcf"])
+    mjcf_path = robot_package / str(manifest["mjcf"])
     try:
         asset_index = json.loads(Path(asset_index_path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:

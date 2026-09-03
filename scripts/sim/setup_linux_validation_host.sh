@@ -199,7 +199,10 @@ run_verification() {
 
   local focused_tests=()
   if [[ "${RUN_MUJOCO}" == "1" ]]; then
-    focused_tests+=(tests/runtime/test_sim_runtime_adapters.py)
+    focused_tests+=(
+      tests/sim/test_imu_dds_adapter.py
+      tests/sim/test_truth_odom_dds_adapter.py
+    )
   fi
   local existing_tests=()
   local test_path

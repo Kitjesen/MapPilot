@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Static and pure-Python contracts for the FactoryPark_HF UE builder."""
 
@@ -39,6 +38,20 @@ BLENDER_MANIFEST_PATH = (
     / "blender-v2"
     / "authoring.manifest.json"
 )
+
+
+def _has_current_blender_authoring() -> bool:
+    if not BLENDER_MANIFEST_PATH.is_file():
+        return False
+    try:
+        manifest = json.loads(BLENDER_MANIFEST_PATH.read_text(encoding="utf-8"))
+        source_path = Path(manifest["source_layout"]["path"])
+        if not source_path.is_absolute():
+            source_path = REPO_ROOT / source_path
+        source_path.resolve(strict=True).relative_to(REPO_ROOT.resolve())
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+    return source_path.is_file()
 
 
 def _load_builder_module():
@@ -98,6 +111,10 @@ def test_factory_park_expected_pbr_count_is_derived_from_current_placements() ->
     assert builder._expected_native_pbr_instance_count(authoring) == 3
 
 
+@pytest.mark.skipif(
+    not BLENDER_MANIFEST_PATH.is_file(),
+    reason="requires generated FactoryPark Blender authoring artifacts",
+)
 def test_factory_park_visual_only_plan_batches_primitive_dressing_without_collision() -> None:
     builder = _load_builder_module()
     manifest = json.loads(BLENDER_MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -613,6 +630,10 @@ def test_factory_park_tank_acceptance_remediation_is_ue_only_and_deterministic()
     }
 
 
+@pytest.mark.skipif(
+    not _has_current_blender_authoring(),
+    reason="requires generated FactoryPark Blender authoring artifacts",
+)
 def test_factory_park_drainage_reeds_remain_visible_but_do_not_cast_ue_shadows() -> None:
     builder = _load_builder_module()
     world = builder._validate_world_recipe()
@@ -650,6 +671,10 @@ def test_factory_park_drainage_reeds_remain_visible_but_do_not_cast_ue_shadows()
     assert "visible_in_ray_tracing" in runner
 
 
+@pytest.mark.skipif(
+    not _has_current_blender_authoring(),
+    reason="requires generated FactoryPark Blender authoring artifacts",
+)
 def test_factory_park_builder_fail_closed_validates_frozen_blender_v2_manifest() -> None:
     builder = _load_builder_module()
     world = builder._validate_world_recipe()

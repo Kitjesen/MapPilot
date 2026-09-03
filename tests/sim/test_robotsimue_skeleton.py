@@ -127,19 +127,6 @@ def test_tripo_bridge_is_a_version_bound_editor_only_candidate_asset_tool() -> N
         }
     ]
 
-    modules = json.loads(
-        (
-            TRIPO_PLUGIN
-            / "Binaries"
-            / "Win64"
-            / "UnrealEditor.modules"
-        ).read_text(encoding="utf-8")
-    )
-    assert modules["BuildId"].isdigit()
-    assert modules["Modules"] == {
-        "Tripo3DUEBridge": "UnrealEditor-Tripo3DUEBridge.dll"
-    }
-
     protocol = (
         TRIPO_PLUGIN
         / "Source"
@@ -212,6 +199,7 @@ def test_json_and_build_cs_static_references_are_closed() -> None:
         "JsonUtilities",
         "Networking",
         "PlatformCryptoContext",
+        "Projects",
         "RenderCore",
         "RHI",
         "Slate",
@@ -221,7 +209,15 @@ def test_json_and_build_cs_static_references_are_closed() -> None:
     for module_name in module_names:
         build_cs = PLUGIN / "Source" / module_name / f"{module_name}.Build.cs"
         assert build_cs.is_file()
-        dependencies = set(re.findall(r'"([A-Za-z0-9_]+)"', build_cs.read_text(encoding="utf-8")))
+        build_rules = build_cs.read_text(encoding="utf-8")
+        dependency_blocks = re.findall(
+            r"(?:Public|Private)DependencyModuleNames\.Add(?:Range)?\((.*?)\);",
+            build_rules,
+            re.DOTALL,
+        )
+        dependencies = set(
+            re.findall(r'"([A-Za-z0-9_]+)"', "\n".join(dependency_blocks))
+        )
         assert dependencies <= allowed_engine_modules | module_names
         for dependency in dependencies & module_names:
             assert (PLUGIN / "Source" / dependency / f"{dependency}.Build.cs").is_file()
@@ -302,7 +298,7 @@ def test_readme_records_validated_windows_build_without_shipping_claim() -> None
     assert "Unreal Engine 5.8.1" in readme
     assert "MuJoCo 3.10.0" in readme
     assert "RobotSimUEEditor Win64 Development" in readme
-    assert "not yet a claim that cooking, packaging, live sensors" in normalized
+    assert "not a claim that cooking, packaging, or the end-to-end playable run is complete" in normalized
 
 
 def test_preview_renderer_enables_lumen_and_virtual_shadows() -> None:

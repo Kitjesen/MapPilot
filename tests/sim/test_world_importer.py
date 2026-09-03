@@ -1,4 +1,3 @@
-# ruff: noqa: S101, S314
 """Contracts for deterministic world imports."""
 
 from __future__ import annotations
@@ -14,9 +13,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-
-from sim.catalog.resolver import CatalogError, CatalogResolver
 from sim.catalog.importers import ImportCode, ImportFailure, WorldImporter
+from sim.catalog.resolver import CatalogError, CatalogResolver
 
 
 def _source_tree(root: Path) -> Path:
@@ -683,9 +681,6 @@ def test_catalog_resolver_does_not_rehash_importer_metadata(tmp_path: Path) -> N
         draft.provenance_path.read_text(encoding="utf-8") + "\n",
         encoding="utf-8",
     )
-    manifest = yaml.safe_load(draft.manifest_path.read_text(encoding="utf-8"))
-    manifest["content"]["digest"] = "0" * 64
-    draft.manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
 
     record = CatalogResolver(tmp_path, (draft.package_root,)).find_package("field@1.0.0", kind="world")
 

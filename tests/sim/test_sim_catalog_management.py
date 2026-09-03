@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """S3 contract tests for simulation catalog management queries."""
 
 from __future__ import annotations
@@ -125,7 +124,7 @@ def _qualification(root: Path) -> Path:
                     {
                         "id": "schema",
                         "status": "passed",
-                        "evidence": [{"path": "evidence/schema.json", "sha256": "3" * 64}],
+                        "evidence": [{"path": "evidence/schema.json"}],
                     }
                 ],
             },
@@ -152,7 +151,7 @@ def test_qualification_record_schema_is_strict_and_accepts_frozen_shape() -> Non
             {
                 "id": "contract",
                 "status": "passed",
-                "evidence": [{"path": "evidence/run.json", "sha256": "3" * 64}],
+                "evidence": [{"path": "evidence/run.json"}],
             }
         ],
     }
@@ -259,7 +258,7 @@ def test_package_artifact_content_is_not_fingerprinted_by_qualification(tmp_path
 
 def test_external_runtime_artifact_content_is_not_fingerprinted_by_qualification(tmp_path: Path) -> None:
     manifest = _world_manifest(tmp_path / "sim" / "packages" / "worlds" / "field")
-    external_model = tmp_path / "sim" / "packages" / "worlds" / "field" / "world.xml"
+    external_model = tmp_path / "sim" / "worlds" / "field" / "world.xml"
     external_model.parent.mkdir(parents=True, exist_ok=True)
     external_model.write_bytes((manifest.parent / "world.xml").read_bytes())
     manifest.write_text(

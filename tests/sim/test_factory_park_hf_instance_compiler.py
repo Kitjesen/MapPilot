@@ -1,10 +1,10 @@
-# ruff: noqa: S101
 
 """Contracts for compiling FactoryPark visual dressing into UE HISM batches."""
 
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -34,6 +34,28 @@ BATCH_ACTOR_HEADER = (
     / "LingTuSimVisualInstanceBatchActor.h"
 )
 BATCH_ACTOR_SOURCE = BATCH_ACTOR_HEADER.parents[1] / "Private" / "LingTuSimVisualInstanceBatchActor.cpp"
+BLENDER_MANIFEST_PATH = (
+    REPO_ROOT
+    / "build"
+    / "factory-park-hf"
+    / "blender-v2"
+    / "authoring.manifest.json"
+)
+
+
+def _has_current_blender_authoring() -> bool:
+    if not BLENDER_MANIFEST_PATH.is_file():
+        return False
+    try:
+        manifest = json.loads(BLENDER_MANIFEST_PATH.read_text(encoding="utf-8"))
+        source_layout = manifest["source_layout"]["path"]
+        source_path = Path(source_layout)
+        if not source_path.is_absolute():
+            source_path = REPO_ROOT / source_path
+        source_path.resolve(strict=True).relative_to(REPO_ROOT.resolve())
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+    return source_path.is_file()
 
 
 def _load_compiler_module():
@@ -47,6 +69,10 @@ def _load_compiler_module():
     return module
 
 
+@pytest.mark.skipif(
+    not _has_current_blender_authoring(),
+    reason="requires generated FactoryPark Blender authoring artifacts",
+)
 def test_factory_park_instance_contract_reduces_actor_count_without_changing_identity() -> None:
     compiler = _load_compiler_module()
     contract = compiler._compile_projection_contract_from_sources()

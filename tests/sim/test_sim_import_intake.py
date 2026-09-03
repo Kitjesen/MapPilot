@@ -1,4 +1,3 @@
-# ruff: noqa: S101, S603, S607
 """Contracts for fail-closed simulation source intake."""
 
 from __future__ import annotations
@@ -15,7 +14,6 @@ from pathlib import Path
 from typing import IO
 
 import pytest
-
 from sim.catalog.importers import contracts as contracts_module
 from sim.catalog.importers import intake as intake_module
 from sim.catalog.importers.contracts import ImportFailure, safe_relative_path, validate_provenance
@@ -634,7 +632,7 @@ def test_intake_enforces_file_and_total_size_limits(tmp_path: Path) -> None:
     assert not (tmp_path / "intake").exists()
 
 
-def test_provenance_requires_real_content_bound_license(tmp_path: Path) -> None:
+def test_provenance_requires_real_license_file(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     request = {
@@ -652,6 +650,6 @@ def test_provenance_requires_real_content_bound_license(tmp_path: Path) -> None:
     normalized = validate_provenance(request, source_root=source)
 
     assert normalized["license"] == "LicenseRef-Fixture"
-    assert len(normalized["license_sha256"]) == 64
+    assert normalized["license_file"] == "LICENSE.txt"
     assert normalized["third_party_assets"] == []
     assert json.loads(json.dumps(normalized, sort_keys=True)) == normalized

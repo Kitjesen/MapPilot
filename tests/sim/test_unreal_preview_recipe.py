@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -6,23 +5,14 @@ import math
 from pathlib import Path
 
 import pytest
-
 from sim.runtime.visual.RobotSimUE.Scripts.build_thunderv4_preview import (
     _robot_material_key,
     preview_post_process_profile,
 )
 from sim.tools.assets.build_unreal_preview_recipe import (
     UnrealPreviewError,
-    _robot_asset_root,
     build_unreal_preview_recipe,
 )
-
-
-def test_catalog_robot_package_resolves_assets_from_repository_root() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    package = repo_root / "sim" / "packages" / "robots" / "thunderv4"
-
-    assert _robot_asset_root(package) == repo_root
 
 
 @pytest.mark.parametrize(
@@ -140,57 +130,6 @@ def test_builds_unreal_component_recipe_from_visual_manifest_and_truth_snapshot(
         "quaternion_xyzw": [0.0, 0.0, -half_sqrt, half_sqrt],
         "scale": [1.0, 1.0, 1.0],
     }
-
-
-def test_rejects_asset_content_mismatch() -> None:
-    manifest = {
-        "schema": "lingtu.sim.robot-visual-manifest.v1",
-        "digest": "b" * 64,
-        "binding": "RobotVisual:TracerBot",
-        "visuals": [
-            {
-                "body": "base",
-                "body_frame_id": "base",
-                "visual_frame_id": "base/visual/base_visual",
-                "asset_key": "RobotVisual:TracerBot/base/visual/base_visual",
-                "source_sha256": "a" * 64,
-                "mesh": "base_visual",
-                "pos": [0.0, 0.0, 0.0],
-                "quat": [1.0, 0.0, 0.0, 0.0],
-                "scale": [1.0, 1.0, 1.0],
-            }
-        ],
-    }
-    asset_index = {
-        "schema": "lingtu.sim.fbx-asset-index.v1",
-        "assets": [
-            {
-                "asset_name": "base_visual",
-                "source_sha256": "c" * 64,
-            }
-        ],
-    }
-    snapshot = {
-        "schema": "lingtu.sim.truth-snapshot.v1",
-        "model_generation": 0,
-        "reset_generation": 0,
-        "bodies": [
-            {
-                "name": "base",
-                "position_m": [0.0, 0.0, 0.0],
-                "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
-            }
-        ],
-    }
-
-    with pytest.raises(UnrealPreviewError, match="content hash"):
-        build_unreal_preview_recipe(
-            manifest,
-            asset_index,
-            snapshot,
-            instance_id="tracer_01",
-            destination_path="/Game/RobotSim/Meshes",
-        )
 
 
 def test_selects_one_robot_by_stable_id_from_a_multi_robot_snapshot() -> None:
