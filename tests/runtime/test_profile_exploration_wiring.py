@@ -8,6 +8,8 @@ from lingtu.assembly.products import (
     resolve_product_host_runtime,
 )
 
+pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
+
 
 def _wire_set(graph):
     return {wire.as_snapshot() for wire in graph.explicit_wires}
@@ -48,7 +50,6 @@ def test_explore_product_delegates_frontier_execution_to_native_navd():
         robot="unitree/go2",
     )
     graph = _product_graph("explore")
-    wires = _wire_set(graph)
     modules = set(graph.module_names)
 
     assert config["exploration_backend"] == "none"
