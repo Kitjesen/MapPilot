@@ -69,8 +69,8 @@ def test_mapd_owns_exact_stage_restore_verify_and_stale_rollback() -> None:
     )
     assert "request.target.map_id, false, *map_lock, expected_active" in activation
     assert "ValidateArtifacts" not in activation
-    assert 'Reject(request, "target_identity_mismatch")' in activation
-    assert 'Reject(request, "previous_identity_mismatch")' in activation
+    assert '"target_identity_mismatch:"' in activation
+    assert '"previous_identity_mismatch:"' in activation
     assert 'Reject(request, "stale_rollback")' in activation
     assert 'Reject(request, "active_identity_mismatch")' in activation
 
@@ -102,7 +102,7 @@ def test_native_mapctl_is_built_for_map_activation() -> None:
 def test_native_mapctl_is_required_in_field_releases() -> None:
     package_release = _read("scripts/deploy/package_native_release.sh")
     install_release = _read("scripts/deploy/install_native_release.sh")
-    artifact = "build/maps/lingtu-mapctl"
+    artifact = "bin/lingtu-mapctl"
     assert artifact in package_release
     assert f'${{PACKAGE_DIR}}/{artifact}' in install_release
     mapd_unit = _read("scripts/deploy/thunder/lt-maps.service")
