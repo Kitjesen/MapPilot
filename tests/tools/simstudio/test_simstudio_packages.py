@@ -304,6 +304,31 @@ def test_failed_import_persists_structured_diagnostics(tmp_path: Path) -> None:
     assert service.get_import_job(job["id"])["payload"]["diagnostics"] == job["payload"]["diagnostics"]
 
 
+def test_independent_store_roots_do_not_share_import_drafts(tmp_path: Path) -> None:
+    """Keep same-named stores isolated while preserving per-store drafts."""
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+
+    first = _service(first_root)
+    first_job = first.create_import_job(
+        kind="robot",
+        request=_robot_request(),
+        source_entry=_robot_source(first),
+    )
+    second = _service(second_root)
+    second_job = second.create_import_job(
+        kind="robot",
+        request=_robot_request(),
+        source_entry=_robot_source(second),
+    )
+
+    assert first_job["status"] == "READY"
+    assert second_job["status"] == "READY"
+    assert first.import_root != second.import_root
+
+
 def test_ready_promote_idempotency_and_catalog_refresh(tmp_path: Path) -> None:
     """Promote once, replay safely, and refresh catalog queries."""
     service = _service(tmp_path)

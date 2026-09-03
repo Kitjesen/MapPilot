@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import os
 import tempfile
 from collections.abc import Mapping
@@ -138,7 +139,14 @@ class PackageImportService:
         # staging root short is important on Windows, where a managed Studio
         # store may itself live below a long pytest/workspace path.
         store_name = store.root.name or "store"
-        self.import_root = (Path(tempfile.gettempdir()) / "lingtu-simstudio" / store_name).resolve()
+        store_scope = store.root.parent.name or "root"
+        store_key = hashlib.sha256(str(store.root.resolve()).encode("utf-8")).hexdigest()[:12]
+        self.import_root = (
+            Path(tempfile.gettempdir())
+            / "lingtu-simstudio"
+            / f"{store_scope}-{store_key}"
+            / store_name
+        ).resolve()
         self.import_root.mkdir(parents=True, exist_ok=True)
         self.intake = intake or SourceIntake()
 
