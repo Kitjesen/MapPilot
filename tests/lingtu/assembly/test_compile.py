@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -41,7 +42,14 @@ def resolve_product_host_runtime(product: str, env: str, **kwargs):
 
 def compile_run_plan(product: str, env: str, **kwargs):
     kwargs.setdefault("robot", _robot_for_env(env))
-    return _compile_run_plan(product, env, **kwargs)
+    if env != "sim" or "graph" in kwargs:
+        return _compile_run_plan(product, env, **kwargs)
+    with patch.object(
+        ProcessArtifact,
+        "from_repository_path",
+        classmethod(lambda cls, root, path: cls(str(path))),
+    ):
+        return _compile_run_plan(product, env, **kwargs)
 
 
 def test_compile_resolves_env_implementation_once(monkeypatch) -> None:
