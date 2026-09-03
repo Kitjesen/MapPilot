@@ -20,6 +20,8 @@ from runtime.graph import (
     ProcessSpec,
 )
 
+pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
+
 
 class FakeRunner:
     def __init__(self) -> None:
