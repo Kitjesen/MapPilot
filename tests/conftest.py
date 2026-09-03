@@ -42,6 +42,19 @@ class _CompatEventLoopPolicy(asyncio.DefaultEventLoopPolicy):
 asyncio.set_event_loop_policy(_CompatEventLoopPolicy())
 
 
+@pytest.fixture
+def allow_unbuilt_process_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let contract tests compile RunPlans without native build outputs."""
+
+    from runtime.graph.processes import ProcessArtifact
+
+    monkeypatch.setattr(
+        ProcessArtifact,
+        "from_repository_path",
+        classmethod(lambda cls, root, path: cls(str(path))),
+    )
+
+
 def _make_windows_basetemp(
     *,
     parent: Path | None = None,

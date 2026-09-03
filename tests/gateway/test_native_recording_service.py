@@ -23,12 +23,14 @@ from lingtu.product_lock import ProductControlLock
 from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
 
 PRODUCT_SESSION_ID = "1" * 32
+pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
 
 
 @lru_cache(maxsize=1)
 def _inspection_plan() -> RunPlan:
     base = ProductControl(
         env="sim",
+        robot="doso/thunder_v4",
         env_config={"backend": "mujoco"},
         process_env={},
     )._resolve("map")

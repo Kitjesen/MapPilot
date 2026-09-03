@@ -19,6 +19,7 @@ from typing import Any, Mapping
 
 from lingtu.control import ProductControl
 from lingtu.product_lock import ProductControlBusy, ProductControlLock
+from lingtu.run_plan import RunPlan
 from lingtu.switch_contracts import is_product_session_id
 
 _ACTIVE_STATES = frozenset({"preparing", "recording", "stopping"})
@@ -121,17 +122,20 @@ class RecordingSnapshot:
 def _exact_inspection_recording_identity(
     environment: Mapping[str, str], state_dir: Path
 ) -> tuple[str, str]:
-    env = str(environment.get("LINGTU_ENV") or "").strip()
-    if env not in {"real", "sim"}:
-        raise RuntimeError("LINGTU_ENV must be real or sim")
+    run_plan_path = Path(str(environment.get("LINGTU_RUN_PLAN") or "").strip()).expanduser()
+    if not run_plan_path.is_absolute():
+        raise RuntimeError("LINGTU_RUN_PLAN must be an absolute path")
+    declared_plan = RunPlan.load(run_plan_path)
     expected_session_id = str(environment.get("LINGTU_PRODUCT_SESSION_ID") or "").strip()
     if not is_product_session_id(expected_session_id):
         raise RuntimeError("Host Product session is invalid")
-    plan, _plan_path, committed_session_id = ProductControl(
-        env=env,
+    plan, committed_path, committed_session_id = ProductControl(
+        env=declared_plan.env,
         env_config={},
         process_env=environment,
     )._current_plan_and_path(state_dir)
+    if committed_path.resolve() != run_plan_path.resolve():
+        raise RuntimeError("Host RunPlan does not match committed current")
     if plan.product != "inspection":
         raise RuntimeError(
             "evidence recording requires the committed inspection Product"
