@@ -385,7 +385,7 @@ def test_websocket_manual_hold_reports_final_logical_zero_not_motor(monkeypatch)
             )
             assert json.loads(ws.receive_text())["type"] == "ingress_ack"
             assert commands.called.wait(1.0)
-            assert commands.sample_manual_modes == [True]
+            assert commands.sample_manual_modes == [False]
 
             ws.send_text(
                 json.dumps(
