@@ -12,7 +12,7 @@ def test_fastlio_save_has_no_optimization_facade() -> None:
 
     assert "builder_->saveMap(pcd.string())" in source
     assert "writeTrajectory(pcd.parent_path(), pose_history_)" in source
-    assert "writePatchBundle(pcd.parent_path(), patches)" in source
+    assert "writePatchBundle(pcd.parent_path(), patches, patch_history_dropped_count_)" in source
     assert "map.raw.pcd" not in source
     assert "map_optimization" not in source
     assert "loop_closure" not in source
