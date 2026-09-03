@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 from __future__ import annotations
 
 import io
@@ -10,7 +9,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-
 from sim.runtime.coordinator.run_allocation import RunAllocation
 from sim.runtime.sensors import SensorSampleStamp, TruthOdometrySample
 from sim.runtime.sensors.dds_adapter import (
@@ -19,6 +17,8 @@ from sim.runtime.sensors.dds_adapter import (
 )
 from sim.runtime.sensors.factory import TruthOdometryEndpointFactory
 from sim.runtime.sensors.runtime import SensorRuntime
+
+from tests.sim.fixtures.sensor_plans import thunderv4_unreal_sensor_runtime
 
 pytestmark = [pytest.mark.sim]
 
@@ -277,9 +277,7 @@ def test_truth_odometry_adapter_does_not_import_legacy_simulation_layers() -> No
 def test_truth_odometry_endpoint_factory_matches_only_the_canonical_stream(
     tmp_path: Path,
 ) -> None:
-    plan = SensorRuntime.from_path(
-        Path("build/session-bundles/thunderv4-unreal/sensor.plan.json")
-    )
+    plan = thunderv4_unreal_sensor_runtime()
     allocation = RunAllocation(
         run_id="truth-endpoint",
         run_dir=tmp_path,
@@ -324,7 +322,7 @@ def test_truth_odometry_cyclonedds_process_loopback() -> None:
     if not publisher.is_file():
         pytest.skip("truth odometry publisher binary is unavailable beside loopback test")
 
-    completed = subprocess.run(  # noqa: S603 - locally built fixed test executable
+    completed = subprocess.run(
         [str(test_binary), str(publisher)],
         check=False,
         capture_output=True,

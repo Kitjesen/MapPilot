@@ -1,13 +1,9 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
 import pytest
-
 from sim.runtime.sensors import (
     LivoxPointSample,
     Mid360FrameSample,
@@ -22,8 +18,14 @@ from sim.runtime.sensors.session import (
     SessionSensorRuntime,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SENSOR_PLAN = REPO_ROOT / "build" / "session-bundles" / "thunderv4-unreal" / "sensor.plan.json"
+from tests.sim.fixtures.sensor_plans import (
+    thunderv4_unreal_sensor_plan,
+    thunderv4_unreal_sensor_runtime,
+)
+
+
+def _plan() -> SensorRuntime:
+    return thunderv4_unreal_sensor_runtime()
 
 
 class RecordingSink:
@@ -73,7 +75,7 @@ def _snapshot(
 
 
 def test_session_sensor_runtime_only_schedules_bound_streams() -> None:
-    plan = SensorRuntime.from_path(SENSOR_PLAN)
+    plan = _plan()
     sink = RecordingSink()
 
     def factory(stream: Any, allocation: Any) -> SensorEndpoint | None:
@@ -108,7 +110,7 @@ def test_session_sensor_runtime_only_schedules_bound_streams() -> None:
 
 
 def test_reset_generation_restarts_bound_stream_sequence() -> None:
-    plan = SensorRuntime.from_path(SENSOR_PLAN)
+    plan = _plan()
     sink = RecordingSink()
 
     def factory(stream: Any, allocation: Any) -> SensorEndpoint | None:
@@ -136,7 +138,7 @@ def test_reset_generation_restarts_bound_stream_sequence() -> None:
 
 
 def test_session_runtime_exposes_generation_bound_nonzero_publication_evidence() -> None:
-    plan = SensorRuntime.from_path(SENSOR_PLAN)
+    plan = _plan()
     sink = RecordingSink()
 
     def factory(stream: Any, allocation: Any) -> SensorEndpoint | None:
@@ -177,7 +179,7 @@ def test_session_runtime_exposes_generation_bound_nonzero_publication_evidence()
 
 
 def test_session_runtime_preserves_mid360_fidelity_limitations_in_evidence() -> None:
-    plan = SensorRuntime.from_path(SENSOR_PLAN)
+    plan = _plan()
     sink = RecordingSink()
 
     def factory(stream: Any, allocation: Any) -> SensorEndpoint | None:
@@ -225,7 +227,7 @@ def test_session_runtime_preserves_mid360_fidelity_limitations_in_evidence() -> 
 
 
 def test_mid360_failure_before_first_frame_still_exposes_failed_evidence() -> None:
-    plan = SensorRuntime.from_path(SENSOR_PLAN)
+    plan = _plan()
     sink = RecordingSink()
 
     def factory(stream: Any, allocation: Any) -> SensorEndpoint | None:
@@ -275,7 +277,7 @@ def test_mid360_failure_before_first_frame_still_exposes_failed_evidence() -> No
 
 
 def test_typed_stream_rejects_a_sample_from_another_reset_generation() -> None:
-    plan = SensorRuntime.from_path(SENSOR_PLAN)
+    plan = _plan()
     sink = RecordingSink()
 
     def factory(stream: Any, allocation: Any) -> SensorEndpoint | None:
@@ -323,7 +325,7 @@ def test_typed_stream_rejects_a_sample_from_another_reset_generation() -> None:
 
 
 def test_prepare_failure_closes_every_started_endpoint() -> None:
-    plan = SensorRuntime.from_path(SENSOR_PLAN)
+    plan = _plan()
     first = RecordingSink()
     failing = RecordingSink(fail_start=True)
 
@@ -354,7 +356,7 @@ def test_prepare_failure_closes_every_started_endpoint() -> None:
 
 
 def test_snapshot_publish_failure_is_fail_closed() -> None:
-    plan = SensorRuntime.from_path(SENSOR_PLAN)
+    plan = _plan()
 
     class FailingSink(RecordingSink):
         def publish(self, sample: Any) -> None:
@@ -386,7 +388,7 @@ def test_snapshot_publish_failure_is_fail_closed() -> None:
 def test_stream_failure_survives_secondary_close_failure_and_closes_all_endpoints(
     failure_stage: str,
 ) -> None:
-    plan = SensorRuntime.from_path(SENSOR_PLAN)
+    plan = _plan()
     stream_error = RuntimeError(f"{failure_stage} exploded")
     close_error = RuntimeError("cleanup endpoint exploded")
 
@@ -458,7 +460,7 @@ def test_stream_failure_survives_secondary_close_failure_and_closes_all_endpoint
 def test_prepare_failure_survives_secondary_close_failure(
     failure_stage: str,
 ) -> None:
-    plan = SensorRuntime.from_path(SENSOR_PLAN)
+    plan = _plan()
     primary_error = RuntimeError(f"{failure_stage} exploded")
     close_error = RuntimeError("earlier endpoint cleanup exploded")
 
@@ -519,7 +521,7 @@ def test_prepare_failure_survives_secondary_close_failure(
         assert target_sink.started == 1
         assert target_sink.closed == 1
 def test_sensor_runtime_parses_explicit_mid360_raycast_frame() -> None:
-    document = json.loads(SENSOR_PLAN.read_text(encoding="utf-8"))
+    document = thunderv4_unreal_sensor_plan()
 
     runtime = SensorRuntime.from_plan(document)
 
@@ -528,7 +530,7 @@ def test_sensor_runtime_parses_explicit_mid360_raycast_frame() -> None:
 
 
 def test_sensor_runtime_requires_raycast_frame_only_for_mid360() -> None:
-    document = json.loads(SENSOR_PLAN.read_text(encoding="utf-8"))
+    document = thunderv4_unreal_sensor_plan()
     document["streams"]["mid360"][0].pop("raycast_frame_stable_id")
 
     with pytest.raises(
@@ -537,7 +539,7 @@ def test_sensor_runtime_requires_raycast_frame_only_for_mid360() -> None:
     ):
         SensorRuntime.from_plan(document)
 
-    document = json.loads(SENSOR_PLAN.read_text(encoding="utf-8"))
+    document = thunderv4_unreal_sensor_plan()
     document["streams"]["imu"][0]["raycast_frame_stable_id"] = (
         "thunder_01/lidar1_link_site"
     )

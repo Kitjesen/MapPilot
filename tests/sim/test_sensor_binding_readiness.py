@@ -1,15 +1,12 @@
 """Tests for per-stream Sensor Runtime qualification."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
-
 from sim.runtime.sensors import SensorRuntime
 from sim.runtime.sensors.readiness import (
     SensorReadiness,
@@ -17,17 +14,11 @@ from sim.runtime.sensors.readiness import (
     SensorStreamState,
 )
 
-SENSOR_PLAN = (
-    Path(__file__).resolve().parents[2]
-    / "build"
-    / "session-bundles"
-    / "thunderv4-unreal"
-    / "sensor.plan.json"
-)
+from tests.sim.fixtures.sensor_plans import thunderv4_unreal_sensor_plan
 
 
 def _sensor_plan() -> dict[str, Any]:
-    return cast(dict[str, Any], json.loads(SENSOR_PLAN.read_text(encoding="utf-8")))
+    return thunderv4_unreal_sensor_plan()
 
 
 def test_truth_odom_alone_does_not_make_required_sensor_facet_ready() -> None:
@@ -101,7 +92,7 @@ def test_active_stream_can_be_retracted_to_prepared_and_block_readiness() -> Non
 
 def test_active_requires_prepared_and_rejects_unknown_stream_source_and_generation() -> None:
     readiness = SensorReadiness.from_runtime(
-        SensorRuntime.from_path(SENSOR_PLAN),
+        SensorRuntime.from_plan(_sensor_plan()),
         required_stream_ids={"thunder_01.imu"},
         model_generation=3,
         reset_generation=5,
