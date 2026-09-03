@@ -1,7 +1,6 @@
-name: Release Models & Firmware
+name: Release Models & Runtime Assets
 
-# Manual trigger — publish trained models, maps, configs, firmware to GitHub Release
-# The "cloud update" feature in the mobile App pulls latest assets from here
+# Publish explicitly selected models and runtime assets to a GitHub Release.
 
 on:
   workflow_dispatch:
@@ -18,15 +17,15 @@ on:
       release_notes:
         description: 'Release notes (Markdown supported)'
         required: false
-        default: 'Model/firmware update package. Deployable to robot via MapPilot App "Cloud Update".'
+        default: 'Model and runtime asset update.'
         type: string
       models_path:
-        description: 'Models glob pattern (e.g. models/*.pt models/*.onnx)'
+        description: 'Model glob (for example sim/packages/controllers/doso/thunder_v4/locomotion/policy/*.onnx)'
         required: false
         default: ''
         type: string
       configs_path:
-        description: 'Config files glob pattern (e.g. configs/*.yaml)'
+        description: 'Config glob (for example config/robots/doso/thunder_v4/*.yaml)'
         required: false
         default: ''
         type: string
@@ -41,6 +40,9 @@ on:
       - 'models-*'
       - 'firmware-*'
       - 'release-*'
+
+permissions:
+  contents: write
 
 jobs:
   release:
@@ -72,13 +74,12 @@ jobs:
             done
           fi
 
-          # For tag-triggered releases, auto-collect common model/config files
+          # For tag-triggered releases, collect tracked model assets at any depth.
           if [ "${{ github.event_name }}" = "push" ]; then
-            # Collect model files with common extensions
-            find . -maxdepth 3 \( \
+            find . -path './research' -prune -o -type f \( \
               -name "*.pt" -o -name "*.pth" -o -name "*.onnx" \
               -o -name "*.tflite" -o -name "*.engine" \
-            \) -exec cp -v {} release_assets/ \; 2>/dev/null || true
+            \) -exec cp -v {} release_assets/ \;
           fi
 
           # List collected assets
@@ -88,6 +89,7 @@ jobs:
           # Check if any files were collected
           ASSET_COUNT=$(find release_assets/ -type f | wc -l)
           echo "asset_count=$ASSET_COUNT" >> "$GITHUB_OUTPUT"
+          test "$ASSET_COUNT" -gt 0
 
       - name: Determine tag name
         id: tag
@@ -95,36 +97,39 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "tag=${{ inputs.tag_name }}" >> "$GITHUB_OUTPUT"
             echo "name=${{ inputs.release_name }}" >> "$GITHUB_OUTPUT"
-            echo "notes=${{ inputs.release_notes }}" >> "$GITHUB_OUTPUT"
             echo "prerelease=${{ inputs.prerelease }}" >> "$GITHUB_OUTPUT"
           else
             TAG="${GITHUB_REF#refs/tags/}"
             echo "tag=$TAG" >> "$GITHUB_OUTPUT"
             echo "name=Release $TAG" >> "$GITHUB_OUTPUT"
-            echo "notes=Auto release — deployable via MapPilot App cloud update." >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Write release notes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_NOTES: ${{ inputs.release_notes }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            printf '%s\n' "$REQUESTED_NOTES" > release_notes.md
+          else
+            printf '%s\n' 'Automated model and runtime asset release.' > release_notes.md
+          fi
+          cat >> release_notes.md <<'EOF'
+
+          ---
+
+          Download the required asset and install it at the path declared by the
+          target robot's configuration. Activate it through ProductControl rather
+          than replacing an asset used by a running Product.
+          EOF
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.name }}
-          body: |
-            ${{ steps.tag.outputs.notes }}
-
-            ---
-
-            **Deploy to robot via MapPilot App:**
-            1. Open MapPilot App -> Settings -> Cloud Update
-            2. Tap "Check for Updates"
-            3. Select the file, tap the cloud button to download and deploy
-
-            **Manual deploy:**
-            ```bash
-            # Copy the file to the robot
-            scp <asset_file> sunrise@<robot_ip>:/home/sunrise/models/
-            ```
+          body_path: release_notes.md
           files: release_assets/*
           draft: false
           prerelease: ${{ steps.tag.outputs.prerelease }}

@@ -1,7 +1,13 @@
-# ruff: noqa: F405, I001
 """Focused tests split from the former monolithic offline semantic pipeline."""
 
-from tests.integration.semantic.offline_support import *
+import math
+import time
+
+import numpy as np
+import pytest
+
+from memory.scheduling.voi_scheduler import SchedulerAction, SchedulerState, VoIScheduler
+
 
 class TestVoIFullEpisode:
     """模拟完整 episode, 统计 VoI 决策分布。"""
@@ -104,13 +110,18 @@ class TestBeliefNetwork:
             "memory.knowledge.belief.network",
             reason="belief_network module not available",
         )
-        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         from memory.knowledge.belief.network import (
-            HAS_TORCH, build_object_vocabulary,
-            build_cooccurrence_matrix, build_safety_vector,
-            build_affordance_vectors, build_room_prior_vectors,
-            build_dangerous_mask, ROOM_TYPES, NUM_AFFORDANCES,
+            HAS_TORCH,
+            NUM_AFFORDANCES,
+            ROOM_TYPES,
+            build_affordance_vectors,
+            build_cooccurrence_matrix,
+            build_dangerous_mask,
+            build_object_vocabulary,
+            build_room_prior_vectors,
+            build_safety_vector,
         )
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.KG = IndustrialKnowledgeGraph
         self.torch_ok = HAS_TORCH
         self.build_vocab = build_object_vocabulary
@@ -190,9 +201,10 @@ class TestBeliefNetwork:
         """GCN forward pass should produce valid output shape and range."""
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
-        from memory.knowledge.belief.network import KGBeliefGCN, NUM_AFFORDANCES
-        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         import torch
+
+        from memory.knowledge.belief.network import NUM_AFFORDANCES, KGBeliefGCN
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         kg = IndustrialKnowledgeGraph()
         vocab, _ = self.build_vocab(kg)
         C = len(vocab)
@@ -210,9 +222,10 @@ class TestBeliefNetwork:
         """Batched forward pass should handle variable-size graphs (loop over batch)."""
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
-        from memory.knowledge.belief.network import KGBeliefGCN, NUM_AFFORDANCES
-        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         import torch
+
+        from memory.knowledge.belief.network import NUM_AFFORDANCES, KGBeliefGCN
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         kg = IndustrialKnowledgeGraph()
         vocab, _ = self.build_vocab(kg)
         C = len(vocab)
@@ -247,12 +260,15 @@ class TestKGDataGeneration:
     """KG 合成训练数据测试。"""
 
     def setup_method(self):
-        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         from memory.knowledge.belief.network import (
-            HAS_TORCH, build_object_vocabulary,
-            build_cooccurrence_matrix, build_safety_vector,
-            build_affordance_vectors, build_room_prior_vectors,
+            HAS_TORCH,
+            build_affordance_vectors,
+            build_cooccurrence_matrix,
+            build_object_vocabulary,
+            build_room_prior_vectors,
+            build_safety_vector,
         )
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.KG = IndustrialKnowledgeGraph
         self.torch_ok = HAS_TORCH
         self.build_vocab = build_object_vocabulary
@@ -282,7 +298,7 @@ class TestKGDataGeneration:
         """Each sample should have correct feature dimensions."""
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
-        from memory.knowledge.belief.network import KGSceneGraphDataset, NUM_AFFORDANCES
+        from memory.knowledge.belief.network import NUM_AFFORDANCES, KGSceneGraphDataset
         kg = self.KG()
         vocab, _ = self.build_vocab(kg)
         C = len(vocab)
@@ -331,6 +347,7 @@ class TestKGDataGeneration:
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
         import torch
+
         from memory.knowledge.belief.network import KGSceneGraphDataset
         kg = self.KG()
         vocab, _ = self.build_vocab(kg)
@@ -346,7 +363,6 @@ class TestKGDataGeneration:
         # Pad variable-size graphs to max N in the batch
         max_n = max(s["x"].shape[0] for s in samples)
         feat_dim = samples[0]["x"].shape[1]
-        C = samples[0]["target"].shape[1]
         B = len(samples)
         x_pad = torch.zeros(B, max_n, feat_dim)
         adj_pad = torch.zeros(B, max_n, max_n)
@@ -364,8 +380,8 @@ class TestBeliefTraining:
     """训练流程测试 (小规模验证收敛性)。"""
 
     def setup_method(self):
-        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         from memory.knowledge.belief.network import HAS_TORCH
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.KG = IndustrialKnowledgeGraph
         self.torch_ok = HAS_TORCH
 
@@ -374,15 +390,21 @@ class TestBeliefTraining:
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
         import torch
+
         from memory.knowledge.belief.network import (
-            KGBeliefGCN, KGSceneGraphDataset, BeliefTrainer,
-            SafetyWeightedBCELoss, build_object_vocabulary,
-            build_cooccurrence_matrix, build_safety_vector,
-            build_affordance_vectors, build_room_prior_vectors,
+            BeliefTrainer,
+            KGBeliefGCN,
+            KGSceneGraphDataset,
+            SafetyWeightedBCELoss,
+            build_affordance_vectors,
+            build_cooccurrence_matrix,
+            build_object_vocabulary,
+            build_room_prior_vectors,
             build_safety_loss_weights,
+            build_safety_vector,
         )
         kg = self.KG()
-        label2idx, idx2label = build_object_vocabulary(kg)
+        label2idx, _idx2label = build_object_vocabulary(kg)
         C = len(label2idx)
         cooc = build_cooccurrence_matrix(kg, label2idx)
         safety = build_safety_vector(kg, label2idx)
@@ -426,9 +448,11 @@ class TestBeliefTraining:
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
         import torch
+
         from memory.knowledge.belief.network import (
-            SafetyWeightedBCELoss, build_safety_loss_weights,
+            SafetyWeightedBCELoss,
             build_object_vocabulary,
+            build_safety_loss_weights,
         )
         kg = self.KG()
         vocab, _ = build_object_vocabulary(kg)

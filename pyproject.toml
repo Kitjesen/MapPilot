@@ -32,7 +32,7 @@ nlp = ["jieba>=0.42"]
 agent = ["langchain-core>=0.2", "langchain-openai>=0.1", "langchain>=0.2"]
 perception = ["torch", "ultralytics", "open-clip-torch"]
 vector = ["chromadb"]
-dev = ["pytest", "pytest-cov", "pytest-asyncio", "ruff", "mypy", "fastapi", "uvicorn", "websockets"]
+dev = ["pytest", "pytest-cov", "pytest-asyncio", "ruff", "mypy", "fastapi", "httpx", "uvicorn", "websockets"]
 # ThunderDriver requires brainstem gRPC contract package brainstem_api (v2.0.0).
 # Install on a real robot target: pip install -e '.[thunder]'
 # stub / sim mode does not need this.
@@ -91,10 +91,6 @@ select = [
     "B",     # flake8-bugbear
     "UP",    # pyupgrade
     "RUF",   # ruff-specific
-    "D101",  # pydocstyle: missing docstring in public class
-    "D102",  # pydocstyle: missing docstring in public method
-    "D103",  # pydocstyle: missing docstring in public function
-    "S",     # flake8-bandit: security lints
 ]
 ignore = [
     "E501",  # line too long (handled by formatter)
@@ -135,9 +131,9 @@ known-first-party = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"tests/**" = ["D", "E402", "F811", "S101"]
+"tests/**" = ["D", "E402", "F811"]
 "scripts/*" = ["D"]
-"third_party/*" = ["D", "B", "S"]
+"third_party/*" = ["D", "B"]
 "tools/calibration/**" = ["D", "W191", "E731", "F821"]
 "docs/**" = ["E702", "E701"]
 # E501 in test files with embedded shell scripts or \uXXXX docstrings

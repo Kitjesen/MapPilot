@@ -11,8 +11,8 @@ pytestmark = [pytest.mark.sim]
 
 np = import_numpy_or_skip()
 
-from sim.compat.engine.mujoco.lidar import MuJoCoLidar  # noqa: E402
-from sim.compat.sensors.livox_mid360 import read_plugin_lidar  # noqa: E402
+from sim.compat.engine.mujoco.lidar import MuJoCoLidar
+from sim.compat.sensors.livox_mid360 import read_plugin_lidar
 
 ROOT = Path(__file__).resolve().parents[2]
 MID360_PATTERN = ROOT / "sim/packages/sensors/livox/mid360/assets/mid360.npy"
@@ -32,8 +32,9 @@ def test_repo_mid360_pattern_asset_is_official_converted_scan_mode() -> None:
 
 
 def test_mid360_nominal_config_uses_conservative_official_envelope() -> None:
-    from drivers.sim.mujoco.runtime import DEFAULT_MID360_SAMPLES_PER_FRAME
     from sim.compat.engine.core.sensor import LidarConfig
+
+    from drivers.sim.mujoco.runtime import DEFAULT_MID360_SAMPLES_PER_FRAME
 
     config = LidarConfig()
 
@@ -222,15 +223,7 @@ def test_mujoco_backend_catalogs_all_products_without_legacy_flat_acceptance() -
         "inspection",
         "explore",
     ]
-    assert set(backend["acceptance"]["products"]) == {
-        "teleop",
-        "teleop_avoid",
-        "map",
-        "nav",
-        "tracking",
-        "inspection",
-        "explore",
-    }
+    assert "acceptance" not in backend
     assert "acceptance_runner" not in backend
     assert "acceptance_runners" not in backend
 
@@ -496,5 +489,5 @@ def test_plugin_lidar_reports_malformed_native_state(monkeypatch: pytest.MonkeyP
         sensordata=np.arange(5, dtype=np.float32),
     )
 
-    with pytest.raises(RuntimeError, match="invalid MuJoCo LiDAR state.*lidar_mid360"):
+    with pytest.raises(RuntimeError, match=r"invalid MuJoCo LiDAR state.*lidar_mid360"):
         read_plugin_lidar(model, data)

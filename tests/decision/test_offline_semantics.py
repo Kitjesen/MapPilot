@@ -1,7 +1,19 @@
-# ruff: noqa: F405, I001
 """Focused tests split from the former monolithic offline semantic pipeline."""
 
-from tests.integration.semantic.offline_support import *
+import json
+import math
+import time
+from typing import Optional, Tuple
+
+import pytest
+
+from decision.goals.resolver import GoalResolver, GoalResult, TargetBeliefManager
+from decision.tasks.decomposition import SubGoalAction, TaskDecomposer
+from tests.integration.semantic.offline_support import (
+    load_instruction_set,
+    make_office_corridor_scene,
+)
+
 
 class TestFastPathResolution:
     """测试 Fast Path 在模拟场景图上的解析准确率。"""
@@ -17,7 +29,7 @@ class TestFastPathResolution:
         cls.scene_json = json.dumps(cls.scene)
         cls.instructions = load_instruction_set()
 
-    def _resolve(self, instruction: str, robot_pos=None) -> Tuple[Optional[GoalResult], float]:
+    def _resolve(self, instruction: str, robot_pos=None) -> tuple[GoalResult | None, float]:
         pos = robot_pos or {"x": 0.0, "y": 0.0, "z": 0.0}
         t0 = time.perf_counter()
         result = self.resolver.fast_resolve(
@@ -28,8 +40,8 @@ class TestFastPathResolution:
         elapsed_ms = (time.perf_counter() - t0) * 1000
         return result, elapsed_ms
 
-    def _check(self, result: Optional[GoalResult], gt_pos: dict, gt_label: str,
-               radius: float = 2.0) -> Tuple[bool, float]:
+    def _check(self, result: GoalResult | None, gt_pos: dict, gt_label: str,
+               radius: float = 2.0) -> tuple[bool, float]:
         if result is None or not result.is_valid:
             return False, float("inf")
         dx = result.target_x - gt_pos["x"]
@@ -40,103 +52,103 @@ class TestFastPathResolution:
     # ── L1: 20 条简单指令 ──
 
     def test_L1_01_find_door(self):
-        r, ms = self._resolve("find the door")
+        r, _ms = self._resolve("find the door")
         ok, err = self._check(r, {"x": 3.5, "y": 1.2}, "door")
         assert r is not None, "Fast Path should resolve 'find the door'"
         assert ok, f"Position error {err:.1f}m > 2m"
 
     def test_L1_02_find_chair(self):
-        r, ms = self._resolve("find a chair")
+        r, _ms = self._resolve("find a chair")
         assert r is not None, "Fast Path should resolve 'find a chair'"
         assert "chair" in r.target_label.lower()
 
     def test_L1_03_find_fire_extinguisher(self):
-        r, ms = self._resolve("find the fire extinguisher")
+        r, _ms = self._resolve("find the fire extinguisher")
         assert r is not None
         assert "fire" in r.target_label.lower() or "extinguisher" in r.target_label.lower()
 
     def test_L1_04_go_to_desk(self):
-        r, ms = self._resolve("go to the desk")
+        r, _ms = self._resolve("go to the desk")
         assert r is not None
         assert "desk" in r.target_label.lower()
 
     def test_L1_05_find_stairs(self):
-        r, ms = self._resolve("find the stairs")
+        r, _ms = self._resolve("find the stairs")
         assert r is not None
         assert "stair" in r.target_label.lower()
 
     def test_L1_06_find_elevator(self):
-        r, ms = self._resolve("find the elevator")
+        r, _ms = self._resolve("find the elevator")
         assert r is not None
         assert "elevator" in r.target_label.lower()
 
     def test_L1_07_find_sign(self):
-        r, ms = self._resolve("find the sign")
+        r, _ms = self._resolve("find the sign")
         assert r is not None
         assert "sign" in r.target_label.lower()
 
     def test_L1_08_find_trash_can(self):
-        r, ms = self._resolve("find the trash can")
+        r, _ms = self._resolve("find the trash can")
         assert r is not None
         assert "trash" in r.target_label.lower()
 
     def test_L1_09_find_sofa(self):
-        r, ms = self._resolve("find the sofa")
+        r, _ms = self._resolve("find the sofa")
         assert r is not None
         assert "sofa" in r.target_label.lower()
 
     def test_L1_10_find_person(self):
-        r, ms = self._resolve("find a person")
+        r, _ms = self._resolve("find a person")
         assert r is not None
         assert "person" in r.target_label.lower()
 
     def test_L1_11_go_to_monitor(self):
-        r, ms = self._resolve("go to the monitor")
+        r, _ms = self._resolve("go to the monitor")
         assert r is not None
         assert "monitor" in r.target_label.lower()
 
     def test_L1_12_find_refrigerator(self):
-        r, ms = self._resolve("find the refrigerator")
+        r, _ms = self._resolve("find the refrigerator")
         assert r is not None
         assert "refrigerator" in r.target_label.lower()
 
     def test_L1_13_find_bottle(self):
-        r, ms = self._resolve("find a bottle")
+        r, _ms = self._resolve("find a bottle")
         assert r is not None
         assert "bottle" in r.target_label.lower()
 
     def test_L1_14_find_window(self):
-        r, ms = self._resolve("find the window")
+        r, _ms = self._resolve("find the window")
         assert r is not None
         assert "window" in r.target_label.lower()
 
     def test_L1_15_find_shelf(self):
-        r, ms = self._resolve("find the shelf")
+        r, _ms = self._resolve("find the shelf")
         assert r is not None
         assert "shelf" in r.target_label.lower()
 
     def test_L1_16_find_cabinet(self):
-        r, ms = self._resolve("find the cabinet")
+        r, _ms = self._resolve("find the cabinet")
         assert r is not None
         assert "cabinet" in r.target_label.lower()
 
     def test_L1_17_find_lamp(self):
-        r, ms = self._resolve("find a lamp")
+        r, _ms = self._resolve("find a lamp")
         assert r is not None
         assert "lamp" in r.target_label.lower()
 
     def test_L1_18_find_computer(self):
-        r, ms = self._resolve("find the computer")
+        r, _ms = self._resolve("find the computer")
         assert r is not None
         assert "computer" in r.target_label.lower()
 
     def test_L1_19_find_tv(self):
-        r, ms = self._resolve("find the TV")
+        r, _ms = self._resolve("find the TV")
         assert r is not None
         assert "tv" in r.target_label.lower()
 
     def test_L1_20_find_exit(self):
-        r, ms = self._resolve("find the exit")
+        r, _ms = self._resolve("find the exit")
         assert r is not None
         assert "exit" in r.target_label.lower() or "door" in r.target_label.lower()
 
@@ -1160,7 +1172,9 @@ class TestKnowledgeGraphEnhanced:
 
     def setup_method(self):
         from memory.knowledge.knowledge_graph import (
-            IndustrialKnowledgeGraph, SafetyLevel, AffordanceType,
+            AffordanceType,
+            IndustrialKnowledgeGraph,
+            SafetyLevel,
         )
         self.kg = IndustrialKnowledgeGraph()
         self.SafetyLevel = SafetyLevel
@@ -1495,7 +1509,7 @@ class TestKGIntegrationWithDecomposer:
     """KG 安全门与 TaskDecomposer 集成测试。"""
 
     def setup_method(self):
-        from decision.tasks.decomposition import TaskDecomposer, SubGoalAction
+        from decision.tasks.decomposition import SubGoalAction, TaskDecomposer
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.kg = IndustrialKnowledgeGraph()
         TaskDecomposer.set_knowledge_graph(self.kg)

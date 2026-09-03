@@ -6,6 +6,9 @@ on:
       - 'src/drivers/real/motion/**'
       - 'tests/drivers/real/motion/**'
       - 'tests/drivers/test_real_motion_driver_contract.py'
+      - 'tests/explore/cpp/**'
+      - 'tests/maps/cpp/**'
+      - 'tests/nav/cpp/**'
       - 'src/nav/cpp/**'
       - 'src/nav/inspection/**'
       - 'src/maps/**'
@@ -20,6 +23,9 @@ on:
       - 'src/drivers/real/motion/**'
       - 'tests/drivers/real/motion/**'
       - 'tests/drivers/test_real_motion_driver_contract.py'
+      - 'tests/explore/cpp/**'
+      - 'tests/maps/cpp/**'
+      - 'tests/nav/cpp/**'
       - 'src/nav/cpp/**'
       - 'src/nav/inspection/**'
       - 'src/maps/**'
@@ -51,6 +57,13 @@ jobs:
           fetch-depth: 1
           submodules: false
 
+      - name: Checkout DOSO SDK
+        uses: actions/checkout@v4
+        with:
+          repository: Kitjesen/DOSO-SDK
+          ref: 0ae4969c9b6e9e026b14d6129aff10bd842a1241
+          path: build/deps/doso-sdk
+
       - name: Install native runtime dependencies
         run: |
           sudo apt-get update
@@ -68,6 +81,16 @@ jobs:
             pkg-config \
             protobuf-compiler \
             protobuf-compiler-grpc
+
+      - name: Build and install DOSO SDK
+        run: |
+          sdk_prefix="${RUNNER_TEMP}/doso-sdk"
+          cmake -S build/deps/doso-sdk -B build/deps/doso-sdk-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF
+          cmake --build build/deps/doso-sdk-build --parallel "${LINGTU_BUILD_JOBS}"
+          cmake --install build/deps/doso-sdk-build --prefix "${sdk_prefix}"
+          echo "LINGTU_BRAINSTEM_CLIENT_PREFIX=${sdk_prefix}" >> "${GITHUB_ENV}"
 
       - name: Build and test native hardware driver
         run: bash scripts/build/build_driver.sh

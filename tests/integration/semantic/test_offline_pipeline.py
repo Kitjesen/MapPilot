@@ -1,7 +1,14 @@
-# ruff: noqa: F405, I001
 """Focused tests split from the former monolithic offline semantic pipeline."""
 
-from tests.integration.semantic.offline_support import *
+import json
+
+import numpy as np
+import pytest
+
+from decision.goals.resolver import TargetBeliefManager
+from perception.tracking.instance_tracker import InstanceTracker, TrackedObject
+from perception.tracking.projection import Detection3D
+
 
 class TestBeliefSystemEndToEnd:
     """模拟完整导航 episode, 验证信念系统行为。"""
@@ -18,7 +25,7 @@ class TestBeliefSystemEndToEnd:
         desk_feat /= np.linalg.norm(desk_feat)
 
         # 模拟 10 帧检测, 逐渐建立场景图
-        for frame in range(10):
+        for _ in range(10):
             detections = [
                 Detection3D(
                     label="chair", score=0.85 + rng.randn() * 0.02,
@@ -116,13 +123,12 @@ class TestBeliefSystemEndToEnd:
             bbox_2d=np.array([160, 100, 240, 140]),
             depth=4.0,
         )
-        tracker.update([new_det] + established_detections)
+        tracker.update([new_det, *established_detections])
 
         sg = json.loads(tracker.get_scene_graph_json())
         keyboard = next((o for o in sg["objects"] if o["label"] == "keyboard"), None)
         assert keyboard is not None, "Keyboard should be tracked"
 
-        established = next((o for o in sg["objects"] if o["label"] == "desk"), None)
         # The keyboard's credibility should benefit from being near established objects
         assert keyboard["belief"]["P_exist"] > 0.5
 
@@ -188,10 +194,10 @@ class TestModelIntegration:
             "memory.knowledge.belief.network",
             reason="belief_network module not available",
         )
+        from memory.knowledge.belief.network import HAS_TORCH
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         from perception.tracking.instance_tracker import InstanceTracker
         from perception.tracking.projection import Detection3D
-        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
-        from memory.knowledge.belief.network import HAS_TORCH
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
         self.KG = IndustrialKnowledgeGraph

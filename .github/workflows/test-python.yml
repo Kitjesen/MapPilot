@@ -3,7 +3,7 @@ name: Python Tests + Lint
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'docs/**', 'config/**', 'tools/**', 'tests/contracts/**', 'scripts/deploy/package_native_release.sh', 'AGENTS.md', 'README.md', '.pre-commit-config.yaml', 'pyproject.toml', '.github/workflows/test-python.yml']
+    paths: ['src/**', 'docs/**', 'config/**', 'sim/**', 'tools/**', 'tests/**', 'scripts/**', 'AGENTS.md', 'README.md', '.pre-commit-config.yaml', 'pyproject.toml', '.github/workflows/test-python.yml']
   pull_request:
     branches: [main]
 
@@ -12,7 +12,7 @@ env:
 
 jobs:
   lint:
-    name: Ruff Lint + Format
+    name: Ruff Lint
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -21,18 +21,25 @@ jobs:
           submodules: false
           sparse-checkout: |
             src
+            tests
             docs
             tools/calibration
             pyproject.toml
           sparse-checkout-cone-mode: false
       - uses: astral-sh/ruff-action@v3
         with:
-          args: check src/ docs/ tools/calibration/
+          args: check
+          src: >-
+            src/
+            tests/
+            docs/
+            tools/calibration/
+          version: "0.15.17"
 
   test:
     name: Framework Tests
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:

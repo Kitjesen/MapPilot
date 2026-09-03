@@ -1,7 +1,9 @@
-# ruff: noqa: F405, I001
 """Focused tests split from the former monolithic offline semantic pipeline."""
 
-from tests.integration.semantic.offline_support import *
+import json
+
+import numpy as np
+
 
 class TestSceneGraphDynamic:
     """DovSG 动态场景图 + 嵌入索引测试。"""
@@ -125,13 +127,19 @@ class TestLoopyBeliefPropagation:
     """迭代信念传播测试 — 参考 Belief Scene Graphs (ICRA 2024)。"""
 
     def setup_method(self):
-        from perception.tracking.instance_tracker import (
-            InstanceTracker, Detection3D, TrackedObject,
-            PhantomNode, RoomTypePosterior, BeliefMessage,
-            BP_MAX_ITERATIONS, BP_CONVERGENCE_EPS,
-            SAFETY_THRESHOLDS_NAVIGATION, SAFETY_THRESHOLDS_INTERACTION,
-        )
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
+        from perception.tracking.instance_tracker import (
+            BP_CONVERGENCE_EPS,
+            BP_MAX_ITERATIONS,
+            SAFETY_THRESHOLDS_INTERACTION,
+            SAFETY_THRESHOLDS_NAVIGATION,
+            BeliefMessage,
+            Detection3D,
+            InstanceTracker,
+            PhantomNode,
+            RoomTypePosterior,
+            TrackedObject,
+        )
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
         self.TrackedObject = TrackedObject
@@ -167,7 +175,7 @@ class TestLoopyBeliefPropagation:
 
     def test_room_type_posterior_office(self):
         """Phase 1 测试: 办公室物体 → 房间类型后验应为 office。"""
-        tracker, kg = self._make_office_scene()
+        tracker, _kg = self._make_office_scene()
         posteriors = tracker.get_room_type_posteriors()
         assert len(posteriors) > 0, "Should have at least one room posterior"
         for rid, rtp in posteriors.items():
@@ -212,7 +220,7 @@ class TestLoopyBeliefPropagation:
 
     def test_kg_prior_injection_expected_object(self):
         """Phase 2 测试: 在 office 中检测到 desk → is_kg_expected=True, alpha 提升。"""
-        tracker, kg = self._make_office_scene()
+        tracker, _kg = self._make_office_scene()
         desk_objs = [o for o in tracker.objects.values() if o.label == "desk"]
         assert len(desk_objs) > 0
         desk = desk_objs[0]
@@ -247,7 +255,7 @@ class TestLoopyBeliefPropagation:
 
     def test_bp_convergence(self):
         """Loopy BP 应在 MAX_ITERATIONS 内收敛。"""
-        tracker, kg = self._make_office_scene()
+        tracker, _kg = self._make_office_scene()
         diag = tracker.get_bp_diagnostics()
         assert diag["total_iterations"] > 0, "BP should have run"
         if diag["convergence_history"]:
@@ -256,7 +264,7 @@ class TestLoopyBeliefPropagation:
 
     def test_bp_messages_logged(self):
         """BP 消息日志应记录传播过程。"""
-        tracker, kg = self._make_office_scene()
+        tracker, _kg = self._make_office_scene()
         diag = tracker.get_bp_diagnostics()
         assert diag["num_messages_last_round"] >= 0, "Should have BP messages"
 
@@ -293,10 +301,12 @@ class TestPhantomNodes:
     """Phantom (Blind) Node 推理测试 — 参考 BSG ICRA 2024 blind nodes。"""
 
     def setup_method(self):
-        from perception.tracking.instance_tracker import (
-            InstanceTracker, Detection3D, PhantomNode,
-        )
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
+        from perception.tracking.instance_tracker import (
+            Detection3D,
+            InstanceTracker,
+            PhantomNode,
+        )
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
         self.PhantomNode = PhantomNode
@@ -408,8 +418,10 @@ class TestSafetyAwareCredibility:
 
     def setup_method(self):
         from perception.tracking.instance_tracker import (
-            TrackedObject, SAFETY_THRESHOLDS_NAVIGATION,
-            SAFETY_THRESHOLDS_INTERACTION, SAFETY_PRIOR_ALPHA_SCALE,
+            SAFETY_PRIOR_ALPHA_SCALE,
+            SAFETY_THRESHOLDS_INTERACTION,
+            SAFETY_THRESHOLDS_NAVIGATION,
+            TrackedObject,
         )
         self.TrackedObject = TrackedObject
         self.SAFETY_NAV = SAFETY_THRESHOLDS_NAVIGATION
@@ -495,8 +507,8 @@ class TestExplorationTargets:
     """探索目标推荐测试。"""
 
     def setup_method(self):
-        from perception.tracking.instance_tracker import InstanceTracker, Detection3D
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
+        from perception.tracking.instance_tracker import Detection3D, InstanceTracker
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
         self.KG = IndustrialKnowledgeGraph
@@ -548,8 +560,8 @@ class TestBPDiagnostics:
     """BP 诊断信息测试。"""
 
     def setup_method(self):
-        from perception.tracking.instance_tracker import InstanceTracker, Detection3D
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
+        from perception.tracking.instance_tracker import Detection3D, InstanceTracker
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
         self.KG = IndustrialKnowledgeGraph

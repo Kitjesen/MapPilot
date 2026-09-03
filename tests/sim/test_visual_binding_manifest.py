@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from sim.catalog import VisualBindingError, compile_robot_visual_manifest
 
 
@@ -144,7 +143,7 @@ def test_package_contained_mjcf_uses_package_relative_visual_sources_under_canon
 
 def test_compiles_thunderv4_package_without_hardcoded_body_count() -> None:
     repo_root = Path(__file__).resolve().parents[2]
-    package_dir = repo_root / "sim" / "packages" / "robots" / "thunderv4"
+    package_dir = repo_root / "sim" / "packages" / "robots" / "doso" / "thunder_v4"
 
     manifest = compile_robot_visual_manifest(package_dir).to_dict()
     repeat = compile_robot_visual_manifest(package_dir).to_dict()
@@ -367,7 +366,7 @@ def test_rejects_fromto_and_omitted_geom_type(tmp_path: Path) -> None:
 <mujoco><worldbody><body name="base"><geom name="implicit" size="0.1" /></body></worldbody></mujoco>
 """,
     )
-    with pytest.raises(VisualBindingError, match="geom.type must be explicit"):
+    with pytest.raises(VisualBindingError, match=r"geom\.type must be explicit"):
         compile_robot_visual_manifest(omitted_type_package)
 
 
