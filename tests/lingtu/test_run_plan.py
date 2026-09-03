@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 
 import pytest
@@ -8,6 +9,8 @@ import pytest
 from lingtu.control import ProductControl
 from lingtu.run_plan import RunPlan
 from runtime.graph import ProcessArtifact, ProcessCommand, ProcessReadiness
+
+pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
 
 
 def test_run_plan_round_trips_without_re_resolving_runtime_graph(tmp_path) -> None:
@@ -60,6 +63,7 @@ def test_run_plan_rejects_the_previous_schema() -> None:
         RunPlan.from_dict(payload)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes are not represented by NTFS")
 def test_run_plan_is_readable_by_managed_service_users(tmp_path) -> None:
     plan = ProductControl(robot="unitree/go2", env="real", process_env={})._resolve("teleop_avoid")
 

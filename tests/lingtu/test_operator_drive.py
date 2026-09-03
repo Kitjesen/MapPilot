@@ -12,6 +12,8 @@ from lingtu.operator_drive import main as drive_main
 from lingtu.product_lock import ProductControlBusy, ProductControlLock
 from lingtu.run_plan import CURRENT_RUN_SCHEMA
 
+pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
+
 
 def _write_current(
     tmp_path: Path,
