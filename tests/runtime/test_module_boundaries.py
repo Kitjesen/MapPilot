@@ -79,7 +79,6 @@ def test_architecture_layer_manifest_is_valid_and_drives_boundary_rules() -> Non
     assert "src/runtime/adapters/" in manifest["layers"][3]["owns"]
     assert "src/nav/adapters/" in manifest["layers"][3]["owns"]
     assert "src/localization/adapters/" in manifest["layers"][3]["owns"]
-    assert "src/maps/adapters/" in manifest["layers"][3]["owns"]
     assert "src/nav/" in manifest["layers"][4]["owns"]
     assert "src/nav/cpp/" in manifest["layers"][5]["owns"]
     assert "src/lingtu/control.py" in manifest["layers"][6]["owns"]
@@ -96,7 +95,6 @@ def test_architecture_layer_lookup_uses_most_specific_path_owner() -> None:
     )["id"] == "L5_algorithm_kernels"
     assert architecture_layer_for_path("src/nav/cpp/planning/local/cmu/paths")["id"] == "L5_algorithm_kernels"
     assert architecture_layer_for_path("src/runtime/adapters/dds/reader.py")["id"] == "L3_adapter_layer"
-    assert architecture_layer_for_path("src/maps/adapters/native/map_save.py")["id"] == "L3_adapter_layer"
     assert architecture_layer_for_path("src/nav/adapters/dds/nav/map_out.py")["id"] == ("L3_adapter_layer")
 
 
@@ -288,14 +286,9 @@ def test_product_sources_have_no_ros_imports() -> None:
     assert classified == 0
 
 
-def test_maps_module_does_not_construct_ros2_map_save_commands() -> None:
+def test_python_maps_service_is_removed() -> None:
     path = SRC / "maps" / "modules" / "service.py"
-    text = path.read_text(encoding="utf-8-sig")
-
-    assert "/pgo/save_maps" not in text
-    assert "interface/srv/SaveMaps" not in text
-    assert "subprocess.run" not in text
-    assert "runtime.adapters.ros2" not in text
+    assert not path.exists()
 
 
 def test_gateway_map_routes_do_not_construct_ros2_map_save_commands() -> None:
