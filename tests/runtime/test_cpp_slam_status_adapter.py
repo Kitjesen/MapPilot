@@ -553,10 +553,10 @@ def test_cpp_slam_status_adapter_is_the_only_status_adapter_name() -> None:
     ("native_slam_status", "native", "native_slam", "slam"),
 )
 def test_removed_localization_adapter_aliases_fail_closed(adapter_name: str) -> None:
-    with pytest.raises(ImportError, match="was removed"):
+    with pytest.raises(ImportError, match="Unsupported localization adapter"):
         localization_adapter_module(adapter_name)
 
-    with pytest.raises(ImportError, match="was removed"):
+    with pytest.raises(ImportError, match="Unsupported localization adapter"):
         slam(
             "native_dds",
             localization_adapter=adapter_name,
@@ -584,6 +584,7 @@ def test_real_product_blueprints_use_cpp_slam_status_adapter(
     config = resolve_product_host_config(
         product,
         "real",
+        robot="unitree/go2",
         product_variant=product_variant,
     )
     bp = blueprint_for_resolved_product(product, config)
