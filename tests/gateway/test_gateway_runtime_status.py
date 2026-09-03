@@ -45,6 +45,19 @@ def _field_gateway(profile: str):
     return GatewayModule(run_plan=_field_manifest(profile))
 
 
+def _set_session_mode(gateway, mode: str) -> None:
+    original_snapshot = gateway._session_snapshot
+
+    def snapshot():
+        payload = dict(original_snapshot())
+        payload["mode"] = mode
+        gateway._session_mode = mode
+        return payload
+
+    gateway._session_mode = mode
+    gateway._session_snapshot = snapshot
+
+
 def _write_active_same_source_octomap(map_root):
     active_dir = map_root / "demo"
     active_dir.mkdir(parents=True)
@@ -436,14 +449,14 @@ def test_localization_status_reports_runtime_boundary_and_topic_frames(monkeypat
     from gateway.schemas import LocalizationStatusResponse
     from gateway.services.runtime_status import build_localization_status
 
-    monkeypatch.setenv("LINGTU_PROFILE", "nav")
+    monkeypatch.setenv("LINGTU_PRODUCT", "nav")
     monkeypatch.setenv("LINGTU_DATA_SOURCE", "field")
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
 
     gateway = GatewayModule()
-    gateway._session_mode = "navigating"
+    _set_session_mode(gateway, "navigating")
     with gateway._state_lock:
         gateway._odom = {"x": 0.0, "y": 0.0, "frame_id": "odom"}
         gateway._localization_status = {
@@ -976,14 +989,14 @@ def test_navigation_status_reports_current_runtime_boundary(monkeypatch):
     from gateway.schemas import NavigationStatusResponse
     from gateway.services.runtime_status import build_navigation_status
 
-    monkeypatch.setenv("LINGTU_PROFILE", "nav")
+    monkeypatch.setenv("LINGTU_PRODUCT", "nav")
     monkeypatch.setenv("LINGTU_DATA_SOURCE", "field")
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
 
     gateway = GatewayModule()
-    gateway._session_mode = "navigating"
+    _set_session_mode(gateway, "navigating")
     with gateway._state_lock:
         gateway._odom = {"x": 1.0, "y": 2.0, "frame_id": "map"}
         gateway._mode = "autonomous"
@@ -1001,8 +1014,11 @@ def test_navigation_status_reports_current_runtime_boundary(monkeypatch):
     runtime = payload["runtime"]
     assert runtime["ok"] is True
     assert runtime["declared"] is True
-    assert runtime["profile"] == "nav"
-    assert runtime["endpoint"] == "thunder_dds"
+    assert runtime["product"] == "nav"
+    assert runtime["env"] == "real"
+    assert runtime["state"] == "standby"
+    assert "profile" not in runtime
+    assert "endpoint" not in runtime
     assert runtime["data_source"] == "field"
     assert runtime["runtime_contract"] == "real"
     assert runtime["simulation_only"] is False
