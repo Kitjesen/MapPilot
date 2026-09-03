@@ -325,6 +325,18 @@ std::string frame_from_header(const lingtu_dds_Header& header) {
   return header.frame_id ? std::string(header.frame_id) : std::string();
 }
 
+long long occupied_cells(const lingtu_dds_MapCollisionLayer& layer) {
+  long long count = 0;
+  for (std::uint32_t index = 0; index < layer.inflated_occupied_bits._length; ++index) {
+    std::uint8_t bits = layer.inflated_occupied_bits._buffer[index];
+    while (bits != 0U) {
+      bits = static_cast<std::uint8_t>(bits & static_cast<std::uint8_t>(bits - 1U));
+      ++count;
+    }
+  }
+  return count;
+}
+
 double steady_seconds() {
   return std::chrono::duration<double>(Clock::now().time_since_epoch()).count();
 }
@@ -468,8 +480,7 @@ void observe(TopicStats& stats, const TopicSpec& spec, const void* sample) {
     case Kind::MapCollisionLayer: {
       const auto* msg = static_cast<const lingtu_dds_MapCollisionLayer*>(sample);
       stats.frame_id = frame_from_header(msg->header);
-      stats.points = static_cast<long long>(msg->occupied.width) *
-          static_cast<long long>(msg->occupied.height);
+      stats.points = occupied_cells(*msg);
       observe_map_identity(
           stats, msg->reset_epoch, msg->observation_sequence, msg->generation, true, msg->live);
       break;

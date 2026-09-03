@@ -13,6 +13,18 @@ ROOT="$(realpath -m -- "$ROOT")"
 NAV_CPP_DIR="$(realpath -m -- "$NAV_CPP_DIR")"
 BUILD_DIR="$(realpath -m -- "$BUILD_DIR")"
 
+# WSL appends Windows executable directories to PATH. CMake may otherwise
+# discover Windows .lib packages (notably Conda's GTest) for a Linux build.
+if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
+  PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vE '^/mnt/[A-Za-z]/' | paste -sd: -)"
+  export PATH
+  if [ -n "${CMAKE_PREFIX_PATH:-}" ]; then
+    CMAKE_PREFIX_PATH="$(printf '%s' "$CMAKE_PREFIX_PATH" | tr ':' '\n' | grep -vE '^/mnt/[A-Za-z]/' | paste -sd: -)"
+    export CMAKE_PREFIX_PATH
+  fi
+  unset CONDA_PREFIX CONDA_DEFAULT_ENV
+fi
+
 if [ -n "${LINGTU_CYCLONEDDS_PREFIX:-}" ]; then
   export CMAKE_PREFIX_PATH="${LINGTU_CYCLONEDDS_PREFIX}${CMAKE_PREFIX_PATH:+:${CMAKE_PREFIX_PATH}}"
   if [ -d "${LINGTU_CYCLONEDDS_PREFIX}/bin" ]; then
@@ -66,7 +78,7 @@ case "${RUN_TESTS,,}" in
       test_executor \
       test_path_follower_core \
       test_local_planner_core; do
-      if [[ ! -x "$BUILD_DIR/$required_test" && ! -x "$BUILD_DIR/endpoint/$required_test" ]]; then
+      if ! find "$BUILD_DIR" -type f -name "$required_test" -perm -u+x -print -quit | grep -q .; then
         echo "ERROR: required navigation test binary is missing: $required_test" >&2
         echo "Install the system GTest development package and reconfigure the build." >&2
         exit 1

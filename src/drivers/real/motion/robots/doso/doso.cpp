@@ -1,6 +1,8 @@
 #include "doso.hpp"
 
+#include <algorithm>
 #include <brainstem/client.hpp>
+#include <cctype>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -13,6 +15,13 @@ std::string endpoint(std::string host, std::uint16_t port) {
     host = '[' + host + ']';
   }
   return std::move(host) + ':' + std::to_string(port);
+}
+
+bool isLoopback(std::string host) {
+  std::transform(host.begin(), host.end(), host.begin(),
+                 [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  return host == "localhost" || host == "localhost.localdomain" || host == "127.0.0.1" ||
+         host == "::1" || host == "[::1]";
 }
 
 brainstem::TlsConfig sdkTls(const BrainstemTlsConfig &source) {
@@ -29,6 +38,7 @@ brainstem::Config sdkConfig(const Config &source, const std::string &target) {
   config.target = target;
   config.timeout = source.rpc_timeout;
   config.client_id = kBrainstemMotionPrincipal;
+  config.allow_insecure = !source.brainstem_tls.enabled() && isLoopback(source.host);
   config.tls = sdkTls(source.brainstem_tls);
   return config;
 }
