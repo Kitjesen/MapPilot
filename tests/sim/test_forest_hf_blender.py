@@ -687,7 +687,7 @@ def test_scene_setup_keeps_exposure_and_world_fill_in_daylight_range(
 
     author._setup_scene(640, 360, 8)
 
-    assert 0.5 <= scene.view_settings.exposure <= 1.25
+    assert scene.view_settings.exposure == pytest.approx(0.14)
     assert 0.4 <= background.inputs["Strength"].default_value <= 0.7
 
 

@@ -205,7 +205,7 @@ class _FrameCapture:
 @dataclass(frozen=True, slots=True)
 class _RuntimeRequestTraceSnapshot:
     source_path: Path
-    source_identity: tuple[int, int, int, int]
+    source_identity: tuple[int, int, int, int, int]
     payload: bytes
     records: tuple[Mapping[str, Any], ...]
 
@@ -1879,7 +1879,7 @@ def _read_stable_bytes(path: Path) -> bytes:
 
 def _read_stable_bytes_with_identity(
     path: Path,
-) -> tuple[bytes, tuple[int, int, int, int]]:
+) -> tuple[bytes, tuple[int, int, int, int, int]]:
     _reject_link_components(path)
     try:
         before = os.lstat(path)
@@ -1945,12 +1945,13 @@ def _reject_link_components(path: Path) -> None:
             raise PlayableEvidenceError(f"path contains a link/reparse point: {current}")
 
 
-def _stat_identity(value: os.stat_result) -> tuple[int, int, int, int]:
+def _stat_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
     return (
         int(value.st_dev),
         int(value.st_ino),
         int(value.st_size),
         int(value.st_mtime_ns),
+        int(value.st_ctime_ns),
     )
 
 
