@@ -644,6 +644,7 @@ def register_map_routes(app, gw) -> None:
             status_code=200 if ok else 400,
             success_message="Map cropped.",
             failure_message="Map could not be cropped.",
+            live_cloud_reset=ok,
         )
 
     @app.post(

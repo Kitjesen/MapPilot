@@ -860,11 +860,14 @@ def test_map_routes_validate_json_contracts(monkeypatch):
 
         gateway = GatewayModule()
         gateway.setup()
-        _attach_test_map_client(gateway, map_dir)
+        service = _attach_test_map_client(gateway, map_dir)
 
         class MapClient:
             def __init__(self) -> None:
                 self.calls: list[tuple[str, str]] = []
+
+            def service(self, action: str, **arguments):
+                return service.service(action, **arguments)
 
             def open_artifact(self, map_id: str, capability: str) -> ArtifactHandle:
                 self.calls.append((map_id, capability))
@@ -1098,7 +1101,7 @@ def test_slam_maps_rejects_invalid_can_activate_contract(tmp_path, invalid_value
 
 def test_map_save_reports_unavailable_mapd_transport():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import MapSaveOperationResponse
+    from gateway.schemas import MapSaveOperationResponse, MapSaveRequest
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1111,7 +1114,9 @@ def test_map_save_reports_unavailable_mapd_transport():
 
     gateway._map_client = UnavailableMapdClient()
 
-    response = asyncio.run(_endpoint(gateway, "/api/v1/map/save")({"name": "native_dds_demo"}))
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/map/save")(MapSaveRequest(name="native_dds_demo"))
+    )
     payload = _payload(response)
     model = MapSaveOperationResponse.model_validate(payload)
 
@@ -1433,7 +1438,7 @@ def test_service_status_default_names_follow_field_readiness_catalog():
     payload = asyncio.run(endpoint())
 
     assert tuple(payload["services"]) == expected
-    assert "explore" not in payload["services"]
+    assert payload["services"]["explore"] == "not_declared"
     assert "camera" in payload["service_metadata"]
     assert "gateway" in payload["service_metadata"]
     assert payload["services"]["gateway"] == "running"
