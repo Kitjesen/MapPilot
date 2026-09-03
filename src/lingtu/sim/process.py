@@ -324,11 +324,9 @@ class SimProcessManager:
             )
 
             for stage in self._process_stages(processes):
-                stage_started = time.monotonic()
-                stage_deadline = stage_started + max(
-                    float(process.timeout_s) for process in stage
-                )
+                readiness_deadlines: dict[str, float] = {}
                 for process in stage:
+                    process_deadline = time.monotonic() + float(process.timeout_s)
                     if self.active(process.target):
                         if process.lifecycle != "persistent":
                             raise ProcessError(
@@ -339,16 +337,20 @@ class SimProcessManager:
                         continue
                     self.start(
                         process.target,
-                        self._remaining(stage_deadline),
+                        self._remaining(process_deadline),
                     )
                     started.append(process)
                     report.started.append(process.target)
+                    readiness_deadlines[process.target] = process_deadline
                 for process in stage:
-                    process_deadline = stage_started + float(process.timeout_s)
+                    if process.target not in readiness_deadlines:
+                        readiness_deadlines[process.target] = (
+                            time.monotonic() + float(process.timeout_s)
+                        )
                     report.ready[process.name] = dict(
                         self.wait(
                             process,
-                            self._remaining(min(stage_deadline, process_deadline)),
+                            self._remaining(readiness_deadlines[process.target]),
                         )
                     )
         except Exception as exc:
