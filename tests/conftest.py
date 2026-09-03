@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
-_WINDOWS_BASETEMP_ROOT = "lingtu-pytest-basetemp"
+_WINDOWS_BASETEMP_ROOT = "ltp"
 
 for _path in (_REPO, _REPO / "src"):
     value = str(_path)
@@ -68,7 +68,7 @@ def _make_windows_basetemp(
     root.mkdir(parents=True, exist_ok=True)
     process_id = pid if pid is not None else os.getpid()
     unique = token or uuid.uuid4().hex
-    return root / f"pid-{process_id}-{unique}"
+    return root / f"{process_id}-{unique[:12]}"
 
 
 def _should_assign_windows_basetemp(
