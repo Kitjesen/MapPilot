@@ -226,6 +226,10 @@ def _open_regular_nofollow(path: Path, *, context: str) -> int:
         try:
             descriptor = os.open(path, flags | getattr(os, "O_NOFOLLOW", 0))
         except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise StlAssetError(
+                    f"{context} must be a regular link-free file: {path}"
+                ) from exc
             raise StlAssetError(f"cannot open {context}: {path}: {exc}") from exc
     try:
         metadata = os.fstat(descriptor)

@@ -214,8 +214,8 @@ def test_review_actor_collection_is_excluded_from_scene_exports(
     assert review_robot.hidden is True
 
 
-def test_runtime_robot_index_loads_exactly_twenty_one_review_only_assets() -> None:
-    contract = author.load_review_robot_asset_index(_RUNTIME_INDEX)
+def test_runtime_robot_index_loads_exactly_twenty_one_review_only_assets(tmp_path: Path) -> None:
+    contract = author.load_review_robot_asset_index(_write_robot_index(tmp_path))
 
     assert len(contract["assets"]) == 21
     assert all(item["classification"] == "VisualOnly" for item in contract["assets"])

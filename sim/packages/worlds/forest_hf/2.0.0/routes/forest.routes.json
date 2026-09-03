@@ -12,6 +12,7 @@
     "route_id": "forest.route.primary_loop.v1",
     "stable_id": "forest.goal.overlook.v1"
   },
+  "route_contract_sha256": "0fe145afc60f9c01422b1ca883079a6c438b62f64994f6b6e8151e4c047eae32",
   "routes": [
     {
       "centerline_xy_m": [

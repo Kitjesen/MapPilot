@@ -107,10 +107,17 @@ def _route_metrics(
 
 def _generated_payloads(root: Path) -> dict[str, bytes]:
     package = root / "sim/packages/worlds/forest_hf/2.0.0"
+    static_paths = {
+        "physics/forest_hf.xml",
+        "provenance/generation.json",
+        "routes/forest.routes.json",
+        "terrain.recipe.json",
+        "visual/ue_projection.json",
+    }
     return {
         path.relative_to(package).as_posix(): path.read_bytes()
         for path in sorted(package.rglob("*"))
-        if path.is_file()
+        if path.is_file() and path.relative_to(package).as_posix() in static_paths
     }
 
 

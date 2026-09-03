@@ -51,6 +51,8 @@
     }
   },
   "generator": "sim.tools.worlds.forest_hf.generate",
+  "production_contract_sha256": "db24984fe082d9a1223552715a941db38d56f9cb8304538e456f765622e66d14",
+  "route_contract_sha256": "0fe145afc60f9c01422b1ca883079a6c438b62f64994f6b6e8151e4c047eae32",
   "schema": "lingtu.sim.forest-terrain-recipe.v1",
   "seed": 20260813,
   "source_grid": {

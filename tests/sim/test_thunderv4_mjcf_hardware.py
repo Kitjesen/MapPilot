@@ -7,6 +7,7 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SIM_ROOT = REPO_ROOT / "sim"
@@ -49,6 +50,7 @@ def _joint_id(model: mujoco.MjModel, name: str) -> int:
 
 
 def _keyboard_module():
+    pytest.importorskip("torch", reason="Thunder V4 keyboard checks require torch")
     script_path = (
         REPO_ROOT
         / "sim" / "packages" / "controllers"

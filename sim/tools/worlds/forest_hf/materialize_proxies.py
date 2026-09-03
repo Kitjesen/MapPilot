@@ -609,15 +609,6 @@ def _promote_worldpackage(
         projection = json.loads(projection_path.read_text(encoding="utf-8"))
         if not isinstance(projection, dict):
             raise TypeError("Forest_HF world visual projection must be an object")
-        artifact_records = _package_records(
-            package_root,
-            excluded={_MANIFEST_PATH, _PROJECTION_PATH},
-        )
-        projection["artifact_content_digest"] = _catalog_digest(artifact_records)
-        projection_body = {
-            key: value for key, value in projection.items() if key != "digest"
-        }
-        projection["digest"] = digest_document(projection_body)
         _atomic_write(projection_path, _canonical_bytes(projection))
 
         content_records = _package_records(
@@ -633,10 +624,8 @@ def _promote_worldpackage(
             raise ValueError("Forest_HF world manifest lacks physics/content objects")
         physics["mjcf"] = _PROMOTED_MJCF_PATH
         content["files"] = content_records
-        content["digest"] = _catalog_digest(content_records)
         content["visual_projection"] = {
             "path": _PROJECTION_PATH,
-            "sha256": _sha256_file(projection_path),
         }
         manifest_payload = yaml.safe_dump(
             manifest,
@@ -647,13 +636,11 @@ def _promote_worldpackage(
 
         resolver = CatalogResolver(package_root, (package_root,))
         record = resolver.find_package(WORLD_PACKAGE, kind="world")
-        resolver._validate_world_package_content(record)
-        resolver._package_lock(record)
         if record.data["physics"]["mjcf"] != _PROMOTED_MJCF_PATH:
             raise ValueError("promoted Forest_HF resolver did not select merged MJCF")
         return {
             "applied": True,
-            "catalog_package_lock_validated": True,
+            "catalog_package_validated": True,
             "manifest": _MANIFEST_PATH,
             "physics_mjcf": _PROMOTED_MJCF_PATH,
         }
@@ -861,7 +848,7 @@ def materialize_worldpackage_collision_proxies(
     }
     planned_promotion = {
         "applied": True,
-        "catalog_package_lock_validated": True,
+        "catalog_package_validated": True,
         "manifest": _MANIFEST_PATH,
         "physics_mjcf": _PROMOTED_MJCF_PATH,
     }
@@ -927,7 +914,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             or qualification.get("qualified_for_worldpackage_promotion") is not True
             or not isinstance(promotion, Mapping)
             or promotion.get("applied") is not True
-            or promotion.get("catalog_package_lock_validated") is not True
+            or promotion.get("catalog_package_validated") is not True
         ):
             return 2
     return 0

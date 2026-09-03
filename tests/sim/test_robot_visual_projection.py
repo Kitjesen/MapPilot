@@ -184,7 +184,7 @@ def test_mesh_projection_fails_closed_without_cooked_asset_mapping(tmp_path: Pat
 
 def test_thunder_projection_retains_only_canonical_mesh_visuals() -> None:
     repo_root = Path(__file__).resolve().parents[2]
-    package_dir = repo_root / "sim" / "packages" / "robots" / "thunderv4"
+    package_dir = repo_root / "sim" / "packages" / "robots" / "doso" / "thunder_v4"
     manifest = compile_robot_visual_manifest(package_dir).to_dict()
     bindings = {
         visual["mesh"]: f"/Game/Robots/ThunderV4/{visual['mesh']}.{visual['mesh']}"
@@ -200,7 +200,7 @@ def test_thunder_projection_retains_only_canonical_mesh_visuals() -> None:
 
 def test_thunder_projection_uses_layered_black_robot_palette() -> None:
     repo_root = Path(__file__).resolve().parents[2]
-    package_dir = repo_root / "sim" / "packages" / "robots" / "thunderv4"
+    package_dir = repo_root / "sim" / "packages" / "robots" / "doso" / "thunder_v4"
     manifest = compile_robot_visual_manifest(package_dir).to_dict()
     bindings = {
         visual["mesh"]: f"/Game/Robots/ThunderV4/{visual['mesh']}.{visual['mesh']}"
@@ -249,7 +249,7 @@ def test_thunder_projection_uses_layered_black_robot_palette() -> None:
 @pytest.mark.parametrize(
     ("package_name", "bindings"),
     [
-        ("thunderv4", "checked_in"),
+        ("doso/thunder_v4", "checked_in"),
         ("omni_cart", None),
     ],
 )

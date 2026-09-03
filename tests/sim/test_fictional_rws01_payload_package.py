@@ -71,9 +71,9 @@ def test_payload_source_asset_and_provenance_are_content_bound() -> None:
 
     assert source_path.is_file()
     assert source_path.suffix == ".glb"
-    assert source["sha256"] == _sha256(source_path)
+    assert source == {"path": "assets/rws-01-v002-runtime.glb"}
     assert report_path.is_file()
-    assert report["sha256"] == _sha256(report_path)
+    assert report == {"path": "provenance/conditioning-report.json"}
     assert manifest["provenance"]["generator"] == "tripo3d"
     assert manifest["provenance"]["source_task_id"] == (
         "2dd80649-65d8-4263-a702-f3d29f73e40c"
@@ -120,16 +120,7 @@ def test_payload_visual_projection_uses_the_clean_pbr_runtime_assets() -> None:
         "material_count": 5,
         "required_channels": ["base_color", "normal", "metallic_roughness"],
     }
-    body = {key: value for key, value in projection.items() if key != "digest"}
-    assert projection["digest"] == hashlib.sha256(
-        json.dumps(
-            body,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
-    ).hexdigest()
+    assert "digest" not in projection
     assert {component["mesh"] for component in projection["components"]} == EXPECTED_MESHES
 
     for component in projection["components"]:
@@ -152,7 +143,6 @@ def test_payload_manifest_connects_mount_physics_visual_and_interfaces() -> None
     assert manifest["physics"] == {
         "mjcf": {
             "path": "mjcf/fictional_rws_01.xml",
-            "sha256": _sha256(MJCF_PATH),
         },
         "attach_root": "payload_base",
         "global_options": "inherit_session",
@@ -163,7 +153,6 @@ def test_payload_manifest_connects_mount_physics_visual_and_interfaces() -> None
         "binding": "PayloadVisual:FictionalRWS01",
         "projection": {
             "path": "visual/payload.visual-projection.json",
-            "sha256": _sha256(PROJECTION_PATH),
         },
         "authority": "mujoco",
         "ue_collision": "disabled",

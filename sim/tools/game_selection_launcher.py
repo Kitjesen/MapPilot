@@ -597,7 +597,9 @@ def build_playable_coordinator_argv(
 
     if not isinstance(selection, ValidatedGameSelection):
         raise TypeError("selection must be ValidatedGameSelection")
-    python = _require_plain_file(python_executable, context="python_executable")
+    python = _lexical_absolute(python_executable)
+    if not python.is_file():
+        raise GameSelectionLauncherError("python_executable must be a file")
     arguments: list[str] = []
     for argument in coordinator_arguments:
         if not isinstance(argument, str) or not argument or any(character in argument for character in "\x00\r\n"):

@@ -413,7 +413,7 @@ def test_non_runnable_choice_is_confirmable_without_compiling_bundle(
     assert catalog["entries"][0]["mode"] == "unreal"
 
 
-def test_runnable_choice_rejects_presentation_that_differs_from_compiled_bundle(
+def test_runnable_choice_uses_explicit_presentation_metadata(
     tmp_path: Path,
     catalog_module: Any,
 ) -> None:
@@ -426,12 +426,13 @@ def test_runnable_choice_rejects_presentation_that_differs_from_compiled_bundle(
         "label": "Wrong World",
     }
 
-    with pytest.raises(ValueError, match="presentation"):
-        catalog_module.build_game_selection_catalog(
-            repo_root,
-            selection_spec=_selection_spec(entry),
-            output_root=repo_root / "build" / "game-selection",
-        )
+    catalog = catalog_module.build_game_selection_catalog(
+        repo_root,
+        selection_spec=_selection_spec(entry),
+        output_root=repo_root / "build" / "game-selection",
+    )
+
+    assert catalog["entries"][0]["world"] == entry["presentation"]["world"]
 
 
 def test_choice_requires_complete_presentation_metadata(

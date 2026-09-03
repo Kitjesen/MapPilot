@@ -27,6 +27,7 @@
       200000.0
     ],
     "location_z_cm": 3000.0,
+    "production_contract_sha256": "db24984fe082d9a1223552715a941db38d56f9cb8304538e456f765622e66d14",
     "quads_per_section": 63,
     "scale_cm": [
       49.6031746031746,

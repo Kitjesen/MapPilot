@@ -526,6 +526,10 @@ def _compiled_entry(
     relative_bundle = PurePosixPath("bundles", entry["id"])
     bundle_dir = staging_root.joinpath(*relative_bundle.parts)
     resolved.write_bundle(bundle_dir)
+    if not bundle_dir.is_dir():
+        raise GameSelectionCatalogError(
+            f"selection {entry['id']} compiled bundle was not materialized"
+        )
     shutil.copyfile(session_path, bundle_dir / "session.yaml")
     _validate_materialized_bundle(
         bundle_dir, resolved=resolved, repo_root=repo_root

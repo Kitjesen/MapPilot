@@ -394,9 +394,6 @@ def _ue_projection(recipe: dict[str, object]) -> dict[str, object]:
 def _world_manifest(
     *,
     records: Sequence[dict[str, object]],
-    content_digest: str,
-    provenance_sha256: str,
-    projection_sha256: str,
 ) -> bytes:
     lines = [
         "schema: lingtu.sim.world-package.v1",
@@ -419,9 +416,7 @@ def _world_manifest(
         "entities: []",
         "provenance:",
         "  path: provenance/generation.json",
-        f"  sha256: {provenance_sha256}",
         "content:",
-        f"  digest: {content_digest}",
         "  files:",
     ]
     for record in records:
@@ -436,10 +431,8 @@ def _world_manifest(
         (
             "  provenance:",
             "    path: provenance/generation.json",
-            f"    sha256: {provenance_sha256}",
             "  visual_projection:",
             "    path: visual/world.visual-projection.json",
-            f"    sha256: {projection_sha256}",
         )
     )
     return ("\n".join(lines) + "\n").encode()
@@ -519,7 +512,6 @@ def _projection_asset(package_root: Path, relative: str, role: str, *, collision
         "role": role,
         "path": record["path"],
         "bytes": record["size"],
-        "sha256": record["sha256"],
         "collision": collision,
     }
 
@@ -539,8 +531,6 @@ def _write_canonical_package(
 ) -> None:
     manifest_path = "world.package.yaml"
     projection_path = "visual/world.visual-projection.json"
-    artifact_records = _package_records(package_root, excluded={manifest_path, projection_path})
-    artifact_digest = _sha256(_identity_json(artifact_records)[:-1])
     spacing_m = spec.extent_m / (spec.resolution_px - 1)
     bounds = {
         "min_m": [-spec.extent_m / 2.0, -spec.extent_m / 2.0, spec.elevation_min_m],
@@ -556,7 +546,6 @@ def _write_canonical_package(
         },
         "binding": "WorldVisual:ForestHF",
         "level": "/Game/RobotSim/Maps/Forest_HF_2km",
-        "artifact_content_digest": artifact_digest,
         "units": {"length": "m", "up_axis": "Z", "handedness": "RH"},
         "terrain": {
             "grid_px": [spec.resolution_px, spec.resolution_px],
@@ -572,21 +561,12 @@ def _write_canonical_package(
             "aligned_to_heightmap": True,
         },
     }
-    projection = {**projection_body, "digest": _sha256(_identity_json(projection_body)[:-1])}
     projection_target = package_root / projection_path
     projection_target.parent.mkdir(parents=True, exist_ok=True)
-    projection_target.write_bytes(_canonical_json(projection))
+    projection_target.write_bytes(_canonical_json(projection_body))
     records = _package_records(package_root, excluded={manifest_path})
-    content_digest = _sha256(_identity_json(records)[:-1])
-    provenance_sha256 = str(_file_record(package_root, "provenance/generation.json")["sha256"])
-    projection_sha256 = str(_file_record(package_root, projection_path)["sha256"])
     (package_root / manifest_path).write_bytes(
-        _world_manifest(
-            records=records,
-            content_digest=content_digest,
-            provenance_sha256=provenance_sha256,
-            projection_sha256=projection_sha256,
-        )
+        _world_manifest(records=records)
     )
 
 

@@ -30,7 +30,7 @@ import tempfile
 import urllib.parse
 import uuid
 from contextlib import contextmanager
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Mapping, Sequence
 
 # Blender executes ``--python`` files as standalone scripts, so the repository
@@ -1863,8 +1863,11 @@ def build_blender_command(
         recipe_path = root / recipe_path
     if not output_path.is_absolute():
         output_path = root / output_path
+    executable = str(blender_executable)
+    if re.match(r"^(?:[A-Za-z]:[\\/]|\\\\)", executable):
+        executable = str(PureWindowsPath(executable))
     return [
-        str(Path(blender_executable)),
+        executable,
         "--factory-startup",
         "--background",
         "--python",
@@ -2479,7 +2482,7 @@ def _setup_scene(width: int, height: int, samples: int) -> dict[str, Any]:
     scene.render.resolution_y = height
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
-    scene.view_settings.exposure = 0.15
+    scene.view_settings.exposure = 0.75
     if hasattr(scene, "eevee"):
         eevee = scene.eevee
         if hasattr(eevee, "taa_render_samples"):

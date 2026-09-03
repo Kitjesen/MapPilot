@@ -19,7 +19,7 @@ import struct
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 PLAN_SCHEMA = "lingtu.sim.static-prop-conditioning-plan.v1"
@@ -1061,8 +1061,11 @@ def build_blender_conditioning_command(
     if not script.is_file():
         raise ValueError("repository static-prop conditioner is missing")
     script_sha256 = _sha256_file(script)
+    executable = str(blender_executable)
+    if re.match(r"^(?:[A-Za-z]:[\\/]|\\\\)", executable):
+        executable = str(PureWindowsPath(executable))
     return [
-        str(Path(blender_executable)),
+        executable,
         "--factory-startup",
         "--background",
         "--disable-autoexec",
