@@ -257,7 +257,7 @@ def test_promoted_package_contained_visual_projection_resolves_in_fresh_catalog_
     assert first.state == "qualified"
     assert second.state == "qualified"
     assert first_result == second_result
-    assert first_result.package_root == tmp_path / "sim" / "packages" / "robots" / "g005_robot" / "1.0.0"
+    assert first_result.package_root == tmp_path / "sim" / "packages" / "robots" / "g005_robot"
     assert {
         path.relative_to(first_result.package_root).as_posix(): path.read_bytes()
         for path in first_result.package_root.rglob("*")

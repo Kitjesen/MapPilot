@@ -199,12 +199,12 @@ def _robot_draft(root: Path) -> ImportDraft:
     return RobotImporter(repo_root, work_root=root / "imports").import_robot(request)
 
 
-def test_full_artifact_digest_is_validated_before_publication(tmp_path: Path) -> None:
+def test_invalid_package_is_rejected_before_publication(tmp_path: Path) -> None:
     draft = _draft(tmp_path)
     (draft.package_root / "world.xml").write_text("<mujoco><worldbody><geom/></worldbody></mujoco>\n", encoding="utf-8")
     promoter = CatalogPromoter(tmp_path)
 
-    with pytest.raises(ImportFailure, match=r"content digest"):
+    with pytest.raises(ImportFailure, match=r"staged package does not validate"):
         promoter.promote(draft)
 
     assert all(not path.exists() for path in _targets(tmp_path))

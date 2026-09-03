@@ -36,7 +36,7 @@ from .contracts import (
     write_json,
 )
 from .intake import SourceIntake
-from .promotion import CatalogPromoter, _PackageLock
+from .promotion import CatalogPromoter, _PackageLock, _same_tree
 
 
 class UrdfToMjcfConverter(Protocol):
@@ -1402,6 +1402,41 @@ class RobotImporter:
             if published_root.exists():
                 try:
                     self._validate_published_draft(published_draft)
+                    if draft.package_root is None or published_draft.package_root is None:
+                        raise ImportFailure(
+                            "robot import draft is missing its package tree",
+                            code=ImportCode.PROMOTION_CONFLICT,
+                            context=draft.import_id,
+                        )
+                    if not _same_tree(published_draft.package_root, draft.package_root):
+                        raise ImportFailure(
+                            "published robot package differs from the regenerated package",
+                            code=ImportCode.PROMOTION_CONFLICT,
+                            context=draft.import_id,
+                        )
+                    if draft.qualification_path is None or published_draft.qualification_path is None:
+                        raise ImportFailure(
+                            "robot import draft is missing qualification evidence",
+                            code=ImportCode.PROMOTION_CONFLICT,
+                            context=draft.import_id,
+                        )
+                    incoming_evidence = draft.qualification_path.parent / "evidence" / draft.version
+                    published_evidence = (
+                        published_draft.qualification_path.parent / "evidence" / draft.version
+                    )
+                    if (
+                        published_draft.qualification_path.read_bytes()
+                        != draft.qualification_path.read_bytes()
+                        or not self._same_qualification_evidence(
+                            published_evidence,
+                            incoming_evidence,
+                        )
+                    ):
+                        raise ImportFailure(
+                            "published robot qualification differs from regenerated evidence",
+                            code=ImportCode.PROMOTION_CONFLICT,
+                            context=draft.import_id,
+                        )
                 except (CatalogError, ImportFailure, OSError, ValueError) as exc:
                     self._remove_staging_root(staging_root)
                     raise ImportFailure(
@@ -1449,6 +1484,47 @@ class RobotImporter:
             qualification_path=qualification_path,
             evidence_root=evidence_root,
         )
+
+    @staticmethod
+    def _same_qualification_evidence(published: Path, incoming: Path) -> bool:
+        published_files = tuple(
+            sorted(path.relative_to(published).as_posix() for path in published.rglob("*") if path.is_file())
+        )
+        incoming_files = tuple(
+            sorted(path.relative_to(incoming).as_posix() for path in incoming.rglob("*") if path.is_file())
+        )
+        if published_files != incoming_files:
+            return False
+        for relative in published_files:
+            left = published / PurePosixPath(relative)
+            right = incoming / PurePosixPath(relative)
+            if relative != "catalog-validation.json":
+                if relative == "import-identity.json":
+                    left_value = json.loads(left.read_text(encoding="utf-8"))
+                    right_value = json.loads(right.read_text(encoding="utf-8"))
+                    if not isinstance(left_value, dict) or not isinstance(right_value, dict):
+                        return False
+                    left_request = left_value.get("request")
+                    right_request = right_value.get("request")
+                    if not isinstance(left_request, dict) or not isinstance(right_request, dict):
+                        return False
+                    left_request.pop("source", None)
+                    right_request.pop("source", None)
+                    if left_value != right_value:
+                        return False
+                    continue
+                if left.read_bytes() != right.read_bytes():
+                    return False
+                continue
+            left_value = json.loads(left.read_text(encoding="utf-8"))
+            right_value = json.loads(right.read_text(encoding="utf-8"))
+            if not isinstance(left_value, dict) or not isinstance(right_value, dict):
+                return False
+            left_value.pop("manifest_path", None)
+            right_value.pop("manifest_path", None)
+            if left_value != right_value:
+                return False
+        return True
 
     @staticmethod
     def _relocate_draft(draft: ImportDraft, staging_root: Path, published_root: Path) -> ImportDraft:
