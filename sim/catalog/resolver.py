@@ -831,28 +831,30 @@ class CatalogResolver:
                 _string(accepts["type"], f"{context}.robot_interface.accepts_command.type")
                 if "message_type" in accepts:
                     _string(accepts["message_type"], f"{context}.robot_interface.accepts_command.message_type")
-            elif record.id == "thunderv4_locomotion" and adapter["plugin"] == "quadruped_him":
-                raise CatalogError(f"{context}.robot_interface.accepts_command is required for ThunderV4 quadruped_him")
+            elif adapter["plugin"] == "quadruped_him":
+                raise CatalogError(
+                    f"{context}.robot_interface.accepts_command is required for quadruped_him"
+                )
             produces = _mapping(robot_interface["produces_command"], f"{context}.robot_interface.produces_command")
             _keys(produces, ("type",), ("message_type",), f"{context}.robot_interface.produces_command")
             _string(produces["type"], f"{context}.robot_interface.produces_command.type")
             if "message_type" in produces:
                 _string(produces["message_type"], f"{context}.robot_interface.produces_command.message_type")
-            if record.id == "thunderv4_locomotion" and adapter["plugin"] == "quadruped_him":
+            if adapter["plugin"] == "quadruped_him":
                 accepts = _mapping(robot_interface["accepts_command"], f"{context}.robot_interface.accepts_command")
                 if accepts["type"] != "base_twist":
                     raise CatalogError(
-                        f"{context}.robot_interface.accepts_command.type must be base_twist for ThunderV4 quadruped_him"
+                        f"{context}.robot_interface.accepts_command.type must be base_twist for quadruped_him"
                     )
                 if accepts.get("message_type") != "lingtu.dds.FinalVelocityCommand":
                     raise CatalogError(
                         f"{context}.robot_interface.accepts_command.message_type must be "
-                        "lingtu.dds.FinalVelocityCommand for ThunderV4 quadruped_him"
+                        "lingtu.dds.FinalVelocityCommand for quadruped_him"
                     )
                 if produces["type"] != "joint_torque":
                     raise CatalogError(
                         f"{context}.robot_interface.produces_command.type must be joint_torque "
-                        "for ThunderV4 quadruped_him"
+                        "for quadruped_him"
                     )
             actuators = _mapping(data["actuators"], f"{context}.actuators")
             _keys(actuators, ("channels",), (), f"{context}.actuators")

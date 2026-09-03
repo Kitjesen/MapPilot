@@ -55,57 +55,6 @@ _MID360_EVIDENCE_FIELDS = frozenset(
         "unknown_line_representation",
     }
 )
-THUNDERV4_NAVIGATION_STREAM_IDS = (
-    "thunder_01.front_depth",
-    "thunder_01.front_rgb",
-    "thunder_01.imu",
-    "thunder_01.mid360",
-    "thunder_01.truth_odom",
-)
-_THUNDERV4_NAVIGATION_CONTRACT = {
-    "thunder_01.front_depth": (
-        "depth",
-        "visual",
-        "unreal_camera",
-        "camera_shm",
-        "lingtu.dds.Image",
-        None,
-    ),
-    "thunder_01.front_rgb": (
-        "rgb",
-        "visual",
-        "unreal_camera",
-        "camera_shm",
-        "lingtu.dds.Image",
-        None,
-    ),
-    "thunder_01.imu": (
-        "imu",
-        "physics",
-        "mujoco_sensor",
-        "typed_dds",
-        "lingtu.dds.Imu",
-        None,
-    ),
-    "thunder_01.mid360": (
-        "mid360",
-        "physics",
-        "mujoco_livox_model",
-        "typed_dds",
-        "lingtu.dds.LivoxFrame",
-        "thunder_01/lidar1_link_site",
-    ),
-    "thunder_01.truth_odom": (
-        "truth_odom",
-        "physics",
-        "mujoco_truth",
-        "typed_dds",
-        "lingtu.dds.Odometry",
-        None,
-    ),
-}
-
-
 class SensorEvidenceError(ValueError):
     """Raised when stream evidence cannot be joined to one trusted session."""
 
@@ -216,51 +165,6 @@ def build_sensor_stream_summary(
         "blocking_reasons": blocking,
         "streams": stream_documents,
     }
-
-
-def build_thunderv4_navigation_stream_summary(
-    plan: SensorRuntime,
-    observations: Iterable[Mapping[str, Any]],
-    *,
-    model_generation: int,
-    reset_generation: int,
-    shm_allocations: Mapping[str, str],
-) -> dict[str, Any]:
-    """Build the exact five-stream ThunderV4 navigation qualification view."""
-
-    if not isinstance(plan, SensorRuntime):
-        raise SensorEvidenceError("plan must be a SensorRuntime")
-    actual = frozenset(stream.sensor_id for stream in plan.streams)
-    expected = frozenset(THUNDERV4_NAVIGATION_STREAM_IDS)
-    if actual != expected:
-        missing = sorted(expected - actual)
-        extra = sorted(actual - expected)
-        raise SensorEvidenceError(
-            "ThunderV4 navigation requires the exact five-stream set; "
-            f"missing={missing}, extra={extra}"
-        )
-    for stream in plan.streams:
-        actual_contract = (
-            stream.stream_kind,
-            stream.route.owner,
-            stream.route.source,
-            stream.route.transport,
-            stream.message_type,
-            stream.raycast_frame_stable_id,
-        )
-        expected_contract = _THUNDERV4_NAVIGATION_CONTRACT[stream.sensor_id]
-        if actual_contract != expected_contract:
-            raise SensorEvidenceError(
-                f"ThunderV4 navigation stream {stream.sensor_id!r} route contract mismatch"
-            )
-    return build_sensor_stream_summary(
-        plan,
-        observations,
-        model_generation=model_generation,
-        reset_generation=reset_generation,
-        required_stream_ids=THUNDERV4_NAVIGATION_STREAM_IDS,
-        shm_allocations=shm_allocations,
-    )
 
 
 def _validate_observation(
@@ -554,9 +458,7 @@ def _generation(value: Any, field: str) -> int:
 
 
 __all__ = [
-    "THUNDERV4_NAVIGATION_STREAM_IDS",
     "SensorEvidenceError",
     "build_sensor_stream_summary",
-    "build_thunderv4_navigation_stream_summary",
     "sensor_stream_binding_identity",
 ]

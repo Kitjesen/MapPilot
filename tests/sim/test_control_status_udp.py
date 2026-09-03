@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -10,7 +9,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from sim.runtime.control.contracts import CommandSubmitResult
 from sim.runtime.coordinator.control_intent_udp import (
     BoundedRuntimeRequestInbox,
@@ -187,7 +185,7 @@ def test_full_status_is_exact_truthful_and_keeps_three_motion_layers_separate() 
         ),
         (
             lambda value: value["sensors"].append(dict(value["sensors"][0])),
-            "exact five",
+            "unique stream ids",
         ),
         (
             lambda value: value["motion"]["requested_axes"].update(forward=float("nan")),
@@ -600,10 +598,7 @@ def test_authority_builder_uses_coordinator_manifest_counts_and_mujoco_truth() -
         snapshot=snapshot,
         runtime_manifest=manifest_without_sensor_source,
     )
-    assert [item["state"] for item in unavailable_sensors["sensors"]] == [
-        "UNAVAILABLE"
-    ] * 5
-    assert all(item["sample_count"] == 0 for item in unavailable_sensors["sensors"])
+    assert unavailable_sensors["sensors"] == []
 
     stale = dict(manifest)
     stale["reset_generation"] = 1

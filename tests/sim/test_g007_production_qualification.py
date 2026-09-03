@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -7,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from sim.catalog.resolver import CatalogResolver
 from sim.runtime.qualification.production import (
     G007_PRODUCTION_RECORD_SCHEMA,
@@ -15,7 +13,7 @@ from sim.runtime.qualification.production import (
     write_g007_production_qualification_result,
 )
 from sim.runtime.recording import SimulationRecordingWriter
-from sim.runtime.sensors.evidence import THUNDERV4_NAVIGATION_STREAM_IDS
+from sim.runtime.qualification.thunderv4 import THUNDERV4_NAVIGATION_STREAM_IDS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SESSION = (

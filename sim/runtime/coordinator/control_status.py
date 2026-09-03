@@ -11,8 +11,6 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from sim.runtime.sensors.evidence import THUNDERV4_NAVIGATION_STREAM_IDS
-
 from .control_intent_udp import (
     MAX_CONTROL_DATAGRAM_BYTES,
     ControlIntentValidationError,
@@ -411,15 +409,7 @@ def build_control_status_authority(
 
     sensor_streams_value = manifest.get("sensor_streams")
     if sensor_streams_value is None:
-        sensors = [
-            {
-                "stream_id": stream_id,
-                "state": "UNAVAILABLE",
-                "sample_count": 0,
-                "blocker": "sensor status source unavailable",
-            }
-            for stream_id in THUNDERV4_NAVIGATION_STREAM_IDS
-        ]
+        sensors: list[dict[str, Any]] = []
     else:
         sensor_streams = _mapping(
             sensor_streams_value,
@@ -480,15 +470,23 @@ def _sensor_authority(
             raise ControlIntentValidationError(
                 f"sensor summary {field} does not match status identity"
             )
-    expected_stream_ids = tuple(THUNDERV4_NAVIGATION_STREAM_IDS)
-    if tuple(summary.get("required_stream_ids", ())) != expected_stream_ids:
+    required_stream_ids = _sequence(
+        summary.get("required_stream_ids"),
+        "sensor summary required_stream_ids",
+    )
+    expected_stream_ids = tuple(
+        _safe_id(stream_id, f"sensor summary required_stream_ids[{index}]")
+        for index, stream_id in enumerate(required_stream_ids)
+    )
+    if expected_stream_ids != tuple(sorted(set(expected_stream_ids))):
         raise ControlIntentValidationError(
-            "sensor summary required_stream_ids must be the exact five streams"
+            "sensor summary required_stream_ids must be unique and in canonical order"
         )
     summary_streams = _mapping(summary.get("streams"), "sensor summary streams")
-    if tuple(sorted(summary_streams)) != expected_stream_ids:
+    missing_streams = [stream_id for stream_id in expected_stream_ids if stream_id not in summary_streams]
+    if missing_streams:
         raise ControlIntentValidationError(
-            "sensor summary streams must be the exact five streams"
+            "sensor summary is missing required streams: " + ", ".join(missing_streams)
         )
     blocking = _mapping(
         summary.get("blocking_reasons"),
@@ -891,9 +889,6 @@ def _validate_readiness(value: Any) -> None:
 
 def _validate_sensors(value: Any) -> None:
     sensors = _sequence(value, "sensors")
-    expected = tuple(THUNDERV4_NAVIGATION_STREAM_IDS)
-    if len(sensors) != len(expected):
-        raise ControlIntentValidationError("sensors must contain the exact five streams")
     actual: list[str] = []
     for index, raw in enumerate(sensors):
         sensor = _mapping(raw, f"sensors[{index}]")
@@ -907,9 +902,9 @@ def _validate_sensors(value: Any) -> None:
             raise ControlIntentValidationError(
                 f"sensors[{index}].blocker is required until ACTIVE with samples"
             )
-    if tuple(actual) != expected:
+    if tuple(actual) != tuple(sorted(set(actual))):
         raise ControlIntentValidationError(
-            "sensors must contain the exact five streams in canonical order"
+            "sensors must contain unique stream ids in canonical order"
         )
 
 

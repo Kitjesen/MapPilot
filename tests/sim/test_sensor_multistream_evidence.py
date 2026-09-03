@@ -1,33 +1,27 @@
 """Strict same-session evidence for the ThunderV4 navigation sensor rig."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
-
 from sim.runtime.sensors import (
     SensorEvidenceError,
     SensorRuntime,
     build_sensor_stream_summary,
-    build_thunderv4_navigation_stream_summary,
     sensor_stream_binding_identity,
 )
+from sim.runtime.qualification.thunderv4 import build_thunderv4_navigation_stream_summary
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SENSOR_PLAN = (
-    REPO_ROOT / "build" / "session-bundles" / "thunderv4-unreal" / "sensor.plan.json"
+from tests.sim.fixtures.sensor_plans import (
+    thunderv4_unreal_sensor_plan,
+    thunderv4_unreal_sensor_runtime,
 )
 
 
 def _plan() -> SensorRuntime:
-    return SensorRuntime.from_plan(
-        cast(dict[str, Any], json.loads(SENSOR_PLAN.read_text(encoding="utf-8")))
-    )
+    return thunderv4_unreal_sensor_runtime()
 
 
 def _active_observations(plan: SensorRuntime) -> list[dict[str, Any]]:
@@ -433,9 +427,7 @@ def test_mid360_cannot_claim_full_motion_distortion_fidelity() -> None:
 
 
 def test_thunderv4_navigation_summary_rejects_an_extra_plan_stream() -> None:
-    document = cast(
-        dict[str, Any], json.loads(SENSOR_PLAN.read_text(encoding="utf-8"))
-    )
+    document = thunderv4_unreal_sensor_plan()
     extra = dict(document["streams"]["truth_odom"][0])
     extra["sensor_id"] = "thunder_01.unplanned_truth"
     document["streams"]["truth_odom"].append(extra)
@@ -452,9 +444,7 @@ def test_thunderv4_navigation_summary_rejects_an_extra_plan_stream() -> None:
 
 
 def test_thunderv4_navigation_summary_rejects_a_tampered_plan_route() -> None:
-    document = cast(
-        dict[str, Any], json.loads(SENSOR_PLAN.read_text(encoding="utf-8"))
-    )
+    document = thunderv4_unreal_sensor_plan()
     document["streams"]["imu"][0]["owner"] = "visual"
     plan = SensorRuntime.from_plan(document)
 

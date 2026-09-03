@@ -44,10 +44,8 @@ from sim.runtime.scenario import (
     load_scenario_plan,
 )
 from sim.runtime.sensors.evidence import (
-    THUNDERV4_NAVIGATION_STREAM_IDS,
     SensorEvidenceError,
     build_sensor_stream_summary,
-    build_thunderv4_navigation_stream_summary,
     sensor_stream_binding_identity,
 )
 from sim.runtime.sensors.readiness import (
@@ -2279,24 +2277,14 @@ class RuntimeCoordinator:
             observations.append(observation)
 
         try:
-            actual_stream_ids = frozenset(streams)
-            if actual_stream_ids == frozenset(THUNDERV4_NAVIGATION_STREAM_IDS):
-                raw_summary: object = build_thunderv4_navigation_stream_summary(
-                    plan,
-                    observations,
-                    model_generation=model_generation,
-                    reset_generation=reset_generation,
-                    shm_allocations=camera_shm_allocations,
-                )
-            else:
-                raw_summary = build_sensor_stream_summary(
-                    plan,
-                    observations,
-                    model_generation=model_generation,
-                    reset_generation=reset_generation,
-                    required_stream_ids=readiness.required_stream_ids,
-                    shm_allocations=camera_shm_allocations,
-                )
+            raw_summary: object = build_sensor_stream_summary(
+                plan,
+                observations,
+                model_generation=model_generation,
+                reset_generation=reset_generation,
+                required_stream_ids=readiness.required_stream_ids,
+                shm_allocations=camera_shm_allocations,
+            )
         except (SensorEvidenceError, SensorSessionError) as exc:
             raise CoordinatorError(f"cannot build sensor stream summary: {exc}") from exc
         if type(raw_summary) is not dict:

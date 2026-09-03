@@ -25,7 +25,7 @@ from sim.runtime.replay.timeline import (
     compare_replays,
     replay_snapshots,
 )
-from sim.runtime.sensors.evidence import THUNDERV4_NAVIGATION_STREAM_IDS
+from sim.runtime.qualification.thunderv4 import THUNDERV4_NAVIGATION_STREAM_IDS
 
 QUALIFICATION_RESULT_SCHEMA = "lingtu.sim.qualification-result.v1"
 QUALIFICATION_RESULT_FILENAME = "qualification_result.json"

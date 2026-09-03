@@ -12,8 +12,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SIM_ROOT = REPO_ROOT / "sim"
 
 CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".inl"}
-MODEL_SPECIFIC_ADAPTERS = {
+MODEL_SPECIFIC_SOURCES = {
     SIM_ROOT / "runtime" / "control" / "thunderv4.py",
+    SIM_ROOT / "runtime" / "coordinator" / "playable_evidence.py",
+    SIM_ROOT / "runtime" / "coordinator" / "playable_vertical_slice.py",
+    SIM_ROOT
+    / "runtime"
+    / "visual"
+    / "RobotSimUE"
+    / "Plugins"
+    / "LingTuSim"
+    / "Source"
+    / "LingTuSimUI"
+    / "Private"
+    / "SLingTuSimRuntimeHUD.cpp",
 }
 
 PHYSICS_SOURCE_ROOTS = tuple(
@@ -73,7 +85,8 @@ def _generic_source_files() -> list[Path]:
                     continue
                 files.append(path)
 
-    files = [path for path in files if path.resolve() not in {item.resolve() for item in MODEL_SPECIFIC_ADAPTERS}]
+    model_specific = {item.resolve() for item in MODEL_SPECIFIC_SOURCES}
+    files = [path for path in files if path.resolve() not in model_specific]
     return sorted(files)
 
 
