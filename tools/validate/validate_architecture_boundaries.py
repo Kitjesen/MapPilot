@@ -183,7 +183,11 @@ def _is_test_or_example(path: Path) -> bool:
 
 
 def _is_scan_excluded_path(path: Path) -> bool:
-    return any(part in SCAN_EXCLUDED_PARTS or part.startswith(".") for part in path.parts)
+    try:
+        parts = path.relative_to(ROOT_DIR).parts
+    except ValueError:
+        parts = path.parts
+    return any(part in SCAN_EXCLUDED_PARTS or part.startswith(".") for part in parts)
 
 
 def _is_composition_exception(path: Path) -> bool:
