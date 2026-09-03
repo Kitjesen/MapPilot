@@ -237,6 +237,11 @@ def test_invalid_camera_intrinsics_drop_the_rgbd_frame(
     "image",
     [
         Image(
+            data=np.zeros((2,), dtype=np.uint8),
+            format=ImageFormat.BGR,
+            ts=10.0,
+        ),
+        Image(
             data=np.zeros((2, 2), dtype=np.uint8),
             format=ImageFormat.BGR,
             ts=10.0,

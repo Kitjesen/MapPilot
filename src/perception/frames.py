@@ -393,22 +393,23 @@ def _intrinsics_are_valid(
 
 
 def _color_image_is_valid(image: Image) -> bool:
-    ndim = int(getattr(image.data, "ndim", -1))
-    if image.height <= 0 or image.width <= 0:
+    shape = tuple(getattr(image.data, "shape", ()))
+    if len(shape) < 2 or int(shape[0]) <= 0 or int(shape[1]) <= 0:
         return False
     if image.format in {ImageFormat.BGR, ImageFormat.RGB}:
-        return ndim == 3 and image.channels == 3
+        return len(shape) == 3 and int(shape[2]) == 3
     if image.format is ImageFormat.RGBA:
-        return ndim == 3 and image.channels == 4
-    return image.format is ImageFormat.GRAY and ndim == 2
+        return len(shape) == 3 and int(shape[2]) == 4
+    return image.format is ImageFormat.GRAY and len(shape) == 2
 
 
 def _depth_image_is_valid(image: Image) -> bool:
+    shape = tuple(getattr(image.data, "shape", ()))
     return bool(
         image.format in {ImageFormat.DEPTH_U16, ImageFormat.DEPTH_F32}
-        and int(getattr(image.data, "ndim", -1)) == 2
-        and image.height > 0
-        and image.width > 0
+        and len(shape) == 2
+        and int(shape[0]) > 0
+        and int(shape[1]) > 0
     )
 
 
