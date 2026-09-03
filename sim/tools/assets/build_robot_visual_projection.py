@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -92,7 +93,18 @@ def _digest(value: Any, context: str) -> str:
     return value
 
 
-def _mesh_expectations(visual_manifest: Mapping[str, Any]) -> dict[str, str]:
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _mesh_expectations(
+    visual_manifest: Mapping[str, Any],
+    robot_package: Path,
+) -> dict[str, str]:
     visuals = visual_manifest.get("visuals")
     if not isinstance(visuals, Sequence) or isinstance(visuals, (str, bytes)):
         raise RobotVisualProjectionToolError("compiled visual manifest visuals must be an array")
@@ -108,10 +120,23 @@ def _mesh_expectations(visual_manifest: Mapping[str, Any]) -> dict[str, str]:
         if geometry.get("kind") != "mesh":
             continue
         mesh = _safe_asset_name(geometry.get("mesh"), f"visual manifest visual {index}.mesh")
-        source_sha256 = _digest(
-            geometry.get("source_sha256"),
-            f"visual manifest visual {index}.source_sha256",
-        )
+        source_mesh = geometry.get("source_mesh")
+        if not isinstance(source_mesh, str) or not source_mesh:
+            raise RobotVisualProjectionToolError(
+                f"visual manifest visual {index}.source_mesh must be a package-relative path"
+            )
+        source_path = (robot_package / PurePosixPath(source_mesh)).resolve()
+        try:
+            source_path.relative_to(robot_package)
+        except ValueError as exc:
+            raise RobotVisualProjectionToolError(
+                f"visual manifest visual {index}.source_mesh escapes the robot package"
+            ) from exc
+        if not source_path.is_file():
+            raise RobotVisualProjectionToolError(
+                f"visual manifest visual {index}.source_mesh does not exist"
+            )
+        source_sha256 = _sha256_file(source_path)
         previous = expected.get(mesh)
         if previous is not None and previous != source_sha256:
             raise RobotVisualProjectionToolError(
@@ -126,10 +151,11 @@ def build_asset_bindings(
     asset_index: Mapping[str, Any],
     destination_path: str,
     asset_index_path: Path,
+    robot_package: Path,
 ) -> dict[str, str]:
     """Build mesh-name to cooked Unreal asset bindings from one FBX index."""
 
-    expected = _mesh_expectations(visual_manifest)
+    expected = _mesh_expectations(visual_manifest, robot_package)
     if asset_index.get("schema") != _ASSET_INDEX_SCHEMA:
         raise RobotVisualProjectionToolError(
             f"asset index schema must be {_ASSET_INDEX_SCHEMA!r}"
@@ -202,7 +228,8 @@ def build_robot_visual_projection(
         manifest = compile_robot_visual_manifest(Path(robot_package)).to_dict()
     except ValueError as exc:
         raise RobotVisualProjectionToolError(str(exc)) from exc
-    expected_meshes = _mesh_expectations(manifest)
+    robot_package = Path(robot_package).resolve()
+    expected_meshes = _mesh_expectations(manifest, robot_package)
     if bool(asset_index_path) != bool(destination_path):
         raise RobotVisualProjectionToolError(
             "asset_index_path and destination_path must be provided together"
@@ -218,6 +245,7 @@ def build_robot_visual_projection(
             asset_index,
             destination_path,
             Path(asset_index_path),
+            robot_package,
         )
     else:
         if asset_index_path is not None or destination_path is not None:

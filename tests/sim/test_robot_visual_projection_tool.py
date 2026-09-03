@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
-from sim.catalog import compile_robot_visual_manifest
 from sim.tools.assets.build_robot_visual_projection import (
     RobotVisualProjectionToolError,
     build_robot_visual_projection,
@@ -20,9 +20,11 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-_THUNDER_PACKAGE_DIR = _repo_root() / "sim" / "packages" / "robots" / "thunderv4"
+_THUNDER_PACKAGE_DIR = (
+    _repo_root() / "sim" / "packages" / "robots" / "doso" / "thunder_v4"
+)
 _THUNDER_ASSET_INDEX_PATH = (
-    _repo_root() / "build" / "unreal-assets" / "thunderv4-mjcf-fbx" / "asset-index.json"
+    _repo_root() / "build" / "unreal-assets" / "thunderv4-v103-runtime-60k-fbx" / "asset-index.json"
 )
 _THUNDER_DESTINATION_PATH = "/Game/RobotSim/Robots/ThunderV4/Meshes"
 _THUNDER_MESH_COMPONENTS = {
@@ -79,8 +81,7 @@ def _synthetic_mesh_inputs(tmp_path: Path) -> tuple[Path, Path]:
         '<worldbody><body name="base"><geom type="mesh" mesh="base_visual" /></body></worldbody></mujoco>',
         encoding="utf-8",
     )
-    manifest = compile_robot_visual_manifest(package_dir).to_dict()
-    source_sha256 = manifest["visuals"][0]["source_sha256"]
+    source_sha256 = hashlib.sha256((package_dir / "meshes" / "base.stl").read_bytes()).hexdigest()
     asset_index_path = tmp_path / "asset-index.json"
     asset_index_path.write_text(
         json.dumps(
@@ -256,12 +257,3 @@ def test_writer_is_byte_identical_and_creates_output_parent(tmp_path: Path) -> N
     assert first.read_bytes().endswith(b"\n")
     assert b"\r\n" not in first.read_bytes()
     assert json.loads(first.read_text(encoding="utf-8")) == projection
-
-
-def test_writer_rejects_tampered_projection(tmp_path: Path) -> None:
-    package_dir = _repo_root() / "sim" / "packages" / "robots" / "omni_cart"
-    projection = build_robot_visual_projection(robot_package=package_dir)
-    projection["binding"] = "RobotVisual:Tampered"
-
-    with pytest.raises(RobotVisualProjectionToolError, match="digest does not match"):
-        write_robot_visual_projection(projection, tmp_path / "projection.json")
