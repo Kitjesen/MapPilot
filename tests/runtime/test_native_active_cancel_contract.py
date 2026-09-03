@@ -1,30 +1,22 @@
-from pathlib import Path
 import re
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-ENDPOINT_LOOP = ROOT / "src" / "nav" / "cpp" / "endpoint" / "runtime" / "loop.cpp"
+NAV_ENDPOINT = ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav"
+ENDPOINT_LOOP = NAV_ENDPOINT / "runtime" / "loop.cpp"
 TASK_CANCEL_ROUTER_SOURCE = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "command" / "cancel.cpp"
+    NAV_ENDPOINT / "command" / "cancel.cpp"
 )
 NAVIGATION_RUNTIME_SOURCE = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "runtime" / "navigation.cpp"
+    NAV_ENDPOINT / "runtime" / "navigation.cpp"
 )
 TERMINAL_TRANSACTION_SOURCE = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "status" / "goal_terminal_transaction.cpp"
+    NAV_ENDPOINT / "status" / "goal_terminal_transaction.cpp"
 )
-RUNTIME_HEADER = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal" / "runtime.hpp"
-)
-RUNTIME_SOURCE = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal" / "runtime.cpp"
-)
-GOAL_PLAN_HEADER = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal" / "plan.hpp"
-)
-GOAL_PLAN_SOURCE = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal" / "plan.cpp"
-)
+RUNTIME_HEADER = NAV_ENDPOINT / "runtime" / "goal" / "runtime.hpp"
+RUNTIME_SOURCE = NAV_ENDPOINT / "runtime" / "goal" / "runtime.cpp"
+GOAL_PLAN_HEADER = NAV_ENDPOINT / "runtime" / "goal" / "plan.hpp"
+GOAL_PLAN_SOURCE = NAV_ENDPOINT / "runtime" / "goal" / "plan.cpp"
 
 
 def _read(path: Path) -> str:

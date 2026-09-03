@@ -1,16 +1,12 @@
-from pathlib import Path
 import re
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-ENDPOINT_LOOP = ROOT / "src" / "nav" / "cpp" / "endpoint" / "runtime" / "loop.cpp"
-STOP_HEADER = ROOT / "src" / "nav" / "cpp" / "endpoint" / "safety" / "stop.hpp"
-RUNTIME_HEADER = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal" / "runtime.hpp"
-)
-RUNTIME_SOURCE = (
-    ROOT / "src" / "nav" / "cpp" / "endpoint" / "plan" / "goal" / "runtime.cpp"
-)
+NAV_ENDPOINT = ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav"
+ENDPOINT_LOOP = NAV_ENDPOINT / "runtime" / "loop.cpp"
+STOP_HEADER = NAV_ENDPOINT / "safety" / "stop.hpp"
+RUNTIME_HEADER = NAV_ENDPOINT / "runtime" / "goal" / "runtime.hpp"
+RUNTIME_SOURCE = NAV_ENDPOINT / "runtime" / "goal" / "runtime.cpp"
 
 
 def _read(path: Path) -> str:
@@ -76,15 +72,7 @@ def test_endpoint_routes_estop_through_runtime_terminal_policy_and_barrier() -> 
     assert "motion_stop.estopWithoutTerminalCommit" in service_block
     assert "estop_latched" in service_block
 
-    transaction = _read(
-        ROOT
-        / "src"
-        / "nav"
-        / "cpp"
-        / "endpoint"
-        / "status"
-        / "goal_terminal_transaction.cpp"
-    )
+    transaction = _read(NAV_ENDPOINT / "status" / "goal_terminal_transaction.cpp")
     assert re.search(r"case\s+TerminalStopPolicy::kEstop\s*:", transaction)
     assert "motion_stop_.estopPreservingGoalTerminal" in transaction
 
