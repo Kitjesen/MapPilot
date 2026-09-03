@@ -61,6 +61,19 @@ def _real_run_plan(product: str):
     )
 
 
+def _set_session_mode(gateway, mode: str) -> None:
+    original_snapshot = gateway._session_snapshot
+
+    def snapshot():
+        payload = dict(original_snapshot())
+        payload["mode"] = mode
+        gateway._session_mode = mode
+        return payload
+
+    gateway._session_mode = mode
+    gateway._session_snapshot = snapshot
+
+
 def test_readiness_snapshot_reports_not_started_without_modules():
     from gateway.gateway_module import GatewayModule
     from gateway.services.readiness import build_readiness_snapshot
@@ -329,7 +342,7 @@ def test_readiness_snapshot_includes_navigation_blockers():
 
     gateway = GatewayModule()
     gateway._all_modules = {"host.bus": _HealthyModule()}
-    gateway._session_mode = "navigating"
+    _set_session_mode(gateway, "navigating")
     gateway._icp_quality = 0.03
     with gateway._state_lock:
         gateway._odom = {"x": 0.0}
@@ -382,7 +395,7 @@ def test_readiness_snapshot_includes_runtime_boundary_blockers(monkeypatch):
     )
     gateway = GatewayModule(run_plan=run_plan)
     gateway._all_modules = {"host.bus": _HealthyModule()}
-    gateway._session_mode = "navigating"
+    _set_session_mode(gateway, "navigating")
     with gateway._state_lock:
         gateway._odom = {"x": 0.0, "frame_id": "map"}
         gateway._localization_status = {
@@ -466,7 +479,7 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
 
     gateway = GatewayModule()
     gateway._all_modules = {"host.bus": _HealthyModule()}
-    gateway._session_mode = "navigating"
+    _set_session_mode(gateway, "navigating")
     gateway._icp_quality = 0.03
     with gateway._state_lock:
         gateway._odom = {"x": 0.0, "frame_id": "odom"}
@@ -562,7 +575,7 @@ def test_readiness_snapshot_blocks_motion_but_not_data_when_safety_stop_active()
 
     gateway = GatewayModule()
     gateway._all_modules = {"host.bus": _HealthyModule()}
-    gateway._session_mode = "navigating"
+    _set_session_mode(gateway, "navigating")
     gateway._icp_quality = 0.03
     with gateway._state_lock:
         gateway._odom = {"x": 0.0, "y": 0.0, "z": 0.0}
@@ -614,7 +627,7 @@ def test_readiness_snapshot_surfaces_calibration_warnings(monkeypatch):
 
     gateway = GatewayModule()
     gateway._all_modules = {"host.bus": _HealthyModule()}
-    gateway._session_mode = "navigating"
+    _set_session_mode(gateway, "navigating")
     with gateway._state_lock:
         gateway._odom = {"x": 0.0}
         gateway._mission = {"state": "IDLE"}
