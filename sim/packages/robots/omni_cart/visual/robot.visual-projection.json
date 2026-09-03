@@ -53,7 +53,7 @@
         },
         "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
         "mjcf": {
-          "path": "sim/packages/robots/omni_cart/omni_cart.xml"
+          "path": "omni_cart.xml"
         },
         "package": {
           "id": "omni_cart",
@@ -127,7 +127,7 @@
         },
         "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
         "mjcf": {
-          "path": "sim/packages/robots/omni_cart/omni_cart.xml"
+          "path": "omni_cart.xml"
         },
         "package": {
           "id": "omni_cart",
@@ -201,7 +201,7 @@
         },
         "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
         "mjcf": {
-          "path": "sim/packages/robots/omni_cart/omni_cart.xml"
+          "path": "omni_cart.xml"
         },
         "package": {
           "id": "omni_cart",
@@ -275,7 +275,7 @@
         },
         "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
         "mjcf": {
-          "path": "sim/packages/robots/omni_cart/omni_cart.xml"
+          "path": "omni_cart.xml"
         },
         "package": {
           "id": "omni_cart",
@@ -348,7 +348,7 @@
         },
         "manifest_schema": "lingtu.sim.robot-visual-manifest.v1",
         "mjcf": {
-          "path": "sim/packages/robots/omni_cart/omni_cart.xml"
+          "path": "omni_cart.xml"
         },
         "package": {
           "id": "omni_cart",
@@ -371,7 +371,7 @@
     }
   ],
   "mjcf": {
-          "path": "sim/packages/robots/omni_cart/omni_cart.xml"
+    "path": "omni_cart.xml"
   },
   "package": {
     "id": "omni_cart",

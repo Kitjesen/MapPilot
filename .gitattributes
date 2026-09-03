@@ -12,10 +12,16 @@ docs/04-deployment/services/*.sh text eol=lf
 sim/**/*.json text eol=lf
 sim/**/*.obj text eol=lf
 sim/**/*.py text eol=lf
+sim/**/*.svg text eol=lf
 sim/**/*.xml text eol=lf
 sim/**/*.yaml text eol=lf
 sim/**/*.yml text eol=lf
-config/runtime_graph/acceptance/**/*.json text eol=lf
+
+# Committed configuration is platform-neutral text.
+config/**/*.json text eol=lf
+config/**/*.md text eol=lf
+config/**/*.xml text eol=lf
+config/**/*.yaml text eol=lf
 scripts/build/*.ps1 text eol=lf
 scripts/build/cmake/**/*.cmake text eol=lf
 scripts/build/locks/**/*.json text eol=lf
