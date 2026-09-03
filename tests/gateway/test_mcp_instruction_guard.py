@@ -143,36 +143,17 @@ def test_mcp_send_instruction_rejects_lease_conflict_without_publish() -> None:
     assert payload["execution_confirmed"] is False
 
 
-def test_mcp_field_instruction_fails_closed_without_gateway(monkeypatch) -> None:
-    from gateway import mcp_server
+def test_mcp_instruction_without_gateway_uses_host_port() -> None:
     from gateway.mcp_server import MCPServerModule
 
-    monkeypatch.setattr(mcp_server, "endpoint_only_enabled", lambda _owner=None: True)
     mcp = MCPServerModule(host="127.0.0.1")
     mcp.on_system_modules({"MCPServerModule": mcp})
 
-    payload = json.loads(mcp.send_instruction("move forward"))
+    payload = json.loads(mcp.send_instruction("local semantic instruction"))
 
-    assert payload["ok"] is False
-    assert payload["accepted"] is False
-    assert payload["error"] == "gateway_unavailable"
-    assert payload["execution_confirmed"] is False
-    assert payload["motor_confirmed"] is False
-
-
-def test_mcp_local_compat_instruction_is_explicitly_submitted_only(monkeypatch) -> None:
-    from gateway import mcp_server
-    from gateway.mcp_server import MCPServerModule
-
-    monkeypatch.setattr(mcp_server, "endpoint_only_enabled", lambda _owner=None: False)
-    mcp = MCPServerModule(host="127.0.0.1")
-    mcp.on_system_modules({"MCPServerModule": mcp})
-
-    payload = json.loads(mcp.send_instruction("local sim instruction"))
-
+    assert mcp.instruction.msg_count == 1
     assert payload["ok"] is True
     assert payload["accepted"] is True
-    assert payload["stage"] == "local_compat_submitted"
-    assert payload["local_compat_submitted"] is True
+    assert payload["stage"] == "host_submitted"
     assert payload["execution_confirmed"] is False
     assert payload["motor_confirmed"] is False
