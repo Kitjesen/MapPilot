@@ -13,6 +13,8 @@ from lingtu.assembly.products import resolve_product_host_runtime
 from lingtu.assembly.simulation import compile_simulation_snapshot
 from lingtu.run_plan import RunPlan
 
+pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SESSION_SOURCE = "sim/sessions/examples/thunder_omni_contract/session.yaml"
 SCENARIO_SESSION_SOURCE = "sim/sessions/examples/open_field_pedestrian_crossing/session.yaml"
@@ -232,7 +234,7 @@ def test_formal_mujoco_subprocess_requires_simulation_snapshot() -> None:
 def test_sim_subprocess_requires_snapshot_without_private_host_backend() -> None:
     base = _compiled_plan("nav", "sim")
 
-    with pytest.raises(ValueError, match="launch.simulation"):
+    with pytest.raises(ValueError, match=r"launch\.simulation"):
         _recreate(
             base,
             process_control="subprocess",
@@ -247,7 +249,7 @@ def test_deserialized_sim_subprocess_cannot_bypass_snapshot_with_host_tamper() -
     payload["launch"]["controller"] = "subprocess"
     payload["launch"]["simulation"] = {}
     payload["host"]["config"].pop("_env_backend", None)
-    with pytest.raises(ValueError, match="launch.simulation"):
+    with pytest.raises(ValueError, match=r"launch\.simulation"):
         RunPlan.from_dict(payload)
 
 
