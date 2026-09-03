@@ -348,7 +348,6 @@ def test_perception_stack_prefers_registered_scene_and_camera_modules():
 
         bp = perception(
             detector="bpu",
-            encoder="mobileclip",
             force_camera=True,
             camera_rotate=90,
         )
@@ -356,8 +355,7 @@ def test_perception_stack_prefers_registered_scene_and_camera_modules():
         assert _entry_classes(bp)[:2] == [FakeCamera, FakePerception]
         assert _entry_names(bp)[:2] == ["camera", "PerceptionModule"]
         assert bp._entries[0].config == {"rotate": 90}
-        assert bp._entries[1].config["detector_type"] == "bpu"
-        assert bp._entries[1].config["encoder_type"] == "mobileclip"
+        assert bp._entries[1].config["detector"].name == "bpu"
     finally:
         restore(saved)
 
@@ -375,7 +373,6 @@ def test_perception_stack_defaults_external_camera_to_canonical_backend():
 
         bp = perception(
             detector="bpu",
-            encoder="mobileclip",
             force_camera=True,
         )
 
@@ -416,7 +413,6 @@ def test_perception_stack_skips_camera_resolution_for_driver_camera(
 
         bp = perception_stack.perception(
             detector="bpu",
-            encoder="mobileclip",
             **config,
         )
 
@@ -450,7 +446,6 @@ def test_perception_stack_resolves_camera_for_mujoco_role(monkeypatch):
 
         bp = perception_stack.perception(
             detector="bpu",
-            encoder="mobileclip",
             _driver_cls_name="MujocoDriverModule",
         )
 
@@ -484,7 +479,6 @@ def test_perception_stack_resolves_camera_for_external_camera(monkeypatch):
 
         bp = perception_stack.perception(
             detector="bpu",
-            encoder="mobileclip",
             _driver_cls_name="ROS2SimDriverModule",
             use_driver_camera=False,
         )
@@ -534,7 +528,6 @@ def test_perception_stack_prefers_registered_optional_tool_modules():
 
         bp = perception(
             detector="bpu",
-            encoder="mobileclip",
             force_camera=True,
             recon_save_dir="/tmp/lingtu-recon",
             recon_server_url="http://127.0.0.1:7890",

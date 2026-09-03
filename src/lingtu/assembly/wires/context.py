@@ -18,6 +18,7 @@ SEMANTIC_CAMERA_CONSUMERS = (
 )
 
 ODOMETRY_CONSUMERS = (
+    "PerceptionModule",
     "SemanticMapperModule",
     "EpisodicMemoryModule",
     "TaggedLocationsModule",

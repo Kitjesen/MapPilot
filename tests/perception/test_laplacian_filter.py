@@ -7,6 +7,8 @@ import unittest
 import numpy as np
 import pytest
 
+from runtime.msgs.sensor import CameraIntrinsics
+
 
 @pytest.fixture(scope="module")
 def laplacian_filter():
@@ -67,10 +69,7 @@ class TestProjection(unittest.TestCase):
 
     def test_project_center_pixel(self):
         """中心像素投影到光心应为 (0, 0, depth)。"""
-        from perception.tracking.projection import (
-            CameraIntrinsics,
-            project_to_3d,
-        )
+        from perception.tracking.projection import project_to_3d
         intrinsics = CameraIntrinsics(
             fx=500, fy=500, cx=320, cy=240, width=640, height=480
         )
@@ -79,7 +78,7 @@ class TestProjection(unittest.TestCase):
 
     def test_project_zero_depth(self):
         """Zero depth remains on the camera plane."""
-        from perception.tracking.projection import CameraIntrinsics, project_to_3d
+        from perception.tracking.projection import project_to_3d
 
         intrinsics = CameraIntrinsics(
             fx=500, fy=500, cx=320, cy=240, width=640, height=480

@@ -12,7 +12,6 @@ switch_policy: cold_restart
 online_hot_switch_supported: false
 host:
   capabilities: [gateway, navigation_skills, goal_commands, semantic]
-  encoder: none
   run_startup_checks: true
 native_nav:
   global_planner: octoplanner3d

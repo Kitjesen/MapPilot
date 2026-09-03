@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from perception.tracking.projection import CameraIntrinsics, bbox_median_depth_to_detection3d
-
+from perception.tracking.projection import bbox_median_depth_to_detection3d
+from runtime.msgs.sensor import CameraIntrinsics
 
 INTRINSICS = CameraIntrinsics(fx=600.0, fy=600.0, cx=320.0, cy=240.0, width=640, height=480)
 

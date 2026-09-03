@@ -280,13 +280,15 @@ class DetectorConfig:
     max_detections: int = 64
     min_box_size_px: int = 12
     model_size: str = "l"
+    device: str = ""
+    model_path: str = ""
 
 
 @dataclass
 class PerceptionConfig:
     """Perception pipeline tunables.
 
-    Defaults mirror the previously hard-coded values in perception_module.py,
+    Defaults mirror the values consumed by perception.module,
     instance_tracker.py, clip_encoder.py, and reconstruction_module.py so
     behavior is unchanged when no override is present in robot_config.yaml.
     """
@@ -295,8 +297,10 @@ class PerceptionConfig:
     skip_frames: int = 1
     max_depth: float = 6.0
     min_depth: float = 0.3
-    depth_scale: float = 0.001
     laplacian_threshold: float = 100.0
+    max_rgbd_skew_s: float = 0.05
+    max_odom_age_s: float = 0.10
+    max_map_odom_age_s: float = 0.50
     dynamic_labels: frozenset[str] = field(
         default_factory=lambda: frozenset(
             {
@@ -403,8 +407,10 @@ def _fill_perception_config(data: dict[str, Any]) -> PerceptionConfig:
         skip_frames=int(data.get("skip_frames", 1)),
         max_depth=float(data.get("max_depth", 6.0)),
         min_depth=float(data.get("min_depth", 0.3)),
-        depth_scale=float(data.get("depth_scale", 0.001)),
         laplacian_threshold=float(data.get("laplacian_threshold", 100.0)),
+        max_rgbd_skew_s=float(data.get("max_rgbd_skew_s", 0.05)),
+        max_odom_age_s=float(data.get("max_odom_age_s", 0.10)),
+        max_map_odom_age_s=float(data.get("max_map_odom_age_s", 0.50)),
         dynamic_labels=dynamic_labels,
         tracking=tracking,
         encoder=encoder,

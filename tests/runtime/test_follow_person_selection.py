@@ -3,7 +3,7 @@
 Covers the "person in red" selection path added across:
   - CLIPEncoder.encode_image (interface-gap fix)
   - PersonTracker.select_by_clip / select_target_with_vlm (CLIP + multimodal VLM)
-  - VisualServoModule.on_system_modules injection + follow target selection
+  - VisualServoModule vision-client discovery + follow target selection
   - SemanticPlannerModule follow-intent routing
 """
 
@@ -66,20 +66,7 @@ def test_clip_encoder_has_encode_image():
     assert out.size == 0
 
 
-def test_perception_exposes_only_an_image_capable_encoder():
-    from perception.perception_module import PerceptionModule
-
-    module = PerceptionModule()
-    image_encoder = _FakeClip([1.0, 0.0], {1: [1.0, 0.0]})
-    module._clip_encoder = image_encoder
-    assert module.image_encoder is image_encoder
-
-    module._clip_encoder = _TextOnlyClip()
-    assert module.image_encoder is None
-
-    module._clip_encoder = _ImageOnlyClip()
-    assert module.image_encoder is None
-
+def test_person_tracker_rejects_an_image_only_encoder():
     tracker = PersonTracker()
     tracker.set_clip_encoder(_ImageOnlyClip())
     assert tracker.has_image_selector is False
@@ -166,7 +153,7 @@ def test_build_vlm_select_messages_structure():
     assert len(image_entries) in (0, 2)  # 0 when cv2/PIL absent, else one per crop
 
 
-# ── VisualServoModule injection + selection ───────────────────────────────────
+# ── VisualServoModule discovery + selection ───────────────────────────────────
 
 
 def test_vs_discovers_vision_client_after_module_setup():
@@ -195,18 +182,6 @@ def test_vs_discovers_vision_client_after_module_setup():
         assert statuses[-1]["follow_available"] is True
     finally:
         vs.stop()
-
-
-def test_vs_discovers_perception_image_encoder_after_module_setup():
-    encoder = _FakeClip([1.0, 0.0], {1: [1.0, 0.0]})
-
-    class _Perception:
-        image_encoder = encoder
-
-    vs = VisualServoModule()
-    vs.on_system_modules({"PerceptionModule": _Perception()})
-
-    assert vs.can_select_follow_target() is True
 
 
 def test_vs_rejects_text_only_llm():

@@ -208,7 +208,7 @@ class YOLOWorldDetector(DetectorBase):
                 _try_empty_cuda_cache()
             else:
                 logger.error("Detection failed: %s", e)
-            return []
+            raise
 
         # 解析结果
         detections = []

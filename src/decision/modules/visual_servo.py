@@ -100,20 +100,11 @@ class VisualServoModule(Module, layer=4):
         self._watchdog_stop = threading.Event()
         self._watchdog_thread: threading.Thread | None = None
         self._llm_module = None
-        self._perception_module = None
 
     def on_system_modules(self, modules: dict) -> None:
-        """Attach the existing image selector and optional vision LLM."""
-        self._perception_module = modules.get("PerceptionModule")
+        """Discover the optional vision-capable LLM."""
         self._llm_module = modules.get("LLMModule")
-        self._refresh_image_selector()
         self._refresh_vision_client()
-
-    def _refresh_image_selector(self) -> None:
-        if self._perception_module is None:
-            return
-        encoder = getattr(self._perception_module, "image_encoder", None)
-        self._person_tracker.set_clip_encoder(encoder)
 
     def _refresh_vision_client(self) -> None:
         client = getattr(self._llm_module, "client", None)
@@ -121,7 +112,6 @@ class VisualServoModule(Module, layer=4):
 
     def can_select_follow_target(self) -> bool:
         """Return whether descriptive person selection is available."""
-        self._refresh_image_selector()
         self._refresh_vision_client()
         return (
             self._single_person_id() is not None

@@ -1,4 +1,4 @@
-# ruff: noqa: S101  (assert statements are standard in pytest test files)
+
 """
 test_golden_characterization.py
 
@@ -137,10 +137,10 @@ class TestProjectionGolden:
         np.testing.assert_allclose(p, [-1.1, -0.2, 3.0], rtol=1e-10)
 
     def test_project_to_3d_zero_focal(self):
-        """Zero focal length falls back to [0, 0, depth]."""
+        """Zero focal length is invalid and must not fabricate a 3D point."""
         K = CameraIntrinsics(fx=0.0, fy=0.0, cx=320.0, cy=240.0, width=640, height=480)
-        p = project_to_3d(100.0, 200.0, 5.0, K)
-        np.testing.assert_allclose(p, [0.0, 0.0, 5.0], rtol=1e-10)
+        with pytest.raises(ValueError, match="focal"):
+            project_to_3d(100.0, 200.0, 5.0, K)
 
     def test_transform_point(self):
         """Camera-frame point -> world frame via 4x4 transform."""

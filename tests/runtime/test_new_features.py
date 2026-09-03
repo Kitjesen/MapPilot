@@ -121,7 +121,6 @@ def test_33_no_api_key_startup():
         robot="stub",
         slam_profile="none",
         detector="yoloe",
-        encoder="mobileclip",
         llm="mock",
         planner="astar",
         enable_native=False,

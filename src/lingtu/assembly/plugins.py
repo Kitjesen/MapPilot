@@ -54,9 +54,8 @@ BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
         "explore.tare.supervisor",
     ),
     "perception": (
-        "perception.perception_module",
-        "perception.detection.detector_module",
-        "perception.api.factory",
+        "perception.backends",
+        "perception.module",
     ),
     "reconstruction": (
         "perception.reconstruction.reconstruction_module",
@@ -100,8 +99,8 @@ DEFAULT_BUILTIN_PLUGIN_GROUPS: tuple[str, ...] = (
     "exploration",
     "perception",
     "reconstruction",
-    "decision",
     "llm",
+    "decision",
     "memory",
 )
 

@@ -152,7 +152,7 @@ class YOLOEDetector(DetectorBase):
             )
         except Exception as e:
             logger.error("YOLO-E detection failed: %s", e)
-            return []
+            raise
 
         detections = []
         if results and len(results) > 0:

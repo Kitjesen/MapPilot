@@ -111,7 +111,7 @@ class VectorMemoryModule(Module, layer=3):
 
             seed_registered_plugins(groups=("perception",))
             provider = get("encoder", backend)
-            candidate = provider.create(self)
+            candidate = provider.create()
             candidate.load_model()
             test_result = candidate.encode_text(["test"])
             if test_result is not None and len(test_result) > 0:

@@ -154,57 +154,5 @@ class TestLLMPipeline(unittest.TestCase):
             handle.stop()
 
 
-# ---------------------------------------------------------------------------
-# Full perception → planner pipeline
-# ---------------------------------------------------------------------------
-
-
-class TestFullDecoupledPipeline(unittest.TestCase):
-    def test_image_to_goal_pipeline(self):
-        """Image → Detector → GoalResolver → LLM → Goal, all via Blueprint."""
-        import numpy as np
-
-        from perception.detection.detector_module import (
-            DetectionResult,
-            DetectorModule,
-        )
-
-        class FakePlanner(Module, layer=4):
-            detections: In[DetectionResult]
-            goal: Out[str]
-
-            def setup(self):
-                self.detections.subscribe(self._on_det)
-
-            def _on_det(self, det: DetectionResult):
-                labels = [d.label for d in det.detections if hasattr(d, "label")]
-                self.goal.publish(f"goal_from_{labels}")
-
-        # Mock detector backend
-        from unittest.mock import patch
-
-        from tests.runtime._test_utils import _MockDetectorBackend
-
-        with patch.object(DetectorModule, "_create_backend", return_value=_MockDetectorBackend()):
-            bp = Blueprint()
-            bp.add(DetectorModule, detector="yoloe")
-            bp.add(FakePlanner)
-            bp.auto_wire()
-            handle = bp.build()
-            handle.start()
-
-            det_mod = handle.get_module("DetectorModule")
-            planner = handle.get_module("FakePlanner")
-
-            goals = []
-            planner.goal._add_callback(goals.append)
-
-            det_mod.image._deliver(np.zeros((100, 100, 3), dtype=np.uint8))
-
-            self.assertEqual(len(goals), 1)
-            self.assertIn("chair", goals[0])
-            handle.stop()
-
-
 if __name__ == "__main__":
     unittest.main(verbosity=2)

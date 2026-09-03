@@ -1,13 +1,16 @@
 """Scene perception stack.
 
 PerceptionModule is the default RGB-D scene-perception boundary. It owns the
-detector, encoder, projection, and tracker capabilities needed to publish
-scene_graph and detections_3d.
+detector, projection, and tracker capabilities needed to publish scene_graph
+and detections_3d.
 """
 
 from __future__ import annotations
 
+from perception.backends import DetectorSpec
+from perception.pipeline import PerceptionSettings
 from runtime.blueprint import Blueprint
+from runtime.config import get_config
 from runtime.contracts import (
     CAMERA_BACKEND_DDS,
     CAMERA_BACKEND_ORBBEC,
@@ -22,7 +25,7 @@ from runtime.plugin_resolution import (
 )
 
 
-def camera(**config) -> Blueprint:
+def _camera(config: dict, *, robot_config=None) -> Blueprint:
     """Build only the canonical camera source for non-semantic products."""
     bp = Blueprint()
     drv_name = config.get("_driver_cls_name", "")
@@ -53,56 +56,156 @@ def camera(**config) -> Blueprint:
         )
         cam_rotate = config.get("camera_rotate", 0)
         if cam_rotate == 0:
-            from runtime.config import get_config
-
-            cam_rotate = get_config().raw.get("camera", {}).get("rotate", 0)
+            if robot_config is None:
+                robot_config = get_config()
+            cam_rotate = robot_config.camera.rotate
         bp.add(CameraModule, alias=CAMERA_ROLE, rotate=int(cam_rotate))
 
     return bp
 
 
-def perception(detector: str = "yoloe", encoder: str = "none", **config) -> Blueprint:
+def camera(**config) -> Blueprint:
+    """Build only the canonical camera source for non-semantic products."""
+    return _camera(config)
+
+
+def _explicit(config: dict, key: str, default, *aliases: str):
+    for candidate in (key, *aliases):
+        if candidate in config and config[candidate] is not None:
+            return config[candidate]
+    return default
+
+
+def _perception_runtime_config(robot_config, detector_name: str, config: dict):
+    perception_config = robot_config.perception
+    detector_config = perception_config.detector
+    tracking_config = perception_config.tracking
+
+    settings = PerceptionSettings(
+        default_classes=str(
+            _explicit(config, "default_classes", perception_config.default_classes)
+        ),
+        min_depth=float(_explicit(config, "min_depth", perception_config.min_depth)),
+        max_depth=float(_explicit(config, "max_depth", perception_config.max_depth)),
+        u16_depth_scale=float(robot_config.camera.depth_scale),
+        laplacian_threshold=float(
+            _explicit(
+                config,
+                "laplacian_threshold",
+                perception_config.laplacian_threshold,
+            )
+        ),
+        merge_distance=float(
+            _explicit(config, "merge_distance", tracking_config.merge_distance)
+        ),
+        tracking_iou_threshold=float(
+            _explicit(
+                config,
+                "tracking_iou_threshold",
+                tracking_config.iou_threshold,
+                "iou_threshold",
+            )
+        ),
+        max_objects=int(_explicit(config, "max_objects", tracking_config.max_objects)),
+    )
+    detector = DetectorSpec(
+        name=detector_name,
+        model_size=str(_explicit(config, "model_size", detector_config.model_size)),
+        confidence=float(
+            _explicit(config, "confidence", detector_config.confidence_threshold)
+        ),
+        iou_threshold=float(
+            _explicit(
+                config,
+                "detector_iou_threshold",
+                detector_config.iou_threshold,
+                "iou_threshold",
+            )
+        ),
+        max_detections=int(
+            _explicit(
+                config,
+                "detector_max_detections",
+                detector_config.max_detections,
+                "max_detections",
+            )
+        ),
+        min_box_size_px=int(
+            _explicit(
+                config,
+                "detector_min_box_size_px",
+                detector_config.min_box_size_px,
+                "min_box_size_px",
+            )
+        ),
+        device=str(_explicit(config, "device", detector_config.device)),
+        model_path=str(
+            _explicit(
+                config,
+                "detector_model_path",
+                detector_config.model_path,
+                "model_path",
+            )
+        ),
+        world=str(config.get("world", "")),
+        scenario_entities=tuple(config.get("scenario_entities", ())),
+    )
+    frame_config = {
+        "skip_frames": int(
+            _explicit(
+                config,
+                "perception_skip_frames",
+                perception_config.skip_frames,
+            )
+        ),
+        "max_rgbd_skew_s": float(
+            _explicit(
+                config,
+                "max_rgbd_skew_s",
+                perception_config.max_rgbd_skew_s,
+            )
+        ),
+        "max_odom_age_s": float(
+            _explicit(config, "max_odom_age_s", perception_config.max_odom_age_s)
+        ),
+        "max_map_odom_age_s": float(
+            _explicit(
+                config,
+                "max_map_odom_age_s",
+                perception_config.max_map_odom_age_s,
+            )
+        ),
+    }
+    return settings, detector, frame_config
+
+
+def perception(detector: str = "yoloe", **config) -> Blueprint:
     """RGB-D scene perception plus optional reconstruction and standalone tools."""
-    bp = camera(**config)
+    if "encoder" in config:
+        raise ValueError("PerceptionModule no longer owns an encoder")
+    robot_config = get_config()
+    bp = _camera(config, robot_config=robot_config)
 
     PerceptionModule = stack_module(
         "perception",
         "scene",
         seed_group="perception",
-        fallback="perception.perception_module.PerceptionModule",
+        fallback="perception.module.PerceptionModule",
+    )
+
+    settings, detector_spec, frame_config = _perception_runtime_config(
+        robot_config,
+        detector,
+        config,
     )
 
     bp.add(
         PerceptionModule,
         alias="PerceptionModule",
-        detector_type=detector,
-        encoder_type=encoder,
-        confidence_threshold=config.get("confidence", 0.3),
-        tracking_iou_threshold=config.get(
-            "tracking_iou_threshold",
-            config.get("iou_threshold", 0.3),
-        ),
-        detector_iou_threshold=config.get(
-            "detector_iou_threshold",
-            config.get("iou_threshold", 0.45),
-        ),
-        detector_max_detections=config.get(
-            "detector_max_detections",
-            config.get("max_detections", 64),
-        ),
-        detector_min_box_size_px=config.get(
-            "detector_min_box_size_px",
-            config.get("min_box_size_px", 12),
-        ),
-        detector_model_size=config.get("model_size", "l"),
-        detector_device=config.get("device", ""),
-        detector_model_path=config.get(
-            "detector_model_path",
-            config.get("model_path", ""),
-        ),
-        skip_frames=config.get("perception_skip_frames", 1),
-        world=config.get("world", ""),
-        scenario_entities=config.get("scenario_entities", ()),
+        settings=settings,
+        detector=detector_spec,
+        camera_to_body=robot_config.camera.T_camera_body,
+        **frame_config,
     )
 
     if config.get("enable_inspection_evidence", False):

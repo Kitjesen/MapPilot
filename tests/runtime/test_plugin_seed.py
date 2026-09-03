@@ -55,8 +55,8 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
                 "exploration",
                 "perception",
                 "reconstruction",
-                "decision",
                 "llm",
+                "decision",
             ),
             reload_loaded=True,
         )

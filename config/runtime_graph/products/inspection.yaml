@@ -18,7 +18,6 @@ host:
     - semantic
     - semantic_planning
     - inspection_evidence
-  encoder: none
   llm: qwen
   inspection_evidence_max_rgb_odom_skew_s: 0.2
   run_startup_checks: true

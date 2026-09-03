@@ -149,18 +149,17 @@ def compile_run_plan(
         viewer=env_spec.config.viewer,
     )
     if env_name == "sim" and has_camera:
-        resolved_config.setdefault("detector", "sim_scene")
-        if resolved_config["detector"] == "sim_scene":
-            world_mjcf = simulation["physics_plan"]["world"]["mjcf"]
-            resolved_config.setdefault("world", Path(world_mjcf).name)
-            scenario_plan = simulation.get("scenario_plan")
-            if isinstance(scenario_plan, Mapping):
-                resolved_config["scenario_entities"] = [
-                    entity
-                    for entity in scenario_plan.get("entities", ())
-                    if isinstance(entity, Mapping)
-                    and entity.get("entity_type") != "robot"
-                ]
+        resolved_config["detector"] = "sim_scene"
+        world_mjcf = simulation["physics_plan"]["world"]["mjcf"]
+        resolved_config.setdefault("world", Path(world_mjcf).as_posix())
+        scenario_plan = simulation.get("scenario_plan")
+        if isinstance(scenario_plan, Mapping):
+            resolved_config["scenario_entities"] = [
+                entity
+                for entity in scenario_plan.get("entities", ())
+                if isinstance(entity, Mapping)
+                and entity.get("entity_type") != "robot"
+            ]
     # Critical Host modules are Product semantics. An Env may select concrete
     # processes, but it must not weaken the Product's startup barrier.
     critical_modules = _string_tuple(product_spec.get("critical_modules"))

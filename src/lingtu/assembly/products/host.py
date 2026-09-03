@@ -37,10 +37,11 @@ def host_blueprint(
 
     cfg = dict(config or {})
     cfg.update({key: value for key, value in overrides.items() if value is not None})
+    if "encoder" in cfg:
+        raise ValueError("Product Host 'encoder' is retired; configure its explicit consumer")
     robot = str(cfg.pop("robot", "stub"))
     slam_profile = normalize_slam_profile(cfg.pop("slam_profile", "native_dds"))
     detector = str(cfg.pop("detector", "bpu"))
-    encoder = str(cfg.pop("encoder", "none"))
     llm = str(cfg.pop("llm", "qwen"))
     gateway_port = int(cfg.pop("gateway_port", DEFAULT_GATEWAY_PORT))
     enable_semantic = bool(cfg.pop("enable_semantic", True))
@@ -64,7 +65,6 @@ def host_blueprint(
         driver_module=driver_module,
         slam_profile=slam_profile,
         detector=detector,
-        encoder=encoder,
         llm=llm,
         gateway_port=gateway_port,
         enable_semantic=enable_semantic,

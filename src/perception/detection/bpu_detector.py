@@ -360,7 +360,7 @@ class BPUDetector(DetectorBase):
             Detection2D results matching the prompt and model classes.
         """
         if self._rt is None:
-            return []
+            raise RuntimeError("Model not loaded. Call load_model() first.")
 
         allowed = self._parse_prompt(text_prompt)
 

@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat
+
 # ── USS-Nav 点云参数 ──
 POINTCLOUD_MAX_POINTS = 512  # 每个物体最大点数 (降采样后)
 POINTCLOUD_VOXEL_SIZE = 0.02  # 体素降采样分辨率 (m)
@@ -25,18 +27,6 @@ POINTCLOUD_MIN_POINTS = 10  # 少于此数的点云视为无效
 
 # ── BBox depth fallback 参数 ──
 BBOX_MEDIAN_MIN_VALID_PIXELS = 20  # minimum valid depth pixels inside bbox
-
-
-@dataclass
-class CameraIntrinsics:
-    """相机内参。"""
-
-    fx: float
-    fy: float
-    cx: float
-    cy: float
-    width: int
-    height: int
 
 
 @dataclass
@@ -52,6 +42,36 @@ class Detection3D:
     points: np.ndarray = field(default_factory=lambda: np.empty((0, 3)))
     # USS-Nav: 物体点云 (N, 3) world frame, 降采样后
     track_id: int | None = None  # Optional 2D tracker id (BoT-SORT/ByteTrack)
+    confidence_3d: float = 0.0
+    width_3d: float = 0.0
+    height_3d: float = 0.0
+
+
+def depth_scale_for_image(
+    depth_image: Image,
+    intrinsics: CameraIntrinsics,
+    *,
+    u16_fallback: float,
+) -> float:
+    """Return the raw-depth-to-metres multiplier for one typed image.
+
+    Float depth is already expressed in metres.  Integer depth normally
+    carries its scale in CameraInfo; the configured camera scale is used when
+    CameraInfo contains the runtime default rather than a plausible uint16
+    scale.
+    """
+    if depth_image.format is ImageFormat.DEPTH_F32:
+        return 1.0
+    if depth_image.format is not ImageFormat.DEPTH_U16:
+        raise ValueError(f"unsupported_depth_format:{depth_image.format.value}")
+
+    candidate = float(getattr(intrinsics, "depth_scale", 0.0) or 0.0)
+    if np.isfinite(candidate) and 0.0 < candidate <= 0.1:
+        return candidate
+    fallback = float(u16_fallback)
+    if not np.isfinite(fallback) or fallback <= 0.0:
+        raise ValueError("invalid_u16_depth_scale")
+    return fallback
 
 
 def bbox_center_depth(
@@ -111,16 +131,21 @@ def project_to_3d(
     pixel_v: float,
     depth_m: float,
     intrinsics: CameraIntrinsics,
-    K: np.ndarray = None,
-    D: np.ndarray = None,
+    K: np.ndarray | None = None,
+    D: np.ndarray | None = None,
 ) -> np.ndarray:
     """单点 2D → 3D 投影 (相机坐标系), with optional undistortion.
 
     If K and D are provided and D is non-zero, pixel coordinates are
     undistorted before back-projection using cv2.undistortPoints.
     """
-    if intrinsics.fx == 0.0 or intrinsics.fy == 0.0:
-        return np.array([0.0, 0.0, depth_m])
+    if (
+        not np.isfinite(intrinsics.fx)
+        or not np.isfinite(intrinsics.fy)
+        or intrinsics.fx <= 0.0
+        or intrinsics.fy <= 0.0
+    ):
+        raise ValueError("camera focal lengths must be finite and positive")
 
     u, v = pixel_u, pixel_v
     if D is not None and K is not None and not np.allclose(D, 0):
@@ -145,7 +170,7 @@ def transform_point(
     """将相机坐标系的点变换到世界坐标系。"""
     p_homo = np.array([*point_camera, 1.0])
     p_world = tf_camera_to_world @ p_homo
-    return p_world[:3]
+    return np.asarray(p_world[:3], dtype=np.float64)
 
 
 def mask_to_pointcloud(
@@ -158,8 +183,8 @@ def mask_to_pointcloud(
     max_depth: float = 6.0,
     max_points: int = POINTCLOUD_MAX_POINTS,
     voxel_size: float = POINTCLOUD_VOXEL_SIZE,
-    K: np.ndarray = None,
-    D: np.ndarray = None,
+    K: np.ndarray | None = None,
+    D: np.ndarray | None = None,
 ) -> np.ndarray | None:
     """
     USS-Nav §IV-C: 将 instance mask + depth 反投影为世界坐标系 3D 点云。
@@ -270,7 +295,7 @@ def _voxel_downsample(
     if voxel_size <= 0 or len(points) <= max_points:
         if len(points) > max_points:
             indices = np.random.choice(len(points), max_points, replace=False)
-            return points[indices]
+            return np.asarray(points[indices])
         return points
 
     quantized = np.floor(points / voxel_size).astype(np.int32)
@@ -294,7 +319,7 @@ def pointcloud_centroid(points: np.ndarray) -> np.ndarray:
     """计算点云质心。"""
     if points is None or len(points) == 0:
         return np.zeros(3)
-    return np.mean(points, axis=0)
+    return np.asarray(np.mean(points, axis=0))
 
 
 def bbox_median_depth_to_detection3d(
@@ -306,6 +331,8 @@ def bbox_median_depth_to_detection3d(
     min_depth: float = 0.3,
     max_depth: float = 6.0,
     min_valid_pixels: int = BBOX_MEDIAN_MIN_VALID_PIXELS,
+    K: np.ndarray | None = None,
+    D: np.ndarray | None = None,
 ) -> Detection3D | None:
     """W2-1: masked-depth median 3D projection fallback.
 
@@ -351,22 +378,13 @@ def bbox_median_depth_to_detection3d(
     d_median = float(np.median(valid_depths))
     confidence_3d = float(valid_depths.size) / float(total_pixels)
 
-    fx = intrinsics.fx if intrinsics.fx != 0.0 else 600.0
-    fy = intrinsics.fy if intrinsics.fy != 0.0 else 600.0
-    ccx = intrinsics.cx
-    ccy = intrinsics.cy
-
     px = (bbox[0] + bbox[2]) / 2.0
     py = (bbox[1] + bbox[3]) / 2.0
-    p_cam = np.array(
-        [
-            (px - ccx) * d_median / fx,
-            (py - ccy) * d_median / fy,
-            d_median,
-        ]
-    )
+    p_cam = project_to_3d(px, py, d_median, intrinsics, K=K, D=D)
     p_world = (tf_camera_to_world @ np.array([*p_cam, 1.0]))[:3]
 
+    fx = intrinsics.fx if intrinsics.fx != 0.0 else 600.0
+    fy = intrinsics.fy if intrinsics.fy != 0.0 else 600.0
     bbox_w_px = max(1.0, float(bbox[2] - bbox[0]))
     bbox_h_px = max(1.0, float(bbox[3] - bbox[1]))
     width_3d = bbox_w_px * d_median / fx
@@ -381,8 +399,8 @@ def bbox_median_depth_to_detection3d(
         features=getattr(det2d, "features", np.array([])),
         points=np.empty((0, 3)),
         track_id=getattr(det2d, "track_id", None),
+        confidence_3d=confidence_3d,
+        width_3d=width_3d,
+        height_3d=height_3d,
     )
-    det3d.confidence_3d = confidence_3d
-    det3d.width_3d = width_3d
-    det3d.height_3d = height_3d
     return det3d

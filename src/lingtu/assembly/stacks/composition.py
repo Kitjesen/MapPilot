@@ -35,7 +35,6 @@ def compose_full_stack_modules(
     driver_module: str,
     slam_profile: str,
     detector: str,
-    encoder: str,
     llm: str,
     gateway_port: int,
     enable_semantic: bool = True,
@@ -91,11 +90,7 @@ def compose_full_stack_modules(
         camera_stack(**perception_config)
         if not enable_semantic and bool(perception_config.get("enable_camera", False))
         else Blueprint(),
-        perception(
-            detector,
-            encoder,
-            **perception_config,
-        )
+        perception(detector, **perception_config)
         if enable_semantic
         else Blueprint(),
         memory(semantic_save_dir) if enable_semantic_planning else Blueprint(),

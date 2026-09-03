@@ -10,7 +10,8 @@ from pathlib import Path
 
 import numpy as np
 
-_SIM_ROOT = Path(__file__).resolve().parents[3] / "sim"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_SIM_ROOT = _REPO_ROOT / "sim"
 _WORLD_FILES = {
     "building": _SIM_ROOT / "packages/worlds/building/physics/building_scene.xml",
     "building_scene": _SIM_ROOT / "packages/worlds/building/physics/building_scene.xml",
@@ -176,10 +177,13 @@ class SimSceneObserver:
     def _load_objects(cls, world: str) -> list[_SceneObject]:
         if not world:
             return []
-        world_file = _WORLD_FILES.get(world, Path(world))
+        world_file = _WORLD_FILES.get(world)
+        if world_file is None:
+            candidate = Path(world)
+            world_file = candidate if candidate.is_absolute() else _REPO_ROOT / candidate
         scene_xml = world_file
-        if not scene_xml.exists():
-            return []
+        if not scene_xml.is_file():
+            raise FileNotFoundError(f"simulation world does not exist: {world}")
 
         root = ET.fromstring(scene_xml.read_text(encoding="utf-8", errors="ignore"))
         worldbody = root.find("worldbody")

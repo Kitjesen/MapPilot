@@ -1,16 +1,26 @@
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from sim.runtime.scenario.runtime import parse_scenario_plan
 
 from decision.modules.visual_servo import VisualServoModule
 from lingtu.assembly.compiler import compile_run_plan
 from perception.detection.sim_scene_observer import SimSceneObserver
-from perception.services import DetectionService
+from perception.pipeline import to_runtime_detections
+from runtime.graph.processes import ProcessArtifact
 from runtime.msgs.geometry import Pose, PoseStamped, Vector3
+
+
+@pytest.fixture(autouse=True)
+def _ignore_process_artifact_presence(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        ProcessArtifact,
+        "from_repository_path",
+        classmethod(lambda cls, root, path: cls(str(path))),
+    )
 
 
 def test_tracking_sim_uses_walking_person_scenario() -> None:
@@ -44,7 +54,7 @@ def test_sim_person_can_be_selected_by_id_and_publish_a_goal() -> None:
         env_config={"backend": "mujoco"},
     )
     observer = SimSceneObserver(
-        world=Path(plan.simulation["physics_plan"]["world"]["mjcf"]).name,
+        world=plan.host_config["world"],
         scenario_entities=plan.host_config["scenario_entities"],
     )
     intrinsics = SimpleNamespace(
@@ -62,7 +72,7 @@ def test_sim_person_can_be_selected_by_id_and_publish_a_goal() -> None:
     person = next(item for item in observed if item.label == "person")
     assert person.track_id == "person_01"
 
-    detections = DetectionService().convert_to_core_detections(
+    detections = to_runtime_detections(
         [person],
         source_ts=42.0,
     )
