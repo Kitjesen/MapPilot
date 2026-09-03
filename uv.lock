@@ -2198,6 +2198,7 @@ all = [
 ]
 dev = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -2250,6 +2251,7 @@ requires-dist = [
     { name = "chromadb", marker = "extra == 'vector'" },
     { name = "fastapi", marker = "extra == 'dev'" },
     { name = "fastapi", marker = "extra == 'gateway'" },
+    { name = "httpx", marker = "extra == 'dev'" },
     { name = "jieba", marker = "extra == 'nlp'", specifier = ">=0.42" },
     { name = "langchain", marker = "extra == 'agent'", specifier = ">=0.2" },
     { name = "langchain-core", marker = "extra == 'agent'", specifier = ">=0.2" },
