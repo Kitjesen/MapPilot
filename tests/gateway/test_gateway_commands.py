@@ -138,6 +138,10 @@ def _attach_active_maps_service(gateway, map_root: Path) -> _TypedActiveMapsServ
 
 def _mark_navigation_ready(gateway) -> None:
     gateway._session_mode = "navigating"
+    gateway._session_snapshot = lambda: {
+        "mode": "navigating",
+        "active_map": None,
+    }
     gateway._icp_quality = 0.03
     with gateway._state_lock:
         gateway._odom = {"x": 0.0, "y": 0.0, "z": 0.0, "ts": time.time()}
