@@ -1,5 +1,6 @@
 #include "planning/local/task.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -14,6 +15,8 @@
 #include <vector>
 
 #include "planning/local/scan/backend.hpp"
+#include "planning/local/scan/grid.hpp"
+#include "trajectory/spline.hpp"
 
 namespace nav_kernel::local {
 namespace {
@@ -108,6 +111,8 @@ struct Completion {
   std::optional<LocalMotionIntent> intent;
   LocalPlan plan{};
   LocalPlannerDebugSnapshot debug{};
+  std::uint64_t collisionGeneration{0};
+  std::uint64_t collisionResetEpoch{0};
 };
 
 bool sameGuide(const Completion &completion, const LocalPlanRequest &request,
@@ -123,7 +128,8 @@ bool sameGuide(const Completion &completion, const LocalPlanRequest &request,
 
 class LocalPlanTask::Impl {
  public:
-  explicit Impl(const LocalPlannerParams &params) : planner_(params) {}
+  explicit Impl(const LocalPlannerParams &params)
+      : params_(params), planner_(params) {}
 
   ~Impl() { stop(); }
 
@@ -168,15 +174,21 @@ class LocalPlanTask::Impl {
     submit(request);
 
     if (current_ && sameGuide(*current_, request, intent)) {
-      output.plan = current_->plan;
-      output.debug = current_->debug;
-      return output;
+      if (safeOnCurrentMap(*current_, request)) {
+        output.plan = current_->plan;
+        output.debug = current_->debug;
+        return output;
+      }
+      current_.reset();
     }
     if (latest_ && sameGuide(*latest_, request, intent) &&
         latest_->plan.status() != LocalPlanStatus::Pending) {
-      output.plan = latest_->plan;
-      output.debug = latest_->debug;
-      return output;
+      if (!latest_->plan.ready() || safeOnCurrentMap(*latest_, request)) {
+        output.plan = latest_->plan;
+        output.debug = latest_->debug;
+        return output;
+      }
+      latest_.reset();
     }
     output.plan = LocalPlan::stopped(LocalPlanStatus::Pending);
     return output;
@@ -205,6 +217,46 @@ class LocalPlanTask::Impl {
   }
 
  private:
+  bool safeOnCurrentMap(Completion &completion,
+                        const LocalPlanRequest &request) const {
+    const auto &collision = request.environment.collision;
+    if (completion.collisionGeneration == collision.generation &&
+        completion.collisionResetEpoch == collision.resetEpoch) {
+      return true;
+    }
+    const auto *target = std::get_if<SplineTarget>(&completion.plan.target());
+    if (target == nullptr) {
+      return false;
+    }
+    const scan::Grid grid(params_, request);
+    const SplineView spline(*target);
+    if (!grid.valid() || !spline.valid()) {
+      return false;
+    }
+
+    constexpr double kStepS = 0.01;
+    const double duration = spline.duration();
+    const double current = std::clamp(
+        request.clock.timestampS - target->startTimeS, 0.0, duration);
+    // The async adapter may keep executing only the prefix that remains clear
+    // during SCAN's official one-second emergency horizon. A farther obstacle
+    // is handled by the planner worker without blanking a still-safe command.
+    constexpr double kEmergencyHorizonS = 1.0;
+    const double end = std::min(duration, current + kEmergencyHorizonS);
+    for (double time = current; time < end; time += kStepS) {
+      const Vec3 position = spline.position(time);
+      const Vec3 next = spline.position(std::min(time + kStepS, duration));
+      const double yaw = std::atan2(next.y - position.y,
+                                    next.x - position.x);
+      if (!grid.obstacleFree(position, yaw)) {
+        return false;
+      }
+    }
+    completion.collisionGeneration = collision.generation;
+    completion.collisionResetEpoch = collision.resetEpoch;
+    return true;
+  }
+
   std::shared_ptr<const std::vector<std::uint8_t>> collisionSnapshot(
       const LocalPlanRequest &request) {
     const LocalCollisionMapView &collision = request.environment.collision;
@@ -307,6 +359,10 @@ class LocalPlanTask::Impl {
       completion.frameEpoch = request.identity.frameEpoch;
       completion.routeGeneration = job->request.routeView.generation;
       completion.intent = job->request.intent;
+      completion.collisionGeneration =
+          request.environment.collision.generation;
+      completion.collisionResetEpoch =
+          request.environment.collision.resetEpoch;
       try {
         completion.plan = planner_.plan(
             request, [&job]() { return job->cancelled(); });
@@ -334,6 +390,7 @@ class LocalPlanTask::Impl {
     }
   }
 
+  LocalPlannerParams params_;
   scan::Backend planner_;
   bool configured_{false};
   std::mutex mutex_;

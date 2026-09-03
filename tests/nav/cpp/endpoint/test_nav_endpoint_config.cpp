@@ -170,11 +170,11 @@ void testCompiledProductMotionContractParses() {
           "path follower heading-alignment hysteresis must parse");
   const auto executor_config = buildExecutorConfig(cfg);
   require(std::abs(executor_config.follower.maxYawRateRadS - 0.70) < 1e-12 &&
-              std::abs(executor_config.follower.headingAlignEnterRad - 0.80) < 1e-12 &&
-              std::abs(executor_config.follower.headingAlignExitRad - 0.30) < 1e-12 &&
+              std::abs(executor_config.follower.headingAlignEnterRad - 0.40) < 1e-12 &&
+              std::abs(executor_config.follower.headingAlignExitRad - 0.40) < 1e-12 &&
               std::abs(executor_config.follower.baseLookAheadDis - 0.50) < 1e-12 &&
               std::abs(executor_config.follower.maxAccel - 2.0) < 1e-12,
-          "CMU config must apply the Go2 profile without discarding configured hysteresis");
+          "CMU config must apply the official Go2 follower profile");
   const auto status = buildStatusWriterConfig(cfg, inputGateConfig(cfg));
   require(std::abs(status.follower_lookahead_m - 0.50) < 1e-12 &&
               std::abs(status.max_accel_mps2 - 2.0) < 1e-12 &&

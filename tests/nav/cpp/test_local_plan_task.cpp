@@ -41,10 +41,10 @@ struct RequestFixture {
         bitmap.view(request.clock.timestampS, generation);
   }
 
-  void setIntent(double directionBodyDeg) {
+  void setIntent(double directionBodyDeg, std::uint64_t generation = 1) {
     request.objective = nav_kernel::MotionIntentTarget{
         {directionBodyDeg, 1.0, 2.0, 90.0},
-        {route.data(), static_cast<int>(route.size()), 1, false}};
+        {route.data(), static_cast<int>(route.size()), generation, false}};
   }
 
   std::vector<nav_kernel::Vec3> route;
@@ -106,14 +106,14 @@ TEST(LocalPlanTask, StampsSplineWhenAsyncPlanningCompletes) {
   EXPECT_NEAR(spline.startTimeS, fixture.request.clock.timestampS, 0.05);
 }
 
-TEST(LocalPlanTask, DirectionChangeDoesNotReuseOldIntentSpline) {
+TEST(LocalPlanTask, NewIntentGenerationDoesNotReuseOldSpline) {
   nav_kernel::local::LocalPlanTask task(scanParams());
   ASSERT_TRUE(task.configure());
   RequestFixture fixture;
   fixture.setIntent(0.0);
   ASSERT_TRUE(waitForPlan(task, fixture).ready());
 
-  fixture.setIntent(90.0);
+  fixture.setIntent(90.0, 2);
   fixture.request.clock.timestampS += 0.01;
   EXPECT_EQ(task.update(fixture.request).plan.status(),
             nav_kernel::LocalPlanStatus::Pending);

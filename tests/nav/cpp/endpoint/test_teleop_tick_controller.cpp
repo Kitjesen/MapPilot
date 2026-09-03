@@ -591,7 +591,6 @@ void testPlannerAcceptedPathIsNotVetoedByDuplicateFinalSweep() {
   fixture.planner_output.active = true;
   fixture.planner_output.path_found = true;
   fixture.planner_output.reason = "teleop_assist_control_ready";
-  fixture.planner_output.hold_body_heading = true;
   fixture.planner_output.cmd_vel = {0.20, 0.0, 0.0};
   fixture.planner_output.local_path_map = {
       {0.0, 0.0, 0.0},

@@ -95,7 +95,6 @@ void applyTeleopRotation(ExecutionOutput &output, const RecoveryOutput &recovery
   copyRecoveryDiagnostics(output, recovery);
   output.path_found = false;
   output.near_field_stop = true;
-  output.hold_body_heading = false;
   output.local_path_body.clear();
   output.local_path_map.clear();
   output.cmd_vel = {};
@@ -452,10 +451,6 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   }
 
   output.near_field_stop = near_field_stop;
-  output.hold_body_heading =
-      recovery.active
-          ? recovery.verified && recovery.action == nav_kernel::RecoveryAction::Translate
-          : false;
   output.slow_down = std::clamp(plan.hints().slowdownLevel, 0, 3);
   output.recovery_state = recovery.state;
   output.recovery_action = static_cast<int>(recovery.action);
@@ -663,10 +658,6 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
 
   const double speed_norm = clamp01(requested_speed / config_.max_speed);
   const double input_direction_body = std::atan2(intent.vy, intent.vx);
-  const bool pure_lateral_intent =
-      std::abs(intent.vx) <= 1e-6 && std::abs(intent.vy) > 1e-6 && std::abs(intent.wz) <= 1e-6;
-  const bool lateral_translation_intent =
-      std::abs(intent.vy) > 1e-6 && std::abs(intent.wz) <= 1e-6;
   if (teleop_recovery_intent_rad_.has_value() &&
       std::abs(nav_kernel::normalizeAngle(
           input_direction_body - *teleop_recovery_intent_rad_)) >
@@ -674,11 +665,7 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
     resetTeleopRotation();
   }
   const double requested_horizon = std::max(0.5, config_.teleop_intent_horizon_m);
-  const double configured_horizon =
-      pure_lateral_intent
-          ? std::min(requested_horizon,
-                     std::max(0.5, local_planner_.params().vehicleLength))
-          : requested_horizon;
+  const double configured_horizon = requested_horizon;
   const bool teleop_direction_changed =
       teleop_reference_.has_value() &&
       std::abs(nav_kernel::normalizeAngle(
@@ -759,8 +746,6 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   const bool spline_provided = spline != nullptr;
   const bool path_provided = std::holds_alternative<nav_kernel::PathTarget>(plan.target());
   output.path_found = plan_ready;
-  output.hold_body_heading =
-      path_provided && lateral_translation_intent && plan_ready;
   output.slow_down = std::clamp(plan.hints().slowdownLevel, 0, 3);
   output.recovery_state = 0;
   output.local_path_body =
@@ -783,15 +768,6 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
       !plan_ready || near_field_stop || !spline_trackable || !path_trackable;
   const bool recovery_needed =
       planner_input_valid && plan_status != nav_kernel::LocalPlanStatus::Pending && plan_unusable;
-  if (recovery_needed && pure_lateral_intent) {
-    output.path_found = false;
-    output.near_field_stop = true;
-    output.reason = "teleop_assist_lateral_blocked";
-    follower_.stopLinear();
-    resetTeleopRotation();
-    traj_frozen_ = false;
-    return output;
-  }
   if (recovery_needed) {
     teleop_recovery_intent_rad_ = input_direction_body;
     const RecoveryOutput recovery = teleop_recovery_.step(plan_request);
@@ -834,22 +810,8 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   }
   follower_state.slowFactor = slowFactor(output.slow_down);
   follower_state.params = config_.follower;
-  follower_state.holdBodyHeading = output.hold_body_heading;
-  if (output.hold_body_heading) {
-    follower_state.params.omniDirGoalThre =
-        std::max(2.0, local_planner_.params().adjacentRange);
-  }
   const nav_kernel::FollowerOutput control = follower_.follow(plan, follower_state);
   output.cmd_vel = control.cmd;
-  if (path_provided && output.hold_body_heading && teleop_reference_.has_value()) {
-    const double desired_body_yaw = nav_kernel::normalizeAngle(
-        teleop_reference_->headingMap - teleop_reference_->directionBody);
-    const double yaw_error =
-        nav_kernel::normalizeAngle(odom_map_body.yaw - desired_body_yaw);
-    output.cmd_vel.wz = std::clamp(-config_.goal_yaw_kp * yaw_error,
-                                   -config_.goal_yaw_max_rate,
-                                   config_.goal_yaw_max_rate);
-  }
   output.trajectory_frozen = control.executionFrozen;
   traj_frozen_ = control.executionFrozen;
   output.near_field_stop = false;
@@ -857,10 +819,8 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
                       ? (control.directionTransition
                              ? "teleop_assist_direction_transition"
                              : "teleop_assist_heading_alignment")
-                      : (pure_lateral_intent
-                             ? "teleop_assist_lateral_ready"
-                             : (spline_provided ? "teleop_assist_spline_ready"
-                                                : "teleop_assist_control_ready"));
+                      : (spline_provided ? "teleop_assist_spline_ready"
+                                         : "teleop_assist_control_ready");
   return output;
 }
 

@@ -40,7 +40,6 @@ struct ExecutionOutput {
   bool goal_reached{false};
   bool path_found{false};
   bool near_field_stop{false};
-  bool hold_body_heading{false};
   bool trajectory_frozen{false};
   bool recovery_exhausted{false};
   std::string reason{"not_configured"};

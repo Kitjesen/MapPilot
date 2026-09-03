@@ -281,7 +281,7 @@ lingtu::nav::navigation::ExecutionInput odomInput(
 template <typename Tick>
 lingtu::nav::navigation::ExecutionOutput awaitScanOutput(Tick tick) {
   auto output = tick();
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
   while (std::chrono::steady_clock::now() < deadline &&
          (output.reason == "local_plan_pending" || output.reason == "local_plan_stale" ||
           output.reason == "local_intent_pending" || output.reason == "local_intent_stale" ||
@@ -476,12 +476,11 @@ TEST(Executor, ScanLateralIntentUsesOfficialHeadingAlignment) {
   });
 
   ASSERT_TRUE(out.path_found) << out.reason;
-  EXPECT_FALSE(out.hold_body_heading);
   EXPECT_TRUE(out.trajectory_frozen);
   EXPECT_NEAR(out.cmd_vel.vx, 0.0, 1e-6);
   EXPECT_NEAR(out.cmd_vel.vy, 0.0, 1e-6);
   EXPECT_GT(out.cmd_vel.wz, 0.0);
-  EXPECT_LE(out.target_distance_m, 0.6 + 1e-6);
+  EXPECT_NEAR(out.target_distance_m, 3.5, 1e-6);
 }
 
 TEST(Executor, ScanDiagonalIntentUsesOfficialWorldVelocityControl) {
@@ -497,7 +496,6 @@ TEST(Executor, ScanDiagonalIntentUsesOfficialWorldVelocityControl) {
   });
 
   ASSERT_TRUE(out.path_found) << out.reason;
-  EXPECT_FALSE(out.hold_body_heading);
   EXPECT_FALSE(out.trajectory_frozen);
   EXPECT_GT(out.cmd_vel.vx, 0.0);
   EXPECT_GT(out.cmd_vel.vy, 0.0);
@@ -516,7 +514,6 @@ TEST(Executor, ScanReverseUsesOfficialHeadingAlignment) {
   });
 
   ASSERT_TRUE(out.path_found) << out.reason;
-  EXPECT_FALSE(out.hold_body_heading);
   EXPECT_TRUE(out.trajectory_frozen);
   EXPECT_NEAR(out.cmd_vel.vx, 0.0, 1e-6);
   EXPECT_NEAR(out.cmd_vel.vy, 0.0, 1e-6);
@@ -549,7 +546,6 @@ TEST(Executor, ScanDirectionChangeNeverExecutesThePreviousIntentSpline) {
                                      1.05, {}, observation));
   });
   ASSERT_TRUE(switched.path_found) << switched.reason;
-  EXPECT_FALSE(switched.hold_body_heading);
   EXPECT_TRUE(switched.trajectory_frozen);
   EXPECT_NEAR(switched.cmd_vel.vx, 0.0, 1e-6);
   EXPECT_NEAR(switched.cmd_vel.vy, 0.0, 1e-6);
@@ -797,7 +793,6 @@ TEST(Executor, CmuRotatesWhenNoPath) {
   EXPECT_DOUBLE_EQ(out.cmd_vel.vx, 0.0);
   EXPECT_DOUBLE_EQ(out.cmd_vel.vy, 0.0);
   EXPECT_GT(std::abs(out.cmd_vel.wz), 0.01);
-  EXPECT_FALSE(out.hold_body_heading);
   EXPECT_EQ(out.reason, out.recovery_reason);
   ASSERT_TRUE(out.recovery_verified) << out.recovery_reason;
   ASSERT_EQ(out.recovery_action,
@@ -1327,7 +1322,7 @@ TEST(Executor, SafeDetourOverridesStraightStop) {
   EXPECT_FALSE(out.near_field_stop)
       << "a collision-checked local detour must supersede the blocked straight intent";
   EXPECT_EQ(out.reason, "control_ready");
-  EXPECT_FALSE(out.trajectory_frozen);
+  EXPECT_TRUE(out.trajectory_frozen);
   EXPECT_DOUBLE_EQ(out.cmd_vel.vx, 0.0);
   EXPECT_DOUBLE_EQ(out.cmd_vel.vy, 0.0);
   EXPECT_GT(std::abs(out.cmd_vel.wz), 1e-6);

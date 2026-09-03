@@ -84,7 +84,6 @@ struct FollowerState {
   int safetyStop{0};       // 0=none, 1=stop linear, 2=stop all
   FollowerParams params{};
   double goalDistance{-1.0};
-  bool holdBodyHeading{false};
   bool standardPathProfile{true};
 };
 

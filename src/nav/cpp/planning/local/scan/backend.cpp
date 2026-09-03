@@ -274,6 +274,10 @@ class Backend::Impl {
     if (active_) {
       debug_.valid = true;
       debug_.continuityReused = !output.trajectory.has_value();
+      if (const auto *spline = std::get_if<SplineTarget>(&active_->target())) {
+        debug_.trajectoryPointCount =
+            static_cast<int>(spline->controls.size());
+      }
       finishDebug(started);
       return *active_;
     }

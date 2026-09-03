@@ -156,8 +156,8 @@ TEST(FollowerPath, CmuProfileMatchesUpstreamAndKeepsDriveMode) {
   EXPECT_DOUBLE_EQ(params.maxYawRateRadS, 0.55);
   EXPECT_DOUBLE_EQ(params.maxAccel, 2.0);
   EXPECT_DOUBLE_EQ(params.linearStopThreshold, 0.02);
-  EXPECT_DOUBLE_EQ(params.headingAlignEnterRad, 0.8);
-  EXPECT_DOUBLE_EQ(params.headingAlignExitRad, 0.3);
+  EXPECT_DOUBLE_EQ(params.headingAlignEnterRad, 0.4);
+  EXPECT_DOUBLE_EQ(params.headingAlignExitRad, 0.4);
   EXPECT_DOUBLE_EQ(params.omniDirGoalThre, 0.4);
   EXPECT_DOUBLE_EQ(params.omniDirDiffThre, 1.5);
   EXPECT_DOUBLE_EQ(params.stopDisThre, 0.3);

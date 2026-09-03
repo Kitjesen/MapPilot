@@ -35,10 +35,14 @@ set(_EP_DIRS
   "${_LINGTU_ROOT}/src")
 
 if(NOT TARGET lingtu_maps)
+  set(_LINGTU_NAV_SAVED_BUILD_TESTING "${BUILD_TESTING}")
+  set(BUILD_TESTING OFF)
   add_subdirectory(
     "${_LINGTU_ROOT}/src/maps"
     "${CMAKE_BINARY_DIR}/maps"
     EXCLUDE_FROM_ALL)
+  set(BUILD_TESTING "${_LINGTU_NAV_SAVED_BUILD_TESTING}")
+  unset(_LINGTU_NAV_SAVED_BUILD_TESTING)
 endif()
 if(NOT TARGET lingtu_inspection_core)
   set(_LINGTU_NAV_SAVED_BUILD_TESTING "${BUILD_TESTING}")

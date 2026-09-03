@@ -486,6 +486,8 @@ FollowerParams cmuFollowerParams(FollowerParams params) {
   params.linearStopThreshold = params.maxAccel / 100.0;
   params.nominalDt = 0.01;
   params.switchTimeThre = 1.0;
+  params.headingAlignEnterRad = 0.4;
+  params.headingAlignExitRad = 0.4;
   params.omniDirGoalThre = 0.4;
   params.omniDirDiffThre = 1.5;
   params.stopDisThre = 0.3;
@@ -537,17 +539,6 @@ class Follower::Impl {
           if constexpr (std::is_same_v<Target, PathTarget>) {
             if (effective.standardPathProfile)
               effective.params = cmuFollowerParams(effective.params);
-            if (effective.holdBodyHeading) {
-              effective.params.yawRateGain = 0.0;
-              effective.params.stopYawRateGain = 0.0;
-              effective.params.maxYawRateRadS = 0.0;
-              effective.params.twoWayDrive = false;
-              effective.params.headingAlignEnterRad = M_PI + 0.1;
-              effective.params.headingAlignExitRad = M_PI;
-              effective.params.omniDirDiffThre = M_PI + 0.1;
-              effective.params.omniDirGoalThre =
-                  std::max(2.0, effective.params.omniDirGoalThre);
-            }
           }
           FollowerInput input = [&target] {
             if constexpr (std::is_same_v<Target, PathTarget>) {
