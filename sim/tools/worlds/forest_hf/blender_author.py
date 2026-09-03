@@ -2482,7 +2482,7 @@ def _setup_scene(width: int, height: int, samples: int) -> dict[str, Any]:
     scene.render.resolution_y = height
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
-    scene.view_settings.exposure = 0.75
+    scene.view_settings.exposure = 0.14
     if hasattr(scene, "eevee"):
         eevee = scene.eevee
         if hasattr(eevee, "taa_render_samples"):

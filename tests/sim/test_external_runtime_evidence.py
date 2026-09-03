@@ -179,7 +179,9 @@ def test_active_camera_sample_stamp_must_advance_with_frame_count(
 
     unchanged_stamp = _document(basis="real_rendered_frame_to_camera_shm")
     unchanged_stamp["streams"][0]["published_frames"] = 2  # type: ignore[index]
-    path.write_text(json.dumps(unchanged_stamp), encoding="utf-8")
+    replacement = tmp_path / "sensor-readiness.next.json"
+    replacement.write_text(json.dumps(unchanged_stamp), encoding="utf-8")
+    replacement.replace(path)
 
     with pytest.raises(CoordinatorError, match="newer sample stamp"):
         watcher.apply(_Target())

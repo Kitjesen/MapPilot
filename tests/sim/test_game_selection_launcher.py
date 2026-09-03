@@ -564,7 +564,7 @@ def test_playable_handoff_revalidates_bundle_then_uses_existing_entrypoint(
 
     assert returncode == 0
     assert coordinator_argv[:4] == (
-        str(Path(sys.executable).resolve()),
+        os.path.abspath(sys.executable),
         "-m",
         "sim.runtime.coordinator.playable_vertical_slice",
         str(selection.bundle_dir),

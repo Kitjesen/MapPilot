@@ -22,7 +22,7 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path, PurePath
+from pathlib import Path, PurePath, PureWindowsPath
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -734,8 +734,7 @@ def _artifact_storage_probe(out_dir: Path) -> tuple[bool, str]:
 
     if os.name != "nt":
         return True, "native_filesystem"
-    resolved = Path(out_dir).expanduser().resolve()
-    drive = str(resolved.drive).replace("/", "\\").lower()
+    drive = str(PureWindowsPath(os.fspath(out_dir)).drive).replace("/", "\\").lower()
     if (
         drive.startswith("\\\\?\\unc\\wsl.localhost\\")
         or drive.startswith("\\\\wsl.localhost\\")

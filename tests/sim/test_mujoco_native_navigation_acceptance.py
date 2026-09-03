@@ -1161,6 +1161,7 @@ def test_binary_candidate_resolver_windows_prefers_existing_exe_and_falls_back(
 
 
 def test_native_traversability_identity_is_injected_without_wslenv(monkeypatch, tmp_path):
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
     map_dir = tmp_path / "same_source_map"
     map_dir.mkdir()
     map_path = map_dir / "map.pcd"
@@ -1361,6 +1362,11 @@ def test_native_acceptance_rejects_windows_9p_motion_artifacts(monkeypatch, tmp_
     manifest.write_text('{"name": "test"}\n', encoding="utf-8")
     monkeypatch.setattr(acceptance, "_probe_wsl_runtime", lambda: (True, "ready"))
     monkeypatch.setattr(acceptance, "_requires_wsl_runtime", lambda _manifest: True)
+    monkeypatch.setattr(
+        acceptance,
+        "_artifact_storage_probe",
+        lambda _path: (False, "windows_9p_mount"),
+    )
     args = type(
         "Args",
         (),
