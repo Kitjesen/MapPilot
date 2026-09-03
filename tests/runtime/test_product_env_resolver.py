@@ -60,9 +60,17 @@ def test_sim_env_accepts_any_known_robot_before_asset_selection(robot: str) -> N
     assert resolved.config.backend == "mujoco"
 
 
-def test_real_env_reports_missing_adjacent_robot_config() -> None:
+def test_real_env_reports_missing_adjacent_robot_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    robot_dir = tmp_path / "vendor" / "model"
+    robot_dir.mkdir(parents=True)
+    (robot_dir / "model.yaml").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(product_configuration, "_ROBOT_MODELS_ROOT", tmp_path)
+
     with pytest.raises((FileNotFoundError, ValueError), match=r"robot\.yaml|RobotConfig"):
-        resolve_env_spec("real", robot=SIM_ROBOT)
+        resolve_env_spec("real", robot="vendor/model")
 
 
 def test_mid360_is_required_by_the_product_not_by_real_env(
@@ -337,13 +345,14 @@ def test_local_planner_selection_keeps_nav_as_the_product() -> None:
     assert resolved.product_spec["native_nav"]["local_planner"] == "scan"
 
 
-def test_real_env_rejects_scan_until_field_qualification() -> None:
-    with pytest.raises(ValueError, match="has not qualified local planner 'scan'"):
-        resolve_product_host_runtime(
-            "nav",
-            "real",
-            local_planner="scan",
-        )
+def test_real_env_resolves_declared_scan_backend_configuration() -> None:
+    resolved = resolve_product_host_runtime(
+        "nav",
+        "real",
+        local_planner="scan",
+    )
+
+    assert resolved.product_spec["native_nav"]["local_planner"] == "scan"
 
 
 def test_local_planner_selection_rejects_unknown_algorithm() -> None:
