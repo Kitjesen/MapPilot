@@ -20,6 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          lfs: true
           submodules: false
 
       - name: Install native test dependencies
