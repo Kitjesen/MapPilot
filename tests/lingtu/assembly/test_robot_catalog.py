@@ -5,6 +5,7 @@ import yaml
 from lingtu.assembly.compiler import compile_run_plan
 from lingtu.assembly.products import resolve_product_host_runtime
 from runtime.config import load_config
+from runtime.graph.processes import ProcessArtifact
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ROBOT_ROOT = REPO_ROOT / "config" / "robots"
@@ -44,7 +45,12 @@ def test_robot_catalog_is_company_then_model() -> None:
         assert mid360_config.is_file()
 
 
-def test_thunder_v4_has_real_and_sim_inputs() -> None:
+def test_thunder_v4_has_real_and_sim_inputs(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ProcessArtifact,
+        "from_repository_path",
+        classmethod(lambda cls, root, path: cls(str(path))),
+    )
     model_dir = ROBOT_ROOT / "doso" / "thunder_v4"
     config = load_config(str(model_dir / "robot.yaml"))
 
