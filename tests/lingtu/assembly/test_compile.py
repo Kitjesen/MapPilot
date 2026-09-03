@@ -588,7 +588,7 @@ def test_unknown_product_does_not_compile_to_run_plan() -> None:
 
 def test_go2_sim_compile_reports_missing_session_assets() -> None:
     with pytest.raises(ValueError, match=r"simulation session|unitree/go2"):
-        _compile_run_plan("teleop", "sim", robot=REAL_ROBOT)
+        compile_run_plan("teleop", "sim", robot=REAL_ROBOT)
 
 
 def test_sim_mujoco_process_catalog_declares_exact_native_platform_paths() -> None:
@@ -1404,18 +1404,17 @@ def test_sim_mujoco_explore_map_compiles_saved_map_route_into_run_plan(
 
 
 @pytest.mark.parametrize(
-    ("product", "local_planner", "manifest_name"),
+    ("product", "local_planner"),
     (
-        ("nav", "cmu", "mujoco_local_cmu.json"),
-        ("nav", "scan", "mujoco_local_scan.json"),
-        ("tracking", None, "mujoco_tracking_native_acceptance.json"),
-        ("inspection", None, "mujoco_inspection_native_acceptance.json"),
+        ("nav", "cmu"),
+        ("nav", "scan"),
+        ("tracking", None),
+        ("inspection", None),
     ),
 )
 def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
     product: str,
     local_planner: str | None,
-    manifest_name: str,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1501,8 +1500,10 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
         assert plan.process("camera") is not plan.process("lidar")
         assert plan.host_config["camera_backend"] == "dds"
         assert plan.host_config["detector"] == "sim_scene"
-        assert plan.host_config["encoder"] == "none"
-        assert plan.host_config["world"] == "industrial_park_scene.xml"
+        assert "encoder" not in plan.host_config
+        assert plan.host_config["world"] == (
+            "sim/packages/worlds/industrial_park/physics/industrial_park_scene.xml"
+        )
         _assert_front_rgbd(plan)
     elif product == "nav":
         assert not plan.has_process("camera")
@@ -1751,7 +1752,7 @@ def test_map_run_plan_preserves_host_config(
 ) -> None:
     operational_overrides = {
         "localization_adapter": "cpp_slam_status",
-        "semantic_taxonomy_path": "/opt/lingtu/config/semantic_taxonomy.json",
+        "semantic_taxonomy_path": "/opt/lingtu/config/semantics/taxonomy.json",
         "gateway_port": 5051,
         "mcp_port": 8091,
         "enable_gateway": True,
