@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import subprocess
 import sys
 import threading
@@ -22,6 +23,12 @@ from sim.scripts.mujoco import native_navigation_video as navigation_video
 from sim.scripts.mujoco import saved_map_plan_gate
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _platform_os(name: str) -> SimpleNamespace:
+    platform_os = SimpleNamespace(**vars(os))
+    platform_os.name = name
+    return platform_os
 
 
 def test_navigation_acceptance_uses_current_thunder_mjcf() -> None:
@@ -611,7 +618,7 @@ def test_binary_candidate_resolver_windows_ignores_existing_retired_root_d_exe(
     retired.write_bytes(b"retired")
     canonical.write_bytes(b"canonical")
     monkeypatch.setattr(acceptance, "ROOT", tmp_path)
-    monkeypatch.setattr(acceptance.os, "name", "nt")
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
 
     resolved = acceptance._resolve_binary(
         {
@@ -1191,7 +1198,7 @@ def test_native_traversability_identity_rejects_nonnumeric_epoch(
 
 
 def test_native_traversability_identity_uses_popen_env_for_windows_exe(monkeypatch):
-    monkeypatch.setattr(acceptance.os, "name", "nt")
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
 
     command, env = acceptance._with_native_env(
         ["D:\\build\\lingtu_traversability_dds.exe", "--domain-id", "226"],
@@ -1253,7 +1260,7 @@ def test_native_acceptance_artifacts_require_wsl_ext4_for_windows_motion():
 
 
 def test_native_runtime_inputs_are_mirrored_to_ext4_artifacts(monkeypatch, tmp_path):
-    monkeypatch.setattr(acceptance.os, "name", "nt")
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
     monkeypatch.setattr(
         acceptance,
         "_artifact_storage_probe",
@@ -1431,7 +1438,7 @@ def test_native_windows_chain_skips_wsl_and_ext4_gates(monkeypatch, tmp_path):
 
 def test_wsl_cleanup_control_calls_use_bounded_timeout(monkeypatch):
     calls: list[float] = []
-    monkeypatch.setattr(sensors.os, "name", "nt")
+    monkeypatch.setattr(sensors, "os", _platform_os("nt"))
     monkeypatch.setattr(sensors.shutil, "which", lambda _name: "wsl.exe")
 
     def timeout_run(*_args, **kwargs):
@@ -1478,7 +1485,7 @@ def test_managed_wsl_process_fails_when_linux_pid_ownership_is_missing(
             return None
 
     owner = ProcessOwner()
-    monkeypatch.setattr(acceptance.os, "name", "nt")
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
     monkeypatch.setattr(acceptance, "ProcessTreeOwner", lambda: owner)
     monkeypatch.setattr(acceptance.subprocess, "Popen", lambda *_args, **_kwargs: process)
     monkeypatch.setattr(
@@ -3244,7 +3251,7 @@ def test_deferred_wsl_goal_command_prestarts_wsl_relay_before_trigger(
     monkeypatch,
     tmp_path,
 ):
-    monkeypatch.setattr(acceptance.os, "name", "nt")
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
     monkeypatch.setattr(
         acceptance,
         "_native_command",

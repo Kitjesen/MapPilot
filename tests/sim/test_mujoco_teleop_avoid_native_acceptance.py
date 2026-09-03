@@ -22,6 +22,12 @@ from sim.scripts.mujoco.teleop_avoid_native_acceptance import (
 )
 
 
+def _platform_os(name: str) -> SimpleNamespace:
+    platform_os = SimpleNamespace(**vars(os))
+    platform_os.name = name
+    return platform_os
+
+
 def test_manifest_uses_scan_with_live_mapd_collision() -> None:
     manifest = json.loads(
         Path("config/runtime_graph/acceptance/mujoco_teleop_avoid_native_acceptance.json").read_text(
@@ -671,7 +677,7 @@ def test_manifest_declares_windows_native_candidates_for_sensor_and_nav_bins() -
 
 
 def test_native_teleop_with_native_windows_exe_uses_popen_env_not_prefix(monkeypatch):
-    monkeypatch.setattr(acceptance.os, "name", "nt")
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
 
     command, env = _with_native_env(
         ["C:\\build\\Release\\lingtu_traversability_dds.exe", "--domain-id", "226"],
@@ -683,7 +689,7 @@ def test_native_teleop_with_native_windows_exe_uses_popen_env_not_prefix(monkeyp
 
 
 def test_native_teleop_wsl_command_keeps_env_wrapper_for_linux_child(monkeypatch):
-    monkeypatch.setattr(acceptance.os, "name", "nt")
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
 
     command, env = _with_native_env(
         ["C:\\Windows\\System32\\wsl.exe", "-e", "/home/sunrise/navd", "--domain-id", "226"],
