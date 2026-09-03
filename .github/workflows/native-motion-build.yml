@@ -52,14 +52,14 @@ jobs:
       LINGTU_NAV_ENDPOINT_RUN_TESTS: '1'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
           lfs: true
           submodules: false
 
       - name: Checkout DOSO SDK
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Kitjesen/DOSO-SDK
           ref: 0ae4969c9b6e9e026b14d6129aff10bd842a1241

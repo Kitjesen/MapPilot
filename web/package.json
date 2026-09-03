@@ -4,7 +4,7 @@
   "version": "2.3.0",
   "type": "module",
   "scripts": {
-    "test": "npm run test:product-contract",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
     "test:product-contract": "node --experimental-strip-types --test --test-isolation=none tests/robotStatusPanel.test.ts",
     "dev": "vite",
     "build": "tsc -b && vite build",

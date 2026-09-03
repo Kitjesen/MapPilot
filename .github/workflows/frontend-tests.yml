@@ -1,0 +1,48 @@
+name: Frontend tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'tools/simstudio/ui/**'
+      - '.github/workflows/frontend-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'tools/simstudio/ui/**'
+      - '.github/workflows/frontend-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Web
+            directory: web
+            lockfile: web/package-lock.json
+          - name: SimStudio UI
+            directory: tools/simstudio/ui
+            lockfile: tools/simstudio/ui/package-lock.json
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: ${{ matrix.lockfile }}
+      - run: npm ci
+        working-directory: ${{ matrix.directory }}
+      - run: npm test
+        working-directory: ${{ matrix.directory }}
+      - run: npm run lint
+        working-directory: ${{ matrix.directory }}
+      - run: npm run build
+        working-directory: ${{ matrix.directory }}
