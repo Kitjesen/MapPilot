@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import subprocess
 import sys
 import time
@@ -219,35 +220,246 @@ def build_execution_plan(
         )
         if missing:
             raise ValueError(f"saved-map explore inputs are missing: {missing}")
-    base_manifest = {
-        **dict(manifest),
-        "slam_runtime": {
-            **dict(manifest.get("slam_runtime") or {}),
-            # The shared process-plan builder starts from the map-free chain.
-            # The exact saved-map arguments are applied below before launch.
-            "mode": "mapping",
-        },
+    case_dir = case_dir.resolve()
+    case_dir.mkdir(parents=True, exist_ok=True)
+    host_boot_id = secrets.token_hex(16)
+    external_arm_token = secrets.token_hex(16)
+    external_arm_timeout = max(60.0, float(duration_s) + float(warmup_s) + 30.0)
+    artifacts = {
+        "scene": str(case_dir / "scene.xml"),
+        "slam_status": str(case_dir / "slam_status.json"),
+        "slam_cloud_dir": str(case_dir / "slam_clouds"),
+        "mapd_status": str(case_dir / "mapd_status.json"),
+        "traversability_status": str(case_dir / "traversability_status.json"),
+        "nav_status": str(case_dir / "nav_status.json"),
+        "sensor_report": str(case_dir / "sensor_report.json"),
+        "parent_sensor_diagnostics": str(case_dir / "parent_sensor_diagnostics.json"),
+        "sensor_arm": str(case_dir / "sensor_arm.json"),
+        "sensor_arm_status": str(case_dir / "sensor_arm_status.json"),
+        "motion_log": str(case_dir / "motion.jsonl"),
+        "nav_timeline": str(case_dir / "nav_timeline.jsonl"),
+        "sensor_publisher_pid": str(case_dir / "sensor_publisher.pid"),
+        "driver_bridge_pid": str(case_dir / "driver_bridge.pid"),
     }
-    plan = teleop.build_execution_plan(
-        scenario="free",
-        domain_id=domain_id,
-        binaries=binaries,
-        paths=paths,
-        case_dir=case_dir,
-        duration_s=duration_s,
-        warmup_s=warmup_s,
-        command_vx=0.0,
-        manifest=base_manifest,
-        external_arm_timeout_s=max(60.0, duration_s + warmup_s + 30.0),
+    Path(artifacts["slam_cloud_dir"]).mkdir(parents=True, exist_ok=True)
+
+    start = [float(value) for value in manifest.get("start") or [0.0, 0.0, 0.48, 0.0]]
+    tolerances = dict(manifest.get("runtime_tolerances") or {})
+    slam_runtime = dict(manifest.get("slam_runtime") or {})
+    state_provider = str(slam_runtime.get("provider") or "fastlio2").strip().lower()
+    if state_provider != "fastlio2":
+        raise ValueError(f"unsupported explore slam provider: {state_provider}")
+
+    slam_command = native._native_command(
+        Path(binaries["slam"]),
+        "--backend",
+        "fastlio2",
+        "--mode",
+        "mapping",
+        "--config",
+        native._native_path_arg(Path(binaries["slam"]), Path(paths["slam_config"])),
+        "--domain-id",
+        str(domain_id),
+        "--tick-hz",
+        "50",
+        "--status-json",
+        native._native_path_arg(Path(binaries["slam"]), Path(artifacts["slam_status"])),
+        "--status-json-hz",
+        str(float(slam_runtime.get("status_json_hz") or 10.0)),
+        "--cloud-snapshot-dir",
+        native._native_path_arg(Path(binaries["slam"]), Path(artifacts["slam_cloud_dir"])),
+        "--cloud-snapshot-hz",
+        str(float(slam_runtime.get("cloud_snapshot_hz") or 2.0)),
     )
-    plan.pop("teleop_command", None)
+
+    map_root = (
+        Path(paths["map_dir"]).resolve().parent
+        if requires_map
+        else case_dir / "maps"
+    )
+    mapd_command, mapd_environment = native._native_mapd_launch(
+        binary=Path(binaries["mapd"]),
+        domain_id=domain_id,
+        status_file=Path(artifacts["mapd_status"]),
+        map_root=map_root,
+        runtime=dict(manifest.get("mapd_runtime") or {}),
+        environment={},
+    )
+
+    traversability_command = native._native_command(
+        Path(binaries["traversability"]),
+        "--domain-id",
+        str(domain_id),
+        "--publish-hz",
+        "10",
+        "--slow-hz",
+        "5",
+        "--tick-hz",
+        "20",
+        "--resolution",
+        "0.2",
+        "--radius",
+        "6",
+        "--max-points",
+        "5000",
+        "--status-file",
+        native._native_path_arg(
+            Path(binaries["traversability"]), Path(artifacts["traversability_status"])
+        ),
+    )
+
+    navigation_binary = Path(binaries["navigation"])
+    local_planner = native._local_planner_backend(dict(manifest))
+    navigation_args = [
+        "--control-mode",
+        "autonomy",
+        "--local-planner",
+        local_planner,
+        "--domain-id",
+        str(domain_id),
+        "--tick-hz",
+        "20",
+        "--publish-cmd-vel",
+        "true",
+        "--teleop-local-planner",
+        "false",
+        "--allow-teleop-takeover",
+        "false",
+        "--check-obstacle",
+        "true",
+        "--use-traversability-cost",
+        "true",
+        "--status-file",
+        native._native_path_arg(navigation_binary, Path(artifacts["nav_status"])),
+        "--status-s",
+        "0.1",
+    ]
+    if local_planner == "cmu":
+        navigation_args.extend(
+            [
+                "--path-library",
+                native._native_path_arg(navigation_binary, Path(paths["path_library"])),
+            ]
+        )
+    navigation_command = native._native_command(navigation_binary, *navigation_args)
+
+    sensor_args = [
+        sys.executable,
+        str(Path(paths["sensor_runner"])),
+        "--world",
+        str(Path(paths["world"])),
+        "--start",
+        ",".join(str(value) for value in start[:3]),
+        "--start-anchor",
+        "warmup",
+        "--duration",
+        str(max(1.0, float(duration_s))),
+        "--settle-s",
+        "1.0",
+        "--warmup-s",
+        str(max(0.0, float(warmup_s))),
+        "--drive-ramp-s",
+        "0",
+        "--drive-mode",
+        "policy",
+        "--policy-path",
+        str(Path(paths["policy"])),
+        "--command-source",
+        "dds",
+        "--driver-bridge-bin",
+        str(Path(binaries["driver_bridge"])),
+        "--driver-expected-host-boot-id",
+        host_boot_id,
+        "--driver-max-linear-mps",
+        str(float((manifest.get("driver_bridge") or {}).get("max_linear_mps") or 1.0)),
+        "--driver-max-angular-rps",
+        str(float((manifest.get("driver_bridge") or {}).get("max_angular_rps") or 1.0)),
+        "--driver-command-timeout-ms",
+        str(int((manifest.get("driver_bridge") or {}).get("command_timeout_ms") or 200)),
+        "--driver-heartbeat-timeout-ms",
+        str(int((manifest.get("driver_bridge") or {}).get("heartbeat_timeout_ms") or 500)),
+        "--driver-apply-timeout-ms",
+        str(int((manifest.get("driver_bridge") or {}).get("apply_timeout_ms") or 500)),
+        "--publisher-bin",
+        str(Path(binaries["sensor_publisher"])),
+        "--publisher-pid-file",
+        str(Path(artifacts["sensor_publisher_pid"])),
+        "--domain-id",
+        str(domain_id),
+        "--slam-status-json",
+        str(Path(artifacts["slam_status"])),
+        "--require-slam-output",
+        "--nav-status-json",
+        str(Path(artifacts["nav_status"])),
+        "--external-arm-file",
+        str(Path(artifacts["sensor_arm"])),
+        "--external-arm-token",
+        external_arm_token,
+        "--external-arm-timeout-s",
+        f"{external_arm_timeout:g}",
+        "--external-arm-status-json",
+        str(Path(artifacts["sensor_arm_status"])),
+        "--external-arm-scenario",
+        "free",
+        "--json-out",
+        str(Path(artifacts["sensor_report"])),
+        *native._parent_sensor_diagnostics_args(
+            Path(artifacts["parent_sensor_diagnostics"]),
+            tolerances,
+        ),
+        *native._sensor_runtime_args(dict(manifest)),
+    ]
+    sensor_command = sensor_args
+
+    plan = {
+        "scenario": route,
+        "scene_variant": "free",
+        "domain_id": int(domain_id),
+        "start": start,
+        "processes": [
+            {
+                "name": "slam",
+                "command": slam_command,
+                "log": str(case_dir / "slam.log"),
+            },
+            {
+                "name": "mapd",
+                "command": mapd_command,
+                "env": dict(mapd_environment),
+                "log": str(case_dir / "mapd.log"),
+            },
+            {
+                "name": "traversability",
+                "command": traversability_command,
+                "log": str(case_dir / "traversability.log"),
+            },
+            {
+                "name": "navigation",
+                "command": navigation_command,
+                "log": str(case_dir / "navigation.log"),
+            },
+            {
+                "name": "sensor",
+                "command": sensor_command,
+                "log": str(case_dir / "sensor.log"),
+            },
+        ],
+        "artifacts": artifacts,
+        "external_arm": {
+            "required": True,
+            "token": external_arm_token,
+            "timeout_s": external_arm_timeout,
+        },
+        "host_boot_id": host_boot_id,
+        "driver_sample_semantics": teleop.DRIVER_SAMPLE_SEMANTICS,
+        "native_control_env": {"LINGTU_HOST_BOOT_ID": host_boot_id},
+    }
     product_session_id = new_product_session_id()
     identity_environment = {
         "LINGTU_ENV": "sim",
         "LINGTU_PRODUCT": "explore",
         "LINGTU_PRODUCT_SESSION_ID": product_session_id,
     }
-    artifacts = dict(plan["artifacts"])
     artifacts["explore_status"] = str(case_dir / "explore_status.json")
     artifacts["explore_control"] = str(case_dir / "explore_control.log")
 
@@ -255,10 +467,11 @@ def build_execution_plan(
     map_root: Path | None = None
     if requires_map:
         map_root = Path(paths["map_dir"]).resolve().parent
-        map_environment = native._native_traversability_env(
+        map_environment = native._native_map_identity(
             paths={name: Path(value) for name, value in paths.items()},
             phase="explore-map",
             domain_id=domain_id,
+            session_root=map_root,
         )
         map_id = Path(paths["map_dir"]).name
         map_environment.update(
@@ -278,7 +491,7 @@ def build_execution_plan(
             command = _set_option(
                 command,
                 "--map",
-                teleop._native_path_arg(command, Path(paths["slam"])),
+                native._native_path_arg(Path(binaries["slam"]), Path(paths["slam"])),
             )
             command = _set_option(command, "--track-against-map-period-s", "1.0")
             process["command"] = command
@@ -296,12 +509,14 @@ def build_execution_plan(
                 command = _set_option(
                     command,
                     "--map",
-                    teleop._native_path_arg(command, Path(paths["planner"])),
+                    native._native_path_arg(
+                        Path(binaries["navigation"]), Path(paths["planner"])
+                    ),
                 )
                 command = _set_option(
                     command,
                     "--map-root",
-                    teleop._native_path_arg(command, map_root),
+                    native._native_path_arg(Path(binaries["navigation"]), map_root),
                 )
             else:
                 invalid = _forbidden_arguments(command)
@@ -324,7 +539,7 @@ def build_execution_plan(
                 explore_command = _set_option(
                     explore_command,
                     "--map-root",
-                    teleop._native_path_arg(explore_command, map_root),
+                    native._native_path_arg(Path(binaries["explore"]), map_root),
                 )
             explore_process = {
                 "name": "explore",

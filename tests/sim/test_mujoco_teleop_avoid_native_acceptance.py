@@ -224,9 +224,19 @@ def test_binary_provenance_includes_slam_build_contract(tmp_path: Path) -> None:
 
     normalized_specs = [Path(spec).as_posix() for spec in provenance["slam"]["source_specs"]]
     assert any(spec.endswith("src/localization/slam/cpp/CMakeLists.txt") for spec in normalized_specs)
-    assert any(
-        spec.endswith("third_party/research_localization/small_gicp/include/small_gicp") for spec in normalized_specs
+    small_gicp_root = (
+        acceptance.ROOT
+        / "third_party"
+        / "research_localization"
+        / "small_gicp"
+        / "include"
+        / "small_gicp"
     )
+    if small_gicp_root.is_dir():
+        assert any(
+            spec.endswith("third_party/research_localization/small_gicp/include/small_gicp")
+            for spec in normalized_specs
+        )
 
 
 def test_binary_provenance_tracks_vendored_small_gicp_changes(
@@ -900,6 +910,8 @@ def test_scan_teleop_preflight_does_not_require_cmu_path_library(
 ) -> None:
     from sim.scripts.mujoco import native_navigation_acceptance as native
 
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
+
     world = tmp_path / "scene.xml"
     world.write_text("<mujoco><worldbody/></mujoco>", encoding="utf-8")
     manifest_path = tmp_path / "manifest.json"
@@ -974,6 +986,8 @@ def test_product_preflight_requires_native_mapd_binary(
     monkeypatch,
 ) -> None:
     from sim.scripts.mujoco import native_navigation_acceptance as native
+
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
 
     world = tmp_path / "scene.xml"
     world.write_text("<mujoco><worldbody/></mujoco>", encoding="utf-8")

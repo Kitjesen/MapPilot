@@ -26,7 +26,7 @@ def _fake_paths(tmp_path: Path) -> dict[str, Path]:
     return {
         "world": tmp_path / "world.xml",
         "slam_config": ROOT / "src" / "localization" / "fastlio2" / "config" / "sim_mid360_slam.yaml",
-        "path_library": ROOT / "src" / "nav" / "local" / "paths",
+        "path_library": ROOT / "src" / "nav" / "cpp" / "planning" / "local" / "cmu" / "paths" / "thunder",
         "sensor_runner": ROOT / "sim" / "scripts" / "mujoco" / "native_dds_sensors.py",
         "policy": tmp_path / "policy.onnx",
     }
@@ -113,12 +113,10 @@ def test_component_manifests_claim_terminal_correlation_only_when_verified() -> 
             "mujoco_explore_map_native_acceptance.json",
         )
     }
-    for name in (
-        "mujoco_native_navigation_acceptance.json",
-        "mujoco_tracking_native_acceptance.json",
-    ):
-        claims = manifests[name]["acceptance_scope"]["claims"]
-        assert any("terminal exact Driver stop" in claim for claim in claims)
+    claims = manifests["mujoco_native_navigation_acceptance.json"]["acceptance_scope"]["claims"]
+    assert any("terminal exact Driver stop" in claim for claim in claims)
+    tracking_claims = manifests["mujoco_tracking_native_acceptance.json"]["acceptance_scope"]["claims"]
+    assert all("terminal exact Driver stop" not in claim for claim in tracking_claims)
     for name in (
         "mujoco_explore_native_acceptance.json",
         "mujoco_explore_map_native_acceptance.json",
@@ -177,7 +175,10 @@ def test_dispatcher_shape_derives_artifacts_from_exact_run_plan_session(
     monkeypatch.setattr(
         acceptance,
         "validate_runner_plan",
-        lambda *_args, **_kwargs: SimpleNamespace(acceptance={"roles": ["explore_runtime"]}),
+        lambda *_args, **_kwargs: SimpleNamespace(
+            acceptance={"roles": ["explore_runtime"]},
+            processes=(SimpleNamespace(provides=("explore_runtime",)),),
+        ),
     )
 
     def fake_run(args: object) -> dict[str, object]:

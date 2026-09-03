@@ -71,7 +71,7 @@ DIAGNOSTIC_TARGETS = {
     ),
     "nav": (
         "native_navigation_acceptance.py",
-        "mujoco_local_cmu.json",
+        "mujoco_local_scan.json",
     ),
     "inspection": (
         "inspection_native_acceptance.py",

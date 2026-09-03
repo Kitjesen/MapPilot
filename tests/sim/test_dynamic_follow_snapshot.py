@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from lingtu.assembly.compiler import compile_run_plan
+from runtime.graph import ProcessArtifact
 from perception.detection.sim_scene_observer import SimSceneObserver
 from sim.compat.engine.mujoco.engine import MuJoCoEngine
 from sim.runtime.scenario.runtime import ScenarioClock, ScenarioRuntime
@@ -24,7 +25,16 @@ from sim.scripts.mujoco.formal_feeder import (
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_tracking_run_plan_exposes_one_dynamic_mujoco_person() -> None:
+def test_tracking_run_plan_exposes_one_dynamic_mujoco_person(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # This contract test exercises the scenario graph, not native artifact
+    # discovery. A clean checkout intentionally has no locally built binaries.
+    monkeypatch.setattr(
+        ProcessArtifact,
+        "from_repository_path",
+        classmethod(lambda cls, _root, path: cls(str(path))),
+    )
     plan = compile_run_plan(
         "tracking",
         "sim",
