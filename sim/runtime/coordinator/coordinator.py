@@ -726,6 +726,7 @@ class RuntimeCoordinator:
         self._sensor_readiness: SensorReadiness | None = None
         self._binding_sources: dict[BindingFacet, str] = {}
         self._sensor_binding_sources: dict[str, str] = {}
+        self._first_sensor_failure_source: str | None = None
         self._native_sensor_ids: frozenset[str] = frozenset()
         self._external_sensor_publications: dict[
             str, _ExternalSensorPublication
@@ -1576,6 +1577,18 @@ class RuntimeCoordinator:
             reset_generation=reset_generation,
             allow_failed_runtime=runtime_failed and state is SensorStreamState.FAILED,
         )
+        readiness = self.sensor_readiness
+        if readiness.state(stream_id) is SensorStreamState.FAILED:
+            raise CoordinatorError(f"sensor stream {stream_id!r} is already FAILED")
+        if runtime_failed:
+            if self._first_sensor_failure_source is None:
+                raise CoordinatorError(
+                    "post-terminal sensor failure requires a prior failed sensor stream"
+                )
+            if source_id != self._first_sensor_failure_source:
+                raise CoordinatorError(
+                    "post-terminal sensor failure requires the first failed stream source"
+                )
         publication = self._external_sensor_publication(
             stream_id,
             source_id=source_id,
@@ -1585,7 +1598,6 @@ class RuntimeCoordinator:
             last_sample_truth_sequence=last_sample_truth_sequence,
             last_sample_sim_time_ns=last_sample_sim_time_ns,
         )
-        readiness = self.sensor_readiness
         stream_source = readiness.streams[stream_id].source
         try:
             if state is SensorStreamState.FAILED:
@@ -1614,6 +1626,8 @@ class RuntimeCoordinator:
             raise CoordinatorError(str(exc)) from exc
         self._sensor_readiness = readiness
         self._sensor_binding_sources[stream_id] = source_id
+        if state is SensorStreamState.FAILED and not runtime_failed:
+            self._first_sensor_failure_source = source_id
         if publication is not None:
             self._external_sensor_publications[stream_id] = publication
         self._sync_sensor_facet()
@@ -2054,6 +2068,10 @@ class RuntimeCoordinator:
             model_generation=readiness.model_generation,
             reset_generation=readiness.reset_generation,
         )
+        if self._first_sensor_failure_source is None:
+            source_id = self._sensor_binding_sources.get(sensor_id)
+            if source_id is not None:
+                self._first_sensor_failure_source = source_id
         self._sync_sensor_facet()
 
     def _accept_event(self, value: Mapping[str, Any], *, expected: str) -> dict[str, Any]:

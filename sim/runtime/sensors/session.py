@@ -187,6 +187,8 @@ class SessionSensorRuntime:
                 "last_sample_truth_sequence": None,
                 "last_sample_sim_time_ns": None,
             }
+            if stream.route.transport == "camera_shm":
+                observation["shm_name"] = self._allocation.shm.get(sensor_id)
             sample = self._last_samples.get(sensor_id)
             sample_count = observation["sample_count"]
             if sample_count:

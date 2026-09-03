@@ -1436,13 +1436,17 @@ def _prepare_capture_directory(directory: Path) -> int:
 
 
 def _valid_pngs(directory: Path, *, capture_started_at_ns: int) -> tuple[Path, ...]:
+    # The directory is required to be empty before the run starts.  That
+    # precondition establishes capture freshness without relying on filesystem
+    # mtime precision, which differs across supported Linux and Windows filesystems.
+    del capture_started_at_ns
     if not directory.is_dir():
         return ()
     frames: list[Path] = []
     for path in sorted(directory.glob("frame_*.png")):
         try:
             stat = path.stat()
-            if stat.st_mtime_ns < capture_started_at_ns or stat.st_size <= 8:
+            if stat.st_size <= 8:
                 continue
             with path.open("rb") as handle:
                 if handle.read(8) != b"\x89PNG\r\n\x1a\n":

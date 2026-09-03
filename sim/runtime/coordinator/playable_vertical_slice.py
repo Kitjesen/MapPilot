@@ -1754,6 +1754,7 @@ class PlayableLaunch:
     frame_capture_wait_timeout_s: float
     cpu_isolation_plan: WindowsCpuIsolationPlan | None
     _bundle_dir: Path = field(repr=False)
+    _bundle_files: Mapping[str, bytes] = field(repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
     _close_results: dict[str, bool] = field(default_factory=dict, init=False, repr=False)
 
@@ -1777,6 +1778,7 @@ def create_playable_launch(
         raise TypeError("runtime must be PlayableRuntimeConfig")
     if bundle.repo_root is None or bundle.repo_root.resolve() != runtime.repo_root:
         raise PlayableLaunchError("runtime repo_root must equal the validated bundle repo_root")
+    bundle_files = _snapshot_declared_bundle_files(bundle)
     deps = dependencies or PlayableLaunchDependencies()
     if not isinstance(deps, PlayableLaunchDependencies):
         raise TypeError("dependencies must be PlayableLaunchDependencies")
@@ -1985,6 +1987,7 @@ def create_playable_launch(
         frame_capture_wait_timeout_s=runtime.frame_capture_wait_timeout_s,
         cpu_isolation_plan=cpu_isolation_plan,
         _bundle_dir=bundle.bundle_dir.resolve(),
+        _bundle_files=bundle_files,
     )
 
 
@@ -2012,6 +2015,7 @@ def run_playable_launch(
         raise PlayableLifecycleError("playable launch is already closed")
     original: BaseException | None = None
     try:
+        _require_unchanged_bundle(launch._bundle_dir, launch._bundle_files)
         launch.control_receiver.start()
         launch.session.prepare()
         _declare_playable_episode_artifacts(launch.coordinator)
@@ -2022,6 +2026,34 @@ def run_playable_launch(
         raise
     finally:
         _close_playable_launch(launch, original=original)
+
+
+def _snapshot_declared_bundle_files(
+    bundle: ResolvedSessionBundle,
+) -> Mapping[str, bytes]:
+    names = ("session.yaml", *sorted(bundle.plans))
+    try:
+        files = {name: (bundle.bundle_dir / name).read_bytes() for name in names}
+    except OSError as exc:
+        raise PlayableLaunchError("resolved playable bundle cannot be read") from exc
+    return MappingProxyType(files)
+
+
+def _require_unchanged_bundle(
+    bundle_dir: Path,
+    expected_files: Mapping[str, bytes],
+) -> None:
+    try:
+        unchanged = all(
+            (bundle_dir / name).read_bytes() == expected
+            for name, expected in expected_files.items()
+        )
+    except OSError as exc:
+        raise PlayableLifecycleError(
+            "resolved playable bundle changed before start"
+        ) from exc
+    if not unchanged:
+        raise PlayableLifecycleError("resolved playable bundle changed before start")
 
 
 def _declare_playable_episode_artifacts(coordinator: Any) -> None:

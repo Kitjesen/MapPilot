@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -312,6 +313,10 @@ def test_qualification_result_rejects_bundle_symlink_before_builder_resolve(
         write_qualification_result(bundle_dir, run_dir)
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="creates a Windows directory junction with cmd.exe",
+)
 def test_qualification_result_rejects_run_junction_before_builder_resolve(
     tmp_path: Path,
 ) -> None:

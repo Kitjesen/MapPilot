@@ -102,13 +102,7 @@ def test_server_publishes_discovery_after_binding(
         else:
             assert discovery.family == "AF_UNIX"
             assert discovery.supervisor_nonce in discovery.address
-            assert discovery.address == str(
-                (
-                    tmp_path
-                    / "supervisor"
-                    / f"control-{discovery.supervisor_nonce}.sock"
-                ).resolve()
-            )
+            assert len(os.fsencode(discovery.address)) < 108
 
     assert not endpoint_path.exists()
     assert not auth_path.exists()

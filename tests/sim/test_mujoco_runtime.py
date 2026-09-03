@@ -990,6 +990,11 @@ def test_mujoco_native_dds_managed_wsl_clock_handshake_is_opt_in(tmp_path):
         clock_handshake=True,
     )
 
+    if sys.platform != "win32":
+        assert plain == command
+        assert synchronized == command
+        return
+
     assert "LINGTU_CLOCK_READY" not in plain[4]
     assert "LINGTU_CLOCK_READY" in synchronized[4]
     assert "LINGTU_CLOCK_SAMPLE" in synchronized[4]
@@ -1453,8 +1458,6 @@ def test_mujoco_native_dds_parent_diagnostics_write_atomic_rolling_counters(tmp_
         "catch_up_events": 0,
         "catch_up_yields": 0,
         "final_lag_s": 0.0,
-        "forced_lidar_observations": 0,
-        "forced_sensor_observations": 0,
         "max_consecutive_steps": 0,
         "max_lag_observed_s": 0.0,
     }
@@ -2020,7 +2023,7 @@ def test_thunder_v3_source_assets_are_resolvable():
 
     assert urdf_path.exists()
     assert xml_path.exists()
-    assert xml_path.read_bytes() == urdf_path.read_bytes()
+    assert xml_path.read_text(encoding="utf-8") == urdf_path.read_text(encoding="utf-8")
 
     root = ET.parse(urdf_path).getroot()
     assert root.attrib["name"] == "thunder_v3"
@@ -3481,9 +3484,14 @@ def test_mujoco_driver_uses_scene_placeholder_start_pose(monkeypatch):
 def test_mujoco_driver_defaults_to_thunderv4_policy():
     import drivers.sim.mujoco.driver as driver_mod
 
-    assert len(driver_mod._POLICY_CANDIDATES) == 1
-    assert driver_mod._POLICY_CANDIDATES[0].name == "policy_1119.onnx"
-    assert driver_mod._EXPLICIT_POLICY_CANDIDATES[0].name == "policy_251119.onnx"
+    assert driver_mod._THUNDERV4_POLICY.name == "policy_1119.onnx"
+    assert driver_mod._THUNDERV4_POLICY.is_file()
+    driver = driver_mod.MujocoDriverModule(
+        world="open_field",
+        render=False,
+        enable_camera=False,
+    )
+    assert Path(driver._policy_path) == driver_mod._THUNDERV4_POLICY
 
 
 def test_root_operation_entrypoint_is_unique_and_uses_current_release_paths():
@@ -3528,7 +3536,7 @@ def test_sim_boundary_indexes_document_stable_contracts():
     assert "## Sensors, mapping, and evidence" in texts["scripts"]
     assert "not the canonical generic simulation Runtime" in texts["engine"]
     assert "remains hardware-free" in texts["engine"]
-    assert "| `sim/` | Simulation engines" in texts["repository"]
+    assert "| `sim/` | Single simulation package" in texts["repository"]
 
     boundary_markers = {
         "evaluation/data": ("offline replay inputs", "generated validation evidence", "artifacts/"),

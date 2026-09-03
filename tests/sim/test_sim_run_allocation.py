@@ -397,6 +397,10 @@ def test_run_artifact_root_rejects_symlink_owner_root(tmp_path: Path) -> None:
     assert list(foreign.iterdir()) == []
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="creates a Windows directory junction with cmd.exe",
+)
 def test_run_artifact_root_rejects_windows_junction_run_root(
     tmp_path: Path,
 ) -> None:
@@ -432,6 +436,10 @@ def test_run_artifact_root_rejects_windows_junction_run_root(
     assert list(foreign.iterdir()) == []
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="creates a Windows directory junction with cmd.exe",
+)
 def test_run_artifact_root_revalidates_new_run_directory_before_writing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -640,6 +648,10 @@ def test_create_run_allocation_rejects_symlink_directory_when_adoption_enabled(
     assert list(foreign.iterdir()) == []
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="creates a Windows directory junction with cmd.exe",
+)
 def test_create_run_allocation_rejects_windows_junction_when_adoption_enabled(
     tmp_path: Path,
 ) -> None:
@@ -848,6 +860,10 @@ def test_adopted_windows_ancestor_chain_is_pinned_during_materialization(
     assert not displaced.exists()
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="relies on Windows directory materialization semantics",
+)
 def test_adopted_run_directory_rolls_back_if_it_changes_during_materialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

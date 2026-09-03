@@ -737,6 +737,10 @@ def test_build_bat_and_direct_ubt_share_the_canonical_project_lock(
             _terminate_pid(first_child_pid)
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="executes a Windows Build.bat fixture",
+)
 def test_runner_preserves_wait_mutex_and_returns_build_bat_exit_code(
     tmp_path: Path,
 ) -> None:

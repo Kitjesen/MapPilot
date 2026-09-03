@@ -23,7 +23,7 @@ MUJOCO_HEADLESS = (
     / "Release"
     / "lingtu_mujoco_headless.exe"
 )
-SESSION_ID = "f" * 64
+SESSION_ID = "f" * 63
 
 
 def _ray_hit(**overrides: object) -> dict[str, object]:
@@ -134,7 +134,7 @@ def test_mujoco_process_serializes_mid360_raycast_batch(
     assert event["hit_count"] == 1
     assert requests == [
         "raycast lidar_site "
-        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff "
+        f"{SESSION_ID} "
         "11 2 7 4000000 0.10000000000000001 40 15 3 2 "
         "0 0 -1 0 1 0 0 2000000"
     ]

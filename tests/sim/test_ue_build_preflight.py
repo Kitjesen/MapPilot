@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,10 @@ PREFLIGHT = REPO_ROOT / "sim" / "tools" / "toolchains" / "windows_netfxsdk.ps1"
 UE_SCRIPTS = REPO_ROOT / "sim" / "runtime" / "visual" / "RobotSimUE" / "Scripts"
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="executes the Windows PowerShell preflight",
+)
 def test_ue_build_preflight_rejects_missing_explicit_netfxsdk(tmp_path: Path) -> None:
     missing_sdk = tmp_path / "missing-netfxsdk"
 
@@ -39,6 +44,10 @@ def test_ue_build_preflight_rejects_missing_explicit_netfxsdk(tmp_path: Path) ->
     assert "".join(str(missing_sdk).split()) in "".join(combined.split())
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="executes the Windows PowerShell preflight",
+)
 def test_ue_build_preflight_accepts_explicit_netfxsdk_with_required_header(
     tmp_path: Path,
 ) -> None:
@@ -65,6 +74,10 @@ def test_ue_build_preflight_accepts_explicit_netfxsdk_with_required_header(
     assert result.stdout.strip() == str(sdk_root.resolve())
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="executes the Windows PowerShell preflight",
+)
 def test_ue_build_preflight_default_detection_honors_netfxsdk_environment(
     tmp_path: Path,
 ) -> None:
@@ -91,6 +104,10 @@ def test_ue_build_preflight_default_detection_honors_netfxsdk_environment(
     assert result.stdout.strip() == str(sdk_root.resolve())
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="executes the Windows PowerShell preflight",
+)
 def test_ue_build_preflight_rejects_netfxsdk_older_than_4_6(tmp_path: Path) -> None:
     sdk_root = tmp_path / "NETFXSDK" / "4.5.2"
     header = sdk_root / "Include" / "um" / "mscoree.h"
@@ -124,6 +141,10 @@ def test_ue_build_preflight_rejects_netfxsdk_older_than_4_6(tmp_path: Path) -> N
         "run_open_field_hf.ps1",
         "run_factory_park_hf.ps1",
     ],
+)
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="executes the Windows PowerShell launcher",
 )
 def test_ue_launcher_fails_netfxsdk_preflight_before_external_processes(
     tmp_path: Path, launcher_name: str,

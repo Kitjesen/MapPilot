@@ -425,14 +425,25 @@ def test_receiver_only_enqueues_and_owner_pumps_before_advance() -> None:
     )
     session.prepare()
 
-    receiver = threading.Thread(target=pump.receive, args=({"linear_x": 1.0},))
-    receiver.start()
-    receiver.join()
+    receiver_finished = threading.Event()
+    release_receiver = threading.Event()
 
-    session.start()
-    assert coordinator.advance_seen.wait(1.0)
-    session.pause()
-    session.stop()
+    def receive_and_hold() -> None:
+        pump.receive({"linear_x": 1.0})
+        receiver_finished.set()
+        release_receiver.wait(1.0)
+
+    receiver = threading.Thread(target=receive_and_hold)
+    receiver.start()
+    try:
+        assert receiver_finished.wait(1.0)
+        session.start()
+        assert coordinator.advance_seen.wait(1.0)
+        session.pause()
+        session.stop()
+    finally:
+        release_receiver.set()
+        receiver.join()
 
     names = [name for name, _thread_id in coordinator.calls]
     first_advance = names.index("advance")

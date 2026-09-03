@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -335,6 +336,11 @@ def _imu_sample(scheduled: Any, snapshot: Any) -> ImuSample:
     )
 
 
+def _camera_sample(scheduled: Any, snapshot: Any) -> SimpleNamespace:
+    del snapshot
+    return SimpleNamespace(stamp=SensorSampleStamp.from_scheduled(scheduled))
+
+
 def _headless_sensor_endpoint(stream: Any, allocation: Any) -> SensorEndpoint | None:
     del allocation
     if stream.stream_kind == "truth_odom":
@@ -353,6 +359,12 @@ def _headless_sensor_endpoint(stream: Any, allocation: Any) -> SensorEndpoint | 
             source_id="mid360-test",
             sink=_TruthSink(),
             extractor=_mid360_frame,
+        )
+    if stream.stream_kind in {"rgb", "depth"}:
+        return SensorEndpoint(
+            source_id="camera-test",
+            sink=_TruthSink(),
+            extractor=_camera_sample,
         )
     if stream.stream_kind not in {"truth_odom", "imu", "mid360"}:
         return None
@@ -379,6 +391,12 @@ def _strict_headless_sensor_endpoint(
             source_id="mid360-test",
             sink=_TruthSink(),
             extractor=_mid360_frame,
+        )
+    if stream.stream_kind in {"rgb", "depth"}:
+        return SensorEndpoint(
+            source_id="camera-test",
+            sink=_TruthSink(),
+            extractor=_camera_sample,
         )
     return None
 
@@ -417,7 +435,7 @@ def test_coordinator_can_bind_allocation_artifacts_to_its_owned_run_directory(
     assert persisted["artifact_root"] == str(coordinator.allocation.run_dir)
 
 
-def test_coordinator_runs_one_control_tick_before_every_physics_step(
+def test_coordinator_holds_output_between_low_level_control_ticks(
     tmp_path: Path,
 ) -> None:
     host = ControlledPhysicsHost()
@@ -455,7 +473,7 @@ def test_coordinator_runs_one_control_tick_before_every_physics_step(
     snapshot = coordinator.advance(3)
 
     assert snapshot["physics_step"] == 3
-    assert [command.sequence for command in host.applied] == [1, 2, 3]
+    assert [command.sequence for command in host.applied] == [1]
     assert all(command.session_id == ready["session_id"] for command in host.applied)
     control_order = [
         call if isinstance(call, str) else call[0]
@@ -467,11 +485,12 @@ def test_coordinator_runs_one_control_tick_before_every_physics_step(
         "snapshot",
         "actuate",
         "advance",
-        "actuate",
         "advance",
-        "actuate",
         "advance",
     ]
+
+    coordinator.advance(1)
+    assert [command.sequence for command in host.applied] == [1, 2]
 
     reset = coordinator.reset()
     assert reset["reset_generation"] == 1

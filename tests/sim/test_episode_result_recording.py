@@ -135,14 +135,14 @@ def test_result_serialization_is_stable_after_artifact_input_mutates(
     assert "late_mutation" not in first_path.read_text(encoding="utf-8")
 
 
-def test_episode_result_requires_lowercase_sha256_session_id() -> None:
+def test_episode_result_requires_non_empty_session_id() -> None:
     with pytest.raises(
         ValueError,
-        match="session_id must be a lowercase SHA-256 digest",
+        match="session_id must be non-empty",
     ):
         EpisodeResult(
             run_id="run-invalid-digest",
-            session_id="NOT-A-DIGEST",
+            session_id=" ",
             model_generation=0,
             reset_generation=0,
             start_sim_time_ns=0,

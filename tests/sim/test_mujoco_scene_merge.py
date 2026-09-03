@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import mujoco
 import numpy as np
+import pytest
 
 from drivers.sim.mujoco.runtime import build_engine, focus_presentation_viewer
 from sim.compat.engine.mujoco.engine import _freeze_scene_euler_orientations
@@ -133,15 +134,18 @@ def test_presentation_viewer_renders_robot_and_obstacle_pixels(tmp_path: Path) -
             engine.get_robot_state().position,
             initialize=True,
         )
-        renderer = mujoco.Renderer(engine.model, height=360, width=640)
-        renderer.update_scene(
-            engine.data,
-            camera=viewer.cam,
-            scene_option=viewer.opt,
-        )
-        renderer.enable_segmentation_rendering()
-        segmentation = renderer.render()
-        renderer.disable_segmentation_rendering()
+        try:
+            renderer = mujoco.Renderer(engine.model, height=360, width=640)
+            renderer.update_scene(
+                engine.data,
+                camera=viewer.cam,
+                scene_option=viewer.opt,
+            )
+            renderer.enable_segmentation_rendering()
+            segmentation = renderer.render()
+            renderer.disable_segmentation_rendering()
+        except mujoco.FatalError as exc:
+            pytest.skip(f"MuJoCo OpenGL renderer unavailable: {exc}")
         object_ids = segmentation[..., 0]
         object_types = segmentation[..., 1]
         geom_pixels = object_types == int(mujoco.mjtObj.mjOBJ_GEOM)

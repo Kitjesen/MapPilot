@@ -12,6 +12,7 @@ import multiprocessing
 import os
 import re
 import secrets
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -265,9 +266,8 @@ class SupervisorResponse:
 def _expected_endpoint(session_root: Path, nonce: str) -> tuple[str, str]:
     if os.name == "nt":
         return "AF_INET", "127.0.0.1:0"
-    return "AF_UNIX", str(
-        (session_root / "supervisor" / f"control-{nonce}.sock").absolute()
-    )
+    del session_root
+    return "AF_UNIX", str(Path(tempfile.gettempdir()) / f"ltu-{nonce}.sock")
 
 
 def _inet_address(address: str, *, allow_zero: bool = False) -> tuple[str, int]:

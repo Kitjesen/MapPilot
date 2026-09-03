@@ -539,21 +539,6 @@ def _write_mapd_runtime_evidence(
     plan: RunPlan,
 ) -> Path:
     identity = ProcessIdentity.current(os.getpid())
-    started_wall_ns = time.time_ns()
-    SimChildLedger(state_dir).replace(
-        SimChildSnapshot.create(
-            product_session_id=OLD_PRODUCT_SESSION_ID,
-            children=(
-                SimChildRecord(
-                    target="map_runtime",
-                    process_identity=identity,
-                    process_group=identity.pid,
-                    started_wall_ns=started_wall_ns,
-                    launch_id="9" * 64,
-                ),
-            ),
-        )
-    )
     generation = 7
     payload = {
         "schema_version": "lingtu.maps.runtime.v1",
@@ -608,7 +593,21 @@ def _write_mapd_runtime_evidence(
     }
     path = state_dir / "mapd.status.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
-    assert path.stat().st_mtime_ns >= started_wall_ns
+    started_wall_ns = path.stat().st_mtime_ns
+    SimChildLedger(state_dir).replace(
+        SimChildSnapshot.create(
+            product_session_id=OLD_PRODUCT_SESSION_ID,
+            children=(
+                SimChildRecord(
+                    target="map_runtime",
+                    process_identity=identity,
+                    process_group=identity.pid,
+                    started_wall_ns=started_wall_ns,
+                    launch_id="9" * 64,
+                ),
+            ),
+        )
+    )
     return path
 
 

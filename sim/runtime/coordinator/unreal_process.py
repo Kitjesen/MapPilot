@@ -7,7 +7,7 @@ import re
 import subprocess
 from collections.abc import Callable, Mapping
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING, Any, TextIO, TypeAlias
 
 from sim.runtime.process_owner import ProcessShutdownSnapshot, ProcessTreeOwner
@@ -26,6 +26,7 @@ _CONTROL_INTENT_PORT = "control_intent_udp"
 _CONTROL_STATUS_PORT = "control_status_udp"
 _CONTROL_SOURCE_ID = "robotsimue.local_player.0"
 _UE_SKIP_UBT_SDK_SETUP = "UE_SKIP_UBT_SDK_SETUP"
+_WINDOWS_ABSOLUTE_PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 _DEFAULT_MAIN_VIEW_SCREEN_PERCENTAGE = 100
 _PLAYABLE_HUD_SCREENSHOTS: tuple[tuple[str, str], ...] = (
     ("LingTuHudDriveScreenshot", "hud-drive.png"),
@@ -93,6 +94,28 @@ def _validate_control_port(port: object, *, name: str) -> int:
     return port
 
 
+def _is_windows_absolute_path(value: Path | str) -> bool:
+    return _WINDOWS_ABSOLUTE_PATH_RE.match(os.fspath(value)) is not None
+
+
+def _command_path_value(value: Path | str) -> Path | PureWindowsPath:
+    raw = os.fspath(value)
+    if _is_windows_absolute_path(value):
+        return PureWindowsPath(raw)
+    return Path(value).resolve()
+
+
+def _command_path(value: Path | str) -> str:
+    return str(_command_path_value(value))
+
+
+def _process_path(value: Path | str) -> Path:
+    candidate = Path(value)
+    if os.name != "nt" and _is_windows_absolute_path(value):
+        return candidate
+    return candidate.resolve()
+
+
 def _playable_control_arguments(
     allocation: RunAllocation,
     *,
@@ -140,7 +163,7 @@ def _playable_control_arguments(
             "visual snapshot, control intent, and control status ports must be distinct"
         )
 
-    allocation_path = Path(allocation.path).resolve()
+    allocation_path = _command_path_value(allocation.path)
     screenshot_dir = allocation_path.parent / "screenshots"
     arguments = [
         f"-LingTuControlIntentPort={intent_port}",
@@ -148,7 +171,7 @@ def _playable_control_arguments(
         f"-LingTuControlSourceId={_CONTROL_SOURCE_ID}",
     ]
     arguments.extend(
-        f"-{argument_name}={(screenshot_dir / filename).resolve()}"
+        f"-{argument_name}={_command_path(screenshot_dir / filename)}"
         for argument_name, filename in _PLAYABLE_HUD_SCREENSHOTS
     )
     return arguments
@@ -158,7 +181,7 @@ def _validate_frame_capture(
     frame_capture_dir: Path | None,
     frame_capture_every: int,
     frame_capture_max: int,
-) -> Path | None:
+) -> Path | PureWindowsPath | None:
     if frame_capture_dir is None:
         return None
     if not str(frame_capture_dir).strip():
@@ -175,7 +198,7 @@ def _validate_frame_capture(
         or frame_capture_max < 1
     ):
         raise ValueError("frame capture maximum must be a positive integer")
-    return Path(frame_capture_dir).resolve()
+    return _command_path_value(frame_capture_dir)
 
 
 def _validate_optional_text(value: str | None, label: str) -> str | None:
@@ -405,8 +428,8 @@ class UnrealProcess(_UnrealProcessLifecycle):
     ) -> None:
         if not isinstance(launch_profile, UnrealLaunchProfile):
             raise TypeError("launch_profile must be UnrealLaunchProfile")
-        self._editor = Path(editor_executable).resolve()
-        self._uproject = Path(uproject).resolve()
+        self._editor = _process_path(editor_executable)
+        self._uproject = _process_path(uproject)
         self._map_name = _validate_map_name(map_name)
         self._frame_capture_dir = _validate_frame_capture(
             frame_capture_dir,
@@ -496,30 +519,30 @@ class UnrealProcess(_UnrealProcessLifecycle):
             if exec_commands is not None:
                 launch_profile_arguments.append(f"-ExecCmds={exec_commands}")
         command = [
-            str(self._editor),
-            str(self._uproject),
+            _command_path(self._editor),
+            _command_path(self._uproject),
             self._map_name,
             "-game",
             "-log",
-            f"-abslog={allocation.log_dir / 'Unreal.log'}",
+            f"-abslog={_command_path(Path(allocation.log_dir) / 'Unreal.log')}",
             *launch_profile_arguments,
             "-nop4",
             "-NoSplash",
             "-NoCompile",
             "-DDC=InstalledNoZenLocalFallback",
-            f"-LocalDataCachePath={ddc_path}",
+            f"-LocalDataCachePath={_command_path(ddc_path)}",
             "-windowed",
             "-ResX=1920",
             "-ResY=1080",
             "-ForceRes",
-            f"-LingTuBundle={Path(bundle_dir)}",
-            f"-LingTuRunAllocation={allocation.path}",
+            f"-LingTuBundle={_command_path(bundle_dir)}",
+            f"-LingTuRunAllocation={_command_path(allocation.path)}",
             f"-LingTuRunId={run_id}",
-            f"-LingTuArtifactRoot={allocation.artifact_root}",
+            f"-LingTuArtifactRoot={_command_path(allocation.artifact_root)}",
             f"-LingTuSnapshotPort={snapshot_port}",
             f"-LingTuModelGeneration={model_generation}",
             f"-LingTuResetGeneration={reset_generation}",
-            f"-LingTuScreenshot={(allocation.log_dir / 'visual-first-frame.png').resolve()}",
+            f"-LingTuScreenshot={_command_path(Path(allocation.log_dir) / 'visual-first-frame.png')}",
         ]
         command.extend(
             _playable_control_arguments(
@@ -530,7 +553,7 @@ class UnrealProcess(_UnrealProcessLifecycle):
         if self._frame_capture_dir is not None:
             command.extend(
                 (
-                    f"-LingTuFrameCaptureDir={self._frame_capture_dir}",
+                    f"-LingTuFrameCaptureDir={_command_path(self._frame_capture_dir)}",
                     f"-LingTuFrameCaptureEvery={self._frame_capture_every}",
                     f"-LingTuFrameCaptureMax={self._frame_capture_max}",
                 )
@@ -585,7 +608,10 @@ class UnrealProcess(_UnrealProcessLifecycle):
             model_generation=plan.model_generation,
             reset_generation=plan.reset_generation,
         )
-        self._ddc_path(allocation).mkdir(parents=True, exist_ok=True)
+        Path(os.fspath(self._ddc_path(allocation))).mkdir(
+            parents=True,
+            exist_ok=True,
+        )
         self._launch(
             command=command,
             cwd=plan.repo_root,
@@ -594,9 +620,11 @@ class UnrealProcess(_UnrealProcessLifecycle):
         )
 
     @staticmethod
-    def _ddc_path(allocation: RunAllocation) -> Path:
+    def _ddc_path(allocation: RunAllocation) -> Path | PureWindowsPath:
         """Return the writable, Zen-free cache shared by local UE runs."""
-        return (allocation.artifact_root / "build" / "unreal-ddc").resolve()
+        return _command_path_value(
+            Path(allocation.artifact_root) / "build" / "unreal-ddc"
+        )
 
 
 class PackagedUnrealProcess(_UnrealProcessLifecycle):
@@ -619,7 +647,7 @@ class PackagedUnrealProcess(_UnrealProcessLifecycle):
         timeout_s: float = 10.0,
         affinity_mask: int | None = None,
     ) -> None:
-        self._executable = Path(executable).resolve()
+        self._executable = _process_path(executable)
         if self._executable.name.lower() != "robotsimue-win64-release.exe":
             raise ValueError(
                 "packaged Unreal runtime must be RobotSimUE-Win64-Release.exe; the "
@@ -677,24 +705,24 @@ class PackagedUnrealProcess(_UnrealProcessLifecycle):
         _validate_snapshot_port(snapshot_port)
         run_id = _validate_run_id(allocation)
         command = [
-            str(self._executable),
+            _command_path(self._executable),
             self._map_name,
             "-log",
-            f"-abslog={allocation.log_dir / 'RobotSimUE.log'}",
+            f"-abslog={_command_path(Path(allocation.log_dir) / 'RobotSimUE.log')}",
             "-unattended",
             "-NoSplash",
             "-windowed",
             "-ResX=1920",
             "-ResY=1080",
             "-ForceRes",
-            f"-LingTuBundle={Path(bundle_dir)}",
-            f"-LingTuRunAllocation={allocation.path}",
+            f"-LingTuBundle={_command_path(bundle_dir)}",
+            f"-LingTuRunAllocation={_command_path(allocation.path)}",
             f"-LingTuRunId={run_id}",
-            f"-LingTuArtifactRoot={allocation.artifact_root}",
+            f"-LingTuArtifactRoot={_command_path(allocation.artifact_root)}",
             f"-LingTuSnapshotPort={snapshot_port}",
             f"-LingTuModelGeneration={model_generation}",
             f"-LingTuResetGeneration={reset_generation}",
-            f"-LingTuScreenshot={(allocation.log_dir / 'visual-first-frame.png').resolve()}",
+            f"-LingTuScreenshot={_command_path(Path(allocation.log_dir) / 'visual-first-frame.png')}",
         ]
         exec_commands = _main_view_exec_commands(
             capped=False,
@@ -711,7 +739,7 @@ class PackagedUnrealProcess(_UnrealProcessLifecycle):
         if self._frame_capture_dir is not None:
             command.extend(
                 (
-                    f"-LingTuFrameCaptureDir={self._frame_capture_dir}",
+                    f"-LingTuFrameCaptureDir={_command_path(self._frame_capture_dir)}",
                     f"-LingTuFrameCaptureEvery={self._frame_capture_every}",
                     f"-LingTuFrameCaptureMax={self._frame_capture_max}",
                 )

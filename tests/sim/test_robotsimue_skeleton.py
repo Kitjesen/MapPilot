@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2] / "sim"
 PROJECT = ROOT / "runtime" / "visual" / "RobotSimUE"
@@ -314,6 +317,10 @@ def test_preview_renderer_enables_lumen_and_virtual_shadows() -> None:
     assert "+D3D12TargetedShaderFormats=PCD3D_SM6" in config
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="executes PowerShell to parse a Windows preview entrypoint",
+)
 def test_thunderv4_preview_entry_is_parseable_and_builds_canonical_physics_host_when_needed() -> None:
     script = PROJECT / "Scripts" / "run_thunderv4_preview.ps1"
     result = subprocess.run(

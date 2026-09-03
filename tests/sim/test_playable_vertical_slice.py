@@ -105,7 +105,7 @@ def _fixed_bundle(tmp_path: Path) -> ResolvedSessionBundle:
                 "robots": [
                     {
                         "instance_id": "thunder_01",
-                        "package": {"id": "thunderv4", "version": "1.0.1"},
+                        "package": {"id": "thunderv4", "version": "1.0.3"},
                     }
                 ],
             },
@@ -426,7 +426,7 @@ def test_create_playable_launch_assembles_one_inert_fixed_slice(
     assert launch.target.controller_id == "thunder_01.thunderv4_locomotion"
     assert launch.target.instance_id == "thunder_01"
     assert launch.target.channel_id == "thunder_01.control.base_twist"
-    assert playable_module.PLAYABLE_ROBOT_PACKAGE == ("thunderv4", "1.0.1")
+    assert playable_module.PLAYABLE_ROBOT_PACKAGE == ("thunderv4", "1.0.3")
 
     coordinator_call = next(value for name, value in calls if name == "create.coordinator")
     _args, coordinator_kwargs = coordinator_call

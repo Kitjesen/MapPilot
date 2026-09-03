@@ -740,6 +740,10 @@ def test_preflight_verifies_trusted_inputs_without_writing_distribution_artifact
     assert not (repo / "build/distribution/windows").exists()
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="executes a Windows RunUAT.bat fixture",
+)
 def test_package_claims_shipping_only_after_uat_produces_executable(
     tmp_path: Path,
 ) -> None:
@@ -779,6 +783,10 @@ def test_package_claims_shipping_only_after_uat_produces_executable(
     assert runtime.read_bytes() == shipping.read_bytes()
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="executes a Windows RunUAT.bat fixture",
+)
 def test_package_isolates_automationtool_writable_user_and_temp_roots(
     tmp_path: Path,
 ) -> None:
@@ -1021,6 +1029,10 @@ def test_preflight_detects_pinned_unreal_from_epic_launcher_inventory(
     assert result.unreal_root == Path(unreal_root).resolve()
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="executes a Windows RunUAT.bat fixture",
+)
 def test_package_fails_closed_when_uat_exits_zero_without_shipping_executable(
     tmp_path: Path,
 ) -> None:
@@ -1111,6 +1123,10 @@ def test_preflight_rejects_editor_only_lingtu_shipping_module(tmp_path: Path) ->
         WindowsDistribution(repo_root=repo, environment=environment).execute("preflight")
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="executes a Windows RunUAT.bat fixture",
+)
 def test_package_rejects_named_executable_without_windows_pe_magic(
     tmp_path: Path,
 ) -> None:

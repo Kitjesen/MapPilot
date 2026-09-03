@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
@@ -1191,10 +1192,17 @@ def test_sim_mujoco_teleop_compiles_persistent_native_processes_and_host_guards(
     assert manifest.process("nav").name == "nav_runtime"
     assert manifest.process("host").name == "host_runtime"
     host_dependencies = manifest.process("host").command.dependencies
-    assert len(host_dependencies) == 3
-    assert host_dependencies[0].path == ("build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_nav_client.dll")
-    assert host_dependencies[1].path.endswith("ddsc.dll")
-    assert host_dependencies[2].path == "build/slam-core-windows-x64/stage/bin/slamctl.exe"
+    if sys.platform == "win32":
+        assert len(host_dependencies) == 3
+        assert host_dependencies[0].path == (
+            "build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_nav_client.dll"
+        )
+        assert host_dependencies[1].path.endswith("ddsc.dll")
+        assert host_dependencies[2].path == "build/slam-core-windows-x64/stage/bin/slamctl.exe"
+    else:
+        assert [dependency.path for dependency in host_dependencies] == [
+            "build/nav_endpoint/liblingtu_nav_client.so"
+        ]
     assert manifest.process("nav").timeout_s == 60
     assert manifest.process("nav").command.argv[-2:] == ("--status-s", "0.1")
     assert not manifest.has_process("camera")

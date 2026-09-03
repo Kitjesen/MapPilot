@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -834,6 +835,10 @@ def test_build_e2e_qualification_record_rejects_artifact_symlink_before_hash(
         build_e2e_qualification_record(bundle_dir, run_dir)
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="creates a Windows directory junction with cmd.exe",
+)
 def test_build_e2e_qualification_record_rejects_windows_junction_before_read(
     tmp_path: Path,
 ) -> None:

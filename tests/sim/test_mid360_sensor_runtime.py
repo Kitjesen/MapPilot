@@ -36,10 +36,12 @@ from sim.runtime.sensors.dds_adapter import (
     encode_mid360_frame_sample,
 )
 
+_SESSION_ID = "a" * 63
+
 
 def _scheduled():
     runtime = SensorRuntime(
-        "a" * 64,
+        _SESSION_ID,
         (
             SensorStreamPlan(
                 stream_kind="mid360",
@@ -167,7 +169,7 @@ def test_mid360_binary_encoder_carries_ltu1_points() -> None:
 def test_mid360_adapter_active_only_after_first_accepted_non_empty_frame(tmp_path) -> None:
     class Allocation:
         dds_domain = 42
-        session_id = "a" * 64
+        session_id = _SESSION_ID
         run_dir = tmp_path
         log_dir = tmp_path / "logs"
 
@@ -206,7 +208,7 @@ def test_mid360_adapter_writes_stderr_to_the_run_log(
 ) -> None:
     class Allocation:
         dds_domain = 42
-        session_id = "a" * 64
+        session_id = _SESSION_ID
         run_dir = tmp_path
         log_dir = tmp_path / "logs"
 
@@ -339,7 +341,7 @@ class RecordingMujocoProcess:
 
 def _reset_scheduled():
     runtime = SensorRuntime(
-        "a" * 64,
+        _SESSION_ID,
         (
             SensorStreamPlan(
                 stream_kind="mid360",
@@ -380,7 +382,7 @@ def test_mid360_raycast_pipeline_publishes_raycast_livox_frame_with_identity() -
             "sensor_frame_id": "lidar_site",
             "directions_sensor": ((0.0, 0.0, -1.0), (1.0, 0.0, 0.0)),
             "offsets_time_ns": (0, 5_000_000),
-            "session_id": "a" * 64,
+            "session_id": _SESSION_ID,
             "model_generation": 3,
             "reset_generation": 0,
             "sequence": 1,
@@ -391,7 +393,7 @@ def test_mid360_raycast_pipeline_publishes_raycast_livox_frame_with_identity() -
             "unknown_line": 0,
         }
     ]
-    assert sample.stamp.session_id == "a" * 64
+    assert sample.stamp.session_id == _SESSION_ID
     assert sample.stamp.model_generation == 3
     assert sample.stamp.reset_generation == 0
     assert sample.stamp.sequence == 1
@@ -447,7 +449,7 @@ def _run_allocation(tmp_path: Path) -> RunAllocation:
         log_dir=tmp_path / "logs",
         ports={},
         shm={},
-        session_id="a" * 64,
+        session_id=_SESSION_ID,
         boot_id="boot",
         dds_domain=42,
     )
@@ -464,7 +466,7 @@ def test_mid360_scheduler_drops_intermediate_deadlines_before_raycast(
         route=SensorRoute("physics", "mujoco_livox_model", "typed_dds"),
         raycast_frame_stable_id="thunder_01/lidar1_link_site",
     )
-    runtime = SensorRuntime("a" * 64, (stream,))
+    runtime = SensorRuntime(_SESSION_ID, (stream,))
     initial = runtime.advance(
         sim_time_ns=0,
         model_generation=3,
