@@ -1395,8 +1395,7 @@ def test_native_dds_build_scripts_check_service_binaries() -> None:
     assert '(cd "$BUILD_DIR" && ctest --output-on-failure)' in nav
     assert "ctest --test-dir" not in nav
     assert "required navigation test binary is missing" in nav
-    assert '[[ ! -x "$BUILD_DIR/$required_test"' in nav
-    assert '&& ! -x "$BUILD_DIR/endpoint/$required_test" ]]' in nav
+    assert 'find "$BUILD_DIR" -type f -name "$required_test" -perm -u+x' in nav
     assert "test_path_follower_core" in nav
     assert "test_local_planner_core" in nav
     assert "test_nav_client" in nav

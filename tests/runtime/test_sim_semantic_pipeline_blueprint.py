@@ -22,7 +22,7 @@ def test_sim_blueprint_wires_real_semantic_pipeline():
     assert driver_name in system.modules
     assert camera_source in system.modules
     assert "PerceptionModule" in system.modules
-    assert "VisualServoModule" not in system.modules
+    assert "VisualServoModule" in system.modules
     assert "AgentPlannerModule" not in system.modules
     assert "SemanticPlannerModule" in system.modules
 
