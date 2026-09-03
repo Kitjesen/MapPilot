@@ -1,15 +1,14 @@
 """Contracts for explicit abandoned manual-run recovery."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-
 import sim.runtime.coordinator.manual_run_recovery as recovery_module
 from sim.runtime.coordinator.manual_run_recovery import (
     ManualRunRecoveryError,
@@ -18,6 +17,12 @@ from sim.runtime.coordinator.manual_run_recovery import (
     recover_manual_abandoned_startup,
 )
 from sim.runtime.coordinator.run_allocation import create_run_allocation
+
+
+def _platform_os(name: str) -> SimpleNamespace:
+    platform_os = SimpleNamespace(**vars(os))
+    platform_os.name = name
+    return platform_os
 
 
 def _write_bundle(root: Path) -> tuple[Path, str]:
@@ -444,7 +449,7 @@ def test_recovery_rejects_unstable_or_fresh_health_files(
 def test_windows_default_process_probe_is_case_insensitive_and_ignores_python(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(recovery_module.os, "name", "nt")
+    monkeypatch.setattr(recovery_module, "os", _platform_os("nt"))
     monkeypatch.setattr(
         recovery_module,
         "_windows_toolhelp_processes",

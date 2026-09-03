@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: S101
 import json
 import queue
 import subprocess
@@ -10,7 +9,6 @@ from pathlib import Path
 from typing import Any, TextIO
 
 import pytest
-
 from sim.runtime.sensors.contracts import SensorRoute, SensorStreamPlan
 from sim.runtime.sensors.dds_adapter import encode_imu_sample
 from sim.runtime.sensors.extractors import imu_from_snapshot
@@ -24,8 +22,8 @@ MUJOCO_HEADLESS = (
     / "Release"
     / "lingtu_mujoco_headless.exe"
 )
-SESSION_ID = "d" * 64
-THUNDER_SESSION_ID = "e" * 64
+SESSION_ID = "d" * 63
+THUNDER_SESSION_ID = "e" * 63
 
 
 def _require_headless() -> Path:
@@ -36,7 +34,7 @@ def _require_headless() -> Path:
 
 def _launch_headless() -> tuple[subprocess.Popen[str], queue.Queue[str | None]]:
     executable = _require_headless()
-    process = subprocess.Popen(  # noqa: S603 - test uses a fixed repo-local binary path.
+    process = subprocess.Popen(
         [
             str(executable),
             "--session",
@@ -86,7 +84,7 @@ def _launch_thunder_headless() -> tuple[
     subprocess.Popen[str], queue.Queue[str | None]
 ]:
     executable = _require_headless()
-    process = subprocess.Popen(  # noqa: S603 - fixed repo-local runtime and assets.
+    process = subprocess.Popen(
         [
             str(executable),
             "--session",
@@ -138,7 +136,7 @@ def _launch_kinematic_headless() -> tuple[
     subprocess.Popen[str], queue.Queue[str | None]
 ]:
     executable = _require_headless()
-    process = subprocess.Popen(  # noqa: S603 - fixed repo-local runtime and assets.
+    process = subprocess.Popen(
         [
             str(executable),
             "--session",
@@ -399,7 +397,7 @@ def test_mujoco_headless_rejected_fused_actuation_does_not_advance() -> None:
             events,
             (
                 "actuate-advance-sampled-realtime 5 5 test_controller robot "
-                f"joint_torque {'f' * 64} 5 0 1 0 0 1 0.75"
+                f"joint_torque {'f' * 63} 5 0 1 0 0 1 0.75"
             ),
         )
 

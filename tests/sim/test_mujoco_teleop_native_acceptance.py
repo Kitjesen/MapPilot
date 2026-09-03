@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -11,8 +10,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from sim.scripts.mujoco import teleop_native_acceptance as acceptance
+
+
+def _platform_os(name: str) -> SimpleNamespace:
+    platform_os = SimpleNamespace(**vars(os))
+    platform_os.name = name
+    return platform_os
 
 
 def _valid_case() -> dict:
@@ -131,7 +135,7 @@ def test_windows_native_library_path_uses_only_pinned_binary_directories(
         "navigation": nav_dir / "navd.exe",
         "driver_bridge": bridge_dir / "bridge.exe",
     }
-    monkeypatch.setattr(acceptance.os, "name", "nt")
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
 
     evidence = acceptance._native_library_evidence(binaries)
     environment = acceptance._process_environment({"IDENTITY": "x"}, binaries["navigation"])
@@ -153,7 +157,7 @@ def test_windows_native_library_evidence_rejects_cross_process_dll_fallback(
     nav_dir.mkdir()
     bridge_dir.mkdir()
     (bridge_dir / "ddsc.dll").write_bytes(b"bridge-dds")
-    monkeypatch.setattr(acceptance.os, "name", "nt")
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
 
     evidence = acceptance._native_library_evidence(
         {
@@ -167,11 +171,14 @@ def test_windows_native_library_evidence_rejects_cross_process_dll_fallback(
 
 
 def test_nav_runtime_bundles_its_linked_cyclonedds_dll() -> None:
-    cmake = (acceptance.ROOT / "src/nav/cpp/endpoint/CMakeLists.txt").read_text(encoding="utf-8")
+    root_cmake = (acceptance.ROOT / "src/nav/cpp/CMakeLists.txt").read_text(encoding="utf-8")
+    endpoint_cmake = (acceptance.ROOT / "src/nav/cpp/endpoint/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
 
-    assert "function(lingtu_endpoint_bundle_cyclonedds target)" in cmake
-    assert "$<TARGET_FILE:CycloneDDS::ddsc>" in cmake
-    assert "lingtu_endpoint_bundle_cyclonedds(${_target})" in cmake
+    assert "function(lingtu_endpoint_bundle_cyclonedds target)" in root_cmake
+    assert "$<TARGET_FILE:CycloneDDS::ddsc>" in root_cmake
+    assert "lingtu_endpoint_bundle_cyclonedds(${_target})" in endpoint_cmake
 
 
 def test_mujoco_dds_targets_use_an_app_local_runtime_closure() -> None:
@@ -253,7 +260,7 @@ def test_windows_adapter_build_reuses_cached_single_config_generator(
     env["LINGTU_FAKE_CMAKE_LOG"] = str(command_log)
     env.pop("CMAKE_GENERATOR", None)
 
-    result = subprocess.run(  # noqa: S603 - pwsh is resolved to an absolute executable.
+    result = subprocess.run(
         [
             pwsh,
             "-NoProfile",

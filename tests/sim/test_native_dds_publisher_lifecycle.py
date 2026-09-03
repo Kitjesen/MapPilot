@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-
 from sim.scripts.mujoco import native_dds_sensors as bridge
 
 pytestmark = [pytest.mark.sim]
+
+
+def _platform_os(name: str) -> SimpleNamespace:
+    platform_os = SimpleNamespace(**vars(os))
+    platform_os.name = name
+    return platform_os
 
 
 def test_local_publisher_starts_without_wsl_pid_handshake(monkeypatch, tmp_path):
@@ -64,7 +71,7 @@ def test_windows_default_native_dds_tools_ignore_retired_root_d_build(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(bridge.os, "name", "nt")
+    monkeypatch.setattr(bridge, "os", _platform_os("nt"))
     monkeypatch.setattr(bridge, "ROOT", tmp_path)
     canonical = (
         tmp_path
