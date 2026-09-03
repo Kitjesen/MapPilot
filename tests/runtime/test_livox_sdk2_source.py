@@ -65,12 +65,14 @@ def test_sdk2_imu_record_maps_to_runtime_imu() -> None:
 
 def test_sdk2_stream_declares_optional_native_dds_publisher() -> None:
     cmake = Path("src/drivers/real/lidar/sdk2_stream/CMakeLists.txt").read_text(encoding="utf-8")
+    message_cmake = Path("src/message/cpp/CMakeLists.txt").read_text(encoding="utf-8")
     main = Path("src/drivers/real/lidar/sdk2_stream/main.cpp").read_text(encoding="utf-8")
     dds_module = Path("src/drivers/real/lidar/native/dds_module.cpp").read_text(encoding="utf-8")
     build_script = Path("scripts/build/build_livox_sdk2_stream.sh").read_text(encoding="utf-8")
 
     assert "LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS" in cmake
-    assert "CycloneDDS::ddsc" in cmake
+    assert "lingtu_dds_contracts" in cmake
+    assert "CycloneDDS::ddsc" in message_cmake
     assert "CycloneDDS-CXX" not in cmake
     assert "src/message/idl/messages.idl" in cmake
     assert "LINGTU_LIVOX_SDK2_STREAM_HAS_DDS=1" in cmake
