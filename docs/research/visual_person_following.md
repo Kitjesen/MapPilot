@@ -60,7 +60,7 @@ PerceptionModule
 
 对应代码：
 
-- [`perception_module.py`](../../src/perception/perception_module.py) 创建检测与跟踪输出。
+- [`module.py`](../../src/perception/module.py) 创建检测与跟踪输出。
 - [`bpu_tracker.py`](../../src/perception/tracking/bpu_tracker.py) 适配 BoT-SORT、ByteTrack 和本地 fallback。
 - [`native_byte_tracker.py`](../../src/perception/tracking/native_byte_tracker.py) 是无 CUDA/ROS 依赖的 ByteTrack 风格实现。
 - [`visual_servo.py`](../../src/decision/modules/visual_servo.py) 负责选人、更新跟随目标和取消视觉任务。
