@@ -36,6 +36,7 @@ from runtime.runtime_interface import (  # noqa: E402
 install_builtin_plugin_catalog()
 
 EXPECTED_PRODUCT = "nav"
+EXPECTED_ROBOT = "doso/thunder_v4"
 EXPECTED_CANONICAL_PRODUCT = "nav"
 EXPECTED_CONTRACT = "field_dds_v1"
 EXPECTED_HARDWARE_BOUNDARY = "driver"
@@ -57,7 +58,6 @@ EXPECTED_CONFIG = {
 }
 
 EXPECTED_SERVICE_ENV = {
-    "LINGTU_DRIVER_BIN": "/opt/lingtu/current/bin/lingtu_driver",
     "LINGTU_DDS_DOMAIN_ID": "0",
     "LINGTU_DRIVER_STATUS_FILE": "/dev/shm/lingtu/driver_status.json",
 }
@@ -106,7 +106,11 @@ EXPECTED_BINDING_DIRECTIONS = {
 }
 
 
-def validate(product: str = EXPECTED_PRODUCT) -> dict[str, Any]:
+def validate(
+    product: str = EXPECTED_PRODUCT,
+    *,
+    robot: str = EXPECTED_ROBOT,
+) -> dict[str, Any]:
     """Validate field runtime, endpoint, graph, and service contracts."""
 
     blockers: list[str] = []
@@ -118,7 +122,7 @@ def validate(product: str = EXPECTED_PRODUCT) -> dict[str, Any]:
         "src/runtime/endpoints/dds/contracts.py",
     }
 
-    plan = ProductControl(env="real", process_env={})._resolve(product)
+    plan = ProductControl(robot=robot, env="real", process_env={})._resolve(product)
     config = dict(plan.host_config)
 
     _validate_runtime_layers(plan, config, blockers)
@@ -130,7 +134,12 @@ def validate(product: str = EXPECTED_PRODUCT) -> dict[str, Any]:
         checked_graph_products,
         graph_label=product,
     )
-    _validate_core_field_product_graphs(product, blockers, checked_graph_products)
+    _validate_core_field_product_graphs(
+        product,
+        robot,
+        blockers,
+        checked_graph_products,
+    )
     _validate_runtime_env_file(blockers, checked_files)
     _validate_service_file(blockers, checked_files)
     _validate_driver_installer(blockers, checked_files)
@@ -140,6 +149,7 @@ def validate(product: str = EXPECTED_PRODUCT) -> dict[str, Any]:
     return {
         "ok": not blockers,
         "product": product,
+        "robot": robot,
         "canonical_product": plan.product,
         "env": plan.env,
         "contract": EXPECTED_CONTRACT,
@@ -240,6 +250,7 @@ def _validate_endpoint_contract(blockers: list[str]) -> None:
 
 def _validate_core_field_product_graphs(
     requested_product: str,
+    robot: str,
     blockers: list[str],
     checked_graph_products: set[str],
 ) -> None:
@@ -249,6 +260,7 @@ def _validate_core_field_product_graphs(
         resolved = resolve_product_host_runtime(
             product,
             "real",
+            robot=robot,
             product_variant=product_variant,
             overrides={
                 "run_startup_checks": False,
@@ -331,6 +343,10 @@ def _validate_service_file(blockers: list[str], checked_files: set[str]) -> None
         actual = env.get(key)
         if actual != expected:
             blockers.append(f"{rel_path}: {key} expected {expected!r}, got {actual!r}")
+    if "LINGTU_DRIVER_BIN" in env:
+        blockers.append(
+            f"{rel_path}: driver binary belongs to run_driver.sh, not the systemd unit"
+        )
 
     if "ros2-env.sh" in text or "/opt/ros" in text:
         blockers.append(f"{rel_path}: must not source ROS in the native driver service")
@@ -501,10 +517,15 @@ def main(argv: list[str] | None = None) -> int:
             "service defaults are checked against the canonical nav Product"
         ),
     )
+    parser.add_argument(
+        "--robot",
+        default=EXPECTED_ROBOT,
+        help="Robot model whose real-environment deployment contract is validated",
+    )
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     args = parser.parse_args(argv)
 
-    result = validate(product=str(args.product))
+    result = validate(product=str(args.product), robot=str(args.robot))
     if args.json:
         print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
     elif result["ok"]:

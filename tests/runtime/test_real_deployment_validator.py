@@ -16,6 +16,7 @@ def test_validate_real_deployment_contract_passes() -> None:
 
     assert result["ok"] is True
     assert result["product"] == "nav"
+    assert result["robot"] == "doso/thunder_v4"
     assert result["canonical_product"] == "nav"
     assert result["env"] == "real"
     assert result["contract"] == "field_dds_v1"
@@ -40,14 +41,18 @@ def test_validate_real_deployment_contract_passes() -> None:
 def test_validate_real_deployment_uses_run_plan_not_runtime_run_spec() -> None:
     source = (REPO_ROOT / "tools" / "validate" / "validate_real_deployment.py").read_text(encoding="utf-8-sig")
 
-    assert 'ProductControl(env="real", process_env={})._resolve(product)' in source
+    assert 'ProductControl(robot=robot, env="real", process_env={})._resolve(product)' in source
     assert "resolve_runtime_run_spec" not in source
     assert "EXPECTED_SPEC" not in source
     assert "runtime spec {field}" not in source
 
 
 def test_validate_real_deployment_rejects_driver_before_nav() -> None:
-    plan = validator.ProductControl(env="real", process_env={})._resolve("nav")
+    plan = validator.ProductControl(
+        robot=validator.EXPECTED_ROBOT,
+        env="real",
+        process_env={},
+    )._resolve("nav")
     bad_processes = tuple(
         replace(process, order=60) if process.name == "nav" else process
         for process in plan.processes
@@ -75,7 +80,11 @@ def test_validate_real_deployment_product_option_checks_graph() -> None:
 
 
 def test_validate_real_deployment_uses_native_command_service_chain() -> None:
-    plan = validator.ProductControl(env="real", process_env={})._resolve("nav")
+    plan = validator.ProductControl(
+        robot=validator.EXPECTED_ROBOT,
+        env="real",
+        process_env={},
+    )._resolve("nav")
     blueprint = validator.blueprint_for_resolved_product(
         plan.product,
         dict(plan.host_config),
@@ -136,7 +145,7 @@ def test_validate_real_deployment_reports_service_drift(monkeypatch, tmp_path) -
     result = validator.validate()
 
     assert result["ok"] is False
-    assert any("LINGTU_DRIVER_BIN expected" in item for item in result["blockers"])
+    assert any("driver binary belongs to run_driver.sh" in item for item in result["blockers"])
     assert any("must not source ROS" in item for item in result["blockers"])
     assert any("must not execute Python" in item for item in result["blockers"])
     assert any("consume the Product session environment" in item for item in result["blockers"])
