@@ -1,6 +1,6 @@
 # Semantic Layer Contract
 
-Status: current semantic runtime contract  
+Status: current semantic runtime contract
 Audience: perception, memory, decision, and Gateway maintainers
 
 LingTu's semantic runtime is centered on `PerceptionModule.scene_graph`.
