@@ -171,6 +171,26 @@ TEST(LocalPlanTask, RouteGenerationOwnsReferenceReplacement) {
             std::abs(replaced.previewPath().back().x));
 }
 
+TEST(LocalPlanTask, OwnsReferenceAcrossAsyncTicks) {
+  nav_kernel::local::scan::Task task(scanParams());
+  ASSERT_TRUE(task.configure());
+  RequestFixture fixture;
+  EXPECT_EQ(task.update(fixture.request).plan.status(),
+            nav_kernel::LocalPlanStatus::Pending);
+
+  // Destroy the caller's buffer while the worker still owns this generation.
+  std::vector<nav_kernel::Vec3>{{0.0, 0.0, 0.5}, {0.0, 2.0, 0.5}}
+      .swap(fixture.route);
+  fixture.request.objective = nav_kernel::RouteTarget{
+      {fixture.route.data(), static_cast<int>(fixture.route.size()), 1, false}};
+
+  const nav_kernel::LocalPlan plan = waitForPlan(task, fixture);
+  ASSERT_TRUE(plan.ready());
+  ASSERT_FALSE(plan.previewPath().empty());
+  EXPECT_GT(plan.previewPath().back().x,
+            std::abs(plan.previewPath().back().y));
+}
+
 TEST(LocalPlanTask, UsesCompleteReferenceInsteadOfShortGuide) {
   nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());

@@ -45,18 +45,22 @@ struct OwnedRequest {
     identity = source.identity;
     clock = source.clock;
     environment = source.environment;
+    environment.obstacles = {};
+    environment.traversability = {};
     collision = std::move(collisionBits);
     if (replaceGuide) {
       if (const LocalRouteView *sourceRoute = source.referenceRoute()) {
         routeView = *sourceRoute;
+        routeView.points = nullptr;
         if (sourceRoute->points != nullptr && sourceRoute->count > 0) {
-          route.assign(sourceRoute->points, sourceRoute->points + sourceRoute->count);
+          route = std::make_shared<const std::vector<Vec3>>(
+              sourceRoute->points, sourceRoute->points + sourceRoute->count);
         } else {
-          route.clear();
+          route.reset();
         }
       } else {
         routeView = {};
-        route.clear();
+        route.reset();
       }
       if (const LocalMotionIntent *sourceIntent = source.intent()) {
         intent = *sourceIntent;
@@ -73,15 +77,13 @@ struct OwnedRequest {
     request.clock = clock;
 
     LocalRouteView routeViewCopy = routeView;
-    routeViewCopy.points = route.empty() ? nullptr : route.data();
-    routeViewCopy.count = static_cast<int>(route.size());
+    routeViewCopy.points = route && !route->empty() ? route->data() : nullptr;
+    routeViewCopy.count = route ? static_cast<int>(route->size()) : 0;
     request.objective = intent ? LocalObjective{MotionIntentTarget{*intent, routeViewCopy}}
                                : LocalObjective{RouteTarget{routeViewCopy}};
     request.reference = routeViewCopy;
 
     request.environment = environment;
-    request.environment.obstacles = {};
-    request.environment.traversability = {};
     request.environment.collision.inflatedBits =
         collision && !collision->empty() ? collision->data() : nullptr;
     request.environment.collision.inflatedBytes = collision ? collision->size() : 0U;
@@ -95,7 +97,7 @@ struct OwnedRequest {
   LocalRouteView routeView{};
   EnvironmentView environment{};
   std::optional<LocalMotionIntent> intent;
-  std::vector<Vec3> route;
+  std::shared_ptr<const std::vector<Vec3>> route;
   std::shared_ptr<const std::vector<std::uint8_t>> collision;
 };
 
@@ -106,12 +108,6 @@ struct InputSnapshot {
     epoch = epochValue;
     request.assign(source, std::move(collision), replaceGuide);
     receivedAt = Clock::now();
-  }
-
-  void assign(const InputSnapshot &source) {
-    epoch = source.epoch;
-    request.assign(source.request.view(), source.request.collision);
-    receivedAt = source.receivedAt;
   }
 
   LocalPlanRequest view(Clock::time_point now) const {
@@ -418,7 +414,7 @@ class Task::Impl {
           if (inputEventPending_) {
             inputEventPending_ = false;
             work = ScanWork::Input;
-            snapshot.assign(input_);
+            snapshot = input_;
             cancelGeneration =
                 cancelGeneration_.load(std::memory_order_relaxed);
             break;
@@ -440,7 +436,7 @@ class Task::Impl {
           else
             advanceTimer(nextCollisionTick_, collisionPeriod, now);
 
-          snapshot.assign(input_);
+          snapshot = input_;
           cancelGeneration = cancelGeneration_.load(std::memory_order_relaxed);
           break;
         }
