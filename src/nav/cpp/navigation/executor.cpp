@@ -34,6 +34,16 @@ std::vector<nav_kernel::Vec3> planningPathToBody(
   return result;
 }
 
+std::vector<nav_kernel::Vec3> planningPathToMap(
+    const lingtu::nav::navigation::MapFromOdomTransform &mapFromOdom,
+    const std::vector<nav_kernel::Vec3> &planningPath) {
+  std::vector<nav_kernel::Vec3> result;
+  result.reserve(planningPath.size());
+  for (const auto &point : planningPath)
+    result.push_back(mapFromOdom.mapPointFromOdom(point));
+  return result;
+}
+
 
 nav_kernel::LocalPlanRequest makeLocalPlanRequest(
     const nav_kernel::Pose &vehicle, const std::vector<nav_kernel::Vec3> &route,
@@ -462,12 +472,14 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   output.recovery_progress = recovery.progress;
   output.recovery_reason = recovery.reason;
   output.recovery_exhausted = recovery.exhausted;
-  output.local_path_body =
-      recovery.active
-          ? recovery.path_body
-          : (std::holds_alternative<nav_kernel::SplineTarget>(plan.target())
-                 ? planningPathToBody(planning_body, plan.previewPath())
-                 : plan.previewPath());
+  const bool spline_provided =
+      std::holds_alternative<nav_kernel::SplineTarget>(plan.target());
+  const auto &preview_path = plan.previewPath();
+  output.local_path_body = recovery.active
+                               ? recovery.path_body
+                               : (spline_provided
+                                      ? planningPathToBody(planning_body, preview_path)
+                                      : preview_path);
   output.path_found = recovery.active
                           ? recovery.verified && recovery.path_body.size() >= 2
                           : plan_ready || output.local_path_body.size() >= 2;
@@ -500,7 +512,9 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
       output.local_path_body.insert(output.local_path_body.begin(), {0.0, 0.0, 0.0});
     }
   }
-  output.local_path_map = bodyPathToMap(map_body, output.local_path_body);
+  output.local_path_map = !recovery.active && spline_provided
+                              ? planningPathToMap(map_from_odom, preview_path)
+                              : bodyPathToMap(map_body, output.local_path_body);
   if (!recovery.active && plan_ready && !near_field_stop &&
       plan.hints().retainRouteGuide &&
       output.local_path_map.size() >= 2) {
@@ -592,8 +606,6 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     setAutonomyMotionExpected(false, planning_body, timestamp_s);
     return output;
   }
-  const auto *spline = std::get_if<nav_kernel::SplineTarget>(&plan.target());
-  const bool spline_provided = spline != nullptr;
   const bool path_provided = std::holds_alternative<nav_kernel::PathTarget>(plan.target());
   if (path_provided && output.local_path_body.size() < 2) {
     output.reason = "untrackable_local_path";
@@ -748,16 +760,19 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   output.path_found = plan_ready;
   output.slow_down = std::clamp(plan.hints().slowdownLevel, 0, 3);
   output.recovery_state = 0;
-  output.local_path_body =
-      spline_provided ? planningPathToBody(odom_map_body, plan.previewPath())
-                      : plan.previewPath();
+  const auto &preview_path = plan.previewPath();
+  output.local_path_body = spline_provided
+                               ? planningPathToBody(odom_map_body, preview_path)
+                               : preview_path;
   if (plan_ready && !near_field_stop && output.local_path_body.size() < 2) {
     if (output.local_path_body.size() == 1 &&
         bodyDistance2D(output.local_path_body.front()) > 0.05) {
       output.local_path_body.insert(output.local_path_body.begin(), {0.0, 0.0, 0.0});
     }
   }
-  output.local_path_map = bodyPathToMap(odom_map_body, output.local_path_body);
+  output.local_path_map = spline_provided
+                              ? preview_path
+                              : bodyPathToMap(odom_map_body, output.local_path_body);
 
   const bool spline_trackable = !spline_provided || plan_ready;
   const bool path_trackable = spline_provided || output.local_path_body.size() >= 2;
