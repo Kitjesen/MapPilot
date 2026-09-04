@@ -186,9 +186,19 @@ PublishedPlan publicationOf(const Completion &completion) {
 }
 
 bool samePublication(const PublishedPlan &left, const PublishedPlan &right) {
+  const bool samePlan = left.epoch == right.epoch &&
+                        left.frameEpoch == right.frameEpoch &&
+                        left.trajectoryId != 0 &&
+                        left.trajectoryId == right.trajectoryId &&
+                        left.status == right.status &&
+                        left.slowdownLevel == right.slowdownLevel &&
+                        left.retainRouteGuide == right.retainRouteGuide;
+  if (samePlan)
+    return true;
   return left.epoch == right.epoch && left.frameEpoch == right.frameEpoch &&
-         left.routeGeneration == right.routeGeneration && sameIntent(left.intent, right.intent) &&
-         left.status == right.status && left.trajectoryId == right.trajectoryId &&
+         left.routeGeneration == right.routeGeneration &&
+         sameIntent(left.intent, right.intent) && left.status == right.status &&
+         left.trajectoryId == right.trajectoryId &&
          left.slowdownLevel == right.slowdownLevel &&
          left.retainRouteGuide == right.retainRouteGuide;
 }
@@ -242,7 +252,10 @@ class Task::Impl {
     }
 
     const PollResult polled = poll();
-    if (polled.completion) {
+    if (polled.completion &&
+        sameGuide(polled.completion->routeGeneration,
+                  polled.completion->frameEpoch,
+                  polled.completion->intent, request)) {
       latest_ = *polled.completion;
       if (polled.completion->plan.ready()) {
         current_ = *polled.completion;
@@ -334,6 +347,8 @@ class Task::Impl {
           !sameGuide(input_.request.routeView.generation,
                      input_.request.identity.frameEpoch,
                      input_.request.intent, request);
+      if (guideChanged)
+        cancelGeneration_.fetch_add(1U, std::memory_order_relaxed);
       input_.assign(epoch_, request, collision, guideChanged);
       hasInput_ = true;
       if (!timersArmed_) {

@@ -188,6 +188,33 @@ TEST(LocalPlanTask, UsesCompleteReferenceInsteadOfShortGuide) {
             std::abs(plan.previewPath().back().x));
 }
 
+TEST(LocalPlanTask, DropsCompletionForSupersededReference) {
+  nav_kernel::local::scan::Task task(scanParams());
+  ASSERT_TRUE(task.configure());
+  RequestFixture fixture;
+  EXPECT_EQ(task.update(fixture.request).plan.status(),
+            nav_kernel::LocalPlanStatus::Pending);
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  fixture.route[1] = {0.0, 2.0, 0.5};
+  fixture.request.objective = nav_kernel::RouteTarget{
+      {fixture.route.data(), static_cast<int>(fixture.route.size()), 2, false}};
+
+  nav_kernel::LocalPlan plan;
+  for (int tick = 0; tick < 400; ++tick) {
+    fixture.request.clock.timestampS = 1.1 + 0.01 * tick;
+    fixture.setGeneration(1);
+    plan = task.update(fixture.request).plan;
+    if (plan.ready()) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+
+  ASSERT_TRUE(plan.ready());
+  ASSERT_FALSE(plan.previewPath().empty());
+  EXPECT_GT(plan.previewPath().back().y,
+            std::abs(plan.previewPath().back().x));
+}
+
 TEST(LocalPlanTask, ProcessesResetEpochOnCollisionTimer) {
   nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
