@@ -702,6 +702,90 @@ def test_sim_mujoco_process_catalog_declares_exact_native_platform_paths() -> No
         assert not platforms["linux"]["artifact"]["path"].endswith(".exe")
 
 
+def test_sim_mujoco_localization_defaults_to_truth_and_fastlio2_is_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "runtime.graph.processes._host_process_platform",
+        lambda: "windows",
+    )
+
+    resolved = resolve_product_host_runtime(
+        "nav",
+        "sim",
+        env_config={"backend": "mujoco", "localization": "truth"},
+    )
+    assert resolved.env_spec.config.localization == "truth"
+
+    plan = compile_run_plan(
+        "nav",
+        "sim",
+        env_config={"backend": "mujoco"},
+    )
+
+    assert plan.process("slam").name == "lidar_publisher"
+    assert "--navigation-fixture" in plan.process("lidar").command.argv
+    assert "slam_runtime" not in {process.name for process in plan.processes}
+    assert "slam_runtime" not in plan.stop_before_start
+    host = plan.process("host").command
+    assert host is not None
+    assert "LINGTU_SLAM_CONTROL" not in dict(host.env)
+    dependency_paths = {dependency.path for dependency in host.dependencies}
+    assert "build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_nav_client.dll" in dependency_paths
+    assert not any(Path(path).name.lower().startswith("slamctl") for path in dependency_paths)
+
+    fastlio2 = compile_run_plan(
+        "nav",
+        "sim",
+        env_config={"backend": "mujoco", "localization": "fastlio2"},
+    )
+    assert fastlio2.process("slam").name == "slam_runtime"
+    assert "--navigation-fixture" not in fastlio2.process("lidar").command.argv
+
+
+def test_sim_localization_defaults_to_truth_and_real_rejects_truth() -> None:
+    resolved = resolve_product_host_runtime(
+        "nav",
+        "sim",
+        env_config={"backend": "mujoco"},
+    )
+    assert resolved.env_spec.config.localization == "truth"
+
+    with pytest.raises(ValueError, match=r"real Env does not accept.*localization"):
+        resolve_product_host_runtime(
+            "nav",
+            "real",
+            robot=REAL_ROBOT,
+            env_config={"localization": "truth"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("product", "product_variant"),
+    (("map", None), ("explore", "live")),
+)
+def test_sim_mujoco_mapping_products_keep_fastlio2_mapping(
+    product: str,
+    product_variant: str | None,
+) -> None:
+    resolved = resolve_product_host_runtime(
+        product,
+        "sim",
+        product_variant=product_variant,
+        env_config={"backend": "mujoco"},
+    )
+    assert resolved.env_spec.config.localization == "fastlio2"
+
+    plan = compile_run_plan(
+        product,
+        "sim",
+        product_variant=product_variant,
+        env_config={"backend": "mujoco"},
+    )
+    assert plan.process("slam").name == "slam_runtime"
+    assert "--navigation-fixture" not in plan.process("lidar").command.argv
+
+
 @pytest.mark.parametrize(
     ("product", "product_variant"),
     (
@@ -736,7 +820,7 @@ def test_sim_mujoco_every_product_compiles_for_windows_with_complete_pe_chain_an
         resolved.product,
         resolved.env,
         product_variant=resolved.product_variant,
-        env_config={"backend": "mujoco"},
+        env_config={"backend": "mujoco", "localization": "fastlio2"},
         graph=graph,
     )
 
@@ -953,11 +1037,15 @@ def test_sim_mujoco_linux_nav_selects_one_complete_elf_chain(
         "runtime.graph.processes._host_process_platform",
         lambda: "linux",
     )
-    resolved = resolve_product_host_runtime("nav", "sim", env_config={"backend": "mujoco"})
+    resolved = resolve_product_host_runtime(
+        "nav",
+        "sim",
+        env_config={"backend": "mujoco", "localization": "fastlio2"},
+    )
     plan = compile_run_plan(
         resolved.product,
         resolved.env,
-        env_config={"backend": "mujoco"},
+        env_config={"backend": "mujoco", "localization": "fastlio2"},
         graph=graph,
     )
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -114,6 +115,7 @@ class EnvConfig:
 
     backend: str | None = None
     viewer: bool = False
+    localization: str | None = None
 
 
 @dataclass(frozen=True)
@@ -193,6 +195,27 @@ def resolve_env_spec(
         raise TypeError(f"Env '{env_name}' implementation must be a mapping")
 
     implementation_copy = dict(implementation)
+    if normalized.localization == "truth":
+        if normalized.backend != "mujoco":
+            raise ValueError("truth localization requires the MuJoCo backend")
+        # The native sensor publisher already owns the truth observation protocol.
+        # Resolve that ownership once, before any executable or readiness binding.
+        process_definitions = deepcopy(implementation_copy["processes"])
+        lidar = process_definitions["lidar_publisher"]
+        lidar["provides"] = ["lidar", "slam"]
+        for platform in lidar["platforms"].values():
+            platform["argv"].append("--navigation-fixture")
+        del process_definitions["slam_runtime"]
+        implementation_copy["stop_before_start"] = [
+            target for target in implementation_copy["stop_before_start"] if target != "slam_runtime"
+        ]
+        for platform in process_definitions["host_runtime"]["platforms"].values():
+            platform["env"].pop("LINGTU_SLAM_CONTROL", None)
+            platform["dependencies"] = [
+                entry for entry in platform.get("dependencies", [])
+                if Path(entry["path"]).name not in {"slamctl", "slamctl.exe"}
+            ]
+        implementation_copy["processes"] = process_definitions
     if env_name == "real":
         robot_config_ref = _resolve_robot_config_ref(robot_name, robot_dir)
         robot_config = load_config(str(robot_config_ref))
@@ -272,6 +295,12 @@ def resolve_product_host_runtime(
         raise TypeError(
             f"Product {resolved_product_name!r} processes must be a list"
         )
+    product_slam_mode = str(resolved_product_spec.get("slam_mode") or "").strip().lower()
+    if product_slam_mode in {"mapping", "none"}:
+        env_config = _default_product_localization(
+            env_config,
+            localization="fastlio2",
+        )
     uses_lidar = "lidar" in product_processes
     resolved_env = resolve_env_spec(
         env,
@@ -279,6 +308,10 @@ def resolve_product_host_runtime(
         env_config=env_config,
         graph=graph,
     )
+    if product_slam_mode == "mapping" and resolved_env.config.localization == "truth":
+        raise ValueError(
+            f"Product {resolved_product_name!r} with slam_mode='mapping' requires Fast-LIO2 localization"
+        )
     if uses_lidar and resolved_env.name == "real":
         resolved_env = _with_real_mid360(resolved_env)
         if not all(
@@ -562,18 +595,20 @@ def _normalize_env_config(
     *,
     default_backend: str | None = None,
 ) -> EnvConfig:
+    localization_explicit = isinstance(env_config, Mapping) and "localization" in env_config
     if env_config is None:
         normalized = EnvConfig()
     elif isinstance(env_config, EnvConfig):
         normalized = env_config
     elif isinstance(env_config, Mapping):
-        unknown = sorted(set(env_config) - {"backend", "viewer"})
+        unknown = sorted(set(env_config) - {"backend", "viewer", "localization"})
         if unknown:
             joined = ", ".join(str(key) for key in unknown)
             raise TypeError(f"unsupported env_config field(s): {joined}")
         normalized = EnvConfig(
             backend=env_config.get("backend"),
             viewer=env_config.get("viewer", False),
+            localization=env_config.get("localization"),
         )
     else:
         raise TypeError("env_config must be EnvConfig, a mapping, or None")
@@ -587,6 +622,24 @@ def _normalize_env_config(
             raise TypeError("env_config.backend must be a non-empty string")
         normalized = replace(normalized, backend=backend.strip())
 
+    localization = normalized.localization
+    if localization is None:
+        if localization_explicit:
+            raise TypeError("env_config.localization must be a non-empty string")
+        localization = (
+            "truth"
+            if env == "sim" and normalized.backend == "mujoco"
+            else "fastlio2"
+        )
+    if not isinstance(localization, str) or not localization.strip():
+        raise TypeError("env_config.localization must be a non-empty string")
+    localization = localization.strip().lower()
+    if localization not in {"fastlio2", "truth"}:
+        raise ValueError("env_config.localization must be 'fastlio2' or 'truth'")
+    normalized = replace(normalized, localization=localization)
+    if env == "real" and localization == "truth":
+        raise ValueError("real Env does not accept env_config.localization='truth'")
+
     if env == "real" and normalized.backend is not None:
         raise ValueError("real Env does not accept env_config.backend")
     if env == "real" and normalized.viewer:
@@ -594,6 +647,26 @@ def _normalize_env_config(
     if env == "sim" and normalized.backend is None:
         raise ValueError("sim env_config.backend is required")
     return normalized
+
+
+def _default_product_localization(
+    env_config: EnvConfig | Mapping[str, Any] | None,
+    *,
+    localization: str,
+) -> EnvConfig | Mapping[str, Any] | None:
+    """Keep products that generate maps on their estimator-backed path."""
+
+    if env_config is None:
+        return {"localization": localization}
+    if isinstance(env_config, EnvConfig):
+        if env_config.localization is None:
+            return replace(env_config, localization=localization)
+        return env_config
+    if isinstance(env_config, Mapping):
+        if "localization" in env_config:
+            return env_config
+        return {**env_config, "localization": localization}
+    return env_config
 
 
 def _single_sim_backend(graph: RuntimeGraph) -> str | None:
