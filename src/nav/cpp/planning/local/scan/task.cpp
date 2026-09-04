@@ -219,8 +219,7 @@ class Task::Impl {
 
   ~Impl() { stop(); }
 
-  bool configure(const std::string &pathLibraryDir) {
-    (void)pathLibraryDir;
+  bool configure() {
     if (configured_)
       return true;
     const Clock::time_point now = Clock::now();
@@ -514,8 +513,8 @@ Task::Task(const LocalPlannerParams &params)
 
 Task::~Task() = default;
 
-bool Task::configure(const std::string &pathLibraryDir) {
-  return impl_->configure(pathLibraryDir);
+bool Task::configure() {
+  return impl_->configure();
 }
 
 bool Task::configured() const {

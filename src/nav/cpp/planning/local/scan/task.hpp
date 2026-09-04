@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <memory>
-#include <string>
 
 #include "planning/local/planner.hpp"
 
@@ -23,8 +22,10 @@ class Task {
   Task(const Task &) = delete;
   Task &operator=(const Task &) = delete;
 
-  bool configure(const std::string &pathLibraryDir = {});
+  bool configure();
   [[nodiscard]] bool configured() const;
+  // Views are borrowed for this call. The worker owns immutable route/map
+  // snapshots; replacing route geometry requires a new reference generation.
   Update update(const LocalPlanRequest &request);
   void reset();
 

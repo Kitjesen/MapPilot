@@ -277,7 +277,7 @@ class local::Planner::Impl {
 
   bool configure(const std::string &path_library_dir) {
     if (params_.backend == LocalPlannerBackend::Scan) {
-      const bool loaded = task_ != nullptr && task_->configure(path_library_dir);
+      const bool loaded = task_ != nullptr && task_->configure();
       configured_ = configured_ || loaded;
       return loaded;
     }
