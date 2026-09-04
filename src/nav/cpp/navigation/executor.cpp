@@ -193,6 +193,8 @@ void Executor::activateRoute(const std::vector<nav_kernel::Vec3> &path,
   resetLocalPlanning();
   recovery_.reset();
   segment.clear();
+  route_reference_target_.reset();
+  route_reference_reaches_goal_ = false;
   committed_local_path_map_.clear();
   resetTeleopRotation();
   resetTeleopReference();
@@ -219,6 +221,8 @@ void Executor::clearRoute() {
   resetLocalPlanning();
   recovery_.reset();
   segment.clear();
+  route_reference_target_.reset();
+  route_reference_reaches_goal_ = false;
   committed_local_path_map_.clear();
   resetTeleopRotation();
   resetTeleopReference();
@@ -241,6 +245,8 @@ void Executor::suspendAutonomy() {
   recovery_attempt_ = -1;
   resetLocalPlanning();
   recovery_.reset();
+  route_reference_target_.reset();
+  route_reference_reaches_goal_ = false;
   committed_local_path_map_.clear();
   resetTeleopRotation();
   resetTeleopReference();
@@ -397,6 +403,22 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   }
 
   const SegmentTarget target = buildSegment(map_body, planning_body, map_from_odom);
+  const double route_reference_advance_m =
+      std::max(0.5, 0.25 * std::max(0.5, config_.corridor_lookahead_m));
+  const bool route_reference_advanced =
+      route_reference_target_.has_value() &&
+      nav_kernel::distance3D(target.point, *route_reference_target_) >=
+          route_reference_advance_m;
+  const bool route_reference_finished =
+      route_reference_target_.has_value() &&
+      target.reachesGoal != route_reference_reaches_goal_;
+  if (!route_reference_target_.has_value() || route_reference_advanced ||
+      route_reference_finished) {
+    if (route_reference_target_.has_value())
+      ++generation;
+    route_reference_target_ = target.point;
+    route_reference_reaches_goal_ = target.reachesGoal;
+  }
   applyCommittedLocalGuide(map_body, planning_body, map_from_odom, timestamp_s);
   output.target_index = target.index;
   output.target = target.point;

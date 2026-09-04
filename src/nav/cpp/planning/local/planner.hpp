@@ -160,8 +160,9 @@ struct LocalTraversabilityView {
   }
 };
 
-// Non-owning route segment in the planning frame. Executor includes the current
-// body position and every global-route bend through the selected local horizon.
+// Non-owning route segment in the planning frame. Generation is the reference
+// event identity and must change whenever the route geometry is intentionally
+// replaced. Robot-pose updates alone do not create a new reference event.
 struct LocalRouteView {
   const Vec3 *points{nullptr};
   int count{0};

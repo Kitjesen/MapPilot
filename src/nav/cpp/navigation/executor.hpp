@@ -213,6 +213,8 @@ class Executor {
   std::vector<nav_kernel::Vec3> committed_local_path_map_;
   std::optional<double> teleop_recovery_intent_rad_;
   std::optional<TeleopReference> teleop_reference_;
+  std::optional<nav_kernel::Vec3> route_reference_target_;
+  bool route_reference_reaches_goal_{false};
   std::uint64_t generation{0};
   std::uint64_t committed_route_generation_{0};
   double committed_local_path_time_s_{-1.0};

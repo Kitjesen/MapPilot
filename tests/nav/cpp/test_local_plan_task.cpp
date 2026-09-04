@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cmath>
 #include <thread>
 #include <vector>
 
@@ -127,6 +128,47 @@ TEST(LocalPlanTask, KeepsPublishedSplineUntilNewIntentIsPlanned) {
   fixture.setIntent(90.0, 2);
   fixture.request.clock.timestampS += 0.01;
   EXPECT_TRUE(task.update(fixture.request).plan.ready());
+}
+
+TEST(LocalPlanTask, RouteGenerationOwnsReferenceReplacement) {
+  nav_kernel::local::scan::Task task(scanParams());
+  ASSERT_TRUE(task.configure());
+  RequestFixture fixture;
+  const nav_kernel::LocalPlan initial = waitForPlan(task, fixture);
+  ASSERT_TRUE(initial.ready());
+  ASSERT_FALSE(initial.previewPath().empty());
+  EXPECT_GT(initial.previewPath().back().x,
+            std::abs(initial.previewPath().back().y));
+
+  fixture.route[1] = {0.0, 2.0, 0.5};
+  nav_kernel::LocalPlan retained = initial;
+  for (int tick = 0; tick < 60; ++tick) {
+    fixture.request.clock.timestampS += 0.01;
+    retained = task.update(fixture.request).plan;
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  ASSERT_TRUE(retained.ready());
+  ASSERT_FALSE(retained.previewPath().empty());
+  EXPECT_GT(retained.previewPath().back().x,
+            std::abs(retained.previewPath().back().y));
+
+  fixture.request.objective = nav_kernel::RouteTarget{
+      {fixture.route.data(), static_cast<int>(fixture.route.size()), 2, false}};
+  nav_kernel::LocalPlan replaced = retained;
+  for (int tick = 0; tick < 200; ++tick) {
+    fixture.request.clock.timestampS += 0.01;
+    replaced = task.update(fixture.request).plan;
+    if (replaced.ready() && !replaced.previewPath().empty() &&
+        replaced.previewPath().back().y >
+            std::abs(replaced.previewPath().back().x)) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  ASSERT_TRUE(replaced.ready());
+  ASSERT_FALSE(replaced.previewPath().empty());
+  EXPECT_GT(replaced.previewPath().back().y,
+            std::abs(replaced.previewPath().back().x));
 }
 
 TEST(LocalPlanTask, ProcessesResetEpochOnCollisionTimer) {

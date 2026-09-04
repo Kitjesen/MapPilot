@@ -39,35 +39,30 @@ bool sameIntent(const std::optional<LocalMotionIntent> &left,
 
 struct OwnedRequest {
   void assign(const LocalPlanRequest &source,
-              std::shared_ptr<const std::vector<std::uint8_t>> collisionBits) {
+              std::shared_ptr<const std::vector<std::uint8_t>> collisionBits,
+              bool replaceGuide = true) {
     robot = source.robot;
     identity = source.identity;
     clock = source.clock;
     environment = source.environment;
     collision = std::move(collisionBits);
-    if (const LocalRouteView *sourceRoute = source.route()) {
-      const bool routeChanged = routeView.generation != sourceRoute->generation ||
-                                routeView.count != sourceRoute->count ||
-                                routeView.reachesGoal != sourceRoute->reachesGoal ||
-                                sourceRoute->points == nullptr ||
-                                !std::equal(route.begin(), route.end(), sourceRoute->points,
-                                            sourceRoute->points + sourceRoute->count,
-                                            [](const Vec3 &left, const Vec3 &right) {
-                                              return left.x == right.x && left.y == right.y &&
-                                                     left.z == right.z;
-                                            });
-      routeView = *sourceRoute;
-      if (routeChanged && sourceRoute->points != nullptr && sourceRoute->count > 0) {
-        route.assign(sourceRoute->points, sourceRoute->points + sourceRoute->count);
+    if (replaceGuide) {
+      if (const LocalRouteView *sourceRoute = source.route()) {
+        routeView = *sourceRoute;
+        if (sourceRoute->points != nullptr && sourceRoute->count > 0) {
+          route.assign(sourceRoute->points, sourceRoute->points + sourceRoute->count);
+        } else {
+          route.clear();
+        }
+      } else {
+        routeView = {};
+        route.clear();
       }
-    } else {
-      routeView = {};
-      route.clear();
-    }
-    if (const LocalMotionIntent *sourceIntent = source.intent()) {
-      intent = *sourceIntent;
-    } else {
-      intent.reset();
+      if (const LocalMotionIntent *sourceIntent = source.intent()) {
+        intent = *sourceIntent;
+      } else {
+        intent.reset();
+      }
     }
   }
 
@@ -105,9 +100,10 @@ struct OwnedRequest {
 
 struct InputSnapshot {
   void assign(std::uint64_t epochValue, const LocalPlanRequest &source,
-              std::shared_ptr<const std::vector<std::uint8_t>> collision) {
+              std::shared_ptr<const std::vector<std::uint8_t>> collision,
+              bool replaceGuide = true) {
     epoch = epochValue;
-    request.assign(source, std::move(collision));
+    request.assign(source, std::move(collision), replaceGuide);
     receivedAt = Clock::now();
   }
 
@@ -206,16 +202,6 @@ void advanceTimer(Clock::time_point &deadline, Clock::duration period, Clock::ti
   // short overrun, but reset the phase after a delay longer than two periods.
   if (deadline + period < now)
     deadline = now;
-}
-
-bool sameRoute(const std::vector<Vec3> &left, const LocalRouteView *right) {
-  if (right == nullptr || right->points == nullptr ||
-      left.size() != static_cast<std::size_t>(right->count))
-    return false;
-  return std::equal(left.begin(), left.end(), right->points,
-                    [](const Vec3 &a, const Vec3 &b) {
-                      return a.x == b.x && a.y == b.y && a.z == b.z;
-                    });
 }
 
 }  // namespace
@@ -346,9 +332,8 @@ class Task::Impl {
           !hasInput_ ||
           !sameGuide(input_.request.routeView.generation,
                      input_.request.identity.frameEpoch,
-                     input_.request.intent, request) ||
-          !sameRoute(input_.request.route, request.route());
-      input_.assign(epoch_, request, collision);
+                     input_.request.intent, request);
+      input_.assign(epoch_, request, collision, guideChanged);
       hasInput_ = true;
       if (!timersArmed_) {
         const Clock::time_point now = Clock::now();
