@@ -33,6 +33,7 @@ GlobalPlanner -> Route -> Executor -> LocalPlanner -> LocalPlan -> Follower
 struct LocalPlanRequest {
   RobotState robot;
   LocalObjective objective;      // RouteTarget or MotionIntentTarget
+  LocalRouteView reference;      // Complete planning-frame reference
   EnvironmentView environment;  // obstacles, collision, traversability
   PlanIdentity identity;
   PlanClock clock;
@@ -44,7 +45,8 @@ struct LocalPlanRequest {
 - CMU returns `PathTarget`.
 - SCAN returns `SplineTarget`.
 
-The Follower dispatches that variant internally. Executor does not branch on
+The Follower dispatches that variant internally. Executor converts preview
+geometry and robot state between the target's frames, but does not select
 CMU/SCAN, inspect backend strings, or manage SCAN task reuse and continuity.
 The endpoint composition root chooses and configures the Planner before
 constructing Executor.

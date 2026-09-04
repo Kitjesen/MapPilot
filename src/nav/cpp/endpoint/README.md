@@ -8,9 +8,11 @@ algorithms remain in `planning/`, `navigation/`, and `tracking/`.
 ## Processes
 
 ```text
-SLAM / LiDAR / Mapd / Gateway / Driver
+Sensor processing:  SLAM pose/TF, LiDAR scan, Mapd collision, terrain grid
+Operator/API:       Gateway goals, teleop, cancel
+Robot feedback:     Driver state
                  |
-                 | typed DDS
+                 | typed DDS values from these producers
                  v
               navd
         +--------+---------+
@@ -47,7 +49,7 @@ The deployed executable names remain:
 | `nav/input/` | Ordinary C++ sensor state, frame math, freshness, active-map gates, and obstacle projection. |
 | `nav/command/` | Ordered command admission, identity, cancellation, and terminal events. |
 | `nav/control/` | Teleop/autonomy candidates, authority, smoothing, and final arbitration. |
-| `nav/runtime/` | The 20 Hz loop and endpoint-only goal, inspection, rolling, and configuration lifecycle. |
+| `nav/runtime/` | The Product-configured control loop (100 Hz for SCAN nav/teleop_avoid) and endpoint-only goal, inspection, rolling, and configuration lifecycle. |
 | `nav/safety/` | E-stop, geofence, hard command limits, and confirmed zero motion. |
 | `nav/status/` | Typed lifecycle/status projection and asynchronous persistence. |
 | `src/explore/cpp/endpoint/` | Explore process entry and lifecycle source, composed here as `lingtu_explore_dds`. |

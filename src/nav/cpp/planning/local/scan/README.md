@@ -5,11 +5,15 @@ This directory contains LingTu's ROS-free port of
 commit `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
 
 The algorithm sources live under [`upstream/`](upstream/UPSTREAM.md). The
-supported closed-loop runtime path is output-equivalent to the pinned commit:
+supported closed-loop runtime path must remain output-equivalent to the pinned commit:
 the same valid inputs, parameters and callback order produce the same map
 queries, Projected DynAStar path, rebound control points, B-spline, six-state
 FSM transitions and controller command. Port changes may replace ROS process
 APIs and storage, but may not change those results.
+
+This is the port's equivalence contract, not a claim that a passing unit suite
+proves every upstream execution or robot behavior. Upstream differential
+results, MuJoCo runs, and field measurements are separate evidence.
 
 LingTu-specific code is only the boundary:
 
@@ -47,3 +51,21 @@ inputs and do not change the SCAN equations.
 controller at 100 Hz; future-collision checks run at the upstream 20 Hz.
 `cmu` remains an explicit backend option and is not deleted or used as a silent
 fallback.
+
+## Input lifetime and scheduling
+
+`Task::update()` borrows caller views only during the call. Task takes one
+immutable copy when the reference generation changes; input and timer work
+share that copy. The endpoint's immutable collision storage is shared when
+available; borrowed bitmaps are copied once per map epoch/generation. Neither
+100 Hz FSM nor 20 Hz collision callbacks copy the full reference route.
+
+Mapd rebuilds the exported collision bitmap only when its collision generation
+changes (including a sliding-window change). Repeated observations still
+advance timestamp/sequence, so content reuse does not conceal a dead sensor.
+Resetting the map epoch clears the snapshot before it can be reused. Returning
+Mapd snapshots and DDS serialization still copy bytes; this is not an end-to-end
+zero-copy claim.
+
+Configuration of the CMU path library stops at the Planner facade. SCAN Task
+has no path-library argument and obtains its parameters at construction.

@@ -81,7 +81,7 @@ require an extra DDS boundary.
 | `client/` | Native client and C ABI for endpoint commands/status |
 | `bindings/` | Nanobind access to portable native kernels used by focused development tools and tests |
 | `platform/` | Small platform-specific runtime utilities |
-| `tests/` | Portable algorithm, endpoint-contract, and performance checks |
+| [`../../../tests/nav/`](../../../tests/nav/) | Navigation tests; native algorithm and endpoint checks live under `cpp/` |
 
 The dependency direction is:
 
@@ -117,13 +117,34 @@ differ:
 | Backend | Main output | Execution model |
 | --- | --- | --- |
 | CMU | Body-relative `PathTarget` | Follower selects a lookahead point and computes velocity online |
-| SCAN | Exact body-relative `SplineTarget` | Follower evaluates the B-spline at the execution clock |
+| SCAN | Exact planning-frame `SplineTarget` (normally `odom`) | Follower evaluates the B-spline at the execution clock and converts control to body velocity |
 
 SCAN preview geometry is sampled from the spline on demand; it is not a second
 executable result. Assisted teleop uses the selected backend as well: CMU
 returns a geometric path and SCAN returns an exact B-spline, without switching
 between them implicitly. See
 [`planning/local/scan/README.md`](planning/local/scan/README.md).
+
+### Map, route, and trajectory ownership
+
+| Data | Owner | Consumers |
+| --- | --- | --- |
+| Live occupied/inflated grid | Mapd in `src/maps/` | Navd receives a complete bitmap; SCAN queries it without rebuilding or inflating it |
+| Activated global Route | Executor | LocalPlanner receives the complete reference plus a bounded local segment |
+| Reference/map snapshots for asynchronous SCAN | `planning/local/scan/task.*` | One serialized worker shares immutable snapshots across timer callbacks |
+| SCAN FSM and generated B-spline | `planning/local/scan/upstream/` through `backend.*` | Follower tracks the published trajectory; preview geometry is telemetry |
+| Final body velocity | Endpoint FinalControl | Driver is the only robot command forwarder |
+
+These are data owners, not new processes. SCAN Task contains both timer
+schedules on one worker: 100 Hz FSM, 20 Hz collision checking. Follower runs
+from the endpoint control tick (`nav` and `teleop_avoid`: 100 Hz). A timer
+callback does not create a new thread or a new navigation goal.
+
+A reference generation changes when the intended route is replaced, not on
+every pose sample. A collision generation changes with collision content or
+window position; new observation timestamps still advance when content stays
+unchanged. A new trajectory ID denotes a newly published spline, not every
+control tick. These three identities must not be substituted for each other.
 
 ### Tracking
 
