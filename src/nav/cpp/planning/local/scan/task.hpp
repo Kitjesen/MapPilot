@@ -27,6 +27,7 @@ class Task {
   // Views are borrowed for this call. The worker owns immutable route/map
   // snapshots; replacing route geometry requires a new reference generation.
   Update update(const LocalPlanRequest &request);
+  void pause();
   void reset();
 
  private:

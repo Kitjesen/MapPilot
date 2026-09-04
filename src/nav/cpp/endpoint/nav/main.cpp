@@ -1271,6 +1271,7 @@ int main(int argc, char **argv) {
               {}});
         };
     autonomy_tick_actions.stop_linear_motion = [&]() { executor.stopLinearMotion(); };
+    autonomy_tick_actions.pause_linear_motion = [&]() { executor.pauseLinearMotion(); };
     AutonomyTickController autonomy_tick(std::move(autonomy_tick_actions), final_control);
 
     EndpointLoopContext loop_ctx{

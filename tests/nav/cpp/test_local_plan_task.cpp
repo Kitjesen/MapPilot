@@ -103,6 +103,45 @@ TEST(LocalPlanTask, RunsFsmOnOwnedTimer) {
   EXPECT_TRUE(task.update(fixture.request).plan.ready());
 }
 
+TEST(LocalPlanTask, PausesOwnedClockForTimerGeneratedReferences) {
+  nav_kernel::LocalPlannerParams runningParams = scanParams();
+  runningParams.scan.noReplanDistance = 0.02;
+  runningParams.scan.replanDistance = 0.02;
+
+  nav_kernel::local::scan::Task pausedTask(runningParams);
+  nav_kernel::local::scan::Task runningTask(runningParams);
+  ASSERT_TRUE(pausedTask.configure());
+  ASSERT_TRUE(runningTask.configure());
+  RequestFixture pausedFixture;
+  RequestFixture runningFixture;
+
+  const nav_kernel::LocalPlan pausedInitial =
+      waitForPlan(pausedTask, pausedFixture);
+  pausedTask.pause();
+  const nav_kernel::LocalPlan runningInitial =
+      waitForPlan(runningTask, runningFixture);
+  ASSERT_TRUE(pausedInitial.ready());
+  ASSERT_TRUE(runningInitial.ready());
+  const auto pausedInitialId =
+      std::get<nav_kernel::SplineTarget>(pausedInitial.target()).trajectoryId;
+  const auto runningInitialId =
+      std::get<nav_kernel::SplineTarget>(runningInitial.target()).trajectoryId;
+
+  // Neither task receives a source update while timer callbacks advance.
+  std::this_thread::sleep_for(std::chrono::seconds(2));
+
+  const nav_kernel::LocalPlan pausedAfter =
+      pausedTask.update(pausedFixture.request).plan;
+  const nav_kernel::LocalPlan runningAfter =
+      runningTask.update(runningFixture.request).plan;
+  ASSERT_TRUE(pausedAfter.ready());
+  ASSERT_TRUE(runningAfter.ready());
+  EXPECT_EQ(std::get<nav_kernel::SplineTarget>(pausedAfter.target()).trajectoryId,
+            pausedInitialId);
+  EXPECT_GT(std::get<nav_kernel::SplineTarget>(runningAfter.target()).trajectoryId,
+             runningInitialId);
+}
+
 TEST(LocalPlanTask, KeepsOfficialWorldFrameSplineDuringMapRefresh) {
   nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());

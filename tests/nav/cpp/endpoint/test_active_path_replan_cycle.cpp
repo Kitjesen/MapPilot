@@ -230,6 +230,7 @@ struct Fixture {
       return output;
     };
     actions.stop_linear_motion = [this] { ++stop_linear_motion_calls; };
+    actions.pause_linear_motion = [] {};
     return actions;
   }
 

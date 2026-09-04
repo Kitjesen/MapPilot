@@ -314,6 +314,11 @@ class local::Planner::Impl {
     return cmu_->plan(request);
   }
 
+  void pause() {
+    if (task_)
+      task_->pause();
+  }
+
   void reset() {
     if (params_.backend == LocalPlannerBackend::Scan)
       task_->reset();
@@ -390,6 +395,10 @@ LocalPlan local::Planner::plan(const LocalPlanRequest &request) {
 LocalPlan local::Planner::plan(const LocalPlanRequest &request,
                                const LocalPlanCancel &cancel) {
   return impl_->plan(request, cancel);
+}
+
+void local::Planner::pause() {
+  impl_->pause();
 }
 
 void local::Planner::reset() {

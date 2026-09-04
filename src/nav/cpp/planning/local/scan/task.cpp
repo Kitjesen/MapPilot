@@ -283,6 +283,12 @@ class Task::Impl {
     return output;
   }
 
+  void pause() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (hasInput_)
+      input_.request.clock.executionFrozen = true;
+  }
+
   void reset() {
     current_.reset();
     latest_.reset();
@@ -531,6 +537,10 @@ Update Task::update(const LocalPlanRequest &request) {
 
 void Task::reset() {
   impl_->reset();
+}
+
+void Task::pause() {
+  impl_->pause();
 }
 
 }  // namespace nav_kernel::local::scan

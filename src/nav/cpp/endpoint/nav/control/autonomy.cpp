@@ -80,7 +80,8 @@ AutonomyTickController::AutonomyTickController(AutonomyTickActions actions,
                                                FinalControl &final_control)
     : actions_(std::move(actions)), final_control_(final_control) {
   if (!actions_.steady_now_s || !actions_.read_plan ||
-      !actions_.current_map_identity || !actions_.tick_autonomy || !actions_.stop_linear_motion) {
+      !actions_.current_map_identity || !actions_.tick_autonomy || !actions_.stop_linear_motion ||
+      !actions_.pause_linear_motion) {
     throw std::invalid_argument("autonomy tick actions must all be configured");
   }
 }
@@ -88,6 +89,9 @@ AutonomyTickController::AutonomyTickController(AutonomyTickActions actions,
 AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) {
   AutonomyTickResult result;
   const double now_s = actions_.steady_now_s();
+
+  if (input.path_active && (!input.input_gate.ready || !input.motion_allowed))
+    actions_.pause_linear_motion();
 
   if (input.map_body && input.path_active && input.input_gate.ready && input.motion_allowed) {
     result.handled = true;

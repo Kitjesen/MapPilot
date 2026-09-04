@@ -265,6 +265,7 @@ void Executor::suspendAutonomy() {
 }
 
 void Executor::pauseLinearMotion() {
+  local_planner_.pause();
   follower_.stopLinear();
   recovery_follower_.stopLinear();
 }

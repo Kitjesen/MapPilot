@@ -58,6 +58,7 @@ struct Fixture {
   int commit_calls{0};
   int velocity_stop_calls{0};
   int stop_calls{0};
+  int pause_calls{0};
   const float *tick_obstacles{nullptr};
   int tick_obstacle_count{-1};
   double tick_stamp{-1.0};
@@ -143,6 +144,7 @@ struct Fixture {
       velocity_stop_reason = reason;
     };
     actions.stop_linear_motion = [&] { ++stop_calls; };
+    actions.pause_linear_motion = [&] { ++pause_calls; };
   }
 
   FinalControl &control() {
@@ -181,6 +183,7 @@ void testIdleAndAuthorityDeniedDoNothing() {
   require(!idle.handled && !denied.handled,
           "inactive or authority-denied paths must stay untouched");
   require(fixture.current_map_calls == 0, "inactive branches must not read active map identity");
+  require(fixture.pause_calls == 1, "authority denial pauses the retained trajectory");
   require(fixture.compute_calls == 0 && fixture.tick_calls == 0,
           "inactive branches must not compute planner inputs");
 }
@@ -194,6 +197,8 @@ void testBlockedInputGateFailsClosedWithoutPlanning() {
   const auto result = controller.tick(fixture.input());
 
   require(result.handled, "active blocked path must be handled");
+  require(fixture.pause_calls == 1 && fixture.stop_calls == 0,
+          "input hold must freeze planning and tracking without resetting the route");
   require(result.clear_local_path && result.clear_local_planner_debug,
           "blocked input must clear stale path products");
   require(result.local.has_value(), "blocked input must update diagnostics");

@@ -410,6 +410,22 @@ TEST(FollowerPath, FixedOffsetCommandMatchesGolden) {
   EXPECT_NEAR(output.cmd.wz, -1.48046673, 1e-6);
 }
 
+TEST(FollowerSpline, ExternalStopPausesTimeWithoutRestartingSpline) {
+  Follower follower;
+  FollowerParams params;
+  const auto trajectory = scanSpline({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, 1, 10.0);
+  (void)followSpline(follower, trajectory, params, 10.0);
+  const auto moving = followSpline(follower, trajectory, params, 10.05);
+  follower.stopLinear();
+  const auto resumed = followSpline(follower, trajectory, params, 10.15);
+  EXPECT_NEAR(resumed.cmd.vx, moving.cmd.vx, 1e-9);
+  const auto next = followSpline(follower, trajectory, params, 10.16);
+  EXPECT_GT(next.cmd.vx, resumed.cmd.vx);
+  follower.stopLinear();
+  const auto afterLongStop = followSpline(follower, trajectory, params, 15.0);
+  EXPECT_NEAR(afterLongStop.cmd.vx, next.cmd.vx, 1e-9);
+}
+
 TEST(FollowerSpline, DefaultsMatchOfficialScanController) {
   const SplineFollowerParams params;
 

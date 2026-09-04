@@ -359,6 +359,13 @@ class SplineAlgorithm final : public Algorithm {
     if (target == nullptr) return output;
     const SplineTarget &spline = target->get();
 
+    // Endpoint holds stop execution without restarting the upstream spline.
+    if (paused_ && lastInputTime_ && input.currentTime > *lastInputTime_)
+      pausedTime_ += input.currentTime - *lastInputTime_;
+    lastInputTime_ = input.currentTime;
+    paused_ = false;
+    const double controlTime = input.currentTime - pausedTime_;
+
     if (!controller_.hasTrajectory() ||
         controller_.trajectoryId() != spline.trajectoryId) {
       local::scan::upstream::BsplineTrajectory trajectory;
@@ -380,7 +387,7 @@ class SplineAlgorithm final : public Algorithm {
       trajectory.order = spline.order;
       trajectory.trajectoryId = spline.trajectoryId;
       trajectory.startTimeS = spline.startTimeS;
-      if (!controller_.setTrajectory(trajectory, input.currentTime))
+      if (!controller_.setTrajectory(trajectory, controlTime))
         return output;
     }
 
@@ -388,7 +395,7 @@ class SplineAlgorithm final : public Algorithm {
     state.position = {input.vehicleRelative.x, input.vehicleRelative.y,
                       input.vehicleRelative.z};
     state.yaw = input.vehicleYawRelative;
-    state.nowS = input.currentTime;
+    state.nowS = controlTime;
 
     const SplineFollowerParams &scan = input.params.spline;
     local::scan::upstream::ClosedLoopControllerParams params;
@@ -413,13 +420,18 @@ class SplineAlgorithm final : public Algorithm {
     return output;
   }
 
-  void stopLinear() override {}
+  void stopLinear() override { paused_ = true; }
 
-  void resetTarget() override { controller_.reset(); }
+  void resetTarget() override { reset(); }
 
-  void resetIntent() override { controller_.reset(); }
+  void resetIntent() override { reset(); }
 
-  void reset() override { controller_.reset(); }
+  void reset() override {
+    controller_.reset();
+    lastInputTime_.reset();
+    pausedTime_ = 0.0;
+    paused_ = false;
+  }
 
   FollowerDiagnostics diagnostics() const override {
     return {
@@ -432,6 +444,9 @@ class SplineAlgorithm final : public Algorithm {
 
  private:
   local::scan::upstream::ClosedLoopController controller_{};
+  std::optional<double> lastInputTime_;
+  double pausedTime_{0.0};
+  bool paused_{false};
 };
 
 using AlgorithmFactory = std::unique_ptr<Algorithm> (*)();

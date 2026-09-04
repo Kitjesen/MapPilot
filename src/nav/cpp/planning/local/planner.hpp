@@ -379,6 +379,7 @@ class Planner {
 
   LocalPlan plan(const LocalPlanRequest &request);
   LocalPlan plan(const LocalPlanRequest &request, const LocalPlanCancel &cancel);
+  void pause();
   void reset();
 
   const LocalPlannerParams &params() const;
