@@ -248,7 +248,7 @@ TEST(ScanBackend, KeepsPublishedSplineUntilNewReferenceIsPlanned) {
   EXPECT_GT(std::get<SplineTarget>(replacement.target()).trajectoryId, previousId);
 }
 
-TEST(ScanBackend, AcceptsChangedReferenceShapeWithTheSameEndpoint) {
+TEST(ScanBackend, AcceptsChangedReferenceShapeWithANewGeneration) {
   RequestFixture fixture(
       {{0.0, 0.0, 0.5}, {1.0, 0.0, 0.5}, {2.0, 0.0, 0.5}});
   nav_kernel::local::scan::Backend backend(scanParams());
@@ -262,7 +262,7 @@ TEST(ScanBackend, AcceptsChangedReferenceShapeWithTheSameEndpoint) {
 
   fixture.route[1] = {1.0, 0.8, 0.5};
   fixture.request.objective = RouteTarget{{
-      fixture.route.data(), static_cast<int>(fixture.route.size()), 1, false}};
+      fixture.route.data(), static_cast<int>(fixture.route.size()), 2, false}};
   fixture.request.clock.timestampS += 0.01;
   LocalPlan replacement = backend.tick(fixture.request);
   for (int tick = 0; tick < 8 &&
