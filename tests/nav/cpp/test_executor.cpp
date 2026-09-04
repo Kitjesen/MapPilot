@@ -1655,6 +1655,20 @@ TEST(Executor, ScanMapReferenceSurvivesTfCorrections) {
   }
 }
 
+TEST(Executor, MapPlanningDoesNotConsumeOdomTransform) {
+  auto executor = makeScanExecutor();
+  executor.setRoute(route({{1.0, -1.0, 0.0}, {1.0, 2.0, 0.0}}));
+  const auto body = pose(1.0, -1.0, 0.5, M_PI / 2.0);
+  auto observation = emptyScanObservation(1.0);
+  lingtu::nav::navigation::MapFromOdomTransform tf{};
+  tf.yaw = std::numeric_limits<double>::quiet_NaN();
+  const auto output = awaitScanOutput([&]() {
+    return executor.tick(odomInput(body, {}, tf, nullptr, 0, 1.0, {}, observation));
+  });
+  ASSERT_TRUE(output.path_found) << output.reason;
+  EXPECT_GT(output.cmd_vel.vx, 0.0);
+}
+
 TEST(Executor, ScanEpochDiscardsOldReferenceAndSpline) {
   auto executor = makeScanExecutor();
   executor.setRoute(route({{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}}));

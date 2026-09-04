@@ -308,7 +308,7 @@ ExecutionOutput Executor::tickRoute(const nav_kernel::Pose &map_body,
                                     const float *obstacle_xyzh_map, int obstacle_count,
                                     double timestamp_s, TraversabilityGridView odom_traversability,
                                     ExecutionObservation observation) {
-  if (!map_from_odom.valid()) {
+  if (config_.planning_frame == PlanningFrame::Odom && !map_from_odom.valid()) {
     ExecutionOutput output;
     output.active = !route.empty();
     output.near_field_stop = output.active;
