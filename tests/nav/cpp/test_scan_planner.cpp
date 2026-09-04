@@ -63,6 +63,8 @@ TEST(ScanDefaults, UsesOfficialGridAndSearchScale) {
   EXPECT_DOUBLE_EQ(params.voxelResolution, 0.05);
   EXPECT_DOUBLE_EQ(params.cylinderRadius, 0.40);
   EXPECT_DOUBLE_EQ(params.cylinderOffset, 0.25);
+  EXPECT_DOUBLE_EQ(nav_kernel::local::scan::Backend::fsmPeriodS(), 0.01);
+  EXPECT_DOUBLE_EQ(nav_kernel::local::scan::Backend::collisionPeriodS(), 0.05);
 }
 
 TEST(ScanGridAdapter, ReadsMapdInflatedBitsWithoutReinflating) {
@@ -128,7 +130,7 @@ TEST(ScanBackend, EmitsOfficialBsplineAfterFsmTransitions) {
   for (int tick = 0; tick < 8 && !plan.ready(); ++tick) {
     fixture.request.clock.timestampS = 1.0 + 0.01 * tick;
     fixture.refreshCollision(1);
-    plan = backend.plan(fixture.request);
+    plan = backend.tick(fixture.request);
   }
 
   ASSERT_TRUE(plan.ready()) << backend.debugSnapshot().searchReason;
@@ -140,6 +142,9 @@ TEST(ScanBackend, EmitsOfficialBsplineAfterFsmTransitions) {
   EXPECT_GE(spline->controls.size(), 4U);
   EXPECT_EQ(spline->knots.size(),
             spline->controls.size() + static_cast<std::size_t>(spline->order) + 1U);
+  const auto &preview = plan.previewPath();
+  ASSERT_FALSE(preview.empty());
+  EXPECT_EQ(preview.data(), plan.previewPath().data());
 }
 
 TEST(ScanBackend, KeepsCommittedTrajectoryWhileOfficialFsmReplans) {
@@ -149,41 +154,47 @@ TEST(ScanBackend, KeepsCommittedTrajectoryWhileOfficialFsmReplans) {
   LocalPlan ready;
   for (int tick = 0; tick < 8 && !ready.ready(); ++tick) {
     fixture.request.clock.timestampS = 1.0 + 0.01 * tick;
-    ready = backend.plan(fixture.request);
+    ready = backend.tick(fixture.request);
   }
   ASSERT_TRUE(ready.ready());
   const auto firstId = std::get<SplineTarget>(ready.target()).trajectoryId;
 
   fixture.request.clock.timestampS += 0.01;
   fixture.refreshCollision(2);
-  const LocalPlan retained = backend.plan(fixture.request);
+  const LocalPlan retained = backend.tick(fixture.request);
 
   ASSERT_TRUE(retained.ready());
   EXPECT_GE(std::get<SplineTarget>(retained.target()).trajectoryId, firstId);
 }
 
-TEST(ScanBackend, DoesNotReturnCommittedSplineAfterCollisionWithoutReplacement) {
+TEST(ScanBackend, CollisionTickRetainsPublishedSplineUntilReplacement) {
   RequestFixture fixture({{0.0, 0.0, 0.5}, {2.0, 0.0, 0.5}});
   nav_kernel::local::scan::Backend backend(scanParams());
   LocalPlan ready;
   for (int tick = 0; tick < 8 && !ready.ready(); ++tick) {
     fixture.request.clock.timestampS = 1.0 + 0.01 * tick;
-    ready = backend.plan(fixture.request);
+    ready = backend.tick(fixture.request);
   }
   ASSERT_TRUE(ready.ready());
 
   fixture.bitmap.occupyInflated({0.5F, 0.0F, 0.5F}, 0.4, 0.2, 0.2);
   fixture.request.clock.timestampS += 0.05;
   fixture.refreshCollision(2);
-  const LocalPlan updated = backend.plan(fixture.request);
+  const LocalPlan retained = backend.tick(fixture.request);
+  ASSERT_TRUE(retained.ready());
+  const auto retainedId =
+      std::get<SplineTarget>(retained.target()).trajectoryId;
+  const LocalPlan updated = backend.checkCollision(fixture.request);
 
-  if (updated.ready()) {
+  ASSERT_TRUE(updated.ready());
+  const auto updatedId =
+      std::get<SplineTarget>(updated.target()).trajectoryId;
+  EXPECT_GE(updatedId, retainedId);
+  if (updatedId > retainedId) {
     nav_kernel::local::scan::Grid grid(scanParams(), fixture.request);
     ASSERT_TRUE(grid.valid()) << grid.reason();
     for (const Vec3 &point : updated.previewPath())
       EXPECT_TRUE(grid.obstacleFree(point, 0.0));
-  } else {
-    EXPECT_EQ(updated.status(), nav_kernel::LocalPlanStatus::Blocked);
   }
 }
 
@@ -193,7 +204,7 @@ TEST(ScanBackend, DoesNotPublishOldSplineForNewRouteIdentity) {
   LocalPlan ready;
   for (int tick = 0; tick < 8 && !ready.ready(); ++tick) {
     fixture.request.clock.timestampS = 1.0 + 0.01 * tick;
-    ready = backend.plan(fixture.request);
+    ready = backend.tick(fixture.request);
   }
   ASSERT_TRUE(ready.ready());
   const auto previousId = std::get<SplineTarget>(ready.target()).trajectoryId;
@@ -202,7 +213,7 @@ TEST(ScanBackend, DoesNotPublishOldSplineForNewRouteIdentity) {
   fixture.request.objective = RouteTarget{{
       fixture.route.data(), static_cast<int>(fixture.route.size()), 2, false}};
   fixture.request.clock.timestampS += 0.01;
-  const LocalPlan changed = backend.plan(fixture.request);
+  const LocalPlan changed = backend.tick(fixture.request);
 
   if (changed.ready()) {
     EXPECT_GT(std::get<SplineTarget>(changed.target()).trajectoryId, previousId);

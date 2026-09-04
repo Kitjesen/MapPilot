@@ -832,7 +832,8 @@ void testLocalCollisionProjectionOwnsPayloadAndRejectsPreClearReplay() {
   projector.projectLocalCollision(layer.message, 202.0);
   require(state.local_collision_count == 1,
           "accepted collision layer must increment its counter");
-  require(state.local_collision_map.inflated_occupied_bits.size() == 50000U,
+  require(state.local_collision_map.inflated_occupied_bits &&
+              state.local_collision_map.inflated_occupied_bits->size() == 50000U,
           "collision projection must own the packed occupancy layer");
   require(!state.local_collision_map.complete,
           "an incomplete wire layer must remain explicitly incomplete");
@@ -865,7 +866,7 @@ void testLocalCollisionProjectionOwnsPayloadAndRejectsPreClearReplay() {
   lingtu_dds_Bool clear{};
   clear.data = true;
   projector.clearPlannerInputs(clear, ClearSource::Map);
-  require(state.local_collision_map.inflated_occupied_bits.empty() &&
+  require(!state.local_collision_map.inflated_occupied_bits &&
               state.last_local_collision_receive_s == 0.0,
           "planner clear must discard collision payload and receiver freshness");
 

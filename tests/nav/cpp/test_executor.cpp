@@ -717,7 +717,7 @@ TEST(Executor, ScanKeepsSafeIntentWhileReturningToTeleopCorridor) {
   EXPECT_NE(detouring.reason, "local_intent_pending");
 }
 
-TEST(Executor, ScanReplacesBlockedSplineAfterInflatedMapChanges) {
+TEST(Executor, ScanCollisionStopsOrReplans) {
   auto executor = makeScanExecutor();
   nav_kernel::Twist intent;
   intent.vx = 0.25;
@@ -764,15 +764,21 @@ TEST(Executor, ScanReplacesBlockedSplineAfterInflatedMapChanges) {
     }
     return true;
   };
-  for (int tick = 1; tick <= 500 && updated.path_found &&
-                     !path_is_safe(updated); ++tick) {
+  const auto stopped = [](const auto &output) {
+    return std::abs(output.cmd_vel.vx) < 1e-6 &&
+           std::abs(output.cmd_vel.vy) < 1e-6 &&
+           std::abs(output.cmd_vel.wz) < 1e-6;
+  };
+  for (int tick = 1; tick <= 300 && updated.path_found &&
+                     !path_is_safe(updated) && !stopped(updated); ++tick) {
     const double now = 1.05 + 0.01 * static_cast<double>(tick);
     updated = executor.tick(
         intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, nullptr, 0, now, {}, observation));
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
-  EXPECT_TRUE(!updated.path_found || path_is_safe(updated)) << updated.reason;
+  EXPECT_TRUE(!updated.path_found || path_is_safe(updated) || stopped(updated))
+      << updated.reason;
 }
 
 TEST(Executor, CmuRotatesWhenNoPath) {

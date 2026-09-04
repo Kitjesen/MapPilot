@@ -13,8 +13,8 @@ struct LocalPlanUpdate {
   LocalPlannerDebugSnapshot debug{};
 };
 
-// Latest-only SCAN worker. It snapshots each collision generation once and
-// retains the last committed world-frame spline while the same guide replans.
+// Serialized SCAN timer runtime. One worker owns the mutable upstream FSM and
+// runs its 100 Hz state callback and independent 20 Hz collision callback.
 class LocalPlanTask {
  public:
   explicit LocalPlanTask(const LocalPlannerParams &params);

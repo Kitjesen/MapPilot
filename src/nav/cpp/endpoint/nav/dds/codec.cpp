@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <string_view>
 #include <utility>
 
@@ -341,9 +342,10 @@ std::vector<float> terrainCloudToXyzh(const lingtu_dds_PointCloud2 &msg,
 }
 
 nav_kernel::LocalCollisionMapView LocalCollisionMap::view() const noexcept {
-  return {
-      inflated_occupied_bits.empty() ? nullptr : inflated_occupied_bits.data(),
-      inflated_occupied_bits.size(),
+  const auto *bits = inflated_occupied_bits.get();
+  nav_kernel::LocalCollisionMapView result{
+      bits == nullptr || bits->empty() ? nullptr : bits->data(),
+      bits == nullptr ? 0U : bits->size(),
       size_x,
       size_y,
       size_z,
@@ -358,6 +360,8 @@ nav_kernel::LocalCollisionMapView LocalCollisionMap::view() const noexcept {
       complete,
       live,
   };
+  result.inflatedStorage = inflated_occupied_bits;
+  return result;
 }
 
 Decoded<LocalCollisionMap> decodeLocalCollisionMap(
@@ -416,9 +420,10 @@ Decoded<LocalCollisionMap> decodeLocalCollisionMap(
     decoded.error = "local_collision_bits_invalid";
     return decoded;
   }
-  decoded.value.inflated_occupied_bits.assign(
-      msg.inflated_occupied_bits._buffer,
-      msg.inflated_occupied_bits._buffer + msg.inflated_occupied_bits._length);
+  decoded.value.inflated_occupied_bits =
+      std::make_shared<const std::vector<std::uint8_t>>(
+          msg.inflated_occupied_bits._buffer,
+          msg.inflated_occupied_bits._buffer + msg.inflated_occupied_bits._length);
   if (!decoded.value.view().valid()) {
     decoded.error = "local_collision_geometry_invalid";
   }

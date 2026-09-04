@@ -146,8 +146,18 @@ class Backend::Impl {
     initializeOfficialCore();
   }
 
-  LocalPlan plan(const LocalPlanRequest &input,
-                 const LocalPlanCancel &cancel = {}) {
+  LocalPlan tick(const LocalPlanRequest &input,
+                 const LocalPlanCancel &cancel) {
+    return run(input, false, cancel);
+  }
+
+  LocalPlan checkCollision(const LocalPlanRequest &input,
+                           const LocalPlanCancel &cancel) {
+    return run(input, true, cancel);
+  }
+
+  LocalPlan run(const LocalPlanRequest &input, bool collisionTick,
+                const LocalPlanCancel &cancel) {
     const auto started = std::chrono::steady_clock::now();
     debug_ = {};
     debug_.backend = LocalPlannerBackend::Scan;
@@ -207,18 +217,22 @@ class Backend::Impl {
     fsmInput.odometry = odometry;
     fsmInput.executionFrozen = input.clock.executionFrozen;
 
-    const bool hardReferenceChange = referenceIdentityChanged(input, *route);
-    if (hardReferenceChange)
-      active_.reset();
-    if (hardReferenceChange || referenceChanged(*route)) {
-      std::vector<Eigen::Vector3d> reference;
-      reference.reserve(static_cast<std::size_t>(route->count));
-      for (int index = 0; index < route->count; ++index)
-        reference.push_back(eigenPoint(route->points[index]));
-      fsmInput.referencePath = std::move(reference);
+    FsmOutput output;
+    if (collisionTick) {
+      output = fsm_->checkFutureCollision(fsmInput);
+    } else {
+      const bool hardReferenceChange = referenceIdentityChanged(input, *route);
+      if (hardReferenceChange)
+        active_.reset();
+      if (hardReferenceChange || referenceChanged(*route)) {
+        std::vector<Eigen::Vector3d> reference;
+        reference.reserve(static_cast<std::size_t>(route->count));
+        for (int index = 0; index < route->count; ++index)
+          reference.push_back(eigenPoint(route->points[index]));
+        fsmInput.referencePath = std::move(reference);
+      }
+      output = fsm_->tick(fsmInput);
     }
-
-    FsmOutput output = fsm_->tick(fsmInput);
     const auto retimeTrajectory = [&](FsmOutput &candidate) {
       if (!candidate.trajectory)
         return;
@@ -230,25 +244,8 @@ class Backend::Impl {
       fsmInput.nowS = completedAtS;
     };
     retimeTrajectory(output);
-    if (output.targetAccepted)
+    if (!collisionTick && output.targetAccepted)
       rememberReference(input, *route);
-
-    if (lastCollisionCheckS_ < 0.0 ||
-        input.clock.timestampS - lastCollisionCheckS_ >=
-            SCANReplanFSM::kFutureCollisionPeriodS - 1e-6) {
-      lastCollisionCheckS_ = input.clock.timestampS;
-      FsmOutput collision = fsm_->checkFutureCollision(fsmInput);
-      retimeTrajectory(collision);
-      if (collision.trajectory) {
-        output.trajectory = std::move(collision.trajectory);
-      } else if (collision.collisionDetected) {
-        output.trajectory.reset();
-      }
-      output.collisionDetected = collision.collisionDetected;
-      output.collisionTimeAheadS = collision.collisionTimeAheadS;
-      output.emergencyStopIssued = collision.emergencyStopIssued;
-      output.state = collision.state;
-    }
     debug_.searchTimeMs = manager_->pp_.time_search_ * 1000.0;
     debug_.splineTimeMs =
         (manager_->pp_.time_optimize_ + manager_->pp_.time_adjust_) * 1000.0;
@@ -265,12 +262,8 @@ class Backend::Impl {
             static_cast<int>(output.trajectory->positionPoints.cols());
       }
     }
-    if (output.collisionDetected && !output.trajectory)
-      active_.reset();
     if (output.targetRejected && !active_)
       return stop(LocalPlanStatus::NoPath, "scan_target_rejected");
-    if (output.collisionDetected && !active_)
-      return stop(LocalPlanStatus::Blocked, "scan_collision_blocked");
     if (active_) {
       debug_.valid = true;
       debug_.continuityReused = !output.trajectory.has_value();
@@ -293,7 +286,6 @@ class Backend::Impl {
     lastReference_.clear();
     lastFrameEpoch_ = 0;
     lastRouteGeneration_ = 0;
-    lastCollisionCheckS_ = -1.0;
     debug_ = {};
     debug_.backend = LocalPlannerBackend::Scan;
     initializeOfficialCore();
@@ -302,6 +294,7 @@ class Backend::Impl {
   LocalPlannerDebugSnapshot debugSnapshot() const { return debug_; }
 
  private:
+
   void initializeOfficialCore() {
     const PlanParameters plan = planParameters(params_);
     manager_ = std::make_unique<SCANPlannerManager>();
@@ -355,7 +348,6 @@ class Backend::Impl {
   std::vector<Vec3> lastReference_;
   std::uint64_t lastFrameEpoch_{0};
   std::uint64_t lastRouteGeneration_{0};
-  double lastCollisionCheckS_{-1.0};
   LocalPlannerDebugSnapshot debug_{};
 };
 
@@ -366,13 +358,22 @@ Backend::~Backend() = default;
 Backend::Backend(Backend &&) noexcept = default;
 Backend &Backend::operator=(Backend &&) noexcept = default;
 
-LocalPlan Backend::plan(const LocalPlanRequest &input) {
-  return impl_->plan(input);
+double Backend::fsmPeriodS() noexcept {
+  return SCANReplanFSM::kTickPeriodS;
 }
 
-LocalPlan Backend::plan(const LocalPlanRequest &input,
+double Backend::collisionPeriodS() noexcept {
+  return SCANReplanFSM::kFutureCollisionPeriodS;
+}
+
+LocalPlan Backend::tick(const LocalPlanRequest &input,
                         const LocalPlanCancel &cancel) {
-  return impl_->plan(input, cancel);
+  return impl_->tick(input, cancel);
+}
+
+LocalPlan Backend::checkCollision(const LocalPlanRequest &input,
+                                  const LocalPlanCancel &cancel) {
+  return impl_->checkCollision(input, cancel);
 }
 
 void Backend::reset() {

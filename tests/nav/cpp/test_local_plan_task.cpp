@@ -74,6 +74,18 @@ TEST(LocalPlanTask, RejectsInvalidRouteWithoutStartingWork) {
             nav_kernel::LocalPlanStatus::InvalidInput);
 }
 
+TEST(LocalPlanTask, RunsFsmOnOwnedTimer) {
+  nav_kernel::local::LocalPlanTask task(scanParams());
+  ASSERT_TRUE(task.configure());
+  RequestFixture fixture;
+
+  EXPECT_EQ(task.update(fixture.request).plan.status(),
+            nav_kernel::LocalPlanStatus::Pending);
+  std::this_thread::sleep_for(std::chrono::seconds(1));
+
+  EXPECT_TRUE(task.update(fixture.request).plan.ready());
+}
+
 TEST(LocalPlanTask, KeepsOfficialWorldFrameSplineDuringMapRefresh) {
   nav_kernel::local::LocalPlanTask task(scanParams());
   ASSERT_TRUE(task.configure());
@@ -119,11 +131,14 @@ TEST(LocalPlanTask, NewIntentGenerationDoesNotReuseOldSpline) {
             nav_kernel::LocalPlanStatus::Pending);
 }
 
-TEST(LocalPlanTask, RefreshesCollisionSnapshotWhenResetEpochChanges) {
+TEST(LocalPlanTask, ProcessesResetEpochOnCollisionTimer) {
   nav_kernel::local::LocalPlanTask task(scanParams());
   ASSERT_TRUE(task.configure());
   RequestFixture fixture;
-  ASSERT_TRUE(waitForPlan(task, fixture).ready());
+  const nav_kernel::LocalPlan ready = waitForPlan(task, fixture);
+  ASSERT_TRUE(ready.ready());
+  const auto firstId =
+      std::get<nav_kernel::SplineTarget>(ready.target()).trajectoryId;
 
   fixture.bitmap.occupyInflated({0.5F, 0.0F, 0.5F}, 0.4, 0.2, 0.2);
   nav_kernel::LocalPlan updated;
@@ -132,10 +147,15 @@ TEST(LocalPlanTask, RefreshesCollisionSnapshotWhenResetEpochChanges) {
     fixture.setGeneration(1);
     fixture.request.environment.collision.resetEpoch = 2;
     updated = task.update(fixture.request).plan;
-    if (updated.status() == nav_kernel::LocalPlanStatus::Blocked)
+    if (updated.ready() &&
+        std::get<nav_kernel::SplineTarget>(updated.target()).trajectoryId >
+            firstId) {
       break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
 
-  EXPECT_EQ(updated.status(), nav_kernel::LocalPlanStatus::Blocked);
+  ASSERT_TRUE(updated.ready());
+  EXPECT_GT(std::get<nav_kernel::SplineTarget>(updated.target()).trajectoryId,
+            firstId);
 }

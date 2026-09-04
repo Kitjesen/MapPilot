@@ -19,8 +19,11 @@ LingTu-specific code is only the boundary:
 - `backend.*` converts `LocalPlanRequest` odometry and Route/MotionIntent into
   official FSM inputs, then converts the emitted B-spline message into
   `SplineTarget`.
-- `planning/local/task.*` owns the latest-only worker and retains the last
-  committed trajectory while a same-intent replan is pending.
+- `planning/local/task.*` owns one serialized worker with the upstream timer
+  semantics: the FSM callback runs at 100 Hz and the future-collision callback
+  runs independently at 20 Hz. The last published trajectory remains active
+  until the FSM publishes a replacement or an emergency stop, matching the
+  official controller/topic behavior.
 - `tracking/follower.*` adapts `SplineTarget` to the official closed-loop
   controller. CMU `PathTarget` continues through its separate path follower.
 
