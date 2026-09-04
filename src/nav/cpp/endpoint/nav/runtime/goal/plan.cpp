@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -392,6 +393,7 @@ GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &
   }
 
   if (!completion->error.empty()) {
+    std::cerr << "nav_native: global planner exception: " << completion->error << '\n';
     diagnostics_.reason = "global_planner_exception";
     advance_result.counted_failure = true;
     if (completing_replan) {
