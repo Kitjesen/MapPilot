@@ -31,7 +31,6 @@ LocalPlannerParams scanParams() {
   params.scan.voxelResolution = 0.1;
   params.scan.controlPointSpacing = 0.2;
   params.scan.cylinderOffset = 0.0;
-  params.scan.cylinderRadius = 0.1;
   params.scan.maxAcceleration = 0.5;
   return params;
 }
@@ -61,7 +60,6 @@ struct RequestFixture {
 TEST(ScanDefaults, UsesOfficialGridAndSearchScale) {
   const nav_kernel::ScanPlannerParams params;
   EXPECT_DOUBLE_EQ(params.voxelResolution, 0.05);
-  EXPECT_DOUBLE_EQ(params.cylinderRadius, 0.40);
   EXPECT_DOUBLE_EQ(params.cylinderOffset, 0.25);
   EXPECT_DOUBLE_EQ(nav_kernel::local::scan::Backend::fsmPeriodS(), 0.01);
   EXPECT_DOUBLE_EQ(nav_kernel::local::scan::Backend::collisionPeriodS(), 0.05);
@@ -73,6 +71,8 @@ TEST(ScanGridAdapter, ReadsMapdInflatedBitsWithoutReinflating) {
   fixture.refreshCollision(2);
   nav_kernel::local::scan::Grid grid(scanParams(), fixture.request);
   ASSERT_TRUE(grid.valid()) << grid.reason();
+  EXPECT_EQ(grid.occupiedCellCount(), 1);
+  EXPECT_EQ(grid.collisionPointCount(), 1);
 
   auto map = std::make_shared<nav_kernel::local::scan::upstream::GridMap>(grid);
   EXPECT_EQ(map->getInflateOccupancy({0.0, 0.0, 0.5}, 0.0), 1);

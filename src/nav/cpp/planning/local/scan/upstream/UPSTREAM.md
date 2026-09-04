@@ -11,4 +11,6 @@ code in the LingTu namespace, and adapting map/time inputs at the module seam.
 
 `plan_env/grid_map.*` is that explicit seam: Mapd owns the upstream occupancy,
 raycast, log-odds, and incremental-inflation behavior, while this class exposes
-the resulting read-only bitmap through the upstream occupancy-query API.
+the resulting read-only bitmap through the upstream occupancy-query API. The
+SCAN Mapd profile disables generic time decay, so occupancy changes only from
+ray evidence or rolling-window eviction, matching the pinned implementation.

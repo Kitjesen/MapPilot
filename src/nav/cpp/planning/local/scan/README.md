@@ -34,9 +34,12 @@ reported as an official `no_path` result.
 
 Mapd uses the upstream map profile: `0.05 m`, `200 x 200 x 100`, `5 m` rays,
 `p_hit=0.85`, `p_miss=0.30`, `p_min=0.12`, `p_max=0.98`, and `p_occ=0.80`.
-Inflation is maintained incrementally when occupancy changes. Thunder replaces
-only the upstream robot geometry with its configured twin-cylinder radius and
-offset.
+Inflation is maintained incrementally when occupancy changes. The SCAN profile
+disables time-based occupancy decay: cells clear only through ray misses or a
+rolling-window eviction, as in the pinned upstream GridMap. Thunder replaces
+the upstream robot geometry with its configured twin-cylinder radius and
+offset. Product speed limits may be lower than the upstream launch defaults;
+they are explicit robot/runtime tuning and do not change the SCAN equations.
 
 `nav` and `teleop_avoid` select `scan` by default and run the SCAN FSM and
 controller at 100 Hz; future-collision checks run at the upstream 20 Hz.

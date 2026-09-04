@@ -18,7 +18,6 @@ nav_kernel::LocalPlannerParams scanParams() {
   params.scan.voxelResolution = 0.1;
   params.scan.controlPointSpacing = 0.2;
   params.scan.cylinderOffset = 0.0;
-  params.scan.cylinderRadius = 0.1;
   params.scan.maxAcceleration = 0.5;
   return params;
 }

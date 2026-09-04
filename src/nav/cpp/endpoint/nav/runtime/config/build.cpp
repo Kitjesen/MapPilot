@@ -206,7 +206,6 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
   out.adjacentRange = cfg.corridor_lookahead_m;
   out.vehicleLength = cfg.vehicle_length_m;
   out.vehicleWidth = cfg.vehicle_width_m;
-  out.scan.cylinderRadius = cfg.collision_cylinder_radius_m;
   out.scan.cylinderOffset = cfg.collision_cylinder_offset_m;
   out.scan.bodyClearanceBelow = cfg.collision_clearance_below_m;
   out.scan.bodyClearanceAbove = cfg.collision_clearance_above_m;

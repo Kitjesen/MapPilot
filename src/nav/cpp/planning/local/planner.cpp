@@ -127,6 +127,9 @@ std::size_t LocalCollisionMapView::occupiedCount() const noexcept {
   if (!valid()) {
     return 0U;
   }
+  if (occupiedCellsKnown) {
+    return occupiedCells;
+  }
   std::size_t count = 0U;
   for (std::size_t index = 0U; index < inflatedBytes; ++index) {
     std::uint8_t value = inflatedBits[index];

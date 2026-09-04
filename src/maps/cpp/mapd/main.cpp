@@ -230,6 +230,16 @@ void ConfigureOccupancy(Config *engine) {
   occupancy.occupied_probability = static_cast<float>(ParseDouble(
       EnvOr("LINGTU_MAPD_OCCUPANCY_P_OCC", std::to_string(occupancy.occupied_probability)),
       "LINGTU_MAPD_OCCUPANCY_P_OCC"));
+  const double decay_after_s = ParseDouble(
+      EnvOr("LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S",
+            std::to_string(static_cast<double>(occupancy.decay_after_ns) * 1e-9)),
+      "LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S");
+  if (decay_after_s < 0.0 ||
+      decay_after_s > static_cast<double>(std::numeric_limits<std::int64_t>::max()) * 1e-9) {
+    throw std::invalid_argument("LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S is invalid");
+  }
+  occupancy.decay_after_ns =
+      static_cast<std::int64_t>(std::llround(decay_after_s * 1e9));
   occupancy.inflation_radius_m = static_cast<float>(ParseDouble(
       EnvOr("LINGTU_MAPD_INFLATION_RADIUS_M", std::to_string(occupancy.inflation_radius_m)),
       "LINGTU_MAPD_INFLATION_RADIUS_M"));

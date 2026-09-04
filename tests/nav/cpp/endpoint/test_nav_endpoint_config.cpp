@@ -889,12 +889,9 @@ void testGo2RunPlanGeometryEnvironmentParsesExactly() {
   ScopedEnvironment planner_backend("LINGTU_NAV_LOCAL_PLANNER_BACKEND", "scan");
   const auto scan_cfg = parse({"navd"});
   const auto scan = buildLocalPlannerParams(scan_cfg);
-  require(std::abs(scan.scan.cylinderRadius - 0.25) < 1e-12 &&
-              std::abs(scan.scan.cylinderOffset - 0.18) < 1e-12 &&
+  require(std::abs(scan.scan.cylinderOffset - 0.18) < 1e-12 &&
               std::abs(scan.footprintPadding) < 1e-12,
           "Go2 SCAN must use the complete double-cylinder envelope without extra padding");
-  require(std::abs(scan.scan.horizontalRange - 2.5) < 1e-12,
-          "SCAN projected A* must retain the official 100-cell, five-meter search pool");
   require(!scan.useTerrainAnalysis,
           "SCAN collision input must not inherit the CMU terrain-cloud interpretation");
 }
@@ -1091,8 +1088,8 @@ void testScanCollisionEnvelopeIsConfigurable() {
       "0.36",
   });
   const auto planner = buildLocalPlannerParams(cfg);
-  require(std::abs(planner.scan.cylinderRadius - 0.41) < 1e-12,
-          "SCAN collision radius must reach the planner");
+  require(std::abs(cfg.collision_cylinder_radius_m - 0.41) < 1e-12,
+          "SCAN collision radius must remain available to the Mapd profile");
   require(std::abs(planner.scan.cylinderOffset - 0.24) < 1e-12,
           "SCAN collision offset must reach the planner");
   require(std::abs(planner.scan.bodyClearanceBelow - 0.22) < 1e-12,

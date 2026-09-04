@@ -84,7 +84,6 @@ lingtu::nav::navigation::Executor makeScanExecutor(double corridor_lookahead_m =
   planner.maxSpeed = 1.0;
   planner.vehicleLength = vehicle_length_m;
   planner.scan.voxelResolution = 0.10;
-  planner.scan.horizontalRange = 4.0;
   config.follower.maxSpeed = 0.5;
   config.follower.maxAccel = 2.0;
   config.follower.nominalDt = 0.05;

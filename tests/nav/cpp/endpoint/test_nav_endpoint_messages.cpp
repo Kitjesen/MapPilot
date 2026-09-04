@@ -274,6 +274,8 @@ void testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity() {
   require(view.present(), "decoded collision view must be present");
   require(view.inflatedStorage == decoded.value.inflated_occupied_bits,
           "planner view must share the decoded collision bitmap");
+  require(decoded.value.occupied_cells_known && view.occupiedCount() == 2U,
+          "collision occupancy count must be cached while the DDS loan is decoded");
   require(!view.complete, "wire completeness flag must survive the owning copy");
   require(view.resetEpoch == 4U && view.observationSequence == 9U &&
               view.generation == 12U,

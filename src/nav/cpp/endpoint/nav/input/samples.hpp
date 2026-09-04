@@ -66,6 +66,8 @@ struct LocalCollisionMap {
   double receive_stamp_s{0.0};
   bool complete{false};
   bool live{false};
+  std::size_t occupied_cells{0U};
+  bool occupied_cells_known{false};
 
   [[nodiscard]] nav_kernel::LocalCollisionMapView view() const noexcept;
 };

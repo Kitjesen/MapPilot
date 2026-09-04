@@ -74,6 +74,8 @@ def mapd_environment(native_environment: Mapping[str, str]) -> dict[str, str]:
         "LINGTU_MAPD_OCCUPANCY_P_MIN": "0.12",
         "LINGTU_MAPD_OCCUPANCY_P_MAX": "0.98",
         "LINGTU_MAPD_OCCUPANCY_P_OCC": "0.80",
+        # Upstream SCAN clears cells only through ray misses or window rolls.
+        "LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S": "0",
         "LINGTU_MAPD_INFLATION_RADIUS_M": _env_number(float(radius)),
         "LINGTU_MAPD_INFLATION_Z_UP_M": "0.10",
         "LINGTU_MAPD_INFLATION_Z_DOWN_M": "0.10",

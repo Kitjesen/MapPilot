@@ -28,26 +28,14 @@ const char *localPlannerBackendName(LocalPlannerBackend backend);
 
 struct ScanPlannerParams {
   double voxelResolution = 0.05;
-  double horizontalRange = 2.5;
-  double verticalMargin = 0.60;
   double routeZTolerance = 0.35;
-  double maxSlope = 0.80;
   double bodyClearanceBelow = 0.25;
   double bodyClearanceAbove = 0.35;
-  double endpointSearchMargin = 0.0;
-  double cylinderRadius = 0.40;
   double cylinderOffset = 0.25;
-  double inflationZUp = 0.10;
-  double inflationZDown = 0.10;
-  double guideWeight = 1.5;
   double controlPointSpacing = 0.20;
-  double sampleSpacing = 0.08;
-  double continuityHorizon = 0.50;
   double replanDistance = 1.0;
   double noReplanDistance = 0.10;
   double collisionMaxAge = 0.50;
-  double planningDeadlineS = 0.10;
-  double maxVerticalSpeed = 0.25;
   double maxAcceleration = 1.0;
   double smoothWeight = 1.0;
   double collisionWeight = 1.0;
@@ -57,9 +45,6 @@ struct ScanPlannerParams {
   double velocityTolerance = 1.0;
   double accelerationTolerance = 1.0;
   double collisionDistance = 0.20;
-  int maxSearchNodes = 12000;
-  int smoothingIterations = 200;
-  int maxReboundRestarts = 3;
 };
 
 struct LocalPlannerParams {
@@ -144,6 +129,9 @@ struct LocalCollisionMapView {
   // Optional lifetime owner supplied by the endpoint. In-process consumers
   // share the decoded bitmap instead of copying it for every map generation.
   std::shared_ptr<const std::vector<std::uint8_t>> inflatedStorage{};
+  // Endpoint-owned views cache this once while decoding the DDS bitmap.
+  std::size_t occupiedCells{0U};
+  bool occupiedCellsKnown{false};
 
   [[nodiscard]] bool present() const noexcept;
   [[nodiscard]] bool valid() const noexcept;

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace nav_kernel::local::scan {
 
@@ -48,11 +49,12 @@ double Grid::resolution() const noexcept {
 }
 
 int Grid::occupiedCellCount() const noexcept {
-  return 0;
+  return static_cast<int>(std::min<std::size_t>(
+      collision_.occupiedCount(), static_cast<std::size_t>(std::numeric_limits<int>::max())));
 }
 
 int Grid::collisionPointCount() const noexcept {
-  return 0;
+  return occupiedCellCount();
 }
 
 bool Grid::obstacleFree(const Vec3 &center, double yaw) const noexcept {

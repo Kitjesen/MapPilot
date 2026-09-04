@@ -86,8 +86,6 @@ int main(int argc, char** argv) {
   params.autonomySpeed = 0.40;
   params.maxSpeed = 1.0;
   params.useTraversabilityCost = false;
-  params.scan.horizontalRange = 4.0;
-  params.scan.maxSearchNodes = 12000;
 
   nav_kernel::local::scan::Backend planner(params);
   const std::vector<nav_kernel::Vec3> route{
@@ -101,8 +99,7 @@ int main(int argc, char** argv) {
   const std::vector<float> collision_xyz = collisionCenters(obstacles);
   lingtu::nav::tests::CollisionBitmap collision(
       {-5.0, -5.0, -3.0}, {5.0, 5.0, 3.0}, params.scan.voxelResolution);
-  collision.occupyInflated(collision_xyz, params.scan.cylinderRadius,
-                           params.scan.inflationZDown, params.scan.inflationZUp);
+  collision.occupyInflated(collision_xyz, 0.40, 0.10, 0.10);
 
   std::vector<double> elapsed_ms;
   std::vector<double> grid_ms;

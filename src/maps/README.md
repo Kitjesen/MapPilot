@@ -104,9 +104,11 @@ voxel clouds embedded in `/maps/scene`. Saved-map artifacts
 remain built by the SaveMap pipeline and are unaffected by this runtime choice.
 
 The rolling 3-D occupancy keeps compact observed/occupied bit indexes. Collision
-snapshots, decay, and window rolls therefore visit active cells instead of
-rescanning the full grid. This changes neither the configured resolution nor
-the collision AABB; the SCAN profile remains `200 x 200 x 100` at `0.05 m`.
+snapshots and window rolls therefore visit active cells instead of rescanning
+the full grid. Generic map profiles may also enable time-based decay. The SCAN
+profile disables it to match upstream GridMap semantics: cells clear through
+ray misses or rolling-window eviction. Its grid remains `200 x 200 x 100` at
+`0.05 m`.
 
 The traversability process owns the separate terrain-risk grid used by control.
 Its rolling exploration occupancy is constructed only by the `explore` Product;

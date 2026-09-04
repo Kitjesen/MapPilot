@@ -1467,6 +1467,7 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MIN"] == "0.12"
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MAX"] == "0.98"
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_OCC"] == "0.80"
+        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S"] == "0"
         assert float(plan.native_process_environment["LINGTU_MAPD_INFLATION_RADIUS_M"]) == pytest.approx(
             float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"])
         )

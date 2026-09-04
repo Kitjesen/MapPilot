@@ -361,6 +361,8 @@ nav_kernel::LocalCollisionMapView LocalCollisionMap::view() const noexcept {
       live,
   };
   result.inflatedStorage = inflated_occupied_bits;
+  result.occupiedCells = occupied_cells;
+  result.occupiedCellsKnown = occupied_cells_known;
   return result;
 }
 
@@ -424,6 +426,8 @@ Decoded<LocalCollisionMap> decodeLocalCollisionMap(
       std::make_shared<const std::vector<std::uint8_t>>(
           msg.inflated_occupied_bits._buffer,
           msg.inflated_occupied_bits._buffer + msg.inflated_occupied_bits._length);
+  decoded.value.occupied_cells = decoded.value.view().occupiedCount();
+  decoded.value.occupied_cells_known = true;
   if (!decoded.value.view().valid()) {
     decoded.error = "local_collision_geometry_invalid";
   }
