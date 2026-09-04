@@ -477,7 +477,7 @@ class FakeEngine:
         points[:, 3] = 100.0
         return points
 
-    def capture_lidar_snapshot(self) -> None:
+    def capture_state(self) -> None:
         return None
 
     def get_lidar_points_from_snapshot(

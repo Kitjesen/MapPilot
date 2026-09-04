@@ -1524,7 +1524,7 @@ class _LidarPublisher:
             world_xyzi_to_sensor_xyzi(
                 self._engine,
                 world_points,
-                data=task.snapshot,
+                data=getattr(self._engine, "_lidar_data", None),
             ),
             self._max_points,
         )
@@ -1688,7 +1688,7 @@ class _SensorPipeline:
 
         frame_start_s = self._next_lidar_s - self._lidar_period_s
         try:
-            snapshot = self._engine.capture_lidar_snapshot()
+            snapshot = self._engine.capture_state()
         except Exception:
             self._lidar_stats.drop_current()
             raise
@@ -2444,7 +2444,7 @@ def _execute(
             viewer_requested = config.viewer_enabled
         if viewer_requested:
             viewer = LiveViewer(
-                engine.model, engine.capture_lidar_snapshot(), config.robot.position_m,
+                engine.model, engine.capture_state(), config.robot.position_m,
                 lambda: _read_navigation_status(session_root / "nav.status.json"),
             )
             viewer_input = viewer_input_from_run_plan(
@@ -2657,7 +2657,7 @@ def _execute(
                     if trace and preview[-1] is not trace[-1]:
                         preview.append(trace[-1])
                     viewer.submit(
-                        engine.capture_lidar_snapshot(), state.position,
+                        engine.capture_state(), state.position,
                         [sample[1:4] for sample in preview],
                     )
                     next_viewer_s = tick.now_s + viewer_period_s

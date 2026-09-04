@@ -48,12 +48,21 @@ def launch_presentation_viewer(model: Any, data: Any) -> Any:
 class LiveViewer:
     """Render owned snapshots; display latency never holds the physics thread."""
 
-    def __init__(self, model: Any, snapshot: Any, position: Any,
+    def __init__(self, model: Any, state: Any, position: Any,
                  read_status: Callable[[], dict[str, Any]]) -> None:
         self._model = model
-        self._data = snapshot
+        import mujoco
+
+        self._data = mujoco.MjData(model)
+        mujoco.mj_setState(
+            model,
+            self._data,
+            np.asarray(state, dtype=np.float64),
+            mujoco.mjtState.mjSTATE_INTEGRATION,
+        )
+        mujoco.mj_forward(model, self._data)
         self._read_status = read_status
-        self._viewer = launch_presentation_viewer(model, snapshot)
+        self._viewer = launch_presentation_viewer(model, self._data)
         focus_presentation_viewer(self._viewer, position, initialize=True)
         self._condition = threading.Condition()
         self._pending: Any = None
@@ -63,9 +72,9 @@ class LiveViewer:
         self._thread = threading.Thread(target=self._run, name="mujoco-viewer", daemon=True)
         self._thread.start()
 
-    def submit(self, snapshot: Any, position: Any, actual_path: Any) -> None:
+    def submit(self, state: Any, position: Any, actual_path: Any) -> None:
         with self._condition:
-            self._pending = (snapshot, tuple(position), actual_path)
+            self._pending = (state, tuple(position), actual_path)
             self._condition.notify()
 
     def is_running(self) -> bool:
@@ -94,11 +103,17 @@ class LiveViewer:
                     self._condition.wait_for(lambda: self._closed or self._pending is not None)
                     if self._closed:
                         return
-                    snapshot, position, actual_path = self._pending
+                    state, position, actual_path = self._pending
                     self._pending = None
                 started = time.perf_counter()
                 with self._viewer.lock():
-                    mujoco.mj_copyData(self._data, self._model, snapshot)
+                    mujoco.mj_setState(
+                        self._model,
+                        self._data,
+                        np.asarray(state, dtype=np.float64),
+                        mujoco.mjtState.mjSTATE_INTEGRATION,
+                    )
+                    mujoco.mj_forward(self._model, self._data)
                 draw_navigation_paths(self._viewer, self._read_status(), actual_path=actual_path)
                 focus_presentation_viewer(self._viewer, position)
                 self._viewer.sync()

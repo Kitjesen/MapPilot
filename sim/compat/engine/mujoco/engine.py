@@ -122,6 +122,7 @@ class MuJoCoEngine(SimEngine):
         # MuJoCo core objects (initialized after load())
         self._model = None
         self._data = None
+        self._lidar_data = None
 
         # Sensors
         self._lidar: MuJoCoLidar | None = None
@@ -311,6 +312,7 @@ class MuJoCoEngine(SimEngine):
                 Path(tmp.name).unlink(missing_ok=True)
 
         self._data = mujoco.MjData(self._model)
+        self._lidar_data = mujoco.MjData(self._model)
         self._physics_dt = float(self._model.opt.timestep)
 
         # Resolve body/joint IDs
@@ -324,7 +326,7 @@ class MuJoCoEngine(SimEngine):
         self._leg_control_mode = self._resolve_leg_control_mode()
 
         # Initialize LiDAR
-        self._lidar = MuJoCoLidar(self._model, self._data, self._lidar_cfg)
+        self._lidar = MuJoCoLidar(self._model, self._lidar_data, self._lidar_cfg)
 
         # Initialize cameras
         for cam_cfg in self._camera_cfgs:
@@ -588,9 +590,10 @@ class MuJoCoEngine(SimEngine):
             self._policy.warm_up(gyro, pg, jp, jv)
             self._policy_idle_hold = False
 
-        # Update LiDAR data reference
-        if self._lidar is not None:
-            self._lidar.update_data(self._data)
+        # Keep LiDAR's reusable worker data synchronized without sharing the
+        # physics data object with asynchronous scans.
+        if self._lidar_data is not None:
+            mujoco.mj_copyData(self._lidar_data, self._model, self._data)
 
         with self._lock:
             self._cmd_vel[:] = 0.0
@@ -621,6 +624,8 @@ class MuJoCoEngine(SimEngine):
         for cam in self._cameras.values():
             cam.close()
         self._cameras.clear()
+        self._lidar = None
+        self._lidar_data = None
         print("[MuJoCoEngine] Closed.")
 
     # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -1085,19 +1090,34 @@ class MuJoCoEngine(SimEngine):
             return np.zeros((0, 4), dtype=np.float32)
         with self._data_lock:
             with self._lidar_lock:
+                import mujoco
+
+                mujoco.mj_copyData(self._lidar_data, self._model, self._data)
                 return self._lidar.scan(sample_count=sample_count)
 
-    def capture_lidar_snapshot(self):
-        """Copy the current MuJoCo state for an asynchronous LiDAR scan."""
+    def capture_state(self) -> np.ndarray:
+        """Capture an owning integration state for asynchronous consumers."""
 
         import mujoco
 
         if self._model is None or self._data is None:
             raise RuntimeError("MuJoCo engine is not loaded")
-        snapshot = mujoco.MjData(self._model)
         with self._data_lock:
-            mujoco.mj_copyData(snapshot, self._model, self._data)
-        return snapshot
+            state = np.empty(
+                mujoco.mj_stateSize(
+                    self._model,
+                    mujoco.mjtState.mjSTATE_INTEGRATION,
+                ),
+                dtype=np.float64,
+            )
+            mujoco.mj_getState(
+                self._model,
+                self._data,
+                state,
+                mujoco.mjtState.mjSTATE_INTEGRATION,
+            )
+        state.flags.writeable = False
+        return state
 
     def get_lidar_points_from_snapshot(
         self,
@@ -1110,13 +1130,17 @@ class MuJoCoEngine(SimEngine):
             return np.zeros((0, 4), dtype=np.float32)
         if snapshot is None:
             raise ValueError("LiDAR snapshot is required")
+        import mujoco
+
         with self._lidar_lock:
-            live_data = self._lidar._data
-            self._lidar.update_data(snapshot)
-            try:
-                return self._lidar.scan(sample_count=sample_count)
-            finally:
-                self._lidar.update_data(live_data)
+            mujoco.mj_setState(
+                self._model,
+                self._lidar_data,
+                np.asarray(snapshot, dtype=np.float64),
+                mujoco.mjtState.mjSTATE_INTEGRATION,
+            )
+            mujoco.mj_forward(self._model, self._lidar_data)
+            return self._lidar.scan(sample_count=sample_count)
 
     def get_lidar_backend_report(self) -> dict:
         """Return JSON-ready LiDAR backend evidence for validation reports."""

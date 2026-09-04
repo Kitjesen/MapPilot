@@ -29,12 +29,34 @@ def test_live_viewer_does_not_block_physics_snapshot_submission(monkeypatch):
     model = mujoco.MjModel.from_xml_string(
         '<mujoco><worldbody><body><freejoint/><geom size=".1"/></body></worldbody></mujoco>'
     )
-    display = mujoco.MjData(model)
-    captured = mujoco.MjData(model)
-    captured.qpos[0] = 3.0
+    captured_data = mujoco.MjData(model)
+    captured_data.qpos[0] = 3.0
+    captured_state = np.empty(
+        mujoco.mj_stateSize(model, mujoco.mjtState.mjSTATE_INTEGRATION),
+        dtype=np.float64,
+    )
+    mujoco.mj_getState(
+        model,
+        captured_data,
+        captured_state,
+        mujoco.mjtState.mjSTATE_INTEGRATION,
+    )
+    captured_state.flags.writeable = False
+    next_data = mujoco.MjData(model)
+    next_data.qpos[0] = 4.0
+    next_state = np.empty_like(captured_state)
+    mujoco.mj_getState(
+        model,
+        next_data,
+        next_state,
+        mujoco.mjtState.mjSTATE_INTEGRATION,
+    )
+    next_state.flags.writeable = False
     entered = threading.Event()
     release = threading.Event()
     rendered = []
+    allocations = []
+    real_mjdata = mujoco.MjData
 
     class SlowViewer:
         def lock(self):
@@ -52,20 +74,157 @@ def test_live_viewer_does_not_block_physics_snapshot_submission(monkeypatch):
 
     monkeypatch.setattr(runtime, "launch_presentation_viewer", lambda *_: SlowViewer())
     monkeypatch.setattr(runtime, "focus_presentation_viewer", lambda *_, **__: None)
-    monkeypatch.setattr(runtime, "draw_navigation_paths", lambda *_, **__: rendered.append(display.qpos[0]))
-    viewer = runtime.LiveViewer(model, display, (0, 0, 0), lambda: {})
+    monkeypatch.setattr(runtime, "draw_navigation_paths", lambda *_, **__: rendered.append(True))
+    monkeypatch.setattr(
+        mujoco,
+        "MjData",
+        lambda model: allocations.append(model) or real_mjdata(model),
+    )
+    viewer = runtime.LiveViewer(model, captured_state, (0, 0, 0), lambda: {})
     try:
-        viewer.submit(captured, (3, 0, 0), [])
+        viewer.submit(captured_state, (3, 0, 0), [])
         assert entered.wait(1.0)
-        next_capture = mujoco.MjData(model)
-        next_capture.qpos[0] = 4.0
-        viewer.submit(next_capture, (4, 0, 0), [])
+        viewer.submit(next_state, (4, 0, 0), [])
         assert viewer.is_running()
-        assert rendered == [3.0]
-        assert captured.qpos[0] == 3.0
+        assert rendered == [True]
+        assert viewer._data.qpos[0] == 3.0
+        assert viewer._data is not captured_data
+        assert captured_data.qpos[0] == 3.0
+        assert len(allocations) == 1
     finally:
         release.set()
         viewer.close()
+
+
+def test_mujoco_state_snapshot_restores_lidar_without_live_data_or_mjdata_reallocation(
+    monkeypatch,
+):
+    mujoco = pytest.importorskip("mujoco")
+    pytest.importorskip("mujoco_lidar")
+
+    from sim.compat.engine.core.sensor import LidarConfig
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
+    from sim.compat.engine.mujoco.lidar import MuJoCoLidar
+
+    model = mujoco.MjModel.from_xml_string(
+        """
+        <mujoco>
+          <option gravity="0 0 0"/>
+          <worldbody>
+            <geom name="floor" type="plane" size="8 8 .1" group="1"/>
+            <geom name="wall" type="box" pos="2 0 1" size=".1 2 1" group="1"/>
+            <body name="base_link" pos="0 0 1">
+              <freejoint/>
+              <site name="lidar_site" pos="0 0 0"/>
+              <geom name="robot_body" type="box" size=".2 .2 .2"/>
+              <body name="arm" pos=".2 0 0">
+                <joint name="arm_joint" type="hinge" axis="0 1 0"/>
+                <geom name="arm_geom" type="box" size=".1 .1 .1"/>
+              </body>
+            </body>
+            <body name="mocap_obstacle" mocap="true" pos="1 0 1">
+              <geom name="mocap_box" type="box" size=".1 .5 .5" group="1"/>
+            </body>
+          </worldbody>
+          <actuator><motor name="arm_motor" joint="arm_joint"/></actuator>
+        </mujoco>
+        """
+    )
+    live_data = mujoco.MjData(model)
+    live_data.qpos[0:3] = [0.25, -0.1, 1.0]
+    live_data.qpos[7] = 0.2
+    live_data.qvel[:] = np.linspace(0.0, 0.2, model.nv)
+    live_data.ctrl[0] = 0.37
+    live_data.mocap_pos[0] = [1.0, 0.15, 1.0]
+    live_data.mocap_quat[0] = [1.0, 0.0, 0.0, 0.0]
+    mujoco.mj_forward(model, live_data)
+
+    pattern = (
+        Path(__file__).resolve().parents[2]
+        / "sim"
+        / "packages"
+        / "sensors"
+        / "livox"
+        / "mid360"
+        / "assets"
+        / "mid360.npy"
+    )
+    lidar_config = LidarConfig(
+        body_name="base_link",
+        site_name="lidar_site",
+        exclude_body_name="base_link",
+        backend="mujoco_lidar",
+        mid360_npy_path=str(pattern),
+        add_noise=False,
+        samples_per_frame=64,
+    )
+    engine = MuJoCoEngine(drive_mode="kinematic", lidar_config=lidar_config)
+    engine._model = model
+    engine._data = live_data
+    engine._lidar_data = mujoco.MjData(model)
+    engine._lidar = MuJoCoLidar(model, engine._lidar_data, lidar_config)
+
+    old_data = mujoco.MjData(model)
+    mujoco.mj_copyData(old_data, model, live_data)
+    engine._lidar.update_data(old_data)
+    engine._lidar._ray_cursor = 0
+    old_points = engine._lidar.scan(sample_count=64)
+    engine._lidar.update_data(engine._lidar_data)
+
+    snapshot = engine.capture_state()
+    snapshot_copy = snapshot.copy()
+    live_qvel = live_data.qvel.copy()
+    live_ctrl = live_data.ctrl.copy()
+    live_mocap_pos = live_data.mocap_pos.copy()
+    live_mocap_quat = live_data.mocap_quat.copy()
+
+    restored = mujoco.MjData(model)
+    mujoco.mj_setState(
+        model,
+        restored,
+        snapshot,
+        mujoco.mjtState.mjSTATE_INTEGRATION,
+    )
+    assert snapshot.flags.owndata
+    assert not snapshot.flags.writeable
+    np.testing.assert_allclose(restored.ctrl, live_ctrl)
+    np.testing.assert_allclose(restored.mocap_pos, live_mocap_pos)
+    np.testing.assert_allclose(restored.mocap_quat, live_mocap_quat)
+
+    live_data.qpos[0] = 4.0
+    live_data.ctrl[0] = 0.91
+    live_data.mocap_pos[0, 0] = 3.0
+    mujoco.mj_forward(model, live_data)
+    np.testing.assert_array_equal(snapshot, snapshot_copy)
+    live_qpos_after_update = live_data.qpos.copy()
+    live_ctrl_after_update = live_data.ctrl.copy()
+    live_mocap_pos_after_update = live_data.mocap_pos.copy()
+
+    engine._lidar._ray_cursor = 0
+    restored_points = engine.get_lidar_points_from_snapshot(snapshot, sample_count=64)
+    np.testing.assert_allclose(restored_points, old_points, rtol=0.0, atol=1e-6)
+    np.testing.assert_array_equal(live_data.qpos, live_qpos_after_update)
+    np.testing.assert_array_equal(live_data.qvel, live_qvel)
+    np.testing.assert_array_equal(live_data.ctrl, live_ctrl_after_update)
+    np.testing.assert_array_equal(live_data.mocap_pos, live_mocap_pos_after_update)
+    np.testing.assert_array_equal(live_data.mocap_quat, live_mocap_quat)
+
+    allocations = []
+    real_mjdata = mujoco.MjData
+    monkeypatch.setattr(
+        mujoco,
+        "MjData",
+        lambda model: allocations.append(model) or real_mjdata(model),
+    )
+    for _ in range(3):
+        engine._lidar._ray_cursor = 0
+        engine.get_lidar_points_from_snapshot(snapshot, sample_count=8)
+    assert allocations == []
+    assert engine._lidar._data is engine._lidar_data
+
+    engine.close()
+    assert engine._lidar is None
+    assert engine._lidar_data is None
 
 _ROS2_AVAILABLE = importlib.util.find_spec("rclpy") is not None
 
