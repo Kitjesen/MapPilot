@@ -140,7 +140,9 @@ class Executor {
   };
 
   struct TeleopReference {
-    nav_kernel::Vec3 origin{};
+    nav_kernel::Vec3 corridorOrigin{};
+    nav_kernel::Vec3 guideStart{};
+    nav_kernel::Vec3 guideTarget{};
     double headingMap{0.0};
     double directionBody{0.0};
   };

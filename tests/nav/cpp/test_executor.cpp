@@ -634,6 +634,32 @@ TEST(Executor, ScanKeepsSafeIntentOnMapChange) {
   EXPECT_GT(during_replan.cmd_vel.vx, 0.0);
 }
 
+TEST(Executor, ScanHeldIntentPublishesStableReferenceSegments) {
+  auto executor = makeScanExecutor();
+  nav_kernel::Twist intent;
+  intent.vx = 0.25;
+  auto observation = emptyScanObservation(1.0);
+
+  const auto initial = awaitScanOutput([&]() {
+    return executor.tick(
+        intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, nullptr, 0, 1.0, {}, observation));
+  });
+  ASSERT_TRUE(initial.path_found) << initial.reason;
+
+  observation = emptyScanObservation(1.05, 2);
+  intent.vx = 0.45;
+  const auto within_segment = executor.tick(
+      intentInput(pose(0.2, 0.0, 0.0, 0.0), intent, nullptr, 0, 1.05, {}, observation));
+  EXPECT_DOUBLE_EQ(within_segment.target.x, initial.target.x);
+  EXPECT_DOUBLE_EQ(within_segment.target.y, initial.target.y);
+
+  observation = emptyScanObservation(1.10, 3);
+  const auto advanced = executor.tick(
+      intentInput(pose(1.0, 0.0, 0.0, 0.0), intent, nullptr, 0, 1.10, {}, observation));
+  EXPECT_GT(advanced.target.x, initial.target.x + 0.5);
+  EXPECT_DOUBLE_EQ(advanced.target.y, initial.target.y);
+}
+
 TEST(Executor, ScanKeepsSafeIntentAcrossBodyHeightOscillation) {
   auto executor = makeScanExecutor();
   nav_kernel::Twist intent;

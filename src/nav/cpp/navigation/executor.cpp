@@ -690,9 +690,17 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
     }
     ++generation;
     follower_.resetIntent();
+    const double heading_map =
+        nav_kernel::normalizeAngle(odom_map_body.yaw + input_direction_body);
+    const double heading_c = std::cos(heading_map);
+    const double heading_s = std::sin(heading_map);
     teleop_reference_ = TeleopReference{
         odom_map_body.position,
-        nav_kernel::normalizeAngle(odom_map_body.yaw + input_direction_body),
+        odom_map_body.position,
+        {odom_map_body.position.x + configured_horizon * heading_c,
+         odom_map_body.position.y + configured_horizon * heading_s,
+         odom_map_body.position.z},
+        heading_map,
         input_direction_body,
     };
     resetTeleopRotation();
@@ -700,37 +708,47 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
 
   const double reference_c = std::cos(teleop_reference_->headingMap);
   const double reference_s = std::sin(teleop_reference_->headingMap);
-  const double from_origin_x = odom_map_body.position.x - teleop_reference_->origin.x;
-  const double from_origin_y = odom_map_body.position.y - teleop_reference_->origin.y;
+  const double from_origin_x =
+      odom_map_body.position.x - teleop_reference_->corridorOrigin.x;
+  const double from_origin_y =
+      odom_map_body.position.y - teleop_reference_->corridorOrigin.y;
   const double along = from_origin_x * reference_c + from_origin_y * reference_s;
-
-  output.active = true;
-  output.target = {
-      teleop_reference_->origin.x + (along + configured_horizon) * reference_c,
-      teleop_reference_->origin.y + (along + configured_horizon) * reference_s,
+  const nav_kernel::Vec3 desired_target{
+      teleop_reference_->corridorOrigin.x +
+          (along + configured_horizon) * reference_c,
+      teleop_reference_->corridorOrigin.y +
+          (along + configured_horizon) * reference_s,
       odom_map_body.position.z,
   };
+  const double reference_advance_m =
+      std::max(0.5, 0.25 * configured_horizon);
+  const double target_advance_m = std::hypot(
+      desired_target.x - teleop_reference_->guideTarget.x,
+      desired_target.y - teleop_reference_->guideTarget.y);
+  if (target_advance_m >= reference_advance_m) {
+    teleop_reference_->guideStart = odom_map_body.position;
+    teleop_reference_->guideTarget = desired_target;
+    ++generation;
+  }
+
+  output.active = true;
+  output.target = teleop_reference_->guideTarget;
   const double target_map_x = output.target.x - odom_map_body.position.x;
   const double target_map_y = output.target.y - odom_map_body.position.y;
-  const double body_c = std::cos(odom_map_body.yaw);
-  const double body_s = std::sin(odom_map_body.yaw);
-  const nav_kernel::Vec3 target_body{
-      body_c * target_map_x + body_s * target_map_y,
-      -body_s * target_map_x + body_c * target_map_y,
-      0.0,
-  };
   const double planning_horizon =
       std::max(0.05, std::hypot(target_map_x, target_map_y));
-  const double planning_direction_body = std::atan2(target_body.y, target_body.x);
   output.target_distance_m = planning_horizon;
 
-  const std::vector<nav_kernel::Vec3> intent_route{odom_map_body.position, output.target};
+  const std::vector<nav_kernel::Vec3> intent_route{
+      teleop_reference_->guideStart,
+      teleop_reference_->guideTarget,
+  };
   const nav_kernel::LocalKinematicState kinematics =
       planningKinematics(odom_map_body, observation, timestamp_s);
   const nav_kernel::LocalMotionIntent motion_intent{
-      planning_direction_body * 180.0 / M_PI,
+      teleop_reference_->directionBody * 180.0 / M_PI,
       speed_norm,
-      planning_horizon,
+      configured_horizon,
       config_.teleop_intent_max_deviation_deg,
   };
   const nav_kernel::LocalPlanRequest plan_request = makeLocalPlanRequest(

@@ -45,8 +45,10 @@ bool sameIntent(const std::optional<LocalMotionIntent> &left,
     return false;
   if (!left)
     return true;
-  return std::abs(left->directionBodyDeg - right->directionBodyDeg) <= 1e-6 &&
-         std::abs(left->speedNormalized - right->speedNormalized) <= 0.05 &&
+  const bool leftMoving = left->speedNormalized > 1e-6;
+  const bool rightMoving = right->speedNormalized > 1e-6;
+  return leftMoving == rightMoving &&
+         std::abs(left->directionBodyDeg - right->directionBodyDeg) <= 1e-6 &&
          std::abs(left->horizonM - right->horizonM) <= 1e-6 &&
          std::abs(left->maxDirectionDeviationDeg -
                    right->maxDirectionDeviationDeg) <= 1e-6;
