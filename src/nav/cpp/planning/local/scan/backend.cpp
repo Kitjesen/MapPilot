@@ -183,7 +183,7 @@ class Backend::Impl {
     if (cancel && cancel())
       return stop(LocalPlanStatus::Cancelled, "planning_cancelled");
 
-    const LocalRouteView *route = input.route();
+    const LocalRouteView *route = input.referenceRoute();
     if (route == nullptr || !route->valid() ||
         !finitePoint(input.robot.pose.position) ||
         !std::isfinite(input.robot.pose.yaw) ||

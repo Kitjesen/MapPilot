@@ -180,6 +180,8 @@ class Executor {
   SegmentTarget buildSegment(const nav_kernel::Pose &map_body,
                              const nav_kernel::Pose &planning_body,
                              const MapFromOdomTransform &map_from_odom);
+  void buildReference(const SegmentTarget &target,
+                      const MapFromOdomTransform &map_from_odom);
   void applyCommittedLocalGuide(const nav_kernel::Pose &map_body,
                                 const nav_kernel::Pose &planning_body,
                                 const MapFromOdomTransform &map_from_odom, double timestamp_s);
@@ -210,11 +212,10 @@ class Executor {
   nav_kernel::Follower recovery_follower_{};
   std::vector<nav_kernel::Vec3> route;
   std::vector<nav_kernel::Vec3> segment;
+  std::vector<nav_kernel::Vec3> reference;
   std::vector<nav_kernel::Vec3> committed_local_path_map_;
   std::optional<double> teleop_recovery_intent_rad_;
   std::optional<TeleopReference> teleop_reference_;
-  std::optional<nav_kernel::Vec3> route_reference_target_;
-  bool route_reference_reaches_goal_{false};
   std::uint64_t generation{0};
   std::uint64_t committed_route_generation_{0};
   double committed_local_path_time_s_{-1.0};

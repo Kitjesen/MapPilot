@@ -47,7 +47,7 @@ struct OwnedRequest {
     environment = source.environment;
     collision = std::move(collisionBits);
     if (replaceGuide) {
-      if (const LocalRouteView *sourceRoute = source.route()) {
+      if (const LocalRouteView *sourceRoute = source.referenceRoute()) {
         routeView = *sourceRoute;
         if (sourceRoute->points != nullptr && sourceRoute->count > 0) {
           route.assign(sourceRoute->points, sourceRoute->points + sourceRoute->count);
@@ -77,6 +77,7 @@ struct OwnedRequest {
     routeViewCopy.count = static_cast<int>(route.size());
     request.objective = intent ? LocalObjective{MotionIntentTarget{*intent, routeViewCopy}}
                                : LocalObjective{RouteTarget{routeViewCopy}};
+    request.reference = routeViewCopy;
 
     request.environment = environment;
     request.environment.obstacles = {};
@@ -158,7 +159,7 @@ struct PollResult {
 
 bool sameGuide(std::uint64_t routeGeneration, std::uint64_t frameEpoch,
                const std::optional<LocalMotionIntent> &intent, const LocalPlanRequest &request) {
-  const LocalRouteView *route = request.route();
+  const LocalRouteView *route = request.referenceRoute();
   const std::optional<LocalMotionIntent> requestIntent =
       request.intent() == nullptr ? std::nullopt
                                   : std::optional<LocalMotionIntent>{*request.intent()};
@@ -234,7 +235,7 @@ class Task::Impl {
       output.plan = LocalPlan::stopped(LocalPlanStatus::NotConfigured);
       return output;
     }
-    const LocalRouteView *route = request.route();
+    const LocalRouteView *route = request.referenceRoute();
     if (route == nullptr || !route->valid()) {
       output.plan = LocalPlan::stopped(LocalPlanStatus::InvalidInput);
       return output;

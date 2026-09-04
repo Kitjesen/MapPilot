@@ -174,6 +174,10 @@ const LocalRouteView *LocalPlanRequest::route() const noexcept {
   return nullptr;
 }
 
+const LocalRouteView *LocalPlanRequest::referenceRoute() const noexcept {
+  return reference.valid() ? &reference : route();
+}
+
 const LocalMotionIntent *LocalPlanRequest::intent() const noexcept {
   if (const auto *target = std::get_if<MotionIntentTarget>(&objective))
     return &target->intent;

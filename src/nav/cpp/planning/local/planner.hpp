@@ -160,8 +160,8 @@ struct LocalTraversabilityView {
   }
 };
 
-// Non-owning route segment in the planning frame. Generation is the reference
-// event identity and must change whenever the route geometry is intentionally
+// Non-owning route geometry in the planning frame. Generation is the reference
+// event identity and must change whenever the geometry is intentionally
 // replaced. Robot-pose updates alone do not create a new reference event.
 struct LocalRouteView {
   const Vec3 *points{nullptr};
@@ -242,11 +242,16 @@ struct PlanClock {
 struct LocalPlanRequest {
   RobotState robot{};
   LocalObjective objective{RouteTarget{}};
+  // Optional complete reference route for planners that own their local
+  // target progression (SCAN REFERENCE_PATH). Short-horizon planners consume
+  // objective instead. Motion intent uses its guide for both roles.
+  LocalRouteView reference{};
   EnvironmentView environment{};
   PlanIdentity identity{};
   PlanClock clock{};
 
   [[nodiscard]] const LocalRouteView *route() const noexcept;
+  [[nodiscard]] const LocalRouteView *referenceRoute() const noexcept;
   [[nodiscard]] const LocalMotionIntent *intent() const noexcept;
 };
 

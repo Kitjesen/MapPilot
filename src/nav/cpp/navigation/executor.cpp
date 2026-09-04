@@ -47,6 +47,7 @@ std::vector<nav_kernel::Vec3> planningPathToMap(
 
 nav_kernel::LocalPlanRequest makeLocalPlanRequest(
     const nav_kernel::Pose &vehicle, const std::vector<nav_kernel::Vec3> &route,
+    const std::vector<nav_kernel::Vec3> *reference_route,
     std::uint64_t route_generation, bool reaches_goal,
     nav_kernel::LocalKinematicState kinematics, const ExecutionObservation &observation,
     const float *obstacle_xyzh, int obstacle_count, double timestamp_s,
@@ -64,6 +65,14 @@ nav_kernel::LocalPlanRequest makeLocalPlanRequest(
                           ? nav_kernel::LocalObjective{
                                 nav_kernel::MotionIntentTarget{*intent, route_view}}
                           : nav_kernel::LocalObjective{nav_kernel::RouteTarget{route_view}};
+  if (reference_route != nullptr && reference_route->size() >= 2U) {
+    request.reference = {
+        reference_route->data(),
+        static_cast<int>(reference_route->size()),
+        route_generation,
+        true,
+    };
+  }
   request.identity = {
       observation.frame_epoch,
       observation.collision.present() ? observation.collision.generation
@@ -193,8 +202,7 @@ void Executor::activateRoute(const std::vector<nav_kernel::Vec3> &path,
   resetLocalPlanning();
   recovery_.reset();
   segment.clear();
-  route_reference_target_.reset();
-  route_reference_reaches_goal_ = false;
+  reference.clear();
   committed_local_path_map_.clear();
   resetTeleopRotation();
   resetTeleopReference();
@@ -221,8 +229,7 @@ void Executor::clearRoute() {
   resetLocalPlanning();
   recovery_.reset();
   segment.clear();
-  route_reference_target_.reset();
-  route_reference_reaches_goal_ = false;
+  reference.clear();
   committed_local_path_map_.clear();
   resetTeleopRotation();
   resetTeleopReference();
@@ -245,8 +252,7 @@ void Executor::suspendAutonomy() {
   recovery_attempt_ = -1;
   resetLocalPlanning();
   recovery_.reset();
-  route_reference_target_.reset();
-  route_reference_reaches_goal_ = false;
+  reference.clear();
   committed_local_path_map_.clear();
   resetTeleopRotation();
   resetTeleopReference();
@@ -403,22 +409,7 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   }
 
   const SegmentTarget target = buildSegment(map_body, planning_body, map_from_odom);
-  const double route_reference_advance_m =
-      std::max(0.5, 0.25 * std::max(0.5, config_.corridor_lookahead_m));
-  const bool route_reference_advanced =
-      route_reference_target_.has_value() &&
-      nav_kernel::distance3D(target.point, *route_reference_target_) >=
-          route_reference_advance_m;
-  const bool route_reference_finished =
-      route_reference_target_.has_value() &&
-      target.reachesGoal != route_reference_reaches_goal_;
-  if (!route_reference_target_.has_value() || route_reference_advanced ||
-      route_reference_finished) {
-    if (route_reference_target_.has_value())
-      ++generation;
-    route_reference_target_ = target.point;
-    route_reference_reaches_goal_ = target.reachesGoal;
-  }
+  buildReference(target, map_from_odom);
   applyCommittedLocalGuide(map_body, planning_body, map_from_odom, timestamp_s);
   output.target_index = target.index;
   output.target = target.point;
@@ -444,7 +435,7 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   const nav_kernel::LocalKinematicState kinematics =
       planningKinematics(planning_body, observation, timestamp_s);
   const nav_kernel::LocalPlanRequest plan_request = makeLocalPlanRequest(
-      planning_body, segment, generation, target.reachesGoal, kinematics, observation,
+      planning_body, segment, &reference, generation, target.reachesGoal, kinematics, observation,
       obstacle_xyzh_planning, obstacle_count, timestamp_s,
       traj_frozen_, traversability);
   nav_kernel::LocalPlan plan =
@@ -774,7 +765,7 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
       config_.teleop_intent_max_deviation_deg,
   };
   const nav_kernel::LocalPlanRequest plan_request = makeLocalPlanRequest(
-      odom_map_body, intent_route, generation, false, kinematics, observation,
+      odom_map_body, intent_route, nullptr, generation, false, kinematics, observation,
       obstacle_xyzh, obstacle_count, timestamp_s,
       traj_frozen_, traversability, &motion_intent);
 

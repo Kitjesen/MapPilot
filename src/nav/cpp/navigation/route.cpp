@@ -202,6 +202,24 @@ Executor::SegmentTarget Executor::buildSegment(
   return target;
 }
 
+void Executor::buildReference(
+    const SegmentTarget& target,
+    const MapFromOdomTransform& map_from_odom) {
+  reference = segment;
+  if (target.reachesGoal || route.empty() || !height_offset_) return;
+
+  const std::size_t first = std::min(target.index, route.size() - 1);
+  for (std::size_t index = first; index < route.size(); ++index) {
+    nav_kernel::Vec3 point = route[index];
+    point.z += *height_offset_;
+    point = map_from_odom.odomPointFromMap(point);
+    if (reference.empty() ||
+        nav_kernel::distance3D(reference.back(), point) > 1e-4) {
+      reference.push_back(point);
+    }
+  }
+}
+
 void Executor::applyCommittedLocalGuide(
     const nav_kernel::Pose& map_body,
     const nav_kernel::Pose& planning_body,

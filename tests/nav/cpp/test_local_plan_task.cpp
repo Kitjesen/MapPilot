@@ -171,6 +171,23 @@ TEST(LocalPlanTask, RouteGenerationOwnsReferenceReplacement) {
             std::abs(replaced.previewPath().back().x));
 }
 
+TEST(LocalPlanTask, UsesCompleteReferenceInsteadOfShortGuide) {
+  nav_kernel::local::scan::Task task(scanParams());
+  ASSERT_TRUE(task.configure());
+  RequestFixture fixture;
+  const std::vector<nav_kernel::Vec3> reference{
+      {0.0, 0.0, 0.5}, {0.0, 1.0, 0.5}, {0.0, 2.0, 0.5}};
+  fixture.request.reference = {
+      reference.data(), static_cast<int>(reference.size()), 1, true};
+
+  const nav_kernel::LocalPlan plan = waitForPlan(task, fixture);
+
+  ASSERT_TRUE(plan.ready());
+  ASSERT_FALSE(plan.previewPath().empty());
+  EXPECT_GT(plan.previewPath().back().y,
+            std::abs(plan.previewPath().back().x));
+}
+
 TEST(LocalPlanTask, ProcessesResetEpochOnCollisionTimer) {
   nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
