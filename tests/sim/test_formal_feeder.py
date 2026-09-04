@@ -534,12 +534,13 @@ class FakeSession:
     def heartbeat(self, *, step_seq: int) -> None:
         self.services.events.append(("heartbeat", step_seq))
 
-    def confirm_ready(self) -> None:
+    def confirm_ready(self, *, input_available=None) -> bool:
         self.confirm_count += 1
         self.services.events.append(("ready", self.confirm_count))
         if self.nav and self.confirm_count == 2:
             assert self.services.stop_event is not None
             self.services.stop_event.set()
+        return True
 
     def begin_deactivate(self) -> DriverBridgeCommand:
         if self.deactivate_failure:
@@ -1041,6 +1042,27 @@ def test_main_rejects_noncanonical_sensor_or_snapshot_arguments(
     if option >= 0:
         del base[option : option + 2]
     assert feeder.main([*base, *extra]) == 2
+
+
+def test_physics_keeps_stepping_while_driver_ready_is_pending(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    services = FakeServices(nav=True, stop_after_readiness=False)
+    original = FakeSession.confirm_ready
+    pending_steps: list[int] = []
+
+    def delayed_ready(self, *, input_available=None):
+        if self.nav_received and len(pending_steps) < 3:
+            assert callable(input_available)
+            pending_steps.append(self.services.engine.steps)
+            return False
+        return original(self, input_available=input_available)
+
+    monkeypatch.setattr(FakeSession, "confirm_ready", delayed_ready)
+    rc, _, _ = _run(monkeypatch, tmp_path, services)
+    assert rc == 0
+    assert len(pending_steps) == 3
+    assert pending_steps[1:] == [pending_steps[0] + 1, pending_steps[0] + 2]
 
 
 def test_main_uses_one_identity_fixed_endpoints_and_exact_startup_order(

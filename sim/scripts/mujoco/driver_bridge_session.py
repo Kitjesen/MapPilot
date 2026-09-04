@@ -161,6 +161,7 @@ class DriverBridgeSession:
         self._last_applied: tuple[DriverBridgeCommand, int] | None = None
         self._ready_expected = False
         self._heartbeat_after_applied = False
+        self._ready_deadline: float | None = None
 
     @property
     def controller_boot_id(self) -> str:
@@ -227,6 +228,7 @@ class DriverBridgeSession:
         self._last_step_seq = parsed_step_seq
         self._last_applied = (command, parsed_step_seq)
         self._heartbeat_after_applied = False
+        self._ready_deadline = None
         if command.kind == "deactivate_zero":
             self._ready_expected = False
             self._state = "awaiting_stopped"
@@ -258,16 +260,21 @@ class DriverBridgeSession:
         if self._ready_expected:
             self._heartbeat_after_applied = True
 
-    def confirm_ready(self) -> None:
-        """Consume the exact READY ACK for the last physically applied command."""
+    def confirm_ready(self, *, input_available: Callable[[], bool] | None = None) -> bool:
+        """Validate READY; a supplied line poll keeps live physics nonblocking."""
 
         self._require_state("awaiting_ready")
         if not self._heartbeat_after_applied or self._last_applied is None:
             self._failed = True
             raise DriverBridgeSessionError("READY requires a later physical heartbeat")
-        deadline = self._deadline()
+        if self._ready_deadline is None:
+            self._ready_deadline = self._deadline()
+        deadline = self._ready_deadline
         try:
             while True:
+                if input_available is not None and not input_available():
+                    self._check_deadline(deadline)
+                    return False
                 fields = self._receive_fields(deadline)
                 if fields and fields[0] == "LT_DRIVER_FAULT_V2":
                     _raise_native_fault(fields)
@@ -291,8 +298,9 @@ class DriverBridgeSession:
                         # with a physical zero that must be applied first.
                         self._ready_expected = False
                         self._heartbeat_after_applied = False
+                        self._ready_deadline = None
                         self._state = "command_available"
-                        return
+                        return True
                     continue
                 if len(fields) != 6 or fields[0] != "LT_DRIVER_READY_V2":
                     raise DriverBridgeSessionError("expected exact LT_DRIVER_READY_V2")
@@ -317,7 +325,9 @@ class DriverBridgeSession:
             raise
         self._ready_expected = False
         self._heartbeat_after_applied = False
+        self._ready_deadline = None
         self._state = "command_available" if self._queued_command else "active"
+        return True
 
     def receive_command(self) -> DriverBridgeCommand:
         """Receive the next native motion command without owning its application."""

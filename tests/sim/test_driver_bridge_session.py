@@ -6,7 +6,6 @@ from dataclasses import FrozenInstanceError
 from typing import Callable
 
 import pytest
-
 from sim.scripts.mujoco import driver_bridge_session as session_module
 from sim.scripts.mujoco.driver_bridge_session import (
     DriverBridgeSession,
@@ -138,6 +137,44 @@ def _active_session(
     session.heartbeat(step_seq=2)
     session.confirm_ready()
     return session, transport
+
+
+def test_delayed_ready_does_not_block_physics_heartbeats() -> None:
+    session, transport = _active_session(_nav_command)
+    command = session.receive_command()
+    session.complete_step(command, step_seq=3)
+    for step in (4, 5, 6):
+        session.heartbeat(step_seq=step)
+        assert not session.confirm_ready(input_available=lambda: bool(transport.incoming))
+    transport.incoming.append(_ready_for_last_sent_command)
+    assert session.confirm_ready(input_available=lambda: bool(transport.incoming))
+    assert transport.sent[-1].endswith("\t6")
+
+
+def test_command_before_delayed_ready_stays_queued_without_blocking() -> None:
+    session, transport = _active_session(_nav_command)
+    command = session.receive_command()
+    session.complete_step(command, step_seq=3)
+    session.heartbeat(step_seq=4)
+    transport.incoming.append(_late_nav_command)
+    assert not session.confirm_ready(input_available=lambda: bool(transport.incoming))
+    session.heartbeat(step_seq=5)
+    transport.incoming.append(_ready_for_last_sent_command)
+    assert session.confirm_ready(input_available=lambda: bool(transport.incoming))
+    assert session.receive_command().output_sequence == 92
+
+
+def test_delayed_ready_retains_one_timeout_across_polls() -> None:
+    session, _transport = _active_session(_nav_command)
+    now = [10.0]
+    session._clock = lambda: now[0]
+    command = session.receive_command()
+    session.complete_step(command, step_seq=3)
+    session.heartbeat(step_seq=4)
+    assert not session.confirm_ready(input_available=lambda: False)
+    now[0] += session._operation_timeout_s + 0.01
+    with pytest.raises(DriverBridgeSessionError, match="deadline"):
+        session.confirm_ready(input_available=lambda: False)
 
 
 def test_activate_returns_typed_immutable_physical_zero() -> None:

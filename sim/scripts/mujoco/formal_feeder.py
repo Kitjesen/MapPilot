@@ -2614,8 +2614,9 @@ def _execute(
                     session.heartbeat(step_seq=step_seq)
                     next_heartbeat_s = tick.now_s + _HEARTBEAT_PERIOD_S
                     if pending_ready:
-                        session.confirm_ready()
-                        pending_ready = False
+                        pending_ready = not session.confirm_ready(
+                            input_available=lambda: services.driver_input_available(driver),
+                        )
                 motion.observe(
                     current_command,
                     before=previous_state,
