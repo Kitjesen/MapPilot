@@ -1184,6 +1184,7 @@ def test_saved_map_cold_start_uses_target_map_runtime(
     previous_identity = _native_identity(None)
     mapctl_calls: list[str] = []
     runner = RecordingRunner(tmp_path)
+    map_root = str(tmp_path / "saved_maps")
 
     def mapctl(
         environment: dict[str, str],
@@ -1193,6 +1194,7 @@ def test_saved_map_cold_start_uses_target_map_runtime(
         timeout_s: float,
     ) -> dict[str, Any]:
         assert environment["LINGTU_DDS_DOMAIN_ID"] == "17"
+        assert environment["NAV_MAP_DIR"] == map_root
         assert timeout_s > 0
         mapctl_calls.append(operation)
         if operation == "prepare":
@@ -1201,6 +1203,8 @@ def test_saved_map_cold_start_uses_target_map_runtime(
         elif operation == "stage":
             assert operand == "yard"
             assert len(runner.calls) == 1 and runner.calls[0][0] == "apply"
+            launched = RunPlan.load(runner.calls[0][1])
+            assert launched.native_process_environment["NAV_MAP_DIR"] == map_root
         else:
             assert operand == "opaque-token"
         return _mapctl_payload(
@@ -1214,7 +1218,7 @@ def test_saved_map_cold_start_uses_target_map_runtime(
         ForbiddenSystemdRunner(),  # type: ignore[arg-type]
         simulation_runner=runner,
         env="sim",
-        process_env={},
+        process_env={"NAV_MAP_DIR": map_root},
     )
     monkeypatch.setattr(control, "_resolve", lambda *_args, **_kwargs: target)
 

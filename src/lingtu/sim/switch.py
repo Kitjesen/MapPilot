@@ -178,11 +178,14 @@ def _execute_locked_switch(
             )
             map_identity = _prepared_map_identity(map_activation, request.map_name)
             plan = plan.with_native_process_environment(
-                _saved_map_environment(
-                    plan,
-                    map_identity,
-                    initial_pose=_sim_initial_pose(request.initial_pose),
-                )
+                {
+                    **_saved_map_environment(
+                        plan,
+                        map_identity,
+                        initial_pose=_sim_initial_pose(request.initial_pose),
+                    ),
+                    "NAV_MAP_DIR": prepare_map_environment["NAV_MAP_DIR"],
+                }
             )
             _validate_target(plan, request)
             report.phases.append("map_prepared")
@@ -657,6 +660,12 @@ def _map_control_environment(
     resolved = dict(environment)
     resolved.update(command_environment)
     resolved["LINGTU_DDS_DOMAIN_ID"] = domain_id
+    home = Path(resolved.get("HOME") or Path.home())
+    resolved["NAV_MAP_DIR"] = str(
+        Path(resolved.get("NAV_MAP_DIR") or home / "data" / "lingtu" / "maps")
+        .expanduser()
+        .resolve()
+    )
     return resolved
 
 
