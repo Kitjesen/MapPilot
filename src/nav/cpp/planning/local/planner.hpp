@@ -141,6 +141,9 @@ struct LocalCollisionMapView {
   // planner normally runs in odom, so the packed grid never needs resampling.
   Vec3 gridFromPlanningTranslation{};
   double gridFromPlanningYaw{0.0};
+  // Optional lifetime owner supplied by the endpoint. In-process consumers
+  // share the decoded bitmap instead of copying it for every map generation.
+  std::shared_ptr<const std::vector<std::uint8_t>> inflatedStorage{};
 
   [[nodiscard]] bool present() const noexcept;
   [[nodiscard]] bool valid() const noexcept;
@@ -282,12 +285,17 @@ class LocalPlan {
   [[nodiscard]] LocalPlanStatus status() const noexcept;
   [[nodiscard]] bool ready() const noexcept;
   [[nodiscard]] const FollowTarget &target() const noexcept;
-  [[nodiscard]] std::vector<Vec3> previewPath() const;
+  // The preview is materialized once with the plan payload. Repeated control
+  // ticks borrow the same samples instead of resampling and reallocating the
+  // spline for visualization.
+  [[nodiscard]] const std::vector<Vec3> &previewPath() const noexcept;
   [[nodiscard]] const ControlHints &hints() const noexcept;
 
  private:
+  struct Payload;
+
   LocalPlanStatus status_{LocalPlanStatus::NoPath};
-  FollowTarget target_{PathTarget{}};
+  std::shared_ptr<const Payload> payload_;
   ControlHints hints_{};
 };
 

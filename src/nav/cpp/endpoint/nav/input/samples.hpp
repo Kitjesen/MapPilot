@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -51,7 +52,7 @@ struct GridSample {
 };
 
 struct LocalCollisionMap {
-  std::vector<std::uint8_t> inflated_occupied_bits;
+  std::shared_ptr<const std::vector<std::uint8_t>> inflated_occupied_bits;
   int size_x{0};
   int size_y{0};
   int size_z{0};

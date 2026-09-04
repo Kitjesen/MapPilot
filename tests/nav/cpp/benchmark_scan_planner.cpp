@@ -122,7 +122,7 @@ int main(int argc, char** argv) {
     input.environment.collision = collision.view(input.clock.timestampS, 1);
 
     const auto started = std::chrono::steady_clock::now();
-    const auto result = planner.plan(input);
+    const auto result = planner.tick(input);
     const double elapsed = std::chrono::duration<double, std::milli>(
                                std::chrono::steady_clock::now() - started)
                                .count();

@@ -1307,9 +1307,12 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_input_projector.cpp")
     "${_ENDPOINT_DIR}/nav/command/goal.cpp"
     "${_ENDPOINT_DIR}/nav/dds/frame.cpp"
     "${_ENDPOINT_DIR}/nav/input/frame.cpp"
-    "${_ENDPOINT_DIR}/nav/input/planner.cpp"
-    "${_ENDPOINT_DIR}/nav/input/gate.cpp"
-    "${_ENDPOINT_DIR}/nav/input/obstacle.cpp")
+      "${_ENDPOINT_DIR}/nav/input/planner.cpp"
+      "${_ENDPOINT_DIR}/nav/input/gate.cpp"
+      "${_ENDPOINT_DIR}/nav/input/obstacle.cpp"
+      "${_ENDPOINT_DIR}/nav/safety/stop.cpp"
+      "${_ENDPOINT_DIR}/nav/status/nav_status_writer.cpp"
+      "${_ENDPOINT_DIR}/nav/status/status_snapshot_file_writer.cpp")
   target_include_directories(test_input_projector PRIVATE
     "${_ENDPOINT_DIR}"
     "${_LINGTU_ROOT}/src"

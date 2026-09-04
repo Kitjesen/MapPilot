@@ -177,7 +177,33 @@ const LocalMotionIntent *LocalPlanRequest::intent() const noexcept {
   return nullptr;
 }
 
-LocalPlan::LocalPlan() = default;
+struct LocalPlan::Payload {
+  explicit Payload(PathTarget path) : target(std::move(path)) {}
+
+  explicit Payload(SplineTarget spline) : target(std::move(spline)) {
+    const auto &spline_target = std::get<SplineTarget>(target);
+    const SplineView view(spline_target);
+    if (!view.valid())
+      return;
+
+    const double duration = view.duration();
+    const double step = std::max(0.01, std::min(0.05, view.interval() * 0.25));
+    const int segments = std::max(1, static_cast<int>(std::ceil(duration / step)));
+    preview.reserve(static_cast<std::size_t>(segments) + 1U);
+    for (int index = 0; index <= segments; ++index) {
+      preview.push_back(view.position(duration * static_cast<double>(index) /
+                                      static_cast<double>(segments)));
+    }
+  }
+
+  FollowTarget target;
+  std::vector<Vec3> preview;
+};
+
+LocalPlan::LocalPlan() {
+  static const auto empty = std::make_shared<const Payload>(PathTarget{});
+  payload_ = empty;
+}
 
 LocalPlan LocalPlan::stopped(LocalPlanStatus status, ControlHints hints) {
   LocalPlan plan;
@@ -189,7 +215,7 @@ LocalPlan LocalPlan::stopped(LocalPlanStatus status, ControlHints hints) {
 LocalPlan LocalPlan::path(std::vector<Vec3> points, ControlHints hints) {
   LocalPlan plan;
   plan.status_ = points.size() >= 2U ? LocalPlanStatus::Ready : LocalPlanStatus::NoPath;
-  plan.target_ = PathTarget{std::move(points)};
+  plan.payload_ = std::make_shared<const Payload>(PathTarget{std::move(points)});
   plan.hints_ = hints;
   return plan;
 }
@@ -205,7 +231,7 @@ LocalPlan LocalPlan::path(std::vector<Vec3> points, LocalPlanStatus status,
 LocalPlan LocalPlan::spline(SplineTarget target, ControlHints hints) {
   LocalPlan plan;
   plan.status_ = SplineView(target).valid() ? LocalPlanStatus::Ready : LocalPlanStatus::NoPath;
-  plan.target_ = std::move(target);
+  plan.payload_ = std::make_shared<const Payload>(std::move(target));
   plan.hints_ = hints;
   return plan;
 }
@@ -219,30 +245,13 @@ bool LocalPlan::ready() const noexcept {
 }
 
 const FollowTarget &LocalPlan::target() const noexcept {
-  return target_;
+  return payload_->target;
 }
 
-std::vector<Vec3> LocalPlan::previewPath() const {
-  if (const auto *path = std::get_if<PathTarget>(&target_))
+const std::vector<Vec3> &LocalPlan::previewPath() const noexcept {
+  if (const auto *path = std::get_if<PathTarget>(&payload_->target))
     return path->points;
-
-  const auto *target = std::get_if<SplineTarget>(&target_);
-  if (target == nullptr)
-    return {};
-  const SplineView spline(*target);
-  if (!spline.valid())
-    return {};
-
-  const double duration = spline.duration();
-  const double step = std::max(0.01, std::min(0.05, spline.interval() * 0.25));
-  const int segments = std::max(1, static_cast<int>(std::ceil(duration / step)));
-  std::vector<Vec3> preview;
-  preview.reserve(static_cast<std::size_t>(segments) + 1U);
-  for (int index = 0; index <= segments; ++index) {
-    preview.push_back(spline.position(duration * static_cast<double>(index) /
-                                      static_cast<double>(segments)));
-  }
-  return preview;
+  return payload_->preview;
 }
 
 const ControlHints &LocalPlan::hints() const noexcept {

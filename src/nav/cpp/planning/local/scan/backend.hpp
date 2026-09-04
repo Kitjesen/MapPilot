@@ -8,6 +8,9 @@ namespace nav_kernel::local::scan {
 
 class Backend {
  public:
+  static double fsmPeriodS() noexcept;
+  static double collisionPeriodS() noexcept;
+
   explicit Backend(const LocalPlannerParams &params);
   ~Backend();
 
@@ -16,8 +19,10 @@ class Backend {
   Backend(const Backend &) = delete;
   Backend &operator=(const Backend &) = delete;
 
-  LocalPlan plan(const LocalPlanRequest &request);
-  LocalPlan plan(const LocalPlanRequest &request, const LocalPlanCancel &cancel);
+  LocalPlan tick(const LocalPlanRequest &request,
+                 const LocalPlanCancel &cancel = {});
+  LocalPlan checkCollision(const LocalPlanRequest &request,
+                           const LocalPlanCancel &cancel = {});
   void reset();
   LocalPlannerDebugSnapshot debugSnapshot() const;
 

@@ -267,10 +267,13 @@ void testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity() {
 
   auto decoded = lingtu::nav::endpoint::decodeLocalCollisionMap(message);
   require(decoded.ok(), "structurally valid incomplete collision layer must decode");
-  require(decoded.value.inflated_occupied_bits == bits,
+  require(decoded.value.inflated_occupied_bits &&
+              *decoded.value.inflated_occupied_bits == bits,
           "collision decoder must copy the packed occupancy loan");
   const auto view = decoded.value.view();
   require(view.present(), "decoded collision view must be present");
+  require(view.inflatedStorage == decoded.value.inflated_occupied_bits,
+          "planner view must share the decoded collision bitmap");
   require(!view.complete, "wire completeness flag must survive the owning copy");
   require(view.resetEpoch == 4U && view.observationSequence == 9U &&
               view.generation == 12U,
