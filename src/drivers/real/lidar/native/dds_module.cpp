@@ -203,6 +203,12 @@ class DdsModule::Impl {
       return;
     }
 
+    if (prior.has_velocity != 0) {
+      const auto body_velocity = NavigationFixtureObservationState::bodyVelocity(prior);
+      msg.twist.twist.linear.x = body_velocity[0];
+      msg.twist.twist.linear.y = body_velocity[1];
+      msg.twist.twist.linear.z = body_velocity[2];
+    }
     checked(dds_write(slam_odom_writer_, &msg), "dds_write(slam_odom)");
 
     lingtu_dds_TransformStamped transform{};

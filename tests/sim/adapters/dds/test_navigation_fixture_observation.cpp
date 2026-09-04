@@ -41,6 +41,18 @@ OdomPrior pose(double x = 1.0) {
 
 int main() {
   try {
+    for (const double yaw : {0.0, 1.5707963267948966, 3.141592653589793, -1.5707963267948966}) {
+      auto truth = pose();
+      truth.qz = std::sin(yaw / 2.0);
+      truth.qw = std::cos(yaw / 2.0);
+      truth.vx = 0.75 * std::cos(yaw) - 0.2 * std::sin(yaw);
+      truth.vy = 0.75 * std::sin(yaw) + 0.2 * std::cos(yaw);
+      truth.vz = 0.1;
+      const auto velocity = NavigationFixtureObservationState::bodyVelocity(truth);
+      require(std::abs(velocity[0] - 0.75) < 1e-9, "truth world velocity was not rotated to body x");
+      require(std::abs(velocity[1] - 0.2) < 1e-9, "truth world velocity was not rotated to body y");
+      require(std::abs(velocity[2] - 0.1) < 1e-9, "truth vertical velocity changed under yaw");
+    }
     NavigationFixtureObservationState state;
     requireThrows(
         [&] { static_cast<void>(state.matchScan(10)); },

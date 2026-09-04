@@ -2,6 +2,7 @@
 
 #include "native/module.hpp"
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -21,6 +22,17 @@ struct NavigationFixtureObservation {
 // navigation fixture and must never be used as a field SLAM replacement.
 class NavigationFixtureObservationState {
  public:
+  // MuJoCo free-joint translation velocity is world-frame; Odometry twist
+  // belongs to child_frame_id (body). Keep the prior/scan pose in world-frame.
+  static std::array<double, 3> bodyVelocity(const OdomPrior& pose) noexcept {
+    const double x = pose.qx, y = pose.qy, z = pose.qz, w = pose.qw;
+    const double s = 2.0 / (x * x + y * y + z * z + w * w);
+    return {
+        (1.0 - s * (y * y + z * z)) * pose.vx + s * (x * y + w * z) * pose.vy + s * (x * z - w * y) * pose.vz,
+        s * (x * y - w * z) * pose.vx + (1.0 - s * (x * x + z * z)) * pose.vy + s * (y * z + w * x) * pose.vz,
+        s * (x * z + w * y) * pose.vx + s * (y * z - w * x) * pose.vy + (1.0 - s * (x * x + y * y)) * pose.vz};
+  }
+
   // Older captured poses still pair scans, but must not rewind live odometry.
   bool recordPose(std::uint64_t timestamp_ns, const OdomPrior& pose) {
     if (timestamp_ns == 0 || !validPose(pose)) {
