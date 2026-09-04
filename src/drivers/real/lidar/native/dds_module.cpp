@@ -192,9 +192,8 @@ class DdsModule::Impl {
 
   void publish_odom_prior(std::uint64_t timestamp_ns, const OdomPrior& prior) {
     require_lidar();
-    if (navigation_fixture_) {
-      observation_state_.recordPose(timestamp_ns, prior);
-    }
+    if (navigation_fixture_ && !observation_state_.recordPose(timestamp_ns, prior))
+      return;
     std::lock_guard<std::mutex> lock(write_mutex_);
     lingtu_dds_Odometry msg{};
     fill_odometry(msg, timestamp_ns, prior);

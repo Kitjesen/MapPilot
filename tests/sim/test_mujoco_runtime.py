@@ -2,21 +2,70 @@ import importlib.util
 import json
 import math
 import sys
+import threading
 import types
 import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 
 import pytest
+from sim.compat.engine.core.robot import RobotConfig
 
 from drivers.sim.mujoco.driver import MujocoDriverModule
 from runtime.msgs.geometry import Twist, Vector3
 from tests.runtime.numpy_guard import import_numpy_or_skip
-from sim.compat.engine.core.robot import RobotConfig
 
 pytestmark = [pytest.mark.sim]
 
 np = import_numpy_or_skip()
+
+
+def test_live_viewer_does_not_block_physics_snapshot_submission(monkeypatch):
+    from contextlib import nullcontext
+
+    from drivers.sim.mujoco import runtime
+
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_string(
+        '<mujoco><worldbody><body><freejoint/><geom size=".1"/></body></worldbody></mujoco>'
+    )
+    display = mujoco.MjData(model)
+    captured = mujoco.MjData(model)
+    captured.qpos[0] = 3.0
+    entered = threading.Event()
+    release = threading.Event()
+    rendered = []
+
+    class SlowViewer:
+        def lock(self):
+            return nullcontext()
+
+        def sync(self):
+            entered.set()
+            assert release.wait(2.0)
+
+        def is_running(self):
+            return True
+
+        def close(self):
+            release.set()
+
+    monkeypatch.setattr(runtime, "launch_presentation_viewer", lambda *_: SlowViewer())
+    monkeypatch.setattr(runtime, "focus_presentation_viewer", lambda *_, **__: None)
+    monkeypatch.setattr(runtime, "draw_navigation_paths", lambda *_, **__: rendered.append(display.qpos[0]))
+    viewer = runtime.LiveViewer(model, display, (0, 0, 0), lambda: {})
+    try:
+        viewer.submit(captured, (3, 0, 0), [])
+        assert entered.wait(1.0)
+        next_capture = mujoco.MjData(model)
+        next_capture.qpos[0] = 4.0
+        viewer.submit(next_capture, (4, 0, 0), [])
+        assert viewer.is_running()
+        assert rendered == [3.0]
+        assert captured.qpos[0] == 3.0
+    finally:
+        release.set()
+        viewer.close()
 
 _ROS2_AVAILABLE = importlib.util.find_spec("rclpy") is not None
 
@@ -226,10 +275,11 @@ def test_mujoco_module_instantaneous_cloud_does_not_fake_rolling_offsets():
 def test_mujoco_native_dds_sensor_bridge_lidar_imu_timebase_contract():
     import io
 
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
     from drivers.sim.mujoco.driver import _xyzi_to_livox_frame
     from runtime.msgs.geometry import Quaternion, Vector3
     from runtime.msgs.sensor import Imu
-    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     lidar_ts_ns = 2_000_000_000
     scan_duration_ns = 100_000_000
@@ -1656,9 +1706,10 @@ def test_mujoco_native_dds_sensor_bridge_keeps_wall_clock_diagnostic_mode():
 
 
 def test_mujoco_native_dds_sensor_bridge_auto_scales_sim_hardware_kinematic_imu_acceleration():
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
     from runtime.msgs.geometry import Quaternion, Vector3
     from runtime.msgs.sensor import Imu
-    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     scale, source = bridge._resolve_imu_acc_axis_scale(
         "auto",
@@ -1759,8 +1810,9 @@ def test_mujoco_native_dds_sensor_bridge_conditions_contact_impulses_before_fast
 
 
 def test_mujoco_native_dds_sensor_bridge_rejects_kinematic_fastlio_acceptance_by_default():
-    from runtime.runtime_interface import TOPICS
     from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    from runtime.runtime_interface import TOPICS
 
     sensor_counts = Counter({TOPICS.lidar_scan: 3, TOPICS.imu: 40, TOPICS.odom_prior: 40})
     slam_counts = Counter({topic: 1 for topic in bridge.REQUIRED_SLAM_OUTPUT_TOPICS})
@@ -1937,9 +1989,10 @@ def test_mujoco_native_dds_sensor_bridge_auto_keeps_legacy_split_acceleration_sc
 
 
 def test_mujoco_native_dds_sensor_bridge_scales_gyro_when_requested():
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
     from runtime.msgs.geometry import Quaternion, Vector3
     from runtime.msgs.sensor import Imu
-    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     imu = Imu(
         orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -3151,9 +3204,10 @@ def test_mujoco_native_dds_parent_diagnostics_retain_pending_records_on_flush_er
 def test_mujoco_native_dds_sensor_bridge_writes_mid360_imu_acceleration_in_g_units():
     import io
 
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
     from runtime.msgs.geometry import Quaternion, Vector3
     from runtime.msgs.sensor import Imu
-    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     imu = Imu(
         orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -3179,9 +3233,10 @@ def test_mujoco_native_dds_sensor_bridge_writes_mid360_imu_acceleration_in_g_uni
 def test_mujoco_native_dds_typed_writer_attributes_diagnostics_to_imu(tmp_path):
     import io
 
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
     from runtime.msgs.geometry import Quaternion, Vector3
     from runtime.msgs.sensor import Imu
-    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     diagnostics = bridge.ParentSensorDiagnostics(
         tmp_path / "parent_sensor_diagnostics.json",

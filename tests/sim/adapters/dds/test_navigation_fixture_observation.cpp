@@ -62,6 +62,13 @@ int main() {
     require(second.reset_epoch == first.reset_epoch, "epoch changed within one fixture boot");
     require(second.pose.x == 3.0, "replacement pose was not used");
 
+    require(state.recordPose(40, pose(4.0)), "fresh truth pose must publish live");
+    require(!state.recordPose(25, pose(2.5)), "late scan pose must not rewind live truth");
+    const auto late_scan = state.matchScan(25);
+    require(late_scan.pose.x == 2.5, "late scan lost its exact capture pose");
+    require(!state.recordPose(40, pose(4.0)), "duplicate live pose must not republish");
+    require(state.recordPose(41, pose(4.1)), "live truth must continue after late scan");
+
     OdomPrior invalid = pose();
     invalid.qw = std::numeric_limits<double>::quiet_NaN();
     requireThrows(

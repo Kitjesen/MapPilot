@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import math
 import tempfile
+import threading
+import time
+from collections.abc import Callable
 from contextlib import nullcontext
 from itertools import pairwise
 from pathlib import Path
@@ -40,6 +43,68 @@ def launch_presentation_viewer(model: Any, data: Any) -> Any:
         show_left_ui=False,
         show_right_ui=False,
     )
+
+
+class LiveViewer:
+    """Render owned snapshots; display latency never holds the physics thread."""
+
+    def __init__(self, model: Any, snapshot: Any, position: Any,
+                 read_status: Callable[[], dict[str, Any]]) -> None:
+        self._model = model
+        self._data = snapshot
+        self._read_status = read_status
+        self._viewer = launch_presentation_viewer(model, snapshot)
+        focus_presentation_viewer(self._viewer, position, initialize=True)
+        self._condition = threading.Condition()
+        self._pending: Any = None
+        self._closed = False
+        self._failure: Exception | None = None
+        self.frame_ms = 0.0
+        self._thread = threading.Thread(target=self._run, name="mujoco-viewer", daemon=True)
+        self._thread.start()
+
+    def submit(self, snapshot: Any, position: Any, actual_path: Any) -> None:
+        with self._condition:
+            self._pending = (snapshot, tuple(position), actual_path)
+            self._condition.notify()
+
+    def is_running(self) -> bool:
+        if self._failure is not None:
+            raise RuntimeError("MuJoCo viewer failed") from self._failure
+        return bool(self._viewer.is_running())
+
+    def close(self) -> None:
+        with self._condition:
+            self._closed = True
+            self._pending = None
+            self._condition.notify()
+        self._thread.join(timeout=2.0)
+        self._viewer.close()
+        if self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+        if self._thread.is_alive():
+            raise RuntimeError("MuJoCo viewer did not close")
+
+    def _run(self) -> None:
+        import mujoco
+
+        try:
+            while True:
+                with self._condition:
+                    self._condition.wait_for(lambda: self._closed or self._pending is not None)
+                    if self._closed:
+                        return
+                    snapshot, position, actual_path = self._pending
+                    self._pending = None
+                started = time.perf_counter()
+                with self._viewer.lock():
+                    mujoco.mj_copyData(self._data, self._model, snapshot)
+                draw_navigation_paths(self._viewer, self._read_status(), actual_path=actual_path)
+                focus_presentation_viewer(self._viewer, position)
+                self._viewer.sync()
+                self.frame_ms = (time.perf_counter() - started) * 1000.0
+        except Exception as exc:
+            self._failure = exc
 
 
 def focus_presentation_viewer(
@@ -195,6 +260,7 @@ def draw_navigation_paths(
     *,
     point_cloud: Any = None,
     max_point_count: int = 600,
+    actual_path: Any = None,
 ) -> dict[str, int]:
     """Draw current paths and a bounded native local-obstacle sample."""
 
@@ -224,6 +290,11 @@ def draw_navigation_paths(
             max_segments=80,
         )
         native_obstacles = _navigation_obstacle_points(status)
+        _append_path_segments(
+            mujoco, scene, _navigation_path_points(actual_path),
+            radius=0.015, rgba=(0.25, 0.5, 1.0, 0.9),
+            z_offset=0.02, max_segments=300,
+        )
         point_count = _append_point_cloud(
             mujoco,
             scene,

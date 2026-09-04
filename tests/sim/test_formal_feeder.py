@@ -11,23 +11,6 @@ from types import SimpleNamespace
 from typing import Any, Iterator
 
 import pytest
-
-from drivers.real.camera.shm import ShmFrameReader, StreamKind
-from lingtu.run_plan import RunPlan
-from lingtu.sim.stop import (
-    MOTION_STOP_SCHEMA,
-    load_motion_stop_evidence,
-    process_launch_id,
-    publish_motion_stop_evidence,
-)
-from runtime.graph import (
-    ProcessArtifact,
-    ProcessCommand,
-    ProcessReadiness,
-    ProcessSpec,
-)
-from runtime.msgs.numpy_compat import np
-from runtime.msgs.sensor import POINT_DTYPE
 from sim.scripts.mujoco import formal_feeder as feeder
 from sim.scripts.mujoco.driver_bridge_session import (
     DriverBridgeCommand,
@@ -53,6 +36,23 @@ from sim.scripts.mujoco.native_sensor_records import (
     RECORD_REGISTERED_CLOUD,
 )
 
+from drivers.real.camera.shm import ShmFrameReader, StreamKind
+from lingtu.run_plan import RunPlan
+from lingtu.sim.stop import (
+    MOTION_STOP_SCHEMA,
+    load_motion_stop_evidence,
+    process_launch_id,
+    publish_motion_stop_evidence,
+)
+from runtime.graph import (
+    ProcessArtifact,
+    ProcessCommand,
+    ProcessReadiness,
+    ProcessSpec,
+)
+from runtime.msgs.numpy_compat import np
+from runtime.msgs.sensor import POINT_DTYPE
+
 PRODUCT_SESSION_ID = "1" * 32
 SESSION_ID = "test-session"
 BRIDGE_BOOT_ID = "c" * 32
@@ -69,7 +69,6 @@ def _minimal_simulation(
     camera_hz: float = 30.0,
     depth_camera_hz: float | None = None,
     initial_keyframe: str | None = None,
-    navigation_fixture_raw_overlay: Any = False,
 ) -> dict[str, Any]:
     global_policy = {
         "owner": "world",
@@ -203,7 +202,6 @@ def _minimal_simulation(
                         "frame_id": "robot_01/lidar_link",
                         "raycast_frame_stable_id": "robot_01/lidar_site",
                         "rate_hz": mid360_hz,
-                        "navigation_fixture_raw_overlay": navigation_fixture_raw_overlay,
                     }
                 ]
                 if include_sensors
@@ -262,7 +260,6 @@ def _run_plan(
     truth_localization: bool = False,
     mid360_hz: float = 10.0,
     initial_keyframe: str | None = None,
-    navigation_fixture_raw_overlay: Any = False,
     camera: bool = False,
     camera_hz: float = 30.0,
     depth_camera_hz: float | None = None,
@@ -349,7 +346,6 @@ def _run_plan(
             camera_hz=camera_hz,
             depth_camera_hz=depth_camera_hz,
             initial_keyframe=initial_keyframe,
-            navigation_fixture_raw_overlay=navigation_fixture_raw_overlay,
         ),
         native_nav={
             "global_planner": "octoplanner3d",
@@ -425,6 +421,8 @@ class FakeEngine:
         self.fail_first_step = fail_first_step
         self.unstable_at_step = unstable_at_step
         self.steps = 0
+        self.model = SimpleNamespace()
+        self.data = SimpleNamespace(ncon=0, contact=[])
         self.sim_time = 0.0
         self.step_periods: list[float] = []
         self.last_state: Any | None = None
@@ -1164,7 +1162,6 @@ def test_lidar_raycast_runs_only_when_the_ten_hz_scan_is_due() -> None:
         max_points=20000,
         publish_odom_prior=False,
         publish_registered_cloud_fixture=False,
-        navigation_fixture_raw_overlay=False,
         started_s=0.0,
         started_wall_s=1000.0,
     )
@@ -1186,7 +1183,8 @@ def test_lidar_raycast_runs_only_when_the_ten_hz_scan_is_due() -> None:
     assert engine.lidar_calls == 1
 
 
-def test_odom_prior_is_not_blocked_by_slow_lidar_raycast() -> None:
+@pytest.mark.parametrize("registered_cloud", [False, True])
+def test_odom_prior_is_not_blocked_by_slow_lidar_raycast(registered_cloud: bool) -> None:
     events: list[Any] = []
     records: list[bytes] = []
     frame_started = threading.Event()
@@ -1234,8 +1232,7 @@ def test_odom_prior_is_not_blocked_by_slow_lidar_raycast() -> None:
         samples_per_frame=4000,
         max_points=20000,
         publish_odom_prior=True,
-        publish_registered_cloud_fixture=False,
-        navigation_fixture_raw_overlay=False,
+        publish_registered_cloud_fixture=registered_cloud,
         started_s=0.0,
         started_wall_s=1000.0,
     )
@@ -1277,7 +1274,6 @@ def test_sensor_timestamp_uses_observation_time_when_physics_is_late() -> None:
         max_points=20000,
         publish_odom_prior=False,
         publish_registered_cloud_fixture=False,
-        navigation_fixture_raw_overlay=False,
         started_s=0.0,
         started_wall_s=1000.0,
     )
@@ -1870,6 +1866,27 @@ def test_running_status_failure_retries_without_stopping_sensors(
     assert len(services.sensors["imu_publisher"].records) > 0
 
 
+def test_live_evidence_reader_does_not_stop_physics(monkeypatch, tmp_path):
+    services = FakeServices(stop_after_readiness=False, stop_after_waits=220)
+    replace = feeder.os.replace
+    failures = []
+
+    def replace_with_reader(source, destination):
+        if Path(destination).name == "mujoco_feeder.live.json" and not failures:
+            failures.append(destination)
+            raise PermissionError("Windows reader holds the progress snapshot")
+        return replace(source, destination)
+
+    monkeypatch.setattr(feeder.os, "replace", replace_with_reader)
+    rc, identity, _ = _run(monkeypatch, tmp_path, services)
+    assert rc == 0
+    assert len(failures) == 1
+    live = json.loads((identity.session_root / "mujoco_feeder.live.json").read_text())
+    assert live["write_failures"] == 1
+    assert live["step_seq"] > 100
+    assert not list(identity.session_root.glob(".mujoco_feeder.live.json.*.tmp"))
+
+
 def test_failed_status_is_best_effort_and_preserves_original_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1915,6 +1932,25 @@ def test_failed_status_balances_the_due_imu_slot_when_write_fails(
     )
 
 
+def test_contacts_count_mocap_obstacles_but_not_road_support():
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_string('''<mujoco><worldbody>
+      <geom name="road_spine" type="plane" size="2 2 .1"/>
+      <body name="base_link" pos="0 0 .15"><freejoint/><geom size=".2"/></body>
+      <body name="walker" mocap="true" pos=".3 0 .15"><geom name="person" size=".2"/></body>
+    </worldbody></mujoco>''')
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    motion = feeder._PhysicalMotionEvidence()
+    motion.observe_contacts(model, data)
+    assert motion.entity_contact_steps == 1
+    assert motion.first_contact_geom == "person"
+    data.mocap_pos[0, 0] = 3.0
+    mujoco.mj_forward(model, data)
+    motion.observe_contacts(model, data)
+    assert motion.entity_contact_steps == 1
+
+
 def test_truth_localization_publishes_pose_and_registered_cloud_with_one_timestamp(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1942,11 +1978,9 @@ def test_truth_localization_publishes_pose_and_registered_cloud_with_one_timesta
         assert index > 0
         assert lidar_records[index - 1][4] == 1
         registered_stamp = int.from_bytes(record[8:16], "little")
-        assert any(
-            candidate[4] == 3
-            and int.from_bytes(candidate[8:16], "little") == registered_stamp
-            for candidate in lidar_records[:index]
-        )
+        assert index >= 2
+        assert lidar_records[index - 2][4] == RECORD_ODOM_PRIOR
+        assert int.from_bytes(lidar_records[index - 2][8:16], "little") == registered_stamp
 
 
 def test_product_slam_process_receives_only_raw_lidar_and_imu_records(
@@ -1999,7 +2033,7 @@ def test_product_truth_localization_sends_prior_only_to_the_slam_process(
     assert record_types.count(RECORD_REGISTERED_CLOUD) == 0
 
 
-def test_free_navigation_fixture_publishes_ground_without_raw_returns(
+def test_truth_cloud_contains_only_raycast_returns(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -2035,18 +2069,14 @@ def test_free_navigation_fixture_publishes_ground_without_raw_returns(
         count=point_count,
         offset=SENSOR_RECORD_HEADER.size,
     )
-    assert point_count > 4
-    np.testing.assert_allclose(points["z"], -0.4, atol=1e-6)
-    assert not bool(
-        np.any(
-            np.isclose(points["x"], 0.25)
-            & np.isclose(points["y"], 0.80)
-            & np.isclose(points["z"], 0.30)
-        )
-    )
+    assert point_count == 1
+    np.testing.assert_allclose(points["x"], 0.25, atol=1e-6)
+    np.testing.assert_allclose(points["y"], 0.80, atol=1e-6)
+    np.testing.assert_allclose(points["z"], 0.30, atol=1e-6)
+    np.testing.assert_allclose(points["intensity"], 99.0, atol=1e-6)
 
 
-def test_obstacle_navigation_fixture_preserves_raw_obstacle_return(
+def test_truth_cloud_does_not_invent_ground_when_rays_miss(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -2054,19 +2084,13 @@ def test_obstacle_navigation_fixture_preserves_raw_obstacle_return(
         stop_after_readiness=False,
         stop_after_waits=25,
     )
-    services.engine.get_lidar_points = lambda sample_count=None: np.array(
-        [[0.25, 0.80, 0.70, 99.0]],
-        dtype=np.float32,
-    )
+    services.engine.get_lidar_points = lambda sample_count=None: np.zeros((0, 4), dtype=np.float32)
 
     rc, _, _ = _run(
         monkeypatch,
         tmp_path,
         services,
-        plan=_run_plan(
-            slam=True,
-            navigation_fixture_raw_overlay=True,
-        ),
+        plan=_run_plan(slam=True),
     )
 
     assert rc == 0
@@ -2082,31 +2106,8 @@ def test_obstacle_navigation_fixture_preserves_raw_obstacle_return(
         count=point_count,
         offset=SENSOR_RECORD_HEADER.size,
     )
-    assert bool(np.any(np.isclose(points["z"], -0.4)))
-    assert bool(
-        np.any(
-            np.isclose(points["x"], 0.25)
-            & np.isclose(points["y"], 0.80)
-            & np.isclose(points["z"], 0.30)
-            & np.isclose(points["intensity"], 99.0)
-        )
-    )
-
-
-def test_navigation_fixture_rejects_nonboolean_raw_overlay(
-    tmp_path: Path,
-) -> None:
-    plan = _run_plan(
-        slam=True,
-        navigation_fixture_raw_overlay="false",
-    )
-    identity = _identity(tmp_path, plan=plan)
-
-    with pytest.raises(
-        feeder.FormalFeederError,
-        match="navigation_fixture_raw_overlay must be bool",
-    ):
-        feeder._run_plan_runtime_config(feeder._parser().parse_args([]), identity.plan)
+    assert point_count == 0
+    assert points.size == 0
 
 
 def test_truth_localization_requires_one_physical_lidar_slam_owner(
@@ -2195,6 +2196,7 @@ def test_clean_stop_publishes_launch_bound_stop_and_motion_evidence(
         FEEDER_STATUS_FILENAME,
         MOTION_EVIDENCE_FILENAME,
         "mujoco_feeder.stop.json",
+        "mujoco_feeder.contacts.json",
     }
 
 

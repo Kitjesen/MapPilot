@@ -21,7 +21,8 @@ struct NavigationFixtureObservation {
 // navigation fixture and must never be used as a field SLAM replacement.
 class NavigationFixtureObservationState {
  public:
-  void recordPose(std::uint64_t timestamp_ns, const OdomPrior& pose) {
+  // Older captured poses still pair scans, but must not rewind live odometry.
+  bool recordPose(std::uint64_t timestamp_ns, const OdomPrior& pose) {
     if (timestamp_ns == 0 || !validPose(pose)) {
       invalidate();
       throw std::invalid_argument("navigation fixture pose is invalid");
@@ -29,6 +30,10 @@ class NavigationFixtureObservationState {
     pose_timestamp_ns_ = timestamp_ns;
     pose_ = pose;
     has_pose_ = true;
+    const bool publish_live = timestamp_ns > latest_pose_timestamp_ns_;
+    if (publish_live)
+      latest_pose_timestamp_ns_ = timestamp_ns;
+    return publish_live;
   }
 
   NavigationFixtureObservation matchScan(std::uint64_t timestamp_ns) {
@@ -71,6 +76,7 @@ class NavigationFixtureObservationState {
 
   bool has_pose_{false};
   std::uint64_t pose_timestamp_ns_{0};
+  std::uint64_t latest_pose_timestamp_ns_{0};
   std::uint64_t reset_epoch_{0};
   std::uint64_t sequence_{0};
   OdomPrior pose_{};

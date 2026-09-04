@@ -5,7 +5,7 @@ consumes identity from the direct-child environment, connects to the two
 Product-owned native endpoints, and is the sole owner of MuJoCo stepping.
 """
 
-# ruff: noqa: E402 - direct script execution must establish repository roots first.
+
 
 from __future__ import annotations
 
@@ -80,23 +80,20 @@ from drivers.real.camera.shm import ShmFrameWriter, StreamKind
 from drivers.sim.mujoco.runtime import (
     DEFAULT_MID360_PATTERN,
     DEFAULT_MID360_SAMPLES_PER_FRAME,
+    LiveViewer,
     build_engine,
-    draw_navigation_paths,
-    focus_presentation_viewer,
-    launch_presentation_viewer,
 )
 from drivers.sim.mujoco.sensors import (
-    navigation_fixture_registered_body_points,
     sensor_specific_force_body,
     world_xyzi_to_body_xyzi,
     world_xyzi_to_sensor_xyzi,
 )
-from nav.adapters.native.operator_motion import NativeOperatorMotionClient
 from lingtu.run_plan import RunPlan
-from lingtu.sim.viewer_input import ViewerInput, viewer_input_from_run_plan
 from lingtu.sim.readiness import SIM_FEEDER_SCHEMA, validate_feeder_readiness
 from lingtu.sim.stop import MOTION_STOP_SCHEMA, publish_motion_stop_evidence
+from lingtu.sim.viewer_input import ViewerInput, viewer_input_from_run_plan
 from lingtu.switch_contracts import is_product_session_id
+from nav.adapters.native.operator_motion import NativeOperatorMotionClient
 from runtime.msgs.geometry import Quaternion, Vector3
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import POINT_DTYPE, Imu, LivoxPointFrame
@@ -810,6 +807,33 @@ class _PhysicalMotionEvidence:
     trajectory: list[list[float]] = field(default_factory=list)
     last_trace_step_seq: int = 0
     last_pose_step_seq: int = 0
+    entity_contact_steps: int = 0
+    first_contact_geom: str = ""
+
+    def observe_contacts(self, model: Any, data: Any, base_body: str = "base_link") -> None:
+        """Count robot/environment contacts, excluding floor support and self contact."""
+        import mujoco
+
+        if not data.ncon:
+            return
+        base_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, base_body)
+        robot_root = int(model.body_rootid[base_id])
+        for contact in data.contact[:data.ncon]:
+            a, b = int(contact.geom1), int(contact.geom2)
+            root_a = int(model.body_rootid[model.geom_bodyid[a]])
+            root_b = int(model.body_rootid[model.geom_bodyid[b]])
+            if (root_a == robot_root) == (root_b == robot_root):
+                continue
+            world_geom = b if root_a == robot_root else a
+            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, world_geom) or ""
+            # These two IndustrialPark road decals are below the support floor.
+            if name.startswith(("ground", "floor")) or name in {"road_spine", "road_cross"}:
+                continue
+            if contact.dist <= 0:
+                self.entity_contact_steps += 1
+                if not self.first_contact_geom:
+                    self.first_contact_geom = name
+                break
 
     def record_trace(self, state: Any, step_seq: int, *, force: bool = False) -> None:
         position = _position(state)
@@ -1026,7 +1050,6 @@ class _RuntimeConfig:
     sensor_roles: tuple[str, ...]
     publish_odom_prior: bool
     publish_registered_cloud_fixture: bool
-    navigation_fixture_raw_overlay: bool
     viewer_enabled: bool
     robot: _RobotRuntimeConfig
     scenario_plan: Mapping[str, Any] | None
@@ -1393,7 +1416,6 @@ class _LidarPublisher:
         samples_per_frame: int,
         max_points: int,
         publish_registered_cloud_fixture: bool,
-        navigation_fixture_raw_overlay: bool,
         stats: _StreamStats,
     ) -> None:
         self._client = client
@@ -1401,7 +1423,6 @@ class _LidarPublisher:
         self._samples_per_frame = samples_per_frame
         self._max_points = max_points
         self._publish_registered_cloud_fixture = publish_registered_cloud_fixture
-        self._navigation_fixture_raw_overlay = navigation_fixture_raw_overlay
         self._stats = stats
         self._write_lock = threading.Lock()
         self._odom_publisher = _RecordPublisher(
@@ -1528,18 +1549,20 @@ class _LidarPublisher:
         if self._publish_registered_cloud_fixture:
             if task.registered_sequence is None:
                 raise FormalFeederError("registered cloud sequence is missing")
-            body_points, _ = navigation_fixture_registered_body_points(
-                world_xyzi_to_body_xyzi(task.state, world_points),
-                task.state,
-                max_points=self._max_points,
-                raw_overlay_enabled=self._navigation_fixture_raw_overlay,
-            )
+            body_points = world_xyzi_to_body_xyzi(task.state, world_points)
             registered_wire = encode_registered_cloud(
                 body_points,
                 timestamp_ns=int(task.wall_s * 1_000_000_000),
                 sequence=task.registered_sequence,
             ).wire
         with self._write_lock:
+            if registered_wire is not None:
+                # Pair the scan with its captured truth pose, not a newer pose
+                # from the physics thread while this scan was raycast.
+                self._client.write(encode_odom_prior(
+                    task.state, timestamp_s=task.wall_s,
+                    sequence=task.registered_sequence,
+                ).wire)
             self._client.write(scan_wire)
             if registered_wire is not None:
                 self._client.write(registered_wire)
@@ -1562,7 +1585,6 @@ class _SensorPipeline:
         max_points: int,
         publish_odom_prior: bool,
         publish_registered_cloud_fixture: bool,
-        navigation_fixture_raw_overlay: bool,
         started_s: float,
         started_wall_s: float,
         imu_stats: _StreamStats | None = None,
@@ -1585,7 +1607,6 @@ class _SensorPipeline:
         self._max_points = max_points
         self._publish_odom_prior = publish_odom_prior
         self._publish_registered_cloud_fixture = publish_registered_cloud_fixture
-        self._navigation_fixture_raw_overlay = navigation_fixture_raw_overlay
         self._imu_sequence = 0
         self._odom_sequence = 0
         self._lidar_sequence = 0
@@ -1601,7 +1622,6 @@ class _SensorPipeline:
             samples_per_frame=self._samples_per_frame,
             max_points=self._max_points,
             publish_registered_cloud_fixture=publish_registered_cloud_fixture,
-            navigation_fixture_raw_overlay=navigation_fixture_raw_overlay,
             stats=self._lidar_stats,
         )
 
@@ -2171,14 +2191,9 @@ def _run_plan_runtime_config(
         sensor_plan=sensor_plan,
         sensors_enabled=sensors_enabled,
     )
-    navigation_fixture_raw_overlay = True
     if sensors_enabled:
         _, imu_hz = _single_sensor_stream(sensor_plan, "imu")
-        lidar_stream, lidar_hz = _single_sensor_stream(sensor_plan, "mid360")
-        raw_overlay = lidar_stream.get("navigation_fixture_raw_overlay", True)
-        if not isinstance(raw_overlay, bool):
-            raise FormalFeederError("sensor_plan mid360 navigation_fixture_raw_overlay must be bool")
-        navigation_fixture_raw_overlay = raw_overlay
+        _, lidar_hz = _single_sensor_stream(sensor_plan, "mid360")
         step_period_s = 1.0 / imu_hz
     else:
         imu_hz = None
@@ -2199,7 +2214,6 @@ def _run_plan_runtime_config(
         sensor_roles=required_roles,
         publish_odom_prior=publish_odom_prior,
         publish_registered_cloud_fixture=slam_colocated,
-        navigation_fixture_raw_overlay=navigation_fixture_raw_overlay,
         viewer_enabled=runtime_mode == "preview",
         robot=robot,
         scenario_plan=(None if scenario_plan is None else scenario),
@@ -2429,9 +2443,10 @@ def _execute(
         if viewer_requested is None:
             viewer_requested = config.viewer_enabled
         if viewer_requested:
-            viewer = launch_presentation_viewer(engine.model, engine.data)
-            focus_presentation_viewer(viewer, config.robot.position_m, initialize=True)
-            viewer.sync()
+            viewer = LiveViewer(
+                engine.model, engine.capture_lidar_snapshot(), config.robot.position_m,
+                lambda: _read_navigation_status(session_root / "nav.status.json"),
+            )
             viewer_input = viewer_input_from_run_plan(
                 plan,
                 client_type=NativeOperatorMotionClient,
@@ -2541,6 +2556,8 @@ def _execute(
         )
         viewer_period_s = 1.0 / float(args.viewer_hz)
         next_viewer_s = started_s
+        next_motion_evidence_s = started_s
+        motion_evidence_write_failures = 0
         next_heartbeat_s = started_s + _HEARTBEAT_PERIOD_S
         sensor_pipeline = (
             _SensorPipeline(
@@ -2556,7 +2573,6 @@ def _execute(
                 publish_registered_cloud_fixture=(
                     config.publish_registered_cloud_fixture
                 ),
-                navigation_fixture_raw_overlay=(config.navigation_fixture_raw_overlay),
                 started_s=started_s,
                 started_wall_s=started_wall_s,
                 imu_stats=streams["imu"],
@@ -2582,6 +2598,7 @@ def _execute(
                         max_linear_mps=max_linear_mps,
                         max_angular_rps=max_angular_rps,
                     )
+                step_started = time.perf_counter()
                 state, step_seq = _step(
                     engine,
                     current_velocity,
@@ -2589,6 +2606,7 @@ def _execute(
                     step_seq=step_seq,
                     scenario=scenario,
                 )
+                step_ms = (time.perf_counter() - step_started) * 1000.0
                 if command is not None:
                     session.complete_step(command, step_seq=step_seq)
                     pending_ready = True
@@ -2605,16 +2623,43 @@ def _execute(
                     step_seq=step_seq,
                 )
                 previous_state = state
-                if viewer is not None and tick.now_s + 1e-12 >= next_viewer_s:
-                    draw_navigation_paths(
-                        viewer,
-                        _read_navigation_status(session_root / "nav.status.json"),
-                    )
-                    focus_presentation_viewer(viewer, state.position)
-                    viewer.sync()
-                    next_viewer_s = tick.now_s + viewer_period_s
                 if sensor_pipeline is not None:
                     sensor_pipeline.publish_step(state, tick=tick)
+                motion.observe_contacts(engine.model, engine.data, config.robot.base_body)
+                if tick.now_s >= next_motion_evidence_s:
+                    try:
+                        _publish_session_bytes(
+                            session_root, "mujoco_feeder.live.json",
+                            json.dumps({
+                                "product_session_id": product_session_id,
+                                "position_m": list(_position(state)),
+                                "yaw_rad": _yaw(state),
+                                "step_seq": step_seq,
+                                "monotonic_s": tick.now_s,
+                                "path_length_xy_m": motion.path_length_xy_m,
+                                "entity_contact_steps": motion.entity_contact_steps,
+                                "first_contact_geom": motion.first_contact_geom,
+                                "write_failures": motion_evidence_write_failures,
+                                "physics_ms": step_ms,
+                                "viewer_ms": viewer.frame_ms if viewer is not None else 0.0,
+                            }, allow_nan=False).encode(),
+                        )
+                    except PermissionError:
+                        # Windows readers may briefly deny replacement of this
+                        # diagnostic snapshot. Retry next update, never stall physics.
+                        motion_evidence_write_failures += 1
+                    next_motion_evidence_s = tick.now_s + 0.5
+                if viewer is not None and tick.now_s + 1e-12 >= next_viewer_s:
+                    trace = motion.trajectory
+                    stride = max(1, math.ceil(len(trace) / 300))
+                    preview = trace[::stride]
+                    if trace and preview[-1] is not trace[-1]:
+                        preview.append(trace[-1])
+                    viewer.submit(
+                        engine.capture_lidar_snapshot(), state.position,
+                        [sample[1:4] for sample in preview],
+                    )
+                    next_viewer_s = tick.now_s + viewer_period_s
                 if camera is not None:
                     camera.publish_due(
                         monotonic_s=tick.due_s,
@@ -2638,6 +2683,16 @@ def _execute(
             scenario=scenario,
         )
         stop_completed = True
+        _publish_session_bytes(
+            session_root, "mujoco_feeder.contacts.json",
+            json.dumps({
+                "product_session_id": product_session_id,
+                "complete": True,
+                "entity_contact_steps": motion.entity_contact_steps,
+                "first_contact_geom": motion.first_contact_geom,
+                "step_seq": step_seq,
+            }, allow_nan=False).encode(),
+        )
         if sensor_pipeline is not None:
             sensor_pipeline.close()
         status.finish("stopped", measurement_end_s)
