@@ -12,8 +12,6 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-
-from lingtu.assembly.native_nav import mapd_environment
 from sim.compat.engine.core.engine import VelocityCommand
 from sim.compat.engine.mujoco import robot_controller
 from sim.compat.engine.mujoco.engine import MuJoCoEngine
@@ -22,7 +20,31 @@ from sim.scripts.mujoco import native_navigation_acceptance as acceptance
 from sim.scripts.mujoco import native_navigation_video as navigation_video
 from sim.scripts.mujoco import saved_map_plan_gate
 
+from lingtu.assembly.native_nav import mapd_environment
+
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_product_goal_requires_physical_arrival_and_stop():
+    manifest = acceptance._load_manifest(ROOT / "config/runtime_graph/acceptance/mujoco_scan_goal.json")
+    motion = {"end_position_m": [56, 32, 0.5], "path_length_xy_m": 61,
+              "net_displacement_xy_m": 59.9}
+    live = {"complete": True, "entity_contact_steps": 0}
+    stop = {"terminal_ack": True, "outcome": "zero_applied"}
+    args = (manifest, motion, live, {"state": 4}, stop, 1.0)
+    assert acceptance._product_goal_blockers(*args) == ([], 0.0)
+    live["entity_contact_steps"] = 1
+    assert "entity_collision_or_missing_evidence" in acceptance._product_goal_blockers(*args)[0]
+    motion["net_displacement_xy_m"] = 2
+    assert "insufficient_displacement" in acceptance._product_goal_blockers(*args)[0]
+
+
+def test_product_goal_reads_native_task_state():
+    assert acceptance._product_goal_state({"state": 1}) == "PLANNING"
+    assert acceptance._product_goal_state({"state": 2}) == "PATH_ACTIVE"
+    assert acceptance._product_goal_state({"state": 3}) == "FAILED"
+    assert acceptance._product_goal_state({"state": 4}) == "REACHED"
+    assert acceptance._product_goal_state({}) == "NOT_SEEN"
 
 
 def _platform_os(name: str) -> SimpleNamespace:
@@ -667,6 +689,15 @@ def test_run_plan_binding_replaces_component_candidates_and_env_override(
             "process": "nav_runtime",
         }
     }
+
+
+def test_run_plan_scan_backend_replaces_implicit_cmu_default() -> None:
+    plan = SimpleNamespace(native_nav={"local_planner": "scan"}, processes=())
+    manifest = {"binaries": {}}
+
+    acceptance._bind_manifest_binaries_to_run_plan(manifest, plan)
+
+    assert acceptance._local_planner_backend(manifest) == "scan"
 
 
 def test_scan_mapd_launch_uses_run_plan_collision_profile(tmp_path: Path) -> None:
@@ -4696,7 +4727,7 @@ def test_native_control_waits_for_business_ack_and_local_path_is_telemetry_only(
 
     tick_index = endpoint_loop.index("autonomy_tick.tick(")
     telemetry_index = endpoint_loop.index(
-        "dds.publish(OutputEvent{LocalPathOutput{out.local_path_map}});",
+        "publish_local_path(out.local_path_map, timing);",
         tick_index,
     )
     assert tick_index < telemetry_index

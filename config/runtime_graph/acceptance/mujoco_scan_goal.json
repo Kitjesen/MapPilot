@@ -1,0 +1,13 @@
+{
+  "schema_version": "lingtu.mujoco.native_navigation_acceptance.v1",
+  "name": "scan_single_floor_goal",
+  "goal": [56.0, 32.0, 0.3],
+  "motion_duration_s": 300.0,
+  "thresholds": {
+    "min_motion_m": 50.0,
+    "min_net_displacement_m": 50.0,
+    "max_goal_error_m": 0.5,
+    "min_input_gate_ready_fraction": 0.98
+  },
+  "description": "ProductControl nav+scan. World, spawn, policy and all runtime parameters come only from RunPlan; MuJoCo truth is selected explicitly. Not a SLAM or hardware acceptance."
+}

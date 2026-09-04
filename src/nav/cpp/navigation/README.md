@@ -85,3 +85,36 @@ Executor may not:
 
 The endpoint `FinalControl` remains the sole owner of shaping, authority,
 hard-stop policy, and the final velocity publication.
+
+## MuJoCo single-floor goal check
+
+Run from the repository root with its Python development environment and freshly
+built native binaries. Prepare a saved `map.pcd` / `octomap.ot` bundle from the
+same industrial-park geometry as the MuJoCo scene, then run:
+
+```sh
+python sim/scripts/mujoco/native_navigation_acceptance.py \
+  --manifest config/runtime_graph/acceptance/mujoco_scan_goal.json \
+  --product-map <same-source-map-directory> \
+  --out-dir artifacts/scan-goal
+```
+
+This entry starts and stops the formal `nav + scan` Product through
+ProductControl. Robot, policy, spawn and native parameters come from RunPlan.
+MuJoCo navigation uses truth localization by default; explicit
+`env_config={"backend": "mujoco", "localization": "fastlio2"}` selects the
+separate SLAM path. Mapping Products retain their estimator-backed defaults.
+Truth replaces localization only: registered clouds contain actual simulated
+LiDAR returns, without synthetic ground patches.
+Truth poses are published independently of raycasting; delayed scans retain
+their capture pose without rewinding live odometry. Viewer refreshes use owned
+snapshots off the physics loop. Endpoint input holds freeze both SCAN planning
+time and Follower execution time without replacing the active reference.
+
+The goal is `(56, 32, 0.3)`. A successful global plan or accepted command is not
+arrival: the report requires physical travel, native `REACHED`, final position,
+collision evidence and terminal zero acknowledgement. The Viewer shows the
+global Route, local spline preview and actual traveled path. Keep failures in
+the report; this entry is not a claim that long-range navigation already passes.
+Use a fresh output directory per run. Contact results are finalized separately
+from best-effort live display updates and must match the Product session.

@@ -6,7 +6,7 @@ and acceptance reporting only. Global planning, local planning, path following,
 and command safety remain inside ``navd``.
 """
 
-# ruff: noqa: E402 - direct execution establishes the repository import paths.
+
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import pairwise
 from pathlib import Path, PurePath, PureWindowsPath
 from typing import Any
 
@@ -211,7 +212,7 @@ def _arm_mujoco_motion(
     token: str,
     domain_id: int,
     scenario: str,
-    sensor: "ManagedProcess",
+    sensor: ManagedProcess,
     timeout_s: float = 5.0,
 ) -> dict[str, Any]:
     payload = {
@@ -325,10 +326,18 @@ def _native_path_arg(
     return str(path.expanduser().resolve())
 
 
-def _local_planner_backend(manifest: dict[str, Any]) -> str:
-    backend = str(
-        (manifest.get("navigation_runtime") or {}).get("local_planner") or "cmu"
-    ).strip().lower()
+def _local_planner_backend(
+    manifest: dict[str, Any],
+    *,
+    run_plan: Any | None = None,
+) -> str:
+    runtime = manifest.get("navigation_runtime") or {}
+    configured = runtime.get("local_planner")
+    if not configured and run_plan is not None:
+        native_nav = getattr(run_plan, "native_nav", None)
+        if isinstance(native_nav, Mapping):
+            configured = native_nav.get("local_planner")
+    backend = str(configured or "cmu").strip().lower()
     if backend not in {"cmu", "scan"}:
         raise ValueError(f"unsupported local planner backend: {backend}")
     return backend
@@ -365,6 +374,11 @@ def _bind_manifest_binaries_to_run_plan(
     }
     selected = {process.name: process for process in plan.processes}
     specs = manifest.get("binaries") or {}
+    native_nav = getattr(plan, "native_nav", None)
+    if isinstance(native_nav, Mapping) and native_nav.get("local_planner"):
+        runtime = manifest.setdefault("navigation_runtime", {})
+        if isinstance(runtime, dict) and not runtime.get("local_planner"):
+            runtime["local_planner"] = _local_planner_backend(manifest, run_plan=plan)
     bindings: dict[str, dict[str, str]] = {}
     for binary_name, process_name in process_names.items():
         process = selected.get(process_name)
@@ -417,10 +431,10 @@ def _requires_wsl_runtime(
     if platform != "nt":
         return False
     state_provider = str(
-        ((manifest.get("slam_runtime") or {}).get("provider") or "fastlio2")
+        (manifest.get("slam_runtime") or {}).get("provider") or "fastlio2"
     ).strip().lower()
     require_traversability = bool(
-        ((manifest.get("thresholds") or {}).get("require_traversability", True))
+        (manifest.get("thresholds") or {}).get("require_traversability", True)
     )
     for name, raw_spec in (manifest.get("binaries") or {}).items():
         if name == "slam" and state_provider == "mujoco_navigation_fixture":
@@ -684,8 +698,7 @@ def _probe_wsl_runtime() -> tuple[bool, str]:
     try:
         probe = subprocess.run(
             [launcher, "-e", "true"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=False,
             timeout=WSL_RUNTIME_PROBE_TIMEOUT_S,
             check=False,
@@ -1567,10 +1580,10 @@ def _preflight_runtime(
     blockers: list[str] = []
     binaries: dict[str, Path] = {}
     state_provider = str(
-        ((manifest.get("slam_runtime") or {}).get("provider") or "fastlio2")
+        (manifest.get("slam_runtime") or {}).get("provider") or "fastlio2"
     ).strip().lower()
     require_traversability = bool(
-        ((manifest.get("thresholds") or {}).get("require_traversability", True))
+        (manifest.get("thresholds") or {}).get("require_traversability", True)
     )
     for name, raw_spec in (manifest.get("binaries") or {}).items():
         if name == "slam" and state_provider == "mujoco_navigation_fixture":
@@ -2162,7 +2175,7 @@ def _polyline_distance(point: tuple[float, ...], raw_path: Any) -> float | None:
         return None
     return min(
         _point_to_segment_distance(point, start, end)
-        for start, end in zip(path, path[1:])
+        for start, end in pairwise(path)
     )
 
 
@@ -3220,7 +3233,7 @@ def _run_phase(
     motion_arm_file = phase_dir / "motion_arm.json"
     motion_arm_status = phase_dir / "motion_arm_status.json"
     motion_arm_token = secrets.token_hex(16)
-    motion_arm_scenario = f"{str(manifest.get('name') or 'navigation')}:{phase}:{domain_id}"
+    motion_arm_scenario = f"{manifest.get('name') or 'navigation'!s}:{phase}:{domain_id}"
     motion_arm_timeout_s = max(
         30.0,
         float(thresholds.get("startup_timeout_s") or 18.0) + 30.0,
@@ -4060,7 +4073,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "MuJoCo-LiDAR 10 Hz full frame -> native DDS",
             (
                 "MuJoCo truth odometry/TF/body cloud/health fixture -> native DDS"
-                if str(((manifest.get("slam_runtime") or {}).get("provider") or "fastlio2")).lower()
+                if str((manifest.get("slam_runtime") or {}).get("provider") or "fastlio2").lower()
                 == "mujoco_navigation_fixture"
                 else "Fast-LIO2 odometry/registered cloud/health -> native DDS"
             ),
@@ -4084,10 +4097,134 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     return report
 
 
+def _product_goal_state(status):
+    from runtime.msgs.nav import NavigationGoalState
+
+    return NavigationGoalState(status["state"]).name if "state" in status else "NOT_SEEN"
+
+
+def _product_goal_blockers(manifest, motion, live, goal_status, stop, ready_fraction):
+    """Evaluate physical evidence separately from command acceptance."""
+    limits = manifest["thresholds"]
+    blockers = []
+    if _product_goal_state(goal_status) != "REACHED":
+        blockers.append("goal_not_reached")
+    end = motion.get("end_position_m") or live.get("position_m")
+    error = math.inf if not end else math.hypot(end[0] - manifest["goal"][0], end[1] - manifest["goal"][1])
+    if error > limits["max_goal_error_m"]:
+        blockers.append("goal_error")
+    if motion.get("path_length_xy_m", 0) < limits["min_motion_m"]:
+        blockers.append("insufficient_motion")
+    if motion.get("net_displacement_xy_m", 0) < limits["min_net_displacement_m"]:
+        blockers.append("insufficient_displacement")
+    if live.get("complete") is not True or live.get("entity_contact_steps") != 0:
+        blockers.append("entity_collision_or_missing_evidence")
+    if ready_fraction < limits["min_input_gate_ready_fraction"]:
+        blockers.append("input_not_continuously_ready")
+    if stop.get("terminal_ack") is not True or stop.get("outcome") != "zero_applied":
+        blockers.append("terminal_zero_not_confirmed")
+    return blockers, error
+
+
+def run_product_goal(args):
+    """Run the real Product lifecycle, observing its processes without launching substitutes."""
+    from lingtu.control import ProductControl
+    from lingtu.run_plan import RunPlan
+    from nav.adapters.native.abi import NativeCommandSession
+
+    manifest = _load_manifest(Path(args.manifest).resolve())
+    out = Path(args.out_dir).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    state_dir = out / "control"
+    if state_dir.exists():
+        raise RuntimeError("Use a fresh output directory for each formal navigation run")
+    map_dir = Path(args.product_map).resolve()
+    environment = {**os.environ, "NAV_MAP_DIR": str(map_dir.parent)}
+    control = ProductControl(robot="doso/thunder_v4", env="sim", process_env=environment,
+                             env_config={"backend": "mujoco", "viewer": True, "localization": "truth"})
+    if control.status().get("status") != "stopped":
+        raise RuntimeError("Stop the existing sim Product before the dedicated navigation run")
+    report = {"ok": False, "scope": "formal_mujoco_truth_goal", "blockers": []}
+    samples = []
+    session = None
+    run_root = state_dir
+    try:
+        switch = control.switch("nav", map_name=map_dir.name, local_planner="scan",
+                                state_dir=state_dir)
+        report["switch"] = switch
+        if not switch.get("ok"):
+            raise RuntimeError(switch.get("error") or "Product switch failed")
+        plan_path = state_dir / ("plan-" + switch["product_session_id"] + ".json")
+        plan = RunPlan.load(plan_path)
+        plan.write(out / "run_plan.json")
+        run_root = plan_path.parent
+        report["run_plan"] = str(out / "run_plan.json")
+        report["simulation"] = dict(plan.simulation)
+        library = ROOT / dict(plan.process("host").command.env)["LINGTU_NAV_CLIENT_LIB"]
+        domain = int(dict(plan.process("nav").command.env)["LINGTU_DDS_DOMAIN_ID"])
+        session = NativeCommandSession(library, domain_id=domain, timeout_ms=5000)
+        session.ensure_goal_status_abi()
+        task_id = "scan-long-goal"
+        report["goal_ack"] = session.start_navigation_task(task_id, "scan-long-start", *manifest["goal"], None)
+        deadline = time.monotonic() + float(manifest["motion_duration_s"])
+        next_lifecycle_check = time.monotonic()
+        while time.monotonic() < deadline:
+            nav = _load_json(run_root / "nav.status.json")
+            live = _load_json(run_root / "mujoco_feeder.live.json")
+            goal = session.get_navigation_task_status(task_id) or {}
+            samples.append({"wall_s": time.time(), "live": live, "nav": nav, "goal": goal})
+            if goal:
+                report["goal_status"] = goal
+            if len(samples) % 20 == 0:
+                print(json.dumps({"position": live.get("position_m"), "path_m": live.get("path_length_xy_m"),
+                                  "goal": _product_goal_state(goal), "local": nav.get("last_local", {}).get("reason")}), flush=True)
+            if _product_goal_state(goal) in {"REACHED", "FAILED", "CANCELLED"}:
+                break
+            if time.monotonic() >= next_lifecycle_check:
+                if control.status(state_dir=state_dir).get("status") != "active":
+                    report["blockers"].append("product_inactive")
+                    break
+                next_lifecycle_check = time.monotonic() + 1.0
+            time.sleep(0.2)
+    except Exception as exc:
+        report["blockers"].append(str(exc))
+    finally:
+        if session is not None:
+            session.close()
+        expected = report.get("switch", {}).get("product_session_id")
+        if expected:
+            try:
+                report["stop"] = control.stop(state_dir=state_dir, expected_product_session_id=expected)
+            except Exception as exc:
+                report["stop"] = {"ok": False, "error": str(exc)}
+        else:
+            report["stop"] = {"ok": False, "error": "no_created_session"}
+    motion = _load_json(run_root / "mujoco_feeder.motion.json")
+    stopped = _load_json(run_root / "mujoco_feeder.stop.json")
+    ready = sum(bool(s["nav"].get("input_gate", {}).get("ready")) for s in samples) / max(1, len(samples))
+    final_live = _load_json(run_root / "mujoco_feeder.live.json")
+    contacts = _load_json(run_root / "mujoco_feeder.contacts.json")
+    expected = report.get("switch", {}).get("product_session_id")
+    for name, evidence in (("motion", motion), ("contacts", contacts), ("stop", stopped)):
+        if not expected or evidence.get("product_session_id") != expected:
+            report["blockers"].append(name + "_session_mismatch")
+    blockers, error = _product_goal_blockers(manifest, motion, contacts,
+                                            report.get("goal_status", {}), stopped, ready)
+    report["blockers"].extend(blockers)
+    report.update(motion=motion, live=final_live, contacts=contacts, terminal_stop=stopped,
+                  goal_error_m=error if math.isfinite(error) else None, ready_fraction=ready)
+    report["ok"] = not report["blockers"] and report["stop"].get("ok") is True
+    _write_json(out / "samples.json", samples)
+    _write_json(out / "report.json", report)
+    return report
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     parser.add_argument("--run-plan", type=Path)
+    parser.add_argument("--product-map", type=Path,
+                        help="Saved map directory: run formal nav+scan with MuJoCo truth through ProductControl.")
     parser.add_argument("--mode", choices=["no_motion", "motion", "both"], default="both")
     parser.add_argument("--domain-id", type=int, default=None)
     parser.add_argument(
@@ -4171,7 +4308,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         args.run_plan_verified = True
         args.validated_run_plan = plan
-    report = run(args)
+    report = run_product_goal(args) if args.product_map is not None else run(args)
     print(json.dumps(report, ensure_ascii=True, indent=2, sort_keys=True))
     return 0 if report.get("ok") else 1
 
