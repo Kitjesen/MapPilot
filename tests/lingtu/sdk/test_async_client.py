@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from lingtu.sdk import AsyncLingTuClient, CommandResult, Pose2D
+from lingtu.sdk import AsyncLingTuClient, CommandResult, NavigationStatus, Pose2D
 from lingtu.sdk.client import LingTuClient
 
 
@@ -42,6 +42,36 @@ class TestAsyncLingTuClient(unittest.IsolatedAsyncioTestCase):
 
         self.client.follow_person.assert_called_once_with("person_01")
         self.client.stop_following.assert_called_once_with()
+
+    async def test_wait_until_arrived_delegates_task_identity(self) -> None:
+        expected = NavigationStatus(state="SUCCESS")
+        self.client.wait_until_arrived.return_value = expected
+
+        result = await self.robot.wait_until_arrived(
+            timeout=12.0,
+            poll_interval=0.1,
+            task_id="navigation-task-1",
+            request_id="goal-1",
+        )
+
+        self.assertIs(result, expected)
+        self.client.wait_until_arrived.assert_called_once_with(
+            12.0,
+            0.1,
+            task_id="navigation-task-1",
+            request_id="goal-1",
+            expected_goal=None,
+            baseline=None,
+        )
+
+    async def test_navigation_task_status_delegates_exact_task(self) -> None:
+        expected = {"found": True, "task_id": "navigation-task-1"}
+        self.client.navigation_task_status.return_value = expected
+
+        result = await self.robot.navigation_task_status("navigation-task-1")
+
+        self.assertIs(result, expected)
+        self.client.navigation_task_status.assert_called_once_with("navigation-task-1")
 
     async def test_recording_start_preserves_capture_options(self) -> None:
         expected = CommandResult(ok=True)

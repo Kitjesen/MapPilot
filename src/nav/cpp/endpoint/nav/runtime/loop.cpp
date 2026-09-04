@@ -1386,6 +1386,9 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
                 if (cmd_vel_published) {
                   operator_motion_final_output_sequence =
                       receipt.final_velocity->output_sequence;
+                  state.motion_stop_evidence.observePublishedFinalOutput(
+                      receipt.final_velocity->output_sequence, teleop_result.publish.command,
+                      static_cast<double>(receipt.final_velocity->source_wall_ns) / 1e9);
                 } else {
                   operator_motion_final_output_sequence = 0U;
                   fail_closed_after_cmd_vel_write("teleop_cmd_vel_publish_failed");
@@ -1500,11 +1503,15 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         bool cmd_vel_published = false;
         if (autonomy_result.publish.cmd_vel) {
           const auto cmd_write_start = SteadyClock::now();
-          cmd_vel_published =
-              dds.publish(OutputEvent{FinalVelocityOutput{autonomy_result.publish.command}})
-                  .published;
+          const auto receipt =
+              dds.publish(OutputEvent{FinalVelocityOutput{autonomy_result.publish.command}});
+          cmd_vel_published = receipt.final_velocity.has_value();
           timing.dds_write_ms += elapsedMs(cmd_write_start);
-          if (!cmd_vel_published) {
+          if (cmd_vel_published) {
+            state.motion_stop_evidence.observePublishedFinalOutput(
+                receipt.final_velocity->output_sequence, autonomy_result.publish.command,
+                static_cast<double>(receipt.final_velocity->source_wall_ns) / 1e9);
+          } else {
             fail_closed_after_cmd_vel_write("autonomy_cmd_vel_publish_failed");
           }
         }

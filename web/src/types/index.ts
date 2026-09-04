@@ -877,6 +877,64 @@ export interface NavigationFeedbackSummary {
   reason_codes: string[]
 }
 
+export type NavigationOperatorTaskState =
+  | 'IDLE'
+  | 'PLANNING'
+  | 'EXECUTING'
+  | 'RECOVERING'
+  | 'PAUSED'
+  | 'SUCCESS'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'UNKNOWN'
+
+export type NavigationOperatorMotionPermission = 'CLEAR' | 'HELD' | 'ESTOPPED' | 'UNKNOWN'
+export type NavigationOperatorMotionObservation = 'MOVING' | 'QUIET' | 'UNKNOWN'
+export type NavigationOperatorGoalAdmission = 'ACCEPTING' | 'BLOCKED' | 'UNKNOWN'
+export type NavigationOperatorControlAuthority = 'AUTONOMY' | 'OPERATOR' | 'NONE' | 'UNKNOWN'
+export type NavigationOperatorSummarySeverity = 'OK' | 'INFO' | 'WARNING' | 'CRITICAL'
+export type NavigationOperatorStopConfirmation =
+  | 'NOT_REQUESTED'
+  | 'PENDING'
+  | 'CONFIRMED'
+  | 'FAILED'
+  | 'UNKNOWN'
+
+export interface NavigationOperatorState {
+  schema_version: 1
+  task: {
+    state: NavigationOperatorTaskState
+    task_id: string
+    request_id: string
+    terminal: boolean
+    progress: number | null
+    reason: string
+  }
+  goal_admission: {
+    state: NavigationOperatorGoalAdmission
+    blockers: string[]
+    advisories: string[]
+  }
+  control: {
+    authority: NavigationOperatorControlAuthority
+    resume_required: boolean
+    reason: string
+  }
+  motion: {
+    permission: NavigationOperatorMotionPermission
+    observation: NavigationOperatorMotionObservation
+    stop_confirmation: NavigationOperatorStopConfirmation
+    linear_speed_mps: number | null
+    angular_speed_radps: number | null
+    reason: string
+  }
+  summary: {
+    severity: NavigationOperatorSummarySeverity
+    code: string
+    next_action: string
+  }
+}
+
 export interface NavigationStatusResponse {
   schema_version: number
   state: string
@@ -899,6 +957,7 @@ export interface NavigationStatusResponse {
   feedback: NavigationFeedbackSummary
   diagnostics: NavigationDiagnosticsSummary
   mission: NavigationMissionSummary
+  operator_state?: NavigationOperatorState
   ts: number
 }
 

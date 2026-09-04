@@ -56,9 +56,10 @@ function Dashboard() {
   const sseState = useSSE(
     elevationSubscription ? '/api/v1/events?include_elevation=1' : '/api/v1/events',
   )
+  const operatorTask = sseState.navigationStatus?.operator_state?.task
   const authoritativeMission = sseState.navigationStatus?.mission.raw
-  const activeTaskId = authoritativeMission?.active_task_id
-  const activeRequestId = authoritativeMission?.active_request_id
+  const activeTaskId = operatorTask ? operatorTask.task_id : authoritativeMission?.active_task_id
+  const activeRequestId = operatorTask ? operatorTask.request_id : authoritativeMission?.active_request_id
   const { toasts, show: showToast, dismiss } = useToast()
   const { theme, resolvedTheme, setTheme } = useTheme()
   const [locale, setLocale] = useState<Locale>(() => readStoredLocale())

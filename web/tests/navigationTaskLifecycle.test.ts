@@ -115,4 +115,14 @@ test('canonical lifecycle names win while legacy named states stay compatible', 
   assert.equal(activeAlias.state, 'EXECUTING')
   assert.equal(successAlias.state, 'SUCCESS')
   assert.equal(successAlias.terminal, true)
-})
+})
+
+test('idle is a canonical no-active-task state without task controls', () => {
+  const idle = describeNavigationTask({ lifecycle_state_name: 'IDLE' })
+
+  assert.equal(idle.state, 'IDLE')
+  assert.equal(idle.terminal, false)
+  assert.equal(idle.canPause, false)
+  assert.equal(idle.canResume, false)
+  assert.equal(idle.canCancel, false)
+})

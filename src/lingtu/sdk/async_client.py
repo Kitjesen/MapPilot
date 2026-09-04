@@ -153,6 +153,7 @@ class AsyncLingTuClient:
         poll_interval: float = 0.5,
         distance_threshold: float = 0.3,
         *,
+        task_id: str | None = None,
         request_id: str | None = None,
         expected_goal: tuple[float, float, float] | None = None,
         baseline: NavigationStatus | None = None,
@@ -162,7 +163,7 @@ class AsyncLingTuClient:
             self._client.wait_until_arrived,
             timeout,
             poll_interval,
-            distance_threshold,
+            task_id=task_id,
             request_id=request_id,
             expected_goal=expected_goal,
             baseline=baseline,
@@ -187,6 +188,10 @@ class AsyncLingTuClient:
     async def navigation_status(self) -> NavigationStatus:
         """Return the current navigation status."""
         return await asyncio.to_thread(self._client.navigation_status)
+
+    async def navigation_task_status(self, task_id: str) -> dict[str, Any]:
+        """Return lifecycle evidence for one stable navigation task identity."""
+        return await asyncio.to_thread(self._client.navigation_task_status, task_id)
 
     async def localization_status(self) -> dict[str, Any]:
         """Return localization health."""

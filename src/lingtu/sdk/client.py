@@ -83,6 +83,70 @@ class HealthStatus:
 
 
 @dataclass
+class NavigationOperatorTask:
+    """Task lifecycle shown to a navigation operator."""
+
+    state: str = "UNKNOWN"
+    task_id: str = ""
+    request_id: str = ""
+    terminal: bool = False
+    progress: float | None = None
+    reason: str = ""
+
+
+@dataclass
+class NavigationGoalAdmissionState:
+    """Whether the Gateway can accept or replace a navigation goal."""
+
+    state: str = "UNKNOWN"
+    blockers: list[str] = field(default_factory=list)
+    advisories: list[str] = field(default_factory=list)
+
+
+@dataclass
+class NavigationControlState:
+    """Current navigation control authority."""
+
+    authority: str = "UNKNOWN"
+    resume_required: bool = False
+    reason: str = ""
+
+
+@dataclass
+class NavigationMotionState:
+    """Motion permission, observation, and stop-confirmation evidence."""
+
+    permission: str = "UNKNOWN"
+    observation: str = "UNKNOWN"
+    stop_confirmation: str = "UNKNOWN"
+    linear_speed_mps: float | None = None
+    angular_speed_radps: float | None = None
+    reason: str = ""
+
+
+@dataclass
+class NavigationOperatorSummary:
+    """Stable machine-readable summary for operator presentation."""
+
+    severity: str = "INFO"
+    code: str = ""
+    next_action: str = ""
+
+
+@dataclass
+class NavigationOperatorState:
+    """Four-axis navigation state intended for operator-facing clients."""
+
+    schema_version: int = 1
+    task: NavigationOperatorTask = field(default_factory=NavigationOperatorTask)
+    goal_admission: NavigationGoalAdmissionState = field(default_factory=NavigationGoalAdmissionState)
+    control: NavigationControlState = field(default_factory=NavigationControlState)
+    motion: NavigationMotionState = field(default_factory=NavigationMotionState)
+    summary: NavigationOperatorSummary = field(default_factory=NavigationOperatorSummary)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class NavigationStatus:
     """Navigation mission state."""
 
@@ -92,6 +156,7 @@ class NavigationStatus:
     goal: Position = field(default_factory=Position)
     raw: dict[str, Any] = field(default_factory=dict)
     request_id: str | None = None
+    operator_state: NavigationOperatorState | None = None
 
 
 @dataclass
@@ -135,6 +200,7 @@ class CommandResult:
     accepted: bool = False
     request_id: str | None = None
     stage: str = ""
+    task_id: str | None = None
 
 
 @dataclass
@@ -293,6 +359,62 @@ def _navigation_request_id(raw: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _operator_codes(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
+def _parse_navigation_operator_state(raw: Any) -> NavigationOperatorState | None:
+    if not isinstance(raw, Mapping):
+        return None
+
+    task = _mapping(raw.get("task"))
+    admission = _mapping(raw.get("goal_admission"))
+    control = _mapping(raw.get("control"))
+    motion = _mapping(raw.get("motion"))
+    summary = _mapping(raw.get("summary"))
+    try:
+        schema_version = int(raw.get("schema_version", 1))
+    except (TypeError, ValueError):
+        schema_version = 1
+    return NavigationOperatorState(
+        schema_version=schema_version,
+        task=NavigationOperatorTask(
+            state=str(task.get("state") or "UNKNOWN"),
+            task_id=str(task.get("task_id") or ""),
+            request_id=str(task.get("request_id") or ""),
+            terminal=task.get("terminal") is True,
+            progress=_optional_float(task.get("progress")),
+            reason=str(task.get("reason") or ""),
+        ),
+        goal_admission=NavigationGoalAdmissionState(
+            state=str(admission.get("state") or "UNKNOWN"),
+            blockers=_operator_codes(admission.get("blockers")),
+            advisories=_operator_codes(admission.get("advisories")),
+        ),
+        control=NavigationControlState(
+            authority=str(control.get("authority") or "UNKNOWN"),
+            resume_required=control.get("resume_required") is True,
+            reason=str(control.get("reason") or ""),
+        ),
+        motion=NavigationMotionState(
+            permission=str(motion.get("permission") or "UNKNOWN"),
+            observation=str(motion.get("observation") or "UNKNOWN"),
+            stop_confirmation=str(motion.get("stop_confirmation") or "UNKNOWN"),
+            linear_speed_mps=_optional_float(motion.get("linear_speed_mps")),
+            angular_speed_radps=_optional_float(motion.get("angular_speed_radps")),
+            reason=str(motion.get("reason") or ""),
+        ),
+        summary=NavigationOperatorSummary(
+            severity=str(summary.get("severity") or "INFO"),
+            code=str(summary.get("code") or ""),
+            next_action=str(summary.get("next_action") or ""),
+        ),
+        raw=dict(raw),
+    )
+
+
 def _parse_navigation_status(raw: dict[str, Any]) -> NavigationStatus:
     target = _mapping(raw.get("target"))
     mission = _navigation_mission_payload(raw)
@@ -316,6 +438,7 @@ def _parse_navigation_status(raw: dict[str, Any]) -> NavigationStatus:
             yaw=_optional_float(goal_raw.get("yaw")) or 0.0,
         ),
         request_id=_navigation_request_id(raw),
+        operator_state=_parse_navigation_operator_state(raw.get("operator_state")),
         raw=raw,
     )
 
@@ -336,6 +459,7 @@ def _parse_command_result(raw: dict[str, Any]) -> CommandResult:
         response_ok = accepted
 
     request_id = str(command.get("request_id") or raw.get("request_id") or "").strip() or None
+    task_id = str(command.get("task_id") or raw.get("task_id") or "").strip() or None
     stage = str(raw.get("stage") or raw.get("status") or command.get("stage") or "")
     operation_id = str(command.get("operation_id") or raw.get("operation_id") or "").strip() or None
     return CommandResult(
@@ -343,6 +467,7 @@ def _parse_command_result(raw: dict[str, Any]) -> CommandResult:
         accepted=accepted,
         message=str(raw.get("message", raw.get("reason", raw.get("error", ""))) or ""),
         request_id=request_id,
+        task_id=task_id,
         stage=stage,
         raw=raw,
         operation_id=operation_id,
@@ -595,6 +720,7 @@ class LingTuClient:
             if not result.ok:
                 break
             self.wait_until_arrived(
+                task_id=result.task_id,
                 request_id=result.request_id,
                 expected_goal=(x, y, yaw),
                 baseline=baseline,
@@ -606,11 +732,24 @@ class LingTuClient:
         timeout: float = 120.0,
         poll_interval: float = 0.5,
         *,
+        task_id: str | None = None,
         request_id: str | None = None,
         expected_goal: tuple[float, float, float] | None = None,
         baseline: NavigationStatus | None = None,
     ) -> NavigationStatus:
-        """Block until the current navigation mission completes."""
+        """Block until one navigation task completes.
+
+        A stable ``task_id`` uses the task ledger endpoint. Calls without one
+        retain the aggregate-status correlation path for older Gateways.
+        """
+        normalized_task_id = str(task_id or "").strip()
+        if normalized_task_id:
+            return self._wait_for_navigation_task(
+                normalized_task_id,
+                timeout=timeout,
+                poll_interval=poll_interval,
+            )
+
         deadline = time.monotonic() + timeout
         active_seen = False
         status = baseline or NavigationStatus()
@@ -632,6 +771,45 @@ class LingTuClient:
 
         distance = "unknown" if status.distance_to_goal is None else f"{status.distance_to_goal:.2f}m"
         raise TimeoutError(f"Navigation did not complete within {timeout}s (state={status.state}, dist={distance})")
+
+    def _wait_for_navigation_task(
+        self,
+        task_id: str,
+        *,
+        timeout: float,
+        poll_interval: float,
+    ) -> NavigationStatus:
+        deadline = time.monotonic() + timeout
+        last_state = "UNKNOWN"
+        while time.monotonic() < deadline:
+            payload = self.navigation_task_status(task_id)
+            status_payload = _mapping(payload.get("status"))
+            observed_task_id = str(status_payload.get("task_id") or payload.get("task_id") or "").strip()
+            identity_matches = observed_task_id == task_id
+            if payload.get("found") is True and status_payload and identity_matches:
+                last_state = str(
+                    status_payload.get("lifecycle_state_name") or status_payload.get("state_name") or "UNKNOWN"
+                ).upper()
+                result = NavigationStatus(
+                    state=last_state,
+                    request_id=(
+                        str(status_payload.get("request_id") or payload.get("request_id") or "").strip() or None
+                    ),
+                    raw=dict(payload),
+                )
+                if last_state == "SUCCESS":
+                    return result
+                if last_state in _NAVIGATION_FAILURE_STATES:
+                    reason = str(
+                        status_payload.get("failure_reason")
+                        or status_payload.get("reason")
+                        or payload.get("reason")
+                        or "unknown reason"
+                    )
+                    raise RuntimeError(f"Navigation {last_state}: {reason}")
+            time.sleep(poll_interval)
+
+        raise TimeoutError(f"Navigation task {task_id} did not complete within {timeout}s (state={last_state})")
 
     # ------------------------------------------------------------------
     # State
@@ -673,6 +851,13 @@ class LingTuClient:
         """Get current navigation mission status."""
         raw = self._get("/api/v1/navigation/status")
         return _parse_navigation_status(raw)
+
+    def navigation_task_status(self, task_id: str) -> dict[str, Any]:
+        """Get lifecycle evidence for one stable navigation task identity."""
+        normalized = str(task_id or "").strip()
+        if not normalized:
+            raise ValueError("task_id is required")
+        return self._get(f"/api/v1/navigation/tasks/{quote(normalized, safe='')}")
 
     def localization_status(self) -> dict[str, Any]:
         """Get localization health: alignment, residual, fix quality."""

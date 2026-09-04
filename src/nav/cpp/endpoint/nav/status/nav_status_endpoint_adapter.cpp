@@ -21,6 +21,7 @@ StatusRuntimeState statusRuntimeStateFromEndpoint(const EndpointState &state) {
   result.driver_control.last_command_accepted = state.driver_last_command_accepted;
   result.driver_control.accepted_producer_boot_id = state.driver_accepted_producer_boot_id;
   result.driver_control.accepted_output_sequence = state.driver_accepted_output_sequence;
+  result.motion_stop_evidence = state.motion_stop_evidence.snapshot();
   result.counters = {
       state.odom_count,           state.tf_count,           state.goal_count,
       state.cancel_count,         state.map_clearing_count, state.cloud_clearing_count,
