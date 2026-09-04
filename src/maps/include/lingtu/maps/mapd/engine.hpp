@@ -34,9 +34,9 @@ struct Observation {
   std::string map_frame{"map"};
   std::string sensor_frame;
   Pose map_sensor;
-  float sensor_origin_x_m{0.0F};
-  float sensor_origin_y_m{0.0F};
-  float sensor_origin_z_m{0.0F};
+  double sensor_origin_x_m{0.0};
+  double sensor_origin_y_m{0.0};
+  double sensor_origin_z_m{0.0};
   float pose_quality{0.0F};
   std::string pose_state;
   std::string pose_reason;
@@ -55,6 +55,7 @@ struct Config {
   float occupancy_min_height_from_sensor_m{-1.0F};
   float occupancy_max_height_from_sensor_m{2.0F};
   std::chrono::milliseconds decay_period{250};
+  std::chrono::milliseconds occupancy_update_period{50};
   std::chrono::milliseconds stale_after{1000};
   float accumulated_decay_factor{0.995F};
   bool accumulated_column_carving{true};
@@ -76,8 +77,6 @@ struct Config {
   }();
   layers::RollingOccupancyConfig occupancy = [] {
     layers::RollingOccupancyConfig value;
-    value.decay_after_ns = 1000000000LL;
-    value.decay_factor = 0.5F;
     return value;
   }();
   BlockGridConfig accumulated;
@@ -140,20 +139,21 @@ struct Snapshot {
   std::uint64_t sequence{0U};
   std::uint64_t generation{0U};
   Pose map_sensor;
+  double sensor_origin_z_m{0.0};
   OwnedPointCloud live_cloud;
   OwnedPointCloud voxel_cloud;
   struct CollisionLayer {
     std::uint64_t generation{0U};
-    float resolution_m{0.0F};
+    double resolution_m{0.0};
     std::int32_t size_x{0};
     std::int32_t size_y{0};
     std::int32_t size_z{0};
-    float min_x_m{0.0F};
-    float min_y_m{0.0F};
-    float min_z_m{0.0F};
-    float max_x_m{0.0F};
-    float max_y_m{0.0F};
-    float max_z_m{0.0F};
+    double min_x_m{0.0};
+    double min_y_m{0.0};
+    double min_z_m{0.0};
+    double max_x_m{0.0};
+    double max_y_m{0.0};
+    double max_z_m{0.0};
     std::size_t occupied_cells{0U};
     bool complete{false};
     std::vector<std::uint8_t> occupied_bits;
@@ -196,6 +196,11 @@ class LiveMapEngine final {
       std::chrono::milliseconds timeout) const;
 
  private:
+  struct TransformedObservation {
+    OwnedPointCloud cloud;
+    std::vector<double> precise_xyz;
+  };
+
   struct QueueState {
     bool running{false};
     bool stop_requested{false};
@@ -210,12 +215,15 @@ class LiveMapEngine final {
       const Observation& observation,
       const Config& config,
       std::string* reason);
-  static OwnedPointCloud TransformObservation(
+  static TransformedObservation TransformObservation(
+      const Observation& observation);
+  static void FilterExtendedObservation(
+      OwnedPointCloud* cloud,
       const Observation& observation,
       const Config& config);
   static layers::Grid2D ProjectOccupancy(
       const layers::RollingOccupancySnapshot& occupancy,
-      float sensor_z_m,
+      double sensor_z_m,
       const Config& config);
   static layers::ElevationMapResult ProjectElevation(
       const PointCloudView& cloud,

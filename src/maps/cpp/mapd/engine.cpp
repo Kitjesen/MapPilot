@@ -107,11 +107,11 @@ Snapshot::CollisionLayer BuildCollisionLayer(
   layer.min_y_m = occupancy.origin_y_m;
   layer.min_z_m = occupancy.origin_z_m;
   layer.max_x_m = occupancy.origin_x_m +
-      static_cast<float>(occupancy.size_x) * occupancy.resolution_m;
+      static_cast<double>(occupancy.size_x) * occupancy.resolution_m;
   layer.max_y_m = occupancy.origin_y_m +
-      static_cast<float>(occupancy.size_y) * occupancy.resolution_m;
+      static_cast<double>(occupancy.size_y) * occupancy.resolution_m;
   layer.max_z_m = occupancy.origin_z_m +
-      static_cast<float>(occupancy.size_z) * occupancy.resolution_m;
+      static_cast<double>(occupancy.size_z) * occupancy.resolution_m;
   layer.occupied_cells = occupancy.occupied_cells;
   layer.complete = true;
   layer.occupied_bits = std::move(occupancy.occupied_bits);
@@ -141,6 +141,7 @@ LiveMapEngine::LiveMapEngine(Config config)
       config_.occupancy_min_height_from_sensor_m >
           config_.occupancy_max_height_from_sensor_m ||
       config_.decay_period.count() <= 0 ||
+      config_.occupancy_update_period.count() <= 0 ||
       config_.stale_after.count() <= 0 ||
       !IsFinite(config_.accumulated_decay_factor) ||
       config_.accumulated_decay_factor < 0.0F ||
@@ -420,9 +421,8 @@ bool LiveMapEngine::ValidateObservation(
   return true;
 }
 
-OwnedPointCloud LiveMapEngine::TransformObservation(
-    const Observation& observation,
-    const Config& config) {
+LiveMapEngine::TransformedObservation LiveMapEngine::TransformObservation(
+    const Observation& observation) {
   const Pose& pose = observation.map_sensor;
   const double inverse_norm = 1.0 / std::sqrt(
       pose.qx * pose.qx + pose.qy * pose.qy + pose.qz * pose.qz +
@@ -442,13 +442,12 @@ OwnedPointCloud LiveMapEngine::TransformObservation(
   const double r21 = 2.0 * (qy * qz + qx * qw);
   const double r22 = 1.0 - 2.0 * (qx * qx + qy * qy);
 
-  const float min_range_sq = config.min_range_m * config.min_range_m;
-  const float max_range_sq = config.max_range_m * config.max_range_m;
-  OwnedPointCloud transformed;
-  transformed.frame_id = observation.map_frame;
-  transformed.stamp_ns = observation.stamp_ns;
-  transformed.layout = CloudLayout::kXyzF32Interleaved;
-  transformed.interleaved.reserve(observation.scan.point_count * 3U);
+  TransformedObservation transformed;
+  transformed.cloud.frame_id = observation.map_frame;
+  transformed.cloud.stamp_ns = observation.stamp_ns;
+  transformed.cloud.layout = CloudLayout::kXyzF32Interleaved;
+  transformed.cloud.interleaved.reserve(observation.scan.point_count * 3U);
+  transformed.precise_xyz.reserve(observation.scan.point_count * 3U);
 
   const PointCloudView source = observation.scan.View();
   for (std::size_t index = 0U; index < source.point_count; ++index) {
@@ -459,32 +458,57 @@ OwnedPointCloud LiveMapEngine::TransformObservation(
         !IsFinite(sx) || !IsFinite(sy) || !IsFinite(sz)) {
       continue;
     }
-    const float mx = static_cast<float>(
-        r00 * sx + r01 * sy + r02 * sz + pose.x);
-    const float my = static_cast<float>(
-        r10 * sx + r11 * sy + r12 * sz + pose.y);
-    const float mz = static_cast<float>(
-        r20 * sx + r21 * sy + r22 * sz + pose.z);
-    const float dx = mx - observation.sensor_origin_x_m;
-    const float dy = my - observation.sensor_origin_y_m;
-    const float dz = mz - observation.sensor_origin_z_m;
+    const double mx = r00 * sx + r01 * sy + r02 * sz + pose.x;
+    const double my = r10 * sx + r11 * sy + r12 * sz + pose.y;
+    const double mz = r20 * sx + r21 * sy + r22 * sz + pose.z;
+    transformed.precise_xyz.push_back(mx);
+    transformed.precise_xyz.push_back(my);
+    transformed.precise_xyz.push_back(mz);
+    transformed.cloud.interleaved.push_back(static_cast<float>(mx));
+    transformed.cloud.interleaved.push_back(static_cast<float>(my));
+    transformed.cloud.interleaved.push_back(static_cast<float>(mz));
+  }
+  transformed.cloud.point_count = transformed.cloud.interleaved.size() / 3U;
+  return transformed;
+}
+
+void LiveMapEngine::FilterExtendedObservation(
+    OwnedPointCloud* cloud,
+    const Observation& observation,
+    const Config& config) {
+  if (cloud == nullptr) {
+    return;
+  }
+  const float min_range_sq = config.min_range_m * config.min_range_m;
+  const float max_range_sq = config.max_range_m * config.max_range_m;
+  std::size_t write = 0U;
+  for (std::size_t read = 0U; read < cloud->point_count; ++read) {
+    const std::size_t source = read * 3U;
+    const float x = cloud->interleaved[source];
+    const float y = cloud->interleaved[source + 1U];
+    const float z = cloud->interleaved[source + 2U];
+    const float dx = x - observation.sensor_origin_x_m;
+    const float dy = y - observation.sensor_origin_y_m;
+    const float dz = z - observation.sensor_origin_z_m;
     const float range_sq = dx * dx + dy * dy + dz * dz;
     if (range_sq < min_range_sq || range_sq > max_range_sq ||
         dz < config.min_height_from_sensor_m ||
         dz > config.max_height_from_sensor_m) {
       continue;
     }
-    transformed.interleaved.push_back(mx);
-    transformed.interleaved.push_back(my);
-    transformed.interleaved.push_back(mz);
+    const std::size_t destination = write * 3U;
+    cloud->interleaved[destination] = x;
+    cloud->interleaved[destination + 1U] = y;
+    cloud->interleaved[destination + 2U] = z;
+    ++write;
   }
-  transformed.point_count = transformed.interleaved.size() / 3U;
-  return transformed;
+  cloud->point_count = write;
+  cloud->interleaved.resize(write * 3U);
 }
 
 layers::Grid2D LiveMapEngine::ProjectOccupancy(
     const layers::RollingOccupancySnapshot& occupancy,
-    float sensor_z_m,
+    double sensor_z_m,
     const Config& config) {
   occupancy.Validate();
   layers::Grid2D grid = layers::makeGrid2D(
@@ -494,19 +518,19 @@ layers::Grid2D LiveMapEngine::ProjectOccupancy(
       occupancy.origin_x_m,
       occupancy.origin_y_m,
       -1.0F);
-  const float min_z =
+  const double min_z =
       sensor_z_m + config.occupancy_min_height_from_sensor_m;
-  const float max_z =
+  const double max_z =
       sensor_z_m + config.occupancy_max_height_from_sensor_m;
-  const float inverse_resolution = 1.0F / occupancy.resolution_m;
+  const double inverse_resolution = 1.0 / occupancy.resolution_m;
   const std::int32_t min_layer = std::clamp(
       static_cast<std::int32_t>(std::ceil(
-          (min_z - occupancy.origin_z_m) * inverse_resolution - 0.5F)),
+          (min_z - occupancy.origin_z_m) * inverse_resolution - 0.5)),
       0,
       occupancy.size_z);
   const std::int32_t max_layer_exclusive = std::clamp(
       static_cast<std::int32_t>(std::floor(
-          (max_z - occupancy.origin_z_m) * inverse_resolution - 0.5F)) + 1,
+          (max_z - occupancy.origin_z_m) * inverse_resolution - 0.5)) + 1,
       0,
       occupancy.size_z);
   for (std::int32_t y = 0; y < occupancy.size_y; ++y) {
@@ -594,24 +618,44 @@ layers::ElevationMapResult LiveMapEngine::ProjectElevation(
 }
 
 void LiveMapEngine::Run() {
-  auto next_decay = std::chrono::steady_clock::now() + config_.decay_period;
+  const auto started = std::chrono::steady_clock::now();
+  auto next_update = started + config_.occupancy_update_period;
+  auto next_decay = started + config_.decay_period;
   for (;;) {
     std::optional<Observation> observation;
     {
       std::unique_lock<std::mutex> lock(queue_mutex_);
-      queue_cv_.wait_until(lock, next_decay, [&] {
-        return stop_requested_ || has_pending_;
-      });
+      queue_cv_.wait_until(
+          lock, std::min(next_update, next_decay), [&] { return stop_requested_; });
       if (stop_requested_) {
         running_ = false;
         has_pending_ = false;
         break;
       }
-      if (has_pending_) {
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= next_update && has_pending_) {
         observation.emplace(std::move(pending_));
         pending_ = {};
         has_pending_ = false;
       }
+      if (now >= next_update) {
+        do {
+          next_update += config_.occupancy_update_period;
+        } while (next_update <= now);
+      }
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= next_decay) {
+      try {
+        Decay(SteadyTimeNs());
+      } catch (const std::exception& error) {
+        std::lock_guard<std::mutex> data_lock(data_mutex_);
+        last_error_ = error.what();
+      }
+      do {
+        next_decay += config_.decay_period;
+      } while (next_decay <= now);
     }
 
     if (observation.has_value()) {
@@ -628,32 +672,21 @@ void LiveMapEngine::Run() {
         }
       }
     }
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now >= next_decay) {
-      try {
-        Decay(SteadyTimeNs());
-      } catch (const std::exception& error) {
-        std::lock_guard<std::mutex> data_lock(data_mutex_);
-        last_error_ = error.what();
-      }
-      do {
-        next_decay += config_.decay_period;
-      } while (next_decay <= now);
-    }
   }
   processed_cv_.notify_all();
 }
 
 void LiveMapEngine::Process(Observation observation) {
-  OwnedPointCloud transformed = TransformObservation(observation, config_);
+  TransformedObservation transformed = TransformObservation(observation);
   std::lock_guard<std::mutex> lock(data_mutex_);
   if (processed_epoch_ != observation.reset_epoch) {
     ResetForEpoch(observation);
   }
 
   MapCloudFrame frame;
-  frame.cloud = transformed.View();
+  frame.cloud = transformed.cloud.View();
+  frame.precise_xyz = {transformed.precise_xyz.data(),
+                       transformed.precise_xyz.size()};
   frame.decay_stamp_ns = SteadyTimeNs();
   frame.sensor_origin_x_m = observation.sensor_origin_x_m;
   frame.sensor_origin_y_m = observation.sensor_origin_y_m;
@@ -666,7 +699,12 @@ void LiveMapEngine::Process(Observation observation) {
       observation.sensor_origin_z_m +
       config_.column_carving_max_height_from_sensor_m;
   frame.incremental = true;
+  occupancy_.Update(frame);
+
   if (config_.build_extended_layers) {
+    FilterExtendedObservation(&transformed.cloud, observation, config_);
+    frame.cloud = transformed.cloud.View();
+    frame.precise_xyz = {};
     voxel_.Update(frame);
     const auto voxel_stats = voxel_.LastStats();
     voxel_total_cells_ = voxel_.VoxelCount();
@@ -674,21 +712,19 @@ void LiveMapEngine::Process(Observation observation) {
     capacity_limited_ =
         capacity_limited_ || voxel_stats.capacity_rejected_voxels > 0U;
   }
-  occupancy_.Update(frame);
-
   if (config_.build_extended_layers) {
     accumulated_.SetFrame(observation.map_frame);
     accumulated_.SetStampNs(observation.stamp_ns);
   }
-  if (config_.build_extended_layers && transformed.point_count > 0U) {
+  if (config_.build_extended_layers && transformed.cloud.point_count > 0U) {
     if (config_.accumulated_column_carving) {
       std::unordered_set<std::uint64_t> columns;
       std::vector<float> columns_xy;
-      columns.reserve(transformed.point_count);
-      columns_xy.reserve(transformed.point_count * 2U);
-      for (std::size_t point = 0U; point < transformed.point_count; ++point) {
-        const float x = transformed.interleaved[point * 3U];
-        const float y = transformed.interleaved[point * 3U + 1U];
+      columns.reserve(transformed.cloud.point_count);
+      columns_xy.reserve(transformed.cloud.point_count * 2U);
+      for (std::size_t point = 0U; point < transformed.cloud.point_count; ++point) {
+        const float x = transformed.cloud.interleaved[point * 3U];
+        const float y = transformed.cloud.interleaved[point * 3U + 1U];
         const auto key = ColumnKey(x, y, config_.accumulated.cell_size_m);
         if (columns.insert(key).second) {
           columns_xy.push_back(x);
@@ -703,16 +739,16 @@ void LiveMapEngine::Process(Observation observation) {
           observation.sensor_origin_z_m +
               config_.column_carving_max_height_from_sensor_m));
     }
-    std::vector<float> origins(transformed.point_count * 3U);
-    for (std::size_t point = 0U; point < transformed.point_count; ++point) {
+    std::vector<float> origins(transformed.cloud.point_count * 3U);
+    for (std::size_t point = 0U; point < transformed.cloud.point_count; ++point) {
       origins[point * 3U] = observation.sensor_origin_x_m;
       origins[point * 3U + 1U] = observation.sensor_origin_y_m;
       origins[point * 3U + 2U] = observation.sensor_origin_z_m;
     }
     const auto accumulated_stats = accumulated_.InsertRays(
         origins.data(),
-        transformed.interleaved.data(),
-        transformed.point_count,
+        transformed.cloud.interleaved.data(),
+        transformed.cloud.point_count,
         config_.max_range_m);
     accumulated_capacity_rejections_ +=
         accumulated_stats.capacity_rejections;
@@ -737,7 +773,8 @@ void LiveMapEngine::Process(Observation observation) {
   snapshot_.sequence = observation.sequence;
   snapshot_.generation = generation_;
   snapshot_.map_sensor = observation.map_sensor;
-  snapshot_.live_cloud = std::move(transformed);
+  snapshot_.sensor_origin_z_m = observation.sensor_origin_z_m;
+  snapshot_.live_cloud = std::move(transformed.cloud);
   processed_cv_.notify_all();
 }
 
@@ -773,9 +810,11 @@ void LiveMapEngine::ResetForEpoch(const Observation& observation) {
   voxel_.Reset();
   occupancy_.Reset(
       observation.map_frame,
-      observation.sensor_origin_x_m,
-      observation.sensor_origin_y_m,
-      observation.sensor_origin_z_m,
+      0.0,
+      0.0,
+      config_.occupancy.ground_height_m +
+          0.5 * static_cast<double>(config_.occupancy.size_z) *
+              config_.occupancy.resolution_m,
       observation.stamp_ns);
   accumulated_.Reset();
   accumulated_.SetFrame(observation.map_frame);
@@ -875,7 +914,7 @@ void LiveMapEngine::EnsureCompleteSnapshotLocked() const {
   snapshot_.accumulated_cloud = accumulated_.Snapshot(accumulated_roi);
   snapshot_.occupancy = ProjectOccupancy(
       occupancy_snapshot,
-      static_cast<float>(snapshot_.map_sensor.z),
+      snapshot_.sensor_origin_z_m,
       config_);
   snapshot_.elevation =
       ProjectElevation(snapshot_.voxel_cloud.View(), snapshot_.occupancy);
@@ -899,6 +938,7 @@ Snapshot LiveMapEngine::RealtimeSnapshotLocked() const {
   realtime.sequence = snapshot_.sequence;
   realtime.generation = snapshot_.generation;
   realtime.map_sensor = snapshot_.map_sensor;
+  realtime.sensor_origin_z_m = snapshot_.sensor_origin_z_m;
   realtime.live_cloud = snapshot_.live_cloud;
   realtime.voxel_cloud = snapshot_.voxel_cloud;
   realtime.collision = snapshot_.collision;

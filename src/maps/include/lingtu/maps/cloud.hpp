@@ -19,6 +19,11 @@ struct FloatArrayView {
   std::size_t size{0};
 };
 
+struct DoubleArrayView {
+  const double* data{nullptr};
+  std::size_t size{0};
+};
+
 struct PointCloudView {
   std::string frame_id{"map"};
   std::int64_t stamp_ns{0};
@@ -61,13 +66,16 @@ struct OwnedPointCloud {
 
 struct MapCloudFrame {
   PointCloudView cloud;
+  // Optional map-frame XYZ retained in double precision after the sensor
+  // transform. SCAN occupancy consumes this; snapshots remain float on wire.
+  DoubleArrayView precise_xyz;
   // Local monotonic time used only for TTL/decay. A value of zero preserves
   // the legacy behavior of using cloud.stamp_ns. Geometry and published
   // timestamps always remain on the sensor timestamp carried by cloud.
   std::int64_t decay_stamp_ns{0};
-  float sensor_origin_x_m{0.0F};
-  float sensor_origin_y_m{0.0F};
-  float sensor_origin_z_m{0.0F};
+  double sensor_origin_x_m{0.0};
+  double sensor_origin_y_m{0.0};
+  double sensor_origin_z_m{0.0};
   bool column_carving_z_range_enabled{false};
   float column_carving_min_z_m{0.0F};
   float column_carving_max_z_m{0.0F};

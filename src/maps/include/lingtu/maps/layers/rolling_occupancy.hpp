@@ -21,22 +21,25 @@ struct RollingOccupancyConfig {
   std::int32_t size_x{200};
   std::int32_t size_y{200};
   std::int32_t size_z{100};
-  float resolution_m{0.05F};
-  float max_ray_range_m{5.0F};
-  float hit_log_odds{1.734601F};
-  float miss_log_odds{0.847298F};
-  float min_log_odds{-1.992430F};
-  float max_log_odds{3.891820F};
-  float occupied_probability{0.80F};
-  float free_probability{0.35F};
-  float inflation_radius_m{0.25F};
-  float inflation_z_up_m{0.10F};
-  float inflation_z_down_m{0.10F};
+  double resolution_m{0.05};
+  double max_ray_range_m{5.0};
+  double hit_log_odds{1.7346010553881064};
+  double miss_log_odds{0.8472978603872036};
+  double min_log_odds{-1.9924301646902063};
+  double max_log_odds{3.8918202981106256};
+  double occupied_probability{0.80};
+  double inflation_radius_m{0.25};
+  double inflation_z_up_m{0.10};
+  double inflation_z_down_m{0.10};
+  double ground_height_m{0.0};
+  double local_update_range_x_m{0.0};
+  double local_update_range_y_m{0.0};
+  double local_update_range_z_m{0.0};
   std::int32_t roll_margin_x{96};
   std::int32_t roll_margin_y{96};
   std::int32_t roll_margin_z{46};
   std::int64_t decay_after_ns{0};
-  float decay_factor{0.90F};
+  double decay_factor{0.90};
   bool auto_roll{true};
   bool reject_out_of_order{true};
 };
@@ -63,13 +66,13 @@ struct RollingOccupancySnapshot {
   std::string frame_id{"map"};
   std::int64_t stamp_ns{0};
   std::uint64_t generation{0U};
-  float resolution_m{0.05F};
+  double resolution_m{0.05};
   std::int32_t size_x{0};
   std::int32_t size_y{0};
   std::int32_t size_z{0};
-  float origin_x_m{0.0F};
-  float origin_y_m{0.0F};
-  float origin_z_m{0.0F};
+  double origin_x_m{0.0};
+  double origin_y_m{0.0};
+  double origin_z_m{0.0};
   std::vector<std::uint8_t> state;
   std::vector<std::int16_t> log_odds_q8;
 
@@ -82,13 +85,13 @@ struct RollingInflatedSnapshot {
   std::string frame_id{"map"};
   std::int64_t stamp_ns{0};
   std::uint64_t generation{0U};
-  float resolution_m{0.05F};
+  double resolution_m{0.05};
   std::int32_t size_x{0};
   std::int32_t size_y{0};
   std::int32_t size_z{0};
-  float origin_x_m{0.0F};
-  float origin_y_m{0.0F};
-  float origin_z_m{0.0F};
+  double origin_x_m{0.0};
+  double origin_y_m{0.0};
+  double origin_z_m{0.0};
   std::size_t occupied_cells{0U};
   std::vector<std::uint8_t> occupied_bits;
 
@@ -119,24 +122,24 @@ class RollingOccupancyGrid final {
 
   void Reset(
       std::string frame_id = "map",
-      float center_x_m = 0.0F,
-      float center_y_m = 0.0F,
-      float center_z_m = 0.0F,
+      double center_x_m = 0.0,
+      double center_y_m = 0.0,
+      double center_z_m = 0.0,
       std::int64_t stamp_ns = 0);
 
   RollingOccupancyCellChunk RollToCenter(
-      float center_x_m,
-      float center_y_m,
-      float center_z_m,
+      double center_x_m,
+      double center_y_m,
+      double center_z_m,
       std::int64_t stamp_ns = 0);
 
   RollingOccupancyUpdateStats Update(const MapCloudFrame& frame);
   std::size_t Decay(std::int64_t now_ns);
 
-  OccupancyState StateAt(float x_m, float y_m, float z_m) const;
-  float OccupancyProbability(float x_m, float y_m, float z_m) const;
-  bool Contains(float x_m, float y_m, float z_m) const;
-  bool InflatedContains(float x_m, float y_m, float z_m) const;
+  OccupancyState StateAt(double x_m, double y_m, double z_m) const;
+  double OccupancyProbability(double x_m, double y_m, double z_m) const;
+  bool Contains(double x_m, double y_m, double z_m) const;
+  bool InflatedContains(double x_m, double y_m, double z_m) const;
 
   RollingOccupancySnapshot Snapshot() const;
   RollingInflatedSnapshot InflatedSnapshot() const;
@@ -148,7 +151,7 @@ class RollingOccupancyGrid final {
 
  private:
   struct Cell {
-    float log_odds{0.0F};
+    double log_odds{0.0};
     std::uint16_t hits{0U};
     std::uint16_t misses{0U};
     std::int64_t last_observed_ns{0};
@@ -171,11 +174,11 @@ class RollingOccupancyGrid final {
   };
 
   static void ValidateConfig(const RollingOccupancyConfig& config);
-  static float Probability(float log_odds);
+  static double Probability(double log_odds);
   static std::uint16_t SaturatingIncrement(std::uint16_t value);
 
   bool InBounds(const CellCoord& coord) const noexcept;
-  bool WorldToCell(float x_m, float y_m, float z_m, CellCoord* out) const;
+  bool WorldToCell(double x_m, double y_m, double z_m, CellCoord* out) const;
   std::size_t PhysicalIndex(const CellCoord& logical) const;
   OccupancyState StateFor(const Cell& cell) const;
   CellCoord PhysicalToLogical(std::size_t physical_index) const;
@@ -183,11 +186,11 @@ class RollingOccupancyGrid final {
   void UpdateInflation(
       const CellCoord& occupied,
       int delta);
-  void InitializeOrigin(float center_x_m, float center_y_m, float center_z_m);
+  void InitializeOrigin(double center_x_m, double center_y_m, double center_z_m);
   RollResult RollToCenterLocked(
-      float center_x_m,
-      float center_y_m,
-      float center_z_m,
+      double center_x_m,
+      double center_y_m,
+      double center_z_m,
       std::int64_t stamp_ns,
       bool commit_revision);
   RollingOccupancyCellChunk RollByLocked(
@@ -202,28 +205,27 @@ class RollingOccupancyGrid final {
       std::uint64_t generation) const;
   RollingOccupancyCellChunk ObservedCellsLocked() const;
   void TraceRay(
-      float origin_x_m,
-      float origin_y_m,
-      float origin_z_m,
-      float end_x_m,
-      float end_y_m,
-      float end_z_m,
+      double origin_x_m,
+      double origin_y_m,
+      double origin_z_m,
+      double end_x_m,
+      double end_y_m,
+      double end_z_m,
       std::vector<CellCoord>* cells) const;
   bool ClipRayToWindow(
-      float origin_x_m,
-      float origin_y_m,
-      float origin_z_m,
-      float* end_x_m,
-      float* end_y_m,
-      float* end_z_m) const;
+      double origin_x_m,
+      double origin_y_m,
+      double origin_z_m,
+      double* end_x_m,
+      double* end_y_m,
+      double* end_z_m) const;
   std::size_t DecayLocked(std::int64_t now_ns);
 
   RollingOccupancyConfig config_;
-  float free_log_odds_threshold_{0.0F};
-  float occupied_log_odds_threshold_{0.0F};
+  double occupied_log_odds_threshold_{0.0};
   std::vector<Cell> cells_;
-  std::vector<std::uint16_t> ray_total_counts_;
-  std::vector<std::uint16_t> ray_hit_counts_;
+  std::vector<std::uint32_t> ray_total_counts_;
+  std::vector<std::uint32_t> ray_hit_counts_;
   std::vector<std::uint64_t> observed_bits_;
   std::vector<std::uint64_t> occupied_bits_;
   std::vector<std::uint16_t> inflation_counts_;
@@ -233,9 +235,9 @@ class RollingOccupancyGrid final {
   std::int32_t ring_x_{0};
   std::int32_t ring_y_{0};
   std::int32_t ring_z_{0};
-  float origin_x_m_{0.0F};
-  float origin_y_m_{0.0F};
-  float origin_z_m_{0.0F};
+  double origin_x_m_{0.0};
+  double origin_y_m_{0.0};
+  double origin_z_m_{0.0};
   std::string frame_id_{"map"};
   std::int64_t stamp_ns_{0};
   std::uint64_t generation_{0U};

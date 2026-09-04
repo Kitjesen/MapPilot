@@ -442,7 +442,7 @@ def test_native_mapd_service_is_packaged_as_a_strict_cpp_boundary() -> None:
     assert "RuntimeDirectoryMode=0770" in unit
     assert "UMask=0007" in unit
     assert "LINGTU_MAPD_STATE_HZ=2" in unit
-    assert "LINGTU_MAPD_CLOUD_HZ=10" in unit
+    assert "LINGTU_MAPD_CLOUD_HZ=20" in unit
     assert "LINGTU_MAPD_MAP_HZ=2" in unit
     assert "LINGTU_MAPD_SCENE_HZ=2" in unit
     assert "LINGTU_MAPD_MAX_POINTS=300000" in unit

@@ -325,9 +325,9 @@ std::optional<Observation> DecodeObservation(const lingtu_dds_MapObservation &me
   observation.map_sensor.qy = message.map_sensor.rotation.y;
   observation.map_sensor.qz = message.map_sensor.rotation.z;
   observation.map_sensor.qw = message.map_sensor.rotation.w;
-  observation.sensor_origin_x_m = static_cast<float>(message.sensor_origin.x);
-  observation.sensor_origin_y_m = static_cast<float>(message.sensor_origin.y);
-  observation.sensor_origin_z_m = static_cast<float>(message.sensor_origin.z);
+  observation.sensor_origin_x_m = message.sensor_origin.x;
+  observation.sensor_origin_y_m = message.sensor_origin.y;
+  observation.sensor_origin_z_m = message.sensor_origin.z;
   observation.pose_quality = std::min(message.pose_confidence, message.localization_quality);
   if (!DecodeCloud(message.scan, limits, &observation.scan, error)) {
     return std::nullopt;

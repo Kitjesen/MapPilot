@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -44,7 +45,7 @@ Config TestConfig() {
   config.occupancy.resolution_m = 0.5F;
   config.occupancy.hit_log_odds = 4.0F;
   config.occupancy.miss_log_odds = 2.0F;
-  config.occupancy.inflation_radius_m = 0.0F;
+  config.occupancy.inflation_radius_m = 0.01F;
   config.occupancy.inflation_z_up_m = 0.0F;
   config.occupancy.inflation_z_down_m = 0.0F;
   config.occupancy.roll_margin_x = 2;
@@ -114,6 +115,23 @@ void TestExactPoseTransformAndDerivedLayers() {
   const auto state = engine.GetState();
   assert(state.live);
   assert(state.accumulated_cells >= state.accumulated_snapshot_cells);
+  engine.Stop();
+}
+
+void TestScanOccupancyReceivesPointsBeforeGenericMapFilters() {
+  Config config = TestConfig();
+  config.min_range_m = 1.0F;
+  LiveMapEngine engine(config);
+  engine.Start();
+  assert(engine.Submit(
+      MakeObservation(1U, 1U, 0.0, 0.0, 0.0, {0.5F, 0.0F, 0.0F}))
+             .accepted());
+  assert(engine.WaitUntilProcessed(1U, 1U, std::chrono::seconds(2)));
+
+  const auto snapshot = engine.GetSnapshot();
+  assert(snapshot.live_cloud.point_count == 0U);
+  assert(snapshot.voxel_cloud.point_count == 0U);
+  assert(snapshot.collision.occupied_cells == 1U);
   engine.Stop();
 }
 
@@ -521,10 +539,63 @@ void TestCollisionOnlyRuntimeSkipsExtendedLayers() {
   engine.Stop();
 }
 
+void TestDefaultOccupancyDoesNotDecayOutsideOfficialRayUpdates() {
+  Config config;
+  assert(config.occupancy.decay_after_ns == 0);
+}
+
+void TestOccupancyProjectionUsesPhysicalSensorHeight() {
+  Config config = TestConfig();
+  config.occupancy_min_height_from_sensor_m = -0.3F;
+  config.occupancy_max_height_from_sensor_m = 0.3F;
+  LiveMapEngine engine(config);
+  engine.Start();
+
+  auto observation = MakeObservation(
+      1U, 1U, 0.0, 0.0, 0.0, {0.5F, 0.0F, 1.0F});
+  observation.map_sensor.z = 0.0;
+  observation.sensor_origin_z_m = 1.0F;
+  assert(engine.Submit(std::move(observation)).accepted());
+  assert(engine.WaitUntilProcessed(1U, 1U, std::chrono::seconds(2)));
+
+  const auto snapshot = engine.GetSnapshot();
+  assert(snapshot.sensor_origin_z_m == 1.0F);
+  assert(std::find(snapshot.occupancy.data.begin(), snapshot.occupancy.data.end(),
+                   100.0F) != snapshot.occupancy.data.end());
+  engine.Stop();
+}
+
+void TestOccupancyKeepsDoublePrecisionThroughPoseTransform() {
+  Config config = TestConfig();
+  LiveMapEngine engine(config);
+  engine.Start();
+
+  auto observation = MakeObservation(
+      1U, 1U, 0.09999998, 0.0, 0.0, {0.4F, 0.0F, 0.0F});
+  observation.sensor_origin_x_m = 0.09999998F;
+  assert(engine.Submit(std::move(observation)).accepted());
+  assert(engine.WaitUntilProcessed(1U, 1U, std::chrono::seconds(2)));
+
+  const auto collision = engine.GetView(SnapshotDetail::kRealtime).snapshot.collision;
+  const auto occupied = [&collision](int x, int y, int z) {
+    const std::size_t linear =
+        (static_cast<std::size_t>(z) * static_cast<std::size_t>(collision.size_y) +
+         static_cast<std::size_t>(y)) *
+            static_cast<std::size_t>(collision.size_x) +
+        static_cast<std::size_t>(x);
+    return (collision.occupied_bits[linear / 8U] &
+            static_cast<std::uint8_t>(1U << (linear % 8U))) != 0U;
+  };
+  assert(occupied(8, 8, 4));
+  assert(!occupied(9, 8, 4));
+  engine.Stop();
+}
+
 }  // namespace
 
 int main() {
   TestExactPoseTransformAndDerivedLayers();
+  TestScanOccupancyReceivesPointsBeforeGenericMapFilters();
   TestIdentityGateAndEpochReset();
   TestIndependentDecayWithoutNewObservations();
   TestMalformedObservationRejectedBeforeQueue();
@@ -536,5 +607,8 @@ int main() {
   TestCollisionSnapshotKeepsNearbyGroundInNearbyCells();
   TestRealtimeAndCompleteSnapshotsAreBuiltOnDemand();
   TestCollisionOnlyRuntimeSkipsExtendedLayers();
+  TestDefaultOccupancyDoesNotDecayOutsideOfficialRayUpdates();
+  TestOccupancyProjectionUsesPhysicalSensorHeight();
+  TestOccupancyKeepsDoublePrecisionThroughPoseTransform();
   return 0;
 }

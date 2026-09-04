@@ -25,7 +25,7 @@ RollingOccupancyConfig TestConfig() {
   config.max_ray_range_m = 20.0F;
   config.hit_log_odds = 4.0F;
   config.miss_log_odds = 2.0F;
-  config.inflation_radius_m = 0.0F;
+  config.inflation_radius_m = 0.01F;
   config.inflation_z_up_m = 0.0F;
   config.inflation_z_down_m = 0.0F;
   config.roll_margin_x = 1;
@@ -156,7 +156,7 @@ void TestRayUsesOfficialVoxelDeltaTraversal() {
   assert(grid.StateAt(1.1F, 0.9F, 0.1F) == OccupancyState::kFree);
 }
 
-void TestOccupiedThresholdIsStrictLikeOfficialGridMap() {
+void TestSubthresholdObservationIsKnownFreeLikeOfficialGridMap() {
   auto config = TestConfig();
   config.auto_roll = false;
   config.hit_log_odds =
@@ -166,7 +166,7 @@ void TestOccupiedThresholdIsStrictLikeOfficialGridMap() {
 
   grid.Update(Frame({2.2F, 0.1F, 0.1F}, 10));
 
-  assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kUnknown);
+  assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kFree);
   assert(grid.InflatedSnapshot().occupied_cells == 0U);
 }
 
@@ -231,6 +231,36 @@ void TestWindowRollEmitsOutgoingAndPreservesOverlap() {
   const auto snapshot = grid.Snapshot();
   assert(std::fabs(snapshot.origin_x_m - -1.0F) < 0.01F);
   assert(snapshot.CellCount() == 8U * 8U * 4U);
+}
+
+void TestSlidingThresholdIsSymmetricLikeUpstream() {
+  auto positive_config = TestConfig();
+  RollingOccupancyGrid positive(positive_config);
+  positive.Reset("map", 0.0F, 0.0F, 0.0F, 1);
+  const float positive_origin = positive.Snapshot().origin_x_m;
+  positive.RollToCenter(3.2F, 0.0F, 0.0F, 2);
+  assert(positive.Snapshot().origin_x_m != positive_origin);
+
+  auto negative_config = TestConfig();
+  RollingOccupancyGrid negative(negative_config);
+  negative.Reset("map", 0.0F, 0.0F, 0.0F, 1);
+  const float negative_origin = negative.Snapshot().origin_x_m;
+  negative.RollToCenter(-2.8F, 0.0F, 0.0F, 2);
+  assert(negative.Snapshot().origin_x_m != negative_origin);
+}
+
+void TestShortPointOutsideUpstreamLocalRangeIsIgnored() {
+  auto config = TestConfig();
+  config.auto_roll = false;
+  RollingOccupancyGrid grid(config);
+  grid.Reset("map", 0.0F, 0.0F, 0.0F, 1);
+
+  const auto stats = grid.Update(
+      Frame({2.2F, 0.1F, 0.1F}, 10, -2.8F, 0.1F, 0.1F));
+
+  assert(stats.accepted_points == 0U);
+  assert(stats.rejected_points == 1U);
+  assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kUnknown);
 }
 
 void TestWindowRollClearsInflationFromEveryReusedCell() {
@@ -413,9 +443,12 @@ void TestIncrementalInflationMatchesFullRebuildAcrossUpdates() {
       const int z = 1 + static_cast<int>(random %
                                          static_cast<std::uint32_t>(snapshot.size_z - 2));
       points.insert(points.end(), {
-          snapshot.origin_x_m + (static_cast<float>(x) + 0.5F) * snapshot.resolution_m,
-          snapshot.origin_y_m + (static_cast<float>(y) + 0.5F) * snapshot.resolution_m,
-          snapshot.origin_z_m + (static_cast<float>(z) + 0.5F) * snapshot.resolution_m,
+          static_cast<float>(snapshot.origin_x_m +
+                             (static_cast<double>(x) + 0.5) * snapshot.resolution_m),
+          static_cast<float>(snapshot.origin_y_m +
+                             (static_cast<double>(y) + 0.5) * snapshot.resolution_m),
+          static_cast<float>(snapshot.origin_z_m +
+                             (static_cast<double>(z) + 0.5) * snapshot.resolution_m),
       });
     }
     const std::int64_t stamp = static_cast<std::int64_t>(step) * 10;
@@ -451,6 +484,49 @@ void TestSubVoxelVerticalInflationUsesOfficialCeil() {
   assert(grid.InflatedContains(0.1F, 0.1F, 0.35F));
 }
 
+void TestOddWindowUsesOfficialInitialVoxelOrigin() {
+  auto config = TestConfig();
+  config.size_x = 5;
+  config.size_y = 5;
+  config.size_z = 5;
+  config.roll_margin_x = 1;
+  config.roll_margin_y = 1;
+  config.roll_margin_z = 1;
+  RollingOccupancyGrid grid(config);
+  grid.Reset("map", 0.0, 0.0, 0.0, 1);
+
+  const auto snapshot = grid.Snapshot();
+  assert(snapshot.origin_x_m == -3.0);
+  assert(snapshot.origin_y_m == -3.0);
+  assert(snapshot.origin_z_m == -3.0);
+}
+
+void TestZeroLengthReturnIsAnOfficialEndpointHit() {
+  auto config = TestConfig();
+  config.auto_roll = false;
+  RollingOccupancyGrid grid(config);
+  grid.Reset("map", 0.0, 0.0, 0.0, 1);
+
+  const auto stats = grid.Update(Frame({0.0F, 0.0F, 0.0F}, 10));
+  assert(stats.accepted_points == 1U);
+  assert(stats.hit_updates == 1U);
+  assert(grid.StateAt(0.0, 0.0, 0.0) == OccupancyState::kOccupied);
+}
+
+void TestConfiguredLocalUpdateRangeMatchesUpstreamFilter() {
+  auto config = TestConfig();
+  config.auto_roll = false;
+  config.local_update_range_x_m = 0.5;
+  config.local_update_range_y_m = 0.5;
+  config.local_update_range_z_m = 0.5;
+  RollingOccupancyGrid grid(config);
+  grid.Reset("map", 0.0, 0.0, 0.0, 1);
+
+  const auto stats = grid.Update(Frame({1.2F, 0.0F, 0.0F}, 10));
+  assert(stats.accepted_points == 0U);
+  assert(stats.rejected_points == 1U);
+}
+
 }  // namespace
 
 int main() {
@@ -460,10 +536,12 @@ int main() {
   TestRayFusionMatchesOfficialEndpointAndTraversalVotes();
   TestRayCornerTieMatchesOfficialSingleAxisStep();
   TestRayUsesOfficialVoxelDeltaTraversal();
-  TestOccupiedThresholdIsStrictLikeOfficialGridMap();
+  TestSubthresholdObservationIsKnownFreeLikeOfficialGridMap();
   TestInflationExcludesExactRadiusBoundary();
   TestCollisionGenerationAdvancesOnlyWhenInflatedGeometryChanges();
   TestWindowRollEmitsOutgoingAndPreservesOverlap();
+  TestSlidingThresholdIsSymmetricLikeUpstream();
+  TestShortPointOutsideUpstreamLocalRangeIsIgnored();
   TestWindowRollClearsInflationFromEveryReusedCell();
   TestAutoRollAndCellMutationCommitOneGeneration();
   TestDecayAndOutOfOrderGate();
@@ -471,5 +549,8 @@ int main() {
   TestIncrementalInflationKeepsSharedCoverageUntilLastSourceClears();
   TestIncrementalInflationMatchesFullRebuildAcrossUpdates();
   TestSubVoxelVerticalInflationUsesOfficialCeil();
+  TestOddWindowUsesOfficialInitialVoxelOrigin();
+  TestZeroLengthReturnIsAnOfficialEndpointHit();
+  TestConfiguredLocalUpdateRangeMatchesUpstreamFilter();
   return 0;
 }

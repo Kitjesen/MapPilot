@@ -74,7 +74,7 @@ struct Options {
   std::string product_session_id;
   std::filesystem::path status_file;
   double state_hz{2.0};
-  double cloud_hz{10.0};
+  double cloud_hz{20.0};
   double map_hz{2.0};
   double scene_hz{2.0};
   std::filesystem::path map_root;
@@ -167,11 +167,11 @@ double Probability(double log_odds) {
   return 1.0 / (1.0 + std::exp(-log_odds));
 }
 
-float LogOdds(double probability, const char *name) {
+double LogOdds(double probability, const char *name) {
   if (!(probability > 0.0) || !(probability < 1.0)) {
     throw std::invalid_argument(std::string(name) + " must be in (0, 1)");
   }
-  return static_cast<float>(std::log(probability / (1.0 - probability)));
+  return std::log(probability / (1.0 - probability));
 }
 
 int RollMargin(int size, double resolution, double threshold) {
@@ -189,9 +189,9 @@ void ConfigureOccupancy(Config *engine) {
   auto &occupancy = engine->occupancy;
   const double default_slide =
       static_cast<double>(occupancy.size_x / 2 - occupancy.roll_margin_x) * occupancy.resolution_m;
-  occupancy.resolution_m = static_cast<float>(ParseDouble(
+  occupancy.resolution_m = ParseDouble(
       EnvOr("LINGTU_MAPD_OCCUPANCY_RESOLUTION_M", std::to_string(occupancy.resolution_m)),
-      "LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"));
+      "LINGTU_MAPD_OCCUPANCY_RESOLUTION_M");
   occupancy.size_x =
       ParseInt(EnvOr("LINGTU_MAPD_OCCUPANCY_SIZE_X", std::to_string(occupancy.size_x)),
                "LINGTU_MAPD_OCCUPANCY_SIZE_X");
@@ -207,9 +207,21 @@ void ConfigureOccupancy(Config *engine) {
   occupancy.roll_margin_x = RollMargin(occupancy.size_x, occupancy.resolution_m, slide);
   occupancy.roll_margin_y = RollMargin(occupancy.size_y, occupancy.resolution_m, slide);
   occupancy.roll_margin_z = RollMargin(occupancy.size_z, occupancy.resolution_m, slide);
-  occupancy.max_ray_range_m = static_cast<float>(
-      ParseDouble(EnvOr("LINGTU_MAPD_OCCUPANCY_RAY_M", std::to_string(occupancy.max_ray_range_m)),
-                  "LINGTU_MAPD_OCCUPANCY_RAY_M"));
+  occupancy.max_ray_range_m = ParseDouble(
+      EnvOr("LINGTU_MAPD_OCCUPANCY_RAY_M", std::to_string(occupancy.max_ray_range_m)),
+      "LINGTU_MAPD_OCCUPANCY_RAY_M");
+  occupancy.local_update_range_x_m = ParseDouble(
+      EnvOr("LINGTU_MAPD_LOCAL_RANGE_X_M",
+            std::to_string(0.5 * occupancy.size_x * occupancy.resolution_m)),
+      "LINGTU_MAPD_LOCAL_RANGE_X_M");
+  occupancy.local_update_range_y_m = ParseDouble(
+      EnvOr("LINGTU_MAPD_LOCAL_RANGE_Y_M",
+            std::to_string(0.5 * occupancy.size_y * occupancy.resolution_m)),
+      "LINGTU_MAPD_LOCAL_RANGE_Y_M");
+  occupancy.local_update_range_z_m = ParseDouble(
+      EnvOr("LINGTU_MAPD_LOCAL_RANGE_Z_M",
+            std::to_string(0.5 * occupancy.size_z * occupancy.resolution_m)),
+      "LINGTU_MAPD_LOCAL_RANGE_Z_M");
 
   const double hit_probability = ParseDouble(
       EnvOr("LINGTU_MAPD_OCCUPANCY_P_HIT", std::to_string(Probability(occupancy.hit_log_odds))),
@@ -227,9 +239,9 @@ void ConfigureOccupancy(Config *engine) {
   occupancy.miss_log_odds = -LogOdds(miss_probability, "LINGTU_MAPD_OCCUPANCY_P_MISS");
   occupancy.min_log_odds = LogOdds(min_probability, "LINGTU_MAPD_OCCUPANCY_P_MIN");
   occupancy.max_log_odds = LogOdds(max_probability, "LINGTU_MAPD_OCCUPANCY_P_MAX");
-  occupancy.occupied_probability = static_cast<float>(ParseDouble(
+  occupancy.occupied_probability = ParseDouble(
       EnvOr("LINGTU_MAPD_OCCUPANCY_P_OCC", std::to_string(occupancy.occupied_probability)),
-      "LINGTU_MAPD_OCCUPANCY_P_OCC"));
+      "LINGTU_MAPD_OCCUPANCY_P_OCC");
   const double decay_after_s = ParseDouble(
       EnvOr("LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S",
             std::to_string(static_cast<double>(occupancy.decay_after_ns) * 1e-9)),
@@ -240,15 +252,15 @@ void ConfigureOccupancy(Config *engine) {
   }
   occupancy.decay_after_ns =
       static_cast<std::int64_t>(std::llround(decay_after_s * 1e9));
-  occupancy.inflation_radius_m = static_cast<float>(ParseDouble(
+  occupancy.inflation_radius_m = ParseDouble(
       EnvOr("LINGTU_MAPD_INFLATION_RADIUS_M", std::to_string(occupancy.inflation_radius_m)),
-      "LINGTU_MAPD_INFLATION_RADIUS_M"));
-  occupancy.inflation_z_up_m = static_cast<float>(ParseDouble(
+      "LINGTU_MAPD_INFLATION_RADIUS_M");
+  occupancy.inflation_z_up_m = ParseDouble(
       EnvOr("LINGTU_MAPD_INFLATION_Z_UP_M", std::to_string(occupancy.inflation_z_up_m)),
-      "LINGTU_MAPD_INFLATION_Z_UP_M"));
-  occupancy.inflation_z_down_m = static_cast<float>(ParseDouble(
+      "LINGTU_MAPD_INFLATION_Z_UP_M");
+  occupancy.inflation_z_down_m = ParseDouble(
       EnvOr("LINGTU_MAPD_INFLATION_Z_DOWN_M", std::to_string(occupancy.inflation_z_down_m)),
-      "LINGTU_MAPD_INFLATION_Z_DOWN_M"));
+      "LINGTU_MAPD_INFLATION_Z_DOWN_M");
 }
 
 void PrintUsage() {

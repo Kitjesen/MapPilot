@@ -807,7 +807,7 @@ struct MapCollisionLayer {
   unsigned long long observation_sequence;
   unsigned long long generation;
   boolean live;
-  float resolution;
+  double resolution;
   unsigned long size_x;
   unsigned long size_y;
   unsigned long size_z;
