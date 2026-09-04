@@ -6,26 +6,26 @@
 
 #include "planning/local/planner.hpp"
 
-namespace nav_kernel::local {
+namespace nav_kernel::local::scan {
 
-struct LocalPlanUpdate {
+struct Update {
   LocalPlan plan{};
   LocalPlannerDebugSnapshot debug{};
 };
 
 // Serialized SCAN timer runtime. One worker owns the mutable upstream FSM and
 // runs its 100 Hz state callback and independent 20 Hz collision callback.
-class LocalPlanTask {
+class Task {
  public:
-  explicit LocalPlanTask(const LocalPlannerParams &params);
-  ~LocalPlanTask();
+  explicit Task(const LocalPlannerParams &params);
+  ~Task();
 
-  LocalPlanTask(const LocalPlanTask &) = delete;
-  LocalPlanTask &operator=(const LocalPlanTask &) = delete;
+  Task(const Task &) = delete;
+  Task &operator=(const Task &) = delete;
 
   bool configure(const std::string &pathLibraryDir = {});
   [[nodiscard]] bool configured() const;
-  LocalPlanUpdate update(const LocalPlanRequest &request);
+  Update update(const LocalPlanRequest &request);
   void reset();
 
  private:
@@ -33,4 +33,4 @@ class LocalPlanTask {
   std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace nav_kernel::local
+}  // namespace nav_kernel::local::scan

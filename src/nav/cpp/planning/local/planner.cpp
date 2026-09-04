@@ -7,7 +7,7 @@
 
 #include "planning/local/cmu/backend.hpp"
 #include "planning/local/scan/backend.hpp"
-#include "planning/local/task.hpp"
+#include "planning/local/scan/task.hpp"
 #include "trajectory/spline.hpp"
 
 namespace nav_kernel {
@@ -265,7 +265,7 @@ class local::Planner::Impl {
  public:
   explicit Impl(LocalPlannerParams params) : params_(std::move(params)) {
     if (params_.backend == LocalPlannerBackend::Scan) {
-      task_ = std::make_unique<local::LocalPlanTask>(params_);
+      task_ = std::make_unique<local::scan::Task>(params_);
     } else {
       cmu_ = std::make_unique<local::cmu::Backend>(params_);
     }
@@ -303,7 +303,7 @@ class local::Planner::Impl {
     if (cancel && cancel())
       return LocalPlan::stopped(LocalPlanStatus::Cancelled);
     if (params_.backend == LocalPlannerBackend::Scan) {
-      const local::LocalPlanUpdate update = task_->update(request);
+      const local::scan::Update update = task_->update(request);
       last_debug_ = update.debug;
       return update.plan;
     }
@@ -322,7 +322,7 @@ class local::Planner::Impl {
  private:
   LocalPlannerParams params_;
   std::unique_ptr<local::cmu::Backend> cmu_;
-  std::unique_ptr<local::LocalPlanTask> task_;
+  std::unique_ptr<local::scan::Task> task_;
   LocalPlannerDebugSnapshot last_debug_{};
   bool configured_{false};
 };

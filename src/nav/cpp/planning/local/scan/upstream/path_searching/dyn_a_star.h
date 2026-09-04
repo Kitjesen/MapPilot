@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <Eigen/Eigen>
+#include <functional>
 #include <memory>
 #include <queue>
 #include <vector>
@@ -56,6 +57,7 @@ class AStar {
 
   void initGridMap(GridMap::Ptr occupancyMap, const Eigen::Vector3i &poolSize);
   void setGridMap(GridMap::Ptr occupancyMap) noexcept;
+  void setTimeSource(std::function<double()> timeSource);
   AStarResult search(double stepSize, Eigen::Vector3d start,
                      Eigen::Vector3d end);
 
@@ -88,6 +90,7 @@ class AStar {
       openSet_{};
   int rounds_{0};
   int expandedNodes_{0};
+  std::function<double()> timeSource_{};
 };
 
 }  // namespace nav_kernel::local::scan::upstream

@@ -91,8 +91,12 @@ class CollisionBitmap {
   }
 
   [[nodiscard]] int index(double value, double minimum, int size) const {
-    const int result = static_cast<int>(std::floor((value - minimum) / resolution_));
-    return result >= 0 && result < size ? result : -1;
+    const auto global = static_cast<std::int64_t>(
+        std::floor(value / resolution_));
+    const auto minimum_index = static_cast<std::int64_t>(
+        std::llround(minimum / resolution_));
+    const auto result = global - minimum_index;
+    return result >= 0 && result < size ? static_cast<int>(result) : -1;
   }
 
   [[nodiscard]] std::size_t cellCount() const {

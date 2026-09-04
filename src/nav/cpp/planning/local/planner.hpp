@@ -31,12 +31,14 @@ struct ScanPlannerParams {
   double routeZTolerance = 0.35;
   double bodyClearanceBelow = 0.25;
   double bodyClearanceAbove = 0.35;
-  double cylinderOffset = 0.25;
+  double cylinderOffset = 0.18;
   double controlPointSpacing = 0.20;
   double replanDistance = 1.0;
   double noReplanDistance = 0.10;
   double collisionMaxAge = 0.50;
-  double maxAcceleration = 1.0;
+  double maxVelocity = 0.75;
+  double maxAcceleration = 0.50;
+  double planningHorizon = 3.5;
   double smoothWeight = 1.0;
   double collisionWeight = 1.0;
   double feasibilityWeight = 0.1;

@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "collision_bitmap.hpp"
-#include "planning/local/task.hpp"
+#include "planning/local/scan/task.hpp"
 
 namespace {
 
@@ -51,7 +51,7 @@ struct RequestFixture {
   nav_kernel::LocalPlanRequest request;
 };
 
-nav_kernel::LocalPlan waitForPlan(nav_kernel::local::LocalPlanTask &task,
+nav_kernel::LocalPlan waitForPlan(nav_kernel::local::scan::Task &task,
                                   RequestFixture &fixture) {
   nav_kernel::LocalPlan plan;
   for (int tick = 0; tick < 400 && !plan.ready(); ++tick) {
@@ -66,7 +66,7 @@ nav_kernel::LocalPlan waitForPlan(nav_kernel::local::LocalPlanTask &task,
 }  // namespace
 
 TEST(LocalPlanTask, RejectsInvalidRouteWithoutStartingWork) {
-  nav_kernel::local::LocalPlanTask task(scanParams());
+  nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
   nav_kernel::LocalPlanRequest request;
   EXPECT_EQ(task.update(request).plan.status(),
@@ -74,7 +74,7 @@ TEST(LocalPlanTask, RejectsInvalidRouteWithoutStartingWork) {
 }
 
 TEST(LocalPlanTask, RunsFsmOnOwnedTimer) {
-  nav_kernel::local::LocalPlanTask task(scanParams());
+  nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
   RequestFixture fixture;
 
@@ -86,7 +86,7 @@ TEST(LocalPlanTask, RunsFsmOnOwnedTimer) {
 }
 
 TEST(LocalPlanTask, KeepsOfficialWorldFrameSplineDuringMapRefresh) {
-  nav_kernel::local::LocalPlanTask task(scanParams());
+  nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
   RequestFixture fixture;
   const nav_kernel::LocalPlan ready = waitForPlan(task, fixture);
@@ -107,7 +107,7 @@ TEST(LocalPlanTask, KeepsOfficialWorldFrameSplineDuringMapRefresh) {
 }
 
 TEST(LocalPlanTask, StampsSplineWhenAsyncPlanningCompletes) {
-  nav_kernel::local::LocalPlanTask task(scanParams());
+  nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
   RequestFixture fixture;
   const nav_kernel::LocalPlan ready = waitForPlan(task, fixture);
@@ -117,8 +117,8 @@ TEST(LocalPlanTask, StampsSplineWhenAsyncPlanningCompletes) {
   EXPECT_NEAR(spline.startTimeS, fixture.request.clock.timestampS, 0.05);
 }
 
-TEST(LocalPlanTask, NewIntentGenerationDoesNotReuseOldSpline) {
-  nav_kernel::local::LocalPlanTask task(scanParams());
+TEST(LocalPlanTask, KeepsPublishedSplineUntilNewIntentIsPlanned) {
+  nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
   RequestFixture fixture;
   fixture.setIntent(0.0);
@@ -126,12 +126,11 @@ TEST(LocalPlanTask, NewIntentGenerationDoesNotReuseOldSpline) {
 
   fixture.setIntent(90.0, 2);
   fixture.request.clock.timestampS += 0.01;
-  EXPECT_EQ(task.update(fixture.request).plan.status(),
-            nav_kernel::LocalPlanStatus::Pending);
+  EXPECT_TRUE(task.update(fixture.request).plan.ready());
 }
 
 TEST(LocalPlanTask, ProcessesResetEpochOnCollisionTimer) {
-  nav_kernel::local::LocalPlanTask task(scanParams());
+  nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
   RequestFixture fixture;
   const nav_kernel::LocalPlan ready = waitForPlan(task, fixture);

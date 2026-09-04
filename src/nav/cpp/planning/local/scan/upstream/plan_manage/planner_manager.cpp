@@ -6,19 +6,12 @@
 #include "planning/local/scan/upstream/plan_manage/planner_manager.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <utility>
 
 namespace nav_kernel::local::scan::upstream {
 namespace {
-
-using SteadyClock = std::chrono::steady_clock;
-
-double elapsedSeconds(const SteadyClock::time_point start) {
-  return std::chrono::duration<double>(SteadyClock::now() - start).count();
-}
 
 void applyLinearZReference(std::vector<Eigen::Vector3d> &points,
                            const double start_z, const double target_z) {
@@ -52,6 +45,16 @@ void applyLinearZReference(std::vector<Eigen::Vector3d> &points,
 
 }  // namespace
 
+void SCANPlannerManager::setTimeSource(std::function<double()> timeSource) {
+  timeSource_ = std::move(timeSource);
+  if (bspline_optimizer_rebound_ && bspline_optimizer_rebound_->a_star_)
+    bspline_optimizer_rebound_->a_star_->setTimeSource(timeSource_);
+}
+
+double SCANPlannerManager::currentTimeS(const double fallback) const {
+  return timeSource_ ? timeSource_() : fallback;
+}
+
 void SCANPlannerManager::initPlanModules(
     const PlanParameters &planParams,
     const BsplineOptimizerParams &optimizerParams, GridMap::Ptr gridMap) {
@@ -65,6 +68,8 @@ void SCANPlannerManager::initPlanModules(
   bspline_optimizer_rebound_->a_star_ = std::make_shared<AStar>();
   bspline_optimizer_rebound_->a_star_->initGridMap(
       grid_map_, Eigen::Vector3i(100, 100, 100));
+  if (timeSource_)
+    bspline_optimizer_rebound_->a_star_->setTimeSource(timeSource_);
 }
 
 bool SCANPlannerManager::reboundReplan(
@@ -76,8 +81,6 @@ bool SCANPlannerManager::reboundReplan(
     ++continuous_failures_count_;
     return false;
   }
-
-  auto phase_start = SteadyClock::now();
 
   double ts = (start_pt - local_target_pt).norm() > 0.1
                   ? pp_.ctrl_pt_dist / pp_.max_vel_ * 1.2
@@ -158,7 +161,7 @@ bool SCANPlannerManager::reboundReplan(
       start_end_derivatives.push_back(gl_traj.evaluateAcc(t));
     } else {
       double t;
-      const double t_cur = nowS - local_data_.start_time_;
+      const double t_cur = currentTimeS(nowS) - local_data_.start_time_;
 
       std::vector<double> pseudo_arc_length;
       std::vector<Eigen::Vector3d> segment_point;
@@ -250,8 +253,6 @@ bool SCANPlannerManager::reboundReplan(
                                         start_end_derivatives, ctrl_pts);
 
   bspline_optimizer_rebound_->initControlPoints(ctrl_pts, true);
-  pp_.time_search_ = elapsedSeconds(phase_start);
-  phase_start = SteadyClock::now();
 
   const bool flag_step_1_success =
       bspline_optimizer_rebound_->BsplineOptimizeTrajRebound(ctrl_pts, ts);
@@ -259,9 +260,6 @@ bool SCANPlannerManager::reboundReplan(
     ++continuous_failures_count_;
     return false;
   }
-
-  pp_.time_optimize_ = elapsedSeconds(phase_start);
-  phase_start = SteadyClock::now();
 
   UniformBspline pos(ctrl_pts, 3, ts);
   pos.setPhysicalLimits(pp_.max_vel_, pp_.max_acc_,
@@ -283,8 +281,7 @@ bool SCANPlannerManager::reboundReplan(
     return false;
   }
 
-  pp_.time_adjust_ = elapsedSeconds(phase_start);
-  updateTrajInfo(pos, nowS);
+  updateTrajInfo(pos, currentTimeS(nowS));
   continuous_failures_count_ = 0;
   return true;
 }
@@ -295,7 +292,8 @@ bool SCANPlannerManager::EmergencyStop(Eigen::Vector3d stop_pos,
   for (int i = 0; i < 6; ++i) {
     control_points.col(i) = stop_pos;
   }
-  updateTrajInfo(UniformBspline(control_points, 3, 1.0), nowS);
+  updateTrajInfo(UniformBspline(control_points, 3, 1.0),
+                 currentTimeS(nowS));
   return true;
 }
 
@@ -359,7 +357,7 @@ bool SCANPlannerManager::planGlobalTrajWaypoints(
     return false;
   }
 
-  global_data_.setGlobalTraj(gl_traj, nowS);
+  global_data_.setGlobalTraj(gl_traj, currentTimeS(nowS));
   return true;
 }
 
@@ -410,7 +408,7 @@ bool SCANPlannerManager::planGlobalTraj(
     return false;
   }
 
-  global_data_.setGlobalTraj(gl_traj, nowS);
+  global_data_.setGlobalTraj(gl_traj, currentTimeS(nowS));
   return true;
 }
 

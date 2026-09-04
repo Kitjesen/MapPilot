@@ -8,6 +8,7 @@
 #include "planning/local/scan/grid.hpp"
 #include "planning/local/scan/upstream/path_searching/dyn_a_star.h"
 #include "planning/local/scan/upstream/plan_env/grid_map.h"
+#include "planning/local/scan/upstream/plan_manage/scan_replan_fsm.h"
 
 namespace {
 
@@ -60,7 +61,7 @@ struct RequestFixture {
 TEST(ScanDefaults, UsesOfficialGridAndSearchScale) {
   const nav_kernel::ScanPlannerParams params;
   EXPECT_DOUBLE_EQ(params.voxelResolution, 0.05);
-  EXPECT_DOUBLE_EQ(params.cylinderOffset, 0.25);
+  EXPECT_DOUBLE_EQ(params.cylinderOffset, 0.18);
   EXPECT_DOUBLE_EQ(nav_kernel::local::scan::Backend::fsmPeriodS(), 0.01);
   EXPECT_DOUBLE_EQ(nav_kernel::local::scan::Backend::collisionPeriodS(), 0.05);
 }
@@ -77,6 +78,23 @@ TEST(ScanGridAdapter, ReadsMapdInflatedBitsWithoutReinflating) {
   auto map = std::make_shared<nav_kernel::local::scan::upstream::GridMap>(grid);
   EXPECT_EQ(map->getInflateOccupancy({0.0, 0.0, 0.5}, 0.0), 1);
   EXPECT_EQ(map->getInflateOccupancy({0.5, 0.0, 0.5}, 0.0), 0);
+}
+
+TEST(ScanGridAdapter, PreservesOfficialBoundaryAndDoubleCylinderSemantics) {
+  RequestFixture fixture({{-1.0, 0.0, 0.5}, {1.0, 0.0, 0.5}});
+  fixture.refreshCollision(2);
+  auto params = scanParams();
+  params.scan.cylinderOffset = 0.25;
+  nav_kernel::local::scan::Grid grid(params, fixture.request);
+  ASSERT_TRUE(grid.valid()) << grid.reason();
+
+  EXPECT_EQ(grid.inflatedOccupancy({-4.7501, 0.0, 0.5}, 3.14159265358979323846), -1);
+  EXPECT_EQ(grid.inflatedOccupancy({-4.7498, 0.0, 0.5}, 3.14159265358979323846), 0);
+
+  fixture.bitmap.occupy({0.25, 0.0, 0.5});
+  fixture.refreshCollision(3);
+  nav_kernel::local::scan::Grid occupiedGrid(params, fixture.request);
+  EXPECT_EQ(occupiedGrid.inflatedOccupancy({0.0, 0.0, 0.5}, 0.0), 1);
 }
 
 TEST(ScanDynAStar, MovesOccupiedStartBackwardLikeUpstream) {
@@ -99,7 +117,7 @@ TEST(ScanDynAStar, MovesOccupiedStartBackwardLikeUpstream) {
 
 TEST(ScanDynAStar, DoesNotPublishPartialProgressPath) {
   RequestFixture fixture({{-1.0, 0.0, 0.5}, {1.0, 0.0, 0.5}});
-  for (int x = -2; x <= 2; ++x) {
+  for (int x = -5; x <= 5; ++x) {
     for (int y = -50; y <= 50; ++y)
       fixture.bitmap.occupy(
           {0.1 * static_cast<double>(x), 0.1 * static_cast<double>(y), 0.5});
@@ -145,6 +163,7 @@ TEST(ScanBackend, EmitsOfficialBsplineAfterFsmTransitions) {
   const auto &preview = plan.previewPath();
   ASSERT_FALSE(preview.empty());
   EXPECT_EQ(preview.data(), plan.previewPath().data());
+  EXPECT_NEAR(preview.back().z, 0.5, 1e-6);
 }
 
 TEST(ScanBackend, KeepsCommittedTrajectoryWhileOfficialFsmReplans) {
@@ -198,7 +217,7 @@ TEST(ScanBackend, CollisionTickRetainsPublishedSplineUntilReplacement) {
   }
 }
 
-TEST(ScanBackend, DoesNotPublishOldSplineForNewRouteIdentity) {
+TEST(ScanBackend, KeepsPublishedSplineUntilNewReferenceIsPlanned) {
   RequestFixture fixture({{0.0, 0.0, 0.5}, {2.0, 0.0, 0.5}});
   nav_kernel::local::scan::Backend backend(scanParams());
   LocalPlan ready;
@@ -215,9 +234,78 @@ TEST(ScanBackend, DoesNotPublishOldSplineForNewRouteIdentity) {
   fixture.request.clock.timestampS += 0.01;
   const LocalPlan changed = backend.tick(fixture.request);
 
-  if (changed.ready()) {
-    EXPECT_GT(std::get<SplineTarget>(changed.target()).trajectoryId, previousId);
-  } else {
-    EXPECT_EQ(changed.status(), nav_kernel::LocalPlanStatus::Pending);
+  ASSERT_TRUE(changed.ready());
+  EXPECT_EQ(std::get<SplineTarget>(changed.target()).trajectoryId, previousId);
+
+  LocalPlan replacement = changed;
+  for (int tick = 0; tick < 8 &&
+                     std::get<SplineTarget>(replacement.target()).trajectoryId == previousId;
+       ++tick) {
+    fixture.request.clock.timestampS += 0.01;
+    replacement = backend.tick(fixture.request);
   }
+  ASSERT_TRUE(replacement.ready());
+  EXPECT_GT(std::get<SplineTarget>(replacement.target()).trajectoryId, previousId);
+}
+
+TEST(ScanBackend, AcceptsChangedReferenceShapeWithTheSameEndpoint) {
+  RequestFixture fixture(
+      {{0.0, 0.0, 0.5}, {1.0, 0.0, 0.5}, {2.0, 0.0, 0.5}});
+  nav_kernel::local::scan::Backend backend(scanParams());
+  LocalPlan ready;
+  for (int tick = 0; tick < 8 && !ready.ready(); ++tick) {
+    fixture.request.clock.timestampS = 1.0 + 0.01 * tick;
+    ready = backend.tick(fixture.request);
+  }
+  ASSERT_TRUE(ready.ready());
+  const auto previousId = std::get<SplineTarget>(ready.target()).trajectoryId;
+
+  fixture.route[1] = {1.0, 0.8, 0.5};
+  fixture.request.objective = RouteTarget{{
+      fixture.route.data(), static_cast<int>(fixture.route.size()), 1, false}};
+  fixture.request.clock.timestampS += 0.01;
+  LocalPlan replacement = backend.tick(fixture.request);
+  for (int tick = 0; tick < 8 &&
+                     std::get<SplineTarget>(replacement.target()).trajectoryId == previousId;
+       ++tick) {
+    fixture.request.clock.timestampS += 0.01;
+    replacement = backend.tick(fixture.request);
+  }
+
+  ASSERT_TRUE(replacement.ready());
+  EXPECT_GT(std::get<SplineTarget>(replacement.target()).trajectoryId, previousId);
+}
+
+TEST(ScanReplanFsm, ReferenceCallbackDoesNotAdvanceFrozenTrajectoryTime) {
+  using nav_kernel::local::scan::upstream::FsmInput;
+  using nav_kernel::local::scan::upstream::FsmOdometry;
+  using nav_kernel::local::scan::upstream::SCANPlannerManager;
+  using nav_kernel::local::scan::upstream::SCANReplanFSM;
+  using nav_kernel::local::scan::upstream::ScanNavigationMode;
+  using nav_kernel::local::scan::upstream::ScanReplanParams;
+
+  SCANPlannerManager manager;
+  manager.pp_.max_vel_ = 0.75;
+  ScanReplanParams params;
+  params.navigationMode = ScanNavigationMode::REFERENCE_PATH;
+  params.bodyHeight = 0.4;
+  SCANReplanFSM fsm(manager, params);
+
+  FsmInput timer;
+  timer.nowS = 9.95;
+  timer.executionFrozen = true;
+  timer.odometry = FsmOdometry{};
+  (void)fsm.tick(timer);
+
+  manager.local_data_.start_time_ = 5.0;
+  FsmInput pathCallback;
+  pathCallback.nowS = 10.0;
+  pathCallback.executionFrozen = true;
+  pathCallback.odometry = FsmOdometry{};
+  pathCallback.referencePath = std::vector<Eigen::Vector3d>{
+      {0.0, 0.0, 0.0}, {2.0, 0.0, 0.0}};
+  const auto output = fsm.tick(pathCallback);
+
+  ASSERT_TRUE(output.targetAccepted);
+  EXPECT_DOUBLE_EQ(manager.local_data_.start_time_, 5.0);
 }

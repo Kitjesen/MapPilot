@@ -18,7 +18,7 @@ int GridMap::getInflateOccupancy(const Eigen::Vector3d &position,
                                  double yaw) const noexcept {
   if (grid_ == nullptr) return -1;
   const Vec3 point{position.x(), position.y(), position.z()};
-  return grid_->obstacleFree(point, yaw) ? 0 : 1;
+  return grid_->inflatedOccupancy(point, yaw);
 }
 
 }  // namespace nav_kernel::local::scan::upstream

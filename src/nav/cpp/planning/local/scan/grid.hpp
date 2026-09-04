@@ -16,10 +16,11 @@ class Grid {
   [[nodiscard]] double resolution() const noexcept;
   [[nodiscard]] int occupiedCellCount() const noexcept;
   [[nodiscard]] int collisionPointCount() const noexcept;
+  [[nodiscard]] int inflatedOccupancy(const Vec3 &center, double yaw) const noexcept;
   [[nodiscard]] bool obstacleFree(const Vec3 &center, double yaw) const noexcept;
 
  private:
-  [[nodiscard]] bool occupied(const Vec3 &planningPoint) const noexcept;
+  [[nodiscard]] int occupiedState(const Vec3 &planningPoint) const noexcept;
 
   bool checkObstacle_{false};
   double cylinderOffset_{0.0};

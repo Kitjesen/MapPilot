@@ -29,6 +29,8 @@ using upstream::ScanNavigationMode;
 using upstream::ScanReplanParams;
 using upstream::ScanReplanState;
 
+constexpr double kOfficialBodyHeightM = 0.4;
+
 bool finitePoint(const Vec3 &point) {
   return std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z);
 }
@@ -43,7 +45,9 @@ bool sameIntent(const std::optional<LocalMotionIntent> &left,
     return false;
   if (!left)
     return true;
-  return std::abs(left->speedNormalized - right->speedNormalized) <= 0.05 &&
+  return std::abs(left->directionBodyDeg - right->directionBodyDeg) <= 1e-6 &&
+         std::abs(left->speedNormalized - right->speedNormalized) <= 0.05 &&
+         std::abs(left->horizonM - right->horizonM) <= 1e-6 &&
          std::abs(left->maxDirectionDeviationDeg -
                    right->maxDirectionDeviationDeg) <= 1e-6;
 }
@@ -68,7 +72,7 @@ const char *stateName(ScanReplanState state) {
 
 PlanParameters planParameters(const LocalPlannerParams &params) {
   PlanParameters output;
-  output.max_vel_ = std::max(0.05, params.autonomySpeed);
+  output.max_vel_ = std::max(0.05, params.scan.maxVelocity);
   output.max_acc_ = std::max(0.05, params.scan.maxAcceleration);
   output.max_jerk_ = 4.0;
   output.vel_tolerance_ = std::max(0.0, params.scan.velocityTolerance);
@@ -76,7 +80,7 @@ PlanParameters planParameters(const LocalPlannerParams &params) {
   output.ctrl_pt_dist = std::max(0.05, params.scan.controlPointSpacing);
   output.feasibility_tolerance_ =
       std::max(0.0, params.scan.feasibilityTolerance);
-  output.planning_horizon_ = std::max(0.5, params.adjacentRange);
+  output.planning_horizon_ = std::max(0.5, params.scan.planningHorizon);
   return output;
 }
 
@@ -105,8 +109,7 @@ ScanReplanParams fsmParameters(const LocalPlannerParams &params,
   output.emergencyTimeS = 1.0;
   output.enableFailSafe = true;
   output.maxReplanFailCount = 1000;
-  // LingTu routes already carry body height in the planning frame.
-  output.bodyHeight = 0.0;
+  output.bodyHeight = kOfficialBodyHeightM;
   return output;
 }
 
@@ -159,6 +162,12 @@ class Backend::Impl {
   LocalPlan run(const LocalPlanRequest &input, bool collisionTick,
                 const LocalPlanCancel &cancel) {
     const auto started = std::chrono::steady_clock::now();
+    manager_->setTimeSource([baseTimeS = input.clock.timestampS, started] {
+      return baseTimeS +
+             std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                           started)
+                 .count();
+    });
     debug_ = {};
     debug_.backend = LocalPlannerBackend::Scan;
     debug_.timestampS = input.clock.timestampS;
@@ -222,33 +231,22 @@ class Backend::Impl {
       output = fsm_->checkFutureCollision(fsmInput);
     } else {
       const bool hardReferenceChange = referenceIdentityChanged(input, *route);
-      if (hardReferenceChange)
-        active_.reset();
       if (hardReferenceChange || referenceChanged(*route)) {
         std::vector<Eigen::Vector3d> reference;
         reference.reserve(static_cast<std::size_t>(route->count));
-        for (int index = 0; index < route->count; ++index)
-          reference.push_back(eigenPoint(route->points[index]));
+        for (int index = 0; index < route->count; ++index) {
+          Eigen::Vector3d point = eigenPoint(route->points[index]);
+          // LingTu routes use body-centre Z; upstream REFERENCE_PATH uses the
+          // ground-following surface and adds grid_map/body_height internally.
+          point.z() -= kOfficialBodyHeightM;
+          reference.push_back(point);
+        }
         fsmInput.referencePath = std::move(reference);
       }
       output = fsm_->tick(fsmInput);
     }
-    const auto retimeTrajectory = [&](FsmOutput &candidate) {
-      if (!candidate.trajectory)
-        return;
-      const double completedAtS =
-          input.clock.timestampS +
-          std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-      manager_->local_data_.start_time_ = completedAtS;
-      candidate.trajectory->startTimeS = completedAtS;
-      fsmInput.nowS = completedAtS;
-    };
-    retimeTrajectory(output);
     if (!collisionTick && output.targetAccepted)
       rememberReference(input, *route);
-    debug_.searchTimeMs = manager_->pp_.time_search_ * 1000.0;
-    debug_.splineTimeMs =
-        (manager_->pp_.time_optimize_ + manager_->pp_.time_adjust_) * 1000.0;
     debug_.searchReason = stateName(output.state);
 
     if (cancel && cancel())
@@ -304,11 +302,17 @@ class Backend::Impl {
   }
 
   bool referenceChanged(const LocalRouteView &route) const {
-    if (lastReference_.empty() || !fsm_->hasTarget()) {
+    if (lastReference_.empty() || !fsm_->hasTarget() ||
+        lastReference_.size() != static_cast<std::size_t>(route.count)) {
       return true;
     }
-    return distance3D(lastReference_.back(), route.target()) >=
-           std::max(0.5, params_.scan.replanDistance);
+    for (int index = 0; index < route.count; ++index) {
+      const Vec3 &previous = lastReference_[static_cast<std::size_t>(index)];
+      const Vec3 &next = route.points[index];
+      if (previous.x != next.x || previous.y != next.y || previous.z != next.z)
+        return true;
+    }
+    return false;
   }
 
   bool referenceIdentityChanged(const LocalPlanRequest &input,

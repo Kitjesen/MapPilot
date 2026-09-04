@@ -441,7 +441,7 @@ TEST(FollowerSpline, UsesOfficialFeedForwardAndLiveWorldPoseError) {
   EXPECT_NEAR(output.directionError, 0.0, 1e-9);
 }
 
-TEST(FollowerSpline, AppliesRequestedSpeedAndSlowFactor) {
+TEST(FollowerSpline, KeepsUpstreamLimitsIndependentOfExternalSpeedScaling) {
   FollowerParams params;
   params.spline.positionGain = 0.0;
   params.spline.headingErrorThreshold = 2.0;
@@ -451,7 +451,7 @@ TEST(FollowerSpline, AppliesRequestedSpeedAndSlowFactor) {
 
   const auto output = followSpline(follower, trajectory, params, 0.1, {}, 0.0, 0.5, 0.5);
 
-  EXPECT_NEAR(output.cmd.vx, params.spline.maxVx * 0.25, 1e-9);
+  EXPECT_NEAR(output.cmd.vx, params.spline.maxVx, 1e-9);
   EXPECT_NEAR(output.cmd.vy, 0.0, 1e-9);
 }
 

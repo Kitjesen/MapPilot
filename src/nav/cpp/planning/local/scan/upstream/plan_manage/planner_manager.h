@@ -5,6 +5,7 @@
 // ROS setup, time and visualization are replaced by explicit values.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -26,6 +27,7 @@ class SCANPlannerManager {
   void initPlanModules(const PlanParameters &planParams,
                        const BsplineOptimizerParams &optimizerParams,
                        GridMap::Ptr gridMap);
+  void setTimeSource(std::function<double()> timeSource);
 
   bool reboundReplan(Eigen::Vector3d start_pt, Eigen::Vector3d start_vel,
                      Eigen::Vector3d start_acc,
@@ -55,8 +57,10 @@ class SCANPlannerManager {
 
  private:
   BsplineOptimizer::Ptr bspline_optimizer_rebound_;
+  std::function<double()> timeSource_;
   int continuous_failures_count_{0};
 
+  double currentTimeS(double fallback) const;
   void updateTrajInfo(const UniformBspline &position_traj, double nowS);
   bool checkDynamicFeasibility(UniformBspline position_traj) const;
   void reparamBspline(UniformBspline &bspline,

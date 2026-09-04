@@ -23,7 +23,6 @@ nav_kernel::FollowerParams followerParams(const CliConfig &cfg) {
   params.stopDisThre = cfg.path_follower_goal_tolerance_m;
   params.nominalDt = 1.0 / cfg.tick_hz;
   params.spline = cfg.scan_follower;
-  params.spline.finishDistance = params.stopDisThre;
   return cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu
              ? nav_kernel::cmuFollowerParams(params)
              : params;
@@ -209,7 +208,6 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
   out.scan.cylinderOffset = cfg.collision_cylinder_offset_m;
   out.scan.bodyClearanceBelow = cfg.collision_clearance_below_m;
   out.scan.bodyClearanceAbove = cfg.collision_clearance_above_m;
-  out.scan.maxAcceleration = cfg.path_follower_max_accel_mps2;
   // Executor receives the map->body pose.  The LiDAR extrinsic is already
   // applied when sensor-origin geometry is constructed and must not shift
   // the body pose a second time inside the local Planner, which accepts no

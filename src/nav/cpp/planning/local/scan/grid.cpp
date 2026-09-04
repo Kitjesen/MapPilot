@@ -58,18 +58,64 @@ int Grid::collisionPointCount() const noexcept {
 }
 
 bool Grid::obstacleFree(const Vec3 &center, double yaw) const noexcept {
-  if (!valid() || !checkObstacle_)
-    return valid();
-  const double c = std::cos(yaw);
-  const double s = std::sin(yaw);
-  return !occupied({center.x + cylinderOffset_ * c,
-                    center.y + cylinderOffset_ * s, center.z}) &&
-         !occupied({center.x - cylinderOffset_ * c,
-                    center.y - cylinderOffset_ * s, center.z});
+  return inflatedOccupancy(center, yaw) == 0;
 }
 
-bool Grid::occupied(const Vec3 &planningPoint) const noexcept {
-  return collision_.occupied(planningPoint);
+int Grid::inflatedOccupancy(const Vec3 &center, double yaw) const noexcept {
+  if (!valid()) return -1;
+  if (!checkObstacle_) return 0;
+  const double c = std::cos(yaw);
+  const double s = std::sin(yaw);
+  const int front = occupiedState({center.x + cylinderOffset_ * c,
+                                   center.y + cylinderOffset_ * s, center.z});
+  if (front != 0) return front;
+  return occupiedState({center.x - cylinderOffset_ * c,
+                        center.y - cylinderOffset_ * s, center.z});
+}
+
+int Grid::occupiedState(const Vec3 &planningPoint) const noexcept {
+  if (!valid() || !std::isfinite(planningPoint.x) || !std::isfinite(planningPoint.y) ||
+      !std::isfinite(planningPoint.z)) {
+    return -1;
+  }
+
+  const double c = std::cos(collision_.gridFromPlanningYaw);
+  const double s = std::sin(collision_.gridFromPlanningYaw);
+  const Vec3 point{
+      collision_.gridFromPlanningTranslation.x + c * planningPoint.x - s * planningPoint.y,
+      collision_.gridFromPlanningTranslation.y + s * planningPoint.x + c * planningPoint.y,
+      collision_.gridFromPlanningTranslation.z + planningPoint.z,
+  };
+  constexpr double boundaryEpsilon = 1e-4;
+  if (point.x < collision_.aabbMin.x + boundaryEpsilon ||
+      point.y < collision_.aabbMin.y + boundaryEpsilon ||
+      point.z < collision_.aabbMin.z + boundaryEpsilon ||
+      point.x > collision_.aabbMax.x - boundaryEpsilon ||
+      point.y > collision_.aabbMax.y - boundaryEpsilon ||
+      point.z > collision_.aabbMax.z - boundaryEpsilon) {
+    return -1;
+  }
+
+  const auto logicalIndex = [this](double value, double minimum) {
+    const auto global = static_cast<std::int64_t>(
+        std::floor(value / collision_.resolution));
+    const auto minimumIndex = static_cast<std::int64_t>(
+        std::llround(minimum / collision_.resolution));
+    return global - minimumIndex;
+  };
+  const std::int64_t x = logicalIndex(point.x, collision_.aabbMin.x);
+  const std::int64_t y = logicalIndex(point.y, collision_.aabbMin.y);
+  const std::int64_t z = logicalIndex(point.z, collision_.aabbMin.z);
+  if (x < 0 || x >= collision_.sizeX || y < 0 || y >= collision_.sizeY ||
+      z < 0 || z >= collision_.sizeZ) {
+    return -1;
+  }
+  const std::size_t linear =
+      (static_cast<std::size_t>(z) * static_cast<std::size_t>(collision_.sizeY) +
+       static_cast<std::size_t>(y)) *
+          static_cast<std::size_t>(collision_.sizeX) +
+      static_cast<std::size_t>(x);
+  return collision_.occupiedLinear(linear) ? 1 : 0;
 }
 
 }  // namespace nav_kernel::local::scan

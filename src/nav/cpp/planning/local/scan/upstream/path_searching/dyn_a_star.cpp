@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <utility>
 
 namespace nav_kernel::local::scan::upstream {
 
@@ -50,6 +51,10 @@ void AStar::initGridMap(GridMap::Ptr occupancyMap,
 
 void AStar::setGridMap(GridMap::Ptr occupancyMap) noexcept {
   gridMap_ = std::move(occupancyMap);
+}
+
+void AStar::setTimeSource(std::function<double()> timeSource) {
+  timeSource_ = std::move(timeSource);
 }
 
 double AStar::getDiagHeuristic(GridNodePtr node1,
@@ -149,11 +154,18 @@ std::vector<GridNodePtr> AStar::retrievePath(GridNodePtr current) const {
 }
 
 AStarResult AStar::search(double stepSize, Eigen::Vector3d start,
-                          Eigen::Vector3d end) {
-  const auto started = std::chrono::steady_clock::now();
+                         Eigen::Vector3d end) {
+  const auto steadyStarted = std::chrono::steady_clock::now();
+  const auto nowS = [this, steadyStarted]() {
+    if (timeSource_)
+      return timeSource_();
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                         steadyStarted)
+        .count();
+  };
+  const double started = nowS();
   ++rounds_;
   expandedNodes_ = 0;
-  gridPath_.clear();
   stepSize_ = stepSize;
   inverseStepSize_ = 1.0 / stepSize;
   center_ = (start + end) / 2.0;
@@ -254,9 +266,7 @@ AStarResult AStar::search(double stepSize, Eigen::Vector3d start,
       }
     }
 
-    const auto elapsed = std::chrono::duration<double>(
-        std::chrono::steady_clock::now() - started);
-    if (elapsed.count() > 0.2) return AStarResult::SearchError;
+    if (nowS() - started > 0.2) return AStarResult::SearchError;
   }
   return AStarResult::SearchError;
 }

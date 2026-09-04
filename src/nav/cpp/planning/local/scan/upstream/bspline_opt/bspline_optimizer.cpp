@@ -274,8 +274,6 @@ BsplineOptimizer::initControlPoints(Eigen::MatrixXd &init_points, bool flag_firs
               break;
             }
           }
-        } else {
-          got_intersection_id = -1;
         }
       }
     }

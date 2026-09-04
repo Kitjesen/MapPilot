@@ -4,12 +4,12 @@ This directory contains LingTu's ROS-free port of
 [wuyi2121/SCAN-Planner](https://github.com/wuyi2121/SCAN-Planner) pinned to
 commit `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
 
-The algorithm sources live under [`upstream/`](upstream/UPSTREAM.md) and keep
-the official Projected DynAStar, polynomial initialization, rebound optimizer,
-uniform B-spline, time reallocation, PlannerManager, six-state replanning FSM,
-future-collision check, and closed-loop controller. Port changes are limited to
-removing ROS process APIs, supplying values explicitly, using the LingTu
-namespace, and C++17/MSVC compatibility.
+The algorithm sources live under [`upstream/`](upstream/UPSTREAM.md). The
+supported closed-loop runtime path is output-equivalent to the pinned commit:
+the same valid inputs, parameters and callback order produce the same map
+queries, Projected DynAStar path, rebound control points, B-spline, six-state
+FSM transitions and controller command. Port changes may replace ROS process
+APIs and storage, but may not change those results.
 
 LingTu-specific code is only the boundary:
 
@@ -19,7 +19,7 @@ LingTu-specific code is only the boundary:
 - `backend.*` converts `LocalPlanRequest` odometry and Route/MotionIntent into
   official FSM inputs, then converts the emitted B-spline message into
   `SplineTarget`.
-- `planning/local/task.*` owns one serialized worker with the upstream timer
+- `task.*` owns one serialized worker with the upstream timer
   semantics: the FSM callback runs at 100 Hz and the future-collision callback
   runs independently at 20 Hz. The last published trajectory remains active
   until the FSM publishes a replacement or an emergency stop, matching the
@@ -38,8 +38,10 @@ Inflation is maintained incrementally when occupancy changes. The SCAN profile
 disables time-based occupancy decay: cells clear only through ray misses or a
 rolling-window eviction, as in the pinned upstream GridMap. Thunder replaces
 the upstream robot geometry with its configured twin-cylinder radius and
-offset. Product speed limits may be lower than the upstream launch defaults;
-they are explicit robot/runtime tuning and do not change the SCAN equations.
+offset. The ring buffer and packed collision bitmap only reduce memory moves
+and DDS payload; they preserve the logical GridMap result. Product speed limits
+may be lower than the upstream launch defaults; they are explicit runtime
+inputs and do not change the SCAN equations.
 
 `nav` and `teleop_avoid` select `scan` by default and run the SCAN FSM and
 controller at 100 Hz; future-collision checks run at the upstream 20 Hz.

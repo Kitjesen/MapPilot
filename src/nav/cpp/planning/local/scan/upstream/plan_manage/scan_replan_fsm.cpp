@@ -15,6 +15,12 @@ FsmOutput SCANReplanFSM::tick(const FsmInput &input) {
   updateRuntimeInput(input);
   acceptTargetInput(input, output);
 
+  // Upstream target subscribers only mutate the FSM state. Planning starts on
+  // the next 100 Hz timer callback, never in the subscriber callback itself.
+  if (input.goal.has_value() || input.referencePath.has_value()) {
+    return finalizeOutput(std::move(output), initialState);
+  }
+
   if (params_.navigationMode == ScanNavigationMode::PRESET_TARGET && haveOdom_ &&
       !presetTriggered_) {
     presetTriggered_ = true;
@@ -185,7 +191,11 @@ void SCANReplanFSM::updateRuntimeInput(const FsmInput &input) {
   if (input.executionFrozen.has_value()) {
     executionFrozen_ = *input.executionFrozen;
   }
-  updateLocalTrajTimeFreeze(input.nowS);
+  // In upstream, target subscribers update the target only. Trajectory time is
+  // shifted exclusively by the 100 Hz FSM and 20 Hz collision timer callbacks.
+  if (!input.goal.has_value() && !input.referencePath.has_value()) {
+    updateLocalTrajTimeFreeze(input.nowS);
+  }
   if (!input.odometry.has_value()) {
     return;
   }
@@ -220,6 +230,11 @@ void SCANReplanFSM::acceptTargetInput(const FsmInput &input, FsmOutput &output) 
 }
 
 void SCANReplanFSM::updateLocalTrajTimeFreeze(double nowS) {
+  if (!freezeClockReady_) {
+    lastFreezeUpdateTimeS_ = nowS;
+    freezeClockReady_ = true;
+    return;
+  }
   const double delta = nowS - lastFreezeUpdateTimeS_;
   lastFreezeUpdateTimeS_ = nowS;
   if (delta <= 0.0 || delta > 0.2) {

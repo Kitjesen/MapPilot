@@ -124,6 +124,7 @@ class SCANReplanFSM {
   int continuouslyCalledTimes_{0};
   int replanFailCount_{0};
   double lastFreezeUpdateTimeS_{0.0};
+  bool freezeClockReady_{false};
 
   Eigen::Vector3d odomPos_{Eigen::Vector3d::Zero()};
   Eigen::Vector3d odomVel_{Eigen::Vector3d::Zero()};

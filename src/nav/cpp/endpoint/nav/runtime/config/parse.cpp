@@ -415,6 +415,8 @@ CliConfig parseArgs(int argc, char **argv) {
   applyEnvDouble(cfg.scan_follower.maxVy, "LINGTU_NAV_SCAN_MAX_VY_MPS");
   applyEnvDouble(cfg.scan_follower.maxYawRateRadS,
                  "LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S");
+  applyEnvDouble(cfg.scan_follower.finishDistance,
+                 "LINGTU_NAV_SCAN_FINISH_DISTANCE_M");
   applyEnvRecoveryOrder(cfg.recovery_order, "LINGTU_NAV_RECOVERY_ORDER");
   applyEnvDouble(cfg.recovery_blocked_interval_s,
                  "LINGTU_NAV_RECOVERY_BLOCKED_INTERVAL_S");

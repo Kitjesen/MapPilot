@@ -904,8 +904,7 @@ void testScanFollowerEnvironmentReachesExecutor() {
   ScopedEnvironment max_vx("LINGTU_NAV_SCAN_MAX_VX_MPS", "0.68");
   ScopedEnvironment max_vy("LINGTU_NAV_SCAN_MAX_VY_MPS", "0.32");
   ScopedEnvironment max_yaw("LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S", "0.95");
-  ScopedEnvironment shared_finish_distance(
-      "LINGTU_NAV_PATH_FOLLOWER_GOAL_TOLERANCE_M", "0.07");
+  ScopedEnvironment finish_distance("LINGTU_NAV_SCAN_FINISH_DISTANCE_M", "0.07");
 
   const auto cfg = parse({"navd", "--path-library", "fixture-paths"});
   const auto executor_config = buildExecutorConfig(cfg);
@@ -921,7 +920,7 @@ void testScanFollowerEnvironmentReachesExecutor() {
               std::abs(executor_config.follower.spline.maxYawRateRadS - 0.95) < 1e-12,
           "SCAN body velocity limits must reach Executor");
   require(std::abs(executor_config.follower.spline.finishDistance - 0.07) < 1e-12,
-          "CMU and SCAN must share the local tracking finish distance");
+          "SCAN finish distance must reach Executor independently");
 }
 
 void testControlLoopDeadlineMissRatioIsExplicitAndBounded() {

@@ -1,4 +1,4 @@
-#include "planning/local/task.hpp"
+#include "planning/local/scan/task.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -16,12 +16,12 @@
 
 #include "planning/local/scan/backend.hpp"
 
-namespace nav_kernel::local {
+namespace nav_kernel::local::scan {
 namespace {
 
 using Clock = std::chrono::steady_clock;
 
-enum class ScanTimer { Fsm, Collision };
+enum class ScanWork { Input, Fsm, Collision };
 
 bool sameIntent(const std::optional<LocalMotionIntent> &left,
                 const std::optional<LocalMotionIntent> &right) {
@@ -29,7 +29,9 @@ bool sameIntent(const std::optional<LocalMotionIntent> &left,
     return false;
   if (!left)
     return true;
-  return std::abs(left->speedNormalized - right->speedNormalized) <= 0.05 &&
+  return std::abs(left->directionBodyDeg - right->directionBodyDeg) <= 1e-6 &&
+         std::abs(left->speedNormalized - right->speedNormalized) <= 0.05 &&
+         std::abs(left->horizonM - right->horizonM) <= 1e-6 &&
          std::abs(left->maxDirectionDeviationDeg - right->maxDirectionDeviationDeg) <= 1e-6;
 }
 
@@ -166,10 +168,6 @@ bool sameGuide(std::uint64_t routeGeneration, std::uint64_t frameEpoch,
          frameEpoch == request.identity.frameEpoch && sameIntent(intent, requestIntent);
 }
 
-bool sameGuide(const Completion &completion, const LocalPlanRequest &request) {
-  return sameGuide(completion.routeGeneration, completion.frameEpoch, completion.intent, request);
-}
-
 bool sameGuide(const WorkerDebug &debug, const LocalPlanRequest &request) {
   return sameGuide(debug.routeGeneration, debug.frameEpoch, debug.intent, request);
 }
@@ -201,14 +199,26 @@ Clock::duration timerPeriod(double seconds) {
 }
 
 void advanceTimer(Clock::time_point &deadline, Clock::duration period, Clock::time_point now) {
-  do {
-    deadline += period;
-  } while (deadline <= now);
+  deadline += period;
+  // Match roscpp TimerManager::updateNext(): retain one pending callback for a
+  // short overrun, but reset the phase after a delay longer than two periods.
+  if (deadline + period < now)
+    deadline = now;
+}
+
+bool sameRoute(const std::vector<Vec3> &left, const LocalRouteView *right) {
+  if (right == nullptr || right->points == nullptr ||
+      left.size() != static_cast<std::size_t>(right->count))
+    return false;
+  return std::equal(left.begin(), left.end(), right->points,
+                    [](const Vec3 &a, const Vec3 &b) {
+                      return a.x == b.x && a.y == b.y && a.z == b.z;
+                    });
 }
 
 }  // namespace
 
-class LocalPlanTask::Impl {
+class Task::Impl {
  public:
   explicit Impl(const LocalPlannerParams &params) : planner_(params) {}
 
@@ -218,6 +228,10 @@ class LocalPlanTask::Impl {
     (void)pathLibraryDir;
     if (configured_)
       return true;
+    const Clock::time_point now = Clock::now();
+    nextFsmTick_ = now + timerPeriod(Backend::fsmPeriodS());
+    nextCollisionTick_ = now + timerPeriod(Backend::collisionPeriodS());
+    timersArmed_ = true;
     configured_ = true;
     worker_ = std::thread([this]() { run(); });
     return true;
@@ -225,8 +239,8 @@ class LocalPlanTask::Impl {
 
   bool configured() const { return configured_; }
 
-  LocalPlanUpdate update(const LocalPlanRequest &request) {
-    LocalPlanUpdate output;
+  Update update(const LocalPlanRequest &request) {
+    Update output;
     output.debug.backend = LocalPlannerBackend::Scan;
     if (!configured_) {
       output.plan = LocalPlan::stopped(LocalPlanStatus::NotConfigured);
@@ -239,7 +253,7 @@ class LocalPlanTask::Impl {
     }
 
     const PollResult polled = poll();
-    if (polled.completion && sameGuide(*polled.completion, request)) {
+    if (polled.completion) {
       latest_ = *polled.completion;
       if (polled.completion->plan.ready()) {
         current_ = *polled.completion;
@@ -250,11 +264,8 @@ class LocalPlanTask::Impl {
     const LocalPlannerDebugSnapshot *workerDebug =
         polled.debug && sameGuide(*polled.debug, request) ? &polled.debug->debug : nullptr;
 
-    if (current_ && !sameGuide(*current_, request))
+    if (current_ && current_->frameEpoch != request.identity.frameEpoch)
       current_.reset();
-    if (latest_ && !sameGuide(*latest_, request))
-      latest_.reset();
-
     publish(request);
 
     if (current_) {
@@ -287,7 +298,11 @@ class LocalPlanTask::Impl {
       completed_.reset();
       workerDebug_.reset();
       publishedPlan_.reset();
-      timersArmed_ = false;
+      inputEventPending_ = false;
+      const Clock::time_point now = Clock::now();
+      nextFsmTick_ = now + timerPeriod(Backend::fsmPeriodS());
+      nextCollisionTick_ = now + timerPeriod(Backend::collisionPeriodS());
+      timersArmed_ = true;
       resetRequested_ = true;
     }
     cv_.notify_one();
@@ -326,22 +341,24 @@ class LocalPlanTask::Impl {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       const bool guideChanged =
-          hasInput_ && !sameGuide(input_.request.routeView.generation,
-                                  input_.request.identity.frameEpoch,
-                                  input_.request.intent, request);
-      if (guideChanged) {
-        cancelGeneration_.fetch_add(1U, std::memory_order_relaxed);
-        publishedPlan_.reset();
-      }
+          !hasInput_ ||
+          !sameGuide(input_.request.routeView.generation,
+                     input_.request.identity.frameEpoch,
+                     input_.request.intent, request) ||
+          !sameRoute(input_.request.route, request.route());
       input_.assign(epoch_, request, collision);
       hasInput_ = true;
       if (!timersArmed_) {
         const Clock::time_point now = Clock::now();
-        nextFsmTick_ = now;
-        nextCollisionTick_ = now;
+        nextFsmTick_ = now + timerPeriod(Backend::fsmPeriodS());
+        nextCollisionTick_ = now + timerPeriod(Backend::collisionPeriodS());
         timersArmed_ = true;
-        wakeWorker = true;
       }
+      // The official /initial_path subscriber has queue size one and runs in
+      // the same callback queue as the timers. Preserve that latest-only,
+      // serialized input event instead of waiting for the next FSM timer.
+      inputEventPending_ = inputEventPending_ || guideChanged;
+      wakeWorker = guideChanged;
     }
     if (wakeWorker)
       cv_.notify_one();
@@ -371,14 +388,14 @@ class LocalPlanTask::Impl {
   }
 
   void run() {
-    const Clock::duration fsmPeriod = timerPeriod(scan::Backend::fsmPeriodS());
+    const Clock::duration fsmPeriod = timerPeriod(Backend::fsmPeriodS());
     const Clock::duration collisionPeriod =
-        timerPeriod(scan::Backend::collisionPeriodS());
+        timerPeriod(Backend::collisionPeriodS());
     InputSnapshot snapshot;
 
     for (;;) {
       std::uint64_t cancelGeneration = 0U;
-      ScanTimer timer = ScanTimer::Fsm;
+      ScanWork work = ScanWork::Fsm;
       bool reset = false;
       {
         std::unique_lock<std::mutex> lock(mutex_);
@@ -395,6 +412,15 @@ class LocalPlanTask::Impl {
             continue;
           }
 
+          if (inputEventPending_) {
+            inputEventPending_ = false;
+            work = ScanWork::Input;
+            snapshot.assign(input_);
+            cancelGeneration =
+                cancelGeneration_.load(std::memory_order_relaxed);
+            break;
+          }
+
           const Clock::time_point now = Clock::now();
           const bool fsmDue = now >= nextFsmTick_;
           const bool collisionDue = now >= nextCollisionTick_;
@@ -403,10 +429,10 @@ class LocalPlanTask::Impl {
             continue;
           }
 
-          timer = collisionDue && (!fsmDue || nextCollisionTick_ < nextFsmTick_)
-                      ? ScanTimer::Collision
-                      : ScanTimer::Fsm;
-          if (timer == ScanTimer::Fsm)
+          work = collisionDue && (!fsmDue || nextCollisionTick_ < nextFsmTick_)
+                     ? ScanWork::Collision
+                     : ScanWork::Fsm;
+          if (work == ScanWork::Fsm)
             advanceTimer(nextFsmTick_, fsmPeriod, now);
           else
             advanceTimer(nextCollisionTick_, collisionPeriod, now);
@@ -431,8 +457,9 @@ class LocalPlanTask::Impl {
         const LocalPlanCancel isCancelled = [this, cancelGeneration]() {
           return cancelGeneration_.load(std::memory_order_relaxed) != cancelGeneration;
         };
-        completion.plan = timer == ScanTimer::Fsm ? planner_.tick(request, isCancelled)
-                                                  : planner_.checkCollision(request, isCancelled);
+        completion.plan = work == ScanWork::Collision
+                              ? planner_.checkCollision(request, isCancelled)
+                              : planner_.tick(request, isCancelled);
         completion.debug = planner_.debugSnapshot();
       } catch (const std::exception &error) {
         completion.plan = LocalPlan::stopped(LocalPlanStatus::InvalidInput);
@@ -445,9 +472,7 @@ class LocalPlanTask::Impl {
       std::lock_guard<std::mutex> lock(mutex_);
       if (cancelGeneration_.load(std::memory_order_relaxed) == cancelGeneration &&
           !resetRequested_ && completion.epoch == epoch_ && !stopping_ && hasInput_ &&
-          input_.epoch == completion.epoch &&
-          sameGuide(completion.routeGeneration, completion.frameEpoch, completion.intent,
-                    input_.request.view())) {
+          input_.epoch == completion.epoch) {
         workerDebug_ = WorkerDebug{completion.frameEpoch, completion.routeGeneration,
                                    completion.intent, completion.debug};
         const PublishedPlan publication = publicationOf(completion);
@@ -459,7 +484,7 @@ class LocalPlanTask::Impl {
     }
   }
 
-  scan::Backend planner_;
+  Backend planner_;
   bool configured_{false};
   std::mutex mutex_;
   std::condition_variable cv_;
@@ -473,6 +498,7 @@ class LocalPlanTask::Impl {
   bool resetRequested_{false};
   bool stopping_{false};
   bool timersArmed_{false};
+  bool inputEventPending_{false};
   Clock::time_point nextFsmTick_{};
   Clock::time_point nextCollisionTick_{};
   std::thread worker_;
@@ -484,25 +510,25 @@ class LocalPlanTask::Impl {
   std::uint64_t collisionResetEpoch_{0};
 };
 
-LocalPlanTask::LocalPlanTask(const LocalPlannerParams &params)
+Task::Task(const LocalPlannerParams &params)
     : impl_(std::make_unique<Impl>(params)) {}
 
-LocalPlanTask::~LocalPlanTask() = default;
+Task::~Task() = default;
 
-bool LocalPlanTask::configure(const std::string &pathLibraryDir) {
+bool Task::configure(const std::string &pathLibraryDir) {
   return impl_->configure(pathLibraryDir);
 }
 
-bool LocalPlanTask::configured() const {
+bool Task::configured() const {
   return impl_->configured();
 }
 
-LocalPlanUpdate LocalPlanTask::update(const LocalPlanRequest &request) {
+Update Task::update(const LocalPlanRequest &request) {
   return impl_->update(request);
 }
 
-void LocalPlanTask::reset() {
+void Task::reset() {
   impl_->reset();
 }
 
-}  // namespace nav_kernel::local
+}  // namespace nav_kernel::local::scan
