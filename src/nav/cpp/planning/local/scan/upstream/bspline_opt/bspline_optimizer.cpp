@@ -5,7 +5,7 @@
 #include <cstring>
 #include <limits>
 
-#include "planning/local/scan/vendor/lbfgs.hpp"
+#include "planning/local/scan/upstream/bspline_opt/lbfgs.hpp"
 
 using std::vector;
 

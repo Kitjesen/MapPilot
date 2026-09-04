@@ -1,3 +1,4 @@
+// Copied from SCAN-Planner commit 348e8a590a50a5a6bbab8d8c6dcfd171f009be26.
 #ifndef LBFGS_HPP
 #define LBFGS_HPP
 

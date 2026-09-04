@@ -3,7 +3,7 @@
 - Repository: https://github.com/wuyi2121/SCAN-Planner
 - Commit: `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`
 - License: Apache-2.0
-- License copy: [`../vendor/LICENSE`](../vendor/LICENSE)
+- License copy: [`LICENSE`](LICENSE)
 
 The supported runtime path has a strict parity contract: with the same valid
 sensor/odometry/reference events, effective parameters and callback order, it
@@ -12,7 +12,8 @@ control points, B-spline, FSM transitions and closed-loop velocity command as
 the pinned commit. A local branch that changes one of those results is not an
 allowed port change.
 
-The corresponding upstream algorithm is retained for:
+The corresponding upstream algorithm and its L-BFGS dependency are retained
+together under this directory for:
 
 - projected `DynAStar`;
 - polynomial initialization and rebound/L-BFGS optimization;
