@@ -232,8 +232,7 @@ class Backend::Impl {
     if (collisionTick) {
       output = fsm_->checkFutureCollision(fsmInput);
     } else {
-      const bool hardReferenceChange = referenceIdentityChanged(input, *route);
-      if (hardReferenceChange || referenceChanged(*route)) {
+      if (referenceIdentityChanged(input, *route)) {
         std::vector<Eigen::Vector3d> reference;
         reference.reserve(static_cast<std::size_t>(route->count));
         for (int index = 0; index < route->count; ++index) {
@@ -283,7 +282,7 @@ class Backend::Impl {
     gridMap_->setGrid(nullptr);
     active_.reset();
     lastIntent_.reset();
-    lastReference_.clear();
+    referenceInitialized_ = false;
     lastFrameEpoch_ = 0;
     lastRouteGeneration_ = 0;
     debug_ = {};
@@ -303,23 +302,9 @@ class Backend::Impl {
                                            fsmParameters(params_, plan));
   }
 
-  bool referenceChanged(const LocalRouteView &route) const {
-    if (lastReference_.empty() || !fsm_->hasTarget() ||
-        lastReference_.size() != static_cast<std::size_t>(route.count)) {
-      return true;
-    }
-    for (int index = 0; index < route.count; ++index) {
-      const Vec3 &previous = lastReference_[static_cast<std::size_t>(index)];
-      const Vec3 &next = route.points[index];
-      if (previous.x != next.x || previous.y != next.y || previous.z != next.z)
-        return true;
-    }
-    return false;
-  }
-
   bool referenceIdentityChanged(const LocalPlanRequest &input,
                                 const LocalRouteView &route) const {
-    return lastReference_.empty() ||
+    return !referenceInitialized_ || !fsm_->hasTarget() ||
            lastFrameEpoch_ != input.identity.frameEpoch ||
            lastRouteGeneration_ != route.generation ||
            !sameIntent(lastIntent_, input.intent());
@@ -327,7 +312,7 @@ class Backend::Impl {
 
   void rememberReference(const LocalPlanRequest &input,
                          const LocalRouteView &route) {
-    lastReference_.assign(route.points, route.points + route.count);
+    referenceInitialized_ = true;
     lastFrameEpoch_ = input.identity.frameEpoch;
     lastRouteGeneration_ = route.generation;
     lastIntent_ = input.intent() == nullptr
@@ -351,7 +336,7 @@ class Backend::Impl {
   std::unique_ptr<SCANReplanFSM> fsm_;
   std::optional<LocalPlan> active_;
   std::optional<LocalMotionIntent> lastIntent_;
-  std::vector<Vec3> lastReference_;
+  bool referenceInitialized_{false};
   std::uint64_t lastFrameEpoch_{0};
   std::uint64_t lastRouteGeneration_{0};
   LocalPlannerDebugSnapshot debug_{};
