@@ -205,6 +205,9 @@ Executor::SegmentTarget Executor::buildSegment(
 void Executor::buildReference(
     const SegmentTarget& target,
     const MapFromOdomTransform& map_from_odom) {
+  // Route activation, suspension and frame-epoch reset clear this snapshot.
+  // Progress changes only the short segment, not the full map-frame reference.
+  if (config_.planning_frame == PlanningFrame::Map && !reference.empty()) return;
   reference = segment;
   if (target.reachesGoal || route.empty() || !height_offset_) return;
 

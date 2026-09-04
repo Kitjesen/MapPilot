@@ -1655,6 +1655,34 @@ TEST(Executor, ScanMapReferenceSurvivesTfCorrections) {
   }
 }
 
+TEST(Executor, ScanEpochDiscardsOldReferenceAndSpline) {
+  auto executor = makeScanExecutor();
+  executor.setRoute(route({{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}}));
+  auto body = pose(0.0, 0.0, 0.5, 0.0);
+  auto observation = emptyScanObservation(1.0);
+  const auto initial = awaitScanOutput([&]() {
+    return executor.tick(routeInput(body, nullptr, 0, 1.0, {}, observation));
+  });
+  ASSERT_TRUE(initial.path_found) << initial.reason;
+  ++observation.frame_epoch;
+  body.position.x = 0.5;
+  const auto reset = executor.tick(routeInput(body, nullptr, 0, 1.1, {}, observation));
+  EXPECT_FALSE(reset.path_found);
+  EXPECT_DOUBLE_EQ(reset.cmd_vel.vx, 0.0);
+  EXPECT_DOUBLE_EQ(reset.cmd_vel.vy, 0.0);
+  EXPECT_DOUBLE_EQ(reset.cmd_vel.wz, 0.0);
+  const auto resumed = awaitScanOutput([&]() {
+    return executor.tick(routeInput(body, nullptr, 0, 1.1, {}, observation));
+  });
+  ASSERT_TRUE(resumed.path_found) << resumed.reason;
+  ASSERT_FALSE(resumed.local_path_map.empty());
+  EXPECT_NEAR(resumed.local_path_map.front().x, body.position.x, 0.01);
+  executor.clear();
+  const auto cancelled = executor.tick(routeInput(body, nullptr, 0, 1.2, {}, observation));
+  EXPECT_FALSE(cancelled.path_found);
+  EXPECT_DOUBLE_EQ(cancelled.cmd_vel.vx, 0.0);
+}
+
 TEST(Executor, ScanAnchorsGroundRouteHeightToRobotBody) {
   auto executor = makeScanExecutor();
   executor.setRoute(route({

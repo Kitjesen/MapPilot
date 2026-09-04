@@ -328,6 +328,11 @@ ExecutionOutput Executor::tickRoute(const nav_kernel::Pose &map_body,
   const int safe_obstacle_count =
       obstacle_xyzh_map == nullptr ? 0 : std::max(0, obstacle_count);
   if (config_.planning_frame == PlanningFrame::Map) {
+    if (reference_epoch && *reference_epoch != observation.frame_epoch) {
+      suspendAutonomy();
+      height_offset_.reset();
+    }
+    reference_epoch = observation.frame_epoch;
     // The occupancy layer and complete reference are already map-frame data.
     // The optional 2D traversability view is odom-only; do not relabel it.
     observation.collision.gridFromPlanningTranslation = {};

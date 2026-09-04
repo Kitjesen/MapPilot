@@ -51,6 +51,18 @@ CMU/SCAN, inspect backend strings, or manage SCAN task reuse and continuity.
 The endpoint composition root chooses and configures the Planner before
 constructing Executor.
 
+Composition selects `PlanningFrame::Map` for SCAN and `PlanningFrame::Odom`
+for CMU. SCAN's complete reference, robot kinematics, collision queries and
+spline tracking share map coordinates; the Follower still returns body-frame
+velocity. Small map-to-odom corrections update the measured robot pose, not
+the reference generation or spline execution clock.
+
+The complete map reference is prepared once after route activation and height
+calibration. Route progress updates only the local segment. Suspension or a
+frame-epoch reset discards the reference and pending local work; the next
+valid input rebuilds it. A new goal and cancellation use `setRoute()` and
+`clear()` respectively, which reset the planner and follower.
+
 ## Executor ownership
 
 Executor may:

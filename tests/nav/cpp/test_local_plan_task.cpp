@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -72,6 +73,22 @@ TEST(LocalPlanTask, RejectsInvalidRouteWithoutStartingWork) {
   nav_kernel::LocalPlanRequest request;
   EXPECT_EQ(task.update(request).plan.status(),
             nav_kernel::LocalPlanStatus::InvalidInput);
+}
+
+TEST(LocalPlanTask, RejectsNonFiniteReferenceSnapshot) {
+  nav_kernel::local::scan::Task task(scanParams());
+  ASSERT_TRUE(task.configure());
+  RequestFixture fixture;
+  fixture.route.back().x = std::numeric_limits<double>::quiet_NaN();
+  auto result = task.update(fixture.request);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (result.plan.status() == nav_kernel::LocalPlanStatus::Pending &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    result = task.update(fixture.request);
+  }
+  EXPECT_EQ(result.plan.status(), nav_kernel::LocalPlanStatus::InvalidInput);
+  EXPECT_FALSE(result.plan.ready());
 }
 
 TEST(LocalPlanTask, RunsFsmOnOwnedTimer) {

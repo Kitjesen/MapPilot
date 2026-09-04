@@ -53,8 +53,12 @@ struct OwnedRequest {
         routeView = *sourceRoute;
         routeView.points = nullptr;
         if (sourceRoute->points != nullptr && sourceRoute->count > 0) {
-          route = std::make_shared<const std::vector<Vec3>>(
-              sourceRoute->points, sourceRoute->points + sourceRoute->count);
+          const auto end = sourceRoute->points + sourceRoute->count;
+          const bool finite = std::all_of(sourceRoute->points, end, [](const Vec3 &point) {
+            return std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z);
+          });
+          route = finite ? std::make_shared<const std::vector<Vec3>>(sourceRoute->points, end)
+                         : nullptr;
         } else {
           route.reset();
         }

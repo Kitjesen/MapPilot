@@ -215,6 +215,7 @@ class Executor {
   std::vector<nav_kernel::Vec3> route;
   std::vector<nav_kernel::Vec3> segment;
   std::vector<nav_kernel::Vec3> reference;
+  std::optional<std::uint64_t> reference_epoch;
   std::vector<nav_kernel::Vec3> committed_local_path_map_;
   std::optional<double> teleop_recovery_intent_rad_;
   std::optional<TeleopReference> teleop_reference_;

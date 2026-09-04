@@ -190,9 +190,13 @@ class Backend::Impl {
         !std::isfinite(input.clock.timestampS)) {
       return stop(LocalPlanStatus::InvalidInput, "route_invalid");
     }
-    for (int index = 0; index < route->count; ++index) {
-      if (!finitePoint(route->points[index]))
-        return stop(LocalPlanStatus::InvalidInput, "route_invalid");
+    // Direct backend callers also obey reference-generation ownership. Task
+    // validates each immutable snapshot on receipt; timer ticks reuse it.
+    if (referenceIdentityChanged(input, *route)) {
+      for (int index = 0; index < route->count; ++index) {
+        if (!finitePoint(route->points[index]))
+          return stop(LocalPlanStatus::InvalidInput, "route_invalid");
+      }
     }
     if (const LocalMotionIntent *intent = input.intent(); intent != nullptr &&
         (!std::isfinite(intent->directionBodyDeg) ||
