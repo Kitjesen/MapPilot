@@ -81,6 +81,23 @@ bool localizationGateBlocked(const lingtu::nav::endpoint::InputGateState &state,
          lingtu::nav::endpoint::isCatastrophicLocalizationReason(state.localization_reason);
 }
 
+bool pathsMateriallyDiffer(const std::vector<nav_kernel::Vec3> &left,
+                           const std::vector<nav_kernel::Vec3> &right) noexcept {
+  if (left.size() != right.size())
+    return true;
+  constexpr double kPositionToleranceM = 0.01;
+  constexpr double kPositionToleranceSquared =
+      kPositionToleranceM * kPositionToleranceM;
+  for (std::size_t index = 0; index < left.size(); ++index) {
+    const double dx = left[index].x - right[index].x;
+    const double dy = left[index].y - right[index].y;
+    const double dz = left[index].z - right[index].z;
+    if (dx * dx + dy * dy + dz * dz > kPositionToleranceSquared)
+      return true;
+  }
+  return false;
+}
+
 lingtu::nav::endpoint::GoalSample inspectionGoal(const lingtu::nav::inspection::Point &point,
                                                  double stamp_s) {
   lingtu::nav::endpoint::GoalSample goal;
@@ -202,6 +219,23 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto next_tick = SteadyClock::now();
   TimingDiagnostics last_timing;
   std::optional<std::string> last_geofence_intrusion;
+  constexpr auto kLocalPathRefreshPeriod = std::chrono::milliseconds(100);
+  SteadyClock::time_point last_local_path_publish_time{};
+  bool local_path_published{false};
+
+  auto publish_local_path = [&](const std::vector<nav_kernel::Vec3> &path,
+                                TimingDiagnostics &timing) {
+    const auto now = SteadyClock::now();
+    const bool refresh_due =
+        !local_path_published || now - last_local_path_publish_time >= kLocalPathRefreshPeriod;
+    if (!refresh_due && !pathsMateriallyDiffer(last_local_path, path))
+      return;
+    const auto write_start = SteadyClock::now();
+    (void)dds.publish(OutputEvent{LocalPathOutput{path}});
+    timing.dds_write_ms += elapsedMs(write_start);
+    last_local_path_publish_time = now;
+    local_path_published = true;
+  };
 
   auto record_final_output_failure = [&](const std::string &reason) {
     control_authority.holdOperatorTakeover();
@@ -1340,14 +1374,14 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
           if (teleop_result.handled) {
             last_teleop = std::move(teleop_result.teleop);
             if (teleop_result.local) {
-              const auto local_write_start = SteadyClock::now();
               if (teleop_result.publish.local_path) {
-                (void)dds.publish(OutputEvent{LocalPathOutput{teleop_result.local_path}});
+                publish_local_path(teleop_result.local_path, timing);
               }
               if (teleop_result.publish.waypoint) {
+                const auto waypoint_write_start = SteadyClock::now();
                 (void)dds.publish(OutputEvent{WaypointOutput{teleop_result.waypoint}});
+                timing.dds_write_ms += elapsedMs(waypoint_write_start);
               }
-              timing.dds_write_ms += elapsedMs(local_write_start);
               last_local = std::move(*teleop_result.local);
               last_local_path = std::move(teleop_result.local_path);
               last_local_planner_debug = std::move(teleop_result.local_planner_debug);
@@ -1488,9 +1522,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         if (autonomy_result.output) {
           auto &out = *autonomy_result.output;
           if (autonomy_result.publish.local_path) {
-            const auto local_write_start = SteadyClock::now();
-            (void)dds.publish(OutputEvent{LocalPathOutput{out.local_path_map}});
-            timing.dds_write_ms += elapsedMs(local_write_start);
+            publish_local_path(out.local_path_map, timing);
           }
           last_local_path = std::move(out.local_path_map);
           last_local_planner_debug = std::move(out.local_planner_debug);
