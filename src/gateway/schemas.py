@@ -1724,6 +1724,97 @@ class NavigationFrameSummary(GatewayResponseModel):
     mismatches: list[NavigationFrameMismatch] = Field(default_factory=list)
 
 
+class NavigationOperatorTaskState(GatewayResponseModel):
+    state: Literal[
+        "IDLE",
+        "PLANNING",
+        "EXECUTING",
+        "RECOVERING",
+        "PAUSED",
+        "SUCCESS",
+        "FAILED",
+        "CANCELLED",
+        "UNKNOWN",
+    ]
+    task_id: str
+    request_id: str
+    terminal: bool
+    progress: float | None = None
+    reason: str
+
+
+class NavigationOperatorGoalAdmission(GatewayResponseModel):
+    state: Literal["ACCEPTING", "BLOCKED", "UNKNOWN"]
+    blockers: list[str] = Field(default_factory=list)
+    advisories: list[str] = Field(default_factory=list)
+
+
+class NavigationOperatorControlState(GatewayResponseModel):
+    authority: Literal["AUTONOMY", "OPERATOR", "NONE", "UNKNOWN"]
+    resume_required: bool
+    reason: str
+
+
+class NavigationOperatorMotionState(GatewayResponseModel):
+    permission: Literal["CLEAR", "HELD", "ESTOPPED", "UNKNOWN"]
+    observation: Literal["MOVING", "QUIET", "UNKNOWN"]
+    stop_confirmation: Literal[
+        "NOT_REQUESTED",
+        "PENDING",
+        "CONFIRMED",
+        "FAILED",
+        "UNKNOWN",
+    ]
+    linear_speed_mps: float | None = None
+    angular_speed_radps: float | None = None
+    reason: str
+
+
+class NavigationOperatorSummary(GatewayResponseModel):
+    severity: Literal["OK", "INFO", "WARNING", "CRITICAL"]
+    code: Literal[
+        "STOP_CONFIRMATION_FAILED",
+        "STOP_CONFIRMATION_PENDING",
+        "ESTOPPED",
+        "STATUS_SOURCE_UNKNOWN",
+        "MOTION_HELD",
+        "GOAL_ADMISSION_BLOCKED",
+        "TASK_FAILED",
+        "TASK_RECOVERING",
+        "TASK_PLANNING",
+        "TASK_PAUSED",
+        "NAVIGATION_ADVISORY",
+        "TASK_EXECUTING",
+        "TASK_SUCCEEDED",
+        "TASK_CANCELLED",
+        "READY_FOR_GOAL",
+    ]
+    next_action: Literal[
+        "inspect_stop_failure",
+        "wait_for_stop_confirmation",
+        "clear_estop",
+        "check_status_sources",
+        "resolve_motion_hold",
+        "resolve_goal_blockers",
+        "inspect_task_failure",
+        "monitor_recovery",
+        "wait_for_plan",
+        "resume_or_cancel",
+        "review_advisories",
+        "monitor_progress",
+        "choose_goal",
+    ]
+
+
+class NavigationOperatorState(GatewayResponseModel):
+    schema_version: Literal[1] = 1
+    task: NavigationOperatorTaskState
+    goal_admission: NavigationOperatorGoalAdmission
+    control: NavigationOperatorControlState
+    motion: NavigationOperatorMotionState
+    summary: NavigationOperatorSummary
+
+
 class NavigationStatusResponse(GatewayResponseModel):
     schema_version: int
     state: str
@@ -1749,6 +1840,7 @@ class NavigationStatusResponse(GatewayResponseModel):
     diagnostics: NavigationDiagnosticsSummary
     mission: NavigationMissionSummary
     goal_status: dict[str, Any] | None = None
+    operator_state: NavigationOperatorState
     ts: float
 
 

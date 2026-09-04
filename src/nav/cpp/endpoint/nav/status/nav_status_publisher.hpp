@@ -45,6 +45,7 @@ struct StatusRuntimeState {
   bool operator_resume_required{false};
   FinalOutputDiagnostics final_output{};
   DriverControlDiagnostics driver_control{};
+  MotionStopEvidenceDiagnostics motion_stop_evidence{};
   StatusCounters counters{};
   const InputGateState *input_gate{nullptr};
   const CloudSyncDiagnostics *cloud_sync{nullptr};

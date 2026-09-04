@@ -19,6 +19,9 @@ from gateway.services.native_control import (
 from gateway.services.native_control import (
     status_is_fresh as native_control_status_is_fresh,
 )
+from gateway.services.navigation_operator_state import (
+    project_navigation_operator_state,
+)
 from gateway.services.safety_status import (
     SAFETY_STOP_BLOCKER,
     safety_stop_active,
@@ -1783,6 +1786,7 @@ def _native_endpoint_readiness(
         "check_obstacle": check_obstacle,
         "use_traversability_cost": use_traversability_cost,
         "far_input": dict(far_input),
+        "motion_stop_evidence": _mapping(_mapping(snapshot).get("motion_stop_evidence")),
         "operator_motion": {
             "required": operator_motion_required,
             "status_available": operator_motion_status_available,
@@ -1854,26 +1858,32 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
         path_len = len(gw._last_path)
         mode = gw._mode
         safety = gw._navigation_state
-        task_statuses = getattr(gw, "_navigation_goal_status_by_task", {})
-        goal_statuses = getattr(gw, "_navigation_goal_status_by_request", {})
-        latest_goal_status = getattr(gw, "_latest_navigation_goal_status", None)
+        task_statuses = _mapping(getattr(gw, "_navigation_goal_status_by_task", {}))
+        goal_statuses = _mapping(getattr(gw, "_navigation_goal_status_by_request", {}))
     state_source = "native_navigation_state"
     active_task_id = str(mission.get("active_task_id") or "")
     active_request_id = str(mission.get("active_request_id") or "")
-    active_goal_status = (
+    active_boot_id = str(native_state.get("boot_id") or "")
+    goal_status = None
+    candidates = (
         task_statuses.get(active_task_id)
         if active_task_id and hasattr(task_statuses, "get")
-        else goal_statuses.get(active_request_id)
+        else None,
+        goal_statuses.get(active_request_id)
         if active_request_id and hasattr(goal_statuses, "get")
-        else None
+        else None,
     )
-    goal_status = (
-        dict(active_goal_status)
-        if isinstance(active_goal_status, Mapping)
-        else dict(latest_goal_status)
-        if isinstance(latest_goal_status, Mapping)
-        else None
-    )
+    for candidate in candidates:
+        if not isinstance(candidate, Mapping):
+            continue
+        if str(candidate.get("task_id") or "") != active_task_id:
+            continue
+        if str(candidate.get("request_id") or "") != active_request_id:
+            continue
+        if str(candidate.get("boot_id") or "") != active_boot_id:
+            continue
+        goal_status = dict(candidate)
+        break
 
     session = safe_session(gw)
     lease = safe_lease(gw)
@@ -1995,6 +2005,20 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
         readiness=readiness,
         reason_codes=reason_codes,
     )
+    operator_state = project_navigation_operator_state(
+        navigation_state=native_state,
+        navigation_state_fresh=(
+            native_control_status_is_fresh({"stamp_s": native_state.get("ts")})
+            if native_state
+            else False
+        ),
+        goal_status=goal_status,
+        readiness=readiness,
+        control=control,
+        native_endpoint=native_endpoint,
+        odometry=odometry,
+        odometry_fresh=localization.get("pose_fresh"),
+    )
     return {
         "schema_version": NAVIGATION_STATUS_SCHEMA_VERSION,
         "state_source": state_source,
@@ -2049,6 +2073,7 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
             "raw": mission,
         },
         "goal_status": goal_status,
+        "operator_state": operator_state,
         "navigation_state": dict(native_state),
         "ts": mission_ts,
     }

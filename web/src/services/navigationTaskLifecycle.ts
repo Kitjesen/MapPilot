@@ -1,4 +1,5 @@
 export type NavigationTaskLifecycleState =
+  | 'IDLE'
   | 'PLANNING'
   | 'EXECUTING'
   | 'PAUSED'
@@ -43,7 +44,7 @@ function normalizedState(input: NavigationTaskLifecycleInput): NavigationTaskLif
   if (typeof named === 'string') {
     const candidate = named.trim().toUpperCase()
     if (candidate in STATE_ALIASES) return STATE_ALIASES[candidate]
-    if (['PLANNING', 'EXECUTING', 'PAUSED', 'RECOVERING', 'SUCCESS', 'FAILED', 'CANCELLED'].includes(candidate)) {
+    if (['IDLE', 'PLANNING', 'EXECUTING', 'PAUSED', 'RECOVERING', 'SUCCESS', 'FAILED', 'CANCELLED'].includes(candidate)) {
       return candidate as NavigationTaskLifecycleState
     }
   }
@@ -58,7 +59,7 @@ export function describeNavigationTask(input: NavigationTaskLifecycleInput): Nav
     terminal,
     canPause: !terminal && ['EXECUTING', 'RECOVERING'].includes(state),
     canResume: !terminal && state === 'PAUSED',
-    canCancel: !terminal,
+    canCancel: !terminal && state !== 'IDLE',
   }
 }
 

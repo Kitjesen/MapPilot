@@ -8,6 +8,7 @@ import {
   isTaskControlAwaitingConfirmation,
   type NavigationTaskControlRequest,
 } from '../services/navigationTaskLifecycle'
+import { navigationOperatorTaskLabel } from '../services/navigationOperatorState'
 import type { ToastKind } from '../types'
 import styles from './CurrentTaskCard.module.css'
 
@@ -20,14 +21,16 @@ interface CurrentTaskCardProps {
 
 type StateTone = 'active' | 'success' | 'danger' | 'muted' | 'waiting'
 
-const STATE_LABELS: Record<string, { en: string; zh: string; tone: StateTone }> = {
-  PLANNING: { en: 'Planning', zh: '规划中', tone: 'active' },
-  EXECUTING: { en: 'Navigating', zh: '导航中', tone: 'active' },
-  PAUSED: { en: 'Paused', zh: '已暂停', tone: 'waiting' },
-  RECOVERING: { en: 'Recovering', zh: '恢复中', tone: 'waiting' },
-  SUCCESS: { en: 'Reached', zh: '已到达', tone: 'success' },
-  FAILED: { en: 'Failed', zh: '失败', tone: 'danger' },
-  CANCELLED: { en: 'Cancelled', zh: '已取消', tone: 'muted' },
+const STATE_LABELS: Record<string, { tone: StateTone }> = {
+  IDLE: { tone: 'muted' },
+  PLANNING: { tone: 'active' },
+  EXECUTING: { tone: 'active' },
+  PAUSED: { tone: 'waiting' },
+  RECOVERING: { tone: 'waiting' },
+  SUCCESS: { tone: 'success' },
+  FAILED: { tone: 'danger' },
+  CANCELLED: { tone: 'muted' },
+  UNKNOWN: { tone: 'muted' },
 }
 
 function shortTaskId(taskId: string): string {
@@ -103,7 +106,7 @@ export function CurrentTaskCard({
       : !snapshot.found || !status
         ? { label: text(locale, 'Waiting for native status', '等待原生状态'), tone: 'waiting' as StateTone }
         : knownState
-          ? { label: text(locale, knownState.en, knownState.zh), tone: knownState.tone }
+          ? { label: navigationOperatorTaskLabel(task.state, locale), tone: knownState.tone }
           : { label: text(locale, 'Unknown', '未知'), tone: 'muted' as StateTone }
   const reason = cleanText(status?.reason)
     || cleanText(snapshot?.reason)

@@ -142,6 +142,7 @@ using lingtu::nav::endpoint::StatusPlannerSample;
 using lingtu::nav::endpoint::StatusWriterConfig;
 using lingtu::nav::endpoint::StopConfirmation;
 using lingtu::nav::endpoint::StopConfirmationConfig;
+using lingtu::nav::endpoint::StopConfirmationDiagnostics;
 using lingtu::nav::endpoint::StopConfirmationEvidencePolicy;
 using lingtu::nav::endpoint::StopConfirmationState;
 using lingtu::nav::endpoint::TeleopAdmissionActions;
@@ -588,6 +589,8 @@ int main(int argc, char **argv) {
         ++cmd_vel_count;
         last_zero_output_sequence = receipt->output_sequence;
         last_zero_source_wall_ns = receipt->source_wall_ns;
+        state.motion_stop_evidence.observePublishedFinalOutput(
+            receipt->output_sequence, {}, static_cast<double>(receipt->source_wall_ns) / 1e9);
       } else {
         record_final_output_publish_failure("cmd_vel_zero_publish_failed");
       }
@@ -603,6 +606,8 @@ int main(int argc, char **argv) {
         ++cmd_vel_count;
         last_zero_output_sequence = receipt->output_sequence;
         last_zero_source_wall_ns = receipt->source_wall_ns;
+        state.motion_stop_evidence.observePublishedFinalOutput(
+            receipt->output_sequence, {}, static_cast<double>(receipt->source_wall_ns) / 1e9);
       } else {
         record_final_output_publish_failure("cmd_vel_shutdown_zero_publish_failed");
       }
@@ -885,8 +890,42 @@ int main(int argc, char **argv) {
         cfg.control_mode == ControlMode::Autonomy
             ? StopConfirmationEvidencePolicy::DriverAckAndOdometry
             : StopConfirmationEvidencePolicy::DriverAckOnly;
+    state.motion_stop_evidence.configure(stop_confirmation_config);
+    auto publish_motion_stop_evidence_status_if_due = [&]() {
+      auto runtime_state =
+          lingtu::nav::endpoint::statusRuntimeStateFromEndpoint(state);
+      runtime_state.final_output.producer_boot_id = dds_status.producer_boot_id;
+      runtime_state.final_output.output_sequence = dds_status.final_output_sequence;
+      const TimingDiagnostics previous_timing =
+          current_timing != nullptr ? *current_timing : TimingDiagnostics{};
+      TimingDiagnostics status_timing;
+      return nav_status.publishIfDue(runtime_state, command_ingress.diagnostics(), previous_timing,
+                                     status_timing);
+    };
+    auto publish_motion_stop_evidence_status = [&]() {
+      nav_status.requestImmediate();
+      if (publish_motion_stop_evidence_status_if_due()) {
+        nav_status.flush();
+      }
+    };
     auto wait_for_stop_confirmation = [&](std::uint64_t output_sequence) {
+      const double zero_published_at_s =
+          last_zero_source_wall_ns != 0U
+              ? static_cast<double>(last_zero_source_wall_ns) / 1e9
+              : nowSeconds();
+      state.motion_stop_evidence.begin(output_sequence, zero_published_at_s);
+      // Stop confirmation blocks the endpoint loop, so publish both edges here.
+      publish_motion_stop_evidence_status();
       if (output_sequence != last_zero_output_sequence || last_zero_source_wall_ns == 0U) {
+        StopConfirmationDiagnostics diagnostics;
+        diagnostics.required_quiet_odometry_samples =
+            stop_confirmation_config.evidence_policy ==
+                    StopConfirmationEvidencePolicy::DriverAckAndOdometry
+                ? stop_confirmation_config.quiet_odometry_samples
+                : 0U;
+        state.motion_stop_evidence.update(StopConfirmationState::TimedOut, diagnostics,
+                                          nowSeconds());
+        publish_motion_stop_evidence_status();
         return StopConfirmationState::TimedOut;
       }
       StopConfirmation confirmation(dds_status.producer_boot_id, output_sequence,
@@ -922,9 +961,13 @@ int main(int argc, char **argv) {
                                         driver.last_command_accepted, driver.stamp_ns);
         }
         const StopConfirmationState confirmation_state = confirmation.state();
-        if (confirmation_state != StopConfirmationState::Pending) {
+        const auto diagnostics = confirmation.diagnostics();
+        state.motion_stop_evidence.update(confirmation_state, diagnostics, nowSeconds());
+        if (confirmation_state == StopConfirmationState::Pending) {
+          (void)publish_motion_stop_evidence_status_if_due();
+        } else {
+          publish_motion_stop_evidence_status();
           if (confirmation_state != StopConfirmationState::Confirmed) {
-            const auto diagnostics = confirmation.diagnostics();
             std::fprintf(
                 stderr,
                 "navd: stop confirmation failed state=%d output_sequence=%llu "

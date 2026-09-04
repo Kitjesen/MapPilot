@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,7 @@
 #include "nav_kernel/types.hpp"
 #include "planning/local/planner.hpp"
 #include "input/gate.hpp"
+#include "safety/stop.hpp"
 #include "status/control_loop_health.hpp"
 #include "status/status_snapshot_file_writer.hpp"
 
@@ -245,6 +247,42 @@ struct DriverControlDiagnostics {
   std::uint64_t accepted_output_sequence{0};
 };
 
+struct MotionStopEvidenceDiagnostics {
+  std::string state{"NOT_REQUESTED"};
+  std::string reason{"not_requested"};
+  std::uint64_t output_sequence{0U};
+  double updated_at_s{0.0};
+  std::string confirmation_state{"not_requested"};
+  bool driver_ack_observed{false};
+  bool driver_accepted{false};
+  std::size_t quiet_odometry_samples{0U};
+  std::size_t required_quiet_odometry_samples{0U};
+  double last_linear_speed_mps{std::numeric_limits<double>::quiet_NaN()};
+  double last_angular_speed_radps{std::numeric_limits<double>::quiet_NaN()};
+  double linear_speed_threshold_mps{0.0};
+  double angular_speed_threshold_radps{0.0};
+};
+
+class MotionStopEvidenceTracker {
+ public:
+  explicit MotionStopEvidenceTracker(StopConfirmationConfig config = {});
+
+  void configure(StopConfirmationConfig config);
+  void begin(std::uint64_t output_sequence, double updated_at_s);
+  void update(StopConfirmationState state, const StopConfirmationDiagnostics &diagnostics,
+              double updated_at_s);
+  void observePublishedFinalOutput(std::uint64_t output_sequence,
+                                   const nav_kernel::Twist &command, double updated_at_s);
+
+  [[nodiscard]] const MotionStopEvidenceDiagnostics &snapshot() const noexcept;
+
+ private:
+  void resetToNotRequested(const std::string &reason, double updated_at_s);
+
+  StopConfirmationConfig config_{};
+  MotionStopEvidenceDiagnostics snapshot_{};
+};
+
 struct FarInputStatus {
   bool required{false};
   bool ready{false};
@@ -258,7 +296,7 @@ void writeStatusSnapshot(
     bool has_odom, bool has_map_odom_tf, bool has_path, bool estop_latched,
     const std::string &estop_reason, const nav_kernel::Twist &final_cmd_vel,
     const FinalOutputDiagnostics &final_output, const DriverControlDiagnostics &driver_control,
-    const FarInputStatus &far_input,
+    const MotionStopEvidenceDiagnostics &motion_stop_evidence, const FarInputStatus &far_input,
     bool has_traversability, bool has_terrain_map, bool has_terrain_map_ext,
     const InputGateState &input_gate, const CloudSyncDiagnostics &cloud_sync,
     const FrameDiagnostics &frames, const CommandDiagnostics &commands,

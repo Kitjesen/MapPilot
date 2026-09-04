@@ -2,6 +2,7 @@ import { Activity } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { SSEState } from '../types'
 import { text, type Locale } from '../i18n'
+import { presentNavigationOperatorStatus } from '../services/navigationOperatorState'
 import styles from './StatusBar.module.css'
 
 interface StatusBarProps {
@@ -46,18 +47,8 @@ function numericMetric(data: Record<string, unknown> | undefined, key: string): 
   return undefined
 }
 
-const NAV_STATE_LABEL: Record<string, { en: string; zh: string }> = {
-  IDLE: { en: 'Idle', zh: '空闲' },
-  EXECUTING: { en: 'Executing', zh: '执行中' },
-  PLANNING: { en: 'Planning', zh: '规划中' },
-  ARRIVED: { en: 'Arrived', zh: '已到达' },
-  FAILED: { en: 'Failed', zh: '失败' },
-  CANCELLED: { en: 'Cancelled', zh: '已取消' },
-}
-
 export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
   const odom = sseState.odometry
-  const mission = sseState.missionStatus
   const safety = sseState.safetyState
   const navigation = sseState.navigationStatus
   const [now, setNow] = useState(0)
@@ -71,39 +62,28 @@ export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
   const y = num(odom?.y)
   const yaw = odom ? rad2deg(odom.yaw) + '°' : '--'
   const vx = num(odom?.vx) + (typeof odom?.vx === 'number' ? ' m/s' : '')
-  const navState = mission?.state ?? 'IDLE'
-  const estopActive = safety?.estop ?? false
-  const navStateLabel = NAV_STATE_LABEL[navState]
-  const navStateText = navStateLabel ? text(locale, navStateLabel.en, navStateLabel.zh) : navState
-  const goalReady =
-    navigation?.readiness?.can_accept_goal ??
-    navigation?.can_accept_goal ??
-    false
-  const goalBlockers = [
-    ...(navigation?.readiness?.blockers ?? []),
-    ...(navigation?.feedback?.blockers ?? []),
-  ]
-  const goalAdvisories = navigation?.readiness?.advisories ?? []
+  const operatorView = presentNavigationOperatorStatus(navigation, {
+    locale,
+    legacyTaskState: navigation?.state,
+  })
+  const navState = operatorView.task.state
+  const estopActive = operatorView.motion.permission.state === 'ESTOPPED' || (safety?.estop ?? false)
+  const navStateText = operatorView.task.label
+  const goalReady = operatorView.goalAdmission.state === 'ACCEPTING'
+  const goalBlockers = operatorView.goalAdmission.blockers
+  const goalAdvisories = operatorView.goalAdmission.advisories
   const goalReadinessTitle = goalReady
     ? (goalAdvisories.length > 0 ? goalAdvisories.join('\n') : text(locale, 'Ready to accept navigation goals', '可以接收导航目标'))
     : (goalBlockers.length > 0 ? goalBlockers.join('\n') : text(locale, 'Navigation status unavailable', '导航状态不可用'))
-  const activeCmdSource =
-    navigation?.control?.active_source?.label ??
-    navigation?.control?.active_cmd_source ??
-    'none'
-  const commandSource = activeCmdSource === 'No active command source' ? 'none' : activeCmdSource
   const slamDiag = sseState.slamDiag?.data
   const displaySlamHz = numericMetric(slamDiag, 'processed_scan_hz') ?? sseState.slamStatus?.slam_hz
   const lidarHz = numericMetric(slamDiag, 'lidar_input_hz')
-  const goalText = navigation
-    ? (goalReady ? text(locale, 'Ready', '可接收') : text(locale, 'Blocked', '受阻'))
-    : text(locale, 'Unknown', '未知')
-  const showCommandSource = commandSource !== 'none' && commandSource !== ''
   const heartbeatAlive = sseState.lastHeartbeat && now > 0 && now - sseState.lastHeartbeat < 5000
   const statusTitle = [
     `${text(locale, 'Uptime', '运行时长')} ${formatUptime(uptimeSeconds)}`,
     typeof displaySlamHz === 'number' ? `${text(locale, 'Localization', '定位处理')} ${displaySlamHz.toFixed(1)} Hz` : null,
     typeof lidarHz === 'number' ? `${text(locale, 'LiDAR input', '雷达输入')} ${lidarHz.toFixed(1)} Hz` : null,
+    `${text(locale, 'Next', '下一步')} ${operatorView.summary.nextAction}`,
     sseState.slamStatus ? `${text(locale, 'Degeneracy', '退化')} ${sseState.slamStatus.degeneracy_count}` : null,
     sseState.robotStatus ? `${text(locale, 'Battery', '电量')} ${sseState.robotStatus.battery.toFixed(0)}%` : null,
     `${text(locale, 'Version', '版本')} 1.8`,
@@ -134,7 +114,7 @@ export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
 
       <span className={styles.sep}>·</span>
 
-      <span className={styles.item}>
+      <span className={styles.item} title={operatorView.summary.nextAction}>
         <span className={styles.label}>{text(locale, 'Nav', '导航')}</span>
         <span className={`${styles.value} ${navState === 'EXECUTING' ? styles.navActive : navState === 'FAILED' ? styles.navFail : ''}`}>
           {navStateText}
@@ -145,20 +125,42 @@ export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
 
       <span className={styles.item} title={goalReadinessTitle}>
         <span className={styles.label}>{text(locale, 'Goal', '任务')}</span>
-        <span className={`${styles.value} ${goalReady ? styles.ready : styles.navFail}`}>
-          {goalText}
+        <span className={`${styles.value} ${goalReady ? styles.ready : operatorView.goalAdmission.state === 'UNKNOWN' ? styles.warn : styles.navFail}`}>
+          {operatorView.goalAdmission.label}
         </span>
       </span>
 
-      {showCommandSource && (
-        <>
-          <span className={styles.sep}>·</span>
-          <span className={styles.item} title={`当前控制源: ${commandSource}`}>
-            <span className={styles.label}>{text(locale, 'Control', '控制')}</span>
-            <span className={`${styles.value} ${styles.warn}`}>{commandSource}</span>
-          </span>
-        </>
-      )}
+      <span className={styles.sep}>·</span>
+
+      <span
+        className={styles.item}
+        title={operatorView.control.resumeRequired
+          ? text(locale, 'Resume is required before autonomy can continue', '自主导航继续前需要恢复任务')
+          : operatorView.control.label}
+      >
+        <span className={styles.label}>{text(locale, 'Control', '控制')}</span>
+        <span className={`${styles.value} ${operatorView.control.state === 'AUTONOMY' ? styles.ready : styles.warn}`}>
+          {operatorView.control.label}
+        </span>
+      </span>
+
+      <span className={styles.sep}>·</span>
+
+      <span className={styles.item} title={operatorView.motion.observation.label}>
+        <span className={styles.label}>{text(locale, 'Motion', '运动')}</span>
+        <span className={`${styles.value} ${operatorView.motion.permission.state === 'CLEAR' ? styles.ready : operatorView.motion.permission.state === 'ESTOPPED' ? styles.navFail : styles.warn}`}>
+          {operatorView.motion.permission.label}
+        </span>
+      </span>
+
+      <span className={styles.sep}>·</span>
+
+      <span className={styles.item} title={operatorView.motion.stopConfirmation.label}>
+        <span className={styles.label}>{text(locale, 'Stop', '停稳')}</span>
+        <span className={`${styles.value} ${operatorView.motion.stopConfirmation.state === 'CONFIRMED' ? styles.ready : operatorView.motion.stopConfirmation.state === 'FAILED' ? styles.navFail : styles.warn}`}>
+          {operatorView.motion.stopConfirmation.label}
+        </span>
+      </span>
 
       {estopActive && (
         <>

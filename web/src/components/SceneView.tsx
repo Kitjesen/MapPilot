@@ -21,6 +21,7 @@ import * as api from '../services/api'
 import {
   mapIsActivationReady,
 } from '../services/mapReadiness'
+import { presentNavigationOperatorStatus } from '../services/navigationOperatorState'
 import { useCamera } from '../hooks/useCamera'
 import { useBinaryCloud } from '../hooks/useBinaryCloud'
 import {
@@ -534,9 +535,20 @@ function SceneViewComponent({
   const displayYawDeg = poseAvailable ? `${formatTelemetryValue((yaw * 180) / Math.PI, 0)}°` : '--'
   const displaySpeed = poseAvailable ? `${formatTelemetryValue(vx, 2)} m/s` : '-- m/s'
 
-  const missionState = sseState.missionStatus?.state ?? 'IDLE'
-  const missionGoal  = sseState.missionStatus?.goal
-  const hasGoal      = missionState === 'EXECUTING' || missionState === 'PLANNING'
+  const navigationStatus = sseState.navigationStatus
+  const operatorView = presentNavigationOperatorStatus(navigationStatus, {
+    locale,
+    legacyTaskState: sseState.missionStatus?.state,
+  })
+  const missionState = operatorView.task.state
+  const missionStateLabel = operatorView.task.label
+  const targetGoal = navigationStatus?.target?.goal
+  const missionGoal = targetGoal && Number.isFinite(targetGoal.x) && Number.isFinite(targetGoal.y)
+    ? `(${formatTelemetryValue(targetGoal.x, 2)}, ${formatTelemetryValue(targetGoal.y, 2)})`
+    : operatorView.source === 'legacy'
+      ? sseState.missionStatus?.goal
+      : null
+  const hasGoal = ['PLANNING', 'EXECUTING', 'RECOVERING', 'PAUSED'].includes(missionState)
   const slamHz       = sseState.slamStatus?.slam_hz ?? 0
   const slamDiag = sseState.slamDiag?.data ?? {}
   const processedScanHz = numericMetric(slamDiag, 'processed_scan_hz') ?? slamHz
@@ -553,13 +565,11 @@ function SceneViewComponent({
   const recoveryMethod = session?.recovery_method ?? '--'
   const relocalizeUnavailableMessage =
     `当前后端 ${localizationBackend} 不支持保存地图重定位；恢复方式：${recoveryMethod}`
-  const navigationStatus = sseState.navigationStatus
   const activeCmdSource = navigationStatus?.control?.active_cmd_source ?? 'none'
-  const activeCmdBlocksGoal = activeCmdSource !== '' && activeCmdSource !== 'none'
-  const canAcceptGoal =
-    navigationStatus?.readiness?.can_accept_goal ??
-    navigationStatus?.can_accept_goal ??
-    false
+  const activeCmdBlocksGoal = operatorView.source === 'legacy'
+    && activeCmdSource !== ''
+    && activeCmdSource !== 'none'
+  const canAcceptGoal = operatorView.goalAdmission.state === 'ACCEPTING'
   const currentProduct = session?.product
   const isExplorationSession = currentProduct === 'explore'
   const activeMapName = activeMap ?? null
@@ -586,8 +596,7 @@ function SceneViewComponent({
   ), [layers.nativeTraversability, rasterNowS, savedMapForScene?.frameId, sseState.nativeTraversability, sseState.mapScene?.frame_id])
   const localPlannerSampleWarningText = localPlannerSampleWarning(localPlannerSnapshot)
   const goalBlockers = uniqueStrings([
-    ...(navigationStatus?.readiness?.blockers ?? []),
-    ...(navigationStatus?.feedback?.blockers ?? []),
+    ...operatorView.goalAdmission.blockers,
     activeCmdBlocksGoal
       ? `当前控制源: ${navigationStatus?.control?.active_source?.label ?? activeCmdSource}`
       : null,
@@ -1904,13 +1913,44 @@ function SceneViewComponent({
               <div className={styles.statItem} style={{ gridColumn: '1 / span 2' }}>
                 <span className={styles.statLabel}>状态</span>
                 <span className={hasGoal ? styles.goalBadgeActive : styles.goalBadgeIdle}>
-                  {missionState}
+                  {missionStateLabel}
+                </span>
+              </div>
+              <div className={styles.statItem} style={{ gridColumn: '1 / span 2' }}>
+                <span className={styles.statLabel}>目标准入</span>
+                <span className={styles.statValueDim}>
+                  {operatorView.goalAdmission.label}
+                </span>
+              </div>
+              <div className={styles.statItem} style={{ gridColumn: '1 / span 2' }}>
+                <span className={styles.statLabel}>控制权</span>
+                <span className={styles.statValueDim}>
+                  {operatorView.control.label}
+                  {operatorView.control.resumeRequired ? text(locale, ' · Resume required', ' · 需要恢复') : ''}
+                </span>
+              </div>
+              <div className={styles.statItem} style={{ gridColumn: '1 / span 2' }}>
+                <span className={styles.statLabel}>运动</span>
+                <span className={styles.statValueDim}>
+                  {operatorView.motion.permission.label} · {operatorView.motion.observation.label}
+                </span>
+              </div>
+              <div className={styles.statItem} style={{ gridColumn: '1 / span 2' }}>
+                <span className={styles.statLabel}>停稳确认</span>
+                <span className={styles.statValueDim}>
+                  {operatorView.motion.stopConfirmation.label}
                 </span>
               </div>
               <div className={styles.statItem} style={{ gridColumn: '1 / span 2' }}>
                 <span className={styles.statLabel}>目标</span>
                 <span className={styles.statValueDim}>
                   {missionGoal ?? '无'}
+                </span>
+              </div>
+              <div className={styles.statItem} style={{ gridColumn: '1 / span 2' }}>
+                <span className={styles.statLabel}>下一步</span>
+                <span className={styles.statValueDim}>
+                  {operatorView.summary.nextAction}
                 </span>
               </div>
             </div>

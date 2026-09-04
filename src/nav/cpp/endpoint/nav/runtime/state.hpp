@@ -109,6 +109,7 @@ struct EndpointState {
   TeleopDiagnostics last_teleop;
   FrameDiagnostics frames;
   OperatorMotionTransportDiagnostics operator_motion_transport;
+  MotionStopEvidenceTracker motion_stop_evidence;
   std::vector<nav_kernel::Vec3> last_global_path;
   std::vector<nav_kernel::Vec3> last_local_path;
   nav_kernel::LocalPlannerDebugSnapshot last_local_planner_debug;
