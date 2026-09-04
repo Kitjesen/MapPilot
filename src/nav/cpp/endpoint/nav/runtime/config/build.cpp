@@ -245,6 +245,9 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
 lingtu::nav::navigation::ExecutorConfig
 buildExecutorConfig(const CliConfig &cfg) {
   lingtu::nav::navigation::ExecutorConfig out;
+  out.planning_frame = cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan
+                           ? lingtu::nav::navigation::PlanningFrame::Map
+                           : lingtu::nav::navigation::PlanningFrame::Odom;
   const nav_kernel::LocalPlannerParams planner = buildLocalPlannerParams(cfg);
   out.max_speed = cfg.path_follower_max_speed_mps;
   out.corridor_lookahead_m = cfg.corridor_lookahead_m;

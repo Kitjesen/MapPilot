@@ -73,6 +73,7 @@ lingtu::nav::navigation::Executor makeCmuTeleopAvoidLoop(
 lingtu::nav::navigation::Executor makeScanExecutor(double corridor_lookahead_m = 3.0,
                                                    double vehicle_length_m = 0.6) {
   lingtu::nav::navigation::ExecutorConfig config;
+  config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
   nav_kernel::LocalPlannerParams planner;
   config.corridor_lookahead_m = corridor_lookahead_m;
   config.max_speed = 0.5;
@@ -1619,6 +1620,39 @@ TEST(Executor, ScanReferencePathPreservesEndpointAndElevation) {
   EXPECT_NEAR(output.target.y, 0.0, 1e-6);
   EXPECT_NEAR(output.target.z, 0.55, 1e-6);
   EXPECT_EQ(output.reason, "spline_control_ready");
+}
+
+TEST(Executor, ScanMapReferenceSurvivesTfCorrections) {
+  auto executor = makeScanExecutor();
+  executor.setRoute(route({{1.0, -1.0, 0.0}, {1.0, 2.0, 0.0}}));
+  const auto body = pose(1.0, -1.0, 0.5, M_PI / 2.0);
+  auto observation = emptyScanObservation(1.0);
+  observation.body_velocity_valid = true;
+  lingtu::nav::navigation::MapFromOdomTransform tf{{2.0, -2.0, 0.2}, 0.4};
+  auto input = [&]() {
+    return odomInput(body, pose(tf.odomPointFromMap(body.position).x,
+                               tf.odomPointFromMap(body.position).y,
+                               tf.odomPointFromMap(body.position).z,
+                               body.yaw - tf.yaw), tf, nullptr, 0, 1.0, {}, observation);
+  };
+  const auto initial = awaitScanOutput([&]() { return executor.tick(input()); });
+  ASSERT_TRUE(initial.path_found) << initial.reason;
+  ASSERT_GE(initial.local_path_map.size(), 2U);
+  EXPECT_GT(initial.cmd_vel.vx, 0.0);
+  EXPECT_NEAR(initial.cmd_vel.vy, 0.0, 0.02);
+  EXPECT_NEAR(initial.local_path_map.back().x, 1.0, 0.02);
+  for (int index = 0; index < 5; ++index) {
+    tf.translation.x += 0.01;
+    tf.yaw += 0.005;
+    const auto next = executor.tick(input());
+    ASSERT_TRUE(next.path_found) << next.reason;
+    ASSERT_EQ(next.local_path_map.size(), initial.local_path_map.size());
+    for (std::size_t point = 0; point < initial.local_path_map.size(); ++point) {
+      ASSERT_NEAR(next.local_path_map[point].x, initial.local_path_map[point].x, 1e-6);
+      ASSERT_NEAR(next.local_path_map[point].y, initial.local_path_map[point].y, 1e-6);
+      ASSERT_NEAR(next.local_path_map[point].z, initial.local_path_map[point].z, 1e-6);
+    }
+  }
 }
 
 TEST(Executor, ScanAnchorsGroundRouteHeightToRobotBody) {

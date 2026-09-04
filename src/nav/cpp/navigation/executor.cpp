@@ -327,6 +327,14 @@ ExecutionOutput Executor::tickRoute(const nav_kernel::Pose &map_body,
 
   const int safe_obstacle_count =
       obstacle_xyzh_map == nullptr ? 0 : std::max(0, obstacle_count);
+  if (config_.planning_frame == PlanningFrame::Map) {
+    // The occupancy layer and complete reference are already map-frame data.
+    // The optional 2D traversability view is odom-only; do not relabel it.
+    observation.collision.gridFromPlanningTranslation = {};
+    observation.collision.gridFromPlanningYaw = 0.0;
+    return tickInPlanningFrame(map_body, map_body, {}, obstacle_xyzh_map,
+                               safe_obstacle_count, timestamp_s, {}, observation);
+  }
   obstacle_xyzh_odom_scratch_.clear();
   obstacle_xyzh_odom_scratch_.reserve(static_cast<std::size_t>(safe_obstacle_count) * 4U);
   for (int index = 0; index < safe_obstacle_count; ++index) {

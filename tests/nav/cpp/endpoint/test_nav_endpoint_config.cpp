@@ -988,6 +988,12 @@ void testScanIsAnExplicitSecondLocalBackend() {
       defaults.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu,
       "CMU must remain the default local backend");
   const auto scan = parse({"navd", "--local-planner", "scan"});
+  require(buildExecutorConfig(defaults).planning_frame ==
+              lingtu::nav::navigation::PlanningFrame::Odom,
+          "CMU must retain odom-frame planning");
+  require(buildExecutorConfig(scan).planning_frame ==
+              lingtu::nav::navigation::PlanningFrame::Map,
+          "SCAN references and tracking must share the collision map frame");
   require(
       scan.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan,
       "SCAN backend must parse explicitly");

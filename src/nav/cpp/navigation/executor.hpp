@@ -14,10 +14,13 @@
 
 namespace lingtu::nav::navigation {
 
+enum class PlanningFrame { Odom, Map };
+
 // Executes an admitted route or assisted-teleop intent through local planning
 // and path tracking. The result is pre-safety motion intent; this class neither
 // computes global routes nor publishes commands to the robot.
 struct ExecutorConfig {
+  PlanningFrame planning_frame{PlanningFrame::Odom};
   double corridor_lookahead_m{3.0};
   double waypoint_reached_m{0.6};
   double goal_reached_m{0.35};
@@ -88,9 +91,8 @@ struct TraversabilityGridView {
   [[nodiscard]] bool valid() const;
 };
 
-// Rigid 2D transform with the explicit direction map <- odom.  The local
-// planner uses odom as its stable rolling frame, while global goals and
-// published paths remain in map.
+// Rigid transform map <- odom. Routes and published previews are always map;
+// composition selects whether local planning also uses map or uses odom.
 struct MapFromOdomTransform {
   nav_kernel::Vec3 translation{};
   double yaw{0.0};
