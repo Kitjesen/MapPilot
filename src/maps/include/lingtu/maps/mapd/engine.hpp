@@ -110,6 +110,7 @@ struct State {
   std::uint64_t complete_snapshot_generation{0U};
   std::uint64_t realtime_snapshot_builds{0U};
   std::uint64_t complete_snapshot_builds{0U};
+  std::uint64_t collision_snapshot_builds{0U};
   std::uint64_t accepted_observations{0U};
   std::uint64_t processed_observations{0U};
   std::uint64_t replaced_observations{0U};
@@ -282,6 +283,7 @@ class LiveMapEngine final {
   mutable std::uint64_t complete_snapshot_generation_{0U};
   mutable std::uint64_t realtime_snapshot_builds_{0U};
   mutable std::uint64_t complete_snapshot_builds_{0U};
+  mutable std::uint64_t collision_snapshot_builds_{0U};
 };
 
 }  // namespace lingtu::maps::mapd

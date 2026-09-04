@@ -293,6 +293,7 @@ State LiveMapEngine::BuildStateLocked(std::int64_t now_ns, const QueueState& que
   state.complete_snapshot_generation = complete_snapshot_generation_;
   state.realtime_snapshot_builds = realtime_snapshot_builds_;
   state.complete_snapshot_builds = complete_snapshot_builds_;
+  state.collision_snapshot_builds = collision_snapshot_builds_;
   state.accepted_observations = queue.accepted_observations;
   state.processed_observations = processed_observations_;
   state.replaced_observations = queue.replaced_observations;
@@ -864,7 +865,11 @@ void LiveMapEngine::BuildRealtimeSnapshotLocked() const {
     snapshot_.voxel_cloud = {};
     voxel_snapshot_omitted_cells_ = 0U;
   }
-  snapshot_.collision = BuildCollisionLayer(occupancy_.InflatedSnapshot());
+  if (!snapshot_.collision.complete ||
+      snapshot_.collision.generation != occupancy_.Generation()) {
+    snapshot_.collision = BuildCollisionLayer(occupancy_.InflatedSnapshot());
+    ++collision_snapshot_builds_;
+  }
   realtime_snapshot_generation_ = generation_;
   ++realtime_snapshot_builds_;
 }

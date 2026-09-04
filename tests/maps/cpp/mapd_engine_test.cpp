@@ -344,6 +344,7 @@ void TestCollisionSnapshotCompletenessAndAabb() {
   assert(complete_engine.WaitUntilProcessed(
       1U, 1U, std::chrono::seconds(2)));
   auto snapshot = complete_engine.GetSnapshot();
+  const auto first_stamp = snapshot.stamp_ns;
   assert(snapshot.collision.complete);
   assert(snapshot.collision.occupied_cells == 2U);
   const auto collision_generation = snapshot.collision.generation;
@@ -370,6 +371,7 @@ void TestCollisionSnapshotCompletenessAndAabb() {
       complete_config.occupancy.size_z *
           complete_config.occupancy.resolution_m) < 1.0e-5F);
   assert(!complete_engine.GetState().capacity_limited);
+  assert(complete_engine.GetState().collision_snapshot_builds == 1U);
 
   assert(complete_engine.Submit(MakeObservation(
       1U,
@@ -382,6 +384,35 @@ void TestCollisionSnapshotCompletenessAndAabb() {
       1U, 2U, std::chrono::seconds(2)));
   snapshot = complete_engine.GetSnapshot();
   assert(snapshot.collision.generation == collision_generation);
+  assert(snapshot.sequence == 2U);
+  assert(snapshot.stamp_ns >= first_stamp);
+  assert(complete_engine.GetState().collision_snapshot_builds == 1U);
+
+  // New occupancy must invalidate the cached bitmap.
+  assert(complete_engine.Submit(MakeObservation(
+      1U, 3U, 0.0, 0.0, 0.0, {-1.0F, 0.0F, 0.0F})).accepted());
+  assert(complete_engine.WaitUntilProcessed(1U, 3U, std::chrono::seconds(2)));
+  snapshot = complete_engine.GetSnapshot();
+  assert(snapshot.collision.generation > collision_generation);
+  assert(snapshot.collision.occupied_cells == 3U);
+  assert(complete_engine.GetState().collision_snapshot_builds == 2U);
+
+  // A new epoch cannot reuse the old epoch's bitmap, even if generation repeats.
+  assert(complete_engine.Submit(MakeObservation(
+      2U, 1U, 0.0, 0.0, 0.0, {0.0F, -1.0F, 0.0F})).accepted());
+  assert(complete_engine.WaitUntilProcessed(2U, 1U, std::chrono::seconds(2)));
+  snapshot = complete_engine.GetSnapshot();
+  assert(snapshot.reset_epoch == 2U);
+  assert(snapshot.collision.occupied_cells == 1U);
+  assert(complete_engine.GetState().collision_snapshot_builds == 3U);
+
+  const auto previous_min_x = snapshot.collision.min_x_m;
+  assert(complete_engine.Submit(MakeObservation(
+      2U, 2U, 3.0, 0.0, 0.0, {1.0F, 0.0F, 0.0F})).accepted());
+  assert(complete_engine.WaitUntilProcessed(2U, 2U, std::chrono::seconds(2)));
+  snapshot = complete_engine.GetSnapshot();
+  assert(snapshot.collision.min_x_m > previous_min_x);
+  assert(complete_engine.GetState().collision_snapshot_builds == 4U);
   complete_engine.Stop();
 }
 
