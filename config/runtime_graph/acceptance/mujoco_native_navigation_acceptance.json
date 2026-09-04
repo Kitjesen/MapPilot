@@ -108,7 +108,7 @@
   },
   "mapd_runtime": {
     "state_hz": 5.0,
-    "cloud_hz": 5.0,
+    "cloud_hz": 20.0,
     "map_hz": 5.0,
     "scene_hz": 2.0,
     "max_points": 5000,

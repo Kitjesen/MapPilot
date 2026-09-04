@@ -39,25 +39,25 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "collision_cylinder_offset_m": 0.18,
         "collision_cylinder_radius_m": 0.25,
         "collision_hard_margin_m": 0.10,
-        "corridor_lookahead_m": 3.0,
+        "corridor_lookahead_m": 3.5,
         "dynamic_confirm_frames": 4,
         "dynamic_min_cells": 8,
         "dynamic_min_speed_mps": 0.25,
-        "goal_reached_m": 0.35,
-        "path_follower_goal_tolerance_m": 0.2,
+        "goal_reached_m": 0.15,
+        "path_follower_goal_tolerance_m": 0.15,
         "path_follower_lookahead_m": 0.35,
-        "path_follower_max_accel_mps2": 0.3,
-        "path_follower_max_speed_mps": 0.5,
+        "path_follower_max_accel_mps2": 0.5,
+        "path_follower_max_speed_mps": 0.75,
         "path_follower_max_yaw_accel_rad_s2": 1.0,
-        "path_follower_max_yaw_rate_rad_s": 0.5,
+        "path_follower_max_yaw_rate_rad_s": 1.0,
         "path_follower_min_speed_mps": 0.08,
         "path_follower_heading_align_enter_rad": math.pi / 4.0,
         "path_follower_heading_align_exit_rad": 0.35,
-        "scan_finish_distance_m": 0.2,
+        "scan_finish_distance_m": 0.15,
         "scan_heading_error_rad": 0.8,
         "scan_max_vx_mps": 0.75,
         "scan_max_vy_mps": 0.35,
-        "scan_max_yaw_rate_rad_s": 0.5,
+        "scan_max_yaw_rate_rad_s": 1.0,
         "scan_position_gain": 0.8,
         "scan_time_forward_s": 0.8,
         "scan_yaw_gain": 1.5,
@@ -74,8 +74,8 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "waypoint_reached_m": 0.2,
     }
     expected_environment = {
-        "LINGTU_NAV_CORRIDOR_LOOKAHEAD_M": "3",
-        "LINGTU_NAV_GOAL_REACHED_M": "0.35",
+        "LINGTU_NAV_CORRIDOR_LOOKAHEAD_M": "3.5",
+        "LINGTU_NAV_GOAL_REACHED_M": "0.15",
         "LINGTU_NAV_CONTROL_MODE": "autonomy",
         "NAV_GLOBAL_PLANNER": "octoplanner3d",
         "LINGTU_NAV_LOCAL_PLANNER_BACKEND": "scan",
@@ -84,14 +84,15 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "LINGTU_NAV_DYNAMIC_MIN_CELLS": "8",
         "LINGTU_NAV_DYNAMIC_MIN_SPEED_MPS": "0.25",
         "LINGTU_NAV_DYNAMIC_CONFIRM_FRAMES": "4",
-        "LINGTU_NAV_PATH_FOLLOWER_GOAL_TOLERANCE_M": "0.2",
+        "LINGTU_NAV_PATH_FOLLOWER_GOAL_TOLERANCE_M": "0.15",
         "LINGTU_NAV_PATH_FOLLOWER_LOOKAHEAD_M": "0.35",
-        "LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2": "0.3",
-        "LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS": "0.5",
+        "LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2": "0.5",
+        "LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS": "0.75",
         "LINGTU_NAV_PATH_FOLLOWER_MIN_SPEED_MPS": "0.08",
-        "LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_RATE_RAD_S": "0.5",
+        "LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_RATE_RAD_S": "1",
         "LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_ENTER_RAD": "0.785398163397448",
         "LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_EXIT_RAD": "0.35",
+        "LINGTU_NAV_SCAN_FINISH_DISTANCE_M": "0.15",
         "LINGTU_NAV_RECOVERY_ORDER": "translate,rotate",
         "LINGTU_NAV_RECOVERY_BLOCKED_INTERVAL_S": "2",
         "LINGTU_NAV_RECOVERY_ROTATION_TIMEOUT_S": "2.5",
@@ -168,6 +169,15 @@ def test_native_nav_config_accepts_scan_as_second_local_backend() -> None:
     assert compiled.environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == "scan"
     assert compiled.environment["LINGTU_NAV_DDS_TICK_HZ"] == "100"
     assert compiled.native_nav["use_traversability_cost"] is False
+
+    with pytest.raises(ValueError, match="tick_hz must be 100"):
+        compile_native_nav_config(
+            "nav",
+            {
+                "native_control_mode": "autonomy",
+                "native_nav": {"local_planner": "scan", "tick_hz": 20.0},
+            },
+        )
 
     with pytest.raises(ValueError, match="local_planner"):
         compile_native_nav_config(

@@ -216,13 +216,14 @@ def _scan_follower_config(native_nav_config: Mapping[str, Any]) -> dict[str, flo
     if not isinstance(raw, Mapping):
         raise ValueError("native_nav.scan_follower must be a mapping")
     follower = {
-        "time_forward_s": _finite_number(raw, "time_forward_s", 0.55),
+        "time_forward_s": _finite_number(raw, "time_forward_s", 0.8),
         "heading_error_rad": _finite_number(raw, "heading_error_rad", 0.8),
-        "position_gain": _finite_number(raw, "position_gain", 0.9),
-        "yaw_gain": _finite_number(raw, "yaw_gain", 1.2),
-        "max_vx_mps": _finite_number(raw, "max_vx_mps", 0.5),
-        "max_vy_mps": _finite_number(raw, "max_vy_mps", 0.25),
+        "position_gain": _finite_number(raw, "position_gain", 0.8),
+        "yaw_gain": _finite_number(raw, "yaw_gain", 1.5),
+        "max_vx_mps": _finite_number(raw, "max_vx_mps", 0.75),
+        "max_vy_mps": _finite_number(raw, "max_vy_mps", 0.35),
         "max_yaw_rate_rad_s": _finite_number(raw, "max_yaw_rate_rad_s", 1.0),
+        "finish_distance_m": _finite_number(raw, "finish_distance_m", 0.15),
     }
     if follower["heading_error_rad"] > math.pi:
         raise ValueError("native_nav.scan_follower.heading_error_rad must not exceed pi")
@@ -230,6 +231,8 @@ def _scan_follower_config(native_nav_config: Mapping[str, Any]) -> dict[str, flo
         raise ValueError("native_nav.scan_follower axis speed limits must be positive")
     if follower["max_yaw_rate_rad_s"] > 1.0:
         raise ValueError("native_nav.scan_follower.max_yaw_rate_rad_s must not exceed 1.0")
+    if follower["finish_distance_m"] <= 0.0:
+        raise ValueError("native_nav.scan_follower.finish_distance_m must be positive")
     return follower
 
 
@@ -283,6 +286,7 @@ class NativeNavConfig:
             "LINGTU_NAV_SCAN_MAX_VX_MPS": _env_number(parameters["scan_max_vx_mps"]),
             "LINGTU_NAV_SCAN_MAX_VY_MPS": _env_number(parameters["scan_max_vy_mps"]),
             "LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S": _env_number(parameters["scan_max_yaw_rate_rad_s"]),
+            "LINGTU_NAV_SCAN_FINISH_DISTANCE_M": _env_number(parameters["scan_finish_distance_m"]),
             "LINGTU_NAV_RECOVERY_ORDER": ",".join(recovery["behavior_order"]),
             "LINGTU_NAV_RECOVERY_BLOCKED_INTERVAL_S": _env_number(recovery["blocked_interval_s"]),
             "LINGTU_NAV_RECOVERY_ROTATION_TIMEOUT_S": _env_number(recovery["rotation_timeout_s"]),
@@ -453,8 +457,7 @@ def compile_native_nav_config(
         "scan_max_vx_mps": scan_follower["max_vx_mps"],
         "scan_max_vy_mps": scan_follower["max_vy_mps"],
         "scan_max_yaw_rate_rad_s": scan_follower["max_yaw_rate_rad_s"],
-        # CMU and SCAN stop tracking the local path with one shared tolerance.
-        "scan_finish_distance_m": path_follower_goal_tolerance_m,
+        "scan_finish_distance_m": scan_follower["finish_distance_m"],
         "waypoint_reached_m": _finite_number(
             native_nav_config, "waypoint_reached_m", 0.6
         ),
@@ -503,6 +506,10 @@ def compile_native_nav_config(
         raise ValueError("teleop_planner_horizon_m must be at least 0.5")
     if parameters["tick_hz"] <= 0.0:
         raise ValueError("native_nav.tick_hz must be positive")
+    if local_planner == "scan" and not math.isclose(
+        parameters["tick_hz"], 100.0, rel_tol=0.0, abs_tol=1e-9
+    ):
+        raise ValueError("native_nav.tick_hz must be 100 when local_planner is scan")
     if parameters["dynamic_confirm_frames"] < 2:
         raise ValueError("dynamic_confirm_frames must be at least 2")
     if parameters["teleop_planner_max_deviation_deg"] > 90.0:

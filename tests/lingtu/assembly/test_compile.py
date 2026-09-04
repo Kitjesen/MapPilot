@@ -326,7 +326,7 @@ def test_real_run_plan_selects_go2_mid360_config() -> None:
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.18"
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] == "0.25"
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.35"
-    assert plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"] == "0.5"
+    assert plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"] == "0.75"
     assert plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_RATE_RAD_S"] == "1"
     assert plan.native_process_environment["LINGTU_TELEOP_MAX_SPEED_MPS"] == "0.5"
     assert plan.native_process_environment["LINGTU_TELEOP_MAX_YAW_RATE"] == "1"
@@ -352,7 +352,7 @@ def test_field_product_compiles_module_graph_and_processes_together() -> None:
     assert product.has_process("maps")
     assert product.has_process("nav")
     assert product.has_process("driver")
-    assert product.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"] == "0.5"
+    assert product.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"] == "0.75"
     assert product.native_process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
     assert "maps.service" not in product.modules
     assert not {

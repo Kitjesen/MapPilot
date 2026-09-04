@@ -44,7 +44,7 @@
     "scan_yaw_gain": 1.5,
     "scan_max_vx_mps": 0.75,
     "scan_max_vy_mps": 0.35,
-    "scan_max_yaw_rate_rad_s": 0.5,
+    "scan_max_yaw_rate_rad_s": 1.0,
     "debug_candidate_limit": 36,
     "debug_local_map_points": 640
   },

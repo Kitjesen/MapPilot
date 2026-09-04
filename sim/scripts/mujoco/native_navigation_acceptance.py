@@ -630,7 +630,7 @@ def _native_mapd_launch(
         "--state-hz",
         str(float(runtime.get("state_hz") or 5.0)),
         "--cloud-hz",
-        str(float(runtime.get("cloud_hz") or 5.0)),
+        str(float(runtime.get("cloud_hz") or 20.0)),
         "--map-hz",
         str(float(runtime.get("map_hz") or 5.0)),
         "--scene-hz",

@@ -27,7 +27,7 @@ native_nav:
   # per-axis smoother would distort the path command after planning.
   smoothing: false
   path_follower_max_yaw_rate_rad_s: 1.0
-  path_follower_max_speed_mps: 0.5
+  path_follower_max_speed_mps: 0.75
   teleop_max_speed_mps: 0.5
   teleop_max_yaw_rate_rad_s: 1.0
   teleop_planner_horizon_m: 3.5
@@ -39,7 +39,8 @@ native_nav:
     yaw_gain: 1.5
     max_vx_mps: 0.75
     max_vy_mps: 0.35
-    max_yaw_rate_rad_s: 0.5
+    max_yaw_rate_rad_s: 1.0
+    finish_distance_m: 0.15
   recovery:
     max_attempts: 0
 processes:

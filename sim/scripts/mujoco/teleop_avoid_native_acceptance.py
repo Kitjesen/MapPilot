@@ -119,7 +119,7 @@ MAPD_STATUS_SCHEMA = "lingtu.maps.runtime.v1"
 MAPD_STATUS_MAX_AGE_S = 2.0
 MAPD_RUNTIME_PROFILE: dict[str, float | int] = {
     "state_hz": 2,
-    "cloud_hz": 10,
+    "cloud_hz": 20,
     "map_hz": 2,
     "scene_hz": 2,
     "max_points": 300000,
