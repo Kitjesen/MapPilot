@@ -4696,10 +4696,14 @@ def test_native_control_waits_for_business_ack_and_local_path_is_telemetry_only(
 
     tick_index = endpoint_loop.index("autonomy_tick.tick(")
     telemetry_index = endpoint_loop.index(
-        "dds.publish(OutputEvent{LocalPathOutput{out.local_path_map}});",
+        "publish_local_path(out.local_path_map, timing);",
         tick_index,
     )
     assert tick_index < telemetry_index
+    telemetry_helper_start = endpoint_loop.index("auto publish_local_path =")
+    telemetry_helper_end = endpoint_loop.index("\n  };", telemetry_helper_start)
+    telemetry_helper = endpoint_loop[telemetry_helper_start:telemetry_helper_end]
+    assert "dds.publish(OutputEvent{LocalPathOutput{path}})" in telemetry_helper
     assert "drainLocalPath" not in endpoint_loop
 
     planner_index = nav_loop.index("local_planner_.plan(")

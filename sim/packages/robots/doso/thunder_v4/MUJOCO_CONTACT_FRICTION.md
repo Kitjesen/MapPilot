@@ -72,6 +72,26 @@ diagnostic, whose checkpoint and controller adaptation are not part of this
 patch. They do not qualify the repository's default policy, a full navigation
 Product, or physical hardware.
 
+## Driver timing follow-up
+
+The first GitHub CI run exposed a second simulation configuration mismatch:
+the Host's `MujocoDriverModule` retained the scene's `0.002 s` physics step,
+while the live runtime factory applied policy 1119's declared `0.005 s` step.
+After the contact correction, the old driver failed the right-lateral motion
+gate. Both entrypoints now share the existing policy timing resolution and
+apply it before reset. Explicit runtime timestep overrides retain precedence;
+kinematic mode and other policies retain their existing scene timing.
+
+With the same corrected asset, seed 7, 200 control steps, and `vy=-0.2 m/s`,
+a timestep-only diagnostic measured `-0.1822 m` lateral displacement at
+`0.002 s` and `-0.7087 m` at `0.005 s`. Both left and right motion then passed
+the existing distance and forward-drift thresholds. No threshold was relaxed.
+
+Two unrelated CI assertions were also repaired: the navigation source check
+now follows the existing throttled telemetry helper, and the same-content
+file replacement fixture retains the original inode so a filesystem cannot
+reuse it during the test. These corrections change test setup/assertions only.
+
 ## Upstream ownership and geometry
 
 Reviewed upstream revision:

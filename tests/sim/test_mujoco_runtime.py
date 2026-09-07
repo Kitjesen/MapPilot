@@ -3399,12 +3399,18 @@ class _FakeEngine:
         self.discrete_ray_config = discrete_ray_config
         self.loaded_xml_path = ""
         self.reset_called = False
+        self.dt = None
+        self.reset_dt = None
 
     def load(self, xml_path: str = "", **kwargs):
         self.loaded_xml_path = xml_path
 
+    def set_physics_timestep(self, timestep_s):
+        self.dt = timestep_s
+
     def reset(self):
         self.reset_called = True
+        self.reset_dt = self.dt
 
 
 def test_mujoco_driver_setup_uses_selected_scene_and_real_robot(monkeypatch):
@@ -3439,6 +3445,7 @@ def test_mujoco_driver_setup_uses_selected_scene_and_real_robot(monkeypatch):
     assert driver._engine.lidar_config.body_name == "lidar_link"
     assert driver._engine.drive_mode == "policy"
     assert driver._engine.reset_called is True
+    assert driver._engine.reset_dt == pytest.approx(0.005)
     assert len(driver._engine.camera_configs) == 1
 
 
@@ -3461,6 +3468,7 @@ def test_mujoco_driver_setup_accepts_absolute_world_path(monkeypatch, tmp_path):
     assert driver._engine is not None
     assert Path(driver._engine.loaded_xml_path) == world.resolve()
     assert Path(driver._engine.world_config.scene_xml) == world.resolve()
+    assert driver._engine.dt is None
 
 
 def test_mujoco_driver_uses_scene_placeholder_start_pose(monkeypatch):
@@ -4000,6 +4008,8 @@ def test_mujoco_policy_lateral_command_matches_body_left_convention(
     driver.setup()
     try:
         assert driver._engine is not None
+        assert driver._engine.dt == pytest.approx(0.005)
+        assert driver._engine.control_dt == pytest.approx(0.02)
         start = driver._engine.get_robot_state()
         start_xy = np.asarray(start.position[:2], dtype=float)
         _, _, start_yaw = _rpy_from_xyzw(start.orientation)
