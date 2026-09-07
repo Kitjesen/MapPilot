@@ -92,6 +92,9 @@ now follows the existing throttled telemetry helper, and the same-content
 file replacement fixture retains the original inode so a filesystem cannot
 reuse it during the test. These corrections change test setup/assertions only.
 
+The Python namespace import check also no longer skips when ROS2 is absent;
+it checks the current perception/message re-exports without a ROS dependency.
+
 ## Upstream ownership and geometry
 
 Reviewed upstream revision:

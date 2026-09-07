@@ -18,9 +18,6 @@ pytestmark = [pytest.mark.sim]
 
 np = import_numpy_or_skip()
 
-_ROS2_AVAILABLE = importlib.util.find_spec("rclpy") is not None
-
-
 def test_default_thunder_v4_resolves_current_robot_and_controller():
     sim_root = Path(__file__).resolve().parents[2] / "sim"
     cfg = RobotConfig.default_thunder_v4().resolve_paths(base_dir=str(sim_root))
@@ -2071,20 +2068,22 @@ def test_thunder_v3_mjcf_runtime_keeps_lingtu_sensor_and_control_contracts():
     }
 
 
-@pytest.mark.skipif(not _ROS2_AVAILABLE, reason="Needs ROS2 runtime")
 def test_semantic_namespace_wrappers_expose_runtime_import_paths():
     assert importlib.util.find_spec("perception.tracking.instance_tracker") is not None
     assert importlib.util.find_spec("decision.llm.client") is not None
 
     # Canonical imports from runtime.utils
-    from perception.tracking.instance_tracker import InstanceTracker
-    from perception.tracking.tracked_objects import TrackedObject
+    from perception.tracking.instance_tracker import InstanceTracker, TrackedObject
+    from perception.tracking.tracked_objects import Region, RoomNode
+    from perception.tracking.tracked_objects import TrackedObject as PerceptionTrackedObject
     from runtime.msgs import scene as scene_msgs
     from runtime.utils.sanitize import sanitize_position
 
     assert callable(sanitize_position)
     assert InstanceTracker is not None
-    assert scene_msgs.TrackedObject is TrackedObject
+    assert TrackedObject is PerceptionTrackedObject
+    assert scene_msgs.Region is Region
+    assert scene_msgs.RoomNode is RoomNode
 
 
 def test_fastlio2_cpp_applies_configured_ieskf_iteration_and_degeneracy_guard():
