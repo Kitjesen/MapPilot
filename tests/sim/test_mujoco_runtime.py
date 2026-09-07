@@ -18,9 +18,6 @@ pytestmark = [pytest.mark.sim]
 
 np = import_numpy_or_skip()
 
-_ROS2_AVAILABLE = importlib.util.find_spec("rclpy") is not None
-
-
 def test_default_thunder_v4_resolves_current_robot_and_controller():
     sim_root = Path(__file__).resolve().parents[2] / "sim"
     cfg = RobotConfig.default_thunder_v4().resolve_paths(base_dir=str(sim_root))
@@ -2071,20 +2068,22 @@ def test_thunder_v3_mjcf_runtime_keeps_lingtu_sensor_and_control_contracts():
     }
 
 
-@pytest.mark.skipif(not _ROS2_AVAILABLE, reason="Needs ROS2 runtime")
 def test_semantic_namespace_wrappers_expose_runtime_import_paths():
     assert importlib.util.find_spec("perception.tracking.instance_tracker") is not None
     assert importlib.util.find_spec("decision.llm.client") is not None
 
     # Canonical imports from runtime.utils
-    from perception.tracking.instance_tracker import InstanceTracker
-    from perception.tracking.tracked_objects import TrackedObject
+    from perception.tracking.instance_tracker import InstanceTracker, TrackedObject
+    from perception.tracking.tracked_objects import Region, RoomNode
+    from perception.tracking.tracked_objects import TrackedObject as PerceptionTrackedObject
     from runtime.msgs import scene as scene_msgs
     from runtime.utils.sanitize import sanitize_position
 
     assert callable(sanitize_position)
     assert InstanceTracker is not None
-    assert scene_msgs.TrackedObject is TrackedObject
+    assert TrackedObject is PerceptionTrackedObject
+    assert scene_msgs.Region is Region
+    assert scene_msgs.RoomNode is RoomNode
 
 
 def test_fastlio2_cpp_applies_configured_ieskf_iteration_and_degeneracy_guard():
@@ -3399,12 +3398,18 @@ class _FakeEngine:
         self.discrete_ray_config = discrete_ray_config
         self.loaded_xml_path = ""
         self.reset_called = False
+        self.dt = None
+        self.reset_dt = None
 
     def load(self, xml_path: str = "", **kwargs):
         self.loaded_xml_path = xml_path
 
+    def set_physics_timestep(self, timestep_s):
+        self.dt = timestep_s
+
     def reset(self):
         self.reset_called = True
+        self.reset_dt = self.dt
 
 
 def test_mujoco_driver_setup_uses_selected_scene_and_real_robot(monkeypatch):
@@ -3439,6 +3444,7 @@ def test_mujoco_driver_setup_uses_selected_scene_and_real_robot(monkeypatch):
     assert driver._engine.lidar_config.body_name == "lidar_link"
     assert driver._engine.drive_mode == "policy"
     assert driver._engine.reset_called is True
+    assert driver._engine.reset_dt == pytest.approx(0.005)
     assert len(driver._engine.camera_configs) == 1
 
 
@@ -3461,6 +3467,7 @@ def test_mujoco_driver_setup_accepts_absolute_world_path(monkeypatch, tmp_path):
     assert driver._engine is not None
     assert Path(driver._engine.loaded_xml_path) == world.resolve()
     assert Path(driver._engine.world_config.scene_xml) == world.resolve()
+    assert driver._engine.dt is None
 
 
 def test_mujoco_driver_uses_scene_placeholder_start_pose(monkeypatch):
@@ -4000,6 +4007,8 @@ def test_mujoco_policy_lateral_command_matches_body_left_convention(
     driver.setup()
     try:
         assert driver._engine is not None
+        assert driver._engine.dt == pytest.approx(0.005)
+        assert driver._engine.control_dt == pytest.approx(0.02)
         start = driver._engine.get_robot_state()
         start_xy = np.asarray(start.position[:2], dtype=float)
         _, _, start_yaw = _rpy_from_xyzw(start.orientation)

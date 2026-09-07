@@ -337,6 +337,23 @@ def scene_with_memory(scene_xml: Path, memory: str) -> Path:
     return Path(tmp.name)
 
 
+def resolve_physics_timestep(
+    *,
+    drive_mode: str,
+    policy_path: Path | str,
+    physics_timestep_s: float | None = None,
+) -> float | None:
+    """Resolve the policy's reference timing before the engine is reset."""
+    if physics_timestep_s is not None:
+        return float(physics_timestep_s)
+    if (
+        str(drive_mode).strip().lower() == "policy"
+        and Path(policy_path).name.lower() == "policy_1119.onnx"
+    ):
+        return POLICY_1119_PHYSICS_TIMESTEP_S
+    return None
+
+
 def build_engine(
     *,
     world: Path,
@@ -444,13 +461,11 @@ def build_engine(
     )
     try:
         engine.load(str(load_world))
-        effective_timestep_s = physics_timestep_s
-        if (
-            effective_timestep_s is None
-            and str(drive_mode).strip().lower() == "policy"
-            and Path(robot_cfg.policy_onnx).name.lower() == "policy_1119.onnx"
-        ):
-            effective_timestep_s = POLICY_1119_PHYSICS_TIMESTEP_S
+        effective_timestep_s = resolve_physics_timestep(
+            drive_mode=drive_mode,
+            policy_path=robot_cfg.policy_onnx,
+            physics_timestep_s=physics_timestep_s,
+        )
         if effective_timestep_s is not None:
             engine.set_physics_timestep(float(effective_timestep_s))
         engine.reset()

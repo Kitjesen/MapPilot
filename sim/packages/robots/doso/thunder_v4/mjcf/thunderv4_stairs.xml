@@ -10,7 +10,7 @@
   <default>
     <joint limited="true" />
     <motor ctrllimited="true" />
-    <geom condim="4" contype="1" conaffinity="15" solref="0.004 1" friction="0.9 0.2 0.2" />
+    <geom condim="4" contype="1" conaffinity="15" solref="0.004 1" />
     <default class="leg_joint_param">
       <joint damping="0.01" frictionloss="0.01" armature="0.01" />
     </default>
@@ -59,9 +59,9 @@
     <light directional="true" diffuse=".4 .4 .4" specular="0.1 0.1 0.1" pos="0 0 5" dir="0 0 -1" castshadow="false" />
     <light directional="true" diffuse=".6 .6 .6" specular="0.2 0.2 0.2" pos="0 0 4" dir="0 0 -1" />
     <geom name="ground" type="plane" size="0 0 1" material="matplane" condim="4" conaffinity="15" />
-    <geom name="step_1" type="box" size="0.35 2.0 0.05" pos="1.0 0 0.05" material="matplane" condim="4" conaffinity="15" friction="0.9 0.2 0.2" />
-    <geom name="step_2" type="box" size="0.35 2.0 0.10" pos="1.7 0 0.10" material="matplane" condim="4" conaffinity="15" friction="0.9 0.2 0.2" />
-    <geom name="step_3" type="box" size="0.35 2.0 0.15" pos="2.4 0 0.15" material="matplane" condim="4" conaffinity="15" friction="0.9 0.2 0.2" />
+    <geom name="step_1" type="box" size="0.35 2.0 0.05" pos="1.0 0 0.05" material="matplane" condim="4" conaffinity="15" />
+    <geom name="step_2" type="box" size="0.35 2.0 0.10" pos="1.7 0 0.10" material="matplane" condim="4" conaffinity="15" />
+    <geom name="step_3" type="box" size="0.35 2.0 0.15" pos="2.4 0 0.15" material="matplane" condim="4" conaffinity="15" />
     <body name="base_link" pos="0 0 0.55">
       <inertial pos="-0.00311 0.00762 0.07473" mass="16.868" fullinertia="0.122066235704 0.52940502055 0.587890658018 0.0008819195624 -0.0014492906904 0.0012140132168" />
       <joint name="floating_base_joint" type="free" limited="false" />
@@ -98,7 +98,7 @@
               <inertial pos="0 -0.01671 0" quat="0.474781 0.524004 0.524005 0.474786" mass="0.68812" diaginertia="0.0037014 0.00194396 0.00194387" />
               <joint name="FR_foot_joint" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-17 17" type="hinge" limited="false" class="wheel_joint_param" />
               <geom type="mesh" mesh="FR_foot_visual" contype="0" conaffinity="0" group="1" density="0" material="wheel_black" pos="0 0 0" />
-              <geom size="0.093 0.025585" pos="0 -0.01631 0" quat="0.707105 0.707108 0 0" type="cylinder" rgba="0.298039 0.298039 0.298039 0" group="3" contype="1" conaffinity="15" solref="0.004 1" friction="0.9 0.2 0.2" name="FR_wheel" class="rubber_wheel" />
+              <geom size="0.093 0.025585" pos="0 -0.01631 0" quat="0.707105 0.707108 0 0" type="cylinder" rgba="0.298039 0.298039 0.298039 0" group="3" contype="1" conaffinity="15" solref="0.004 1" name="FR_wheel" class="rubber_wheel" />
             </body>
           </body>
         </body>
@@ -126,7 +126,7 @@
               <inertial pos="0 0.01671 0" quat="0.527685 0.470692 0.470687 0.527684" mass="0.68812" diaginertia="0.0037014 0.00194396 0.00194387" />
               <joint name="FL_foot_joint" pos="0 0 0" axis="0 -1 0" actuatorfrcrange="-17 17" type="hinge" limited="false" class="wheel_joint_param" />
               <geom type="mesh" mesh="FL_foot_visual" contype="0" conaffinity="0" group="1" density="0" material="wheel_black" pos="0 0 0" />
-              <geom size="0.093 0.025585" pos="0 0.01631 0" quat="0.707105 0.707108 0 0" type="cylinder" rgba="0.298039 0.298039 0.298039 0" group="3" contype="1" conaffinity="15" solref="0.004 1" friction="0.9 0.2 0.2" name="FL_wheel" class="rubber_wheel" />
+              <geom size="0.093 0.025585" pos="0 0.01631 0" quat="0.707105 0.707108 0 0" type="cylinder" rgba="0.298039 0.298039 0.298039 0" group="3" contype="1" conaffinity="15" solref="0.004 1" name="FL_wheel" class="rubber_wheel" />
             </body>
           </body>
         </body>
@@ -154,7 +154,7 @@
               <inertial pos="0 -0.01671 0" quat="0.47211 0.526417 0.526416 0.472105" mass="0.68812" diaginertia="0.0037014 0.00194396 0.00194387" />
               <joint name="RR_foot_joint" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-17 17" type="hinge" limited="false" class="wheel_joint_param" />
               <geom type="mesh" mesh="RR_foot_visual" contype="0" conaffinity="0" group="1" density="0" material="wheel_black" pos="0 0 0" />
-              <geom size="0.093 0.025585" pos="0 -0.01631 0" quat="0.707105 0.707108 0 0" type="cylinder" rgba="0.298039 0.298039 0.298039 0" group="3" contype="1" conaffinity="15" solref="0.004 1" friction="0.9 0.2 0.2" name="RR_wheel" class="rubber_wheel" />
+              <geom size="0.093 0.025585" pos="0 -0.01631 0" quat="0.707105 0.707108 0 0" type="cylinder" rgba="0.298039 0.298039 0.298039 0" group="3" contype="1" conaffinity="15" solref="0.004 1" name="RR_wheel" class="rubber_wheel" />
             </body>
           </body>
         </body>
@@ -182,7 +182,7 @@
               <inertial pos="0 0.01671 0" quat="0.524004 0.474781 0.474786 0.524005" mass="0.68812" diaginertia="0.0037014 0.00194396 0.00194387" />
               <joint name="RL_foot_joint" pos="0 0 0" axis="0 -1 0" actuatorfrcrange="-17 17" type="hinge" limited="false" class="wheel_joint_param" />
               <geom type="mesh" mesh="RL_foot_visual" contype="0" conaffinity="0" group="1" density="0" material="wheel_black" pos="0 0 0" />
-              <geom size="0.093 0.025585" pos="0 0.01631 0" quat="0.707105 0.707108 0 0" type="cylinder" rgba="0.298039 0.298039 0.298039 0" group="3" contype="1" conaffinity="15" solref="0.004 1" friction="0.9 0.2 0.2" name="RL_wheel" class="rubber_wheel" />
+              <geom size="0.093 0.025585" pos="0 0.01631 0" quat="0.707105 0.707108 0 0" type="cylinder" rgba="0.298039 0.298039 0.298039 0" group="3" contype="1" conaffinity="15" solref="0.004 1" name="RL_wheel" class="rubber_wheel" />
             </body>
           </body>
         </body>
