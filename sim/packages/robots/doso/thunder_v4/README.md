@@ -20,7 +20,7 @@ python D:\inovxio\brain\lingtu\sim\packages\robots\doso\thunder_v4\tools\check_t
 Collision primitives are physically enabled but transparent by default. For a
 geometry-debug XML, add `--show-collisions` to either generator command.
 
-Generator guarantees:
+Generated hardware contract:
 
 - total modeled mass: `45.8086 kg`
 - free floating `base_link`
@@ -29,8 +29,25 @@ Generator guarantees:
 - leg actuator limit: `120 Nm`
 - wheel actuator limit: `17 Nm`
 - leg speed limit: `17.48 rad/s`; wheel speed limit: `44 rad/s`
-- V4 small-wheel collision radius: `0.093 m`
+- Wheel collision radius is copied from the selected URDF; the checked-in
+  MJCF uses `0.093 m`.
 - `v4_nominal_stand` keyframe: a valid V4 standing reference with no joint-limit target
+
+The upstream V4 URDF reviewed on 2026-09-08 uses `0.095 m` wheel collision
+radii. Regenerating from that revision also changes geometry. Use the URDF
+associated with the policy's training asset when reproducing an existing
+rollout; qualify a radius change separately.
+
+## MuJoCo contact materials
+
+Wheel collision geoms inherit `friction="1.0 0.005 0.0001"` from
+`rubber_wheel`. Generic robot collision friction must not override that class
+or become the default material of an imported world. The flat ground and
+stairs use MuJoCo's default friction; an external world owns its own material
+settings.
+
+The failure mechanism, regression checks, and upstream comparison are recorded
+in [MUJOCO_CONTACT_FRICTION.md](MUJOCO_CONTACT_FRICTION.md).
 
 ## Baseline locomotion policy
 
