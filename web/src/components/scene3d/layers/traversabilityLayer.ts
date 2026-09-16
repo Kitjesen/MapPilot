@@ -79,30 +79,27 @@ function cellColor(value: number): [number, number, number, number] {
 export function createNativeTraversabilityLayer(state: NativeTraversabilityLayerState): GroupedMesh | null {
   if (state.status !== 'ready') return null
   const { event, values } = state
-  const canvas = document.createElement('canvas')
-  canvas.width = event.cols
-  canvas.height = event.rows
-  const context = canvas.getContext('2d')
-  if (!context) return null
-  const image = context.createImageData(event.cols, event.rows)
+  const pixels = new Uint8Array(event.cols * event.rows * 4)
   values.forEach((value, index) => {
     const [r, g, b, a] = cellColor(value)
     const offset = index * 4
-    image.data[offset] = r
-    image.data[offset + 1] = g
-    image.data[offset + 2] = b
-    image.data[offset + 3] = a
+    pixels[offset] = r
+    pixels[offset + 1] = g
+    pixels[offset + 2] = b
+    pixels[offset + 3] = a
   })
-  context.putImageData(image, 0, 0)
-  const texture = new THREE.CanvasTexture(canvas)
+  const texture = new THREE.DataTexture(pixels, event.cols, event.rows)
   texture.flipY = false
-  texture.minFilter = THREE.LinearFilter
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.minFilter = THREE.NearestFilter
   texture.magFilter = THREE.NearestFilter
+  texture.generateMipmaps = false
+  texture.needsUpdate = true
   const sizeX = event.cols * event.resolution
   const sizeY = event.rows * event.resolution
   const mesh = new THREE.Mesh(
     new THREE.PlaneGeometry(sizeX, sizeY),
-    new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false, toneMapped: false, side: THREE.DoubleSide }),
   ) as GroupedMesh
   mesh.name = 'native-traversability-risk'
   mesh.renderOrder = 6

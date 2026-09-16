@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { resolveNativeTraversabilityLayer } from '../src/components/scene3d/layers/traversabilityLayer.ts'
+import { resolveNativeTraversabilityLayer, createNativeTraversabilityLayer } from '../src/components/scene3d/layers/traversabilityLayer.ts'
+import * as THREE from 'three'
 import { estimateSceneTime } from '../src/services/sceneTelemetry.ts'
 import type { NativeTraversabilityEvent } from '../src/types/index.ts'
 
@@ -22,6 +23,24 @@ const event: NativeTraversabilityEvent = {
   value_semantics: 'control_risk_0_100',
   identity_verified: true,
 }
+
+test('risk cells retain discrete boundaries and an unlit, transparent-zero palette', () => {
+  const state = resolveNativeTraversabilityLayer(event, { nowS: 101, allowedFrameIds: ['map'] })
+  const mesh = createNativeTraversabilityLayer(state)!
+  const material = mesh.material as THREE.MeshBasicMaterial
+  const texture = material.map as THREE.DataTexture
+  assert.equal(texture.minFilter, THREE.NearestFilter)
+  assert.equal(texture.magFilter, THREE.NearestFilter)
+  assert.equal(texture.generateMipmaps, false)
+  assert.equal(texture.colorSpace, THREE.SRGBColorSpace)
+  assert.equal(material.toneMapped, false)
+  assert.equal(material.depthWrite, false)
+  const pixels = texture.image.data as Uint8Array
+  assert.equal(pixels[3], 0)
+  assert.equal(pixels[15], 250)
+  assert.equal(pixels[12], 250)
+  texture.dispose(); material.dispose(); mesh.geometry.dispose()
+})
 
 test('native traversability accepts only fresh map-frame control risk', () => {
   const state = resolveNativeTraversabilityLayer(event, {

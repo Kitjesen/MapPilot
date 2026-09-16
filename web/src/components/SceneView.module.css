@@ -1706,8 +1706,8 @@
   border-radius: 2px;
 }
 
-.costSoft { background: linear-gradient(135deg, #2ec4b6, #e74848); }
-.costLethal { background: #4c0004; }
+.costSoft { background: #28d26e; }
+.costLethal { background: #fa2814; }
 
 .localPlannerLegend {
   display: flex;

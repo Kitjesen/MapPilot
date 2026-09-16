@@ -2004,7 +2004,7 @@ function SceneViewComponent({
               savedMapFlat={savedMapForScene?.points}
               savedMapFrameId={savedMapForScene?.frameId}
               savedMapEpoch={savedMapForScene?.epoch}
-              savedMapVisible={!showPlanningMap}
+              savedMapVisible={mapView !== 'planning'}
               planningMap={planningMap}
               planningMapVisible={showPlanningMap}
               mappingMode={isMappingSession}
@@ -2031,7 +2031,7 @@ function SceneViewComponent({
                 safetyEnvelope={safetyEnvelope}
                 safetyView={safetyView}
               layers={{ ...layers, cloud: layers.cloud && !showSavedMapInScene
-                && !(showMappingObservation && mappingObservation.status === 'ready') }}
+                && !showMappingObservation }}
               pointSize={pointSize}
               onPendingGoal={isMappingSession
                 ? canProbeMapping ? (x, y) => setMappingProbe({ x, y, epoch: poseEpoch }) : undefined
@@ -2066,7 +2066,7 @@ function SceneViewComponent({
                     <small>二维投影，非地面表面 · 运动中检查局部障碍</small>
                   </> : <>
                     <strong>{mapView === 'planning' ? planningMapUnavailableLabel(planningLayer.reason) : '保存点云 · 静态'}</strong>
-                    <span>点：已扫描表面 · 空白不代表可走</span>
+                    {mapView === 'points' && <span>点：已扫描表面 · 空白不代表可走</span>}
                   </>}
                 </div>}
                 {layers.elevation && (
@@ -2092,7 +2092,7 @@ function SceneViewComponent({
                     className={sceneLayerLegendClass(nativeTraversabilityState.status)}
                     aria-label="控制可通行性图例"
                   >
-                    <strong>局部风险</strong>
+                    <strong title="实时风险叠加；透明格表示风险值为 0，不代表已验证可通行。">实时风险</strong>
                     <div className={styles.costLegendItems}>
                       <span><i className={styles.costSoft} />低</span>
                       <span><i className={styles.costLethal} />高</span>

@@ -32,3 +32,11 @@ export function mapProjectionDisplayZ(
     robotZ - NOMINAL_GO2_FOOT_OFFSET_M + MAP_PROJECTION_SURFACE_OFFSET_M,
   )
 }
+
+/** A risk overlay shares the displayed base plane; its query height is unchanged. */
+export function riskProjectionDisplayZ(
+  originZ: number, robotZ: number, robotModel: 'go2' | 'thunder_v4' | undefined,
+  robotValid: boolean, underlayZ?: number,
+): number {
+  return (underlayZ ?? mapProjectionDisplayZ(originZ, robotZ, robotModel, robotValid)) + 0.006
+}

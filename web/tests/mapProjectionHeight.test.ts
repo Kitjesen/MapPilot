@@ -3,12 +3,20 @@ import test from 'node:test'
 
 import {
   mapProjectionDisplayZ,
+  riskProjectionDisplayZ,
   NOMINAL_GO2_FOOT_OFFSET_M,
 } from '../src/services/mapProjectionHeight.ts'
 
 const closeTo = (actual: number, expected: number) => {
   assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} != ${expected}`)
 }
+
+test('risk follows the displayed projection instead of cutting through the robot body', () => {
+  const underlay = mapProjectionDisplayZ(0, 0, 'go2', true)
+  closeTo(riskProjectionDisplayZ(.4, 0, 'go2', true, underlay), underlay + .006)
+  closeTo(riskProjectionDisplayZ(.4, 0, 'go2', true), underlay + .006)
+  closeTo(riskProjectionDisplayZ(.4, 0, undefined, false), .418)
+})
 
 test('derives the nominal Go2 foot-center offset from the checked-in URDF leg geometry', () => {
   closeTo(NOMINAL_GO2_FOOT_OFFSET_M, 2 * 0.213 * Math.cos(0.8))

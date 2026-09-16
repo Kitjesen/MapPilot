@@ -1,7 +1,7 @@
 import { scanCanStandAlone } from '../services/sceneTelemetry.ts'
 import type { ReadyPlanningMap } from '../services/planningMap.ts'
 import { createPlanningMapLayer } from './scene3d/layers/planningMapLayer.ts'
-import { mapProjectionDisplayZ } from '../services/mapProjectionHeight.ts'
+import { mapProjectionDisplayZ, riskProjectionDisplayZ } from '../services/mapProjectionHeight.ts'
 import type { MappingObservationState } from '../services/mappingObservation.ts'
 import { createMappingObservationLayer } from './scene3d/layers/mappingObservationLayer.ts'
 /**
@@ -200,13 +200,20 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     ? mapProjectionDisplayZ(mappingObservation.layer.origin[2], robotZ, robotModel, robotValid) : undefined
   const planningDisplayZ = planningMap
     ? mapProjectionDisplayZ(planningMap.origin[2], robotZ, robotModel, robotValid) : undefined
+  const underlayDisplayZ = mappingObservationVisible ? observationDisplayZ
+    : planningMapVisible ? planningDisplayZ : undefined
+  const riskDisplayZ = nativeTraversabilityState.status === 'ready'
+    ? riskProjectionDisplayZ(nativeTraversabilityState.event.origin[2], robotZ, robotModel, robotValid, underlayDisplayZ)
+    : undefined
 
   // ── Expose resetCamera ──────────────────────────────────────────
   useImperativeHandle(ref, () => ({
     fitMap() {
       const camera = cameraRef.current
       const controls = controlsRef.current
-      const points = savedMapRef.current ?? liveCloudRef.current ?? mappingObservationRef.current
+      const raster = planningMapMeshRef.current ?? mappingObservationRef.current
+      const points = raster ? raster._group ?? raster
+        : savedMapRef.current?.visible ? savedMapRef.current : liveCloudRef.current
       if (!camera || !controls || !points) return
       const bounds = new THREE.Box3().setFromObject(points)
       if (bounds.isEmpty()) return
@@ -522,7 +529,8 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (!scene) return
     if (!pendingGoal) return
     const marker = new THREE.Group()
-    marker.position.set(...lingtuToThree([pendingGoal.x, pendingGoal.y, (pendingGoal.z ?? 0) + 0.05]))
+    marker.position.set(...lingtuToThree([pendingGoal.x, pendingGoal.y,
+      underlayDisplayZ !== undefined ? underlayDisplayZ + 0.012 : (pendingGoal.z ?? 0) + 0.05]))
     const ring = new THREE.Mesh(
       new THREE.TorusGeometry(pendingGoalRadius, 0.025, 8, 32),
       new THREE.MeshBasicMaterial({ color: 0xf5b841, depthTest: false }),
@@ -545,7 +553,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     }
     scene.add(marker)
     return () => { removeFrom(scene, marker); texture?.dispose() }
-  }, [pendingGoal, pendingGoalRadius, pendingGoalLabel])
+  }, [pendingGoal, pendingGoalRadius, pendingGoalLabel, underlayDisplayZ])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -646,6 +654,11 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     scene.add(mesh._group ?? mesh)
     nativeTraversabilityMeshRef.current = mesh
   }, [nativeTraversabilityState, layers.nativeTraversability])
+
+  useEffect(() => {
+    const mesh = nativeTraversabilityMeshRef.current
+    if (mesh && riskDisplayZ !== undefined) (mesh._group ?? mesh).position.y = riskDisplayZ
+  }, [riskDisplayZ, nativeTraversabilityState, layers.nativeTraversability])
 
   // Native endpoint diagnostics are read-only and have no path back into
   // planning or control. Rebuild only at the explicitly enabled low poll rate.
