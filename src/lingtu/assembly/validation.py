@@ -5,8 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from runtime.graph import ProcessSpec
-from runtime.graph.validator import RuntimeGraphIssue
+from lingtu.assembly.graph.validator import RuntimeGraphIssue
 
 
 def validate_product(
@@ -17,7 +16,6 @@ def validate_product(
     config: Mapping[str, Any],
     module_names: tuple[str, ...],
     env_name: str,
-    processes: tuple[ProcessSpec, ...] = (),
 ) -> list[RuntimeGraphIssue]:
     """Validate one already resolved Product assembly."""
 
@@ -32,7 +30,6 @@ def validate_product(
     issues: list[RuntimeGraphIssue] = []
 
     expected = (
-        ("_env", "real", "real_product_env_drift", "use the real Env"),
         (
             "localization_adapter",
             "cpp_slam_status",

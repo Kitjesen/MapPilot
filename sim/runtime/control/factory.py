@@ -107,6 +107,12 @@ PRODUCTION_CONTROLLER_COMPONENTS.register(
 )
 PRODUCTION_CONTROLLER_COMPONENTS.register(
     adapter_abi="lingtu.sim.controller-adapter.v1",
+    adapter_plugin="thunderv4_flat53",
+    policy_runtime="onnxruntime",
+    provider=create_thunderv4_onnx_components,
+)
+PRODUCTION_CONTROLLER_COMPONENTS.register(
+    adapter_abi="lingtu.sim.controller-adapter.v1",
     adapter_plugin="differential_drive_wheel_torque",
     policy_runtime="analytic",
     provider=_create_differential_drive_components,

@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Regression contracts for externally conditioned Forest_HF asset slots."""
 

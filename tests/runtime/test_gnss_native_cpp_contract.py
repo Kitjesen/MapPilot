@@ -73,9 +73,9 @@ def test_gnss_native_dds_entrypoint_is_product_service() -> None:
     assert '#include "native/dds_module.hpp"' in entry
     assert '#include "native/module.hpp"' in entry
     assert '#include "dds/dds.h"' not in entry
-    assert '#include "message/cpp/topics.hpp"' in module
+    assert '#include "message/generated/topics.hpp"' in module
     assert '#include "dds/dds.h"' in dds_module
-    assert '#include "message/cpp/qos.hpp"' in dds_module
+    assert '#include "transport/dds/qos.hpp"' in dds_module
     assert "lingtu_dds_GnssFix_desc" in dds_module
     assert "lingtu_dds_GnssStatus_desc" in dds_module
     assert "add_executable(lingtu_gnss_dds" in cmake

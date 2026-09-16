@@ -1,7 +1,10 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <future>
 #include <iostream>
+#include <limits>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -226,6 +229,38 @@ struct Fixture {
   }
 };
 
+void testQueuedSnapshotOwnsCollisionBytesAfterInputChanges() {
+  Fixture fixture;
+  std::promise<void> sink_started;
+  std::promise<void> release_sink;
+  auto started = sink_started.get_future();
+  auto released = release_sink.get_future();
+  NavStatusPublisher publisher(fixture.config(), 2.0, fixture.actions(),
+      [&](const std::filesystem::path &, const std::string &snapshot) {
+        if (fixture.writes.empty()) {
+          sink_started.set_value();
+          released.wait();
+        }
+        fixture.writes.push_back(snapshot);
+        return true;
+      });
+  TimingDiagnostics previous, current;
+  publisher.requestImmediate();
+  require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
+          "first snapshot must reach the writer");
+  require(started.wait_for(std::chrono::seconds(5)) == std::future_status::ready,
+          "snapshot writer must start before queuing its replacement");
+  publisher.requestImmediate();
+  require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
+          "second snapshot must queue while the writer is busy");
+  fixture.collision_bitmap.clear();
+  release_sink.set_value();
+  publisher.flush();
+  require(fixture.writes.size() == 2U, "both snapshots must finish");
+  require(contains(fixture.writes.back(), "\"occupied_points_returned\": 1"),
+          "queued sampling must retain the captured collision bitmap");
+}
+
 void testCadenceImmediateDisabledAndEmptyFileLog() {
   Fixture fixture;
   NavStatusPublisher publisher(fixture.config(), 2.0, fixture.actions(), fixture.sink());
@@ -270,9 +305,29 @@ void testCadenceImmediateDisabledAndEmptyFileLog() {
   require(log_only.writes.empty(), "empty status file must skip snapshot I/O");
 }
 
+void testMissingCloudPoseSerializesUnavailableGap() {
+  Fixture fixture;
+  fixture.cloud_sync.last_pose_gap_s = std::numeric_limits<double>::infinity();
+  NavStatusPublisher publisher(fixture.config(), 10.0, fixture.actions(), fixture.sink());
+  TimingDiagnostics timing;
+  publisher.requestImmediate();
+  publisher.publishIfDue(fixture.state, fixture.commands, timing, timing);
+  publisher.flush();
+  require(contains(fixture.writes.back(), "\"last_pose_gap_s\": -1.000000"),
+          "an empty pose buffer must produce valid JSON with an unavailable gap");
+  fixture.cloud_sync.last_pose_gap_s = 0.125;
+  publisher.requestImmediate();
+  publisher.publishIfDue(fixture.state, fixture.commands, timing, timing);
+  publisher.flush();
+  require(contains(fixture.writes.back(), "\"last_pose_gap_s\": 0.125000"),
+          "a finite pose gap must retain its measured value");
+}
+
 void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
   Fixture fixture;
-  NavStatusPublisher publisher(fixture.config(), 10.0, fixture.actions(), fixture.sink());
+  auto config = fixture.config();
+  config.publish_cmd_vel = true;
+  NavStatusPublisher publisher(config, 10.0, fixture.actions(), fixture.sink());
   TimingDiagnostics previous;
   previous.loop_ms = 12.5;
   previous.obstacle_merge_ms = 4.5;
@@ -399,8 +454,8 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
           "JSON snapshot must expose top-level control-loop health state");
   require(contains(autonomy,
                    "\"far_input\": {\"required\": false, \"ready\": true, \"reason\": \"not_required\"") &&
-              contains(autonomy, "\"navigation_ready\": false"),
-          "OctoPlanner must not require FAR input, but an unhealthy control loop must still block navigation readiness");
+              contains(autonomy, "\"navigation_ready\": true"),
+          "rolling performance warnings must preserve native motion permission");
   require(contains(autonomy, "\"loop_ms\": {\"mean\": 49.750000") &&
               contains(autonomy, "\"p50\": 50.000000") &&
               contains(autonomy, "\"p95\": 52.500000") &&
@@ -415,6 +470,15 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
   require(current.status_log_ms >= 0.0 && current.status_snapshot_ms >= 0.0,
           "current status timing fields must be updated");
 
+  fixture.state.control_loop_hold = true;
+  publisher.requestImmediate();
+  require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
+          "native loop hold snapshot must publish");
+  publisher.flush();
+  require(contains(fixture.writes.back(), "\"control_loop_hold\": true") &&
+              contains(fixture.writes.back(), "\"navigation_ready\": false"),
+          "an actual native motion hold must block admission");
+  fixture.state.control_loop_hold = false;
   fixture.state.driver_control.accepted_output_sequence = 16U;
   publisher.requestImmediate();
   require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
@@ -480,6 +544,44 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
           "estop must force a zero final velocity");
 }
 
+void testTrackingSnapshotPreservesProgressAndErrors() {
+  Fixture fixture;
+  fixture.local.tracking.active = true;
+  fixture.local.tracking.trajectoryId = 47;
+  fixture.local.tracking.executionTimeS = 1.25;
+  fixture.local.tracking.durationS = 4.5;
+  fixture.local.tracking.positionErrorM = 0.12;
+  fixture.local.tracking.headingErrorRad = -0.2;
+  fixture.local.tracking.endDistanceM = 2.3;
+  fixture.local.tracking.executionFrozen = true;
+  fixture.local.tracking.finished = false;
+  fixture.local.tracking.speedLimitMps = 0.35;
+  NavStatusPublisher publisher(fixture.config(), 10.0, fixture.actions(), fixture.sink());
+  TimingDiagnostics previous;
+  TimingDiagnostics current;
+  publisher.requestImmediate();
+  require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
+          "tracking status snapshot must publish");
+  publisher.flush();
+  require(contains(fixture.writes.back(),
+                   "\"tracking\": {\"active\": true, \"trajectory_id\": 47, "
+                   "\"execution_time_s\": 1.250000, \"duration_s\": 4.500000, "
+                   "\"position_error_m\": 0.120000, \"heading_error_rad\": -0.200000, "
+                   "\"end_distance_m\": 2.300000, \"execution_frozen\": true, "
+                   "\"finished\": false, \"speed_limit_mps\": 0.350000}"),
+          "last_local must preserve reference-point error separately from endpoint distance");
+
+  fixture.local.tracking = {};
+  publisher.requestImmediate();
+  require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
+          "inactive tracking status snapshot must publish");
+  publisher.flush();
+  require(contains(fixture.writes.back(),
+                   "\"tracking\": {\"active\": false, \"trajectory_id\": 0, "
+                   "\"execution_time_s\": 0.000000, \"duration_s\": 0.000000"),
+          "inactive tracking must not retain the previous trajectory's progress");
+}
+
 void testOperatorMotionReadinessDeclarationFollowsProductMode() {
   Fixture fixture;
   StatusWriterConfig config = fixture.config();
@@ -510,6 +612,7 @@ void testConfirmedMotionStopEvidenceIsPublished() {
   MotionStopEvidenceTracker evidence(config);
   evidence.begin(23U, 1234.0);
   StopConfirmationDiagnostics diagnostics;
+  diagnostics.driver_ack_output_sequence = 25U;
   diagnostics.driver_ack_observed = true;
   diagnostics.driver_accepted = true;
   diagnostics.quiet_odometry_samples = 3U;
@@ -530,7 +633,7 @@ void testConfirmedMotionStopEvidenceIsPublished() {
   const std::string &status = fixture.writes.back();
   require(contains(status,
                    "\"motion_stop_evidence\": {\"state\": \"CONFIRMED\", "
-                   "\"reason\": \"stop_confirmed\", \"output_sequence\": 23, "
+                   "\"reason\": \"stop_confirmed\", \"output_sequence\": 25, "
                    "\"updated_at_s\": 1235.000000, "
                    "\"confirmation_state\": \"confirmed\", "
                    "\"driver_ack_observed\": true, \"driver_accepted\": true, "
@@ -540,7 +643,7 @@ void testConfirmedMotionStopEvidenceIsPublished() {
                    "\"last_angular_speed_radps\": 0.034000, "
                    "\"linear_speed_threshold_mps\": 0.030000, "
                    "\"angular_speed_threshold_radps\": 0.080000}"),
-          "confirmed stop evidence must retain the correlated ACK and quiet-odometry proof");
+          "confirmed stop evidence must identify the refreshed zero ACK and quiet-odometry proof");
 }
 
 void testPendingMotionStopEvidenceIsPublished() {
@@ -770,11 +873,137 @@ void testFarInputReadinessControlsNavigationReadiness() {
           "validated FAR occupancy must make the FAR input ready");
 }
 
+void testScanFailureCaptureAndSafetyReasonSurviveStatusReset() {
+  Fixture fixture;
+  fixture.local_debug.backend = nav_kernel::LocalPlannerBackend::Scan;
+  auto failure = std::make_shared<nav_kernel::ScanFailureSnapshot>();
+  failure->sequence = 7U;
+  failure->clock.timestampS = 12.0;
+  failure->attempt.attempted = true;
+  failure->attempt.attemptId = 3U;
+  failure->attempt.stage = "dynamic_feasibility";
+  failure->attempt.reason = "velocity_limit_exceeded";
+  failure->attempt.dynamicViolationValid = true;
+  failure->attempt.dynamicQuantity = "speed";
+  failure->attempt.dynamicValue = 1.1;
+  failure->attempt.dynamicLimit = 0.8;
+  failure->attempt.dynamicTimeS = 0.0;
+  failure->collision = fixture.state.local_collision_map;
+  failure->collision.inflatedStorage = std::make_shared<const std::vector<std::uint8_t>>(
+      failure->collision.inflatedBits,
+      failure->collision.inflatedBits + failure->collision.inflatedBytes);
+  failure->collision.inflatedBits = failure->collision.inflatedStorage->data();
+  failure->collision.gridFromPlanningTranslation = {3.0, 4.0, 1.0};
+  failure->collision.gridFromPlanningYaw = 0.5;
+  // Failure evidence must not inherit the 512-point periodic path preview cap.
+  failure->reference.assign(514U, {1.0, 2.0, 3.0});
+  failure->reference.back() = {123.0, 456.0, 789.0};
+  failure->candidateControlPoints = {{0.0, 0.0, 0.4}, {1.0, 0.0, 0.4}};
+  failure->candidateIntervalS = 0.2;
+  fixture.local_debug.scanAttempt = failure->attempt;
+  fixture.local_debug.lastScanFailure = failure;
+  fixture.teleop.last_safety_replan.count = 2U;
+  fixture.teleop.last_safety_replan.stamp_steady_s = 11.5;
+  fixture.teleop.last_safety_replan.reason = "scan_measured_braking_collision";
+  fixture.teleop.last_safety_replan.candidate_cmd_vel.vx = 0.3;
+
+  std::mutex writes_mutex;
+  std::vector<std::string> failure_writes;
+  auto sink = [&](const std::filesystem::path &path, const std::string &snapshot) {
+    std::lock_guard<std::mutex> lock(writes_mutex);
+    if (path.extension() == ".json" && contains(path.string(), ".scan-failure.json"))
+      failure_writes.push_back(snapshot);
+    else fixture.writes.push_back(snapshot);
+    return true;
+  };
+  auto config = fixture.config();
+  config.local_planner = "scan";
+  NavStatusPublisher publisher(config, 1.0, fixture.actions(), sink);
+  TimingDiagnostics previous, current;
+  publisher.requestImmediate();
+  require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
+          "failed SCAN tick must publish status and its immutable input");
+  fixture.collision_bitmap.clear();
+  publisher.flush();
+  require(failure_writes.size() == 1U, "first failure must write a separate snapshot");
+  const auto &saved = failure_writes.front();
+  require(contains(saved, "\"product_session_id\": \"product-session-test\"") &&
+              contains(saved, "\"coordinate_frame\": \"request_planning_frame\"") &&
+              contains(saved, "\"grid_from_planning_translation\": [3, 4, 1]") &&
+              contains(saved, "\"grid_from_planning_yaw\": 0.5"),
+          "failure snapshot must preserve session and request-to-grid transform");
+  require(contains(saved, "[123, 456, 789]") &&
+              contains(saved, "\"candidate_control_points\": [[0, 0,") &&
+              contains(saved, "\"quantity\": \"speed\", \"value\": 1.1"),
+          "failure input must retain full reference, candidate and measured violation");
+  const auto bits_start = saved.find("\"bits\": \"") + std::string("\"bits\": \"").size();
+  const auto bits_end = saved.find('"', bits_start);
+  const auto bits = saved.substr(bits_start, bits_end - bits_start);
+  require(bits.size() == failure->collision.inflatedBytes * 2U,
+          "captured bitmap must serialize every byte");
+  constexpr char hex[] = "0123456789abcdef";
+  for (std::size_t i = 0; i < failure->collision.inflatedBytes; ++i) {
+    const auto byte = failure->collision.inflatedBits[i];
+    require(bits[2U * i] == hex[byte >> 4U] && bits[2U * i + 1U] == hex[byte & 15U],
+            "bitmap encoding must preserve exact immutable bytes after live map mutation");
+  }
+  require(!contains(fixture.writes.back(), "\"bits\":") &&
+              contains(fixture.writes.back(), "\"search_ms\": null") &&
+              contains(fixture.writes.back(), "\"optimizer_evaluations\": null") &&
+              contains(fixture.writes.back(), "\"last_safety_replan\": {\"count\": 2") &&
+              contains(fixture.writes.back(), "scan_measured_braking_collision"),
+          "periodic status must keep the stop cause and not fabricate SCAN measurements or repeat the bitmap");
+
+  fixture.local_debug = {};
+  publisher.requestImmediate();
+  publisher.publishIfDue(fixture.state, fixture.commands, previous, current);
+  publisher.flush();
+  require(failure_writes.size() == 1U &&
+              contains(fixture.writes.back(), "\"last_scan_failure\": {\"sequence\": 7"),
+          "asynchronous Task reset must retain the failure summary without rewriting its map");
+
+  auto next = std::make_shared<nav_kernel::ScanFailureSnapshot>(*failure);
+  next->sequence = 8U;
+  next->attempt.stage = "rebound_optimization";
+  next->attempt.reason = "start_segment_collision";
+  next->attempt.dynamicViolationValid = false;
+  next->attempt.collisionValid = true;
+  next->attempt.collisionPosition = {2.0, 3.0, 0.4};
+  next->attempt.collisionState = 1;
+  next->attempt.collisionTimeS = -1.0;
+  fixture.local_debug.lastScanFailure = next;
+  publisher.requestImmediate();
+  publisher.publishIfDue(fixture.state, fixture.commands, previous, current);
+  publisher.flush();
+  require(failure_writes.size() == 2U && contains(failure_writes.back(), "\"sequence\": 8") &&
+              contains(failure_writes.back(), "\"trajectory_time_s\": null, \"state\": 1") &&
+              contains(failure_writes.back(), "\"dynamic_violation\": null"),
+          "a new episode must replace saved evidence and distinguish collision from dynamic limits");
+}
+
+void testScanFailureNonfiniteValueIsJsonNull() {
+  nav_kernel::ScanFailureSnapshot failure;
+  failure.attempt.attempted = true;
+  failure.attempt.dynamicViolationValid = true;
+  failure.attempt.dynamicValue = std::numeric_limits<double>::quiet_NaN();
+  failure.attempt.collisionValid = true;
+  failure.attempt.collisionPosition.x = std::numeric_limits<double>::quiet_NaN();
+  const auto json = lingtu::nav::endpoint::scanFailureSnapshotJson(failure, "test");
+  require(contains(json, "\"value\": null") && contains(json, "\"position\": [null, 0, 0]") &&
+              !contains(json, ": nan"),
+          "nonfinite optimizer evidence must remain valid JSON without becoming a measured zero");
+}
+
 }  // namespace
 
 int main() {
+  testScanFailureCaptureAndSafetyReasonSurviveStatusReset();
+  testScanFailureNonfiniteValueIsJsonNull();
+  testQueuedSnapshotOwnsCollisionBytesAfterInputChanges();
   testCadenceImmediateDisabledAndEmptyFileLog();
+  testMissingCloudPoseSerializesUnavailableGap();
   testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming();
+  testTrackingSnapshotPreservesProgressAndErrors();
   testOperatorMotionReadinessDeclarationFollowsProductMode();
   testPendingMotionStopEvidenceIsPublished();
   testPendingMotionStopEvidenceRefreshesAtStatusCadence();

@@ -43,6 +43,7 @@ struct StatusRuntimeState {
   bool operator_takeover_latched{false};
   bool teleop_request_active{false};
   bool operator_resume_required{false};
+  bool control_loop_hold{false};
   FinalOutputDiagnostics final_output{};
   DriverControlDiagnostics driver_control{};
   MotionStopEvidenceDiagnostics motion_stop_evidence{};
@@ -111,6 +112,9 @@ class NavStatusPublisher {
   double next_due_s_{0.0};
   NavStatusPublisherActions actions_;
   StatusSnapshotFileWriter snapshot_writer_;
+  StatusSnapshotFileWriter::Sink failure_sink_;
+  std::unique_ptr<StatusSnapshotFileWriter> failure_writer_;
+  std::shared_ptr<const nav_kernel::ScanFailureSnapshot> last_submitted_failure_;
 };
 
 }  // namespace lingtu::nav::endpoint

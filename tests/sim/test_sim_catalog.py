@@ -8,7 +8,6 @@ from fractions import Fraction
 from pathlib import Path
 
 import pytest
-
 from sim.catalog import CatalogError, CatalogResolver, DiagnosticCode
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -17,7 +16,7 @@ THUNDER_UNREAL_SESSION = REPO_ROOT / "sim" / "sessions" / "examples" / "thunderv
 THUNDER_CONTROLLED_HEADLESS_SESSION = (
     REPO_ROOT / "sim" / "sessions" / "examples" / "thunderv4_controlled_headless" / "session.yaml"
 )
-THUNDER_INDUSTRIAL_PARK_HEADLESS_SESSION = (
+THUNDER_FACTORY_CAMPUS_HEADLESS_SESSION = (
     REPO_ROOT
     / "sim" / "sessions" / "products"
     / "doso"
@@ -786,13 +785,13 @@ def test_controlled_headless_session_compiles_the_navigation_sensor_rig() -> Non
     ]
 
 
-def test_industrial_park_headless_session_is_the_common_local_planner_world() -> None:
-    resolved = _resolver().resolve(THUNDER_INDUSTRIAL_PARK_HEADLESS_SESSION)
+def test_factory_campus_is_the_default_simulation_world() -> None:
+    resolved = _resolver().resolve(THUNDER_FACTORY_CAMPUS_HEADLESS_SESSION)
 
-    assert resolved.session["world"] == "industrial_park@1.0.0"
+    assert resolved.session["world"] == "factory_workshop@2.0.0"
     assert resolved.session["robots"][0]["package"] == "thunderv4@1.0.3"
     assert resolved.physics_plan["world"]["mjcf"] == (
-        "sim/packages/worlds/industrial_park/physics/industrial_park_scene.xml"
+        "sim/packages/worlds/factory_workshop/2.0.0/physics/campus.xml"
     )
     assert resolved.physics_plan["global_policy"] == {
         "owner": "world",
@@ -805,7 +804,7 @@ def test_industrial_park_headless_session_is_the_common_local_planner_world() ->
     assert resolved.physics_plan["robots"][0]["model"]["mjcf"] == (
         "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml"
     )
-    assert resolved.physics_plan["robots"][0]["spawn"]["position_m"] == [3.0, 4.0, 0.0]
+    assert resolved.physics_plan["robots"][0]["spawn"]["position_m"] == [61.0, 16.5, 0.02]
 
 
 def test_thunderv4_unreal_session_resolves_full_sensor_control_transport_slice() -> None:
@@ -865,11 +864,11 @@ def test_thunderv4_unreal_session_resolves_full_sensor_control_transport_slice()
     controller = resolved.control_plan["controllers"][0]
     assert controller["instance_id"] == "thunder_01"
     assert controller["package"]["id"] == "thunderv4_locomotion"
-    assert controller["adapter"] == {"plugin": "quadruped_him", "abi": "lingtu.sim.controller-adapter.v1"}
+    assert controller["adapter"] == {"plugin": "thunderv4_flat53", "abi": "lingtu.sim.controller-adapter.v1"}
     assert controller["policy"] == {
         "runtime": "onnxruntime",
-        "artifact": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx",
-        "manifest": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_manifest.json",
+        "artifact": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx",
+        "manifest": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998_manifest.json",
     }
     assert controller["timing"] == {"inference_hz": 50, "low_level_hz": 200}
     assert controller["command_channels"] == ["thunder_01.control.base_twist", "thunder_01.control.joint_torque"]

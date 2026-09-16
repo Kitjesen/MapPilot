@@ -1,0 +1,154 @@
+enum MapActivationOperation {
+  MAP_ACTIVATION_STAGE,
+  MAP_ACTIVATION_RESTORE,
+  MAP_ACTIVATION_VERIFY
+};
+@final
+struct MapArtifactIdentity {
+  string type;
+  string uri;
+};
+@final
+struct MapIdentity {
+  boolean present;
+  string map_id;
+  long long content_epoch;
+  string frame_id;
+  sequence<MapArtifactIdentity> artifacts;
+};
+// Exact saved-map activation transaction. STAGE compares previous with the
+// currently active identity before changing it. RESTORE compares target with
+// the currently active identity and therefore rejects a stale rollback.
+@final
+struct MapActivationRequest {
+  string request_id;
+  MapActivationOperation operation;
+  MapIdentity target;
+  MapIdentity previous;
+  string caller;
+  string reason;
+};
+@final
+struct MapActivationAck {
+  string request_id;
+  MapActivationOperation operation;
+  boolean accepted;
+  string message;
+  boolean changed;
+  MapIdentity target;
+  MapIdentity previous;
+  MapIdentity active;
+  string producer_boot_id;
+};
+// Identity-bearing live map layer contracts. A layer update is valid only for
+// its reset_epoch and observation_sequence; consumers must discard old epochs
+// rather than blending geometry across a SLAM reset or relocalization.
+@final
+struct MapCloudLayer {
+  Header header;
+  string layer;
+  unsigned long long reset_epoch;
+  unsigned long long observation_sequence;
+  unsigned long long generation;
+  boolean live;
+  PointCloud2 cloud;
+};
+// Planner-ready inflated occupancy for one complete rolling-map AABB. Bits
+// use logical x-fastest order: ((z * size_y) + y) * size_x + x.
+@final
+struct MapCollisionLayer {
+  Header header;
+  unsigned long long reset_epoch;
+  unsigned long long observation_sequence;
+  unsigned long long generation;
+  boolean live;
+  float resolution;
+  unsigned long size_x;
+  unsigned long size_y;
+  unsigned long size_z;
+  Point aabb_min;
+  Point aabb_max;
+  boolean complete;
+  sequence<octet> inflated_occupied_bits;
+};
+@final
+struct MapGrid {
+  Header header;
+  string layer;
+  MapMetaData info;
+  sequence<float> data;
+  unsigned long long reset_epoch;
+  unsigned long long observation_sequence;
+  unsigned long long generation;
+  boolean live;
+};
+@final
+struct MapRuntimeState {
+  Header header;
+  string producer_boot_id;
+  MapIdentity active_map;
+  boolean running;
+  boolean live;
+  unsigned long long reset_epoch;
+  unsigned long long observation_sequence;
+  unsigned long long generation;
+  unsigned long long accepted_observations;
+  unsigned long long processed_observations;
+  unsigned long long replaced_observations;
+  unsigned long long stale_observations;
+  unsigned long long invalid_observations;
+  unsigned long long epoch_resets;
+  unsigned long queue_depth;
+  unsigned long long live_points;
+  unsigned long long voxel_points;
+  unsigned long long voxel_cells;
+  unsigned long long voxel_snapshot_omitted_cells;
+  unsigned long long voxel_capacity_rejections;
+  unsigned long long accumulated_cells;
+  unsigned long long accumulated_snapshot_cells;
+  unsigned long long accumulated_capacity_rejections;
+  boolean capacity_limited;
+  float pose_quality;
+  string pose_state;
+  string pose_reason;
+  unsigned long long dds_received_samples;
+  unsigned long long dds_decoded_samples;
+  unsigned long long dds_rejected_samples;
+  unsigned long long dds_write_attempts;
+  unsigned long long dds_write_failures;
+  unsigned long long dds_serialization_rejections;
+  unsigned long long dds_scene_oversize_rejections;
+  unsigned long dds_unhealthy_writers;
+  boolean required_publications_ready;
+  boolean current_generation_published;
+  unsigned long long state_published_generation;
+  unsigned long long realtime_clouds_published_generation;
+  unsigned long long map_layers_published_generation;
+  unsigned long long scene_published_generation;
+  string engine_error;
+  string input_error;
+  string output_error;
+};
+// Coherent low-rate reader handoff. Individual layers remain available on
+// /maps/* for native consumers; Gateway can consume this snapshot without
+// reconstructing temporal consistency itself.
+@final
+struct MapScene {
+  Header header;
+  string producer_boot_id;
+  unsigned long long reset_epoch;
+  unsigned long long observation_sequence;
+  unsigned long long generation;
+  boolean live;
+  Pose map_sensor;
+  MapCloudLayer live_cloud;
+  MapCloudLayer voxel_cloud;
+  MapCloudLayer accumulated_cloud;
+  MapGrid occupancy;
+  MapGrid elevation;
+  MapGrid esdf;
+  MapGrid surface_projection;
+  MapGrid ground_height;
+  MapGrid ground_roughness;
+  MapGrid ground_support;
+};

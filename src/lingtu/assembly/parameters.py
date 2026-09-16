@@ -9,7 +9,7 @@ from typing import Any, Callable, Mapping
 
 @dataclass(frozen=True)
 class ParameterSpec:
-    """One bounded parameter accepted by the native rolling navigation seam."""
+    """One bounded parameter accepted by native navigation."""
 
     name: str
     env_key: str
@@ -19,6 +19,8 @@ class ParameterSpec:
     maximum: int | float
 
     def coerce(self, value: Any) -> int | float:
+        if isinstance(value, bool):
+            raise ValueError(f"parameter {self.name} must be a number, not a boolean")
         try:
             parsed = self.parse(value)
         except (TypeError, ValueError, OverflowError) as exc:
@@ -59,14 +61,36 @@ class RuntimeParameterSet:
 
 
 def _integer(value: Any) -> int:
-    if isinstance(value, bool):
-        raise ValueError("boolean is not an integer parameter")
     if isinstance(value, float) and not value.is_integer():
         raise ValueError("integer parameter must not contain a fraction")
     return int(value)
 
 
 PARAMETER_SPECS: tuple[ParameterSpec, ...] = (
+    ParameterSpec("scan_planner.route_z_tolerance_m", "LINGTU_NAV_SCAN_ROUTE_Z_TOLERANCE_M", 0.35, float, 0.0, math.inf),
+    ParameterSpec("scan_planner.control_point_spacing_m", "LINGTU_NAV_SCAN_CONTROL_POINT_SPACING_M", 0.20, float, 0.05, math.inf),
+    ParameterSpec("scan_planner.replan_distance_m", "LINGTU_NAV_SCAN_REPLAN_DISTANCE_M", 1.0, float, 0.01, math.inf),
+    ParameterSpec("scan_planner.no_replan_distance_m", "LINGTU_NAV_SCAN_NO_REPLAN_DISTANCE_M", 0.10, float, 0.01, math.inf),
+    ParameterSpec("scan_planner.max_velocity_mps", "LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS", 0.75, float, 0.05, math.inf),
+    ParameterSpec("scan_planner.max_acceleration_mps2", "LINGTU_NAV_SCAN_PLANNER_MAX_ACCELERATION_MPS2", 0.50, float, 0.05, math.inf),
+    ParameterSpec("scan_planner.planning_horizon_m", "LINGTU_NAV_SCAN_PLANNING_HORIZON_M", 3.5, float, 0.5, math.inf),
+    ParameterSpec("scan_planner.smooth_weight", "LINGTU_NAV_SCAN_SMOOTH_WEIGHT", 1.0, float, 0.0, math.inf),
+    ParameterSpec("scan_planner.collision_weight", "LINGTU_NAV_SCAN_COLLISION_WEIGHT", 1.0, float, 0.0, math.inf),
+    ParameterSpec("scan_planner.feasibility_weight", "LINGTU_NAV_SCAN_FEASIBILITY_WEIGHT", 0.1, float, 0.0, math.inf),
+    ParameterSpec("scan_planner.fitness_weight", "LINGTU_NAV_SCAN_FITNESS_WEIGHT", 1.0, float, 0.0, math.inf),
+    ParameterSpec("scan_planner.feasibility_tolerance", "LINGTU_NAV_SCAN_FEASIBILITY_TOLERANCE", 0.5, float, 0.0, math.inf),
+    ParameterSpec("scan_planner.velocity_tolerance", "LINGTU_NAV_SCAN_VELOCITY_TOLERANCE", 1.0, float, 0.0, math.inf),
+    ParameterSpec("scan_planner.acceleration_tolerance", "LINGTU_NAV_SCAN_ACCELERATION_TOLERANCE", 1.0, float, 0.0, math.inf),
+    ParameterSpec("scan_planner.collision_distance_m", "LINGTU_NAV_SCAN_COLLISION_DISTANCE_M", 0.20, float, 0.01, math.inf),
+    ParameterSpec("scan_follower.time_forward_s", "LINGTU_NAV_SCAN_TIME_FORWARD_S", 0.8, float, 0.0, math.inf),
+    ParameterSpec("scan_follower.heading_error_rad", "LINGTU_NAV_SCAN_HEADING_ERROR_RAD", 0.8, float, 0.0, math.pi),
+    ParameterSpec("scan_follower.position_gain", "LINGTU_NAV_SCAN_POSITION_GAIN", 0.8, float, 0.0, math.inf),
+    ParameterSpec("scan_follower.yaw_gain", "LINGTU_NAV_SCAN_YAW_GAIN", 1.5, float, 0.0, math.inf),
+    ParameterSpec("scan_follower.max_vx_mps", "LINGTU_NAV_SCAN_MAX_VX_MPS", 0.75, float, 0.01, math.inf),
+    ParameterSpec("scan_follower.max_vy_mps", "LINGTU_NAV_SCAN_MAX_VY_MPS", 0.35, float, 0.01, math.inf),
+    ParameterSpec("scan_follower.max_yaw_rate_rad_s", "LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S", 1.0, float, 0.0, 1.0),
+    ParameterSpec("scan_follower.finish_distance_m", "LINGTU_NAV_SCAN_FINISH_DISTANCE_M", 0.15, float, 0.01, math.inf),
+    ParameterSpec("local_collision.max_age_s", "LINGTU_NAV_LOCAL_COLLISION_MAX_AGE_S", 0.50, float, 0.10, math.inf),
     ParameterSpec(
         "segment.max_distance_m",
         "LINGTU_NAV_SEGMENT_MAX_DISTANCE_M",
@@ -147,6 +171,9 @@ def resolve_parameters(
     _apply_parameter_layer(resolved, env_overrides)
     _apply_parameter_layer(resolved, product_parameters)
     _apply_parameter_layer(resolved, session_overrides)
+
+    if resolved["scan_planner.replan_distance_m"].value < resolved["scan_planner.no_replan_distance_m"].value:
+        raise ValueError("scan_planner.replan_distance_m must be at least no_replan_distance_m")
 
     stop = float(resolved["risk.stop_threshold"].value)
     resume = float(resolved["risk.resume_threshold"].value)

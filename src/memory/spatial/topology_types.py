@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from runtime.msgs.numpy_compat import np
+
 logger = logging.getLogger(__name__)
 
 

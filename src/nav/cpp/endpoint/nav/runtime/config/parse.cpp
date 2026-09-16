@@ -406,6 +406,32 @@ CliConfig parseArgs(int argc, char **argv) {
                  "LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_ENTER_RAD");
   applyEnvDouble(cfg.path_follower_heading_align_exit_rad,
                  "LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_EXIT_RAD");
+  const auto scan_parameter = [](double &value, const char *name, double minimum) {
+    applyEnvDouble(value, name);
+    if (!std::isfinite(value) || value < minimum) {
+      throw std::runtime_error(std::string(name) + " must be finite and at least " +
+                               std::to_string(minimum));
+    }
+  };
+  scan_parameter(cfg.scan_planner.routeZTolerance, "LINGTU_NAV_SCAN_ROUTE_Z_TOLERANCE_M", 0.0);
+  scan_parameter(cfg.scan_planner.controlPointSpacing, "LINGTU_NAV_SCAN_CONTROL_POINT_SPACING_M", 0.05);
+  scan_parameter(cfg.scan_planner.replanDistance, "LINGTU_NAV_SCAN_REPLAN_DISTANCE_M", 0.01);
+  scan_parameter(cfg.scan_planner.noReplanDistance, "LINGTU_NAV_SCAN_NO_REPLAN_DISTANCE_M", 0.01);
+  scan_parameter(cfg.scan_planner.maxVelocity, "LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS", 0.05);
+  scan_parameter(cfg.scan_planner.maxAcceleration, "LINGTU_NAV_SCAN_PLANNER_MAX_ACCELERATION_MPS2", 0.05);
+  scan_parameter(cfg.scan_planner.planningHorizon, "LINGTU_NAV_SCAN_PLANNING_HORIZON_M", 0.5);
+  scan_parameter(cfg.scan_planner.smoothWeight, "LINGTU_NAV_SCAN_SMOOTH_WEIGHT", 0.0);
+  scan_parameter(cfg.scan_planner.collisionWeight, "LINGTU_NAV_SCAN_COLLISION_WEIGHT", 0.0);
+  scan_parameter(cfg.scan_planner.feasibilityWeight, "LINGTU_NAV_SCAN_FEASIBILITY_WEIGHT", 0.0);
+  scan_parameter(cfg.scan_planner.fitnessWeight, "LINGTU_NAV_SCAN_FITNESS_WEIGHT", 0.0);
+  scan_parameter(cfg.scan_planner.feasibilityTolerance, "LINGTU_NAV_SCAN_FEASIBILITY_TOLERANCE", 0.0);
+  scan_parameter(cfg.scan_planner.velocityTolerance, "LINGTU_NAV_SCAN_VELOCITY_TOLERANCE", 0.0);
+  scan_parameter(cfg.scan_planner.accelerationTolerance, "LINGTU_NAV_SCAN_ACCELERATION_TOLERANCE", 0.0);
+  scan_parameter(cfg.scan_planner.collisionDistance, "LINGTU_NAV_SCAN_COLLISION_DISTANCE_M", 0.01);
+  scan_parameter(cfg.local_collision_max_age_s, "LINGTU_NAV_LOCAL_COLLISION_MAX_AGE_S", 0.10);
+  if (cfg.scan_planner.replanDistance < cfg.scan_planner.noReplanDistance) {
+    throw std::runtime_error("SCAN replan distance must be at least no-replan distance");
+  }
   applyEnvDouble(cfg.scan_follower.timeForward, "LINGTU_NAV_SCAN_TIME_FORWARD_S");
   applyEnvDouble(cfg.scan_follower.headingErrorThreshold,
                  "LINGTU_NAV_SCAN_HEADING_ERROR_RAD");
@@ -911,6 +937,14 @@ CliConfig parseArgs(int argc, char **argv) {
   }
 
   const std::string runtime_env = envOrEmpty("LINGTU_ENV");
+  const std::string execution_clock = envOrEmpty("LINGTU_NAV_EXECUTION_CLOCK");
+  if (execution_clock == "simulation") {
+    if (runtime_env != "sim")
+      throw std::runtime_error("simulation execution clock requires LINGTU_ENV=sim");
+    cfg.use_simulation_clock = true;
+  } else if (!execution_clock.empty() && execution_clock != "steady") {
+    throw std::runtime_error("LINGTU_NAV_EXECUTION_CLOCK must be steady or simulation");
+  }
   if (runtime_env == "sim") {
     const auto session_root =
         normalizedAbsolutePath(envOrEmpty("LINGTU_SESSION_ROOT"), "LINGTU_SESSION_ROOT");

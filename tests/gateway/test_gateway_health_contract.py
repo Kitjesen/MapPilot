@@ -6,6 +6,7 @@ import os
 import time
 
 import pytest
+
 from runtime.msgs.numpy_compat import np
 
 pytest.importorskip("fastapi")
@@ -455,7 +456,7 @@ def test_health_reports_camera_idle_reason_from_camera_health(monkeypatch):
 
 
 def test_health_detail_selection_uses_only_canonical_sensor_roles():
-    from gateway.routes.status import _health_module_needs_detail
+    from gateway.routes.health import _health_module_needs_detail
 
     assert _health_module_needs_detail("camera") is True
     assert _health_module_needs_detail("lidar") is True
@@ -505,7 +506,7 @@ def test_health_details_query_runs_full_module_diagnostics(monkeypatch):
 
 
 def test_brainstem_probe_projects_native_driver_status(monkeypatch, tmp_path):
-    import gateway.routes.status as status_routes
+    import gateway.routes.health as status_routes
 
     status_path = tmp_path / "driver_status.json"
     status_path.write_text(
@@ -553,7 +554,7 @@ def test_brainstem_probe_projects_native_driver_status(monkeypatch, tmp_path):
 
 
 def test_brainstem_probe_rejects_stale_driver_status(monkeypatch, tmp_path):
-    import gateway.routes.status as status_routes
+    import gateway.routes.health as status_routes
 
     status_path = tmp_path / "driver_status.json"
     status_path.write_text(
@@ -579,7 +580,7 @@ def test_brainstem_probe_rejects_stale_driver_status(monkeypatch, tmp_path):
 
 
 def test_health_uses_cached_brainstem_probe_for_short_app_polling_window(monkeypatch):
-    import gateway.routes.status as status_routes
+    import gateway.routes.health as status_routes
     from gateway.gateway_module import GatewayModule
 
     gateway = GatewayModule()
@@ -611,7 +612,7 @@ def test_health_uses_cached_brainstem_probe_for_short_app_polling_window(monkeyp
 
 
 def test_health_returns_stale_brainstem_cache_and_refreshes_in_background(monkeypatch):
-    import gateway.routes.status as status_routes
+    import gateway.routes.health as status_routes
     from gateway.gateway_module import GatewayModule
 
     gateway = GatewayModule()
@@ -650,7 +651,7 @@ def test_health_returns_stale_brainstem_cache_and_refreshes_in_background(monkey
 
 
 def test_health_default_brainstem_probe_does_not_block_without_cache(monkeypatch):
-    import gateway.routes.status as status_routes
+    import gateway.routes.health as status_routes
     from gateway.gateway_module import GatewayModule
 
     gateway = GatewayModule()
@@ -684,7 +685,7 @@ def test_health_default_brainstem_probe_does_not_block_without_cache(monkeypatch
 
 
 def test_health_details_query_waits_for_live_brainstem_probe(monkeypatch):
-    import gateway.routes.status as status_routes
+    import gateway.routes.health as status_routes
     from gateway.gateway_module import GatewayModule
 
     gateway = GatewayModule()

@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Extract API documentation from LingTu source code.
-
-Generates:
-  docs/api/mcp_tools.md    — @skill methods from all Module files
-  docs/api/gateway_rest.md  — REST endpoints from gateway route registrations
-"""
+"""Generate the single maintained LingTu API reference."""
 
 from __future__ import annotations
 
@@ -24,7 +19,7 @@ def find_repo_root(start: Path) -> Path:
 REPO_ROOT = find_repo_root(Path(__file__).resolve().parent)
 SRC = REPO_ROOT / "src"
 GATEWAY = SRC / "gateway"
-DOCS_API = REPO_ROOT / "docs" / "api"
+DOCS_API = REPO_ROOT / "docs" / "api.md"
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -51,7 +46,7 @@ def _module_docstring(path: Path) -> str:
     return ""
 
 
-# ── TASK 1: Extract @skill methods → mcp_tools.md ───────────────────────
+# ── TASK 1: Extract @skill methods ──────────────────────────────────────
 
 def _is_real_module(path: Path) -> bool:
     """Skip test files, legacy, and __init__.py."""
@@ -145,19 +140,12 @@ def _ast_to_str(node: ast.AST) -> str:
 
 
 def generate_mcp_tools_md(skills: list[dict]) -> str:
-    """Generate mcp_tools.md from extracted skills."""
+    """Generate the MCP section of the API reference."""
     lines = [
-        "# MCP Tools (Auto-Discovered @skill Methods)",
+        "## MCP tools",
         "",
-        "> Auto-generated from `@skill` decorators across all Module files.",
-        "> Deterministic generated inventory; run "
-        "`python tools/docs/extract_api_docs.py --check` to verify freshness.",
-        "",
-        "These tools are auto-discovered by `MCPServerModule` and exposed via JSON-RPC",
-        "at `http://<robot>:8090/mcp`. They are also available in the AgentLoop for",
-        "multi-turn LLM tool calling.",
-        "",
-        "---",
+        "This inventory is generated from `@skill` decorators. The Host exposes",
+        "these methods through MCP JSON-RPC on port 8090 and to the Agent loop.",
         "",
     ]
 
@@ -202,7 +190,7 @@ def generate_mcp_tools_md(skills: list[dict]) -> str:
     return "\n".join(lines)
 
 
-# ── TASK 2: Extract Gateway REST routes → gateway_rest.md ───────────────
+# ── TASK 2: Extract Gateway REST routes ─────────────────────────────────
 
 _HTTP_ROUTE_METHODS = frozenset({"get", "post", "put", "delete", "patch"})
 
@@ -263,17 +251,10 @@ def _routes_from_file(py_file: Path) -> list[dict]:
 def extract_gateway_routes() -> list[dict]:
     """Extract every static FastAPI route decorator, including stacked aliases."""
 
-    routes_dir = GATEWAY / "routes"
-    if not routes_dir.is_dir():
-        return []
     files = [
-        path
-        for path in sorted(routes_dir.rglob("*.py"))
+        path for path in sorted(GATEWAY.rglob("*.py"))
         if path.name != "__init__.py"
     ]
-    gateway_module = GATEWAY / "gateway_module.py"
-    if gateway_module.is_file():
-        files.append(gateway_module)
 
     routes = [route for py_file in files for route in _routes_from_file(py_file)]
     routes.sort(key=lambda route: (route["path"], route["method"], route["file"]))
@@ -281,19 +262,14 @@ def extract_gateway_routes() -> list[dict]:
 
 
 def generate_gateway_rest_md(routes: list[dict]) -> str:
-    """Generate gateway_rest.md from extracted routes."""
+    """Generate the Gateway section of the API reference."""
     lines = [
-        "# Gateway REST API",
+        "## Gateway REST API",
         "",
-        "> Auto-generated from route registrations in `src/gateway/routes/`.",
-        "> Deterministic generated inventory; run "
-        "`python tools/docs/extract_api_docs.py --check` to verify freshness.",
+        "The Gateway serves these generated route registrations on port 5050.",
+        "FastAPI's live OpenAPI UI remains available at `/docs`.",
         "",
-        "The GatewayModule serves these endpoints via FastAPI on port 5050.",
-        "",
-        "---",
-        "",
-        "## Summary",
+        "### Route summary",
         "",
     ]
 
@@ -309,16 +285,13 @@ def generate_gateway_rest_md(routes: list[dict]) -> str:
             summary = f" — {entry['summary']}" if entry["summary"] else ""
             lines.append(f"  - `{entry['method']} {entry['path']}`{summary}")
     lines.append("")
-    lines.append("---")
-    lines.append("")
-
     # Detailed sections by file
     for filepath in sorted(by_file):
-        lines.append(f"## {filepath}")
+        lines.append(f"### {filepath}")
         lines.append("")
 
         for entry in by_file[filepath]:
-            lines.append(f"### `{entry['method']} {entry['path']}`")
+            lines.append(f"#### `{entry['method']} {entry['path']}`")
             if entry["summary"]:
                 lines.append(f"**Summary:** {entry['summary']}")
             if entry["response_model"]:
@@ -327,6 +300,83 @@ def generate_gateway_rest_md(routes: list[dict]) -> str:
             lines.append("")
 
     return "\n".join(lines)
+
+
+def generate_api_md(skills: list[dict], routes: list[dict]) -> str:
+    """Generate the complete maintained API reference."""
+
+    header = [
+        "# API",
+        "",
+        "**Status:** Current generated interface reference",
+        "**Audience:** SDK, Web, MCP, Gateway, and integration developers",
+        "**Runs on:** One LingTu Host in `env=real` or `env=sim`",
+        "",
+        "This file combines the small maintained integration contract with",
+        "inventories generated from source. Do not hand-edit the generated",
+        "method or route lists; run `python tools/docs/extract_api_docs.py`.",
+        "",
+        "## Integration boundaries",
+        "",
+        "| Surface | Endpoint | Owner |",
+        "| --- | --- | --- |",
+        "| REST and SSE | `http://<host>:5050` | Gateway routes and projections |",
+        "| MCP | `http://<host>:8090/mcp` | `@skill` methods discovered in the Host |",
+        "| Python SDK/CLI | `lingtu-sdk` and `lingtu.sdk` | Typed client facade |",
+        "| Camera Web media | go2rtc WHEP with Gateway JPEG fallback | Optional media sidecar plus Gateway |",
+        "",
+        "Gateway submits typed intent and projects runtime facts. It does not",
+        "own Product lifecycle, maps, planning, final motion, or hardware.",
+        "",
+        "Product lifecycle uses `lingtu` / `python -m lingtu.control`, not REST",
+        "service orchestration assembled by a client.",
+        "",
+        "External map integrations operate on the canonical map identity",
+        "`map_id + content_epoch` and maintained artifact contracts. They must",
+        "not invent version directories or bypass ProductControl activation.",
+        "",
+        "## Generation",
+        "",
+        "```bash",
+        "python tools/docs/extract_api_docs.py",
+        "python tools/docs/extract_api_docs.py --check",
+        "```",
+        "",
+        "## Navigation status",
+        "",
+        "`GET /api/v1/navigation/status` and SSE `navigation_status` expose one root-level",
+        "v3 contract. It answers four independent questions:",
+        "Implementation lives in `src/gateway/navigation/`: `routes.py` registers the",
+        "HTTP surface, `status.py` evaluates admission and publishes SSE, `projection.py`",
+        "projects the public axes, and `tasks.py` handles exact task/request queries.",
+        "",
+        "| Axis | Meaning |",
+        "| --- | --- |",
+        "| `task` | Current task phase: `IDLE`, planning, execution, recovery, explicit pause, or a terminal result |",
+        "| `goal_admission` | Whether a new or replacement goal can be accepted |",
+        "| `control` | Whether autonomy, the operator, or nobody owns control |",
+        "| `motion` | Permission, observed motion, and stop-confirmation evidence |",
+        "",
+        "The task lifecycle is `IDLE -> PLANNING -> EXECUTING <-> RECOVERING`, with",
+        "explicit `PAUSED` and terminal `SUCCESS`, `FAILED`, or `CANCELLED` branches.",
+        "E-stop, takeover, and InputGate holds change control or motion; they do not fake",
+        "a task pause. `QUIET` is only a fresh odometry observation and is not equivalent",
+        "to `CONFIRMED`. Missing or stale evidence projects to `UNKNOWN`.",
+        "",
+        "There is no `operator_state` wrapper or second rich navigation status. Full",
+        "blockers live at `/api/v1/readiness`, paths at `/api/v1/path`, native evidence at",
+        "`/api/v1/navigation/dds_snapshot`, and exact terminal evidence at",
+        "`/api/v1/navigation/tasks/{task_id}`.",
+        "",
+    ]
+    return "\n".join(
+        (
+            *header,
+            generate_mcp_tools_md(skills),
+            "",
+            generate_gateway_rest_md(routes),
+        )
+    )
 
 
 # ── main ─────────────────────────────────────────────────────────────────
@@ -349,7 +399,6 @@ def main(argv: list[str] | None = None) -> int:
         help="fail without writing when generated API documentation is stale",
     )
     args = parser.parse_args(argv)
-    DOCS_API.mkdir(parents=True, exist_ok=True)
     stale: list[Path] = []
 
     # Task 1: MCP tools
@@ -357,26 +406,18 @@ def main(argv: list[str] | None = None) -> int:
     skills = extract_skills()
     print(f"  Found {len(skills)} @skill methods in {len(set(s['file'] for s in skills))} files")
 
-    mcp_doc = generate_mcp_tools_md(skills)
-    mcp_path = DOCS_API / "mcp_tools.md"
-    if not _publish(mcp_path, mcp_doc, check=args.check):
-        stale.append(mcp_path)
-    print(f"  -> {mcp_path}")
-
     # Task 2: Gateway REST
     print("Extracting Gateway REST routes...")
     routes = extract_gateway_routes()
     print(f"  Found {len(routes)} REST endpoints")
 
-    rest_doc = generate_gateway_rest_md(routes)
-    rest_path = DOCS_API / "gateway_rest.md"
-    if not _publish(rest_path, rest_doc, check=args.check):
-        stale.append(rest_path)
-    print(f"  -> {rest_path}")
+    api_doc = generate_api_md(skills, routes)
+    if not _publish(DOCS_API, api_doc, check=args.check):
+        stale.append(DOCS_API)
+    print(f"  -> {DOCS_API}")
 
-    # Task 3: Output summary for ROADMAP update
-    # (to be consumed by the caller)
-    sys.stdout.reconfigure(encoding='utf-8')  # type: ignore[union-attr]
+    # Console summary for reviewers and CI logs.
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
 
     print(f"\nSKILL_FILES={len(set(s['file'] for s in skills))}")
     print(f"SKILL_COUNT={len(skills)}")

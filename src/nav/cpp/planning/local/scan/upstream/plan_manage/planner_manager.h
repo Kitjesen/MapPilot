@@ -6,6 +6,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <functional>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -17,6 +18,28 @@
 
 namespace nav_kernel::local::scan::upstream {
 
+struct ReboundPlanDebug : OptimizationDebug {
+  std::uint64_t attemptId{0};
+  bool attempted{false};
+  bool success{false};
+  std::string stage{"not_run"};
+  Eigen::Vector3d startPosition{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d startVelocity{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d startAcceleration{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d targetPosition{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d targetVelocity{Eigen::Vector3d::Zero()};
+  bool polyInit{false};
+  bool randomPolyInit{false};
+  // Failure-only candidate; empty if initialization produced no B-spline.
+  Eigen::MatrixXd candidateControlPoints;
+  double candidateIntervalS{0.0};
+  bool dynamicViolationValid{false};
+  std::string dynamicQuantity;
+  double dynamicValue{0.0};
+  double dynamicLimit{0.0};
+  double dynamicTimeS{0.0};
+};
+
 class SCANPlannerManager {
  public:
   SCANPlannerManager() = default;
@@ -27,6 +50,8 @@ class SCANPlannerManager {
   void initPlanModules(const PlanParameters &planParams,
                        const BsplineOptimizerParams &optimizerParams,
                        GridMap::Ptr gridMap);
+  void updatePlanParameters(const PlanParameters &planParams,
+                            const BsplineOptimizerParams &optimizerParams);
   void setTimeSource(std::function<double()> timeSource);
 
   bool reboundReplan(Eigen::Vector3d start_pt, Eigen::Vector3d start_vel,
@@ -35,6 +60,8 @@ class SCANPlannerManager {
                      Eigen::Vector3d local_target_vel, bool flag_polyInit,
                      bool flag_randomPolyTraj, double nowS);
   bool EmergencyStop(Eigen::Vector3d stop_pos, double nowS);
+  // One reboundReplan call, retained until the next call, including success.
+  const ReboundPlanDebug &reboundDebug() const noexcept { return rebound_debug_; }
   bool planGlobalTraj(const Eigen::Vector3d &start_pos,
                       const Eigen::Vector3d &start_vel,
                       const Eigen::Vector3d &start_acc,
@@ -59,10 +86,11 @@ class SCANPlannerManager {
   BsplineOptimizer::Ptr bspline_optimizer_rebound_;
   std::function<double()> timeSource_;
   int continuous_failures_count_{0};
+  ReboundPlanDebug rebound_debug_;
 
   double currentTimeS(double fallback) const;
   void updateTrajInfo(const UniformBspline &position_traj, double nowS);
-  bool checkDynamicFeasibility(UniformBspline position_traj) const;
+  bool checkDynamicFeasibility(UniformBspline position_traj);
   void reparamBspline(UniformBspline &bspline,
                       std::vector<Eigen::Vector3d> &start_end_derivative,
                       double ratio, Eigen::MatrixXd &ctrl_pts, double &dt,

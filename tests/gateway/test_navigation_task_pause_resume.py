@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -8,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gateway.gateway_module import GatewayModule
-from gateway.services.event_handlers import handle_navigation_goal_status
+from gateway.navigation.status import handle_navigation_goal_status
 from gateway.services.sse import subscribe, unsubscribe
 
 

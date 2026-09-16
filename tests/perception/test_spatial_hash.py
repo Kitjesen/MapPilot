@@ -1,4 +1,4 @@
-# ruff: noqa: S101  (assert statements are standard in pytest test files)
+
 """
 test_spatial_hash.py
 

@@ -43,14 +43,16 @@ struct TrajectoryPoint {
   double timeFromStartS{0.0};
 };
 
-// Exact executable B-spline in the planning frame. The final two fields are
-// the ROS-free equivalent of SCAN-Planner's Bspline message identity/knots.
+// Exact executable B-spline in the planning frame, with SCAN message identity
+// and the resolved runtime speed limit used for this publication.
 struct SplineTarget {
   std::vector<Vec3> controls;
   std::vector<double> knots;
   int order{3};
   std::int64_t trajectoryId{0};
   double startTimeS{-1.0};
+  // Linear-speed limit used to generate this trajectory; zero is unspecified.
+  double maxLinearSpeedMps{0.0};
 };
 
 using Path = std::vector<Pose>;

@@ -154,6 +154,22 @@ void test_body_conversion_and_information() {
   }
 }
 
+void test_near_level_rank_four_information() {
+  detail::Matrix4 h4{};
+  for (std::size_t i = 0; i < 4; ++i) h4[i][i] = 1.0;
+  for (double pitch : {1.0e-7, 1.0e-5, 0.03}) {
+    opt::Pose body;
+    body.qw = std::cos(pitch / 2.0);
+    body.qy = std::sin(pitch / 2.0);
+    const auto information = detail::body_right_information_upper(h4, 0.01, opt::Pose{}, body);
+    require(opt::valid_information_upper(information),
+            "near-level rank-four graph information was rejected");
+    auto indefinite = information;
+    indefinite[20] = -1.0;
+    require(!opt::valid_information_upper(indefinite), "negative information accepted");
+  }
+}
+
 void test_noise_fail_closed() {
   std::vector<detail::PlaneSample> exact(8);
   for (std::size_t i = 0; i < exact.size(); ++i) {
@@ -243,6 +259,7 @@ int main() {
     test_raw_jacobian();
     test_body_conversion_and_information();
     test_noise_fail_closed();
+    test_near_level_rank_four_information();
     test_rank4_loop_reduces_drift();
     std::cout << "loop_information_test: passed\n";
     return 0;

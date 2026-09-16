@@ -8,7 +8,7 @@ Core components:
 - blueprint — Declarative orchestration blueprint (Blueprint, autoconnect, SystemHandle)
 - config    — Typed RobotConfig loader
 - clock     — Switchable real-time / simulation clock
-Importing a contract submodule such as :mod:`runtime.graph.processes` must not
+Importing a contract submodule such as :mod:`lingtu.assembly.graph.processes` must not
 load Blueprint or construct the Module framework.  Public facade symbols stay
 source-compatible and are imported only when requested.
 """
@@ -19,37 +19,29 @@ import importlib
 from typing import Any
 
 __all__ = [
-    # blueprint
     "Blueprint",
     "Buffer",
-    "ConnectivityException",
-    # clock
     "Clock",
-    # frames
+    "ConnectivityException",
     "ExtrapolationError",
     "FrameError",
     "FrameTree",
     "In",
     "LocalTransport",
     "LookupException",
-    # module
     "Module",
     "NoTransformError",
-    "StaticTransformBroadcaster",
-    # stream
     "Out",
-    # resource monitor (imported lazily)
     "ResourceMonitor",
-    # config
     "RobotConfig",
     "SkillInfo",
+    "StaticTransformBroadcaster",
     "SystemHandle",
-    # transport
-    "Transport",
-    "TransformException",
     "TfBus",
     "TransformBroadcaster",
+    "TransformException",
     "TransformListener",
+    "Transport",
     "UnknownFrameError",
     "autoconnect",
     "clock",
@@ -71,19 +63,19 @@ _LAZY_EXPORTS = {
     "get_config": (".config", "get_config"),
     "load_config": (".config", "load_config"),
     "reset_config": (".config", "reset_config"),
-    "Buffer": (".tf", "Buffer"),
-    "ConnectivityException": (".tf", "ConnectivityException"),
-    "ExtrapolationError": (".tf", "ExtrapolationError"),
-    "FrameError": (".tf", "FrameError"),
-    "FrameTree": (".tf", "FrameTree"),
-    "LookupException": (".tf", "LookupException"),
-    "NoTransformError": (".tf", "NoTransformError"),
-    "StaticTransformBroadcaster": (".tf", "StaticTransformBroadcaster"),
-    "TfBus": (".tf", "TfBus"),
-    "TransformBroadcaster": (".tf", "TransformBroadcaster"),
-    "TransformException": (".tf", "TransformException"),
-    "TransformListener": (".tf", "TransformListener"),
-    "UnknownFrameError": (".tf", "UnknownFrameError"),
+    "Buffer": (".tf.buffer", "Buffer"),
+    "ConnectivityException": (".tf.tree", "ConnectivityException"),
+    "ExtrapolationError": (".tf.tree", "ExtrapolationError"),
+    "FrameError": (".tf.tree", "FrameError"),
+    "FrameTree": (".tf.tree", "FrameTree"),
+    "LookupException": (".tf.tree", "LookupException"),
+    "NoTransformError": (".tf.tree", "NoTransformError"),
+    "StaticTransformBroadcaster": (".tf.buffer", "StaticTransformBroadcaster"),
+    "TfBus": (".tf.buffer", "TfBus"),
+    "TransformBroadcaster": (".tf.buffer", "TransformBroadcaster"),
+    "TransformException": (".tf.tree", "TransformException"),
+    "TransformListener": (".tf.buffer", "TransformListener"),
+    "UnknownFrameError": (".tf.tree", "UnknownFrameError"),
     "Module": (".module", "Module"),
     "SkillInfo": (".module", "SkillInfo"),
     "rpc": (".module", "rpc"),

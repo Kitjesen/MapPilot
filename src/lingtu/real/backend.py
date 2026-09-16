@@ -1,7 +1,6 @@
 """Field side effects used by the real Product switch transaction."""
 
 # Protocol declarations intentionally keep their signatures compact.
-# ruff: noqa: D102
 
 from __future__ import annotations
 
@@ -26,6 +25,7 @@ from lingtu.products import ProductLifecycle, ProductName
 from lingtu.run_plan import RUN_PLAN_SCHEMA, RunPlan
 from lingtu.switch_contracts import (
     MAP_ACTIVATION_TOKEN_SCHEMA,
+    InitialPose,
     MapArtifactIdentity,
     MapIdentity,
     map_identity_environment,
@@ -36,7 +36,6 @@ from lingtu.switch_contracts import (
     optional_map_identity_from_native,
     pointcloud_artifact,
 )
-from runtime.tf import map_from_odom_transform_from_mapping
 
 _ACTIVE_MAP_SAVE_STATES = frozenset({"WAITING_SNAPSHOT", "QUEUED", "RUNNING"})
 _TERMINAL_MAP_SAVE_STATES = frozenset({"SUCCEEDED", "FAILED", "CANCELLED"})
@@ -53,22 +52,14 @@ _SESSION_ROOT = "/run/lingtu"
 _SESSION_ROOT_ENV = "LINGTU_SESSION_ROOT"
 _SESSION_ENV_FILE = "session.env"
 _MAX_SESSION_ENV_BYTES = 256 * 1024
-_RELOCALIZE_RETRY_REASONS = (
-    "registered_cloud_unavailable",
-    "waiting_for_scan",
-    "scan_too_small",
-    "cloud_unavailable",
-    "scan_unavailable",
-    "timeout",
-)
-_NAV_STATUS_PATH = Path("/dev/shm/lingtu/nav_endpoint_status.json")  # noqa: S108
-_DRIVER_STATUS_PATH = Path("/dev/shm/lingtu/driver_status.json")  # noqa: S108
+_NAV_STATUS_PATH = Path("/dev/shm/lingtu/nav_endpoint_status.json")
+_DRIVER_STATUS_PATH = Path("/dev/shm/lingtu/driver_status.json")
 _DRIVER_MOTION_PRINCIPAL = "lingtu-driver@robot"
-_EXPLORE_STATUS_PATH = Path("/dev/shm/lingtu/explore_status.json")  # noqa: S108
-_SLAM_STATUS_PATH = Path("/tmp/lingtu_slam_status.json")  # noqa: S108
-_MAPD_STATUS_PATH = Path("/dev/shm/lingtu/mapd_status.json")  # noqa: S108
-_SLAM_SNAPSHOT_DIR = Path("/dev/shm/lingtu_slam")  # noqa: S108
-_RUNTIME_CLEANUP_ROOTS = ("/dev/shm", "/run", "/tmp")  # noqa: S108
+_EXPLORE_STATUS_PATH = Path("/dev/shm/lingtu/explore_status.json")
+_SLAM_STATUS_PATH = Path("/tmp/lingtu_slam_status.json")
+_MAPD_STATUS_PATH = Path("/dev/shm/lingtu/mapd_status.json")
+_SLAM_SNAPSHOT_DIR = Path("/dev/shm/lingtu_slam")
+_RUNTIME_CLEANUP_ROOTS = ("/dev/shm", "/run", "/tmp")
 _TELEOP_AVOID_STARTUP_BLOCKERS = frozenset(
     {
         "real_runtime_evidence_missing_or_stale",
@@ -142,6 +133,8 @@ class SwitchBackend(Protocol):
 
     def stop_motion(self, current_product: ProductName | None) -> None: ...
 
+    def prepare_map(self, map_name: str) -> MapIdentity: ...
+
     def stage_map(self, map_name: str) -> MapActivationToken: ...
 
     def restore_map(self, token: MapActivationToken) -> None: ...
@@ -197,7 +190,7 @@ class SwitchBackend(Protocol):
         *,
         map_name: str,
         relocalize: bool,
-        initial_pose: tuple[float, float, float] | None,
+        initial_pose: InitialPose | None,
     ) -> None: ...
 
     def wait_navigation(
@@ -378,6 +371,14 @@ class FieldBackend:
             command.extend(("--timeout-ms", str(client_timeout_ms)))
             self._run(command, timeout=subprocess_timeout_s)
 
+    def prepare_map(self, map_name: str) -> MapIdentity:
+        """Read the saved identity before mapd exists; activation remains native."""
+        response = self._mapctl("prepare", map_name, timeout_s=10.0)
+        target = map_identity_from_native(response.get("target"), field_name="prepared map")
+        if target.map_id != map_name:
+            raise RuntimeError("native map preparation returned another map")
+        return target
+
     def stage_map(self, map_name: str) -> MapActivationToken:
         """Stage one exact active map through native typed DDS control."""
 
@@ -411,7 +412,21 @@ class FieldBackend:
         """Verify the exact staged identity before committing the Product."""
 
         _validate_map_activation_token(token)
-        response = self._mapctl("verify", token.activation_token, timeout_s=10.0)
+        deadline = self._monotonic() + 10.0
+        busy = f"native map verify rejected: artifact_gate_failed:map write in progress: {token.target.map_id}"
+        while True:
+            try:
+                response = self._mapctl(
+                    "verify", token.activation_token,
+                    timeout_s=max(0.001, deadline - self._monotonic()),
+                )
+                break
+            except RuntimeError as exc:
+                remaining = deadline - self._monotonic()
+                if str(exc) != busy or remaining <= 0.0:
+                    raise
+                # Map health queries also hold this lock; retry only contention.
+                self._sleep(min(0.2, remaining))
         active = map_identity_from_native(response.get("active"), field_name="verified active map")
         if active != token.target:
             raise RuntimeError("native active map identity changed before Product commit")
@@ -927,17 +942,13 @@ class FieldBackend:
         *,
         map_name: str,
         relocalize: bool,
-        initial_pose: tuple[float, float, float] | None,
+        initial_pose: InitialPose | None,
     ) -> None:
         """Complete localization handover for a saved-map Product."""
 
         if lifecycle.slam_mode != "localization":
             return
-        if relocalize:
-            self._relocalize(map_name, initial_pose=initial_pose)
-            return
-        if not self._localization_reusable(map_name):
-            self._relocalize(map_name, initial_pose=None)
+        self._relocalize(map_name, initial_pose=initial_pose if relocalize else None)
 
     def wait_navigation(
         self,
@@ -951,26 +962,68 @@ class FieldBackend:
         deadline = self._monotonic() + timeout_s
         nav: Mapping[str, Any] = {}
         session: Mapping[str, Any] = {}
+        native: Mapping[str, Any] = {}
         while self._monotonic() < deadline:
             nav = self._http("GET", "/api/v1/navigation/status", timeout_s=3.0)
             if map_name:
                 session = self._http("GET", "/api/v1/session", timeout_s=3.0)
-            readiness = nav.get("readiness") if isinstance(nav.get("readiness"), Mapping) else {}
+            task = nav.get("task") if isinstance(nav.get("task"), Mapping) else {}
+            admission = (
+                nav.get("goal_admission")
+                if isinstance(nav.get("goal_admission"), Mapping)
+                else {}
+            )
+            control = nav.get("control") if isinstance(nav.get("control"), Mapping) else {}
+            motion = nav.get("motion") if isinstance(nav.get("motion"), Mapping) else {}
+            navigation_state_known = (
+                task.get("state")
+                in {
+                    "IDLE",
+                    "PLANNING",
+                    "EXECUTING",
+                    "RECOVERING",
+                    "PAUSED",
+                    "SUCCESS",
+                    "FAILED",
+                    "CANCELLED",
+                }
+                and admission.get("state") in {"ACCEPTING", "BLOCKED"}
+                and control.get("authority") in {"AUTONOMY", "OPERATOR", "NONE"}
+                and motion.get("permission") in {"CLEAR", "HELD", "ESTOPPED"}
+                and motion.get("observation") in {"MOVING", "QUIET"}
+                and motion.get("stop_confirmation")
+                in {"NOT_REQUESTED", "PENDING", "CONFIRMED", "FAILED"}
+            )
             if control_mode == "autonomy":
-                ready = bool(readiness.get("can_accept_goal", nav.get("can_accept_goal", False)))
+                ready = navigation_state_known and admission.get("state") == "ACCEPTING"
             else:
+                readiness = self._http(
+                    "GET",
+                    "/api/v1/readiness",
+                    timeout_s=3.0,
+                )
+                runtime = readiness.get("runtime")
+                runtime = runtime if isinstance(runtime, Mapping) else {}
+                navigation = runtime.get("navigation")
+                navigation = navigation if isinstance(navigation, Mapping) else {}
                 native = (
-                    readiness.get("native_endpoint") if isinstance(readiness.get("native_endpoint"), Mapping) else {}
+                    navigation.get("native_endpoint")
+                    if isinstance(navigation.get("native_endpoint"), Mapping)
+                    else {}
                 )
                 aggregate_blockers = [
                     str(blocker)
-                    for blocker in (
-                        *(readiness.get("blockers") or []),
-                        *(native.get("blockers") or []),
-                    )
+                    for blocker in native.get("blockers") or []
                     if str(blocker)
                 ]
-                ready = bool(native.get("ok", False))
+                navigation_quiet = (
+                    navigation_state_known
+                    and motion.get("permission") != "ESTOPPED"
+                    and motion.get("observation") == "QUIET"
+                    and motion.get("stop_confirmation")
+                    in {"NOT_REQUESTED", "CONFIRMED"}
+                )
+                ready = navigation_quiet and bool(native.get("ok", False))
                 if control_mode == "teleop_avoid":
                     input_gate = (
                         native.get("input_gate")
@@ -983,7 +1036,8 @@ class FieldBackend:
                         else {}
                     )
                     ready = (
-                        native.get("status_available") is True
+                        navigation_quiet
+                        and native.get("status_available") is True
                         and input_gate.get("ready") is True
                         and loop_health.get("ready") is True
                         and loop_health.get("healthy") is True
@@ -1000,7 +1054,13 @@ class FieldBackend:
             if ready and (not map_name or active_map == map_name):
                 return
             self._sleep(0.25)
-        raise RuntimeError(f"navigation did not become ready: state={nav.get('state')} map={session.get('active_map')}")
+        raise RuntimeError(
+            "navigation did not become ready: "
+            f"state={task.get('state', 'UNKNOWN')} map={session.get('active_map')} "
+            f"native_status_available={native.get('status_available')} "
+            f"native_blockers={native.get('blockers') or []} "
+            f"control_loop={native.get('control_loop_health') or {}}"
+        )
 
     def wait_motion_output(self, control_mode: str, *, timeout_s: float) -> None:
         """Require one exact idle-zero acknowledgement through the selected driver.
@@ -1065,65 +1125,31 @@ class FieldBackend:
         nav_root = _text(self._environment.get("NAV_MAP_DIR"))
         return Path(nav_root) if nav_root else Path("/var/lib/lingtu/maps")
 
-    def _localization_reusable(self, map_name: str) -> bool:
-        status = self._http("GET", "/api/v1/localization/status", timeout_s=5.0)
-        transform = map_from_odom_transform_from_mapping(status.get("map_odom_tf"))
-        raw = status.get("raw") if isinstance(status.get("raw"), Mapping) else {}
-        reported_map = _text(status.get("active_map"))
-        state = str(status.get("state") or "").upper()
-        return (
-            (status.get("ready") is True or state in {"TRACKING", "READY"})
-            and (not reported_map or reported_map == map_name)
-            and status.get("map_loaded") is not False
-            and status.get("pose_fresh") is not False
-            and transform is not None
-            and _raw_map_tracking_healthy(raw)
-        )
-
     def _relocalize(
         self,
         map_name: str,
         *,
-        initial_pose: tuple[float, float, float] | None,
+        initial_pose: InitialPose | None,
     ) -> None:
-        attempts = _positive_int(
-            self._environment.get(
-                "LINGTU_RELOCALIZE_ATTEMPTS" if initial_pose is not None else "LINGTU_GLOBAL_RELOCALIZE_ATTEMPTS"
-            ),
-            12,
-        )
-        interval = _positive_float(
-            self._environment.get("LINGTU_RELOCALIZE_RETRY_INTERVAL"),
-            1.0,
-        )
-        response: Mapping[str, Any] = {}
-        for attempt in range(1, attempts + 1):
-            if initial_pose is None:
-                payload: dict[str, Any] = {
-                    "map_name": map_name,
-                    "mode": "global",
-                }
-            else:
-                x, y, yaw = initial_pose
-                payload = {
-                    "map_name": map_name,
-                    "mode": "seeded",
-                    "initial_pose": {"x": x, "y": y, "yaw": yaw},
-                }
-            response = self._http(
-                "POST",
-                "/api/v1/localization/relocalizations",
-                payload,
-                timeout_s=35.0,
+        # Host starts after mapd, which needs aligned observations. Bootstrap
+        # the existing native tracking loop directly instead of waiting for HTTP.
+        command = [
+            "/opt/lingtu/current/bin/slamctl", "track-against-map",
+            "--domain-id", str(self._environment.get("LINGTU_DDS_DOMAIN_ID", "0")),
+            "--timeout-s", "10",
+        ]
+        if initial_pose is not None:
+            command.extend(["--x", str(initial_pose[0]), "--y", str(initial_pose[1]),
+                            "--yaw", str(initial_pose[-1])])
+            if len(initial_pose) == 4:
+                command.extend(["--z", str(initial_pose[2])])
+        result = self._run(command, check=False, timeout=12.0)
+        response = json.loads(result.stdout or "{}")
+        if result.returncode != 0 or response.get("success") is not True:
+            raise RuntimeError(
+                f"saved-map tracking start failed for {map_name}: "
+                f"{response.get('message') or result.stderr or response}"
             )
-            if _response_ok(response):
-                return
-            message = str(response.get("message") or "")
-            retryable = any(reason in message for reason in _RELOCALIZE_RETRY_REASONS)
-            if not retryable or attempt == attempts:
-                break
-            self._sleep(interval)
-        raise RuntimeError(f"saved-map relocalization failed: {response.get('message') or response}")
 
     def _http(
         self,
@@ -1144,7 +1170,7 @@ class FieldBackend:
         if payload is not None:
             data = json.dumps(payload, allow_nan=False, separators=(",", ":")).encode("utf-8")
             request_headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(  # noqa: S310 - Base URL is validated in __init__.
+        request = urllib.request.Request(
             f"{self._gateway_url}{path}",
             data=data,
             headers=request_headers,
@@ -1152,7 +1178,7 @@ class FieldBackend:
         )
         status_code: int | None = None
         try:
-            with urllib.request.urlopen(  # noqa: S310 - Request uses the validated base URL.
+            with urllib.request.urlopen(
                 request,
                 timeout=timeout_s,
             ) as response:
@@ -1725,14 +1751,6 @@ def _status_bool(value: Any) -> bool | None:
 
 def _env_bool(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _positive_int(value: Any, default: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default
 
 
 def _positive_float(value: Any, default: float) -> float:

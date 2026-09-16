@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-
 from sim.scripts.mujoco import native_recording_acceptance as acceptance
 
 

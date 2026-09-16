@@ -24,22 +24,27 @@ const recordingApiSource = readFileSync(
   'utf8',
 )
 
-test('recording is opened from the Scene workspace, not a primary navigation tab', () => {
+test('recording is discoverable in scene tools and unavailable in observation mode', () => {
   assert.match(sceneViewSource, /<CircleDot size=\{12\} \/>/)
   assert.match(sceneViewSource, /recordingPanelOpen \? '收起录制' : '录制'/)
-  assert.match(sceneViewSource, /<FloatingWidget[\s\S]*id="scene-recording"/)
+  assert.match(sceneViewSource, /<div id="scene-recording">/)
+  assert.doesNotMatch(sceneViewSource, /<FloatingWidget/)
   assert.match(sceneViewSource, /<RecordingPanel[\s\S]*embedded/)
+  assert.match(sceneViewSource, /!observe && <div[\s\S]*id="scene-panel-tools"[\s\S]*recordingPanelOpen/)
+  assert.doesNotMatch(sceneViewSource, /sceneDebugTools && !observe && recordingPanelOpen/)
+  assert.match(sceneViewSource, /className=\{styles\.toolGroup\}[\s\S]*数据记录/)
   assert.doesNotMatch(appSource, /RecordingPanel/)
   assert.doesNotMatch(topbarSource, /key: 'recording'/)
 })
 
-test('Scene owns one lightweight status poll even while the recording panel is closed', () => {
+test('Scene owns one lightweight recording poll in the operating workspace', () => {
   const statusFetches = [sceneViewSource, recordingPanelSource]
     .flatMap(source => source.match(/api\.fetchRecordingStatus\(\)/g) ?? [])
 
   assert.equal(statusFetches.length, 1)
   assert.ok(RECORDING_STATUS_POLL_MS >= 2000)
   assert.match(sceneViewSource, /RECORDING_STATUS_POLL_MS/)
+  assert.match(sceneViewSource, /if \(observe\) return\s+void refreshRecordingStatus\(\)/)
   assert.match(sceneViewSource, /window\.setInterval\([\s\S]*?refreshRecordingStatus\(\)/)
   assert.match(sceneViewSource, /status=\{recordingStatus\}/)
   assert.doesNotMatch(recordingPanelSource, /fetchRecordingStatus/)

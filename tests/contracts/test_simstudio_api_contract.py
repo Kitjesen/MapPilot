@@ -1,4 +1,3 @@
-# ruff: noqa: D103,S101
 """Adversarial contract tests for the isolated SimStudio HTTP API.
 
 These tests deliberately describe the G006 surface before all of its

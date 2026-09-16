@@ -17,9 +17,9 @@ export function useTheme() {
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('lingtu-theme')
-      return isTheme(stored) ? stored : 'system'
+      return isTheme(stored) ? stored : 'light'
     }
-    return 'system'
+    return 'light'
   })
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveTheme(theme))
 

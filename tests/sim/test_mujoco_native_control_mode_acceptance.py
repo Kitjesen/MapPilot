@@ -5,11 +5,10 @@ import json
 from pathlib import Path
 
 import pytest
-
 from sim.scripts.mujoco import native_control_mode_acceptance as acceptance
 
 ROOT = Path(__file__).resolve().parents[2]
-MANIFEST = ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_native_control_mode_acceptance.json"
+MANIFEST = ROOT / "config" / "acceptance" / "mujoco" / "control_modes.json"
 
 
 def _endpoint_observations(control_mode: str, nonzero_samples: int) -> dict:
@@ -93,7 +92,7 @@ def test_each_control_mode_has_an_exclusive_product_execution_plan() -> None:
     assert "rt/nav/traversability" in teleop_avoid["required_inputs"]
     assert teleop_avoid["runner"]["kind"] == "teleop_avoid_native_acceptance"
     assert any(
-        str(value).endswith("mujoco_teleop_avoid_native_acceptance.json")
+        str(value).endswith("config/acceptance/mujoco/teleop_avoid.json")
         for value in teleop_avoid["runner"]["arguments"]
     )
 
@@ -565,7 +564,7 @@ def test_autonomy_adapter_recomputes_proofs_from_harness_report(
                 "python",
                 str(script_path),
                     "--manifest",
-                    "config/runtime_graph/acceptance/mujoco_native_navigation_acceptance.json",
+                    "config/acceptance/mujoco/navigation.json",
                 "--mode",
                 "motion",
                 "--out-dir",

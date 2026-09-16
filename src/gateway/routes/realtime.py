@@ -1,16 +1,25 @@
-"""WebSocket route registration for GatewayModule."""
+"""SSE and WebSocket routes for GatewayModule."""
 
 import asyncio
 import json
 import logging
 import math
 import time
+from collections.abc import Mapping
+from typing import Annotated, Any
 
+from fastapi import Query
+from fastapi.responses import StreamingResponse
 from starlette.websockets import WebSocket as StarletteWebSocket
 from starlette.websockets import WebSocketDisconnect as StarletteWebSocketDisconnect
 
+from gateway.schemas import SSEEventEnvelope
+from gateway.services.runtime_dataflow import build_runtime_dataflow_topic_detail
 from gateway.services.safety_status import safety_stop_active
+from gateway.services.sse import subscribe_with_event_id, unsubscribe
+from gateway.services.state_snapshot import build_state_snapshot
 from gateway.services.teleop import NativeTeleopSession, TeleopSessionResult
+from gateway.services.traffic import SSE_RETRY_MS, format_sse_message, normalize_sse_event, prepare_sse_delivery
 
 logger = logging.getLogger(__name__)
 
@@ -369,3 +378,112 @@ def register_realtime_routes(app, gw) -> None:
     add_ws("/ws/camera", ws_camera_endpoint)
     add_ws("/ws/cloud", ws_cloud_endpoint)
     add_ws("/ws/scan", ws_scan_endpoint)
+
+    @app.get(
+        "/api/v1/events",
+        summary="SSE event stream",
+        response_class=StreamingResponse,
+        responses={200: {"content": {"text/event-stream": {"schema": SSEEventEnvelope.model_json_schema()}}}},
+    )
+    async def sse_events(
+        topic: Annotated[
+            str | None,
+            Query(
+                description=(
+                    "Optional runtime dataflow topic or alias. When set, the "
+                    "SSE stream emits only Gateway events backing that stream."
+                )
+            ),
+        ] = None,
+        include_elevation: Annotated[
+            bool,
+            Query(
+                description=(
+                    "Opt in to the large /maps/elevation grid payload. "
+                    "The default stream sends elevation metadata only."
+                )
+            ),
+        ] = False,
+    ):
+        topic_filter = topic.strip() if isinstance(topic, str) else ""
+        selected_event_types: set[str] | None = None
+        subscription_payload: dict[str, Any] | None = None
+        if topic_filter:
+            detail = build_runtime_dataflow_topic_detail(gw, topic_filter)
+            inspection = detail.get("inspection") if isinstance(detail.get("inspection"), Mapping) else {}
+            stream_interfaces = [
+                dict(item) for item in (inspection.get("stream_interfaces") or []) if isinstance(item, Mapping)
+            ]
+            selected_event_types = {str(item.get("event_type")) for item in stream_interfaces if item.get("event_type")}
+            subscription_payload = {
+                "ok": bool(detail.get("ok")) and bool(selected_event_types),
+                "selector": topic_filter,
+                "topic": (
+                    (detail.get("topic") or {}).get("topic") if isinstance(detail.get("topic"), Mapping) else None
+                ),
+                "event_types": sorted(selected_event_types),
+                "stream_interfaces": stream_interfaces,
+                "blockers": [] if selected_event_types else ["no_gateway_sse_stream"],
+            }
+
+        # /maps/elevation is an explicit capability request.  A general map
+        # scene subscription remains metadata-only unless include_elevation=1
+        # is supplied by the client.
+        elevation_payload = bool(
+            include_elevation or topic_filter.rstrip("/") == "/maps/elevation"
+        )
+        q, snapshot_event_id = subscribe_with_event_id(
+            gw,
+            event_types=selected_event_types,
+            include_elevation_payload=elevation_payload,
+        )
+
+        async def _stream():
+            try:
+                if subscription_payload is not None:
+                    yield format_sse_message(
+                        normalize_sse_event(
+                            {
+                                "type": "runtime_dataflow_subscription",
+                                "data": subscription_payload,
+                            },
+                            event_id=snapshot_event_id,
+                        ),
+                        retry_ms=SSE_RETRY_MS,
+                    )
+                else:
+                    snapshot = {
+                        "type": "snapshot",
+                        "data": build_state_snapshot(gw),
+                    }
+                    yield format_sse_message(
+                        normalize_sse_event(snapshot, event_id=snapshot_event_id),
+                        retry_ms=SSE_RETRY_MS,
+                    )
+
+                while True:
+                    try:
+                        event = await asyncio.wait_for(q.get(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        yield format_sse_message(
+                            normalize_sse_event(
+                                {"type": "ping"},
+                                now=time.time(),
+                            )
+                        )
+                        continue
+                    if selected_event_types is not None and event.get("type") not in selected_event_types:
+                        continue
+                    event = prepare_sse_delivery(event)
+                    if event is None:
+                        continue
+                    yield format_sse_message(event)
+                    await asyncio.sleep(0)
+            finally:
+                unsubscribe(gw, q)
+
+        return StreamingResponse(
+            _stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )

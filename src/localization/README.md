@@ -4,7 +4,7 @@
 
 The current Product dataflow, control commands, complete DDS topic inventory,
 relocalization/loop-closure status, and SaveMap boundary are documented in
-[`docs/architecture/LOCALIZATION_RUNTIME.md`](../../docs/architecture/LOCALIZATION_RUNTIME.md).
+[`docs/runtime.md`](../../docs/runtime.md).
 
 ## Responsibilities
 
@@ -87,7 +87,7 @@ class/confidence weighting and mixed point-to-plane residuals remain a measured
 algorithm upgrade, not a claimed property of this baseline.
 
 The adoption decision and product gates are documented in
-`docs/research/socc_icp_adoption.md`.
+`docs/roadmap.md`.
 
 ## Loop and PGO Status
 

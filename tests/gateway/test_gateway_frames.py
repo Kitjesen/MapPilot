@@ -6,9 +6,10 @@ pytest.importorskip("fastapi")
 
 from gateway.gateway_module import GatewayModule
 from gateway.routes.diagnostics import _frame_contract_snapshot
+from message.topics import TOPICS
 from runtime.msgs.geometry import Pose, Quaternion, Vector3
 from runtime.msgs.nav import Odometry
-from runtime.runtime_interface import TOPICS, topic_default_frame_id
+from runtime.tf.frames import topic_default_frame_id
 
 
 def test_gateway_map_odom_tf_updates_frame_tree() -> None:
@@ -141,3 +142,14 @@ def test_gateway_odometry_updates_frame_tree_for_diagnostics() -> None:
 
     assert transform.translation.x == pytest.approx(1.0)
     assert transform.translation.y == pytest.approx(2.0)
+
+
+def test_odometry_event_preserves_measured_body_orientation() -> None:
+    gateway = GatewayModule()
+    events = []
+    gateway.push_event = events.append
+    orientation = Quaternion(x=0.1, y=0.2, z=0.3, w=0.9).normalize()
+    gateway._on_odometry(Odometry(pose=Pose(orientation=orientation), ts=125.0, frame_id="map"))
+    event = next(event for event in events if event["type"] == "odometry")
+    assert event["data"]["orientation"] == pytest.approx(
+        [orientation.x, orientation.y, orientation.z, orientation.w])

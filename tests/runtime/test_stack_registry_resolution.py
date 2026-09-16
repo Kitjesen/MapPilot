@@ -387,7 +387,7 @@ def test_perception_stack_defaults_external_camera_to_canonical_backend():
 @pytest.mark.parametrize(
     "config",
     [
-        {"_driver_cls_name": "ROS2SimDriverModule", "use_driver_camera": True},
+        {"_driver_cls_name": "MujocoDriverModule", "use_driver_camera": True},
     ],
 )
 def test_perception_stack_skips_camera_resolution_for_driver_camera(
@@ -479,7 +479,7 @@ def test_perception_stack_resolves_camera_for_external_camera(monkeypatch):
 
         bp = perception_stack.perception(
             detector="bpu",
-            _driver_cls_name="ROS2SimDriverModule",
+            camera_backend="orbbec",
             use_driver_camera=False,
         )
 

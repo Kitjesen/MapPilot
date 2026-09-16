@@ -1,4 +1,3 @@
-# ruff: noqa: S106
 
 from __future__ import annotations
 
@@ -22,6 +21,7 @@ from lingtu.run_plan import RunPlan
 from lingtu.switch_contracts import (
     MapArtifactIdentity,
     MapIdentity,
+    ProcessFailed,
     ProcessReport,
     SwitchFailed,
     SwitchRequest,
@@ -176,9 +176,9 @@ class FakeRunner:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def apply(self, plan: RunPlan, *, dry_run: bool = False) -> ProcessReport:
+    def apply(self, plan: RunPlan, *, dry_run: bool = False, on_process_ready=None) -> ProcessReport:
         self.calls.append("apply")
-        return ProcessReport(
+        report = ProcessReport(
             product=plan.product,
             env=plan.env,
             action="apply",
@@ -186,9 +186,20 @@ class FakeRunner:
             status="active",
             dry_run=dry_run,
         )
+        if on_process_ready is not None and not dry_run:
+            try:
+                for process in sorted(plan.processes, key=lambda item: (item.order, item.name)):
+                    on_process_ready(process)
+            except Exception as exc:
+                from lingtu.switch_contracts import ProcessFailed
+                report.ok = False
+                report.status = "failed"
+                report.error = str(exc)
+                raise ProcessFailed(report) from exc
+        return report
 
-    def apply_deferred(self, plan: RunPlan, *, dry_run: bool = False) -> ProcessReport:
-        return self.apply(plan, dry_run=dry_run)
+    def apply_deferred(self, plan: RunPlan, *, dry_run: bool = False, on_process_ready=None) -> ProcessReport:
+        return self.apply(plan, dry_run=dry_run, on_process_ready=on_process_ready)
 
     def transition(
         self,
@@ -197,9 +208,10 @@ class FakeRunner:
         *,
         dry_run: bool = False,
         defer_rollback: bool = False,
+        on_process_ready=None,
     ) -> ProcessReport:
         assert defer_rollback is True
-        return self.apply(plan, dry_run=dry_run)
+        return self.apply(plan, dry_run=dry_run, on_process_ready=on_process_ready)
 
     def ensure_transition_process_active(self, plan, transition, process_name):
         return transition
@@ -208,8 +220,11 @@ class FakeRunner:
         self.calls.append("stop_target")
         return transition
 
-    def restore_transition_previous(self, previous, transition):
+    def restore_transition_previous(self, previous, transition, *, on_process_ready=None):
         self.calls.append("restore_previous")
+        if on_process_ready is not None:
+            for process in previous.processes:
+                on_process_ready(process)
         return transition
 
     def quiesce(self, plan: RunPlan, *, dry_run: bool = False) -> ProcessReport:
@@ -245,6 +260,10 @@ class FakeBackend:
 
     def stop_motion(self, current_product=None) -> None:
         self._event("stop_motion")
+
+    def prepare_map(self, map_name: str):
+        self._event("prepare_map")
+        return _map_identity(map_name, 7)
 
     def stage_map(self, map_name: str) -> MapActivationToken:
         self._event("stage_map")
@@ -467,13 +486,14 @@ def test_cold_switch_commits_map_and_current_product_identity(tmp_path) -> None:
     assert backend.recording_idle_calls == 0
     assert backend.events == [
         "stop_motion",
-        "stage_map",
+        "prepare_map",
         "stage_session",
         "clear_runtime_status",
-        "wait_native_nav",
         "wait_slam",
         "prepare_localization",
         "wait_slam_localized",
+        "stage_map",
+        "wait_native_nav",
         "wait_navigation",
         "commit_map",
     ]
@@ -598,118 +618,57 @@ def test_http_returns_explicitly_allowed_error_status(monkeypatch) -> None:
     assert response == {"detail": "maps.service is unavailable", "_http_status": 503}
 
 
-def test_localization_reuse_requires_healthy_saved_map_tracking(monkeypatch) -> None:
-    backend = FieldBackend(environment={})
-    status = {
-        "state": "ready",
-        "ready": True,
-        "active_map": "plant-a",
-        "map_loaded": True,
-        "pose_fresh": True,
-        "map_odom_tf": {
-            "valid": True,
-            "frame_id": "map",
-            "child_frame_id": "odom",
-            "tx": 0.0,
-            "ty": 0.0,
-            "tz": 0.0,
-            "qx": 0.0,
-            "qy": 0.0,
-            "qz": 0.0,
-            "qw": 1.0,
-            "ts": 1.0,
-        },
-        "raw": {},
-    }
-    monkeypatch.setattr(backend, "_http", lambda *_args, **_kwargs: status)
-
-    assert backend._localization_reusable("plant-a") is False
-
-    status["raw"] = {
-        "track_against_map": {
-            "enabled": True,
-            "successes": 1,
-            "degraded": False,
-        }
-    }
-    assert backend._localization_reusable("plant-a") is True
-
-
-def test_prepare_localization_relocalizes_when_saved_map_tracking_is_not_reusable(monkeypatch) -> None:
-    backend = FieldBackend(environment={})
-    status = {
-        "state": "ready",
-        "ready": True,
-        "active_map": "plant-a",
-        "map_loaded": True,
-        "pose_fresh": True,
-        "map_odom_tf": {
-            "valid": True,
-            "frame_id": "map",
-            "child_frame_id": "odom",
-            "tx": 0.0,
-            "ty": 0.0,
-            "tz": 0.0,
-            "qx": 0.0,
-            "qy": 0.0,
-            "qz": 0.0,
-            "qw": 1.0,
-            "ts": 1.0,
-        },
-        "raw": {"track_against_map": {"enabled": True, "successes": 0, "degraded": False}},
-    }
-
-    def http(method, path, *_args, **_kwargs):
-        assert (method, path) == ("GET", "/api/v1/localization/status")
-        return status
-
-    relocalizations = []
-    monkeypatch.setattr(backend, "_http", http)
-    monkeypatch.setattr(
-        backend,
-        "_relocalize",
-        lambda map_name, *, initial_pose: relocalizations.append((map_name, initial_pose)),
-    )
-
-    backend.prepare_localization(
-        SimpleNamespace(session_mode="navigating", product="nav", slam_mode="localization"),
-        map_name="plant-a",
-        relocalize=False,
-        initial_pose=None,
-    )
-
-    assert relocalizations == [("plant-a", None)]
-
-
-def test_teleop_avoid_startup_accepts_safe_native_hold_before_commit(monkeypatch) -> None:
-    backend = FieldBackend(environment={})
+@pytest.mark.parametrize("healthy", [True, False])
+def test_teleop_avoid_startup_checks_evaluated_readiness_before_commit(monkeypatch, healthy) -> None:
+    clock = iter((0.0, 0.0, 2.0))
+    backend = FieldBackend(environment={}, monotonic=lambda: next(clock), sleep=lambda _seconds: None)
     calls: list[str] = []
     navigation = {
-        "readiness": {
-            "blockers": ["real_runtime_evidence_missing_or_stale"],
-            "native_endpoint": {
-                "ok": False,
-                "status_available": True,
-                "blockers": ["native_resume_required"],
-                "input_gate": {"ready": True},
-                "control_loop_health": {"ready": True, "healthy": True},
-            },
-        }
+        "task": {"state": "IDLE", "task_id": "", "reason": ""},
+        "goal_admission": {"state": "BLOCKED"},
+        "control": {"authority": "NONE", "resume_required": True, "reason": ""},
+        "motion": {
+            "permission": "HELD",
+            "observation": "QUIET",
+            "stop_confirmation": "CONFIRMED",
+            "reason": "",
+        },
     }
+    readiness = {
+        "runtime": {
+            "navigation": {
+                "native_endpoint": {
+                    "ok": False,
+                    "status_available": True,
+                    "blockers": ["native_resume_required"],
+                    "input_gate": {"ready": True},
+                    "control_loop_health": {
+                        "ready": True,
+                        "healthy": healthy,
+                        "reason": "ready" if healthy else "deadline_miss_ratio_high",
+                    },
+                },
+            },
+        },
+    }
+
     def http(_method, path, *, timeout_s):
         assert timeout_s == 3.0
         calls.append(path)
-        return navigation
+        return readiness if path == "/api/v1/readiness" else navigation
 
     monkeypatch.setattr(backend, "_http", http)
 
-    backend.wait_navigation(
-        map_name="",
-        control_mode="teleop_avoid",
-        timeout_s=1.0,
-    )
+    if healthy:
+        backend.wait_navigation(map_name="", control_mode="teleop_avoid", timeout_s=1.0)
+    else:
+        with pytest.raises(RuntimeError, match=r"control_loop=.*deadline_miss_ratio_high"):
+            backend.wait_navigation(map_name="", control_mode="teleop_avoid", timeout_s=1.0)
 
-    assert calls == ["/api/v1/navigation/status"]
+    assert calls == [
+        "/api/v1/navigation/status",
+        "/api/v1/readiness",
+    ]
 
 
 def test_saved_map_navigation_startup_still_checks_active_map(monkeypatch) -> None:
@@ -720,7 +679,17 @@ def test_saved_map_navigation_startup_still_checks_active_map(monkeypatch) -> No
         assert timeout_s == 3.0
         calls.append(path)
         if path == "/api/v1/navigation/status":
-            return {"readiness": {"can_accept_goal": True}}
+            return {
+                "task": {"state": "IDLE", "task_id": "", "reason": ""},
+                "goal_admission": {"state": "ACCEPTING"},
+                "control": {"authority": "NONE", "resume_required": False, "reason": ""},
+                "motion": {
+                    "permission": "CLEAR",
+                    "observation": "QUIET",
+                    "stop_confirmation": "NOT_REQUESTED",
+                    "reason": "",
+                },
+            }
         return {"active_map": "plant-a"}
 
     monkeypatch.setattr(backend, "_http", http)
@@ -732,6 +701,50 @@ def test_saved_map_navigation_startup_still_checks_active_map(monkeypatch) -> No
     )
 
     assert calls == ["/api/v1/navigation/status", "/api/v1/session"]
+
+
+def test_navigation_startup_fails_closed_when_navigation_state_is_unknown(monkeypatch) -> None:
+    clock = iter((0.0, 0.0, 2.0))
+    backend = FieldBackend(
+        environment={},
+        monotonic=lambda: next(clock),
+        sleep=lambda _seconds: None,
+    )
+
+    def http(_method, path, *, timeout_s):
+        assert timeout_s == 3.0
+        if path == "/api/v1/readiness":
+            return {
+                "runtime": {
+                    "navigation": {
+                        "native_endpoint": {
+                            "ok": True,
+                            "status_available": True,
+                            "blockers": [],
+                        },
+                    },
+                },
+            }
+        return {
+            "task": {"state": "UNKNOWN", "task_id": "", "reason": "status stale"},
+            "goal_admission": {"state": "UNKNOWN"},
+            "control": {"authority": "UNKNOWN", "resume_required": False, "reason": ""},
+            "motion": {
+                "permission": "UNKNOWN",
+                "observation": "UNKNOWN",
+                "stop_confirmation": "UNKNOWN",
+                "reason": "",
+            },
+        }
+
+    monkeypatch.setattr(backend, "_http", http)
+
+    with pytest.raises(RuntimeError, match="state=UNKNOWN"):
+        backend.wait_navigation(
+            map_name="",
+            control_mode="teleop",
+            timeout_s=1.0,
+        )
 
 
 def test_motion_stop_confirmation_blocks_process_mutation(tmp_path) -> None:
@@ -755,11 +768,9 @@ def test_failed_switch_restores_map_quiesces_processes_and_removes_session(tmp_p
 
     assert failure.value.report.status == "failed_stopped"
     assert runner.calls == ["apply", "quiesce"]
-    assert backend.events[-3:] == [
-        "stop_motion",
-        "restore_map",
-        "rollback_session",
-    ]
+    assert backend.events[-2:] == ["stop_motion", "rollback_session"]
+    assert "stage_map" not in backend.events
+    assert "restore_map" not in backend.events
     assert not (tmp_path / "current.json").exists()
 
 
@@ -788,6 +799,93 @@ def test_failed_switch_restores_previous_run_and_keeps_committed_record(tmp_path
     assert "previous_session:active" in failure.value.report.cleanup
     assert backend.map_save_idle_calls == 1
     assert backend.recording_idle_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("nav_evidence", "nav_active", "stop_fails", "restores_previous"),
+    [
+        ("stopped", False, False, True),
+        ("not_stopped", False, False, False),
+        ("start_attempted", False, False, False),
+        ("preserved", False, False, False),
+        ("stopped", True, False, True),
+        ("stopped", True, True, False),
+    ],
+)
+def test_localization_failure_rolls_back_only_with_navigation_stop_evidence(
+    tmp_path, monkeypatch, nav_evidence, nav_active, stop_fails, restores_previous,
+) -> None:
+    runner = FakeRunner()
+    control = _control(runner)
+    control._switch(
+        SwitchRequest(target_product="map", variant="camera"),
+        backend=FakeBackend(),
+        state_dir=tmp_path,
+    )
+    current_path = tmp_path / "current.json"
+    committed = current_path.read_bytes()
+    backend = FakeBackend(fail_at="wait_slam_localized")
+    active = {"nav": True}
+    stop_commands = []
+
+    def run_stop(command, **_kwargs):
+        stop_commands.append(command)
+        if stop_fails and len(stop_commands) > 1:
+            raise RuntimeError("native navigation stop rejected")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    field_backend = FieldBackend(environment={}, runner=run_stop)
+    monkeypatch.setattr(field_backend, "_unit_active", lambda _unit: active["nav"])
+    monkeypatch.setattr(backend, "stop_motion", field_backend.stop_motion)
+    monkeypatch.setattr(backend, "remove_session", lambda _plan: None, raising=False)
+
+    def fail_localization(previous, plan, *, on_process_ready, **_kwargs):
+        runner.calls.append("apply")
+        transition = ProcessReport(
+            product=plan.product,
+            env=plan.env,
+            action="transition",
+            status="failed",
+            started=[plan.process("slam").target],
+        )
+        if nav_evidence != "not_stopped":
+            transition.stopped.append(previous.process("nav").target)
+        if nav_evidence == "start_attempted":
+            transition.started.append(plan.process("nav").target)
+        if nav_evidence == "preserved":
+            transition.preserved.append(plan.process("nav").target)
+        active["nav"] = nav_active
+        try:
+            on_process_ready(plan.process("slam"))
+        except Exception as exc:
+            transition.error = str(exc)
+            raise ProcessFailed(transition) from exc
+        pytest.fail("localization readiness failure was not reached")
+
+    monkeypatch.setattr(runner, "transition", fail_localization)
+    with pytest.raises(SwitchFailed, match="failed at wait_slam_localized") as failure:
+        control._switch(
+            SwitchRequest(target_product="nav", variant="camera", map_name="plant-a"),
+            backend=backend,
+            state_dir=tmp_path,
+        )
+
+    # Even an unexpected live endpoint must receive the real native stop.
+    assert len(stop_commands) == (2 if nav_active else 1)
+    assert all(command[1:3] == ["stop", "product_mode_switch"] for command in stop_commands)
+    assert "stage_map" not in backend.events
+    if restores_previous:
+        assert failure.value.report.status == "failed_rolled_back"
+        assert current_path.read_bytes() == committed
+        assert runner.calls[-2:] == ["stop_target", "restore_previous"]
+        assert "previous_session:active" in failure.value.report.cleanup
+        assert not any(item.startswith("motion_session_failed:") for item in failure.value.report.cleanup)
+    else:
+        assert failure.value.report.status == "rollback_failed"
+        assert not current_path.exists()
+        assert "restore_previous" not in runner.calls
+        assert runner.calls[-2:] == ["quiesce", "quiesce"]
+        assert any(item.startswith("motion_session_failed:") for item in failure.value.report.cleanup)
 
 
 def test_stage_map_hands_native_identity_to_product_control(tmp_path) -> None:
@@ -826,44 +924,63 @@ def test_stage_map_hands_native_identity_to_product_control(tmp_path) -> None:
     assert calls[0][0:3] == ["/release/lingtu-mapctl", "stage", "plant-a"]
 
 
-@pytest.mark.parametrize(
-    ("initial_pose", "expected_payload"),
-    [
-        (None, {"map_name": "plant-a", "mode": "global"}),
-        (
-            (1.0, 2.0, 0.3),
-            {
-                "map_name": "plant-a",
-                "mode": "seeded",
-                "initial_pose": {"x": 1.0, "y": 2.0, "yaw": 0.3},
-            },
-        ),
-    ],
-)
-def test_relocalize_uses_localization_domain_api(
-    monkeypatch,
-    initial_pose,
-    expected_payload,
-) -> None:
-    calls: list[tuple[str, str, object, float]] = []
-    backend = FieldBackend(environment={})
+@pytest.mark.parametrize("failure", ["busy_once", "busy_forever", "invalid_artifact"])
+def test_map_commit_waits_for_read_lock_without_accepting_invalid_artifacts(failure):
+    clock = [0.0]
+    calls = []
 
-    def http(method, path, payload, *, timeout_s):
-        calls.append((method, path, payload, timeout_s))
-        return {"ok": True, "success": True}
+    def sleep(seconds):
+        clock[0] += seconds
 
-    monkeypatch.setattr(backend, "_http", http)
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        accepted = failure == "busy_once" and len(calls) > 1
+        message = ("artifact_gate_failed:map write in progress: plant-a"
+                   if failure != "invalid_artifact" else "artifact_gate_failed:missing octomap")
+        return SimpleNamespace(returncode=0 if accepted else 1, stderr="", stdout=json.dumps({
+            "schema_version": "lingtu.map_activation.v2", "operation": "verify",
+            "accepted": accepted, "message": message, "active": _map_payload("plant-a", 7),
+        }))
 
-    backend._relocalize("plant-a", initial_pose=initial_pose)
+    backend = FieldBackend(environment={}, runner=run, sleep=sleep, monotonic=lambda: clock[0])
+    token = MapActivationToken(target=_map_identity("plant-a", 7), previous=None,
+                               changed=True, activation_token="activation-token")
+    if failure == "busy_once":
+        backend.commit_map(token)
+        assert len(calls) == 2
+        assert clock[0] == 0.2
+    else:
+        with pytest.raises(RuntimeError, match="artifact_gate_failed"):
+            backend.commit_map(token)
+        assert clock[0] <= 10.0
+        if failure == "invalid_artifact":
+            assert len(calls) == 1
 
-    assert calls == [
-        (
-            "POST",
-            "/api/v1/localization/relocalizations",
-            expected_payload,
-            35.0,
-        )
-    ]
+
+@pytest.mark.parametrize("initial_pose", [None, (1.0, 2.0, 0.3), (1.0, 2.0, 0.45, 0.3)])
+@pytest.mark.parametrize("accepted", [True, False])
+def test_startup_localization_uses_native_dds_before_host(initial_pose, accepted):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=0 if accepted else 1,
+                               stdout=json.dumps({"success": accepted, "message": "rejected"}), stderr="")
+
+    backend = FieldBackend(environment={"LINGTU_DDS_DOMAIN_ID": "17"}, runner=run)
+    lifecycle = SimpleNamespace(slam_mode="localization")
+    if accepted:
+        backend.prepare_localization(lifecycle, map_name="plant-a", relocalize=True, initial_pose=initial_pose)
+    else:
+        with pytest.raises(RuntimeError, match="tracking start failed"):
+            backend.prepare_localization(lifecycle, map_name="plant-a", relocalize=True, initial_pose=initial_pose)
+    expected = ["/opt/lingtu/current/bin/slamctl", "track-against-map", "--domain-id", "17", "--timeout-s", "10"]
+    if initial_pose is not None:
+        expected += ["--x", "1.0", "--y", "2.0", "--yaw", "0.3"]
+        if len(initial_pose) == 4:
+            expected += ["--z", "0.45"]
+    assert calls[0][0] == expected
+    assert calls[0][1]["timeout"] == 12.0
 
 
 def test_field_map_root_ignores_legacy_map_dir(tmp_path: Path) -> None:

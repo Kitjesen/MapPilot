@@ -25,7 +25,7 @@ POLICY = (
     / "thunder_v4"
     / "locomotion"
     / "policy"
-    / "policy_1119.onnx"
+    / "policy_4998.onnx"
 )
 FORWARD_COMMAND_X_MPS = 0.6
 POLICY_STARTUP_STAND_HOLD_S = 0.5
@@ -181,12 +181,8 @@ def run_qualification(
         walk_signed_displacement = float(walk_end.position[0] - walk_start.position[0])
         walk_lateral_displacement = float(walk_end.position[1] - walk_start.position[1])
         walk_duration_s = float(walk_steps * engine.control_dt)
+        # The walk interval begins after warmup; use its full commanded duration.
         phase_average_forward_speed_mps = walk_signed_displacement / walk_duration_s
-        active_walk_duration_s = max(
-            walk_duration_s - POLICY_STARTUP_STAND_HOLD_S,
-            engine.control_dt,
-        )
-        active_average_forward_speed_mps = walk_signed_displacement / active_walk_duration_s
         motion_states = warmup_states + walk_states + release_states
         motion_positions = np.asarray([state.position for state in motion_states], dtype=np.float64)
         motion_attitudes = np.asarray(
@@ -222,7 +218,6 @@ def run_qualification(
             "walk": {
                 "steps": int(walk_steps),
                 "duration_s": walk_duration_s,
-                "active_duration_s": active_walk_duration_s,
                 "command": {
                     "linear_x": float(forward_x_mps),
                     "linear_y": 0.0,
@@ -236,7 +231,6 @@ def run_qualification(
                     math.atan2(walk_lateral_displacement, walk_signed_displacement)
                 ),
                 "phase_average_forward_speed_mps": phase_average_forward_speed_mps,
-                "active_average_forward_speed_mps": active_average_forward_speed_mps,
                 "horizontal_displacement_m": float(np.linalg.norm(walk_end.position[:2] - walk_start.position[:2])),
                 "all_state_values_finite": all(_state_is_finite(state) for state in walk_states),
             },
@@ -269,7 +263,7 @@ def run_qualification(
                 ),
                 "continuous_forward_walk": bool(
                     walk_signed_displacement >= MIN_FORWARD_DISPLACEMENT_M
-                    and active_average_forward_speed_mps >= MIN_AVERAGE_FORWARD_SPEED_MPS
+                    and phase_average_forward_speed_mps >= MIN_AVERAGE_FORWARD_SPEED_MPS
                 ),
                 "base_height_and_attitude": bool(
                     float(np.min(motion_positions[:, 2])) >= MIN_BASE_HEIGHT_M

@@ -3,6 +3,7 @@
 
 #include <Eigen/Eigen>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "planning/local/scan/upstream/bspline_opt/uniform_bspline.h"
@@ -25,6 +26,18 @@ struct BsplineOptimizerParams {
   double max_vel{-1.0};
   double max_acc{-1.0};
   int order{3};
+};
+
+struct OptimizationDebug {
+  std::string reason{"not_run"};
+  bool optimizerReturnCodeValid{false};
+  int optimizerReturnCode{0};
+  bool collisionValid{false};
+  // Rejected segment start, or the control point for an early solver abort.
+  // GridMap returns occupancy only, not the obstacle voxel that was hit.
+  Eigen::Vector3d collisionPosition{Eigen::Vector3d::Zero()};
+  double collisionTimeS{-1.0};  // -1 means a control point without trajectory time.
+  int collisionState{0};
 };
 
 class ControlPoints {
@@ -92,10 +105,16 @@ class BsplineOptimizer {
                                   double ts);  // must be called after initControlPoints()
   bool BsplineOptimizeTrajRefine(const Eigen::MatrixXd &init_points, const double ts,
                                  Eigen::MatrixXd &optimal_points);
+  // Use the existing refined-trajectory segment/yaw checks over the closest 2/3.
+  bool checkTrajectoryCollisionFree(const UniformBspline &trajectory);
 
   inline int getOrder(void) { return order_; }
 
+  // Result of the most recent optimization, with the latest collision check.
+  const OptimizationDebug &optimizationDebug() const noexcept { return debug_; }
+
  private:
+  OptimizationDebug debug_;
   GridMap::Ptr grid_map_;
 
   enum FORCE_STOP_OPTIMIZE_TYPE { DONT_STOP, STOP_FOR_REBOUND, STOP_FOR_ERROR } force_stop_type_;

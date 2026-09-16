@@ -33,6 +33,7 @@ struct CommandSafetyConfig {
   double max_speed_mps{0.4};
   double max_yaw_rate{1.0};
   double min_motion_speed_mps{0.03};
+  bool verified_recovery_translation{false};
 };
 
 struct CommandSafetyDecision {

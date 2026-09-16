@@ -1,8 +1,8 @@
 #include "dds.hpp"
 
-#include "message/cpp/qos.hpp"
-#include "message/cpp/topics.hpp"
-#include "message/cpp/navigation_command.hpp"
+#include "transport/dds/qos.hpp"
+#include "message/generated/topics.hpp"
+#include "message/protocol/navigation.hpp"
 
 #include "dds/dds.h"
 #include "messages.h"
@@ -95,6 +95,16 @@ struct DdsReader::Impl {
             publisher, control_state_topic, control_qos.get(), nullptr),
         "dds_create_writer(driver_control_state)");
 
+    joint_state_topic = checked(
+        dds_create_topic(participant, &lingtu_dds_JointState_desc,
+                         lingtu::message::kRobotJointStates.dds_topic.data(), nullptr, nullptr),
+        "dds_create_topic(robot_joint_states)");
+    auto joint_qos = lingtu::dds::make_qos(
+        lingtu::dds::qos_for_topic(lingtu::message::kRobotJointStates.dds_topic));
+    joint_state_writer = checked(
+        dds_create_writer(publisher, joint_state_topic, joint_qos.get(), nullptr),
+        "dds_create_writer(robot_joint_states)");
+
     safety_stop_topic = checked(
         dds_create_topic(
             participant,
@@ -125,6 +135,8 @@ struct DdsReader::Impl {
   dds_entity_t reader{0};
   dds_entity_t control_state_topic{0};
   dds_entity_t control_state_writer{0};
+  dds_entity_t joint_state_topic{0};
+  dds_entity_t joint_state_writer{0};
   dds_entity_t safety_stop_topic{0};
   dds_entity_t safety_stop_writer{0};
   std::string host_boot_id;
@@ -219,6 +231,21 @@ bool DdsReader::writeControlState(
   msg.owner_id = state.control_assured ? const_cast<char*>(kDriverMotionPrincipal) : kEmpty;
   msg.reason = const_cast<char*>(state.reason.c_str());
   return dds_write(impl_->control_state_writer, &msg) >= 0;
+}
+
+bool DdsReader::writeJointState(const JointState& state) {
+  lingtu_dds_JointState msg{};
+  fillHeader(msg.header, state.stamp_s, "body");
+  msg.robot_model = const_cast<char*>(state.robot_model.c_str());
+  std::vector<char*> names;
+  names.reserve(state.names.size());
+  for (const auto& name : state.names) names.push_back(const_cast<char*>(name.c_str()));
+  const auto count = static_cast<std::uint32_t>(names.size());
+  msg.names = {count, count, names.data(), false};
+  msg.position = {count, count, const_cast<double*>(state.position.data()), false};
+  msg.velocity = {count, count, const_cast<double*>(state.velocity.data()), false};
+  msg.effort = {count, count, const_cast<double*>(state.effort.data()), false};
+  return dds_write(impl_->joint_state_writer, &msg) >= 0;
 }
 
 bool DdsReader::writeNavigationStop(

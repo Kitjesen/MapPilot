@@ -4,50 +4,21 @@
 #include <optional>
 #include <string>
 
-#include "message/cpp/navigation_command.hpp"
+#include "message/protocol/navigation.hpp"
 
 namespace lingtu::nav::endpoint {
 
 struct GoalPlanStatus;
 
-enum class NavigationControlState : std::int32_t {
-  kUnknown = 0,
-  kAutonomy = 1,
-  kTeleop = 2,
-  kTeleopAvoid = 3,
-};
+using lingtu::message::NavigationControlState;
 
-enum class NavigationLifecycleState : std::int32_t {
-  kIdle = 0,
-  kPlanning = 1,
-  kExecuting = 2,
-  kPaused = 3,
-  kRecovering = 4,
-  kSuccess = 5,
-  kFailed = 6,
-  kCancelled = 7,
-};
+using lingtu::message::NavigationLifecycleState;
 
-enum class NavigationPlanningState : std::int32_t {
-  kIdle = 0,
-  kPlanning = 1,
-  kReady = 2,
-  kFailed = 3,
-};
+using lingtu::message::NavigationPlanningState;
 
-enum class NavigationExecutionState : std::int32_t {
-  kIdle = 0,
-  kFollowing = 1,
-  kReached = 2,
-  kBlocked = 3,
-};
+using lingtu::message::NavigationExecutionState;
 
-enum class NavigationRecoveryState : std::int32_t {
-  kIdle = 0,
-  kActive = 1,
-  kSucceeded = 2,
-  kFailed = 3,
-};
+using lingtu::message::NavigationRecoveryState;
 
 struct NavigationMapIdentity {
   std::string map_id;

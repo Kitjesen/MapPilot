@@ -1,5 +1,5 @@
-#include "message/cpp/topics.hpp"
-#include "message/cpp/qos.hpp"
+#include "message/generated/topics.hpp"
+#include "transport/dds/qos.hpp"
 
 #include "dds/dds.h"
 #include "messages.h"

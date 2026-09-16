@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
-
-from runtime.runtime_interface import MESSAGE_FORMATS
+from lingtu.assembly.graph.loader import load_runtime_graph
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -18,53 +16,29 @@ def _read(path: str) -> str:
 def test_legacy_native_traversability_is_map_frame_only() -> None:
     """The current native writer and nav reader both operate in the map frame."""
 
-    assert MESSAGE_FORMATS["traversability"].frame_role == "map"
+    assert load_runtime_graph().topic_contracts["/nav/traversability"]["frame"] == "map"
 
 
 def test_odom_local_risk_is_a_native_volatile_planning_input() -> None:
     """Keep the local control window separate from map authority and Host UI."""
 
-    runtime_topics = yaml.safe_load(
-        (REPO_ROOT / "config" / "runtime_graph" / "topics.yaml").read_text(encoding="utf-8")
-    )
-    local = runtime_topics["topics"]["/nav/local_traversability"]
+    graph = load_runtime_graph()
+    local = graph.topic_contracts["/nav/local_traversability"]
 
-    assert "/nav/local_traversability" in runtime_topics["native_contract_topics"]
-    assert local == {
-        "role": "rolling_local_traversability_grid",
-        "frame": "odom",
-        "schema": "occupancy_grid",
-        "producer": "traversability_runtime",
-        "field_producer": "native_traversability_endpoint",
-        "single_writer_per_product": True,
-        "qos": "reliable_volatile_keep_last_1_lifespan_500ms",
-        "semantics": (
-            "latest_only_odom_rolling_control_risk_for_native_local_planning_"
-            "not_map_persistence_or_gateway_projection"
-        ),
-        "consumers": ["native_nav_runtime"],
-        "port_bindings": [
-            {
-                "owner": "native_traversability_endpoint",
-                "port": "local_traversability",
-                "direction": "out",
-                "boundary": "endpoint",
-            },
-            {
-                "owner": "endpoint_supervisor",
-                "port": "local_traversability",
-                "direction": "in",
-                "boundary": "endpoint",
-            },
-        ],
-    }
+    assert "/nav/local_traversability" in graph.native_contract_topics
+    assert local["message_type"] == "lingtu.dds.OccupancyGrid"
+    assert local["qos_profile"] == "LocalRiskGrid"
+    assert local["frame"] == "odom"
+    assert local["producer"] == "traversability_runtime"
+    assert local["consumers"] == ["native_nav_runtime"]
+    assert local["single_writer_per_product"] is True
 
 
 def test_native_odom_local_risk_wiring_preserves_map_safety_authority() -> None:
     """Odom risk may guide local planning but must not replace map safety input."""
 
-    topics = _read("src/message/cpp/topics.hpp")
-    qos = _read("src/message/cpp/qos.hpp")
+    topics = _read("src/message/generated/topics.hpp")
+    qos = _read("src/transport/dds/qos.hpp")
     producer = _read("src/nav/cpp/endpoint/traversability/main.cpp")
     projector = _read("src/nav/cpp/endpoint/nav/input/map.cpp")
     dds = _read("src/nav/cpp/endpoint/nav/dds/runtime.cpp")

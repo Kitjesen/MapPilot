@@ -1,6 +1,5 @@
-from pathlib import Path
 import re
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 NAV_CPP = ROOT / "src/nav/cpp"
@@ -21,8 +20,8 @@ PORTABLE_CMAKE = NAV_CPP / "CMakeLists.txt"
 ENDPOINT_CMAKE = ENDPOINT / "CMakeLists.txt"
 TEST_CMAKE = ROOT / "tests/nav/cpp/endpoint/CMakeLists.txt"
 BUILD_SCRIPT = ROOT / "scripts/build/build_nav_endpoint.sh"
-GATEWAY_RUNTIME_STATUS = ROOT / "src/gateway/services/runtime_status.py"
-GATEWAY_STATUS_ROUTES = ROOT / "src/gateway/routes/status.py"
+GATEWAY_RUNTIME_STATUS = ROOT / "src/gateway/navigation/status.py"
+GATEWAY_STATUS_ROUTES = ROOT / "src/gateway/routes/health.py"
 
 
 def _read(path: Path) -> str:
@@ -162,15 +161,15 @@ def test_linux_endpoint_build_gate_requires_control_loop_health_ctest() -> None:
     assert "test_control_loop_health" in script
 
 
-def test_gateway_blocks_only_mature_unhealthy_loop_and_projects_metrics() -> None:
+def test_gateway_obeys_native_hold_and_projects_health_metrics() -> None:
     runtime_status = _read(GATEWAY_RUNTIME_STATUS)
     routes = _read(GATEWAY_STATUS_ROUTES)
     assert '"native_control_loop_health_unavailable"' in runtime_status
 
     assert '"native_control_loop_unhealthy"' in runtime_status
     assert 'snapshot.get("control_loop_health")' in runtime_status
-    assert 'control_loop_health.get("ready") is True' in runtime_status
-    assert 'control_loop_health.get("healthy") is not True' in runtime_status
+    assert 'control_authority.get("control_loop_hold") is True' in runtime_status
+    assert 'control_loop_health.get("healthy") is not True' not in runtime_status
     assert '"control_loop_health": control_loop_health' in runtime_status
 
     metrics = _block_after(
@@ -178,7 +177,7 @@ def test_gateway_blocks_only_mature_unhealthy_loop_and_projects_metrics() -> Non
         '"/api/v1/metrics"',
         '"map": {',
     )
-    assert "_native_nav_endpoint_status()" in metrics
+    assert "read_navigation_status()" in metrics
     assert 'nav_endpoint.get("tick_hz")' in metrics
     assert 'nav_endpoint.get("control_loop_health")' in metrics
     assert '"navigation": {' in metrics

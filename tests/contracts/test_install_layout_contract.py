@@ -1,4 +1,3 @@
-# ruff: noqa: D103, S101
 
 import subprocess
 from pathlib import Path
@@ -12,7 +11,7 @@ def _read(relative: str) -> str:
 
 def test_repository_axes_and_generated_roots_have_one_meaning() -> None:
     readme = _read("README.md")
-    layout = _read("docs/REPO_LAYOUT.md")
+    layout = _read("docs/architecture.md")
     gitignore = _read(".gitignore")
 
     for path in ("src/", "sim/", "build/", "install/", "dist/"):
@@ -96,7 +95,7 @@ CURRENT_RELEASE="${test_root}/dual"
     require_dual_release_layout
     """
     completed = subprocess.run(
-        ["bash"],  # noqa: S607 - repository-owned Bash contract
+        ["bash"],
         cwd=ROOT,
         input=command.encode(),
         capture_output=True,

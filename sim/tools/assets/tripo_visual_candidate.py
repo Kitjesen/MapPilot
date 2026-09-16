@@ -1327,10 +1327,7 @@ def _stable_publication_parent(path: Path) -> Iterator[tuple[Path, int | None]]:
         raise ValueError("publication parent changed before it was locked")
     try:
         yield parent, descriptor
-        try:
-            current = os.stat(parent, follow_symlinks=False)
-        except FileNotFoundError as exc:
-            raise ValueError("publication parent changed while it was locked") from exc
+        current = os.stat(parent, follow_symlinks=False)
         if (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
             raise ValueError("publication parent changed while it was locked")
     finally:

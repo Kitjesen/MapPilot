@@ -16,8 +16,8 @@
 #include "dds.hpp"
 #include "dds/dds.h"
 #include "messages.h"
-#include "message/cpp/qos.hpp"
-#include "message/cpp/topics.hpp"
+#include "transport/dds/qos.hpp"
+#include "message/generated/topics.hpp"
 
 namespace {
 
@@ -383,6 +383,11 @@ void TestMapdDdsRoundTrip() {
   snapshot.collision.occupied_bits.assign(500U, 0U);
   snapshot.collision.occupied_bits.front() = 1U;
   snapshot.occupancy = lingtu::maps::layers::makeGrid2D(2, 2, 0.2, 0.0, 0.0, 0.0F);
+  snapshot.surface_projection = lingtu::maps::layers::makeGrid2D(1, 3, 0.2, 0.0, 0.0, -1.0F);
+  snapshot.surface_projection.data = {-1.0F, 0.0F, 100.0F};
+  snapshot.ground_surface.height = lingtu::maps::layers::makeGrid2D(1, 2, 0.2, 0.0, 0.0, 0.1F);
+  snapshot.ground_surface.roughness_m = lingtu::maps::layers::makeGrid2D(1, 2, 0.2, 0.0, 0.0, 0.01F);
+  snapshot.ground_surface.support_count = lingtu::maps::layers::makeGrid2D(1, 2, 0.2, 0.0, 0.0, 3.0F);
   snapshot.elevation.minZ = lingtu::maps::layers::makeGrid2D(2, 2, 0.2, 0.0, 0.0, 0.1F);
   snapshot.esdf.distance = lingtu::maps::layers::makeGrid2D(2, 2, 0.2, 0.0, 0.0, 1.0F);
 
@@ -443,6 +448,16 @@ void TestMapdDdsRoundTrip() {
   assert(scene_message.generation == 12U);
   assert(scene_message.live_cloud.cloud.width == 1U);
   assert(scene_message.occupancy.data._length == 4U);
+  assert(scene_message.surface_projection.data._length == 3U);
+  assert(scene_message.surface_projection.data._buffer[0] == -1.0F);
+  assert(scene_message.surface_projection.data._buffer[1] == 0.0F);
+  assert(scene_message.surface_projection.data._buffer[2] == 100.0F);
+  assert(scene_message.ground_height.data._length == 2U);
+  assert(scene_message.ground_height.data._buffer[1] == 0.1F);
+  assert(scene_message.ground_roughness.data._length == 2U);
+  assert(scene_message.ground_roughness.data._buffer[0] == 0.01F);
+  assert(scene_message.ground_support.data._length == 2U);
+  assert(scene_message.ground_support.data._buffer[1] == 3.0F);
   assert(received_collision);
   assert(collision_message.reset_epoch == 4U);
   assert(collision_message.observation_sequence == 9U);

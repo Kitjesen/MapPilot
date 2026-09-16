@@ -1,10 +1,8 @@
-# ruff: noqa: S101
 from __future__ import annotations
 
 from fractions import Fraction
 
 import pytest
-
 from sim.runtime.sensors.contracts import SensorRoute, SensorStreamPlan
 from sim.runtime.sensors.extractors import SensorSampleError, imu_from_snapshot
 from sim.runtime.sensors.runtime import SensorRuntime

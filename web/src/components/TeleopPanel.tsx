@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Gamepad2, PauseCircle, PlayCircle, RotateCcw, StopCircle } from 'lucide-react'
+import { RotateCcw } from 'lucide-react'
 import type { AppBootstrapResponse, ProductName, SSEState, ToastKind } from '../types'
 import * as api from '../services/api'
 import {
@@ -11,12 +11,11 @@ import styles from './TeleopPanel.module.css'
 
 interface TeleopPanelProps {
   sseState: SSEState
+  onExit: () => void
   showToast: (msg: string, kind?: ToastKind) => void
 }
 
-type Direction = 'forward' | 'back' | 'left' | 'right' | 'turnLeft' | 'turnRight'
-
-const TELEOP_PRODUCTS = new Set<ProductName>(['teleop', 'teleop_avoid'])
+const TELEOP_PRODUCTS = new Set<ProductName>(['teleop', 'teleop_avoid', 'map'])
 const SEND_INTERVAL_MS = 20
 const BOOTSTRAP_RETRY_MS = 1000
 const PRECISION_SCALE = 0.4
@@ -58,9 +57,11 @@ function teleopLimitsFromBootstrap(bootstrap: AppBootstrapResponse | null): Tele
   }
 }
 
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false
-  return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
+function blocksTeleopKeyboard(target: EventTarget | null, teleopRoot: HTMLElement | null): boolean {
+  if (!(target instanceof Element)) return false
+  if (target.closest('input, textarea, select') || (target instanceof HTMLElement && target.isContentEditable)) return true
+  if (teleopRoot?.contains(target)) return false
+  return target.closest('button, a[href], summary, [role="button"], [role="tab"], [role="dialog"], [role="menu"], [role="listbox"], details[open]') !== null
 }
 
 function commandFromKeys(
@@ -78,34 +79,6 @@ function commandFromKeys(
   }
 }
 
-function commandFromDirections(
-  directions: Set<Direction>,
-  limits: TeleopLimits,
-): { vxMps: number; vyMps: number; yawRps: number } {
-  const forward = (directions.has('forward') ? 1 : 0) + (directions.has('back') ? -1 : 0)
-  const lateral = (directions.has('left') ? 1 : 0) + (directions.has('right') ? -1 : 0)
-  const yaw = (directions.has('turnLeft') ? 1 : 0) + (directions.has('turnRight') ? -1 : 0)
-  return {
-    vxMps: forward * limits.linearMps,
-    vyMps: lateral * limits.linearMps,
-    yawRps: yaw * limits.yawRadS,
-  }
-}
-
-function ackSummary(ack: TeleopAck | null): string {
-  if (!ack) return '尚未收到 Gateway 回执'
-  const reason = ack.error ?? ack.message ?? ack.stage ?? ''
-  const bits = [
-    ack.type,
-    ack.action,
-    ack.request_id ? `request=${ack.request_id}` : null,
-    ack.final_cmd_vel_confirmed === true ? '最终零速已确认' : null,
-    ack.motor_confirmed === true ? '电机已确认' : ack.motor_confirmed === false ? '非电机确认' : null,
-    reason,
-  ].filter(Boolean)
-  return bits.join(' · ')
-}
-
 function rejectionMessage(ack: TeleopAck): string {
   if (ack.error === 'control_in_use') return '另一个控制端正在使用机器人'
   if (ack.error === 'safety_stop') return '安全停车仍在生效'
@@ -114,7 +87,7 @@ function rejectionMessage(ack: TeleopAck): string {
   return ack.message ?? '遥控暂时不可用'
 }
 
-export function TeleopPanel({ sseState, showToast }: TeleopPanelProps) {
+export function TeleopPanel({ sseState, showToast, onExit }: TeleopPanelProps) {
   const [bootstrap, setBootstrap] = useState<AppBootstrapResponse | null>(null)
   const [bootstrapError, setBootstrapError] = useState<string | null>(null)
   const [openState, setOpenState] = useState<TeleopConnectionState>('idle')
@@ -122,11 +95,10 @@ export function TeleopPanel({ sseState, showToast }: TeleopPanelProps) {
   const [lastAck, setLastAck] = useState<TeleopAck | null>(null)
   const [resumePending, setResumePending] = useState(false)
   const [precisionMode, setPrecisionMode] = useState(false)
-  const [manualMode, setManualMode] = useState(false)
-  const [activeDirections, setActiveDirections] = useState<Set<Direction>>(() => new Set())
+  const [speedLimit, setSpeedLimit] = useState(0.5)
+  const panelRef = useRef<HTMLDivElement>(null)
   const keysRef = useRef<Set<string>>(new Set())
   const blockedKeysRef = useRef<Set<string>>(new Set())
-  const directionsRef = useRef<Set<Direction>>(new Set())
   const clientRef = useRef<TeleopWsClient | null>(null)
   const inputActiveRef = useRef(false)
   const manualModeRef = useRef(false)
@@ -134,17 +106,17 @@ export function TeleopPanel({ sseState, showToast }: TeleopPanelProps) {
   const clearInputIntent = useCallback(() => {
     for (const key of keysRef.current) blockedKeysRef.current.add(key)
     keysRef.current.clear()
-    directionsRef.current.clear()
     inputActiveRef.current = false
     manualModeRef.current = false
     setPrecisionMode(false)
-    setManualMode(false)
-    setActiveDirections(new Set())
   }, [])
 
   const product = currentProduct(sseState)
   const teleopPath = teleopPathFromBootstrap(bootstrap)
-  const teleopLimits = useMemo(() => teleopLimitsFromBootstrap(bootstrap), [bootstrap])
+  const backendLimits = useMemo(() => teleopLimitsFromBootstrap(bootstrap), [bootstrap])
+  const teleopLimits = useMemo(() => ({ ...backendLimits,
+    linearMps: Math.min(speedLimit, backendLimits.linearMps),
+  }), [backendLimits, speedLimit])
   const resumeRequired = sseState.navigationStatus?.control.resume_required === true
   const enabled = Boolean(product && teleopPath)
   const connectionReady = openState === 'open'
@@ -218,7 +190,10 @@ export function TeleopPanel({ sseState, showToast }: TeleopPanelProps) {
     return () => window.clearTimeout(timer)
   }, [closeClient, enabled])
 
-  useEffect(() => () => closeClient(), [closeClient])
+  useEffect(() => {
+    panelRef.current?.focus({ preventScroll: true })
+    return () => closeClient()
+  }, [closeClient])
 
   const sendHold = useCallback(() => {
     clientRef.current?.hold()
@@ -229,7 +204,6 @@ export function TeleopPanel({ sseState, showToast }: TeleopPanelProps) {
     if (active && enabled && !connectionReady) connectClient()
     const next = active && product === 'teleop_avoid' && enabled && !resumeRequired
     manualModeRef.current = next
-    setManualMode(next)
   }, [connectClient, connectionReady, enabled, product, resumeRequired])
 
   const quiesceInput = useCallback(() => {
@@ -271,9 +245,30 @@ export function TeleopPanel({ sseState, showToast }: TeleopPanelProps) {
   }, [quiesceInput])
 
   useEffect(() => {
+    const quiesceForInteraction = (event: Event) => {
+      if (blocksTeleopKeyboard(event.target, panelRef.current)
+        && (keysRef.current.size > 0 || inputActiveRef.current || manualModeRef.current)) {
+        quiesceInput()
+      }
+    }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target)) return
       const key = event.key.toLowerCase()
+      if (blocksTeleopKeyboard(event.target, panelRef.current)) {
+        if (['w', 'a', 's', 'd', 'q', 'e', 'm', 'shift'].includes(key)) blockedKeysRef.current.add(key)
+        quiesceForInteraction(event)
+        return
+      }
+      if (key === 'escape') {
+        quiesceInput()
+        onExit()
+        event.preventDefault()
+        return
+      }
+      if (blockedKeysRef.current.has(key)) {
+        event.preventDefault()
+        return
+      }
+      if (event.repeat && (key === 'm' || key === 'shift')) return
       if (key === 'shift') {
         setPrecisionMode(true)
         return
@@ -289,44 +284,46 @@ export function TeleopPanel({ sseState, showToast }: TeleopPanelProps) {
         return
       }
       if (enabled && !resumeRequired && ['w', 'a', 's', 'd', 'q', 'e'].includes(key)) {
+        if (event.repeat && !keysRef.current.has(key)) return
         if (!connectionReady) connectClient()
-        if (blockedKeysRef.current.has(key)) {
-          event.preventDefault()
-          return
-        }
         keysRef.current.add(key)
         event.preventDefault()
       }
     }
     const onKeyUp = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase()
+      const wasBlocked = blockedKeysRef.current.delete(key)
+      const inputBlocked = blocksTeleopKeyboard(event.target, panelRef.current)
       if (key === 'shift') {
         setPrecisionMode(false)
         return
       }
       if (key === 'm') {
         setManualEscape(false)
-        event.preventDefault()
+        if (!inputBlocked) event.preventDefault()
         return
       }
-      if (event.code === 'Space' && connectionReady) {
+      if (event.code === 'Space' && connectionReady && !inputBlocked) {
         event.preventDefault()
         return
       }
       if (['w', 'a', 's', 'd', 'q', 'e'].includes(key)) {
-        const wasBlocked = blockedKeysRef.current.delete(key)
         const tracked = keysRef.current.delete(key)
-        if (tracked || wasBlocked) event.preventDefault()
-        if (tracked && keysRef.current.size === 0 && directionsRef.current.size === 0) sendHold()
+        if ((tracked || wasBlocked) && !inputBlocked) event.preventDefault()
+        if (tracked && keysRef.current.size === 0) sendHold()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
+    document.addEventListener('focusin', quiesceForInteraction)
+    document.addEventListener('pointerdown', quiesceForInteraction, true)
     return () => {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
+      document.removeEventListener('focusin', quiesceForInteraction)
+      document.removeEventListener('pointerdown', quiesceForInteraction, true)
     }
-  }, [connectClient, connectionReady, enabled, product, quiesceInput, resumeRequired, sendHold, setManualEscape])
+  }, [connectClient, connectionReady, enabled, onExit, product, quiesceInput, resumeRequired, sendHold, setManualEscape])
 
   useEffect(() => {
     if (!connectionReady || resumeRequired) return
@@ -336,11 +333,8 @@ export function TeleopPanel({ sseState, showToast }: TeleopPanelProps) {
         teleopLimits,
         precisionMode ? PRECISION_SCALE : 1,
       )
-      const fromButtons = commandFromDirections(directionsRef.current, teleopLimits)
-      const vxMps = fromKeys.vxMps + fromButtons.vxMps
-      const vyMps = fromKeys.vyMps + fromButtons.vyMps
-      const yawRps = fromKeys.yawRps + fromButtons.yawRps
-      const deadman = keysRef.current.size > 0 || directionsRef.current.size > 0
+      const { vxMps, vyMps, yawRps } = fromKeys
+      const deadman = keysRef.current.size > 0
       if (deadman) {
         clientRef.current?.move({
           vxMps,
@@ -357,25 +351,8 @@ export function TeleopPanel({ sseState, showToast }: TeleopPanelProps) {
     return () => window.clearInterval(timer)
   }, [connectionReady, precisionMode, resumeRequired, sendHold, teleopLimits])
 
-  const setDirection = useCallback((direction: Direction, active: boolean) => {
-    if (resumeRequired) return
-    const wasActive = directionsRef.current.has(direction)
-    const next = new Set(directionsRef.current)
-    if (active) next.add(direction)
-    else next.delete(direction)
-    directionsRef.current = next
-    setActiveDirections(next)
-    if (!active && wasActive && next.size === 0 && keysRef.current.size === 0) sendHold()
-  }, [resumeRequired, sendHold])
-
-  const startDirection = useCallback((direction: Direction) => {
-    if (!enabled || resumeRequired) return
-    if (!connectionReady) connectClient()
-    setDirection(direction, true)
-  }, [connectClient, connectionReady, enabled, resumeRequired, setDirection])
-
   const controlDisabledReason = useMemo(() => {
-    if (!product) return '当前 Product 不是 teleop/teleop_avoid'
+    if (!product) return '当前模式不支持网页遥控'
     if (bootstrapError) return `bootstrap 失败：${bootstrapError}`
     if (!teleopPath) return 'bootstrap 未声明 teleop_ws'
     if (!connectionReady) return 'WebSocket 未连接'
@@ -383,115 +360,38 @@ export function TeleopPanel({ sseState, showToast }: TeleopPanelProps) {
     return ''
   }, [bootstrapError, connectionReady, product, resumeRequired, teleopPath])
 
-  const holdLike = lastAck?.type === 'control_ack' && lastAck.action === 'hold'
-
   return (
-    <div className={styles.panel} aria-label="Web teleop control">
-      <div className={styles.header}>
-        <div className={styles.title}><Gamepad2 size={15} /> 遥控</div>
-        <span className={styles.badge}>{product ?? '非遥控模式'} · {openState}</span>
+    <div ref={panelRef} className={styles.modeBar} tabIndex={-1} aria-label="遥控模式">
+      <div className={styles.modeKeys}>
+        <strong>W/S 前后 · A/D 侧移 · Q/E 转向</strong>
+        <span>松键停车 · Space 停止 · Esc 退出</span>
       </div>
-      <div className={styles.body}>
-        <div className={styles.status}>
-          <span className={enabled ? styles.ok : styles.warn}>
-            {enabled ? '可连接：仅提交操作员意图，不代表电机已执行' : controlDisabledReason}
-          </span>
-          <span>键盘：直接按住 W/S 前后、A/D 横移、Q/E 旋转；Shift 为 40% 精细模式，Space 立即保持。速度单位为 m/s、rad/s。</span>
-          {product === 'teleop_avoid' && (
-            <span>脱困：按住 M 或“按住脱困”并同时给方向；按住期间局部避障关闭，松开立即恢复 CMU。急停、deadman、驱动与速度限制始终有效。</span>
-          )}
-          <span>当前上限：平移 {teleopLimits.linearMps.toFixed(2)} m/s，旋转 {teleopLimits.yawRadS.toFixed(2)} rad/s。</span>
-          {holdLike && <span className={styles.warn}>机器人已保持；再次按方向键即可继续。</span>}
-          {resumeRequired && <span className={styles.warn}>安全保护要求恢复；旧指令不会自动重放。</span>}
-        </div>
-
-        <div className={styles.controls}>
-          <span />
-          <button
-            className={styles.controlBtn}
-            disabled={!enabled || resumeRequired}
-            onPointerDown={() => startDirection('forward')}
-            onPointerUp={() => setDirection('forward', false)}
-            onPointerLeave={() => setDirection('forward', false)}
-            onPointerCancel={() => setDirection('forward', false)}
-          >前</button>
-          <span />
-          <button
-            className={styles.controlBtn}
-            disabled={!enabled || resumeRequired}
-            onPointerDown={() => startDirection('left')}
-            onPointerUp={() => setDirection('left', false)}
-            onPointerLeave={() => setDirection('left', false)}
-            onPointerCancel={() => setDirection('left', false)}
-          >左</button>
-          <button
-            className={styles.controlBtn}
-            disabled={!enabled || resumeRequired}
-            onPointerDown={() => startDirection('back')}
-            onPointerUp={() => setDirection('back', false)}
-            onPointerLeave={() => setDirection('back', false)}
-            onPointerCancel={() => setDirection('back', false)}
-          >后</button>
-          <button
-            className={styles.controlBtn}
-            disabled={!enabled || resumeRequired}
-            onPointerDown={() => startDirection('right')}
-            onPointerUp={() => setDirection('right', false)}
-            onPointerLeave={() => setDirection('right', false)}
-            onPointerCancel={() => setDirection('right', false)}
-          >右</button>
-          <button
-            className={styles.controlBtn}
-            disabled={!enabled || resumeRequired}
-            onPointerDown={() => startDirection('turnLeft')}
-            onPointerUp={() => setDirection('turnLeft', false)}
-            onPointerLeave={() => setDirection('turnLeft', false)}
-            onPointerCancel={() => setDirection('turnLeft', false)}
-          >左转</button>
-          <span className={activeDirections.size > 0 ? styles.ok : styles.badge}>按住运行</span>
-          <button
-            className={styles.controlBtn}
-            disabled={!enabled || resumeRequired}
-            onPointerDown={() => startDirection('turnRight')}
-            onPointerUp={() => setDirection('turnRight', false)}
-            onPointerLeave={() => setDirection('turnRight', false)}
-            onPointerCancel={() => setDirection('turnRight', false)}
-          >右转</button>
-        </div>
-
-        <div className={styles.actions}>
-          <button className={styles.actionBtn} disabled={!enabled || connectionReady} onClick={connectClient}>
-            <PlayCircle size={13} /> 连接
-          </button>
-          <button className={styles.actionBtn} disabled={!connectionReady} onClick={quiesceInput}>
-            <PauseCircle size={13} /> 保持
-          </button>
-          {product === 'teleop_avoid' && (
-            <button
-              className={manualMode ? styles.dangerBtn : styles.actionBtn}
-              disabled={!enabled || resumeRequired}
-              onPointerDown={() => setManualEscape(true)}
-              onPointerUp={() => setManualEscape(false)}
-              onPointerLeave={() => setManualEscape(false)}
-              onPointerCancel={() => setManualEscape(false)}
-            >
-              <Gamepad2 size={13} /> {manualMode ? '脱困中' : '按住脱困'}
-            </button>
-          )}
-          {resumeRequired && (
-            <button className={styles.actionBtn} disabled={resumePending} onClick={resumeControl}>
-              <RotateCcw size={13} /> {resumePending ? '恢复中' : '恢复控制'}
-            </button>
-          )}
-          <button className={styles.dangerBtn} disabled={!sessionActive} onClick={closeClient}>
-            <StopCircle size={13} /> 断开
-          </button>
-        </div>
-
-        <div className={styles.ack} aria-live="polite">
-          <strong>最新回执</strong>
-          {ackSummary(lastAck)}
-        </div>
+      <label className={styles.speedLimit}>限速
+        <select aria-label="遥控限速" value={teleopLimits.linearMps} onChange={event => {
+          quiesceInput()
+          setSpeedLimit(Number(event.target.value))
+          panelRef.current?.focus({ preventScroll: true })
+        }}>
+          {[...new Set([0.1, 0.2, 0.3, 0.5, backendLimits.linearMps])]
+            .filter(value => value <= backendLimits.linearMps && value <= 0.5)
+            .sort((a, b) => a - b)
+            .map(value => <option key={value} value={value}>{value.toFixed(2)} m/s</option>)}
+        </select>
+      </label>
+      <span className={styles.connection}>
+        {resumeRequired ? '需恢复控制' : bootstrapError ? '连接失败'
+          : !enabled ? '等待遥控就绪' : connectionReady ? '已连接'
+          : sessionActive ? (openState === 'error' || openState === 'closed' ? '连接已断开' : '连接中') : '按键开始'}
+      </span>
+      {resumeRequired && <button className={styles.actionBtn} disabled={resumePending} onClick={resumeControl}>
+        <RotateCcw size={13} /> {resumePending ? '恢复中' : '恢复控制'}
+      </button>}
+      <div className={styles.modeNote}>
+        {product === 'map' ? '建图直接遥控 · 请主动避让障碍' : product === 'teleop_avoid'
+          ? '辅助避障 · 按住 M 加方向键可临时脱困' : '直接遥控 · 请主动避让障碍'}
+        <span>Shift 为 40% 精细模式 · 操作菜单时暂停，点击场景后继续</span>
+        {!enabled && <span>{controlDisabledReason}</span>}
+        {lastAck?.type === 'control_rejected' && <span>{rejectionMessage(lastAck)}</span>}
       </div>
     </div>
   )

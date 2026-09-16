@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from gateway.maps.transport import mapd_request
 from gateway.schemas import SessionResponse
-from gateway.services.mapd_transport import mapd_query
 from gateway.services.native_control import endpoint_only_enabled
 from lingtu.products import product_name
 
@@ -43,7 +43,7 @@ def _externally_owned_product(gw: Any) -> str | None:
 
 def _maps_active_name(gw: Any) -> str:
     try:
-        response = mapd_query(gw, {"action": "get_active_map"})
+        response = mapd_request(gw, {"action": "get_active_map"})
     except Exception as exc:
         logger.warning("mapd active-map query failed: %s", exc)
         return ""

@@ -1,8 +1,8 @@
 """Shared mixin for memory modules that track robot position via odometry."""
 from __future__ import annotations
 
-from runtime.msgs.numpy_compat import np
 from runtime.msgs.nav import Odometry
+from runtime.msgs.numpy_compat import np
 
 
 class OdomTrackingMixin:

@@ -13,6 +13,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -85,6 +86,21 @@ struct FollowerState {
   FollowerParams params{};
   double goalDistance{-1.0};
   bool standardPathProfile{true};
+  // Teleoperation supplies body heading independently of the spline tangent.
+  std::optional<double> desiredHeading{};
+};
+
+struct FollowerTracking {
+  bool active{false};
+  std::int64_t trajectoryId{0};
+  double executionTimeS{0.0};
+  double durationS{0.0};
+  double positionErrorM{0.0};
+  double headingErrorRad{0.0};
+  double endDistanceM{0.0};
+  bool executionFrozen{false};
+  bool finished{false};
+  double speedLimitMps{0.0};
 };
 
 struct FollowerOutput {
@@ -96,6 +112,8 @@ struct FollowerOutput {
   bool executionFrozen{false};
   bool directionTransition{false};
   bool finished{false};
+  bool awaitingTrajectory{false};
+  FollowerTracking tracking{};
 };
 
 struct FollowerDiagnostics {
@@ -103,6 +121,7 @@ struct FollowerDiagnostics {
   FollowerAlgorithm algorithm{FollowerAlgorithm::Path};
   double linearSpeed{0.0};
   bool forward{true};
+  FollowerTracking tracking{};
 };
 
 class Follower {

@@ -19,6 +19,18 @@ InputProjector::InputProjector(EndpointState &state, InputGate &gate,
       actions_(std::move(actions)) {}
 
 void InputProjector::apply(SensorBatch batch, TimingDiagnostics &timing) {
+  if (config_.use_simulation_clock && batch.simulation_time_s) {
+    const double clock_s = *batch.simulation_time_s;
+    if (std::isfinite(clock_s) && clock_s >= 0.0) {
+      if (state_.simulation_time_s && clock_s < *state_.simulation_time_s) {
+        // A physics reset requires a new Product run, not resuming an old spline.
+        state_.simulation_clock_regressed = true;
+      } else {
+        state_.simulation_time_s = clock_s;
+        state_.simulation_clock_receive_s = batch.receive_steady_s;
+      }
+    }
+  }
   for (const auto &sample : batch.transforms) {
     projectTf(sample, batch.receive_steady_s);
   }
@@ -55,6 +67,10 @@ void InputProjector::apply(SensorBatch batch, TimingDiagnostics &timing) {
   if (batch.localization_health) {
     projectLocalizationHealth(std::move(*batch.localization_health), batch.receive_steady_s);
   }
+}
+
+double InputProjector::executionTime(double steady_now_s) const {
+  return config_.use_simulation_clock ? state_.simulation_time_s.value_or(0.0) : steady_now_s;
 }
 
 void InputProjector::projectTf(const InputSample<TransformSample> &sample,

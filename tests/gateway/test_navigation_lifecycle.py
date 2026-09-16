@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import time
 from threading import RLock
 
 import pytest
 
-from gateway.services.event_handlers import handle_navigation_goal_status
-from gateway.services.navigation_lifecycle import (
+from gateway.navigation.status import handle_navigation_goal_status
+from gateway.navigation.tasks import (
     query_navigation_goal_status,
     query_navigation_task_status,
 )
@@ -70,8 +71,6 @@ def test_gateway_retains_terminal_status_by_request() -> None:
     assert result["status"]["lifecycle_state_name"] == "SUCCESS"
     assert result["status"]["phase"] == "REACHED"
     assert result["status"]["terminal"] is True
-    assert len(gateway.events) == 2
-    assert gateway.events[-1]["data"]["state_name"] == "SUCCESS"
 
 
 def test_gateway_retains_terminal_status_by_stable_task_identity() -> None:
@@ -107,7 +106,37 @@ def test_gateway_deduplicates_replayed_goal_status_sequence() -> None:
 
     assert result["status"]["state_name"] == "EXECUTING"
     assert result["status"]["phase"] == "PATH_ACTIVE"
-    assert len(gateway.events) == 1
+    assert gateway._navigation_goal_status_sequences == {"navd-boot": 2}
+
+
+def test_goal_status_update_publishes_only_unified_navigation_event() -> None:
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    gateway._session_mode = "navigating"
+    events: list[dict] = []
+    gateway.push_event = events.append
+    with gateway._state_lock:
+        gateway._odom = {"x": 0.0, "y": 0.0, "vx": 0.0, "wz": 0.0}
+        gateway._localization_status = {"state": "TRACKING", "pose_fresh": True}
+        gateway._navigation_state = {
+            "ts": time.time(),
+            "boot_id": "navd-boot",
+            "lifecycle_state_name": "EXECUTING",
+            "active_task_id": "navigation-task-1",
+            "active_request_id": "goal-1",
+            "authority": "autonomy",
+        }
+
+    handle_navigation_goal_status(gateway, _status(sequence=1))
+
+    assert [event["type"] for event in events] == ["navigation_status"]
+    assert events[0]["data"]["schema_version"] == 3
+    assert events[0]["data"]["task"] == {
+        "state": "EXECUTING",
+        "task_id": "navigation-task-1",
+        "reason": "",
+    }
 
 
 def test_gateway_goal_status_query_is_read_only_and_explicit_when_unknown() -> None:

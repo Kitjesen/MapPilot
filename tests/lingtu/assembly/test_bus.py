@@ -56,7 +56,7 @@ def _map_scene_payload(
             "qz": 0.0,
             "qw": 1.0,
         },
-        "payload_bytes": 24,
+        "payload_bytes": 36,
         "clouds": {
             "live": {
                 "point_count": 1,
@@ -73,6 +73,10 @@ def _map_scene_payload(
             ),
             "elevation": _grid(),
             "esdf": _grid(),
+            "surface_projection": _grid(width=3, height=1, values=struct.pack("<3f", -1, 0, 100)),
+            "ground_height": _grid(width=2, height=1, values=struct.pack("<2f", 0.1, 0.2)),
+            "ground_roughness": _grid(width=2, height=1, values=struct.pack("<2f", 0.01, 0.02)),
+            "ground_support": _grid(width=2, height=1, values=struct.pack("<2f", 3, 4)),
         },
     }
 
@@ -429,7 +433,7 @@ def test_host_bus_projects_map_scene_only_after_aligned_mapd_state() -> None:
     assert len(observed) == 1
     assert observed[0].source == "mapd"
     assert observed[0].sequence == 7
-    assert len(observed[0].layers) == 6
+    assert len(observed[0].layers) == 10
     assert observed[0].layers[0]["point_count"] == 1
     occupancy = next(
         layer
@@ -437,6 +441,12 @@ def test_host_bus_projects_map_scene_only_after_aligned_mapd_state() -> None:
         if layer["id"] == "maps.occupancy"
     )
     assert occupancy["grid"].shape == (1, 2)
+    surface = next(layer for layer in observed[0].layers if layer["id"] == "maps.surface_projection")
+    assert surface["grid"].tolist() == [[-1, 0, 100]]
+    assert "topic" not in surface
+    ground_height = next(layer for layer in observed[0].layers if layer["id"] == "maps.ground_height")
+    assert ground_height["grid"].ravel().tolist() == pytest.approx([0.1, 0.2])
+    assert "topic" not in ground_height
     health = bus.health()["map_scene"]
     assert health["cursor"] == ["mapd-boot", 7]
     assert health["generation"] == 5

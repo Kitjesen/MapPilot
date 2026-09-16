@@ -99,7 +99,7 @@ def test_cli_fails_before_writing_when_required_field_is_missing(
     )
     output = tmp_path / "should_not_exist.yaml"
 
-    completed = subprocess.run(  # noqa: S603 - executes the repository parser with this interpreter
+    completed = subprocess.run(
         [
             sys.executable,
             str(PARSER),

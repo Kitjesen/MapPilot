@@ -99,7 +99,7 @@ class LingTuMCP:
         return self._read(request)
 
     def _read(self, request: urllib.request.Request) -> dict[str, Any]:
-        with urllib.request.urlopen(request, timeout=self._timeout) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=self._timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("MCP response must be a JSON object")

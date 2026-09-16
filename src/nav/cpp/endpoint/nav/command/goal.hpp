@@ -19,6 +19,8 @@ struct ParsedCommand {
 struct GoalTarget {
   nav_kernel::Vec3 position{};
   std::optional<double> yaw;
+  std::optional<double> max_speed_mps{};
+  std::optional<double> acceptance_radius_m{};
 };
 
 ParsedCommand<GoalTarget> parseGoal(const GoalSample &sample,

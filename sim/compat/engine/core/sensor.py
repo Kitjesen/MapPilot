@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from math import pi
 from typing import Optional, Tuple
 
-from runtime.runtime_interface import LIDAR_EXTRINSICS
+from runtime.tf.mounts import lidar_extrinsic
 
-_MUJOCO_LIDAR = LIDAR_EXTRINSICS["mujoco_thunder_v3"]
+_MUJOCO_LIDAR = lidar_extrinsic("mujoco_thunder_v3")
 
 
 @dataclass

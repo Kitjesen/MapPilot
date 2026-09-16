@@ -1,4 +1,3 @@
-# ruff: noqa: S101, S603, S607
 """Contract tests for the SimStudio package import service."""
 
 from __future__ import annotations
@@ -11,8 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sim.catalog.management import SimCatalog
 from sim.catalog.importers.world import WorldImporter
+from sim.catalog.management import SimCatalog
 from tools.simstudio.service import package_service as package_service_module
 from tools.simstudio.service.package_service import PackageImportService, PackageServiceError
 from tools.simstudio.service.store import StudioStore

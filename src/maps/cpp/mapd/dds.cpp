@@ -16,8 +16,8 @@
 
 #include "dds/dds.h"
 #include "messages.h"
-#include "message/cpp/qos.hpp"
-#include "message/cpp/topics.hpp"
+#include "transport/dds/qos.hpp"
+#include "message/generated/topics.hpp"
 
 #if defined(_WIN32)
 #include <process.h>
@@ -549,9 +549,13 @@ std::optional<std::size_t> EstimateSceneBytes(const State &state, const Snapshot
       !AddBytes(snapshot.accumulated_cloud.Size() * 4U * sizeof(float), &total)) {
     return std::nullopt;
   }
-  const std::array<std::size_t, 3U> grid_cells{snapshot.occupancy.data.size(),
+  const std::array<std::size_t, 7U> grid_cells{snapshot.occupancy.data.size(),
                                                snapshot.elevation.minZ.data.size(),
-                                               snapshot.esdf.distance.data.size()};
+                                               snapshot.esdf.distance.data.size(),
+                                               snapshot.surface_projection.data.size(),
+                                               snapshot.ground_surface.height.data.size(),
+                                               snapshot.ground_surface.roughness_m.data.size(),
+                                               snapshot.ground_surface.support_count.data.size()};
   for (const std::size_t cells : grid_cells) {
     if (cells > std::numeric_limits<std::size_t>::max() / sizeof(float) ||
         !AddBytes(cells * sizeof(float), &total)) {
@@ -976,6 +980,9 @@ bool Dds::PublishScene(const State &state, const Snapshot &snapshot) {
   GridMessage occupancy("occupancy", snapshot.occupancy, snapshot, state.live);
   GridMessage elevation("elevation", snapshot.elevation.minZ, snapshot, state.live);
   GridMessage esdf("esdf", snapshot.esdf.distance, snapshot, state.live);
+  GridMessage ground_height("ground_height", snapshot.ground_surface.height, snapshot, state.live);
+  GridMessage ground_roughness("ground_roughness", snapshot.ground_surface.roughness_m, snapshot, state.live);
+  GridMessage ground_support("ground_support", snapshot.ground_surface.support_count, snapshot, state.live);
 
   lingtu_dds_MapScene message{};
   const std::string frame = snapshot.frame_id.empty() ? "map" : snapshot.frame_id;
@@ -998,6 +1005,12 @@ bool Dds::PublishScene(const State &state, const Snapshot &snapshot) {
   message.occupancy = occupancy.message;
   message.elevation = elevation.message;
   message.esdf = esdf.message;
+  message.ground_height = ground_height.message;
+  message.ground_roughness = ground_roughness.message;
+  message.ground_support = ground_support.message;
+  GridMessage surface_projection(
+      "surface_projection", snapshot.surface_projection, snapshot, state.live);
+  message.surface_projection = surface_projection.message;
   return impl_->Write(impl_->scene_writer, &message, "scene");
 }
 

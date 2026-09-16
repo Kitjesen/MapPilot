@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "control/autonomy.hpp"
+#include "runtime/loop.hpp"
 
 namespace {
 
@@ -26,6 +27,7 @@ using lingtu::nav::endpoint::InputGateState;
 using lingtu::nav::endpoint::LocalDiagnostics;
 using lingtu::nav::endpoint::TimingDiagnostics;
 using lingtu::nav::endpoint::TraversabilityGrid;
+using lingtu::nav::endpoint::enforcePostPlanningInputReadiness;
 
 void require(bool condition, const char *message) {
   if (!condition) {
@@ -67,6 +69,7 @@ struct Fixture {
   double stop_stamp{-1.0};
   nav_kernel::Twist shaped_input{};
   nav_kernel::Twist command_safety_input{};
+  bool verified_translation_seen{false};
   nav_kernel::Twist committed_command{};
   std::string velocity_stop_reason;
   bool commit_succeeds{true};
@@ -113,8 +116,9 @@ struct Fixture {
       return next_output;
     };
     final_actions.command_safety =
-        [&](const CommandSafetyConfig &, const nav_kernel::Twist &command, double) {
+        [&](const CommandSafetyConfig &config, const nav_kernel::Twist &command, double) {
       ++command_safety_calls;
+      verified_translation_seen = config.verified_recovery_translation;
       command_safety_input = command;
       CommandSafetyDecision decision;
       decision.should_publish = true;
@@ -192,6 +196,9 @@ void testBlockedInputGateFailsClosedWithoutPlanning() {
   Fixture fixture;
   fixture.gate.ready = false;
   fixture.gate.reason = "input_cloud_stale";
+  fixture.previous.tracking.active = true;
+  fixture.previous.tracking.trajectoryId = 17;
+  fixture.previous.tracking.executionTimeS = 1.25;
   AutonomyTickController controller(fixture.actions, fixture.control());
 
   const auto result = controller.tick(fixture.input());
@@ -208,6 +215,10 @@ void testBlockedInputGateFailsClosedWithoutPlanning() {
   require(result.local->goal_reached && result.local->slow_down == 3 &&
               near(result.local->target.x, 9.0),
           "fields untouched by the legacy gate branch must be preserved");
+  require(result.local->tracking.active && result.local->tracking.trajectoryId == 17 &&
+              near(result.local->tracking.executionTimeS, 1.25) &&
+              result.local->tracking.executionFrozen,
+          "input hold must report frozen progress for the retained trajectory");
   require(result.publish.cmd_vel && result.delta.cmd_vel_count == 1 &&
               result.delta.output_count == 0,
           "blocked input must request exactly one zero command publish");
@@ -220,9 +231,60 @@ void testBlockedInputGateFailsClosedWithoutPlanning() {
           "blocked input must reset smoother state with the gate reason");
 }
 
+void testInputsExpiringDuringPlanningBlockPublicationWithoutCompletingGoal() {
+  for (const char *reason : {"cloud_stale", "local_collision_stale", "odom_stale",
+                             "driver_control_stale"}) {
+    Fixture fixture;
+    fixture.next_output.cmd_vel = {0.3, 0.1, 0.2};
+    const auto planner = fixture.actions.tick_autonomy;
+    fixture.actions.tick_autonomy = [&, planner](
+        const nav_kernel::Pose &pose, const float *obstacles, int count, double stamp,
+        lingtu::nav::navigation::TraversabilityGridView traversability) {
+      auto result = planner(pose, obstacles, count, stamp, traversability);
+      fixture.gate.ready = false;
+      fixture.gate.reason = reason;
+      return result;
+    };
+    AutonomyTickController controller(fixture.actions, fixture.control());
+    const auto planned = controller.tick(fixture.input());
+    require(planned.publish.cmd_vel && near(planned.publish.command.vx, 0.3),
+            "the planner must start from ready inputs and produce a nonzero command");
+
+    int hold_calls = 0;
+    const auto readiness = enforcePostPlanningInputReadiness(
+        planned.publish.command, fixture.gate, [&](const std::string &stop_reason) {
+          ++hold_calls;
+          require(stop_reason == std::string("input_gate_") + reason,
+                  "the publication hold must expose the newly stale input");
+          return true;
+        });
+    require(!readiness.allow_publish && readiness.stop_required &&
+                readiness.stop_succeeded && hold_calls == 1,
+            "data expiring during planning must hold motion before nonzero publication");
+    require(planned.outcome.kind == AutonomyTickOutcomeKind::kNone && fixture.stop_calls == 0,
+            "a temporary input hold must not complete or abort the autonomous goal");
+
+    const auto failed_stop = enforcePostPlanningInputReadiness(
+        planned.publish.command, fixture.gate, [](const std::string &) { return false; });
+    require(!failed_stop.allow_publish && failed_stop.stop_required &&
+                !failed_stop.stop_succeeded,
+            "a failed zero publication must never allow the obsolete nonzero command");
+    const auto zero = enforcePostPlanningInputReadiness(
+        {}, fixture.gate, [&](const std::string &) {
+          ++hold_calls;
+          return false;
+        });
+    require(zero.allow_publish && !zero.stop_required && hold_calls == 1,
+            "stale inputs must not suppress an explicit zero command");
+  }
+}
+
 void testActiveMapIdentityGuardFailsClosedBeforePlanning() {
   auto expect_blocked = [](Fixture &fixture, const char *expected_reason) {
     fixture.next_output.cmd_vel = {0.3, 0.0, 0.0};
+    fixture.previous.tracking.active = true;
+    fixture.previous.tracking.trajectoryId = 17;
+    fixture.previous.tracking.executionTimeS = 1.25;
     AutonomyTickController controller(fixture.actions, fixture.control());
     const auto result = controller.tick(fixture.input());
 
@@ -244,6 +306,9 @@ void testActiveMapIdentityGuardFailsClosedBeforePlanning() {
                 result.local->final_safety_reason == expected_reason &&
                 result.local->final_safety_stopped,
             "map identity blocker diagnostics must retain stop evidence");
+    require(!result.local->tracking.active && result.local->tracking.trajectoryId == 0 &&
+                near(result.local->tracking.executionTimeS, 0.0),
+            "map identity failure must discard tracking diagnostics for the invalid route");
     require(fixture.velocity_stop_calls == 1 && fixture.velocity_stop_reason == expected_reason,
             "map identity blocker must reset smoother state");
   };
@@ -314,6 +379,8 @@ void testNormalTickProducesBorrowedInputIntentsAndDiagnostics() {
   require(fixture.commit_calls == 1 && near(fixture.committed_command.vx, 0.24) &&
               near(fixture.commit_stamp, 42.0),
           "the limits-only command must be committed with the same tick timestamp");
+  require(fixture.pause_calls == 0,
+          "accepted nonzero motion must keep the trajectory advancing");
   require(near(result.local->path_follower_cmd_vel.vx, 0.3) && near(result.local->cmd_vel.vx, 0.24),
           "diagnostics must distinguish follower and shaped commands");
   require(result.local->final_safety_applied && !result.local->final_safety_slowed &&
@@ -369,6 +436,14 @@ void testInvalidShapingAndCommitFailureFailClosed() {
   require(invalid_result.output.has_value() && near(invalid_result.output->cmd_vel.vx, 0.0) &&
               invalid_result.publish.cmd_vel && near(invalid_result.publish.command.vx, 0.0),
           "invalid shaping must expose an immediate zero command");
+  require(invalid.pause_calls == 1 && invalid.stop_calls == 0 &&
+              invalid_result.output->trajectory_frozen &&
+              invalid_result.local->tracking.executionFrozen,
+          "invalid shaping must pause the retained trajectory without resetting it");
+  require(!invalid_result.local->final_safety_applied &&
+              invalid_result.local->final_safety_stopped &&
+              invalid_result.local->final_safety_reason == "target_timeout",
+          "pre-safety shaping failure must retain its final stop reason in diagnostics");
 
   Fixture commit_failure;
   commit_failure.next_output.cmd_vel = {0.4, 0.0, 0.0};
@@ -386,6 +461,71 @@ void testInvalidShapingAndCommitFailureFailClosed() {
               commit_result.local->final_safety_stopped &&
               commit_result.local->final_safety_reason == "velocity_smoother_commit_failed",
           "commit failure must publish zero with explicit stopped diagnostics");
+  require(commit_failure.pause_calls == 1 && commit_failure.stop_calls == 0 &&
+              commit_result.output->trajectory_frozen,
+          "commit failure must pause planning and tracking until execution can resume");
+}
+
+void testPlannedCrawlBypassesTeleopDeadbandAndKeepsMaximumLimits() {
+  Fixture fixture;
+  fixture.next_output.active = true;
+  fixture.next_output.path_found = true;
+  fixture.next_output.cmd_vel = {0.01, 0.0, 0.0};
+  fixture.safety.min_motion_speed_mps = 0.03;
+  fixture.final_actions.command_safety = lingtu::nav::endpoint::evaluateCommandSafety;
+  AutonomyTickController controller(fixture.actions, fixture.control());
+
+  const auto crawl = controller.tick(fixture.input());
+
+  require(crawl.output.has_value() && near(crawl.publish.command.vx, 0.01) &&
+              !crawl.local->final_safety_stopped && fixture.pause_calls == 0,
+          "planned startup and arrival speeds must not be erased by the teleop deadband");
+  fixture.next_output.cmd_vel = {0.8, 0.0, 2.0};
+
+  const auto limited = controller.tick(fixture.input());
+
+  require(near(limited.publish.command.vx, fixture.safety.max_speed_mps) &&
+              near(limited.publish.command.wz, fixture.safety.max_yaw_rate) &&
+              limited.local->final_safety_limited && fixture.pause_calls == 0,
+          "planned motion must retain maximum speed and yaw-rate limits");
+}
+
+void testFinalLinearStopPausesTrajectoryAndPreservesAllowedRotation() {
+  for (const double yaw_rate : {0.0, 0.4}) {
+    Fixture fixture;
+    fixture.next_output.active = true;
+    fixture.next_output.path_found = true;
+    fixture.next_output.cmd_vel = {0.2, 0.0, yaw_rate};
+    fixture.safety.max_speed_mps = 0.0;
+    fixture.final_actions.command_safety = lingtu::nav::endpoint::evaluateCommandSafety;
+    AutonomyTickController controller(fixture.actions, fixture.control());
+
+    const auto result = controller.tick(fixture.input());
+
+    require(fixture.pause_calls == 1 && fixture.stop_calls == 0 &&
+                result.output.has_value() && result.output->trajectory_frozen &&
+                result.local->tracking.executionFrozen,
+            "final translation suppression must freeze the retained trajectory");
+    require(near(result.publish.command.vx, 0.0) && near(result.publish.command.vy, 0.0) &&
+                near(result.publish.command.wz, yaw_rate),
+            "pausing trajectory progress must preserve an allowed rotation command");
+  }
+}
+
+void testShapingToZeroPausesTrajectoryBeforeSafety() {
+  Fixture fixture;
+  fixture.next_output.cmd_vel = {0.4, 0.0, 0.0};
+  fixture.shape_override = true;
+  fixture.shaped_velocity.command = {};
+  AutonomyTickController controller(fixture.actions, fixture.control());
+
+  const auto result = controller.tick(fixture.input());
+
+  require(fixture.command_safety_calls == 0 && fixture.commit_calls == 0 &&
+              fixture.pause_calls == 1 && fixture.stop_calls == 0 &&
+              result.output.has_value() && result.output->trajectory_frozen &&
+              near(result.publish.command.vx, 0.0),
+          "valid zero shaping must pause trajectory time even without a stopped safety decision");
 }
 
 void testUnpublishedCommandDoesNotAdvanceSmootherCommit() {
@@ -423,6 +563,8 @@ void testVerifiedRecoveryCommandUsesPlannerDecision() {
 
   require(fixture.command_safety_calls == 1,
           "verified recovery must use the planner decision and command limits only");
+  require(fixture.verified_translation_seen,
+          "final collision checking must know this is a verified translation");
   require(fixture.velocity_stop_calls == 0,
           "an accepted verified recovery must not reset smoother state");
   require(result.output.has_value() && near(result.output->cmd_vel.vx, 0.0) &&
@@ -433,6 +575,15 @@ void testVerifiedRecoveryCommandUsesPlannerDecision() {
   require(result.local.has_value() && result.local->recovery_verified &&
               result.local->recovery_state == 2 && !result.local->final_safety_stopped,
           "status must retain verified recovery without a duplicate veto");
+  fixture.next_output.recovery_verified = false;
+  controller.tick(fixture.input());
+  require(!fixture.verified_translation_seen,
+          "an unverified recovery must not receive boundary-departure admission");
+  fixture.next_output.recovery_verified = true;
+  fixture.next_output.recovery_action = static_cast<int>(nav_kernel::RecoveryAction::Rotate);
+  controller.tick(fixture.input());
+  require(!fixture.verified_translation_seen,
+          "rotation must not receive boundary-departure admission");
 }
 
 void testRecoveryOutcomesDistinguishRollingAndGenericGoals() {
@@ -473,6 +624,9 @@ void testRecoveryOutcomesDistinguishRollingAndGenericGoals() {
 void testPrecomputedPersistentReplanBypassesPlannerAndFinalSafetyWithZeroCommand() {
   Fixture fixture;
   fixture.next_output.cmd_vel = {0.8, 0.0, 0.4};
+  fixture.previous.tracking.active = true;
+  fixture.previous.tracking.trajectoryId = 17;
+  fixture.previous.tracking.executionTimeS = 1.25;
 
   GoalReplanTrigger trigger;
   trigger.kind = GoalReplanTriggerKind::kPersistentPathObstruction;
@@ -508,6 +662,9 @@ void testPrecomputedPersistentReplanBypassesPlannerAndFinalSafetyWithZeroCommand
               result.local->final_safety_stopped &&
               result.local->final_safety_reason == "persistent_path_obstruction",
           "persistent obstruction diagnostics must retain explicit stopped evidence");
+  require(!result.local->tracking.active && result.local->tracking.trajectoryId == 0 &&
+              near(result.local->tracking.executionTimeS, 0.0),
+          "replanning must discard tracking diagnostics for the stopped trajectory");
   require(result.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
               result.outcome.replan_trigger.has_value(),
           "persistent obstruction must surface one typed replan outcome");
@@ -533,6 +690,66 @@ void testPrecomputedPersistentReplanBypassesPlannerAndFinalSafetyWithZeroCommand
                 near(lhs.min_z, rhs.min_z) && near(lhs.max_z, rhs.max_z),
             "precomputed blocked region changed in the tick");
   }
+}
+
+void testActualCollisionRestartsPlannerInsteadOfHoldingUnsafeTrackingTarget() {
+  Fixture fixture;
+  int blockage_reports = 0;
+  fixture.actions.report_final_motion_blocked = [&](bool blocked, double) {
+    require(blocked, "final braking rejection was reported as accepted motion");
+    ++blockage_reports;
+  };
+  fixture.next_output.active = true;
+  fixture.next_output.path_found = true;
+  fixture.next_output.cmd_vel = {0.3, 0.0, 0.0};
+  fixture.final_actions.command_safety = [](const auto &, const auto &, double) {
+    CommandSafetyDecision decision;
+    decision.should_publish = true;
+    decision.stopped = true;
+    decision.reason = "scan_actual_motion_blocked";
+    return decision;
+  };
+  AutonomyTickController controller(fixture.actions, fixture.control());
+  const auto result = controller.tick(fixture.input());
+  require(fixture.stop_calls == 1 && fixture.pause_calls == 0,
+          "actual collision must restart planning from odometry instead of resuming the old spline");
+  require(near(result.publish.command.vx, 0.0) && fixture.commit_calls == 0,
+          "the blocked command must never be committed");
+  require(result.local->final_safety_reason == "scan_actual_motion_blocked",
+          "collision rejection must be visible in navigation status");
+  require(blockage_reports == 1, "final braking rejection did not reach recovery");
+}
+
+void testBrakingSlowdownRetainsActiveTrajectory() {
+  Fixture fixture;
+  int accepted_reports = 0;
+  fixture.actions.report_final_motion_blocked = [&](bool blocked, double) {
+    require(!blocked, "safe limited motion must clear prior final blockage");
+    ++accepted_reports;
+  };
+  fixture.next_output.active = true;
+  fixture.next_output.path_found = true;
+  fixture.next_output.cmd_vel = {0.75, 0.0, 0.0};
+  fixture.next_output.tracking.active = true;
+  fixture.next_output.tracking.trajectoryId = 17;
+  fixture.final_actions.command_safety = [](const auto &, const auto &, double) {
+    CommandSafetyDecision decision;
+    decision.should_publish = true;
+    decision.cmd = {0.25, 0.0, 0.0};
+    decision.slowed = decision.limited = true;
+    decision.reason = "scan_actual_motion_limited";
+    return decision;
+  };
+  AutonomyTickController controller(fixture.actions, fixture.control());
+  const auto result = controller.tick(fixture.input());
+  require(accepted_reports == 1, "accepted motion did not clear prior final blockage");
+  require(fixture.stop_calls == 0 && fixture.pause_calls == 0,
+          "a safe lower speed must not discard or freeze the active trajectory");
+  require(near(result.publish.command.vx, 0.25) && fixture.commit_calls == 1,
+          "only the collision-checked lower speed may be committed");
+  require(result.local->tracking.trajectoryId == 17 &&
+              !result.local->tracking.executionFrozen && result.local->final_safety_slowed,
+          "braking slowdown must preserve tracking identity and expose its limiting reason");
 }
 
 void testReachedOutcomesDistinguishInspectionArrival() {
@@ -565,15 +782,21 @@ int main() {
   try {
     testIdleAndAuthorityDeniedDoNothing();
     testBlockedInputGateFailsClosedWithoutPlanning();
+    testInputsExpiringDuringPlanningBlockPublicationWithoutCompletingGoal();
     testActiveMapIdentityGuardFailsClosedBeforePlanning();
     testNormalTickProducesBorrowedInputIntentsAndDiagnostics();
     testZeroCommandSkipsFinalSafety();
     testInvalidShapingAndCommitFailureFailClosed();
+    testPlannedCrawlBypassesTeleopDeadbandAndKeepsMaximumLimits();
+    testFinalLinearStopPausesTrajectoryAndPreservesAllowedRotation();
+    testShapingToZeroPausesTrajectoryBeforeSafety();
     testUnpublishedCommandDoesNotAdvanceSmootherCommit();
     testVerifiedRecoveryCommandUsesPlannerDecision();
     testRecoveryOutcomesDistinguishRollingAndGenericGoals();
     testPrecomputedPersistentReplanBypassesPlannerAndFinalSafetyWithZeroCommand();
     testReachedOutcomesDistinguishInspectionArrival();
+    testActualCollisionRestartsPlannerInsteadOfHoldingUnsafeTrackingTarget();
+    testBrakingSlowdownRetainsActiveTrajectory();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "test_autonomy_tick_controller: FAIL: %s\n", error.what());
     return 1;

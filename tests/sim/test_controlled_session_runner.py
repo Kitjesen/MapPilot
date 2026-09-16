@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -7,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from sim.runtime.control import CommandSubmitResult
 from sim.runtime.coordinator import CoordinatorError, RuntimeState
 from sim.runtime.coordinator.controlled_run import (

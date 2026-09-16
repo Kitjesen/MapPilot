@@ -12,9 +12,9 @@ import os
 import unittest
 from pathlib import Path
 
+from message.topics import TOPICS
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.msgs.nav import Odometry
-from runtime.runtime_interface import TOPICS
 
 ROOT = Path(__file__).resolve().parents[3]
 TARE_ENDPOINT_BOUNDARY_FILES = (

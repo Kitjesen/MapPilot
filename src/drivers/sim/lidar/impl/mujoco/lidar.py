@@ -5,8 +5,9 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from message.topics import TOPICS
 from runtime.msgs.sensor import PointCloud2
-from runtime.runtime_interface import TOPICS, topic_default_frame_id
+from runtime.tf.frames import topic_default_frame_id
 
 from ...native import Config, Sample
 

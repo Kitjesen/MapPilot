@@ -35,7 +35,6 @@ from .lidar import (
 from .messages import (
     CURRENT_SCHEMA_VERSION,
     ContractError,
-    MessageEnvelope,
     ValidationIssue,
     assert_valid_message,
     validate_message,
@@ -72,7 +71,6 @@ __all__ = [
     "ContractError",
     "LidarContract",
     "LiftState",
-    "MessageEnvelope",
     "ValidationIssue",
     "assert_valid_message",
     "validate_message",

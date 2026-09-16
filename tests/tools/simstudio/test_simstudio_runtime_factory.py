@@ -1,6 +1,5 @@
 """Public behavior tests for the SimStudio production runtime factory."""
 
-# ruff: noqa: D101,D102,D103,S101
 
 from __future__ import annotations
 
@@ -850,8 +849,8 @@ def test_prepare_rejects_runs_parent_link_swap_without_writing_foreign_target(
         (foreign / run_id).mkdir(parents=True)
         runs_root.rename(displaced)
         if sys.platform == "win32":
-            created = subprocess.run(  # noqa: S603
-                ["cmd", "/c", "mklink", "/J", str(runs_root), str(foreign)],  # noqa: S607
+            created = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(runs_root), str(foreign)],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -947,8 +946,8 @@ def test_prepare_revalidates_the_full_artifact_chain_after_factory_construction(
     link_created = False
     try:
         if sys.platform == "win32":
-            created = subprocess.run(  # noqa: S603
-                ["cmd", "/c", "mklink", "/J", str(artifacts_root), str(foreign)],  # noqa: S607
+            created = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(artifacts_root), str(foreign)],
                 capture_output=True,
                 text=True,
                 check=False,

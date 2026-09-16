@@ -57,7 +57,8 @@ def _snapshots(
                     "data_ready": True,
                     "motion_ready": live,
                     "non_motion_safe": True,
-                }
+                },
+                "navigation": {"blockers": []},
             },
         },
         "runtime_dataflow": {
@@ -79,8 +80,16 @@ def _snapshots(
         },
         "navigation_status": {
             "_http_status": 200,
-            "state": "IDLE",
-            "readiness": {"can_send_goal": live, "blockers": []},
+            "schema_version": 3,
+            "task": {"state": "IDLE", "task_id": "", "reason": ""},
+            "goal_admission": {"state": "ACCEPTING" if live else "BLOCKED"},
+            "control": {"authority": "NONE", "resume_required": False, "reason": ""},
+            "motion": {
+                "permission": "CLEAR",
+                "observation": "QUIET",
+                "stop_confirmation": "NOT_REQUESTED",
+                "reason": "",
+            },
         },
         "real_runtime_evidence": evidence
         or {
@@ -276,12 +285,21 @@ def test_navigation_blockers_block_field_acceptance():
     from diagnostics.field.gateway_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(live=True, evidence=_real_evidence())
-    snapshots["navigation_status"]["readiness"] = {
-        "can_send_goal": False,
-        "blockers": ["map unavailable"],
-    }
+    snapshots["navigation_status"]["goal_admission"]["state"] = "BLOCKED"
 
     payload = evaluate_gateway_runtime_acceptance(snapshots, mode="field")
 
     assert payload["ok"] is False
-    assert "navigation readiness blockers: map unavailable" in payload["blockers"]
+    assert "field acceptance requires navigation goal_admission=ACCEPTING" in payload["blockers"]
+
+
+def test_navigation_unknown_axes_fail_closed_for_field_acceptance():
+    from diagnostics.field.gateway_acceptance import evaluate_gateway_runtime_acceptance
+
+    snapshots = _snapshots(live=True, evidence=_real_evidence())
+    snapshots["navigation_status"]["control"]["authority"] = "UNKNOWN"
+
+    payload = evaluate_gateway_runtime_acceptance(snapshots, mode="field")
+
+    assert payload["ok"] is False
+    assert "navigation state is unknown: control" in payload["blockers"]

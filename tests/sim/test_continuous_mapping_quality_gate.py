@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from sim.scripts.mujoco.continuous_mapping_quality_gate import (
     MAX_CYCLONEDDS_DOMAIN_ID,
     analyze_scale_convergence,
@@ -128,7 +127,7 @@ def test_rigid_align_recovers_rotation_translation():
 
 
 def test_ate_is_frame_invariant():
-    t, xy, yaw = _arc_trajectory()
+    _t, xy, _yaw = _arc_trajectory()
     theta = -1.2
     rot = np.array([[math.cos(theta), -math.sin(theta)], [math.sin(theta), math.cos(theta)]])
     translation = np.array([10.0, -4.0])

@@ -1,13 +1,16 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
+import copy
 import importlib.util
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import mujoco
 import numpy as np
-import pytest
+import yaml
+from sim.packages.robots.doso.thunder_v4.tools import generate_thunderv4_mjcf as generator
+from sim.scripts.mujoco import continuous_walk
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SIM_ROOT = REPO_ROOT / "sim"
@@ -50,7 +53,6 @@ def _joint_id(model: mujoco.MjModel, name: str) -> int:
 
 
 def _keyboard_module():
-    pytest.importorskip("torch", reason="Thunder V4 keyboard checks require torch")
     script_path = (
         REPO_ROOT
         / "sim" / "packages" / "controllers"
@@ -89,6 +91,9 @@ def test_flat_and_stairs_use_the_same_real_v4_hardware_contract() -> None:
             wheel_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, wheel_name)
             assert wheel_id >= 0, f"missing V4 wheel geom {wheel_name} in {filename}"
             assert np.isclose(model.geom_size[wheel_id, 0], 0.093, atol=1e-6)
+            assert np.allclose(model.geom_friction[wheel_id], (1.0, 0.005, 0.0001))
+
+        assert np.allclose(model.geom("ground").friction, (1.0, 0.005, 0.0001))
 
         sensor_names = {
             mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_SENSOR, sensor_id) for sensor_id in range(model.nsensor)
@@ -108,6 +113,64 @@ def test_flat_and_stairs_use_the_same_real_v4_hardware_contract() -> None:
     stairs = _model("thunderv4_stairs.xml")
     for step_name in ("step_1", "step_2", "step_3"):
         assert mujoco.mj_name2id(stairs, mujoco.mjtObj.mjOBJ_GEOM, step_name) >= 0
+        assert np.allclose(stairs.geom(step_name).friction, (1.0, 0.005, 0.0001))
+
+
+def test_generated_wheel_uses_rubber_friction_after_collision_annotation() -> None:
+    body = ET.fromstring('<body name="fr_foot_Link"><geom type="cylinder" size="0.093 0.026"/></body>')
+    generator._rename_tree(body, show_collisions=False)
+    generator._mark_wheel_collisions(body)
+    root = ET.Element("mujoco")
+    root.append(copy.deepcopy(ET.parse(MJCF_ROOT / "thunderv4.xml").getroot().find("default")))
+    ET.SubElement(root, "worldbody").append(body)
+
+    model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
+
+    assert np.allclose(model.geom("FR_wheel").friction, (1.0, 0.005, 0.0001))
+
+
+def test_navigation_clearance_covers_fixed_torso_geoms_from_base_link() -> None:
+    model = _model("thunderv4.xml")
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    base_id = model.body("base_link").id
+    base_rotation = data.xmat[base_id].reshape(3, 3)
+    package = yaml.safe_load((ASSET_ROOT / "robot.package.yaml").read_text(encoding="utf-8"))
+    geometry = package["navigation_geometry"]
+    fixed_bounds = []
+    for geom_id in range(model.ngeom):
+        if not (model.geom_contype[geom_id] or model.geom_conaffinity[geom_id]):
+            continue
+        body_id = int(model.geom_bodyid[geom_id])
+        while body_id != base_id and body_id and model.body_jntnum[body_id] == 0:
+            body_id = int(model.body_parentid[body_id])
+        if body_id != base_id:
+            continue
+        assert model.geom_type[geom_id] == mujoco.mjtGeom.mjGEOM_BOX
+        rotation = base_rotation.T @ data.geom_xmat[geom_id].reshape(3, 3)
+        center = base_rotation.T @ (data.geom_xpos[geom_id] - data.xpos[base_id])
+        extent = np.abs(rotation) @ model.geom_size[geom_id]
+        fixed_bounds.append((center[2] - extent[2], center[2] + extent[2]))
+    assert fixed_bounds
+    assert -geometry["collision_clearance_below_m"] <= min(b[0] for b in fixed_bounds) - 0.04
+    assert geometry["collision_clearance_above_m"] >= max(b[1] for b in fixed_bounds) + 0.08
+    assert geometry["collision_clearance_below_m"] < geometry["support_height_m"]
+
+
+def test_merged_open_field_keeps_floor_friction_and_low_wheel_contact_torsion() -> None:
+    world = mujoco.MjModel.from_xml_path(str(continuous_walk.WORLD_XML))
+    engine = continuous_walk._build_engine()
+    try:
+        assert np.allclose(engine._model.geom("floor").friction, world.geom("floor").friction)
+        for _ in range(25):
+            engine.step(continuous_walk.VelocityCommand())
+        wheels = {engine._model.geom(f"{leg}_wheel").id for leg in ("FR", "FL", "RR", "RL")}
+        contacts = [c for c in engine._data.contact if c.geom1 in wheels or c.geom2 in wheels]
+        assert contacts
+        assert all(contact.dim == 4 for contact in contacts)
+        assert all(np.isclose(contact.friction[2], 0.005) for contact in contacts)
+    finally:
+        engine.close()
 
 
 def test_manual_high_stand_pose_stays_within_true_v4_joint_limits() -> None:

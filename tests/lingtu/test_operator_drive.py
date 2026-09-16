@@ -31,12 +31,12 @@ def _write_current(
     )
     plan = control._resolve(product)
     if env == "real":
-        native_environment = plan.native_process_environment
+        native_environment = plan.process_environment
         if domain_id is None:
             native_environment.pop("LINGTU_DDS_DOMAIN_ID", None)
         else:
             native_environment["LINGTU_DDS_DOMAIN_ID"] = domain_id
-        plan = plan.with_native_process_environment(native_environment)
+        plan = plan.with_process_environment(native_environment)
     product_session_id = "1" * 32
     plan_path = plan.write(tmp_path / f"plan-{product_session_id}.json")
     (tmp_path / "current.json").write_text(

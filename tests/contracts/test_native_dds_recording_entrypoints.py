@@ -1,6 +1,6 @@
 """Contracts for the native CycloneDDS recording product entrypoints."""
 
-# ruff: noqa: D103, S101 - pytest contracts use assertions by design.
+
 
 from pathlib import Path
 

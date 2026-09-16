@@ -14,8 +14,8 @@
 #include "dds/drain.hpp"
 #include "input/samples.hpp"
 #include "messages.h"
-#include "message/cpp/navigation_command.hpp"
-#include "message/cpp/operator_motion.hpp"
+#include "message/protocol/navigation.hpp"
+#include "message/protocol/operator_motion.hpp"
 #include "nav/inspection/inspection.hpp"
 #include "nav_kernel/types.hpp"
 #include "safety/geofence.hpp"
@@ -209,7 +209,7 @@ copyGeofenceCommand(const lingtu_dds_GeofenceCommandRequest &message);
 class Dds {
  public:
   explicit Dds(int domain_id, DdsStatus *status = nullptr,
-               bool read_obstacle_cloud = true);
+               bool read_obstacle_cloud = true, bool read_simulation_clock = false);
   ~Dds();
 
   Dds(const Dds &) = delete;
@@ -456,6 +456,7 @@ class Dds {
   dds_entity_t subscriber_{0};
   dds_entity_t publisher_{0};
   dds_entity_t odom_reader_{0};
+  dds_entity_t simulation_clock_reader_{0};
   dds_entity_t tf_reader_{0};
   dds_entity_t cloud_reader_{0};
   dds_entity_t terrain_map_reader_{0};

@@ -352,8 +352,15 @@ class DriverBridgeSession:
         """Request or continue shutdown and return its next physical command."""
 
         self._require_state(
-            "active", "command_available", "deactivation_waiting_zero"
+            "active", "command_available", "applying", "deactivation_waiting_zero",
+            "deactivating_pending", "deactivating",
         )
+        if self._state in {"deactivating_pending", "deactivating"}:
+            # A failed physical step does not acknowledge or consume its zero.
+            # Retry the exact command already returned by this transaction.
+            assert self._inflight is not None
+            return self._inflight
+        received = self._inflight if self._state == "applying" else None
         continuing = self._state == "deactivation_waiting_zero"
         deadline = self._deadline()
         try:
@@ -369,12 +376,20 @@ class DriverBridgeSession:
                     f"\t{self._control_seq}",
                     deadline,
                 )
-                if self._queued_command is not None:
+                if received is not None:
+                    # No APPLIED was sent when a caller's physics step failed.
+                    # The bridge cancels nav; an issued safety zero remains owed.
+                    command = received
+                elif self._queued_command is not None:
                     command = self._queued_command
                     self._queued_command = None
                 else:
                     command = self._receive_command(deadline)
-                if command.kind not in {"nav", "deactivate_zero"}:
+                if command.kind == "nav":
+                    # DEACTIVATE supersedes the one command already in transit.
+                    # Do not report APPLIED for motion that the caller skipped.
+                    command = self._receive_command(deadline, expected_kind="deactivate_zero")
+                if command.kind not in {"safety_zero", "deactivate_zero"}:
                     raise DriverBridgeSessionError(
                         "unexpected command while deactivating"
                     )
@@ -383,7 +398,7 @@ class DriverBridgeSession:
             raise
         self._inflight = command
         self._state = (
-            "deactivating_pending" if command.kind == "nav" else "deactivating"
+            "deactivating_pending" if command.kind == "safety_zero" else "deactivating"
         )
         return command
 

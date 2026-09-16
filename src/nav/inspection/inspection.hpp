@@ -1,6 +1,5 @@
 #pragma once
-
-#include "message/cpp/inspection_command.hpp"
+#include "message/protocol/inspection.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -20,24 +19,7 @@ enum class FailurePolicy : std::int32_t {
   kSkip = 2,
 };
 
-enum class RunState : std::int32_t {
-  kIdle = 0,
-  kValidating = 1,
-  kPlanning = 2,
-  kNavigating = 3,
-  kDwelling = 4,
-  kPaused = 5,
-  kRecovering = 6,
-  kSucceeded = 7,
-  kFailed = 8,
-  kCancelled = 9,
-  kSettling = 10,
-  kActionPending = 11,
-  // Route progression has stopped, but the final task state still awaits
-  // native zero-output confirmation.
-  kPausing = 12,
-  kCancelling = 13,
-};
+using RunState = lingtu::message::InspectionTaskState;
 
 struct Point {
   std::string id;
@@ -123,13 +105,7 @@ struct RunStatus {
 // later adds its boot identity and transport sequence when it publishes this
 // outbox to DDS; Gateway must consume these facts rather than infer them from
 // command ACKs or snapshots.
-enum class TaskEventKind : std::int32_t {
-  kTaskAccepted = 1,
-  kStateChanged = 2,
-  kMilestone = 3,
-  kStopConfirmationFailed = 4,
-  kEvidenceRecorded = 5,
-};
+using TaskEventKind = lingtu::message::InspectionTaskEventKind;
 
 struct TaskEvent {
   std::uint64_t sequence{0U};

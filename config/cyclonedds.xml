@@ -1,58 +1,46 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!--
-  CycloneDDS 配置 — 3D NAV 导航系统
-  用法: export CYCLONEDDS_URI=file://$(pwd)/config/cyclonedds.xml
-  或在 launch 中: os.environ['CYCLONEDDS_URI'] = 'file://' + config_path
-
-  文档: https://cyclonedds.io/docs/cyclonedds/latest/config.html
+  Native typed-DDS defaults for LingTu.
+  Development: export CYCLONEDDS_URI=file://$(pwd)/config/cyclonedds.xml
+  ProductControl may supply target-specific inline XML for a selected robot.
 -->
 <CycloneDDS xmlns="https://cdds.io/config">
   <Domain id="any">
 
-    <!-- ═══ 通用设置 ═══ -->
+    <!-- Network and payload limits. -->
     <General>
-      <!-- 网络接口: 指定机器人使用的网卡, 避免多网卡发现混乱 -->
-      <!-- 部署时改为实际接口名 (如 eth0, wlan0) -->
+      <!-- A deployment may replace autodetection with its robot-facing NIC. -->
       <Interfaces>
         <NetworkInterface autodetermine="true" priority="default" />
       </Interfaces>
 
-      <!-- 允许组播 (同一子网内发现) -->
       <AllowMulticast>default</AllowMulticast>
 
-      <!-- RTPS datagram budget. Larger map scenes are fragmented by CycloneDDS. -->
+      <!-- Larger map payloads are fragmented by CycloneDDS. -->
       <MaxMessageSize>65500B</MaxMessageSize>
       <FragmentSize>4096B</FragmentSize>
     </General>
 
-    <!-- ═══ 发现 (Discovery) ═══ -->
+    <!-- Participant discovery. -->
     <Discovery>
-      <!-- 参与者发现间隔: 默认 30s 太慢, 机器人场景 5s 足够 -->
       <ParticipantIndex>auto</ParticipantIndex>
-
-      <!-- 对等发现超时: 新节点加入后多快能被发现 -->
       <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
     </Discovery>
 
-    <!-- ═══ 内部线程 ═══ -->
+    <!-- Runtime buffers and retransmission policy. -->
     <Internal>
-      <!-- 写缓冲区: PointCloud2 大消息需要足够空间 -->
       <WriterLingerDuration>1s</WriterLingerDuration>
 
       <!-- Covers concurrent LiDAR fragments plus one bounded map scene. -->
       <SocketReceiveBufferSize min="8MB" />
 
-      <!-- 发现协议收敛加速 -->
       <BuiltinEndpointSet>writers</BuiltinEndpointSet>
-
-      <!-- 避免 CPU 空转 -->
       <RetransmitMerging>adaptive</RetransmitMerging>
     </Internal>
 
-    <!-- ═══ 追踪/调试 (生产环境注释掉) ═══ -->
+    <!-- Keep production output bounded; raise locally while diagnosing DDS. -->
     <Tracing>
       <Verbosity>warning</Verbosity>
-      <!-- 调试时可改为 config/fine/finer/finest -->
       <!-- <OutputFile>/tmp/cyclonedds.log</OutputFile> -->
     </Tracing>
 
@@ -61,7 +49,7 @@
       they are serialized even when an iceoryx-enabled CycloneDDS is used.
       Keep their rates and payload caps enforced in mapd.
     -->
-    <!-- ═══ 共享内存 (同主机固定布局类型可用, 需 iceoryx) ═══ -->
+    <!-- Optional shared memory for eligible fixed-layout local types. -->
     <!--
     <SharedMemory>
       <Enable>true</Enable>

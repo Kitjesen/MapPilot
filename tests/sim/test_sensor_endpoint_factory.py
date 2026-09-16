@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -6,7 +5,6 @@ from fractions import Fraction
 from typing import Any
 
 import pytest
-
 from sim.runtime.sensors import (
     SensorEndpoint,
     SensorEndpointRouter,

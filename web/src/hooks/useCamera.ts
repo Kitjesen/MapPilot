@@ -20,12 +20,21 @@ export function useCamera(url: string = '/ws/camera'): CameraState {
   const mountedRef = useRef(true)
   const connectRef = useRef<() => void>(() => {})
   const prevBlobRef = useRef<string | null>(null)
+  const frameReceivedAt = useRef(0)
 
   const connect = useCallback(() => {
     if (!mountedRef.current) return
     if (wsRef.current) {
       wsRef.current.close()
       wsRef.current = null
+    }
+    setConnected(false)
+    setImgSrc(null)
+    setLastFrameAt(null)
+    frameReceivedAt.current = 0
+    if (prevBlobRef.current) {
+      URL.revokeObjectURL(prevBlobRef.current)
+      prevBlobRef.current = null
     }
 
     // Empty url signals "stay idle" while the WHEP path is in charge.
@@ -39,39 +48,54 @@ export function useCamera(url: string = '/ws/camera'): CameraState {
     const ws = new WebSocket(wsUrl)
     ws.binaryType = 'blob'
     wsRef.current = ws
+    let decoding = false
 
     ws.onopen = () => {
-      if (!mountedRef.current) return
+      if (!mountedRef.current || wsRef.current !== ws) return
       setConnected(true)
       setError(null)
     }
 
     ws.onmessage = (e: MessageEvent) => {
-      if (!mountedRef.current) return
-      if (e.data instanceof Blob) {
-        // Revoke previous blob URL to avoid memory leak
-        if (prevBlobRef.current) {
-          URL.revokeObjectURL(prevBlobRef.current)
-        }
+      if (!mountedRef.current || wsRef.current !== ws) return
+      if (e.data instanceof Blob && !decoding) {
+        // Decode before swapping so the previous image stays visible. Drop
+        // intermediate frames while decoding instead of queueing stale video.
+        decoding = true
+        const receivedAt = Date.now()
         const objectUrl = URL.createObjectURL(e.data)
-        prevBlobRef.current = objectUrl
-        setImgSrc(objectUrl)
-        setLastFrameAt(Date.now())
-        setFrameCount(n => n + 1)
+        const frame = new Image()
+        frame.src = objectUrl
+        void frame.decode().then(() => {
+          if (!mountedRef.current || wsRef.current !== ws) {
+            URL.revokeObjectURL(objectUrl)
+            return
+          }
+          const previous = prevBlobRef.current
+          prevBlobRef.current = objectUrl
+          setImgSrc(objectUrl)
+          setLastFrameAt(receivedAt)
+          frameReceivedAt.current = receivedAt
+          setFrameCount(n => n + 1)
+          if (previous) URL.revokeObjectURL(previous)
+        }).catch(() => URL.revokeObjectURL(objectUrl))
+          .finally(() => { decoding = false })
       }
       // JSON frames (e.g. ping/control echo) — ignore
     }
 
     ws.onclose = () => {
-      if (!mountedRef.current) return
+      if (!mountedRef.current || wsRef.current !== ws) return
+      wsRef.current = null
       setConnected(false)
+      setImgSrc(null)
       reconnectTimer.current = setTimeout(() => {
         if (mountedRef.current) connectRef.current()
       }, 3000)
     }
 
     ws.onerror = () => {
-      if (mountedRef.current) setError('socket')
+      if (mountedRef.current && wsRef.current === ws) setError('socket')
       ws.close()
     }
   }, [url])
@@ -87,8 +111,13 @@ export function useCamera(url: string = '/ws/camera'): CameraState {
 
   useEffect(() => {
     mountedRef.current = true
-    connect()
+    const connectTimer = setTimeout(connect, 0)
+    const freshnessTimer = url ? setInterval(() => {
+      if (frameReceivedAt.current > 0 && Date.now() - frameReceivedAt.current > 3000) setImgSrc(null)
+    }, 1000) : undefined
     return () => {
+      clearTimeout(connectTimer)
+      clearInterval(freshnessTimer)
       mountedRef.current = false
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
       if (wsRef.current) {
@@ -99,7 +128,7 @@ export function useCamera(url: string = '/ws/camera'): CameraState {
         URL.revokeObjectURL(prevBlobRef.current)
       }
     }
-  }, [connect])
+  }, [connect, url])
 
   return { imgSrc, connected, lastFrameAt, frameCount, error, reconnect }
 }

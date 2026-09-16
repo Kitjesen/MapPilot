@@ -35,7 +35,19 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
         lingtu_nav_follower
         lingtu_nav_local_planner
         GTest::gtest_main)
-      gtest_discover_tests(${target})
+      if(target STREQUAL "test_scan_planner")
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+            AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "9"
+            AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "10"
+            AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+          # GCC 9/aarch64 ICEs in add_symbol_to_partition_1 for this test.
+          # Keep LTO, bypass its failing partition phase; production IPO stays on.
+          target_link_options(${target} PRIVATE -flto-partition=none)
+        endif()
+        gtest_discover_tests(${target} PROPERTIES TIMEOUT 120)
+      else()
+        gtest_discover_tests(${target})
+      endif()
     endfunction()
 
     foreach(test_name IN ITEMS
@@ -50,12 +62,16 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
         test_far_c_api
         test_far_planner
         test_scan_planner
+        test_scan_spline_velocity_bounds
         test_local_plan_task
         test_recovery_rotation
         test_recovery_sequence
         test_local_planner_core)
       lingtu_add_nav_gtest(${test_name} "${test_name}.cpp")
     endforeach()
+
+    target_include_directories(test_terrain_core PRIVATE
+      "${LINGTU_SRC_ROOT}/maps/include")
 
     target_link_libraries(test_far_planner PRIVATE lingtu_nav_far)
     target_link_libraries(test_far_c_api PRIVATE lingtu_nav_far_c_api)

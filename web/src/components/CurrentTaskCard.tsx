@@ -8,7 +8,7 @@ import {
   isTaskControlAwaitingConfirmation,
   type NavigationTaskControlRequest,
 } from '../services/navigationTaskLifecycle'
-import { navigationOperatorTaskLabel } from '../services/navigationOperatorState'
+import { navigationTaskLabel } from '../services/navigationStatus'
 import type { ToastKind } from '../types'
 import styles from './CurrentTaskCard.module.css'
 
@@ -31,10 +31,6 @@ const STATE_LABELS: Record<string, { tone: StateTone }> = {
   FAILED: { tone: 'danger' },
   CANCELLED: { tone: 'muted' },
   UNKNOWN: { tone: 'muted' },
-}
-
-function shortTaskId(taskId: string): string {
-  return taskId.length > 10 ? `${taskId.slice(0, 8)}...` : taskId
 }
 
 function cleanText(value: unknown): string {
@@ -95,6 +91,12 @@ export function CurrentTaskCard({
     return () => window.clearTimeout(timer)
   }, [controlAwaiting, controlRequest])
 
+  useEffect(() => {
+    if (stale || !task.terminal || !['SUCCESS', 'CANCELLED'].includes(task.state)) return
+    const timer = window.setTimeout(dismiss, 8000)
+    return () => window.clearTimeout(timer)
+  }, [currentTaskId, dismiss, stale, task.state, task.terminal])
+
   if (!identity) return null
   const knownState = STATE_LABELS[task.state]
 
@@ -106,11 +108,14 @@ export function CurrentTaskCard({
       : !snapshot.found || !status
         ? { label: text(locale, 'Waiting for native status', '等待原生状态'), tone: 'waiting' as StateTone }
         : knownState
-          ? { label: navigationOperatorTaskLabel(task.state, locale), tone: knownState.tone }
+          ? { label: navigationTaskLabel(task.state, locale), tone: knownState.tone }
           : { label: text(locale, 'Unknown', '未知'), tone: 'muted' as StateTone }
   const reason = cleanText(status?.reason)
     || cleanText(snapshot?.reason)
     || (loading ? text(locale, 'Awaiting the first lifecycle update', '等待首个生命周期更新') : '-')
+  const showReason = reason !== '-' && (
+    stale || !snapshot?.found || ['PAUSED', 'RECOVERING', 'FAILED', 'UNKNOWN'].includes(task.state)
+  )
   const updatedAt = Number(status?.ts ?? snapshot?.ts ?? identity.submitted_at)
   const freshness = formatAge(updatedAt, now, locale)
 
@@ -270,10 +275,21 @@ export function CurrentTaskCard({
         )}
       </div>
 
-      <div className={styles.reasonRow}>
-        <span className={styles.label}>{text(locale, 'Reason', '原因')}</span>
-        <span className={styles.reason} title={reason}>{reason}</span>
-      </div>
+      {showReason && (
+        <div className={styles.reasonRow}>
+          <span className={styles.label}>{text(locale, 'Reason', '原因')}</span>
+          <span className={styles.reason}>{reason}</span>
+        </div>
+      )}
+
+      {!terminal && task.canResume && !resumeAllowed && (
+        <div className={styles.reasonRow} role="status">
+          <span className={styles.label}>{text(locale, 'Resume blocked', '暂不能恢复')}</span>
+          <span className={styles.reason}>
+            {resumeBlockedReason || text(locale, 'Resume is blocked by robot state', '机器人状态阻止恢复')}
+          </span>
+        </div>
+      )}
 
       {!terminal && (
         <div className={styles.actions}>
@@ -327,15 +343,17 @@ export function CurrentTaskCard({
         </div>
       )}
 
-      <footer className={styles.meta}>
-        <span title={identity.task_id}>
-          {text(locale, 'Task', '任务')} <code>#{shortTaskId(identity.task_id)}</code>
-        </span>
-        <span className={styles.freshness}>
-          <Clock3 size={11} aria-hidden="true" />
-          {text(locale, 'Updated', '更新于')} {freshness}
-        </span>
-      </footer>
+      <details className={styles.details}>
+        <summary>{text(locale, 'Task details', '任务详情')}</summary>
+        <div className={styles.meta}>
+          <span>{text(locale, 'Task ID', '任务 ID')} <code>{identity.task_id}</code></span>
+          <span className={styles.freshness}>
+            <Clock3 size={11} aria-hidden="true" />
+            {text(locale, 'Updated', '更新于')} {freshness}
+          </span>
+          <span>{text(locale, 'Raw reason', '原始原因')} <code>{reason}</code></span>
+        </div>
+      </details>
     </aside>
   )
 }

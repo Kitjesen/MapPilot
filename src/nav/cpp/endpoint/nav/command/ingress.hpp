@@ -11,13 +11,13 @@
 #include <unordered_map>
 #include <vector>
 
-#include "message/cpp/navigation_command.hpp"
+#include "message/protocol/navigation.hpp"
 
 namespace lingtu::nav::endpoint {
 
 struct CommandPayload {
   std::string frame_id;
-  std::array<double, 7> goal{};
+  std::array<double, 9> goal{};
   std::string reason;
 
   [[nodiscard]] std::string canonical() const;

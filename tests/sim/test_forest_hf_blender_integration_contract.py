@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Integration contracts for Forest_HF Blender authoring boundaries."""
 

@@ -1,6 +1,5 @@
 """Contracts for visual-only conditioning of first-batch Tripo forest assets."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -10,7 +9,6 @@ import struct
 from pathlib import Path
 
 import pytest
-
 from sim.tools.assets.forest_asset_conditioning import (
     CONDITIONER_CONTRACT,
     build_forest_asset_conditioning_plan,

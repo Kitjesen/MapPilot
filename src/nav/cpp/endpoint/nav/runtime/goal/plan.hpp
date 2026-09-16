@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "message/cpp/navigation_command.hpp"
+#include "message/protocol/navigation.hpp"
 #include "runtime/goal/task.hpp"
 #include "input/active/identity.hpp"
 
@@ -20,6 +20,8 @@ enum class GoalPlanOrigin {
 struct GoalPlanTarget {
   nav_kernel::Vec3 position{};
   std::optional<double> yaw;
+  std::optional<double> max_speed_mps{};
+  std::optional<double> acceptance_radius_m{};
 };
 
 struct GoalPlanRequest {
@@ -88,6 +90,8 @@ struct GoalPlanPathActivation {
   std::optional<GoalPlanPathTolerance> tolerance;
   std::optional<lingtu::nav::plan::MapIdentity> map_identity;
   double stamp_s{0.0};
+  std::optional<double> max_speed_mps{};
+  std::optional<double> acceptance_radius_m{};
 };
 
 struct GoalPlanDiagnostics {
@@ -187,6 +191,8 @@ struct GoalPlanSnapshot {
   return !snapshot.active_paused && !snapshot.busy && !snapshot.pending_plan_queued;
 }
 
+[[nodiscard]] bool goalPlanInputGapIsRecoverable(const std::string &reason) noexcept;
+
 class GoalPlanController {
  public:
   GoalPlanController(GlobalPlanTask::Planner planner, GoalPlanActions actions);
@@ -256,6 +262,7 @@ class GoalPlanController {
   struct DeferredPlanStart {
     GoalPlanRequest request;
     std::uint64_t goal_epoch{0U};
+    bool project_to_navigation_state{false};
   };
   struct DeferredReplacementActivation {
     std::string task_id;
@@ -265,6 +272,7 @@ class GoalPlanController {
     GoalPlanTarget target;
     GoalPlanOrigin origin{GoalPlanOrigin::kExternal};
     lingtu::nav::plan::GlobalPlannerOptions planner_options{};
+    bool replan_after_input_gap{false};
   };
   void clearPlanningIdentity();
 

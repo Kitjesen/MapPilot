@@ -22,8 +22,8 @@ from typing import Any
 from runtime.module import Module
 from runtime.msgs.sensor import Imu, PointCloud2
 from runtime.registry import register
-from runtime.runtime_interface import real_lidar_frame_id
 from runtime.stream import Out
+from runtime.tf.frames import real_lidar_frame_id
 
 from .native.sdk import LidarSource, LidarSourceFactory, create_lidar_source
 

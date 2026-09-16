@@ -285,9 +285,10 @@ int main() {
   require(busy_controller.submit(request, context).accepted,
           "busy test could not start first goal");
   auto overlapping_request = request;
+  overlapping_request.origin = GoalPlanOrigin::kInspection;
   overlapping_request.request_id = "goal-overlap";
   const auto busy_result = busy_controller.submit(overlapping_request, context);
-  require(!busy_result.accepted, "overlapping goal bypassed planner busy gate");
+  require(!busy_result.accepted, "inspection goal bypassed planner busy gate");
   require(busy_result.reason == "global_planner_busy", "planner busy rejection reason changed");
   require(busy_controller.snapshot().goal_epoch == 1U, "busy rejection consumed a second epoch");
   require(busy_statuses.size() == 1U, "busy rejection published a second planning status");

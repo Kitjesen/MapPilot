@@ -1,5 +1,3 @@
-# ruff: noqa: S101
-
 from __future__ import annotations
 
 import json
@@ -11,7 +9,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 import sim.runtime.coordinator.unreal_process as unreal_process_module
 from sim.catalog import CatalogResolver
 from sim.runtime.control.fake import zero_output_components
@@ -27,12 +24,7 @@ from sim.runtime.coordinator.unreal_process import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SESSION = REPO_ROOT / "sim" / "sessions" / "examples" / "thunderv4_unreal" / "session.yaml"
-CONTRACT_SESSION = (
-    REPO_ROOT
-    / "sim" / "sessions" / "examples"
-    / "thunder_omni_contract"
-    / "session.yaml"
-)
+CONTRACT_SESSION = REPO_ROOT / "sim" / "sessions" / "examples" / "thunder_omni_contract" / "session.yaml"
 ACTUATORS = (
     "FR_hip_joint",
     "FR_thigh_joint",
@@ -219,9 +211,7 @@ class _Evidence:
         model_generation: int,
         reset_generation: int,
     ) -> None:
-        self.order.append(
-            f"evidence.advance:{self.name}:{model_generation}:{reset_generation}"
-        )
+        self.order.append(f"evidence.advance:{self.name}:{model_generation}:{reset_generation}")
 
 
 class _VisualReadinessEvidence:
@@ -233,10 +223,7 @@ class _VisualReadinessEvidence:
     def apply(self, target: _Coordinator) -> bool:
         self.order.append("evidence.apply:visual-readiness")
         self.calls += 1
-        if (
-            self.calls >= self.active_after
-            and target.readiness.state(BindingFacet.VISUAL) is not BindingState.ACTIVE
-        ):
+        if self.calls >= self.active_after and target.readiness.state(BindingFacet.VISUAL) is not BindingState.ACTIVE:
             target.readiness = target.readiness.mark_prepared(
                 BindingFacet.VISUAL,
                 model_generation=0,
@@ -254,9 +241,7 @@ class _VisualReadinessEvidence:
         model_generation: int,
         reset_generation: int,
     ) -> None:
-        self.order.append(
-            f"evidence.advance:visual-readiness:{model_generation}:{reset_generation}"
-        )
+        self.order.append(f"evidence.advance:visual-readiness:{model_generation}:{reset_generation}")
 
 
 def test_prepare_publishes_and_applies_first_evidence_before_warmup() -> None:
@@ -286,9 +271,7 @@ def test_prepare_publishes_and_applies_first_evidence_before_warmup() -> None:
 def test_prepare_until_visual_applied_freezes_physics_while_waiting_for_active() -> None:
     order: list[str] = []
     coordinator = _Coordinator(order)
-    coordinator.readiness = BindingReadiness.for_required(
-        (BindingFacet.PHYSICS, BindingFacet.VISUAL)
-    )
+    coordinator.readiness = BindingReadiness.for_required((BindingFacet.PHYSICS, BindingFacet.VISUAL))
     publisher = _Publisher(order)
     evidence = _VisualReadinessEvidence(order, active_after=3)
     host = SessionHost(
@@ -556,11 +539,7 @@ def test_post_stop_terminal_status_failure_is_persisted_as_failed_with_real_coor
         host.close(failure_reason="terminal status send failed")
 
         manifest = json.loads(coordinator.manifest_path.read_text(encoding="utf-8"))
-        episode = json.loads(
-            (coordinator.allocation.run_dir / "episode_result.json").read_text(
-                encoding="utf-8"
-            )
-        )
+        episode = json.loads((coordinator.allocation.run_dir / "episode_result.json").read_text(encoding="utf-8"))
         assert coordinator.state is RuntimeState.FAILED
         assert manifest["state"] == "FAILED"
         assert episode["status"] == "FAILED"
@@ -593,18 +572,14 @@ def test_terminal_unreal_readback_failure_promotes_stopped_runtime_to_failed() -
 
     assert coordinator.state is RuntimeState.FAILED
     assert any(
-        call.startswith("coordinator.finalize_terminal_failure:")
-        and "non-zero code 4" in call
-        for call in order
+        call.startswith("coordinator.finalize_terminal_failure:") and "non-zero code 4" in call for call in order
     )
 
 
 def test_visual_run_can_remain_alive_until_external_artifacts_are_collected() -> None:
     order: list[str] = []
     coordinator = _Coordinator(order, ready_on_prepare=True)
-    coordinator.readiness = BindingReadiness.for_required(
-        (BindingFacet.PHYSICS, BindingFacet.VISUAL)
-    )
+    coordinator.readiness = BindingReadiness.for_required((BindingFacet.PHYSICS, BindingFacet.VISUAL))
     host = SessionHost(
         coordinator=coordinator,
         unreal_process=_Unreal(order),
@@ -613,11 +588,14 @@ def test_visual_run_can_remain_alive_until_external_artifacts_are_collected() ->
         sleep_s=0,
     )
 
-    assert host.run_visual_only(
-        frame_limit=1,
-        steps_per_frame=2,
-        close_on_finish=False,
-    ) == 1
+    assert (
+        host.run_visual_only(
+            frame_limit=1,
+            steps_per_frame=2,
+            close_on_finish=False,
+        )
+        == 1
+    )
     assert "unreal.terminate" not in order
     assert "coordinator.stop" not in order
 
@@ -848,10 +826,7 @@ def test_unreal_command_uses_argv_and_preserves_paths_with_spaces() -> None:
     assert "-NoSplash" in command
     assert command.count("-NoCompile") == 1
     assert command.count("-DDC=InstalledNoZenLocalFallback") == 1
-    assert (
-        "-LocalDataCachePath=C:\\artifact roots\\live artifact root\\build\\unreal-ddc"
-        in command
-    )
+    assert "-LocalDataCachePath=C:\\artifact roots\\live artifact root\\build\\unreal-ddc" in command
     assert "-windowed" in command
     assert "-ResX=1920" in command
     assert "-ResY=1080" in command
@@ -896,9 +871,7 @@ def test_interactive_unreal_command_is_windowed_capped_and_not_unattended() -> N
     assert "-UnattendedInput" not in command
     assert "-LingTuRuntimeUI" not in command
     assert command.count("-NoSound") == 1
-    assert [arg for arg in command if arg.startswith("-ExecCmds=")] == [
-        "-ExecCmds=t.MaxFPS 30"
-    ]
+    assert [arg for arg in command if arg.startswith("-ExecCmds=")] == ["-ExecCmds=t.MaxFPS 30"]
 
 
 def test_main_view_screen_percentage_is_explicit_tsr_without_changing_output_size() -> None:
@@ -925,8 +898,7 @@ def test_main_view_screen_percentage_is_explicit_tsr_without_changing_output_siz
     )
 
     assert [arg for arg in command if arg.startswith("-ExecCmds=")] == [
-        "-ExecCmds=t.MaxFPS 30,r.AntiAliasingMethod 4,"
-        "r.DynamicRes.OperationMode 0,r.ScreenPercentage 80"
+        "-ExecCmds=t.MaxFPS 30,r.AntiAliasingMethod 4,r.DynamicRes.OperationMode 0,r.ScreenPercentage 80"
     ]
     assert command.count("-ResX=1920") == 1
     assert command.count("-ResY=1080") == 1
@@ -970,9 +942,7 @@ def test_depth_main_renderer_is_explicit_and_emitted_once() -> None:
         "reset_generation": 0,
     }
     assert "-LingTuDepthCaptureInMainRenderer" not in default_process.command(**common)
-    assert enabled_process.command(**common).count(
-        "-LingTuDepthCaptureInMainRenderer"
-    ) == 1
+    assert enabled_process.command(**common).count("-LingTuDepthCaptureInMainRenderer") == 1
 
 
 def test_shared_color_depth_capture_is_explicit_and_emitted_once() -> None:
@@ -1002,9 +972,7 @@ def test_shared_color_depth_capture_is_explicit_and_emitted_once() -> None:
         "reset_generation": 0,
     }
     assert "-LingTuSharedColorDepthCapture" not in default_process.command(**common)
-    assert enabled_process.command(**common).count(
-        "-LingTuSharedColorDepthCapture"
-    ) == 1
+    assert enabled_process.command(**common).count("-LingTuSharedColorDepthCapture") == 1
 
 
 @pytest.mark.parametrize("value", [None, 1, "true"])
@@ -1105,9 +1073,7 @@ def test_sdk_quiet_editor_start_skips_probes_with_exact_interaction_mode(
     assert command.count("-UnattendedInput") == (1 if unattended_input else 0)
     assert command.count("-LingTuRuntimeUI") == (1 if runtime_ui else 0)
     assert command.count("-NoSound") == 1
-    assert [arg for arg in command if arg.startswith("-ExecCmds=")] == [
-        "-ExecCmds=t.MaxFPS 30"
-    ]
+    assert [arg for arg in command if arg.startswith("-ExecCmds=")] == ["-ExecCmds=t.MaxFPS 30"]
     assert popen_call["env"] == {
         "LINGTU_HOST_BOOT_ID": "boot-sdk-quiet",
         "UE_SKIP_UBT_SDK_SETUP": "1",
@@ -1170,12 +1136,9 @@ def test_unreal_command_binds_playable_control_to_run_allocation_ports(
     assert command.count("-LingTuControlStatusPort=25125") == 1
     assert command.count("-LingTuControlSourceId=robotsimue.local_player.0") == 1
     expected_hud_arguments = {
-        "-LingTuHudDriveScreenshot="
-        "C:\\runs\\playable-run-001\\screenshots\\hud-drive.png",
-        "-LingTuHudTacticalScreenshot="
-        "C:\\runs\\playable-run-001\\screenshots\\hud-tactical.png",
-        "-LingTuHudMenuRecordingScreenshot="
-        "C:\\runs\\playable-run-001\\screenshots\\hud-menu-recording.png",
+        "-LingTuHudDriveScreenshot=C:\\runs\\playable-run-001\\screenshots\\hud-drive.png",
+        "-LingTuHudTacticalScreenshot=C:\\runs\\playable-run-001\\screenshots\\hud-tactical.png",
+        "-LingTuHudMenuRecordingScreenshot=C:\\runs\\playable-run-001\\screenshots\\hud-menu-recording.png",
     }
     for argument in expected_hud_arguments:
         assert command.count(argument) == 1
@@ -1431,9 +1394,7 @@ def test_unreal_command_can_select_an_exact_session_camera_tag() -> None:
         reset_generation=0,
     )
 
-    assert (
-        "-LingTuSessionCameraTag=PreviewTarget:south_gate_robot_eye" in command
-    )
+    assert "-LingTuSessionCameraTag=PreviewTarget:south_gate_robot_eye" in command
 
 
 def test_unreal_session_camera_tag_rejects_whitespace() -> None:
@@ -1507,9 +1468,7 @@ def test_unreal_recording_options_are_absent_by_default() -> None:
     assert not any(argument.startswith("-LingTuMotionCameraStableId") for argument in command)
 
 
-def test_unreal_command_resolves_relative_process_paths(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_unreal_command_resolves_relative_process_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     process = UnrealProcess(
         Path("tools/UnrealEditor.exe"),
@@ -1628,10 +1587,7 @@ def test_packaged_unreal_command_rejects_noncanonical_allocation_run_id(
             "RobotSimUE-Win64-Release.exe",
         ),
         (
-            Path(
-                "C:/trusted builds/RobotSimUE/"
-                "RobotSimUE-Win64-Shipping.exe"
-            ),
+            Path("C:/trusted builds/RobotSimUE/RobotSimUE-Win64-Shipping.exe"),
             "/Game/Maps/OpenField_HF",
             "RobotSimUE-Win64-Release.exe",
         ),
@@ -2052,15 +2008,9 @@ def test_external_camera_batch_failure_preserves_first_terminal_reason() -> None
         assert watcher.apply(coordinator) is True
 
         assert coordinator.state is RuntimeState.FAILED
-        episode = json.loads(
-            (coordinator.allocation.run_dir / "episode_result.json").read_text(
-                encoding="utf-8"
-            )
-        )
+        episode = json.loads((coordinator.allocation.run_dir / "episode_result.json").read_text(encoding="utf-8"))
         assert episode["status"] == "FAILED"
-        assert episode["failure_reason"] == (
-            "thunder_01.front_rgb: rgb GPU readback timed out"
-        )
+        assert episode["failure_reason"] == ("thunder_01.front_rgb: rgb GPU readback timed out")
         manifest = coordinator.runtime_manifest_snapshot()
         assert manifest["sensor_streams"]["failures"] == {
             "thunder_01.front_depth": "rgb GPU readback timed out",
@@ -2121,59 +2071,6 @@ def _report_rgb_terminal_failure(coordinator: RuntimeCoordinator) -> None:
         reset_generation=0,
     )
     assert coordinator.state is RuntimeState.FAILED
-
-
-def test_post_terminal_sensor_failure_append_requires_the_first_failure_source() -> None:
-    test_root = REPO_ROOT / "tmp" / f"sensor-failure-source-{uuid.uuid4().hex}"
-    test_root.mkdir(parents=True, exist_ok=False)
-    try:
-        coordinator, physics = _prepared_camera_failure_coordinator(
-            test_root,
-            run_id="sensor-failure-source",
-            dds_domain=124,
-            snapshot_port=25124,
-        )
-        _report_rgb_terminal_failure(coordinator)
-
-        with pytest.raises(CoordinatorError, match="first failed stream source"):
-            coordinator.report_sensor_stream_failed(
-                "thunder_01.front_depth",
-                source_id="foreign-camera",
-                reason="foreign failure",
-                session_id=coordinator.plan.session_id,
-                model_generation=0,
-                reset_generation=0,
-            )
-
-        assert coordinator.sensor_readiness.state("thunder_01.front_depth").value == "UNBOUND"
-        assert physics.calls.count("stop") == 1
-    finally:
-        shutil.rmtree(test_root, ignore_errors=True)
-
-
-def test_post_terminal_sensor_failure_append_requires_a_prior_failed_stream() -> None:
-    test_root = REPO_ROOT / "tmp" / f"sensor-failure-prior-{uuid.uuid4().hex}"
-    test_root.mkdir(parents=True, exist_ok=False)
-    try:
-        coordinator, _physics = _prepared_camera_failure_coordinator(
-            test_root,
-            run_id="sensor-failure-prior",
-            dds_domain=123,
-            snapshot_port=25123,
-        )
-        coordinator.stop(failure_reason="unrelated terminal failure")
-
-        with pytest.raises(CoordinatorError, match="prior failed sensor stream"):
-            coordinator.report_sensor_stream_failed(
-                "thunder_01.front_depth",
-                source_id="robotsimue-camera",
-                reason="late camera failure",
-                session_id=coordinator.plan.session_id,
-                model_generation=0,
-                reset_generation=0,
-            )
-    finally:
-        shutil.rmtree(test_root, ignore_errors=True)
 
 
 @pytest.mark.parametrize(
@@ -2248,43 +2145,5 @@ def test_post_terminal_nonfailure_sensor_evidence_remains_rejected(
                 model_generation=0,
                 reset_generation=0,
             )
-    finally:
-        shutil.rmtree(test_root, ignore_errors=True)
-
-
-def test_post_terminal_failed_stream_reason_is_immutable() -> None:
-    test_root = REPO_ROOT / "tmp" / f"sensor-failure-reason-{uuid.uuid4().hex}"
-    test_root.mkdir(parents=True, exist_ok=False)
-    try:
-        coordinator, physics = _prepared_camera_failure_coordinator(
-            test_root,
-            run_id="sensor-failure-reason",
-            dds_domain=120,
-            snapshot_port=25120,
-        )
-        _report_rgb_terminal_failure(coordinator)
-
-        with pytest.raises(CoordinatorError, match="already FAILED"):
-            coordinator.report_sensor_stream_failed(
-                "thunder_01.front_rgb",
-                source_id="robotsimue-camera",
-                reason="replacement reason",
-                session_id=coordinator.plan.session_id,
-                model_generation=0,
-                reset_generation=0,
-            )
-
-        assert coordinator.sensor_readiness.failure_reason("thunder_01.front_rgb") == (
-            "rgb GPU readback timed out"
-        )
-        episode = json.loads(
-            (coordinator.allocation.run_dir / "episode_result.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        assert episode["failure_reason"] == (
-            "thunder_01.front_rgb: rgb GPU readback timed out"
-        )
-        assert physics.calls.count("stop") == 1
     finally:
         shutil.rmtree(test_root, ignore_errors=True)

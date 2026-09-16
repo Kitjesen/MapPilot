@@ -2,7 +2,7 @@ import { Activity } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { SSEState } from '../types'
 import { text, type Locale } from '../i18n'
-import { presentNavigationOperatorStatus } from '../services/navigationOperatorState'
+import { presentNavigationStatus } from '../services/navigationStatus'
 import styles from './StatusBar.module.css'
 
 interface StatusBarProps {
@@ -62,19 +62,14 @@ export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
   const y = num(odom?.y)
   const yaw = odom ? rad2deg(odom.yaw) + '°' : '--'
   const vx = num(odom?.vx) + (typeof odom?.vx === 'number' ? ' m/s' : '')
-  const operatorView = presentNavigationOperatorStatus(navigation, {
-    locale,
-    legacyTaskState: navigation?.state,
-  })
-  const navState = operatorView.task.state
-  const estopActive = operatorView.motion.permission.state === 'ESTOPPED' || (safety?.estop ?? false)
-  const navStateText = operatorView.task.label
-  const goalReady = operatorView.goalAdmission.state === 'ACCEPTING'
-  const goalBlockers = operatorView.goalAdmission.blockers
-  const goalAdvisories = operatorView.goalAdmission.advisories
+  const navigationView = presentNavigationStatus(navigation, locale)
+  const navState = navigationView.task.state
+  const estopActive = navigationView.motion.permission.state === 'ESTOPPED' || (safety?.estop ?? false)
+  const navStateText = navigationView.task.label
+  const goalReady = navigationView.goalAdmission.state === 'ACCEPTING'
   const goalReadinessTitle = goalReady
-    ? (goalAdvisories.length > 0 ? goalAdvisories.join('\n') : text(locale, 'Ready to accept navigation goals', '可以接收导航目标'))
-    : (goalBlockers.length > 0 ? goalBlockers.join('\n') : text(locale, 'Navigation status unavailable', '导航状态不可用'))
+    ? text(locale, 'Ready to accept navigation goals', '可以接收导航目标')
+    : text(locale, 'Navigation is not accepting goals', '导航暂不接收目标')
   const slamDiag = sseState.slamDiag?.data
   const displaySlamHz = numericMetric(slamDiag, 'processed_scan_hz') ?? sseState.slamStatus?.slam_hz
   const lidarHz = numericMetric(slamDiag, 'lidar_input_hz')
@@ -83,7 +78,6 @@ export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
     `${text(locale, 'Uptime', '运行时长')} ${formatUptime(uptimeSeconds)}`,
     typeof displaySlamHz === 'number' ? `${text(locale, 'Localization', '定位处理')} ${displaySlamHz.toFixed(1)} Hz` : null,
     typeof lidarHz === 'number' ? `${text(locale, 'LiDAR input', '雷达输入')} ${lidarHz.toFixed(1)} Hz` : null,
-    `${text(locale, 'Next', '下一步')} ${operatorView.summary.nextAction}`,
     sseState.slamStatus ? `${text(locale, 'Degeneracy', '退化')} ${sseState.slamStatus.degeneracy_count}` : null,
     sseState.robotStatus ? `${text(locale, 'Battery', '电量')} ${sseState.robotStatus.battery.toFixed(0)}%` : null,
     `${text(locale, 'Version', '版本')} 1.8`,
@@ -114,7 +108,7 @@ export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
 
       <span className={styles.sep}>·</span>
 
-      <span className={styles.item} title={operatorView.summary.nextAction}>
+      <span className={styles.item}>
         <span className={styles.label}>{text(locale, 'Nav', '导航')}</span>
         <span className={`${styles.value} ${navState === 'EXECUTING' ? styles.navActive : navState === 'FAILED' ? styles.navFail : ''}`}>
           {navStateText}
@@ -125,8 +119,8 @@ export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
 
       <span className={styles.item} title={goalReadinessTitle}>
         <span className={styles.label}>{text(locale, 'Goal', '任务')}</span>
-        <span className={`${styles.value} ${goalReady ? styles.ready : operatorView.goalAdmission.state === 'UNKNOWN' ? styles.warn : styles.navFail}`}>
-          {operatorView.goalAdmission.label}
+        <span className={`${styles.value} ${goalReady ? styles.ready : navigationView.goalAdmission.state === 'UNKNOWN' ? styles.warn : styles.navFail}`}>
+          {navigationView.goalAdmission.label}
         </span>
       </span>
 
@@ -134,31 +128,31 @@ export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
 
       <span
         className={styles.item}
-        title={operatorView.control.resumeRequired
+        title={navigationView.control.resumeRequired
           ? text(locale, 'Resume is required before autonomy can continue', '自主导航继续前需要恢复任务')
-          : operatorView.control.label}
+          : navigationView.control.label}
       >
         <span className={styles.label}>{text(locale, 'Control', '控制')}</span>
-        <span className={`${styles.value} ${operatorView.control.state === 'AUTONOMY' ? styles.ready : styles.warn}`}>
-          {operatorView.control.label}
+        <span className={`${styles.value} ${navigationView.control.state === 'AUTONOMY' ? styles.ready : styles.warn}`}>
+          {navigationView.control.label}
         </span>
       </span>
 
       <span className={styles.sep}>·</span>
 
-      <span className={styles.item} title={operatorView.motion.observation.label}>
+      <span className={styles.item} title={navigationView.motion.observation.label}>
         <span className={styles.label}>{text(locale, 'Motion', '运动')}</span>
-        <span className={`${styles.value} ${operatorView.motion.permission.state === 'CLEAR' ? styles.ready : operatorView.motion.permission.state === 'ESTOPPED' ? styles.navFail : styles.warn}`}>
-          {operatorView.motion.permission.label}
+        <span className={`${styles.value} ${navigationView.motion.permission.state === 'CLEAR' ? styles.ready : navigationView.motion.permission.state === 'ESTOPPED' ? styles.navFail : styles.warn}`}>
+          {navigationView.motion.permission.label}
         </span>
       </span>
 
       <span className={styles.sep}>·</span>
 
-      <span className={styles.item} title={operatorView.motion.stopConfirmation.label}>
+      <span className={styles.item} title={navigationView.motion.stopConfirmation.label}>
         <span className={styles.label}>{text(locale, 'Stop', '停稳')}</span>
-        <span className={`${styles.value} ${operatorView.motion.stopConfirmation.state === 'CONFIRMED' ? styles.ready : operatorView.motion.stopConfirmation.state === 'FAILED' ? styles.navFail : styles.warn}`}>
-          {operatorView.motion.stopConfirmation.label}
+        <span className={`${styles.value} ${navigationView.motion.stopConfirmation.state === 'CONFIRMED' ? styles.ready : navigationView.motion.stopConfirmation.state === 'FAILED' ? styles.navFail : styles.warn}`}>
+          {navigationView.motion.stopConfirmation.label}
         </span>
       </span>
 

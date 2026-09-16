@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, ClassVar
 
-from runtime.runtime_interface import map_frame_id
+from runtime.tf.frames import map_frame_id
 
 from .protocol import json_message_decode, json_message_encode
 from .sensor import Header

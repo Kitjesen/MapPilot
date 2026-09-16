@@ -426,6 +426,23 @@ TEST(FollowerSpline, ExternalStopPausesTimeWithoutRestartingSpline) {
   EXPECT_NEAR(afterLongStop.cmd.vx, next.cmd.vx, 1e-9);
 }
 
+TEST(FollowerSpline, RepeatedPhysicalTimeDoesNotRunAhead) {
+  Follower follower;
+  FollowerParams params;
+  const auto trajectory = scanSpline({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, 1, 10.0);
+  (void)followSpline(follower, trajectory, params, 0.0);
+  const auto moving = followSpline(follower, trajectory, params, 0.05);
+  for (int tick = 0; tick < 100; ++tick) {
+    const auto paused = followSpline(follower, trajectory, params, 0.05);
+    EXPECT_DOUBLE_EQ(paused.cmd.vx, moving.cmd.vx);
+    EXPECT_DOUBLE_EQ(paused.cmd.vy, moving.cmd.vy);
+    EXPECT_DOUBLE_EQ(paused.cmd.wz, moving.cmd.wz);
+  }
+  const auto resumed = followSpline(follower, trajectory, params, 0.10);
+  EXPECT_GT(resumed.cmd.vx, moving.cmd.vx);
+  EXPECT_NEAR(resumed.cmd.vx - moving.cmd.vx, 0.05 * 0.1 * params.spline.positionGain, 1e-9);
+}
+
 TEST(FollowerSpline, DefaultsMatchOfficialScanController) {
   const SplineFollowerParams params;
 
@@ -457,7 +474,7 @@ TEST(FollowerSpline, UsesOfficialFeedForwardAndLiveWorldPoseError) {
   EXPECT_NEAR(output.directionError, 0.0, 1e-9);
 }
 
-TEST(FollowerSpline, KeepsUpstreamLimitsIndependentOfExternalSpeedScaling) {
+TEST(FollowerSpline, ResolvesRequestedSpeedIntoControllerLimits) {
   FollowerParams params;
   params.spline.positionGain = 0.0;
   params.spline.headingErrorThreshold = 2.0;
@@ -467,8 +484,52 @@ TEST(FollowerSpline, KeepsUpstreamLimitsIndependentOfExternalSpeedScaling) {
 
   const auto output = followSpline(follower, trajectory, params, 0.1, {}, 0.0, 0.5, 0.5);
 
-  EXPECT_NEAR(output.cmd.vx, params.spline.maxVx, 1e-9);
+  EXPECT_NEAR(output.cmd.vx, 0.25, 1e-9);
   EXPECT_NEAR(output.cmd.vy, 0.0, 1e-9);
+}
+
+TEST(FollowerSpline, SlowerRequestHoldsOldTrajectoryUntilMatchingReplacement) {
+  Follower follower;
+  FollowerParams params;
+  auto trajectory = scanSpline({{0, 0, 0}, {2, 0, 0}}, 1, 4.0, 11);
+  trajectory.maxLinearSpeedMps = 0.5;
+  (void)followSpline(follower, trajectory, params, 1.0);
+  const auto moving = followSpline(follower, trajectory, params, 1.1);
+  ASSERT_GT(moving.cmd.vx, 0.0);
+  const auto held = followSpline(follower, trajectory, params, 1.2, {}, 0.0, 0.1);
+  const auto still_held = followSpline(follower, trajectory, params, 1.3, {}, 0.0, 0.1);
+  EXPECT_TRUE(held.executionFrozen);
+  EXPECT_DOUBLE_EQ(held.cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(still_held.tracking.executionTimeS, moving.tracking.executionTimeS);
+  const auto speed_restored = followSpline(follower, trajectory, params, 1.35);
+  EXPECT_TRUE(speed_restored.executionFrozen);
+  EXPECT_DOUBLE_EQ(speed_restored.cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(speed_restored.tracking.executionTimeS, moving.tracking.executionTimeS);
+  auto slower = scanSpline({{0, 0, 0}, {2, 0, 0}}, 1, 20.0, 12);
+  slower.maxLinearSpeedMps = 0.1;
+  const auto resumed = followSpline(follower, slower, params, 1.4, {}, 0.0, 0.1);
+  EXPECT_FALSE(resumed.executionFrozen);
+  EXPECT_GT(resumed.cmd.vx, 0.0);
+  EXPECT_LE(resumed.cmd.vx, 0.1);
+  EXPECT_EQ(resumed.tracking.trajectoryId, 12);
+  EXPECT_DOUBLE_EQ(resumed.tracking.executionTimeS, 0.0);
+}
+
+TEST(FollowerSpline, ReportsActualReferenceErrorAndPausesTelemetry) {
+  Follower follower;
+  FollowerParams params;
+  const auto trajectory = scanSpline({{0, 0, 0}, {2, 0, 0}}, 1, 4.0, 17);
+  (void)followSpline(follower, trajectory, params, 1.0);
+  const auto output = followSpline(follower, trajectory, params, 1.1, {-0.2, 0, 0});
+  EXPECT_NEAR(output.tracking.executionTimeS, 0.1, 1e-9);
+  EXPECT_NEAR(output.tracking.positionErrorM, 0.25, 1e-9);
+  EXPECT_NEAR(output.tracking.endDistanceM, 2.2, 1e-9);
+  EXPECT_NEAR(output.tracking.durationS, 4.0, 1e-9);
+  EXPECT_EQ(output.tracking.trajectoryId, 17);
+  EXPECT_NEAR(follower.diagnostics().linearSpeed, output.cmd.vx, 1e-9);
+  follower.stopLinear();
+  EXPECT_DOUBLE_EQ(follower.diagnostics().linearSpeed, 0.0);
+  EXPECT_TRUE(follower.diagnostics().tracking.executionFrozen);
 }
 
 TEST(FollowerSpline, ConvertsWorldVelocityIntoCurrentBodyFrame) {

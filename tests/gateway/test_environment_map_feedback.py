@@ -38,7 +38,7 @@ def _current_scene(*, stamp_s: float = 100.0) -> dict:
 
 
 def test_environment_map_feedback_unifies_layers_without_exposing_internal_epochs() -> None:
-    from gateway.services.environment_map_feedback import EnvironmentMapFeedback
+    from gateway.maps.status import EnvironmentMapFeedback
 
     feedback = EnvironmentMapFeedback()
     feedback.observe_scene(_current_scene())
@@ -66,7 +66,7 @@ def test_environment_map_feedback_unifies_layers_without_exposing_internal_epoch
 
 
 def test_environment_map_feedback_marks_old_scene_stale_and_does_not_claim_elevation_ready() -> None:
-    from gateway.services.environment_map_feedback import EnvironmentMapFeedback
+    from gateway.maps.status import EnvironmentMapFeedback
 
     feedback = EnvironmentMapFeedback(freshness_limit_s=5.0)
     feedback.observe_scene(_current_scene(stamp_s=10.0))
@@ -85,7 +85,7 @@ def test_environment_map_feedback_marks_old_scene_stale_and_does_not_claim_eleva
 
 
 def test_environment_map_feedback_does_not_call_an_undated_risk_engine_current() -> None:
-    from gateway.services.environment_map_feedback import EnvironmentMapFeedback
+    from gateway.maps.status import EnvironmentMapFeedback
 
     feedback = EnvironmentMapFeedback()
     feedback.observe_scene(_current_scene())
@@ -102,7 +102,7 @@ def test_environment_map_feedback_does_not_call_an_undated_risk_engine_current()
 
 
 def test_environment_map_feedback_ignores_a_noncanonical_elevation_preview() -> None:
-    from gateway.services.environment_map_feedback import EnvironmentMapFeedback
+    from gateway.maps.status import EnvironmentMapFeedback
 
     scene = _current_scene()
     scene["layers"][1]["id"] = "maps.elevation_preview"

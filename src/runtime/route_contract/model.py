@@ -53,7 +53,7 @@ class TopicContract:
 
     topic: str
     role: str
-    schema: str
+    message_type: str
     frame: str
     producer: str
     consumers: tuple[str, ...] = ()
@@ -72,7 +72,7 @@ class TopicContract:
         return cls(
             topic=str(topic),
             role=str(data.get("role") or ""),
-            schema=str(data.get("schema") or ""),
+            message_type=str(data.get("message_type") or ""),
             frame=str(data.get("frame") or "none"),
             producer=str(data.get("producer") or ""),
             consumers=tuple(str(item) for item in consumers),
@@ -87,7 +87,7 @@ class TopicContract:
         return {
             "topic": self.topic,
             "role": self.role,
-            "schema": self.schema,
+            "message_type": self.message_type,
             "frame": self.frame,
             "producer": self.producer,
             "consumers": list(self.consumers),
@@ -104,7 +104,6 @@ class RouteSpec:
     name: str
     default: str = RouteBackend.LOCAL.value
     description: str = ""
-    endpoint_contract: str | None = None
     routes: Mapping[str, str] = field(default_factory=dict)
     bindings: Mapping[str, Mapping[str, Mapping[str, Any]]] = field(default_factory=dict)
 
@@ -120,7 +119,6 @@ class RouteSpec:
             "name": self.name,
             "description": self.description,
             "default": self.default,
-            "endpoint_contract": self.endpoint_contract,
             "routes": dict(self.routes),
             "bindings": {
                 str(backend): {str(topic): dict(binding) for topic, binding in topic_bindings.items()}

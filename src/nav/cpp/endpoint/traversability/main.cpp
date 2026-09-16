@@ -30,8 +30,8 @@
 #include "lingtu/maps/layers/grid.hpp"
 #include "lingtu/maps/layers/rolling_occupancy.hpp"
 #include "messages.h"
-#include "message/cpp/qos.hpp"
-#include "message/cpp/topics.hpp"
+#include "transport/dds/qos.hpp"
+#include "message/generated/topics.hpp"
 #include "native/snapshot_file.hpp"
 #include "nav_kernel/dynamic_clear_core.hpp"
 #include "nav_kernel/terrain_core.hpp"
@@ -363,13 +363,14 @@ struct CliConfig {
   double terrain_decay_s{2.0};
   double terrain_no_decay_radius{4.0};
   double terrain_dis_ratio_z{0.2};
-  double terrain_quantile{0.25};
+  double terrain_surface_residual_m{0.04};
+  int terrain_surface_min_columns{3};
   bool terrain_connectivity{true};
   double terrain_under_vehicle_m{-0.75};
   double terrain_connection_height_m{0.50};
   double terrain_ceiling_height_m{2.00};
   int terrain_connectivity_radius_cells{2};
-  int terrain_seed_radius_cells{3};
+  int terrain_seed_radius_cells{10};
   double terrain_seed_max_error_m{1.00};
   double vehicle_height{1.5};
   int terrain_min_block_points{10};
@@ -558,7 +559,11 @@ CliConfig parseArgs(int argc, char **argv) {
     } else if (arg == "--terrain-min-block-points") {
       cfg.terrain_min_block_points = std::stoi(next());
     } else if (arg == "--terrain-quantile") {
-      cfg.terrain_quantile = std::stod(next());
+      throw std::runtime_error("--terrain-quantile was replaced by observed surface fitting; use --terrain-surface-residual-m and --terrain-surface-min-columns");
+    } else if (arg == "--terrain-surface-residual-m") {
+      cfg.terrain_surface_residual_m = std::stod(next());
+    } else if (arg == "--terrain-surface-min-columns") {
+      cfg.terrain_surface_min_columns = std::stoi(next());
     } else if (arg == "--terrain-connectivity") {
       cfg.terrain_connectivity = parseBool(next());
     } else if (arg == "--terrain-under-vehicle-m") {
@@ -633,7 +638,7 @@ CliConfig parseArgs(int argc, char **argv) {
           "[--terrain-soft-slope-deg DEG] [--terrain-hard-slope-deg DEG] "
           "[--sensor-offset-x-m M] [--sensor-offset-y-m M] [--sensor-offset-z-m M] "
           "[--terrain-decay-s S] [--terrain-min-block-points N] "
-          "[--terrain-quantile Q] [--terrain-connectivity BOOL] "
+          "[--terrain-surface-residual-m M] [--terrain-surface-min-columns N] [--terrain-connectivity BOOL] "
           "[--terrain-under-vehicle-m M] [--terrain-connection-height-m M] "
           "[--terrain-ceiling-height-m M] [--terrain-cache-max-points N] "
           "[--terrain-threads N] "
@@ -675,7 +680,8 @@ CliConfig parseArgs(int argc, char **argv) {
       std::max(cfg.terrain_soft_slope_deg + 1.0, cfg.terrain_hard_slope_deg);
   cfg.terrain_decay_s = std::max(0.1, cfg.terrain_decay_s);
   cfg.terrain_no_decay_radius = std::max(0.0, cfg.terrain_no_decay_radius);
-  cfg.terrain_quantile = std::max(0.0, std::min(1.0, cfg.terrain_quantile));
+  if (!std::isfinite(cfg.terrain_surface_residual_m) || cfg.terrain_surface_residual_m <= 0 ||
+      cfg.terrain_surface_min_columns < 3) throw std::runtime_error("invalid ground surface fitting parameters");
   cfg.terrain_connection_height_m = std::max(0.01, cfg.terrain_connection_height_m);
   cfg.terrain_ceiling_height_m =
       std::max(cfg.terrain_connection_height_m + 0.01, cfg.terrain_ceiling_height_m);
@@ -718,7 +724,8 @@ nav_kernel::TerrainParams terrainParamsFromConfig(const CliConfig &cfg) {
   params.planarVoxelSize = cfg.resolution;
   params.planarVoxelHalfWidth =
       std::max(1, static_cast<int>(std::ceil(cfg.radius / params.planarVoxelSize)));
-  params.quantileZ = cfg.terrain_quantile;
+  params.groundSurface.max_residual_m = cfg.terrain_surface_residual_m;
+  params.groundSurface.min_support_columns = cfg.terrain_surface_min_columns;
   params.checkTerrainConnectivity = cfg.terrain_connectivity;
   params.terrainUnderVehicle = cfg.terrain_under_vehicle_m;
   params.terrainConnectionHeight = cfg.terrain_connection_height_m;

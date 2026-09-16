@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ruff: noqa: D103
 """Run the native/Gateway system acceptance sequence from Python."""
 
 from __future__ import annotations

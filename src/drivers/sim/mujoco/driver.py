@@ -35,6 +35,7 @@ from drivers.sim.mujoco.sensors import (
     world_points_to_body_frame,
     world_xyzi_to_sensor_xyzi,
 )
+from message.topics import TOPICS
 from runtime.module import Module
 from runtime.msgs.geometry import Pose, Quaternion, Transform, Twist, Vector3
 from runtime.msgs.map import MapCloudFrame, MapObservationFrame
@@ -42,8 +43,8 @@ from runtime.msgs.nav import Odometry
 from runtime.msgs.numpy_compat import np, numpy_import_is_safe
 from runtime.msgs.sensor import CameraIntrinsics, Image, PointCloud2
 from runtime.registry import register
-from runtime.runtime_interface import FRAMES, TOPICS, topic_default_frame_id
 from runtime.stream import In, Out
+from runtime.tf.frames import FRAMES, topic_default_frame_id
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ _THUNDERV4_POLICY = (
     / "thunder_v4"
     / "locomotion"
     / "policy"
-    / "policy_1119.onnx"
+    / "policy_4998.onnx"
 )
 _ROBOT_XML = _THUNDER_MJCF
 _DEFAULT_START_POS = (0.0, 0.0, 0.55)
@@ -305,6 +306,8 @@ class MujocoDriverModule(Module, layer=1):
             from sim.compat.engine.core.world import WorldConfig
             from sim.compat.engine.mujoco.engine import MuJoCoEngine
 
+            from .runtime import resolve_physics_timestep
+
             # Resolve world XML
             world_path = Path(WORLDS.get(self._world_name, self._world_name)).resolve()
             if not world_path.exists():
@@ -366,6 +369,12 @@ class MujocoDriverModule(Module, layer=1):
             # Let MuJoCoEngine decide whether to use the scene directly or merge
             # the selected world geometry into the robot model.
             self._engine.load(str(world_path))
+            timestep_s = resolve_physics_timestep(
+                drive_mode=self._drive_mode,
+                policy_path=robot_cfg.policy_onnx,
+            )
+            if timestep_s is not None:
+                self._engine.set_physics_timestep(timestep_s)
             self._engine.reset()  # stabilize + warm up policy history
             logger.info(
                 "MujocoDriverModule: loaded world '%s', robot at %s, drive_mode=%s",

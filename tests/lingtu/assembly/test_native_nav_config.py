@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from lingtu.assembly.native_nav import compile_native_nav_config
+from lingtu.assembly.native_nav import compile_native_nav_config, mapd_environment
 from lingtu.assembly.products import resolve_product_host_runtime
 
 
@@ -34,8 +34,8 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
     assert payload["product"] == "nav"
     assert "fingerprint" not in payload
     assert payload["parameters"] == {
-        "collision_clearance_above_m": 0.35,
-        "collision_clearance_below_m": 0.25,
+        "collision_clearance_above_m": 0.10,
+        "collision_clearance_below_m": 0.10,
         "collision_cylinder_offset_m": 0.18,
         "collision_cylinder_radius_m": 0.25,
         "collision_hard_margin_m": 0.10,
@@ -53,14 +53,6 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "path_follower_min_speed_mps": 0.08,
         "path_follower_heading_align_enter_rad": math.pi / 4.0,
         "path_follower_heading_align_exit_rad": 0.35,
-        "scan_finish_distance_m": 0.15,
-        "scan_heading_error_rad": 0.8,
-        "scan_max_vx_mps": 0.75,
-        "scan_max_vy_mps": 0.35,
-        "scan_max_yaw_rate_rad_s": 1.0,
-        "scan_position_gain": 0.8,
-        "scan_time_forward_s": 0.8,
-        "scan_yaw_gain": 1.5,
         "teleop_max_speed_mps": 0.5,
         "teleop_max_yaw_rate_rad_s": 1.0,
         "teleop_planner_horizon_m": 3.5,
@@ -92,12 +84,11 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_RATE_RAD_S": "1",
         "LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_ENTER_RAD": "0.785398163397448",
         "LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_EXIT_RAD": "0.35",
-        "LINGTU_NAV_SCAN_FINISH_DISTANCE_M": "0.15",
         "LINGTU_NAV_RECOVERY_ORDER": "translate,rotate",
         "LINGTU_NAV_RECOVERY_BLOCKED_INTERVAL_S": "2",
         "LINGTU_NAV_RECOVERY_ROTATION_TIMEOUT_S": "2.5",
         "LINGTU_NAV_RECOVERY_TRANSLATION_TIMEOUT_S": "1.5",
-        "LINGTU_NAV_RECOVERY_MAX_ATTEMPTS": "0",
+        "LINGTU_NAV_RECOVERY_MAX_ATTEMPTS": "3",
         "LINGTU_NAV_RECOVERY_TRANSLATION_SPEED_MPS": "0.15",
         "LINGTU_NAV_RECOVERY_ROTATION_RATE_RAD_S": "0.25",
         "LINGTU_NAV_RECOVERY_MIN_ROTATION_RAD": "0.2",
@@ -105,7 +96,7 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "LINGTU_NAV_RECOVERY_ROTATION_CANDIDATE_STEP_RAD": "0.2",
         "LINGTU_NAV_RECOVERY_ROTATION_SAMPLE_STEP_RAD": "0.05",
         "LINGTU_PRODUCT": "nav",
-        "LINGTU_NAV_USE_TRAVERSABILITY_COST": "0",
+        "LINGTU_NAV_USE_TRAVERSABILITY_COST": "1",
         "LINGTU_NAV_ALLOW_TELEOP_TAKEOVER": "1",
         "LINGTU_TELEOP_PLANNER_HORIZON_M": "3.5",
         "LINGTU_TELEOP_PLANNER_MAX_DEVIATION_DEG": "55",
@@ -127,7 +118,7 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "translate",
         "rotate",
     )
-    assert payload["native_nav"]["recovery"]["max_attempts"] == 0
+    assert payload["native_nav"]["recovery"]["max_attempts"] == 3
 
 
 def test_go2_collision_hard_margin_reaches_native_endpoint() -> None:
@@ -137,6 +128,27 @@ def test_go2_collision_hard_margin_reaches_native_endpoint() -> None:
 
     assert compiled.parameters["collision_hard_margin_m"] == pytest.approx(0.10)
     assert compiled.environment["LINGTU_TELEOP_OBSTACLE_MARGIN_M"] == "0.1"
+
+
+def test_scan_mapd_inflation_covers_asymmetric_body_clearances() -> None:
+    config = _compiled_product_config("nav")
+    config["collision_clearance_below_m"] = 0.25
+    config["collision_clearance_above_m"] = 0.35
+    compiled = compile_native_nav_config("nav", config)
+    environment = mapd_environment(compiled.environment)
+
+    assert environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.25"
+    assert environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.35"
+
+
+@pytest.mark.parametrize("product", ["nav", "teleop_avoid"])
+def test_go2_vertical_clearance_reaches_nav_and_mapd(product: str) -> None:
+    compiled = compile_native_nav_config(product, _compiled_product_config(product))
+    for direction in ("BELOW", "ABOVE"):
+        assert compiled.environment[f"LINGTU_NAV_COLLISION_CLEARANCE_{direction}_M"] == "0.1"
+    environment = mapd_environment(compiled.environment)
+    assert environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.1"
+    assert environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.1"
 
 
 def test_dynamic_obstacle_thresholds_reach_native_endpoint() -> None:
@@ -352,6 +364,14 @@ def test_native_nav_config_rejects_legacy_host_parameter_names() -> None:
                 "native_control_mode": "autonomy",
                 "path_follower_max_speed": 0.5,
             },
+        )
+
+
+@pytest.mark.parametrize("section", ["scan_follower", "scan_planner"])
+def test_scan_tuning_requires_the_unified_parameter_mapping(section) -> None:
+    with pytest.raises(ValueError, match="Product parameters"):
+        compile_native_nav_config(
+            "nav", {"native_control_mode": "autonomy", "native_nav": {section: {}}}
         )
 
 

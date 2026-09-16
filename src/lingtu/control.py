@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -13,6 +13,7 @@ from typing import Any
 
 import lingtu.sim.switch as sim_switch
 from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.graph import ProcessSpec
 from lingtu.assembly.native_nav import local_planner_name
 from lingtu.product_lock import (
     CURRENT_RUN_FILE_NAME,
@@ -27,6 +28,7 @@ from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
 from lingtu.sim.daemon import ensure_sim_supervisor
 from lingtu.sim.supervisor import SimulationSupervisorClient, SimulationSupervisorError
 from lingtu.switch_contracts import (
+    InitialPose,
     ProcessFailed,
     ProcessReport,
     SwitchFailed,
@@ -148,8 +150,9 @@ class ProductControl:
         product: str,
         *,
         map_name: str | None = None,
+        variant: str | None = None,
         relocalize: bool = True,
-        initial_pose: tuple[float, float, float] | None = None,
+        initial_pose: InitialPose | None = None,
         local_planner: str | None = None,
         parameter_overrides: Mapping[str, Any] | None = None,
         state_dir: str | Path | None = None,
@@ -163,6 +166,7 @@ class ProductControl:
         report = self._switch(
             SwitchRequest(
                 target_product=product_name(product),
+                variant=variant,
                 map_name=map_name,
                 relocalize=relocalize,
                 initial_pose=initial_pose,
@@ -367,18 +371,20 @@ class ProductControl:
         *,
         previous_plan: RunPlan | None = None,
         dry_run: bool = False,
+        on_process_ready: Callable[[ProcessSpec], None] | None = None,
     ) -> ProcessReport:
         """Internal switch primitive for the resolved preflight artifact."""
 
         plan = RunPlan.load(path)
         runner = self._systemd_runner()
         if previous_plan is None:
-            return runner.apply_deferred(plan, dry_run=dry_run)
+            return runner.apply_deferred(plan, dry_run=dry_run, on_process_ready=on_process_ready)
         return runner.transition(
             previous_plan,
             plan,
             dry_run=dry_run,
             defer_rollback=True,
+            on_process_ready=on_process_ready,
         )
 
     def _quiesce_plan_for_switch(
@@ -622,6 +628,7 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("product", nargs="?", help="Field Product name")
+    parser.add_argument("--variant", help="Declared Product variant, for example nav camera")
     parser.add_argument(
         "--robot",
         default=os.environ.get("LINGTU_ROBOT"),
@@ -655,7 +662,10 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--state-dir", type=Path)
-    parser.add_argument("--initial-pose", nargs=3, type=float, metavar=("X", "Y", "YAW"))
+    parser.add_argument(
+        "--initial-pose", nargs="+", type=float, metavar="COORD",
+        help="Map-frame body seed: X Y Z YAW; X Y YAW retains Z=0.",
+    )
     parser.add_argument(
         "--set",
         action="append",
@@ -695,6 +705,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.local_planner and args.action != "switch":
             raise ValueError("--local-planner is only valid with switch")
+        if args.variant and args.action != "switch":
+            raise ValueError("--variant is only valid with switch")
         if args.backend and (args.action != "switch" or args.env != "sim"):
             raise ValueError("--backend is only valid with switch --env sim")
         if args.viewer and (args.action != "switch" or args.env != "sim"):
@@ -720,6 +732,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("switch requires PRODUCT or LINGTU_PRODUCT")
             payload = control.switch(
                 requested_product,
+                variant=args.variant,
                 map_name=args.map_name,
                 relocalize=bool(args.relocalize),
                 initial_pose=initial_pose,
@@ -753,12 +766,9 @@ def main(argv: list[str] | None = None) -> int:
         print(
             json.dumps(
                 {
-                    "ok": False,
-                    "status": report.status,
+                    **report.as_dict(),
                     "robot": control.robot if control is not None else args.robot,
-                    "env": report.env,
                     "product": report.target_product,
-                    "error": report.error,
                 },
                 ensure_ascii=False,
                 indent=2,

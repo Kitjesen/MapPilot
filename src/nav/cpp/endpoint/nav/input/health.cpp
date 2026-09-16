@@ -104,6 +104,20 @@ InputGateState InputProjector::evaluateGate(double now_steady_s, SteadyClock::ti
   input.driver_control_reason = state_.driver_control_reason;
 
   state_.input_gate_state = gate_.evaluate(input);
+  if (config_.use_simulation_clock && state_.input_gate_state.ready) {
+    std::string clock_blocker;
+    if (state_.simulation_clock_regressed)
+      clock_blocker = "simulation_clock_regressed";
+    else if (!state_.simulation_time_s)
+      clock_blocker = "simulation_clock_missing";
+    else if (config_.simulation_clock_max_age_s > 0.0 &&
+             now_steady_s - state_.simulation_clock_receive_s > config_.simulation_clock_max_age_s)
+      clock_blocker = "simulation_clock_stale";
+    if (!clock_blocker.empty()) {
+      state_.input_gate_state.ready = false;
+      state_.input_gate_state.reason = std::move(clock_blocker);
+    }
+  }
   return state_.input_gate_state;
 }
 

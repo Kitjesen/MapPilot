@@ -42,7 +42,7 @@ class WireSpec:
             label = f"{label}@{self.topic}"
         return label
 
-    def apply(self, bp: "Blueprint") -> None:
+    def apply(self, bp: Blueprint) -> None:
         bp.wire(
             self.out_module,
             self.out_port,

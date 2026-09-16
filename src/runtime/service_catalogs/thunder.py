@@ -10,8 +10,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from message.topics import dds_topic_name
-from runtime.runtime_interface import TOPICS
+from message.topics import TOPICS, dds_topic_name
 
 
 @dataclass(frozen=True)
@@ -79,8 +78,8 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
         ),
         product_default=True,
         checks=("systemd", "native_binary", "dds"),
-        topics=(TOPICS.raw_lidar_points, TOPICS.raw_imu),
-        dds_topics=_dds(TOPICS.raw_lidar_points, TOPICS.raw_imu),
+        topics=(TOPICS.lidar_scan, TOPICS.imu),
+        dds_topics=_dds(TOPICS.lidar_scan, TOPICS.imu),
         binaries=(
             (
                 "livox_dds",
@@ -98,7 +97,7 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
         group="native_dds",
         retired_units=("lingtu-driver.service",),
         product_default=True,
-        install_enable_default=True,
+        install_enable_default=False,
         checks=("systemd", "native_binary", "status_file"),
         topics=(TOPICS.cmd_vel, "/driver/control_state"),
         dds_topics=(_dds(TOPICS.cmd_vel)[0], "rt/driver/control_state"),

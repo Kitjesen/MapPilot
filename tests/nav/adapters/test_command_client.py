@@ -1102,11 +1102,26 @@ def test_native_session_reads_bounded_map_scene_and_health(tmp_path):
         header.occupancy.resolution = 0.1
         header.occupancy.origin_qw = 1.0
         header.occupancy.cell_count = 2
-        for name in ("elevation", "esdf"):
+        for name in (
+            "elevation",
+            "esdf",
+            "surface_projection",
+            "ground_height",
+            "ground_roughness",
+            "ground_support",
+        ):
             grid = getattr(header, name)
             grid.resolution = 0.1
             grid.origin_qw = 1.0
-        header.payload_bytes = 2 * 16 + 2 * 4
+        header.surface_projection.width = 1
+        header.surface_projection.height = 1
+        header.surface_projection.cell_count = 1
+        for name in ("ground_height", "ground_roughness", "ground_support"):
+            grid = getattr(header, name)
+            grid.width = 1
+            grid.height = 1
+            grid.cell_count = 1
+        header.payload_bytes = 2 * 16 + 6 * 4
 
     def take(_handle, header_pointer, buffers_pointer):
         nonlocal take_calls
@@ -1129,6 +1144,14 @@ def test_native_session_reads_bounded_map_scene_and_health(tmp_path):
         buffers.voxel_points[0].intensity = 8.0
         buffers.occupancy_cells[0] = 0.25
         buffers.occupancy_cells[1] = 0.75
+        assert buffers.surface_projection_cell_capacity == 1
+        buffers.surface_projection_cells[0] = 100.0
+        assert buffers.ground_height_cell_capacity == 1
+        assert buffers.ground_roughness_cell_capacity == 1
+        assert buffers.ground_support_cell_capacity == 1
+        buffers.ground_height_cells[0] = 0.1
+        buffers.ground_roughness_cells[0] = 0.02
+        buffers.ground_support_cells[0] = 4.0
         return 1
 
     def health(_handle, health_pointer):
@@ -1172,6 +1195,10 @@ def test_native_session_reads_bounded_map_scene_and_health(tmp_path):
     assert len(scene["clouds"]["live"]["points_xyzi_f32"]) == 16
     assert scene["grids"]["occupancy"]["cell_count"] == 2
     assert len(scene["grids"]["occupancy"]["values_f32"]) == 8
+    assert scene["grids"]["surface_projection"]["values_f32"] == bytes.fromhex("0000c842")
+    assert scene["grids"]["ground_height"]["values_f32"] == bytes.fromhex("cdcccc3d")
+    assert scene["grids"]["ground_roughness"]["values_f32"] == bytes.fromhex("0ad7a33c")
+    assert scene["grids"]["ground_support"]["values_f32"] == bytes.fromhex("00008040")
 
     map_health = session.read_map_scene_health()
     assert map_health["consumer_buffer_retries"] == 1
@@ -1528,3 +1555,20 @@ def test_native_operator_motion_rejects_non_boolean_manual_mode(tmp_path, manual
             manual_mode=manual_mode,
         )
     client.close()
+
+
+def test_goal_limits_cross_ctypes_boundary(tmp_path):
+    library = _Library()
+    received = []
+    def limited(handle, task, request, x, y, z, yaw, speed, radius, timeout, receipt):
+        received.append((speed, radius))
+        return library._start_task_with_receipt(handle, task, request, x, y, z, yaw, timeout, receipt)
+    library.lingtu_nav_client_start_task_with_receipt_v2 = _Function(limited)
+    client = NativeNavigationClient(tmp_path / "client.so", library=library)
+    try:
+        receipt = client.start_task(1, 2, 0, None, task_id="task", request_id="request",
+                                    max_speed_mps=0.2, acceptance_radius_m=0.3)
+        assert receipt.accepted
+        assert received == [(0.2, 0.3)]
+    finally:
+        client.close()

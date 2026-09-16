@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from runtime.graph import (
+from lingtu.assembly.graph import (
     ProcessSpec,
     RuntimeGraph,
     load_runtime_graph,

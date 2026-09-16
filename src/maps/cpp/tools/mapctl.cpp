@@ -19,8 +19,8 @@
 #include "lingtu/maps/mapd/activation.hpp"
 #include "lingtu/maps/store.hpp"
 #include "messages.h"
-#include "message/cpp/qos.hpp"
-#include "message/cpp/topics.hpp"
+#include "transport/dds/qos.hpp"
+#include "message/generated/topics.hpp"
 
 #if defined(_WIN32)
 #include <process.h>

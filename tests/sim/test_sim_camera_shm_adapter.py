@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 # Pytest assertions are the public behavior checks for this contract.
-# ruff: noqa: S101
 import os
 import struct
 import uuid
 
 import pytest
-
 from sim.adapters.shm import (
     SHM_MAGIC,
     SHM_SCHEMA,

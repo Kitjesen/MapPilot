@@ -1,9 +1,7 @@
-# ruff: noqa: S101
 
 from pathlib import Path
 
 import pytest
-
 from sim.runtime.control.contracts import ControllerRuntimeError
 from sim.runtime.control.factory import (
     PRODUCTION_CONTROLLER_COMPONENTS,
@@ -112,5 +110,10 @@ def test_production_registry_supports_shipped_controller_contracts() -> None:
             "lingtu.sim.controller-adapter.v1",
             "quadruped_him",
             "torchscript",
+        ),
+        (
+            "lingtu.sim.controller-adapter.v1",
+            "thunderv4_flat53",
+            "onnxruntime",
         ),
     )

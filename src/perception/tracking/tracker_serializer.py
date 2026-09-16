@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from runtime.runtime_interface import map_frame_id
+from runtime.tf.frames import map_frame_id
 from runtime.utils.sanitize import sanitize_position
 
 if TYPE_CHECKING:

@@ -15,8 +15,8 @@ from .base import ReconBackendBase
 from .registry import BackendRegistry, get_backend, list_backends, register_backend
 
 __all__ = [
-    "ReconBackendBase",
     "BackendRegistry",
+    "ReconBackendBase",
     "get_backend",
     "list_backends",
     "register_backend",

@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Behavior contracts for deterministic Forest_HF Blender authoring."""
 
@@ -14,7 +13,6 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
-
 from sim.catalog.importers.contracts import digest_document
 
 
@@ -656,7 +654,7 @@ def test_terrain_uvs_repeat_every_twenty_four_to_thirty_two_metres(
     assert 24.0 <= float(uv_calls[0]["tile_m"]) <= 32.0
 
 
-def test_scene_setup_keeps_exposure_and_world_fill_in_daylight_range(
+def test_scene_setup_applies_the_current_daylight_exposure_and_world_fill(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     author = _author()
@@ -687,8 +685,8 @@ def test_scene_setup_keeps_exposure_and_world_fill_in_daylight_range(
 
     author._setup_scene(640, 360, 8)
 
-    assert scene.view_settings.exposure == pytest.approx(0.14)
-    assert 0.4 <= background.inputs["Strength"].default_value <= 0.7
+    assert scene.view_settings.exposure == pytest.approx(0.15)
+    assert background.inputs["Strength"].default_value == pytest.approx(0.58)
 
 
 def test_outdoor_tree_and_ground_albedo_is_brightened_without_clipping() -> None:

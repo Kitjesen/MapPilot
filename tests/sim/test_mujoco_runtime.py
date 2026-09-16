@@ -20,6 +20,252 @@ pytestmark = [pytest.mark.sim]
 np = import_numpy_or_skip()
 
 
+def test_support_clearance_uses_physical_floor_and_excludes_robot_and_visuals():
+    import mujoco
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
+
+    model = mujoco.MjModel.from_xml_string('''<mujoco><worldbody>
+      <geom name="floor" type="box" pos="0 0 2.95" size="2 2 .05"/>
+      <geom name="decoration" type="box" pos="0 0 3.10" size="1 1 .01"
+            contype="0" conaffinity="0"/>
+      <body name="base_link" pos="0 0 3.435"><freejoint/>
+        <geom type="box" size=".4 .15 .1"/>
+        <body name="attachment" pos="0 0 -.2"><geom size=".03"/></body>
+      </body></worldbody></mujoco>''')
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    engine = MuJoCoEngine.__new__(MuJoCoEngine)
+    engine._model, engine._data = model, data
+    engine._base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+    engine._data_lock = threading.RLock()
+    assert engine.get_support_clearance() == pytest.approx(.435)
+    data.qpos[2] = 3.1
+    mujoco.mj_forward(model, data)
+    assert engine.get_support_clearance() == pytest.approx(.1)
+    data.qpos[0] = 10.0
+    mujoco.mj_forward(model, data)
+    assert math.isnan(engine.get_support_clearance())
+
+
+@pytest.mark.parametrize("mixed_groups", [False, True])
+def test_support_clearance_masks_only_groups_without_physical_support(monkeypatch, mixed_groups):
+    import mujoco
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
+
+    physical_group, visual_group, robot_group = ((0, 0, 0) if mixed_groups else (4, 2, 3))
+    model = mujoco.MjModel.from_xml_string(f'''<mujoco><worldbody>
+      <geom name="floor" type="box" pos="0 0 2.95" size="2 2 .05" group="{physical_group}"/>
+      <geom name="decoration" type="box" pos="0 0 3.10" size="1 1 .01"
+            group="{visual_group}" contype="0" conaffinity="0"/>
+      <geom name="step" type="box" pos="1.5 0 3.1" size=".3 .5 .1" group="{physical_group}"/>
+      <body name="platform" mocap="true" pos="3 0 2">
+        <geom type="box" size=".4 .4 .05" group="{physical_group}"/>
+      </body>
+      <body name="base_link" pos="0 0 3.435"><freejoint/>
+        <geom type="box" size=".4 .15 .1" group="{robot_group}"/>
+        <body name="attachment" pos="0 0 -.2">
+          <geom size=".03" group="{robot_group}"/>
+        </body>
+      </body></worldbody></mujoco>''')
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    engine = MuJoCoEngine.__new__(MuJoCoEngine)
+    engine._model, engine._data = model, data
+    engine._base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+    engine._data_lock = threading.RLock()
+    original_groups = model.geom_group.copy()
+    real_ray = mujoco.mj_ray
+    masks = []
+
+    def ray(*args):
+        masks.append(None if args[4] is None else args[4].copy())
+        return real_ray(*args)
+
+    monkeypatch.setattr(mujoco, "mj_ray", ray)
+    assert engine.get_support_clearance() == pytest.approx(.435)
+    if not mixed_groups:
+        assert len(masks) == 1, "Excluded visual and robot groups must not be ray-cast"
+    assert all(mask is not None for mask in masks)
+    assert all(mask[physical_group] == 1 for mask in masks)
+    # A higher stair and a moving platform must remain current physical support.
+    data.qpos[:3] = [1.5, 0, 3.635]
+    mujoco.mj_forward(model, data)
+    assert engine.get_support_clearance() == pytest.approx(.435)
+    data.qpos[:3] = [3, 0, 2.485]
+    mujoco.mj_forward(model, data)
+    assert engine.get_support_clearance() == pytest.approx(.435)
+    data.mocap_pos[0, 2] = 1.9
+    mujoco.mj_forward(model, data)
+    assert engine.get_support_clearance() == pytest.approx(.535)
+    data.mocap_pos[0, 0] = 4
+    mujoco.mj_forward(model, data)
+    assert math.isnan(engine.get_support_clearance())
+    np.testing.assert_array_equal(model.geom_group, original_groups)
+
+
+def test_support_clearance_uses_native_clamped_groups_and_current_collision_flags():
+    import mujoco
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
+
+    model = mujoco.MjModel.from_xml_string('''<mujoco><worldbody>
+      <geom name="floor" type="plane" size="1 1 .1" group="7"/>
+      <body name="base_link" pos="0 0 .5"><freejoint/><geom size=".1"/></body>
+    </worldbody></mujoco>''')
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    engine = MuJoCoEngine.__new__(MuJoCoEngine)
+    engine._model, engine._data = model, data
+    engine._base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+    engine._data_lock = threading.RLock()
+    assert engine.get_support_clearance() == pytest.approx(.5)
+    floor = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "floor")
+    model.geom_contype[floor] = model.geom_conaffinity[floor] = 0
+    assert math.isnan(engine.get_support_clearance())
+    model.geom_group[floor] = -1
+    model.geom_conaffinity[floor] = 1
+    assert engine.get_support_clearance() == pytest.approx(.5)
+
+
+def test_support_clearance_does_not_step_through_coplanar_visual_into_tread():
+    import mujoco
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
+
+    # The factory stair's visual top is 61 nm above its physical top. Advancing
+    # the ray by 1 um after a visual hit used to return the tread's bottom face.
+    model = mujoco.MjModel.from_xml_string('''<mujoco><worldbody>
+      <geom name="visual_tread" type="box" pos="0 0 .590000061" size="1 1 .01"
+            group="2" contype="0" conaffinity="0"/>
+      <geom name="physical_tread" type="box" pos="0 0 .54" size="1 1 .06" group="4"/>
+      <body name="base_link" pos="0 0 1.05"><freejoint/><geom size=".1" group="3"/></body>
+    </worldbody></mujoco>''')
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    engine = MuJoCoEngine.__new__(MuJoCoEngine)
+    engine._model, engine._data = model, data
+    engine._base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+    engine._data_lock = threading.RLock()
+    assert engine.get_support_clearance() == pytest.approx(.45)
+
+
+@pytest.mark.parametrize(
+    ("gate", "local", "expected", "health"),
+    [
+        ({"ready": True}, {"active": False, "reason": "driver_control_lost"}, "ready for a goal", {"ready": True, "healthy": True}),
+        ({"ready": False, "reason": "odometry_stale"}, {"active": True}, "odometry_stale", {}),
+        ({"ready": True}, {"active": True, "reason": "tracking"}, "tracking", {"ready": True, "healthy": True}),
+        ({"ready": True}, {"active": True, "reason": "scan_initialization_failed"},
+         "Local trajectory blocked near robot; back away or change goal", {"ready": True, "healthy": True}),
+        ({"ready": True}, {"active": True, "reason": "scan_local_target_blocked"},
+         "No reachable local target; change goal or wait for clear space", {"ready": True, "healthy": True}),
+        ({"ready": True}, {"active": True, "reason": "autonomy_motion_stalled"},
+         "Motion stalled; stopped. Change goal or use keyboard to back away", {"ready": True, "healthy": True}),
+        ({"ready": True}, {"goal_reached": True}, "goal reached", {"ready": True, "healthy": True}),
+        ({"ready": True}, {}, "waiting for control loop health", {}),
+        ({"ready": True}, {"active": True}, "waiting for control loop health",
+         {"ready": False, "healthy": True}),
+        ({"ready": True}, {}, "collecting samples",
+         {"ready": False, "reason": "collecting samples"}),
+        ({"ready": True}, {}, "ready for a goal\nTiming warning: deadline_miss_ratio_high",
+         {"ready": True, "healthy": False, "reason": "deadline_miss_ratio_high"}),
+        ({"ready": True}, {"active": True, "reason": "tracking", "final_safety": {
+            "applied": True, "stopped": True, "reason": "scan_actual_motion_blocked"}},
+         "Obstacle within stopping distance; stopped\nTiming warning: deadline_miss_ratio_high",
+         {"ready": True, "healthy": False, "reason": "deadline_miss_ratio_high"}),
+        ({"ready": True}, {"active": True, "final_safety": {
+            "applied": True, "stopped": True, "reason": "traversability_blocked"}},
+         "Stopped: traversability_blocked", {"ready": True, "healthy": True}),
+    ],
+)
+def test_viewer_reports_current_navigation_gate(gate, local, expected, health):
+    from contextlib import nullcontext
+
+    from drivers.sim.mujoco.runtime import LiveViewer
+
+    pytest.importorskip("mujoco")
+    texts = []
+    viewer = LiveViewer.__new__(LiveViewer)
+    viewer._goal_input = types.SimpleNamespace(poll=lambda: "Ready")
+    viewer._read_keyboard_status = lambda: "Keyboard: operator ACK timed out"
+    viewer._goal_picker = types.SimpleNamespace(draw=lambda _: None)
+    viewer._viewer = types.SimpleNamespace(
+        viewport=None, lock=nullcontext, set_texts=texts.append, poll_click=lambda: None,
+    )
+    viewer._update_goal_input({"input_gate": gate, "last_local": local, "control_loop_health": health})
+    assert texts[0][-1] == "Ready\nNavigation: " + expected + "\nKeyboard: operator ACK timed out"
+    assert "WASD: move" in texts[0][-2]
+
+
+def test_live_viewer_start_does_not_wait_for_first_window_frame(monkeypatch):
+    from contextlib import nullcontext
+
+    from drivers.sim.mujoco import click_viewer, goal_picker, runtime
+
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_string('<mujoco><worldbody><geom size=".1"/></worldbody></mujoco>')
+    data = mujoco.MjData(model)
+    state = np.empty(mujoco.mj_stateSize(model, mujoco.mjtState.mjSTATE_INTEGRATION))
+    mujoco.mj_getState(model, data, state, mujoco.mjtState.mjSTATE_INTEGRATION)
+    entered, release, created = threading.Event(), threading.Event(), threading.Event()
+    result = []
+
+    def slow_first_frame():
+        entered.set()
+        release.wait(timeout=3)
+
+    window = types.SimpleNamespace(
+        sync=slow_first_frame, is_running=lambda: True, close=lambda: None,
+        dispose=lambda: None, lock=nullcontext, poll_click=lambda: None,
+        set_texts=lambda _: None, user_scn=types.SimpleNamespace(ngeom=0),
+    )
+    monkeypatch.setattr(runtime.os, "name", "nt")
+    monkeypatch.setattr(click_viewer, "ClickViewer", lambda *_: window)
+    monkeypatch.setattr(goal_picker, "GoalPicker", lambda *_: types.SimpleNamespace(draw=lambda _: None))
+    monkeypatch.setattr(runtime, "focus_presentation_viewer", lambda *_, **__: None)
+
+    def construct():
+        result.append(runtime.LiveViewer(
+            model, state, (0, 0, 0), lambda: {},
+            goal_input=types.SimpleNamespace(poll=lambda: "Ready", close=lambda: None),
+        ))
+        created.set()
+
+    thread = threading.Thread(target=construct, daemon=True)
+    thread.start()
+    try:
+        assert entered.wait(timeout=2)
+        assert created.wait(timeout=.5), "display initialization must not delay sensor connections"
+        assert result[0].is_running()
+        initialized = threading.Event()
+        waiter = threading.Thread(
+            target=lambda: (result[0].wait_until_initialized(threading.Event()), initialized.set()),
+            daemon=True,
+        )
+        waiter.start()
+        assert initialized.wait(timeout=.5), "activation must not wait for the first drawn frame"
+    finally:
+        release.set()
+        thread.join(timeout=3)
+        if result:
+            result[0].close()
+
+
+def test_live_viewer_initialization_wait_propagates_failure_and_cancellation():
+    from drivers.sim.mujoco.runtime import LiveViewer
+
+    viewer = LiveViewer.__new__(LiveViewer)
+    viewer._window_ready = threading.Event()
+    stop = threading.Event()
+    stop.set()
+    with pytest.raises(RuntimeError, match="initialization cancelled"):
+        viewer.wait_until_initialized(stop)
+    stop.clear()
+    viewer._failure = RuntimeError("render resource allocation failed")
+    viewer._window_ready.set()
+    with pytest.raises(RuntimeError, match="viewer failed") as raised:
+        viewer.wait_until_initialized(stop)
+    assert raised.value.__cause__ is viewer._failure
+
+
 def test_live_viewer_does_not_block_physics_snapshot_submission(monkeypatch):
     from contextlib import nullcontext
 
@@ -59,6 +305,8 @@ def test_live_viewer_does_not_block_physics_snapshot_submission(monkeypatch):
     real_mjdata = mujoco.MjData
 
     class SlowViewer:
+        user_scn = types.SimpleNamespace(ngeom=0, maxgeom=0)
+
         def lock(self):
             return nullcontext()
 
@@ -167,7 +415,6 @@ def test_mujoco_state_snapshot_restores_lidar_without_live_data_or_mjdata_reallo
     old_data = mujoco.MjData(model)
     mujoco.mj_copyData(old_data, model, live_data)
     engine._lidar.update_data(old_data)
-    engine._lidar._ray_cursor = 0
     old_points = engine._lidar.scan(sample_count=64)
     engine._lidar.update_data(engine._lidar_data)
 
@@ -200,7 +447,6 @@ def test_mujoco_state_snapshot_restores_lidar_without_live_data_or_mjdata_reallo
     live_ctrl_after_update = live_data.ctrl.copy()
     live_mocap_pos_after_update = live_data.mocap_pos.copy()
 
-    engine._lidar._ray_cursor = 0
     restored_points = engine.get_lidar_points_from_snapshot(snapshot, sample_count=64)
     np.testing.assert_allclose(restored_points, old_points, rtol=0.0, atol=1e-6)
     np.testing.assert_array_equal(live_data.qpos, live_qpos_after_update)
@@ -217,7 +463,6 @@ def test_mujoco_state_snapshot_restores_lidar_without_live_data_or_mjdata_reallo
         lambda model: allocations.append(model) or real_mjdata(model),
     )
     for _ in range(3):
-        engine._lidar._ray_cursor = 0
         engine.get_lidar_points_from_snapshot(snapshot, sample_count=8)
     assert allocations == []
     assert engine._lidar._data is engine._lidar_data
@@ -226,8 +471,6 @@ def test_mujoco_state_snapshot_restores_lidar_without_live_data_or_mjdata_reallo
     assert engine._lidar is None
     assert engine._lidar_data is None
 
-_ROS2_AVAILABLE = importlib.util.find_spec("rclpy") is not None
-
 
 def test_default_thunder_v4_resolves_current_robot_and_controller():
     sim_root = Path(__file__).resolve().parents[2] / "sim"
@@ -235,7 +478,7 @@ def test_default_thunder_v4_resolves_current_robot_and_controller():
 
     assert Path(cfg.robot_xml).as_posix().endswith("robots/doso/thunder_v4/mjcf/thunderv4.xml")
     assert Path(cfg.robot_xml).exists()
-    assert Path(cfg.policy_onnx).name == "policy_1119.onnx"
+    assert Path(cfg.policy_onnx).name == "policy_4998.onnx"
     assert cfg.base_body_name == "base_link"
     assert cfg.lidar_body_name == "lidar_link"
     assert cfg.leg_act_offset == 0
@@ -312,7 +555,7 @@ def test_default_thunder_v4_resolves_paths_from_engine_core_default():
 
 def test_mujoco_driver_splits_body_lidar_cloud_from_world_map_cloud():
     from drivers.sim.mujoco.sensors import world_points_to_body_frame
-    from runtime.runtime_interface import FRAMES
+    from runtime.tf.frames import FRAMES
 
     pts = np.array([[0.0, 1.0, 0.0, 0.5]], dtype=np.float32)
     yaw_90_xyzw = np.array([0.0, 0.0, math.sin(math.pi / 4.0), math.cos(math.pi / 4.0)])
@@ -796,7 +1039,7 @@ def test_mujoco_native_dds_odom_prior_contract_is_wired():
     runtime_source = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(encoding="utf-8")
     fastlio_source = Path("src/localization/slam/cpp/fastlio.cpp").read_text(encoding="utf-8")
     config_source = Path("src/localization/fastlio2/config/sim_mid360_slam.yaml").read_text(encoding="utf-8")
-    topics_source = Path("src/message/cpp/topics.hpp").read_text(encoding="utf-8")
+    topics_source = Path("src/message/generated/topics.hpp").read_text(encoding="utf-8")
 
     assert native_sensor_records.RECORD_ODOM_PRIOR == 3
     assert bridge._RECORD_ODOM_PRIOR == native_sensor_records.RECORD_ODOM_PRIOR
@@ -1198,11 +1441,6 @@ def test_mujoco_native_dds_managed_wsl_clock_handshake_is_opt_in(tmp_path):
         tmp_path / "synchronized.pid",
         clock_handshake=True,
     )
-
-    if sys.platform != "win32":
-        assert plain == command
-        assert synchronized == command
-        return
 
     assert "LINGTU_CLOCK_READY" not in plain[4]
     assert "LINGTU_CLOCK_READY" in synchronized[4]
@@ -1667,6 +1905,8 @@ def test_mujoco_native_dds_parent_diagnostics_write_atomic_rolling_counters(tmp_
         "catch_up_events": 0,
         "catch_up_yields": 0,
         "final_lag_s": 0.0,
+        "forced_lidar_observations": 0,
+        "forced_sensor_observations": 0,
         "max_consecutive_steps": 0,
         "max_lag_observed_s": 0.0,
     }
@@ -1971,7 +2211,7 @@ def test_mujoco_native_dds_sensor_bridge_conditions_contact_impulses_before_fast
 def test_mujoco_native_dds_sensor_bridge_rejects_kinematic_fastlio_acceptance_by_default():
     from sim.scripts.mujoco import native_dds_sensors as bridge
 
-    from runtime.runtime_interface import TOPICS
+    from message.topics import TOPICS
 
     sensor_counts = Counter({TOPICS.lidar_scan: 3, TOPICS.imu: 40, TOPICS.odom_prior: 40})
     slam_counts = Counter({topic: 1 for topic in bridge.REQUIRED_SLAM_OUTPUT_TOPICS})
@@ -2112,25 +2352,91 @@ def test_mujoco_engine_fast_static_clock_advance_skips_state_recompute():
     assert engine._sensor_tick_residual_s == pytest.approx(0.0)
 
 
-def test_mujoco_lidar_pattern_cursor_supports_subscan_sample_count():
+def test_mujoco_lidar_ray_budget_preserves_the_full_physical_pattern_window():
     from sim.compat.engine.mujoco.lidar import MuJoCoLidar
 
     lidar = object.__new__(MuJoCoLidar)
-    lidar._ray_angles = np.asarray(
-        [[0.0, 0.0], [1.0, 0.1], [2.0, 0.2], [3.0, 0.3]],
-        dtype=np.float32,
-    )
-    lidar._ray_cursor = 0
-    lidar._config = types.SimpleNamespace(samples_per_frame=4, add_noise=False)
+    indexes = np.arange(800_000, dtype=np.float32)
+    lidar._ray_angles = np.column_stack((indexes, -indexes))
+    lidar._config = types.SimpleNamespace(samples_per_frame=4000, fps=10.0, add_noise=False)
+    lidar._data = types.SimpleNamespace(time=0.1)
     lidar._rng = np.random.default_rng(0)
 
-    theta, phi = lidar._next_pattern_angles(sample_count=2)
-    theta2, _phi2 = lidar._next_pattern_angles()
+    theta, phi = lidar._next_pattern_angles()
+    np.testing.assert_array_equal(theta, np.arange(0, 20_000, 5))
+    np.testing.assert_array_equal(phi, -theta)
+    lidar._data.time = 0.2
+    theta2, _ = lidar._next_pattern_angles(sample_count=20_000)
+    np.testing.assert_array_equal(theta2, np.arange(20_000, 40_000))
+    # Skipped publication cannot slow the physical scan pattern clock.
+    lidar._data.time = 0.5
+    theta3, _ = lidar._next_pattern_angles()
+    np.testing.assert_array_equal(theta3, np.arange(80_000, 100_000, 5))
 
-    assert theta.tolist() == pytest.approx([0.0, 1.0])
-    assert phi.tolist() == pytest.approx([0.0, 0.1])
-    assert theta2.tolist() == pytest.approx([2.0, 3.0, 0.0, 1.0])
-    assert lidar._ray_cursor == 2
+
+@pytest.mark.parametrize(
+    ("end_s", "duration_s", "count", "start", "span"),
+    [(0.005, 0.005, 200, 0, 1000), (0.010, 0.005, 200, 1000, 1000),
+     (0.05, 0.05, 4000, 0, 10_000), (4.005, 0.01, 2000, 799_000, 2000)],
+)
+def test_mujoco_lidar_explicit_scan_interval_covers_subscans_and_wrap(
+    end_s, duration_s, count, start, span,
+):
+    from sim.compat.engine.mujoco.lidar import MuJoCoLidar
+
+    lidar = object.__new__(MuJoCoLidar)
+    indexes = np.arange(800_000, dtype=np.float32)
+    lidar._ray_angles = np.column_stack((indexes, -indexes))
+    lidar._config = types.SimpleNamespace(samples_per_frame=4000, fps=10.0, add_noise=False)
+    lidar._data = types.SimpleNamespace(time=end_s)
+    theta, _ = lidar._next_pattern_angles(sample_count=count, scan_duration_s=duration_s)
+    expected = (start + np.arange(count, dtype=np.int64) * span // count) % 800_000
+    np.testing.assert_array_equal(theta, expected)
+    # An immutable snapshot always addresses the same angular window.
+    repeated, _ = lidar._next_pattern_angles(sample_count=count, scan_duration_s=duration_s)
+    np.testing.assert_array_equal(repeated, theta)
+
+
+def test_mujoco_cpu_lidar_reduced_budget_matches_full_window_ray_hits():
+    import mujoco
+    from sim.compat.engine.core.sensor import LidarConfig
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
+    from sim.compat.engine.mujoco.lidar import MuJoCoLidar
+
+    model = mujoco.MjModel.from_xml_string('''<mujoco><worldbody>
+      <geom type="box" size="5 5 5" group="4"/>
+      <body name="base_link"><freejoint/><inertial mass="1" diaginertia="1 1 1" pos="0 0 0"/>
+        <site name="lidar_site"/>
+      </body>
+    </worldbody></mujoco>''')
+    data = mujoco.MjData(model)
+    data.time = 0.1
+    mujoco.mj_forward(model, data)
+    lidar = MuJoCoLidar(model, data, LidarConfig(
+        body_name="base_link", exclude_body_name="base_link", backend="mujoco_lidar",
+        add_noise=False, mid360_npy_path="sim/packages/sensors/livox/mid360/assets/mid360.npy",
+    ))
+    full = lidar.scan_xyz(sample_count=20_000, scan_duration_s=0.1)
+    reduced = lidar.scan_xyz(sample_count=4000, scan_duration_s=0.1)
+    assert full.shape == (20_000, 3)
+    np.testing.assert_allclose(reduced, full[::5], atol=1e-6, rtol=0)
+    engine = MuJoCoEngine(drive_mode="kinematic")
+    engine._model = model
+    engine._data = data
+    engine._lidar_data = mujoco.MjData(model)
+    engine._lidar = lidar
+    lidar.update_data(engine._lidar_data)
+    try:
+        current = engine.get_lidar_points(sample_count=2000, scan_duration_s=0.05)
+        np.testing.assert_allclose(current[:, :3], full[10_000::5], atol=1e-6, rtol=0)
+        snapshot = engine.capture_state()
+        data.time = 0.3
+        restored = engine.get_lidar_points_from_snapshot(
+            snapshot, sample_count=2000, scan_duration_s=0.05,
+        )
+        np.testing.assert_allclose(restored, current, atol=1e-6, rtol=0)
+    finally:
+        engine.close()
 
 
 def test_mujoco_native_dds_sensor_bridge_auto_keeps_legacy_split_acceleration_scale():
@@ -2199,9 +2505,6 @@ def test_mujoco_native_dds_fastlio_config_uses_sim_gravity_scale():
 
 
 def test_thunderv4_mid360_recording_world_is_dense(tmp_path):
-    pytest.importorskip("cv2")
-    pytest.importorskip("imageio")
-    pytest.importorskip("mujoco")
     import xml.etree.ElementTree as ET
 
     from sim.scripts.mujoco.record_thunderv4_mid360_policy import _write_world
@@ -2220,7 +2523,8 @@ def test_thunderv4_mid360_recording_world_is_dense(tmp_path):
 
 def test_mujoco_driver_raw_scan_uses_lidar_frame_for_native_slam():
     import drivers.sim.mujoco.driver as driver
-    from runtime.runtime_interface import TOPICS, topic_default_frame_id
+    from message.topics import TOPICS
+    from runtime.tf.frames import topic_default_frame_id
 
     source = Path(driver.__file__).read_text(encoding="utf-8")
 
@@ -2283,20 +2587,22 @@ def test_thunder_v3_mjcf_runtime_keeps_lingtu_sensor_and_control_contracts():
     }
 
 
-@pytest.mark.skipif(not _ROS2_AVAILABLE, reason="Needs ROS2 runtime")
 def test_semantic_namespace_wrappers_expose_runtime_import_paths():
     assert importlib.util.find_spec("perception.tracking.instance_tracker") is not None
     assert importlib.util.find_spec("decision.llm.client") is not None
 
     # Canonical imports from runtime.utils
-    from perception.tracking.instance_tracker import InstanceTracker
-    from perception.tracking.tracked_objects import TrackedObject
+    from perception.tracking.instance_tracker import InstanceTracker, TrackedObject
+    from perception.tracking.tracked_objects import Region, RoomNode
+    from perception.tracking.tracked_objects import TrackedObject as PerceptionTrackedObject
     from runtime.msgs import scene as scene_msgs
     from runtime.utils.sanitize import sanitize_position
 
     assert callable(sanitize_position)
     assert InstanceTracker is not None
-    assert scene_msgs.TrackedObject is TrackedObject
+    assert TrackedObject is PerceptionTrackedObject
+    assert scene_msgs.Region is Region
+    assert scene_msgs.RoomNode is RoomNode
 
 
 def test_fastlio2_cpp_applies_configured_ieskf_iteration_and_degeneracy_guard():
@@ -2366,7 +2672,7 @@ def test_mujoco_sensor_helper_prefers_lidar_site_pose(monkeypatch):
 
 def test_mujoco_sensor_helper_converts_sensor_cloud_to_body_frame():
     from drivers.sim.mujoco.sensors import sensor_xyzi_to_body_xyzi
-    from runtime.runtime_interface import lidar_extrinsic
+    from runtime.tf.mounts import lidar_extrinsic
 
     sensor_cloud = np.array(
         [
@@ -2418,16 +2724,13 @@ def test_mujoco_sensor_helper_preserves_signed_imu_gyro_z():
 
 
 def test_navigation_runtime_dataflow_documents_no_python_slam_rule():
-    architecture = Path("docs/architecture/NAVIGATION_RUNTIME_DATAFLOW.md").read_text(encoding="utf-8")
-    recording = Path(
-        "docs/07-testing/simulation/thunderv4_mujoco_lidar_recording_requirements.md"
-    ).read_text(encoding="utf-8")
+    runtime = " ".join(Path("docs/runtime.md").read_text(encoding="utf-8").split())
+    simulation = " ".join(Path("docs/simulation.md").read_text(encoding="utf-8").split())
 
-    assert "Do not write or ship Python SLAM" in architecture
-    assert "Python code may adapt streams, status" in architecture
-    assert "it must not become a SLAM backend" in architecture
-    assert "Do not write or ship Python SLAM" in recording
-    assert "Reports must keep `no_python_slam=true`" in recording
+    assert "Field Products have no Python algorithm fallback" in runtime
+    assert "Do not write or ship Python SLAM" in simulation
+    assert "simulation substitute for the native" in simulation
+    assert "Reports must keep `no_python_slam=true`" in simulation
 
 
 def test_mujoco_native_dds_sensor_bridge_declares_no_python_slam_contract():
@@ -3508,7 +3811,8 @@ def test_native_slam_status_adapter_records_odom_snapshot_stamp():
 
 def test_native_slam_status_adapter_uses_runtime_default_frames():
     from localization.adapters.status import CppSlamStatusAdapterModule
-    from runtime.runtime_interface import TOPICS, topic_default_frame_id
+    from message.topics import TOPICS
+    from runtime.tf.frames import topic_default_frame_id
 
     adapter = CppSlamStatusAdapterModule()
     odometry_seen = []
@@ -3522,8 +3826,9 @@ def test_native_slam_status_adapter_uses_runtime_default_frames():
 
 def test_native_slam_status_adapter_feeds_module_ports_directly(tmp_path):
     from localization.adapters.status import CppSlamStatusAdapterModule
+    from message.topics import TOPICS
     from runtime.msgs.sensor import PointCloud2
-    from runtime.runtime_interface import TOPICS, topic_default_frame_id
+    from runtime.tf.frames import topic_default_frame_id
 
     cloud_dir = tmp_path / "clouds"
     cloud_dir.mkdir()
@@ -3613,12 +3918,18 @@ class _FakeEngine:
         self.discrete_ray_config = discrete_ray_config
         self.loaded_xml_path = ""
         self.reset_called = False
+        self.dt = None
+        self.reset_dt = None
 
     def load(self, xml_path: str = "", **kwargs):
         self.loaded_xml_path = xml_path
 
+    def set_physics_timestep(self, timestep_s):
+        self.dt = timestep_s
+
     def reset(self):
         self.reset_called = True
+        self.reset_dt = self.dt
 
 
 def test_mujoco_driver_setup_uses_selected_scene_and_real_robot(monkeypatch):
@@ -3653,6 +3964,7 @@ def test_mujoco_driver_setup_uses_selected_scene_and_real_robot(monkeypatch):
     assert driver._engine.lidar_config.body_name == "lidar_link"
     assert driver._engine.drive_mode == "policy"
     assert driver._engine.reset_called is True
+    assert driver._engine.reset_dt == pytest.approx(0.005)
     assert len(driver._engine.camera_configs) == 1
 
 
@@ -3675,6 +3987,7 @@ def test_mujoco_driver_setup_accepts_absolute_world_path(monkeypatch, tmp_path):
     assert driver._engine is not None
     assert Path(driver._engine.loaded_xml_path) == world.resolve()
     assert Path(driver._engine.world_config.scene_xml) == world.resolve()
+    assert driver._engine.dt is None
 
 
 def test_mujoco_driver_uses_scene_placeholder_start_pose(monkeypatch):
@@ -3692,20 +4005,7 @@ def test_mujoco_driver_uses_scene_placeholder_start_pose(monkeypatch):
 
     assert driver._engine is not None
     assert driver._engine.robot_config.init_position == [2.0, 3.0, 0.5]
-    assert Path(driver._engine.robot_config.policy_onnx).name == "policy_1119.onnx"
-
-
-def test_mujoco_driver_defaults_to_thunderv4_policy():
-    import drivers.sim.mujoco.driver as driver_mod
-
-    assert driver_mod._THUNDERV4_POLICY.name == "policy_1119.onnx"
-    assert driver_mod._THUNDERV4_POLICY.is_file()
-    driver = driver_mod.MujocoDriverModule(
-        world="open_field",
-        render=False,
-        enable_camera=False,
-    )
-    assert Path(driver._policy_path) == driver_mod._THUNDERV4_POLICY
+    assert Path(driver._engine.robot_config.policy_onnx).name == "policy_4998.onnx"
 
 
 def test_root_operation_entrypoint_is_unique_and_uses_current_release_paths():
@@ -3716,9 +4016,7 @@ def test_root_operation_entrypoint_is_unique_and_uses_current_release_paths():
         encoding="utf-8"
     )
     scripts_index = (repo_root / "scripts" / "README.md").read_text(encoding="utf-8")
-    release_guide = (repo_root / "docs" / "04-deployment" / "OTA_GUIDE.md").read_text(
-        encoding="utf-8"
-    )
+    release_guide = (repo_root / "docs" / "operations.md").read_text(encoding="utf-8")
 
     assert canonical_entry.is_file()
     assert not retired_entry.exists()
@@ -3738,7 +4036,7 @@ def test_sim_boundary_indexes_document_stable_contracts():
         "simulation": repo_root / "sim" / "README.md",
         "scripts": repo_root / "sim" / "scripts" / "README.md",
         "engine": repo_root / "sim" / "compat" / "engine" / "README.md",
-        "repository": repo_root / "docs" / "REPO_LAYOUT.md",
+        "repository": repo_root / "docs" / "architecture.md",
     }
     texts = {name: path.read_text(encoding="utf-8") for name, path in indexes.items()}
 
@@ -3750,7 +4048,7 @@ def test_sim_boundary_indexes_document_stable_contracts():
     assert "## Sensors, mapping, and evidence" in texts["scripts"]
     assert "not the canonical generic simulation Runtime" in texts["engine"]
     assert "remains hardware-free" in texts["engine"]
-    assert "| `sim/` | Single simulation package" in texts["repository"]
+    assert "Root `sim/` is a simulation workspace" in texts["repository"]
 
     boundary_markers = {
         "evaluation/data": ("offline replay inputs", "generated validation evidence", "artifacts/"),
@@ -4214,6 +4512,8 @@ def test_mujoco_policy_lateral_command_matches_body_left_convention(
     driver.setup()
     try:
         assert driver._engine is not None
+        assert driver._engine.dt == pytest.approx(0.005)
+        assert driver._engine.control_dt == pytest.approx(0.02)
         start = driver._engine.get_robot_state()
         start_xy = np.asarray(start.position[:2], dtype=float)
         _, _, start_yaw = _rpy_from_xyzw(start.orientation)
@@ -4285,3 +4585,69 @@ def test_sim_scene_observer_respects_live_forward_axis_convention():
     detections = observer.observe(tf, _Intrinsics(), text_prompt="stairs . goal")
 
     assert any(det.label == "stairs" for det in detections)
+
+
+def test_click_window_idle_render_does_not_block_physics_or_pose_sampling(monkeypatch):
+    import os
+    from contextlib import nullcontext
+
+    from drivers.sim.mujoco import click_viewer, runtime
+
+    if os.name != "nt":
+        pytest.skip("Windows click-navigation window")
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_string(
+        '<mujoco><worldbody><body name="base_link"><freejoint/>'
+        '<geom size=".1"/></body></worldbody></mujoco>'
+    )
+    data = mujoco.MjData(model)
+    state = np.empty(mujoco.mj_stateSize(model, mujoco.mjtState.mjSTATE_INTEGRATION))
+    mujoco.mj_getState(model, data, state, mujoco.mjtState.mjSTATE_INTEGRATION)
+    entered, release, submitted = threading.Event(), threading.Event(), threading.Event()
+    poses = []
+
+    class SlowWindow:
+        user_scn = types.SimpleNamespace(ngeom=0, maxgeom=0)
+        frames = 0
+
+        def __init__(self, *_): pass
+        def lock(self): return nullcontext()
+        def is_running(self): return True
+        def poll_click(self): return None
+        def set_texts(self, _): pass
+        def close(self): pass
+        def dispose(self): pass
+
+        def sync(self):
+            self.frames += 1
+            if self.frames > 1:
+                entered.set()
+                assert release.wait(3)
+
+    monkeypatch.setattr(click_viewer, "ClickViewer", SlowWindow)
+    monkeypatch.setattr(runtime, "focus_presentation_viewer", lambda *_, **__: None)
+    goal = types.SimpleNamespace(
+        poll=lambda: "Ready", close=lambda: None,
+        observe_pose=lambda *pose: poses.append(pose),
+        world_to_map_transform=lambda: (np.eye(3), np.zeros(3)),
+    )
+    viewer = runtime.LiveViewer(model, state, (0, 0, 0), lambda: {}, goal_input=goal)
+
+    def physics():
+        viewer.observe_pose(123.0, [1, 2, 3], [0, 0, 0, 1])
+        viewer.submit(state, (1, 2, 3), [])
+        submitted.set()
+
+    producer = threading.Thread(target=physics)
+    try:
+        assert entered.wait(1), "idle window did not draw"
+        producer.start()
+        assert submitted.wait(1), "idle rendering held the physics submission lock"
+        assert poses[0][0] == 123.0
+        np.testing.assert_allclose(poses[0][1], [1, 2, 3])
+        np.testing.assert_allclose(poses[0][2], np.eye(3))
+        assert viewer.is_running()
+    finally:
+        release.set()
+        producer.join(2)
+        viewer.close()

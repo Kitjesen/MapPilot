@@ -1,4 +1,3 @@
-# ruff: noqa: D103, S101
 """Durable authoring contracts for validated SimStudio scene drafts."""
 
 from __future__ import annotations

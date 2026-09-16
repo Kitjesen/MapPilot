@@ -5,8 +5,12 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from tools.validate import validate_real_deployment as validator
+
+from message.topics import TOPICS, topic_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -19,8 +23,8 @@ def test_validate_real_deployment_contract_passes() -> None:
     assert result["robot"] == "doso/thunder_v4"
     assert result["canonical_product"] == "nav"
     assert result["env"] == "real"
-    assert result["contract"] == "field_dds_v1"
-    assert result["endpoint_contract"] == "field_dds_v1"
+    assert result["transport"] == "dds"
+    assert TOPICS.cmd_vel in result["required_topics"]
     assert result["runtime_contract"] == "real"
     assert "host" in result["run_plan_processes"]
     assert "nav" in result["run_plan_processes"]
@@ -35,6 +39,35 @@ def test_validate_real_deployment_contract_passes() -> None:
         "explore:map",
         "map",
         "nav",
+    ]
+
+
+def test_deployment_checks_only_run_plan_required_topics(monkeypatch) -> None:
+    def selected_topic_only(topic):
+        assert topic == TOPICS.cmd_vel
+        return topic_spec(topic)
+
+    monkeypatch.setattr(validator, "topic_spec", selected_topic_only)
+    blockers = []
+    validator._validate_required_topics(SimpleNamespace(required_topics=(TOPICS.cmd_vel,)), blockers)
+    assert blockers == []
+
+
+@pytest.mark.parametrize("topic", ["/test/missing", TOPICS.check_obstacle])
+def test_deployment_rejects_required_topic_without_dds_type(topic) -> None:
+    blockers = []
+    validator._validate_required_topics(SimpleNamespace(required_topics=(topic,)), blockers)
+    assert blockers == [f"RunPlan required topic {topic} has no typed DDS declaration"]
+
+
+@pytest.mark.parametrize("field", ["dds_topic", "message_type", "qos_profile"])
+def test_deployment_rejects_incomplete_required_topic(monkeypatch, field) -> None:
+    spec = replace(topic_spec(TOPICS.cmd_vel), **{field: ""})
+    monkeypatch.setattr(validator, "topic_spec", lambda _topic: spec)
+    blockers = []
+    validator._validate_required_topics(SimpleNamespace(required_topics=(TOPICS.cmd_vel,)), blockers)
+    assert blockers == [
+        f"RunPlan required topic {TOPICS.cmd_vel} must declare DDS name, message type, and QoS"
     ]
 
 

@@ -82,7 +82,7 @@ format:
 lint: py-lint
 
 py-lint:
-	@ruff check src/ tests/
+	@ruff check src/ tests/ docs/ tools/calibration/
 
 py-format:
 	@ruff format src/ tests/

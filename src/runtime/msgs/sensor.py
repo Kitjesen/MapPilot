@@ -13,6 +13,7 @@ LivoxPointFrame — decoded Livox frame shared by real and simulated sources
 
 from __future__ import annotations
 
+import math
 import os
 import struct
 import time
@@ -21,13 +22,61 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar
 
-from runtime.runtime_interface import camera_frame_id, map_frame_id
+from runtime.tf.frames import camera_frame_id, map_frame_id
 
 from .geometry import Quaternion, Vector3
 from .numpy_compat import is_numpy_array, np, numpy_import_is_safe
+from .protocol import json_message_decode, json_message_encode
 
 SENSOR_CAMERA_FRAME_ID = camera_frame_id()
 SENSOR_MAP_FRAME_ID = map_frame_id()
+
+
+@dataclass
+class JointState:
+    """Bounded measured joint telemetry; ts is the original source timestamp."""
+
+    ts: float
+    robot_model: str
+    names: list[str]
+    position: list[float]
+    velocity: list[float]
+    effort: list[float]
+    msg_name: ClassVar[str] = "sensor_msgs.JointState"
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.ts) or self.ts <= 0:
+            raise ValueError("joint state timestamp must be positive and finite")
+        if not isinstance(self.robot_model, str) or not self.robot_model or len(self.robot_model) > 31:
+            raise ValueError("joint state robot model is invalid")
+        if not 1 <= len(self.names) <= 12 or any(
+            not isinstance(name, str) or not name or len(name) > 63 for name in self.names
+        ) or len(set(self.names)) != len(self.names):
+            raise ValueError("joint state names must be bounded and unique")
+        for values in (self.position, self.velocity, self.effort):
+            if len(values) != len(self.names) or any(not math.isfinite(value) for value in values):
+                raise ValueError("joint state vectors must be finite and aligned with names")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ts": self.ts,
+            "robot_model": self.robot_model,
+            "names": list(self.names),
+            "position": list(self.position),
+            "velocity": list(self.velocity),
+            "effort": list(self.effort),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> JointState:
+        return cls(**data)
+
+    def encode(self) -> bytes:
+        return json_message_encode(self)
+
+    @classmethod
+    def decode(cls, data: bytes) -> JointState:
+        return json_message_decode(data, cls)
 
 POINT_DTYPE = np.dtype(
     [

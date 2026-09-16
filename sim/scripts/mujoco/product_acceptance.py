@@ -38,10 +38,10 @@ from lingtu.sim.readiness import (
     readiness_expectation_for_process,
 )
 from lingtu.sim.switch import _load_committed_plan
-from lingtu.switch_contracts import ProcessReport, SwitchFailed
+from lingtu.switch_contracts import InitialPose, ProcessReport, SwitchFailed
 
 _BOOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
-_LIFECYCLE_PRODUCTS = frozenset({"teleop", "teleop_avoid", "map"})
+_LIFECYCLE_PRODUCTS = frozenset({"teleop", "teleop_avoid", "map", "explore", "nav"})
 _SENSOR_MIN_WINDOW_S = 3.0
 _SIM_TRUTH_SLAM_CONFIG = "src/localization/fastlio2/config/sim_mid360.yaml"
 
@@ -214,6 +214,7 @@ def run(
     rollback_root: Path | None = None,
     check: Check | None = None,
     expected_plan: RunPlan | None = None,
+    map_name: str | None = None,
 ) -> dict[str, Any]:
     """Run one Product scenario under ProductControl."""
 
@@ -236,7 +237,7 @@ def run(
     plan: RunPlan | None = None
     runtime_status: dict[str, Any] = {}
     sensor_runtime_evidence: dict[str, Any] = {
-        "ok": True,
+        "ok": None,
         "measurement_scope": "feeder_scheduler",
         "dds_delivery_verified": False,
         "published_count_scope": "endpoint_write",
@@ -248,14 +249,24 @@ def run(
     selected_local_planner = (
         str(expected_plan.native_nav.get("local_planner") or "").strip() or None
         if expected_plan is not None
-        and expected_plan.native_nav.get("teleop_local_planner") is True
+        and (product == "nav" or expected_plan.native_nav.get("teleop_local_planner") is True)
         else None
     )
+    if product == "nav":
+        if not map_name:
+            raise ValueError("nav acceptance requires a saved map name")
+        nav_manifest = load_manifest(target.manifest, root=ROOT)
+        if selected_local_planner is None:
+            selected_local_planner = str(nav_manifest["navigation_runtime"]["local_planner"])
+    map_options: dict[str, Any] = {"map_name": map_name} if map_name is not None else {}
+    if product == "nav" and nav_manifest.get("initial_pose") is not None:
+        map_options["initial_pose"] = tuple(nav_manifest["initial_pose"])
     try:
         switch = control.switch(
             product,
             local_planner=selected_local_planner,
             state_dir=root,
+            **map_options,
         )
         if not isinstance(switch, Mapping):
             raise TypeError("ProductControl.switch must return a mapping")
@@ -265,6 +276,8 @@ def run(
             raise RuntimeError(f"{product} switch did not become active")
         session_id = str(switch.get("product_session_id") or "").strip() or None
         committed, snapshot, current = _active_context(root, switch, product)
+        if current.get("map_name") != map_name:
+            raise RuntimeError("committed map does not match acceptance map")
         plan = committed.plan
         if expected_plan is not None and committed.plan != expected_plan:
             raise RuntimeError(f"{product} RunPlan changed after dispatch")
@@ -328,6 +341,8 @@ def run(
                 if status:
                     runtime_status["mujoco_feeder"] = status
             except Exception as exc:
+                sensor_runtime_evidence["ok"] = False
+                sensor_runtime_evidence["error"] = f"{type(exc).__name__}:{exc}"
                 blockers.append(f"sensor_runtime:{type(exc).__name__}:{exc}")
         if check is not None and plan is not None:
             try:
@@ -351,6 +366,7 @@ def run(
                 rollback_root,
                 product,
                 local_planner=selected_local_planner,
+                **map_options,
             )
         except Exception as exc:
             rollback = {"ok": False, "error": f"{type(exc).__name__}:{exc}"}
@@ -399,6 +415,8 @@ def check_rollback(
     product: str,
     *,
     local_planner: str | None = None,
+    map_name: str | None = None,
+    initial_pose: InitialPose | None = None,
 ) -> dict[str, Any]:
     """Prove target failure restores one exact previous Product session."""
 
@@ -406,11 +424,15 @@ def check_rollback(
     result: dict[str, Any] = {"ok": False}
     active = False
     session_id: str | None = None
+    map_options: dict[str, Any] = {"map_name": map_name} if map_name is not None else {}
+    if initial_pose is not None:
+        map_options["initial_pose"] = initial_pose
     try:
         previous_switch = control.switch(
             product,
             local_planner=local_planner,
             state_dir=root,
+            **map_options,
         )
         if not isinstance(previous_switch, Mapping):
             raise TypeError("ProductControl.switch must return a mapping")
@@ -426,6 +448,7 @@ def check_rollback(
                 product,
                 local_planner=local_planner,
                 state_dir=root,
+                **map_options,
             )
         except SwitchFailed as exc:
             restored = _load_committed_plan(root, {})
@@ -563,28 +586,16 @@ def _active_context(
     switch_session_id = str(switch.get("product_session_id") or "").strip()
     if not switch_session_id:
         raise RuntimeError("switch report has no committed Product session")
-    current = {
-        "product": committed.plan.product,
-        "product_variant": committed.plan.product_variant,
-        "env": committed.plan.env,
-        "run_plan_path": str(committed.path),
-        "product_session_id": committed.product_session_id,
-        "map_name": None,
-        "map_identity": None,
-    }
+    current = json.loads((state_root / CURRENT_RUN_FILE_NAME).read_text(encoding="utf-8"))
     expected = (
         product,
         switch.get("product_variant"),
         switch_session_id,
-        None,
-        None,
     )
     actual = (
         current.get("product"),
         current.get("product_variant"),
         current.get("product_session_id"),
-        current.get("map_name"),
-        current.get("map_identity"),
     )
     if actual != expected:
         raise RuntimeError("current identity does not match switch evidence")
@@ -1335,6 +1346,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--state-root", type=Path)
     parser.add_argument("--rollback-state-root", type=Path)
+    parser.add_argument("--map", dest="map_name")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", action="store_true", dest="json_output")
     return parser
@@ -1361,9 +1373,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         scope = acceptance_scope(target)
         verify_rollback = scope.get("coverage") == "product"
+        use_product_lifecycle = target.product in _LIFECYCLE_PRODUCTS and (
+            target.product != "nav" or verify_rollback
+        )
         command = command_for(target)
         if args.dry_run:
-            if target.product in _LIFECYCLE_PRODUCTS:
+            if use_product_lifecycle:
                 payload = {
                     "backend": "mujoco",
                     "product": target.product,
@@ -1402,9 +1417,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             }
             print(json.dumps(payload, ensure_ascii=False, indent=2))
             return 0
-        if target.product in _LIFECYCLE_PRODUCTS:
+        if use_product_lifecycle:
             if args.state_root is None:
                 raise ValueError(f"{target.product} acceptance requires --state-root")
+            if target.product == "nav" and not args.map_name:
+                raise ValueError("nav acceptance requires --map")
             if verify_rollback and args.rollback_state_root is None:
                 raise ValueError(
                     f"{target.product} acceptance requires --rollback-state-root"
@@ -1419,6 +1436,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 scenario = _teleop_case(target)
             elif target.product == "teleop_avoid":
                 scenario = _avoid_case(target)
+            elif target.product == "explore":
+                scenario = _explore_case(target)
+            elif target.product == "nav":
+                scenario = _nav_case(target)
             else:
                 scenario = _runner_case(target)
             rollback_root = (
@@ -1451,11 +1472,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     if target.product == "teleop"
                     else _check_teleop_avoid_motion
                     if target.product == "teleop_avoid"
+                    else _check_motion
+                    if target.product == "explore"
+                    else _check_nav_goal
+                    if target.product == "nav"
                     else None
                 ),
                 expected_plan=plan,
                 rollback_control=rollback_control,
                 rollback_root=rollback_root,
+                map_name=args.map_name,
             )
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 0 if report["ok"] is True else 1
@@ -1576,6 +1602,82 @@ def _avoid_case(target: AcceptanceTarget) -> Scenario:
         )
 
     return scenario
+
+
+def _explore_case(target: AcceptanceTarget) -> Scenario:
+    """Exercise Explore without creating a second native process owner."""
+
+    def scenario(
+        plan: RunPlan,
+        run_plan_path: Path,
+        product_session_id: str,
+    ) -> Mapping[str, Any]:
+        from sim.scripts.mujoco import explore_native_acceptance as explore
+
+        args = explore.build_parser().parse_args(
+            [
+                "--run-plan",
+                str(run_plan_path),
+                "--manifest",
+                str(target.manifest),
+                "--artifact-dir",
+                str(run_plan_path.parent / "explore_acceptance"),
+                "--domain-id",
+                _selected_nav_dds_domain_id(plan),
+            ]
+        )
+        prepared = explore.prepare_runtime(args)
+        if prepared.get("ok") is not True:
+            return {
+                "ok": False,
+                "mode": "attach_only",
+                "blockers": list(prepared.get("blockers") or ()),
+            }
+        return dict(
+            explore.run_attached(
+                plan=plan,
+                run_plan_path=run_plan_path,
+                product_session_id=product_session_id,
+                prepared=prepared,
+                args=args,
+            )
+        )
+
+    return scenario
+
+
+def _nav_case(target: AcceptanceTarget) -> Scenario:
+    """Drive Gateway clicks without adding a second native process owner."""
+    from sim.scripts.mujoco import native_navigation_acceptance as navigation
+
+    manifest = load_manifest(target.manifest, root=ROOT)
+
+    def scenario(plan: RunPlan, path: Path, session_id: str) -> Mapping[str, Any]:
+        result = navigation.run_attached_goal(plan, path, session_id, manifest, path.parent / "nav_acceptance")
+        return {**result, "criteria": manifest, "min_path_length_m": manifest["thresholds"]["min_motion_m"]}
+
+    return scenario
+
+
+def _check_nav_goal(
+    root: Path, plan: RunPlan, children: Sequence[Any], scenario: Mapping[str, Any], session_id: str,
+) -> Mapping[str, Any]:
+    """Require physical arrival and terminal zero after ProductControl stops nav."""
+    from sim.scripts.mujoco import native_navigation_acceptance as navigation
+
+    motion = _check_motion(root, plan, children, scenario, session_id)
+    contacts = navigation._load_json(root / "mujoco_feeder.contacts.json")
+    stopped = navigation._load_json(root / "mujoco_feeder.stop.json")
+    for name, evidence in (("contacts", contacts), ("stop", stopped)):
+        if evidence.get("product_session_id") != session_id:
+            raise RuntimeError(f"nav {name} evidence belongs to another Product session")
+    blockers, error = navigation._product_goal_blockers(
+        scenario["criteria"], motion, contacts, scenario.get("goal_status", {}),
+        stopped, float(scenario.get("ready_fraction", 0)),
+    )
+    if blockers:
+        raise RuntimeError("nav goal evidence: " + ", ".join(blockers))
+    return {"motion": motion, "contacts": contacts, "terminal_stop": stopped, "goal_error_m": error}
 
 
 def _runner_case(target: AcceptanceTarget) -> Scenario:

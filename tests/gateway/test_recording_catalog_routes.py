@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: S101 - pytest contract assertions intentionally use assert.
 from pathlib import Path
 from types import SimpleNamespace
 

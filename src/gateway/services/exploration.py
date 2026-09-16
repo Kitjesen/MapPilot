@@ -10,8 +10,8 @@ import os
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from gateway.navigation.commands import navigation_commands
 from gateway.schemas import GATEWAY_MAP_FRAME_ID
-from gateway.services.command_boundary import navigation_commands
 from gateway.services.native_exploration import read_fresh_status
 
 logger = logging.getLogger(__name__)
@@ -1410,21 +1410,21 @@ def exploration_start_readiness(gw: Any) -> dict[str, Any]:
             blockers.append("exploration_run_journal_unavailable")
 
     try:
-        from gateway.services.runtime_status import build_navigation_status
+        from gateway.navigation.status import evaluate_navigation_gate
 
-        navigation = build_navigation_status(gw)
-        readiness = navigation.get("readiness") or {}
-        nav_blockers = readiness.get("blockers") or []
-        nav_advisories = readiness.get("advisories") or []
+        navigation = evaluate_navigation_gate(gw)
+        native_state = navigation.get("navigation_state") or {}
+        nav_blockers = navigation.get("blockers") or []
+        nav_advisories = navigation.get("advisories") or []
         if isinstance(nav_blockers, list):
             blockers.extend(str(code) for code in nav_blockers if str(code) not in exploration_ignored_nav_blockers)
         if isinstance(nav_advisories, list):
             advisories.extend(str(code) for code in nav_advisories)
-        if not blockers and not bool(readiness.get("can_execute_autonomy", False)) and not nav_blockers:
-            blockers.append("navigation_not_ready")
+        if not blockers and navigation.get("can_execute_autonomy") is not True and not nav_blockers:
+            blockers.append(str(navigation.get("reason") or "navigation_not_ready"))
     except Exception as exc:
         logger.debug(
-            "_exploration_start_readiness: build_navigation_status failed: %s",
+            "_exploration_start_readiness: navigation gate failed: %s",
             exc,
         )
         blockers.append("navigation_status_unavailable")
@@ -1436,9 +1436,15 @@ def exploration_start_readiness(gw: Any) -> dict[str, Any]:
         "blockers": blockers,
         "advisories": advisories,
         "navigation": {
-            "state": navigation.get("state"),
-            "can_accept_goal": navigation.get("can_accept_goal"),
-            "readiness": navigation.get("readiness") or {},
+            "task_state": native_state.get("lifecycle_state_name"),
+            "goal_admission": (
+                "ACCEPTING"
+                if navigation.get("can_accept_goal") is True
+                else "BLOCKED"
+                if navigation.get("can_accept_goal") is False
+                else "UNKNOWN"
+            ),
+            "reason": navigation.get("reason") or "",
         },
         "run_projection": run_projection,
     }

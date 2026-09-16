@@ -14,6 +14,7 @@ struct Route {
   std::optional<double> finalYaw;
   std::optional<double> goalToleranceM;
   std::optional<double> yawToleranceRad;
+  std::optional<double> maxSpeedMps{};
 
   [[nodiscard]] bool empty() const noexcept { return points.empty(); }
 };

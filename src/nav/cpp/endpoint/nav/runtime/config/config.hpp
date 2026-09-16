@@ -39,6 +39,7 @@ struct CliConfig {
   nav_kernel::LocalPlannerBackend local_planner_backend{
       nav_kernel::LocalPlannerBackend::Cmu};
   int domain_id{0};
+  bool use_simulation_clock{false};
   double tick_hz{20.0};
   double control_loop_deadline_miss_ratio_limit{0.05};
   double control_loop_p95_utilization_limit{0.90};
@@ -63,6 +64,8 @@ struct CliConfig {
   double path_follower_heading_align_enter_rad{0.7853981633974483};
   double path_follower_heading_align_exit_rad{0.35};
   nav_kernel::SplineFollowerParams scan_follower{};
+  nav_kernel::ScanPlannerParams scan_planner{};
+  double local_collision_max_age_s{0.50};
   std::vector<nav_kernel::RecoveryAction> recovery_order{
       nav_kernel::RecoveryAction::Translate,
       nav_kernel::RecoveryAction::Rotate,

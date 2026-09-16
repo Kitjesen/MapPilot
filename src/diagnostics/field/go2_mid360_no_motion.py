@@ -34,6 +34,7 @@ _TOPIC_REQUIREMENTS = {
     "rt/slam/registered_cloud": (5, 5.0),
 }
 _CMD_VEL_TOPIC = "rt/nav/cmd_vel"
+_MAX_TOPIC_AGE_S = 1.0
 
 
 class GateFailed(RuntimeError):
@@ -41,7 +42,7 @@ class GateFailed(RuntimeError):
 
 
 def _command(command: list[str], *, timeout: float = 10.0) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 - commands are fixed field tools or resolved release binaries.
+    return subprocess.run(
         command,
         check=False,
         capture_output=True,
@@ -98,7 +99,7 @@ def _require_executable(path: Path, label: str) -> Path:
     return path
 
 
-def evaluate_topics(payload: Any) -> tuple[bool, list[str], dict[str, dict[str, Any]]]:
+def evaluate_topics(payload: Any, *, collected_at: float) -> tuple[bool, list[str], dict[str, dict[str, Any]]]:
     """Validate fresh sensor/SLAM samples and the absence of final velocity samples."""
 
     if not isinstance(payload, Mapping):
@@ -112,6 +113,9 @@ def evaluate_topics(payload: Any) -> tuple[bool, list[str], dict[str, dict[str, 
         last_ts = float(row.get("last_ts", 0.0) or 0.0)
         if samples < minimum_samples or hz < minimum_hz or last_ts <= 0.0:
             blockers.append(f"{topic}: samples={samples}, hz={hz:.2f}, last_ts={last_ts:.3f}")
+        elif collected_at - last_ts > _MAX_TOPIC_AGE_S:
+            # A healthy burst followed by silence must not pass on its average rate.
+            blockers.append(f"{topic}: age_s={collected_at - last_ts:.3f} exceeds {_MAX_TOPIC_AGE_S:.3f}")
     cmd_vel = rows.get(_CMD_VEL_TOPIC)
     if cmd_vel is None:
         blockers.append(f"{_CMD_VEL_TOPIC}: probe result missing")
@@ -124,7 +128,7 @@ def evaluate_topics(payload: Any) -> tuple[bool, list[str], dict[str, dict[str, 
 
 def _start(command: list[str], log_path: Path, environment: dict[str, str]) -> tuple[subprocess.Popen[bytes], Any]:
     log = log_path.open("wb")
-    process = subprocess.Popen(  # noqa: S603 - commands are resolved from the trusted RunPlan/release.
+    process = subprocess.Popen(
         command,
         env=environment,
         stdout=log,
@@ -279,7 +283,7 @@ def run_gate(*, repo: Path, output_dir: Path, seconds: float, settle_seconds: fl
             seconds=seconds,
             domain_id=int(environment["LINGTU_DDS_DOMAIN_ID"]),
         )
-        _, blockers, rows = evaluate_topics(readiness["topics"])
+        _, blockers, rows = evaluate_topics(readiness["topics"], collected_at=readiness["collected_at"])
         if not status_path.is_file():
             raise GateFailed("SLAM did not publish its status snapshot")
         slam_status = json.loads(status_path.read_text(encoding="utf-8"))
@@ -294,6 +298,7 @@ def run_gate(*, repo: Path, output_dir: Path, seconds: float, settle_seconds: fl
                 "blockers": blockers,
                 "network": network,
                 "topics": rows,
+                "collected_at": readiness["collected_at"],
                 "slam_state": slam_state,
             }
         )

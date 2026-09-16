@@ -18,7 +18,7 @@ POWERSHELL = shutil.which("pwsh")
 
 def _run_script(*arguments: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     assert POWERSHELL is not None
-    return subprocess.run(  # noqa: S603 - executes the repository-owned build helper.
+    return subprocess.run(
         [POWERSHELL, "-NoProfile", "-File", str(SCRIPT), *arguments],
         cwd=ROOT,
         check=False,
@@ -48,7 +48,7 @@ Assert-StagedExecutableLoads $env:LINGTU_TEST_EXECUTABLE $env:LINGTU_TEST_USAGE
     environment["LINGTU_TEST_SCRIPT"] = str(SCRIPT)
     environment["LINGTU_TEST_EXECUTABLE"] = str(executable)
     environment["LINGTU_TEST_USAGE"] = expected_usage
-    return subprocess.run(  # noqa: S603 - executes the repository-owned helper function.
+    return subprocess.run(
         [POWERSHELL, "-NoProfile", "-Command", command],
         cwd=ROOT,
         check=False,

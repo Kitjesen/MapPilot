@@ -58,42 +58,49 @@ double Executor::goalYawError(const nav_kernel::Pose& odom_map_body) const {
 }
 
 bool Executor::autonomyMotionStalled(
-    const nav_kernel::Pose& odom_map_body, double timestamp_s,
-    const nav_kernel::LocalKinematicState& kinematics) {
+    const nav_kernel::Pose& odom_map_body, double timestamp_s) {
   if (!autonomy_motion_expected_) return false;
   if (!autonomy_progress_valid_ ||
       !std::isfinite(timestamp_s) ||
-      timestamp_s < autonomy_progress_time_s_) {
+      timestamp_s < autonomy_sample_time_s_) {
     autonomy_progress_pose_ = odom_map_body;
     autonomy_progress_time_s_ = timestamp_s;
+    autonomy_sample_time_s_ = timestamp_s;
+    autonomy_observed_progress_ = 0.0;
+    autonomy_requested_progress_ = 0.0;
     autonomy_progress_valid_ = true;
     return false;
   }
 
-  const double interval = std::max(0.1, config_.recovery.blocked_interval_s);
-  const double linear_threshold = config_.recovery.stuck_linear_progress_m;
-  const double yaw_threshold = config_.recovery.stuck_yaw_progress_rad;
-  const bool observed_linear_motion =
-      kinematics.valid && linear_threshold > 0.0 &&
-      std::hypot(kinematics.linearVelocity.x, kinematics.linearVelocity.y) >=
-          2.0 * linear_threshold / interval;
-  const bool observed_yaw_motion =
-      kinematics.valid && yaw_threshold > 0.0 &&
-      std::abs(kinematics.yawRate) >= 2.0 * yaw_threshold / interval;
-  if (observed_linear_motion || observed_yaw_motion) {
-    autonomy_progress_pose_ = odom_map_body;
-    autonomy_progress_time_s_ = timestamp_s;
-    return false;
+  const double dt = timestamp_s - autonomy_sample_time_s_;
+  const auto& command = autonomy_expected_command_;
+  const double speed = std::hypot(command.vx, command.vy);
+  const bool translating = speed > 1e-6;
+  // Measure signed displacement along the previous requested motion. Heave,
+  // lateral slip and unwanted yaw cannot keep a translation attempt alive.
+  if (translating) {
+    const double dx = odom_map_body.position.x - autonomy_progress_pose_.position.x;
+    const double dy = odom_map_body.position.y - autonomy_progress_pose_.position.y;
+    autonomy_observed_progress_ += (dx * command.vx + dy * command.vy) / speed;
+    autonomy_requested_progress_ += speed * dt;
+  } else {
+    autonomy_observed_progress_ +=
+        wrappedAngle(odom_map_body.yaw - autonomy_progress_pose_.yaw) *
+        std::copysign(1.0, command.wz);
+    autonomy_requested_progress_ += std::abs(command.wz) * dt;
   }
-
-  const double linear_progress = nav_kernel::distance3D(
-      autonomy_progress_pose_.position, odom_map_body.position);
-  const double yaw_progress = std::abs(
-      wrappedAngle(odom_map_body.yaw - autonomy_progress_pose_.yaw));
-  if (linear_progress >= config_.recovery.stuck_linear_progress_m ||
-      yaw_progress >= config_.recovery.stuck_yaw_progress_rad) {
-    autonomy_progress_pose_ = odom_map_body;
+  autonomy_progress_pose_ = odom_map_body;
+  autonomy_sample_time_s_ = timestamp_s;
+  // Keep the existing absolute progress bound, but do not require a slowly
+  // commanded robot to cover more than half its requested travel to stay live.
+  const double threshold = std::min(
+      translating ? config_.recovery.stuck_linear_progress_m
+                  : config_.recovery.stuck_yaw_progress_rad,
+      0.5 * autonomy_requested_progress_);
+  if (autonomy_observed_progress_ > 1e-6 && autonomy_observed_progress_ >= threshold) {
     autonomy_progress_time_s_ = timestamp_s;
+    autonomy_observed_progress_ = 0.0;
+    autonomy_requested_progress_ = 0.0;
     return false;
   }
 
@@ -102,26 +109,45 @@ bool Executor::autonomyMotionStalled(
 }
 
 void Executor::setAutonomyMotionExpected(
-    bool expected,
+    const nav_kernel::Twist& command,
     const nav_kernel::Pose& odom_map_body,
     double timestamp_s) {
-  if (!expected) {
+  const bool translating = std::hypot(command.vx, command.vy) > 1e-6;
+  if (!translating && std::abs(command.wz) <= 1e-6) {
     resetAutonomyProgress();
     return;
   }
-  if (!autonomy_motion_expected_ || !autonomy_progress_valid_) {
+  const bool was_translating =
+      std::hypot(autonomy_expected_command_.vx, autonomy_expected_command_.vy) > 1e-6;
+  if (!autonomy_motion_expected_ || !autonomy_progress_valid_ ||
+      translating != was_translating ||
+      (!translating && command.wz * autonomy_expected_command_.wz < 0.0)) {
     autonomy_progress_pose_ = odom_map_body;
     autonomy_progress_time_s_ = timestamp_s;
+    autonomy_sample_time_s_ = timestamp_s;
+    autonomy_observed_progress_ = 0.0;
+    autonomy_requested_progress_ = 0.0;
     autonomy_progress_valid_ = true;
   }
+  const double c = std::cos(odom_map_body.yaw);
+  const double s = std::sin(odom_map_body.yaw);
+  autonomy_expected_command_ = {
+      c * command.vx - s * command.vy,
+      s * command.vx + c * command.vy,
+      command.wz,
+  };
   autonomy_motion_expected_ = true;
 }
 
 void Executor::resetAutonomyProgress() {
   autonomy_motion_expected_ = false;
   autonomy_progress_valid_ = false;
+  autonomy_expected_command_ = {};
   autonomy_progress_pose_ = {};
   autonomy_progress_time_s_ = 0.0;
+  autonomy_sample_time_s_ = 0.0;
+  autonomy_observed_progress_ = 0.0;
+  autonomy_requested_progress_ = 0.0;
 }
 
 bool Executor::recoveryObservationAdvanced(

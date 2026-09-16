@@ -44,6 +44,7 @@ struct OwnedRequest {
     robot = source.robot;
     identity = source.identity;
     clock = source.clock;
+    maxLinearSpeedMps = source.maxLinearSpeedMps;
     environment = source.environment;
     environment.obstacles = {};
     environment.traversability = {};
@@ -79,6 +80,7 @@ struct OwnedRequest {
     request.robot = robot;
     request.identity = identity;
     request.clock = clock;
+    request.maxLinearSpeedMps = maxLinearSpeedMps;
 
     LocalRouteView routeViewCopy = routeView;
     routeViewCopy.points = route && !route->empty() ? route->data() : nullptr;
@@ -98,6 +100,7 @@ struct OwnedRequest {
   RobotState robot{};
   PlanIdentity identity{};
   PlanClock clock{};
+  double maxLinearSpeedMps{0.0};
   LocalRouteView routeView{};
   EnvironmentView environment{};
   std::optional<LocalMotionIntent> intent;
@@ -116,7 +119,8 @@ struct InputSnapshot {
 
   LocalPlanRequest view(Clock::time_point now) const {
     LocalPlanRequest output = request.view();
-    output.clock.timestampS += std::chrono::duration<double>(now - receivedAt).count();
+    output.clock.timestampS = output.clock.afterElapsed(
+        std::chrono::duration<double>(now - receivedAt).count());
     return output;
   }
 
@@ -237,6 +241,11 @@ class Task::Impl {
 
   bool configured() const { return configured_; }
 
+  std::shared_ptr<const ScanFailureSnapshot> lastScanFailure() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return lastScanFailure_;
+  }
+
   Update update(const LocalPlanRequest &request) {
     Update output;
     output.debug.backend = LocalPlannerBackend::Scan;
@@ -258,7 +267,9 @@ class Task::Impl {
       latest_ = *polled.completion;
       if (polled.completion->plan.ready()) {
         current_ = *polled.completion;
-      } else if (polled.completion->plan.status() != LocalPlanStatus::Pending) {
+      } else {
+        // Backend retains a ready spline during an ordinary replan. An
+        // explicit non-ready publication invalidates that retained result.
         current_.reset();
       }
     }
@@ -280,6 +291,8 @@ class Task::Impl {
       return output;
     }
     output.plan = LocalPlan::stopped(LocalPlanStatus::Pending);
+    if (workerDebug != nullptr)
+      output.debug = *workerDebug;
     return output;
   }
 
@@ -299,6 +312,10 @@ class Task::Impl {
       return;
     {
       std::lock_guard<std::mutex> lock(mutex_);
+      // Repeated idle stops must preserve a pending reset without rebuilding
+      // the core again. New input re-arms reset through publish().
+      if (!hasInput_)
+        return;
       ++epoch_;
       cancelGeneration_.fetch_add(1U, std::memory_order_relaxed);
       hasInput_ = false;
@@ -481,6 +498,8 @@ class Task::Impl {
       if (cancelGeneration_.load(std::memory_order_relaxed) == cancelGeneration &&
           !resetRequested_ && completion.epoch == epoch_ && !stopping_ && hasInput_ &&
           input_.epoch == completion.epoch) {
+        if (completion.debug.lastScanFailure)
+          lastScanFailure_ = completion.debug.lastScanFailure;
         workerDebug_ = WorkerDebug{completion.frameEpoch, completion.routeGeneration,
                                    completion.intent, completion.debug};
         const PublishedPlan publication = publicationOf(completion);
@@ -494,13 +513,14 @@ class Task::Impl {
 
   Backend planner_;
   bool configured_{false};
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   std::condition_variable cv_;
   InputSnapshot input_;
   bool hasInput_{false};
   std::atomic<std::uint64_t> cancelGeneration_{1U};
   std::optional<Completion> completed_;
   std::optional<WorkerDebug> workerDebug_;
+  std::shared_ptr<const ScanFailureSnapshot> lastScanFailure_;
   std::optional<PublishedPlan> publishedPlan_;
   std::uint64_t epoch_{1};
   bool resetRequested_{false};
@@ -533,6 +553,10 @@ bool Task::configured() const {
 
 Update Task::update(const LocalPlanRequest &request) {
   return impl_->update(request);
+}
+
+std::shared_ptr<const ScanFailureSnapshot> Task::lastScanFailure() const {
+  return impl_->lastScanFailure();
 }
 
 void Task::reset() {

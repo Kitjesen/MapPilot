@@ -1,7 +1,30 @@
-schema_version: lingtu.runtime_graph.product.v2
+schema_version: lingtu.runtime_graph.product.v3
 name: teleop_avoid
-contracts:
-  - lingtu.product.teleop_avoid.v1
+topics:
+  - /nav/command/request
+  - /nav/command/ack
+  - /nav/state
+  - /nav/operator_motion/control
+  - /nav/operator_motion/sample
+  - /nav/operator_motion/ack
+  - /nav/operator_motion/status
+  - /slam/odometry
+  - /slam/registered_cloud
+  - /slam/map_observation
+  - /slam/localization_health
+  - /nav/local_path
+  - /nav/way_point
+  - /nav/cmd_vel
+capabilities:
+  - teleop
+  - operator_motion_typed_dds_interface
+  - native_operator_motion_authority
+  - localization_health_gate
+  - registered_cloud_collision_check
+  - path_follower_pre_command_output
+  - operator_assisted_local_planner_control
+  - final_cmd_vel_single_writer
+  - cmd_vel_arbitration
 summary: Operator-assisted teleoperation with selectable native local planning and live LiDAR obstacle checks.
 operator_switchable: true
 session_mode: navigating
@@ -32,17 +55,11 @@ native_nav:
   teleop_max_yaw_rate_rad_s: 1.0
   teleop_planner_horizon_m: 3.5
   teleop_planner_max_deviation_deg: 90.0
-  scan_follower:
-    time_forward_s: 0.8
-    heading_error_rad: 0.8
-    position_gain: 0.8
-    yaw_gain: 1.5
-    max_vx_mps: 0.75
-    max_vy_mps: 0.35
-    max_yaw_rate_rad_s: 1.0
-    finish_distance_m: 0.15
   recovery:
     max_attempts: 0
+parameters:
+  # Preserve SCAN's assisted-motion acceleration without changing CMU tuning.
+  scan_planner.max_acceleration_mps2: 0.5
 processes:
   - lidar
   - imu

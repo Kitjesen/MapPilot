@@ -20,21 +20,6 @@ pytestmark = [pytest.mark.sim]
 fastapi = pytest.importorskip("fastapi")
 
 
-def test_auth_routes_register_expected_paths():
-    from fastapi import FastAPI
-    from fastapi.exceptions import RequestValidationError
-
-    from gateway.routes.auth import register_auth_routes
-
-    app = FastAPI()
-    register_auth_routes(app)
-
-    paths = {getattr(route, "path", "") for route in app.routes}
-    assert "/api/v1/auth/login" in paths
-    assert "/api/v1/auth/check" in paths
-    assert RequestValidationError in app.exception_handlers
-
-
 def test_realtime_routes_register_expected_websockets():
     from fastapi import FastAPI
     from starlette.websockets import WebSocket
@@ -58,7 +43,7 @@ def test_realtime_routes_register_expected_websockets():
 def test_map_routes_register_expected_paths():
     from fastapi import FastAPI
 
-    from gateway.routes.maps import register_map_routes
+    from gateway.maps.routes import register_map_routes
 
     class MapsService:
         def service(self, action, **arguments):
@@ -109,11 +94,11 @@ def test_map_routes_register_expected_paths():
 def test_slam_maps_does_not_turn_native_failure_into_empty_inventory(monkeypatch):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     monkeypatch.setattr(
         map_routes,
-        "_mapd_command",
+        "_mapd_http_request",
         lambda _gw, _payload: {
             "success": False,
             "reason_code": "native_list_failed",
@@ -156,7 +141,7 @@ def test_robot_mesh_defaults_to_bundled_thunder_v4_asset(monkeypatch):
 def test_map_content_epoch_routes_are_not_registered():
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
@@ -169,11 +154,11 @@ def test_map_content_epoch_routes_are_not_registered():
 def test_save_map_returns_accepted_while_native_job_is_running(monkeypatch):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     monkeypatch.setattr(
         map_routes,
-        "_mapd_command",
+        "_mapd_http_request",
         lambda _gw, _payload: {
             "success": False,
             "accepted": True,
@@ -200,7 +185,7 @@ def test_save_map_returns_accepted_while_native_job_is_running(monkeypatch):
 def test_save_map_fails_closed_when_slam_profile_is_unavailable(monkeypatch):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     def submit_save(_gw, _payload):
         raise AssertionError("save must not be submitted without live SLAM profile")
@@ -208,7 +193,7 @@ def test_save_map_fails_closed_when_slam_profile_is_unavailable(monkeypatch):
     def read_slam_profile():
         raise RuntimeError("telemetry unavailable")
 
-    monkeypatch.setattr(map_routes, "_mapd_command", submit_save)
+    monkeypatch.setattr(map_routes, "_mapd_http_request", submit_save)
     gateway = SimpleNamespace(
         _get_slam_profile=read_slam_profile,
         _session_slam_profile="native_dds",
@@ -229,7 +214,7 @@ def test_map_viewer_serves_static_file_without_gateway_snapshot():
     from fastapi import FastAPI
     from fastapi.responses import FileResponse
 
-    from gateway.routes.maps import MAP_VIEWER_TEMPLATE, register_map_routes
+    from gateway.maps.routes import MAP_VIEWER_TEMPLATE, register_map_routes
 
     class Gateway:
         def _generate_viewer_live(self):
@@ -257,7 +242,7 @@ def test_map_viewer_serves_static_file_without_gateway_snapshot():
 def test_map_voxel_overlay_route_reads_saved_edits(monkeypatch, tmp_path):
     from fastapi import FastAPI
 
-    from gateway.routes.maps import register_map_routes
+    from gateway.maps.routes import register_map_routes
 
     monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path))
     map_dir = tmp_path / "demo"
@@ -316,18 +301,52 @@ def test_status_routes_register_expected_paths():
     register_status_routes(app, SimpleNamespace())
 
     paths = {getattr(route, "path", "") for route in app.routes}
-    assert "/api/v1/events" in paths
     assert "/api/v1/state" in paths
     assert "/api/v1/scene_graph" in paths
-    assert "/api/v1/locations" in paths
-    assert "/api/v1/locations/{name}" in paths
-    assert "/api/v1/path" in paths
     assert "/api/v1/localization/status" in paths
-    assert "/api/v1/navigation/status" in paths
-    assert "/api/v1/runtime/dataflow" in paths
-    assert "/api/v1/health" in paths
-    assert "/health" in paths
-    assert "/ready" in paths
+    assert {path for path in paths if path.startswith("/api/")} == {
+        "/api/v1/state", "/api/v1/scene_graph", "/api/v1/localization/status",
+    }
+
+
+@pytest.fixture(scope="module")
+def domain_route_app():
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    gateway.setup()
+    return gateway._app
+
+
+@pytest.mark.parametrize(
+    ("path", "owner"),
+    [
+        ("/api/v1/navigation/status", "gateway.navigation.routes"),
+        ("/api/v1/navigation/dds_snapshot", "gateway.navigation.diagnostics"),
+        ("/api/v1/path", "gateway.navigation.diagnostics"),
+        ("/api/v1/slam/maps", "gateway.maps.routes"),
+        ("/api/v1/maps/operations", "gateway.maps.routes"),
+        ("/api/v1/maps/environment/layers", "gateway.maps.routes"),
+        ("/api/v1/locations", "gateway.maps.locations"),
+        ("/api/v1/locations/{name}", "gateway.maps.locations"),
+        ("/api/v1/places", "gateway.maps.places"),
+        ("/api/v1/runtime/dataflow", "gateway.routes.diagnostics"),
+        ("/api/v1/runtime/dataflow/topic", "gateway.routes.diagnostics"),
+        ("/api/v1/runtime/dataflow/subscribe", "gateway.routes.diagnostics"),
+        ("/api/v1/health", "gateway.routes.health"),
+        ("/api/v1/metrics", "gateway.routes.health"),
+        ("/health", "gateway.routes.health"),
+        ("/ready", "gateway.routes.health"),
+        ("/api/v1/readiness", "gateway.routes.health"),
+        ("/api/v1/events", "gateway.routes.realtime"),
+    ],
+)
+def test_app_registers_domain_routes_once(domain_route_app, path, owner):
+    routes = [route for route in domain_route_app.routes if route.path == path]
+    assert routes, f"Missing route: {path}"
+    assert all(route.endpoint.__module__ == owner for route in routes)
+    methods = [method for route in routes for method in route.methods]
+    assert len(methods) == len(set(methods)), f"Duplicate registration: {path}"
 
 
 def test_session_routes_register_expected_paths():
@@ -498,17 +517,39 @@ def test_command_routes_register_expected_paths():
     register_command_routes(app, SimpleNamespace())
 
     routes = {getattr(route, "path", ""): route for route in app.routes}
-    assert "/api/v1/navigation/plan" in routes
-    assert "/api/v1/navigation/goal_candidate" in routes
-    assert "/api/v1/goal" in routes
-    assert "/api/v1/navigate/click" in routes
+    assert "/api/v1/goal" not in routes
     assert "/api/v1/cmd_vel" not in routes
     assert "/api/v1/stop" in routes
-    assert "/api/v1/navigation/cancel" in routes
+    assert "/api/v1/navigation/cancel" not in routes
     assert "/api/v1/instruction" in routes
     assert "/api/v1/mode" in routes
     assert "/api/v1/lease" in routes
-    assert routes["/api/v1/goal"].endpoint.__module__ == "gateway.routes.commands"
+
+
+def test_navigation_routes_own_commands_and_queries_once():
+    from fastapi import FastAPI
+
+    from gateway.navigation.routes import register_navigation_routes
+
+    app = FastAPI()
+    register_navigation_routes(app, SimpleNamespace())
+    paths = [getattr(route, "path", "") for route in app.routes if getattr(route, "path", "").startswith("/api/")]
+    assert len(paths) == len(set(paths))
+    assert set(paths) == {
+        "/api/v1/navigation/plan",
+        "/api/v1/navigation/goal_candidate",
+        "/api/v1/goal",
+        "/api/v1/navigate/click",
+        "/api/v1/navigation/cancel",
+        "/api/v1/navigation/tasks/{task_id}/cancel",
+        "/api/v1/navigation/tasks/{task_id}/pause",
+        "/api/v1/navigation/tasks/{task_id}/resume",
+        "/api/v1/navigation/resume",
+        "/api/v1/navigation/status",
+        "/api/v1/navigation/goals/{request_id}",
+        "/api/v1/navigation/tasks/{task_id}",
+    }
+    assert all(route.endpoint.__module__ == "gateway.navigation.routes" for route in app.routes if route.path in paths)
 
 
 def test_diagnostic_routes_export_tarball(monkeypatch):
@@ -693,7 +734,6 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
     assert frame_contract["expected"]["map_frame"] == "map"
     assert frame_contract["expected"]["odom_frame"] == "odom"
     assert frame_contract["expected"]["body_frame"] == "body"
-    assert frame_contract["navigation_frames"]["planning_frame_id"] == "map"
     assert "runtime_boundary" in frame_contract
     assert snapshots["runtime_contract"]["ok"] is True
     runtime_contract = snapshots["runtime_contract"]["data"]["manifest"]
@@ -713,7 +753,7 @@ def test_diagnostic_runtime_contract_route_exposes_canonical_manifest():
 
     snapshot = _runtime_contract_snapshot()
     assert snapshot["schema_version"] == 1
-    assert snapshot["source"] == "runtime.runtime_interface.runtime_contract_manifest"
+    assert snapshot["source"] == "diagnostics.runtime_contract.runtime_contract_manifest"
     manifest = snapshot["manifest"]
     assert manifest["schema_version"] == "lingtu.runtime_interface.v1"
     assert manifest["frame_links"]["body_to_lidar"] == {
@@ -736,8 +776,8 @@ def test_diagnostic_runtime_contract_route_exposes_canonical_manifest():
 
 
 def test_runtime_contract_manifest_is_fully_typed_by_gateway_schema():
+    from diagnostics.runtime_contract import runtime_contract_manifest
     from gateway.schemas import RuntimeContractManifest
-    from runtime.runtime_interface import runtime_contract_manifest
 
     manifest = runtime_contract_manifest()
     schema_fields = set(RuntimeContractManifest.model_fields)
@@ -777,7 +817,7 @@ def test_diagnostic_frame_contract_reports_navigation_mismatches(monkeypatch):
     assert snapshot["expected"]["map_frame"] == "map"
     assert {
         "source": "odometry",
-        "expected_frame": "map",
+        "expected_frame": "odom,map",
         "received_frame": "camera_link",
     } in snapshot["mismatches"]
     runtime = snapshot["runtime_boundary"]
@@ -809,7 +849,7 @@ def test_diagnostic_frame_contract_reports_navigation_mismatches(monkeypatch):
 
 
 def test_frame_contract_snapshot_defaults_to_runtime_contract(monkeypatch):
-    import runtime.runtime_interface as runtime_interface
+    import diagnostics.runtime_contract as runtime_interface
     from gateway.gateway_module import GatewayModule
     from gateway.routes import diagnostics
 
@@ -851,8 +891,6 @@ def test_gateway_module_builds_split_routes_once():
     assert counts["/api/v1/app/bootstrap"] == 1
     assert counts["/api/v1/bootstrap"] == 0
     assert counts["/api/v1/app/capabilities"] == 1
-    assert counts["/api/v1/auth/login"] == 1
-    assert counts["/api/v1/auth/check"] == 1
     assert counts["/api/v1/diagnostic_pack"] == 1
     assert counts["/api/v1/diagnostics/routecheck/latest"] == 1
     assert counts["/api/v1/diagnostics/real-runtime-evidence/latest"] == 1
@@ -906,8 +944,6 @@ def test_gateway_module_keeps_client_route_inventory():
     expected = {
         "/api/v1/app/bootstrap",
         "/api/v1/app/capabilities",
-        "/api/v1/auth/login",
-        "/api/v1/auth/check",
         "/api/v1/state",
         "/api/v1/scene_graph",
         "/api/v1/locations",
@@ -1348,17 +1384,10 @@ def test_openapi_exposes_client_response_models():
     assert "RobotPoseSummary" in schemas
     assert "LocalizationStatusResponse" in schemas
     assert "NavigationStatusResponse" in schemas
-    assert "NavigationControlSummary" in schemas
-    assert "NavigationReadinessSummary" in schemas
-    assert "NavigationProgressSummary" in schemas
-    assert "NavigationTargetSummary" in schemas
-    assert "NavigationSpeedPolicy" in schemas
-    assert "NavigationMotionSummary" in schemas
-    assert "NavigationFeedbackSummary" in schemas
-    assert "NavigationDiagnosticsSummary" in schemas
-    assert "AuthLoginRequest" in schemas
-    assert "AuthLoginResponse" in schemas
-    assert "AuthCheckResponse" in schemas
+    assert "NavigationTaskState" in schemas
+    assert "NavigationGoalAdmission" in schemas
+    assert "NavigationControlState" in schemas
+    assert "NavigationMotionState" in schemas
     assert "LeaseResponse" in schemas
     assert "SessionResponse" in schemas
     assert "product_session_id" in schemas["SessionResponse"]["properties"]
@@ -1533,9 +1562,6 @@ def test_openapi_exposes_client_response_models():
     ):
         assert _schema_ref_for(openapi, path, status="409", method="post").endswith("/GatewayErrorResponse")
     assert _schema_ref_for(openapi, "/api/v1/lease", status="403", method="post").endswith("/GatewayErrorResponse")
-    assert _schema_ref_for(openapi, "/api/v1/auth/login", method="post").endswith("/AuthLoginResponse")
-    assert _request_schema_ref_for(openapi, "/api/v1/auth/login").endswith("/AuthLoginRequest")
-    assert _schema_ref_for(openapi, "/api/v1/auth/check").endswith("/AuthCheckResponse")
     assert _schema_ref_for(openapi, "/api/v1/lease", method="post").endswith("/LeaseResponse")
     assert _schema_ref_for(openapi, "/api/v1/session").endswith("/SessionResponse")
     assert "/api/v1/session/start" not in openapi["paths"]
@@ -1637,12 +1663,19 @@ def test_openapi_exposes_client_response_models():
     assert schemas["GoalCandidateResponse"]["properties"]["preview"]["anyOf"][0]["$ref"].endswith(
         "/PlanPreviewResponse"
     )
-    assert schemas["NavigationStatusResponse"]["properties"]["control"]["$ref"].endswith("/NavigationControlSummary")
-    assert schemas["NavigationStatusResponse"]["properties"]["readiness"]["$ref"].endswith(
-        "/NavigationReadinessSummary"
-    )
-    assert schemas["NavigationStatusResponse"]["properties"]["progress"]["$ref"].endswith("/NavigationProgressSummary")
-    assert schemas["NavigationStatusResponse"]["properties"]["frames"]["$ref"].endswith("/NavigationFrameSummary")
+    navigation = schemas["NavigationStatusResponse"]["properties"]
+    assert set(navigation) == {
+        "schema_version",
+        "task",
+        "goal_admission",
+        "control",
+        "motion",
+        "ts",
+    }
+    assert navigation["task"]["$ref"].endswith("/NavigationTaskState")
+    assert navigation["goal_admission"]["$ref"].endswith("/NavigationGoalAdmission")
+    assert navigation["control"]["$ref"].endswith("/NavigationControlState")
+    assert navigation["motion"]["$ref"].endswith("/NavigationMotionState")
     assert schemas["ReadinessResponse"]["properties"]["runtime"]["$ref"].endswith("/ReadinessRuntimeSummary")
     assert schemas["ReadinessResponse"]["properties"]["product_contract"]["$ref"].endswith(
         "/ReadinessProductContract"
@@ -1687,16 +1720,6 @@ def test_openapi_exposes_client_response_models():
     assert schemas["AppBootstrapResponse"]["properties"]["localization"]["$ref"].endswith("/LocalizationStatusResponse")
     assert schemas["LocalizationStatusResponse"]["properties"]["runtime"]["$ref"].endswith("/NavigationRuntimeBoundary")
     assert schemas["LocalizationStatusResponse"]["properties"]["frames"]["$ref"].endswith("/LocalizationFrameSummary")
-    assert schemas["NavigationStatusResponse"]["properties"]["target"]["$ref"].endswith("/NavigationTargetSummary")
-    assert schemas["NavigationStatusResponse"]["properties"]["motion"]["$ref"].endswith("/NavigationMotionSummary")
-    assert schemas["NavigationStatusResponse"]["properties"]["feedback"]["$ref"].endswith("/NavigationFeedbackSummary")
-    assert schemas["NavigationDiagnosticsSummary"]["properties"]["frame_mismatches"]["items"]["$ref"].endswith(
-        "/NavigationFrameMismatch"
-    )
-    diagnostics = schemas["NavigationDiagnosticsSummary"]["properties"]
-    assert "safety" in diagnostics
-    assert "plan_safety_policy" not in diagnostics
-    assert "last_plan_report" not in diagnostics
     assert schemas["AppTrafficResponse"]["properties"]["sse"]["$ref"].endswith("/TrafficSSEStats")
     assert schemas["AppTrafficResponse"]["properties"]["cloud"]["$ref"].endswith("/TrafficCloudStats")
     assert "schema_version" in schemas["ControlCommandResponse"]["properties"]
@@ -1764,8 +1787,6 @@ def test_capabilities_manifest_http_paths_exist_in_openapi():
         capabilities["endpoints"]["app"]["bootstrap"],
         capabilities["endpoints"]["app"]["capabilities"],
         capabilities["endpoints"]["app"]["traffic"],
-        capabilities["endpoints"]["auth"]["login"],
-        capabilities["endpoints"]["auth"]["check"],
         capabilities["endpoints"]["control"]["navigation_goal_candidate"],
         capabilities["endpoints"]["control"]["navigation_plan"],
         capabilities["endpoints"]["ops"]["routecheck_latest"],

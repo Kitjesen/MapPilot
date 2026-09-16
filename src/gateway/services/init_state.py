@@ -13,6 +13,7 @@ import time
 from collections import OrderedDict
 from typing import Any
 
+from gateway.maps.transport import active_map
 from gateway.services.cloud_viewer import CloudViewerService
 from gateway.services.commands import CommandJournal, ControlLease
 from gateway.services.inspection_task_lifecycle import create_inspection_task_timeline
@@ -25,7 +26,7 @@ from gateway.services.traffic import (
 )
 from gateway.services.ws_registry import WebSocketRegistry
 from localization.service import Localization
-from runtime.tf import FrameTree
+from runtime.tf.tree import FrameTree
 
 
 def init_core_state(
@@ -96,7 +97,7 @@ def init_cloud_and_frame_state(gw: Any, *, frame_tree: Any | None) -> None:
         push_event=gw.push_event,
         session_mode=lambda: gw._session_mode,
         active_session_map=lambda: gw._session_map,
-        saved_active_map=gw._session_active_map_name,
+        saved_active_map=lambda: active_map(gw),
         queue_maxsize=DEFAULT_CLOUD_QUEUE_MAXSIZE,
     )
     gw._frame_tree = frame_tree or FrameTree.from_robot_config()

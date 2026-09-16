@@ -36,7 +36,7 @@ def load_semantic_taxonomy(path: str | Path | None = None) -> SemanticTaxonomy:
     """Load and validate the configured semantic taxonomy."""
 
     if path is None:
-        path = Path(__file__).resolve().parents[3] / "config" / "semantic_taxonomy.json"
+        path = Path(__file__).resolve().parents[3] / "config" / "semantics" / "taxonomy.json"
     source = Path(path)
     payload = json.loads(source.read_text(encoding="utf-8"))
     name = str(payload.get("name") or "").strip()

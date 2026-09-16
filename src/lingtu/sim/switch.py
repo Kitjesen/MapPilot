@@ -33,6 +33,7 @@ from lingtu.sim.readiness import (
 )
 from lingtu.switch_contracts import (
     MAP_ACTIVATION_TOKEN_SCHEMA,
+    InitialPose,
     MapIdentity,
     ProcessReport,
     SwitchFailed,
@@ -134,7 +135,7 @@ def _execute_locked_switch(
         current_product=None,
         target_product=target_product,
         env="sim",
-        product_variant=request.product_variant,
+        product_variant=resolved_plan.product_variant,
         local_planner=resolved_plan.native_nav.get("local_planner"),
         dry_run=False,
     )
@@ -177,7 +178,7 @@ def _execute_locked_switch(
                 timeout_s=10.0,
             )
             map_identity = _prepared_map_identity(map_activation, request.map_name)
-            plan = plan.with_native_process_environment(
+            plan = plan.with_process_environment(
                 {
                     **_saved_map_environment(
                         plan,
@@ -312,28 +313,31 @@ def _execute_locked_switch(
             report.status = "rollback_failed"
             raise SwitchFailed(report) from exc
         rollback_ok = True
+        map_restore_deferred = False
         if map_activation is not None and map_staged:
             try:
-                restore_environment = (
-                    _map_control_environment(environment, plan)
-                    if target_attempted
-                    else prepare_map_environment
-                )
-                if restore_environment is None:
-                    raise RuntimeError(
-                        "sim saved-map restore has no exact mapd DDS environment"
+                if target_attempted:
+                    owner_plan, owner_session = plan, product_session_id
+                elif previous is not None:
+                    owner_plan, owner_session = previous.plan, previous.product_session_id
+                else:
+                    raise RuntimeError("sim saved-map restore has no map runtime owner")
+                if not _has_live_map_runtime(owner_plan, owner_session, root):
+                    # Failed apply may already have rolled back every child.
+                    # Restore through the previous RunPlan's mapd after it restarts.
+                    map_restore_deferred = True
+                else:
+                    _require_mapctl_transition(
+                        _mapctl(
+                            _map_control_environment(environment, owner_plan),
+                            "restore",
+                            str(map_activation["activation_token"]),
+                            timeout_s=20.0,
+                        ),
+                        prepared=map_activation,
+                        operation="restore",
                     )
-                _require_mapctl_transition(
-                    _mapctl(
-                        restore_environment,
-                        "restore",
-                        str(map_activation["activation_token"]),
-                        timeout_s=20.0,
-                    ),
-                    prepared=map_activation,
-                    operation="restore",
-                )
-                report.cleanup.append("map:restored")
+                    report.cleanup.append("map:restored")
             except Exception as cleanup_error:
                 rollback_ok = False
                 report.cleanup.append(f"map_failed:{cleanup_error}")
@@ -352,6 +356,7 @@ def _execute_locked_switch(
             except Exception as cleanup_error:
                 rollback_ok = False
                 report.cleanup.append(f"target_failed:{cleanup_error}")
+        previous_restored = False
         if target_stopped and previous is not None and previous_quiesce_attempted:
             try:
                 _require_success(
@@ -362,9 +367,29 @@ def _execute_locked_switch(
                     action="restore previous Product",
                 )
                 report.cleanup.append("previous:restored")
+                previous_restored = True
             except Exception as cleanup_error:
                 rollback_ok = False
                 report.cleanup.append(f"previous_failed:{cleanup_error}")
+        if map_restore_deferred and map_activation is not None:
+            try:
+                if previous is None or not previous_restored:
+                    raise RuntimeError("sim saved-map restore has no live previous map runtime")
+                _require_saved_map_previous(previous, root)
+                _require_mapctl_transition(
+                    _mapctl(
+                        _map_control_environment(environment, previous.plan),
+                        "restore",
+                        str(map_activation["activation_token"]),
+                        timeout_s=20.0,
+                    ),
+                    prepared=map_activation,
+                    operation="restore",
+                )
+                report.cleanup.append("map:restored")
+            except Exception as cleanup_error:
+                rollback_ok = False
+                report.cleanup.append(f"map_failed:{cleanup_error}")
         if journal is not None and rollback_ok:
             try:
                 _remove_switch_journal(
@@ -488,17 +513,17 @@ def _reconcile_incomplete_switch(
                 "simulation switch journal cannot prove the committed RunPlan identity"
             )
     else:
-        if not _committed_matches(current, journal.previous):
+        if current is None or not _committed_matches(current, journal.previous):
             raise RuntimeError(
                 "simulation switch journal cannot prove the previous RunPlan identity"
             )
-        if journal.map_activation is not None:
+        map_restore_deferred = journal.map_activation is not None and not _has_live_map_runtime(
+            current.plan, current.product_session_id, state_root
+        )
+        if journal.map_activation is not None and not map_restore_deferred:
             _require_mapctl_transition(
                 _mapctl(
-                    _map_control_environment(
-                        environment,
-                        current.plan if current is not None else target_plan,
-                    ),
+                    _map_control_environment(environment, current.plan),
                     "restore",
                     str(journal.map_activation["activation_token"]),
                     timeout_s=20.0,
@@ -520,6 +545,18 @@ def _reconcile_incomplete_switch(
             ),
             action="restore interrupted previous Product",
         )
+        if map_restore_deferred and journal.map_activation is not None:
+            _require_saved_map_previous(current, state_root)
+            _require_mapctl_transition(
+                _mapctl(
+                    _map_control_environment(environment, current.plan),
+                    "restore",
+                    str(journal.map_activation["activation_token"]),
+                    timeout_s=20.0,
+                ),
+                prepared=journal.map_activation,
+                operation="restore",
+            )
     _remove_switch_journal(state_root, journal)
     try:
         journal.target.path.unlink(missing_ok=True)
@@ -535,6 +572,20 @@ def _owned_child_session(state_root: Path) -> str | None:
     if snapshot is None or not snapshot.children:
         return None
     return snapshot.product_session_id
+
+
+def _has_live_map_runtime(plan: RunPlan, product_session_id: str, state_root: Path) -> bool:
+    try:
+        snapshot = SimChildLedger(state_root).load()
+    except SimChildLedgerError as exc:
+        raise RuntimeError("sim saved-map child ledger is not trusted") from exc
+    if snapshot is None or snapshot.product_session_id != product_session_id:
+        return False
+    targets = {process.target for process in plan.processes if "maps" in process.provides}
+    return any(
+        child.target in targets and child.process_identity.matches()
+        for child in snapshot.children
+    )
 
 
 def _load_journal_plan(ref: _SwitchPlanRef) -> RunPlan:
@@ -693,9 +744,9 @@ def _saved_map_environment(
     plan: RunPlan,
     identity: MapIdentity,
     *,
-    initial_pose: tuple[float, float, float] | None = None,
+    initial_pose: tuple[float, float, float, float] | None = None,
 ) -> dict[str, str]:
-    environment = plan.native_process_environment
+    environment = plan.process_environment
     for key in (
         "LINGTU_SLAM_TRACK_INITIAL_X",
         "LINGTU_SLAM_TRACK_INITIAL_Y",
@@ -705,7 +756,7 @@ def _saved_map_environment(
         environment.pop(key, None)
     environment.update(map_identity_environment(identity))
     slam_map_path = pointcloud_artifact(identity).uri
-    planner = environment.get("NAV_GLOBAL_PLANNER")
+    planner = plan.native_nav.get("global_planner")
     if planner == "octoplanner3d":
         environment["OCTOPLANNER_MAP_PATH"] = octomap_artifact(identity).uri
         environment["FAR_OCCUPANCY_PATH"] = ""
@@ -720,12 +771,12 @@ def _saved_map_environment(
         occupancy_artifact(identity).uri if plan.product == "explore" else ""
     )
     if initial_pose is not None:
-        x, y, yaw = initial_pose
+        x, y, z, yaw = initial_pose
         environment.update(
             {
                 "LINGTU_SLAM_TRACK_INITIAL_X": f"{x:.17g}",
                 "LINGTU_SLAM_TRACK_INITIAL_Y": f"{y:.17g}",
-                "LINGTU_SLAM_TRACK_INITIAL_Z": "0",
+                "LINGTU_SLAM_TRACK_INITIAL_Z": f"{z:.17g}",
                 "LINGTU_SLAM_TRACK_INITIAL_YAW": f"{yaw:.17g}",
             }
         )
@@ -771,7 +822,7 @@ def _mapctl(
     if not domain_id:
         raise RuntimeError("native sim map control requires the exact mapd DDS domain")
     command.extend(("--domain-id", domain_id))
-    completed = subprocess.run(  # noqa: S603 - executable is an explicit native runtime path.
+    completed = subprocess.run(
         command,
         check=False,
         capture_output=True,
@@ -882,7 +933,7 @@ def _validate_target(
 ) -> None:
     if plan.product != request.target_product:
         raise RuntimeError("resolved RunPlan Product does not match switch request")
-    if plan.product_variant != request.product_variant:
+    if request.product_variant is not None and plan.product_variant != request.product_variant:
         raise RuntimeError("resolved RunPlan variant does not match switch request")
     if plan.env != "sim":
         raise RuntimeError("resolved RunPlan does not belong to Env sim")
@@ -915,20 +966,23 @@ def _validate_sim_request(request: SwitchRequest) -> None:
             raise RuntimeError("sim initial_pose requires relocalize=True")
         _sim_initial_pose(request.initial_pose)
 def _sim_initial_pose(
-    value: tuple[float, float, float] | None,
-) -> tuple[float, float, float] | None:
+    value: InitialPose | None,
+) -> tuple[float, float, float, float] | None:
     if value is None:
         return None
-    if not isinstance(value, tuple) or len(value) != 3:
-        raise RuntimeError("sim initial_pose must contain x, y, yaw")
+    if not isinstance(value, tuple) or len(value) not in (3, 4):
+        raise RuntimeError("sim initial_pose must contain x, y, yaw or x, y, z, yaw")
     try:
         pose = tuple(float(item) for item in value)
     except (TypeError, ValueError) as exc:
         raise RuntimeError("sim initial_pose must contain finite numbers") from exc
     if any(not (-float("inf") < item < float("inf")) for item in pose):
         raise RuntimeError("sim initial_pose must contain finite numbers")
-    x, y, yaw = pose
-    return x, y, yaw
+    if len(pose) == 3:
+        x, y, yaw = pose
+        return x, y, 0.0, yaw
+    x, y, z, yaw = pose
+    return x, y, z, yaw
 
 
 def _load_committed_plan(

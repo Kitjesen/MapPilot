@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 from tools.validate.validate_architecture_boundaries import validate
@@ -10,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 
 CORE_RUNTIME_BOUNDARY_SOURCES = {
-    "runtime_interface": SRC / "runtime" / "runtime_interface.py",
+    "frames": SRC / "runtime" / "tf" / "frames.py",
     "runtime_policy": SRC / "runtime" / "runtime_policy.py",
 }
 
@@ -78,8 +80,8 @@ def test_architecture_validator_is_contract_entrypoint() -> None:
     assert violations == [], "\n".join(violations)
 
 
-def test_runtime_contract_imports_through_core_boundary() -> None:
-    from runtime.runtime_interface import (
+def test_runtime_contract_is_a_diagnostic_projection() -> None:
+    from diagnostics.runtime_contract import (
         FIELD_DATA_SOURCE,
         runtime_contract_manifest,
         runtime_data_flow_topics,
@@ -92,6 +94,26 @@ def test_runtime_contract_imports_through_core_boundary() -> None:
     assert tuple(manifest["runtime_data_flow_topics"][FIELD_DATA_SOURCE]) == runtime_data_flow_topics(
         FIELD_DATA_SOURCE
     )
+
+
+def test_runtime_routes_do_not_load_product_assembly() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; from runtime.route_contract import load_route_contract; "
+                "contract = load_route_contract(); assert contract.topics; "
+                "assert not any(n == 'lingtu' or n.startswith('lingtu.') for n in sys.modules); "
+                "assert 'diagnostics.runtime_contract' not in sys.modules"
+            ),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_runtime_boundary_sources_remain_core_owned() -> None:

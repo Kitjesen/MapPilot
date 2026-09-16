@@ -292,7 +292,7 @@ def test_python_maps_service_is_removed() -> None:
 
 
 def test_gateway_map_routes_do_not_construct_ros2_map_save_commands() -> None:
-    path = SRC / "gateway" / "routes" / "maps.py"
+    path = SRC / "gateway" / "maps" / "routes.py"
     text = path.read_text(encoding="utf-8-sig")
 
     assert "/pgo/save_maps" not in text

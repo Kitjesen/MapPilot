@@ -18,6 +18,8 @@ from gateway.services.recording import (
     NativeRecordingService,
     RecordingSnapshot,
 )
+from lingtu.assembly.graph import load_runtime_graph
+from lingtu.assembly.graph.loader import resolve_product_variant_spec
 from lingtu.control import ProductControl
 from lingtu.product_lock import ProductControlLock
 from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
@@ -36,6 +38,10 @@ def _inspection_plan() -> RunPlan:
     )._resolve("map")
     lifecycle = base.lifecycle
     lifecycle["product"] = "inspection"
+    runtime = resolve_product_variant_spec(
+        "inspection",
+        load_runtime_graph().products["inspection"],
+    )
     return RunPlan.create(
         product="inspection",
         env=base.env,
@@ -45,12 +51,14 @@ def _inspection_plan() -> RunPlan:
         processes=base.processes,
         available_processes=base.available_processes,
         stop_before_start=base.stop_before_start,
-        contracts=("lingtu.product.inspection.v1",),
+        required_topics=tuple(runtime["topics"]),
+        required_capabilities=tuple(runtime["capabilities"]),
         critical_modules=base.critical_modules,
         route_contract=base.route_contract,
         host_config=base.host_config,
         lifecycle=lifecycle,
-        native_process_environment=base.native_process_environment,
+        process_environment=base.process_environment,
+        native_nav=base.native_nav,
         parameters=base.parameters,
         simulation=base.simulation,
         support_processes=base.support_processes,

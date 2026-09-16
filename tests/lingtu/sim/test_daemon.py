@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Behavior tests for the persistent simulation supervisor daemon."""
 
 from __future__ import annotations

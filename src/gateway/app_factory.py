@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 def build_gateway_app(gw: Any):
     try:
         from fastapi import FastAPI
+        from fastapi.encoders import jsonable_encoder
+        from fastapi.exceptions import RequestValidationError
         from fastapi.middleware.cors import CORSMiddleware
         from fastapi.responses import JSONResponse
     except ImportError:
@@ -41,37 +43,41 @@ def build_gateway_app(gw: Any):
         allow_headers=["*"],
     )
 
-    from gateway.auth import APIKeyMiddleware, gateway_api_key_required
+    from gateway.maps.locations import register_location_routes
+    from gateway.maps.places import register_place_routes
+    from gateway.maps.routes import register_map_routes
+    from gateway.navigation.diagnostics import register_navigation_diagnostic_routes
+    from gateway.navigation.routes import register_navigation_routes
     from gateway.routes import (
         mount_dashboard_assets,
-        register_asset_routes,
         register_app_routes,
-        register_auth_routes,
+        register_asset_routes,
         register_camera_routes,
         register_command_routes,
         register_diagnostic_routes,
+        register_health_routes,
         register_inspection_routes,
-        register_map_routes,
         register_operation_routes,
-        register_place_routes,
         register_realtime_routes,
         register_recording_routes,
+        register_safety_routes,
         register_session_routes,
         register_status_routes,
-        register_safety_routes,
     )
     from gateway.services.rate_limit import RateLimitMiddleware
 
-    app.add_middleware(
-        APIKeyMiddleware,
-        require_key=gateway_api_key_required(),
-    )
-    # Rate limiting is outermost: reject floods before auth processing.
     app.add_middleware(RateLimitMiddleware)
 
     # ------------------------------------------------------------------
     # Global exception handlers - structured JSON errors for all routes
     # ------------------------------------------------------------------
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error_handler(request, exc):
+        return JSONResponse(
+            status_code=422,
+            content=jsonable_encoder({"error": "validation_error", "detail": exc.errors()}),
+        )
 
     @app.exception_handler(Exception)
     async def _unhandled_exception_handler(request, exc):
@@ -125,14 +131,17 @@ def build_gateway_app(gw: Any):
     register_recording_routes(app, gw)
     register_diagnostic_routes(app, gw)
     register_map_routes(app, gw)
+    register_location_routes(app, gw)
     register_place_routes(app, gw)
     register_status_routes(app, gw)
+    register_health_routes(app, gw)
     register_session_routes(app, gw)
     register_command_routes(app, gw)
+    register_navigation_routes(app, gw)
+    register_navigation_diagnostic_routes(app, gw)
     register_inspection_routes(app, gw)
     register_safety_routes(app, gw)
 
-    register_auth_routes(app)
     register_app_routes(app, gw)
     register_asset_routes(app)
     register_camera_routes(app, gw)

@@ -26,6 +26,7 @@ sim-mujoco = [
 ]
 gateway = ["fastapi", "uvicorn", "websockets"]
 vision = ["opencv-python-headless>=4.5"]
+sim-recording = ["lingtu[sim-mujoco,vision]", "imageio>=2.31"]
 ml = ["scikit-learn>=1.0"]
 llm = ["openai>=1.0", "anthropic"]
 nlp = ["jieba>=0.42"]
@@ -75,6 +76,9 @@ include = [
     "maps*",
     "message*",
 ]
+
+[tool.setuptools.package-data]
+message = ["topics/*.yaml", "idl/*.idl"]
 
 [tool.ruff]
 target-version = "py310"

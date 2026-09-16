@@ -1,6 +1,5 @@
 """End-to-end contract for presenting a committed recording in RobotSimUE."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -10,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from sim.catalog import CatalogResolver
 from sim.runtime.recording import SimulationRecordingWriter
 from sim.runtime.replay.visual import (

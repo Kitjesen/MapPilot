@@ -9,6 +9,8 @@ Short names are intentional:
 | --- | --- |
 | `map.*` | Resolve and check saved-map artifacts: `map.pcd`, `poses.txt`, `patches/*.pcd`. |
 | `graph.*` | Shared non-ROS pose graph, PCD patch, and bundle writer used by PGO. |
+| `online_graph.*` | Single-worker, bounded in-memory optimization of measured graph snapshots. |
+| `online_mapping.*` | Resident keyframe registration, verified closure, optimization and whole-map reconstruction. |
 | `pose_math.hpp` | Shared, explicit `T_parent_child` pose algebra used by loop verification. |
 | `cloud.hpp` | Portable PCD input contract shared by map optimization and loop verification. |
 | `loop_constraints.*` | Deterministic saved-map loop candidate, 4DoF verification, and audit report. |
@@ -33,6 +35,41 @@ Runtime rule:
 - `pose_graph.constraints` is an atomically written, strictly re-read private
   optimizer input; automatic mode deletes it before publishing any output;
 - Gateway/Web do not implement optimization logic or expose an optimizer switch.
+
+## Online backend migration
+
+Current evidence: [MIGRATION.md](MIGRATION.md). Next-machine setup and ordered
+acceptance work: [NEXT_STEPS.md](NEXT_STEPS.md).
+
+`optimize_graph` separates the existing native solver and its convergence gate
+from saved-map I/O. `optimize_map` uses the same function before rebuilding and
+publishing a saved bundle. No ROS or GTSAM dependency is introduced.
+
+`OnlinePoseGraph` accepts keyframes in odometry coordinates, independently
+measured adjacent factors, and geometrically verified loop factors. It does not
+infer measurement weights from pose differences. `start_optimization` copies a
+graph prefix to one background worker; `poll` is nonblocking. Further keyframes
+can be accepted during optimization. Results identify their source epoch,
+revision and exact keyframe prefix; they provide corrected poses and
+`T_map_odom` at that prefix's last keyframe without mutating input odometry.
+Reset discards old-generation results without joining the worker on the caller
+thread. Destruction does join and therefore belongs to service shutdown.
+
+The solver uses sparse batch LM for larger systems, **not incremental iSAM2**.
+The standalone graph-input utility retains its 256-frame validation budget.
+The resident `OnlineMapping` worker directly uses the shared solver after
+measuring its own factors; it retains up to 3000 keyframes and reports queue
+or capacity loss explicitly. Sparse factorization failure never allocates a
+large dense fallback.
+
+Fast-LIO's mapping mode now feeds this worker. Completed whole-map snapshots
+are published on native `/slam/cumulative_map_cloud` and through the Host
+snapshot path for the Web whole-map view. Corrections rebuild historical map
+geometry without mutating current odometry or navigation arbitration.
+Corrected saving uses full-resolution patches and matching corrected poses.
+See [migration and acceptance](MIGRATION.md) for coordinate semantics, bounds,
+verification evidence and the remaining field validation. Local tests do not
+establish ARM performance or field navigation readiness.
 
 Native commands:
 

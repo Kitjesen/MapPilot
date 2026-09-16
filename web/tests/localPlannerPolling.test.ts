@@ -13,7 +13,7 @@ const sceneViewSource = readFileSync(
   'utf8',
 )
 
-test('ordinary scene pages do not poll native planner diagnostics until the layer is enabled', () => {
+test('diagnostic consumers can opt in through the layer or explicit debug mode', () => {
   assert.equal(shouldPollLocalPlannerDiagnostics(false, false), false)
   assert.equal(shouldPollLocalPlannerDiagnostics(false, true), true)
   assert.equal(shouldPollLocalPlannerDiagnostics(true, false), true)
@@ -24,10 +24,10 @@ test('enabled planner diagnostics stay in the requested low-rate 2-5 Hz band', (
   assert.ok(hz >= 2 && hz <= 5, `expected 2-5 Hz, got ${hz} Hz`)
 })
 
-test('scene view exposes the opt-in layer and feeds the snapshot to Scene3D', () => {
+test('scene view feeds only a fresh native snapshot to the diagnostic layer', () => {
   assert.match(sceneViewSource, /k="localPlanner"/)
   assert.match(sceneViewSource, /api\.fetchNavigationDdsSnapshot\(\)/)
-  assert.match(sceneViewSource, /localPlannerSnapshot=\{localPlannerSnapshot\}/)
+  assert.match(sceneViewSource, /localPlannerSnapshot=\{nativeFresh \? localPlannerSnapshot : null\}/)
   assert.match(sceneViewSource, /局部安全诊断（采样）/)
 })
 

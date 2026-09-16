@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -10,8 +9,14 @@ from pathlib import Path
 
 import pytest
 import yaml
-
-from sim.catalog.importers import CatalogPromoter, ImportCode, ImportDraft, ImportFailure, RobotImporter, validate_robot_package
+from sim.catalog.importers import (
+    CatalogPromoter,
+    ImportCode,
+    ImportDraft,
+    ImportFailure,
+    RobotImporter,
+    validate_robot_package,
+)
 from sim.catalog.importers.contracts import file_records
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

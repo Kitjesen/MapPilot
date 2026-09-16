@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "message/cpp/navigation_command.hpp"
+#include "message/protocol/navigation.hpp"
 
 namespace lingtu::nav::endpoint {
 

@@ -484,7 +484,7 @@
   gap: 7px;
   width: 100%;
   height: 34px;
-  color: #061212;
+  color: var(--on-accent);
   background: var(--accent);
   border: 1px solid transparent;
   border-radius: var(--r-sm);

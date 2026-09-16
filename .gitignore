@@ -122,6 +122,7 @@ src/nav/services/plan/**/CMakeFiles/
 *.bin
 !sim/packages/worlds/factory_park_hf/generated/heightfield_f32.bin
 !sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx
+!sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx
 !sim/packages/worlds/factory_park_robot_yard_safety/1.0.0/artifacts/heightfield_f32.bin
 *.hbm
 mobileclip2_b.ts
@@ -209,14 +210,13 @@ sim/output/
 # 鈹€鈹€ Sim datasets (too large for git) 鈹€鈹€
 sim/evaluation/data/legkilo_all/
 
-# 鈹€鈹€ Research reference repos (clone manually, see research/README.md) 鈹€鈹€
-research/semantic_map_refs/
-!research/README.md
+# Optional unregistered semantic-map reference clone.
+/research/semantic/dimos/
 
 # Local outputs from the vehicle parking research package. Keep the package
 # source, configuration, and tests; regenerate these result bundles locally.
-/research/vehicle_parking_detection_package/sample_results/
-/research/vehicle_parking_detection_package/validation/
+/research/parking/sample_results/
+/research/parking/validation/
 
 # 鈹€鈹€ MuJoCo temp XML 鈹€鈹€
 sim/packages/robots/**/tmp*.xml

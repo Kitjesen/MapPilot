@@ -19,9 +19,13 @@ Keep Python module ports typed with these message classes. Serialization is an
 adapter concern:
 
 - In-process module graph: pass the Python objects directly.
+- Dictionary payload checks consume the payload directly; there is no generic
+  message envelope or separate envelope schema to maintain.
 - Recording/replay tools use MCAP and do not define a second message model.
 - DDS product topics: use `src/message/topics.py` and native C++ aliases from
-  `src/message/cpp/topics.hpp`.
+  `src/message/generated/topics.hpp`.
+- Native DDS payload conversion: use `runtime.endpoints.dds.adapters`; Module
+  implementations must not duplicate field-by-field wire decoding.
 - Protobuf: add only for a real non-Python/non-DDS boundary that needs generated
   language bindings.
 

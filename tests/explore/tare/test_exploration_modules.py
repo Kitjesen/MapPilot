@@ -11,7 +11,6 @@ internal implementation details or algorithmic correctness.
 
 from __future__ import annotations
 
-
 # =============================================================================
 # TAREExplorerModule
 # =============================================================================
@@ -273,7 +272,7 @@ class TestExplorationSupervisorModule:
 
         mod = ExplorationSupervisorModule()
         mod._last_stats = {"finished": True, "alive": True}
-        mode, reason, wp_age = mod._evaluate()
+        mode, reason, _wp_age = mod._evaluate()
         assert mode == MODE_FINISHED
         assert "complete" in reason
 
@@ -308,7 +307,7 @@ class TestExplorationSupervisorModule:
             "healthy": False,
             "waypoint_age_s": 15.0,
         }
-        mode, reason, wp_age = mod._evaluate()
+        mode, _reason, wp_age = mod._evaluate()
         assert mode == MODE_FALLBACK
         assert wp_age == 15.0
 

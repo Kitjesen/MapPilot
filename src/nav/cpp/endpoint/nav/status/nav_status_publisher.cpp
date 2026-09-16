@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "planning/local/planner.hpp"
 #include "runtime/time.hpp"
 
 namespace lingtu::nav::endpoint {
@@ -99,7 +100,8 @@ NavStatusPublisher::NavStatusPublisher(StatusWriterConfig config, double interva
     : config_(std::move(config)),
       interval_s_(interval_s),
       actions_(normalizeActions(std::move(actions))),
-      snapshot_writer_(config_.status_file, std::move(sink)) {
+      snapshot_writer_(config_.status_file, sink),
+      failure_sink_(std::move(sink)) {
   next_due_s_ = interval_s_ > 0.0 ? actions_.steady_now_s() + interval_s_ : 0.0;
 }
 
@@ -128,6 +130,7 @@ bool NavStatusPublisher::publishIfDue(const StatusRuntimeState &state,
 
   config_.operator_takeover_latched = state.operator_takeover_latched;
   config_.resume_required = state.operator_resume_required;
+  config_.control_loop_hold = state.control_loop_hold;
   config_.active_cmd_source = activeCommandSource(state);
 
   const StatusMotionLayerSample motion = actions_.sample_motion_layer(wall_now_s);
@@ -142,6 +145,30 @@ bool NavStatusPublisher::publishIfDue(const StatusRuntimeState &state,
   current_timing.status_log_ms = elapsedMs(status_log_start);
 
   const auto status_snapshot_start = SteadyClock::now();
+  // Task reset can briefly publish an empty debug result while its worker
+  // restarts. Keep the previously submitted failure visible in status.
+  std::optional<nav_kernel::LocalPlannerDebugSnapshot> retained_debug;
+  const auto *local_debug = state.local_planner_debug;
+  if (!local_debug->lastScanFailure && last_submitted_failure_) {
+    retained_debug = *local_debug;
+    retained_debug->lastScanFailure = last_submitted_failure_;
+    local_debug = &*retained_debug;
+  }
+  const auto failure = state.local_planner_debug->lastScanFailure;
+  if (!config_.status_file.empty() && failure && failure != last_submitted_failure_) {
+    if (!failure_writer_) {
+      const std::string path = config_.status_file + ".scan-failure.json";
+      failure_writer_ = failure_sink_
+          ? std::make_unique<StatusSnapshotFileWriter>(path, failure_sink_)
+          : std::make_unique<StatusSnapshotFileWriter>(path);
+    }
+    // Serialize the immutable failure input off the control thread, once per
+    // failure episode. Periodic status carries only its small summary.
+    failure_writer_->submitFactory([failure, session = config_.product_session_id] {
+      return scanFailureSnapshotJson(*failure, session);
+    });
+    last_submitted_failure_ = failure;
+  }
   writeStatusSnapshot(
       snapshot_writer_, config_, wall_now_s, state.has_odom, state.has_map_odom_tf,
       state.path_active, state.estop_latched, state.estop_reason,
@@ -159,9 +186,10 @@ bool NavStatusPublisher::publishIfDue(const StatusRuntimeState &state,
       state.counters.plan_failures, state.counters.outputs, state.counters.cmd_vel,
       motion.live_obstacle_cells, motion.stats, *motion.dynamic_clusters, *state.last_sensor_origin,
       planner.obstacle_points, *state.plan, *state.local, *state.teleop, previous_timing,
-      loop_health, *state.global_path, *state.local_path, *state.local_planner_debug,
+      loop_health, *state.global_path, *state.local_path, *local_debug,
       *planner.local_map_obstacle_xyzh, *state.local_map_traversability,
-      state.local_collision_map);
+      state.local_collision_map,
+      failure_writer_ ? failure_writer_->diagnostics() : StatusSnapshotWriterDiagnostics{});
   current_timing.status_snapshot_ms = elapsedMs(status_snapshot_start);
   return true;
 }
@@ -172,6 +200,7 @@ void NavStatusPublisher::requestImmediate() {
 
 void NavStatusPublisher::flush() {
   snapshot_writer_.flush();
+  if (failure_writer_) failure_writer_->flush();
 }
 
 void NavStatusPublisher::validateRuntimeState(const StatusRuntimeState &state) const {

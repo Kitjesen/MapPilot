@@ -63,9 +63,9 @@ def compile_simulation_snapshot(
 
     resolved = CatalogResolver.from_repository(root).resolve(source_path)
     session = dict(resolved.session)
-    if viewer:
+    if backend == "mujoco":
         runtime = dict(session["runtime"])
-        runtime["mode"] = "preview"
+        runtime["mode"] = "preview" if viewer else "headless"
         session["runtime"] = runtime
     return {
         "schema": SIMULATION_SCHEMA,

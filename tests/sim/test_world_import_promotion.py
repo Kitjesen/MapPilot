@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """End-to-end world import and Catalog promotion contracts."""
 
 from __future__ import annotations
@@ -10,9 +9,9 @@ from typing import cast
 
 import pytest
 import yaml
-
-from sim.catalog.resolver import CatalogResolver
 from sim.catalog.importers import CatalogPromoter, ImportFailure, WorldImporter
+from sim.catalog.resolver import CatalogResolver
+
 from tests.sim.test_world_importer import _request, _source_tree
 
 

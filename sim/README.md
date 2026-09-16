@@ -116,7 +116,7 @@ Inspected UE presentation evidence is
 21 body bindings, 21 visual links, 105 VisualOnly props, zero material compile
 errors, and SHA-256 `827fc3bf342ba49e0a16510119485c43e72812949d7874faf94db1666dc1c9fd`.
 
-See [`current-roadmap.md`](../docs/plans/current-roadmap.md) for the current roadmap.
+See [`roadmap.md`](../docs/roadmap.md) for the current roadmap.
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the detailed architecture,
 authority matrix, migration tree, and delivery gates.
 
@@ -211,7 +211,7 @@ Current native-DDS acceptance commands are:
 
 ```bash
 PYTHONPATH=src:. python sim/scripts/mujoco/native_navigation_acceptance.py \
-  --manifest config/runtime_graph/acceptance/mujoco_industrial_park_60m_navigation_acceptance.json \
+  --manifest config/acceptance/mujoco/industrial_park_60m.json \
   --mode motion \
   --record-video \
   --out-dir artifacts/mujoco_native_nav_60m
@@ -230,7 +230,7 @@ ext4:
 ```powershell
 $env:PYTHONPATH = "src;."
 python sim/scripts/mujoco/native_navigation_acceptance.py `
-  --manifest config/runtime_graph/acceptance/mujoco_industrial_park_60m_navigation_acceptance.json `
+  --manifest config/acceptance/mujoco/industrial_park_60m.json `
   --mode motion `
   --out-dir '\\wsl.localhost\Ubuntu\tmp\lingtu_native_nav_60m'
 ```
@@ -246,34 +246,33 @@ for high-rate status snapshots, so this compatibility path should use a
 WSL preflight and reports `wsl_runtime_unavailable` before starting workers; it
 never turns a missing native runtime into a passing result.
 
-For an interactive assisted-teleop obstacle demo on Windows + WSL2:
+For interactive assisted teleoperation with local obstacle avoidance:
 
 ```powershell
 $env:PYTHONPATH = "src;."
-python sim/scripts/mujoco/teleop_avoid_wasd.py --scenario obstacle_stop
+python -m lingtu.control switch teleop_avoid `
+  --env sim `
+  --backend mujoco `
+  --robot doso/thunder_v4 `
+  --local-planner scan `
+  --viewer
 ```
 
-The interactive demo defaults to the existing `mujoco_navigation_fixture` state
-provider. It publishes MuJoCo ground-truth pose, TF, localization health and the
-live registered LiDAR cloud over typed DDS so the run isolates the local
-avoidance chain; it is not evidence that Fast-LIO2 localization passed. Use
-`--state-provider fastlio2` when the full simulated SLAM chain also needs to be
-validated.
+ProductControl owns the process graph and opens the MuJoCo viewer. Focus the
+viewer, hold `Shift` as the deadman, and use `W/S` for forward/reverse, `A/D`
+for lateral intent, `Q/E` for yaw, `M` for manual escape, `Space` to command
+zero, and `Esc` to exit. This Product defaults to native Fast-LIO2 using
+simulated LiDAR and IMU; Mapd supplies the local collision map. An explicitly
+selected truth-localization diagnostic bypasses that estimator and only
+validates the downstream navigation chain. The native endpoint owns
+LocalPlanner, Follower, final motion arbitration, and `/nav/cmd_vel`. The
+Thunder policy and MuJoCo driver do not validate Go2 SDK2 execution.
 
-The demo opens a passive MuJoCo viewer. Hold `Shift` as the deadman and use
-`W/S` for forward/reverse, `A/D` for lateral intent, `Q/E` for yaw, `Space`
-to command zero, and `Esc` to exit. Keyboard input publishes typed operator
-requests through one persistent native command client, so direction changes do
-not relaunch WSL processes. A 350 ms keyboard-heartbeat timeout sends typed
-zero plus stop and ends the stream if the operator process stalls; restart the
-demo before motion can resume. The native endpoint still owns LocalPlanner,
-PathFollower, final safety, and `/nav/cmd_vel`. Use
-`--scenario free|obstacle_slow|obstacle_stop|terrain_soft|terrain_hard`
-to compare behavior. `sim/packages/controllers/doso/thunder_v4/locomotion/keyboard.py --keyboard` is a gait-policy
-debug tool that bypasses LingTu planning and must not be used as local-avoidance
-evidence.
+`sim/packages/controllers/doso/thunder_v4/locomotion/keyboard.py --keyboard`
+is a gait-policy debug tool that bypasses LingTu planning and must not be used
+as local-avoidance evidence.
 
-Use [`docs/07-testing/simulation/MUJOCO_NAVIGATION_ACCEPTANCE.md`](../docs/07-testing/simulation/MUJOCO_NAVIGATION_ACCEPTANCE.md)
+Use [`docs/simulation.md`](../docs/simulation.md)
 for the exact claim boundary. The current native-DDS navigation component gate
 measures the simulated map/plan/local-follow/final-DDS-command/control loop; it
 does not prove the ProductControl transaction, field fault handling, or
@@ -289,7 +288,7 @@ python -m lingtu.control switch teleop_avoid --robot doso/thunder_v4 --env sim -
 python -m sim.scripts.mujoco.product_acceptance \
   --run-plan <published-teleop-avoid-run-plan.json> \
   --runner sim/scripts/mujoco/teleop_avoid_native_acceptance.py \
-  --manifest config/runtime_graph/acceptance/mujoco_teleop_avoid_native_acceptance.json \
+  --manifest config/acceptance/mujoco/teleop_avoid.json \
   --state-root <isolated-product-state-dir> --dry-run --json
 ```
 
@@ -423,7 +422,7 @@ Set `LINGTU_SIM_HOST=FIELD_COMPUTE_HOST` before using the remote runner.
 
 Keep isolated `--domain-id` in **`200–232`**. Production robot SLAM uses domain
 `0`. See
-[2026-07-06 continuous mapping field run](../docs/07-testing/field-runs/2026-07-06-mujoco-continuous-mapping-gate.md)
+[the maintained evidence policy](../docs/testing.md)
 for the first 180 s verdict matrix and remaining scale-drift blocker.
 
 When a top-down map looks thick, smeared, or duplicated, inspect these in order:

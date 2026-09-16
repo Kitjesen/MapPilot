@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
+from lingtu.assembly.graph import ProcessSpec
 from lingtu.run_plan import RunPlan
 from lingtu.switch_contracts import (
     PROCESS_REPORT_SCHEMA,
@@ -20,7 +21,6 @@ from lingtu.switch_contracts import (
     ProcessFailed,
     ProcessReport,
 )
-from runtime.graph import ProcessSpec
 from runtime.service_catalogs.thunder import ThunderServiceSpec, thunder_service_spec
 
 
@@ -350,7 +350,7 @@ class _ServiceInspector:
         status_code: int | None = None
         response_body: bytes | str = b""
         try:
-            with urllib.request.urlopen(  # noqa: S310 - scheme checked above
+            with urllib.request.urlopen(
                 url,
                 timeout=max(0.1, float(os.environ.get("LINGTU_SERVICE_HTTP_CHECK_TIMEOUT", "1.0"))),
             ) as response:
@@ -466,6 +466,7 @@ class SystemdRunner:
         *,
         dry_run: bool = False,
         defer_rollback: bool = False,
+        on_process_ready: Callable[[ProcessSpec], None] | None = None,
     ) -> ProcessReport:
         """Stop conflicting processes and apply one resolved RunPlan."""
 
@@ -556,6 +557,8 @@ class SystemdRunner:
                     )
                     if identity is not None:
                         report.identities[process.name] = identity
+                    if on_process_ready is not None:
+                        on_process_ready(process)
         except Exception as exc:
             report.error = str(exc) or exc.__class__.__name__
             report.status = "failed"
@@ -572,6 +575,7 @@ class SystemdRunner:
         plan: RunPlan,
         *,
         dry_run: bool = False,
+        on_process_ready: Callable[[ProcessSpec], None] | None = None,
     ) -> ProcessReport:
         """Apply while leaving target cleanup to an outer transaction."""
 
@@ -579,6 +583,7 @@ class SystemdRunner:
             plan,
             dry_run=dry_run,
             defer_rollback=True,
+            on_process_ready=on_process_ready,
         )
 
     def transition(
@@ -588,6 +593,7 @@ class SystemdRunner:
         *,
         dry_run: bool = False,
         defer_rollback: bool = False,
+        on_process_ready: Callable[[ProcessSpec], None] | None = None,
     ) -> ProcessReport:
         """Cold-restart mode processes between two exact RunPlans.
 
@@ -708,6 +714,8 @@ class SystemdRunner:
                     identity = self._runtime_identity(process.target, required=False)
                     if identity is not None:
                         report.identities[process.name] = identity
+                    if on_process_ready is not None:
+                        on_process_ready(process)
         except Exception as exc:
             report.error = str(exc) or exc.__class__.__name__
             report.status = "failed"
@@ -821,6 +829,8 @@ class SystemdRunner:
         self,
         previous: RunPlan,
         transition: ProcessReport,
+        *,
+        on_process_ready: Callable[[ProcessSpec], None] | None = None,
     ) -> ProcessReport:
         """Restart only previous processes stopped by one transition."""
 
@@ -887,6 +897,8 @@ class SystemdRunner:
                     identity = self._runtime_identity(process.target, required=False)
                     if identity is not None:
                         report.identities[process.name] = identity
+                    if on_process_ready is not None:
+                        on_process_ready(process)
         except Exception as exc:
             report.error = str(exc) or exc.__class__.__name__
             report.status = "failed"

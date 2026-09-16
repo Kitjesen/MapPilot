@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from gateway.auth import gateway_api_key_required
 from gateway.schemas import (
     NavigationRuntimeBoundary,
     ReadinessProductContract,
@@ -125,7 +124,7 @@ class _FakeRunPlan:
     def as_dict(self) -> dict[str, object]:
         return {
             "identity": {
-                "schema": "lingtu.run_plan.v8",
+                "schema": "lingtu.run_plan.v10",
                 "robot": self.robot,
                 "product": self.product,
                 "product_variant": self.product_variant,
@@ -135,7 +134,17 @@ class _FakeRunPlan:
                 "controller": self.process_control,
                 "process_catalog": {"selected": [], "available": []},
                 "stop_before_start": [],
-                "native_process_environment": {},
+                "process_environment": {},
+                "native_nav": {
+                    "control_mode": "autonomy",
+                    "global_planner": "octoplanner3d",
+                    "local_planner": "cmu",
+                    "publish_cmd_vel": True,
+                    "check_obstacle": True,
+                    "use_traversability_cost": False,
+                    "allow_teleop_takeover": False,
+                    "teleop_local_planner": False,
+                },
                 "session": dict(self.lifecycle),
                 "parameters": {},
             },
@@ -144,7 +153,7 @@ class _FakeRunPlan:
                 "expected_modules": [],
                 "route_contract": None,
             },
-            "checks": {"contracts": [], "critical_modules": []},
+            "checks": {"topics": [], "capabilities": [], "critical_modules": []},
         }
 
 
@@ -163,17 +172,6 @@ def _plan(
         product_variant=product_variant,
         requires_map=requires_map,
     )
-
-
-def test_gateway_auth_uses_fixed_env(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("LINGTU_GATEWAY_REQUIRE_API_KEY", raising=False)
-    monkeypatch.setenv("LINGTU_ENV", "real")
-    assert gateway_api_key_required() is True
-
-    monkeypatch.setenv("LINGTU_ENV", "sim")
-    assert gateway_api_key_required() is False
 
 
 def test_session_contract_names_field_identity_env_and_product() -> None:

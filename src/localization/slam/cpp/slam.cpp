@@ -264,7 +264,11 @@ class ContractBackend final : public ISlamBackend {
     return Status::Ok(reason_);
   }
 
-  Status relocalize(const std::optional<Pose3d>& guess) override {
+  Status relocalize(const std::optional<Pose3d>& guess,
+                    RelocalizationSearch search) override {
+    if (search == RelocalizationSearch::Global) {
+      return Status::Error("global_relocalization_unsupported");
+    }
     if (guess.has_value()) {
       const Status status = setInitialPose(*guess);
       if (!status.ok) {

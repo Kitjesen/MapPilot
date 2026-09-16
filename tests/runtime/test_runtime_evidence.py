@@ -1,5 +1,4 @@
 # The subprocess tests execute fixed scripts from this repository.
-# ruff: noqa: S603
 
 from __future__ import annotations
 
@@ -8,6 +7,7 @@ import pytest
 pytestmark = [pytest.mark.sim]
 
 import importlib.util
+import math
 import subprocess
 import sys
 from argparse import Namespace
@@ -21,22 +21,24 @@ from diagnostics.field.evidence import (
     validate_real_runtime_evidence,
     validate_runtime_evidence,
 )
-from runtime.runtime_interface import (
-    FRAME_LINKS,
+from diagnostics.runtime_contract import (
     REAL_RUNTIME_CONTRACT,
     REAL_RUNTIME_REQUIRED_ENDPOINT_INPUT_TOPICS,
+    resolved_runtime_data_flow,
+    runtime_contract_data_source,
+    runtime_data_flow_topics,
+)
+from message.topics import TOPICS
+from runtime.adapters.topics import adapter_source_for_target
+from runtime.tf.frames import (
+    FRAME_LINKS,
     REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS,
-    TOPICS,
-    adapter_source_for_target,
     body_frame_id,
     camera_frame_id,
     lidar_frame_id,
     map_frame_id,
     odom_frame_id,
     real_lidar_frame_id,
-    resolved_runtime_data_flow,
-    runtime_contract_data_source,
-    runtime_data_flow_topics,
     runtime_topic_default_frame_id,
     simulator_world_frame_id,
 )
@@ -1103,7 +1105,7 @@ def test_real_runtime_collector_dependency_failure_preserves_contract_shape():
     collector = _load_real_runtime_collect_module()
     report = collector.build_unavailable_real_runtime_report(
         duration_sec=0.1,
-        error="ROS 2 Python dependencies unavailable: No module named 'rclpy'",
+        error="Gateway collection unavailable: connection refused",
     )
 
     result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
@@ -1124,7 +1126,7 @@ def test_real_runtime_collector_dependency_failure_preserves_contract_shape():
     assert "lidar_scan_sampled" in data_flow["endpoint_adapter"]["missing_signals"]
     assert REAL_HARDWARE_COMMAND_SINK in data_flow["command_boundary"]["missing_outputs"]
     assert report["runtime_contract"]["collection_available"] is False
-    assert "No module named 'rclpy'" in report["runtime_contract"]["collection_error"]
+    assert "Gateway collection unavailable: connection refused" in report["runtime_contract"]["collection_error"]
 
 
 def test_real_runtime_gateway_collector_builds_valid_report(monkeypatch):
@@ -1246,13 +1248,8 @@ def test_real_runtime_gateway_collector_builds_valid_report(monkeypatch):
                 "icp_quality": 0.0234,
                 "icp_fitness": 0.0234,
             }
-        if path == "/api/v1/navigation/status":
-            return {
-                "control": {
-                    "active_cmd_source": "path_follower",
-                    "sources": {"path_follower": {"active": True}},
-                }
-            }
+        if path == "/api/v1/navigation/dds_snapshot":
+            return {"nav_endpoint": {"active_cmd_source": "autonomy"}}
         raise AssertionError(path)
 
     monkeypatch.setattr(collector, "_fetch_gateway_json", _fake_fetch)
@@ -1371,6 +1368,90 @@ def test_real_runtime_gateway_collector_infers_raw_inputs_from_localization():
     assert topic_evidence[TOPICS.imu]["ok"] is True
     assert topic_evidence[TOPICS.imu]["rate_hz"] == 200.0
     assert topic_evidence[TOPICS.localization_quality]["quality_kind"] == "confidence"
+
+
+def test_gateway_collector_counts_only_confirmed_nonzero_final_output():
+    collector = _load_real_runtime_collect_module()
+    topic_evidence = {
+        topic: {"ok": False, "samples": 0, "graph_exists": False}
+        for topic in collector.OBSERVED_TOPICS
+    }
+    odom_positions: list[tuple[float, float, float]] = []
+
+    collector._record_gateway_rest_payloads(
+        topic_evidence,
+        odom_positions,
+        {
+            "navigation_dds": {
+                "ts": 100.0,
+                "nav_endpoint": {"active_cmd_source": "manual_hold"},
+                "cmd_vel": {
+                    "final_output_confirmed": False,
+                    "ts": 99.5,
+                    "linear": {"x": 0.4, "y": 0.0, "z": 0.0},
+                    "angular": {"x": 0.0, "y": 0.0, "z": 0.0},
+                },
+            }
+        },
+        sample_time_sec=1.0,
+        min_cmd_vel_norm=0.01,
+    )
+
+    assert topic_evidence[TOPICS.cmd_vel].get("nonzero_samples", 0) == 0
+
+    collector._record_gateway_rest_payloads(
+        topic_evidence,
+        odom_positions,
+        {
+            "navigation_dds": {
+                "ts": 100.0,
+                "cmd_vel": {
+                    "final_output_confirmed": True,
+                    "ts": 99.5,
+                    "frame_id": "base_link",
+                    "linear": {"x": 0.2, "y": 0.0, "z": 0.0},
+                    "angular": {"x": 0.0, "y": 0.0, "z": 0.1},
+                }
+            }
+        },
+        sample_time_sec=2.0,
+        min_cmd_vel_norm=0.01,
+    )
+
+    assert topic_evidence[TOPICS.cmd_vel]["nonzero_samples"] == 1
+    assert topic_evidence[TOPICS.cmd_vel]["max_norm"] == pytest.approx(math.sqrt(0.05))
+    assert (
+        topic_evidence[TOPICS.cmd_vel]["cmd_vel_nonzero_source"]
+        == "gateway_navigation_dds_snapshot"
+    )
+
+
+def test_gateway_collector_rejects_stale_confirmed_final_output():
+    collector = _load_real_runtime_collect_module()
+    topic_evidence = {
+        topic: {"ok": False, "samples": 0, "graph_exists": False}
+        for topic in collector.OBSERVED_TOPICS
+    }
+
+    collector._record_gateway_rest_payloads(
+        topic_evidence,
+        [],
+        {
+            "navigation_dds": {
+                "ts": 100.0,
+                "cmd_vel": {
+                    "final_output_confirmed": True,
+                    "ts": 90.0,
+                    "linear": {"x": 0.2, "y": 0.0, "z": 0.0},
+                    "angular": {"x": 0.0, "y": 0.0, "z": 0.0},
+                },
+            }
+        },
+        sample_time_sec=1.0,
+        min_cmd_vel_norm=0.01,
+    )
+
+    assert topic_evidence[TOPICS.cmd_vel].get("nonzero_samples", 0) == 0
 
 
 def test_real_runtime_collector_script_rejects_non_real_expected_contract():

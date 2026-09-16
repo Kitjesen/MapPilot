@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import fields, replace
 from pathlib import Path
 
 import pytest
@@ -114,7 +114,7 @@ def test_real_product_resolution_includes_robot_identity() -> None:
     assert resolved.product == "nav"
     assert resolved.env == "real"
     assert resolved.product_variant is None
-    assert resolved.config["_env"] == "real"
+    assert "_env" not in resolved.config
     assert resolved.product_spec["slam_mode"] == "localization"
     assert resolved.env_spec.name == "real"
     assert "_env_backend" not in resolved.config
@@ -169,7 +169,8 @@ def test_sim_product_uses_the_robot_backend() -> None:
     resolved = resolve_product_host_runtime("map", "sim")
 
     assert resolved.robot == "doso/thunder_v4"
-    assert resolved.config["_env_backend"] == "mujoco"
+    assert resolved.env_spec.config.backend == "mujoco"
+    assert "_env_backend" not in resolved.config
 
     with pytest.raises(ValueError, match="unsupported sim backend"):
         resolve_product_host_runtime(
@@ -230,23 +231,17 @@ def test_sim_backend_is_internal_configuration_not_a_third_identity() -> None:
 
     assert resolved.product == "teleop_avoid"
     assert resolved.env == "sim"
-    assert resolved.config["_env"] == "sim"
-    assert resolved.config["_env_backend"] == "mujoco"
+    assert resolved.env_spec.config.backend == "mujoco"
+    assert "_env" not in resolved.config
+    assert "_env_backend" not in resolved.config
     assert resolved.config["_endpoint_transport"] == "dds"
     assert resolved.config["_endpoint_contract"] == "field_dds_v1"
 
 
-@pytest.mark.parametrize(
-    ("profile", "error"),
-    (
-        ("missing_mid360", "unknown LiDAR extrinsic profile"),
-        ("thunder_v4_mid360", "extrinsic profile differs from RobotConfig"),
-    ),
-)
+@pytest.mark.parametrize("profile", [None, "", 42])
 def test_lidar_product_rejects_invalid_mid360_profile(
     monkeypatch: pytest.MonkeyPatch,
-    profile: str,
-    error: str,
+    profile: object,
 ) -> None:
     model = yaml.safe_load((ROOT / "config" / "robots" / "unitree" / "go2" / "model.yaml").read_text(encoding="utf-8"))
     model["sensors"]["mid360"]["extrinsic_profile"] = profile
@@ -260,8 +255,22 @@ def test_lidar_product_rejects_invalid_mid360_profile(
         ),
     )
 
-    with pytest.raises(ValueError, match=error):
+    with pytest.raises(TypeError, match="extrinsic_profile must be a string"):
         resolve_product_host_runtime("teleop_avoid", "real", robot=REAL_ROBOT)
+
+
+def test_lidar_product_preserves_calibrated_robot_config() -> None:
+    env = resolve_env_spec("real")
+    assert env.robot_config is not None
+    calibrated = replace(
+        env.robot_config,
+        lidar=replace(env.robot_config.lidar, offset_x=0.175, pitch=0.23),
+    )
+    resolved = product_configuration._with_real_mid360(replace(env, robot_config=calibrated))
+
+    assert resolved.robot_config is calibrated
+    assert resolved.robot_config.lidar.offset_x == 0.175
+    assert resolved.robot_config.lidar.pitch == 0.23
 
 
 def test_real_product_uses_typed_robot_geometry_values() -> None:

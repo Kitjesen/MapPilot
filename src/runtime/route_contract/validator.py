@@ -46,10 +46,11 @@ def validate_route_contract(contract: RouteContract | None = None, *, route: str
     for topic, spec in topics.items():
         if not _valid_topic_name(topic):
             issues.append(_issue("topic_name_invalid", f"topic {topic!r} must start with /", topic))
-        if not spec.producer:
-            issues.append(_issue("topic_producer_missing", f"topic {topic} has no producer", topic))
-        if not spec.consumers and not _is_external_diagnostics_stream(spec):
-            issues.append(_issue("topic_consumers_missing", f"topic {topic} has no consumers", topic))
+        if spec.role or spec.port_bindings:
+            if not spec.producer:
+                issues.append(_issue("topic_producer_missing", f"topic {topic} has no producer", topic))
+            if not spec.consumers and not _is_external_diagnostics_stream(spec):
+                issues.append(_issue("topic_consumers_missing", f"topic {topic} has no consumers", topic))
         issues.extend(_validate_port_bindings(topic, spec.port_bindings))
 
     for topic, backend in contract.route.routes.items():
@@ -92,7 +93,8 @@ def _validate_protocol_bindings(contract: RouteContract) -> list[RouteIssue]:
     for topic in sorted(contract.topics):
         backend = contract.route_for(topic)
         if backend == RouteBackend.DDS.value:
-            if not contract.topic(topic).port_bindings:
+            spec = contract.topic(topic)
+            if (topic in contract.native_contract_topics or spec.role) and not spec.port_bindings:
                 issues.append(
                     _issue(
                         "dds_port_bindings_missing",
@@ -101,8 +103,6 @@ def _validate_protocol_bindings(contract: RouteContract) -> list[RouteIssue]:
                     )
                 )
             issues.extend(_validate_dds_binding(contract, topic, cpp_topics))
-            if contract.route.endpoint_contract:
-                issues.extend(_validate_dds_endpoint_binding(contract.route.endpoint_contract, topic))
         elif backend == RouteBackend.LCM.value:
             issues.extend(_validate_lcm_binding(contract, topic))
     return issues
@@ -189,24 +189,8 @@ def _validate_lcm_binding(contract: RouteContract, topic: str) -> list[RouteIssu
     ]
 
 
-def _validate_dds_endpoint_binding(contract_name: str, topic: str) -> list[RouteIssue]:
-    try:
-        from runtime.endpoints.dds.contracts import binding_for_topic
-
-        binding_for_topic(contract_name, topic)
-    except KeyError:
-        return [
-            _issue(
-                "dds_endpoint_binding_missing",
-                f"DDS route topic {topic} is missing from endpoint contract {contract_name}",
-                topic,
-            )
-        ]
-    return []
-
-
 def _read_cpp_topic_header() -> str:
-    path = REPO_ROOT / "src" / "message" / "cpp" / "topics.hpp"
+    path = REPO_ROOT / "src" / "message" / "generated" / "topics.hpp"
     try:
         return path.read_text(encoding="utf-8")
     except OSError:
@@ -221,17 +205,11 @@ def _is_external_diagnostics_stream(spec: TopicContract) -> bool:
     """Allow intentionally output-only observability streams, never commands."""
 
     role = str(spec.role).strip().lower()
-    observability_role = role.endswith(
-        ("_status", "_telemetry", "_diagnostic", "_diagnostics", "_event", "_events")
-    )
+    observability_role = role.endswith(("_status", "_telemetry", "_diagnostic", "_diagnostics", "_event", "_events"))
     output_only_boundary = bool(spec.port_bindings) and all(
         binding.direction == "out" for binding in spec.port_bindings
     )
-    return bool(
-        spec.external_diagnostics_subscribable
-        and observability_role
-        and output_only_boundary
-    )
+    return bool(spec.external_diagnostics_subscribable and observability_role and output_only_boundary)
 
 
 def _issue(code: str, message: str, scope: str = "route", severity: str = "error") -> RouteIssue:

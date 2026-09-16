@@ -1,6 +1,6 @@
 ﻿"""Test-only driver / sensor-source port contracts.
 
-NAV COMPUTE CONTRACT companion (docs/architecture/NAVIGATION_COMPUTE_CONTRACT.md).
+Navigation runtime contract companion (docs/runtime.md).
 
 Why this file exists
 --------------------

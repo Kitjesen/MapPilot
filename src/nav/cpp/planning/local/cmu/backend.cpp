@@ -242,10 +242,17 @@ class local::cmu::Backend::Impl {
     if (const auto *intent = input.intent()) {
       freezeStatus_ = 0;
       reset();
+      double directionBodyDeg = std::remainder(intent->directionBodyDeg, 360.0);
+      if (const auto *guide = input.route(); guide != nullptr && guide->valid()) {
+        // Reproject the admitted guide after planner-induced yaw and lateral detours.
+        const double relGoalX = (goalX_ - vx_) * cosYaw_ + (goalY_ - vy_) * sinYaw_;
+        const double relGoalY = -(goalX_ - vx_) * sinYaw_ + (goalY_ - vy_) * cosYaw_;
+        directionBodyDeg = std::atan2(relGoalY, relGoalX) * 180.0 / M_PI;
+      }
       result = planForIntent(
           input.environment.obstacles.xyzh, input.environment.obstacles.count,
           input.clock.timestampS, std::max(0.0, intent->horizonM),
-          std::remainder(intent->directionBodyDeg, 360.0),
+          directionBodyDeg,
           std::clamp(intent->speedNormalized, 0.0, 1.0),
           std::clamp(intent->maxDirectionDeviationDeg, 0.0, 180.0), true);
     } else {

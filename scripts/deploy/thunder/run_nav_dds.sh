@@ -11,10 +11,12 @@ source /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh nav
 : "${LINGTU_NAV_SENSOR_OFFSET_X_M:?Product session is missing LINGTU_NAV_SENSOR_OFFSET_X_M}"
 : "${LINGTU_NAV_SENSOR_OFFSET_Y_M:?Product session is missing LINGTU_NAV_SENSOR_OFFSET_Y_M}"
 : "${LINGTU_NAV_SENSOR_OFFSET_Z_M:?Product session is missing LINGTU_NAV_SENSOR_OFFSET_Z_M}"
-: "${LINGTU_TELEOP_SLOW_DISTANCE_M:?Product session is missing LINGTU_TELEOP_SLOW_DISTANCE_M}"
-: "${LINGTU_TELEOP_STOP_DISTANCE_M:?Product session is missing LINGTU_TELEOP_STOP_DISTANCE_M}"
 : "${LINGTU_NAV_LOCAL_PLANNER_BACKEND:?Product session is missing LINGTU_NAV_LOCAL_PLANNER_BACKEND}"
-if [ "${LINGTU_NAV_LOCAL_PLANNER_BACKEND}" = cmu ]; then
+: "${LINGTU_NAV_CONTROL_MODE:?Product session is missing LINGTU_NAV_CONTROL_MODE}"
+: "${LINGTU_TELEOP_LOCAL_PLANNER:?Product session is missing LINGTU_TELEOP_LOCAL_PLANNER}"
+# Match navd's planner configuration gate; plain teleop/map do not use CMU assets.
+if [ "${LINGTU_NAV_LOCAL_PLANNER_BACKEND}" = cmu ] &&
+   { [ "${LINGTU_NAV_CONTROL_MODE}" = autonomy ] || [ "${LINGTU_TELEOP_LOCAL_PLANNER}" = 1 ]; }; then
     : "${LINGTU_LOCAL_PLANNER_PATHS:?CMU Product session is missing LINGTU_LOCAL_PLANNER_PATHS}"
     case "$(basename -- "${LINGTU_LOCAL_PLANNER_PATHS}")" in
         go2|thunder) ;;

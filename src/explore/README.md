@@ -124,12 +124,12 @@ Strict MuJoCo preflight and execution:
 
 ```bash
 python sim/scripts/mujoco/explore_native_acceptance.py \
-  --manifest config/runtime_graph/acceptance/mujoco_explore_native_acceptance.json \
+  --manifest config/acceptance/mujoco/explore.json \
   --artifact-dir artifacts/mujoco-explore \
   --preflight-only --strict
 
 python sim/scripts/mujoco/explore_native_acceptance.py \
-  --manifest config/runtime_graph/acceptance/mujoco_explore_native_acceptance.json \
+  --manifest config/acceptance/mujoco/explore.json \
   --artifact-dir artifacts/mujoco-explore \
   --strict
 ```

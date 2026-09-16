@@ -1,4 +1,6 @@
 import importlib.util
+import io
+import json
 from pathlib import Path
 
 import pytest
@@ -36,8 +38,12 @@ def _healthy_soak_sample() -> dict:
         "slam_hz": 10.0,
         "map_points": 5000.0,
         "confidence": 0.95,
-        "active_cmd_source": "none",
-        "navigation_state": "IDLE",
+        "task_state": "IDLE",
+        "goal_admission": "BLOCKED",
+        "control_authority": "NONE",
+        "motion_permission": "HELD",
+        "motion_observation": "QUIET",
+        "stop_confirmation": "CONFIRMED",
         "navigation_blockers": ["navigation_session_inactive"],
         "non_motion_safe": True,
     }
@@ -46,7 +52,6 @@ def _healthy_soak_sample() -> dict:
 def _soak_limits() -> dict:
     return {
         "min_slam_hz": 1.0,
-        "min_map_points": 1.0,
         "max_odom_age_ms": 1500.0,
         "max_cloud_age_ms": 5000.0,
         "max_diag_age_ms": 3000.0,
@@ -90,7 +95,7 @@ def test_field_doctor_uses_current_camera_and_runtime_contracts():
         "RunPlan.load",
         "gateway.client_readiness",
         '"/api/v1/readiness"',
-        "def command_source_name(control):",
+        'nav.get("goal_admission")',
     ):
         assert expected in text
 
@@ -111,7 +116,7 @@ def test_soak_checks_client_readiness_contract_shape():
     soak = _load_soak_module()
     payloads = {
         "bootstrap": {
-            "schema_version": 1,
+            "schema_version": 4,
             "links": {
                 "state": "/api/v1/state",
                 "events": "/api/v1/events",
@@ -121,7 +126,7 @@ def test_soak_checks_client_readiness_contract_shape():
                 "readiness": "/api/v1/readiness",
             },
         },
-        "capabilities": {"schema_version": 1, "endpoints": {"state": {}}},
+        "capabilities": {"schema_version": 2, "endpoints": {"state": {}}},
         "readiness": {
             "schema_version": 1,
             "status": "degraded",
@@ -129,8 +134,8 @@ def test_soak_checks_client_readiness_contract_shape():
             "modules": {},
         },
         "localization": {"schema_version": 1},
-        "navigation": {"schema_version": 1},
-        "state": {"schema_version": 1},
+        "navigation": {"schema_version": 3},
+        "state": {"schema_version": 4},
         "path": {"schema_version": 1},
         "scene_graph": {"schema_version": 1},
         "locations": {"schema_version": 1},
@@ -148,9 +153,137 @@ def test_soak_rejects_unsafe_ready_503_states():
     }
     assert soak.ready_status_is_non_motion_safe("ready", 503, not_ready) is False
     sample = _healthy_soak_sample()
-    sample["active_cmd_source"] = "teleop"
+    sample["control_authority"] = "OPERATOR"
     violations, _warnings = soak.sample_violations(sample, _soak_limits())
-    assert "active_cmd_source=teleop" in violations
+    assert "control_authority=OPERATOR" in violations
+
+
+@pytest.mark.parametrize("api_key", [None, "  field-soak-test-key  "])
+@pytest.mark.parametrize(
+    ("path", "same_gateway"),
+    [
+        ("/api/v1/readiness", True),
+        ("http://127.0.0.1:5050/api/v1/app/traffic", True),
+        ("http://other-gateway:5050/api/v1/app/traffic", False),
+    ],
+)
+def test_soak_http_get_uses_credentials_only_for_configured_gateway(monkeypatch, api_key, path, same_gateway):
+    soak = _load_soak_module()
+    if api_key is None:
+        monkeypatch.delenv("LINGTU_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("LINGTU_API_KEY", api_key)
+
+    class Response(io.BytesIO):
+        def getcode(self):
+            return 200
+
+    def open_request(request, *, timeout):
+        assert request.get_method() == "GET"
+        assert request.get_header("X-api-key") == (
+            api_key.strip() if api_key and same_gateway else None
+        )
+        assert timeout == 3.0
+        return Response(b'{"ready":true}')
+
+    monkeypatch.setattr(soak.urllib.request, "urlopen", open_request)
+    result = soak.http_json("http://127.0.0.1:5050", path)
+
+    assert result[:3] == (200, {"ready": True}, None)
+    assert "field-soak-test-key" not in repr(result)
+
+
+def test_soak_http_retains_failed_readiness_body_without_credentials(monkeypatch):
+    soak = _load_soak_module()
+    monkeypatch.setenv("LINGTU_API_KEY", "field-soak-test-key")
+    payload = {"data_ready": False, "reasons": ["localization:lost"]}
+
+    def open_request(request, *, timeout):
+        raise soak.urllib.error.HTTPError(
+            request.full_url, 503, "not ready", {}, io.BytesIO(json.dumps(payload).encode())
+        )
+
+    monkeypatch.setattr(soak.urllib.request, "urlopen", open_request)
+    result = soak.http_json("http://127.0.0.1:5050", "/ready")
+
+    assert result[:3] == (503, payload, None)
+    assert "field-soak-test-key" not in repr(result)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_violation"),
+    [
+        ({}, None),
+        ({"slam_hz": 0.0}, "slam_hz<1"),
+        ({"slam_hz": None}, "slam_hz<1"),
+        ({"has_odometry": False}, "has_odometry=false"),
+        ({"pose_fresh": False}, "pose_fresh=false"),
+        ({"data_ready": False}, "data_ready:false"),
+        ({"control_authority": "OPERATOR"}, "control_authority=OPERATOR"),
+        ({"motion_observation": "MOVING"}, "motion_observation=MOVING"),
+    ],
+)
+def test_soak_samples_native_runtime_without_viewer_cache(monkeypatch, overrides, expected_violation):
+    soak = _load_soak_module()
+    runtime = {**_healthy_soak_sample(), "data_ready": True, **overrides}
+    payloads = {
+        name: {"schema_version": version}
+        for name, version in soak.EXPECTED_SCHEMA_VERSIONS.items()
+    }
+    payloads["bootstrap"]["links"] = {
+        name: f"/api/v1/{name}"
+        for name in ("state", "events", "scene_graph", "locations", "path", "readiness")
+    }
+    payloads["capabilities"]["endpoints"] = {"state": {}}
+    payloads["ready"] = {
+        "ready": runtime["data_ready"], "data_ready": runtime["data_ready"],
+        "non_motion_safe": True, "failed_modules": [], "reasons": [],
+    }
+    payloads["readiness"].update({
+        "status": "ready", "reasons": [], "modules": {},
+        "runtime": {"navigation": {"blockers": []}},
+    })
+    payloads["localization"].update({
+        "state": "ready", "has_odometry": runtime["has_odometry"],
+        "pose_fresh": runtime["pose_fresh"], "confidence": 0.95,
+    })
+    payloads["navigation"].update({
+        "task": {"state": "IDLE"}, "goal_admission": {"state": "ACCEPTING"},
+        "control": {"authority": runtime["control_authority"]},
+        "motion": {"permission": "CLEAR", "observation": runtime["motion_observation"],
+                   "stop_confirmation": "NOT_REQUESTED"},
+    })
+    payloads["health"] = {"map_points": 0, "sensors": {"slam": {"hz": runtime["slam_hz"]}}}
+
+    def http_json(_gateway, path):
+        name = soak.READ_ONLY_ENDPOINT_NAMES[path]
+        code = 503 if name == "ready" and not runtime["data_ready"] else 200
+        return code, payloads[name], None, 0.1
+
+    monkeypatch.setattr(soak, "http_json", http_json)
+    monkeypatch.setattr(soak, "process_rows", lambda: [])
+    sample = soak.sample_once("http://127.0.0.1:5050", 0, soak.time.monotonic(), soak.thresholds())
+
+    assert sample["map_points"] == 0
+    if expected_violation is None:
+        assert sample["violations"] == []
+    else:
+        assert expected_violation in sample["violations"]
+
+
+def test_soak_viewer_cache_drop_is_telemetry_not_native_map_failure():
+    soak = _load_soak_module()
+    samples = [
+        {**_healthy_soak_sample(), "index": index, "map_points": points,
+         "pose": {"x": 0.0, "y": 0.0, "yaw": 0.0}}
+        for index, points in enumerate((5000, 0, 0))
+    ]
+    summary, violations, warnings = soak.summarize(samples, 6.0, soak.thresholds())
+
+    assert summary["map_points_drop_ratio"] == 1.0
+    assert summary["map_points_source"] == "gateway_viewer_cache"
+    assert violations == []
+    assert warnings == []
 
 
 def test_soak_process_summary_only_tracks_native_slamd_and_host():

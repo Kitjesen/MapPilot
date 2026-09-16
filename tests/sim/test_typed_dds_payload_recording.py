@@ -1,6 +1,5 @@
 """Internal contract tests for typed-DDS payload recording and replay."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -9,7 +8,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from sim.runtime.recording import (
     SimulationRecordingError,
     SimulationRecordingWriter,

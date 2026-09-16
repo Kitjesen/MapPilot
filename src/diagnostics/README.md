@@ -8,6 +8,7 @@ leaving every motion process stopped.
 
 ```text
 diagnostics/
+  runtime_contract.py    read-only topic/frame/data-flow/Product projections
   saved_map_display.py   text output for the saved-map gate
   field/
     doctor.py            current Gateway/native readiness snapshot
@@ -37,3 +38,9 @@ Python diagnostics and acceptance commands run with
 `scripts/gates/field/` contains only the stable P0 Shell procedures. Static
 Runtime Graph, architecture, and Topic declaration checks stay with their
 existing development validators instead of being repeated here.
+
+`runtime_contract.py` consumes message contracts, frame rules, and Product
+declarations. It is not imported by the generic runtime or message package.
+Gateway keeps the existing diagnostic response shape; only the implementation
+location changed. Runtime adapters read legacy aliases directly from
+`runtime/adapters/topics.py`, not through diagnostics.

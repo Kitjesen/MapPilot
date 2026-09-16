@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -12,17 +11,16 @@ from typing import Any
 
 import yaml
 
-from lingtu.assembly.native_nav import local_planner_name
-from lingtu.products import ProductName, product_name
-from runtime.config import RobotConfig, load_config
-from runtime.graph.loader import (
+from lingtu.assembly.graph.loader import (
     PRODUCT_HOST_CAPABILITIES,
     PRODUCT_HOST_FIELDS,
     RuntimeGraph,
     load_runtime_graph,
     resolve_product_variant_spec,
 )
-from runtime.runtime_interface import lidar_extrinsic
+from lingtu.assembly.native_nav import local_planner_name
+from lingtu.products import ProductName, product_name
+from runtime.config import RobotConfig, load_config
 
 from .runtime_paths import DEFAULT_GATEWAY_PORT, DEFAULT_PLANNING_FRAME_ID
 
@@ -176,7 +174,7 @@ def resolve_env_spec(
     )
 
     # Keep the runtime-graph import local so Product config remains cheap to import.
-    from runtime.graph import resolve_env_implementation
+    from lingtu.assembly.graph import resolve_env_implementation
 
     try:
         implementation = resolve_env_implementation(
@@ -404,13 +402,6 @@ def resolve_product_host_runtime(
             config["lidar_ip"] = resolved_env.lidar_ip
 
     config.update(dict(overrides or {}))
-    config["_selection_kind"] = "product"
-    config["_env"] = resolved_env.name
-    if resolved_product_variant is not None:
-        config["_product_variant"] = str(resolved_product_variant)
-    if resolved_env.config.backend is not None:
-        config["_env_backend"] = resolved_env.config.backend
-
     return ResolvedProductHostConfig(
         robot=resolved_env.robot,
         product=resolved_product_name,
@@ -558,30 +549,6 @@ def _with_real_mid360(env: EnvSpec) -> EnvSpec:
     if robot_config is None:
         raise RuntimeError("real Env resolved without RobotConfig")
 
-    mount = lidar_extrinsic(profile)
-    configured_mount = (
-        robot_config.lidar.offset_x,
-        robot_config.lidar.offset_y,
-        robot_config.lidar.offset_z,
-        robot_config.lidar.roll,
-        robot_config.lidar.pitch,
-        robot_config.lidar.yaw,
-    )
-    declared_mount = (
-        mount.x,
-        mount.y,
-        mount.z,
-        mount.roll,
-        mount.pitch,
-        mount.yaw,
-    )
-    if not all(
-        math.isclose(configured, declared, abs_tol=1e-12)
-        for configured, declared in zip(configured_mount, declared_mount)
-    ):
-        raise ValueError(
-            f"Robot {env.robot!r} MID-360 extrinsic profile differs from RobotConfig"
-        )
     return replace(
         env,
         slam_config_ref=config_ref,
@@ -626,11 +593,7 @@ def _normalize_env_config(
     if localization is None:
         if localization_explicit:
             raise TypeError("env_config.localization must be a non-empty string")
-        localization = (
-            "truth"
-            if env == "sim" and normalized.backend == "mujoco"
-            else "fastlio2"
-        )
+        localization = "fastlio2"
     if not isinstance(localization, str) or not localization.strip():
         raise TypeError("env_config.localization must be a non-empty string")
     localization = localization.strip().lower()

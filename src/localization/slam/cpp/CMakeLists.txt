@@ -15,9 +15,6 @@ foreach(DEPRECATED_OPTION IN ITEMS
   endif()
 endforeach()
 
-project(messages_contract LANGUAGES C CXX)
-include(GNUInstallDirs)
-
 option(LINGTU_SLAM_BUILD_TESTS "Build native SLAM contract tests" ON)
 option(LINGTU_SLAM_FASTLIO2_BACKEND "Build the real Fast-LIO2 algorithm backend" OFF)
 option(LINGTU_SLAM_BUILD_DDS_RUNTIME "Build ROS-free CycloneDDS C++ sensor-to-SLAM runtime" OFF)
@@ -27,6 +24,10 @@ if(LINGTU_SLAM_BUILD_DDS_RUNTIME AND NOT LINGTU_SLAM_FASTLIO2_BACKEND)
     "LINGTU_SLAM_FASTLIO2_BACKEND=ON; refusing to build production slamd "
     "against the contract-only backend.")
 endif()
+
+project(messages_contract LANGUAGES C CXX)
+include(GNUInstallDirs)
+
 add_library(messages_contract STATIC
   slam.cpp
   fastlio.cpp
@@ -51,6 +52,9 @@ if(LINGTU_SLAM_FASTLIO2_BACKEND)
   endif()
   add_subdirectory("${FASTLIO2_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/fastlio2")
   add_subdirectory("${LOCALIZER_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/localizer")
+  if(NOT TARGET map_opt)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../opt" "${CMAKE_CURRENT_BINARY_DIR}/map_opt")
+  endif()
 
   target_sources(messages_contract PRIVATE
     map_icp.cpp
@@ -63,7 +67,7 @@ if(LINGTU_SLAM_FASTLIO2_BACKEND)
   target_include_directories(messages_contract PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../maps/include")
   target_link_libraries(messages_contract
-    PRIVATE localizer
+    PRIVATE localizer map_opt
     PUBLIC fastlio2_core ${LINGTU_YAML_CPP_TARGET})
 endif()
 
@@ -149,9 +153,7 @@ if(LINGTU_SLAM_BUILD_DDS_RUNTIME)
   find_package(iceoryx_binding_c QUIET)
   find_package(CycloneDDS REQUIRED)
 
-  add_subdirectory(
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../../message/cpp"
-    "${CMAKE_CURRENT_BINARY_DIR}/message_cpp")
+  include("${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/LingTuDDS.cmake")
 
   set(_LINGTU_SLAM_IDL "${CMAKE_CURRENT_SOURCE_DIR}/../../../message/idl/messages.idl")
   lingtu_add_dds_c_messages(messages_cyclone_idl "${_LINGTU_SLAM_IDL}")
@@ -166,6 +168,44 @@ if(LINGTU_SLAM_BUILD_DDS_RUNTIME)
     lingtu_dds_contracts
     CycloneDDS::ddsc)
 
+  if(LINGTU_SLAM_BUILD_TESTS)
+    add_executable(test_tf_publication
+      "${LINGTU_SLAM_TESTS_DIR}/test_tf_publication.cpp")
+    target_compile_features(test_tf_publication PRIVATE cxx_std_17)
+    target_include_directories(test_tf_publication PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(test_tf_publication PRIVATE
+      messages_contract
+      messages_cyclone_idl
+      lingtu_dds_contracts
+      CycloneDDS::ddsc)
+    add_test(NAME messages_tf_publication COMMAND test_tf_publication)
+    set_tests_properties(messages_tf_publication PROPERTIES TIMEOUT 15)
+    add_executable(test_odometry_publication
+      "${LINGTU_SLAM_TESTS_DIR}/test_odometry_publication.cpp")
+    target_compile_features(test_odometry_publication PRIVATE cxx_std_17)
+    target_include_directories(test_odometry_publication PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(test_odometry_publication PRIVATE
+      messages_contract
+      messages_cyclone_idl
+      lingtu_dds_contracts
+      CycloneDDS::ddsc)
+    add_test(NAME messages_odometry_publication COMMAND test_odometry_publication)
+
+    add_executable(test_track_seed
+      "${LINGTU_SLAM_TESTS_DIR}/test_track_seed.cpp")
+    target_compile_features(test_track_seed PRIVATE cxx_std_17)
+    target_include_directories(test_track_seed PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(test_track_seed PRIVATE
+      messages_contract
+      messages_cyclone_idl
+      lingtu_dds_contracts
+      CycloneDDS::ddsc)
+    add_test(NAME messages_track_seed COMMAND test_track_seed)
+  endif()
+
   add_executable(slamctl slam_control.cpp)
   target_compile_features(slamctl PRIVATE cxx_std_17)
   target_include_directories(slamctl PRIVATE
@@ -178,4 +218,11 @@ if(LINGTU_SLAM_BUILD_DDS_RUNTIME)
   install(TARGETS slamd slamctl
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
       COMPONENT lingtu_runtime)
+  if(CPU_BBS3D_LIBRARY)
+    set_target_properties(slamd PROPERTIES
+      INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+    install(FILES "${CPU_BBS3D_LIBRARY}"
+      DESTINATION ${CMAKE_INSTALL_LIBDIR}
+      COMPONENT lingtu_runtime)
+  endif()
 endif()

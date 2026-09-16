@@ -8,18 +8,28 @@ import threading
 import time
 from typing import Any
 
+from message.topics import TOPICS
 from nav.adapters.native.abi import (
     NATIVE_COMMAND_CAP_EXPLORATION_RUN_EVENTS,
     NATIVE_COMMAND_CAP_INSPECTION_TASK_EVENTS,
+    NATIVE_COMMAND_CAP_JOINT_STATE,
     NATIVE_COMMAND_CAP_MAP_SCENE,
     NATIVE_COMMAND_CAP_TRAVERSABILITY_GRID,
     NativeCommandSession,
     get_native_command_session,
 )
+from runtime.endpoints.dds.adapters import (
+    exploration_run_event_from_dds,
+    inspection_task_event_from_dds,
+    joint_state_from_dds,
+    navigation_goal_status_from_dds,
+    navigation_state_from_dds,
+)
 from runtime.module import Module
 from runtime.msgs import (
     ExplorationRunEvent,
     InspectionTaskEvent,
+    JointState,
     NavigationGoalStatus,
     NavigationState,
     Path,
@@ -28,7 +38,6 @@ from runtime.msgs.geometry import Pose, PoseStamped, Vector3
 from runtime.msgs.map import MapSceneFrame
 from runtime.msgs.numpy_compat import np, numpy_import_is_safe
 from runtime.msgs.sensor import PointCloud2
-from runtime.runtime_interface import TOPICS
 from runtime.stream import Out
 
 logger = logging.getLogger(__name__)
@@ -45,6 +54,7 @@ class HostBus(Module):
     local_path: Out[Path]
     map_scene: Out[MapSceneFrame]
     traversability: Out[dict[str, Any]]
+    joint_state: Out[JointState]
 
     def __init__(self, **config: Any) -> None:
         super().__init__(**config)
@@ -99,6 +109,7 @@ class HostBus(Module):
         )
         self._map_scene_enabled = False
         self._traversability_enabled = False
+        self._joint_state_enabled = False
         self._traversability_max_age_s = max(
             0.1,
             min(10.0, float(config.get("traversability_max_age_s", 2.0))),
@@ -144,6 +155,12 @@ class HostBus(Module):
         if capabilities & NATIVE_COMMAND_CAP_TRAVERSABILITY_GRID:
             session.ensure_traversability_abi()
             self._traversability_enabled = True
+        if capabilities & NATIVE_COMMAND_CAP_JOINT_STATE:
+            try:
+                session.ensure_joint_state_abi()
+                self._joint_state_enabled = True
+            except Exception as exc:
+                logger.warning("Joint display telemetry unavailable: %s", exc)
         if self._require_inspection_task_events:
             if not (capabilities & NATIVE_COMMAND_CAP_INSPECTION_TASK_EVENTS):
                 raise RuntimeError("native inspection task event ABI is unavailable")
@@ -205,6 +222,8 @@ class HostBus(Module):
                 if self._exploration_run_events_enabled:
                     self._drain_exploration_run_events()
                 self._poll_paths()
+                if self._joint_state_enabled:
+                    self._poll_joint_state()
                 if self._traversability_enabled:
                     self._poll_traversability()
                 if self._map_scene_enabled:
@@ -228,26 +247,7 @@ class HostBus(Module):
         ):
             self._nav_discarded += 1
             return
-        state = NavigationState(
-            ts=float(payload["timestamp_s"]),
-            frame_id=str(payload["frame_id"]),
-            boot_id=cursor[0],
-            sequence=cursor[1],
-            control_mode=int(payload["control_mode"]),
-            lifecycle_state=int(payload["lifecycle_state"]),
-            active_task_id=str(payload["active_task_id"]),
-            active_request_id=str(payload["active_request_id"]),
-            goal_epoch=int(payload["goal_epoch"]),
-            map_id=str(payload["map_id"]),
-            map_content_epoch=int(payload["map_content_epoch"]),
-            planning_state=int(payload["planning_state"]),
-            execution_state=int(payload["execution_state"]),
-            recovery_state=int(payload["recovery_state"]),
-            progress=float(payload["progress"]),
-            authority=str(payload["authority"]),
-            hold_reason=str(payload["hold_reason"]),
-            failure_code=str(payload["failure_code"]),
-        )
+        state = navigation_state_from_dds(payload)
         self._last_cursor = cursor
         self._received = True
         self._nav_received_monotonic = time.monotonic()
@@ -265,17 +265,7 @@ class HostBus(Module):
             if sequence <= self._goal_status_sequences.get(boot_id, 0):
                 continue
             self._goal_status_sequences[boot_id] = sequence
-            status = NavigationGoalStatus(
-                ts=float(payload["timestamp_s"]),
-                frame_id=str(payload["frame_id"]),
-                boot_id=boot_id,
-                sequence=sequence,
-                task_id=str(payload["task_id"]),
-                request_id=str(payload["request_id"]),
-                state=int(payload["state"]),
-                goal_epoch=int(payload["goal_epoch"]),
-                reason=str(payload["reason"]),
-            )
+            status = navigation_goal_status_from_dds(payload)
             self.navigation_goal_status.publish(status)
 
     def _drain_inspection_task_events(self) -> None:
@@ -287,30 +277,7 @@ class HostBus(Module):
             if payload is None:
                 return
             try:
-                event = InspectionTaskEvent(
-                    ts=float(payload["timestamp_s"]),
-                    frame_id=str(payload["frame_id"]),
-                    boot_id=str(payload["boot_id"]),
-                    event_sequence=int(payload["event_sequence"]),
-                    kind=int(payload["kind"]),
-                    task_id=str(payload["task_id"]),
-                    request_id=str(payload["request_id"]),
-                    command_request_id=str(payload["command_request_id"]),
-                    state=int(payload["state"]),
-                    map_id=str(payload["map_id"]),
-                    map_content_epoch=int(payload["map_content_epoch"]),
-                    route_id=str(payload["route_id"]),
-                    route_revision=int(payload["route_revision"]),
-                    point_index=int(payload["point_index"]),
-                    point_count=int(payload["point_count"]),
-                    loop_index=int(payload["loop_index"]),
-                    retry_count=int(payload["retry_count"]),
-                    point_id=str(payload["point_id"]),
-                    action=str(payload["action"]),
-                    action_request_id=str(payload["action_request_id"]),
-                    evidence_id=str(payload["evidence_id"]),
-                    reason=str(payload["reason"]),
-                )
+                event = inspection_task_event_from_dds(payload)
             except (KeyError, TypeError, ValueError) as exc:
                 self._inspection_task_event_discarded += 1
                 self._inspection_task_event_error = f"invalid_native_inspection_task_event:{exc}"
@@ -334,24 +301,7 @@ class HostBus(Module):
             if payload is None:
                 return
             try:
-                event = ExplorationRunEvent(
-                    ts=float(payload["timestamp_s"]),
-                    frame_id=str(payload["frame_id"]),
-                    boot_id=str(payload["boot_id"]),
-                    event_sequence=int(payload["event_sequence"]),
-                    kind=int(payload["kind"]),
-                    exploration_run_id=str(payload["exploration_run_id"]),
-                    start_request_id=str(payload["start_request_id"]),
-                    command_request_id=str(payload["command_request_id"]),
-                    product_session_id=str(payload["product_session_id"]),
-                    state=int(payload["state"]),
-                    route=str(payload["route"]),
-                    map_id=str(payload["map_id"]),
-                    map_content_epoch=int(payload["map_content_epoch"]),
-                    reason=str(payload["reason"]),
-                    motion_stop_confirmed=payload["motion_stop_confirmed"],
-                    motion_stop_reason=str(payload["motion_stop_reason"]),
-                )
+                event = exploration_run_event_from_dds(payload)
             except (KeyError, TypeError, ValueError) as exc:
                 self._exploration_run_event_discarded += 1
                 self._exploration_run_event_error = (
@@ -372,6 +322,21 @@ class HostBus(Module):
         assert self._session is not None
         self._publish_path(self._session.take_global_path(), self.global_path)
         self._publish_path(self._session.take_local_path(), self.local_path)
+
+    def _poll_joint_state(self) -> None:
+        assert self._session is not None
+        try:
+            payload = self._session.take_joint_state()
+            if payload is None:
+                return
+            state = joint_state_from_dds(payload)
+            age_s = time.time() - state.ts
+            if age_s > 2.0 or age_s < -1.0:
+                return
+            self.joint_state.publish(state)
+        except Exception as exc:
+            # Display telemetry must not alter native navigation readiness.
+            logger.debug("Joint display sample discarded: %s", exc)
 
     def _poll_traversability(self) -> None:
         assert self._session is not None
@@ -551,6 +516,10 @@ class HostBus(Module):
             "occupancy": TOPICS.maps_occupancy,
             "elevation": TOPICS.maps_elevation,
             "esdf": TOPICS.maps_esdf,
+            "surface_projection": None,
+            "ground_height": None,
+            "ground_roughness": None,
+            "ground_support": None,
         }
         for name, topic in grid_topics.items():
             grid = raw_grids.get(name)
@@ -578,7 +547,7 @@ class HostBus(Module):
                 {
                     "id": f"maps.{name}",
                     "type": "grid",
-                    "topic": topic,
+                    **({"topic": topic} if topic is not None else {}),
                     "source": "mapd",
                     "metadata": {
                         **common,

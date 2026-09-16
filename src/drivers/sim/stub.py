@@ -13,8 +13,8 @@ from runtime.msgs.nav import Odometry
 from runtime.msgs.semantic import SceneGraph
 from runtime.msgs.sensor import Image
 from runtime.registry import register
-from runtime.runtime_interface import body_frame_id, odom_frame_id
 from runtime.stream import In, Out
+from runtime.tf.frames import body_frame_id, odom_frame_id
 
 STUB_ODOM_FRAME_ID = odom_frame_id()
 STUB_BODY_FRAME_ID = body_frame_id()

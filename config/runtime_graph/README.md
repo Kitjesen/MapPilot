@@ -1,7 +1,5 @@
 # LingTu Runtime Graph
 
-Status: current runtime graph contract as of 2026-08-31.
-
 Runtime Graph is the readable contract layer for Product and Env resolution.
 It is not the runtime data plane.
 
@@ -33,12 +31,14 @@ products/<product>.yaml + envs/<real-or-sim>.yaml
 `scripts/lingtu` and Gateway both invoke this same ProductControl operation.
 Neither one recompiles the Product or owns process ordering.
 
-Each Product uses `lingtu.runtime_graph.product.v2`. Its `host.capabilities`
-list is the environment-independent Host declaration; Assembly translates
-those capability names into the existing Blueprint Module graph. Product
-navigation settings stay under `native_nav`, and rolling launch parameters
-stay under `parameters`. There is no Python Product-default table or named
-parameter profile beside the YAML.
+Each Product uses `lingtu.runtime_graph.product.v3`. Its top-level `topics` and
+`capabilities` are the complete environment-independent runtime boundary;
+`host.capabilities` selects the in-process Blueprint Modules. Topic definitions
+and message types remain canonical under `src/message/topics/*.yaml`; a Product only lists
+which canonical topics it needs. Product navigation settings stay under
+`native_nav`, and rolling launch parameters stay under `parameters`. There is
+no Python Product-default, Product contract registry, or named parameter profile
+beside the YAML.
 
 Products declare `processes` using stable logical roles such as `lidar`,
 `slam`, `nav`, and `host`. The ProductControl-managed `real` Env maps those roles to
@@ -57,10 +57,20 @@ The `real` Env is fail closed: every selected process target must be
 installed, become active within its declared timeout, and pass its role-specific
 readiness check. The RunPlan also carries all mode-owned and
 conflicting targets, so switching Products removes stale process ownership
-before startup. Product compilation resolves code defaults, Env parameters,
-Product parameters, and the current `--set` values into `launch.parameters` in
-RunPlan v8. Runners execute that final result and do not resolve parameters a
-second time.
+before startup. Product compilation resolves topics, capabilities, code
+defaults, Env parameters, Product parameters, and the current `--set` values
+into RunPlan v10. Runners execute that final result and do not resolve Product
+policy a second time.
+
+The graph loader preserves raw variant declarations. Assembly selects the
+variant once and passes its resolved values explicitly to Host construction.
+Public selection uses `python -m lingtu.control switch PRODUCT --variant NAME`.
+For `nav`, `standard` is the default; `camera` adds the native camera process
+and Host preview relay while retaining the same navigation configuration.
+The release installer preserves the selected variant when restoring a Product.
+RunPlan stores structured navigation settings under `launch.native_nav` and
+other process environment values under `launch.process_environment`; the final
+launch environment is derived from those values and `launch.parameters`.
 
 ## Naming
 
@@ -92,9 +102,9 @@ RouteContract defines native cross-process transport:
 
 Do not move DDS imports into normal Modules. Modules keep typed `In`/`Out`
 ports; adapters and endpoint services translate between those ports and DDS.
-Python code must get canonical runtime topics from
-`runtime.runtime_interface.TOPICS`; see
-`docs/architecture/TOPIC_CONTRACT_POLICY.md` for the static guard and allowed
+Python code gets the generated topic view from
+`message.topics.TOPICS`; see
+`docs/architecture.md` for the static guard and allowed
 boundary exceptions.
 
 Runtime resolver now exposes the selected contract as `route_contract`.
@@ -124,14 +134,20 @@ endpoints own DDS communication.
 
 ## Files
 
-- `topics.yaml`: canonical topic, frame, schema, producer/consumer roles, and
-  `port_bindings` that identify the endpoint or Module port touching the topic.
+- `src/message/topics/*.yaml` (outside this directory): one file per domain. Each entry owns the logical name, DDS
+  wire name, exact `lingtu.dds.*` message type, QoS profile, and optional
+  producer/consumer bindings. `message/topics.py` and
+  `message/generated/topics.hpp` are generated views, never edited by hand.
 - `products/*.yaml`: product modes such as `map`, `nav`, `explore`, and
   `teleop_avoid`.
 - `envs/real.yaml`: the shared physical implementation; the selected robot model owns its RobotConfig,
   ProductControl process-role ownership, and genuine endpoint contract.
 - `envs/sim.yaml`: simulation backends, per-robot session bindings, process
   owners, Host configuration, and the genuine endpoint contract.
+
+Local qualification manifests live under `config/acceptance/`, outside this
+tree. They exercise a resolved runtime but do not participate in Product/Env
+resolution.
 
 `operator_switchable` controls whether a Product appears in the normal
 operator/Gateway mode catalog; it does not decide whether the compiler can
@@ -143,6 +159,54 @@ Each Env implementation declares the algorithms it has qualified in
 `local_planners`. Resolution fails before launch when a Product selects an
 unqualified backend. The physical `real` Env and MuJoCo simulation both expose
 CMU and SCAN.
+
+## SCAN runtime parameters
+
+SCAN tuning uses the existing Product `parameters` mapping and session
+`parameter_overrides` / `--set` interface. Defaults and accepted ranges live in
+`src/lingtu/assembly/parameters.py`; the resolved values are saved in
+`RunPlan.launch.parameters` and rendered into the native process environment.
+There is no separate `native_nav.scan_follower` or `native_nav.scan_planner`
+configuration block.
+
+```yaml
+parameters:
+  scan_planner.control_point_spacing_m: 0.20
+  scan_planner.replan_distance_m: 1.0
+  scan_planner.no_replan_distance_m: 0.10
+  scan_planner.planning_horizon_m: 3.5
+  scan_planner.collision_weight: 1.0
+  scan_follower.time_forward_s: 0.8
+  scan_follower.finish_distance_m: 0.15
+  local_collision.max_age_s: 0.50
+```
+
+For SCAN Products, planner velocity/acceleration defaults derive from
+`native_nav.path_follower_max_speed_mps` / `path_follower_max_accel_mps2`.
+Follower forward speed and yaw-rate defaults derive from the corresponding
+Product motion limits. Explicit parameter values override these defaults:
+Env overrides, then Product parameters, then session overrides. Planner
+constraints, follower axis limits, and final command safety limits retain
+their separate roles; an explicit SCAN override does not raise the final
+Product command limit. CMU selection and its configuration are unchanged.
+
+`local_collision.max_age_s` is Endpoint input policy, shared with recovery.
+Robot geometry still comes from RobotConfig. Map resolution and upstream FSM
+cadences remain part of the fixed SCAN port contract. C++ parameter-struct
+initializers serve standalone library callers; Product runs receive every
+SCAN tuning value from the saved RunPlan. Plans created before these fields
+were recorded must be recompiled before use with this runtime.
+
+Regeneration uses the normal `ProductControl.switch` entry: it compiles and
+publishes a new RunPlan from the current Product, Env, and session parameters.
+For example, a saved-map-free MuJoCo SCAN run starts with:
+
+```bash
+python -m lingtu.control switch teleop_avoid --robot doso/thunder_v4 --env sim --backend mujoco --local-planner scan
+```
+
+Use `--set scan_planner.planning_horizon_m=4.0` for a session override. Do not
+edit the old RunPlan JSON; retain it as the snapshot of its original run.
 
 ## Real-Equivalent Rule
 
@@ -202,10 +266,10 @@ backends.
 
 ## Validation
 
-Use the Python helper in `src/runtime/graph`:
+Use the Python helper in `src/lingtu/assembly/graph`:
 
 ```python
-from runtime.graph import assert_runtime_graph_valid
+from lingtu.assembly.graph import assert_runtime_graph_valid
 
 assert_runtime_graph_valid()
 ```

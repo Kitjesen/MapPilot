@@ -122,8 +122,12 @@ fn left_jacobian_so3(omega: &Vector3<f64>) -> Matrix3<f64> {
     let theta = omega.norm();
     let omega_hat = skew(omega);
     let omega_hat2 = omega_hat * omega_hat;
-    if theta < 1e-8 {
-        Matrix3::identity() + 0.5 * omega_hat + (1.0 / 6.0) * omega_hat2
+    if theta < 1e-4 {
+        // Avoid cancellation in the trigonometric coefficients at small angles.
+        let theta2 = theta * theta;
+        Matrix3::identity()
+            + (0.5 - theta2 / 24.0) * omega_hat
+            + (1.0 / 6.0 - theta2 / 120.0) * omega_hat2
     } else {
         let theta2 = theta * theta;
         Matrix3::identity()
@@ -136,8 +140,9 @@ fn left_jacobian_so3_inverse(omega: &Vector3<f64>) -> Matrix3<f64> {
     let theta = omega.norm();
     let omega_hat = skew(omega);
     let omega_hat2 = omega_hat * omega_hat;
-    if theta < 1e-8 {
-        Matrix3::identity() - 0.5 * omega_hat + (1.0 / 12.0) * omega_hat2
+    if theta < 1e-4 {
+        let theta2 = theta * theta;
+        Matrix3::identity() - 0.5 * omega_hat + (1.0 / 12.0 + theta2 / 720.0) * omega_hat2
     } else {
         let theta2 = theta * theta;
         let half_theta = 0.5 * theta;
@@ -173,6 +178,14 @@ mod tests {
         let delta = Vector6::from_row_slice(&[1e-10, -2e-10, 3e-10, 0.2, -0.1, 0.05]);
         let pose = Pose3::exp(&delta);
         assert_vec6_near(pose.log(), delta, 1e-8);
+    }
+
+    #[test]
+    fn se3_roundtrip_at_optimizer_finite_difference_angles() {
+        for angle in [1e-8, 3e-8, 1e-7, 1e-6, 1e-5, 9e-5] {
+            let delta = Vector6::from_row_slice(&[angle, 0.0, 0.0, 0.2, -0.1, 0.05]);
+            assert_vec6_near(Pose3::exp(&delta).log(), delta, 1e-12);
+        }
     }
 
     #[test]

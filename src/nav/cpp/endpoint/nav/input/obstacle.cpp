@@ -131,8 +131,8 @@ bool MotionLayer::isStale(const Cell &cell, double now_s) const {
   return age_source >= 0.0 && now_s - age_source > config_.decay_s;
 }
 
-void MotionLayer::markHit(const Cell &sample, double stamp_s) {
-  auto &cell = cells_[makeKey(sample.x, sample.y, sample.z)];
+void MotionLayer::markHit(const VoxelKey &key, const Cell &sample, double stamp_s) {
+  auto &cell = cells_[key];
   const bool new_hit_frame = !sameFrame(cell.last_hit_s, stamp_s);
   if (cell.hits <= 0 || sample.height > cell.height || cell.state == CellState::Free ||
       cell.state == CellState::Cleared) {
@@ -236,8 +236,9 @@ void MotionLayer::update(const std::vector<float> &xyzh, double stamp_s) {
         !std::isfinite(sample.height)) {
       continue;
     }
-    current_hit_keys_.insert(makeKey(sample.x, sample.y, sample.z));
-    markHit(sample, stamp_s);
+    const auto key = makeKey(sample.x, sample.y, sample.z);
+    current_hit_keys_.insert(key);
+    markHit(key, sample, stamp_s);
   }
   prune(stamp_s);
 }
@@ -258,6 +259,7 @@ void MotionLayer::updateFromScan(const SensorOrigin &origin, const std::vector<f
     return;
   }
 
+  cells_.reserve(cells_.size() + count);
   for (std::size_t i = 0; i < count; ++i) {
     const std::size_t base = i * 4;
     const float x = xyzh[base + 0];
@@ -267,7 +269,10 @@ void MotionLayer::updateFromScan(const SensorOrigin &origin, const std::vector<f
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(height)) {
       continue;
     }
-    current_hit_keys_.insert(makeKey(x, y, z));
+    const auto key = makeKey(x, y, z);
+    current_hit_keys_.insert(key);
+    markHit(key, Cell{x, y, z, height, stamp_s, -1.0, stamp_s, 1, 1, 0,
+                      CellState::Occupied}, stamp_s);
   }
 
   const std::size_t ray_stride =
@@ -304,6 +309,7 @@ void MotionLayer::updateFromScan(const SensorOrigin &origin, const std::vector<f
       ++stats_.raycast_rays;
     }
     stats_.raycast_voxels += free_keys_scratch_.size();
+    // Hits are already applied; ray clearing touches only non-hit cells.
     for (const auto &key : free_keys_scratch_) {
       if (current_hit_keys_.find(key) != current_hit_keys_.end()) {
         continue;
@@ -313,28 +319,6 @@ void MotionLayer::updateFromScan(const SensorOrigin &origin, const std::vector<f
     last_ray_clearing_s_ = stamp_s;
   }
 
-  cells_.reserve(cells_.size() + count);
-  for (std::size_t i = 0; i < count; ++i) {
-    const std::size_t base = i * 4;
-    const Cell sample{
-        xyzh[base + 0],
-        xyzh[base + 1],
-        xyzh[base + 2],
-        xyzh[base + 3],
-        stamp_s,
-        -1.0,
-        stamp_s,
-        1,
-        1,
-        0,
-        CellState::Occupied,
-    };
-    if (!std::isfinite(sample.x) || !std::isfinite(sample.y) || !std::isfinite(sample.z) ||
-        !std::isfinite(sample.height)) {
-      continue;
-    }
-    markHit(sample, stamp_s);
-  }
   prune(stamp_s);
 }
 
@@ -391,7 +375,7 @@ void MotionLayer::snapshot(std::vector<float> &out, std::size_t max_points, doub
     for (const auto &entry : cells_) {
       const Cell &cell = entry.second;
       if (isObstacle(cell.state) && cell.hits >= config_.min_hits) {
-        obstacles.push_back(&cell);
+        obstacles.push_back({&cell, 0.0});
       }
     }
     if (obstacles.empty()) {
@@ -399,7 +383,8 @@ void MotionLayer::snapshot(std::vector<float> &out, std::size_t max_points, doub
     }
     if (max_points == 0 || obstacles.size() <= max_points) {
       out.reserve(obstacles.size() * 4);
-      for (const Cell *cell : obstacles) {
+      for (const auto &obstacle : obstacles) {
+        const Cell *cell = obstacle.cell;
         out.push_back(cell->x);
         out.push_back(cell->y);
         out.push_back(cell->z);
@@ -408,14 +393,18 @@ void MotionLayer::snapshot(std::vector<float> &out, std::size_t max_points, doub
       return;
     }
 
+    // Each cell's distance is constant during this snapshot; avoid recomputing it per comparison.
+    for (auto &obstacle : obstacles) {
+      obstacle.distance_squared = distance_squared(obstacle.cell);
+    }
     std::partial_sort(obstacles.begin(),
                       obstacles.begin() + static_cast<std::ptrdiff_t>(max_points), obstacles.end(),
-                      [&](const Cell *lhs, const Cell *rhs) {
-                        return distance_squared(lhs) < distance_squared(rhs);
+                      [](const RankedObstacle &lhs, const RankedObstacle &rhs) {
+                        return lhs.distance_squared < rhs.distance_squared;
                       });
     out.reserve(max_points * 4);
     for (std::size_t i = 0; i < max_points; ++i) {
-      const Cell &cell = *obstacles[i];
+      const Cell &cell = *obstacles[i].cell;
       out.push_back(cell.x);
       out.push_back(cell.y);
       out.push_back(cell.z);
@@ -487,16 +476,16 @@ void MotionLayer::snapshot(std::vector<float> &out, std::size_t max_points, doub
     obstacles.clear();
     obstacles.reserve(output_cells.size());
     for (const auto &entry : output_cells) {
-      obstacles.push_back(&entry.second);
+      obstacles.push_back({&entry.second, distance_squared(&entry.second)});
     }
     std::partial_sort(obstacles.begin(),
                       obstacles.begin() + static_cast<std::ptrdiff_t>(keep), obstacles.end(),
-                      [&](const Cell *lhs, const Cell *rhs) {
-                        return distance_squared(lhs) < distance_squared(rhs);
+                      [](const RankedObstacle &lhs, const RankedObstacle &rhs) {
+                        return lhs.distance_squared < rhs.distance_squared;
                       });
     out.reserve(keep * 4);
     for (std::size_t i = 0; i < keep; ++i) {
-      const Cell &cell = *obstacles[i];
+      const Cell &cell = *obstacles[i].cell;
       out.push_back(cell.x);
       out.push_back(cell.y);
       out.push_back(cell.z);

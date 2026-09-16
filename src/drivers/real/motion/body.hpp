@@ -3,7 +3,9 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "core.hpp"
 
@@ -67,6 +69,15 @@ struct HealthState {
   std::string reason{"unknown"};
 };
 
+struct JointState {
+  double stamp_s{0.0};
+  std::string robot_model;
+  std::vector<std::string> names;
+  std::vector<double> position;
+  std::vector<double> velocity;
+  std::vector<double> effort;
+};
+
 struct ControlState {
   bool connected{false};
   bool ready{false};
@@ -119,6 +130,7 @@ class Body {
   virtual Result act(BodyAction action) = 0;
   virtual Capabilities capabilities() const noexcept = 0;
   virtual BodyState state() const = 0;
+  virtual std::optional<JointState> jointState() const { return std::nullopt; }
   virtual HealthState health() const = 0;
   virtual AdapterDiagnostics diagnostics() const = 0;
 };

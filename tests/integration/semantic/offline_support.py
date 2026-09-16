@@ -1,4 +1,3 @@
-# ruff: noqa: F401
 from __future__ import annotations
 
 import json
@@ -12,20 +11,21 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pytest
 
-from perception.tracking.instance_tracker import (
-    BELIEF_FRESHNESS_TAU,
-    InstanceTracker,
-    TrackedObject,
-)
-from perception.tracking.projection import Detection3D
 from decision.goals.resolver import (
     GoalResolver,
     GoalResult,
     TargetBeliefManager,
     TargetHypothesis,
 )
-from decision.tasks.decomposition import TaskDecomposer, SubGoalAction, SubGoalStatus
+from decision.tasks.decomposition import SubGoalAction, SubGoalStatus, TaskDecomposer
 from memory.scheduling.voi_scheduler import SchedulerAction, SchedulerState, VoIConfig, VoIScheduler
+from perception.tracking.instance_tracker import (
+    BELIEF_FRESHNESS_TAU,
+    InstanceTracker,
+    TrackedObject,
+)
+from perception.tracking.projection import Detection3D
+
 
 def make_office_corridor_scene() -> dict:
     """办公走廊场景: 3 间办公室 + 1 条走廊, 约 30 个物体。"""
@@ -184,7 +184,7 @@ def make_office_corridor_scene() -> dict:
 def load_instruction_set() -> dict:
     """加载指令集 JSON。"""
     p = Path(__file__).resolve().parent / "fixtures" / "offline_instruction_set.json"
-    with open(p, "r", encoding="utf-8") as f:
+    with open(p, encoding="utf-8") as f:
         return json.load(f)
 
 class FastPathResult:

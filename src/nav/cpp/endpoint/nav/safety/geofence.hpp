@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "message/cpp/geofence.hpp"
+#include "message/protocol/geofence.hpp"
 
 namespace lingtu::nav::endpoint {
 

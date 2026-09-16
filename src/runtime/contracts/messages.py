@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, Callable
 
 CURRENT_SCHEMA_VERSION = 1
@@ -40,122 +40,6 @@ class MessageContract:
     name: str
     required_fields: tuple[str, ...]
     validate: Validator
-
-
-@dataclass(frozen=True)
-class MessageEnvelope:
-    """Portable message wrapper for non-Python runtime adapters.
-
-    Existing Modules may continue to pass plain dict payloads. The envelope is
-    the stable boundary shape for schema export, replay, and future Dart/Rust
-    adapters.
-    """
-
-    payload: Any = field(default_factory=dict)
-    topic: str | None = None
-    schema: str | None = None
-    message_contract: str | None = None
-    frame_id: str | None = None
-    ts: float | None = None
-    format: str | None = None
-    type: str | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-    encoding: str = "dict"
-    schema_version: int = CURRENT_SCHEMA_VERSION
-
-    @classmethod
-    def from_payload(
-        cls,
-        message_type: str,
-        payload: Any,
-        *,
-        topic: str | None = None,
-        schema: str | None = None,
-        frame_id: str | None = None,
-        encoding: str = "dict",
-        format: str | None = None,
-        schema_version: int | None = None,
-        ts: float | None = None,
-        metadata: Mapping[str, Any] | None = None,
-    ) -> "MessageEnvelope":
-        msg = _to_mapping(payload)
-        version = schema_version
-        if version is None:
-            raw_version = msg.get("schema_version", CURRENT_SCHEMA_VERSION)
-            version = int(raw_version)
-        return cls(
-            topic=topic,
-            schema=schema,
-            message_contract=str(message_type),
-            type=str(message_type),
-            payload=msg,
-            schema_version=version,
-            frame_id=frame_id,
-            encoding=encoding,
-            format=format,
-            ts=ts,
-            metadata=dict(metadata or {}),
-        )
-
-    @classmethod
-    def from_mapping(cls, envelope: Mapping[str, Any]) -> "MessageEnvelope":
-        """Create an envelope from an existing LCM/JSON-style mapping."""
-
-        return cls(
-            payload=envelope.get("payload", {}),
-            topic=_optional_str(envelope.get("topic")),
-            schema=_optional_str(envelope.get("schema")),
-            message_contract=_optional_str(envelope.get("message_contract")),
-            frame_id=_optional_str(envelope.get("frame_id")),
-            ts=envelope.get("ts"),
-            format=_optional_str(envelope.get("format")),
-            type=_optional_str(envelope.get("type")),
-            metadata=envelope.get("metadata", {}) if isinstance(envelope.get("metadata"), Mapping) else {},
-            encoding=_optional_str(envelope.get("encoding")) or "dict",
-            schema_version=int(envelope.get("schema_version", CURRENT_SCHEMA_VERSION)),
-        )
-
-    def validate(self) -> list[ValidationIssue]:
-        """Validate the wrapped payload against its named contract."""
-
-        contract = self.message_contract or self.type
-        if not contract:
-            return []
-        return validate_message(contract, self.payload)
-
-    def assert_valid(self) -> None:
-        """Raise ContractError if the wrapped payload violates its contract."""
-
-        contract = self.message_contract or self.type
-        if not contract:
-            return
-        assert_valid_message(contract, self.payload)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-ready envelope dict."""
-
-        data: dict[str, Any] = {
-            "schema_version": self.schema_version,
-            "encoding": self.encoding,
-            "payload": dict(self.payload) if isinstance(self.payload, Mapping) else self.payload,
-        }
-        if self.topic is not None:
-            data["topic"] = self.topic
-        if self.schema is not None:
-            data["schema"] = self.schema
-        if self.message_contract is not None:
-            data["message_contract"] = self.message_contract
-        if self.type is not None:
-            data["type"] = self.type
-        if self.frame_id is not None:
-            data["frame_id"] = self.frame_id
-        if self.format is not None:
-            data["format"] = self.format
-        if self.ts is not None:
-            data["ts"] = self.ts
-        if self.metadata:
-            data["metadata"] = dict(self.metadata)
-        return data
 
 
 MISSION_STATES = frozenset(
@@ -241,13 +125,6 @@ def _to_mapping(payload: Any) -> Mapping[str, Any]:
     if not isinstance(payload, Mapping):
         raise ContractError(f"message payload must be a mapping, got {type(payload).__name__}")
     return payload
-
-
-def _optional_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value)
-    return text or None
 
 
 def _validate_schema_version(msg: Mapping[str, Any]) -> list[ValidationIssue]:

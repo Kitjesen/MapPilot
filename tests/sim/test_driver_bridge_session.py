@@ -562,49 +562,79 @@ def test_activation_command_sequence_starts_at_one_without_gaps() -> None:
         session.activate()
 
 
-def test_inflight_nav_must_be_applied_before_deactivation() -> None:
-    session, transport = _active_session(_nav_command)
+def test_failed_physical_step_cancels_received_nav_without_applied_evidence() -> None:
+    session, transport = _active_session(_nav_command, _deactivate_command, _stopped_after_pending_nav)
     nav = session.receive_command()
-    sent_before = list(transport.sent)
+    assert nav.kind == "nav"
+    # The caller failed before it could prove a completed physics step.
+    zero = session.begin_deactivate()
+    assert zero.kind == "deactivate_zero"
+    session.complete_step(zero, step_seq=4)
+    assert session.wait_stopped().terminal_ack
+    assert not any("\tnav\t" in line for line in transport.sent)
 
-    with pytest.raises(DriverBridgeSessionError, match="out of order"):
-        session.begin_deactivate()
-    assert transport.sent == sent_before
 
-    session.complete_step(nav, step_seq=3)
+def test_feeder_step_failure_deactivates_received_nav_without_replaying_it() -> None:
+    from types import SimpleNamespace
 
+    from sim.scripts.mujoco import formal_feeder as feeder
 
-def test_deactivate_drains_one_existing_pending_nav_before_terminal_zero() -> None:
-    session, transport = _active_session(
-        _nav_command,
-        _deactivate_command,
-        _stopped_after_pending_nav,
+    def stopped_after_zero(transport):
+        return _stopped_after_pending_nav(transport).replace(
+            "\t3\t4\tdeactivate_zero", "\t3\t3\tdeactivate_zero",
+        )
+
+    session, transport = _active_session(_nav_command, _deactivate_command, stopped_after_zero)
+    nav = session.receive_command()
+    physical_commands = []
+    scenario_steps = []
+
+    def before_step(period_s):
+        scenario_steps.append(period_s)
+        if len(scenario_steps) == 1:
+            raise RuntimeError("scenario failed before physics")
+
+    def physical_step(velocity, period_s):
+        physical_commands.append(velocity)
+        return SimpleNamespace()
+
+    scenario = SimpleNamespace(before_step=before_step)
+    engine = SimpleNamespace(step_sensor_tick=physical_step)
+    velocity = feeder._velocity(nav, max_linear_mps=1.0, max_angular_rps=1.0)
+    with pytest.raises(RuntimeError, match="before physics"):
+        feeder._step(engine, velocity, period_s=0.005, step_seq=2, scenario=scenario)
+    assert physical_commands == []
+
+    stopped, step_seq = feeder._shutdown(
+        session=session, engine=engine, current_velocity=velocity, current_command=nav,
+        previous_state=SimpleNamespace(), motion=SimpleNamespace(), pending_ready=False,
+        step_seq=2, period_s=0.005, max_linear_mps=1.0, max_angular_rps=1.0,
+        scenario=scenario, emergency=True,
     )
 
-    pending_nav = session.begin_deactivate()
-    session.complete_step(pending_nav, step_seq=3)
+    assert step_seq == 3
+    assert stopped.terminal_ack
+    assert stopped.kind == "deactivate_zero"
+    assert physical_commands == [feeder.VelocityCommand()]
+    assert not any("\tnav\t" in line for line in transport.sent)
+
+
+def test_deactivate_cancels_pending_nav_without_claiming_it_was_applied() -> None:
+    session, transport = _active_session(
+        _nav_command, _deactivate_command, _stopped_after_pending_nav,
+    )
     deactivation = session.begin_deactivate()
+    assert deactivation.kind == "deactivate_zero"
     session.complete_step(deactivation, step_seq=4)
     stopped = session.wait_stopped()
-
-    assert pending_nav.kind == "nav"
-    assert pending_nav.bridge_command_seq == 2
-    assert deactivation.kind == "deactivate_zero"
-    assert deactivation.bridge_command_seq == 3
     assert stopped.bridge_command_seq == 3
     assert stopped.applied_step_seq == 4
-    prefixes = [line.split("\t", 1)[0] for line in transport.sent]
-    assert prefixes == [
-        "LT_DRIVER_ACTIVATE_V2",
-        "LT_DRIVER_APPLIED_V2",
-        "LT_DRIVER_HEARTBEAT_V2",
-        "LT_DRIVER_DEACTIVATE_V2",
-        "LT_DRIVER_APPLIED_V2",
-        "LT_DRIVER_APPLIED_V2",
-    ]
+    applied = [line.split("\t") for line in transport.sent if line.startswith("LT_DRIVER_APPLIED_V2\t")]
+    assert [fields[4] for fields in applied] == ["activation_zero", "deactivate_zero"]
+    assert all(fields[3] != "2" for fields in applied)
 
 
-def test_deactivate_drains_a_command_queued_before_ready_exactly_once() -> None:
+def test_deactivate_discards_a_command_queued_before_ready_exactly_once() -> None:
     transport = ScriptedTransport(
         f"LT_DRIVER_HELLO_V2\t{BRIDGE_BOOT_ID}",
         _activation_command,
@@ -624,13 +654,12 @@ def test_deactivate_drains_a_command_queued_before_ready_exactly_once() -> None:
     session.heartbeat(step_seq=2)
     session.confirm_ready()
 
-    pending_nav = session.begin_deactivate()
-    session.complete_step(pending_nav, step_seq=3)
     deactivation = session.begin_deactivate()
     session.complete_step(deactivation, step_seq=4)
     session.wait_stopped()
 
-    assert (pending_nav.kind, deactivation.kind) == ("nav", "deactivate_zero")
+    assert deactivation.kind == "deactivate_zero"
+    assert not any("\tnav\t" in line for line in transport.sent)
     assert sum(
         line.startswith("LT_DRIVER_DEACTIVATE_V2\t") for line in transport.sent
     ) == 1
@@ -638,9 +667,6 @@ def test_deactivate_drains_a_command_queued_before_ready_exactly_once() -> None:
 
 def test_deactivate_rejects_a_new_nav_after_the_existing_pending_nav() -> None:
     session, _ = _active_session(_nav_command, _late_nav_command)
-    pending_nav = session.begin_deactivate()
-    session.complete_step(pending_nav, step_seq=3)
-
     with pytest.raises(DriverBridgeSessionError, match="kind"):
         session.begin_deactivate()
     with pytest.raises(DriverBridgeSessionError, match="fault-closed"):
@@ -666,11 +692,11 @@ def test_deactivate_fault_closes_on_invalid_pending_command(invalid_pending) -> 
 
 
 def test_deactivate_fault_closes_on_nonadvancing_pending_applied_step() -> None:
-    session, _ = _active_session(_nav_command)
-    pending_nav = session.begin_deactivate()
+    session, _ = _active_session(_nav_command, _deactivate_command)
+    zero = session.begin_deactivate()
 
     with pytest.raises(DriverBridgeSessionError, match="step_seq"):
-        session.complete_step(pending_nav, step_seq=2)
+        session.complete_step(zero, step_seq=2)
     with pytest.raises(DriverBridgeSessionError, match="fault-closed"):
         session.begin_deactivate()
 
@@ -822,3 +848,44 @@ def test_public_surface_is_protocol_only_without_lifecycle_ownership() -> None:
         "ready_" + "file",
     )
     assert all(token not in source for token in forbidden)
+
+
+def test_deactivate_completes_inflight_safety_zero_before_terminal_zero() -> None:
+    session, transport = _active_session(
+        lambda transport: _pending_writer_fault_zero(transport).replace("writer_fault_zero", "safety_zero"),
+        _deactivate_command, _stopped_after_pending_nav,
+    )
+    safety = session.begin_deactivate()
+    assert safety.kind == "safety_zero"
+    session.complete_step(safety, step_seq=3)
+    zero = session.begin_deactivate()
+    assert zero.kind == "deactivate_zero"
+    session.complete_step(zero, step_seq=4)
+    assert session.wait_stopped().terminal_ack
+    assert sum(line.startswith("LT_DRIVER_DEACTIVATE_V2\t") for line in transport.sent) == 1
+    assert not any("\tnav\t" in line for line in transport.sent)
+
+
+@pytest.mark.parametrize("received_before_stop", [False, True])
+def test_interrupted_physical_zero_is_retained_until_applied(received_before_stop):
+    def safety_record(transport):
+        return _pending_writer_fault_zero(transport).replace("writer_fault_zero", "safety_zero")
+
+    session, transport = _active_session(safety_record, _deactivate_command, _stopped_after_pending_nav)
+    if received_before_stop:
+        received = session.receive_command()
+    safety = session.begin_deactivate()
+    if received_before_stop:
+        assert safety is received
+    assert safety.kind == "safety_zero"
+    # A failed zero step can retry the exact issued zero without a new request.
+    assert session.begin_deactivate() is safety
+    session.complete_step(safety, step_seq=3)
+    zero = session.begin_deactivate()
+    assert session.begin_deactivate() is zero
+    session.complete_step(zero, step_seq=4)
+    assert session.wait_stopped().terminal_ack
+    assert sum(line.startswith("LT_DRIVER_DEACTIVATE_V2\t") for line in transport.sent) == 1
+    assert [line.split("\t")[4] for line in transport.sent if line.startswith("LT_DRIVER_APPLIED_V2\t")] == [
+        "activation_zero", "safety_zero", "deactivate_zero",
+    ]

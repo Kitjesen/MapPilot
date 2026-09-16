@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import sys
+import time
 import types
 from types import SimpleNamespace
 
@@ -88,7 +89,7 @@ def test_readiness_snapshot_reports_not_started_without_modules():
     assert payload["ready"] is False
     assert payload["data_ready"] is False
     assert payload["motion_ready"] is False
-    assert payload["non_motion_safe"] is True
+    assert payload["non_motion_safe"] is False
     assert payload["modules"] == {}
     assert payload["module_count"] == 0
     assert payload["reasons"] == ["no_modules_loaded"]
@@ -112,14 +113,14 @@ def test_readiness_snapshot_reports_ready_when_all_modules_are_healthy():
     assert payload["ready"] is True
     assert payload["data_ready"] is True
     assert payload["motion_ready"] is True
-    assert payload["non_motion_safe"] is True
+    assert payload["non_motion_safe"] is False
     assert payload["module_count"] == 2
     assert payload["failed_modules"] == []
     assert payload["modules"]["A"]["detail"] == {"state": "ok"}
     assert payload["modules"]["B"]["detail"] == {}
 
 
-def test_readiness_snapshot_requires_native_endpoint_for_idle_teleop_product(
+def test_readiness_snapshot_requires_native_endpoint_for_teleop_product(
     monkeypatch,
     tmp_path,
 ):
@@ -139,6 +140,18 @@ def test_readiness_snapshot_requires_native_endpoint_for_idle_teleop_product(
     )
     gateway._all_modules = {"GatewayModule": _HealthyModule()}
     gateway._session_product = None
+    _set_session_mode(gateway, "navigating")
+    gateway._icp_quality = 0.03
+    with gateway._state_lock:
+        gateway._odom = {"x": 0.0, "y": 0.0, "z": 0.0}
+        gateway._localization_status = {
+            "state": "TRACKING",
+            "confidence": 0.9,
+            "degeneracy": "NONE",
+            "icp_fitness": 0.028,
+            "odom_age_ms": 100.0,
+            "localizer_health": "RECOVERED",
+        }
 
     payload, status_code = build_readiness_snapshot(gateway, now=124.25)
 
@@ -159,6 +172,41 @@ def test_readiness_snapshot_requires_native_endpoint_for_idle_teleop_product(
     serialized = ReadinessResponse.model_validate(payload).model_dump()
     assert serialized["product_contract"]["product"] == "teleop"
     assert serialized["product_contract"]["native_readiness_required"] is True
+
+
+@pytest.mark.parametrize("product", ["map", "teleop", "nav"])
+@pytest.mark.parametrize("endpoint_blocker", ["", "native_endpoint_status_missing_or_stale", "native_estop_latched"])
+def test_operator_product_readiness_does_not_require_navigation_session(
+    monkeypatch, product, endpoint_blocker,
+):
+    from gateway.gateway_module import GatewayModule
+    from gateway.navigation import status as navigation_status
+    from gateway.services import runtime_status
+    from gateway.services.readiness import build_readiness_snapshot
+
+    plan = _real_run_plan(product)
+    gateway = GatewayModule(run_plan=plan)
+    gateway._all_modules = {"host.bus": SimpleNamespace(map_readiness=lambda: "")}
+    _set_session_mode(gateway, "mapping" if product != "teleop" else "idle")
+    monkeypatch.setattr(runtime_status, "build_localization_status", lambda *_a, **_kw: {
+        "state": "tracking", "pose_fresh": True, "runtime": {}, "frames": {},
+    })
+    monkeypatch.setattr(navigation_status, "_native_endpoint_readiness", lambda *_a, **_kw: {
+        "required": True,
+        "ok": not endpoint_blocker,
+        "expected_control_mode": plan.native_nav["control_mode"],
+        "blockers": [endpoint_blocker] if endpoint_blocker else [],
+        "input_gate": {"ready": True},
+        "control_authority": {},
+    })
+
+    payload, _ = build_readiness_snapshot(gateway)
+
+    assert payload["motion_ready"] is (product != "nav" and not endpoint_blocker)
+    assert payload["runtime"]["navigation"]["can_accept_goal"] is False
+    assert "navigation_session_inactive" in payload["runtime"]["navigation"]["blockers"]
+    if endpoint_blocker:
+        assert f"navigation_blocked:{endpoint_blocker}" in payload["reasons"]
 
 
 def test_managed_gateway_without_run_plan_fails_readiness_closed():
@@ -285,7 +333,7 @@ def test_readiness_snapshot_reports_failed_modules_and_keeps_legacy_fields():
     assert payload["ready"] is False
     assert payload["data_ready"] is False
     assert payload["motion_ready"] is False
-    assert payload["non_motion_safe"] is True
+    assert payload["non_motion_safe"] is False
     assert payload["failed_modules"] == ["Bad"]
     assert payload["reasons"] == ["module_failed:Bad"]
     assert payload["modules"]["Bad"]["ok"] is False
@@ -330,13 +378,13 @@ def test_readiness_snapshot_blocks_lost_robot_localization():
     assert payload["ready"] is False
     assert payload["data_ready"] is False
     assert payload["motion_ready"] is False
-    assert payload["non_motion_safe"] is True
+    assert payload["non_motion_safe"] is False
     assert payload["failed_modules"] == []
     assert "localization:lost" in payload["reasons"]
     assert payload["runtime"]["localization"]["state"] == "lost"
 
 
-def test_readiness_snapshot_includes_navigation_blockers():
+def test_readiness_snapshot_reports_localization_and_goal_gate_staleness():
     from gateway.gateway_module import GatewayModule
     from gateway.services.readiness import build_readiness_snapshot
 
@@ -359,15 +407,14 @@ def test_readiness_snapshot_includes_navigation_blockers():
 
     assert status_code == 503
     assert "localization:degraded" in payload["reasons"]
-    assert "navigation_blocked:pose_stale" in payload["reasons"]
+    assert "localization:pose_stale" in payload["reasons"]
     assert payload["data_ready"] is False
     assert payload["motion_ready"] is False
-    assert payload["non_motion_safe"] is True
-    assert payload["runtime"]["navigation"]["blockers"] == ["pose_stale"]
+    assert payload["non_motion_safe"] is False
+    assert payload["runtime"]["navigation"]["blockers"] == ["odometry_stale"]
     assert payload["runtime"]["summary"]["data_blockers"] == [
         "localization:degraded",
         "localization:pose_stale",
-        "navigation_blocked:pose_stale",
     ]
 
 
@@ -392,6 +439,7 @@ def test_readiness_snapshot_includes_runtime_boundary_blockers(monkeypatch):
         processes=(),
         required_topics=("/maps/state", "/maps/scene"),
         required_capabilities=(),
+        has_process=lambda _role: False,
     )
     gateway = GatewayModule(run_plan=run_plan)
     gateway._all_modules = {"host.bus": _HealthyModule()}
@@ -483,12 +531,7 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
     gateway._icp_quality = 0.03
     with gateway._state_lock:
         gateway._odom = {"x": 0.0, "frame_id": "odom"}
-        gateway._mission = {
-            "state": "IDLE",
-            "planning_frame_id": "map",
-            "costmap_frame_id": "map",
-            "goal_frame_id": "map",
-        }
+        gateway._odom_timestamps.append(time.time())
         gateway._localization_status = {
             "state": "TRACKING",
             "confidence": 0.9,
@@ -504,9 +547,8 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
 
     payload, status_code = build_readiness_snapshot(gateway, now=128.35)
 
-    assert status_code == 503
-    assert "navigation_blocked:frame_mismatch_odometry" in payload["reasons"]
-    assert "navigation_blocked:real_runtime_evidence_missing_or_stale" in payload["reasons"]
+    assert status_code == 200
+    assert payload["reasons"] == []
     localization = payload["runtime"]["localization"]
     assert localization["runtime_contract"] == "real"
     assert localization["topic_default_frame_ids"]["/slam/map_cloud"] == "map"
@@ -537,11 +579,7 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
     assert frames["missing_required_topic_frame_ids"] == []
     assert frames["mismatches"] == []
     assert frames["ok"] is True
-    navigation = payload["runtime"]["navigation"]
-    assert navigation["tf_ok"] is False
-    assert navigation["planning_frame_id"] == "map"
-    assert navigation["odom_frame_id"] == "odom"
-    assert navigation["real_runtime_evidence_ok"] is False
+    assert payload["runtime"]["navigation"]["tf_ok"] is True
     boundary = payload["runtime"]["boundary"]
     assert boundary["env"] == "real"
     assert boundary["product"] == "nav"
@@ -550,23 +588,99 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
     assert "profile" not in boundary
 
 
-def test_manual_hold_is_a_non_motion_safe_readiness_state():
+@pytest.mark.parametrize(
+    ("authority", "observation", "stop_confirmation", "expected"),
+    [
+        ("NONE", "QUIET", "NOT_REQUESTED", True),
+        ("NONE", "QUIET", "CONFIRMED", True),
+        ("UNKNOWN", "QUIET", "CONFIRMED", False),
+        ("AUTONOMY", "QUIET", "CONFIRMED", False),
+        ("OPERATOR", "QUIET", "CONFIRMED", False),
+        ("NONE", "MOVING", "CONFIRMED", False),
+        ("NONE", "UNKNOWN", "CONFIRMED", False),
+        ("NONE", "QUIET", "PENDING", False),
+        ("NONE", "QUIET", "FAILED", False),
+        ("NONE", "QUIET", "UNKNOWN", False),
+    ],
+)
+def test_non_motion_safe_requires_exact_operator_evidence(
+    authority: str,
+    observation: str,
+    stop_confirmation: str,
+    expected: bool,
+):
     from gateway.services.readiness import _runtime_readiness_modes
 
     modes = _runtime_readiness_modes(
         failed_modules=[],
-        reasons=["navigation_blocked:native_resume_required"],
-        runtime={
-            "navigation": {
-                "state": "IDLE",
-                "active_cmd_source": "manual_hold",
-            }
+        reasons=[],
+        navigation_projection={
+            "task": {"state": "EXECUTING"},
+            "control": {"authority": authority},
+            "motion": {
+                "observation": observation,
+                "stop_confirmation": stop_confirmation,
+            },
         },
     )
 
     assert modes["data_ready"] is True
-    assert modes["motion_ready"] is False
-    assert modes["non_motion_safe"] is True
+    assert modes["motion_ready"] is True
+    assert modes["non_motion_safe"] is expected
+
+
+def test_readiness_non_motion_safe_uses_navigation_projection(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.navigation import status as navigation_status
+    from gateway.services import runtime_status
+    from gateway.services.readiness import build_readiness_snapshot
+
+    monkeypatch.setattr(
+        runtime_status,
+        "build_localization_status",
+        lambda _gw, **_kwargs: {
+            "state": "tracking",
+            "pose_fresh": True,
+            "runtime": {},
+            "frames": {},
+        },
+    )
+    monkeypatch.setattr(
+        navigation_status,
+        "evaluate_navigation_gate",
+        lambda _gw, **_kwargs: {
+            "can_accept_goal": True,
+            "blockers": [],
+            "advisories": [],
+            "reason": "",
+            "navigation_state": {
+                "lifecycle_state_name": "IDLE",
+                "authority": "none",
+            },
+            "navigation_state_fresh": True,
+            "goal_status": {},
+            "control": {
+                "active_cmd_source": "none",
+                "operator_takeover_latched": False,
+                "resume_required": False,
+                "estop_latched": False,
+            },
+            "native_endpoint": {
+                "required": False,
+                "status_available": False,
+                "motion_stop_evidence": {"state": "NOT_REQUESTED"},
+            },
+            "odometry": {"vx": 0.0, "vy": 0.0, "wz": 0.0},
+            "odometry_fresh": True,
+        },
+    )
+    gateway = GatewayModule()
+    gateway._all_modules = {"host.bus": _HealthyModule()}
+
+    payload, status_code = build_readiness_snapshot(gateway, now=128.45)
+
+    assert status_code == 200
+    assert payload["non_motion_safe"] is True
 
 
 def test_readiness_snapshot_blocks_motion_but_not_data_when_safety_stop_active():
@@ -579,7 +693,6 @@ def test_readiness_snapshot_blocks_motion_but_not_data_when_safety_stop_active()
     gateway._icp_quality = 0.03
     with gateway._state_lock:
         gateway._odom = {"x": 0.0, "y": 0.0, "z": 0.0}
-        gateway._mission = {"state": "IDLE"}
         gateway._navigation_state = {"authority": "estop", "hold_reason": "operator_estop"}
         gateway._localization_status = {
             "state": "TRACKING",
@@ -596,8 +709,8 @@ def test_readiness_snapshot_blocks_motion_but_not_data_when_safety_stop_active()
     assert payload["ready"] is False
     assert payload["data_ready"] is True
     assert payload["motion_ready"] is False
-    assert payload["non_motion_safe"] is True
-    assert "navigation_blocked:safety_stop" in payload["reasons"]
+    assert payload["non_motion_safe"] is False
+    assert "navigation_blocked:estop_latched" in payload["reasons"]
     assert "safety:stop" in payload["reasons"]
     assert payload["runtime"]["safety"]["stop_active"] is True
     assert payload["runtime"]["summary"]["data_blockers"] == []
@@ -630,7 +743,7 @@ def test_readiness_snapshot_surfaces_calibration_warnings(monkeypatch):
     _set_session_mode(gateway, "navigating")
     with gateway._state_lock:
         gateway._odom = {"x": 0.0}
-        gateway._mission = {"state": "IDLE"}
+        gateway._odom_timestamps.append(time.time())
         gateway._localization_status = {
             "state": "TRACKING",
             "confidence": 0.9,

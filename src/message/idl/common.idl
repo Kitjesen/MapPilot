@@ -1,0 +1,136 @@
+@final
+struct Time {
+  long sec;
+  unsigned long nanosec;
+};
+@final
+struct Header {
+  Time stamp;
+  string frame_id;
+};
+@final
+struct Vector3 {
+  double x;
+  double y;
+  double z;
+};
+@final
+struct Quaternion {
+  double x;
+  double y;
+  double z;
+  double w;
+};
+@final
+struct Point {
+  double x;
+  double y;
+  double z;
+};
+@final
+struct PointStamped {
+  Header header;
+  Point point;
+};
+@final
+struct Pose {
+  Point position;
+  Quaternion orientation;
+};
+@final
+struct PoseStamped {
+  Header header;
+  Pose pose;
+};
+@final
+struct PoseWithCovariance {
+  Pose pose;
+  double covariance[36];
+};
+@final
+struct Twist {
+  Vector3 linear;
+  Vector3 angular;
+};
+@final
+struct TwistStamped {
+  Header header;
+  Twist twist;
+};
+@final
+struct Transform {
+  Vector3 translation;
+  Quaternion rotation;
+};
+@final
+struct TransformStamped {
+  Header header;
+  string child_frame_id;
+  Transform transform;
+};
+@final
+struct TFMessage {
+  sequence<TransformStamped> transforms;
+};
+@final
+struct TwistWithCovariance {
+  Twist twist;
+  double covariance[36];
+};
+@final
+struct Odometry {
+  Header header;
+  string child_frame_id;
+  PoseWithCovariance pose;
+  TwistWithCovariance twist;
+};
+@final
+struct PointField {
+  string name;
+  unsigned long offset;
+  octet datatype;
+  unsigned long count;
+};
+@final
+struct PointCloud2 {
+  Header header;
+  unsigned long height;
+  unsigned long width;
+  sequence<PointField> fields;
+  boolean is_bigendian;
+  unsigned long point_step;
+  unsigned long row_step;
+  sequence<octet> data;
+  boolean is_dense;
+};
+@final
+struct Float32 {
+  float data;
+};
+@final
+struct Bool {
+  boolean data;
+};
+@final
+struct Text {
+  string data;
+};
+@final
+struct Path {
+  Header header;
+  sequence<PoseStamped> poses;
+};
+@final
+struct MapMetaData {
+  Time map_load_time;
+  float resolution;
+  unsigned long width;
+  unsigned long height;
+  Pose origin;
+};
+@final
+struct OccupancyGrid {
+  Header header;
+  MapMetaData info;
+  sequence<octet> data;
+};

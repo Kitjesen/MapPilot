@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 from __future__ import annotations
 
 import json
@@ -6,13 +5,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from sim.diagnostics import summary as sim_diagnostics
 
 from runtime.algorithm_gates import (
     DIMOS_BENCHMARK_REQUIRED_GATES,
     G4_SERVER_FULL_SIM_REQUIRED_GATES,
     INSPECTION_MVP_REQUIRED_GATES,
 )
-from sim.diagnostics import summary as sim_diagnostics
 
 pytestmark = pytest.mark.sim
 

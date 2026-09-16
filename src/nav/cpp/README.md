@@ -218,9 +218,9 @@ belong in the build and endpoint guides rather than this component overview.
 
 ## Detailed references
 
-- [Local planning and tracking contract](../../../docs/architecture/LOCAL_PLANNING_AND_TRACKING_CONTRACT.md)
-- [Architecture index](../../../docs/architecture/README.md)
-- [Native build guide](../../../docs/01-getting-started/BUILD_GUIDE.md)
+- [Product runtime and navigation contract](../../../docs/runtime.md)
+- [Architecture](../../../docs/architecture.md)
+- [Native build guide](../../../docs/getting-started.md)
 - [Navigation execution](navigation/README.md)
 - [Native endpoint](endpoint/README.md)
 - [SCAN backend](planning/local/scan/README.md)

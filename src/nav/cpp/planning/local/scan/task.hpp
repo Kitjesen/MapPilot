@@ -27,6 +27,8 @@ class Task {
   // Views are borrowed for this call. The worker owns immutable route/map
   // snapshots; replacing route geometry requires a new reference generation.
   Update update(const LocalPlanRequest &request);
+  // Last accepted worker failure, independent of plan polling and resets.
+  [[nodiscard]] std::shared_ptr<const ScanFailureSnapshot> lastScanFailure() const;
   void pause();
   void reset();
 

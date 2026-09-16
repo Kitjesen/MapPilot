@@ -23,7 +23,7 @@ from unittest.mock import patch
 def _domain_id_from_environment() -> int:
     module_name = ".test_dds_domain" if __package__ else "test_dds_domain"
     module = importlib.import_module(module_name, package=__package__)
-    resolver = cast(Callable[[], int], getattr(module, "domain_id_from_environment"))
+    resolver = cast(Callable[[], int], module.domain_id_from_environment)
     return resolver()
 
 
@@ -274,7 +274,7 @@ def _start_publisher(
         "0",
     ]
     if os.name == "nt":
-        return subprocess.Popen(  # noqa: S603
+        return subprocess.Popen(
             command,
             cwd=str(session),
             env=_process_environment(session, product_session_id),
@@ -283,7 +283,7 @@ def _start_publisher(
             stderr=subprocess.PIPE,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )
-    return subprocess.Popen(  # noqa: S603
+    return subprocess.Popen(
         command,
         cwd=str(session),
         env=_process_environment(session, product_session_id),
@@ -303,7 +303,7 @@ def _start_feeder(
     duration_s: float,
     base_ns: int,
 ) -> subprocess.Popen[str]:
-    return subprocess.Popen(  # noqa: S603
+    return subprocess.Popen(
         [
             sys.executable,
             str(Path(__file__).resolve()),
@@ -601,31 +601,31 @@ def test_warmup_drops_are_diagnostic_only_and_camera_info_survives() -> None:
         waiter_factory=waiter,
     )
 
-    assert stats == FeedStats(2, 1, 2, 0, 0.04, 0.0)  # noqa: S101
+    assert stats == FeedStats(2, 1, 2, 0, 0.04, 0.0)
     _require_feeder_delivery(
         "camera",
         sent=stats.sent - stats.warmup_sent,
         dropped=stats.dropped,
         qualification=False,
     )
-    assert len(client.records) == 2  # noqa: S101
-    assert _is_camera_info(client.records[0])  # noqa: S101
+    assert len(client.records) == 2
+    assert _is_camera_info(client.records[0])
 
 
 def test_full_camera_records_use_production_shape_without_prebuilding_window() -> None:
     records = _full_camera_records(2_000_000_000, 0.0)
 
-    assert isinstance(records, Iterator)  # noqa: S101
-    info_offset, info = next(records)
+    assert isinstance(records, Iterator)
+    info_offset, _info = next(records)
     color_offset, color = next(records)
     depth_offset, depth = next(records)
 
-    assert (info_offset, color_offset, depth_offset) == (0.0, 0.0, 0.0)  # noqa: S101
+    assert (info_offset, color_offset, depth_offset) == (0.0, 0.0, 0.0)
     camera_header_size = struct.calcsize("<4sHHIIIIddddddIddddd")
-    assert len(color) == 28 + camera_header_size + 640 * 480 * 3  # noqa: S101
-    assert len(depth) == 28 + camera_header_size + 640 * 480 * 2  # noqa: S101
-    assert struct.unpack_from("<II", color, 36) == (640, 480)  # noqa: S101
-    assert struct.unpack_from("<II", depth, 36) == (640, 480)  # noqa: S101
+    assert len(color) == 28 + camera_header_size + 640 * 480 * 3
+    assert len(depth) == 28 + camera_header_size + 640 * 480 * 2
+    assert struct.unpack_from("<II", color, 36) == (640, 480)
+    assert struct.unpack_from("<II", depth, 36) == (640, 480)
 
 
 def test_feeder_protocol_waits_for_one_shared_start_and_reports_json() -> None:
@@ -650,11 +650,11 @@ def test_feeder_protocol_waits_for_one_shared_start_and_reports_json() -> None:
         waiter_factory=waiter,
     )
     lines = reports.getvalue().splitlines()
-    assert lines[0] == "READY"  # noqa: S101
+    assert lines[0] == "READY"
     assert (
         json.loads(lines[1])
         == result
-        == {  # noqa: S101
+        == {
             "stream": "imu",
             "sent": 1,
             "warmup_sent": 1,
@@ -671,9 +671,9 @@ def test_feeders_use_normal_process_priority() -> None:
         for stream in ("lidar", "imu", "camera"):
             _start_feeder(Path("repo"), Path("ready"), "role", "f" * 32, stream, 1.0, 1)
 
-    assert popen.call_count == 3  # noqa: S101
+    assert popen.call_count == 3
     for call in popen.call_args_list:
-        assert "creationflags" not in call.kwargs  # noqa: S101
+        assert "creationflags" not in call.kwargs
 
 
 def test_business_error_stays_primary_when_cleanup_also_fails() -> None:
@@ -681,9 +681,9 @@ def test_business_error_stays_primary_when_cleanup_also_fails() -> None:
         with _cleanup_scope(lambda: ["wait probe: simulated cleanup failure"]):
             raise ValueError("simulated business failure")
     except ValueError as error:
-        assert str(error) == "simulated business failure"  # noqa: S101
-        assert isinstance(error.__cause__, RuntimeError)  # noqa: S101
-        assert str(error.__cause__) == (  # noqa: S101
+        assert str(error) == "simulated business failure"
+        assert isinstance(error.__cause__, RuntimeError)
+        assert str(error.__cause__) == (
             "cleanup failed after business error: wait probe: simulated cleanup failure"
         )
     else:
@@ -736,7 +736,7 @@ def test_cleanup_attempts_every_resource_in_three_stages() -> None:
         },
     )
 
-    assert events == [  # noqa: S101
+    assert events == [
         "terminate:probe",
         "terminate:feeder",
         "signal:publisher",
@@ -746,9 +746,9 @@ def test_cleanup_attempts_every_resource_in_three_stages() -> None:
         "wait:feeder",
         "wait:publisher",
     ]
-    assert len(errors) == 2  # noqa: S101
-    assert errors[0].startswith("terminate probe:")  # noqa: S101
-    assert errors[1].startswith("close client bad:")  # noqa: S101
+    assert len(errors) == 2
+    assert errors[0].startswith("terminate probe:")
+    assert errors[1].startswith("close client bad:")
 
 
 def test_default_records_maximum_intervals_but_qualification_gates_them() -> None:
@@ -1021,7 +1021,7 @@ def _camera_payload_main(publisher: Path, probe_executable: Path, repository: Pa
                 timeout_s=20.0,
             )
             clients["camera"] = client
-            probe = subprocess.Popen(  # noqa: S603
+            probe = subprocess.Popen(
                 [str(probe_executable), str(domain_id), str(CAMERA_PAYLOAD_WINDOW_S), "camera"],
                 cwd=str(root),
                 stdout=subprocess.PIPE,
@@ -1124,7 +1124,7 @@ def main() -> int:
             for stream, feeder in feeders.items():
                 _wait_feeder_ready(stream, feeder)
 
-            probe = subprocess.Popen(  # noqa: S603
+            probe = subprocess.Popen(
                 [str(probe_executable), str(domain_id), "10"],
                 cwd=str(root),
                 stdout=subprocess.PIPE,

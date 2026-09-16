@@ -259,7 +259,7 @@ def test_navigation_dds_snapshot_prefers_native_final_teleop_command(
 
 
 def test_native_teleop_policy_output_is_preview_not_final():
-    from gateway.routes.status import _native_cmd_vel_payload
+    from gateway.navigation.diagnostics import _native_cmd_vel_payload
     from gateway.schemas import DdsTwistSnapshot
 
     payload = _native_cmd_vel_payload(

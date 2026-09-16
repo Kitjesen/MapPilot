@@ -26,13 +26,13 @@ test('pose yaw and speed reserve stable character widths', () => {
   assert.match(statusStyles, /font-variant-numeric:\s*tabular-nums/)
 })
 
-test('operator status axes are rendered from the live navigation status projection', () => {
-  assert.match(statusSource, /presentNavigationOperatorStatus\(navigation/)
-  assert.match(statusSource, /operatorView\.task\.label/)
-  assert.match(statusSource, /operatorView\.goalAdmission\.label/)
-  assert.match(statusSource, /operatorView\.control\.label/)
-  assert.match(statusSource, /operatorView\.motion\.permission\.label/)
-  assert.match(statusSource, /operatorView\.motion\.stopConfirmation\.label/)
-  assert.match(statusSource, /operatorView\.summary\.nextAction/)
+test('navigation axes are rendered from the live navigation status projection', () => {
+  assert.match(statusSource, /presentNavigationStatus\(navigation/)
+  assert.match(statusSource, /navigationView\.task\.label/)
+  assert.match(statusSource, /navigationView\.goalAdmission\.label/)
+  assert.match(statusSource, /navigationView\.control\.label/)
+  assert.match(statusSource, /navigationView\.motion\.permission\.label/)
+  assert.match(statusSource, /navigationView\.motion\.stopConfirmation\.label/)
+  assert.doesNotMatch(statusSource, /navigationView\.summary/)
   assert.doesNotMatch(statusSource, /missionStatus/)
 })

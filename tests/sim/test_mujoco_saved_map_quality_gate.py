@@ -5,7 +5,6 @@ import struct
 from pathlib import Path
 
 import pytest
-
 from sim.scripts.mujoco.saved_map_quality_gate import (
     DEFAULT_WORLD_XML,
     _apply_overlay_alignment_xy_m,

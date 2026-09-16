@@ -710,22 +710,39 @@ void testPendingNavStopSuppressesAckThenEmitsZero() {
   activateToReady(core, start);
   const auto nav_command = core.submitNav(nav(start + 4ms, 81));
   check(nav_command.has_value(), "pending-stop fixture must emit Nav");
+  (void)core.submitNav(nav(start + 5ms, 82));
 
-  const auto early_zero =
-      core.onDeactivate(DeactivateMessage{kBridgeBoot, kControllerBoot, 3}, start + 5ms);
-  check(!early_zero.has_value(), "stop must not overwrite an immutable pending Nav command");
-  check(core.status(start + 5ms).output_ack.producerBootId().empty(),
-        "stop request must not ACK pending Nav");
-
-  const auto zero = core.onApplied(appliedFor(*nav_command, 3), start + 6ms);
-  check(zero.has_value(), "pending Nav APPLIED must release stop zero");
-  check(zero->kind == BridgeCommandKind::DeactivateZero,
-        "pending stop must preserve planned zero kind");
+  const auto zero =
+      core.onDeactivate(DeactivateMessage{kBridgeBoot, kControllerBoot, 3}, start + 6ms);
+  check(zero.has_value(), "deactivation must replace unexecuted nav with zero immediately");
+  check(zero->kind == BridgeCommandKind::DeactivateZero, "deactivation must retain typed zero");
+  check(zero->bridge_command_seq == nav_command->bridge_command_seq + 1,
+        "cancelling a nav must not reuse its command identity");
   check(core.status(start + 6ms).output_ack.producerBootId().empty(),
-        "Nav applied after stop request must not publish output ACK");
-  (void)core.onApplied(appliedFor(*zero, 4), start + 7ms);
+        "cancelled nav must never become an applied output ACK");
+  check(!core.status(start + 6ms).has_latest, "deactivation must discard queued future nav");
+  check(!core.stoppedEvidence().has_value(), "issuing zero is not physical stop evidence");
+  (void)core.onApplied(appliedFor(*zero, 3), start + 7ms);
   check(core.status(start + 7ms).lifecycle == BridgeLifecycle::Stopped,
         "stop zero must complete planned deactivation");
+  check(core.stoppedEvidence()->bridge_command_seq == zero->bridge_command_seq,
+        "stop evidence must belong to executed zero only");
+}
+
+void testCancelledNavAppliedCannotAcknowledgeDeactivation() {
+  const auto start = TimePoint{} + 21s;
+  MujocoDriverBridgeCore core(config());
+  activateToReady(core, start);
+  const auto nav_command = core.submitNav(nav(start + 4ms, 81));
+  const auto zero = core.onDeactivate(
+      DeactivateMessage{kBridgeBoot, kControllerBoot, 3}, start + 5ms);
+  check(nav_command.has_value() && zero.has_value(), "cancel fixture must issue both commands");
+  (void)core.onApplied(appliedFor(*nav_command, 3), start + 6ms);
+  check(core.status(start + 6ms).lifecycle == BridgeLifecycle::FaultClosed,
+        "a cancelled nav APPLIED cannot substitute for applied stop zero");
+  check(!core.stoppedEvidence().has_value(), "cancelled nav must not provide stop evidence");
+  check(core.status(start + 6ms).output_ack.producerBootId().empty(),
+        "cancelled nav must not provide execution evidence");
 }
 
 void testSafetyZeroReturnsToNonMotionReady() {
@@ -986,6 +1003,7 @@ int main() {
     testPlannedDeactivatePublishesTypedPhysicalStopEvidence();
     testInvalidDeactivateAppliedNeverPublishesStopEvidence();
     testPendingNavStopSuppressesAckThenEmitsZero();
+    testCancelledNavAppliedCannotAcknowledgeDeactivation();
     testSafetyZeroReturnsToNonMotionReady();
     testPlannedDeactivateSupersedesInFlightSafetyStop();
     testRealCoreWatchdogEmitsSafetyZero();

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ruff: noqa: D103, S310, S607
 """Read-only non-motion readiness soak for LingTu field validation."""
 
 from __future__ import annotations
@@ -30,27 +29,19 @@ READ_ONLY_ENDPOINT_NAMES = {
     "/api/v1/locations": "locations",
 }
 READ_ONLY_ENDPOINTS = tuple(READ_ONLY_ENDPOINT_NAMES)
-SCHEMA_VERSIONED_ENDPOINTS = {
-    "bootstrap",
-    "capabilities",
-    "readiness",
-    "localization",
-    "navigation",
-    "state",
-    "path",
-    "scene_graph",
-    "locations",
+EXPECTED_SCHEMA_VERSIONS = {
+    "bootstrap": 4,
+    "capabilities": 2,
+    "readiness": 1,
+    "localization": 1,
+    "navigation": 3,
+    "state": 4,
+    "path": 1,
+    "scene_graph": 1,
+    "locations": 1,
 }
 
-IDLE_SOURCES = {"", "none", "unknown", "null"}
-MOVING_STATES = {
-    "EXECUTING",
-    "NAVIGATING",
-    "PLANNING",
-    "EXPLORING",
-    "RECOVERY",
-    "PATROLLING",
-}
+IDLE_TASK_STATES = {"IDLE", "PAUSED", "SUCCESS", "FAILED", "CANCELLED"}
 BAD_LOCALIZATION_STATES = {"no_odometry", "lost", "relocalizing", "initializing"}
 NON_MOTION_NAVIGATION_BLOCKERS = {
     "navigation_session_inactive",
@@ -85,7 +76,6 @@ def thresholds() -> dict[str, float | int]:
     return {
         "min_samples": env_int("LINGTU_SOAK_MIN_SAMPLES", 3),
         "min_slam_hz": env_float("LINGTU_SOAK_MIN_SLAM_HZ", 1.0),
-        "min_map_points": env_float("LINGTU_SOAK_MIN_MAP_POINTS", 1.0),
         "max_odom_age_ms": env_float("LINGTU_SOAK_MAX_ODOM_AGE_MS", 1500.0),
         "max_cloud_age_ms": env_float("LINGTU_SOAK_MAX_CLOUD_AGE_MS", 5000.0),
         "max_diag_age_ms": env_float("LINGTU_SOAK_MAX_DIAG_AGE_MS", 3000.0),
@@ -99,10 +89,6 @@ def thresholds() -> dict[str, float | int]:
         ),
         "max_xy_drift_m": env_float("LINGTU_SOAK_MAX_XY_DRIFT_M", 0.30),
         "max_yaw_drift_rad": env_float("LINGTU_SOAK_MAX_YAW_DRIFT_RAD", 0.35),
-        "max_map_points_drop_ratio": env_float(
-            "LINGTU_SOAK_MAX_MAP_POINTS_DROP_RATIO",
-            0.75,
-        ),
     }
 
 
@@ -186,12 +172,12 @@ def advertised_read_only_endpoints(payloads: dict[str, dict[str, Any]]) -> dict[
 
 def client_contract_violations(payloads: dict[str, dict[str, Any]]) -> list[str]:
     violations: list[str] = []
-    checked = set(SCHEMA_VERSIONED_ENDPOINTS)
+    expected_versions = dict(EXPECTED_SCHEMA_VERSIONS)
     if "traffic" in payloads:
-        checked.add("traffic")
-    for name in sorted(checked):
+        expected_versions["traffic"] = 1
+    for name, expected in sorted(expected_versions.items()):
         payload = payloads.get(name) or {}
-        if payload.get("schema_version") != 1:
+        if payload.get("schema_version") != expected:
             violations.append(f"{name}.schema_version")
 
     bootstrap = payloads.get("bootstrap") or {}
@@ -219,6 +205,11 @@ def http_json(gateway: str, path: str, timeout: float = 3.0) -> tuple[int | None
     started = time.monotonic()
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        api_key = os.environ.get("LINGTU_API_KEY", "").strip()
+        target = urlparse(url)
+        configured = urlparse(gateway)
+        if api_key and (target.scheme, target.netloc) == (configured.scheme, configured.netloc):
+            req.add_header("X-API-Key", api_key)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read(2_000_000).decode("utf-8", "replace")
             code = resp.getcode()
@@ -235,17 +226,6 @@ def http_json(gateway: str, path: str, timeout: float = 3.0) -> tuple[int | None
     if not isinstance(payload, dict):
         payload = {"raw": payload}
     return code, payload, None, round((time.monotonic() - started) * 1000.0, 1)
-
-
-def command_source_name(control: dict[str, Any]) -> str:
-    source = control.get("active_cmd_source")
-    if source in (None, "", "unknown"):
-        source = control.get("active_source")
-    if isinstance(source, dict):
-        source = source.get("name") or source.get("source") or source.get("owner") or "none"
-    if source in (None, ""):
-        return "none"
-    return str(source)
 
 
 def ready_status_is_non_motion_safe(
@@ -269,12 +249,11 @@ def blockers_are_non_motion_safe(sample: dict[str, Any]) -> bool:
     blockers = {str(blocker) for blocker in sample.get("navigation_blockers") or []}
     if not blockers or not blockers.issubset(NON_MOTION_NAVIGATION_BLOCKERS):
         return False
-    source = str(sample.get("active_cmd_source") or "none").lower()
-    nav_state = str(sample.get("navigation_state") or "").upper()
     return (
         sample.get("non_motion_safe") is True
-        and source in IDLE_SOURCES
-        and nav_state not in MOVING_STATES
+        and sample.get("control_authority") == "NONE"
+        and sample.get("task_state") in IDLE_TASK_STATES
+        and sample.get("motion_observation") == "QUIET"
     )
 
 
@@ -397,17 +376,27 @@ def sample_violations(sample: dict[str, Any], limits: dict[str, float | int]) ->
             violations.append(f"{key}>{limit:g}")
     if sample["slam_hz"] is None or sample["slam_hz"] < float(limits["min_slam_hz"]):
         violations.append(f"slam_hz<{float(limits['min_slam_hz']):g}")
-    if sample["map_points"] is None or sample["map_points"] < float(limits["min_map_points"]):
-        violations.append(f"map_points<{float(limits['min_map_points']):g}")
     confidence = sample.get("confidence")
     if confidence is not None and confidence < float(limits["min_localization_confidence"]):
         warnings.append(f"confidence<{float(limits['min_localization_confidence']):g}")
-    source = str(sample.get("active_cmd_source") or "none").lower()
-    if source not in IDLE_SOURCES:
-        violations.append(f"active_cmd_source={sample.get('active_cmd_source')}")
-    nav_state = str(sample.get("navigation_state") or "").upper()
-    if nav_state in MOVING_STATES:
-        violations.append(f"navigation_state={nav_state}")
+    authority = str(sample.get("control_authority") or "UNKNOWN").upper()
+    if authority != "NONE":
+        violations.append(f"control_authority={authority}")
+    task_state = str(sample.get("task_state") or "UNKNOWN").upper()
+    if task_state not in IDLE_TASK_STATES:
+        violations.append(f"task_state={task_state}")
+    admission = str(sample.get("goal_admission") or "UNKNOWN").upper()
+    if admission not in {"ACCEPTING", "BLOCKED"}:
+        violations.append(f"goal_admission={admission}")
+    observation = str(sample.get("motion_observation") or "UNKNOWN").upper()
+    if observation != "QUIET":
+        violations.append(f"motion_observation={observation}")
+    permission = str(sample.get("motion_permission") or "UNKNOWN").upper()
+    if permission not in {"CLEAR", "HELD", "ESTOPPED"}:
+        violations.append(f"motion_permission={permission}")
+    stop_confirmation = str(sample.get("stop_confirmation") or "UNKNOWN").upper()
+    if stop_confirmation not in {"NOT_REQUESTED", "CONFIRMED"}:
+        violations.append(f"stop_confirmation={stop_confirmation}")
     blockers = sample.get("navigation_blockers") or []
     if blockers and not blockers_are_non_motion_safe(sample):
         violations.append("navigation_blockers=" + ",".join(map(str, blockers)))
@@ -458,9 +447,11 @@ def sample_once(gateway: str, index: int, started_mono: float, limits: dict[str,
     if failed_modules:
         endpoint_errors.append("ready_failed_modules=" + ",".join(map(str, failed_modules)))
 
-    nav_readiness = mapping(nav.get("readiness"))
-    nav_control = mapping(nav.get("control"))
-    mission = mapping(nav.get("mission"))
+    task = mapping(nav.get("task"))
+    admission = mapping(nav.get("goal_admission"))
+    control = mapping(nav.get("control"))
+    motion = mapping(nav.get("motion"))
+    nav_readiness = mapping(nested(client_readiness, "runtime", "navigation"))
     slam = mapping(nested(health, "sensors", "slam"))
 
     sample = {
@@ -502,7 +493,6 @@ def sample_once(gateway: str, index: int, started_mono: float, limits: dict[str,
             first_value(
                 loc.get("has_odometry"),
                 health.get("has_odom"),
-                nested(state_payload, "navigation", "has_odometry"),
             )
         ),
         "pose_fresh": as_bool(loc.get("pose_fresh")),
@@ -515,17 +505,17 @@ def sample_once(gateway: str, index: int, started_mono: float, limits: dict[str,
         "map_cloud_fresh": as_bool(loc.get("map_cloud_fresh")),
         "localizer_health": first_value(loc.get("localizer_health"), loc.get("localizer_health_raw")),
         "slam_hz": first_float(slam.get("hz"), health.get("slam_hz")),
+        # The viewer cache can be empty while native SLAM publishes healthy data.
         "map_points": first_float(health.get("map_points")),
-        "navigation_state": first_value(nav.get("state"), mission.get("state")),
-        "can_accept_goal": as_bool(
-            first_value(
-                nav.get("can_accept_goal"),
-                nav_readiness.get("can_accept_goal"),
-                nav_readiness.get("can_execute_autonomy"),
-            )
-        ),
+        "task_state": str(task.get("state") or "UNKNOWN").upper(),
+        "goal_admission": str(admission.get("state") or "UNKNOWN").upper(),
         "navigation_blockers": list(nav_readiness.get("blockers") or []),
-        "active_cmd_source": command_source_name(nav_control),
+        "control_authority": str(control.get("authority") or "UNKNOWN").upper(),
+        "motion_permission": str(motion.get("permission") or "UNKNOWN").upper(),
+        "motion_observation": str(motion.get("observation") or "UNKNOWN").upper(),
+        "stop_confirmation": str(
+            motion.get("stop_confirmation") or "UNKNOWN"
+        ).upper(),
         "pose": extract_pose(state_payload, path_payload),
         "processes": process_rows(),
     }
@@ -595,8 +585,6 @@ def summarize(
         warnings.append("yaw_drift_unavailable")
     elif max_yaw_drift_rad > float(limits["max_yaw_drift_rad"]):
         violations.append(f"max_yaw_drift_rad>{float(limits['max_yaw_drift_rad']):g}")
-    if map_points_drop_ratio is not None and map_points_drop_ratio > float(limits["max_map_points_drop_ratio"]):
-        warnings.append(f"map_points_drop_ratio>{float(limits['max_map_points_drop_ratio']):g}")
 
     summary = {
         "sample_count": len(samples),
@@ -656,6 +644,7 @@ def summarize(
             ),
         },
         "map_points": stat([sample.get("map_points") for sample in samples]),
+        "map_points_source": "gateway_viewer_cache",
         "map_points_drop_ratio": map_points_drop_ratio,
         "max_xy_drift_m": max_xy_drift_m,
         "max_yaw_drift_rad": max_yaw_drift_rad,
@@ -663,11 +652,15 @@ def summarize(
         "localization_states": sorted(
             {str(sample.get("localization_state")) for sample in samples if sample.get("localization_state")}
         ),
-        "navigation_states": sorted(
-            {str(sample.get("navigation_state")) for sample in samples if sample.get("navigation_state")}
+        "task_states": sorted(
+            {str(sample.get("task_state")) for sample in samples if sample.get("task_state")}
         ),
-        "active_cmd_source_values": sorted(
-            {str(sample.get("active_cmd_source")) for sample in samples if sample.get("active_cmd_source")}
+        "control_authorities": sorted(
+            {
+                str(sample.get("control_authority"))
+                for sample in samples
+                if sample.get("control_authority")
+            }
         ),
         "processes": process_summary(samples),
     }
@@ -705,7 +698,7 @@ def print_text(report: dict[str, Any]) -> None:
         f"gateway={report['gateway']}"
     )
     print(
-        "  loc={} backend={} confidence={} slam_hz={} map_points={}".format(
+        "  loc={} backend={} confidence={} slam_hz={} viewer_map_points={}".format(
             ",".join(summary["localization_states"]) or "-",
             ",".join(summary["backends"]) or "-",
             summary["confidence"],
@@ -722,16 +715,16 @@ def print_text(report: dict[str, Any]) -> None:
         )
     )
     print(
-        "  drift max_xy_drift_m={} max_yaw_drift_rad={} map_points_drop_ratio={}".format(
+        "  drift max_xy_drift_m={} max_yaw_drift_rad={} viewer_map_points_drop_ratio={}".format(
             summary["max_xy_drift_m"],
             summary["max_yaw_drift_rad"],
             summary["map_points_drop_ratio"],
         )
     )
     print(
-        "  navigation states={} active_cmd_source_values={}".format(
-            ",".join(summary["navigation_states"]) or "-",
-            ",".join(summary["active_cmd_source_values"]) or "-",
+        "  task_states={} control_authorities={}".format(
+            ",".join(summary["task_states"]) or "-",
+            ",".join(summary["control_authorities"]) or "-",
         )
     )
     app_web = summary["app_web"]

@@ -38,6 +38,7 @@ exec > >(tee -a "$LOG") 2>&1
 
 echo "=== P0-06 Explore - $(date) - duration=${DURATION}s ==="
 API_KEY="${LINGTU_API_KEY:?set LINGTU_API_KEY}"
+AUTH_ARGS=(-H "Authorization: Bearer $API_KEY")
 
 json_field() {
   local field="$1"
@@ -49,7 +50,7 @@ stop_explore() {
 }
 
 echo "[1/6] Baseline health"
-curl -sf http://localhost:5050/api/v1/health >/dev/null || {
+curl -sf "${AUTH_ARGS[@]}" http://localhost:5050/api/v1/health >/dev/null || {
   echo "FAIL: Gateway down"
   exit 2
 }
@@ -63,7 +64,7 @@ fi
 trap stop_explore EXIT
 
 echo "[3/6] Exploration readiness"
-STATUS_JSON="$(curl -fsS -H "Authorization: Bearer $API_KEY" \
+STATUS_JSON="$(curl -fsS "${AUTH_ARGS[@]}" \
   http://127.0.0.1:5050/api/v1/explore/status)"
 echo "$STATUS_JSON" | python3 -m json.tool
 AVAILABLE="$(echo "$STATUS_JSON" | json_field available)"
@@ -77,7 +78,7 @@ fi
 echo ""
 echo "[4/6] Starting exploration through the Gateway"
 curl -fsS -X POST http://127.0.0.1:5050/api/v1/explore/start \
-  -H "Authorization: Bearer $API_KEY" \
+  "${AUTH_ARGS[@]}" \
   -H "Content-Type: application/json" \
   --data-binary '{}'
 
@@ -85,7 +86,7 @@ echo "[5/6] Observing exploration status for ${DURATION}s"
 DEADLINE=$((SECONDS + DURATION))
 SAW_EXPLORING=0
 while [[ $SECONDS -lt $DEADLINE ]]; do
-  STATUS_JSON="$(curl -fsS -H "Authorization: Bearer $API_KEY" \
+  STATUS_JSON="$(curl -fsS "${AUTH_ARGS[@]}" \
     http://127.0.0.1:5050/api/v1/explore/status)"
 SUMMARY="$(echo "$STATUS_JSON" | python3 -c '
 import json, sys

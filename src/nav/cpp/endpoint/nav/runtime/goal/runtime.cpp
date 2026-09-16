@@ -810,10 +810,17 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
 
   if (replacement_plan_in_progress_) {
     const std::string admission_error = admissionFailure(input);
+    if (before.busy && before.active_task_id.empty() &&
+        admission_error.rfind("input_gate_", 0) == 0 &&
+        !goalPlanInputGapIsRecoverable(input.fresh_admission.input_gate_reason)) {
+      replacement_plan_in_progress_ = false;
+      attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed,
+                             admission_error, true);
+      return result;
+    }
     GoalPlanAdvanceResult activated =
-        admission_error.empty()
-            ? goal_plan_.activateDeferredReplacement(input.wall_now_s,
-                                                     normalizedAdmission(input.fresh_admission))
+        (admission_error.empty() || admission_error.rfind("input_gate_", 0) == 0)
+            ? goal_plan_.activateDeferredReplacement(input.wall_now_s, input.fresh_admission)
             : goal_plan_.failDeferredReplacement(deferredReplacementAdmissionState(admission_error),
                                                  admission_error);
     if (activated.path_activated) {
@@ -832,6 +839,9 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
       attachExistingTerminal(result, std::move(terminal), task_id);
       return result;
     }
+    // Fresh input can restart a held replacement from the stopped pose.
+    before = goal_plan_.snapshot();
+    current = activeGoal(before);
   }
 
   if ((!before.active_task_id.empty() || !before.active_request_id.empty() ||

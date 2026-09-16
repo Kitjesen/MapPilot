@@ -165,16 +165,13 @@ imports. Machine-enforced ownership lives in
 ## Current References
 
 - Architecture index and sources of truth:
-  [`docs/architecture/README.md`](docs/architecture/README.md)
-- Current document/evidence status: [`docs/CURRENT.md`](docs/CURRENT.md)
+  [`docs/architecture.md`](docs/architecture.md)
+- Current documentation and claim boundaries: [`docs/README.md`](docs/README.md)
 - Product/runtime-graph contract:
   [`config/runtime_graph/README.md`](config/runtime_graph/README.md)
 - ProductControl package guide: [`src/lingtu/README.md`](src/lingtu/README.md)
-- Products, environments, and lifecycle commands: [`docs/QUICKSTART.md`](docs/QUICKSTART.md)
-- Build and platform instructions:
-  [`docs/01-getting-started/BUILD_GUIDE.md`](docs/01-getting-started/BUILD_GUIDE.md)
-- Robot-side operations: [`docs/04-deployment/lingtu_cli.md`](docs/04-deployment/lingtu_cli.md)
-- Validation levels and gates: [`docs/07-testing/README.md`](docs/07-testing/README.md)
+- Products, environments, lifecycle, and build: [`docs/getting-started.md`](docs/getting-started.md)
+- Robot-side operations: [`docs/operations.md`](docs/operations.md)
+- Validation levels and gates: [`docs/testing.md`](docs/testing.md)
 - Simulation architecture: [`sim/ARCHITECTURE.md`](sim/ARCHITECTURE.md)
-- External/Gateway integration boundary:
-  [`docs/09-integrations/README.md`](docs/09-integrations/README.md)
+- External/Gateway integration boundary: [`docs/api.md`](docs/api.md)

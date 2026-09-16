@@ -1089,9 +1089,154 @@ void testReplacementCompletionDefersBActivationUntilOldActiveTerminalAck() {
   const auto activated = fixture.coordinator.advancePlanningCycle(stopped_path_frame);
   require(activated.reason == "replacement_plan_completed" &&
               activated.plan_advance.path_activated &&
+              !activated.plan_advance.completion_consumed &&
+              fixture.goal_plan.snapshot().diagnostics.accepted &&
               fixture.goal_plan.snapshot().active_task_id == "task-b" &&
               fixture.countStatus("task-b", NavigationGoalState::PathActive) == 1U,
           "replacement B reused A's cleared retained-path gate after exact terminal ACK");
+}
+
+void testReplacementWaitsForFreshInputsThenReplansFromStoppedPose() {
+  Fixture fixture;
+  fixture.activate(fixture.request());
+  auto replacement = fixture.request("task-b", "request-b");
+  replacement.target = GoalPlanTarget{nav_kernel::Vec3{2.0, 5.0, 0.0}, 0.75};
+  require(fixture.goal_plan.submit(replacement, fixture.admission()).accepted,
+          "input-wait fixture could not submit replacement B");
+  const auto completed = fixture.waitForPlanning(
+      [](const GoalReplanRuntimeResult &result) { return result.terminal_after_stop.has_value(); },
+      30.6);
+  fixture.commitTerminal(completed);
+  const auto deferred = fixture.goal_plan.snapshot();
+  const int zero_calls_before_wait = fixture.keep_zero_calls;
+  for (int tick = 0; tick < 3; ++tick) {
+    auto stale = fixture.frameInput(30.7 + tick * 0.1);
+    stale.fresh_admission.input_ready = false;
+    stale.fresh_admission.input_gate_reason = "local_collision_stale";
+    const auto held = fixture.coordinator.advancePlanningCycle(stale);
+    require(!held.terminal_after_stop && !held.plan_advance.path_activated &&
+                held.zero_kept_fresh && fixture.activations.size() == 1U,
+            "transient stale input killed or activated deferred replacement instead of holding zero");
+    require(fixture.goal_plan.snapshot().deferred_replacement_task_id == "task-b" &&
+                fixture.countStatus("task-b", NavigationGoalState::Failed) == 0U,
+            "input wait lost replacement identity or published premature failure");
+  }
+  require(fixture.keep_zero_calls > zero_calls_before_wait && fixture.planner_calls.load() == 2,
+          "stale replacement did not refresh zero or planned without fresh input");
+
+  fixture.block_on_call.store(3);
+  auto fresh = fixture.frameInput(31.1);
+  fresh.fresh_admission.map_position = nav_kernel::Vec3{0.7, 0.2, 0.0};
+  const auto replanning = fixture.coordinator.advancePlanningCycle(fresh);
+  require(!replanning.terminal_after_stop && !replanning.plan_advance.path_activated,
+          "fresh input activated the pre-stop cached replacement path");
+  fixture.waitForPlannerCalls(3, "fresh input did not replan deferred replacement");
+  const auto requests = fixture.plannerRequests();
+  require(requests.back().start.x == 0.7 && requests.back().start.y == 0.2 &&
+              requests.back().goal.x == 2.0 && requests.back().goal.y == 5.0,
+          "replacement recovery used old pose or old goal");
+  fixture.release_blocked.store(true);
+  const auto activated = fixture.waitForPlanning(
+      [](const GoalReplanRuntimeResult &result) { return result.plan_advance.path_activated; },
+      31.2);
+  const auto active = fixture.goal_plan.snapshot();
+  require(!activated.terminal_after_stop && active.active_task_id == "task-b" &&
+              active.active_goal_epoch == deferred.deferred_replacement_goal_epoch &&
+              fixture.activations.size() == 2U &&
+              fixture.activations.back().path.front().x == 0.7 &&
+              fixture.countStatus("task-a", NavigationGoalState::Cancelled) == 1U &&
+              fixture.countStatus("task-a", NavigationGoalState::PathActive) == 1U &&
+              fixture.countStatus("task-b", NavigationGoalState::PathActive) == 1U,
+          "fresh replacement recovery changed task identity or revived old trajectory");
+}
+
+void testReplacementInputWaitStillHonorsCancelAndSupersession() {
+  for (const auto interruption : {GoalReplanRuntimeInterruption::kCancel,
+                                  GoalReplanRuntimeInterruption::kNewGoal}) {
+    Fixture fixture;
+    fixture.activate(fixture.request());
+    require(fixture.goal_plan.submit(fixture.request("task-b", "request-b"), fixture.admission())
+                .accepted,
+            "input-wait cancellation fixture could not submit B");
+    fixture.commitTerminal(fixture.waitForPlanning(
+        [](const GoalReplanRuntimeResult &result) { return result.terminal_after_stop.has_value(); },
+        32.0));
+    auto stale = fixture.frameInput(32.1);
+    stale.fresh_admission.input_ready = false;
+    stale.fresh_admission.input_gate_reason = "local_collision_stale";
+    const auto held = fixture.coordinator.advancePlanningCycle(stale);
+    require(!held.terminal_after_stop && held.zero_kept_fresh,
+            "replacement did not remain stopped during input wait");
+    const auto cancelled = fixture.coordinator.interrupt(interruption, 32.2);
+    require(cancelled.terminal_after_stop && cancelled.terminal_task_id == "task-b",
+            "cancel or new goal missed the input-waiting replacement");
+    fixture.commitTerminal(cancelled);
+    const auto recovered = fixture.coordinator.advancePlanningCycle(fixture.frameInput(32.3));
+    require(!recovered.terminal_after_stop && !recovered.plan_advance.path_activated &&
+                fixture.goal_plan.snapshot().deferred_replacement_task_id.empty() &&
+                fixture.countStatus("task-b", NavigationGoalState::Cancelled) == 1U &&
+                fixture.countStatus("task-b", NavigationGoalState::PathActive) == 0U,
+            "cancelled input-waiting replacement returned after fresh input");
+    if (interruption == GoalReplanRuntimeInterruption::kNewGoal) {
+      auto newest = fixture.request("task-c", "request-c");
+      newest.target = GoalPlanTarget{nav_kernel::Vec3{8.0, 6.0, 0.0}, 0.0};
+      require(fixture.goal_plan.submit(newest, fixture.admission()).accepted,
+              "newest goal could not replace the cancelled input-waiting goal");
+      (void)fixture.waitForPlanning(
+          [](const GoalReplanRuntimeResult &result) { return result.plan_advance.path_activated; },
+          32.4);
+      require(fixture.goal_plan.snapshot().active_task_id == "task-c" &&
+                  fixture.activations.back().path.back().x == 8.0 &&
+                  fixture.countStatus("task-b", NavigationGoalState::PathActive) == 0U,
+              "newest goal activation revived an older replacement");
+    }
+  }
+}
+
+void testReplacementInputFaultsStillFailInsteadOfWaiting() {
+  for (const bool replan_started : {false, true}) {
+    for (const char *reason : {"simulation_clock_regressed", "odom_velocity_out_of_bounds",
+                              "localization_not_tracking", "local_collision_incomplete"}) {
+      Fixture fixture;
+      fixture.activate(fixture.request());
+      require(fixture.goal_plan.submit(fixture.request("task-b", "request-b"), fixture.admission())
+                  .accepted,
+              "input-fault fixture could not submit B");
+      fixture.commitTerminal(fixture.waitForPlanning(
+          [](const GoalReplanRuntimeResult &result) { return result.terminal_after_stop.has_value(); },
+          33.0));
+      if (replan_started) {
+        auto stale = fixture.frameInput(33.01);
+        stale.fresh_admission.input_ready = false;
+        stale.fresh_admission.input_gate_reason = "local_collision_stale";
+        const auto held = fixture.coordinator.advancePlanningCycle(stale);
+        require(!held.terminal_after_stop && held.zero_kept_fresh,
+                "replanning fault fixture did not hold for recoverable input gap");
+        fixture.block_on_call.store(3);
+        (void)fixture.coordinator.advancePlanningCycle(fixture.frameInput(33.02));
+        fixture.waitForPlannerCalls(3, "replanning fault fixture did not start a fresh plan");
+        require(fixture.goal_plan.snapshot().busy &&
+                    fixture.goal_plan.snapshot().deferred_replacement_task_id.empty(),
+                "replanning fault fixture still had a deferred activation");
+      }
+      auto fault = fixture.frameInput(33.1);
+      fault.fresh_admission.input_ready = false;
+      fault.fresh_admission.input_gate_reason = reason;
+      const auto failed = fixture.coordinator.advancePlanningCycle(fault);
+      require(failed.terminal_after_stop && failed.terminal_task_id == "task-b" &&
+                  failed.reason == std::string{"input_gate_"} + reason,
+              "irrecoverable input fault was held indefinitely or activated replacement");
+      fixture.commitTerminal(failed);
+      fixture.release_blocked.store(true);
+      const auto recovered = fixture.coordinator.advancePlanningCycle(fixture.frameInput(33.2));
+      const auto terminal_state = replan_started ? NavigationGoalState::Cancelled
+                                                : NavigationGoalState::Failed;
+      require(!recovered.plan_advance.path_activated &&
+                  fixture.countStatus("task-b", terminal_state) == 1U &&
+                  fixture.countStatus("task-b", NavigationGoalState::PathActive) == 0U,
+              "failed input-fault replacement returned without a new request");
+    }
+  }
 }
 
 void testReplacementActivationAfterAckRechecksFreshEstopAdmission() {
@@ -2399,6 +2544,9 @@ int main() {
   testGoalReachedRequiresStableCapturedAndCurrentPlan();
   testReachedClosesAThenResumesPendingB();
   testReplacementCompletionDefersBActivationUntilOldActiveTerminalAck();
+  testReplacementWaitsForFreshInputsThenReplansFromStoppedPose();
+  testReplacementInputWaitStillHonorsCancelAndSupersession();
+  testReplacementInputFaultsStillFailInsteadOfWaiting();
   testReplacementActivationAfterAckRechecksFreshEstopAdmission();
   testReplacementActivationAfterAckRechecksStoredMapIdentity();
   testDeferredReplacementInterruptionsCloseBWithExactNonProjectingTerminals();

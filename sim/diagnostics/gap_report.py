@@ -32,8 +32,8 @@ DIMOS_REFERENCE_SURFACES: dict[str, dict[str, str]] = {
 
 DIMOS_SOURCE_LINKS = {
     "dimos_repository": "https://github.com/dimensionalOS/dimos",
-    "lingtu_gap_matrix": "docs/research/dimos_benchmark_matrix.md",
-    "lingtu_validation_flow": "docs/07-testing/simulation/ALGORITHM_VALIDATION_FLOW.md",
+    "lingtu_gap_matrix": "docs/roadmap.md",
+    "lingtu_validation_flow": "docs/simulation.md",
 }
 PIPELINE_TRACE = {
     "schema_version": "lingtu.dimos_pipeline_trace.v1",

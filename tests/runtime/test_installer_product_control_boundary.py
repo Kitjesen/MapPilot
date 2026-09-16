@@ -9,8 +9,8 @@ import sys
 import uuid
 from pathlib import Path
 
+from lingtu.assembly.graph import ProcessSpec
 from lingtu.run_plan import RunPlan
-from runtime.graph import ProcessSpec
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -45,7 +45,8 @@ def _write_current_run_plan(path: Path, current_path: Path) -> None:
         processes=(maps, driver),
         available_processes=(maps, driver),
         stop_before_start=(),
-        contracts=("lingtu.product.nav.v1",),
+        required_topics=(),
+        required_capabilities=(),
         critical_modules=(),
         route_contract=None,
         host_config={},
@@ -88,7 +89,7 @@ def _run_native_installer_plan_reader(
         for item in (str(ROOT / "src"), env.get("PYTHONPATH", ""))
         if item
     )
-    return subprocess.run(  # noqa: S603 - executes the checked-in installer reader.
+    return subprocess.run(
         [sys.executable, "-", str(path), str(current_path)],
         input=program,
         text=True,
@@ -180,6 +181,8 @@ def test_catalog_installer_boot_enablement_is_catalog_gated() -> None:
     assert 'REQUESTED_ENABLE="${LINGTU_ENABLE_SERVICE:-${ENABLE_DEFAULT}}"' in script
     assert 'if [ "${CATALOG_ENABLE_DEFAULT}" = "1" ]; then' in script
     assert 'systemctl enable "${SERVICE_NAME}"' in script
+    assert 'systemctl disable "${SERVICE_NAME}"' in script
+    assert 'systemctl disable --now "${SERVICE_NAME}"' not in script
     assert "ProductControl owns Product role activation" in script
 
 
@@ -202,7 +205,7 @@ def test_gateway_key_helper_points_to_product_switch() -> None:
 
 
 def test_deployment_guide_uses_product_lifecycle_commands() -> None:
-    guide = _read("docs/04-deployment/README.md")
+    guide = _read("docs/operations.md")
 
     assert "switch / status / stop" in guide
     assert "svc restart" not in guide
@@ -210,7 +213,7 @@ def test_deployment_guide_uses_product_lifecycle_commands() -> None:
 
 
 def test_web_guide_keeps_restart_ownership_in_product_control() -> None:
-    guide = _read("docs/04-deployment/WEB_GUIDE.md")
+    guide = " ".join(_read("docs/operations.md").split())
 
     assert "可按各自角色独立观测" in guide
     assert "当前 RunPlan 与 ProductControl 统一拥有" in guide

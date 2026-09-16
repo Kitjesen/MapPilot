@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: S106
 import importlib.util
 import re
 import sys

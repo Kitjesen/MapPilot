@@ -1,3 +1,4 @@
+import sys
 import threading
 import time
 from collections import defaultdict, deque
@@ -12,6 +13,10 @@ from pynput import keyboard as pynput_keyboard
 from scipy.spatial.transform import Rotation as R
 
 REPO_ROOT = Path(__file__).resolve().parents[6]
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(REPO_ROOT))
+from sim.runtime.control import thunderv4_flat as flat
+
 ROBOT_DIR = REPO_ROOT / "sim" / "packages" / "robots" / "doso" / "thunder_v4"
 DEFAULT_MODEL_PATH = ROBOT_DIR / "mjcf" / "thunderv4.xml"
 DEFAULT_POLICY_PATH = (
@@ -21,14 +26,14 @@ DEFAULT_POLICY_PATH = (
     / "thunder_v4"
     / "locomotion"
     / "policy"
-    / "policy_1119.onnx"
+    / "policy_4998.onnx"
 )
 DEFAULT_PHYSICS_TIMESTEP_S = 0.005
 DEFAULT_POLICY_DECIMATION = 4
 
 
 class _OnnxHistoryPolicy:
-    """Torch-call-compatible ONNX wrapper for the 5 x 57 policy_1119 input."""
+    """Torch-call-compatible wrapper for flat 53-D and legacy 285-D ONNX inputs."""
 
     def __init__(self, path: Path, *, session=None) -> None:
         if session is None:
@@ -45,10 +50,12 @@ class _OnnxHistoryPolicy:
             )
         inputs = session.get_inputs()
         outputs = session.get_outputs()
-        if len(inputs) != 1 or tuple(inputs[0].shape) != (1, 285):
+        input_shape = tuple(inputs[0].shape) if len(inputs) == 1 else ()
+        self.flat53 = input_shape in {("batch", 53), (None, 53), (1, 53)}
+        if not self.flat53 and input_shape != (1, 285):
             shape = None if len(inputs) != 1 else tuple(inputs[0].shape)
             raise ValueError(f"policy_1119 input must be [1, 285], got {shape!r}")
-        if len(outputs) != 1 or tuple(outputs[0].shape) != (1, 16):
+        if len(outputs) != 1 or tuple(outputs[0].shape) != (input_shape[0], 16):
             shape = None if len(outputs) != 1 else tuple(outputs[0].shape)
             raise ValueError(f"policy_1119 output must be [1, 16], got {shape!r}")
         self._session = session
@@ -58,6 +65,11 @@ class _OnnxHistoryPolicy:
 
     def __call__(self, observation: torch.Tensor) -> torch.Tensor:
         frame = np.asarray(observation.detach().cpu().numpy(), dtype=np.float32).reshape(-1)
+        if self.flat53:
+            action = self._session.run(
+                [self._output_name], {self._input_name: frame.reshape(1, 53)}
+            )[0]
+            return torch.from_numpy(np.asarray(action, dtype=np.float32))
         if frame.size != 57:
             raise ValueError(f"policy_1119 observation frame must contain 57 values, got {frame.size}")
         if not self._history:
@@ -605,7 +617,7 @@ def start_keyboard_listener():
     listener.start()
 
 
-def get_obs(data, vel_cmd, last_action, qpos_ids, qvel_ids, debug=False):
+def get_obs(data, vel_cmd, last_action, qpos_ids, qvel_ids, debug=False, *, flat53=False):
     q = data.qpos[qpos_ids].astype(np.double) - default_angle
     q += np.random.uniform(-0.01, 0.01, q.shape)
 
@@ -622,6 +634,12 @@ def get_obs(data, vel_cmd, last_action, qpos_ids, qvel_ids, debug=False):
 
     gyro_world = r_imu.apply(gyro_local)
     gyro = r_base.apply(gyro_world, inverse=True) * 0.25
+
+    if flat53:
+        return flat.observation(
+            gyro / 0.25, proj, [vel_cmd.vx, vel_cmd.vy, vel_cmd.dyaw],
+            data.qpos[qpos_ids], data.qvel[qvel_ids], last_action,
+        )
 
     obs = np.concatenate(
         [
@@ -780,10 +798,11 @@ def run_mujoco(
     # Set initial state
     data.qpos[:3] = [0, 0, cfg.robot_config.init_height]
     data.qpos[3:7] = [1, 0, 0, 0]  # quaternion [w, x, y, z]
-    data.qpos[qpos_ids] = default_angle.copy()
+    initial_pose = flat.STANDING_POSE if getattr(policies["A"], "flat53", False) else default_angle
+    data.qpos[qpos_ids] = initial_pose.copy()
     data.qvel[:] = 0.0
 
-    target_q = default_angle.copy()
+    target_q = initial_pose.copy()
     action = np.zeros(16, dtype=np.float32)
     last_action = np.zeros(16, dtype=np.float32)
 
@@ -807,11 +826,14 @@ def run_mujoco(
     try:
         for step in range(steps):
             if step % decimation == 0:
-                obs = get_obs(data, vel_cmd, last_action, qpos_ids, qvel_ids, debug=debug)
-
                 # Dynamic Policy Switching
                 # Select policy based on current pose state
                 current_policy = policies.get(current_pose_name, policies["A"])  # Default to A if not found
+                is_flat53 = getattr(current_policy, "flat53", False)
+                pose = flat.STANDING_POSE if is_flat53 else default_angle
+                kp_array = flat.KP if is_flat53 else cfg.robot_config.kp_array
+                kd_array = flat.KD if is_flat53 else cfg.robot_config.kd_array
+                obs = get_obs(data, vel_cmd, last_action, qpos_ids, qvel_ids, debug=debug, flat53=is_flat53)
 
                 with torch.inference_mode():
                     obs_tensor = torch.from_numpy(obs).unsqueeze(0).to(dtype=torch.float32)
@@ -821,11 +843,10 @@ def run_mujoco(
                 # print("action: ", action)
                 # print("================================================")
                 if step > 100:
-                    scaled_action = scale_action(action, cfg)
-                    target_q = scaled_action + default_angle
+                    target_q = flat.action_targets(action) if is_flat53 else scale_action(action, cfg) + pose
                     target_q[12:] = np.clip(target_q[12:], -velocity_limits[12:], velocity_limits[12:])
                 else:
-                    target_q = default_angle
+                    target_q = pose
                 last_action = action.copy()
 
             q = data.qpos[qpos_ids]

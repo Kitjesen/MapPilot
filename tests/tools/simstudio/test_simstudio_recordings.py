@@ -1,6 +1,5 @@
 """Validated recording read models for SimStudio runs."""
 
-# ruff: noqa: D103, S101
 
 from __future__ import annotations
 

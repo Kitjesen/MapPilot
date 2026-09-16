@@ -25,6 +25,29 @@ test('all web motion-start surfaces consume the shared gate', () => {
 
 test('estop reset UI warns that an old task never resumes implicitly', () => {
   const camera = source('components/CameraFeed.tsx')
-  assert.match(camera, /onResetEstop/)
+  const app = source('App.tsx')
+  assert.match(camera, /onClick=\{onResetEstop\}/)
+  assert.match(camera, /disabled=\{resetBusy \|\| !resetAllowed\}/)
+  assert.match(camera, /estop && <div className=\{styles\.estopOverlay\}/)
   assert.match(camera, /旧任务不会自动恢复/)
+  assert.match(app, /<Topbar[^>]*onStop=\{handleStop\}/)
+  assert.doesNotMatch(camera, /onStop|btnStop/)
+  assert.match(app, /if \(!estopResetGate\.allowed\)/)
+  assert.ok(app.indexOf('if (!confirmed) return') < app.indexOf('await api.resetEstop()'))
+})
+
+test('dashboard compares received state with the current render clock, not the preceding UI tick', () => {
+  const app = source('App.tsx')
+  assert.match(app, /nowMs:\s*Math\.max\(nowMs, sseState\.lastTruthAt \?\? 0\)/)
+  assert.doesNotMatch(app, /freshness = \{ nowMs, /)
+})
+
+test('scene preview is read-only while dispatch retains the shared motion gate', () => {
+  const scene = source('components/SceneView.tsx')
+  const preview = scene.slice(scene.indexOf('const handlePendingGoal ='), scene.indexOf('const handleSceneRelocalize ='))
+  assert.match(preview, /if \(previewDisabledReason\)/)
+  assert.doesNotMatch(preview, /canSendGoal|api\.sendGoal|showToast/)
+  const dispatch = scene.slice(scene.indexOf('const handleConfirmGoal ='), scene.indexOf('const handleDirectedExploration ='))
+  assert.ok(dispatch.indexOf('if (!canSendGoal)') < dispatch.indexOf('api.sendGoal'))
+  assert.match(dispatch, /if \(!res\.ok\)/)
 })

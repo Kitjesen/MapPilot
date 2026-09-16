@@ -140,6 +140,7 @@ class NativeSlamRelocalizationService:
         y: float,
         yaw: float,
         *,
+        z: float = 0.0,
         timeout_s: float = 30.0,
     ) -> RelocalizationResult:
         try:
@@ -158,6 +159,8 @@ class NativeSlamRelocalizationService:
             f"{float(x):g}",
             "--y",
             f"{float(y):g}",
+            "--z",
+            f"{float(z):g}",
             "--yaw",
             f"{float(yaw):g}",
             "--domain-id",

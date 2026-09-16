@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <array>
+#include <optional>
 #include <cstdint>
 #include <iosfwd>
 #include <string>
@@ -17,6 +19,8 @@ enum class SensorRecordType : std::uint8_t {
   OdomPrior = 3,
   RegisteredCloud = 4,
   Camera = 5,
+  SimulationClock = 6,
+  RegisteredCloudWithOrigin = 7,
 };
 
 struct SensorRecordHeader {
@@ -43,6 +47,7 @@ struct SensorRecordStats {
   std::uint64_t odom_priors{0};
   std::uint64_t registered_clouds{0};
   std::uint64_t camera{0};
+  std::uint64_t simulation_clocks{0};
   std::uint64_t bytes{0};
 };
 
@@ -61,6 +66,8 @@ SensorRecordReadStatus read_sensor_record(std::istream &input, SensorRecord &rec
 bool validate_sensor_record_header(const SensorRecordHeader &header, std::string &error);
 
 std::vector<lingtu::drivers::lidar::Point> decode_point_payload(const SensorRecord &record);
+
+std::optional<std::array<double, 3>> decode_sensor_origin(const SensorRecord &record);
 
 lingtu::drivers::lidar::ImuSample decode_imu_payload(const SensorRecord &record);
 

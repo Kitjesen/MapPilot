@@ -40,10 +40,13 @@ class NativeRelocalizer {
   // Registration is safe to run on copied scan/pose inputs while the SLAM
   // estimator continues on its owning thread. MapIcp serializes its mutable
   // localizer and rejects a result if the loaded-map generation changes.
+  // Only a prediction from an accepted alignment is locally refined;
+  // explicit and persisted initial poses use strict seed verification.
   NativeRelocalizationResult relocalize(
       const Cloud& scan_body,
       const Pose3d& map_body_guess,
-      const Pose3d& odom_body) const;
+      const Pose3d& odom_body,
+      bool refine_prediction = false) const;
 
   NativeRelocalizationResult globalRelocalize(
       const Cloud& scan_body,

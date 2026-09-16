@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from message.topics import TOPICS
 from runtime.module import Module
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
 from runtime.msgs.map import MapCloudFrame
@@ -20,12 +21,8 @@ from runtime.msgs.nav import Odometry
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat, PointCloud2
 from runtime.registry import register
-from runtime.runtime_interface import (
-    TOPICS,
-    runtime_fixed_path_frame_ids,
-    topic_default_frame_id,
-)
 from runtime.stream import In, Out
+from runtime.tf.frames import runtime_fixed_path_frame_ids, topic_default_frame_id
 
 logger = logging.getLogger(__name__)
 

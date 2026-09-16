@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
+from lingtu.assembly.compiler import compile_run_plan
+from lingtu.sim import viewer_input as viewer_input_module
 from lingtu.sim.viewer_input import (
     ViewerInput,
     ViewerInputConfig,
@@ -150,3 +153,21 @@ def test_viewer_input_requires_neutral_keys_before_first_motion() -> None:
     control.poll_once()
 
     assert [call[0] for call in client.calls] == ["claim", "sample"]
+
+
+@pytest.mark.parametrize("product", ["nav", "map", "teleop", "teleop_avoid"])
+def test_viewer_keyboard_follows_resolved_operator_capability(monkeypatch, product) -> None:
+    plan = compile_run_plan(
+        product, "sim", robot="doso/thunder_v4",
+        env_config={"backend": "mujoco", "localization": "fastlio2"},
+    )
+    keys = ViewerKeys(key_state=lambda _code: 0, foreground_title=lambda: "MuJoCo")
+    monkeypatch.setattr(viewer_input_module, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(viewer_input_module, "ViewerKeys", lambda: keys)
+
+    control = viewer_input_module.viewer_input_from_run_plan(plan, client_type=_Client)
+
+    assert plan.host_config["enable_teleop"] is True
+    assert control is not None
+    assert control.config.linear_speed_mps <= 0.5
+    control.close()

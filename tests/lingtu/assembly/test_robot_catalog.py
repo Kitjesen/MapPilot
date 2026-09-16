@@ -3,9 +3,9 @@ from pathlib import Path
 import yaml
 
 from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.graph.processes import ProcessArtifact
 from lingtu.assembly.products import resolve_product_host_runtime
 from runtime.config import load_config
-from runtime.graph.processes import ProcessArtifact
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ROBOT_ROOT = REPO_ROOT / "config" / "robots"

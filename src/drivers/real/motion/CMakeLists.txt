@@ -26,6 +26,27 @@ target_include_directories(lingtu_driver_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR
 target_compile_options(lingtu_driver_core PRIVATE ${_LINGTU_DRIVER_WARNINGS})
 
 if(BUILD_TESTING)
+  add_executable(test_go2_acquisition
+    "${_LINGTU_DRIVER_TEST_DIR}/test_go2_acquisition.cpp"
+    robots/unitree/go2/go2.cpp)
+  target_include_directories(test_go2_acquisition PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${_LINGTU_DRIVER_TEST_DIR}/fake_unitree")
+  target_compile_options(test_go2_acquisition PRIVATE ${_LINGTU_DRIVER_WARNINGS})
+  find_package(Threads REQUIRED)
+  target_link_libraries(test_go2_acquisition PRIVATE Threads::Threads)
+  add_test(NAME test_go2_acquisition COMMAND test_go2_acquisition)
+
+  add_executable(test_go2_joint_telemetry
+    "${_LINGTU_DRIVER_TEST_DIR}/test_go2_joint_telemetry.cpp"
+    robots/unitree/go2/go2.cpp)
+  target_include_directories(test_go2_joint_telemetry PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${_LINGTU_DRIVER_TEST_DIR}/fake_unitree")
+  target_compile_options(test_go2_joint_telemetry PRIVATE ${_LINGTU_DRIVER_WARNINGS})
+  target_link_libraries(test_go2_joint_telemetry PRIVATE Threads::Threads)
+  add_test(NAME test_go2_joint_telemetry COMMAND test_go2_joint_telemetry)
+
   add_executable(test_output_ack
     "${_LINGTU_DRIVER_TEST_DIR}/test_output_ack.cpp")
   target_include_directories(test_output_ack PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -80,9 +101,7 @@ if(LINGTU_DRIVER_BUILD_RUNTIME)
   else()
     find_package(CycloneDDS REQUIRED)
   endif()
-  add_subdirectory(
-    "${_LINGTU_ROOT}/src/message/cpp"
-    "${CMAKE_CURRENT_BINARY_DIR}/message_cpp")
+  include("${_LINGTU_ROOT}/cmake/LingTuDDS.cmake")
   set(_LINGTU_IDL "${_LINGTU_ROOT}/src/message/idl/messages.idl")
   lingtu_add_dds_c_messages(lingtu_driver_messages "${_LINGTU_IDL}")
 

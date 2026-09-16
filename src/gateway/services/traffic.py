@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -17,15 +18,13 @@ SSE_EVENT_TYPES = (
     "snapshot",
     "ping",
     "odometry",
+    "joint_state",
     "slam_status",
     "map_cloud",
     "map_scene",
     "scene_graph",
     "visual_servo_status",
     "safety",
-    "mission",
-    "navigation_state",
-    "navigation_goal_status",
     "navigation_status",
     "inspection_task_event",
     "lease",
@@ -65,6 +64,21 @@ RECOMMENDED_CLIENT_RATES_HZ: dict[str, float] = {
 
 def put_latest(queue: asyncio.Queue, item: Any) -> bool:
     """Put item without blocking, dropping one old item if the queue is full."""
+    if isinstance(item, Mapping) and item.get("type") == "joint_state":
+        retained: list[Any] = []
+        replaced = False
+        while not queue.empty():
+            queued = queue.get_nowait()
+            if isinstance(queued, Mapping) and queued.get("type") == "joint_state":
+                replaced = True
+            else:
+                retained.append(queued)
+        for queued in retained:
+            queue.put_nowait(queued)
+        if queue.full():
+            return True
+        queue.put_nowait(item)
+        return replaced
     try:
         queue.put_nowait(item)
         return False
@@ -81,6 +95,19 @@ def put_latest(queue: asyncio.Queue, item: Any) -> bool:
     except asyncio.QueueFull:
         return True
     return True
+
+
+def prepare_sse_delivery(event: Mapping[str, Any], *, now: float | None = None) -> dict[str, Any] | None:
+    """Refresh display sample age at dequeue, without rebasing its source clock."""
+    if event.get("type") != "joint_state":
+        return dict(event)
+    stamp = event.get("stamp")
+    if not isinstance(stamp, (float, int)) or not math.isfinite(stamp) or stamp <= 0:
+        return None
+    age_s = (time.time() if now is None else now) - stamp
+    if age_s > 2.0 or age_s < -1.0:
+        return None
+    return {**event, "source_age_s": max(0.0, age_s)}
 
 
 def normalize_sse_event(

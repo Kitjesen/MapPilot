@@ -1,10 +1,9 @@
 # LingTu device registry: physical hardware inventory.
 #
-# This file describes hardware assets and low-rate discovery/status metadata.
-# It must not decide runtime sensor wiring. Camera images, LiDAR point clouds,
-# IMU samples, and GNSS fixes are owned by native Product services. Camera
-# startup and read-only field diagnostics may read this inventory; it never
-# opens devices or decides Product dataflow.
+# This file describes supported hardware assets and discovery metadata. The
+# camera record is also the native camera service's startup input. Other device
+# endpoints come from the selected RobotConfig and RunPlan; editing an inventory
+# record here does not rewire Product dataflow.
 
 version: 1
 
@@ -60,6 +59,19 @@ devices:
         height: 480
         fps: 30
       enable_frame_sync: false
+      frame_id: camera_link
+    capabilities: [color, depth, intrinsics]
+
+  # Optional Go2 RGB-D accessory; enable only after USB discovery and calibration.
+  - id: realsense_d435i_main
+    type: camera
+    enabled: false
+    driver: realsense_native
+    description: "Intel RealSense D435i RGB-D Camera"
+    config:
+      serial_number: ""
+      color: {width: 640, height: 480, fps: 30}
+      depth: {width: 640, height: 480, fps: 30}
       frame_id: camera_link
     capabilities: [color, depth, intrinsics]
 

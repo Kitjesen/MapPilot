@@ -1,8 +1,8 @@
 #include "slam.hpp"
 #include "map_tracking_health.hpp"
 #include "imu_frame_contract.hpp"
-#include "message/cpp/topics.hpp"
-#include "message/cpp/qos.hpp"
+#include "message/generated/topics.hpp"
+#include "transport/dds/qos.hpp"
 #include "native/snapshot_file.hpp"
 
 #include "dds/dds.h"
@@ -44,6 +44,7 @@ using lingtu::slam::OdomSample;
 using lingtu::slam::PointXYZIT;
 using lingtu::slam::Pose3d;
 using lingtu::slam::ProjectMapTrackingHealth;
+using lingtu::slam::RelocalizationSearch;
 using lingtu::slam::SlamConfig;
 using lingtu::slam::SlamMode;
 using lingtu::slam::SlamOutputs;
@@ -177,6 +178,8 @@ OdomSample toOdomSample(const lingtu_dds_Odometry& msg) {
       msg.pose.pose.orientation.y,
       msg.pose.pose.orientation.z,
       msg.pose.pose.orientation.w};
+  // /odom_prior currently carries odom-frame velocity despite child_frame_id
+  // being body. Its native producer must migrate with this legacy input.
   sample.vx = msg.twist.twist.linear.x;
   sample.vy = msg.twist.twist.linear.y;
   sample.vz = msg.twist.twist.linear.z;
@@ -240,27 +243,38 @@ Pose3d composePoses(const Pose3d& lhs, const Pose3d& rhs) {
   return out;
 }
 
-lingtu_dds_Odometry toDdsOdom(
+std::optional<lingtu_dds_Odometry> toDdsOdom(
     const Pose3d& pose,
     double stamp_s,
-    double vx,
-    double vy,
-    double vz,
+    const std::optional<lingtu::slam::BodyTwist>& twist_body,
     const char* frame_id,
     const char* child_frame_id) {
+  // A pose without a synchronized twist is still diagnostic data, but must
+  // not refresh navigation odometry with an invented stationary velocity.
+  if (!twist_body) return std::nullopt;
   lingtu_dds_Odometry out{};
   fillHeader(out.header, stamp_s, frame_id);
   out.child_frame_id = const_cast<char*>(child_frame_id);
   out.pose.pose = toDdsPose(pose);
-  out.twist.twist.linear.x = vx;
-  out.twist.twist.linear.y = vy;
-  out.twist.twist.linear.z = vz;
+  out.twist.twist.linear.x = twist_body->vx;
+  out.twist.twist.linear.y = twist_body->vy;
+  out.twist.twist.linear.z = twist_body->vz;
+  out.twist.twist.angular.x = twist_body->wx;
+  out.twist.twist.angular.y = twist_body->wy;
+  out.twist.twist.angular.z = twist_body->wz;
   return out;
 }
 
 struct TfMessage {
   lingtu_dds_TFMessage msg{};
   std::array<lingtu_dds_TransformStamped, 1> transforms{};
+
+  void bindStorage() {
+    msg.transforms._maximum = static_cast<std::uint32_t>(transforms.size());
+    msg.transforms._length = static_cast<std::uint32_t>(transforms.size());
+    msg.transforms._buffer = transforms.data();
+    msg.transforms._release = false;
+  }
 };
 
 TfMessage toDdsTfMessage(const Transform3d& transform, double stamp_s) {
@@ -275,10 +289,7 @@ TfMessage toDdsTfMessage(const Transform3d& transform, double stamp_s) {
   stamped.transform.rotation.y = transform.pose.qy;
   stamped.transform.rotation.z = transform.pose.qz;
   stamped.transform.rotation.w = transform.pose.qw;
-  out.msg.transforms._maximum = static_cast<std::uint32_t>(out.transforms.size());
-  out.msg.transforms._length = static_cast<std::uint32_t>(out.transforms.size());
-  out.msg.transforms._buffer = out.transforms.data();
-  out.msg.transforms._release = false;
+  out.bindStorage();
   return out;
 }
 
@@ -662,6 +673,24 @@ std::string fastLioLidarUpdateJson(
       "}}";
 }
 
+std::string globalMappingJson(const SlamOutputs& out) {
+  return
+      "{\"state\":\"" + jsonEscape(out.global_map_state) +
+      "\",\"revision\":" + std::to_string(out.global_map_revision) +
+      ",\"source_epoch\":" + std::to_string(out.source_epoch) +
+      ",\"keyframes\":" + std::to_string(out.global_map_keyframes) +
+      ",\"registered_keyframes\":" + std::to_string(out.global_map_registered_keyframes) +
+      ",\"rejected_keyframes\":" + std::to_string(out.global_map_rejected_keyframes) +
+      ",\"dropped_frames\":" + std::to_string(out.global_map_dropped_frames) +
+      ",\"loops\":" + std::to_string(out.global_map_loops) +
+      ",\"optimizations\":" + std::to_string(out.global_map_optimizations) +
+      ",\"optimization_failures\":" + std::to_string(out.global_map_optimization_failures) +
+      ",\"busy\":" + (out.global_map_busy ? "true" : "false") +
+      ",\"frame_id\":\"" + jsonEscape(out.global_map_cloud ? out.global_map_cloud->frame_id : "") +
+      "\",\"stamp_s\":" + std::to_string(out.global_map_cloud ? out.global_map_cloud->stamp_s : 0.0) +
+      ",\"points\":" + std::to_string(out.global_map_cloud ? out.global_map_cloud->points.size() : 0) + "}";
+}
+
 std::string statusSnapshotJson(
     const SlamOutputs& out,
     const std::string& backend,
@@ -764,6 +793,7 @@ std::string statusSnapshotJson(
       "\"source_epoch\":" + std::to_string(out.source_epoch) + "," +
       "\"map_points\":" + std::to_string(map_points) + "," +
       "\"saved_map_points\":" + std::to_string(saved_map_points) + "," +
+      "\"global_mapping\":" + globalMappingJson(out) + "," +
       "\"registered_cloud_frame_id\":\"" + jsonEscape(registered_cloud_frame_id) + "\"," +
       "\"map_cloud_frame_id\":\"" + jsonEscape(map_cloud_frame_id) + "\"," +
       "\"saved_map_cloud_frame_id\":\"" + jsonEscape(saved_map_cloud_frame_id) + "\"," +
@@ -867,9 +897,9 @@ void writeTextAtomic(const std::string& path, const std::string& text) {
   }
 }
 
-void writeBytesAtomic(const std::string& path, const std::string& bytes, const char* label) {
+bool writeBytesAtomic(const std::string& path, const std::string& bytes, const char* label) {
   if (path.empty()) {
-    return;
+    return false;
   }
   const std::filesystem::path target(path);
   const std::filesystem::path parent = target.parent_path();
@@ -878,7 +908,7 @@ void writeBytesAtomic(const std::string& path, const std::string& bytes, const c
     std::filesystem::create_directories(parent, ec);
     if (ec) {
       std::fprintf(stderr, "%s mkdir failed: %s\n", label, parent.string().c_str());
-      return;
+      return false;
     }
   }
   const std::string tmp = path + ".tmp";
@@ -886,9 +916,11 @@ void writeBytesAtomic(const std::string& path, const std::string& bytes, const c
     std::ofstream out(tmp, std::ios::out | std::ios::binary | std::ios::trunc);
     if (!out) {
       std::fprintf(stderr, "%s open failed: %s\n", label, tmp.c_str());
-      return;
+      return false;
     }
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    out.flush();
+    if (!out) return false;
   }
   std::error_code ec;
   if (!lingtu::native::replaceSnapshotFile(tmp, path, &ec)) {
@@ -899,7 +931,9 @@ void writeBytesAtomic(const std::string& path, const std::string& bytes, const c
         tmp.c_str(),
         path.c_str(),
         ec.message().c_str());
+    return false;
   }
+  return true;
 }
 
 void appendU32(std::string& out, std::uint32_t value) {
@@ -914,7 +948,7 @@ void appendFloat(std::string& out, float value) {
   out.append(reinterpret_cast<const char*>(&value), sizeof(value));
 }
 
-void writeCloudSnapshotAtomic(const std::string& path, const Cloud& cloud) {
+bool writeCloudSnapshotAtomic(const std::string& path, const Cloud& cloud) {
   const auto& points = cloud.points;
   constexpr std::uint32_t kCols = 4;
   const auto n = static_cast<std::uint32_t>(points.size());
@@ -933,7 +967,7 @@ void writeCloudSnapshotAtomic(const std::string& path, const Cloud& cloud) {
     appendFloat(payload, point.z);
     appendFloat(payload, point.intensity);
   }
-  writeBytesAtomic(path, payload, "cloud_snapshot");
+  return writeBytesAtomic(path, payload, "cloud_snapshot");
 }
 
 void writeLidarScanSnapshotAtomic(const std::string& path, const LidarFrame& frame) {
@@ -1065,21 +1099,41 @@ std::optional<Pose3d> loadTrackSeed(const std::string& path, const std::string& 
       (std::istreambuf_iterator<char>(in)),
       std::istreambuf_iterator<char>());
   const auto saved_map = jsonStringValue(json, "map_path");
-  if (saved_map.has_value() && !map_path.empty() && *saved_map != map_path) {
+  if (map_path.empty() || !saved_map.has_value() || *saved_map != map_path) {
     return std::nullopt;
   }
   Pose3d pose;
   pose.x = jsonDoubleValue(json, "x").value_or(std::numeric_limits<double>::quiet_NaN());
   pose.y = jsonDoubleValue(json, "y").value_or(std::numeric_limits<double>::quiet_NaN());
   pose.z = jsonDoubleValue(json, "z").value_or(std::numeric_limits<double>::quiet_NaN());
-  pose.qx = jsonDoubleValue(json, "qx").value_or(0.0);
-  pose.qy = jsonDoubleValue(json, "qy").value_or(0.0);
-  pose.qz = jsonDoubleValue(json, "qz").value_or(0.0);
-  pose.qw = jsonDoubleValue(json, "qw").value_or(1.0);
-  if (!std::isfinite(pose.x) || !std::isfinite(pose.y) || !std::isfinite(pose.z)) {
+  pose.qx = jsonDoubleValue(json, "qx").value_or(std::numeric_limits<double>::quiet_NaN());
+  pose.qy = jsonDoubleValue(json, "qy").value_or(std::numeric_limits<double>::quiet_NaN());
+  pose.qz = jsonDoubleValue(json, "qz").value_or(std::numeric_limits<double>::quiet_NaN());
+  pose.qw = jsonDoubleValue(json, "qw").value_or(std::numeric_limits<double>::quiet_NaN());
+  const double quaternion_norm = std::hypot(std::hypot(pose.qx, pose.qy),
+                                          std::hypot(pose.qz, pose.qw));
+  if (!std::isfinite(pose.x) || !std::isfinite(pose.y) || !std::isfinite(pose.z) ||
+      !std::isfinite(quaternion_norm) || quaternion_norm <= 1e-12) {
     return std::nullopt;
   }
   return pose;
+}
+
+std::optional<Pose3d> trackSeedForRequest(
+    const std::optional<Pose3d>& explicit_pose,
+    const std::optional<Pose3d>& pending_seed,
+    const std::string& current_map_path,
+    const std::string& requested_map_path,
+    const std::string& seed_file) {
+  if (explicit_pose.has_value()) {
+    return explicit_pose;
+  }
+  const std::string& target_map =
+      requested_map_path.empty() ? current_map_path : requested_map_path;
+  if (!target_map.empty() && target_map == current_map_path && pending_seed.has_value()) {
+    return pending_seed;
+  }
+  return loadTrackSeed(seed_file, target_map);
 }
 
 void saveTrackSeed(
@@ -1574,6 +1628,9 @@ class DdsRuntime {
     map_writer_ = writer<lingtu_dds_PointCloud2>(
         lingtu::message::kSlamMapCloud.dds_topic.data(), &lingtu_dds_PointCloud2_desc, "map_cloud",
         QosProfile::LidarPointcloud);
+    global_map_writer_ = writer<lingtu_dds_PointCloud2>(
+        lingtu::message::kSlamCumulativeMapCloud.dds_topic.data(), &lingtu_dds_PointCloud2_desc,
+        "cumulative_map_cloud", QosProfile::LidarPointcloud);
     saved_map_writer_ = writer<lingtu_dds_PointCloud2>(
         lingtu::message::kSlamSavedMapCloud.dds_topic.data(),
         &lingtu_dds_PointCloud2_desc,
@@ -1676,6 +1733,10 @@ class DdsRuntime {
     logDdsError(dds_write(map_writer_, &msg), "dds_write(map_cloud)");
   }
 
+  void writeGlobalMap(const lingtu_dds_PointCloud2& msg) {
+    logDdsError(dds_write(global_map_writer_, &msg), "dds_write(cumulative_map_cloud)");
+  }
+
   void writeSavedMap(const lingtu_dds_PointCloud2& msg) {
     logDdsError(dds_write(saved_map_writer_, &msg), "dds_write(saved_map_cloud)");
   }
@@ -1703,8 +1764,9 @@ class DdsRuntime {
     logDdsError(dds_write(health_writer_, &msg), "dds_write(health)");
   }
 
-  void writeTf(const lingtu_dds_TFMessage& msg) {
-    logDdsError(dds_write(tf_writer_, &msg), "dds_write(tf)");
+  void writeTf(TfMessage& message) {
+    message.bindStorage();
+    logDdsError(dds_write(tf_writer_, &message.msg), "dds_write(tf)");
   }
 
  private:
@@ -1754,6 +1816,7 @@ class DdsRuntime {
   dds_entity_t registered_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t map_observation_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t map_writer_ = DDS_RETCODE_ERROR;
+  dds_entity_t global_map_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t saved_map_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t map_snapshot_ack_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t relocalization_response_writer_ = DDS_RETCODE_ERROR;
@@ -1808,6 +1871,10 @@ int main(int argc, char** argv) {
     double last_log_s = 0.0;
     double last_status_json_s = 0.0;
     double last_cloud_snapshot_s = 0.0;
+    std::uint64_t last_global_snapshot_epoch = 0;
+    std::uint64_t last_global_snapshot_revision = 0;
+    std::uint64_t last_global_dds_epoch = 0;
+    std::uint64_t last_global_dds_revision = 0;
     double last_lidar_scan_snapshot_s = 0.0;
     double last_registered_cloud_stamp_s = -1.0;
     double last_map_cloud_stamp_s = -1.0;
@@ -1842,6 +1909,7 @@ int main(int argc, char** argv) {
         !cli.map_path.empty() &&
         (!product_managed || envOrEmpty("LINGTU_ENV") == "sim");
     const bool repeat_track_against_map = cli.track_against_map_period_s > 0.0;
+    std::string track_against_map_path = cli.map_path;
     std::optional<Pose3d> track_against_map_seed = startup_track_seed;
     int track_against_map_failures = 0;
     std::uint64_t track_against_map_attempts = 0;
@@ -1861,11 +1929,11 @@ int main(int argc, char** argv) {
       if (track_against_map_failures == kTrackAgainstMapDegradedFailureCount) {
         // A stale saved pose must not block global localization forever. Input
         // waits are counted separately, so reaching this branch means the
-        // seeded geometric registration was actually rejected three times.
+        // local geometric registration was actually rejected three times.
         track_against_map_seed.reset();
         std::fprintf(
             stderr,
-            "track_against_map degraded after repeated seeded failures; falling back to global localization\n");
+            "track_against_map degraded after repeated localization failures; falling back to global localization\n");
       } else if (
           track_against_map_failures > kTrackAgainstMapDegradedFailureCount &&
           track_against_map_failures % 10 == 0) {
@@ -2055,9 +2123,19 @@ int main(int argc, char** argv) {
           last_track_against_map_success_s = -1.0;
           last_track_against_map_s = 0.0;
           last_track_against_map_scan_s = -1.0;
-          track_against_map_seed = request.has_initial_pose
-              ? std::optional<Pose3d>{poseFromDds(request.initial_pose)}
-              : std::optional<Pose3d>{};
+          // Starting the Product's tracking loop must not discard its saved
+          // full-pose seed. A different map can only load a matching seed.
+          track_against_map_seed = trackSeedForRequest(
+              request.has_initial_pose
+                  ? std::optional<Pose3d>{poseFromDds(request.initial_pose)}
+                  : std::nullopt,
+              track_against_map_seed,
+              track_against_map_path,
+              map_path,
+              cli.track_against_map_seed_file);
+          if (!map_path.empty()) {
+            track_against_map_path = map_path;
+          }
           const SlamOutputs out = backend->outputs();
           auto response = relocalizationResponse(
               request,
@@ -2123,6 +2201,10 @@ int main(int argc, char** argv) {
 
         if (action == "load_map") {
           command_status = backend->loadMap(map_path);
+          if (command_status.ok) {
+            track_against_map_path = map_path;
+            track_against_map_seed = loadTrackSeed(cli.track_against_map_seed_file, map_path);
+          }
         } else {
           if (!map_path.empty()) {
             if (product_managed) {
@@ -2142,11 +2224,16 @@ int main(int argc, char** argv) {
               dds.writeRelocalizationResponse(response.msg);
               return;
             }
+            track_against_map_path = map_path;
+            track_against_map_seed = loadTrackSeed(cli.track_against_map_seed_file, map_path);
           }
           command_status = backend->relocalize(
               action == "global_relocalize"
                   ? std::optional<Pose3d>{}
-                  : std::optional<Pose3d>{poseFromDds(request.initial_pose)});
+                  : std::optional<Pose3d>{poseFromDds(request.initial_pose)},
+              action == "global_relocalize"
+                  ? RelocalizationSearch::Global
+                  : RelocalizationSearch::Automatic);
         }
         if (command_status.ok &&
             (action == "seeded_relocalize" || action == "global_relocalize")) {
@@ -2155,7 +2242,8 @@ int main(int argc, char** argv) {
 
         const SlamOutputs out = backend->outputs();
         if (command_status.ok &&
-            (action == "seeded_relocalize" || action == "global_relocalize")) {
+            (action == "seeded_relocalize" || action == "global_relocalize") &&
+            track_against_map_path == cli.map_path) {
           saveTrackSeed(cli.track_against_map_seed_file, cli.map_path, out.relocalization_map_body);
         }
         if (command_status.ok && out.saved_map_cloud_map.has_value()) {
@@ -2198,7 +2286,7 @@ int main(int argc, char** argv) {
             note_track_failure(completed->message);
           }
           out = backend->outputs();
-          if (completed->ok) {
+          if (completed->ok && track_against_map_path == cli.map_path) {
             saveTrackSeed(
                 cli.track_against_map_seed_file,
                 cli.map_path,
@@ -2220,7 +2308,11 @@ int main(int argc, char** argv) {
             last_track_against_map_scan_s = out.registered_cloud_body->stamp_s;
             ++track_against_map_attempts;
             const Status start_status =
-                backend->startRelocalizeAsync(track_against_map_seed);
+                backend->startRelocalizeAsync(
+                    track_against_map_seed,
+                    track_against_map_failures >= kTrackAgainstMapDegradedFailureCount
+                        ? RelocalizationSearch::Global
+                        : RelocalizationSearch::Automatic);
             if (!start_status.ok && isTrackAgainstMapInputWait(start_status.message)) {
               note_track_wait(start_status.message);
             } else if (!start_status.ok) {
@@ -2249,34 +2341,34 @@ int main(int argc, char** argv) {
               : -1.0,
           backend->relocalizeAsyncInFlight()};
       if (out.map_odom_tf.has_value()) {
-        const auto msg = toDdsTfMessage(*out.map_odom_tf, out.stamp_s);
-        dds.writeTf(msg.msg);
+        auto msg = toDdsTfMessage(*out.map_odom_tf, out.stamp_s);
+        dds.writeTf(msg);
       }
       if (out.odometry_odom_body.has_value() &&
           std::abs(out.stamp_s - last_odometry_stamp_s) > 1e-6) {
-        last_odometry_stamp_s = out.stamp_s;
         const auto msg = toDdsOdom(
             *out.odometry_odom_body,
             out.stamp_s,
-            out.fastlio_velocity_x,
-            out.fastlio_velocity_y,
-            out.fastlio_velocity_z,
+            out.odometry_twist_body,
             "odom",
             "body");
-        dds.writeOdom(msg);
+        if (msg) {
+          last_odometry_stamp_s = out.stamp_s;
+          dds.writeOdom(*msg);
+        }
       }
       if (out.state_estimation_at_scan.has_value() &&
           std::abs(out.stamp_s - last_state_estimation_stamp_s) > 1e-6) {
-        last_state_estimation_stamp_s = out.stamp_s;
         const auto msg = toDdsOdom(
             *out.state_estimation_at_scan,
             out.stamp_s,
-            out.fastlio_velocity_x,
-            out.fastlio_velocity_y,
-            out.fastlio_velocity_z,
+            out.odometry_twist_body,
             "odom",
             "body");
-        dds.writeState(msg);
+        if (msg) {
+          last_state_estimation_stamp_s = out.stamp_s;
+          dds.writeState(*msg);
+        }
       }
       if (out.registered_cloud_body.has_value() &&
           std::abs(
@@ -2307,6 +2399,14 @@ int main(int argc, char** argv) {
         dds.writeMap(msg.msg);
         processed_scan_rate.mark(nowSeconds());
       }
+      if (out.global_map_cloud && (last_global_dds_epoch != out.source_epoch ||
+          last_global_dds_revision != out.global_map_revision)) {
+        auto msg = toDdsCloud(*out.global_map_cloud);
+        msg.bindStorage();
+        dds.writeGlobalMap(msg.msg);
+        last_global_dds_epoch = out.source_epoch;
+        last_global_dds_revision = out.global_map_revision;
+      }
       if (!cli.cloud_snapshot_dir.empty() && cloud_snapshot_period_s > 0.0) {
         const double t = nowSeconds();
         if (t - last_cloud_snapshot_s >= cloud_snapshot_period_s) {
@@ -2320,6 +2420,15 @@ int main(int argc, char** argv) {
           }
           if (out.saved_map_cloud_map.has_value()) {
             writeCloudSnapshotAtomic(base + "/saved_map_cloud.bin", *out.saved_map_cloud_map);
+          }
+          if (out.global_map_cloud && (last_global_snapshot_epoch != out.source_epoch ||
+              last_global_snapshot_revision != out.global_map_revision)) {
+            // Replace the entire corrected snapshot; never accumulate old revisions.
+            if (writeCloudSnapshotAtomic(base + "/global_map_cloud.bin", *out.global_map_cloud) &&
+                writeBytesAtomic(base + "/global_map_cloud.meta.json", globalMappingJson(out), "global_map_metadata")) {
+              last_global_snapshot_epoch = out.source_epoch;
+              last_global_snapshot_revision = out.global_map_revision;
+            }
           }
         }
       }

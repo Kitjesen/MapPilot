@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """S3 contract tests for SessionIntent and SessionComposer."""
 
 from __future__ import annotations

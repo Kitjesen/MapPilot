@@ -8,6 +8,7 @@ from typing import get_args
 import pytest
 
 from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.graph.loader import RuntimeGraph, load_runtime_graph, resolve_product_variant_spec
 from lingtu.assembly.native_nav import compile_native_nav_config
 from lingtu.assembly.products import resolve_product_host_runtime
 from lingtu.products import (
@@ -15,9 +16,7 @@ from lingtu.products import (
     ProductName,
     product_lifecycle,
 )
-from runtime.contracts.product_runtime import resolve_product_spec_contracts
-from runtime.graph.loader import RuntimeGraph, load_runtime_graph, resolve_product_variant_spec
-from runtime.runtime_interface import TOPICS
+from message.topics import TOPICS
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -213,13 +212,13 @@ def test_operator_mode_switches_match_the_cold_restart_executor() -> None:
 def test_teleop_avoid_is_map_free_native_assisted_teleop() -> None:
     lifecycle = OPERATOR_PRODUCT_LIFECYCLES["teleop_avoid"]
     product = load_runtime_graph().products["teleop_avoid"]
-    contract = resolve_product_spec_contracts("teleop_avoid", product)
+    contract = resolve_product_variant_spec("teleop_avoid", product)
 
     assert lifecycle.requires_map is False
     assert lifecycle.native_control_mode == "teleop_avoid"
     assert lifecycle.slam_mode == "mapping"
-    assert "/nav/local_path" in contract.topics
-    assert "operator_assisted_local_planner_control" in contract.capabilities
+    assert "/nav/local_path" in tuple(contract["topics"])
+    assert "operator_assisted_local_planner_control" in tuple(contract["capabilities"])
 
 
 def test_product_claims_match_enabled_features() -> None:
@@ -232,25 +231,26 @@ def test_product_claims_match_enabled_features() -> None:
     )
     inspection = products["inspection"]
     tracking = products["tracking"]
-    explore_contract = resolve_product_spec_contracts("explore", explore)
-    mapped_explore_contract = resolve_product_spec_contracts(
+    explore_contract = resolve_product_variant_spec("explore", explore)
+    mapped_explore_contract = resolve_product_variant_spec(
         "explore",
         explore,
         product_variant="map",
     )
-    inspection_contract = resolve_product_spec_contracts("inspection", inspection)
-    tracking_contract = resolve_product_spec_contracts("tracking", tracking)
+    inspection_contract = resolve_product_variant_spec("inspection", inspection)
+    tracking_contract = resolve_product_variant_spec("tracking", tracking)
 
-    assert "semantic_or_scheduled_goal_source" not in inspection_contract.capabilities
+    assert "semantic_or_scheduled_goal_source" not in tuple(inspection_contract["capabilities"])
     assert "target_chain" not in inspection
     assert "target_chain" not in tracking
-    assert tracking_contract.contract_ids == ("lingtu.product.tracking.v1",)
-    assert explore["requires_map"] is False
-    assert explore["slam_mode"] == "mapping"
-    assert "rolling_map_segment_execution" in explore_contract.capabilities
-    assert "octoplanner3d_global_planning" not in explore_contract.capabilities
+    assert tuple(tracking_contract["topics"]) == tuple(tracking["topics"])
+    live_explore = resolve_product_variant_spec("explore", explore)
+    assert live_explore["requires_map"] is False
+    assert live_explore["slam_mode"] == "mapping"
+    assert "rolling_map_segment_execution" in tuple(explore_contract["capabilities"])
+    assert "octoplanner3d_global_planning" not in tuple(explore_contract["capabilities"])
     assert mapped_explore["requires_map"] is True
     assert mapped_explore["slam_mode"] == "localization"
-    assert "octoplanner3d_global_planning" in mapped_explore_contract.capabilities
-    assert "rolling_map_segment_execution" in mapped_explore_contract.capabilities
-    assert TOPICS.exploration_snapshot in mapped_explore_contract.topics
+    assert "octoplanner3d_global_planning" in tuple(mapped_explore_contract["capabilities"])
+    assert "rolling_map_segment_execution" in tuple(mapped_explore_contract["capabilities"])
+    assert TOPICS.exploration_snapshot in tuple(mapped_explore_contract["topics"])

@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -17,12 +18,12 @@
 #include "clock_sync.hpp"
 #include "dds/dds.h"
 #include "messages.h"
-#include "message/cpp/qos.hpp"
-#include "message/cpp/topics.hpp"
-#include "message/cpp/exploration_command.hpp"
-#include "message/cpp/inspection_command.hpp"
-#include "message/cpp/navigation_command.hpp"
-#include "message/cpp/operator_motion.hpp"
+#include "transport/dds/qos.hpp"
+#include "message/generated/topics.hpp"
+#include "message/protocol/exploration.hpp"
+#include "message/protocol/inspection.hpp"
+#include "message/protocol/navigation.hpp"
+#include "message/protocol/operator_motion.hpp"
 #include "command/ingress.hpp"
 
 #if defined(_WIN32)
@@ -60,6 +61,7 @@ enum class TestDomainSlot : std::size_t {
   kClockAnchor,
   kDelayedClockAck,
   kConcurrentClients,
+  kJointTelemetry,
   kCount,
 };
 
@@ -438,6 +440,15 @@ void writeMapScene(
   MapSceneGridFixture esdf(
       "esdf", {1.0F, 2.0F},
       reset_epoch, observation_sequence, generation, stamp_s);
+  MapSceneGridFixture ground_height(
+      "ground_height", {0.1F, 0.2F},
+      reset_epoch, observation_sequence, generation, stamp_s);
+  MapSceneGridFixture ground_roughness(
+      "ground_roughness", {0.01F, 0.02F},
+      reset_epoch, observation_sequence, generation, stamp_s);
+  MapSceneGridFixture ground_support(
+      "ground_support", {3.0F, 4.0F},
+      reset_epoch, observation_sequence, generation, stamp_s);
 
   lingtu_dds_MapScene scene{};
   scene.header = live.layer.header;
@@ -454,6 +465,13 @@ void writeMapScene(
   scene.occupancy = occupancy.grid;
   scene.elevation = elevation.grid;
   scene.esdf = esdf.grid;
+  scene.ground_height = ground_height.grid;
+  scene.ground_roughness = ground_roughness.grid;
+  scene.ground_support = ground_support.grid;
+  MapSceneGridFixture surface_projection(
+      "surface_projection", {0.0F, 100.0F},
+      reset_epoch, observation_sequence, generation, stamp_s);
+  scene.surface_projection = surface_projection.grid;
   checked(dds_write(writer, &scene), "dds_write(test_map_scene)");
 }
 
@@ -1559,7 +1577,7 @@ void testEstopBypassesGoalAckWait() {
       LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
   goal_receipt.struct_size = sizeof(goal_receipt);
   std::thread goal_sender([&]() {
-    goal_result = lingtu_nav_client_start_task_with_receipt_v1(
+    goal_result = lingtu_nav_client_start_task_with_receipt_v2(
         client,
         "priority-task",
         "goal-without-ack",
@@ -1567,6 +1585,8 @@ void testEstopBypassesGoalAckWait() {
         2.0,
         0.0,
         0.0,
+        0.2,
+        0.3,
         500,
         &goal_receipt);
     if (goal_result != 0) {
@@ -1579,6 +1599,8 @@ void testEstopBypassesGoalAckWait() {
   check(
       std::string(goal_request->request_id) == "goal-without-ack",
       "priority test did not observe the blocked goal");
+  const bool limits_preserved = goal_request->max_speed_mps == 0.2 &&
+                                goal_request->acceptance_radius_m == 0.3;
   returnLoan(request_reader, goal_request);
 
   const auto estop_started = std::chrono::steady_clock::now();
@@ -1616,6 +1638,7 @@ void testEstopBypassesGoalAckWait() {
   goal_sender.join();
   lingtu_nav_client_destroy(client);
   dds_delete(participant);
+  check(limits_preserved, "C v2 goal constraints were lost on DDS");
   if (observation_error) {
     std::rethrow_exception(observation_error);
   }
@@ -2524,6 +2547,10 @@ void testMapSceneTelemetryAndCapacityGate() {
   std::vector<float> occupancy(header.occupancy.cell_count);
   std::vector<float> elevation(header.elevation.cell_count);
   std::vector<float> esdf(header.esdf.cell_count);
+  std::vector<float> surface_projection(header.surface_projection.cell_count);
+  std::vector<float> ground_height(header.ground_height.cell_count);
+  std::vector<float> ground_roughness(header.ground_roughness.cell_count);
+  std::vector<float> ground_support(header.ground_support.cell_count);
   lingtu_nav_map_scene_buffers_v1 buffers{};
   buffers.abi_version = LINGTU_NAV_MAP_SCENE_ABI_VERSION;
   buffers.struct_size = sizeof(buffers);
@@ -2539,12 +2566,22 @@ void testMapSceneTelemetryAndCapacityGate() {
   buffers.elevation_cell_capacity = elevation.size();
   buffers.esdf_cells = esdf.data();
   buffers.esdf_cell_capacity = esdf.size();
+  buffers.surface_projection_cells = surface_projection.data();
+  buffers.surface_projection_cell_capacity = surface_projection.size();
+  buffers.ground_height_cells = ground_height.data();
+  buffers.ground_height_cell_capacity = ground_height.size();
+  buffers.ground_roughness_cells = ground_roughness.data();
+  buffers.ground_roughness_cell_capacity = ground_roughness.size();
+  buffers.ground_support_cells = ground_support.data();
+  buffers.ground_support_cell_capacity = ground_support.size();
   result = lingtu_nav_client_take_map_scene_v1(
       client, &header, &buffers);
   check(result == 1, "C MapScene buffered copy failed");
   check(
       std::abs(accumulated[1].x - 3.0F) < 1e-6F &&
-          std::abs(esdf[1] - 2.0F) < 1e-6F,
+          std::abs(esdf[1] - 2.0F) < 1e-6F && surface_projection[1] == 100.0F &&
+          std::abs(ground_height[1] - 0.2F) < 1e-6F &&
+          std::abs(ground_roughness[1] - 0.02F) < 1e-6F && ground_support[1] == 4.0F,
       "C MapScene copied the wrong point or grid payload");
 
   bool rejected = false;
@@ -2928,6 +2965,87 @@ void testConcurrentClientsKeepClockAcksIsolated() {
   dds_delete(participant);
 }
 
+void testJointStateTelemetry() {
+  const int domain_id = testDomain(TestDomainSlot::kJointTelemetry);
+  const auto participant = checked(dds_create_participant(domain_id, nullptr, nullptr), "joint test participant");
+  const auto publisher = checked(dds_create_publisher(participant, nullptr, nullptr), "joint test publisher");
+  const auto writer = createWriter(participant, publisher, lingtu::message::kRobotJointStates, &lingtu_dds_JointState_desc);
+  const auto client = lingtu_nav_client_create(domain_id);
+  check(client != nullptr, "joint telemetry C client creation failed");
+  check((lingtu_nav_client_capabilities() & LINGTU_NAV_CLIENT_CAP_JOINT_STATE) != 0, "joint telemetry capability missing");
+  std::array<std::string, 12> names;
+  std::array<char *, 12> name_pointers{};
+  std::array<double, 12> positions{}, velocities{}, efforts{};
+  const std::array<std::string, 4> legs{"FR", "FL", "RR", "RL"};
+  const std::array<std::string, 3> joints{"hip", "thigh", "calf"};
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    names[i] = legs[i / 3] + "_" + joints[i % 3] + "_joint";
+    name_pointers[i] = names[i].data();
+    positions[i] = static_cast<double>(i) * 0.1;
+    velocities[i] = static_cast<double>(i) * 0.2;
+    efforts[i] = static_cast<double>(i) * 0.3;
+  }
+  lingtu_dds_JointState message{};
+  message.header.frame_id = const_cast<char *>("body");
+  message.robot_model = const_cast<char *>("go2");
+  message.names._buffer = name_pointers.data();
+  message.names._length = message.names._maximum = 12U;
+  message.position._buffer = positions.data();
+  message.position._length = message.position._maximum = 12U;
+  message.velocity._buffer = velocities.data();
+  message.velocity._length = message.velocity._maximum = 12U;
+  message.effort._buffer = efforts.data();
+  message.effort._length = message.effort._maximum = 12U;
+  const auto set_stamp = [&](double stamp) {
+    message.header.stamp.sec = static_cast<std::int32_t>(stamp);
+    message.header.stamp.nanosec = static_cast<std::uint32_t>((stamp - message.header.stamp.sec) * 1e9);
+  };
+  lingtu_nav_joint_state_v1 result{};
+  result.abi_version = LINGTU_NAV_JOINT_STATE_ABI_VERSION;
+  result.struct_size = sizeof(result);
+  set_stamp(nowSeconds() - 0.25);
+  const double original_stamp = stampSeconds(message.header.stamp);
+  int received = 0;
+  for (int attempt = 0; attempt < 100 && received == 0; ++attempt) {
+    checked(dds_write(writer, &message), "joint test write");
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    received = lingtu_nav_client_take_joint_state_v1(client, &result);
+  }
+  check(received == 1 && result.joint_count == 12, "joint telemetry did not cross DDS and C ABI");
+  check(result.timestamp_s == original_stamp, "joint source timestamp was rebased");
+  check(std::string(result.names[11]) == "RL_calf_joint", "joint names were reordered");
+  check(result.position[11] == positions[11] && result.velocity[11] == velocities[11] && result.effort[11] == efforts[11], "joint vectors changed");
+  check(lingtu_nav_client_take_joint_state_v1(client, &result) == 0, "consumed joint sample repeated");
+  const auto rejected = [&]() {
+    checked(dds_write(writer, &message), "invalid joint test write");
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    check(lingtu_nav_client_take_joint_state_v1(client, &result) == 0, "invalid/stale joint sample was accepted");
+  };
+  set_stamp(nowSeconds() - 3.0);
+  rejected();
+  set_stamp(nowSeconds() + 5.0);
+  rejected();
+  set_stamp(nowSeconds());
+  positions[0] = std::numeric_limits<double>::quiet_NaN();
+  rejected();
+  positions[0] = 0.0;
+  message.position._length = 11U;
+  rejected();
+  message.position._length = 12U;
+  set_stamp(nowSeconds());
+  positions[0] = 1.0;
+  checked(dds_write(writer, &message), "joint test pending write");
+  std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  set_stamp(nowSeconds());
+  positions[0] = 2.0;
+  checked(dds_write(writer, &message), "joint test latest write");
+  std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  check(lingtu_nav_client_take_joint_state_v1(client, &result) == 1 && result.position[0] == 2.0, "joint pending queue did not keep newest sample");
+  check(lingtu_nav_client_take_joint_state_v1(client, &result) == 0, "joint older pending sample leaked through");
+  lingtu_nav_client_destroy(client);
+  dds_delete(participant);
+}
+
 void testClockOffsetTracksRealtimeRollback() {
   constexpr double kEndpointAckStampS = 1000.0;
   constexpr double kLocalReceiveWallS = 1001.0;
@@ -2959,6 +3077,7 @@ bool runNamedTest(const std::string &name) {
       {"command_roundtrip", &runTest},
       {"goal_status", &testNavigationGoalStatusReaderAndRetention},
       {"path_telemetry", &testNavigationPathTelemetry},
+      {"joint_telemetry", &testJointStateTelemetry},
       {"map_scene", &testMapSceneTelemetryAndCapacityGate},
       {"exploration_commands", &testExplorationCommands},
       {"exploration_events", &testExplorationRunEventReader},
@@ -3050,6 +3169,7 @@ int main(int argc, char **argv) {
     runTest();
     testNavigationGoalStatusReaderAndRetention();
     testNavigationPathTelemetry();
+    testJointStateTelemetry();
     testMapSceneTelemetryAndCapacityGate();
     testExplorationCommands();
     testExplorationRunEventReader();

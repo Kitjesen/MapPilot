@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -14,7 +13,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pytest
-
 from sim.runtime.qualification.playable import (
     PLAYABLE_QUALIFICATION_FILENAME,
     PLAYABLE_QUALIFICATION_SCHEMA,

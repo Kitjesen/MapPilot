@@ -1,0 +1,250 @@
+schema_version: lingtu.runtime_graph.topics.v2
+topics:
+  camera_info:
+    topic: /camera/color/camera_info
+    transport: dds
+    dds_topic: rt/camera/info
+    message_type: lingtu.dds.CameraInfo
+    qos_profile: CameraInfo
+    cpp_name: kCameraInfo
+    role: camera_calibration
+    frame: camera_link
+    semantics: latched_camera_calibration_published_once_per_endpoint_start_for_late_joiners
+    producer: camera_endpoint
+    consumers:
+    - perception
+    - gateway
+    real_equivalent_required: false
+    port_bindings:
+    - owner: camera_endpoint
+      port: camera_info
+      direction: out
+      boundary: endpoint
+  camera_color:
+    topic: /camera/color/image_raw
+    transport: dds
+    dds_topic: rt/camera/color
+    message_type: lingtu.dds.Image
+    qos_profile: CameraStream
+    cpp_name: kCameraColor
+    role: camera_color_image
+    frame: camera_link
+    nominal_rate_hz: 30.0
+    producer: camera_endpoint
+    consumers:
+    - gateway
+    - inspection_evidence
+    real_equivalent_required: false
+    transport_note: native image payload; compressed image is compatibility/export format.
+    port_bindings:
+    - owner: camera_endpoint
+      port: color_image
+      direction: out
+      boundary: endpoint
+    - owner: GatewayModule
+      port: color_image
+      direction: in
+      boundary: module
+  camera_depth:
+    topic: /camera/depth/image_raw
+    transport: dds
+    dds_topic: rt/camera/depth
+    message_type: lingtu.dds.Image
+    qos_profile: CameraStream
+    cpp_name: kCameraDepth
+    role: camera_depth_image
+    frame: camera_link
+    nominal_rate_hz: 30.0
+    producer: camera_endpoint
+    consumers:
+    - perception
+    - inspection_evidence
+    real_equivalent_required: false
+    transport_note: native metric depth payload; PNG depth or Float32 are adapter/export formats.
+    port_bindings:
+    - owner: camera_endpoint
+      port: depth_image
+      direction: out
+      boundary: endpoint
+  driver_control_state:
+    topic: /driver/control_state
+    transport: dds
+    dds_topic: rt/driver/control_state
+    message_type: lingtu.dds.DriverControlState
+    qos_profile: SystemStatus
+    cpp_name: kDriverControlState
+  driver_odometry:
+    topic: /driver/odometry
+    transport: dds
+    dds_topic: rt/driver/odometry
+    message_type: lingtu.dds.Odometry
+    qos_profile: HighFreqState
+    cpp_name: kDriverOdometry
+  robot_joint_states:
+    topic: /robot/joint_states
+    transport: dds
+    dds_topic: rt/robot/joint_states
+    message_type: lingtu.dds.JointState
+    qos_profile: SensorStream
+    cpp_name: kRobotJointStates
+    role: robot_joint_telemetry
+    frame: body
+    nominal_rate_hz: 30.0
+    producer: driver
+    consumers:
+    - host_bus
+    semantics: measured_joint_position_rad_velocity_rad_s_effort_nm_with_sample_receive_timestamp
+    port_bindings:
+    - owner: driver
+      port: joint_states
+      direction: out
+      boundary: native
+      required: false
+    - owner: host_bus
+      port: joint_states
+      direction: in
+      boundary: native
+      required: false
+  gnss_fix:
+    topic: /gnss/fix
+    transport: dds
+    dds_topic: rt/gnss/fix
+    message_type: lingtu.dds.GnssFix
+    qos_profile: HighFreqState
+    cpp_name: kGnssFix
+    role: gnss_fix
+    frame: gnss_antenna
+    producer: gnss_endpoint
+    consumers:
+    - localization
+    - gateway
+    real_equivalent_required: false
+    port_bindings:
+    - owner: gnss_endpoint
+      port: fix
+      direction: out
+      boundary: endpoint
+  gnss_odom:
+    topic: /gnss/odom
+    transport: dds
+    dds_topic: rt/gnss/odom
+    message_type: lingtu.dds.Odometry
+    qos_profile: HighFreqState
+    cpp_name: kGnssOdom
+    role: gnss_odometry
+    frame: odom
+    producer: gnss_endpoint
+    consumers:
+    - localization
+    - gateway
+    real_equivalent_required: false
+    port_bindings:
+    - owner: gnss_endpoint
+      port: odometry
+      direction: out
+      boundary: endpoint
+  gnss_status:
+    topic: /gnss/status
+    transport: dds
+    dds_topic: rt/gnss/status
+    message_type: lingtu.dds.GnssStatus
+    qos_profile: SystemStatus
+    cpp_name: kGnssStatus
+    role: gnss_status
+    frame: gnss_antenna
+    producer: gnss_endpoint
+    consumers:
+    - gateway
+    real_equivalent_required: false
+    port_bindings:
+    - owner: gnss_endpoint
+      port: status
+      direction: out
+      boundary: endpoint
+  imu:
+    topic: /imu/raw
+    transport: dds
+    dds_topic: rt/imu/raw
+    message_type: lingtu.dds.Imu
+    qos_profile: SensorStream
+    cpp_name: kImuRaw
+    native_contract: true
+    role: raw_imu
+    frame: imu_link
+    nominal_rate_hz: 200.0
+    producer: endpoint_sensor
+    consumers:
+    - native_slam_runtime
+    real_equivalent_required: true
+    port_bindings:
+    - owner: endpoint_sensor
+      port: imu
+      direction: out
+      boundary: endpoint
+    - owner: native_slam_runtime
+      port: imu
+      direction: in
+      boundary: endpoint
+  lidar_scan:
+    topic: /lidar/raw_frame
+    transport: dds
+    dds_topic: rt/lidar/raw_frame
+    message_type: lingtu.dds.LivoxFrame
+    qos_profile: RawLidarStream
+    cpp_name: kLidarRawFrame
+    native_contract: true
+    role: raw_lidar_points
+    frame: lidar_link
+    nominal_rate_hz: 10.0
+    producer: endpoint_sensor
+    consumers:
+    - native_slam_runtime
+    real_equivalent_required: true
+    port_bindings:
+    - owner: endpoint_sensor
+      port: lidar_scan
+      direction: out
+      boundary: endpoint
+    - owner: native_slam_runtime
+      port: lidar_scan
+      direction: in
+      boundary: endpoint
+  raw_lidar_packet:
+    topic: /lidar/raw_packet
+    transport: dds
+    dds_topic: rt/lidar/raw_packet
+    message_type: lingtu.dds.LivoxFrame
+    qos_profile: RawLidarStream
+    cpp_name: kLidarRawPacket
+  sim_clock:
+    topic: /sim/clock
+    transport: dds
+    dds_topic: rt/sim/clock
+    message_type: lingtu.dds.Time
+    qos_profile: SensorStream
+    cpp_name: kSimClock
+    semantics: simulation_physical_time_only_not_sensor_freshness_or_computation_deadlines
+    producer: imu_publisher
+    consumers: [nav_runtime]
+    real_equivalent_required: false
+  sim_imu:
+    topic: /sim/imu
+    transport: dds
+    dds_topic: rt/sim/imu
+    message_type: lingtu.dds.Imu
+    qos_profile: Default
+    cpp_name: kSimImu
+  sim_lidar_raw_frame:
+    topic: /sim/lidar/raw_frame
+    transport: dds
+    dds_topic: rt/sim/lidar/raw_frame
+    message_type: lingtu.dds.LivoxFrame
+    qos_profile: RawLidarStream
+    cpp_name: kSimLidarRawFrame
+  sim_truth_odometry:
+    topic: /sim/truth/odom
+    transport: dds
+    dds_topic: rt/sim/truth/odom
+    message_type: lingtu.dds.Odometry
+    qos_profile: Default
+    cpp_name: kSimTruthOdometry

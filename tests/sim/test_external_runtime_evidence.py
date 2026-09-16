@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -7,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from sim.runtime.coordinator.coordinator import CoordinatorError
 from sim.runtime.coordinator.external_evidence import ExternalEvidenceWatcher
 
@@ -158,9 +156,7 @@ def test_active_camera_frame_count_must_not_move_backward(tmp_path: Path) -> Non
     assert watcher.apply(_Target())
 
     second = _document(basis="real_rendered_frame_to_camera_shm")
-    replacement = tmp_path / "sensor-readiness.next.json"
-    replacement.write_text(json.dumps(second), encoding="utf-8")
-    replacement.replace(path)
+    path.write_text(json.dumps(second), encoding="utf-8")
 
     with pytest.raises(CoordinatorError, match="published_frames moved backward"):
         watcher.apply(_Target())

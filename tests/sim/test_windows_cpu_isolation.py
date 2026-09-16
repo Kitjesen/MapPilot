@@ -1,6 +1,5 @@
 """Windows CPU topology and affinity partition contracts."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -8,7 +7,6 @@ import os
 import subprocess
 
 import pytest
-
 import sim.runtime.process_owner as process_owner_module
 import sim.runtime.windows_cpu_isolation as cpu_isolation_module
 from sim.runtime.process_owner import ProcessTreeOwner

@@ -18,4 +18,4 @@ def test_coordinator_and_recording_packages_import_in_either_order() -> None:
                 *(f"importlib.import_module({name!r})" for name in order),
             ]
         )
-        subprocess.run([sys.executable, "-c", code], check=True)  # noqa: S603
+        subprocess.run([sys.executable, "-c", code], check=True)

@@ -1,4 +1,3 @@
-# ruff: noqa: D103, S101
 
 from __future__ import annotations
 
@@ -145,7 +144,7 @@ def test_endpoint_cmake_uses_portable_threads_and_compiler_options() -> None:
 
 def test_dds_types_are_compiled_once_per_endpoint_build_tree() -> None:
     endpoint = _read("src/nav/cpp/endpoint/CMakeLists.txt")
-    messages = _read("src/message/cpp/CMakeLists.txt")
+    messages = _read("cmake/LingTuDDS.cmake")
 
     assert "_LINGTU_IDL_SOURCE" not in endpoint
     assert "lingtu_add_dds_c_messages(lingtu_dds_messages" in endpoint
@@ -156,7 +155,7 @@ def test_dds_types_are_compiled_once_per_endpoint_build_tree() -> None:
 
 
 def test_dds_idlc_uses_only_the_runtime_installed_beside_the_tool() -> None:
-    messages = _read("src/message/cpp/CMakeLists.txt")
+    messages = _read("cmake/LingTuDDS.cmake")
 
     assert 'get_filename_component(_idlc_prefix "${_idlc_bin_dir}" DIRECTORY)' in messages
     assert '"${_idlc_prefix}/lib/${CMAKE_LIBRARY_ARCHITECTURE}"' in messages
@@ -212,7 +211,7 @@ def test_endpoint_rejects_stale_plans_and_reuses_validated_maps() -> None:
 
 
 def test_navigation_map_identity_is_runtime_bound_not_store_discovered() -> None:
-    identity_idl = _read("src/message/idl/messages.idl")
+    identity_idl = _read("src/message/idl/maps.idl")
     declared = _read("src/nav/cpp/endpoint/nav/input/active/declared.cpp")
     octomap = _read("src/nav/cpp/endpoint/nav/input/active/octomap.cpp")
     occupancy = _read("src/nav/cpp/endpoint/nav/input/active/occupancy.cpp")
@@ -308,8 +307,7 @@ def test_release_uses_the_deployer_and_native_packager_directly() -> None:
 
 
 def test_explore_map_variant_declares_saved_map_localization_capability() -> None:
-    from runtime.contracts.product_runtime import resolve_product_spec_contracts
-    from runtime.graph.loader import load_runtime_graph, resolve_product_variant_spec
+    from lingtu.assembly.graph.loader import load_runtime_graph, resolve_product_variant_spec
 
     graph = load_runtime_graph()
     product = resolve_product_variant_spec(
@@ -317,7 +315,7 @@ def test_explore_map_variant_declares_saved_map_localization_capability() -> Non
         graph.products["explore"],
         product_variant="map",
     )
-    contract = resolve_product_spec_contracts(
+    contract = resolve_product_variant_spec(
         "explore",
         graph.products["explore"],
         product_variant="map",
@@ -325,5 +323,5 @@ def test_explore_map_variant_declares_saved_map_localization_capability() -> Non
 
     assert product["slam_mode"] == "localization"
     assert product["requires_map"] is True
-    assert "saved_map_relocalization" in contract.capabilities
-    assert "native_slam_mapping" not in contract.capabilities
+    assert "saved_map_relocalization" in tuple(contract["capabilities"])
+    assert "native_slam_mapping" not in tuple(contract["capabilities"])

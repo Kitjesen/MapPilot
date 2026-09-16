@@ -22,8 +22,8 @@
 #include "dds/dds.h"
 #include "messages.h"
 #include "local_endpoint_server.hpp"
-#include "message/cpp/qos.hpp"
-#include "message/cpp/topics.hpp"
+#include "transport/dds/qos.hpp"
+#include "message/generated/topics.hpp"
 #include "native/dds_module.hpp"
 #include "replay_deadline_restamper.hpp"
 #include "run_plan_process_environment.hpp"
@@ -411,6 +411,53 @@ class SimLidarRawFramePublisher final {
   dds_entity_t writer_{DDS_RETCODE_ERROR};
 };
 
+class SimulationClockDdsPublisher final {
+ public:
+  explicit SimulationClockDdsPublisher(int domain_id) {
+    participant_ = checked(
+        dds_create_participant(static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
+        "dds_create_participant(sim_clock)");
+    publisher_ = checked(
+        dds_create_publisher(participant_, nullptr, nullptr),
+        "dds_create_publisher(sim_clock)");
+    topic_ = checked(
+        dds_create_topic(participant_, &lingtu_dds_Time_desc,
+                         lingtu::message::kSimClock.dds_topic.data(), nullptr, nullptr),
+        "dds_create_topic(sim_clock)");
+    auto qos = lingtu::dds::make_qos(lingtu::dds::QosProfile::SensorStream);
+    writer_ = checked(
+        dds_create_writer(publisher_, topic_, qos.get(), nullptr),
+        "dds_create_writer(sim_clock)");
+  }
+
+  ~SimulationClockDdsPublisher() {
+    if (participant_ > 0) {
+      dds_delete(participant_);
+    }
+  }
+
+  SimulationClockDdsPublisher(const SimulationClockDdsPublisher &) = delete;
+  SimulationClockDdsPublisher &operator=(const SimulationClockDdsPublisher &) = delete;
+
+  void publish(std::uint64_t timestamp_ns) {
+    constexpr std::uint64_t nanoseconds_per_second = 1000000000ULL;
+    const auto seconds = timestamp_ns / nanoseconds_per_second;
+    if (seconds > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+      throw std::runtime_error("simulation clock timestamp exceeds int32 seconds range");
+    }
+    lingtu_dds_Time msg{};
+    msg.sec = static_cast<std::int32_t>(seconds);
+    msg.nanosec = static_cast<std::uint32_t>(timestamp_ns % nanoseconds_per_second);
+    checked(dds_write(writer_, &msg), "dds_write(sim_clock)");
+  }
+
+ private:
+  dds_entity_t participant_{DDS_RETCODE_ERROR};
+  dds_entity_t publisher_{DDS_RETCODE_ERROR};
+  dds_entity_t topic_{DDS_RETCODE_ERROR};
+  dds_entity_t writer_{DDS_RETCODE_ERROR};
+};
+
 class CameraDdsPublisher final {
  public:
   CameraDdsPublisher(int domain_id, std::string frame_id) : frame_id_(std::move(frame_id)) {
@@ -618,9 +665,11 @@ bool accepts(const Stream stream, const adapter::SensorRecordType type) {
     case Stream::Lidar:
       return type == adapter::SensorRecordType::Cloud ||
              type == adapter::SensorRecordType::OdomPrior ||
-             type == adapter::SensorRecordType::RegisteredCloud;
+             type == adapter::SensorRecordType::RegisteredCloud ||
+             type == adapter::SensorRecordType::RegisteredCloudWithOrigin;
     case Stream::Imu:
-      return type == adapter::SensorRecordType::Imu;
+      return type == adapter::SensorRecordType::Imu ||
+             type == adapter::SensorRecordType::SimulationClock;
     case Stream::Camera:
       return type == adapter::SensorRecordType::Camera;
   }
@@ -629,7 +678,7 @@ bool accepts(const Stream stream, const adapter::SensorRecordType type) {
 
 int run_records(const CliConfig &config, lidar::DdsModule *dds,
                 SimLidarRawFramePublisher *sim_lidar, CameraDdsPublisher *camera_dds,
-                std::istream &input,
+                SimulationClockDdsPublisher *simulation_clock, std::istream &input,
                 const bool require_stop_for_eof = false) {
   adapter::SensorRecordStats stats;
   std::optional<std::uint64_t> first_timestamp_ns;
@@ -652,12 +701,13 @@ int run_records(const CliConfig &config, lidar::DdsModule *dds,
     std::fprintf(
         stderr,
         "sensor records: clouds=%llu imu=%llu odom=%llu registered_clouds=%llu camera=%llu "
-        "bytes=%llu mode=%s\n",
+        "simulation_clocks=%llu bytes=%llu mode=%s\n",
         static_cast<unsigned long long>(stats.clouds), static_cast<unsigned long long>(stats.imu),
         static_cast<unsigned long long>(stats.odom_priors),
         static_cast<unsigned long long>(stats.registered_clouds),
-        static_cast<unsigned long long>(stats.camera), static_cast<unsigned long long>(stats.bytes),
-        config.validate_records ? "validate" : "replay");
+        static_cast<unsigned long long>(stats.camera),
+        static_cast<unsigned long long>(stats.simulation_clocks),
+        static_cast<unsigned long long>(stats.bytes), config.validate_records ? "validate" : "replay");
     return code;
   };
 
@@ -691,6 +741,17 @@ int run_records(const CliConfig &config, lidar::DdsModule *dds,
     if (!accepts(config.stream, record.header.type)) {
       std::fputs("sensor record does not belong to selected --stream\n", stderr);
       return finish(2);
+    }
+    if (record.header.type == adapter::SensorRecordType::SimulationClock) {
+      if (config.validate_records) {
+        continue;
+      }
+      if (simulation_clock == nullptr) {
+        std::fputs("simulation clock record requires an IMU or All DDS stream\n", stderr);
+        return finish(2);
+      }
+      simulation_clock->publish(record.header.timestamp_ns);
+      continue;
     }
     std::optional<adapter::CameraRecord> camera;
     if (record.header.type == adapter::SensorRecordType::Camera) {
@@ -762,6 +823,7 @@ int run_records(const CliConfig &config, lidar::DdsModule *dds,
         dds->publish_odom_prior(timestamp_ns, adapter::decode_odom_prior_payload(record));
         break;
       case adapter::SensorRecordType::RegisteredCloud:
+      case adapter::SensorRecordType::RegisteredCloudWithOrigin:
         if (sim_lidar != nullptr) {
           std::fprintf(stderr, "sim MID-360 publisher accepts cloud records only\n");
           return finish(2);
@@ -770,7 +832,8 @@ int run_records(const CliConfig &config, lidar::DdsModule *dds,
           std::fprintf(stderr, "stdin registered cloud requires --navigation-fixture\n");
           return finish(2);
         }
-        dds->publish_registered_cloud(timestamp_ns, adapter::decode_point_payload(record));
+        dds->publish_registered_cloud(timestamp_ns, adapter::decode_point_payload(record),
+                                     adapter::decode_sensor_origin(record));
         break;
       case adapter::SensorRecordType::Camera:
         if (sim_lidar != nullptr || (dds == nullptr && camera_dds == nullptr)) {
@@ -826,6 +889,7 @@ int main(int argc, const char *const argv[]) {
     std::unique_ptr<lidar::DdsModule> dds;
     std::unique_ptr<SimLidarRawFramePublisher> sim_lidar;
     std::unique_ptr<CameraDdsPublisher> camera_dds;
+    std::unique_ptr<SimulationClockDdsPublisher> simulation_clock;
     if (config.dds && config.sim_lidar_raw_frame) {
       sim_lidar = std::make_unique<SimLidarRawFramePublisher>(config.domain_id, config.lidar_frame);
     } else if (config.dds && config.stream != Stream::Camera) {
@@ -839,6 +903,9 @@ int main(int argc, const char *const argv[]) {
     } else if (config.dds) {
       camera_dds =
           std::make_unique<CameraDdsPublisher>(config.domain_id, config.camera_frame);
+    }
+    if (config.dds && (config.stream == Stream::Imu || config.stream == Stream::All)) {
+      simulation_clock = std::make_unique<SimulationClockDdsPublisher>(config.domain_id);
     }
     ready_file.mark_ready(config.sim_lidar_raw_frame
                               ? std::string(lingtu::message::kSimLidarRawFrame.dds_topic)
@@ -865,9 +932,11 @@ int main(int argc, const char *const argv[]) {
       }
       EndpointStreamBuf buffer(std::move(*stream));
       std::istream input(&buffer);
-      return run_records(config, dds.get(), sim_lidar.get(), camera_dds.get(), input, true);
+      return run_records(config, dds.get(), sim_lidar.get(), camera_dds.get(),
+                         simulation_clock.get(), input, true);
     }
-    return run_records(config, dds.get(), sim_lidar.get(), camera_dds.get(), std::cin);
+    return run_records(config, dds.get(), sim_lidar.get(), camera_dds.get(),
+                       simulation_clock.get(), std::cin);
   } catch (const std::exception &exc) {
     std::fprintf(stderr, "sensor_publisher failed: %s\n", exc.what());
     return 1;

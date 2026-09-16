@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "src" / "diagnostics" / "field" / "service_readiness.py"
 
@@ -163,6 +165,168 @@ def test_thunder_service_readiness_report_shape(monkeypatch) -> None:
     ]
     assert report["gateway"]["health"]["ok"] is True
     assert report["gateway"]["services_status"]["status"] == 404
+
+
+def test_motion_status_collection_waits_for_driver_ack_to_cover_nav_anchor(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    status_files = {
+        "nav": {
+            "exists": True,
+            "age_s": 0.01,
+            "json": {
+                "input_gate": {"driver_control_max_age_s": 0.35},
+                "final_output": {
+                    "published": True,
+                    "producer_boot_id": "nav-boot",
+                    "output_sequence": 20649,
+                },
+            },
+        },
+        "driver": {
+            "exists": True,
+            "age_s": 0.01,
+            "json": {
+                "output_ack": {
+                    "accepted": True,
+                    "producer_boot_id": "nav-boot",
+                    "output_sequence": 20620,
+                }
+            },
+        },
+    }
+    driver_sequences = iter((20646, 20649))
+    clock = iter((10.0, 10.0, 10.8, 11.0))
+    monkeypatch.setattr(module, "collect_status_files", lambda: status_files)
+    monkeypatch.setattr(
+        module,
+        "_collect_status_file",
+        lambda _path: {
+            "exists": True,
+            "age_s": 0.01,
+            "json": {
+                "output_ack": {
+                    "accepted": True,
+                    "producer_boot_id": "nav-boot",
+                    "output_sequence": next(driver_sequences),
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(clock))
+
+    result = module._collect_motion_status_files(status_max_age_s=3.0)
+
+    assert result["nav"]["json"]["final_output"]["output_sequence"] == 20649
+    assert result["driver"]["json"]["output_ack"]["output_sequence"] == 20649
+    assert result["nav"]["age_s"] == pytest.approx(1.01)
+
+
+def test_motion_status_collection_stops_at_status_freshness_deadline(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    status_files = {
+        "nav": {
+            "exists": True,
+            "age_s": 0.01,
+            "json": {
+                "input_gate": {"driver_control_max_age_s": 0.35},
+                "final_output": {
+                    "published": True,
+                    "producer_boot_id": "nav-boot",
+                    "output_sequence": 20649,
+                },
+            },
+        },
+        "driver": {
+            "exists": True,
+            "age_s": 0.01,
+            "json": {
+                "output_ack": {
+                    "accepted": True,
+                    "producer_boot_id": "nav-boot",
+                    "output_sequence": 20620,
+                }
+            },
+        },
+    }
+    clock = iter((10.0, 10.0, 11.2, 13.01, 13.01))
+    reads = 0
+
+    def read_driver(_path):
+        nonlocal reads
+        reads += 1
+        return status_files["driver"]
+
+    monkeypatch.setattr(module, "collect_status_files", lambda: status_files)
+    monkeypatch.setattr(module, "_collect_status_file", read_driver)
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    result = module._collect_motion_status_files(status_max_age_s=3.0)
+
+    assert reads == 2
+    assert result["driver"]["json"]["output_ack"]["output_sequence"] == 20620
+
+
+def test_motion_report_anchors_status_after_slow_collectors(monkeypatch) -> None:
+    module = _load_module()
+    events = []
+
+    def collected(name, value):
+        def collect(*_args, **_kwargs):
+            events.append(name)
+            return value
+
+        return collect
+
+    monkeypatch.setattr(module, "collect_processes", collected("processes", {"blockers": []}))
+    monkeypatch.setattr(
+        module,
+        "collect_dds",
+        collected("dds", {"checked": True, "blockers": [], "services": {}}),
+    )
+    monkeypatch.setattr(module, "collect_systemd", collected("systemd", {}))
+    monkeypatch.setattr(
+        module,
+        "collect_native_binaries",
+        collected("native_binaries", {"blockers": [], "binaries": {}}),
+    )
+    monkeypatch.setattr(module, "collect_gnss_device", collected("gnss", {"blockers": []}))
+    monkeypatch.setattr(module, "collect_gateway", collected("gateway", {}))
+    monkeypatch.setattr(module, "_collect_motion_status_files", collected("motion_status", {}))
+    monkeypatch.setattr(
+        module,
+        "collect_driver_readiness",
+        collected("driver_readiness", {"ok": False, "blockers": []}),
+    )
+    monkeypatch.setattr(module, "collect_lidar_imu_ownership", lambda **_: {"blockers": []})
+    monkeypatch.setattr(module, "collect_camera_readiness", lambda **_: {"blockers": []})
+    monkeypatch.setattr(module, "collect_current_run", lambda: {})
+    monkeypatch.setattr(
+        module,
+        "evaluate_teleop_avoid_preflight",
+        lambda *_args, **_kwargs: {"ok": False, "blockers": []},
+    )
+
+    module.build_report(
+        gateway_url="http://127.0.0.1:5050",
+        teleop_avoid_stage="motion",
+    )
+
+    assert events == [
+        "processes",
+        "dds",
+        "systemd",
+        "native_binaries",
+        "gnss",
+        "gateway",
+        "motion_status",
+        "driver_readiness",
+    ]
 
 
 def test_thunder_service_readiness_collector_marks_missing_systemd_units(monkeypatch):

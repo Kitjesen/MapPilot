@@ -52,9 +52,7 @@ if(NOT TARGET lingtu_inspection_core)
   unset(_LINGTU_NAV_SAVED_BUILD_TESTING)
 endif()
 if(NOT TARGET lingtu_dds_contracts)
-  add_subdirectory(
-    "${_LINGTU_ROOT}/src/message/cpp"
-    "${CMAKE_BINARY_DIR}/message_cpp")
+  include("${_LINGTU_ROOT}/cmake/LingTuDDS.cmake")
 endif()
 lingtu_add_dds_c_messages(lingtu_dds_messages "${_LINGTU_IDL}")
 
@@ -178,6 +176,7 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     nav/runtime/navigation.cpp
     nav/status/navigation_state.cpp
     nav/status/status_snapshot_file_writer.cpp
+    nav/status/planning_map_writer.cpp
     nav/status/inspection_status_file_writer.cpp
     nav/command/cancel.cpp
     nav/command/ingress.cpp

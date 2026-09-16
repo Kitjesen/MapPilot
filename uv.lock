@@ -1585,6 +1585,19 @@ wheels = [
 ]
 
 [[package]]
+name = "imageio"
+version = "2.37.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pillow" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/48/62/aa770a9307508d2a2a2c62d536a49347bffe9e55322db27838d3c93d0b07/imageio-2.37.4.tar.gz", hash = "sha256:e45cbc5e83502047fb138f7f585f7f105a136a57eea5f4b3cfc6ce1b52720bd3", size = 390173, upload-time = "2026-07-20T05:26:11.369Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3e/2d/ca050652104bab2cf55e569db2a178b1b61cb041fef28307f2db383f6d9f/imageio-2.37.4-py3-none-any.whl", hash = "sha256:1ab2e22c8debf700f24c3ac43e8f95f3b3a8110c83b93411e97b4b0b2cd1c7e6", size = 318000, upload-time = "2026-07-20T05:26:09.874Z" },
+]
+
+[[package]]
 name = "importlib-metadata"
 version = "9.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2234,6 +2247,14 @@ sim-mujoco = [
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "onnxruntime", version = "1.28.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
+sim-recording = [
+    { name = "imageio" },
+    { name = "mujoco" },
+    { name = "mujoco-lidar" },
+    { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "onnxruntime", version = "1.28.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "opencv-python-headless" },
+]
 thunder = [
     { name = "brainstem-api" },
 ]
@@ -2252,11 +2273,13 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'dev'" },
     { name = "fastapi", marker = "extra == 'gateway'" },
     { name = "httpx", marker = "extra == 'dev'" },
+    { name = "imageio", marker = "extra == 'sim-recording'", specifier = ">=2.31" },
     { name = "jieba", marker = "extra == 'nlp'", specifier = ">=0.42" },
     { name = "langchain", marker = "extra == 'agent'", specifier = ">=0.2" },
     { name = "langchain-core", marker = "extra == 'agent'", specifier = ">=0.2" },
     { name = "langchain-openai", marker = "extra == 'agent'", specifier = ">=0.1" },
     { name = "lingtu", extras = ["gateway", "vision", "ml", "llm", "nlp", "agent", "perception", "vector"], marker = "extra == 'all'" },
+    { name = "lingtu", extras = ["sim-mujoco", "vision"], marker = "extra == 'sim-recording'" },
     { name = "mujoco", marker = "extra == 'sim-mujoco'", specifier = ">=3.2" },
     { name = "mujoco-lidar", marker = "extra == 'sim-mujoco'", specifier = "==0.3.3" },
     { name = "mypy", marker = "extra == 'dev'" },
@@ -2281,7 +2304,7 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'dev'" },
     { name = "websockets", marker = "extra == 'gateway'" },
 ]
-provides-extras = ["sim-mujoco", "gateway", "vision", "ml", "llm", "nlp", "agent", "perception", "vector", "dev", "thunder", "all"]
+provides-extras = ["sim-mujoco", "gateway", "vision", "sim-recording", "ml", "llm", "nlp", "agent", "perception", "vector", "dev", "thunder", "all"]
 
 [[package]]
 name = "markdown-it-py"

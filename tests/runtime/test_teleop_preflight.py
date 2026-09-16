@@ -150,7 +150,7 @@ def _snapshot() -> dict:
                     "env": "real",
                 },
                 "launch": {
-                    "native_process_environment": {
+                    "process_environment": {
                         "LINGTU_DRIVER_TARGET": "192.168.66.12:13145",
                         "LINGTU_DRIVER_NETWORK_INTERFACE": "",
                     }
@@ -167,13 +167,13 @@ def _snapshot() -> dict:
         },
         "status_files": {
             "nav": {
-                "path": "/dev/shm/lingtu/nav_endpoint_status.json",  # noqa: S108
+                "path": "/dev/shm/lingtu/nav_endpoint_status.json",
                 "exists": True,
                 "age_s": 0.1,
                 "json": nav,
             },
             "driver": {
-                "path": "/dev/shm/lingtu/driver_status.json",  # noqa: S108
+                "path": "/dev/shm/lingtu/driver_status.json",
                 "exists": True,
                 "age_s": 0.1,
                 "json": driver,
@@ -194,7 +194,7 @@ def _go2_snapshot() -> dict:
         "control_owner_id": "",
     }
     driver["control"]["lease_valid"] = False
-    environment = snapshot["current_run"]["run_plan"]["launch"]["native_process_environment"]
+    environment = snapshot["current_run"]["run_plan"]["launch"]["process_environment"]
     environment["LINGTU_DRIVER_TARGET"] = ""
     environment["LINGTU_DRIVER_NETWORK_INTERFACE"] = "eth0"
     return snapshot

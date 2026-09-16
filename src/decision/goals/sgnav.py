@@ -18,7 +18,7 @@ from decision.llm.prompts import build_sgnav_subgraph_prompt
 
 logger = logging.getLogger(__name__)
 
-# Loaded from config/semantic_scoring.yaml [sgnav_heuristic] on first call.
+# Loaded from config/semantics/scoring.yaml [sgnav_heuristic] on first call.
 _DEFAULTS_SGNAV: dict = {
     "keyword": 0.55,
     "relation": 0.20,
@@ -30,9 +30,9 @@ _sgnav_weights_loaded: bool = False
 
 
 def _load_semantic_scoring_yaml() -> dict:
-    """Load config/semantic_scoring.yaml from the repo root."""
+    """Load config/semantics/scoring.yaml from the repo root."""
     repo_root = Path(__file__).resolve().parents[3]
-    yaml_path = repo_root / "config" / "semantic_scoring.yaml"
+    yaml_path = repo_root / "config" / "semantics" / "scoring.yaml"
     try:
         with open(yaml_path, encoding="utf-8") as fh:
             return yaml.safe_load(fh) or {}
@@ -41,7 +41,7 @@ def _load_semantic_scoring_yaml() -> dict:
 
 
 def _load_sgnav_weights() -> None:
-    """Load sgnav_heuristic weights from config/semantic_scoring.yaml (once)."""
+    """Load sgnav_heuristic weights from config/semantics/scoring.yaml once."""
     global _SGNAV_WEIGHTS, _sgnav_weights_loaded
     if _sgnav_weights_loaded:
         return
@@ -50,7 +50,8 @@ def _load_sgnav_weights() -> None:
         section = _load_semantic_scoring_yaml().get("sgnav_heuristic")
         if section is None:
             logger.info(
-                "sgnav_heuristic section absent — using default weights. See config/semantic_scoring.yaml to tune."
+                "sgnav_heuristic section absent — using default weights. "
+                "See config/semantics/scoring.yaml to tune."
             )
             return
         _SGNAV_WEIGHTS["keyword"] = float(section.get("keyword", _DEFAULTS_SGNAV["keyword"]))

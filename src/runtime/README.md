@@ -1,106 +1,60 @@
-# LingTu Core
+# Host runtime
 
-`src/runtime/` is the runtime foundation of LingTu.
+`runtime/` owns how typed Python Modules are constructed, connected, started,
+and stopped inside one Host. It does not decide which Product runs or which
+native processes to launch.
 
-Keep this folder small in meaning: it explains how modules exist, how modules
-talk, and how runtime execution works. Product stack recipes live in
-`src/lingtu/assembly`. Runtime should not contain navigation
-decisions, perception algorithms, robot behavior, HTTP endpoint logic, or ROS
-node logic.
+## Find the owner
 
-## Read This First
-
-| If you need to... | Start here |
+| Work | Entry |
 | --- | --- |
-| write or inspect a module | `module.py`, `stream.py` |
-| understand the graph mechanism | `blueprint.py`, `wiring.py` |
-| connect LingTu product modules | `src/lingtu/assembly/wires/` |
-| understand Product data flow | `config/runtime_graph/products/`, then `src/lingtu/assembly/compiler.py` and `src/lingtu/assembly/stacks/` |
-| change Product/env declarations | `config/runtime_graph/products/` and `config/runtime_graph/envs/` |
-| find shared messages | `msgs/`, `contracts/` |
-| find topic, frame, or runtime contract names | `runtime_interface.py` |
-| register or resolve a backend | `registry.py` |
-| inspect runtime diagnostics and acceptance evidence | `../diagnostics/field/` |
+| Module lifecycle and ports | `module.py`, `stream.py` |
+| Host construction and wiring mechanism | `blueprint.py`, `wiring.py` |
+| Backend lookup | `registry.py` |
+| In-process payloads and shared values | `msgs/`, `contracts/` |
+| Local delivery and external route metadata | `transport/local.py`, `route_contract/` |
+| Coordinate frames and transforms | `tf/` |
+| DDS-to-Module conversion | `endpoints/dds/adapters.py` |
+| Legacy topic aliases | `adapters/topics.py` |
+| Product/Env resolution and process contracts | [`../lingtu/assembly/graph/`](../lingtu/assembly/graph/) |
+| Product compilation and Host recipes | [`../lingtu/assembly/`](../lingtu/assembly/) |
+| Topics, wire fields, and numeric enums | [`../message/`](../message/README.md) |
+| Diagnostic projections and field evidence | [`../diagnostics/`](../diagnostics/README.md) |
 
-## Mental Model
-
-```text
-Module      = one runtime unit
-In / Out    = typed input and output ports
-WireSpec    = one declared data-flow connection
-Blueprint   = one application Module graph before it starts
-Route       = runtime contract (metadata) and optional routed delivery mode
-SystemHandle = the running graph
-ProcessSpec = one env-resolved deployment process
-Product     = one env-independent operating-mode declaration
-RunPlan     = one Product resolved inside one env
-ProductControl = the only Product transaction owner
-SystemdRunner = ProductControl's internal process executor
-```
-
-Normal Module flow is:
+## Host model
 
 ```text
-goal / sensor / map input
-  -> Module ports
-  -> explicit wires
-  -> command adapters, business logic, or Gateway
-  -> native endpoint request or user-facing status
+Module       = one typed in-process runtime unit
+In / Out     = input/output ports
+WireSpec     = one declared connection
+Blueprint    = construction and wiring before startup
+SystemHandle = the running Host graph
 ```
 
-Navigation uses the same native boundary in `real` and `sim`:
+Module lifecycle is `preflight -> setup -> start -> stop`. Assembly selects
+the Modules; Blueprint implements their construction and lifecycle. Native
+planning, map management, safety arbitration, and device I/O stay with their
+domain owners.
 
-```text
-GatewayModule.goal_pose
-  -> nav.goals.goal_request
-  -> native navigation command client
-  -> lt-nav
-  -> host.bus navigation status/path telemetry
-  -> GatewayModule / NavSkills
+ProductControl owns the whole Product lifecycle. Its RunPlan and process
+contracts belong to `lingtu/`, not to this generic framework.
 
-sensor endpoint
-  -> lt-slam
-  -> lt-terrain
-  -> lt-nav
-  -> /nav/cmd_vel
-  -> driver endpoint
-```
+## Communication
 
-`src/runtime` assembles Host command/status, map, and business Modules. Native
-processes own planning, path following, arbitration, and final motion output.
+Module-to-Module delivery is local. External route metadata records the topic,
+transport, and single-writer constraints at a process seam; it does not alter
+the Host's internal wires.
 
-## Runtime Routes
+`route_contract.robot()` reads only `message/catalog.py`. The same catalogue
+reader feeds the message generator and Product graph. It does not load Product
+or Env YAML, import assembly, or start a process.
 
-Routes choose the runtime path. Built-in presets live in
-`runtime.route_contract`:
+The replay preset describes explicit LCM compatibility bindings.
+`route_contract.sim()` describes local development delivery; it is not
+`env=sim` and does not launch a simulator. Real and simulation Products use
+their resolved native DDS process contracts.
 
-- `robot()`: physical robot route, typed DDS for sensor, SLAM, navigation,
-  and command boundaries.
-- `replay()`: replay/development route, typed LCM bindings where declared.
-- `sim()`: in-process simulation route.
-
-Blueprint records the external route contract for boundary validation and
-topic naming:
-
-```python
-from runtime.route_contract import robot
-
-system = (
-    Blueprint()
-    .route_contract(robot())
-    .build()
-)
-```
-This never changes Module-to-Module wiring.
-
-DDS itself is started by systemd services on real hardware (for example
-`lt-lidar.service`, `lt-slam.service`, and
-`lt-nav.service`). The hardware command sink is the separate
-`lt-driver.service`, which consumes the final typed DDS command and owns the
-Brainstem lease. Internal validators still check DDS topic/type contracts
-against `src/message/topics.py` and C++ topic constants.
-
-## Minimal Example
+## Minimal Module
 
 ```python
 from runtime.module import Module
@@ -115,70 +69,22 @@ class Doubler(Module):
         self.value.subscribe(lambda x: self.doubled.publish(x * 2.0))
 ```
 
-```python
-bp.wire("SourceModule", "doubled", "SinkModule", "value")
-```
+Connect Modules through Blueprint wires; resolve backend implementations
+through the existing registry. Do not introduce a second orchestration layer
+inside a Module.
 
-## What Belongs Here
+## Dependency rule
 
-| Area | Examples |
-| --- | --- |
-| runtime unit model | `module.py`, `stream.py`, `blueprint.py` |
-| shared contracts | `msgs/`, `contracts/`, `runtime_interface.py` |
-| graph mechanism | `blueprint.py`, `wiring.py`, generic `introspection/` |
-| runtime model | `profiles/`, `graph/`, endpoint and topic contracts |
-| backend lookup | `registry.py`, `plugin_seed.py` |
-| local Host transport and frames | `transport/local.py`, `tf/` |
-| small cross-cutting utilities | `utils/`, config helpers |
+`runtime` must not import `lingtu`, `diagnostics`, Gateway, or domain
+implementations. `message` must not import Host runtime or Product assembly.
+These rules are enforced in `config/architecture_layers.yaml`.
 
-## What Does Not Belong Here
+There is no `runtime.graph`, `ProductRuntime`, or `runtime_interface.py`
+compatibility facade. Callers use the owning package directly.
 
-| Logic | Put it in |
-| --- | --- |
-| global/local planning, tracking, and motion safety | `src/nav/cpp/` |
-| Host navigation commands, goals, skills, and adapters | `src/nav/` |
-| perception and decision reasoning | `src/perception/`, `src/decision/` |
-| robot drivers and hardware behavior | `src/drivers/` |
-| REST, SSE, WebSocket, MCP endpoint behavior | `src/gateway/` |
-| simulator/calibration bridges and quarantined vendor trees | their owning non-Product roots |
-
-## Current State
-
-`src/runtime` currently contains three kinds of files:
-
-| Group | Status |
-| --- | --- |
-| core runtime | should stay here |
-| runtime profile and process contracts | should stay here, but keep them declarative |
-| audit and evidence helpers | moved to `src/diagnostics/field/` |
-| compatibility helpers | keep them outside Product runtime; delete them when no supported tool consumes them |
-
-Non-Product support surfaces include:
-
-- Gazebo bridge scripts: explicit compatibility adapters, never default Product
-  processes
-- `adapters/dds/reader.py`: Python CycloneDDS reader utility for diagnostics,
-  and LiDAR/GNSS diagnostics. It is a DDS adapter.
-
-Audit and evidence tooling now lives outside `src/runtime`, in
-`src/diagnostics/field/`:
-
-- `evidence.py`
-- `gates.py`
-- `gateway_acceptance.py`
-- `inspection.py`
-- `field_check.py`
-- `dds_readiness.py`
-
-Simulation diagnostics live in `sim/diagnostics/`, migration planning helpers in
-`tools/migration/`, and benchmark-only status helpers in `tests/benchmark/`.
-Keep field diagnostics focused on operator acceptance evidence.
-
-## Quick Checks
+## Focused checks
 
 ```bash
-python -m pytest tests/runtime/test_runtime.py tests/runtime/test_registry.py -q
+python -m pytest tests/runtime/test_route_contract.py tests/runtime/test_topic_catalog_generation.py
+python -m pytest tests/contracts/test_runtime_architecture_boundaries.py
 ```
-
-For a broader runtime check, use the targeted tests that match the files you
-changed instead of running unrelated hardware or ROS tests from this folder.

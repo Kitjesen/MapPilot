@@ -9,7 +9,6 @@ from perception.reconstruction.reconstruction_module import ReconstructionModule
 from runtime.msgs.semantic import SceneGraph
 from runtime.msgs.sensor import CameraIntrinsics, Image
 
-
 # ============================================================================
 # Port declaration tests
 # ============================================================================

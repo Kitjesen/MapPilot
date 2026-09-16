@@ -16,10 +16,7 @@ from dataclasses import dataclass, field
 from threading import RLock
 from typing import Any
 
-from ..msgs.geometry import Pose, PoseStamped, Quaternion, Transform, Vector3
-from ..msgs.nav import Odometry
-from ..msgs.numpy_compat import np, numpy_import_is_safe
-from ..runtime_interface import (
+from runtime.tf.frames import (
     FRAMES,
     body_frame_id,
     camera_frame_id,
@@ -27,6 +24,10 @@ from ..runtime_interface import (
     normalize_frame_id,
     real_lidar_frame_id,
 )
+
+from ..msgs.geometry import Pose, PoseStamped, Quaternion, Transform, Vector3
+from ..msgs.nav import Odometry
+from ..msgs.numpy_compat import np, numpy_import_is_safe
 
 
 class FrameError(ValueError):
@@ -231,7 +232,7 @@ class FrameTree:
                     if next_frame in visited:
                         continue
                     self._edge_at_time(current_frame, next_frame, ts)
-                    next_path = current_path + (next_frame,)
+                    next_path = (*current_path, next_frame)
                     if next_frame == target:
                         return next_path
                     visited.add(next_frame)

@@ -1,7 +1,81 @@
-schema_version: lingtu.runtime_graph.product.v2
+schema_version: lingtu.runtime_graph.product.v3
 name: map
-contracts:
-  - lingtu.product.map.v1
+default_variant: standard
+variants:
+  standard:
+    host:
+      capabilities: [gateway, operator_motion]
+      run_startup_checks: true
+  camera:
+    # Operator video preview does not change mapping or motion ownership.
+    host:
+      capabilities: [gateway, operator_motion]
+      run_startup_checks: true
+    processes: [lidar, imu, slam, maps, nav, driver, camera, host]
+    topics:
+      - /lidar/raw_frame
+      - /imu/raw
+      - /slam/odometry
+      - /slam/registered_cloud
+      - /slam/map_observation
+      - /slam/map_cloud
+      - /slam/cumulative_map_cloud
+      - /slam/saved_map_cloud
+      - /slam/localization_health
+      - /maps/state
+      - /maps/scene
+      - /nav/command/request
+      - /nav/command/ack
+      - /nav/state
+      - /nav/operator_motion/control
+      - /nav/operator_motion/sample
+      - /nav/operator_motion/ack
+      - /nav/operator_motion/status
+      - /nav/cmd_vel
+      - /camera/color/image_raw
+      - /camera/depth/image_raw
+      - /camera/color/camera_info
+    capabilities:
+      - native_slam_mapping
+      - map_artifact_save
+      - map_pcd_to_octomap_artifact
+      - teleop
+      - operator_motion_typed_dds_interface
+      - native_operator_motion_authority
+      - command_staleness_gate
+      - velocity_limit
+      - final_cmd_vel_single_writer
+      - camera_preview
+topics:
+  - /lidar/raw_frame
+  - /imu/raw
+  - /slam/odometry
+  - /slam/registered_cloud
+  - /slam/map_observation
+  - /slam/map_cloud
+  - /slam/cumulative_map_cloud
+  - /slam/saved_map_cloud
+  - /slam/localization_health
+  - /maps/state
+  - /maps/scene
+  - /nav/command/request
+  - /nav/command/ack
+  - /nav/state
+  - /nav/operator_motion/control
+  - /nav/operator_motion/sample
+  - /nav/operator_motion/ack
+  - /nav/operator_motion/status
+  - /nav/cmd_vel
+capabilities:
+  - native_slam_mapping
+  - map_artifact_save
+  - map_pcd_to_octomap_artifact
+  - teleop
+  - operator_motion_typed_dds_interface
+  - native_operator_motion_authority
+  - command_staleness_gate
+  - velocity_limit
+  - final_cmd_vel_single_writer
 summary: Build live map artifacts from native LiDAR-inertial SLAM output.
 operator_switchable: true
 session_mode: mapping
@@ -21,11 +95,9 @@ processes:
   - maps
   - nav
   - driver
-  - camera
   - host
 critical_modules:
   - host.bus
-  - camera
   - nav.commands
   - GatewayModule
 forbidden_modules:

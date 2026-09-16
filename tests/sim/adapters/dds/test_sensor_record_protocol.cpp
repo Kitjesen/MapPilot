@@ -3,6 +3,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <limits>
 #include <vector>
 
 #include "dds_domain.hpp"
@@ -15,6 +16,7 @@ using lingtu::drivers::lidar::OdomPrior;
 using lingtu::drivers::lidar::Point;
 using lingtu::sim::dds_adapter::SensorRecord;
 using lingtu::sim::dds_adapter::SensorRecordReadStatus;
+using lingtu::sim::dds_adapter::SensorRecordStats;
 using lingtu::sim::dds_adapter::SensorRecordType;
 namespace camera_record = lingtu::drivers::camera::record;
 
@@ -61,6 +63,27 @@ std::string make_record(std::uint8_t type, std::uint64_t timestamp_ns, std::uint
   append_u32(out, static_cast<std::uint32_t>(payload.size()));
   out += payload;
   return out;
+}
+
+void registered_cloud_origin_decodes_without_shifting_points() {
+  const std::array<double, 3> origin{4.3, -2.0, .6};
+  Point point{};
+  point.x = 1.0F;
+  point.y = 2.0F;
+  point.z = .3F;
+  std::string payload;
+  append_pod(payload, origin);
+  append_pod(payload, point);
+  std::istringstream input(make_record(7, 12, 3, 1, payload));
+  SensorRecord record;
+  std::string error;
+  require(lingtu::sim::dds_adapter::read_sensor_record(input, record, error) ==
+              SensorRecordReadStatus::Ok, "registered origin record must parse");
+  require(lingtu::sim::dds_adapter::decode_sensor_origin(record).value() == origin,
+          "origin must remain world XYZ");
+  const auto points = lingtu::sim::dds_adapter::decode_point_payload(record);
+  require(points.size() == 1 && points[0].x == point.x && points[0].z == point.z,
+          "origin prefix must not shift point data");
 }
 
 void valid_point_record_decodes() {
@@ -150,6 +173,23 @@ void valid_camera_record_decodes() {
   require(decoded.payload.empty(), "camera intrinsics payload must be empty");
 }
 
+void valid_simulation_clock_record_decodes_and_counts() {
+  std::istringstream input(make_record(6, 0, 4, 1, ""));
+  SensorRecord record;
+  std::string error;
+  require(lingtu::sim::dds_adapter::read_sensor_record(input, record, error) ==
+              SensorRecordReadStatus::Ok,
+          "valid simulation clock record must parse");
+  require(record.header.type == SensorRecordType::SimulationClock,
+          "simulation clock type mismatch");
+  require(record.header.timestamp_ns == 0, "simulation clock timestamp mismatch");
+  SensorRecordStats stats;
+  lingtu::sim::dds_adapter::accumulate_sensor_record_stats(record, stats);
+  require(stats.simulation_clocks == 1, "simulation clock statistic mismatch");
+  require(stats.bytes == lingtu::sim::dds_adapter::kSensorRecordHeaderBytes,
+          "simulation clock byte statistic mismatch");
+}
+
 void rejects_malformed_camera_records() {
   auto camera_header = camera_record::makeRecordHeader(camera_record::kKindColor);
   camera_header.width = 1;
@@ -221,6 +261,22 @@ void rejects_malformed_records() {
           "unknown record type must fail");
   require(error.find("unknown") != std::string::npos, "unknown record error must be actionable");
 
+  std::istringstream clock_count(make_record(6, 1, 1, 2, ""));
+  require(lingtu::sim::dds_adapter::read_sensor_record(clock_count, record, error) ==
+              SensorRecordReadStatus::Error,
+          "simulation clock count other than one must fail");
+  std::istringstream clock_payload(make_record(6, 1, 1, 1, "x"));
+  require(lingtu::sim::dds_adapter::read_sensor_record(clock_payload, record, error) ==
+              SensorRecordReadStatus::Error,
+          "simulation clock payload must be empty");
+  const auto beyond_int32_seconds =
+      (static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()) + 1ULL) *
+      1000000000ULL;
+  std::istringstream clock_range(make_record(6, beyond_int32_seconds, 1, 1, ""));
+  require(lingtu::sim::dds_adapter::read_sensor_record(clock_range, record, error) ==
+              SensorRecordReadStatus::Error,
+          "simulation clock timestamp above int32 seconds must fail");
+
   std::string truncated = make_record(2, 1, 1, 1, std::string(sizeof(ImuSample), '\0'));
   truncated.pop_back();
   std::istringstream truncated_input(truncated);
@@ -249,9 +305,11 @@ void validates_supported_dds_domain_range() {
 }  // namespace
 
 int main() {
+  registered_cloud_origin_decodes_without_shifting_points();
   valid_point_record_decodes();
   valid_imu_and_odom_decode();
   valid_camera_record_decodes();
+  valid_simulation_clock_record_decodes_and_counts();
   rejects_malformed_camera_records();
   clean_eof_is_not_error();
   rejects_malformed_records();

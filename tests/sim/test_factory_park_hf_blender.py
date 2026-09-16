@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Contracts for FactoryPark_HF Blender authoring without requiring bpy."""
 
@@ -12,7 +11,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from sim.tools.worlds.factory_park_hf import blender_author
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

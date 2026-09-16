@@ -7,11 +7,12 @@ import math
 import os
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from lingtu.assembly.graph import ProcessSpec
 from lingtu.product_lock import resolve_current_run_path, resolve_product_state_dir
 from lingtu.products import (
     ProductLifecycle,
@@ -28,6 +29,7 @@ from lingtu.real.backend import (
 from lingtu.real.systemd import SystemdRunner
 from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
 from lingtu.switch_contracts import (
+    InitialPose,
     MapIdentity,
     ProcessFailed,
     ProcessReport,
@@ -73,6 +75,7 @@ class SwitchControl(Protocol):
         *,
         previous_plan: RunPlan | None = None,
         dry_run: bool = False,
+        on_process_ready: Callable[[ProcessSpec], None] | None = None,
     ) -> ProcessReport: ...
 
     def _systemd_runner(self) -> SystemdRunner: ...
@@ -83,6 +86,31 @@ class SwitchControl(Protocol):
         *,
         dry_run: bool = False,
     ) -> ProcessReport: ...
+
+
+def _localization_startup(
+    backend: SwitchBackend,
+    lifecycle: ProductLifecycle,
+    *,
+    map_name: str,
+    relocalize: bool = False,
+    initial_pose: InitialPose | None = None,
+    phases: list[str] | None = None,
+) -> Callable[[ProcessSpec], None]:
+    def on_ready(process: ProcessSpec) -> None:
+        if process.name != "slam" or lifecycle.slam_mode != "localization":
+            return
+        # mapd cannot receive map-frame observations until saved-map alignment
+        # exists. Complete it before starting downstream map/navigation stages.
+        backend.wait_slam("localization", require_map=True, require_localization=False, timeout_s=35.0)
+        backend.prepare_localization(
+            lifecycle, map_name=map_name, relocalize=relocalize, initial_pose=initial_pose,
+        )
+        backend.wait_slam("localization", require_map=True, require_localization=True, timeout_s=35.0)
+        if phases is not None:
+            phases.extend(["slam_frontend_ready", "localization_prepared", "slam_ready"])
+
+    return on_ready
 
 
 def execute_switch(
@@ -134,8 +162,9 @@ def execute_switch(
         )
         if plan.product != target_product:
             raise RuntimeError("resolved RunPlan Product does not match switch request")
-        if plan.product_variant != request.product_variant:
+        if request.product_variant is not None and plan.product_variant != request.product_variant:
             raise RuntimeError("resolved RunPlan variant does not match switch request")
+        report.product_variant = plan.product_variant
         if plan.env != runtime_env:
             raise RuntimeError("resolved RunPlan Env does not match ProductControl")
         report.local_planner = plan.native_nav.get("local_planner")
@@ -240,8 +269,7 @@ def execute_switch(
         mutated = True
         report.phases.append("previous_run_retained")
         if map_name:
-            map_activation = backend.stage_map(map_name)
-            map_identity = map_activation.target
+            map_identity = backend.prepare_map(map_name)
             report.phases.append("map_prepared")
         staged_session = backend.stage_session(
             run_plan_path,
@@ -260,10 +288,26 @@ def execute_switch(
 
         if RunPlan.load(run_plan_path) != plan:
             raise RuntimeError("published RunPlan changed after staging")
+        localize = _localization_startup(
+            backend, target_lifecycle, map_name=map_name,
+            relocalize=bool(request.relocalize), initial_pose=initial_pose,
+            phases=report.phases,
+        )
+
+        def on_process_ready(process: ProcessSpec) -> None:
+            nonlocal map_activation
+            localize(process)
+            if process.name == "maps" and map_name:
+                map_activation = backend.stage_map(map_name)
+                if map_activation.target != map_identity:
+                    raise RuntimeError("saved map changed after Product session staging")
+                report.phases.append("map_staged")
+
         try:
             transition_report = control._apply_plan_for_switch(
                 run_plan_path,
                 previous_plan=previous.plan if previous is not None else None,
+                on_process_ready=on_process_ready,
             )
         except ProcessFailed as exc:
             transition_report = exc.report
@@ -271,31 +315,11 @@ def execute_switch(
         report.phases.append("processes_active")
         backend.wait_native_nav(native_environment, timeout_s=10.0)
         report.phases.append("native_nav_ready")
-        if target_lifecycle.slam_mode != "none" and plan.has_process("slam"):
+        if target_lifecycle.slam_mode == "mapping" and plan.has_process("slam"):
             backend.wait_slam(
-                target_lifecycle.slam_mode,
-                require_map=target_lifecycle.slam_mode == "localization",
+                "mapping",
+                require_map=False,
                 require_localization=False,
-                timeout_s=35.0,
-            )
-            report.phases.append(
-                "slam_frontend_ready"
-                if target_lifecycle.slam_mode == "localization"
-                else "slam_ready"
-            )
-        if target_lifecycle.slam_mode == "localization":
-            backend.prepare_localization(
-                target_lifecycle,
-                map_name=map_name,
-                relocalize=bool(request.relocalize),
-                initial_pose=initial_pose,
-            )
-            report.phases.append("localization_prepared")
-        if target_lifecycle.slam_mode == "localization" and plan.has_process("slam"):
-            backend.wait_slam(
-                target_lifecycle.slam_mode,
-                require_map=True,
-                require_localization=True,
                 timeout_s=35.0,
             )
             report.phases.append("slam_ready")
@@ -362,7 +386,18 @@ def execute_switch(
                 for error in (transition_report.rollback_errors if transition_report is not None else ())
             ]
             try:
-                backend.stop_motion(target_product)
+                stop_product: ProductName | None = target_product
+                if previous is not None and transition_report is not None and previous.plan.has_process("nav"):
+                    previous_nav = previous.plan.process("nav").target
+                    nav_targets = {previous_nav, plan.process("nav").target}
+                    # Started includes attempts that failed before readiness.
+                    active_or_attempted = set(transition_report.started) | set(transition_report.preserved)
+                    if previous_nav in transition_report.stopped and nav_targets.isdisjoint(active_or_attempted):
+                        # Localization can fail after old nav stopped and before
+                        # new nav starts. Absence is then expected; stop_motion
+                        # still stops any nav endpoint that is actually active.
+                        stop_product = None
+                backend.stop_motion(stop_product)
                 report.cleanup.append("motion:stopped")
             except Exception as cleanup_error:
                 if report.status != "rollback_failed":
@@ -416,6 +451,10 @@ def execute_switch(
                         restored = systemd_runner.restore_transition_previous(
                             previous.plan,
                             transition_report,
+                            on_process_ready=_localization_startup(
+                                backend, _lifecycle(previous.plan),
+                                map_name=_text(committed.get("map_name")) or "",
+                            ),
                         )
                         report.cleanup.append(f"previous_processes:{restored.status}")
                     except Exception as cleanup_error:
@@ -656,13 +695,6 @@ def _restore_previous_product_session(
             require_localization=False,
             timeout_s=35.0,
         )
-    if lifecycle.slam_mode == "localization":
-        backend.prepare_localization(
-            lifecycle,
-            map_name=map_name,
-            relocalize=False,
-            initial_pose=None,
-        )
     if lifecycle.slam_mode == "localization" and plan.has_process("slam"):
         backend.wait_slam(
             lifecycle.slam_mode,
@@ -810,16 +842,18 @@ def _commit_current_run(
 
 
 def _initial_pose(
-    value: tuple[float, float, float] | None,
-) -> tuple[float, float, float] | None:
+    value: InitialPose | None,
+) -> InitialPose | None:
     if value is None:
         return None
-    if len(value) != 3:
-        raise RuntimeError("initial pose must contain X, Y, and YAW")
+    if len(value) not in (3, 4):
+        raise RuntimeError("initial pose must contain X, Y, YAW or X, Y, Z, YAW")
     pose = tuple(float(item) for item in value)
     if not all(math.isfinite(item) for item in pose):
         raise RuntimeError("initial pose must contain finite values")
-    return pose
+    if len(pose) == 3:
+        return pose[0], pose[1], pose[2]
+    return pose[0], pose[1], pose[2], pose[3]
 
 
 def _explore_route(slam_mode: str) -> str:

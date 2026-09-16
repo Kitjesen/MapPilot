@@ -2,46 +2,36 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
+from gateway.navigation.status import build_navigation_status
 from gateway.services.app_bootstrap import (
     CLIENT_LINKS,
     _map_summary,
     _media_summary,
 )
-from gateway.services.runtime_status import (
-    build_localization_status_from_parts,
-    build_navigation_status,
-    safe_lease,
-    safe_session,
-)
+from gateway.services.runtime_facts import capture_runtime_facts
+from gateway.services.runtime_status import build_localization_status_from_parts, safe_lease, safe_session
+from gateway.services.safety_status import safety_summary
 
-STATE_SNAPSHOT_SCHEMA_VERSION = 2
+STATE_SNAPSHOT_SCHEMA_VERSION = 4
 
 
 def build_state_snapshot(gw: Any) -> dict[str, Any]:
     """Return the current session, localization, and navigation snapshot."""
-    now = time.time()
-    with gw._state_lock:
-        odometry = gw._odom
-        teleop_active = gw._teleop_active
-        scene_graph_json = gw._sg_json
-        path_len = len(gw._last_path)
-        localization_status = getattr(gw, "_localization_status", None)
-        visual_servo_status = getattr(gw, "_visual_servo_status", None)
-        if isinstance(visual_servo_status, dict):
-            visual_servo_status = dict(visual_servo_status)
+    facts = capture_runtime_facts(gw)
+    now = facts["ts"]
     teleop_clients = gw._teleop_client_count()
 
     session = safe_session(gw)
     localization = build_localization_status_from_parts(
-        odometry,
+        facts["odometry"],
         session,
-        float(getattr(gw, "_icp_quality", 0.0)),
-        localization_status,
+        facts["icp_quality"],
+        facts["localization_status"],
+        gw=gw,
     )
-    navigation = build_navigation_status(gw)
+    navigation = build_navigation_status(gw, facts=facts)
     return {
         "schema_version": STATE_SNAPSHOT_SCHEMA_VERSION,
         "ts": now,
@@ -51,20 +41,21 @@ def build_state_snapshot(gw: Any) -> dict[str, Any]:
         },
         "lease": safe_lease(gw),
         "teleop": {
-            "active": bool(teleop_active),
+            "active": facts["teleop_active"],
             "clients": int(teleop_clients),
         },
         "session": session,
+        "safety": safety_summary(facts["navigation_state"]),
         "localization": localization,
         "navigation": navigation,
-        "visual_servo": visual_servo_status,
+        "visual_servo": facts["visual_servo_status"],
         "map": _map_summary(gw, session),
         "scene": {
-            "available": bool(scene_graph_json) and scene_graph_json != "{}",
+            "available": bool(facts["scene_graph_json"]) and facts["scene_graph_json"] != "{}",
             "endpoint": CLIENT_LINKS["scene_graph"],
         },
         "path": {
-            "points": path_len,
+            "points": facts["path_len"],
             "endpoint": CLIENT_LINKS["path"],
         },
         "media": _media_summary(gw),

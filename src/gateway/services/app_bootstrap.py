@@ -2,25 +2,21 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections.abc import Mapping
 from typing import Any
 
 from diagnostics.field.gates import gate_catalog
-from gateway.services.mapd_transport import map_management_available
+from gateway.maps.transport import map_management_available
+from gateway.navigation.status import build_navigation_status
 from gateway.services.media_status import build_media_status
-from gateway.services.runtime_status import (
-    build_localization_status_from_parts,
-    build_navigation_status,
-    runtime_identity,
-)
+from gateway.services.runtime_status import build_localization_status_from_parts, runtime_identity
 from gateway.services.runtime_status import (
     safe_session as _safe_session,
 )
 from gateway.services.safety_status import (
-    SAFETY_STOP_BLOCKER,
-    safety_clear_for_motion,
     safety_summary,
 )
 from gateway.services.traffic import (
@@ -34,7 +30,7 @@ from gateway.services.traffic import (
     snapshot as traffic_snapshot,
 )
 
-APP_BOOTSTRAP_SCHEMA_VERSION = 2
+APP_BOOTSTRAP_SCHEMA_VERSION = 4
 APP_CAPABILITIES_SCHEMA_VERSION = 2
 APP_TRAFFIC_SCHEMA_VERSION = 1
 _OPERATION_CONTRACT_CACHE_ATTR = "_app_capabilities_operation_contract_cache"
@@ -59,8 +55,6 @@ CLIENT_LINKS: dict[str, str] = {
     "health": "/api/v1/health",
     "metrics": "/api/v1/metrics",
     "readiness": "/api/v1/readiness",
-    "auth_login": "/api/v1/auth/login",
-    "auth_check": "/api/v1/auth/check",
     "session": "/api/v1/session",
     "events": "/api/v1/events",
     "teleop_ws": "/ws/teleop",
@@ -138,10 +132,6 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
         "bootstrap": {"method": "GET", "path": CLIENT_LINKS["bootstrap"]},
         "capabilities": {"method": "GET", "path": CLIENT_LINKS["capabilities"]},
         "traffic": {"method": "GET", "path": CLIENT_LINKS["traffic"]},
-    },
-    "auth": {
-        "login": {"method": "POST", "path": CLIENT_LINKS["auth_login"]},
-        "check": {"method": "GET", "path": CLIENT_LINKS["auth_check"]},
     },
     "state": {
         "snapshot": {"method": "GET", "path": CLIENT_LINKS["state"]},
@@ -345,14 +335,6 @@ def _mapping(value: Any) -> dict[str, Any]:
     return {}
 
 
-def _mission_summary(mission: Any) -> dict[str, Any]:
-    raw = _mapping(mission)
-    return {
-        "state": raw.get("state", raw.get("status", "idle")),
-        "raw": raw,
-    }
-
-
 def _safety_summary(safety: Any) -> dict[str, Any]:
     return safety_summary(safety)
 
@@ -536,30 +518,6 @@ def _command_policy(gw: Any) -> dict[str, Any]:
     }
 
 
-def _auth_summary() -> dict[str, Any]:
-    try:
-        from gateway.auth import _get_configured_key
-
-        enabled = _get_configured_key() is not None
-    except Exception:
-        enabled = False
-    return {
-        "enabled": enabled,
-        "scheme": "api_key" if enabled else "none",
-        "header": "X-API-Key",
-        "query_param": "api_key",
-        "cookie": "lingtu_api_key",
-        "public_endpoints": [
-            "/",
-            "/api/v1/auth/login",
-            "/api/v1/auth/check",
-            "/docs",
-            "/redoc",
-            "/openapi.json",
-        ],
-    }
-
-
 def _feature_flags(gw: Any) -> dict[str, bool]:
     explorer_available = bool(gw._explorer_available())
     return {
@@ -602,13 +560,17 @@ def _active_env_backend(gw: Any, env: str) -> str | None:
 def _runtime_product_capabilities(gw: Any) -> dict[str, Any]:
     """Return Product availability from the resolved Env/RunPlan source."""
 
-    from runtime.graph.loader import load_runtime_graph, product_variant_names
+    from lingtu.assembly.graph.loader import load_runtime_graph, product_variant_names
 
     identity = runtime_identity(gw)
     env = str(identity["env"])
     backend = _active_env_backend(gw, env)
     run_plan_available = getattr(gw, "_compiled_run_plan", None) is not None
-    graph = load_runtime_graph()
+    graph = getattr(gw, "_runtime_product_graph", None)
+    if graph is None:
+        # Product declarations belong to this Host; live identity stays per request.
+        graph = load_runtime_graph()
+        gw._runtime_product_graph = graph
     env_spec = graph.envs.get(env, {})
     availability_source = "env"
     implementation = env_spec
@@ -831,7 +793,6 @@ def build_app_capabilities(gw: Any) -> dict[str, Any]:
             "api_version": "v1",
             "time": now,
         },
-        "auth": _auth_summary(),
         "features": _feature_flags(gw),
         "runtime_products": _runtime_product_capabilities(gw),
         "endpoints": _enrich_endpoint_specs(gw, CLIENT_ENDPOINTS),
@@ -924,12 +885,13 @@ def build_app_traffic(gw: Any) -> dict[str, Any]:
 
 
 def build_app_bootstrap(gw: Any) -> dict[str, Any]:
-    """Return the first payload a mobile app or web client needs after login."""
+    """Return the first payload a mobile app or web client needs on connection."""
     now = time.time()
+    plan = getattr(gw, "_compiled_run_plan", None)
+    robot_model = str(getattr(plan, "robot", None) or os.environ.get("LINGTU_ROBOT") or "").strip() or None
     with gw._state_lock:
         odometry = gw._odom
         safety = gw._navigation_state
-        mode = gw._mode
         scene_graph_json = gw._sg_json
         path_len = len(gw._last_path)
         teleop_active = gw._teleop_active
@@ -945,32 +907,18 @@ def build_app_bootstrap(gw: Any) -> dict[str, Any]:
         localization_status,
     )
     navigation = build_navigation_status(gw)
-    mission = _mapping(_mapping(navigation.get("mission")).get("raw"))
     traffic = _traffic_summary(gw)
-    control = dict(navigation.get("control", {}))
-    nav_readiness = navigation.get("readiness", {})
-    safety_clear = safety_clear_for_motion(safety)
-    goal_blockers = list(nav_readiness.get("blockers") or [])
-    if not safety_clear and SAFETY_STOP_BLOCKER not in goal_blockers:
-        goal_blockers.append(SAFETY_STOP_BLOCKER)
-    control.update(
-        {
-            "teleop": {
-                "active": bool(teleop_active),
-                "clients": int(teleop_clients),
-                "limits": {
-                    "linear_mps": float(gw._teleop_max_speed),
-                    "yaw_rad_s": float(gw._teleop_max_yaw),
-                },
+    control = {
+        "teleop": {
+            "active": bool(teleop_active),
+            "clients": int(teleop_clients),
+            "limits": {
+                "linear_mps": float(gw._teleop_max_speed),
+                "yaw_rad_s": float(gw._teleop_max_yaw),
             },
-            "estop_clear": mode != "estop",
-            "safety_clear": safety_clear,
-            "can_send_commands": (mode != "estop" and safety_clear),
-            "can_send_goal": (safety_clear and bool(navigation.get("can_accept_goal", False))),
-            "goal_blockers": goal_blockers,
-            "command_policy": _command_policy(gw),
-        }
-    )
+        },
+        "command_policy": _command_policy(gw),
+    }
 
     return {
         "schema_version": APP_BOOTSTRAP_SCHEMA_VERSION,
@@ -982,9 +930,9 @@ def build_app_bootstrap(gw: Any) -> dict[str, Any]:
         "robot": {
             "online": True,
             "has_odometry": odometry is not None,
+            "model": robot_model,
         },
         "session": session,
-        "mission": _mission_summary(mission),
         "safety": _safety_summary(safety),
         "localization": localization,
         "navigation": navigation,

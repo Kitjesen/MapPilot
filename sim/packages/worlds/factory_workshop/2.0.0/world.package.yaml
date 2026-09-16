@@ -1,0 +1,22 @@
+schema: lingtu.sim.world-package.v1
+id: factory_workshop
+version: 2.0.0
+kind: world
+description: DOSO 120 x 90 m campus with an 80 x 48 m factory, full second floor at
+  6 m, roof at 12 m, two stairs, retained machinery and exterior grounds. Native MuJoCo
+  baked visuals; robot stair capability is not qualified.
+physics:
+  mjcf: physics/campus.xml
+  global_policy:
+    timestep_s: 0.005
+    integrator: euler
+    solver: newton
+    iterations: 100
+    gravity_mps2:
+    - 0.0
+    - 0.0
+    - -9.81
+visual:
+  binding: WorldVisual:FactoryWorkshop
+  level: /Game/RobotSim/Maps/ThunderV4_RuntimePreview
+entities: []

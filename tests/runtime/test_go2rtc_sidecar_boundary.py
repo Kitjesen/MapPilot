@@ -48,7 +48,7 @@ def test_go2rtc_installer_documents_machine_level_sidecar_boundary() -> None:
 
 
 def test_camera_transport_adr_locks_whep_and_jpeg_fallback_contract() -> None:
-    adr = _read("docs/architecture/CAMERA_TRANSPORT_DECISION.md")
+    adr = _read("docs/architecture.md")
     contract = " ".join(adr.split())
 
     assert "go2rtc WHEP" in contract

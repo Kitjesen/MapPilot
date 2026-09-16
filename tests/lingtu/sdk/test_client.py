@@ -13,8 +13,8 @@ from lingtu.sdk import (
     CommandResult,
     LingTuClient,
     MapList,
-    NavigationOperatorState,
     NavigationStatus,
+    NavigationTask,
     Pose2D,
     Position,
     RobotState,
@@ -68,7 +68,6 @@ class TestLingTuClient(unittest.TestCase):
             (self.robot.capabilities, "/api/v1/app/capabilities"),
             (self.robot.bootstrap, "/api/v1/app/bootstrap"),
             (self.robot.readiness, "/api/v1/readiness"),
-            (self.robot.auth_check, "/api/v1/auth/check"),
             (self.robot.map_points, "/api/v1/map/points"),
             (self.robot.localization_status, "/api/v1/localization/status"),
             (self.robot.path, "/api/v1/path"),
@@ -282,81 +281,41 @@ class TestLingTuClient(unittest.TestCase):
     # ------------------------------------------------------------------
 
     @patch("urllib.request.urlopen")
-    def test_navigation_status(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {
-            "state": "EXECUTING",
-            "target": {
-                "distance_to_goal_m": 5.0,
-                "goal": {"x": 10.0, "y": 5.0, "z": 0.0, "yaw": 0.0},
-            },
-            "mission": {"raw": {"time_elapsed": 3.5}},
-        })
-        ns = self.robot.navigation_status()
-        self.assertIsInstance(ns, NavigationStatus)
-        self.assertEqual(ns.state, "EXECUTING")
-        self.assertEqual(ns.distance_to_goal, 5.0)
-        self.assertEqual(ns.time_elapsed, 3.5)
-        self.assertEqual(ns.goal.x, 10.0)
-
-    @patch("urllib.request.urlopen")
-    def test_navigation_status_parses_operator_state(self, mock_urlopen) -> None:
+    def test_navigation_status_parses_v3_state_axes(self, mock_urlopen) -> None:
         self._mock_http(
             mock_urlopen,
             {
-                "state": "EXECUTING",
-                "operator_state": {
-                    "schema_version": 1,
-                    "task": {
-                        "state": "EXECUTING",
-                        "task_id": "navigation-task-1",
-                        "request_id": "goal-1",
-                        "terminal": False,
-                        "progress": 0.4,
-                        "reason": "path_active",
-                    },
-                    "goal_admission": {
-                        "state": "BLOCKED",
-                        "blockers": ["input_gate_stale"],
-                        "advisories": ["replacement_supported"],
-                    },
-                    "control": {
-                        "authority": "AUTONOMY",
-                        "resume_required": False,
-                        "reason": "autonomy_selected",
-                    },
-                    "motion": {
-                        "permission": "HELD",
-                        "observation": "QUIET",
-                        "stop_confirmation": "PENDING",
-                        "linear_speed_mps": 0.0,
-                        "angular_speed_radps": 0.0,
-                        "reason": "input_gate_stale",
-                    },
-                    "summary": {
-                        "severity": "WARNING",
-                        "code": "MOTION_HELD",
-                        "next_action": "RESTORE_INPUTS",
-                    },
+                "schema_version": 3,
+                "task": {
+                    "state": "EXECUTING",
+                    "task_id": "navigation-task-1",
+                    "reason": "path_active",
+                },
+                "goal_admission": {
+                    "state": "BLOCKED",
+                    "reason": "input_gate_stale",
+                },
+                "control": {
+                    "authority": "AUTONOMY",
+                    "resume_required": False,
+                    "reason": "autonomy_selected",
+                },
+                "motion": {
+                    "permission": "HELD",
+                    "observation": "QUIET",
+                    "stop_confirmation": "PENDING",
+                    "reason": "input_gate_stale",
                 },
             },
         )
 
         status = self.robot.navigation_status()
 
-        self.assertIsInstance(status.operator_state, NavigationOperatorState)
-        assert status.operator_state is not None
-        self.assertEqual(status.operator_state.task.task_id, "navigation-task-1")
-        self.assertEqual(status.operator_state.goal_admission.blockers, ["input_gate_stale"])
-        self.assertEqual(status.operator_state.motion.permission, "HELD")
-        self.assertEqual(status.operator_state.summary.code, "MOTION_HELD")
-
-    @patch("urllib.request.urlopen")
-    def test_navigation_status_without_operator_state_remains_compatible(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"state": "IDLE"})
-
-        status = self.robot.navigation_status()
-
-        self.assertIsNone(status.operator_state)
+        self.assertEqual(status.task.task_id, "navigation-task-1")
+        self.assertEqual(status.goal_admission.reason, "input_gate_stale")
+        self.assertEqual(status.control.authority, "AUTONOMY")
+        self.assertEqual(status.motion.permission, "HELD")
+        self.assertEqual(status.motion.stop_confirmation, "PENDING")
 
     def test_navigation_task_status_queries_exact_encoded_task(self) -> None:
         expected = {
@@ -374,260 +333,17 @@ class TestLingTuClient(unittest.TestCase):
         )
 
     @patch("urllib.request.urlopen")
-    def test_navigation_status_missing_distance_stays_unknown(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {
-            "state": "IDLE",
-            "target": {"goal": None, "distance_to_goal_m": None},
-        })
-
-        ns = self.robot.navigation_status()
-
-        self.assertIsNone(ns.distance_to_goal)
-
-    def test_wait_until_arrived_ignores_stale_terminal_until_new_mission_is_active(self) -> None:
-        baseline = NavigationStatus(
-            state="SUCCESS",
-            goal=Position(10.0, 5.0),
-            raw={
-                "mission": {"raw": {"ts": 1.0}},
-                "target": {"goal": {"x": 10.0, "y": 5.0}},
-            },
-        )
-        stale = NavigationStatus(
-            state="SUCCESS",
-            goal=Position(10.0, 5.0),
-            raw={
-                "mission": {"raw": {"ts": 1.0}},
-                "target": {"goal": {"x": 10.0, "y": 5.0}},
-            },
-        )
-        active = NavigationStatus(
-            state="PLANNING",
-            goal=Position(10.0, 5.0),
-            raw={
-                "mission": {"raw": {"ts": 2.0}},
-                "target": {"goal": {"x": 10.0, "y": 5.0}},
-            },
-        )
-        completed = NavigationStatus(
-            state="SUCCESS",
-            distance_to_goal=0.0,
-            goal=Position(10.0, 5.0),
-            raw={
-                "mission": {"raw": {"ts": 3.0}},
-                "target": {"goal": {"x": 10.0, "y": 5.0}},
-            },
-        )
-        self.robot.navigation_status = Mock(side_effect=[stale, active, completed])
-
-        result = self.robot.wait_until_arrived(
-            timeout=1.0,
-            poll_interval=0.0,
-            expected_goal=(10.0, 5.0, 0.0),
-            baseline=baseline,
+    def test_navigation_status_does_not_read_removed_operator_wrapper(self, mock_urlopen) -> None:
+        self._mock_http(
+            mock_urlopen,
+            {"operator_state": {"task": {"state": "SUCCESS"}}},
         )
 
-        self.assertIs(result, completed)
-        self.assertEqual(self.robot.navigation_status.call_count, 3)
+        status = self.robot.navigation_status()
 
-    def test_wait_until_arrived_ignores_unrelated_terminal_transition(self) -> None:
-        baseline = NavigationStatus(
-            state="IDLE",
-            raw={"mission": {"raw": {"ts": 1.0}}},
-        )
-        unrelated = NavigationStatus(
-            state="SUCCESS",
-            goal=Position(99.0, 99.0),
-            raw={
-                "mission": {"raw": {"ts": 2.0}},
-                "target": {"goal": {"x": 99.0, "y": 99.0}},
-            },
-        )
-        wrong_yaw = NavigationStatus(
-            state="SUCCESS",
-            goal=Position(7.0, 8.0, yaw=1.5),
-            raw={
-                "mission": {"raw": {"ts": 2.5}},
-                "target": {"goal": {"x": 7.0, "y": 8.0, "yaw": 1.5}},
-            },
-        )
-        active = NavigationStatus(
-            state="EXECUTING",
-            goal=Position(7.0, 8.0, yaw=0.0),
-            raw={
-                "mission": {"raw": {"ts": 3.0}},
-                "target": {"goal": {"x": 7.0, "y": 8.0, "yaw": 0.0}},
-            },
-        )
-        completed = NavigationStatus(
-            state="SUCCESS",
-            goal=Position(7.0, 8.0, yaw=0.0),
-            raw={
-                "mission": {"raw": {"ts": 4.0}},
-                "target": {"goal": {"x": 7.0, "y": 8.0, "yaw": 0.0}},
-            },
-        )
-        self.robot.navigation_status = Mock(
-            side_effect=[unrelated, wrong_yaw, active, completed]
-        )
+        self.assertEqual(status.task.state, "UNKNOWN")
 
-        result = self.robot.wait_until_arrived(
-            timeout=1.0,
-            poll_interval=0.0,
-            expected_goal=(7.0, 8.0, 0.0),
-            baseline=baseline,
-        )
-
-        self.assertIs(result, completed)
-        self.assertEqual(self.robot.navigation_status.call_count, 4)
-
-    @patch(
-        "lingtu.sdk.client.time.monotonic",
-        side_effect=[0.0, 0.1, 0.2, 0.3, 1.1],
-    )
-    def test_wait_until_arrived_requires_explicit_success(
-        self,
-        _monotonic,
-    ) -> None:
-        self.robot.navigation_status = Mock(
-            side_effect=[
-                NavigationStatus(state="EXECUTING"),
-                NavigationStatus(state="IDLE", distance_to_goal=0.0),
-                NavigationStatus(state="ARRIVED", distance_to_goal=0.0),
-            ]
-        )
-
-        with self.assertRaises(TimeoutError):
-            self.robot.wait_until_arrived(
-                timeout=1.0,
-                poll_interval=0.0,
-                expected_goal=(7.0, 8.0, 0.0),
-            )
-
-    def test_wait_until_arrived_raises_for_terminal_failure(self) -> None:
-        for state in ("FAILED", "CANCELLED"):
-            with self.subTest(state=state):
-                self.robot.navigation_status = Mock(
-                    side_effect=[
-                        NavigationStatus(state="EXECUTING", goal=Position(2.0, 3.0)),
-                        NavigationStatus(
-                            state=state,
-                            goal=Position(2.0, 3.0),
-                            raw={
-                                "failure_reason": "planner_failed",
-                                "target": {"goal": {"x": 2.0, "y": 3.0}},
-                            },
-                        ),
-                    ]
-                )
-
-                with self.assertRaisesRegex(RuntimeError, f"{state}.*planner_failed"):
-                    self.robot.wait_until_arrived(
-                        timeout=1.0,
-                        poll_interval=0.0,
-                        expected_goal=(2.0, 3.0, 0.0),
-                    )
-    def test_wait_until_arrived_accepts_immediate_success_with_matching_request_id(self) -> None:
-        baseline = NavigationStatus(
-            state="IDLE",
-            raw={"mission": {"raw": {"ts": 1.0}}},
-        )
-        completed = NavigationStatus(
-            state="SUCCESS",
-            goal=Position(7.0, 8.0),
-            request_id="goal-1",
-            raw={
-                "request_id": "goal-1",
-                "mission": {"raw": {"ts": 2.0}},
-                "target": {"goal": {"x": 7.0, "y": 8.0, "yaw": 0.0}},
-            },
-        )
-        self.robot.navigation_status = Mock(return_value=completed)
-
-        result = self.robot.wait_until_arrived(
-            timeout=1.0,
-            poll_interval=0.0,
-            request_id="goal-1",
-            expected_goal=(7.0, 8.0, 0.0),
-            baseline=baseline,
-        )
-
-        self.assertIs(result, completed)
-
-    def test_wait_until_arrived_ignores_same_goal_terminal_for_other_request(self) -> None:
-        baseline = NavigationStatus(
-            state="IDLE",
-            raw={"mission": {"raw": {"ts": 1.0}}},
-        )
-        other = NavigationStatus(
-            state="SUCCESS",
-            goal=Position(7.0, 8.0),
-            request_id="goal-other",
-            raw={
-                "request_id": "goal-other",
-                "mission": {"raw": {"ts": 2.0}},
-                "target": {"goal": {"x": 7.0, "y": 8.0, "yaw": 0.0}},
-            },
-        )
-        active = NavigationStatus(
-            state="EXECUTING",
-            goal=Position(7.0, 8.0),
-            request_id="goal-1",
-            raw={
-                "request_id": "goal-1",
-                "mission": {"raw": {"ts": 3.0}},
-                "target": {"goal": {"x": 7.0, "y": 8.0, "yaw": 0.0}},
-            },
-        )
-        completed = NavigationStatus(
-            state="SUCCESS",
-            goal=Position(7.0, 8.0),
-            request_id="goal-1",
-            raw={
-                "request_id": "goal-1",
-                "mission": {"raw": {"ts": 4.0}},
-                "target": {"goal": {"x": 7.0, "y": 8.0, "yaw": 0.0}},
-            },
-        )
-        self.robot.navigation_status = Mock(side_effect=[other, active, completed])
-
-        result = self.robot.wait_until_arrived(
-            timeout=1.0,
-            poll_interval=0.0,
-            request_id="goal-1",
-            expected_goal=(7.0, 8.0, 0.0),
-            baseline=baseline,
-        )
-
-        self.assertIs(result, completed)
-        self.assertEqual(self.robot.navigation_status.call_count, 3)
-
-    def test_wait_until_arrived_reports_failure_that_precedes_first_active_poll(self) -> None:
-        baseline = NavigationStatus(
-            state="IDLE",
-            raw={"mission": {"raw": {"ts": 1.0}}},
-        )
-        self.robot.navigation_status = Mock(
-            return_value=NavigationStatus(
-                state="FAILED",
-                goal=Position(7.0, 8.0),
-                raw={
-                    "failure_reason": "goal_rejected",
-                    "mission": {"raw": {"ts": 2.0}},
-                    "target": {"goal": {"x": 7.0, "y": 8.0}},
-                },
-            )
-        )
-
-        with self.assertRaisesRegex(RuntimeError, "FAILED.*goal_rejected"):
-            self.robot.wait_until_arrived(
-                timeout=1.0,
-                poll_interval=0.0,
-                expected_goal=(7.0, 8.0, 0.0),
-                baseline=baseline,
-            )
-
-    def test_wait_until_arrived_with_task_id_ignores_other_task_terminal(self) -> None:
+    def test_wait_until_arrived_ignores_other_task_terminal(self) -> None:
         self.robot.navigation_status = Mock()
         self.robot.navigation_task_status = Mock(
             side_effect=[
@@ -653,17 +369,16 @@ class TestLingTuClient(unittest.TestCase):
         )
 
         result = self.robot.wait_until_arrived(
+            "navigation-task-1",
             timeout=1.0,
             poll_interval=0.0,
-            task_id="navigation-task-1",
         )
 
-        self.assertEqual(result.state, "SUCCESS")
-        self.assertEqual(result.request_id, "goal-1")
+        self.assertEqual(result.task.state, "SUCCESS")
         self.assertEqual(self.robot.navigation_task_status.call_count, 3)
         self.robot.navigation_status.assert_not_called()
 
-    def test_wait_until_arrived_with_task_id_reports_exact_task_failure(self) -> None:
+    def test_wait_until_arrived_reports_exact_task_failure(self) -> None:
         self.robot.navigation_task_status = Mock(
             return_value={
                 "found": True,
@@ -679,41 +394,41 @@ class TestLingTuClient(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "FAILED.*planner_failed"):
             self.robot.wait_until_arrived(
+                "navigation-task-1",
                 timeout=1.0,
                 poll_interval=0.0,
-                task_id="navigation-task-1",
             )
 
-    def test_wait_until_arrived_with_task_id_rejects_unidentified_terminal(self) -> None:
-        self.robot.navigation_task_status = Mock(
-            side_effect=[
-                {
-                    "found": True,
-                    "request_id": "goal-unknown",
-                    "status": {"state_name": "SUCCESS", "terminal": True},
-                },
-                {
-                    "found": True,
-                    "task_id": "navigation-task-1",
-                    "request_id": "goal-1",
-                    "status": {"state_name": "SUCCESS", "terminal": True},
-                },
-            ]
+    def test_wait_until_arrived_without_task_id_uses_current_v3_task(self) -> None:
+        executing = NavigationStatus(
+            task=NavigationTask(state="EXECUTING", task_id="navigation-task-1")
+        )
+        success = NavigationStatus(
+            task=NavigationTask(state="SUCCESS", task_id="navigation-task-1")
+        )
+        self.robot.navigation_status = Mock(side_effect=[executing, success])
+        self.robot.navigation_task_status = Mock()
+
+        result = self.robot.wait_until_arrived(timeout=1.0, poll_interval=0.0)
+
+        self.assertIs(result, success)
+        self.robot.navigation_task_status.assert_not_called()
+
+    def test_wait_until_arrived_without_task_id_reports_v3_failure(self) -> None:
+        self.robot.navigation_status = Mock(
+            return_value=NavigationStatus(
+                task=NavigationTask(
+                    state="FAILED",
+                    task_id="navigation-task-1",
+                    reason="planner_failed",
+                )
+            )
         )
 
-        result = self.robot.wait_until_arrived(
-            timeout=1.0,
-            poll_interval=0.0,
-            task_id="navigation-task-1",
-        )
-
-        self.assertEqual(result.request_id, "goal-1")
-        self.assertEqual(self.robot.navigation_task_status.call_count, 2)
+        with self.assertRaisesRegex(RuntimeError, "FAILED.*planner_failed"):
+            self.robot.wait_until_arrived(timeout=1.0, poll_interval=0.0)
 
     def test_batch_go_waits_for_every_waypoint_including_final(self) -> None:
-        first_baseline = NavigationStatus(state="IDLE", raw={"mission": {"raw": {"ts": 1.0}}})
-        second_baseline = NavigationStatus(state="SUCCESS", raw={"mission": {"raw": {"ts": 2.0}}})
-        self.robot.navigation_status = Mock(side_effect=[first_baseline, second_baseline])
         self.robot.go = Mock(
             side_effect=[
                 CommandResult(
@@ -730,33 +445,21 @@ class TestLingTuClient(unittest.TestCase):
                 ),
             ]
         )
-        self.robot.wait_until_arrived = Mock(
-            side_effect=[
-                NavigationStatus(state="SUCCESS"),
-                NavigationStatus(state="SUCCESS"),
-            ]
-        )
+        self.robot.wait_until_arrived = Mock()
 
         results = self.robot.batch_go([(1.0, 2.0, 0.1), (3.0, 4.0, 0.2)])
 
         self.assertEqual(len(results), 2)
         self.assertEqual(
             self.robot.wait_until_arrived.call_args_list,
-            [
-                call(
-                    task_id="navigation-task-1",
-                    request_id="goal-1",
-                    expected_goal=(1.0, 2.0, 0.1),
-                    baseline=first_baseline,
-                ),
-                call(
-                    task_id="navigation-task-2",
-                    request_id="goal-2",
-                    expected_goal=(3.0, 4.0, 0.2),
-                    baseline=second_baseline,
-                ),
-            ],
+            [call("navigation-task-1"), call("navigation-task-2")],
         )
+
+    def test_batch_go_rejects_accepted_goal_without_task_id(self) -> None:
+        self.robot.go = Mock(return_value=CommandResult(ok=True, accepted=True))
+
+        with self.assertRaisesRegex(RuntimeError, "without a task_id"):
+            self.robot.batch_go([(1.0, 2.0, 0.1)])
 
     @patch("urllib.request.urlopen")
     def test_command_without_explicit_success_signal_is_not_accepted(self, mock_urlopen) -> None:
@@ -1468,18 +1171,6 @@ class TestLingTuClient(unittest.TestCase):
     # ------------------------------------------------------------------
     # App endpoints
     # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Auth
-    # ------------------------------------------------------------------
-
-    @patch("urllib.request.urlopen")
-    def test_auth_login(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"ok": True, "token": "abc"})
-        r = self.robot.auth_login("my-key")
-        self.assertEqual(r.get("token"), "abc")
-        request = mock_urlopen.call_args.args[0]
-        self.assertEqual(json.loads(request.data), {"key": "my-key"})
 
     # ------------------------------------------------------------------
     # Map operations

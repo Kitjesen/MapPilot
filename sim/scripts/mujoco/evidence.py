@@ -18,6 +18,8 @@ MOTION_EVIDENCE_FILENAME = "mujoco_feeder.motion.json"
 MIN_BASE_HEIGHT_M = 0.20
 MAX_BASE_HEIGHT_M = 1.00
 MAX_BASE_HEIGHT_SPAN_M = 0.35
+# Height bounds and evidence min/max refer to physical terrain clearance.
+# Trajectory positions retain world Z, including floor-to-floor elevation.
 MAX_ABS_TILT_RAD = math.radians(30.0)
 MAX_TRAJECTORY_SAMPLES = 4096
 _MOTION_FIELDS = frozenset(

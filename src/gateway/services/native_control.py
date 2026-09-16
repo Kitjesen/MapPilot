@@ -1,23 +1,23 @@
 """Mode-independent native motion control seam for external interfaces.
 
-The JSON status snapshot in this module is telemetry only. Command delivery
+Native JSON status snapshots are telemetry only. Command delivery
 authority comes solely from the configured typed native command boundary.
 """
 
 from __future__ import annotations
 
-import json
 import math
 import os
 import time
 from collections.abc import Mapping
 from typing import Any
 
-from gateway.services.command_boundary import (
+from gateway.navigation.commands import (
     CommandBoundaryError,
     invoke_navigation_command,
     navigation_commands,
 )
+from gateway.services.native_status import read_navigation_status
 from runtime.msgs import NavigationCommandKind
 
 
@@ -50,17 +50,6 @@ def endpoint_only_enabled(owner: Any | None = None) -> bool:
     raise ValueError(f"unsupported command_output_mode: {mode!r}")
 
 
-def read_status() -> dict[str, Any] | None:
-    """Read a best-effort, non-authoritative endpoint telemetry snapshot."""
-    path = os.environ.get("LINGTU_NAV_STATUS_FILE", "").strip() or ("/dev/shm/lingtu/nav_endpoint_status.json")
-    try:
-        with open(path, encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
 def status_is_fresh(
     payload: Mapping[str, Any] | None,
     *,
@@ -91,7 +80,7 @@ def motion_resume_context(
 ) -> dict[str, Any]:
     """Describe what a native motion resume means without guessing from stale status."""
 
-    snapshot = payload if payload is not None else read_status()
+    snapshot = payload if payload is not None else read_navigation_status()
     unknown = {
         "status_fresh": False,
         "observed_control_mode": None,
@@ -195,7 +184,7 @@ def motion_resume_result(
 def teleop_active(payload: Mapping[str, Any] | None = None) -> bool:
     """Report native teleop activity from non-authoritative telemetry."""
 
-    snapshot = payload if payload is not None else read_status()
+    snapshot = payload if payload is not None else read_navigation_status()
     if not status_is_fresh(snapshot):
         return False
     control_mode = str(snapshot.get("control_mode") or "")

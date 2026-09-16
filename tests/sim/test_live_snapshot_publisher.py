@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -6,7 +5,6 @@ import json
 from typing import Any
 
 import pytest
-
 from sim.runtime.coordinator import CoordinatorError, RuntimeState
 from sim.runtime.coordinator.live_snapshot import (
     MAX_LOOPBACK_DATAGRAM_BYTES,

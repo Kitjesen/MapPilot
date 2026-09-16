@@ -10,7 +10,7 @@ here.
 These are not the repository's universal messages. DDS wire types live in
 `src/message/idl/`, Python in-process messages in `src/runtime/msgs/`, HTTP
 models in `src/gateway/schemas.py`, and topic ownership/QoS in
-`config/runtime_graph/topics.yaml`.
+`src/message/topics/*.yaml`.
 
 ## Contract index
 

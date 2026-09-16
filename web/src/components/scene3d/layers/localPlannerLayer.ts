@@ -187,6 +187,27 @@ function addTraversabilityRisk(
   group.add(mesh)
 }
 
+function addInflatedCollisionCells(group: THREE.Group, snapshot: NavigationDdsSnapshotResponse, sliceZ?: number): void {
+  const collision = snapshot.nav_endpoint?.local_map?.collision
+  const resolution = collision?.resolution_m
+  if (!collision?.enabled || !collision.live || !collision.complete || collision.frame_id !== 'map'
+    || typeof resolution !== 'number' || !Number.isFinite(resolution) || resolution <= 0
+    || typeof collision.stamp_s !== 'number' || Math.abs(snapshot.ts - collision.stamp_s) > 0.5) return
+  const points = (collision.occupied_points ?? []).map(point => scenePoint(point))
+    .filter((point): point is THREE.Vector3 => point != null)
+    .filter(point => sliceZ === undefined || Math.abs(point.y - sliceZ) <= resolution / 2 + 1e-6)
+  if (!points.length) return
+  // These cells already include mapd inflation; never expand them again here.
+  const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(resolution, resolution, resolution),
+    new THREE.MeshBasicMaterial({ color: 0xe56754, transparent: true, opacity: 0.65, depthWrite: false, toneMapped: false }), points.length)
+  const transform = new THREE.Matrix4()
+  points.forEach((point, index) => mesh.setMatrixAt(index, transform.makeTranslation(point.x, point.y, point.z)))
+  mesh.instanceMatrix.needsUpdate = true
+  mesh.computeBoundingSphere()
+  mesh.name = 'inflated-collision-cells'
+  group.add(mesh)
+}
+
 function addCandidatePaths(
   group: THREE.Group,
   snapshot: NavigationDdsSnapshotResponse,
@@ -211,13 +232,17 @@ function addCandidatePaths(
 
 export function createLocalPlannerDiagnosticLayer(
   snapshot: NavigationDdsSnapshotResponse | null | undefined,
+  sliceZ?: number,
 ): THREE.Group | null {
   if (!snapshot?.nav_endpoint || !endpointSnapshotFresh(snapshot)) return null
   const group = new THREE.Group()
   group.name = 'native-local-planner-diagnostics'
-  addTraversabilityRisk(group, snapshot)
-  addObstaclePoints(group, snapshot)
-  addCandidatePaths(group, snapshot)
+  if (sliceZ === undefined) {
+    addTraversabilityRisk(group, snapshot)
+    addObstaclePoints(group, snapshot)
+    addCandidatePaths(group, snapshot)
+  }
+  addInflatedCollisionCells(group, snapshot, sliceZ)
   return group.children.length > 0 ? group : null
 }
 

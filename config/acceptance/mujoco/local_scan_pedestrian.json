@@ -1,0 +1,38 @@
+{
+  "extends": "local_scan.json",
+  "name": "mujoco_local_scan_physical_pedestrian",
+  "description": "Thunder V4 truth-localized SCAN navigation through a physical crossing pedestrian in the existing IndustrialPark world.",
+  "start": [42.0, 6.0, 0.6, 1.5707963267948966],
+  "goal": [42.0, 10.0, 0.3, 1.5707963267948966],
+  "scenario_geometry": null,
+  "dynamic_obstacle": {
+    "proxy_mjcf": "sim/packages/scenarios/industrial_park_walking_person/physics/person_capsule.xml",
+    "attach_root": "proxy_root",
+    "start_xyz": [39.0, 8.0, 0.0],
+    "end_xyz": [45.0, 8.0, 0.0],
+    "start_s": 2.5,
+    "duration_s": 6.0
+  },
+  "phases": {"motion": {"duration_s": 40.0, "warmup_s": 10.0}},
+  "telemetry_log": {"enabled": true, "hz": 10.0, "lidar_points": 4000},
+  "thresholds": {
+    "min_motion_m": 3.0,
+    "min_net_displacement_m": 3.0,
+    "min_goal_distance_reduction_m": 3.0
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": [
+      "existing mocap pedestrian collision geometry moves across the robot route",
+      "actual ray-cast LiDAR observes a physical moving-actor encounter",
+      "native SCAN stops for the observed moving obstacle and resumes toward the goal",
+      "every visible physical step is checked for entity contact, with final arrival and exact driver stop"
+    ],
+    "excluded_claims": [
+      "Fast-LIO2 localization quality",
+      "full ProductControl navigation acceptance",
+      "Go2 hardware motion or field safety clearance",
+      "predictive pedestrian tracking or a dynamic-obstacle benchmark campaign"
+    ]
+  }
+}

@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from sim.runtime.control import ActuatorCommand, GenerationStamp
 from sim.runtime.coordinator import CoordinatorError
 from sim.runtime.coordinator.mujoco_process import MujocoProcess

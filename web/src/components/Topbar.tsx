@@ -1,23 +1,22 @@
-import { useState } from 'react'
-import { Settings } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Activity, Box, Check, ChevronDown, Gamepad2, ListChecks, Map, Navigation, Settings, SlidersHorizontal, Square, Workflow } from 'lucide-react'
 import type { SSEState, Tab } from '../types'
+import { isObservationMode } from '../services/observationMode.ts'
 import { SettingsMenu } from './SettingsMenu'
 import type { ResolvedTheme, Theme } from './useTheme'
 import { text, type Locale } from '../i18n'
 import styles from './Topbar.module.css'
 
-const PRODUCT_TABS: { key: Tab; en: string; zh: string }[] = [
-  { key: 'console', en: 'Console', zh: '控制台' },
-  { key: 'scene', en: 'Scene', zh: '场景' },
-  { key: 'map', en: 'Maps', zh: '地图' },
-  { key: 'slam', en: 'Localization', zh: '定位' },
-  { key: 'inspection', en: 'Inspect', zh: '巡检' },
-]
-
-const INTERNAL_TABS: { key: Tab; en: string; zh: string }[] = [
-  { key: 'dataflow', en: 'Data', zh: '数据' },
-  { key: 'planner', en: 'Planning', zh: '规划' },
-]
+const WORKSPACE_PAGES = [
+  { key: 'scene', en: 'Scene', zh: '现场', icon: Box },
+  { key: 'console', en: 'Control', zh: '控制台', icon: Gamepad2 },
+  { key: 'map', en: 'Maps', zh: '地图', icon: Map },
+  { key: 'inspection', en: 'Tasks', zh: '巡检任务', icon: ListChecks },
+  { key: 'slam', en: 'Localization', zh: '定位诊断', icon: Activity },
+  { key: 'dataflow', en: 'Data', zh: '数据诊断', icon: Workflow },
+  { key: 'planner', en: 'Planning', zh: '规划参数', icon: SlidersHorizontal },
+] as const
+const PRIMARY_PAGES = ['scene', 'map', 'inspection']
 
 interface TopbarProps {
   sseState: SSEState
@@ -28,144 +27,115 @@ interface TopbarProps {
   onThemeChange: (theme: Theme) => void
   locale: Locale
   onLocaleChange: (locale: Locale) => void
+  onStop: () => void
 }
-
-function numericMetric(data: Record<string, unknown>, key: string): number | undefined {
-  const value = data[key]
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string') {
-    const parsed = Number(value)
-    return Number.isFinite(parsed) ? parsed : undefined
-  }
-  return undefined
-}
-
-function showInternalTabs(): boolean {
-  if (typeof window === 'undefined') return false
-  const params = new URLSearchParams(window.location.search)
-  return params.has('debug_nav')
-}
-
-export function Topbar({
-  sseState,
-  activeTab,
-  onTabChange,
-  theme,
-  resolvedTheme,
-  onThemeChange,
-  locale,
-  onLocaleChange,
-}: TopbarProps) {
+export function Topbar(props: TopbarProps) {
+  const { sseState, activeTab, onTabChange, locale } = props
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const tabs = showInternalTabs() ? [...PRODUCT_TABS, ...INTERNAL_TABS] : PRODUCT_TABS
-  const slamDiag = sseState.slamDiag?.data ?? {}
-  const scanHz = numericMetric(slamDiag, 'processed_scan_hz') ?? sseState.slamStatus?.slam_hz ?? 0
-  const lidarHz = numericMetric(slamDiag, 'lidar_input_hz')
-  const hasCloud = !!sseState.mapCloud
-  const slamMode = sseState.slamStatus?.mode ?? null
-  const slamPipClass = scanHz > 3 ? styles.pipGood : scanHz > 0 ? styles.pipWarn : styles.pipBad
-  const cloudPipClass = hasCloud ? styles.pipGood : styles.pipBad
+  const workspaceMenu = useRef<HTMLDetailsElement>(null)
+  const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  const observe = isObservationMode()
+  const currentPage = WORKSPACE_PAGES.find(page => page.key === activeTab) ?? WORKSPACE_PAGES[0]
 
-  const handleKeyDown = (e: React.KeyboardEvent, idx: number) => {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-    e.preventDefault()
-    const delta = e.key === 'ArrowRight' ? 1 : -1
-    const next = (idx + delta + tabs.length) % tabs.length
-    onTabChange(tabs[next].key)
-  }
+  useEffect(() => {
+    const dismissOutside = (event: PointerEvent) => {
+      const menu = workspaceMenu.current
+      if (menu?.open && !menu.contains(event.target as Node)) menu.open = false
+    }
+    const dismissEscape = (event: KeyboardEvent) => {
+      const menu = workspaceMenu.current
+      if (event.key === 'Escape' && menu?.open) {
+        menu.open = false
+        menu.querySelector('summary')?.focus()
+      }
+    }
+    document.addEventListener('pointerdown', dismissOutside)
+    document.addEventListener('keydown', dismissEscape)
+    return () => {
+      document.removeEventListener('pointerdown', dismissOutside)
+      document.removeEventListener('keydown', dismissEscape)
+    }
+  }, [])
 
   return (
     <header className={styles.topbar}>
-      <span className={styles.logo}>
-        <span className={styles.logoIcon} aria-hidden="true">
-          <svg width="15" height="15" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="16" cy="16" r="11.5" stroke="url(#tbRing)" strokeWidth="1.5" fill="none" strokeDasharray="7 3.5" strokeLinecap="round" />
-            <path d="M16 5.5 L23.5 21 L16 17.8 L8.5 21 Z" fill="url(#tbArrow)" />
-            <path d="M16 10.5 L20.5 19.5 L16 17.8 L11.5 19.5 Z" fill="rgba(14,16,32,0.85)" />
-            <circle cx="16" cy="25.5" r="1.8" fill="#22d3ee" opacity="0.9" />
-            <circle cx="16" cy="25.5" r="1" fill="rgba(14,16,32,0.85)" />
-            <defs>
-              <linearGradient id="tbArrow" x1="8" y1="5" x2="24" y2="24" gradientUnits="userSpaceOnUse">
-                <stop offset="0" stopColor="#818cf8" />
-                <stop offset="1" stopColor="#22d3ee" />
-              </linearGradient>
-              <linearGradient id="tbRing" x1="5" y1="5" x2="27" y2="27" gradientUnits="userSpaceOnUse">
-                <stop offset="0" stopColor="#6366f1" stopOpacity="0.8" />
-                <stop offset="1" stopColor="#06b6d4" stopOpacity="0.8" />
-              </linearGradient>
-            </defs>
-          </svg>
-        </span>
-        LingTu
-      </span>
-
-      <div className={styles.middle}>
-        <nav className={styles.tabs} role="tablist" aria-label={text(locale, 'Main view switcher', '主视图切换')}>
-          {tabs.map((tab, i) => (
-            <button
-              key={tab.key}
-              role="tab"
-              tabIndex={activeTab === tab.key ? 0 : -1}
-              aria-selected={activeTab === tab.key}
-              aria-controls={`panel-${tab.key}`}
-              className={activeTab === tab.key ? styles.tabActive : styles.tab}
-              onClick={() => onTabChange(tab.key)}
-              onKeyDown={(e) => handleKeyDown(e, i)}
-            >
-              {text(locale, tab.en, tab.zh)}
-            </button>
-          ))}
-        </nav>
-      </div>
-
+      <button className={styles.logo} onClick={() => onTabChange('scene')}
+        aria-label={text(locale, 'LingTu — return to scene', 'LingTu · 返回现场')}
+        title={text(locale, 'Return to scene', '返回现场')}>
+        <Navigation size={24} strokeWidth={1.8} aria-hidden="true" />
+      </button>
+      <nav className={styles.workspace} aria-label={text(locale, 'Workspace', '工作区')}>
+        {observe ? <span className={styles.viewLabel}>{text(locale, 'Scene', '现场')}</span> : (<>
+          <div className={styles.primaryPages}>
+            {WORKSPACE_PAGES.filter(page => PRIMARY_PAGES.includes(page.key)).map(page => (
+              <button key={page.key} className={styles.pageButton}
+                aria-current={activeTab === page.key ? 'page' : undefined}
+                onClick={() => onTabChange(page.key)}>
+                <page.icon size={16} strokeWidth={1.7} />
+                {text(locale, page.en, page.zh)}
+              </button>
+            ))}
+          </div>
+          <details ref={workspaceMenu} className={styles.workspaceMenu} name="lingtu-menu"
+            onBlur={event => {
+              if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false
+            }}
+            onKeyDown={event => {
+              const menu = event.currentTarget
+              const buttons = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+              const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+              if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+                event.preventDefault()
+                menu.open = true
+                const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+                  : index < 0 ? event.key === 'ArrowDown' ? 0 : buttons.length - 1
+                    : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+                buttons[next]?.focus()
+              }
+            }}>
+            <summary className={styles.workspaceTrigger} aria-haspopup="menu"
+              aria-label={text(locale, `Switch workspace: ${currentPage.en}`, `切换工作区：${currentPage.zh}`)}>
+              {PRIMARY_PAGES.includes(activeTab) ? text(locale, 'More', '更多') : text(locale, currentPage.en, currentPage.zh)}<ChevronDown size={13} />
+            </summary>
+            <div className={styles.workspacePanel} role="menu" aria-label={text(locale, 'Choose workspace', '选择工作区')}>
+              {WORKSPACE_PAGES.filter(page => !PRIMARY_PAGES.includes(page.key)).map((page, index) => <div key={page.key}>
+                {index === 1 && <div className={styles.groupLabel}>{text(locale, 'Diagnostics', '诊断与调试')}</div>}
+                <button role="menuitem" aria-current={activeTab === page.key ? 'page' : undefined}
+                  onClick={() => {
+                    onTabChange(page.key)
+                    if (workspaceMenu.current) {
+                      workspaceMenu.current.open = false
+                      workspaceMenu.current.querySelector('summary')?.focus()
+                    }
+                  }}>
+                  <page.icon size={16} strokeWidth={1.6} />
+                  <span>{text(locale, page.en, page.zh)}</span>
+                  {activeTab === page.key && <Check size={14} />}
+                </button>
+              </div>)}
+            </div>
+          </details>
+        </>)}
+      </nav>
       <div className={styles.right}>
-        <span
-          className={sseState.connected ? styles.badgeOnline : styles.badgeOffline}
-          title={text(
-            locale,
-            `Gateway SSE ${sseState.connected ? 'connected' : 'disconnected'}`,
-            `网关 SSE ${sseState.connected ? '已连接' : '已断开'}`,
-          )}
-        >
-          {sseState.connected ? text(locale, 'Online', '在线') : text(locale, 'Offline', '离线')}
+        <span className={sseState.connected ? styles.online : styles.offline} role="status"
+          title={text(locale, 'Realtime connection', '实时连接状态')}>
+          {sseState.connected ? text(locale, 'Connected', '已连接') : text(locale, 'Disconnected', '未连接')}
         </span>
-        <span
-          className={`${styles.miniPip} ${slamPipClass}`}
-          title={text(
-            locale,
-            `Localization processing ${scanHz.toFixed(1)} Hz${lidarHz ? ` / LiDAR input ${lidarHz.toFixed(1)} Hz` : ''} / ${slamMode ?? '--'}`,
-            `定位处理 ${scanHz.toFixed(1)} Hz${lidarHz ? ` / 雷达输入 ${lidarHz.toFixed(1)} Hz` : ''} / ${slamMode ?? '--'}`,
-          )}
-        >
-          {text(locale, 'Localization', '定位')}
-        </span>
-        <span
-          className={`${styles.miniPip} ${cloudPipClass}`}
-          title={text(locale, `Point cloud ${hasCloud ? 'active' : 'no data'}`, `点云 ${hasCloud ? '活跃' : '无数据'}`)}
-        >
-          {text(locale, 'Environment', '环境')}
-        </span>
-        {sseState.safetyState?.estop && <span className={styles.estop}>{text(locale, 'E-STOP', '急停')}</span>}
-        <button
-          className={styles.btnIcon}
-          aria-label={text(locale, 'Settings', '设置')}
-          aria-expanded={settingsOpen}
-          onClick={() => setSettingsOpen(v => !v)}
-        >
-          <Settings size={16} />
-        </button>
+        {observe ? <a className={styles.pageButton} href="/" title={text(locale, 'Open goal selection; no motion until you confirm a goal', '打开选点工作区，确认目标后才会运动')}>
+          <Navigation size={16} />{text(locale, 'Navigate', '进入导航')}
+        </a> : (
+          <button className={styles.stop} onClick={props.onStop} title={text(locale, 'Emergency stop', '紧急停止机器人')}>
+            <Square size={11} fill="currentColor" />{text(locale, 'Stop', '停止')}
+          </button>
+        )}
+        {sseState.safetyState?.estop && <span className={styles.estop}>{text(locale, 'E-stop active', '急停中')}</span>}
+        <button className={styles.iconButton} aria-label={text(locale, 'Settings', '设置')}
+          aria-expanded={settingsOpen} onClick={() => setSettingsOpen(value => !value)}><Settings size={18} strokeWidth={1.7} /></button>
       </div>
-
-      <SettingsMenu
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        theme={theme}
-        resolvedTheme={resolvedTheme}
-        onThemeChange={onThemeChange}
-        locale={locale}
-        onLocaleChange={onLocaleChange}
-        onNavigateTab={onTabChange}
-      />
+      <SettingsMenu open={settingsOpen} onClose={closeSettings}
+        theme={props.theme} resolvedTheme={props.resolvedTheme} onThemeChange={props.onThemeChange}
+        locale={locale} onLocaleChange={props.onLocaleChange} />
     </header>
   )
 }

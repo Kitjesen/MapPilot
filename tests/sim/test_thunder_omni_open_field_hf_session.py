@@ -1,10 +1,8 @@
-# ruff: noqa: S101
 from __future__ import annotations
 
 from pathlib import Path
 
 import yaml
-
 from sim.catalog import CatalogResolver
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

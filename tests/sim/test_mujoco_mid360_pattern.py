@@ -210,7 +210,7 @@ def test_saved_map_relocalize_discovers_generic_native_same_source_map(
 
 
 def test_mujoco_backend_catalogs_all_products_without_legacy_flat_acceptance() -> None:
-    from runtime.graph.loader import load_runtime_graph
+    from lingtu.assembly.graph.loader import load_runtime_graph
 
     backend = load_runtime_graph().envs["sim"]["backends"]["mujoco"]
 

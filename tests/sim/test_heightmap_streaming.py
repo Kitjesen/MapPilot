@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Streaming heightmap artifact construction contracts."""
 
 from __future__ import annotations
@@ -7,7 +6,6 @@ import struct
 from pathlib import Path
 
 import pytest
-
 from sim.catalog.importers.heightmap import (
     build_heightmap_artifacts,
     build_heightmap_artifacts_from_u16_file,

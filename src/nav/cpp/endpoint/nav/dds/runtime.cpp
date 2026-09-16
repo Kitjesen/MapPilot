@@ -10,8 +10,8 @@
 #include <type_traits>
 
 #include "dds/codec.hpp"
-#include "message/cpp/qos.hpp"
-#include "message/cpp/topics.hpp"
+#include "transport/dds/qos.hpp"
+#include "message/generated/topics.hpp"
 #include "nav/cpp/platform/runtime.hpp"
 #include "status/navigation_state.hpp"
 
@@ -251,7 +251,7 @@ GeofenceCommandView copyGeofenceCommand(const lingtu_dds_GeofenceCommandRequest 
   return view;
 }
 
-Dds::Dds(int domain_id, DdsStatus *status, bool read_obstacle_cloud)
+Dds::Dds(int domain_id, DdsStatus *status, bool read_obstacle_cloud, bool read_simulation_clock)
     : host_boot_id_(readHostBootId()),
       producer_boot_id_(makeProducerBootId(host_boot_id_, boottimeNanoseconds())),
       status_(status) {
@@ -268,6 +268,9 @@ Dds::Dds(int domain_id, DdsStatus *status, bool read_obstacle_cloud)
 
   odom_reader_ =
       reader(lingtu::message::kSlamOdometry.dds_topic.data(), &lingtu_dds_Odometry_desc, "odom");
+  if (read_simulation_clock)
+    simulation_clock_reader_ = reader(lingtu::message::kSimClock.dds_topic.data(),
+                                      &lingtu_dds_Time_desc, "simulation_clock");
   tf_reader_ = reader(lingtu::message::kTf.dds_topic.data(), &lingtu_dds_TFMessage_desc, "tf");
   if (read_obstacle_cloud) {
     cloud_reader_ = reader(lingtu::message::kSlamRegisteredCloud.dds_topic.data(),
@@ -372,6 +375,14 @@ SensorBatch Dds::takeSensors(double now_steady_s) {
   SensorBatch batch;
   batch.receive_steady_s = now_steady_s;
   batch.receive_wall_s = nowSeconds();
+  if (simulation_clock_reader_ > 0) {
+    drainReader<lingtu_dds_Time>(
+        simulation_clock_reader_, lingtu_dds_Time_desc,
+        [&](const lingtu_dds_Time &message) {
+          if (message.sec >= 0 && message.nanosec < 1'000'000'000U)
+            batch.simulation_time_s = toSeconds(message);
+        }, DdsDrainProfile::kDefault, true);
+  }
 
   drainReader<lingtu_dds_TFMessage>(
       tf_reader_, lingtu_dds_TFMessage_desc,
@@ -479,6 +490,8 @@ CommandBatch Dds::takeCommands(double now_steady_s) {
       [&](const lingtu_dds_NavigationCommandRequest &message) {
         NavigationCommandSample sample;
         sample.ingress = commandIngressRequestFromDds(message);
+        sample.goal.max_speed_mps = message.max_speed_mps;
+        sample.goal.acceptance_radius_m = message.acceptance_radius_m;
         sample.goal.stamp_s = headerStampSeconds(message.header);
         sample.goal.frame_id = headerFrameId(message.header);
         sample.goal.position = {message.goal.position.x, message.goal.position.y,

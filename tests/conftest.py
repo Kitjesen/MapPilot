@@ -46,7 +46,7 @@ asyncio.set_event_loop_policy(_CompatEventLoopPolicy())
 def allow_unbuilt_process_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
     """Let contract tests compile RunPlans without native build outputs."""
 
-    from runtime.graph.processes import ProcessArtifact
+    from lingtu.assembly.graph.processes import ProcessArtifact
 
     monkeypatch.setattr(
         ProcessArtifact,

@@ -5,6 +5,10 @@ Run these commands from the repository root. Compilation outputs go under
 prefix `install/linux-<arch>/<config>/{bin,lib,etc,share}` before assembling
 `dist/`; Product startup never resolves a `build/` path.
 
+On Windows x64, use the same CMake install rules with
+`--prefix install/windows-x64/Release`. The Linux OTA packager does not package
+Windows binaries.
+
 ## Field runtime
 
 | Target | Command |
@@ -44,12 +48,22 @@ generator, then run `cmake --build src/kernels/gateway/pointcloud_codec/build --
 The files under `cmake/`, `locks/`, `vcpkg/`, and `provenance/` are inputs to
 that release build. They are not Product runtime state.
 
+## Native planner builds
+
+Product default: native planner kernels, no ROS2.
+
+| Target | Command |
+| --- | --- |
+| OctoPlanner3D | `bash scripts/build/build_octoplanner3d.sh` |
+| Optional vendored PCL | `bash scripts/build/build_vendored_pcl.sh` |
+
+ROS 2 Humble Desktop is optional and belongs only to an explicit compatibility
+or algorithm-validation path.
+
 ## Optional research builds
 
 - `fetch_erasor2.sh` restores the optional map-cleaning comparison source used
   by `build_prune.sh`.
-- `build_vendored_pcl.sh` and `build_octoplanner3d.sh` prepare optional native
-  planner dependencies.
 
 `fetch_orbbec_sdk.sh` fetches the field-tested standalone Orbbec SDK v2.8.7
 into ignored `build/deps/orbbec-sdk/`; the native camera does not use a ROS2

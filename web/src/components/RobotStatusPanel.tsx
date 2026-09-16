@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { LocateFixed, RefreshCw, Route } from 'lucide-react'
+import { ChevronDown, LocateFixed, RefreshCw, Route } from 'lucide-react'
 import { text, type Locale } from '../i18n'
 import * as api from '../services/api'
 import type { SSEState, ToastKind } from '../types'
@@ -83,7 +83,7 @@ export function RobotStatusPanel({
 
   const product = value(
     session?.product,
-    text(locale, 'No active task', '当前无任务'),
+    text(locale, 'Not active', '未启用'),
   )
   const backend = value(
     session?.localization_backend ?? session?.slam_profile,
@@ -141,18 +141,24 @@ export function RobotStatusPanel({
       </header>
 
       <div className={styles.grid}>
-        <div><span>{text(locale, 'Task', '任务')}</span><strong>{product}</strong></div>
-        <div><span>Env</span><strong>{session?.env ?? '--'}</strong></div>
-        <div><span>{text(locale, 'Map', '地图')}</span><strong>{map}</strong></div>
-        <div><span>{text(locale, 'Localization', '定位')}</span><strong>{backend}</strong></div>
-        <div><span>{text(locale, 'Cloud', '点云')}</span><strong>{cloudPoints.toLocaleString()}</strong></div>
+        <div><span>{text(locale, 'Operating mode', '运行模式')}</span><strong>{product}</strong></div>
         <div>
-          <span>{text(locale, 'State', '状态')}</span>
+          <span>{text(locale, 'Localization state', '定位状态')}</span>
           <strong className={ready ? styles.ready : styles.waiting}>
-            {ready ? text(locale, 'Ready', '就绪') : text(locale, 'Waiting', '等待')}
+            {ready ? text(locale, 'Localization ready', '定位就绪') : text(locale, 'Awaiting localization', '等待定位')}
           </strong>
         </div>
+        <div className={styles.mapField}><span>{text(locale, 'Map', '地图')}</span><strong>{map}</strong></div>
       </div>
+
+      <details className={styles.details}>
+        <summary>{text(locale, 'Runtime details', '运行详情')}<ChevronDown size={14} /></summary>
+        <div className={styles.grid}>
+          <div><span>{text(locale, 'Environment', '运行环境')}</span><strong>{session?.env ?? '--'}</strong></div>
+          <div><span>{text(locale, 'Localization backend', '定位后端')}</span><strong>{backend}</strong></div>
+          <div><span>{text(locale, 'Map cloud points', '地图点云数量')}</span><strong>{cloudPoints.toLocaleString()}</strong></div>
+        </div>
+      </details>
 
       <button
         className={styles.action}
@@ -234,7 +240,7 @@ export function RobotStatusPanel({
               onClick={() => void runVisualServo('stop')}
               disabled={visualCommand !== null}
             >
-              {text(locale, 'Stop', '停止')}
+              {text(locale, 'Stop tracking', '停止跟随')}
             </button>
           </div>
           {visualServo && (

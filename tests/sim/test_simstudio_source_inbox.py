@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Contracts for SimStudio's managed import source inbox."""
 
 from __future__ import annotations

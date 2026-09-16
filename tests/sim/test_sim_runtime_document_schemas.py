@@ -1,6 +1,5 @@
 """Contracts for session-bound simulation runtime JSON documents."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -11,9 +10,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from sim.runtime.coordinator.live_snapshot import truth_snapshot_document
 from sim.runtime.replay.visual import _runtime_manifest as replay_runtime_manifest
+
 from tests.sim.test_sim_plan_schemas import SchemaError, _validate
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

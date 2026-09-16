@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from diagnostics.field.teleop_avoid_preflight import evaluate_teleop_avoid_preflight
+from lingtu.assembly.compiler import compile_run_plan
 from lingtu.run_plan import CURRENT_RUN_SCHEMA, RUN_PLAN_SCHEMA, RunPlan
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,8 +35,6 @@ def _snapshot() -> dict:
         "operator_motion_typed_dds_interface",
         "native_operator_motion_authority",
         "registered_cloud_collision_check",
-        "traversability_costmap",
-        "local_planner_collision_and_traversability_scoring",
         "path_follower_pre_command_output",
         "operator_assisted_local_planner_control",
         "final_cmd_vel_single_writer",
@@ -48,17 +47,15 @@ def _snapshot() -> dict:
         "/slam/odometry",
         "/slam/registered_cloud",
         "/slam/map_observation",
-        "/maps/state",
-        "/maps/scene",
-        "/nav/traversability",
         "/nav/local_path",
         "/nav/cmd_vel",
     }
     native_nav = {
         "control_mode": "teleop_avoid",
+        "local_planner": "scan",
         "publish_cmd_vel": True,
         "check_obstacle": True,
-        "use_traversability_cost": True,
+        "use_traversability_cost": False,
         "allow_teleop_takeover": False,
         "teleop_local_planner": True,
     }
@@ -97,21 +94,33 @@ def _snapshot() -> dict:
             },
         },
         "has_odom": True,
-        "has_traversability": True,
+        "has_traversability": False,
         "input_gate": {
             "ready": True,
             "reason": "ready",
             "require_odom": True,
-            "require_cloud": True,
-            "require_traversability": True,
+            "require_cloud": False,
+            "require_local_collision": True,
+            "require_traversability": False,
             "require_driver_control": True,
-            "require_localization_health": True,
+            "require_localization_health": False,
             "localization_healthy": True,
             "driver_control_ready": True,
             "driver_control_reason": "ready",
+            "driver_control_max_age_s": 0.35,
+            "local_collision_age_s": 0.05,
+            "local_collision_max_age_s": 0.35,
         },
         "control_loop_health": {"ready": True, "healthy": True, "reason": "ready"},
-        "counters": {"odom": 10, "registered_clouds": 10, "traversability": 10},
+        "counters": {"odom": 10, "registered_clouds": 10, "traversability": 0},
+        "local_map": {
+            "collision": {
+                "live": True,
+                "complete": True,
+                "generation": 12,
+                "observation_sequence": 10,
+            }
+        },
         "final_cmd_vel": _zero(),
         "final_output": {
             "published": True,
@@ -136,12 +145,6 @@ def _snapshot() -> dict:
         },
         "local_path_points": 0,
         "last_local": {"seen": False, "final_safety": {"applied": False}},
-    }
-    traversability = {
-        "schema_version": "lingtu.traversability.status.v2",
-        "endpoint": "lingtu_traversability_dds",
-        "has_odom": True,
-        "counters": {"odom": 10, "registered_clouds": 10, "published": 10},
     }
     maps = {
         "schema_version": "lingtu.maps.runtime.v1",
@@ -224,7 +227,7 @@ def _snapshot() -> dict:
                     "env": "real",
                 },
                 "launch": {
-                    "native_process_environment": {
+                    "process_environment": {
                         "LINGTU_DRIVER_TARGET": "192.168.66.12:13145",
                         "LINGTU_DRIVER_NETWORK_INTERFACE": "",
                     }
@@ -243,31 +246,24 @@ def _snapshot() -> dict:
                     "maps",
                     "nav",
                     "slam",
-                    "traversability",
                 ],
             },
         },
         "status_files": {
             "nav": {
-                "path": "/dev/shm/lingtu/nav_endpoint_status.json",  # noqa: S108
+                "path": "/dev/shm/lingtu/nav_endpoint_status.json",
                 "exists": True,
                 "age_s": 0.1,
                 "json": nav,
             },
-            "traversability": {
-                "path": "/dev/shm/lingtu/traversability_status.json",  # noqa: S108
-                "exists": True,
-                "age_s": 0.1,
-                "json": traversability,
-            },
             "maps": {
-                "path": "/dev/shm/lingtu/mapd_status.json",  # noqa: S108
+                "path": "/dev/shm/lingtu/mapd_status.json",
                 "exists": True,
                 "age_s": 0.1,
                 "json": maps,
             },
             "driver": {
-                "path": "/dev/shm/lingtu/driver_status.json",  # noqa: S108
+                "path": "/dev/shm/lingtu/driver_status.json",
                 "exists": True,
                 "age_s": 0.1,
                 "json": driver,
@@ -288,9 +284,32 @@ def _go2_snapshot() -> dict:
         "control_owner_id": "",
     }
     driver["control"]["lease_valid"] = False
-    environment = snapshot["current_run"]["run_plan"]["launch"]["native_process_environment"]
+    environment = snapshot["current_run"]["run_plan"]["launch"]["process_environment"]
     environment["LINGTU_DRIVER_TARGET"] = ""
     environment["LINGTU_DRIVER_NETWORK_INTERFACE"] = "eth0"
+    return snapshot
+
+
+def _compiled_go2_snapshot(local_planner: str | None) -> dict:
+    plan = compile_run_plan(
+        "teleop_avoid", "real", robot="unitree/go2", local_planner=local_planner
+    )
+    snapshot = _go2_snapshot()
+    current = snapshot["current_run"]
+    current["run_plan"] = plan.as_dict()
+    current["verified_contract"] = {
+        "product": plan.product,
+        "env": plan.env,
+        "required_topics": list(plan.required_topics),
+        "required_capabilities": list(plan.required_capabilities),
+        "native_nav": plan.native_nav,
+        "selected_roles": sorted({role for process in plan.processes for role in process.provides}),
+    }
+    snapshot["status_files"]["nav"]["json"].update(plan.native_nav)
+    scan = plan.native_nav["local_planner"] == "scan"
+    snapshot["status_files"]["nav"]["json"]["input_gate"].update(
+        require_cloud=not scan, require_local_collision=scan
+    )
     return snapshot
 
 
@@ -395,34 +414,168 @@ def test_contract_stage_allows_bounded_voxel_snapshot_omissions() -> None:
     assert result["ok"] is True
 
 
-def test_contract_stage_accepts_traversability_five_second_status_cadence() -> None:
-    snapshot = _snapshot()
-    snapshot["status_files"]["traversability"]["age_s"] = 5.2
+@pytest.mark.parametrize("local_planner", [None, "cmu"], ids=["default_scan", "cmu"])
+@pytest.mark.parametrize("stage", ["contract", "motion"])
+def test_current_go2_product_passes_without_traversability(local_planner: str | None, stage: str) -> None:
+    snapshot = _compiled_go2_snapshot(local_planner)
+    contract = snapshot["current_run"]["verified_contract"]
+    assert contract["native_nav"]["local_planner"] == (local_planner or "scan")
+    assert contract["native_nav"]["use_traversability_cost"] is False
+    assert "traversability" not in contract["selected_roles"]
+    assert "/nav/traversability" not in contract["required_topics"]
+    assert "traversability" not in snapshot["status_files"]
 
-    result = evaluate_teleop_avoid_preflight(snapshot, stage="contract", status_max_age_s=3.0)
+    result = evaluate_teleop_avoid_preflight(snapshot, stage=stage)
 
-    assert result["ok"] is True
-
-
-def test_contract_stage_rejects_traversability_status_older_than_its_cadence() -> None:
-    snapshot = _snapshot()
-    snapshot["status_files"]["traversability"]["age_s"] = 6.1
-
-    result = evaluate_teleop_avoid_preflight(snapshot, stage="contract", status_max_age_s=3.0)
-
-    assert "status.traversability.fresh" in result["blockers"]
+    assert result["ok"] is True, result["blockers"]
+    assert result["command_published"] is False
+    assert result["authority_acquired"] is False
 
 
-def test_motion_stage_keeps_nav_traversability_as_distinct_safety_authority() -> None:
-    snapshot = _snapshot()
-    snapshot["current_run"]["verified_contract"]["required_topics"].remove("/nav/traversability")
+def test_contract_stage_rejects_runtime_planner_different_from_run_plan() -> None:
+    snapshot = _compiled_go2_snapshot(None)
+    snapshot["status_files"]["nav"]["json"]["local_planner"] = "cmu"
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="contract")
+
+    assert "nav.runtime_policy" in result["blockers"]
+
+
+@pytest.mark.parametrize("local_planner", [None, "cmu"], ids=["default_scan", "cmu"])
+@pytest.mark.parametrize(
+    ("section", "key", "value", "blocker"),
+    [
+        ("input_gate", "require_traversability", True, "motion.input_gate"),
+        ("input_gate", "driver_control_ready", False, "motion.input_gate"),
+        ("input_gate", "localization_healthy", False, "motion.input_gate"),
+        ("control_loop_health", "healthy", False, "motion.control_loop"),
+        ("final_cmd_vel", "vx", 0.1, "motion.idle_zero"),
+    ],
+)
+def test_current_planners_preserve_motion_gates(
+    local_planner: str | None, section: str, key: str, value: object, blocker: str
+) -> None:
+    snapshot = _compiled_go2_snapshot(local_planner)
+    snapshot["status_files"]["nav"]["json"][section][key] = value
 
     result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
 
-    checks = {check["id"]: check for check in result["checks"]}
-    assert "product.required_topics" in result["blockers"]
-    assert "/nav/traversability" in checks["product.required_topics"]["expected"]
-    assert "/maps/traversability" not in checks["product.required_topics"]["expected"]
+    assert blocker in result["blockers"]
+    assert result["nonzero_motion_allowed"] is False
+
+
+def test_scan_motion_stage_uses_fresh_local_collision_instead_of_registered_cloud() -> None:
+    snapshot = _compiled_go2_snapshot(None)
+    snapshot["status_files"]["nav"]["json"]["counters"]["registered_clouds"] = 0
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert "motion.sensor_chain" not in result["blockers"]
+    assert result["ok"] is True, result["blockers"]
+
+
+def test_driver_ack_wait_expires_the_anchored_nav_status(monkeypatch) -> None:
+    collector = _load_collector()
+    snapshot = _snapshot()
+    status_files = snapshot["status_files"]
+    status_files["nav"]["age_s"] = 0.09
+    status_files["driver"]["json"]["output_ack"]["output_sequence"] = 16
+    now = [10.0]
+
+    monkeypatch.setattr(collector, "collect_status_files", lambda: status_files)
+    monkeypatch.setattr(
+        collector,
+        "_collect_status_file",
+        lambda _path: {
+            **status_files["driver"],
+            "age_s": 0.01,
+            "json": {
+                **status_files["driver"]["json"],
+                "output_ack": {
+                    **status_files["driver"]["json"]["output_ack"],
+                    "output_sequence": 17,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(collector.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(collector.time, "sleep", lambda _seconds: now.__setitem__(0, now[0] + 0.02))
+
+    snapshot["status_files"] = collector._collect_motion_status_files(status_max_age_s=0.1)
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion", status_max_age_s=0.1)
+
+    assert "status.nav.fresh" in result["blockers"]
+    assert "motion.correlated_driver_ack" not in result["blockers"]
+
+
+def test_scan_motion_stage_rejects_stale_local_collision() -> None:
+    snapshot = _compiled_go2_snapshot(None)
+    gate = snapshot["status_files"]["nav"]["json"]["input_gate"]
+    gate["local_collision_age_s"] = gate["local_collision_max_age_s"] + 0.01
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert "motion.sensor_chain" in result["blockers"]
+    assert result["nonzero_motion_allowed"] is False
+
+
+def test_scan_motion_stage_rejects_local_collision_without_observation_sequence() -> None:
+    snapshot = _compiled_go2_snapshot(None)
+    collision = snapshot["status_files"]["nav"]["json"]["local_map"]["collision"]
+    collision["observation_sequence"] = 0
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert "motion.sensor_chain" in result["blockers"]
+    assert result["nonzero_motion_allowed"] is False
+
+
+def test_cmu_motion_stage_requires_registered_cloud() -> None:
+    snapshot = _compiled_go2_snapshot("cmu")
+    snapshot["status_files"]["nav"]["json"]["counters"]["registered_clouds"] = 0
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert "motion.sensor_chain" in result["blockers"]
+    assert result["nonzero_motion_allowed"] is False
+
+
+@pytest.mark.parametrize("local_planner", [None, "cmu"], ids=["default_scan", "cmu"])
+@pytest.mark.parametrize("field", ["require_cloud", "require_local_collision"])
+def test_motion_stage_rejects_wrong_collision_input_owner(local_planner: str | None, field: str) -> None:
+    snapshot = _compiled_go2_snapshot(local_planner)
+    gate = snapshot["status_files"]["nav"]["json"]["input_gate"]
+    gate[field] = not gate[field]
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert "motion.input_gate" in result["blockers"]
+    assert result["nonzero_motion_allowed"] is False
+
+
+@pytest.mark.parametrize("reason", ["local_collision_stale", "local_collision_incomplete"])
+def test_motion_stage_rejects_scan_collision_gate_blocked(reason: str) -> None:
+    snapshot = _compiled_go2_snapshot(None)
+    snapshot["status_files"]["nav"]["json"]["input_gate"].update(ready=False, reason=reason)
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert "motion.input_gate" in result["blockers"]
+
+
+@pytest.mark.parametrize("local_planner", [None, "cmu"], ids=["default_scan", "cmu"])
+def test_current_go2_planners_reject_lying_robot(local_planner: str | None) -> None:
+    snapshot = _compiled_go2_snapshot(local_planner)
+    driver = snapshot["status_files"]["driver"]["json"]
+    driver["ready"] = False
+    driver["control"].update(fsm="lying", motors_enabled=False, control_assured=False)
+    snapshot["driver_readiness"] = {"ok": False, "blockers": ["driver_fsm_not_ready"]}
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert "motion.driver_readiness" in result["blockers"]
+    assert "motion.go2_control" in result["blockers"]
+    assert result["nonzero_motion_allowed"] is False
 
 
 def test_motion_stage_rejects_degraded_mapd() -> None:
@@ -459,31 +612,60 @@ def test_motion_stage_accepts_one_tick_nav_ack_lag() -> None:
     assert checks["motion.correlated_driver_ack"]["ok"] is True
 
 
-def test_motion_stage_accepts_lagging_driver_status_snapshot() -> None:
+def test_motion_stage_rejects_driver_status_that_has_not_covered_anchored_output() -> None:
     snapshot = _go2_snapshot()
     snapshot["status_files"]["driver"]["json"]["output_ack"]["output_sequence"] = 3
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert "motion.correlated_driver_ack" in result["blockers"]
+
+
+def test_motion_stage_accepts_older_nav_ack_when_driver_covers_anchored_output() -> None:
+    snapshot = _go2_snapshot()
+    snapshot["status_files"]["nav"]["json"]["driver_control"]["accepted_output_sequence"] = 14
 
     result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
 
     assert result["ok"] is True
 
 
-def test_motion_stage_rejects_stale_nav_ack() -> None:
-    snapshot = _go2_snapshot()
-    snapshot["status_files"]["nav"]["json"]["driver_control"]["accepted_output_sequence"] = 14
-
-    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
-
-    assert "motion.correlated_driver_ack" in result["blockers"]
-
-
-def test_motion_stage_rejects_driver_ack_too_far_ahead() -> None:
+def test_motion_stage_accepts_driver_ack_that_advanced_beyond_anchored_output() -> None:
     snapshot = _go2_snapshot()
     snapshot["status_files"]["driver"]["json"]["output_ack"]["output_sequence"] = 20
 
     result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
 
+    assert result["ok"] is True
+
+
+def test_motion_stage_rejects_driver_ack_from_another_producer() -> None:
+    snapshot = _go2_snapshot()
+    snapshot["status_files"]["driver"]["json"]["output_ack"][
+        "producer_boot_id"
+    ] = "other-nav-boot"
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
     assert "motion.correlated_driver_ack" in result["blockers"]
+
+
+def test_motion_stage_rejects_driver_ack_that_was_not_accepted() -> None:
+    snapshot = _go2_snapshot()
+    snapshot["status_files"]["driver"]["json"]["output_ack"]["accepted"] = False
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert "motion.correlated_driver_ack" in result["blockers"]
+
+
+def test_motion_stage_rejects_missing_driver_control_freshness_contract() -> None:
+    snapshot = _go2_snapshot()
+    del snapshot["status_files"]["nav"]["json"]["input_gate"]["driver_control_max_age_s"]
+
+    result = evaluate_teleop_avoid_preflight(snapshot, stage="motion")
+
+    assert "motion.input_gate" in result["blockers"]
 
 
 def test_motion_stage_accepts_go2_sdk2_control() -> None:
@@ -532,7 +714,7 @@ def test_motion_stage_rejects_loopback_brainstem() -> None:
 
 def test_motion_stage_rejects_driver_target_that_differs_from_run_plan() -> None:
     snapshot = _snapshot()
-    snapshot["current_run"]["run_plan"]["launch"]["native_process_environment"][
+    snapshot["current_run"]["run_plan"]["launch"]["process_environment"][
         "LINGTU_DRIVER_TARGET"
     ] = "192.168.66.99:13145"
 
@@ -552,7 +734,8 @@ def test_current_run_collector_loads_current_run_plan(monkeypatch, tmp_path: Pat
         processes=(),
         available_processes=(),
         stop_before_start=(),
-        contracts=("lingtu.product.teleop_avoid.v1",),
+        required_topics=(),
+        required_capabilities=(),
         critical_modules=(),
         native_nav={
             "control_mode": "teleop_avoid",

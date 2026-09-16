@@ -844,34 +844,57 @@ void checkBypassAsyncRelocalizationUsesOdomHeightAndTilt(
   checkPoseRpy(map_body, kRoll, kPitch, kSeedYaw);
 }
 
-void checkTruncatedPatchBundleManifest(
+void checkPatchBundleRetentionManifest(
     const std::filesystem::path& config_path,
     const std::filesystem::path& map_dir) {
   double next_imu_stamp_s = 0.0;
-  auto backend = initializedMappingBackend(config_path, next_imu_stamp_s);
+  // Patch retention needs accepted observations, independently of the mock
+  // cloud's degeneracy. Use the supported time-aligned pose-prior input.
+  OdomSample prior;
+  prior.stamp_s = 0.345;
+  prior.has_velocity = true;
+  auto backend = initializedMappingBackend(config_path, next_imu_stamp_s, prior);
+  const auto initial_sequence = backend->outputs().observation_sequence;
+  check(initial_sequence == 1, "patch_bundle_initial_observation_count_wrong");
+  const auto check_manifest = [&](const char* directory, bool expected_complete,
+                                  std::uint64_t expected_dropped,
+                                  std::uint64_t expected_count) {
+    const auto map_path = map_dir / directory / "map.pcd";
+    check(backend->saveMap(map_path.string()).ok, "patch_bundle_save_failed");
+    std::ifstream manifest(map_path.parent_path() / "patch_bundle.manifest");
+    check(manifest.is_open(), "patch_bundle_manifest_missing");
+    std::string schema;
+    std::string key;
+    std::uint64_t complete = 1;
+    std::uint64_t dropped_count = 0;
+    std::uint64_t first_sequence = 0;
+    std::uint64_t last_sequence = 0;
+    std::uint64_t patch_count = 0;
+    manifest >> schema >> key >> complete >> key >> dropped_count >> key >> first_sequence >>
+        key >> last_sequence >> key >> patch_count;
+    check(static_cast<bool>(manifest), "patch_bundle_manifest_parse_failed");
+    check(schema == "LINGTU_PATCH_BUNDLE_V1", "patch_bundle_manifest_schema_wrong");
+    check(complete == static_cast<std::uint64_t>(expected_complete),
+          "patch_bundle_completeness_wrong");
+    check(dropped_count == expected_dropped, "patch_bundle_drop_count_wrong");
+    check(patch_count == expected_count, "patch_bundle_retained_count_wrong");
+    check(first_sequence == dropped_count, "patch_bundle_first_sequence_wrong");
+    check(last_sequence + 1 == dropped_count + patch_count,
+          "patch_bundle_sequence_accounting_wrong");
+  };
+  check_manifest("complete_patch_bundle", true, 0, 1);
   for (int i = 0; i < 4; ++i) {
-    processScan(*backend, 0.40 + static_cast<double>(i) * 0.10, 0.0F, next_imu_stamp_s);
+    const double scan_stamp_s = 0.40 + static_cast<double>(i) * 0.10;
+    prior.stamp_s = scan_stamp_s + 0.045;
+    check(backend->feedVisualOdom(prior).ok, "patch_bundle_pose_prior_rejected");
+    processScan(*backend, scan_stamp_s, 0.0F, next_imu_stamp_s);
+    const auto outputs = backend->outputs();
+    check(outputs.state == SlamState::Tracking && outputs.odom_prior_active,
+          "patch_bundle_pose_prior_not_tracking");
+    check(outputs.observation_sequence == initial_sequence + static_cast<std::uint64_t>(i) + 1,
+          "patch_bundle_observation_not_advanced");
   }
-  const auto map_path = map_dir / "truncated_patch_bundle" / "map.pcd";
-  check(backend->saveMap(map_path.string()).ok, "truncated_patch_bundle_save_failed");
-  std::ifstream manifest(map_path.parent_path() / "patch_bundle.manifest");
-  check(manifest.is_open(), "patch_bundle_manifest_missing");
-  std::string schema;
-  std::string key;
-  std::uint64_t complete = 1;
-  std::uint64_t dropped_count = 0;
-  std::uint64_t first_sequence = 0;
-  std::uint64_t last_sequence = 0;
-  std::uint64_t patch_count = 0;
-  manifest >> schema >> key >> complete >> key >> dropped_count >> key >> first_sequence >>
-      key >> last_sequence >> key >> patch_count;
-  check(schema == "LINGTU_PATCH_BUNDLE_V1", "patch_bundle_manifest_schema_wrong");
-  check(complete == 0, "truncated_patch_bundle_marked_complete");
-  check(dropped_count > 0, "truncated_patch_bundle_drop_not_counted");
-  check(patch_count == 2, "truncated_patch_bundle_retained_count_wrong");
-  check(first_sequence == dropped_count, "truncated_patch_bundle_first_sequence_wrong");
-  check(last_sequence + 1 == dropped_count + patch_count,
-        "truncated_patch_bundle_sequence_accounting_wrong");
+  check_manifest("truncated_patch_bundle", false, 3, 2);
 }
 
 }  // namespace
@@ -884,6 +907,8 @@ int main() {
   const auto config_path = map_dir / "fastlio_test.yaml";
   {
     std::ofstream config_out(config_path);
+    // The fixture interleaves three planes; stride three retains only one.
+    config_out << "lidar_filter_num: 1\n";
     config_out << "relocalization_map_bounds_margin_m: 10.0\n";
     config_out << "relocalization_min_inliers: 10\n";
     config_out << "relocalization_max_pos_cov_trace: 100.0\n";
@@ -951,11 +976,11 @@ int main() {
     config_out << "patch_min_interval_s: 0.0\n";
     config_out << "patch_min_translation_m: 0.0\n";
     config_out << "patch_min_rotation_rad: 0.0\n";
-    config_out << "max_update_velocity_mps: 100.0\n";
-    config_out << "max_update_velocity_delta_mps: 100.0\n";
+    config_out << "odom_prior_enabled: true\n";
+    config_out << "odom_prior_max_age_s: 0.20\n";
   }
 
-  checkTruncatedPatchBundleManifest(patch_bundle_config_path, map_dir);
+  checkPatchBundleRetentionManifest(patch_bundle_config_path, map_dir);
   checkOdomPriorBypass(bypass_config_path);
   checkOdomPriorHistoryBypass(bypass_config_path);
   checkOdomPriorBypassDoesNotFallback(bypass_config_path);
@@ -1029,6 +1054,10 @@ int main() {
     }
   }
   const auto static_outputs = backend->outputs();
+  if (!static_outputs.odometry_odom_body.has_value()) {
+    std::cerr << "static_missing state=" << toString(static_outputs.state)
+              << " reason=" << static_outputs.reason << "\n";
+  }
   check(static_outputs.odometry_odom_body.has_value(), "static_odometry_missing");
   const auto& static_pose = *static_outputs.odometry_odom_body;
   const double static_position_norm =
@@ -1111,6 +1140,61 @@ int main() {
       "relocalization_map_frame_jump_did_not_advance_source_epoch");
 
   check(backend->relocalize(static_pose).ok, "manual_relocalization_regressed");
+
+  // An accepted alignment supplies a prediction for drift correction, not a
+  // new explicit seed subject to the fixed-transform 80% overlap precheck.
+  check(backend->relocalize(std::nullopt).ok, "periodic_local_refinement_failed");
+  check(backend->outputs().relocalization_refine_backend != "fixed_transform_seed_check" &&
+            backend->outputs().relocalization_refine_backend != "fixed_seed_planar_icp",
+        "periodic_prediction_was_treated_as_an_explicit_seed");
+  check(backend->startRelocalizeAsync(std::nullopt).ok,
+        "async_periodic_local_refinement_start_failed");
+  async_completion.reset();
+  const auto periodic_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < periodic_deadline) {
+    async_completion = backend->pollRelocalizeAsync();
+    if (async_completion.has_value()) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  check(async_completion.has_value() && async_completion->ok,
+        "async_periodic_local_refinement_failed");
+  check(backend->outputs().relocalization_refine_backend != "fixed_transform_seed_check" &&
+            backend->outputs().relocalization_refine_backend != "fixed_seed_planar_icp",
+        "async_periodic_prediction_was_treated_as_an_explicit_seed");
+
+  // A true global request must not silently reuse the existing map<-odom.
+  // Builds without BBS3D must report unavailable instead of succeeding by ICP.
+  const auto global_start = backend->startRelocalizeAsync(
+      std::nullopt, RelocalizationSearch::Global);
+  if (!global_start.ok) {
+    check(global_start.message == "global_relocalization_unavailable",
+          "global_search_did_not_report_missing_bbs3d");
+    check(backend->outputs().map_odom_tf.has_value(),
+          "unavailable_global_search_discarded_alignment");
+    const auto sync_global = backend->relocalize(std::nullopt, RelocalizationSearch::Global);
+    check(!sync_global.ok && sync_global.message == "global_relocalization_unavailable",
+          "sync_global_request_reused_existing_alignment_as_seed");
+  } else {
+    async_completion.reset();
+    const auto global_deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(40);
+    while (std::chrono::steady_clock::now() < global_deadline) {
+      async_completion = backend->pollRelocalizeAsync();
+      if (async_completion.has_value()) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    check(async_completion.has_value(), "explicit_global_search_timeout");
+    const auto global_outputs = backend->outputs();
+    if (async_completion->ok) {
+      check(global_outputs.last_relocalization_message == "native_global_relocalized",
+            "global_request_succeeded_through_local_seed_refinement");
+    } else {
+      check(global_outputs.last_relocalization_message.find("native_global_") == 0U ||
+                global_outputs.last_relocalization_message.find("relocalization_") == 0U,
+            "global_request_failed_through_local_seed_verification");
+    }
+  }
 
   std::cout << "fastlio2_mock_flow odometry stamp=" << outputs.stamp_s
             << " points=" << outputs.registered_cloud_body->points.size() << "\n";

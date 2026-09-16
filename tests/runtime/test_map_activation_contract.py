@@ -6,6 +6,8 @@ from pathlib import Path
 
 import yaml
 
+from lingtu.assembly.graph.loader import load_runtime_graph
+
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -14,7 +16,7 @@ def _read(relative: str) -> str:
 
 
 def test_map_activation_idl_is_typed_and_identity_bearing() -> None:
-    idl = _read("src/message/idl/messages.idl")
+    idl = _read("src/message/idl/maps.idl")
     for operation in (
         "MAP_ACTIVATION_STAGE",
         "MAP_ACTIVATION_RESTORE",
@@ -43,19 +45,19 @@ def test_map_activation_idl_is_typed_and_identity_bearing() -> None:
 
 
 def test_map_activation_topics_and_qos_are_canonical() -> None:
-    topics = yaml.safe_load(_read("config/runtime_graph/topics.yaml"))
-    request = topics["topics"]["/maps/activation/request"]
-    ack = topics["topics"]["/maps/activation/ack"]
-    assert request["qos"] == "reliable_volatile_keep_last_32"
+    graph = load_runtime_graph()
+    request = graph.topic_contracts["/maps/activation/request"]
+    ack = graph.topic_contracts["/maps/activation/ack"]
+    assert request["qos_profile"] == "CommandRequest"
     assert request["producer"] == "native_map_control_client"
     assert request["consumers"] == ["native_maps_runtime"]
-    assert ack["qos"] == "reliable_transient_local_keep_last_64"
+    assert ack["qos_profile"] == "CommandAck"
     assert ack["producer"] == "native_maps_runtime"
     assert ack["consumers"] == ["native_map_control_client"]
-    assert "/maps/activation/request" in topics["native_contract_topics"]
-    assert "/maps/activation/ack" in topics["native_contract_topics"]
+    assert "/maps/activation/request" in graph.native_contract_topics
+    assert "/maps/activation/ack" in graph.native_contract_topics
 
-    cpp_topics = _read("src/message/cpp/topics.hpp")
+    cpp_topics = _read("src/message/generated/topics.hpp")
     assert '"/maps/activation/request", "rt/maps/activation/request"' in cpp_topics
     assert '"/maps/activation/ack", "rt/maps/activation/ack"' in cpp_topics
     assert "/slam/map_activation" not in cpp_topics

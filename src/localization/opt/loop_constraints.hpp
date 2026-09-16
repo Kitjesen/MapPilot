@@ -3,11 +3,15 @@
 #include <array>
 #include <cstddef>
 #include <filesystem>
+#include <functional>
+#include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "localization/opt/graph.hpp"
 #include "localization/opt/map.hpp"
+#include "localization/opt/cloud.hpp"
 
 namespace lingtu::localization::opt {
 
@@ -176,6 +180,32 @@ struct SequentialConstraintResult {
   GeometricConstraint constraint;
   LoopCandidateDiagnostic diagnostic;
 };
+
+// The caller owns an immutable, body-local cloud for each keyframe during a
+// verification call. Online and saved-map paths use the same geometric gates.
+using PatchCloudSource = std::function<std::vector<Point>(std::size_t)>;
+
+// Append-only keyframes and fixed options for one mapping epoch. Only complete
+// submaps are cached; callers reset this object together with their keyframes.
+struct CachedLoopVerification {
+  std::optional<GeometricConstraint> measurement;
+  Pose correction;
+  LoopCandidateDiagnostic diagnostic;
+};
+using LoopVerificationCache =
+    std::map<std::pair<std::size_t, std::size_t>, CachedLoopVerification>;
+
+std::vector<Point> sample_mapping_cloud(const std::vector<Point> &cloud,
+                                      double voxel_size_m, std::size_t max_points);
+
+SequentialConstraintResult generate_sequential_constraint(
+    const PatchCloudSource &cloud_at, const std::vector<Keyframe> &keyframes,
+    std::size_t from_index, const LoopConstraintOptions &options = {});
+
+LoopConstraintResult generate_loop_constraints(
+    const PatchCloudSource &cloud_at, const std::vector<Keyframe> &keyframes,
+    const LoopConstraintOptions &options = {}, std::size_t first_to_index = 0,
+    LoopVerificationCache *cache = nullptr);
 
 SequentialConstraintResult generate_sequential_constraint(
     const Map &map, const std::vector<Keyframe> &keyframes, std::size_t from_index,

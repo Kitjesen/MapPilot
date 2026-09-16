@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, cast
 
 import pytest
-
 from sim.scripts.mujoco.native_runtime_endpoint import (
     DRIVER_PROTOCOL,
     DRIVER_ROLE,

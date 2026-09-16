@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ruff: noqa: D103, S310, S603
 """Collect read-only Thunder service readiness evidence.
 
 This script is safe to run on the robot or through SSH. It does not start,
@@ -17,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from diagnostics.field.dds_readiness import probe as probe_dds
 from diagnostics.field.teleop_avoid_preflight import STAGES as TELEOP_AVOID_STAGES
@@ -156,23 +155,90 @@ def _int_or_none(value: str | None) -> int | None:
         return None
 
 
+def _collect_status_file(raw_path: str) -> dict[str, Any]:
+    path = Path(raw_path)
+    entry: dict[str, Any] = {"path": raw_path, "exists": path.exists()}
+    if path.exists():
+        try:
+            entry["age_s"] = max(0.0, time.time() - path.stat().st_mtime)
+        except OSError:
+            entry["age_s"] = None
+        text = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            entry["json"] = json.loads(text)
+        except json.JSONDecodeError:
+            entry["raw"] = text[:4096]
+    return entry
+
+
 def collect_status_files() -> dict[str, Any]:
-    files: dict[str, Any] = {}
-    for name, raw_path in STATUS_FILES.items():
-        path = Path(raw_path)
-        entry: dict[str, Any] = {"path": raw_path, "exists": path.exists()}
-        if path.exists():
-            try:
-                entry["age_s"] = max(0.0, time.time() - path.stat().st_mtime)
-            except OSError:
-                entry["age_s"] = None
-            text = path.read_text(encoding="utf-8", errors="replace")
-            try:
-                entry["json"] = json.loads(text)
-            except json.JSONDecodeError:
-                entry["raw"] = text[:4096]
-        files[name] = entry
-    return files
+    return {name: _collect_status_file(raw_path) for name, raw_path in STATUS_FILES.items()}
+
+
+def _collect_motion_status_files(*, status_max_age_s: float) -> dict[str, Any]:
+    status_files = collect_status_files()
+    collected_at = time.monotonic()
+    nav = status_files.get("nav", {}).get("json", {})
+    if not isinstance(nav, dict):
+        return status_files
+    final_output = nav.get("final_output", {})
+    input_gate = nav.get("input_gate", {})
+    if not isinstance(final_output, dict) or not isinstance(input_gate, dict):
+        return status_files
+    producer_boot_id = final_output.get("producer_boot_id")
+    output_sequence = final_output.get("output_sequence")
+    driver_max_age_s = input_gate.get("driver_control_max_age_s")
+    valid_sequence = isinstance(output_sequence, int) and not isinstance(output_sequence, bool)
+    valid_driver_age = (
+        isinstance(driver_max_age_s, (int, float))
+        and not isinstance(driver_max_age_s, bool)
+        and driver_max_age_s > 0.0
+    )
+    valid_status_age = (
+        isinstance(status_max_age_s, (int, float))
+        and not isinstance(status_max_age_s, bool)
+        and status_max_age_s > 0.0
+    )
+    if (
+        final_output.get("published") is not True
+        or not isinstance(producer_boot_id, str)
+        or not producer_boot_id
+        or not valid_sequence
+        or output_sequence <= 0
+        or not valid_driver_age
+        or not valid_status_age
+    ):
+        return status_files
+
+    def driver_covers_anchor() -> bool:
+        driver = status_files.get("driver", {}).get("json", {})
+        ack = driver.get("output_ack", {}) if isinstance(driver, dict) else {}
+        sequence = ack.get("output_sequence") if isinstance(ack, dict) else None
+        return bool(
+            isinstance(ack, dict)
+            and ack.get("accepted") is True
+            and ack.get("producer_boot_id") == producer_boot_id
+            and isinstance(sequence, int)
+            and not isinstance(sequence, bool)
+            and sequence >= output_sequence
+        )
+
+    # Driver JSON is published once per second, independently of its fast DDS ACK.
+    # Bound this read-only wait by the diagnostic snapshot freshness contract.
+    deadline = collected_at + float(status_max_age_s)
+    driver_path = STATUS_FILES.get(DRIVER_STATUS_NAME)
+    while not driver_covers_anchor() and driver_path:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            break
+        time.sleep(min(0.02, remaining))
+        status_files["driver"] = _collect_status_file(driver_path)
+    elapsed = max(0.0, time.monotonic() - collected_at)
+    for entry in status_files.values():
+        age_s = entry.get("age_s") if isinstance(entry, dict) else None
+        if isinstance(age_s, (int, float)) and not isinstance(age_s, bool):
+            entry["age_s"] = max(0.0, float(age_s) + elapsed)
+    return status_files
 
 
 def _current_run_path() -> Path:
@@ -312,7 +378,11 @@ def collect_gnss_device() -> dict[str, Any]:
 
 def _http_json(url: str, *, timeout: float = 3.0) -> dict[str, Any]:
     try:
-        with urlopen(url, timeout=timeout) as response:
+        request = Request(url, headers={"Accept": "application/json"})
+        api_key = os.environ.get("LINGTU_API_KEY", "").strip()
+        if api_key:
+            request.add_header("X-API-Key", api_key)
+        with urlopen(request, timeout=timeout) as response:
             raw = response.read().decode("utf-8", errors="replace")
             payload: Any
             try:
@@ -739,8 +809,14 @@ def build_report(
     processes = collect_processes()
     dds = collect_dds(seconds=dds_seconds, domain_id=dds_domain)
     systemd = collect_systemd()
-    status_files = collect_status_files()
     native_binaries = collect_native_binaries()
+    gnss = collect_gnss_device()
+    gateway = collect_gateway(gateway_url)
+    status_files = (
+        _collect_motion_status_files(status_max_age_s=status_max_age_s)
+        if teleop_avoid_stage == "motion"
+        else collect_status_files()
+    )
     driver_readiness = collect_driver_readiness(
         systemd=systemd,
         native_binaries=native_binaries,
@@ -752,9 +828,9 @@ def build_report(
         "systemd": systemd,
         "status_files": status_files,
         "native_binaries": native_binaries,
-        "gnss": collect_gnss_device(),
+        "gnss": gnss,
         "dds": dds,
-        "gateway": collect_gateway(gateway_url),
+        "gateway": gateway,
         "processes": processes,
         "lidar_imu": collect_lidar_imu_ownership(processes=processes, dds=dds),
         "camera": collect_camera_readiness(

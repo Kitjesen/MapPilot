@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -12,10 +11,23 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from sim.scripts.mujoco import (
+    inspection_native_acceptance,
+    map_native_acceptance,
+    product_acceptance,
+    tracking_native_acceptance,
+)
+from sim.scripts.mujoco.evidence import (
+    FEEDER_STATUS_SCHEMA,
+    SimFeederStatusError,
+    publish_feeder_status,
+)
 
 import lingtu.sim.switch as sim_switch
 from drivers.real.camera.shm import ShmFrameWriter, StreamKind
 from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.graph import RuntimeGraph
+from lingtu.assembly.graph.loader import load_runtime_graph
 from lingtu.control import ProductControl
 from lingtu.run_plan import RunPlan
 from lingtu.sim.identity import (
@@ -30,19 +42,6 @@ from lingtu.sim.stop import (
     process_launch_id,
 )
 from lingtu.switch_contracts import ProcessReport
-from runtime.graph import RuntimeGraph
-from runtime.graph.loader import load_runtime_graph
-from sim.scripts.mujoco import (
-    inspection_native_acceptance,
-    map_native_acceptance,
-    product_acceptance,
-    tracking_native_acceptance,
-)
-from sim.scripts.mujoco.evidence import (
-    FEEDER_STATUS_SCHEMA,
-    SimFeederStatusError,
-    publish_feeder_status,
-)
 
 EXPECTED_PRODUCTS = (
     "teleop",
@@ -59,27 +58,27 @@ ROOT = Path(__file__).resolve().parents[2]
 PRODUCT_SESSION_ID = "a" * 32
 
 DIAGNOSTIC_TARGETS = {
-    "teleop": ("teleop_native_acceptance.py", "mujoco_teleop_native_acceptance.json"),
+    "teleop": ("teleop_native_acceptance.py", "teleop.json"),
     "teleop_avoid": (
         "teleop_avoid_native_acceptance.py",
-        "mujoco_teleop_avoid_native_acceptance.json",
+        "teleop_avoid.json",
     ),
-    "map": ("map_native_acceptance.py", "mujoco_map_native_acceptance.json"),
+    "map": ("map_native_acceptance.py", "map.json"),
     "tracking": (
         "tracking_native_acceptance.py",
-        "mujoco_tracking_native_acceptance.json",
+        "tracking.json",
     ),
     "nav": (
         "native_navigation_acceptance.py",
-        "mujoco_local_scan.json",
+        "navigation.json",
     ),
     "inspection": (
         "inspection_native_acceptance.py",
-        "mujoco_inspection_native_acceptance.json",
+        "inspection.json",
     ),
     "explore": (
         "explore_native_acceptance.py",
-        "mujoco_explore_native_acceptance.json",
+        "explore.json",
     ),
 }
 
@@ -89,7 +88,7 @@ def _target(product: str) -> product_acceptance.AcceptanceTarget:
     return product_acceptance.AcceptanceTarget(
         product=product,
         runner=(ROOT / "sim" / "scripts" / "mujoco" / runner).resolve(),
-        manifest=(ROOT / "config" / "runtime_graph" / "acceptance" / manifest).resolve(),
+        manifest=(ROOT / "config" / "acceptance" / "mujoco" / manifest).resolve(),
     )
 
 
@@ -108,7 +107,7 @@ def _dispatcher_args(product: str, run_plan: Path, *extra: str) -> list[str]:
 
 def test_teleop_manifest_uses_canonical_windows_runtime_closure() -> None:
     manifest = json.loads(
-        (ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_teleop_native_acceptance.json").read_text(
+        (ROOT / "config" / "acceptance" / "mujoco" / "teleop.json").read_text(
             encoding="utf-8"
         )
     )
@@ -123,7 +122,7 @@ def test_teleop_manifest_uses_canonical_windows_runtime_closure() -> None:
 
 
 def test_all_acceptance_manifests_use_only_canonical_windows_artifacts() -> None:
-    acceptance_root = ROOT / "config" / "runtime_graph" / "acceptance"
+    acceptance_root = ROOT / "config" / "acceptance" / "mujoco"
     allowed_prefixes = (
         "build/maps-windows/Release/",
         "build/nav-cpp/windows-x64-nav-endpoint/Release/",
@@ -305,24 +304,25 @@ def linux_sim_plan(
 ) -> Callable[..., RunPlan]:
     graph = _materialized_linux_graph(tmp_path)
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: "linux",
     )
-    plans: dict[tuple[str, str | None, str | None], RunPlan] = {}
+    plans: dict[tuple[str, str | None, str | None, str], RunPlan] = {}
 
     def resolve(
         product: str,
         *,
         product_variant: str | None = None,
         local_planner: str | None = None,
+        localization: str = "fastlio2",
     ) -> RunPlan:
-        key = (product, product_variant, local_planner)
+        key = (product, product_variant, local_planner, localization)
         if key not in plans:
             plans[key] = compile_run_plan(
                 product,
                 "sim",
                 robot="doso/thunder_v4",
-                env_config={"backend": "mujoco"},
+                env_config={"backend": "mujoco", "localization": localization},
                 product_variant=product_variant,
                 local_planner=local_planner,
                 graph=graph,
@@ -702,7 +702,7 @@ def test_mujoco_catalog_declares_persistent_products() -> None:
 
 def test_nav_catalog_binds_non_degraded_60m_manifest() -> None:
     manifest_path = (
-        ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_industrial_park_60m_navigation_acceptance.json"
+        ROOT / "config" / "acceptance" / "mujoco" / "industrial_park_60m.json"
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     start = manifest["start"]
@@ -827,6 +827,7 @@ def test_mujoco_saved_map_navigation_products_resolve_exact_chain(
         "map_runtime",
         "mujoco_feeder",
         "nav_runtime",
+        "traversability_runtime",
         "host_runtime",
     }
     if product in {"inspection", "tracking"}:
@@ -843,7 +844,7 @@ def test_scan_is_a_nav_local_planner_selection(
     target = product_acceptance.resolve_target(
         plan,
         runner=ROOT / "sim/scripts/mujoco/native_navigation_acceptance.py",
-        manifest=ROOT / "config/runtime_graph/acceptance/mujoco_local_scan.json",
+        manifest=ROOT / "config/acceptance/mujoco/local_scan.json",
     )
     restored = RunPlan.from_dict(plan.as_dict())
 
@@ -852,12 +853,12 @@ def test_scan_is_a_nav_local_planner_selection(
     assert plan.native_nav["local_planner"] == "scan"
     assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
     assert target.product == "nav"
-    assert target.manifest.name == "mujoco_local_scan.json"
+    assert target.manifest.name == "local_scan.json"
     assert restored == plan
     assert restored.native_nav["local_planner"] == "scan"
 
 
-def test_cmu_and_scan_share_mujoco_truth_localization(
+def test_cmu_and_scan_share_actual_fastlio_localization(
     linux_sim_plan: Callable[..., RunPlan],
 ) -> None:
     plans = tuple(
@@ -868,8 +869,8 @@ def test_cmu_and_scan_share_mujoco_truth_localization(
     assert {
         plan.native_process_environment["LINGTU_SLAM_CONFIG"].replace("\\", "/")
         for plan in plans
-    } == {"src/localization/fastlio2/config/sim_mid360.yaml"}
-    assert all(product_acceptance._uses_mujoco_truth_localization(plan) for plan in plans)
+    } == {"src/localization/fastlio2/config/sim_mid360_slam.yaml"}
+    assert not any(product_acceptance._uses_mujoco_truth_localization(plan) for plan in plans)
     assert {plan.process("slam").name for plan in plans} == {"slam_runtime"}
 
 
@@ -879,7 +880,7 @@ def test_mujoco_product_acceptance_scopes_do_not_overclaim_partial_gates() -> No
             product_acceptance.AcceptanceTarget(
                 product=product,
                 runner=(ROOT / "sim" / "scripts" / "mujoco" / runner).resolve(),
-                manifest=(ROOT / "config" / "runtime_graph" / "acceptance" / manifest).resolve(),
+                manifest=(ROOT / "config" / "acceptance" / "mujoco" / manifest).resolve(),
             )
         )
         for product, (runner, manifest) in DIAGNOSTIC_TARGETS.items()
@@ -1008,8 +1009,10 @@ def test_product_evidence_truthy_non_boolean_inputs_fail_closed(
 
 
 @pytest.mark.parametrize("product", ("teleop", "teleop_avoid"))
+@pytest.mark.parametrize("sensor_failure", (False, True))
 def test_run_owns_switch_scenario_stop_and_cleanup_for_component_acceptance(
     product: str,
+    sensor_failure: bool,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     linux_sim_plan: Callable[..., RunPlan],
@@ -1047,6 +1050,11 @@ def test_run_owns_switch_scenario_stop_and_cleanup_for_component_acceptance(
         "matches",
         lambda _identity: not runner.stopped,
     )
+    if sensor_failure:
+        def reject_sensor_runtime(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("mujoco_feeder imu actual_hz differs by more than 5%")
+
+        monkeypatch.setattr(product_acceptance, "_sensor_runtime_evidence", reject_sensor_runtime)
     observed: dict[str, object] = {}
 
     def scenario(exact_plan: RunPlan, plan_path: Path, session_id: str) -> dict:
@@ -1067,7 +1075,7 @@ def test_run_owns_switch_scenario_stop_and_cleanup_for_component_acceptance(
         expected_plan=plan,
     )
 
-    assert report["ok"] is True, report
+    assert report["ok"] is (not sensor_failure), report
     assert report["lifecycle_verified"] is True
     assert report["stop_verified"] is True, report
     assert report["cleanup_verified"] is True
@@ -1078,6 +1086,15 @@ def test_run_owns_switch_scenario_stop_and_cleanup_for_component_acceptance(
         "skipped": True,
         "reason": "component_coverage",
     }
+    if sensor_failure:
+        assert report["sensor_runtime_evidence"]["ok"] is False
+        assert "actual_hz" in report["sensor_runtime_evidence"]["error"]
+        assert any("sensor_runtime:" in item for item in report["blockers"])
+        assert report["product_acceptance_passed"] is False
+        assert runner.calls == ["apply", "stop"]
+        assert not (state_root / "current.json").exists()
+        assert SimChildLedger(state_root).load() is None
+        return
     assert report["runtime_status"]["mujoco_feeder"]["state"] == "stopped"
     assert report["sensor_runtime_evidence"]["ok"] is True
     assert report["sensor_runtime_evidence"]["measurement_scope"] == "feeder_scheduler"
@@ -1139,10 +1156,12 @@ def test_sensor_runtime_evidence_rejects_bad_terminal_status(
         product_acceptance._sensor_runtime_evidence(plan, status)
 
 
-def test_truth_localized_product_records_but_does_not_gate_on_imu_rate(
+@pytest.mark.parametrize("localization", ("truth", "fastlio2"))
+def test_imu_rate_gate_follows_explicit_localization_authority(
     linux_sim_plan: Callable[..., RunPlan],
+    localization: str,
 ) -> None:
-    plan = linux_sim_plan("teleop_avoid")
+    plan = linux_sim_plan("nav", localization=localization)
     status = _feeder_status_payload(plan)
     streams = cast(dict[str, dict[str, object]], status["streams"])
     streams["imu"].update(
@@ -1152,6 +1171,10 @@ def test_truth_localized_product_records_but_does_not_gate_on_imu_rate(
         actual_hz=125.0,
     )
 
+    if localization == "fastlio2":
+        with pytest.raises(RuntimeError, match="imu drop rate"):
+            product_acceptance._sensor_runtime_evidence(plan, status)
+        return
     evidence = product_acceptance._sensor_runtime_evidence(plan, status)
 
     assert evidence["localization_authority"] == "mujoco_truth"

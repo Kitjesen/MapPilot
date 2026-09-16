@@ -26,11 +26,11 @@ def test_save_map_accepts_the_validated_http_request(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     monkeypatch.setattr(
         map_routes,
-        "_mapd_command",
+        "_mapd_http_request",
         lambda _gw, payload: {
             "success": False,
             "accepted": True,
@@ -57,7 +57,7 @@ def test_save_map_accepts_the_validated_http_request(monkeypatch):
 def test_save_map_does_not_expose_optimizer_selection(monkeypatch):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     captured: dict = {}
 
@@ -70,7 +70,7 @@ def test_save_map_does_not_expose_optimizer_selection(monkeypatch):
             "job": {"state": "RUNNING"},
         }
 
-    monkeypatch.setattr(map_routes, "_mapd_command", submit)
+    monkeypatch.setattr(map_routes, "_mapd_http_request", submit)
     app = FastAPI()
     map_routes.register_map_routes(
         app,
@@ -150,11 +150,11 @@ def _private_operation_status() -> dict:
 def test_save_map_response_recursively_hides_native_paths(monkeypatch):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     monkeypatch.setattr(
         map_routes,
-        "_mapd_command",
+        "_mapd_http_request",
         lambda _gw, _payload: {
             "success": False,
             "accepted": True,
@@ -186,11 +186,11 @@ def test_save_map_response_recursively_hides_native_paths(monkeypatch):
 def test_save_map_running_job_returns_stable_accepted_response(monkeypatch):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     monkeypatch.setattr(
         map_routes,
-        "_mapd_command",
+        "_mapd_http_request",
         lambda _gw, _payload: {
             "success": False,
             "status": "running",
@@ -221,11 +221,11 @@ def test_save_map_running_job_returns_stable_accepted_response(monkeypatch):
 def test_save_map_exposes_operation_identity_not_worker_job(monkeypatch):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     monkeypatch.setattr(
         map_routes,
-        "_mapd_command",
+        "_mapd_http_request",
         lambda _gw, _payload: {
             "success": False,
             "accepted": True,
@@ -264,7 +264,7 @@ def test_save_map_exposes_operation_identity_not_worker_job(monkeypatch):
 def test_map_operation_routes_are_the_public_contract():
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
@@ -282,7 +282,7 @@ def test_map_operation_routes_are_the_public_contract():
 def test_slam_maps_collection_route_is_canonical_and_maps_alias_is_absent():
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
@@ -295,11 +295,11 @@ def test_slam_maps_collection_route_is_canonical_and_maps_alias_is_absent():
 def test_map_operation_translates_native_job_reason_codes(monkeypatch):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     monkeypatch.setattr(
         map_routes,
-        "_mapd_command",
+        "_mapd_http_request",
         lambda _gw, _request: {
             "success": False,
             "reason_code": "job_not_found",
@@ -320,11 +320,11 @@ def test_map_operation_translates_native_job_reason_codes(monkeypatch):
 def test_public_map_list_hides_internal_entries_and_paths(monkeypatch):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     monkeypatch.setattr(
         map_routes,
-        "_mapd_command",
+        "_mapd_http_request",
         lambda _gw, _payload: {
             "success": True,
             "active": "warehouse",
@@ -367,7 +367,7 @@ def test_delete_saved_map_uses_customer_lifecycle_contract(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     calls: list[dict] = []
 
@@ -381,7 +381,7 @@ def test_delete_saved_map_uses_customer_lifecycle_contract(monkeypatch):
             "map_dir": "/home/sunrise/data/lingtu/maps/warehouse",
         }
 
-    monkeypatch.setattr(map_routes, "_mapd_command", fake_command)
+    monkeypatch.setattr(map_routes, "_mapd_http_request", fake_command)
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
 
@@ -402,11 +402,11 @@ def test_build_saved_map_octomap_hides_native_paths(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     monkeypatch.setattr(
         map_routes,
-        "_mapd_command",
+        "_mapd_http_request",
         lambda _gw, request: {
             "action": request["action"],
             "success": True,
@@ -434,7 +434,7 @@ def test_build_saved_map_occupancy_uses_customer_lifecycle_contract(monkeypatch)
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     calls: list[dict] = []
 
@@ -448,7 +448,7 @@ def test_build_saved_map_occupancy_uses_customer_lifecycle_contract(monkeypatch)
             "message": "wrote /home/sunrise/data/lingtu/maps/warehouse/occupancy.npz",
         }
 
-    monkeypatch.setattr(map_routes, "_mapd_command", fake_command)
+    monkeypatch.setattr(map_routes, "_mapd_http_request", fake_command)
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
 
@@ -481,12 +481,12 @@ def test_named_map_mutations_reject_reserved_operation_namespace(
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("reserved map names must fail before maps.service")
 
-    monkeypatch.setattr(map_routes, "_mapd_command", fail_if_called)
+    monkeypatch.setattr(map_routes, "_mapd_http_request", fail_if_called)
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
 
@@ -499,7 +499,7 @@ def test_named_map_mutations_reject_reserved_operation_namespace(
 def test_save_map_keeps_gateway_event_loop_responsive(monkeypatch):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     order: list[str] = []
 
@@ -513,7 +513,7 @@ def test_save_map_keeps_gateway_event_loop_responsive(monkeypatch):
             "job_id": "save_job_1",
         }
 
-    monkeypatch.setattr(map_routes, "_mapd_command", slow_save)
+    monkeypatch.setattr(map_routes, "_mapd_http_request", slow_save)
     gateway = SimpleNamespace(_get_slam_profile=lambda: "native_dds")
     app = FastAPI()
     map_routes.register_map_routes(app, gateway)
@@ -564,7 +564,7 @@ def test_customer_map_queries_keep_gateway_event_loop_responsive(
 ):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     command_started = threading.Event()
     release_command = threading.Event()
@@ -582,7 +582,7 @@ def test_customer_map_queries_keep_gateway_event_loop_responsive(
             return {"success": True, "status": {"state": "RUNNING"}}
         return {"success": True, "accepted": True, "job_id": "save_job_1"}
 
-    monkeypatch.setattr(map_routes, "_mapd_command", slow_command)
+    monkeypatch.setattr(map_routes, "_mapd_http_request", slow_command)
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
 
@@ -619,7 +619,7 @@ def test_map_operation_detail_route_wins_over_named_map_artifact_routes(
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     calls: list[dict] = []
 
@@ -657,9 +657,8 @@ def test_map_operation_detail_route_wins_over_named_map_artifact_routes(
 
     gateway = SimpleNamespace(
         _cloud_viewer=CloudViewer(),
-        _active_map_from_mapd=lambda: "operations",
     )
-    monkeypatch.setattr(map_routes, "_mapd_command", fake_command)
+    monkeypatch.setattr(map_routes, "_mapd_http_request", fake_command)
     app = FastAPI()
     map_routes.register_map_routes(app, gateway)
 
@@ -673,12 +672,12 @@ def test_map_operation_detail_route_wins_over_named_map_artifact_routes(
 def test_map_save_rejects_reserved_operation_namespace(monkeypatch):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("reserved map names must fail before reaching maps.service")
 
-    monkeypatch.setattr(map_routes, "_mapd_command", fail_if_called)
+    monkeypatch.setattr(map_routes, "_mapd_http_request", fail_if_called)
     app = FastAPI()
     map_routes.register_map_routes(
         app,
@@ -698,7 +697,7 @@ def test_map_save_stops_before_map_service_when_explore_is_not_safely_parked(
 ):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("unsafe Explore save must not reach maps.service")
@@ -713,7 +712,7 @@ def test_map_save_stops_before_map_service_when_explore_is_not_safely_parked(
             "message": "The native endpoint still owns motion.",
         },
     )
-    monkeypatch.setattr(map_routes, "_mapd_command", fail_if_called)
+    monkeypatch.setattr(map_routes, "_mapd_http_request", fail_if_called)
     app = FastAPI()
     map_routes.register_map_routes(
         app,
@@ -764,7 +763,7 @@ def test_map_operation_routes_recursively_hide_native_paths(
 ):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     status = _private_operation_status()
 
@@ -782,7 +781,7 @@ def test_map_operation_routes_recursively_hide_native_paths(
             return {**common, "jobs": [status], "count": 1}
         return {**common, "status": status}
 
-    monkeypatch.setattr(map_routes, "_mapd_command", fake_command)
+    monkeypatch.setattr(map_routes, "_mapd_http_request", fake_command)
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
     endpoint = _endpoint(app, path)
@@ -805,11 +804,11 @@ def test_map_operation_routes_recursively_hide_native_paths(
 def test_public_map_list_hides_invalid_active_map(monkeypatch):
     from fastapi import FastAPI
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
 
     monkeypatch.setattr(
         map_routes,
-        "_mapd_command",
+        "_mapd_http_request",
         lambda _gw, _payload: {
             "success": True,
             "active": ".codex_backups",
@@ -834,7 +833,7 @@ def test_public_map_list_hides_invalid_active_map(monkeypatch):
 def test_pcd_errors_never_echo_native_paths(monkeypatch, error_kind, expected_reason):
     from fastapi import FastAPI, HTTPException
 
-    import gateway.routes.maps as map_routes
+    import gateway.maps.routes as map_routes
     from runtime.endpoints.mapd import MapClientError
 
     error = (

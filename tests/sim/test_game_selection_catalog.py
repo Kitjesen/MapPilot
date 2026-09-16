@@ -79,6 +79,16 @@ class _Resolved:
         write_files: bool = True,
     ) -> None:
         self.session_id = entry_id
+        self.session = {"runtime": {"mode": "unreal"}}
+        self.physics_plan = {
+            "world": {"package": {"id": "forest_hf", "version": "2.0.0"}},
+            "robots": [
+                {"package": {"id": "thunderv4", "version": "1.0.3"}}
+            ],
+        }
+        self.scenario_plan = {
+            "package": {"id": "forest_patrol", "version": "1.1.0"}
+        }
         self._write_files = write_files
         self.write_calls: list[Path] = []
 
@@ -413,7 +423,7 @@ def test_non_runnable_choice_is_confirmable_without_compiling_bundle(
     assert catalog["entries"][0]["mode"] == "unreal"
 
 
-def test_runnable_choice_uses_explicit_presentation_metadata(
+def test_runnable_choice_rejects_presentation_that_differs_from_compiled_bundle(
     tmp_path: Path,
     catalog_module: Any,
 ) -> None:
@@ -426,13 +436,12 @@ def test_runnable_choice_uses_explicit_presentation_metadata(
         "label": "Wrong World",
     }
 
-    catalog = catalog_module.build_game_selection_catalog(
-        repo_root,
-        selection_spec=_selection_spec(entry),
-        output_root=repo_root / "build" / "game-selection",
-    )
-
-    assert catalog["entries"][0]["world"] == entry["presentation"]["world"]
+    with pytest.raises(ValueError, match="presentation"):
+        catalog_module.build_game_selection_catalog(
+            repo_root,
+            selection_spec=_selection_spec(entry),
+            output_root=repo_root / "build" / "game-selection",
+        )
 
 
 def test_choice_requires_complete_presentation_metadata(

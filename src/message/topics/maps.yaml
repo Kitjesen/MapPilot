@@ -1,0 +1,214 @@
+schema_version: lingtu.runtime_graph.topics.v2
+topics:
+  maps_accumulated_cloud:
+    topic: /maps/accumulated_cloud
+    transport: dds
+    dds_topic: rt/maps/accumulated_cloud
+    message_type: lingtu.dds.MapCloudLayer
+    qos_profile: MapCloud
+    cpp_name: kMapsAccumulatedCloud
+    role: bounded_accumulated_map
+    frame: map
+    producer: native_maps_runtime
+    consumers:
+    - gateway
+    - diagnostics
+    port_bindings:
+    - owner: native_maps_runtime
+      port: accumulated_cloud
+      direction: out
+      boundary: endpoint
+  maps_activation_ack:
+    topic: /maps/activation/ack
+    transport: dds
+    dds_topic: rt/maps/activation/ack
+    message_type: lingtu.dds.MapActivationAck
+    qos_profile: CommandAck
+    cpp_name: kMapsActivationAck
+    native_contract: true
+    role: exact_saved_map_activation_ack
+    frame: none
+    producer: native_maps_runtime
+    consumers:
+    - native_map_control_client
+    semantics: request_correlated_result_with_authoritative_target_previous_and_active_identity
+    port_bindings:
+    - owner: native_maps_runtime
+      port: activation_ack
+      direction: out
+      boundary: endpoint
+    - owner: native_map_control_client
+      port: activation_ack
+      direction: in
+      boundary: native
+  maps_activation_request:
+    topic: /maps/activation/request
+    transport: dds
+    dds_topic: rt/maps/activation/request
+    message_type: lingtu.dds.MapActivationRequest
+    qos_profile: CommandRequest
+    cpp_name: kMapsActivationRequest
+    native_contract: true
+    role: exact_saved_map_activation_request
+    frame: none
+    producer: native_map_control_client
+    consumers:
+    - native_maps_runtime
+    semantics: typed_stage_restore_or_verify_with_exact_target_and_previous_identity
+    port_bindings:
+    - owner: native_map_control_client
+      port: activation_request
+      direction: out
+      boundary: native
+    - owner: native_maps_runtime
+      port: activation_request
+      direction: in
+      boundary: endpoint
+  maps_elevation:
+    topic: /maps/elevation
+    transport: dds
+    dds_topic: rt/maps/elevation
+    message_type: lingtu.dds.MapGrid
+    qos_profile: MapGrid
+    cpp_name: kMapsElevation
+    role: live_elevation_grid
+    frame: map
+    producer: native_maps_runtime
+    consumers:
+    - gateway
+    port_bindings:
+    - owner: native_maps_runtime
+      port: elevation
+      direction: out
+      boundary: endpoint
+  maps_esdf:
+    topic: /maps/esdf
+    transport: dds
+    dds_topic: rt/maps/esdf
+    message_type: lingtu.dds.MapGrid
+    qos_profile: MapGrid
+    cpp_name: kMapsEsdf
+    role: live_distance_grid
+    frame: map
+    producer: native_maps_runtime
+    consumers:
+    - gateway
+    port_bindings:
+    - owner: native_maps_runtime
+      port: esdf
+      direction: out
+      boundary: endpoint
+  maps_live_cloud:
+    topic: /maps/live_cloud
+    transport: dds
+    dds_topic: rt/maps/live_cloud
+    message_type: lingtu.dds.MapCloudLayer
+    qos_profile: MapCloud
+    cpp_name: kMapsLiveCloud
+    role: current_incremental_scan
+    frame: map
+    producer: native_maps_runtime
+    consumers:
+    - gateway
+    - diagnostics
+    port_bindings:
+    - owner: native_maps_runtime
+      port: live_cloud
+      direction: out
+      boundary: endpoint
+  maps_local_collision:
+    topic: /maps/local_collision
+    transport: dds
+    dds_topic: rt/maps/local_collision
+    message_type: lingtu.dds.MapCollisionLayer
+    qos_profile: LocalRiskGrid
+    cpp_name: kMapsLocalCollision
+    native_contract: true
+    role: complete_local_3d_collision_roi
+    frame: map
+    producer: native_maps_runtime
+    consumers:
+    - native_nav_runtime
+    semantics: packed_inflated_occupancy_bits_with_dimensions_resolution_aabb_identity_and_explicit_completeness
+    port_bindings:
+    - owner: native_maps_runtime
+      port: local_collision
+      direction: out
+      boundary: endpoint
+    - owner: native_nav_runtime
+      port: local_collision
+      direction: in
+      boundary: endpoint
+  maps_occupancy:
+    topic: /maps/occupancy
+    transport: dds
+    dds_topic: rt/maps/occupancy
+    message_type: lingtu.dds.MapGrid
+    qos_profile: MapGrid
+    cpp_name: kMapsOccupancy
+    role: live_occupancy_grid
+    frame: map
+    producer: native_maps_runtime
+    consumers:
+    - gateway
+    - exploration
+    port_bindings:
+    - owner: native_maps_runtime
+      port: occupancy
+      direction: out
+      boundary: endpoint
+  maps_scene:
+    topic: /maps/scene
+    transport: dds
+    dds_topic: rt/maps/scene
+    message_type: lingtu.dds.MapScene
+    qos_profile: MapScene
+    cpp_name: kMapsScene
+    role: coherent_live_map_scene
+    frame: map
+    producer: native_maps_runtime
+    consumers:
+    - gateway
+    real_equivalent_required: true
+    port_bindings:
+    - owner: native_maps_runtime
+      port: scene
+      direction: out
+      boundary: endpoint
+  maps_state:
+    topic: /maps/state
+    transport: dds
+    dds_topic: rt/maps/state
+    message_type: lingtu.dds.MapRuntimeState
+    qos_profile: SystemStatus
+    cpp_name: kMapsState
+    role: live_maps_runtime_state
+    frame: map
+    producer: native_maps_runtime
+    consumers:
+    - gateway
+    - diagnostics
+    real_equivalent_required: true
+    port_bindings:
+    - owner: native_maps_runtime
+      port: state
+      direction: out
+      boundary: endpoint
+  maps_voxel_cloud:
+    topic: /maps/voxel_cloud
+    transport: dds
+    dds_topic: rt/maps/voxel_cloud
+    message_type: lingtu.dds.MapCloudLayer
+    qos_profile: MapCloud
+    cpp_name: kMapsVoxelCloud
+    role: decaying_voxel_map
+    frame: map
+    producer: native_maps_runtime
+    consumers:
+    - gateway
+    - diagnostics
+    port_bindings:
+    - owner: native_maps_runtime
+      port: voxel_cloud
+      direction: out
+      boundary: endpoint

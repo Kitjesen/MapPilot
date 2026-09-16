@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import pytest
-from diagnostics.field.gate_support import GateError, require_no_active_command_source
+
+from diagnostics.field.gate_support import GateError, require_no_control_authority
 
 
-def test_no_active_command_source_accepts_native_idle() -> None:
-    require_no_active_command_source({"control": {"active_cmd_source": "none"}}, "test")
+def test_no_active_command_source_accepts_no_authority() -> None:
+    require_no_control_authority({"control": {"authority": "NONE"}}, "test")
 
 
-@pytest.mark.parametrize("source", ["autonomy", "teleop", "manual_hold", "estop"])
-def test_no_active_command_source_rejects_native_authority(source: str) -> None:
-    with pytest.raises(GateError, match=f"active_cmd_source={source}"):
-        require_no_active_command_source({"control": {"active_cmd_source": source}}, "test")
+@pytest.mark.parametrize("authority", ["AUTONOMY", "OPERATOR", "UNKNOWN"])
+def test_no_active_command_source_rejects_authority(authority: str) -> None:
+    with pytest.raises(GateError, match=f"control_authority={authority}"):
+        require_no_control_authority({"control": {"authority": authority}}, "test")
+
+
+def test_no_active_command_source_fails_closed_when_control_is_missing() -> None:
+    with pytest.raises(GateError, match="control_authority=UNKNOWN"):
+        require_no_control_authority({}, "test")

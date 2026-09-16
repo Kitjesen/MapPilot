@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Static contracts for the UE5 front-end gamepad input boundary."""
 
 from pathlib import Path

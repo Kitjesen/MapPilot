@@ -1,4 +1,3 @@
-# ruff: noqa: B009, D103, S101
 
 from __future__ import annotations
 
@@ -466,7 +465,7 @@ def test_stop_gate_blocks_lifecycle_calls_while_advance_is_exiting() -> None:
 
     stopper = threading.Thread(target=stop_session)
     stopper.start()
-    assert _wait_until(lambda: getattr(session, "_closed"))
+    assert _wait_until(lambda: session._closed)
     calls_before = list(coordinator.calls)
 
     for operation in (session.start, session.pause, session.reset):

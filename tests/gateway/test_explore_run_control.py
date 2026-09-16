@@ -241,15 +241,14 @@ def test_new_run_is_blocked_while_previous_run_truth_is_unresolved(
     )
     monkeypatch.setattr(exploration, "product_control_owns_explore", lambda _gw: True)
     monkeypatch.setattr(
-        "gateway.services.runtime_status.build_navigation_status",
+        "gateway.navigation.status.evaluate_navigation_gate",
         lambda _gw: {
-            "state": "ready",
             "can_accept_goal": True,
-            "readiness": {
-                "can_execute_autonomy": True,
-                "blockers": [],
-                "advisories": [],
-            },
+            "can_execute_autonomy": True,
+            "blockers": [],
+            "advisories": [],
+            "reason": "",
+            "navigation_state": {"lifecycle_state_name": "IDLE"},
         },
     )
 
@@ -447,7 +446,7 @@ def test_native_run_event_is_persisted_before_exact_sse_projection(
 def test_native_run_event_journal_failure_requests_one_fail_safe_stop(
     configured: tuple[_Gateway, _Commands], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import gateway.services.command_boundary as command_boundary
+    import gateway.navigation.commands as command_boundary
     from gateway.services.event_handlers import handle_exploration_run_event
 
     gw, commands = configured
@@ -475,7 +474,7 @@ def test_native_run_event_journal_failure_requests_one_fail_safe_stop(
 def test_rejected_false_terminal_requests_stop_for_the_known_active_run(
     configured: tuple[_Gateway, _Commands], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import gateway.services.command_boundary as command_boundary
+    import gateway.navigation.commands as command_boundary
     from gateway.services.event_handlers import handle_exploration_run_event
 
     gw, commands = configured

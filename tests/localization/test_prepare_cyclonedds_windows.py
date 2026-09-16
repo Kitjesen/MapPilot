@@ -16,7 +16,7 @@ RUN_REAL_INTEGRATION = os.environ.get("LINGTU_RUN_CYCLONEDDS_WINDOWS_INTEGRATION
 
 def _run(*arguments: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     assert POWERSHELL is not None
-    return subprocess.run(  # noqa: S603 - runs the repository-owned preparation entry point.
+    return subprocess.run(
         [POWERSHELL, "-NoProfile", "-File", str(SCRIPT), *arguments],
         cwd=ROOT,
         capture_output=True,
@@ -174,7 +174,7 @@ def test_preflight_resolves_junction_aliases_before_overlap_check(tmp_path: Path
     environment = os.environ.copy()
     environment["LINGTU_TEST_JUNCTION"] = str(junction)
     environment["LINGTU_TEST_JUNCTION_TARGET"] = str(physical)
-    created = subprocess.run(  # noqa: S603 - creates a test-only junction inside pytest tmp_path.
+    created = subprocess.run(
         [
             POWERSHELL,
             "-NoProfile",
@@ -240,7 +240,7 @@ def test_real_windows_sdk_build_verify_and_publish_contract() -> None:
     assert (sdk / "evidence/sdk-receipt.json").is_file()
     assert not Path(f"{sdk}.incoming").exists()
     assert POWERSHELL is not None
-    verified = subprocess.run(  # noqa: S603 - runs the repository-owned published SDK verifier.
+    verified = subprocess.run(
         [POWERSHELL, "-NoProfile", "-File", str(ROOT / "scripts/build/verify_cyclonedds_windows_sdk.ps1"),
          "-SdkRoot", str(sdk)],
         cwd=ROOT,

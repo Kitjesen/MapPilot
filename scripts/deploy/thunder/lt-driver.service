@@ -22,6 +22,8 @@ ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_status_file_w
 Restart=on-failure
 RestartSec=2
 KillSignal=SIGTERM
+# The watchdog wrapper preserves a forwarded SIGTERM as exit 128 + 15.
+SuccessExitStatus=143
 TimeoutStopSec=3
 NoNewPrivileges=true
 

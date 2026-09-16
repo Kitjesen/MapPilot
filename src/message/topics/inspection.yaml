@@ -1,0 +1,137 @@
+schema_version: lingtu.runtime_graph.topics.v2
+topics:
+  inspection_evidence_request:
+    topic: /nav/inspection/evidence/request
+    transport: dds
+    dds_topic: rt/nav/inspection/evidence/request
+    message_type: lingtu.dds.InspectionEvidenceRequest
+    qos_profile: InspectionEvidence
+    cpp_name: kNavInspectionEvidenceRequest
+    native_contract: true
+    role: native_inspection_evidence_request
+    frame: map
+    producer: native_nav_runtime
+    consumers:
+    - inspection_evidence_worker
+    semantics: capture_and_analyze_route_point_evidence
+    port_bindings:
+    - owner: native_nav_runtime
+      port: inspection_evidence_request
+      direction: out
+      boundary: endpoint
+    - owner: inspection_evidence_worker
+      port: inspection_evidence_request
+      direction: in
+      boundary: native
+  inspection_evidence_result:
+    topic: /nav/inspection/evidence/result
+    transport: dds
+    dds_topic: rt/nav/inspection/evidence/result
+    message_type: lingtu.dds.InspectionEvidenceResult
+    qos_profile: InspectionEvidence
+    cpp_name: kNavInspectionEvidenceResult
+    native_contract: true
+    role: native_inspection_evidence_result
+    frame: map
+    producer: inspection_evidence_worker
+    consumers:
+    - native_nav_runtime
+    semantics: durable_evidence_result_for_matching_request_id
+    port_bindings:
+    - owner: inspection_evidence_worker
+      port: inspection_evidence_result
+      direction: out
+      boundary: native
+    - owner: native_nav_runtime
+      port: inspection_evidence_result
+      direction: in
+      boundary: endpoint
+  inspection_status:
+    topic: /nav/inspection/status
+    transport: dds
+    dds_topic: rt/nav/inspection/status
+    message_type: lingtu.dds.InspectionStatus
+    qos_profile: SystemStatus
+    cpp_name: kNavInspectionStatus
+    native_contract: true
+    role: native_inspection_status
+    frame: map
+    producer: native_nav_runtime
+    consumers: []
+    external_diagnostics_subscribable: true
+    semantics: route_and_current_point_progress
+    port_bindings:
+    - owner: native_nav_runtime
+      port: inspection_status
+      direction: out
+      boundary: endpoint
+  inspection_task_ack:
+    topic: /nav/inspection/task/ack
+    transport: dds
+    dds_topic: rt/nav/inspection/task/ack
+    message_type: lingtu.dds.InspectionTaskAck
+    qos_profile: CommandAck
+    cpp_name: kNavInspectionTaskAck
+    native_contract: true
+    role: native_inspection_task_ack
+    frame: map
+    producer: native_nav_runtime
+    consumers:
+    - persistent_cpp_navigation_client
+    semantics: task_id_preserving_business_ack
+    port_bindings:
+    - owner: native_nav_runtime
+      port: inspection_task_ack
+      direction: out
+      boundary: endpoint
+    - owner: persistent_cpp_navigation_client
+      port: inspection_task_ack
+      direction: in
+      boundary: native
+  inspection_task_event:
+    topic: /nav/inspection/task/event
+    transport: dds
+    dds_topic: rt/nav/inspection/task/event
+    message_type: lingtu.dds.InspectionTaskEvent
+    qos_profile: TaskEvent
+    cpp_name: kNavInspectionTaskEvent
+    native_contract: true
+    role: native_inspection_task_event
+    frame: map
+    producer: native_nav_runtime
+    consumers:
+    - host_bus
+    external_diagnostics_subscribable: true
+    semantics: ordered_task_facts_with_boot_id_and_event_sequence
+    port_bindings:
+    - owner: native_nav_runtime
+      port: inspection_task_event
+      direction: out
+      boundary: endpoint
+    - owner: host_bus
+      port: inspection_task_event
+      direction: in
+      boundary: native
+  inspection_task_request:
+    topic: /nav/inspection/task/request
+    transport: dds
+    dds_topic: rt/nav/inspection/task/request
+    message_type: lingtu.dds.InspectionTaskRequest
+    qos_profile: CommandRequest
+    cpp_name: kNavInspectionTaskRequest
+    native_contract: true
+    role: native_inspection_task_request
+    frame: map
+    producer: persistent_cpp_navigation_client
+    consumers:
+    - native_nav_runtime
+    semantics: caller_task_id_and_retryable_request_id
+    port_bindings:
+    - owner: persistent_cpp_navigation_client
+      port: inspection_task_request
+      direction: out
+      boundary: native
+    - owner: native_nav_runtime
+      port: inspection_task_request
+      direction: in
+      boundary: endpoint

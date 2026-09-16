@@ -9,6 +9,13 @@ ParsedCommand<GoalTarget> parseGoal(const GoalSample &sample,
                                     const std::optional<RigidTransform> &map_odom) {
   ParsedCommand<GoalTarget> out;
   out.value.position = sample.position;
+  if (!std::isfinite(sample.max_speed_mps) || sample.max_speed_mps < 0.0 ||
+      !std::isfinite(sample.acceptance_radius_m) || sample.acceptance_radius_m < 0.0) {
+    out.error = "goal_constraints_invalid";
+    return out;
+  }
+  if (sample.max_speed_mps > 0.0) out.value.max_speed_mps = sample.max_speed_mps;
+  if (sample.acceptance_radius_m > 0.0) out.value.acceptance_radius_m = sample.acceptance_radius_m;
   if (!std::isfinite(out.value.position.x) || !std::isfinite(out.value.position.y) ||
       !std::isfinite(out.value.position.z)) {
     out.error = "goal_nonfinite";

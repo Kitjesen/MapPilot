@@ -1,4 +1,3 @@
-# ruff: noqa: S101, S603
 
 from __future__ import annotations
 
@@ -9,7 +8,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from sim.catalog import CatalogResolver
 from sim.runtime.control import (
     CommandSubmitResult,

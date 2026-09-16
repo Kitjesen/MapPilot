@@ -1,6 +1,6 @@
 #include "native/dds_module.hpp"
 
-#include "message/cpp/qos.hpp"
+#include "transport/dds/qos.hpp"
 
 #include "dds/dds.h"
 #include "messages.h"

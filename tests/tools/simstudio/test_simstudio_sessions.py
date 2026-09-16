@@ -1,4 +1,3 @@
-# ruff: noqa: D103, S101
 """Contract tests for the isolated SimStudio session authoring service."""
 
 from __future__ import annotations

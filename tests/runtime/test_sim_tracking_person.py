@@ -8,9 +8,9 @@ from sim.runtime.scenario.runtime import parse_scenario_plan
 
 from decision.modules.visual_servo import VisualServoModule
 from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.graph.processes import ProcessArtifact
 from perception.detection.sim_scene_observer import SimSceneObserver
 from perception.pipeline import to_runtime_detections
-from runtime.graph.processes import ProcessArtifact
 from runtime.msgs.geometry import Pose, PoseStamped, Vector3
 
 

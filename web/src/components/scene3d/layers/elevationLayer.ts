@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import type { ElevationMapSceneLayer, MapSceneEvent, MapSceneLayer } from '../../../types'
 import { createHeightGridGroup, type GroupedMesh } from './layerUtils.ts'
 import { lingtuToThree } from '../../../services/coordinateFrame.ts'
+import { mapResetEpoch } from '../../../services/mapSceneIdentity.ts'
 
 export const ELEVATION_MAX_CELLS = 131_072
 export const ELEVATION_DEFAULT_MAX_AGE_S = 5
@@ -98,9 +99,10 @@ export function resolveElevationLayer(
     return error('最低观测高程 producer identity 无效')
   }
   const sceneResetEpoch = mapScene.metadata?.reset_epoch
-  if (!nonNegativeInteger(layer.reset_epoch)
+  const resetEpoch = mapResetEpoch(layer.reset_epoch)
+  if (resetEpoch === null
     || (sceneResetEpoch !== undefined
-      && (!nonNegativeInteger(sceneResetEpoch) || layer.reset_epoch !== sceneResetEpoch))) {
+      && mapResetEpoch(sceneResetEpoch) !== resetEpoch)) {
     return error('最低观测高程 reset epoch 无效')
   }
 
@@ -187,7 +189,7 @@ export function resolveElevationLayer(
   }
   return {
     status: 'ready',
-    layer,
+    layer: layer.reset_epoch === resetEpoch ? layer : { ...layer, reset_epoch: resetEpoch },
     heights,
     minZ: layer.min_z,
     maxZ: layer.max_z,

@@ -1,4 +1,3 @@
-# ruff: noqa: D101, D102, D103, S603, S607
 """Sample native DDS topics without cyclonedds-python and report activity."""
 
 from __future__ import annotations

@@ -111,12 +111,14 @@ struct DegeneracyInfo
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     bool detected = false;           // true if any DOF is degenerate
     double condition_number = 0.0;   // H condition number (high = bad)
-    double min_eigenvalue = 0.0;     // smallest eigenvalue of H_pose (6x6)
-    double max_eigenvalue = 0.0;     // largest eigenvalue
+    // Pose-H spectrum after one shared rotational lever-length scale balances
+    // rotation and translation blocks; these are not raw mixed-unit eigenvalues.
+    double min_eigenvalue = 0.0;
+    double max_eigenvalue = 0.0;
     double effective_ratio = 1.0;    // ratio of well-conditioned DOFs (0~1)
     int degenerate_dof_count = 0;    // number of degenerate DOFs (0~6)
     Eigen::Matrix<double, 6, 1> eigenvalues = Eigen::Matrix<double, 6, 1>::Zero();
-    // Per-DOF degeneracy mask: 1.0 = well-constrained, 0.0 = degenerate
+    // Balanced-eigenbasis mask: 1.0 = well-constrained, 0.0 = degenerate
     Eigen::Matrix<double, 6, 1> dof_mask = Eigen::Matrix<double, 6, 1>::Ones();
     // Position covariance trace (m²) — sum of t_wi diagonals after the update.
     // Surfacing this lets external monitors detect IEKF divergence ~30-60s before

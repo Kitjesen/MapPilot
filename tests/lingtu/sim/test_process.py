@@ -10,23 +10,24 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from lingtu.run_plan import RunPlan
-from lingtu.sim.identity import ProcessIdentity, SimChildLedger
-from lingtu.sim.process import SimProcessManager
-from lingtu.switch_contracts import ProcessError, ProcessFailed
-from runtime.graph import (
+from lingtu.assembly.graph import (
     ProcessArtifact,
     ProcessCommand,
     ProcessReadiness,
     ProcessShutdown,
     ProcessSpec,
 )
+from lingtu.run_plan import RunPlan
+from lingtu.sim.identity import ProcessIdentity, SimChildLedger
+from lingtu.sim.process import SimProcessManager
+from lingtu.switch_contracts import ProcessError, ProcessFailed
 
 PRODUCT_SESSION_ID = "2" * 32
 WINDOWS_X64_RUNTIME_DLLS = (
@@ -72,6 +73,90 @@ def test_same_stage_role_provider_starts_before_support_process() -> None:
     )
 
     assert [process.name for process in ordered] == ["nav_runtime", "mujoco_feeder"]
+
+
+@pytest.mark.parametrize(
+    "failure", [None, "mujoco_feeder", "map_runtime", "nav_runtime", "support_exit"]
+)
+def test_same_stage_support_startup_has_bounded_consumer_readiness_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str | None,
+) -> None:
+    artifact = tmp_path / "worker.py"
+    artifact.write_text("pass\n", encoding="utf-8")
+    nav = replace(
+        _role_process(tmp_path, artifact, "nav"),
+        name="nav_runtime",
+        target="nav_runtime",
+        provides=("nav",),
+    )
+    support = replace(nav, name="mujoco_feeder", target="mujoco_feeder", provides=())
+    plan = _plan(
+        tmp_path,
+        artifact,
+        process_name="map_runtime",
+        process_target="map_runtime",
+        provides=("maps",),
+        additional_processes=(nav, support),
+        support_processes=("mujoco_feeder",),
+    )
+    manager = SimProcessManager(tmp_path)
+    manager.bind(
+        plan,
+        run_plan_path=_publish_plan(tmp_path / "session", plan),
+        product_session_id=PRODUCT_SESSION_ID,
+    )
+    now = [0.0]
+    starts: list[str] = []
+    waits: list[tuple[str, float]] = []
+    exited: set[str] = set()
+    durations = {"mujoco_feeder": 4.4, "map_runtime": 3.0, "nav_runtime": 1.5}
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(manager, "active", lambda target: target in starts and target not in exited)
+
+    def start(target: str, _timeout_s: float) -> None:
+        starts.append(target)
+        now[0] += 0.1
+
+    def wait(process: ProcessSpec, timeout_s: float) -> dict[str, bool]:
+        assert starts == ["map_runtime", "nav_runtime", "mujoco_feeder"]
+        waits.append((process.name, timeout_s))
+        if process.name != "mujoco_feeder":
+            assert waits[0][0] == "mujoco_feeder", "consumers need live feeder input"
+        if process.name == failure:
+            now[0] += timeout_s
+            raise ProcessError(f"{process.name} readiness timed out")
+        duration = durations[process.name]
+        assert timeout_s >= duration, "feeder loading consumed the consumer budget"
+        now[0] += duration
+        if process.name == "nav_runtime" and failure == "support_exit":
+            exited.add("mujoco_feeder")
+        return {"ready": True}
+
+    monkeypatch.setattr(manager, "start", start)
+    monkeypatch.setattr(manager, "wait", wait)
+    if failure is None:
+        assert manager.apply(plan).ok
+    else:
+        message = (
+            "support process exited during consumer readiness: mujoco_feeder"
+            if failure == "support_exit"
+            else f"{failure} readiness timed out"
+        )
+        with pytest.raises(ProcessFailed, match=message) as captured:
+            manager.apply(plan)
+        assert captured.value.report.rolled_back == [
+            "mujoco_feeder", "nav_runtime", "map_runtime"
+        ]
+
+    assert waits[0] == ("mujoco_feeder", pytest.approx(4.9))
+    if failure != "mujoco_feeder":
+        assert waits[1] == ("map_runtime", pytest.approx(5.0))
+    if failure in (None, "nav_runtime", "support_exit"):
+        assert waits[2] == ("nav_runtime", pytest.approx(2.0))
+    # One support deadline plus one consumer deadline, never a fresh budget per wait.
+    assert now[0] <= 10.3
 
 
 def test_bootstrap_environment_keeps_local_map_location(
@@ -204,6 +289,7 @@ def _plan(
     dependencies: tuple[ProcessArtifact, ...] = (),
     additional_processes: tuple[ProcessSpec, ...] = (),
     additional_available_processes: tuple[ProcessSpec, ...] = (),
+    support_processes: tuple[str, ...] = (),
 ) -> RunPlan:
     relative_artifact = artifact.relative_to(repository_root).as_posix()
     process = ProcessSpec(
@@ -231,19 +317,35 @@ def _plan(
         process_control="subprocess",
         modules=(),
         processes=(process, *additional_processes),
+        support_processes=support_processes,
         available_processes=(
             process,
             *additional_processes,
             *additional_available_processes,
         ),
         stop_before_start=(),
-        contracts=("lingtu.product.nav.v1",),
+        required_topics=(),
+        required_capabilities=(),
         critical_modules=(),
         route_contract=None,
         host_config={},
         lifecycle={},
         simulation=_minimal_simulation(),
-        native_process_environment=native_process_environment,
+        process_environment={
+            key: value
+            for key, value in (native_process_environment or {}).items()
+            if key
+            not in {
+                "NAV_GLOBAL_PLANNER",
+                "LINGTU_NAV_CONTROL_MODE",
+                "LINGTU_NAV_LOCAL_PLANNER_BACKEND",
+                "LINGTU_NAV_PUBLISH_CMD_VEL",
+                "LINGTU_NAV_CHECK_OBSTACLE",
+                "LINGTU_NAV_USE_TRAVERSABILITY_COST",
+                "LINGTU_NAV_ALLOW_TELEOP_TAKEOVER",
+                "LINGTU_TELEOP_LOCAL_PLANNER",
+            }
+        },
         native_nav={
             "control_mode": "test",
             "publish_cmd_vel": False,
@@ -658,7 +760,7 @@ def test_direct_process_output_is_bounded_and_exposed_as_session_evidence(
     )
 
 
-def test_process_exit_before_readiness_reports_exit_code_and_log_paths(
+def test_process_exit_before_readiness_reports_rolled_back_process(
     tmp_path: Path,
 ) -> None:
     repository_root = tmp_path / "repository"
@@ -686,7 +788,7 @@ def test_process_exit_before_readiness_reports_exit_code_and_log_paths(
 
     message = str(captured.value)
     assert captured.value.report.started == ["worker-target"]
-    assert captured.value.report.rolled_back == []
+    assert captured.value.report.rolled_back == ["worker-target"]
     stdout_log = session_root / "logs" / "worker.stdout.log"
     stderr_log = session_root / "logs" / "worker.stderr.log"
     assert f"stdout_log={stdout_log}" in message
@@ -856,7 +958,7 @@ def test_new_manager_adopts_exact_live_child_and_stops_it(
     )
     plan = _plan(repository_root, artifact)
     plan_path = _publish_plan(session_root, plan)
-    child = subprocess.Popen(  # noqa: S603
+    child = subprocess.Popen(
         [sys.executable, str(artifact)],
         cwd=repository_root,
         stdin=subprocess.DEVNULL,
@@ -901,7 +1003,7 @@ def test_reused_pid_identity_is_cleared_without_signalling_foreign_process(
     )
     plan = _plan(repository_root, artifact)
     plan_path = _publish_plan(session_root, plan)
-    child = subprocess.Popen(  # noqa: S603
+    child = subprocess.Popen(
         [sys.executable, str(artifact)],
         cwd=repository_root,
         stdin=subprocess.DEVNULL,
@@ -948,7 +1050,7 @@ def test_bind_rejects_duplicate_live_child_target_without_signal(
     )
     plan = _plan(repository_root, artifact)
     plan_path = _publish_plan(session_root, plan)
-    child = subprocess.Popen(  # noqa: S603
+    child = subprocess.Popen(
         [sys.executable, str(artifact)],
         cwd=repository_root,
         stdin=subprocess.DEVNULL,

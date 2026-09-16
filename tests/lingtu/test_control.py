@@ -8,17 +8,17 @@ from pathlib import Path
 import pytest
 from sim.catalog import CatalogResolver
 
-from lingtu.control import ExpectedProductMismatch, ProductControl
-from lingtu.control import main as control_main
-from lingtu.real.systemd import ProcessReport
-from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
-from lingtu.switch_contracts import SwitchRequest
-from runtime.graph import (
+from lingtu.assembly.graph import (
     ProcessArtifact,
     ProcessCommand,
     ProcessReadiness,
     ProcessSpec,
 )
+from lingtu.control import ExpectedProductMismatch, ProductControl
+from lingtu.control import main as control_main
+from lingtu.real.systemd import ProcessReport
+from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
+from lingtu.switch_contracts import SwitchFailed, SwitchReport, SwitchRequest
 
 pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
 
@@ -168,6 +168,40 @@ def test_product_control_help_names_the_field_product_selector(capsys) -> None:
     assert "restart" not in help_text
 
 
+@pytest.mark.parametrize("json_args", [[], ["--json"]])
+def test_product_control_cli_preserves_switch_failure_report(monkeypatch, capsys, json_args) -> None:
+    report = SwitchReport(
+        current_product="map",
+        target_product="nav",
+        env="real",
+        product_variant="camera",
+        local_planner="scan",
+        status="rollback_failed",
+        run_plan_path="/run/lingtu/products/plan-failed.json",
+        phases=["motion_stopped", "session_staged"],
+        cleanup=[
+            "motion_session_failed:native navigation stop is unavailable",
+            "session:restored",
+            "fail_closed_session:removed",
+        ],
+        error="SLAM did not become ready: map_tracking_initial_alignment_pending",
+    )
+
+    def fail_switch(self, product, **kwargs):
+        assert product == "nav"
+        raise SwitchFailed(report)
+
+    monkeypatch.setattr(ProductControl, "switch", fail_switch)
+    assert control_main(["switch", "nav", "--robot", "unitree/go2", *json_args]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["cleanup"] == report.cleanup
+    assert payload["phases"] == report.phases
+    for key, value in report.as_dict().items():
+        assert payload[key] == value
+    assert payload["robot"] == "unitree/go2"
+    assert payload["product"] == "nav"
+
+
 @pytest.mark.parametrize("action", ("reapply", "quiesce", "restart"))
 def test_product_control_rejects_retired_actions(action: str) -> None:
     with pytest.raises(SystemExit) as exc_info:
@@ -227,7 +261,7 @@ def test_product_control_selects_scan_in_sim_without_changing_product_identity()
     teleop = control._resolve("teleop")
 
     assert plan.product == "nav"
-    assert plan.product_variant is None
+    assert plan.product_variant == "standard"
     assert plan.native_nav["local_planner"] == "scan"
     assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == "scan"
     assert teleop.product == "teleop"
@@ -329,7 +363,7 @@ def test_product_control_resolves_robot_and_env_together() -> None:
     assert plan.env == "sim"
     assert plan.robot == "doso/thunder_v4"
     assert plan.process_control == "subprocess"
-    assert plan.host_config["_env_backend"] == "mujoco"
+    assert plan.simulation["session"]["runtime"]["backend"] == "mujoco"
 
 
 def test_product_control_public_switch_hides_the_internal_plan(tmp_path: Path) -> None:
@@ -553,8 +587,8 @@ def test_product_control_routes_exact_mujoco_map_plan_through_simulation_runner(
     assert switched.status == "active"
     assert plan.product == "map"
     assert plan.lifecycle["slam_mode"] == "mapping"
-    assert plan.process("camera") is not plan.process("lidar")
-    assert plan.process("camera").name == "camera_publisher"
+    assert not plan.has_process("camera")
+    assert plan.has_process("lidar")
     assert simulation_runner.calls == [("apply", run_plan_path)]
     assert systemd_runner.calls == []
     product_session_id = simulation_runner.product_session_ids[0]
@@ -667,6 +701,35 @@ def test_product_control_cli_accepts_explicit_sim_backend(capsys) -> None:
     assert payload["env"] == "sim"
 
 
+def test_cli_preserves_camera_variant_in_switch_request(monkeypatch, capsys) -> None:
+    calls = []
+
+    def switch(self, product, **kwargs):
+        calls.append((product, kwargs))
+        return {"ok": True}
+
+    monkeypatch.setattr(ProductControl, "switch", switch)
+    assert control_main(["switch", "nav", "--variant", "camera", "--robot", "unitree/go2", "--json"]) == 0
+    assert calls[0][1]["variant"] == "camera"
+    assert json.loads(capsys.readouterr().out)["ok"]
+    assert SwitchRequest(target_product="nav", variant="camera").product_variant == "camera"
+
+
+@pytest.mark.parametrize("pose", [(3.0, 4.0, 0.0), (3.0, 4.0, 0.45, 0.0)])
+def test_product_control_cli_preserves_explicit_pose_dimensions(monkeypatch, capsys, pose) -> None:
+    calls = []
+
+    def switch(self, product, **kwargs):
+        calls.append(kwargs["initial_pose"])
+        return {"ok": True, "product": product}
+
+    monkeypatch.setattr(ProductControl, "switch", switch)
+    assert control_main(["switch", "nav", "--env", "sim", "--initial-pose",
+                         *map(str, pose), "--dry-run", "--json"]) == 0
+    assert calls == [pose]
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+
+
 def test_product_control_cli_human_output_names_robot(capsys) -> None:
     exit_code = control_main(
         [
@@ -714,6 +777,8 @@ def _write_current(
     env: str = "real",
     product_session_id: str = "1" * 32,
 ) -> None:
+    if product_variant is None:
+        product_variant = RunPlan.load(run_plan_path).product_variant
     (tmp_path / "current.json").write_text(
         json.dumps(
             {
@@ -892,7 +957,8 @@ def _sim_subprocess_plan(product: str = "teleop_avoid") -> RunPlan:
         processes=(process,),
         available_processes=(process,),
         stop_before_start=(process.target,),
-        contracts=(f"lingtu.product.{product}.v1",),
+        required_topics=(),
+        required_capabilities=(),
         critical_modules=(),
         route_contract=None,
         host_config={},

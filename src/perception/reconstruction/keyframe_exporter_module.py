@@ -268,8 +268,8 @@ class ReconKeyframeExporterModule(Module, layer=3):
 
     def _upload_batch(self, batch: list[dict]) -> None:
         try:
-            import urllib.request
             import urllib.error
+            import urllib.request
 
             # Build multipart payload manually (no external deps)
             boundary = b"---LingTuReconBoundary"
@@ -306,7 +306,7 @@ class ReconKeyframeExporterModule(Module, layer=3):
                 headers={"Content-Type": "multipart/form-data; boundary=" + boundary.decode()},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310  # trusted local server
+            with urllib.request.urlopen(req, timeout=15) as resp:  # trusted local server
                 resp.read()
 
             self._total_exported += len(batch)

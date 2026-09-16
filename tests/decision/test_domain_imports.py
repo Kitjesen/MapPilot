@@ -3,17 +3,17 @@
 
 def test_import_perception():
     """perception package is importable."""
-    import perception  # noqa: F401
+    import perception
 
 
 def test_import_decision():
     """decision package is importable."""
-    import decision  # noqa: F401
+    import decision
 
 
 def test_import_semantic_reconstruction():
     """perception.reconstruction package is importable."""
-    import perception.reconstruction  # noqa: F401
+    import perception.reconstruction
 
 
 def test_import_all_subpackages():

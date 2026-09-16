@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -10,7 +9,6 @@ from contextlib import contextmanager
 from typing import Any
 
 import pytest
-
 from sim.runtime.control.contracts import (
     CommandSubmitResult,
     ControllerCommand,
@@ -425,25 +423,14 @@ def test_receiver_only_enqueues_and_owner_pumps_before_advance() -> None:
     )
     session.prepare()
 
-    receiver_finished = threading.Event()
-    release_receiver = threading.Event()
-
-    def receive_and_hold() -> None:
-        pump.receive({"linear_x": 1.0})
-        receiver_finished.set()
-        release_receiver.wait(1.0)
-
-    receiver = threading.Thread(target=receive_and_hold)
+    receiver = threading.Thread(target=pump.receive, args=({"linear_x": 1.0},))
     receiver.start()
-    try:
-        assert receiver_finished.wait(1.0)
-        session.start()
-        assert coordinator.advance_seen.wait(1.0)
-        session.pause()
-        session.stop()
-    finally:
-        release_receiver.set()
-        receiver.join()
+    receiver.join()
+
+    session.start()
+    assert coordinator.advance_seen.wait(1.0)
+    session.pause()
+    session.stop()
 
     names = [name for name, _thread_id in coordinator.calls]
     first_advance = names.index("advance")

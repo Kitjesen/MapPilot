@@ -3,16 +3,16 @@ from __future__ import annotations
 from copy import deepcopy
 
 from lingtu.assembly.compiler import blueprint_from_run_plan, compile_run_plan
-from lingtu.assembly.native_nav import compile_native_nav_config
-from lingtu.assembly.products import resolve_product_host_runtime
-from runtime.contracts.product_runtime import resolve_product_spec_contracts
-from runtime.graph import (
+from lingtu.assembly.graph import (
     ProcessArtifact,
     RuntimeGraph,
     load_runtime_graph,
     validate_runtime_graph,
 )
-from runtime.runtime_interface import TOPICS
+from lingtu.assembly.graph.loader import resolve_product_variant_spec
+from lingtu.assembly.native_nav import compile_native_nav_config
+from lingtu.assembly.products import resolve_product_host_runtime
+from message.topics import TOPICS
 
 OPERATOR_MOTION_TOPICS = frozenset(
     {
@@ -51,7 +51,7 @@ def _with_products(graph: RuntimeGraph, products: dict) -> RuntimeGraph:
 
 
 def _contracts(name: str, product: dict):
-    return resolve_product_spec_contracts(name, product)
+    return resolve_product_variant_spec(name, product)
 
 
 def _real_modules(product: str) -> tuple[str, ...]:
@@ -121,8 +121,8 @@ def test_teleop_avoid_compiles_native_motion_settings() -> None:
     assert compiled.parameters["teleop_planner_max_deviation_deg"] == 90.0
     assert compiled.native_nav["smoothing"] is False
     assert "traversability" not in product["processes"]
-    assert OPERATOR_MOTION_CAPABILITIES <= set(contract.capabilities)
-    assert OPERATOR_MOTION_TOPICS <= set(contract.topics)
+    assert OPERATOR_MOTION_CAPABILITIES <= set(contract["capabilities"])
+    assert OPERATOR_MOTION_TOPICS <= set(contract["topics"])
     assert "required_capabilities" not in product
     assert "required_topics" not in product
 
@@ -158,15 +158,6 @@ def test_native_nav_compiles_follower_and_recovery_settings() -> None:
             "path_follower_max_yaw_rate_rad_s": 0.70,
             "path_follower_heading_align_enter_rad": 0.80,
             "path_follower_heading_align_exit_rad": 0.30,
-            "scan_follower": {
-                "time_forward_s": 0.65,
-                "heading_error_rad": 0.70,
-                "position_gain": 0.90,
-                "yaw_gain": 1.40,
-                "max_vx_mps": 0.68,
-                "max_vy_mps": 0.32,
-                "max_yaw_rate_rad_s": 0.95,
-            },
             "recovery": {
                 "behavior_order": ["rotate", "translate"],
                 "blocked_interval_s": 1.25,
@@ -189,8 +180,6 @@ def test_native_nav_compiles_follower_and_recovery_settings() -> None:
     assert compiled.parameters["path_follower_max_yaw_rate_rad_s"] == 0.70
     assert compiled.parameters["path_follower_heading_align_enter_rad"] == 0.80
     assert compiled.parameters["path_follower_heading_align_exit_rad"] == 0.30
-    assert compiled.parameters["scan_time_forward_s"] == 0.65
-    assert compiled.parameters["scan_max_vy_mps"] == 0.32
     assert compiled.native_nav["recovery"]["behavior_order"] == (
         "rotate",
         "translate",
@@ -199,14 +188,6 @@ def test_native_nav_compiles_follower_and_recovery_settings() -> None:
     assert compiled.environment["LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_RATE_RAD_S"] == "0.7"
     assert compiled.environment["LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_ENTER_RAD"] == "0.8"
     assert compiled.environment["LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_EXIT_RAD"] == "0.3"
-    assert compiled.environment["LINGTU_NAV_SCAN_TIME_FORWARD_S"] == "0.65"
-    assert compiled.environment["LINGTU_NAV_SCAN_HEADING_ERROR_RAD"] == "0.7"
-    assert compiled.environment["LINGTU_NAV_SCAN_POSITION_GAIN"] == "0.9"
-    assert compiled.environment["LINGTU_NAV_SCAN_YAW_GAIN"] == "1.4"
-    assert compiled.environment["LINGTU_NAV_SCAN_MAX_VX_MPS"] == "0.68"
-    assert compiled.environment["LINGTU_NAV_SCAN_MAX_VY_MPS"] == "0.32"
-    assert compiled.environment["LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S"] == "0.95"
-    assert "LINGTU_NAV_SCAN_FINISH_DISTANCE_M" not in compiled.environment
     assert compiled.environment["LINGTU_NAV_RECOVERY_ORDER"] == "rotate,translate"
     assert compiled.environment["LINGTU_NAV_RECOVERY_BLOCKED_INTERVAL_S"] == "1.25"
     assert compiled.environment["LINGTU_NAV_RECOVERY_ROTATION_TIMEOUT_S"] == "2.75"
@@ -233,8 +214,8 @@ def test_operator_motion_requirement_is_derived_from_native_policy_for_every_pro
 
         assert derived_requirement is (name in PRODUCTS_REQUIRING_OPERATOR_MOTION)
         contract = _contracts(name, product)
-        topics = set(contract.topics)
-        capabilities = set(contract.capabilities)
+        topics = set(contract["topics"])
+        capabilities = set(contract["capabilities"])
         if derived_requirement:
             assert OPERATOR_MOTION_TOPICS <= topics
             assert OPERATOR_MOTION_CAPABILITIES <= capabilities
@@ -287,7 +268,9 @@ def test_validator_rejects_contract_without_operator_motion_topics_for_every_req
     graph = load_runtime_graph()
     products = deepcopy(graph.products)
     for product_name in PRODUCTS_REQUIRING_OPERATOR_MOTION:
-        products[product_name]["contracts"] = ["lingtu.product.explore.v1"]
+        products[product_name]["topics"] = [
+            topic for topic in products[product_name]["topics"] if topic not in OPERATOR_MOTION_TOPICS
+        ]
 
     issues = validate_runtime_graph(_with_products(graph, products))
 
@@ -305,7 +288,11 @@ def test_validator_rejects_contract_without_operator_motion_capabilities_for_eve
     graph = load_runtime_graph()
     products = deepcopy(graph.products)
     for product_name in PRODUCTS_REQUIRING_OPERATOR_MOTION:
-        products[product_name]["contracts"] = ["lingtu.product.explore.v1"]
+        products[product_name]["capabilities"] = [
+            capability
+            for capability in products[product_name]["capabilities"]
+            if capability not in OPERATOR_MOTION_CAPABILITIES
+        ]
 
     issues = validate_runtime_graph(_with_products(graph, products))
 
@@ -353,10 +340,10 @@ def test_native_policy_bootstraps_operator_motion_requirement() -> None:
     assert "product_operator_motion_capability_missing" in codes
 
 
-def test_product_contracts_use_typed_operator_motion_topics_without_yaml_chains() -> None:
+def test_products_declare_typed_operator_motion_topics_directly() -> None:
     products = load_runtime_graph().products
 
     for name in PRODUCTS_REQUIRING_OPERATOR_MOTION:
         contract = _contracts(name, products[name])
-        assert OPERATOR_MOTION_TOPICS <= set(contract.topics)
+        assert OPERATOR_MOTION_TOPICS <= set(contract["topics"])
         assert "target_chain" not in products[name]

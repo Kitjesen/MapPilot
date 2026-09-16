@@ -1,7 +1,7 @@
 export type Locale = 'en' | 'zh'
 
 const STORAGE_KEY = 'lingtu.locale'
-const DEFAULT_LOCALE: Locale = 'en'
+const DEFAULT_LOCALE: Locale = 'zh'
 
 export function normalizeLocale(value: unknown): Locale {
   return value === 'zh' || value === 'en' ? value : DEFAULT_LOCALE

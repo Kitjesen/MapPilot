@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "message/cpp/navigation_command.hpp"
+#include "message/protocol/navigation.hpp"
 #include "command/ingress.hpp"
 
 namespace {

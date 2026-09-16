@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """No-network tests for deterministic Forest_HF UE PBR binding."""
 

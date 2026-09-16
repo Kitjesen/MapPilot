@@ -14,12 +14,12 @@ import json
 import logging
 from typing import Any
 
+from memory.modules._odom_mixin import OdomTrackingMixin
+from memory.spatial.topological import TopologicalMemory
 from runtime import In, Module, Out
 from runtime.msgs import Odometry, SceneGraph
 from runtime.msgs.numpy_compat import np
 from runtime.registry import register
-from memory.modules._odom_mixin import OdomTrackingMixin
-from memory.spatial.topological import TopologicalMemory
 
 logger = logging.getLogger(__name__)
 

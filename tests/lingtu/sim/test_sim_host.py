@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Simulation Host process tests."""
 
 from __future__ import annotations
@@ -251,6 +250,6 @@ def test_source_does_not_import_or_call_runtime_graph() -> None:
         if isinstance(node, ast.ImportFrom)
     )
 
-    assert not any(name.startswith("runtime.graph") for name in imported_modules)
+    assert not any(name.startswith("lingtu.assembly.graph") for name in imported_modules)
     assert "load_runtime_graph" not in source
     assert "compile_run_plan" not in source

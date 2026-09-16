@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ruff: noqa: D103, S310
 """Collect read-only real-robot runtime evidence.
 
 This script does not publish goals, cmd_vel, or any robot-control topic. It
@@ -19,6 +18,10 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+SRC_DIR = Path(__file__).resolve().parents[2]
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
 from diagnostics.field.evidence import (
     REAL_HARDWARE_COMMAND_SINK,
     REAL_RUNTIME_COLLECTOR_NAME,
@@ -30,12 +33,9 @@ from diagnostics.field.evidence import (
     runtime_data_flow_stage_signals,
     validate_real_runtime_evidence,
 )
-from runtime.runtime_interface import (
-    FRAME_LINKS,
-    TOPICS,
-    resolved_runtime_data_flow,
-    runtime_data_flow_topics,
-)
+from diagnostics.runtime_contract import resolved_runtime_data_flow, runtime_data_flow_topics
+from message.topics import TOPICS
+from runtime.tf.frames import FRAME_LINKS
 
 OBSERVED_TOPICS = runtime_data_flow_topics(REAL_RUNTIME_CONTRACT)
 
@@ -322,13 +322,6 @@ def _mapping_payload(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
-def _nested_mapping(value: Mapping[str, Any], *keys: str) -> Mapping[str, Any]:
-    current: Any = value
-    for key in keys:
-        current = _mapping_payload(current).get(key)
-    return current if isinstance(current, Mapping) else {}
-
-
 def _numeric_payload(value: Mapping[str, Any], *keys: str) -> float | None:
     for key in keys:
         parsed = _safe_float(value.get(key))
@@ -500,7 +493,6 @@ def _record_gateway_dataflow(
     *,
     sample_time_sec: float,
     min_cmd_vel_norm: float,
-    command_active: bool,
 ) -> None:
     topic_summaries = {
         str(item.get("topic")): item
@@ -550,16 +542,6 @@ def _record_gateway_dataflow(
             inferred_nonempty=inferred_nonempty,
             source="gateway_runtime_dataflow",
         )
-        if topic == TOPICS.cmd_vel and command_active:
-            entry = topic_evidence[topic]
-            entry["max_norm"] = max(
-                float(entry.get("max_norm", 0.0)),
-                float(min_cmd_vel_norm),
-            )
-            entry["nonzero_samples"] = int(entry.get("nonzero_samples", 0)) + 1
-            entry["cmd_vel_nonzero_source"] = "gateway_navigation_status"
-
-
 def _record_gateway_rest_payloads(
     topic_evidence: dict[str, dict[str, Any]],
     odom_positions: list[tuple[float, float, float]],
@@ -607,6 +589,25 @@ def _record_gateway_rest_payloads(
             payload=map_points,
             source="gateway_map_points",
         )
+
+    navigation_dds = _mapping_payload(payloads.get("navigation_dds"))
+    cmd_vel = _mapping_payload(navigation_dds.get("cmd_vel"))
+    cmd_norm = _gateway_final_cmd_norm(navigation_dds)
+    if cmd_norm is not None:
+        _record_gateway_sample(
+            topic_evidence,
+            odom_positions,
+            TOPICS.cmd_vel,
+            sample_time_sec=sample_time_sec,
+            min_cmd_vel_norm=min_cmd_vel_norm,
+            frame_id=str(cmd_vel.get("frame_id") or "body"),
+            payload={"cmd_norm": cmd_norm},
+            source="gateway_navigation_dds_snapshot",
+        )
+        if cmd_norm >= min_cmd_vel_norm:
+            topic_evidence[TOPICS.cmd_vel]["cmd_vel_nonzero_source"] = (
+                "gateway_navigation_dds_snapshot"
+            )
 
     localization = _mapping_payload(payloads.get("localization"))
     if localization:
@@ -691,21 +692,30 @@ def _record_gateway_rest_payloads(
             )
 
 
-def _gateway_command_active(navigation_status: Mapping[str, Any]) -> bool:
-    control = _mapping_payload(navigation_status.get("control"))
-    active_source = (
-        str(control.get("active_cmd_source") or _nested_mapping(control, "active_source").get("name") or "")
-        .strip()
-        .lower()
-    )
-    if active_source and active_source != "none":
-        return True
-    sources = _mapping_payload(control.get("sources"))
-    for source in sources.values():
-        source_payload = _mapping_payload(source)
-        if source_payload.get("active") is True:
-            return True
-    return False
+def _gateway_final_cmd_norm(dds_snapshot: Mapping[str, Any]) -> float | None:
+    cmd_vel = _mapping_payload(dds_snapshot.get("cmd_vel"))
+    if cmd_vel.get("final_output_confirmed") is not True:
+        return None
+    snapshot_ts = _safe_float(dds_snapshot.get("ts"))
+    command_ts = _safe_float(cmd_vel.get("ts"))
+    if snapshot_ts is None or command_ts is None:
+        return None
+    command_age_s = snapshot_ts - command_ts
+    if command_age_s < 0.0 or command_age_s > 2.0:
+        return None
+    linear = _mapping_payload(cmd_vel.get("linear"))
+    angular = _mapping_payload(cmd_vel.get("angular"))
+    components = [
+        _safe_float(linear.get(axis))
+        for axis in ("x", "y", "z")
+    ] + [
+        _safe_float(angular.get(axis))
+        for axis in ("x", "y", "z")
+    ]
+    finite_components = [value for value in components if value is not None]
+    if not finite_components:
+        return None
+    return math.sqrt(sum(value * value for value in finite_components))
 
 
 def _fresh_gateway_port(stats: Mapping[str, Any]) -> bool:
@@ -800,7 +810,7 @@ def _collect_gateway_payloads(args: argparse.Namespace) -> dict[str, Any]:
         "path": "/api/v1/path",
         "map_points": "/api/v1/map/points",
         "localization": "/api/v1/localization/status",
-        "navigation": "/api/v1/navigation/status",
+        "navigation_dds": "/api/v1/navigation/dds_snapshot",
     }
     errors = []
     for name, path in optional_endpoints.items():
@@ -839,15 +849,12 @@ def run_gateway_collect(args: argparse.Namespace) -> dict[str, Any]:
         )
         payloads = _collect_gateway_payloads(args)
         dataflow = _mapping_payload(payloads.get("dataflow"))
-        navigation = _mapping_payload(payloads.get("navigation"))
-        command_active = _gateway_command_active(navigation)
         _record_gateway_dataflow(
             topic_evidence,
             odom_positions,
             dataflow,
             sample_time_sec=sample_time_sec,
             min_cmd_vel_norm=args.min_cmd_vel_norm,
-            command_active=command_active,
         )
         _record_gateway_rest_payloads(
             topic_evidence,

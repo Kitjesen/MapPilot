@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -6,12 +5,10 @@ import hashlib
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
-
 import sim.runtime.coordinator.atomic_file as atomic_file_module
 from sim.runtime.qualification.session_record import QualificationRecordError
 from sim.runtime.recording import (
@@ -313,10 +310,6 @@ def test_qualification_result_rejects_bundle_symlink_before_builder_resolve(
         write_qualification_result(bundle_dir, run_dir)
 
 
-@pytest.mark.skipif(
-    sys.platform != "win32",
-    reason="creates a Windows directory junction with cmd.exe",
-)
 def test_qualification_result_rejects_run_junction_before_builder_resolve(
     tmp_path: Path,
 ) -> None:
@@ -324,7 +317,7 @@ def test_qualification_result_rejects_run_junction_before_builder_resolve(
     actual_run = tmp_path / "actual-run"
     run_dir.rename(actual_run)
     cmd = os.environ.get("ComSpec", r"C:\Windows\System32\cmd.exe")
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [cmd, "/c", "mklink", "/J", str(run_dir), str(actual_run)],
         check=False,
         capture_output=True,

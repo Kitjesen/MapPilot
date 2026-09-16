@@ -18,6 +18,16 @@ visual:
   source_mesh_root: visual/meshes
 semantic:
   class: quadruped
+navigation_geometry:
+  # base_link is near the torso bottom, not at half the standing robot height.
+  # Fixed collision geoms span Z [-0.00209, 0.224772]. One 5 cm cell below
+  # base_link leaves 4.79 cm below the rigid torso; the legs own ground contact.
+  collision_clearance_below_m: 0.05
+  collision_clearance_above_m: 0.35
+  # Standing base_link height for the packaged locomotion controller, with
+  # tolerance for support voxelization and normal body heave.
+  support_height_m: 0.435
+  support_height_tolerance_m: 0.10
 frames:
   - name: base_link
     role: body

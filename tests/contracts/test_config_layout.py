@@ -23,4 +23,4 @@ def test_retired_config_surfaces_are_absent() -> None:
 
     present = [path for path in retired if (ROOT / path).exists()]
 
-    assert present == []  # noqa: S101
+    assert present == []

@@ -13,11 +13,9 @@ import {
 } from 'lucide-react'
 import {
   fetchAppBootstrap,
-  fetchNavigationStatus,
-  fetchSession,
   validateMapPlan,
 } from '../services/api'
-import type { AppBootstrapResponse, NavigationStatusResponse, PlanPreviewResponse } from '../types'
+import type { AppBootstrapResponse, PlanPreviewResponse } from '../types'
 import styles from './PlannerTuning.module.css'
 
 type ToastKind = 'success' | 'error' | 'info'
@@ -76,13 +74,7 @@ interface ToggleParam {
 interface RuntimeSnapshot {
   activeMap: string
   navState: string
-  hasOdometry: boolean
-  canAcceptGoal: boolean
-  blockers: string[]
-  tfOk: boolean | null
-  mapReady: boolean | null
-  updatedAt: number | null
-  error: string
+  goalAdmission: string
 }
 
 interface PreviewGoal {
@@ -364,10 +356,6 @@ function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
-function booleanValue(value: unknown): boolean | null {
-  return typeof value === 'boolean' ? value : null
-}
-
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
@@ -466,31 +454,20 @@ function downloadJson(filename: string, text: string): void {
   URL.revokeObjectURL(url)
 }
 
-function runtimeFromResponses(
-  bootstrap: AppBootstrapResponse | null,
-  session: Record<string, unknown> | null,
-  status: NavigationStatusResponse | null,
-): RuntimeSnapshot {
+function runtimeFromResponse(bootstrap: AppBootstrapResponse | null): RuntimeSnapshot {
   const bootstrapMap = isRecord(bootstrap?.map) ? bootstrap.map : {}
   const mapActive = isRecord(bootstrapMap.active) ? bootstrapMap.active : {}
+  const session = isRecord(bootstrap?.session) ? bootstrap.session : {}
+  const status = bootstrap?.navigation
   const activeMap = stringValue(session?.active_map)
     || stringValue(bootstrapMap.active)
     || stringValue(mapActive.name)
     || stringValue(mapActive.map_id)
-  const mapReady = booleanValue(session?.map_has_octomap) === true && booleanValue(session?.map_has_pcd) === true
-    ? true
-    : booleanValue(mapActive.activation_ready)
 
   return {
     activeMap,
-    navState: status?.state ?? stringValue(session?.mode) ?? 'unknown',
-    hasOdometry: status?.has_odometry ?? false,
-    canAcceptGoal: status?.readiness?.can_accept_goal ?? status?.can_accept_goal ?? false,
-    blockers: status?.readiness?.blockers ?? [],
-    tfOk: status?.frames?.ok ?? null,
-    mapReady,
-    updatedAt: status?.ts ?? null,
-    error: '',
+    navState: status?.task.state ?? 'UNKNOWN',
+    goalAdmission: status?.goal_admission.state ?? 'UNKNOWN',
   }
 }
 
@@ -582,14 +559,8 @@ export function PlannerTuning({ showToast }: PlannerTuningProps) {
   const [activePreset, setActivePreset] = useState('product')
   const [runtime, setRuntime] = useState<RuntimeSnapshot>({
     activeMap: '',
-    navState: 'unknown',
-    hasOdometry: false,
-    canAcceptGoal: false,
-    blockers: [],
-    tfOk: null,
-    mapReady: null,
-    updatedAt: null,
-    error: '',
+    navState: 'UNKNOWN',
+    goalAdmission: 'UNKNOWN',
   })
   const [runtimeLoading, setRuntimeLoading] = useState(false)
   const [goal, setGoal] = useState<PreviewGoal>({ x: 0.5, y: 0, z: 0 })
@@ -603,26 +574,9 @@ export function PlannerTuning({ showToast }: PlannerTuningProps) {
 
   const refreshRuntime = useCallback(async () => {
     setRuntimeLoading(true)
-    try {
-      const [bootstrapResult, sessionResult, statusResult] = await Promise.allSettled([
-        fetchAppBootstrap(),
-        fetchSession(),
-        fetchNavigationStatus(),
-      ])
-      const bootstrap = bootstrapResult.status === 'fulfilled' ? bootstrapResult.value : null
-      const session = sessionResult.status === 'fulfilled' && isRecord(sessionResult.value)
-        ? sessionResult.value
-        : null
-      const status = statusResult.status === 'fulfilled' ? statusResult.value : null
-      setRuntime(runtimeFromResponses(bootstrap, session, status))
-    } catch (error) {
-      setRuntime((current) => ({
-        ...current,
-        error: error instanceof Error ? error.message : String(error),
-      }))
-    } finally {
-      setRuntimeLoading(false)
-    }
+    const bootstrap = await fetchAppBootstrap().catch(() => null)
+    setRuntime(runtimeFromResponse(bootstrap))
+    setRuntimeLoading(false)
   }, [])
 
   useEffect(() => {
@@ -792,30 +746,10 @@ export function PlannerTuning({ showToast }: PlannerTuningProps) {
               <strong>{runtime.navState}</strong>
             </div>
             <div>
-              <span>里程计</span>
-              <StatusPill ok={runtime.hasOdometry} label={runtime.hasOdometry ? 'OK' : '缺失'} />
-            </div>
-            <div>
-              <span>TF</span>
-              <StatusPill ok={runtime.tfOk} label={runtime.tfOk === false ? '异常' : 'OK'} />
-            </div>
-            <div>
-              <span>地图</span>
-              <StatusPill ok={runtime.mapReady} label={runtime.mapReady === false ? '未就绪' : 'OK'} />
+              <span>目标准入</span>
+              <strong>{runtime.goalAdmission}</strong>
             </div>
           </div>
-          {runtime.blockers.length > 0 && (
-            <div className={styles.inlineWarn}>
-              <AlertTriangle size={15} />
-              <span>{runtime.blockers.join(', ')}</span>
-            </div>
-          )}
-          {runtime.error && (
-            <div className={styles.inlineWarn}>
-              <AlertTriangle size={15} />
-              <span>{runtime.error}</span>
-            </div>
-          )}
           <div className={styles.goalGrid}>
             <label>
               <span>X</span>

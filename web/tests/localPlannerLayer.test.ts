@@ -52,6 +52,41 @@ const snapshot: NavigationDdsSnapshotResponse = {
   source: 'test',
 }
 
+test('inflated occupancy samples retain voxel size and map coordinates without extra padding', () => {
+  const data = structuredClone(snapshot)
+  data.nav_endpoint!.local_map!.collision = {
+    enabled: true, live: true, complete: true, frame_id: 'map', stamp_s: 10,
+    resolution_m: 0.05, occupied_points: [[1, 2, 0.3]],
+    occupied_points_returned: 1, occupied_points_total: 100, occupied_points_truncated: true,
+  }
+  const layer = createLocalPlannerDiagnosticLayer(data)!
+  const cells = layer.getObjectByName('inflated-collision-cells') as THREE.InstancedMesh
+  assert.equal(cells.count, 1)
+  assert.equal((cells.geometry as THREE.BoxGeometry).parameters.width, 0.05)
+  const transform = new THREE.Matrix4()
+  cells.getMatrixAt(0, transform)
+  assert.ok(new THREE.Vector3().setFromMatrixPosition(transform).distanceTo(new THREE.Vector3(1, 0.3, -2)) < 1e-6)
+  data.nav_endpoint!.local_map!.collision.stamp_s = 9
+  assert.equal(createLocalPlannerDiagnosticLayer(data)!.getObjectByName('inflated-collision-cells'), undefined)
+  data.nav_endpoint!.local_map!.collision.stamp_s = 10
+  data.nav_endpoint!.local_map!.collision.frame_id = 'odom'
+  assert.equal(createLocalPlannerDiagnosticLayer(data)!.getObjectByName('inflated-collision-cells'), undefined)
+})
+
+test('height slice shows only intersecting inflated samples and hides unrelated diagnostics', () => {
+  const data = structuredClone(snapshot)
+  data.nav_endpoint!.local_map!.collision = {
+    enabled: true, live: true, complete: true, frame_id: 'map', stamp_s: 10,
+    resolution_m: 0.05, occupied_points: [[1, 2, 0.3], [1, 2, 0.35], [1, 2, 1.5]],
+  }
+  const layer = createLocalPlannerDiagnosticLayer(data, 0.31)!
+  assert.equal((layer.getObjectByName('inflated-collision-cells') as THREE.InstancedMesh).count, 1)
+  assert.equal(layer.getObjectByName('planner-obstacles'), undefined)
+  assert.equal(layer.getObjectByName('candidate-paths'), undefined)
+  assert.equal(createLocalPlannerDiagnosticLayer(data, 2), null)
+  assert.equal((createLocalPlannerDiagnosticLayer(data)!.getObjectByName('inflated-collision-cells') as THREE.InstancedMesh).count, 3)
+})
+
 test('native local-planner diagnostics render as distinct read-only scene layers', () => {
   const layer = createLocalPlannerDiagnosticLayer(snapshot)
   assert.ok(layer)

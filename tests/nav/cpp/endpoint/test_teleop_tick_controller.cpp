@@ -1,8 +1,10 @@
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <optional>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -270,6 +272,16 @@ void testAssistedPathReturnsPlannerArtifactsAndFinalSafetyIntent() {
   fixture.planner_output.target_distance_m = 1.0;
   fixture.planner_output.target = {1.0, 0.0, 0.0};
   fixture.planner_output.cmd_vel = {0.25, 0.0, 0.0};
+  fixture.planner_output.tracking.active = true;
+  fixture.planner_output.tracking.trajectoryId = 47;
+  fixture.planner_output.tracking.executionTimeS = 1.25;
+  fixture.planner_output.tracking.durationS = 4.5;
+  fixture.planner_output.tracking.positionErrorM = 0.12;
+  fixture.planner_output.tracking.headingErrorRad = -0.2;
+  fixture.planner_output.tracking.endDistanceM = 2.3;
+  fixture.planner_output.tracking.executionFrozen = true;
+  fixture.planner_output.tracking.finished = false;
+  fixture.planner_output.tracking.speedLimitMps = 0.35;
   fixture.planner_output.local_path_map = {
       {0.0, 0.0, 0.0},
       {1.0, 0.0, 0.0},
@@ -282,6 +294,13 @@ void testAssistedPathReturnsPlannerArtifactsAndFinalSafetyIntent() {
           "assisted path action sequence mismatch");
   require(result.local.has_value() && result.local->path_found,
           "assisted local diagnostics missing");
+  const auto &tracking = result.local->tracking;
+  require(tracking.active && tracking.trajectoryId == 47 &&
+              tracking.executionTimeS == 1.25 && tracking.durationS == 4.5 &&
+              tracking.positionErrorM == 0.12 && tracking.headingErrorRad == -0.2 &&
+              tracking.endDistanceM == 2.3 && tracking.executionFrozen &&
+              !tracking.finished && tracking.speedLimitMps == 0.35,
+          "assisted diagnostics must preserve follower timing, errors and execution state");
   require(result.local->reason == "teleop_assisted" &&
               result.local->final_safety_reason == "teleop_assisted",
           "assisted diagnostics reason mismatch");
@@ -486,6 +505,45 @@ void testPlannerTerrainSlowdownDoesNotResetSmootherRamp() {
           "a valid composed ramp must advance instead of resetting smoother state");
 }
 
+void testVerifiedRecoveryTranslationFlagIsScopedToTranslation() {
+  Fixture fixture;
+  fixture.config.teleop_local_planner = true;
+  fixture.config.publish_cmd_vel = true;
+  fixture.planner_output.active = true;
+  fixture.planner_output.path_found = true;
+  fixture.planner_output.local_path_map = {{0.0, 0.0, 0.0}, {0.35, 0.0, 0.0}};
+  fixture.planner_output.cmd_vel = {0.1, 0.0, 0.0};
+  std::vector<bool> verified_translation_flags;
+  fixture.final_actions.command_safety = [&](const CommandSafetyConfig &config,
+                                             const nav_kernel::Twist &command,
+                                             double age_s) {
+    verified_translation_flags.push_back(config.verified_recovery_translation);
+    return lingtu::nav::endpoint::evaluateCommandSafety(config, command, age_s);
+  };
+  TeleopTickController controller(fixture.actions, fixture.control());
+
+  fixture.planner_output.recovery_verified = true;
+  fixture.planner_output.recovery_action =
+      static_cast<int>(nav_kernel::RecoveryAction::Translate);
+  const auto departure = controller.tick(fixture.input());
+  require(!departure.teleop.stopped && departure.publish.command.vx > 0.0,
+          "verified departure translation must reach final safety");
+
+  fixture.planner_output.recovery_action =
+      static_cast<int>(nav_kernel::RecoveryAction::Rotate);
+  controller.tick(fixture.input());
+  fixture.planner_output.recovery_verified = false;
+  fixture.planner_output.recovery_action =
+      static_cast<int>(nav_kernel::RecoveryAction::None);
+  controller.tick(fixture.input());
+
+  require(verified_translation_flags.size() == 3 &&
+              verified_translation_flags[0] &&
+              !verified_translation_flags[1] &&
+              !verified_translation_flags[2],
+          "final safety must receive the departure exception only for verified translation");
+}
+
 void testPlannerRampBelowOperatorDeadbandKeepsAdvancing() {
   Fixture fixture;
   fixture.config.teleop_local_planner = true;
@@ -553,7 +611,7 @@ void testPlannerTerrainScalePassesThroughUnchanged() {
           "assisted control must keep the measured soft-risk scale instead of the worst case");
 }
 
-void testAssistedNoPathFailsClosedAndReplansOriginalIntent() {
+void testAssistedNoPathFailsClosedWithoutResettingPlanner() {
   Fixture fixture;
   fixture.config.teleop_local_planner = true;
   fixture.config.publish_cmd_vel = true;
@@ -561,13 +619,16 @@ void testAssistedNoPathFailsClosedAndReplansOriginalIntent() {
   fixture.planner_output.active = true;
   fixture.planner_output.path_found = false;
   fixture.planner_output.reason.clear();
+  fixture.planner_output.tracking.active = true;
+  fixture.planner_output.tracking.trajectoryId = 47;
+  fixture.planner_output.tracking.executionTimeS = 1.25;
   TeleopTickController controller(fixture.actions, fixture.control());
 
   const auto result = controller.tick(fixture.input());
 
   require(fixture.compute_calls == 1 && fixture.planner_calls == 1 &&
-              fixture.replan_calls == 1 && fixture.pause_calls == 0 && fixture.stop_calls == 0,
-          "no-path assist must stop output and retry the original teleop target");
+              fixture.replan_calls == 0 && fixture.pause_calls == 1 && fixture.stop_calls == 0,
+          "no-path assist must pause execution without cancelling the planner's work");
   require(result.teleop.stopped && result.teleop.limited &&
               result.teleop.reason == "teleop_assist_no_path",
           "no-path assist must fail closed with a stable reason");
@@ -577,9 +638,110 @@ void testAssistedNoPathFailsClosedAndReplansOriginalIntent() {
   require(result.local.has_value() && !result.local->path_found &&
               result.local->final_safety_reason == "teleop_assist_no_path",
           "no-path local diagnostics mismatch");
+  require(result.local->tracking.active && result.local->tracking.executionFrozen &&
+              result.local->tracking.trajectoryId == 47 &&
+              result.local->tracking.executionTimeS == 1.25,
+          "no-path pause must preserve the existing trajectory's frozen progress");
   require(result.publish.local_path && result.publish.waypoint && result.delta.output_count == 1 &&
               result.delta.teleop_stop_count == 1 && result.delta.teleop_limited_count == 1,
           "no-path publish intents and counters mismatch");
+}
+
+void testPendingAssistedPlanCanBecomeReadyAcrossTicks() {
+  Fixture fixture;
+  fixture.config.teleop_local_planner = true;
+  fixture.config.publish_cmd_vel = true;
+  fixture.map_body->position.z = 0.4;
+  nav_kernel::LocalPlannerParams planner_params;
+  planner_params.backend = nav_kernel::LocalPlannerBackend::Scan;
+  planner_params.checkObstacle = false;
+  nav_kernel::local::Planner planner(planner_params);
+  require(planner.configure(), "native SCAN planner must configure without external resources");
+  lingtu::nav::navigation::ExecutorConfig executor_config;
+  executor_config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
+  lingtu::nav::navigation::Executor executor(executor_config, std::move(planner));
+  const auto started = std::chrono::steady_clock::now();
+  fixture.actions.steady_now_s = [&] {
+    return 10.0 + std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+  };
+  fixture.actions.tick_teleop_intent = [&](const nav_kernel::Pose &pose,
+                                          const nav_kernel::Twist &intent,
+                                          const float *obstacles, int count, double now_s,
+                                          lingtu::nav::navigation::TraversabilityGridView traversability) {
+    ++fixture.planner_calls;
+    return executor.tick(lingtu::nav::navigation::ExecutionInput{
+        lingtu::nav::navigation::ExecutionMode::MotionIntent, pose, pose, {},
+        obstacles, count, now_s, traversability, {}, intent});
+  };
+  fixture.actions.pause_linear_motion = [&] {
+    ++fixture.pause_calls;
+    executor.pauseLinearMotion();
+  };
+  fixture.actions.replan_motion = [&] {
+    ++fixture.replan_calls;
+    executor.replanTeleop();
+  };
+  fixture.actions.stop_linear_motion = [&] {
+    ++fixture.stop_calls;
+    executor.stopLinearMotion();
+  };
+  TeleopTickController controller(fixture.actions, fixture.control());
+
+  int pending_ticks = 0;
+  bool ready = false;
+  while (std::chrono::steady_clock::now() - started < std::chrono::seconds(5)) {
+    const auto result = controller.tick(fixture.input());
+    if (result.local && result.local->path_found && result.local->tracking.active) {
+      ready = true;
+      require(!result.teleop.stopped && result.local->tracking.trajectoryId > 0,
+              "the first native SCAN spline must reach the command boundary");
+      break;
+    }
+    ++pending_ticks;
+    require(result.teleop.stopped && result.publish.command.vx == 0.0 &&
+                result.local && !result.local->tracking.active,
+            "pending initialization must publish zero without claiming an active trajectory");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  require(ready && pending_ticks > 0,
+          "native SCAN initialization must produce its first spline after pending ticks");
+  require(fixture.pause_calls == pending_ticks &&
+              fixture.replan_calls == 0 && fixture.stop_calls == 0,
+          "pending ticks must let planner initialization continue to its first result");
+}
+
+void testAssistedShapedZeroPausesWithoutRestartingPlanner() {
+  Fixture fixture;
+  fixture.config.teleop_local_planner = true;
+  fixture.config.publish_cmd_vel = true;
+  fixture.planner_output.active = true;
+  fixture.planner_output.path_found = true;
+  fixture.planner_output.cmd_vel = {0.25, 0.0, 0.2};
+  fixture.planner_output.local_path_map = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+  fixture.planner_output.tracking.active = true;
+  fixture.planner_output.tracking.trajectoryId = 47;
+  fixture.planner_output.tracking.executionTimeS = 1.25;
+  fixture.override_shaped_command = true;
+  fixture.shaped_command = {};
+  TeleopTickController controller(fixture.actions, fixture.control());
+
+  const auto result = controller.tick(fixture.input());
+
+  require(!result.teleop.stopped && result.publish.command.vx == 0.0 &&
+              fixture.pause_calls == 1 && fixture.replan_calls == 0 && fixture.stop_calls == 0,
+          "a valid shaped zero must pause execution without restarting asynchronous planning");
+  require(result.local && result.local->tracking.executionFrozen &&
+              result.local->tracking.trajectoryId == 47 &&
+              result.local->tracking.executionTimeS == 1.25,
+          "shaped zero must freeze the current trajectory while retaining its progress");
+
+  fixture.shaped_command.wz = 0.2;
+  const auto turning = controller.tick(fixture.input());
+  require(turning.publish.command.vx == 0.0 && turning.publish.command.wz == 0.2 &&
+              fixture.pause_calls == 2 && fixture.replan_calls == 0 &&
+              turning.local && turning.local->tracking.executionFrozen,
+          "a shaped rotation must retain allowed yaw while pausing linear trajectory execution");
 }
 
 void testPlannerAcceptedPathIsNotVetoedByDuplicateFinalSweep() {
@@ -640,6 +802,9 @@ void testAssistedPublishTimeStaleUpdatesLocalFinalSafety() {
   fixture.planner_output.path_found = true;
   fixture.planner_output.reason = "teleop_assisted";
   fixture.planner_output.cmd_vel = {0.25, 0.0, 0.0};
+  fixture.planner_output.tracking.active = true;
+  fixture.planner_output.tracking.trajectoryId = 47;
+  fixture.planner_output.tracking.executionTimeS = 1.25;
   fixture.planner_output.local_path_map = {
       {0.0, 0.0, 0.0},
       {1.0, 0.0, 0.0},
@@ -660,6 +825,146 @@ void testAssistedPublishTimeStaleUpdatesLocalFinalSafety() {
           "assisted stale final-safety diagnostics mismatch");
   require(result.local->reason == "teleop_assisted" && result.local_path.size() == 2,
           "stale override must retain the planner trace for diagnostics");
+  require(!result.local->tracking.active && result.local->tracking.trajectoryId == 0 &&
+              result.local->tracking.executionTimeS == 0.0,
+          "stale cancellation must clear the stopped follower's execution state");
+}
+
+void testAssistedRotationPausePreservesTrackingProgress() {
+  Fixture fixture;
+  fixture.config.teleop_local_planner = true;
+  fixture.config.publish_cmd_vel = true;
+  fixture.planner_output.active = true;
+  fixture.planner_output.path_found = true;
+  fixture.planner_output.cmd_vel = {0.25, 0.0, 0.2};
+  fixture.planner_output.local_path_map = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+  fixture.planner_output.tracking.active = true;
+  fixture.planner_output.tracking.trajectoryId = 47;
+  fixture.planner_output.tracking.executionTimeS = 1.25;
+  fixture.final_actions.command_safety = [](const CommandSafetyConfig &,
+                                           const nav_kernel::Twist &, double) {
+    lingtu::nav::endpoint::CommandSafetyDecision decision;
+    decision.should_publish = true;
+    decision.stopped = true;
+    decision.reason = "rotation_only";
+    decision.cmd.wz = 0.2;
+    return decision;
+  };
+  TeleopTickController controller(fixture.actions, fixture.control());
+
+  const auto result = controller.tick(fixture.input());
+
+  require(fixture.pause_calls == 1 && fixture.replan_calls == 0 && fixture.stop_calls == 0,
+          "a rotation-only final command must pause the existing trajectory");
+  require(result.teleop.last_safety_replan.count == 0,
+          "a rotation-only pause must not be reported as a safety replan");
+  require(result.local && result.local->tracking.active &&
+              result.local->tracking.executionFrozen &&
+              result.local->tracking.trajectoryId == 47 &&
+              result.local->tracking.executionTimeS == 1.25,
+          "external pause must freeze diagnostics while preserving trajectory progress");
+}
+
+void testSafetyReplanEvidenceSurvivesReadyPendingAndInitializationFailure() {
+  Fixture fixture;
+  fixture.config.teleop_local_planner = true;
+  fixture.config.publish_cmd_vel = true;
+  fixture.planner_output.active = true;
+  fixture.planner_output.path_found = true;
+  fixture.planner_output.cmd_vel = {0.25, -0.1, 0.2};
+  fixture.planner_output.local_path_map = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+  fixture.planner_output.reason = "teleop_assist_spline_ready";
+  fixture.now_values = {10.0, 10.01, 10.02, 10.03, 10.04};
+  bool safety_blocked = true;
+  fixture.final_actions.command_safety = [&](const CommandSafetyConfig &config,
+                                            const nav_kernel::Twist &command,
+                                            double age_s) {
+    if (!safety_blocked)
+      return lingtu::nav::endpoint::evaluateCommandSafety(config, command, age_s);
+    lingtu::nav::endpoint::CommandSafetyDecision decision;
+    decision.should_publish = true;
+    decision.stopped = true;
+    decision.reason = "scan_actual_motion_blocked";
+    return decision;
+  };
+  TeleopTickController controller(fixture.actions, fixture.control());
+
+  const auto stopped = controller.tick(fixture.input());
+  const auto &first = stopped.teleop.last_safety_replan;
+  require(first.count == 1 && first.stamp_steady_s == 10.0 &&
+              first.reason == "scan_actual_motion_blocked",
+          "the first final-safety replan must retain its reason, sequence and tick time");
+  require(first.candidate_cmd_vel.vx == 0.25 && first.candidate_cmd_vel.vy == -0.1 &&
+              first.candidate_cmd_vel.wz == 0.2 && first.final_cmd_vel.vx == 0.0 &&
+              first.final_cmd_vel.vy == 0.0 && first.final_cmd_vel.wz == 0.0,
+          "safety replan evidence must pair the planner candidate with the applied stop");
+  require(stopped.teleop.stopped && fixture.replan_calls == 1 &&
+              fixture.pause_calls == 0 && fixture.stop_calls == 0 &&
+              fixture.velocity_stop_calls == 1,
+          "recording a safety replan must preserve the existing reset and zero-output actions");
+
+  safety_blocked = false;
+  const auto ready = controller.tick(fixture.input());
+  require(!ready.teleop.stopped && ready.publish.command.vx != 0.0 &&
+              ready.teleop.last_safety_replan.count == 1 &&
+              ready.teleop.last_safety_replan.stamp_steady_s == 10.0 &&
+              ready.teleop.last_safety_replan.reason == first.reason,
+          "a subsequent ready tick must not erase the earlier safety-stop cause");
+
+  fixture.planner_output.path_found = false;
+  fixture.planner_output.local_path_map.clear();
+  for (const char *reason : {"local_intent_pending", "scan_initialization_failed"}) {
+    fixture.planner_output.reason = reason;
+    const auto waiting = controller.tick(fixture.input());
+    const auto &retained = waiting.teleop.last_safety_replan;
+    require(waiting.teleop.stopped && waiting.teleop.reason == reason &&
+                retained.count == 1 && retained.stamp_steady_s == 10.0 &&
+                retained.reason == first.reason && retained.candidate_cmd_vel.vx == 0.25 &&
+                retained.candidate_cmd_vel.vy == -0.1 &&
+                retained.candidate_cmd_vel.wz == 0.2 && retained.final_cmd_vel.vx == 0.0 &&
+                retained.final_cmd_vel.vy == 0.0 && retained.final_cmd_vel.wz == 0.0,
+            "later pending or initialization failure must preserve the first safety replan");
+  }
+  require(fixture.replan_calls == 1 && fixture.pause_calls == 2 && fixture.stop_calls == 0,
+          "waiting for a replacement plan must not repeat the safety reset or event");
+
+  safety_blocked = true;
+  fixture.planner_output.path_found = true;
+  fixture.planner_output.local_path_map = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+  fixture.planner_output.cmd_vel = {0.1, 0.2, -0.3};
+  const auto stopped_again = controller.tick(fixture.input());
+  require(stopped_again.teleop.last_safety_replan.count == 2 &&
+              stopped_again.teleop.last_safety_replan.stamp_steady_s == 10.04 &&
+              stopped_again.teleop.last_safety_replan.candidate_cmd_vel.vx == 0.1 &&
+              stopped_again.teleop.last_safety_replan.candidate_cmd_vel.vy == 0.2 &&
+              stopped_again.teleop.last_safety_replan.candidate_cmd_vel.wz == -0.3 &&
+              fixture.replan_calls == 2,
+          "a new actual safety replan must advance the event and update its candidate");
+
+  fixture.config.control_mode = ControlMode::TeleopAvoid;
+  const auto idle = controller.tick(fixture.input(false, false));
+  require(idle.teleop.reason == "idle" && idle.teleop.last_safety_replan.count == 2 &&
+              idle.teleop.last_safety_replan.stamp_steady_s == 10.04,
+          "idle heartbeats must preserve safety evidence for slower status sampling");
+}
+
+void testOrdinaryPendingDoesNotInventSafetyReplanEvidence() {
+  Fixture fixture;
+  fixture.config.teleop_local_planner = true;
+  fixture.config.publish_cmd_vel = true;
+  fixture.planner_output.active = true;
+  fixture.planner_output.reason = "local_intent_pending";
+  TeleopTickController controller(fixture.actions, fixture.control());
+
+  for (int tick = 0; tick < 3; ++tick) {
+    const auto result = controller.tick(fixture.input());
+    require(result.teleop.stopped && result.teleop.reason == "local_intent_pending" &&
+                result.teleop.last_safety_replan.count == 0 &&
+                result.teleop.last_safety_replan.reason.empty(),
+            "ordinary pending must not be mislabeled as an earlier final-safety rejection");
+  }
+  require(fixture.replan_calls == 0 && fixture.stop_calls == 0 && fixture.pause_calls == 3,
+          "ordinary pending must only pause the existing planner work");
 }
 
 void testDirectSafetyEvaluatesShapedCommandAndCommitsAppliedValue() {
@@ -800,6 +1105,104 @@ void testRealSmootherTransitionalZeroRetainsTargetAcrossTicks() {
           "a shaped transitional zero must not hard-stop the real smoother");
 }
 
+void testRotationClearsPreviousTranslationFailureAndPath() {
+  Fixture fixture;
+  fixture.config.control_mode = ControlMode::TeleopAvoid;
+  fixture.config.teleop_local_planner = true;
+  fixture.config.publish_cmd_vel = true;
+  fixture.planner_output.active = true;
+  fixture.planner_output.reason = "scan_local_target_blocked";
+  TeleopTickController controller(fixture.actions, fixture.control());
+  const auto blocked = controller.tick(fixture.input());
+  require(blocked.local && blocked.local->reason == "scan_local_target_blocked",
+          "fixture must first report the failed translation plan");
+
+  fixture.request = {0.0, 0.0, 0.35};
+  const auto rotating = controller.tick(fixture.input());
+  require(rotating.publish.command.wz == 0.35 && !rotating.teleop.stopped,
+          "rotation must reach final control after a blocked translation");
+  require(rotating.local && !rotating.local->seen && !rotating.local->active &&
+              !rotating.local->tracking.active,
+          "rotation must clear the previous translation diagnostics in the owning loop");
+  require(rotating.publish.local_path && rotating.local_path.empty(),
+          "rotation must publish an empty path instead of retaining the old trajectory");
+}
+
+void testPureRotationUsesFinalControlWithoutATranslationPlan() {
+  for (const double minimum_motion : {0.03, 0.0}) {
+    for (const double yaw_rate : {0.35, -0.35}) {
+      Fixture fixture;
+      fixture.config.control_mode = ControlMode::TeleopAvoid;
+      fixture.config.teleop_local_planner = true;
+      fixture.config.teleop_min_motion_speed_mps = minimum_motion;
+      fixture.config.publish_cmd_vel = true;
+      fixture.safety.min_motion_speed_mps = minimum_motion;
+      fixture.request = {0.0, 0.0, yaw_rate};
+      fixture.planner_output.reason = "teleop_intent_idle";
+      fixture.now_values.clear();
+      for (int tick = 0; tick < 20; ++tick)
+        fixture.now_values.push_back(10.0 + tick * 0.05);
+      nav_kernel::VelocitySmoother smoother;
+      bool collision_blocked = false;
+      int safety_calls = 0;
+      fixture.final_actions.shape = [&](const nav_kernel::Twist &raw, double now_s) {
+        require(smoother.SetTarget(raw, now_s), "rotation target must be accepted");
+        return smoother.Step(now_s);
+      };
+      fixture.final_actions.commit = [&](const nav_kernel::Twist &applied, double now_s) {
+        return smoother.CommitApplied(applied, now_s);
+      };
+      fixture.final_actions.stop = [&](double now_s, const std::string &reason) {
+        ++fixture.velocity_stop_calls;
+        (void)smoother.Stop(now_s, reason);
+      };
+      fixture.final_actions.command_safety = [&](const CommandSafetyConfig &safety,
+                                                  const nav_kernel::Twist &raw, double age) {
+        ++safety_calls;
+        auto decision = lingtu::nav::endpoint::evaluateCommandSafety(safety, raw, age);
+        if (collision_blocked) {
+          decision.cmd = {};
+          decision.stopped = true;
+          decision.reason = "scan_actual_motion_blocked";
+        }
+        return decision;
+      };
+      TeleopTickController controller(fixture.actions, fixture.control());
+      double last_yaw_rate = 0.0;
+      for (int tick = 0; tick < 10; ++tick) {
+        const auto result = controller.tick(fixture.input());
+        require(fixture.planner_calls == 0,
+                "pure Q/E must not enter translation planning even with zero motion threshold");
+        require(result.publish.command.vx == 0.0 && result.publish.command.vy == 0.0,
+                "pure Q/E must not introduce translation");
+        require(result.publish.command.wz * yaw_rate >= 0.0,
+                "Q/E yaw direction must be preserved");
+        last_yaw_rate = result.publish.command.wz;
+      }
+      require(std::abs(last_yaw_rate - yaw_rate) < 1e-6 && safety_calls > 0,
+              "held Q/E must reach requested yaw rate through final safety");
+
+      fixture.request = {};
+      const auto released = controller.tick(fixture.input());
+      require(released.publish.command.wz == 0.0 && fixture.velocity_stop_calls > 0,
+              "release after rotation must publish zero immediately, not a deceleration residue");
+
+      fixture.request = {0.0, 0.0, yaw_rate};
+      collision_blocked = true;
+      const auto blocked = controller.tick(fixture.input());
+      require(blocked.teleop.stopped && blocked.publish.command.wz == 0.0 &&
+                  blocked.teleop.reason == "scan_actual_motion_blocked",
+              "pure Q/E must still obey the final collision veto");
+      collision_blocked = false;
+      fixture.ages = {0.5};
+      const auto stale = controller.tick(fixture.input());
+      require(stale.teleop.stopped && stale.publish.command.wz == 0.0 &&
+                  stale.teleop.reason == "stale",
+              "expired Q/E input must stop rotation");
+    }
+  }
+}
+
 void testRawZeroStillHardStopsSmoother() {
   Fixture raw_zero;
   raw_zero.config.publish_cmd_vel = true;
@@ -882,19 +1285,27 @@ int main() {
     testAssistedPathReturnsPlannerArtifactsAndFinalSafetyIntent();
     testCmuDetourPublishesTranslationAndYawWithoutRecovery();
     testVerifiedTeleopRotationPublishesWithoutPath();
+    testVerifiedRecoveryTranslationFlagIsScopedToTranslation();
     testPlannerSlowdownIsNotAppliedTwice();
     testPlannerTerrainSlowdownDoesNotResetSmootherRamp();
     testPlannerRampBelowOperatorDeadbandKeepsAdvancing();
     testPlannerTerrainScalePassesThroughUnchanged();
     testPlannerAcceptedPathIsNotVetoedByDuplicateFinalSweep();
-    testAssistedNoPathFailsClosedAndReplansOriginalIntent();
+    testAssistedNoPathFailsClosedWithoutResettingPlanner();
+    testPendingAssistedPlanCanBecomeReadyAcrossTicks();
+    testAssistedShapedZeroPausesWithoutRestartingPlanner();
     testActiveAutonomyPathSuppressesTeleopPublishing();
     testAssistedPublishTimeStaleUpdatesLocalFinalSafety();
+    testAssistedRotationPausePreservesTrackingProgress();
+    testSafetyReplanEvidenceSurvivesReadyPendingAndInitializationFailure();
+    testOrdinaryPendingDoesNotInventSafetyReplanEvidence();
     testDirectSafetyEvaluatesShapedCommandAndCommitsAppliedValue();
     testAssistedSafetyEvaluatesShapedPlannerCommand();
     testCommitFailureFailsClosedAndStopsSmoother();
     testHardZeroResetsSmootherBeforeNextCommand();
     testRealSmootherTransitionalZeroRetainsTargetAcrossTicks();
+    testPureRotationUsesFinalControlWithoutATranslationPlan();
+    testRotationClearsPreviousTranslationFailureAndPath();
     testRawZeroStillHardStopsSmoother();
     testPostPlanningStaleInputStopsInsteadOfPublishingNonzeroCommand();
   } catch (const std::exception &error) {

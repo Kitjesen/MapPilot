@@ -1,0 +1,170 @@
+@final
+struct FinalVelocityCommand {
+  string host_boot_id;
+  string producer_boot_id;
+  unsigned long long output_seq;
+  unsigned long long source_boottime_ns;
+  unsigned long long source_wall_ns;
+  Twist twist;
+};
+@final
+struct NavigationCommandRequest {
+  Header header;
+  string client_id;
+  string task_id;
+  string request_id;
+  long kind;
+  Pose goal;
+  double max_speed_mps;
+  double acceptance_radius_m;
+  string reason;
+};
+@final
+struct NavigationCommandAck {
+  Header header;
+  string task_id;
+  string request_id;
+  long kind;
+  boolean accepted;
+  boolean duplicate;
+  string reason;
+};
+@final
+struct PlanRequest {
+  Header header;
+  string request_id;
+  Point goal;
+};
+@final
+struct PlanResult {
+  Header header;
+  string request_id;
+  boolean feasible;
+  boolean start_valid;
+  string reason;
+  double elapsed_ms;
+  string planner;
+  Point start;
+  Point goal;
+  sequence<Point> path;
+};
+@final
+struct GeofenceCommandRequest {
+  Header header;
+  string request_id;
+  long action;
+  string name;
+  sequence<Point> polygon;
+};
+@final
+struct GeofenceZoneSummary {
+  string name;
+  boolean enabled;
+  unsigned long vertex_count;
+};
+@final
+struct GeofenceCommandAck {
+  Header header;
+  string request_id;
+  long action;
+  boolean accepted;
+  string reason;
+  unsigned long long revision;
+  sequence<GeofenceZoneSummary> zones;
+};
+@final
+struct GeofenceAlert {
+  Header header;
+  boolean active;
+  string name;
+  Point robot_position;
+  unsigned long long revision;
+  string reason;
+};
+@final
+struct OperatorMotionControl {
+  Header header;
+  string source_id;
+  unsigned long long source_epoch;
+  unsigned long long source_sequence;
+  string request_id;
+  long action;
+  unsigned long lease_ttl_ms;
+  string reason;
+};
+@final
+struct OperatorMotionSample {
+  Header header;
+  string source_id;
+  unsigned long long source_epoch;
+  unsigned long long source_sequence;
+  string request_id;
+  boolean deadman;
+  boolean manual_mode;
+  Twist velocity;
+  unsigned long freshness_budget_ms;
+  unsigned long long source_stamp_ns;
+};
+@final
+struct OperatorMotionAck {
+  Header header;
+  string source_id;
+  unsigned long long source_epoch;
+  unsigned long long source_sequence;
+  string request_id;
+  long action;
+  boolean accepted;
+  string reason;
+  unsigned long long accepted_sequence;
+  unsigned long long final_output_sequence;
+};
+@final
+struct OperatorMotionStatus {
+  Header header;
+  string active_source_id;
+  unsigned long long active_source_epoch;
+  boolean has_active_authority;
+  boolean holding;
+  boolean has_active_sample;
+  unsigned long long last_sample_sequence;
+  unsigned long long admitted_sequence;
+  unsigned long long final_output_sequence;
+  string authority_reason;
+  string input_gate_reason;
+  Twist teleop_output;
+  Twist final_cmd_vel;
+};
+@final
+struct NavigationGoalStatus {
+  Header header;
+  string boot_id;
+  unsigned long long event_sequence;
+  string task_id;
+  string request_id;
+  long state;
+  unsigned long long goal_epoch;
+  string reason;
+};
+// Compact authoritative state from navd. Detailed timing, input age, and
+// performance counters belong to NavigationDiagnostics, not this lifecycle
+// contract.
+@final
+struct NavigationState {
+  Header header;
+  string boot_id;
+  unsigned long long state_sequence;
+  long control_mode;
+  long lifecycle_state;
+  string active_task_id;
+  string active_request_id;
+  unsigned long long goal_epoch;
+  string map_id;
+  long long map_content_epoch;
+  long planning_state;
+  long execution_state;
+  long recovery_state;
+  float progress;
+  string authority;
+  string hold_reason;
+  string failure_code;
+};

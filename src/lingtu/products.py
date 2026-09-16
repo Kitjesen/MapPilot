@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
-from runtime.graph.loader import load_runtime_graph, resolve_product_variant_spec
+from lingtu.assembly.graph.loader import load_runtime_graph, resolve_product_variant_spec
 
 _PRODUCT_DEFINITIONS = load_runtime_graph().products
 _PRODUCT_NAMES = frozenset(_PRODUCT_DEFINITIONS)
@@ -83,7 +83,10 @@ def _lifecycle_from_product(name: str, product: Mapping[str, Any]) -> ProductLif
 
 OPERATOR_PRODUCT_LIFECYCLES: Mapping[str, ProductLifecycle] = MappingProxyType(
     {
-        product_name(name): _lifecycle_from_product(name, product)
+        product_name(name): _lifecycle_from_product(
+            name,
+            resolve_product_variant_spec(name, product),
+        )
         for name, product in _PRODUCT_DEFINITIONS.items()
         if product.get("operator_switchable") is True
     }

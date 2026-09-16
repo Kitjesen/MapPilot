@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Review-only contracts for the standalone Forest_HF hero diorama."""
 

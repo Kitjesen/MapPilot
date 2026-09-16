@@ -108,6 +108,17 @@ test('decodes PCLD v2 metadata, colors, and odd-length frame_id padding', () => 
   assert.ok(Math.abs(decoded.colors[5] - 1) < 1e-6)
 })
 
+test('preserves valid map points across floor heights and map origins', () => {
+  for (const height of [-100, -21, 0, 21, 100]) {
+    const buffer = v2Frame()
+    new DataView(buffer).setFloat32(24, height, true)
+    const decoded = decodePointCloudFrame(buffer)
+    assert.equal(decoded.count, 2)
+    assert.equal(decoded.positions[1], height)
+    assert.equal(decoded.positions[4], height - 1)
+  }
+})
+
 test('rejects truncated and trailing PCLD payload bytes', () => {
   const valid = v2Frame()
   assert.throws(

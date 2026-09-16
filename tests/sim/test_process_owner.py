@@ -1,4 +1,3 @@
-# ruff: noqa: S101, S603
 
 from __future__ import annotations
 
@@ -11,7 +10,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from sim.runtime.process_owner import ProcessTreeOwner
 from sim.runtime.windows_cpu_isolation import discover_windows_cpu_topology
 

@@ -19,7 +19,7 @@
 #include "lingtu/recording/mcap_session.hpp"
 #include "lingtu/recording/recording_core.hpp"
 #include "lingtu/recording/topic_catalog.hpp"
-#include "message/cpp/topics.hpp"
+#include "message/generated/topics.hpp"
 
 namespace {
 

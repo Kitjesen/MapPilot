@@ -1,0 +1,337 @@
+schema_version: lingtu.runtime_graph.topics.v2
+topics:
+  cumulative_map_cloud:
+    topic: /slam/cumulative_map_cloud
+    transport: dds
+    dds_topic: rt/slam/cumulative_map_cloud
+    message_type: lingtu.dds.PointCloud2
+    qos_profile: LidarPointcloud
+    cpp_name: kSlamCumulativeMapCloud
+    role: online_whole_map_preview
+    native_contract: true
+    frame: map
+    producer: native_slam_runtime
+    consumers: [gateway, diagnostics]
+    semantics: complete_sampled_snapshot_replaces_previous_revision_not_collision_map
+    port_bindings:
+    - owner: native_slam_runtime
+      port: cumulative_map_cloud
+      direction: out
+      boundary: endpoint
+  localization_health:
+    topic: /slam/localization_health
+    transport: dds
+    dds_topic: rt/slam/localization_health
+    message_type: lingtu.dds.Text
+    qos_profile: LocalizationHealth
+    cpp_name: kSlamLocalizationHealth
+    native_contract: true
+    role: localization_health
+    frame: none
+    producer: native_slam_runtime
+    consumers:
+    - navigation
+    - safety
+    - gateway
+    real_equivalent_required: true
+    port_bindings:
+    - owner: native_slam_runtime
+      port: localization_health
+      direction: out
+      boundary: endpoint
+    - owner: SlamAdapterModule
+      port: localization_status
+      direction: out
+      boundary: module
+    - owner: GatewayModule
+      port: localization_status
+      direction: in
+      boundary: module
+  localization_quality:
+    topic: /slam/localization_quality
+    transport: dds
+    dds_topic: rt/slam/localization_quality
+    message_type: lingtu.dds.Float32
+    qos_profile: HighFreqState
+    cpp_name: kSlamLocalizationQuality
+    native_contract: true
+    role: localization_quality
+    frame: none
+    producer: native_slam_runtime
+    consumers:
+    - gateway
+    - diagnostics
+    port_bindings:
+    - owner: native_slam_runtime
+      port: localization_quality
+      direction: out
+      boundary: endpoint
+    - owner: SlamAdapterModule
+      port: localization_quality
+      direction: out
+      boundary: module
+    - owner: GatewayModule
+      port: localization_quality
+      direction: in
+      boundary: module
+  map_cloud:
+    topic: /slam/map_cloud
+    transport: dds
+    dds_topic: rt/slam/map_cloud
+    message_type: lingtu.dds.PointCloud2
+    qos_profile: LidarPointcloud
+    cpp_name: kSlamMapCloud
+    native_contract: true
+    role: live_map_cloud
+    frame: map
+    producer: native_slam_runtime
+    consumers:
+    - maps
+    - gateway
+    - map_artifacts
+    real_equivalent_required: true
+    port_bindings:
+    - owner: native_slam_runtime
+      port: map_cloud
+      direction: out
+      boundary: endpoint
+    - owner: SlamAdapterModule
+      port: map_cloud_frame
+      direction: out
+      boundary: module
+    - owner: GatewayModule
+      port: map_cloud_frame
+      direction: in
+      boundary: module
+  slam_map_snapshot_request:
+    topic: /slam/map_command
+    transport: dds
+    dds_topic: rt/slam/map_command
+    message_type: lingtu.dds.SlamMapSnapshotRequest
+    qos_profile: CommandRequest
+    cpp_name: kSlamMapSnapshotRequest
+    role: slam_map_snapshot_request
+    frame: none
+    producer: native_mapd_runtime
+    consumers:
+    - native_slam_runtime
+    real_equivalent_required: true
+    semantics: request_correlated_typed_atomic_snapshot_request_from_mapd
+    port_bindings:
+    - owner: native_mapd_runtime
+      port: map_snapshot_request
+      direction: out
+      boundary: endpoint
+    - owner: native_slam_runtime
+      port: map_snapshot_request
+      direction: in
+      boundary: endpoint
+  slam_map_snapshot_ack:
+    topic: /slam/map_event
+    transport: dds
+    dds_topic: rt/slam/map_event
+    message_type: lingtu.dds.SlamMapSnapshotAck
+    qos_profile: CommandAck
+    cpp_name: kSlamMapSnapshotAck
+    role: slam_map_snapshot_ack
+    frame: none
+    producer: native_slam_runtime
+    consumers:
+    - native_mapd_runtime
+    - slam_control_client
+    external_diagnostics_subscribable: true
+    real_equivalent_required: true
+    semantics: request_correlated_typed_snapshot_receipt_consumed_by_mapd
+    port_bindings:
+    - owner: native_slam_runtime
+      port: map_snapshot_ack
+      direction: out
+      boundary: endpoint
+    - owner: native_mapd_runtime
+      port: map_snapshot_ack
+      direction: in
+      boundary: endpoint
+  map_observation:
+    topic: /slam/map_observation
+    transport: dds
+    dds_topic: rt/slam/map_observation
+    message_type: lingtu.dds.MapObservation
+    qos_profile: LidarPointcloud
+    cpp_name: kSlamMapObservation
+    native_contract: true
+    role: synchronized_incremental_map_observation
+    frame: map
+    producer: native_slam_runtime
+    consumers:
+    - native_maps_runtime
+    semantics: one_accepted_scan_with_exact_same_timestamp_map_sensor_pose_and_origin
+    real_equivalent_required: true
+    port_bindings:
+    - owner: native_slam_runtime
+      port: map_observation
+      direction: out
+      boundary: endpoint
+    - owner: native_maps_runtime
+      port: map_observation
+      direction: in
+      boundary: endpoint
+  odom_prior:
+    topic: /slam/odom_prior
+    transport: dds
+    dds_topic: rt/slam/odom_prior
+    message_type: lingtu.dds.Odometry
+    qos_profile: SensorStream
+    cpp_name: kSlamOdomPrior
+    role: simulation_odom_prior
+    frame: odom
+    producer: simulation_sensor_diagnostic
+    consumers:
+    - native_slam_runtime
+    real_equivalent_required: false
+    simulation_only: true
+    port_bindings:
+    - owner: simulation_sensor_diagnostic
+      port: odom_prior
+      direction: out
+      boundary: endpoint
+    - owner: native_slam_runtime
+      port: odom_prior
+      direction: in
+      boundary: endpoint
+  odometry:
+    topic: /slam/odometry
+    transport: dds
+    dds_topic: rt/slam/odometry
+    message_type: lingtu.dds.Odometry
+    qos_profile: HighFreqState
+    cpp_name: kSlamOdometry
+    native_contract: true
+    role: localization_pose
+    frame: odom
+    producer: native_slam_runtime
+    consumers:
+    - maps
+    - navigation
+    - safety
+    - gateway
+    real_equivalent_required: true
+    port_bindings:
+    - owner: native_slam_runtime
+      port: odometry
+      direction: out
+      boundary: endpoint
+    - owner: SlamAdapterModule
+      port: odometry
+      direction: out
+      boundary: module
+    - owner: GatewayModule
+      port: odometry
+      direction: in
+      boundary: module
+  registered_cloud:
+    topic: /slam/registered_cloud
+    transport: dds
+    dds_topic: rt/slam/registered_cloud
+    message_type: lingtu.dds.PointCloud2
+    qos_profile: LidarPointcloud
+    cpp_name: kSlamRegisteredCloud
+    native_contract: true
+    role: registered_scan
+    frame: body
+    producer: native_slam_runtime
+    consumers:
+    - local_mapping
+    - diagnostics
+    port_bindings:
+    - owner: native_slam_runtime
+      port: registered_cloud
+      direction: out
+      boundary: endpoint
+    - owner: diagnostics
+      port: registered_cloud
+      direction: in
+      boundary: endpoint
+  slam_relocalization_request:
+    topic: /slam/relocalization/request
+    transport: dds
+    dds_topic: rt/slam/relocalization/request
+    message_type: lingtu.dds.RelocalizationRequest
+    qos_profile: CommandRequest
+    cpp_name: kSlamRelocalizationRequest
+    role: slam_relocalization_request
+    frame: map
+    producer: slam_control_client
+    consumers:
+    - native_slam_runtime
+    real_equivalent_required: true
+    semantics: request_correlated_global_seeded_or_saved_map_relocalization
+    port_bindings:
+    - owner: slam_control_client
+      port: relocalization_request
+      direction: out
+      boundary: endpoint
+    - owner: native_slam_runtime
+      port: relocalization_request
+      direction: in
+      boundary: endpoint
+  slam_relocalization_response:
+    topic: /slam/relocalization/response
+    transport: dds
+    dds_topic: rt/slam/relocalization/response
+    message_type: lingtu.dds.RelocalizationResponse
+    qos_profile: CommandAck
+    cpp_name: kSlamRelocalizationResponse
+    role: slam_relocalization_response
+    frame: map
+    producer: native_slam_runtime
+    consumers:
+    - slam_control_client
+    external_diagnostics_subscribable: true
+    real_equivalent_required: true
+    semantics: request_correlated_relocalization_acceptance_and_quality
+    port_bindings:
+    - owner: native_slam_runtime
+      port: relocalization_response
+      direction: out
+      boundary: endpoint
+    - owner: slam_control_client
+      port: relocalization_response
+      direction: in
+      boundary: endpoint
+  saved_map_cloud:
+    topic: /slam/saved_map_cloud
+    transport: dds
+    dds_topic: rt/slam/saved_map_cloud
+    message_type: lingtu.dds.PointCloud2
+    qos_profile: LidarPointcloud
+    cpp_name: kSlamSavedMapCloud
+    native_contract: true
+    role: saved_map_cloud
+    frame: map
+    producer: native_slam_runtime
+    consumers:
+    - map_artifacts
+    port_bindings:
+    - owner: native_slam_runtime
+      port: saved_map_cloud
+      direction: out
+      boundary: endpoint
+  state_estimation_at_scan:
+    topic: /slam/state_at_scan
+    transport: dds
+    dds_topic: rt/slam/state_at_scan
+    message_type: lingtu.dds.Odometry
+    qos_profile: HighFreqState
+    cpp_name: kSlamStateAtScan
+    role: scan_timestamp_state_estimate_diagnostic
+    frame: odom
+    producer: native_slam_runtime
+    consumers: []
+    external_diagnostics_subscribable: true
+    semantics: state_estimate_at_the_exact_accepted_lidar_scan_timestamp
+    real_equivalent_required: true
+    port_bindings:
+    - owner: native_slam_runtime
+      port: state_at_scan
+      direction: out
+      boundary: endpoint

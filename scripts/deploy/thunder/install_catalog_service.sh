@@ -65,12 +65,13 @@ for unit in "${RETIRED_UNITS[@]}"; do
 done
 
 REQUESTED_ENABLE="${LINGTU_ENABLE_SERVICE:-${ENABLE_DEFAULT}}"
-if [ "${REQUESTED_ENABLE}" = "1" ]; then
-    if [ "${CATALOG_ENABLE_DEFAULT}" = "1" ]; then
+if [ "${CATALOG_ENABLE_DEFAULT}" = "1" ]; then
+    if [ "${REQUESTED_ENABLE}" = "1" ]; then
         sudo systemctl enable "${SERVICE_NAME}"
-    else
-        echo "Not boot-enabling Thunder ${SERVICE}: ProductControl owns Product role activation."
     fi
+else
+    sudo systemctl disable "${SERVICE_NAME}"
+    echo "Disabled boot enablement for Thunder ${SERVICE}: ProductControl owns Product role activation."
 fi
 
 echo "Installed Thunder runtime environment: ${CONFIG_DIR}/thunder-runtime-env.sh"

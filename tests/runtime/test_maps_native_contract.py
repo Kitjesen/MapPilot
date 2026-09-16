@@ -166,7 +166,7 @@ def test_retired_map_c_apis_are_absent() -> None:
 
 def test_gateway_uses_public_maps_contract() -> None:
     files = (
-        REPO / "src" / "gateway" / "services" / "mapd_transport.py",
+        REPO / "src" / "gateway" / "maps" / "transport.py",
         REPO / "src" / "gateway" / "routes" / "session.py",
         REPO / "src" / "gateway" / "routes" / "diagnostics.py",
     )
@@ -185,7 +185,7 @@ def test_gateway_uses_public_maps_contract() -> None:
 
 
 def test_gateway_does_not_construct_maps_service() -> None:
-    text = (REPO / "src" / "gateway" / "services" / "mapd_transport.py").read_text(encoding="utf-8")
+    text = (REPO / "src" / "gateway" / "maps" / "transport.py").read_text(encoding="utf-8")
     assert "MapsModule(" not in text
     assert "manager.setup()" not in text
 
@@ -206,8 +206,8 @@ def test_retired_abstract_map_api_is_absent() -> None:
 
 
 def test_gateway_map_routes_use_typed_maps_boundary() -> None:
-    route = (REPO / "src" / "gateway" / "routes" / "maps.py").read_text(encoding="utf-8")
-    assert "mapd_command(" in route
+    route = (REPO / "src" / "gateway" / "maps" / "routes.py").read_text(encoding="utf-8")
+    assert "mapd_request(" in route
     assert "MapControlRequest" not in route
     assert 'pathlib.Path(str(resp.get("map_dir")' not in route
     tree = ast.parse(route)
@@ -217,7 +217,7 @@ def test_gateway_map_routes_use_typed_maps_boundary() -> None:
     pcd_source = ast.unparse(pcd_handler)
     assert "open_artifact" in pcd_source
     assert "StreamingResponse" in pcd_source
-    assert "_mapd_command" not in pcd_source
+    assert "_mapd_http_request" not in pcd_source
     assert "artifact_path" not in pcd_source
     assert "resolve_exchange_path(" in route
     assert "map_import_root(" in route
@@ -241,7 +241,7 @@ def test_maps_core_declares_optional_native_octomap_builder() -> None:
 
 
 def test_gateway_map_routes_delegate_remaining_persistent_mutations() -> None:
-    route = (REPO / "src" / "gateway" / "routes" / "maps.py").read_text(encoding="utf-8")
+    route = (REPO / "src" / "gateway" / "maps" / "routes.py").read_text(encoding="utf-8")
     assert '"action": "restore_source"' not in route
     assert '"action": "rename_map"' in route
     assert "shutil.copy" not in route

@@ -24,6 +24,7 @@ export interface BinaryCloud extends CloudFrameMetadata {
   transport: 'none' | 'ws' | 'http'
   lastFrameAt: number | null
   error: string | null
+  mappingSummary?: { state: string; loops: number; optimizations: number; droppedFrames: number; registrationRejections: number }
 }
 
 const EMPTY: BinaryCloud = {
@@ -43,11 +44,7 @@ const EMPTY: BinaryCloud = {
   error: null,
 }
 
-// Live SLAM clouds can arrive in odom/map frames with a vertical offset before
-// relocalization settles. Keep the display permissive and let Scene3D styling
-// handle readability; a tight floor/ceiling window can hide every point.
-const Z_FLOOR = -20
-const Z_CEIL = 20
+// Map-frame height is not bounded by the robot's current floor.
 const COLOR_Z_MIN = -1.0
 const COLOR_Z_SPAN = 3.5
 
@@ -69,7 +66,6 @@ function turboColor(t: number, out: Float32Array, off: number) {
 function finitePoint(x: unknown, y: unknown, z: unknown): [number, number, number] | null {
   if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number') return null
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null
-  if (z < Z_FLOOR || z > Z_CEIL) return null
   return [x, y, z]
 }
 
@@ -146,7 +142,7 @@ export function useBinaryCloud(
 
   useEffect(() => {
     let cancelled = false
-    if (path == null) {
+    if (path == null && fallbackUrl == null) {
       setCloud(prev => ({
         ...EMPTY,
         seq: prev.seq + 1,
@@ -158,8 +154,8 @@ export function useBinaryCloud(
 
     const worker = new CloudDecoderWorker()
     workerRef.current = worker
-    const endpoint: CloudEndpointKind = path.includes('/scan') ? 'scan' : 'cloud'
-    const effectiveMaxHz = maxHz ?? (path.includes('/scan') ? 10 : 2)
+    const endpoint: CloudEndpointKind = path?.includes('/scan') ? 'scan' : 'cloud'
+    const effectiveMaxHz = maxHz ?? (path?.includes('/scan') ? 10 : 2)
     const minFrameMs = effectiveMaxHz > 0 ? 1000 / effectiveMaxHz : 0
     let fallbackSeq = 0
     let httpFallbackActive = false
@@ -273,6 +269,16 @@ export function useBinaryCloud(
             'cloud',
             { epoch: null, sequence: null },
           )
+          if (payload.global_mapping && typeof payload.global_mapping === 'object') {
+            const mapping = payload.global_mapping as Record<string, unknown>
+            decoded.mappingSummary = {
+              registrationRejections: typeof mapping.rejected_keyframes === 'number' ? mapping.rejected_keyframes : 0,
+              state: typeof mapping.state === 'string' ? mapping.state : '',
+              loops: typeof mapping.loops === 'number' ? mapping.loops : 0,
+              optimizations: typeof mapping.optimizations === 'number' ? mapping.optimizations : 0,
+              droppedFrames: typeof mapping.dropped_frames === 'number' ? mapping.dropped_frames : 0,
+            }
+          }
           setCloud(decoded)
         }
       } catch (error) {
@@ -339,6 +345,16 @@ export function useBinaryCloud(
       }
     }
 
+    const armFrameTimeout = (generation: number) => {
+      if (noFrameTimer.current) clearTimeout(noFrameTimer.current)
+      noFrameTimer.current = setTimeout(() => {
+        noFrameTimer.current = null
+        if (isActiveGeneration(generation)) {
+          startHttpFallback(sawDecodedFrame ? 'cloud_ws_stream_stalled' : 'cloud_ws_no_valid_frame')
+        }
+      }, 2500)
+    }
+
     worker.onmessage = (e: MessageEvent) => {
       const m = e.data as ({
         type: 'cloud'
@@ -379,12 +395,9 @@ export function useBinaryCloud(
         return
       }
       sawDecodedFrame = true
-      if (noFrameTimer.current) {
-        clearTimeout(noFrameTimer.current)
-        noFrameTimer.current = null
-      }
+      armFrameTimeout(m.connectionGeneration)
       stopHttpFallback()
-      setCloud(prev => ({
+      setCloud({
         positions: m.positions,
         colors: m.colors,
         count: m.count,
@@ -395,11 +408,11 @@ export function useBinaryCloud(
         stampS: m.stampS,
         sequence: m.sequence,
         streamKind: m.streamKind,
-        connected: prev.connected,
+        connected: wsRef.current?.readyState === WebSocket.OPEN,
         transport: 'ws',
         lastFrameAt: Date.now(),
         error: null,
-      }))
+      })
       flushPendingWsFrame()
     }
     worker.onerror = (event) => {
@@ -426,6 +439,10 @@ export function useBinaryCloud(
       sawDecodedFrame = false
       pendingWsFrame = null
       resetCloudState({ connected: false, transport: 'none' })
+      if (path == null) {
+        startHttpFallback('')
+        return
+      }
       if (typeof WebSocket !== 'function') {
         startHttpFallback('websocket_unavailable')
         return
@@ -438,12 +455,7 @@ export function useBinaryCloud(
       ws.onopen = () => {
         if (!isActiveGeneration(generation) || wsRef.current !== ws) return
         resetCloudState({ connected: true, transport: 'ws' })
-        if (noFrameTimer.current) clearTimeout(noFrameTimer.current)
-        noFrameTimer.current = setTimeout(() => {
-          if (isActiveGeneration(generation) && !sawDecodedFrame) {
-            startHttpFallback('cloud_ws_no_valid_frame')
-          }
-        }, 2500)
+        armFrameTimeout(generation)
       }
 
       ws.onmessage = (e: MessageEvent) => {

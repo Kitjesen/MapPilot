@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from message.topics import TOPIC_SPECS, dds_topic_name, topic_spec
-from runtime.runtime_interface import TOPICS
+from message.topics import TOPIC_SPECS, TOPICS, dds_topic_name, topic_spec
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -16,7 +15,7 @@ def test_message_package_has_no_python_dds_payload_types() -> None:
 
 
 def test_topic_metadata_matches_native_catalogue() -> None:
-    header = (ROOT / "src/message/cpp/topics.hpp").read_text(encoding="utf-8")
+    header = (ROOT / "src/message/generated/topics.hpp").read_text(encoding="utf-8")
     for spec in TOPIC_SPECS.values():
         assert f'"{spec.topic}"' in header
         assert f'"{dds_topic_name(spec.topic)}"' in header

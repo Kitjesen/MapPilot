@@ -17,7 +17,7 @@ enum {
   // Field Products atomically package this library with its Host bindings.
   // Mixed global ABI versions fail closed; append-only feature discovery
   // within one version uses the capability bits below.
-  LINGTU_NAV_CLIENT_ABI_VERSION = 8,
+  LINGTU_NAV_CLIENT_ABI_VERSION = 10,
 };
 
 enum {
@@ -37,10 +37,11 @@ enum {
   LINGTU_NAV_CLIENT_CAP_EXPLORATION_RUN_EVENTS = 1ULL << 13,
   LINGTU_NAV_CLIENT_CAP_TRAVERSABILITY_GRID = 1ULL << 14,
   LINGTU_NAV_CLIENT_CAP_PLAN_PREVIEW = 1ULL << 15,
+  LINGTU_NAV_CLIENT_CAP_JOINT_STATE = 1ULL << 16,
 };
 
 enum {
-  LINGTU_NAV_MAP_SCENE_ABI_VERSION = 1,
+  LINGTU_NAV_MAP_SCENE_ABI_VERSION = 3,
   LINGTU_NAV_MAP_SCENE_MAX_POINTS_PER_LAYER = 300000,
   LINGTU_NAV_MAP_SCENE_MAX_TOTAL_POINTS = 800000,
   LINGTU_NAV_MAP_SCENE_MAX_GRID_CELLS_PER_LAYER = 1000000,
@@ -58,7 +59,21 @@ enum {
   LINGTU_NAV_TRAVERSABILITY_GRID_ABI_VERSION = 1,
   LINGTU_NAV_TRAVERSABILITY_GRID_MAX_CELLS = 1000000,
   LINGTU_NAV_PLAN_RESULT_ABI_VERSION = 1,
+  LINGTU_NAV_JOINT_STATE_ABI_VERSION = 1,
+  LINGTU_NAV_JOINT_STATE_MAX_JOINTS = 12,
 };
+
+typedef struct lingtu_nav_joint_state_v1 {
+  uint32_t abi_version;
+  uint32_t struct_size;
+  double timestamp_s;
+  char robot_model[32];
+  uint32_t joint_count;
+  char names[LINGTU_NAV_JOINT_STATE_MAX_JOINTS][64];
+  double position[LINGTU_NAV_JOINT_STATE_MAX_JOINTS];
+  double velocity[LINGTU_NAV_JOINT_STATE_MAX_JOINTS];
+  double effort[LINGTU_NAV_JOINT_STATE_MAX_JOINTS];
+} lingtu_nav_joint_state_v1;
 
 typedef struct lingtu_nav_navigation_state {
   double timestamp_s;
@@ -286,6 +301,10 @@ typedef struct lingtu_nav_map_scene_header_v1 {
   lingtu_nav_map_scene_grid_header_v1 occupancy;
   lingtu_nav_map_scene_grid_header_v1 elevation;
   lingtu_nav_map_scene_grid_header_v1 esdf;
+  lingtu_nav_map_scene_grid_header_v1 surface_projection;
+  lingtu_nav_map_scene_grid_header_v1 ground_height;
+  lingtu_nav_map_scene_grid_header_v1 ground_roughness;
+  lingtu_nav_map_scene_grid_header_v1 ground_support;
 } lingtu_nav_map_scene_header_v1;
 
 typedef struct lingtu_nav_map_scene_buffers_v1 {
@@ -303,6 +322,14 @@ typedef struct lingtu_nav_map_scene_buffers_v1 {
   unsigned long long elevation_cell_capacity;
   float* esdf_cells;
   unsigned long long esdf_cell_capacity;
+  float* surface_projection_cells;
+  unsigned long long surface_projection_cell_capacity;
+  float* ground_height_cells;
+  unsigned long long ground_height_cell_capacity;
+  float* ground_roughness_cells;
+  unsigned long long ground_roughness_cell_capacity;
+  float* ground_support_cells;
+  unsigned long long ground_support_cell_capacity;
 } lingtu_nav_map_scene_buffers_v1;
 
 typedef struct lingtu_nav_map_scene_health_v1 {
@@ -355,6 +382,20 @@ LINGTU_NAV_CLIENT_API int lingtu_nav_client_start_task_with_receipt_v1(
     double y,
     double z,
     double yaw,
+    int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1* receipt);
+
+// Zero constraints retain the Product defaults. Positive values constrain this task.
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_start_task_with_receipt_v2(
+    lingtu_nav_client_handle handle,
+    const char* task_id,
+    const char* request_id,
+    double x,
+    double y,
+    double z,
+    double yaw,
+    double max_speed_mps,
+    double acceptance_radius_m,
     int timeout_ms,
     lingtu_nav_navigation_command_receipt_v1* receipt);
 
@@ -676,6 +717,10 @@ LINGTU_NAV_CLIENT_API int
 lingtu_nav_client_take_traversability_grid_v1(lingtu_nav_client_handle handle,
                                               lingtu_nav_traversability_grid_header_v1 *header,
                                               uint8_t *cells, unsigned long long cell_capacity);
+
+// Pops the latest measured joint sample: 1 copied, 0 unavailable, -1 invalid arguments.
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_take_joint_state_v1(
+    lingtu_nav_client_handle handle, lingtu_nav_joint_state_v1 *state);
 
 // Copies one latest-only coherent MapScene. Returns 2 with required counts in
 // header when any caller-owned buffer is too small and retains the sample for

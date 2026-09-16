@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 import inspect
 import sys
@@ -7,7 +6,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 import sim.runtime.control.thunderv4 as thunderv4_module
 from sim.runtime.control import create_thunderv4_components
 from sim.runtime.control.contracts import (
@@ -441,6 +439,66 @@ def test_adapter_converts_dart_action_to_plan_ordered_named_pd_torques() -> None
     expected_by_channel = dict(zip(_ACTUATOR_CHANNELS, expected_dart))
     assert tuple(torques) == plan_layout.channels
     assert torques == pytest.approx({channel: expected_by_channel[channel] for channel in plan_layout.channels})
+
+
+def test_flat53_contract_observation_raw_action_memory_and_pd_gains() -> None:
+    pytest.importorskip("onnxruntime")
+    from sim.runtime.control import thunderv4_flat as flat
+    from sim.runtime.control.factory import create_production_components
+
+    spec = replace(
+        _controller_spec(),
+        adapter=AdapterSpec("thunderv4_flat53", "lingtu.sim.controller-adapter.v1"),
+        policy=PolicySpec(
+            "onnxruntime",
+            "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx",
+            "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998_manifest.json",
+        ),
+    )
+    adapter, policy = create_production_components(spec, Path(__file__).resolve().parents[2])
+    position = flat.STANDING_POSE + np.arange(16) * 0.01
+    velocity = np.arange(16, dtype=np.float64)
+    state = _state(joint_position=position, joint_velocity=velocity)
+    obs = adapter.observe(state, _command(), spec.actuators)
+    expected = np.concatenate((
+        [1, 2, 3], [0.1, 0.2, -0.9], [0.6, 0, -0.25],
+        np.arange(12) * 0.01, velocity * 0.05, np.zeros(16),
+    ))
+    np.testing.assert_allclose(obs, expected, atol=1e-7)
+    assert obs.shape == (53,)
+    raw = policy._session.run(None, {"obs": obs.reshape(1, 53)})[0].reshape(-1)
+    np.testing.assert_allclose(policy.infer(obs), flat.STANDING_POSE)
+    next_obs = adapter.observe(state, _command(), spec.actuators)
+    np.testing.assert_allclose(next_obs[-16:], raw)
+    for _ in range(24):
+        policy.infer(obs)
+    np.testing.assert_allclose(policy.infer(obs), flat.STANDING_POSE + raw * np.array((0.125, 0.25, 0.25) * 4 + (5,) * 4))
+    torques = adapter.actuate(state, flat.STANDING_POSE, spec.actuators)
+    assert torques["FR_thigh_joint"] == pytest.approx(-0.01 * 90 - 6.93)
+    assert torques["FR_foot_joint"] == pytest.approx(-12)
+    policy.reset(GenerationStamp(2, 3))
+    assert np.count_nonzero(adapter.observe(state, _command(), spec.actuators)[-16:]) == 0
+
+
+def test_flat53_compat_runner_matches_formal_policy() -> None:
+    pytest.importorskip("onnxruntime")
+    from sim.compat.engine.mujoco.robot_controller import DART_TO_MJ, load_policy_runner
+    from sim.runtime.control import thunderv4_flat as flat
+
+    path = Path(__file__).resolve().parents[2] / "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx"
+    runner = load_policy_runner(str(path))
+    position = flat.STANDING_POSE + np.arange(16) * 0.01
+    velocity = np.arange(16, dtype=np.float64)
+    obs = runner.build_obs(np.array([4, 8, 12]), np.array([0, 0, -1]), np.array([0, 0.2, 0]), position[DART_TO_MJ], velocity[DART_TO_MJ])
+    np.testing.assert_allclose(obs[9:21], np.arange(12) * 0.01, atol=1e-7)
+    np.testing.assert_allclose(obs[21:37], velocity * 0.05)
+    raw = runner.session.run(None, {"obs": obs.reshape(1, 53)})[0].reshape(-1)
+    for _ in range(25):
+        np.testing.assert_allclose(runner.infer(obs), flat.STANDING_POSE)
+    np.testing.assert_allclose(runner.infer(obs), flat.action_targets(raw))
+    np.testing.assert_allclose(runner.last_action, raw)
+    runner.reset()
+    assert np.count_nonzero(runner.last_action) == 0
 
 
 def test_adapter_safe_stop_holds_standing_pose_and_brakes_wheels_in_plan_order() -> None:

@@ -29,7 +29,7 @@ const sseSource = readFileSync(
 
 test('inspection tab uses the product workbench as the run entry', () => {
   assert.match(appSource, /InspectionWorkbench/)
-  assert.match(topbarSource, /key: 'inspection', en: 'Inspect'/)
+  assert.match(topbarSource, /key: 'inspection', en: 'Tasks'/)
 })
 
 test('dashboard emergency stop always reports command acceptance or failure', () => {
@@ -198,10 +198,18 @@ test('workbench shows recent verified evidence without exposing storage paths', 
   assert.doesNotMatch(workbenchSource, /manifest_path|evidence_dir/)
 })
 
-test('workbench copy presents repeatable inspection and review instead of native internals', () => {
-  assert.match(workbenchSource, /Repeatable Routes and Evidence/)
-  assert.match(workbenchSource, /可复现路线与证据闭环/)
-  assert.match(workbenchSource, /review and reinspection/)
+test('workbench prioritizes route and selected-task controls with secondary detail collapsed', () => {
+  assert.match(workbenchSource, /Inspection controls/)
+  assert.match(workbenchSource, /<select aria-label=\{text\(locale, 'Saved routes', '已保存路线'\)\} value=\{selectedRouteId/)
+  assert.match(workbenchSource, /<select aria-label=\{text\(locale, 'Recent tasks', '最近任务'\)\} value=\{activeTaskId[\s\S]*?disabled=\{busy !== null\}/)
+  assert.match(workbenchSource, /taskEventTimestamp\(\{ ts: task\.updated_at \}, locale\)/)
+  assert.match(workbenchSource, /!observe && <div className=\{styles\.runControls\}/)
+  assert.match(workbenchSource, /!observe && <details className=\{styles\.editorPane\}/)
+  assert.match(workbenchSource, /<details className=\{styles\.reportPanel\}>/)
+  assert.match(workbenchSource, /<details className=\{styles\.evidencePanel\}>/)
+  assert.match(workbenchSource, /<details className=\{styles\.details\}>\s*<summary>\{text\(locale, 'System details', '系统详情'\)/)
+  assert.ok(workbenchSource.indexOf('styles.runPanel') < workbenchSource.indexOf('styles.reportPanel'))
+  assert.doesNotMatch(workbenchSource, /Repeatable Routes and Evidence|可复现路线与证据闭环/)
   assert.match(workbenchSource, /inspectionVerdictLabel/)
   assert.match(workbenchSource, /Needs review/)
   assert.match(workbenchSource, /需复核/)

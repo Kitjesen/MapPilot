@@ -5,10 +5,10 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
-from drivers.sim.mujoco.runtime import build_engine
 from sim.compat.engine.core.engine import VelocityCommand
 from sim.runtime.control.thunderv4 import DART_ACTUATOR_ORDER
+
+from drivers.sim.mujoco.runtime import build_engine
 
 
 @pytest.mark.parametrize(
@@ -118,13 +118,13 @@ def test_policy_mode_requires_the_declared_thunderv4_baseline(
     assert driver._policy_path == ""
 
 
-def test_keyboard_entrypoint_loads_policy_1119_as_onnx() -> None:
+def test_keyboard_entrypoint_loads_policy_4998_as_onnx() -> None:
     torch = pytest.importorskip("torch")
     pytest.importorskip("onnxruntime")
     from sim.packages.controllers.doso.thunder_v4.locomotion import keyboard
 
     policy = keyboard._load_policy(str(keyboard.DEFAULT_POLICY_PATH))
-    action = policy(torch.zeros((1, 57), dtype=torch.float32))
+    action = policy(torch.zeros((1, 53), dtype=torch.float32))
 
     assert tuple(action.shape) == (1, 16)
     assert keyboard.DEFAULT_PHYSICS_TIMESTEP_S == pytest.approx(0.005)

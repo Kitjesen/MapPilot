@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate runtime topic names against ``runtime.runtime_interface``.
+"""Validate runtime topic names against the generated topic catalogue.
 
 Usage:
     python tools/validate/validate_topics.py
@@ -10,7 +10,7 @@ Exit codes:
     1 - topic(s) found that are not defined in the contract
 
 Validation scope:
-    1. runtime.runtime_interface as source of truth
+    1. src/message/topics/*.yaml as source of truth
     2. src/remote_monitoring/config/grpc_gateway.yaml values when present
     3. launch/**/*.launch.py remappings
     4. critical runtime adapter/factory source files
@@ -119,12 +119,12 @@ def info(msg: str) -> None:
 
 
 def load_contract() -> dict[str, Any]:
-    """Load the canonical Python runtime-topic contract."""
+    """Load the generated Python view of the canonical topic catalogue."""
 
     root_src = os.path.join(ROOT_DIR, "src")
     if root_src not in sys.path:
         sys.path.insert(0, root_src)
-    from runtime.runtime_interface import runtime_contract_manifest
+    from diagnostics.runtime_contract import runtime_contract_manifest
 
     return runtime_contract_manifest()
 
@@ -167,7 +167,7 @@ def load_required_nav_topics(data: dict[str, Any], contract_topics: set[str]) ->
             for path in (ROOT_DIR, root_src):
                 if path not in sys.path:
                     sys.path.insert(0, path)
-            from runtime.runtime_interface import CORE_REQUIRED_TOPICS
+            from diagnostics.runtime_contract import CORE_REQUIRED_TOPICS
 
             required = set(CORE_REQUIRED_TOPICS)
         except Exception:

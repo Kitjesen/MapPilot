@@ -12,7 +12,7 @@ def test_pcd_download_streams_mapd_descriptor_without_legacy_path_lookup(tmp_pat
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from gateway.routes.maps import register_map_routes
+    from gateway.maps.routes import register_map_routes
     from runtime.endpoints.mapd import ArtifactHandle
 
     payload = b"VERSION .7\nDATA binary\nmap-payload"
@@ -52,7 +52,7 @@ def test_pcd_download_reports_native_missing_map_as_404() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from gateway.routes.maps import register_map_routes
+    from gateway.maps.routes import register_map_routes
     from runtime.endpoints.mapd import MapClientError
 
     class Client:
@@ -75,7 +75,7 @@ def test_pcd_download_reports_map_write_in_progress_as_conflict() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from gateway.routes.maps import register_map_routes
+    from gateway.maps.routes import register_map_routes
     from runtime.endpoints.mapd import MapClientError
 
     class Client:

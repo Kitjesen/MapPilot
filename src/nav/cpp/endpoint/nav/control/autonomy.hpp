@@ -41,6 +41,7 @@ struct AutonomyTickActions {
       tick_autonomy;
   std::function<void()> stop_linear_motion;
   std::function<void()> pause_linear_motion;
+  std::function<void(bool, double)> report_final_motion_blocked;
 };
 
 struct AutonomyTickInput {

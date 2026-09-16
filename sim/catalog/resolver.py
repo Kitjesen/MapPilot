@@ -526,9 +526,22 @@ class CatalogResolver:
                     "defaults",
                     "declared_capabilities",
                 ),
-                ("description", "compatibility", "qualification"),
+                ("description", "compatibility", "qualification", "navigation_geometry"),
                 context,
             )
+            if "navigation_geometry" in data:
+                geometry = _mapping(data["navigation_geometry"], f"{context}.navigation_geometry")
+                _keys(
+                    geometry,
+                    ("collision_clearance_below_m", "collision_clearance_above_m",
+                     "support_height_m", "support_height_tolerance_m"),
+                    (),
+                    f"{context}.navigation_geometry",
+                )
+                for name, value in geometry.items():
+                    if (isinstance(value, bool) or not isinstance(value, (int, float))
+                            or not math.isfinite(value) or value <= 0):
+                        raise CatalogError(f"{context}.navigation_geometry.{name} must be positive and finite")
             physics = _mapping(data["physics"], f"{context}.physics")
             _keys(
                 physics,
@@ -831,7 +844,7 @@ class CatalogResolver:
                 _string(accepts["type"], f"{context}.robot_interface.accepts_command.type")
                 if "message_type" in accepts:
                     _string(accepts["message_type"], f"{context}.robot_interface.accepts_command.message_type")
-            elif adapter["plugin"] == "quadruped_him":
+            elif adapter["plugin"] in {"quadruped_him", "thunderv4_flat53"}:
                 raise CatalogError(
                     f"{context}.robot_interface.accepts_command is required for quadruped_him"
                 )
@@ -840,7 +853,7 @@ class CatalogResolver:
             _string(produces["type"], f"{context}.robot_interface.produces_command.type")
             if "message_type" in produces:
                 _string(produces["message_type"], f"{context}.robot_interface.produces_command.message_type")
-            if adapter["plugin"] == "quadruped_him":
+            if adapter["plugin"] in {"quadruped_him", "thunderv4_flat53"}:
                 accepts = _mapping(robot_interface["accepts_command"], f"{context}.robot_interface.accepts_command")
                 if accepts["type"] != "base_twist":
                     raise CatalogError(
@@ -2041,6 +2054,8 @@ class CatalogResolver:
             }
             if resolved_physics_payloads:
                 resolved_robot["payloads"] = resolved_physics_payloads
+            if "navigation_geometry" in robot_data:
+                resolved_robot["navigation_geometry"] = dict(robot_data["navigation_geometry"])
             resolved_robots.append(resolved_robot)
             resolved_visual_robot: dict[str, Any] = {
                 "instance_id": instance_id,

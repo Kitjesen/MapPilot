@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 # Re-export all shared data types and constants from runtime.msgs.scene
-from runtime.msgs.scene import (  # noqa: F401
+from runtime.msgs.scene import (
     BELIEF_FRESHNESS_TAU,
     BELIEF_NEG_EVIDENCE_WEIGHT,
     BELIEF_SIGMA_BASE,

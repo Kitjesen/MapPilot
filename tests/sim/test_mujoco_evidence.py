@@ -6,8 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
-from lingtu.sim.stop import PROCESS_LAUNCH_ID_ENV
 from sim.scripts.mujoco.evidence import (
     FEEDER_STATUS_FILENAME,
     FEEDER_STATUS_SCHEMA,
@@ -15,6 +13,8 @@ from sim.scripts.mujoco.evidence import (
     load_feeder_status,
     publish_feeder_status,
 )
+
+from lingtu.sim.stop import PROCESS_LAUNCH_ID_ENV
 
 
 def test_feeder_status_accepts_normal_json_and_binds_the_launch(tmp_path: Path) -> None:

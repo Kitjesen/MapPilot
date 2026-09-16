@@ -20,7 +20,8 @@ const std::vector<float> &obstaclesOrEmpty(const PlanView &inputs) {
 }
 
 LocalDiagnostics activeDiagnostics(const lingtu::nav::navigation::ExecutionOutput &output,
-                                   const CommandSafetyDecision *final_safety) {
+                                   const CommandSafetyDecision *final_safety,
+                                   bool safety_applied) {
   LocalDiagnostics local;
   local.seen = true;
   local.active = output.active;
@@ -42,10 +43,11 @@ LocalDiagnostics activeDiagnostics(const lingtu::nav::navigation::ExecutionOutpu
   local.target_index = output.target_index;
   local.target_distance_m = output.target_distance_m;
   local.target = output.target;
+  local.tracking = output.tracking;
   local.local_path_points = output.local_path_map.size();
   local.path_follower_cmd_vel = output.cmd_vel;
   local.cmd_vel = output.cmd_vel;
-  local.final_safety_applied = final_safety != nullptr;
+  local.final_safety_applied = safety_applied;
   local.final_safety_stopped = final_safety != nullptr && final_safety->stopped;
   local.final_safety_slowed = final_safety != nullptr && final_safety->slowed;
   local.final_safety_limited = final_safety != nullptr && final_safety->limited;
@@ -106,6 +108,7 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
       local.seen = true;
       local.active = false;
       local.path_found = false;
+      local.tracking = {};
       local.near_field_stop = true;
       local.reason = map_blocker;
       local.final_safety_applied = false;
@@ -137,6 +140,7 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
       local.seen = true;
       local.active = false;
       local.path_found = false;
+      local.tracking = {};
       local.near_field_stop = true;
       local.reason = reason;
       local.final_safety_applied = false;
@@ -170,14 +174,20 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
 
     const nav_kernel::Twist path_follower_cmd = output.cmd_vel;
     std::optional<CommandSafetyDecision> final_safety;
+    bool safety_applied = false;
     const bool raw_command_zero = isZeroCommand(output.cmd_vel);
     if (output.goal_reached || raw_command_zero) {
       final_control_.stop(now_s, output.goal_reached ? "goal_reached" : "zero_command");
       output.cmd_vel = {};
     } else {
+      CommandSafetyConfig path_safety = input.safety;
+      path_safety.min_motion_speed_mps = 0.0;
+      path_safety.verified_recovery_translation =
+          output.recovery_verified && output.recovery_action ==
+              static_cast<int>(nav_kernel::RecoveryAction::Translate);
       const auto final = final_control_.finalize(FinalInput{
           FinalMode::kAutonomyPath,
-          input.safety,
+          path_safety,
           path_follower_cmd,
           0.0,
           0.0,
@@ -186,15 +196,33 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
           now_s,
       });
       output.cmd_vel = final.decision.cmd;
+      // A feasible trajectory can still be rejected by measured-motion braking.
+      // Pending replans must not erase this independent recovery trigger.
+      if (actions_.report_final_motion_blocked &&
+          (final.decision.reason == "scan_actual_motion_blocked" ||
+           linearSpeed(output.cmd_vel) > 1e-6 || std::abs(output.cmd_vel.wz) > 1e-6)) {
+        actions_.report_final_motion_blocked(
+            final.decision.reason == "scan_actual_motion_blocked", now_s);
+      }
+      if (final.decision.stopped ||
+          (linearSpeed(path_follower_cmd) > 1e-6 && linearSpeed(output.cmd_vel) <= 1e-6)) {
+        if (final.decision.reason == "scan_actual_motion_blocked") {
+          actions_.stop_linear_motion();
+        } else {
+          actions_.pause_linear_motion();
+        }
+        output.trajectory_frozen = true;
+        output.tracking.executionFrozen = true;
+      }
       if (!final.reason.empty()) {
         output.reason = final.reason;
       }
-      if (final.safety_applied) {
-        final_safety = final.decision;
-      }
+      final_safety = final.decision;
+      safety_applied = final.safety_applied;
     }
 
-    auto local = activeDiagnostics(output, final_safety.has_value() ? &*final_safety : nullptr);
+    auto local = activeDiagnostics(output, final_safety.has_value() ? &*final_safety : nullptr,
+                                   safety_applied);
     local.path_follower_cmd_vel = path_follower_cmd;
     local.cmd_vel = output.cmd_vel;
     local.reason = output.reason;
@@ -244,6 +272,7 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
     local.seen = true;
     local.active = false;
     local.path_found = false;
+    local.tracking.executionFrozen = local.tracking.active;
     local.near_field_stop = true;
     local.reason = input.input_gate.reason;
     local.final_safety_applied = false;

@@ -22,23 +22,21 @@ NATIVE_MOTION_CI_PATH = ROOT_DIR / ".github" / "workflows" / "native-motion-buil
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from lingtu.assembly.compiler import blueprint_for_resolved_product  # noqa: E402
-from lingtu.assembly.plugins import install_builtin_plugin_catalog  # noqa: E402
-from lingtu.assembly.products import resolve_product_host_runtime  # noqa: E402
-from lingtu.control import ProductControl  # noqa: E402
-from runtime.endpoints.dds.contracts import endpoint_contract  # noqa: E402
-from runtime.runtime_interface import (  # noqa: E402
+from diagnostics.runtime_contract import (
     FIELD_DATA_SOURCE,
     REAL_RUNTIME_CONTRACT,
-    TOPICS,
 )
+from lingtu.assembly.compiler import blueprint_for_resolved_product
+from lingtu.assembly.plugins import install_builtin_plugin_catalog
+from lingtu.assembly.products import resolve_product_host_runtime
+from lingtu.control import ProductControl
+from message.topics import topic_spec
 
 install_builtin_plugin_catalog()
 
 EXPECTED_PRODUCT = "nav"
 EXPECTED_ROBOT = "doso/thunder_v4"
 EXPECTED_CANONICAL_PRODUCT = "nav"
-EXPECTED_CONTRACT = "field_dds_v1"
 EXPECTED_HARDWARE_BOUNDARY = "driver"
 EXPECTED_COMMAND_MODE = "endpoint_only"
 FIELD_PRODUCT_GRAPH_SPECS = (
@@ -91,21 +89,6 @@ FORBIDDEN_GATEWAY_COMMAND_WIRES = {
     "GatewayModule.cancel->nav.goals.cancel_request",
 }
 
-EXPECTED_BINDING_DIRECTIONS = {
-    TOPICS.lidar_scan: "endpoint_to_lingtu",
-    TOPICS.imu: "endpoint_to_lingtu",
-    TOPICS.odometry: "endpoint_to_lingtu",
-    TOPICS.registered_cloud: "endpoint_to_lingtu",
-    TOPICS.map_cloud: "endpoint_to_lingtu",
-    TOPICS.nav_command_request: "lingtu_to_endpoint",
-    TOPICS.nav_command_ack: "endpoint_to_lingtu",
-    TOPICS.global_path: "lingtu_to_endpoint",
-    TOPICS.local_path: "lingtu_to_endpoint",
-    TOPICS.nav_way_point: "lingtu_to_endpoint",
-    TOPICS.cmd_vel: "lingtu_to_endpoint",
-}
-
-
 def validate(
     product: str = EXPECTED_PRODUCT,
     *,
@@ -119,14 +102,14 @@ def validate(
         "src/lingtu/control.py",
         "src/lingtu/run_plan.py",
         "src/lingtu/assembly/products/thunder.py",
-        "src/runtime/endpoints/dds/contracts.py",
+        "src/message/topics.py",
     }
 
     plan = ProductControl(robot=robot, env="real", process_env={})._resolve(product)
     config = dict(plan.host_config)
 
     _validate_runtime_layers(plan, config, blockers)
-    _validate_endpoint_contract(blockers)
+    _validate_required_topics(plan, blockers)
     _validate_blueprint_graph(
         plan.product,
         config,
@@ -152,8 +135,8 @@ def validate(
         "robot": robot,
         "canonical_product": plan.product,
         "env": plan.env,
-        "contract": EXPECTED_CONTRACT,
-        "endpoint_contract": EXPECTED_CONTRACT,
+        "transport": "dds",
+        "required_topics": list(plan.required_topics),
         "runtime_contract": REAL_RUNTIME_CONTRACT,
         "run_plan_processes": [process.name for process in plan.processes],
         "checked_graph_products": sorted(checked_graph_products),
@@ -223,29 +206,16 @@ def _validate_runtime_layers(
             "RunPlan native env LINGTU_NAV_CONTROL_MODE expected 'autonomy' "
             f"for {plan.product!r}, got {native_env.get('LINGTU_NAV_CONTROL_MODE')!r}"
         )
-def _validate_endpoint_contract(blockers: list[str]) -> None:
-    contract = endpoint_contract(EXPECTED_CONTRACT)
-    if contract.runtime_contract != REAL_RUNTIME_CONTRACT:
-        blockers.append(
-            f"endpoint contract runtime expected {REAL_RUNTIME_CONTRACT!r}, got {contract.runtime_contract!r}"
-        )
-    if contract.transport != "dds":
-        blockers.append(f"endpoint contract transport expected 'dds', got {contract.transport!r}")
+def _validate_required_topics(plan: Any, blockers: list[str]) -> None:
+    """Check the selected Product's requirements against the generated DDS view."""
 
-    for topic, expected_direction in EXPECTED_BINDING_DIRECTIONS.items():
-        try:
-            binding = contract.binding_for_topic(topic)
-        except KeyError:
-            blockers.append(f"endpoint contract missing topic {topic}")
+    for topic in plan.required_topics:
+        spec = topic_spec(topic)
+        if spec is None:
+            blockers.append(f"RunPlan required topic {topic} has no typed DDS declaration")
             continue
-        if binding.direction != expected_direction:
-            blockers.append(
-                f"endpoint contract {topic} direction expected {expected_direction!r}, got {binding.direction!r}"
-            )
-        if binding.payload_format != "dds.idl.v1":
-            blockers.append(f"endpoint contract {topic} payload format must be dds.idl.v1")
-        if not binding.idl_type:
-            blockers.append(f"endpoint contract {topic} must declare an IDL message type")
+        if not spec.message_type or not spec.dds_topic or not spec.qos_profile:
+            blockers.append(f"RunPlan required topic {topic} must declare DDS name, message type, and QoS")
 
 
 def _validate_core_field_product_graphs(

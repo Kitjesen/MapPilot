@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Behavior contracts for direct FactoryPark_HF element production."""
 
@@ -8,7 +7,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from sim.tools.worlds.factory_park_hf.elements import compile_element_batch, element_catalog
 from sim.tools.worlds.factory_park_hf.generate import (
     generate_factory_park_hf,

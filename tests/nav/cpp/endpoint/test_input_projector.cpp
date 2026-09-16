@@ -1132,6 +1132,57 @@ void testSensorBatchOwnsDdsSamplesAndAppliesInFrameOrder() {
           "sensor batch must own point data before the DDS loan is returned");
 }
 
+void testSimulationClockSeparatesExecutionAndFreshness() {
+  EndpointState state;
+  InputGateConfig gate_config;
+  gate_config.require_cloud = false;
+  gate_config.recovery_frames = 1;
+  gate_config.odom_max_age_s = 10.0;
+  InputGate gate(gate_config);
+  TransformBuffer poses, transforms;
+  MotionLayer obstacles;
+  InputConfig config;
+  config.use_simulation_clock = true;
+  config.simulation_clock_max_age_s = 0.25;
+  InputProjector projector(state, gate, poses, transforms, obstacles, config, {});
+  TimingDiagnostics timing;
+  projector.projectOdometry(odometryMessage(1000.0, "map"), 100.0);
+  require(projector.evaluateGate(100.01, steadyTime(100.01)).reason == "simulation_clock_missing",
+          "simulation execution must not silently fall back to wall time");
+  lingtu::nav::endpoint::SensorBatch batch;
+  batch.receive_steady_s = 100.0;
+  batch.simulation_time_s = 0.0;
+  projector.apply(batch, timing);
+  require(projector.evaluateGate(100.01, steadyTime(100.01)).ready,
+          "zero is a valid simulation clock origin");
+  require(projector.executionTime(100.2) == 0.0,
+          "wall time must not advance the execution clock");
+  require(projector.evaluateGate(100.3, steadyTime(100.3)).reason == "simulation_clock_stale",
+          "clock freshness must still expire in wall time while physics is paused");
+
+  batch.receive_steady_s = 100.4;
+  projector.apply(batch, timing);
+  require(projector.evaluateGate(100.41, steadyTime(100.41)).ready,
+          "repeated paused clock samples must refresh communication health");
+  batch.simulation_time_s = 0.05;
+  projector.apply(batch, timing);
+  require(projector.executionTime(101.0) == 0.05,
+          "execution must advance by the physical sample, not receive time");
+  batch.simulation_time_s = 0.0;
+  projector.apply(batch, timing);
+  require(projector.evaluateGate(100.41, steadyTime(100.41)).reason == "simulation_clock_regressed",
+          "a physics reset must not reactivate an old trajectory");
+  require(lingtu::nav::endpoint::manualModeMayBypassInputGate(state.input_gate_state),
+          "manual escape does not need a trajectory clock");
+
+  EndpointState real_state;
+  InputGate real_gate(gate_config);
+  InputProjector real(real_state, real_gate, poses, transforms, obstacles, {}, {});
+  real.apply(batch, timing);
+  require(!real_state.simulation_time_s && real.executionTime(101.0) == 101.0,
+          "real execution must ignore simulation clock samples");
+}
+
 }  // namespace
 
 int main() {
@@ -1154,6 +1205,7 @@ int main() {
   testPlannerClearingUsesDistinctSynchronousReasonsWithoutResettingCloudEpoch();
   testEpochRecoveryBaselinesBeforeTriggeringTfGeneration();
   testSensorBatchOwnsDdsSamplesAndAppliesInFrameOrder();
+  testSimulationClockSeparatesExecutionAndFreshness();
   std::cout << "test_input_projector passed\n";
   return 0;
   } catch (const std::exception &error) {

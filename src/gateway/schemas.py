@@ -8,7 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from lingtu.products import ProductName
-from runtime.runtime_interface import body_frame_id, map_frame_id
+from runtime.tf.frames import body_frame_id, map_frame_id
 
 GATEWAY_MAP_FRAME_ID = map_frame_id()
 GATEWAY_BODY_FRAME_ID = body_frame_id()
@@ -413,15 +413,16 @@ class TemporalSemanticRequest(BaseModel):
 
 
 class LocalizationInitialPose(BaseModel):
-    """Caller-provided planar seed in the active map frame."""
+    """Caller-provided body position and yaw in the active map frame."""
 
     model_config = ConfigDict(extra="forbid")
 
     x: float
     y: float
     yaw: float
+    z: float = 0.0
 
-    @field_validator("x", "y", "yaw")
+    @field_validator("x", "y", "z", "yaw")
     @classmethod
     def finite(cls, value: float) -> float:
         import math
@@ -967,19 +968,6 @@ class SafetyEstopResponse(GatewayResponseModel):
     command: CommandReceipt | None = None
 
 
-class AuthLoginRequest(BaseModel):
-    key: str = Field(default="", max_length=4096)
-
-
-class AuthLoginResponse(GatewayResponseModel):
-    ok: bool
-    message: str
-
-
-class AuthCheckResponse(GatewayResponseModel):
-    auth_required: bool
-
-
 class LeaseResponse(GatewayResponseModel):
     schema_version: int = 1
     ok: bool = True
@@ -1151,7 +1139,7 @@ class NavigationDdsSnapshotResponse(GatewayResponseModel):
     cmd_vel: DdsTwistSnapshot | None = None
     nav_endpoint: dict[str, Any] | None = None
     traversability_endpoint: dict[str, Any] | None = None
-    navigation: dict[str, Any] = Field(default_factory=dict)
+    navigation_state: dict[str, Any] = Field(default_factory=dict)
     ts: float
     source: str = "gateway_navigation_cache"
 
@@ -1602,129 +1590,7 @@ class LocalizationStatusResponse(GatewayResponseModel):
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
-class NavigationPathSummary(GatewayResponseModel):
-    points: int = 0
-    endpoint: str
-
-
-class NavigationControlActiveSource(GatewayResponseModel):
-    name: str
-    label: str
-    category: str
-    owner: str
-    priority: int | None = None
-    active: bool | None = None
-    age_ms: int | None = None
-
-
-class NavigationControlSummary(GatewayResponseModel):
-    mode: str
-    lease: dict[str, Any] = Field(default_factory=dict)
-    authority_source: str = "native_endpoint"
-    authority_available: bool = False
-    native_endpoint_available: bool = False
-    active_cmd_source: str
-    command_owner: str
-    source_category: str
-    manual_override: bool
-    autonomy_requested: bool
-    preempting_autonomy: bool
-    operator_takeover_latched: bool = False
-    resume_required: bool = False
-    estop_latched: bool = False
-    active_source: NavigationControlActiveSource
-    sources: dict[str, Any] = Field(default_factory=dict)
-    native_endpoint_control: dict[str, Any] = Field(default_factory=dict)
-
-
-class NavigationLocalizationSummary(GatewayResponseModel):
-    state: str | None = None
-    ready: bool | None = None
-    degraded: bool = False
-    algorithm_healthy: bool | None = None
-    pose_fresh: bool | None = None
-    pose_freshness: str | None = None
-    degeneracy: str | None = None
-    speed_scale: float | None = None
-    reasons: list[str] = Field(default_factory=list)
-
-
-class NavigationReadinessSummary(GatewayResponseModel):
-    navigation_ready: bool
-    can_accept_goal: bool
-    can_execute_autonomy: bool
-    blockers: list[str] = Field(default_factory=list)
-    advisories: list[str] = Field(default_factory=list)
-    localization_ready: bool
-    control_owner: str
-    session_mode: str | None = None
-
-
-class NavigationProgressSummary(GatewayResponseModel):
-    wp_index: int = 0
-    wp_total: int = 0
-    fraction: float = 0.0
-    path_points: int = 0
-    replan_count: int = 0
-    active: bool = False
-    terminal: bool = False
-
-
-class NavigationDiagnosticsSummary(GatewayResponseModel):
-    reason_codes: list[str] = Field(default_factory=list)
-    failure_reason: str = ""
-    localization_reasons: list[str] = Field(default_factory=list)
-    frame_mismatches: list[NavigationFrameMismatch] = Field(default_factory=list)
-    safety: dict[str, Any] | None = None
-
-
-class NavigationMissionSummary(GatewayResponseModel):
-    state: str
-    raw: dict[str, Any] = Field(default_factory=dict)
-
-
-class NavigationTargetSummary(GatewayResponseModel):
-    goal: PathPoint | None = None
-    current_waypoint: PathPoint | None = None
-    distance_to_goal_m: float | None = None
-    active_waypoint_distance_m: float | None = None
-    remaining_waypoints: int | None = None
-
-
-class NavigationSpeedPolicy(GatewayResponseModel):
-    scale: float | None = None
-    mode: Literal["normal", "cautious", "restricted", "hold", "unknown"] = "unknown"
-    reason: str | None = None
-    source: str = "native_navigation_state"
-    applied: bool | None = None
-
-
-class NavigationMotionSummary(GatewayResponseModel):
-    current_speed_mps: float | None = None
-    speed_scale: float | None = None
-    speed_policy: NavigationSpeedPolicy
-    active_cmd_source: str
-    command_owner: str
-
-
-class NavigationFeedbackSummary(GatewayResponseModel):
-    next_action: str
-    primary: str
-    blockers: list[str] = Field(default_factory=list)
-    advisories: list[str] = Field(default_factory=list)
-    reason_codes: list[str] = Field(default_factory=list)
-
-
-class NavigationFrameSummary(GatewayResponseModel):
-    planning_frame_id: str = GATEWAY_MAP_FRAME_ID
-    odom_frame_id: str = "unknown"
-    costmap_frame_id: str = "unknown"
-    goal_frame_id: str | None = None
-    ok: bool = True
-    mismatches: list[NavigationFrameMismatch] = Field(default_factory=list)
-
-
-class NavigationOperatorTaskState(GatewayResponseModel):
+class NavigationTaskState(GatewayResponseModel):
     state: Literal[
         "IDLE",
         "PLANNING",
@@ -1737,25 +1603,21 @@ class NavigationOperatorTaskState(GatewayResponseModel):
         "UNKNOWN",
     ]
     task_id: str
-    request_id: str
-    terminal: bool
-    progress: float | None = None
     reason: str
 
 
-class NavigationOperatorGoalAdmission(GatewayResponseModel):
+class NavigationGoalAdmission(GatewayResponseModel):
     state: Literal["ACCEPTING", "BLOCKED", "UNKNOWN"]
-    blockers: list[str] = Field(default_factory=list)
-    advisories: list[str] = Field(default_factory=list)
+    reason: str
 
 
-class NavigationOperatorControlState(GatewayResponseModel):
+class NavigationControlState(GatewayResponseModel):
     authority: Literal["AUTONOMY", "OPERATOR", "NONE", "UNKNOWN"]
     resume_required: bool
     reason: str
 
 
-class NavigationOperatorMotionState(GatewayResponseModel):
+class NavigationMotionState(GatewayResponseModel):
     permission: Literal["CLEAR", "HELD", "ESTOPPED", "UNKNOWN"]
     observation: Literal["MOVING", "QUIET", "UNKNOWN"]
     stop_confirmation: Literal[
@@ -1765,82 +1627,15 @@ class NavigationOperatorMotionState(GatewayResponseModel):
         "FAILED",
         "UNKNOWN",
     ]
-    linear_speed_mps: float | None = None
-    angular_speed_radps: float | None = None
     reason: str
 
 
-class NavigationOperatorSummary(GatewayResponseModel):
-    severity: Literal["OK", "INFO", "WARNING", "CRITICAL"]
-    code: Literal[
-        "STOP_CONFIRMATION_FAILED",
-        "STOP_CONFIRMATION_PENDING",
-        "ESTOPPED",
-        "STATUS_SOURCE_UNKNOWN",
-        "MOTION_HELD",
-        "GOAL_ADMISSION_BLOCKED",
-        "TASK_FAILED",
-        "TASK_RECOVERING",
-        "TASK_PLANNING",
-        "TASK_PAUSED",
-        "NAVIGATION_ADVISORY",
-        "TASK_EXECUTING",
-        "TASK_SUCCEEDED",
-        "TASK_CANCELLED",
-        "READY_FOR_GOAL",
-    ]
-    next_action: Literal[
-        "inspect_stop_failure",
-        "wait_for_stop_confirmation",
-        "clear_estop",
-        "check_status_sources",
-        "resolve_motion_hold",
-        "resolve_goal_blockers",
-        "inspect_task_failure",
-        "monitor_recovery",
-        "wait_for_plan",
-        "resume_or_cancel",
-        "review_advisories",
-        "monitor_progress",
-        "choose_goal",
-    ]
-
-
-class NavigationOperatorState(GatewayResponseModel):
-    schema_version: Literal[1] = 1
-    task: NavigationOperatorTaskState
-    goal_admission: NavigationOperatorGoalAdmission
-    control: NavigationOperatorControlState
-    motion: NavigationOperatorMotionState
-    summary: NavigationOperatorSummary
-
-
 class NavigationStatusResponse(GatewayResponseModel):
-    schema_version: int
-    state: str
-    has_odometry: bool
-    can_accept_goal: bool
-    navigation_ready: bool
-    wp_index: int = 0
-    wp_total: int = 0
-    replan_count: int = 0
-    speed_scale: float | None = None
-    failure_reason: str = ""
-    reason_codes: list[str] = Field(default_factory=list)
-    readiness: NavigationReadinessSummary
-    progress: NavigationProgressSummary
-    path: NavigationPathSummary
-    runtime: NavigationRuntimeBoundary
-    frames: NavigationFrameSummary
-    control: NavigationControlSummary
-    localization: NavigationLocalizationSummary
-    target: NavigationTargetSummary
-    motion: NavigationMotionSummary
-    feedback: NavigationFeedbackSummary
-    diagnostics: NavigationDiagnosticsSummary
-    mission: NavigationMissionSummary
-    goal_status: dict[str, Any] | None = None
-    operator_state: NavigationOperatorState
+    schema_version: Literal[3] = 3
+    task: NavigationTaskState
+    goal_admission: NavigationGoalAdmission
+    control: NavigationControlState
+    motion: NavigationMotionState
     ts: float
 
 
@@ -2234,8 +2029,6 @@ class ClientLinks(GatewayResponseModel):
     runtime_dataflow_subscribe: str | None = None
     readiness: str | None = None
     metrics: str | None = None
-    auth_login: str | None = None
-    auth_check: str | None = None
     events: str | None = None
     teleop_ws: str | None = None
     camera_ws: str | None = None
@@ -2468,12 +2261,13 @@ class AppTrafficResponse(GatewayResponseModel):
 
 
 class StateResponse(GatewayResponseModel):
-    schema_version: int
+    schema_version: Literal[4] = 4
     ts: float
     server: ServerInfo
     lease: dict[str, Any]
     teleop: TeleopSummary
     session: dict[str, Any]
+    safety: dict[str, Any]
     localization: LocalizationStatusResponse
     navigation: NavigationStatusResponse
     visual_servo: dict[str, Any] | None = None
@@ -2485,12 +2279,11 @@ class StateResponse(GatewayResponseModel):
 
 
 class AppBootstrapResponse(GatewayResponseModel):
-    schema_version: int
+    schema_version: Literal[4] = 4
     ts: float
     server: ServerInfo
     robot: dict[str, Any]
     session: dict[str, Any]
-    mission: dict[str, Any]
     safety: dict[str, Any]
     localization: LocalizationStatusResponse
     navigation: NavigationStatusResponse
@@ -2510,7 +2303,6 @@ class AppCapabilitiesResponse(GatewayResponseModel):
     schema_version: int
     ts: float
     server: ServerInfo
-    auth: dict[str, Any]
     features: dict[str, bool]
     runtime_products: dict[str, Any] = Field(default_factory=dict)
     endpoints: dict[str, dict[str, EndpointSpec]]

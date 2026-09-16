@@ -14,13 +14,12 @@ import time
 from pathlib import Path
 from typing import cast
 
-from message.topics import dds_topic_name
+from message.topics import TOPICS, dds_topic_name
 from runtime.contracts import CAMERA_BACKEND_DDS, CAMERA_ROLE
 from runtime.module import Module
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat
 from runtime.registry import register
-from runtime.runtime_interface import TOPICS
 from runtime.stream import Out
 
 from .shm import (

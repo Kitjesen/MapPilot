@@ -35,7 +35,7 @@ def test_slam_adapter_does_not_fan_out_to_retired_python_map_layers() -> None:
         and spec.out_port == "map_cloud_frame"
     }
 
-    assert observation_targets == {"ReconstructionModule"}
+    assert observation_targets == {"ReconstructionModule", "GatewayModule"}
     assert frame_targets == set()
     assert not any(spec.out_port == "map_cloud" or spec.in_port == "map_cloud" for spec in specs)
 

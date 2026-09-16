@@ -55,6 +55,9 @@ struct EndpointState {
   LocalCollisionMap local_collision_map;
 
   // -- Timestamps --------------------------------------------------------------
+  std::optional<double> simulation_time_s;
+  double simulation_clock_receive_s{0.0};
+  bool simulation_clock_regressed{false};
   double last_terrain_map_s{0.0};
   double last_terrain_map_receive_s{0.0};
   double last_terrain_ext_s{0.0};

@@ -6,10 +6,12 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from gateway.services.mapd_transport import mapd_query
+from gateway.maps.transport import active_map as read_active_map
+from gateway.maps.transport import map_bundle, mapd_request
 from gateway.services.runtime_status import (
     backend_capability_defaults,
     classify_pose_freshness,
+    compiled_session_context,
     localizer_algorithm_healthy,
     runtime_identity,
 )
@@ -23,31 +25,23 @@ from gateway.services.safety_status import (
 def _runtime_projection(gw: Any) -> dict[str, Any]:
     """Project Product session identity from RunPlan and native mapd."""
 
-    identity = runtime_identity(gw)
-    plan = getattr(gw, "_compiled_run_plan", None)
-    lifecycle = getattr(plan, "lifecycle", None) if plan is not None else None
-    mode = "idle"
-    slam_profile = "stopped"
-    requires_map = False
-    if isinstance(lifecycle, Mapping):
-        product = str(getattr(plan, "product", "") or "").strip()
-        if str(lifecycle.get("product") or "").strip() != product:
-            raise RuntimeError("compiled RunPlan lifecycle Product mismatch")
-        declared_mode = str(lifecycle.get("session_mode") or "none").strip().lower()
-        mode = "idle" if declared_mode == "none" else declared_mode
-        slam_profile = str(lifecycle.get("slam_mode") or "none").strip().lower()
-        requires_map = lifecycle.get("requires_map") is True
+    context = compiled_session_context(gw) or {
+        **runtime_identity(gw),
+        "mode": "idle",
+        "slam_profile": "stopped",
+        "requires_map": False,
+    }
+    requires_map = context.pop("requires_map")
+    mode = context["mode"]
 
-    saved_active_map = gw._session_active_map_name()
+    saved_active_map = read_active_map(gw)
     active_map = (
         saved_active_map
         if mode in {"navigating", "exploring"} and requires_map
         else None
     )
     return {
-        **identity,
-        "mode": mode,
-        "slam_profile": slam_profile,
+        **context,
         "active_map": active_map,
         "saved_active_map": saved_active_map,
     }
@@ -123,7 +117,7 @@ def session_snapshot(gw: Any) -> dict[str, Any]:
     can_activate = False
     if saved_active_map:
         try:
-            maps_response = mapd_query(gw, {"action": "list_maps"})
+            maps_response = mapd_request(gw, {"action": "list_maps"})
         except Exception:
             pass
         else:
@@ -142,14 +136,16 @@ def session_snapshot(gw: Any) -> dict[str, Any]:
                     can_activate = target["can_activate"]
     if artifact_map:
         has_pcd = (
-            gw._map_bundle_from_mapd(
+            map_bundle(
+                gw,
                 artifact_map,
                 "source_pointcloud",
             )
             is not None
         )
         has_octomap = (
-            gw._map_bundle_from_mapd(
+            map_bundle(
+                gw,
                 artifact_map,
                 "navigation_safety_3d",
             )
@@ -180,6 +176,9 @@ def session_snapshot(gw: Any) -> dict[str, Any]:
     map_save_supported = localization_status.get("map_save_supported")
     if map_save_supported is None:
         map_save_supported = capability_defaults["map_save_supported"]
+    if backend == "native_dds":
+        # Native SaveCoordinator accepts captures only in the committed map Product.
+        map_save_supported = bool(map_save_supported) and projection["product"] == "map"
     map_save_source = localization_status.get("map_save_source")
     if map_save_source is None:
         map_save_source = capability_defaults["map_save_source"]

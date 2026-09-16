@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import importlib
 from types import SimpleNamespace
+
+import pytest
 
 from drivers.real.camera_jpeg_relay import CameraJpegRelayModule
 
@@ -24,3 +27,16 @@ def test_camera_jpeg_relay_registers_only_as_gateway_media_provider() -> None:
 
     assert gateway._camera_module is relay
     assert not hasattr(gateway, "_teleop_module")
+
+
+def test_camera_preview_reports_missing_encoder_at_setup(monkeypatch) -> None:
+    original = importlib.import_module
+
+    def unavailable(name: str):
+        if name == "cv2":
+            raise ModuleNotFoundError("No module named 'cv2'")
+        return original(name)
+
+    monkeypatch.setattr("drivers.real.camera_jpeg_relay.importlib.import_module", unavailable)
+    with pytest.raises(RuntimeError, match="declared vision dependency"):
+        CameraJpegRelayModule().setup()

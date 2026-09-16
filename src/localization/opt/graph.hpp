@@ -43,6 +43,19 @@ struct OptimizeOptions {
   std::vector<GeometricConstraint> geometric_constraints;
 };
 
+struct GraphSolution {
+  bool ok = false;
+  std::string code;
+  std::string message;
+  std::vector<Keyframe> keyframes;
+  lt_pose_graph_opt_report report{};
+};
+
+// Pure in-memory solve. Input poses are estimates, never synthesized factors.
+// Both the save-time writer and the online worker use this quality gate.
+GraphSolution optimize_graph(const std::vector<Keyframe>& keyframes,
+                             const OptimizeOptions& options);
+
 Result optimize_map(const Map& map, const OptimizeOptions& options);
 
 std::vector<Keyframe> read_poses(const std::filesystem::path& path);

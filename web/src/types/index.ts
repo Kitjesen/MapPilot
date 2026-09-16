@@ -5,7 +5,7 @@ export interface MapInfo {
   has_pcd: boolean
   has_occupancy?: boolean
   has_octomap?: boolean
-  activation_ready?: boolean
+  can_activate: boolean
   state?: string | null
   is_active: boolean
   size_mb?: number
@@ -149,9 +149,10 @@ export interface LocationOperationResponse {
 }
 
 export interface StateResponse {
-  schema_version: number
+  schema_version: 4
   ts: number
   server?: ServerInfo
+  safety?: Record<string, unknown> | null
   lease?: Record<string, unknown> | null
   teleop?: Record<string, unknown> | null
   session?: SessionEvent['data'] | Record<string, unknown> | null
@@ -256,17 +257,6 @@ export interface RealRuntimeEvidenceLatestResponse {
   [key: string]: unknown
 }
 
-export interface AuthLoginResponse {
-  ok: boolean
-  message?: string | null
-  [key: string]: unknown
-}
-
-export interface AuthCheckResponse {
-  auth_required: boolean
-  [key: string]: unknown
-}
-
 export interface RobotPoseSummary {
   x: number
   y: number
@@ -326,6 +316,18 @@ export interface NativeLocalTraversabilityDebug {
 }
 
 export interface NativeLocalMapDebug {
+  collision?: {
+    enabled?: boolean
+    frame_id?: string
+    live?: boolean
+    complete?: boolean
+    stamp_s?: number
+    resolution_m?: number
+    occupied_points?: number[][]
+    occupied_points_returned?: number
+    occupied_points_total?: number
+    occupied_points_truncated?: boolean
+  }
   enabled?: boolean
   frame_id?: string
   obstacle_points_fresh?: boolean
@@ -752,132 +754,7 @@ export interface ProductFieldCheckResponse {
   advisories: string[]
 }
 
-export interface NavigationPathSummary {
-  points: number
-  endpoint: string
-}
-
-export interface NavigationControlActiveSource {
-  name: string
-  label: string
-  category: string
-  owner: string
-  priority?: number | null
-  active?: boolean | null
-  age_ms?: number | null
-}
-
-export interface NavigationControlSummary {
-  mode: string
-  lease: Record<string, unknown>
-  active_cmd_source: string
-  command_owner: string
-  source_category: string
-  manual_override: boolean
-  autonomy_requested: boolean
-  preempting_autonomy: boolean
-  active_source: NavigationControlActiveSource
-  sources: Record<string, unknown>
-  [key: string]: unknown
-}
-
-export interface NavigationLocalizationSummary {
-  state?: string | null
-  ready?: boolean | null
-  degraded: boolean
-  algorithm_healthy?: boolean | null
-  pose_fresh?: boolean | null
-  pose_freshness?: string | null
-  degeneracy?: string | null
-  speed_scale?: number | null
-  reasons: string[]
-}
-
-export interface NavigationReadinessSummary {
-  can_accept_goal: boolean
-  can_execute_autonomy: boolean
-  blockers: string[]
-  advisories: string[]
-  localization_ready: boolean
-  control_owner: string
-  session_mode?: string | null
-}
-
-export interface NavigationProgressSummary {
-  wp_index: number
-  wp_total: number
-  fraction: number
-  path_points: number
-  replan_count: number
-  active: boolean
-  terminal: boolean
-}
-
-export interface NavigationFrameMismatch {
-  source: string
-  expected_frame: string
-  received_frame: string
-}
-
-export interface NavigationFrameSummary {
-  planning_frame_id: string
-  odom_frame_id: string
-  costmap_frame_id: string
-  goal_frame_id?: string | null
-  ok: boolean
-  mismatches: NavigationFrameMismatch[]
-}
-
-export interface NavigationDiagnosticsSummary {
-  reason_codes: string[]
-  failure_reason: string
-  localization_reasons: string[]
-  frame_mismatches: NavigationFrameMismatch[]
-  safety?: Record<string, unknown> | null
-  plan_safety_policy?: string | null
-  last_plan_report?: Record<string, unknown>
-}
-
-export interface NavigationMissionSummary {
-  state: string
-  raw: Record<string, unknown>
-}
-
-export interface NavigationTargetSummary {
-  goal?: PathPoint | null
-  current_waypoint?: PathPoint | null
-  distance_to_goal_m?: number | null
-  active_waypoint_distance_m?: number | null
-  remaining_waypoints?: number | null
-}
-
-export type NavigationSpeedPolicyMode = 'normal' | 'cautious' | 'restricted' | 'hold' | 'unknown'
-
-export interface NavigationSpeedPolicy {
-  scale?: number | null
-  mode: NavigationSpeedPolicyMode
-  reason?: string | null
-  source: string
-  applied?: boolean | null
-}
-
-export interface NavigationMotionSummary {
-  current_speed_mps?: number | null
-  speed_scale?: number | null
-  speed_policy: NavigationSpeedPolicy
-  active_cmd_source: string
-  command_owner: string
-}
-
-export interface NavigationFeedbackSummary {
-  next_action: string
-  primary: string
-  blockers: string[]
-  advisories: string[]
-  reason_codes: string[]
-}
-
-export type NavigationOperatorTaskState =
+export type NavigationTaskState =
   | 'IDLE'
   | 'PLANNING'
   | 'EXECUTING'
@@ -888,76 +765,39 @@ export type NavigationOperatorTaskState =
   | 'CANCELLED'
   | 'UNKNOWN'
 
-export type NavigationOperatorMotionPermission = 'CLEAR' | 'HELD' | 'ESTOPPED' | 'UNKNOWN'
-export type NavigationOperatorMotionObservation = 'MOVING' | 'QUIET' | 'UNKNOWN'
-export type NavigationOperatorGoalAdmission = 'ACCEPTING' | 'BLOCKED' | 'UNKNOWN'
-export type NavigationOperatorControlAuthority = 'AUTONOMY' | 'OPERATOR' | 'NONE' | 'UNKNOWN'
-export type NavigationOperatorSummarySeverity = 'OK' | 'INFO' | 'WARNING' | 'CRITICAL'
-export type NavigationOperatorStopConfirmation =
+export type NavigationMotionPermission = 'CLEAR' | 'HELD' | 'ESTOPPED' | 'UNKNOWN'
+export type NavigationMotionObservation = 'MOVING' | 'QUIET' | 'UNKNOWN'
+export type NavigationGoalAdmission = 'ACCEPTING' | 'BLOCKED' | 'UNKNOWN'
+export type NavigationControlAuthority = 'AUTONOMY' | 'OPERATOR' | 'NONE' | 'UNKNOWN'
+export type NavigationStopConfirmation =
   | 'NOT_REQUESTED'
   | 'PENDING'
   | 'CONFIRMED'
   | 'FAILED'
   | 'UNKNOWN'
 
-export interface NavigationOperatorState {
-  schema_version: 1
+export interface NavigationStatusResponse {
+  schema_version: 3
   task: {
-    state: NavigationOperatorTaskState
+    state: NavigationTaskState
     task_id: string
-    request_id: string
-    terminal: boolean
-    progress: number | null
     reason: string
   }
   goal_admission: {
-    state: NavigationOperatorGoalAdmission
-    blockers: string[]
-    advisories: string[]
+    state: NavigationGoalAdmission
+    reason: string
   }
   control: {
-    authority: NavigationOperatorControlAuthority
+    authority: NavigationControlAuthority
     resume_required: boolean
     reason: string
   }
   motion: {
-    permission: NavigationOperatorMotionPermission
-    observation: NavigationOperatorMotionObservation
-    stop_confirmation: NavigationOperatorStopConfirmation
-    linear_speed_mps: number | null
-    angular_speed_radps: number | null
+    permission: NavigationMotionPermission
+    observation: NavigationMotionObservation
+    stop_confirmation: NavigationStopConfirmation
     reason: string
   }
-  summary: {
-    severity: NavigationOperatorSummarySeverity
-    code: string
-    next_action: string
-  }
-}
-
-export interface NavigationStatusResponse {
-  schema_version: number
-  state: string
-  has_odometry: boolean
-  can_accept_goal: boolean
-  wp_index: number
-  wp_total: number
-  replan_count: number
-  speed_scale?: number | null
-  failure_reason: string
-  reason_codes: string[]
-  readiness: NavigationReadinessSummary
-  progress: NavigationProgressSummary
-  path: NavigationPathSummary
-  frames: NavigationFrameSummary
-  control: NavigationControlSummary
-  localization: NavigationLocalizationSummary
-  target: NavigationTargetSummary
-  motion: NavigationMotionSummary
-  feedback: NavigationFeedbackSummary
-  diagnostics: NavigationDiagnosticsSummary
-  mission: NavigationMissionSummary
-  operator_state?: NavigationOperatorState
   ts: number
 }
 
@@ -1027,8 +867,6 @@ export interface ClientLinks {
   devices?: string
   readiness?: string
   metrics?: string
-  auth_login?: string
-  auth_check?: string
   events?: string
   teleop_ws?: string
   camera_ws?: string
@@ -1351,6 +1189,7 @@ export interface RuntimeDataflowTopicSummary {
 }
 
 export interface RuntimeDataflowResponse {
+  run_plan?: unknown
   schema_version: number
   ts: number
   runtime_contract?: string | null
@@ -1484,12 +1323,11 @@ export interface VisualServoStatusEvent {
 }
 
 export interface AppBootstrapResponse {
-  schema_version: number
+  schema_version: 4
   ts: number
   server: ServerInfo
   robot: Record<string, unknown>
   session: SessionEvent['data'] | Record<string, unknown>
-  mission: Record<string, unknown>
   safety: Record<string, unknown>
   localization: Record<string, unknown>
   navigation: NavigationStatusResponse
@@ -1519,7 +1357,6 @@ export interface AppCapabilitiesResponse {
   schema_version: number
   ts: number
   server: ServerInfo
-  auth: Record<string, unknown>
   features: Record<string, boolean>
   runtime_products?: RuntimeProductCapabilities
   endpoints: Record<string, Record<string, EndpointSpec>>
@@ -1632,6 +1469,7 @@ export interface LeaseResponse {
 }
 
 export interface OdometryEvent {
+  orientation?: [number, number, number, number] | null
   type: 'odometry'
   x: number
   y: number
@@ -1642,13 +1480,6 @@ export interface OdometryEvent {
   frame_id?: string | null
   child_frame_id?: string | null
   ts?: number | null
-}
-
-export interface MissionStatusEvent {
-  type: 'mission_status'
-  state: string
-  goal: string | null
-  progress: number
 }
 
 export interface SafetyStateEvent {
@@ -1671,7 +1502,6 @@ export interface PingEvent {
 export interface SnapshotEventData {
   odometry?: Record<string, unknown>
   safety?: Record<string, unknown>
-  mission?: Record<string, unknown>
   mode?: string
   lease?: Record<string, unknown>
   session?: Record<string, unknown>
@@ -1682,11 +1512,6 @@ export interface SnapshotEventData {
 export interface SnapshotEvent {
   type: 'snapshot'
   data?: SnapshotEventData
-}
-
-export interface MissionEvent {
-  type: 'mission'
-  data?: Record<string, unknown>
 }
 
 export interface SafetyEvent {
@@ -1855,6 +1680,8 @@ export interface MapScenePaletteEntry {
   name?: string
 }
 
+export type MapResetEpoch = import('../services/mapSceneIdentity.ts').MapResetEpoch
+
 export interface MapSceneLayer {
   id?: string
   type?: string
@@ -1875,6 +1702,31 @@ export interface MapSceneLayer {
   [key: string]: unknown
 }
 
+export interface OccupancyMapSceneLayer extends MapSceneLayer {
+  id: string
+  type: 'grid'
+  frame_id: string
+  producer_boot_id: string
+  stamp_s: number
+  generation: number
+  reset_epoch: MapResetEpoch
+  observation_sequence: number
+  live: boolean
+  grid_b64: string
+  rows: number
+  cols: number
+  resolution: number
+  origin: [number, number, number]
+  yaw: number
+  encoding: 'int8'
+  value_semantics: 'height_band_occupancy_not_traversability' | 'ground_relative_surface_not_traversability'
+  scope: 'rolling_window'
+  unknown_count: number
+  free_count: number
+  occupied_count: number
+  downsample_factor: number
+}
+
 export interface ElevationMapSceneLayer extends MapSceneLayer {
   id: string
   type: 'grid'
@@ -1882,7 +1734,7 @@ export interface ElevationMapSceneLayer extends MapSceneLayer {
   producer_boot_id: string
   stamp_s: number
   generation: number
-  reset_epoch: number
+  reset_epoch: MapResetEpoch
   observation_sequence: number
   live: boolean
   grid_b64: string
@@ -1902,6 +1754,29 @@ export interface ElevationMapSceneLayer extends MapSceneLayer {
   payload_observation_sequence?: number
   payload_stamp_s?: number
   retained_for_generation?: number
+}
+
+export interface GroundDiagnosticMapSceneLayer extends MapSceneLayer {
+  id: 'maps.ground_height' | 'maps.ground_roughness' | 'maps.ground_support'
+  type: 'grid'
+  frame_id: string
+  producer_boot_id: string
+  stamp_s: number
+  generation: number
+  reset_epoch: MapResetEpoch
+  observation_sequence: number
+  live: boolean
+  grid_b64: string
+  rows: number
+  cols: number
+  resolution: number
+  origin: [number, number, number]
+  yaw: number
+  encoding: 'float32_le'
+  value_semantics: 'local_surface_fit_height_m' | 'local_surface_fit_residual_rms_m' | 'distinct_fine_xy_support_count'
+  scope: 'rolling_window'
+  valid_count: number
+  downsample_factor: 1
 }
 
 export interface MapSceneEvent {
@@ -2024,13 +1899,12 @@ export interface SSEEnvelopeFields {
 }
 
 export type SSEEvent = SSEEnvelopeFields & (
+  | import('../services/robotJointState.ts').Go2JointStateEvent
   | OdometryEvent
-  | MissionStatusEvent
   | SafetyStateEvent
   | SceneGraphEvent
   | PingEvent
   | SnapshotEvent
-  | MissionEvent
   | SafetyEvent
   | NavigationStatusEvent
   | InspectionTaskEvent
@@ -2059,8 +1933,9 @@ export type SSEEvent = SSEEnvelopeFields & (
 )
 
 export interface SSEState {
+  robotModel?: string | null
+  jointTelemetry?: import('../services/jointTelemetryStream.ts').JointTelemetryStream
   odometry: OdometryEvent | null
-  missionStatus: MissionStatusEvent | null
   safetyState: SafetyStateEvent | null
   sceneGraph: SceneGraphEvent | null
   slamStatus: SlamStatusEvent | null
@@ -2076,6 +1951,7 @@ export interface SSEState {
   commandAck: CommandAckEvent['data'] | null
   locations: LocationsResponse | null
   stateSnapshot: StateResponse | null
+  stateSnapshotReceivedAt?: number | null
   traffic: AppTrafficResponse | null
   nativeTraversability: NativeTraversabilityEvent | null
   agentMessage: AgentMessageEvent | null  // latest agent chat message (ts dedups)

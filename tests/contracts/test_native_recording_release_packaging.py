@@ -1,6 +1,6 @@
 """Release packaging contracts for the ROS-free native recording tools."""
 
-# ruff: noqa: D103, I001, S101 - pytest contracts use assertions by design.
+# ruff: noqa: I001 - pytest contracts use assertions by design.
 
 from pathlib import Path
 

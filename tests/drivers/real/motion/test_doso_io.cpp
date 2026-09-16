@@ -24,9 +24,9 @@
 #include "dds/dds.h"
 #include "doso.hpp"
 #include "messages.h"
-#include "message/cpp/qos.hpp"
-#include "message/cpp/topics.hpp"
-#include "message/cpp/navigation_command.hpp"
+#include "transport/dds/qos.hpp"
+#include "message/generated/topics.hpp"
+#include "message/protocol/navigation.hpp"
 #include "status.hpp"
 
 namespace {

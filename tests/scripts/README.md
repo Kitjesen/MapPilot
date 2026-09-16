@@ -1,6 +1,6 @@
 # Script Tests And Manual Smokes
 
-This directory separates automated script tests from manual robot/ROS smoke checks.
+This directory separates automated script tests from manual runtime smoke checks.
 
 | Path | How to run | Purpose |
 | --- | --- | --- |
@@ -8,6 +8,6 @@ This directory separates automated script tests from manual robot/ROS smoke chec
 | `*.sh` | Manual or CI-specific shell invocation | Legacy integration helpers; read each script before running on hardware. |
 | `smoke/*.py` | Manual, from repository root | Thunder compatibility smoke checks migrated from the old `scripts/test_*.py` paths. |
 
-The smoke scripts are intentionally not pytest tests: they may require ROS 2,
-Gateway, an active map, MCP, or real Thunder access. Keep their paths stable and
+The smoke scripts are intentionally not pytest tests: they may require a running
+native Product, Gateway, an active map, MCP, or real Thunder access. Keep their paths stable and
 document runtime prerequisites in `smoke/README.md`.

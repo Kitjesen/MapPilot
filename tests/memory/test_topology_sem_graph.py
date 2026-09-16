@@ -18,12 +18,11 @@ import numpy as np
 import pytest
 
 from memory.spatial.topology_graph import (
+    ExplorationTarget,
+    TopoEdge,
     TopologySemGraph,
     TopoNode,
-    TopoEdge,
-    ExplorationTarget,
 )
-
 
 # 鈹€鈹€ 娴嬭瘯鏁版嵁 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
@@ -261,7 +260,7 @@ class TestShortestPath:
         tsg = TopologySemGraph()
         tsg.update_from_scene_graph(make_scene_graph())
 
-        cost, path = tsg.shortest_path(1, 2)
+        _cost, path = tsg.shortest_path(1, 2)
         assert len(path) == 3
         assert path[0] == 1
         assert path[1] == 0

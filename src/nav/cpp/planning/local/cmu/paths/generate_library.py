@@ -13,7 +13,6 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial import cKDTree
 
-
 PROFILES = {
     "go2": 0.55,
     "thunder": 0.75,
@@ -30,8 +29,9 @@ VOXEL_COUNT_Y = 451
 def read_paths(path: Path) -> tuple[np.ndarray, np.ndarray]:
     with path.open("r", encoding="ascii") as stream:
         header_lines = 0
-        for header_lines, line in enumerate(stream, start=1):
+        for line_number, line in enumerate(stream, start=1):
             if line.strip() == "end_header":
+                header_lines = line_number
                 break
         else:
             raise ValueError(f"PLY header is incomplete: {path}")

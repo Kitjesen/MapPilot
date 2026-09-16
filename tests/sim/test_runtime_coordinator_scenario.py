@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-# ruff: noqa: S101
 import importlib
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
-
 from sim.catalog import CatalogResolver
 from sim.runtime.coordinator import (
     BindingFacet,

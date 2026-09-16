@@ -16,7 +16,7 @@
 #include <unordered_map>
 
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
-#  include <octomap/OcTree.h>
+#  include "lingtu/maps/build/octomap_io.hpp"
 #endif
 
 #if defined(_WIN32)
@@ -84,8 +84,7 @@ bool HasOctomapHeader(const std::filesystem::path& path) {
 
 bool IsValidOctomap(const std::filesystem::path& path) {
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
-  octomap::OcTree tree(0.1);
-  return tree.readBinary(path.string());
+  return LoadOctomapTree(path) != nullptr;
 #else
   return HasOctomapHeader(path);
 #endif

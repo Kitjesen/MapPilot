@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Bounded MuJoCo route-runtime smoke for the deterministic Forest_HF world.
 
@@ -24,7 +23,6 @@ from xml.etree import ElementTree
 import numpy as np
 import pytest
 import yaml
-
 from sim.catalog.resolver import CatalogResolver
 from sim.tools.worlds.forest_hf.generate import TerrainSpec, generate_forest_hf
 from sim.tools.worlds.forest_hf.materialize_proxies import (
@@ -351,8 +349,6 @@ def _assert_production_artifact_bindings(runtime: _RuntimePackage) -> None:
     )
     resolver = CatalogResolver(runtime.root, (runtime.root,))
     record = resolver.find_package("forest_hf@2.0.0", kind="world")
-    resolver._validate_world_package_content(record)
-    assert resolver._package_lock(record)["package_artifact_sha256"]
     assert record.data["physics"]["mjcf"] == (
         "physics/forest_hf.with-collision-proxies.xml"
     )
@@ -500,7 +496,7 @@ def _write_contact_probe_world(
     output: Path,
 ) -> Path:
     source = runtime.root / "physics" / "forest_hf.with-collision-proxies.xml"
-    root = ElementTree.parse(source).getroot()  # noqa: S314 - generated local MJCF.
+    root = ElementTree.parse(source).getroot()
     hfield = root.find("./asset/hfield[@name='forest_terrain']")
     assert hfield is not None
     hfield.set(

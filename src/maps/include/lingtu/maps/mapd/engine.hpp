@@ -12,6 +12,7 @@
 #include "lingtu/maps/block_grid.hpp"
 #include "lingtu/maps/cloud.hpp"
 #include "lingtu/maps/layers/grid.hpp"
+#include "lingtu/maps/layers/ground_surface.hpp"
 #include "lingtu/maps/layers/rolling_occupancy.hpp"
 #include "lingtu/maps/layers/voxel.hpp"
 
@@ -73,12 +74,18 @@ struct Config {
     value.max_range_m = 0.0F;
     value.min_z_m = -10000.0F;
     value.max_z_m = 10000.0F;
+    // Surface hits do not prove that other heights in the column are free.
+    // The independent occupancy layer owns ray-based clearing.
+    value.column_carving = false;
+    // Observed surfaces persist within the local window, including sparse hits.
+    value.decay_rate = 0.0F;
     return value;
   }();
   layers::RollingOccupancyConfig occupancy = [] {
     layers::RollingOccupancyConfig value;
     return value;
   }();
+  layers::GroundSurfaceConfig ground_surface;
   BlockGridConfig accumulated;
 };
 
@@ -161,6 +168,8 @@ struct Snapshot {
   } collision;
   BlockGridSnapshot accumulated_cloud;
   layers::Grid2D occupancy;
+  layers::Grid2D surface_projection;
+  layers::GroundSurfaceResult ground_surface;
   layers::ElevationMapResult elevation;
   layers::EsdfResult esdf;
 };

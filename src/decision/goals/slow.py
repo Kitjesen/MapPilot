@@ -6,7 +6,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from runtime.runtime_interface import map_frame_id
+from runtime.tf.frames import map_frame_id
 
 if TYPE_CHECKING:
     from .resolver import GoalResult

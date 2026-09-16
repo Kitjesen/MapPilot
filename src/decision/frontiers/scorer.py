@@ -23,9 +23,9 @@ _frontier_weights_loaded: bool = False
 
 
 def _load_semantic_scoring_yaml() -> dict:
-    """Load config/semantic_scoring.yaml from the repo root."""
+    """Load config/semantics/scoring.yaml from the repo root."""
     repo_root = Path(__file__).resolve().parents[3]
-    yaml_path = repo_root / "config" / "semantic_scoring.yaml"
+    yaml_path = repo_root / "config" / "semantics" / "scoring.yaml"
     try:
         with open(yaml_path, encoding="utf-8") as fh:
             return yaml.safe_load(fh) or {}
@@ -43,7 +43,8 @@ def _load_frontier_weights() -> None:
         section = _load_semantic_scoring_yaml().get("frontier_scorer")
         if section is None:
             logger.info(
-                "frontier_scorer section absent - using default weights. See config/semantic_scoring.yaml to tune."
+                "frontier_scorer section absent - using default weights. "
+                "See config/semantics/scoring.yaml to tune."
             )
             return
         _frontier_config_weight = float(section.get("semantic_prior_weight", _DEFAULT_SEMANTIC_PRIOR_WEIGHT))

@@ -28,7 +28,7 @@ def _gateway(*, mode: str, requires_map: bool = False):
         _compiled_env="real",
         _compiled_product=product,
         _compiled_product_session_id="run-1234",
-        _session_active_map_name=lambda: "warehouse",
+        _map_client=SimpleNamespace(service=lambda action, **kwargs: {"success": True, "active": "warehouse"}),
     )
 
 

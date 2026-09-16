@@ -20,7 +20,6 @@ from __future__ import annotations
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import pickle
 import re
 import sqlite3
@@ -104,11 +103,11 @@ class SqliteStore(TimeSeriesStore):
                 timestamp REAL PRIMARY KEY,
                 data BLOB NOT NULL
             )
-        """)  # noqa: S608  # table name from class attr, not user input
+        """)  # table name from class attr, not user input
         conn.execute(f"""
             CREATE INDEX IF NOT EXISTS idx_{self._table}_timestamp
             ON {self._table}(timestamp)
-        """)  # noqa: S608  # table name from class attr, not user input
+        """)  # table name from class attr, not user input
         conn.commit()
 
     def close(self) -> None:
@@ -142,7 +141,7 @@ class SqliteStore(TimeSeriesStore):
         row = cursor.fetchone()
         if row is None:
             return None
-        return pickle.loads(row[0])  # noqa: S301  # trusted local SQLite store
+        return pickle.loads(row[0])  # trusted local SQLite store
 
     def _delete(self, timestamp: float) -> Any | None:
         data = self._load(timestamp)
@@ -177,7 +176,7 @@ class SqliteStore(TimeSeriesStore):
         cursor = conn.execute(query, params)
         for row in cursor:
             ts: float = row[0]
-            data: Any = pickle.loads(row[1])  # noqa: S301  # trusted local SQLite store
+            data: Any = pickle.loads(row[1])  # trusted local SQLite store
             yield (ts, data)
 
     def _find_closest_timestamp(
@@ -225,12 +224,12 @@ class SqliteStore(TimeSeriesStore):
 
     def _count(self) -> int:
         conn = self._get_conn()
-        cursor = conn.execute(f"SELECT COUNT(*) FROM {self._table}")  # noqa: S608  # table name from class attr
+        cursor = conn.execute(f"SELECT COUNT(*) FROM {self._table}")  # table name from class attr
         return cursor.fetchone()[0]  # type: ignore[no-any-return]
 
     def _last_timestamp(self) -> float | None:
         conn = self._get_conn()
-        cursor = conn.execute(f"SELECT MAX(timestamp) FROM {self._table}")  # noqa: S608  # table name from class attr
+        cursor = conn.execute(f"SELECT MAX(timestamp) FROM {self._table}")  # table name from class attr
         row = cursor.fetchone()
         if row is None or row[0] is None:
             return None
@@ -249,7 +248,7 @@ class SqliteStore(TimeSeriesStore):
         row = cursor.fetchone()
         if row is None:
             return None
-        return (row[0], pickle.loads(row[1]))  # noqa: S301  # trusted local SQLite store
+        return (row[0], pickle.loads(row[1]))  # trusted local SQLite store
 
     def _find_after(self, timestamp: float) -> tuple[float, Any] | None:
         conn = self._get_conn()
@@ -264,4 +263,4 @@ class SqliteStore(TimeSeriesStore):
         row = cursor.fetchone()
         if row is None:
             return None
-        return (row[0], pickle.loads(row[1]))  # noqa: S301  # trusted local SQLite store
+        return (row[0], pickle.loads(row[1]))  # trusted local SQLite store

@@ -9,6 +9,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace lingtu::nav::endpoint {
 
@@ -48,6 +49,7 @@ struct StopConfirmationDiagnostics {
   double last_angular_speed_radps{std::numeric_limits<double>::quiet_NaN()};
   bool driver_ack_observed{false};
   bool driver_accepted{false};
+  std::uint64_t driver_ack_output_sequence{0U};
 };
 
 class StopConfirmation {
@@ -58,6 +60,9 @@ class StopConfirmation {
                    std::uint64_t zero_published_source_wall_ns, Clock::time_point started_at,
                    StopConfirmationConfig config = {});
 
+  // Register only successfully published zero outputs from this stop wait.
+  void observePublishedZero(std::uint64_t output_sequence,
+                            std::uint64_t source_wall_ns);
   void observeDriverAck(const std::string &producer_boot_id, std::uint64_t output_sequence,
                         bool accepted, std::uint64_t source_stamp_ns) noexcept;
   void observeQuietOdometry(double source_stamp_s, double linear_speed_mps,
@@ -69,7 +74,12 @@ class StopConfirmation {
   static std::uint64_t sourceStampNanoseconds(double source_stamp_s) noexcept;
 
   std::string producer_boot_id_;
-  std::uint64_t output_sequence_{0};
+  struct ZeroPublication {
+    std::uint64_t output_sequence;
+    std::uint64_t source_wall_ns;
+  };
+  std::vector<ZeroPublication> zero_publications_;
+  std::uint64_t driver_ack_output_sequence_{0U};
   std::uint64_t zero_published_source_wall_ns_{0U};
   Clock::time_point started_at_{};
   StopConfirmationConfig config_;
@@ -117,12 +127,14 @@ struct ResumeAutonomyRequest {
   std::string precondition_error;
   bool operator_takeover_latched{false};
   double source_stamp_s{0.0};
+  bool resume_required{false};
 };
 
 struct ResumeTeleopRequest {
   std::string precondition_error;
   bool motion_hold_latched{false};
   double source_stamp_s{0.0};
+  bool resume_required{false};
 };
 
 struct FinalShutdownResult {

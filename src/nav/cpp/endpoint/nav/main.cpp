@@ -36,6 +36,7 @@
 #include "nav/inspection/inspection.hpp"
 #include "nav/inspection/store.hpp"
 #include "navigation/executor.hpp"
+#include "planning/local/scan/grid.hpp"
 #include "input/obstacle.hpp"
 #include "runtime/goal/blockage.hpp"
 #include "runtime/goal/plan.hpp"
@@ -53,6 +54,7 @@
 #include "status/control_loop_health.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
 #include "status/inspection_status_file_writer.hpp"
+#include "status/planning_map_writer.hpp"
 #include "status/nav_status_endpoint_adapter.hpp"
 #include "status/nav_status_publisher.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
@@ -240,7 +242,12 @@ int main(int argc, char **argv) {
     std::fprintf(stderr, "navd startup: creating_dds_runtime\n");
     std::fflush(stderr);
     DdsStatus dds_status;
-    Dds dds(cfg.domain_id, &dds_status);
+    // SCAN assisted teleop consumes mapd collision cells. Its control path does
+    // not consume the separate point-cloud MotionLayer built in sensor drain.
+    const bool read_obstacle_cloud =
+        cfg.control_mode != ControlMode::TeleopAvoid ||
+        cfg.local_planner_backend != nav_kernel::LocalPlannerBackend::Scan;
+    Dds dds(cfg.domain_id, &dds_status, read_obstacle_cloud, cfg.use_simulation_clock);
     std::fprintf(stderr, "navd startup: dds_runtime_ready\n");
     std::fflush(stderr);
     if (cfg.control_mode == ControlMode::Autonomy && !cfg.map_path.empty()) {
@@ -319,6 +326,10 @@ int main(int argc, char **argv) {
                                   });
     };
     GlobalPlanTask plan_preview(global_planner);
+    lingtu::nav::endpoint::PlanningMapWriter planning_map_writer(
+        cfg.status_file, cfg.product_session_id,
+        cfg.global_planner == GlobalPlannerBackend::OctoPlanner3D ? active_octomap_gate : nullptr,
+        cfg.map_path, cfg.octoplanner_options);
 
     EndpointState state;
     std::optional<lingtu::nav::inspection::TaskEvent> inspection_recovery_event;
@@ -791,10 +802,11 @@ int main(int argc, char **argv) {
       if (activation.tolerance) {
         executor.setRoute(lingtu::nav::navigation::Route{
             activation.path, activation.goal_yaw, activation.tolerance->position_m,
-            activation.tolerance->yaw_rad});
+            activation.tolerance->yaw_rad, activation.max_speed_mps});
       } else {
         executor.setRoute(
-            lingtu::nav::navigation::Route{activation.path, activation.goal_yaw});
+            lingtu::nav::navigation::Route{activation.path, activation.goal_yaw, activation.acceptance_radius_m, std::nullopt,
+                                          activation.max_speed_mps});
       }
       const auto write_start = SteadyClock::now();
       (void)dds.publish(lingtu::nav::endpoint::OutputEvent{
@@ -870,6 +882,9 @@ int main(int argc, char **argv) {
       }
     };
     InputConfig inputs_config;
+    inputs_config.use_simulation_clock =
+        cfg.use_simulation_clock && cfg.control_mode != ControlMode::Teleop;
+    inputs_config.simulation_clock_max_age_s = cfg.odom_max_age_s;
     inputs_config.source_transform_max_gap_s = source_transform_max_gap_s;
     inputs_config.cloud_pose_max_gap_s = cfg.cloud_pose_max_gap_s;
     inputs_config.driver_control_max_age_s = cfg.driver_control_max_age_s;
@@ -931,6 +946,8 @@ int main(int argc, char **argv) {
       StopConfirmation confirmation(dds_status.producer_boot_id, output_sequence,
                                     last_zero_source_wall_ns,
                                     StopConfirmation::Clock::now(), stop_confirmation_config);
+      const auto zero_refresh_period = std::chrono::duration<double>(1.0 / cfg.tick_hz);
+      auto next_zero_refresh = StopConfirmation::Clock::now() + zero_refresh_period;
       OdometrySpeedMonitor stop_speed_monitor(OdometrySpeedEvidence::PoseDerivedPlanar);
       while (true) {
         // Drain queued odometry before observing the exact driver ACK. Samples
@@ -955,15 +972,28 @@ int main(int argc, char **argv) {
         }
         if (stop_inputs.driver_control) {
           const auto &driver = *stop_inputs.driver_control;
-          inputs.projectDriverControl(driver, stop_inputs.receive_steady_s);
           confirmation.observeDriverAck(driver.accepted_producer_boot_id,
                                         driver.accepted_output_sequence,
                                         driver.last_command_accepted, driver.stamp_ns);
         }
+        // Taking a batch consumes every sensor topic. Keep the ordinary input
+        // state fresh while motion remains stopped, including collision/TF/clock.
+        TimingDiagnostics stop_input_timing;
+        inputs.apply(std::move(stop_inputs), stop_input_timing);
         const StopConfirmationState confirmation_state = confirmation.state();
         const auto diagnostics = confirmation.diagnostics();
         state.motion_stop_evidence.update(confirmation_state, diagnostics, nowSeconds());
         if (confirmation_state == StopConfirmationState::Pending) {
+          // The normal output loop is suspended here. Keep fresh zeros flowing
+          // across a driver reconnect, retaining each exact publication receipt.
+          const auto refresh_now = StopConfirmation::Clock::now();
+          if (refresh_now >= next_zero_refresh) {
+            if (publish_zero_command()) {
+              confirmation.observePublishedZero(last_zero_output_sequence,
+                                                last_zero_source_wall_ns);
+            }
+            next_zero_refresh = refresh_now + zero_refresh_period;
+          }
           (void)publish_motion_stop_evidence_status_if_due();
         } else {
           publish_motion_stop_evidence_status();
@@ -976,7 +1006,9 @@ int main(int argc, char **argv) {
                 "odom_quiet=%zu/%zu last_odom_stamp_ns=%llu "
                 "last_linear_speed=%.6f last_angular_speed=%.6f\n",
                 static_cast<int>(confirmation_state),
-                static_cast<unsigned long long>(output_sequence),
+                static_cast<unsigned long long>(diagnostics.driver_ack_output_sequence != 0U
+                                                    ? diagnostics.driver_ack_output_sequence
+                                                    : output_sequence),
                 static_cast<unsigned long long>(diagnostics.zero_published_source_wall_ns),
                 diagnostics.driver_ack_observed ? 1 : 0, diagnostics.driver_accepted ? 1 : 0,
                 static_cast<unsigned long long>(diagnostics.driver_ack_source_stamp_ns),
@@ -1187,11 +1219,68 @@ int main(int argc, char **argv) {
           state.odom_velocity_valid,
       };
       observation.collision = state.local_collision_map.view();
+      if (cfg.use_simulation_clock && observation.collision.receiveStampS > 0.0) {
+        // Preserve receive age while expressing it in the executor's clock.
+        // Mapd source stamps remain wall time; simulation execution can pause.
+        const double steady_now = steadySeconds();
+        observation.collision.receiveStampS += inputs.executionTime(steady_now) - steady_now;
+      }
+      observation.clock_mode = cfg.use_simulation_clock ? nav_kernel::PlanClockMode::External
+                                                       : nav_kernel::PlanClockMode::Steady;
       return observation;
     };
 
     FinalActions final_control_actions;
-    final_control_actions.command_safety = evaluateCommandSafety;
+    final_control_actions.command_safety = [&](const auto &base_safety, const auto &command, double age) {
+      auto safety = base_safety;
+      if (cfg.control_mode == ControlMode::Autonomy && executor.hasRoute() &&
+          !control_authority.operatorTakeoverLatched()) {
+        safety.max_speed_mps = std::min(safety.max_speed_mps, executor.activeMaxSpeedMps());
+      }
+      auto decision = evaluateCommandSafety(safety, command, age);
+      if (decision.stopped || local_planner_params.backend != nav_kernel::LocalPlannerBackend::Scan ||
+          !local_planner_params.checkObstacle || control_authority.teleopManualMode() ||
+          (cfg.control_mode != ControlMode::Autonomy && !cfg.teleop_local_planner)) return decision;
+      nav_kernel::LocalPlanRequest collision_request;
+      collision_request.environment.collision = state.local_collision_map.view();
+      nav_kernel::local::scan::Grid grid(local_planner_params, collision_request);
+      const double deceleration = std::min({local_planner_params.scan.maxAcceleration,
+          cfg.velocity_smoother.x.deceleration, cfg.velocity_smoother.y.deceleration});
+      const double reaction = std::max(safety.cmd_max_age_s, 1.0 / cfg.tick_hz);
+      const auto occupied = [&](const nav_kernel::Twist &twist) {
+        return !map_body || grid.brakingOccupancy(*map_body, twist, reaction, deceleration,
+                                                  cfg.velocity_smoother.yaw.deceleration) != 0;
+      };
+      const nav_kernel::Twist measured{state.odom_linear_velocity_body.x,
+                                      state.odom_linear_velocity_body.y, state.odom_yaw_rate};
+      if (map_body && safety.verified_recovery_translation &&
+          grid.inflatedOccupancy(map_body->position, map_body->yaw) == 1 &&
+          state.odom_velocity_valid &&
+          grid.boundaryDepartureMotionFree(*map_body, decision.cmd, measured,
+              std::min(cfg.recovery_translation_speed_mps, safety.max_speed_mps),
+              reaction, deceleration)) {
+        decision.reason = "scan_boundary_departure";
+        return decision;
+      }
+      const double braking_scale = !map_body ||
+          (state.odom_velocity_valid && occupied(measured)) ? 0.0 :
+          grid.brakingScale(*map_body, decision.cmd, reaction, deceleration,
+                            cfg.velocity_smoother.yaw.deceleration);
+      if (braking_scale <= 0.0) {
+        decision.cmd = {};
+        decision.stopped = true;
+        decision.limited = true;
+        decision.reason = "scan_actual_motion_blocked";
+      } else if (braking_scale < 1.0) {
+        decision.cmd.vx *= braking_scale;
+        decision.cmd.vy *= braking_scale;
+        decision.cmd.wz *= braking_scale;
+        decision.slowed = true;
+        decision.limited = true;
+        decision.reason = "scan_actual_motion_limited";
+      }
+      return decision;
+    };
     final_control_actions.shape = shape_velocity;
     final_control_actions.commit = commit_applied_velocity;
     final_control_actions.stop = stop_velocity;
@@ -1211,15 +1300,24 @@ int main(int argc, char **argv) {
           input.odomBody = pose;
           input.obstacleXyzhMap = obstacles;
           input.obstacleCount = obstacle_count;
-          input.timestampS = now_s;
+          input.timestampS = inputs.executionTime(now_s);
           input.traversability = traversability;
           input.observation = execution_observation(false);
           input.motionIntent = intent;
           return executor.tick(input);
         };
-    teleop_tick_actions.pause_linear_motion = [&]() { executor.pauseLinearMotion(); };
-    teleop_tick_actions.replan_motion = [&]() { executor.replanTeleop(); };
-    teleop_tick_actions.stop_linear_motion = [&]() { executor.stopLinearMotion(); };
+    teleop_tick_actions.pause_linear_motion = [&]() {
+      executor.pauseLinearMotion();
+      last_local.tracking.executionFrozen = last_local.tracking.active;
+    };
+    teleop_tick_actions.replan_motion = [&]() {
+      executor.replanTeleop();
+      last_local.tracking = {};
+    };
+    teleop_tick_actions.stop_linear_motion = [&]() {
+      executor.stopLinearMotion();
+      last_local.tracking = {};
+    };
     TeleopTickController teleop_tick(std::move(teleop_tick_actions), final_control);
 
     AutonomyTickActions autonomy_tick_actions;
@@ -1253,7 +1351,7 @@ int main(int argc, char **argv) {
                 map_from_odom,
                 obstacles,
                 obstacle_count,
-                now_s,
+                inputs.executionTime(now_s),
                 local_traversability,
                 observation,
                 {}});
@@ -1265,12 +1363,15 @@ int main(int argc, char **argv) {
               {},
               obstacles,
               obstacle_count,
-              now_s,
+              inputs.executionTime(now_s),
               traversability,
               observation,
               {}});
         };
     autonomy_tick_actions.stop_linear_motion = [&]() { executor.stopLinearMotion(); };
+    autonomy_tick_actions.report_final_motion_blocked = [&](bool blocked, double timestamp_s) {
+      executor.reportFinalMotionBlocked(blocked, inputs.executionTime(timestamp_s));
+    };
     autonomy_tick_actions.pause_linear_motion = [&]() { executor.pauseLinearMotion(); };
     AutonomyTickController autonomy_tick(std::move(autonomy_tick_actions), final_control);
 
@@ -1312,6 +1413,7 @@ int main(int argc, char **argv) {
         sync_goal_plan_diagnostics,
         control_loop_guard_latched,
         current_timing,
+        &planning_map_writer,
     };
     return runEndpointLoop(loop_ctx, g_running);
   } catch (const std::exception &exc) {

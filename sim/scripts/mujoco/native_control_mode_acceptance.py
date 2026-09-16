@@ -22,7 +22,7 @@ from typing import Any, Mapping
 from uuid import UUID, uuid4
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_MANIFEST = ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_native_control_mode_acceptance.json"
+DEFAULT_MANIFEST = ROOT / "config" / "acceptance" / "mujoco" / "control_modes.json"
 CONTROL_MODES = ("autonomy", "teleop", "teleop_avoid")
 GATE_LAYERS = ("control_chain", "product_integration", "slam_map_quality")
 RUNNER_ARTIFACT_SCHEMA = "lingtu.mujoco.native_control_mode.runner_artifact.v2"

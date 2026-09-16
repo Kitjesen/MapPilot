@@ -12,8 +12,8 @@
 #include "dds/dds.h"
 #include "dds_domain.hpp"
 #include "messages.h"
-#include "message/cpp/qos.hpp"
-#include "message/cpp/topics.hpp"
+#include "transport/dds/qos.hpp"
+#include "message/generated/topics.hpp"
 #include "truth_odom_protocol.hpp"
 
 #ifdef _WIN32

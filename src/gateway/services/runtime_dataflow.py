@@ -11,9 +11,10 @@ from contextlib import nullcontext
 from typing import Any
 from urllib.parse import quote
 
-from gateway.services.mapd_transport import active_map, validate_map_artifacts
+from diagnostics.runtime_contract import runtime_contract_manifest, runtime_data_flow_topics
+from gateway.maps.transport import active_map, validate_map_artifacts
 from gateway.services.runtime_status import _runtime_boundary_status
-from runtime.runtime_interface import TOPICS, runtime_contract_manifest, runtime_data_flow_topics
+from message.topics import TOPICS
 
 RUNTIME_DATAFLOW_SCHEMA_VERSION = 1
 LIVE_MODULE_SAMPLE_STALE_MS = 2000.0
@@ -28,6 +29,9 @@ _PRODUCT_OBSERVABILITY_STAGES: tuple[dict[str, Any], ...] = ()
 
 
 _GATEWAY_TOPIC_CHANNELS: dict[str, list[dict[str, Any]]] = {
+    TOPICS.robot_joint_states: [
+        {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "joint_state"},
+    ],
     TOPICS.odometry: [
         {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "odometry"},
         {"transport": "gateway_rest", "path": "/api/v1/state", "field": "localization.odometry"},
@@ -88,17 +92,22 @@ _GATEWAY_TOPIC_CHANNELS: dict[str, list[dict[str, Any]]] = {
         {"transport": "gateway_rest", "path": "/api/v1/scene_graph"},
     ],
     TOPICS.nav_state: [
-        {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "navigation_state"},
+        {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "navigation_status"},
         {"transport": "gateway_rest", "path": "/api/v1/navigation/status"},
-        {"transport": "gateway_rest", "path": "/api/v1/state", "field": "navigation.diagnostics.safety"},
+        {"transport": "gateway_rest", "path": "/api/v1/state", "field": "safety"},
     ],
     TOPICS.planner_status: [
-        {"transport": "gateway_rest", "path": "/api/v1/navigation/status", "field": "diagnostics"},
+        {
+            "transport": "gateway_rest",
+            "path": "/api/v1/navigation/dds_snapshot",
+            "field": "navigation_state",
+        },
     ],
 }
 
 
 _TOPIC_PORT_HINTS: dict[str, tuple[str, ...]] = {
+    TOPICS.robot_joint_states: ("joint_state",),
     TOPICS.lidar_scan: ("lidar_scan", "scan"),
     TOPICS.imu: ("imu",),
     TOPICS.odometry: ("odometry", "odom"),
@@ -112,7 +121,7 @@ _TOPIC_PORT_HINTS: dict[str, tuple[str, ...]] = {
     TOPICS.local_path: ("local_path",),
     TOPICS.cmd_vel: ("cmd_vel", "driver_cmd_vel"),
     TOPICS.nav_command_request: ("command_request", "navigation_command_request"),
-    TOPICS.nav_state: ("navigation_state",),
+    TOPICS.nav_state: ("navigation_status",),
     TOPICS.semantic_scene_graph: ("scene_graph",),
     TOPICS.semantic_instruction: ("instruction",),
     TOPICS.added_obstacles: ("added_obstacles",),
@@ -915,6 +924,10 @@ def _topic_summaries(
     topics = list(dict.fromkeys([*topics, *_PRODUCT_OBSERVABILITY_TOPICS, *command_topics]))
     if declared_topics is not None:
         topics = [topic for topic in topics if topic in declared_topics]
+    # This optional display input is a subscription capability, not a required
+    # Product output or evidence that a native/simulation publisher is running.
+    if TOPICS.robot_joint_states not in topics and _topic_module_ports(TOPICS.robot_joint_states, module_ports):
+        topics.append(TOPICS.robot_joint_states)
 
     allowed_frames = _mapping(manifest.get("topic_allowed_frame_ids"))
     default_frames = _mapping(manifest.get("topic_default_frame_ids"))
@@ -927,6 +940,7 @@ def _topic_summaries(
         gateway_channels = [dict(item) for item in _GATEWAY_TOPIC_CHANNELS.get(topic, [])]
         item = {
             "topic": topic,
+            "required_by_product": declared_topics is not None and topic in declared_topics,
             "message_formats": list(topic_formats.get(topic) or []),
             "default_frame_id": default_frames.get(topic),
             "allowed_frame_ids": list(allowed_frames.get(topic) or []),

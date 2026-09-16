@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Contract tests for the deterministic Thunder STL-to-FBX asset pipeline."""
 
 from __future__ import annotations
@@ -12,7 +11,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from sim.tools.assets import export_binary_stl_fbx
 from sim.tools.assets.export_binary_stl_fbx import (
     StlAssetError,

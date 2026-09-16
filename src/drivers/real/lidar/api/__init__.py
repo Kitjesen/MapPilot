@@ -1,7 +1,8 @@
 """Small Python data APIs shared by LiDAR sources."""
 
-from .frame_stream import LidarFrameMetrics, LidarFrameStream
 from runtime.msgs.sensor import POINT_DTYPE, LivoxPointFrame
+
+from .frame_stream import LidarFrameMetrics, LidarFrameStream
 
 __all__ = [
     "POINT_DTYPE",

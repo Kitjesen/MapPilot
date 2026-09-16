@@ -22,6 +22,8 @@ struct GlobalPlanContext {
   std::uint64_t goal_epoch{0};
   std::uint64_t frame_epoch{0};
   lingtu::nav::plan::GlobalPlanRequest request{};
+  std::optional<double> max_speed_mps{};
+  std::optional<double> acceptance_radius_m{};
 };
 
 struct GlobalPlanCompletion {

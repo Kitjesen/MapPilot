@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ruff: noqa: D103
 """Field acceptance gate for a saved mapping run.
 
 This gate checks the saved directory's required files and trajectory/patch

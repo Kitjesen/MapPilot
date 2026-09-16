@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Simulation local RPC tests."""
 
 from __future__ import annotations
@@ -102,7 +101,13 @@ def test_server_publishes_discovery_after_binding(
         else:
             assert discovery.family == "AF_UNIX"
             assert discovery.supervisor_nonce in discovery.address
-            assert len(os.fsencode(discovery.address)) < 108
+            assert discovery.address == str(
+                (
+                    tmp_path
+                    / "supervisor"
+                    / f"control-{discovery.supervisor_nonce}.sock"
+                ).resolve()
+            )
 
     assert not endpoint_path.exists()
     assert not auth_path.exists()
@@ -444,5 +449,5 @@ def test_server_receive_limit_rejects_oversize_before_handler(
 def test_supervisor_module_does_not_import_runtime_graph_or_run_plan() -> None:
     source = Path(supervisor_module.__file__).read_text(encoding="utf-8")
 
-    assert "runtime.graph" not in source
+    assert "lingtu.assembly.graph" not in source
     assert "lingtu.run_plan" not in source

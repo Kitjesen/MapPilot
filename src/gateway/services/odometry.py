@@ -24,6 +24,12 @@ def handle_odometry(gw: Any, odom: Any) -> None:
         "child_frame_id": str(getattr(odom, "child_frame_id", "") or "body"),
         "ts": odom.ts,
     }
+    orientation = getattr(getattr(odom, "pose", None), "orientation", None)
+    if orientation is not None:
+        values = [orientation.x, orientation.y, orientation.z, orientation.w]
+        norm = math.hypot(*values)
+        if all(math.isfinite(value) for value in values) and norm > 1e-9:
+            data["orientation"] = [value / norm for value in values]
     numeric_fields = ("x", "y", "z", "yaw", "vx", "wz", "ts")
     invalid_fields = [name for name in numeric_fields if not math.isfinite(float(data.get(name, 0.0)))]
     if invalid_fields:

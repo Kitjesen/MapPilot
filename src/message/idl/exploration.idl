@@ -1,0 +1,110 @@
+@final
+struct ExplorationCommandRequest {
+  Header header;
+  string request_id;
+  string exploration_run_id;
+  long kind;
+  string product_session_id;
+  boolean has_directed_target;
+  double directed_target_x;
+  double directed_target_y;
+  double directed_target_ttl_s;
+  string reason;
+};
+@final
+struct ExplorationCommandAck {
+  Header header;
+  string request_id;
+  string exploration_run_id;
+  long kind;
+  boolean accepted;
+  boolean duplicate;
+  string reason;
+  string product_session_id;
+  unsigned long long intent_revision;
+};
+// Immutable ordered facts for one finite exploration execution. Admission
+// ACKs are deliberately separate: only terminal run events carrying parking
+// evidence are authoritative completion/cancellation/failure facts.
+@final
+struct ExplorationRunEvent {
+  double timestamp_s;
+  string frame_id;
+  string boot_id;
+  unsigned long long event_sequence;
+  long kind;
+  string exploration_run_id;
+  string start_request_id;
+  string command_request_id;
+  string product_session_id;
+  long state;
+  string route;
+  string map_id;
+  long long map_content_epoch;
+  string reason;
+  boolean motion_stop_confirmed;
+  string motion_stop_reason;
+};
+// P3 rolling-map motion is deliberately separate from a generic Navigation
+// Goal. The request binds the TARE-selected target to a live rolling-map
+// epoch; navd selects and verifies the executable free-space prefix itself.
+
+@final
+struct ExplorationSegmentRequest {
+  Header header;
+  string request_id;
+  long kind;
+  string session_id;
+  unsigned long long reset_epoch;
+  unsigned long long minimum_generation;
+  Pose target;
+  string reason;
+};
+@final
+struct ExplorationSegmentAck {
+  Header header;
+  string request_id;
+  long kind;
+  boolean accepted;
+  string session_id;
+  unsigned long long reset_epoch;
+  unsigned long long generation;
+  boolean live;
+  string reason;
+};
+@final
+struct ExplorationSegmentStatus {
+  Header header;
+  string request_id;
+  long state;
+  string session_id;
+  unsigned long long reset_epoch;
+  unsigned long long generation;
+  boolean live;
+  string reason;
+};
+@final
+struct ExplorationExecutionGrid {
+  Header header;
+  MapMetaData info;
+  sequence<octet> occupancy;
+  sequence<octet> terrain_cost;
+  string session_id;
+  unsigned long long reset_epoch;
+  unsigned long long generation;
+  boolean live;
+  Time terrain_risk_stamp;
+  boolean terrain_risk_ready;
+};
+@final
+struct ExplorationGrid {
+  Header header;
+  MapMetaData info;
+  sequence<octet> data;
+  string session_id;
+  string map_id;
+  long long map_content_epoch;
+  unsigned long long reset_epoch;
+  unsigned long long generation;
+  boolean live;
+};

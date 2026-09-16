@@ -137,6 +137,9 @@ class RollingOccupancyGrid final {
   std::size_t Decay(std::int64_t now_ns);
 
   OccupancyState StateAt(double x_m, double y_m, double z_m) const;
+  // A surface voxel is removable only when its entire volume is observed free.
+  std::vector<std::uint8_t> ObservedFreeVoxels(
+      const PointCloudView& centers, float voxel_size_m) const;
   double OccupancyProbability(double x_m, double y_m, double z_m) const;
   bool Contains(double x_m, double y_m, double z_m) const;
   bool InflatedContains(double x_m, double y_m, double z_m) const;
@@ -156,6 +159,7 @@ class RollingOccupancyGrid final {
     std::uint16_t misses{0U};
     std::int64_t last_observed_ns{0};
     bool observed{false};
+    bool unresolved_hit{false};
   };
 
   struct CellCoord {
@@ -227,6 +231,7 @@ class RollingOccupancyGrid final {
   std::vector<std::uint32_t> ray_total_counts_;
   std::vector<std::uint32_t> ray_hit_counts_;
   std::vector<std::uint64_t> observed_bits_;
+  // Collision seeds: historical occupancy united with the current scan hits.
   std::vector<std::uint64_t> occupied_bits_;
   std::vector<std::uint16_t> inflation_counts_;
   std::vector<std::uint64_t> inflated_bits_;

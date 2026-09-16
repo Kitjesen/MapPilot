@@ -121,7 +121,9 @@ def _gateway(
         _compiled_env=str(getattr(plan, "env", "real") or "real"),
         _compiled_product=product,
         _compiled_product_session_id=product_session_id,
-        _session_active_map_name=lambda: "yard" if map_backed else None,
+        _map_client=SimpleNamespace(
+            service=lambda action, **kwargs: {"success": True, "active": "yard" if map_backed else None},
+        ),
         _session_projection_key=None,
         _session_mode="idle",
         _session_product=None,
@@ -588,7 +590,7 @@ def test_map_backed_explore_projects_native_active_map() -> None:
 
 
 def test_readiness_recovers_commit_that_landed_after_gateway_setup(tmp_path, monkeypatch) -> None:
-    from gateway.services import runtime_status
+    from gateway.navigation import status as runtime_status
 
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
     monkeypatch.setenv("LINGTU_EXPLORE_RUN_JOURNAL", str(tmp_path / "explore-runs.json"))
@@ -597,15 +599,14 @@ def test_readiness_recovers_commit_that_landed_after_gateway_setup(tmp_path, mon
     monkeypatch.setattr(exploration, "_native_status", lambda: _status(product_session_id="session-a"))
     monkeypatch.setattr(
         runtime_status,
-        "build_navigation_status",
+        "evaluate_navigation_gate",
         lambda _gw: {
-            "state": "ready",
             "can_accept_goal": True,
-            "readiness": {
-                "can_execute_autonomy": True,
-                "blockers": [],
-                "advisories": [],
-            },
+            "can_execute_autonomy": True,
+            "blockers": [],
+            "advisories": [],
+            "reason": "",
+            "navigation_state": {"lifecycle_state_name": "IDLE"},
         },
     )
     gateway = _gateway(_plan())

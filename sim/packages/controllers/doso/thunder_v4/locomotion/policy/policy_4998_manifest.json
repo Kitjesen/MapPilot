@@ -1,0 +1,68 @@
+{
+  "schema_version": "lingtu.sim_policy_manifest.v1",
+  "asset": "policy_4998.onnx",
+  "format": "onnx",
+  "onnx": {
+    "input_name": "obs",
+    "input_shape": [
+      "batch",
+      53
+    ],
+    "output_name": "actions",
+    "output_shape": [
+      "batch",
+      16
+    ]
+  },
+  "contract": {
+    "observation_frame_dim": 53,
+    "history_frames": 1,
+    "action_dim": 16,
+    "inference_hz": 50,
+    "low_level_hz": 200,
+    "physics_timestep_s": 0.005,
+    "startup_stand_hold_s": 0.5,
+    "startup_hold_inference_steps": 25,
+    "hip_action_scale": 0.125,
+    "thigh_calf_action_scale": 0.25,
+    "wheel_action_scale": 5.0,
+    "leg_kp": [
+      90,
+      90,
+      90
+    ],
+    "leg_kd": [
+      6.93,
+      6.93,
+      6.93
+    ],
+    "wheel_kd": 1.0,
+    "active_thunderv4_mjcf_wheel_torque_limit_nm": 17.0,
+    "run_policy_at_idle": true,
+    "default_joint_position": [
+      -0.2,
+      -0.93,
+      1.96,
+      0.2,
+      0.93,
+      -1.96,
+      0.2,
+      0.93,
+      -1.96,
+      -0.2,
+      -0.93,
+      1.96,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "source_note": "thunder_flat_s4_lateral_g2_v2_model_4998.zip/exported/policy.onnx; contract from params/env.yaml.",
+  "qualification": {
+    "passed": false,
+    "reason": "Historical fixed evaluation failed; lateral contact peaks 616.53/597.57 N. See model_4998_DEPLOYMENT.md."
+  },
+  "simulation_only": true,
+  "real_robot_motion": false
+}

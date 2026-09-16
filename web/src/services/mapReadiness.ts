@@ -26,12 +26,19 @@ export interface ProductWaitOptions {
   sleep?: (delayMs: number) => Promise<void>
 }
 
+export function mapSaveBlockedReason(session: SessionEvent['data'] | null): string {
+  if (!session) return '等待连接'
+  if (session.product !== 'map') return '请先启动建图模式'
+  if (session.map_save_supported !== true) return '当前建图服务不支持保存'
+  return ''
+}
+
 export function mapIsActivationReady(
-  map: Pick<MapInfo, 'has_pcd' | 'has_octomap' | 'activation_ready'>,
+  map: Pick<MapInfo, 'has_pcd' | 'has_octomap' | 'can_activate'>,
 ): boolean {
   return map.has_pcd === true
     && map.has_octomap === true
-    && map.activation_ready === true
+    && map.can_activate === true
 }
 
 export function navigationSessionReady(
@@ -56,9 +63,7 @@ export function navigationRuntimeReady(
   mapName: string,
 ): boolean {
   return navigationSessionReady(session, mapName)
-    && navigation.can_accept_goal === true
-    && navigation.readiness?.can_accept_goal === true
-    && (navigation.readiness?.blockers?.length ?? 0) === 0
+    && navigation.goal_admission.state === 'ACCEPTING'
 }
 
 export function resolveNavigationTargetMapName(
@@ -150,7 +155,7 @@ export async function waitForProductReady(
           if (navigationRuntimeReady(session, navigation, mapName?.trim() ?? '')) {
             return session
           }
-          lastState = navigation.readiness?.blockers?.join(', ') || '等待导航输入链路就绪'
+          lastState = '等待导航输入链路就绪'
         } catch (error) {
           lastState = error instanceof Error ? error.message : String(error)
         }

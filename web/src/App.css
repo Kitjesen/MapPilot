@@ -1,232 +1,144 @@
-/* ===================================================================
-   LingTu Dashboard — Frosted Glass (毛玻璃) design system
-   =================================================================== */
-
+/* LingTu field console: one shared palette, spacing and type system. */
 :root {
-  /* ── Surfaces — pure dark, no color tint ── */
-  --bg:          #090A0F;
-  --bg-layer-1:  #0E0F15;
-  --bg-layer-2:  #13141C;
-  --bg-layer-3:  #1A1B24;
-
-  /* Glass — higher transparency + stronger blur = real frosted glass */
-  --glass:       rgba(255, 255, 255, 0.04);
-  --glass-hi:    rgba(255, 255, 255, 0.06);
-  --glass-lo:    rgba(255, 255, 255, 0.03);
-
-  /* Borders — white hairlines */
-  --border:      rgba(255, 255, 255, 0.08);
-  --border-hi:   rgba(255, 255, 255, 0.14);
-  --border-focus: rgba(255, 255, 255, 0.25);
-
-  /* Inner highlight (top edge of glass — frosted sheen) */
-  --inner-hi:    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-
-  /* ── Text — neutral whites ── */
-  --text:        #E4E4E8;
-  --text-dim:    #8C8C96;
-  --text-faint:  #55555F;
-  --text-mute:   #3A3A42;
-
-  /* ── Brand — single accent, no rainbow gradient ── */
-  --brand-1:     #FFFFFF;
-  --brand-2:     #FFFFFF;
-  --brand-3:     #FFFFFF;
-  --brand-4:     #FFFFFF;
-
-  /* Replaced: gradient-brand → frosted white button */
-  --gradient-brand: linear-gradient(135deg,
-    rgba(255, 255, 255, 0.15) 0%,
-    rgba(255, 255, 255, 0.08) 100%);
-
-  --gradient-brand-soft: linear-gradient(135deg,
-    rgba(255, 255, 255, 0.06) 0%,
-    rgba(255, 255, 255, 0.03) 100%);
-
-  /* Status colors — kept but muted */
-  --accent:       #5EEAD4;
-  --accent-dim:   #2DD4BF;
-  --accent-glow:  rgba(94, 234, 212, 0.15);
-
-  --warn:         #FBBF24;
-  --warn-glow:    rgba(251, 191, 36, 0.15);
-
-  --red:          #F87171;
-  --red-dim:      #DC2626;
-  --red-glow:     rgba(248, 113, 113, 0.2);
-
-  --blue:         #60A5FA;
-  --blue-glow:    rgba(96, 165, 250, 0.15);
-
-  /* ── Shadows — softer, less aggressive ── */
-  --shadow-sm:    0 1px 3px rgba(0, 0, 0, 0.4);
-  --shadow-md:
-    0 1px 2px rgba(0, 0, 0, 0.4),
-    0 4px 16px rgba(0, 0, 0, 0.3),
-    var(--inner-hi);
-  --shadow-lg:
-    0 2px 4px rgba(0, 0, 0, 0.5),
-    0 12px 40px rgba(0, 0, 0, 0.4),
-    var(--inner-hi);
-  --shadow-glow: 0 0 40px rgba(255, 255, 255, 0.04);
-
-  /* ── Radii ── */
-  --r-xs:         4px;
-  --r-sm:         6px;
-  --r-md:         8px;
-  --r-lg:         12px;
-  --r-xl:         16px;
-  --r-2xl:        20px;
-  --r-full:       9999px;
-  --radius:       8px;    /* legacy alias */
-
-  /* ── Space scale (4px rhythm) ── */
-  --s-1:  4px;
-  --s-2:  8px;
-  --s-3:  12px;
-  --s-4:  16px;
-  --s-5:  20px;
-  --s-6:  24px;
-
-  /* ── Typography ── */
-  --font-ui:      'Inter', 'Geist', 'Segoe UI', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
-  --font-mono:    'JetBrains Mono', 'Geist Mono', 'SF Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
-  --font-serif:   'Source Serif 4', 'Noto Serif SC', Georgia, serif;
-
-  /* Type scale — follows 1.25 modular ratio (Minor Third) */
-  --fs-xs:   11px;   /* micro labels, badges, status dots */
-  --fs-sm:   12.5px; /* captions, secondary meta */
-  --fs-base: 14px;   /* body default, form controls */
-  --fs-md:   15.5px; /* emphasized body, primary labels */
-  --fs-lg:   19px;   /* section headings */
-  --fs-xl:   22px;   /* page-level headings */
-  --fs-2xl:  30px;   /* hero / large display */
-
-  /* ── Semantic type roles — size + weight + color + tracking ── */
-  /* Each role is a complete bundle; use all four props together.  */
-
-  /* overline: tiny uppercase section/stat labels */
-  --t-overline-size:    11px;
-  --t-overline-weight:  700;
-  --t-overline-color:   var(--text-faint);
-  --t-overline-track:   0.09em;
-
-  /* caption: hints, timestamps, footnotes — smallest, dimmest */
-  --t-caption-size:     11px;
-  --t-caption-weight:   400;
-  --t-caption-color:    var(--text-faint);
-  --t-caption-track:    0;
-
-  /* label: secondary interactive labels (tabs, chips) */
-  --t-label-size:       13px;
-  --t-label-weight:     500;
-  --t-label-color:      var(--text-dim);
-  --t-label-track:      0.01em;
-
-  /* body: standard readable text */
-  --t-body-size:        14px;
-  --t-body-weight:      400;
-  --t-body-color:       var(--text-dim);
-  --t-body-track:       0;
-
-  /* body-em: emphasized body / active states */
-  --t-body-em-size:     15px;
-  --t-body-em-weight:   600;
-  --t-body-em-color:    var(--text);
-  --t-body-em-track:    0;
-
-  /* value: monospace numeric/data — bigger than body, always brightest */
-  --t-value-size:       16px;
-  --t-value-weight:     600;
-  --t-value-color:      var(--text);
-  --t-value-track:      0;
-
-  /* value-lg: large stat display numbers (SLAM panel / GPS card) */
-  --t-value-lg-size:    26px;
-  --t-value-lg-weight:  700;
-  --t-value-lg-color:   var(--text);
-  --t-value-lg-track:   0;
-
-  /* title: panel/section headers */
-  --t-title-size:       17px;
-  --t-title-weight:     700;
-  --t-title-color:      var(--text);
-  --t-title-track:      0;
-
-  /* ── Motion ── */
-  --ease-out:    cubic-bezier(0.2, 0.8, 0.2, 1);
+  color-scheme: light;
+  --bg: #f5f5f5;
+  --bg-layer-1: #ffffff;
+  --bg-layer-2: #f0f0f0;
+  --bg-layer-3: #e8e8e8;
+  --glass: rgb(255 255 255 / 80%);
+  --glass-hi: rgb(255 255 255 / 94%);
+  --glass-lo: rgb(246 246 246 / 72%);
+  --border: #e3e3e3;
+  --border-hi: #c8c8c8;
+  --border-focus: #242424;
+  --inner-hi: inset 0 1px 0 rgb(255 255 255 / 16%);
+  --text: #1a1c1f;
+  --text-dim: #686868;
+  --text-faint: #787878;
+  --text-mute: #a0a0a0;
+  --brand-1: #242424;
+  --brand-2: #242424;
+  --brand-3: #242424;
+  --brand-4: #242424;
+  --gradient-brand: #eaeaea;
+  --gradient-brand-soft: #f2f2f2;
+  --accent: #242424;
+  --on-accent: #ffffff;
+  --accent-dim: #404040;
+  --accent-glow: rgb(0 0 0 / 6%);
+  --warn: #ad6815;
+  --warn-glow: rgb(173 104 21 / 10%);
+  --red: #cc3c3c;
+  --red-dim: #a72f2f;
+  --red-glow: rgb(204 60 60 / 10%);
+  --blue: #242424;
+  --blue-glow: rgb(0 0 0 / 5%);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 4%);
+  --shadow-md: 0 4px 18px rgb(0 0 0 / 6%);
+  --shadow-lg: 0 12px 40px rgb(0 0 0 / 12%);
+  --shadow-glow: none;
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 18px;
+  --r-2xl: 22px;
+  --r-full: 9999px;
+  --radius: 8px;
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --font-ui: 'Segoe UI', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'Cascadia Code', Consolas, ui-monospace, monospace;
+  --font-serif: Georgia, 'Noto Serif SC', serif;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 14px;
+  --fs-md: 16px;
+  --fs-lg: 18px;
+  --fs-xl: 22px;
+  --fs-2xl: 28px;
+  --t-overline-size: 12px;
+  --t-overline-weight: 550;
+  --t-overline-color: var(--text-dim);
+  --t-overline-track: 0;
+  --t-caption-size: 12px;
+  --t-caption-weight: 400;
+  --t-caption-color: var(--text-dim);
+  --t-caption-track: 0;
+  --t-label-size: 13px;
+  --t-label-weight: 500;
+  --t-label-color: var(--text-dim);
+  --t-label-track: 0;
+  --t-body-size: 14px;
+  --t-body-weight: 400;
+  --t-body-color: var(--text);
+  --t-body-track: 0;
+  --t-body-em-size: 14px;
+  --t-body-em-weight: 600;
+  --t-body-em-color: var(--text);
+  --t-body-em-track: 0;
+  --t-value-size: 16px;
+  --t-value-weight: 600;
+  --t-value-color: var(--text);
+  --t-value-track: 0;
+  --t-value-lg-size: 26px;
+  --t-value-lg-weight: 650;
+  --t-value-lg-color: var(--text);
+  --t-value-lg-track: 0;
+  --t-title-size: 16px;
+  --t-title-weight: 650;
+  --t-title-color: var(--text);
+  --t-title-track: 0;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
-
-  /* ── Layout ── */
-  --topbar-h:    56px;
+  --topbar-h: 64px;
+  --duration-ui: 160ms;
+  --duration-panel: 180ms;
   --statusbar-h: 28px;
 }
-
 html[data-theme="dark"] {
   color-scheme: dark;
+  --bg: #181818;
+  --bg-layer-1: #212121;
+  --bg-layer-2: #2b2b2b;
+  --bg-layer-3: #353535;
+  --glass: rgb(33 33 33 / 82%);
+  --glass-hi: rgb(43 43 43 / 94%);
+  --glass-lo: rgb(28 28 28 / 74%);
+  --border: #343434;
+  --border-hi: #4a4a4a;
+  --border-focus: #ededed;
+  --text: #ededed;
+  --text-dim: #aaaaaa;
+  --text-faint: #909090;
+  --text-mute: #6e6e6e;
+  --brand-1: #ededed;
+  --brand-2: #ededed;
+  --brand-3: #ededed;
+  --brand-4: #ededed;
+  --gradient-brand: #333333;
+  --gradient-brand-soft: #292929;
+  --accent: #ededed;
+  --on-accent: #181818;
+  --accent-dim: #ffffff;
+  --accent-glow: rgb(255 255 255 / 8%);
+  --blue: #ededed;
+  --blue-glow: rgb(255 255 255 / 8%);
+  --warn: #edbc6a;
+  --warn-glow: rgb(237 188 106 / 12%);
+  --red: #ef8585;
+  --red-dim: #ed6d6d;
+  --red-glow: rgb(239 133 133 / 12%);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 12%);
+  --shadow-md: 0 4px 18px rgb(0 0 0 / 18%);
+  --shadow-lg: 0 12px 40px rgb(0 0 0 / 28%);
 }
-
-html[data-theme="light"] {
-  color-scheme: light;
-
-  --bg:          #f7f7f5;
-  --bg-layer-1:  #ffffff;
-  --bg-layer-2:  #f0f0ee;
-  --bg-layer-3:  #e8e8e5;
-
-  --glass:       rgba(255, 255, 255, 0.72);
-  --glass-hi:    rgba(255, 255, 255, 0.92);
-  --glass-lo:    rgba(255, 255, 255, 0.54);
-
-  --border:      rgba(28, 28, 28, 0.11);
-  --border-hi:   rgba(28, 28, 28, 0.18);
-  --border-focus: rgba(255, 122, 42, 0.44);
-  --inner-hi:    inset 0 1px 0 rgba(255, 255, 255, 0.86);
-
-  --text:        #1f1f1f;
-  --text-dim:    #666661;
-  --text-faint:  #8b8b86;
-  --text-mute:   #b5b5ae;
-
-  --brand-1:     #1f1f1f;
-  --brand-2:     #1f1f1f;
-  --brand-3:     #1f1f1f;
-  --brand-4:     #1f1f1f;
-
-  --gradient-brand: linear-gradient(135deg,
-    rgba(255, 255, 255, 0.95) 0%,
-    rgba(238, 238, 235, 0.86) 100%);
-
-  --gradient-brand-soft: linear-gradient(135deg,
-    rgba(255, 255, 255, 0.78) 0%,
-    rgba(238, 238, 235, 0.58) 100%);
-
-  --accent:       #0d9488;
-  --accent-dim:   #0f766e;
-  --accent-glow:  rgba(13, 148, 136, 0.16);
-
-  --warn:         #b7791f;
-  --warn-glow:    rgba(183, 121, 31, 0.16);
-
-  --red:          #dc2626;
-  --red-dim:      #b91c1c;
-  --red-glow:     rgba(220, 38, 38, 0.16);
-
-  --blue:         #2563eb;
-  --blue-glow:    rgba(37, 99, 235, 0.14);
-
-  --shadow-sm:    0 1px 2px rgba(0, 0, 0, 0.06);
-  --shadow-md:
-    0 1px 2px rgba(0, 0, 0, 0.06),
-    0 10px 24px rgba(0, 0, 0, 0.08),
-    var(--inner-hi);
-  --shadow-lg:
-    0 2px 6px rgba(0, 0, 0, 0.08),
-    0 20px 48px rgba(0, 0, 0, 0.12),
-    var(--inner-hi);
-  --shadow-glow: 0 0 38px rgba(255, 122, 42, 0.08);
-}
+html[data-theme="light"] { color-scheme: light; }
 
 /* ── Global animations ── */
 
@@ -251,6 +163,19 @@ html[data-theme="light"] {
   to   { background-position: 200% 0; }
 }
 
+@keyframes menu-reveal {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes panel-reveal {
+  from { opacity: 0; transform: translateY(5px) scale(.995); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes overlay-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 /* ===== Reset ===== */
 *, *::before, *::after {
   box-sizing: border-box;
@@ -261,9 +186,14 @@ html[data-theme="light"] {
 /* Accessible focus baseline — hide for mouse, show for keyboard */
 :focus:not(:focus-visible) { outline: none; }
 :focus-visible {
-  outline: 2px solid rgba(99, 102, 241, 0.55);
+  outline: 2px solid var(--blue);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* Interaction feedback changes only surfaces, never measured motion or values. */
+button, summary, a {
+  transition: background-color var(--duration-ui) var(--ease-out), color var(--duration-ui) var(--ease-out), border-color var(--duration-ui) var(--ease-out), box-shadow var(--duration-ui) var(--ease-out);
 }
 
 /* Honor user motion preferences globally */
@@ -318,36 +248,23 @@ body {
 
 /* Ambient background — no colored orbs, just a very subtle
    radial vignette so edges are slightly darker than center. */
-.app::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  background: radial-gradient(ellipse at 50% 40%,
-    transparent 30%,
-    rgba(0, 0, 0, 0.3) 100%);
-  pointer-events: none;
-  z-index: 0;
-}
+.app::before { content: none; }
 
 .app::after {
   content: none;
 }
 
-/* All content above the ambient background */
-.app > * {
-  position: relative;
-  z-index: 1;
-}
-
 /* ===== Main content wrapper ===== */
 .main-content {
+  position: relative;
+  z-index: 0;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   padding: 12px;
   gap: 12px;
-  animation: fade-in 0.32s var(--ease-spring);
+  animation: overlay-reveal var(--duration-panel) var(--ease-out);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -364,11 +281,7 @@ body {
   padding: 12px;
 }
 
-html[data-theme="light"] .app::before {
-  background:
-    radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, 0.8), transparent 34%),
-    radial-gradient(ellipse at 50% 100%, rgba(223, 223, 218, 0.58), transparent 58%);
-}
+
 
 .console-grid {
   height: 100%;
@@ -525,3 +438,5 @@ html[data-theme="light"] .app::before {
     gap: 8px;
   }
 }
+
+.view-loading { display: grid; place-items: center; flex: 1; color: var(--text-dim); font-size: 14px; }

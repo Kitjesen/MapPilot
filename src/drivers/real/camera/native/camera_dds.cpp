@@ -1,6 +1,6 @@
 #include "camera_record.hpp"
-#include "message/cpp/topics.hpp"
-#include "message/cpp/qos.hpp"
+#include "message/generated/topics.hpp"
+#include "transport/dds/qos.hpp"
 #include "shm_frame_ring.hpp"
 
 #include "dds/dds.h"

@@ -31,7 +31,7 @@ content:
   - path: visual/ue_projection.json
     size: 1101
   - path: visual/world.visual-projection.json
-    size: 2022
+    size: 1587
   provenance:
     path: provenance/generation.json
   visual_projection:

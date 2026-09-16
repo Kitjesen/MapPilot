@@ -4,15 +4,7 @@
 
 import type { PlanPreviewResponse, SSEState } from '../types'
 import * as api from '../services/api'
-
-const NAV_STATE_ZH: Record<string, string> = {
-  PLANNING:  '规划路线中',
-  EXECUTING: '导航中',
-  ARRIVED:   '已到达目的地。',
-  IDLE:      '导航空闲。',
-  FAILED:    '导航失败。',
-  CANCELLED: '导航已取消。',
-}
+import { presentNavigationStatus } from '../services/navigationStatus'
 
 // ── Command registry — single source of truth for dropdown + help ──
 
@@ -118,16 +110,20 @@ export async function executeSlashCommand(raw: string, sseState: SSEState): Prom
   }
 
   if (cmd === '/status') {
-    const ms = sseState.missionStatus
+    const view = presentNavigationStatus(sseState.navigationStatus, 'zh')
     const odom = sseState.odometry
-    const safety = sseState.safetyState
-    const stateZh = ms ? (NAV_STATE_ZH[ms.state] ?? ms.state) : '未知'
     const pos =
       typeof odom?.x === 'number' && typeof odom?.y === 'number'
         ? `(${odom.x.toFixed(2)}, ${odom.y.toFixed(2)})`
         : '--'
-    const estop = safety?.estop ? '急停激活' : '正常'
-    return `状态：${stateZh}\n位置：${pos}\n安全：${estop}`
+    return [
+      `导航：${view.task.label}`,
+      `新目标：${view.goalAdmission.label}`,
+      `控制：${view.control.label}`,
+      `运动：${view.motion.permission.label} · ${view.motion.observation.label}`,
+      `停稳：${view.motion.stopConfirmation.label}`,
+      `位置：${pos}`,
+    ].join('\n')
   }
 
   if (cmd === '/map') {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from message.topics import TOPIC_SPECS, TOPICS, topic_spec
 from runtime.blueprint import Blueprint
 from runtime.module import Module
 from runtime.route_contract import (
@@ -13,7 +14,6 @@ from runtime.route_contract import (
     sim,
     validate_route_contract,
 )
-from runtime.runtime_interface import TOPICS
 from runtime.stream import In, Out
 
 
@@ -33,38 +33,49 @@ def test_robot_route_validates_against_typed_dds_contract() -> None:
     contract = load_route_contract(robot())
 
     assert validate_route_contract(contract) == []
-    assert contract.route.endpoint_contract == "field_dds_v1"
     assert contract.route_for(TOPICS.lidar_scan) == "dds"
     assert contract.route_for(TOPICS.nav_command_request) == "dds"
-    assert contract.route_for(TOPICS.semantic_instruction) == "local"
+    assert contract.route_for(TOPICS.semantic_instruction) == "dds"
+    assert contract.route_for(TOPICS.check_obstacle) == "local"
     assert contract.route_for(TOPICS.nav_way_point) == "dds"
     assert contract.route_for(TOPICS.cmd_vel) == "dds"
-    assert contract.binding_for(TOPICS.cmd_vel)["qos"] == "command"
+    assert contract.binding_for(TOPICS.cmd_vel)["single_writer"] is True
 
 
-def test_robot_route_matches_thunder_dds_endpoint_topics() -> None:
-    from runtime.endpoints.dds.contracts import FIELD_DDS_CONTRACT
-
+def test_robot_route_matches_generated_dds_topics() -> None:
     contract = load_route_contract(robot())
 
-    assert set(contract.route.routes) == set(FIELD_DDS_CONTRACT.topics)
+    assert set(contract.route.routes) == set(TOPIC_SPECS)
     assert validate_route_contract(contract) == []
+
+
+def test_robot_route_uses_catalog_transport_and_single_writer(monkeypatch) -> None:
+    topic = "/test/new_command"
+    entry = {"topic": topic, "transport": "dds", "single_writer_per_product": True}
+    monkeypatch.setattr("runtime.route_contract.routes.load_topics", lambda: [entry])
+
+    route = robot()
+    assert route.backend_for(topic) == "dds"
+    assert route.binding_for("dds", topic) == {"single_writer": True}
+
+    entry["transport"] = "local"
+    assert robot().backend_for(topic) == "local"
 
 
 def test_robot_route_includes_native_exploration_dds_boundaries() -> None:
     contract = load_route_contract(robot())
-    expected_qos = {
-        TOPICS.exploration_grid: "state",
-        TOPICS.exploration_snapshot: "state",
-        TOPICS.exploration_execution_snapshot: "state",
-        TOPICS.exploration_segment_request: "command",
-        TOPICS.exploration_segment_ack: "event",
-        TOPICS.exploration_segment_status: "event",
+    expected_profiles = {
+        TOPICS.exploration_grid: "MapGrid",
+        TOPICS.exploration_snapshot: "MapGrid",
+        TOPICS.exploration_execution_snapshot: "MapGrid",
+        TOPICS.exploration_segment_request: "CommandRequest",
+        TOPICS.exploration_segment_ack: "CommandAck",
+        TOPICS.exploration_segment_status: "CommandAck",
     }
 
-    for topic, qos in expected_qos.items():
+    for topic, profile in expected_profiles.items():
         assert contract.route_for(topic) == "dds"
-        assert contract.binding_for(topic)["qos"] == qos
+        assert topic_spec(topic).qos_profile == profile
 
 
 def test_robot_route_exposes_module_and_endpoint_port_bindings() -> None:
@@ -138,6 +149,23 @@ def test_route_rejects_dds_topic_without_port_bindings() -> None:
     issues = validate_route_contract(broken)
 
     assert any(issue.code == "dds_port_bindings_missing" for issue in issues)
+
+
+def test_route_rejects_invalid_command_port_direction() -> None:
+    contract = load_route_contract(robot())
+    command = contract.topic(TOPICS.cmd_vel)
+    broken = replace(
+        contract,
+        topics={
+            **contract.topics,
+            TOPICS.cmd_vel: replace(
+                command,
+                port_bindings=(replace(command.port_bindings[0], direction="sideways"),),
+            ),
+        },
+    )
+
+    assert any(issue.code == "port_binding_direction_invalid" for issue in validate_route_contract(broken))
 
 
 def test_route_allows_explicit_external_status_without_in_repo_consumer() -> None:

@@ -21,6 +21,8 @@ class GridMap {
   [[nodiscard]] double getResolution() const noexcept;
   [[nodiscard]] int getInflateOccupancy(const Eigen::Vector3d &position,
                                         double yaw) const noexcept;
+  [[nodiscard]] int getInflateOccupancySegment(const Eigen::Vector3d &start, double startYaw,
+                                               const Eigen::Vector3d &end, double endYaw) const noexcept;
 
  private:
   const Grid *grid_{nullptr};

@@ -1,410 +1,156 @@
-/* MapView — split layout: left viewer + right list */
-
 .mapTab {
   display: flex;
+  flex-direction: column;
   height: 100%;
+  min-height: 0;
   overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-layer-1);
 }
-
-.viewerPanel {
-  /* width set via inline style for resizable split */
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-width: 200px;
-}
-
-.divider {
-  width: 4px;
-  flex-shrink: 0;
-  background: var(--border);
-  cursor: col-resize;
-  transition: background 0.15s;
-  position: relative;
-}
-
-.divider:hover,
-.divider:active {
-  background: var(--accent);
-}
-
-/* ── Right panel ── */
-
-.listPanel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-width: 0;
-}
-
-.listHeader {
+.mapHeader {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
+  gap: 14px;
+  min-height: 60px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg2);
   flex-shrink: 0;
-  min-height: 38px;
 }
-
-.listTitle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-  margin: 0;
-}
-
-.listActions {
-  display: flex;
-  gap: 6px;
-}
-
-.listScroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px;
-}
-
-/* ── State messages ── */
-
-.stateMsg {
-  display: flex;
-  flex-direction: column;
+.backButton, .quietButton, .primaryButton, .iconButton, .mapSelector, .dangerButton {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 40px 20px;
+  gap: 7px;
+  min-height: 36px;
+  padding: 7px 11px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--duration-ui) var(--ease-out), color var(--duration-ui) var(--ease-out);
+}
+.backButton { color: var(--text-dim); padding-inline: 4px; }
+.backButton:hover, .quietButton:hover, .iconButton:hover, .mapSelector:hover { background: var(--accent-glow); color: var(--text); }
+.primaryButton { background: var(--accent); color: var(--on-accent); padding-inline: 14px; }
+.primaryButton:hover { background: var(--accent-dim); }
+.iconButton { width: 34px; padding: 6px; flex-shrink: 0; color: var(--text-dim); }
+.dangerButton { color: var(--red); }
+.dangerButton:hover { background: var(--red-glow); }
+.mapTab button:disabled { opacity: .4; cursor: not-allowed; }
+.mapTab button:focus-visible, .mapTab summary:focus-visible, .searchField:focus-within {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 3px;
+}
+.headerDivider { height: 20px; width: 1px; background: var(--border); flex-shrink: 0; }
+.mapSelector { justify-content: flex-start; min-width: 0; max-width: min(44vw, 490px); font-weight: 550; }
+.mapSelector span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mapSelector svg { flex-shrink: 0; }
+.headerActions { display: flex; gap: 8px; margin-left: auto; }
+.snapshotInfo { position: relative; flex-shrink: 0; }
+.snapshotInfo > summary {
+  list-style: none;
+  font-size: 12px;
   color: var(--text-dim);
-  text-align: center;
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: var(--bg-layer-2);
+  cursor: pointer;
+}
+.snapshotInfo > summary::-webkit-details-marker { display: none; }
+.snapshotPopover {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 12px);
+  right: 0;
+  width: 280px;
+  max-width: calc(100vw - 40px);
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--glass-hi);
+  backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-md);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.snapshotPopover p { margin: 6px 0 0; color: var(--text-dim); overflow-wrap: anywhere; }
+.snapshotPopover details { margin-top: 10px; }
+.snapshotPopover summary { cursor: pointer; }
+.mapWorkspace { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.mapCanvas { position: relative; flex: 1; min-width: 0; min-height: 0; }
+.library {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-layer-1);
+}
+.libraryHeader { display: flex; align-items: center; gap: 4px; padding: 16px 12px 8px 18px; }
+.libraryHeader h2 { display: flex; gap: 9px; margin: 0 auto 0 0; font-size: 15px; font-weight: 600; }
+.libraryHeader h2 span { color: var(--text-faint); font-size: 13px; font-weight: 400; }
+.libraryScroll { flex: 1; overflow-y: auto; min-height: 0; padding: 5px 8px 16px; }
+.searchField { display: flex; align-items: center; gap: 9px; margin: 4px 14px 12px; padding: 8px 10px; color: var(--text-dim); border-radius: var(--r-sm); background: var(--bg-layer-2); }
+.searchField input { background: transparent; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 14px; min-width: 0; width: 100%; }
+.mapList { list-style: none; margin: 0; padding: 0; }
+.mapRow { border-radius: var(--r-sm); margin-bottom: 3px; }
+.mapRowMain { display: flex; align-items: center; padding-right: 4px; }
+.mapRowSelected { background: var(--bg-layer-2); }
+.mapRow:hover { background: var(--accent-glow); }
+.mapChoice {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  padding: 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
   font-size: 14px;
 }
-
-.stateMsg p { margin: 0; }
-
-.saveStatusCard {
-  display: grid;
-  gap: 7px;
-  margin: 10px 12px 0;
-  padding: 9px 10px;
-  background: rgba(255, 255, 255, 0.045);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text-dim);
+.mapChoice svg { flex-shrink: 0; color: var(--text-dim); }
+.mapName { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rowHint { display: block; margin: -4px 12px 6px 38px; color: var(--text-faint); font-size: 12px; }
+.rowDetails { border-top: 1px solid var(--border); margin-inline: 10px; padding: 12px 0; font-size: 13px; color: var(--text-dim); line-height: 1.65; }
+.rowDetails p { margin: 0 0 5px; }
+.mapMeta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--text-faint); }
+.rowActions { display: flex; flex-wrap: wrap; gap: 3px; margin: 8px -5px 0; }
+.rowActions button { font-size: 13px; padding: 6px; }
+.stateMsg { padding: 16px 10px; color: var(--text-dim); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.stateMsg p { margin: 0 0 8px; }
+.emptyLibrary { display: grid; justify-items: center; gap: 12px; color: var(--text-dim); padding: 36px 10px; font-size: 14px; }
+.emptyCanvas { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; min-height: 200px; gap: 14px; padding: 24px; color: var(--text-dim); background: var(--bg); text-align: center; }
+.emptyCanvas h2 { margin: 4px 0 0; color: var(--text); font-size: 19px; font-weight: 550; }
+.emptyCanvas p { margin: 0; font-size: 14px; }
+.saveNotice { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 36px; padding: 6px 18px; background: var(--bg-layer-2); color: var(--text-dim); font-size: 13px; }
+.saveError { background: var(--red-glow); color: var(--red); }
+.pickPanel { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 12px; width: max-content; max-width: calc(100% - 32px); padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--glass-hi); backdrop-filter: blur(16px); box-shadow: var(--shadow-md); }
+.pickInfo { display: grid; gap: 3px; font-size: 14px; min-width: 0; }
+.pickInfo strong { font-weight: 550; }
+.pickInfo span { color: var(--text-dim); font-size: 13px; }
+@media (max-width: 760px) {
+  .mapHeader { gap: 8px; padding: 8px 10px; flex-wrap: wrap; }
+  .mapSelector { max-width: min(50vw, 320px); padding-inline: 5px; }
+  .snapshotInfo { margin-left: auto; }
+  .headerActions { margin-left: 0; }
+  .mapWorkspace { flex-direction: column; }
+  .library { width: 100%; max-height: 42%; border-right: 0; border-bottom: 1px solid var(--border); }
+  .libraryHeader { padding-top: 8px; }
+  .mapCanvas { min-height: 180px; }
+  .pickPanel { flex-wrap: wrap; bottom: 12px; }
 }
-
-.saveStatusBusy {
-  border-color: rgba(94, 234, 212, 0.28);
-  background: rgba(94, 234, 212, 0.055);
+@media (prefers-reduced-motion: reduce) {
+  .mapTab button { transition: none; }
 }
-
-.saveStatusError {
-  border-color: rgba(248, 113, 113, 0.28);
-  background: rgba(248, 113, 113, 0.06);
-}
-
-.saveStatusHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-
-.saveStatusName {
-  min-width: 0;
-  max-width: 58%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text);
-  font-family: var(--font-mono);
-  text-transform: none;
-}
-
-.saveStatusDetail {
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--text-dim);
-}
-
-.saveProgressBar {
-  position: relative;
-  height: 3px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.07);
-}
-
-.saveProgressBar span {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 42%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, transparent, rgba(94, 234, 212, 0.78), transparent);
-  animation: saveProgress 1.1s linear infinite;
-}
-
-@keyframes saveProgress {
-  from { transform: translateX(-105%); }
-  to { transform: translateX(245%); }
-}
-
-.saveLocation {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 6px;
-  align-items: baseline;
-  font-size: 10.5px;
-  color: var(--text-faint);
-}
-
-.saveLocation code {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text);
-  font-family: var(--font-mono);
-}
-
-.saveSummary {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-faint);
-  font-family: var(--font-mono);
-  font-size: 10px;
-}
-
-.pickPanel {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 10px 12px 0;
-  padding: 8px 10px;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius);
-  background: rgba(0, 255, 136, 0.06);
-}
-
-.pickInfo {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.pickTitle {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
-}
-
-.pickCoords {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.pickActions {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-/* ── Map list ── */
-
-/* ── Groups ── */
-
-.group {
-  margin-bottom: 14px;
-}
-
-.groupHeader {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 2px 6px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 6px;
-}
-
-.groupLabel {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-}
-
-.groupCount {
-  font-size: 11px;
-  color: var(--text-faint);
-  background: var(--bg3);
-  border-radius: 8px;
-  padding: 0 5px;
-  line-height: 16px;
-}
-
-.groupHint {
-  font-size: 11px;
-  color: var(--text-faint);
-  margin-left: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.list {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  transition: border-color 0.12s;
-}
-
-.card:hover { border-color: var(--border-hi); }
-
-.cardActive {
-  composes: card;
-  border-color: var(--accent);
-  background: rgba(0,255,136,0.04);
-}
-
-.cardSelected {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
-}
-
-.cardInfo {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.mapName {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 13px;
-  font-weight: 500;
-  font-family: var(--font-mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.starIcon { color: var(--accent); flex-shrink: 0; }
-
-.meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.tag {
-  font-size: 11px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.tagPcd   { composes: tag; background: rgba(59,130,246,0.15); color: #60a5fa; }
-.tagTomo  { composes: tag; background: rgba(0,255,136,0.10); color: var(--accent); }
-.tagEmpty { composes: tag; background: rgba(255,255,255,0.05); color: var(--text-dim); }
-
-.cardActions {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
-  margin-left: 8px;
-}
-
-/* ── Buttons ── */
-
-.btnSmall {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 12px;
-  font-family: inherit;
-}
-
-.btnSmall:hover { border-color: var(--text-dim); color: var(--text); }
-
-.btnSmallAccent {
-  composes: btnSmall;
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.btnSmallAccent:hover { background: rgba(0,255,136,0.08); }
-
-.btnTiny {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  padding: 3px 7px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 11px;
-  font-family: inherit;
-  white-space: nowrap;
-}
-
-.btnTiny:hover { border-color: var(--text-dim); color: var(--text); }
-
-.btnTinyActive {
-  composes: btnTiny;
-  border-color: var(--accent);
-  color: var(--accent);
-  background: rgba(0,255,136,0.08);
-}
-
-.btnTinyAccent {
-  composes: btnTiny;
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.btnTinyAccent:hover { background: rgba(0,255,136,0.08); }
-
-.btnTinyDanger {
-  composes: btnTiny;
-}
-
-.btnTinyDanger:hover { border-color: var(--red); color: var(--red); }

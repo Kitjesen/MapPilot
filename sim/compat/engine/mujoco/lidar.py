@@ -12,6 +12,7 @@ Initialization fails when neither supported backend is available.
 from __future__ import annotations
 
 import importlib.metadata
+import math
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,8 @@ ROBOT_VISUAL_GEOM_GROUP = 5
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _REPO_SOURCE_ROOT = _REPO_ROOT / "src"
 _MUJOCO_LIDAR_VERSION = "0.3.3"
+# The MID-360 first-return pattern contains 200,000 angular samples per second.
+_MID360_POINTS_PER_SECOND = 200_000
 _BACKEND_ALIASES = {
     "": "auto",
     "auto": "auto",
@@ -69,7 +72,6 @@ class MuJoCoLidar:
         self._config = config
         self._rng = np.random.default_rng(0)
         self._ray_angles: np.ndarray | None = None
-        self._ray_cursor = 0
         self._body_id = 0
         self._exclude_body_id = 0
         self._mujoco_lidar: Any | None = None
@@ -111,6 +113,8 @@ class MuJoCoLidar:
         # Existing LingTu gates expect default scene geoms plus explicit env geoms.
         geomgroup[0] = 1
         geomgroup[1] = 1
+        # Baked worlds keep their LiDAR/contact proxies hidden in group 4.
+        geomgroup[4] = 1
         try:
             idx = int(config.geom_group)
         except (TypeError, ValueError):
@@ -223,7 +227,6 @@ class MuJoCoLidar:
         self._body_id = self._resolve_body_id()
         self._exclude_body_id = self._resolve_exclude_body_id()
         self._ray_angles = self._load_configured_mid360_angles()
-        self._ray_cursor = 0
         impl = str(self._config.mujoco_lidar_backend or "cpu").strip().lower()
         self._mujoco_lidar_impl = impl
         changed = self._exclude_robot_geoms()
@@ -322,17 +325,27 @@ class MuJoCoLidar:
                 "mujoco_lidar.scan_gen.LivoxGenerator('mid360')."
             ) from exc
 
-    def _next_pattern_angles(self, sample_count: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+    def _next_pattern_angles(
+        self, sample_count: int | None = None, *, scan_duration_s: float | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         assert self._ray_angles is not None
+        duration_s = 1.0 / self._config.fps if scan_duration_s is None else float(scan_duration_s)
+        if not math.isfinite(duration_s) or duration_s <= 0.0:
+            raise ValueError("MID-360 scan duration must be finite and positive")
+        # The snapshot clock fixes the angular interval even when scans are
+        # dropped. Reducing ray work samples this interval; it never slows it.
+        end_s = float(self._data.time)
+        start = round((end_s - duration_s) * _MID360_POINTS_PER_SECOND)
+        end = round(end_s * _MID360_POINTS_PER_SECOND)
+        span = max(1, end - start)
         samples = max(
             1,
             int(self._config.samples_per_frame if sample_count is None else sample_count),
         )
+        samples = min(samples, span)
         n_angles = len(self._ray_angles)
-        start = int(getattr(self, "_ray_cursor", 0))
-        indices = (np.arange(samples, dtype=np.int64) + start) % n_angles
+        indices = (np.arange(samples, dtype=np.int64) * span // samples + start) % n_angles
         angles = self._ray_angles[indices]
-        self._ray_cursor = (start + samples) % n_angles
         angle_noise = float(getattr(self._config, "angle_noise_std_rad", 0.0) or 0.0)
         if bool(getattr(self._config, "add_noise", False)) and angle_noise > 0.0:
             angles = angles.copy()
@@ -343,14 +356,16 @@ class MuJoCoLidar:
             angles[:, 1].astype(np.float32, copy=False),
         )
 
-    def scan(self, sample_count: int | None = None) -> np.ndarray:
+    def scan(
+        self, sample_count: int | None = None, *, scan_duration_s: float | None = None,
+    ) -> np.ndarray:
         """Perform one LiDAR scan.
 
         Returns:
             (N, 4) float32 XYZI point cloud in world frame.
         """
 
-        pts_xyz = self.scan_xyz(sample_count)
+        pts_xyz = self.scan_xyz(sample_count, scan_duration_s=scan_duration_s)
         if len(pts_xyz) == 0:
             return np.zeros((0, 4), dtype=np.float32)
         return self._points_with_return_model(pts_xyz)
@@ -476,19 +491,23 @@ class MuJoCoLidar:
         ).astype(np.float32)
         return np.column_stack([pts, intensity]).astype(np.float32, copy=False)
 
-    def scan_xyz(self, sample_count: int | None = None) -> np.ndarray:
+    def scan_xyz(
+        self, sample_count: int | None = None, *, scan_duration_s: float | None = None,
+    ) -> np.ndarray:
         """Return XYZ-only point cloud in world frame."""
 
         if self._backend == "mujoco_lidar":
-            return self._scan_mujoco_lidar(sample_count)
+            return self._scan_mujoco_lidar(sample_count, scan_duration_s=scan_duration_s)
         if self._backend == "ray_caster_lidar":
             return self._scan_plugin()
         raise RuntimeError(f"unsupported active LiDAR backend: {self._backend}")
 
-    def _scan_mujoco_lidar(self, sample_count: int | None = None) -> np.ndarray:
+    def _scan_mujoco_lidar(
+        self, sample_count: int | None = None, *, scan_duration_s: float | None = None,
+    ) -> np.ndarray:
         if self._mujoco_lidar is None:
             return np.zeros((0, 3), dtype=np.float32)
-        theta, phi = self._next_pattern_angles(sample_count)
+        theta, phi = self._next_pattern_angles(sample_count, scan_duration_s=scan_duration_s)
         distances = np.asarray(
             self._mujoco_lidar.trace_rays(
                 self._data,

@@ -3,7 +3,6 @@ from __future__ import annotations
 import threading
 
 import pytest
-
 from sim.runtime.windows_timing import WindowsTimingError, deadline_waiter
 
 

@@ -8,7 +8,7 @@
 #include <string>
 #include <utility>
 
-#include "message/cpp/topics.hpp"
+#include "message/generated/topics.hpp"
 
 namespace lingtu::recording {
 namespace {

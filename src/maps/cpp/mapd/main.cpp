@@ -283,6 +283,8 @@ void PrintUsage() {
             << "  --max-scene-bytes N maximum serialized MapScene payload bytes\n"
             << "  --max-voxel-snapshot-points N bounded scene voxel points\n"
             << "  --voxel-snapshot-radius M local voxel scene radius\n"
+            << "  --surface-residual-m M maximum ground fit residual (default 0.04)\n"
+            << "  --surface-min-columns N minimum distinct ground XY samples (default 3)\n"
             << "  --max-voxels N     live voxel runtime hard limit\n"
             << "  --max-accumulated-cells N accumulated runtime cell hard limit\n"
             << "  --max-accumulated-blocks N accumulated runtime block hard limit\n"
@@ -434,6 +436,16 @@ Options ParseOptions(int argc, char **argv) {
     } else if (argument == "--voxel-snapshot-radius") {
       options.engine.voxel_snapshot_radius_m =
           static_cast<float>(ParseDouble(next(), "--voxel-snapshot-radius"));
+    } else if (argument == "--surface-residual-m") {
+      options.engine.ground_surface.max_residual_m = ParseDouble(next(), "--surface-residual-m");
+      if (!(options.engine.ground_surface.max_residual_m > 0.0)) {
+        throw std::invalid_argument("--surface-residual-m must be positive");
+      }
+    } else if (argument == "--surface-min-columns") {
+      options.engine.ground_surface.min_support_columns = ParseInt(next(), "--surface-min-columns");
+      if (options.engine.ground_surface.min_support_columns < 3) {
+        throw std::invalid_argument("--surface-min-columns must be at least 3");
+      }
     } else if (argument == "--max-voxels") {
       options.engine.voxel.max_voxels = ParseSize(next(), "--max-voxels");
     } else if (argument == "--max-accumulated-cells") {

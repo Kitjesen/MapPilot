@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -8,7 +7,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 import sim.runtime.coordinator.coordinator as coordinator_module
 from sim.catalog import CatalogResolver
 from sim.runtime.coordinator import CoordinatorError, RuntimeCoordinator, RuntimeState

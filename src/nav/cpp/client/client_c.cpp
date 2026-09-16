@@ -513,6 +513,10 @@ void copyMapSceneHeader(
   copyMapSceneGridHeader(&target->occupancy, source.occupancy);
   copyMapSceneGridHeader(&target->elevation, source.elevation);
   copyMapSceneGridHeader(&target->esdf, source.esdf);
+  copyMapSceneGridHeader(&target->surface_projection, source.surface_projection);
+  copyMapSceneGridHeader(&target->ground_height, source.ground_height);
+  copyMapSceneGridHeader(&target->ground_roughness, source.ground_roughness);
+  copyMapSceneGridHeader(&target->ground_support, source.ground_support);
 }
 
 bool mapSceneBuffersTooSmall(
@@ -522,7 +526,11 @@ bool mapSceneBuffersTooSmall(
     return !source.live_points.empty() || !source.voxel_points.empty() ||
         !source.accumulated_points.empty() ||
         !source.occupancy.cells.empty() ||
-        !source.elevation.cells.empty() || !source.esdf.cells.empty();
+        !source.elevation.cells.empty() || !source.esdf.cells.empty() ||
+        !source.surface_projection.cells.empty() ||
+        !source.ground_height.cells.empty() ||
+        !source.ground_roughness.cells.empty() ||
+        !source.ground_support.cells.empty();
   }
   return buffers->live_point_capacity < source.live_points.size() ||
       buffers->voxel_point_capacity < source.voxel_points.size() ||
@@ -530,7 +538,11 @@ bool mapSceneBuffersTooSmall(
           source.accumulated_points.size() ||
       buffers->occupancy_cell_capacity < source.occupancy.cells.size() ||
       buffers->elevation_cell_capacity < source.elevation.cells.size() ||
-      buffers->esdf_cell_capacity < source.esdf.cells.size();
+      buffers->esdf_cell_capacity < source.esdf.cells.size() ||
+      buffers->surface_projection_cell_capacity < source.surface_projection.cells.size() ||
+      buffers->ground_height_cell_capacity < source.ground_height.cells.size() ||
+      buffers->ground_roughness_cell_capacity < source.ground_roughness.cells.size() ||
+      buffers->ground_support_cell_capacity < source.ground_support.cells.size();
 }
 
 bool mapSceneBufferPointersValid(
@@ -544,7 +556,11 @@ bool mapSceneBufferPointersValid(
        buffers.occupancy_cells != nullptr) &&
       (source.elevation.cells.empty() ||
        buffers.elevation_cells != nullptr) &&
-      (source.esdf.cells.empty() || buffers.esdf_cells != nullptr);
+      (source.esdf.cells.empty() || buffers.esdf_cells != nullptr) &&
+      (source.surface_projection.cells.empty() || buffers.surface_projection_cells != nullptr) &&
+      (source.ground_height.cells.empty() || buffers.ground_height_cells != nullptr) &&
+      (source.ground_roughness.cells.empty() || buffers.ground_roughness_cells != nullptr) &&
+      (source.ground_support.cells.empty() || buffers.ground_support_cells != nullptr);
 }
 
 void copyMapScenePoints(
@@ -588,6 +604,7 @@ uint64_t lingtu_nav_client_capabilities(void) {
       LINGTU_NAV_CLIENT_CAP_INSPECTION_TASK_EVENTS |
       LINGTU_NAV_CLIENT_CAP_EXPLORATION_RUN_EVENTS |
       LINGTU_NAV_CLIENT_CAP_TRAVERSABILITY_GRID |
+      LINGTU_NAV_CLIENT_CAP_JOINT_STATE |
       LINGTU_NAV_CLIENT_CAP_PLAN_PREVIEW;
 }
 
@@ -632,6 +649,36 @@ int lingtu_nav_client_start_task_with_receipt_v1(
             timeout_ms,
             task_id == nullptr ? "" : task_id,
             request_id == nullptr ? "" : request_id));
+  });
+}
+
+int lingtu_nav_client_start_task_with_receipt_v2(
+    lingtu_nav_client_handle handle,
+    const char* task_id,
+    const char* request_id,
+    double x,
+    double y,
+    double z,
+    double yaw,
+    double max_speed_mps,
+    double acceptance_radius_m,
+    int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1* receipt) {
+  if (!validateNavigationReceiptBuffer(receipt, "navigation start task")) {
+    return -1;
+  }
+  return invoke(handle, [&](lingtu::nav::commands::Client& client) {
+    copyNavigationReceipt(
+        receipt,
+        client.navigation().startTask(
+            x,
+            y,
+            z,
+            yaw,
+            timeout_ms,
+            task_id == nullptr ? "" : task_id,
+            request_id == nullptr ? "" : request_id,
+            max_speed_mps, acceptance_radius_m));
   });
 }
 
@@ -1456,6 +1503,31 @@ int lingtu_nav_client_take_traversability_grid_v1(lingtu_nav_client_handle handl
   return takeTraversabilityGrid(handle, header, cells, cell_capacity);
 }
 
+int lingtu_nav_client_take_joint_state_v1(
+    lingtu_nav_client_handle handle, lingtu_nav_joint_state_v1 *state) {
+  if (state == nullptr || state->abi_version != LINGTU_NAV_JOINT_STATE_ABI_VERSION ||
+      state->struct_size < sizeof(*state)) {
+    thread_error = "joint state output ABI is invalid";
+    return -1;
+  }
+  bool found = false;
+  const int result = invoke(handle, [&](lingtu::nav::commands::Client &client) {
+    lingtu::nav::commands::JointStateSnapshot snapshot;
+    found = client.takeJointState(&snapshot);
+    if (!found) return;
+    state->timestamp_s = snapshot.timestamp_s;
+    copyString(state->robot_model, snapshot.robot_model);
+    state->joint_count = snapshot.joint_count;
+    for (std::size_t i = 0; i < snapshot.joint_count; ++i) {
+      copyString(state->names[i], snapshot.names[i]);
+      state->position[i] = snapshot.position[i];
+      state->velocity[i] = snapshot.velocity[i];
+      state->effort[i] = snapshot.effort[i];
+    }
+  });
+  return result < 0 ? result : (found ? 1 : 0);
+}
+
 int lingtu_nav_client_take_map_scene_v1(
     lingtu_nav_client_handle raw_handle,
     lingtu_nav_map_scene_header_v1* header,
@@ -1504,6 +1576,10 @@ int lingtu_nav_client_take_map_scene_v1(
     copyMapSceneCells(buffers->occupancy_cells, scene.occupancy.cells);
     copyMapSceneCells(buffers->elevation_cells, scene.elevation.cells);
     copyMapSceneCells(buffers->esdf_cells, scene.esdf.cells);
+    copyMapSceneCells(buffers->surface_projection_cells, scene.surface_projection.cells);
+    copyMapSceneCells(buffers->ground_height_cells, scene.ground_height.cells);
+    copyMapSceneCells(buffers->ground_roughness_cells, scene.ground_roughness.cells);
+    copyMapSceneCells(buffers->ground_support_cells, scene.ground_support.cells);
     handle->map_scene_staging.reset();
     thread_error.clear();
     return 1;

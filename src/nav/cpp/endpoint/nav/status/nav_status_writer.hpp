@@ -16,8 +16,10 @@
 #include "safety/stop.hpp"
 #include "status/control_loop_health.hpp"
 #include "status/status_snapshot_file_writer.hpp"
+#include "tracking/follower.hpp"
 
 namespace nav_kernel {
+struct ScanFailureSnapshot;
 struct LocalPlannerDebugSnapshot;
 }
 
@@ -51,6 +53,7 @@ struct StatusWriterConfig {
   double teleop_planner_max_deviation_deg{0.0};
   bool operator_takeover_latched{false};
   bool resume_required{false};
+  bool control_loop_hold{false};
   std::string active_cmd_source{"none"};
   std::string path_library_dir;
   std::string map_path;
@@ -78,6 +81,7 @@ struct StatusWriterConfig {
   double odom_max_age_s{0.0};
   double tf_max_age_s{0.0};
   double cloud_max_age_s{0.0};
+  double local_collision_max_age_s{0.0};
   double traversability_max_age_s{0.0};
   double localization_health_max_age_s{0.0};
   double driver_control_max_age_s{0.0};
@@ -86,6 +90,7 @@ struct StatusWriterConfig {
   std::size_t input_recovery_frames{0};
   bool input_require_odom{true};
   bool input_require_cloud{true};
+  bool input_require_local_collision{false};
   bool input_require_traversability{false};
   bool input_require_localization_health{false};
   bool input_require_driver_control{false};
@@ -134,8 +139,17 @@ struct LocalDiagnostics {
   double final_safety_obstacle_distance_m{-1.0};
   double final_safety_traversability_cost{-1.0};
   nav_kernel::Vec3 target{};
+  nav_kernel::FollowerTracking tracking{};
   nav_kernel::Twist path_follower_cmd_vel{};
   nav_kernel::Twist cmd_vel{};
+};
+
+struct TeleopSafetyReplanDiagnostics {
+  std::uint64_t count{0};
+  double stamp_steady_s{0.0};
+  std::string reason;
+  nav_kernel::Twist candidate_cmd_vel{};
+  nav_kernel::Twist final_cmd_vel{};
 };
 
 struct TeleopDiagnostics {
@@ -152,6 +166,7 @@ struct TeleopDiagnostics {
   double age_s{-1.0};
   double obstacle_distance_m{-1.0};
   double traversability_cost{-1.0};
+  TeleopSafetyReplanDiagnostics last_safety_replan{};
 };
 
 struct TimingDiagnostics {
@@ -291,6 +306,9 @@ struct FarInputStatus {
   std::int64_t content_epoch{0};
 };
 
+std::string scanFailureSnapshotJson(const nav_kernel::ScanFailureSnapshot &failure,
+                                    const std::string &product_session_id);
+
 void writeStatusSnapshot(
     StatusSnapshotFileWriter &snapshot_writer, const StatusWriterConfig &cfg, double stamp_s,
     bool has_odom, bool has_map_odom_tf, bool has_path, bool estop_latched,
@@ -318,6 +336,7 @@ void writeStatusSnapshot(
     const nav_kernel::LocalPlannerDebugSnapshot &local_planner_debug,
     const std::vector<float> &local_map_obstacle_xyzh,
     const TraversabilityGrid &local_map_traversability,
-    nav_kernel::LocalCollisionMapView local_collision_map);
+    nav_kernel::LocalCollisionMapView local_collision_map,
+    StatusSnapshotWriterDiagnostics scan_failure_writer = {});
 
 }  // namespace lingtu::nav::endpoint

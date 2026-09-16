@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -10,7 +9,6 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 import pytest
-
 from sim.runtime.control.contracts import CommandSubmitResult, ControllerCommand
 from sim.runtime.coordinator.control_intent_udp import (
     CONTROL_ACK_SCHEMA,

@@ -16,7 +16,7 @@ class BackendStatus:
     _degraded: bool | None = None
 
     @classmethod
-    def configured_as(cls, backend: str) -> "BackendStatus":
+    def configured_as(cls, backend: str) -> BackendStatus:
         return cls(configured=backend, effective=backend)
 
     @property

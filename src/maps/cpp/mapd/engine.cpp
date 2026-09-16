@@ -1,4 +1,5 @@
 #include "lingtu/maps/mapd/engine.hpp"
+#include "lingtu/maps/layers/surface_projection.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -702,16 +703,26 @@ void LiveMapEngine::Process(Observation observation) {
   frame.incremental = true;
   occupancy_.Update(frame);
 
+  bool observation_capacity_limited = false;
   if (config_.build_extended_layers) {
     FilterExtendedObservation(&transformed.cloud, observation, config_);
     frame.cloud = transformed.cloud.View();
     frame.precise_xyz = {};
-    voxel_.Update(frame);
+    layers::VoxelSnapshotRequest window;
+    window.center_x_m = static_cast<float>(observation.map_sensor.x);
+    window.center_y_m = static_cast<float>(observation.map_sensor.y);
+    window.radius_m = config_.voxel_snapshot_radius_m;
+    window.min_z_m = static_cast<float>(observation.map_sensor.z) +
+                    config_.voxel_snapshot_min_z_from_sensor_m;
+    window.max_z_m = static_cast<float>(observation.map_sensor.z) +
+                    config_.voxel_snapshot_max_z_from_sensor_m;
+    // Use actual ray-cleared space, never an entire observed XY column.
+    voxel_.ClearObservedFree(occupancy_);
+    voxel_.Update(frame, window);
     const auto voxel_stats = voxel_.LastStats();
     voxel_total_cells_ = voxel_.VoxelCount();
     voxel_capacity_rejections_ += voxel_stats.capacity_rejected_voxels;
-    capacity_limited_ =
-        capacity_limited_ || voxel_stats.capacity_rejected_voxels > 0U;
+    observation_capacity_limited = voxel_stats.capacity_rejected_voxels > 0U;
   }
   if (config_.build_extended_layers) {
     accumulated_.SetFrame(observation.map_frame);
@@ -753,8 +764,13 @@ void LiveMapEngine::Process(Observation observation) {
         config_.max_range_m);
     accumulated_capacity_rejections_ +=
         accumulated_stats.capacity_rejections;
-    capacity_limited_ =
-        capacity_limited_ || accumulated_stats.capacity_rejections > 0U;
+    observation_capacity_limited =
+        observation_capacity_limited || accumulated_stats.capacity_rejections > 0U;
+  }
+  // Keep lifetime rejection counters, but recover readiness only after a new,
+  // nonempty observation has been integrated without rejecting geometry.
+  if (transformed.cloud.point_count > 0U) {
+    capacity_limited_ = observation_capacity_limited;
   }
   accumulated_total_cells_ =
       config_.build_extended_layers ? accumulated_.CellCount() : 0U;
@@ -884,6 +900,8 @@ void LiveMapEngine::EnsureCompleteSnapshotLocked() const {
     }
     snapshot_.accumulated_cloud = {};
     snapshot_.occupancy = {};
+    snapshot_.surface_projection = {};
+    snapshot_.ground_surface = {};
     snapshot_.elevation = {};
     snapshot_.esdf = {};
     complete_snapshot_generation_ = generation_;
@@ -923,6 +941,13 @@ void LiveMapEngine::EnsureCompleteSnapshotLocked() const {
       config_);
   snapshot_.elevation =
       ProjectElevation(snapshot_.voxel_cloud.View(), snapshot_.occupancy);
+  const auto surface_geometry = layers::GroundSurfaceGeometry(snapshot_.occupancy);
+  const auto surface_xyz = voxel_.SnapshotXyz(surface_geometry);
+  snapshot_.ground_surface = layers::EstimateGroundSurface(surface_xyz,
+      surface_geometry, config_.ground_surface);
+  snapshot_.surface_projection = layers::ProjectSupportSurface(
+      snapshot_.ground_surface, occupancy_snapshot,
+      snapshot_.map_sensor.x, snapshot_.map_sensor.y, snapshot_.map_sensor.z);
 
   layers::Grid2D collision_cost = snapshot_.occupancy;
   for (float& value : collision_cost.data) {

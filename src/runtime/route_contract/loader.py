@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 
-from runtime.graph.loader import load_runtime_graph
+from message.catalog import load_topics
 from runtime.yaml_helpers import load_yaml
 
 from .model import RouteContract, RouteSpec, TopicContract
@@ -41,7 +41,6 @@ def load_route(name: str = "robot", *, root: str | Path | None = None) -> RouteS
         name=str(data.get("name") or name),
         description=str(data.get("description") or ""),
         default=str(data.get("default") or "local").strip().lower(),
-        endpoint_contract=(str(data.get("endpoint_contract")).strip() if data.get("endpoint_contract") else None),
         routes={str(topic): str(backend).strip().lower() for topic, backend in dict(routes).items()},
         bindings=_normalize_bindings(bindings),
     )
@@ -52,23 +51,22 @@ def load_route_contract(
     *,
     name: str = "runtime",
     route_root: str | Path | None = None,
-    runtime_graph_root: str | Path | None = None,
 ) -> RouteContract:
     """Load the runtime topic contract with one route selected.
 
-    The canonical topic ownership source is the existing Runtime Graph topics
-    contract. Routes are separate so DDS, LCM, SHM, ROS2, and local delivery can
+    The canonical topic ownership source is the message catalogue.
+    Routes are separate so DDS, LCM, SHM, ROS2, and local delivery can
     be selected without duplicating topic ownership.
     """
 
-    graph = load_runtime_graph(runtime_graph_root)
+    entries = load_topics()
     route_spec = load_route(route, root=route_root) if isinstance(route, str) else route
-    topics = {str(topic): TopicContract.from_mapping(str(topic), spec) for topic, spec in graph.topic_contracts.items()}
+    topics = {spec["topic"]: TopicContract.from_mapping(spec["topic"], spec) for spec in entries}
     return RouteContract(
         name=name,
         topics=topics,
         route=route_spec,
-        native_contract_topics=graph.native_contract_topics,
+        native_contract_topics=tuple(spec["topic"] for spec in entries if spec.get("native_contract") is True),
     )
 
 

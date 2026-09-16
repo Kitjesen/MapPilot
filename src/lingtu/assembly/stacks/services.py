@@ -6,13 +6,15 @@ inspection commands.
 
 from __future__ import annotations
 
+from message.topics import TOPICS
 from runtime.blueprint import Blueprint
-from runtime.runtime_interface import TOPICS
 
 
 def services(
     *,
     enable_goals: bool = True,
+    required_topics: tuple[str, ...] = (),
+    required_capabilities: tuple[str, ...] = (),
     **config,
 ) -> Blueprint:
     """Add navigation support services that are not planning algorithms."""
@@ -23,35 +25,29 @@ def services(
         from lingtu.assembly.host_bus import HostBus
         from nav.commands.module import Commands
 
-        required_topics = {
-            str(topic)
-            for topic in config.get("_product_required_topics", ())
-        }
-        required_capabilities = {
-            str(capability)
-            for capability in config.get("_product_required_capabilities", ())
-        }
+        required_topic_set = set(required_topics)
+        required_capability_set = set(required_capabilities)
         inspection_task_topics = {
             TOPICS.inspection_task_request,
             TOPICS.inspection_task_ack,
             TOPICS.inspection_task_event,
         }
         has_inspection_task_contract = (
-            inspection_task_topics <= required_topics
-            and "inspection_evidence_capture_and_result_ack" in required_capabilities
+            inspection_task_topics <= required_topic_set
+            and "inspection_evidence_capture_and_result_ack" in required_capability_set
         )
         bp.add(
             HostBus,
             alias="host.bus",
             require_map_scene=(
-                TOPICS.maps_state in required_topics
-                or TOPICS.maps_scene in required_topics
+                TOPICS.maps_state in required_topic_set
+                or TOPICS.maps_scene in required_topic_set
             ),
             require_inspection_task_events=(
-                TOPICS.inspection_task_event in required_topics
+                TOPICS.inspection_task_event in required_topic_set
             ),
             require_exploration_run_events=(
-                TOPICS.exploration_run_event in required_topics
+                TOPICS.exploration_run_event in required_topic_set
             ),
         )
         bp.add(

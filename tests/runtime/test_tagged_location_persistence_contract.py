@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from memory.spatial.tagged_locations import TaggedLocationStore
 from lingtu.assembly.stacks.memory import memory
+from memory.spatial.tagged_locations import TaggedLocationStore
 
 
 def test_memory_stack_persists_tagged_locations_under_semantic_directory(tmp_path: Path) -> None:

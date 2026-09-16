@@ -86,6 +86,7 @@ class TeleopTickController {
  private:
   TeleopTickActions actions_;
   FinalControl &final_control_;
+  TeleopSafetyReplanDiagnostics last_safety_replan_{};
 };
 
 }  // namespace lingtu::nav::endpoint

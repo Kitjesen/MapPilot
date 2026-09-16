@@ -1,4 +1,3 @@
-# ruff: noqa: S101, S314
 
 """Contracts for the deterministic FactoryPark_HF world package."""
 
@@ -14,7 +13,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from sim.catalog import CatalogResolver
 from sim.tools.worlds.factory_park_hf.generate import generate_factory_park_hf
 

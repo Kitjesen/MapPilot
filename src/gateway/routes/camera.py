@@ -88,6 +88,10 @@ def _registered_snapshot_adapter_jpeg() -> bytes | None:
 
 
 def register_camera_routes(app, gw=None) -> None:
+    @app.get("/api/v1/camera/status", summary="Camera frame availability and rates")
+    async def camera_status():
+        return build_camera_status(gw)
+
     @app.get(
         "/api/v1/camera/snapshot",
         summary="Camera JPEG snapshot",

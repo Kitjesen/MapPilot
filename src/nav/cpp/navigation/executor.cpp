@@ -1,8 +1,11 @@
 #include "navigation/executor.hpp"
+#include "planning/local/scan/grid.hpp"
+#include "planning/local/scan/upstream/plan_manage/closed_loop_controller.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 namespace lingtu::nav::navigation {
@@ -81,7 +84,7 @@ nav_kernel::LocalPlanRequest makeLocalPlanRequest(
   };
   request.environment.obstacles = {obstacle_xyzh, obstacle_count};
   request.environment.collision = observation.collision;
-  request.clock = {timestamp_s, execution_frozen};
+  request.clock = {timestamp_s, execution_frozen, observation.clock_mode};
   if (traversability.valid()) {
     request.environment.traversability = {
         traversability.values, traversability.rows, traversability.cols,
@@ -150,14 +153,26 @@ Executor::Executor(ExecutorConfig config, nav_kernel::local::Planner planner)
       std::max(0.0, config_.recovery.stuck_linear_progress_m);
   config_.recovery.stuck_yaw_progress_rad = std::max(0.0, config_.recovery.stuck_yaw_progress_rad);
   active_goal_reached_m_ = config_.goal_reached_m;
+  active_max_speed_mps_ = config_.max_speed;
   active_goal_height_tolerance_m_ = config_.goal_height_tolerance_m;
   active_goal_yaw_tolerance_rad_ = config_.goal_yaw_tolerance_rad;
 }
 
 void Executor::resetLocalPlanning() {
   local_planner_.reset();
+  follower_.resetTarget();
+  last_scan_tick_s_.reset();
   traj_frozen_ = false;
   intent_mode_ = false;
+}
+
+void Executor::reportFinalMotionBlocked(bool blocked, double timestamp_s) {
+  if (!blocked) {
+    final_motion_blocked_since_s_ = -1.0;
+  } else if (final_motion_blocked_since_s_ < 0.0 ||
+             final_motion_blocked_since_s_ > timestamp_s) {
+    final_motion_blocked_since_s_ = timestamp_s;
+  }
 }
 
 
@@ -174,7 +189,7 @@ nav_kernel::LocalPlan Executor::planLocal(
 }
 
 void Executor::setRoute(Route value) {
-  activateRoute(value.points, value.finalYaw, value.goalToleranceM, value.yawToleranceRad);
+  activateRoute(value.points, value.finalYaw, value.goalToleranceM, value.yawToleranceRad, value.maxSpeedMps);
 }
 
 void Executor::clear() {
@@ -184,8 +199,13 @@ void Executor::clear() {
 void Executor::activateRoute(const std::vector<nav_kernel::Vec3> &path,
                              std::optional<double> final_yaw,
                              std::optional<double> goal_reached_m,
-                             std::optional<double> goal_yaw_tolerance_rad) {
+                             std::optional<double> goal_yaw_tolerance_rad,
+                             std::optional<double> max_speed_mps) {
+  if (max_speed_mps && (!std::isfinite(*max_speed_mps) || *max_speed_mps <= 0.0))
+    throw std::invalid_argument("route speed limit must be positive and finite");
+  active_max_speed_mps_ = std::min(config_.max_speed, max_speed_mps.value_or(config_.max_speed));
   route = path;
+  autonomy_stall_stop_ = false;
   ++generation;
   final_yaw_ = final_yaw;
   height_offset_.reset();
@@ -210,15 +230,18 @@ void Executor::activateRoute(const std::vector<nav_kernel::Vec3> &path,
   committed_local_path_time_s_ = -1.0;
   previous_kinematics_time_s_ = -1.0;
   local_blocked_since_s_ = -1.0;
+  final_motion_blocked_since_s_ = -1.0;
   resetAutonomyProgress();
 }
 
 void Executor::clearRoute() {
   route.clear();
+  autonomy_stall_stop_ = false;
   ++generation;
   final_yaw_.reset();
   height_offset_.reset();
   active_goal_reached_m_ = config_.goal_reached_m;
+  active_max_speed_mps_ = config_.max_speed;
   active_goal_height_tolerance_m_ = config_.goal_height_tolerance_m;
   active_goal_yaw_tolerance_rad_ = config_.goal_yaw_tolerance_rad;
   progress = 0;
@@ -237,6 +260,7 @@ void Executor::clearRoute() {
   committed_local_path_time_s_ = -1.0;
   previous_kinematics_time_s_ = -1.0;
   local_blocked_since_s_ = -1.0;
+  final_motion_blocked_since_s_ = -1.0;
   clearRecoveryObservationWait();
   resetAutonomyProgress();
 }
@@ -260,24 +284,27 @@ void Executor::suspendAutonomy() {
   committed_local_path_time_s_ = -1.0;
   previous_kinematics_time_s_ = -1.0;
   local_blocked_since_s_ = -1.0;
+  final_motion_blocked_since_s_ = -1.0;
   clearRecoveryObservationWait();
   resetAutonomyProgress();
 }
 
 void Executor::pauseLinearMotion() {
+  traj_frozen_ = true;
   local_planner_.pause();
   follower_.stopLinear();
   recovery_follower_.stopLinear();
 }
 
 void Executor::replanTeleop() {
-  pauseLinearMotion();
-  follower_.resetTarget();
+  resetLocalPlanning();
+  intent_mode_ = true;
+  resetTeleopBoundaryDeparture();
 }
 
 void Executor::stopLinearMotion() {
-  pauseLinearMotion();
-  follower_.resetTarget();
+  resetLocalPlanning();
+  resetTeleopBoundaryDeparture();
   resetTeleopRotation();
   resetTeleopReference();
 }
@@ -287,20 +314,48 @@ void Executor::resetTeleopRotation() {
   teleop_recovery_intent_rad_.reset();
 }
 
+void Executor::resetTeleopBoundaryDeparture() {
+  recovery_follower_.reset();
+  teleop_boundary_departure_intent_rad_.reset();
+}
+
 void Executor::resetTeleopReference() {
   teleop_reference_.reset();
 }
 
 
 ExecutionOutput Executor::tick(const ExecutionInput &input) {
+  if (local_planner_.params().backend == nav_kernel::LocalPlannerBackend::Scan) {
+    if (last_scan_tick_s_) {
+      const double elapsed = input.timestampS - *last_scan_tick_s_;
+      const double max_gap =
+          nav_kernel::local::scan::upstream::ClosedLoopController::kMaxUpdateGapS;
+      if (elapsed < 0.0 || (!traj_frozen_ && elapsed > max_gap)) {
+        suspendAutonomy();
+        last_scan_tick_s_ = input.timestampS;
+        ExecutionOutput output;
+        output.active = input.mode == ExecutionMode::MotionIntent || !route.empty();
+        output.near_field_stop = output.active;
+        output.reason = "scan_execution_clock_discontinuity";
+        return output;
+      }
+    }
+    last_scan_tick_s_ = input.timestampS;
+  }
   if (input.mode == ExecutionMode::MotionIntent) {
     return tickIntent(input.mapBody, input.motionIntent, input.obstacleXyzhMap,
                       input.obstacleCount, input.timestampS, input.traversability,
                       input.observation);
   }
-  return tickRoute(input.mapBody, input.odomBody, input.mapFromOdom,
+  auto output = tickRoute(input.mapBody, input.odomBody, input.mapFromOdom,
                    input.obstacleXyzhMap, input.obstacleCount, input.timestampS,
                    input.traversability, input.observation);
+  const double speed = std::hypot(output.cmd_vel.vx, output.cmd_vel.vy);
+  if (speed > active_max_speed_mps_ && speed > 0.0) {
+    output.cmd_vel.vx *= active_max_speed_mps_ / speed;
+    output.cmd_vel.vy *= active_max_speed_mps_ / speed;
+  }
+  return output;
 }
 
 ExecutionOutput Executor::tickRoute(const nav_kernel::Pose &map_body,
@@ -322,7 +377,7 @@ ExecutionOutput Executor::tickRoute(const nav_kernel::Pose &map_body,
     resetLocalPlanning();
     recovery_.reset();
     clearRecoveryObservationWait();
-    setAutonomyMotionExpected(false, odom_body, timestamp_s);
+    resetAutonomyProgress();
     return output;
   }
 
@@ -441,17 +496,19 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
       output.near_field_stop = true;
       follower_.stopLinear();
       recovery_follower_.stopLinear();
-      setAutonomyMotionExpected(false, planning_body, timestamp_s);
+      resetAutonomyProgress();
       return output;
     }
   }
 
   const nav_kernel::LocalKinematicState kinematics =
       planningKinematics(planning_body, observation, timestamp_s);
-  const nav_kernel::LocalPlanRequest plan_request = makeLocalPlanRequest(
+  nav_kernel::LocalPlanRequest plan_request = makeLocalPlanRequest(
       planning_body, segment, &reference, generation, target.reachesGoal, kinematics, observation,
       obstacle_xyzh_planning, obstacle_count, timestamp_s,
       traj_frozen_, traversability);
+  plan_request.maxLinearSpeedMps = std::min(
+      active_max_speed_mps_, std::max(config_.follower.spline.maxVx, config_.follower.spline.maxVy));
   nav_kernel::LocalPlan plan =
       planLocal(plan_request, map_from_odom, &output.local_planner_debug);
 
@@ -469,12 +526,16 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     local_blocked_since_s_ = timestamp_s;
   }
   const bool blocked_long_enough =
-      local_blocked_since_s_ >= 0.0 &&
-      timestamp_s - local_blocked_since_s_ >= std::max(0.0, config_.recovery.blocked_interval_s);
+      (local_blocked_since_s_ >= 0.0 &&
+       timestamp_s - local_blocked_since_s_ >= std::max(0.0, config_.recovery.blocked_interval_s)) ||
+      (final_motion_blocked_since_s_ >= 0.0 &&
+       timestamp_s - final_motion_blocked_since_s_ >=
+           std::max(0.0, config_.recovery.blocked_interval_s));
   const bool recovery_enabled = config_.recovery.max_attempts > 0;
   const bool recovery_active = recovery_.active();
   const bool stalled = !recovery_active && !blocked_long_enough &&
-                       autonomyMotionStalled(planning_body, timestamp_s, kinematics);
+                       autonomyMotionStalled(planning_body, timestamp_s);
+  if (stalled && !recovery_enabled) autonomy_stall_stop_ = true;
   output.recovery_trigger = recovery_active
                                 ? "active"
                                 : (blocked_long_enough ? "blocked"
@@ -554,11 +615,19 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     committed_local_path_time_s_ = -1.0;
   }
 
+  if (autonomy_stall_stop_) {
+    output.reason = "autonomy_motion_stalled";
+    output.recovery_trigger = "stalled";
+    output.near_field_stop = true;
+    output.trajectory_frozen = true;
+    pauseLinearMotion();
+    return output;
+  }
   if (recovery.exhausted) {
     output.reason = "local_recovery_exhausted";
     follower_.stopLinear();
     recovery_follower_.stopLinear();
-    setAutonomyMotionExpected(false, planning_body, timestamp_s);
+    resetAutonomyProgress();
     return output;
   }
 
@@ -567,7 +636,7 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
         static_cast<double>(recovery.rotation_direction) * config_.recovery.rotation_rate_rad_s;
     output.reason = output.recovery_reason;
     follower_.stopLinear();
-    setAutonomyMotionExpected(std::abs(output.cmd_vel.wz) > 1e-6, planning_body, timestamp_s);
+    setAutonomyMotionExpected(output.cmd_vel, planning_body, timestamp_s);
     return output;
   }
 
@@ -576,13 +645,17 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
       output.reason = "recovery_untrackable_path";
       recovery_follower_.stopLinear();
       follower_.stopLinear();
-      setAutonomyMotionExpected(false, planning_body, timestamp_s);
+      resetAutonomyProgress();
       return output;
     }
 
     nav_kernel::FollowerParams recovery_params = config_.follower;
     recovery_params.maxSpeed = config_.recovery.translation_speed_mps;
     recovery_params.minSpeed = 0.0;
+    // Recovery completes within 0.125 m. A wider normal-goal stopping radius
+    // would stop the follower before Recovery can acknowledge completion.
+    recovery_params.stopDisThre = 0.08;
+    recovery_params.slowDwnDisThre = 0.0;
     recovery_params.yawRateGain = 0.0;
     recovery_params.stopYawRateGain = 0.0;
     recovery_params.maxYawRateRadS = 0.0;
@@ -607,8 +680,7 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     output.cmd_vel = recovery_control.cmd;
     output.reason = output.recovery_reason;
     follower_.stopLinear();
-    setAutonomyMotionExpected(config_.recovery.translation_speed_mps > 1e-6, planning_body,
-                              timestamp_s);
+    setAutonomyMotionExpected(output.cmd_vel, planning_body, timestamp_s);
     return output;
   }
 
@@ -616,28 +688,31 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     output.reason = output.recovery_reason;
     follower_.stopLinear();
     recovery_follower_.stopLinear();
-    setAutonomyMotionExpected(false, planning_body, timestamp_s);
+    resetAutonomyProgress();
     return output;
   }
   if (near_field_stop) {
     output.reason = "near_field_stop";
     follower_.stopLinear();
-    setAutonomyMotionExpected(false, planning_body, timestamp_s);
+    resetAutonomyProgress();
     return output;
   }
   if (!plan_ready) {
     output.reason = plan_status == nav_kernel::LocalPlanStatus::Pending
                         ? "local_plan_pending"
-                        : nav_kernel::localPlanStatusName(plan_status);
+                        : local_planner_.params().backend == nav_kernel::LocalPlannerBackend::Scan &&
+                                  !output.local_planner_debug.searchReason.empty()
+                              ? output.local_planner_debug.searchReason
+                              : nav_kernel::localPlanStatusName(plan_status);
     follower_.stopLinear();
-    setAutonomyMotionExpected(false, planning_body, timestamp_s);
+    resetAutonomyProgress();
     return output;
   }
   const bool path_provided = std::holds_alternative<nav_kernel::PathTarget>(plan.target());
   if (path_provided && output.local_path_body.size() < 2) {
     output.reason = "untrackable_local_path";
     follower_.stopLinear();
-    setAutonomyMotionExpected(false, planning_body, timestamp_s);
+    resetAutonomyProgress();
     return output;
   }
   nav_kernel::FollowerState follower_state;
@@ -655,15 +730,21 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   follower_state.goalDistance = std::hypot(route.back().x - map_body.position.x,
                                            route.back().y - map_body.position.y);
   follower_state.params = config_.follower;
+  follower_state.params.maxSpeed = active_max_speed_mps_;
+  follower_state.params.minSpeed = std::min(follower_state.params.minSpeed, active_max_speed_mps_);
+  follower_state.params.spline.maxVx = std::min(follower_state.params.spline.maxVx, active_max_speed_mps_);
+  follower_state.params.spline.maxVy = std::min(follower_state.params.spline.maxVy, active_max_speed_mps_);
   follower_state.params.twoWayDrive = false;
   const nav_kernel::FollowerOutput control = follower_.follow(plan, follower_state);
   output.cmd_vel = control.cmd;
+  output.tracking = control.tracking;
   output.trajectory_frozen = control.executionFrozen;
   traj_frozen_ = control.executionFrozen;
-  output.reason = spline_provided ? "spline_control_ready" : "control_ready";
-  const bool command_expects_motion =
-      std::hypot(output.cmd_vel.vx, output.cmd_vel.vy) > 1e-6 || std::abs(output.cmd_vel.wz) > 1e-6;
-  setAutonomyMotionExpected(command_expects_motion, planning_body, timestamp_s);
+  output.reason = spline_provided
+                      ? (control.awaitingTrajectory ? "spline_speed_replan"
+                         : control.executionFrozen ? "spline_execution_frozen" : "spline_control_ready")
+                      : "control_ready";
+  setAutonomyMotionExpected(output.cmd_vel, planning_body, timestamp_s);
   return output;
 }
 
@@ -673,13 +754,14 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
                                       TraversabilityGridView traversability,
                                       ExecutionObservation observation) {
   ExecutionOutput output;
+  autonomy_stall_stop_ = false;
   clearRecoveryObservationWait();
 
   recovery_action_ = 0;
   recovery_attempt_ = -1;
-  recovery_follower_.reset();
   if (!intent_mode_) {
     local_planner_.reset();
+    resetTeleopBoundaryDeparture();
     intent_mode_ = true;
   }
   recovery_.reset();
@@ -690,6 +772,7 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
       resetLocalPlanning();
     output.reason = "teleop_intent_idle";
     follower_.stopLinear();
+    resetTeleopBoundaryDeparture();
     resetTeleopRotation();
     resetTeleopReference();
     return output;
@@ -710,15 +793,29 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
       std::abs(nav_kernel::normalizeAngle(
           input_direction_body - teleop_reference_->directionBody)) >
           kTeleopIntentToleranceRad;
-  if (!teleop_reference_.has_value() || teleop_direction_changed) {
+  const bool boundary_departure_direction_changed =
+      teleop_direction_changed && teleop_boundary_departure_intent_rad_.has_value();
+  const bool operator_turning = std::abs(intent.wz) > 1e-6;
+  const double heading_map =
+      nav_kernel::normalizeAngle(odom_map_body.yaw + input_direction_body);
+  bool steering_changed = false;
+  if (teleop_reference_.has_value()) {
+    const double heading_change = std::abs(nav_kernel::normalizeAngle(
+        heading_map - teleop_reference_->headingMap));
+    // Re-anchor only for operator steering, not planner-induced detour yaw.
+    // Keep reference segments stable while turning, then latch the release pose.
+    steering_changed =
+        (operator_turning && heading_change > kTeleopIntentToleranceRad) ||
+        (!operator_turning && teleop_reference_->operatorTurning && heading_change > 1e-6);
+  }
+  if (!teleop_reference_.has_value() || teleop_direction_changed || steering_changed) {
     if (teleop_direction_changed) {
       resetLocalPlanning();
       intent_mode_ = true;
     }
     ++generation;
-    follower_.resetIntent();
-    const double heading_map =
-        nav_kernel::normalizeAngle(odom_map_body.yaw + input_direction_body);
+    if (!teleop_reference_.has_value() || teleop_direction_changed)
+      follower_.resetIntent();
     const double heading_c = std::cos(heading_map);
     const double heading_s = std::sin(heading_map);
     teleop_reference_ = TeleopReference{
@@ -730,7 +827,16 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
         heading_map,
         input_direction_body,
     };
+    resetTeleopBoundaryDeparture();
     resetTeleopRotation();
+  }
+  teleop_reference_->operatorTurning = operator_turning;
+
+  if (boundary_departure_direction_changed) {
+    output.active = true;
+    output.reason = "teleop_intent_direction_changed";
+    follower_.stopLinear();
+    return output;
   }
 
   const double reference_c = std::cos(teleop_reference_->headingMap);
@@ -778,12 +884,16 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
       configured_horizon,
       config_.teleop_intent_max_deviation_deg,
   };
-  const nav_kernel::LocalPlanRequest plan_request = makeLocalPlanRequest(
+  nav_kernel::LocalPlanRequest plan_request = makeLocalPlanRequest(
       odom_map_body, intent_route, nullptr, generation, false, kinematics, observation,
       obstacle_xyzh, obstacle_count, timestamp_s,
       traj_frozen_, traversability, &motion_intent);
+  plan_request.maxLinearSpeedMps = std::min(
+      std::min(requested_speed, config_.max_speed),
+      std::max(config_.follower.spline.maxVx, config_.follower.spline.maxVy));
 
   if (teleop_recovery_.active()) {
+    resetTeleopBoundaryDeparture();
     const RecoveryOutput recovery = teleop_recovery_.step(plan_request);
     applyTeleopRotation(output, recovery, config_.recovery.rotation_rate_rad_s);
     output.recovery_trigger = "active";
@@ -826,7 +936,78 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
       plan_status != nav_kernel::LocalPlanStatus::NotConfigured;
   const bool plan_unusable =
       !plan_ready || near_field_stop || !spline_trackable || !path_trackable;
+  const bool scan_boundary_departure_candidate =
+      local_planner_.params().backend == nav_kernel::LocalPlannerBackend::Scan &&
+      planner_input_valid && plan_status != nav_kernel::LocalPlanStatus::Pending &&
+      plan_unusable && config_.recovery.translation_speed_mps > 1e-6 &&
+      std::abs(intent.wz) <= 1e-6 && observation.collision.valid();
+  if (scan_boundary_departure_candidate) {
+    nav_kernel::local::scan::Grid grid(local_planner_.params(), plan_request);
+    constexpr double departure_distance_m = 0.35;
+    const std::vector<nav_kernel::Vec3> departure_body{
+        {},
+        {departure_distance_m * std::cos(input_direction_body),
+         departure_distance_m * std::sin(input_direction_body), 0.0},
+    };
+    auto departure_map = bodyPathToMap(odom_map_body, departure_body);
+    const bool occupied_start =
+        grid.valid() && grid.inflatedOccupancy(odom_map_body.position, odom_map_body.yaw) == 1;
+    if (occupied_start &&
+        grid.boundaryDepartureFree(odom_map_body, departure_map.back())) {
+      if (!teleop_boundary_departure_intent_rad_.has_value()) {
+        recovery_follower_.reset();
+      }
+      teleop_boundary_departure_intent_rad_ = input_direction_body;
+      output.path_found = true;
+      output.near_field_stop = false;
+      output.local_path_body = departure_body;
+      output.local_path_map = std::move(departure_map);
+      output.target = output.local_path_map.back();
+      output.target_distance_m = departure_distance_m;
+      output.recovery_state = 2;
+      output.recovery_action = static_cast<int>(nav_kernel::RecoveryAction::Translate);
+      output.recovery_candidate_count = 1;
+      output.recovery_verified = true;
+      output.recovery_trigger = "blocked";
+      output.recovery_reason = "scan_boundary_departure";
+
+      nav_kernel::FollowerParams recovery_params = config_.follower;
+      recovery_params.maxSpeed =
+          std::min(config_.recovery.translation_speed_mps, plan_request.maxLinearSpeedMps);
+      recovery_params.minSpeed = 0.0;
+      recovery_params.stopDisThre = 0.08;
+      recovery_params.slowDwnDisThre = 0.0;
+      recovery_params.yawRateGain = 0.0;
+      recovery_params.stopYawRateGain = 0.0;
+      recovery_params.maxYawRateRadS = 0.0;
+      recovery_params.twoWayDrive = false;
+      recovery_params.headingAlignEnterRad = M_PI + 0.1;
+      recovery_params.headingAlignExitRad = M_PI;
+      recovery_params.omniDirDiffThre = M_PI + 0.1;
+      recovery_params.omniDirGoalThre =
+          std::max(2.0, local_planner_.params().adjacentRange);
+      recovery_params.noRotAtGoal = true;
+
+      nav_kernel::FollowerState recovery_state;
+      recovery_state.requestedSpeed = 1.0;
+      recovery_state.currentTime = timestamp_s;
+      recovery_state.params = recovery_params;
+      recovery_state.goalDistance = departure_distance_m;
+      recovery_state.standardPathProfile = false;
+      const nav_kernel::FollowerOutput recovery_control = recovery_follower_.follow(
+          nav_kernel::LocalPlan::path(output.local_path_body), recovery_state);
+      output.cmd_vel = recovery_control.cmd;
+      output.tracking = recovery_control.tracking;
+      output.trajectory_frozen = recovery_control.executionFrozen;
+      output.reason = output.recovery_reason;
+      follower_.stopLinear();
+      traj_frozen_ = recovery_control.executionFrozen;
+      return output;
+    }
+  }
+  resetTeleopBoundaryDeparture();
   const bool recovery_needed =
+      local_planner_.params().backend != nav_kernel::LocalPlannerBackend::Scan &&
       planner_input_valid && plan_status != nav_kernel::LocalPlanStatus::Pending && plan_unusable;
   if (recovery_needed) {
     teleop_recovery_intent_rad_ = input_direction_body;
@@ -855,6 +1036,7 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   }
 
   resetTeleopRotation();
+  resetTeleopBoundaryDeparture();
 
   nav_kernel::FollowerState follower_state;
   follower_state.requestedSpeed = speed_norm;
@@ -867,16 +1049,25 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   if (spline_provided) {
     follower_state.vehicleRelative = odom_map_body.position;
     follower_state.vehicleYawRelative = odom_map_body.yaw;
+    follower_state.desiredHeading = nav_kernel::normalizeAngle(
+        teleop_reference_->headingMap - teleop_reference_->directionBody);
+    if (std::abs(intent.wz) > 1e-6 && config_.follower.spline.yawGain > 0.0) {
+      follower_state.desiredHeading = nav_kernel::normalizeAngle(
+          odom_map_body.yaw + intent.wz / config_.follower.spline.yawGain);
+    }
   }
   follower_state.slowFactor = slowFactor(output.slow_down);
   follower_state.params = config_.follower;
   const nav_kernel::FollowerOutput control = follower_.follow(plan, follower_state);
   output.cmd_vel = control.cmd;
+  output.tracking = control.tracking;
   output.trajectory_frozen = control.executionFrozen;
   traj_frozen_ = control.executionFrozen;
   output.near_field_stop = false;
   output.reason = control.executionFrozen
-                      ? (control.directionTransition
+                      ? (control.awaitingTrajectory
+                             ? "teleop_assist_speed_replan"
+                             : control.directionTransition
                              ? "teleop_assist_direction_transition"
                              : "teleop_assist_heading_alignment")
                       : (spline_provided ? "teleop_assist_spline_ready"

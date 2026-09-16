@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from runtime.runtime_interface import map_frame_id
+from runtime.tf.frames import map_frame_id
 
 from .geometry import Pose, Transform, Vector3
 from .numpy_compat import is_numpy_array, np, numpy_import_is_safe

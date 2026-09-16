@@ -20,6 +20,8 @@ import signal
 import sys
 import threading
 import time
+import traceback
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -40,6 +42,8 @@ _prepare_direct_script_import_path()
 
 from sim.compat.engine.core.engine import VelocityCommand
 from sim.compat.engine.core.sensor import CameraConfig
+from sim.compat.engine.mujoco.engine import resolve_scene_asset_paths
+from sim.runtime.coordinator.atomic_file import replace_file_with_retry
 from sim.runtime.scenario.runtime import ScenarioClock, ScenarioRuntime
 from sim.runtime.windows_timing import deadline_waiter
 from sim.scripts.mujoco.driver_bridge_session import (
@@ -74,6 +78,7 @@ from sim.scripts.mujoco.native_sensor_records import (
     encode_odom_prior,
     encode_registered_cloud,
     encode_scan,
+    encode_simulation_clock,
 )
 
 from drivers.real.camera.shm import ShmFrameWriter, StreamKind
@@ -84,6 +89,7 @@ from drivers.sim.mujoco.runtime import (
     build_engine,
 )
 from drivers.sim.mujoco.sensors import (
+    lidar_pose_world,
     sensor_specific_force_body,
     world_xyzi_to_body_xyzi,
     world_xyzi_to_sensor_xyzi,
@@ -91,13 +97,15 @@ from drivers.sim.mujoco.sensors import (
 from lingtu.run_plan import RunPlan
 from lingtu.sim.readiness import SIM_FEEDER_SCHEMA, validate_feeder_readiness
 from lingtu.sim.stop import MOTION_STOP_SCHEMA, publish_motion_stop_evidence
+from lingtu.sim.viewer_goal import ViewerGoal
 from lingtu.sim.viewer_input import ViewerInput, viewer_input_from_run_plan
 from lingtu.switch_contracts import is_product_session_id
+from message.topics import TOPICS
 from nav.adapters.native.operator_motion import NativeOperatorMotionClient
 from runtime.msgs.geometry import Quaternion, Vector3
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import POINT_DTYPE, Imu, LivoxPointFrame
-from runtime.runtime_interface import TOPICS, topic_default_frame_id
+from runtime.tf.frames import topic_default_frame_id
 
 _PROCESS_NAME = "mujoco_feeder"
 _READINESS_NAME = "mujoco_feeder.ready.json"
@@ -115,12 +123,22 @@ _SENSOR_ENDPOINTS = (
 )
 
 
-def _read_navigation_status(path: Path) -> dict[str, Any]:
+def _read_navigation_status(path: Path, product_session_id: str) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+        payload = None
+    reason = "waiting for navigation status"
+    if isinstance(payload, dict):
+        try:
+            age = time.time() - float(payload["stamp_s"])
+            same_session = (payload.get("native_product") or {}).get("product_session_id") == product_session_id
+            if same_session and 0 <= age <= 1.0:
+                return payload
+            reason = "navigation status stale" if same_session else "navigation status belongs to another session"
+        except (KeyError, TypeError, ValueError):
+            reason = "navigation status timestamp unavailable"
+    return {"input_gate": {"ready": False, "reason": reason}}
 
 
 class FormalFeederError(RuntimeError):
@@ -148,7 +166,9 @@ def _publish_session_bytes(session_root: Path, filename: str, payload: bytes) ->
     try:
         temporary.write_bytes(payload)
         os.chmod(temporary, 0o600)
-        os.replace(temporary, destination)
+        # Snapshot readers may briefly deny replacement on Windows. Request at
+        # most 5 ms of retry delays, not the utility's 2 s default.
+        replace_file_with_retry(temporary, destination, attempts=6, delay_s=.001, replace=os.replace)
     finally:
         temporary.unlink(missing_ok=True)
     return destination
@@ -304,13 +324,65 @@ class _Services:
             raise FormalFeederError(f"RunPlan simulation directory is missing: {value}")
         return candidate
 
+    @staticmethod
+    def _strip_static_world_visuals(root: ET.Element) -> bool:
+        """Remove only explicit world-body visuals excluded by the CPU LiDAR mask."""
+        worldbody = root.find("worldbody")
+        if worldbody is None or root.find(".//include") is not None:
+            return False
+        references = {
+            value for node in root.iter() for key, value in node.attrib.items()
+            if key != "name"
+        }
+        removed: list[ET.Element] = []
+        for geom in worldbody.findall("geom"):
+            if (
+                geom.get("group") == "2"
+                and geom.get("contype") == "0"
+                and geom.get("conaffinity") == "0"
+                and not len(geom)
+                and geom.get("name") not in references
+            ):
+                worldbody.remove(geom)
+                removed.append(geom)
+        if not removed:
+            return False
+        asset = root.find("asset")
+        if asset is not None:
+            # Keep shared resources and references from defaults, bodies or sensors.
+            for kind in ("mesh", "material", "texture"):
+                candidates = {
+                    node.attrib[kind] for removed_node in removed
+                    for node in removed_node.iter() if kind in node.attrib
+                }
+                references = {
+                    value for node in root.iter() for key, value in node.attrib.items()
+                    if key == kind or (key == "objname" and node.get("objtype") == kind)
+                }
+                for node in asset.findall(kind):
+                    name = node.get("name")
+                    if name in candidates and name not in references:
+                        asset.remove(node)
+                        removed.append(node)
+        return True
+
     @classmethod
     def snapshot_artifacts(
         cls,
         session_root: Path,
         config: _RuntimeConfig,
+        *,
+        retain_world_visuals: bool = True,
     ) -> tuple[Path, Path, Path]:
-        required = (config.world, config.robot.policy)
+        required = {config.world, config.robot.policy}
+        world_source = cls.resolve_artifact(config.world)
+        world_xml = ET.parse(world_source)
+        stripped_world = None
+        if not retain_world_visuals and cls._strip_static_world_visuals(world_xml.getroot()):
+            stripped_world = ET.tostring(world_xml.getroot(), encoding="utf-8", xml_declaration=True)
+        resolve_scene_asset_paths(world_xml.getroot(), world_source)
+        for asset in world_xml.findall("./asset/*[@file]"):
+            required.add(Path(asset.attrib["file"]).relative_to(_REPOSITORY_ROOT).as_posix())
         snapshot_root = session_root / (f".formal-feeder-artifacts-{secrets.token_hex(16)}")
         snapshot_root.mkdir(mode=0o700 if os.name != "nt" else 0o777)
         package_relative = PurePosixPath(config.robot.package_root)
@@ -345,8 +417,11 @@ class _Services:
             destination = snapshot_root / Path(*relative_path.parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
             with source.open("rb") as reader, destination.open("xb") as writer:
-                while chunk := reader.read(1024 * 1024):
-                    writer.write(chunk)
+                if relative == config.world and stripped_world is not None:
+                    writer.write(stripped_world)
+                else:
+                    while chunk := reader.read(1024 * 1024):
+                        writer.write(chunk)
                 writer.flush()
                 os.fsync(writer.fileno())
         world_path = snapshot_root / Path(*PurePosixPath(config.world).parts)
@@ -761,10 +836,12 @@ def _yaw(state: Any) -> float:
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
-def _require_stable_pose(state: Any) -> tuple[float, float, float]:
-    height, abs_roll, abs_pitch = _pose_metrics(state)
+def _require_stable_pose(state: Any, clearance_m: float) -> tuple[float, float, float]:
+    _, abs_roll, abs_pitch = _pose_metrics(state)
+    height = float(clearance_m)
     if (
-        height < MIN_BASE_HEIGHT_M
+        not math.isfinite(height)
+        or height < MIN_BASE_HEIGHT_M
         or height > MAX_BASE_HEIGHT_M
         or abs_roll > MAX_ABS_TILT_RAD
         or abs_pitch > MAX_ABS_TILT_RAD
@@ -780,6 +857,7 @@ def _report_failure(exc: Exception) -> None:
         file=sys.stderr,
         flush=True,
     )
+    traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
 
 
 @dataclass
@@ -809,6 +887,7 @@ class _PhysicalMotionEvidence:
     last_pose_step_seq: int = 0
     entity_contact_steps: int = 0
     first_contact_geom: str = ""
+    first_contact: dict[str, Any] | None = None
 
     def observe_contacts(self, model: Any, data: Any, base_body: str = "base_link") -> None:
         """Count robot/environment contacts, excluding floor support and self contact."""
@@ -826,13 +905,24 @@ class _PhysicalMotionEvidence:
                 continue
             world_geom = b if root_a == robot_root else a
             name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, world_geom) or ""
-            # These two IndustrialPark road decals are below the support floor.
-            if name.startswith(("ground", "floor")) or name in {"road_spine", "road_cross"}:
+            # Support surfaces in the shipped IndustrialPark and factory scenes.
+            if name.startswith(("ground", "floor", "fw_r2_site_paving_")) or name in {
+                "road_spine", "road_cross", "fw_r2_ground_floor", "fw_r2_site_ground",
+            }:
                 continue
             if contact.dist <= 0:
                 self.entity_contact_steps += 1
-                if not self.first_contact_geom:
+                if self.first_contact is None:
                     self.first_contact_geom = name
+                    robot_geom = a if root_a == robot_root else b
+                    self.first_contact = {
+                        "sim_time_s": float(data.time),
+                        "robot_geom": mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, robot_geom) or "",
+                        "environment_geom": name,
+                        "position_m": [float(value) for value in contact.pos],
+                        "distance_m": float(contact.dist),
+                        "robot_position_m": [float(value) for value in data.xpos[base_id]],
+                    }
                 break
 
     def record_trace(self, state: Any, step_seq: int, *, force: bool = False) -> None:
@@ -857,8 +947,8 @@ class _PhysicalMotionEvidence:
             self.trajectory[:] = self.trajectory[::2]
         self.last_trace_step_seq = step_seq
 
-    def observe_pose(self, state: Any) -> None:
-        height, abs_roll, abs_pitch = _require_stable_pose(state)
+    def observe_pose(self, state: Any, clearance_m: float) -> None:
+        height, abs_roll, abs_pitch = _require_stable_pose(state, clearance_m)
         self.pose_sample_count += 1
         self.min_base_height_m = min(self.min_base_height_m, height)
         self.max_base_height_m = max(self.max_base_height_m, height)
@@ -878,9 +968,10 @@ class _PhysicalMotionEvidence:
         before: Any,
         after: Any,
         step_seq: int,
+        clearance_m: float,
     ) -> None:
         try:
-            self.observe_pose(after)
+            self.observe_pose(after, clearance_m)
         except FormalFeederError as exc:
             raise FormalFeederError(
                 f"{exc}; step={step_seq} kind={command.kind} "
@@ -998,11 +1089,12 @@ class _Subscan:
 class _LidarFrame:
     snapshot: Any
     state: Any
-    frame_start_s: float
     monotonic_s: float
     wall_s: float
     sequence: int
     registered_sequence: int | None
+    schedule_lateness_s: float = 0.0
+    captured_at_s: float = field(default_factory=time.monotonic)
 
 
 _LIDAR_STOP = object()
@@ -1075,6 +1167,7 @@ class _ScenarioFeed:
         self._config = config
         self._next_publish_ns = 0
         self._last_snapshot: Any | None = None
+        self.write_failures = 0
 
     def start(self) -> None:
         self._apply(0)
@@ -1097,8 +1190,16 @@ class _ScenarioFeed:
             self._last_snapshot = snapshot
         self._engine.apply_scenario_snapshot(snapshot)
         if sim_time_ns >= self._next_publish_ns:
-            self._services.publish_scenario(self._session_root, snapshot.to_dict())
             self._next_publish_ns = sim_time_ns + _SCENARIO_SNAPSHOT_PERIOD_NS
+            try:
+                self._services.publish_scenario(self._session_root, snapshot.to_dict())
+            except PermissionError as exc:
+                # This snapshot is observational; the physical actor was already
+                # updated. Retry the newest observation at the next publish slot.
+                self.write_failures += 1
+                if self.write_failures == 1 or self.write_failures % 20 == 0:
+                    print(f"scenario_snapshot_publish_deferred count={self.write_failures} reason={exc}",
+                          file=sys.stderr, flush=True)
 
 
 @dataclass(frozen=True)
@@ -1318,13 +1419,15 @@ class _RecordPublisher:
         client: SensorPublisherClient,
         stats: _StreamStats | None,
         write_lock: Any | None = None,
+        latest_only: bool = False,
     ) -> None:
         self._name = name
         self._client = client
         self._stats = stats
         self._write_lock = write_lock
+        self._latest_only = latest_only
         self._records: queue.Queue[bytes | object] = queue.Queue(
-            maxsize=self._QUEUE_LIMIT
+            maxsize=1 if latest_only else self._QUEUE_LIMIT
         )
         self._failure_lock = threading.Lock()
         self._failure: BaseException | None = None
@@ -1341,6 +1444,15 @@ class _RecordPublisher:
             if self._closed:
                 raise FormalFeederError(f"{self._name} publisher is closed")
             self.raise_if_failed()
+            if self._latest_only:
+                # Truth-mode samples supersede unsent samples. Fast-LIO2 IMU
+                # records use the ordered queue instead.
+                try:
+                    self._records.get_nowait()
+                    if self._stats is not None:
+                        self._stats.drop_current()
+                except queue.Empty:
+                    pass
             self._records.put_nowait(wire)
         except Exception as exc:
             if self._stats is not None:
@@ -1405,7 +1517,7 @@ class _RecordPublisher:
 class _LidarPublisher:
     """Scan immutable MuJoCo snapshots without stalling the physics clock."""
 
-    _QUEUE_LIMIT = 512
+    _QUEUE_LIMIT = 1
     _SHUTDOWN_TIMEOUT_S = 4.0
 
     def __init__(
@@ -1417,6 +1529,7 @@ class _LidarPublisher:
         max_points: int,
         publish_registered_cloud_fixture: bool,
         stats: _StreamStats,
+        max_frame_age_s: float = 0.6,
     ) -> None:
         self._client = client
         self._engine = engine
@@ -1424,12 +1537,14 @@ class _LidarPublisher:
         self._max_points = max_points
         self._publish_registered_cloud_fixture = publish_registered_cloud_fixture
         self._stats = stats
+        self._max_frame_age_s = max_frame_age_s
         self._write_lock = threading.Lock()
         self._odom_publisher = _RecordPublisher(
             name="odom",
             client=client,
             stats=None,
             write_lock=self._write_lock,
+            latest_only=True,
         )
         self._tasks: queue.Queue[_LidarFrame | object] = queue.Queue(
             maxsize=self._QUEUE_LIMIT
@@ -1489,10 +1604,13 @@ class _LidarPublisher:
         if self._closed:
             raise FormalFeederError("LiDAR publisher is closed")
         self.raise_if_failed()
+        # Only the newest unsampled frame can usefully catch up with live time.
         try:
-            self._tasks.put_nowait(task)
-        except queue.Full as exc:
-            raise FormalFeederError("LiDAR publisher queue is full") from exc
+            self._tasks.get_nowait()
+            self._stats.drop_current()
+        except queue.Empty:
+            pass
+        self._tasks.put_nowait(task)
 
     def _run(self) -> None:
         while True:
@@ -1513,10 +1631,14 @@ class _LidarPublisher:
                 return
 
     def _publish_frame(self, task: _LidarFrame) -> None:
+        if task.schedule_lateness_s + time.monotonic() - task.captured_at_s > self._max_frame_age_s:
+            self._stats.drop_current()
+            return
         world_points = _bounded_xyzi(
             self._engine.get_lidar_points_from_snapshot(
                 task.snapshot,
                 sample_count=self._samples_per_frame,
+                scan_duration_s=1.0 / self._stats.expected_hz,
             ),
             self._max_points,
         )
@@ -1528,18 +1650,13 @@ class _LidarPublisher:
             ),
             self._max_points,
         )
-        scan = _Subscan(task.frame_start_s, sensor_points, world_points)
+        # Raycasting one frozen MuJoCo state is an instantaneous scan at this
+        # physical tick, not a rolling scan acquired during the preceding period.
+        scan = _Subscan(task.monotonic_s, sensor_points, world_points)
         frame = _build_livox_frame(
             (scan,),
-            frame_start_s=task.frame_start_s,
-            frame_timestamp_ns=int(
-                max(
-                    0.0,
-                    task.wall_s
-                    - max(0.0, task.monotonic_s - task.frame_start_s),
-                )
-                * 1_000_000_000
-            ),
+            frame_start_s=task.monotonic_s,
+            frame_timestamp_ns=int(task.wall_s * 1_000_000_000),
             sequence=task.sequence,
             max_points=self._max_points,
             scan_duration_ns=int(1_000_000_000 / self._stats.expected_hz),
@@ -1554,8 +1671,14 @@ class _LidarPublisher:
                 body_points,
                 timestamp_ns=int(task.wall_s * 1_000_000_000),
                 sequence=task.registered_sequence,
+                sensor_origin_world=lidar_pose_world(
+                    self._engine, data=getattr(self._engine, "_lidar_data", None)
+                )[0],
             ).wire
         with self._write_lock:
+            if task.schedule_lateness_s + time.monotonic() - task.captured_at_s > self._max_frame_age_s:
+                self._stats.drop_current()
+                return
             if registered_wire is not None:
                 # Pair the scan with its captured truth pose, not a newer pose
                 # from the physics thread while this scan was raycast.
@@ -1589,6 +1712,7 @@ class _SensorPipeline:
         started_wall_s: float,
         imu_stats: _StreamStats | None = None,
         lidar_stats: _StreamStats | None = None,
+        max_frame_age_s: float = 0.6,
     ) -> None:
         self._services = services
         self._lidar = lidar
@@ -1608,6 +1732,7 @@ class _SensorPipeline:
         self._publish_odom_prior = publish_odom_prior
         self._publish_registered_cloud_fixture = publish_registered_cloud_fixture
         self._imu_sequence = 0
+        self._simulation_clock_sequence = 0
         self._odom_sequence = 0
         self._lidar_sequence = 0
         self._registered_sequence = 0
@@ -1623,6 +1748,7 @@ class _SensorPipeline:
             max_points=self._max_points,
             publish_registered_cloud_fixture=publish_registered_cloud_fixture,
             stats=self._lidar_stats,
+            max_frame_age_s=max_frame_age_s,
         )
 
     def publish_step(self, state: Any, *, tick: _Tick) -> None:
@@ -1631,7 +1757,9 @@ class _SensorPipeline:
         monotonic_s = tick.due_s
         if not math.isfinite(monotonic_s) or monotonic_s < self._started_s:
             raise FormalFeederError("sensor monotonic time is invalid")
-        wall_s = self._started_wall_s + (tick.now_s - self._started_s)
+        # Each deadline advances exactly one fixed physics step, including
+        # catch-up ticks. Delivery jitter must not change Fast-LIO's integration dt.
+        wall_s = self._started_wall_s + (monotonic_s - self._started_s)
         imu = Imu(
             orientation=Quaternion(
                 float(state.orientation[0]),
@@ -1653,18 +1781,19 @@ class _SensorPipeline:
             dropped=tick.skipped,
             lateness_s=max(0.0, tick.now_s - tick.due_s),
         )
-        self._imu_publisher.enqueue(
-            encode_imu(imu, sequence=self._imu_sequence).wire
+        clock_wire = encode_simulation_clock(
+            float(self._engine.sim_time), sequence=self._simulation_clock_sequence,
+        ).wire
+        self._imu_publisher.enqueue(clock_wire + encode_imu(imu, sequence=self._imu_sequence).wire)
+        self._simulation_clock_sequence = _next_sequence(
+            self._simulation_clock_sequence, "simulation clock",
         )
         self._imu_sequence = _next_sequence(self._imu_sequence, "IMU")
         if self._publish_odom_prior:
-            self._lidar_publisher.enqueue_odom(
-                encode_odom_prior(
-                    state,
-                    timestamp_s=wall_s,
-                    sequence=self._odom_sequence,
-                ).wire
-            )
+            odom_wire = encode_odom_prior(
+                state, timestamp_s=wall_s, sequence=self._odom_sequence,
+            ).wire
+            self._lidar_publisher.enqueue_odom(odom_wire)
             self._odom_sequence = _next_sequence(self._odom_sequence, "odometry")
 
         if monotonic_s + 1e-12 < self._next_lidar_s:
@@ -1678,7 +1807,7 @@ class _SensorPipeline:
         self._lidar_stats.due(
             count=due_count,
             dropped=due_count if due_count > 1 else 0,
-            lateness_s=max(0.0, monotonic_s - due_s),
+            lateness_s=max(0.0, tick.now_s - due_s),
         )
         if due_count > 1:
             for _ in range(due_count):
@@ -1686,17 +1815,16 @@ class _SensorPipeline:
             self._next_lidar_s += due_count * self._lidar_period_s
             return
 
-        frame_start_s = self._next_lidar_s - self._lidar_period_s
         try:
             snapshot = self._engine.capture_state()
         except Exception:
             self._lidar_stats.drop_current()
             raise
+        capture_completed_s = self._services.monotonic()
         self._lidar_publisher.enqueue_frame(
             _LidarFrame(
                 snapshot=snapshot,
                 state=state,
-                frame_start_s=frame_start_s,
                 monotonic_s=monotonic_s,
                 wall_s=wall_s,
                 sequence=self._lidar_sequence,
@@ -1705,6 +1833,7 @@ class _SensorPipeline:
                     if self._publish_registered_cloud_fixture
                     else None
                 ),
+                schedule_lateness_s=max(0.0, capture_completed_s - tick.due_s),
             )
         )
         self._lidar_sequence = _next_sequence(self._lidar_sequence, "LiDAR")
@@ -2173,18 +2302,11 @@ def _run_plan_runtime_config(
     missing_roles = [role for role in required_roles if role not in process_names]
     if missing_roles:
         raise FormalFeederError("RunPlan is missing required sensor endpoint: " + ", ".join(missing_roles))
-    slam_colocated = bool(
+    truth_localization = bool(
         plan.has_process("slam")
-        and plan.process("lidar").name == plan.process("slam").name
+        and "--navigation-fixture" in plan.process("slam").command.argv
     )
-    slam_config = plan.native_process_environment.get("LINGTU_SLAM_CONFIG", "").replace("\\", "/")
-    publish_odom_prior = bool(
-        slam_colocated
-        or (
-            plan.has_process("slam")
-            and slam_config.endswith("/sim_mid360.yaml")
-        )
-    )
+    publish_odom_prior = truth_localization
     robot = _single_robot_config(
         physics_plan=physics_plan,
         control_plan=control_plan,
@@ -2213,7 +2335,7 @@ def _run_plan_runtime_config(
         camera_hz=camera_hz,
         sensor_roles=required_roles,
         publish_odom_prior=publish_odom_prior,
-        publish_registered_cloud_fixture=slam_colocated,
+        publish_registered_cloud_fixture=truth_localization,
         viewer_enabled=runtime_mode == "preview",
         robot=robot,
         scenario_plan=(None if scenario_plan is None else scenario),
@@ -2320,14 +2442,15 @@ def _shutdown(
                 before=previous_state,
                 after=state,
                 step_seq=step_seq,
+                clearance_m=engine.get_support_clearance(),
             )
         previous_state = state
 
     while True:
         command = session.begin_deactivate()
         current_command = command
-        if emergency and command.kind != "deactivate_zero":
-            raise FormalFeederError("emergency shutdown refuses to physically replay pending navigation")
+        if command.kind not in {"deactivate_zero", "safety_zero"}:
+            raise FormalFeederError("shutdown refuses to physically replay pending navigation")
         velocity = _velocity(
             command,
             max_linear_mps=max_linear_mps,
@@ -2347,12 +2470,11 @@ def _shutdown(
                 before=previous_state,
                 after=state,
                 step_seq=step_seq,
+                clearance_m=engine.get_support_clearance(),
             )
         previous_state = state
         if command.kind == "deactivate_zero":
             break
-        if command.kind != "nav":
-            raise FormalFeederError("shutdown received a non-drainable command")
     return session.wait_stopped(), step_seq
 
 
@@ -2385,13 +2507,23 @@ def _execute(
     max_angular_rps = float(args.max_angular_rps)
     protocol_active = False
     stop_completed = False
+    failure_end_s: float | None = None
     result = 1
     try:
         config = _run_plan_runtime_config(args, plan)
         period_s = config.step_period_s
+        viewer_requested = args.viewer
+        if viewer_requested is None:
+            viewer_requested = config.viewer_enabled
         world_path, robot_path, policy_path = services.snapshot_artifacts(
             session_root,
             config,
+            retain_world_visuals=(
+                viewer_requested
+                or config.camera_enabled
+                or args.lidar_backend != "mujoco_lidar"
+                or args.mujoco_lidar_backend != "cpu"
+            ),
         )
         engine = services.build_engine(
             world=world_path,
@@ -2439,17 +2571,19 @@ def _execute(
                 config=config,
             )
             scenario.start()
-        viewer_requested = args.viewer
-        if viewer_requested is None:
-            viewer_requested = config.viewer_enabled
         if viewer_requested:
-            viewer = LiveViewer(
-                engine.model, engine.capture_state(), config.robot.position_m,
-                lambda: _read_navigation_status(session_root / "nav.status.json"),
-            )
             viewer_input = viewer_input_from_run_plan(
                 plan,
                 client_type=NativeOperatorMotionClient,
+            )
+            viewer = LiveViewer(
+                engine.model, engine.capture_state(), config.robot.position_m,
+                lambda: _read_navigation_status(session_root / "nav.status.json", product_session_id),
+                goal_input=ViewerGoal(plan, session_root, product_session_id),
+                body_name=config.robot.base_body,
+                read_keyboard_status=(
+                    (lambda: viewer_input.status_message) if viewer_input is not None else None
+                ),
             )
             if viewer_input is not None:
                 viewer_input.start()
@@ -2504,6 +2638,12 @@ def _execute(
             )
             camera.publish_initial()
 
+        if viewer is not None:
+            # MjrContext construction holds the GIL while uploading scene assets.
+            # Finish it before starting the physical heartbeat/READY deadlines.
+            # ProductControl owns the startup deadline and signals cancellation.
+            viewer.wait_until_initialized(stop_event)
+
         activation = session.activate()
         current_velocity = _velocity(
             activation,
@@ -2517,7 +2657,7 @@ def _execute(
             step_seq=0,
             scenario=scenario,
         )
-        _require_stable_pose(state)
+        _require_stable_pose(state, engine.get_support_clearance())
         session.complete_step(activation, step_seq=step_seq)
         state, step_seq = _step(
             engine,
@@ -2526,14 +2666,14 @@ def _execute(
             step_seq=step_seq,
             scenario=scenario,
         )
-        _require_stable_pose(state)
+        _require_stable_pose(state, engine.get_support_clearance())
         session.heartbeat(step_seq=step_seq)
         session.confirm_ready()
         protocol_active = True
         current_command = activation
         previous_state = state
         motion = _PhysicalMotionEvidence()
-        motion.observe_pose(state)
+        motion.observe_pose(state, engine.get_support_clearance())
 
         services.publish_readiness(
             session_root,
@@ -2577,6 +2717,9 @@ def _execute(
                 started_wall_s=started_wall_s,
                 imu_stats=streams["imu"],
                 lidar_stats=streams["lidar"],
+                max_frame_age_s=float(
+                    dict(plan.process("nav").command.env).get("LINGTU_NAV_CLOUD_MAX_AGE_S", 0.6)
+                ) if plan.has_process("nav") else 0.6,
             )
             if config.sensors_enabled
             else None
@@ -2607,6 +2750,10 @@ def _execute(
                     scenario=scenario,
                 )
                 step_ms = (time.perf_counter() - step_started) * 1000.0
+                if viewer is not None:
+                    viewer.observe_pose(
+                        started_wall_s + (tick.now_s - started_s), state.position, state.orientation,
+                    )
                 if command is not None:
                     session.complete_step(command, step_seq=step_seq)
                     pending_ready = True
@@ -2622,6 +2769,7 @@ def _execute(
                     before=previous_state,
                     after=state,
                     step_seq=step_seq,
+                    clearance_m=engine.get_support_clearance(),
                 )
                 previous_state = state
                 if sensor_pipeline is not None:
@@ -2641,6 +2789,7 @@ def _execute(
                                 "entity_contact_steps": motion.entity_contact_steps,
                                 "first_contact_geom": motion.first_contact_geom,
                                 "write_failures": motion_evidence_write_failures,
+                                "scenario_write_failures": scenario.write_failures if scenario is not None else 0,
                                 "physics_ms": step_ms,
                                 "viewer_ms": viewer.frame_ms if viewer is not None else 0.0,
                             }, allow_nan=False).encode(),
@@ -2757,11 +2906,6 @@ def _execute(
                 )
             except Exception as shutdown_exc:
                 _report_failure(FormalFeederError(f"emergency shutdown failed: {shutdown_exc}"))
-        if status is not None:
-            try:
-                status.finish("failed", failure_end_s)
-            except Exception as status_exc:
-                _report_failure(FormalFeederError(f"failed feeder status could not be built: {status_exc}"))
         result = 1
     finally:
         cleanup_failed = False
@@ -2806,12 +2950,14 @@ def _execute(
             except Exception:
                 cleanup_failed = True
         if cleanup_failed:
-            if status is not None:
-                try:
-                    status.finish("failed", services.monotonic())
-                except Exception as status_exc:
-                    _report_failure(FormalFeederError(f"cleanup failure status could not be built: {status_exc}"))
             result = 1
+        if result != 0 and status is not None:
+            # Workers settle their outstanding stream slots during close. A
+            # terminal status before that would claim incomplete accounting.
+            try:
+                status.finish("failed", failure_end_s if failure_end_s is not None else services.monotonic())
+            except Exception as status_exc:
+                _report_failure(FormalFeederError(f"failed feeder status could not be built: {status_exc}"))
     return result
 
 

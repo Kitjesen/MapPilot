@@ -1,0 +1,50 @@
+schema_version: lingtu.runtime_graph.topics.v2
+topics:
+  tf:
+    topic: /tf
+    transport: dds
+    dds_topic: rt/tf
+    message_type: lingtu.dds.TFMessage
+    qos_profile: TfDynamic
+    cpp_name: kTf
+    native_contract: true
+    role: dynamic_frame_tree
+    frame: none
+    producer: native_slam_runtime
+    consumers:
+    - runtime_frame_tree
+    - navigation
+    - local_planner
+    port_bindings:
+    - owner: native_slam_runtime
+      port: tf
+      direction: out
+      boundary: endpoint
+    - owner: FrameTree
+      port: tf
+      direction: in
+      boundary: module
+  tf_static:
+    topic: /tf_static
+    transport: dds
+    dds_topic: rt/tf_static
+    message_type: lingtu.dds.TFMessage
+    qos_profile: TfStatic
+    cpp_name: kTfStatic
+    native_contract: true
+    role: static_frame_tree
+    frame: none
+    producer: calibration
+    consumers:
+    - runtime_frame_tree
+    - navigation
+    - local_planner
+    port_bindings:
+    - owner: calibration
+      port: tf_static
+      direction: out
+      boundary: endpoint
+    - owner: FrameTree
+      port: tf_static
+      direction: in
+      boundary: module

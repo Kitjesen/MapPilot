@@ -8,6 +8,7 @@ import {
   matchSlashCommands,
   type SlashCommandSpec,
 } from '../utils/slashCommands'
+import { presentNavigationStatus } from '../services/navigationStatus'
 import { ThinkingBubble } from './ThinkingBubble'
 import styles from './ChatPanel.module.css'
 
@@ -26,15 +27,6 @@ function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString('zh-CN', {
     hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
   })
-}
-
-const NAV_STATE_ZH: Record<string, string> = {
-  PLANNING:  '规划路线中',
-  EXECUTING: '导航中',
-  ARRIVED:   '已到达目的地。',
-  IDLE:      '导航空闲。',
-  FAILED:    '导航失败。',
-  CANCELLED: '导航已取消。',
 }
 
 interface ChatPanelProps {
@@ -62,7 +54,7 @@ export function ChatPanel({
   const [thinking, setThinking] = useState<{ hint: string; startedAt: number } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const prevMissionRef = useRef<string | null>(null)
+  const prevNavigationRef = useRef<string | null>(null)
   const lastAgentTsRef = useRef<number>(0)
 
   // ── Autocomplete candidates ──
@@ -101,21 +93,19 @@ export function ChatPanel({
     return () => clearTimeout(t)
   }, [thinking])
 
-  // React to mission_status changes from SSE
+  // Report task changes from the same navigation status used by the rest of the UI.
   useEffect(() => {
-    const ms = sseState.missionStatus
-    if (!ms) return
-    const key = `${ms.state}:${ms.goal ?? ''}:${ms.progress}`
-    if (key === prevMissionRef.current) return
-    prevMissionRef.current = key
+    const task = sseState.navigationStatus?.task
+    if (!task) return
+    const view = presentNavigationStatus(sseState.navigationStatus, 'zh')
+    const key = `${task.task_id}:${view.task.state}`
+    if (key === prevNavigationRef.current) return
+    prevNavigationRef.current = key
 
-    const label = NAV_STATE_ZH[ms.state] ?? ms.state
-    const text = ms.goal
-      ? `[${ms.state}] ${label} 目标：${ms.goal} (${Math.round(ms.progress * 100)}%)`
-      : `[${ms.state}] ${label}`
+    const text = `[${view.task.state}] ${view.task.label}`
 
     setMessages(prev => [...prev, { id: nextId(), role: 'system', text, ts: Date.now() }])
-  }, [sseState.missionStatus])
+  }, [sseState.navigationStatus])
 
   const addSystem = useCallback((text: string) => {
     setMessages(prev => [...prev, { id: nextId(), role: 'system', text, ts: Date.now() }])

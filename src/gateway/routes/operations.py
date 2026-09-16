@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from gateway.maps.transport import mapd_request, safe_map_name
 from gateway.schemas import (
     DirectedExplorationClearRequest,
     DirectedExplorationResponse,
@@ -49,7 +50,6 @@ from gateway.services.exploration import (
     start_exploration_run,
 )
 from gateway.services.explore_runs import ensure_explore_runs
-from gateway.services.mapd_transport import mapd_query, safe_map_name
 from gateway.services.recording import NativeRecordingError
 from gateway.services.runtime_status import runtime_identity
 from runtime.service_catalogs.thunder import (
@@ -1020,7 +1020,7 @@ def register_operation_routes(app, gw) -> None:
         if map_guard_response is not None:
             return resolved_map, map_guard_response
         try:
-            record = mapd_query(
+            record = mapd_request(
                 gw,
                 {"action": "get_record", "map_id": resolved_map},
             )
@@ -1083,6 +1083,7 @@ def register_operation_routes(app, gw) -> None:
                     request.initial_pose.x,
                     request.initial_pose.y,
                     request.initial_pose.yaw,
+                    z=request.initial_pose.z,
                     timeout_s=30.0,
                 )
             if result.timed_out:

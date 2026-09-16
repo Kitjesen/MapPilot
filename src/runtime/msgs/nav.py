@@ -1,6 +1,6 @@
 """lingtu.runtime.msgs.nav — navigation message types (Odometry, Path, OccupancyGrid).
 
-Follows dimos nav_msgs design, aligned with LingTu /nav/* ROS2 topic contracts.
+In-process payloads for LingTu navigation. Wire enums are generated from IDL.
 """
 
 from __future__ import annotations
@@ -14,7 +14,21 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, ClassVar
 
-from runtime.runtime_interface import body_frame_id, map_frame_id, odom_frame_id
+from message.generated.enums import (
+    ExplorationRunEventKind,
+    ExplorationRunState,
+    InspectionTaskEventKind,
+    InspectionTaskState,
+    NavigationCommandKind,
+    NavigationControlMode,
+    NavigationExecutionState,
+    NavigationGoalState,
+    NavigationLifecycle,
+    NavigationPlanningState,
+    NavigationRecoveryState,
+    OperatorMotionAction,
+)
+from runtime.tf.frames import body_frame_id, map_frame_id, odom_frame_id
 
 from .geometry import Pose, PoseStamped, Twist
 from .numpy_compat import is_numpy_array, np, numpy_import_is_safe
@@ -22,117 +36,6 @@ from .numpy_compat import is_numpy_array, np, numpy_import_is_safe
 NAV_MAP_FRAME_ID = map_frame_id()
 NAV_ODOM_FRAME_ID = odom_frame_id()
 NAV_BODY_FRAME_ID = body_frame_id()
-
-
-class NavigationControlMode(IntEnum):
-    UNKNOWN = 0
-    AUTONOMY = 1
-    TELEOP = 2
-    TELEOP_AVOID = 3
-
-
-class NavigationLifecycle(IntEnum):
-    IDLE = 0
-    PLANNING = 1
-    EXECUTING = 2
-    PAUSED = 3
-    RECOVERING = 4
-    SUCCESS = 5
-    FAILED = 6
-    CANCELLED = 7
-
-
-class NavigationPlanningState(IntEnum):
-    IDLE = 0
-    PLANNING = 1
-    READY = 2
-    FAILED = 3
-
-
-class NavigationExecutionState(IntEnum):
-    IDLE = 0
-    FOLLOWING = 1
-    REACHED = 2
-    BLOCKED = 3
-
-
-class NavigationRecoveryState(IntEnum):
-    IDLE = 0
-    ACTIVE = 1
-    SUCCEEDED = 2
-    FAILED = 3
-
-
-class NavigationGoalState(IntEnum):
-    PLANNING = 1
-    PATH_ACTIVE = 2
-    FAILED = 3
-    REACHED = 4
-    CANCELLED = 5
-    PAUSED = 6
-
-
-class InspectionTaskEventKind(IntEnum):
-    TASK_ACCEPTED = 1
-    STATE_CHANGED = 2
-    MILESTONE = 3
-    STOP_CONFIRMATION_FAILED = 4
-    EVIDENCE_RECORDED = 5
-
-
-class InspectionTaskState(IntEnum):
-    IDLE = 0
-    VALIDATING = 1
-    PLANNING = 2
-    NAVIGATING = 3
-    DWELLING = 4
-    PAUSED = 5
-    RECOVERING = 6
-    SUCCEEDED = 7
-    FAILED = 8
-    CANCELLED = 9
-    SETTLING = 10
-    ACTION_PENDING = 11
-    PAUSING = 12
-    CANCELLING = 13
-
-
-class ExplorationRunEventKind(IntEnum):
-    """Kind of immutable lifecycle fact emitted by the native Explore endpoint."""
-
-    ADMITTED = 1
-    STATE_CHANGED = 2
-    STOP_CONFIRMATION_FAILED = 3
-
-
-class ExplorationRunState(IntEnum):
-    """Authoritative state of one finite native Explore run."""
-
-    ADMITTED = 1
-    RUNNING = 2
-    PAUSING = 3
-    PAUSED = 4
-    CANCELLING = 5
-    COMPLETED = 6
-    CANCELLED = 7
-    FAILED = 8
-
-
-class NavigationCommandKind(IntEnum):
-    GOAL = 1
-    TASK_CANCEL = 2
-    STOP = 4
-    ESTOP = 5
-    CLEAR_ESTOP = 6
-    RESUME_AUTONOMY = 7
-    PAUSE_TASK = 8
-    RESUME_TASK = 9
-
-
-class OperatorMotionAction(IntEnum):
-    CLAIM = 1
-    RELEASE = 2
-    HOLD = 3
 
 
 def _require_int(value: int, field_name: str) -> int:

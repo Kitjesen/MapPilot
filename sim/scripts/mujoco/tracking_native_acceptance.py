@@ -29,7 +29,7 @@ from lingtu.sdk.client import LingTuClient  # noqa: E402
 from lingtu.sim.acceptance import validate_runner_plan  # noqa: E402
 from lingtu.sim.switch import _load_committed_plan  # noqa: E402
 
-DEFAULT_MANIFEST = ROOT / "config/runtime_graph/acceptance/mujoco_tracking_native_acceptance.json"
+DEFAULT_MANIFEST = ROOT / "config" / "acceptance" / "mujoco" / "tracking.json"
 REPORT_SCHEMA = "lingtu.mujoco.tracking_native_acceptance.report.v1"
 PERSON_LABELS = frozenset({"person", "human", "pedestrian"})
 ACTIVE_NAVIGATION_STATES = frozenset({"accepted", "planning", "path_active"})

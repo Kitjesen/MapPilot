@@ -111,6 +111,37 @@ their capture pose without rewinding live odometry. Viewer refreshes use owned
 snapshots off the physics loop. Endpoint input holds freeze both SCAN planning
 time and Follower execution time without replacing the active reference.
 
+SCAN's final command check sweeps the actual body's braking path through the
+same LiDAR collision bitmap used by local planning. If the requested speed
+cannot stop in the available clearance, it scales the complete twist down
+along the same arc and retains the active trajectory. Occupied current space,
+unsafe measured motion, or an unavailable safe prefix still stops execution.
+The sweep keeps measured body height: an ascending global route cannot be
+used as evidence that the physical robot has already climbed the stairs.
+
+Disabling automatic recovery does not disable stall stopping. If a commanded
+robot makes no measured progress for the existing recovery observation interval,
+the executor holds zero output with `autonomy_motion_stalled`. A new route or
+operator intent clears this hold; periodic local replanning does not. This keeps
+an unqualified locomotion policy from repeatedly pushing against the same step.
+
+Stall progress follows the previous requested motion in the planning frame.
+Translation accumulates signed horizontal displacement along the commanded
+path-following direction; heading alignment accumulates rotation in the
+requested direction. Reverse drift, cross-track slip, body heave and incidental
+yaw do not refresh a translation timer. Instantaneous velocity alone does not
+prove progress. The existing distance/angle threshold is capped at half the
+requested travel accumulated in that observation window, so a slow command is
+not required to cover an impossible fixed distance. This is a stall detector,
+not a locomotion tracking-accuracy qualification.
+
+A translating recovery also rejects excursions beyond its existing cross-track
+limit. Completion requires both along-path progress and actual XY proximity to
+the exit; merely projecting onto the endpoint cannot finish recovery. A rejected
+action advances the existing checked candidate sequence. These checks do not
+raise recovery speed, change braking limits or establish that policy 4998 can
+execute low-speed lateral commands.
+
 The goal is `(56, 32, 0.3)`. A successful global plan or accepted command is not
 arrival: the report requires physical travel, native `REACHED`, final position,
 collision evidence and terminal zero acknowledgement. The Viewer shows the

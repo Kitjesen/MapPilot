@@ -154,6 +154,8 @@ class Commands(Module, layer=3):
         *,
         task_id: str,
         request_id: str | None = None,
+        max_speed_mps: float | None = None,
+        acceptance_radius_m: float | None = None,
     ) -> NavigationCommandReceipt:
         return self._navigation_receipt(
             lambda client: client.start_task(
@@ -163,6 +165,8 @@ class Commands(Module, layer=3):
                 None if yaw is None else float(yaw),
                 task_id=task_id,
                 request_id=request_id,
+                **{k: v for k, v in {"max_speed_mps": max_speed_mps,
+                    "acceptance_radius_m": acceptance_radius_m}.items() if v is not None},
             )
         )
 

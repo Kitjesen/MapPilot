@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Thunder compatibility smoke; run from repository root:
 #   python tests/scripts/smoke/mapping.py
-# ruff: noqa: E402 - configure the repository source path before imports
+
 import logging
 import sys
 import time

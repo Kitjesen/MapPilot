@@ -1,6 +1,5 @@
 """Offline tests for the one-shot manual SDK-quiet short gate."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -13,7 +12,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from sim.runtime.coordinator import playable_vertical_slice as playable_module
 from sim.runtime.coordinator.manual_short_gate import (
     ManualShortGateConfig,

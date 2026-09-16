@@ -1,14 +1,11 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from sim.catalog import CatalogResolver
 from sim.runtime.control import (
     CommandSubmitResult,
@@ -152,7 +149,7 @@ class ControlledPhysicsHost:
         assert steps == 1
         self.physics_step += 1
         self.sequence += 1
-        self.sim_time_ns += 2_000_000
+        self.sim_time_ns += 1_000_000
         return self._snapshot()
 
     def pause(self) -> dict[str, Any]:
@@ -241,7 +238,7 @@ class ChunkedControlledPhysicsHost(ControlledPhysicsHost):
         self.calls.append(("advance", steps))
         self.physics_step += steps
         self.sequence += steps
-        self.sim_time_ns += steps * 2_000_000
+        self.sim_time_ns += steps * 1_000_000
         return self._snapshot()
 
 
@@ -336,11 +333,6 @@ def _imu_sample(scheduled: Any, snapshot: Any) -> ImuSample:
     )
 
 
-def _camera_sample(scheduled: Any, snapshot: Any) -> SimpleNamespace:
-    del snapshot
-    return SimpleNamespace(stamp=SensorSampleStamp.from_scheduled(scheduled))
-
-
 def _headless_sensor_endpoint(stream: Any, allocation: Any) -> SensorEndpoint | None:
     del allocation
     if stream.stream_kind == "truth_odom":
@@ -360,14 +352,6 @@ def _headless_sensor_endpoint(stream: Any, allocation: Any) -> SensorEndpoint | 
             sink=_TruthSink(),
             extractor=_mid360_frame,
         )
-    if stream.stream_kind in {"rgb", "depth"}:
-        return SensorEndpoint(
-            source_id="camera-test",
-            sink=_TruthSink(),
-            extractor=_camera_sample,
-        )
-    if stream.stream_kind not in {"truth_odom", "imu", "mid360"}:
-        return None
     return None
 
 
@@ -392,13 +376,34 @@ def _strict_headless_sensor_endpoint(
             sink=_TruthSink(),
             extractor=_mid360_frame,
         )
-    if stream.stream_kind in {"rgb", "depth"}:
-        return SensorEndpoint(
-            source_id="camera-test",
-            sink=_TruthSink(),
-            extractor=_camera_sample,
-        )
     return None
+
+
+def _activate_headless_cameras(
+    coordinator: RuntimeCoordinator,
+    event: dict[str, Any],
+) -> None:
+    for sensor_id in ("thunder_01.front_depth", "thunder_01.front_rgb"):
+        evidence = {
+            "source_id": "mujoco-camera-test",
+            "session_id": event["session_id"],
+            "model_generation": event["model_generation"],
+            "reset_generation": event["reset_generation"],
+        }
+        coordinator.report_sensor_stream_prepared(sensor_id, **evidence)
+        coordinator.report_sensor_stream_active(
+            sensor_id,
+            published_frames=1,
+            last_sample_truth_sequence=event["sequence"],
+            last_sample_sim_time_ns=event["sim_time_ns"],
+            **evidence,
+        )
+
+
+def _prepare_headless(coordinator: RuntimeCoordinator) -> dict[str, Any]:
+    event = coordinator.prepare()
+    _activate_headless_cameras(coordinator, event)
+    return event
 
 
 def test_coordinator_refuses_to_ignore_a_compiled_controller(tmp_path: Path) -> None:
@@ -428,14 +433,14 @@ def test_coordinator_can_bind_allocation_artifacts_to_its_owned_run_directory(
         artifact_root_mode="run",
     )
 
-    coordinator.prepare()
+    _prepare_headless(coordinator)
 
     assert coordinator.allocation.artifact_root == coordinator.allocation.run_dir
     persisted = json.loads(coordinator.allocation.path.read_text(encoding="utf-8"))
     assert persisted["artifact_root"] == str(coordinator.allocation.run_dir)
 
 
-def test_coordinator_holds_output_between_low_level_control_ticks(
+def test_coordinator_runs_due_control_before_each_physics_advance(
     tmp_path: Path,
 ) -> None:
     host = ControlledPhysicsHost()
@@ -448,7 +453,7 @@ def test_coordinator_holds_output_between_low_level_control_ticks(
         sensor_endpoint_factory=_headless_sensor_endpoint,
         run_id="controlled-session",
     )
-    ready = coordinator.prepare()
+    ready = _prepare_headless(coordinator)
     assert coordinator.state is RuntimeState.READY
     assert host.calls[1][0] == "bind"
     assert host.calls[1][1]["channels"] == ACTUATORS
@@ -470,10 +475,10 @@ def test_coordinator_holds_output_between_low_level_control_ticks(
         is CommandSubmitResult.ACCEPTED
     )
 
-    snapshot = coordinator.advance(3)
+    snapshot = coordinator.advance(6)
 
-    assert snapshot["physics_step"] == 3
-    assert [command.sequence for command in host.applied] == [1]
+    assert snapshot["physics_step"] == 6
+    assert [command.sequence for command in host.applied] == [1, 2]
     assert all(command.session_id == ready["session_id"] for command in host.applied)
     control_order = [
         call if isinstance(call, str) else call[0]
@@ -487,13 +492,17 @@ def test_coordinator_holds_output_between_low_level_control_ticks(
         "advance",
         "advance",
         "advance",
+        "advance",
+        "advance",
+        "actuate",
+        "advance",
     ]
-
-    coordinator.advance(1)
-    assert [command.sequence for command in host.applied] == [1, 2]
 
     reset = coordinator.reset()
     assert reset["reset_generation"] == 1
+    assert coordinator.state is RuntimeState.PREPARING
+    _activate_headless_cameras(coordinator, reset)
+    assert coordinator.state is RuntimeState.READY
     assert (
         coordinator.submit_controller_command(
             "thunder_01.thunderv4_locomotion",
@@ -524,7 +533,7 @@ def test_realtime_chunk_holds_one_control_output_across_physics_substeps(
         sensor_endpoint_factory=_headless_sensor_endpoint,
         run_id="controlled-realtime-chunk",
     )
-    ready = coordinator.prepare()
+    ready = _prepare_headless(coordinator)
     coordinator.start()
     assert (
         coordinator.submit_controller_command(
@@ -564,7 +573,7 @@ def test_realtime_sampled_chunk_preserves_every_strict_sensor_deadline(
         sensor_endpoint_factory=_strict_headless_sensor_endpoint,
         run_id="controlled-realtime-sampled-chunk",
     )
-    ready = coordinator.prepare()
+    ready = _prepare_headless(coordinator)
     coordinator.start()
     assert (
         coordinator.submit_controller_command(
@@ -611,7 +620,7 @@ def test_realtime_sampled_chunk_fuses_one_actuator_command_with_physics_advance(
         sensor_endpoint_factory=_strict_headless_sensor_endpoint,
         run_id="controlled-realtime-fused-chunk",
     )
-    ready = coordinator.prepare()
+    ready = _prepare_headless(coordinator)
     coordinator.start()
     assert (
         coordinator.submit_controller_command(
@@ -654,7 +663,7 @@ def test_realtime_sampled_chunk_rejects_a_batch_without_the_final_truth(
         sensor_endpoint_factory=_strict_headless_sensor_endpoint,
         run_id="controlled-realtime-incomplete-sampled-chunk",
     )
-    coordinator.prepare()
+    _prepare_headless(coordinator)
     coordinator.start()
 
     with pytest.raises(CoordinatorError, match="invalid snapshot batch"):
@@ -715,7 +724,7 @@ def test_controller_failure_stops_physics_and_marks_session_failed(
         sensor_endpoint_factory=_headless_sensor_endpoint,
         run_id="controller-failure",
     )
-    ready = coordinator.prepare()
+    ready = _prepare_headless(coordinator)
     coordinator.start()
     coordinator.submit_controller_command(
         "thunder_01.thunderv4_locomotion",
@@ -756,7 +765,7 @@ def test_warmup_control_failure_keeps_first_failed_terminal(
         sensor_endpoint_factory=_headless_sensor_endpoint,
         run_id="controller-warmup-failure",
     )
-    coordinator.prepare()
+    _prepare_headless(coordinator)
     host.actuator_result = "rejected_out_of_range"
 
     with pytest.raises(CoordinatorError, match="rejected_out_of_range") as error:

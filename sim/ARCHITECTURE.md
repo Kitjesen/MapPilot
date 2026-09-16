@@ -2,9 +2,9 @@
 
 This file is the canonical architecture for the high-fidelity simulation
 payload under `sim/`. LingTu Product contracts remain authoritative in
-[`docs/architecture/README.md`](../docs/architecture/README.md) and the
+[`docs/architecture.md`](../docs/architecture.md) and the
 simulation runtime contract remains in
-[`docs/architecture/SIM_RUNTIME_CONTRACT.md`](../docs/architecture/SIM_RUNTIME_CONTRACT.md).
+[`docs/simulation.md`](../docs/simulation.md).
 
 ## Canonical Product Chain
 

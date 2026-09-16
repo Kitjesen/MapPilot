@@ -4,16 +4,15 @@ import math
 from typing import Any
 
 import pytest
-
 from sim.runtime.control import (
     ActuatorCommand,
     ActuatorLayout,
     AdapterSpec,
     CommandChannelSpec,
-    ControlPlan,
     ControllerPhysicsBridge,
     ControllerRuntimeError,
     ControllerSpec,
+    ControlPlan,
     GenerationStamp,
     PolicySpec,
 )

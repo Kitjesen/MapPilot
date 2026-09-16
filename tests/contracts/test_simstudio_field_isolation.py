@@ -1,4 +1,3 @@
-# ruff: noqa: D103,S101
 """Field-boundary and import-graph contracts for SimStudio."""
 
 from __future__ import annotations
@@ -56,7 +55,7 @@ print(json.dumps({
             "PYTHONPATH": os.pathsep.join((str(REPO_ROOT), str(REPO_ROOT / "src"))),
         }
     )
-    completed = subprocess.run(  # noqa: S603
+    completed = subprocess.run(
         [sys.executable, "-c", script],
         cwd=REPO_ROOT,
         env=environment,

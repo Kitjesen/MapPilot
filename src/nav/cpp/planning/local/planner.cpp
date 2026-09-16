@@ -294,6 +294,8 @@ class local::Planner::Impl {
         params_.backend == LocalPlannerBackend::Scan
             ? last_debug_
             : (cmu_ != nullptr ? cmu_->debugSnapshot() : LocalPlannerDebugSnapshot{});
+    if (task_)
+      snapshot.lastScanFailure = task_->lastScanFailure();
     snapshot.backend = params_.backend;
     return snapshot;
   }

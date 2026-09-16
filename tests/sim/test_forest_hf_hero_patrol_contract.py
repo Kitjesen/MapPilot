@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Review-only hero patrol contracts for Forest_HF Blender authoring."""
 
@@ -13,7 +12,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from sim.tools.worlds.forest_hf import blender_author as author
 from sim.tools.worlds.forest_hf import blender_visuals as visuals
 
@@ -214,7 +212,9 @@ def test_review_actor_collection_is_excluded_from_scene_exports(
     assert review_robot.hidden is True
 
 
-def test_runtime_robot_index_loads_exactly_twenty_one_review_only_assets(tmp_path: Path) -> None:
+def test_review_robot_index_loads_exactly_twenty_one_review_only_assets(
+    tmp_path: Path,
+) -> None:
     contract = author.load_review_robot_asset_index(_write_robot_index(tmp_path))
 
     assert len(contract["assets"]) == 21

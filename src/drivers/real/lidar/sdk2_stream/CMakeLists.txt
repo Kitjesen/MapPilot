@@ -26,9 +26,7 @@ if(LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS)
 
   set(_LINGTU_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../..")
 
-  add_subdirectory(
-    "${_LINGTU_ROOT}/src/message/cpp"
-    "${CMAKE_CURRENT_BINARY_DIR}/message_cpp")
+  include("${_LINGTU_ROOT}/cmake/LingTuDDS.cmake")
   set(_LINGTU_SLAM_IDL "${_LINGTU_ROOT}/src/message/idl/messages.idl")
   lingtu_add_dds_c_messages(
     livox_sdk2_stream_messages "${_LINGTU_SLAM_IDL}")
@@ -131,4 +129,17 @@ if(BUILD_TESTING)
   add_test(
     NAME test_livox_replay_deadline_restamper
     COMMAND test_livox_replay_deadline_restamper)
+
+  foreach(test_target IN ITEMS
+      test_livox_fallback_timestamp_clock
+      test_livox_packet_timestamp_clock
+      test_livox_single_lidar_handle_guard
+      test_livox_stream_exit_state
+      test_livox_replay_deadline_restamper)
+    if(MSVC)
+      target_compile_options(${test_target} PRIVATE /UNDEBUG)
+    else()
+      target_compile_options(${test_target} PRIVATE -UNDEBUG)
+    endif()
+  endforeach()
 endif()

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from lingtu.assembly.products.runtime_paths import DEFAULT_GATEWAY_PORT
+from lingtu.run_plan import RunPlan
 from runtime.blueprint import Blueprint
 from runtime.runtime_policy import normalize_slam_profile
 
@@ -31,6 +32,11 @@ def _semantic_save_dir(
 
 def host_blueprint(
     config: Mapping[str, Any] | None = None,
+    *,
+    product: str | None = None,
+    required_topics: tuple[str, ...] = (),
+    required_capabilities: tuple[str, ...] = (),
+    run_plan: RunPlan | None = None,
     **overrides: Any,
 ) -> Blueprint:
     """Build a Product Host blueprint from an already resolved config."""
@@ -72,6 +78,10 @@ def host_blueprint(
         enable_teleop=enable_teleop,
         enable_navigation=enable_navigation,
         semantic_save_dir=semantic_save_dir,
+        product=product,
+        required_topics=required_topics,
+        required_capabilities=required_capabilities,
+        run_plan=run_plan,
         config=cfg,
     )
     bp = apply_full_stack_wires(

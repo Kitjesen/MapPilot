@@ -86,6 +86,19 @@ test('saved-map layer keeps outdoor height and applies height colors without sem
   )
 })
 
+test('saved-map default height window keeps other floors and rejects non-finite points', () => {
+  const saved = createSavedMapLayer(
+    [0, 0, -80, 1, 0, 80, 2, 0, Number.NaN, Number.POSITIVE_INFINITY, 0, 0],
+    SAVED_MAP_Z_FLOOR,
+    SAVED_MAP_Z_CEIL,
+  )
+  assert.ok(saved)
+  const positions = saved.geometry.getAttribute('position')
+  assert.equal(positions.count, 2)
+  assert.equal(positions.getY(0), -80)
+  assert.equal(positions.getY(1), 80)
+})
+
 test('periodic map-scene events do not rebuild the saved-map GPU layer', () => {
   assert.doesNotMatch(scene3dSource, /\[savedMapFlat,\s*mapScene\]/)
   assert.match(

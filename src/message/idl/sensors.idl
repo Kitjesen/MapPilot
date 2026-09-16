@@ -1,0 +1,105 @@
+@final
+struct Imu {
+  Header header;
+  Quaternion orientation;
+  double orientation_covariance[9];
+  Vector3 angular_velocity;
+  double angular_velocity_covariance[9];
+  Vector3 linear_acceleration;
+  double linear_acceleration_covariance[9];
+};
+@final
+struct LivoxPoint {
+  unsigned long offset_time;
+  float x;
+  float y;
+  float z;
+  octet reflectivity;
+  octet tag;
+  octet line;
+};
+@final
+struct LivoxFrame {
+  Header header;
+  unsigned long long timebase;
+  unsigned long point_num;
+  octet lidar_id;
+  octet rsvd[3];
+  sequence<LivoxPoint> points;
+};
+@final
+struct Image {
+  Header header;
+  unsigned long height;
+  unsigned long width;
+  string encoding;
+  boolean is_bigendian;
+  unsigned long step;
+  sequence<octet> data;
+};
+@final
+struct CameraInfo {
+  Header header;
+  unsigned long height;
+  unsigned long width;
+  double depth_scale;
+  string distortion_model;
+  sequence<double> d;
+  double k[9];
+  double r[9];
+  double p[12];
+};
+@final
+struct GnssFix {
+  Header header;
+  double latitude;
+  double longitude;
+  double altitude;
+  long fix_type;
+  double position_covariance[9];
+  unsigned long num_sat;
+  unsigned long num_sat_used;
+  double hdop;
+  double rtcm_age_s;
+};
+@final
+struct GnssStatus {
+  Header header;
+  string device;
+  long fix_type;
+  boolean link_ok;
+  boolean rtk;
+  unsigned long num_sat;
+  unsigned long num_sat_used;
+  double hdop;
+  double rtcm_age_s;
+  string error;
+};
+@final
+struct JointState {
+  Header header;
+  string robot_model;
+  sequence<string> names;
+  sequence<double> position;
+  sequence<double> velocity;
+  sequence<double> effort;
+};
+@final
+struct DriverControlState {
+  Header header;
+  boolean connected;
+  boolean ready;
+  boolean motors_enabled;
+  boolean critical_fault;
+  boolean control_assured;
+  boolean lease_valid;
+  unsigned long lease_remaining_ms;
+  unsigned long long accepted_sequence;
+  string accepted_producer_boot_id;
+  unsigned long long accepted_output_sequence;
+  boolean last_command_accepted;
+  string fsm;
+  string owner;
+  string owner_id;
+  string reason;
+};

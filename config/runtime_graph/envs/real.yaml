@@ -209,11 +209,15 @@ endpoints:
       - /nav/traversability
       - /maps/activation/request
     exposed_topics:
+      - /camera/color/image_raw
+      - /camera/depth/image_raw
+      - /camera/color/camera_info
       - /slam/odometry
       - /slam/state_at_scan
       - /slam/registered_cloud
       - /slam/map_observation
       - /slam/map_cloud
+      - /slam/cumulative_map_cloud
       - /slam/saved_map_cloud
       - /slam/map_event
       - /slam/relocalization/response

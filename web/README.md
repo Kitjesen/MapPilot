@@ -77,7 +77,29 @@ Important current links include:
 
 The Dataflow tab uses `runtime_dataflow` only as a read-only view of the declared motion path, Product topics, and currently visible Gateway evidence. It does not orchestrate processes or motion. `runtime_dataflow_topic` inspects one stream, and `runtime_dataflow_subscribe` discovers its filtered Gateway SSE URL. The Product Check strip uses the backend `field_check` verdict instead of recomputing it in the browser. There is no arbitrary ModulePort publish, no arbitrary runtime topic publish, and no motion bypass.
 
-Saved-map previews use saved-map JSON points separately from raw saved-map PCD; `/api/v1/maps/{name}/pcd` is the raw PCD endpoint.
+Scene's navigation overlay uses JSON points bound to the active map and live
+frame. The independent Maps viewer uses `/api/v1/maps/{name}/pcd` for any saved
+map, without activating it or placing the live robot in an unverified frame.
+
+During mapping, Scene offers **遥控**, **保存地图**, and **已存地图**. The map
+fills the workspace by default; **视图** holds display controls and **状态**
+opens the status/layers/operations sidebar. Measured speed and unavailable or
+cached local data remain visible with the sidebar closed. Ordinary mapping
+clicks only manipulate the view: no probe marker, diagnostic popover or motion
+target is created. Cell probing is available only under the existing
+`debug_nav` diagnostics on a fresh local projection. The footer is a plain data
+status; detailed interpretation belongs to the layers/diagnostics panel.
+Saving waits for
+the native save operation to succeed before opening that exact map in Maps.
+The whole-map viewer's **已保存** disclosure explains **整图快照**: it covers the saved PCD's
+extent, with a bounded point sample, and does not update with subsequent scans.
+The map-name selector opens the library; selecting a row closes it. Map
+management is under each row's **…** button. The viewer opens in **2D** top
+view, with **3D** and fit controls; height/color information is collapsed.
+**现场** opens Scene's rolling local map again. Viewing saved maps is also
+available in observation mode; save and navigation controls are unavailable there.
+There is currently no continuous, unsaved global-map stream. Do not present the
+mapd local cloud or local projection as the complete mapping history.
 
 The console shows the current task, map, localization backend, and readiness.
 It does not expose Product lifecycle or copy shell commands. The same console
@@ -86,6 +108,8 @@ remain motion-capable commands guarded by Gateway safety policy, while `stop`
 only releases visual-servo ownership.
 
 The Inspection tab mounts `InspectionWorkbench`. It lists persisted routes and recently retained tasks, lets the operator explicitly select the task being inspected, loads route revisions, builds routes only from locations bound to the selected map revision, saves or deletes routes, submits a persisted revision as one `task_id`, and shows the bounded native event timeline for that exact task. SSE causes an immediate task refresh but does not itself become task authority. Route editing is no-motion; start and resume are motion-capable; pause and cancel are state-changing controls that reduce or stop motion.
+
+The default inspection view keeps route selection, task selection, confirmed progress, and available task controls together. Route editing, detailed results, evidence, and runtime diagnostics are collapsed until requested; errors and required operator actions remain visible. The global emergency stop remains in the top bar, while the duplicate runtime footer is hidden on this page.
 
 If manual takeover paused a task, the console shows a separate “Release manual control” action. That releases the safety-plane latch only; it never resumes the inspection task implicitly. The operator then submits the selected task's resume command and waits for a native event. A native command rejection is shown as a task conflict, not as a false claim that the endpoint is down.
 
@@ -100,17 +124,14 @@ Read-only UI actions:
 - Open dashboard, status cards, topbar, Scene view, Map preview, SLAM status.
 - Open the Dataflow tab and inspect runtime stream summary/detail.
 - Open the Inspection tab to review route definitions, current mission status, and verified evidence; run the separate read-only acceptance diagnostic.
-- Open the Runtime tab and run product switch Preflight.
 - SSE `/api/v1/events`, point cloud `/ws/cloud`, camera `/ws/camera`.
 - Gateway bootstrap, health, readiness, runtime dataflow, map list, map points, navigation status.
 
 State-changing but no robot motion:
 
-- Copy ProductControl switch or stop commands for mapping, navigation, or exploration.
-- Save, activate, rename, or delete a map.
+- Save, rename, or delete a map.
 - Create, update, or delete an inspection route.
 - Pause or cancel an inspection mission; these controls may reduce or stop existing motion but never initiate it.
-- Switch SLAM mode.
 - Manual or auto relocalization.
 - Reset accumulated map cloud.
 - Execute a product mode switch that only plans, stops current motion, or cold-restarts services without publishing a navigation goal.
@@ -124,11 +145,15 @@ Robot motion capable:
 - Teleop or any command that enters autonomous motion.
 - Execute a product mode that starts an exploration/navigation behavior, or send Visual Servo `find`/`follow`.
 
-The UI confirms map activation and saved-map load/relocalize. Goal and inspection motion controls must remain disabled when Gateway reports readiness blockers, localization loss, missing odometry, unsupported evidence actions, or an incompatible control owner.
+Saved-map preview does not activate a map or relocalize the robot. Product
+lifecycle changes remain outside this dashboard and use ProductControl.
+Goal and inspection motion controls must remain disabled when Gateway reports
+readiness blockers, localization loss, missing odometry, unsupported evidence
+actions, or an incompatible control owner.
 
 Command acceptance is not physical outcome confirmation. A command toast reports submitted, rejected, or failed; task state must then be confirmed by the native inspection event stream. In particular, `CANCELLED` is valid only after the native endpoint records its stop evidence.
 
-State-changing communication is limited to Gateway's whitelisted commands, such as goal, stop, map, and SLAM operations. Product lifecycle changes are copied as ProductControl commands for the operator; the dashboard must not provide arbitrary publish into ModulePorts or runtime topics.
+State-changing communication is limited to Gateway's whitelisted commands, such as goal, stop, map, and SLAM operations. The dashboard must not provide arbitrary publish into ModulePorts or runtime topics.
 
 ## Sunrise No-Motion Smoke
 

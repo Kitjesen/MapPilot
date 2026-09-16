@@ -20,19 +20,19 @@ from typing import Type
 
 from .base import ReconBackendBase
 
-_registry: dict[str, Type[ReconBackendBase]] = {}
+_registry: dict[str, type[ReconBackendBase]] = {}
 
 
 def register_backend(name: str):
     """Class decorator: register a backend under ``name``."""
-    def decorator(cls: Type[ReconBackendBase]) -> Type[ReconBackendBase]:
+    def decorator(cls: type[ReconBackendBase]) -> type[ReconBackendBase]:
         cls.name = name
         _registry[name] = cls
         return cls
     return decorator
 
 
-def get_backend(name: str) -> Type[ReconBackendBase]:
+def get_backend(name: str) -> type[ReconBackendBase]:
     """Return the backend class for ``name``.
 
     Tries lazy-importing the built-in backends on first call.
@@ -85,7 +85,7 @@ class BackendRegistry:
         return register_backend(name)
 
     @staticmethod
-    def get(name: str) -> Type[ReconBackendBase]:
+    def get(name: str) -> type[ReconBackendBase]:
         return get_backend(name)
 
     @staticmethod

@@ -1,0 +1,83 @@
+// One accepted incremental scan and the exact map<-sensor transform evaluated
+// at that scan timestamp. Consumers must reject an old reset_epoch or a
+// non-increasing sequence within the same epoch.
+@final
+struct MapObservation {
+  Header header;
+  unsigned long long observation_sequence;
+  unsigned long long reset_epoch;
+  string sensor_frame;
+  Transform map_sensor;
+  Vector3 sensor_origin;
+  PointCloud2 scan;
+  float pose_confidence;
+  float localization_quality;
+  string pose_state;
+  string pose_reason;
+};
+@final
+struct RelocalizationRequest {
+  string request_id;
+  string action;
+  string engine;
+  string map_path;
+  boolean has_initial_pose;
+  Pose initial_pose;
+  double timeout_s;
+};
+@final
+struct RelocalizationResponse {
+  string request_id;
+  string action;
+  string engine;
+  boolean success;
+  string message;
+  double quality;
+  boolean map_loaded;
+  boolean has_map_body;
+  Pose map_body;
+  boolean has_map_odom;
+  Pose map_odom;
+  string state;
+  string refine_backend;
+  long refine_iterations;
+  long refine_inliers;
+  long refine_input_points;
+  long refine_evaluated_points;
+  double refine_support_ratio;
+  double refine_overlap_inlier_ratio;
+  boolean refine_converged;
+  double refine_pos_cov_trace;
+  boolean track_against_map_supported;
+  boolean track_against_map_enabled;
+  long track_against_map_failures;
+};
+// Typed save-time handoff between mapd and the native SLAM owner. The request
+// selects the exact product session and output location; the acknowledgement
+// carries the runtime identity and observation epoch captured by that save.
+@final
+struct SlamMapSnapshotRequest {
+  string request_id;
+  string map_id;
+  string product_session_id;
+  string output_path;
+  boolean save_patches;
+};
+@final
+struct SlamMapSnapshotAck {
+  string request_id;
+  string map_id;
+  boolean success;
+  string message;
+  string output_path;
+  string runtime_instance_id;
+  string product_session_id;
+  unsigned long long reset_epoch;
+  unsigned long long observation_sequence;
+  unsigned long long captured_at_ns;
+  string frame_id;
+  unsigned long long point_count;
+  string state;
+  boolean healthy;
+  string health_message;
+};

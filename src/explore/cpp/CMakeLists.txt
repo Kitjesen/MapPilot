@@ -47,7 +47,7 @@ if(LINGTU_EXPLORE_CPP_WITH_DDS)
     message(STATUS "CycloneDDS found: ${CycloneDDS_DIR}")
     target_compile_definitions(lingtu_explore_core PUBLIC LINGTU_EXPLORE_HAS_DDS)
     target_link_libraries(lingtu_explore_core PUBLIC CycloneDDS::ddsc)
-    # The repo root contains message/cpp/ (topics.hpp, qos.hpp).
+    # The repo root contains generated message contracts and DDS transport policy.
     target_include_directories(lingtu_explore_core PUBLIC
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../..>)
   else()

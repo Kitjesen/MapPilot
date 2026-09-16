@@ -8,8 +8,8 @@
 
 #ifdef LINGTU_EXPLORE_HAS_DDS
 
-#include "message/cpp/qos.hpp"
-#include "message/cpp/topics.hpp"
+#include "transport/dds/qos.hpp"
+#include "message/generated/topics.hpp"
 
 #include "dds/dds.h"
 

@@ -28,6 +28,11 @@ enum class SlamMode {
   Localization,
 };
 
+enum class RelocalizationSearch {
+  Automatic,
+  Global,
+};
+
 enum class SlamState {
   Unconfigured,
   Initializing,
@@ -111,10 +116,21 @@ struct GnssSample {
 struct OdomSample {
   double stamp_s = 0.0;
   Pose3d odom_body;
+  // Legacy /odom_prior input: body-origin linear velocity expressed in odom.
   bool has_velocity = false;
   double vx = 0.0;
   double vy = 0.0;
   double vz = 0.0;
+};
+
+struct BodyTwist {
+  // Body-origin velocity expressed in the Odometry child frame (body).
+  double vx = 0.0;
+  double vy = 0.0;
+  double vz = 0.0;
+  double wx = 0.0;
+  double wy = 0.0;
+  double wz = 0.0;
 };
 
 struct Cloud {
@@ -170,9 +186,21 @@ struct SlamOutputs {
 
   std::optional<Pose3d> odometry_odom_body;
   std::optional<Pose3d> state_estimation_at_scan;
+  std::optional<BodyTwist> odometry_twist_body;
   std::optional<Cloud> registered_cloud_body;
   std::optional<Cloud> map_cloud_map;
   std::optional<Cloud> saved_map_cloud_map;
+  std::shared_ptr<const Cloud> global_map_cloud;
+  std::uint64_t global_map_revision = 0;
+  std::size_t global_map_keyframes = 0;
+  std::size_t global_map_registered_keyframes = 0;
+  std::size_t global_map_rejected_keyframes = 0;
+  std::size_t global_map_dropped_frames = 0;
+  std::size_t global_map_loops = 0;
+  std::size_t global_map_optimizations = 0;
+  std::size_t global_map_optimization_failures = 0;
+  bool global_map_busy = false;
+  std::string global_map_state = "inactive";
   std::optional<Transform3d> map_odom_tf;
   std::uint64_t observation_sequence = 0U;
   std::uint64_t source_epoch = 0U;
@@ -223,6 +251,7 @@ struct SlamOutputs {
   double odom_prior_error_xy_m = -1.0;
   int odom_prior_map_points = 0;
 
+  // Filter diagnostics retain the internal odom-frame velocity.
   double fastlio_velocity_x = 0.0;
   double fastlio_velocity_y = 0.0;
   double fastlio_velocity_z = 0.0;
@@ -251,13 +280,19 @@ class ISlamBackend {
   virtual Status feedVisualOdom(const OdomSample&) = 0;
 
   virtual Status setInitialPose(const Pose3d&) = 0;
-  virtual Status relocalize(const std::optional<Pose3d>& guess) = 0;
+  virtual Status relocalize(
+      const std::optional<Pose3d>& guess,
+      RelocalizationSearch search = RelocalizationSearch::Automatic) = 0;
 
   // Periodic saved-map tracking must not run ICP on the sensor/tick thread.
   // Backends that support it snapshot their inputs in startRelocalizeAsync(),
   // perform only the independent registration work off-thread, and commit a
   // completed result from pollRelocalizeAsync() on the owning runtime thread.
-  virtual Status startRelocalizeAsync(const std::optional<Pose3d>&) {
+  // Global ignores the previous alignment as a search seed, while retaining
+  // the result's quality and map-alignment commit gates.
+  virtual Status startRelocalizeAsync(
+      const std::optional<Pose3d>&,
+      RelocalizationSearch = RelocalizationSearch::Automatic) {
     return Status::Error("async_relocalization_unsupported");
   }
   virtual std::optional<Status> pollRelocalizeAsync() { return std::nullopt; }

@@ -1,6 +1,5 @@
 """Pure policy tests for the Blender forest asset conditioner."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -12,7 +11,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from sim.tools.assets import blender_forest_asset_conditioner as conditioner_module
 from sim.tools.assets import static_prop_conditioning as conditioning_contract
 from sim.tools.assets.blender_forest_asset_conditioner import (

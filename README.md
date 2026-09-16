@@ -26,10 +26,10 @@
 </p>
 
 <p align="center">
-  <a href="docs/QUICKSTART.md">Quick start</a> ·
-  <a href="docs/architecture/README.md">Architecture</a> ·
-  <a href="docs/04-deployment/README.md">Deployment</a> ·
-  <a href="docs/07-testing/README.md">Validation</a>
+  <a href="docs/getting-started.md">Quick start</a> ·
+  <a href="docs/architecture.md">Architecture</a> ·
+  <a href="docs/operations.md">Operations</a> ·
+  <a href="docs/testing.md">Validation</a>
 </p>
 
 ## Overview
@@ -342,13 +342,12 @@ native dependencies and DDS services installed.
 
 Start here:
 
-- [`docs/architecture/README.md`](docs/architecture/README.md)
-- [`docs/architecture/FIELD_PRODUCTS.md`](docs/architecture/FIELD_PRODUCTS.md)
-- [`docs/architecture/NAVIGATION_RUNTIME_DATAFLOW.md`](docs/architecture/NAVIGATION_RUNTIME_DATAFLOW.md)
-- [`docs/architecture/MAP_SERVICE_CONTRACT.md`](docs/architecture/MAP_SERVICE_CONTRACT.md)
-- [`docs/07-testing/simulation/MUJOCO_NAVIGATION_ACCEPTANCE.md`](docs/07-testing/simulation/MUJOCO_NAVIGATION_ACCEPTANCE.md)
-- [`docs/07-testing/simulation/MUJOCO_NATIVE_CONTROL_MODE_ACCEPTANCE.md`](docs/07-testing/simulation/MUJOCO_NATIVE_CONTROL_MODE_ACCEPTANCE.md)
-- [`docs/04-deployment/lingtu_cli.md`](docs/04-deployment/lingtu_cli.md)
+- [Documentation index](docs/README.md)
+- [Architecture](docs/architecture.md)
+- [Product runtime](docs/runtime.md)
+- [Simulation](docs/simulation.md)
+- [Operations](docs/operations.md)
+- [Testing and evidence](docs/testing.md)
 - [`sim/README.md`](sim/README.md)
 
 ## Known Boundaries
@@ -391,7 +390,7 @@ proof, and reproducible artifacts instead of only code-path inspection.
 ## Contributing
 
 1. Read [`AGENTS.md`](AGENTS.md) and the
-   [development guide](docs/03-development/README.md).
+   [development guide](docs/development.md).
 2. Keep field hot paths native and ROS-free; add ROS only through an explicit
    compatibility boundary.
 3. Run the narrowest affected tests first, then the relevant native, Python,

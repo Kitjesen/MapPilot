@@ -17,7 +17,7 @@ Gateway / GoalService / Explore
 
 ## Ownership
 
-- Wire enums and validation belong to `src/message/cpp` because producers and
+- Wire enums and validation belong to `src/message/protocol` because producers and
   consumers must share the same stable numeric values.
 - `cpp/Client` owns one DDS session and exposes two narrow views:
   `navigation()` and `inspection()`.

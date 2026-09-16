@@ -85,7 +85,7 @@ commandIngressRequestFromDds(const lingtu_dds_NavigationCommandRequest &message)
   payload.goal = {
       message.goal.position.x,    message.goal.position.y,    message.goal.position.z,
       message.goal.orientation.x, message.goal.orientation.y, message.goal.orientation.z,
-      message.goal.orientation.w,
+      message.goal.orientation.w, message.max_speed_mps, message.acceptance_radius_m,
   };
   payload.reason = stringValue(message.reason);
   return request;

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from gateway.services.mapd_transport import safe_map_name
+from gateway.maps.transport import safe_map_name
 
 
 @pytest.mark.parametrize(

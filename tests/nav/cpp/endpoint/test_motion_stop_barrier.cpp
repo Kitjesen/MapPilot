@@ -874,6 +874,22 @@ void testResumeOnlyUnlatchesAfterConfirmation() {
   require(ready_result.accepted && ready_result.reason == "autonomy_already_ready",
           "already-ready result mismatch");
   orderIs(already_ready, {});
+
+  Fixture independent_hold;
+  independent_hold.takeover_latched = false;
+  MotionStopBarrier independent_coordinator(true, independent_hold.actions);
+  const auto independent_result = independent_coordinator.resumeAutonomy({{}, false, 42.5, true});
+  require(independent_result.accepted && independent_result.reason == "autonomy_resume_ready_reissue_goal",
+          "independent resume requirement must not report already ready");
+  require(independent_hold.order == confirmed.order, "independent hold must use the full resume barrier");
+
+  Fixture independent_timeout;
+  independent_timeout.takeover_latched = false;
+  independent_timeout.confirmation = StopConfirmationState::TimedOut;
+  MotionStopBarrier timeout_coordinator(true, independent_timeout.actions);
+  require(!timeout_coordinator.resumeAutonomy({{}, false, 42.5, true}).accepted,
+          "independent resume must still require confirmed zero");
+  require(independent_timeout.order == rejected.order, "unconfirmed independent hold must not clear resume");
 }
 
 void testTeleopResumeConfirmsZeroWithoutTouchingAutonomyGoal() {
@@ -907,6 +923,22 @@ void testTeleopResumeConfirmsZeroWithoutTouchingAutonomyGoal() {
   require(ready_result.accepted && ready_result.reason == "teleop_already_ready",
           "teleop already-ready result mismatch");
   orderIs(already_ready, {});
+
+  Fixture independent_hold;
+  independent_hold.takeover_latched = false;
+  MotionStopBarrier independent_coordinator(true, independent_hold.actions);
+  const auto independent_result = independent_coordinator.resumeTeleop({{}, false, 42.5, true});
+  require(independent_result.accepted && independent_result.reason == "teleop_resume_ready_reassert_command",
+          "teleop independent resume requirement must not report already ready");
+  require(independent_hold.order == confirmed.order, "independent teleop hold must use the full resume barrier");
+
+  Fixture independent_timeout;
+  independent_timeout.takeover_latched = false;
+  independent_timeout.confirmation = StopConfirmationState::TimedOut;
+  MotionStopBarrier timeout_coordinator(true, independent_timeout.actions);
+  require(!timeout_coordinator.resumeTeleop({{}, false, 42.5, true}).accepted,
+          "teleop independent resume must still require confirmed zero");
+  require(independent_timeout.order == rejected.order, "unconfirmed independent teleop hold must not clear resume");
 }
 
 void testDriverLossAndKeepZeroOrder() {

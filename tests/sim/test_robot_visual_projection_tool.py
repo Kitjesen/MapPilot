@@ -8,7 +8,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from sim.tools.assets.build_robot_visual_projection import (
     RobotVisualProjectionToolError,
     build_robot_visual_projection,

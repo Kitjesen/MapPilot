@@ -1,16 +1,16 @@
-/* Modal — product dialog with a flat backdrop and restrained depth. */
+/* Modal — theme-aware product dialog with restrained depth. */
 
 .backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(5, 6, 12, 0.68);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  background: rgb(0 0 0 / 28%);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 100;
-  animation: fade 0.2s var(--ease-out);
+  animation: fade var(--duration-ui, 160ms) var(--ease-out);
 }
 
 @keyframes fade {
@@ -23,20 +23,18 @@
   width: 420px;
   max-width: calc(100vw - 48px);
   padding: 28px 28px 24px;
-  background: rgba(24, 25, 31, 0.98);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  border: 1px solid rgba(255, 255, 255, 0.11);
+  background: var(--glass-hi);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 18px 56px rgba(0, 0, 0, 0.48);
-  animation: dialogIn 0.22s var(--ease-out);
+  box-shadow: var(--shadow-lg);
+  animation: dialogIn var(--duration-panel, 180ms) var(--ease-out);
   color: var(--text);
 }
 
 @keyframes dialogIn {
-  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  from { opacity: 0; transform: translateY(6px) scale(0.99); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
@@ -57,8 +55,8 @@
   justify-content: center;
   width: 36px;
   height: 36px;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bg-layer-2);
+  border: 1px solid var(--border);
   border-radius: 10px;
   color: var(--text);
   flex-shrink: 0;
@@ -67,9 +65,9 @@
 
 .iconWrapDanger {
   composes: iconWrap;
-  background: rgba(220, 38, 38, 0.12);
-  border-color: rgba(248, 113, 113, 0.24);
-  color: #FCA5A5;
+  background: var(--red-glow);
+  border-color: color-mix(in srgb, var(--red) 30%, transparent);
+  color: var(--red);
   box-shadow: none;
 }
 
@@ -94,17 +92,17 @@
   border-radius: 8px;
   color: var(--text-faint);
   cursor: pointer;
-  transition: all 0.15s var(--ease-out);
+  transition: color var(--duration-ui, 160ms) var(--ease-out), background var(--duration-ui, 160ms) var(--ease-out);
 }
 
 .closeBtn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-layer-2);
   color: var(--text);
 }
 
 .closeBtn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.55);
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
 }
 
 .body {
@@ -124,15 +122,15 @@
   width: 100%;
   margin-top: 14px;
   padding: 12px 14px;
-  background: rgba(0, 0, 0, 0.32);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-layer-2);
+  border: 1px solid var(--border);
   border-radius: 10px;
   color: var(--text);
   font-size: 15px;
   font-family: var(--font-mono);
   letter-spacing: 0;
   outline: none;
-  transition: all 0.2s var(--ease-out);
+  transition: background var(--duration-ui, 160ms) var(--ease-out), border-color var(--duration-ui, 160ms) var(--ease-out);
 }
 
 .input::placeholder {
@@ -141,15 +139,15 @@
 }
 
 .input:focus {
-  background: rgba(0, 0, 0, 0.45);
-  border-color: rgba(255, 255, 255, 0.42);
+  background: var(--bg-layer-1);
+  border-color: var(--border-focus);
   box-shadow: none;
 }
 
 .error {
   margin-top: 8px;
   font-size: 13px;
-  color: #FCA5A5;
+  color: var(--red);
   letter-spacing: 0;
 }
 
@@ -168,13 +166,13 @@
   font-weight: 600;
   letter-spacing: 0;
   cursor: pointer;
-  transition: all 0.15s var(--ease-out);
+  transition: background var(--duration-ui, 160ms) var(--ease-out), border-color var(--duration-ui, 160ms) var(--ease-out), color var(--duration-ui, 160ms) var(--ease-out), transform var(--duration-ui, 160ms) var(--ease-out);
   border: 1px solid transparent;
 }
 
 .btnBase:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.34);
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
 }
 
 .btnBase:disabled {
@@ -184,28 +182,28 @@
 
 .btnCancel {
   composes: btnBase;
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.08);
+  background: var(--bg-layer-2);
+  border-color: var(--border);
   color: var(--text-dim);
 }
 
 .btnCancel:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.09);
+  background: var(--bg-layer-3);
   color: var(--text);
 }
 
 .btnPrimary {
   composes: btnBase;
-  background: rgba(94, 234, 212, 0.14);
-  border-color: rgba(94, 234, 212, 0.32);
-  color: var(--accent);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
   box-shadow: none;
 }
 
 .btnPrimary:hover:not(:disabled) {
   transform: translateY(-1px);
-  background: rgba(94, 234, 212, 0.2);
-  border-color: rgba(94, 234, 212, 0.44);
+  background: var(--accent-dim);
+  border-color: var(--accent-dim);
   box-shadow: none;
 }
 
@@ -215,19 +213,26 @@
 
 .btnDanger {
   composes: btnBase;
-  background: rgba(220, 38, 38, 0.16);
-  border-color: rgba(248, 113, 113, 0.3);
-  color: #FCA5A5;
+  background: var(--red-glow);
+  border-color: color-mix(in srgb, var(--red) 30%, transparent);
+  color: var(--red);
   box-shadow: none;
 }
 
 .btnDanger:hover:not(:disabled) {
   transform: translateY(-1px);
-  background: rgba(220, 38, 38, 0.22);
-  border-color: rgba(248, 113, 113, 0.44);
+  background: color-mix(in srgb, var(--red) 18%, var(--bg-layer-1));
+  border-color: var(--red);
   box-shadow: none;
 }
 
 .btnDanger:active:not(:disabled) {
   transform: translateY(0) scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop, .dialog { animation: none; }
+  .closeBtn, .input, .btnBase { transition: none; }
+  .btnPrimary:hover:not(:disabled), .btnPrimary:active:not(:disabled),
+  .btnDanger:hover:not(:disabled), .btnDanger:active:not(:disabled) { transform: none; }
 }

@@ -24,8 +24,8 @@ from runtime.msgs.numpy_compat import np
 from runtime.msgs.semantic import SceneGraph
 from runtime.msgs.sensor import CameraIntrinsics, Image
 from runtime.registry import register
-from runtime.runtime_interface import map_frame_id
 from runtime.stream import In, Out
+from runtime.tf.frames import map_frame_id
 
 logger = logging.getLogger(__name__)
 

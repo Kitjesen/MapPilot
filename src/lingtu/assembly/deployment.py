@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from lingtu.assembly.graph import load_runtime_graph
 from lingtu.products import product_name
-from runtime.graph import load_runtime_graph
 
 _NATIVE_BUILD_STAGES: tuple[tuple[frozenset[str], str], ...] = (
     (frozenset({"lidar", "imu"}), "scripts/build/build_livox_sdk2_stream.sh"),

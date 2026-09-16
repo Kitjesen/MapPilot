@@ -5,7 +5,6 @@ import json
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -16,7 +15,6 @@ VERIFY_SCRIPT = ROOT / "scripts" / "build" / "verify_cyclonedds_windows_sdk.ps1"
 LOCK = ROOT / "scripts" / "build" / "locks" / "cyclonedds-windows-x64.json"
 CMAKE = shutil.which("cmake")
 POWERSHELL = shutil.which("pwsh")
-WINDOWS_SDK_VERIFY_AVAILABLE = sys.platform == "win32" and CMAKE is not None and POWERSHELL is not None
 COMMIT = "e54e991f75a3e67f8e628da3171122e36ea5b872"
 TREE = "56508d35826c362782fc8a388cad351a3d491f51"
 
@@ -97,7 +95,7 @@ def _write_fake_tree(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
 
 def _stage(install: Path, source: Path, receipts: Path, final: Path) -> subprocess.CompletedProcess[str]:
     assert CMAKE is not None
-    return subprocess.run(  # noqa: S603 - runs the repository-owned CMake staging script.
+    return subprocess.run(
         [
             CMAKE,
             f"-DINSTALL_ROOT={install}",
@@ -131,7 +129,7 @@ def _verify(quarantine: Path, *, create_receipt: bool = True) -> subprocess.Comp
     command = [POWERSHELL, "-NoProfile", "-File", str(VERIFY_SCRIPT), "-SdkRoot", str(quarantine)]
     if create_receipt:
         command.append("-CreateReceipt")
-    return subprocess.run(  # noqa: S603 - runs the repository-owned verifier.
+    return subprocess.run(
         command,
         cwd=ROOT,
         capture_output=True,
@@ -157,12 +155,12 @@ def _assert_spdx_23_is_internally_consistent(quarantine: Path) -> None:
         relative = record["fileName"].removeprefix("./")
         payload = quarantine / relative
         checksums = {item["algorithm"]: item["checksumValue"] for item in record["checksums"]}
-        assert checksums["SHA1"] == hashlib.sha1(payload.read_bytes()).hexdigest()  # noqa: S324 - SPDX 2.3 requires SHA-1.
+        assert checksums["SHA1"] == hashlib.sha1(payload.read_bytes()).hexdigest()
         assert checksums["SHA256"] == hashlib.sha256(payload.read_bytes()).hexdigest()
         assert record["licenseInfoInFiles"] == ["NOASSERTION"]
         sha1s.append(checksums["SHA1"])
         file_ids.add(record["SPDXID"])
-    verification = hashlib.sha1("".join(sorted(sha1s)).encode()).hexdigest()  # noqa: S324 - SPDX algorithm.
+    verification = hashlib.sha1("".join(sorted(sha1s)).encode()).hexdigest()
     assert package["packageVerificationCode"]["packageVerificationCodeValue"] == verification
     relationships = spdx["relationships"]
     assert {
@@ -238,10 +236,7 @@ def test_standalone_stage_rejects_overlapping_input_and_output_roots(tmp_path: P
     assert not Path(f"{final}.incoming").exists()
 
 
-@pytest.mark.skipif(
-    not WINDOWS_SDK_VERIFY_AVAILABLE,
-    reason="the Windows SDK verifier requires Windows Authenticode support",
-)
+@pytest.mark.skipif(CMAKE is None or POWERSHELL is None, reason="cmake or pwsh unavailable")
 def test_invalid_spdx_fails_in_quarantine_without_publishing_final_sdk(tmp_path: Path) -> None:
     install, source, receipts, final = _write_fake_tree(tmp_path)
     staged = _stage(install, source, receipts, final)
@@ -260,10 +255,7 @@ def test_invalid_spdx_fails_in_quarantine_without_publishing_final_sdk(tmp_path:
     assert not final.exists()
 
 
-@pytest.mark.skipif(
-    not WINDOWS_SDK_VERIFY_AVAILABLE,
-    reason="the Windows SDK verifier requires Windows Authenticode support",
-)
+@pytest.mark.skipif(CMAKE is None or POWERSHELL is None, reason="cmake or pwsh unavailable")
 def test_realistic_spdx_iso_timestamp_remains_a_string_in_pwsh(tmp_path: Path) -> None:
     install, source, receipts, final = _write_fake_tree(tmp_path)
     staged = _stage(install, source, receipts, final)
@@ -282,10 +274,7 @@ def test_realistic_spdx_iso_timestamp_remains_a_string_in_pwsh(tmp_path: Path) -
     assert not final.exists()
 
 
-@pytest.mark.skipif(
-    not WINDOWS_SDK_VERIFY_AVAILABLE,
-    reason="the Windows SDK verifier requires Windows Authenticode support",
-)
+@pytest.mark.skipif(CMAKE is None or POWERSHELL is None, reason="cmake or pwsh unavailable")
 def test_missing_dll_and_payload_tamper_are_rejected_before_publish(tmp_path: Path) -> None:
     install, source, receipts, final = _write_fake_tree(tmp_path)
     staged = _stage(install, source, receipts, final)
@@ -313,10 +302,7 @@ def test_missing_dll_and_payload_tamper_are_rejected_before_publish(tmp_path: Pa
     assert not final.exists()
 
 
-@pytest.mark.skipif(
-    not WINDOWS_SDK_VERIFY_AVAILABLE,
-    reason="the Windows SDK verifier requires Windows Authenticode support",
-)
+@pytest.mark.skipif(CMAKE is None or POWERSHELL is None, reason="cmake or pwsh unavailable")
 def test_tampered_sdk_receipt_is_rejected(tmp_path: Path) -> None:
     install, source, receipts, final = _write_fake_tree(tmp_path)
     staged = _stage(install, source, receipts, final)

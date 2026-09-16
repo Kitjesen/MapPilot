@@ -13,9 +13,7 @@
   -webkit-backdrop-filter: blur(40px) saturate(120%);
   border: 1px solid var(--border);
   border-radius: var(--r-xl);
-  box-shadow: var(--shadow-md);
   overflow: hidden;
-  animation: fade-in 0.6s var(--ease-spring) 0.1s both;
 }
 
 /* ─── Tabs ────────────────────────────────────────────────────────── */
@@ -68,6 +66,7 @@
   flex-direction: column;
   padding: var(--s-4);
   min-height: 0;
+  overflow-y: auto;
 }
 
 /* ─── Header ──────────────────────────────────────────────────────── */
@@ -118,6 +117,15 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+
+.details { margin-top: 12px; }
+.details summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; list-style: none; cursor: pointer; font-size: 12px; color: var(--text-dim); transition: color 150ms ease; }
+.details summary::-webkit-details-marker { display: none; }
+.details summary:hover { color: var(--text); }
+.details summary svg { transition: transform 150ms ease; }
+.details[open] summary svg { transform: rotate(180deg); }
+.details .grid { margin-top: 8px; }
+.details summary:focus-visible, .tabs button:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
 
 /* ─── Field grid ──────────────────────────────────────────────────── */
 /* grid hugs its content — no flex-grow, so extra widget height stays as
@@ -202,4 +210,8 @@
   border: 1px solid var(--border);
   border-radius: 3px;
   color: var(--text-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab, .tabActive, .details summary, .details summary svg { transition: none; }
 }

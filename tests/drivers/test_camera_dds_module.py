@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: D103,S101
 import time
 from importlib import reload
 from pathlib import Path

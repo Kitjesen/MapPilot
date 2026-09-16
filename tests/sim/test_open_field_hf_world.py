@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Contracts for the deterministic OpenField_HF source terrain."""
 
@@ -12,7 +11,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from sim.catalog import CatalogResolver
 from sim.tools.worlds.open_field_hf.generate import generate_open_field_hf
 

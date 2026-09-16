@@ -12,8 +12,8 @@ from nav.services.goals import build_goal_pose
 from runtime.module import Module, skill
 from runtime.msgs.nav import NavigationGoalStatus, NavigationState
 from runtime.registry import register
-from runtime.runtime_interface import map_frame_id, normalize_frame_id
 from runtime.stream import In, Out
+from runtime.tf.frames import map_frame_id, normalize_frame_id
 
 
 @register("navigation_skills", "default", description="MCP/AI skills for navigation control")

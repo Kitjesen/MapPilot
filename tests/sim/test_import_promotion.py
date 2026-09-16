@@ -1,6 +1,5 @@
 """Atomic package-promotion contracts."""
 
-# ruff: noqa: S101,S603
 
 from __future__ import annotations
 
@@ -13,10 +12,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-
 from sim.catalog.composer import SessionComposer
-from sim.catalog.resolver import CatalogError, CatalogResolver
 from sim.catalog.importers import CatalogPromoter, ImportDraft, ImportFailure, RobotImporter
+from sim.catalog.resolver import CatalogError, CatalogResolver
 
 _PROCESS_BARRIER_TIMEOUT_S = 60
 

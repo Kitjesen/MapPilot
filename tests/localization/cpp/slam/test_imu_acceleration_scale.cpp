@@ -17,6 +17,103 @@ void require(bool condition, const char* message) {
 }  // namespace
 
 int main() {
+  IESKF bounded_covariance;
+  bounded_covariance.P() = M21D::Identity() * 1e-5;
+  bounded_covariance.P()(3, 3) = 1.0;
+  bounded_covariance.P()(12, 12) = 400.0;
+  bounded_covariance.P()(3, 12) = bounded_covariance.P()(12, 3) = 18.0;
+  require(bounded_covariance.P().llt().info() == Eigen::Success,
+          "prediction covariance fixture must start positive definite");
+  bounded_covariance.clampCovariance();
+  require(bounded_covariance.P().llt().info() == Eigen::Success,
+          "prediction variance upper bounds must preserve positive-definite covariance");
+  require(std::abs(bounded_covariance.P()(12, 12) - IESKF::P_MAX[12]) < 1e-10,
+          "prediction variance upper bound changed");
+  require(std::abs(bounded_covariance.P()(3, 12) - 9.0) < 1e-10,
+          "variance cap must preserve position-velocity correlation");
+
+  Config settling_config;
+  settling_config.imu_init_num = 200;
+  settling_config.imu_static_acc_thresh = 0.22;
+  settling_config.imu_static_gyro_thresh = 0.022;
+  settling_config.zupt_min_static_frames = 6;
+  settling_config.zupt_sigma_v = 0.015;
+  settling_config.zupt_sigma_pos = 0.08;
+  settling_config.vertical_velocity_constraint_enabled = true;
+  auto settling_filter = std::make_shared<IESKF>();
+  IMUProcessor settling_processor(settling_config, settling_filter);
+  SyncPackage settling_package;
+  settling_package.cloud_end_time = 1.2;
+  for (int i = 0; i < 240; ++i) {
+    IMUData sample;
+    // A MuJoCo startup contact produced 59--76 m/s^2 before settling at 1 g.
+    sample.acc = V3D(0.0, 0.0, i < 8 ? 60.0 : State::gravity);
+    sample.gyro = V3D::Zero();
+    sample.time = static_cast<double>(i) * 0.005;
+    settling_package.imus.push_back(sample);
+  }
+  require(!settling_processor.initialize(settling_package),
+          "startup impact must not calibrate the accelerometer scale");
+  require(std::abs(settling_processor.accelerationScale() - 1.0) < 1e-12,
+          "rejected startup window changed the accelerometer scale");
+  settling_package.imus.clear();
+  settling_package.cloud_end_time = 2.2;
+  for (int i = 0; i < settling_config.imu_init_num; ++i) {
+    IMUData sample;
+    sample.acc = V3D(0.0, 0.0, State::gravity);
+    sample.gyro = V3D::Zero();
+    sample.time = 1.2 + static_cast<double>(i) * 0.005;
+    settling_package.imus.push_back(sample);
+  }
+  require(settling_processor.initialize(settling_package),
+          "a settled window did not recover from startup impact");
+  require(std::abs(settling_processor.accelerationScale() - 1.0) < 1e-12,
+          "startup impact contaminated the settled calibration window");
+
+  for (int frame = 0; frame < 20; ++frame) {
+    SyncPackage next;
+    next.cloud_start_time = 2.2 + frame * 0.1;
+    next.cloud_end_time = next.cloud_start_time + 0.1;
+    next.cloud.reset(new CloudType);
+    PointType point;
+    point.curvature = 0.0F;
+    next.cloud->push_back(point);
+    for (int i = 0; i < 20; ++i) {
+      IMUData sample;
+      sample.acc = V3D(0.0, 0.0, State::gravity);
+      sample.gyro = V3D::Zero();
+      sample.time = next.cloud_start_time + static_cast<double>(i) * 0.005;
+      next.imus.push_back(sample);
+    }
+    settling_processor.undistort(next);
+    const double min_eigenvalue =
+        Eigen::SelfAdjointEigenSolver<M21D>(settling_filter->P()).eigenvalues().minCoeff();
+    if (min_eigenvalue <= 0.0) {
+      std::cerr << "sim stationary covariance failed at frame " << frame
+                << " min_eigenvalue=" << min_eigenvalue << '\n';
+    }
+    require(min_eigenvalue > 0.0 && settling_filter->P().llt().info() == Eigen::Success,
+            "simulation stationary constraints must preserve positive-definite covariance");
+  }
+
+  for (const bool gyro_motion : {false, true}) {
+    auto varying_filter = std::make_shared<IESKF>();
+    IMUProcessor varying_processor(settling_config, varying_filter);
+    SyncPackage varying_package;
+    varying_package.cloud_end_time = 1.0;
+    for (int i = 0; i < settling_config.imu_init_num; ++i) {
+      const double sign = i % 2 == 0 ? 1.0 : -1.0;
+      IMUData sample;
+      sample.acc = V3D(gyro_motion ? 0.0 : sign * 0.3, 0.0, State::gravity);
+      sample.gyro = V3D(gyro_motion ? sign * 0.03 : 0.0, 0.0, 0.0);
+      sample.time = static_cast<double>(i) * 0.005;
+      varying_package.imus.push_back(sample);
+    }
+    require(!varying_processor.initialize(varying_package),
+            gyro_motion ? "gyro RMS above the stationary threshold was accepted"
+                        : "acceleration RMS above the stationary threshold was accepted");
+  }
+
   Config config;
   config.imu_init_num = 200;
   auto filter = std::make_shared<IESKF>();
@@ -61,6 +158,13 @@ int main() {
       next.imus.push_back(sample);
     }
     processor.undistort(next);
+    if (filter->P().llt().info() != Eigen::Success) {
+      std::cerr << "stationary covariance became indefinite at frame " << frame
+                << " position_variance=" << filter->P().diagonal().segment<3>(3).transpose()
+                << '\n';
+    }
+    require(filter->P().llt().info() == Eigen::Success,
+            "stationary IMU constraints must preserve positive-definite covariance");
     package_start_s += 0.1;
   }
   require(

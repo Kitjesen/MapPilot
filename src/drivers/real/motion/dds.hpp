@@ -62,6 +62,7 @@ class DdsReader {
       const std::string& reason,
       std::uint64_t sequence,
       double stamp_s);
+  bool writeJointState(const JointState& state);
 
  private:
   struct Impl;

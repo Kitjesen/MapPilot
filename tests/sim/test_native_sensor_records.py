@@ -5,11 +5,6 @@ import types
 from io import BytesIO
 
 import pytest
-
-from runtime.msgs.sensor import POINT_DTYPE
-from runtime.msgs.geometry import Quaternion, Vector3
-from runtime.msgs.numpy_compat import np
-from runtime.msgs.sensor import Imu
 from sim.scripts.mujoco.native_sensor_records import (
     HEADER,
     IMU_PAYLOAD,
@@ -18,6 +13,7 @@ from sim.scripts.mujoco.native_sensor_records import (
     ODOM_PRIOR_PAYLOAD,
     RECORD_CAMERA,
     RECORD_CLOUD,
+    RECORD_SIMULATION_CLOCK,
     encode_camera_depth,
     encode_camera_intrinsics,
     encode_camera_rgb,
@@ -26,7 +22,12 @@ from sim.scripts.mujoco.native_sensor_records import (
     encode_record,
     encode_registered_cloud,
     encode_scan,
+    encode_simulation_clock,
 )
+
+from runtime.msgs.geometry import Quaternion, Vector3
+from runtime.msgs.numpy_compat import np
+from runtime.msgs.sensor import POINT_DTYPE, Imu
 
 
 def test_encode_camera_intrinsics_wraps_exact_ltob_v2_record() -> None:
@@ -321,6 +322,18 @@ def test_encode_imu_matches_the_ltu1_wire_contract_exactly() -> None:
     assert encoded.wire == expected_header + expected_payload
 
 
+@pytest.mark.parametrize("sim_time_s,timestamp_ns", [(0.0, 0), (0.05, 50_000_000)])
+def test_encode_simulation_clock_uses_physical_time(sim_time_s: float, timestamp_ns: int) -> None:
+    encoded = encode_simulation_clock(sim_time_s, sequence=11)
+    assert encoded.wire == HEADER.pack(LTU1_MAGIC, RECORD_SIMULATION_CLOCK, timestamp_ns, 11, 1, 0)
+
+
+@pytest.mark.parametrize("sim_time_s", [-0.1, float("inf"), 2**31])
+def test_encode_simulation_clock_rejects_invalid_time(sim_time_s: float) -> None:
+    with pytest.raises(ValueError):
+        encode_simulation_clock(sim_time_s, sequence=0)
+
+
 def test_encode_record_matches_the_ltu1_point_wire_contract_exactly() -> None:
     point = struct.pack("<ffffIBBH", 1.0, -2.0, 3.5, 42.0, 500, 6, 7, 0)
 
@@ -389,6 +402,17 @@ def test_encode_odom_prior_matches_the_native_struct_layout() -> None:
         -0.1,
         1,
     )
+
+
+def test_registered_cloud_preserves_sensor_origin_separately_from_body_points() -> None:
+    points = np.array([[1.0, 2.0, 0.3, 11.0]], dtype=np.float32)
+    original = encode_registered_cloud(points, timestamp_ns=12, sequence=3)
+    encoded = encode_registered_cloud(
+        points, timestamp_ns=12, sequence=3, sensor_origin_world=[4.3, -2.0, 0.6]
+    )
+    assert encoded.record_type == 7
+    assert struct.unpack("<ddd", encoded.payload[:24]) == (4.3, -2.0, 0.6)
+    assert encoded.payload[24:] == original.payload
 
 
 def test_encode_registered_cloud_builds_canonical_body_frame_points() -> None:
@@ -482,3 +506,37 @@ def test_legacy_writer_delegates_to_the_same_codec_without_wire_drift() -> None:
     assert bridge._HEADER is HEADER
     assert bridge._IMU_PAYLOAD is IMU_PAYLOAD
     assert bridge._ODOM_PRIOR_PAYLOAD is ODOM_PRIOR_PAYLOAD
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_legacy_imu_batch_publishes_physical_clock_before_sensor_time(
+    tmp_path,
+    async_mode: bool,
+) -> None:
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    imu = Imu(
+        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        angular_velocity=Vector3(0.0, 0.0, 0.0),
+        linear_acceleration=Vector3(0.0, 0.0, MID360_ACCEL_MPS2_PER_G),
+        ts=1_788_998_860.0,
+        frame_id="imu_link",
+    )
+    stream = BytesIO()
+    batch = bridge.AsyncPublisherBatch() if async_mode else None
+    diagnostics = bridge.ParentSensorDiagnostics(tmp_path / "sensor.json")
+    bridge._write_native_imu(
+        stream,
+        imu,
+        sequence=7,
+        simulation_time_s=1.25,
+        parent_diagnostics=diagnostics,
+        async_batch=batch,
+    )
+    if batch is not None:
+        assert stream.getvalue() == b""
+        for record in batch._seal():
+            bridge._write_serialized_record(stream, record, parent_diagnostics=diagnostics)
+    assert stream.getvalue() == (
+        encode_simulation_clock(1.25, sequence=7).wire + encode_imu(imu, sequence=7).wire
+    )

@@ -7,7 +7,7 @@ it is not part of the default Product process graph.
 
 Operator commands, install paths, failure handling, replay safety, and the
 rosbag2-inspired roadmap are maintained in the canonical
-[native recording and replay guide](../../../docs/04-deployment/native_recording.md).
+[native recording and replay guide](../../../docs/operations.md).
 
 Camera images remain on the existing POSIX shared-memory data plane. They are
 recorded as short external video segments with a small MCAP timeline, rather

@@ -172,12 +172,17 @@ class MotionLayer {
     float height{0.0f};
   };
 
+  struct RankedObstacle {
+    const Cell *cell;
+    double distance_squared;
+  };
+
   VoxelKey makeKey(float x, float y, float z) const;
   VoxelKey makeKeyForSize(float x, float y, float z, double voxel_size_m) const;
   Cell cellAtKey(const VoxelKey &key, double stamp_s) const;
   void collectRayFreeKeys(const SensorOrigin &origin, const Cell &endpoint,
                           std::unordered_set<VoxelKey, VoxelKeyHash> &keys) const;
-  void markHit(const Cell &sample, double stamp_s);
+  void markHit(const VoxelKey &key, const Cell &sample, double stamp_s);
   void markFree(const VoxelKey &key, double stamp_s);
   void refreshStats();
   static bool isObstacle(CellState state);
@@ -187,7 +192,7 @@ class MotionLayer {
   std::unordered_map<VoxelKey, Cell, VoxelKeyHash> cells_;
   std::unordered_map<VoxelKey, Cell, VoxelKeyHash> output_cells_scratch_;
   std::unordered_map<VoxelKey, Cell, VoxelKeyHash> reduced_cells_scratch_;
-  std::vector<const Cell *> obstacle_scratch_;
+  std::vector<RankedObstacle> obstacle_scratch_;
   MotionLayerStats stats_{};
   double last_ray_clearing_s_{-1.0};
   double last_prune_s_{-1.0};

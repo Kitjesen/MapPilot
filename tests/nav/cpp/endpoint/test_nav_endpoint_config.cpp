@@ -678,9 +678,17 @@ void testPureTeleopDoesNotRequirePlannerAssets() {
       "teleop",
       "--path-library",
       "",
+      "--path-follower-lookahead-m", "0.3",
+      "--path-follower-goal-tolerance-m", "0.2",
+      "--path-follower-max-accel-mps2", "1.0",
   });
   require(teleop.path_library_dir.empty(),
           "pure teleop must start without a local planner path library");
+  const auto status = buildStatusWriterConfig(teleop, inputGateConfig(teleop));
+  require(std::abs(status.follower_lookahead_m - teleop.path_follower_lookahead_m) < 1e-12 &&
+              std::abs(status.follower_goal_tolerance_m - teleop.path_follower_goal_tolerance_m) < 1e-12 &&
+              std::abs(status.max_accel_mps2 - teleop.path_follower_max_accel_mps2) < 1e-12,
+          "unused CMU follower defaults must not override the teleop/map RunPlan status");
   const auto avoid = parse({
       "navd",
       "--control-mode",
@@ -894,6 +902,70 @@ void testGo2RunPlanGeometryEnvironmentParsesExactly() {
           "Go2 SCAN must use the complete double-cylinder envelope without extra padding");
   require(!scan.useTerrainAnalysis,
           "SCAN collision input must not inherit the CMU terrain-cloud interpretation");
+}
+
+void testScanPlannerEnvironmentReachesCore() {
+  struct Binding {
+    const char *name;
+    double nav_kernel::ScanPlannerParams::*field;
+    double value;
+  };
+  using Params = nav_kernel::ScanPlannerParams;
+  const Binding bindings[] = {
+      {"LINGTU_NAV_SCAN_ROUTE_Z_TOLERANCE_M", &Params::routeZTolerance, 0.24},
+      {"LINGTU_NAV_SCAN_CONTROL_POINT_SPACING_M", &Params::controlPointSpacing, 0.16},
+      {"LINGTU_NAV_SCAN_REPLAN_DISTANCE_M", &Params::replanDistance, 0.8},
+      {"LINGTU_NAV_SCAN_NO_REPLAN_DISTANCE_M", &Params::noReplanDistance, 0.08},
+      {"LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS", &Params::maxVelocity, 0.42},
+      {"LINGTU_NAV_SCAN_PLANNER_MAX_ACCELERATION_MPS2", &Params::maxAcceleration, 0.3},
+      {"LINGTU_NAV_SCAN_PLANNING_HORIZON_M", &Params::planningHorizon, 2.5},
+      {"LINGTU_NAV_SCAN_SMOOTH_WEIGHT", &Params::smoothWeight, 1.2},
+      {"LINGTU_NAV_SCAN_COLLISION_WEIGHT", &Params::collisionWeight, 1.3},
+      {"LINGTU_NAV_SCAN_FEASIBILITY_WEIGHT", &Params::feasibilityWeight, 0.2},
+      {"LINGTU_NAV_SCAN_FITNESS_WEIGHT", &Params::fitnessWeight, 0.9},
+      {"LINGTU_NAV_SCAN_FEASIBILITY_TOLERANCE", &Params::feasibilityTolerance, 0.4},
+      {"LINGTU_NAV_SCAN_VELOCITY_TOLERANCE", &Params::velocityTolerance, 0.8},
+      {"LINGTU_NAV_SCAN_ACCELERATION_TOLERANCE", &Params::accelerationTolerance, 0.7},
+      {"LINGTU_NAV_SCAN_COLLISION_DISTANCE_M", &Params::collisionDistance, 0.18},
+  };
+  for (const auto &binding : bindings) {
+    ScopedEnvironment value(binding.name, std::to_string(binding.value));
+    const auto cfg = parse({"navd", "--local-planner", "scan"});
+    const auto planner = buildLocalPlannerParams(cfg);
+    require(std::abs(planner.scan.*(binding.field) - binding.value) < 1e-12,
+            binding.name);
+  }
+  ScopedEnvironment age("LINGTU_NAV_LOCAL_COLLISION_MAX_AGE_S", "0.75");
+  const auto cfg = parse({"navd", "--local-planner", "scan"});
+  require(inputGateConfig(cfg).local_collision_max_age_s == 0.75 &&
+              buildLocalPlannerParams(cfg).localCollisionMaxAge == 0.75,
+          "input gate and recovery must consume the same collision freshness policy");
+  const auto status = buildStatusWriterConfig(cfg, inputGateConfig(cfg));
+  require(status.input_require_local_collision && !status.input_require_cloud &&
+              status.local_collision_max_age_s == 0.75,
+          "SCAN status must expose its actual local collision gate and freshness limit");
+}
+
+void testScanPlannerRejectsInvalidRuntimeParameters() {
+  for (const auto *value : {"nan", "-1", "0.04"}) {
+    ScopedEnvironment speed("LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS", value);
+    bool rejected = false;
+    try { (void)parse({"navd", "--local-planner", "scan"}); }
+    catch (const std::runtime_error &) { rejected = true; }
+    require(rejected, "invalid SCAN velocity must not reach the optimizer");
+  }
+  {
+    ScopedEnvironment age("LINGTU_NAV_LOCAL_COLLISION_MAX_AGE_S", "0.09");
+    bool rejected = false;
+    try { (void)parse({"navd", "--local-planner", "scan"}); }
+    catch (const std::runtime_error &) { rejected = true; }
+    require(rejected, "collision age below the recovery minimum must be rejected");
+  }
+  ScopedEnvironment distance("LINGTU_NAV_SCAN_REPLAN_DISTANCE_M", "0.05");
+  bool rejected = false;
+  try { (void)parse({"navd", "--local-planner", "scan"}); }
+  catch (const std::runtime_error &) { rejected = true; }
+  require(rejected, "inverted SCAN replan thresholds must be rejected");
 }
 
 void testScanFollowerEnvironmentReachesExecutor() {
@@ -1255,7 +1327,10 @@ void testSimulationRunPlanIdentityDerivesRuntimePaths() {
   ScopedEnvironment status("LINGTU_NAV_STATUS_FILE", "");
   ScopedEnvironment inspection("LINGTU_INSPECTION_DIR", "");
 
+  ScopedEnvironment clock("LINGTU_NAV_EXECUTION_CLOCK", "simulation");
+
   const auto cfg = parse({"navd", "--control-mode", "teleop"});
+  require(cfg.use_simulation_clock, "sim RunPlan must select the physical execution clock");
   require(cfg.product_session_id == product_session_id,
           "simulation navd must preserve the Product session id");
   require(std::filesystem::path(cfg.status_file) == session_root / "nav.status.json",
@@ -1265,6 +1340,25 @@ void testSimulationRunPlanIdentityDerivesRuntimePaths() {
   const auto status_cfg = buildStatusWriterConfig(cfg, inputGateConfig(cfg));
   require(status_cfg.product_session_id == product_session_id,
           "status writer must receive the Product session id");
+}
+
+void testExecutionClockConfiguration() {
+  ScopedEnvironment runtime_env("LINGTU_ENV", "real");
+  {
+    ScopedEnvironment clock("LINGTU_NAV_EXECUTION_CLOCK", "");
+    require(!parse({"navd", "--control-mode", "teleop"}).use_simulation_clock,
+            "real execution must default to steady time");
+  }
+  for (const char *value : {"simulation", "unknown"}) {
+    ScopedEnvironment clock("LINGTU_NAV_EXECUTION_CLOCK", value);
+    bool rejected = false;
+    try {
+      (void)parse({"navd", "--control-mode", "teleop"});
+    } catch (const std::runtime_error &) {
+      rejected = true;
+    }
+    require(rejected, "real must reject simulation or unknown execution clocks");
+  }
 }
 
 void testSimulationRunPlanIdentityFailsClosed() {
@@ -1378,6 +1472,8 @@ int main() {
     testRuntimeEnvironmentPrecedesDefaultsAndCliPrecedesEnvironment();
     testGo2RunPlanGeometryEnvironmentParsesExactly();
     testScanFollowerEnvironmentReachesExecutor();
+    testScanPlannerEnvironmentReachesCore();
+    testScanPlannerRejectsInvalidRuntimeParameters();
     testCompiledProductMotionContractParses();
     testVelocitySmootherEnvironmentParsesExactly();
     testVelocitySmootherRejectsUnavailableClosedLoopOnlyWhenEnabled();
@@ -1385,6 +1481,7 @@ int main() {
     testEnvironmentNumbersRejectTrailingJunk();
     testVelocitySmootherAcceptsCoreBoundaryValues();
     testSimulationRunPlanIdentityDerivesRuntimePaths();
+    testExecutionClockConfiguration();
     testSimulationRunPlanIdentityFailsClosed();
     testLegacyNativeProfileSelectorIsRejected();
     testCompiledProductMotionContractRejectsMinimumAboveMaximum();

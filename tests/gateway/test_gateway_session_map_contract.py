@@ -9,6 +9,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -132,8 +133,8 @@ class _FakeRelocalizationService:
         self.global_calls.append(timeout_s)
         return self.global_result
 
-    def relocalize_saved_map(self, map_id, x, y, yaw, *, timeout_s: float = 30.0):
-        self.saved_calls.append((map_id, x, y, yaw, timeout_s))
+    def relocalize_saved_map(self, map_id, x, y, yaw, *, z: float = 0.0, timeout_s: float = 30.0):
+        self.saved_calls.append((map_id, x, y, z, yaw, timeout_s))
         return self.saved_result
 
     def track_against_map(self, *, timeout_s: float = 10.0):
@@ -581,34 +582,11 @@ def _write_binary_xyz_pcd(path: Path) -> None:
     path.write_bytes(header + struct.pack("<ffffff", 1, 2, 3, 4, 5, 6))
 
 
-def test_auth_routes_validate_response_contracts(monkeypatch):
-    from gateway import auth
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import AuthCheckResponse, AuthLoginRequest, AuthLoginResponse
-
-    monkeypatch.setattr(auth, "_get_configured_key", lambda: None)
-
-    gateway = GatewayModule()
-    gateway.setup()
-
-    check_payload = asyncio.run(_endpoint(gateway, "/api/v1/auth/check")())
-    login_response = asyncio.run(_endpoint(gateway, "/api/v1/auth/login")(AuthLoginRequest(key="")))
-
-    check = AuthCheckResponse.model_validate(check_payload)
-    login = AuthLoginResponse.model_validate(_payload(login_response))
-
-    assert check.auth_required is False
-    assert login.ok is True
-    assert login.message == "\u8ba4\u8bc1\u672a\u542f\u7528"
-
-
 def test_validation_error_handler_serializes_invalid_json_body(monkeypatch):
     from fastapi.exceptions import RequestValidationError
 
-    from gateway import auth
     from gateway.gateway_module import GatewayModule
 
-    monkeypatch.setattr(auth, "_get_configured_key", lambda: None)
 
     gateway = GatewayModule()
     gateway.setup()
@@ -634,24 +612,6 @@ def test_validation_error_handler_serializes_invalid_json_body(monkeypatch):
     payload = json.loads(response.body)
     assert payload["error"] == "validation_error"
     assert isinstance(payload["detail"], list)
-
-
-def test_auth_login_invalid_key_preserves_legacy_message(monkeypatch):
-    from gateway import auth
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import AuthLoginRequest, AuthLoginResponse
-
-    monkeypatch.setattr(auth, "_get_configured_key", lambda: "secret")
-
-    gateway = GatewayModule()
-    gateway.setup()
-
-    login_response = asyncio.run(_endpoint(gateway, "/api/v1/auth/login")(AuthLoginRequest(key="bad")))
-    login = AuthLoginResponse.model_validate(_payload(login_response))
-
-    assert login_response.status_code == 403
-    assert login.ok is False
-    assert login.message == "Key \u65e0\u6548"
 
 
 def test_lease_route_validates_success_and_conflict_payloads():
@@ -703,6 +663,23 @@ def test_session_routes_validate_idle_contracts():
     assert session.explorer_available is False
     assert session.explorer_unavailable_reason == "explorer_backend_not_running"
     assert session.explorer_required_product == "explore"
+
+
+@pytest.mark.parametrize("product", ["map", "teleop_avoid", "nav"])
+def test_native_session_map_save_requires_mapping_product(product):
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._compiled_run_plan = _field_run_plan(product)
+    gateway._compiled_product = product
+    gateway._compiled_product_session_id = "map-save-contract"
+    _seed_ready_navigation(gateway)
+    gateway._localization_status["map_save_supported"] = True
+
+    snapshot = gateway._session_snapshot()
+
+    assert snapshot["map_save_supported"] is (product == "map")
 
 
 def test_session_snapshot_uses_mapd_bundles_for_navigation_readiness():
@@ -772,7 +749,7 @@ def test_session_snapshot_uses_mapd_bundles_for_navigation_readiness():
     assert ("native_active", "navigation_safety_3d") in maps.bundle_calls
 
 
-def test_session_snapshot_does_not_guess_navigation_readiness_without_mapd(
+def test_session_snapshot_does_not_guess_navigation_readiness_without_mapd_artifacts(
     monkeypatch,
 ):
     import gateway.services.session_view as session_view
@@ -780,7 +757,13 @@ def test_session_snapshot_does_not_guess_navigation_readiness_without_mapd(
 
     gateway = GatewayModule()
     gateway.setup()
-    gateway._session_active_map_name = lambda: "orphaned_disk_map"
+    gateway._map_client = SimpleNamespace(
+        service=lambda action, **kwargs: (
+            {"success": True, "active": "orphaned_disk_map"}
+            if action == "get_active_map"
+            else {"success": False, "reason_code": "artifacts_unavailable"}
+        ),
+    )
     _seed_ready_navigation(gateway)
 
     def fail_file_map_lookup(*_args, **_kwargs):
@@ -1479,7 +1462,8 @@ def test_localization_request_models_enforce_mode_specific_payloads():
         )
 
 
-def test_seeded_relocalization_passes_map_id_to_service(monkeypatch, tmp_path):
+@pytest.mark.parametrize("height", [0.0, 0.45])
+def test_seeded_relocalization_passes_map_id_to_service(monkeypatch, tmp_path, height):
     import subprocess
 
     from gateway.gateway_module import GatewayModule
@@ -1513,7 +1497,7 @@ def test_seeded_relocalization_passes_map_id_to_service(monkeypatch, tmp_path):
             {
                 "map_name": "demo",
                 "mode": "seeded",
-                "initial_pose": {"x": 1.0, "y": 2.0, "yaw": 0.3},
+                "initial_pose": {"x": 1.0, "y": 2.0, "z": height, "yaw": 0.3},
             }
         )
     )
@@ -1523,7 +1507,7 @@ def test_seeded_relocalization_passes_map_id_to_service(monkeypatch, tmp_path):
     assert payload["success"] is True
     assert payload["ts"] > 0
     assert payload["message"] == "Relocalized to demo"
-    assert service.saved_calls == [("demo", 1.0, 2.0, 0.3, 30.0)]
+    assert service.saved_calls == [("demo", 1.0, 2.0, height, 0.3, 30.0)]
 
 
 def test_field_seeded_relocalization_rejects_map_outside_active_product(tmp_path):
@@ -1687,7 +1671,7 @@ def test_seeded_relocalization_delegates_validated_request(
         )
     )
 
-    assert service.saved_calls == [("demo", 1.0, 2.0, 0.3, 30.0)]
+    assert service.saved_calls == [("demo", 1.0, 2.0, 0.0, 0.3, 30.0)]
     assert subprocess_calls == []
     assert payload["schema_version"] == 1
     assert payload["ok"] is True

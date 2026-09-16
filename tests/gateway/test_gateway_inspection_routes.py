@@ -198,7 +198,7 @@ def _component_dynamic_residual(
 
 
 def _configure_component_environment_admission(gateway, monkeypatch) -> None:
-    from gateway.services.environment_map_feedback import EnvironmentMapFeedback
+    from gateway.maps.status import EnvironmentMapFeedback
 
     now = time.time()
     product_session_id = "inspection-component-session"
@@ -225,7 +225,7 @@ def _client(monkeypatch):
     monkeypatch.setattr(inspection, "active_map", lambda _gw: "field-map")
     monkeypatch.setattr(
         inspection,
-        "mapd_query",
+        "mapd_request",
         lambda _gw, _request: {
             "success": True,
             "record": {"name": "field-map", "content_epoch": 3},

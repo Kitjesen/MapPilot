@@ -23,3 +23,8 @@ export function lingtuYawToThree(yaw: number): number {
 export function lingtuXYToThree(x: number, y: number, height = 0): [number, number, number] {
   return lingtuToThree([x, y, height])
 }
+
+/** Change the rotation basis along with positions: (x, y, z) -> (x, z, -y). */
+export function lingtuQuaternionToThree([x, y, z, w]: readonly [number, number, number, number]): [number, number, number, number] {
+  return [x, z, negate(y), w]
+}

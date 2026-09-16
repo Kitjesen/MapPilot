@@ -115,3 +115,8 @@ Deployment readiness should use the camera status file plus the three SHM
 objects and their advancing sequences. A catalog that still requires live
 color/depth DDS samples describes the compatibility path, not the default data
 plane, and must be migrated by the runtime/service owner.
+# Optional RealSense backend
+
+D435i capture uses the existing native camera record/SHM service. See
+[RealSense build and runtime selection](impl/realsense/README.md).
+This does not enable a camera on LiDAR-only Products or validate Go2 extrinsics.

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from runtime.runtime_interface import TOPICS, adapter_remappings
+from message.topics import TOPICS
+from runtime.adapters.topics import adapter_remappings
 
 EXPLORATION_START = "/exploration/start"
 EXPLORATION_GLOBAL_PATH = "/exploration/global_path"

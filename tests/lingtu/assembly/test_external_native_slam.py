@@ -4,11 +4,11 @@ import sys
 
 import pytest
 
-from lingtu.assembly.wires import full_stack as full_stack_wires
 from lingtu.assembly.compiler import compile_run_plan
 from lingtu.assembly.plugins import BASE_PLUGIN_MODULES
 from lingtu.assembly.products import resolve_product_host_runtime
 from lingtu.assembly.stacks.slam import slam
+from lingtu.assembly.wires import full_stack as full_stack_wires
 from lingtu.assembly.wires.full_stack import full_stack_wire_specs
 from runtime.blueprint import Blueprint
 from runtime.module import Module

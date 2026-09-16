@@ -6,8 +6,6 @@ const KNOWN_FLAGS = FLAG_HAS_COLOR
 const V1_HEADER_SIZE = 28
 const V2_HEADER_BASE_SIZE = 48
 const MAX_POINT_COUNT = 1_000_000
-const Z_FLOOR = -20
-const Z_CEIL = 20
 const COLOR_Z_MIN = -1.0
 const COLOR_Z_SPAN = 3.5
 
@@ -370,7 +368,6 @@ export function decodePointCloudFrame(buf: ArrayBuffer): DecodedCloudFrame {
     if (!Number.isFinite(wx) || !Number.isFinite(wy) || !Number.isFinite(wz)) {
       decodeError('PCLD point expands to a non-finite coordinate')
     }
-    if (wz < Z_FLOOR || wz > Z_CEIL) continue
 
     const off = written * 3
     const [tx, ty, tz] = lingtuToThree([wx, wy, wz])

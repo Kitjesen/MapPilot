@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-# ruff: noqa: S101
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
-
 from sim.runtime.coordinator import (
     CoordinatorError,
     PhysicsGlobalPolicy,

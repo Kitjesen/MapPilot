@@ -1,4 +1,5 @@
 #include "lingtu/maps/layers/voxel.hpp"
+#include "lingtu/maps/layers/grid.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -161,6 +162,67 @@ void TestSoAInputAndSnapshotCloud() {
   assert(snapshot.z.size() == 2U);
 }
 
+void TestRollingWindowEvictsBeforeAdmission() {
+  VoxelLayerConfig config;
+  config.column_carving = false;
+  config.max_range_m = 0;
+  config.max_z_m = 100;
+  config.min_z_m = -100;
+  config.max_voxels = 1;
+  VoxelLayerCore layer(config);
+  lingtu::maps::layers::VoxelSnapshotRequest window;
+  window.radius_m = 2;
+  window.min_z_m = -1;
+  window.max_z_m = 1;
+  auto first = InterleavedFrame({1, 0, 0});
+  layer.Update(first.frame, window);
+  assert(layer.VoxelCount() == 1U);
+  window.center_x_m = 10;
+  auto next = InterleavedFrame({11, 0, 0, 1, 0, 0, 11, 0, 30});
+  layer.Update(next.frame, window);
+  assert(layer.VoxelCount() == 1U);
+  assert(layer.Contains(11, 0, 0));
+  assert(!layer.Contains(1, 0, 0));
+  assert(layer.LastStats().capacity_rejected_voxels == 0U);
+  window.min_z_m = 20;
+  window.max_z_m = 40;
+  auto upper = InterleavedFrame({11, 0, 30});
+  layer.Update(upper.frame, window);
+  assert(layer.Contains(11, 0, 30));
+  assert(!layer.Contains(11, 0, 0));
+  assert(layer.LastStats().capacity_rejected_voxels == 0U);
+}
+
+void TestModelSnapshotKeepsAllHeightsInsideGrid() {
+  VoxelLayerConfig config;
+  config.voxel_size_m = 0.1F;
+  config.column_carving = false;
+  VoxelLayerCore layer(config);
+  auto frame = InterleavedFrame({
+      -0.15F, 0.05F, -0.35F,
+      -0.15F, 0.05F, 0.45F,
+      0.05F, 0.15F, -0.35F,
+      -0.25F, 0.05F, 0.0F,  // Outside the grid's left edge.
+      0.25F, 0.05F, 0.0F,   // Outside the grid's right edge.
+      0.05F, -0.15F, 0.0F,
+      0.05F, 0.25F, 0.0F,
+  });
+  layer.Update(frame.frame);
+  const auto window = lingtu::maps::layers::makeGrid2D(2, 4, 0.1, -0.2, 0.0);
+  const auto xyz = layer.SnapshotXyz(window);
+  assert(xyz.size() == 9U);
+  int low = 0, high = 0;
+  for (std::size_t i = 0; i < xyz.size(); i += 3U) {
+    assert(xyz[i] >= -0.2F && xyz[i] < 0.2F);
+    assert(xyz[i+1] >= 0.0F && xyz[i+1] < 0.2F);
+    if (xyz[i+2] < 0.0F) ++low;
+    else ++high;
+  }
+  assert(low == 2 && high == 1);
+  assert(layer.VoxelCount() == 7U);
+  assert(layer.SnapshotXyz({}).empty());
+}
+
 void TestDecayPrunesWeakVoxels() {
   VoxelLayerConfig config;
   config.voxel_size_m = 1.0F;
@@ -189,5 +251,7 @@ int main() {
   TestColumnCarvingPreservesOtherHeightBands();
   TestSoAInputAndSnapshotCloud();
   TestDecayPrunesWeakVoxels();
+  TestRollingWindowEvictsBeforeAdmission();
+  TestModelSnapshotKeepsAllHeightsInsideGrid();
   return 0;
 }

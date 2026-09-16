@@ -62,12 +62,13 @@ ClosedLoopControllerOutput ClosedLoopController::step(
     const ClosedLoopControllerParams &params) {
   ClosedLoopControllerOutput output;
   if (!receiveTrajectory_ || !state.position.allFinite() ||
-      !std::isfinite(state.yaw) || !std::isfinite(state.nowS)) {
+      !std::isfinite(state.yaw) || !std::isfinite(state.nowS) ||
+      (state.desiredHeading && !std::isfinite(*state.desiredHeading))) {
     return output;
   }
 
   double dt = state.nowS - lastUpdateTimeS_;
-  if (dt < 0.0 || dt > 0.2) dt = 0.0;
+  if (dt < 0.0 || dt > kMaxUpdateGapS) dt = 0.0;
 
   const double evaluationTime = std::min(executionTimeS_, durationS_);
   Eigen::Vector3d desiredPosition =
@@ -75,9 +76,10 @@ ClosedLoopControllerOutput ClosedLoopController::step(
   Eigen::Vector3d desiredVelocity =
       velocityTrajectory_.evaluateDeBoorT(evaluationTime);
 
-  const double desiredHeading = desiredYaw(
-      evaluationTime, desiredPosition, state.yaw,
-      std::max(0.0, params.timeForward));
+  const double desiredHeading = state.desiredHeading
+      ? *state.desiredHeading
+      : desiredYaw(evaluationTime, desiredPosition, state.yaw,
+                   std::max(0.0, params.timeForward));
   const double yawError = normalizeAngle(desiredHeading - state.yaw);
   const double yawLimit =
       std::min(kMaxYawRateLimit, std::max(0.0, params.maxYawRate));
@@ -85,6 +87,9 @@ ClosedLoopControllerOutput ClosedLoopController::step(
       std::max(0.0, params.yawGain) * yawError, -yawLimit, yawLimit);
 
   output.yawError = yawError;
+  output.durationS = durationS_;
+  output.positionErrorM =
+      (desiredPosition.head<2>() - state.position.head<2>()).norm();
   output.executionTimeS = executionTimeS_;
   const Eigen::Vector3d endpoint =
       positionTrajectory_.evaluateDeBoorT(durationS_);
@@ -106,6 +111,7 @@ ClosedLoopControllerOutput ClosedLoopController::step(
 
   const Eigen::Vector2d positionError =
       desiredPosition.head<2>() - state.position.head<2>();
+  output.positionErrorM = positionError.norm();
   const Eigen::Vector2d feedForward = desiredVelocity.head<2>();
   const Eigen::Vector2d worldVelocity = clampNorm(
       feedForward + std::max(0.0, params.positionGain) * positionError,

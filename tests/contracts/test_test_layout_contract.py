@@ -31,7 +31,7 @@ def _is_allowed_exception(path: PurePosixPath) -> bool:
 def test_repository_tests_live_under_tests() -> None:
     git = shutil.which("git")
     assert git is not None
-    tracked = subprocess.run(  # noqa: S603 - repository-owned executable and arguments
+    tracked = subprocess.run(
         [git, "ls-files"],
         check=True,
         capture_output=True,

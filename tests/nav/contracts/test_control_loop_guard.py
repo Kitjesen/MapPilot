@@ -208,6 +208,7 @@ def test_resume_command_passes_through_guard_before_motion_stop_resume() -> None
     assert "control_loop_guard.requestResume" in resume_block
     assert "motion_stop.resumeAutonomy" in resume_block
     assert "motion_stop.resumeTeleop" in resume_block
+    assert resume_block.count("request.resume_required = operator_resume_required;") == 2
     assert resume_block.count("evaluate_input_gate()") >= 2
     assert "control_loop_guard.completeResume" in resume_block
     assert resume_block.index("control_loop_guard.requestResume") < resume_block.index("motion_stop.resumeAutonomy")

@@ -7,8 +7,8 @@ import struct
 from dataclasses import dataclass
 from typing import Any
 
-from runtime.msgs.sensor import POINT_DTYPE
 from runtime.msgs.numpy_compat import np
+from runtime.msgs.sensor import POINT_DTYPE
 
 LTU1_MAGIC = b"LTU1"
 RECORD_CLOUD = 1
@@ -16,6 +16,8 @@ RECORD_IMU = 2
 RECORD_ODOM_PRIOR = 3
 RECORD_REGISTERED_CLOUD = 4
 RECORD_CAMERA = 5
+RECORD_SIMULATION_CLOCK = 6
+RECORD_REGISTERED_CLOUD_WITH_ORIGIN = 7
 MID360_ACCEL_MPS2_PER_G = 9.80665
 
 HEADER = struct.Struct("<4sB3xQIII")
@@ -25,6 +27,7 @@ ODOM_PRIOR_PAYLOAD = struct.Struct("<ddddddddddB7x")
 MAX_SENSOR_RECORD_PAYLOAD_BYTES = 256 * 1024 * 1024
 MAX_CAMERA_RECORD_PAYLOAD_BYTES = 128 * 1024 * 1024
 MAX_CAMERA_TIMESTAMP_S = (1 << 31) - 1
+MAX_SIMULATION_CLOCK_S = (1 << 31) - 1
 _UINT8_MAX = (1 << 8) - 1
 _UINT32_MAX = (1 << 32) - 1
 _UINT64_MAX = (1 << 64) - 1
@@ -87,6 +90,8 @@ def encode_record(
         RECORD_ODOM_PRIOR,
         RECORD_REGISTERED_CLOUD,
         RECORD_CAMERA,
+        RECORD_SIMULATION_CLOCK,
+        RECORD_REGISTERED_CLOUD_WITH_ORIGIN,
     }:
         raise ValueError(f"unsupported LTU1 record_type: {encoded_type}")
     encoded_timestamp = _unsigned_int("timestamp_ns", timestamp_ns, _UINT64_MAX)
@@ -292,6 +297,25 @@ def encode_imu(imu: Any, *, sequence: int) -> EncodedSensorRecord:
     )
 
 
+def encode_simulation_clock(
+    sim_time_s: int | float,
+    *,
+    sequence: int,
+) -> EncodedSensorRecord:
+    """Encode one MuJoCo physical-clock sample as an empty LTU1 record."""
+
+    timestamp_ns = _seconds_to_timestamp_ns("sim_time_s", sim_time_s)
+    if float(sim_time_s) > MAX_SIMULATION_CLOCK_S:
+        raise ValueError("sim_time_s exceeds the int32 seconds range")
+    return encode_record(
+        RECORD_SIMULATION_CLOCK,
+        timestamp_ns=timestamp_ns,
+        sequence=sequence,
+        count=1,
+        payload=b"",
+    )
+
+
 def _encode_point_frame(scan: Any, *, record_type: int) -> EncodedSensorRecord:
     points = np.asarray(scan.points)
     if points.ndim != 1 or points.dtype != POINT_DTYPE:
@@ -378,6 +402,7 @@ def encode_registered_cloud(
     *,
     timestamp_ns: int,
     sequence: int,
+    sensor_origin_world: Any | None = None,
 ) -> EncodedSensorRecord:
     """Encode body-frame XYZ[I] points as a registered Livox cloud."""
 
@@ -401,8 +426,15 @@ def encode_registered_cloud(
     payload = raw.tobytes(order="C")
     if len(payload) != count * POINT_DTYPE.itemsize:
         raise ValueError("LTU1 registered-cloud payload size mismatch")
+    record_type = RECORD_REGISTERED_CLOUD
+    if sensor_origin_world is not None:
+        origin = np.asarray(sensor_origin_world, dtype=np.float64)
+        if origin.shape != (3,) or not bool(np.isfinite(origin).all()):
+            raise ValueError("registered cloud sensor origin must be finite world XYZ")
+        payload = struct.pack("<ddd", *origin) + payload
+        record_type = RECORD_REGISTERED_CLOUD_WITH_ORIGIN
     return encode_record(
-        RECORD_REGISTERED_CLOUD,
+        record_type,
         timestamp_ns=timestamp_ns,
         sequence=sequence,
         count=count,

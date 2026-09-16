@@ -20,11 +20,10 @@ StopConfirmation::StopConfirmation(std::string producer_boot_id, std::uint64_t o
                                    Clock::time_point started_at,
                                    StopConfirmationConfig config)
     : producer_boot_id_(std::move(producer_boot_id)),
-      output_sequence_(output_sequence),
       zero_published_source_wall_ns_(zero_published_source_wall_ns),
       started_at_(started_at),
       config_(config) {
-  if (producer_boot_id_.empty() || output_sequence_ == 0U ||
+  if (producer_boot_id_.empty() || output_sequence == 0U ||
       zero_published_source_wall_ns_ == 0U) {
     throw std::invalid_argument(
         "stop confirmation requires a sequenced producer identity and "
@@ -41,20 +40,41 @@ StopConfirmation::StopConfirmation(std::string producer_boot_id, std::uint64_t o
       config_.evidence_policy != StopConfirmationEvidencePolicy::DriverAckOnly) {
     throw std::invalid_argument("invalid stop confirmation evidence policy");
   }
+  observePublishedZero(output_sequence, zero_published_source_wall_ns);
+}
+
+void StopConfirmation::observePublishedZero(std::uint64_t output_sequence,
+                                            std::uint64_t source_wall_ns) {
+  if (output_sequence == 0U || source_wall_ns == 0U ||
+      (!zero_publications_.empty() &&
+       output_sequence <= zero_publications_.back().output_sequence)) {
+    throw std::invalid_argument("stop zero publication requires a fresh sequenced output");
+  }
+  zero_publications_.push_back({output_sequence, source_wall_ns});
 }
 
 void StopConfirmation::observeDriverAck(const std::string &producer_boot_id,
                                         std::uint64_t output_sequence, bool accepted,
                                         std::uint64_t source_stamp_ns) noexcept {
-  if (producer_boot_id != producer_boot_id_ || output_sequence != output_sequence_ ||
-      source_stamp_ns <= zero_published_source_wall_ns_) {
+  if (producer_boot_id != producer_boot_id_ || output_sequence < driver_ack_output_sequence_) {
+    return;
+  }
+  const auto publication = std::find_if(
+      zero_publications_.rbegin(), zero_publications_.rend(),
+      [output_sequence](const ZeroPublication &zero) {
+        return zero.output_sequence == output_sequence;
+      });
+  if (publication == zero_publications_.rend() ||
+      source_stamp_ns <= publication->source_wall_ns) {
     return;
   }
   if (!driver_ack_observed_ || driver_accepted_ != accepted) {
     quiet_odometry_samples_ = 0U;
     last_qualified_odometry_source_stamp_ns_ = 0U;
-    driver_ack_source_stamp_ns_ = source_stamp_ns;
   }
+  driver_ack_source_stamp_ns_ = source_stamp_ns;
+  driver_ack_output_sequence_ = output_sequence;
+  zero_published_source_wall_ns_ = publication->source_wall_ns;
   driver_ack_observed_ = true;
   driver_accepted_ = accepted;
 }
@@ -121,6 +141,7 @@ StopConfirmationDiagnostics StopConfirmation::diagnostics() const noexcept {
       last_angular_speed_radps_,
       driver_ack_observed_,
       driver_accepted_,
+      driver_ack_output_sequence_,
   };
 }
 
@@ -494,7 +515,7 @@ MotionStopResult MotionStopBarrier::resumeAutonomy(const ResumeAutonomyRequest &
   if (!request.precondition_error.empty()) {
     return {false, request.precondition_error};
   }
-  if (!request.operator_takeover_latched) {
+  if (!request.operator_takeover_latched && !request.resume_required) {
     return {true, "autonomy_already_ready"};
   }
   MotionStopTerminalCommit commit_ready = deferGoalAbort("autonomy_resume_ready");
@@ -521,7 +542,7 @@ MotionStopResult MotionStopBarrier::resumeTeleop(const ResumeTeleopRequest &requ
   if (!request.precondition_error.empty()) {
     return {false, request.precondition_error};
   }
-  if (!request.motion_hold_latched) {
+  if (!request.motion_hold_latched && !request.resume_required) {
     return {true, "teleop_already_ready"};
   }
   if (!clearMotionOutputs("teleop_resume_ready")) {

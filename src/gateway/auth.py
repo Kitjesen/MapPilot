@@ -1,4 +1,7 @@
-"""API Key authentication middleware for GatewayModule.
+"""API Key authentication middleware for the separate MCP server.
+
+The main Gateway HTTP, SSE and WebSocket app has no API Key login or
+authentication middleware. These helpers remain for MCPServerModule only.
 
 Implemented as a **pure ASGI middleware** (not ``BaseHTTPMiddleware``) so
 that it works cleanly with both HTTP and WebSocket scopes. Starlette's
@@ -10,16 +13,15 @@ Security model:
   - API key set via ``LINGTU_API_KEY`` env var or ``robot_config.yaml``
   - If no key configured, auth is disabled by default (dev/testing mode)
   - If ``require_key=True`` and no key is configured, protected paths fail closed
-  - Protected: ``/api/*``, ``/ws/*``, ``/mcp``
-  - Public: ``/``, ``/docs``, ``/redoc``, ``/openapi.json``, static assets,
-    ``/api/v1/auth/login``, ``/api/v1/auth/check``
+  - The separate MCP app protects its ``/mcp`` endpoint.
+  - Its documentation and static assets stay public.
 
 Clients send the key as:
   - Header: ``X-API-Key: <key>``
   - Header: ``Authorization: Bearer <key>`` (service-to-service clients)
   - Query param: ``?api_key=<key>`` (for WebSocket / SSE where setting
     headers is inconvenient)
-  - Cookie: ``lingtu_api_key=<key>`` (set by the login page, HTTP only)
+  - Cookie: ``lingtu_api_key=<key>`` (legacy clients)
 
 ⚠️ Danger: Query parameter and Cookie auth both expose the API key to
 ``/?api_key=...`` referrer leakage, browser history, and server access logs.
@@ -85,7 +87,7 @@ def _redact_api_key(value: str) -> str:
 
 # Paths that never require auth
 _PUBLIC_PREFIXES = ("/docs", "/redoc", "/openapi.json", "/favicon")
-_PUBLIC_EXACT = {"/", "/api/v1/auth/login", "/api/v1/auth/check"}
+_PUBLIC_EXACT = {"/"}
 _LOOPBACK_PUBLIC_EXACT = {"/health", "/ready"}
 _PRODUCT_SESSION_ALLOWED_ROUTES = frozenset(
     {
@@ -130,15 +132,6 @@ def _get_configured_key() -> str | None:
     except Exception as e:
         logger.debug("_get_configured_key: failed to read api_key from config: %s", e)
     return None
-
-
-def gateway_api_key_required() -> bool:
-    """Return whether the main Gateway must fail closed without an API key."""
-    env = os.environ.get("LINGTU_ENV", "").strip().lower()
-    if env == "real":
-        return True
-    value = os.environ.get("LINGTU_GATEWAY_REQUIRE_API_KEY", "").strip().lower()
-    return value in {"1", "true", "yes", "on"}
 
 
 def _is_loopback_client(scope) -> bool:

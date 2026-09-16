@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <limits>
@@ -155,6 +156,24 @@ bool sameStatuses(const std::vector<GoalPlanStatus> &lhs, const std::vector<Goal
 }  // namespace
 
 int main() {
+  {
+    Recorder recorder;
+    GoalPlanController controller(successfulPlan, recorder.actions());
+    auto limited = request();
+    limited.target->max_speed_mps = 0.2;
+    limited.target->acceptance_radius_m = 0.3;
+    require(controller.submit(limited, admissionContext()).accepted, "limited goal rejected");
+    (void)waitForCompletion(controller, GoalPlanAdvanceContext{4U, false, 10.1});
+    require(recorder.activations.size() == 1, "limited path not activated");
+    require(recorder.activations.back().max_speed_mps == 0.2, "speed limit lost on activation");
+    require(recorder.activations.back().acceptance_radius_m == 0.3, "radius lost on activation");
+    require(controller.replanActive(admissionContext()).accepted, "limited replan rejected");
+    (void)waitForCompletion(controller, GoalPlanAdvanceContext{4U, false, 10.2});
+    require(recorder.activations.size() == 2, "limited replan not activated");
+    require(recorder.activations.back().max_speed_mps == 0.2, "speed limit lost on replan");
+    require(recorder.activations.back().acceptance_radius_m == 0.3, "radius lost on replan");
+  }
+
   Recorder recorder;
   GoalPlanController controller(successfulPlan, recorder.actions());
   const auto admission = admissionContext();
@@ -1755,5 +1774,113 @@ int main() {
   replan_hold_commit();
   require(replan_hold_controller.snapshot().active_request_id.empty(),
           "hold abort commit left active identity live");
+  for (const bool has_active_path : {false, true}) {
+    Recorder latest_recorder;
+    std::atomic_bool cancellation_seen{false};
+    GoalPlanController latest_controller(
+        [&](const lingtu::nav::plan::GlobalPlanRequest &plan_request,
+            const lingtu::nav::plan::GlobalPlanCancelCheck &cancelled) {
+          if (plan_request.goal.x == 10.0) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (!cancelled() && std::chrono::steady_clock::now() < deadline) {
+              std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            cancellation_seen.store(cancelled());
+          }
+          // Even a successful late result must be discarded after supersession.
+          return successfulPlan(plan_request, cancelled);
+        }, latest_recorder.actions());
+    if (has_active_path) {
+      require(latest_controller.submit(active_a_request, admission).accepted,
+              "latest-click fixture could not submit its existing path");
+      require(waitForCompletion(latest_controller, {admission.frame_epoch, false, 60.0})
+                  .path_activated,
+              "latest-click fixture could not activate its existing path");
+    }
+    auto first = active_b_request;
+    first.task_id = "latest-first";
+    first.request_id = "latest-first-request";
+    first.target->position.x = 10.0;
+    auto second = first;
+    second.task_id = "latest-second";
+    second.request_id = "latest-second-request";
+    second.target->position.x = 20.0;
+    auto third = first;
+    third.task_id = "latest-third";
+    third.request_id = "latest-third-request";
+    third.target->position.x = 30.0;
+
+    require(latest_controller.submit(first, admission).accepted,
+            "latest-click fixture could not start first plan");
+    const auto queued_second = latest_controller.submit(second, admission);
+    require(queued_second.accepted && queued_second.reason == "planning_queued",
+            "new click was rejected while initial or replacement planning was busy");
+    auto invalid = third;
+    invalid.target.reset();
+    require(!latest_controller.submit(invalid, admission).accepted &&
+                latest_controller.snapshot().pending_request_id == second.request_id,
+            "invalid click displaced the valid queued goal");
+    require(latest_controller.submit(third, admission).accepted &&
+                latest_controller.snapshot().pending_request_id == third.request_id,
+            "third click did not replace the pending second click");
+    require(lastStatus(latest_recorder.statuses).project_to_navigation_state == !has_active_path,
+            "queued goal incorrectly replaced or omitted the navigation state");
+    require(countStatus(latest_recorder.statuses, first.request_id,
+                        NavigationGoalState::Cancelled, "superseded_by_new_goal") == 1U &&
+                countStatus(latest_recorder.statuses, second.request_id,
+                            NavigationGoalState::Cancelled, "superseded_by_new_goal") == 1U,
+            "superseded requests did not each receive exactly one terminal status");
+    waitUntilNotBusy(latest_controller, {admission.frame_epoch, false, 61.0});
+    require(!latest_controller.snapshot().busy && cancellation_seen.load(),
+            "superseded search did not observe cancellation and drain");
+    require(latest_recorder.activations.size() == (has_active_path ? 1U : 0U),
+            "cancelled search activated its late path");
+
+    auto fresh = admission;
+    fresh.map_position = nav_kernel::Vec3{8.0, 9.0, 0.5};
+    ++fresh.frame_epoch;
+    require(latest_controller.resumePending(fresh).accepted,
+            "latest goal did not start after cancelled search drained");
+    const auto ready = waitForCompletion(latest_controller, {fresh.frame_epoch, false, 62.0});
+    if (has_active_path) {
+      require(ready.terminal_after_stop.has_value() && !ready.path_activated,
+              "replacement bypassed the active goal's stop confirmation");
+      ready.terminal_after_stop->commit();
+      require(latest_controller.activateDeferredReplacement(62.1, fresh).path_activated,
+              "latest replacement did not activate after terminal confirmation");
+    } else {
+      require(ready.path_activated, "latest initial goal did not activate");
+    }
+    require(latest_controller.snapshot().active_request_id == third.request_id &&
+                latest_recorder.activations.back().path.front().x == 8.0 &&
+                latest_recorder.activations.back().path.back().x == 30.0,
+            "latest goal used a stale start or activated an obsolete destination");
+  }
+
+  for (const bool cancel_queued_click : {false, true}) {
+    Recorder queued_recorder;
+    GoalPlanController queued_controller(successfulPlan, queued_recorder.actions());
+    require(queued_controller.submit(active_a_request, admission).accepted,
+            "queued cancellation fixture could not start planning");
+    require(queued_controller.submit(active_b_request, admission).accepted,
+            "queued cancellation fixture could not replace planning");
+    if (cancel_queued_click) {
+      const auto cancelled = queued_controller.deferCancelPending(
+          active_b_request.task_id, "cancel-queued", "operator_cancel");
+      require(cancelled.accepted, "queued click could not be cancelled");
+      cancelled.commit();
+    } else {
+      waitUntilNotBusy(queued_controller, {admission.frame_epoch, false, 63.0});
+      auto held = admission;
+      held.operator_takeover_latched = true;
+      require(!queued_controller.resumePending(held).accepted,
+              "queued click bypassed a later operator takeover");
+    }
+    require(!queued_controller.snapshot().pending_plan_queued &&
+                queued_recorder.activations.empty() &&
+                lastStatus(queued_recorder.statuses).state == NavigationGoalState::Cancelled &&
+                lastStatus(queued_recorder.statuses).project_to_navigation_state,
+            "cancelled queued goal stayed live or left the navigation state in Planning");
+  }
   return 0;
 }

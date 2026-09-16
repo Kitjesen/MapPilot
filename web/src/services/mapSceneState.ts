@@ -1,4 +1,5 @@
 import type { MapSceneEvent, MapSceneLayer } from '../types'
+import { mapResetEpoch } from './mapSceneIdentity.ts'
 
 const ELEVATION_MAX_CELLS = 131_072
 
@@ -12,7 +13,7 @@ function elevationLayer(scene: MapSceneEvent | null | undefined): MapSceneLayer 
 function rasterInteger(
   scene: MapSceneEvent,
   layer: MapSceneLayer | undefined,
-  key: 'generation' | 'reset_epoch',
+  key: 'generation',
 ): number | null {
   const value = layer?.[key] ?? scene.metadata?.[key]
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null
@@ -46,7 +47,7 @@ function elevationCohort(scene: MapSceneEvent, layer: MapSceneLayer | undefined)
     layer.producer_boot_id ?? scene.metadata?.producer_boot_id ?? '',
   ).trim()
   const frameId = String(layer.frame_id ?? scene.frame_id ?? '').trim()
-  const resetEpoch = nonNegativeInteger(layer.reset_epoch ?? scene.metadata?.reset_epoch)
+  const resetEpoch = mapResetEpoch(layer.reset_epoch ?? scene.metadata?.reset_epoch)
   const rows = nonNegativeInteger(layer.rows)
   const cols = nonNegativeInteger(layer.cols)
   const resolution = finiteNumber(layer.resolution)

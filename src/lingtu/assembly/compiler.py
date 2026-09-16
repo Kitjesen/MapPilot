@@ -9,10 +9,21 @@ from pathlib import Path
 from typing import Any
 
 from lingtu.assembly.binding_policy import (
-    endpoint_contract_for_config,
     endpoint_transport_for_config,
 )
-from lingtu.assembly.native_nav import compile_native_nav_config, mapd_environment
+from lingtu.assembly.graph import (
+    ProcessSpec,
+    load_runtime_graph,
+    resolve_processes,
+    resolve_stop_before_start,
+    valid_process_name,
+)
+from lingtu.assembly.graph.loader import RuntimeGraph, product_requirements
+from lingtu.assembly.native_nav import (
+    NATIVE_NAV_ENVIRONMENT,
+    compile_native_nav_config,
+    mapd_environment,
+)
 from lingtu.assembly.parameters import resolve_parameters
 from lingtu.assembly.products.configuration import (
     EnvSpec,
@@ -22,15 +33,6 @@ from lingtu.assembly.simulation import compile_simulation_snapshot
 from lingtu.products import product_name
 from lingtu.run_plan import RunPlan
 from runtime.blueprint import Blueprint
-from runtime.contracts.product_runtime import resolve_product_spec_contracts
-from runtime.graph import (
-    ProcessSpec,
-    load_runtime_graph,
-    resolve_processes,
-    resolve_stop_before_start,
-    valid_process_name,
-)
-from runtime.graph.loader import RuntimeGraph
 
 _CMU_PROFILES = {
     "doso/thunder_v4": "thunder",
@@ -38,11 +40,16 @@ _CMU_PROFILES = {
 }
 
 _SIM_TRUTH_SLAM_CONFIG = "src/localization/fastlio2/config/sim_mid360.yaml"
+_SIM_FASTLIO_SLAM_CONFIG = "src/localization/fastlio2/config/sim_mid360_slam.yaml"
 
 
 def blueprint_for_resolved_product(
     product: str,
     config: Mapping[str, Any],
+    *,
+    required_topics: tuple[str, ...] = (),
+    required_capabilities: tuple[str, ...] = (),
+    run_plan: RunPlan | None = None,
 ) -> Blueprint:
     """Return the Host Blueprint for an already resolved field Product."""
 
@@ -50,7 +57,13 @@ def blueprint_for_resolved_product(
 
     from lingtu.assembly.products import host_blueprint
 
-    return host_blueprint(config)
+    return host_blueprint(
+        config,
+        product=product,
+        required_topics=required_topics,
+        required_capabilities=required_capabilities,
+        run_plan=run_plan,
+    )
 
 
 def compile_run_plan(
@@ -91,11 +104,7 @@ def compile_run_plan(
         implementation.get("process_control") or "module"
     ).strip()
     resolved_product_variant = resolved.product_variant
-    runtime_contracts = resolve_product_spec_contracts(
-        resolved_product,
-        product_spec,
-    )
-    required_topics = runtime_contracts.topics
+    required_topics, required_capabilities = product_requirements(resolved_product, product_spec)
 
     validate_route_contract_for_resolved_config(resolved_config)
     route_contract = route_contract_name_for_resolved_config(resolved_config)
@@ -122,7 +131,6 @@ def compile_run_plan(
             implementation=implementation,
             product_spec=product_spec,
         )
-    required_capabilities = runtime_contracts.capabilities
     product_roles = _product_roles(product_spec, product=resolved_product)
     has_camera = "camera" in product_roles
     resolved_config["enable_camera"] = has_camera
@@ -148,6 +156,14 @@ def compile_run_plan(
         product=resolved_product,
         viewer=env_spec.config.viewer,
     )
+    if env_name == "sim":
+        geometry = simulation["physics_plan"]["robots"][0].get("navigation_geometry", {})
+        for name in ("collision_clearance_below_m", "collision_clearance_above_m"):
+            if name in geometry:
+                resolved_config.setdefault(name, geometry[name])
+        for name in ("support_height_m", "support_height_tolerance_m"):
+            if name in geometry:
+                resolved_config.setdefault(f"octoplanner3d_{name}", geometry[name])
     if env_name == "sim" and has_camera:
         resolved_config["detector"] = "sim_scene"
         world_mjcf = simulation["physics_plan"]["world"]["mjcf"]
@@ -163,10 +179,12 @@ def compile_run_plan(
     # Critical Host modules are Product semantics. An Env may select concrete
     # processes, but it must not weaken the Product's startup barrier.
     critical_modules = _string_tuple(product_spec.get("critical_modules"))
-    blueprint_config = dict(resolved_config)
-    blueprint_config["_product_required_topics"] = required_topics
-    blueprint_config["_product_required_capabilities"] = required_capabilities
-    blueprint = blueprint_for_resolved_product(resolved_product, blueprint_config)
+    blueprint = blueprint_for_resolved_product(
+        resolved_product,
+        resolved_config,
+        required_topics=required_topics,
+        required_capabilities=required_capabilities,
+    )
     if route_contract:
         blueprint.route_contract(route_contract)
     if critical_modules:
@@ -180,7 +198,6 @@ def compile_run_plan(
         config=resolved_config,
         module_names=blueprint.module_names,
         env_name=env_name,
-        processes=processes,
     )
     if issues:
         detail = "; ".join(f"{issue.code}: {issue.message}" for issue in issues)
@@ -205,7 +222,7 @@ def compile_run_plan(
     del native_nav_contract["octoplanner3d"]
     del native_nav_contract["recovery"]
     del native_nav_contract["smoothing"]
-    native_process_environment = _native_process_environment(
+    process_environment = _process_environment(
         product=resolved_product,
         env_spec=env_spec,
         native_environment=compiled_native_nav.environment,
@@ -216,12 +233,21 @@ def compile_run_plan(
     product_parameters = product_spec.get("parameters", {})
     if not isinstance(product_parameters, Mapping):
         raise ValueError(f"Product {resolved_product!r} parameters must be a mapping")
+    env_parameters = _env_parameters(
+        env=env_name,
+        implementation=implementation,
+        env_spec=graph.envs.get(env_name),
+    )
+    if compiled_native_nav.native_nav["local_planner"] == "scan":
+        env_parameters = {
+            "scan_planner.max_velocity_mps": compiled_native_nav.parameters["path_follower_max_speed_mps"],
+            "scan_planner.max_acceleration_mps2": compiled_native_nav.parameters["path_follower_max_accel_mps2"],
+            "scan_follower.max_vx_mps": compiled_native_nav.parameters["path_follower_max_speed_mps"],
+            "scan_follower.max_yaw_rate_rad_s": compiled_native_nav.parameters["path_follower_max_yaw_rate_rad_s"],
+            **env_parameters,
+        }
     parameters = resolve_parameters(
-        env_overrides=_env_parameters(
-            env=env_name,
-            implementation=implementation,
-            env_spec=graph.envs.get(env_name),
-        ),
+        env_overrides=env_parameters,
         product_parameters=product_parameters,
         session_overrides=parameter_overrides,
         map_publish_hz=_traversability_publish_hz(
@@ -241,10 +267,11 @@ def compile_run_plan(
         available_processes=available_processes,
         support_processes=support_processes,
         stop_before_start=stop_before_start,
-        contracts=runtime_contracts.contract_ids,
+        required_topics=required_topics,
+        required_capabilities=required_capabilities,
         critical_modules=critical_modules,
         native_nav=native_nav_contract,
-        native_process_environment=native_process_environment,
+        process_environment=process_environment,
         route_contract=route_contract,
         host_config=resolved_config,
         lifecycle=lifecycle,
@@ -257,11 +284,6 @@ def blueprint_from_run_plan(plan: RunPlan) -> Blueprint:
     """Recreate only the Host graph declared by a RunPlan."""
 
     config = dict(plan.host_config)
-    config_env = _env_name(config.get("_env"))
-    if config_env != plan.env:
-        raise ValueError(
-            f"RunPlan Host env mismatch: plan={plan.env!r} config={config_env!r}"
-        )
     route_contract = route_contract_name_for_resolved_config(config)
     if route_contract != plan.route_contract:
         raise ValueError(
@@ -269,12 +291,13 @@ def blueprint_from_run_plan(plan: RunPlan) -> Blueprint:
             f"plan={plan.route_contract!r} config={route_contract!r}"
         )
     validate_route_contract_for_resolved_config(config)
-    assembly_config = dict(config)
-    assembly_config["_product_required_topics"] = plan.required_topics
-    assembly_config["_product_required_capabilities"] = plan.required_capabilities
-    # Hand the resolved execution record directly to the managed Host.
-    assembly_config["_run_plan"] = plan
-    blueprint = blueprint_for_resolved_product(plan.product, assembly_config)
+    blueprint = blueprint_for_resolved_product(
+        plan.product,
+        config,
+        required_topics=plan.required_topics,
+        required_capabilities=plan.required_capabilities,
+        run_plan=plan,
+    )
     if plan.route_contract:
         blueprint.route_contract(plan.route_contract)
     if plan.critical_modules:
@@ -303,8 +326,7 @@ def route_contract_name_for_resolved_config(config: Mapping[str, Any]) -> str | 
     """
 
     endpoint_transport = endpoint_transport_for_config(config, default="").lower()
-    endpoint_contract = endpoint_contract_for_config(config)
-    if endpoint_transport == "dds" and endpoint_contract == "field_dds_v1":
+    if endpoint_transport == "dds":
         return "robot"
     return None
 
@@ -332,7 +354,7 @@ def _env_name(value: Any) -> str:
     return env
 
 
-def _native_process_environment(
+def _process_environment(
     *,
     product: str,
     env_spec: EnvSpec,
@@ -341,7 +363,11 @@ def _native_process_environment(
     roles: tuple[str, ...],
     process_control: str,
 ) -> dict[str, str]:
-    environment = dict(native_environment)
+    environment = {
+        key: value
+        for key, value in native_environment.items()
+        if key not in NATIVE_NAV_ENVIRONMENT.values()
+    }
     if "maps" in roles:
         environment["LINGTU_MAPD_EXTENDED_LAYERS"] = "1" if product == "map" else "0"
     if "traversability" in roles:
@@ -349,11 +375,18 @@ def _native_process_environment(
             "live" if lifecycle["slam_mode"] == "mapping" else "map"
         )
     if "maps" in roles:
-        environment.update(mapd_environment(environment))
+        environment.update(mapd_environment(native_environment))
     if env_spec.name == "real":
         robot_config = env_spec.robot_config
         if robot_config is None:
             raise RuntimeError("real Env resolved without RobotConfig")
+        if "camera" in roles:
+            camera = robot_config.camera
+            if camera.capture_driver not in {"orbbec_native", "realsense_native"}:
+                raise ValueError(f"unsupported camera capture driver: {camera.capture_driver}")
+            environment["LINGTU_CAMERA_DRIVER"] = camera.capture_driver
+            serial_key = "LINGTU_REALSENSE_SERIAL_NUMBER" if camera.capture_driver == "realsense_native" else "LINGTU_ORBBEC_SERIAL_NUMBER"
+            environment[serial_key] = camera.serial_number
         driver = robot_config.driver
         speed = robot_config.speed
         safety = robot_config.safety
@@ -402,9 +435,13 @@ def _native_process_environment(
             {key: str(value) for key, value in values.items() if value is not None}
         )
     elif "slam" in roles:
-        environment["LINGTU_SLAM_CONFIG"] = _SIM_TRUTH_SLAM_CONFIG
-    cmu_planning_enabled = environment.get("LINGTU_NAV_LOCAL_PLANNER_BACKEND") == "cmu" and (
-        "traversability" in roles or environment.get("LINGTU_TELEOP_LOCAL_PLANNER") == "1"
+        environment["LINGTU_SLAM_CONFIG"] = (
+            _SIM_TRUTH_SLAM_CONFIG
+            if env_spec.config.localization == "truth"
+            else _SIM_FASTLIO_SLAM_CONFIG
+        )
+    cmu_planning_enabled = native_environment.get("LINGTU_NAV_LOCAL_PLANNER_BACKEND") == "cmu" and (
+        "traversability" in roles or native_environment.get("LINGTU_TELEOP_LOCAL_PLANNER") == "1"
     )
     if cmu_planning_enabled:
         try:

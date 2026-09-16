@@ -6,6 +6,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <Eigen/Eigen>
+#include <cstddef>
 #include <optional>
 #include <vector>
 
@@ -51,6 +52,7 @@ struct FsmInput {
   double nowS{0.0};
   std::optional<FsmOdometry> odometry{};
   std::optional<bool> executionFrozen{};
+  std::optional<double> motionIntentMaxDeviationRad{};
   std::optional<Eigen::Vector3d> goal{};
   std::optional<std::vector<Eigen::Vector3d>> referencePath{};
 };
@@ -64,6 +66,8 @@ struct FsmOutput {
   bool collisionDetected{false};
   double collisionTimeAheadS{0.0};
   bool emergencyStopIssued{false};
+  bool localTargetBlocked{false};
+  bool initializationFailed{false};
   std::optional<BsplineTrajectory> trajectory{};
 };
 
@@ -100,7 +104,10 @@ class SCANReplanFSM {
   void setStartStateFromOdomOrCurrentTraj(double nowS);
   bool callReboundReplan(bool usePolyInit, bool randomPolyTraj, double nowS, FsmOutput &output);
   bool callEmergencyStop(const Eigen::Vector3d &stopPos, double nowS, FsmOutput &output);
-  void getLocalTarget();
+  bool getLocalTarget();
+  bool usableMotionIntentDetour(const Eigen::Vector3d &point, double minimumDistance = 0.2) const;
+  bool selectMotionIntentDetour();
+  void resetMotionIntentDetourSearch();
   void setTrajectoryOutput(FsmOutput &output) const;
 
   [[nodiscard]] double getOdomYaw() const;
@@ -109,6 +116,7 @@ class SCANReplanFSM {
   [[nodiscard]] FsmOutput finalizeOutput(FsmOutput output, ScanReplanState initialState) const;
 
   SCANPlannerManager &plannerManager_;
+  bool initializationFailed_{false};
   ScanReplanParams params_;
 
   bool trigger_{false};
@@ -120,6 +128,7 @@ class SCANReplanFSM {
   bool escapeEmergency_{true};
   bool needHoverStop_{false};
   bool presetTriggered_{false};
+  bool localTargetBlocked_{false};
   ScanReplanState state_{ScanReplanState::INIT};
   int continuouslyCalledTimes_{0};
   int replanFailCount_{0};
@@ -137,6 +146,12 @@ class SCANReplanFSM {
   Eigen::Vector3d endVel_{Eigen::Vector3d::Zero()};
   Eigen::Vector3d localTargetPt_{Eigen::Vector3d::Zero()};
   Eigen::Vector3d localTargetVel_{Eigen::Vector3d::Zero()};
+  std::optional<double> motionIntentMaxDeviationRad_{};
+  std::optional<Eigen::Vector3d> motionIntentDetour_{};
+  std::size_t motionIntentDetourCandidate_{0};
+  bool motionIntentAdvancePending_{false};
+  bool motionIntentReferenceFallback_{false};
+  bool motionIntentShortDetours_{false};
   double manualGoalHeight_{0.0};
 
   std::vector<Eigen::Vector3d> activeWaypoints_{};

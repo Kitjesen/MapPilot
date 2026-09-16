@@ -38,7 +38,7 @@ from lingtu.sim.identity import (  # noqa: E402
 from lingtu.sim.readiness import load_typed_readiness, readiness_expectation_for_process  # noqa: E402
 from lingtu.sim.switch import _load_committed_plan  # noqa: E402
 
-DEFAULT_MANIFEST = ROOT / "config/runtime_graph/acceptance/mujoco_map_native_acceptance.json"
+DEFAULT_MANIFEST = ROOT / "config" / "acceptance" / "mujoco" / "map.json"
 REPORT_SCHEMA = "lingtu.mujoco.map_native_acceptance.report.v1"
 _CAMERA_STALE_TIMEOUT_S = 1.0
 _ATTACHED_PROCESSES = (

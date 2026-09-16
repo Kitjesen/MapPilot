@@ -1,6 +1,6 @@
 """Contracts for the default native build and release entrypoints."""
 
-# ruff: noqa: S101 - contracts use asserts.
+
 
 from pathlib import Path
 

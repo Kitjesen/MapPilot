@@ -1,6 +1,6 @@
 """Direct-child Host entry point for Product-owned simulation runs."""
 
-# ruff: noqa: E402 - direct script execution must establish the source root first.
+
 
 from __future__ import annotations
 

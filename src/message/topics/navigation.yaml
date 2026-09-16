@@ -1,0 +1,481 @@
+schema_version: lingtu.runtime_graph.topics.v2
+topics:
+  added_obstacles:
+    topic: /nav/added_obstacles
+    transport: local
+  check_obstacle:
+    topic: /nav/check_obstacle
+    transport: local
+  cloud_clearing:
+    topic: /nav/cloud_clearing
+    transport: dds
+    dds_topic: rt/nav/cloud_clearing
+    message_type: lingtu.dds.Bool
+    qos_profile: ControlCommand
+    cpp_name: kNavCloudClearing
+  cmd_vel:
+    topic: /nav/cmd_vel
+    transport: dds
+    dds_topic: rt/nav/cmd_vel
+    message_type: lingtu.dds.FinalVelocityCommand
+    qos_profile: FinalVelocityCommand
+    cpp_name: kNavCmdVel
+    native_contract: true
+    role: final_velocity_command
+    frame: body
+    producer: command_arbiter
+    single_writer_per_product: true
+    semantics: identity_bound_freshness_bounded_final_velocity_envelope
+    consumers:
+    - driver
+    - safety_monitor
+    real_equivalent_required: true
+    port_bindings:
+    - owner: native_nav_endpoint
+      port: cmd_vel
+      direction: out
+      boundary: native
+      required: false
+    - owner: driver
+      port: cmd_vel
+      direction: in
+      boundary: native
+  nav_command_ack:
+    topic: /nav/command/ack
+    transport: dds
+    dds_topic: rt/nav/command/ack
+    message_type: lingtu.dds.NavigationCommandAck
+    qos_profile: CommandAck
+    cpp_name: kNavCommandAck
+    native_contract: true
+    role: native_navigation_command_ack
+    frame: none
+    producer: native_nav_runtime
+    consumers:
+    - persistent_cpp_navigation_client
+    - native_explore_runtime
+    semantics: business_accept_or_reject_for_matching_request_id
+    port_bindings:
+    - owner: native_nav_runtime
+      port: command_ack
+      direction: out
+      boundary: endpoint
+    - owner: persistent_cpp_navigation_client
+      port: command_ack
+      direction: in
+      boundary: native
+    - owner: native_explore_runtime
+      port: navigation_command_ack
+      direction: in
+      boundary: endpoint
+  nav_command_request:
+    topic: /nav/command/request
+    transport: dds
+    dds_topic: rt/nav/command/request
+    message_type: lingtu.dds.NavigationCommandRequest
+    qos_profile: CommandRequest
+    cpp_name: kNavCommandRequest
+    native_contract: true
+    role: native_navigation_command_request
+    frame: request_dependent
+    producer: native_navigation_command_client
+    consumers:
+    - native_nav_runtime
+    semantics: task_scoped_goal_cancel_pause_resume_or_global_safety_request
+    port_bindings:
+    - owner: persistent_cpp_navigation_client
+      port: command_request
+      direction: out
+      boundary: native
+    - owner: native_explore_runtime
+      port: navigation_command_request
+      direction: out
+      boundary: endpoint
+    - owner: native_nav_runtime
+      port: command_request
+      direction: in
+      boundary: endpoint
+  geofence_alert:
+    topic: /nav/geofence/alert
+    transport: dds
+    dds_topic: rt/nav/geofence/alert
+    message_type: lingtu.dds.GeofenceAlert
+    qos_profile: SystemStatus
+    cpp_name: kNavGeofenceAlert
+  geofence_command:
+    topic: /nav/geofence/command
+    transport: dds
+    dds_topic: rt/nav/geofence/command
+    message_type: lingtu.dds.GeofenceCommandRequest
+    qos_profile: CommandRequest
+    cpp_name: kNavGeofenceCommand
+  geofence_response:
+    topic: /nav/geofence/response
+    transport: dds
+    dds_topic: rt/nav/geofence/response
+    message_type: lingtu.dds.GeofenceCommandAck
+    qos_profile: CommandAck
+    cpp_name: kNavGeofenceResponse
+  global_path:
+    topic: /nav/global_path
+    transport: dds
+    dds_topic: rt/nav/global_path
+    message_type: lingtu.dds.Path
+    qos_profile: GlobalPath
+    cpp_name: kNavGlobalPath
+    native_contract: true
+    role: global_path
+    frame: map
+    producer: native_nav_runtime
+    consumers:
+    - host_bus
+    port_bindings:
+    - owner: native_nav_runtime
+      port: global_path
+      direction: out
+      boundary: endpoint
+    - owner: host_bus
+      port: global_path
+      direction: in
+      boundary: native
+  nav_goal_status:
+    topic: /nav/goal/status
+    transport: dds
+    dds_topic: rt/nav/goal/status
+    message_type: lingtu.dds.NavigationGoalStatus
+    qos_profile: CommandAck
+    cpp_name: kNavGoalStatus
+    role: native_navigation_goal_status
+    frame: map
+    producer: native_nav_runtime
+    consumers:
+    - native_explore_runtime
+    - host_bus
+    semantics: request_correlated_goal_lifecycle
+    port_bindings:
+    - owner: native_nav_runtime
+      port: goal_status
+      direction: out
+      boundary: endpoint
+    - owner: native_explore_runtime
+      port: goal_status
+      direction: in
+      boundary: endpoint
+    - owner: host_bus
+      port: navigation_goal_status
+      direction: in
+      boundary: native
+  goal_point:
+    topic: /nav/goal_point
+    transport: local
+  height_rays:
+    topic: /nav/height_rays
+    transport: local
+  local_path:
+    topic: /nav/local_path
+    transport: dds
+    dds_topic: rt/nav/local_path
+    message_type: lingtu.dds.Path
+    qos_profile: GlobalPath
+    cpp_name: kNavLocalPath
+    native_contract: true
+    role: local_path
+    frame: map
+    producer: native_nav_runtime
+    consumers:
+    - host_bus
+    port_bindings:
+    - owner: native_nav_runtime
+      port: local_path
+      boundary: endpoint
+      direction: out
+    - owner: host_bus
+      port: local_path
+      direction: in
+      boundary: native
+  local_planner_clear_path:
+    topic: /nav/local_planner/clear_path
+    transport: local
+  local_planner_control_hint:
+    topic: /nav/local_planner/control_hint
+    transport: local
+  local_traversability:
+    topic: /nav/local_traversability
+    transport: dds
+    dds_topic: rt/nav/local_traversability
+    message_type: lingtu.dds.OccupancyGrid
+    qos_profile: LocalRiskGrid
+    cpp_name: kNavLocalTraversability
+    native_contract: true
+    role: rolling_local_traversability_grid
+    frame: odom
+    producer: traversability_runtime
+    field_producer: native_traversability_endpoint
+    single_writer_per_product: true
+    semantics: latest_only_odom_rolling_control_risk_for_native_local_planning_not_map_persistence_or_gateway_projection
+    consumers:
+    - native_nav_runtime
+    port_bindings:
+    - owner: native_traversability_endpoint
+      port: local_traversability
+      direction: out
+      boundary: endpoint
+    - owner: endpoint_supervisor
+      port: local_traversability
+      direction: in
+      boundary: endpoint
+  map_clearing:
+    topic: /nav/map_clearing
+    transport: dds
+    dds_topic: rt/nav/map_clearing
+    message_type: lingtu.dds.Bool
+    qos_profile: ControlCommand
+    cpp_name: kNavMapClearing
+  navigation_boundary:
+    topic: /nav/navigation_boundary
+    transport: local
+  operator_motion_ack:
+    topic: /nav/operator_motion/ack
+    transport: dds
+    dds_topic: rt/nav/operator_motion/ack
+    message_type: lingtu.dds.OperatorMotionAck
+    qos_profile: OperatorMotionAck
+    cpp_name: kOperatorMotionAck
+    native_contract: true
+    role: native_operator_motion_ack
+    frame: none
+    producer: native_nav_runtime
+    consumers:
+    - operator_motion_adapter
+    semantics: native_business_ack_for_claim_hold_release_only
+    port_bindings:
+    - owner: native_nav_runtime
+      port: operator_motion_ack
+      direction: out
+      boundary: endpoint
+    - owner: operator_motion_adapter
+      port: operator_motion_ack
+      direction: in
+      boundary: native
+  operator_motion_control:
+    topic: /nav/operator_motion/control
+    transport: dds
+    dds_topic: rt/nav/operator_motion/control
+    message_type: lingtu.dds.OperatorMotionControl
+    qos_profile: OperatorMotionControl
+    cpp_name: kOperatorMotionControl
+    native_contract: true
+    role: native_operator_motion_control
+    frame: none
+    producer: operator_motion_adapter
+    consumers:
+    - native_nav_runtime
+    semantics: claim_release_or_hold_for_source_epoch
+    port_bindings:
+    - owner: operator_motion_adapter
+      port: operator_motion_control
+      direction: out
+      boundary: native
+    - owner: native_nav_runtime
+      port: operator_motion_control
+      direction: in
+      boundary: endpoint
+  operator_motion_sample:
+    topic: /nav/operator_motion/sample
+    transport: dds
+    dds_topic: rt/nav/operator_motion/sample
+    message_type: lingtu.dds.OperatorMotionSample
+    qos_profile: OperatorMotionSample
+    cpp_name: kOperatorMotionSample
+    native_contract: true
+    role: native_operator_motion_sample
+    frame: body
+    producer: operator_motion_adapter
+    consumers:
+    - native_nav_runtime
+    semantics: high_rate_latest_only_body_frame_velocity_intent
+    port_bindings:
+    - owner: operator_motion_adapter
+      port: operator_motion_sample
+      direction: out
+      boundary: native
+    - owner: native_nav_runtime
+      port: operator_motion_sample
+      direction: in
+      boundary: endpoint
+  operator_motion_status:
+    topic: /nav/operator_motion/status
+    transport: dds
+    dds_topic: rt/nav/operator_motion/status
+    message_type: lingtu.dds.OperatorMotionStatus
+    qos_profile: OperatorMotionStatus
+    cpp_name: kOperatorMotionStatus
+    native_contract: true
+    role: native_operator_motion_status
+    frame: map
+    producer: native_nav_runtime
+    consumers: []
+    semantics: active_source_epoch_last_sample_admission_and_final_output_evidence
+    external_diagnostics_subscribable: true
+    port_bindings:
+    - owner: native_nav_runtime
+      port: operator_motion_status
+      direction: out
+      boundary: endpoint
+  plan_request:
+    topic: /nav/plan/request
+    transport: dds
+    dds_topic: rt/nav/plan/request
+    message_type: lingtu.dds.PlanRequest
+    qos_profile: CommandRequest
+    cpp_name: kNavPlanRequest
+    native_contract: true
+    role: native_plan_request
+    frame: map
+    producer: persistent_cpp_navigation_client
+    consumers:
+    - native_nav_runtime
+    semantics: read_only_path_planning_request
+    port_bindings:
+    - owner: persistent_cpp_navigation_client
+      port: plan_request
+      direction: out
+      boundary: native
+    - owner: native_nav_runtime
+      port: plan_request
+      direction: in
+      boundary: endpoint
+  plan_result:
+    topic: /nav/plan/result
+    transport: dds
+    dds_topic: rt/nav/plan/result
+    message_type: lingtu.dds.PlanResult
+    qos_profile: CommandRequest
+    cpp_name: kNavPlanResult
+    native_contract: true
+    role: native_plan_result
+    frame: map
+    producer: native_nav_runtime
+    consumers:
+    - persistent_cpp_navigation_client
+    semantics: request_correlated_read_only_path_result
+    port_bindings:
+    - owner: native_nav_runtime
+      port: plan_result
+      direction: out
+      boundary: endpoint
+    - owner: persistent_cpp_navigation_client
+      port: plan_result
+      direction: in
+      boundary: native
+  planner_status:
+    topic: /nav/planner_status
+    transport: local
+  semantic_instruction:
+    topic: /nav/semantic/instruction
+    transport: dds
+    dds_topic: rt/nav/semantic/instruction
+    message_type: lingtu.dds.Text
+    qos_profile: Event
+    cpp_name: kNavSemanticInstruction
+    role: semantic_instruction
+    frame: none
+    producer: gateway_or_mcp
+    consumers:
+    - semantic_planner
+    port_bindings:
+    - owner: GatewayModule
+      port: instruction
+      direction: out
+      boundary: module
+    - owner: SemanticPlannerModule
+      port: instruction
+      direction: in
+      boundary: module
+  semantic_scene_graph:
+    topic: /nav/semantic/scene_graph
+    transport: local
+  nav_state:
+    topic: /nav/state
+    transport: dds
+    dds_topic: rt/nav/state
+    message_type: lingtu.dds.NavigationState
+    qos_profile: SystemStatus
+    cpp_name: kNavState
+    native_contract: true
+    role: authoritative_navigation_state
+    frame: map
+    producer: native_nav_runtime
+    consumers:
+    - host_bus
+    semantics: compact_authoritative_navd_lifecycle_state
+    external_diagnostics_subscribable: true
+    port_bindings:
+    - owner: native_nav_runtime
+      port: navigation_state
+      direction: out
+      boundary: endpoint
+    - owner: host_bus
+      port: navigation_state
+      direction: in
+      boundary: native
+  terrain_map:
+    topic: /nav/terrain_map
+    transport: dds
+    dds_topic: rt/nav/terrain_map
+    message_type: lingtu.dds.PointCloud2
+    qos_profile: LidarPointcloud
+    cpp_name: kNavTerrainMap
+  terrain_map_ext:
+    topic: /nav/terrain_map_ext
+    transport: dds
+    dds_topic: rt/nav/terrain_map_ext
+    message_type: lingtu.dds.PointCloud2
+    qos_profile: LidarPointcloud
+    cpp_name: kNavTerrainMapExt
+  traversability:
+    topic: /nav/traversability
+    transport: dds
+    dds_topic: rt/nav/traversability
+    message_type: lingtu.dds.OccupancyGrid
+    qos_profile: MapGrid
+    cpp_name: kNavTraversability
+    native_contract: true
+    role: traversability_grid
+    frame: map
+    producer: traversability_runtime
+    field_producer: native_traversability_endpoint
+    single_writer_per_product: true
+    semantics: control_risk_authority_distinct_from_maps_scene_traversability
+    consumers:
+    - local_planner
+    - native_nav_runtime
+    - host_bus
+    port_bindings:
+    - owner: endpoint_supervisor
+      port: traversability
+      direction: in
+      boundary: endpoint
+    - owner: host_bus
+      port: traversability
+      direction: in
+      boundary: native
+  nav_way_point:
+    topic: /nav/way_point
+    transport: dds
+    dds_topic: rt/nav/way_point
+    message_type: lingtu.dds.PoseStamped
+    qos_profile: ControlCommand
+    cpp_name: kNavWayPoint
+    native_contract: true
+    role: navigation_waypoint
+    frame: map
+    producer: navigation
+    consumers:
+    - local_planner
+    - native_nav_runtime
+    port_bindings:
+    - owner: endpoint_supervisor
+      port: waypoint
+      direction: in
+      boundary: endpoint

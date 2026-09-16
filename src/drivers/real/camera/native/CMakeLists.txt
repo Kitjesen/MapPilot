@@ -7,30 +7,17 @@ if(NOT UNIX)
 endif()
 
 find_package(CycloneDDS REQUIRED)
-find_program(CYCLONEDDS_IDLC_EXECUTABLE NAMES idlc REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(_LINGTU_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../..")
 set(_LINGTU_IDL "${_LINGTU_ROOT}/src/message/idl/messages.idl")
-set(_LINGTU_IDL_HEADER "${CMAKE_CURRENT_BINARY_DIR}/messages.h")
-set(_LINGTU_IDL_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/messages.c")
-
-add_custom_command(
-  OUTPUT "${_LINGTU_IDL_HEADER}" "${_LINGTU_IDL_SOURCE}"
-  COMMAND "${CYCLONEDDS_IDLC_EXECUTABLE}" -l c "${_LINGTU_IDL}"
-  DEPENDS "${_LINGTU_IDL}"
-  WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-  VERBATIM)
-
-add_subdirectory(
-  "${_LINGTU_ROOT}/src/message/cpp"
-  "${CMAKE_CURRENT_BINARY_DIR}/message_cpp")
+include("${_LINGTU_ROOT}/cmake/LingTuDDS.cmake")
+lingtu_add_dds_c_messages(lingtu_camera_dds_messages "${_LINGTU_IDL}")
 
 add_executable(lingtu_camera_dds
-  camera_dds.cpp
-  "${_LINGTU_IDL_SOURCE}")
+  camera_dds.cpp)
 
 target_include_directories(lingtu_camera_dds PRIVATE
   "${CMAKE_CURRENT_BINARY_DIR}"
@@ -40,7 +27,11 @@ target_include_directories(lingtu_camera_dds PRIVATE
 target_link_libraries(lingtu_camera_dds PRIVATE
   CycloneDDS::ddsc
   lingtu_dds_contracts
+  lingtu_camera_dds_messages
   pthread)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_libraries(lingtu_camera_dds PRIVATE rt)
+endif()
 
 target_compile_options(lingtu_camera_dds PRIVATE
   -Wall

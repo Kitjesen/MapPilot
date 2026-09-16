@@ -46,8 +46,8 @@ def handle_scene_graph(gw: Any, sg: Any) -> None:
             {
                 "id": str(getattr(obj, "id", "") or getattr(obj, "label", "")),
                 "label": obj.label,
-                "x": round(float(getattr(getattr(obj, "position", None) or getattr(obj, "position_3d", None), "x")), 2),
-                "y": round(float(getattr(getattr(obj, "position", None) or getattr(obj, "position_3d", None), "y")), 2),
+                "x": round(float((getattr(obj, "position", None) or getattr(obj, "position_3d", None)).x), 2),
+                "y": round(float((getattr(obj, "position", None) or getattr(obj, "position_3d", None)).y), 2),
                 "z": round(
                     float(
                         getattr(
@@ -83,65 +83,6 @@ def handle_visual_servo_status(gw: Any, status: Any) -> None:
     with gw._state_lock:
         gw._visual_servo_status = data
     gw.push_event({"type": "visual_servo_status", "data": data})
-
-
-def handle_navigation_state(gw: Any, state: Any) -> None:
-    data = state.to_dict() if hasattr(state, "to_dict") else json_payload(state)
-    if not isinstance(data, dict):
-        data = {"raw": str(data)}
-    with gw._state_lock:
-        gw._navigation_state = data
-    gw.push_event({"type": "navigation_state", "data": data})
-    try:
-        from gateway.services.runtime_status import build_navigation_status
-
-        gw.push_event(
-            {
-                "type": "navigation_status",
-                "data": build_navigation_status(gw),
-            }
-        )
-    except Exception as exc:
-        logger.debug("_on_navigation_state: build_navigation_status failed: %s", exc)
-
-
-def handle_navigation_goal_status(gw: Any, status: Any) -> None:
-    data = status.to_dict() if hasattr(status, "to_dict") else json_payload(status)
-    if not isinstance(data, dict):
-        return
-    from gateway.services.navigation_lifecycle import (
-        NavigationTaskProjectionError,
-        project_navigation_goal_status,
-    )
-
-    try:
-        data = project_navigation_goal_status(data)
-    except NavigationTaskProjectionError as exc:
-        logger.warning("Rejected navigation goal status: %s", exc)
-        return
-    boot_id = str(data.get("boot_id") or "")
-    sequence = int(data.get("sequence") or 0)
-    task_id = str(data.get("task_id") or "")
-    request_id = str(data.get("request_id") or "")
-    if not boot_id or sequence <= 0 or not task_id or not request_id:
-        return
-    with gw._state_lock:
-        sequences = gw._navigation_goal_status_sequences
-        if sequence <= int(sequences.get(boot_id, 0)):
-            return
-        sequences[boot_id] = sequence
-        tasks = gw._navigation_goal_status_by_task
-        tasks.pop(task_id, None)
-        tasks[task_id] = dict(data)
-        while len(tasks) > 256:
-            tasks.popitem(last=False)
-        statuses = gw._navigation_goal_status_by_request
-        statuses.pop(request_id, None)
-        statuses[request_id] = dict(data)
-        while len(statuses) > 256:
-            statuses.popitem(last=False)
-        gw._latest_navigation_goal_status = dict(data)
-    gw.push_event({"type": "navigation_goal_status", "data": data})
 
 
 def handle_inspection_task_event(gw: Any, event: Any) -> None:
@@ -254,7 +195,7 @@ def _request_exploration_stop_after_projection_failure(
 ) -> dict[str, Any]:
     """Issue one run-addressed fail-safe stop without claiming it completed."""
 
-    from gateway.services.command_boundary import navigation_commands
+    from gateway.navigation.commands import navigation_commands
     from gateway.services.explore_runs import new_request_id
 
     run_id = str(data.get("exploration_run_id") or "").strip()

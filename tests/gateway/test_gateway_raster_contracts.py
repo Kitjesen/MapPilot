@@ -90,7 +90,7 @@ def test_map_scene_elevation_emits_little_endian_float_grid_with_invalid_nan() -
     assert layer["source_stamp_s"] == source_stamp_s
     assert layer["age_s_at_emit"] >= 0.0
     assert layer["generation"] == 7
-    assert layer["reset_epoch"] == 3
+    assert layer["reset_epoch"] == "3"
     assert layer["observation_sequence"] == 11
     assert layer["semantic"] == "min_observed_z_not_ground"
     assert layer["value_semantics"] == "min_observed_z_not_ground"
@@ -353,7 +353,7 @@ def test_map_scene_elevation_does_not_retain_across_producer_or_geometry_change(
     assert resized["retain_previous"] is False
 
 
-def test_map_scene_does_not_inline_non_elevation_grids() -> None:
+def test_map_scene_does_not_inline_unsupported_grids() -> None:
     events: list[dict] = []
     service = _service(events)
 
@@ -362,11 +362,6 @@ def test_map_scene_does_not_inline_non_elevation_grids() -> None:
             frame_id="map",
             source="mapd",
             layers=[
-                {
-                    "id": "maps.occupancy",
-                    "type": "grid",
-                    "grid": np.ones((4, 4), dtype=np.float32),
-                },
                 {
                     "id": "maps.esdf",
                     "type": "grid",
@@ -391,6 +386,7 @@ def test_latest_elevation_is_replayed_to_new_and_reconnecting_sse_subscribers() 
     from gateway.gateway_module import GatewayModule
 
     gateway = GatewayModule()
+    field_epoch = 117269136217079808
     gateway._on_map_scene(
         MapSceneFrame(
             ts=100.0,
@@ -400,7 +396,7 @@ def test_latest_elevation_is_replayed_to_new_and_reconnecting_sse_subscribers() 
             metadata={
                 "producer_boot_id": "mapd-boot-a",
                 "generation": 3,
-                "reset_epoch": 2,
+                "reset_epoch": field_epoch,
                 "observation_sequence": 9,
                 "live": True,
             },
@@ -412,7 +408,7 @@ def test_latest_elevation_is_replayed_to_new_and_reconnecting_sse_subscribers() 
                     "grid": np.array([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32),
                     "metadata": {
                         "generation": 3,
-                        "reset_epoch": 2,
+                        "reset_epoch": field_epoch,
                         "observation_sequence": 9,
                         "live": True,
                         "width": 2,
@@ -436,6 +432,8 @@ def test_latest_elevation_is_replayed_to_new_and_reconnecting_sse_subscribers() 
     assert [layer["id"] for layer in first_replay["layers"]] == ["maps.elevation"]
     assert first_replay["layers"][0]["payload"] == "inline"
     assert first_replay["layers"][0]["producer_boot_id"] == "mapd-boot-a"
+    assert first_replay["metadata"]["reset_epoch"] == str(field_epoch)
+    assert first_replay["layers"][0]["reset_epoch"] == str(field_epoch)
     assert "event_id" not in first_replay
     first_grid = first_replay["layers"][0]["grid_b64"]
     unsubscribe(gateway, first)

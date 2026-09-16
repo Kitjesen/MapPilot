@@ -76,3 +76,35 @@ def test_environment_uses_native_contract_names() -> None:
     assert environment["LINGTU_NAV_SEGMENT_MAX_DISTANCE_M"] == "2.5"
     assert environment["LINGTU_NAV_SEGMENT_MAX_WAYPOINTS"] == "20"
     assert environment["LINGTU_NAV_SEGMENT_MAP_MAX_AGE_S"] == "0.35"
+
+
+def test_scan_overrides_follow_the_existing_parameter_precedence() -> None:
+    resolved = resolve_parameters(
+        env_overrides={"scan_planner.max_velocity_mps": 0.5},
+        product_parameters={"scan_planner.max_velocity_mps": 0.4},
+        session_overrides={
+            "scan_planner.max_velocity_mps": 0.3,
+            "scan_follower.position_gain": 1.2,
+            "local_collision.max_age_s": 0.75,
+        },
+    )
+    assert resolved.as_dict()["scan_planner.max_velocity_mps"] == 0.3
+    assert resolved.environment()["LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS"] == "0.3"
+    assert resolved.environment()["LINGTU_NAV_SCAN_POSITION_GAIN"] == "1.2"
+    assert resolved.environment()["LINGTU_NAV_LOCAL_COLLISION_MAX_AGE_S"] == "0.75"
+
+
+@pytest.mark.parametrize("overrides", [
+    {"scan_planner.max_velocity_mps": True},
+    {"scan_planner.max_velocity_mps": float("nan")},
+    {"scan_planner.max_acceleration_mps2": 0.0},
+    {"scan_planner.control_point_spacing_m": 0.01},
+    {"scan_planner.smooth_weight": -1.0},
+    {"scan_planner.replan_distance_m": 0.05},
+    {"scan_follower.max_vx_mps": 0.0},
+    {"scan_follower.max_yaw_rate_rad_s": 1.1},
+    {"local_collision.max_age_s": 0.09},
+])
+def test_invalid_scan_parameters_fail_before_launch(overrides) -> None:
+    with pytest.raises(ValueError):
+        resolve_parameters(session_overrides=overrides)

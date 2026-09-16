@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,56 @@ CANONICAL_ROBOT_XML = (
 )
 
 
+@pytest.mark.parametrize("measured_speed, expected_pass", [(0.48, False), (0.50, True), (0.60, True)])
+def test_qualification_does_not_inflate_speed_after_warmup(
+    monkeypatch: pytest.MonkeyPatch, measured_speed: float, expected_pass: bool,
+) -> None:
+    class ConstantSpeedEngine:
+        dt = 0.005
+        control_dt = 0.02
+
+        def __init__(self) -> None:
+            self.command = qualification_module.VelocityCommand()
+            self.walk_steps = 0
+            self.state = qualification_module.RobotState(
+                position=np.array([0.0, 0.0, 0.4]),
+                orientation=np.array([0.0, 0.0, 0.0, 1.0]),
+                linear_velocity=np.zeros(3),
+                angular_velocity=np.zeros(3),
+                joint_positions=np.zeros(16),
+                joint_velocities=np.zeros(16),
+                imu_gyro=np.zeros(3),
+                imu_projected_gravity=np.array([0.0, 0.0, -1.0]),
+            )
+
+        def get_robot_state(self):
+            return self.state
+
+        def step(self, command=None):
+            if command is not None:
+                self.command = command
+            speed = measured_speed if self.command.linear_x > 0.0 else 0.0
+            if speed > 0.0:
+                self.walk_steps += 1
+            self.state = replace(
+                self.state,
+                position=np.array([self.walk_steps * self.control_dt * measured_speed, 0.0, 0.4]),
+                linear_velocity=np.array([speed, 0.0, 0.0]),
+            )
+            return self.state
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(qualification_module, "_build_engine", lambda **_kwargs: ConstantSpeedEngine())
+
+    report = run_qualification(warmup_s=0.5, walk_s=6.0, release_s=2.0)
+
+    assert report["walk"]["phase_average_forward_speed_mps"] == pytest.approx(measured_speed)
+    assert report["checks"]["continuous_forward_walk"] is expected_pass
+    assert report["qualified"] is expected_pass
+
+
 def test_thunderv4_headless_qualification_reports_nominal_stand_warmup() -> None:
     pytest.importorskip("mujoco")
 
@@ -39,12 +90,11 @@ def test_thunderv4_headless_qualification_reports_continuous_forward_walk() -> N
 
     assert report["checks"]["continuous_forward_walk"] is True
     assert report["walk"]["signed_forward_displacement_m"] > 0.30
-    assert report["walk"]["active_average_forward_speed_mps"] >= 0.50
-    assert report["walk"]["phase_average_forward_speed_mps"] > 0.0
+    assert report["walk"]["phase_average_forward_speed_mps"] >= 0.50
     assert report["walk"]["command"]["linear_x"] == pytest.approx(0.6)
 
 
-def test_policy_1119_qualification_uses_its_reference_control_timing() -> None:
+def test_policy_4998_qualification_uses_its_reference_control_timing() -> None:
     pytest.importorskip("mujoco")
 
     report = run_qualification(seed=7)
@@ -123,7 +173,7 @@ def test_explicit_robot_mjcf_is_loaded_and_cross_bound_in_the_report(
     assert report["artifacts"] == {
         "world_mjcf": "sim/packages/worlds/open_field/physics/open_field.xml",
         "robot_mjcf": "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml",
-        "policy": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx",
+        "policy": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx",
     }
 
 

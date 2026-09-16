@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
+import { isObservationMode } from './services/observationMode.ts'
+import { lazy, Suspense, useState, useEffect, useCallback } from 'react'
 import { useSSE } from './hooks/useSSE'
 import { useToast } from './hooks/useToast'
 import { Topbar } from './components/Topbar'
@@ -6,20 +7,18 @@ import { CameraFeed } from './components/CameraFeed'
 import { ChatPanel } from './components/ChatPanel'
 import { LocalizationCard } from './components/LocalizationCard'
 import { StatusBar } from './components/StatusBar'
-import { MapView } from './components/MapView'
-import { SlamStatusPanel } from './components/SlamStatusPanel'
+const MapView = lazy(() => import('./components/MapView').then(m => ({ default: m.MapView })))
+const SlamStatusPanel = lazy(() => import('./components/SlamStatusPanel').then(m => ({ default: m.SlamStatusPanel })))
 import { SceneView } from './components/SceneView'
-import { PlannerTuning } from './components/PlannerTuning'
+const PlannerTuning = lazy(() => import('./components/PlannerTuning').then(m => ({ default: m.PlannerTuning })))
 import { RobotStatusPanel } from './components/RobotStatusPanel'
-import { RuntimeDataflowView } from './components/RuntimeDataflowView'
-import { InspectionWorkbench } from './components/InspectionWorkbench'
+const RuntimeDataflowView = lazy(() => import('./components/RuntimeDataflowView').then(m => ({ default: m.RuntimeDataflowView })))
+const InspectionWorkbench = lazy(() => import('./components/InspectionWorkbench').then(m => ({ default: m.InspectionWorkbench })))
 import { CurrentTaskCard } from './components/CurrentTaskCard'
 import { useTheme } from './components/useTheme'
 import { readStoredLocale, text, writeStoredLocale, type Locale } from './i18n'
 
 import { ToastContainer } from './components/Toast'
-import { LoginPage } from './components/LoginPage'
-import { Landing } from './components/Landing'
 import * as api from './services/api'
 import { currentNavigationTaskStore } from './services/currentNavigationTask'
 import {
@@ -42,12 +41,16 @@ function motionBlockedMessage(reason: string, locale: Locale): string {
       return text(locale, 'Authoritative state refresh failed', '机器人权威状态刷新失败')
     case MotionGateReason.STALE_TIMESTAMP:
       return text(locale, 'Robot state is stale', '机器人状态已过期')
+    case MotionGateReason.INVALID_TIMESTAMP:
+      return text(locale, 'Robot state timestamp is invalid', '状态时间异常，等待更新')
+    case MotionGateReason.SNAPSHOT_NOT_AUTHORITATIVE:
+      return text(locale, 'Waiting for confirmed robot state', '等待机器人状态确认')
     case MotionGateReason.EMERGENCY_STOP_NOT_ACTIVE:
       return text(locale, 'Emergency stop is not active', '当前没有激活的急停锁')
     case MotionGateReason.EMERGENCY_STOP_ACTIVE:
       return text(locale, 'Emergency stop is active', '急停锁仍处于激活状态')
     default:
-      return text(locale, 'Robot state cannot safely authorize motion', '当前状态不足以安全授权运动')
+      return text(locale, 'Motion is not ready', '运动尚未就绪')
   }
 }
 
@@ -56,16 +59,22 @@ function Dashboard() {
   const sseState = useSSE(
     elevationSubscription ? '/api/v1/events?include_elevation=1' : '/api/v1/events',
   )
-  const operatorTask = sseState.navigationStatus?.operator_state?.task
-  const authoritativeMission = sseState.navigationStatus?.mission.raw
-  const activeTaskId = operatorTask ? operatorTask.task_id : authoritativeMission?.active_task_id
-  const activeRequestId = operatorTask ? operatorTask.request_id : authoritativeMission?.active_request_id
+  const activeTaskId = sseState.navigationStatus?.task.task_id
   const { toasts, show: showToast, dismiss } = useToast()
   const { theme, resolvedTheme, setTheme } = useTheme()
   const [locale, setLocale] = useState<Locale>(() => readStoredLocale())
   const [uptimeSeconds, setUptimeSeconds] = useState(0)
   const [nowMs, setNowMs] = useState(() => Date.now())
-  const [activeTab, setActiveTab] = useState<Tab>('console')
+  const [activeTab, setActiveTab] = useState<Tab>('scene')
+  const [selectedSavedMap, setSelectedSavedMap] = useState<string | null>(null)
+  const handleOpenSavedMap = useCallback((name: string | null) => {
+    setSelectedSavedMap(name)
+    setActiveTab('map')
+  }, [])
+  const handleTabChange = useCallback((tab: Tab) => {
+    setSelectedSavedMap(null)
+    setActiveTab(tab)
+  }, [])
   const [estopResetIssuedAt, setEstopResetIssuedAt] = useState<number | null>(null)
   const estop = sseState.safetyState?.estop ?? false
   const motionTruth = {
@@ -79,7 +88,9 @@ function Dashboard() {
           emergencyStopActive: estop,
         },
   }
-  const freshness = { nowMs, maxAgeMs: MOTION_TRUTH_MAX_AGE_MS }
+  // Both values are browser receipt times; a new receipt may precede the next
+  // UI timer tick. Use the latest observed local clock, not the older tick.
+  const freshness = { nowMs: Math.max(nowMs, sseState.lastTruthAt ?? 0), maxAgeMs: MOTION_TRUTH_MAX_AGE_MS }
   const motionStartGate = evaluateMotionAction(MotionAction.START, motionTruth, freshness)
   const estopResetGate = evaluateMotionAction(
     MotionAction.RESET_EMERGENCY_STOP,
@@ -171,9 +182,8 @@ function Dashboard() {
   useEffect(() => {
     currentNavigationTaskStore.adoptAuthoritative({
       task_id: activeTaskId,
-      request_id: activeRequestId,
     })
-  }, [activeRequestId, activeTaskId])
+  }, [activeTaskId])
 
   useEffect(() => {
     if (estopResetIssuedAt === null || estop || !motionStartGate.allowed) return undefined
@@ -192,21 +202,22 @@ function Dashboard() {
       <Topbar
         sseState={sseState}
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChange}
         theme={theme}
         resolvedTheme={resolvedTheme}
         onThemeChange={setTheme}
         locale={locale}
         onLocaleChange={handleLocaleChange}
+        onStop={handleStop}
       />
 
       <main className="main-content" key={activeTab}>
+        <Suspense fallback={<div className="view-loading" role="status">{text(locale, 'Loading view…', '正在打开视图…')}</div>}>
         {activeTab === 'console' && (
           <div className="console-canvas" role="tabpanel" id="panel-console">
             <div className="console-grid">
               <section className="console-camera" aria-label="camera feed">
                 <CameraFeed
-                  onStop={handleStop}
                   onResetEstop={handleResetEstop}
                   estop={estop}
                   resetBusy={estopResetBusy}
@@ -246,10 +257,14 @@ function Dashboard() {
             motionStartAllowed={motionStartGate.allowed}
             motionStartBlockedReason={motionStartBlockedReason}
             onElevationSubscriptionChange={setElevationSubscription}
+            onOpenSavedMap={handleOpenSavedMap}
           />
         )}
         {activeTab === 'map' && (
           <MapView
+            initialSelectedMap={selectedSavedMap}
+            onReturnLive={() => handleTabChange('scene')}
+            session={sseState.session}
             showToast={showToast}
             locale={locale}
             motionStartAllowed={motionStartGate.allowed}
@@ -263,72 +278,23 @@ function Dashboard() {
         )}
         {activeTab === 'planner' && <PlannerTuning showToast={showToast} />}
 
+        </Suspense>
       </main>
 
-      <CurrentTaskCard
+      {!isObservationMode() && <CurrentTaskCard
         locale={locale}
         showToast={showToast}
         resumeAllowed={motionResumeGate.allowed}
         resumeBlockedReason={motionResumeBlockedReason}
       />
-      <StatusBar sseState={sseState} uptimeSeconds={uptimeSeconds} locale={locale} />
+      }
+      {activeTab !== 'scene' && activeTab !== 'map' && activeTab !== 'inspection' && <StatusBar sseState={sseState} uptimeSeconds={uptimeSeconds} locale={locale} />}
       <ToastContainer toasts={toasts} dismiss={dismiss} />
     </div>
   )
 }
 
 function App() {
-  // Landing page: ?landing bypasses auth and shows the marketing page
-  const isLanding = typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).has('landing')
-
-  // Dev preview: ?login forces the login page to render
-  const forceLogin = typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).has('login')
-  const bypassAuth = isLanding || forceLogin
-
-  const [authChecked, setAuthChecked] = useState(bypassAuth)
-  const [loggedIn, setLoggedIn] = useState(false)
-
-  useEffect(() => {
-    // Landing page needs scroll — remove dashboard overflow:hidden from html/body
-    if (isLanding) {
-      document.documentElement.style.overflow = 'auto'
-      document.documentElement.style.height = 'auto'
-      document.body.style.overflow = 'auto'
-      document.body.style.height = 'auto'
-      const root = document.getElementById('root')
-      if (root) { root.style.overflow = 'auto'; root.style.height = 'auto' }
-    }
-    return () => {
-      if (isLanding) {
-        document.documentElement.style.overflow = ''
-        document.documentElement.style.height = ''
-        document.body.style.overflow = ''
-        document.body.style.height = ''
-        const root = document.getElementById('root')
-        if (root) { root.style.overflow = ''; root.style.height = '' }
-      }
-    }
-  }, [isLanding])
-
-  useEffect(() => {
-    if (bypassAuth) return
-    api.checkAuth()
-      .then(data => {
-        setLoggedIn(!data.auth_required)
-        setAuthChecked(true)
-      })
-      .catch(() => {
-        // Backend offline — skip auth
-        setLoggedIn(true)
-        setAuthChecked(true)
-      })
-  }, [bypassAuth])
-
-  if (isLanding) return <Landing />
-  if (!authChecked) return null
-  if (!loggedIn) return <LoginPage onLogin={() => setLoggedIn(true)} />
   return <Dashboard />
 }
 

@@ -8,9 +8,12 @@
  */
 #pragma once
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -127,6 +130,15 @@ public:
     bool goal_snapped{false};
   };
 
+  struct SearchInfo
+  {
+    enum class Outcome { NotStarted, Found, Exhausted, IterationLimit, Cancelled };
+    Outcome outcome{Outcome::NotStarted};
+    bool used_stair_connections{false};
+    int basic_iterations{0};
+    int extended_iterations{0};
+  };
+
   OctoPlanner3D();
 
   ~OctoPlanner3D();
@@ -144,8 +156,32 @@ public:
   void getPlannerResults(std::vector<PointPose>& plannerResults);
 
   EndpointResolutionInfo endpointResolution() const noexcept;
+  SearchInfo searchInfo() const noexcept;
+
+  struct PlanningSlice {
+    bool available{false};
+    std::string reason;
+    double resolution{0.0};
+    int rows{0};
+    int cols{0};
+    PointPose origin{};
+    double reference_z{0.0};
+    // X-fastest: 0 = unsupported/unclassified, 1 = allowed, 2 = body blocked.
+    std::vector<std::uint8_t> cells;
+  };
+  PlanningSlice projectPlanningSlice(double reference_z, std::size_t max_cells = 250000) const;
 
 private:
+  friend struct OctoPlannerGridQueryTest;
+
+  enum class CellState : std::uint8_t
+  {
+    Unqueried,
+    Free,
+    Occupied,
+    OccupiedLeafCenter,
+  };
+
   enum class TraversabilityFailure
   {
     None,
@@ -176,23 +212,25 @@ private:
   bool hasFootprintGroundSupport(
     const GridIndex & idx,
     double robot_radius,
-    int support_depth_cells) const;
+    int support_depth_cells,
+    bool * uneven = nullptr) const;
+  bool isTraversableTerrainBelow(const GridIndex & point, const GridIndex & body) const;
 
   bool isOccupiedCell(const GridIndex & idx) const;
+  bool isOccupiedLeafCell(const GridIndex & idx) const;
+  CellState cellState(const GridIndex & idx) const;
 
   bool hasNonOccupiedNeighborSameLevel(const GridIndex & idx) const;
 
   bool hasSameLevelNeighborWithOccupiedAbove(const GridIndex & idx) const;
 
-  void rebuildPreblockedCells();
+  void clearMapQueryCaches();
+  void rebuildQueryOffsets();
+  bool isPreblockedCell(const GridIndex & idx) const;
 
   void rebuildExternalPreblockedCells();
 
-  void rebuildPreblockedCostmap();
-
   double getPreblockedCost(const GridIndex & idx) const;
-
-  void rebuildObstacleClearanceCostmap();
 
   double getObstacleClearanceCost(const GridIndex & idx) const;
 
@@ -238,7 +276,7 @@ private:
 
   bool resolvePlanEndpoints(GridIndex & start, GridIndex & goal);
 
-  std::vector<GridIndex> make26Directions() const;
+  std::vector<GridIndex> makeSearchDirections(bool include_stair_connections) const;
 
   std::vector<GridIndex> reconstructPath(
     const std::unordered_map<GridIndex, GridIndex, GridIndexHash> & came_from,
@@ -292,6 +330,7 @@ private:
   PointPose goal_point_;
 
   EndpointResolutionInfo endpoint_resolution_{};
+  SearchInfo search_info_{};
   std::vector<PointPose> planner_results_;
 
   std::function<bool()> cancel_check_;
@@ -299,11 +338,20 @@ private:
   std::shared_ptr<octomap::OcTree> octree_;
 
   std::unordered_set<GridIndex, GridIndexHash> traversable_cells_;
-  std::unordered_set<GridIndex, GridIndexHash> preblocked_cells_;
+  std::vector<GridIndex> body_offsets_;
+  mutable std::vector<GridIndex> snap_offsets_;
+  mutable std::unordered_map<GridIndex, TraversabilityFailure, GridIndexHash> body_cache_;
+  // Allocate only queried 16^3 regions. Adjacent footprint samples share one
+  // block lookup instead of allocating/hashing an entry for every voxel.
+  using OccupancyBlock = std::array<CellState, 16 * 16 * 16>;
+  mutable std::unordered_map<GridIndex, OccupancyBlock, GridIndexHash> occupied_blocks_;
+  mutable GridIndex last_occupied_block_index_{};
+  mutable OccupancyBlock * last_occupied_block_{nullptr};
+  mutable std::unordered_map<GridIndex, bool, GridIndexHash> preblocked_cache_;
   std::vector<ExternalBlockedRegion> external_preblocked_regions_;
   std::unordered_set<GridIndex, GridIndexHash> external_preblocked_cells_;
-  std::unordered_map<GridIndex, double, GridIndexHash> preblocked_costmap_;
-  std::unordered_map<GridIndex, double, GridIndexHash> obstacle_clearance_costmap_;
+  mutable std::unordered_map<GridIndex, double, GridIndexHash> preblocked_costmap_;
+  mutable std::unordered_map<GridIndex, double, GridIndexHash> obstacle_clearance_costmap_;
 };
 
 // Compatibility name for the original standalone demo. Product code uses the

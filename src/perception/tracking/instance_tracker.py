@@ -32,7 +32,7 @@ import numpy as np
 
 from memory.spatial.room_inferencer import RoomInferencer
 from runtime.config import get_config
-from runtime.runtime_interface import map_frame_id
+from runtime.tf.frames import map_frame_id
 
 from .projection import Detection3D
 from .scene_graph_builder import SceneGraphBuilder

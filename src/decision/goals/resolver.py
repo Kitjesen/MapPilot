@@ -7,7 +7,7 @@ from typing import Any
 
 from decision.llm.client import LLMConfig, create_llm_client
 from memory.spatial.tagged_locations import TaggedLocationStore
-from runtime.runtime_interface import map_frame_id
+from runtime.tf.frames import map_frame_id
 
 from .fast import FastPathMixin
 from .router import AdaCoTRouter

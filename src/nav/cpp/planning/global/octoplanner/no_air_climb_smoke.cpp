@@ -496,8 +496,10 @@ int main()
     supported_layer_options.support_height_m = 0.6;
     supported_layer_options.support_height_tolerance_m = 0.05;
     supported_layer_options.lowest_traversable_only = true;
+    // Calibrated standing height is measured from the nearest surface. Test
+    // the positive case on a flat floor, not through the narrow raised rail.
     const auto supported_layer_result = plan(
-      map_path.string(),
+      writeOverlayMap().string(),
       {center(-18), center(0), center(5)},
       {center(18), center(0), center(5)},
       supported_layer_options);
@@ -510,6 +512,15 @@ int main()
         std::cerr << "lowest supported layer drifted to z=" << point.z << "\n";
         return 4;
       }
+    }
+    const auto hidden_floor_support_result = plan(
+      map_path.string(),
+      {center(-18), center(0), center(5)},
+      {center(18), center(0), center(5)},
+      supported_layer_options);
+    if (hidden_floor_support_result.ok) {
+      std::cerr << "nearer barrier was skipped in favour of the floor below it\n";
+      return 4;
     }
 
     auto body_envelope_options = supported_layer_options;

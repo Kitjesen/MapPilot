@@ -389,6 +389,13 @@ def test_slam_runtime_uses_persisted_track_seed_before_fallback_seed() -> None:
     assert "track_against_map_initial_pose" in text
     assert "startup_track_seed.has_value()" in text
     assert "std::optional<Pose3d> track_against_map_seed = startup_track_seed" in text
+    track_request = text.split('if (action == "track_against_map") {', 1)[1].split(
+        'if (action != "load_map"', 1
+    )[0]
+    assert "track_against_map_seed = trackSeedForRequest(" in track_request
+    assert "track_against_map_path," in track_request
+    assert "request.has_initial_pose" in track_request
+    assert "track_against_map_path == cli.map_path" in text
 
 
 def test_slam_track_against_map_waits_for_inputs_without_disabling() -> None:
@@ -422,7 +429,7 @@ def test_native_mapd_service_is_packaged_as_a_strict_cpp_boundary() -> None:
     cmake = _read("src/maps/CMakeLists.txt")
     main = _read("src/maps/cpp/mapd/main.cpp")
     dds = _read("src/maps/cpp/mapd/dds.cpp")
-    topics = _read("src/message/cpp/topics.hpp")
+    topics = _read("src/message/generated/topics.hpp")
 
     assert "Description=Native live maps and map service runtime" in unit
     assert "After=network-online.target" in unit
@@ -523,8 +530,8 @@ def test_thunder_traversability_dds_service_runs_cpp_runtime() -> None:
     text = _read("scripts/deploy/thunder/lt-terrain.service")
     source = _read("src/nav/cpp/endpoint/traversability/main.cpp")
     cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
-    topics = _read("src/message/cpp/topics.hpp")
-    idl = _read("src/message/idl/messages.idl")
+    topics = _read("src/message/generated/topics.hpp")
+    idl = _read("src/message/idl/common.idl")
 
     assert "Description=LingTu native traversability DDS producer" in text
     assert "lt-slam.service" not in text
@@ -537,7 +544,7 @@ def test_thunder_traversability_dds_service_runs_cpp_runtime() -> None:
     assert "LINGTU_TRAVERSABILITY_STATUS_FILE=/dev/shm/lingtu/traversability_status.json" in text
     assert "LINGTU_TRAVERSABILITY_TERRAIN_DECAY_S=2.0" in text
     assert "LINGTU_TRAVERSABILITY_TERRAIN_MIN_BLOCK_POINTS=10" in text
-    assert "LINGTU_TRAVERSABILITY_TERRAIN_QUANTILE=0.25" in text
+    assert "LINGTU_TRAVERSABILITY_SURFACE_RESIDUAL_M=0.04" in text
     assert "LINGTU_TRAVERSABILITY_RADIUS=6" in text
     assert "LINGTU_TRAVERSABILITY_MAX_POINTS=5000" in text
     assert "LINGTU_TRAVERSABILITY_TERRAIN_CACHE_MAX_POINTS=20000" in text
@@ -586,7 +593,8 @@ def test_thunder_traversability_dds_service_runs_cpp_runtime() -> None:
     assert "--max-points" in text
     assert "--terrain-decay-s" in text
     assert "--terrain-min-block-points" in text
-    assert "--terrain-quantile" in text
+    assert "--terrain-surface-residual-m" in text
+    assert "--terrain-surface-min-columns" in text
     assert "--terrain-cache-max-points" in text
     assert "--terrain-clear-dy-obs" in text
     assert "--terrain-min-dy-obs-dis" in text
@@ -628,7 +636,7 @@ def test_thunder_traversability_dds_service_runs_cpp_runtime() -> None:
     assert "kNavTerrainMapExt" in source
     assert "kNavMapClearing" in source
     assert "kNavCloudClearing" in source
-    assert '#include "message/cpp/qos.hpp"' in source
+    assert '#include "transport/dds/qos.hpp"' in source
     assert "qos_for_topic(topic_name)" in source
     assert "dds_qset_reliability" not in source
     assert "writeTerrainMap" in source
@@ -802,8 +810,8 @@ def test_thunder_camera_dds_service_is_optional_and_fails_without_native_publish
     cmake = _read("src/drivers/real/camera/native/CMakeLists.txt")
     nav_cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
     source = _read("src/drivers/real/camera/native/camera_dds.cpp")
-    topics = _read("src/message/cpp/topics.hpp")
-    idl = _read("src/message/idl/messages.idl")
+    topics = _read("src/message/generated/topics.hpp")
+    idl = _read("src/message/idl/sensors.idl")
 
     assert "Description=LingTu native camera DDS publisher" in text
     assert "Environment=LINGTU_CAMERA_DDS_BIN=" not in text
@@ -1440,7 +1448,7 @@ def test_nav_control_external_path_is_explicit_legacy_smoke_only() -> None:
     assert "clear <map|cloud|all>" in text
     assert "kNavMapClearing" in text
     assert "kNavCloudClearing" in text
-    assert '#include "message/cpp/qos.hpp"' in text
+    assert '#include "transport/dds/qos.hpp"' in text
     assert "qosFor(" in text
     assert "dds_qset_reliability" not in text
     assert "dds_wait_for_acks" in text
@@ -1475,7 +1483,7 @@ def test_native_nav_endpoint_uses_shared_dds_qos_catalog() -> None:
     cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
     tests = _read("tests/nav/cpp/endpoint/CMakeLists.txt")
 
-    assert '#include "message/cpp/qos.hpp"' in runtime_source
+    assert '#include "transport/dds/qos.hpp"' in runtime_source
     assert "qos_for_topic(topic_name)" in runtime_source
     assert "dds_qset_reliability" not in runtime_source
     assert "navd" in cmake
@@ -1503,9 +1511,10 @@ def test_native_motion_publishers_use_canonical_body_frame() -> None:
 def test_retired_ota_tree_is_absent_and_native_release_is_canonical() -> None:
     package_script = _read("scripts/deploy/package_native_release.sh")
     installer = _read("scripts/deploy/install_native_release.sh")
-    release_guide = _read("docs/04-deployment/OTA_GUIDE.md")
+    release_guide = _read("docs/operations.md")
     scripts_index = _read("scripts/README.md")
-    build_guide = _read("docs/01-getting-started/BUILD_GUIDE.md")
+    component_build_guide = _read("scripts/build/README.md")
+    build_guide = _read("docs/getting-started.md")
     combined = "\n".join((package_script, installer, release_guide, build_guide))
 
     assert not (ROOT / "scripts" / "ota").exists()
@@ -1520,9 +1529,10 @@ def test_retired_ota_tree_is_absent_and_native_release_is_canonical() -> None:
     assert "--packages-select fastlio2 local_planner" not in combined
     assert "--packages-select local_planner" not in combined
     assert "local_planner terrain_analysis terrain_analysis_ext" not in combined
-    assert "bash scripts/build/build_octoplanner3d.sh" in build_guide
-    assert "Product default: native planner kernels, no ROS2" in build_guide
-    assert "ROS 2 Humble Desktop is optional" in build_guide
+    assert "[`scripts/build/README.md`](../scripts/build/README.md)" in build_guide
+    assert "bash scripts/build/build_octoplanner3d.sh" in component_build_guide
+    assert "Product default: native planner kernels, no ROS2" in component_build_guide
+    assert "ROS 2 Humble Desktop is optional" in component_build_guide
     assert "make build           # source ROS Humble" not in build_guide
 
 
@@ -1629,7 +1639,7 @@ def test_product_switch_requires_confirmed_stop_before_runtime_staging() -> None
     source = _read("src/lingtu/real/switch.py")
 
     stop = "backend.stop_motion(current_product)"
-    map_stage = "backend.stage_map(map_name)"
+    map_stage = "backend.prepare_map(map_name)"
     config_stage = "backend.stage_session("
     apply = "control._apply_plan_for_switch("
     assert source.index(stop) < source.index(map_stage)
@@ -1641,16 +1651,16 @@ def test_product_nav_switch_commits_only_after_runtime_readiness() -> None:
     source = _read("src/lingtu/real/switch.py")
 
     stop = "backend.stop_motion(current_product)"
-    map_stage = "backend.stage_map(map_name)"
+    map_stage = "backend.prepare_map(map_name)"
     apply = "control._apply_plan_for_switch("
-    localization = "backend.prepare_localization("
+    localization = "localize = _localization_startup("
     readiness = "backend.wait_navigation("
     commit = "_commit_current_run("
 
     assert source.index(stop) < source.index(map_stage)
     assert source.index(map_stage) < source.index(apply)
-    assert source.index(apply) < source.index(localization)
-    assert source.index(localization) < source.index(readiness)
+    assert source.index(map_stage) < source.index(localization) < source.index(apply)
+    assert source.index(apply) < source.index(readiness)
     assert source.index(readiness) < source.index(commit)
 
 

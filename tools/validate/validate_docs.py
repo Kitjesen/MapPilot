@@ -39,20 +39,23 @@ EXCLUDED_MARKDOWN_PREFIXES = (
     ROOT / "tools" / "calibration" / "camera_lidar",
     ROOT / "tools" / "calibration" / "lidar_imu" / "LiDAR_IMU_Init",
 )
-FORBIDDEN_DOC_DIRS = (
-    ROOT / "docs" / "archive",
-    ROOT / "docs" / "references",
-    ROOT / "docs" / "superpowers",
-)
-ALLOWED_PLAN_FILES = {
+DOCS_MARKDOWN = {
     "README.md",
-    "current-roadmap.md",
-    "robot-mounted-weapon-gameplay-tdd.md",
-    "sensor-noise-injection-tdd.md",
-    "ue5-playable-vertical-slice.md",
+    "getting-started.md",
+    "architecture.md",
+    "runtime.md",
+    "simulation.md",
+    "development.md",
+    "operations.md",
+    "api.md",
+    "testing.md",
+    "roadmap.md",
 }
-STATUS_RE = re.compile(r"^(?:Status|状态)\s*[:：]", re.IGNORECASE)
-DATE_RECORD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:-|\.md$)")
+METADATA_RE = {
+    "Status": re.compile(r"^\*\*Status:\*\*\s+\S", re.IGNORECASE),
+    "Audience": re.compile(r"^\*\*Audience:\*\*\s+\S", re.IGNORECASE),
+    "Runs on": re.compile(r"^\*\*Runs on:\*\*\s+\S", re.IGNORECASE),
+}
 INLINE_LINK_RE = re.compile(r"!?\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+['\"][^)]*['\"])?\s*\)")
 REFERENCE_LINK_RE = re.compile(r"^\s*\[[^\]]+\]:\s*(?:<([^>]+)>|([^\s]+))")
 EXTERNAL_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
@@ -133,9 +136,13 @@ def _local_link_path(source: Path, raw_target: str) -> Path | None:
     return candidate
 
 
-def _has_status(path: Path) -> bool:
+def _missing_metadata(path: Path) -> list[str]:
     lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()[:12]
-    return any(STATUS_RE.match(line.strip()) for line in lines)
+    return [
+        name
+        for name, pattern in METADATA_RE.items()
+        if not any(pattern.match(line.strip()) for line in lines)
+    ]
 
 
 def validate_repository(root: Path = ROOT) -> tuple[list[str], int]:
@@ -144,25 +151,22 @@ def validate_repository(root: Path = ROOT) -> tuple[list[str], int]:
     errors: list[str] = []
     files = markdown_files(root)
 
-    for directory in FORBIDDEN_DOC_DIRS:
-        if directory.exists():
-            errors.append(f"retired documentation directory exists: {_repo_rel(directory)}")
-
-    plan_dir = root / "docs" / "plans"
-    plan_files = {path.name for path in plan_dir.glob("*.md")}
-    unexpected_plans = sorted(plan_files - ALLOWED_PLAN_FILES)
-    if unexpected_plans:
-        errors.append("unexpected active plan files: " + ", ".join(unexpected_plans))
+    docs_root = root / "docs"
+    docs_markdown = {
+        path.relative_to(docs_root).as_posix()
+        for path in docs_root.rglob("*.md")
+        if path.is_file()
+    }
+    missing_docs = sorted(DOCS_MARKDOWN - docs_markdown)
+    unexpected_docs = sorted(docs_markdown - DOCS_MARKDOWN)
+    if missing_docs:
+        errors.append("missing maintained docs: " + ", ".join(missing_docs))
+    if unexpected_docs:
+        errors.append("unexpected docs Markdown: " + ", ".join(unexpected_docs))
 
     binary_docs = sorted(path for suffix in ("*.pdf", "*.docx") for path in (root / "docs").rglob(suffix))
     for path in binary_docs:
         errors.append(f"binary snapshot belongs outside docs or in generated artifacts: {_repo_rel(path)}")
-
-    field_runs = root / "docs" / "07-testing" / "field-runs"
-    field_run_exceptions = {"README.md"}
-    for path in field_runs.glob("*.md"):
-        if path.name not in field_run_exceptions and not DATE_RECORD_RE.match(path.name):
-            errors.append(f"field evidence must be date-prefixed: {_repo_rel(path)}")
 
     for path in files:
         rel = _repo_rel(path)
@@ -171,13 +175,13 @@ def validate_repository(root: Path = ROOT) -> tuple[list[str], int]:
         if not first_nonempty.startswith("# "):
             errors.append(f"missing H1 title: {rel}")
 
-        if (
-            path.parent == root / "docs" / "architecture"
-            or path.parent == root / "docs" / "product"
-            or path.parent == root / "docs" / "research"
-            or path.parent == root / "docs" / "plans"
-        ) and not _has_status(path):
-            errors.append(f"missing status near top: {rel}")
+        if path.parent == docs_root and path.name in DOCS_MARKDOWN:
+            missing_metadata = _missing_metadata(path)
+            if missing_metadata:
+                errors.append(
+                    f"missing metadata near top: {rel} -> "
+                    + ", ".join(missing_metadata)
+                )
 
         for target in _link_targets(text):
             candidate = _local_link_path(path, target)
@@ -202,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.verbose:
-        print("Checks: titles, statuses, local links, plan/evidence layout, retired directories")
+        print("Checks: flat ten-page docs set, metadata, titles, and local links")
     print(f"PASSED: {scanned} first-party Markdown files")
     return 0
 

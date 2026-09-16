@@ -14,6 +14,18 @@ using PlanRequest = lingtu::nav::plan::GlobalPlanRequest;
 using PlanResult = lingtu::nav::plan::GlobalPlanResult;
 using CancelCheck = lingtu::nav::plan::GlobalPlanCancelCheck;
 
+struct PlanningMapProjection {
+  bool available{false};
+  std::string reason;
+  lingtu::nav::plan::MapIdentity map_identity;
+  double resolution{0.0};
+  int rows{0};
+  int cols{0};
+  Point origin{};
+  double reference_z{0.0};
+  std::vector<std::uint8_t> cells;
+};
+
 bool pcdConversionEnabled();
 
 // Serial planning session that reuses the immutable in-memory OcTree while the
@@ -34,6 +46,11 @@ public:
 
   std::size_t mapLoadCount() const;
   std::size_t prepareCount() const;
+  PlanningMapProjection project(
+    const std::filesystem::path & map_path,
+    const lingtu::nav::plan::MapIdentity & map_identity,
+    const PlannerOptions & options, double reference_z,
+    const CancelCheck & cancel_check = {});
 
 private:
   struct Impl;

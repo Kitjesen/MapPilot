@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Simulation Product switch tests."""
 
 from __future__ import annotations
@@ -16,6 +15,12 @@ import pytest
 from sim.catalog import CatalogResolver
 
 import lingtu.sim.switch as sim_switch_module
+from lingtu.assembly.graph import (
+    ProcessArtifact,
+    ProcessCommand,
+    ProcessReadiness,
+    ProcessSpec,
+)
 from lingtu.control import ProductControl
 from lingtu.product_lock import ProductControlBusy, ProductControlLock
 from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
@@ -26,12 +31,6 @@ from lingtu.sim.identity import (
     SimChildSnapshot,
 )
 from lingtu.switch_contracts import ProcessReport, SwitchFailed, SwitchRequest
-from runtime.graph import (
-    ProcessArtifact,
-    ProcessCommand,
-    ProcessReadiness,
-    ProcessSpec,
-)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SIMULATION_SESSION = "sim/sessions/examples/thunder_omni_contract/session.yaml"
@@ -164,7 +163,8 @@ def _plan(
         processes=tuple(processes),
         available_processes=tuple(processes),
         stop_before_start=tuple(item.target for item in processes),
-        contracts=(f"lingtu.product.{product}.v1",),
+        required_topics=(),
+        required_capabilities=(),
         critical_modules=(),
         route_contract=None,
         host_config={},
@@ -537,15 +537,32 @@ def _write_current(state_dir: Path, plan: RunPlan) -> tuple[Path, Path, bytes]:
 def _write_mapd_runtime_evidence(
     state_dir: Path,
     plan: RunPlan,
+    *,
+    product_session_id: str = OLD_PRODUCT_SESSION_ID,
 ) -> Path:
     identity = ProcessIdentity.current(os.getpid())
+    started_wall_ns = time.time_ns()
+    SimChildLedger(state_dir).replace(
+        SimChildSnapshot.create(
+            product_session_id=product_session_id,
+            children=(
+                SimChildRecord(
+                    target="map_runtime",
+                    process_identity=identity,
+                    process_group=identity.pid,
+                    started_wall_ns=started_wall_ns,
+                    launch_id="9" * 64,
+                ),
+            ),
+        )
+    )
     generation = 7
     payload = {
         "schema_version": "lingtu.maps.runtime.v1",
         "process": "mapd",
         "native_product": {
             "product": plan.product,
-            "product_session_id": OLD_PRODUCT_SESSION_ID,
+            "product_session_id": product_session_id,
         },
         "producer_boot_id": "mapd-boot",
         "status": "ready",
@@ -593,21 +610,7 @@ def _write_mapd_runtime_evidence(
     }
     path = state_dir / "mapd.status.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
-    started_wall_ns = path.stat().st_mtime_ns
-    SimChildLedger(state_dir).replace(
-        SimChildSnapshot.create(
-            product_session_id=OLD_PRODUCT_SESSION_ID,
-            children=(
-                SimChildRecord(
-                    target="map_runtime",
-                    process_identity=identity,
-                    process_group=identity.pid,
-                    started_wall_ns=started_wall_ns,
-                    launch_id="9" * 64,
-                ),
-            ),
-        )
-    )
+    assert path.stat().st_mtime_ns >= started_wall_ns
     return path
 
 
@@ -893,7 +896,7 @@ def test_mapctl_prepare_receipt_is_strictly_read_only(
     )
     payload[field] = value
 
-    with pytest.raises(RuntimeError, match="read-only|producer_boot_id|changed"):
+    with pytest.raises(RuntimeError, match=r"read-only|producer_boot_id|changed"):
         sim_switch_module._validate_mapctl_receipt(
             payload,
             operation="prepare",
@@ -1014,7 +1017,7 @@ def test_saved_map_switch_rejects_untrusted_mapd_readiness_before_prepare(
     )
     monkeypatch.setattr(control, "_resolve", lambda *_args, **_kwargs: target)
 
-    with pytest.raises(SwitchFailed, match="map runtime readiness|child ledger"):
+    with pytest.raises(SwitchFailed, match=r"map runtime readiness|child ledger"):
         control._switch(
             SwitchRequest(target_product="nav", map_name="yard"),
             state_dir=tmp_path,
@@ -1237,6 +1240,7 @@ def test_saved_map_cold_start_uses_target_map_runtime(
     (
         (None, True, None),
         ((1.25, -2.5, 0.3), True, ("1.25", "-2.5", "0", "0.29999999999999999")),
+        ((1.25, -2.5, 0.45, 0.3), True, ("1.25", "-2.5", "0.45000000000000001", "0.29999999999999999")),
         (None, False, None),
     ),
 )
@@ -1356,6 +1360,10 @@ def test_saved_map_localization_failure_rolls_back_transaction(
         def apply(self, run_plan_path: Path, **kwargs: Any) -> ProcessReport:
             events.append("previous:apply" if run_plan_path == previous_path else "target:apply")
             report = super().apply(run_plan_path, **kwargs)
+            _write_mapd_runtime_evidence(
+                tmp_path, RunPlan.load(run_plan_path),
+                product_session_id=kwargs["product_session_id"],
+            )
             if run_plan_path != previous_path:
                 raise RuntimeError("alignment rejected")
             return report
@@ -1399,26 +1407,51 @@ def test_saved_map_localization_failure_rolls_back_transaction(
     assert not (tmp_path / "switch.json").exists()
 
 
-def test_saved_map_failure_restores_map_before_previous_product(
+@pytest.mark.parametrize("failure_phase", ("before_apply", "partial_apply", "apply_rolled_back", "verify"))
+def test_saved_map_failure_restores_through_the_live_map_owner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    failure_phase: str,
 ) -> None:
     previous = _plan("teleop", with_maps=True)
     current_path, previous_path, current_bytes = _write_current(tmp_path, previous)
     target = _plan("nav", with_maps=True)
     target_identity = _native_identity("yard")
-    previous_identity = _native_identity(None)
+    previous_identity = _native_identity("previous-yard")
+    active_identity = copy.deepcopy(previous_identity)
     events: list[str] = []
 
     def mapctl(
         _environment: dict[str, str],
         operation: str,
-        _operand: str,
+        operand: str,
         *,
         timeout_s: float,
     ) -> dict[str, Any]:
+        nonlocal active_identity
         assert timeout_s > 0
+        snapshot = SimChildLedger(tmp_path).load()
+        assert snapshot is not None and snapshot.children
+        assert snapshot.children[0].target == "map_runtime"
+        assert snapshot.children[0].process_identity.matches()
         events.append(f"map:{operation}")
+        if operation in {"prepare", "stage"}:
+            assert snapshot.product_session_id == OLD_PRODUCT_SESSION_ID
+        if operation == "stage":
+            active_identity = copy.deepcopy(target_identity)
+        if operation == "verify":
+            assert failure_phase == "verify"
+            raise RuntimeError("target launch failed")
+        if operation == "restore":
+            assert operand == "opaque-token"
+            expected_owner = (
+                TARGET_PRODUCT_SESSION_ID
+                if failure_phase in {"partial_apply", "verify"}
+                else OLD_PRODUCT_SESSION_ID
+            )
+            assert snapshot.product_session_id == expected_owner
+            assert active_identity == target_identity
+            active_identity = copy.deepcopy(previous_identity)
         return _mapctl_payload(
             operation,
             target=target_identity,
@@ -1434,13 +1467,26 @@ def test_saved_map_failure_restores_map_before_previous_product(
             timeout_s: float | None = None,
         ) -> ProcessReport:
             assert timeout_s is None
+            assert product_session_id is not None
             self.calls.append(("apply", run_plan_path))
             if run_plan_path != previous_path:
                 events.append("target:apply")
-                raise RuntimeError("target launch failed")
-            events.append("previous:apply")
+                if failure_phase != "before_apply":
+                    _write_mapd_runtime_evidence(
+                        tmp_path, RunPlan.load(run_plan_path),
+                        product_session_id=product_session_id,
+                    )
+                if failure_phase == "apply_rolled_back":
+                    SimChildLedger(tmp_path).replace(SimChildSnapshot.create(
+                        product_session_id=product_session_id, children=(),
+                    ))
+                if failure_phase != "verify":
+                    raise RuntimeError("target launch failed")
+            else:
+                events.append("previous:apply")
+                _write_mapd_runtime_evidence(tmp_path, previous)
             return ProcessReport(
-                product=previous.product,
+                product=RunPlan.load(run_plan_path).product,
                 env="sim",
                 action="apply",
                 ok=True,
@@ -1457,6 +1503,9 @@ def test_saved_map_failure_restores_map_before_previous_product(
             events.append(
                 "previous:quiesce" if run_plan_path == previous_path else "target:quiesce"
             )
+            SimChildLedger(tmp_path).replace(SimChildSnapshot.create(
+                product_session_id=product_session_id, children=(),
+            ))
             return super().quiesce(
                 run_plan_path,
                 product_session_id=product_session_id,
@@ -1480,15 +1529,21 @@ def test_saved_map_failure_restores_map_before_previous_product(
         )
 
     assert failure.value.report.status == "failed_rolled_back"
-    assert events == [
+    expected_events = [
         "map:prepare",
         "map:stage",
         "previous:quiesce",
         "target:apply",
-        "map:restore",
-        "target:quiesce",
-        "previous:apply",
     ]
+    if failure_phase == "verify":
+        expected_events.append("map:verify")
+    if failure_phase in {"partial_apply", "verify"}:
+        expected_events.extend(("map:restore", "target:quiesce", "previous:apply"))
+    else:
+        expected_events.extend(("target:quiesce", "previous:apply", "map:restore"))
+    assert events == expected_events
+    assert active_identity == previous_identity
+    assert SimChildLedger(tmp_path).load().product_session_id == OLD_PRODUCT_SESSION_ID
     assert current_path.read_bytes() == current_bytes
     assert not (tmp_path / "switch.json").exists()
 
@@ -1609,9 +1664,11 @@ def test_bad_restore_receipt_retains_journal_and_fails_closed(
     assert (tmp_path / "switch.json").is_file()
 
 
-def test_failed_target_stop_restores_map_but_not_previous_product(
+@pytest.mark.parametrize("target_map_live", (True, False))
+def test_failed_target_stop_does_not_restore_previous_product(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    target_map_live: bool,
 ) -> None:
     previous = _plan("teleop", with_maps=True)
     _current_path, previous_path, _current_bytes = _write_current(tmp_path, previous)
@@ -1637,6 +1694,10 @@ def test_failed_target_stop_restores_map_but_not_previous_product(
         def apply(self, run_plan_path: Path, **_kwargs: Any) -> ProcessReport:
             if run_plan_path == previous_path:
                 raise AssertionError("previous Product must remain stopped")
+            if target_map_live:
+                _write_mapd_runtime_evidence(
+                    tmp_path, target, product_session_id=TARGET_PRODUCT_SESSION_ID,
+                )
             raise RuntimeError("target launch failed")
 
         def quiesce(self, run_plan_path: Path, **kwargs: Any) -> ProcessReport:
@@ -1660,35 +1721,43 @@ def test_failed_target_stop_restores_map_but_not_previous_product(
         )
 
     assert failure.value.report.status == "rollback_failed"
-    assert operations == ["prepare", "stage", "restore"]
-    assert failure.value.report.cleanup == [
-        "map:restored",
-        "target_failed:target stop failed",
-    ]
+    assert operations == ["prepare", "stage"] + (["restore"] if target_map_live else [])
+    assert "target_failed:target stop failed" in failure.value.report.cleanup
+    if target_map_live:
+        assert "map:restored" in failure.value.report.cleanup
+    else:
+        assert any(item.startswith("map_failed:") for item in failure.value.report.cleanup)
     assert (tmp_path / "switch.json").is_file()
 
 
+@pytest.mark.parametrize("previous_still_live", (True, False))
 def test_saved_map_reconcile_previous_restores_exact_token_before_new_switch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    previous_still_live: bool,
 ) -> None:
     previous = _plan("teleop", with_maps=True)
     _current_path, previous_path, _current_bytes = _write_current(tmp_path, previous)
     saved_target = _plan("nav", with_maps=True)
     next_target = _plan("teleop_avoid")
     target_identity = _native_identity("yard")
-    previous_identity = _native_identity(None)
+    previous_identity = _native_identity("previous-yard")
     events: list[str] = []
 
     def mapctl(
         _environment: dict[str, str],
         operation: str,
-        _operand: str,
+        operand: str,
         *,
         timeout_s: float,
     ) -> dict[str, Any]:
         assert timeout_s > 0
+        snapshot = SimChildLedger(tmp_path).load()
+        assert snapshot is not None and snapshot.children
+        assert snapshot.product_session_id == OLD_PRODUCT_SESSION_ID
         events.append(f"map:{operation}")
+        if operation == "restore":
+            assert operand == "opaque-token"
         return _mapctl_payload(
             operation,
             target=target_identity,
@@ -1730,7 +1799,19 @@ def test_saved_map_reconcile_previous_restores_exact_token_before_new_switch(
             state_dir=tmp_path,
         )
 
-    recovery = RecordingRunner(tmp_path, expect_current_absent=False)
+    if not previous_still_live:
+        SimChildLedger(tmp_path).replace(SimChildSnapshot.create(
+            product_session_id=TARGET_PRODUCT_SESSION_ID, children=(),
+        ))
+
+    class RecoveryRunner(RecordingRunner):
+        def apply(self, run_plan_path: Path, **kwargs: Any) -> ProcessReport:
+            if run_plan_path == previous_path:
+                events.append("previous:apply")
+                _write_mapd_runtime_evidence(tmp_path, previous)
+            return super().apply(run_plan_path, **kwargs)
+
+    recovery = RecoveryRunner(tmp_path, expect_current_absent=False)
     second = ProductControl(
         ForbiddenSystemdRunner(),  # type: ignore[arg-type]
         simulation_runner=recovery,
@@ -1744,11 +1825,16 @@ def test_saved_map_reconcile_previous_restores_exact_token_before_new_switch(
     )
 
     assert report.status == "active"
-    assert recovery.calls[:2] == [
+    recovery_start = 0 if previous_still_live else 1
+    assert recovery.calls[recovery_start:recovery_start + 2] == [
         ("quiesce", previous_path),
         ("apply", previous_path),
     ]
-    assert events == ["map:prepare", "map:stage", "map:restore"]
+    restore_events = (
+        ["map:restore", "previous:apply"]
+        if previous_still_live else ["previous:apply", "map:restore"]
+    )
+    assert events == ["map:prepare", "map:stage", *restore_events]
     assert not (tmp_path / "switch.json").exists()
     assert not first_runner.calls[-1][1].exists()
 

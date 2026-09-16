@@ -709,9 +709,9 @@ fn damping_for_diagonal(diagonal: f64, lambda: f64) -> f64 {
 
 fn solve_lm_step(system: &LinearizedSystem, lambda: f64) -> Option<DVector<f64>> {
     if system.normal.dim >= SPARSE_LM_MIN_DIM {
-        if let Some(delta) = solve_sparse_lm_step(system, lambda) {
-            return Some(delta);
-        }
+        // Propagate failed sparse factorization. Never allocate a quadratic
+        // dense fallback for a large online mapping graph.
+        return solve_sparse_lm_step(system, lambda);
     }
     solve_dense_lm_step(system, lambda)
 }

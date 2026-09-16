@@ -5,7 +5,6 @@ import struct
 from pathlib import Path
 
 import pytest
-
 from sim.tools.planning import octoplanner3d_route_viz as viz
 
 

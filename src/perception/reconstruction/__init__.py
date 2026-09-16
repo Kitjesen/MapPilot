@@ -8,8 +8,8 @@ from typing import Any
 __all__ = [
     "ColorProjector",
     "DatasetRecorderModule",
-    "ReconstructionModule",
     "ReconKeyframeExporterModule",
+    "ReconstructionModule",
     "SemanticLabeler",
 ]
 

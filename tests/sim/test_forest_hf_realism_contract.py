@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Deterministic acceptance contracts for the next Forest_HF realism pass."""
 
@@ -11,7 +10,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from sim.tools.worlds.forest_hf import blender_author as author
 from sim.tools.worlds.forest_hf import blender_visuals as visuals
 

@@ -1,6 +1,5 @@
 """Immutable shutdown facts for playable-owned runtime processes."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -9,7 +8,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 import sim.runtime.coordinator.mujoco_process as mujoco_process_module
 import sim.runtime.coordinator.unreal_process as unreal_process_module
 from sim.runtime.coordinator.mujoco_process import MujocoProcess

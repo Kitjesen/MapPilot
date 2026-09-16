@@ -307,7 +307,7 @@ def create_app(
     """
     try:
         from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-        from fastapi.responses import FileResponse, JSONResponse  # noqa: F401
+        from fastapi.responses import FileResponse, JSONResponse
     except ImportError as exc:
         raise ImportError(
             "FastAPI is required for the reconstruction server. "
@@ -339,7 +339,7 @@ def create_app(
 
     @app.get("/api/v1/backends")
     async def get_backends():
-        from .backends.registry import list_backends, get_backend
+        from .backends.registry import get_backend, list_backends
         result = []
         for name in list_backends():
             cls  = get_backend(name)
@@ -399,7 +399,7 @@ def create_app(
             )
             return job.to_dict()
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc))
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/api/v1/jobs/{session_id}")
     async def get_job(session_id: str):
@@ -469,7 +469,7 @@ Examples:
     )
 
     if args.list_backends:
-        from .backends.registry import list_backends, get_backend
+        from .backends.registry import get_backend, list_backends
         print("Available reconstruction backends:")
         for name in list_backends():
             cls  = get_backend(name)
@@ -484,7 +484,7 @@ Examples:
     except ImportError:
         raise SystemExit(
             "uvicorn not installed — run: pip install uvicorn"
-        )
+        ) from None
 
     app = create_app(
         backend=args.backend,

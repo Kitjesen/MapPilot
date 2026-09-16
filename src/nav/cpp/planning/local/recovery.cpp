@@ -1,4 +1,5 @@
 #include "planning/local/recovery.hpp"
+#include "planning/local/scan/grid.hpp"
 
 #include <algorithm>
 #include <array>
@@ -26,6 +27,10 @@ class RecoveryPlannerImplementation {
       out.safetyFailure = invalid;
       out.diagnostics.lastFailure = invalid;
       return out;
+    }
+    if (input.collisionGrid != nullptr && p_.checkObstacles &&
+        !input.collisionGrid->obstacleFree(input.vehiclePose.position, input.vehiclePose.yaw)) {
+      return boundaryDeparture(input);
     }
     if (searchTranslation(input, &out)) return out;
     if (out.status == PlanStatus::InvalidInput) return out;
@@ -108,6 +113,17 @@ class RecoveryPlannerImplementation {
       }
     }
     SafetyFailure why = SafetyFailure::None;
+    if (input.collisionGrid != nullptr && p_.checkObstacles && bodyPath.size() == 2 &&
+        distance2D(bodyPath.front(), {}) < 1e-6 &&
+        !input.collisionGrid->obstacleFree(input.vehiclePose.position, input.vehiclePose.yaw)) {
+      auto end = bodyPathToWorld(bodyPath, input.vehiclePose).back();
+      // Recovery is planar; body bobbing must not turn the retained waypoint
+      // height into a requested ascent or invalidate an otherwise safe exit.
+      end.z = input.vehiclePose.position.z;
+      const bool free = input.collisionGrid->boundaryDepartureFree(input.vehiclePose, end);
+      setFailure(failure, free ? SafetyFailure::None : SafetyFailure::ObstacleCollision);
+      return free;
+    }
     if (!safePose(input, bodyPath.front().x, bodyPath.front().y, 0.0, &why)) {
       setFailure(failure, why);
       return false;
@@ -192,6 +208,30 @@ class RecoveryPlannerImplementation {
   static constexpr int kDirectionBins = 16;
 
   RecoveryPlannerParams p_;
+
+  RecoveryPlanResult boundaryDeparture(const RecoveryPlannerInput& in) const {
+    RecoveryPlanResult out;
+    for (int bin = 0; bin < kDirectionBins; ++bin) {
+      if (in.rejectedTranslationDirectionMask & (std::uint32_t{1} << bin)) continue;
+      const double angle = 2.0 * M_PI * bin / kDirectionBins;
+      const std::vector<Vec3> body{{}, {p_.minTranslationDistance * std::cos(angle),
+                                       p_.minTranslationDistance * std::sin(angle), 0.0}};
+      const auto world = bodyPathToWorld(body, in.vehiclePose);
+      if (!in.collisionGrid->boundaryDepartureFree(in.vehiclePose, world.back())) continue;
+      ++out.diagnostics.candidateCount;
+      const double score = std::cos(angle - in.goalDirectionBodyRad);
+      if (score <= out.diagnostics.selectedScore) continue;
+      out.status = PlanStatus::TranslationReady;
+      out.action = RecoveryAction::Translate;
+      out.pathBody = body;
+      out.pathWorld = world;
+      out.verified = true;
+      out.diagnostics.selectedScore = score;
+      out.diagnostics.selectedDirectionBin = bin;
+    }
+    if (!out.verified) out.safetyFailure = SafetyFailure::ObstacleCollision;
+    return out;
+  }
 
   static bool finite(double value) { return std::isfinite(value); }
 
@@ -318,7 +358,17 @@ class RecoveryPlannerImplementation {
 
     // Collision is checked against the full padded rectangle, not a centre
     // strip. The same check is used for forward, lateral, and reverse motion.
-    if (p_.checkObstacles) {
+    if (p_.checkObstacles && in.collisionGrid != nullptr) {
+      const double vc = std::cos(in.vehiclePose.yaw);
+      const double vs = std::sin(in.vehiclePose.yaw);
+      const Vec3 center{in.vehiclePose.position.x + vc * bodyX - vs * bodyY,
+                        in.vehiclePose.position.y + vs * bodyX + vc * bodyY,
+                        in.vehiclePose.position.z};
+      if (!in.collisionGrid->obstacleFree(center, in.vehiclePose.yaw + relativeYaw)) {
+        setFailure(failure, SafetyFailure::ObstacleCollision);
+        return false;
+      }
+    } else if (p_.checkObstacles) {
       for (int i = 0; i < in.obstacleCount; ++i) {
         if (!admitted(in.obstacleHeight[i])) continue;
         const double dx = static_cast<double>(in.obstacleX[i]) - bodyX;
@@ -360,6 +410,21 @@ class RecoveryPlannerImplementation {
       double toX,
       double toY,
       SafetyFailure* failure) const {
+    if (p_.checkObstacles && in.collisionGrid != nullptr) {
+      const double c = std::cos(in.vehiclePose.yaw);
+      const double s = std::sin(in.vehiclePose.yaw);
+      const auto world = [&](double x, double y) {
+        return Vec3{in.vehiclePose.position.x + c * x - s * y,
+                    in.vehiclePose.position.y + s * x + c * y,
+                    in.vehiclePose.position.z};
+      };
+      if (in.collisionGrid->segmentInflatedOccupancy(
+              world(fromX, fromY), in.vehiclePose.yaw,
+              world(toX, toY), in.vehiclePose.yaw) != 0) {
+        setFailure(failure, SafetyFailure::ObstacleCollision);
+        return false;
+      }
+    }
     const double length = std::hypot(toX - fromX, toY - fromY);
     const int samples = std::max(
         1, static_cast<int>(

@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Contracts for deterministic Blender conditioning of generated static props."""
 
 from __future__ import annotations
@@ -12,7 +11,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from sim.catalog.importers.contracts import digest_document
 from sim.tools.assets import blender_static_prop_conditioner as static_conditioner
 from sim.tools.assets import static_prop_conditioning as conditioning_contract
@@ -251,7 +249,7 @@ def test_plan_rejects_non_glb_or_oversized_source(tmp_path: Path) -> None:
     model, task = _source_fixture(root)
     wrong = model.with_suffix(".gltf")
     wrong.write_bytes(model.read_bytes())
-    with pytest.raises(ValueError, match="single-file .glb"):
+    with pytest.raises(ValueError, match=r"single-file \.glb"):
         build_static_prop_conditioning_plan(
             artifact_root=root,
             asset_id="bad-source-v001",

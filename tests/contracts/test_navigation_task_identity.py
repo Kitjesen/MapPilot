@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from lingtu.assembly.graph.loader import load_runtime_graph
 from runtime.msgs.nav import (
     NavigationCommandKind,
     NavigationCommandReceipt,
@@ -18,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _idl_fields(struct_name: str) -> list[str]:
-    idl = (REPO_ROOT / "src/message/idl/messages.idl").read_text(encoding="utf-8")
+    idl = (REPO_ROOT / "src/message/idl/navigation.idl").read_text(encoding="utf-8")
     body = idl.split(f"struct {struct_name} {{", 1)[1].split("};", 1)[0]
     return [line.rstrip(";").split()[-1] for line in body.splitlines() if ";" in line]
 
@@ -78,7 +79,7 @@ def test_navigation_task_identity_is_distinct_from_command_attempt_identity() ->
 
 
 def test_navigation_task_identity_uses_existing_dds_topics() -> None:
-    topics = (REPO_ROOT / "config/runtime_graph/topics.yaml").read_text(encoding="utf-8")
+    topics = load_runtime_graph().topic_contracts
 
     assert "/nav/command/request" in topics
     assert "/nav/command/ack" in topics

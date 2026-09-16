@@ -10,7 +10,7 @@ from numbers import Real
 from typing import Any
 
 from gateway.services.safety_status import safety_stop_active, safety_summary
-from runtime.runtime_interface import TOPICS
+from message.topics import TOPICS
 
 READINESS_SCHEMA_VERSION = 1
 _CALIBRATION_CACHE_TTL_S = 30.0
@@ -36,17 +36,6 @@ _DATA_RELEVANT_REASON_PREFIXES = (
     "localization:status_error",
     "navigation:status_error",
 )
-
-_MISSION_ACTIVE_STATES = {
-    "EXECUTING",
-    "NAVIGATING",
-    "PLANNING",
-    "PAUSED",
-    "EXPLORING",
-    "RECOVERY",
-    "RECOVERING",
-    "REPLANNING",
-}
 
 _NATIVE_OPERATOR_TOPICS = frozenset(
     {
@@ -252,49 +241,51 @@ def _runtime_readiness_modes(
     *,
     failed_modules: list[str],
     reasons: list[str],
-    runtime: Mapping[str, Any],
+    navigation_projection: Mapping[str, Any],
 ) -> dict[str, Any]:
-    navigation = runtime.get("navigation")
-    navigation = navigation if isinstance(navigation, Mapping) else {}
     data_reasons = [
         reason
         for reason in reasons
         if str(reason).startswith(_DATA_RELEVANT_REASON_PREFIXES)
     ]
-    active_cmd_source = str(navigation.get("active_cmd_source") or "unknown")
-    mission_state = str(navigation.get("state") or "unknown").upper()
-    motion_active = mission_state in _MISSION_ACTIVE_STATES
-    command_source_idle = active_cmd_source.lower() in {
-        "",
-        "none",
-        "unknown",
-        "null",
-        "manual_hold",
-        "estop",
-    }
+    control = navigation_projection.get("control")
+    control = control if isinstance(control, Mapping) else {}
+    motion = navigation_projection.get("motion")
+    motion = motion if isinstance(motion, Mapping) else {}
+    authority = str(control.get("authority") or "UNKNOWN").upper()
+    observation = str(motion.get("observation") or "UNKNOWN").upper()
+    stop_confirmation = str(motion.get("stop_confirmation") or "UNKNOWN").upper()
     data_ready = not failed_modules and not data_reasons
-    non_motion_safe = command_source_idle and not motion_active
+    non_motion_safe = (
+        authority == "NONE"
+        and observation == "QUIET"
+        and stop_confirmation in {"NOT_REQUESTED", "CONFIRMED"}
+    )
     motion_ready = not failed_modules and not reasons
     return {
         "data_ready": data_ready,
         "motion_ready": motion_ready,
         "non_motion_safe": non_motion_safe,
-        "active_cmd_source": active_cmd_source,
-        "mission_state": mission_state,
         "data_blockers": data_reasons,
     }
 
 
-def _runtime_readiness_reasons(gw: Any) -> tuple[list[str], dict[str, Any]]:
-    from gateway.services.runtime_status import (
-        build_localization_status,
-        build_navigation_status,
-    )
+def _runtime_readiness_reasons(
+    gw: Any,
+) -> tuple[list[str], dict[str, Any], dict[str, Any]]:
+    from gateway.navigation.projection import project_navigation_status
+    from gateway.navigation.status import evaluate_navigation_gate
+    from gateway.services.runtime_facts import capture_runtime_facts
+    from gateway.services.runtime_status import build_localization_status
 
+    facts = capture_runtime_facts(gw)
     runtime: dict[str, Any] = {}
     reasons: list[str] = []
+    navigation_projection: dict[str, Any] = {}
+    localization_runtime: Mapping[str, Any] = {}
+    localization_frames: Mapping[str, Any] = {}
     try:
-        localization = build_localization_status(gw)
+        localization = build_localization_status(gw, facts=facts)
         localization_runtime = localization.get("runtime")
         localization_runtime = (
             localization_runtime if isinstance(localization_runtime, Mapping) else {}
@@ -363,29 +354,24 @@ def _runtime_readiness_reasons(gw: Any) -> tuple[list[str], dict[str, Any]]:
         reasons.append("localization:status_error")
 
     try:
-        navigation = build_navigation_status(gw)
-        readiness = navigation.get("readiness", {})
-        blockers = list(readiness.get("blockers") or [])
+        navigation = evaluate_navigation_gate(gw, facts=facts)
+        native_state = navigation.get("navigation_state") or {}
+        blockers = list(navigation.get("blockers") or [])
+        if navigation.get("can_accept_goal") is not True and not blockers:
+            blockers.append(str(navigation.get("reason") or "navigation_state_unknown"))
+        native_endpoint = navigation.get("native_endpoint") or {}
+        blockers = list(dict.fromkeys([*blockers, *native_endpoint.get("blockers", [])]))
         control = navigation.get("control") or {}
-        boundary = navigation.get("runtime")
-        boundary = boundary if isinstance(boundary, Mapping) else {}
+        navigation_projection = project_navigation_status(navigation)
+        boundary = localization_runtime
         boundary_blockers = list(boundary.get("blockers") or [])
         runtime["navigation"] = {
-            "state": navigation.get("state"),
+            "state": native_state.get("lifecycle_state_name"),
             "can_accept_goal": navigation.get("can_accept_goal"),
             "blockers": blockers,
-            "advisories": list(readiness.get("advisories") or []),
-            "tf_ok": readiness.get("tf_ok"),
-            "map_artifacts_ok": readiness.get("map_artifacts_ok"),
-            "real_runtime_evidence_ok": readiness.get("real_runtime_evidence_ok"),
-            "planning_frame_id": readiness.get("planning_frame_id"),
-            "odom_frame_id": readiness.get("odom_frame_id"),
-            "map_artifact_gate": _json_safe(
-                readiness.get("map_artifact_gate") or {}
-            ),
-            "observed_frame_links": _json_safe(
-                readiness.get("observed_frame_links") or {}
-            ),
+            "advisories": list(navigation.get("advisories") or []),
+            "tf_ok": localization_frames.get("ok"),
+            "native_endpoint": _json_safe(navigation.get("native_endpoint") or {}),
             "active_cmd_source": _source_name(control),
         }
         if boundary:
@@ -423,7 +409,16 @@ def _runtime_readiness_reasons(gw: Any) -> tuple[list[str], dict[str, Any]]:
                 ),
                 "blockers": boundary_blockers,
             }
-        reasons.extend(f"navigation_blocked:{blocker}" for blocker in blockers)
+        # Goal admission stays blocked in mapping/teleop, but their declared
+        # operator control does not require an autonomous navigation session.
+        operator_control = (
+            native_endpoint.get("required") is True
+            and native_endpoint.get("expected_control_mode") == "teleop"
+        )
+        reasons.extend(
+            f"navigation_blocked:{blocker}" for blocker in blockers
+            if not (operator_control and blocker == "navigation_session_inactive")
+        )
         reasons.extend(f"runtime_blocked:{blocker}" for blocker in boundary_blockers)
     except Exception as exc:
         runtime["navigation"] = {"error": str(exc)}
@@ -444,7 +439,7 @@ def _runtime_readiness_reasons(gw: Any) -> tuple[list[str], dict[str, Any]]:
     if calibration.get("errors"):
         reasons.append("calibration:error")
 
-    return list(dict.fromkeys(reasons)), runtime
+    return list(dict.fromkeys(reasons)), runtime, navigation_projection
 
 
 def _calibration_status(now: float | None = None) -> dict[str, Any]:
@@ -615,7 +610,7 @@ def build_readiness_snapshot(
                 "ready": False,
                 "data_ready": False,
                 "motion_ready": False,
-                "non_motion_safe": True,
+                "non_motion_safe": False,
                 "modules": {},
                 "module_count": 0,
                 "failed_modules": list(critical_failed_modules),
@@ -654,8 +649,9 @@ def build_readiness_snapshot(
         reasons.append("run_plan_missing")
     reasons = list(dict.fromkeys(reasons))
     runtime: dict[str, Any] = {}
+    navigation_projection: dict[str, Any] = {}
     if _requires_runtime_readiness(gw, modules):
-        runtime_reasons, runtime = _runtime_readiness_reasons(gw)
+        runtime_reasons, runtime, navigation_projection = _runtime_readiness_reasons(gw)
         reasons.extend(runtime_reasons)
     map_reasons, map_runtime = _native_maps_readiness(gw, modules)
     reasons.extend(map_reasons)
@@ -666,7 +662,7 @@ def build_readiness_snapshot(
     modes = _runtime_readiness_modes(
         failed_modules=failed_modules,
         reasons=reasons,
-        runtime=runtime,
+        navigation_projection=navigation_projection,
     )
     if startup_blocked:
         modes["data_ready"] = False

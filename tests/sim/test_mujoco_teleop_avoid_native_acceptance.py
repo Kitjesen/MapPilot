@@ -11,7 +11,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 import sim.scripts.mujoco.teleop_avoid_native_acceptance as acceptance
 from sim.scripts.mujoco.teleop_avoid_native_acceptance import (
     _binary_source_provenance,
@@ -30,12 +29,15 @@ def _platform_os(name: str) -> SimpleNamespace:
 
 def test_manifest_uses_scan_with_live_mapd_collision() -> None:
     manifest = json.loads(
-        Path("config/runtime_graph/acceptance/mujoco_teleop_avoid_native_acceptance.json").read_text(
+        Path("config/acceptance/mujoco/teleop_avoid.json").read_text(
             encoding="utf-8"
         )
     )
 
     assert manifest["navigation_runtime"]["local_planner"] == "scan"
+    assert manifest["slam_runtime"]["provider"] == "fastlio2"
+    assert manifest["sensor_runtime"]["scan_time_profile"] == "physical_rolling"
+    assert manifest["sensor_runtime"]["publish_odom_prior"] is False
     assert "path_library" not in manifest["paths"]
     assert "rt/maps/local_collision" in manifest["contracts"]["navigation_inputs"]
 
@@ -51,9 +53,26 @@ def test_local_detour_is_measured_from_command_corridor_not_path_chord() -> None
     assert _path_lateral_offset_m(diagonal_detour, -math.pi / 4.0) == pytest.approx(0.0)
 
 
-def test_attached_case_uses_split_product_processes_without_starting_runtime(
+@pytest.mark.parametrize(
+    ("final_published", "final_nonzero", "progress_m", "command_vy", "odom_yaw", "expected_blocker"),
+    [
+        (True, True, 0.4, 0.0, 0.0, None),
+        (True, False, 0.0, 0.0, 0.0, "nonzero_control_missing"),
+        (False, True, 0.4, 0.0, 0.0, "nonzero_control_missing"),
+        (True, True, 0.0, 0.0, 0.0, "odometry_forward_progress_insufficient"),
+        (True, True, 0.4, 0.18, math.pi / 2.0, None),
+        (True, True, -0.4, 0.18, math.pi / 2.0, "odometry_forward_progress_insufficient"),
+    ],
+)
+def test_attached_case_requires_published_motion_and_odometry_progress_without_starting_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    final_published: bool,
+    final_nonzero: bool,
+    progress_m: float,
+    command_vy: float,
+    odom_yaw: float,
+    expected_blocker: str | None,
 ) -> None:
     readiness = SimpleNamespace(kind="file", target="nav.status.json")
     plan = SimpleNamespace(
@@ -68,11 +87,14 @@ def test_attached_case_uses_split_product_processes_without_starting_runtime(
                 "lidar_publisher",
                 "imu_publisher",
                 "camera_publisher",
+                "slam_runtime",
                 "nav_runtime",
             )
         ),
     )
     calls: list[tuple[str, ...]] = []
+    command_vx = 0.0 if command_vy else 0.18
+    odom_command_heading = odom_yaw + math.atan2(command_vy, command_vx)
 
     def control(_binary, arguments, **_kwargs):
         calls.append(tuple(arguments))
@@ -96,6 +118,8 @@ def test_attached_case_uses_split_product_processes_without_starting_runtime(
                     "stamp_s": float(index),
                     "control_mode": "teleop_avoid",
                     "input_gate": {"ready": True},
+                    "final_cmd_vel": {"vx": 0.2 if final_nonzero else 0.0, "vy": 0.0, "wz": 0.0},
+                    "final_output": {"published": final_published},
                     "teleop": {
                         "reason": reason,
                         "obstacle_distance_m": -1.0,
@@ -109,6 +133,23 @@ def test_attached_case_uses_split_product_processes_without_starting_runtime(
                         [3.5, 0.0, 0.0],
                     ],
                     "control_authority": {"resume_required": False},
+                },
+                "slam": {
+                    "stamp_s": float(index),
+                    "has_odom": True,
+                    "odometry": {
+                        "frame_id": "odom",
+                        "child_frame_id": "body",
+                        "pose": {
+                            "x": (index - 1) * progress_m / 2.0 * math.cos(odom_command_heading),
+                            "y": (index - 1) * progress_m / 2.0 * math.sin(odom_command_heading),
+                            "z": 0.0,
+                            "qx": 0.0,
+                            "qy": 0.0,
+                            "qz": math.sin(odom_yaw / 2.0),
+                            "qw": math.cos(odom_yaw / 2.0),
+                        },
+                    },
                 },
             }
             for index, reason in enumerate(
@@ -129,7 +170,7 @@ def test_attached_case_uses_split_product_processes_without_starting_runtime(
             for index in range(acceptance.POST_STOP_REQUIRED_STATUS_SAMPLES)
         ],
     )
-    args = SimpleNamespace(domain_base=225, command_vx=0.18, duration_s=None)
+    args = SimpleNamespace(domain_base=225, command_vx=command_vx, command_vy=command_vy, duration_s=None)
 
     result = acceptance.run_attached(
         plan=plan,
@@ -139,6 +180,7 @@ def test_attached_case_uses_split_product_processes_without_starting_runtime(
             "binaries": {"navigation_control": tmp_path / "navctl.exe"},
             "manifest": {
                 "teleop_command": {"duration_s": 1.0},
+                "detour_acceptance": {"minimum_forward_progress_m": 0.3},
                 "robot_geometry": {
                     "vehicle_length_m": 1.0,
                     "vehicle_width_m": 0.6,
@@ -148,7 +190,10 @@ def test_attached_case_uses_split_product_processes_without_starting_runtime(
         args=args,
     )
 
-    assert result["ok"] is True
+    assert result["ok"] is (expected_blocker is None)
+    if expected_blocker is not None:
+        assert expected_blocker in result["blockers"]
+    assert result["metrics"]["odometry_forward_progress_m"] == pytest.approx(progress_m)
     assert result["sensor_processes"] == [
         "lidar_publisher",
         "imu_publisher",
@@ -224,19 +269,6 @@ def test_binary_provenance_includes_slam_build_contract(tmp_path: Path) -> None:
 
     normalized_specs = [Path(spec).as_posix() for spec in provenance["slam"]["source_specs"]]
     assert any(spec.endswith("src/localization/slam/cpp/CMakeLists.txt") for spec in normalized_specs)
-    small_gicp_root = (
-        acceptance.ROOT
-        / "third_party"
-        / "research_localization"
-        / "small_gicp"
-        / "include"
-        / "small_gicp"
-    )
-    if small_gicp_root.is_dir():
-        assert any(
-            spec.endswith("third_party/research_localization/small_gicp/include/small_gicp")
-            for spec in normalized_specs
-        )
 
 
 def test_binary_provenance_tracks_vendored_small_gicp_changes(
@@ -253,9 +285,10 @@ def test_binary_provenance_tracks_vendored_small_gicp_changes(
         fake_root / "src/maps/include/lingtu/maps/semantic_map_persistence.hpp",
         fake_root / "src/native/snapshot_file.hpp",
         fake_root / "src/message/idl/messages.idl",
-        fake_root / "src/message/cpp/CMakeLists.txt",
-        fake_root / "src/message/cpp/topics.hpp",
-        fake_root / "src/message/cpp/qos.hpp",
+        fake_root / "src/message/topics/core.yaml",
+        fake_root / "cmake/LingTuDDS.cmake",
+        fake_root / "src/message/generated/topics.hpp",
+        fake_root / "src/transport/dds/qos.hpp",
     )
     for source in source_files:
         source.parent.mkdir(parents=True, exist_ok=True)
@@ -304,8 +337,8 @@ def test_binary_provenance_covers_transitive_native_build_contracts(
             "src/native/snapshot_file.hpp",
         ),
         "navigation_control": (
-            "src/message/cpp/exploration_command.hpp",
-            "src/message/cpp/operator_motion.hpp",
+            "src/message/protocol/exploration.hpp",
+            "src/message/protocol/operator_motion.hpp",
         ),
         "sensor_publisher": (
             "src/drivers/real/lidar/sdk2_stream/CMakeLists.txt",
@@ -429,13 +462,14 @@ def test_binary_provenance_tracks_c_abi_header_changes(
     endpoint_dir = nav_cpp / "endpoint"
     common_files = (
         fake_root / "src" / "message" / "idl" / "messages.idl",
-        fake_root / "src" / "message" / "cpp" / "CMakeLists.txt",
-        fake_root / "src" / "message" / "cpp" / "topics.hpp",
-        fake_root / "src" / "message" / "cpp" / "qos.hpp",
-        fake_root / "src" / "message" / "cpp" / "exploration_command.hpp",
-        fake_root / "src" / "message" / "cpp" / "inspection_command.hpp",
-        fake_root / "src" / "message" / "cpp" / "navigation_command.hpp",
-        fake_root / "src" / "message" / "cpp" / "operator_motion.hpp",
+        fake_root / "src" / "message" / "topics" / "core.yaml",
+        fake_root / "cmake" / "LingTuDDS.cmake",
+        fake_root / "src" / "message" / "generated" / "topics.hpp",
+        fake_root / "src" / "transport" / "dds" / "qos.hpp",
+        fake_root / "src" / "message" / "protocol" / "exploration.hpp",
+        fake_root / "src" / "message" / "protocol" / "inspection.hpp",
+        fake_root / "src" / "message" / "protocol" / "navigation.hpp",
+        fake_root / "src" / "message" / "protocol" / "operator_motion.hpp",
     )
     sources = (
         endpoint_dir / "tools" / "navctl.cpp",
@@ -474,9 +508,10 @@ def test_binary_provenance_tracks_sensor_publisher_idl_changes(
     publisher_cmake = publisher_source.with_name("CMakeLists.txt")
     common_files = (
         fake_root / "src" / "message" / "idl" / "messages.idl",
-        fake_root / "src" / "message" / "cpp" / "CMakeLists.txt",
-        fake_root / "src" / "message" / "cpp" / "topics.hpp",
-        fake_root / "src" / "message" / "cpp" / "qos.hpp",
+        fake_root / "src" / "message" / "topics" / "core.yaml",
+        fake_root / "cmake" / "LingTuDDS.cmake",
+        fake_root / "src" / "message" / "generated" / "topics.hpp",
+        fake_root / "src" / "transport" / "dds" / "qos.hpp",
         fake_root / "src" / "drivers" / "real" / "lidar" / "native" / "dds_module.cpp",
     )
     for source in (publisher_source, publisher_cmake, *common_files):
@@ -531,7 +566,7 @@ def _mapd_status(**overrides: object) -> dict:
 
 def test_manifest_keeps_mapd_scene_separate_from_navigation_safety_authority() -> None:
     manifest = json.loads(
-        Path("config/runtime_graph/acceptance/mujoco_native_navigation_acceptance.json").read_text(encoding="utf-8")
+        Path("config/acceptance/mujoco/navigation.json").read_text(encoding="utf-8")
     )
     contracts = manifest["contracts"]
 
@@ -718,12 +753,15 @@ def test_native_teleop_wsl_command_keeps_env_wrapper_for_linux_child(monkeypatch
     assert env == {}
 
 
-def test_prepare_runtime_keeps_mapd_but_omits_slam_for_truth_fixture(
+@pytest.mark.parametrize("state_provider", ["mujoco_navigation_fixture", "fastlio2"])
+def test_prepare_runtime_state_override_aligns_sensor_inputs_and_localization_scope(
     tmp_path: Path,
     monkeypatch,
+    state_provider: str,
 ) -> None:
     from sim.scripts.mujoco import native_navigation_acceptance as native
 
+    declared_scope = json.loads(acceptance.DEFAULT_MANIFEST.read_text(encoding="utf-8"))["acceptance_scope"]
     world = tmp_path / "scene.xml"
     world.write_text("<mujoco><worldbody/></mujoco>", encoding="utf-8")
     manifest_path = tmp_path / "manifest.json"
@@ -737,8 +775,16 @@ def test_prepare_runtime_keeps_mapd_but_omits_slam_for_truth_fixture(
             "slam_mode": "mapping",
             "requires_map": False,
         },
-        "slam_runtime": {"provider": "mujoco_navigation_fixture", "mode": "mapping"},
+        "slam_runtime": {
+            "provider": "fastlio2" if state_provider == "mujoco_navigation_fixture" else "mujoco_navigation_fixture",
+            "mode": "mapping",
+        },
+        "sensor_runtime": {
+            "scan_time_profile": "physical_rolling" if state_provider == "mujoco_navigation_fixture" else "instantaneous",
+            "publish_odom_prior": state_provider != "mujoco_navigation_fixture",
+        },
         "asset_builder": {"kind": "scene_only"},
+        "acceptance_scope": declared_scope,
         "binaries": {},
     }
     binaries = {
@@ -757,6 +803,8 @@ def test_prepare_runtime_keeps_mapd_but_omits_slam_for_truth_fixture(
         "sensor_runner": tmp_path / "sensor.py",
         "policy": tmp_path / "policy.onnx",
     }
+    if state_provider == "fastlio2":
+        binaries["slam"] = tmp_path / "slamd"
     monkeypatch.setattr(native, "_load_manifest", lambda _path: dict(manifest))
     monkeypatch.setattr(
         native,
@@ -779,7 +827,7 @@ def test_prepare_runtime_keeps_mapd_but_omits_slam_for_truth_fixture(
             "--manifest",
             str(manifest_path),
             "--state-provider",
-            "mujoco_navigation_fixture",
+            state_provider,
             "--artifact-dir",
             str(tmp_path / "artifacts"),
             "--preflight-only",
@@ -792,6 +840,22 @@ def test_prepare_runtime_keeps_mapd_but_omits_slam_for_truth_fixture(
         for blocker in ("native_binary_missing:mapd", "native_binary_missing:slam")
     )
     assert prepared["details"]["binaries"] == {key: str(path) for key, path in binaries.items()}
+    assert prepared["details"]["state_provider"] == state_provider
+    fixture = state_provider == "mujoco_navigation_fixture"
+    assert prepared["details"]["localization_authority"] == ("mujoco_truth" if fixture else "slam_estimator")
+    sensor_runtime = prepared["manifest"]["sensor_runtime"]
+    assert sensor_runtime["scan_time_profile"] == ("instantaneous" if fixture else "physical_rolling")
+    assert sensor_runtime["publish_odom_prior"] is fixture
+    assert ("Fast-LIO state estimation" in prepared["details"]["acceptance_scope"].get("excluded_claims", [])) is fixture
+    effective_scope = prepared["details"]["acceptance_scope"]
+    if fixture:
+        assert effective_scope["coverage"] == "component"
+        assert effective_scope["claims"] == [
+            "native local-navigation acceptance with MuJoCo truth localization and synthetic ground coverage"
+        ]
+        assert prepared["manifest"]["acceptance_scope"] == effective_scope
+    else:
+        assert effective_scope == declared_scope
 
 
 def test_preflight_rejects_mixed_native_boot_clock_platforms(
@@ -910,8 +974,6 @@ def test_scan_teleop_preflight_does_not_require_cmu_path_library(
 ) -> None:
     from sim.scripts.mujoco import native_navigation_acceptance as native
 
-    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
-
     world = tmp_path / "scene.xml"
     world.write_text("<mujoco><worldbody/></mujoco>", encoding="utf-8")
     manifest_path = tmp_path / "manifest.json"
@@ -986,8 +1048,6 @@ def test_product_preflight_requires_native_mapd_binary(
     monkeypatch,
 ) -> None:
     from sim.scripts.mujoco import native_navigation_acceptance as native
-
-    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
 
     world = tmp_path / "scene.xml"
     world.write_text("<mujoco><worldbody/></mujoco>", encoding="utf-8")

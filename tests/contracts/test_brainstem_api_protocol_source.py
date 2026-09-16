@@ -1,6 +1,6 @@
 """Contracts for the Brainstem Client SDK seam used by the native driver."""
 
-# ruff: noqa: D103, S101 - pytest contracts use assertions by design.
+
 
 from __future__ import annotations
 

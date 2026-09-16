@@ -10,18 +10,22 @@ from copy import deepcopy
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping, cast
+from typing import Any, Mapping
 
-from runtime.contracts.product_runtime import resolve_product_runtime_contracts
-from runtime.graph import (
+from lingtu.assembly.graph import (
     ProcessArtifact,
     ProcessCommand,
     ProcessReadiness,
     ProcessShutdown,
     ProcessSpec,
 )
+from lingtu.assembly.native_nav import (
+    NATIVE_NAV_ENVIRONMENT,
+    NATIVE_NAV_TEXT_FIELDS,
+    render_native_nav_environment,
+)
 
-RUN_PLAN_SCHEMA = "lingtu.run_plan.v8"
+RUN_PLAN_SCHEMA = "lingtu.run_plan.v10"
 CURRENT_RUN_SCHEMA = "lingtu.current.v1"
 SIMULATION_SCHEMA = "lingtu.run_plan.simulation.v1"
 
@@ -32,7 +36,8 @@ _LAUNCH_FIELDS = frozenset(
         "controller",
         "process_catalog",
         "stop_before_start",
-        "native_process_environment",
+        "process_environment",
+        "native_nav",
         "session",
         "parameters",
         "simulation",
@@ -40,7 +45,7 @@ _LAUNCH_FIELDS = frozenset(
 )
 _PROCESS_CATALOG_FIELDS = frozenset({"selected", "available", "support_processes"})
 _HOST_FIELDS = frozenset({"config", "expected_modules", "route_contract"})
-_CHECK_FIELDS = frozenset({"contracts", "critical_modules"})
+_CHECK_FIELDS = frozenset({"topics", "capabilities", "critical_modules"})
 _PROCESS_FIELDS = frozenset({"name", "manager", "target", "order", "timeout_s", "lifecycle"})
 _SIMULATION_FIELDS = frozenset({"schema", "session_source", "session", "physics_plan"})
 _SIMULATION_BUNDLE_SCHEMAS = {
@@ -51,19 +56,6 @@ _SIMULATION_BUNDLE_SCHEMAS = {
 }
 _SIMULATION_BUNDLE_FIELDS = frozenset({*_SIMULATION_BUNDLE_SCHEMAS, "scenario_plan"})
 _ENVIRONMENT_KEY = re.compile(r"[A-Z][A-Z0-9_]*\Z")
-_NATIVE_NAV_ENVIRONMENT_KEYS = {
-    "control_mode": "LINGTU_NAV_CONTROL_MODE",
-    "global_planner": "NAV_GLOBAL_PLANNER",
-    "local_planner": "LINGTU_NAV_LOCAL_PLANNER_BACKEND",
-    "publish_cmd_vel": "LINGTU_NAV_PUBLISH_CMD_VEL",
-    "check_obstacle": "LINGTU_NAV_CHECK_OBSTACLE",
-    "use_traversability_cost": "LINGTU_NAV_USE_TRAVERSABILITY_COST",
-    "allow_teleop_takeover": "LINGTU_NAV_ALLOW_TELEOP_TAKEOVER",
-    "teleop_local_planner": "LINGTU_TELEOP_LOCAL_PLANNER",
-}
-_NATIVE_NAV_TEXT_FIELDS = frozenset({"control_mode", "global_planner", "local_planner"})
-
-
 @dataclass(frozen=True)
 class RunPlan:
     """Concrete processes and Host configuration for one Product and env."""
@@ -78,10 +70,12 @@ class RunPlan:
     processes: tuple[ProcessSpec, ...]
     available_processes: tuple[ProcessSpec, ...]
     stop_before_start: tuple[str, ...]
-    contracts: tuple[str, ...]
+    required_topics: tuple[str, ...]
+    required_capabilities: tuple[str, ...]
     critical_modules: tuple[str, ...]
     route_contract: str | None
-    _native_process_environment: dict[str, str] = dataclass_field(repr=False)
+    _process_environment: dict[str, str] = dataclass_field(repr=False)
+    _native_nav: dict[str, Any] = dataclass_field(repr=False)
     _host_config: dict[str, Any] = dataclass_field(repr=False)
     _lifecycle: dict[str, Any] = dataclass_field(repr=False)
     _parameters: dict[str, int | float] = dataclass_field(repr=False)
@@ -101,12 +95,13 @@ class RunPlan:
         processes: tuple[ProcessSpec, ...],
         available_processes: tuple[ProcessSpec, ...],
         stop_before_start: tuple[str, ...],
-        contracts: tuple[str, ...],
+        required_topics: tuple[str, ...],
+        required_capabilities: tuple[str, ...],
         critical_modules: tuple[str, ...],
         route_contract: str | None,
         host_config: Mapping[str, Any],
         lifecycle: Mapping[str, Any],
-        native_process_environment: Mapping[str, str] | None = None,
+        process_environment: Mapping[str, str] | None = None,
         native_nav: Mapping[str, Any] | None = None,
         parameters: Mapping[str, Any] | None = None,
         simulation: Mapping[str, Any] | None = None,
@@ -122,22 +117,28 @@ class RunPlan:
         available = _normalize_processes(available_processes, field="process_catalog.available")
         support = tuple(sorted(_strings(support_processes, field="process_catalog.support_processes")))
         _validate_process_catalog(selected, available, support)
-        resolved_contracts = resolve_product_runtime_contracts(contracts, owner="RunPlan checks")
+        normalized_topics = _strings(required_topics, field="checks.topics")
+        normalized_capabilities = _strings(
+            required_capabilities,
+            field="checks.capabilities",
+        )
         normalized_host_config = _json_object(host_config, field="host.config")
         normalized_lifecycle = _json_object(lifecycle, field="launch.session")
         _validate_product_variant_identity(
             normalized_variant,
-            host_config=normalized_host_config,
             lifecycle=normalized_lifecycle,
         )
         normalized_parameters = _resolved_parameters(parameters)
-        normalized_native_environment = _normalize_native_environment(
-            native_process_environment,
-            native_nav=native_nav,
+        normalized_native_nav = _normalized_native_nav(native_nav)
+        normalized_process_environment = _native_environment(process_environment or {})
+        duplicate_native_keys = sorted(
+            set(normalized_process_environment) & set(NATIVE_NAV_ENVIRONMENT.values())
         )
-        normalized_native_environment.update(
-            _parameter_environment(normalized_parameters)
-        )
+        if duplicate_native_keys:
+            raise ValueError(
+                "RunPlan process_environment duplicates native_nav: "
+                + ", ".join(duplicate_native_keys)
+            )
         return cls(
             schema_version=RUN_PLAN_SCHEMA,
             product=normalized_product,
@@ -150,10 +151,12 @@ class RunPlan:
             available_processes=available,
             support_processes=support,
             stop_before_start=_strings(stop_before_start, field="stop_before_start"),
-            contracts=resolved_contracts.contract_ids,
+            required_topics=normalized_topics,
+            required_capabilities=normalized_capabilities,
             critical_modules=_strings(critical_modules, field="critical_modules"),
             route_contract=_optional_text(route_contract),
-            _native_process_environment=normalized_native_environment,
+            _process_environment=normalized_process_environment,
+            _native_nav=normalized_native_nav,
             _host_config=normalized_host_config,
             _lifecycle=normalized_lifecycle,
             _parameters=normalized_parameters,
@@ -195,9 +198,14 @@ class RunPlan:
                 field="launch.process_catalog.support_processes",
             ),
             stop_before_start=_strings(launch.get("stop_before_start"), field="launch.stop_before_start"),
-            contracts=_strings(checks.get("contracts"), field="checks.contracts"),
+            required_topics=_strings(checks.get("topics"), field="checks.topics"),
+            required_capabilities=_strings(
+                checks.get("capabilities"),
+                field="checks.capabilities",
+            ),
             critical_modules=_strings(checks.get("critical_modules"), field="checks.critical_modules"),
-            native_process_environment=_native_environment(launch.get("native_process_environment")),
+            process_environment=_native_environment(launch.get("process_environment")),
+            native_nav=_object(launch.get("native_nav"), field="launch.native_nav"),
             route_contract=_optional_text(host.get("route_contract")),
             host_config=_object(host.get("config"), field="host.config"),
             lifecycle=_object(launch.get("session"), field="launch.session"),
@@ -223,24 +231,23 @@ class RunPlan:
         return self.process_control
 
     @property
-    def required_topics(self) -> tuple[str, ...]:
-        """Return topics required by the Product contracts."""
-        return cast(tuple[str, ...], resolve_product_runtime_contracts(self.contracts).topics)
-
-    @property
-    def required_capabilities(self) -> tuple[str, ...]:
-        """Return capabilities required by the Product contracts."""
-        return cast(tuple[str, ...], resolve_product_runtime_contracts(self.contracts).capabilities)
-
-    @property
     def native_process_environment(self) -> dict[str, str]:
-        """Return a copy of the native process environment."""
-        return dict(self._native_process_environment)
+        """Render the environment consumed by native process launchers."""
+        environment = dict(self._process_environment)
+        environment.update(render_native_nav_environment(self._native_nav))
+        environment.update(_parameter_environment(self._parameters))
+        return dict(sorted(environment.items()))
+
+    @property
+    def process_environment(self) -> dict[str, str]:
+        """Return the non-derived native process environment."""
+
+        return dict(self._process_environment)
 
     @property
     def native_nav(self) -> dict[str, Any]:
-        """Return native navigation settings derived from the environment."""
-        return _native_nav_from_environment(self._native_process_environment)
+        """Return the structured native navigation settings."""
+        return dict(self._native_nav)
 
     @property
     def host_config(self) -> dict[str, Any]:
@@ -302,7 +309,8 @@ class RunPlan:
                     "support_processes": list(self.support_processes),
                 },
                 "stop_before_start": list(self.stop_before_start),
-                "native_process_environment": self.native_process_environment,
+                "process_environment": self.process_environment,
+                "native_nav": self.native_nav,
                 "session": self.lifecycle,
                 "parameters": self.parameters,
                 "simulation": self.simulation,
@@ -313,15 +321,16 @@ class RunPlan:
                 "route_contract": self.route_contract,
             },
             "checks": {
-                "contracts": list(self.contracts),
+                "topics": list(self.required_topics),
+                "capabilities": list(self.required_capabilities),
                 "critical_modules": list(self.critical_modules),
             },
         }
 
-    def with_native_process_environment(self, native_process_environment: Mapping[str, str]) -> RunPlan:
-        """Return a copy with a different native process environment."""
+    def with_process_environment(self, process_environment: Mapping[str, str]) -> RunPlan:
+        """Return a copy with different non-derived process settings."""
         payload = self.as_dict()
-        payload["launch"]["native_process_environment"] = dict(native_process_environment)
+        payload["launch"]["process_environment"] = dict(process_environment)
         return RunPlan.from_dict(payload)
 
     def summary(self) -> dict[str, Any]:
@@ -335,7 +344,8 @@ class RunPlan:
             "controller": self.process_control,
             "processes": [process.name for process in self.processes],
             "host_modules": list(self.modules),
-            "contracts": list(self.contracts),
+            "required_topics": list(self.required_topics),
+            "required_capabilities": list(self.required_capabilities),
             "route_contract": self.route_contract,
             "slam_mode": self._lifecycle.get("slam_mode"),
             "native_control_mode": self._lifecycle.get("native_control_mode"),
@@ -431,16 +441,9 @@ def _json_value(value: Any, *, field: str) -> Any:
 def _validate_product_variant_identity(
     product_variant: str | None,
     *,
-    host_config: Mapping[str, Any],
     lifecycle: Mapping[str, Any],
 ) -> None:
-    host_has_variant = "_product_variant" in host_config
-    host_variant = _optional_text(host_config.get("_product_variant"))
     lifecycle_variant = _optional_text(lifecycle.get("product_variant"))
-    if product_variant is None and host_has_variant:
-        raise ValueError("RunPlan Host config declares a variant for a non-variant Product")
-    if product_variant is not None and (not host_has_variant or host_variant != product_variant):
-        raise ValueError("RunPlan Host config variant does not match identity.product_variant")
     if lifecycle_variant != product_variant:
         raise ValueError("RunPlan lifecycle variant does not match identity.product_variant")
 
@@ -637,25 +640,9 @@ def _process_shutdown(value: Any, *, field: str) -> ProcessShutdown:
     return ProcessShutdown(kind=kind, target=shutdown.get("target"), schema=shutdown.get("schema"))
 
 
-def _normalize_native_environment(
-    value: Mapping[str, str] | None,
-    *,
-    native_nav: Mapping[str, Any] | None,
-) -> dict[str, str]:
-    if value is None:
-        if native_nav is None:
-            raise ValueError("RunPlan launch.native_process_environment is required")
-        environment = _native_environment_from_nav(native_nav)
-    else:
-        environment = _native_environment(value)
-    if native_nav is not None and _native_nav_from_environment(environment) != _normalized_native_nav(native_nav):
-        raise ValueError("RunPlan native_nav disagrees with native_process_environment")
-    return environment
-
-
 def _native_environment(value: Any) -> dict[str, str]:
     if not isinstance(value, Mapping):
-        raise ValueError("RunPlan launch.native_process_environment must be an object")
+        raise ValueError("RunPlan launch.process_environment must be an object")
     environment: dict[str, str] = {}
     for key, item in value.items():
         if not isinstance(key, str) or _ENVIRONMENT_KEY.fullmatch(key) is None:
@@ -663,54 +650,24 @@ def _native_environment(value: Any) -> dict[str, str]:
         if not isinstance(item, str) or any(character in item for character in ("\x00", "\n", "\r")):
             raise ValueError(f"RunPlan environment value must be a single-line string: {key}")
         environment[key] = item
-    _native_nav_from_environment(environment)
     return dict(sorted(environment.items()))
 
 
-def _normalized_native_nav(value: Mapping[str, Any]) -> dict[str, Any]:
+def _normalized_native_nav(value: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("RunPlan launch.native_nav must be an object")
     native_nav = {**value, "local_planner": value.get("local_planner", "cmu")}
-    _require_fields(native_nav, frozenset(_NATIVE_NAV_ENVIRONMENT_KEYS), context="RunPlan native_nav")
-    normalized = {
+    _require_fields(native_nav, frozenset(NATIVE_NAV_ENVIRONMENT), context="RunPlan native_nav")
+    normalized: dict[str, Any] = {
         field: _required_value_text(native_nav[field], field=f"native_nav.{field}")
-        for field in _NATIVE_NAV_TEXT_FIELDS
+        for field in NATIVE_NAV_TEXT_FIELDS
     }
-    for field in set(_NATIVE_NAV_ENVIRONMENT_KEYS) - _NATIVE_NAV_TEXT_FIELDS:
+    for field in set(NATIVE_NAV_ENVIRONMENT) - NATIVE_NAV_TEXT_FIELDS:
         item = native_nav[field]
         if not isinstance(item, bool):
             raise ValueError(f"RunPlan native_nav.{field} must be a boolean")
         normalized[field] = item
     return normalized
-
-
-def _native_environment_from_nav(value: Mapping[str, Any]) -> dict[str, str]:
-    native_nav = _normalized_native_nav(value)
-    environment = {
-        key: str(native_nav[field]) if field in _NATIVE_NAV_TEXT_FIELDS else ("1" if native_nav[field] else "0")
-        for field, key in _NATIVE_NAV_ENVIRONMENT_KEYS.items()
-    }
-    return dict(sorted(environment.items()))
-
-
-def _native_nav_from_environment(value: Mapping[str, str]) -> dict[str, Any]:
-    local_planner_key = _NATIVE_NAV_ENVIRONMENT_KEYS["local_planner"]
-    missing = sorted(set(_NATIVE_NAV_ENVIRONMENT_KEYS.values()) - {local_planner_key} - set(value))
-    if missing:
-        raise ValueError("RunPlan native process environment is missing: " + ", ".join(missing))
-    native_nav: dict[str, Any] = {}
-    for field, key in _NATIVE_NAV_ENVIRONMENT_KEYS.items():
-        if field == "local_planner":
-            native_nav[field] = value.get(key, "cmu")
-        elif field in _NATIVE_NAV_TEXT_FIELDS:
-            native_nav[field] = value[key]
-        else:
-            native_nav[field] = _environment_bool(value[key])
-    return native_nav
-
-
-def _environment_bool(value: str) -> bool:
-    if value in {"0", "1"}:
-        return value == "1"
-    raise ValueError(f"RunPlan native boolean environment value must be 0 or 1: {value!r}")
 
 
 def _resolved_parameters(value: Mapping[str, Any] | None) -> dict[str, int | float]:

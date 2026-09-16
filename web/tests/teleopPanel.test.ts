@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { runInNewContext } from 'node:vm'
+import ts from 'typescript'
 
 import {
   TeleopWsClient,
@@ -43,6 +45,99 @@ const panelSource = readFileSync(
   new URL('../src/components/TeleopPanel.tsx', import.meta.url),
   'utf8',
 )
+
+class FocusElement {
+  tagName: string
+  parentElement: FocusElement | null
+  attributes: Record<string, string>
+  isContentEditable: boolean
+
+  constructor(tag: string, parent: FocusElement | null = null, attributes: Record<string, string> = {}) {
+    this.tagName = tag.toUpperCase()
+    this.parentElement = parent
+    this.attributes = attributes
+    this.isContentEditable = attributes.contenteditable === 'true' || parent?.isContentEditable === true
+  }
+
+  contains(other: FocusElement): boolean {
+    for (let node: FocusElement | null = other; node; node = node.parentElement) {
+      if (node === this) return true
+    }
+    return false
+  }
+
+  closest(selectors: string): FocusElement | null {
+    const matches = selectors.split(',').some(selector => {
+      const match = selector.trim().match(/^([a-z]+)?(?:\[([a-z-]+)(?:="([^"]*)")?\])?$/)
+      assert.ok(match, `Supported selector: ${selector}`)
+      return (!match[1] || this.tagName.toLowerCase() === match[1])
+        && (!match[2] || (match[3] === undefined
+          ? match[2] in this.attributes : this.attributes[match[2]] === match[3]))
+    })
+    return matches ? this : this.parentElement?.closest(selectors) ?? null
+  }
+}
+
+// Compile the actual component callbacks; no copy of their keyboard logic is tested.
+const keyboardNames = new Set([
+  'blocksTeleopKeyboard', 'clearInputIntent', 'sendHold', 'setManualEscape',
+  'quiesceInput', 'quiesceForInteraction', 'onKeyDown', 'onKeyUp',
+])
+const keyboardAst = ts.createSourceFile('TeleopPanel.tsx', panelSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+const keyboardDeclarations: string[] = []
+function collectKeyboardCallbacks(node: ts.Node) {
+  if (ts.isFunctionDeclaration(node) && node.name && keyboardNames.has(node.name.text)) {
+    keyboardDeclarations.push(node.getText(keyboardAst))
+  } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && keyboardNames.has(node.name.text)) {
+    const initializer = node.initializer
+    assert.ok(initializer)
+    const callback = ts.isCallExpression(initializer) ? initializer.arguments[0] : initializer
+    keyboardDeclarations.push(`const ${node.name.text} = ${callback.getText(keyboardAst)};`)
+  }
+  ts.forEachChild(node, collectKeyboardCallbacks)
+}
+collectKeyboardCallbacks(keyboardAst)
+assert.equal(keyboardDeclarations.length, keyboardNames.size)
+const keyboardCode = ts.transpileModule(
+  keyboardDeclarations.join('\n') + '\n({ blocksTeleopKeyboard, quiesceForInteraction, onKeyDown, onKeyUp });',
+  { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } },
+).outputText
+
+function keyEvent(key: string, target: FocusElement, repeat = false) {
+  return {
+    key, target, repeat, code: key === ' ' ? 'Space' : key,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true },
+  }
+}
+
+function keyboardHarness() {
+  const body = new FocusElement('body')
+  const panel = new FocusElement('div', body)
+  const state = { precision: false, manual: false, holds: 0, connects: 0 }
+  const keysRef = { current: new Set<string>() }
+  const blockedKeysRef = { current: new Set<string>() }
+  const context = {
+    Element: FocusElement, HTMLElement: FocusElement,
+    panelRef: { current: panel }, keysRef, blockedKeysRef,
+    directionsRef: { current: new Set<string>() },
+    inputActiveRef: { current: false }, manualModeRef: { current: false },
+    clientRef: { current: { hold: () => { state.holds += 1 } } },
+    product: 'teleop_avoid', enabled: true, connectionReady: true, resumeRequired: false,
+    connectClient: () => { state.connects += 1 },
+    onExit: () => {},
+    setPrecisionMode: (value: boolean) => { state.precision = value },
+    setManualMode: (value: boolean) => { state.manual = value },
+    setActiveDirections: () => {},
+  }
+  const handlers = runInNewContext(keyboardCode, context) as {
+    blocksTeleopKeyboard: (target: FocusElement | null, panel: FocusElement) => boolean
+    quiesceForInteraction: (event: { target: FocusElement }) => void
+    onKeyDown: (event: ReturnType<typeof keyEvent>) => void
+    onKeyUp: (event: ReturnType<typeof keyEvent>) => void
+  }
+  return { ...handlers, ...context, body, panel, state }
+}
 const legacyMapViewerSource = readFileSync(
   new URL('../../src/gateway/templates/map_viewer.html', import.meta.url),
   'utf8',
@@ -168,7 +263,7 @@ test('teleop panel is gated by bootstrap teleop_ws and teleop products', () => {
   assert.match(panelSource, /api\.fetchAppBootstrap\(\)/)
   assert.match(panelSource, /BOOTSTRAP_RETRY_MS/)
   assert.match(panelSource, /teleopPathFromBootstrap/)
-  assert.match(panelSource, /new Set<ProductName>\(\['teleop', 'teleop_avoid'\]\)/)
+  assert.match(panelSource, /new Set<ProductName>\(\['teleop', 'teleop_avoid', 'map'\]\)/)
   assert.match(panelSource, /bootstrap 未声明 teleop_ws/)
   assert.match(panelSource, /teleopLimitsFromBootstrap/)
   assert.match(panelSource, /linear_mps/)
@@ -176,41 +271,133 @@ test('teleop panel is gated by bootstrap teleop_ws and teleop products', () => {
   assert.match(sceneViewSource, /<TeleopPanel[\s\S]*sseState=\{sseState\}/)
 })
 
-test('teleop panel uses direct hold-to-move keys and explicitly displays gateway/native ack semantics', () => {
-  assert.match(panelSource, /直接按住 W\/S 前后/)
+test('mapping admits the actual teleop panel while navigation stays excluded', () => {
+  const declarations = keyboardAst.statements.filter(node =>
+    (ts.isFunctionDeclaration(node) && node.name?.text === 'currentProduct')
+    || (ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration =>
+      ts.isIdentifier(declaration.name) && declaration.name.text === 'TELEOP_PRODUCTS')),
+  )
+  assert.equal(declarations.length, 2)
+  const code = ts.transpileModule(
+    declarations.map(node => node.getText(keyboardAst)).join('\n') + '\ncurrentProduct;',
+    { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } },
+  ).outputText
+  const resolve = runInNewContext(code) as (state: { session?: { product: string } }) => string | null
+  for (const product of ['map', 'teleop', 'teleop_avoid']) {
+    assert.equal(resolve({ session: { product } }), product)
+  }
+  assert.equal(resolve({ session: { product: 'nav' } }), null)
+  assert.equal(resolve({}), null)
+  assert.match(sceneViewSource, /currentProduct === 'map'\) && \([\s\S]*?setTeleopMode/)
+  assert.match(panelSource, /建图直接遥控/)
+})
+
+test('keyboard mode uses hold-to-move and keeps native control rejection handling', () => {
+  assert.match(panelSource, /W\/S 前后/)
   assert.match(panelSource, /Shift 为 40% 精细模式/)
-  assert.match(panelSource, /Space 立即保持/)
+  assert.match(panelSource, /Space 停止/)
   assert.match(panelSource, /const SEND_INTERVAL_MS = 20/)
   assert.match(panelSource, /const PRECISION_SCALE = 0\.4/)
   assert.match(panelSource, /sendHold/)
-  assert.match(panelSource, /onClick=\{quiesceInput\}[\s\S]*保持/)
   assert.match(panelSource, /visibilitychange/)
   assert.match(panelSource, /manualMode: manualModeRef\.current/)
   assert.match(panelSource, /按住 M/)
-  assert.match(panelSource, /按住脱困/)
-  assert.match(panelSource, /final_cmd_vel_confirmed/)
-  assert.match(panelSource, /motor_confirmed/)
   assert.match(panelSource, /clearInputIntent\(\)[\s\S]*client\.hold\('rejected_input'\)/)
   assert.match(panelSource, /resume_required/)
   assert.match(panelSource, /api\.resumeNavigation\(\)/)
   assert.match(panelSource, /恢复控制/)
-  assert.match(panelSource, /断开/)
   assert.doesNotMatch(panelSource, /LEASE_RENEW_INTERVAL_MS|heartbeat/)
   assert.doesNotMatch(panelSource, /keyboardDeadman/)
 })
 
-test('teleop panel clears latched input on focus loss and ignores editable targets', () => {
-  assert.match(panelSource, /function isEditableTarget/)
+test('teleop panel clears latched input on focus loss and yields focus to other controls', () => {
+  assert.match(panelSource, /function blocksTeleopKeyboard/)
   assert.match(panelSource, /keysRef\.current\.clear\(\)/)
   assert.match(panelSource, /blockedKeysRef\.current\.add\(key\)/)
   assert.match(panelSource, /blockedKeysRef\.current\.has\(key\)/)
   assert.match(panelSource, /blockedKeysRef\.current\.delete\(key\)/)
-  assert.match(panelSource, /directionsRef\.current\.clear\(\)/)
   assert.match(panelSource, /setPrecisionMode\(false\)/)
-  assert.match(panelSource, /if \(isEditableTarget\(event\.target\)\) return/)
+  assert.match(panelSource, /document\.addEventListener\('focusin', quiesceForInteraction\)/)
+  assert.match(panelSource, /document\.addEventListener\('pointerdown', quiesceForInteraction, true\)/)
+  assert.match(panelSource, /document\.removeEventListener\('focusin', quiesceForInteraction\)/)
+  assert.match(panelSource, /document\.removeEventListener\('pointerdown', quiesceForInteraction, true\)/)
   assert.match(panelSource, /event\.code === 'Space'/)
-  assert.match(panelSource, /keysRef\.current\.size === 0 && directionsRef\.current\.size === 0/)
-  assert.match(panelSource, /onPointerCancel=/)
+  assert.match(panelSource, /keysRef\.current\.size === 0/)
+})
+
+test('menu, dialog and ordinary controls retain Space and letters; teleop buttons retain motion keys', () => {
+  const h = keyboardHarness()
+  const menu = new FocusElement('div', h.body, { role: 'menu' })
+  const dialog = new FocusElement('aside', h.body, { role: 'dialog' })
+  const details = new FocusElement('details', h.body, { open: '' })
+  const edit = new FocusElement('div', h.panel, { contenteditable: 'true' })
+  const blockedTargets = [
+    new FocusElement('button', h.body), new FocusElement('summary', h.body),
+    new FocusElement('a', h.body, { href: '#' }), new FocusElement('input', h.panel),
+    new FocusElement('span', edit), new FocusElement('span', menu),
+    new FocusElement('div', dialog), new FocusElement('span', details),
+  ]
+  for (const target of blockedTargets) {
+    assert.equal(h.blocksTeleopKeyboard(target, h.panel), true)
+    for (const key of [' ', 'w', 'm', 'Shift']) {
+      const event = keyEvent(key, target)
+      h.onKeyDown(event)
+      h.onKeyUp(event)
+      assert.equal(event.defaultPrevented, false, `${target.tagName} retains ${key}`)
+      assert.equal(h.keysRef.current.size, 0)
+      assert.equal(h.state.manual, false)
+    }
+  }
+  assert.equal(h.state.connects, 0)
+  assert.equal(h.state.holds, 0)
+  assert.equal(h.blocksTeleopKeyboard(new FocusElement('canvas', h.body), h.panel), false)
+  const ownButton = new FocusElement('button', h.panel)
+  const down = keyEvent('w', ownButton)
+  h.onKeyDown(down)
+  assert.equal(down.defaultPrevented, true)
+  assert.equal(h.keysRef.current.has('w'), true)
+  const stop = keyEvent(' ', ownButton)
+  h.onKeyDown(stop)
+  assert.equal(stop.defaultPrevented, true)
+  assert.equal(h.keysRef.current.size, 0)
+  assert.equal(h.state.holds, 1)
+})
+
+test('opening another control quiesces held input; return cannot replay it before release', () => {
+  const h = keyboardHarness()
+  const ownButton = new FocusElement('button', h.panel)
+  const menuTrigger = new FocusElement('summary', h.body)
+  h.onKeyDown(keyEvent('w', ownButton))
+  h.onKeyDown(keyEvent('m', ownButton))
+  h.quiesceForInteraction({ target: menuTrigger })
+  assert.equal(h.keysRef.current.size, 0)
+  assert.equal(h.blockedKeysRef.current.has('w'), true)
+  assert.equal(h.state.manual, false)
+  assert.equal(h.state.holds, 1)
+  h.onKeyDown(keyEvent('w', ownButton, true))
+  h.onKeyDown(keyEvent('m', ownButton, true))
+  assert.equal(h.keysRef.current.size, 0)
+  assert.equal(h.state.manual, false)
+  h.onKeyUp(keyEvent('w', menuTrigger))
+  h.onKeyUp(keyEvent('m', menuTrigger))
+  h.onKeyDown(keyEvent('w', ownButton))
+  assert.equal(h.keysRef.current.has('w'), true)
+  const release = keyEvent('w', menuTrigger)
+  h.onKeyUp(release)
+  assert.equal(h.keysRef.current.size, 0)
+  assert.equal(release.defaultPrevented, false)
+  assert.equal(h.state.holds, 2)
+})
+
+test('a key first pressed inside a menu cannot become motion when the menu closes', () => {
+  const h = keyboardHarness()
+  const menuButton = new FocusElement('button', h.body)
+  h.onKeyDown(keyEvent('w', menuButton))
+  h.onKeyDown(keyEvent('w', h.panel, true))
+  assert.equal(h.keysRef.current.size, 0)
+  h.onKeyUp(keyEvent('w', h.panel))
+  h.onKeyDown(keyEvent('w', h.panel))
+  assert.equal(h.keysRef.current.has('w'), true)
 })
 
 test('same-origin websocket URL is resolved without treating queued intent as motor truth', () => {
@@ -223,4 +410,21 @@ test('same-origin websocket URL is resolved without treating queued intent as mo
 test('legacy map viewer cannot bypass the claimed teleop websocket', () => {
   assert.doesNotMatch(legacyMapViewerSource, /\/api\/v1\/cmd_vel/)
   assert.doesNotMatch(legacyMapViewerSource, /addEventListener\(['"]keydown/)
+})
+
+test('entering keyboard mode with a key already held cannot start movement', () => {
+  const h = keyboardHarness()
+  h.onKeyDown(keyEvent('w', h.panel, true))
+  assert.equal(h.keysRef.current.size, 0)
+  h.onKeyUp(keyEvent('w', h.panel))
+  h.onKeyDown(keyEvent('w', h.panel))
+  assert.equal(h.keysRef.current.has('w'), true)
+})
+
+test('Escape clears active motion before exiting keyboard mode', () => {
+  const h = keyboardHarness()
+  h.onKeyDown(keyEvent('w', h.panel))
+  h.onKeyDown(keyEvent('Escape', h.panel))
+  assert.equal(h.keysRef.current.size, 0)
+  assert.equal(h.state.holds, 1)
 })

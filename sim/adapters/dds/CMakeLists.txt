@@ -270,9 +270,7 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
   # developer shell happened to contain a CycloneDDS SDK on PATH.
   set(_LINGTU_CYCLONEDDS_TEST_ENV "")
 
-  add_subdirectory(
-    "${LINGTU_ROOT}/src/message/cpp"
-    "${CMAKE_CURRENT_BINARY_DIR}/message_cpp")
+  include("${LINGTU_ROOT}/cmake/LingTuDDS.cmake")
   lingtu_add_dds_c_messages(
     lingtu_mujoco_dds_messages
     "${LINGTU_ROOT}/src/message/idl/messages.idl")

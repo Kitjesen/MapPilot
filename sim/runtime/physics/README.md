@@ -4,7 +4,7 @@ This directory contains the hardware-free, pure C++ MuJoCo runtime used by
 RobotSimUE and headless host processes. MuJoCo remains the physics and simulation
 clock authority. The runtime has no Unreal, DDS, ROS, or LingTu Host dependency.
 It is the Physics Runtime layer of
-[`docs/architecture/SIM_RUNTIME_CONTRACT.md`](../../../docs/architecture/SIM_RUNTIME_CONTRACT.md).
+[`docs/simulation.md`](../../../docs/simulation.md).
 
 ## Interface
 

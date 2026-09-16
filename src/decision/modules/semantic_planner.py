@@ -41,16 +41,16 @@ from decision.backends import BackendManager
 from decision.modules.llm import LLMRequest, LLMResponse
 from decision.semantic_navigation.intent import HybridSemanticIntentParser, SemanticAction, SemanticIntent, TravelMode
 from decision.semantic_navigation.intent import normalize_floor_id as normalize_semantic_floor_id
-from runtime.endpoints.mapd import MapClient
 from memory.spatial.places import PlaceCatalog, PlaceCatalogError, PlaceRef
+from runtime.endpoints.mapd import MapClient
 from runtime.module import Module, skill
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.msgs.nav import NavigationState, Odometry
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.semantic import SceneGraph
 from runtime.registry import register
-from runtime.runtime_interface import map_frame_id
 from runtime.stream import In, Out
+from runtime.tf.frames import map_frame_id
 
 logger = logging.getLogger(__name__)
 
@@ -747,7 +747,7 @@ class SemanticPlannerModule(Module, layer=4):
         m = self._FOLLOW_PATTERN.search(raw)
         if not m:
             return None
-        target = m.group(2).strip(" \t\r\n.!,.;:")
+        target = m.group(2).strip(" \t\r\n.!,;:")
         return target or "person"
 
     def _on_scene_graph(self, sg: SceneGraph) -> None:

@@ -33,22 +33,23 @@ from sim.scripts.mujoco.native_sensor_records import (
     RECORD_CLOUD,
     RECORD_IMU,
     RECORD_ODOM_PRIOR,
-    RECORD_REGISTERED_CLOUD,
+    RECORD_REGISTERED_CLOUD_WITH_ORIGIN,
+    RECORD_SIMULATION_CLOCK,
 )
 
 from drivers.real.camera.shm import ShmFrameReader, StreamKind
+from lingtu.assembly.graph import (
+    ProcessArtifact,
+    ProcessCommand,
+    ProcessReadiness,
+    ProcessSpec,
+)
 from lingtu.run_plan import RunPlan
 from lingtu.sim.stop import (
     MOTION_STOP_SCHEMA,
     load_motion_stop_evidence,
     process_launch_id,
     publish_motion_stop_evidence,
-)
-from runtime.graph import (
-    ProcessArtifact,
-    ProcessCommand,
-    ProcessReadiness,
-    ProcessSpec,
 )
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import POINT_DTYPE
@@ -57,6 +58,19 @@ PRODUCT_SESSION_ID = "1" * 32
 SESSION_ID = "test-session"
 BRIDGE_BOOT_ID = "c" * 32
 CONTROLLER_BOOT_ID = "d" * 32
+
+
+def test_failure_log_retains_viewer_exception_cause(capsys: pytest.CaptureFixture[str]) -> None:
+    try:
+        try:
+            raise AttributeError("map transform is unavailable")
+        except AttributeError as exc:
+            raise RuntimeError("MuJoCo viewer failed") from exc
+    except RuntimeError as exc:
+        feeder._report_failure(exc)
+    stderr = capsys.readouterr().err
+    assert "formal_feeder_failed type=RuntimeError" in stderr
+    assert "AttributeError: map transform is unavailable" in stderr
 
 
 def _minimal_simulation(
@@ -281,7 +295,7 @@ def _run_plan(
             timeout_s=5,
             lifecycle="mode",
             command=ProcessCommand(
-                argv=("python", artifact.path),
+                argv=("python", artifact.path, *(("--navigation-fixture",) if slam and colocate_slam and name in {lidar_endpoint, imu_endpoint} else ())),
                 cwd=".",
                 env=(),
                 artifact=artifact,
@@ -312,7 +326,8 @@ def _run_plan(
         available_processes=tuple(processes),
         support_processes=("mujoco_feeder",),
         stop_before_start=(),
-        contracts=("lingtu.product.nav.v1",),
+        required_topics=(),
+        required_capabilities=(),
         critical_modules=(),
         route_contract=None,
         host_config=(
@@ -321,14 +336,7 @@ def _run_plan(
             else {"enable_camera": enable_camera}
         ),
         lifecycle={},
-        native_process_environment={
-            "NAV_GLOBAL_PLANNER": "octoplanner3d",
-            "LINGTU_NAV_CONTROL_MODE": "test",
-            "LINGTU_NAV_PUBLISH_CMD_VEL": "0",
-            "LINGTU_NAV_CHECK_OBSTACLE": "0",
-            "LINGTU_NAV_USE_TRAVERSABILITY_COST": "0",
-            "LINGTU_NAV_ALLOW_TELEOP_TAKEOVER": "0",
-            "LINGTU_TELEOP_LOCAL_PLANNER": "0",
+        process_environment={
             **(
                 {
                     "LINGTU_SLAM_CONFIG": (
@@ -384,11 +392,19 @@ class FakeSensorClient:
         self.role = role
         self.all_records = all_records
         self.records: list[bytes] = []
+        self.writes: list[bytes] = []
 
     def write(self, payload: bytes) -> int:
-        self.records.append(payload)
-        self.all_records.append(payload)
-        self.events.append((self.role, payload[4]))
+        self.writes.append(payload)
+        offset = 0
+        while offset < len(payload):
+            _, _, _, _, _, payload_bytes = SENSOR_RECORD_HEADER.unpack_from(payload, offset)
+            end = offset + SENSOR_RECORD_HEADER.size + payload_bytes
+            record = payload[offset:end]
+            self.records.append(record)
+            self.all_records.append(record)
+            self.events.append((self.role, record[4]))
+            offset = end
         return len(payload)
 
     def close(self) -> None:
@@ -427,6 +443,7 @@ class FakeEngine:
         self.step_periods: list[float] = []
         self.last_state: Any | None = None
         self.position = np.array([0.0, 0.0, 0.4], dtype=np.float64)
+        self.support_z_m = 0.0
         self.lidar_calls = 0
         self.camera_calls = 0
         self.camera_result: Any = SimpleNamespace(
@@ -469,6 +486,9 @@ class FakeEngine:
         assert self.last_state is not None
         return self.last_state
 
+    def get_support_clearance(self) -> float:
+        return float(self.position[2]) - self.support_z_m
+
     def get_lidar_points(self, sample_count: int | None = None) -> Any:
         self.lidar_calls += 1
         count = min(4, int(sample_count or 4))
@@ -484,7 +504,11 @@ class FakeEngine:
         self,
         _snapshot: Any,
         sample_count: int | None = None,
+        *,
+        scan_duration_s: float | None = None,
     ) -> Any:
+        assert scan_duration_s is not None and scan_duration_s > 0.0
+        self.events.append(("lidar_scan_duration_s", scan_duration_s))
         return self.get_lidar_points(sample_count=sample_count)
 
     def get_camera_data(self, camera_name: str = "front_camera") -> Any:
@@ -548,8 +572,7 @@ class FakeSession:
             raise RuntimeError("synthetic deactivate failure")
         if self.pending_nav_on_stop and not self.pending_stop_drained:
             self.pending_stop_drained = True
-            self.services.events.append("deactivate_pending_nav")
-            return self.stop_nav
+            self.services.events.append("cancel_pending_nav")
         self.services.events.append("deactivate_zero")
         return self.deactivation
 
@@ -642,9 +665,10 @@ class FakeServices:
         return Path(value)
 
     def snapshot_artifacts(
-        self, session_root: Path, config: Any
+        self, session_root: Path, config: Any, *, retain_world_visuals: bool = True,
     ) -> tuple[Path, Path, Path]:
         assert session_root.is_dir()
+        self.events.append(("retain_world_visuals", retain_world_visuals))
         return (
             self.resolve_artifact(config.world),
             self.resolve_artifact(config.robot.model),
@@ -889,6 +913,38 @@ def test_artifact_snapshot_is_independent_of_validated_source_paths(
     assert policy.read_bytes() == artifacts["controllers/policy.bin"]
 
 
+@pytest.mark.parametrize(
+    ("extra", "camera", "retain"),
+    [
+        ((), False, False),
+        (("--viewer",), False, True),
+        (("--no-viewer",), False, False),
+        ((), True, True),
+        (("--lidar-backend", "ray_caster_lidar"), False, True),
+        (("--mujoco-lidar-backend", "warp"), False, True),
+    ],
+)
+def test_world_visual_pruning_requires_headless_camera_off_cpu_lidar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    extra: tuple[str, ...], camera: bool, retain: bool,
+) -> None:
+    services = FakeServices()
+
+    def snapshot(session_root, config, *, retain_world_visuals):
+        assert retain_world_visuals is retain
+        services.events.append("snapshot_checked")
+        raise feeder.FormalFeederError("stop after snapshot selection")
+
+    monkeypatch.setattr(services, "snapshot_artifacts", snapshot)
+    rc, _, _ = _run(
+        monkeypatch, tmp_path, services, *extra,
+        plan=_run_plan(camera=camera, enable_camera=camera),
+    )
+    assert rc == 1
+    assert "snapshot_checked" in services.events
+    assert services.build_kwargs is None
+
+
 def _run(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1065,6 +1121,43 @@ def test_physics_keeps_stepping_while_driver_ready_is_pending(
     assert pending_steps[1:] == [pending_steps[0] + 1, pending_steps[0] + 2]
 
 
+@pytest.mark.parametrize("initialization_fails", [False, True])
+def test_viewer_resources_finish_before_driver_activation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, initialization_fails: bool,
+) -> None:
+    services = FakeServices(stop_after_readiness=True)
+
+    class Viewer:
+        def __init__(self, *args, **kwargs):
+            services.events.append("viewer_created")
+
+        def is_running(self):
+            return True
+
+        def wait_until_initialized(self, stop_event):
+            assert "connect_driver" in services.events
+            assert "activate" not in services.events
+            assert services.engine.steps == 0
+            services.events.append("viewer_initialized")
+            if initialization_fails:
+                raise RuntimeError("render resources unavailable")
+
+        def close(self):
+            services.events.append("viewer_closed")
+
+    monkeypatch.setattr(feeder, "LiveViewer", Viewer)
+    monkeypatch.setattr(feeder, "viewer_input_from_run_plan", lambda *args, **kwargs: None)
+    monkeypatch.setattr(feeder, "ViewerGoal", lambda *args, **kwargs: None)
+    rc, _, _ = _run(monkeypatch, tmp_path, services, "--viewer")
+    assert rc == (1 if initialization_fails else 0)
+    assert "viewer_closed" in services.events
+    if initialization_fails:
+        assert "activate" not in services.events
+        assert services.engine.steps == 0
+    else:
+        assert services.events.index("viewer_initialized") < services.events.index("activate")
+
+
 def test_main_uses_one_identity_fixed_endpoints_and_exact_startup_order(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1151,12 +1244,18 @@ def test_sensor_records_are_sent_only_to_their_endpoint(
 
     assert rc == 0
     assert {record[4] for record in services.sensors["imu_publisher"].records} == {
+        RECORD_SIMULATION_CLOCK,
         RECORD_IMU
     }
+    assert sum(record[4] == RECORD_SIMULATION_CLOCK
+               for record in services.sensors["imu_publisher"].records) == sum(
+                   record[4] == RECORD_IMU
+                   for record in services.sensors["imu_publisher"].records
+               )
     assert {record[4] for record in services.sensors["lidar_publisher"].records} <= {
         RECORD_CLOUD,
         RECORD_ODOM_PRIOR,
-        RECORD_REGISTERED_CLOUD,
+        RECORD_REGISTERED_CLOUD_WITH_ORIGIN,
     }
     assert {record[4] for record in services.sensors["camera_publisher"].records} == {
         RECORD_CAMERA
@@ -1168,13 +1267,52 @@ def test_sensor_records_are_sent_only_to_their_endpoint(
     ]
 
 
+def test_simulation_clock_is_paired_with_imu_and_uses_physics_time() -> None:
+    events: list[Any] = []
+    records: list[bytes] = []
+    engine = FakeEngine(events)
+    state = engine.step_sensor_tick(
+        SimpleNamespace(linear_x=0.0, linear_y=0.0, angular_z=0.0),
+        0.005,
+    )
+    imu = FakeSensorClient(events, "imu", records)
+    pipeline = feeder._SensorPipeline(
+        services=SimpleNamespace(monotonic=lambda: 0.405),
+        lidar=FakeSensorClient(events, "lidar", records),
+        imu=imu,
+        engine=engine,
+        imu_hz=200.0,
+        lidar_hz=10.0,
+        samples_per_frame=4000,
+        max_points=20000,
+        publish_odom_prior=False,
+        publish_registered_cloud_fixture=False,
+        started_s=0.0,
+        started_wall_s=1000.0,
+    )
+    pipeline.publish_step(
+        state,
+        tick=feeder._Tick(now_s=0.405, due_s=0.005, skipped=0),
+    )
+    pipeline.close()
+
+    assert len(imu.writes) == 1
+    wire = imu.writes[0]
+    clock_header = SENSOR_RECORD_HEADER.unpack_from(wire, 0)
+    clock_end = SENSOR_RECORD_HEADER.size + clock_header[5]
+    imu_header = SENSOR_RECORD_HEADER.unpack_from(wire, clock_end)
+    assert clock_header[1:] == (RECORD_SIMULATION_CLOCK, 5_000_000, 0, 1, 0)
+    assert imu_header[1] == RECORD_IMU
+    assert imu_header[2] == 1_000_005_000_000
+
+
 def test_lidar_raycast_runs_only_when_the_ten_hz_scan_is_due() -> None:
     events: list[Any] = []
     records: list[bytes] = []
     engine = FakeEngine(events)
     state = engine.step_sensor_tick(SimpleNamespace(linear_x=0.0, linear_y=0.0, angular_z=0.0), 0.005)
     pipeline = feeder._SensorPipeline(
-        services=SimpleNamespace(),
+        services=SimpleNamespace(monotonic=lambda: 0.1),
         lidar=FakeSensorClient(events, "lidar", records),
         imu=FakeSensorClient(events, "imu", records),
         engine=engine,
@@ -1231,12 +1369,15 @@ def test_odom_prior_is_not_blocked_by_slow_lidar_raycast(registered_cloud: bool)
             self,
             snapshot: Any,
             sample_count: int | None = None,
+            *,
+            scan_duration_s: float | None = None,
         ) -> Any:
             frame_started.set()
             assert release_frame.wait(timeout=1.0)
             return super().get_lidar_points_from_snapshot(
                 snapshot,
                 sample_count=sample_count,
+                scan_duration_s=scan_duration_s,
             )
 
     engine = BlockingLidarEngine(events)
@@ -1245,7 +1386,7 @@ def test_odom_prior_is_not_blocked_by_slow_lidar_raycast(registered_cloud: bool)
         0.005,
     )
     pipeline = feeder._SensorPipeline(
-        services=SimpleNamespace(),
+        services=SimpleNamespace(monotonic=lambda: 0.105),
         lidar=SignalingSensorClient(events, "lidar", records),
         imu=FakeSensorClient(events, "imu", records),
         engine=engine,
@@ -1277,7 +1418,7 @@ def test_odom_prior_is_not_blocked_by_slow_lidar_raycast(registered_cloud: bool)
         pipeline.close()
 
 
-def test_sensor_timestamp_uses_observation_time_when_physics_is_late() -> None:
+def test_sensor_timestamp_uses_physics_deadline_when_delivery_is_late() -> None:
     events: list[Any] = []
     records: list[bytes] = []
     engine = FakeEngine(events)
@@ -1286,7 +1427,7 @@ def test_sensor_timestamp_uses_observation_time_when_physics_is_late() -> None:
         0.005,
     )
     pipeline = feeder._SensorPipeline(
-        services=SimpleNamespace(),
+        services=SimpleNamespace(monotonic=lambda: 0.5),
         lidar=FakeSensorClient(events, "lidar", records),
         imu=FakeSensorClient(events, "imu", records),
         engine=engine,
@@ -1307,7 +1448,150 @@ def test_sensor_timestamp_uses_observation_time_when_physics_is_late() -> None:
     pipeline.close()
 
     imu_record = next(record for record in records if record[4] == RECORD_IMU)
-    assert SENSOR_RECORD_HEADER.unpack_from(imu_record)[2] == 1_000_500_000_000
+    assert SENSOR_RECORD_HEADER.unpack_from(imu_record)[2] == 1_000_100_000_000
+
+
+def test_catchup_sensor_timestamps_follow_physics_and_snapshot_has_no_rolling_offsets() -> None:
+    events: list[Any] = []
+    records: list[bytes] = []
+    engine = FakeEngine(events)
+    delivery_clock = [0.0]
+    pipeline = feeder._SensorPipeline(
+        services=SimpleNamespace(monotonic=lambda: delivery_clock[0]),
+        lidar=FakeSensorClient(events, "lidar", records),
+        imu=FakeSensorClient(events, "imu", records),
+        engine=engine,
+        imu_hz=200.0,
+        lidar_hz=10.0,
+        samples_per_frame=4000,
+        max_points=20000,
+        publish_odom_prior=False,
+        publish_registered_cloud_fixture=False,
+        started_s=0.0,
+        started_wall_s=1000.0,
+    )
+    try:
+        for index in range(20):
+            delivery_clock[0] = 0.405 + index * 0.001
+            state = engine.step_sensor_tick(
+                SimpleNamespace(linear_x=0.2, linear_y=0.0, angular_z=0.0), 0.005,
+            )
+            pipeline.publish_step(state, tick=feeder._Tick(
+                now_s=delivery_clock[0],
+                due_s=(index + 1) * 0.005,
+                skipped=0,
+            ))
+    finally:
+        pipeline.close()
+
+    imu_stamps = [SENSOR_RECORD_HEADER.unpack_from(record)[2]
+                  for record in records if record[4] == RECORD_IMU]
+    clock_stamps = [SENSOR_RECORD_HEADER.unpack_from(record)[2]
+                    for record in records if record[4] == RECORD_SIMULATION_CLOCK]
+    assert len(imu_stamps) == len(clock_stamps) == 20
+    assert np.diff(imu_stamps).tolist() == pytest.approx([5_000_000] * 19, abs=1)
+    assert np.diff(imu_stamps).tolist() == pytest.approx(np.diff(clock_stamps).tolist(), abs=1)
+    cloud_record = next(record for record in records if record[4] == RECORD_CLOUD)
+    cloud_header = SENSOR_RECORD_HEADER.unpack_from(cloud_record)
+    assert cloud_header[2] == imu_stamps[-1]
+    points = np.frombuffer(cloud_record, dtype=POINT_DTYPE, offset=SENSOR_RECORD_HEADER.size)
+    assert len(points) > 0
+    assert np.all(points["offset_time_ns"] == 0)
+    assert pipeline._imu_stats.payload(0.424)["max_schedule_lateness_ms"] == pytest.approx(400.0)
+    assert pipeline._imu_stats.payload(0.424)["published_count"] == 20
+
+
+@pytest.mark.parametrize("wake_time_s", (0.1, 1.0))
+def test_lidar_drops_a_snapshot_whose_physics_deadline_is_already_stale(wake_time_s: float) -> None:
+    events: list[Any] = []
+    records: list[bytes] = []
+    engine = FakeEngine(events)
+    state = engine.step_sensor_tick(
+        SimpleNamespace(linear_x=0.0, linear_y=0.0, angular_z=0.0), 0.005,
+    )
+    pipeline = feeder._SensorPipeline(
+        services=SimpleNamespace(monotonic=lambda: 1.0),
+        lidar=FakeSensorClient(events, "lidar", records),
+        imu=FakeSensorClient(events, "imu", records),
+        engine=engine,
+        imu_hz=200.0,
+        lidar_hz=10.0,
+        samples_per_frame=4000,
+        max_points=20000,
+        publish_odom_prior=False,
+        publish_registered_cloud_fixture=False,
+        started_s=0.0,
+        started_wall_s=1000.0,
+        max_frame_age_s=0.6,
+    )
+    pipeline.publish_step(state, tick=feeder._Tick(now_s=wake_time_s, due_s=0.1, skipped=0))
+    pipeline.close()
+
+    assert not any(record[4] == RECORD_CLOUD for record in records)
+    assert engine.lidar_calls == 0
+    stats = pipeline._lidar_stats.payload(1.0)
+    assert stats["scheduled_count"] == stats["dropped_count"] == 1
+    assert stats["published_count"] == 0
+    imu_record = next(record for record in records if record[4] == RECORD_IMU)
+    assert SENSOR_RECORD_HEADER.unpack_from(imu_record)[2] == 1_000_100_000_000
+
+
+@pytest.mark.parametrize(
+    ("queue_age_s", "raycast_age_s", "published", "raycast_calls"),
+    ((0.3, 0.0, False, 0), (0.05, 0.3, False, 1), (0.05, 0.05, True, 1)),
+)
+def test_lidar_age_limit_includes_schedule_queue_and_raycast_time(
+    monkeypatch: pytest.MonkeyPatch,
+    queue_age_s: float,
+    raycast_age_s: float,
+    published: bool,
+    raycast_calls: int,
+) -> None:
+    events: list[Any] = []
+    records: list[bytes] = []
+    engine = FakeEngine(events)
+    state = engine.step_sensor_tick(
+        SimpleNamespace(linear_x=0.0, linear_y=0.0, angular_z=0.0), 0.005,
+    )
+    clock = [queue_age_s]
+
+    def raycast(
+        _snapshot: Any, sample_count: int | None = None, *, scan_duration_s: float | None = None,
+    ) -> Any:
+        assert scan_duration_s == pytest.approx(0.1)
+        clock[0] += raycast_age_s
+        return engine.get_lidar_points(sample_count)
+
+    monkeypatch.setattr(engine, "get_lidar_points_from_snapshot", raycast)
+    monkeypatch.setattr(feeder, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    stats = feeder._StreamStats(10.0)
+    stats.due(count=1, dropped=0, lateness_s=0.35)
+    publisher = feeder._LidarPublisher(
+        client=FakeSensorClient(events, "lidar", records),
+        engine=engine,
+        samples_per_frame=4000,
+        max_points=20000,
+        publish_registered_cloud_fixture=False,
+        stats=stats,
+        max_frame_age_s=0.6,
+    )
+    try:
+        publisher._publish_frame(feeder._LidarFrame(
+            snapshot=None,
+            state=state,
+            monotonic_s=0.1,
+            wall_s=1000.1,
+            sequence=0,
+            registered_sequence=None,
+            schedule_lateness_s=0.35,
+            captured_at_s=0.0,
+        ))
+    finally:
+        publisher.close()
+    assert any(record[4] == RECORD_CLOUD for record in records) == published
+    assert engine.lidar_calls == raycast_calls
+    assert stats.payload(1.0)["published_count"] == int(published)
+    assert stats.payload(1.0)["dropped_count"] == int(not published)
 
 
 def test_deadline_loop_uses_one_reversible_waiter_scope(
@@ -1438,6 +1722,34 @@ def test_formal_feeder_rejects_unstable_pose_before_readiness(
     assert "MuJoCo base pose is outside the stability gate" in capsys.readouterr().err
 
 
+def test_formal_feeder_accepts_standing_on_an_upper_floor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    services = FakeServices(stop_after_readiness=True)
+    services.engine.position[2] = 3.4
+    services.engine.support_z_m = 3.0
+    rc, _, _ = _run(monkeypatch, tmp_path, services)
+    assert rc == 0
+    assert services.motion_payload["min_base_height_m"] == pytest.approx(0.4)
+    assert services.motion_payload["max_base_height_m"] == pytest.approx(0.4)
+
+
+def test_motion_stability_uses_terrain_clearance_during_floor_changes() -> None:
+    evidence = feeder._PhysicalMotionEvidence()
+    for floor_z in [0.0, 0.15, 0.3, 0.6, 3.0, 0.0]:
+        state = SimpleNamespace(position=[0.0, 0.0, floor_z + 0.435],
+                                orientation=[0.0, 0.0, 0.0, 1.0])
+        evidence.observe_pose(state, 0.435)
+    assert evidence.min_base_height_m == pytest.approx(0.435)
+    assert evidence.max_base_height_m == pytest.approx(0.435)
+    for clearance in [0.1, 1.5, float("nan")]:
+        with pytest.raises(feeder.FormalFeederError, match="stability gate"):
+            evidence.observe_pose(state, clearance)
+    with pytest.raises(feeder.FormalFeederError, match="height span"):
+        evidence.observe_pose(state, 0.9)
+
+
 def test_post_readiness_instability_still_publishes_terminal_zero_evidence(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1522,7 +1834,7 @@ def test_failed_emergency_shutdown_does_not_publish_stop_evidence(
     assert "emergency shutdown failed" in capsys.readouterr().err
 
 
-def test_emergency_shutdown_never_physically_drains_pending_navigation(
+def test_emergency_shutdown_cancels_pending_navigation_and_confirms_zero(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1531,18 +1843,17 @@ def test_emergency_shutdown_never_physically_drains_pending_navigation(
         stop_after_readiness=False,
         unstable_at_step=3,
     )
-
     rc, _, _ = _run(monkeypatch, tmp_path, services)
-
     assert rc == 1
-    pending = services.events.index("deactivate_pending_nav")
-    assert not any(
-        isinstance(event, tuple) and event[0] == "step"
-        for event in services.events[pending + 1 :]
-    )
-    assert "stopped" not in services.events
-    assert "publish_evidence" not in services.events
-    assert services.evidence_payload is None
+    pending = services.events.index("cancel_pending_nav")
+    steps = [event for event in services.events[pending + 1:]
+             if isinstance(event, tuple) and event[0] == "step"]
+    assert steps and all(event[2:] == (0.0, 0.0, 0.0) for event in steps)
+    assert not any(isinstance(event, tuple) and event[:2] == ("applied", "nav")
+                   for event in services.events)
+    assert services.evidence_payload["command_kind"] == "deactivate_zero"
+    assert services.evidence_payload["terminal_ack"] is True
+
 
 
 def test_post_write_readiness_failure_still_publishes_real_terminal_zero(
@@ -1639,18 +1950,21 @@ def test_motion_evidence_includes_coasting_path_between_nonzero_commands(
         before=state(0.0),
         after=state(1.0),
         step_seq=1,
+        clearance_m=0.4,
     )
     evidence.observe(
         _command("activation_zero", 2),
         before=state(1.0),
         after=state(3.0),
         step_seq=2,
+        clearance_m=0.4,
     )
     evidence.observe(
         _command("nav", 2, walk=(0.5, 0.0, 0.0)),
         before=state(3.0),
         after=state(4.0),
         step_seq=3,
+        clearance_m=0.4,
     )
     stopped = DriverBridgeStoppedEvidence(
         bridge_boot_id=BRIDGE_BOOT_ID,
@@ -1703,6 +2017,7 @@ def test_motion_trajectory_decimates_without_changing_aggregate_metrics() -> Non
             before=state((step - 1) * 0.1),
             after=state(step * 0.1),
             step_seq=step,
+            clearance_m=0.4,
         )
 
     assert len(evidence.trajectory) <= MAX_TRAJECTORY_SAMPLES
@@ -1718,34 +2033,21 @@ def test_motion_trajectory_decimates_without_changing_aggregate_metrics() -> Non
     assert replay.trajectory == evidence.trajectory
 
 
-def test_shutdown_drains_one_protocol_pending_nav_before_exact_zero(
+def test_shutdown_cancels_pending_nav_before_exact_zero(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    services = FakeServices(
-        pending_nav_on_stop=True,
-        stop_after_readiness=True,
-    )
-
+    services = FakeServices(pending_nav_on_stop=True, stop_after_readiness=True)
     rc, _, _ = _run(monkeypatch, tmp_path, services)
-
     assert rc == 0
-    pending = services.events.index("deactivate_pending_nav")
-    pending_step = next(
-        index
-        for index, event in enumerate(services.events[pending + 1 :], pending + 1)
-        if isinstance(event, tuple) and event[0] == "step"
-    )
-    pending_applied = services.events.index(("applied", "nav", 3))
+    pending = services.events.index("cancel_pending_nav")
     zero = services.events.index("deactivate_zero")
-    zero_step = next(
-        index
-        for index, event in enumerate(services.events[zero + 1 :], zero + 1)
-        if isinstance(event, tuple) and event[0] == "step"
-    )
-    assert pending < pending_step < pending_applied < zero < zero_step
-    assert services.events[pending_step][2:] == (0.25, 0.0, -0.5)
-    assert services.events[zero_step][2:] == (0.0, 0.0, 0.0)
+    zero_step = services.events.index(("step", 3, 0.0, 0.0, 0.0))
+    assert pending < zero < zero_step
+    assert not any(isinstance(event, tuple) and event[:2] == ("applied", "nav")
+                   for event in services.events)
+    assert services.evidence_payload["terminal_ack"] is True
+
 
 
 def test_absolute_sensor_deadlines_catch_up_late_slots_without_dropping(
@@ -1904,9 +2206,95 @@ def test_live_evidence_reader_does_not_stop_physics(monkeypatch, tmp_path):
     assert rc == 0
     assert len(failures) == 1
     live = json.loads((identity.session_root / "mujoco_feeder.live.json").read_text())
-    assert live["write_failures"] == 1
+    assert live["write_failures"] == 0
     assert live["step_seq"] > 100
     assert not list(identity.session_root.glob(".mujoco_feeder.live.json.*.tmp"))
+
+
+def test_scenario_reader_conflict_retries_same_atomic_snapshot(monkeypatch, tmp_path):
+    destination = tmp_path / "scenario.current.json"
+    destination.write_text('{"sequence":0}')
+    replace = feeder.os.replace
+    attempts = []
+
+    def reader_conflict(source, target):
+        attempts.append(Path(source))
+        if len(attempts) < 3:
+            assert json.loads(destination.read_text()) == {"sequence": 0}
+            raise PermissionError("Windows reader temporarily holds scenario.current.json")
+        return replace(source, target)
+
+    monkeypatch.setattr(feeder.os, "replace", reader_conflict)
+    assert feeder._Services.publish_scenario(tmp_path, {"sequence": 1}) == destination
+    assert json.loads(destination.read_text()) == {"sequence": 1}
+    assert len(attempts) == 3 and len(set(attempts)) == 1
+    assert not list(tmp_path.glob(".scenario.current.json.*.tmp"))
+
+
+def test_scenario_observation_conflict_does_not_skip_physics_or_actor_updates(tmp_path):
+    engine = FakeEngine([])
+    applied = []
+    engine.apply_scenario_snapshot = lambda snapshot: applied.append(snapshot.sim_time_ns)
+    publications = []
+
+    def publish(session_root, payload):
+        publications.append(payload["sim_time_ns"])
+        if len(publications) == 1:
+            raise PermissionError("scenario snapshot reader outlived bounded retry")
+
+    def snapshot(clock):
+        return SimpleNamespace(sim_time_ns=clock.sim_time_ns,
+                               to_dict=lambda: {"sim_time_ns": clock.sim_time_ns})
+
+    scenario = feeder._ScenarioFeed(
+        engine=engine, runtime=SimpleNamespace(snapshot=snapshot),
+        services=SimpleNamespace(publish_scenario=publish), session_root=tmp_path,
+        config=SimpleNamespace(session_id="scenario-test", model_generation=0, reset_generation=0),
+    )
+    scenario.start()
+    for step in range(10):
+        _, sequence = feeder._step(engine, feeder.VelocityCommand(), period_s=.005,
+                                   step_seq=step, scenario=scenario)
+    assert sequence == engine.steps == 10
+    assert applied == [index * 5_000_000 for index in range(11)]
+    assert publications == [0, 50_000_000]
+    assert scenario.write_failures == 1
+
+
+def test_scenario_non_permission_failure_remains_visible(tmp_path):
+    def publish(*args):
+        raise OSError(28, "disk full")
+
+    snapshot = SimpleNamespace(sim_time_ns=0, to_dict=lambda: {"sim_time_ns": 0})
+    scenario = feeder._ScenarioFeed(
+        engine=SimpleNamespace(apply_scenario_snapshot=lambda value: None),
+        runtime=SimpleNamespace(snapshot=lambda clock: snapshot),
+        services=SimpleNamespace(publish_scenario=publish), session_root=tmp_path,
+        config=SimpleNamespace(session_id="scenario-test", model_generation=0, reset_generation=0),
+    )
+    with pytest.raises(OSError, match="disk full"):
+        scenario.start()
+
+
+@pytest.mark.parametrize("error,expected_attempts", [(PermissionError("persistent access denial"), 6),
+                                                   (OSError(28, "disk full"), 1)])
+def test_atomic_snapshot_failure_is_bounded_and_preserves_existing_evidence(
+    monkeypatch, tmp_path, error, expected_attempts,
+):
+    destination = tmp_path / "mujoco_feeder.stop.json"
+    destination.write_bytes(b"previous evidence")
+    attempts = []
+
+    def denied(source, target):
+        attempts.append(source)
+        raise error
+
+    monkeypatch.setattr(feeder.os, "replace", denied)
+    with pytest.raises(type(error)):
+        feeder._publish_session_bytes(tmp_path, destination.name, b"new evidence")
+    assert len(attempts) == expected_attempts
+    assert destination.read_bytes() == b"previous evidence"
+    assert not list(tmp_path.glob(".mujoco_feeder.stop.json.*.tmp"))
 
 
 def test_failed_status_is_best_effort_and_preserves_original_failure(
@@ -1954,10 +2342,11 @@ def test_failed_status_balances_the_due_imu_slot_when_write_fails(
     )
 
 
-def test_contacts_count_mocap_obstacles_but_not_road_support():
+@pytest.mark.parametrize("support", ["road_spine", "fw_r2_site_paving_road0", "fw_r2_ground_floor", "fw_r2_site_ground"])
+def test_contacts_count_mocap_obstacles_but_not_road_support(support):
     mujoco = pytest.importorskip("mujoco")
-    model = mujoco.MjModel.from_xml_string('''<mujoco><worldbody>
-      <geom name="road_spine" type="plane" size="2 2 .1"/>
+    model = mujoco.MjModel.from_xml_string(f'''<mujoco><worldbody>
+      <geom name="{support}" type="plane" size="2 2 .1"/>
       <body name="base_link" pos="0 0 .15"><freejoint/><geom size=".2"/></body>
       <body name="walker" mocap="true" pos=".3 0 .15"><geom name="person" size=".2"/></body>
     </worldbody></mujoco>''')
@@ -1993,9 +2382,9 @@ def test_truth_localization_publishes_pose_and_registered_cloud_with_one_timesta
     lidar_records = services.sensors["lidar_publisher"].records
     record_types = [record[4] for record in lidar_records]
     assert record_types.count(3) > 0
-    assert record_types.count(4) > 0
+    assert record_types.count(RECORD_REGISTERED_CLOUD_WITH_ORIGIN) > 0
     for index, record in enumerate(lidar_records):
-        if record[4] != 4:
+        if record[4] != RECORD_REGISTERED_CLOUD_WITH_ORIGIN:
             continue
         assert index > 0
         assert lidar_records[index - 1][4] == 1
@@ -2003,6 +2392,7 @@ def test_truth_localization_publishes_pose_and_registered_cloud_with_one_timesta
         assert index >= 2
         assert lidar_records[index - 2][4] == RECORD_ODOM_PRIOR
         assert int.from_bytes(lidar_records[index - 2][8:16], "little") == registered_stamp
+        assert int.from_bytes(lidar_records[index - 1][8:16], "little") == registered_stamp
 
 
 def test_product_slam_process_receives_only_raw_lidar_and_imu_records(
@@ -2026,10 +2416,10 @@ def test_product_slam_process_receives_only_raw_lidar_and_imu_records(
     assert record_types.count(1) > 0
     assert record_types.count(2) > 0
     assert record_types.count(3) == 0
-    assert record_types.count(RECORD_REGISTERED_CLOUD) == 0
+    assert record_types.count(RECORD_REGISTERED_CLOUD_WITH_ORIGIN) == 0
 
 
-def test_product_truth_localization_sends_prior_only_to_the_slam_process(
+def test_slam_config_filename_never_enables_truth_prior_injection(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -2051,8 +2441,8 @@ def test_product_truth_localization_sends_prior_only_to_the_slam_process(
 
     assert rc == 0
     record_types = [record[4] for record in services.sensor.records]
-    assert record_types.count(RECORD_ODOM_PRIOR) > 0
-    assert record_types.count(RECORD_REGISTERED_CLOUD) == 0
+    assert record_types.count(RECORD_ODOM_PRIOR) == 0
+    assert record_types.count(RECORD_REGISTERED_CLOUD_WITH_ORIGIN) == 0
 
 
 def test_truth_cloud_contains_only_raycast_returns(
@@ -2079,17 +2469,17 @@ def test_truth_cloud_contains_only_raycast_returns(
     registered = next(
         record
         for record in services.sensor.records
-        if record[4] == RECORD_REGISTERED_CLOUD
+        if record[4] == RECORD_REGISTERED_CLOUD_WITH_ORIGIN
     )
     _, _, _, _, point_count, payload_bytes = SENSOR_RECORD_HEADER.unpack_from(
         registered
     )
-    assert payload_bytes == point_count * POINT_DTYPE.itemsize
+    assert payload_bytes == 24 + point_count * POINT_DTYPE.itemsize
     points = np.frombuffer(
         registered,
         dtype=POINT_DTYPE,
         count=point_count,
-        offset=SENSOR_RECORD_HEADER.size,
+        offset=SENSOR_RECORD_HEADER.size + 24,
     )
     assert point_count == 1
     np.testing.assert_allclose(points["x"], 0.25, atol=1e-6)
@@ -2119,14 +2509,14 @@ def test_truth_cloud_does_not_invent_ground_when_rays_miss(
     registered = next(
         record
         for record in services.sensor.records
-        if record[4] == RECORD_REGISTERED_CLOUD
+        if record[4] == RECORD_REGISTERED_CLOUD_WITH_ORIGIN
     )
     _, _, _, _, point_count, _ = SENSOR_RECORD_HEADER.unpack_from(registered)
     points = np.frombuffer(
         registered,
         dtype=POINT_DTYPE,
         count=point_count,
-        offset=SENSOR_RECORD_HEADER.size,
+        offset=SENSOR_RECORD_HEADER.size + 24,
     )
     assert point_count == 0
     assert points.size == 0
@@ -2598,3 +2988,36 @@ def test_disabled_camera_does_not_configure_render_or_publish_camera_records(
     assert services.camera_writers == {}
     assert not any(record[4] == RECORD_CAMERA for record in services.sensor.records)
     assert "connect_sensor" not in services.events
+
+
+def test_sensor_failure_waits_for_outstanding_frame_before_terminal_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    class FailingPipeline:
+        def __init__(self, **kwargs):
+            self.stats = kwargs["lidar_stats"]
+            self.closed = False
+
+        def publish_step(self, state, *, tick):
+            self.stats.due(count=1, dropped=0, lateness_s=0.0)
+            raise RuntimeError("odom publisher failed while scan still in flight")
+
+        def close(self):
+            if not self.closed:
+                self.closed = True
+                self.stats.published()
+            raise RuntimeError("odom publisher failed")
+
+    monkeypatch.setattr(feeder, "_SensorPipeline", FailingPipeline)
+    monkeypatch.setenv("LINGTU_PROCESS_LAUNCH_ID", "f" * 64)
+    services = FakeServices(stop_after_readiness=False, publish_real_artifacts=True,
+                            pending_nav_on_stop=True)
+    rc, identity, _ = _run(monkeypatch, tmp_path, services)
+    assert rc == 1
+    status = json.loads((identity.session_root / FEEDER_STATUS_FILENAME).read_text())
+    assert status["state"] == "failed"
+    scan = status["streams"]["lidar"]
+    assert scan["scheduled_count"] == scan["published_count"] == 1
+    assert scan["dropped_count"] == 0
+    assert services.evidence_payload["terminal_ack"] is True
+    assert "stream counts are inconsistent" not in capsys.readouterr().err

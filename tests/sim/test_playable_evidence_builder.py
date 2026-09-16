@@ -1,6 +1,5 @@
 """Focused contracts for post-close playable evidence assembly."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -13,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from sim.runtime.coordinator import playable_evidence as playable_evidence_module
 from sim.runtime.coordinator.playable_evidence import (
     PinnedPlayableMediaToolchain,
@@ -646,7 +644,7 @@ def test_runtime_request_trace_is_archived_byte_exact_with_complete_descriptor(
         )
 
 
-@pytest.mark.parametrize("mutation", ["delete", "replace", "recreate_same"])
+@pytest.mark.parametrize("mutation", ["delete", "replace", "replace_same_content"])
 def test_runtime_request_trace_archive_fails_closed_if_validated_source_changes(
     tmp_path: Path,
     mutation: str,
@@ -670,8 +668,9 @@ def test_runtime_request_trace_archive_fails_closed_if_validated_source_changes(
     original_payload = source.read_bytes()
     if mutation == "delete":
         source.unlink()
-    elif mutation == "recreate_same":
-        source.unlink()
+    elif mutation == "replace_same_content":
+        # Retain the original inode so replacement cannot reuse its identity.
+        source.rename(tmp_path / "validated-runtime-request-trace.jsonl")
         source.write_bytes(original_payload)
     else:
         source.write_text("{}\n", encoding="utf-8")

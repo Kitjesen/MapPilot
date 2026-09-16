@@ -182,7 +182,11 @@ TEST(TerrainCore, ConnectivityRejectsDisconnectedOverheadSurface) {
   std::vector<float> scan;
   for (int ix = -4; ix <= 4; ++ix) {
     for (int iy = -4; iy <= 4; ++iy) {
-      appendPoint(scan, ix * 0.2f, iy * 0.2f, -0.5f);
+      for (const float dx : {-0.06f, 0.06f}) {
+        for (const float dy : {-0.06f, 0.06f}) {
+          appendPoint(scan, ix * 0.2f + dx, iy * 0.2f + dy, -0.5f);
+        }
+      }
     }
   }
   for (int ix = 7; ix <= 9; ++ix) {
@@ -228,7 +232,11 @@ TEST(TerrainCore, ConnectivityKeepsGradualGroundRamp) {
     const float x = step * 0.25f;
     const float z = -0.5f + step * 0.08f;
     for (int iy = -2; iy <= 2; ++iy) {
-      appendPoint(scan, x, iy * 0.2f, z);
+      for (const float dx : {-0.06f, 0.06f}) {
+        for (const float dy : {-0.06f, 0.06f}) {
+          appendPoint(scan, x + dx, iy * 0.2f + dy, z + 0.32f * dx);
+        }
+      }
     }
   }
 
@@ -241,4 +249,169 @@ TEST(TerrainCore, ConnectivityKeepsGradualGroundRamp) {
     retained_far_ramp = retained_far_ramp || result.terrain_points[i * 4] > 1.75f;
   }
   EXPECT_TRUE(retained_far_ramp);
+}
+
+TEST(TerrainCore, RobustGroundRejectsSparseLowGhostAndKeepsObstacleHeight) {
+  TerrainParams p = smallTerrainParams();
+  p.checkTerrainConnectivity = true;
+  p.terrainUnderVehicle = -0.5;
+  TerrainAnalysisCore terrain(p);
+  terrain.updateVehicle(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+  std::vector<float> scan;
+  for (int x = -3; x <= 3; ++x) {
+    for (int y = -3; y <= 3; ++y) {
+      appendPoint(scan, x * 0.06f, y * 0.06f, -0.5f);
+    }
+  }
+  appendPoint(scan, 0.0f, 0.0f, -0.9f);
+  appendPoint(scan, 0.12f, 0.12f, 0.2f);
+  const TerrainResult result = terrain.process(scan.data(), static_cast<int>(scan.size() / 4), 0.0);
+  const int center = result.map_width * p.planarVoxelHalfWidth + p.planarVoxelHalfWidth;
+  ASSERT_TRUE(std::isfinite(result.elevation_map[center]));
+  EXPECT_NEAR(result.elevation_map[center], -0.5f, 0.01f);
+  bool kept_obstacle = false;
+  for (std::size_t i = 0; i < result.terrain_points.size(); i += 4) {
+    EXPECT_GT(result.terrain_points[i + 2], -0.8f);
+    if (result.terrain_points[i + 2] > 0.19f) {
+      kept_obstacle = true;
+      EXPECT_NEAR(result.terrain_points[i + 3], 0.7f, 0.02f);
+    }
+  }
+  EXPECT_TRUE(kept_obstacle);
+}
+
+TEST(TerrainCore, FittedRampUsesPointPositionAndCorrectGridAxes) {
+  TerrainParams p = smallTerrainParams();
+  p.planarVoxelSize = 0.25;
+  p.planarVoxelHalfWidth = 4;
+  p.checkTerrainConnectivity = true;
+  p.terrainUnderVehicle = -0.5;
+  TerrainAnalysisCore terrain(p);
+  terrain.updateVehicle(2.0, -1.0, 0.0, 0.0, 0.0, 0.0);
+
+  std::vector<float> scan;
+  for (int x = -2; x <= 2; ++x) {
+    for (int y = -2; y <= 2; ++y) {
+      for (const float dx : {-0.07f, 0.07f}) {
+        for (const float dy : {-0.07f, 0.07f}) {
+          const float rx = x * 0.25f + dx;
+          const float ry = y * 0.25f + dy;
+          appendPoint(scan, 2.0f + rx, -1.0f + ry, -0.5f + 0.30f * rx + 0.15f * ry);
+        }
+      }
+    }
+  }
+  const TerrainResult result = terrain.process(scan.data(), static_cast<int>(scan.size() / 4), 0.0);
+  ASSERT_EQ(result.n_points, static_cast<int>(scan.size() / 4));
+  for (std::size_t i = 3; i < result.terrain_points.size(); i += 4) {
+    EXPECT_NEAR(result.terrain_points[i], 0.0f, 1e-5f);
+  }
+  const int cell = result.map_width * (p.planarVoxelHalfWidth + 1) + p.planarVoxelHalfWidth - 1;
+  EXPECT_NEAR(result.elevation_map[cell], -0.4625f, 1e-5f);
+}
+
+TEST(TerrainCore, NeighborEvidenceDoesNotFillUnobservedSupportHole) {
+  TerrainParams p = smallTerrainParams();
+  p.checkTerrainConnectivity = true;
+  p.terrainUnderVehicle = -0.5;
+  TerrainAnalysisCore terrain(p);
+  terrain.updateVehicle(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+  std::vector<float> scan;
+  for (int x = -1; x <= 1; ++x) {
+    for (int y = -1; y <= 1; ++y) {
+      if (x == 0 && y == 0) continue;
+      for (const float dx : {-0.06f, 0.06f}) {
+        for (const float dy : {-0.06f, 0.06f}) {
+          appendPoint(scan, x * 0.5f + dx, y * 0.5f + dy, -0.5f);
+        }
+      }
+    }
+  }
+  const TerrainResult result = terrain.process(scan.data(), static_cast<int>(scan.size() / 4), 0.0);
+  const int center = result.map_width * p.planarVoxelHalfWidth + p.planarVoxelHalfWidth;
+  EXPECT_GT(result.connected_cells, 0);
+  EXPECT_TRUE(std::isnan(result.elevation_map[center]));
+  EXPECT_EQ(result.connectivity_map[center], 0);
+}
+
+TEST(TerrainCore, IsolatedObstacleRemainsEvidenceWithoutInventingGround) {
+  TerrainParams p = smallTerrainParams();
+  p.checkTerrainConnectivity = true;
+  p.terrainUnderVehicle = -0.5;
+  TerrainAnalysisCore terrain(p);
+  terrain.updateVehicle(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+  const std::vector<float> scan{0.0f, 0.0f, 0.3f, 0.0f};
+  const TerrainResult result = terrain.process(scan.data(), 1, 0.0);
+  const int center = result.map_width * p.planarVoxelHalfWidth + p.planarVoxelHalfWidth;
+  EXPECT_EQ(result.connected_cells, 0);
+  EXPECT_TRUE(std::isnan(result.elevation_map[center]));
+  ASSERT_EQ(result.n_points, 1);
+  EXPECT_FLOAT_EQ(result.terrain_points[2], 0.3f);
+  EXPECT_GE(result.terrain_points[3], p.obstacleHeightThre);
+}
+
+TEST(TerrainCore, ObservedFloorOutsideLidarBlindRegionSeedsConnectivity) {
+  TerrainParams p = smallTerrainParams();
+  p.planarVoxelSize = 0.20;
+  p.planarVoxelHalfWidth = 15;
+  p.terrainVoxelHalfWidth = 4;
+  p.checkTerrainConnectivity = true;
+  p.terrainUnderVehicle = -0.5;
+  EXPECT_EQ(p.groundSeedSearchRadiusCells, 10);
+  TerrainAnalysisCore terrain(p);
+  terrain.updateVehicle(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+  std::vector<float> scan;
+  for (int x = -10; x <= 10; ++x) {
+    for (int y = -10; y <= 10; ++y) {
+      for (const float dx : {-0.06f, 0.06f}) {
+        for (const float dy : {-0.06f, 0.06f}) {
+          const float px = x * 0.20f + dx;
+          const float py = y * 0.20f + dy;
+          const double radius = std::hypot(px, py);
+          if (radius >= 1.3 && radius <= 2.0) appendPoint(scan, px, py, -0.5f);
+        }
+      }
+    }
+  }
+  const TerrainResult result = terrain.process(scan.data(), static_cast<int>(scan.size() / 4), 0.0);
+  const int center = result.map_width * p.planarVoxelHalfWidth + p.planarVoxelHalfWidth;
+  EXPECT_GT(result.connected_cells, 0);
+  EXPECT_TRUE(std::isnan(result.elevation_map[center]));
+  EXPECT_EQ(result.connectivity_map[center], 0);
+  EXPECT_GT(result.n_points, 0);
+}
+
+TEST(TerrainCore, FiveCentimeterGridFitsObservedFloorAndPreservesFineHole) {
+  TerrainParams p = smallTerrainParams();
+  p.planarVoxelSize = 0.05;
+  p.planarVoxelHalfWidth = 10;
+  p.checkTerrainConnectivity = true;
+  p.terrainUnderVehicle = -0.5;
+  TerrainAnalysisCore terrain(p);
+  terrain.updateVehicle(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+  std::vector<float> scan;
+  for (int x = -8; x <= 8; ++x) {
+    for (int y = -8; y <= 8; ++y) {
+      if (x == 0 && y == 0) continue;
+      const float px = x * 0.05f;
+      const float py = y * 0.05f;
+      appendPoint(scan, px, py, -0.5f + 0.20f * px - 0.10f * py);
+    }
+  }
+  const TerrainResult result = terrain.process(scan.data(), static_cast<int>(scan.size() / 4), 0.0);
+  const int center = result.map_width * p.planarVoxelHalfWidth + p.planarVoxelHalfWidth;
+  EXPECT_TRUE(std::isnan(result.elevation_map[center]));
+  EXPECT_EQ(result.connectivity_map[center], 0);
+  EXPECT_EQ(result.connected_cells, static_cast<int>(scan.size() / 4));
+  ASSERT_EQ(result.n_points, static_cast<int>(scan.size() / 4));
+  for (std::size_t i = 3; i < result.terrain_points.size(); i += 4) {
+    EXPECT_NEAR(result.terrain_points[i], 0.0f, 1e-5f);
+  }
+  const int observed = result.map_width * (p.planarVoxelHalfWidth + 1) + p.planarVoxelHalfWidth - 1;
+  EXPECT_NEAR(result.elevation_map[observed], -0.485f, 1e-5f);
 }

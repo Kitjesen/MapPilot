@@ -82,32 +82,34 @@ bool valid_information_upper(const std::array<double, 21>& upper) {
     return false;
   }
 
-  // Unpivoted LDL^T is sufficient here: a zero PSD diagonal implies its whole
-  // row/column is zero. The tolerance only absorbs floating-point roundoff.
+  // Pivot on the largest remaining diagonal. Gravity-aligned ICP produces
+  // rank-four information: a nearly level body can have a tiny leading
+  // diagonal coupled to a well-observed later axis. Eliminating that axis
+  // first loses precision or mistakes its nonzero coupling for an invalid row.
   const double tolerance = std::max(1.0, scale) * 1.0e-12;
-  double lower[6][6]{};
-  double diagonal[6]{};
   for (std::size_t row = 0; row < 6; ++row) {
-    lower[row][row] = 1.0;
-    double pivot = matrix[row][row];
-    for (std::size_t k = 0; k < row; ++k) {
-      pivot -= lower[row][k] * lower[row][k] * diagonal[k];
+    std::size_t pivot_index = row;
+    for (std::size_t i = row + 1; i < 6; ++i) {
+      if (matrix[i][i] > matrix[pivot_index][pivot_index]) pivot_index = i;
     }
-    if (pivot < -tolerance) {
-      return false;
+    if (pivot_index != row) {
+      for (std::size_t i = 0; i < 6; ++i) std::swap(matrix[row][i], matrix[pivot_index][i]);
+      for (std::size_t i = 0; i < 6; ++i) std::swap(matrix[i][row], matrix[i][pivot_index]);
     }
-    diagonal[row] = pivot > tolerance ? pivot : 0.0;
-    for (std::size_t next = row + 1; next < 6; ++next) {
-      double residual = matrix[next][row];
-      for (std::size_t k = 0; k < row; ++k) {
-        residual -= lower[next][k] * lower[row][k] * diagonal[k];
-      }
-      if (diagonal[row] == 0.0) {
-        if (std::abs(residual) > tolerance) {
-          return false;
+    const double pivot = matrix[row][row];
+    if (pivot < -tolerance) return false;
+    if (pivot <= tolerance) {
+      for (std::size_t i = row; i < 6; ++i) {
+        for (std::size_t j = row; j < 6; ++j) {
+          if (std::abs(matrix[i][j]) > tolerance) return false;
         }
-      } else {
-        lower[next][row] = residual / diagonal[row];
+      }
+      return true;
+    }
+    for (std::size_t i = row + 1; i < 6; ++i) {
+      for (std::size_t j = i; j < 6; ++j) {
+        matrix[i][j] -= matrix[i][row] * matrix[j][row] / pivot;
+        matrix[j][i] = matrix[i][j];
       }
     }
   }

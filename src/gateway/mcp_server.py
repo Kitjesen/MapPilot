@@ -22,19 +22,20 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import os
 import threading
 import uuid
 from typing import Any
 
 from fastapi.responses import JSONResponse
 
+from gateway.navigation.commands import CommandBoundaryError
+from gateway.navigation.status import build_navigation_status
 from gateway.schemas import InstructionRequest
-from gateway.services.command_boundary import CommandBoundaryError
 from gateway.services.control_commands import ControlCommandService
-from gateway.services.module_refs import navigation_state as resolve_navigation_state
 from gateway.services.native_control import estop as native_estop
 from runtime.module import Module, skill
-from runtime.msgs.nav import NavigationGoalStatus, NavigationState, Odometry
+from runtime.msgs.nav import NavigationGoalStatus, Odometry
 from runtime.msgs.semantic import SceneGraph
 from runtime.registry import register
 from runtime.status_provider import RuntimeStatusProvider
@@ -44,6 +45,21 @@ logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 _BUILTIN_FALLBACK_TOOLS = frozenset({"emergency_stop", "send_instruction"})
+
+
+def _motion_tools_blocked(status: dict[str, Any] | None) -> bool:
+    try:
+        return (
+            status["task"]["state"] == "UNKNOWN"
+            or status["goal_admission"]["state"] != "ACCEPTING"
+            or status["control"]["authority"] in {"OPERATOR", "UNKNOWN"}
+            or status["control"]["resume_required"] is not False
+            or status["motion"]["permission"] != "CLEAR"
+            or status["motion"]["observation"] == "UNKNOWN"
+            or status["motion"]["stop_confirmation"] == "UNKNOWN"
+        )
+    except (KeyError, TypeError):
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +103,6 @@ class MCPServerModule(Module, layer=6):
     # -- receive telemetry for read-only queries ----------------------------
     odometry: In[Odometry]
     scene_graph: In[SceneGraph]
-    navigation_state: In[NavigationState]
     navigation_goal_status: In[NavigationGoalStatus]
 
     # -- outgoing commands --------------------------------------------------
@@ -115,7 +130,6 @@ class MCPServerModule(Module, layer=6):
         # Cached telemetry (written by subscriptions)
         self._odom: dict | None = None
         self._sg_json: str = "{}"
-        self._navigation_state: dict | None = None
         self._navigation_goal_status_by_request: dict[str, dict[str, Any]] = {}
 
         # Injected by the Host after module startup.
@@ -138,6 +152,22 @@ class MCPServerModule(Module, layer=6):
     def set_system_handle(self, handle: Any) -> None:
         """Inject SystemHandle so get_health / list_modules work."""
         self._system_handle = handle
+
+    def _capabilities_payload(self) -> dict[str, Any]:
+        gateway = (self._all_modules or {}).get("GatewayModule")
+        navigation_status = build_navigation_status(gateway) if gateway is not None else None
+        tool_names = [tool["name"] for tool in self._tool_list]
+        return {
+            "schema_version": 1,
+            "server": "lingtu-mcp",
+            "protocol_version": MCP_PROTOCOL_VERSION,
+            "tools_available": len(tool_names),
+            "tool_names": sorted(tool_names),
+            "navigation_status": navigation_status,
+            "motion_tools_blocked": _motion_tools_blocked(navigation_status),
+            "has_system_handle": self._system_handle is not None,
+            "tool_timeout_s": float(os.environ.get("LINGTU_MCP_TOOL_TIMEOUT_S", "10")),
+        }
 
     def set_runtime_status_provider(self, provider: RuntimeStatusProvider) -> None:
         """Inject read-only runtime diagnostics without SystemHandle ownership."""
@@ -220,7 +250,6 @@ class MCPServerModule(Module, layer=6):
     def setup(self) -> None:
         self.odometry.subscribe(self._on_odom)
         self.scene_graph.subscribe(self._on_sg)
-        self.navigation_state.subscribe(self._on_navigation_state)
         self.navigation_goal_status.subscribe(self._on_navigation_goal_status)
 
     def start(self) -> None:
@@ -300,9 +329,6 @@ class MCPServerModule(Module, layer=6):
 
     def _on_sg(self, sg: SceneGraph) -> None:
         self._sg_json = sg.to_json() if hasattr(sg, "to_json") else str(sg)
-
-    def _on_navigation_state(self, state: NavigationState) -> None:
-        self._navigation_state = state.to_dict()
 
     def _on_navigation_goal_status(self, status: NavigationGoalStatus) -> None:
         self._navigation_goal_status_by_request[status.request_id] = status.to_dict()
@@ -629,8 +655,6 @@ class MCPServerModule(Module, layer=6):
         current = threading.current_thread()
         self._server_error = None
         try:
-            import os
-
             import uvicorn
             from fastapi import FastAPI
             from fastapi.middleware.cors import CORSMiddleware
@@ -743,19 +767,7 @@ class MCPServerModule(Module, layer=6):
             Returns available tools grouped by category, along with
             system state that affects tool availability.
             """
-            nav_state = resolve_navigation_state(mcp._navigation_state)
-            tool_names = [t["name"] for t in mcp._tool_list]
-            return {
-                "schema_version": 1,
-                "server": "lingtu-mcp",
-                "protocol_version": MCP_PROTOCOL_VERSION,
-                "tools_available": len(tool_names),
-                "tool_names": sorted(tool_names),
-                "navigation_state": nav_state or "UNKNOWN",
-                "motion_tools_blocked": nav_state != "IDLE" and nav_state != "",
-                "has_system_handle": mcp._system_handle is not None,
-                "tool_timeout_s": float(os.environ.get("LINGTU_MCP_TOOL_TIMEOUT_S", "10")),
-            }
+            return mcp._capabilities_payload()
 
         try:
             config = uvicorn.Config(

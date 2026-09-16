@@ -18,18 +18,17 @@ from typing import Any, Callable
 from gateway.services.cloud_scene_cache import CloudSceneCache
 from gateway.services.cloud_ws import CloudWs
 from gateway.services.traffic import DEFAULT_CLOUD_QUEUE_MAXSIZE
+from message.topics import TOPICS
+from runtime.msgs.map import MapObservationFrame
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import PointCloud2
-from runtime.runtime_interface import (
-    TOPICS,
-    normalize_frame_id,
-    runtime_topic_allowed_frame_ids,
-    topic_default_frame_id,
-)
+from runtime.tf.frames import normalize_frame_id, runtime_topic_allowed_frame_ids, topic_default_frame_id
 from runtime.utils.binary_codec import encode_pointcloud
 
 _MAX_BROWSER_CLOUD_POINTS = 1_000_000
 _MAX_BROWSER_ELEVATION_CELLS = 131_072
+_MAX_BROWSER_OCCUPANCY_CELLS = 131_072
+_MAX_BROWSER_GROUND_DIAGNOSTIC_CELLS = 131_072
 _ELEVATION_MIN_INTERVAL_S = 1.0
 
 
@@ -45,6 +44,15 @@ def _as_layer_dict(layer: Any) -> dict[str, Any] | None:
         if isinstance(value, dict):
             return dict(value)
     return None
+
+
+def _browser_epoch_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    """Keep the native uint64 epoch exact across the browser JSON boundary."""
+    result = dict(fields)
+    epoch = result.get("reset_epoch")
+    if isinstance(epoch, int) and not isinstance(epoch, bool):
+        result["reset_epoch"] = str(epoch)
+    return result
 
 
 def _finite_label(value: Any) -> int | None:
@@ -224,6 +232,23 @@ def _is_elevation_layer(layer: dict[str, Any], layer_type: str) -> bool:
     return normalized_type in {"grid", "elevation"} and (layer_id == "maps.elevation" or topic == TOPICS.maps_elevation)
 
 
+def _is_occupancy_layer(layer: dict[str, Any], layer_type: str) -> bool:
+    return layer_type.strip().lower() in {"grid", "occupancy"} and (
+        str(layer.get("id") or "").strip().lower() == "maps.occupancy"
+        or layer.get("topic") == TOPICS.maps_occupancy
+    )
+
+
+def _is_ground_diagnostic_layer(layer: dict[str, Any], layer_type: str) -> bool:
+    return layer_type.strip().lower() == "grid" and str(
+        layer.get("id") or ""
+    ).strip().lower() in {
+        "maps.ground_height",
+        "maps.ground_roughness",
+        "maps.ground_support",
+    }
+
+
 def _finite_float(value: Any, default: float = 0.0) -> float:
     try:
         result = float(value)
@@ -300,7 +325,7 @@ def _downsample_min_observed_z(source: np.ndarray, factor: int) -> np.ndarray:
     return np.ascontiguousarray(values, dtype="<f4")
 
 
-def _elevation_source_shape(layer: dict[str, Any]) -> tuple[int, int] | None:
+def _raster_source_shape(layer: dict[str, Any]) -> tuple[int, int] | None:
     metadata = layer.get("metadata")
     metadata = metadata if isinstance(metadata, dict) else {}
     declared_rows = _int_or_none(metadata.get("height", layer.get("source_rows")))
@@ -324,6 +349,99 @@ def _elevation_source_shape(layer: dict[str, Any]) -> tuple[int, int] | None:
     return rows, cols
 
 
+def _occupancy_grid_contract(layer: dict[str, Any], frame: dict[str, Any]) -> dict[str, Any] | None:
+    """Expose observed occupancy without promoting unknown cells to free space."""
+    metadata = layer.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    frame_metadata = frame.get("metadata")
+    frame_metadata = frame_metadata if isinstance(frame_metadata, dict) else {}
+    shape = _raster_source_shape(layer)
+    if shape is None or layer.get("grid") is None:
+        return None
+    try:
+        source = np.asarray(layer["grid"])
+        if not np.all((source == -1) | (source == 0) | (source == 100)):
+            return None
+        rows, cols = shape
+        factor = _grid_downsample_factor(rows, cols, _MAX_BROWSER_OCCUPANCY_CELLS)
+        occupied = source == 100
+        free = source == 0
+        if factor > 1:
+            row_starts = np.arange(0, rows, factor)
+            col_starts = np.arange(0, cols, factor)
+            occupied = np.logical_or.reduceat(occupied, row_starts, axis=0)
+            occupied = np.logical_or.reduceat(occupied, col_starts, axis=1)
+            free = np.logical_and.reduceat(free, row_starts, axis=0)
+            free = np.logical_and.reduceat(free, col_starts, axis=1)
+            # A partial edge block extends beyond the observed source window.
+            if rows % factor:
+                free[-1, :] = False
+            if cols % factor:
+                free[:, -1] = False
+        sampled = np.where(occupied, 100, np.where(free, 0, -1)).astype(np.int8)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+    stamp_s = _finite_float(layer.get("source_stamp_s", layer.get("stamp_s", layer.get("ts", frame.get("ts")))))
+    resolution = _finite_float(layer.get("resolution", metadata.get("resolution")))
+    frame_id = str(layer.get("frame_id") or frame.get("frame_id") or "").strip()
+    producer_boot_id = str(
+        layer.get("producer_boot_id", metadata.get("producer_boot_id", frame_metadata.get("producer_boot_id", "")))
+        or ""
+    ).strip()
+    if stamp_s <= 0 or resolution <= 0 or not frame_id or not producer_boot_id:
+        return None
+    identity: dict[str, int] = {}
+    for key in ("reset_epoch", "generation", "observation_sequence"):
+        raw = layer.get(key, metadata.get(key, frame_metadata.get(key)))
+        value = _int_or_none(raw)
+        if value is None or value < 0 or value != raw:
+            return None
+        identity[key] = value
+    raw_origin = layer.get("origin", metadata.get("origin"))
+    if isinstance(raw_origin, dict):
+        origin_values = list(raw_origin.values())
+    elif isinstance(raw_origin, (list, tuple)) and len(raw_origin) >= 2:
+        origin_values = list(raw_origin)
+    else:
+        return None
+    if not origin_values or not all(math.isfinite(_finite_float(value, math.nan)) for value in origin_values):
+        return None
+    raw_yaw = layer.get("yaw", metadata.get("yaw", 0.0))
+    if not math.isfinite(_finite_float(raw_yaw, math.nan)):
+        return None
+    origin, yaw = _origin_xyz_yaw(layer, metadata)
+    return {
+        **{key: str(layer[key]) for key in ("id", "type", "layer_type", "topic", "source") if key in layer},
+        **identity,
+        "frame_id": frame_id,
+        "producer_boot_id": producer_boot_id,
+        "stamp_s": stamp_s,
+        "live": bool(layer.get("live", metadata.get("live", frame_metadata.get("live", False)))),
+        "encoding": "int8",
+        "value_semantics": (
+            "ground_relative_surface_not_traversability"
+            if layer.get("id") == "maps.surface_projection"
+            else "height_band_occupancy_not_traversability"
+        ),
+        "scope": "rolling_window",
+        "grid_b64": base64.b64encode(sampled.tobytes(order="C")).decode("ascii"),
+        "rows": int(sampled.shape[0]),
+        "cols": int(sampled.shape[1]),
+        "resolution": resolution * factor,
+        "origin": origin,
+        "yaw": yaw,
+        "downsample_factor": factor,
+        "source_rows": rows,
+        "source_cols": cols,
+        "unknown_count": int(np.count_nonzero(sampled == -1)),
+        "free_count": int(np.count_nonzero(sampled == 0)),
+        "occupied_count": int(np.count_nonzero(sampled == 100)),
+        "payload": "inline",
+        "retain_previous": False,
+    }
+
+
 def _elevation_layer_metadata(
     layer: dict[str, Any],
     frame: dict[str, Any],
@@ -342,7 +460,7 @@ def _elevation_layer_metadata(
         ),
         now,
     )
-    source_shape = _elevation_source_shape(layer)
+    source_shape = _raster_source_shape(layer)
     source_rows, source_cols = source_shape if source_shape is not None else (None, None)
     factor = 1
     if source_rows and source_cols and source_rows > 0 and source_cols > 0:
@@ -407,7 +525,7 @@ def _elevation_grid_contract(
         return None
     try:
         source = np.asarray(raw_grid)
-        source_shape = _elevation_source_shape(layer)
+        source_shape = _raster_source_shape(layer)
         if source_shape is None or tuple(source.shape) != source_shape:
             return None
         source_rows, source_cols = source_shape
@@ -463,6 +581,78 @@ def _omit_elevation_payload(
         }
     )
     return layer
+
+
+def _ground_diagnostic_grid_contract(
+    layer: dict[str, Any], frame: dict[str, Any], *, now: float,
+) -> dict[str, Any] | None:
+    """Expose local geometric-fit diagnostics without inventing confidence."""
+    metadata = layer.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    frame_metadata = frame.get("metadata")
+    frame_metadata = frame_metadata if isinstance(frame_metadata, dict) else {}
+    name = str(layer.get("id") or "").strip().lower()
+    semantics = {
+        "maps.ground_height": "local_surface_fit_height_m",
+        "maps.ground_roughness": "local_surface_fit_residual_rms_m",
+        "maps.ground_support": "distinct_fine_xy_support_count",
+    }.get(name)
+    if semantics is None or layer.get("grid") is None:
+        return None
+    source_shape = _raster_source_shape(layer)
+    if source_shape is None:
+        return None
+    rows, cols = source_shape
+    if rows * cols > _MAX_BROWSER_GROUND_DIAGNOSTIC_CELLS:
+        return None
+    try:
+        values = np.ascontiguousarray(np.asarray(layer["grid"], dtype="<f4"))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if values.ndim != 2 or tuple(values.shape) != source_shape:
+        return None
+    resolution = _finite_float(layer.get("resolution", metadata.get("resolution", 0.0)))
+    source_stamp_s = _finite_float(
+        layer.get("source_stamp_s", layer.get("stamp_s", layer.get("ts", frame.get("ts", now)))),
+        now,
+    )
+    origin, yaw = _origin_xyz_yaw(layer, metadata)
+    frame_id = str(layer.get("frame_id") or frame.get("frame_id") or "").strip()
+    producer_boot_id = str(
+        layer.get("producer_boot_id", metadata.get("producer_boot_id", frame_metadata.get("producer_boot_id", "")))
+        or ""
+    ).strip()
+    if source_stamp_s <= 0 or resolution <= 0 or not frame_id or not producer_boot_id:
+        return None
+    identity: dict[str, int] = {}
+    for key in ("reset_epoch", "generation", "observation_sequence"):
+        value = _int_or_none(layer.get(key, metadata.get(key, frame_metadata.get(key))))
+        if value is None or value < 0:
+            return None
+        identity[key] = value
+    if not all(math.isfinite(value) for value in (*origin, yaw)):
+        return None
+    return {
+        **{key: str(layer[key]) for key in ("id", "type", "layer_type", "topic", "source") if key in layer},
+        **identity,
+        "frame_id": frame_id,
+        "producer_boot_id": producer_boot_id,
+        "stamp_s": source_stamp_s,
+        "live": bool(layer.get("live", metadata.get("live", frame_metadata.get("live", False)))),
+        "encoding": "float32_le",
+        "value_semantics": semantics,
+        "scope": "rolling_window",
+        "grid_b64": base64.b64encode(values.tobytes(order="C")).decode("ascii"),
+        "rows": rows,
+        "cols": cols,
+        "resolution": resolution,
+        "origin": origin,
+        "yaw": yaw,
+        "valid_count": int(np.count_nonzero(np.isfinite(values))),
+        "downsample_factor": 1,
+        "payload": "inline",
+        "retain_previous": False,
+    }
 
 
 def _env_float(name: str, default: float) -> float:
@@ -598,6 +788,7 @@ class CloudViewerService:
         self._scene_map_id: str | None = None
         self._scene_epoch = 1
         self._wire_cloud_sequence = 0
+        self._map_source_stamp_s = 0.0
         self._wire_scan_sequence = 0
         self._scan_incompatible_frame_drops = 0
         self._last_incompatible_scan_frame_id: str | None = None
@@ -620,6 +811,9 @@ class CloudViewerService:
             _env_float("LINGTU_CLOUD_ABS_LIMIT_M", 10000.0),
         )
         self._last_scan_publish_ts = 0.0
+        self._observation_epoch = 0
+        self._observation_sequence = 0
+        self._stale_observation_drops = 0
 
     def viewer_scan_allowed_frames(self) -> set[str]:
         frames = runtime_topic_allowed_frame_ids(None).get(
@@ -673,6 +867,40 @@ class CloudViewerService:
         with self._scene_lock:
             self._on_map_scene_locked(frame)
 
+    def on_map_observation(self, frame: MapObservationFrame) -> None:
+        """Render a current registered scan using its exact scan-time transform."""
+        with self._scene_lock:
+            age_s = time.time() - frame.ts
+            if (
+                age_s > 2.0
+                or age_s < -1.0
+                or frame.reset_epoch < self._observation_epoch
+                or (
+                    frame.reset_epoch == self._observation_epoch
+                    and frame.sequence <= self._observation_sequence
+                )
+            ):
+                self._stale_observation_drops += 1
+                return
+            if self._observation_epoch and frame.reset_epoch != self._observation_epoch:
+                self._clear_locked(
+                    reason="slam_observation_epoch_changed",
+                    scene_map_id=self._current_saved_active_map(),
+                )
+            self._observation_epoch = frame.reset_epoch
+            self._observation_sequence = frame.sequence
+            if not self._scan_ws.has_subscribers():
+                return
+            # The input coordinates are in sensor_frame_id (normally body), not map.
+            cloud = PointCloud2(
+                points=frame.map_points(), frame_id=frame.frame_id, ts=frame.ts,
+            )
+            if not self.is_viewer_scan_frame_compatible(cloud):
+                self._scan_incompatible_frame_drops += 1
+                self._last_incompatible_scan_frame_id = cloud.frame_id
+                return
+            self._handle_scan_cloud_locked(cloud, source="registered_scan", observation=frame)
+
     def _on_map_scene_locked(self, frame: Any) -> None:
         now = time.time()
         self._last_map_scene_ts = now
@@ -682,12 +910,33 @@ class CloudViewerService:
         else:
             layers = list(getattr(frame, "layers", []) or [])
             frame_dict = frame.to_dict(include_payload=False)
+        scene_layers = [item for layer in layers if (item := _as_layer_dict(layer)) is not None]
+        native_cloud_layers = {
+            str(layer.get("id")): layer
+            for layer in scene_layers
+            if (layer.get("source") == "mapd" or frame_dict.get("source") == "mapd")
+            and str(layer.get("type") or layer.get("layer_type")) == "pointcloud"
+            and layer.get("id") in {"maps.accumulated_cloud", "maps.voxel_cloud", "maps.live_cloud"}
+        }
+        selected_cloud = None
+        cloud_order = (
+            ("maps.voxel_cloud", "maps.accumulated_cloud", "maps.live_cloud")
+            if self._session_mode() in ("mapping", "exploring")
+            else ("maps.live_cloud", "maps.voxel_cloud", "maps.accumulated_cloud")
+        )
+        for identifier in cloud_order:
+            candidate = native_cloud_layers.get(identifier)
+            payload = (candidate.get("payload") or candidate.get("cloud")) if candidate else None
+            if (
+                isinstance(payload, PointCloud2) and payload.points is not None
+                and normalize_frame_id(payload.frame_id) == normalize_frame_id(frame_dict.get("frame_id"))
+                and self.is_viewer_scan_frame_compatible(payload)
+            ):
+                selected_cloud = candidate
+                break
         consumed = 0
         event_layers: list[dict[str, Any]] = []
-        for layer in layers:
-            layer_dict = _as_layer_dict(layer)
-            if layer_dict is None:
-                continue
+        for layer_dict in scene_layers:
             layer_type = str(layer_dict.get("type") or layer_dict.get("layer_type") or "")
             source = str(layer_dict.get("source") or layer_dict.get("id") or "maps.scene")
             payload = layer_dict.get("payload") or layer_dict.get("cloud")
@@ -695,17 +944,42 @@ class CloudViewerService:
             if layer_type == "pointcloud" and isinstance(payload, PointCloud2):
                 point_count = int(len(payload.points)) if payload.points is not None else 0
                 semantic_info = _semantic_layer_info(layer_dict, point_count)
-                if not self._accept_map_frame(payload):
-                    continue
-                self.handle_view_cloud(
-                    payload,
-                    source=source,
-                    authoritative=True,
-                    colors=_semantic_colors(semantic_info),
-                )
-                consumed += 1
+                if not native_cloud_layers or layer_dict is selected_cloud:
+                    if self._accept_map_frame(payload):
+                        self._handle_view_cloud_locked(
+                            payload,
+                            source=str(layer_dict["id"]) if selected_cloud is not None else source,
+                            authoritative=True,
+                            colors=_semantic_colors(semantic_info),
+                            replace_snapshot=selected_cloud is not None and layer_dict.get("id") != "maps.live_cloud",
+                        )
+                        consumed += 1
             event_layer = _semantic_event_layer(layer_dict, semantic_info)
-            if _is_elevation_layer(layer_dict, layer_type):
+            if _is_occupancy_layer(layer_dict, layer_type) or layer_dict.get("id") == "maps.surface_projection":
+                event_layer = _occupancy_grid_contract(layer_dict, frame_dict) or {
+                    **{
+                        key: str(event_layer[key])
+                        for key in ("id", "type", "layer_type", "topic", "source")
+                        if key in event_layer
+                    },
+                    "payload": "omitted",
+                    "reason": "unsafe_occupancy_payload",
+                    "retain_previous": False,
+                }
+            elif _is_ground_diagnostic_layer(layer_dict, layer_type):
+                event_layer = _ground_diagnostic_grid_contract(
+                    layer_dict, frame_dict, now=now,
+                ) or {
+                    **{
+                        key: str(event_layer[key])
+                        for key in ("id", "type", "layer_type", "topic", "source")
+                        if key in event_layer
+                    },
+                    "payload": "omitted",
+                    "reason": "unavailable_ground_diagnostic",
+                    "retain_previous": False,
+                }
+            elif _is_elevation_layer(layer_dict, layer_type):
                 event_layer = {
                     key: str(event_layer[key])
                     for key in ("id", "type", "layer_type", "topic", "source")
@@ -757,7 +1031,7 @@ class CloudViewerService:
                 )
                 same_cohort = cohort is not None and cohort == self._last_elevation_cohort
                 same_identity = identity is not None and identity == self._last_elevation_identity
-                source_geometry_safe = layer_dict.get("grid") is None or _elevation_source_shape(layer_dict) is not None
+                source_geometry_safe = layer_dict.get("grid") is None or _raster_source_shape(layer_dict) is not None
                 if not source_geometry_safe:
                     self._last_elevation_identity = None
                     self._last_elevation_cohort = None
@@ -802,6 +1076,9 @@ class CloudViewerService:
                         elevation["payload"] = "inline"
                         elevation["retain_previous"] = False
                         event_layer = elevation
+            event_layer = _browser_epoch_fields(event_layer)
+            if isinstance(event_layer.get("metadata"), dict):
+                event_layer["metadata"] = _browser_epoch_fields(event_layer["metadata"])
             event_layers.append(event_layer)
         if consumed or event_layers:
             self._push_event(
@@ -813,7 +1090,7 @@ class CloudViewerService:
                     "frame_id": frame_dict.get("frame_id"),
                     "sequence": frame_dict.get("sequence"),
                     "map_id": frame_dict.get("map_id"),
-                    "metadata": frame_dict.get("metadata") or {},
+                    "metadata": _browser_epoch_fields(frame_dict.get("metadata") or {}),
                     "layers": event_layers or frame_dict.get("layers") or [],
                     "consumed_pointcloud_layers": consumed,
                 }
@@ -836,6 +1113,7 @@ class CloudViewerService:
         cloud: PointCloud2,
         *,
         source: str,
+        observation: MapObservationFrame | None = None,
     ) -> None:
         now = time.time()
         min_interval_s = self._scan_viewer_min_interval_s
@@ -857,8 +1135,10 @@ class CloudViewerService:
         else:
             scan_pts = self.voxel_downsample(pts, self._scan_viewer_voxel_size)
         if len(scan_pts) > self._scan_viewer_max_points:
-            stride = max(1, len(scan_pts) // self._scan_viewer_max_points)
-            scan_pts = scan_pts[::stride][: self._scan_viewer_max_points]
+            indices = np.linspace(
+                0, len(scan_pts) - 1, self._scan_viewer_max_points, dtype=np.int64,
+            )
+            scan_pts = scan_pts[indices]
         if len(scan_pts) == 0:
             return
 
@@ -893,6 +1173,14 @@ class CloudViewerService:
                 "wire_sequence": wire_sequence,
                 "stamp_s": stamp_s,
                 "session_mode": self._session_mode(),
+                **(
+                    {
+                        "source_epoch": observation.reset_epoch,
+                        "observation_sequence": observation.sequence,
+                        "sensor_frame_id": observation.sensor_frame_id,
+                    }
+                    if observation is not None else {}
+                ),
                 "z_min": float(np.min(z_values)),
                 "z_max": float(np.max(z_values)),
             },
@@ -922,17 +1210,18 @@ class CloudViewerService:
         source: str,
         authoritative: bool,
         colors: np.ndarray | None = None,
+        replace_snapshot: bool = False,
     ) -> None:
         map_frame_count = self._map_cache.record_frame()
         cloud_points = cloud.points
-        if cloud_points is None or len(cloud_points) == 0:
+        if cloud_points is None or (len(cloud_points) == 0 and not replace_snapshot):
             return
         raw_pts = cloud_points[:, :3].astype(np.float32)
         finite = np.isfinite(raw_pts).all(axis=1)
         bounded = (np.abs(raw_pts) < self._cloud_abs_limit_m).all(axis=1)
         valid = finite & bounded
         pts = raw_pts[valid]
-        if len(pts) == 0:
+        if len(pts) == 0 and (len(raw_pts) > 0 or not replace_snapshot):
             return
         point_colors: np.ndarray | None = None
         if colors is not None and len(colors) == len(raw_pts):
@@ -943,11 +1232,21 @@ class CloudViewerService:
         aligned_colors: np.ndarray | None = None
         with self._map_cloud_lock:
             if authoritative:
-                clean_pts, clean_indices = self.voxel_downsample_with_indices(
-                    pts,
-                    self._map_voxel_size,
-                )
-                if mode == "navigating" or self._map_points is None:
+                if replace_snapshot:
+                    # Native mapd snapshots already have their own voxel resolution.
+                    # Preserve their surfaces independently of the scan cache voxel size.
+                    clean_indices = (
+                        np.linspace(0, len(pts) - 1, self._map_viewer_max_points, dtype=np.int64)
+                        if len(pts) > self._map_viewer_max_points
+                        else np.arange(len(pts))
+                    )
+                    clean_pts = pts[clean_indices]
+                else:
+                    clean_pts, clean_indices = self.voxel_downsample_with_indices(
+                        pts,
+                        self._map_voxel_size,
+                    )
+                if replace_snapshot or mode == "navigating" or self._map_points is None:
                     self.replace_map_points(clean_pts)
                     if point_colors is not None:
                         aligned_color_points = clean_pts
@@ -968,6 +1267,10 @@ class CloudViewerService:
                 self.merge_map_points_incremental(sampled_pts)
                 self._map_cache.record_hits(pts)
 
+        # Source time belongs to the cached geometry, not the HTTP reader or WS throttle.
+        source_stamp_s = _finite_float(getattr(cloud, "ts", None))
+        self._map_source_stamp_s = source_stamp_s if source_stamp_s > 0 else time.time()
+
         if not authoritative and map_frame_count % 2 != 0:
             return
 
@@ -976,20 +1279,25 @@ class CloudViewerService:
             return
 
         max_send = 60_000
-        if len(pts_all) > max_send:
+        send_indices = None
+        if replace_snapshot and len(pts_all) > max_send:
+            send_indices = np.linspace(0, len(pts_all) - 1, max_send, dtype=np.int64)
+            pts_send = pts_all[send_indices]
+        elif len(pts_all) > max_send:
             scale = (len(pts_all) / max_send) ** (1 / 3)
             coarse_voxel = self._map_voxel_size * max(1.0, scale)
             pts_send = self.voxel_downsample(pts_all, coarse_voxel)
             if len(pts_send) > max_send:
-                stride = max(1, len(pts_send) // max_send)
-                pts_send = pts_send[::stride][:max_send]
+                indices = np.linspace(0, len(pts_send) - 1, max_send, dtype=np.int64)
+                pts_send = pts_send[indices]
         else:
             pts_send = pts_all
 
         cache_point_count = int(len(pts_all))
         publish_ts = time.time()
-        if not self.should_publish_view_cloud(
+        if not (replace_snapshot and cache_point_count == 0) and not self.should_publish_view_cloud(
             mode=mode,
+            replace_snapshot=replace_snapshot,
             cache_points=cache_point_count,
             now=publish_ts,
         ):
@@ -1004,21 +1312,17 @@ class CloudViewerService:
         if (
             aligned_colors is not None
             and aligned_color_points is not None
-            and len(pts_send) == len(pts_all) == len(aligned_colors)
+            and len(pts_all) == len(aligned_colors)
+            and (send_indices is not None or len(pts_send) == len(pts_all))
             and np.array_equal(pts_all, aligned_color_points)
         ):
-            send_colors = aligned_colors
+            send_colors = aligned_colors[send_indices] if send_indices is not None else aligned_colors
         frame_id = (
             self._viewer_frame_id
             or normalize_frame_id(getattr(cloud, "frame_id", None))
             or topic_default_frame_id(TOPICS.map_cloud)
         )
-        try:
-            stamp_s = float(getattr(cloud, "ts", 0.0) or publish_ts)
-        except (TypeError, ValueError):
-            stamp_s = publish_ts
-        if not np.isfinite(stamp_s):
-            stamp_s = publish_ts
+        stamp_s = self._map_source_stamp_s
         wire_sequence = self._next_wire_sequence("map")
         buf = encode_pointcloud(
             pts_send[:, :3],
@@ -1062,14 +1366,14 @@ class CloudViewerService:
         self._last_view_cloud_publish_ts = publish_ts
         self._last_view_cloud_publish_cache_points = cache_point_count
 
-    def should_publish_view_cloud(self, *, mode: str, cache_points: int, now: float) -> bool:
+    def should_publish_view_cloud(self, *, mode: str, cache_points: int, now: float, replace_snapshot: bool = False) -> bool:
         last_ts = self._last_view_cloud_publish_ts
         if last_ts <= 0.0:
             return True
         elapsed = max(0.0, now - last_ts)
         if elapsed < self._cloud_viewer_min_interval_s:
             return False
-        if mode in ("mapping", "exploring"):
+        if not replace_snapshot and mode in ("mapping", "exploring"):
             delta = cache_points - self._last_view_cloud_publish_cache_points
             if delta < self._cloud_viewer_min_point_delta and elapsed < self._cloud_viewer_force_interval_s:
                 return False
@@ -1280,7 +1584,7 @@ class CloudViewerService:
                 "frame_id": self._viewer_frame_id or topic_default_frame_id(TOPICS.map_cloud),
                 "epoch": self._scene_epoch,
                 "sequence": self._wire_cloud_sequence,
-                "stamp_s": snapshot_ts,
+                "stamp_s": self._map_source_stamp_s,
                 "stream_kind": "reset",
                 "source": "live_map_cloud",
                 "points": [],
@@ -1288,7 +1592,7 @@ class CloudViewerService:
             }
 
         if len(pts) > limit:
-            idx = np.random.choice(len(pts), limit, replace=False)
+            idx = np.linspace(0, len(pts) - 1, limit, dtype=np.int64)
             pts = pts[idx]
 
         return {
@@ -1299,7 +1603,7 @@ class CloudViewerService:
             "frame_id": self._viewer_frame_id or topic_default_frame_id(TOPICS.map_cloud),
             "epoch": self._scene_epoch,
             "sequence": self._wire_cloud_sequence,
-            "stamp_s": snapshot_ts,
+            "stamp_s": self._map_source_stamp_s,
             "stream_kind": "map",
             "source": "live_map_cloud",
             "bounds": {
@@ -1341,7 +1645,8 @@ class CloudViewerService:
             else None,
             "scan_voxel_size_m": self._scan_viewer_voxel_size,
             "scan_max_points": self._scan_viewer_max_points,
-            "scan_source": "lidar_scan",
+            "scan_source": latest_scan.get("source", "lidar_scan"),
+            "stale_observation_drops": self._stale_observation_drops,
             "viewer_frame_id": self._viewer_frame_id,
             "scene_epoch": self._scene_epoch,
             "scan_overlay_allowed_frames": sorted(self.viewer_scan_allowed_frames()),
@@ -1387,6 +1692,7 @@ class CloudViewerService:
         self._last_scan_publish_ts = 0.0
 
         now = time.time()
+        self._map_source_stamp_s = now
         cloud_wire_sequence = self._next_wire_sequence("map")
         cloud_reset = encode_pointcloud(
             np.empty((0, 3), dtype=np.float32),
@@ -1469,7 +1775,22 @@ class CloudViewerService:
                         "reason": "scene_reset",
                         "retain_previous": False,
                         "retention_scope": "same_elevation_cohort",
-                    }
+                    },
+                    *[
+                        {
+                            "id": layer_id,
+                            "type": "grid",
+                            "frame_id": reset_frame_id,
+                            "payload": "omitted",
+                            "reason": "scene_reset",
+                            "retain_previous": False,
+                        }
+                        for layer_id in (
+                            "maps.ground_height",
+                            "maps.ground_roughness",
+                            "maps.ground_support",
+                        )
+                    ],
                 ],
                 "consumed_pointcloud_layers": 0,
             }

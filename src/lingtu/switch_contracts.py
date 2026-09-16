@@ -6,15 +6,18 @@ import re
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 if TYPE_CHECKING:
     from lingtu.products import ProductName
 
 SWITCH_REPORT_SCHEMA = "lingtu.product_switch.v1"
 PROCESS_REPORT_SCHEMA = "lingtu.process_report.v2"
-MAP_ACTIVATION_TOKEN_SCHEMA = "lingtu.map_activation.v2"  # noqa: S105
+MAP_ACTIVATION_TOKEN_SCHEMA = "lingtu.map_activation.v2"
 _PRODUCT_SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}\Z")
+
+# Map-frame body seed: legacy X/Y/YAW (Z=0), or explicit X/Y/Z/YAW.
+InitialPose: TypeAlias = tuple[float, float, float] | tuple[float, float, float, float]
 
 
 class ProcessError(RuntimeError):
@@ -92,14 +95,17 @@ class SwitchRequest:
     target_product: ProductName
     map_name: str | None = None
     relocalize: bool = True
-    initial_pose: tuple[float, float, float] | None = None
+    initial_pose: InitialPose | None = None
     local_planner: str | None = None
     parameter_overrides: Mapping[str, Any] = field(default_factory=dict)
+    variant: str | None = None
 
     @property
     def product_variant(self) -> str | None:
-        """Select the internal Explore route without exposing another Product."""
+        """Use an explicit variant, or derive the existing Explore map route."""
 
+        if self.variant is not None:
+            return self.variant
         if self.target_product != "explore":
             return None
         return "map" if str(self.map_name or "").strip() else "live"

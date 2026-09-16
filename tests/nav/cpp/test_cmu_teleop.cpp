@@ -264,6 +264,8 @@ TEST(CmuTeleop, PreservesAdmittedDirection) {
   EXPECT_NEAR(replanned.target.x, 4.5, 1e-9);
   EXPECT_NEAR(replanned.target.y, 0.0, 1e-9)
       << "planner-induced yaw must not rotate the admitted operator direction";
+  EXPECT_GT(replanned.cmd_vel.wz, 0.0)
+      << "CMU must steer the detoured body back toward the admitted corridor";
 }
 
 TEST(CmuTeleop, LateralIntentTurnsTowardSelectedPath) {

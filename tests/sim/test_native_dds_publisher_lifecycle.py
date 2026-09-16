@@ -969,6 +969,7 @@ def test_driver_bridge_shutdown_drains_pending_command_then_applies_terminal_zer
         DriverBridge(),
         imu_period_s=0.005,
         step_seq=40,
+        on_physics_step=lambda: events.append(("contact_observation",)),
     )
 
     assert last_step == 42
@@ -976,10 +977,12 @@ def test_driver_bridge_shutdown_drains_pending_command_then_applies_terminal_zer
         ("prepare", 0.0),
         ("step", 0.2, 0.005),
         ("applied", "nav", 41),
+        ("contact_observation",),
         ("deactivate",),
         ("prepare", pytest.approx(3.0, abs=0.05)),
         ("step", 0.0, 0.005),
         ("applied", "deactivate_zero", 42),
+        ("contact_observation",),
         ("stopped", 3.0),
     ]
 

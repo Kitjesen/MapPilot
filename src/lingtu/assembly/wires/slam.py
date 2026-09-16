@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from runtime.runtime_interface import TOPICS
+from message.topics import TOPICS
 from runtime.wiring import WireSpec
 
 from .context import (

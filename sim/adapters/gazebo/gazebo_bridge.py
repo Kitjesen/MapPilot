@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from runtime.runtime_interface import FRAMES, TOPICS, RuntimeFrames
-
+from message.topics import TOPICS
+from runtime.tf.frames import FRAMES, RuntimeFrames
 
 FrameContract = RuntimeFrames
 

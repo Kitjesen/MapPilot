@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -16,8 +17,18 @@ def test_state_snapshot_exposes_native_navigation_state_and_client_contract():
     with gateway._state_lock:
         gateway._odom = {"x": 1.0, "y": 2.0}
         gateway._navigation_state = {
+            "ts": time.time(),
+            "boot_id": "boot-1",
             "lifecycle_state_name": "EXECUTING",
+            "active_task_id": "task-1",
+            "active_request_id": "request-1",
             "authority": "autonomy",
+        }
+        gateway._navigation_goal_status_by_task["task-1"] = {
+            "boot_id": "boot-1",
+            "task_id": "task-1",
+            "request_id": "request-1",
+            "state_name": "EXECUTING",
         }
         gateway._mode = "autonomous"
         gateway._teleop_clients = 2
@@ -35,20 +46,25 @@ def test_state_snapshot_exposes_native_navigation_state_and_client_contract():
     payload = build_state_snapshot(gateway)
     monkeypatch.undo()
 
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 4
     assert payload["ts"] > 0
     assert payload["server"]["time"] == payload["ts"]
     assert payload["server"]["api_version"] == "v1"
     assert payload["localization"]["odometry"] == {"x": 1.0, "y": 2.0}
-    assert payload["navigation"]["diagnostics"]["safety"]["stop_active"] is False
-    assert payload["navigation"]["navigation_state"]["lifecycle_state_name"] == "EXECUTING"
+    assert payload["navigation"]["task"]["state"] == "EXECUTING"
+    assert set(payload["navigation"]) == {
+        "schema_version",
+        "task",
+        "goal_admission",
+        "control",
+        "motion",
+        "ts",
+    }
     assert payload["session"]["mode"] == "idle"
     assert payload["lease"]["holder"] is None
     assert payload["teleop"] == {"active": True, "clients": 2}
     assert payload["localization"]["reported_state"] == "TRACKING"
     assert payload["localization"]["confidence"] == 0.8
-    assert payload["navigation"]["state"] == "EXECUTING"
-    assert payload["navigation"]["path"]["points"] == 2
     assert payload["visual_servo"]["follow_available"] is True
     assert payload["scene"]["available"] is True
     assert payload["path"]["points"] == 2
@@ -66,12 +82,66 @@ def test_state_route_returns_stable_snapshot():
     route = next(route for route in gateway._app.routes if route.path == "/api/v1/state")
     payload = asyncio.run(route.endpoint())
 
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 4
     assert payload["ts"] > 0
     assert "odometry" in payload["localization"]
     assert "teleop" in payload
     assert "navigation" in payload
     assert payload["links"]["events"] == "/api/v1/events"
+
+
+def test_state_localization_preserves_bound_runtime_identity():
+    from gateway.gateway_module import GatewayModule
+    from gateway.services.runtime_status import build_localization_status
+    from gateway.services.state_snapshot import build_state_snapshot
+
+    gateway = GatewayModule()
+    gateway._compiled_env = "sim"
+    gateway._compiled_product = "nav"
+    gateway._compiled_product_session_id = "session-1"
+    gateway._compiled_run_plan = SimpleNamespace(required_topics=())
+
+    snapshot = build_state_snapshot(gateway)
+    status = build_localization_status(gateway)
+
+    assert snapshot["localization"]["runtime"] == status["runtime"]
+    assert snapshot["localization"]["runtime"]["env"] == "sim"
+    assert snapshot["localization"]["runtime"]["product"] == "nav"
+    assert snapshot["localization"]["runtime"]["state"] == "active"
+
+
+def test_state_keeps_one_navigation_sample_when_callback_arrives(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.services.state_snapshot import build_state_snapshot
+
+    gateway = GatewayModule()
+    gateway._navigation_state = {
+        "ts": time.time(),
+        "boot_id": "boot-1",
+        "lifecycle_state_name": "EXECUTING",
+        "active_task_id": "task-1",
+        "active_request_id": "request-1",
+        "authority": "autonomy",
+    }
+    gateway._navigation_goal_status_by_task["task-1"] = {
+        "boot_id": "boot-1",
+        "task_id": "task-1",
+        "request_id": "request-1",
+        "state_name": "EXECUTING",
+    }
+
+    def receive_new_state():
+        with gateway._state_lock:
+            gateway._navigation_state = None
+            gateway._navigation_goal_status_by_task.clear()
+        return 0
+
+    monkeypatch.setattr(gateway, "_teleop_client_count", receive_new_state)
+    snapshot = build_state_snapshot(gateway)
+
+    assert snapshot["navigation"]["task"]["task_id"] == "task-1"
+    assert snapshot["navigation"]["task"]["state"] == "EXECUTING"
+    assert gateway._navigation_state is None
 
 
 def test_state_snapshot_includes_camera_media_status():

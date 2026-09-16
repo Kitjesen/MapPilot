@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Collision-proxy contracts for the deterministic Forest_HF world."""
 
@@ -15,7 +14,6 @@ from xml.etree import ElementTree
 
 import pytest
 import yaml
-
 from sim.catalog import CatalogResolver
 from sim.tools.worlds.forest_hf.generate import TerrainSpec, generate_forest_hf
 from sim.tools.worlds.forest_hf.materialize_proxies import (
@@ -263,7 +261,7 @@ def test_every_proxy_preserves_route_spawn_and_goal_clearance() -> None:
 
 def test_mjcf_contains_only_simplified_tree_and_rock_primitives(tmp_path: Path) -> None:
     artifacts = build_collision_proxy_artifacts(_placements(), ROUTES)
-    root = ElementTree.fromstring(artifacts.mjcf)  # noqa: S314 - generated locally
+    root = ElementTree.fromstring(artifacts.mjcf)
     geoms = root.findall("./worldbody/body/geom")
 
     assert len(geoms) == len(artifacts.manifest["proxies"])
@@ -405,7 +403,7 @@ def test_proxy_body_merges_into_the_authoritative_forest_world() -> None:
 """
 
     merged = merge_collision_proxies_into_world(base, artifacts)
-    root = ElementTree.fromstring(merged)  # noqa: S314 - generated locally
+    root = ElementTree.fromstring(merged)
 
     assert root.attrib["model"] == "forest_hf_2_0_0_with_collision_proxies"
     assert root.find("./worldbody/geom[@name='terrain']") is not None

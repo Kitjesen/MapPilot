@@ -147,7 +147,7 @@ inline bool manualModeMayBypassInputGate(const InputGateState &state) noexcept {
   return state.ready || reason == "recovering" || starts_with("odom_") ||
           starts_with("tf_") || starts_with("cloud_") ||
           starts_with("traversability_") || starts_with("local_collision_") ||
-          starts_with("localization_");
+          starts_with("localization_") || starts_with("simulation_clock_");
 }
 
 class InputGate {

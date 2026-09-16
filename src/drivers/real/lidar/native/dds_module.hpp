@@ -3,6 +3,8 @@
 #include "native/module.hpp"
 
 #include <cstdint>
+#include <array>
+#include <optional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -41,7 +43,8 @@ class DdsModule {
   void publish_odom_prior(std::uint64_t timestamp_ns, const OdomPrior& prior);
   void publish_registered_cloud(
       std::uint64_t timestamp_ns,
-      const std::vector<Point>& points);
+      const std::vector<Point>& points,
+      std::optional<std::array<double, 3>> sensor_origin_world = std::nullopt);
 
  private:
   class Impl;

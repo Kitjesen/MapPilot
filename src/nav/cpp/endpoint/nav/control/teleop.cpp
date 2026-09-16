@@ -73,6 +73,7 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
       result.publish.command = {};
       result.delta.cmd_vel_count = input.config.publish_cmd_vel ? 1U : 0U;
     }
+    result.teleop.last_safety_replan = last_safety_replan_;
     result.timing.teleop_gate_ms = elapsedMs(tick_start);
     return result;
   }
@@ -102,8 +103,15 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
       linear_motion_paused = true;
     }
   };
-  const auto replan_motion = [&] {
+  const auto replan_motion = [&](const nav_kernel::Twist &candidate,
+                                 const CommandSafetyDecision &decision) {
     if (!motion_replan_requested && !linear_motion_stopped) {
+      ++last_safety_replan_.count;
+      last_safety_replan_.stamp_steady_s = tick_now;
+      last_safety_replan_.reason = decision.reason;
+      // Keep the pre-smoothing planner candidate with the final rejection.
+      last_safety_replan_.candidate_cmd_vel = candidate;
+      last_safety_replan_.final_cmd_vel = decision.cmd;
       actions_.replan_motion();
       linear_motion_paused = true;
       motion_replan_requested = true;
@@ -146,10 +154,12 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
         arbitrateTeleopCommand(input.safety, *input.active_request, age_s);
     auto decision = precheck;
     bool hard_zero_requested = isZeroCommand(precheck.cmd);
+    // Pure rotation needs final swept-footprint safety, not a translation path.
     const bool use_assisted_planner =
         !input.manual_mode && input.config.teleop_local_planner && input.map_body &&
         precheck.should_publish &&
-        !precheck.stopped && linearSpeed(precheck.cmd) >= input.config.teleop_min_motion_speed_mps;
+        !precheck.stopped && linearSpeed(precheck.cmd) > 1e-6 &&
+        linearSpeed(precheck.cmd) >= input.config.teleop_min_motion_speed_mps;
     if (use_assisted_planner) {
       const auto planner_inputs = actions_.read_plan(tick_now, input.timing);
       const auto *planner_obstacles = planner_inputs.obstacles;
@@ -169,6 +179,9 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
         hard_zero_requested = isZeroCommand(assisted.cmd_vel);
         CommandSafetyConfig path_safety = input.safety;
         path_safety.min_motion_speed_mps = 0.0;
+        path_safety.verified_recovery_translation =
+            assisted.recovery_verified && assisted.recovery_action ==
+                static_cast<int>(nav_kernel::RecoveryAction::Translate);
         const auto final = final_control_.finalize(FinalInput{
             FinalMode::kTeleopPath,
             path_safety,
@@ -185,8 +198,11 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
           if (path_ready && std::abs(decision.cmd.wz) > 1e-6) {
             pause_linear_motion();
           } else {
-            replan_motion();
+            replan_motion(assisted.cmd_vel, decision);
           }
+        } else if (linearSpeed(assisted.cmd_vel) > 1e-6 &&
+                   linearSpeed(decision.cmd) <= 1e-6) {
+          pause_linear_motion();
         }
         if (!decision.stopped && decision.reason == "accepted") {
           decision.reason = assisted.reason;
@@ -197,7 +213,7 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
       } else {
         decision = failClosedDecision("teleop_assist_no_path");
         decision.reason = assisted.reason.empty() ? "teleop_assist_no_path" : assisted.reason;
-        replan_motion();
+        pause_linear_motion();
       }
 
       LocalDiagnostics local;
@@ -223,6 +239,7 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
       local.target_distance_m = assisted.target_distance_m;
       local.target = assisted.target;
       local.local_path_points = assisted.local_path_map.size();
+      local.tracking = assisted.tracking;
       local.path_follower_cmd_vel = assisted.cmd_vel;
       local.cmd_vel = decision.cmd;
       local.final_safety_applied = true;
@@ -240,7 +257,7 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
       result.publish.waypoint = true;
       result.delta.output_count = 1U;
     } else {
-      if (precheck.stopped || !precheck.should_publish) {
+      if (precheck.stopped || !precheck.should_publish || hard_zero_requested) {
         decision = precheck;
       } else {
         const auto final = final_control_.finalize(FinalInput{
@@ -261,6 +278,9 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
       }
       if (input.config.teleop_local_planner) {
         stop_linear_motion();
+        // The owning loop must discard the cancelled translation's status/path.
+        result.local.emplace();
+        result.publish.local_path = true;
       }
     }
 
@@ -287,6 +307,14 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
 
     if (decision.stopped || hard_zero_requested) {
       stop_velocity(decision.reason);
+    }
+
+    if (result.local) {
+      if (linear_motion_stopped || motion_replan_requested) {
+        result.local->tracking = {};
+      } else if (linear_motion_paused && result.local->tracking.active) {
+        result.local->tracking.executionFrozen = true;
+      }
     }
 
     result.teleop.seen = true;
@@ -318,6 +346,7 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
     result.teleop.reason = "auto_active";
   }
 
+  result.teleop.last_safety_replan = last_safety_replan_;
   result.timing.teleop_gate_ms = elapsedMs(tick_start);
   return result;
 }

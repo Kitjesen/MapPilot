@@ -38,6 +38,22 @@ from sim.compat.engine.mujoco.robot_controller import (
 DEFAULT_LEG_JOINT_NAMES = THUNDER_V4_JOINT_NAMES
 
 
+def resolve_scene_asset_paths(scene_root: Any, scene_path: Path) -> None:
+    """Keep world assets in their source scope when merging into robot MJCF."""
+    compiler = scene_root.find("compiler")
+    settings = compiler.attrib if compiler is not None else {}
+    for asset in scene_root.findall("./asset/*[@file]"):
+        filename = Path(asset.attrib["file"])
+        if settings.get("strippath", "false") == "true":
+            filename = Path(filename.name)
+        directory = settings.get("assetdir", "")
+        if asset.tag == "mesh":
+            directory = settings.get("meshdir", directory)
+        elif asset.tag == "texture":
+            directory = settings.get("texturedir", directory)
+        asset.set("file", (scene_path.resolve().parent / directory / filename).resolve().as_posix())
+
+
 def _freeze_scene_euler_orientations(scene_root: Any, mujoco_module: Any) -> None:
     """Preserve scene-local Euler semantics before merging MJCF compiler scopes."""
 
@@ -130,6 +146,7 @@ class MuJoCoEngine(SimEngine):
 
         # Policy controller
         self._policy: Any | None = None
+        self._velocity_feedback = None
         self._policy_path: str = ""
         self._policy_idle_hold = False
         self._policy_idle_cmd_eps = 1e-4
@@ -214,6 +231,7 @@ class MuJoCoEngine(SimEngine):
                     # robot root, raw Euler triples would silently inherit the
                     # robot convention and describe different geometry.
                     _freeze_scene_euler_orientations(scene_root, mujoco)
+                    resolve_scene_asset_paths(scene_root, Path(xml_path))
                     scene_asset = scene_root.find("asset")
                     robot_asset = robot_root.find("asset")
                     scene_size = scene_root.find("size")
@@ -337,6 +355,7 @@ class MuJoCoEngine(SimEngine):
 
         # Initialize policy. Kinematic mode intentionally bypasses the gait
         # policy so route-level navigation tests are not gated by RL checkpoints.
+        self._velocity_feedback = None
         policy_path = self._robot_cfg.policy_onnx
         self._policy_path = str(policy_path or "")
         if self._drive_mode == "kinematic":
@@ -348,6 +367,20 @@ class MuJoCoEngine(SimEngine):
                     policy_path,
                     cpu_threads=self._robot_cfg.policy_cpu_threads,
                 )
+                from .robot_controller import ThunderV4FlatPolicyRunner
+
+                if isinstance(self._policy, ThunderV4FlatPolicyRunner):
+                    from sim.runtime.control import thunderv4_flat as flat
+
+                    self._velocity_feedback = flat.VelocityFeedback((
+                        self._robot_cfg.max_linear_vel, self._robot_cfg.max_linear_vel,
+                        self._robot_cfg.max_angular_vel,
+                    ))
+                    self._robot_cfg.standing_pose = flat.STANDING_POSE.tolist()
+                    self._robot_cfg.torque_kp = flat.KP.tolist()
+                    self._robot_cfg.torque_kd = flat.KD.tolist()
+                    self._robot_cfg.obs_dim = 53
+                    self._robot_cfg.history_len = 1
             else:
                 raise FileNotFoundError(f"MuJoCo policy is missing: {policy_path}")
         else:
@@ -585,6 +618,8 @@ class MuJoCoEngine(SimEngine):
         # Reset policy history (use stabilized real sensor data)
         if self._policy is not None:
             self._policy.reset()
+            if self._velocity_feedback is not None:
+                self._velocity_feedback.reset()
             gyro, pg = self._get_imu()
             jp, jv = self._get_joint_state()
             self._policy.warm_up(gyro, pg, jp, jv)
@@ -784,6 +819,8 @@ class MuJoCoEngine(SimEngine):
 
         if self._policy is not None:
             idle_command = self._is_idle_policy_command(direction)
+            if idle_command and self._velocity_feedback is not None:
+                self._velocity_feedback.reset()
             if idle_command and not bool(getattr(self._policy, "run_at_idle", False)):
                 self._policy_idle_hold = True
                 standing_dart = self._robot_cfg.standing_pose_array
@@ -794,6 +831,12 @@ class MuJoCoEngine(SimEngine):
                 # one-time startup hold. Full reset belongs to simulation reset.
                 self._policy.warm_up(gyro, pg, jp, jv)
                 self._policy_idle_hold = False
+            if self._velocity_feedback is not None:
+                rotation = self._data.xmat[self._base_body_id].reshape(3, 3)
+                dadr = self._root_dofadr
+                body_velocity = rotation.T @ self._data.qvel[dadr:dadr + 3]
+                measured = np.array([body_velocity[0], body_velocity[1], self._data.qvel[dadr + 5]])
+                direction = self._velocity_feedback.update(direction, measured, self._control_dt)
             obs = self._policy.build_obs(gyro, pg, direction, jp, jv)
             action_dart = self._policy.infer(obs)  # (16,) Dart order
             if idle_command and bool(getattr(self._policy, "zero_wheels_at_idle", False)):
@@ -926,6 +969,41 @@ class MuJoCoEngine(SimEngine):
         """Read current robot state snapshot."""
         with self._data_lock:
             return self._get_robot_state_unlocked(robot_id)
+
+    def get_support_clearance(self) -> float:
+        """Vertical base clearance above physical terrain, for simulation evidence only."""
+        import mujoco
+
+        with self._data_lock:
+            origin = self._data.xpos[self._base_body_id].copy()
+            base_z = float(origin[2])
+            direction = np.array([0.0, 0.0, -1.0], dtype=np.float64)
+            hit = np.array([-1], dtype=np.int32)
+            robot_root = self._model.body_rootid[self._base_body_id]
+            support = (
+                (self._model.body_rootid[self._model.geom_bodyid] != robot_root)
+                & ((self._model.geom_contype != 0) | (self._model.geom_conaffinity != 0))
+            )
+            # Skip entire visual/robot-only groups before native ray traversal.
+            # Mixed groups retain the exact per-hit exclusions below.
+            geomgroup = np.zeros(6, dtype=np.uint8)
+            geomgroup[np.clip(self._model.geom_group[support], 0, 5)] = 1
+            # A ray can enter and leave each excluded visual or robot geometry.
+            for _ in range(2 * self._model.ngeom + 1):
+                distance = float(mujoco.mj_ray(
+                    self._model, self._data, origin, direction, geomgroup, True,
+                    self._base_body_id, hit,
+                ))
+                if distance < 0.0:
+                    return math.nan
+                geom = int(hit[0])
+                origin[2] -= distance
+                is_robot = self._model.body_rootid[self._model.geom_bodyid[geom]] == robot_root
+                physical = self._model.geom_contype[geom] or self._model.geom_conaffinity[geom]
+                if not is_robot and physical:
+                    return base_z - float(origin[2])
+                origin[2] -= 1e-6
+            return math.nan
 
     def _get_robot_state_unlocked(self, robot_id: str = "robot_0") -> RobotState:
         del robot_id
@@ -1080,7 +1158,9 @@ class MuJoCoEngine(SimEngine):
         with self._data_lock:
             return self._cameras[camera_name].render(self._data)
 
-    def get_lidar_points(self, sample_count: int | None = None) -> np.ndarray:
+    def get_lidar_points(
+        self, sample_count: int | None = None, *, scan_duration_s: float | None = None,
+    ) -> np.ndarray:
         """Read current LiDAR point cloud.
 
         Returns:
@@ -1093,7 +1173,7 @@ class MuJoCoEngine(SimEngine):
                 import mujoco
 
                 mujoco.mj_copyData(self._lidar_data, self._model, self._data)
-                return self._lidar.scan(sample_count=sample_count)
+                return self._lidar.scan(sample_count=sample_count, scan_duration_s=scan_duration_s)
 
     def capture_state(self) -> np.ndarray:
         """Capture an owning integration state for asynchronous consumers."""
@@ -1123,6 +1203,8 @@ class MuJoCoEngine(SimEngine):
         self,
         snapshot,
         sample_count: int | None = None,
+        *,
+        scan_duration_s: float | None = None,
     ) -> np.ndarray:
         """Scan one immutable MuJoCo state without blocking physics stepping."""
 
@@ -1140,7 +1222,7 @@ class MuJoCoEngine(SimEngine):
                 mujoco.mjtState.mjSTATE_INTEGRATION,
             )
             mujoco.mj_forward(self._model, self._lidar_data)
-            return self._lidar.scan(sample_count=sample_count)
+            return self._lidar.scan(sample_count=sample_count, scan_duration_s=scan_duration_s)
 
     def get_lidar_backend_report(self) -> dict:
         """Return JSON-ready LiDAR backend evidence for validation reports."""

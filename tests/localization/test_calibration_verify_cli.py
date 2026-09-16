@@ -45,7 +45,7 @@ def test_cli_reports_invalid_utf8_without_traceback(tmp_path: Path) -> None:
     config = tmp_path / "robot_config.yaml"
     config.write_bytes(b"camera:\n  model: \xff\n")
 
-    completed = subprocess.run(  # noqa: S603 - runs the repository-owned CLI.
+    completed = subprocess.run(
         [sys.executable, str(Path(verify.__file__)), "--config", str(config)],
         capture_output=True,
         text=True,
@@ -64,7 +64,7 @@ def test_cli_reports_malformed_yaml_without_traceback(tmp_path: Path) -> None:
     config = tmp_path / "robot_config.yaml"
     config.write_text("camera: [unterminated\n", encoding="utf-8")
 
-    completed = subprocess.run(  # noqa: S603 - runs the repository-owned CLI.
+    completed = subprocess.run(
         [sys.executable, str(Path(verify.__file__)), "--config", str(config)],
         capture_output=True,
         text=True,

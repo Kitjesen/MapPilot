@@ -9,6 +9,13 @@ from typing import Any
 import pytest
 
 import lingtu.sim.supervisor as runtime_module
+from lingtu.assembly.graph import (
+    ProcessArtifact,
+    ProcessCommand,
+    ProcessReadiness,
+    ProcessShutdown,
+    ProcessSpec,
+)
 from lingtu.run_plan import RunPlan
 from lingtu.sim.daemon import _SimulationRequestHandler
 from lingtu.sim.process import SimProcessManager
@@ -21,13 +28,6 @@ from lingtu.sim.supervisor import (
     SimulationSupervisorClient,
 )
 from lingtu.switch_contracts import ProcessFailed, ProcessReport
-from runtime.graph import (
-    ProcessArtifact,
-    ProcessCommand,
-    ProcessReadiness,
-    ProcessShutdown,
-    ProcessSpec,
-)
 
 PRODUCT_SESSION_ID = "1" * 32
 
@@ -187,7 +187,8 @@ def _published_plan(
         processes=(process,),
         available_processes=(process,),
         stop_before_start=() if motion_shutdown else (process.target,),
-        contracts=("lingtu.product.nav.v1",),
+        required_topics=(),
+        required_capabilities=(),
         critical_modules=(),
         route_contract=None,
         host_config={},
@@ -305,7 +306,8 @@ def _owned_process_plan(
         processes=(process,),
         available_processes=(process,),
         stop_before_start=() if motion_shutdown else (process.target,),
-        contracts=("lingtu.product.nav.v1",),
+        required_topics=(),
+        required_capabilities=(),
         critical_modules=(),
         route_contract=None,
         host_config={},
@@ -423,7 +425,7 @@ def test_supervisor_runtime_never_reloads_runtime_graph() -> None:
     source = Path(runtime_module.__file__).read_text(encoding="utf-8")
 
     assert "load_runtime_graph" not in source
-    assert "runtime.graph" not in source
+    assert "lingtu.assembly.graph" not in source
     assert ".assert_compatible(" not in source
 
 

@@ -2,9 +2,6 @@ from io import StringIO
 from pathlib import Path
 
 import pytest
-
-from runtime.msgs.geometry import Pose, Quaternion, Vector3
-from runtime.msgs.nav import Odometry
 from sim.evaluation.slam import (
     TumPose,
     associate_by_timestamp,
@@ -13,6 +10,9 @@ from sim.evaluation.slam import (
     read_tum_trajectory,
     write_tum_trajectory,
 )
+
+from runtime.msgs.geometry import Pose, Quaternion, Vector3
+from runtime.msgs.nav import Odometry
 
 
 class _NonClosingStringIO(StringIO):

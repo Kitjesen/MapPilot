@@ -19,11 +19,12 @@ from __future__ import annotations
 
 import logging
 
+from message.topics import TOPICS
 from runtime.module import Module
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.msgs.nav import Odometry
-from runtime.runtime_interface import TOPICS, topic_default_frame_id
 from runtime.stream import In, Out
+from runtime.tf.frames import topic_default_frame_id
 
 logger = logging.getLogger(__name__)
 

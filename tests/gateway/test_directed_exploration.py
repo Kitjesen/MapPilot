@@ -190,7 +190,7 @@ def test_directed_route_rejects_missing_or_incompatible_native_context(monkeypat
 
 
 def test_directed_route_never_falls_back_when_native_command_is_missing(monkeypatch) -> None:
-    app, gateway = _app_and_gateway(commands=None)
+    app, _gateway = _app_and_gateway(commands=None)
     monkeypatch.setattr(exploration, "_native_status", lambda: _native_tare_status())
 
     response = asyncio.run(

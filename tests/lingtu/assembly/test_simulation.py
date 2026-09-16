@@ -87,12 +87,14 @@ def _recreate(
         available_processes=base.available_processes,
         support_processes=base.support_processes,
         stop_before_start=base.stop_before_start,
-        contracts=base.contracts,
+        required_topics=base.required_topics,
+        required_capabilities=base.required_capabilities,
         critical_modules=base.critical_modules,
         route_contract=base.route_contract,
         host_config=host_config or base.host_config,
         lifecycle=base.lifecycle,
-        native_process_environment=base.native_process_environment,
+        process_environment=base.process_environment,
+        native_nav=base.native_nav,
         parameters=base.parameters,
         simulation=simulation,
     )
@@ -100,12 +102,6 @@ def _recreate(
 
 def _snapshot_plan() -> RunPlan:
     return _recreate(_compiled_plan("nav", "sim"), simulation=_catalog_snapshot())
-
-
-def _without_private_backend(plan: RunPlan) -> dict[str, Any]:
-    host_config = plan.host_config
-    host_config.pop("_env_backend", None)
-    return host_config
 
 
 def test_actual_catalog_snapshot_roundtrips_through_run_plan() -> None:
@@ -141,7 +137,9 @@ def test_assembly_compiles_complete_catalog_bundle_without_runtime_generation() 
     assert snapshot["scenario_plan"] is None
 
 
-def test_simulation_viewer_changes_only_the_runtime_mode() -> None:
+@pytest.mark.parametrize("viewer", [False, True])
+def test_simulation_viewer_changes_only_the_runtime_mode(viewer: bool) -> None:
+    source = "sim/sessions/products/doso/thunder_v4/nav.yaml"
     snapshot = compile_simulation_snapshot(
         env="sim",
         robot=SIM_ROBOT,
@@ -149,15 +147,15 @@ def test_simulation_viewer_changes_only_the_runtime_mode() -> None:
         backend="mujoco",
         implementation={
             "presets": {
-                SIM_ROBOT: {"default": SESSION_SOURCE},
+                SIM_ROBOT: {"default": source},
             }
         },
         repository_root=REPO_ROOT,
-        viewer=True,
+        viewer=viewer,
     )
 
-    expected = _catalog_snapshot()
-    expected["session"]["runtime"]["mode"] = "preview"
+    expected = _catalog_snapshot(source)
+    expected["session"]["runtime"]["mode"] = "preview" if viewer else "headless"
     assert snapshot == expected
 
 
@@ -239,7 +237,7 @@ def test_sim_subprocess_requires_snapshot_without_private_host_backend() -> None
             base,
             process_control="subprocess",
             simulation={},
-            host_config=_without_private_backend(base),
+            host_config=base.host_config,
         )
 
 
@@ -248,7 +246,6 @@ def test_deserialized_sim_subprocess_cannot_bypass_snapshot_with_host_tamper() -
     payload = base.as_dict()
     payload["launch"]["controller"] = "subprocess"
     payload["launch"]["simulation"] = {}
-    payload["host"]["config"].pop("_env_backend", None)
     with pytest.raises(ValueError, match=r"launch\.simulation"):
         RunPlan.from_dict(payload)
 

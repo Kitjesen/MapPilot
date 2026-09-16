@@ -8,6 +8,7 @@ runtime construction logic in ``sim/scripts``.
 from __future__ import annotations
 
 import math
+import os
 import tempfile
 import threading
 import time
@@ -49,7 +50,9 @@ class LiveViewer:
     """Render owned snapshots; display latency never holds the physics thread."""
 
     def __init__(self, model: Any, state: Any, position: Any,
-                 read_status: Callable[[], dict[str, Any]]) -> None:
+                 read_status: Callable[[], dict[str, Any]], *,
+                 goal_input: Any = None, body_name: str = "base_link",
+                 read_keyboard_status: Callable[[], str] | None = None) -> None:
         self._model = model
         import mujoco
 
@@ -62,8 +65,20 @@ class LiveViewer:
         )
         mujoco.mj_forward(model, self._data)
         self._read_status = read_status
-        self._viewer = launch_presentation_viewer(model, self._data)
-        focus_presentation_viewer(self._viewer, position, initialize=True)
+        self._read_keyboard_status = read_keyboard_status
+        self._goal_input = goal_input
+        self._goal_picker = None
+        self._owns_window = goal_input is not None and os.name == "nt"
+        if self._owns_window:
+            from drivers.sim.mujoco.goal_picker import GoalPicker
+
+            self._goal_picker = GoalPicker(model, body_name)
+        self._viewer = None if self._owns_window else launch_presentation_viewer(model, self._data)
+        self._initial_position = position
+        self._window_ready = threading.Event()
+        self._overlay = NavigationOverlay()
+        if self._viewer is not None:
+            focus_presentation_viewer(self._viewer, position, initialize=True)
         self._condition = threading.Condition()
         self._pending: Any = None
         self._closed = False
@@ -71,6 +86,15 @@ class LiveViewer:
         self.frame_ms = 0.0
         self._thread = threading.Thread(target=self._run, name="mujoco-viewer", daemon=True)
         self._thread.start()
+
+    def observe_pose(self, stamp_s: float, position: Any, orientation: Any) -> None:
+        """Record every physics observation without waiting for a display frame."""
+        if self._goal_input is not None:
+            from runtime.msgs.geometry import Quaternion
+
+            self._goal_input.observe_pose(
+                stamp_s, np.asarray(position), Quaternion(*orientation).to_rotation_matrix(),
+            )
 
     def submit(self, state: Any, position: Any, actual_path: Any) -> None:
         with self._condition:
@@ -80,7 +104,18 @@ class LiveViewer:
     def is_running(self) -> bool:
         if self._failure is not None:
             raise RuntimeError("MuJoCo viewer failed") from self._failure
+        if self._owns_window and not self._window_ready.is_set():
+            return not self._closed
         return bool(self._viewer.is_running())
+
+    def wait_until_initialized(self, stop_event: threading.Event) -> None:
+        """Wait for render resources before activating physics, not for a frame."""
+        while not stop_event.is_set():
+            if self._window_ready.wait(timeout=0.05):
+                if not self.is_running():
+                    raise RuntimeError("MuJoCo viewer closed during initialization")
+                return
+        raise RuntimeError("MuJoCo viewer initialization cancelled")
 
     def close(self) -> None:
         with self._condition:
@@ -88,23 +123,102 @@ class LiveViewer:
             self._pending = None
             self._condition.notify()
         self._thread.join(timeout=2.0)
-        self._viewer.close()
+        if self._viewer is not None:
+            self._viewer.close()
         if self._thread.is_alive():
             self._thread.join(timeout=2.0)
         if self._thread.is_alive():
             raise RuntimeError("MuJoCo viewer did not close")
+        if self._goal_input is not None:
+            self._goal_input.close()
+
+    def _update_goal_input(self, nav_status: dict[str, Any]) -> None:
+        if self._goal_picker is None:
+            return
+        import mujoco
+
+        with self._viewer.lock():
+            try:
+                point = self._viewer.poll_click()
+                if point is not None:
+                    self._goal_input.submit(point)
+                    self._goal_picker.marker = point
+            except ValueError as exc:
+                self._goal_input.message = str(exc)
+            message = self._goal_input.poll()
+            self._goal_picker.draw(self._viewer)
+        gate = nav_status.get("input_gate") or {}
+        health = nav_status.get("control_loop_health") or {}
+        authority = nav_status.get("control_authority") or {}
+        local = nav_status.get("last_local") or {}
+        plan = nav_status.get("last_plan") or {}
+        safety = local.get("final_safety") or {}
+        if not gate.get("ready"):
+            navigation_message = str(gate.get("reason") or "waiting for navigation status")
+        elif safety.get("applied") and safety.get("stopped"):
+            reason = safety.get("reason")
+            navigation_message = (
+                "Obstacle within stopping distance; stopped"
+                if reason == "scan_actual_motion_blocked"
+                else "Stopped: " + str(reason or "motion blocked")
+            )
+        elif not health.get("ready"):
+            navigation_message = str(health.get("reason") or "waiting for control loop health")
+        elif authority.get("control_loop_hold"):
+            navigation_message = "control loop motion hold"
+        elif plan.get("reason") == "planning":
+            navigation_message = "planning route..."
+        elif local.get("active"):
+            reason = local.get("reason")
+            navigation_message = {
+                "autonomy_motion_stalled": "Motion stalled; stopped. Change goal or use keyboard to back away",
+                "scan_initialization_failed": "Local trajectory blocked near robot; back away or change goal",
+                "scan_local_target_blocked": "No reachable local target; change goal or wait for clear space",
+            }.get(reason, str(reason or "active"))
+        elif local.get("goal_reached") or plan.get("reached_goal"):
+            navigation_message = "goal reached"
+        else:
+            navigation_message = "ready for a goal"
+        controls = "Left click: goal | Drag: orbit"
+        status_text = message + "\nNavigation: " + navigation_message
+        if health.get("ready") and not health.get("healthy") and not authority.get("control_loop_hold"):
+            status_text += "\nTiming warning: " + str(health.get("reason") or "control loop delayed")
+        if self._read_keyboard_status is not None:
+            controls += "\nWASD: move | Q/E: turn | Space: stop"
+            status_text += "\n" + self._read_keyboard_status()
+        self._viewer.set_texts((
+            mujoco.mjtFontScale.mjFONTSCALE_100, mujoco.mjtGridPos.mjGRID_TOPLEFT,
+            controls, status_text,
+        ))
 
     def _run(self) -> None:
         import mujoco
 
         try:
+            if self._owns_window:
+                from drivers.sim.mujoco.click_viewer import ClickViewer
+
+                self._viewer = ClickViewer(self._model, self._data, self._goal_picker)
+                focus_presentation_viewer(self._viewer, self._initial_position, initialize=True)
+                self._window_ready.set()
+                self._viewer.sync()
+            else:
+                self._window_ready.set()
             while True:
                 with self._condition:
-                    self._condition.wait_for(lambda: self._closed or self._pending is not None)
+                    self._condition.wait_for(lambda: self._closed or self._pending is not None, timeout=0.05)
                     if self._closed:
                         return
-                    state, position, actual_path = self._pending
+                    pending = self._pending
                     self._pending = None
+                if pending is None:
+                    if self._owns_window:
+                        # Reset the marker before appending it again on an idle frame.
+                        self._viewer.user_scn.ngeom = self._overlay._total_count
+                        self._update_goal_input(self._read_status())
+                        self._viewer.sync()
+                    continue
+                state, position, actual_path = pending
                 started = time.perf_counter()
                 with self._viewer.lock():
                     mujoco.mj_setState(
@@ -114,12 +228,27 @@ class LiveViewer:
                         mujoco.mjtState.mjSTATE_INTEGRATION,
                     )
                     mujoco.mj_forward(self._model, self._data)
-                draw_navigation_paths(self._viewer, self._read_status(), actual_path=actual_path)
+                nav_status = self._read_status()
+                world_from_map = (np.eye(3), np.zeros(3))
+                overlay_status = nav_status
+                if self._goal_input is not None:
+                    try:
+                        rotation, translation = self._goal_input.world_to_map_transform()
+                        world_from_map = (rotation.T, -rotation.T @ translation)
+                    except ValueError:
+                        # Never draw map coordinates as world coordinates without localization.
+                        overlay_status = {}
+                self._overlay.draw(self._viewer, overlay_status, actual_path, world_from_map)
+                self._update_goal_input(nav_status)
                 focus_presentation_viewer(self._viewer, position)
                 self._viewer.sync()
                 self.frame_ms = (time.perf_counter() - started) * 1000.0
         except Exception as exc:
             self._failure = exc
+        finally:
+            self._window_ready.set()
+            if self._owns_window and self._viewer is not None:
+                self._viewer.dispose()
 
 
 def focus_presentation_viewer(
@@ -267,6 +396,50 @@ def _append_point_cloud(
         geom.rgba[:] = color
         added += 1
     return added
+
+
+class NavigationOverlay:
+    """Retain unchanged native geometry while the world-space trace advances."""
+
+    def __init__(self) -> None:
+        self._static: tuple[np.ndarray, ...] | None = None
+        self._static_count = 0
+        self._trace: np.ndarray | None = None
+        self._total_count = 0
+
+    def draw(self, viewer: Any, status: dict[str, Any], actual_path: Any,
+             world_from_map: tuple[np.ndarray, np.ndarray]) -> None:
+        import mujoco
+
+        rotation, translation = world_from_map
+        paths = (
+            _point_cloud_xyz(status.get("global_path"), 121),
+            _point_cloud_xyz(status.get("local_path"), 81),
+            _point_cloud_xyz(_navigation_obstacle_points(status), 600),
+        )
+        static = tuple(points @ rotation.T + translation for points in paths)
+        changed = self._static is None or any(
+            not np.array_equal(old, new) for old, new in zip(self._static, static, strict=True)
+        )
+        trace = _point_cloud_xyz(actual_path, 301)
+        if changed:
+            draw_navigation_paths(viewer, {
+                "global_path": static[0].tolist(), "local_path": static[1].tolist(),
+            }, point_cloud=static[2])
+            self._static = static
+            self._static_count = int(viewer.user_scn.ngeom)
+        with viewer.lock():
+            scene = viewer.user_scn
+            if changed or not np.array_equal(self._trace, trace):
+                scene.ngeom = self._static_count
+                _append_path_segments(
+                    mujoco, scene, list(trace), radius=0.015,
+                    rgba=(0.25, 0.5, 1.0, 0.9), z_offset=0.02, max_segments=300,
+                )
+                self._trace = trace
+                self._total_count = int(scene.ngeom)
+            # Discard the previous click marker, which is appended after this call.
+            scene.ngeom = self._total_count
 
 
 def draw_navigation_paths(
@@ -423,6 +596,23 @@ def scene_with_memory(scene_xml: Path, memory: str) -> Path:
     return Path(tmp.name)
 
 
+def resolve_physics_timestep(
+    *,
+    drive_mode: str,
+    policy_path: Path | str,
+    physics_timestep_s: float | None = None,
+) -> float | None:
+    """Resolve the policy's reference timing before the engine is reset."""
+    if physics_timestep_s is not None:
+        return float(physics_timestep_s)
+    if (
+        str(drive_mode).strip().lower() == "policy"
+        and Path(policy_path).name.lower() in {"policy_1119.onnx", "policy_4998.onnx"}
+    ):
+        return POLICY_1119_PHYSICS_TIMESTEP_S
+    return None
+
+
 def build_engine(
     *,
     world: Path,
@@ -530,13 +720,11 @@ def build_engine(
     )
     try:
         engine.load(str(load_world))
-        effective_timestep_s = physics_timestep_s
-        if (
-            effective_timestep_s is None
-            and str(drive_mode).strip().lower() == "policy"
-            and Path(robot_cfg.policy_onnx).name.lower() == "policy_1119.onnx"
-        ):
-            effective_timestep_s = POLICY_1119_PHYSICS_TIMESTEP_S
+        effective_timestep_s = resolve_physics_timestep(
+            drive_mode=drive_mode,
+            policy_path=robot_cfg.policy_onnx,
+            physics_timestep_s=physics_timestep_s,
+        )
         if effective_timestep_s is not None:
             engine.set_physics_timestep(float(effective_timestep_s))
         engine.reset()

@@ -92,8 +92,11 @@ int main(int argc, char **argv) {
     auto next_probe = next_tick;
     auto next_status = next_tick;
     auto next_control_state = next_tick;
+    auto next_joint_state = next_tick;
+    double last_joint_stamp_s = 0.0;
     auto next_lease_refresh = next_tick;
     constexpr auto kControlStatePeriod = std::chrono::milliseconds(50);
+    constexpr auto kJointStatePeriod = std::chrono::milliseconds(34);
     std::uint64_t safety_stop_sequence = 0;
     bool readiness_announced = false;
     bool cmd_vel_writer_fault_active = false;
@@ -174,6 +177,13 @@ int main(int argc, char **argv) {
     };
 
     auto fail_closed = [&](const std::string &reason, bool preserve_current_rejection) {
+      // Preserve the triggering result before the stop/reconnect overwrites it.
+      std::fprintf(stderr,
+                   "lingtu_driver: fail_closed reason=%s backend_reason=%s "
+                   "backend_error=%s ready=%d connected=%d last_output=%s\n",
+                   reason.c_str(), stats.control.reason.c_str(), stats.last_error.c_str(),
+                   stats.ready ? 1 : 0, stats.connected ? 1 : 0,
+                   stats.last_output_kind.c_str());
       stats.last_output_kind = "control_loss_stop";
       const bool stopped = stop_and_release(reason, reason + ":stop_unconfirmed");
       core.reset();
@@ -332,6 +342,13 @@ int main(int argc, char **argv) {
     try {
       while (g_running) {
         const auto now = Clock::now();
+        if (now >= next_joint_state) {
+          next_joint_state = now + kJointStatePeriod;
+          const auto joints = body->jointState();
+          if (joints && joints->stamp_s != last_joint_stamp_s && dds.writeJointState(*joints)) {
+            last_joint_stamp_s = joints->stamp_s;
+          }
+        }
         const auto writer_decision = update_cmd_vel_writer_gate();
         if (!writer_decision.ready) {
           if (!cmd_vel_writer_fault_active || writer_decision.requires_stop) {

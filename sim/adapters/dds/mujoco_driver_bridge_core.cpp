@@ -316,6 +316,11 @@ std::optional<BridgeCommand> MujocoDriverBridgeCore::onDeactivate(const Deactiva
     return std::nullopt;
   }
   last_control_seq_ = message.control_seq;
+  // Controller records are ordered: any nav already applied arrives before
+  // DEACTIVATE. A still-pending nav is cancelled, never replayed to obtain ACK.
+  if (pending_.has_value() && pending_->kind == BridgeCommandKind::Nav) {
+    pending_.reset();
+  }
   return requestStop(BridgeStopCause::Planned, now);
 }
 

@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -9,7 +8,6 @@ import time
 from typing import Any
 
 import pytest
-
 from sim.runtime.coordinator.control_intent_udp import (
     MAX_CONTROL_DATAGRAM_BYTES,
     BoundedRuntimeRequestInbox,

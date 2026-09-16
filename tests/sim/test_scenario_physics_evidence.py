@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -7,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from sim.runtime.qualification.scenario_physics_evidence import (
     SCENARIO_PHYSICS_EVIDENCE_FILENAME,
     SCENARIO_PHYSICS_EVIDENCE_SCHEMA,

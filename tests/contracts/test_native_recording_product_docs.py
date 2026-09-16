@@ -1,11 +1,13 @@
 """Product-documentation contracts for native recording and replay."""
 
-# ruff: noqa: D103, S101 - pytest contracts use assertions by design.
+
 
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-GUIDE = ROOT / "docs" / "04-deployment" / "native_recording.md"
+GUIDE = ROOT / "docs" / "operations.md"
+API = ROOT / "docs" / "api.md"
+IMPLEMENTATION = ROOT / "src" / "native" / "recording" / "README.md"
 
 
 def _read(path: Path) -> str:
@@ -16,35 +18,36 @@ def test_native_recording_has_one_truthful_operator_guide() -> None:
     guide = _read(GUIDE)
 
     for expected in (
-        "C++",
-        "CycloneDDS",
         "MCAP",
         "lingtu_recorder",
         "lingtu_dds_player",
+        "Recording does not authorize motion",
+    ):
+        assert expected in guide
+
+    implementation = _read(IMPLEMENTATION)
+    for expected in (
+        "C++",
+        "CycloneDDS",
         "--min-free-gib",
         "5 GiB",
-        "DDS domain `84`",
+        "isolated DDS domain 84",
         "session.json",
         ".mcap.tmp",
         "record-only",
     ):
-        assert expected in guide
-
-    assert "startup preflight" in guide.lower()
-    assert "0" in guide and "disable" in guide.lower()
-    assert "running quota" in guide.lower()
-    assert "not yet" in guide.lower()
+        assert expected in implementation
 
 
 
 def test_recording_docs_expose_only_native_mcap_routes() -> None:
-    guide = _read(GUIDE)
+    api = _read(API)
 
     for endpoint in (
         "/api/v1/recordings/start",
         "/api/v1/recordings/status",
         "/api/v1/recordings/stop",
     ):
-        assert endpoint in guide
+        assert endpoint in api
 
-    assert "/api/v1/bag/" not in guide
+    assert "/api/v1/bag/" not in api

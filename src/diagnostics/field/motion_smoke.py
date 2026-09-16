@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ruff: noqa: D103
 """Run one controlled navigation motion smoke through ProductControl."""
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ from diagnostics.field.gate_support import (
     poll_navigation_terminal,
     read_json,
     request_json,
-    require_no_active_command_source,
+    require_no_control_authority,
     run_command,
     run_product_control,
     safe_map_dir,
@@ -168,7 +167,7 @@ def run(args: argparse.Namespace) -> int:
     try:
         capture_phase(args.gateway_url, "motion_smoke_before", artifact_dir / "before")
         navigation = request_json(args.gateway_url, "/api/v1/navigation/status", timeout_s=5)
-        require_no_active_command_source(navigation, "motion-smoke before Product switch")
+        require_no_control_authority(navigation, "motion-smoke before Product switch")
 
         switch_args = ["switch", "nav", "--env", args.env, "--map", map_name]
         if args.backend:

@@ -3,8 +3,8 @@ import type { MapSceneEvent, MapSceneLayer } from '../../../types'
 import { DEFAULT_POINT_SIZE, pointSizeToWorld } from './liveCloudLayer.ts'
 import { lingtuToThree } from '../../../services/coordinateFrame.ts'
 
-export const SAVED_MAP_Z_FLOOR = -50
-export const SAVED_MAP_Z_CEIL = 50
+export const SAVED_MAP_Z_FLOOR = Number.NEGATIVE_INFINITY
+export const SAVED_MAP_Z_CEIL = Number.POSITIVE_INFINITY
 
 function parseHexColor(value: unknown): [number, number, number] | null {
   if (typeof value !== 'string') return null
@@ -85,6 +85,7 @@ export function createSavedMapLayer(
     const wx = savedMapFlat[i]
     const wy = savedMapFlat[i + 1]
     const wz = savedMapFlat[i + 2]
+    if (!Number.isFinite(wx) || !Number.isFinite(wy) || !Number.isFinite(wz)) continue
     if (wz < zFloor || wz > zCeil) continue
     positions.push(...lingtuToThree([wx, wy, wz]))
     heights.push(wz)
@@ -107,12 +108,13 @@ export function createSavedMapLayer(
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
   }
   const mat = new THREE.PointsMaterial({
-    size: pointSizeToWorld(pointSize),
-    color: 0x26364f,
+    size: pointSizeToWorld(pointSize) * 2,
+    color: colors.length === positions.length ? 0xffffff : 0x7896af,
     vertexColors: colors.length === positions.length,
     sizeAttenuation: true,
-    opacity: colors.length === positions.length ? 0.82 : 0.55,
+    opacity: 0.95,
     transparent: true,
+    depthWrite: false,
   })
   return new THREE.Points(geo, mat)
 }
@@ -120,5 +122,5 @@ export function createSavedMapLayer(
 export function updateSavedMapPointSize(points: THREE.Points | null, pointSize: number): void {
   if (!points || Array.isArray(points.material)) return
   const material = points.material as THREE.PointsMaterial
-  material.size = pointSizeToWorld(pointSize)
+  material.size = pointSizeToWorld(pointSize) * 2
 }

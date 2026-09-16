@@ -1,13 +1,11 @@
 """Camera SHM to recording payload adapter contracts."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
 from types import SimpleNamespace
 
 import pytest
-
 from sim.adapters.shm import (
     CameraShmAllocation,
     CameraShmWriter,

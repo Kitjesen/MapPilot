@@ -149,24 +149,16 @@ class AsyncLingTuClient:
 
     async def wait_until_arrived(
         self,
+        task_id: str | None = None,
         timeout: float = 120.0,
         poll_interval: float = 0.5,
-        distance_threshold: float = 0.3,
-        *,
-        task_id: str | None = None,
-        request_id: str | None = None,
-        expected_goal: tuple[float, float, float] | None = None,
-        baseline: NavigationStatus | None = None,
     ) -> NavigationStatus:
-        """Wait until the current navigation mission completes."""
+        """Wait until an identified or currently observed navigation task completes."""
         return await asyncio.to_thread(
             self._client.wait_until_arrived,
+            task_id,
             timeout,
             poll_interval,
-            task_id=task_id,
-            request_id=request_id,
-            expected_goal=expected_goal,
-            baseline=baseline,
         )
 
     async def state(self) -> RobotState:
@@ -389,11 +381,3 @@ class AsyncLingTuClient:
     async def runtime_contract(self) -> dict[str, Any]:
         """Return the runtime interface contract."""
         return await asyncio.to_thread(self._client.runtime_contract)
-
-    async def auth_login(self, api_key: str) -> dict[str, Any]:
-        """Authenticate with an API key."""
-        return await asyncio.to_thread(self._client.auth_login, api_key)
-
-    async def auth_check(self) -> dict[str, Any]:
-        """Return authentication requirements."""
-        return await asyncio.to_thread(self._client.auth_check)

@@ -1,0 +1,10 @@
+{
+  "world": "factory_workshop@2.0.0",
+  "authoring_revision": "v8-r4-detail-study",
+  "source": "artifacts/factory_workshop/v8-r4-detail-study/native/campus.xml",
+  "asset_count": 100,
+  "asset_bytes": 1015001533,
+  "collision_geometry_changed": false,
+  "robot_motion_verified": false,
+  "scope": "Native MuJoCo world; no Unreal scene or navigation qualification implied."
+}

@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 from __future__ import annotations
 
 import io
@@ -8,7 +7,6 @@ from fractions import Fraction
 from pathlib import Path
 
 import pytest
-
 from sim.runtime.coordinator.run_allocation import RunAllocation
 from sim.runtime.sensors.contracts import SensorRoute, SensorStreamPlan
 from sim.runtime.sensors.dds_adapter import ImuDdsAdapter, encode_imu_sample

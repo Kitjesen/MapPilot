@@ -5,7 +5,6 @@ contains a small validator for the draft-2020-12 vocabulary used by the local
 contracts, so positive and negative cases use only the standard library.
 """
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -16,7 +15,6 @@ from typing import Any, cast
 
 import pytest
 import yaml
-
 from sim.catalog import CatalogResolver
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

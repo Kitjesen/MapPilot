@@ -7,8 +7,9 @@ import time
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from runtime.tf.frames import map_frame_id, normalize_frame_id, odom_frame_id
+
 from ..msgs.geometry import Quaternion, Transform, Vector3
-from ..runtime_interface import map_frame_id, normalize_frame_id, odom_frame_id
 from .buffer import TFMessage
 from .tree import FrameError
 

@@ -76,8 +76,12 @@ BsplineOptimizer::initControlPoints(Eigen::MatrixXd &init_points, bool flag_firs
   bool flag_got_start = false, flag_got_end = false, flag_got_end_maybe = false;
   int i_end = (int)init_points.cols() - order_ -
               ((int)init_points.cols() - 2 * order_) / 3;  // only check closed 2/3 points.
-  for (int i = order_; i <= i_end; ++i) {
+  // Finish an obstacle already entered in the checked prefix. Dropping its
+  // exit beyond that prefix leaves the optimizer without an A* rebound guide.
+  for (int i = order_; i <= (int)init_points.cols() - order_ &&
+                       (i <= i_end || flag_got_start); ++i) {
     for (double a = 1.0; a >= 0.0; a -= step_size) {
+      if (i > i_end && !flag_got_start) break;
       Eigen::Vector3d sample_pt = a * init_points.col(i - 1) + (1 - a) * init_points.col(i);
       double sample_yaw = estimateSegmentYaw(init_points.col(i - 1), init_points.col(i));
       occ = grid_map_->getInflateOccupancy(sample_pt, sample_yaw);
@@ -213,6 +217,7 @@ BsplineOptimizer::initControlPoints(Eigen::MatrixXd &init_points, bool flag_firs
     // step 2
     int got_intersection_id = -1;
     for (int j = segment_ids[i].first + 1; j < segment_ids[i].second; ++j) {
+      bool intersection_found = false;
       Eigen::Vector3d ctrl_pts_law(cps_.points.col(j + 1) - cps_.points.col(j - 1)),
           intersection_point;
       int Astar_id = a_star_paths[i].size() / 2,
@@ -234,7 +239,7 @@ BsplineOptimizer::initControlPoints(Eigen::MatrixXd &init_points, bool flag_firs
         val = (a_star_paths[i][Astar_id] - cps_.points.col(j)).dot(ctrl_pts_law);
 
         if (val * last_val <= 0 &&
-            (abs(val) > 0 || abs(last_val) > 0))  // val = last_val = 0.0 is not allowed
+            (std::abs(val) > 0 || std::abs(last_val) > 0))  // val = last_val = 0.0 is not allowed
         {
           const double denom =
               ctrl_pts_law.dot(a_star_paths[i][Astar_id] - a_star_paths[i][last_Astar_id]);
@@ -250,13 +255,12 @@ BsplineOptimizer::initControlPoints(Eigen::MatrixXd &init_points, bool flag_firs
           // cout << "i=" << i << " j=" << j << " Astar_id=" << Astar_id << " last_Astar_id=" <<
           // last_Astar_id << " intersection_point = " << intersection_point.transpose() << endl;
 
-          got_intersection_id = j;
+          intersection_found = true;
           break;
         }
       }
 
-      if (got_intersection_id >= 0) {
-        cps_.flag_temp[j] = true;
+      if (intersection_found) {
         double length = (intersection_point - cps_.points.col(j)).norm();
         if (length > 1e-5) {
           for (double a = length; a >= 0.0; a -= grid_map_->getResolution()) {
@@ -271,6 +275,8 @@ BsplineOptimizer::initControlPoints(Eigen::MatrixXd &init_points, bool flag_firs
               cps_.base_point[j].push_back((a / length) * intersection_point +
                                            (1 - a / length) * cps_.points.col(j));
               cps_.direction[j].push_back((intersection_point - cps_.points.col(j)).normalized());
+              cps_.flag_temp[j] = true;
+              got_intersection_id = j;
               break;
             }
           }
@@ -304,7 +310,7 @@ BsplineOptimizer::initControlPoints(Eigen::MatrixXd &init_points, bool flag_firs
         val = (a_star_paths[i][Astar_id] - middle_point).dot(ctrl_pts_law);
 
         if (val * last_val <= 0 &&
-            (abs(val) > 0 || abs(last_val) > 0))  // val = last_val = 0.0 is not allowed
+            (std::abs(val) > 0 || std::abs(last_val) > 0))  // val = last_val = 0.0 is not allowed
         {
           const double denom =
               ctrl_pts_law.dot(a_star_paths[i][Astar_id] - a_star_paths[i][last_Astar_id]);
@@ -659,8 +665,9 @@ bool BsplineOptimizer::check_collision_and_rebound(void) {
   bool flag_new_obs_valid = false;
   int i_end = end_idx - (end_idx - order_) / 3;
   for (int i = order_ - 1; i <= i_end; ++i) {
-    bool occ =
+    const int collision_state =
         grid_map_->getInflateOccupancy(cps_.points.col(i), estimateControlPointYaw(cps_.points, i));
+    bool occ = collision_state != 0;
 
     /*** check if the new collision will be valid ***/
     if (occ) {
@@ -702,6 +709,11 @@ bool BsplineOptimizer::check_collision_and_rebound(void) {
       }
       if (j >= cps_.size)  // fail to get the obs free point
       {
+        debug_.reason = "collision_no_free_exit";
+        debug_.collisionValid = true;
+        debug_.collisionPosition = cps_.points.col(i);
+        debug_.collisionTimeS = -1.0;
+        debug_.collisionState = collision_state;
         force_stop_type_ = STOP_FOR_ERROR;
         return false;
       }
@@ -750,6 +762,7 @@ bool BsplineOptimizer::check_collision_and_rebound(void) {
       // step 2
       int got_intersection_id = -1;
       for (int j = segment_ids[i].first + 1; j < segment_ids[i].second; ++j) {
+        bool intersection_found = false;
         Eigen::Vector3d ctrl_pts_law(cps_.points.col(j + 1) - cps_.points.col(j - 1)),
             intersection_point;
         int Astar_id = a_star_paths[i].size() / 2,
@@ -773,7 +786,7 @@ bool BsplineOptimizer::check_collision_and_rebound(void) {
           // cout << val << endl;
 
           if (val * last_val <= 0 &&
-              (abs(val) > 0 || abs(last_val) > 0))  // val = last_val = 0.0 is not allowed
+              (std::abs(val) > 0 || std::abs(last_val) > 0))  // val = last_val = 0.0 is not allowed
           {
             const double denom =
                 ctrl_pts_law.dot(a_star_paths[i][Astar_id] - a_star_paths[i][last_Astar_id]);
@@ -786,13 +799,12 @@ bool BsplineOptimizer::check_collision_and_rebound(void) {
                  (ctrl_pts_law.dot(cps_.points.col(j) - a_star_paths[i][Astar_id]) / denom)  // = t
                 );
 
-            got_intersection_id = j;
+            intersection_found = true;
             break;
           }
         }
 
-        if (got_intersection_id >= 0) {
-          cps_.flag_temp[j] = true;
+        if (intersection_found) {
           double length = (intersection_point - cps_.points.col(j)).norm();
           if (length > 1e-5) {
             for (double a = length; a >= 0.0; a -= grid_map_->getResolution()) {
@@ -807,11 +819,11 @@ bool BsplineOptimizer::check_collision_and_rebound(void) {
                 cps_.base_point[j].push_back((a / length) * intersection_point +
                                              (1 - a / length) * cps_.points.col(j));
                 cps_.direction[j].push_back((intersection_point - cps_.points.col(j)).normalized());
+                cps_.flag_temp[j] = true;
+                got_intersection_id = j;
                 break;
               }
             }
-          } else {
-            got_intersection_id = -1;
           }
         }
       }
@@ -841,6 +853,7 @@ bool BsplineOptimizer::check_collision_and_rebound(void) {
 }
 
 bool BsplineOptimizer::BsplineOptimizeTrajRebound(Eigen::MatrixXd &optimal_points, double ts) {
+  debug_ = {};
   setBsplineInterval(ts);
 
   bool flag_success = rebound_optimize();
@@ -852,6 +865,7 @@ bool BsplineOptimizer::BsplineOptimizeTrajRebound(Eigen::MatrixXd &optimal_point
 
 bool BsplineOptimizer::BsplineOptimizeTrajRefine(const Eigen::MatrixXd &init_points,
                                                  const double ts, Eigen::MatrixXd &optimal_points) {
+  debug_ = {};
   setControlPoints(init_points);
   setBsplineInterval(ts);
 
@@ -892,31 +906,52 @@ bool BsplineOptimizer::rebound_optimize() {
     lbfgs_params.g_epsilon = 0.01;
 
     /* ---------- optimize ---------- */
+    debug_ = {};
     int result =
         lbfgs::lbfgs_optimize(variable_num_, q.data(), &final_cost,
                               BsplineOptimizer::costFunctionRebound,
                               NULL, BsplineOptimizer::earlyExit, this, &lbfgs_params);
+    debug_.optimizerReturnCodeValid = true;
+    debug_.optimizerReturnCode = result;
     /* ---------- success temporary, check collision again ---------- */
     if (result == lbfgs::LBFGS_CONVERGENCE || result == lbfgs::LBFGSERR_MAXIMUMITERATION ||
         result == lbfgs::LBFGS_ALREADY_MINIMIZED || result == lbfgs::LBFGS_STOP) {
       flag_force_return = false;
 
       UniformBspline traj = UniformBspline(cps_.points, 3, bspline_interval_);
+      const UniformBspline velocity = traj.getDerivative();
       double tm, tmp;
       static_cast<void>(traj.getTimeSpan(tm, tmp));
-      double t_step = (tmp - tm) / ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() /
-                                    grid_map_->getResolution());
-      for (double t = tm; t < tmp * 2 / 3;
-           t += t_step)  // Only check the closest 2/3 partition of the whole trajectory.
+      // Validate every published segment, including the final approach. The
+      // periodic FSM lookahead is not a substitute for candidate validation.
+      const double t_step = std::min(
+          0.01, (tmp - tm) /
+                    ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() /
+                     grid_map_->getResolution()));
+      for (double t = tm; t < tmp; t += t_step)
       {
         Eigen::Vector3d pos = traj.evaluateDeBoorT(t);
-        Eigen::Vector3d pos_next = traj.evaluateDeBoorT(std::min(t + t_step, tmp));
-        flag_occ = grid_map_->getInflateOccupancy(pos, estimateSegmentYaw(pos, pos_next));
+        const double next_t = std::min(t + t_step, tmp);
+        const Eigen::Vector3d pos_next = traj.evaluateDeBoorT(next_t);
+        const Eigen::Vector3d tangent = velocity.evaluateDeBoorT(t);
+        const Eigen::Vector3d next_tangent = velocity.evaluateDeBoorT(next_t);
+        const double chord_yaw = estimateSegmentYaw(pos, pos_next);
+        const int collision_state = grid_map_->getInflateOccupancySegment(
+            pos, tangent.head<2>().squaredNorm() > 1e-8
+                     ? std::atan2(tangent.y(), tangent.x()) : chord_yaw,
+            pos_next, next_tangent.head<2>().squaredNorm() > 1e-8
+                          ? std::atan2(next_tangent.y(), next_tangent.x()) : chord_yaw);
+        flag_occ = collision_state != 0;
         if (flag_occ) {
+          debug_.collisionValid = true;
+          debug_.collisionPosition = pos;
+          debug_.collisionTimeS = t;
+          debug_.collisionState = collision_state;
           // cout << "hit_obs, t=" << t << " P=" << traj.evaluateDeBoorT(t).transpose() << endl;
 
           if (t <= bspline_interval_)  // First 3 control points in obstacles!
           {
+            debug_.reason = "collision_at_trajectory_start";
             return false;
           }
 
@@ -926,23 +961,63 @@ bool BsplineOptimizer::rebound_optimize() {
 
       if (!flag_occ) {
         success = true;
+        debug_.reason = "accepted";
+        debug_.collisionValid = false;
       } else  // restart
       {
+        debug_.reason = "collision_restart_limit";
         restart_nums++;
         initControlPoints(cps_.points, false);
         new_lambda2_ *= 2;
 
       }
     } else if (result == lbfgs::LBFGSERR_CANCELED) {
+      if (debug_.reason == "not_run") debug_.reason = "rebound_restart_limit";
       flag_force_return = true;
       rebound_times++;
     } else {
+      debug_.reason = "optimizer_error";
     }
 
   } while ((flag_occ && restart_nums < MAX_RESART_NUMS_SET) ||
            (flag_force_return && force_stop_type_ == STOP_FOR_REBOUND && rebound_times <= 20));
 
   return success;
+}
+
+bool BsplineOptimizer::checkTrajectoryCollisionFree(const UniformBspline &traj) {
+  const UniformBspline velocity = traj.getDerivative();
+  double tm, tmp;
+  static_cast<void>(traj.getTimeSpan(tm, tmp));
+  // Refinement and boundary restoration can change the final approach too.
+  const double t_step = std::min(
+      0.01, (tmp - tm) /
+                ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() /
+                 grid_map_->getResolution()));
+  for (double t = tm; t < tmp; t += t_step) {
+    Eigen::Vector3d pos = traj.evaluateDeBoorT(t);
+    const double next_t = std::min(t + t_step, tmp);
+    const Eigen::Vector3d pos_next = traj.evaluateDeBoorT(next_t);
+    const Eigen::Vector3d tangent = velocity.evaluateDeBoorT(t);
+    const Eigen::Vector3d next_tangent = velocity.evaluateDeBoorT(next_t);
+    const double chord_yaw = estimateSegmentYaw(pos, pos_next);
+    const int collision_state = grid_map_->getInflateOccupancySegment(
+        pos, tangent.head<2>().squaredNorm() > 1e-8
+                 ? std::atan2(tangent.y(), tangent.x()) : chord_yaw,
+        pos_next, next_tangent.head<2>().squaredNorm() > 1e-8
+                      ? std::atan2(next_tangent.y(), next_tangent.x()) : chord_yaw);
+    if (collision_state != 0) {
+      debug_.reason = "collision_after_refine";
+      debug_.collisionValid = true;
+      debug_.collisionPosition = pos;
+      debug_.collisionTimeS = t;
+      debug_.collisionState = collision_state;
+      return false;
+    }
+  }
+  debug_.reason = "accepted";
+  debug_.collisionValid = false;
+  return true;
 }
 
 bool BsplineOptimizer::refine_optimize() {
@@ -971,6 +1046,8 @@ bool BsplineOptimizer::refine_optimize() {
         lbfgs::lbfgs_optimize(variable_num_, q.data(), &final_cost,
                               BsplineOptimizer::costFunctionRefine,
                               NULL, NULL, this, &lbfgs_params);
+    debug_.optimizerReturnCodeValid = true;
+    debug_.optimizerReturnCode = result;
     if (result == lbfgs::LBFGS_CONVERGENCE || result == lbfgs::LBFGSERR_MAXIMUMITERATION ||
         result == lbfgs::LBFGS_ALREADY_MINIMIZED || result == lbfgs::LBFGS_STOP) {
       // pass
@@ -978,28 +1055,7 @@ bool BsplineOptimizer::refine_optimize() {
     }
 
     UniformBspline traj = UniformBspline(cps_.points, 3, bspline_interval_);
-    double tm, tmp;
-    static_cast<void>(traj.getTimeSpan(tm, tmp));
-    double t_step =
-        (tmp - tm) / ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() /
-                      grid_map_->getResolution());  // Step size is defined as the maximum size that
-                                                    // can passes through every grid.
-    for (double t = tm; t < tmp * 2 / 3; t += t_step) {
-      Eigen::Vector3d pos = traj.evaluateDeBoorT(t);
-      Eigen::Vector3d pos_next = traj.evaluateDeBoorT(std::min(t + t_step, tmp));
-      if (grid_map_->getInflateOccupancy(pos, estimateSegmentYaw(pos, pos_next))) {
-        // cout << "Refined traj hit_obs, t=" << t << " P=" << traj.evaluateDeBoorT(t).transpose()
-        // << endl;
-
-        Eigen::MatrixXd ref_pts(ref_pts_.size(), 3);
-        for (size_t i = 0; i < ref_pts_.size(); i++) {
-          ref_pts.row(i) = ref_pts_[i].transpose();
-        }
-
-        flag_safe = false;
-        break;
-      }
-    }
+    flag_safe = checkTrajectoryCollisionFree(traj);
 
     if (!flag_safe)
       lambda4_ *= 2;

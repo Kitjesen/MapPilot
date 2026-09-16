@@ -12,7 +12,8 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from runtime.runtime_interface import REAL_RUNTIME_CONTRACT, TOPICS
+from diagnostics.runtime_contract import REAL_RUNTIME_CONTRACT
+from message.topics import TOPICS
 
 GATEWAY_RUNTIME_ACCEPTANCE_SCHEMA_VERSION = "lingtu.gateway_runtime_acceptance.v3"
 ACCEPTANCE_MODES = ("non_motion", "simulation", "field")
@@ -232,6 +233,8 @@ def _check_readiness(
 ) -> dict[str, Any]:
     runtime = _mapping(readiness.get("runtime"))
     summary = _mapping(runtime.get("summary"))
+    navigation = _mapping(runtime.get("navigation"))
+    navigation_blockers = [str(item) for item in navigation.get("blockers") or [] if item]
     data_ready = _as_bool(summary.get("data_ready", readiness.get("data_ready")))
     motion_ready = _as_bool(summary.get("motion_ready", readiness.get("motion_ready")))
     non_motion_safe = _as_bool(summary.get("non_motion_safe", readiness.get("non_motion_safe")))
@@ -250,6 +253,8 @@ def _check_readiness(
         blockers.append(f"{mode} acceptance requires motion_ready=true")
     elif motion_ready is not True:
         advisories.append("motion_ready is not true; this is not field navigation evidence")
+    if mode in MOTION_ACCEPTANCE_MODES and navigation_blockers:
+        blockers.append("navigation readiness blockers: " + ", ".join(navigation_blockers))
 
     return {
         "ok": status not in {"failed", "error", "not_started"}
@@ -262,6 +267,7 @@ def _check_readiness(
         "data_ready": data_ready,
         "motion_ready": motion_ready,
         "non_motion_safe": non_motion_safe,
+        "navigation_blockers": navigation_blockers,
     }
 
 
@@ -296,20 +302,47 @@ def _check_navigation(
     blockers: list[str],
     advisories: list[str],
 ) -> dict[str, Any]:
-    readiness = _mapping(navigation.get("readiness"))
-    can_send_goal = _as_bool(readiness.get("can_send_goal", readiness.get("can_accept_goal")))
-    blockers_list = list(readiness.get("blockers") or [])
+    task = _mapping(navigation.get("task"))
+    admission = _mapping(navigation.get("goal_admission"))
+    control = _mapping(navigation.get("control"))
+    motion = _mapping(navigation.get("motion"))
+    admission_state = str(admission.get("state") or "UNKNOWN").upper()
+    can_send_goal = (
+        True
+        if admission_state == "ACCEPTING"
+        else False
+        if admission_state == "BLOCKED"
+        else None
+    )
+    unknown_axes = [
+        name
+        for name, value in (
+            ("task", task.get("state")),
+            ("goal_admission", admission_state),
+            ("control", control.get("authority")),
+            ("motion.permission", motion.get("permission")),
+            ("motion.observation", motion.get("observation")),
+            ("motion.stop_confirmation", motion.get("stop_confirmation")),
+        )
+        if not value or str(value).upper() == "UNKNOWN"
+    ]
     if mode in MOTION_ACCEPTANCE_MODES and can_send_goal is not True:
-        blockers.append(f"{mode} acceptance requires navigation can_send_goal=true")
+        blockers.append(f"{mode} acceptance requires navigation goal_admission=ACCEPTING")
     elif can_send_goal is not True:
         advisories.append("navigation cannot currently accept a goal")
-    if mode in MOTION_ACCEPTANCE_MODES and blockers_list:
-        blockers.append("navigation readiness blockers: " + ", ".join(map(str, blockers_list)))
+    if unknown_axes:
+        message = "navigation state is unknown: " + ", ".join(unknown_axes)
+        if mode in MOTION_ACCEPTANCE_MODES:
+            blockers.append(message)
+        else:
+            advisories.append(message)
     return {
-        "ok": mode not in MOTION_ACCEPTANCE_MODES or (can_send_goal is True and not blockers_list),
-        "state": navigation.get("state"),
+        "ok": mode not in MOTION_ACCEPTANCE_MODES
+        or (can_send_goal is True and not unknown_axes),
+        "state": task.get("state"),
+        "goal_admission": admission_state,
         "can_send_goal": can_send_goal,
-        "blockers": blockers_list,
+        "unknown_axes": unknown_axes,
     }
 
 

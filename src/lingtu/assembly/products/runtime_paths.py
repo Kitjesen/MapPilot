@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from runtime.runtime_interface import map_frame_id
+from runtime.tf.frames import map_frame_id
 
 DEFAULT_GATEWAY_PORT = 5050
 

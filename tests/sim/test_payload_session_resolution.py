@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """PayloadPackage resolution contracts for payload-aware v2 sessions."""
 
 from __future__ import annotations
@@ -9,7 +8,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from sim.catalog import CatalogError, CatalogResolver
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

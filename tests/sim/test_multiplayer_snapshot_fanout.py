@@ -1,9 +1,7 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
 import pytest
-
 from sim.runtime.coordinator.multiplayer_room import (
     MultiplayerJoinRequest,
     MultiplayerRole,

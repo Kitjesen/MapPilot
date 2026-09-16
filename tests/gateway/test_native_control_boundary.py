@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from gateway.navigation.commands import CommandBoundaryError
 from gateway.services import native_control
-from gateway.services.command_boundary import CommandBoundaryError
 from runtime.msgs import NavigationCommandKind
 
 

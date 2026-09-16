@@ -18,7 +18,7 @@
   border: 1px solid var(--border-hi);
   border-radius: var(--r-md);
   box-shadow: var(--shadow-lg);
-  transition: border-color 160ms var(--ease-out), opacity 160ms var(--ease-out);
+  transition: border-color var(--duration-ui) var(--ease-out), opacity var(--duration-ui) var(--ease-out);
 }
 
 .cardStale {
@@ -72,7 +72,7 @@
   border: 1px solid transparent;
   border-radius: var(--r-sm);
   cursor: pointer;
-  transition: color 140ms var(--ease-out), background 140ms var(--ease-out), border-color 140ms var(--ease-out);
+  transition: color var(--duration-ui) var(--ease-out), background var(--duration-ui) var(--ease-out), border-color var(--duration-ui) var(--ease-out);
 }
 
 .dismiss:hover {
@@ -143,6 +143,7 @@
 }
 
 .reasonRow {
+  align-items: flex-start;
   min-width: 0;
   gap: 9px;
   padding: 8px 9px;
@@ -162,12 +163,11 @@
 
 .reason {
   min-width: 0;
-  overflow: hidden;
   color: var(--text-dim);
   font-family: var(--font-mono);
   font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .actions {
@@ -189,13 +189,13 @@
   font-size: 10px;
   font-weight: 700;
   cursor: pointer;
-  transition: transform 140ms var(--ease-out), opacity 140ms var(--ease-out), border-color 140ms var(--ease-out);
+  transition: transform var(--duration-ui) var(--ease-out), opacity var(--duration-ui) var(--ease-out), border-color var(--duration-ui) var(--ease-out);
 }
 
 .pauseButton {
-  color: var(--warn);
-  background: var(--warn-glow);
-  border: 1px solid color-mix(in srgb, var(--warn) 36%, transparent);
+  color: var(--text-dim);
+  background: var(--glass-hi);
+  border: 1px solid var(--border-hi);
 }
 
 .resumeButton {
@@ -205,10 +205,12 @@
 }
 
 .cancelButton {
-  color: var(--red);
-  background: var(--red-dim);
-  border: 1px solid color-mix(in srgb, var(--red) 45%, transparent);
+  color: var(--text-dim);
+  background: var(--glass-lo);
+  border: 1px solid var(--border-hi);
 }
+
+.cancelButton:hover:not(:disabled) { color: var(--red); border-color: var(--red); }
 
 .pauseButton:hover:not(:disabled),
 .resumeButton:hover:not(:disabled),
@@ -224,10 +226,33 @@
 }
 
 .meta {
-  justify-content: space-between;
-  gap: 10px;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 8px;
   color: var(--text-faint);
   font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.details {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.details summary {
+  color: var(--text-faint);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.details summary:hover { color: var(--text); }
+
+.details[open] .meta { animation: detailReveal var(--duration-panel) var(--ease-out); }
+
+@keyframes detailReveal {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .meta code {
@@ -250,7 +275,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .waiting {
+  .waiting,
+  .details[open] .meta {
     animation: none;
   }
 }

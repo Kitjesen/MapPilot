@@ -99,6 +99,7 @@ struct PlannerClearSample {
 struct SensorBatch {
   double receive_steady_s{0.0};
   double receive_wall_s{0.0};
+  std::optional<double> simulation_time_s;
   std::vector<InputSample<TransformSample>> transforms;
   std::vector<InputSample<OdometrySample>> odometry;
   std::optional<DriverControlSample> driver_control;

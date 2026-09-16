@@ -5,7 +5,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_LOOKUP_FILES = (
-    REPO_ROOT / "src/gateway/services/mapd_transport.py",
+    REPO_ROOT / "src/gateway/maps/transport.py",
     REPO_ROOT / "src/decision/modules/semantic_planner.py",
 )
 REMOVED_MAPS_MODULE = REPO_ROOT / "src/maps/modules/service.py"

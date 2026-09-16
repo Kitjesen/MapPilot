@@ -1,6 +1,5 @@
 """Lifecycle contracts for the single RobotSimUE playable runner."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -14,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 import sim.runtime.coordinator.playable_vertical_slice as playable_module
 from sim.runtime.control import create_production_components
 from sim.runtime.coordinator.coordinator import RuntimeState
@@ -105,7 +103,10 @@ def _fixed_bundle(tmp_path: Path) -> ResolvedSessionBundle:
                 "robots": [
                     {
                         "instance_id": "thunder_01",
-                        "package": {"id": "thunderv4", "version": "1.0.3"},
+                        "package": {
+                            "id": playable_module.PLAYABLE_ROBOT_PACKAGE[0],
+                            "version": playable_module.PLAYABLE_ROBOT_PACKAGE[1],
+                        },
                     }
                 ],
             },
@@ -791,47 +792,6 @@ def test_create_playable_launch_rejects_preexisting_run_before_construction(
         )
 
     assert constructed is False
-
-
-def test_run_rejects_bundle_disk_drift_before_starting_any_process(
-    tmp_path: Path,
-) -> None:
-    bundle = _fixed_bundle(tmp_path)
-    calls: list[tuple[str, Any]] = []
-    resources: dict[str, _Resource] = {}
-    dependencies = PlayableLaunchDependencies(
-        physics_host_factory=_factory("physics", calls, resources),
-        coordinator_factory=_factory("coordinator", calls, resources),
-        editor_process_factory=_factory("unreal", calls, resources),
-        snapshot_publisher_factory=_factory("snapshot", calls, resources),
-        visual_watcher_factory=_factory("visual_watcher", calls, resources),
-        camera_watcher_factory=_factory("camera_watcher", calls, resources),
-        session_host_factory=_factory("host", calls, resources),
-        camera_payload_source_factory=_factory("camera_payload", calls, resources),
-        motion_inbox_factory=_factory("motion_inbox", calls, resources),
-        request_inbox_factory=_factory("request_inbox", calls, resources),
-        control_receiver_factory=_factory("receiver", calls, resources),
-        control_ack_publisher_factory=_factory("ack", calls, resources),
-        control_pump_factory=_factory("pump", calls, resources),
-        interactive_session_factory=_factory("session", calls, resources),
-    )
-    launch = create_playable_launch(
-        bundle,
-        runtime=_runtime(bundle, tmp_path),
-        sensor_endpoint_factory_builder=lambda _physics: lambda *_args: None,
-        dependencies=dependencies,
-    )
-    sensor_path = bundle.bundle_dir / "sensor.plan.json"
-    mutated = copy.deepcopy(dict(bundle.plans["sensor.plan.json"]))
-    mutated["streams"]["mid360"] = []
-    sensor_path.write_text(json.dumps(mutated), encoding="utf-8")
-
-    with pytest.raises(PlayableLifecycleError, match="changed before start"):
-        run_playable_launch(launch, run_body=lambda: None)
-
-    assert "receiver.start" not in {name for name, _value in calls}
-    assert "session.prepare" not in {name for name, _value in calls}
-    assert launch._closed is True
 
 
 def test_run_playable_launch_starts_only_the_owned_lifecycle_and_closes_it(

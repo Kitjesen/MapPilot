@@ -1,0 +1,41 @@
+{
+  "schema_version": "lingtu.mujoco.native_navigation_acceptance.v1",
+  "name": "mujoco_scan_click_short",
+  "description": "Short same-source factory-workshop map click through Gateway, actual Fast-LIO2, SCAN and the current ProductControl nav preset. World goal coordinates are independent evaluation input, not SLAM input.",
+  "product_contract": {
+    "product": "nav",
+    "source": "config/runtime_graph/products/nav.yaml",
+    "native_control_mode": "autonomy",
+    "slam_mode": "localization",
+    "requires_map": true
+  },
+  "navigation_runtime": {"local_planner": "scan"},
+  "scene_contract": {"world": "factory_workshop@2.0.0", "map_source_profile": "factory_workshop_v2"},
+  "initial_pose": [61.0, 16.5, 0.45, 1.5707963267948966],
+  "goal": [61.0, 18.5, 0.0],
+  "goal_world": [61.0, 18.5, 0.0],
+  "motion_duration_s": 60.0,
+  "thresholds": {
+    "startup_timeout_s": 18.0,
+    "startup_ready_stable_s": 1.0,
+    "min_motion_m": 1.0,
+    "min_net_displacement_m": 1.0,
+    "max_goal_error_m": 0.5,
+    "min_input_gate_ready_fraction": 0.98
+  },
+  "acceptance_scope": {
+    "coverage": "product",
+    "claims": [
+      "one ProductControl nav transaction selects actual Fast-LIO2 and SCAN",
+      "the Gateway map-click endpoint returns the task identity observed to REACHED",
+      "same-session physical motion reaches the independently specified world goal without entity collision",
+      "terminal driver zero acknowledgement, process cleanup and previous-Product rollback are verified"
+    ],
+    "excluded_claims": [
+      "physical mouse gesture through the operating system",
+      "global relocalization without an initial map pose",
+      "95 mm V4 asset policy qualification",
+      "S100P or physical robot behavior"
+    ]
+  }
+}

@@ -70,23 +70,25 @@ import json
 from pathlib import Path
 import sys
 
+from lingtu.assembly.graph import ProcessSpec, load_runtime_graph
+from lingtu.assembly.graph.loader import product_requirements, resolve_product_variant_spec
 from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
-from runtime.graph import ProcessSpec
 
 kind, current_value = sys.argv[1:]
 if kind == "map":
     product = "map"
-    contracts = ("lingtu.product.map.v1",)
     processes = (ProcessSpec("maps", "systemd", "lt-maps.service", 10, 5, "mode"),)
 elif kind == "transaction":
     product = "nav"
-    contracts = ("lingtu.product.nav.v1",)
     processes = (
         ProcessSpec("driver", "systemd", "lt-driver.service", 10, 5, "mode"),
         ProcessSpec("nav", "systemd", "navd.service", 20, 5, "mode"),
     )
 else:
     raise SystemExit(f"unknown RunPlan fixture: {kind}")
+
+spec = resolve_product_variant_spec(product, load_runtime_graph().products[product])
+required_topics, required_capabilities = product_requirements(product, spec)
 
 plan = RunPlan.create(
     product=product,
@@ -97,7 +99,8 @@ plan = RunPlan.create(
     processes=processes,
     available_processes=processes,
     stop_before_start=tuple(process.target for process in processes),
-    contracts=contracts,
+    required_topics=required_topics,
+    required_capabilities=required_capabilities,
     critical_modules=(),
     route_contract=None,
     host_config={},
@@ -172,9 +175,13 @@ run_self_test() {
   local unexpected_root_output
   local fake_control
   local success_root
+  local stopped_root
+  local stopped_failure_root
   local failure_root
   local link_failure_root
   local fake_ln_dir
+  local fake_mv_dir
+  local real_mv
   local link_failure_output
   local header_output
 
@@ -219,8 +226,9 @@ run_self_test() {
   printf 'runtime = True\n' > "${test_root}/source/src/nav/inspection/service.py"
   printf 'internal only\n' > "${test_root}/source/src/nav/inspection/internal.hpp"
   printf 'removed before packaging\n' > "${test_root}/source/config/deleted.txt"
+  printf '/web/dist/\n' > "${test_root}/source/.gitignore"
   git -C "${test_root}/source" init -q
-  git -C "${test_root}/source" add VERSION config sim src
+  git -C "${test_root}/source" add VERSION config sim src .gitignore
   rm "${test_root}/source/config/deleted.txt"
   mkdir -p "${test_root}/source/src/message"
   printf 'CURRENT_CONTRACT = True\n' \
@@ -519,6 +527,11 @@ PY
     <<<"${mapd_missing_converter_output}"
   install -m 0755 /dev/null \
     "${install_prefix}/bin/octoplanner3d_pcd_to_octomap"
+  mkdir -p "${test_root}/source/web/dist/assets"
+  printf '<html>Dashboard self-test</html>\n' \
+    > "${test_root}/source/web/dist/index.html"
+  printf 'console.log("dashboard self-test");\n' \
+    > "${test_root}/source/web/dist/assets/self-test.js"
   LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
     LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
     LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
@@ -534,6 +547,10 @@ PY
     <<<"${mapd_tar_listing}"
   grep -Fq \
     'lingtu-0.0.1-aarch64-native-release/build/octoplanner3d_headless/octoplanner3d_pcd_to_octomap' \
+    <<<"${mapd_tar_listing}"
+  grep -Fq 'lingtu-0.0.1-aarch64-native-release/web/dist/index.html' \
+    <<<"${mapd_tar_listing}"
+  grep -Fq 'lingtu-0.0.1-aarch64-native-release/web/dist/assets/self-test.js' \
     <<<"${mapd_tar_listing}"
 
   # Exercise the real installer transaction with a fake ProductControl. The
@@ -561,6 +578,39 @@ if [[ "$(basename "${repo}")" != "old-release" \
 fi
 FAKE_CONTROL
   chmod 0755 "${fake_control}"
+
+  # A stopped Product has no current record but can retain a release link.
+  # Upgrading that tree must not start a Product or create runtime state.
+  stopped_root="${test_root}/transaction-stopped"
+  mkdir -p "${stopped_root}/old-release" "${stopped_root}/state"
+  ln -s "${stopped_root}/old-release" "${stopped_root}/current"
+  LINGTU_NATIVE_RELEASE_TEST_ROOT="${test_root}" \
+    LINGTU_NATIVE_RELEASE_TEST_CONTROL="${fake_control}" \
+    LINGTU_FAKE_CONTROL_LOG="${stopped_root}/control.log" \
+    bash "${extracted_package}/install_nav.sh" \
+    --dry-run \
+    --package-dir "${extracted_package}" \
+    --releases-dir "${stopped_root}/releases" \
+    --current-link "${stopped_root}/current" \
+    --state-dir "${stopped_root}/state"
+  test "$(readlink -f "${stopped_root}/current")" = \
+    "$(readlink -f "${stopped_root}/old-release")"
+  test ! -e "${stopped_root}/releases"
+  test ! -e "${stopped_root}/control.log"
+  test ! -e "${stopped_root}/state/current.json"
+  LINGTU_NATIVE_RELEASE_TEST_ROOT="${test_root}" \
+    LINGTU_NATIVE_RELEASE_TEST_CONTROL="${fake_control}" \
+    LINGTU_FAKE_CONTROL_LOG="${stopped_root}/control.log" \
+    bash "${extracted_package}/install_nav.sh" \
+    --package-dir "${extracted_package}" \
+    --releases-dir "${stopped_root}/releases" \
+    --current-link "${stopped_root}/current" \
+    --state-dir "${stopped_root}/state"
+  test "$(readlink -f "${stopped_root}/current")" = \
+    "$(readlink -f "${stopped_root}/releases/v0.0.0")"
+  test ! -e "${stopped_root}/control.log"
+  test ! -e "${stopped_root}/state/current.json"
+
   success_root="${test_root}/transaction-success"
   mkdir -p "${success_root}/old-release" "${success_root}/state"
   ln -s "${success_root}/old-release" "${success_root}/current"
@@ -669,6 +719,46 @@ assert Path(sys.argv[1]).read_text(encoding="utf-8").splitlines() == [
 PY
   test "$(readlink -f "${link_failure_root}/current")" = \
     "$(readlink -f "${link_failure_root}/releases/v0.0.0")"
+
+  # Link activation failure must also keep a stopped Product stopped.
+  stopped_failure_root="${test_root}/transaction-stopped-link-failure"
+  fake_mv_dir="${test_root}/fake-mv-bin"
+  mkdir -p "${stopped_failure_root}/old-release" "${stopped_failure_root}/state"
+  ln -s "${stopped_failure_root}/old-release" "${stopped_failure_root}/current"
+  mkdir -p "${fake_mv_dir}"
+  cat > "${fake_mv_dir}/mv" <<'FAKE_MV'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$1" == "-Tf" && ! -e "${LINGTU_FAKE_MV_FAILED}" ]]; then
+  "${LINGTU_REAL_MV}" "$@"
+  : > "${LINGTU_FAKE_MV_FAILED}"
+  exit 1
+fi
+exec "${LINGTU_REAL_MV}" "$@"
+FAKE_MV
+  chmod 0755 "${fake_mv_dir}/mv"
+  real_mv="$(command -v mv)"
+  if PATH="${fake_mv_dir}:${PATH}" \
+      LINGTU_REAL_MV="${real_mv}" \
+      LINGTU_FAKE_MV_FAILED="${stopped_failure_root}/mv-failed" \
+      LINGTU_NATIVE_RELEASE_TEST_ROOT="${test_root}" \
+      LINGTU_NATIVE_RELEASE_TEST_CONTROL="${fake_control}" \
+      LINGTU_FAKE_CONTROL_LOG="${stopped_failure_root}/control.log" \
+      bash "${extracted_package}/install_nav.sh" \
+      --package-dir "${extracted_package}" \
+      --releases-dir "${stopped_failure_root}/releases" \
+      --current-link "${stopped_failure_root}/current" \
+      --state-dir "${stopped_failure_root}/state"; then
+    echo "installer accepted a failed stopped-release link activation" >&2
+    return 1
+  fi
+  test "$(readlink -f "${stopped_failure_root}/current")" = \
+    "$(readlink -f "${stopped_failure_root}/old-release")"
+  test -d "${stopped_failure_root}/releases/v0.0.0"
+  test -e "${stopped_failure_root}/mv-failed"
+  test ! -e "${stopped_failure_root}/control.log"
+  test ! -e "${stopped_failure_root}/state/current.json"
   echo "package_native_release self-test passed"
 }
 
@@ -784,6 +874,12 @@ list_checkout_files "${ROOT}" \
   --exclude='/scripts/deploy/s100p/***' \
   "${ROOT}/" "${PACKAGE_ROOT}/"
 
+# The Gateway serves this built dashboard, which is ignored by Git.
+if [[ -d "${ROOT}/web/dist" ]]; then
+  mkdir -p "${PACKAGE_ROOT}/web/dist"
+  rsync -a "${ROOT}/web/dist/" "${PACKAGE_ROOT}/web/dist/"
+fi
+
 if [[ -e "${PACKAGE_ROOT}/src/nav/cpp" ]]; then
   echo "Native release must not contain internal source: src/nav/cpp" >&2
   exit 1
@@ -854,6 +950,10 @@ prepare_default_install_prefix() {
   rsync -aL \
     "${ROOT}/build/orbbec_native/lib/" \
     "${INSTALL_PREFIX}/lib/"
+  if [[ -x "${ROOT}/build/realsense_native/realsense_capture" ]]; then
+    install -m 0755 "${ROOT}/build/realsense_native/realsense_capture" \
+      "${INSTALL_PREFIX}/bin/realsense_capture"
+  fi
   rsync -a --delete "${ROOT}/config/" "${INSTALL_PREFIX}/etc/lingtu/"
   mkdir -p "${INSTALL_PREFIX}/share/lingtu/schemas"
   rsync -a \

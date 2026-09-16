@@ -277,7 +277,14 @@ def test_sse_message_format_keeps_eventsource_onmessage_contract():
         normalize_sse_event,
     )
 
-    event = normalize_sse_event({"type": "mission_status", "data": {"state": "IDLE"}}, event_id=7, now=123.0)
+    event = normalize_sse_event(
+        {
+            "type": "navigation_status",
+            "data": {"task": {"state": "IDLE"}},
+        },
+        event_id=7,
+        now=123.0,
+    )
     text = format_sse_message(event, retry_ms=3000)
 
     assert text.startswith("retry: 3000\nid: 7\ndata: ")

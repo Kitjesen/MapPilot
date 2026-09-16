@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -7,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 import sim.runtime.coordinator.atomic_file as atomic_file_module
 from sim.runtime.recording import EpisodeRecorder, EpisodeResult, EpisodeStatus
 
@@ -135,22 +133,6 @@ def test_result_serialization_is_stable_after_artifact_input_mutates(
     assert "late_mutation" not in first_path.read_text(encoding="utf-8")
 
 
-def test_episode_result_requires_non_empty_session_id() -> None:
-    with pytest.raises(
-        ValueError,
-        match="session_id must be non-empty",
-    ):
-        EpisodeResult(
-            run_id="run-invalid-digest",
-            session_id=" ",
-            model_generation=0,
-            reset_generation=0,
-            start_sim_time_ns=0,
-            end_sim_time_ns=1,
-            status=EpisodeStatus.SUCCEEDED,
-        )
-
-
 @pytest.mark.parametrize(
     ("override", "message"),
     [
@@ -188,6 +170,7 @@ def test_episode_result_validates_generation_and_sim_time_schema(
     ("override", "message"),
     [
         ({"run_id": ""}, "run_id"),
+        ({"session_id": ""}, "session_id"),
         ({"status": "SUCCEEDED"}, "status"),
         ({"artifact_references": []}, "artifact_references"),
         ({"artifact_references": {"": "evidence.json"}}, "artifact reference name"),

@@ -1,6 +1,6 @@
 """Contracts for the native camera recorder/player boundary."""
 
-# ruff: noqa: D103, S101 - pytest contracts use assertions by design.
+
 
 from pathlib import Path
 

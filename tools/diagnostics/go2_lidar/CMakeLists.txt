@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.16)
+project(go2_lidar_capture LANGUAGES CXX)
+find_package(unitree_sdk2 REQUIRED CONFIG)
+add_executable(go2_lidar_capture main.cpp)
+target_compile_features(go2_lidar_capture PRIVATE cxx_std_17)
+target_compile_options(go2_lidar_capture PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(go2_lidar_capture PRIVATE unitree_sdk2 pthread)

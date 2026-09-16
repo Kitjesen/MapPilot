@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import pytest
 
-from runtime.contracts.product_runtime import resolve_product_spec_contracts
-from runtime.endpoints.dds.contracts import FIELD_DDS_CONTRACT, binding_for_topic
-from runtime.graph import load_runtime_graph, resolve_env_implementation
+from lingtu.assembly.graph import load_runtime_graph, resolve_env_implementation
+from lingtu.assembly.graph.loader import resolve_product_variant_spec
+from message.generated.schema import MESSAGE_FIELDS
+from message.topics import TOPICS, topic_spec
 from runtime.msgs import (
     ExplorationRunEvent,
     ExplorationRunEventKind,
     ExplorationRunState,
 )
 from runtime.route_contract.routes import robot
-from runtime.runtime_interface import MESSAGE_FORMATS, TOPICS
 
 RUN_ID = "01K1M9S4FX27T8XMY6QJNBAV3W"
 
@@ -111,42 +111,26 @@ def test_exploration_run_event_is_required_by_both_explore_variants() -> None:
     topic = TOPICS.exploration_run_event
 
     for variant in ("live", "map"):
-        contract = resolve_product_spec_contracts(
+        contract = resolve_product_variant_spec(
             "explore",
             graph.products["explore"],
             product_variant=variant,
         )
-        assert topic in contract.topics
+        assert topic in tuple(contract["topics"])
 
 def test_exploration_run_event_is_one_native_writer_to_host_bus_stream() -> None:
     graph = load_runtime_graph()
     topic = TOPICS.exploration_run_event
 
     assert topic in graph.native_contract_topics
-    assert graph.topic_contracts[topic] == {
-        "role": "native_exploration_run_event",
-        "frame": "map",
-        "schema": "exploration_run_event",
-        "producer": "native_explore_runtime",
-        "consumers": ["host_bus"],
-        "external_diagnostics_subscribable": True,
-        "qos": "reliable_transient_local_keep_last_512",
-        "semantics": "ordered_exploration_run_facts_with_native_stop_evidence",
-        "port_bindings": [
-            {
-                "owner": "native_explore_runtime",
-                "port": "exploration_run_event",
-                "direction": "out",
-                "boundary": "endpoint",
-            },
-            {
-                "owner": "host_bus",
-                "port": "exploration_run_event",
-                "direction": "in",
-                "boundary": "native",
-            },
-        ],
-    }
+    contract = graph.topic_contracts[topic]
+    assert contract["message_type"] == "lingtu.dds.ExplorationRunEvent"
+    assert contract["qos_profile"] == "TaskEvent"
+    assert contract["producer"] == "native_explore_runtime"
+    assert contract["consumers"] == ["host_bus"]
+    assert contract["semantics"] == (
+        "ordered_exploration_run_facts_with_native_stop_evidence"
+    )
 
     real = resolve_env_implementation("real", graph=graph)
     sim = resolve_env_implementation(
@@ -163,16 +147,13 @@ def test_exploration_run_event_is_one_native_writer_to_host_bus_stream() -> None
             "terminal_truth": "native_motion_stop_confirmation_before_terminal",
         }
 
-    binding = binding_for_topic(FIELD_DDS_CONTRACT.name, topic)
-    assert binding.direction == "endpoint_to_lingtu"
-    assert binding.idl_type == "lingtu.dds.ExplorationRunEvent"
-    assert binding.frame_ids == ("map",)
-    assert binding.required is True
-    assert robot().binding_for("dds", topic) == {"qos": "event"}
+    assert topic_spec(topic).message_type == "lingtu.dds.ExplorationRunEvent"
+    assert graph.topic_contracts[topic]["frame"] == "map"
+    assert robot().binding_for("dds", topic) == {}
 
 
 def test_exploration_run_event_runtime_format_is_complete() -> None:
-    assert MESSAGE_FORMATS["exploration_run_event"].required_fields == (
+    assert MESSAGE_FIELDS["lingtu.dds.ExplorationRunEvent"] == (
         "timestamp_s",
         "frame_id",
         "boot_id",

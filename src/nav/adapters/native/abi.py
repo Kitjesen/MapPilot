@@ -18,7 +18,7 @@ from typing import Any
 # Field Products package the Host and native client in one atomically switched
 # release. Exact equality intentionally fails closed.
 # Append-only extensions inside a release are advertised by capability bits.
-NATIVE_COMMAND_ABI_VERSION = 8
+NATIVE_COMMAND_ABI_VERSION = 10
 NATIVE_COMMAND_CAP_NAVIGATION = 1 << 0
 NATIVE_COMMAND_CAP_INSPECTION = 1 << 1
 NATIVE_COMMAND_CAP_EXPLORATION = 1 << 2
@@ -35,6 +35,8 @@ NATIVE_COMMAND_CAP_INSPECTION_TASK_EVENTS = 1 << 12
 NATIVE_COMMAND_CAP_EXPLORATION_RUN_EVENTS = 1 << 13
 NATIVE_COMMAND_CAP_TRAVERSABILITY_GRID = 1 << 14
 NATIVE_COMMAND_CAP_PLAN_PREVIEW = 1 << 15
+NATIVE_COMMAND_CAP_JOINT_STATE = 1 << 16
+NATIVE_JOINT_STATE_ABI_VERSION = 1
 
 NATIVE_OPERATOR_MOTION_RECEIPT_ABI_VERSION = 1
 NATIVE_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION = 1
@@ -44,7 +46,7 @@ NATIVE_EXPLORATION_COMMAND_RECEIPT_ABI_VERSION = 1
 NATIVE_EXPLORATION_RUN_EVENT_ABI_VERSION = 2
 NATIVE_PLAN_RESULT_ABI_VERSION = 1
 
-NATIVE_MAP_SCENE_ABI_VERSION = 1
+NATIVE_MAP_SCENE_ABI_VERSION = 3
 NATIVE_MAP_SCENE_MAX_POINTS_PER_LAYER = 300_000
 NATIVE_MAP_SCENE_MAX_TOTAL_POINTS = 800_000
 NATIVE_MAP_SCENE_MAX_GRID_CELLS_PER_LAYER = 1_000_000
@@ -52,6 +54,20 @@ NATIVE_MAP_SCENE_MAX_TOTAL_GRID_CELLS = 4_000_000
 NATIVE_MAP_SCENE_MAX_PAYLOAD_BYTES = 32 * 1024 * 1024
 NATIVE_TRAVERSABILITY_GRID_ABI_VERSION = 1
 NATIVE_TRAVERSABILITY_MAX_CELLS = 1_000_000
+
+
+class _NativeJointStateV1(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("struct_size", ctypes.c_uint32),
+        ("timestamp_s", ctypes.c_double),
+        ("robot_model", ctypes.c_char * 32),
+        ("joint_count", ctypes.c_uint32),
+        ("names", (ctypes.c_char * 64) * 12),
+        ("position", ctypes.c_double * 12),
+        ("velocity", ctypes.c_double * 12),
+        ("effort", ctypes.c_double * 12),
+    ]
 
 
 class _NativeNavigationState(ctypes.Structure):
@@ -305,6 +321,10 @@ class _NativeMapSceneHeaderV1(ctypes.Structure):
         ("occupancy", _NativeMapSceneGridHeaderV1),
         ("elevation", _NativeMapSceneGridHeaderV1),
         ("esdf", _NativeMapSceneGridHeaderV1),
+        ("surface_projection", _NativeMapSceneGridHeaderV1),
+        ("ground_height", _NativeMapSceneGridHeaderV1),
+        ("ground_roughness", _NativeMapSceneGridHeaderV1),
+        ("ground_support", _NativeMapSceneGridHeaderV1),
     ]
 
 
@@ -324,6 +344,14 @@ class _NativeMapSceneBuffersV1(ctypes.Structure):
         ("elevation_cell_capacity", ctypes.c_ulonglong),
         ("esdf_cells", ctypes.POINTER(ctypes.c_float)),
         ("esdf_cell_capacity", ctypes.c_ulonglong),
+        ("surface_projection_cells", ctypes.POINTER(ctypes.c_float)),
+        ("surface_projection_cell_capacity", ctypes.c_ulonglong),
+        ("ground_height_cells", ctypes.POINTER(ctypes.c_float)),
+        ("ground_height_cell_capacity", ctypes.c_ulonglong),
+        ("ground_roughness_cells", ctypes.POINTER(ctypes.c_float)),
+        ("ground_roughness_cell_capacity", ctypes.c_ulonglong),
+        ("ground_support_cells", ctypes.POINTER(ctypes.c_float)),
+        ("ground_support_cell_capacity", ctypes.c_ulonglong),
     ]
 
 
@@ -425,6 +453,7 @@ class NativeCommandSession:
         self._plan_preview_configured = False
         self._map_scene_configured = False
         self._traversability_configured = False
+        self._joint_state_configured = False
         self._configure_core_abi()
         self._validate_abi()
         self.handle = self.library.lingtu_nav_client_create(int(domain_id))
@@ -998,6 +1027,46 @@ class NativeCommandSession:
                 ) from exc
             self._map_scene_configured = True
 
+    def ensure_joint_state_abi(self) -> None:
+        """Bind optional bounded measured-joint telemetry on the existing session."""
+        with self.lock:
+            if self._joint_state_configured:
+                return
+            self._require_capability(NATIVE_COMMAND_CAP_JOINT_STATE, "joint state telemetry")
+            try:
+                take = self.library.lingtu_nav_client_take_joint_state_v1
+                take.argtypes = [ctypes.c_void_p, ctypes.POINTER(_NativeJointStateV1)]
+                take.restype = ctypes.c_int
+            except AttributeError as exc:
+                raise NativeCommandClientError("native joint state ABI is incomplete") from exc
+            self._joint_state_configured = True
+
+    def take_joint_state(self) -> dict[str, object] | None:
+        """Pop one latest-only sample without altering its source timestamp."""
+        self.ensure_joint_state_abi()
+        state = _NativeJointStateV1()
+        state.abi_version = NATIVE_JOINT_STATE_ABI_VERSION
+        state.struct_size = ctypes.sizeof(state)
+        with self.lock:
+            self.require_open()
+            result = int(self.library.lingtu_nav_client_take_joint_state_v1(self.handle, ctypes.byref(state)))
+            if result < 0:
+                raise NativeCommandClientError(self.last_error(self.handle))
+        if result == 0:
+            return None
+        count = int(state.joint_count)
+        if result != 1 or state.abi_version != NATIVE_JOINT_STATE_ABI_VERSION \
+                or state.struct_size != ctypes.sizeof(state) or not 1 <= count <= 12:
+            raise NativeCommandClientError("native joint state header is invalid")
+        return {
+            "timestamp_s": float(state.timestamp_s),
+            "robot_model": self._decode_fixed_text(state.robot_model),
+            "names": [self._decode_fixed_text(bytes(state.names[index])) for index in range(count)],
+            "position": list(state.position[:count]),
+            "velocity": list(state.velocity[:count]),
+            "effort": list(state.effort[:count]),
+        }
+
     def ensure_traversability_abi(self) -> None:
         """Validate bounded latest-only native control-risk grid telemetry."""
 
@@ -1316,6 +1385,8 @@ class NativeCommandSession:
         y: float,
         z: float,
         yaw: float | None,
+        max_speed_mps: float | None = None,
+        acceptance_radius_m: float | None = None,
     ) -> dict[str, object]:
         """Submit one navigation task and return the correlated native ACK."""
 
@@ -1326,14 +1397,26 @@ class NativeCommandSession:
             raise ValueError("task_id is required")
         if not request:
             raise ValueError("request_id is required")
+        operation = self.library.lingtu_nav_client_start_task_with_receipt_v1
+        constraints = []
+        if max_speed_mps is not None or acceptance_radius_m is not None:
+            constraints = [0.0 if v is None else float(v) for v in (max_speed_mps, acceptance_radius_m)]
+            if any(not math.isfinite(v) or v < 0.0 for v in constraints):
+                raise ValueError("goal constraints must be nonnegative and finite")
+            operation = self.library.lingtu_nav_client_start_task_with_receipt_v2
+            operation.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p,
+                                  *([ctypes.c_double] * 6), ctypes.c_int,
+                                  ctypes.POINTER(_NativeNavigationCommandReceiptV1)]
+            operation.restype = ctypes.c_int
         return self._write_navigation_command_receipt(
-            self.library.lingtu_nav_client_start_task_with_receipt_v1,
+            operation,
             task.encode("utf-8"),
             request.encode("utf-8"),
             float(x),
             float(y),
             float(z),
             math.nan if yaw is None else float(yaw),
+            *constraints,
             self.goal_timeout_ms,
         )
 
@@ -1656,6 +1739,10 @@ class NativeCommandSession:
                 "occupancy": header.occupancy,
                 "elevation": header.elevation,
                 "esdf": header.esdf,
+                "surface_projection": header.surface_projection,
+                "ground_height": header.ground_height,
+                "ground_roughness": header.ground_roughness,
+                "ground_support": header.ground_support,
             }
             point_buffers = {
                 name: (_NativeMapScenePointV1 * count)()
@@ -1923,6 +2010,10 @@ class NativeCommandSession:
                 int(header.occupancy.cell_count),
                 int(header.elevation.cell_count),
                 int(header.esdf.cell_count),
+                int(header.surface_projection.cell_count),
+                int(header.ground_height.cell_count),
+                int(header.ground_roughness.cell_count),
+                int(header.ground_support.cell_count),
             )
         )
 
@@ -1941,6 +2032,10 @@ class NativeCommandSession:
             int(header.occupancy.cell_count),
             int(header.elevation.cell_count),
             int(header.esdf.cell_count),
+            int(header.surface_projection.cell_count),
+            int(header.ground_height.cell_count),
+            int(header.ground_roughness.cell_count),
+            int(header.ground_support.cell_count),
             int(header.payload_bytes),
         )
 
@@ -1965,6 +2060,10 @@ class NativeCommandSession:
             header.occupancy,
             header.elevation,
             header.esdf,
+            header.surface_projection,
+            header.ground_height,
+            header.ground_roughness,
+            header.ground_support,
         ]
         grid_counts = [int(grid.cell_count) for grid in grid_headers]
         if any(
@@ -2095,6 +2194,10 @@ class NativeCommandSession:
                 "occupancy": grid("occupancy", header.occupancy),
                 "elevation": grid("elevation", header.elevation),
                 "esdf": grid("esdf", header.esdf),
+                "surface_projection": grid("surface_projection", header.surface_projection),
+                "ground_height": grid("ground_height", header.ground_height),
+                "ground_roughness": grid("ground_roughness", header.ground_roughness),
+                "ground_support": grid("ground_support", header.ground_support),
             },
         }
 

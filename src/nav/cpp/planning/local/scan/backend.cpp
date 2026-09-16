@@ -39,6 +39,31 @@ Eigen::Vector3d eigenPoint(const Vec3 &point) {
   return {point.x, point.y, point.z};
 }
 
+Vec3 planningPoint(const Eigen::Vector3d &point) {
+  return {point.x(), point.y(), point.z()};
+}
+
+ScanAttemptDiagnostics attemptDiagnostics(const upstream::ReboundPlanDebug &attempt) {
+  ScanAttemptDiagnostics result;
+  result.attemptId = attempt.attemptId;
+  result.attempted = attempt.attempted;
+  result.success = attempt.success;
+  result.stage = attempt.stage;
+  result.reason = attempt.reason;
+  result.optimizerReturnCodeValid = attempt.optimizerReturnCodeValid;
+  result.optimizerReturnCode = attempt.optimizerReturnCode;
+  result.collisionValid = attempt.collisionValid;
+  result.collisionPosition = planningPoint(attempt.collisionPosition);
+  result.collisionTimeS = attempt.collisionTimeS;
+  result.collisionState = attempt.collisionState;
+  result.dynamicViolationValid = attempt.dynamicViolationValid;
+  result.dynamicQuantity = attempt.dynamicQuantity;
+  result.dynamicValue = attempt.dynamicValue;
+  result.dynamicLimit = attempt.dynamicLimit;
+  result.dynamicTimeS = attempt.dynamicTimeS;
+  return result;
+}
+
 bool sameIntent(const std::optional<LocalMotionIntent> &left,
                 const LocalMotionIntent *right) {
   if (left.has_value() != (right != nullptr))
@@ -115,7 +140,7 @@ ScanReplanParams fsmParameters(const LocalPlannerParams &params,
   return output;
 }
 
-SplineTarget splineTarget(const BsplineTrajectory &trajectory) {
+SplineTarget splineTarget(const BsplineTrajectory &trajectory, double maxLinearSpeedMps) {
   SplineTarget target;
   target.controls.reserve(static_cast<std::size_t>(trajectory.positionPoints.cols()));
   for (Eigen::Index column = 0; column < trajectory.positionPoints.cols(); ++column) {
@@ -128,6 +153,7 @@ SplineTarget splineTarget(const BsplineTrajectory &trajectory) {
                       trajectory.knots.data() + trajectory.knots.size());
   target.startTimeS = trajectory.startTimeS;
   target.trajectoryId = trajectory.trajectoryId;
+  target.maxLinearSpeedMps = maxLinearSpeedMps;
   return target;
 }
 
@@ -164,15 +190,15 @@ class Backend::Impl {
   LocalPlan run(const LocalPlanRequest &input, bool collisionTick,
                 const LocalPlanCancel &cancel) {
     const auto started = std::chrono::steady_clock::now();
-    manager_->setTimeSource([baseTimeS = input.clock.timestampS, started] {
-      return baseTimeS +
-             std::chrono::duration<double>(std::chrono::steady_clock::now() -
-                                           started)
-                 .count();
+    manager_->setTimeSource([clock = input.clock, started] {
+      return clock.afterElapsed(std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - started).count());
     });
     debug_ = {};
     debug_.backend = LocalPlannerBackend::Scan;
     debug_.timestampS = input.clock.timestampS;
+    debug_.scanAttempt = lastAttempt_;
+    debug_.lastScanFailure = lastFailure_;
 
     const auto stop = [this, started](LocalPlanStatus status,
                                       std::string reason) {
@@ -182,6 +208,9 @@ class Backend::Impl {
     };
     if (cancel && cancel())
       return stop(LocalPlanStatus::Cancelled, "planning_cancelled");
+
+    if (!std::isfinite(input.maxLinearSpeedMps) || input.maxLinearSpeedMps < 0.0)
+      return stop(LocalPlanStatus::InvalidInput, "linear_speed_limit_invalid");
 
     const LocalRouteView *route = input.referenceRoute();
     if (route == nullptr || !route->valid() ||
@@ -219,6 +248,31 @@ class Backend::Impl {
     if (!grid.valid())
       return stop(LocalPlanStatus::InvalidInput, grid.reason());
 
+    PlanParameters plan = planParameters(params_);
+    plan.motion_intent_ = input.intent() != nullptr;
+    if (input.maxLinearSpeedMps > 0.0)
+      plan.max_vel_ = std::min(plan.max_vel_, input.maxLinearSpeedMps);
+    if (plan.max_vel_ != manager_->pp_.max_vel_ ||
+        plan.motion_intent_ != manager_->pp_.motion_intent_)
+      manager_->updatePlanParameters(plan, optimizerParameters(params_, plan));
+
+    const auto *activeSpline =
+        active_ ? std::get_if<SplineTarget>(&active_->target()) : nullptr;
+    if (activeSpline != nullptr && !referenceRejected_ && !speedReductionPending_ &&
+        plan.max_vel_ < activeSpline->maxLinearSpeedMps) {
+      // Executor holds the old trajectory during a speed reduction. Its
+      // derivatives are no longer the robot's motion state, so start a fresh
+      // FSM from odometry while retaining the manager's allocation and IDs.
+      const int trajectoryId = manager_->local_data_.traj_id_;
+      manager_->local_data_ = {};
+      manager_->local_data_.traj_id_ = trajectoryId;
+      fsm_ = std::make_unique<SCANReplanFSM>(*manager_, fsmParameters(params_, plan));
+      referenceInitialized_ = false;
+      speedReductionPending_ = true;
+      active_.reset();
+      activeSpline = nullptr;
+    }
+
     GridBinding binding(*gridMap_, grid);
     FsmInput fsmInput;
     fsmInput.nowS = input.clock.timestampS;
@@ -231,12 +285,23 @@ class Backend::Impl {
         Eigen::AngleAxisd(input.robot.pose.yaw, Eigen::Vector3d::UnitZ());
     fsmInput.odometry = odometry;
     fsmInput.executionFrozen = input.clock.executionFrozen;
+    if (const auto *intent = input.intent()) {
+      fsmInput.motionIntentMaxDeviationRad =
+          std::clamp(intent->maxDirectionDeviationDeg, 0.0, 90.0) * M_PI / 180.0;
+    }
 
     FsmOutput output;
     if (collisionTick) {
       output = fsm_->checkFutureCollision(fsmInput);
     } else {
-      if (referenceIdentityChanged(input, *route)) {
+      // A new speed is a planning input, not a replacement guide identity.
+      // Do not repeatedly inject subscriber events while a replan is pending:
+      // they return before the official FSM timer can generate a trajectory.
+      const bool speedReplan = activeSpline != nullptr &&
+                               !referenceRejected_ &&
+                               activeSpline->maxLinearSpeedMps != plan.max_vel_ &&
+                               fsm_->state() == ScanReplanState::EXEC_TRAJ;
+      if (referenceIdentityChanged(input, *route) || speedReplan) {
         std::vector<Eigen::Vector3d> reference;
         reference.reserve(static_cast<std::size_t>(route->count));
         for (int index = 0; index < route->count; ++index) {
@@ -250,23 +315,48 @@ class Backend::Impl {
       }
       output = fsm_->tick(fsmInput);
     }
-    if (!collisionTick && output.targetAccepted)
+    if (!collisionTick && (output.targetAccepted || output.targetRejected)) {
       rememberReference(input, *route);
+      referenceRejected_ = output.targetRejected;
+    }
     debug_.searchReason = stateName(output.state);
 
-    if (cancel && cancel())
+    if (cancel && cancel()) {
+      // Consume this discarded tick's attempt so a later tick without a new
+      // attempt cannot capture it against a different accepted request.
+      lastObservedAttemptId_ = manager_->reboundDebug().attemptId;
       return stop(LocalPlanStatus::Cancelled, "planning_cancelled");
+    }
+    recordAttempt(input, *route);
+    if (output.localTargetBlocked) {
+      active_.reset();
+      return stop(LocalPlanStatus::Blocked, "scan_local_target_blocked");
+    }
+    if (output.state == ScanReplanState::EMERGENCY_STOP || output.emergencyStopIssued) {
+      // Keep the upstream stop trajectory inside the FSM. The native executor
+      // owns stopping; publishing this stationary spline as Ready hides failure.
+      active_.reset();
+      emergencyStopped_ = true;
+      return stop(LocalPlanStatus::NearFieldStop, "scan_emergency_stop");
+    }
     if (output.trajectory) {
-      LocalPlan next = LocalPlan::spline(splineTarget(*output.trajectory));
+      LocalPlan next = LocalPlan::spline(splineTarget(*output.trajectory, plan.max_vel_));
       if (next.ready()) {
         active_ = next;
+        emergencyStopped_ = false;
+        speedReductionPending_ = false;
         debug_.valid = true;
         debug_.trajectoryPointCount =
             static_cast<int>(output.trajectory->positionPoints.cols());
       }
     }
-    if (output.targetRejected && !active_)
+    if (referenceRejected_ && !active_)
       return stop(LocalPlanStatus::NoPath, "scan_target_rejected");
+    if (emergencyStopped_)
+      return stop(fsm_->hasTarget() ? LocalPlanStatus::NearFieldStop : LocalPlanStatus::NoPath,
+                  fsm_->hasTarget() ? "scan_emergency_stop" : "scan_replan_failed");
+    if (output.initializationFailed && !active_)
+      return stop(LocalPlanStatus::Blocked, "scan_initialization_failed");
     if (active_) {
       debug_.valid = true;
       debug_.continuityReused = !output.trajectory.has_value();
@@ -287,16 +377,82 @@ class Backend::Impl {
     active_.reset();
     lastIntent_.reset();
     referenceInitialized_ = false;
+    referenceRejected_ = false;
+    speedReductionPending_ = false;
+    emergencyStopped_ = false;
     lastFrameEpoch_ = 0;
     lastRouteGeneration_ = 0;
     debug_ = {};
     debug_.backend = LocalPlannerBackend::Scan;
+    debug_.scanAttempt = lastAttempt_;
+    debug_.lastScanFailure = lastFailure_;
+    lastObservedAttemptId_ = 0;
+    failureEpisodeActive_ = false;
     initializeOfficialCore();
   }
 
   LocalPlannerDebugSnapshot debugSnapshot() const { return debug_; }
 
  private:
+
+  void recordAttempt(const LocalPlanRequest &input, const LocalRouteView &route) {
+    const auto &attempt = manager_->reboundDebug();
+    if (!attempt.attempted || attempt.attemptId == lastObservedAttemptId_)
+      return;
+    lastObservedAttemptId_ = attempt.attemptId;
+    lastAttempt_ = attemptDiagnostics(attempt);
+    debug_.scanAttempt = lastAttempt_;
+
+    // The final attempted result at the tick boundary defines a failure episode.
+    // Failed internal retries followed by success in this tick do not start one.
+    if (attempt.success) {
+      failureEpisodeActive_ = false;
+      return;
+    }
+    if (failureEpisodeActive_)
+      return;
+    failureEpisodeActive_ = true;
+
+    auto failure = std::make_shared<ScanFailureSnapshot>();
+    failure->sequence = ++failureSequence_;
+    failure->attempt = lastAttempt_;
+    failure->clock = input.clock;
+    failure->identity = input.identity;
+    failure->robot = input.robot;
+    failure->params = params_.scan;
+    failure->checkObstacle = params_.checkObstacle;
+    failure->maxLinearSpeedMps = input.maxLinearSpeedMps;
+    if (const auto *intent = input.intent())
+      failure->intent = *intent;
+    failure->reference.assign(route.points, route.points + route.count);
+    failure->referenceGeneration = route.generation;
+    failure->referenceReachesGoal = route.reachesGoal;
+    failure->collision = input.environment.collision;
+    auto &collision = failure->collision;
+    if (collision.inflatedBits != nullptr && collision.inflatedBytes > 0U &&
+        (!collision.inflatedStorage ||
+         collision.inflatedStorage->data() != collision.inflatedBits ||
+         collision.inflatedStorage->size() != collision.inflatedBytes)) {
+      collision.inflatedStorage = std::make_shared<const std::vector<std::uint8_t>>(
+          collision.inflatedBits, collision.inflatedBits + collision.inflatedBytes);
+      collision.inflatedBits = collision.inflatedStorage->data();
+    }
+    failure->startPosition = planningPoint(attempt.startPosition);
+    failure->startVelocity = planningPoint(attempt.startVelocity);
+    failure->startAcceleration = planningPoint(attempt.startAcceleration);
+    failure->targetPosition = planningPoint(attempt.targetPosition);
+    failure->targetVelocity = planningPoint(attempt.targetVelocity);
+    failure->polyInit = attempt.polyInit;
+    failure->randomPolyInit = attempt.randomPolyInit;
+    failure->candidateIntervalS = attempt.candidateIntervalS;
+    failure->candidateControlPoints.reserve(
+        static_cast<std::size_t>(attempt.candidateControlPoints.cols()));
+    for (Eigen::Index column = 0; column < attempt.candidateControlPoints.cols(); ++column)
+      failure->candidateControlPoints.push_back(
+          planningPoint(attempt.candidateControlPoints.col(column)));
+    lastFailure_ = std::move(failure);
+    debug_.lastScanFailure = lastFailure_;
+  }
 
   void initializeOfficialCore() {
     const PlanParameters plan = planParameters(params_);
@@ -308,7 +464,7 @@ class Backend::Impl {
 
   bool referenceIdentityChanged(const LocalPlanRequest &input,
                                 const LocalRouteView &route) const {
-    return !referenceInitialized_ || !fsm_->hasTarget() ||
+    return !referenceInitialized_ ||
            lastFrameEpoch_ != input.identity.frameEpoch ||
            lastRouteGeneration_ != route.generation ||
            !sameIntent(lastIntent_, input.intent());
@@ -341,8 +497,16 @@ class Backend::Impl {
   std::optional<LocalPlan> active_;
   std::optional<LocalMotionIntent> lastIntent_;
   bool referenceInitialized_{false};
+  bool referenceRejected_{false};
+  bool speedReductionPending_{false};
+  bool emergencyStopped_{false};
   std::uint64_t lastFrameEpoch_{0};
   std::uint64_t lastRouteGeneration_{0};
+  std::uint64_t lastObservedAttemptId_{0};
+  std::uint64_t failureSequence_{0};
+  bool failureEpisodeActive_{false};
+  ScanAttemptDiagnostics lastAttempt_{};
+  std::shared_ptr<const ScanFailureSnapshot> lastFailure_;
   LocalPlannerDebugSnapshot debug_{};
 };
 

@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Contracts for Tripo-generated visual candidates."""
 
 from __future__ import annotations
@@ -13,7 +12,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-
 import sim.tools.assets.tripo_visual_candidate as tripo_candidate_module
 from sim.catalog.importers.contracts import digest_document
 from sim.tools.assets.tripo_high_fidelity import (
@@ -536,7 +534,7 @@ def test_visual_candidate_rejects_artifact_identity_drift(tmp_path: Path) -> Non
     model, task, inspection, assessment = _write_candidate_fixture(tmp_path)
     model.write_bytes(b"changed-after-inspection")
 
-    with pytest.raises(ValueError, match="artifact identity|self-contained GLB|GLB v2"):
+    with pytest.raises(ValueError, match=r"artifact identity|self-contained GLB|GLB v2"):
         build_visual_candidate_manifest(
             asset_id="industrial-electrical-cabinet-v001",
             world_entity_id="element__operations_safety__container_equipment_01",

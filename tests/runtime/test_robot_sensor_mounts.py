@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from drivers.real.camera.module import _default_camera_config
-from runtime.runtime_interface import LIDAR_EXTRINSICS
+from runtime.tf.mounts import lidar_extrinsic
 
 ROOT = Path(__file__).resolve().parents[2]
 GO2_OFFICIAL_MID360_XYZ = (
@@ -70,7 +70,7 @@ def test_mid360_contract_keeps_go2_and_thunder_mounts_distinct() -> None:
         "thunder_v4_mid360": (THUNDER_V4_MID360_XYZ, THUNDER_V4_MID360_RPY),
     }
     for profile, (xyz, rpy) in expected.items():
-        mount = LIDAR_EXTRINSICS[profile]
+        mount = lidar_extrinsic(profile)
         assert (mount.x, mount.y, mount.z) == pytest.approx(xyz)
         assert (mount.roll, mount.pitch, mount.yaw) == pytest.approx(rpy)
 

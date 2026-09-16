@@ -52,6 +52,17 @@ export function createLiveCloudLayer(
     opacity: options.opacity ?? 0.96,
     depthWrite: false,
   })
+  material.onBeforeCompile = shader => {
+    // Near-camera points must not grow into opaque disks over the robot.
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <logdepthbuf_vertex>',
+      'gl_PointSize = min(gl_PointSize, 5.0);\n#include <logdepthbuf_vertex>',
+    )
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <clipping_planes_fragment>',
+      '#include <clipping_planes_fragment>\nif (distance(gl_PointCoord, vec2(0.5)) > 0.5) discard;',
+    )
+  }
 
   const points = new THREE.Points(geometry, material)
   points.frustumCulled = false

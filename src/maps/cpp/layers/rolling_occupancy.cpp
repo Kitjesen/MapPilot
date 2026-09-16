@@ -468,7 +468,7 @@ void RollingOccupancyGrid::RefreshMembership(std::size_t physical_index) {
   const Cell& cell = cells_[physical_index];
   const bool was_occupied = BitSet(occupied_bits_, physical_index);
   const bool is_occupied =
-      cell.observed && StateFor(cell) == OccupancyState::kOccupied;
+      cell.unresolved_hit || StateFor(cell) == OccupancyState::kOccupied;
   SetBit(observed_bits_, physical_index, cell.observed);
   if (was_occupied != is_occupied) {
     UpdateInflation(PhysicalToLogical(physical_index), is_occupied ? 1 : -1);
@@ -813,17 +813,16 @@ void RollingOccupancyGrid::TraceRay(
   const double start_x = end_x_m / config_.resolution_m;
   const double start_y = end_y_m / config_.resolution_m;
   const double start_z = end_z_m / config_.resolution_m;
-  const double dx = static_cast<double>(sensor.x - current.x);
-  const double dy = static_cast<double>(sensor.y - current.y);
-  const double dz = static_cast<double>(sensor.z - current.z);
+  // Trace the measured segment. Cell-index deltas change its direction and can
+  // clear a neighboring obstacle while missing voxels the LiDAR ray crossed.
+  const double dx = (origin_x_m - end_x_m) / config_.resolution_m;
+  const double dy = (origin_y_m - end_y_m) / config_.resolution_m;
+  const double dz = (origin_z_m - end_z_m) / config_.resolution_m;
   const auto sign = [](double value) { return value == 0.0 ? 0 : value < 0.0 ? -1 : 1; };
   const auto integer_boundary = [](double value, double delta) {
-    if (delta < 0.0) {
-      value = -value;
-      delta = -delta;
-    }
-    value = std::fmod(std::fmod(value, 1.0) + 1.0, 1.0);
-    return (1.0 - value) / delta;
+    if (delta > 0.0) return (std::floor(value) + 1.0 - value) / delta;
+    if (delta < 0.0) return (value - std::floor(value)) / -delta;
+    return std::numeric_limits<double>::infinity();
   };
   const int step_x = sign(dx);
   const int step_y = sign(dy);
@@ -831,19 +830,27 @@ void RollingOccupancyGrid::TraceRay(
   double t_max_x = integer_boundary(start_x, dx);
   double t_max_y = integer_boundary(start_y, dy);
   double t_max_z = integer_boundary(start_z, dz);
-  const double t_delta_x = static_cast<double>(step_x) / dx;
-  const double t_delta_y = static_cast<double>(step_y) / dy;
-  const double t_delta_z = static_cast<double>(step_z) / dz;
+  const double t_delta_x = dx == 0.0 ? std::numeric_limits<double>::infinity() : std::abs(1.0 / dx);
+  const double t_delta_y = dy == 0.0 ? std::numeric_limits<double>::infinity() : std::abs(1.0 / dy);
+  const double t_delta_z = dz == 0.0 ? std::numeric_limits<double>::infinity() : std::abs(1.0 / dz);
   const std::size_t max_steps = cells_.size();
   while (!(current == sensor) && cells->size() <= max_steps) {
     cells->push_back(current);
-    if (t_max_x < t_max_y && t_max_x < t_max_z) {
+    // An axis at the sensor cell must not step past a boundary endpoint.
+    if (current.x == sensor.x) t_max_x = std::numeric_limits<double>::infinity();
+    if (current.y == sensor.y) t_max_y = std::numeric_limits<double>::infinity();
+    if (current.z == sensor.z) t_max_z = std::numeric_limits<double>::infinity();
+    const double crossing = std::min({t_max_x, t_max_y, t_max_z});
+    // Edge/corner contact alone is not evidence that a neighboring cell is free.
+    if (t_max_x == crossing) {
       current.x += step_x;
       t_max_x += t_delta_x;
-    } else if (t_max_y < t_max_z) {
+    }
+    if (t_max_y == crossing) {
       current.y += step_y;
       t_max_y += t_delta_y;
-    } else {
+    }
+    if (t_max_z == crossing) {
       current.z += step_z;
       t_max_z += t_delta_z;
     }
@@ -918,7 +925,6 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
   std::vector<std::size_t> touched_indices;
   touched_indices.reserve(cloud.point_count * 8U);
   std::vector<std::uint64_t> ray_endpoint_bits(BitWordCount(cells_.size()), 0U);
-  std::vector<std::uint64_t> ray_traverse_bits(BitWordCount(cells_.size()), 0U);
   const double local_range_x = config_.local_update_range_x_m > 0.0
                                    ? config_.local_update_range_x_m
                                    : 0.5 * static_cast<double>(config_.size_x) *
@@ -1010,18 +1016,18 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
     const bool reached_hit = has_hit && endpoint_coord == hit_coord;
     const std::size_t endpoint = PhysicalIndex(endpoint_coord);
     record_ray_evidence(endpoint, reached_hit);
-    if (BitSet(ray_endpoint_bits, endpoint)) {
-      continue;
+    if (!BitSet(ray_endpoint_bits, endpoint)) {
+      SetBit(ray_endpoint_bits, endpoint, true);
+      ++stats.unique_rays;
     }
-    SetBit(ray_endpoint_bits, endpoint, true);
-    ++stats.unique_rays;
-    for (const CellCoord& traversed : ray) {
-      const std::size_t physical = PhysicalIndex(traversed);
+    // Shared voxels do not imply identical measured segments. Accumulate all
+    // traversal votes; the touched-cell pass still updates probability once
+    // per scan and preserves every real endpoint as live collision geometry.
+    // TraceRay starts at the endpoint, whose hit or clipped miss is recorded
+    // above. Counting it again as free would cancel every measured hit vote.
+    for (std::size_t step = 1U; step < ray.size(); ++step) {
+      const std::size_t physical = PhysicalIndex(ray[step]);
       record_ray_evidence(physical, false);
-      if (BitSet(ray_traverse_bits, physical)) {
-        break;
-      }
-      SetBit(ray_traverse_bits, physical, true);
     }
   }
 
@@ -1041,13 +1047,13 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
   const std::int64_t local_min_z = std::max(
       map_min_z, global_cell(static_cast<double>(frame.sensor_origin_z_m) - local_range_z));
   const std::int64_t local_max_x = std::min(
-      map_min_x + config_.size_x - 1LL,
+      map_min_x + config_.size_x - std::int64_t{1},
       global_cell(static_cast<double>(frame.sensor_origin_x_m) + local_range_x));
   const std::int64_t local_max_y = std::min(
-      map_min_y + config_.size_y - 1LL,
+      map_min_y + config_.size_y - std::int64_t{1},
       global_cell(static_cast<double>(frame.sensor_origin_y_m) + local_range_y));
   const std::int64_t local_max_z = std::min(
-      map_min_z + config_.size_z - 1LL,
+      map_min_z + config_.size_z - std::int64_t{1},
       global_cell(static_cast<double>(frame.sensor_origin_z_m) + local_range_z));
 
   for (const std::size_t physical : touched_indices) {
@@ -1055,9 +1061,14 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
     const std::uint32_t total = ray_total_counts_[physical];
     const bool hit = hits >= total - hits;
     Cell& cell = cells_[physical];
+    // Keep a new endpoint blocked even if its old free-space history dominates
+    // the probability. Only a later measured ray through this cell without an
+    // endpoint resolves the hit; unobserved or occluded cells retain protection.
+    cell.unresolved_hit = hits > 0U;
     cell.observed = true;
     const double update = hit ? config_.hit_log_odds : -config_.miss_log_odds;
     if (update >= 0.0 && cell.log_odds >= config_.max_log_odds) {
+      RefreshMembership(physical);
       ray_total_counts_[physical] = 0U;
       ray_hit_counts_[physical] = 0U;
       continue;
@@ -1132,6 +1143,38 @@ OccupancyState RollingOccupancyGrid::StateAt(double x_m, double y_m, double z_m)
     return OccupancyState::kUnknown;
   }
   return StateFor(cells_[PhysicalIndex(coord)]);
+}
+
+std::vector<std::uint8_t> RollingOccupancyGrid::ObservedFreeVoxels(
+    const PointCloudView& centers, float voxel_size_m) const {
+  if (!IsFinite(voxel_size_m) || voxel_size_m <= 0.0F) {
+    throw std::invalid_argument("surface voxel size must be finite and positive");
+  }
+  std::vector<std::uint8_t> result(centers.point_count, 0U);
+  const double half = static_cast<double>(voxel_size_m) * 0.49999;
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  for (std::size_t i = 0; i < centers.point_count; ++i) {
+    const double x = ReadCoordinate(centers, i, 0U);
+    const double y = ReadCoordinate(centers, i, 1U);
+    const double z = ReadCoordinate(centers, i, 2U);
+    CellCoord low, high;
+    if (!WorldToCell(x - half, y - half, z - half, &low) ||
+        !WorldToCell(x + half, y + half, z + half, &high)) continue;
+    bool free = true;
+    for (auto ix = low.x; ix <= high.x && free; ++ix) {
+      for (auto iy = low.y; iy <= high.y && free; ++iy) {
+        for (auto iz = low.z; iz <= high.z; ++iz) {
+          const Cell& cell = cells_[PhysicalIndex({ix, iy, iz})];
+          if (cell.unresolved_hit || StateFor(cell) != OccupancyState::kFree) {
+            free = false;
+            break;
+          }
+        }
+      }
+    }
+    result[i] = free ? 1U : 0U;
+  }
+  return result;
 }
 
 double RollingOccupancyGrid::OccupancyProbability(double x_m, double y_m, double z_m) const {

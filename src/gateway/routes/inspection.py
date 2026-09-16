@@ -16,6 +16,8 @@ from typing import Any
 
 from fastapi.responses import JSONResponse, Response
 
+from gateway.maps.status import EnvironmentMapFeedback
+from gateway.maps.transport import active_map, mapd_request
 from gateway.schemas import (
     GatewayErrorResponse,
     InspectionCommandResponse,
@@ -30,7 +32,6 @@ from gateway.schemas import (
     InspectionTaskStartRequest,
     InspectionTaskStatusResponse,
 )
-from gateway.services.environment_map_feedback import EnvironmentMapFeedback
 from gateway.services.inspection_boundary import (
     InspectionBoundaryError,
     InspectionCommandRejected,
@@ -41,7 +42,6 @@ from gateway.services.inspection_task_lifecycle import (
     InspectionTaskJournalUnavailable,
     ensure_inspection_task_timeline,
 )
-from gateway.services.mapd_transport import active_map, mapd_query
 from gateway.services.recording import NativeRecordingError
 from runtime.contracts.inspection_evidence import (
     EvidenceIntegrityError,
@@ -420,7 +420,7 @@ def _route_payload(body: InspectionRouteRequest) -> dict[str, Any]:
 
 def _map_content_epoch(gw: Any, map_id: str) -> int | JSONResponse:
     try:
-        response = mapd_query(gw, {"action": "get_record", "map_id": map_id})
+        response = mapd_request(gw, {"action": "get_record", "map_id": map_id})
     except Exception as exc:
         return _error(503, "inspection_map_query_failed", str(exc))
     record = response.get("record") if isinstance(response, dict) else None

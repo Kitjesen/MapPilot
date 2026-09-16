@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -10,7 +9,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from sim.catalog import CatalogResolver
 from sim.runtime.coordinator import CoordinatorError, RuntimeState
 from sim.runtime.coordinator.live_visual import (

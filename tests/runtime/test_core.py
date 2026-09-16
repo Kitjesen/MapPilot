@@ -19,11 +19,11 @@ from typing import Any
 
 import pytest
 
+from message.topics import TOPICS
 from runtime.blueprint import Blueprint, autoconnect
 from runtime.module import Module, rpc, skill
 from runtime.msgs.geometry import PoseStamped, Vector3
 from runtime.msgs.semantic import Detection3D, GoalResult, SceneGraph
-from runtime.runtime_interface import TOPICS
 from runtime.stream import In, Out
 from runtime.transport.local import LocalTransport
 

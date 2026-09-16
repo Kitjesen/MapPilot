@@ -214,7 +214,7 @@ def _drive(
             ready_path.unlink()
             command.extend(("--ready-file", str(ready_path)))
             try:
-                process = subprocess.Popen(  # noqa: S603 - exact native client, no shell
+                process = subprocess.Popen(
                     command,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,

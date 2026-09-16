@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from gateway.navigation.commands import CommandBoundaryError
 from gateway.services import teleop
-from gateway.services.command_boundary import CommandBoundaryError
 from runtime.msgs.geometry import Twist, Vector3
 from runtime.msgs.nav import OperatorMotionAction, OperatorMotionReceipt
 

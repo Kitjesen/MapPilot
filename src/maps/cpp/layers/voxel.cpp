@@ -1,4 +1,6 @@
 #include "lingtu/maps/layers/voxel.hpp"
+#include "lingtu/maps/layers/grid.hpp"
+#include "lingtu/maps/layers/rolling_occupancy.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -73,6 +75,32 @@ void VoxelLayerCore::Reset() {
 }
 
 void VoxelLayerCore::Update(const MapCloudFrame& frame) {
+  UpdateImpl(frame, nullptr);
+}
+
+void VoxelLayerCore::Update(
+    const MapCloudFrame& frame, const VoxelSnapshotRequest& window) {
+  if (!IsFinite(window.center_x_m) || !IsFinite(window.center_y_m) ||
+      !IsFinite(window.radius_m) || window.radius_m <= 0.0F ||
+      !IsFinite(window.min_z_m) || !IsFinite(window.max_z_m) ||
+      window.min_z_m > window.max_z_m) {
+    throw std::invalid_argument("voxel retention window is invalid");
+  }
+  UpdateImpl(frame, &window);
+}
+
+void VoxelLayerCore::UpdateImpl(
+    const MapCloudFrame& frame, const VoxelSnapshotRequest* window) {
+  const auto inside_window = [&](const VoxelKey& key) {
+    if (window == nullptr) return true;
+    const float x = (static_cast<float>(key.x) + 0.5F) * config_.voxel_size_m;
+    const float y = (static_cast<float>(key.y) + 0.5F) * config_.voxel_size_m;
+    const float z = (static_cast<float>(key.z) + 0.5F) * config_.voxel_size_m;
+    const float dx = x - window->center_x_m;
+    const float dy = y - window->center_y_m;
+    return dx * dx + dy * dy <= window->radius_m * window->radius_m &&
+           z >= window->min_z_m && z <= window->max_z_m;
+  };
   const PointCloudView& cloud = frame.cloud;
   if (frame.column_carving_z_range_enabled &&
       (!IsFinite(frame.column_carving_min_z_m) ||
@@ -118,6 +146,7 @@ void VoxelLayerCore::Update(const MapCloudFrame& frame) {
     }
 
     const VoxelKey key = ToKey(x_m, y_m, z_m, config_.voxel_size_m);
+    if (!inside_window(key)) continue;
     frame_counts[key] += 1.0F;
     observed_columns[{key.x, key.y}] = true;
     ++stats.accepted_points;
@@ -125,13 +154,19 @@ void VoxelLayerCore::Update(const MapCloudFrame& frame) {
 
   stats.input_voxels = frame_counts.size();
   stats.input_columns = observed_columns.size();
-  if (frame_counts.empty()) {
+  if (frame_counts.empty() && window == nullptr) {
     std::lock_guard<std::mutex> lock(mutex_);
     last_stats_ = stats;
     return;
   }
 
   std::lock_guard<std::mutex> lock(mutex_);
+  if (window != nullptr) {
+    for (auto it = voxels_.begin(); it != voxels_.end();) {
+      if (!inside_window(it->first)) it = voxels_.erase(it);
+      else ++it;
+    }
+  }
   last_frame_id_ = stats.frame_id;
   last_stamp_ns_ = cloud.stamp_ns;
   if (config_.column_carving && !observed_columns.empty()) {
@@ -265,6 +300,45 @@ OwnedPointCloud VoxelLayerCore::SnapshotCloud(
     stats->omitted_voxels = voxels_.size() - cloud.point_count;
   }
   return cloud;
+}
+
+std::vector<float> VoxelLayerCore::SnapshotXyz(const Grid2D& window) const {
+  window.validate("voxel modeling window");
+  if (window.empty()) return {};
+  const double max_x = window.originX + window.cols * window.resolution;
+  const double max_y = window.originY + window.rows * window.resolution;
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::vector<float> xyz;
+  // Storage is already bounded by max_voxels and the rolling XYZ window.
+  xyz.reserve(voxels_.size() * 3U);
+  for (const auto& entry : voxels_) {
+    const auto& key = entry.first;
+    const float x = (key.x + 0.5F) * config_.voxel_size_m;
+    const float y = (key.y + 0.5F) * config_.voxel_size_m;
+    if (x < window.originX || x >= max_x || y < window.originY || y >= max_y) continue;
+    xyz.insert(xyz.end(), {x, y, (key.z + 0.5F) * config_.voxel_size_m});
+  }
+  return xyz;
+}
+
+std::size_t VoxelLayerCore::ClearObservedFree(const RollingOccupancyGrid& occupancy) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  OwnedPointCloud centers;
+  centers.layout = CloudLayout::kXyzF32Interleaved;
+  centers.point_count = voxels_.size();
+  centers.interleaved.reserve(centers.point_count * 3U);
+  for (const auto& entry : voxels_) {
+    centers.interleaved.push_back((entry.first.x + 0.5F) * config_.voxel_size_m);
+    centers.interleaved.push_back((entry.first.y + 0.5F) * config_.voxel_size_m);
+    centers.interleaved.push_back((entry.first.z + 0.5F) * config_.voxel_size_m);
+  }
+  const auto free = occupancy.ObservedFreeVoxels(centers.View(), config_.voxel_size_m);
+  std::size_t removed = 0U, index = 0U;
+  for (auto it = voxels_.begin(); it != voxels_.end(); ++index) {
+    if (free[index]) { it = voxels_.erase(it); ++removed; }
+    else ++it;
+  }
+  return removed;
 }
 
 void VoxelLayerCore::Decay() {

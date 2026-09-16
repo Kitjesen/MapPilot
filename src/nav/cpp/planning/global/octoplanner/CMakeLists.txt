@@ -184,6 +184,19 @@ set_target_properties(octoplanner3d_make_test_octomap PROPERTIES
   INSTALL_RPATH "$ORIGIN"
 )
 if(BUILD_TESTING)
+  add_executable(octoplanner3d_planning_slice_smoke planning_slice_smoke.cpp)
+  target_link_libraries(octoplanner3d_planning_slice_smoke PRIVATE octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_planning_slice_smoke COMMAND octoplanner3d_planning_slice_smoke)
+  add_executable(octoplanner3d_neighborhood_fallback_smoke neighborhood_fallback_smoke.cpp)
+  target_link_libraries(octoplanner3d_neighborhood_fallback_smoke
+    PRIVATE octoplanner3d_runtime octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_neighborhood_fallback_smoke
+    COMMAND octoplanner3d_neighborhood_fallback_smoke)
+
+  add_executable(octoplanner3d_grid_query_smoke grid_query_smoke.cpp)
+  target_link_libraries(octoplanner3d_grid_query_smoke PRIVATE octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_grid_query_smoke COMMAND octoplanner3d_grid_query_smoke)
+
   add_executable(octoplanner3d_queue_node_compare_smoke queue_node_compare_smoke.cpp)
   target_include_directories(octoplanner3d_queue_node_compare_smoke
     PRIVATE
@@ -232,7 +245,8 @@ target_link_libraries(octoplanner3d_pcd_to_octomap
 )
 if(OCTOPLANNER3D_ENABLE_PCD)
   target_compile_definitions(octoplanner3d_pcd_to_octomap PRIVATE OCTOPLANNER3D_ENABLE_PCD=1)
-  target_link_libraries(octoplanner3d_pcd_to_octomap PRIVATE octoplanner3d_pcd_converter)
+  target_include_directories(octoplanner3d_pcd_to_octomap PRIVATE ${PCL_INCLUDE_DIRS})
+  target_link_libraries(octoplanner3d_pcd_to_octomap PRIVATE ${PCL_LIBRARIES})
 endif()
 set_target_properties(octoplanner3d_pcd_to_octomap PROPERTIES
   BUILD_RPATH "${OCTOPLANNER3D_SOURCE_DIR}/lib"
@@ -241,3 +255,21 @@ set_target_properties(octoplanner3d_pcd_to_octomap PROPERTIES
 install(TARGETS octoplanner3d_pcd_to_octomap
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     COMPONENT lingtu_runtime)
+
+if(BUILD_TESTING)
+  add_executable(octoplanner3d_sampled_pcd_smoke sampled_pcd_smoke.cpp)
+  target_link_libraries(octoplanner3d_sampled_pcd_smoke PRIVATE octomap_vendor octomath_vendor)
+  add_test(NAME octoplanner3d_sampled_pcd_smoke
+    COMMAND octoplanner3d_sampled_pcd_smoke
+      $<TARGET_FILE:octoplanner3d_pcd_to_octomap>
+      "${CMAKE_CURRENT_BINARY_DIR}/sampled-pcd-fixture"
+      $<BOOL:${OCTOPLANNER3D_ENABLE_PCD}>)
+  if(OCTOPLANNER3D_ENABLE_PCD)
+    add_executable(octoplanner3d_ascii_pcd_test_converter pcd_to_octomap.cpp)
+    target_link_libraries(octoplanner3d_ascii_pcd_test_converter PRIVATE octomap_vendor octomath_vendor)
+    add_test(NAME octoplanner3d_sampled_ascii_pcd_smoke
+      COMMAND octoplanner3d_sampled_pcd_smoke
+        $<TARGET_FILE:octoplanner3d_ascii_pcd_test_converter>
+        "${CMAKE_CURRENT_BINARY_DIR}/sampled-ascii-pcd-fixture" 0)
+  endif()
+endif()

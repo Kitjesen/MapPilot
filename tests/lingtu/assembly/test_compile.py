@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
@@ -16,16 +15,16 @@ from lingtu.assembly.compiler import (
 from lingtu.assembly.compiler import (
     compile_run_plan as _compile_run_plan,
 )
-from lingtu.assembly.products import resolve_product_host_runtime as _resolve_product_host_runtime
-from lingtu.run_plan import RUN_PLAN_SCHEMA, RunPlan
-from lingtu.sim.acceptance import load_manifest
-from runtime.blueprint import Blueprint
-from runtime.graph import (
+from lingtu.assembly.graph import (
     ProcessArtifact,
     RuntimeGraph,
     load_runtime_graph,
     resolve_processes,
 )
+from lingtu.assembly.products import resolve_product_host_runtime as _resolve_product_host_runtime
+from lingtu.run_plan import RUN_PLAN_SCHEMA, RunPlan
+from lingtu.sim.acceptance import load_manifest
+from runtime.blueprint import Blueprint
 
 FIELD_PRODUCTS = tuple(sorted(load_runtime_graph().products))
 REAL_ROBOT = "unitree/go2"
@@ -55,8 +54,8 @@ def compile_run_plan(product: str, env: str, **kwargs):
 
 def test_compile_resolves_env_implementation_once(monkeypatch) -> None:
     import lingtu.assembly.compiler as compiler_module
-    import runtime.graph as graph_module
-    import runtime.graph.processes as process_module
+    import lingtu.assembly.graph as graph_module
+    import lingtu.assembly.graph.processes as process_module
 
     original = graph_module.resolve_env_implementation
     calls = 0
@@ -76,6 +75,146 @@ def test_compile_resolves_env_implementation_once(monkeypatch) -> None:
 
     assert plan.env == "real"
     assert calls == 1
+
+
+def test_go2_camera_preview_is_owned_by_the_selected_run_plan() -> None:
+    standard = compile_run_plan("nav", "real")
+    camera = compile_run_plan("nav", "real", product_variant="camera")
+    assert "camera" not in standard.modules
+    assert "camera" in camera.modules
+    assert "CameraJpegRelayModule" in camera.modules
+    assert camera.process("camera").target == "lt-camera.service"
+    assert camera.process_environment["LINGTU_CAMERA_DRIVER"] == "realsense_native"
+    assert camera.process_environment["LINGTU_REALSENSE_SERIAL_NUMBER"] == "419522073370"
+    assert "/camera/color/image_raw" in camera.required_topics
+    assert "camera_preview" in camera.required_capabilities
+    assert camera.native_nav == standard.native_nav
+    import yaml
+    config = yaml.safe_load(Path("config/robots/unitree/go2/robot.yaml").read_text(encoding="utf-8"))
+    assert config["calibration"]["camera"]["status"] == "unverified"
+
+
+def test_map_camera_variant_only_adds_explicit_preview_to_real_mapping() -> None:
+    standard = compile_run_plan("map", "real")
+    explicit_standard = compile_run_plan("map", "real", product_variant="standard")
+    camera = compile_run_plan("map", "real", product_variant="camera")
+    assert standard == explicit_standard
+    assert standard.product_variant == "standard"
+    assert not standard.has_process("camera")
+    assert "camera" not in standard.modules
+    assert "CameraJpegRelayModule" not in standard.modules
+    assert camera.product_variant == "camera"
+    assert camera.process("camera").target == "lt-camera.service"
+    assert set(camera.modules) == set(standard.modules) | {"camera", "CameraJpegRelayModule"}
+    assert {process.name for process in camera.processes} == {process.name for process in standard.processes} | {"camera"}
+    assert set(camera.required_topics) == set(standard.required_topics) | {
+        "/camera/color/image_raw", "/camera/depth/image_raw", "/camera/color/camera_info",
+    }
+    assert set(camera.required_capabilities) == set(standard.required_capabilities) | {"camera_preview"}
+    assert camera.native_nav == standard.native_nav
+    assert camera.lifecycle == {**standard.lifecycle, "product_variant": "camera"}
+    assert camera.lifecycle["requires_map"] is False
+    assert camera.lifecycle["slam_mode"] == "mapping"
+    assert camera.native_nav["control_mode"] == "teleop"
+    assert camera.process_environment["LINGTU_CAMERA_DRIVER"] == "realsense_native"
+    assert camera.process_environment["LINGTU_REALSENSE_SERIAL_NUMBER"] == "419522073370"
+
+
+@pytest.mark.parametrize("product", ["map", "nav"])
+def test_standard_remains_available_in_sim_without_claiming_camera_support(product: str) -> None:
+    default = compile_run_plan(product, "sim", env_config={"backend": "mujoco"})
+    explicit = compile_run_plan(product, "sim", product_variant="standard", env_config={"backend": "mujoco"})
+    assert default == explicit
+    assert default.product_variant == "standard"
+    assert "camera" not in default.modules
+    assert "camera_preview" not in default.required_capabilities
+    with pytest.raises(ValueError, match="variant"):
+        compile_run_plan(product, "sim", product_variant="camera", env_config={"backend": "mujoco"})
+
+
+@pytest.mark.parametrize("env", ["real", "sim"])
+def test_scan_parameters_survive_run_plan_round_trip(env, tmp_path) -> None:
+    overrides = {
+        "scan_planner.control_point_spacing_m": 0.16,
+        "scan_planner.max_velocity_mps": 0.42,
+        "scan_planner.max_acceleration_mps2": 0.30,
+        "scan_planner.planning_horizon_m": 2.5,
+        "scan_planner.collision_weight": 1.3,
+        "scan_follower.max_vx_mps": 0.4,
+        "scan_follower.time_forward_s": 0.65,
+        "scan_follower.finish_distance_m": 0.07,
+        "local_collision.max_age_s": 0.75,
+    }
+    plan = compile_run_plan("nav", env, parameter_overrides=overrides)
+    loaded = RunPlan.load(plan.write(tmp_path / "scan-plan.json"))
+    assert overrides.items() <= loaded.parameters.items()
+    expected = {
+        "LINGTU_NAV_SCAN_CONTROL_POINT_SPACING_M": "0.16",
+        "LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS": "0.42",
+        "LINGTU_NAV_SCAN_PLANNER_MAX_ACCELERATION_MPS2": "0.3",
+        "LINGTU_NAV_SCAN_PLANNING_HORIZON_M": "2.5",
+        "LINGTU_NAV_SCAN_COLLISION_WEIGHT": "1.3",
+        "LINGTU_NAV_SCAN_MAX_VX_MPS": "0.4",
+        "LINGTU_NAV_SCAN_TIME_FORWARD_S": "0.65",
+        "LINGTU_NAV_SCAN_FINISH_DISTANCE_M": "0.07",
+        "LINGTU_NAV_LOCAL_COLLISION_MAX_AGE_S": "0.75",
+    }
+    assert expected.items() <= loaded.native_process_environment.items()
+    assert not (set(expected) & set(loaded.as_dict()["launch"]["process_environment"]))
+
+
+def test_scan_defaults_follow_product_motion_limits() -> None:
+    from dataclasses import replace
+
+    graph = load_runtime_graph()
+    products = deepcopy(graph.products)
+    products["nav"]["native_nav"].update({
+        "path_follower_max_speed_mps": 0.4,
+        "path_follower_max_accel_mps2": 0.3,
+        "path_follower_max_yaw_rate_rad_s": 0.7,
+    })
+    plan = compile_run_plan("nav", "real", graph=replace(graph, products=products))
+    assert plan.parameters["scan_planner.max_velocity_mps"] == 0.4
+    assert plan.parameters["scan_planner.max_acceleration_mps2"] == 0.3
+    assert plan.parameters["scan_follower.max_vx_mps"] == 0.4
+    assert plan.parameters["scan_follower.max_yaw_rate_rad_s"] == 0.7
+
+
+@pytest.mark.parametrize("product", ["nav", "teleop_avoid"])
+def test_scan_products_preserve_default_planner_and_follower_values(product) -> None:
+    plan = compile_run_plan(product, "real")
+    assert plan.parameters["scan_planner.max_velocity_mps"] == 0.75
+    assert plan.parameters["scan_planner.max_acceleration_mps2"] == 0.5
+    assert plan.parameters["scan_follower.max_vx_mps"] == 0.75
+    assert plan.parameters["scan_follower.max_vy_mps"] == 0.35
+    assert plan.parameters["scan_follower.finish_distance_m"] == 0.15
+
+
+def test_cmu_assisted_motion_keeps_its_existing_acceleration_limit() -> None:
+    plan = compile_run_plan("teleop_avoid", "real", local_planner="cmu")
+    assert plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2"] == "1"
+
+
+def test_compile_resolves_product_variant_once(monkeypatch) -> None:
+    import lingtu.assembly.graph.loader as loader
+    import lingtu.assembly.products.configuration as configuration
+
+    original = loader.resolve_product_variant_spec
+    calls = []
+
+    def resolve_once(product, spec, **kwargs):
+        calls.append((product, kwargs.get("product_variant")))
+        return original(product, spec, **kwargs)
+
+    monkeypatch.setattr(loader, "resolve_product_variant_spec", resolve_once)
+    monkeypatch.setattr(configuration, "resolve_product_variant_spec", resolve_once)
+
+    plan = compile_run_plan("explore", "real", product_variant="map")
+
+    assert calls == [("explore", "map")]
+    assert plan.product_variant == "map"
+    assert "saved_map_relocalization" in plan.required_capabilities
+    assert "native_slam_mapping" not in plan.required_capabilities
 
 
 def test_direct_teleop_does_not_require_robot_local_planner_assets() -> None:
@@ -324,8 +463,10 @@ def test_real_run_plan_selects_go2_mid360_config() -> None:
     assert plan.native_process_environment["LINGTU_TELEOP_OBSTACLE_MARGIN_M"] == "0.1"
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"] == "0.25"
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.18"
-    assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] == "0.25"
-    assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.35"
+    assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] == "0.1"
+    assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.1"
+    assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.1"
+    assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.1"
     assert plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"] == "0.75"
     assert plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_RATE_RAD_S"] == "1"
     assert plan.native_process_environment["LINGTU_TELEOP_MAX_SPEED_MPS"] == "0.5"
@@ -474,8 +615,8 @@ def test_explore_variants_compile_distinct_complete_run_plans(tmp_path) -> None:
     assert live.product == saved_map.product == "explore"
     assert live.product_variant == "live"
     assert saved_map.product_variant == "map"
-    assert live.contracts == ("lingtu.product.explore.v1",)
-    assert saved_map.contracts == ("lingtu.product.explore.map.v1",)
+    assert "/maps/activation/request" not in live.required_topics
+    assert "/maps/activation/request" in saved_map.required_topics
     assert live.lifecycle["product_variant"] == "live"
     assert saved_map.lifecycle["product_variant"] == "map"
     assert live.lifecycle["slam_mode"] == "mapping"
@@ -499,17 +640,10 @@ def test_explore_variants_compile_distinct_complete_run_plans(tmp_path) -> None:
         RunPlan.from_dict(tampered)
 
 
-@pytest.mark.parametrize("mismatched_surface", ["host", "lifecycle"])
-def test_run_plan_create_rejects_mismatched_variant_identity(
-    mismatched_surface: str,
-) -> None:
+def test_run_plan_create_rejects_mismatched_variant_identity() -> None:
     plan = _compile_real("explore", product_variant="map")
-    host_config = plan.host_config
     lifecycle = plan.lifecycle
-    if mismatched_surface == "host":
-        host_config["_product_variant"] = "live"
-    else:
-        lifecycle["product_variant"] = "live"
+    lifecycle["product_variant"] = "live"
 
     with pytest.raises(ValueError, match="variant does not match"):
         RunPlan.create(
@@ -522,12 +656,14 @@ def test_run_plan_create_rejects_mismatched_variant_identity(
             processes=plan.processes,
             available_processes=plan.available_processes,
             stop_before_start=plan.stop_before_start,
-            contracts=plan.contracts,
+            required_topics=plan.required_topics,
+            required_capabilities=plan.required_capabilities,
             critical_modules=plan.critical_modules,
             route_contract=plan.route_contract,
-            host_config=host_config,
+            host_config=plan.host_config,
             lifecycle=lifecycle,
-            native_process_environment=plan.native_process_environment,
+            process_environment=plan.process_environment,
+            native_nav=plan.native_nav,
             parameters=plan.parameters,
         )
 
@@ -702,11 +838,11 @@ def test_sim_mujoco_process_catalog_declares_exact_native_platform_paths() -> No
         assert not platforms["linux"]["artifact"]["path"].endswith(".exe")
 
 
-def test_sim_mujoco_localization_defaults_to_truth_and_fastlio2_is_explicit(
+def test_sim_mujoco_localization_defaults_to_fastlio2_and_truth_is_explicit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: "windows",
     )
 
@@ -720,7 +856,7 @@ def test_sim_mujoco_localization_defaults_to_truth_and_fastlio2_is_explicit(
     plan = compile_run_plan(
         "nav",
         "sim",
-        env_config={"backend": "mujoco"},
+        env_config={"backend": "mujoco", "localization": "truth"},
     )
 
     assert plan.process("slam").name == "lidar_publisher"
@@ -737,19 +873,37 @@ def test_sim_mujoco_localization_defaults_to_truth_and_fastlio2_is_explicit(
     fastlio2 = compile_run_plan(
         "nav",
         "sim",
-        env_config={"backend": "mujoco", "localization": "fastlio2"},
+        env_config={"backend": "mujoco"},
     )
     assert fastlio2.process("slam").name == "slam_runtime"
     assert "--navigation-fixture" not in fastlio2.process("lidar").command.argv
 
 
-def test_sim_localization_defaults_to_truth_and_real_rejects_truth() -> None:
+@pytest.mark.parametrize("process_platform", ("windows", "linux"))
+@pytest.mark.parametrize("product", ("nav", "map"))
+def test_actual_sim_slam_profile_does_not_wait_for_unpublished_pose_prior(
+    monkeypatch: pytest.MonkeyPatch, process_platform: str, product: str,
+) -> None:
+    import yaml
+
+    monkeypatch.setattr("lingtu.assembly.graph.processes._host_process_platform", lambda: process_platform)
+    plan = compile_run_plan(product, "sim", env_config={"backend": "mujoco"})
+    assert plan.process("slam").name == "slam_runtime"
+    assert plan.process("imu").provides == ("imu",)
+    assert plan.process("lidar").provides == ("lidar",)
+    config_path = Path(__file__).resolve().parents[3] / plan.native_process_environment["LINGTU_SLAM_CONFIG"]
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert config["odom_prior_enabled"] is False
+    assert config.get("odom_prior_bypass_fastlio", False) is False
+
+
+def test_sim_localization_defaults_to_fastlio2_and_real_rejects_truth() -> None:
     resolved = resolve_product_host_runtime(
         "nav",
         "sim",
         env_config={"backend": "mujoco"},
     )
-    assert resolved.env_spec.config.localization == "truth"
+    assert resolved.env_spec.config.localization == "fastlio2"
 
     with pytest.raises(ValueError, match=r"real Env does not accept.*localization"):
         resolve_product_host_runtime(
@@ -792,7 +946,8 @@ def test_sim_mujoco_mapping_products_keep_fastlio2_mapping(
         ("teleop", None),
         ("teleop_avoid", None),
         ("map", None),
-        ("nav", None),
+        ("nav", "standard"),
+        ("nav", "camera"),
         ("tracking", None),
         ("inspection", None),
         ("explore", "live"),
@@ -807,7 +962,7 @@ def test_sim_mujoco_every_product_compiles_for_windows_with_complete_pe_chain_an
 ) -> None:
     graph = _materialized_platform_graph(tmp_path)
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: "windows",
     )
     resolved = resolve_product_host_runtime(
@@ -847,7 +1002,7 @@ def test_sim_mujoco_every_product_compiles_for_windows_with_complete_pe_chain_an
     assert slam.readiness.target == "slam.status.json"
     assert "--config" not in slam.argv
     assert plan.native_process_environment["LINGTU_SLAM_CONFIG"].replace("\\", "/") == (
-        "src/localization/fastlio2/config/sim_mid360.yaml"
+        "src/localization/fastlio2/config/sim_mid360_slam.yaml"
     )
     assert len(slam.dependencies) == 19
     assert all(item.path.endswith(".dll") for item in slam.dependencies)
@@ -874,7 +1029,6 @@ def test_sim_mujoco_every_product_compiles_for_windows_with_complete_pe_chain_an
         (
             "map",
             {
-                "camera_publisher",
                 "driver_bridge",
                 "lidar_publisher",
                 "imu_publisher",
@@ -894,6 +1048,7 @@ def test_sim_mujoco_every_product_compiles_for_windows_with_complete_pe_chain_an
                 "mujoco_feeder",
                 "slam_runtime",
                 "map_runtime",
+                "traversability_runtime",
                 "nav_runtime",
                 "host_runtime",
             },
@@ -908,6 +1063,7 @@ def test_sim_mujoco_every_product_compiles_for_windows_with_complete_pe_chain_an
                 "mujoco_feeder",
                 "slam_runtime",
                 "map_runtime",
+                "traversability_runtime",
                 "nav_runtime",
                 "host_runtime",
             },
@@ -922,6 +1078,7 @@ def test_sim_mujoco_every_product_compiles_for_windows_with_complete_pe_chain_an
                 "mujoco_feeder",
                 "slam_runtime",
                 "map_runtime",
+                "traversability_runtime",
                 "nav_runtime",
                 "host_runtime",
             },
@@ -950,7 +1107,7 @@ def test_sim_mujoco_products_select_exact_platform_processes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: process_platform,
     )
     monkeypatch.setattr(
@@ -979,7 +1136,7 @@ def test_sim_mujoco_slam_is_the_only_navigation_output_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: process_platform,
     )
     monkeypatch.setattr(
@@ -1004,7 +1161,7 @@ def test_sim_mujoco_driver_deadlines_cover_scheduler_jitter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: process_platform,
     )
     monkeypatch.setattr(
@@ -1034,7 +1191,7 @@ def test_sim_mujoco_linux_nav_selects_one_complete_elf_chain(
 ) -> None:
     graph = _materialized_platform_graph(tmp_path)
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: "linux",
     )
     resolved = resolve_product_host_runtime(
@@ -1071,7 +1228,7 @@ def test_sim_mujoco_unselected_artifacts_do_not_block_and_selection_is_explicit(
     linux_driver = tmp_path / "artifacts/linux/driver_bridge"
     linux_driver.unlink()
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: "windows",
     )
     windows_plan = compile_run_plan(
@@ -1095,7 +1252,7 @@ def test_sim_mujoco_unselected_artifacts_do_not_block_and_selection_is_explicit(
 
     linux_driver.write_bytes(b"linux:driver_bridge")
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: "linux",
     )
     linux_plan = compile_run_plan(
@@ -1117,7 +1274,7 @@ def test_sim_mujoco_windows_slam_selected_artifact_paths_are_required(
 ) -> None:
     graph = _materialized_platform_graph(tmp_path)
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: "windows",
     )
     resolved = resolve_product_host_runtime("nav", "sim", env_config={"backend": "mujoco"})
@@ -1177,15 +1334,15 @@ def test_sim_mujoco_windows_host_uses_staged_slam_control(
 ) -> None:
     graph = _materialized_platform_graph(tmp_path)
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: "windows",
     )
-    resolved = resolve_product_host_runtime("nav", "sim", env_config={"backend": "mujoco"})
+    resolved = resolve_product_host_runtime("nav", "sim", env_config={"backend": "mujoco", "localization": "fastlio2"})
 
     plan = compile_run_plan(
         resolved.product,
         resolved.env,
-        env_config={"backend": "mujoco"},
+        env_config={"backend": "mujoco", "localization": "fastlio2"},
         graph=graph,
     )
 
@@ -1204,7 +1361,7 @@ def test_sim_host_nav_client_dependency_must_be_authenticated(
     command = graph.envs["sim"]["backends"]["mujoco"]["processes"]["host_runtime"]["platforms"]["windows"]
     command["env"]["LINGTU_NAV_CLIENT_LIB"] = "artifacts/windows/untracked.dll"
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: "windows",
     )
     resolved = resolve_product_host_runtime("teleop", "sim", env_config={"backend": "mujoco"})
@@ -1226,18 +1383,27 @@ def test_sim_host_slam_control_dependency_must_be_authenticated(
     command = graph.envs["sim"]["backends"]["mujoco"]["processes"]["host_runtime"]["platforms"]["windows"]
     command["env"]["LINGTU_SLAM_CONTROL"] = "artifacts/windows/untracked-slamctl.exe"
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: "windows",
     )
-    resolved = resolve_product_host_runtime("nav", "sim", env_config={"backend": "mujoco"})
+    resolved = resolve_product_host_runtime("nav", "sim", env_config={"backend": "mujoco", "localization": "fastlio2"})
 
     with pytest.raises(ValueError, match="LINGTU_SLAM_CONTROL"):
         compile_run_plan(
             resolved.product,
             resolved.env,
-            env_config={"backend": "mujoco"},
+            env_config={"backend": "mujoco", "localization": "fastlio2"},
             graph=graph,
         )
+
+
+def test_mujoco_run_plan_selects_physical_clock_without_changing_slam_owner() -> None:
+    sim_plan = compile_run_plan(
+        "nav", "sim", env_config={"backend": "mujoco"}, local_planner="scan",
+    )
+    assert dict(sim_plan.process("nav").command.env)["LINGTU_NAV_EXECUTION_CLOCK"] == "simulation"
+    assert sim_plan.process("slam").name != "imu_publisher"
+    assert sim_plan.process("imu").provides == ("imu",)
 
 
 def test_sim_mujoco_teleop_compiles_persistent_native_processes_and_host_guards() -> None:
@@ -1259,13 +1425,13 @@ def test_sim_mujoco_teleop_compiles_persistent_native_processes_and_host_guards(
     assert manifest.simulation["session_source"] == (
         "sim/sessions/products/doso/thunder_v4/default.yaml"
     )
-    assert manifest.simulation["session"]["world"] == "industrial_park@1.0.0"
+    assert manifest.simulation["session"]["world"] == "factory_workshop@2.0.0"
     assert manifest.simulation["physics_plan"]["global_policy"]["timestep_s"] == 0.005
     assert manifest.simulation["physics_plan"]["global_policy"]["integrator"] == "euler"
     assert manifest.simulation["physics_plan"]["robots"][0]["spawn"]["position_m"] == [
-        3.0,
-        4.0,
-        0.0,
+        61.0,
+        16.5,
+        0.02,
     ]
     assert manifest.simulation["session"]["session_id"]
     assert [process.name for process in manifest.processes] == [
@@ -1280,17 +1446,10 @@ def test_sim_mujoco_teleop_compiles_persistent_native_processes_and_host_guards(
     assert manifest.process("nav").name == "nav_runtime"
     assert manifest.process("host").name == "host_runtime"
     host_dependencies = manifest.process("host").command.dependencies
-    if sys.platform == "win32":
-        assert len(host_dependencies) == 3
-        assert host_dependencies[0].path == (
-            "build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_nav_client.dll"
-        )
-        assert host_dependencies[1].path.endswith("ddsc.dll")
-        assert host_dependencies[2].path == "build/slam-core-windows-x64/stage/bin/slamctl.exe"
-    else:
-        assert [dependency.path for dependency in host_dependencies] == [
-            "build/nav_endpoint/liblingtu_nav_client.so"
-        ]
+    assert len(host_dependencies) == 3
+    assert host_dependencies[0].path == ("build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_nav_client.dll")
+    assert host_dependencies[1].path.endswith("ddsc.dll")
+    assert host_dependencies[2].path == "build/slam-core-windows-x64/stage/bin/slamctl.exe"
     assert manifest.process("nav").timeout_s == 60
     assert manifest.process("nav").command.argv[-2:] == ("--status-s", "0.1")
     assert not manifest.has_process("camera")
@@ -1310,7 +1469,7 @@ def test_sim_mujoco_teleop_avoid_compiles_complete_native_safety_chain(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr("runtime.graph.processes._host_process_platform", lambda: "linux")
+    monkeypatch.setattr("lingtu.assembly.graph.processes._host_process_platform", lambda: "linux")
     graph = _materialized_platform_graph(tmp_path)
     resolved = resolve_product_host_runtime(
         "teleop_avoid",
@@ -1329,7 +1488,7 @@ def test_sim_mujoco_teleop_avoid_compiles_complete_native_safety_chain(
         "sim/sessions/products/doso/thunder_v4/teleop_avoid.yaml"
     )
     assert plan.simulation["session"]["world"] == "teleop_avoid_field@1.0.0"
-    assert plan.simulation["session"]["runtime"]["mode"] == "preview"
+    assert plan.simulation["session"]["runtime"]["mode"] == "headless"
     assert plan.lifecycle["native_control_mode"] == "teleop_avoid"
     assert [process.name for process in plan.processes] == [
         "driver_bridge",
@@ -1358,7 +1517,7 @@ def test_sim_mujoco_teleop_avoid_compiles_complete_native_safety_chain(
     assert "--navigation-fixture" not in plan.process("lidar").command.argv
     assert plan.native_process_environment["LINGTU_SLAM_MODE"] == "mapping"
     assert plan.native_process_environment["LINGTU_SLAM_CONFIG"].replace("\\", "/") == (
-        "src/localization/fastlio2/config/sim_mid360.yaml"
+        "src/localization/fastlio2/config/sim_mid360_slam.yaml"
     )
     assert "LINGTU_EXPLORE_ROUTE" not in plan.native_process_environment
     assert plan.native_process_environment["LINGTU_MAPD_EXTENDED_LAYERS"] == "0"
@@ -1399,7 +1558,7 @@ def test_sim_mujoco_explore_live_compiles_exact_native_process_chain(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr("runtime.graph.processes._host_process_platform", lambda: "linux")
+    monkeypatch.setattr("lingtu.assembly.graph.processes._host_process_platform", lambda: "linux")
     graph = _materialized_platform_graph(tmp_path)
     resolved = resolve_product_host_runtime(
         "explore",
@@ -1461,7 +1620,7 @@ def test_sim_mujoco_explore_map_compiles_saved_map_route_into_run_plan(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr("runtime.graph.processes._host_process_platform", lambda: "linux")
+    monkeypatch.setattr("lingtu.assembly.graph.processes._host_process_platform", lambda: "linux")
     graph = _materialized_platform_graph(tmp_path)
     resolved = resolve_product_host_runtime(
         "explore",
@@ -1486,10 +1645,10 @@ def test_sim_mujoco_explore_map_compiles_saved_map_route_into_run_plan(
         "driver_bridge",
         "imu_publisher",
         "lidar_publisher",
-        "slam_runtime",
         "map_runtime",
         "mujoco_feeder",
         "nav_runtime",
+        "slam_runtime",
         "traversability_runtime",
         "explore_runtime",
         "host_runtime",
@@ -1515,7 +1674,7 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: "linux",
     )
     graph = _materialized_platform_graph(tmp_path)
@@ -1559,14 +1718,18 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
         assert float(plan.native_process_environment["LINGTU_MAPD_INFLATION_RADIUS_M"]) == pytest.approx(
             float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"])
         )
-        assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.10"
-        assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.10"
+        assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.05"
+        assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.35"
         assert float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"]) == pytest.approx(
             (0.25**2 + 0.3**2) ** 0.5
         )
         assert plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.25"
-        assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] == "0.25"
-        assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.25"
+        assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] == "0.05"
+        assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.35"
+        assert plan.native_process_environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"] == "0.05"
+        assert plan.native_process_environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"] == "0.35"
+        assert plan.native_process_environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M"] == "0.435"
+        assert plan.native_process_environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M"] == "0.1"
     else:
         assert plan.native_process_environment["LINGTU_LOCAL_PLANNER_PATHS"] == (
             "src/nav/cpp/planning/local/cmu/paths/thunder"
@@ -1582,13 +1745,14 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
         "mujoco_feeder",
         "nav_runtime",
         "slam_runtime",
+        "traversability_runtime",
         "host_runtime",
     ]
     assert [process.name for process in plan.processes] == expected_processes
     assert "acceptance" not in plan.as_dict()["launch"]
-    assert "LINGTU_EXPLORE_ROUTE" not in plan.native_process_environment
+    assert plan.native_process_environment["LINGTU_EXPLORE_ROUTE"] == "map"
     assert plan.native_process_environment["LINGTU_MAPD_EXTENDED_LAYERS"] == "0"
-    assert not plan.has_process("traversability")
+    assert plan.has_process("traversability")
     assert plan.host_config["enable_camera"] is (
         product in {"inspection", "tracking"}
     )
@@ -1600,6 +1764,8 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
         assert "encoder" not in plan.host_config
         assert plan.host_config["world"] == (
             "sim/packages/worlds/industrial_park/physics/industrial_park_scene.xml"
+            if product == "tracking"
+            else "sim/packages/worlds/factory_workshop/2.0.0/physics/campus.xml"
         )
         _assert_front_rgbd(plan)
     elif product == "nav":
@@ -1608,11 +1774,11 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
         _assert_front_rgbd(plan)
 
 
-def test_sim_mujoco_map_compiles_exact_rgbd_mapping_chain(
+def test_sim_mujoco_map_compiles_exact_lidar_mapping_chain(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr("runtime.graph.processes._host_process_platform", lambda: "linux")
+    monkeypatch.setattr("lingtu.assembly.graph.processes._host_process_platform", lambda: "linux")
     graph = _materialized_platform_graph(tmp_path)
     resolved = resolve_product_host_runtime(
         "map",
@@ -1633,7 +1799,6 @@ def test_sim_mujoco_map_compiles_exact_rgbd_mapping_chain(
     assert plan.lifecycle["native_control_mode"] == "teleop"
     assert "acceptance" not in plan.as_dict()["launch"]
     assert [process.name for process in plan.processes] == [
-        "camera_publisher",
         "driver_bridge",
         "imu_publisher",
         "lidar_publisher",
@@ -1643,17 +1808,14 @@ def test_sim_mujoco_map_compiles_exact_rgbd_mapping_chain(
         "slam_runtime",
         "host_runtime",
     ]
-    assert plan.process("camera") is not plan.process("lidar")
-    assert plan.process("camera") is not plan.process("slam")
+    assert not plan.has_process("camera")
     assert plan.process("slam").name == "slam_runtime"
-    assert plan.process("camera").name == "camera_publisher"
-    assert plan.process("camera").provides == ("camera",)
     assert plan.native_process_environment["LINGTU_SLAM_MODE"] == "mapping"
     assert plan.native_process_environment["LINGTU_MAPD_EXTENDED_LAYERS"] == "1"
-    assert plan.host_config["enable_camera"] is True
+    assert plan.host_config["enable_camera"] is False
     assert plan.host_config["use_driver_camera"] is False
-    assert plan.host_config["camera_backend"] == "dds"
-    assert "camera" in plan.critical_modules
+    assert "camera_backend" not in plan.host_config
+    assert "camera" not in plan.critical_modules
     _assert_front_rgbd(plan)
     assert not plan.has_process("traversability")
     assert not plan.has_process("explore")
@@ -1831,10 +1993,9 @@ def test_map_run_plan_contains_host_blueprint_contract() -> None:
         "maps",
         "nav",
         "driver",
-        "camera",
         "host",
     ]
-    assert product.process("camera").target == "lt-camera.service"
+    assert not product.has_process("camera")
     assert set(payload["identity"]) == {
         "schema",
         "product",
@@ -1891,8 +2052,6 @@ def test_map_run_plan_preserves_host_config(
             "mcp_port",
             "enable_gateway",
             "enable_teleop",
-            "enable_camera",
-            "camera_backend",
             "camera_jpeg_quality",
             "camera_fps",
             "startup_timeout_s",
@@ -1906,6 +2065,8 @@ def test_map_run_plan_preserves_host_config(
         )
     }
     assert {key: host_config[key] for key in expected_host_config} == expected_host_config
+    assert host_config["enable_camera"] is False
+    assert "camera_backend" not in host_config
     assert host_config == json.loads(json.dumps(product.host_config))
     staging_keys = (
         "_endpoint_transport",
@@ -1937,6 +2098,7 @@ def test_product_contract_is_serializable_without_starting_runtime() -> None:
         "lidar",
         "slam",
         "maps",
+        "traversability",
         "nav",
         "driver",
         "host",
@@ -1951,11 +2113,11 @@ def test_product_contract_is_serializable_without_starting_runtime() -> None:
     assert payload["launch"]["process_catalog"]["available"]
     assert not hasattr(product, "plan")
     assert payload["host"]["route_contract"] == "robot"
-    assert payload["host"]["config"]["_env"] == "real"
+    assert "_env" not in payload["host"]["config"]
+    assert "_product_variant" not in payload["host"]["config"]
     assert payload["checks"]["critical_modules"] == list(product.critical_modules)
-    assert payload["checks"]["contracts"] == ["lingtu.product.nav.v1"]
-    assert "required_capabilities" not in payload["checks"]
-    assert "required_topics" not in payload["checks"]
+    assert payload["checks"]["topics"] == list(product.required_topics)
+    assert payload["checks"]["capabilities"] == list(product.required_capabilities)
 
 
 def test_compiled_lifecycle_omits_dead_hot_switch_candidates() -> None:
@@ -1988,12 +2150,13 @@ def test_product_env_and_session_parameters_are_resolved_before_launch() -> None
     assert product.parameters["segment.max_distance_m"] == 2.0
     assert payload["launch"]["parameters"] == product.parameters
     assert set(payload["checks"]) == {
-        "contracts",
+        "topics",
+        "capabilities",
         "critical_modules",
     }
-    assert payload["launch"]["native_process_environment"][
-        "LINGTU_NAV_SEGMENT_MAX_DISTANCE_M"
-    ] == "2.0"
+    assert "native_process_environment" not in payload["launch"]
+    assert payload["launch"]["native_nav"] == product.native_nav
+    assert product.native_process_environment["LINGTU_NAV_SEGMENT_MAX_DISTANCE_M"] == "2.0"
 
 
 def test_parameter_validation_uses_declared_traversability_publish_rate() -> None:
@@ -2112,7 +2275,7 @@ def test_blueprint_runs_deferred_checks_only_when_building() -> None:
     assert calls == ["preflight"]
 
 
-def test_run_plan_round_trip_and_contract_change_is_explicit(tmp_path) -> None:
+def test_run_plan_round_trip_and_runtime_change_is_explicit(tmp_path) -> None:
     product = _compile_real("nav")
     path = product.write(tmp_path / "product.json")
 
@@ -2127,11 +2290,11 @@ def test_run_plan_round_trip_and_contract_change_is_explicit(tmp_path) -> None:
     )
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    payload["checks"]["contracts"] = ["lingtu.product.tracking.v1"]
+    payload["checks"]["capabilities"] = ["changed-capability"]
     path.write_text(json.dumps(payload), encoding="utf-8")
 
     changed = RunPlan.load(path)
-    assert changed.contracts == ("lingtu.product.tracking.v1",)
+    assert changed.required_capabilities == ("changed-capability",)
     assert changed != product
 
 
@@ -2223,7 +2386,7 @@ def test_every_windows_sim_product_run_plan_keeps_selected_processes_on_domain_1
 ) -> None:
     graph = _materialized_platform_graph(tmp_path)
     monkeypatch.setattr(
-        "runtime.graph.processes._host_process_platform",
+        "lingtu.assembly.graph.processes._host_process_platform",
         lambda: "windows",
     )
     resolved = resolve_product_host_runtime(

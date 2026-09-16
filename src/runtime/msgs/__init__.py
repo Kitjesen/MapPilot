@@ -46,7 +46,7 @@ from .semantic import (
     Relation,
     SceneGraph,
 )
-from .sensor import CameraIntrinsics, Image, ImageFormat, Imu, PointCloud2, PointField
+from .sensor import CameraIntrinsics, Image, ImageFormat, Imu, JointState, PointCloud2, PointField
 
 __all__ = [
     "CameraIntrinsics",
@@ -61,6 +61,7 @@ __all__ = [
     "InspectionTaskEvent",
     "InspectionTaskEventKind",
     "InspectionTaskState",
+    "JointState",
     "LingtuMsg",
     "MapCloudFrame",
     "MapObservationFrame",

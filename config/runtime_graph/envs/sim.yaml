@@ -26,6 +26,9 @@ backends:
       - tracking
       - inspection
       - explore
+    supported_product_variants:
+      map: [standard]
+      nav: [standard]
     process_control: subprocess
     process_manager: direct
     presets:
@@ -245,7 +248,7 @@ backends:
         target: traversability_runtime
         lifecycle: mode
         order: 20
-        timeout_s: 30
+        timeout_s: 60
         provides: [traversability]
         platforms:
           windows:
@@ -277,6 +280,7 @@ backends:
             env:
               LINGTU_DDS_DOMAIN_ID: "17"
               LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS: "600"
+              LINGTU_NAV_EXECUTION_CLOCK: simulation
               LINGTU_NAV_ODOM_MAX_AGE_S: "0.60"
               LINGTU_NAV_CLOUD_MAX_AGE_S: "0.60"
               LINGTU_NAV_INPUT_RECOVERY_FRAMES: "1"
@@ -291,6 +295,7 @@ backends:
             env:
               LINGTU_DDS_DOMAIN_ID: "231"
               LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS: "600"
+              LINGTU_NAV_EXECUTION_CLOCK: simulation
               LINGTU_NAV_ODOM_MAX_AGE_S: "0.60"
               LINGTU_NAV_CLOUD_MAX_AGE_S: "0.60"
               LINGTU_NAV_INPUT_RECOVERY_FRAMES: "1"
@@ -439,6 +444,7 @@ backends:
           - /tf_static
           - /lidar/raw_frame
           - /imu/raw
+          - /sim/clock
           - /slam/map_command
           - /slam/relocalization/request
           - /nav/command/request
@@ -456,6 +462,7 @@ backends:
           - /slam/registered_cloud
           - /slam/map_observation
           - /slam/map_cloud
+          - /slam/cumulative_map_cloud
           - /slam/saved_map_cloud
           - /slam/map_event
           - /slam/relocalization/response

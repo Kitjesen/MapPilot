@@ -1,6 +1,5 @@
 """Static and source-integrity contracts for the OpenField_HF UE recipe."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 

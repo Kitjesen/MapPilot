@@ -1,6 +1,14 @@
 from lingtu.assembly.deployment import product_native_build_scripts
 
 
+def test_exploration_build_plan_includes_default_variant_processes() -> None:
+    scripts = product_native_build_scripts("explore")
+
+    assert "scripts/build/build_livox_sdk2_stream.sh" in scripts
+    assert "scripts/build/build_slam_core.sh" in scripts
+    assert "scripts/build/build_nav_endpoint.sh" in scripts
+
+
 def test_product_build_plan_does_not_resolve_an_environment(monkeypatch) -> None:
     def fail_host_compile(*_args, **_kwargs):
         raise AssertionError("build planning must not resolve Product + env")

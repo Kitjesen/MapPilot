@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat
-from runtime.runtime_interface import FRAMES
+from runtime.tf.frames import FRAMES
 
 from ...native import Config, Info, Sample
 

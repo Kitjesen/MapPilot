@@ -62,7 +62,7 @@ endif()
 
 if(LINGTU_RECORDING_BUILD_DDS)
   find_package(CycloneDDS REQUIRED)
-  include("${LINGTU_ROOT}/src/message/cpp/CMakeLists.txt")
+  include("${LINGTU_ROOT}/cmake/LingTuDDS.cmake")
   lingtu_add_dds_c_messages(
     lingtu_recording_dds_messages
     "${LINGTU_ROOT}/src/message/idl/messages.idl")

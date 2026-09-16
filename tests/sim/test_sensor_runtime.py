@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import copy
-from functools import cache
 from fractions import Fraction
+from functools import cache
 from pathlib import Path
 from typing import Any
 
 import pytest
-
 from sim.catalog import CatalogResolver
 from sim.runtime.sensors import (
     DeadlinePolicy,

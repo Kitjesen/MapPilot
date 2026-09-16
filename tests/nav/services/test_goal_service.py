@@ -1585,3 +1585,26 @@ class TestGoalService:
         assert task["cancel_requested"] is True
         assert task["terminal"] is False
         service.stop()
+
+
+def test_goal_limits_reach_command_and_participate_in_replay_identity(goal_service):
+    captured = []
+    original = goal_service._test_commands.send_goal
+    def send_goal(x, y, z, yaw, *, task_id, request_id, **limits):
+        captured.append(limits)
+        return original(x, y, z, yaw, task_id=task_id, request_id=request_id)
+    goal_service._test_commands.send_goal = send_goal
+    from gateway.navigation.routes import _publish_goal
+    from gateway.navigation.goals import construct_goal_from_request
+    from gateway.schemas import ClickNavRequest
+    from types import SimpleNamespace
+    body = ClickNavRequest(x=2, y=1, max_speed_mps=0.2, acceptance_radius_m=0.3)
+    goal = construct_goal_from_request(body, default_source="map_click")
+    owner = SimpleNamespace(_goals=goal_service)
+    result = _publish_goal(owner, goal, ts=10, task_id="limited-task", request_id="limited-request")
+    assert result["accepted"]
+    assert captured == [{"max_speed_mps": 0.2, "acceptance_radius_m": 0.3}]
+    rejected = goal_service.submit_goal(goal.pose_stamped(ts=10), task_id="limited-task",
+        request_id="limited-request", max_speed_mps=0.4, acceptance_radius_m=0.3)
+    assert rejected["accepted"] is False
+    assert len(captured) == 1

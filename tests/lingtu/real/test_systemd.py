@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.graph import ProcessSpec
 from lingtu.assembly.products import resolve_product_host_runtime
 from lingtu.real.systemd import (
     ServiceReadiness,
@@ -17,7 +18,6 @@ from lingtu.real.systemd import (
     _ServiceInspector,
 )
 from lingtu.switch_contracts import ProcessError, ProcessFailed
-from runtime.graph import ProcessSpec
 
 
 class FakeControl:
@@ -148,6 +148,7 @@ def test_systemd_runner_dry_run_has_no_process_side_effects() -> None:
         "lt-lidar.service",
         "lt-slam.service",
         "lt-maps.service",
+        "lt-terrain.service",
         "lt-nav.service",
         "lt-driver.service",
         "lt-host.service",
@@ -176,6 +177,7 @@ def test_systemd_runner_applies_plan_in_order_and_restarts_active_mode_driver() 
         "lt-lidar.service",
         "lt-slam.service",
         "lt-maps.service",
+        "lt-terrain.service",
         "lt-nav.service",
         "lt-driver.service",
         "lt-host.service",
@@ -185,10 +187,54 @@ def test_systemd_runner_applies_plan_in_order_and_restarts_active_mode_driver() 
         "lidar",
         "slam",
         "maps",
+        "traversability",
         "nav",
         "driver",
         "host",
     ]
+
+
+@pytest.mark.parametrize("operation", ["apply", "transition", "restore"])
+@pytest.mark.parametrize("localization_fails", [False, True])
+def test_localization_barrier_precedes_maps_and_driver(operation, localization_fails):
+    from lingtu.switch_contracts import ProcessReport
+
+    plan = _field_product()
+    targets = {process.target for process in plan.processes}
+    control = FakeControl(targets if operation == "transition" else set())
+    localized = False
+
+    class Readiness(FakeReadiness):
+        def wait(self, process, timeout_s):
+            if process.name == "maps":
+                assert localized, "mapd waits for map-frame observations from localization"
+            return super().wait(process, timeout_s)
+
+    def on_ready(process):
+        nonlocal localized
+        if process.name == "slam":
+            if localization_fails:
+                raise RuntimeError("localization failed")
+            localized = True
+
+    runner = SystemdRunner(control, Readiness())
+
+    def invoke():
+        if operation == "apply":
+            return runner.apply_deferred(plan, on_process_ready=on_ready)
+        if operation == "transition":
+            return runner.transition(plan, plan, on_process_ready=on_ready)
+        transition = ProcessReport(product=plan.product, env=plan.env, action="transition", stopped=list(targets))
+        return runner.restore_transition_previous(plan, transition, on_process_ready=on_ready)
+
+    if localization_fails:
+        with pytest.raises(ProcessFailed, match="localization failed"):
+            invoke()
+        assert "lt-maps.service" not in control.started
+        assert "lt-driver.service" not in control.started
+    else:
+        assert invoke().ok
+        assert control.started.index("lt-slam.service") < control.started.index("lt-maps.service")
 
 
 def test_systemd_runner_rolls_back_only_processes_started_by_failed_transaction() -> None:
@@ -203,6 +249,7 @@ def test_systemd_runner_rolls_back_only_processes_started_by_failed_transaction(
     assert report.error == "nav readiness failed"
     assert report.rolled_back == [
         "lt-nav.service",
+        "lt-terrain.service",
         "lt-maps.service",
         "lt-slam.service",
         "lt-lidar.service",
@@ -237,6 +284,7 @@ def test_systemd_runner_stop_stops_all_mode_processes() -> None:
         "lt-host.service",
         "lt-nav.service",
         "lt-driver.service",
+        "lt-terrain.service",
         "lt-maps.service",
         "lt-slam.service",
         "lt-lidar.service",

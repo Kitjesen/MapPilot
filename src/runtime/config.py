@@ -89,10 +89,12 @@ class CameraConfig:
     """Camera mounting extrinsics and default intrinsics.
 
     Extrinsics define the body→camera static transform (position + rotation).
-    Intrinsics are factory defaults; runtime CameraInfo from ROS2 overrides them.
+    Intrinsics are factory defaults; native CameraInfo overrides them.
     Distortion uses Brown-Conrady (plumb_bob) model: k1, k2, p1, p2, k3.
     """
 
+    capture_driver: str = "orbbec_native"
+    serial_number: str = ""
     # Extrinsics: camera position in body frame (m)
     position_x: float = 0.15
     position_y: float = 0.0
@@ -101,7 +103,7 @@ class CameraConfig:
     roll: float = 0.0
     pitch: float = 0.0
     yaw: float = 0.0
-    # Default intrinsics (overridden by ROS2 CameraInfo at runtime)
+    # Default intrinsics (overridden by native CameraInfo at runtime)
     fx: float = 615.0
     fy: float = 615.0
     cx: float = 320.0

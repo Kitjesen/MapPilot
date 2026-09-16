@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Deterministic, no-network tests for the Forest_HF UE MCP adapter."""
 
@@ -11,7 +10,6 @@ from pathlib import Path
 from typing import Any, Mapping, cast
 
 import pytest
-
 from sim.tools.worlds.forest_hf.generate import TerrainSpec, generate_forest_hf
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

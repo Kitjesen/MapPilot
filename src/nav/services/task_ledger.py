@@ -1321,7 +1321,7 @@ class NavigationTaskLedger:
         if self._closed:
             raise RuntimeError("navigation task ledger is closed")
 
-    def __enter__(self) -> "NavigationTaskLedger":
+    def __enter__(self) -> NavigationTaskLedger:
         return self
 
     def __exit__(self, *args: object) -> None:

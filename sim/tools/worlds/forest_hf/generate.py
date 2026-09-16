@@ -424,7 +424,6 @@ def _world_manifest(
             (
                 f"  - path: {record['path']}",
                 f"    size: {record['size']}",
-                f"    sha256: {record['sha256']}",
             )
         )
     lines.extend(
@@ -565,9 +564,7 @@ def _write_canonical_package(
     projection_target.parent.mkdir(parents=True, exist_ok=True)
     projection_target.write_bytes(_canonical_json(projection_body))
     records = _package_records(package_root, excluded={manifest_path})
-    (package_root / manifest_path).write_bytes(
-        _world_manifest(records=records)
-    )
+    (package_root / manifest_path).write_bytes(_world_manifest(records=records))
 
 
 def generate_forest_hf(

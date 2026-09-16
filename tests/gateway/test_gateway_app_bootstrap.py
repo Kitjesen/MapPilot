@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import pytest
 
@@ -55,6 +56,7 @@ def test_app_bootstrap_uses_run_plan_teleop_limits(monkeypatch):
 
     monkeypatch.setenv("LINGTU_TELEOP_MAX_SPEED_MPS", "0.2")
     monkeypatch.setenv("LINGTU_TELEOP_MAX_YAW_RATE", "0.3")
+    monkeypatch.setenv("LINGTU_ROBOT", "doso/thunder_v4")
     plan = compile_run_plan("teleop_avoid", "real", robot="unitree/go2")
 
     gateway = GatewayModule(run_plan=plan)
@@ -66,6 +68,19 @@ def test_app_bootstrap_uses_run_plan_teleop_limits(monkeypatch):
         "linear_mps": 0.5,
         "yaw_rad_s": 1.0,
     }
+    assert payload["robot"]["model"] == "unitree/go2"
+
+
+@pytest.mark.parametrize("configured, expected", [(None, None), ("unitree/go2", "unitree/go2")])
+def test_app_bootstrap_robot_model_uses_environment_without_inventing_a_default(monkeypatch, configured, expected):
+    from gateway.gateway_module import GatewayModule
+    from gateway.services.app_bootstrap import build_app_bootstrap
+
+    if configured is None:
+        monkeypatch.delenv("LINGTU_ROBOT", raising=False)
+    else:
+        monkeypatch.setenv("LINGTU_ROBOT", configured)
+    assert build_app_bootstrap(GatewayModule())["robot"]["model"] == expected
 
 
 def test_client_links_advertise_task_status_and_estop_reset_controls():
@@ -135,7 +150,15 @@ def test_app_bootstrap_service_returns_client_contract():
         gateway._odom = {"x": 1.0, "y": 2.0, "yaw": 0.1}
         gateway._navigation_state = {
             "lifecycle_state_name": "EXECUTING",
+            "active_task_id": "navigation-task-1",
+            "active_request_id": "goal-1",
             "authority": "none",
+            "ts": time.time(),
+        }
+        gateway._navigation_goal_status_by_task["navigation-task-1"] = {
+            "task_id": "navigation-task-1",
+            "request_id": "goal-1",
+            "state_name": "EXECUTING",
         }
         gateway._mode = "autonomous"
         gateway._last_path = [{"x": 0.0, "y": 0.0}, {"x": 1.0, "y": 1.0}]
@@ -149,24 +172,26 @@ def test_app_bootstrap_service_returns_client_contract():
     gateway._icp_quality = 0.2
     payload = build_app_bootstrap(gateway)
 
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 4
     assert isinstance(payload["ts"], float)
     assert payload["server"]["time"] == payload["ts"]
     assert payload["server"]["api_version"] == "v1"
     assert payload["robot"]["has_odometry"] is True
-    assert payload["mission"]["state"] == "EXECUTING"
+    assert "mission" not in payload
     assert payload["safety"]["ok"] is True
     assert payload["localization"]["state"] == "degraded"
     assert payload["localization"]["reported_state"] == "DEGRADED"
     assert payload["localization"]["confidence"] == 0.4
-    assert payload["navigation"]["state"] == "EXECUTING"
-    assert payload["navigation"]["path"]["points"] == 2
-    assert payload["control"]["mode"] == "autonomous"
-    assert payload["control"]["active_cmd_source"] == "unknown"
-    assert payload["control"]["command_owner"] == "none"
-    assert payload["control"]["estop_clear"] is True
-    assert payload["control"]["can_send_goal"] is False
-    assert payload["control"]["goal_blockers"]
+    assert payload["navigation"]["task"]["state"] == "EXECUTING"
+    assert set(payload["navigation"]) == {
+        "schema_version",
+        "task",
+        "goal_admission",
+        "control",
+        "motion",
+        "ts",
+    }
+    assert set(payload["control"]) == {"teleop", "command_policy"}
     assert payload["path"]["points"] == 2
     assert payload["path"]["endpoint"] == "/api/v1/path"
     assert "path" not in payload["path"]
@@ -204,8 +229,6 @@ def test_app_bootstrap_service_returns_client_contract():
     assert payload["links"]["traffic"] == "/api/v1/app/traffic"
     assert payload["links"]["readiness"] == "/api/v1/readiness"
     assert payload["links"]["metrics"] == "/api/v1/metrics"
-    assert payload["links"]["auth_login"] == "/api/v1/auth/login"
-    assert payload["links"]["auth_check"] == "/api/v1/auth/check"
     assert payload["links"]["localization_status"] == "/api/v1/localization/status"
     assert payload["links"]["localization_relocalize"] == "/api/v1/localization/relocalizations"
     assert payload["links"]["localization_map_tracking"] == "/api/v1/localization/map-tracking"
@@ -246,8 +269,6 @@ def test_app_bootstrap_service_returns_client_contract():
     assert capabilities["realtime"]["scene_layers"]["layers"][1]["id"] == "live_cloud"
     assert capabilities["endpoints"]["app"]["bootstrap"]["path"] == "/api/v1/app/bootstrap"
     assert capabilities["endpoints"]["app"]["traffic"]["path"] == "/api/v1/app/traffic"
-    assert capabilities["endpoints"]["auth"]["login"]["path"] == "/api/v1/auth/login"
-    assert capabilities["endpoints"]["auth"]["check"]["path"] == "/api/v1/auth/check"
     assert capabilities["endpoints"]["state"]["localization_status"]["path"] == "/api/v1/localization/status"
     assert capabilities["endpoints"]["localization"]["relocalize"] == {
         "method": "POST",
@@ -527,6 +548,7 @@ def test_app_bootstrap_disables_motion_controls_when_safety_stop_active():
             "lifecycle_state_name": "IDLE",
             "authority": "estop",
             "hold_reason": "operator_estop",
+            "ts": time.time(),
         }
         gateway._mode = "autonomous"
         gateway._localization_status = {
@@ -541,13 +563,9 @@ def test_app_bootstrap_disables_motion_controls_when_safety_stop_active():
 
     assert payload["safety"]["ok"] is False
     assert payload["safety"]["stop_active"] is True
-    assert payload["control"]["estop_clear"] is True
-    assert payload["control"]["safety_clear"] is False
-    assert payload["control"]["can_send_goal"] is False
-    assert payload["control"]["can_send_commands"] is False
-    assert "safety_stop" in payload["control"]["goal_blockers"]
-    assert payload["navigation"]["can_accept_goal"] is False
-    assert "safety_stop" in payload["navigation"]["readiness"]["blockers"]
+    assert payload["navigation"]["goal_admission"]["state"] == "BLOCKED"
+    assert payload["navigation"]["motion"]["permission"] == "ESTOPPED"
+    assert payload["navigation"]["motion"]["reason"] == "estop_latched"
 
 
 def test_app_bootstrap_blocks_goal_when_navigation_session_inactive():
@@ -562,6 +580,7 @@ def test_app_bootstrap_blocks_goal_when_navigation_session_inactive():
         gateway._navigation_state = {
             "lifecycle_state_name": "IDLE",
             "authority": "none",
+            "ts": time.time(),
         }
         gateway._mode = "autonomous"
         gateway._localization_status = {
@@ -574,12 +593,10 @@ def test_app_bootstrap_blocks_goal_when_navigation_session_inactive():
 
     payload = build_app_bootstrap(gateway)
 
-    assert payload["control"]["can_send_goal"] is False
-    assert "navigation_session_inactive" in payload["control"]["goal_blockers"]
-    assert payload["navigation"]["can_accept_goal"] is False
-    assert "navigation_session_inactive" in payload["navigation"]["readiness"]["blockers"]
-    assert payload["navigation"]["readiness"]["session_mode"] == "idle"
-    assert payload["navigation"]["feedback"]["next_action"] == "resolve_blockers"
+    assert payload["navigation"]["goal_admission"] == {
+        "state": "BLOCKED",
+        "reason": "navigation_session_inactive",
+    }
     assert payload["links"]["navigation_cancel"] == "/api/v1/navigation/cancel"
 
 
@@ -688,7 +705,7 @@ def test_app_bootstrap_route_endpoint_returns_payload():
     route = next(route for route in app.routes if route.path == "/api/v1/app/bootstrap")
     payload = asyncio.run(route.endpoint())
 
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 4
     assert payload["ts"] > 0
     assert payload["links"]["health"] == "/api/v1/health"
 
@@ -755,8 +772,6 @@ def test_app_capabilities_enriches_specs_from_openapi():
     scene_graph = capabilities["endpoints"]["state"]["scene_graph"]
     locations = capabilities["endpoints"]["state"]["locations"]
     path = capabilities["endpoints"]["state"]["path"]
-    auth_login = capabilities["endpoints"]["auth"]["login"]
-    auth_check = capabilities["endpoints"]["auth"]["check"]
     localization = capabilities["endpoints"]["state"]["localization_status"]
     navigation = capabilities["endpoints"]["state"]["navigation_status"]
     readiness = capabilities["endpoints"]["state"]["readiness"]
@@ -788,9 +803,6 @@ def test_app_capabilities_enriches_specs_from_openapi():
     assert scene_graph["response_schema"] == "SceneGraphResponse"
     assert locations["response_schema"] == "LocationsResponse"
     assert path["response_schema"] == "PathResponse"
-    assert auth_login["request_schema"] == "AuthLoginRequest"
-    assert auth_login["response_schema"] == "AuthLoginResponse"
-    assert auth_check["response_schema"] == "AuthCheckResponse"
     assert localization["response_schema"] == "LocalizationStatusResponse"
     assert navigation["response_schema"] == "NavigationStatusResponse"
     assert readiness["response_schema"] == "ReadinessResponse"
@@ -852,6 +864,51 @@ def test_app_capabilities_enriches_specs_from_openapi():
     assert "image/jpeg" in camera["response_content_types"]
 
 
+def test_runtime_products_reuse_host_declarations_without_freezing_identity(monkeypatch):
+    from copy import deepcopy
+    from types import SimpleNamespace
+
+    from gateway.services.app_bootstrap import _runtime_product_capabilities
+    from lingtu.assembly.graph import loader
+
+    declarations = SimpleNamespace(
+        products={"teleop": {"operator_switchable": True}},
+        envs={"real": {"supported_products": ["teleop"]}},
+    )
+    loads = 0
+
+    def load_declarations():
+        nonlocal loads
+        loads += 1
+        return deepcopy(declarations)
+
+    monkeypatch.setattr(loader, "load_runtime_graph", load_declarations)
+    gateway = SimpleNamespace(
+        _compiled_env="real", _compiled_product="teleop",
+        _compiled_product_session_id="session-a", _compiled_run_plan=object(),
+    )
+    first = _runtime_product_capabilities(gateway)
+    first["products"]["teleop"]["variants"].append("response-only")
+    declarations.envs["real"]["supported_products"].clear()
+    gateway._compiled_product_session_id = "session-b"
+    second = _runtime_product_capabilities(gateway)
+    assert loads == 1
+    assert second["product_session_id"] == "session-b"
+    assert second["products"]["teleop"]["available"] is True
+    assert second["products"]["teleop"]["variants"] == []
+
+    gateway._compiled_run_plan = None
+    stopped = _runtime_product_capabilities(gateway)
+    assert stopped["state"] == "standby"
+    assert stopped["products"]["teleop"]["available"] is False
+    assert loads == 1
+
+    next_host = SimpleNamespace(_compiled_env="real", _compiled_run_plan=object())
+    refreshed = _runtime_product_capabilities(next_host)
+    assert loads == 2
+    assert refreshed["products"]["teleop"]["available"] is False
+
+
 def test_app_capabilities_reuses_openapi_contract_cache_without_freezing_runtime(
     monkeypatch,
 ):
@@ -892,13 +949,23 @@ def test_app_capabilities_reuses_openapi_contract_cache_without_freezing_runtime
     assert second["endpoints"]["app"]["bootstrap"]["response_schema"] == "AppBootstrapResponse"
 
 
-def test_app_web_cold_start_routes_return_stable_client_shapes():
+def test_app_web_cold_start_routes_return_stable_client_shapes(monkeypatch):
     from fastapi.testclient import TestClient
 
     from gateway.gateway_module import GatewayModule
+    from gateway.navigation import status as navigation_status
+    from gateway.services.native_control import status_is_fresh
+
+    snapshot_time = time.time()
+    monkeypatch.setattr(
+        navigation_status,
+        "native_control_status_is_fresh",
+        lambda snapshot: status_is_fresh(snapshot, now_s=snapshot_time),
+    )
 
     gateway = GatewayModule()
     gateway.setup()
+    snapshot_time = time.time()
     with gateway._state_lock:
         gateway._odom = {
             "x": 1.25,
@@ -911,6 +978,7 @@ def test_app_web_cold_start_routes_return_stable_client_shapes():
         gateway._navigation_state = {
             "lifecycle_state_name": "IDLE",
             "authority": "none",
+            "ts": snapshot_time,
         }
         gateway._mode = "manual"
         gateway._last_path = [
@@ -965,15 +1033,13 @@ def test_app_web_cold_start_routes_return_stable_client_shapes():
     path_payload = path.json()
     capabilities_payload = capabilities.json()
 
-    assert bootstrap_payload["schema_version"] == 2
+    assert bootstrap_payload["schema_version"] == 4
     assert bootstrap_payload["ts"] > 0
     assert bootstrap_payload["server"]["time"] == bootstrap_payload["ts"]
     assert bootstrap_payload["traffic"]["client_policy"]["usage"] == "cold_start_only"
     assert bootstrap_payload["links"]["state"] == "/api/v1/state"
     assert bootstrap_payload["links"]["events"] == "/api/v1/events"
     assert bootstrap_payload["links"]["traffic"] == "/api/v1/app/traffic"
-    assert bootstrap_payload["links"]["auth_login"] == "/api/v1/auth/login"
-    assert bootstrap_payload["links"]["auth_check"] == "/api/v1/auth/check"
     assert bootstrap_payload["links"]["navigation_cancel"] == "/api/v1/navigation/cancel"
     assert bootstrap_payload["links"]["explore_directed"] == "/api/v1/explore/directed"
     assert bootstrap_payload["links"]["explore_directed_clear"] == "/api/v1/explore/directed/clear"
@@ -981,8 +1047,7 @@ def test_app_web_cold_start_routes_return_stable_client_shapes():
     assert bootstrap_payload["media"]["go2rtc_status"] == "/api/v1/webrtc/go2rtc/status"
     assert "scene_graph" not in bootstrap_payload["scene"]
     assert "path" not in bootstrap_payload["path"]
-    assert "can_send_goal" in bootstrap_payload["control"]
-    assert isinstance(bootstrap_payload["control"]["goal_blockers"], list)
+    assert set(bootstrap_payload["control"]) == {"teleop", "command_policy"}
 
     assert traffic_payload["schema_version"] == 1
     assert traffic_payload["ts"] > 0
@@ -995,7 +1060,7 @@ def test_app_web_cold_start_routes_return_stable_client_shapes():
     assert traffic_payload["client_policy"]["traffic_endpoint"] == "/api/v1/app/traffic"
     assert traffic_payload["warnings"] == []
 
-    assert state_payload["schema_version"] == 2
+    assert state_payload["schema_version"] == 4
     assert state_payload["ts"] > 0
     assert state_payload["server"]["time"] == state_payload["ts"]
     assert state_payload["links"]["state"] == "/api/v1/state"
@@ -1012,8 +1077,15 @@ def test_app_web_cold_start_routes_return_stable_client_shapes():
     assert state_payload["links"]["navigation_cancel"] == "/api/v1/navigation/cancel"
     assert state_payload["path"]["points"] == 2
     assert state_payload["localization"]["odometry"]["x"] == 1.25
-    assert state_payload["navigation"]["mission"]["raw"]["state"] == "IDLE"
-    assert state_payload["navigation"]["diagnostics"]["safety"]["stop_active"] is False
+    assert state_payload["navigation"]["task"]["state"] == "IDLE"
+    assert set(state_payload["navigation"]) == {
+        "schema_version",
+        "task",
+        "goal_admission",
+        "control",
+        "motion",
+        "ts",
+    }
 
     assert readiness_payload["schema_version"] == 1
     assert readiness_payload["status"] in {"ready", "degraded", "not_started"}
@@ -1046,9 +1118,6 @@ def test_app_web_cold_start_routes_return_stable_client_shapes():
     assert (
         capabilities_payload["endpoints"]["state"]["runtime_dataflow_topic"]["path"] == "/api/v1/runtime/dataflow/topic"
     )
-    assert capabilities_payload["endpoints"]["auth"]["login"]["request_schema"] == "AuthLoginRequest"
-    assert capabilities_payload["endpoints"]["auth"]["login"]["response_schema"] == "AuthLoginResponse"
-    assert capabilities_payload["endpoints"]["auth"]["check"]["response_schema"] == "AuthCheckResponse"
     assert capabilities_payload["links"]["events"] == "/api/v1/events"
     assert capabilities_payload["links"]["readiness"] == "/api/v1/readiness"
     assert "map_activate" not in capabilities_payload["links"]
@@ -1080,6 +1149,7 @@ def test_app_web_events_stream_starts_with_snapshot_contract():
         gateway._navigation_state = {
             "lifecycle_state_name": "IDLE",
             "authority": "none",
+            "ts": time.time(),
         }
         gateway._mode = "manual"
 
@@ -1094,13 +1164,17 @@ def test_app_web_events_stream_starts_with_snapshot_contract():
     assert payload["schema_version"] == 1
     assert payload["event_id"] == 1
     assert payload["ts"] > 0
-    assert payload["data"]["navigation"]["mission"]["raw"]["state"] == "IDLE"
-    assert payload["data"]["navigation"]["diagnostics"]["safety"]["stop_active"] is False
+    assert payload["data"]["navigation"]["task"]["state"] == "IDLE"
     assert payload["data"]["session"]["mode"] in {"idle", "navigating", "mapping"}
     assert payload["data"]["lease"]["active"] is False
-    assert payload["data"]["navigation"]["path"]["endpoint"] == "/api/v1/path"
-    assert payload["data"]["navigation"]["readiness"]["can_accept_goal"] is False
-    assert payload["data"]["navigation"]["frames"]["planning_frame_id"] == "map"
+    assert set(payload["data"]["navigation"]) == {
+        "schema_version",
+        "task",
+        "goal_admission",
+        "control",
+        "motion",
+        "ts",
+    }
     assert gateway._traffic_stats_snapshot()["sse"]["clients"] == 0
 
 
@@ -1152,7 +1226,12 @@ def test_app_web_events_stream_flushes_live_event_before_heartbeat_delay():
             first_payload = decode_payload(await iterator.__anext__())
             next_chunk_task = asyncio.create_task(iterator.__anext__())
             await asyncio.sleep(0.01)
-            gateway.push_event({"type": "mission_status", "data": {"state": "IDLE"}})
+            gateway.push_event(
+                {
+                    "type": "navigation_status",
+                    "data": {"task": {"state": "IDLE"}},
+                }
+            )
             second_payload = decode_payload(await asyncio.wait_for(next_chunk_task, timeout=0.5))
             return first_payload, second_payload
         finally:
@@ -1168,8 +1247,8 @@ def test_app_web_events_stream_flushes_live_event_before_heartbeat_delay():
     first, second = asyncio.run(read_next_payload_after_delayed_push(gateway))
 
     assert first["type"] == "snapshot"
-    assert second["type"] == "mission_status"
-    assert second["data"]["state"] == "IDLE"
+    assert second["type"] == "navigation_status"
+    assert second["data"]["task"]["state"] == "IDLE"
     assert second["event_id"] > first["event_id"]
     assert gateway._traffic_stats_snapshot()["sse"]["clients"] == 0
 
@@ -1194,7 +1273,12 @@ def test_app_web_events_stream_filters_runtime_dataflow_topic():
             first_payload = decode_payload(await iterator.__anext__())
             next_chunk_task = asyncio.create_task(iterator.__anext__())
             await asyncio.sleep(0.01)
-            gateway.push_event({"type": "mission_status", "data": {"state": "IDLE"}})
+            gateway.push_event(
+                {
+                    "type": "navigation_status",
+                    "data": {"task": {"state": "IDLE"}},
+                }
+            )
             await asyncio.sleep(0.01)
             gateway.odometry._deliver(Odometry())
             second_payload = decode_payload(await asyncio.wait_for(next_chunk_task, timeout=0.5))
@@ -1248,13 +1332,23 @@ def test_app_web_events_reconnect_snapshot_uses_latest_state_and_monotonic_id():
     gateway.setup()
     with gateway._state_lock:
         gateway._odom = {"x": 1.0, "y": 2.0, "yaw": 0.25}
-        gateway._navigation_state = {"lifecycle_state_name": "IDLE"}
+        gateway._navigation_state = {"lifecycle_state_name": "IDLE", "ts": time.time()}
 
     first = asyncio.run(read_first_payload(gateway))
 
     with gateway._state_lock:
         gateway._odom = {"x": 3.0, "y": 4.0, "yaw": 0.5}
-        gateway._navigation_state = {"lifecycle_state_name": "EXECUTING"}
+        gateway._navigation_state = {
+            "lifecycle_state_name": "EXECUTING",
+            "active_task_id": "navigation-task-2",
+            "active_request_id": "goal-2",
+            "ts": time.time(),
+        }
+        gateway._navigation_goal_status_by_task["navigation-task-2"] = {
+            "task_id": "navigation-task-2",
+            "request_id": "goal-2",
+            "state_name": "EXECUTING",
+        }
 
     second = asyncio.run(read_first_payload(gateway))
 
@@ -1262,6 +1356,5 @@ def test_app_web_events_reconnect_snapshot_uses_latest_state_and_monotonic_id():
     assert second["type"] == "snapshot"
     assert second["event_id"] > first["event_id"]
     assert second["data"]["localization"]["odometry"]["x"] == 3.0
-    assert second["data"]["navigation"]["mission"]["raw"]["state"] == "EXECUTING"
-    assert second["data"]["navigation"]["diagnostics"]["safety"]["stop_active"] is False
+    assert second["data"]["navigation"]["task"]["state"] == "EXECUTING"
     assert gateway._traffic_stats_snapshot()["sse"]["clients"] == 0

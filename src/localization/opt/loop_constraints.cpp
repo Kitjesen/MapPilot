@@ -322,20 +322,15 @@ std::filesystem::path patch_path(const Map &map,
   return {};
 }
 
-std::vector<Point> build_submap(const Map &map, const std::vector<Keyframe> &keyframes,
-                                const std::vector<std::filesystem::path> &sorted_patches,
+std::vector<Point> build_submap(const PatchCloudSource &cloud_at, const std::vector<Keyframe> &keyframes,
                                 std::size_t anchor, const LoopConstraintOptions &options) {
   const std::size_t begin =
       anchor > options.submap_half_window ? anchor - options.submap_half_window : 0;
   const std::size_t end = std::min(keyframes.size() - 1, anchor + options.submap_half_window);
   std::vector<Point> accumulated;
   for (std::size_t index = begin; index <= end; ++index) {
-    const auto path = patch_path(map, sorted_patches, keyframes[index], index);
-    if (path.empty()) {
-      throw std::runtime_error("patch missing for keyframe " + std::to_string(index));
-    }
     const Pose neighbor_to_anchor = between_poses(keyframes[anchor].pose, keyframes[index].pose);
-    const auto cloud = read_point_cloud(path);
+    const auto cloud = cloud_at(index);
     accumulated.reserve(accumulated.size() + cloud.size());
     for (const Point &point : cloud) {
       if (finite_point(point)) {
@@ -513,7 +508,8 @@ std::vector<double> cumulative_path(const std::vector<Keyframe> &keyframes) {
 
 std::vector<Candidate>
 generate_candidates(const std::vector<Keyframe> &keyframes, const LoopConstraintOptions &options,
-                    const std::function<const Descriptor &(std::size_t)> &descriptor_at) {
+                    const std::function<const Descriptor &(std::size_t)> &descriptor_at,
+                    std::size_t first_to_index = 0) {
   std::vector<Candidate> candidates;
   if (keyframes.size() <= options.min_index_separation) {
     return candidates;
@@ -529,7 +525,7 @@ generate_candidates(const std::vector<Keyframe> &keyframes, const LoopConstraint
       spatial[voxel_key(pose.x, pose.y, 0.0, cell_size)].push_back(next_history);
       ++next_history;
     }
-    if (spatial.empty()) {
+    if (spatial.empty() || to_index < first_to_index) {
       continue;
     }
 
@@ -1913,8 +1909,15 @@ std::array<double, 21> body_right_information_upper(const Matrix4 &gravity_hessi
 
 }  // namespace detail
 
+std::vector<Point> sample_mapping_cloud(const std::vector<Point> &cloud,
+                                      double voxel_size_m, std::size_t max_points) {
+  if (!std::isfinite(voxel_size_m) || voxel_size_m <= 0.0 || max_points == 0)
+    throw std::invalid_argument("invalid mapping cloud sampling limits");
+  return voxel_downsample(cloud, voxel_size_m, max_points);
+}
+
 SequentialConstraintResult generate_sequential_constraint(
-    const Map &map, const std::vector<Keyframe> &keyframes, std::size_t from_index,
+    const PatchCloudSource &cloud_at, const std::vector<Keyframe> &keyframes, std::size_t from_index,
     const LoopConstraintOptions &options) {
   SequentialConstraintResult result;
   if (const auto option_error = validate_loop_options(options)) {
@@ -1934,25 +1937,12 @@ SequentialConstraintResult generate_sequential_constraint(
   }
 
   try {
-    const auto sorted_patches = sorted_point_cloud_files(map.patches_dir);
-    if (sorted_patches.size() != keyframes.size()) {
-      result.code = "patch_pose_mismatch";
-      result.message = "patch count must exactly match keyframe count";
-      return result;
-    }
-    const auto from_path = patch_path(map, sorted_patches, keyframes[from_index], from_index);
-    const auto to_path = patch_path(map, sorted_patches, keyframes[from_index + 1], from_index + 1);
-    if (from_path.empty() || to_path.empty()) {
-      result.code = "sequential_patch_missing";
-      result.message = "an adjacent keyframe does not resolve to its named patch";
-      return result;
-    }
     const auto target = gravity_aligned_cloud(
-        voxel_downsample(read_point_cloud(from_path), options.voxel_size_m,
+        voxel_downsample(cloud_at(from_index), options.voxel_size_m,
                          options.max_points_per_submap),
         keyframes[from_index].pose);
     const auto source = gravity_aligned_cloud(
-        voxel_downsample(read_point_cloud(to_path), options.voxel_size_m,
+        voxel_downsample(cloud_at(from_index + 1), options.voxel_size_m,
                          options.max_points_per_submap),
         keyframes[from_index + 1].pose);
     Candidate candidate;
@@ -1976,6 +1966,149 @@ SequentialConstraintResult generate_sequential_constraint(
     result.message = exception.what();
     return result;
   }
+}
+
+SequentialConstraintResult generate_sequential_constraint(
+    const Map &map, const std::vector<Keyframe> &keyframes, std::size_t from_index,
+    const LoopConstraintOptions &options) {
+  try {
+    const auto patches = sorted_point_cloud_files(map.patches_dir);
+    if (patches.size() != keyframes.size()) {
+      SequentialConstraintResult result;
+      result.code = "patch_pose_mismatch";
+      result.message = "patch count must exactly match keyframe count";
+      return result;
+    }
+    return generate_sequential_constraint([&](std::size_t index) {
+      const auto path = patch_path(map, patches, keyframes.at(index), index);
+      if (path.empty()) throw std::runtime_error("sequential_patch_missing");
+      return read_point_cloud(path);
+    }, keyframes, from_index, options);
+  } catch (const std::exception &exception) {
+    SequentialConstraintResult result;
+    result.code = "sequential_registration_failed";
+    result.message = exception.what();
+    return result;
+  }
+}
+
+LoopConstraintResult generate_loop_constraints(const PatchCloudSource &cloud_at,
+                                               const std::vector<Keyframe> &keyframes,
+                                               const LoopConstraintOptions &options, std::size_t first_to_index,
+                                               LoopVerificationCache *cache) {
+  const auto started = std::chrono::steady_clock::now();
+  LoopConstraintResult result;
+  result.report.options = options;
+  result.report.pose_count = keyframes.size();
+  auto record_elapsed = [&]() {
+    result.report.elapsed_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
+            .count();
+  };
+  if (const auto option_error = validate_loop_options(options)) {
+    result.code = "invalid_loop_options";
+    result.message = *option_error;
+    record_elapsed();
+    return result;
+  }
+  if (const auto keyframe_error = validate_keyframes(keyframes)) {
+    result.code = "invalid_loop_keyframes";
+    result.message = *keyframe_error;
+    record_elapsed();
+    return result;
+  }
+  result.report.patch_count = keyframes.size();
+  try {
+    std::map<std::size_t, std::vector<Point>> gravity_submaps;
+    std::map<std::size_t, Descriptor> descriptors;
+    auto gravity_submap_at = [&](std::size_t index) -> const std::vector<Point> & {
+      auto found = gravity_submaps.find(index);
+      if (found == gravity_submaps.end()) {
+        found =
+            gravity_submaps
+                .emplace(index, gravity_aligned_cloud(
+                                    build_submap(cloud_at, keyframes, index, options),
+                                    keyframes[index].pose))
+                .first;
+      }
+      return found->second;
+    };
+    auto descriptor_at = [&](std::size_t index) -> const Descriptor & {
+      auto found = descriptors.find(index);
+      if (found == descriptors.end()) {
+        found =
+            descriptors.emplace(index, make_descriptor(gravity_submap_at(index), options)).first;
+      }
+      return found->second;
+    };
+
+    auto candidates = generate_candidates(keyframes, options, descriptor_at, first_to_index);
+    if (cache) {
+      for (auto it = cache->begin(); it != cache->end();)
+        if (it->first.second < first_to_index) it = cache->erase(it); else ++it;
+      // Wait for the forward half-window once, rather than rerunning expensive
+      // ICP every time a still-growing submap gets another scan.
+      candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [&](const Candidate& c) {
+        return c.to_index + options.submap_half_window >= keyframes.size();
+      }), candidates.end());
+    }
+    result.report.candidate_count = candidates.size();
+    std::vector<VerifiedCandidate> verified;
+    verified.reserve(candidates.size());
+    for (const Candidate &candidate : candidates) {
+      LoopCandidateDiagnostic diagnostic;
+      const std::size_t diagnostic_index = result.report.candidates.size();
+      std::optional<VerifiedCandidate> candidate_result;
+      const auto key = std::make_pair(candidate.from_index, candidate.to_index);
+      const auto found = cache ? cache->find(key) : LoopVerificationCache::iterator{};
+      if (cache && found != cache->end()) {
+        diagnostic = found->second.diagnostic;
+        if (found->second.measurement)
+          candidate_result = VerifiedCandidate{*found->second.measurement, 0, found->second.correction};
+      } else {
+        candidate_result = verify_candidate(candidate, keyframes,
+            gravity_submap_at(candidate.from_index), gravity_submap_at(candidate.to_index), options, diagnostic);
+        if (cache) {
+          CachedLoopVerification value;
+          value.diagnostic = diagnostic;
+          if (candidate_result) {
+            value.measurement = candidate_result->constraint;
+            value.correction = candidate_result->correction;
+          }
+          cache->emplace(key, std::move(value));
+        }
+      }
+      result.report.candidates.push_back(diagnostic);
+      if (candidate_result.has_value()) {
+        candidate_result->diagnostic_index = diagnostic_index;
+        verified.push_back(*candidate_result);
+      }
+    }
+    result.report.geometrically_verified_count = verified.size();
+    apply_consensus(verified, result, options);
+    result.report.accepted_constraint_count = result.constraints.size();
+    result.report.consensus_support_count = static_cast<std::size_t>(
+        std::count_if(result.report.candidates.begin(), result.report.candidates.end(),
+                      [](const LoopCandidateDiagnostic &diagnostic) {
+                        return diagnostic.reason == "consensus_support";
+                      }));
+    const std::size_t non_rejected =
+        result.report.accepted_constraint_count + result.report.consensus_support_count;
+    result.report.rejected_count = result.report.candidate_count > non_rejected
+                                       ? result.report.candidate_count - non_rejected
+                                       : 0;
+    result.ok = true;
+    result.code = result.constraints.empty() ? "no_verified_loops" : "verified_loops";
+    result.message = result.constraints.empty()
+                         ? "loop verification completed without an accepted loop"
+                         : "loop verification produced graph-ready independent constraints";
+  } catch (const std::exception &exception) {
+    result.ok = false;
+    result.code = "loop_verification_failed";
+    result.message = exception.what();
+  }
+  record_elapsed();
+  return result;
 }
 
 LoopConstraintResult generate_loop_constraints(const Map &map,
@@ -2051,46 +2184,13 @@ LoopConstraintResult generate_loop_constraints(const Map &map,
     }
     result.report.patches_fingerprint = hash_hex(patch_hash);
 
-    std::map<std::size_t, std::vector<Point>> gravity_submaps;
-    std::map<std::size_t, Descriptor> descriptors;
-    auto gravity_submap_at = [&](std::size_t index) -> const std::vector<Point> & {
-      auto found = gravity_submaps.find(index);
-      if (found == gravity_submaps.end()) {
-        found =
-            gravity_submaps
-                .emplace(index, gravity_aligned_cloud(
-                                    build_submap(map, keyframes, sorted_patches, index, options),
-                                    keyframes[index].pose))
-                .first;
-      }
-      return found->second;
-    };
-    auto descriptor_at = [&](std::size_t index) -> const Descriptor & {
-      auto found = descriptors.find(index);
-      if (found == descriptors.end()) {
-        found =
-            descriptors.emplace(index, make_descriptor(gravity_submap_at(index), options)).first;
-      }
-      return found->second;
-    };
-
-    const auto candidates = generate_candidates(keyframes, options, descriptor_at);
-    result.report.candidate_count = candidates.size();
-    std::vector<VerifiedCandidate> verified;
-    verified.reserve(candidates.size());
-    for (const Candidate &candidate : candidates) {
-      LoopCandidateDiagnostic diagnostic;
-      const std::size_t diagnostic_index = result.report.candidates.size();
-      auto candidate_result =
-          verify_candidate(candidate, keyframes, gravity_submap_at(candidate.from_index),
-                           gravity_submap_at(candidate.to_index), options, diagnostic);
-      result.report.candidates.push_back(diagnostic);
-      if (candidate_result.has_value()) {
-        candidate_result->diagnostic_index = diagnostic_index;
-        verified.push_back(*candidate_result);
-      }
-    }
-    result.report.geometrically_verified_count = verified.size();
+    auto verified_result = generate_loop_constraints([&](std::size_t index) {
+      return read_point_cloud(referenced_patches.at(index));
+    }, keyframes, options);
+    verified_result.report.options_fingerprint = result.report.options_fingerprint;
+    verified_result.report.poses_fingerprint = result.report.poses_fingerprint;
+    verified_result.report.patches_fingerprint = result.report.patches_fingerprint;
+    result = std::move(verified_result);
     const std::string poses_after = hash_hex(hash_file(kFnvOffset, map.poses_txt));
     std::uint64_t patch_hash_after = kFnvOffset;
     for (const auto &patch : referenced_patches) {
@@ -2108,23 +2208,6 @@ LoopConstraintResult generate_loop_constraints(const Map &map,
       record_elapsed();
       return result;
     }
-    apply_consensus(verified, result, options);
-    result.report.accepted_constraint_count = result.constraints.size();
-    result.report.consensus_support_count = static_cast<std::size_t>(
-        std::count_if(result.report.candidates.begin(), result.report.candidates.end(),
-                      [](const LoopCandidateDiagnostic &diagnostic) {
-                        return diagnostic.reason == "consensus_support";
-                      }));
-    const std::size_t non_rejected =
-        result.report.accepted_constraint_count + result.report.consensus_support_count;
-    result.report.rejected_count = result.report.candidate_count > non_rejected
-                                       ? result.report.candidate_count - non_rejected
-                                       : 0;
-    result.ok = true;
-    result.code = result.constraints.empty() ? "no_verified_loops" : "verified_loops";
-    result.message = result.constraints.empty()
-                         ? "loop verification completed without an accepted loop"
-                         : "loop verification produced graph-ready independent constraints";
   } catch (const std::exception &exception) {
     result.ok = false;
     result.code = "loop_verification_failed";

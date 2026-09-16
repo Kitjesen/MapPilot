@@ -1,18 +1,18 @@
-[submodule "research/core_planner"]
-	path = research/core_planner
+[submodule "research/coreplanner"]
+	path = research/coreplanner
 	url = https://github.com/BBD00/core_planner.git
-[submodule "research/semantic_map_refs/DualMap"]
-	path = research/semantic_map_refs/DualMap
+[submodule "research/semantic/DualMap"]
+	path = research/semantic/DualMap
 	url = https://github.com/Eku127/DualMap.git
-[submodule "research/semantic_map_refs/HOV-SG"]
-	path = research/semantic_map_refs/HOV-SG
+[submodule "research/semantic/HOV-SG"]
+	path = research/semantic/HOV-SG
 	url = https://github.com/hovsg/HOV-SG.git
-[submodule "research/semantic_map_refs/OVO"]
-	path = research/semantic_map_refs/OVO
+[submodule "research/semantic/OVO"]
+	path = research/semantic/OVO
 	url = https://github.com/tberriel/OVO.git
-[submodule "research/semantic_map_refs/concept-graphs"]
-	path = research/semantic_map_refs/concept-graphs
+[submodule "research/semantic/concept-graphs"]
+	path = research/semantic/concept-graphs
 	url = https://github.com/concept-graphs/concept-graphs.git
-[submodule "research/semantic_map_refs/vlmaps"]
-	path = research/semantic_map_refs/vlmaps
+[submodule "research/semantic/vlmaps"]
+	path = research/semantic/vlmaps
 	url = https://github.com/vlmaps/vlmaps.git

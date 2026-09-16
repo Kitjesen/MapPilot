@@ -10,6 +10,8 @@ def test_real_map_uses_native_mapd_without_python_map_module() -> None:
     blueprint = blueprint_from_run_plan(plan)
 
     assert plan.has_process("maps")
+    assert not plan.has_process("camera")
+    assert "camera" not in plan.critical_modules
     assert "maps.service" not in plan.modules
     assert "maps.service" not in plan.critical_modules
     assert blueprint.required_module_names == plan.critical_modules

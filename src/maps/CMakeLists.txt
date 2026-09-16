@@ -99,10 +99,7 @@ if(LINGTU_MAPS_BUILD_MAPD)
     endif()
   endfunction()
   if(NOT TARGET lingtu_dds_contracts)
-    add_subdirectory(
-      "${CMAKE_CURRENT_SOURCE_DIR}/../message/cpp"
-      "${CMAKE_CURRENT_BINARY_DIR}/message_cpp"
-    )
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/LingTuDDS.cmake")
   endif()
   set(_LINGTU_MAPD_IDL
     "${CMAKE_CURRENT_SOURCE_DIR}/../message/idl/messages.idl"
@@ -277,6 +274,10 @@ if(BUILD_TESTING)
 
   add_executable(lingtu_maps_store_test ${_LINGTU_MAPS_TEST_DIR}/store_test.cpp)
   target_link_libraries(lingtu_maps_store_test PRIVATE lingtu_maps)
+  if(octomap_FOUND)
+    target_compile_definitions(lingtu_maps_store_test PRIVATE LINGTU_MAPS_HAS_OCTOMAP=1)
+    target_include_directories(lingtu_maps_store_test PRIVATE ${OCTOMAP_INCLUDE_DIRS})
+  endif()
   add_test(NAME lingtu_maps_store_test COMMAND lingtu_maps_store_test)
 
   add_executable(lingtu_maps_map_health_test ${_LINGTU_MAPS_TEST_DIR}/map_health_test.cpp)
@@ -295,6 +296,12 @@ if(BUILD_TESTING)
     lingtu_maps_mapd_engine_test
     ${_LINGTU_MAPS_TEST_DIR}/mapd_engine_test.cpp
   )
+  add_executable(lingtu_maps_surface_projection_test ${_LINGTU_MAPS_TEST_DIR}/surface_projection_test.cpp)
+  target_link_libraries(lingtu_maps_surface_projection_test PRIVATE lingtu_maps)
+  add_test(NAME lingtu_maps_surface_projection_test COMMAND lingtu_maps_surface_projection_test)
+  add_executable(lingtu_maps_ground_surface_test ${_LINGTU_MAPS_TEST_DIR}/ground_surface_test.cpp)
+  target_link_libraries(lingtu_maps_ground_surface_test PRIVATE lingtu_maps)
+  add_test(NAME lingtu_maps_ground_surface_test COMMAND lingtu_maps_ground_surface_test)
   target_link_libraries(lingtu_maps_mapd_engine_test PRIVATE lingtu_maps)
   add_test(
     NAME lingtu_maps_mapd_engine_test
@@ -428,6 +435,7 @@ if(BUILD_TESTING)
     lingtu_maps_grid_layers_test
     lingtu_maps_voxel_layer_test
     lingtu_maps_rolling_occupancy_test
+    lingtu_maps_exploration_projection_test
     lingtu_maps_semantic_occupancy_test
     lingtu_maps_semantic_map_persistence_test
     lingtu_maps_unity_semantic_import_test
@@ -437,6 +445,8 @@ if(BUILD_TESTING)
     lingtu_maps_process_test
     lingtu_maps_block_grid_test
     lingtu_maps_mapd_engine_test
+    lingtu_maps_surface_projection_test
+    lingtu_maps_ground_surface_test
     lingtu_maps_mapd_service_dispatch_test
     lingtu_maps_mapd_save_coordinator_test
     lingtu_maps_map_activation_test

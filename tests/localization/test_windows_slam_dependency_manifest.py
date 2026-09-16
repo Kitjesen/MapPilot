@@ -20,7 +20,7 @@ CMAKE = shutil.which("cmake")
 def _compile_native_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     vswhere = Path(os.environ["ProgramFiles(x86)"]) / "Microsoft Visual Studio/Installer/vswhere.exe"
     vs_install = Path(
-        subprocess.run(  # noqa: S603 - queries the installed Visual Studio instance.
+        subprocess.run(
             [
                 str(vswhere),
                 "-latest",
@@ -57,7 +57,7 @@ def _compile_native_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
         "@cl /nologo /MD app.c fixture.lib /Fe:app.exe\n",
         encoding="utf-8",
     )
-    subprocess.run(  # noqa: S603 - compiles a hermetic local PE/DLL fixture with VS2022.
+    subprocess.run(
         [os.environ["ComSpec"], "/d", "/c", str(build_batch)],
         check=True,
         capture_output=True,
@@ -266,7 +266,7 @@ def test_windows_runtime_stage_uses_only_resolved_real_install_evidence(
     if app_local_runtime:
         shutil.copy2(fixture_dll, build_dir / "fixture.dll")
 
-    completed = subprocess.run(  # noqa: S603 - runs CMake's repository-owned stage script.
+    completed = subprocess.run(
         [
             CMAKE,
             f"-DSLAMD_EXECUTABLE={system_executable}",
@@ -381,7 +381,7 @@ def test_windows_runtime_stage_uses_only_resolved_real_install_evidence(
         f"{expected_runtime_source.as_posix()}\t{runtime_owner}\t{expected_version}\tx64\n"
     ) in evidence.replace("\\", "/")
 
-    repeated = subprocess.run(  # noqa: S603 - verifies safe idempotent staging.
+    repeated = subprocess.run(
         completed.args,
         cwd=ROOT,
         check=False,
@@ -395,7 +395,7 @@ def test_windows_runtime_stage_uses_only_resolved_real_install_evidence(
         app_local_dll = build_dir / "fixture.dll"
         pristine_app_local = app_local_dll.read_bytes()
         app_local_dll.write_bytes(pristine_app_local + b"app-local-drift")
-        mismatched_copy = subprocess.run(  # noqa: S603 - verifies authoritative vcpkg binding.
+        mismatched_copy = subprocess.run(
             completed.args,
             cwd=ROOT,
             check=False,
@@ -414,7 +414,7 @@ def test_windows_runtime_stage_uses_only_resolved_real_install_evidence(
             pristine_second_owner + "x64-windows/bin/fixture.dll\n",
             encoding="utf-8",
         )
-        ambiguous_owner = subprocess.run(  # noqa: S603 - verifies unique vcpkg ownership.
+        ambiguous_owner = subprocess.run(
             completed.args,
             cwd=ROOT,
             check=False,
@@ -429,7 +429,7 @@ def test_windows_runtime_stage_uses_only_resolved_real_install_evidence(
 
     staged_notice = stage_root / "licenses" / "cyclonedds" / "NOTICE.md"
     staged_notice.unlink()
-    missing = subprocess.run(  # noqa: S603 - verifies exact stage file coverage.
+    missing = subprocess.run(
         completed.args,
         cwd=ROOT,
         check=False,
@@ -442,7 +442,7 @@ def test_windows_runtime_stage_uses_only_resolved_real_install_evidence(
 
     injected_file = stage_root / "injected.txt"
     injected_file.write_text("not covered\n", encoding="utf-8")
-    injected = subprocess.run(  # noqa: S603 - verifies exact stage file coverage.
+    injected = subprocess.run(
         completed.args,
         cwd=ROOT,
         check=False,
@@ -466,7 +466,7 @@ def test_windows_runtime_stage_uses_only_resolved_real_install_evidence(
         else argument
         for argument in completed.args
     ]
-    bad_lock = subprocess.run(  # noqa: S603 - verifies repository-lock binding.
+    bad_lock = subprocess.run(
         mutated_lock_args,
         cwd=ROOT,
         check=False,
@@ -480,7 +480,7 @@ def test_windows_runtime_stage_uses_only_resolved_real_install_evidence(
 
     staged_slamd = stage_root / "bin" / "slamd.exe"
     staged_slamd.write_bytes(staged_slamd.read_bytes() + b"tamper")
-    tampered = subprocess.run(  # noqa: S603 - verifies receipt-protected idempotence.
+    tampered = subprocess.run(
         completed.args,
         cwd=ROOT,
         check=False,
@@ -536,7 +536,7 @@ def test_windows_runtime_stage_uses_only_resolved_real_install_evidence(
         ),
         encoding="utf-8",
     )
-    synchronized_tamper = subprocess.run(  # noqa: S603 - reruns the repository-owned stage command.
+    synchronized_tamper = subprocess.run(
         completed.args,
         cwd=ROOT,
         check=False,

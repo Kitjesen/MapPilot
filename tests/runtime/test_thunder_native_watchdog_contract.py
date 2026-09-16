@@ -118,6 +118,21 @@ def test_field_driver_reads_selected_backend_from_product_session() -> None:
     assert "run_driver.sh --require-remote" not in text
 
 
+def test_driver_accepts_forwarded_sigterm_without_masking_watchdog_failure() -> None:
+    text = _read("lt-driver.service")
+    success_statuses = [
+        status
+        for line in text.splitlines()
+        if line.startswith("SuccessExitStatus=")
+        for status in line.partition("=")[2].split()
+    ]
+
+    assert success_statuses == ["143"]
+    assert "WatchdogSec=6s" in text
+    assert "WatchdogSignal=SIGTERM" in text
+    assert "Restart=on-failure" in text
+
+
 def test_go2_launcher_validates_network_routing_without_rewriting_dds() -> None:
     text = _read("run_driver.sh")
 
@@ -176,8 +191,7 @@ def test_field_driver_launcher_rejects_missing_or_loopback_brainstem(
         cwd=REPO_ROOT,
         timeout=10,
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -299,8 +313,7 @@ def test_field_driver_launcher_rejects_remote_brainstem_without_mtls(
         cwd=REPO_ROOT,
         timeout=10,
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",

@@ -276,6 +276,50 @@ std::vector<float> copyCollisionDebugPoints(std::size_t point_limit,
   return points;
 }
 
+void writeNumberJson(std::ostream &out, double value) {
+  if (std::isfinite(value)) out << value;
+  else out << "null";
+}
+
+void writeScanAttemptJson(std::ostream &out, const nav_kernel::ScanAttemptDiagnostics &attempt) {
+  if (!attempt.attempted) {
+    out << "null";
+    return;
+  }
+  out << "{\"attempt_id\": " << attempt.attemptId
+      << ", \"success\": " << (attempt.success ? "true" : "false")
+      << ", \"stage\": \"" << jsonEscape(attempt.stage)
+      << "\", \"reason\": \"" << jsonEscape(attempt.reason)
+      << "\", \"optimizer_return_code\": ";
+  if (attempt.optimizerReturnCodeValid) out << attempt.optimizerReturnCode;
+  else out << "null";
+  out << ", \"collision\": ";
+  if (attempt.collisionValid) {
+    out << "{\"position_kind\": \""
+        << (attempt.collisionTimeS >= 0.0 ? "segment_start" : "control_point")
+        << "\", \"position\": ";
+    out << '[';
+    writeNumberJson(out, attempt.collisionPosition.x); out << ", ";
+    writeNumberJson(out, attempt.collisionPosition.y); out << ", ";
+    writeNumberJson(out, attempt.collisionPosition.z); out << ']';
+    out << ", \"trajectory_time_s\": ";
+    if (attempt.collisionTimeS >= 0.0) writeNumberJson(out, attempt.collisionTimeS);
+    else out << "null";
+    out << ", \"state\": " << attempt.collisionState << "}";
+  } else out << "null";
+  out << ", \"dynamic_violation\": ";
+  if (attempt.dynamicViolationValid) {
+    out << "{\"quantity\": \"" << jsonEscape(attempt.dynamicQuantity) << "\", \"value\": ";
+    writeNumberJson(out, attempt.dynamicValue);
+    out << ", \"limit\": ";
+    writeNumberJson(out, attempt.dynamicLimit);
+    out << ", \"trajectory_time_s\": ";
+    writeNumberJson(out, attempt.dynamicTimeS);
+    out << "}";
+  } else out << "null";
+  out << "}";
+}
+
 void writeCollisionMapJson(std::ostream &out, std::size_t point_limit,
                            const nav_kernel::LocalCollisionMapView &collision,
                            std::size_t total_points, const std::vector<float> &occupied_xyz,
@@ -576,6 +620,9 @@ void MotionStopEvidenceTracker::update(StopConfirmationState state,
       break;
   }
   snapshot_.updated_at_s = updated_at_s;
+  if (diagnostics.driver_ack_output_sequence != 0U) {
+    snapshot_.output_sequence = diagnostics.driver_ack_output_sequence;
+  }
   snapshot_.driver_ack_observed = diagnostics.driver_ack_observed;
   snapshot_.driver_accepted = diagnostics.driver_accepted;
   snapshot_.quiet_odometry_samples = diagnostics.quiet_odometry_samples;
@@ -614,6 +661,112 @@ void MotionStopEvidenceTracker::resetToNotRequested(const std::string &reason,
   snapshot_.angular_speed_threshold_radps = angular_threshold;
 }
 
+std::string scanFailureSnapshotJson(const nav_kernel::ScanFailureSnapshot &failure,
+                                    const std::string &product_session_id) {
+  std::ostringstream out;
+  out << std::setprecision(17) << std::boolalpha;
+  const auto point = [&out](const nav_kernel::Vec3 &p) {
+    out << '[';
+    writeNumberJson(out, p.x); out << ", ";
+    writeNumberJson(out, p.y); out << ", ";
+    writeNumberJson(out, p.z); out << ']';
+  };
+  const auto points = [&out, &point](const std::vector<nav_kernel::Vec3> &values) {
+    out << '[';
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      if (i != 0U) out << ", ";
+      point(values[i]);
+    }
+    out << ']';
+  };
+  out << "{\"schema_version\": 1, \"product_session_id\": \""
+      << jsonEscape(product_session_id) << "\", \"sequence\": " << failure.sequence
+      << ", \"capture\": \"first_failed_fsm_tick_final_attempt\""
+      << ", \"coordinate_frame\": \"request_planning_frame\""
+      << ", \"attempt\": ";
+  writeScanAttemptJson(out, failure.attempt);
+  out << ", \"clock\": {\"timestamp_s\": " << failure.clock.timestampS
+      << ", \"execution_frozen\": " << failure.clock.executionFrozen
+      << ", \"mode\": \""
+      << (failure.clock.mode == nav_kernel::PlanClockMode::Steady ? "steady" : "external")
+      << "\"}, \"identity\": {\"frame_epoch\": " << failure.identity.frameEpoch
+      << ", \"obstacle_generation\": " << failure.identity.obstacleGeneration
+      << ", \"traversability_generation\": " << failure.identity.traversabilityGeneration
+      << "}, \"robot\": {\"position\": ";
+  point(failure.robot.pose.position);
+  out << ", \"yaw\": " << failure.robot.pose.yaw
+      << ", \"kinematics_valid\": " << failure.robot.kinematics.valid
+      << ", \"linear_velocity\": ";
+  point(failure.robot.kinematics.linearVelocity);
+  out << ", \"linear_acceleration\": ";
+  point(failure.robot.kinematics.linearAcceleration);
+  out << ", \"yaw_rate\": "; writeNumberJson(out, failure.robot.kinematics.yawRate);
+  out << "}, \"max_linear_speed_mps\": " << failure.maxLinearSpeedMps
+      << ", \"check_obstacle\": " << failure.checkObstacle << ", \"params\": {";
+  const auto &p = failure.params;
+  bool first = true;
+  for (const auto &[name, value] : std::initializer_list<std::pair<const char *, double>>{
+      {"voxelResolution", p.voxelResolution}, {"routeZTolerance", p.routeZTolerance},
+      {"bodyClearanceBelow", p.bodyClearanceBelow}, {"bodyClearanceAbove", p.bodyClearanceAbove},
+      {"cylinderOffset", p.cylinderOffset}, {"controlPointSpacing", p.controlPointSpacing},
+      {"replanDistance", p.replanDistance}, {"noReplanDistance", p.noReplanDistance},
+      {"maxVelocity", p.maxVelocity}, {"maxAcceleration", p.maxAcceleration},
+      {"planningHorizon", p.planningHorizon}, {"smoothWeight", p.smoothWeight},
+      {"collisionWeight", p.collisionWeight}, {"feasibilityWeight", p.feasibilityWeight},
+      {"fitnessWeight", p.fitnessWeight}, {"feasibilityTolerance", p.feasibilityTolerance},
+      {"velocityTolerance", p.velocityTolerance}, {"accelerationTolerance", p.accelerationTolerance},
+      {"collisionDistance", p.collisionDistance}}) {
+    if (!first) out << ", ";
+    first = false;
+    out << '"' << name << "\": "; writeNumberJson(out, value);
+  }
+  out << "}, \"reference_generation\": " << failure.referenceGeneration
+      << ", \"reference_reaches_goal\": " << failure.referenceReachesGoal
+      << ", \"reference\": ";
+  points(failure.reference);
+  out << ", \"intent\": ";
+  if (failure.intent) {
+    const auto &intent = *failure.intent;
+    out << "{\"direction_body_deg\": " << intent.directionBodyDeg
+        << ", \"speed_normalized\": " << intent.speedNormalized
+        << ", \"horizon_m\": " << intent.horizonM
+        << ", \"max_direction_deviation_deg\": " << intent.maxDirectionDeviationDeg << '}';
+  } else out << "null";
+  out << ", \"start_position\": "; point(failure.startPosition);
+  out << ", \"start_velocity\": "; point(failure.startVelocity);
+  out << ", \"start_acceleration\": "; point(failure.startAcceleration);
+  out << ", \"target_position\": "; point(failure.targetPosition);
+  out << ", \"target_velocity\": "; point(failure.targetVelocity);
+  out << ", \"poly_init\": " << failure.polyInit
+      << ", \"random_poly_init\": " << failure.randomPolyInit
+      << ", \"candidate_interval_s\": ";
+  writeNumberJson(out, failure.candidateIntervalS);
+  out << ", \"candidate_control_points\": "; points(failure.candidateControlPoints);
+  const auto &map = failure.collision;
+  out << ", \"collision_map\": {\"encoding\": \"packed_lsb0_hex\""
+      << ", \"linear_index\": \"(z * size_y + y) * size_x + x\""
+      << ", \"inflated_bytes\": " << map.inflatedBytes
+      << ", \"size\": [" << map.sizeX << ", " << map.sizeY << ", " << map.sizeZ << ']'
+      << ", \"resolution\": " << map.resolution << ", \"aabb_min\": ";
+  point(map.aabbMin);
+  out << ", \"aabb_max\": "; point(map.aabbMax);
+  out << ", \"reset_epoch\": " << map.resetEpoch
+      << ", \"observation_sequence\": " << map.observationSequence
+      << ", \"generation\": " << map.generation
+      << ", \"stamp_s\": " << map.stampS << ", \"receive_stamp_s\": " << map.receiveStampS
+      << ", \"complete\": " << map.complete << ", \"live\": " << map.live
+      << ", \"grid_from_planning_translation\": "; point(map.gridFromPlanningTranslation);
+  out << ", \"grid_from_planning_yaw\": " << map.gridFromPlanningYaw
+      << ", \"bits\": \"";
+  constexpr char hex[] = "0123456789abcdef";
+  for (std::size_t i = 0; map.inflatedBits && i < map.inflatedBytes; ++i) {
+    const auto byte = map.inflatedBits[i];
+    out << hex[byte >> 4U] << hex[byte & 15U];
+  }
+  out << "\"}}\n";
+  return out.str();
+}
+
 void writeStatusSnapshot(
     StatusSnapshotFileWriter &snapshot_writer, const StatusWriterConfig &cfg, double stamp_s,
     bool has_odom, bool has_map_odom_tf, bool has_path, bool estop_latched,
@@ -642,23 +795,31 @@ void writeStatusSnapshot(
     const nav_kernel::LocalPlannerDebugSnapshot &local_planner_debug,
     const std::vector<float> &local_map_obstacle_xyzh,
     const TraversabilityGrid &local_map_traversability,
-    nav_kernel::LocalCollisionMapView local_collision_map) {
+    nav_kernel::LocalCollisionMapView local_collision_map,
+    StatusSnapshotWriterDiagnostics scan_failure_writer) {
   if (cfg.status_file.empty()) {
     return;
   }
-  const std::size_t local_collision_total_points = local_collision_map.occupiedCount();
-  auto local_collision_occupied_xyz = copyCollisionDebugPoints(
-      cfg.local_map_debug_point_limit, local_collision_map, last_sensor_origin,
-      local_collision_total_points);
+  // Native DDS maps already own immutable storage. Borrowed views must keep
+  // their bytes alive after this control-thread call returns.
+  if (local_collision_map.valid() && !local_collision_map.inflatedStorage) {
+    local_collision_map.inflatedStorage = std::make_shared<const std::vector<std::uint8_t>>(
+        local_collision_map.inflatedBits,
+        local_collision_map.inflatedBits + local_collision_map.inflatedBytes);
+    local_collision_map.inflatedBits = local_collision_map.inflatedStorage->data();
+  }
   snapshot_writer.submitFactory(
-      [=, local_collision_occupied_xyz = std::move(local_collision_occupied_xyz),
-       snapshot_diagnostics = snapshot_writer.diagnostics()]() {
+      [=, snapshot_diagnostics = snapshot_writer.diagnostics()]() {
+    const std::size_t local_collision_total_points = local_collision_map.occupiedCount();
+    const auto local_collision_occupied_xyz = copyCollisionDebugPoints(
+        cfg.local_map_debug_point_limit, local_collision_map, last_sensor_origin,
+        local_collision_total_points);
     const bool operator_motion_enabled =
         cfg.control_mode == "teleop" || cfg.control_mode == "teleop_avoid" ||
         (cfg.control_mode == "autonomy" && cfg.allow_teleop_takeover);
     const bool navigation_ready =
         !cfg.product_session_id.empty() && has_odom && has_map_odom_tf && input_gate.ready &&
-        control_loop_health.ready && control_loop_health.healthy && !estop_latched &&
+        control_loop_health.ready && !cfg.control_loop_hold && !estop_latched &&
         !cfg.operator_takeover_latched && !cfg.resume_required && cfg.publish_cmd_vel &&
         (!far_input.required || far_input.ready);
     std::ostringstream out;
@@ -710,7 +871,8 @@ void writeStatusSnapshot(
         << "\"estop_reason\": \"" << jsonEscape(estop_reason) << "\", "
         << "\"operator_takeover_latched\": " << (cfg.operator_takeover_latched ? "true" : "false")
         << ", "
-        << "\"resume_required\": " << (cfg.resume_required ? "true" : "false") << "},\n";
+        << "\"resume_required\": " << (cfg.resume_required ? "true" : "false") << ", "
+        << "\"control_loop_hold\": " << (cfg.control_loop_hold ? "true" : "false") << "},\n";
     writeMotionOutputJson(out, final_cmd_vel, final_output, driver_control, input_gate, cfg);
     writeMotionStopEvidenceJson(out, motion_stop_evidence);
     out << "  \"global_planner\": \"" << jsonEscape(cfg.global_planner) << "\",\n"
@@ -824,6 +986,8 @@ void writeStatusSnapshot(
         << "\"required_frames\": " << cfg.input_recovery_frames << ", "
         << "\"require_odom\": " << (cfg.input_require_odom ? "true" : "false") << ", "
         << "\"require_cloud\": " << (cfg.input_require_cloud ? "true" : "false") << ", "
+        << "\"require_local_collision\": "
+        << (cfg.input_require_local_collision ? "true" : "false") << ", "
         << "\"require_traversability\": " << (cfg.input_require_traversability ? "true" : "false")
         << ", "
         << "\"require_localization_health\": "
@@ -836,6 +1000,9 @@ void writeStatusSnapshot(
         << ", "
         << "\"cloud_age_s\": "
         << (std::isfinite(input_gate.cloud_age_s) ? input_gate.cloud_age_s : -1.0) << ", "
+        << "\"local_collision_age_s\": "
+        << (std::isfinite(input_gate.local_collision_age_s) ? input_gate.local_collision_age_s : -1.0)
+        << ", "
         << "\"traversability_age_s\": "
         << (std::isfinite(input_gate.traversability_age_s) ? input_gate.traversability_age_s : -1.0)
         << ", "
@@ -856,12 +1023,14 @@ void writeStatusSnapshot(
         << "\"odom_max_age_s\": " << cfg.odom_max_age_s << ", "
         << "\"tf_max_age_s\": " << cfg.tf_max_age_s << ", "
         << "\"cloud_max_age_s\": " << cfg.cloud_max_age_s << ", "
+        << "\"local_collision_max_age_s\": " << cfg.local_collision_max_age_s << ", "
         << "\"traversability_max_age_s\": " << cfg.traversability_max_age_s << ", "
         << "\"localization_health_max_age_s\": " << cfg.localization_health_max_age_s << ", "
         << "\"driver_control_max_age_s\": " << cfg.driver_control_max_age_s << ", "
         << "\"future_tolerance_s\": " << cfg.input_future_tolerance_s << "},\n"
         << "  \"cloud_sync\": {\"last_stamp_age_s\": " << cloud_sync.last_stamp_age_s
-        << ", \"last_pose_gap_s\": " << cloud_sync.last_pose_gap_s
+        << ", \"last_pose_gap_s\": "
+        << (std::isfinite(cloud_sync.last_pose_gap_s) ? cloud_sync.last_pose_gap_s : -1.0)
         << ", \"stamp_rejected\": " << cloud_sync.stamp_rejected
         << ", \"pose_rejected\": " << cloud_sync.pose_rejected << "},\n"
         << "  \"frame_gate\": {"
@@ -920,24 +1089,52 @@ void writeStatusSnapshot(
         << "  \"local_planner_debug\": {\"backend\": \""
         << nav_kernel::localPlannerBackendName(local_planner_debug.backend)
         << "\", \"planning_ms\": " << local_planner_debug.planningTimeMs
-        << ", \"reuse_ms\": " << local_planner_debug.reuseTimeMs
+        << ", \"reuse_ms\": " << (local_planner_debug.backend == nav_kernel::LocalPlannerBackend::Scan
+            ? "null" : std::to_string(local_planner_debug.reuseTimeMs))
         << ", \"grid_ms\": " << local_planner_debug.gridTimeMs
-        << ", \"search_ms\": " << local_planner_debug.searchTimeMs
-        << ", \"spline_ms\": " << local_planner_debug.splineTimeMs
+        << ", \"search_ms\": " << (local_planner_debug.backend == nav_kernel::LocalPlannerBackend::Scan
+            ? "null" : std::to_string(local_planner_debug.searchTimeMs))
+        << ", \"spline_ms\": " << (local_planner_debug.backend == nav_kernel::LocalPlannerBackend::Scan
+            ? "null" : std::to_string(local_planner_debug.splineTimeMs))
         << ", \"search_reason\": \"" << jsonEscape(local_planner_debug.searchReason) << "\""
-        << ", \"expanded_nodes\": " << local_planner_debug.expandedNodes
+        << ", \"expanded_nodes\": " << (local_planner_debug.backend == nav_kernel::LocalPlannerBackend::Scan
+            ? "null" : std::to_string(local_planner_debug.expandedNodes))
         << ", \"occupied_cells\": " << local_planner_debug.occupiedCellCount
         << ", \"collision_points_used\": " << local_planner_debug.collisionPointCount
         << ", \"trajectory_points\": " << local_planner_debug.trajectoryPointCount
-        << ", \"rebound_restarts\": " << local_planner_debug.reboundRestarts
-        << ", \"optimizer_evaluations\": " << local_planner_debug.optimizerEvaluations
-        << ", \"collision_segments\": " << local_planner_debug.collisionSegments
-        << ", \"anchor_searches\": " << local_planner_debug.anchorSearches
+        << ", \"rebound_restarts\": " << (local_planner_debug.backend == nav_kernel::LocalPlannerBackend::Scan
+            ? "null" : std::to_string(local_planner_debug.reboundRestarts))
+        << ", \"optimizer_evaluations\": " << (local_planner_debug.backend == nav_kernel::LocalPlannerBackend::Scan
+            ? "null" : std::to_string(local_planner_debug.optimizerEvaluations))
+        << ", \"collision_segments\": " << (local_planner_debug.backend == nav_kernel::LocalPlannerBackend::Scan
+            ? "null" : std::to_string(local_planner_debug.collisionSegments))
+        << ", \"anchor_searches\": " << (local_planner_debug.backend == nav_kernel::LocalPlannerBackend::Scan
+            ? "null" : std::to_string(local_planner_debug.anchorSearches))
         << ", \"continuity_reused\": "
         << (local_planner_debug.continuityReused ? "true" : "false")
         << ", \"spline_fallback\": "
-        << (local_planner_debug.splineFallback ? "true" : "false") << "},\n"
-        << "  \"local_map\": ";
+        << (local_planner_debug.splineFallback ? "true" : "false")
+        << ", \"last_scan_attempt\": ";
+    writeScanAttemptJson(out, local_planner_debug.scanAttempt);
+    out << ", \"last_scan_failure\": ";
+    if (local_planner_debug.lastScanFailure) {
+      const auto &failure = *local_planner_debug.lastScanFailure;
+      out << "{\"sequence\": " << failure.sequence
+          << ", \"timestamp_s\": " << failure.clock.timestampS
+          << ", \"coordinate_frame\": \"request_planning_frame\""
+          << ", \"collision_generation\": " << failure.collision.generation
+          << ", \"snapshot_file\": \"" << jsonEscape(cfg.status_file + ".scan-failure.json")
+          << "\", \"writer\": {\"submitted\": " << scan_failure_writer.submitted
+          << ", \"written\": " << scan_failure_writer.written
+          << ", \"failures\": " << scan_failure_writer.failures
+          << ", \"dropped\": " << scan_failure_writer.dropped
+          << ", \"pending\": " << (scan_failure_writer.pending ? "true" : "false")
+          << ", \"writing\": " << (scan_failure_writer.writing ? "true" : "false")
+          << "}, \"attempt\": ";
+      writeScanAttemptJson(out, failure.attempt);
+      out << '}';
+    } else out << "null";
+    out << "},\n  \"local_map\": ";
     writeLocalMapJson(out, cfg, local_map_obstacle_xyzh,
                       local_map_traversability, local_collision_map, local_collision_total_points,
                       local_collision_occupied_xyz, last_sensor_origin, input_gate.ready,
@@ -980,6 +1177,18 @@ void writeStatusSnapshot(
         << "    \"target_index\": " << local.target_index << ",\n"
         << "    \"target_distance_m\": " << local.target_distance_m << ",\n"
         << "    \"local_path_points\": " << local.local_path_points << ",\n"
+        << "    \"tracking\": {"
+        << "\"active\": " << (local.tracking.active ? "true" : "false") << ", "
+        << "\"trajectory_id\": " << local.tracking.trajectoryId << ", "
+        << "\"execution_time_s\": " << local.tracking.executionTimeS << ", "
+        << "\"duration_s\": " << local.tracking.durationS << ", "
+        << "\"position_error_m\": " << local.tracking.positionErrorM << ", "
+        << "\"heading_error_rad\": " << local.tracking.headingErrorRad << ", "
+        << "\"end_distance_m\": " << local.tracking.endDistanceM << ", "
+        << "\"execution_frozen\": "
+        << (local.tracking.executionFrozen ? "true" : "false") << ", "
+        << "\"finished\": " << (local.tracking.finished ? "true" : "false") << ", "
+        << "\"speed_limit_mps\": " << local.tracking.speedLimitMps << "},\n"
         << "    \"final_safety\": {"
         << "\"applied\": " << (local.final_safety_applied ? "true" : "false") << ", "
         << "\"stopped\": " << (local.final_safety_stopped ? "true" : "false") << ", "
@@ -1016,7 +1225,15 @@ void writeStatusSnapshot(
     out << ",\n"
         << "    \"output\": ";
     writeTwistJson(out, teleop.output);
-    out << "\n"
+    out << ",\n    \"last_safety_replan\": {\"count\": "
+        << teleop.last_safety_replan.count
+        << ", \"stamp_steady_s\": " << teleop.last_safety_replan.stamp_steady_s
+        << ", \"reason\": \"" << jsonEscape(teleop.last_safety_replan.reason)
+        << "\", \"candidate_cmd_vel\": ";
+    writeTwistJson(out, teleop.last_safety_replan.candidate_cmd_vel);
+    out << ", \"final_cmd_vel\": ";
+    writeTwistJson(out, teleop.last_safety_replan.final_cmd_vel);
+    out << "}\n"
         << "  },\n"
         << "  \"status_snapshot_writer\": {"
         << "\"submitted\": " << snapshot_diagnostics.submitted << ", "

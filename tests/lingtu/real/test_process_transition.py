@@ -4,10 +4,10 @@ from typing import Any
 
 import pytest
 
+from lingtu.assembly.graph import ProcessSpec
 from lingtu.real.systemd import SystemdRunner
 from lingtu.run_plan import RunPlan
 from lingtu.switch_contracts import ProcessError, ProcessFailed
-from runtime.graph import ProcessSpec
 
 
 class RecordingManager:
@@ -48,10 +48,6 @@ class RecordingReadiness:
 
 
 def _plan(product: str, processes: tuple[ProcessSpec, ...]) -> RunPlan:
-    contract = {
-        "teleop_avoid": "lingtu.product.teleop_avoid.v1",
-        "nav": "lingtu.product.nav.v1",
-    }[product]
     return RunPlan.create(
         product=product,
         env="real",
@@ -61,7 +57,8 @@ def _plan(product: str, processes: tuple[ProcessSpec, ...]) -> RunPlan:
         processes=processes,
         available_processes=processes,
         stop_before_start=tuple(process.target for process in reversed(processes)),
-        contracts=(contract,),
+        required_topics=(),
+        required_capabilities=(),
         critical_modules=(),
         route_contract=None,
         host_config={},

@@ -8,10 +8,16 @@ from typing import Any
 from runtime.plugin_seed import seed_registered_plugins
 from runtime.registry import get
 
+_REMOVED_ADAPTER_NAMES = frozenset({"native_slam_status", "native", "native_slam", "slam"})
+
 
 def localization_adapter_module(adapter_name: str | None = None) -> type[Any]:
     """Return the sole supported Product Host localization adapter."""
     adapter = str(adapter_name or "").strip().lower()
+    if adapter in _REMOVED_ADAPTER_NAMES:
+        raise ImportError(
+            f"Localization adapter {adapter_name!r} was removed; use 'cpp_slam_status'"
+        )
     if adapter != "cpp_slam_status":
         raise ImportError(
             f"Unsupported localization adapter {adapter_name!r}; use 'cpp_slam_status'"

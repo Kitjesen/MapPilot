@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
 from sim.diagnostics.dataflow_report import (
     RUNTIME_DATAFLOW_GATES,
     build_runtime_dataflow_from_summary,
 )
 from sim.diagnostics.gap_report import _host_setup_plan, build_dimos_gap_report
+
+from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
 
 
 def test_runtime_dataflow_reads_current_native_gate_report(tmp_path: Path) -> None:

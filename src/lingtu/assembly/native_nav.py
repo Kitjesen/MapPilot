@@ -23,6 +23,17 @@ _GLOBAL_PLANNERS = frozenset({"octoplanner3d", "far"})
 _LOCAL_PLANNERS = frozenset({"cmu", "scan"})
 _RECOVERY_ACTIONS = frozenset({"translate", "rotate"})
 _RECOVERY_DEFAULT_ORDER = ("translate", "rotate")
+NATIVE_NAV_ENVIRONMENT = {
+    "control_mode": "LINGTU_NAV_CONTROL_MODE",
+    "global_planner": "NAV_GLOBAL_PLANNER",
+    "local_planner": "LINGTU_NAV_LOCAL_PLANNER_BACKEND",
+    "publish_cmd_vel": "LINGTU_NAV_PUBLISH_CMD_VEL",
+    "check_obstacle": "LINGTU_NAV_CHECK_OBSTACLE",
+    "use_traversability_cost": "LINGTU_NAV_USE_TRAVERSABILITY_COST",
+    "allow_teleop_takeover": "LINGTU_NAV_ALLOW_TELEOP_TAKEOVER",
+    "teleop_local_planner": "LINGTU_TELEOP_LOCAL_PLANNER",
+}
+NATIVE_NAV_TEXT_FIELDS = frozenset({"control_mode", "global_planner", "local_planner"})
 _OCTOPLANNER_CONFIG = {
     "octoplanner3d_robot_radius": ("LINGTU_NAV_OCTO_ROBOT_RADIUS_M", 0.25),
     "octoplanner3d_max_iterations": ("LINGTU_NAV_OCTO_MAX_ITERATIONS", 500000),
@@ -31,6 +42,8 @@ _OCTOPLANNER_CONFIG = {
     "octoplanner3d_strict_direct_ground_support": ("LINGTU_NAV_OCTO_STRICT_GROUND_SUPPORT", True),
     "octoplanner3d_ground_support_xy_radius_cells": ("LINGTU_NAV_OCTO_GROUND_SUPPORT_XY_RADIUS_CELLS", 0),
     "octoplanner3d_ground_support_depth_cells": ("LINGTU_NAV_OCTO_GROUND_SUPPORT_DEPTH_CELLS", 2),
+    "octoplanner3d_support_height_m": ("LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M", 0.0),
+    "octoplanner3d_support_height_tolerance_m": ("LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M", 0.0),
     "octoplanner3d_enable_preblocked_costmap": ("LINGTU_NAV_OCTO_ENABLE_PREBLOCKED_COSTMAP", True),
     "octoplanner3d_preblocked_costmap_radius_cells": ("LINGTU_NAV_OCTO_PREBLOCKED_RADIUS_CELLS", 3),
     "octoplanner3d_preblocked_costmap_weight": ("LINGTU_NAV_OCTO_PREBLOCKED_WEIGHT", 2.5),
@@ -52,6 +65,19 @@ def local_planner_name(value: Any) -> str:
     if name not in _LOCAL_PLANNERS:
         raise ValueError("local_planner must be cmu or scan")
     return name
+
+
+def render_native_nav_environment(native_nav: Mapping[str, Any]) -> dict[str, str]:
+    """Render the small structured navigation contract for process launch."""
+
+    return {
+        environment_key: (
+            str(native_nav[field])
+            if field in NATIVE_NAV_TEXT_FIELDS
+            else _env_bool(bool(native_nav[field]))
+        )
+        for field, environment_key in NATIVE_NAV_ENVIRONMENT.items()
+    }
 
 
 def mapd_environment(native_environment: Mapping[str, str]) -> dict[str, str]:
@@ -77,8 +103,14 @@ def mapd_environment(native_environment: Mapping[str, str]) -> dict[str, str]:
         # Upstream SCAN clears cells only through ray misses or window rolls.
         "LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S": "0",
         "LINGTU_MAPD_INFLATION_RADIUS_M": _env_number(float(radius)),
-        "LINGTU_MAPD_INFLATION_Z_UP_M": "0.10",
-        "LINGTU_MAPD_INFLATION_Z_DOWN_M": "0.10",
+        # Inflate obstacles into forbidden body-center positions. The body's
+        # lower clearance expands obstacles upward, and vice versa.
+        "LINGTU_MAPD_INFLATION_Z_UP_M": native_environment[
+            "LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"
+        ],
+        "LINGTU_MAPD_INFLATION_Z_DOWN_M": native_environment[
+            "LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"
+        ],
     }
 
 
@@ -211,31 +243,6 @@ def _recovery_config(native_nav_config: Mapping[str, Any]) -> dict[str, Any]:
     return recovery
 
 
-def _scan_follower_config(native_nav_config: Mapping[str, Any]) -> dict[str, float]:
-    raw = native_nav_config.get("scan_follower") or {}
-    if not isinstance(raw, Mapping):
-        raise ValueError("native_nav.scan_follower must be a mapping")
-    follower = {
-        "time_forward_s": _finite_number(raw, "time_forward_s", 0.8),
-        "heading_error_rad": _finite_number(raw, "heading_error_rad", 0.8),
-        "position_gain": _finite_number(raw, "position_gain", 0.8),
-        "yaw_gain": _finite_number(raw, "yaw_gain", 1.5),
-        "max_vx_mps": _finite_number(raw, "max_vx_mps", 0.75),
-        "max_vy_mps": _finite_number(raw, "max_vy_mps", 0.35),
-        "max_yaw_rate_rad_s": _finite_number(raw, "max_yaw_rate_rad_s", 1.0),
-        "finish_distance_m": _finite_number(raw, "finish_distance_m", 0.15),
-    }
-    if follower["heading_error_rad"] > math.pi:
-        raise ValueError("native_nav.scan_follower.heading_error_rad must not exceed pi")
-    if follower["max_vx_mps"] <= 0.0 or follower["max_vy_mps"] <= 0.0:
-        raise ValueError("native_nav.scan_follower axis speed limits must be positive")
-    if follower["max_yaw_rate_rad_s"] > 1.0:
-        raise ValueError("native_nav.scan_follower.max_yaw_rate_rad_s must not exceed 1.0")
-    if follower["finish_distance_m"] <= 0.0:
-        raise ValueError("native_nav.scan_follower.finish_distance_m must be positive")
-    return follower
-
-
 @dataclass(frozen=True)
 class NativeNavConfig:
     """Validated native endpoint configuration."""
@@ -252,14 +259,10 @@ class NativeNavConfig:
         native_nav = self.native_nav
         recovery = native_nav["recovery"]
         env = {
+            **render_native_nav_environment(native_nav),
             "LINGTU_NAV_DDS_TICK_HZ": _env_number(parameters["tick_hz"]),
             "LINGTU_NAV_CORRIDOR_LOOKAHEAD_M": _env_number(parameters["corridor_lookahead_m"]),
             "LINGTU_NAV_GOAL_REACHED_M": _env_number(parameters["goal_reached_m"]),
-            "LINGTU_NAV_CONTROL_MODE": str(native_nav["control_mode"]),
-            "NAV_GLOBAL_PLANNER": str(native_nav["global_planner"]),
-            "LINGTU_NAV_LOCAL_PLANNER_BACKEND": str(native_nav["local_planner"]),
-            "LINGTU_NAV_PUBLISH_CMD_VEL": _env_bool(bool(native_nav["publish_cmd_vel"])),
-            "LINGTU_NAV_CHECK_OBSTACLE": _env_bool(bool(native_nav["check_obstacle"])),
             "LINGTU_NAV_DYNAMIC_MIN_CELLS": str(parameters["dynamic_min_cells"]),
             "LINGTU_NAV_DYNAMIC_MIN_SPEED_MPS": _env_number(parameters["dynamic_min_speed_mps"]),
             "LINGTU_NAV_DYNAMIC_CONFIRM_FRAMES": str(parameters["dynamic_confirm_frames"]),
@@ -279,14 +282,6 @@ class NativeNavConfig:
             "LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_EXIT_RAD": _env_number(
                 parameters["path_follower_heading_align_exit_rad"]
             ),
-            "LINGTU_NAV_SCAN_TIME_FORWARD_S": _env_number(parameters["scan_time_forward_s"]),
-            "LINGTU_NAV_SCAN_HEADING_ERROR_RAD": _env_number(parameters["scan_heading_error_rad"]),
-            "LINGTU_NAV_SCAN_POSITION_GAIN": _env_number(parameters["scan_position_gain"]),
-            "LINGTU_NAV_SCAN_YAW_GAIN": _env_number(parameters["scan_yaw_gain"]),
-            "LINGTU_NAV_SCAN_MAX_VX_MPS": _env_number(parameters["scan_max_vx_mps"]),
-            "LINGTU_NAV_SCAN_MAX_VY_MPS": _env_number(parameters["scan_max_vy_mps"]),
-            "LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S": _env_number(parameters["scan_max_yaw_rate_rad_s"]),
-            "LINGTU_NAV_SCAN_FINISH_DISTANCE_M": _env_number(parameters["scan_finish_distance_m"]),
             "LINGTU_NAV_RECOVERY_ORDER": ",".join(recovery["behavior_order"]),
             "LINGTU_NAV_RECOVERY_BLOCKED_INTERVAL_S": _env_number(recovery["blocked_interval_s"]),
             "LINGTU_NAV_RECOVERY_ROTATION_TIMEOUT_S": _env_number(recovery["rotation_timeout_s"]),
@@ -300,13 +295,10 @@ class NativeNavConfig:
             "LINGTU_NAV_RECOVERY_ROTATION_SAMPLE_STEP_RAD": _env_number(recovery["rotation_sample_step_rad"]),
             # Native endpoint ABI; the value is the active Product name.
             "LINGTU_PRODUCT": self.product,
-            "LINGTU_NAV_USE_TRAVERSABILITY_COST": _env_bool(bool(native_nav["use_traversability_cost"])),
-            "LINGTU_NAV_ALLOW_TELEOP_TAKEOVER": _env_bool(bool(native_nav["allow_teleop_takeover"])),
             "LINGTU_TELEOP_PLANNER_HORIZON_M": _env_number(parameters["teleop_planner_horizon_m"]),
             "LINGTU_TELEOP_PLANNER_MAX_DEVIATION_DEG": _env_number(parameters["teleop_planner_max_deviation_deg"]),
             "LINGTU_TELEOP_MAX_SPEED_MPS": _env_number(parameters["teleop_max_speed_mps"]),
             "LINGTU_TELEOP_MAX_YAW_RATE": _env_number(parameters["teleop_max_yaw_rate_rad_s"]),
-            "LINGTU_TELEOP_LOCAL_PLANNER": _env_bool(bool(native_nav["teleop_local_planner"])),
             "LINGTU_TELEOP_OBSTACLE_MARGIN_M": _env_number(parameters["collision_hard_margin_m"]),
             "LINGTU_NAV_VEHICLE_LENGTH_M": _env_number(parameters["vehicle_length_m"]),
             "LINGTU_NAV_VEHICLE_WIDTH_M": _env_number(parameters["vehicle_width_m"]),
@@ -320,6 +312,11 @@ class NativeNavConfig:
             "LINGTU_NAV_WAYPOINT_REACHED_M": _env_number(parameters["waypoint_reached_m"]),
         }
         env.update(_octoplanner_environment(self.native_nav["octoplanner3d"]))
+        if float(env["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M"]) > 0.0:
+            # A calibrated support height selects body-origin routes. Global
+            # body checks and Mapd inflation then consume the same envelope.
+            env["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"] = env["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"]
+            env["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"] = env["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"]
         return env
 
     def as_dict(self) -> dict[str, Any]:
@@ -344,6 +341,8 @@ def compile_native_nav_config(
     if not product_name:
         raise ValueError("native navigation Product must not be empty")
     native_nav_config = _native_nav_mapping(config)
+    if "scan_follower" in native_nav_config or "scan_planner" in native_nav_config:
+        raise ValueError("SCAN tuning belongs in Product parameters: scan_follower.* and scan_planner.*")
     legacy_keys = sorted(
         (set(config) | set(native_nav_config)) & _LEGACY_NAV_PARAMETER_KEYS
     )
@@ -351,7 +350,6 @@ def compile_native_nav_config(
         raise ValueError(
             "legacy navigation parameters are unsupported: " + ", ".join(legacy_keys)
         )
-    scan_follower = _scan_follower_config(native_nav_config)
     raw_control_mode = str(config.get("native_control_mode") or "").strip().lower()
     if not raw_control_mode:
         raise ValueError("native_control_mode must be declared by the compiled Product")
@@ -450,14 +448,6 @@ def compile_native_nav_config(
         "path_follower_heading_align_exit_rad": _finite_number(
             native_nav_config, "path_follower_heading_align_exit_rad", 0.35
         ),
-        "scan_time_forward_s": scan_follower["time_forward_s"],
-        "scan_heading_error_rad": scan_follower["heading_error_rad"],
-        "scan_position_gain": scan_follower["position_gain"],
-        "scan_yaw_gain": scan_follower["yaw_gain"],
-        "scan_max_vx_mps": scan_follower["max_vx_mps"],
-        "scan_max_vy_mps": scan_follower["max_vy_mps"],
-        "scan_max_yaw_rate_rad_s": scan_follower["max_yaw_rate_rad_s"],
-        "scan_finish_distance_m": scan_follower["finish_distance_m"],
         "waypoint_reached_m": _finite_number(
             native_nav_config, "waypoint_reached_m", 0.6
         ),

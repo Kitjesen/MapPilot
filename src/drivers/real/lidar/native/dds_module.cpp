@@ -4,8 +4,8 @@
 
 #include "dds/dds.h"
 #include "messages.h"
-#include "message/cpp/qos.hpp"
-#include "message/cpp/topics.hpp"
+#include "transport/dds/qos.hpp"
+#include "message/generated/topics.hpp"
 
 #include <array>
 #include <chrono>
@@ -235,7 +235,8 @@ class DdsModule::Impl {
 
   void publish_registered_cloud(
       std::uint64_t timestamp_ns,
-      const std::vector<Point>& points) {
+      const std::vector<Point>& points,
+      std::optional<std::array<double, 3>> sensor_origin_world) {
     require_lidar();
     if (!navigation_fixture_) {
       throw std::runtime_error(
@@ -292,9 +293,12 @@ class DdsModule::Impl {
     map_observation.map_sensor.rotation.y = observation.pose.qy;
     map_observation.map_sensor.rotation.z = observation.pose.qz;
     map_observation.map_sensor.rotation.w = observation.pose.qw;
-    map_observation.sensor_origin.x = observation.pose.x;
-    map_observation.sensor_origin.y = observation.pose.y;
-    map_observation.sensor_origin.z = observation.pose.z;
+    // Scan coordinates remain body-local; ray clearing starts at the LiDAR site.
+    const auto origin = sensor_origin_world.value_or(
+        std::array<double, 3>{observation.pose.x, observation.pose.y, observation.pose.z});
+    map_observation.sensor_origin.x = origin[0];
+    map_observation.sensor_origin.y = origin[1];
+    map_observation.sensor_origin.z = origin[2];
     map_observation.scan = msg;
     map_observation.pose_confidence = 1.0F;
     map_observation.localization_quality = 1.0F;
@@ -661,8 +665,9 @@ void DdsModule::publish_odom_prior(
 
 void DdsModule::publish_registered_cloud(
     std::uint64_t timestamp_ns,
-    const std::vector<Point>& points) {
-  impl_->publish_registered_cloud(timestamp_ns, points);
+    const std::vector<Point>& points,
+    std::optional<std::array<double, 3>> sensor_origin_world) {
+  impl_->publish_registered_cloud(timestamp_ns, points, sensor_origin_world);
 }
 
 }  // namespace lingtu::drivers::lidar

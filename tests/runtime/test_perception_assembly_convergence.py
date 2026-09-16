@@ -9,6 +9,7 @@ import yaml
 
 from decision.modules.visual_servo import VisualServoModule
 from lingtu.assembly.compiler import blueprint_from_run_plan, compile_run_plan
+from lingtu.assembly.graph.processes import ProcessArtifact
 from lingtu.assembly.products.host import host_blueprint
 from lingtu.assembly.stacks import perception as perception_stack
 from lingtu.assembly.stacks.composition import compose_full_stack_modules
@@ -23,7 +24,6 @@ from runtime.config import (
     TrackingConfig,
     load_config,
 )
-from runtime.graph.processes import ProcessArtifact
 from runtime.module import Module
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

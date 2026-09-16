@@ -6,10 +6,7 @@ from pathlib import Path
 import pytest
 
 from lingtu.assembly.compiler import compile_run_plan
-from lingtu.assembly.products import resolve_product_host_runtime
-from lingtu.assembly.validation import validate_product
-from runtime.contracts.product_runtime import resolve_product_spec_contracts
-from runtime.graph import (
+from lingtu.assembly.graph import (
     RuntimeGraph,
     load_runtime_graph,
     render_env_mermaid,
@@ -18,7 +15,11 @@ from runtime.graph import (
     resolve_processes,
     validate_runtime_graph,
 )
-from runtime.runtime_interface import TOPICS
+from lingtu.assembly.graph.loader import product_requirements, resolve_product_variant_spec
+from lingtu.assembly.graph.processes import ProcessArtifact
+from lingtu.assembly.products import resolve_product_host_runtime
+from lingtu.assembly.validation import validate_product
+from message.topics import TOPICS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -31,6 +32,14 @@ INSPECTION_DDS_TOPICS = (
     TOPICS.inspection_evidence_request,
     TOPICS.inspection_evidence_result,
 )
+
+
+def _ignore_process_artifact_presence(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        ProcessArtifact,
+        "from_repository_path",
+        classmethod(lambda cls, root, path: cls(str(path))),
+    )
 
 
 def _direct_process_definition(
@@ -144,13 +153,40 @@ def test_runtime_graph_contracts_are_valid() -> None:
 
     assert set(graph.envs) == {"real", "sim"}
     assert {env["schema_version"] for env in graph.envs.values()} == {"lingtu.runtime_graph.env.v1"}
-    assert {product["schema_version"] for product in graph.products.values()} == {"lingtu.runtime_graph.product.v2"}
+    assert {product["schema_version"] for product in graph.products.values()} == {"lingtu.runtime_graph.product.v3"}
     assert "robot_config_ref" not in graph.envs["real"]
     assert set(graph.envs["sim"]["backends"]) == {"mujoco"}
     assert "inspection" in graph.envs["sim"]["supported_products"]
     assert "inspection" in graph.envs["sim"]["backends"]["mujoco"]["supported_products"]
     assert "default_backend" not in graph.envs["sim"]
     assert validate_runtime_graph(graph) == []
+
+
+def test_runtime_graph_keeps_variant_products_unresolved() -> None:
+    explore = load_runtime_graph().products["explore"]
+
+    assert explore["default_variant"] == "live"
+    assert "topics" not in explore
+    assert "capabilities" not in explore
+    assert "product_variant" not in explore
+
+
+def test_products_own_their_runtime_boundary_without_named_contract_ids() -> None:
+    graph = load_runtime_graph()
+
+    for product_name, product in graph.products.items():
+        variants = product.get("variants") or {None: {}}
+        for product_variant in variants:
+            resolved = resolve_product_variant_spec(
+                product_name,
+                product,
+                product_variant=product_variant,
+            )
+            topics, capabilities = product_requirements(product_name, resolved)
+
+            assert "contracts" not in resolved
+            assert topics == tuple(resolved["topics"])
+            assert capabilities == tuple(resolved["capabilities"])
 
 
 def test_nav_acceptance_selects_local_planner_without_creating_another_product() -> None:
@@ -216,42 +252,42 @@ def test_sim_process_dependency_schema_is_strict(mutation: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("topic_name", "schema", "nominal_rate_hz"),
+    ("topic_name", "message_type", "nominal_rate_hz"),
     (
-        (TOPICS.raw_lidar_points, "lingtu.dds.LivoxFrame", 10.0),
-        (TOPICS.raw_imu, "lingtu.dds.Imu", 200.0),
+        (TOPICS.lidar_scan, "lingtu.dds.LivoxFrame", 10.0),
+        (TOPICS.imu, "lingtu.dds.Imu", 200.0),
         ("/camera/color/image_raw", "lingtu.dds.Image", 30.0),
         ("/camera/depth/image_raw", "lingtu.dds.Image", 30.0),
     ),
 )
 def test_sim_sensor_topics_are_the_single_contract_source(
     topic_name: str,
-    schema: str,
+    message_type: str,
     nominal_rate_hz: float,
 ) -> None:
     contract = load_runtime_graph().topic_contracts[topic_name]
 
-    assert contract["schema"] == schema
+    assert contract["message_type"] == message_type
     assert contract["nominal_rate_hz"] == nominal_rate_hz
 
 
 def test_camera_info_is_latched_calibration_without_a_claimed_frequency() -> None:
     contract = load_runtime_graph().topic_contracts["/camera/color/camera_info"]
 
-    assert contract["schema"] == "lingtu.dds.CameraInfo"
+    assert contract["message_type"] == "lingtu.dds.CameraInfo"
     assert "nominal_rate_hz" not in contract
-    assert contract["qos"] == "reliable_transient_local_keep_last_1"
+    assert contract["qos_profile"] == "CameraInfo"
     assert contract["semantics"] == ("latched_camera_calibration_published_once_per_endpoint_start_for_late_joiners")
 
 
 def test_raw_imu_uses_the_dedicated_imu_frame() -> None:
-    assert load_runtime_graph().topic_contracts[TOPICS.raw_imu]["frame"] == "imu_link"
+    assert load_runtime_graph().topic_contracts[TOPICS.imu]["frame"] == "imu_link"
 
 
 def test_gnss_fix_is_event_driven_without_a_claimed_frequency() -> None:
     contract = load_runtime_graph().topic_contracts["/gnss/fix"]
 
-    assert contract["schema"] == "lingtu.dds.GnssFix"
+    assert contract["message_type"] == "lingtu.dds.GnssFix"
     assert "nominal_rate_hz" not in contract
 
 
@@ -314,7 +350,7 @@ def test_final_velocity_topic_is_identity_bound_and_single_writer() -> None:
     topic = load_runtime_graph().topics["topics"][TOPICS.cmd_vel]
 
     assert topic["role"] == "final_velocity_command"
-    assert topic["schema"] == "final_velocity_command"
+    assert topic["message_type"] == "lingtu.dds.FinalVelocityCommand"
     assert topic["single_writer_per_product"] is True
     assert topic["semantics"] == "identity_bound_freshness_bounded_final_velocity_envelope"
 
@@ -450,9 +486,9 @@ def test_runtime_graph_static_validation_rejects_invalid_conflicts(
 
 def test_sim_process_resolution_requires_an_explicit_supported_backend(
     monkeypatch: pytest.MonkeyPatch,
-    allow_unbuilt_process_artifacts: None,
 ) -> None:
-    monkeypatch.setattr("runtime.graph.processes._host_process_platform", lambda: "windows")
+    monkeypatch.setattr("lingtu.assembly.graph.processes._host_process_platform", lambda: "windows")
+    _ignore_process_artifact_presence(monkeypatch)
     with pytest.raises(ValueError, match=r"env_config\.backend"):
         resolve_processes("teleop", "sim")
 
@@ -507,9 +543,9 @@ def test_sim_process_resolution_requires_an_explicit_supported_backend(
 
 def test_sim_mujoco_teleop_avoid_resolves_one_native_owner_per_required_role(
     monkeypatch: pytest.MonkeyPatch,
-    allow_unbuilt_process_artifacts: None,
 ) -> None:
-    monkeypatch.setattr("runtime.graph.processes._host_process_platform", lambda: "windows")
+    monkeypatch.setattr("lingtu.assembly.graph.processes._host_process_platform", lambda: "windows")
+    _ignore_process_artifact_presence(monkeypatch)
     selected, available, conflicts, support = resolve_processes(
         "teleop_avoid",
         "sim",
@@ -543,9 +579,9 @@ def test_sim_mujoco_teleop_avoid_resolves_one_native_owner_per_required_role(
 
 def test_sim_slam_product_compiles_the_dedicated_slam_runtime(
     monkeypatch: pytest.MonkeyPatch,
-    allow_unbuilt_process_artifacts: None,
 ) -> None:
-    monkeypatch.setattr("runtime.graph.processes._host_process_platform", lambda: "windows")
+    monkeypatch.setattr("lingtu.assembly.graph.processes._host_process_platform", lambda: "windows")
+    _ignore_process_artifact_presence(monkeypatch)
 
     plan = compile_run_plan(
         "map",
@@ -734,7 +770,7 @@ def test_subprocess_process_resolution_rejects_invalid_direct_contracts(
     elif mutation == "artifact_sha":
         native["command"]["artifact"]["sha256"] = "a" * 64
     elif mutation == "artifact_not_argv":
-        native["command"]["artifact"]["path"] = "src/runtime/graph/processes.py"
+        native["command"]["artifact"]["path"] = "src/lingtu/assembly/graph/processes.py"
     elif mutation == "unknown_command_field":
         native["command"]["shell"] = True
     elif mutation == "unknown_process_field":
@@ -1093,18 +1129,18 @@ def test_operator_motion_topics_are_native_endpoint_contract() -> None:
 
     assert operator_topics <= set(graph.native_contract_topics)
     assert graph.topic_contracts[TOPICS.operator_motion_control]["frame"] == "none"
-    assert graph.topic_contracts[TOPICS.operator_motion_control]["qos"] == "reliable_volatile_keep_last_32"
+    assert graph.topic_contracts[TOPICS.operator_motion_control]["qos_profile"] == "OperatorMotionControl"
     assert graph.topic_contracts[TOPICS.operator_motion_sample]["frame"] == "body"
-    assert graph.topic_contracts[TOPICS.operator_motion_sample]["qos"] == "best_effort_volatile_keep_last_1"
+    assert graph.topic_contracts[TOPICS.operator_motion_sample]["qos_profile"] == "OperatorMotionSample"
     assert graph.topic_contracts[TOPICS.operator_motion_ack]["frame"] == "none"
-    assert graph.topic_contracts[TOPICS.operator_motion_ack]["qos"] == "reliable_transient_local_keep_last_64"
+    assert graph.topic_contracts[TOPICS.operator_motion_ack]["qos_profile"] == "OperatorMotionAck"
     assert graph.topic_contracts[TOPICS.operator_motion_ack]["consumers"] == ["operator_motion_adapter"]
     assert (
         graph.topic_contracts[TOPICS.operator_motion_ack]["semantics"]
         == "native_business_ack_for_claim_hold_release_only"
     )
     assert graph.topic_contracts[TOPICS.operator_motion_status]["frame"] == "map"
-    assert graph.topic_contracts[TOPICS.operator_motion_status]["qos"] == "reliable_transient_local_keep_last_1"
+    assert graph.topic_contracts[TOPICS.operator_motion_status]["qos_profile"] == "OperatorMotionStatus"
     assert graph.topic_contracts[TOPICS.operator_motion_status]["consumers"] == []
     assert graph.topic_contracts[TOPICS.operator_motion_status]["external_diagnostics_subscribable"] is True
     assert (
@@ -1157,31 +1193,14 @@ def test_inspection_dds_topics_are_a_native_runtime_contract() -> None:
     assert set(INSPECTION_DDS_TOPICS) <= set(graph.native_contract_topics)
     assert "/nav/inspection/command" not in graph.native_contract_topics
     assert "/nav/inspection/ack" not in graph.native_contract_topics
-    assert graph.topic_contracts[TOPICS.inspection_task_request] == {
-        "role": "native_inspection_task_request",
-        "frame": "map",
-        "schema": "inspection_task_request",
-        "producer": "persistent_cpp_navigation_client",
-        "consumers": ["native_nav_runtime"],
-        "qos": "reliable_volatile_keep_last_32",
-        "semantics": "caller_task_id_and_retryable_request_id",
-        "port_bindings": [
-            {
-                "owner": "persistent_cpp_navigation_client",
-                "port": "inspection_task_request",
-                "direction": "out",
-                "boundary": "native",
-            },
-            {
-                "owner": "native_nav_runtime",
-                "port": "inspection_task_request",
-                "direction": "in",
-                "boundary": "endpoint",
-            },
-        ],
-    }
+    request = graph.topic_contracts[TOPICS.inspection_task_request]
+    assert request["message_type"] == "lingtu.dds.InspectionTaskRequest"
+    assert request["qos_profile"] == "CommandRequest"
+    assert request["producer"] == "persistent_cpp_navigation_client"
+    assert request["consumers"] == ["native_nav_runtime"]
+    assert request["semantics"] == "caller_task_id_and_retryable_request_id"
     assert "persistent_cpp_navigation_client" in graph.topic_contracts[TOPICS.inspection_task_ack]["consumers"]
-    assert graph.topic_contracts[TOPICS.inspection_status]["qos"] == ("reliable_transient_local_keep_last_1")
+    assert graph.topic_contracts[TOPICS.inspection_status]["qos_profile"] == "SystemStatus"
 
 
 def test_native_ack_and_status_topics_do_not_claim_nonexistent_gateway_readers() -> None:
@@ -1245,10 +1264,10 @@ def test_tare_goal_status_is_a_field_endpoint_lifecycle_contract() -> None:
 
     assert status["role"] == "native_navigation_goal_status"
     assert status["frame"] == "map"
-    assert status["schema"] == "navigation_goal_status"
+    assert status["message_type"] == "lingtu.dds.NavigationGoalStatus"
     assert status["producer"] == "native_nav_runtime"
     assert status["consumers"] == ["native_explore_runtime", "host_bus"]
-    assert status["qos"] == "reliable_transient_local_keep_last_64"
+    assert status["qos_profile"] == "CommandAck"
     assert status["semantics"] == "request_correlated_goal_lifecycle"
     assert {
         (binding["owner"], binding["port"], binding["direction"], binding["boundary"])
@@ -1266,12 +1285,12 @@ def test_tare_goal_status_is_a_field_endpoint_lifecycle_contract() -> None:
         ("inspection", None),
         ("tracking", None),
     ):
-        contract = resolve_product_spec_contracts(
+        contract = resolve_product_variant_spec(
             product_name,
             graph.products[product_name],
             product_variant=product_variant,
         )
-        assert TOPICS.nav_goal_status in contract.topics
+        assert TOPICS.nav_goal_status in tuple(contract["topics"])
     assert TOPICS.nav_goal_status not in graph.native_contract_topics
 
 
@@ -1280,9 +1299,9 @@ def test_directed_exploration_intent_reuses_the_existing_command_ack_boundary() 
     command = graph.topic_contracts[TOPICS.exploration_command]
     ack = graph.topic_contracts[TOPICS.exploration_ack]
 
-    assert command["qos"] == "reliable_volatile_keep_last_32"
+    assert command["qos_profile"] == "CommandRequest"
     assert command["semantics"] == "exploration_lifecycle_or_directed_target_set_clear"
-    assert ack["qos"] == "reliable_transient_local_keep_last_64"
+    assert ack["qos_profile"] == "CommandAck"
     assert ack["semantics"] == "exploration_business_ack_with_intent_revision"
 
     directed_target = {
@@ -1308,9 +1327,9 @@ def test_directed_exploration_intent_reuses_the_existing_command_ack_boundary() 
 def test_inspection_product_requires_its_native_task_and_status_topics() -> None:
     graph = load_runtime_graph()
     inspection = graph.products["inspection"]
-    contract = resolve_product_spec_contracts("inspection", inspection)
+    contract = resolve_product_variant_spec("inspection", inspection)
 
-    assert set(INSPECTION_DDS_TOPICS) <= set(contract.topics)
+    assert set(INSPECTION_DDS_TOPICS) <= set(contract["topics"])
 
 
 def test_runtime_graph_rejects_missing_localization_health() -> None:
@@ -1388,7 +1407,8 @@ def test_runtime_graph_rejects_map_and_slam_mode_conflict() -> None:
 def test_runtime_graph_rejects_map_free_exploration_without_live_route() -> None:
     graph = load_runtime_graph()
     products = deepcopy(graph.products)
-    products["explore"]["variants"]["live"]["contracts"] = ["lingtu.product.teleop_avoid.v1"]
+    products["explore"]["variants"]["live"]["topics"] = products["teleop_avoid"]["topics"]
+    products["explore"]["variants"]["live"]["capabilities"] = products["teleop_avoid"]["capabilities"]
     broken = RuntimeGraph(
         root=graph.root,
         topics=graph.topics,
@@ -1404,7 +1424,8 @@ def test_runtime_graph_rejects_map_free_exploration_without_live_route() -> None
 def test_runtime_graph_rejects_static_planner_as_map_free_exploration_requirement() -> None:
     graph = load_runtime_graph()
     products = deepcopy(graph.products)
-    products["explore"]["variants"]["live"]["contracts"] = ["lingtu.product.nav.v1"]
+    products["explore"]["variants"]["live"]["topics"] = products["nav"]["topics"]
+    products["explore"]["variants"]["live"]["capabilities"] = products["nav"]["capabilities"]
     broken = RuntimeGraph(
         root=graph.root,
         topics=graph.topics,
@@ -1420,7 +1441,7 @@ def test_runtime_graph_rejects_static_planner_as_map_free_exploration_requiremen
 def test_runtime_graph_validates_non_default_explore_variant_contract() -> None:
     graph = load_runtime_graph()
     products = deepcopy(graph.products)
-    products["explore"]["variants"]["map"]["contracts"] = ["lingtu.product.missing.v1"]
+    products["explore"]["variants"]["map"]["topics"] = None
     broken = RuntimeGraph(
         root=graph.root,
         topics=graph.topics,
@@ -1431,7 +1452,7 @@ def test_runtime_graph_validates_non_default_explore_variant_contract() -> None:
     issues = validate_runtime_graph(broken)
 
     assert any(
-        issue.code == "product_contract_invalid"
+        issue.code == "product_runtime_invalid"
         and issue.scope == "product:explore:variant:map"
         and "variant 'map'" in issue.message
         for issue in issues
@@ -1569,7 +1590,7 @@ def test_runtime_graph_renderers_emit_human_readable_contracts() -> None:
     assert mermaid.startswith("flowchart LR")
     assert 'env["sim"]' in mermaid
     assert 'backend["mujoco"]' in mermaid
-    assert TOPICS.raw_lidar_points in mermaid
+    assert TOPICS.lidar_scan in mermaid
     assert "# nav" in markdown
     assert f"`{TOPICS.odometry}`" in markdown
     assert "native localization" in markdown.lower()

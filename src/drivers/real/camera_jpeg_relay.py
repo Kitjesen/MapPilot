@@ -6,6 +6,7 @@ teleop state, or motion RPC. Operator motion is owned by the native DDS path.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import threading
 from typing import Any
@@ -53,6 +54,13 @@ class CameraJpegRelayModule(Module, layer=6):
             self._cam_rotate = 0
 
     def setup(self) -> None:
+        try:
+            importlib.import_module("cv2")
+        except ImportError as exc:
+            raise RuntimeError(
+                "Camera JPEG preview requires the declared vision dependency "
+                "(opencv-python-headless) in the Host Python environment"
+            ) from exc
         self.color_image.subscribe(self._on_image)
         self.color_image.set_policy("latest")
         self.scene_graph.subscribe(self._on_scene_graph)

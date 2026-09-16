@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import json
 import os
 import stat
 
 import pytest
 
+from lingtu.assembly.graph import ProcessArtifact, ProcessCommand, ProcessReadiness
 from lingtu.control import ProductControl
 from lingtu.run_plan import RunPlan
-from runtime.graph import ProcessArtifact, ProcessCommand, ProcessReadiness
 
 pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
 
@@ -57,7 +56,7 @@ def test_run_plan_records_final_parameter_overrides(
 
 def test_run_plan_rejects_the_previous_schema() -> None:
     payload = ProductControl(robot="unitree/go2", env="real", process_env={})._resolve("nav").as_dict()
-    payload["identity"]["schema"] = "lingtu.run_plan.v7"
+    payload["identity"]["schema"] = "lingtu.run_plan.v8"
 
     with pytest.raises(ValueError, match="unsupported RunPlan schema"):
         RunPlan.from_dict(payload)
@@ -137,7 +136,8 @@ def test_run_plan_summary_stays_compact() -> None:
     assert summary["processes"] == [process.name for process in plan.processes]
     assert "host_config" not in summary
     assert "native_process_environment" not in summary
-    assert "required_topics" not in json.dumps(plan.as_dict(), sort_keys=True)
+    assert summary["required_topics"] == list(plan.required_topics)
+    assert summary["required_capabilities"] == list(plan.required_capabilities)
 
 
 def test_simulation_run_plan_does_not_embed_acceptance_tooling() -> None:

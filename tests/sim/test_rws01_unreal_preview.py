@@ -1,11 +1,9 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
-
 from sim.runtime.visual.RobotSimUE.Scripts.build_thunderv4_rws01_preview import (
     EXPECTED_RUNTIME_MESHES,
     MESH_DESTINATION,

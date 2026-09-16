@@ -6,7 +6,6 @@ import type {
   AppCapabilitiesResponse,
   LocationsResponse,
   MapSceneEvent,
-  MissionStatusEvent,
   OdometryEvent,
   SafetyStateEvent,
   SceneGraphEvent,
@@ -16,16 +15,15 @@ import type {
   StateResponse,
 } from '../types'
 import { mergeMapSceneElevation } from '../services/mapSceneState.ts'
+import { createJointTelemetryStream } from '../services/jointTelemetryStream.ts'
 
 // Re-export types for backward compatibility
 export type {
   OdometryEvent,
-  MissionStatusEvent,
   SafetyStateEvent,
   SceneGraphEvent,
   PingEvent,
   SnapshotEvent,
-  MissionEvent,
   SafetyEvent,
   NavigationStatusEvent,
   LeaseEvent,
@@ -52,7 +50,6 @@ export type {
 
 const INITIAL_STATE: SSEState = {
   odometry: null,
-  missionStatus: null,
   safetyState: null,
   sceneGraph: null,
   slamStatus: null,
@@ -68,6 +65,7 @@ const INITIAL_STATE: SSEState = {
   commandAck: null,
   locations: null,
   stateSnapshot: null,
+  stateSnapshotReceivedAt: null,
   traffic: null,
   nativeTraversability: null,
   agentMessage: null,
@@ -155,6 +153,9 @@ function snapshotOdometry(snapshot: StateResponse): OdometryEvent | null {
     y: raw.y,
     z: finiteNumber(raw.z),
     yaw: finiteNumber(raw.yaw),
+    orientation: Array.isArray(raw.orientation) && raw.orientation.length === 4
+      && raw.orientation.every(v => typeof v === 'number' && Number.isFinite(v))
+      ? raw.orientation as [number, number, number, number] : null,
     vx: finiteNumber(raw.vx),
     wz: finiteNumber(raw.wz),
     frame_id: optionalString(raw.frame_id),
@@ -163,19 +164,8 @@ function snapshotOdometry(snapshot: StateResponse): OdometryEvent | null {
   }
 }
 
-function snapshotMission(snapshot: StateResponse): MissionStatusEvent | null {
-  const raw = snapshot.navigation?.mission?.raw
-  if (!isRecord(raw)) return null
-  return {
-    type: 'mission_status',
-    state: optionalString(raw.state) ?? 'IDLE',
-    goal: optionalString(raw.goal),
-    progress: finiteNumber(raw.progress),
-  }
-}
-
 function snapshotSafety(snapshot: StateResponse): SafetyStateEvent | null {
-  const raw = snapshot.navigation?.diagnostics?.safety
+  const raw = snapshot.safety
   if (!isRecord(raw)) return null
   const level = raw.level
   return {
@@ -204,7 +194,8 @@ function snapshotSceneGraph(scene: Awaited<ReturnType<typeof api.fetchSceneGraph
 }
 
 export function useSSE(url: string = '/api/v1/events') {
-  const [state, setState] = useState<SSEState>(INITIAL_STATE)
+  const [jointTelemetry] = useState(createJointTelemetryStream)
+  const [state, setState] = useState<SSEState>(() => ({ ...INITIAL_STATE, jointTelemetry }))
   const esRef = useRef<EventSource | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -231,8 +222,12 @@ export function useSSE(url: string = '/api/v1/events') {
     try {
       const includeState = mode !== 'auxiliary'
       const includeAuxiliary = mode !== 'truth'
+      let stateReceivedAt: number | null = null
       const statePromise: Promise<StateResponse | null> = includeState
-        ? api.fetchState()
+        ? api.fetchState().then(snapshot => {
+            stateReceivedAt = Date.now()
+            return snapshot
+          })
         : Promise.resolve(null)
       const [stateResult, pathResult, sceneResult, locationsResult] = await Promise.allSettled([
         statePromise,
@@ -251,7 +246,6 @@ export function useSSE(url: string = '/api/v1/events') {
       const failures = [stateResult, pathResult, sceneResult, locationsResult]
         .filter(result => result.status === 'rejected').length
       const odometry = statePayload ? snapshotOdometry(statePayload) : null
-      const mission = statePayload ? snapshotMission(statePayload) : null
       const safety = statePayload ? snapshotSafety(statePayload) : null
 
       const refreshedAt = Date.now()
@@ -278,13 +272,13 @@ export function useSSE(url: string = '/api/v1/events') {
           ...prev,
           ...truth,
           odometry: statePayload ? odometry : prev.odometry,
-          missionStatus: mission ?? prev.missionStatus,
           safetyState: safety ?? prev.safetyState,
           session: (statePayload?.session as SSEState['session'] | undefined) ?? prev.session,
           navigationStatus: statePayload?.navigation ?? prev.navigationStatus,
           visualServoStatus: statePayload?.visual_servo ?? prev.visualServoStatus,
           lease: statePayload?.lease ?? prev.lease,
           stateSnapshot: statePayload ?? prev.stateSnapshot,
+          stateSnapshotReceivedAt: statePayload ? stateReceivedAt : prev.stateSnapshotReceivedAt,
           globalPath: pathPayload
             ? {
                 type: 'global_path',
@@ -336,6 +330,9 @@ export function useSSE(url: string = '/api/v1/events') {
       ])
       const bootstrap = bootstrapResult.status === 'fulfilled' ? bootstrapResult.value : null
       const capabilities = capabilitiesResult.status === 'fulfilled' ? capabilitiesResult.value : null
+      if (mountedRef.current) {
+        setState(prev => ({ ...prev, robotModel: typeof bootstrap?.robot.model === 'string' ? bootstrap.robot.model : null }))
+      }
       const endpoint = trafficEndpointFrom(bootstrap, capabilities)
       trafficEndpointRef.current = endpoint
       if (!endpoint && mountedRef.current) {
@@ -386,6 +383,7 @@ export function useSSE(url: string = '/api/v1/events') {
 
     es.onopen = () => {
       if (!mountedRef.current) return
+      jointTelemetry.setConnected(true)
       setState(prev => ({ ...prev, connected: true, lastError: null }))
       if (everConnectedRef.current) {
         queueRefresh('event_stream_reconnected')
@@ -408,6 +406,7 @@ export function useSSE(url: string = '/api/v1/events') {
       for (const line of lines) {
         try {
           const event = JSON.parse(line) as SSEEvent
+          const receivedAtMs = performance.now()
           const eventId = typeof event.event_id === 'number' && Number.isFinite(event.event_id)
             ? event.event_id
             : null
@@ -417,6 +416,12 @@ export function useSSE(url: string = '/api/v1/events') {
             : 0
           if (eventId !== null) lastEventIdRef.current = eventId
           if (missedByEvent > 0) queueRefresh('event_id_gap')
+          if (event.type === 'joint_state') {
+            jointTelemetry.ingest(event, receivedAtMs)
+            if (missedByEvent > 0) setState(prev => ({ ...prev,
+              missedEvents: prev.missedEvents + missedByEvent, lastEventId: eventId ?? prev.lastEventId }))
+            continue
+          }
           setState(prev => {
             const missedEvents = prev.missedEvents + missedByEvent
             const next = {
@@ -438,9 +443,7 @@ export function useSSE(url: string = '/api/v1/events') {
                 const d = evt.data || {}
                 const snapshot = d as unknown as StateResponse
                 next.odometry = snapshotOdometry(snapshot)
-                const mission = snapshotMission(snapshot)
                 const safety = snapshotSafety(snapshot)
-                if (mission) next.missionStatus = mission
                 if (safety) next.safetyState = safety
                 if (d.session)  next.session = d.session as never
                 if (d.navigation) next.navigationStatus = d.navigation as never
@@ -455,10 +458,6 @@ export function useSSE(url: string = '/api/v1/events') {
                 } else {
                   next.odometry = { type: 'odometry', ...(evt.data as object || evt) } as never
                 }
-                break
-              case 'mission':
-              case 'mission_status':
-                next.missionStatus = { type: 'mission_status', ...(evt.data as object || evt) } as never
                 break
               case 'safety':
               case 'safety_state':
@@ -561,6 +560,7 @@ export function useSSE(url: string = '/api/v1/events') {
 
     es.onerror = () => {
       if (!mountedRef.current) return
+      jointTelemetry.setConnected(false)
       clearInitialSnapshotFallback()
       es.close()
       esRef.current = null
@@ -575,7 +575,7 @@ export function useSSE(url: string = '/api/v1/events') {
         if (mountedRef.current) connectRef.current()
       }, 3000)
     }
-  }, [clearInitialSnapshotFallback, queueRefresh, url])
+  }, [clearInitialSnapshotFallback, queueRefresh, url, jointTelemetry])
 
   useEffect(() => {
     connectRef.current = connect
@@ -590,6 +590,7 @@ export function useSSE(url: string = '/api/v1/events') {
     connect()
     return () => {
       mountedRef.current = false
+      jointTelemetry.setConnected(false)
       if (refreshTimer.current) clearTimeout(refreshTimer.current)
       clearInitialSnapshotFallback()
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
@@ -598,7 +599,7 @@ export function useSSE(url: string = '/api/v1/events') {
         esRef.current = null
       }
     }
-  }, [clearInitialSnapshotFallback, connect])
+  }, [clearInitialSnapshotFallback, connect, jointTelemetry])
 
   useEffect(() => {
     let cancelled = false

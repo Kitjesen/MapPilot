@@ -87,7 +87,12 @@ void IESKF::clampCovariance()
         if (!std::isfinite(m_P(i, i)) || m_P(i, i) < P_MIN[i])
             m_P(i, i) = P_MIN[i];
         else if (m_P(i, i) > P_MAX[i])
-            m_P(i, i) = P_MAX[i];
+        {
+            // A smaller variance requires the same scaling of its cross terms.
+            const double scale = std::sqrt(P_MAX[i] / m_P(i, i));
+            m_P.row(i) *= scale;
+            m_P.col(i) *= scale;
+        }
     }
 }
 
@@ -122,7 +127,15 @@ void IESKF::injectZUPT(double sigma_v, double sigma_pos)
     if (sigma_pos > 0.0)
     {
         for (int i = 3; i < 6; ++i)
-            m_P(i, i) = std::min(m_P(i, i), sigma_pos * sigma_pos);
+        {
+            if (m_P(i, i) > sigma_pos * sigma_pos)
+            {
+                // Preserve PSD while retaining the configured stationary cap.
+                const double scale = sigma_pos / std::sqrt(m_P(i, i));
+                m_P.row(i) *= scale;
+                m_P.col(i) *= scale;
+            }
+        }
     }
     clampCovariance();
 }
@@ -214,8 +227,7 @@ bool IESKF::update()
     bool has_degeneracy = false;
     bool has_valid_measurement = false;
     bool pathological = false;  // condition_number explodes or all 6 DOF degenerate
-    Eigen::Matrix<double, 6, 6> saved_evecs = Eigen::Matrix<double, 6, 6>::Identity();
-    Eigen::Matrix<double, 6, 1> saved_mask  = Eigen::Matrix<double, 6, 1>::Ones();
+    Eigen::Matrix<double, 6, 6> pose_observable = Eigen::Matrix<double, 6, 6>::Identity();
 
     for (size_t i = 0; i < m_max_iter; i++)
     {
@@ -242,8 +254,20 @@ bool IESKF::update()
         // to detect degenerate directions where LiDAR provides no constraint.
         if (i == 0)  // Only compute on first iteration (H structure is stable)
         {
-            Eigen::Matrix<double, 6, 6> H_pose = shared_data.H.block<6, 6>(0, 0);
-            Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 6, 6>> solver(H_pose);
+            const Eigen::Matrix<double, 6, 6> H_pose = shared_data.H.block<6, 6>(0, 0);
+            // Balance radians and metres with one rotational lever length.
+            // A single scale preserves anisotropy inside each three-axis block.
+            const double rotation_trace = H_pose.block<3, 3>(0, 0).trace();
+            const double translation_trace = H_pose.block<3, 3>(3, 3).trace();
+            const double rotation_length = rotation_trace > 0.0 && translation_trace > 0.0
+                ? std::sqrt(rotation_trace / translation_trace) : 1.0;
+            Eigen::Matrix<double, 6, 6> normalized_to_pose = Eigen::Matrix<double, 6, 6>::Identity();
+            normalized_to_pose.block<3, 3>(0, 0) /= rotation_length;
+            Eigen::Matrix<double, 6, 6> pose_to_normalized = Eigen::Matrix<double, 6, 6>::Identity();
+            pose_to_normalized.block<3, 3>(0, 0) *= rotation_length;
+            const Eigen::Matrix<double, 6, 6> H_normalized =
+                normalized_to_pose.transpose() * H_pose * normalized_to_pose;
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 6, 6>> solver(H_normalized);
             auto &evals = solver.eigenvalues();   // sorted ascending
             auto &evecs = solver.eigenvectors();
 
@@ -273,9 +297,6 @@ bool IESKF::update()
                 (6.0 - degen_count) / 6.0;
             shared_data.degeneracy.detected = (degen_count > 0);
 
-            // Save eigenbasis for OC delta/P projection outside this block
-            saved_evecs = evecs;
-            saved_mask  = mask;
             has_degeneracy = (degen_count > 0);
 
             // ── Pathological degeneracy: eigenvectors themselves are unreliable ─
@@ -311,11 +332,16 @@ bool IESKF::update()
                         P_good += evecs.col(d) * evecs.col(d).transpose();
                 }
                 Eigen::Matrix<double, 6, 6> P_bad = Eigen::Matrix<double, 6, 6>::Identity() - P_good;
+                // Eigenvectors are orthogonal only in the balanced coordinates.
+                pose_observable = normalized_to_pose * P_good * pose_to_normalized;
                 double regularize = evals(5) * 0.01;
                 Eigen::Matrix<double, 6, 6> H_lidar_remapped =
-                    P_good * H_pose * P_good + P_bad * regularize;
+                    pose_to_normalized.transpose()
+                    * (P_good * H_normalized * P_good + P_bad * regularize)
+                    * pose_to_normalized;
                 Eigen::Matrix<double, 6, 1> b_lidar_remapped =
-                    P_good * shared_data.b.head<6>();
+                    pose_to_normalized.transpose() * P_good
+                    * normalized_to_pose.transpose() * shared_data.b.head<6>();
 
                 H.block<6, 6>(0, 0) = H_prior.block<6, 6>(0, 0) + H_lidar_remapped;
                 b.block<6, 1>(0, 0) = b_prior.block<6, 1>(0, 0) + b_lidar_remapped;
@@ -330,13 +356,7 @@ bool IESKF::update()
         // carried by IMU prediction alone, not corrupted by virtual LiDAR signal.
         if (has_degeneracy)
         {
-            Eigen::Matrix<double, 6, 1> dp_eig = saved_evecs.transpose() * delta.head<6>();
-            for (int d = 0; d < 6; ++d)
-            {
-                if (saved_mask(d) < 0.5)
-                    dp_eig(d) = 0.0;
-            }
-            delta.head<6>() = saved_evecs * dp_eig;
+            delta.head<6>() = (pose_observable * delta.head<6>()).eval();
         }
 
         m_x += delta;
@@ -486,19 +506,16 @@ bool IESKF::update()
     // fusion weights see the true uncertainty.
     if (has_degeneracy)
     {
-        Eigen::Matrix<double, 6, 6> P_post_pose  = m_P.block<6, 6>(0, 0);
-        Eigen::Matrix<double, 6, 6> P_prior_pose = P_prior.block<6, 6>(0, 0);
-        Eigen::Matrix<double, 6, 6> P_post_eig   = saved_evecs.transpose() * P_post_pose  * saved_evecs;
-        Eigen::Matrix<double, 6, 6> P_prior_eig  = saved_evecs.transpose() * P_prior_pose * saved_evecs;
-        for (int d = 0; d < 6; ++d)
-        {
-            if (saved_mask(d) < 0.5)
-            {
-                P_post_eig.row(d) = P_prior_eig.row(d);
-                P_post_eig.col(d) = P_prior_eig.col(d);
-            }
-        }
-        m_P.block<6, 6>(0, 0) = saved_evecs * P_post_eig * saved_evecs.transpose();
+        // Combining prior cross-covariances with smaller posterior variances
+        // can make P indefinite. Decorrelate the complementary subspaces,
+        // including cross-covariances with the remaining estimator states.
+        // Physical projectors need not be symmetric. Each congruence preserves
+        // PSD and is equivalent to retaining blocks in the balanced eigenbasis.
+        M21D observable = M21D::Identity();
+        observable.block<6, 6>(0, 0) = pose_observable;
+        const M21D unobservable = M21D::Identity() - observable;
+        m_P = observable * P_candidate * observable.transpose()
+              + unobservable * P_prior * unobservable.transpose();
     }
     m_P = (0.5 * (m_P + m_P.transpose())).eval();
     m_lidar_update_diagnostics.posterior_covariance_evaluated = true;

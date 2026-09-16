@@ -257,43 +257,6 @@ async def test_operator_key_takes_precedence_over_product_session_header(monkeyp
     assert sent[0]["status"] == 200
 
 
-def test_real_env_gateway_requires_api_key(monkeypatch):
-    from gateway.auth import gateway_api_key_required
-
-    monkeypatch.setenv("LINGTU_ENV", "real")
-    monkeypatch.delenv("LINGTU_GATEWAY_REQUIRE_API_KEY", raising=False)
-
-    assert gateway_api_key_required() is True
-
-
-def test_legacy_field_endpoint_does_not_select_real_env(monkeypatch):
-    from gateway.auth import gateway_api_key_required
-
-    monkeypatch.setenv("LINGTU_ENV", "sim")
-    monkeypatch.setenv("LINGTU_ENDPOINT", "thunder-field")
-    monkeypatch.delenv("LINGTU_GATEWAY_REQUIRE_API_KEY", raising=False)
-
-    assert gateway_api_key_required() is False
-
-
-def test_sim_env_gateway_keeps_auth_optional_by_default(monkeypatch):
-    from gateway.auth import gateway_api_key_required
-
-    monkeypatch.setenv("LINGTU_ENV", "sim")
-    monkeypatch.delenv("LINGTU_GATEWAY_REQUIRE_API_KEY", raising=False)
-
-    assert gateway_api_key_required() is False
-
-
-def test_explicit_gateway_auth_requirement_is_honored(monkeypatch):
-    from gateway.auth import gateway_api_key_required
-
-    monkeypatch.setenv("LINGTU_ENV", "sim")
-    monkeypatch.setenv("LINGTU_GATEWAY_REQUIRE_API_KEY", "1")
-
-    assert gateway_api_key_required() is True
-
-
 def _mcp_auth_kwargs(app):
     from gateway.auth import APIKeyMiddleware
 

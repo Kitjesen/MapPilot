@@ -67,10 +67,10 @@ def _lidar_fixture() -> bytes:
         )
         records.extend(
             _record(
-                4,
+                7,
                 observation_ns,
                 index * 2 + 1,
-                struct.pack(
+                struct.pack("<3d", .7 + index, 2.0, .6) + struct.pack(
                     "<4fIBBH",
                     2.0,
                     0.0,
@@ -385,7 +385,7 @@ def _verify_three_streams(
             clients.append(client)
             if client.write(payload) != len(payload):
                 raise RuntimeError(f"{stream} endpoint reported a short write")
-        writer_observer = subprocess.run(  # noqa: S603
+        writer_observer = subprocess.run(
             [str(observer), "--observe-stream-writers", str(domain_id)],
             cwd=str(root),
             check=False,
@@ -473,7 +473,7 @@ def _verify_missing_stream_fails(
     command = _publisher_command(publisher, domain_id)
     stream_index = command.index("--stream")
     del command[stream_index : stream_index + 2]
-    process = subprocess.run(  # noqa: S603
+    process = subprocess.run(
         command,
         cwd=str(session_root),
         env=_process_environment(session_root, product_session_id),
@@ -492,7 +492,7 @@ def _verify_live_endpoint_rejects_replay(
     publisher: Path, session_root: Path, domain_id: int
 ) -> None:
     product_session_id = "c" * 32
-    process = subprocess.run(  # noqa: S603
+    process = subprocess.run(
         [*_publisher_command(publisher, domain_id), "--replay-rate", "1"],
         cwd=str(session_root),
         env=_process_environment(session_root, product_session_id),
@@ -597,4 +597,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except Exception as error:
         print(f"sensor publisher authenticated endpoint DDS process: FAIL: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from error

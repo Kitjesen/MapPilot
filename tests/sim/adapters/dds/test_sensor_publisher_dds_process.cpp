@@ -20,8 +20,8 @@
 #include "dds/dds.h"
 #include "drivers/real/camera/native/camera_record.hpp"
 #include "messages.h"
-#include "message/cpp/qos.hpp"
-#include "message/cpp/topics.hpp"
+#include "transport/dds/qos.hpp"
+#include "message/generated/topics.hpp"
 #include "native/module.hpp"
 #include "test_dds_domain.hpp"
 
@@ -156,6 +156,30 @@ std::string make_sensor_fixture() {
   return records;
 }
 
+std::string make_simulation_clock_fixture() {
+  std::string records;
+  constexpr std::uint64_t kWallTimestampNs = 1700000000000000000ULL;
+
+  auto append_imu = [&](std::uint64_t timestamp_ns, std::uint32_t sequence) {
+    lidar::ImuSample imu{};
+    imu.gyro_x = 0.25F;
+    imu.gyro_y = -0.5F;
+    imu.gyro_z = 0.75F;
+    imu.acc_x = 0.15F;
+    imu.acc_y = 0.25F;
+    imu.acc_z = 1.0F;
+    std::string payload;
+    append_pod(payload, imu);
+    append_record(records, 2, timestamp_ns, sequence, 1, payload);
+  };
+
+  append_record(records, 6, 0, 0, 1, "");
+  append_imu(kWallTimestampNs, 0);
+  append_record(records, 6, 50000000ULL, 1, 1, "");
+  append_imu(kWallTimestampNs + 50000000ULL, 1);
+  return records;
+}
+
 std::string make_color_without_intrinsics_fixture(std::uint32_t count = 1) {
   auto color = camera_record::makeRecordHeader(camera_record::kKindColor);
   color.width = 1;
@@ -232,8 +256,9 @@ class PublisherProcess {
  public:
   PublisherProcess(const std::filesystem::path &publisher, const std::filesystem::path &ready,
                    int domain_id,
-                   std::optional<std::pair<std::string, std::string>> extra_option = std::nullopt) {
-    start(publisher, ready, domain_id, std::move(extra_option));
+                   std::optional<std::pair<std::string, std::string>> extra_option = std::nullopt,
+                   bool restamp_stdin_records = false) {
+    start(publisher, ready, domain_id, std::move(extra_option), restamp_stdin_records);
   }
 
   PublisherProcess(const PublisherProcess &) = delete;
@@ -373,7 +398,8 @@ class PublisherProcess {
 #endif
 
   void start(const std::filesystem::path &publisher, const std::filesystem::path &ready,
-             int domain_id, std::optional<std::pair<std::string, std::string>> extra_option) {
+             int domain_id, std::optional<std::pair<std::string, std::string>> extra_option,
+             bool restamp_stdin_records) {
 #ifdef _WIN32
     SECURITY_ATTRIBUTES security{};
     security.nLength = sizeof(security);
@@ -393,6 +419,9 @@ class PublisherProcess {
                            quote_arg("lidar_test") + L" --imu-frame " + quote_arg("imu_test") +
                            L" --camera-frame " + quote_arg("camera_test") +
                            L" --scan-window 0 --ready-file " + quote(ready);
+    if (restamp_stdin_records) {
+      command += L" --restamp-stdin-records";
+    }
     if (extra_option.has_value()) {
       command += L" " + quote_arg(extra_option->first) + L" " + quote_arg(extra_option->second);
     }
@@ -431,11 +460,24 @@ class PublisherProcess {
       close(stdin_pipe[0]);
       const std::string domain = std::to_string(domain_id);
       if (extra_option.has_value()) {
+        if (restamp_stdin_records) {
+          execl(publisher.c_str(), publisher.c_str(), "--stdin-records", "--dds", "--domain-id",
+                domain.c_str(), "--lidar-frame", "lidar_test", "--imu-frame", "imu_test",
+                "--camera-frame", "camera_test", "--scan-window", "0", "--ready-file",
+                ready.c_str(), "--restamp-stdin-records", extra_option->first.c_str(),
+                extra_option->second.c_str(), static_cast<char *>(nullptr));
+        } else {
+          execl(publisher.c_str(), publisher.c_str(), "--stdin-records", "--dds", "--domain-id",
+                domain.c_str(), "--lidar-frame", "lidar_test", "--imu-frame", "imu_test",
+                "--camera-frame", "camera_test", "--scan-window", "0", "--ready-file",
+                ready.c_str(), extra_option->first.c_str(), extra_option->second.c_str(),
+                static_cast<char *>(nullptr));
+        }
+      } else if (restamp_stdin_records) {
         execl(publisher.c_str(), publisher.c_str(), "--stdin-records", "--dds", "--domain-id",
               domain.c_str(), "--lidar-frame", "lidar_test", "--imu-frame", "imu_test",
-              "--camera-frame", "camera_test", "--scan-window", "0", "--ready-file", ready.c_str(),
-              extra_option->first.c_str(), extra_option->second.c_str(),
-              static_cast<char *>(nullptr));
+              "--camera-frame", "camera_test", "--scan-window", "0", "--ready-file",
+              ready.c_str(), "--restamp-stdin-records", static_cast<char *>(nullptr));
       } else {
         execl(publisher.c_str(), publisher.c_str(), "--stdin-records", "--dds", "--domain-id",
               domain.c_str(), "--lidar-frame", "lidar_test", "--imu-frame", "imu_test",
@@ -534,6 +576,46 @@ bool reader_has_match(dds_entity_t reader, const char *label) {
                              "): " + dds_strretcode(-count));
   }
   return count > 0;
+}
+
+std::uint8_t take_matching_simulation_clocks(dds_entity_t reader) {
+  void *samples[8]{};
+  dds_sample_info_t infos[8]{};
+  const dds_return_t count = dds_take(reader, samples, infos, 8, 8);
+  if (count < 0) {
+    throw std::runtime_error(std::string("dds_take(sim_clock): ") + dds_strretcode(-count));
+  }
+  std::uint8_t matches = 0;
+  for (dds_return_t index = 0; index < count; ++index) {
+    if (!infos[index].valid_data || samples[index] == nullptr) {
+      continue;
+    }
+    const auto *msg = static_cast<const lingtu_dds_Time *>(samples[index]);
+    if (msg->sec == 0 && msg->nanosec == 0) {
+      matches |= 1U;
+    }
+    if (msg->sec == 0 && msg->nanosec == 50000000U) {
+      matches |= 2U;
+    }
+  }
+  if (count > 0) {
+    checked(dds_return_loan(reader, samples, count), "dds_return_loan(sim_clock)");
+  }
+  return matches;
+}
+
+void wait_for_clock_reader_match(PublisherProcess &process, dds_entity_t clock_reader) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (reader_has_match(clock_reader, "sim_clock")) {
+      return;
+    }
+    if (process.wait(std::chrono::milliseconds(1))) {
+      throw std::runtime_error("publisher exited before simulation clock DDS discovery completed");
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  throw std::runtime_error("publisher simulation clock DDS discovery timed out");
 }
 
 int reader_match_count(dds_entity_t reader, const char *label) {
@@ -702,7 +784,8 @@ bool take_matching_map_observation(dds_entity_t reader) {
                        msg->observation_sequence > 0 && msg->reset_epoch > 0 &&
                        close_enough(msg->map_sensor.translation.z, 0.4) &&
                        close_enough(msg->map_sensor.rotation.w, 1.0) &&
-                       close_enough(msg->sensor_origin.z, 0.4) &&
+                       close_enough(msg->sensor_origin.z, 0.6) &&
+                       close_enough(msg->sensor_origin.x, msg->map_sensor.translation.x - 0.3) &&
                        close_enough(msg->pose_confidence, 1.0) &&
                        close_enough(msg->localization_quality, 1.0) &&
                        msg->pose_state != nullptr &&
@@ -730,6 +813,41 @@ dds_entity_t create_reader(dds_entity_t participant, const lingtu::message::Topi
       "dds_create_topic(reader)");
   auto qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(contract.dds_topic));
   return checked(dds_create_reader(participant, topic, qos.get(), nullptr), "dds_create_reader");
+}
+
+void verify_simulation_clock_round_trip(const std::filesystem::path &publisher, int domain_id,
+                                        dds_entity_t participant) {
+  const auto ready =
+      std::filesystem::temp_directory_path() /
+      ("lingtu_sensor_publisher_clock_ready_" +
+       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".json");
+  std::filesystem::remove(ready);
+  const dds_entity_t clock_reader =
+      create_reader(participant, lingtu::message::kSimClock, &lingtu_dds_Time_desc);
+  try {
+    PublisherProcess process(publisher, ready, domain_id, std::nullopt, true);
+    wait_for_ready_marker(process, ready);
+    wait_for_clock_reader_match(process, clock_reader);
+    process.write_records(make_simulation_clock_fixture());
+
+    std::uint8_t matches = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    while (std::chrono::steady_clock::now() < deadline && matches != 3U) {
+      matches |= take_matching_simulation_clocks(clock_reader);
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    const bool exited = process.wait(std::chrono::seconds(4));
+    std::filesystem::remove(ready);
+    if (!exited || process.exit_code() != std::optional<int>{0}) {
+      throw std::runtime_error("simulation clock publisher did not exit successfully");
+    }
+    if (matches != 3U) {
+      throw std::runtime_error("simulation clock DDS samples did not preserve 0 and 0.05 seconds");
+    }
+  } catch (...) {
+    std::filesystem::remove(ready);
+    throw;
+  }
 }
 
 void observe_endpoint_samples(const int domain_id, const std::filesystem::path &ready_path) {
@@ -950,6 +1068,7 @@ int main(int argc, const char *const argv[]) {
                                " camera_depth=" + (saw_depth ? "yes" : "no") +
                                " camera_info=" + (saw_info ? "yes" : "no"));
     }
+    verify_simulation_clock_round_trip(argv[1], domain_id, participant);
     dds_delete(participant);
     std::printf(
         "sensor publisher DDS process passed: domain=%d imu=%s "

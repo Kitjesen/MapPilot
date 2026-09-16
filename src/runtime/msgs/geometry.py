@@ -12,7 +12,7 @@ import struct
 import time
 from typing import Any, ClassVar
 
-from runtime.runtime_interface import body_frame_id, map_frame_id
+from runtime.tf.frames import body_frame_id, map_frame_id
 
 from .numpy_compat import is_numpy_array, np
 

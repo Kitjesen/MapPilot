@@ -8,6 +8,7 @@ from lingtu.assembly.binding_policy import (
     endpoint_contract_for_config,
     localization_adapter_for_config,
 )
+from lingtu.run_plan import RunPlan
 from runtime.blueprint import Blueprint, autoconnect
 
 from .driver import driver
@@ -42,6 +43,10 @@ def compose_full_stack_modules(
     enable_teleop: bool = True,
     enable_navigation: bool = True,
     semantic_save_dir: str = DEFAULT_SEMANTIC_DIR,
+    product: str | None = None,
+    required_topics: tuple[str, ...] = (),
+    required_capabilities: tuple[str, ...] = (),
+    run_plan: RunPlan | None = None,
     config: dict[str, Any] | None = None,
 ) -> Blueprint:
     """Compose the standard LingTu/Thunder module graph before explicit wires.
@@ -103,6 +108,8 @@ def compose_full_stack_modules(
         else Blueprint(),
         services(
             enable_goals=enable_goals,
+            required_topics=required_topics,
+            required_capabilities=required_capabilities,
             **services_config,
         ),
         navigation() if enable_navigation else Blueprint(),
@@ -114,8 +121,8 @@ def compose_full_stack_modules(
             enable_camera=bool(perception_config.get("enable_camera", False)),
             command_output_mode=config.get("command_output_mode"),
             hardware_control_boundary=config.get("hardware_control_boundary"),
-            product=config.get("_product"),
-            run_plan=config.get("_run_plan"),
+            product=product,
+            run_plan=run_plan,
         )
         if enable_gateway
         else Blueprint(),

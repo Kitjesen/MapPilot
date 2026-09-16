@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Camera, StopCircle, RefreshCw, LockOpen } from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { Camera, ChevronDown, RefreshCw, LockOpen } from 'lucide-react'
 import { useCamera } from '../hooks/useCamera'
 import { useWHEP } from '../hooks/useWHEP'
 import { CameraHud } from './CameraHud'
@@ -8,7 +8,6 @@ import { text, type Locale } from '../i18n'
 import styles from './CameraFeed.module.css'
 
 interface CameraFeedProps {
-  onStop:   () => void
   onResetEstop: () => void
   estop:    boolean
   resetBusy: boolean
@@ -19,11 +18,9 @@ interface CameraFeedProps {
 }
 
 type Source = 'whep' | 'jpeg'
-type CameraHealth = 'live' | 'degraded' | 'connecting' | 'offline'
-const STREAM_TIMEOUT_MS = 8_000
+type CameraHealth = 'live' | 'connecting' | 'offline'
 
 export function CameraFeed({
-  onStop,
   onResetEstop,
   estop,
   resetBusy,
@@ -32,23 +29,11 @@ export function CameraFeed({
   sseState,
   locale,
 }: CameraFeedProps) {
-  // Two-tier fallback, fastest-first:
-  //   1. go2rtc WHEP sidecar (native Go, ~30–60 ms LAN)
-  //   2. JPEG-over-WebSocket (~250 ms, universal fallback)
-  // The JPEG hook idles until WHEP fails or times out.
+  // Show the native JPEG stream while WHEP negotiates. An absent optional
+  // go2rtc service must not delay an already available camera by eight seconds.
   const whep = useWHEP()
-  const [whepTimedOut, setWhepTimedOut] = useState(false)
-  const whepDone = whep.connected || whep.stream || whep.error
-  useEffect(() => {
-    if (whepDone) return
-    const t = setTimeout(() => setWhepTimedOut(true), STREAM_TIMEOUT_MS)
-    return () => clearTimeout(t)
-  }, [whepDone])
-
-  const whepFailed = whep.error != null || (!whepDone && whepTimedOut)
-  const jpeg = useCamera(whepFailed ? '/ws/camera' : '')
-
-  const source: Source = whepFailed ? 'jpeg' : 'whep'
+  const jpeg = useCamera(whep.connected ? '' : '/ws/camera')
+  const source: Source = whep.connected ? 'whep' : 'jpeg'
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const liveStream = source === 'whep' ? whep.stream : null
@@ -70,26 +55,22 @@ export function CameraFeed({
     jpeg.reconnect
 
   const cameraHealth: CameraHealth = hasVideo
-    ? (source === 'whep' ? 'live' : 'degraded')
+    ? 'live'
     : (isConnected ? 'connecting' : 'offline')
   const cameraHealthClass =
     cameraHealth === 'live' ? styles.camBadgeLive :
-    cameraHealth === 'degraded' ? styles.camBadgeDegraded :
     cameraHealth === 'connecting' ? styles.camBadgeConnecting :
     styles.camBadgeOff
   const cameraHealthLabel =
-    cameraHealth === 'live' ? '直播' :
-    cameraHealth === 'degraded' ? '降级 MJPEG' :
+    cameraHealth === 'live' ? '实时画面' :
     cameraHealth === 'connecting' ? '图传恢复中' :
     '图传离线'
 
   let sourceLabel: string
   if (source === 'jpeg') {
-    sourceLabel = jpeg.lastFrameAt ? 'MJPEG 降级流 · 已恢复' : 'MJPEG 降级流 · 等待帧'
-  } else if (source === 'whep') {
-    sourceLabel = whep.connected ? '图传 · Go2RTC · H.264' : '图传 · Go2RTC (建立中…)'
+    sourceLabel = jpeg.imgSrc ? '相机图传 · 已连接' : '相机图传 · 等待画面'
   } else {
-    sourceLabel = '图传 · Go2RTC (建立中…)'
+    sourceLabel = whep.connected ? '图传 · Go2RTC · H.264' : '图传 · Go2RTC (建立中…)'
   }
 
   return (
@@ -133,14 +114,6 @@ export function CameraFeed({
       </div>
 
       <div className={styles.controls}>
-        <button
-          className={styles.btnStop}
-          onClick={onStop}
-          aria-label="紧急停止"
-        >
-          <StopCircle size={18} />
-          紧急停止
-        </button>
         {estop && (
           <button
             className={styles.btnReset}
@@ -166,7 +139,10 @@ export function CameraFeed({
             )}
           </span>
         )}
-        <span className={styles.hint}>{sourceLabel}</span>
+        <details className={styles.streamInfo}>
+          <summary>{text(locale, 'Camera information', '相机信息')}<ChevronDown size={13} /></summary>
+          <p>{sourceLabel}</p>
+        </details>
       </div>
     </div>
   )

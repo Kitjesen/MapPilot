@@ -4,7 +4,6 @@ pytestmark = [pytest.mark.sim]
 
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PRODUCT_MUJOCO_WORLD = (
     REPO_ROOT / "sim" / "packages" / "worlds" / "industrial_park" / "physics" / "industrial_park_scene.xml"

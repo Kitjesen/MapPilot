@@ -27,6 +27,7 @@ using LocalPlanCancel = std::function<bool()>;
 const char *localPlannerBackendName(LocalPlannerBackend backend);
 
 struct ScanPlannerParams {
+  static constexpr double kMinReferenceWaypointDistanceM = 0.5;
   double voxelResolution = 0.05;
   double routeZTolerance = 0.35;
   double bodyClearanceBelow = 0.25;
@@ -35,7 +36,6 @@ struct ScanPlannerParams {
   double controlPointSpacing = 0.20;
   double replanDistance = 1.0;
   double noReplanDistance = 0.10;
-  double collisionMaxAge = 0.50;
   double maxVelocity = 0.75;
   double maxAcceleration = 0.50;
   double planningHorizon = 3.5;
@@ -52,6 +52,8 @@ struct ScanPlannerParams {
 struct LocalPlannerParams {
   LocalPlannerBackend backend = LocalPlannerBackend::Cmu;
   ScanPlannerParams scan{};
+  // Endpoint input policy shared with recovery collision queries.
+  double localCollisionMaxAge = 0.50;
   double vehicleLength = 0.6;
   double vehicleWidth = 0.6;
   bool twoWayDrive = true;
@@ -121,6 +123,7 @@ struct LocalCollisionMapView {
   std::uint64_t observationSequence{0};
   std::uint64_t generation{0};
   double stampS{0.0};
+  // Receive time in the consuming request's clock; endpoint rebases for sim.
   double receiveStampS{0.0};
   bool complete{false};
   bool live{false};
@@ -234,9 +237,16 @@ struct EnvironmentView {
 
 using PlanIdentity = LocalPlanIdentity;
 
+enum class PlanClockMode { Steady, External };
+
 struct PlanClock {
   double timestampS{0.0};
   bool executionFrozen{false};
+  PlanClockMode mode{PlanClockMode::Steady};
+
+  [[nodiscard]] double afterElapsed(double wallElapsedS) const {
+    return timestampS + (mode == PlanClockMode::Steady ? wallElapsedS : 0.0);
+  }
 };
 
 struct LocalPlanRequest {
@@ -249,6 +259,8 @@ struct LocalPlanRequest {
   EnvironmentView environment{};
   PlanIdentity identity{};
   PlanClock clock{};
+  // Resolved runtime linear-speed ceiling; zero uses configured planner limits.
+  double maxLinearSpeedMps{0.0};
 
   [[nodiscard]] const LocalRouteView *route() const noexcept;
   [[nodiscard]] const LocalRouteView *referenceRoute() const noexcept;
@@ -326,6 +338,52 @@ struct LocalPlanCandidate {
   std::vector<Vec3> path;
 };
 
+struct ScanAttemptDiagnostics {
+  std::uint64_t attemptId{0};
+  bool attempted{false};
+  bool success{false};
+  std::string stage;
+  std::string reason;
+  bool optimizerReturnCodeValid{false};
+  int optimizerReturnCode{0};
+  bool collisionValid{false};
+  // Rejected segment start, or a control point when collisionTimeS is -1.
+  // This is not the obstacle voxel or an exact contact point.
+  Vec3 collisionPosition{};
+  double collisionTimeS{-1.0};
+  int collisionState{0};
+  bool dynamicViolationValid{false};
+  std::string dynamicQuantity;
+  double dynamicValue{0.0};
+  double dynamicLimit{0.0};
+  double dynamicTimeS{-1.0};
+};
+
+// Final attempted result of the first failed FSM tick in the latest episode.
+// A tick that recovers through an internal retry is not a failure episode.
+// Large map bytes retain
+// immutable ownership and are persisted separately from periodic status.
+struct ScanFailureSnapshot {
+  std::uint64_t sequence{0};
+  ScanAttemptDiagnostics attempt;
+  PlanClock clock;
+  PlanIdentity identity;
+  RobotState robot;
+  ScanPlannerParams params;
+  bool checkObstacle{true};
+  double maxLinearSpeedMps{0.0};
+  std::optional<LocalMotionIntent> intent;
+  std::vector<Vec3> reference;
+  std::uint64_t referenceGeneration{0};
+  bool referenceReachesGoal{false};
+  LocalCollisionMapView collision;
+  Vec3 startPosition{}, startVelocity{}, startAcceleration{};
+  Vec3 targetPosition{}, targetVelocity{};
+  bool polyInit{false}, randomPolyInit{false};
+  double candidateIntervalS{0.0};
+  std::vector<Vec3> candidateControlPoints;
+};
+
 struct LocalPlannerDebugSnapshot {
   bool valid{false};
   LocalPlannerBackend backend{LocalPlannerBackend::Cmu};
@@ -346,6 +404,8 @@ struct LocalPlannerDebugSnapshot {
   int anchorSearches{0};
   bool continuityReused{false};
   bool splineFallback{false};
+  ScanAttemptDiagnostics scanAttempt;
+  std::shared_ptr<const ScanFailureSnapshot> lastScanFailure;
   double pathScale{0.0};
   double pathRange{0.0};
   double relativeGoalDistanceM{0.0};

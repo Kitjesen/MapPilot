@@ -31,7 +31,7 @@ function elevationScene(
     metadata: {
       producer_boot_id: 'mapd-boot-a',
       generation: 4,
-      reset_epoch: 2,
+      reset_epoch: '2',
       observation_sequence: 8,
       live: true,
     },
@@ -44,7 +44,7 @@ function elevationScene(
       producer_boot_id: 'mapd-boot-a',
       stamp_s: 100,
       generation: 4,
-      reset_epoch: 2,
+      reset_epoch: '2',
       observation_sequence: 8,
       live: true,
       grid_b64: float32Base64(values),
@@ -95,6 +95,36 @@ test('elevation surface fails closed when its frame does not match the scene', (
   assert.equal(createElevationLayer(state), null)
 })
 
+test('elevation cohorts preserve exact uint64 reset epoch identities', () => {
+  const liveEpoch = '117269136217079808'
+  const previous = elevationScene([0, 0.25, 0.5, 0.75], { reset_epoch: liveEpoch })
+  previous.metadata = { ...previous.metadata, reset_epoch: liveEpoch }
+  const state = resolveElevationLayer(previous, { nowS: 101, savedMapFrameId: 'map' })
+  assert.equal(state.status, 'ready')
+  if (state.status === 'ready') assert.equal(state.layer.reset_epoch, liveEpoch)
+
+  const adjacentEpoch: MapSceneEvent = {
+    ...previous,
+    ts: 101,
+    sequence: 9,
+    metadata: { ...previous.metadata, reset_epoch: '117269136217079809', generation: 5 },
+    layers: [{
+      ...previous.layers[0],
+      reset_epoch: '117269136217079809',
+      generation: 5,
+      grid_b64: undefined,
+      payload: 'omitted',
+      retain_previous: true,
+      retention_scope: 'same_elevation_cohort',
+    }],
+  }
+  assert.equal(mergeMapSceneElevation(previous, adjacentEpoch).layers[0].grid_b64, undefined)
+
+  const roundedNumber = elevationScene([0, 0.25, 0.5, 0.75], { reset_epoch: 117269136217079808 })
+  roundedNumber.metadata = { ...roundedNumber.metadata, reset_epoch: 117269136217079808 }
+  assert.equal(resolveElevationLayer(roundedNumber, { nowS: 101, savedMapFrameId: 'map' }).status, 'error')
+})
+
 test('metadata-only map scene updates retain the latest aligned elevation payload', () => {
   const previous = elevationScene([0, 0.25, 0.5, 0.75])
   const incoming: MapSceneEvent = {
@@ -104,7 +134,7 @@ test('metadata-only map scene updates retain the latest aligned elevation payloa
     metadata: {
       producer_boot_id: 'mapd-boot-a',
       generation: 5,
-      reset_epoch: 2,
+      reset_epoch: '2',
       observation_sequence: 9,
       live: true,
     },
@@ -113,7 +143,7 @@ test('metadata-only map scene updates retain the latest aligned elevation payloa
       type: 'grid',
       frame_id: 'map',
       producer_boot_id: 'mapd-boot-a',
-      reset_epoch: 2,
+      reset_epoch: '2',
       generation: 5,
       rows: 2,
       cols: 2,
@@ -130,7 +160,7 @@ test('metadata-only map scene updates retain the latest aligned elevation payloa
   previous.metadata = {
     producer_boot_id: 'mapd-boot-a',
     generation: 4,
-    reset_epoch: 2,
+    reset_epoch: '2',
     observation_sequence: 8,
     live: true,
   }
@@ -180,11 +210,11 @@ test('gateway-shaped sparse scene metadata uses the elevation layer identity ato
 
 test('metadata without an explicit retention grant clears the previous elevation payload', () => {
   const previous = elevationScene([0, 0.25, 0.5, 0.75])
-  previous.metadata = { generation: 4, live: true, reset_epoch: 2 }
+  previous.metadata = { generation: 4, live: true, reset_epoch: '2' }
   const incoming: MapSceneEvent = {
     ...previous,
     sequence: 9,
-    metadata: { generation: 5, live: true, reset_epoch: 2 },
+    metadata: { generation: 5, live: true, reset_epoch: '2' },
     layers: [{ id: 'maps.elevation', type: 'grid', frame_id: 'map', payload: 'omitted' }],
   }
 
@@ -199,7 +229,7 @@ test('producer restart and geometry changes clear old elevation even when counte
     metadata: {
       producer_boot_id: 'mapd-boot-b',
       generation: 1,
-      reset_epoch: 2,
+      reset_epoch: '2',
       observation_sequence: 1,
       live: true,
     },
@@ -208,7 +238,7 @@ test('producer restart and geometry changes clear old elevation even when counte
       type: 'grid',
       frame_id: 'map',
       producer_boot_id: 'mapd-boot-b',
-      reset_epoch: 2,
+      reset_epoch: '2',
       generation: 1,
       rows: 2,
       cols: 2,
@@ -232,7 +262,7 @@ test('producer restart and geometry changes clear old elevation even when counte
       type: 'grid',
       frame_id: 'map',
       producer_boot_id: 'mapd-boot-a',
-      reset_epoch: 2,
+      reset_epoch: '2',
       generation: 5,
       rows: 2,
       cols: 2,
@@ -262,12 +292,12 @@ test('invalid cells cut holes in the elevation surface instead of creating NaN t
 test('reset epochs and regressing scene identities never inherit an older elevation payload', () => {
   const previous = elevationScene([0, 0.25, 0.5, 0.75])
   previous.map_id = 'map-a'
-  previous.metadata = { generation: 4, live: true, reset_epoch: 2 }
+  previous.metadata = { generation: 4, live: true, reset_epoch: '2' }
   const reset: MapSceneEvent = {
     ...previous,
     ts: 101,
     sequence: 1,
-    metadata: { generation: 1, live: true, reset_epoch: 3 },
+    metadata: { generation: 1, live: true, reset_epoch: '3' },
     layers: [{ id: 'maps.elevation', type: 'grid', frame_id: 'map', payload: 'omitted' }],
   }
   assert.equal(mergeMapSceneElevation(previous, reset).layers[0].grid_b64, undefined)
@@ -275,7 +305,7 @@ test('reset epochs and regressing scene identities never inherit an older elevat
   const switchedMap: MapSceneEvent = {
     ...reset,
     map_id: 'map-b',
-    metadata: { generation: 1, live: true, reset_epoch: 2 },
+    metadata: { generation: 1, live: true, reset_epoch: '2' },
   }
   assert.equal(mergeMapSceneElevation(previous, switchedMap).layers[0].grid_b64, undefined)
 
@@ -283,7 +313,7 @@ test('reset epochs and regressing scene identities never inherit an older elevat
     ...reset,
     sequence: 9,
     map_id: 'map-a',
-    metadata: { generation: 5, live: true, reset_epoch: 2 },
+    metadata: { generation: 5, live: true, reset_epoch: '2' },
     layers: [{
       id: 'maps.elevation',
       type: 'grid',
@@ -302,7 +332,7 @@ test('reset epochs and regressing scene identities never inherit an older elevat
     metadata: {
       producer_boot_id: 'mapd-boot-a',
       generation: 3,
-      reset_epoch: 2,
+      reset_epoch: '2',
       observation_sequence: 7,
       live: true,
     },
@@ -311,7 +341,7 @@ test('reset epochs and regressing scene identities never inherit an older elevat
       type: 'grid',
       frame_id: 'map',
       producer_boot_id: 'mapd-boot-a',
-      reset_epoch: 2,
+      reset_epoch: '2',
       generation: 3,
       rows: 2,
       cols: 2,

@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """S3 contract tests for the simulation-local Studio application service."""
 
 from __future__ import annotations

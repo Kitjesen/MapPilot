@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from gateway.mcp_server import MCPServerModule
 from runtime.msgs.geometry import Pose, Vector3
-from runtime.msgs.nav import NavigationState, Odometry
+from runtime.msgs.nav import Odometry
 from runtime.msgs.semantic import SceneGraph
 from runtime.stream import In, Out
 
@@ -39,6 +40,22 @@ def _scene_graph() -> SceneGraph:
         ],
         regions=[Region(name="office", object_ids=["1", "2"], center=Vector3(2, 3, 0))],
     )
+
+
+def _navigation_status() -> dict:
+    return {
+        "schema_version": 3,
+        "task": {"state": "IDLE", "task_id": "", "reason": ""},
+        "goal_admission": {"state": "ACCEPTING", "reason": ""},
+        "control": {"authority": "NONE", "resume_required": False, "reason": ""},
+        "motion": {
+            "permission": "CLEAR",
+            "observation": "QUIET",
+            "stop_confirmation": "NOT_REQUESTED",
+            "reason": "",
+        },
+        "ts": 123.0,
+    }
 
 
 def _fake_nav_skills():
@@ -82,7 +99,7 @@ class TestMCPPorts(unittest.TestCase):
         self.assertEqual(MCPServerModule._layer, 6)
 
     def test_in_ports(self):
-        for name in ("odometry", "scene_graph", "navigation_state", "navigation_goal_status"):
+        for name in ("odometry", "scene_graph", "navigation_goal_status"):
             with self.subTest(port=name):
                 self.assertIsInstance(getattr(self.mod, name), In)
 
@@ -121,18 +138,6 @@ class TestMCPTelemetry(unittest.TestCase):
         self.mod._on_sg(_scene_graph())
         parsed = json.loads(self.mod._sg_json)
         self.assertIn("objects", parsed)
-
-    def test_navigation_state_cached(self):
-        self.mod._on_navigation_state(
-            NavigationState(
-                boot_id="navd-test",
-                sequence=1,
-                active_task_id="task-1",
-                active_request_id="request-1",
-            )
-        )
-        self.assertEqual(self.mod._navigation_state["active_task_id"], "task-1")
-
 
 # ===========================================================================
 # 3. Dynamic @skill discovery via on_system_modules
@@ -396,6 +401,54 @@ class TestMCPHealth(unittest.TestCase):
         m = _make_mcp()
         m.on_system_modules({"MCPServerModule": m})
         self.assertEqual(m.health()["mcp"]["tools"], len(m._tool_list))
+
+
+class TestMCPCapabilities(unittest.TestCase):
+    def test_capabilities_use_gateway_navigation_status(self):
+        status = _navigation_status()
+        m = _make_mcp()
+        m.on_system_modules({"MCPServerModule": m, "GatewayModule": SimpleNamespace()})
+
+        with patch("gateway.mcp_server.build_navigation_status", return_value=status) as build:
+            payload = m._capabilities_payload()
+
+        build.assert_called_once_with(m._all_modules["GatewayModule"])
+        self.assertIs(payload["navigation_status"], status)
+        self.assertNotIn("navigation_state", payload)
+        self.assertFalse(payload["motion_tools_blocked"])
+
+    def test_capabilities_fail_closed_without_gateway(self):
+        m = _make_mcp()
+        m.on_system_modules({"MCPServerModule": m})
+
+        payload = m._capabilities_payload()
+
+        self.assertIsNone(payload["navigation_status"])
+        self.assertTrue(payload["motion_tools_blocked"])
+
+    def test_capabilities_fail_closed_for_unknown_or_missing_axis_state(self):
+        fields = (
+            ("task", "state"),
+            ("goal_admission", "state"),
+            ("control", "authority"),
+            ("motion", "permission"),
+            ("motion", "observation"),
+            ("motion", "stop_confirmation"),
+        )
+        m = _make_mcp()
+        m.on_system_modules({"MCPServerModule": m, "GatewayModule": SimpleNamespace()})
+
+        for axis, field in fields:
+            for value in ("UNKNOWN", None):
+                with self.subTest(axis=axis, field=field, value=value):
+                    status = _navigation_status()
+                    if value is None:
+                        status[axis].pop(field)
+                    else:
+                        status[axis][field] = value
+                    with patch("gateway.mcp_server.build_navigation_status", return_value=status):
+                        payload = m._capabilities_payload()
+                    self.assertTrue(payload["motion_tools_blocked"])
 
 
 if __name__ == "__main__":

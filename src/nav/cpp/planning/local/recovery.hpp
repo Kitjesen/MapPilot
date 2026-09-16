@@ -9,6 +9,8 @@
 
 namespace nav_kernel {
 
+namespace local::scan { class Grid; }
+
 enum class RecoveryAction { None, Translate, Rotate };
 
 enum class PlanStatus {
@@ -56,6 +58,8 @@ struct RecoveryPlannerParams {
 
 struct RecoveryPlannerInput {
   Pose vehiclePose{};
+  // Already inflated 3D map: query the same cylinder chain as SCAN.
+  const local::scan::Grid* collisionGrid{nullptr};
   const float* obstacleX{nullptr};
   const float* obstacleY{nullptr};
   const float* obstacleHeight{nullptr};

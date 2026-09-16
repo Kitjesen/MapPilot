@@ -52,6 +52,7 @@ class RelocalizationService(Protocol):
         y: float,
         yaw: float,
         *,
+        z: float = 0.0,
         timeout_s: float = 30.0,
     ) -> RelocalizationResult:
         ...
@@ -118,6 +119,7 @@ class Localization:
         y: float,
         yaw: float,
         *,
+        z: float = 0.0,
         timeout_s: float = 30.0,
     ) -> RelocalizationResult:
         if self._backend is None:
@@ -127,6 +129,7 @@ class Localization:
             x,
             y,
             yaw,
+            z=z,
             timeout_s=timeout_s,
         )
 

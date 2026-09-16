@@ -44,10 +44,29 @@ bool IMUProcessor::initialize(SyncPackage &package)
         m_imu_cache.clear();
         return false;
     }
+    const double acc_scale = State::gravity / acc_norm;
+    double acc_var = 0.0;
+    double gyro_var = 0.0;
+    for (const auto &imu : m_imu_cache)
+    {
+        acc_var += ((imu.acc - acc_mean) * acc_scale).squaredNorm();
+        gyro_var += (imu.gyro - gyro_mean).squaredNorm();
+    }
+    acc_var /= static_cast<double>(m_imu_cache.size());
+    gyro_var /= static_cast<double>(m_imu_cache.size());
+    // Startup motion and contact impulses must not set the permanent scale.
+    // Gyro bias is still unknown, so test variation around its candidate mean.
+    const double acc_thresh2 = m_config.imu_static_acc_thresh * m_config.imu_static_acc_thresh;
+    const double gyro_thresh2 = m_config.imu_static_gyro_thresh * m_config.imu_static_gyro_thresh;
+    if (acc_var >= acc_thresh2 || gyro_var >= gyro_thresh2)
+    {
+        m_imu_cache.clear();
+        return false;
+    }
     // FAST-LIO normalizes raw accelerometer magnitude using the stationary
     // initialization mean. Without this, a small scale error integrates into
     // unbounded velocity and position drift even while the robot is static.
-    m_acc_scale = State::gravity / acc_norm;
+    m_acc_scale = acc_scale;
     m_kf->x().r_il = m_config.r_il;
     m_kf->x().t_il = m_config.t_il;
     m_kf->x().bg = gyro_mean;

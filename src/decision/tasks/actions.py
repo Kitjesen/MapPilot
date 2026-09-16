@@ -16,7 +16,7 @@ from enum import Enum
 from typing import Any
 
 from runtime.msgs.numpy_compat import np
-from runtime.runtime_interface import map_frame_id
+from runtime.tf.frames import map_frame_id
 from runtime.utils.sanitize import safe_json_loads
 
 logger = logging.getLogger(__name__)

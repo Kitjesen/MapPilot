@@ -35,7 +35,7 @@
 #endif
 
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
-#include <octomap/OcTree.h>
+#include "lingtu/maps/build/octomap_io.hpp"
 #endif
 
 namespace lingtu::maps {
@@ -1004,12 +1004,13 @@ OctomapEditRun RunNativeOctomapEdit(const std::filesystem::path &input,
   result.mode = "native_octomap";
   result.effective_state =
       options.state == "occupied" || options.state == "preblocked" ? "occupied" : "free";
-  octomap::OcTree tree(0.10);
-  if (!tree.readBinary(input.string())) {
+  auto loaded_tree = LoadOctomapTree(input);
+  if (!loaded_tree) {
     result.reason_code = "octomap_read_failed";
-    result.message = "OctoMap OcTree::readBinary failed";
+    result.message = "OctoMap artifact is empty or unreadable";
     return result;
   }
+  auto& tree = *loaded_tree;
   const double resolution = tree.getResolution();
   if (!(resolution > 0.0) || !std::isfinite(resolution)) {
     result.reason_code = "invalid_octomap_resolution";

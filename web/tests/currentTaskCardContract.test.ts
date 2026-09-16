@@ -45,6 +45,16 @@ test('task card never projects an ambiguous bare numeric state as a lifecycle re
   assert.match(card, /STATE_LABELS\[task\.state\]/)
 })
 
+test('task card shares the operator task vocabulary while keeping task-specific polling', () => {
+  const card = readFileSync(
+    new URL('../src/components/CurrentTaskCard.tsx', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(card, /useCurrentNavigationTask\(\)/)
+  assert.match(card, /navigationTaskLabel\(task\.state, locale\)/)
+})
+
 test('non-terminal task card cannot be dismissed from the operator screen', () => {
   const card = readFileSync(
     new URL('../src/components/CurrentTaskCard.tsx', import.meta.url),
@@ -61,9 +71,9 @@ test('the dashboard adopts the authoritative active task instead of relying on l
     'utf8',
   )
 
-  assert.match(app, /navigationStatus\?\.mission\.raw/)
-  assert.match(app, /active_task_id/)
-  assert.match(app, /active_request_id/)
+  assert.match(app, /const activeTaskId = sseState\.navigationStatus\?\.task\.task_id/)
+  assert.doesNotMatch(app, /activeRequestId/)
+  assert.doesNotMatch(app, /mission\.raw|active_task_id|active_request_id/)
   assert.match(app, /currentNavigationTaskStore\.adoptAuthoritative/)
   assert.match(app, /MotionAction\.RESUME/)
   assert.match(app, /resumeAllowed=\{motionResumeGate\.allowed\}/)

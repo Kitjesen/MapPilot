@@ -181,6 +181,34 @@
     },
     "declared_capabilities": {
       "type": "object"
+    },
+    "navigation_geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "collision_clearance_below_m",
+        "collision_clearance_above_m",
+        "support_height_m",
+        "support_height_tolerance_m"
+      ],
+      "properties": {
+        "collision_clearance_below_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "collision_clearance_above_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "support_height_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "support_height_tolerance_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
     }
   },
   "$defs": {

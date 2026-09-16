@@ -1,4 +1,3 @@
-# ruff: noqa: D103, S101
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,8 +20,8 @@ FUNCTIONAL_ROOTS = {
     "runtime",
 }
 SOURCE_FAMILIES = {
-    "product_control": {"lingtu"},
-    "capabilities": {
+    "Product control": {"lingtu"},
+    "Capability": {
         "decision",
         "drivers",
         "explore",
@@ -32,8 +31,9 @@ SOURCE_FAMILIES = {
         "nav",
         "perception",
     },
-    "platform": {"diagnostics", "gateway", "message", "runtime"},
-    "compute": {"kernels", "native"},
+    "Runtime platform": {"diagnostics", "gateway", "message", "runtime"},
+    "Shared compute": {"kernels"},
+    "Shared native": {"native"},
 }
 
 
@@ -54,35 +54,22 @@ def test_src_uses_one_documented_functional_root_model() -> None:
         assert f"({name}/README.md)" in index
 
 
-def test_src_readme_groups_every_root_once_without_wrapper_packages() -> None:
+def test_src_readme_assigns_every_root_to_one_category_without_wrappers() -> None:
     index = (SRC / "README.md").read_text(encoding="utf-8")
-    source_families = index.split("## Source families", 1)[1].split(
-        "## Runtime entries", 1
+    directory_map = index.split("## Directory map", 1)[1].split(
+        "## Source and install boundary", 1
     )[0]
 
     assert set().union(*SOURCE_FAMILIES.values()) == FUNCTIONAL_ROOTS
     assert sum(map(len, SOURCE_FAMILIES.values())) == len(FUNCTIONAL_ROOTS)
 
-    family_starts = {
-        family: source_families.index(f"### {family}")
-        for family in SOURCE_FAMILIES
-    }
-    ordered_families = sorted(family_starts, key=family_starts.get)
-    for position, family in enumerate(ordered_families):
-        start = family_starts[family]
-        end = (
-            family_starts[ordered_families[position + 1]]
-            if position + 1 < len(ordered_families)
-            else len(source_families)
-        )
-        section = source_families[start:end]
-        for root in FUNCTIONAL_ROOTS:
-            assert (f"({root}/README.md)" in section) == (
-                root in SOURCE_FAMILIES[family]
-            )
+    for family, roots in SOURCE_FAMILIES.items():
+        for root in roots:
+            row_prefix = f"| {family} | [`{root}/`]({root}/README.md) |"
+            assert directory_map.count(row_prefix) == 1
 
     for family in SOURCE_FAMILIES:
-        assert not (SRC / family).exists()
+        assert not (SRC / family.lower().replace(" ", "_")).exists()
 
 
 def test_exploration_endpoint_is_owned_by_exploration_domain() -> None:
@@ -98,8 +85,9 @@ def test_exploration_endpoint_is_owned_by_exploration_domain() -> None:
 
 def test_removed_empty_roots_are_not_current_documented_owners() -> None:
     current_docs = (
-        ROOT / "docs/03-development/README.md",
-        ROOT / "docs/architecture/NAVIGATION_CAPABILITY_MATRIX.md",
+        ROOT / "docs/architecture.md",
+        ROOT / "docs/development.md",
+        ROOT / "docs/runtime.md",
     )
     text = "\n".join(path.read_text(encoding="utf-8") for path in current_docs)
 

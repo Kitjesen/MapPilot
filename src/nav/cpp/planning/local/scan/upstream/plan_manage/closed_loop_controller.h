@@ -3,10 +3,12 @@
 // Ported from SCAN-Planner plan_manage/closed_loop_controller.cpp at
 // commit 348e8a590a50a5a6bbab8d8c6dcfd171f009be26.
 // ROS messages, timers and publishers are replaced by value inputs/outputs;
-// the controller equations and execution-clock behavior are unchanged.
+// The autonomous controller equations and execution clock are retained.
+// LingTu teleoperation may supply body heading independently of travel direction.
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cstdint>
+#include <optional>
 
 #include <Eigen/Eigen>
 
@@ -38,6 +40,7 @@ struct ClosedLoopControllerState {
   Eigen::Vector3d position{Eigen::Vector3d::Zero()};
   double yaw{0.0};
   double nowS{0.0};
+  std::optional<double> desiredHeading{};
 };
 
 struct ClosedLoopControllerOutput {
@@ -45,12 +48,15 @@ struct ClosedLoopControllerOutput {
   double yawError{0.0};
   double endDistance{0.0};
   double executionTimeS{0.0};
+  double durationS{0.0};
+  double positionErrorM{0.0};
   bool executionFrozen{false};
   bool finished{false};
 };
 
 class ClosedLoopController {
  public:
+  static constexpr double kMaxUpdateGapS = 0.2;
   bool setTrajectory(const BsplineTrajectory &trajectory, double nowS);
   ClosedLoopControllerOutput step(const ClosedLoopControllerState &state,
                                   const ClosedLoopControllerParams &params);

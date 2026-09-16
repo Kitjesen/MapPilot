@@ -1,12 +1,13 @@
+import { dashboardFetch } from './observationMode.ts'
+import type { PlanningMap } from './planningMap.ts'
 // Centralized API service layer for LingTu web dashboard
 // All fetch() calls in one place.
 
 import type {
+  CameraMediaStatus,
   AppBootstrapResponse,
   AppCapabilitiesResponse,
   AppTrafficResponse,
-  AuthCheckResponse,
-  AuthLoginResponse,
   RecordingOperationResponse,
   RecordingStartConfig,
   RecordingDetailResponse,
@@ -170,7 +171,7 @@ async function readJsonResponse<T>(res: Response): Promise<T> {
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
-  return readJsonResponse<T>(await fetch(url))
+  return readJsonResponse<T>(await dashboardFetch(url))
 }
 
 function setClientLinks(links?: ClientLinks | null): void {
@@ -299,7 +300,7 @@ function flattenPointArray(points: MapPointsResponse['points']): number[] {
 }
 
 async function postJson<T>(url: string, body?: unknown): Promise<T> {
-  const res = await fetch(url, {
+  const res = await dashboardFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -332,6 +333,10 @@ export async function fetchAppBootstrap(): Promise<AppBootstrapResponse> {
   const data = await fetchJson<AppBootstrapResponse>(apiPath('bootstrap', '/api/v1/app/bootstrap'))
   setClientLinks(data.links)
   return data
+}
+
+export async function fetchCameraStatus(): Promise<CameraMediaStatus> {
+  return fetchJson<CameraMediaStatus>('/api/v1/camera/status')
 }
 
 export async function fetchAppCapabilities(): Promise<AppCapabilitiesResponse> {
@@ -420,6 +425,10 @@ export async function fetchNavigationStatus(): Promise<NavigationStatusResponse>
   return fetchJson<NavigationStatusResponse>(apiPath('navigation_status', '/api/v1/navigation/status'))
 }
 
+export async function fetchPlanningMap(signal?: AbortSignal): Promise<PlanningMap> {
+  return readJsonResponse<PlanningMap>(await dashboardFetch('/api/v1/navigation/planning_map', { signal }))
+}
+
 export async function fetchNavigationTaskStatus(
   taskId: string,
 ): Promise<NavigationTaskStatusQueryResponse> {
@@ -489,7 +498,7 @@ export async function deleteInspectionRoute(
 ): Promise<InspectionCommandResponse> {
   const path = inspectionRouteDetailPath(routeId)
   const query = mapId ? `?${new URLSearchParams({ map_id: mapId }).toString()}` : ''
-  const res = await fetch(`${path}${query}`, { method: 'DELETE' })
+  const res = await dashboardFetch(`${path}${query}`, { method: 'DELETE' })
   return readJsonResponse<InspectionCommandResponse>(res)
 }
 
@@ -622,7 +631,7 @@ export async function updateLocation(
   name: string,
   body: LocationUpsertRequest,
 ): Promise<LocationOperationResponse> {
-  const res = await fetch(locationDetailPath(name), {
+  const res = await dashboardFetch(locationDetailPath(name), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -637,7 +646,7 @@ export async function updateLocation(
 }
 
 export async function deleteLocation(name: string): Promise<LocationOperationResponse> {
-  const res = await fetch(locationDetailPath(name), { method: 'DELETE' })
+  const res = await dashboardFetch(locationDetailPath(name), { method: 'DELETE' })
   return readJsonResponse<LocationOperationResponse>(res)
 }
 
@@ -870,14 +879,14 @@ export async function fetchMaps(): Promise<MapInfo[]> {
 }
 
 export async function deleteMap(name: string): Promise<MapLifecycleResponse> {
-  const res = await fetch(mapNamedPath('map_delete', '/api/v1/maps/{name}', name), {
+  const res = await dashboardFetch(mapNamedPath('map_delete', '/api/v1/maps/{name}', name), {
     method: 'DELETE',
   })
   return readMapLifecycle(res)
 }
 
 export async function renameMap(oldName: string, newName: string): Promise<MapLifecycleResponse> {
-  const res = await fetch(apiPath('map_rename', '/api/v1/map/rename'), {
+  const res = await dashboardFetch(apiPath('map_rename', '/api/v1/map/rename'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ old_name: oldName, new_name: newName }),
@@ -993,7 +1002,7 @@ function waitDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
 }
 
 export async function saveMap(name: string): Promise<SaveMapResult> {
-  const res = await fetch(apiPath('map_save', '/api/v1/map/save'), {
+  const res = await dashboardFetch(apiPath('map_save', '/api/v1/map/save'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -1053,7 +1062,7 @@ export async function importPcdMap(
   sourcePath: string,
   voxelSize = 0,
 ): Promise<MapLifecycleResponse> {
-  const res = await fetch(apiPath('map_import_pcd', '/api/v1/maps/import_pcd'), {
+  const res = await dashboardFetch(apiPath('map_import_pcd', '/api/v1/maps/import_pcd'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, source_path: sourcePath, voxel_size: voxelSize }),
@@ -1065,7 +1074,7 @@ export async function cropMap(
   name: string,
   bounds: Record<string, unknown>,
 ): Promise<MapLifecycleResponse> {
-  const res = await fetch(mapNamedPath('map_crop', '/api/v1/maps/{name}/crop', name), {
+  const res = await dashboardFetch(mapNamedPath('map_crop', '/api/v1/maps/{name}/crop', name), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ bounds }),
@@ -1077,7 +1086,7 @@ export async function markMapZone(
   name: string,
   body: Record<string, unknown>,
 ): Promise<MapLifecycleResponse> {
-  const res = await fetch(mapNamedPath('map_mark_zone', '/api/v1/maps/{name}/mark_zone', name), {
+  const res = await dashboardFetch(mapNamedPath('map_mark_zone', '/api/v1/maps/{name}/mark_zone', name), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1086,7 +1095,7 @@ export async function markMapZone(
 }
 
 export async function buildMapOctomap(name: string): Promise<MapLifecycleResponse> {
-  const res = await fetch(mapNamedPath('map_build_octomap', '/api/v1/maps/{name}/build_octomap', name), {
+  const res = await dashboardFetch(mapNamedPath('map_build_octomap', '/api/v1/maps/{name}/build_octomap', name), {
     method: 'POST',
   })
   return readMapLifecycle(res)
@@ -1130,10 +1139,32 @@ function normalizeInspectionRoute(route: InspectionRoute): InspectionRoute {
 }
 
 export async function resumeNavigation(): Promise<ControlCommandResponse> {
-  return postJson<ControlCommandResponse>(
+  const response = await postJson<ControlCommandResponse>(
     apiPath('navigation_resume', '/api/v1/navigation/resume'),
     commandBody('navigation_resume', {}),
   )
+  if (!response.ok) throw new Error(response.status || '恢复请求被拒绝')
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const status = await fetchNavigationStatus()
+    if (status.control?.resume_required === false) {
+      const authority = status.control?.authority
+      const permission = status.motion?.permission
+      if (authority === 'UNKNOWN' || permission === 'UNKNOWN') {
+        if (attempt < 11) await new Promise(resolve => setTimeout(resolve, 150))
+        continue
+      }
+      if (permission === 'ESTOPPED') {
+        throw new Error('控制暂停未恢复：急停仍在生效')
+      }
+      if (permission === 'HELD') {
+        const blocker = status.motion?.reason || status.goal_admission?.reason || '其他运动条件未满足'
+        throw new Error(`控制暂停已解除，但运动仍被阻止：${blocker}`)
+      }
+      return response
+    }
+    if (attempt < 11) await new Promise(resolve => setTimeout(resolve, 150))
+  }
+  throw new Error('恢复请求已接受，但控制状态仍未确认；请查看控制状态')
 }
 
 export async function fetchSession(): Promise<SessionState> {
@@ -1141,7 +1172,7 @@ export async function fetchSession(): Promise<SessionState> {
 }
 
 export async function resetMapCloud(): Promise<MapLifecycleResponse> {
-  const res = await fetch(apiPath('map_cloud_reset', '/api/v1/map_cloud/reset'), { method: 'POST' })
+  const res = await dashboardFetch(apiPath('map_cloud_reset', '/api/v1/map_cloud/reset'), { method: 'POST' })
   const data = await readMapLifecycle(res)
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('lingtu:cloud-reset'))
@@ -1195,7 +1226,7 @@ export async function relocalize(
   y: number,
   yaw: number,
 ): Promise<LocalizationOperationResponse> {
-  const res = await fetch(apiPath('localization_relocalize', '/api/v1/localization/relocalizations'), {
+  const res = await dashboardFetch(apiPath('localization_relocalize', '/api/v1/localization/relocalizations'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1208,7 +1239,7 @@ export async function relocalize(
 }
 
 export async function globalRelocalize(mapName: string): Promise<LocalizationOperationResponse> {
-  const res = await fetch(apiPath('localization_relocalize', '/api/v1/localization/relocalizations'), {
+  const res = await dashboardFetch(apiPath('localization_relocalize', '/api/v1/localization/relocalizations'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ map_name: mapName, mode: 'global' }),
@@ -1239,7 +1270,7 @@ export function recordingArtifactUrl(sessionId: string, artifactPath: string): s
 }
 
 export async function deleteRecording(sessionId: string): Promise<{ ok: boolean; session_id: string }> {
-  return readJsonResponse<{ ok: boolean; session_id: string }>(await fetch(
+  return readJsonResponse<{ ok: boolean; session_id: string }>(await dashboardFetch(
     `/api/v1/recordings/${encodeURIComponent(sessionId)}`,
     { method: 'DELETE' },
   ))
@@ -1263,14 +1294,4 @@ export async function startRecording(
 
 export async function stopRecording(): Promise<RecordingOperationResponse> {
   return postJson<RecordingOperationResponse>(apiPath('recording_stop', '/api/v1/recordings/stop'))
-}
-
-// --- Auth ---
-
-export async function login(key: string): Promise<AuthLoginResponse> {
-  return postJson<AuthLoginResponse>(apiPath('auth_login', '/api/v1/auth/login'), { key })
-}
-
-export async function checkAuth(): Promise<AuthCheckResponse> {
-  return fetchJson<AuthCheckResponse>(apiPath('auth_check', '/api/v1/auth/check'))
 }

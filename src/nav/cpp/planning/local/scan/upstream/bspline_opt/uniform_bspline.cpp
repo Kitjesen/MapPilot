@@ -1,5 +1,7 @@
 #include "planning/local/scan/upstream/bspline_opt/uniform_bspline.h"
 
+#include <Eigen/SparseQR>
+
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -109,7 +111,7 @@ bool UniformBspline::checkFeasibility(double &ratio, bool show) const {
   bool feasible = true;
   const Eigen::MatrixXd points = controlPoints_;
   const int dimension = static_cast<int>(controlPoints_.rows());
-  double maxVelocity = -1.0;
+  double maxVelocity = 0.0;
   const double velocityLimit =
       velocityLimit_ * (1.0 + feasibilityTolerance_) + 1e-4;
   for (int index = 0; index < points.cols() - 1; ++index) {
@@ -127,7 +129,7 @@ bool UniformBspline::checkFeasibility(double &ratio, bool show) const {
     }
   }
 
-  double maxAcceleration = -1.0;
+  double maxAcceleration = 0.0;
   const double accelerationLimit =
       accelerationLimit_ * (1.0 + feasibilityTolerance_) + 1e-4;
   for (int index = 0; index < points.cols() - 2; ++index) {
@@ -151,7 +153,7 @@ bool UniformBspline::checkFeasibility(double &ratio, bool show) const {
   }
 
   ratio = std::max(maxVelocity / velocityLimit_,
-                   std::sqrt(std::abs(maxAcceleration) / accelerationLimit_));
+                   std::sqrt(maxAcceleration / accelerationLimit_));
   return feasible;
 }
 
@@ -182,36 +184,37 @@ void UniformBspline::parameterizeToBspline(
   Eigen::Vector3d positionRow(1.0, 4.0, 1.0);
   Eigen::Vector3d velocityRow(-1.0, 0.0, 1.0);
   Eigen::Vector3d accelerationRow(1.0, -2.0, 1.0);
-  Eigen::MatrixXd matrix = Eigen::MatrixXd::Zero(count + 4, count + 2);
+  std::vector<Eigen::Triplet<double>> entries;
+  entries.reserve(static_cast<std::size_t>(3 * count + 12));
   for (int index = 0; index < count; ++index) {
-    matrix.block(index, index, 1, 3) =
-        (1.0 / 6.0) * positionRow.transpose();
+    for (int offset = 0; offset < 3; ++offset)
+      entries.emplace_back(index, index + offset, positionRow(offset) / 6.0);
   }
-  matrix.block(count, 0, 1, 3) =
-      (1.0 / 2.0 / interval) * velocityRow.transpose();
-  matrix.block(count + 1, count - 1, 1, 3) =
-      (1.0 / 2.0 / interval) * velocityRow.transpose();
-  matrix.block(count + 2, 0, 1, 3) =
-      (1.0 / interval / interval) * accelerationRow.transpose();
-  matrix.block(count + 3, count - 1, 1, 3) =
-      (1.0 / interval / interval) * accelerationRow.transpose();
+  for (int offset = 0; offset < 3; ++offset) {
+    entries.emplace_back(count, offset, velocityRow(offset) / (2.0 * interval));
+    entries.emplace_back(count + 1, count - 1 + offset,
+                         velocityRow(offset) / (2.0 * interval));
+    entries.emplace_back(count + 2, offset,
+                         accelerationRow(offset) / (interval * interval));
+    entries.emplace_back(count + 3, count - 1 + offset,
+                         accelerationRow(offset) / (interval * interval));
+  }
+  Eigen::SparseMatrix<double> matrix(count + 4, count + 2);
+  matrix.setFromTriplets(entries.begin(), entries.end());
 
-  Eigen::VectorXd x(count + 4), y(count + 4), z(count + 4);
+  Eigen::MatrixXd values(count + 4, 3);
   for (int index = 0; index < count; ++index) {
-    x(index) = points[index].x();
-    y(index) = points[index].y();
-    z(index) = points[index].z();
+    values.row(index) = points[index].transpose();
   }
   for (int index = 0; index < 4; ++index) {
-    x(count + index) = startEndDerivative[index].x();
-    y(count + index) = startEndDerivative[index].y();
-    z(count + index) = startEndDerivative[index].z();
+    values.row(count + index) = startEndDerivative[index].transpose();
   }
 
-  controls.resize(3, count + 2);
-  controls.row(0) = matrix.colPivHouseholderQr().solve(x).transpose();
-  controls.row(1) = matrix.colPivHouseholderQr().solve(y).transpose();
-  controls.row(2) = matrix.colPivHouseholderQr().solve(z).transpose();
+  // The same least-squares system has three local coefficients per row.
+  // Factor it once for all axes without densifying low-speed trajectories.
+  Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int>> solver;
+  solver.compute(matrix);
+  controls = solver.solve(values).transpose();
 }
 
 double UniformBspline::getTimeSum() const {

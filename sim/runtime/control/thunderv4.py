@@ -9,6 +9,7 @@ from typing import Any, Mapping, Protocol, TypeAlias, cast
 import numpy as np
 from numpy.typing import NDArray
 
+from . import thunderv4_flat as flat
 from .contracts import (
     ControllerAdapter,
     ControllerCommand,
@@ -154,7 +155,7 @@ class ThunderV4ControllerAdapter:
     ) -> None:
         if not isinstance(controller, ControllerSpec):
             raise TypeError("controller must be a compiled ControllerSpec")
-        if controller.adapter.plugin != "quadruped_him":
+        if controller.adapter.plugin not in {"quadruped_him", "thunderv4_flat53"}:
             raise ControllerRuntimeError(
                 f"ThunderV4 adapter plugin must be 'quadruped_him', got {controller.adapter.plugin!r}"
             )
@@ -172,6 +173,10 @@ class ThunderV4ControllerAdapter:
                 f"extra={sorted(actual_actuators - expected_actuators)!r}"
             )
         self._controller = controller
+        self._flat53 = controller.adapter.plugin == "thunderv4_flat53"
+        self._standing_pose = flat.STANDING_POSE if self._flat53 else _STANDING_POSE
+        self._kp = flat.KP if self._flat53 else _KP
+        self._kd = flat.KD if self._flat53 else _KD
         self._actuators = controller.actuators.channels
         self._plan_to_dart = np.asarray(
             [controller.actuators.index_of(channel) for channel in DART_ACTUATOR_ORDER],
@@ -196,6 +201,13 @@ class ThunderV4ControllerAdapter:
         )
         joint_position = joint_position_plan[self._plan_to_dart]
         joint_velocity = joint_velocity_plan[self._plan_to_dart]
+        if self._flat53:
+            return flat.observation(
+                _finite_vector(state.channels.get("base_angular_velocity"), 3, "base_angular_velocity"),
+                _finite_vector(state.channels.get("projected_gravity"), 3, "projected_gravity"),
+                self._command_direction(command.payload),
+                joint_position, joint_velocity, self._memory.last_action,
+            )
         position_observation = joint_position - _STANDING_POSE
         position_observation[12:] = 0.0
         direction = self._command_direction(command.payload)
@@ -238,13 +250,13 @@ class ThunderV4ControllerAdapter:
         joint_velocity = joint_velocity_plan[self._plan_to_dart]
 
         torque = np.empty(_ACTION_DIM, dtype=np.float64)
-        position_control = _KP > 0.0
+        position_control = self._kp > 0.0
         torque[position_control] = (
-            _KP[position_control] * (target[position_control] - joint_position[position_control])
-            - _KD[position_control] * joint_velocity[position_control]
+            self._kp[position_control] * (target[position_control] - joint_position[position_control])
+            - self._kd[position_control] * joint_velocity[position_control]
         )
         velocity_control = ~position_control
-        torque[velocity_control] = _KD[velocity_control] * (target[velocity_control] - joint_velocity[velocity_control])
+        torque[velocity_control] = self._kd[velocity_control] * (target[velocity_control] - joint_velocity[velocity_control])
         torque = np.clip(torque, -_TORQUE_LIMIT, _TORQUE_LIMIT)
         return {channel: float(torque[_DART_INDEX[channel]]) for channel in actuators.channels}
 
@@ -255,7 +267,7 @@ class ThunderV4ControllerAdapter:
     ) -> Mapping[str, float]:
         """Hold the standing pose while braking all four wheel joints."""
 
-        return self.actuate(state, _STANDING_POSE, actuators)
+        return self.actuate(state, self._standing_pose, actuators)
 
     def reset(self, generation: GenerationStamp) -> None:
         """Clear the previous raw policy action after a generation switch."""
@@ -380,7 +392,7 @@ class ThunderV4TorchScriptPolicy:
 
 
 class ThunderV4OnnxPolicy:
-    """Brainstem policy_1119 ONNX runtime with five 57-D history frames."""
+    """Thunder ONNX runtime for legacy history or the flat single-frame policy."""
 
     def __init__(
         self,
@@ -415,12 +427,17 @@ class ThunderV4OnnxPolicy:
             )
         inputs = session.get_inputs()
         outputs = session.get_outputs()
-        if len(inputs) != 1 or tuple(inputs[0].shape) != (1, _HISTORY_OBSERVATION_DIM):
+        input_shape = tuple(inputs[0].shape) if len(inputs) == 1 else ()
+        self._flat53 = len(input_shape) == 2 and input_shape[1] == 53
+        if self._flat53 and input_shape[0] not in (1, None, "batch"):
+            raise ControllerRuntimeError(f"flat policy batch must accept one sample, got {input_shape!r}")
+        if not self._flat53 and input_shape != (1, _HISTORY_OBSERVATION_DIM):
             shape = None if len(inputs) != 1 else tuple(inputs[0].shape)
             raise ControllerRuntimeError(
                 f"policy_1119 input must be [1, {_HISTORY_OBSERVATION_DIM}], got {shape!r}"
             )
-        if len(outputs) != 1 or tuple(outputs[0].shape) != (1, _ACTION_DIM):
+        expected_output = (input_shape[0], _ACTION_DIM) if self._flat53 else (1, _ACTION_DIM)
+        if len(outputs) != 1 or tuple(outputs[0].shape) != expected_output:
             shape = None if len(outputs) != 1 else tuple(outputs[0].shape)
             raise ControllerRuntimeError(
                 f"policy_1119 output must be [1, {_ACTION_DIM}], got {shape!r}"
@@ -437,6 +454,17 @@ class ThunderV4OnnxPolicy:
         return self._artifact_path
 
     def infer(self, observation: Any) -> Float64Array:
+        if self._flat53:
+            frame = _finite_vector(observation, 53, "flat policy observation").astype(np.float32)
+            raw_action = _finite_vector(
+                self._session.run([self._output_name], {self._input_name: frame.reshape(1, 53)})[0],
+                _ACTION_DIM, "ONNX policy action",
+            )
+            self._memory.last_action = raw_action.copy()
+            if self._startup_hold_remaining > 0:
+                self._startup_hold_remaining -= 1
+                return flat.STANDING_POSE.copy()
+            return flat.action_targets(raw_action)
         frame = (
             _finite_vector(observation, _OBSERVATION_DIM, "quadruped_him observation")
             .astype(np.float32, copy=False)
@@ -489,7 +517,7 @@ def create_thunderv4_onnx_components(
     controller: ControllerSpec,
     repo_root: Path,
 ) -> tuple[ControllerAdapter, ControllerPolicy]:
-    """Build the policy_1119 ONNX adapter and policy with shared action memory."""
+    """Build the declared ONNX adapter and policy with shared action memory."""
 
     memory = _PolicyMemory()
     adapter = ThunderV4ControllerAdapter(controller, _memory=memory)
@@ -498,4 +526,6 @@ def create_thunderv4_onnx_components(
         repo_root,
         _memory=memory,
     )
+    if policy._flat53 != adapter._flat53:
+        raise ControllerRuntimeError("ONNX observation shape does not match the declared controller adapter")
     return adapter, policy

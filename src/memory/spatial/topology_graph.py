@@ -391,7 +391,7 @@ class TopologySemGraph:
         return tsg_to_dict(self._nodes, self._edges, self._current_room_id, self._traversal_history)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "TopologySemGraph":
+    def from_dict(cls, data: dict) -> TopologySemGraph:
         """从字典恢复拓扑图。"""
         tsg = cls()
         tsg._nodes, tsg._edges, tsg._adjacency, tsg._current_room_id = (
@@ -415,7 +415,7 @@ class TopologySemGraph:
             return False
 
     @classmethod
-    def load_from_file(cls, path: str) -> "TopologySemGraph | None":
+    def load_from_file(cls, path: str) -> TopologySemGraph | None:
         """从 JSON 文件恢复拓扑图。"""
         import json as _json
         try:

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# ruff: noqa: S101
-
 _SENSORS = (
     Path(__file__).resolve().parents[2]
     / "sim"
@@ -142,7 +140,7 @@ def test_camera_capture_state_destroys_transient_owner_on_late_failure() -> None
     spawn = create.index("SpawnActor<AActor>")
     cleanup = create.index("FTransientOwnerCleanup")
     release = create.index("OwnerCleanup.Release()")
-    state_release = create.index("State.Release()", release)
+    state_release = create.rindex("State.Release()")
     assert resolve < spawn
     assert parent_lookup < spawn
     assert spawn < cleanup < release < state_release

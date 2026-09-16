@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-# ruff: noqa: S101
 from dataclasses import replace
 
 import pytest
-
 from sim.runtime.scenario import (
     EntitySnapshot,
     MujocoScenarioDispatcher,

@@ -89,7 +89,7 @@ Invoke-LingTuVcRedistBootstrap @parameters | ConvertTo-Json -Compress
             ),
         }
     )
-    completed = subprocess.run(  # noqa: S603 - runs a repository-owned test harness.
+    completed = subprocess.run(
         [powershell, "-NoProfile", "-File", str(harness_path)],
         cwd=ROOT,
         check=False,
@@ -258,7 +258,7 @@ $module = Import-Module -Force -PassThru $env:LINGTU_TEST_MODULE
     Assert-LingTuVcRedistInstaller -InstallerPath ([IO.FileInfo]$Path)
 } $env:LINGTU_TEST_SIGNED_EXE
 """
-    completed = subprocess.run(  # noqa: S603 - inspects a trusted Windows binary.
+    completed = subprocess.run(
         [powershell, "-NoProfile", "-Command", command],
         cwd=ROOT,
         check=False,
@@ -277,7 +277,7 @@ def test_cli_help_describes_the_safe_check_and_install_inputs() -> None:
     powershell = _pwsh()
     environment = os.environ.copy()
     environment["LINGTU_TEST_SCRIPT"] = str(SCRIPT)
-    completed = subprocess.run(  # noqa: S603 - runs the repository-owned CLI.
+    completed = subprocess.run(
         [
             powershell,
             "-NoProfile",
@@ -301,7 +301,7 @@ def test_cli_help_describes_the_safe_check_and_install_inputs() -> None:
 @pytest.mark.skipif(os.name != "nt", reason="reads the Windows x64 runtime registry")
 def test_cli_check_only_uses_a_distinct_install_required_exit_code() -> None:
     powershell = _pwsh()
-    completed = subprocess.run(  # noqa: S603 - runs the repository-owned CLI.
+    completed = subprocess.run(
         [
             powershell,
             "-NoProfile",
@@ -333,7 +333,7 @@ def test_module_loads_in_the_fresh_windows_powershell_runtime() -> None:
     assert WINDOWS_POWERSHELL is not None
     environment = os.environ.copy()
     environment["LINGTU_TEST_MODULE"] = str(MODULE)
-    completed = subprocess.run(  # noqa: S603 - imports the repository-owned module.
+    completed = subprocess.run(
         [
             WINDOWS_POWERSHELL,
             "-NoProfile",

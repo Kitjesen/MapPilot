@@ -58,7 +58,7 @@ def main() -> None:
         s = robot.state()
         print(f"Mode: {s.mode}")
         print(f"Pos: ({s.odometry.x:.2f}, {s.odometry.y:.2f}, yaw={s.odometry.yaw:.2f})")
-        print(f"Mission: {s.mission.state}")
+        print(f"Navigation task: {s.mission.task.state}")
     elif args.cmd == "health":
         h = robot.health()
         print(f"Modules: {h.modules_ok}/{h.modules_total} ok")
@@ -74,14 +74,10 @@ def main() -> None:
         print(r.message or "saved")
     elif args.cmd == "nav-status":
         ns = robot.navigation_status()
-        print(f"State: {ns.state}")
-        distance = (
-            f"{ns.distance_to_goal:.2f}m"
-            if ns.distance_to_goal is not None
-            else "unknown"
-        )
-        print(f"Dist to goal: {distance}")
-        print(f"Goal: ({ns.goal.x:.2f}, {ns.goal.y:.2f})")
+        print(f"Task: {ns.task.state}")
+        print(f"Goal admission: {ns.goal_admission.state}")
+        print(f"Control: {ns.control.authority}")
+        print(f"Motion: {ns.motion.permission} / {ns.motion.observation}")
     elif args.cmd == "position":
         p = robot.position()
         print(f"x={p.x:.2f}  y={p.y:.2f}  z={p.z:.2f}  yaw={p.yaw:.2f}")

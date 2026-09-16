@@ -24,6 +24,15 @@ LingTu's neutral `Body` interface. The motion adapter does not start IMU or
 joint telemetry streams; sensor consumers opt into those long-lived streams
 separately.
 
+Go2 also passively subscribes to SDK2 `rt/lowstate` and publishes measured
+`q` (rad), `dq` (rad/s), and `tau_est` (Nm) on the typed LingTu
+`/robot/joint_states` topic (`rt/robot/joint_states` on DDS). Its 12 joint names
+follow the URDF order FR, FL, RR, RL, with hip, thigh, calf in each leg.
+The header keeps the sample's receive wall time; duplicate SDK ticks never
+refresh it. Samples expire after 500 ms, and publication sends only new
+samples, at most once per 34 ms. This telemetry does not depend on motion
+readiness or issue motion commands. Doso currently exposes no joint samples.
+
 `Body` also exposes the neutral actions `Stand`, `Sit`, `Recover`, and `Damp`,
 plus body and health snapshots. Go2 maps all four actions to SDK2. Doso maps
 `Stand` and `Sit` to its authenticated Brainstem posture RPCs and reports

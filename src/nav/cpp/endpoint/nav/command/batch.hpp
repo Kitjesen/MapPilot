@@ -19,6 +19,8 @@ struct GoalSample {
   nav_kernel::Vec3 position{};
   Quaternion orientation{};
   bool has_orientation{false};
+  double max_speed_mps{0.0};
+  double acceptance_radius_m{0.0};
 };
 
 struct NavigationCommandSample {

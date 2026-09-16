@@ -24,7 +24,7 @@ try:
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
-    from torch.utils.data import DataLoader, Dataset  # noqa: F401
+    from torch.utils.data import DataLoader, Dataset
 
     HAS_TORCH = True
 except ImportError:

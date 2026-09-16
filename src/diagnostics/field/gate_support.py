@@ -1,4 +1,3 @@
-# ruff: noqa: D103, S310, S603
 """Shared stdlib helpers for stateful field acceptance gates.
 
 Product and process lifecycle is deliberately delegated to ``lingtu.control``.
@@ -22,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
-TERMINAL_NAV_STATES = {"SUCCESS", "FAILED", "STUCK", "CANCELLED"}
+TERMINAL_NAV_STATES = {"SUCCESS", "FAILED", "CANCELLED"}
 
 
 class GateError(RuntimeError):
@@ -187,20 +186,17 @@ def capture_phase(gateway_url: str, phase: str, directory: Path) -> None:
     (directory / "phase.txt").write_text(phase + "\n", encoding="utf-8")
 
 
-def active_command_source(navigation: Mapping[str, Any]) -> str:
+def control_authority(navigation: Mapping[str, Any]) -> str:
     control = navigation.get("control")
     control = control if isinstance(control, Mapping) else {}
-    source: Any = control.get("active_cmd_source") or control.get("active_source") or "none"
-    if isinstance(source, Mapping):
-        source = source.get("name") or source.get("source") or source.get("owner") or "none"
-    return str(source or "none")
+    return str(control.get("authority") or "UNKNOWN").upper()
 
 
-def require_no_active_command_source(navigation: Mapping[str, Any], phase: str) -> None:
-    source = active_command_source(navigation).strip().lower()
-    if source in {"", "none", "null", "-"}:
+def require_no_control_authority(navigation: Mapping[str, Any], phase: str) -> None:
+    authority = control_authority(navigation)
+    if authority == "NONE":
         return
-    raise GateError(f"{phase} refused while active_cmd_source={source}")
+    raise GateError(f"{phase} refused while control_authority={authority}")
 
 
 def plan_preview(
@@ -213,7 +209,9 @@ def plan_preview(
     directory.mkdir(parents=True, exist_ok=True)
     navigation = request_json(gateway_url, "/api/v1/navigation/status", timeout_s=5)
     write_json(directory / "navigation.pre_plan.json", navigation)
-    require_no_active_command_source(navigation, "plan preview")
+    require_no_control_authority(navigation, "plan preview")
+    task = navigation.get("task")
+    task = task if isinstance(task, Mapping) else {}
     plan = request_json(
         gateway_url,
         "/api/v1/navigation/plan",
@@ -226,8 +224,8 @@ def plan_preview(
         "schema_version": 1,
         "phase": "motion_smoke",
         "non_motion": True,
-        "navigation_state": navigation.get("state"),
-        "active_cmd_source_before": active_command_source(navigation),
+        "task_state": task.get("state"),
+        "control_authority_before": control_authority(navigation),
         "feasible": plan.get("feasible") is True,
         "count": plan.get("count"),
         "planner": plan.get("planner"),
@@ -290,12 +288,12 @@ def poll_navigation_terminal(
             stream.write(json.dumps(navigation, ensure_ascii=False) + "\n")
             stream.flush()
             write_json(directory / "navigation.latest.json", navigation)
-            state = str(navigation.get("state") or "unknown").upper()
+            task = navigation.get("task")
+            task = task if isinstance(task, Mapping) else {}
+            state = str(task.get("state") or "UNKNOWN").upper()
             if state in TERMINAL_NAV_STATES:
                 if state != "SUCCESS":
-                    raise GateError(
-                        f"navigation ended in {state}: {navigation.get('failure_reason') or ''}"
-                    )
+                    raise GateError(f"navigation ended in {state}: {task.get('reason') or ''}")
                 return navigation
             if time.monotonic() >= deadline:
                 raise GateError(

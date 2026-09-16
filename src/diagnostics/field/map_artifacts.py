@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ruff: noqa: D103
 """Ask mapd to validate one saved map's planning artifacts."""
 
 from __future__ import annotations

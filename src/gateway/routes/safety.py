@@ -12,9 +12,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
+from gateway.navigation.commands import CommandBoundaryError
 from gateway.schemas import SafetyEstopRequest, SafetyEstopResponse
 from gateway.services import native_control
-from gateway.services.command_boundary import CommandBoundaryError
 from gateway.services.safety_status import safety_stop_active
 
 

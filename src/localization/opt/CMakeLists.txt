@@ -51,11 +51,14 @@ add_library(map_opt STATIC
   graph.cpp
   loop_constraints.cpp
   map.cpp
+  online_graph.cpp
+  online_mapping.cpp
   pgo.cpp)
+find_package(Threads REQUIRED)
 target_include_directories(map_opt
   PUBLIC "${LINGTU_ROOT}/src" "${PGO_KERNEL_DIR}/include")
 target_compile_definitions(map_opt PUBLIC LT_POSE_GRAPH_OPT_STATIC)
-target_link_libraries(map_opt PUBLIC pose_graph_opt)
+target_link_libraries(map_opt PUBLIC pose_graph_opt Threads::Threads)
 if(WIN32)
   target_link_libraries(map_opt PUBLIC ws2_32 userenv bcrypt ntdll)
 elseif(UNIX)
@@ -71,6 +74,9 @@ install(TARGETS lt_pgo
 add_executable(lt_loop_verify loop_cli.cpp)
 target_link_libraries(lt_loop_verify PRIVATE map_opt)
 
+add_executable(lt_mapping_replay "${LINGTU_ROOT}/tools/diagnostics/mapping_replay.cpp")
+target_link_libraries(lt_mapping_replay PRIVATE map_opt)
+
 include(CTest)
 if(BUILD_TESTING)
   set(LINGTU_LOCALIZATION_OPT_TESTS_DIR
@@ -78,6 +84,14 @@ if(BUILD_TESTING)
   add_executable(pgo_test "${LINGTU_LOCALIZATION_OPT_TESTS_DIR}/pgo_test.cpp")
   target_link_libraries(pgo_test PRIVATE map_opt)
   add_test(NAME pgo_core COMMAND pgo_test)
+  add_executable(online_graph_test "${LINGTU_LOCALIZATION_OPT_TESTS_DIR}/online_graph_test.cpp")
+  target_link_libraries(online_graph_test PRIVATE map_opt)
+  add_test(NAME online_graph COMMAND online_graph_test)
+  add_executable(online_mapping_test "${LINGTU_LOCALIZATION_OPT_TESTS_DIR}/online_mapping_test.cpp")
+  target_link_libraries(online_mapping_test PRIVATE map_opt)
+  add_test(NAME online_mapping COMMAND online_mapping_test)
+  set_tests_properties(online_mapping PROPERTIES TIMEOUT 60)
+  set_tests_properties(online_graph PROPERTIES TIMEOUT 30)
   add_executable(loop_information_test
     "${LINGTU_LOCALIZATION_OPT_TESTS_DIR}/loop_information_test.cpp")
   target_link_libraries(loop_information_test PRIVATE map_opt)

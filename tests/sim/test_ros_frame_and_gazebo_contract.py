@@ -1,3 +1,5 @@
+"""Static runtime/Gazebo contracts and transform math; no ROS runtime required."""
+
 from __future__ import annotations
 
 import math
@@ -6,43 +8,41 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("rclpy", reason="Needs ROS2 runtime (Gazebo)")
 pytestmark = [pytest.mark.sim]
 
 
-from runtime.runtime_interface import (
-    ADAPTER_TOPIC_ALIASES,
+from sim.adapters.gazebo.gazebo_bridge import GazeboBridgeConfig
+from sim.adapters.gazebo.gazebo_runtime_adapter import Pose3, _odom_xyz_to_body, _transform_xyz
+
+from diagnostics.runtime_contract import (
     ALGORITHM_INTERFACES,
     ARTIFACT_FORMATS,
     CORE_ALGORITHM_ENTRY_TOPICS,
     CORE_REQUIRED_TOPICS,
     DATA_SOURCE_CONTRACTS,
-    FRAMES,
-    LIDAR_EXTRINSICS,
-    MESSAGE_FORMATS,
+    FIELD_DATA_SOURCE,
     REAL_RUNTIME_CONTRACT,
-    REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS,
-    REAL_RUNTIME_TOPIC_ALLOWED_FRAME_IDS,
     RUNTIME_DATA_FLOW,
     RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES,
-    TOPIC_ALLOWED_FRAME_IDS,
-    TOPIC_FORMATS,
-    TOPICS,
-    adapter_remappings,
-    expand_frame_id_aliases,
-    frame_id_aliases,
     product_data_source,
     resolved_runtime_data_flow,
     runtime_contract_manifest,
     runtime_data_flow_topics,
-    runtime_topic_allowed_frame_ids,
-    runtime_topic_default_frame_id,
-    topic_default_frame_id,
     topic_formats,
+)
+from message.topics import TOPICS
+from runtime.adapters.topics import ADAPTER_TOPIC_ALIASES, adapter_remappings
+from runtime.tf.frames import (
+    FRAMES,
+    REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS,
+    REAL_RUNTIME_TOPIC_ALLOWED_FRAME_IDS,
+    TOPIC_ALLOWED_FRAME_IDS,
+    expand_frame_id_aliases,
+    frame_id_aliases,
+    topic_default_frame_id,
     transform_xyz,
 )
-from sim.adapters.gazebo.gazebo_bridge import GazeboBridgeConfig
-from sim.adapters.gazebo.gazebo_runtime_adapter import Pose3, _odom_xyz_to_body, _transform_xyz
+from runtime.tf.mounts import lidar_extrinsic
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -51,68 +51,50 @@ def _read(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8", errors="ignore")
 
 
-def test_ros_frame_contract_documents_body_base_link_alias():
-    doc = _read("docs/architecture/ros_frame_contract.md")
+def test_architecture_documents_the_frame_boundary_without_copying_the_catalog():
+    architecture = " ".join(_read("docs/architecture.md").split())
+    runtime = " ".join(_read("docs/runtime.md").split())
 
-    assert "map -> odom -> body" in doc
-    assert "base_link == body" in doc
-    assert "`world`" in doc
-    assert "/slam/map_cloud" in doc
-    assert "never body-relative points" in doc
-    assert "`/slam/odometry`" in doc
-    assert "`map` or `odom`" in doc
-    assert "odom` is allowed only when an adapter transforms it" not in doc
+    assert "Saved maps and global paths use the `map` frame" in architecture
+    assert "`base_link == body` is a compatibility alias" in architecture
+    assert "ROS TF is not the Product data plane" in architecture
+    assert "Saved-map navigation requires a valid `map -> odom` relationship" in runtime
+    assert "Local sensor and control payloads use the declared" in runtime
 
 
-def _markdown_frame_list(frames: tuple[str, ...]) -> str:
-    return ", ".join(f"`{frame}`" for frame in frames)
+def test_docs_delegate_topic_and_frame_values_to_machine_sources():
+    architecture = " ".join(_read("docs/architecture.md").split())
+    runtime = " ".join(_read("docs/runtime.md").split())
 
-
-def test_ros_frame_contract_topic_frame_table_mirrors_runtime_contract():
-    doc = _read("docs/architecture/ros_frame_contract.md")
-    general_allowed = runtime_topic_allowed_frame_ids(None)
-    real_allowed = runtime_topic_allowed_frame_ids(REAL_RUNTIME_CONTRACT)
-    required = set(REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS)
-
-    for topic in real_allowed:
-        row = (
-            f"| `{topic}` | "
-            f"`{runtime_topic_default_frame_id(REAL_RUNTIME_CONTRACT, topic)}` | "
-            f"{_markdown_frame_list(general_allowed[topic])} | "
-            f"{'yes' if topic in required else 'no'} | "
-            f"{_markdown_frame_list(real_allowed[topic])} |"
-        )
-        assert row in doc
-
-    assert ("`/slam/map_cloud` and `/nav/global_path` are deliberately stricter on real") in doc
-    assert "real S100P evidence must reject `/slam/map_cloud` outside `map`" in doc
+    assert "src/runtime/tf/frames.py" in architecture
+    assert "owning IDL/schema and runtime graph" in architecture
+    assert "Do not duplicate them in business logic" in architecture
+    assert "message.topics.TOPICS" in runtime
+    assert "`src/message/idl/` and `src/message/topics/`" in runtime
 
 
 def test_simulation_contract_documents_switch_dataflow_and_frame_boundary():
-    doc = _read("docs/architecture/SIMULATION_INTEGRATION_CONTRACT.md")
+    doc = " ".join(_read("docs/simulation.md").split())
 
-    assert "`endpoint`" in doc
+    assert "An endpoint is a concrete HTTP, DDS, or native-service access point" in doc
     assert "RobotConfig selector" in doc
-    assert "runtime-contract --json" in doc
-    assert "runtime-spec explore --adapter mujoco_live" in doc
+    assert "/api/v1/diagnostics/runtime-contract" in doc
+    assert "/api/v1/runtime/dataflow" in doc
     assert "/api/v1/navigation/status" in doc
     assert "`runtime.blockers`" in doc
     assert "`launcher` and `launcher_args`" in doc
     assert "`frame_links`" in doc
-    assert "`resolved_runtime_data_flow`" in doc
-    assert "mujoco_live -> real_s100p" in doc
+    assert "mujoco_fastlio2_live -> field" in doc
     assert "sensor/log/simulator source" in doc
     assert "`runtime_data_flow`" in doc
     assert "`resolved_runtime_data_flow.<data_source>`" in doc
-    assert "`mujoco_fastlio2_live` resolves to `/points_raw + /imu_raw" in doc
-    assert "`slam_or_relayed_localization_map`" in doc
-    assert "`command_boundary`" in doc
+    assert "`mujoco_fastlio2_live` resolves to `/lidar/raw_frame + /imu/raw" in doc
     assert "map -> odom -> body -> lidar_link" in doc
     assert "`odom->body` must be observed from live odometry" in doc
 
 
 def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algorithms():
-    from runtime.config import LidarConfig
+    from runtime.config import load_config
 
     assert (
         runtime_data_flow_topics.__doc__ == "Return unique canonical runtime stream tokens in one resolved data-flow."
@@ -121,21 +103,13 @@ def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algori
     assert FRAMES.axis_convention == "x_forward_y_left_z_up"
     assert FRAMES.lidar_frame == "lidar_link"
     assert FRAMES.real_lidar == "livox_frame"
-    assert TOPICS.raw_lidar_points == "/points_raw"
-    assert TOPICS.raw_imu == "/imu_raw"
+    assert TOPICS.lidar_scan == "/lidar/raw_frame"
+    assert TOPICS.imu == "/imu/raw"
     assert TOPICS.registered_cloud == "/slam/registered_cloud"
     assert TOPICS.map_cloud == "/slam/map_cloud"
-    assert MESSAGE_FORMATS["raw_timed_pointcloud2"].required_fields == (
-        "x",
-        "y",
-        "z",
-        "intensity",
-        "time",
-        "ring",
-    )
-    assert MESSAGE_FORMATS["registered_cloud"].frame_role == FRAMES.body
-    assert TOPIC_FORMATS[TOPICS.registered_cloud] == ("registered_cloud",)
-    assert TOPIC_FORMATS[TOPICS.map_cloud] == ("map_cloud",)
+    assert topic_formats(TOPICS.registered_cloud) == ("lingtu.dds.PointCloud2",)
+    assert topic_formats(TOPICS.map_cloud) == ("lingtu.dds.PointCloud2",)
+    assert TOPIC_ALLOWED_FRAME_IDS[TOPICS.registered_cloud] == (FRAMES.body,)
     assert TOPIC_ALLOWED_FRAME_IDS[TOPICS.odometry] == (FRAMES.odom, FRAMES.map)
     assert TOPIC_ALLOWED_FRAME_IDS[TOPICS.map_cloud] == (FRAMES.map, FRAMES.odom)
     assert frame_id_aliases(FRAMES.body) == (FRAMES.body, FRAMES.model_base)
@@ -151,17 +125,14 @@ def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algori
     )
     assert REAL_RUNTIME_TOPIC_ALLOWED_FRAME_IDS[TOPICS.map_cloud] == (FRAMES.map,)
     assert REAL_RUNTIME_TOPIC_ALLOWED_FRAME_IDS[TOPICS.global_path] == (FRAMES.map,)
-    assert set(TOPIC_FORMATS[TOPICS.raw_lidar_points]) == {
-        "raw_livox_custom",
-        "raw_timed_pointcloud2",
-    }
-    assert topic_formats(TOPICS.cmd_vel) == ("cmd_vel",)
+    assert topic_formats(TOPICS.lidar_scan) == ("lingtu.dds.LivoxFrame",)
+    assert topic_formats(TOPICS.cmd_vel) == ("lingtu.dds.FinalVelocityCommand",)
     assert TOPICS.lidar_scan in ALGORITHM_INTERFACES["fastlio_mapping"].inputs
-    assert TOPICS.raw_lidar_points in ALGORITHM_INTERFACES["fastlio_raw_validation"].inputs
+    assert TOPICS.lidar_scan in ALGORITHM_INTERFACES["fastlio_raw_validation"].inputs
     assert TOPICS.lidar_scan in DATA_SOURCE_CONTRACTS["field"].normalized_outputs
     assert TOPICS.exploration_way_point in ALGORITHM_INTERFACES["exploration_strategy"].outputs
     assert DATA_SOURCE_CONTRACTS["field"].lidar_extrinsic_profile is None
-    assert DATA_SOURCE_CONTRACTS["gazebo_industrial"].lidar_extrinsic_profile == "gazebo_proxy"
+    assert "gazebo_industrial" not in DATA_SOURCE_CONTRACTS
     assert RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES["map_layers_and_exploration"] == (
         "exploration_strategy",
     )
@@ -169,8 +140,8 @@ def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algori
     assert "octoplanner3d_uses_headless_octomap_or_point_cloud" in global_stage.map_dependency
     assert ARTIFACT_FORMATS["map_pcd"].path == "map.pcd"
     assert product_data_source("map").data_source == "field"
-    real_lidar = LIDAR_EXTRINSICS["go2_mid360"]
-    cfg_lidar = LidarConfig()
+    real_lidar = lidar_extrinsic("go2_mid360")
+    cfg_lidar = load_config(str(REPO_ROOT / "config/robots/unitree/go2/robot.yaml")).lidar
     assert cfg_lidar.frame_id == real_lidar.child
     assert cfg_lidar.offset_x == pytest.approx(real_lidar.x)
     assert cfg_lidar.offset_y == pytest.approx(real_lidar.y)
@@ -201,6 +172,8 @@ def test_runtime_contract_manifest_exports_topics_formats_algorithms_sources_and
         "endpoint_adapter",
         "slam_or_relayed_localization_map",
         "map_layers_and_exploration",
+        "tare_exploration",
+        "rolling_map_segment_execution",
         "global_planning",
         "local_planning_and_following",
         "dynamic_obstacle_gate",
@@ -210,12 +183,12 @@ def test_runtime_contract_manifest_exports_topics_formats_algorithms_sources_and
     assert flow[-1]["inputs"] == (TOPICS.cmd_vel,)
     assert flow[-1]["outputs"] == ("sink:data_source.command_sink",)
     resolved_flow = manifest["resolved_runtime_data_flow"]["mujoco_fastlio2_live"]
-    assert resolved_flow[0]["inputs"] == (TOPICS.raw_lidar_points, TOPICS.raw_imu)
-    assert resolved_flow[0]["outputs"] == (TOPICS.raw_lidar_points, TOPICS.raw_imu)
-    assert resolved_flow[1]["inputs"] == (TOPICS.raw_lidar_points, TOPICS.raw_imu)
+    assert resolved_flow[0]["inputs"] == (TOPICS.lidar_scan, TOPICS.imu)
+    assert resolved_flow[0]["outputs"] == (TOPICS.lidar_scan, TOPICS.imu)
+    assert resolved_flow[1]["inputs"] == (TOPICS.lidar_scan, TOPICS.imu)
     assert resolved_flow[-1]["outputs"] == ("mujoco_velocity_adapter",)
-    assert manifest["message_formats"]["registered_cloud"]["frame_role"] == FRAMES.body
-    assert manifest["topic_formats"][TOPICS.registered_cloud] == ("registered_cloud",)
+    assert manifest["topic_allowed_frame_ids"][TOPICS.registered_cloud] == [FRAMES.body]
+    assert manifest["topic_formats"][TOPICS.registered_cloud] == ("lingtu.dds.PointCloud2",)
     assert manifest["topic_allowed_frame_ids"][TOPICS.map_cloud] == [
         FRAMES.map,
         FRAMES.odom,
@@ -224,9 +197,9 @@ def test_runtime_contract_manifest_exports_topics_formats_algorithms_sources_and
         FRAMES.map,
     ]
     assert tuple(manifest["real_runtime_required_topic_frame_ids"]) == (REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS)
-    assert tuple(manifest["runtime_data_flow_topics"]["real_s100p"]) == (runtime_data_flow_topics("real_s100p"))
+    assert tuple(manifest["runtime_data_flow_topics"][FIELD_DATA_SOURCE]) == (runtime_data_flow_topics(REAL_RUNTIME_CONTRACT))
     assert TOPICS.map_cloud in manifest["algorithm_interfaces"]["exploration_strategy"]["inputs"]
-    assert TOPICS.lidar_scan in manifest["data_sources"]["real_s100p"]["normalized_outputs"]
+    assert TOPICS.lidar_scan in manifest["data_sources"][FIELD_DATA_SOURCE]["normalized_outputs"]
     fastlio_aliases = {item["source"]: item["target"] for item in manifest["adapter_aliases"]["fastlio2"]}
     assert fastlio_aliases["/cloud_registered"] == TOPICS.registered_cloud
     assert fastlio_aliases["/cloud_map"] == TOPICS.map_cloud
@@ -236,7 +209,7 @@ def test_runtime_contract_manifest_exports_topics_formats_algorithms_sources_and
 
 
 def test_runtime_stream_contract_language_is_not_ros2_topic_only():
-    sim_contract = _read("docs/architecture/SIMULATION_INTEGRATION_CONTRACT.md")
+    sim_contract = _read("docs/simulation.md")
 
     assert "canonical runtime stream tokens" in sim_contract
     assert "not a ROS2 topic browser" in sim_contract
@@ -305,36 +278,39 @@ def test_runtime_contract_references_declared_topics_formats_and_artifacts():
 
 
 def test_all_product_data_sources_reach_same_navigation_algorithm_entry_topics():
-    real_runtime_entry_topics = CORE_ALGORITHM_ENTRY_TOPICS + (
+    real_runtime_entry_topics = (
+        *CORE_ALGORITHM_ENTRY_TOPICS,
         TOPICS.localization_health,
         TOPICS.localization_quality,
     )
 
     for name, source in DATA_SOURCE_CONTRACTS.items():
-        if name == REAL_RUNTIME_CONTRACT:
+        if name == FIELD_DATA_SOURCE:
             assert source.algorithm_entry_outputs == real_runtime_entry_topics, name
         else:
             assert source.algorithm_entry_outputs == CORE_ALGORITHM_ENTRY_TOPICS, name
 
-    real = DATA_SOURCE_CONTRACTS[REAL_RUNTIME_CONTRACT]
-    gazebo = DATA_SOURCE_CONTRACTS["gazebo_industrial"]
+    real = DATA_SOURCE_CONTRACTS[FIELD_DATA_SOURCE]
     mujoco_fastlio = DATA_SOURCE_CONTRACTS["mujoco_fastlio2_live"]
 
     assert set(real.source_outputs) == {TOPICS.lidar_scan, TOPICS.imu}
-    assert set(mujoco_fastlio.source_outputs) == {TOPICS.raw_lidar_points, TOPICS.raw_imu}
-    assert TOPICS.exploration_grid in gazebo.algorithm_context_outputs
+    assert set(mujoco_fastlio.source_outputs) == {TOPICS.lidar_scan, TOPICS.imu}
+    assert "gazebo_industrial" not in DATA_SOURCE_CONTRACTS
     assert "cmu_unity_external" not in DATA_SOURCE_CONTRACTS
 
 
 def test_resolved_runtime_data_flow_expands_endpoint_boundaries_without_placeholders():
     for name in DATA_SOURCE_CONTRACTS:
         stages = resolved_runtime_data_flow(name)
-        assert [stage.name for stage in stages] == [stage["name"] for stage in manifest_stages()]
+        assert [stage.name for stage in stages] == [
+            stage["name"] for stage in manifest_stages()
+            if stage["name"] not in {"tare_exploration", "rolling_map_segment_execution"}
+        ]
         tokens = [token for stage in stages for token in (*stage.inputs, *stage.outputs)]
         assert not any(token.startswith("source:data_source.") for token in tokens), name
         assert not any(token.startswith("sink:data_source.") for token in tokens), name
 
-    real = {stage.name: stage for stage in resolved_runtime_data_flow("real_s100p")}
+    real = {stage.name: stage for stage in resolved_runtime_data_flow(REAL_RUNTIME_CONTRACT)}
     assert real["endpoint_adapter"].inputs == (TOPICS.lidar_scan, TOPICS.imu)
     assert real["endpoint_adapter"].outputs == (TOPICS.lidar_scan, TOPICS.imu)
     assert real["slam_or_relayed_localization_map"].inputs == (
@@ -345,8 +321,8 @@ def test_resolved_runtime_data_flow_expands_endpoint_boundaries_without_placehol
 
     mujoco_live = {stage.name: stage for stage in resolved_runtime_data_flow("mujoco_fastlio2_live")}
     assert mujoco_live["endpoint_adapter"].inputs == (
-        TOPICS.raw_lidar_points,
-        TOPICS.raw_imu,
+        TOPICS.lidar_scan,
+        TOPICS.imu,
     )
     assert mujoco_live["slam_or_relayed_localization_map"].outputs == (
         TOPICS.odometry,
@@ -355,14 +331,6 @@ def test_resolved_runtime_data_flow_expands_endpoint_boundaries_without_placehol
     )
     assert mujoco_live["command_boundary"].outputs == ("mujoco_velocity_adapter",)
 
-    gazebo = {stage.name: stage for stage in resolved_runtime_data_flow("gazebo_industrial")}
-    assert gazebo["endpoint_adapter"].inputs == (
-        "/model/thunder/odometry",
-        "/lingtu/gazebo/raw/lidar_points",
-        "/lingtu/gazebo/raw/lidar_scan",
-    )
-    assert TOPICS.exploration_grid in gazebo["endpoint_adapter"].outputs
-    assert gazebo["command_boundary"].outputs == ("/lingtu/gazebo/cmd_vel",)
 
 
 def manifest_stages():
@@ -370,7 +338,7 @@ def manifest_stages():
 
 
 def test_lidar_extrinsic_preserves_body_axis_direction_contract():
-    extrinsic = LIDAR_EXTRINSICS["gazebo_proxy"]
+    extrinsic = lidar_extrinsic("gazebo_proxy")
 
     origin = transform_xyz((0.0, 0.0, 0.0), extrinsic)
     forward = transform_xyz((1.0, 0.0, 0.0), extrinsic)
@@ -383,17 +351,15 @@ def test_lidar_extrinsic_preserves_body_axis_direction_contract():
 
 
 def test_lidar_module_uses_runtime_frame_contract():
-    module_source = _read("src/drivers/real/lidar/lidar_module.py")
-    driver_source = _read("src/drivers/real/lidar/lidar.py")
+    from drivers.real.lidar.module import LIDAR_RAW_FRAME_ID
+    from runtime.tf.frames import real_lidar_frame_id
 
-    assert "from runtime.runtime_interface import TOPICS, real_lidar_frame_id" in module_source
-    assert "LIDAR_RAW_FRAME_ID = real_lidar_frame_id()" in module_source
-    assert "scan_topic: str = TOPICS.lidar_scan" in module_source
-    assert "imu_topic: str = TOPICS.imu" in module_source
+    module_source = _read("src/drivers/real/lidar/module.py")
+    assert LIDAR_RAW_FRAME_ID == real_lidar_frame_id()
     assert "frame_id=LIDAR_RAW_FRAME_ID" in module_source
-    assert "from runtime.runtime_interface import TOPICS" in driver_source
-    assert "scan_topic: str = TOPICS.lidar_scan" in driver_source
-    assert "imu_topic: str = TOPICS.imu" in driver_source
+    assert "scan: Out[PointCloud2]" in module_source
+    assert "imu: Out[Imu]" in module_source
+
 
 
 def test_native_motion_driver_uses_the_body_frame_contract():
@@ -410,7 +376,7 @@ def test_adapter_aliases_use_runtime_contract_topics():
     assert adapter_remappings("fastlio2")["/cloud_registered"] == TOPICS.registered_cloud
     assert adapter_remappings("fastlio2")["/cloud_map"] == TOPICS.map_cloud
     assert adapter_remappings("fastlio2")["/Odometry"] == TOPICS.odometry
-    assert adapter_remappings("localizer")["map_cloud"] == TOPICS.saved_map_cloud
+    assert "localizer" not in ADAPTER_TOPIC_ALIASES
     assert ADAPTER_TOPIC_ALIASES["tare"][0].target == TOPICS.map_cloud
 
 
@@ -420,35 +386,22 @@ def test_slam_runtime_defaults_keep_genz_frame_contract_available():
 
 
 def test_src_mujoco_bridges_use_runtime_contract_frames():
-    sensor_bridge = _read("src/drivers/sim/mujoco/sensors.py")
-    stack = _read("src/drivers/sim/mujoco/stack.py")
-    driver = _read("src/drivers/sim/mujoco/driver.py")
+    from drivers.sim.mujoco import driver, sensors
 
-    assert "from runtime.runtime_interface import FRAME_LINKS, TOPICS, topic_default_frame_id" in sensor_bridge
-    assert "MUJOCO_ODOM_FRAME_ID = topic_default_frame_id(TOPICS.odometry)" in sensor_bridge
-    assert 'MUJOCO_BODY_FRAME_ID = FRAME_LINKS["odom_to_body"].child' in sensor_bridge
+    assert sensors.MUJOCO_ODOM_FRAME_ID == topic_default_frame_id(TOPICS.odometry)
+    assert sensors.MUJOCO_BODY_FRAME_ID == FRAMES.body
+    assert driver.MUJOCO_MODULE_ODOM_FRAME_ID == sensors.MUJOCO_ODOM_FRAME_ID
+    assert driver.MUJOCO_MODULE_BODY_FRAME_ID == sensors.MUJOCO_BODY_FRAME_ID
+    assert driver.MUJOCO_MODULE_LIDAR_FRAME_ID == topic_default_frame_id(TOPICS.lidar_scan)
+    assert driver.MUJOCO_MODULE_MAP_CLOUD_FRAME_ID == driver.MUJOCO_MODULE_ODOM_FRAME_ID
+    assert driver.MUJOCO_MODULE_CAMERA_FRAME_ID == FRAMES.camera
+
+    sensor_bridge = _read("src/drivers/sim/mujoco/sensors.py")
     assert "msg.header.frame_id = MUJOCO_ODOM_FRAME_ID" in sensor_bridge
     assert "msg.child_frame_id = MUJOCO_BODY_FRAME_ID" in sensor_bridge
     assert 'parent=FRAME_LINKS["odom_to_body"].parent' in sensor_bridge
     assert 'child=FRAME_LINKS["odom_to_body"].child' in sensor_bridge
-    assert "FRAMES.odom" not in sensor_bridge
-    assert "FRAMES.body" not in sensor_bridge
 
-    assert "from runtime.runtime_interface import TOPICS, topic_default_frame_id" in stack
-    assert "MUJOCO_LIVE_PLANNING_FRAME_ID = topic_default_frame_id(TOPICS.odometry)" in stack
-    assert "planning_frame_id=MUJOCO_LIVE_PLANNING_FRAME_ID" in stack
-    assert "occupancy_frame_id=MUJOCO_LIVE_OCCUPANCY_FRAME_ID" in stack
-    assert "goal_frame_id=MUJOCO_LIVE_GOAL_FRAME_ID" in stack
-    assert "FRAMES.odom" not in stack
-
-    assert "MUJOCO_MODULE_ODOM_FRAME_ID = topic_default_frame_id(TOPICS.odometry)" in driver
-    assert "MUJOCO_MODULE_BODY_FRAME_ID = topic_default_frame_id(TOPICS.registered_cloud)" in driver
-    assert "MUJOCO_MODULE_MAP_CLOUD_FRAME_ID = MUJOCO_MODULE_ODOM_FRAME_ID" in driver
-    assert "frame_id=MUJOCO_MODULE_BODY_FRAME_ID" in driver
-    assert "frame_id=MUJOCO_MODULE_MAP_CLOUD_FRAME_ID" in driver
-    assert "frame_id=MUJOCO_MODULE_CAMERA_FRAME_ID" in driver
-    assert "FRAMES.odom" not in driver
-    assert "FRAMES.body" not in driver
 
 
 def test_gazebo_bridge_config_exposes_lingtu_runtime_topics():
@@ -494,7 +447,7 @@ def test_gazebo_launch_is_optional_but_ros_native():
     normalized_launch = launch.replace("\r\n", "\n")
 
     assert "lingtu_gazebo_demo_room.sdf" in launch
-    assert '"worlds",\n    "gazebo",' in normalized_launch
+    assert '"gazebo",\n    "assets",\n    "worlds",' in normalized_launch
     assert "lingtu_gazebo_empty.sdf" not in launch
     assert "ros_gz_sim" in launch
     assert "ros_gz_bridge" in launch
@@ -520,7 +473,7 @@ def test_gazebo_launch_is_optional_but_ros_native():
     assert 'DeclareLaunchArgument("spawn_x", default_value="0.0")' in launch
 
 
-def test_gazebo_industrial_park_scene_is_first_class_product_scene():
+def test_gazebo_industrial_park_compatibility_scene_has_expected_assets():
     world_path = REPO_ROOT / "sim/adapters/gazebo/assets/worlds/lingtu_gazebo_industrial_park.sdf"
     tree = ET.parse(world_path)
     root = tree.getroot()
@@ -583,7 +536,7 @@ def test_gazebo_proxy_model_matches_bridge_frame_and_topic_contract():
     lidar_pose = root.find(".//link[@name='lidar_link']/pose")
     assert lidar_pose is not None
     xyz_rpy = [float(value) for value in lidar_pose.text.split()]
-    gazebo_lidar = LIDAR_EXTRINSICS["gazebo_proxy"]
+    gazebo_lidar = lidar_extrinsic("gazebo_proxy")
     assert xyz_rpy == pytest.approx(
         [
             gazebo_lidar.x,

@@ -132,21 +132,9 @@ def _package_records(
             {
                 "path": relative,
                 "size": path.stat().st_size,
-                "sha256": _sha256_file(path),
             }
         )
     return records
-
-
-def _catalog_digest(value: object) -> str:
-    payload = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
 
 
 def _package_path(package_root: Path, value: object, field: str) -> Path:
@@ -609,6 +597,8 @@ def _promote_worldpackage(
         projection = json.loads(projection_path.read_text(encoding="utf-8"))
         if not isinstance(projection, dict):
             raise TypeError("Forest_HF world visual projection must be an object")
+        projection.pop("artifact_content_digest", None)
+        projection.pop("digest", None)
         _atomic_write(projection_path, _canonical_bytes(projection))
 
         content_records = _package_records(
@@ -624,9 +614,8 @@ def _promote_worldpackage(
             raise ValueError("Forest_HF world manifest lacks physics/content objects")
         physics["mjcf"] = _PROMOTED_MJCF_PATH
         content["files"] = content_records
-        content["visual_projection"] = {
-            "path": _PROJECTION_PATH,
-        }
+        content.pop("digest", None)
+        content["visual_projection"] = {"path": _PROJECTION_PATH}
         manifest_payload = yaml.safe_dump(
             manifest,
             allow_unicode=True,

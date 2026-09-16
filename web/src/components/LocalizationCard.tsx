@@ -7,6 +7,7 @@
  *   - 一个 accent 只用在:活动指示点 + 链接高亮,其余全部 neutral
  */
 import { useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import type { SSEState } from '../types'
 import styles from './LocalizationCard.module.css'
 
@@ -111,7 +112,11 @@ function SlamPanel({ sseState }: { sseState: SSEState }) {
     typeof odom?.yaw === 'number' ? ((odom.yaw * 180) / Math.PI).toFixed(1) : '—'
   const vx = fmt(odom?.vx, 2)
   const mode = slam?.mode ?? '离线'
-  const hasFix = connected && odom != null
+  const hasOdometry = connected && odom != null
+  const poseFresh = sseState.session?.pose_fresh
+  const odometryStatus = !connected ? '连接断开'
+    : !hasOdometry ? '等待里程计'
+    : poseFresh === false ? '数据已过期' : '已收到里程计'
   const processedHz = num(diag, 'processed_scan_hz') ?? slam?.slam_hz
   const lidarHz = num(diag, 'lidar_input_hz')
   const imuHz = num(diag, 'imu_input_hz')
@@ -137,31 +142,35 @@ function SlamPanel({ sseState }: { sseState: SSEState }) {
 
   return (
     <>
-      <Header title="定位里程计" live={hasFix} status={hasFix ? '已锁定' : '未锁定'} />
+      <Header title="定位里程计" live={hasOdometry && poseFresh !== false} status={odometryStatus} />
 
       <div className={styles.grid}>
         <Field label="X · Y" value={`${posX}, ${posY}`} unit="m" />
         <Field label="航向" value={yawDeg} unit="°" />
         <Field label="线速度" value={vx} unit="m/s" />
-        <Field label="链路" value={modeLabel(mode)} dim title={mode} />
+        <Field label="数据时效" value={!connected ? '连接断开' : !hasOdometry ? '未收到' : poseFresh === false ? '已过期' : poseFresh === true ? '最新' : '未报告'} dim={poseFresh !== true || !connected} />
       </div>
-      <div className={styles.grid}>
-        <Field label="处理频率" value={fmt(processedHz, 1)} unit="Hz" title="定位输出频率；和雷达原始输入不是同一个计数窗口。" />
-        <Field label="目标频率" value={fmt(targetHz, 1)} unit="Hz" dim title="配置目标频率，不是实测雷达吞吐。" />
-        <Field label="雷达输入" value={fmt(lidarHz, 1)} unit="Hz" title="原生运行时报告的雷达输入频率。" />
-        <Field label="IMU 输入" value={fmt(imuHz, 1)} unit="Hz" />
-        <Field label="匹配质量" value={icpText} dim={!icpGood} title="越低越好；大于 0.3 需要重定位或重新建图。" />
-        <Field label="内部时钟" value={fmt(tickHz, 1)} unit="Hz" dim />
-        <Field label="地图变换" value={hasTf ? '正常' : '缺失'} dim={!hasTf} />
-        <Field label="匹配点数" value={fmtInt(registeredPoints)} />
-        <Field label="地图点数" value={fmtInt(mapPoints)} />
-        <Field label="缓存" value={`${fmtInt(imuBuffer)} / ${fmtInt(lidarBuffer)}`} unit="I/L" dim />
-        <Field label="丢帧" value={`${fmtInt(droppedImu)} / ${fmtInt(droppedLidar)}`} unit="I/L" dim />
-        <Field label="同步等待" value={fmtInt(syncWait)} dim />
-        <Field label="场景" value={sceneMode} dim />
-        <Field label="地图加载" value={mapLoaded ? '是' : '否'} dim={!mapLoaded} />
-        <Field label="坐标跳变" value={mapFrameJump ? '是' : '否'} dim={!mapFrameJump} />
-      </div>
+      <details className={styles.details}>
+        <summary>定位详情<ChevronDown size={14} /></summary>
+        <div className={styles.grid}>
+          <Field label="链路" value={modeLabel(mode)} dim title={mode} />
+          <Field label="处理频率" value={fmt(processedHz, 1)} unit="Hz" title="定位输出频率；和雷达原始输入不是同一个计数窗口。" />
+          <Field label="目标频率" value={fmt(targetHz, 1)} unit="Hz" dim title="配置目标频率，不是实测雷达吞吐。" />
+          <Field label="雷达输入" value={fmt(lidarHz, 1)} unit="Hz" title="原生运行时报告的雷达输入频率。" />
+          <Field label="IMU 输入" value={fmt(imuHz, 1)} unit="Hz" />
+          <Field label="匹配质量" value={icpText} dim={!icpGood} title="越低越好；大于 0.3 需要重定位或重新建图。" />
+          <Field label="内部时钟" value={fmt(tickHz, 1)} unit="Hz" dim />
+          <Field label="地图变换" value={hasTf ? '正常' : '缺失'} dim={!hasTf} />
+          <Field label="匹配点数" value={fmtInt(registeredPoints)} />
+          <Field label="地图点数" value={fmtInt(mapPoints)} />
+          <Field label="缓存" value={`${fmtInt(imuBuffer)} / ${fmtInt(lidarBuffer)}`} unit="I/L" dim />
+          <Field label="丢帧" value={`${fmtInt(droppedImu)} / ${fmtInt(droppedLidar)}`} unit="I/L" dim />
+          <Field label="同步等待" value={fmtInt(syncWait)} dim />
+          <Field label="场景" value={sceneMode} dim />
+          <Field label="地图加载" value={mapLoaded ? '是' : '否'} dim={!mapLoaded} />
+          <Field label="坐标跳变" value={mapFrameJump ? '是' : '否'} dim={!mapFrameJump} />
+        </div>
+      </details>
     </>
   )
 }

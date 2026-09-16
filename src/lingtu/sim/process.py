@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import IO, Any, BinaryIO, cast
 
+from lingtu.assembly.graph import ProcessSpec
 from lingtu.run_plan import RunPlan
 from lingtu.sim.identity import (
     ProcessIdentity,
@@ -38,7 +39,6 @@ from lingtu.sim.stop import (
     load_motion_stop_evidence,
 )
 from lingtu.switch_contracts import ProcessError, ProcessFailed, ProcessReport, is_product_session_id
-from runtime.graph import ProcessSpec
 
 _WINDOWS_BOOTSTRAP_ENV = frozenset(
     {
@@ -342,7 +342,18 @@ class SimProcessManager:
                     started.append(process)
                     report.started.append(process.target)
                     readiness_deadlines[process.target] = process_deadline
-                for process in stage:
+                support_ready = not any(not process.provides for process in stage)
+                for process in sorted(stage, key=lambda item: bool(item.provides)):
+                    if process.provides and not support_ready:
+                        # DDS readers start first, but the feeder must finish loading
+                        # before their input-dependent readiness budget begins.
+                        support_ready = True
+                        input_ready_at = time.monotonic()
+                        for consumer in stage:
+                            if consumer.provides:
+                                readiness_deadlines[consumer.target] = (
+                                    input_ready_at + float(consumer.timeout_s)
+                                )
                     if process.target not in readiness_deadlines:
                         readiness_deadlines[process.target] = (
                             time.monotonic() + float(process.timeout_s)
@@ -353,15 +364,32 @@ class SimProcessManager:
                             self._remaining(readiness_deadlines[process.target]),
                         )
                     )
+                for process in stage:
+                    if not process.provides and not self.active(process.target):
+                        raise ProcessError(
+                            "direct support process exited during consumer readiness: "
+                            f"{process.target}"
+                        )
         except Exception as exc:
             report.error = str(exc) or exc.__class__.__name__
             report.status = "failed"
+            rollback_order = self._stop_order(plan, tuple(started))
             failures = self._stop_processes(
-                self._stop_order(plan, tuple(started)),
+                rollback_order,
                 report,
                 completed=report.rolled_back,
                 continue_on_error=True,
             )
+            # rolled_back records the transaction outcome, including a child
+            # that exited on its own before cleanup could signal it.
+            failed_targets = {target for target, _error in failures}
+            for process in rollback_order:
+                if (
+                    process.target not in failed_targets
+                    and process.target not in report.rolled_back
+                    and not self.owns(process.target)
+                ):
+                    report.rolled_back.append(process.target)
             report.rollback_errors.extend(
                 f"{target}: {error}" for target, error in failures
             )
@@ -635,7 +663,7 @@ class SimProcessManager:
         log_capture: _ProcessLogCapture | None = None
         stdout_log, stderr_log = self._log_paths(bound.process.name)
         try:
-            child = subprocess.Popen(  # noqa: S603
+            child = subprocess.Popen(
                 bound.argv,
                 cwd=bound.cwd,
                 env=child_environment,

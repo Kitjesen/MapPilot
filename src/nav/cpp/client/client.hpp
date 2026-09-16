@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -159,9 +160,19 @@ struct PlanResult {
   std::vector<PathPoint> path;
 };
 
-// Latest native /nav/traversability control-risk grid.  This is deliberately
-// separate from MapScene and Python planning cost: the native endpoint is the
-// only producer with motion-control authority.
+// Latest measured joints for display, independent of navigation authority.
+struct JointStateSnapshot {
+  double timestamp_s{0.0};
+  std::string robot_model;
+  std::uint32_t joint_count{0U};
+  std::array<std::string, 12> names;
+  std::array<double, 12> position{};
+  std::array<double, 12> velocity{};
+  std::array<double, 12> effort{};
+};
+
+// Latest native /nav/traversability control-risk grid. The native endpoint
+// remains its only producer with motion-control authority.
 struct TraversabilityGridSnapshot {
   double timestamp_s{0.0};
   std::string frame_id;
@@ -221,6 +232,10 @@ struct MapSceneSnapshot {
   MapSceneGridSnapshot occupancy;
   MapSceneGridSnapshot elevation;
   MapSceneGridSnapshot esdf;
+  MapSceneGridSnapshot surface_projection;
+  MapSceneGridSnapshot ground_height;
+  MapSceneGridSnapshot ground_roughness;
+  MapSceneGridSnapshot ground_support;
 };
 
 struct MapSceneHealthSnapshot {
@@ -265,7 +280,9 @@ class LINGTU_NAV_CLIENT_API Client {
         double yaw,
         int timeout_ms = 1000,
         const std::string& task_id = {},
-        const std::string& request_id = {});
+        const std::string& request_id = {},
+        double max_speed_mps = 0.0,
+        double acceptance_radius_m = 0.0);
     [[nodiscard]] PlanResult preview(
         double x,
         double y,
@@ -481,6 +498,7 @@ class LINGTU_NAV_CLIENT_API Client {
   [[nodiscard]] bool takeGlobalPath(PathSnapshot* path);
   [[nodiscard]] bool takeLocalPath(PathSnapshot* path);
   [[nodiscard]] bool takeTraversability(TraversabilityGridSnapshot *grid);
+  [[nodiscard]] bool takeJointState(JointStateSnapshot *state);
   [[nodiscard]] bool takeMapScene(MapSceneSnapshot* scene);
   [[nodiscard]] MapSceneHealthSnapshot mapSceneHealth() const;
 

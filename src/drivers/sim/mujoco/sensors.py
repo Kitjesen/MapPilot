@@ -1,8 +1,7 @@
-"""MuJoCo raw sensor bridge helpers for ROS-facing simulation adapters.
+"""MuJoCo sensor transforms shared by native DDS and compatibility adapters.
 
-These functions are intentionally not a gate harness. They convert MuJoCo
-state and point samples into canonical ROS-compatible sensor messages so
-runtime adapters and validation gates can share the same sensor semantics.
+Geometry and IMU helpers are transport-independent. Compatibility message
+builders receive their message classes from callers and do not import ROS.
 """
 
 from __future__ import annotations
@@ -13,7 +12,8 @@ from typing import Any
 
 import numpy as np
 
-from runtime.runtime_interface import FRAME_LINKS, TOPICS, topic_default_frame_id
+from message.topics import TOPICS
+from runtime.tf.frames import FRAME_LINKS, topic_default_frame_id
 
 MUJOCO_ODOM_FRAME_ID = topic_default_frame_id(TOPICS.odometry)
 MUJOCO_BODY_FRAME_ID = FRAME_LINKS["odom_to_body"].child
@@ -66,19 +66,12 @@ def world_points_to_body_frame(
     return cloud
 
 
-def world_xyzi_to_sensor_xyzi(
+def lidar_pose_world(
     engine: Any,
-    pts_xyzi_world: np.ndarray,
     *,
     data: Any | None = None,
-) -> np.ndarray:
-    """Convert MuJoCo world-frame XYZI points into the LiDAR sensor frame."""
-
-    pts = np.asarray(pts_xyzi_world, dtype=np.float32)
-    if pts.size == 0:
-        return np.zeros((0, 4), dtype=np.float32)
-    if pts.ndim != 2 or pts.shape[1] < 3:
-        raise ValueError(f"expected point cloud shape (N, >=3), got {pts.shape}")
+) -> tuple[np.ndarray, np.ndarray]:
+    """Read the raycast sensor pose from the same MuJoCo scan snapshot."""
 
     data = getattr(engine, "_data", None) if data is None else data
     model = getattr(engine, "_model", None)
@@ -108,6 +101,22 @@ def world_xyzi_to_sensor_xyzi(
             sensor_rmat = quat_xyzw_to_matrix(
                 np.asarray(state.orientation, dtype=np.float64)
             )
+    return sensor_pos, sensor_rmat
+
+
+def world_xyzi_to_sensor_xyzi(
+    engine: Any,
+    pts_xyzi_world: np.ndarray,
+    *,
+    data: Any | None = None,
+) -> np.ndarray:
+    """Convert MuJoCo world-frame XYZI points into the LiDAR sensor frame."""
+    pts = np.asarray(pts_xyzi_world, dtype=np.float32)
+    if pts.size == 0:
+        return np.zeros((0, 4), dtype=np.float32)
+    if pts.ndim != 2 or pts.shape[1] < 3:
+        raise ValueError(f"expected point cloud shape (N, >=3), got {pts.shape}")
+    sensor_pos, sensor_rmat = lidar_pose_world(engine, data=data)
     xyz_sensor = (pts[:, :3].astype(np.float64) - sensor_pos) @ sensor_rmat
     intensity = (
         pts[:, 3:4].astype(np.float32)

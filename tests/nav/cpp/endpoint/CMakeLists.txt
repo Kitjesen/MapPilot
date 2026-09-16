@@ -838,6 +838,21 @@ endif()
 
 if(LINGTU_NAV_CPP_BUILD_ENDPOINT)
 if(LINGTU_NAV_CPP_BUILD_TESTS)
+if(TARGET octoplanner3d_runtime)
+  add_executable(test_planning_map_writer
+    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_planning_map_writer.cpp"
+    "${_ENDPOINT_DIR}/nav/status/planning_map_writer.cpp"
+    "${_ENDPOINT_DIR}/nav/status/status_snapshot_file_writer.cpp"
+    "${_ENDPOINT_DIR}/nav/input/active/octomap.cpp"
+    "${_ENDPOINT_DIR}/nav/input/active/declared.cpp")
+  target_include_directories(test_planning_map_writer PRIVATE
+    "${_LINGTU_ROOT}/src" "${LINGTU_NAV_CPP_ROOT}" "${_ENDPOINT_DIR}/nav"
+    "${_NAV_KERNEL_DIR}/include")
+  target_link_libraries(test_planning_map_writer PRIVATE
+    octoplanner3d_runtime octoplanner3d_global_planner Threads::Threads)
+  lingtu_endpoint_enable_warnings(test_planning_map_writer)
+  add_test(NAME test_planning_map_writer COMMAND test_planning_map_writer)
+endif()
 add_executable(test_nav_client
   "${_NAV_TESTS_DIR}/test_client.cpp"
   "${_ENDPOINT_DIR}/nav/command/ingress.cpp")
@@ -1265,6 +1280,27 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_navigation_goal_status_dds.cpp")
     COMMAND test_navigation_goal_status_dds)
 endif()
 
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_simulation_clock_dds.cpp")
+  add_executable(test_simulation_clock_dds
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_simulation_clock_dds.cpp"
+    "${_ENDPOINT_DIR}/nav/dds/runtime.cpp"
+    "${_ENDPOINT_DIR}/nav/dds/codec.cpp"
+    "${_ENDPOINT_DIR}/nav/dds/frame.cpp"
+    "${_ENDPOINT_DIR}/nav/command/goal.cpp"
+    "${_ENDPOINT_DIR}/nav/input/frame.cpp")
+  target_include_directories(test_simulation_clock_dds PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}"
+    "${_LINGTU_ROOT}/src"
+    "${_NAV_CORE_DIR}"
+    "${_NAV_KERNEL_DIR}/include"
+    ${_EP_DIRS})
+  target_link_libraries(test_simulation_clock_dds PRIVATE
+    lingtu_inspection_core lingtu_nav_local_planner lingtu_dds_messages
+    CycloneDDS::ddsc lingtu_dds_contracts Threads::Threads)
+  lingtu_endpoint_enable_warnings(test_simulation_clock_dds)
+  add_test(NAME test_simulation_clock_dds COMMAND test_simulation_clock_dds)
+endif()
+
 if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_evidence_bridge.cpp")
   add_executable(test_inspection_evidence_bridge
     "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_evidence_bridge.cpp")
@@ -1409,6 +1445,7 @@ if(WIN32)
       test_final_velocity_writer
       test_inspection_evidence_dds
       test_navigation_goal_status_dds
+      test_simulation_clock_dds
       test_operator_motion_dds)
     if(TEST ${_boot_identity_test})
       set_tests_properties(${_boot_identity_test} PROPERTIES
@@ -1751,6 +1788,16 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_active_octomap_gate.cpp")
     octoplanner3d_global_planner)
   lingtu_endpoint_enable_warnings(test_active_octomap_gate)
   add_test(NAME test_active_octomap_gate COMMAND test_active_octomap_gate)
+endif()
+
+if(TARGET lingtu_maps)
+  add_executable(test_live_obstacle_braking
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_live_obstacle_braking.cpp")
+  target_include_directories(test_live_obstacle_braking PRIVATE "${_NAV_CORE_DIR}")
+  target_link_libraries(test_live_obstacle_braking PRIVATE
+    lingtu_maps lingtu_nav_local_planner)
+  lingtu_endpoint_enable_warnings(test_live_obstacle_braking)
+  add_test(NAME test_live_obstacle_braking COMMAND test_live_obstacle_braking)
 endif()
 
 if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_active_occupancy_gate.cpp")

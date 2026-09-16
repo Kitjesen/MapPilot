@@ -11,7 +11,6 @@ const requiredBootstrapKeys = [
   'localization',
   'map',
   'media',
-  'mission',
   'navigation',
   'robot',
   'safety',
@@ -332,6 +331,7 @@ try {
   const session = bootstrapBody.session || {}
   const localization = bootstrapBody.localization || {}
   const navigation = bootstrapBody.navigation || {}
+  const goalAdmission = navigation.goal_admission?.state
 
   const summary = {
     base,
@@ -340,7 +340,7 @@ try {
     active_map: session.active_map ?? null,
     localization_state: localization.state ?? null,
     localization_backend: session.localization_backend ?? session.slam_profile ?? null,
-    can_accept_goal: navigation.can_accept_goal ?? navigation.readiness?.can_accept_goal ?? null,
+    can_accept_goal: goalAdmission === 'ACCEPTING' ? true : goalAdmission === 'BLOCKED' ? false : null,
     routecheck_ok: typeof routecheck.body?.ok === 'boolean' ? routecheck.body.ok : null,
     routecheck_count: typeof routecheck.body?.count === 'number' ? routecheck.body.count : null,
     real_runtime_evidence_ok: typeof realEvidence.body?.ok === 'boolean' ? realEvidence.body.ok : null,

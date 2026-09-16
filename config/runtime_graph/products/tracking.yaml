@@ -1,7 +1,38 @@
-schema_version: lingtu.runtime_graph.product.v2
+schema_version: lingtu.runtime_graph.product.v3
 name: tracking
-contracts:
-  - lingtu.product.tracking.v1
+topics:
+  - /tf
+  - /slam/odometry
+  - /slam/registered_cloud
+  - /slam/map_observation
+  - /slam/localization_health
+  - /maps/state
+  - /maps/scene
+  - /maps/activation/request
+  - /maps/activation/ack
+  - /nav/command/request
+  - /nav/command/ack
+  - /nav/goal/status
+  - /nav/state
+  - /nav/operator_motion/control
+  - /nav/operator_motion/sample
+  - /nav/operator_motion/ack
+  - /nav/operator_motion/status
+  - /nav/traversability
+  - /nav/global_path
+  - /nav/local_path
+  - /nav/way_point
+  - /nav/cmd_vel
+capabilities:
+  - saved_map_relocalization
+  - explicit_goal_tracking
+  - local_planner_collision_and_traversability_scoring
+  - path_follower_pre_command_output
+  - final_cmd_vel_single_writer
+  - operator_motion_typed_dds_interface
+  - native_operator_motion_authority
+  - operator_teleop_takeover_with_safety_veto
+  - operator_assisted_local_planner_takeover
 summary: Follow a selected person from RGB-D perception through native planning and safety.
 operator_switchable: true
 session_mode: navigating
@@ -17,7 +48,7 @@ native_nav:
   global_planner: octoplanner3d
   local_planner: cmu
   local_planners: [cmu, scan]
-  use_traversability_cost: false
+  use_traversability_cost: true
   allow_teleop_takeover: true
   teleop_local_planner: true
 processes:
@@ -25,6 +56,7 @@ processes:
   - imu
   - slam
   - maps
+  - traversability
   - nav
   - driver
   - camera

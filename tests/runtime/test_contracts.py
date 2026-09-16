@@ -1,5 +1,13 @@
 import pytest
 
+from diagnostics.runtime_contract import (
+    DATA_SOURCE_CONTRACTS,
+    REAL_RUNTIME_CONTRACT,
+    runtime_contract_manifest,
+    topic_formats,
+)
+from message.topics import TOPICS
+from runtime.adapters.topics import adapter_aliases
 from runtime.contracts import (
     CAMERA_BACKEND_DDS,
     CAMERA_BACKEND_ORBBEC,
@@ -17,19 +25,10 @@ from runtime.contracts import (
     LIDAR_PORTS,
     LIDAR_ROLE,
     ContractError,
-    MessageEnvelope,
     assert_valid_message,
     validate_message,
 )
-from runtime.runtime_interface import (
-    DATA_SOURCE_CONTRACTS,
-    REAL_RUNTIME_CONTRACT,
-    TOPICS,
-    adapter_aliases,
-    runtime_contract_manifest,
-    runtime_topic_allowed_frame_ids,
-    topic_formats,
-)
+from runtime.tf.frames import runtime_topic_allowed_frame_ids
 
 
 def test_camera_contract_defines_generic_stream_boundary():
@@ -178,44 +177,23 @@ def test_assert_valid_message_raises_with_issue_detail():
         assert_valid_message("localization_status", {"state": "LOST"})
 
 
-def test_message_envelope_wraps_existing_dict_payload_without_changing_contract():
-    envelope = MessageEnvelope.from_payload(
-        "mission_status",
-        {
-            "state": "EXECUTING",
-            "replan_count": 1,
-            "wp_index": 2,
-            "wp_total": 5,
-            "speed_scale": 0.7,
-            "degeneracy": "MILD",
-            "ts": 10.0,
-        },
-        frame_id="map",
-    )
-
-    assert envelope.validate() == []
-    assert envelope.to_dict()["type"] == "mission_status"
-    assert envelope.to_dict()["payload"]["state"] == "EXECUTING"
-    assert envelope.to_dict()["frame_id"] == "map"
-
-
 def test_runtime_interface_resolves_topics_and_data_sources_directly():
     manifest = runtime_contract_manifest()
     assert manifest["schema_version"] == "lingtu.runtime_interface.v1"
-    assert topic_formats(TOPICS.cmd_vel) == ("cmd_vel",)
+    assert topic_formats(TOPICS.cmd_vel) == ("lingtu.dds.FinalVelocityCommand",)
     assert runtime_topic_allowed_frame_ids(None)[TOPICS.cmd_vel] == ("body",)
-    assert topic_formats(TOPICS.raw_imu) == ("lingtu.dds.Imu",)
+    assert topic_formats(TOPICS.imu) == ("lingtu.dds.Imu",)
     assert topic_formats(TOPICS.camera_color) == ("lingtu.dds.Image",)
     assert topic_formats(TOPICS.camera_depth) == ("lingtu.dds.Image",)
     assert topic_formats(TOPICS.camera_info) == ("lingtu.dds.CameraInfo",)
-    from runtime.runtime_interface import MESSAGE_FORMATS
+    from message.generated.schema import MESSAGE_FIELDS
 
-    assert "depth_scale" in MESSAGE_FORMATS["lingtu.dds.CameraInfo"].required_fields
+    assert "depth_scale" in MESSAGE_FIELDS["lingtu.dds.CameraInfo"]
     assert "topic_ros_types" not in manifest
-    assert topic_formats(TOPICS.maps_scene) == ("maps_scene",)
+    assert topic_formats(TOPICS.maps_scene) == ("lingtu.dds.MapScene",)
     assert runtime_topic_allowed_frame_ids(None)[TOPICS.maps_scene] == ("map", "odom")
     assert runtime_topic_allowed_frame_ids(REAL_RUNTIME_CONTRACT)[TOPICS.maps_scene] == ("map",)
-    assert topic_formats(TOPICS.height_rays) == ("height_rays",)
+    assert topic_formats(TOPICS.height_rays) == ("python.object",)
     assert runtime_topic_allowed_frame_ids(None)[TOPICS.height_rays] == ("body",)
 
     mujoco = DATA_SOURCE_CONTRACTS["mujoco_module_graph"]

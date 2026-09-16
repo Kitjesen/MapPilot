@@ -87,7 +87,7 @@ def test_native_seeded_relocalization_uses_control_binary(monkeypatch, tmp_path)
         '{"success":true,"message":"relocalized","relocalization_quality":0.123}\n',
     )
 
-    result = NativeSlamRelocalizationService().relocalize_saved_map("factory", 1.0, 2.0, 0.3, timeout_s=12.0)
+    result = NativeSlamRelocalizationService().relocalize_saved_map("factory", 1.0, 2.0, 0.3, z=0.45, timeout_s=12.0)
 
     assert result.success is True
     assert result.quality == 0.123
@@ -99,6 +99,8 @@ def test_native_seeded_relocalization_uses_control_binary(monkeypatch, tmp_path)
         "1",
         "--y",
         "2",
+        "--z",
+        "0.45",
         "--yaw",
         "0.3",
         "--domain-id",

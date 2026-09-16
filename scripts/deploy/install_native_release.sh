@@ -105,6 +105,7 @@ fi
 
 ACTIVE_REQUIRES_MAPD=0
 ACTIVE_PRODUCT=""
+ACTIVE_VARIANT=""
 ACTIVE_ENV=""
 ACTIVE_ROBOT=""
 ACTIVE_MAP=""
@@ -131,11 +132,11 @@ requires_mapd = any(
     process.name.lower() in {"maps", "mapd"} or "mapd" in process.target.lower()
     for process in plan.processes
 )
-values = (plan.product, plan.env, robot, map_name, "1" if requires_mapd else "0")
+values = (plan.product, plan.env, robot, map_name, "1" if requires_mapd else "0", plan.product_variant or "")
 sys.stdout.write("\0".join(values) + "\0")
 PY
   )
-  if [[ "${#ACTIVE_PRODUCT_FACTS[@]}" -ne 5 ]]; then
+  if [[ "${#ACTIVE_PRODUCT_FACTS[@]}" -ne 6 ]]; then
     echo "Current Product identity could not be loaded" >&2
     exit 1
   fi
@@ -144,6 +145,7 @@ PY
   ACTIVE_ROBOT="${ACTIVE_PRODUCT_FACTS[2]}"
   ACTIVE_MAP="${ACTIVE_PRODUCT_FACTS[3]}"
   ACTIVE_REQUIRES_MAPD="${ACTIVE_PRODUCT_FACTS[4]}"
+  ACTIVE_VARIANT="${ACTIVE_PRODUCT_FACTS[5]}"
 fi
 
 if [[ "${ACTIVE_REQUIRES_MAPD}" == "1" ]] \
@@ -157,10 +159,6 @@ fi
 
 if [[ -e "${CURRENT_LINK}" && ! -L "${CURRENT_LINK}" ]]; then
   echo "Current release path exists but is not a symlink: ${CURRENT_LINK}" >&2
-  exit 1
-fi
-if [[ -L "${CURRENT_LINK}" && -z "${RUN_PLAN_PATH}" ]]; then
-  echo "Refusing to replace an active release without its current RunPlan" >&2
   exit 1
 fi
 if [[ -e "${TARGET_DIR}" || -L "${TARGET_DIR}" ]]; then
@@ -258,6 +256,9 @@ product_control() {
     )
     if [[ -n "${ACTIVE_MAP}" ]]; then
       control_command+=(--map "${ACTIVE_MAP}")
+    fi
+    if [[ -n "${ACTIVE_VARIANT}" ]]; then
+      control_command+=(--variant "${ACTIVE_VARIANT}")
     fi
     PYTHONPATH="${repo}/src${PYTHONPATH:+:${PYTHONPATH}}" \
       "${control_command[@]}"

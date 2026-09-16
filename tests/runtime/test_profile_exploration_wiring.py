@@ -3,12 +3,20 @@ from __future__ import annotations
 import pytest
 
 from lingtu.assembly.compiler import blueprint_from_run_plan, compile_run_plan
+from lingtu.assembly.graph.processes import ProcessArtifact
 from lingtu.assembly.products import (
     resolve_product_host_config,
     resolve_product_host_runtime,
 )
 
-pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
+
+@pytest.fixture(autouse=True)
+def _ignore_process_artifact_presence(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        ProcessArtifact,
+        "from_repository_path",
+        classmethod(lambda cls, root, path: cls(str(path))),
+    )
 
 
 def _wire_set(graph):

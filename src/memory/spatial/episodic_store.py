@@ -217,9 +217,9 @@ def _row_to_record(row: tuple) -> MemoryRecord:
     ts, pos_b, labels_j, room, desc, emb_b = row
     return MemoryRecord(
         timestamp=ts,
-        position=pickle.loads(pos_b),  # noqa: S301  # trusted local episodic store
+        position=pickle.loads(pos_b),  # trusted local episodic store
         labels=json.loads(labels_j),
         room_type=room,
         description=desc,
-        embedding=pickle.loads(emb_b) if emb_b is not None else None,  # noqa: S301  # trusted local episodic store
+        embedding=pickle.loads(emb_b) if emb_b is not None else None,  # trusted local episodic store
     )

@@ -1,12 +1,18 @@
 #include "lingtu/maps/store.hpp"
 #include "lingtu/maps/build/occupancy_snapshot.hpp"
 #include "lingtu/maps/build/pcd.hpp"
+#include "lingtu/maps/build/pipeline.hpp"
+#include "lingtu/maps/json.hpp"
 
 #include <cassert>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
+
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+#include <octomap/OcTree.h>
+#endif
 
 using lingtu::maps::ArtifactType;
 using lingtu::maps::MapState;
@@ -56,10 +62,16 @@ void WriteValidPlanningArtifacts(const std::filesystem::path& map_dir) {
   assert(lingtu::maps::WriteBinaryXyzPcd(map_dir / "map.pcd", points, &error));
   const auto occupancy = lingtu::maps::BuildOccupancyProjectionSnapshot(map_dir, true);
   assert(occupancy.ok);
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+  octomap::OcTree tree(0.1);
+  tree.updateNode(octomap::point3d(0.0F, 0.0F, 0.5F), true);
+  assert(tree.write((map_dir / "octomap.ot").string()));
+#else
   std::ofstream octomap(map_dir / "octomap.ot", std::ios::binary | std::ios::trunc);
   octomap << "# Octomap OcTree binary file\nid OcTree\nsize 1\nres 0.1\ndata\n";
   octomap.put('\0');
   assert(octomap.good());
+#endif
 }
 
 void WriteDuplicateFrameMetadata(const std::filesystem::path& path) {
@@ -148,6 +160,26 @@ int main() {
   const auto activation_check = store.CheckMapActivation("building_1f");
   assert(activation_check.ok);
   assert(activation_check.content_epoch == store.ContentEpoch("building_1f"));
+
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+  lingtu::maps::MapPipelineCore pipeline(store);
+  lingtu::maps::OctomapEditOptions edit;
+  edit.state = "occupied";
+  edit.z_m = 0.5;
+  edit.radius_m = 0.1;
+  const auto edited = pipeline.EditOctomapVoxelsJson("building_1f", edit);
+  assert(lingtu::maps::JsonObjectBoolAtPath(edited, {"success"}) == true);
+  assert(store.CheckMapActivation("building_1f").ok);
+  WriteValidOccupancyMetadata(root / "building_1f" / "metadata.json");
+  octomap::OcTree binary_tree(0.1);
+  binary_tree.updateNode(octomap::point3d(0.0F, 0.0F, 0.5F), true);
+  assert(binary_tree.writeBinary((root / "building_1f" / "octomap.ot").string()));
+  assert(store.CheckMapActivation("building_1f").ok);
+  octomap::OcTree empty_tree(0.1);
+  assert(empty_tree.write((root / "building_1f" / "octomap.ot").string()));
+  assert(!store.CheckMapActivation("building_1f").ok);
+  WriteValidPlanningArtifacts(root / "building_1f");
+#endif
 
   WriteText(root / "building_1f" / "map.pcd", "not a pcd\n");
   const auto bad_pcd_activation = store.CheckMapActivation("building_1f");

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import threading
 
-# ruff: noqa: S101
 import pytest
 
 from drivers.sim.mujoco.lift import MuJoCoLiftCommandAdapter, MuJoCoLiftConfig

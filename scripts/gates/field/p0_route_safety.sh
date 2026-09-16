@@ -9,6 +9,10 @@ set -e
 
 GOAL_X="${1:-2.0}"
 GOAL_Y="${2:-0.0}"
+AUTH_ARGS=()
+if [[ -n "${LINGTU_API_KEY:-}" ]]; then
+  AUTH_ARGS=(-H "X-API-Key: ${LINGTU_API_KEY}")
+fi
 
 LOG_DIR="${HOME}/data/nav_logs"
 mkdir -p "$LOG_DIR"
@@ -22,36 +26,45 @@ json_expr() {
   python3 -c "import json,sys; d=json.load(sys.stdin); print($expr)"
 }
 
-cmd_source() {
+status_axes() {
   python3 -c '
 import json, sys
 d = json.load(sys.stdin)
+task = d.get("task") or {}
+admission = d.get("goal_admission") or {}
 control = d.get("control") or {}
-value = control.get("active_cmd_source")
-if value is None:
-    value = control.get("command_owner")
-value = str(value or "none").strip().lower()
-print(value if value not in {"", "unknown", "null", "-"} else "none")
+motion = d.get("motion") or {}
+values = (
+    task.get("state") or "UNKNOWN",
+    admission.get("state") or "UNKNOWN",
+    control.get("authority") or "UNKNOWN",
+    str(control.get("resume_required", "UNKNOWN")).upper(),
+    motion.get("permission") or "UNKNOWN",
+    motion.get("observation") or "UNKNOWN",
+    motion.get("stop_confirmation") or "UNKNOWN",
+)
+print("|".join(str(value).strip().upper() for value in values))
 '
 }
 
 echo "[1/4] Navigation readiness"
-STATUS_JSON="$(curl -sf http://localhost:5050/api/v1/navigation/status)"
+STATUS_JSON="$(curl -sf "${AUTH_ARGS[@]}" http://localhost:5050/api/v1/navigation/status)"
 echo "$STATUS_JSON" | python3 -m json.tool
-HAS_ODOM="$(echo "$STATUS_JSON" | json_expr 'd.get("has_odometry", False)')"
-CAN_ACCEPT="$(echo "$STATUS_JSON" | json_expr 'd.get("can_accept_goal", False)')"
-SOURCE_BEFORE="$(echo "$STATUS_JSON" | cmd_source)"
-if [[ "$HAS_ODOM" != "True" || "$CAN_ACCEPT" != "True" ]]; then
-  echo "FAIL: navigation is not ready (has_odometry=$HAS_ODOM can_accept_goal=$CAN_ACCEPT)"
+AXES_BEFORE="$(echo "$STATUS_JSON" | status_axes)"
+IFS='|' read -r TASK ADMISSION AUTHORITY RESUME PERMISSION OBSERVATION STOP_CONFIRMATION <<< "$AXES_BEFORE"
+if [[ "$TASK" != "IDLE" && "$TASK" != "SUCCESS" && "$TASK" != "FAILED" && "$TASK" != "CANCELLED" ]]; then
+  echo "FAIL: navigation task is not quiescent (task=$TASK)"
   exit 2
 fi
-if [[ "$SOURCE_BEFORE" != "none" ]]; then
-  echo "FAIL: robot is not idle before preview (active_cmd_source=$SOURCE_BEFORE)"
+if [[ "$ADMISSION" != "ACCEPTING" || "$AUTHORITY" != "NONE" || "$RESUME" != "FALSE" || \
+      "$PERMISSION" != "CLEAR" || "$OBSERVATION" != "QUIET" || \
+      ( "$STOP_CONFIRMATION" != "NOT_REQUESTED" && "$STOP_CONFIRMATION" != "CONFIRMED" ) ]]; then
+  echo "FAIL: navigation is not safe for preview (axes=$AXES_BEFORE)"
   exit 3
 fi
 
 echo "[2/4] Previewing route without motion"
-PLAN_JSON="$(curl -sf -X POST http://localhost:5050/api/v1/navigation/plan \
+PLAN_JSON="$(curl -sf "${AUTH_ARGS[@]}" -X POST http://localhost:5050/api/v1/navigation/plan \
   -H 'Content-Type: application/json' \
   -d "{\"x\":$GOAL_X,\"y\":$GOAL_Y,\"z\":0.0,\"frame_id\":\"map\"}")"
 echo "$PLAN_JSON" | python3 -m json.tool
@@ -66,10 +79,10 @@ if [[ "$FEASIBLE" != "True" || "$COUNT" -lt 2 || -z "$PLANNER" ]]; then
 fi
 
 echo "[4/4] Verifying preview did not start motion"
-AFTER_JSON="$(curl -sf http://localhost:5050/api/v1/navigation/status)"
-SOURCE_AFTER="$(echo "$AFTER_JSON" | cmd_source)"
-if [[ "$SOURCE_AFTER" != "$SOURCE_BEFORE" ]]; then
-  echo "FAIL: command source changed during preview ($SOURCE_BEFORE -> $SOURCE_AFTER)"
+AFTER_JSON="$(curl -sf "${AUTH_ARGS[@]}" http://localhost:5050/api/v1/navigation/status)"
+AXES_AFTER="$(echo "$AFTER_JSON" | status_axes)"
+if [[ "$AXES_AFTER" != "$AXES_BEFORE" ]]; then
+  echo "FAIL: navigation state changed during preview ($AXES_BEFORE -> $AXES_AFTER)"
   exit 6
 fi
 

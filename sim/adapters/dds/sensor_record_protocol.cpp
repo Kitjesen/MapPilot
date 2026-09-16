@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstring>
+#include <cmath>
 #include <istream>
 #include <limits>
 #include <stdexcept>
@@ -43,7 +44,8 @@ std::uint64_t read_u64_le(const std::array<std::uint8_t, kSensorRecordHeaderByte
 }
 
 bool is_point_record(SensorRecordType type) noexcept {
-  return type == SensorRecordType::Cloud || type == SensorRecordType::RegisteredCloud;
+  return type == SensorRecordType::Cloud || type == SensorRecordType::RegisteredCloud ||
+         type == SensorRecordType::RegisteredCloudWithOrigin;
 }
 
 void require_record_type(const SensorRecord &record, SensorRecordType expected) {
@@ -98,6 +100,12 @@ SensorRecordReadStatus read_sensor_record(std::istream &input, SensorRecord &rec
       break;
     case 5:
       record.header.type = SensorRecordType::Camera;
+      break;
+    case 6:
+      record.header.type = SensorRecordType::SimulationClock;
+      break;
+    case 7:
+      record.header.type = SensorRecordType::RegisteredCloudWithOrigin;
       break;
     default:
       error = "unknown LTU1 record type: " + std::to_string(raw_type);
@@ -154,7 +162,9 @@ bool validate_sensor_record_header(const SensorRecordHeader &header, std::string
       error = "LTU1 point count overflows payload byte calculation";
       return false;
     }
-    if (header.payload_bytes != header.count * point_size) {
+    const std::uint64_t origin_bytes =
+        header.type == SensorRecordType::RegisteredCloudWithOrigin ? 3 * sizeof(double) : 0;
+    if (header.payload_bytes != static_cast<std::uint64_t>(header.count) * point_size + origin_bytes) {
       error =
           std::string("LTU1 ") + sensor_record_type_name(header.type) + " payload size mismatch";
       return false;
@@ -188,6 +198,19 @@ bool validate_sensor_record_header(const SensorRecordHeader &header, std::string
     }
     return true;
   }
+  if (header.type == SensorRecordType::SimulationClock) {
+    if (header.count != 1 || header.payload_bytes != 0) {
+      error = "LTU1 simulation clock payload must contain exactly one empty record";
+      return false;
+    }
+    constexpr std::uint64_t nanoseconds_per_second = 1000000000ULL;
+    if (header.timestamp_ns / nanoseconds_per_second >
+        static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+      error = "LTU1 simulation clock timestamp exceeds int32 seconds range";
+      return false;
+    }
+    return true;
+  }
   error = "unknown LTU1 record type";
   return false;
 }
@@ -198,9 +221,20 @@ std::vector<Point> decode_point_payload(const SensorRecord &record) {
   }
   std::vector<Point> points(record.header.count);
   if (!points.empty()) {
-    std::memcpy(points.data(), record.payload.data(), record.payload.size());
+    const std::size_t offset = record.header.type == SensorRecordType::RegisteredCloudWithOrigin
+                                   ? 3 * sizeof(double) : 0;
+    std::memcpy(points.data(), record.payload.data() + offset, points.size() * sizeof(Point));
   }
   return points;
+}
+
+std::optional<std::array<double, 3>> decode_sensor_origin(const SensorRecord &record) {
+  if (record.header.type != SensorRecordType::RegisteredCloudWithOrigin) return std::nullopt;
+  std::array<double, 3> origin{};
+  std::memcpy(origin.data(), record.payload.data(), sizeof(origin));
+  for (const double coordinate : origin)
+    if (!std::isfinite(coordinate)) throw std::runtime_error("registered cloud origin is not finite");
+  return origin;
 }
 
 ImuSample decode_imu_payload(const SensorRecord &record) {
@@ -249,10 +283,14 @@ void accumulate_sensor_record_stats(const SensorRecord &record, SensorRecordStat
       ++stats.odom_priors;
       break;
     case SensorRecordType::RegisteredCloud:
+    case SensorRecordType::RegisteredCloudWithOrigin:
       ++stats.registered_clouds;
       break;
     case SensorRecordType::Camera:
       ++stats.camera;
+      break;
+    case SensorRecordType::SimulationClock:
+      ++stats.simulation_clocks;
       break;
   }
 }
@@ -267,8 +305,12 @@ const char *sensor_record_type_name(SensorRecordType type) noexcept {
       return "odom_prior";
     case SensorRecordType::RegisteredCloud:
       return "registered_cloud";
+    case SensorRecordType::RegisteredCloudWithOrigin:
+      return "registered_cloud_with_origin";
     case SensorRecordType::Camera:
       return "camera";
+    case SensorRecordType::SimulationClock:
+      return "simulation_clock";
   }
   return "unknown";
 }

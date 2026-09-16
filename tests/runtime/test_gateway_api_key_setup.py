@@ -32,7 +32,7 @@ def _run_setup(
     env = os.environ.copy()
     env["LINGTU_GATEWAY_ENV_FILE"] = str(gateway_target)
     env["LINGTU_MAP_CLIENT_ENV_FILE"] = str(map_target)
-    return subprocess.run(  # noqa: S603 - Runs a repository-owned helper in an isolated test.
+    return subprocess.run(
         [BASH, str(SCRIPT), *args],
         cwd=REPO_ROOT,
         env=env,

@@ -30,7 +30,7 @@ from lingtu.sdk.client import LingTuClient  # noqa: E402
 from lingtu.sim.acceptance import validate_runner_plan  # noqa: E402
 from lingtu.sim.switch import _load_committed_plan  # noqa: E402
 
-DEFAULT_MANIFEST = ROOT / "config/runtime_graph/acceptance/mujoco_inspection_native_acceptance.json"
+DEFAULT_MANIFEST = ROOT / "config" / "acceptance" / "mujoco" / "inspection.json"
 REPORT_SCHEMA = "lingtu.mujoco.inspection_native_acceptance.report.v1"
 
 

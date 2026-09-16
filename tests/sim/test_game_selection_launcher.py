@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 import sim.tools.game_selection_launcher as launcher_module
 from sim.catalog.importers.contracts import canonical_json_bytes, digest_document
 from sim.tools.game_selection_launcher import (

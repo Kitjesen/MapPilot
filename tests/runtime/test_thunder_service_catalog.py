@@ -42,7 +42,7 @@ def test_thunder_catalog_exposes_only_the_native_slam_runtime():
     assert "legacy_lidar" not in metadata
     assert metadata["driver"]["role"] == "motion_output"
     assert metadata["driver"]["product_default"] is True
-    assert metadata["driver"]["install_enable_default"] is True
+    assert metadata["driver"]["install_enable_default"] is False
     assert metadata["driver"]["checks"] == [
         "systemd",
         "native_binary",
@@ -80,7 +80,7 @@ def test_optional_super_lio_integration_is_not_in_the_active_service_catalog():
 
 
 def test_thunder_catalog_declares_product_readiness_contracts():
-    from runtime.runtime_interface import TOPICS
+    from message.topics import TOPICS
     from runtime.service_catalogs.thunder import thunder_service_metadata
 
     metadata = thunder_service_metadata()
@@ -119,7 +119,7 @@ def test_thunder_catalog_declares_product_readiness_contracts():
     ]
 
     assert metadata["lidar"]["checks"] == ["systemd", "native_binary", "dds"]
-    assert metadata["lidar"]["topics"] == [TOPICS.raw_lidar_points, TOPICS.raw_imu]
+    assert metadata["lidar"]["topics"] == [TOPICS.lidar_scan, TOPICS.imu]
     assert metadata["lidar"]["dds_topics"] == ["rt/lidar/raw_frame", "rt/imu/raw"]
     assert metadata["lidar"]["binaries"] == [
         {
@@ -408,7 +408,7 @@ def test_thunder_install_services_and_runtime_order():
     assert thunder_service_install_enable_default("gnss-dds") == "0"
     assert thunder_service_install_enable_default("nav") == "0"
     assert thunder_service_install_enable_default("mapd") == "0"
-    assert thunder_service_install_enable_default("driver") == "1"
+    assert thunder_service_install_enable_default("driver") == "0"
     assert thunder_service_install_enable_default("unknown") == ""
 
 

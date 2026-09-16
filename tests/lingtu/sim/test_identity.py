@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Process identity behavior used by simulation child ownership."""
 
 from __future__ import annotations

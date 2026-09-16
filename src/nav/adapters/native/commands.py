@@ -63,6 +63,8 @@ class NativeNavigationClient:
         *,
         task_id: str,
         request_id: str | None = None,
+        max_speed_mps: float | None = None,
+        acceptance_radius_m: float | None = None,
     ) -> NavigationCommandReceipt:
         """Submit one product navigation task and return its business ACK."""
 
@@ -73,6 +75,8 @@ class NativeNavigationClient:
             float(y),
             float(z),
             None if yaw is None else float(yaw),
+            **{k: v for k, v in {"max_speed_mps": max_speed_mps,
+                "acceptance_radius_m": acceptance_radius_m}.items() if v is not None},
         )
         return NavigationCommandReceipt(**receipt)
 

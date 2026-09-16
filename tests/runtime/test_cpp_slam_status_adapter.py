@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import math
 import time
+from threading import Lock
+from types import SimpleNamespace
 
 import pytest
 
+from gateway.services.loc_cache import LocCache
+from gateway.services.odometry import handle_odometry
 from lingtu.assembly.compiler import blueprint_for_resolved_product
 from lingtu.assembly.products import resolve_product_host_config
 from lingtu.assembly.stacks.slam import slam
@@ -14,10 +19,40 @@ from localization.adapters.status import (
     STATUS_SNAPSHOT_SCHEMA,
     CppSlamStatusAdapterModule,
 )
+from runtime.msgs.geometry import Quaternion, Vector3
 from runtime.msgs.map import MapObservationFrame
 from runtime.msgs.sensor import PointCloud2
 from runtime.registry import list_plugins
-from runtime.tf import FrameTree
+from runtime.tf.tree import FrameTree
+
+
+@pytest.mark.parametrize("yaw", [0.0, math.pi / 2, math.pi, -math.pi / 2])
+def test_snapshot_forwards_changing_linear_velocity_in_body_axes(yaw) -> None:
+    adapter = CppSlamStatusAdapterModule()
+    seen = []
+    events = []
+    gateway = SimpleNamespace(
+        _frame_tree=FrameTree(), _state_lock=Lock(), _runtime_cache=LocCache(),
+        _blackbox=SimpleNamespace(record=lambda *_: None),
+        push_event=events.append, _slam_status_throttle=0,
+    )
+    adapter.odometry.subscribe(seen.append)
+    adapter.odometry.subscribe(lambda odom: handle_odometry(gateway, odom))
+    orientation = Quaternion.from_euler(0.2, -0.1, yaw)
+    for index, body_velocity in enumerate([(0.5, 0.0, 0.0), (-0.2, 0.3, 0.1), (0.0, 0.0, 0.0)]):
+        payload = _status_payload()
+        payload["stamp_s"] += index
+        payload["scan_end_s"] += index
+        pose = payload["odometry"]["pose"]
+        pose.update({"qx": orientation.x, "qy": orientation.y,
+                     "qz": orientation.z, "qw": orientation.w})
+        payload["fastlio_velocity"] = orientation.rotate_vector(Vector3(*body_velocity)).to_dict()
+        adapter._publish_status_snapshot(payload)
+        assert seen[-1].twist.linear.to_tuple() == pytest.approx(body_velocity)
+        assert seen[-1].ts == 123.0 + index
+        assert events[-1]["data"]["vx"] == pytest.approx(body_velocity[0])
+        assert gateway._runtime_cache._odom["vx"] == pytest.approx(body_velocity[0])
+    assert len(seen) == 3
 
 
 def test_cpp_slam_status_adapter_reads_cpp_status_snapshot(tmp_path) -> None:
@@ -553,10 +588,10 @@ def test_cpp_slam_status_adapter_is_the_only_status_adapter_name() -> None:
     ("native_slam_status", "native", "native_slam", "slam"),
 )
 def test_removed_localization_adapter_aliases_fail_closed(adapter_name: str) -> None:
-    with pytest.raises(ImportError, match="Unsupported localization adapter"):
+    with pytest.raises(ImportError, match="was removed"):
         localization_adapter_module(adapter_name)
 
-    with pytest.raises(ImportError, match="Unsupported localization adapter"):
+    with pytest.raises(ImportError, match="was removed"):
         slam(
             "native_dds",
             localization_adapter=adapter_name,
@@ -590,8 +625,8 @@ def test_real_product_blueprints_use_cpp_slam_status_adapter(
     bp = blueprint_for_resolved_product(product, config)
     slam_entry = next(entry for entry in bp._entries if entry.name == "SlamAdapterModule")
 
-    assert config["_selection_kind"] == "product"
-    assert config["_env"] == "real"
+    assert "_selection_kind" not in config
+    assert "_env" not in config
     assert config["_endpoint_transport"] == "dds"
     assert config["localization_adapter"] == "cpp_slam_status"
     assert "nav_in_adapter" not in config

@@ -27,7 +27,7 @@ def _payload(response_or_payload):
     return response_or_payload
 
 
-def _field_manifest(profile: str, *, variant: str | None = None):
+def _field_manifest(profile: str, *, variant: str | None = None, local_planner: str | None = None):
     from lingtu.assembly.compiler import compile_run_plan
     from lingtu.assembly.products import resolve_product_host_runtime
 
@@ -42,13 +42,14 @@ def _field_manifest(profile: str, *, variant: str | None = None):
         resolved.env,
         robot="unitree/go2",
         product_variant=variant,
+        local_planner=local_planner,
     )
 
 
-def _field_gateway(profile: str, *, variant: str | None = None):
+def _field_gateway(profile: str, *, variant: str | None = None, local_planner: str | None = None):
     from gateway.gateway_module import GatewayModule
 
-    return GatewayModule(run_plan=_field_manifest(profile, variant=variant))
+    return GatewayModule(run_plan=_field_manifest(profile, variant=variant, local_planner=local_planner))
 
 
 def _set_session_mode(gateway, mode: str) -> None:
@@ -388,31 +389,6 @@ def test_localization_status_rejects_incomplete_map_odom_tf() -> None:
     assert payload["has_map_odom_tf"] is False
 
 
-def test_navigation_frame_summary_rejects_incomplete_map_odom_tf() -> None:
-    from gateway.services.runtime_status import _navigation_frame_summary
-
-    summary = _navigation_frame_summary(
-        {
-            "planning_frame_id": "map",
-            "costmap_frame_id": "map",
-            "map_odom_tf": {
-                "valid": True,
-                "frame_id": "map",
-                "child_frame_id": "odom",
-            },
-        },
-        {"frame_id": "odom"},
-    )
-
-    assert summary["has_map_odom_tf"] is False
-    assert summary["map_odom_tf"] is None
-    assert summary["mismatches"] == [
-        {
-            "source": "odometry",
-            "expected_frame": "map",
-            "received_frame": "odom",
-        }
-    ]
 
 
 def test_localization_status_route_returns_stable_schema():
@@ -448,6 +424,59 @@ def test_localization_status_exposes_backend_reason():
 
     assert payload["reason"] == "tracking"
     assert payload["backend_reason"] == "tracking"
+
+
+@pytest.mark.parametrize("source,contract,sink", [
+    (None, None, None),
+    ("field", "real", "driver"),
+    ("unknown", "real", "driver"),
+    ("field", "unknown", "driver"),
+])
+def test_runtime_boundary_uses_only_its_static_contract_parts(monkeypatch, source, contract, sink):
+    from dataclasses import asdict
+    from types import SimpleNamespace
+
+    import diagnostics.runtime_contract as contracts
+    from gateway.services.runtime_status import _runtime_boundary_status
+    from runtime.tf.frames import FRAMES
+
+    manifest = contracts.runtime_contract_manifest()
+    for name, value in {
+        "LINGTU_DATA_SOURCE": source, "LINGTU_RUNTIME_CONTRACT": contract,
+        "LINGTU_COMMAND_SINK": sink,
+    }.items():
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+
+    def full_manifest_is_not_a_status_dependency():
+        raise AssertionError("status must not reload Product YAML or unrelated robot calibrations")
+
+    monkeypatch.setattr(contracts, "runtime_contract_manifest", full_manifest_is_not_a_status_dependency)
+    gateway = SimpleNamespace(
+        _compiled_env="real", _compiled_product="teleop_avoid",
+        _compiled_run_plan=object(), _compiled_product_session_id="session-a",
+    )
+    status = _runtime_boundary_status(gateway)
+    declared_source = bool(source or contract)
+    assert status["frames"] == (manifest["frames"] if declared_source else asdict(FRAMES))
+    assert status["frame_links"] == (manifest["frame_links"] if declared_source else {})
+    expected_source = manifest["data_sources"].get(source, {})
+    for key in ("slam_source", "localization_source", "mapping_source"):
+        assert status[key] == expected_source.get(key)
+    assert status["expected_command_sink"] == expected_source.get("command_sink")
+    assert ("data_source_unknown" in status["blockers"]) == (source == "unknown")
+    assert ("topic_frame_contract_unavailable" in status["blockers"]) == (contract == "unknown")
+
+    gateway._compiled_run_plan = None
+    gateway._compiled_product_session_id = "session-b"
+    monkeypatch.setenv("LINGTU_COMMAND_SINK", "wrong")
+    changed = _runtime_boundary_status(gateway)
+    assert changed["state"] == "standby"
+    assert changed["product_session_id"] == "session-b"
+    assert changed["command_sink"] == "wrong"
+    assert ("command_sink_mismatch" in changed["blockers"]) == (source == "field")
 
 
 def test_localization_status_reports_runtime_boundary_and_topic_frames(monkeypatch):
@@ -859,52 +888,6 @@ def test_slam_profile_accepts_only_native_runtime_identity():
 
 
 
-def test_navigation_status_prefers_native_navigation_state() -> None:
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_navigation_status
-    from runtime.msgs.nav import NavigationState
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    with gateway._state_lock:
-        gateway._odom = {"x": 1.0, "y": 2.0, "vx": 0.0, "vy": 0.0}
-        gateway._mode = "autonomous"
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.9,
-            "icp_fitness": 0.03,
-        }
-    gateway._on_navigation_state(
-        NavigationState(
-            ts=123.0,
-            frame_id="map",
-            boot_id="navd-boot",
-            sequence=4,
-            control_mode=1,
-            lifecycle_state=2,
-            active_task_id="navigation-task-3",
-            active_request_id="goal-3",
-            goal_epoch=3,
-            map_id="site-a",
-            map_content_epoch=2,
-            planning_state=2,
-            execution_state=1,
-            recovery_state=0,
-            progress=0.6,
-            authority="autonomy",
-        )
-    )
-
-    payload = build_navigation_status(gateway)
-
-    assert payload["state_source"] == "native_navigation_state"
-    assert payload["state"] == "EXECUTING"
-    assert payload["failure_reason"] == ""
-    assert payload["progress"]["fraction"] == pytest.approx(0.6)
-    assert payload["control"]["command_owner"] == "autonomy"
-    assert payload["navigation_state"]["boot_id"] == "navd-boot"
-    assert payload["mission"]["raw"]["active_task_id"] == "navigation-task-3"
-    assert payload["mission"]["raw"]["active_request_id"] == "goal-3"
 
 
 def test_drift_watchdog_classifies_nan_odom_as_diverged():
@@ -990,357 +973,22 @@ def test_drift_watchdog_uses_quarantined_non_finite_odometry():
     assert invalid is False
 
 
-def test_navigation_status_reports_current_runtime_boundary(monkeypatch):
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import NavigationStatusResponse
-    from gateway.services.runtime_status import build_navigation_status
-
-    monkeypatch.setenv("LINGTU_PRODUCT", "nav")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "field")
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
-    monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
-    monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    with gateway._state_lock:
-        gateway._odom = {"x": 1.0, "y": 2.0, "frame_id": "map"}
-        gateway._mode = "autonomous"
-        gateway._mission = {
-            "state": "EXECUTING",
-            "planning_frame_id": "map",
-            "costmap_frame_id": "map",
-            "goal_frame_id": "map",
-        }
-        gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
-
-    payload = build_navigation_status(gateway)
-    NavigationStatusResponse.model_validate(payload)
-
-    runtime = payload["runtime"]
-    assert runtime["ok"] is True
-    assert runtime["declared"] is True
-    assert runtime["product"] == "nav"
-    assert runtime["env"] == "real"
-    assert runtime["state"] == "standby"
-    assert "profile" not in runtime
-    assert "endpoint" not in runtime
-    assert runtime["data_source"] == "field"
-    assert runtime["runtime_contract"] == "real"
-    assert runtime["simulation_only"] is False
-    assert runtime["command_sink"] == "driver"
-    assert runtime["expected_command_sink"] == "driver"
-    assert runtime["slam_source"] == "lingtu_fastlio_or_external_robot_slam"
-    assert runtime["localization_source"] == "slam_localizer"
-    assert runtime["mapping_source"] == "slam_map_cloud"
-    assert runtime["frames"]["map"] == "map"
-    assert runtime["frames"]["odom"] == "odom"
-    assert runtime["frames"]["body"] == "body"
-    assert runtime["frames"]["axis_convention"] == "x_forward_y_left_z_up"
-    assert runtime["frame_links"]["body_to_lidar"] == {
-        "parent": "body",
-        "child": "lidar_link",
-        "required": True,
-    }
-    assert runtime["topic_allowed_frame_ids"]["/slam/map_cloud"] == ["map"]
-    assert runtime["topic_allowed_frame_ids"]["/nav/global_path"] == ["map"]
-    assert runtime["topic_default_frame_ids"]["/slam/map_cloud"] == "map"
-    assert runtime["topic_default_frame_ids"]["/nav/cmd_vel"] == "body"
-    assert runtime["required_topic_frame_ids"] == [
-        "/lidar/raw_frame",
-        "/imu/raw",
-        "/slam/odometry",
-        "/slam/registered_cloud",
-        "/slam/map_cloud",
-        "/nav/global_path",
-        "/nav/local_path",
-        "/nav/cmd_vel",
-    ]
-    assert runtime["runtime_data_flow_topics"] == [
-        "/lidar/raw_frame",
-        "/imu/raw",
-        "/slam/odometry",
-        "/slam/registered_cloud",
-        "/slam/map_cloud",
-        "/slam/localization_health",
-        "/slam/localization_quality",
-        "/nav/exploration_grid",
-        "/nav/terrain_map_ext",
-        "/exploration/way_point",
-        "/nav/command/request",
-        "/nav/global_path",
-        "/nav/way_point",
-        "/nav/terrain_map",
-        "/nav/traversability",
-        "/nav/local_path",
-        "/nav/local_planner/control_hint",
-        "/nav/cmd_vel",
-        "/nav/added_obstacles",
-        "/nav/check_obstacle",
-        "/nav/planner_status",
-    ]
-    flow = {stage["name"]: stage for stage in runtime["resolved_runtime_data_flow"]}
-    assert list(flow["endpoint_adapter"]["inputs"]) == [
-        "/lidar/raw_frame",
-        "/imu/raw",
-    ]
-    assert list(flow["command_boundary"]["outputs"]) == ["driver"]
-    assert runtime["runtime_data_flow_stage_algorithm_interfaces"]["global_planning"] == [
-        "global_planning",
-        "octoplanner3d_global_planning",
-    ]
-    assert runtime["runtime_data_flow_stage_algorithm_interfaces"]["local_planning_and_following"] == [
-        "local_planning_and_following"
-    ]
-
-
-def test_navigation_frame_summary_defaults_planning_frame_from_runtime_contract(
-    monkeypatch,
-):
-    import runtime.runtime_interface as runtime_interface
-    from gateway.services import runtime_status
-
-    calls: list[tuple[str | None, str]] = []
-
-    def fake_runtime_topic_default_frame_id(
-        runtime_contract: str | None,
-        topic: str,
-    ) -> str:
-        calls.append((runtime_contract, topic))
-        return "contract_map"
-
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
-    monkeypatch.setattr(
-        runtime_interface,
-        "runtime_topic_default_frame_id",
-        fake_runtime_topic_default_frame_id,
-    )
-
-    summary = runtime_status._navigation_frame_summary({}, None)
-
-    assert summary["planning_frame_id"] == "contract_map"
-    assert summary["ok"] is True
-    assert calls == [("real", runtime_interface.TOPICS.global_path)]
-
-
-def test_navigation_status_flags_runtime_boundary_mismatch(monkeypatch):
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_navigation_status
-
-    monkeypatch.setenv("LINGTU_PROFILE", "explore")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "mujoco_fastlio2_live")
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
-    monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
-    monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "1")
-
-    gateway = GatewayModule()
-    with gateway._state_lock:
-        gateway._odom = {"x": 1.0, "frame_id": "map"}
-        gateway._mission = {"state": "EXECUTING", "planning_frame_id": "map"}
-        gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
-
-    runtime = build_navigation_status(gateway)["runtime"]
-
-    assert runtime["ok"] is False
-    assert "runtime_contract_data_source_mismatch" in runtime["blockers"]
-    assert "command_sink_mismatch" in runtime["blockers"]
-    assert runtime["expected_command_sink"] == "mujoco_velocity_adapter"
-    assert runtime["topic_allowed_frame_ids"]["/slam/map_cloud"] == ["map"]
-    assert runtime["required_topic_frame_ids"] == [
-        "/lidar/raw_frame",
-        "/imu/raw",
-        "/slam/odometry",
-        "/slam/registered_cloud",
-        "/slam/map_cloud",
-        "/nav/global_path",
-        "/nav/local_path",
-        "/nav/cmd_vel",
-    ]
-    assert runtime["runtime_data_flow_topics"][:2] == ["/lidar/raw_frame", "/imu/raw"]
-
-
-def test_navigation_status_reports_sim_runtime_topic_frames(monkeypatch):
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import NavigationStatusResponse
-    from gateway.services.runtime_status import build_navigation_status
-
-    monkeypatch.setenv("LINGTU_PROFILE", "explore")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "mujoco_fastlio2_live")
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "mujoco_fastlio2_live")
-    monkeypatch.setenv("LINGTU_COMMAND_SINK", "mujoco_velocity_adapter")
-    monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "1")
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    with gateway._state_lock:
-        gateway._odom = {"x": 1.0, "frame_id": "odom"}
-        gateway._mode = "autonomous"
-        gateway._mission = {
-            "state": "EXECUTING",
-            "planning_frame_id": "map",
-            "costmap_frame_id": "map",
-            "goal_frame_id": "map",
-        }
-        gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
-
-    payload = build_navigation_status(gateway)
-    NavigationStatusResponse.model_validate(payload)
-
-    runtime = payload["runtime"]
-    assert runtime["ok"] is True
-    assert runtime["topic_allowed_frame_ids"]["/slam/map_cloud"] == ["map", "odom"]
-    assert runtime["topic_allowed_frame_ids"]["/nav/global_path"] == ["map", "odom"]
-    assert runtime["required_topic_frame_ids"] == []
-    assert runtime["runtime_data_flow_topics"][:2] == ["/lidar/raw_frame", "/imu/raw"]
-
-
-def test_navigation_status_flags_unknown_topic_frame_contract(monkeypatch):
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_navigation_status
-
-    monkeypatch.setenv("LINGTU_PROFILE", "nav")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "field")
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "typo_contract")
-    monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
-    monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
-
-    gateway = GatewayModule()
-    with gateway._state_lock:
-        gateway._odom = {"x": 1.0, "frame_id": "map"}
-        gateway._mission = {"state": "EXECUTING", "planning_frame_id": "map"}
-        gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
-
-    runtime = build_navigation_status(gateway)["runtime"]
-
-    assert runtime["ok"] is False
-    assert "runtime_contract_data_source_mismatch" in runtime["blockers"]
-    assert "topic_frame_contract_unavailable" in runtime["blockers"]
-    assert runtime["topic_allowed_frame_ids"] == {}
 
 
 
 
-def test_navigation_status_blocks_goal_on_odometry_frame_mismatch():
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import NavigationStatusResponse
-    from gateway.services.runtime_status import build_navigation_status
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    gateway._icp_quality = 0.03
-    with gateway._state_lock:
-        gateway._odom = {"x": 1.0, "y": 2.0, "frame_id": "camera_link"}
-        gateway._mode = "autonomous"
-        gateway._mission = {
-            "state": "IDLE",
-            "planning_frame_id": "map",
-            "costmap_frame_id": "map",
-        }
-        gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
-    gateway._all_modules = {}
-
-    payload = build_navigation_status(gateway)
-    NavigationStatusResponse.model_validate(payload)
-
-    assert payload["frames"]["ok"] is False
-    assert payload["frames"]["mismatches"] == [
-        {
-            "source": "odometry",
-            "expected_frame": "map",
-            "received_frame": "camera_link",
-        }
-    ]
-    assert "frame_mismatch_odometry" in payload["reason_codes"]
-    assert "frame_mismatch_odometry" in payload["readiness"]["blockers"]
-    assert payload["diagnostics"]["frame_mismatches"] == payload["frames"]["mismatches"]
-    assert payload["can_accept_goal"] is False
-    assert payload["readiness"]["can_execute_autonomy"] is False
 
 
-def test_gateway_odometry_preserves_frame_for_navigation_status():
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_navigation_status
-    from runtime.msgs.geometry import Pose, Quaternion, Vector3
-    from runtime.msgs.nav import Odometry
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    gateway._icp_quality = 0.03
-    with gateway._state_lock:
-        gateway._mode = "autonomous"
-        gateway._mission = {"state": "IDLE", "planning_frame_id": "map"}
-        gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
-
-    gateway._on_odometry(
-        Odometry(
-            pose=Pose(position=Vector3(1.0, 2.0, 0.0), orientation=Quaternion()),
-            frame_id="odom",
-            child_frame_id="base_link",
-        )
-    )
-    payload = build_navigation_status(gateway)
-
-    assert gateway._odom["frame_id"] == "odom"
-    assert gateway._odom["child_frame_id"] == "base_link"
-    assert payload["frames"]["odom_frame_id"] == "odom"
-    assert "frame_mismatch_odometry" in payload["reason_codes"]
-    assert payload["frames"]["mismatches"] == [
-        {
-            "source": "odometry",
-            "expected_frame": "map",
-            "received_frame": "odom",
-        }
-    ]
 
 
-def test_gateway_navigation_status_accepts_odom_when_map_odom_tf_is_valid():
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_navigation_status
-    from runtime.msgs.geometry import Pose, Quaternion, Vector3
-    from runtime.msgs.nav import Odometry
 
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    gateway._icp_quality = 0.03
-    with gateway._state_lock:
-        gateway._mode = "autonomous"
-        gateway._mission = {
-            "state": "IDLE",
-            "planning_frame_id": "map",
-            "costmap_frame_id": "map",
-        }
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.9,
-            "map_odom_tf": {
-                "valid": True,
-                "frame_id": "map",
-                "child_frame_id": "odom",
-                "tx": 0.0,
-                "ty": 0.0,
-                "tz": 0.0,
-                "qx": 0.0,
-                "qy": 0.0,
-                "qz": 0.0,
-                "qw": 1.0,
-                "ts": 123.0,
-            },
-        }
 
-    gateway._on_odometry(
-        Odometry(
-            pose=Pose(position=Vector3(1.0, 2.0, 0.0), orientation=Quaternion()),
-            frame_id="odom",
-            child_frame_id="base_link",
-        )
-    )
-    payload = build_navigation_status(gateway)
 
-    assert payload["frames"]["ok"] is True
-    assert payload["frames"]["mismatches"] == []
-    assert payload["frames"]["odometry_expected_frame_ids"] == ["map", "odom"]
-    assert payload["readiness"]["tf_ok"] is True
-    assert "frame_mismatch_odometry" not in payload["reason_codes"]
+
+
+
+
+
 
 
 def test_gateway_navigation_state_pushes_navigation_status_update():
@@ -1380,182 +1028,16 @@ def test_gateway_navigation_state_pushes_navigation_status_update():
     finally:
         unsubscribe(gateway, queue)
 
-    assert [event["type"] for event in events] == [
-        "navigation_state",
-        "navigation_status",
-    ]
-    assert events[1]["data"]["state"] == "EXECUTING"
-    assert events[1]["data"]["frames"]["ok"] is True
-
-
-def test_navigation_frame_summary_reports_costmap_frame_mismatch():
-    from gateway.services.runtime_status import _navigation_frame_summary
-
-    frames = _navigation_frame_summary(
-        {
-            "planning_frame_id": "map",
-            "odom_frame_id": "map",
-            "costmap_frame_id": "odom",
-        },
-        {"frame_id": "map"},
-    )
-
-    assert frames["ok"] is False
-    assert frames["mismatches"] == [
-        {
-            "source": "costmap",
-            "expected_frame": "map",
-            "received_frame": "odom",
-        }
-    ]
-
-
-def test_navigation_status_blocks_goal_when_session_is_not_navigating():
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_navigation_status
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "idle")
-    gateway._icp_quality = 0.03
-    with gateway._state_lock:
-        gateway._odom = {"x": 1.0, "y": 2.0}
-        gateway._mode = "autonomous"
-        gateway._mission = {"state": "IDLE"}
-        gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
-    gateway._all_modules = {}
-
-    payload = build_navigation_status(gateway)
-
-    assert payload["can_accept_goal"] is False
-    assert "navigation_session_inactive" in payload["reason_codes"]
-    assert "navigation_session_inactive" in payload["readiness"]["blockers"]
-    assert payload["readiness"]["session_mode"] == "idle"
-    assert payload["feedback"]["next_action"] == "resolve_blockers"
-
-
-def test_navigation_status_can_disable_real_runtime_evidence_gate_for_commissioning(monkeypatch):
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_navigation_status
-
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
-    monkeypatch.setenv("LINGTU_REQUIRE_REAL_RUNTIME_EVIDENCE", "0")
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    gateway._icp_quality = 0.9
-    with gateway._state_lock:
-        gateway._odom = {"x": 1.0, "y": 2.0, "frame_id": "odom"}
-        gateway._mode = "autonomous"
-        gateway._mission = {
-            "state": "IDLE",
-            "planning_frame_id": "map",
-            "odom_frame_id": "odom",
-        }
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.9,
-            "algorithm_healthy": True,
-            "map_odom_tf": {
-                "valid": True,
-                "frame_id": "map",
-                "child_frame_id": "odom",
-                "tx": 0.0,
-                "ty": 0.0,
-                "tz": 0.0,
-                "qx": 0.0,
-                "qy": 0.0,
-                "qz": 0.0,
-                "qw": 1.0,
-                "ts": 123.0,
-            },
-        }
-    gateway._all_modules = {}
-
-    payload = build_navigation_status(gateway)
-
-    assert "real_runtime_evidence_missing_or_stale" not in payload["reason_codes"]
-    assert "real_runtime_evidence_missing_or_stale" not in payload["readiness"]["blockers"]
-    assert payload["readiness"]["real_runtime_evidence_ok"] is None
-    assert payload["diagnostics"]["real_runtime_evidence"]["reason"] == "disabled_for_commissioning"
-
-
-def test_navigation_status_requires_passing_real_runtime_evidence(monkeypatch):
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_navigation_status
-
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
-    monkeypatch.setenv("LINGTU_REQUIRE_REAL_RUNTIME_EVIDENCE", "1")
-    monkeypatch.setattr(
-        "gateway.routes.diagnostics.build_real_runtime_evidence_latest_summary",
-        lambda: {
-            "ok": False,
-            "blockers": ["real-runtime-evidence real_robot_motion is not true"],
-        },
-    )
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    gateway._icp_quality = 0.9
-    with gateway._state_lock:
-        gateway._odom = {"x": 1.0, "y": 2.0, "frame_id": "odom"}
-        gateway._mode = "autonomous"
-        gateway._mission = {
-            "state": "IDLE",
-            "planning_frame_id": "map",
-            "odom_frame_id": "odom",
-        }
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.9,
-            "algorithm_healthy": True,
-            "map_odom_tf": {
-                "valid": True,
-                "frame_id": "map",
-                "child_frame_id": "odom",
-                "tx": 0.0,
-                "ty": 0.0,
-                "tz": 0.0,
-                "qx": 0.0,
-                "qy": 0.0,
-                "qz": 0.0,
-                "qw": 1.0,
-                "ts": 123.0,
-            },
-        }
-    gateway._all_modules = {}
-
-    payload = build_navigation_status(gateway)
-
-    assert payload["can_accept_goal"] is False
-    assert "real_runtime_evidence_missing_or_stale" in payload["reason_codes"]
-    assert payload["readiness"]["real_runtime_evidence_ok"] is False
-
-
-def test_navigation_status_allows_exploring_session_for_external_tare():
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_navigation_status
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "exploring")
-    gateway._session_slam_profile = "none"
-    gateway._icp_quality = 0.03
-    with gateway._state_lock:
-        gateway._odom = {"x": 1.0, "y": 2.0}
-        gateway._mode = "autonomous"
-        gateway._mission = {"state": "IDLE"}
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.9,
-            "pose_fresh": True,
-            "odom_age_ms": 100.0,
-        }
-    gateway._all_modules = {}
-
-    payload = build_navigation_status(gateway)
-
-    assert payload["readiness"]["session_mode"] == "exploring"
-    assert "navigation_session_inactive" not in payload["reason_codes"]
-    assert "navigation_session_inactive" not in payload["readiness"]["blockers"]
+    assert [event["type"] for event in events] == ["navigation_status"]
+    assert events[0]["data"]["task"]["state"] == "UNKNOWN"
+    assert set(events[0]["data"]) == {
+        "schema_version",
+        "task",
+        "goal_admission",
+        "control",
+        "motion",
+        "ts",
+    }
 
 
 
@@ -1564,126 +1046,29 @@ def test_navigation_status_allows_exploring_session_for_external_tare():
 
 
 
-def test_navigation_status_blocks_autonomy_when_pose_is_stale_but_algorithm_healthy():
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_navigation_status
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    gateway._icp_quality = 0.03
-    with gateway._state_lock:
-        gateway._odom = {"x": 0.0}
-        gateway._mission = {"state": "IDLE"}
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.28,
-            "degeneracy": "NONE",
-            "icp_fitness": 0.028,
-            "odom_age_ms": 2500.0,
-            "localizer_health": "RECOVERED",
-        }
-    gateway._all_modules = {}
-
-    payload = build_navigation_status(gateway)
-
-    assert payload["localization"]["algorithm_healthy"] is True
-    assert payload["localization"]["pose_fresh"] is False
-    assert "pose_stale" in payload["reason_codes"]
-    assert "pose_stale" in payload["readiness"]["blockers"]
-    assert payload["can_accept_goal"] is False
-    assert payload["readiness"]["can_accept_goal"] is False
-    assert payload["readiness"]["can_execute_autonomy"] is False
 
 
-def test_navigation_status_allows_fresh_pose_with_low_confidence_snapshot():
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_navigation_status
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    gateway._icp_quality = 0.03
-    with gateway._state_lock:
-        gateway._odom = {"x": 0.0}
-        gateway._mission = {"state": "IDLE"}
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.28,
-            "degeneracy": "NONE",
-            "icp_fitness": 0.028,
-            "odom_age_ms": 1440.0,
-            "localizer_health": "RECOVERED",
-        }
-    gateway._all_modules = {}
-
-    payload = build_navigation_status(gateway)
-
-    assert payload["localization"]["algorithm_healthy"] is True
-    assert payload["localization"]["pose_fresh"] is True
-    assert payload["localization"]["pose_freshness"] == "fresh"
-    assert "pose_stale" not in payload["reason_codes"]
-    assert payload["can_accept_goal"] is True
-    assert payload["readiness"]["blockers"] == []
-    assert payload["readiness"]["can_accept_goal"] is True
-    assert payload["readiness"]["can_execute_autonomy"] is True
-
-    session = gateway._session_snapshot()
-    assert session["localizer_ready"] is True
-    assert session["pose_fresh"] is True
-    assert session["pose_freshness"] == "fresh"
 
 
-def test_navigation_status_blocks_when_native_input_gate_is_not_ready(
-    monkeypatch,
-    tmp_path,
-):
-    from gateway.services.runtime_status import build_navigation_status
-
-    status_path = tmp_path / "nav_endpoint_status.json"
-    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
-    monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_path))
-    monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "30")
-
-    gateway = _field_gateway("nav")
-    _set_session_mode(gateway, "navigating")
-    gateway._icp_quality = 0.03
-    with gateway._state_lock:
-        gateway._odom = {"x": 0.0}
-        gateway._mission = {"state": "IDLE"}
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.9,
-            "degeneracy": "NONE",
-            "icp_fitness": 0.028,
-            "localizer_health": "RECOVERED",
-            "odom_age_ms": 0.0,
-        }
-    gateway._all_modules = {}
-
-    status_path.write_text(
-        json.dumps(
-            {
-                "stamp_s": time.time(),
-                "input_gate": {
-                    "ready": False,
-                    "reason": "localization_unhealthy",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    payload = build_navigation_status(gateway)
-
-    assert payload["can_accept_goal"] is False
-    assert "native_input_gate_not_ready" in payload["readiness"]["blockers"]
-    assert payload["readiness"]["native_endpoint"]["input_gate"]["reason"] == ("localization_unhealthy")
 
 
+
+
+
+
+
+
+
+
+
+
+@pytest.mark.parametrize("local_planner", ["scan", "cmu"])
 def test_native_endpoint_readiness_requires_product_control_mode_and_cmd_vel_publish(
     monkeypatch,
     tmp_path,
+    local_planner,
 ):
-    from gateway.services.runtime_status import _native_endpoint_readiness
+    from gateway.navigation.status import _native_endpoint_readiness
 
     status_path = tmp_path / "nav_endpoint_status.json"
     monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
@@ -1701,7 +1086,7 @@ def test_native_endpoint_readiness_requires_product_control_mode_and_cmd_vel_pub
         ) -> None:
         native_status = {}
         if product:
-            manifest = _field_manifest(product)
+            manifest = _field_manifest(product, local_planner=local_planner)
             environment = manifest.native_process_environment
             parameter_environment = (
                 ("path_follower_max_speed_mps", "LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"),
@@ -1736,11 +1121,11 @@ def test_native_endpoint_readiness_requires_product_control_mode_and_cmd_vel_pub
                     "corridor_lookahead_m": parameters["corridor_lookahead_m"],
                 },
             }
-            if product == "teleop_avoid":
+            if manifest.native_nav["teleop_local_planner"]:
                 native_status.update(
                     teleop_local_planner=True,
                     check_obstacle=True,
-                    use_traversability_cost=True,
+                    use_traversability_cost=manifest.native_nav["use_traversability_cost"],
                     teleop_planner_horizon_m=parameters["teleop_planner_horizon_m"],
                     teleop_planner_max_deviation_deg=parameters[
                         "teleop_planner_max_deviation_deg"
@@ -1758,12 +1143,13 @@ def test_native_endpoint_readiness_requires_product_control_mode_and_cmd_vel_pub
             json.dumps(
                 {
                     "stamp_s": time.time(),
-                    "control_loop_health": {
-                        "ready": True,
-                        "healthy": True,
-                        "reason": "healthy",
-                    },
-                    "input_gate": {"ready": True, "reason": "ready"},
+                        "control_loop_health": {
+                            "ready": True,
+                            "healthy": True,
+                            "reason": "healthy",
+                        },
+                        "navigation_ready": True,
+                        "input_gate": {"ready": True, "reason": "ready"},
                     "control_mode": control_mode,
                     "operator_motion": {
                         "schema_version": 1,
@@ -1809,7 +1195,7 @@ def test_native_endpoint_readiness_requires_product_control_mode_and_cmd_vel_pub
     assert {"planner_map", "active_octomap", "active_occupancy"}.isdisjoint(ready)
 
     write_status("teleop_avoid", True, product="teleop_avoid")
-    assisted_gateway = _field_gateway("teleop_avoid")
+    assisted_gateway = _field_gateway("teleop_avoid", local_planner=local_planner)
     assisted = _native_endpoint_readiness(
         {"mode": "navigating", "product": "teleop_avoid"},
         assisted_gateway,
@@ -1821,6 +1207,23 @@ def test_native_endpoint_readiness_requires_product_control_mode_and_cmd_vel_pub
     assert assisted["operator_motion"]["required"] is True
     assert assisted["operator_motion"]["status_available"] is True
 
+    assisted_status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert assisted_status["use_traversability_cost"] is False
+    for field, actual, blocker in (
+        ("use_traversability_cost", True, "native_traversability_cost_mismatch"),
+        ("use_traversability_cost", None, "native_traversability_cost_mismatch"),
+        ("teleop_local_planner", False, "native_teleop_local_planner_disabled"),
+        ("check_obstacle", False, "native_obstacle_check_disabled"),
+        ("input_gate", {"ready": False}, "native_input_gate_not_ready"),
+    ):
+        status_path.write_text(json.dumps({**assisted_status, field: actual}), encoding="utf-8")
+        rejected = _native_endpoint_readiness(
+            {"mode": "navigating", "product": "teleop_avoid"}, assisted_gateway
+        )
+        assert rejected["ok"] is False
+        assert rejected["blockers"] == [blocker]
+    status_path.write_text(json.dumps(assisted_status), encoding="utf-8")
+
     status_without_operator_motion = json.loads(status_path.read_text(encoding="utf-8"))
     status_without_operator_motion.pop("operator_motion")
     status_path.write_text(json.dumps(status_without_operator_motion), encoding="utf-8")
@@ -1830,9 +1233,18 @@ def test_native_endpoint_readiness_requires_product_control_mode_and_cmd_vel_pub
     )
     assert missing_operator_motion["ok"] is False
     assert missing_operator_motion["blockers"] == ["native_operator_motion_status_missing"]
-    from gateway.services.runtime_status import _navigation_blockers
 
-    assert _navigation_blockers(missing_operator_motion["blockers"]) == ["native_operator_motion_status_missing"]
+    write_status("autonomy", True, product="nav")
+    terrain_gateway = _field_gateway("nav", local_planner=local_planner)
+    terrain_required = _native_endpoint_readiness({"mode": "navigating", "product": "nav"}, terrain_gateway)
+    assert terrain_required["ok"] is True
+    terrain_status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert terrain_status["use_traversability_cost"] is True
+    terrain_status["use_traversability_cost"] = False
+    status_path.write_text(json.dumps(terrain_status), encoding="utf-8")
+    terrain_disabled = _native_endpoint_readiness({"mode": "navigating", "product": "nav"}, terrain_gateway)
+    assert terrain_disabled["ok"] is False
+    assert terrain_disabled["blockers"] == ["native_traversability_cost_disabled"]
 
     write_status(
         "autonomy",
@@ -1905,7 +1317,7 @@ def test_native_endpoint_readiness_is_required_by_product_contract_without_endpo
     product,
     expected_control_mode,
 ):
-    from gateway.services.runtime_status import _native_endpoint_readiness
+    from gateway.navigation.status import _native_endpoint_readiness
 
     status_path = tmp_path / "missing_nav_endpoint_status.json"
     monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
@@ -1924,254 +1336,18 @@ def test_native_endpoint_readiness_is_required_by_product_contract_without_endpo
     assert result["blockers"] == ["native_endpoint_status_missing_or_stale"]
 
 
-def test_navigation_status_treats_diverged_slam_as_lost():
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_navigation_status
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    with gateway._state_lock:
-        gateway._odom = {"x": 0.0}
-        gateway._mission = {"state": "IDLE"}
-        gateway._localization_status = {
-            "state": "DIVERGED",
-            "confidence": 0.0,
-            "reason": "fastlio_velocity_out_of_bounds",
-            "fastlio_speed_mps": 2805.0,
-            "odom_age_ms": 0.0,
-        }
-    gateway._all_modules = {}
-
-    payload = build_navigation_status(gateway)
-
-    assert payload["localization"]["state"] == "lost"
-    assert payload["localization"]["fastlio_speed_mps"] == 2805.0
-    assert "localization_lost" in payload["readiness"]["blockers"]
-    assert payload["can_accept_goal"] is False
 
 
-def test_map_artifact_consistency_compares_map_ids_directly():
-    from gateway.services.runtime_status import _with_active_map_artifact_consistency
-
-    checked = _with_active_map_artifact_consistency(
-        {"required": True, "ok": True, "map_id": "old-map", "blockers": []},
-        {"active_map": "current-map"},
-        {},
-    )
-
-    assert checked["ok"] is False
-    assert checked["gate_map"] == "old-map"
-    assert checked["active_map"] == "current-map"
-    assert "map_dir" not in checked
 
 
-def test_navigation_status_blocks_native_saved_map_before_relocalize():
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_navigation_status
-
-    gateway = GatewayModule()
-    gateway._icp_quality = 0.03
-    gateway._session_snapshot = lambda: {
-        "mode": "navigating",
-        "active_map": "accept_ready",
-        "localizer_ready": True,
-    }
-    with gateway._state_lock:
-        gateway._odom = {"x": 219143.1, "y": 421310.9, "frame_id": "odom"}
-        gateway._mission = {"state": "IDLE"}
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.9,
-            "health_source": "slam_runtime",
-            "backend": "fastlio2",
-            "mode": "localization",
-            "map_loaded": True,
-            "saved_map_relocalization_supported": True,
-            "relocalization_state": "idle",
-            "relocalization_quality": -1.0,
-            "track_against_map": {
-                "enabled": True,
-                "successes": 1,
-                "degraded": False,
-            },
-            "map_odom_tf": {
-                "valid": True,
-                "frame_id": "map",
-                "child_frame_id": "odom",
-                "tx": 0.0,
-                "ty": 0.0,
-                "tz": 0.0,
-                "qx": 0.0,
-                "qy": 0.0,
-                "qz": 0.0,
-                "qw": 1.0,
-                "ts": 123.0,
-            },
-        }
-    gateway._all_modules = {}
-
-    payload = build_navigation_status(gateway)
-
-    assert payload["localization"]["ready"] is True
-    assert payload["can_accept_goal"] is False
-    assert "saved_map_relocalization_missing" in payload["readiness"]["blockers"]
-    assert "saved_map_relocalization_missing" in payload["reason_codes"]
 
 
-def test_navigation_status_blocks_unhealthy_native_saved_map_tracking():
-    from gateway.schemas import LocalizationStatusResponse
-    from gateway.services.runtime_status import build_localization_status, build_navigation_status
-
-    gateway = _field_gateway("nav")
-    gateway._icp_quality = 0.03
-    gateway._session_snapshot = lambda: {
-        "mode": "navigating",
-        "active_map": "accept_ready",
-        "localizer_ready": True,
-    }
-    with gateway._state_lock:
-        gateway._odom = {"x": 0.0, "y": 0.0, "frame_id": "odom"}
-        gateway._mission = {"state": "IDLE"}
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.9,
-            "health_source": "slam_runtime",
-            "backend": "fastlio2",
-            "mode": "localization",
-            "map_loaded": True,
-            "saved_map_relocalization_supported": True,
-            "relocalization_state": "completed",
-            "map_odom_tf": {
-                "valid": True,
-                "frame_id": "map",
-                "child_frame_id": "odom",
-                "tx": 0.0,
-                "ty": 0.0,
-                "tz": 0.0,
-                "qx": 0.0,
-                "qy": 0.0,
-                "qz": 0.0,
-                "qw": 1.0,
-                "ts": 123.0,
-            },
-            "track_against_map": {
-                "enabled": True,
-                "successes": 0,
-                "degraded": False,
-            },
-        }
-    gateway._all_modules = {}
-
-    localization_model = LocalizationStatusResponse.model_validate(build_localization_status(gateway))
-    payload = build_navigation_status(gateway)
-
-    assert localization_model.map_tracking == {
-        "enabled": True,
-        "successes": 0,
-        "degraded": False,
-    }
-    assert payload["can_accept_goal"] is False
-    assert "saved_map_tracking_unhealthy" in payload["reason_codes"]
-    assert "saved_map_tracking_unhealthy" in payload["readiness"]["blockers"]
 
 
-def test_saved_map_relocalization_gate_fails_closed_without_capability_or_commit():
-    from gateway.services.runtime_status import _saved_map_relocalization_missing
-
-    localization = {
-        "active_map": "accept_ready",
-        "backend": "native_dds",
-        "native_mode": "localization",
-        "map_loaded": True,
-        "saved_map_relocalization_supported": False,
-        "relocalization_state": "unsupported",
-        "relocalization_quality": -1.0,
-    }
-
-    assert _saved_map_relocalization_missing(localization) is True
-
-    localization.update(
-        {
-            "saved_map_relocalization_supported": True,
-            "relocalization_state": "rejected",
-            "relocalization_quality": 0.02,
-        }
-    )
-    assert _saved_map_relocalization_missing(localization) is True
-
-    localization["relocalization_state"] = "completed"
-    assert _saved_map_relocalization_missing(localization) is False
 
 
-def test_navigation_status_treats_mild_degeneracy_as_advisory():
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_navigation_status
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    gateway._icp_quality = 0.0
-    with gateway._state_lock:
-        gateway._odom = {"x": 0.0}
-        gateway._mission = {"state": "IDLE", "speed_scale": 0.7}
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.7,
-            "degeneracy": "MILD",
-            "health_source": "odom_map_cloud",
-            "pose_fresh": True,
-            "map_cloud_fresh": True,
-            "icp_fitness": 0.0,
-            "odom_age_ms": 150.0,
-            "cloud_age_ms": 120.0,
-            "localizer_health": "LIO_TRACKING",
-        }
-    gateway._all_modules = {}
-
-    payload = build_navigation_status(gateway)
-
-    assert payload["can_accept_goal"] is True
-    assert payload["localization"]["ready"] is True
-    assert payload["localization"]["degraded"] is False
-    assert payload["localization"]["degeneracy"] == "MILD"
-    assert payload["readiness"]["blockers"] == []
-    assert payload["readiness"]["advisories"] == ["localization_mild_degeneracy"]
-    assert payload["reason_codes"] == ["localization_mild_degeneracy"]
 
 
-def test_navigation_status_uses_localizer_health_fitness_when_icp_quality_is_zero():
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_localization_status, build_navigation_status
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    gateway._icp_quality = 0.0
-    with gateway._state_lock:
-        gateway._odom = {"x": 0.0}
-        gateway._mission = {"state": "IDLE"}
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.92,
-            "degeneracy": "NONE",
-            "icp_fitness": 0.0,
-            "odom_age_ms": 150.0,
-            "cloud_age_ms": 140.0,
-            "localizer_health": "RECOVERED",
-            "localizer_health_source": "localizer_health_topic",
-            "localizer_health_fitness": 0.0223,
-        }
-    gateway._all_modules = {}
-
-    localization = build_localization_status(gateway)
-    navigation = build_navigation_status(gateway)
-    session = gateway._session_snapshot()
-
-    assert localization["state"] == "ready"
-    assert localization["ready"] is True
-    assert localization["algorithm_healthy"] is True
-    assert localization["reasons"] == []
-    assert navigation["can_accept_goal"] is True
-    assert navigation["reason_codes"] == []
-    assert session["localizer_ready"] is True
 
 
 def test_localizer_health_topic_recovered_marks_gateway_ready_when_icp_quality_is_zero():
@@ -2220,129 +1396,10 @@ def test_localizer_health_topic_recovered_marks_gateway_ready_when_icp_quality_i
     assert payload["reasons"] == []
 
 
-def test_navigation_status_blocks_ready_when_map_cloud_is_stale():
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_localization_status, build_navigation_status
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    gateway._icp_quality = 0.0
-    with gateway._state_lock:
-        gateway._odom = {"x": 0.0}
-        gateway._mission = {"state": "IDLE"}
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.92,
-            "degeneracy": "NONE",
-            "icp_fitness": 0.0,
-            "odom_age_ms": 150.0,
-            "cloud_age_ms": 140.0,
-            "map_cloud_fresh": False,
-            "localizer_health": "RECOVERED",
-            "localizer_health_source": "localizer_health_topic",
-            "localizer_health_fitness": 0.0223,
-        }
-    gateway._all_modules = {}
-
-    localization = build_localization_status(gateway)
-    navigation = build_navigation_status(gateway)
-    session = gateway._session_snapshot()
-
-    assert localization["state"] == "initializing"
-    assert localization["ready"] is False
-    assert localization["algorithm_healthy"] is False
-    assert localization["reasons"] == ["localizer_not_ready"]
-    assert navigation["can_accept_goal"] is False
-    assert "localization_initializing" in navigation["reason_codes"]
-    assert session["localizer_ready"] is False
 
 
-def test_navigation_status_blocks_goal_when_native_recovery_signal_is_active():
-    from gateway.gateway_module import GatewayModule
-    from gateway.services.runtime_status import build_localization_status, build_navigation_status
-
-    gateway = GatewayModule()
-    _set_session_mode(gateway, "navigating")
-    gateway._icp_quality = 0.0
-    with gateway._state_lock:
-        gateway._odom = {"x": 0.0}
-        gateway._mission = {"state": "IDLE"}
-        gateway._localization_status = {
-            "backend": "native_dds",
-            "state": "TRACKING",
-            "confidence": 0.92,
-            "health_source": "slam_runtime",
-            "pose_fresh": True,
-            "map_cloud_fresh": True,
-            "recovery_signal": "LOC_DIVERGED",
-            "recovery_action": "restart_native_dds_slam",
-            "localizer_health": "LIO_TRACKING",
-            "odom_age_ms": 120.0,
-            "cloud_age_ms": 80.0,
-        }
-    gateway._all_modules = {}
-
-    localization = build_localization_status(gateway)
-    navigation = build_navigation_status(gateway)
-
-    assert localization["state"] == "degraded"
-    assert localization["ready"] is False
-    assert localization["algorithm_healthy"] is False
-    assert localization["reasons"] == ["recovery_signal:loc_diverged"]
-    assert localization["map_save_source"] == "native_slam_dds_control"
-    assert navigation["can_accept_goal"] is False
-    assert "localization_recovery_active" in navigation["reason_codes"]
-    assert "localization_recovery_active" in navigation["readiness"]["blockers"]
 
 
-def test_goal_route_rejects_stale_localization_without_publishing():
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import GatewayErrorResponse, GoalRequest
-
-    class FakeGoals:
-        def __init__(self) -> None:
-            self.goals = []
-
-        def submit_goal(self, goal, **identity):
-            self.goals.append((goal, identity))
-            return {"accepted": True, **identity}
-
-    gateway = GatewayModule()
-    goals = FakeGoals()
-    gateway.on_system_modules({"nav.goals": goals})
-    _set_session_mode(gateway, "navigating")
-    gateway._icp_quality = 0.03
-    with gateway._state_lock:
-        gateway._odom = {"x": 0.0}
-        gateway._mission = {"state": "IDLE"}
-        gateway._localization_status = {
-            "state": "TRACKING",
-            "confidence": 0.28,
-            "degeneracy": "NONE",
-            "icp_fitness": 0.028,
-            "odom_age_ms": 2500.0,
-            "localizer_health": "RECOVERED",
-        }
-    response = asyncio.run(
-        _endpoint(gateway, "/api/v1/goal")(
-            GoalRequest(
-                x=1.0,
-                y=2.0,
-                request_id="stale-goal",
-                client_id="web",
-            )
-        )
-    )
-    payload = _payload(response)
-    model = GatewayErrorResponse.model_validate(payload)
-
-    assert response.status_code == 409
-    assert model.error == "navigation_not_ready"
-    assert model.command is not None
-    assert model.command.name == "goal"
-    assert model.command.accepted is False
-    assert model.detail["blockers"] == ["pose_stale"]
-    assert goals.goals == []
 
 
 
@@ -2353,20 +1410,45 @@ def test_navigation_status_route_returns_stable_schema():
     from gateway.gateway_module import GatewayModule
 
     gateway = GatewayModule()
+    endpoint = _endpoint(gateway, "/api/v1/navigation/status")
     with gateway._state_lock:
-        gateway._navigation_state = {"lifecycle_state_name": "IDLE"}
+        gateway._navigation_state = {"lifecycle_state_name": "IDLE", "ts": time.time()}
 
-    payload = asyncio.run(_endpoint(gateway, "/api/v1/navigation/status")())
+    payload = asyncio.run(endpoint())
 
-    assert payload["schema_version"] == 1
-    assert payload["state"] == "IDLE"
-    assert payload["path"]["endpoint"] == "/api/v1/path"
-    assert payload["control"]["active_cmd_source"] == "unknown"
-    assert "odometry_missing" in payload["reason_codes"]
-    assert payload["readiness"]["blockers"] == [
-        "odometry_missing",
-        "navigation_session_inactive",
-    ]
+    assert payload["schema_version"] == 3
+    assert payload["task"]["state"] == "IDLE"
+    assert payload["goal_admission"] == {
+        "state": "BLOCKED",
+        "reason": "navigation_session_inactive",
+    }
+    assert set(payload) == {
+        "schema_version",
+        "task",
+        "goal_admission",
+        "control",
+        "motion",
+        "ts",
+    }
+
+
+def test_fallback_navigation_gate_rejects_stale_odometry() -> None:
+    from gateway.gateway_module import GatewayModule
+    from gateway.navigation.status import evaluate_navigation_gate
+
+    gateway = GatewayModule()
+    _set_session_mode(gateway, "navigating")
+    with gateway._state_lock:
+        gateway._odom = {"x": 0.0, "y": 0.0}
+        gateway._localization_status = {
+            "state": "TRACKING",
+            "odom_age_ms": 2500.0,
+        }
+
+    gate = evaluate_navigation_gate(gateway)
+
+    assert gate["can_accept_goal"] is None
+    assert gate["reason"] == "odometry_stale"
 
 
 def test_navigation_status_routes_pass_fastapi_response_validation():
@@ -2377,29 +1459,25 @@ def test_navigation_status_routes_pass_fastapi_response_validation():
     gateway = GatewayModule()
     gateway.setup()
     with gateway._state_lock:
-        gateway._navigation_state = {"lifecycle_state_name": "IDLE"}
+        gateway._navigation_state = {"lifecycle_state_name": "IDLE", "ts": time.time()}
 
     client = TestClient(gateway._app)
     response = client.get("/api/v1/navigation/status")
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["schema_version"] == 1
-    assert payload["state"] == "IDLE"
-    assert payload["frames"]["planning_frame_id"] == "map"
-    assert payload["target"] == {
-        "goal": None,
-        "current_waypoint": None,
-        "distance_to_goal_m": None,
-        "active_waypoint_distance_m": None,
-        "remaining_waypoints": None,
+    assert payload["schema_version"] == 3
+    assert payload["task"] == {"state": "IDLE", "task_id": "", "reason": ""}
+    assert payload["goal_admission"]["state"] == "BLOCKED"
+    assert payload["goal_admission"]["reason"] == "navigation_session_inactive"
+    assert set(payload) == {
+        "schema_version",
+        "task",
+        "goal_admission",
+        "control",
+        "motion",
+        "ts",
     }
-    assert payload["motion"]["active_cmd_source"] == "unknown"
-    assert payload["feedback"]["next_action"] == "resolve_blockers"
-    assert payload["feedback"]["blockers"] == [
-        "odometry_missing",
-        "navigation_session_inactive",
-    ]
     assert client.get("/api/v1/navigation").status_code == 404
 
 
@@ -2458,8 +1536,8 @@ def test_drift_watchdog_report_noops_after_shutdown() -> None:
 
 def test_runtime_dataflow_route_exposes_product_runtime_observability(monkeypatch):
     from gateway.schemas import RuntimeDataflowResponse
+    from message.topics import TOPICS
     from runtime.msgs.nav import Odometry
-    from runtime.runtime_interface import TOPICS
 
     monkeypatch.setenv("LINGTU_PROFILE", "nav")
     monkeypatch.setenv("LINGTU_DATA_SOURCE", "field")
@@ -2565,12 +1643,57 @@ def test_runtime_dataflow_route_exposes_product_runtime_observability(monkeypatc
     )
 
 
+@pytest.mark.parametrize(
+    ("product", "variant"),
+    [
+        ("teleop", None),
+        ("teleop_avoid", None),
+        ("map", None),
+        ("nav", None),
+        ("tracking", None),
+        ("inspection", None),
+        ("explore", "live"),
+        ("explore", "map"),
+    ],
+)
+def test_runtime_dataflow_covers_each_product_run_plan(
+    monkeypatch,
+    product: str,
+    variant: str | None,
+) -> None:
+    from diagnostics.runtime_contract import runtime_data_flow_topics
+    from gateway.services.runtime_dataflow import build_runtime_dataflow_snapshot
+    from message.topics import TOPICS
+
+    monkeypatch.setenv("LINGTU_DATA_SOURCE", "field")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
+    monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
+    monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
+
+    gateway = _field_gateway(product, variant=variant)
+    snapshot = build_runtime_dataflow_snapshot(gateway)
+    declared = set(gateway._compiled_run_plan.required_topics)
+    topics = {item["topic"]: item for item in snapshot["topics"]}
+    expected = set(runtime_data_flow_topics("real")) & declared
+
+    assert expected <= set(topics)
+    assert set(topics) - declared == {TOPICS.robot_joint_states}
+    assert topics[TOPICS.robot_joint_states]["inspection"]["live"] is False
+    assert topics
+    for topic, item in topics.items():
+        assert item["topic"] == topic
+        assert item["required_by_product"] is (topic in declared)
+        assert "ros2_topic_required" not in item["inspection"]
+        assert item["inspection"]["arbitrary_publish_supported"] is False
+        assert item["communication"]["arbitrary_publish_supported"] is False
+
+
 def test_runtime_dataflow_route_validates_active_saved_octomap_artifact(
     monkeypatch,
     tmp_path,
 ):
     from gateway.schemas import RuntimeDataflowResponse
-    from runtime.runtime_interface import TOPICS
+    from message.topics import TOPICS
 
     map_root = tmp_path / "maps"
     _write_active_same_source_octomap(map_root)
@@ -2651,8 +1774,8 @@ def test_runtime_dataflow_route_does_not_mark_stale_port_as_live(
     monkeypatch,
 ):
     import gateway.services.runtime_dataflow as dataflow_mod
+    from message.topics import TOPICS
     from runtime.msgs.nav import Odometry
-    from runtime.runtime_interface import TOPICS
 
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
     monkeypatch.setattr(dataflow_mod, "LIVE_MODULE_SAMPLE_STALE_MS", -1.0)
@@ -2672,8 +1795,8 @@ def test_runtime_dataflow_route_does_not_mark_stale_port_as_live(
 
 def test_runtime_dataflow_topic_route_answers_one_stream_without_ros2(monkeypatch):
     from gateway.schemas import RuntimeDataflowTopicDetailResponse
+    from message.topics import TOPICS
     from runtime.msgs.nav import Odometry
-    from runtime.runtime_interface import TOPICS
 
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
 
@@ -2712,8 +1835,8 @@ def test_runtime_dataflow_subscribe_route_returns_read_only_sse_plan(monkeypatch
         RuntimeDataflowSubscribeRequest,
         RuntimeDataflowSubscribeResponse,
     )
+    from message.topics import TOPICS
     from runtime.msgs.nav import Odometry
-    from runtime.runtime_interface import TOPICS
 
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
 
@@ -2768,8 +1891,8 @@ def test_runtime_dataflow_subscribe_route_rejects_unknown_selector_without_publi
 def test_runtime_dataflow_topic_route_accepts_canonical_stream_token(
     monkeypatch,
 ):
+    from message.topics import TOPICS
     from runtime.msgs.nav import Odometry
-    from runtime.runtime_interface import TOPICS
 
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
 
@@ -2789,7 +1912,7 @@ def test_runtime_dataflow_topic_route_accepts_canonical_stream_token(
 def test_runtime_dataflow_topic_route_exposes_whitelisted_command_interfaces(
     monkeypatch,
 ):
-    from runtime.runtime_interface import TOPICS
+    from message.topics import TOPICS
 
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
 
@@ -2817,48 +1940,6 @@ def test_runtime_dataflow_topic_route_exposes_whitelisted_command_interfaces(
     )
 
 
-@pytest.mark.parametrize(
-    ("product", "variant"),
-    [
-        ("teleop", None),
-        ("teleop_avoid", None),
-        ("map", None),
-        ("nav", None),
-        ("tracking", None),
-        ("inspection", None),
-        ("explore", "live"),
-        ("explore", "map"),
-    ],
-)
-def test_runtime_dataflow_covers_each_product_run_plan(
-    monkeypatch,
-    product: str,
-    variant: str | None,
-) -> None:
-    from gateway.services.runtime_dataflow import build_runtime_dataflow_snapshot
-    from runtime.runtime_interface import runtime_data_flow_topics
-
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "field")
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
-    monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
-    monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
-
-    gateway = _field_gateway(product, variant=variant)
-    snapshot = build_runtime_dataflow_snapshot(gateway)
-    declared = set(gateway._compiled_run_plan.required_topics)
-    topics = {item["topic"]: item for item in snapshot["topics"]}
-    expected = set(runtime_data_flow_topics("real")) & declared
-
-    assert expected <= set(topics)
-    assert set(topics) <= declared
-    assert topics
-    for topic, item in topics.items():
-        assert item["topic"] == topic
-        assert "ros2_topic_required" not in item["inspection"]
-        assert item["inspection"]["arbitrary_publish_supported"] is False
-        assert item["communication"]["arbitrary_publish_supported"] is False
-
-
 def test_runtime_dataflow_topic_route_reports_unknown_selector(monkeypatch):
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
 
@@ -2879,10 +1960,10 @@ def test_runtime_dataflow_topic_route_reports_unknown_selector(monkeypatch):
 def test_runtime_dataflow_reports_live_samples_for_field_topics(monkeypatch):
     import numpy as np
 
+    from message.topics import TOPICS
     from runtime.msgs.map import MapSceneFrame
     from runtime.msgs.nav import Odometry, Path
     from runtime.msgs.sensor import PointCloud2
-    from runtime.runtime_interface import TOPICS
 
     class LiveNativeNav:
         @staticmethod

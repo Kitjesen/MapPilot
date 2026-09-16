@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: D103,S101
 import os
 import stat
 import struct

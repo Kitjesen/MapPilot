@@ -579,6 +579,137 @@ std::vector<Keyframe> read_poses(const std::filesystem::path& path) {
   return poses;
 }
 
+GraphSolution optimize_graph(const std::vector<Keyframe>& keyframes,
+                             const OptimizeOptions& options) {
+  GraphSolution result;
+  if (keyframes.empty() || keyframes.size() > std::numeric_limits<uint32_t>::max() ||
+      options.max_iterations == 0 ||
+      options.max_iterations > std::numeric_limits<uint32_t>::max()) {
+    result.code = "invalid_graph_input";
+    result.message = "graph requires poses and a representable positive iteration bound";
+    return result;
+  }
+  if (options.geometric_constraints.empty()) {
+    result.code = "no_independent_constraints";
+    result.message = "pose estimates alone do not define graph measurements";
+    return result;
+  }
+  const auto valid_pose = [](const Pose& pose) {
+    const double norm = std::sqrt(sqr(pose.qw) + sqr(pose.qx) + sqr(pose.qy) + sqr(pose.qz));
+    return is_finite(pose.x) && is_finite(pose.y) && is_finite(pose.z) &&
+           is_finite(norm) && norm >= 0.9 && norm <= 1.1;
+  };
+  for (const auto& keyframe : keyframes) {
+    if (!valid_pose(keyframe.pose)) {
+      result.code = "invalid_graph_pose";
+      result.message = "graph poses must be finite with unit quaternions";
+      return result;
+    }
+  }
+  for (const auto& constraint : options.geometric_constraints) {
+    if (!valid_pose(constraint.pose_from_to)) {
+      result.code = "geometric_constraint_invalid";
+      result.message = "constraint transform must be finite with a unit quaternion";
+      return result;
+    }
+  }
+  std::vector<lt_pose_graph_opt_pose3> poses;
+  poses.reserve(keyframes.size());
+  for (const Keyframe& keyframe : keyframes) {
+    poses.push_back(to_kernel_pose(keyframe.pose));
+  }
+
+  std::vector<lt_pose_graph_opt_between3> betweens;
+  betweens.reserve(options.geometric_constraints.size());
+  for (const GeometricConstraint& constraint : options.geometric_constraints) {
+    if (constraint.from_index >= keyframes.size() ||
+        constraint.to_index >= keyframes.size() ||
+        constraint.from_index == constraint.to_index ||
+        !valid_information_upper(constraint.information_upper)) {
+      result.code = "geometric_constraint_invalid";
+      result.message =
+          "independent geometric constraint has invalid indices or information matrix";
+      return result;
+    }
+    lt_pose_graph_opt_between3 edge{};
+    edge.from_index = static_cast<uint32_t>(constraint.from_index);
+    edge.to_index = static_cast<uint32_t>(constraint.to_index);
+    edge.pose_from_to = to_kernel_pose(constraint.pose_from_to);
+    std::copy(constraint.information_upper.begin(), constraint.information_upper.end(),
+        std::begin(edge.information_upper));
+    betweens.push_back(edge);
+  }
+
+  lt_pose_graph_opt_config config{};
+  config.struct_size = sizeof(lt_pose_graph_opt_config);
+  config.version = LT_POSE_GRAPH_OPT_CONFIG_VERSION;
+  config.max_iterations = static_cast<uint32_t>(options.max_iterations);
+  config.method = 1;
+  config.fixed_pose_index = 0;
+  config.auto_anchor = 1;
+  config.initial_lambda = 1e-3;
+  config.tolerance = 1e-9;
+  config.numeric_epsilon = 1e-6;
+
+  lt_pose_graph_opt_handle* handle = lt_pose_graph_opt_create(&config);
+  if (handle == nullptr) {
+    result.ok = false;
+    result.code = "optimizer_create_failed";
+    result.message = "pose graph optimizer could not be created";
+    return result;
+  }
+
+  lt_pose_graph_opt_report report{};
+  const lt_pose_graph_opt_result status = lt_pose_graph_opt_process_se3(
+    handle,
+    poses.data(),
+    static_cast<uint64_t>(poses.size()),
+    nullptr,
+    0,
+    betweens.empty() ? nullptr : betweens.data(),
+    static_cast<uint64_t>(betweens.size()),
+    &report);
+  if (status != LT_POSE_GRAPH_OPT_OK) {
+    lt_pose_graph_opt_destroy(handle);
+    result.ok = false;
+    result.code = "optimizer_failed";
+    result.message = "pose graph optimizer failed: " + std::to_string(status);
+    return result;
+  }
+
+  uint64_t written = 0;
+  const lt_pose_graph_opt_result copy_status = lt_pose_graph_opt_copy_result_poses(
+    handle,
+    poses.data(),
+    static_cast<uint64_t>(poses.size()),
+    &written);
+  lt_pose_graph_opt_destroy(handle);
+  if (copy_status != LT_POSE_GRAPH_OPT_OK || written != poses.size()) {
+    result.ok = false;
+    result.code = "optimizer_copy_failed";
+    result.message = "pose graph optimizer did not return all poses";
+    return result;
+  }
+
+  if (!report.converged || !is_finite(report.initial_cost) ||
+      !is_finite(report.final_cost) || report.final_cost > report.initial_cost) {
+    result.code = "optimizer_quality_failed";
+    result.message = "pose graph optimizer did not converge to a finite non-increasing cost";
+    result.report = report;
+    return result;
+  }
+  result.keyframes = keyframes;
+  for (std::size_t i = 0; i < keyframes.size(); ++i) {
+    result.keyframes[i].pose = from_kernel_pose(poses[i]);
+  }
+  result.report = report;
+  result.ok = true;
+  result.code = "optimized";
+  result.message = "in-memory pose graph optimization completed";
+  return result;
+
+}
+
 Result optimize_map(const Map& map, const OptimizeOptions& options) {
   Result result = check(map);
   if (!result.ok) {
@@ -682,91 +813,18 @@ Result optimize_map(const Map& map, const OptimizeOptions& options) {
       return result;
     }
 
-    std::vector<lt_pose_graph_opt_pose3> poses;
-    poses.reserve(keyframes.size());
-    for (const Keyframe& keyframe : keyframes) {
-      poses.push_back(to_kernel_pose(keyframe.pose));
-    }
-
-    std::vector<lt_pose_graph_opt_between3> betweens;
-    betweens.reserve(options.geometric_constraints.size());
-    for (const GeometricConstraint& constraint : options.geometric_constraints) {
-      if (constraint.from_index >= keyframes.size() ||
-          constraint.to_index >= keyframes.size() ||
-          constraint.from_index == constraint.to_index ||
-          !valid_information_upper(constraint.information_upper)) {
-        result.ok = false;
-        result.code = "geometric_constraint_invalid";
-        result.message =
-            "independent geometric constraint has invalid indices or information matrix";
-        result.pose_count = keyframes.size();
-        return result;
-      }
-      lt_pose_graph_opt_between3 edge{};
-      edge.from_index = static_cast<uint32_t>(constraint.from_index);
-      edge.to_index = static_cast<uint32_t>(constraint.to_index);
-      edge.pose_from_to = to_kernel_pose(constraint.pose_from_to);
-      std::copy(constraint.information_upper.begin(), constraint.information_upper.end(),
-                std::begin(edge.information_upper));
-      betweens.push_back(edge);
-    }
-
-    lt_pose_graph_opt_config config{};
-    config.struct_size = sizeof(lt_pose_graph_opt_config);
-    config.version = LT_POSE_GRAPH_OPT_CONFIG_VERSION;
-    config.max_iterations = static_cast<uint32_t>(options.max_iterations);
-    config.method = 1;
-    config.fixed_pose_index = 0;
-    config.auto_anchor = 1;
-    config.initial_lambda = 1e-3;
-    config.tolerance = 1e-9;
-    config.numeric_epsilon = 1e-6;
-
-    lt_pose_graph_opt_handle* handle = lt_pose_graph_opt_create(&config);
-    if (handle == nullptr) {
+    const auto solution = optimize_graph(keyframes, options);
+    if (!solution.ok) {
       result.ok = false;
-      result.code = "optimizer_create_failed";
-      result.message = "pose graph optimizer could not be created";
-      return result;
-    }
-
-    lt_pose_graph_opt_report report{};
-    const lt_pose_graph_opt_result status = lt_pose_graph_opt_process_se3(
-        handle,
-        poses.data(),
-        static_cast<uint64_t>(poses.size()),
-        nullptr,
-        0,
-        betweens.empty() ? nullptr : betweens.data(),
-        static_cast<uint64_t>(betweens.size()),
-        &report);
-    if (status != LT_POSE_GRAPH_OPT_OK) {
-      lt_pose_graph_opt_destroy(handle);
-      result.ok = false;
-      result.code = "optimizer_failed";
-      result.message = "pose graph optimizer failed: " + std::to_string(status);
+      result.code = solution.code;
+      result.message = solution.message;
       result.pose_count = keyframes.size();
-      result.factor_count = betweens.size();
+      result.factor_count = options.geometric_constraints.size();
+      result.iterations = solution.report.iterations;
       return result;
     }
-
-    uint64_t written = 0;
-    const lt_pose_graph_opt_result copy_status = lt_pose_graph_opt_copy_result_poses(
-        handle,
-        poses.data(),
-        static_cast<uint64_t>(poses.size()),
-        &written);
-    lt_pose_graph_opt_destroy(handle);
-    if (copy_status != LT_POSE_GRAPH_OPT_OK || written != poses.size()) {
-      result.ok = false;
-      result.code = "optimizer_copy_failed";
-      result.message = "pose graph optimizer did not return all poses";
-      return result;
-    }
-
-    for (std::size_t i = 0; i < keyframes.size(); ++i) {
-      keyframes[i].pose = from_kernel_pose(poses[i]);
-    }
+    keyframes = solution.keyframes;
+    const auto& report = solution.report;
 
     std::vector<Point> map_points;
     for (const Keyframe& keyframe : keyframes) {
@@ -786,16 +844,6 @@ Result optimize_map(const Map& map, const OptimizeOptions& options) {
       result.ok = false;
       result.code = "output_staging_exists";
       result.message = "optimization staging directory already exists";
-      return result;
-    }
-    if (!report.converged || !is_finite(report.initial_cost) ||
-        !is_finite(report.final_cost) || report.final_cost > report.initial_cost) {
-      result.ok = false;
-      result.code = "optimizer_quality_failed";
-      result.message = "pose graph optimizer did not converge to a finite non-increasing cost";
-      result.pose_count = keyframes.size();
-      result.factor_count = betweens.size();
-      result.iterations = report.iterations;
       return result;
     }
     std::filesystem::create_directories(staging / "patches");
@@ -818,7 +866,7 @@ Result optimize_map(const Map& map, const OptimizeOptions& options) {
     result.message = options.strategy + " optimization completed";
     result.patch_count = keyframes.size();
     result.pose_count = keyframes.size();
-    result.factor_count = betweens.size();
+    result.factor_count = options.geometric_constraints.size();
     result.iterations = report.iterations;
     result.changed = true;
     result.report_path = map.output_dir / "map_optimization.json";

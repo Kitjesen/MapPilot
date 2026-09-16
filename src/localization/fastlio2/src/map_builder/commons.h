@@ -67,8 +67,8 @@ struct Config
     double lidar_cov_inv = 1000.0;
 
     // ZUPT (Zero velocity UPdaTe) parameters — inject pseudo-observation when stationary
-    double imu_static_acc_thresh  = 0.04;   // m/s² — acc variance threshold for static detection
-    double imu_static_gyro_thresh = 0.001;  // rad/s — gyro variance threshold
+    double imu_static_acc_thresh  = 0.04;   // m/s^2: RMS acceleration deviation and gravity-magnitude error
+    double imu_static_gyro_thresh = 0.001;  // rad/s: RMS gyro deviation and bias-compensated mean
     int    zupt_min_static_frames = 5;      // consecutive undistort() calls required to trigger ZUPT
     double zupt_sigma_v           = 0.02;   // ZUPT velocity measurement noise (m/s)
     double zupt_sigma_pos         = 0.1;    // ZUPT position covariance ceiling (m)

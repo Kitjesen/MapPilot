@@ -1,11 +1,9 @@
 """Tests for immutable session binding qualification."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
 import pytest
-
 from sim.runtime.coordinator.readiness import (
     BindingFacet,
     BindingReadiness,

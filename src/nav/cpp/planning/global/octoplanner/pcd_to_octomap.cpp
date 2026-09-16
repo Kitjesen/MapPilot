@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -13,7 +15,8 @@
 #include <vector>
 
 #if defined(OCTOPLANNER3D_ENABLE_PCD)
-#include "pcd2octomap_converter.h"
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
 #endif
 
 namespace {
@@ -117,8 +120,20 @@ std::string lower(std::string value)
   return value;
 }
 
-std::vector<Point> readAsciiPcd(const std::string & path)
+std::vector<Point> readPcd(const std::string & path)
 {
+#if defined(OCTOPLANNER3D_ENABLE_PCD)
+  pcl::PointCloud<pcl::PointXYZ> cloud;
+  if (pcl::io::loadPCDFile(path, cloud) < 0) {
+    throw std::runtime_error("failed to read input PCD: " + path);
+  }
+  std::vector<Point> points;
+  points.reserve(cloud.size());
+  for (const auto & point : cloud) {
+    points.push_back({point.x, point.y, point.z});
+  }
+  return points;
+#else
   std::ifstream in(path);
   if (!in) {
     throw std::runtime_error("failed to open input PCD: " + path);
@@ -190,6 +205,7 @@ std::vector<Point> readAsciiPcd(const std::string & path)
     throw std::runtime_error("PCD contains no valid xyz points");
   }
   return points;
+#endif
 }
 
 void markFreeEnvelope(
@@ -231,9 +247,6 @@ std::unordered_set<VoxelKey, VoxelKeyHash> horizontalSupportKeys(
 {
   std::unordered_set<VoxelKey, VoxelKeyHash> supports;
   supports.reserve(occupied.size());
-  constexpr int kMinimumProbeDistance = 2;
-  constexpr int kProbeRadius = 4;
-  constexpr int kLateralTolerance = 2;
   constexpr int kVerticalTolerance = 1;
   const auto max_key = static_cast<long long>(std::numeric_limits<unsigned int>::max());
 
@@ -251,21 +264,21 @@ std::unordered_set<VoxelKey, VoxelKeyHash> horizontalSupportKeys(
   };
 
   auto hasDirection = [&](const VoxelKey & key, int axis_x, int axis_y) {
-    for (int step = kMinimumProbeDistance; step <= kProbeRadius; ++step) {
-      for (int lateral = -kLateralTolerance; lateral <= kLateralTolerance; ++lateral) {
-        for (int dz = -kVerticalTolerance; dz <= kVerticalTolerance; ++dz) {
-          const int dx = axis_x * step + axis_y * lateral;
-          const int dy = axis_y * step + axis_x * lateral;
-          if (contains(key, dx, dy, dz)) {
-            return true;
-          }
-        }
+    // Support padding needs a locally connected, exposed surface. Distant
+    // probes can join opposite corridor walls and inflate their interiors.
+    for (int dz = -kVerticalTolerance; dz <= kVerticalTolerance; ++dz) {
+      if (contains(key, axis_x, axis_y, dz) &&
+          !contains(key, axis_x, axis_y, dz + 1)) {
+        return true;
       }
     }
     return false;
   };
 
   for (const auto & key : occupied) {
+    if (contains(key, 0, 0, 1)) {
+      continue;
+    }
     int directions = 0;
     directions += hasDirection(key, 1, 0) ? 1 : 0;
     directions += hasDirection(key, -1, 0) ? 1 : 0;
@@ -278,30 +291,25 @@ std::unordered_set<VoxelKey, VoxelKeyHash> horizontalSupportKeys(
   return supports;
 }
 
-std::unordered_set<VoxelKey, VoxelKeyHash> buildFilteredOccupiedKeys(
+std::unordered_set<VoxelKey, VoxelKeyHash> buildOccupiedKeys(
   const std::vector<Point> & points,
   octomap::OcTree & tree,
   int support_dilation_cells,
   std::unordered_set<VoxelKey, VoxelKeyHash> & support_keys)
 {
-  std::unordered_map<VoxelKey, int, VoxelKeyHash> counts;
+  std::unordered_set<VoxelKey, VoxelKeyHash> occupied;
+  occupied.reserve(points.size());
+  // Saved SLAM maps are already voxel-sampled and pruned. Point multiplicity
+  // no longer measures repeated observations; filtering it erases real surfaces.
   for (const Point & point : points) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
+      continue;
+    }
     octomap::OcTreeKey raw_key;
     if (!tree.coordToKeyChecked(point.x, point.y, point.z, raw_key)) {
       continue;
     }
-    ++counts[VoxelKey{raw_key.k[0], raw_key.k[1], raw_key.k[2]}];
-  }
-
-  std::unordered_set<VoxelKey, VoxelKeyHash> occupied;
-  occupied.reserve(counts.size());
-  // MuJoCo/Livox scan noise can place isolated single-hit voxels in the robot
-  // body envelope. Require repeated hits before a voxel becomes occupied.
-  constexpr int kMinPointsPerVoxel = 2;
-  for (const auto & entry : counts) {
-    if (entry.second >= kMinPointsPerVoxel) {
-      occupied.insert(entry.first);
-    }
+    occupied.insert(VoxelKey{raw_key.k[0], raw_key.k[1], raw_key.k[2]});
   }
 
   support_keys = horizontalSupportKeys(occupied);
@@ -310,6 +318,13 @@ std::unordered_set<VoxelKey, VoxelKeyHash> buildFilteredOccupiedKeys(
   }
 
   std::unordered_set<VoxelKey, VoxelKeyHash> dilated = occupied;
+  std::unordered_map<VoxelKey, unsigned int, VoxelKeyHash> column_lowest;
+  column_lowest.reserve(occupied.size());
+  for (const auto & key : occupied) {
+    const VoxelKey column{key.x, key.y, 0};
+    const auto inserted = column_lowest.emplace(column, key.z);
+    if (!inserted.second) inserted.first->second = std::min(inserted.first->second, key.z);
+  }
   const int dilation = std::max(0, support_dilation_cells);
   const auto max_key = static_cast<long long>(std::numeric_limits<unsigned int>::max());
   const auto support_seeds = support_keys;
@@ -326,6 +341,14 @@ std::unordered_set<VoxelKey, VoxelKeyHash> buildFilteredOccupiedKeys(
           static_cast<unsigned int>(x),
           static_cast<unsigned int>(y),
           static_cast<unsigned int>(z)};
+        // Fill sampling gaps, not a second surface above observed lower ground.
+        // Otherwise a table or step top grows sideways into a walkable aisle.
+        // Original occupied voxels remain untouched, including upper floors.
+        const auto lower = column_lowest.find({dilated_key.x, dilated_key.y, 0});
+        if (!occupied.count(dilated_key) && lower != column_lowest.end() &&
+            static_cast<long long>(lower->second) + 1 < z) {
+          continue;
+        }
         dilated.insert(dilated_key);
         support_keys.insert(dilated_key);
       }
@@ -346,36 +369,18 @@ int main(int argc, char ** argv)
 {
   try {
     const CliConfig cfg = parseArgs(argc, argv);
-#if defined(OCTOPLANNER3D_ENABLE_PCD)
-    pcd2octomap::Pcd2OctomapConverter converter;
-    converter.setInputPcdFile(cfg.input);
-    converter.setOutputBtFile(cfg.output);
-    converter.setResolution(cfg.resolution);
-    converter.setSupportDilationCells(cfg.support_dilation_cells);
-    converter.setFreeEnvelopeLayers(cfg.free_layers_above);
-    converter.setFreeEnvelopeDilationCells(cfg.free_dilation_cells);
-    if (!converter.convert()) {
-      std::cerr << "failed to convert PCD to OctoMap: " << cfg.input << std::endl;
-      return 3;
-    }
-    std::cout << "{\"success\":true,\"input\":\"" << cfg.input
-              << "\",\"output\":\"" << cfg.output
-              << "\",\"resolution\":" << cfg.resolution
-              << ",\"support_dilation_cells\":" << cfg.support_dilation_cells
-              << ",\"free_layers_above\":" << cfg.free_layers_above
-              << ",\"free_dilation_cells\":" << cfg.free_dilation_cells
-              << ",\"converter\":\"octoplanner3d_pcl_pcd\"}" << std::endl;
-    return 0;
-#else
-    const std::vector<Point> points = readAsciiPcd(cfg.input);
+    const std::vector<Point> points = readPcd(cfg.input);
 
     octomap::OcTree tree(cfg.resolution);
     std::unordered_set<VoxelKey, VoxelKeyHash> support_keys;
-    const auto occupied_keys = buildFilteredOccupiedKeys(
+    const auto occupied_keys = buildOccupiedKeys(
       points,
       tree,
       cfg.support_dilation_cells,
       support_keys);
+    if (occupied_keys.empty()) {
+      throw std::runtime_error("PCD contains no finite points within OctoMap bounds");
+    }
     for (const auto & key : occupied_keys) {
       octomap::OcTreeKey octo_key;
       octo_key.k[0] = key.x;
@@ -383,7 +388,7 @@ int main(int argc, char ** argv)
       octo_key.k[2] = key.z;
       tree.updateNode(tree.keyToCoord(octo_key), true);
     }
-    for (const auto & key : occupied_keys) {
+    for (const auto & key : support_keys) {
       markFreeEnvelope(
         tree,
         key,
@@ -409,9 +414,8 @@ int main(int argc, char ** argv)
               << ",\"occupied_voxels\":" << occupied_keys.size()
               << ",\"support_voxels\":" << support_keys.size()
               << ",\"points\":" << points.size()
-              << ",\"converter\":\"octomap_ascii_pcd\"}" << std::endl;
+              << ",\"converter\":\"octomap_sampled_pcd\"}" << std::endl;
     return 0;
-#endif
   } catch (const std::exception & exc) {
     std::cerr << exc.what() << std::endl;
     return 2;

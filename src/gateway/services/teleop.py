@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from gateway.services.command_boundary import (
+from gateway.navigation.commands import (
     CommandBoundaryError,
 )
 from runtime.msgs.geometry import Twist, Vector3

@@ -58,6 +58,7 @@ test('accepted SaveMap polls until the durable operation succeeds', async () => 
 
   assert.equal(result.success, true)
   assert.equal(result.operation?.state, 'SUCCEEDED')
+  assert.equal(result.name, 'warehouse')
   assert.deepEqual(urls, [
     '/api/v1/maps/operations/save-17',
     '/api/v1/maps/operations/save-17',

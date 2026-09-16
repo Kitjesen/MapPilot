@@ -1,6 +1,6 @@
 """Contracts for the product-facing native recording supervisor."""
 
-# ruff: noqa: D103, S101 - pytest contracts use assertions by design.
+
 
 from pathlib import Path
 

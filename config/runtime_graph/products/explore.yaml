@@ -1,4 +1,4 @@
-schema_version: lingtu.runtime_graph.product.v2
+schema_version: lingtu.runtime_graph.product.v3
 name: explore
 summary: Grow a map and navigate to exploration goals through the native runtime contract.
 operator_switchable: true
@@ -8,8 +8,39 @@ native_control_mode: autonomy
 default_variant: live
 variants:
   live:
-    contracts:
-      - lingtu.product.explore.v1
+    topics:
+      - /tf
+      - /lidar/raw_frame
+      - /imu/raw
+      - /slam/odometry
+      - /slam/registered_cloud
+      - /slam/map_observation
+      - /slam/map_cloud
+      - /slam/localization_health
+      - /maps/state
+      - /maps/scene
+      - /nav/exploration/command
+      - /nav/exploration/ack
+      - /nav/exploration/run/event
+      - /nav/command/request
+      - /nav/command/ack
+      - /nav/goal/status
+      - /nav/state
+      - /nav/traversability
+      - /nav/exploration_snapshot
+      - /nav/exploration_execution_snapshot
+      - /nav/exploration_segment/request
+      - /nav/exploration_segment/ack
+      - /nav/exploration_segment/status
+      - /nav/global_path
+      - /nav/local_path
+      - /nav/cmd_vel
+    capabilities:
+      - native_slam_mapping
+      - frontier_or_tare_goal_source
+      - rolling_map_segment_execution
+      - local_planner_collision_and_traversability_scoring
+      - final_cmd_vel_single_writer
     slam_mode: mapping
     requires_map: false
     switch_policy: cold_restart
@@ -22,8 +53,51 @@ variants:
       local_planner: cmu
       local_planners: [cmu, scan]
   map:
-    contracts:
-      - lingtu.product.explore.map.v1
+    topics:
+      - /tf
+      - /lidar/raw_frame
+      - /imu/raw
+      - /slam/odometry
+      - /slam/registered_cloud
+      - /slam/map_observation
+      - /slam/map_cloud
+      - /slam/localization_health
+      - /maps/state
+      - /maps/scene
+      - /maps/activation/request
+      - /maps/activation/ack
+      - /nav/exploration/command
+      - /nav/exploration/ack
+      - /nav/exploration/run/event
+      - /nav/command/request
+      - /nav/command/ack
+      - /nav/state
+      - /nav/operator_motion/control
+      - /nav/operator_motion/sample
+      - /nav/operator_motion/ack
+      - /nav/operator_motion/status
+      - /nav/goal/status
+      - /nav/traversability
+      - /nav/exploration_snapshot
+      - /nav/exploration_execution_snapshot
+      - /nav/exploration_segment/request
+      - /nav/exploration_segment/ack
+      - /nav/exploration_segment/status
+      - /nav/global_path
+      - /nav/local_path
+      - /nav/way_point
+      - /nav/cmd_vel
+    capabilities:
+      - saved_map_relocalization
+      - tare_frontier_or_viewpoint_goal_source
+      - octoplanner3d_global_planning
+      - rolling_map_segment_execution
+      - local_planner_collision_and_traversability_scoring
+      - final_cmd_vel_single_writer
+      - operator_motion_typed_dds_interface
+      - native_operator_motion_authority
+      - operator_teleop_takeover_with_safety_veto
+      - operator_assisted_local_planner_takeover
     slam_mode: localization
     requires_map: true
     switch_policy: cold_restart

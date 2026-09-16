@@ -1,6 +1,5 @@
 """Behavior tests for the native-backed place catalog projection."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 

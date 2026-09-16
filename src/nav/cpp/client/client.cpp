@@ -26,12 +26,12 @@
 #include "clock_sync.hpp"
 #include "dds/dds.h"
 #include "messages.h"
-#include "message/cpp/qos.hpp"
-#include "message/cpp/topics.hpp"
-#include "message/cpp/exploration_command.hpp"
-#include "message/cpp/inspection_command.hpp"
-#include "message/cpp/navigation_command.hpp"
-#include "message/cpp/operator_motion.hpp"
+#include "transport/dds/qos.hpp"
+#include "message/generated/topics.hpp"
+#include "message/protocol/exploration.hpp"
+#include "message/protocol/inspection.hpp"
+#include "message/protocol/navigation.hpp"
+#include "message/protocol/operator_motion.hpp"
 #include "nav/cpp/platform/runtime.hpp"
 
 namespace lingtu::nav::commands {
@@ -568,6 +568,10 @@ SceneDecodeResult decodeMapScene(
                &message.occupancy, "occupancy", &scene->occupancy},
            {&message.elevation, "elevation", &scene->elevation},
            {&message.esdf, "esdf", &scene->esdf},
+           {&message.surface_projection, "surface_projection", &scene->surface_projection},
+           {&message.ground_height, "ground_height", &scene->ground_height},
+           {&message.ground_roughness, "ground_roughness", &scene->ground_roughness},
+           {&message.ground_support, "ground_support", &scene->ground_support},
        }) {
     const auto result = decodeSceneGrid(
         *std::get<0>(item),
@@ -1019,6 +1023,8 @@ struct Client::Impl {
           "local_path");
       traversability_reader = createReader(lingtu::message::kNavTraversability,
                                            &lingtu_dds_OccupancyGrid_desc, "traversability");
+      joint_state_reader = createReader(lingtu::message::kRobotJointStates,
+                                        &lingtu_dds_JointState_desc, "joint_state");
       map_scene_reader = createReader(
           lingtu::message::kMapsScene,
           &lingtu_dds_MapScene_desc,
@@ -2238,6 +2244,61 @@ struct Client::Impl {
     return count > 0;
   }
 
+  bool takeJointStateSamples() {
+    constexpr std::size_t kMaxSamples = 8U;
+    void *samples[kMaxSamples]{};
+    dds_sample_info_t infos[kMaxSamples]{};
+    const dds_return_t count = dds_take(joint_state_reader, samples, infos, kMaxSamples, kMaxSamples);
+    // Optional display telemetry must not stop command ACK reception.
+    if (count <= 0) return false;
+    try {
+      for (dds_return_t i = 0; i < count; ++i) {
+        if (!infos[i].valid_data || samples[i] == nullptr) continue;
+        const auto &message = *static_cast<lingtu_dds_JointState *>(samples[i]);
+        const std::size_t size = message.names._length;
+        if (size == 0 || size > LINGTU_NAV_JOINT_STATE_MAX_JOINTS ||
+            message.names._buffer == nullptr || message.position._length != size ||
+            message.velocity._length != size || message.effort._length != size ||
+            message.position._buffer == nullptr || message.velocity._buffer == nullptr ||
+            message.effort._buffer == nullptr || message.header.stamp.sec <= 0 ||
+            message.header.stamp.nanosec >= 1000000000U) continue;
+        JointStateSnapshot candidate;
+        candidate.timestamp_s = static_cast<double>(message.header.stamp.sec) +
+                                static_cast<double>(message.header.stamp.nanosec) * 1e-9;
+        const double age_s = nowSeconds() - candidate.timestamp_s;
+        if (age_s > 2.0 || age_s < -1.0) continue;
+        candidate.joint_count = static_cast<std::uint32_t>(size);
+        std::string error;
+        if (!copyBoundedText(message.robot_model, 32U, "joint robot model", &candidate.robot_model, &error, true)) continue;
+        bool valid = true;
+        for (std::size_t joint = 0; joint < size; ++joint) {
+          if (!copyBoundedText(message.names._buffer[joint], 64U, "joint name", &candidate.names[joint], &error, true) ||
+              !std::isfinite(message.position._buffer[joint]) ||
+              !std::isfinite(message.velocity._buffer[joint]) ||
+              !std::isfinite(message.effort._buffer[joint]) ||
+              std::find(candidate.names.begin(), candidate.names.begin() + joint, candidate.names[joint]) !=
+                  candidate.names.begin() + joint) {
+            valid = false;
+            break;
+          }
+          candidate.position[joint] = message.position._buffer[joint];
+          candidate.velocity[joint] = message.velocity._buffer[joint];
+          candidate.effort[joint] = message.effort._buffer[joint];
+        }
+        if (!valid) continue;
+        std::lock_guard<std::mutex> lock(joint_state_mutex);
+        if (candidate.timestamp_s <= last_joint_state_timestamp_s) continue;
+        last_joint_state_timestamp_s = candidate.timestamp_s;
+        pending_joint_state = std::move(candidate);
+      }
+    } catch (...) {
+      dds_return_loan(joint_state_reader, samples, count);
+      return false;
+    }
+    dds_return_loan(joint_state_reader, samples, count);
+    return true;
+  }
+
   bool takeTraversabilitySamples() {
     constexpr std::size_t kMaxSamples = 8U;
     void *samples[kMaxSamples]{};
@@ -2474,7 +2535,7 @@ struct Client::Impl {
                 pending_local_path,
                 local_path_receive_sequence,
                 "local_path") |
-            takeTraversabilitySamples() | takeMapRuntimeStates() | takeMapScenes();
+            takeTraversabilitySamples() | takeMapRuntimeStates() | takeMapScenes() | takeJointStateSamples();
         if (!received) {
           std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
@@ -3036,6 +3097,9 @@ struct Client::Impl {
   std::optional<PathSnapshot> pending_local_path;
   std::uint64_t local_path_receive_sequence{0U};
   mutable std::mutex traversability_mutex;
+  mutable std::mutex joint_state_mutex;
+  std::optional<JointStateSnapshot> pending_joint_state;
+  double last_joint_state_timestamp_s{0.0};
   std::optional<TraversabilityGridSnapshot> pending_traversability;
   double last_traversability_timestamp_s{0.0};
   std::uint64_t traversability_receive_sequence{0U};
@@ -3073,6 +3137,7 @@ struct Client::Impl {
   dds_entity_t global_path_reader{0};
   dds_entity_t local_path_reader{0};
   dds_entity_t traversability_reader{0};
+  dds_entity_t joint_state_reader{0};
   dds_entity_t map_scene_reader{0};
   dds_entity_t map_state_reader{0};
   const std::string client_id{makeClientId()};
@@ -3191,6 +3256,15 @@ bool Client::takeLocalPath(PathSnapshot* path) {
   return true;
 }
 
+bool Client::takeJointState(JointStateSnapshot *state) {
+  if (state == nullptr) throw std::invalid_argument("joint state output is null");
+  std::lock_guard<std::mutex> lock(impl_->joint_state_mutex);
+  if (!impl_->pending_joint_state.has_value()) return false;
+  *state = std::move(*impl_->pending_joint_state);
+  impl_->pending_joint_state.reset();
+  return true;
+}
+
 bool Client::takeTraversability(TraversabilityGridSnapshot *grid) {
   if (grid == nullptr) {
     throw std::invalid_argument("traversability output is null");
@@ -3231,7 +3305,13 @@ NavigationCommandReceipt Client::NavigationCommands::startTask(
     double yaw,
     int timeout_ms,
     const std::string& requested_task_id,
-    const std::string& requested_id) {
+    const std::string& requested_id,
+    double max_speed_mps,
+    double acceptance_radius_m) {
+  requireFinite(max_speed_mps, "goal speed limit");
+  requireFinite(acceptance_radius_m, "goal acceptance radius");
+  if (max_speed_mps < 0.0 || acceptance_radius_m < 0.0)
+    throw std::invalid_argument("goal constraints must be nonnegative");
   requireFinite(x, "goal x");
   requireFinite(y, "goal y");
   requireFinite(z, "goal z");
@@ -3245,6 +3325,8 @@ NavigationCommandReceipt Client::NavigationCommands::startTask(
   message.task_id = const_cast<char*>(task_id.c_str());
   message.request_id = const_cast<char*>(request_id.c_str());
   message.kind = static_cast<std::int32_t>(CommandKind::Goal);
+  message.max_speed_mps = max_speed_mps;
+  message.acceptance_radius_m = acceptance_radius_m;
   message.goal.position.x = x;
   message.goal.position.y = y;
   message.goal.position.z = z;

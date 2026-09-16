@@ -29,6 +29,7 @@ import type {
 } from '../types'
 import { text, type Locale } from '../i18n'
 import * as api from '../services/api'
+import { isObservationMode } from '../services/observationMode.ts'
 import styles from './InspectionWorkbench.module.css'
 
 interface InspectionWorkbenchProps {
@@ -63,15 +64,29 @@ function statusText(value: unknown, fallback = '--'): string {
 function taskTruthLabel(task: InspectionTaskStatusResponse | null, locale: Locale): string {
   if (!task) return text(locale, 'No task selected', '未选择任务')
   if (task.state_source === 'native_task_event') {
-    return text(locale, 'Native endpoint confirmed', '原生端已确认')
+    return text(locale, 'Confirmed', '已确认')
   }
   if (task.state_source === 'business_ack_only') {
-    return text(locale, 'Waiting for native confirmation', '等待原生端确认')
+    return text(locale, 'Waiting for robot confirmation', '等待机器人确认')
   }
   if (task.state_source === 'continuity_monitor') {
     return text(locale, 'Task event continuity interrupted', '任务事件连续性已中断')
   }
   return text(locale, 'Task state unavailable', '任务状态不可用')
+}
+
+function inspectionTaskStateLabel(state: string, locale: Locale): string {
+  const labels: Record<string, [string, string]> = {
+    ACCEPTED: ['Waiting to start', '等待开始'],
+    RUNNING: ['Running', '执行中'],
+    PAUSED: ['Paused', '已暂停'],
+    SUCCEEDED: ['Completed', '已完成'],
+    COMPLETED: ['Completed', '已完成'],
+    FAILED: ['Failed', '失败'],
+    CANCELLED: ['Cancelled', '已取消'],
+  }
+  const label = labels[state]
+  return label ? text(locale, label[0], label[1]) : state
 }
 
 function evidenceWorkerFromStatus(status: Record<string, unknown>): InspectionEvidenceWorkerStatus {
@@ -305,6 +320,7 @@ function upsertInspectionTask(
 }
 
 export function InspectionWorkbench({ sseState, showToast, locale }: InspectionWorkbenchProps) {
+  const observe = isObservationMode()
   const [mapId, setMapId] = useState(() => sessionActiveMap(sseState))
   const [routeId, setRouteId] = useState('route-1')
   const [routeName, setRouteName] = useState(() => text(locale, 'Inspection route', '巡检路线'))
@@ -329,6 +345,9 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
   const [evidenceIntegrityFailures, setEvidenceIntegrityFailures] = useState(0)
   const [busy, setBusy] = useState<BusyAction>(null)
   const [error, setError] = useState<string | null>(null)
+  const [taskReadError, setTaskReadError] = useState<string | null>(null)
+  const [statusReadError, setStatusReadError] = useState<string | null>(null)
+  const [evidenceReadError, setEvidenceReadError] = useState<string | null>(null)
   const [inspectionAvailability, setInspectionAvailability] = useState<InspectionAvailability>('checking')
   const activeTaskIdRef = useRef<string | null>(null)
 
@@ -448,7 +467,12 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
         throw routeResult.reason
       }
       if (locationResult.status === 'fulfilled') setLocations(locationResult.value)
-      if (statusResult.status === 'fulfilled') setStatus(statusResult.value.status)
+      if (statusResult.status === 'fulfilled') {
+        setStatus(statusResult.value.status)
+        setStatusReadError(null)
+      } else {
+        setStatusReadError(String(statusResult.reason))
+      }
       if (taskResult.status === 'fulfilled') {
         const retainedTasks = taskResult.value.tasks
         setInspectionTasks(retainedTasks)
@@ -456,14 +480,18 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
           ? retainedTasks.find(task => task.task_id === activeTaskIdRef.current) ?? null
           : retainedTasks.find(task => !task.terminal) ?? retainedTasks[0] ?? null
         selectInspectionTask(currentTask)
+        setTaskReadError(null)
       } else {
-        setInspectionTasks([])
-        selectInspectionTask(null)
+        setTaskReadError(String(taskResult.reason))
       }
       if (evidenceResult.status === 'fulfilled') {
         setEvidenceItems(evidenceResult.value.evidence)
         setEvidenceIntegrityFailures(evidenceResult.value.integrity_failures)
+        setEvidenceReadError(null)
+      } else {
+        setEvidenceReadError(String(evidenceResult.reason))
       }
+      if (locationResult.status === 'rejected') throw locationResult.reason
       setError(null)
     } catch (err) {
       if (api.isGatewayApiError(err) && (err.statusCode === 404 || err.statusCode === 503)) {
@@ -487,8 +515,11 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
     if (inspectionAvailability !== 'available') return
     const timer = window.setInterval(() => {
       api.fetchInspectionStatus()
-        .then(result => setStatus(result.status))
-        .catch(() => undefined)
+        .then(result => {
+          setStatus(result.status)
+          setStatusReadError(null)
+        })
+        .catch(err => setStatusReadError(String(err)))
     }, 2000)
     return () => window.clearInterval(timer)
   }, [inspectionAvailability])
@@ -501,11 +532,14 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
         .then(snapshot => {
           if (activeTaskIdRef.current !== selectedTaskId) return
           setTaskStatus(snapshot)
+          setTaskReadError(null)
           if (snapshot.found) {
             setInspectionTasks(current => upsertInspectionTask(current, snapshot))
           }
         })
-        .catch(() => undefined)
+        .catch(err => {
+          if (activeTaskIdRef.current === selectedTaskId) setTaskReadError(String(err))
+        })
     }
     refreshTask()
     const timer = window.setInterval(refreshTask, 2000)
@@ -558,11 +592,14 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
       .then(snapshot => {
         if (activeTaskIdRef.current !== activeTaskId) return
         setTaskStatus(snapshot)
+        setTaskReadError(null)
         if (snapshot.found) {
           setInspectionTasks(current => upsertInspectionTask(current, snapshot))
         }
       })
-      .catch(() => undefined)
+      .catch(err => {
+        if (activeTaskIdRef.current === activeTaskId) setTaskReadError(String(err))
+      })
   }, [
     activeTaskId,
     sseState.inspectionTaskEvent?.data?.task_id,
@@ -576,8 +613,9 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
         .then(result => {
           setEvidenceItems(result.evidence)
           setEvidenceIntegrityFailures(result.integrity_failures)
+          setEvidenceReadError(null)
         })
-        .catch(() => undefined)
+        .catch(err => setEvidenceReadError(String(err)))
     }
     const timer = window.setInterval(refreshEvidence, 5000)
     return () => window.clearInterval(timer)
@@ -772,102 +810,122 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
   return (
     <div className={styles.page} role="tabpanel" id="panel-inspection">
       <header className={styles.header}>
-        <div>
-          <div className={styles.eyebrow}>{text(locale, 'Inspection Mission', '巡检任务')}</div>
-          <h1 className={styles.title}>{text(locale, 'Repeatable Routes and Evidence', '可复现路线与证据闭环')}</h1>
-          <p className={styles.subtitle}>{text(
-            locale,
-            'Plan fixed inspection points, collect verified evidence, and carry uncertain results into review and reinspection.',
-            '规划固定巡检点位、采集可信证据，并将不确定结果转入复核或复巡。',
-          )}</p>
-        </div>
+        <h1 className={styles.title}>{text(locale, 'Inspection', '巡检任务')}</h1>
         <div className={styles.actions}>
           <button type="button" className={styles.iconButton} onClick={() => void load()} disabled={busy !== null} title={text(locale, 'Refresh', '刷新')}>
             <RefreshCcw size={16} />
           </button>
-          <button type="button" className={styles.primaryButton} onClick={() => void saveRoute()} disabled={inspectionAvailability !== 'available' || busy !== null || points.length === 0}>
-            <Save size={16} />
-            {text(locale, 'Save', '保存')}
-          </button>
         </div>
       </header>
 
-      <section className={styles.statusBand}>
-        <div>
-          <span>{text(locale, 'Task state', '任务状态')}</span>
-          <strong>{statusText(taskStatus?.current_state, 'NO_ACTIVE_TASK')}</strong>
+      {busy === 'load' && (
+        <div className={styles.readNotice} role="status">{text(locale, 'Refreshing inspection data…', '正在读取巡检数据…')}</div>
+      )}
+      {error && (
+        <div className={styles.alert} role="status">
+          <XCircle size={16} />
+          <span>{error}</span>
         </div>
-        <div>
-          <span>{text(locale, 'Task ID', '任务 ID')}</span>
-          <strong>{statusText(activeTaskId)}</strong>
+      )}
+      {(taskReadError || statusReadError || evidenceReadError) && (
+        <div className={styles.capabilityNotice} role="status">
+          <AlertTriangle size={16} />
+          <span>{[
+            taskReadError && text(locale, `Task refresh failed; retained state may be stale: ${taskReadError}`, `任务读取失败，保留的状态可能已过期：${taskReadError}`),
+            statusReadError && text(locale, `Capture readiness refresh failed: ${statusReadError}`, `取证就绪状态读取失败：${statusReadError}`),
+            evidenceReadError && text(locale, `Evidence refresh failed; showing retained evidence: ${evidenceReadError}`, `证据读取失败，显示上次结果：${evidenceReadError}`),
+          ].filter(Boolean).join(' · ')}</span>
         </div>
-        <div>
-          <span>{text(locale, 'Task truth', '任务事实')}</span>
-          <strong>{taskTruthLabel(taskStatus, locale)}</strong>
+      )}
+
+      <section className={styles.runPanel} aria-label={text(locale, 'Inspection controls', '巡检运行')}>
+        <div className={styles.routeSelection}>
+          <label>
+            <span>{text(locale, 'Route', '路线')}</span>
+            <select aria-label={text(locale, 'Saved routes', '已保存路线')} value={selectedRouteId ?? ''}
+              disabled={busy !== null || routes.length === 0}
+              onChange={event => {
+                const route = routes.find(item => item.id === event.target.value)
+                if (route) void loadRouteIntoEditor(route)
+              }}>
+              {!selectedRouteId && <option value="">{text(locale, 'Choose a route', '选择路线')}</option>}
+              {routes.map(route => <option key={route.id} value={route.id}>{route.name || route.id}</option>)}
+            </select>
+          </label>
+          <span className={styles.routeMeta}>{selectedRoute
+            ? `${selectedRoute.map_id} · ${selectedRoute.point_count ?? selectedRoute.points.length} ${text(locale, 'points', '个点位')}`
+            : observe ? text(locale, 'No saved route', '暂无已保存路线')
+              : text(locale, 'Save a route in the editor below', '在下方编辑并保存路线')}</span>
         </div>
-        <div>
-          <span>{text(locale, 'Route', '路线')}</span>
-          <strong>{statusText(taskStatus?.identity.route_id ?? selectedRouteId)}</strong>
+        <div className={styles.taskSelection}>
+          <label>
+            <span>{text(locale, 'Task', '任务')}</span>
+            <select aria-label={text(locale, 'Recent tasks', '最近任务')} value={activeTaskId ?? ''}
+              disabled={busy !== null}
+              onChange={event => selectInspectionTask(inspectionTasks.find(task => task.task_id === event.target.value) ?? null)}>
+              <option value="">{text(locale, 'No task selected', '未选择任务')}</option>
+              {activeTaskId && !inspectionTasks.some(task => task.task_id === activeTaskId) &&
+                <option value={activeTaskId}>{text(locale, 'Awaiting task confirmation', '等待任务确认')}</option>}
+              {inspectionTasks.map(task => <option key={task.task_id} value={task.task_id}>
+                {`${routes.find(route => route.id === task.identity.route_id)?.name || task.identity.route_id || text(locale, 'Route', '路线')} · ${inspectionTaskStateLabel(task.current_state, locale)} · ${taskEventTimestamp({ ts: task.updated_at }, locale)}`}
+              </option>)}
+            </select>
+          </label>
+          <div className={styles.taskState}>
+            <strong>{taskStatus ? inspectionTaskStateLabel(taskStatus.current_state, locale)
+              : activeTaskId || taskReadError || error || inspectionAvailability !== 'available'
+                ? text(locale, 'Unconfirmed', '待确认') : text(locale, 'Not started', '未开始')}</strong>
+            {activeTaskId && <span role="status">{taskReadError ? text(locale, 'State may be stale', '状态可能已过期') : taskTruthLabel(taskStatus, locale)}</span>}
+          </div>
+          {activeTaskId && <div className={styles.taskProgress}>
+            <strong>{progressLabel}</strong>
+            <span>{statusText(taskProgress?.current_point_id)}</span>
+          </div>}
         </div>
-        <div>
-          <span>{text(locale, 'Route progress', '路线进度')}</span>
-          <strong>{progressLabel}</strong>
-        </div>
-        <div>
-          <span>{text(locale, 'Current point', '当前点')}</span>
-          <strong>{statusText(taskProgress?.current_point_id)}</strong>
-        </div>
-        <div>
-          <span>{text(locale, 'Current reason', '当前原因')}</span>
-          <strong>{statusText(taskStatus?.reason)}</strong>
-        </div>
-        <div>
-          <span>{text(locale, 'Point action', '点位动作')}</span>
-          <strong>{inspectionActionLabel(statusText(taskProgress?.action, ''), locale)}</strong>
-        </div>
-        <div>
-          <span>{text(locale, 'Latest evidence', '最近证据')}</span>
-          <strong>{statusText(taskProgress?.evidence_id)}</strong>
-        </div>
-        <div>
-          <span>{text(locale, 'Capture readiness', '取证就绪')}</span>
-          <strong className={evidenceWorkerReady ? styles.workerReady : styles.workerUnavailable}>
-            {evidenceWorkerReady
-              ? text(locale, 'Ready', '就绪')
-              : text(locale, 'Unavailable', '不可用')}
-          </strong>
-        </div>
-        <div>
-          <span>{text(locale, 'Planned points', '计划点位')}</span>
-          <strong>{enabledPointCount}/{points.length}</strong>
-        </div>
+        {taskStatus && ['FAILED', 'PAUSED'].includes(taskStatus.current_state) && taskStatus.reason &&
+          <p className={styles.runReason} role="status">{taskStatus.reason}</p>}
+        {!observe && <div className={styles.runControls}>
+            {!taskStillOpen && <button
+              type="button"
+              className={styles.primaryButton}
+              onClick={() => void runAction('start', startRoute)}
+              disabled={inspectionAvailability !== 'available' || busy !== null || !selectedRouteId || savedRevision < 1 || startBlockedByEvidenceWorker || taskStillOpen || Boolean(taskReadError || statusReadError)}
+              title={startBlockedByEvidenceWorker
+                ? (!evidenceWorkerReady
+                    ? text(locale, 'Evidence capture must be ready before starting routes with capture actions.', '带取证动作的路线启动前，取证服务必须就绪。')
+                    : text(
+                        locale,
+                        `Unsupported capture actions: ${unsupportedRouteActions.join(', ')}`,
+                        `不支持的取证动作：${unsupportedRouteActions.join('、')}`,
+                      ))
+                : undefined}
+            >
+              <Play size={15} />{text(locale, 'Start inspection', '开始巡检')}
+            </button>}
+            {activeTaskId && taskStatus?.terminal !== true && <>
+            {taskStatus?.current_state !== 'PAUSED' && <button type="button" onClick={() => void runAction('pause', pauseRoute)} disabled={inspectionAvailability !== 'available' || busy !== null || !taskStatus?.can_pause}>
+              <Pause size={15} />{text(locale, 'Pause', '暂停')}
+            </button>}
+            {manualTakeoverReleaseRequired && (
+              <button type="button" onClick={() => void releaseManualTakeover()} disabled={inspectionAvailability !== 'available' || busy !== null}>
+                <Play size={15} />{text(locale, 'Release manual control', '释放人工接管')}
+              </button>
+            )}
+            {taskStatus?.current_state === 'PAUSED' && <button type="button" onClick={() => void runAction('resume', resumeRoute)} disabled={inspectionAvailability !== 'available' || busy !== null || !taskStatus?.can_resume || manualTakeoverReleaseRequired || Boolean(taskReadError || statusReadError)}>
+              <RotateCcw size={15} />{text(locale, 'Resume', '恢复')}
+            </button>}
+            <button type="button" onClick={() => void runAction('cancel', cancelRoute)} disabled={inspectionAvailability !== 'available' || busy !== null || !taskStatus?.can_cancel}>
+              <Square size={15} />{text(locale, 'Cancel task', '取消任务')}
+            </button>
+            </>}
+          </div>}
       </section>
 
-      <section
-        className={styles.reportPanel}
-        aria-label={text(locale, 'Inspection result', '巡检结果')}
-      >
-        <div className={styles.reportHeader}>
-          <div>
-            <div className={styles.sectionTitle}>{text(locale, 'Inspection result', '巡检结果')}</div>
-            <p>{text(
-              locale,
-              'Execution and evidence are evaluated separately. Only an acceptable result closes the inspection work.',
-              '执行结果与取证完整性分别判定；只有“可验收”才能闭合本次巡检。',
-            )}</p>
-          </div>
-          <span
-            className={
-              taskReport?.acceptance === 'ACCEPTABLE'
-                ? styles.reportAcceptable
-                : taskReport?.acceptance === 'NOT_ACCEPTABLE'
-                  ? styles.reportRejected
-                  : styles.reportReview
-            }
-          >
-            {inspectionAcceptanceLabel(taskReport?.acceptance ?? 'UNKNOWN', locale)}
-          </span>
-        </div>
+      {activeTaskId && <details className={styles.reportPanel}>
+        <summary>
+          <span>{text(locale, 'Inspection result', '巡检结果')}</span>
+          <span>{taskReportError ? text(locale, 'Unavailable', '暂不可用') : inspectionAcceptanceLabel(taskReport?.acceptance ?? 'UNKNOWN', locale)}</span>
+        </summary>
         <div className={styles.statusBand}>
           <div>
             <span>{text(locale, 'Execution outcome', '执行结果')}</span>
@@ -937,94 +995,47 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
                   <span>{inspectionActionLabel(point.action, locale)}</span>
                   <em>{inspectionPointResultLabel(point.status, locale)}</em>
                   {point.evidence_id && (
-                    <small>{text(locale, 'Evidence ', '证据 ') + point.evidence_id}</small>
+                    <details className={styles.inlineDetails}>
+                      <summary>{text(locale, 'Evidence ID', '证据 ID')}</summary>
+                      <code>{point.evidence_id}</code>
+                    </details>
                   )}
                 </li>
               ))}
             </ol>
           </div>
         )}
-        {!activeTaskId && (
-          <p className={styles.reportEmpty}>{text(
-            locale,
-            'Select or start a task to see its inspection result.',
-            '请选择或启动一个任务以查看巡检结果。',
-          )}</p>
-        )}
-      </section>
+      </details>}
 
       {manualTakeoverReleaseRequired && (
         <div className={styles.taskSafetyNotice} role="status">
           <AlertTriangle size={16} />
           <span>{text(
             locale,
-            'Manual control is still active. Release it as a separate safety action; that action does not resume this task.',
-            '人工接管仍处于激活状态。请将其作为独立安全操作释放；该操作不会恢复此任务。',
+            'Release manual control, then request task resume separately.',
+            '先释放人工接管，再单独恢复任务。',
           )}</span>
         </div>
       )}
 
-      <section className={styles.taskTimeline} aria-label={text(locale, 'Native task events', '原生任务事件')}>
-        <div className={styles.taskTimelineHeader}>
-          <div>
-            <div className={styles.sectionTitle}>{text(locale, 'Native task events', '原生任务事件')}</div>
-            <p>{taskStatus?.delivery.history_complete === false
-              ? text(
-                  locale,
-                  'Event history is incomplete. Controls remain disabled until native reconciliation is available.',
-                  '任务事件历史不完整。在原生端完成对账前，控制操作将保持禁用。',
-                )
-              : text(
-                  locale,
-                  'Execution facts below come only from the native endpoint; a command receipt is not a state change.',
-                  '以下执行事实只来自原生端；命令回执不代表状态已改变。',
-                )}</p>
-          </div>
-          <span>{taskTimeline.length}</span>
+      {taskStatus?.delivery.history_complete === false && (
+        <div className={styles.taskSafetyNotice} role="status">
+          <AlertTriangle size={16} />
+          <span>{text(
+            locale,
+            'Event history is incomplete. Controls remain disabled until native reconciliation is available.',
+            '任务事件历史不完整。在原生端完成对账前，控制操作将保持禁用。',
+          )}</span>
         </div>
-        <ol className={styles.taskEventList}>
-          {taskTimeline.map(event => (
-            <li key={statusText(event.event_id, `${statusText(event.boot_id)}:${statusText(event.event_sequence)}`)}>
-              <strong>{statusText(event.state_name)}</strong>
-              <span>{statusText(event.kind_name)}</span>
-              <time>{taskEventTimestamp(event, locale)}</time>
-              <small>{statusText(event.reason, text(locale, 'No reason reported', '未报告原因'))}</small>
-              {statusText(event.evidence_id, '') !== '' && <em>{statusText(event.evidence_id)}</em>}
-            </li>
-          ))}
-          {taskStatus && taskTimeline.length === 0 && (
-            <li className={styles.taskEventEmpty}>{text(
-              locale,
-              'No native event yet. Submission acceptance does not mean execution has started.',
-              '尚未收到原生事件。提交已受理不代表任务已开始执行。',
-            )}</li>
-          )}
-          {!taskStatus && (
-            <li className={styles.taskEventEmpty}>{text(
-              locale,
-              'Select a retained task to inspect its native event history.',
-              '请选择一个保留任务以查看其原生事件历史。',
-            )}</li>
-          )}
-        </ol>
-      </section>
+      )}
 
-      <section className={styles.evidencePanel} aria-label={text(locale, 'Recent inspection evidence', '最近巡检证据')}>
-        <div className={styles.evidenceHeader}>
-          <div>
-            <div className={styles.sectionTitle}>{text(locale, 'Recent evidence', '最近证据')}</div>
-            <p>{text(
-              locale,
-              'Verified captures stay bound to route, point, pose, action, and time for review and reinspection.',
-              '已验证取证始终绑定路线、点位、位姿、动作与时间，供复核和复巡使用。',
-            )}</p>
-          </div>
-          <div className={evidenceIntegrityFailures > 0 ? styles.evidenceWarning : styles.evidenceCount}>
-            {evidenceIntegrityFailures > 0
-              ? text(locale, `${evidenceIntegrityFailures} invalid hidden`, `已隐藏 ${evidenceIntegrityFailures} 条异常证据`)
-              : text(locale, `${evidenceItems.length} verified`, `${evidenceItems.length} 条已验证`)}
-          </div>
-        </div>
+      <details className={styles.evidencePanel}>
+        <summary>
+          <span>{text(locale, 'Recent evidence', '最近证据')}</span>
+          <span>{evidenceIntegrityFailures > 0
+            ? text(locale, `${evidenceIntegrityFailures} invalid hidden`, `已隐藏 ${evidenceIntegrityFailures} 条异常证据`)
+            : text(locale, `${evidenceItems.length} verified`, `${evidenceItems.length} 条已验证`)}</span>
+        </summary>
         <div className={styles.evidenceGrid}>
           {evidenceItems.map(evidence => {
             const request = evidence.request
@@ -1058,43 +1069,40 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
                     </span>
                     <time>{evidenceTimestamp(evidence, locale)}</time>
                   </div>
-                  <div className={styles.evidenceLinks}>
-                    {hasEvidenceArtifact(evidence, 'pose') && (
-                      <a href={api.inspectionEvidenceArtifactUrl(evidence.evidence_id, 'pose')} target="_blank" rel="noreferrer">
-                        {text(locale, 'Pose', '位姿')}
-                      </a>
-                    )}
-                    {hasEvidenceArtifact(evidence, 'detections') && (
-                      <a href={api.inspectionEvidenceArtifactUrl(evidence.evidence_id, 'detections')} target="_blank" rel="noreferrer">
-                        {text(locale, 'Detections', '检测')}
-                      </a>
-                    )}
-                  </div>
+                  <details className={styles.inlineDetails}>
+                    <summary>{text(locale, 'Evidence details', '证据详情')}</summary>
+                    <code>{evidence.evidence_id}</code>
+                    <div className={styles.evidenceLinks}>
+                      {hasEvidenceArtifact(evidence, 'pose') && (
+                        <a href={api.inspectionEvidenceArtifactUrl(evidence.evidence_id, 'pose')} target="_blank" rel="noreferrer">
+                          {text(locale, 'Pose', '位姿')}
+                        </a>
+                      )}
+                      {hasEvidenceArtifact(evidence, 'detections') && (
+                        <a href={api.inspectionEvidenceArtifactUrl(evidence.evidence_id, 'detections')} target="_blank" rel="noreferrer">
+                          {text(locale, 'Detections', '检测')}
+                        </a>
+                      )}
+                    </div>
+                  </details>
                 </div>
               </article>
             )
           })}
-          {evidenceItems.length === 0 && (
+          {evidenceItems.length === 0 && !evidenceReadError && !error && busy !== 'load' && inspectionAvailability === 'available' && (
             <div className={styles.empty}>{text(locale, 'No verified evidence yet', '暂无已验证证据')}</div>
           )}
         </div>
-      </section>
+      </details>
 
       {inspectionAvailability === 'unavailable' && (
         <div className={styles.capabilityNotice}>
           <AlertTriangle size={16} />
           <span>{text(
             locale,
-            'This page turns map-bound locations into repeatable inspection routes. The connected Gateway does not expose the route service, so editing and run controls are unavailable.',
-            '该页面把地图绑定点位编排成可复现巡检路线。当前 Gateway 未提供路线服务，因此编辑与运行控制不可用。',
+            'Inspection service is unavailable; route editing and task controls are disabled.',
+            '当前未提供巡检服务，暂不能编辑或运行路线。',
           )}</span>
-        </div>
-      )}
-
-      {error && (
-        <div className={styles.alert}>
-          <XCircle size={16} />
-          <span>{error}</span>
         </div>
       )}
 
@@ -1115,97 +1123,18 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
         </div>
       )}
 
-      <section className={styles.content}>
-        <aside className={styles.routesPane}>
-          <div className={styles.sectionTitle}>{text(locale, 'Saved routes', '已保存路线')}</div>
-          <div className={styles.routeList}>
-            {routes.map(route => (
-              <button
-                key={route.id}
-                type="button"
-                className={route.id === selectedRouteId ? styles.routeActive : styles.routeItem}
-                onClick={() => void loadRouteIntoEditor(route)}
-              >
-                <span>{route.name || route.id}</span>
-                <small>{route.point_count ?? route.points.length} {text(locale, 'points', '个点位')} · {text(locale, 'revision', '修订')} {route.revision ?? 0}</small>
-              </button>
-            ))}
-            {routes.length === 0 && <div className={styles.empty}>{text(locale, 'No routes saved', '暂无路线')}</div>}
+      {!observe && <details className={styles.editorPane}>
+        <summary>{text(locale, 'Route editor', '编辑路线')}</summary>
+          <div className={styles.editorHeader}>
+            <button type="button" className={styles.primaryButton} onClick={() => void saveRoute()} disabled={inspectionAvailability !== 'available' || busy !== null || points.length === 0}>
+              <Save size={15} />{text(locale, 'Save route', '保存路线')}
+            </button>
+            <span>{text(locale, 'Planned points', '计划点位')} {enabledPointCount}/{points.length}</span>
           </div>
-          <div className={styles.taskListSection}>
-            <div className={styles.sectionTitle}>{text(locale, 'Recent tasks', '最近任务')}</div>
-            <div className={styles.taskList}>
-              {inspectionTasks.map(task => (
-                <button
-                  key={task.task_id}
-                  type="button"
-                  className={task.task_id === activeTaskId ? styles.taskActive : styles.taskItem}
-                  aria-pressed={task.task_id === activeTaskId}
-                  onClick={() => selectInspectionTask(task)}
-                >
-                  <span>{task.current_state}</span>
-                  <small>{task.task_id}</small>
-                  <small>{statusText(task.identity.route_id)} · {taskTruthLabel(task, locale)}</small>
-                </button>
-              ))}
-              {inspectionTasks.length === 0 && <div className={styles.empty}>{text(locale, 'No retained tasks', '暂无保留任务')}</div>}
-            </div>
-          </div>
-          <div className={styles.runControls}>
-            <button
-              type="button"
-              onClick={() => void runAction('start', startRoute)}
-              disabled={inspectionAvailability !== 'available' || busy !== null || !selectedRouteId || savedRevision < 1 || startBlockedByEvidenceWorker || taskStillOpen}
-              title={startBlockedByEvidenceWorker
-                ? (!evidenceWorkerReady
-                    ? text(locale, 'Evidence capture must be ready before starting routes with capture actions.', '带取证动作的路线启动前，取证服务必须就绪。')
-                    : text(
-                        locale,
-                        `Unsupported capture actions: ${unsupportedRouteActions.join(', ')}`,
-                        `不支持的取证动作：${unsupportedRouteActions.join('、')}`,
-                      ))
-                : undefined}
-            >
-              <Play size={15} />{text(locale, 'Start', '启动')}
-            </button>
-            <button type="button" onClick={() => void runAction('pause', pauseRoute)} disabled={inspectionAvailability !== 'available' || busy !== null || !taskStatus?.can_pause}>
-              <Pause size={15} />{text(locale, 'Pause', '暂停')}
-            </button>
-            {manualTakeoverReleaseRequired && (
-              <button type="button" onClick={() => void releaseManualTakeover()} disabled={inspectionAvailability !== 'available' || busy !== null}>
-                <Play size={15} />{text(locale, 'Release manual control', '释放人工接管')}
-              </button>
-            )}
-            <button type="button" onClick={() => void runAction('resume', resumeRoute)} disabled={inspectionAvailability !== 'available' || busy !== null || !taskStatus?.can_resume || manualTakeoverReleaseRequired}>
-              <RotateCcw size={15} />{text(locale, 'Resume', '恢复')}
-            </button>
-            <button type="button" onClick={() => void runAction('cancel', cancelRoute)} disabled={inspectionAvailability !== 'available' || busy !== null || !taskStatus?.can_cancel}>
-              <Square size={15} />{text(locale, 'Cancel', '取消')}
-            </button>
-          </div>
-        </aside>
-
-        <main className={styles.editorPane}>
           <div className={styles.formGrid}>
-            <label>
-              <span>{text(locale, 'Route ID', '路线 ID')}</span>
-              <input value={routeId} onChange={event => setRouteId(event.target.value)} />
-            </label>
             <label>
               <span>{text(locale, 'Name', '名称')}</span>
               <input value={routeName} onChange={event => setRouteName(event.target.value)} />
-            </label>
-            <label>
-              <span>{text(locale, 'Map ID', '地图 ID')}</span>
-              <input value={mapId} onChange={event => setMapId(event.target.value)} />
-            </label>
-            <label>
-              <span>{text(locale, 'Map version', '地图版本')}</span>
-              <input type="number" min="0" value={mapVersion} onChange={event => setMapVersion(Number(event.target.value))} />
-            </label>
-            <label>
-              <span>{text(locale, 'Revision', '修订')}</span>
-              <input type="number" min="1" value={revision} onChange={event => setRevision(Number(event.target.value))} />
             </label>
             <label>
               <span>{text(locale, 'Loop count', '循环次数')}</span>
@@ -1224,6 +1153,28 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
               <input type="number" min="0" value={maxRetries} onChange={event => setMaxRetries(Number(event.target.value))} />
             </label>
           </div>
+
+          <details className={styles.details}>
+            <summary>{text(locale, 'Route and map binding', '路线标识与地图绑定')}</summary>
+            <div className={styles.formGrid}>
+              <label>
+                <span>{text(locale, 'Route ID', '路线 ID')}</span>
+                <input value={routeId} onChange={event => setRouteId(event.target.value)} />
+              </label>
+              <label>
+                <span>{text(locale, 'Map ID', '地图 ID')}</span>
+                <input value={mapId} onChange={event => setMapId(event.target.value)} />
+              </label>
+              <label>
+                <span>{text(locale, 'Map version', '地图版本')}</span>
+                <input type="number" min="0" value={mapVersion} onChange={event => setMapVersion(Number(event.target.value))} />
+              </label>
+              <label>
+                <span>{text(locale, 'Revision', '修订')}</span>
+                <input type="number" min="1" value={revision} onChange={event => setRevision(Number(event.target.value))} />
+              </label>
+            </div>
+          </details>
 
           <div className={styles.builder}>
             <section className={styles.locationPane}>
@@ -1330,8 +1281,109 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
               {text(locale, 'Delete selected route', '删除所选路线')}
             </button>
           )}
-        </main>
+      </details>}
+      <details className={styles.details}>
+        <summary>{text(locale, 'System details', '系统详情')}</summary>
+      <section className={styles.statusBand}>
+        <div>
+          <span>{text(locale, 'Task state', '任务状态')}</span>
+          <strong>{statusText(taskStatus?.current_state,
+            busy === 'load'
+              ? text(locale, 'Loading', '读取中')
+              : taskReadError || error || inspectionAvailability !== 'available'
+                ? text(locale, 'Unconfirmed', '未确认')
+                : text(locale, 'No active task', '无当前任务'),
+          )}</strong>
+        </div>
+        <div>
+          <span>{text(locale, 'Task truth', '任务事实')}</span>
+          <strong>{taskReadError ? text(locale, 'State may be stale', '状态可能已过期') : taskTruthLabel(taskStatus, locale)}</strong>
+        </div>
+        <div>
+          <span>{text(locale, 'Route progress', '路线进度')}</span>
+          <strong>{progressLabel}</strong>
+        </div>
+        <div>
+          <span>{text(locale, 'Current point', '当前点')}</span>
+          <strong>{statusText(taskProgress?.current_point_id)}</strong>
+        </div>
+        <div className={styles.currentReason}>
+          <span>{text(locale, 'Current reason', '当前原因')}</span>
+          <strong>{statusText(taskStatus?.reason)}</strong>
+        </div>
+        <div>
+          <span>{text(locale, 'Point action', '点位动作')}</span>
+          <strong>{inspectionActionLabel(statusText(taskProgress?.action, ''), locale)}</strong>
+        </div>
+        <div>
+          <span>{text(locale, 'Capture readiness', '取证就绪')}</span>
+          <strong className={evidenceWorkerReady && !statusReadError ? styles.workerReady : styles.workerUnavailable}>
+            {statusReadError
+              ? text(locale, 'Unconfirmed', '未确认')
+              : evidenceWorkerReady
+              ? text(locale, 'Ready', '就绪')
+              : text(locale, 'Unavailable', '不可用')}
+          </strong>
+        </div>
       </section>
+
+      <details className={styles.details}>
+        <summary>{text(locale, 'Task details', '任务详情')}</summary>
+        <div className={styles.statusBand}>
+          <div>
+            <span>{text(locale, 'Task ID', '任务 ID')}</span>
+            <strong>{statusText(activeTaskId)}</strong>
+          </div>
+          <div>
+            <span>{text(locale, 'State source', '状态来源')}</span>
+            <strong>{statusText(taskStatus?.state_source)}</strong>
+          </div>
+          <div>
+            <span>{text(locale, 'Route ID', '路线 ID')}</span>
+            <strong>{statusText(taskStatus?.identity.route_id ?? selectedRouteId)}</strong>
+          </div>
+          <div>
+            <span>{text(locale, 'Latest evidence ID', '最近证据 ID')}</span>
+            <strong>{statusText(taskProgress?.evidence_id)}</strong>
+          </div>
+        </div>
+      </details>
+
+      <details className={styles.details}>
+        <summary>{text(locale, 'Native task events', '原生任务事件')} · {taskTimeline.length}</summary>
+        <p className={styles.detailNote}>{text(
+          locale,
+          'Execution facts below come only from the native endpoint; a command receipt is not a state change.',
+          '以下执行事实只来自原生端；命令回执不代表状态已改变。',
+        )}</p>
+        <ol className={styles.taskEventList}>
+          {taskTimeline.map(event => (
+            <li key={statusText(event.event_id, `${statusText(event.boot_id)}:${statusText(event.event_sequence)}`)}>
+              <strong>{statusText(event.state_name)}</strong>
+              <span>{statusText(event.kind_name)}</span>
+              <time>{taskEventTimestamp(event, locale)}</time>
+              <small>{statusText(event.reason, text(locale, 'No reason reported', '未报告原因'))}</small>
+              {statusText(event.evidence_id, '') !== '' && <em>{statusText(event.evidence_id)}</em>}
+            </li>
+          ))}
+          {taskStatus && taskTimeline.length === 0 && (
+            <li className={styles.taskEventEmpty}>{text(
+              locale,
+              'No native event yet. Submission acceptance does not mean execution has started.',
+              '尚未收到原生事件。提交已受理不代表任务已开始执行。',
+            )}</li>
+          )}
+          {!taskStatus && (
+            <li className={styles.taskEventEmpty}>{text(
+              locale,
+              'Select a retained task to inspect its native event history.',
+              '请选择一个保留任务以查看其原生事件历史。',
+            )}</li>
+          )}
+        </ol>
+      </details>
+
+      </details>
     </div>
   )
 }

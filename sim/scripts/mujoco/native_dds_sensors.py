@@ -27,7 +27,7 @@ import time
 from collections import Counter, deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 if TYPE_CHECKING:
     from sim.compat.engine.core.engine import VelocityCommand
@@ -65,10 +65,11 @@ from drivers.sim.mujoco.sensors import (  # noqa: E402
     world_xyzi_to_sensor_xyzi,
     yaw_from_quat_xyzw,
 )
+from message.topics import TOPICS
 from runtime.msgs.geometry import Quaternion, Vector3  # noqa: E402
 from runtime.msgs.numpy_compat import np  # noqa: E402
 from runtime.msgs.sensor import Imu  # noqa: E402
-from runtime.runtime_interface import TOPICS, topic_default_frame_id  # noqa: E402
+from runtime.tf.frames import topic_default_frame_id
 
 NATIVE_SLAM_RUNTIME = "slamd"
 NATIVE_SENSOR_PUBLISHER = "lingtu_mujoco_sensor_publisher --stdin-records --dds"
@@ -91,7 +92,7 @@ KINEMATIC_SIM_HARDWARE_IMU_ACC_AXIS_SCALE = (0.0, 1.0, 1.0)
 _THUNDERV4_POLICY_DIR = (
     ROOT / "sim" / "packages" / "controllers" / "doso" / "thunder_v4" / "locomotion" / "policy"
 )
-DEFAULT_THUNDERV4_ONNX_POLICY = _THUNDERV4_POLICY_DIR / "policy_1119.onnx"
+DEFAULT_THUNDERV4_ONNX_POLICY = _THUNDERV4_POLICY_DIR / "policy_4998.onnx"
 REQUIRED_SLAM_OUTPUT_TOPICS = (
     TOPICS.odometry,
     TOPICS.map_cloud,
@@ -123,6 +124,7 @@ DEFAULT_DRIVER_BRIDGE_TRANSPORT_READY_S = 10.0
 NATIVE_SENSOR_PUBLISHER_READY_SCHEMA = "lingtu.mujoco_sensor_publisher.ready.v1"
 PARENT_DIAGNOSTICS_SCHEMA = "lingtu.mujoco.parent_sensor_diagnostics.v1"
 _PARENT_DIAGNOSTIC_RECORD_TYPES = (
+    "simulation_clock",
     "cloud",
     "imu",
     "odom_prior",
@@ -355,6 +357,8 @@ class ParentSensorDiagnostics:
             "max_consecutive_steps": 0,
             "catch_up_events": 0,
             "catch_up_yields": 0,
+            "forced_sensor_observations": 0,
+            "forced_lidar_observations": 0,
         }
         self._async_queue: dict[str, Any] = {
             "enabled": False,
@@ -3616,6 +3620,7 @@ def _deactivate_driver_bridge(
     *,
     imu_period_s: float,
     step_seq: int,
+    on_physics_step: Callable[[], None] | None = None,
 ) -> int:
     """Physically apply the bridge's terminal zero before accepting clean exit."""
 
@@ -3628,6 +3633,8 @@ def _deactivate_driver_bridge(
             imu_period_s=imu_period_s,
             step_seq=step_seq,
         )
+        if on_physics_step is not None:
+            on_physics_step()
     bridge.begin_deactivate()
     deadline = time.monotonic() + max(3.0, bridge.apply_timeout_ms / 1000.0)
     while True:
@@ -3646,6 +3653,8 @@ def _deactivate_driver_bridge(
             imu_period_s=imu_period_s,
             step_seq=step_seq,
         )
+        if on_physics_step is not None:
+            on_physics_step()
         break
     bridge.wait_stopped(timeout_s=3.0)
     return step_seq
@@ -4854,9 +4863,18 @@ def _write_native_imu(
     imu: Imu,
     sequence: int,
     *,
+    simulation_time_s: float | None = None,
     parent_diagnostics: ParentSensorDiagnostics | None = None,
     async_batch: AsyncPublisherBatch | None = None,
 ) -> None:
+    if simulation_time_s is not None:
+        _publish_encoded_record(
+            stream,
+            _sensor_records.encode_simulation_clock(simulation_time_s, sequence=sequence),
+            parent_diagnostics=parent_diagnostics,
+            diagnostic_record_type="simulation_clock",
+            async_batch=async_batch,
+        )
     _publish_encoded_record(
         stream,
         _sensor_records.encode_imu(imu, sequence=sequence),
@@ -4980,6 +4998,15 @@ def _acceptance_contacts(model: Any, data: Any) -> list[dict[str, Any]]:
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     from sim.compat.engine.core.engine import VelocityCommand
+    from sim.scripts.mujoco.formal_feeder import _PhysicalMotionEvidence
+
+    entity_contacts = _PhysicalMotionEvidence()
+    contact_observation_steps = 0
+
+    def observe_entity_contacts() -> None:
+        nonlocal contact_observation_steps
+        entity_contacts.observe_contacts(engine.model, engine.data)
+        contact_observation_steps += 1
 
     duration_s = max(0.0, float(args.duration))
     settle_s = max(0.0, float(args.settle_s))
@@ -5191,6 +5218,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     physics_timestep_s = 0.0
     runtime_stage_profiler = RuntimeStageProfiler()
     mocap_motion: LinearMocapMotion | None = None
+    mocap_body_id: int | None = None
     try:
         policy_path = _resolve_policy_path_for_drive(str(args.drive_mode), str(args.policy_path or ""))
         policy_runtime_report = _configure_policy_cpu_threads(policy_path, int(args.policy_cpu_threads))
@@ -5220,6 +5248,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             engine.set_physics_timestep(physics_timestep_requested_s)
         mocap_body = str(getattr(args, "mocap_motion_body", "") or "").strip()
         if mocap_body:
+            mocap_body_id = int(engine.model.body(mocap_body).id)
             mocap_motion = LinearMocapMotion.attach(
                 engine.model,
                 body_name=mocap_body,
@@ -5288,6 +5317,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     _step_static_engine_for_sensor_tick(engine, imu_period_s)
                 else:
                     engine.step(hold_cmd)
+                    observe_entity_contacts()
 
         timestamp_clock = str(args.timestamp_clock)
         imu_timestamp_clock = str(args.imu_timestamp_clock or timestamp_clock)
@@ -5556,6 +5586,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 state = _step_static_engine_for_sensor_tick(engine, imu_period_s)
             else:
                 state = _step_engine_for_sensor_tick(engine, cmd, imu_period_s)
+            if not fast_static_clock:
+                observe_entity_contacts()
             sim_time_s = float(getattr(engine, "sim_time", sim_time_s if state is None else 0.0))
             runtime_stage_profiler.record(
                 "physics_step",
@@ -5604,6 +5636,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 sim_end_yaw = float(yaw)
             if parent_diagnostics is not None:
                 parent_diagnostics.record_scheduled("imu")
+                parent_diagnostics.record_scheduled("simulation_clock")
                 if bool(args.publish_odom_prior):
                     parent_diagnostics.record_scheduled("odom_prior")
             if (
@@ -5633,6 +5666,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 sequence += dropped_lidar_frames
                 if parent_diagnostics is not None:
                     parent_diagnostics.record_catchup_drop("imu")
+                    parent_diagnostics.record_catchup_drop("simulation_clock")
                     if bool(args.publish_odom_prior):
                         parent_diagnostics.record_catchup_drop("odom_prior")
                     if dropped_lidar_frames > 0:
@@ -5687,12 +5721,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             _apply_imu_gyro_axis_scale(imu, imu_gyro_axis_scale)
             if parent_diagnostics is not None:
                 parent_diagnostics.record_generated("imu")
+                parent_diagnostics.record_generated("simulation_clock")
             if publisher.stdin is None:
                 raise RuntimeError("native publisher stdin closed")
             _write_native_imu(
                 publisher.stdin,
                 imu,
                 imu_sequence,
+                simulation_time_s=sim_time_s,
                 parent_diagnostics=parent_diagnostics,
                 async_batch=publisher_batch,
             )
@@ -5729,7 +5765,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             if str(args.scan_time_profile) == "physical_rolling":
                 lidar_subscan_stage_start = time.monotonic()
                 sample_world_points = _bounded_points(
-                    engine.get_lidar_points(sample_count=rolling_subscan_samples),
+                    engine.get_lidar_points(
+                        sample_count=rolling_subscan_samples,
+                        scan_duration_s=(
+                            imu_period_s if rolling_subscan_samples is not None else lidar_period_s
+                        ),
+                    ),
                     int(args.max_points),
                 )
                 sample_sensor_points = world_xyzi_to_sensor_xyzi(engine, sample_world_points)
@@ -5782,7 +5823,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         world_points = world_points[::stride][: int(args.max_points)]
                         relative_times_s = relative_times_s[::stride][: int(args.max_points)]
                 else:
-                    world_points = _bounded_points(engine.get_lidar_points(), int(args.max_points))
+                    world_points = _bounded_points(
+                        engine.get_lidar_points(scan_duration_s=lidar_period_s), int(args.max_points),
+                    )
                     sensor_points = world_xyzi_to_sensor_xyzi(engine, world_points)
                     relative_times_s = _relative_times_for_scan(
                         len(sensor_points),
@@ -5935,6 +5978,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                             else None
                         ),
                         "qpos": np.asarray(engine.data.qpos, dtype=np.float64).tolist(),
+                        "mocap_pose": ({
+                            "body_name": mocap_body,
+                            "position_m": engine.data.xpos[mocap_body_id].astype(float).tolist(),
+                        } if mocap_body_id is not None else None),
                         "cmd": [float(cmd.linear_x), float(cmd.linear_y), float(cmd.angular_z)],
                         "global_path": nav_status.get("global_path") or [],
                         "local_path": nav_status.get("local_path") or [],
@@ -6041,6 +6088,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     driver_bridge,
                     imu_period_s=imu_period_s,
                     step_seq=driver_step_seq,
+                    on_physics_step=observe_entity_contacts,
                 )
             except Exception as exc:
                 cleanup_errors.append(f"driver_bridge_physical_shutdown_failed:{type(exc).__name__}:{exc}")
@@ -6188,6 +6236,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         external_arm_gate.snapshot() if external_arm_gate is not None else _external_arm_disabled_report()
     )
     report["motion_interval_completed"] = motion_interval_completed
+    report["entity_contacts"] = {
+        "observation_steps": contact_observation_steps,
+        "contact_steps": entity_contacts.entity_contact_steps,
+        "first_contact_geom": entity_contacts.first_contact_geom,
+        "first_contact": entity_contacts.first_contact,
+        "coverage": "every visible simulation step; excludes self contact and floor support",
+    }
     report["start_anchor"] = start_anchor
     report["start_anchor_xyz"] = [float(value) for value in anchor_position[:3]]
     report["start_anchor_yaw_deg"] = (

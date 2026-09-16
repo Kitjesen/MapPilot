@@ -12,8 +12,11 @@ import tempfile
 import time
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
+from fastapi import Query
+
+from gateway.maps.locations import location_entries
 from gateway.schemas import (
     InspectionAcceptanceRequest,
     InspectionAcceptanceResponse,
@@ -22,6 +25,15 @@ from gateway.schemas import (
     RealRuntimeEvidenceLatestResponse,
     RoutecheckLatestResponse,
     RuntimeContractResponse,
+    RuntimeDataflowResponse,
+    RuntimeDataflowSubscribeRequest,
+    RuntimeDataflowSubscribeResponse,
+    RuntimeDataflowTopicDetailResponse,
+)
+from gateway.services.runtime_dataflow import (
+    build_runtime_dataflow_snapshot,
+    build_runtime_dataflow_subscription,
+    build_runtime_dataflow_topic_detail,
 )
 
 # Simple TTL cache for expensive diagnostic builders.
@@ -64,19 +76,6 @@ def _json_payload(value: Any) -> Any:
 
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
-
-
-def _location_entries(gw: Any) -> list[Any]:
-    tlm = getattr(gw, "_tagged_loc_module", None)
-    if tlm is None:
-        return []
-    try:
-        return list(tlm.store.list_all())
-    except Exception:
-        try:
-            return list(tlm.store._store.values())
-        except Exception:
-            return []
 
 
 def _snapshot_or_error(name: str, builder) -> dict[str, Any]:
@@ -393,7 +392,7 @@ def _real_runtime_evidence_summary_from_report(
     now: float,
     max_age_s: float,
 ) -> dict[str, Any] | None:
-    from runtime.runtime_interface import REAL_RUNTIME_CONTRACT
+    from diagnostics.runtime_contract import REAL_RUNTIME_CONTRACT
 
     report = _load_json_file(report_path)
     if report is None:
@@ -499,11 +498,11 @@ def build_real_runtime_evidence_latest_summary(
 
 
 def _runtime_contract_snapshot() -> dict[str, Any]:
-    from runtime.runtime_interface import runtime_contract_manifest
+    from diagnostics.runtime_contract import runtime_contract_manifest
 
     return {
         "schema_version": 1,
-        "source": "runtime.runtime_interface.runtime_contract_manifest",
+        "source": "diagnostics.runtime_contract.runtime_contract_manifest",
         "manifest": runtime_contract_manifest(),
         "ts": time.time(),
     }
@@ -526,8 +525,8 @@ def _first_path_frame(path: Any) -> str | None:
 
 
 def _frame_contract_snapshot(gw: Any) -> dict[str, Any]:
-    from gateway.services.runtime_status import build_navigation_status
-    from runtime.runtime_interface import runtime_contract_manifest
+    from diagnostics.runtime_contract import runtime_contract_manifest
+    from gateway.services.runtime_status import build_localization_status
 
     manifest = runtime_contract_manifest()
     runtime_frames = manifest.get("frames", {})
@@ -537,11 +536,11 @@ def _frame_contract_snapshot(gw: Any) -> dict[str, Any]:
     if not isinstance(runtime_links, dict):
         runtime_links = {}
 
-    nav_status = build_navigation_status(gw)
-    frames = nav_status.get("frames", {})
+    localization_status = build_localization_status(gw)
+    frames = localization_status.get("frames", {})
     if not isinstance(frames, dict):
         frames = {}
-    runtime_boundary = nav_status.get("runtime", {})
+    runtime_boundary = localization_status.get("runtime", {})
     if not isinstance(runtime_boundary, dict):
         runtime_boundary = {}
     frame_tree = getattr(gw, "_frame_tree", None)
@@ -580,7 +579,7 @@ def _frame_contract_snapshot(gw: Any) -> dict[str, Any]:
             "localization_backend": (localization.get("backend") if isinstance(localization, dict) else None),
             "localization_state": (localization.get("state") if isinstance(localization, dict) else None),
         },
-        "navigation_frames": frames,
+        "localization_frames": frames,
         "frame_tree": _json_payload(frame_tree_snapshot),
         "runtime_boundary": _json_payload(runtime_boundary),
         "mismatches": frames.get("mismatches", []),
@@ -590,6 +589,7 @@ def _frame_contract_snapshot(gw: Any) -> dict[str, Any]:
 
 
 def _build_app_web_snapshots(gw: Any) -> dict[str, dict[str, Any]]:
+    from gateway.navigation.status import build_navigation_status
     from gateway.services.app_bootstrap import (
         build_app_bootstrap,
         build_app_capabilities,
@@ -597,10 +597,7 @@ def _build_app_web_snapshots(gw: Any) -> dict[str, dict[str, Any]]:
     )
     from gateway.services.media_status import build_media_status
     from gateway.services.readiness import build_readiness_snapshot
-    from gateway.services.runtime_status import (
-        build_localization_status,
-        build_navigation_status,
-    )
+    from gateway.services.runtime_status import build_localization_status
     from gateway.services.state_snapshot import build_state_snapshot
     from gateway.services.telemetry_normalizers import (
         build_locations_response,
@@ -650,7 +647,7 @@ def _build_app_web_snapshots(gw: Any) -> dict[str, dict[str, Any]]:
         "scene_graph": _snapshot_or_error("scene_graph", _scene_graph),
         "locations": _snapshot_or_error(
             "locations",
-            lambda: build_locations_response(_location_entries(gw)),
+            lambda: build_locations_response(location_entries(gw)),
         ),
         "media": _snapshot_or_error(
             "media",
@@ -682,13 +679,11 @@ def _build_app_web_snapshots(gw: Any) -> dict[str, dict[str, Any]]:
 
 
 def _gateway_acceptance_snapshots(gw: Any) -> dict[str, dict[str, Any]]:
+    from gateway.navigation.status import build_navigation_status
     from gateway.services.app_bootstrap import build_app_capabilities
     from gateway.services.readiness import build_readiness_snapshot
     from gateway.services.runtime_dataflow import build_runtime_dataflow_snapshot
-    from gateway.services.runtime_status import (
-        build_localization_status,
-        build_navigation_status,
-    )
+    from gateway.services.runtime_status import build_localization_status
 
     return {
         "capabilities": build_app_capabilities(gw),
@@ -701,7 +696,7 @@ def _gateway_acceptance_snapshots(gw: Any) -> dict[str, dict[str, Any]]:
 
 
 def _inspection_map_gate(gw: Any, body: Any) -> dict[str, Any] | None:
-    from gateway.services.mapd_transport import (
+    from gateway.maps.transport import (
         active_map,
         validate_map_artifacts,
     )
@@ -727,9 +722,9 @@ def _inspection_map_gate(gw: Any, body: Any) -> dict[str, Any] | None:
 
 def _inspection_candidate(gw: Any, target: dict[str, Any]) -> dict[str, Any]:
     from diagnostics.field.inspection import goal_candidate_body_for_target
+    from gateway.navigation.goals import construct_goal_from_request
     from gateway.schemas import GoalCandidateRequest
     from gateway.services.control_commands import ControlCommandService
-    from gateway.services.goal_builder import construct_goal_from_request
 
     if target.get("_invalid_payload"):
         return {
@@ -822,7 +817,7 @@ def inspection_check(gw: Any, body: Any) -> dict[str, Any]:
     from gateway.services.telemetry_normalizers import build_locations_response
 
     product_check = field_check(gw, body)
-    locations = build_locations_response(_location_entries(gw))
+    locations = build_locations_response(location_entries(gw))
     targets = inspection_targets_from_payload(
         locations,
         points=list(getattr(body, "points", None) or []),
@@ -1034,3 +1029,31 @@ def register_diagnostic_routes(app, gw) -> None:
             media_type="application/gzip",
             background=BackgroundTask(tmp_path.unlink, missing_ok=True),
         )
+
+    @app.get(
+        "/api/v1/runtime/dataflow",
+        summary="Read-only Product motion and Gateway observability",
+        response_model=RuntimeDataflowResponse,
+    )
+    async def get_runtime_dataflow():
+        return build_runtime_dataflow_snapshot(gw)
+
+    @app.get(
+        "/api/v1/runtime/dataflow/topic",
+        summary="Inspect one Gateway-observable Product topic",
+        response_model=RuntimeDataflowTopicDetailResponse,
+    )
+    async def get_runtime_dataflow_topic(
+        topic: Annotated[str, Query(description="Canonical topic or short alias")],
+    ):
+        return build_runtime_dataflow_topic_detail(gw, topic)
+
+    @app.post(
+        "/api/v1/runtime/dataflow/subscribe",
+        summary="Create a read-only Gateway SSE subscription plan",
+        response_model=RuntimeDataflowSubscribeResponse,
+    )
+    async def post_runtime_dataflow_subscribe(
+        request: RuntimeDataflowSubscribeRequest,
+    ):
+        return build_runtime_dataflow_subscription(gw, request)

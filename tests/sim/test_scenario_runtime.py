@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-# ruff: noqa: S101
 import json
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 import pytest
-
 from sim.runtime.scenario import (
     MAX_SCENARIO_DATAGRAM_BYTES,
     CompositeScenarioDispatcher,

@@ -359,8 +359,24 @@ class SplineAlgorithm final : public Algorithm {
     if (target == nullptr) return output;
     const SplineTarget &spline = target->get();
 
+    const SplineFollowerParams &scan = input.params.spline;
+    const double requestedLimit = std::min(
+        std::max(scan.maxVx, scan.maxVy),
+        std::max(0.0, input.params.maxSpeed) * clamp(input.requestedSpeed, 0.0, 1.0) *
+            clamp(input.slowFactor, 0.0, 1.0));
+    const bool speedReplan = spline.maxLinearSpeedMps > 0.0 &&
+                            spline.maxLinearSpeedMps > requestedLimit + 1e-9;
+    if (invalidatedTrajectoryId_ && *invalidatedTrajectoryId_ != spline.trajectoryId)
+      invalidatedTrajectoryId_.reset();
+    if (speedReplan) invalidatedTrajectoryId_ = spline.trajectoryId;
+    const bool externalHold = invalidatedTrajectoryId_.has_value() || requestedLimit <= kSpeedEpsilon ||
+                              input.safetyStop >= 1;
+    const double speedLimit = spline.maxLinearSpeedMps > 0.0
+                                 ? std::min(requestedLimit, spline.maxLinearSpeedMps)
+                                 : requestedLimit;
+
     // Endpoint holds stop execution without restarting the upstream spline.
-    if (paused_ && lastInputTime_ && input.currentTime > *lastInputTime_)
+    if ((paused_ || externalHold) && lastInputTime_ && input.currentTime > *lastInputTime_)
       pausedTime_ += input.currentTime - *lastInputTime_;
     lastInputTime_ = input.currentTime;
     paused_ = false;
@@ -396,15 +412,15 @@ class SplineAlgorithm final : public Algorithm {
                       input.vehicleRelative.z};
     state.yaw = input.vehicleYawRelative;
     state.nowS = controlTime;
+    state.desiredHeading = input.desiredHeading;
 
-    const SplineFollowerParams &scan = input.params.spline;
     local::scan::upstream::ClosedLoopControllerParams params;
     params.timeForward = scan.timeForward;
     params.headingErrorThreshold = scan.headingErrorThreshold;
     params.positionGain = scan.positionGain;
     params.yawGain = scan.yawGain;
-    params.maxVx = scan.maxVx;
-    params.maxVy = scan.maxVy;
+    params.maxVx = std::min(scan.maxVx, speedLimit);
+    params.maxVy = std::min(scan.maxVy, speedLimit);
     params.maxYawRate = scan.maxYawRateRadS;
     params.finishDistance = scan.finishDistance;
 
@@ -415,12 +431,30 @@ class SplineAlgorithm final : public Algorithm {
     output.endDistance = controlled.endDistance;
     output.executionFrozen = controlled.executionFrozen;
     output.finished = controlled.finished;
+    output.awaitingTrajectory = invalidatedTrajectoryId_.has_value();
+    if (externalHold) {
+      output.cmd.vx = 0.0;
+      output.cmd.vy = 0.0;
+      if (input.safetyStop >= 2) output.cmd.wz = 0.0;
+      output.executionFrozen = true;
+    }
+    output.tracking = {controller_.hasTrajectory(), spline.trajectoryId,
+                       controlled.executionTimeS, controlled.durationS,
+                       controlled.positionErrorM, controlled.yawError,
+                       controlled.endDistance, output.executionFrozen,
+                       controlled.finished, speedLimit};
+    lastCommand_ = output.cmd;
+    tracking_ = output.tracking;
     output.canAccelerate =
         std::hypot(output.cmd.vx, output.cmd.vy) > kSpeedEpsilon;
     return output;
   }
 
-  void stopLinear() override { paused_ = true; }
+  void stopLinear() override {
+    paused_ = true;
+    lastCommand_ = {};
+    tracking_.executionFrozen = true;
+  }
 
   void resetTarget() override { reset(); }
 
@@ -431,14 +465,18 @@ class SplineAlgorithm final : public Algorithm {
     lastInputTime_.reset();
     pausedTime_ = 0.0;
     paused_ = false;
+    lastCommand_ = {};
+    tracking_ = {};
+    invalidatedTrajectoryId_.reset();
   }
 
   FollowerDiagnostics diagnostics() const override {
     return {
         controller_.hasTrajectory(),
         FollowerAlgorithm::Spline,
-        0.0,
-        true,
+        std::hypot(lastCommand_.vx, lastCommand_.vy),
+        lastCommand_.vx >= 0.0,
+        tracking_,
     };
   }
 
@@ -447,6 +485,9 @@ class SplineAlgorithm final : public Algorithm {
   std::optional<double> lastInputTime_;
   double pausedTime_{0.0};
   bool paused_{false};
+  Twist lastCommand_{};
+  FollowerTracking tracking_{};
+  std::optional<std::int64_t> invalidatedTrajectoryId_;
 };
 
 using AlgorithmFactory = std::unique_ptr<Algorithm> (*)();

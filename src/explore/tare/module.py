@@ -12,7 +12,7 @@ Port contract
 Output port ``exploration_goal: Out[PoseStamped]`` is the shared Host
 exploration goal contract consumed by navigation adapters.
 
-DDS topic contract is centralized in ``topics`` and ``runtime.runtime_interface``.
+DDS topic contract is centralized in ``topics`` and ``diagnostics.runtime_contract``.
 
 Start control: ``start_tare_exploration`` enables goal emission. In DDS mode it
 also publishes the configured external start topic.
@@ -27,12 +27,13 @@ import threading
 import time as _time
 from typing import Any
 
+from message.topics import TOPICS
 from runtime.backend_status import BackendStatus
 from runtime.module import skill
 from runtime.msgs.nav import Odometry
 from runtime.registry import register
-from runtime.runtime_interface import TOPICS, topic_default_frame_id
 from runtime.stream import Out
+from runtime.tf.frames import topic_default_frame_id
 
 from ..base import ExploreModule
 from .policy import PortableTAREPolicy

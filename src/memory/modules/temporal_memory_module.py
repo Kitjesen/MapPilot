@@ -21,14 +21,13 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
-
+from memory.modules._odom_mixin import OdomTrackingMixin
+from memory.storage.temporal_store import TemporalStore
 from runtime.module import Module, skill
 from runtime.msgs.nav import Odometry
 from runtime.msgs.semantic import SceneGraph
 from runtime.registry import register
 from runtime.stream import In, Out
-from memory.modules._odom_mixin import OdomTrackingMixin
-from memory.storage.temporal_store import TemporalStore
 
 logger = logging.getLogger(__name__)
 

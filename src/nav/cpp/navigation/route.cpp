@@ -212,6 +212,15 @@ void Executor::buildReference(
   if (target.reachesGoal || route.empty() || !height_offset_) return;
 
   const std::size_t first = std::min(target.index, route.size() - 1);
+  // Keep useful corridor samples, but do not put a synthetic cut closer to
+  // the next true waypoint than SCAN's reference spacing. A very short last
+  // polynomial segment can send its initial reference backwards.
+  if (local_planner_.params().backend == nav_kernel::LocalPlannerBackend::Scan &&
+      reference.size() > 1 &&
+      std::hypot(target.point.x - route[first].x, target.point.y - route[first].y) <
+          nav_kernel::ScanPlannerParams::kMinReferenceWaypointDistanceM) {
+    reference.pop_back();
+  }
   for (std::size_t index = first; index < route.size(); ++index) {
     nav_kernel::Vec3 point = route[index];
     point.z += *height_offset_;

@@ -31,7 +31,7 @@ from sim.scripts.mujoco import teleop_avoid_native_acceptance as shared
 
 
 SCHEMA_VERSION = "lingtu.mujoco.teleop_native_acceptance.v1"
-DEFAULT_MANIFEST = ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_teleop_native_acceptance.json"
+DEFAULT_MANIFEST = ROOT / "config" / "acceptance" / "mujoco" / "teleop.json"
 REQUIRED_BINARIES = (
     "sensor_publisher",
     "navigation",

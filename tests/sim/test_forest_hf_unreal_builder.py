@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Contracts for the fail-closed Forest_HF 2.0 Unreal builder."""
 
@@ -12,7 +11,6 @@ import struct
 from pathlib import Path
 
 import pytest
-
 from sim.tools.worlds.forest_hf.generate import TerrainSpec, generate_forest_hf
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

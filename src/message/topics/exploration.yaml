@@ -1,0 +1,236 @@
+schema_version: lingtu.runtime_graph.topics.v2
+topics:
+  exploration_finish:
+    topic: /exploration/finish
+    transport: dds
+    dds_topic: rt/exploration/finish
+    message_type: lingtu.dds.Bool
+    qos_profile: Event
+    cpp_name: kExplorationFinish
+  exploration_local_path:
+    topic: /exploration/local_path
+    transport: dds
+    dds_topic: rt/exploration/local_path
+    message_type: lingtu.dds.Path
+    qos_profile: Event
+    cpp_name: kExplorationLocalPath
+  exploration_runtime:
+    topic: /exploration/runtime
+    transport: dds
+    dds_topic: rt/exploration/runtime
+    message_type: lingtu.dds.Float32
+    qos_profile: Event
+    cpp_name: kExplorationRuntime
+  exploration_start:
+    topic: /exploration/start
+    transport: dds
+    dds_topic: rt/exploration/start
+    message_type: lingtu.dds.Bool
+    qos_profile: Event
+    cpp_name: kExplorationStart
+  exploration_way_point:
+    topic: /exploration/way_point
+    transport: dds
+    dds_topic: rt/exploration/way_point
+    message_type: lingtu.dds.PointStamped
+    qos_profile: Event
+    cpp_name: kExplorationWayPoint
+  exploration_ack:
+    topic: /nav/exploration/ack
+    transport: dds
+    dds_topic: rt/nav/exploration/ack
+    message_type: lingtu.dds.ExplorationCommandAck
+    qos_profile: CommandAck
+    cpp_name: kNavExplorationAck
+    native_contract: true
+    role: native_exploration_command_ack
+    frame: map
+    producer: native_explore_runtime
+    consumers:
+    - persistent_cpp_navigation_client
+    semantics: exploration_business_ack_with_intent_revision
+    port_bindings:
+    - owner: native_explore_runtime
+      port: exploration_ack
+      direction: out
+      boundary: endpoint
+    - owner: persistent_cpp_navigation_client
+      port: exploration_ack
+      direction: in
+      boundary: native
+  exploration_command:
+    topic: /nav/exploration/command
+    transport: dds
+    dds_topic: rt/nav/exploration/command
+    message_type: lingtu.dds.ExplorationCommandRequest
+    qos_profile: CommandRequest
+    cpp_name: kNavExplorationCommand
+    native_contract: true
+    role: native_exploration_command
+    frame: map
+    producer: persistent_cpp_navigation_client
+    consumers:
+    - native_explore_runtime
+    semantics: exploration_lifecycle_or_directed_target_set_clear
+    port_bindings:
+    - owner: persistent_cpp_navigation_client
+      port: exploration_command
+      direction: out
+      boundary: native
+    - owner: native_explore_runtime
+      port: exploration_command
+      direction: in
+      boundary: endpoint
+  exploration_run_event:
+    topic: /nav/exploration/run/event
+    transport: dds
+    dds_topic: rt/nav/exploration/run/event
+    message_type: lingtu.dds.ExplorationRunEvent
+    qos_profile: TaskEvent
+    cpp_name: kNavExplorationRunEvent
+    native_contract: true
+    role: native_exploration_run_event
+    frame: map
+    producer: native_explore_runtime
+    consumers:
+    - host_bus
+    external_diagnostics_subscribable: true
+    semantics: ordered_exploration_run_facts_with_native_stop_evidence
+    port_bindings:
+    - owner: native_explore_runtime
+      port: exploration_run_event
+      direction: out
+      boundary: endpoint
+    - owner: host_bus
+      port: exploration_run_event
+      direction: in
+      boundary: native
+  exploration_execution_snapshot:
+    topic: /nav/exploration_execution_snapshot
+    transport: dds
+    dds_topic: rt/nav/exploration_execution_snapshot
+    message_type: lingtu.dds.ExplorationExecutionGrid
+    qos_profile: MapGrid
+    cpp_name: kNavExplorationExecutionSnapshot
+    role: identity_bound_exploration_execution_snapshot
+    frame: map
+    producer: native_traversability_endpoint
+    consumers:
+    - native_nav_runtime
+    semantics: atomic_rolling_occupancy_and_terrain_risk_with_session_reset_epoch_generation_and_live
+    port_bindings:
+    - owner: native_traversability_endpoint
+      port: execution_snapshot
+      direction: out
+      boundary: endpoint
+    - owner: native_nav_runtime
+      port: execution_snapshot
+      direction: in
+      boundary: endpoint
+  exploration_grid:
+    topic: /nav/exploration_grid
+    transport: dds
+    dds_topic: rt/nav/exploration_grid
+    message_type: lingtu.dds.OccupancyGrid
+    qos_profile: MapGrid
+    cpp_name: kNavExplorationGrid
+    native_contract: true
+    role: frontier_occupancy_grid
+    frame: map
+    producer: native_traversability_endpoint
+    consumers:
+    - TAREExplorerModule
+    semantics: observed_free_occupied_and_unknown_frontier_input
+    port_bindings:
+    - owner: native_traversability_endpoint
+      port: exploration_grid
+      direction: out
+      boundary: endpoint
+  exploration_segment_ack:
+    topic: /nav/exploration_segment/ack
+    transport: dds
+    dds_topic: rt/nav/exploration_segment/ack
+    message_type: lingtu.dds.ExplorationSegmentAck
+    qos_profile: CommandAck
+    cpp_name: kNavExplorationSegmentAck
+    role: native_exploration_segment_ack
+    frame: map
+    producer: native_nav_runtime
+    consumers:
+    - native_explore_runtime
+    semantics: business_accept_or_reject_for_matching_segment_identity
+    port_bindings:
+    - owner: native_nav_runtime
+      port: segment_ack
+      direction: out
+      boundary: endpoint
+    - owner: native_explore_runtime
+      port: segment_ack
+      direction: in
+      boundary: endpoint
+  exploration_segment_request:
+    topic: /nav/exploration_segment/request
+    transport: dds
+    dds_topic: rt/nav/exploration_segment/request
+    message_type: lingtu.dds.ExplorationSegmentRequest
+    qos_profile: CommandRequest
+    cpp_name: kNavExplorationSegmentRequest
+    role: native_exploration_segment_request
+    frame: map
+    producer: native_explore_runtime
+    consumers:
+    - native_nav_runtime
+    semantics: request_execution_of_identity_bound_rolling_map_segment
+    port_bindings:
+    - owner: native_explore_runtime
+      port: segment_request
+      direction: out
+      boundary: endpoint
+    - owner: native_nav_runtime
+      port: segment_request
+      direction: in
+      boundary: endpoint
+  exploration_segment_status:
+    topic: /nav/exploration_segment/status
+    transport: dds
+    dds_topic: rt/nav/exploration_segment/status
+    message_type: lingtu.dds.ExplorationSegmentStatus
+    qos_profile: CommandAck
+    cpp_name: kNavExplorationSegmentStatus
+    role: native_exploration_segment_status
+    frame: map
+    producer: native_nav_runtime
+    consumers:
+    - native_explore_runtime
+    semantics: request_correlated_identity_bound_segment_lifecycle
+    port_bindings:
+    - owner: native_nav_runtime
+      port: segment_status
+      direction: out
+      boundary: endpoint
+    - owner: native_explore_runtime
+      port: segment_status
+      direction: in
+      boundary: endpoint
+  exploration_snapshot:
+    topic: /nav/exploration_snapshot
+    transport: dds
+    dds_topic: rt/nav/exploration_snapshot
+    message_type: lingtu.dds.ExplorationGrid
+    qos_profile: MapGrid
+    cpp_name: kNavExplorationSnapshot
+    role: versioned_live_exploration_map
+    frame: map
+    producer: native_traversability_endpoint
+    consumers:
+    - native_explore_endpoint
+    semantics: rolling_occupancy_with_session_reset_epoch_and_generation
+    port_bindings:
+    - owner: native_traversability_endpoint
+      port: exploration_snapshot
+      direction: out
+      boundary: endpoint
+    - owner: native_explore_endpoint
+      port: exploration_snapshot
+      direction: in
+      boundary: endpoint

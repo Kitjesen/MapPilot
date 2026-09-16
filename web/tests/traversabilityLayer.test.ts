@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { resolveNativeTraversabilityLayer } from '../src/components/scene3d/layers/traversabilityLayer.ts'
+import { estimateSceneTime } from '../src/services/sceneTelemetry.ts'
 import type { NativeTraversabilityEvent } from '../src/types/index.ts'
 
 const event: NativeTraversabilityEvent = {
@@ -45,4 +46,23 @@ test('native traversability hides stale data instead of leaving an old risk mesh
     allowedFrameIds: ['map'],
   })
   assert.equal(state.status, 'stale')
+})
+
+test('Gateway clock offset does not reject fresh risk, and disconnected risk still expires', () => {
+  const receivedAtMs = 97_800
+  assert.equal(resolveNativeTraversabilityLayer(event, {
+    nowS: 97.8, allowedFrameIds: ['map'],
+  }).status, 'error')
+  assert.equal(resolveNativeTraversabilityLayer(event, {
+    nowS: estimateSceneTime(97.8, 100, receivedAtMs), allowedFrameIds: ['map'],
+  }).status, 'ready')
+  assert.equal(resolveNativeTraversabilityLayer(event, {
+    nowS: estimateSceneTime(101.8, 100, receivedAtMs), allowedFrameIds: ['map'],
+  }).status, 'stale')
+})
+
+test('scene time falls back to local time until a paired snapshot is received', () => {
+  assert.equal(estimateSceneTime(100, undefined, null), 100)
+  assert.equal(estimateSceneTime(100, 102.2, undefined), 100)
+  assert.equal(estimateSceneTime(100, NaN, 100_000), 100)
 })

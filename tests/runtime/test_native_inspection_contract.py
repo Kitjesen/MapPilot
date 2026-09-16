@@ -1,8 +1,9 @@
 from pathlib import Path
 
 from lingtu.assembly.products import resolve_product_host_config
+from message.topics import TOPICS
 from nav.adapters.native import inspection_store as native_inspection
-from runtime.runtime_interface import TOPIC_ALLOWED_FRAME_IDS, TOPICS
+from runtime.tf.frames import TOPIC_ALLOWED_FRAME_IDS
 
 
 def test_inspection_profile_does_not_enable_python_patrol_runtime() -> None:
@@ -38,7 +39,7 @@ def test_inspection_task_events_are_ordered_native_facts() -> None:
     assert topic_spec(topic).dds_topic == "rt/nav/inspection/task/event"
     assert dds_topic_name(topic) == "rt/nav/inspection/task/event"
 
-    idl = Path("src/message/idl/messages.idl").read_text(encoding="utf-8")
+    idl = Path("src/message/idl/inspection.idl").read_text(encoding="utf-8")
     endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(encoding="utf-8")
     runtime = Path("src/nav/cpp/endpoint/nav/dds/runtime.cpp").read_text(encoding="utf-8")
     assert "struct InspectionTaskEvent" in idl
@@ -48,7 +49,7 @@ def test_inspection_task_events_are_ordered_native_facts() -> None:
 
 
 def test_inspection_idl_and_native_endpoint_are_wired() -> None:
-    idl = Path("src/message/idl/messages.idl").read_text(encoding="utf-8")
+    idl = Path("src/message/idl/inspection.idl").read_text(encoding="utf-8")
     endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(encoding="utf-8")
     controller = Path(
         "src/nav/cpp/endpoint/nav/runtime/inspection/inspection_runtime_controller.cpp"
@@ -183,6 +184,25 @@ def test_autonomy_input_gate_zero_intent_is_published_without_nav_output() -> No
     assert "result.publish.command = {}" in blocked_branch
     assert "FinalVelocityOutput{autonomy_result.publish.command}" in projection
     assert "dds.writeCmdVel" not in projection
+
+
+def test_autonomy_rechecks_inputs_after_planning_before_nonzero_publish() -> None:
+    endpoint = Path("src/nav/cpp/endpoint/nav/runtime/loop.cpp").read_text(encoding="utf-8")
+    projection = endpoint.split("runtime_actions.apply_autonomy_outputs =", 1)[1].split(
+        "if (autonomy_result.clear_local_path)", 1
+    )[0]
+
+    guard_index = projection.index("input_gate_state = evaluate_input_gate()")
+    readiness_index = projection.index("enforcePostPlanningInputReadiness(", guard_index)
+    stop_index = projection.index("motion_stop.holdEndpointMotion(reason)", readiness_index)
+    blocked_index = projection.index("if (post_planning_readiness.stop_required)", stop_index)
+    failure_index = projection.index("record_zero_publish_failure(", blocked_index)
+    publish_index = projection.index("FinalVelocityOutput{autonomy_result.publish.command}")
+
+    assert guard_index < readiness_index < stop_index < blocked_index < failure_index < publish_index
+    assert "} else {" in projection[failure_index:publish_index]
+    assert "manual_mode" not in projection[readiness_index:blocked_index]
+    assert "motion_stop.clearEndpointMotion" not in projection
 
 
 def test_local_recovery_exhaustion_routes_into_inspection_failure_policy() -> None:

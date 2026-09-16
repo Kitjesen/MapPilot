@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from sim.evaluation.navigation_replay import (
     SCHEMA_VERSION,
     build_fixture_trace,

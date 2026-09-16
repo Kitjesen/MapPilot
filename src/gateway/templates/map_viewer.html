@@ -590,12 +590,12 @@ renderer.domElement.addEventListener('mouseup',   e=>{
     _pathGeo.setAttribute('position',new THREE.BufferAttribute(a,3));
     _pathGeo.attributes.position.needsUpdate=true;
   }
-  function _mission(m){
-    if(!m) return;
-    const s=m.state||m.status||'';
+  function _task(navigationStatus){
+    const task=navigationStatus&&navigationStatus.task;
+    const s=task&&task.state;
     if(s){
       $mission.textContent=s; $hmission.textContent=s;
-      if(s==='idle'||s==='arrived'||s==='success') goalGroup.visible=false;
+      if(s==='IDLE'||s==='SUCCESS'||s==='FAILED'||s==='CANCELLED') goalGroup.visible=false;
     }
   }
   function _mode(md){
@@ -633,11 +633,15 @@ renderer.domElement.addEventListener('mouseup',   e=>{
       try{
         const ev=JSON.parse(e.data);
         if(ev.type==='snapshot'){
-          if(ev.data){ _odom(ev.data.odometry); _mission(ev.data.mission); _mode(ev.data.mode); }
+          if(ev.data){
+            _odom(ev.data.localization&&ev.data.localization.odometry);
+            _task(ev.data.navigation);
+            _mode(ev.data.session);
+          }
         }
         else if(ev.type==='odometry')    _odom(ev.data);
         else if(ev.type==='global_path') _path(ev.points);
-        else if(ev.type==='mission')     _mission(ev.data);
+        else if(ev.type==='navigation_status') _task(ev.data);
         else if(ev.type==='mode')        _mode(ev.data);
         else if(ev.type==='costmap')     _costmap(ev);
         else if(ev.type==='exploring')   _setExploring(ev.active);

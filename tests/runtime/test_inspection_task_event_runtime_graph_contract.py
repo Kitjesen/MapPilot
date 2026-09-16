@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from runtime.contracts.product_runtime import resolve_product_spec_contracts
-from runtime.endpoints.dds.contracts import FIELD_DDS_CONTRACT, binding_for_topic
-from runtime.graph import load_runtime_graph, resolve_env_implementation
+from lingtu.assembly.graph import load_runtime_graph, resolve_env_implementation
+from lingtu.assembly.graph.loader import resolve_product_variant_spec
+from message.topics import TOPICS, topic_spec
 from runtime.route_contract.routes import robot
-from runtime.runtime_interface import TOPICS
 
 
 def _native_endpoint_contracts() -> tuple[dict[str, object], ...]:
@@ -25,11 +24,15 @@ def test_inspection_task_ingress_binds_caller_task_identity_end_to_end() -> None
     graph = load_runtime_graph()
     request_topic = TOPICS.inspection_task_request
     ack_topic = TOPICS.inspection_task_ack
-    assert graph.topic_contracts[request_topic]["schema"] == "inspection_task_request"
+    assert graph.topic_contracts[request_topic]["message_type"] == (
+        "lingtu.dds.InspectionTaskRequest"
+    )
     assert graph.topic_contracts[request_topic]["semantics"] == (
         "caller_task_id_and_retryable_request_id"
     )
-    assert graph.topic_contracts[ack_topic]["schema"] == "inspection_task_ack"
+    assert graph.topic_contracts[ack_topic]["message_type"] == (
+        "lingtu.dds.InspectionTaskAck"
+    )
     assert graph.topic_contracts[ack_topic]["semantics"] == "task_id_preserving_business_ack"
 
     for endpoint in _native_endpoint_contracts():
@@ -42,14 +45,10 @@ def test_inspection_task_ingress_binds_caller_task_identity_end_to_end() -> None
             "response_identity_fields": ["task_id", "request_id"],
         }
 
-    request_binding = binding_for_topic(FIELD_DDS_CONTRACT.name, request_topic)
-    ack_binding = binding_for_topic(FIELD_DDS_CONTRACT.name, ack_topic)
-    assert request_binding.direction == "lingtu_to_endpoint"
-    assert request_binding.idl_type == "lingtu.dds.InspectionTaskRequest"
-    assert ack_binding.direction == "endpoint_to_lingtu"
-    assert ack_binding.idl_type == "lingtu.dds.InspectionTaskAck"
-    assert robot().binding_for("dds", request_topic) == {"qos": "command"}
-    assert robot().binding_for("dds", ack_topic) == {"qos": "event"}
+    assert topic_spec(request_topic).message_type == "lingtu.dds.InspectionTaskRequest"
+    assert topic_spec(ack_topic).message_type == "lingtu.dds.InspectionTaskAck"
+    assert robot().binding_for("dds", request_topic) == {}
+    assert robot().binding_for("dds", ack_topic) == {}
 
 
 def test_inspection_task_event_is_an_honest_native_product_fact_stream() -> None:
@@ -57,30 +56,12 @@ def test_inspection_task_event_is_an_honest_native_product_fact_stream() -> None
     topic = TOPICS.inspection_task_event
 
     assert topic in graph.native_contract_topics
-    assert graph.topic_contracts[topic] == {
-        "role": "native_inspection_task_event",
-        "frame": "map",
-        "schema": "inspection_task_event",
-        "producer": "native_nav_runtime",
-        "consumers": ["host_bus"],
-        "external_diagnostics_subscribable": True,
-        "qos": "reliable_transient_local_keep_last_512",
-        "semantics": "ordered_task_facts_with_boot_id_and_event_sequence",
-        "port_bindings": [
-            {
-                "owner": "native_nav_runtime",
-                "port": "inspection_task_event",
-                "direction": "out",
-                "boundary": "endpoint",
-            },
-            {
-                "owner": "host_bus",
-                "port": "inspection_task_event",
-                "direction": "in",
-                "boundary": "native",
-            }
-        ],
-    }
+    contract = graph.topic_contracts[topic]
+    assert contract["message_type"] == "lingtu.dds.InspectionTaskEvent"
+    assert contract["qos_profile"] == "TaskEvent"
+    assert contract["producer"] == "native_nav_runtime"
+    assert contract["consumers"] == ["host_bus"]
+    assert contract["semantics"] == "ordered_task_facts_with_boot_id_and_event_sequence"
 
     for endpoint in _native_endpoint_contracts():
         assert topic in endpoint["exposed_topics"]
@@ -91,11 +72,8 @@ def test_inspection_task_event_is_an_honest_native_product_fact_stream() -> None
         }
 
     inspection = graph.products["inspection"]
-    assert topic in resolve_product_spec_contracts("inspection", inspection).topics
+    assert topic in resolve_product_variant_spec("inspection", inspection)["topics"]
 
-    binding = binding_for_topic(FIELD_DDS_CONTRACT.name, topic)
-    assert binding.direction == "endpoint_to_lingtu"
-    assert binding.idl_type == "lingtu.dds.InspectionTaskEvent"
-    assert binding.frame_ids == ("map",)
-    assert binding.required is True
-    assert robot().binding_for("dds", topic) == {"qos": "event"}
+    assert topic_spec(topic).message_type == "lingtu.dds.InspectionTaskEvent"
+    assert contract["frame"] == "map"
+    assert robot().binding_for("dds", topic) == {}

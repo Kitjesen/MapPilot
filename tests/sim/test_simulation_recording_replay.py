@@ -1,6 +1,5 @@
 """Public recording-to-replay behavior for simulation truth timelines."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -11,7 +10,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-
 from sim.runtime.recording import (
     SensorPayloadSample,
     SimulationRecordingError,

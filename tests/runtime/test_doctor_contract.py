@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import io
 from types import SimpleNamespace
 
+import pytest
+
 import diagnostics.field.doctor as doctor
+from diagnostics.field import service_readiness
 from diagnostics.field.doctor import (
     driver_health_blockers,
     parse_args,
@@ -10,7 +14,41 @@ from diagnostics.field.doctor import (
 )
 
 
-def _collect_non_motion_report(monkeypatch, ready_payload, *, lidar_interface: list[str] | None = None):
+@pytest.mark.parametrize("api_key", [None, "field-test-key"])
+@pytest.mark.parametrize("collector", ["doctor", "service_readiness"])
+def test_field_http_uses_configured_gateway_credentials(monkeypatch, api_key, collector):
+    if api_key is None:
+        monkeypatch.delenv("LINGTU_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("LINGTU_API_KEY", api_key)
+
+    class Response(io.BytesIO):
+        status = 200
+
+        def getcode(self):
+            return self.status
+
+    def open_request(request, *, timeout):
+        assert request.full_url == "http://127.0.0.1:5050/api/v1/readiness"
+        assert request.get_method() == "GET"
+        assert request.get_header("X-api-key") == api_key
+        assert timeout == 3.0
+        return Response(b'{"ready":true}')
+
+    if collector == "doctor":
+        monkeypatch.setattr(doctor.urllib.request, "urlopen", open_request)
+        result = doctor.http_json("http://127.0.0.1:5050", "/api/v1/readiness")
+        assert result == (200, {"ready": True}, None)
+    else:
+        monkeypatch.setattr(service_readiness, "urlopen", open_request)
+        result = service_readiness._http_json("http://127.0.0.1:5050/api/v1/readiness")
+        assert result == {"ok": True, "status": 200, "body": {"ready": True}}
+    assert "field-test-key" not in repr(result)
+
+
+def _collect_non_motion_report(
+    monkeypatch, ready_payload, *, lidar_interface: list[str] | None = None, health_payload=None
+):
     plan = SimpleNamespace(product="nav", env="real", processes=())
     monkeypatch.setattr(doctor, "current_run_path", lambda: "current.json")
     monkeypatch.setattr(doctor, "load_current_plan", lambda *_args: (plan, {}))
@@ -23,6 +61,8 @@ def _collect_non_motion_report(monkeypatch, ready_payload, *, lidar_interface: l
             }, ""
         if path == "/ready":
             return 200, ready_payload, ""
+        if path == "/api/v1/health?details=true" and health_payload is not None:
+            return 200, health_payload, ""
         return 503, None, "unavailable"
 
     monkeypatch.setattr(doctor, "http_json", http_json)
@@ -35,6 +75,22 @@ def _collect_non_motion_report(monkeypatch, ready_payload, *, lidar_interface: l
     monkeypatch.setattr(doctor.urllib.request, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError()))
     monkeypatch.setattr(doctor.glob, "glob", lambda _pattern: [])
     return doctor.collect_report(doctor.parse_args(["--non-motion"]))
+
+
+@pytest.mark.parametrize(
+    ("hz", "has_odom", "blockers"),
+    [(10.0, True, []), (0.0, True, ["slam_hz<1"]), (10.0, False, ["has_odom=false"])],
+)
+def test_slam_readiness_does_not_depend_on_viewer_point_cache(monkeypatch, hz, has_odom, blockers):
+    report = _collect_non_motion_report(
+        monkeypatch,
+        {},
+        health_payload={"status": "ok", "modules_fail": 0, "slam_hz": hz, "map_points": 0, "has_odom": has_odom},
+    )
+    stream = next(c for c in report["checks"] if c["id"] == "gateway.slam_stream")
+
+    assert stream["evidence"]["blockers"] == blockers
+    assert stream["evidence"]["viewer_map_points"] == 0
 
 
 def test_runtime_dataflow_must_match_current_real_run_plan() -> None:

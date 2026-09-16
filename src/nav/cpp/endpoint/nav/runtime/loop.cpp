@@ -27,7 +27,7 @@
 #include "input/projector.hpp"
 #include "runtime/inspection/inspection_command_coordinator.hpp"
 #include "runtime/inspection/inspection_runtime_controller.hpp"
-#include "message/cpp/geofence.hpp"
+#include "message/protocol/geofence.hpp"
 #include "nav/cpp/platform/runtime.hpp"
 #include "nav/inspection/inspection.hpp"
 #include "nav/inspection/store.hpp"
@@ -47,6 +47,7 @@
 #include "status/goal_terminal_status_delivery.hpp"
 #include "status/goal_terminal_transaction.hpp"
 #include "status/inspection_status_file_writer.hpp"
+#include "status/planning_map_writer.hpp"
 #include "status/nav_status_endpoint_adapter.hpp"
 #include "status/nav_status_publisher.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
@@ -333,7 +334,8 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     request.source_stamp_s = goal.stamp_s;
     const auto decoded = parseGoal(goal, map_odom_tf);
     if (decoded.ok()) {
-      request.target = GoalPlanTarget{decoded.value.position, decoded.value.yaw};
+      request.target = GoalPlanTarget{decoded.value.position, decoded.value.yaw,
+                                      decoded.value.max_speed_mps, decoded.value.acceptance_radius_m};
     } else {
       request.decode_error = decoded.error;
     }
@@ -472,11 +474,15 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     return {result.accepted, result.reason};
   };
   auto handle_resume_motion = [&](double source_stamp_s) -> std::pair<bool, std::string> {
+    if (operator_motion_authority.snapshot().has_active_authority) {
+      return {false, "operator_authority_active"};
+    }
     const auto guard_resume = control_loop_guard.requestResume();
     const bool runtime_guard_latched = control_loop_guard_latched();
     MotionStopResult result;
     if (cfg.control_mode == ControlMode::Autonomy) {
       ResumeAutonomyRequest request;
+      request.resume_required = operator_resume_required;
       if (!control_authority.motionAllowed()) {
         request.precondition_error = "estop_latched";
       } else {
@@ -494,6 +500,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       result = motion_stop.resumeAutonomy(request);
     } else {
       ResumeTeleopRequest request;
+      request.resume_required = operator_resume_required;
       if (!control_authority.motionAllowed()) {
         request.precondition_error = "estop_latched";
       } else {
@@ -515,7 +522,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       request.motion_hold_latched =
           control_authority.operatorTakeoverLatched() || runtime_guard_latched;
       result = motion_stop.resumeTeleop(request);
-      if (result.accepted && request.motion_hold_latched) {
+      if (result.accepted && (request.motion_hold_latched || request.resume_required)) {
         input_gate_state = evaluate_input_gate();
         if (!input_gate_state.ready) {
           control_authority.holdOperatorTakeover();
@@ -744,6 +751,10 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       } else {
         navigation_map_identity.reset();
       }
+      if (ctx.planning_map_writer) {
+        ctx.planning_map_writer->update(identity.identity,
+            map_body ? std::optional<double>{map_body->position.z} : std::nullopt, now);
+      }
     }
     std::string navigation_authority = "none";
     if (control_authority.estopLatched()) {
@@ -762,6 +773,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         navigation_authority})});
     timing.dds_write_ms += elapsedMs(navigation_state_write_start);
     auto status_runtime_state = statusRuntimeStateFromEndpoint(state);
+    status_runtime_state.control_loop_hold = control_loop_guard.snapshot().hold_motion;
     status_runtime_state.final_output.producer_boot_id = dds_status.producer_boot_id;
     status_runtime_state.final_output.output_sequence = dds_status.final_output_sequence;
     (void)nav_status.publishIfDue(status_runtime_state, command_ingress.diagnostics(), last_timing,
@@ -1107,8 +1119,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         return;
       }
       const auto active_goal = goal_plan.snapshot();
-      if (active_goal.busy || active_goal.pending_plan_queued ||
-          !active_goal.active_task_id.empty()) {
+      if (active_goal.busy || active_goal.pending_plan_queued) {
         reject("navigation_busy");
         return;
       }
@@ -1213,6 +1224,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
 
   auto advance_runtime = [&](const SteadyClock::time_point &input_start,
                              TimingDiagnostics &timing) -> double {
+    const std::uint64_t output_before_runtime = dds_status.final_output_sequence;
     if (inspectionPostArrivalState(inspection_executor.status().state) &&
         localizationGateBlocked(input_gate_state, gate_cfg)) {
       if (inspection_executor.Pause("inspection_localization_health_blocked")) {
@@ -1265,9 +1277,11 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     runtime_actions.complete_endpoint_work_before_autonomy =
         [&](const GoalReplanRuntimeResult &runtime_advance_result) {
           const auto &plan_advance = runtime_advance_result.plan_advance;
-          if (plan_advance.completion_consumed) {
+          if (plan_advance.completion_consumed || plan_advance.path_activated) {
             sync_goal_plan_diagnostics();
-            timing.global_plan_ms = plan_advance.elapsed_ms;
+            if (plan_advance.completion_consumed) {
+              timing.global_plan_ms = plan_advance.elapsed_ms;
+            }
             if (plan_advance.counted_failure) {
               ++plan_fail_count;
             }
@@ -1534,17 +1548,35 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         }
         bool cmd_vel_published = false;
         if (autonomy_result.publish.cmd_vel) {
-          const auto cmd_write_start = SteadyClock::now();
-          const auto receipt =
-              dds.publish(OutputEvent{FinalVelocityOutput{autonomy_result.publish.command}});
-          cmd_vel_published = receipt.final_velocity.has_value();
-          timing.dds_write_ms += elapsedMs(cmd_write_start);
-          if (cmd_vel_published) {
-            state.motion_stop_evidence.observePublishedFinalOutput(
-                receipt.final_velocity->output_sequence, autonomy_result.publish.command,
-                static_cast<double>(receipt.final_velocity->source_wall_ns) / 1e9);
+          const bool command_is_nonzero = autonomy_result.publish.command.vx != 0.0 ||
+                                          autonomy_result.publish.command.vy != 0.0 ||
+                                          autonomy_result.publish.command.wz != 0.0;
+          PostPlanningInputReadinessResult post_planning_readiness;
+          if (command_is_nonzero) {
+            input_gate_state = evaluate_input_gate();
+            post_planning_readiness = enforcePostPlanningInputReadiness(
+                autonomy_result.publish.command, input_gate_state,
+                [&](const std::string &reason) {
+                  return motion_stop.holdEndpointMotion(reason);
+                });
+          }
+          if (post_planning_readiness.stop_required) {
+            if (!post_planning_readiness.stop_succeeded) {
+              record_zero_publish_failure(post_planning_readiness.reason);
+            }
           } else {
-            fail_closed_after_cmd_vel_write("autonomy_cmd_vel_publish_failed");
+            const auto cmd_write_start = SteadyClock::now();
+            const auto receipt =
+                dds.publish(OutputEvent{FinalVelocityOutput{autonomy_result.publish.command}});
+            cmd_vel_published = receipt.final_velocity.has_value();
+            timing.dds_write_ms += elapsedMs(cmd_write_start);
+            if (cmd_vel_published) {
+              state.motion_stop_evidence.observePublishedFinalOutput(
+                  receipt.final_velocity->output_sequence, autonomy_result.publish.command,
+                  static_cast<double>(receipt.final_velocity->source_wall_ns) / 1e9);
+            } else {
+              fail_closed_after_cmd_vel_write("autonomy_cmd_vel_publish_failed");
+            }
           }
         }
         if (autonomy_result.clear_local_path) {
@@ -1596,6 +1628,17 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         runtime_frame_result.pending_result.pending_resumed) {
       sync_goal_plan_diagnostics();
       nav_status.requestImmediate();
+    }
+    // The driver watchdog also runs while idle. Keep the checked zero command
+    // fresh after arrival or operator release without duplicating this frame's zero output.
+    const auto &idle_command = dds_status.final_output_command;
+    const bool zero_published_this_frame =
+        dds_status.final_output_sequence > output_before_runtime &&
+        idle_command.vx == 0.0 && idle_command.vy == 0.0 && idle_command.wz == 0.0;
+    if (cfg.publish_cmd_vel && !control_authority.pathActive() && !control_authority.teleopRequest() &&
+        !zero_published_this_frame &&
+        !motion_stop.keepZeroFresh()) {
+      record_zero_publish_failure("idle");
     }
     if (!navigation_runtime_controller.terminalPending()) {
       (void)goal_status_outbox.flush();

@@ -21,7 +21,7 @@ SHM_SCHEMA_VERSION = 1
 SHM_SCHEMA = "lingtu.camera.shm_frame.v1"
 SUPERBLOCK = struct.Struct("<8sHHHHIIIIQQQQ")
 SLOT_HEADER = struct.Struct("<QQQIIIIIIIIHHHH16s64s10d24sQ")
-POSIX_SHM_DIRECTORY = Path("/dev/shm")  # noqa: S108 - required POSIX SHM mount
+POSIX_SHM_DIRECTORY = Path("/dev/shm")
 
 
 class StreamKind(IntEnum):

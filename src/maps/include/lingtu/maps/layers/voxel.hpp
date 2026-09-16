@@ -11,6 +11,9 @@
 
 namespace lingtu::maps::layers {
 
+class RollingOccupancyGrid;
+struct Grid2D;
+
 struct VoxelLayerConfig {
   float voxel_size_m{0.05F};
   float max_range_m{20.0F};
@@ -65,11 +68,17 @@ class VoxelLayerCore final : public VoxelLayer {
 
   void Reset() override;
   void Update(const MapCloudFrame& frame) override;
+  // Retain only observed surfaces in the current local window before admission.
+  void Update(const MapCloudFrame& frame, const VoxelSnapshotRequest& window);
   OwnedPointCloud SnapshotCloud() const override;
   OwnedPointCloud SnapshotCloud(
       const VoxelSnapshotRequest& request,
       VoxelSnapshotStats* stats) const;
+  // All retained voxel centers in this XY grid, packed XYZ. Modeling must not
+  // consume the display snapshot's nearest-point budget. Linear in stored voxels.
+  std::vector<float> SnapshotXyz(const Grid2D& window) const;
 
+  std::size_t ClearObservedFree(const RollingOccupancyGrid& occupancy);
   void Decay();
   bool Contains(float x_m, float y_m, float z_m) const;
   float CountAt(float x_m, float y_m, float z_m) const;
@@ -77,6 +86,7 @@ class VoxelLayerCore final : public VoxelLayer {
   VoxelUpdateStats LastStats() const;
 
  private:
+  void UpdateImpl(const MapCloudFrame& frame, const VoxelSnapshotRequest* window);
   struct VoxelKey {
     std::int32_t x{0};
     std::int32_t y{0};

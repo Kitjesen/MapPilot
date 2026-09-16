@@ -49,7 +49,7 @@ class Open3DBackend(ReconBackendBase):
 
     def check_dependencies(self) -> tuple[bool, str]:
         try:
-            import open3d  # noqa
+            import open3d
             return True, "open3d available"
         except ImportError:
             return False, "open3d not installed — run: pip install open3d"

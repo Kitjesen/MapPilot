@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from lingtu.assembly.wires.context import WiringContext
+from lingtu.assembly.wires.gateway import gateway_status_specs
 from lingtu.assembly.wires.semantic import semantic_command_specs
 from runtime.wiring import wire_key
 
@@ -26,6 +27,21 @@ def test_semantic_nav_command_wires_to_goal_service_when_present() -> None:
     keys = {wire_key(spec) for spec in specs}
     assert ("SemanticPlannerModule", "nav_command", "nav.goals", "goal_command") in keys
     assert ("host.bus", "navigation_state", "SemanticPlannerModule", "navigation_state") in keys
+
+
+def test_mcp_uses_gateway_status_projection_but_keeps_goal_events() -> None:
+    keys = {
+        wire_key(spec)
+        for spec in gateway_status_specs(_ctx("host.bus", "GatewayModule", "MCPServerModule"))
+    }
+
+    assert ("host.bus", "navigation_state", "MCPServerModule", "navigation_state") not in keys
+    assert (
+        "host.bus",
+        "navigation_goal_status",
+        "MCPServerModule",
+        "navigation_goal_status",
+    ) in keys
 
 
 def test_semantic_planner_symbolic_llm_wires_when_llm_module_present() -> None:

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 
-
 _CYCLONE_DEFAULT_PORT_BASE = 7400
 _CYCLONE_DEFAULT_DOMAIN_GAIN = 250
 _CYCLONE_MAXIMUM_FIXED_PORT_OFFSET = 11

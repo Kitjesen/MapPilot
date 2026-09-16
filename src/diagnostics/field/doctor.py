@@ -35,7 +35,6 @@ def check_level(required):
 
 
 MIN_SLAM_HZ = env_float("LINGTU_DOCTOR_MIN_SLAM_HZ", 1.0)
-MIN_MAP_POINTS = env_float("LINGTU_DOCTOR_MIN_MAP_POINTS", 1.0)
 MAX_ODOM_AGE_MS = env_float("LINGTU_DOCTOR_MAX_ODOM_AGE_MS", 1500.0)
 MAX_LOC_DIAG_AGE_MS = env_float("LINGTU_DOCTOR_MAX_LOC_DIAG_AGE_MS", 3000.0)
 MAX_LOCALIZER_HEALTH_AGE_MS = env_float("LINGTU_DOCTOR_MAX_LOCALIZER_HEALTH_AGE_MS", 3000.0)
@@ -49,7 +48,7 @@ DATA_NAV_BLOCKERS = {
     "localization_initializing",
     "pose_stale",
 }
-MOVING_NAV_STATES = {"EXECUTING", "NAVIGATING", "PLANNING", "EXPLORING", "RECOVERY", "RUNNING"}
+IDLE_TASK_STATES = {"IDLE", "PAUSED", "SUCCESS", "FAILED", "CANCELLED"}
 
 
 def resolve_tool(args):
@@ -87,6 +86,9 @@ def http_json(base_url, path, timeout=3):
     url = f"{base_url}{path}"
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        api_key = os.environ.get("LINGTU_API_KEY", "").strip()
+        if api_key:
+            req.add_header("X-API-Key", api_key)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read(2_000_000).decode("utf-8", "replace")
             code = resp.getcode()
@@ -116,28 +118,6 @@ def as_bool(value):
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "ok", "ready", "active"}
     return bool(value)
-
-
-def command_source_name(control):
-    source = control.get("active_cmd_source")
-    if source in (None, "", "unknown"):
-        source = control.get("active_source")
-    if isinstance(source, dict):
-        source = source.get("name") or source.get("source") or source.get("owner") or "none"
-    if source in (None, ""):
-        return "none"
-    return str(source)
-
-
-def navigation_state_name(nav):
-    mission = nav.get("mission") if isinstance(nav, dict) else {}
-    if not isinstance(mission, dict):
-        mission = {}
-    return str(nav.get("state") or mission.get("state") or "unknown")
-
-
-def navigation_state_is_idle(state):
-    return str(state or "").upper() not in MOVING_NAV_STATES
 
 
 def check_age(payload, key, max_age_ms, blockers):
@@ -549,8 +529,6 @@ def collect_report(options: argparse.Namespace) -> dict[str, object]:
         stream_blockers = []
         if slam_hz is None or slam_hz < MIN_SLAM_HZ:
             stream_blockers.append(f"slam_hz<{MIN_SLAM_HZ:g}")
-        if map_points is None or map_points < MIN_MAP_POINTS:
-            stream_blockers.append(f"map_points<{MIN_MAP_POINTS:g}")
         if not has_odom:
             stream_blockers.append("has_odom=false")
         add(
@@ -562,8 +540,7 @@ def collect_report(options: argparse.Namespace) -> dict[str, object]:
             {
                 "slam_hz": slam_hz,
                 "min_slam_hz": MIN_SLAM_HZ,
-                "map_points": map_points,
-                "min_map_points": MIN_MAP_POINTS,
+                "viewer_map_points": map_points,
                 "has_odom": has_odom,
                 "blockers": stream_blockers,
             },
@@ -654,19 +631,52 @@ def collect_report(options: argparse.Namespace) -> dict[str, object]:
             {"http_status": nav_code, "error": nav_err},
         )
     else:
-        readiness = nav.get("readiness") or {}
-        blockers = readiness.get("blockers") or []
-        reason_codes = nav.get("reason_codes") or []
-        can_accept = bool(nav.get("can_accept_goal", readiness.get("can_execute_autonomy", False)))
-        state = navigation_state_name(nav)
-        control = nav.get("control") or {}
-        active_source = command_source_name(control)
-        data_blockers = list(
-            dict.fromkeys(blocker for blocker in list(blockers) + list(reason_codes) if blocker in DATA_NAV_BLOCKERS)
+        task = nav.get("task") if isinstance(nav.get("task"), dict) else {}
+        admission = (
+            nav.get("goal_admission")
+            if isinstance(nav.get("goal_admission"), dict)
+            else {}
         )
-        nav_ok = can_accept and not blockers
+        control = nav.get("control") if isinstance(nav.get("control"), dict) else {}
+        motion = nav.get("motion") if isinstance(nav.get("motion"), dict) else {}
+        client_runtime = (
+            client_ready.get("runtime")
+            if isinstance(client_ready, dict) and isinstance(client_ready.get("runtime"), dict)
+            else {}
+        )
+        navigation_readiness = (
+            client_runtime.get("navigation")
+            if isinstance(client_runtime.get("navigation"), dict)
+            else {}
+        )
+        blockers = list(navigation_readiness.get("blockers") or [])
+        state = str(task.get("state") or "UNKNOWN").upper()
+        admission_state = str(admission.get("state") or "UNKNOWN").upper()
+        authority = str(control.get("authority") or "UNKNOWN").upper()
+        observation = str(motion.get("observation") or "UNKNOWN").upper()
+        permission = str(motion.get("permission") or "UNKNOWN").upper()
+        stop_confirmation = str(
+            motion.get("stop_confirmation") or "UNKNOWN"
+        ).upper()
+        can_accept = admission_state == "ACCEPTING"
+        unknown_axes = [
+            name
+            for name, value in (
+                ("task", state),
+                ("goal_admission", admission_state),
+                ("control", authority),
+                ("motion.permission", permission),
+                ("motion.observation", observation),
+                ("motion.stop_confirmation", stop_confirmation),
+            )
+            if value == "UNKNOWN"
+        ]
+        data_blockers = list(
+            dict.fromkeys(blocker for blocker in blockers if blocker in DATA_NAV_BLOCKERS)
+        )
+        nav_ok = can_accept and not blockers and not unknown_axes
         if non_motion:
-            if data_blockers:
+            if unknown_axes or data_blockers:
                 nav_status = "fail"
             elif blockers or not can_accept:
                 nav_status = "warn"
@@ -692,25 +702,35 @@ def collect_report(options: argparse.Namespace) -> dict[str, object]:
             {
                 "http_status": nav_code,
                 "state": state,
-                "can_accept_goal": can_accept,
+                "goal_admission": admission_state,
                 "blockers": blockers,
-                "reason_codes": reason_codes,
                 "data_blockers": data_blockers,
-                "active_cmd_source": active_source,
+                "unknown_axes": unknown_axes,
+                "control_authority": authority,
+                "motion_observation": observation,
             },
         )
         if non_motion and "nav" in required_process_names:
-            source_idle = str(active_source).lower() in {"", "none", "unknown", "null"}
-            state_idle = navigation_state_is_idle(state)
+            safe = (
+                authority == "NONE"
+                and state in IDLE_TASK_STATES
+                and observation == "QUIET"
+                and stop_confirmation in {"NOT_REQUESTED", "CONFIRMED"}
+            )
             add(
                 checks,
                 "safety.non_motion_guard",
-                "pass" if source_idle and state_idle else "fail",
+                "pass" if safe else "fail",
                 "p0",
-                "no active command source or executing mission"
-                if source_idle and state_idle
-                else "robot appears to have an active command source or mission",
-                {"state": state, "active_cmd_source": active_source},
+                "navigation state confirms no authority and quiet motion"
+                if safe
+                else "navigation state does not confirm a quiet, unowned robot",
+                {
+                    "task_state": state,
+                    "control_authority": authority,
+                    "motion_observation": observation,
+                    "stop_confirmation": stop_confirmation,
+                },
             )
 
     _, lsusb_out, _ = run(["lsusb"], timeout=3)
@@ -732,6 +752,9 @@ def collect_report(options: argparse.Namespace) -> dict[str, object]:
             f"{gw}/api/v1/camera/snapshot",
             headers={"Accept": "image/jpeg"},
         )
+        api_key = os.environ.get("LINGTU_API_KEY", "").strip()
+        if api_key:
+            req.add_header("X-API-Key", api_key)
         with urllib.request.urlopen(req, timeout=3) as resp:
             head = resp.read(3)
             content_type = resp.headers.get("content-type", "")

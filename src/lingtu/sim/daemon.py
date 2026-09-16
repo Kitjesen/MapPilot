@@ -331,6 +331,14 @@ def _spawn_daemon(
     session_root: Path,
     repository_root: Path,
 ) -> subprocess.Popen[bytes]:
+    environment = os.environ.copy()
+    package_root = str(Path(__file__).resolve().parents[2])
+    inherited_pythonpath = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = (
+        f"{package_root}{os.pathsep}{inherited_pythonpath}"
+        if inherited_pythonpath
+        else package_root
+    )
     command = (
         sys.executable,
         "-m",
@@ -352,6 +360,7 @@ def _spawn_daemon(
         return subprocess.Popen(
             command,
             cwd=repository_root,
+            env=environment,
             shell=False,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,

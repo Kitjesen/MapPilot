@@ -176,7 +176,7 @@ def _rpy_to_quat(rpy: str | None) -> str | None:
 
 
 def _parse_urdf(urdf_path: Path) -> tuple[ET.Element, dict[str, ET.Element], dict[str, ET.Element]]:
-    root = ET.parse(urdf_path).getroot()  # noqa: S314 - canonical local URDF
+    root = ET.parse(urdf_path).getroot()
     links = {link.attrib["name"]: link for link in root.findall("link")}
     joints = {joint.attrib["name"]: joint for joint in root.findall("joint")}
     return root, links, joints
@@ -301,7 +301,7 @@ def _compile_raw_urdf(urdf_path: Path) -> ET.Element:
         raw_path = Path(tmp) / "raw.xml"
         model = mujoco.MjModel.from_xml_path(str(urdf_path))
         mujoco.mj_saveLastXML(str(raw_path), model)
-        return ET.parse(raw_path).getroot()  # noqa: S314 - MuJoCo-generated XML
+        return ET.parse(raw_path).getroot()
 
 
 def _transparent_rgba(rgba: str | None) -> str:
@@ -358,6 +358,8 @@ def _mark_wheel_collisions(body: ET.Element) -> None:
             if geom.attrib.get("type") == "cylinder" and geom.attrib.get("contype") != "0":
                 geom.attrib["name"] = f"{leg}_wheel"
                 geom.attrib["class"] = "rubber_wheel"
+                # Let the wheel material replace the generic collision friction.
+                geom.attrib.pop("friction", None)
     for child in body.findall("body"):
         _mark_wheel_collisions(child)
 
@@ -397,7 +399,6 @@ def _add_scene_terrain(worldbody: ET.Element, scene: str) -> None:
                 "material": "matplane",
                 "condim": "4",
                 "conaffinity": "15",
-                "friction": "0.9 0.2 0.2",
             },
         )
 
@@ -425,10 +426,11 @@ def _build_model(urdf_path: Path, scene: str = "flat", show_collisions: bool = F
     default = ET.SubElement(mujoco_root, "default")
     ET.SubElement(default, "joint", {"limited": "true"})
     ET.SubElement(default, "motor", {"ctrllimited": "true"})
+    # Keep robot material friction out of the merged world's global defaults.
     ET.SubElement(
         default,
         "geom",
-        {"condim": "4", "contype": "1", "conaffinity": "15", "solref": "0.004 1", "friction": "0.9 0.2 0.2"},
+        {"condim": "4", "contype": "1", "conaffinity": "15", "solref": "0.004 1"},
     )
     leg_default = ET.SubElement(default, "default", {"class": "leg_joint_param"})
     ET.SubElement(leg_default, "joint", {"damping": "0.01", "frictionloss": "0.01", "armature": "0.01"})

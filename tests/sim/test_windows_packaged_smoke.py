@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -8,7 +7,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from sim.distribution.windows import DistributionError, resolve_verified_windows_release
 from sim.distribution.windows import smoke as smoke_module
 

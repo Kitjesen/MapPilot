@@ -1,0 +1,127 @@
+{
+  "schema_version": "lingtu.mujoco.native_control_modes.v1",
+  "name": "mujoco_native_control_modes",
+  "control_modes": {
+    "autonomy": {
+      "endpoint_control_mode": "autonomy",
+      "command_kind": "goal",
+      "required_processes": [
+        "slam",
+        "traversability",
+        "navigation",
+        "mujoco_sensor_policy"
+      ],
+      "forbidden_processes": [
+        "python_nav_mission",
+        "python_local_planner",
+        "python_path_follower"
+      ],
+      "required_inputs": [
+        "rt/nav/command/request",
+        "rt/slam/odometry",
+        "rt/slam/registered_cloud",
+        "rt/slam/localization_health",
+        "rt/nav/traversability"
+      ],
+      "quality_thresholds": {
+        "max_ate_rmse_m": 0.30,
+        "min_trajectory_scale_ratio": 0.80,
+        "max_trajectory_scale_ratio": 1.20,
+        "min_map_near_field_match_rate": 0.80
+      },
+      "runner": {
+        "kind": "native_navigation_acceptance",
+        "script": "sim/scripts/mujoco/native_navigation_acceptance.py",
+        "report": "report.json",
+        "report_schema": "lingtu.mujoco.native_navigation.acceptance.v1",
+        "timeout_s": 1800,
+        "arguments": [
+          "--manifest",
+          "config/acceptance/mujoco/navigation.json",
+          "--mode",
+          "motion",
+          "--out-dir",
+          "{harness_dir}"
+        ]
+      }
+    },
+    "teleop": {
+      "endpoint_control_mode": "teleop",
+      "command_kind": "teleop",
+      "required_processes": [
+        "navigation",
+        "driver",
+        "mujoco_sensor_policy"
+      ],
+      "forbidden_processes": [
+        "slam",
+        "traversability",
+        "python_nav_mission",
+        "python_local_planner",
+        "python_path_follower"
+      ],
+      "required_inputs": [
+        "rt/nav/operator_motion/control",
+        "rt/nav/operator_motion/sample",
+        "rt/driver/control_state"
+      ],
+      "runner": {
+        "kind": "teleop_native_acceptance",
+        "script": "sim/scripts/mujoco/teleop_native_acceptance.py",
+        "report": "report.json",
+        "report_schema": "lingtu.mujoco.teleop_native_acceptance.v1",
+        "timeout_s": 300,
+        "arguments": [
+          "--manifest",
+          "config/acceptance/mujoco/teleop.json",
+          "--artifact-dir",
+          "{harness_dir}",
+          "--strict"
+        ]
+      }
+    },
+    "teleop_avoid": {
+      "endpoint_control_mode": "teleop_avoid",
+      "command_kind": "teleop",
+      "required_processes": [
+        "slam",
+        "mapd",
+        "traversability",
+        "navigation",
+        "mujoco_sensor_policy"
+      ],
+      "forbidden_processes": [
+        "python_nav_mission",
+        "python_local_planner",
+        "python_path_follower",
+        "global_planner"
+      ],
+      "required_inputs": [
+        "rt/nav/operator_motion/control",
+        "rt/nav/operator_motion/sample",
+        "rt/slam/odometry",
+        "rt/slam/registered_cloud",
+        "rt/slam/map_observation",
+        "rt/slam/localization_health",
+        "rt/nav/traversability"
+      ],
+      "quality_thresholds": {
+        "require_live_mapping_inputs": true
+      },
+      "runner": {
+        "kind": "teleop_avoid_native_acceptance",
+        "script": "sim/scripts/mujoco/teleop_avoid_native_acceptance.py",
+        "report": "report.json",
+        "report_schema": "lingtu.mujoco.teleop_avoid_native_acceptance.v1",
+        "timeout_s": 900,
+        "arguments": [
+          "--manifest",
+          "config/acceptance/mujoco/teleop_avoid.json",
+          "--artifact-dir",
+          "{harness_dir}",
+          "--strict"
+        ]
+      }
+    }
+  }
+}

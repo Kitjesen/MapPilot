@@ -43,8 +43,13 @@ sim/packages/**/*.bin filter=lfs diff=lfs merge=lfs -text
 sim/compat/assets/**/*.STL filter=lfs diff=lfs merge=lfs -text
 sim/compat/assets/**/*.stl filter=lfs diff=lfs merge=lfs -text
 sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx filter=lfs diff=lfs merge=lfs -text
+sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx filter=lfs diff=lfs merge=lfs -text
 sim/runtime/visual/RobotSimUE/Content/**/*.uasset filter=lfs diff=lfs merge=lfs -text
 sim/runtime/visual/RobotSimUE/Content/**/*.umap filter=lfs diff=lfs merge=lfs -text
 sim/runtime/visual/RobotSimUE/Plugins/**/*.uasset filter=lfs diff=lfs merge=lfs -text
 sim/runtime/visual/RobotSimUE/Plugins/**/*.umap filter=lfs diff=lfs merge=lfs -text
 src/nav/cpp/planning/local/cmu/paths/**/correspondences.txt filter=lfs diff=lfs merge=lfs -text
+
+# Preserve the portable factory scene assets without Git's large-blob limit.
+sim/packages/worlds/factory_workshop/**/visual/native/*.obj filter=lfs diff=lfs merge=lfs -text
+sim/packages/worlds/factory_workshop/**/visual/native/*.png filter=lfs diff=lfs merge=lfs -text

@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """TDD contracts for conditioned understory assets in the review-only hero scene."""
 

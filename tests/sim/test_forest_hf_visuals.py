@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Pure contract tests for the richer Forest_HF Blender visuals."""
 

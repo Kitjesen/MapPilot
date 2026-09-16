@@ -1,10 +1,4 @@
-"""Regression checks for the curated documentation entry points.
-
-The documentation tree contains design records, plans, and dated validation
-evidence alongside product documentation.  These checks keep the public-facing
-landing pages present and prevent their local Markdown links from silently
-drifting as files are reorganized.
-"""
+"""Regression checks for LingTu's ten maintained documentation pages."""
 
 from __future__ import annotations
 
@@ -12,40 +6,52 @@ import re
 from pathlib import Path
 from urllib.parse import unquote
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DOCS_ROOT = REPOSITORY_ROOT / "docs"
-VALIDATION_ROOT = DOCS_ROOT / "07-testing"
 
-LANDING_PAGES = (
-    DOCS_ROOT / "README.md",
-    DOCS_ROOT / "01-getting-started" / "README.md",
-    DOCS_ROOT / "02-concepts" / "README.md",
-    DOCS_ROOT / "03-development" / "README.md",
-    DOCS_ROOT / "05-guides" / "README.md",
-    DOCS_ROOT / "06-operations" / "README.md",
-    DOCS_ROOT / "08-reference" / "README.md",
-    DOCS_ROOT / "09-integrations" / "README.md",
-    DOCS_ROOT / "10-safety" / "README.md",
+DOCUMENT_NAMES = (
+    "README.md",
+    "getting-started.md",
+    "architecture.md",
+    "runtime.md",
+    "simulation.md",
+    "development.md",
+    "operations.md",
+    "api.md",
+    "testing.md",
+    "roadmap.md",
 )
-
-DETAILED_GUIDES = (
-    DOCS_ROOT / "QUICKSTART.md",
-    DOCS_ROOT / "01-getting-started" / "BUILD_GUIDE.md",
-    DOCS_ROOT / "03-development" / "TROUBLESHOOTING.md",
-    DOCS_ROOT / "04-deployment" / "WEB_GUIDE.md",
-    DOCS_ROOT / "07-testing" / "WEB_GUIDE.md",
-)
-
-CURATED_PAGES = LANDING_PAGES + DETAILED_GUIDES
+CURATED_PAGES = tuple(DOCS_ROOT / name for name in DOCUMENT_NAMES)
+DOCUMENT_IDS = {
+    "home",
+    "getting-started",
+    "architecture",
+    "runtime",
+    "simulation",
+    "development",
+    "operations",
+    "api",
+    "testing",
+    "roadmap",
+}
 
 WEB_GUIDE_ENTRY = REPOSITORY_ROOT / "web" / "guide" / "index.html"
+WEB_GUIDE_APP = REPOSITORY_ROOT / "web" / "src" / "guide" / "DocsApp.tsx"
 WEB_GUIDE_REGISTRY = REPOSITORY_ROOT / "web" / "src" / "guide" / "docsRegistry.ts"
-WEB_GUIDE_SOURCES = re.compile(r"(?:sourcePath|contentSourcePath):\s*'([^']+)'")
+WEB_GUIDE_SOURCES = re.compile(r"sourcePath:\s*'([^']+)'")
 WEB_GUIDE_RAW_DOC_IMPORT = re.compile(r"from '([^']*docs/[^']+)\?raw'")
+WEB_GUIDE_DOCUMENT_ID = re.compile(r"^\s+id:\s*'([^']+)',", re.MULTILINE)
+WEB_GUIDE_GROUP_IDS = re.compile(r"ids:\s*\[([^\]]*)\]")
+WEB_GUIDE_QUOTED_ID = re.compile(r"'([^']+)'")
+WEB_GUIDE_STATIC_HASH = re.compile(r'href="#([a-z][a-z0-9-]*)"')
+WEB_GUIDE_NAVIGATE_ID = re.compile(r"onNavigate\('([^']+)'\)")
+WEB_GUIDE_HOME_PATH_ID = re.compile(r"\{ id: '([^']+)', title:")
 
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
-FIELD_ENDPOINT = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b|\bnatapp\b", re.IGNORECASE)
+FIELD_ENDPOINT = re.compile(
+    r"\b(?!127\.0\.0\.1\b)(?:\d{1,3}\.){3}\d{1,3}\b|\bnatapp\b",
+    re.IGNORECASE,
+)
 UNCLOSED_CODE_LINK = re.compile(r"\[[^\]\n]*`\([^\)\n]+\)")
 
 
@@ -80,29 +86,15 @@ def _has_exact_local_path_case(source: Path, target: str) -> bool:
     return True
 
 
-def test_curated_documentation_landing_pages_exist() -> None:
-    missing = [path.relative_to(REPOSITORY_ROOT).as_posix() for path in LANDING_PAGES if not path.is_file()]
-    assert not missing, f"missing documentation landing pages: {missing}"
-
-
-def test_validation_documentation_has_one_routing_level() -> None:
-    top_level_markdown = {path.name for path in VALIDATION_ROOT.glob("*.md")}
-    assert top_level_markdown == {"README.md", "WEB_GUIDE.md"}
-    assert not list(VALIDATION_ROOT.glob("*.sh")), (
-        "executable validation procedures belong under scripts/gates"
-    )
-
-    expected_indexes = (
-        VALIDATION_ROOT / "field" / "README.md",
-        VALIDATION_ROOT / "simulation" / "README.md",
-        VALIDATION_ROOT / "field-runs" / "README.md",
-    )
-    missing = [
+def test_documentation_tree_contains_exactly_ten_root_markdown_pages() -> None:
+    expected = {f"docs/{name}" for name in DOCUMENT_NAMES}
+    actual = {
         path.relative_to(REPOSITORY_ROOT).as_posix()
-        for path in expected_indexes
-        if not path.is_file()
-    ]
-    assert not missing, f"missing validation section indexes: {missing}"
+        for path in DOCS_ROOT.rglob("*.md")
+    }
+
+    assert actual == expected
+    assert all(path.parent == DOCS_ROOT for path in CURATED_PAGES)
 
 
 def test_curated_documentation_links_resolve() -> None:
@@ -127,7 +119,7 @@ def test_curated_documentation_links_resolve() -> None:
 def test_curated_documentation_pages_have_reader_metadata() -> None:
     required_markers = ("**Status:**", "**Audience:**", "**Runs on:**")
 
-    for source in LANDING_PAGES:
+    for source in CURATED_PAGES:
         text = source.read_text(encoding="utf-8")
         assert text.startswith("# "), f"{source.relative_to(REPOSITORY_ROOT)} needs one H1 title"
         for marker in required_markers:
@@ -170,29 +162,25 @@ def test_curated_documentation_has_no_trailing_whitespace() -> None:
 
 
 def test_curated_documentation_has_no_replacement_characters() -> None:
-    corrupted: list[str] = []
-    for source in CURATED_PAGES:
-        if "\ufffd" in source.read_text(encoding="utf-8"):
-            corrupted.append(source.relative_to(REPOSITORY_ROOT).as_posix())
+    corrupted = [
+        source.relative_to(REPOSITORY_ROOT).as_posix()
+        for source in CURATED_PAGES
+        if "\ufffd" in source.read_text(encoding="utf-8")
+    ]
 
     assert not corrupted, "replacement characters in curated documentation:\n" + "\n".join(corrupted)
 
 
-def test_web_guide_is_static_and_catalogs_the_curated_sources() -> None:
+def test_web_guide_is_static_and_catalogs_exactly_the_ten_docs() -> None:
     """Keep the public Web guide separate from robot-control runtime surfaces."""
 
     assert WEB_GUIDE_ENTRY.is_file(), "the /guide Vite entry is missing"
     assert WEB_GUIDE_REGISTRY.is_file(), "the Web guide source registry is missing"
 
     registry = WEB_GUIDE_REGISTRY.read_text(encoding="utf-8")
+    expected_sources = {f"docs/{name}" for name in DOCUMENT_NAMES}
     registered_sources = set(WEB_GUIDE_SOURCES.findall(registry))
-    expected_sources = {
-        path.relative_to(REPOSITORY_ROOT).as_posix()
-        for path in (*CURATED_PAGES, DOCS_ROOT / "CURRENT.md")
-    }
-
-    missing = sorted(expected_sources - registered_sources)
-    assert not missing, f"curated Markdown missing from the Web guide registry: {missing}"
+    assert registered_sources == expected_sources
 
     guide_source = "\n".join(
         path.read_text(encoding="utf-8")
@@ -214,18 +202,39 @@ def test_web_guide_is_static_and_catalogs_the_curated_sources() -> None:
     )
 
 
-def test_web_guide_does_not_bundle_field_endpoints() -> None:
+def test_web_guide_navigation_uses_only_canonical_document_ids() -> None:
+    registry = WEB_GUIDE_REGISTRY.read_text(encoding="utf-8")
+    app = WEB_GUIDE_APP.read_text(encoding="utf-8")
+
+    registry_ids = WEB_GUIDE_DOCUMENT_ID.findall(registry)
+    assert len(registry_ids) == len(DOCUMENT_IDS)
+    assert set(registry_ids) == DOCUMENT_IDS
+
+    group_ids = [
+        document_id
+        for group in WEB_GUIDE_GROUP_IDS.findall(registry)
+        for document_id in WEB_GUIDE_QUOTED_ID.findall(group)
+    ]
+    assert len(group_ids) == len(DOCUMENT_IDS) - 1
+    assert set(group_ids) == DOCUMENT_IDS - {"home"}
+
+    app_targets = (
+        (set(WEB_GUIDE_STATIC_HASH.findall(app)) - {"main-content"})
+        | set(WEB_GUIDE_NAVIGATE_ID.findall(app))
+        | set(WEB_GUIDE_HOME_PATH_ID.findall(app))
+    )
+    assert app_targets <= DOCUMENT_IDS
+
+
+def test_web_guide_bundles_only_the_ten_docs_without_field_endpoints() -> None:
     """The static guide may bundle only source material safe for public reading."""
 
     registry = WEB_GUIDE_REGISTRY.read_text(encoding="utf-8")
-    imported_sources = [
+    imported_sources = {
         (WEB_GUIDE_REGISTRY.parent / relative_path).resolve()
         for relative_path in WEB_GUIDE_RAW_DOC_IMPORT.findall(registry)
-    ]
-    assert imported_sources, "the Web guide should declare its raw Markdown sources"
-
-    missing = [path.relative_to(REPOSITORY_ROOT).as_posix() for path in imported_sources if not path.is_file()]
-    assert not missing, f"missing raw Markdown bundled by the Web guide: {missing}"
+    }
+    assert imported_sources == set(CURATED_PAGES)
 
     leaked: list[str] = []
     for source in imported_sources:

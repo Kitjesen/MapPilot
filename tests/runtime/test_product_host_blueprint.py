@@ -7,6 +7,7 @@ from lingtu.assembly.compiler import (
     blueprint_from_run_plan,
     compile_run_plan,
 )
+from lingtu.assembly.graph.processes import ProcessArtifact
 from lingtu.assembly.plugins import install_builtin_plugin_catalog
 from lingtu.assembly.products import resolve_product_host_config
 from lingtu.assembly.products.host import host_blueprint
@@ -57,8 +58,13 @@ def test_tracking_product_builds_only_the_person_following_host(
     env: str,
     robot: str | None,
     env_config: dict[str, str] | None,
-    allow_unbuilt_process_artifacts: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        ProcessArtifact,
+        "from_repository_path",
+        classmethod(lambda cls, root, path: cls(str(path))),
+    )
     plan = compile_run_plan(
         "tracking",
         env,

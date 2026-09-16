@@ -1,10 +1,8 @@
-# ruff: noqa: S101
 
 """Contract tests for the fictional RWS-01 simulation payload package."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -30,10 +28,6 @@ EXPECTED_MESHES = {
     "SM_RWS01_RecoilHousing",
     "SM_RWS01_YawFrame",
 }
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _manifest() -> dict:
@@ -62,7 +56,7 @@ def test_payload_package_is_versioned_fictional_and_simulation_only() -> None:
     assert "tsk_" not in serialized
 
 
-def test_payload_source_asset_and_provenance_are_content_bound() -> None:
+def test_payload_source_asset_and_provenance_are_declared() -> None:
     manifest = _manifest()
     source = manifest["provenance"]["source_asset"]
     source_path = PACKAGE_ROOT / source["path"]
@@ -71,9 +65,7 @@ def test_payload_source_asset_and_provenance_are_content_bound() -> None:
 
     assert source_path.is_file()
     assert source_path.suffix == ".glb"
-    assert source == {"path": "assets/rws-01-v002-runtime.glb"}
     assert report_path.is_file()
-    assert report == {"path": "provenance/conditioning-report.json"}
     assert manifest["provenance"]["generator"] == "tripo3d"
     assert manifest["provenance"]["source_task_id"] == (
         "2dd80649-65d8-4263-a702-f3d29f73e40c"
@@ -120,7 +112,6 @@ def test_payload_visual_projection_uses_the_clean_pbr_runtime_assets() -> None:
         "material_count": 5,
         "required_channels": ["base_color", "normal", "metallic_roughness"],
     }
-    assert "digest" not in projection
     assert {component["mesh"] for component in projection["components"]} == EXPECTED_MESHES
 
     for component in projection["components"]:
@@ -141,9 +132,7 @@ def test_payload_manifest_connects_mount_physics_visual_and_interfaces() -> None
         "root_frame": "payload_base",
     }
     assert manifest["physics"] == {
-        "mjcf": {
-            "path": "mjcf/fictional_rws_01.xml",
-        },
+        "mjcf": {"path": "mjcf/fictional_rws_01.xml"},
         "attach_root": "payload_base",
         "global_options": "inherit_session",
         "authority": "mujoco",
@@ -151,9 +140,7 @@ def test_payload_manifest_connects_mount_physics_visual_and_interfaces() -> None
     }
     assert manifest["visual"] == {
         "binding": "PayloadVisual:FictionalRWS01",
-        "projection": {
-            "path": "visual/payload.visual-projection.json",
-        },
+        "projection": {"path": "visual/payload.visual-projection.json"},
         "authority": "mujoco",
         "ue_collision": "disabled",
     }

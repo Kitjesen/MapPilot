@@ -23,7 +23,7 @@ def _configure_native_slam(
     cmake_executable = shutil.which("cmake")
     assert cmake_executable is not None, "cmake is required for native SLAM tests"
     with tempfile.TemporaryDirectory(prefix="lingtu-slam-cmake-") as build_dir:
-        return subprocess.run(  # noqa: S603 - arguments are controlled test inputs
+        return subprocess.run(
             [
                 cmake_executable,
                 "-S",
@@ -120,22 +120,22 @@ def test_native_cloud_allocations_support_pcl_1_10_pointer_alias() -> None:
 
 
 def test_slam_control_dds_topics_have_runtime_contracts_and_command_qos() -> None:
-    from runtime.graph import load_runtime_graph
+    from lingtu.assembly.graph import load_runtime_graph
 
     graph = load_runtime_graph()
     expected_qos = {
-        "/slam/map_command": "reliable_volatile_keep_last_32",
-        "/slam/map_event": "reliable_transient_local_keep_last_64",
-        "/slam/relocalization/request": "reliable_volatile_keep_last_32",
-        "/slam/relocalization/response": "reliable_transient_local_keep_last_64",
-        "/slam/state_at_scan": "best_effort_volatile_keep_last_5_deadline_20ms",
-        "/slam/localization_quality": "best_effort_volatile_keep_last_5_deadline_20ms",
-        "/slam/localization_health": "reliable_volatile_keep_last_10",
+        "/slam/map_command": "CommandRequest",
+        "/slam/map_event": "CommandAck",
+        "/slam/relocalization/request": "CommandRequest",
+        "/slam/relocalization/response": "CommandAck",
+        "/slam/state_at_scan": "HighFreqState",
+        "/slam/localization_quality": "HighFreqState",
+        "/slam/localization_health": "LocalizationHealth",
     }
     for topic, qos in expected_qos.items():
-        assert graph.topic_contracts[topic]["qos"] == qos
+        assert graph.topic_contracts[topic]["qos_profile"] == qos
 
-    native_topics = Path("src/message/cpp/topics.hpp").read_text(encoding="utf-8")
+    native_topics = Path("src/message/generated/topics.hpp").read_text(encoding="utf-8")
     for topic in ("rt/slam/map_command", "rt/slam/relocalization/request"):
         assert topic in native_topics
     for topic in ("rt/slam/map_event", "rt/slam/relocalization/response"):
@@ -178,8 +178,8 @@ def test_slam_control_dds_topics_have_runtime_contracts_and_command_qos() -> Non
 
 
 def test_slam_map_snapshot_uses_typed_request_and_ack() -> None:
-    idl = Path("src/message/idl/messages.idl").read_text(encoding="utf-8")
-    topics = Path("src/message/cpp/topics.hpp").read_text(encoding="utf-8")
+    idl = Path("src/message/idl/localization.idl").read_text(encoding="utf-8")
+    topics = Path("src/message/generated/topics.hpp").read_text(encoding="utf-8")
     runtime = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(
         encoding="utf-8"
     )
@@ -515,6 +515,7 @@ def test_cpp_slam_adapter_reads_the_direct_child_session_status(
     from localization.adapters.status import CppSlamStatusAdapterModule
 
     monkeypatch.delenv("LINGTU_SLAM_STATUS_JSON", raising=False)
+    monkeypatch.setenv("LINGTU_ENV", "sim")
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
 
     adapter = CppSlamStatusAdapterModule()
@@ -522,6 +523,47 @@ def test_cpp_slam_adapter_reads_the_direct_child_session_status(
     assert adapter.health()["status_snapshot_path"] == str(
         tmp_path / "slam.status.json"
     )
+
+
+@pytest.mark.parametrize("environment", ("real", None))
+def test_cpp_slam_adapter_keeps_field_status_path_with_session_root(
+    tmp_path,
+    monkeypatch,
+    environment,
+) -> None:
+    from localization.adapters.status import CppSlamStatusAdapterModule
+
+    monkeypatch.delenv("LINGTU_SLAM_STATUS_JSON", raising=False)
+    monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
+    if environment is None:
+        monkeypatch.delenv("LINGTU_ENV", raising=False)
+    else:
+        monkeypatch.setenv("LINGTU_ENV", environment)
+
+    adapter = CppSlamStatusAdapterModule()
+
+    assert adapter.health()["status_snapshot_path"] == "/tmp/lingtu_slam_status.json"
+
+
+@pytest.mark.parametrize("environment", ("real", "sim"))
+def test_cpp_slam_adapter_explicit_status_paths_override_env_defaults(
+    tmp_path,
+    monkeypatch,
+    environment,
+) -> None:
+    from localization.adapters.status import CppSlamStatusAdapterModule
+
+    configured_path = str(tmp_path / "configured.status.json")
+    argument_path = str(tmp_path / "argument.status.json")
+    monkeypatch.setenv("LINGTU_ENV", environment)
+    monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path / "session"))
+    monkeypatch.setenv("LINGTU_SLAM_STATUS_JSON", configured_path)
+
+    configured_adapter = CppSlamStatusAdapterModule()
+    argument_adapter = CppSlamStatusAdapterModule(status_snapshot_path=argument_path)
+
+    assert configured_adapter.health()["status_snapshot_path"] == configured_path
+    assert argument_adapter.health()["status_snapshot_path"] == argument_path
 
 
 def test_slam_stack_requires_external_native_adapter() -> None:
@@ -675,7 +717,7 @@ def test_slam_cpp_build_declares_native_dds_runtime() -> None:
     assert "last_track_against_map_scan_s" in cyclone_runtime
     assert "lingtu::message::kTf.dds_topic.data()" in cyclone_runtime
     assert "lingtu::message::kTfStatic.dds_topic.data()" not in cyclone_runtime
-    assert '#include "message/cpp/qos.hpp"' in cyclone_runtime
+    assert '#include "transport/dds/qos.hpp"' in cyclone_runtime
     assert "using lingtu::dds::QosProfile" in cyclone_runtime
     assert "using lingtu::dds::make_qos" in cyclone_runtime
     assert "QosProfile::RawLidarStream" in cyclone_runtime
@@ -685,7 +727,7 @@ def test_slam_cpp_build_declares_native_dds_runtime() -> None:
     assert "QosProfile::LocalizationHealth" in cyclone_runtime
     assert "QosProfile::LidarPointcloud" in cyclone_runtime
     assert "lingtu_dds_contracts" in cmake
-    assert '#include "message/cpp/qos.hpp"' in sdk2_dds
+    assert '#include "transport/dds/qos.hpp"' in sdk2_dds
     assert "qos_for_topic(lingtu::message::kLidarRawFrame.dds_topic)" in sdk2_dds
     assert "qos_for_topic(lingtu::message::kLidarRawPacket.dds_topic)" in sdk2_dds
     assert "make_qos(lingtu::dds::QosProfile::SensorStream)" in sdk2_dds
@@ -720,8 +762,8 @@ def test_native_slam_product_binary_names_hide_transport_details() -> None:
         Path("scripts/deploy/thunder/run_slam_dds.sh"),
         Path("scripts/deploy/thunder/lt-slam.service"),
         Path("src/runtime/service_catalogs/thunder.py"),
-        Path("config/runtime_graph/acceptance/mujoco_native_navigation_acceptance.json"),
-        Path("config/runtime_graph/acceptance/mujoco_teleop_avoid_native_acceptance.json"),
+        Path("config/acceptance/mujoco/navigation.json"),
+        Path("config/acceptance/mujoco/teleop_avoid.json"),
     )
     combined = "\n".join(path.read_text(encoding="utf-8") for path in product_surfaces)
 
@@ -732,9 +774,9 @@ def test_native_slam_product_binary_names_hide_transport_details() -> None:
 
 
 def test_slam_relocalization_has_typed_dds_request_reply_contract() -> None:
-    idl = Path("src/message/idl/messages.idl").read_text(encoding="utf-8")
-    topics = Path("src/message/cpp/topics.hpp").read_text(encoding="utf-8")
-    runtime_topics = Path("src/runtime/runtime_interface.py").read_text(encoding="utf-8")
+    idl = Path("src/message/idl/localization.idl").read_text(encoding="utf-8")
+    topics = Path("src/message/generated/topics.hpp").read_text(encoding="utf-8")
+    runtime_topics = Path("src/diagnostics/runtime_contract.py").read_text(encoding="utf-8")
     cyclone_runtime = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(encoding="utf-8")
     slam_control = Path("src/localization/slam/cpp/slam_control.cpp").read_text(encoding="utf-8")
 
@@ -767,7 +809,9 @@ def test_slam_relocalization_has_typed_dds_request_reply_contract() -> None:
     assert "restart_track_against_map" in cyclone_runtime
     assert "--track-against-map-period-s" in cyclone_runtime
     assert "registered_cloud_stale" in cyclone_runtime
-    assert "backend->startRelocalizeAsync(track_against_map_seed)" in cyclone_runtime
+    assert "backend->startRelocalizeAsync(" in cyclone_runtime
+    assert "track_against_map_failures >= kTrackAgainstMapDegradedFailureCount" in cyclone_runtime
+    assert "? RelocalizationSearch::Global" in cyclone_runtime
     assert "backend->pollRelocalizeAsync()" in cyclone_runtime
     assert "backend->relocalize(track_against_map_seed)" not in cyclone_runtime
 
@@ -797,7 +841,7 @@ def test_relocalization_response_preserves_overlap_evidence_across_boundaries() 
         "double refine_support_ratio;",
         "double refine_overlap_inlier_ratio;",
     ]
-    idl = Path("src/message/idl/messages.idl").read_text(encoding="utf-8")
+    idl = Path("src/message/idl/localization.idl").read_text(encoding="utf-8")
     response_struct = idl.split("struct RelocalizationResponse {", 1)[1].split(
         "};", 1
     )[0]
@@ -814,6 +858,31 @@ def test_relocalization_response_preserves_overlap_evidence_across_boundaries() 
         assert f"response.{field_name}" in slam_control
 
 
+def test_slam_global_fallback_preserves_search_intent_and_commit_gates() -> None:
+    runtime = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(encoding="utf-8")
+    fastlio = Path("src/localization/slam/cpp/fastlio.cpp").read_text(encoding="utf-8")
+
+    synchronous = runtime.split("command_status = backend->relocalize(", 1)[1].split(";", 1)[0]
+    assert 'action == "global_relocalize"' in synchronous
+    assert "RelocalizationSearch::Global" in synchronous
+    periodic = runtime.split("backend->startRelocalizeAsync(", 1)[1].split(";", 1)[0]
+    assert "track_against_map_failures >= kTrackAgainstMapDegradedFailureCount" in periodic
+    assert "RelocalizationSearch::Global" in periodic
+    assert "RelocalizationSearch::Automatic" in periodic
+
+    for method, following in (
+        ("Status relocalize(", "Status startRelocalizeAsync("),
+        ("Status startRelocalizeAsync(", "std::optional<Status> pollRelocalizeAsync()"),
+    ):
+        body = fastlio.split(method, 1)[1].split(following, 1)[0]
+        assert "effective_guess = global_search ? std::nullopt : guess" in body
+        assert "if (!global_search && !effective_guess.has_value()" in body
+        assert "(search == RelocalizationSearch::Global || !guess.has_value())" in body
+        assert "has_map_odom_pose_ && odometry_odom_body_.has_value()" in body
+    assert "*odometry_odom_body_, map_alignment_update)" in fastlio
+    assert "odom_body, map_alignment_update)" in fastlio
+
+
 def test_native_relocalization_uses_map_icp_with_generation_guard() -> None:
     native_relocalizer = Path("src/localization/slam/cpp/native_relocalizer.cpp").read_text(encoding="utf-8")
     map_icp_header = Path("src/localization/slam/cpp/map_icp.hpp").read_text(encoding="utf-8")
@@ -828,7 +897,9 @@ def test_native_relocalization_uses_map_icp_with_generation_guard() -> None:
     seeded_body = native_relocalizer.split("NativeRelocalizationResult NativeRelocalizer::relocalize(", 1)[1].split(
         "NativeRelocalizationResult NativeRelocalizer::globalRelocalize(", 1
     )[0]
-    assert "map_icp.refine(" not in seeded_body
+    assert "const MapIcpResult icp_result = refine_prediction" in seeded_body
+    assert "? impl_->map_icp.refine(scan, guess, map_generation)" in seeded_body
+    assert ": impl_->map_icp.verifySeed(scan, guess, map_generation)" in seeded_body
     assert "map_icp.refine(scan, coarse.pose, map_generation)" in native_relocalizer
     assert "native_relocalizer_map_generation_mismatch" in native_relocalizer
     assert "native_global_relocalizer_map_generation_mismatch" in native_relocalizer
@@ -855,7 +926,7 @@ def test_native_relocalization_uses_map_icp_with_generation_guard() -> None:
 
 
 def test_cpp_message_topic_contract_stays_ros_free() -> None:
-    header = Path("src/message/cpp/topics.hpp").read_text(encoding="utf-8")
+    header = Path("src/message/generated/topics.hpp").read_text(encoding="utf-8")
 
     forbidden = (
         "rclcpp",

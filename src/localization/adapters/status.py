@@ -13,28 +13,20 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from message.topics import TOPICS
 from runtime.backend_status import BackendStatus
 from runtime.contracts.localization import degeneracy_level
 from runtime.module import Module
-from runtime.msgs.geometry import Pose, Quaternion, Transform, Vector3
+from runtime.msgs.geometry import Pose, Quaternion, Transform, Twist, Vector3
 from runtime.msgs.gnss import GnssOdom
 from runtime.msgs.map import MapCloudFrame, MapObservationFrame
 from runtime.msgs.nav import Odometry
 from runtime.msgs.sensor import Imu, PointCloud2
 from runtime.registry import register
-from runtime.runtime_interface import (
-    TOPICS,
-    body_frame_id,
-    map_frame_id,
-    odom_frame_id,
-    topic_default_frame_id,
-)
 from runtime.stream import In, Out
-from runtime.tf import (
-    FrameTree,
-    map_from_odom_transform_from_mapping,
-    map_from_odom_transform_to_dict,
-)
+from runtime.tf.conversions import map_from_odom_transform_from_mapping, map_from_odom_transform_to_dict
+from runtime.tf.frames import body_frame_id, map_frame_id, odom_frame_id, topic_default_frame_id
+from runtime.tf.tree import FrameTree
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +85,7 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         session_root = str(os.environ.get("LINGTU_SESSION_ROOT") or "").strip()
         session_status = (
             str(Path(session_root) / "slam.status.json")
-            if session_root
+            if session_root and os.environ.get("LINGTU_ENV", "").strip() == "sim"
             else DEFAULT_STATUS_SNAPSHOT_PATH
         )
         self._status_snapshot_path = str(
@@ -339,6 +331,7 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             "observation_sequence": _int(payload.get("observation_sequence")),
             "map_points": _int(payload.get("map_points")),
             "saved_map_points": _int(payload.get("saved_map_points")),
+            "global_mapping": dict(payload.get("global_mapping") or {}),
             "registered_cloud_frame_id": str(payload.get("registered_cloud_frame_id") or ""),
             "map_cloud_frame_id": str(payload.get("map_cloud_frame_id") or ""),
             "saved_map_cloud_frame_id": str(payload.get("saved_map_cloud_frame_id") or ""),
@@ -871,6 +864,20 @@ def _odometry_from_status_snapshot(payload: Mapping[str, Any]) -> Odometry | Non
     raw_pose = raw_odom.get("pose") if isinstance(raw_odom, Mapping) else None
     if not isinstance(raw_odom, Mapping) or not isinstance(raw_pose, Mapping):
         return None
+    orientation = Quaternion(
+        _float(raw_pose.get("qx"), 0.0),
+        _float(raw_pose.get("qy"), 0.0),
+        _float(raw_pose.get("qz"), 0.0),
+        _float(raw_pose.get("qw"), 1.0),
+    )
+    linear = Vector3()
+    velocity = payload.get("fastlio_velocity")
+    if isinstance(velocity, Mapping):
+        # Fast-LIO reports odom-frame linear velocity; Twist uses child/body axes.
+        # Use the matching odom pose, before applying map alignment.
+        linear = orientation.normalize().conjugate().rotate_vector(
+            Vector3(*(float(velocity[axis]) for axis in ("x", "y", "z")))
+        )
     return Odometry(
         pose=Pose(
             position=Vector3(
@@ -878,13 +885,9 @@ def _odometry_from_status_snapshot(payload: Mapping[str, Any]) -> Odometry | Non
                 _float(raw_pose.get("y"), 0.0),
                 _float(raw_pose.get("z"), 0.0),
             ),
-            orientation=Quaternion(
-                _float(raw_pose.get("qx"), 0.0),
-                _float(raw_pose.get("qy"), 0.0),
-                _float(raw_pose.get("qz"), 0.0),
-                _float(raw_pose.get("qw"), 1.0),
-            ),
+            orientation=orientation,
         ),
+        twist=Twist(linear=linear),
         ts=_float(payload.get("stamp_s"), 0.0),
         frame_id=str(raw_odom.get("frame_id") or topic_default_frame_id(TOPICS.odometry)),
         child_frame_id=str(raw_odom.get("child_frame_id") or body_frame_id()),

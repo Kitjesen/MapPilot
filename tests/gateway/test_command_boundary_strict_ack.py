@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gateway.services.command_boundary import (
+from gateway.navigation.commands import (
     CommandBoundaryError,
     submit_cancel,
     submit_goal,

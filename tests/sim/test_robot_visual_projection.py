@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from sim.catalog import (
     VisualBindingError,
     VisualProjectionError,
@@ -247,18 +246,18 @@ def test_thunder_projection_uses_layered_black_robot_palette() -> None:
 
 
 @pytest.mark.parametrize(
-    ("package_name", "bindings"),
+    ("package_path", "bindings"),
     [
         ("doso/thunder_v4", "checked_in"),
         ("omni_cart", None),
     ],
 )
 def test_checked_in_robot_projections_are_valid_and_byte_identical_when_regenerated(
-    package_name: str,
+    package_path: str,
     bindings: str | None,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[2]
-    package_dir = repo_root / "sim" / "packages" / "robots" / package_name
+    package_dir = repo_root / "sim" / "packages" / "robots" / package_path
     projection_path = package_dir / "visual" / "robot.visual-projection.json"
     checked_in = json.loads(projection_path.read_text(encoding="utf-8"))
     manifest = compile_robot_visual_manifest(package_dir).to_dict()

@@ -477,11 +477,13 @@ PlanResult runPreparedPlanner(
   planner.makePlan(start, goal);
   planner.getPlannerResults(native_path);
   const auto endpoint_resolution = planner.endpointResolution();
+  const auto search_info = planner.searchInfo();
 
   PlanResult result;
   result.options = request.options;
   copyOverlayIdentity(request, result);
-  result.cancelled = cancel_check && cancel_check();
+  result.cancelled = search_info.outcome == global_planner::OctoPlanner3D::SearchInfo::Outcome::Cancelled ||
+                     (cancel_check && cancel_check());
   if (result.cancelled) {
     return cancelledResult(request, started);
   }
@@ -491,6 +493,9 @@ PlanResult runPreparedPlanner(
   }
   if (native_path.empty()) {
     result.failure_reason = endpointResolutionFailureReason(endpoint_resolution);
+    if (search_info.outcome == global_planner::OctoPlanner3D::SearchInfo::Outcome::IterationLimit) {
+      result.failure_reason = "search_iteration_limit";
+    }
   }
   if (!hasAcceptableSameFloorExcursion(request, result.path)) {
     result.failure_reason = "same_floor_z_excursion";
@@ -643,6 +648,40 @@ std::size_t PlannerSession::mapLoadCount() const
 {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   return impl_->map_load_count;
+}
+
+PlanningMapProjection PlannerSession::project(
+  const std::filesystem::path & map_path,
+  const lingtu::nav::plan::MapIdentity & map_identity,
+  const PlannerOptions & options, double reference_z,
+  const CancelCheck & cancel_check)
+{
+  if (map_path.empty() || !map_identity.valid()) {
+    throw std::runtime_error("planning projection requires an active map identity");
+  }
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  const bool map_changed = !impl_->map ||
+    !lingtu::nav::plan::sameMapIdentity(impl_->map_identity, map_identity);
+  if (map_changed) {
+    impl_->map = loadOctomap(map_path.string());
+    impl_->map_identity = map_identity;
+    ++impl_->map_load_count;
+  }
+  if (map_changed || !impl_->planner || !sameOptions(impl_->options, options) ||
+      !impl_->overlay.empty()) {
+    auto planner = std::make_unique<global_planner::OctoPlanner3D>();
+    planner->setConfig(plannerConfig(options));
+    planner->setOctomap(impl_->map);
+    impl_->planner = std::move(planner);
+    impl_->options = options;
+    impl_->overlay = {};
+    ++impl_->prepare_count;
+  }
+  impl_->planner->setCancelCheck(cancel_check);
+  auto slice = impl_->planner->projectPlanningSlice(reference_z);
+  return {slice.available, std::move(slice.reason), map_identity, slice.resolution,
+          slice.rows, slice.cols, {slice.origin.x, slice.origin.y, slice.origin.z},
+          slice.reference_z, std::move(slice.cells)};
 }
 
 std::size_t PlannerSession::prepareCount() const

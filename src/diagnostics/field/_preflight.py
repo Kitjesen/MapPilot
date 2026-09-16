@@ -35,7 +35,7 @@ def status_entry(snapshot: Mapping[str, Any], name: str) -> tuple[Mapping[str, A
 
 def native_environment(current_run: Mapping[str, Any]) -> Mapping[str, Any]:
     run_plan = mapping(current_run.get("run_plan"))
-    return mapping(mapping(run_plan.get("launch")).get("native_process_environment"))
+    return mapping(mapping(run_plan.get("launch")).get("process_environment"))
 
 
 def target_host(value: Any) -> str:

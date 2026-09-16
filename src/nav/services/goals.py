@@ -23,7 +23,7 @@ from runtime.msgs import (
 )
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.registry import register
-from runtime.runtime_interface import map_frame_id, normalize_frame_id
+from runtime.tf.frames import map_frame_id, normalize_frame_id
 
 logger = logging.getLogger(__name__)
 
@@ -322,6 +322,8 @@ class GoalService(Module, layer=6):
         task_id: str | None = None,
         request_id: str | None = None,
         action: str = "goal_pose",
+        max_speed_mps: float | None = None,
+        acceptance_radius_m: float | None = None,
     ) -> dict[str, Any]:
         """Validate and synchronously admit one typed goal."""
 
@@ -347,6 +349,14 @@ class GoalService(Module, layer=6):
         frame_id = frame_id or self._planning_frame_id
         try:
             normalized_goal, target = self._normalize_goal(goal, frame_id=frame_id)
+            limits = {}
+            for key, value in (("max_speed_mps", max_speed_mps), ("acceptance_radius_m", acceptance_radius_m)):
+                if value is not None:
+                    value = float(value)
+                    if not math.isfinite(value) or value <= 0:
+                        raise ValueError(f"{key} must be positive and finite")
+                    limits[key] = value
+            target.update(limits)
         except (AttributeError, TypeError, ValueError) as exc:
             return self._publish_status(
                 action,
@@ -396,6 +406,7 @@ class GoalService(Module, layer=6):
         dispatch_result = self._dispatch_goal(
             normalized_goal,
             yaw=target["yaw"],
+            limits=limits,
             task_id=resolved_task_id,
             request_id=resolved_request_id,
         )
@@ -726,6 +737,7 @@ class GoalService(Module, layer=6):
         goal: PoseStamped,
         *,
         yaw: float | None,
+        limits: dict[str, float],
         task_id: str,
         request_id: str,
     ) -> NavigationCommandReceipt | str | None:
@@ -736,6 +748,7 @@ class GoalService(Module, layer=6):
                 y=goal.y,
                 z=goal.z,
                 yaw=yaw,
+                **limits,
                 task_id=task_id,
                 request_id=request_id,
             )

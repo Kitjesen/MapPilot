@@ -4,7 +4,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SMOKE_SCRIPT = ROOT / "tools" / "bench" / "camera_lidar_optimizer_abi_smoke.py"
 

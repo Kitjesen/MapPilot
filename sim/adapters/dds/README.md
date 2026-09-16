@@ -42,6 +42,14 @@ publish odometry prior, registered cloud, TF, and localization-health fixture
 data. Those are simulation truth inputs for native navigation acceptance; they
 are not physical sensor mocks and must not be presented as SLAM output.
 
+MuJoCo truth navigation sends LTU1 record type 7 for registered clouds: three
+little-endian doubles containing the scan-time LiDAR origin in world coordinates,
+followed by `count` 24-byte point records in the body frame. The DDS observation
+keeps `map_sensor` as the body-point transform and uses the separate origin for
+ray clearing. The origin comes from the same raycast snapshot as the points;
+it must not be replaced with the body position when the sensor has a mount offset.
+Type 4 remains the existing body-origin fixture/recording format.
+
 The Product control path uses `lingtu_mujoco_driver_bridge`. It reads the same
 typed `FinalVelocityCommand` as the real driver, applies the real native driver
 normalization/freshness/writer-gate rules, and sends a versioned controller

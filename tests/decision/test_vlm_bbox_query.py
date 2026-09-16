@@ -4,7 +4,6 @@ import asyncio
 from unittest import mock
 
 import decision.vision.vlm_bbox as vlm_bbox
-
 from decision.vision.vlm_bbox import (
     _build_bbox_prompt,
     _extract_bbox_from_response,

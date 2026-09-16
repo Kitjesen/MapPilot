@@ -1,4 +1,5 @@
 #include "navigation/recovery.hpp"
+#include "planning/local/scan/grid.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -51,7 +52,10 @@ nav_kernel::RecoveryPlannerParams recoveryPlannerParams(
   recovery.obstacleHeightThreshold = params.obstacleHeightThre;
   recovery.useTerrainAnalysis = params.useTerrainAnalysis;
   recovery.checkObstacles = params.checkObstacle;
-  recovery.requireTraversability = params.useTraversabilityCost;
+  // SCAN consumes the 3D collision map. Its map-frame requests deliberately
+  // omit the odom-only 2D traversability view, just like normal SCAN planning.
+  recovery.requireTraversability =
+      params.backend != nav_kernel::LocalPlannerBackend::Scan && params.useTraversabilityCost;
   recovery.traversabilityHardCost = params.traversabilityHardCost;
 
   const double configured_range =
@@ -148,6 +152,8 @@ class Recovery::Impl {
                 safetyFailureName(candidate.safetyFailure);
       if (cycle_count_ >= max_attempts) {
         markExhausted(output, reason_ + "_exhausted");
+      } else {
+        output.observation_refresh_required = true;
       }
       populate(output);
       return output;
@@ -210,13 +216,13 @@ class Recovery::Impl {
   bool prepareInput(const nav_kernel::LocalPlanRequest& request,
                     double* goal_direction_body_rad,
                     std::string* failure_reason) {
+    collision_grid_.reset();
     obstacle_x_.clear();
     obstacle_y_.clear();
     obstacle_height_.clear();
     const nav_kernel::LocalRouteView* route = request.route();
     const bool collision_authoritative =
-        params_.backend == nav_kernel::LocalPlannerBackend::Scan &&
-        request.environment.collision.present();
+        params_.backend == nav_kernel::LocalPlannerBackend::Scan;
 
     if (route == nullptr || !route->valid() ||
         !finitePoint(request.robot.pose.position) ||
@@ -284,31 +290,14 @@ class Recovery::Impl {
         if (!validateCollisionMap(request, obstacle_range, failure_reason)) {
           return false;
         }
-        const double min_relative_z =
-            params_.backend == nav_kernel::LocalPlannerBackend::Scan
-                ? -std::max(0.0, params_.scan.bodyClearanceBelow)
-                : params_.minRelZ;
-        const double max_relative_z =
-            params_.backend == nav_kernel::LocalPlannerBackend::Scan
-                ? std::max(0.0, params_.scan.bodyClearanceAbove)
-                : params_.maxRelZ;
-        const double occupied_height =
-            std::max(0.0, params_.obstacleHeightThre);
-        const auto& collision = request.environment.collision;
-        for (std::size_t index = 0; index < collision.cellCount(); ++index) {
-          if (!collision.occupiedLinear(index)) {
-            continue;
-          }
-          const nav_kernel::Vec3 point = collision.planningCellCenter(index);
-          const double relative_z =
-              point.z - request.robot.pose.position.z;
-          if (relative_z < min_relative_z || relative_z > max_relative_z) {
-            continue;
-          }
-          if (!append_planning_obstacle(point.x, point.y, occupied_height)) {
-            *failure_reason = "recovery_collision_map_nonfinite";
-            return false;
-          }
+        // Mapd already applied the cylinder radius and vertical clearance.
+        // Keep the 3D view instead of projecting and inflating it a second time.
+        auto collision_request = request;
+        collision_request.objective = nav_kernel::RouteTarget{*route};
+        collision_grid_.emplace(params_, collision_request);
+        if (!collision_grid_->valid()) {
+          *failure_reason = "recovery_" + collision_grid_->reason();
+          return false;
         }
       }
     }
@@ -350,7 +339,7 @@ class Recovery::Impl {
             : collision.stampS;
     const double age = request.clock.timestampS - freshness_stamp;
     if (!std::isfinite(age) || age < -0.10 ||
-        age > std::max(0.10, params_.scan.collisionMaxAge)) {
+        age > params_.localCollisionMaxAge) {
       *failure_reason = "recovery_collision_map_stale";
       return false;
     }
@@ -392,13 +381,15 @@ class Recovery::Impl {
       double goal_direction_body_rad) const {
     nav_kernel::RecoveryPlannerInput recovery;
     recovery.vehiclePose = request.robot.pose;
+    recovery.collisionGrid = collision_grid_ ? &*collision_grid_ : nullptr;
     if (!obstacle_x_.empty()) {
       recovery.obstacleX = obstacle_x_.data();
       recovery.obstacleY = obstacle_y_.data();
       recovery.obstacleHeight = obstacle_height_.data();
       recovery.obstacleCount = static_cast<int>(obstacle_x_.size());
     }
-    if (request.environment.traversability.valid()) {
+    if (params_.backend != nav_kernel::LocalPlannerBackend::Scan &&
+        request.environment.traversability.valid()) {
       recovery.traversabilityGrid = request.environment.traversability.values;
       recovery.traversabilityRows = request.environment.traversability.rows;
       recovery.traversabilityCols = request.environment.traversability.cols;
@@ -647,10 +638,11 @@ class Recovery::Impl {
       const double cross_track_limit = std::max(
           0.20,
           0.5 * params_.vehicleWidth + params_.footprintPadding);
-      const double observed_progress =
-          projection.cross_track_distance <= cross_track_limit
-              ? projection.progress
-              : last_progress_;
+      if (projection.cross_track_distance > cross_track_limit) {
+        *failure_reason = "recovery_translation_off_path";
+        return Update::Failed;
+      }
+      const double observed_progress = projection.progress;
       if (observed_progress > last_progress_ + 0.01) {
         last_progress_ = observed_progress;
         last_progress_time_ = request.clock.timestampS;
@@ -658,7 +650,9 @@ class Recovery::Impl {
 
       const double completion_distance =
           std::max(0.08, planner_.params().latticeResolution * 1.25);
-      if (path_length_ - projection.along_distance <= completion_distance) {
+      if (path_length_ - projection.along_distance <= completion_distance &&
+          nav_kernel::distance2D(request.robot.pose.position, world_path_.back()) <=
+              completion_distance) {
         output.observation_refresh_required = true;
         finish(request.clock.timestampS, "recovery_translation_complete");
         return Update::Completed;
@@ -741,6 +735,7 @@ class Recovery::Impl {
   nav_kernel::LocalPlannerParams params_;
   RecoveryConfig config_;
   nav_kernel::RecoveryPlanner planner_;
+  std::optional<nav_kernel::local::scan::Grid> collision_grid_;
   std::vector<float> obstacle_x_;
   std::vector<float> obstacle_y_;
   std::vector<float> obstacle_height_;

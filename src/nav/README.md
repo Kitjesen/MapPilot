@@ -78,14 +78,39 @@ planning contract below.
   tracker handoff is a direct C++ call inside `navd`.
 - Only the driver forwards the final checked command to robot hardware.
 
+SCAN recovery uses the same inflated 3-D collision bitmap and cylinder chain
+as SCAN planning, without projecting and inflating it again. The `nav` Product
+allows up to three recovery attempts. A straight translation may leave an
+initially occupied boundary cell only when both cylinder traces enter no other
+occupied cell and end in free space. Final command checks restrict that exit
+to a verified, slow translation with no commanded rotation, and reject measured
+motion directed into another occupied cell. Simulation receive
+times are rebased at the endpoint before comparing map freshness with execution
+time. Recovery motion does not demonstrate stair-climbing capability.
+
+The 4998 controller currently used in MuJoCo has a measured low-speed lateral
+tracking limitation: a 0.15 m/s lateral command produced almost no steady lateral
+motion in an isolated flat-ground probe, whereas 0.30 m/s tracked about 0.285 m/s.
+Finding a collision-free recovery path therefore does not prove that this policy
+can execute it. See the recorded physical runs in
+`artifacts/mujoco-stair-side-exit-2026-09-09/report.md`; do not raise a checked
+command after arbitration to compensate for this limitation.
+
+A subsequent simulation at the recorded stair-side position completed recovery,
+ground navigation, and stopping with a 0.30 m/s recovery limit and 2.0 m/s²
+follower acceleration, while retaining 0.5 m/s² for SCAN and braking checks.
+The boundary-exit gate now consumes the configured recovery limit and requires
+the reaction-plus-braking distance to fit its checked exit. Defaults remain
+unchanged; the single successful trial and its unsuccessful controls are recorded
+in `artifacts/mujoco-faster-recovery-2026-09-09/report.md`.
+
 ## References
 
 - [Short file index](FILES.md)
 - [Native navigation](cpp/README.md)
 - [Native endpoint](cpp/endpoint/README.md)
-- [Global planning contract](../../docs/architecture/GLOBAL_PLANNING_CONTRACT.md)
-- [Local planning and tracking contract](../../docs/architecture/LOCAL_PLANNING_AND_TRACKING_CONTRACT.md)
-- [Runtime data flow](../../docs/architecture/NAVIGATION_RUNTIME_DATAFLOW.md)
+- [Architecture and ownership](../../docs/architecture.md)
+- [Product runtime and native dataflow](../../docs/runtime.md)
 
 ## Verification
 

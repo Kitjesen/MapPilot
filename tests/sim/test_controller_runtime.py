@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 import json
 from copy import deepcopy
@@ -6,7 +5,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from sim.runtime.control import (
     CommandSubmitResult,
     ControllerCommand,

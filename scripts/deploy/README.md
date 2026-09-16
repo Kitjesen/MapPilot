@@ -6,27 +6,37 @@ assets. Product startup remains owned by ProductControl.
 ## Main commands
 
 ```bash
-# Build and deploy one Product to the configured robot
+# Product-scoped checkout build and activation; not a release-package input
 bash scripts/deploy/deploy_robot.sh teleop_avoid
 
 # Install current Thunder services
 bash scripts/deploy/thunder/install_services.sh field-cpp
 
-# Package or install a native release
+# Build the complete native release set, then package it
+LINGTU_DRIVER_BACKEND=<go2-or-doso> make build BUILD_TYPE=Release
 bash scripts/deploy/package_native_release.sh <version> <output-dir>
-bash scripts/deploy/install_native_release.sh --package-dir <release-dir>
 
-# Deploy one Product and package the resulting checkout
-bash scripts/deploy/deploy_robot.sh <product>
-bash scripts/deploy/package_native_release.sh <version> <output-dir>
+# Install an extracted native release
+bash scripts/deploy/install_native_release.sh --package-dir <release-dir>
 ```
 
-The packager consumes one standard prefix at
-`install/linux-<arch>/<config>/{bin,lib,etc,share}`. Set
-`LINGTU_NATIVE_RELEASE_INSTALL_SOURCE` only when CI provides an equivalent
-pre-staged prefix. Phase-one releases also carry the former `build/` layout for
-rollback compatibility, but current services use `/opt/lingtu/current/bin`
-and `/opt/lingtu/current/lib`.
+By default, the packager installs the complete `build/` input set into
+`install/linux-<arch>/<config>/{bin,lib,etc,share}` before assembling the
+archive. Set `LINGTU_NATIVE_RELEASE_INSTALL_SOURCE` only when CI provides an
+equivalent pre-staged prefix. A Product-scoped `deploy_robot.sh` build is not a
+complete packager input. Phase-one releases also carry the former `build/`
+layout for rollback compatibility, but current services use
+`/opt/lingtu/current/bin` and `/opt/lingtu/current/lib`.
+
+Roll out the path change in order: activate one dual-layout release while the
+old units are still installed; activate the next dual-layout release so the
+first becomes its rollback target; then run `install_services.sh` to install
+the canonical units. The installer accepts only a dual-layout `current` tree.
+Remove the packaged `build/` copy only after that rollback window closes.
+
+`package_native_release.sh` is the Linux field-release packager. Windows x64
+uses the same CMake install rules with a prefix such as
+`install/windows-x64/Release`; it is not assembled by this Linux OTA script.
 
 For a Go2 real target, `deploy_robot.sh` first applies the
 `driver.network_interface` and `driver.network_address` from RobotConfig through
@@ -59,5 +69,5 @@ Installing services does not start a Product.
 `99-lingtu-orbbec-gemini335.rules` is the minimal USB permission rule installed
 by `tools/robot/setup_network.sh --permanent` for the field camera.
 
-Release runbooks live under `docs/04-deployment/`; developer-only sync and
+The release runbook is `docs/operations.md`; developer-only sync and
 network utilities live under `tools/`.

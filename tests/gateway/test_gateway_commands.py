@@ -143,9 +143,12 @@ def _mark_navigation_ready(gateway) -> None:
         "active_map": None,
     }
     gateway._icp_quality = 0.03
+    now = time.time()
     with gateway._state_lock:
-        gateway._odom = {"x": 0.0, "y": 0.0, "z": 0.0, "ts": time.time()}
+        gateway._odom = {"x": 0.0, "y": 0.0, "z": 0.0, "ts": now}
+        gateway._odom_timestamps.append(now)
         gateway._navigation_state = {
+            "ts": now,
             "lifecycle_state_name": "IDLE",
             "authority": "none",
         }
@@ -319,7 +322,7 @@ def test_navigation_goal_requests_are_map_frame_only():
     with pytest.raises(ValidationError):
         GoalRequest(x=float("nan"), y=2.0)
 
-    from gateway.services.goal_builder import construct_goal_from_request
+    from gateway.navigation.goals import construct_goal_from_request
 
     clicked = construct_goal_from_request(
         ClickNavRequest(x=1.0, y=2.0),
@@ -329,6 +332,20 @@ def test_navigation_goal_requests_are_map_frame_only():
     assert clicked.yaw is None
     orientation = clicked.pose_stamped().pose.orientation
     assert (orientation.x, orientation.y, orientation.z, orientation.w) == (0.0, 0.0, 0.0, 0.0)
+
+
+def test_web_map_goal_preserves_optional_heading():
+    from gateway.navigation.goals import construct_goal_from_request
+    from gateway.schemas import GoalRequest
+
+    body = GoalRequest(x=1.0, y=2.0, source="map_click", target_type="map_point")
+    clicked = construct_goal_from_request(body)
+    assert clicked.yaw is None
+    assert clicked.pose_stamped().pose.orientation.w == 0.0
+    for yaw in (0.0, 1.2):
+        explicit = body.model_copy(update={"yaw": yaw})
+        assert construct_goal_from_request(explicit).yaw == yaw
+    assert construct_goal_from_request(GoalRequest(x=1.0, y=2.0)).yaw == 0.0
 
 
 def test_plan_preview_uses_native_navigation_without_readiness_gate():
@@ -862,8 +879,8 @@ def test_navigation_task_cancel_rejection_preserves_target_task_identity():
 
 def test_endpoint_only_goal_fails_closed_when_native_client_is_missing(monkeypatch, tmp_path):
     from gateway.gateway_module import GatewayModule
+    from gateway.navigation import status as runtime_status
     from gateway.schemas import GatewayErrorResponse, GoalRequest
-    from gateway.services import runtime_status
 
     status_file = tmp_path / "nav_endpoint_status.json"
     status_file.write_text(
@@ -896,11 +913,11 @@ def test_endpoint_only_goal_fails_closed_when_native_client_is_missing(monkeypat
     monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "60")
     monkeypatch.setattr(
         runtime_status,
-        "build_navigation_status",
+        "evaluate_navigation_gate",
         lambda _gateway: {
             "can_accept_goal": True,
-            "has_odometry": True,
-            "readiness": {"blockers": [], "advisories": []},
+            "blockers": [],
+            "advisories": [],
         },
     )
 
@@ -1482,7 +1499,7 @@ def test_navigation_resume_releases_takeover_without_replaying_old_motion(
     monkeypatch,
 ):
     from gateway.gateway_module import GatewayModule
-    from gateway.routes import commands
+    from gateway.navigation import routes as commands
     from gateway.schemas import ControlCommandResponse, StopRequest
 
     calls: list[tuple[str, str | None]] = []
@@ -1523,7 +1540,7 @@ def test_navigation_resume_in_teleop_avoid_requires_fresh_operator_command(
     monkeypatch,
 ):
     from gateway.gateway_module import GatewayModule
-    from gateway.routes import commands
+    from gateway.navigation import routes as commands
     from gateway.schemas import StopRequest
 
     monkeypatch.setattr(commands, "native_resume_control", lambda *_args, **_kwargs: True)
@@ -1558,7 +1575,7 @@ def test_navigation_resume_with_unknown_status_does_not_guess_goal_semantics(
     monkeypatch,
 ):
     from gateway.gateway_module import GatewayModule
-    from gateway.routes import commands
+    from gateway.navigation import routes as commands
 
     monkeypatch.setattr(commands, "native_resume_control", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
@@ -1584,7 +1601,7 @@ def test_navigation_resume_with_unknown_status_does_not_guess_goal_semantics(
 
 def test_navigation_resume_uses_authoritative_native_reason(monkeypatch):
     from gateway.gateway_module import GatewayModule
-    from gateway.routes import commands
+    from gateway.navigation import routes as commands
     from runtime.msgs import NavigationCommandKind
 
     monkeypatch.setattr(
@@ -1623,7 +1640,7 @@ def test_navigation_resume_uses_authoritative_native_reason(monkeypatch):
 
 def test_navigation_resume_rejects_missing_local_resume_implementation(monkeypatch):
     from gateway.gateway_module import GatewayModule
-    from gateway.routes import commands
+    from gateway.navigation import routes as commands
 
     monkeypatch.setattr(commands, "native_resume_control", lambda *_args, **_kwargs: False)
     gateway = GatewayModule()
@@ -1640,7 +1657,7 @@ def test_navigation_resume_rejects_missing_local_resume_implementation(monkeypat
 
 def test_active_control_lease_blocks_other_rest_resume_clients(monkeypatch):
     from gateway.gateway_module import GatewayModule
-    from gateway.routes import commands
+    from gateway.navigation import routes as commands
     from gateway.schemas import StopRequest
 
     calls = []

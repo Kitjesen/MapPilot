@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from runtime.runtime_interface import FRAMES
+from runtime.tf.frames import FRAMES
 
 THUNDER_V4_JOINT_NAMES = [
     "FR_hip_joint",
@@ -199,6 +199,6 @@ class RobotConfig:
         cfg = cls()
         cfg.robot_xml = "packages/robots/doso/thunder_v4/mjcf/thunderv4.xml"
         cfg.policy_onnx = (
-            "packages/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx"
+            "packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx"
         )
         return cfg

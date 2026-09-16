@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 """Static design contracts for the UE5 tactical front end.
 
 These checks deliberately inspect the checked-in Slate source.  Runtime authority

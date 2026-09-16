@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from message.topics import TOPICS
 from runtime.contracts import CAMERA_ROLE
-from runtime.runtime_interface import TOPICS
 
 MAP_OBSERVATION_CONSUMERS = (
     "ReconstructionModule",
+    "GatewayModule",
 )
 
 SEMANTIC_CAMERA_CONSUMERS = (

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import math
 import json
+import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
-
 
 _GROUND_NAME_TOKENS = ("ground", "floor", "road", "start_disk", "goal_disk")
 _OVERHEAD_NAME_TOKENS = ("roof", "beam", "pipe", "light")

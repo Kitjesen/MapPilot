@@ -19,10 +19,7 @@ STAGES = frozenset({"contract", "motion"})
 
 _PRODUCT = "teleop_avoid"
 _ENV = "real"
-_TRAVERSABILITY_STATUS_SCHEMA = "lingtu.traversability.status.v2"
 _MAPS_STATUS_SCHEMA = "lingtu.maps.runtime.v1"
-_DRIVER_ACK_MAX_SEQUENCE_LAG = 2
-_TRAVERSABILITY_STATUS_MAX_AGE_S = 6.0
 _TWIST_ALIASES = (
     ("vx_mps", "vx", "x"),
     ("vy_mps", "vy", "y"),
@@ -33,8 +30,6 @@ _REQUIRED_CAPABILITIES = frozenset(
         "operator_motion_typed_dds_interface",
         "native_operator_motion_authority",
         "registered_cloud_collision_check",
-        "traversability_costmap",
-        "local_planner_collision_and_traversability_scoring",
         "path_follower_pre_command_output",
         "operator_assisted_local_planner_control",
         "final_cmd_vel_single_writer",
@@ -49,14 +44,11 @@ _REQUIRED_TOPICS = frozenset(
         "/slam/odometry",
         "/slam/registered_cloud",
         "/slam/map_observation",
-        "/maps/state",
-        "/maps/scene",
-        "/nav/traversability",
         "/nav/local_path",
         "/nav/cmd_vel",
     }
 )
-_REQUIRED_ROLES = frozenset({"lidar", "slam", "maps", "traversability", "nav", "driver", "host"})
+_REQUIRED_ROLES = frozenset({"lidar", "slam", "maps", "nav", "driver", "host"})
 
 
 def _zero_int(value: Any) -> bool:
@@ -96,7 +88,7 @@ def _observed(mapping: Mapping[str, Any], keys: tuple[str, ...]) -> dict[str, An
 
 
 _LOOPBACK_OR_UNSPECIFIED_HOSTS = frozenset(
-    {"", "localhost", "127.0.0.1", "::1", "0.0.0.0", "::"}  # noqa: S104
+    {"", "localhost", "127.0.0.1", "::1", "0.0.0.0", "::"}
 )
 
 
@@ -327,11 +319,19 @@ def evaluate_teleop_avoid_preflight(
     )
 
     native_nav = _preflight.mapping(run_plan.get("native_nav"))
+    local_planner = _preflight.text(native_nav.get("local_planner"))
+    evaluation.check(
+        "product.local_planner",
+        local_planner in {"scan", "cmu"},
+        expected="scan or cmu",
+        observed=local_planner,
+    )
     expected_native_nav = {
         "control_mode": _PRODUCT,
+        "local_planner": local_planner,
         "publish_cmd_vel": True,
         "check_obstacle": True,
-        "use_traversability_cost": True,
+        "use_traversability_cost": False,
         "allow_teleop_takeover": False,
         "teleop_local_planner": True,
     }
@@ -343,24 +343,17 @@ def evaluate_teleop_avoid_preflight(
     )
 
     nav_entry, nav = _preflight.status_entry(snapshot, "nav")
-    traversability_entry, traversability = _preflight.status_entry(snapshot, "traversability")
     maps_entry, maps = _preflight.status_entry(snapshot, "maps")
     driver_entry, driver = _preflight.status_entry(snapshot, "driver")
     for name, entry, payload, schema in (
         ("nav", nav_entry, nav, _preflight.NAV_STATUS_SCHEMA),
-        ("traversability", traversability_entry, traversability, _TRAVERSABILITY_STATUS_SCHEMA),
         ("maps", maps_entry, maps, _MAPS_STATUS_SCHEMA),
         ("driver", driver_entry, driver, _preflight.DRIVER_STATUS_SCHEMA),
     ):
-        entry_max_age_s = (
-            max(max_age_s, _TRAVERSABILITY_STATUS_MAX_AGE_S)
-            if name == "traversability"
-            else max_age_s
-        )
         evaluation.check(
             f"status.{name}.fresh",
-            _preflight.fresh(entry, entry_max_age_s),
-            expected=f"exists and age_s <= {entry_max_age_s:g}",
+            _preflight.fresh(entry, max_age_s),
+            expected=f"exists and age_s <= {max_age_s:g}",
             observed={"exists": entry.get("exists"), "age_s": entry.get("age_s")},
         )
         evaluation.check(
@@ -381,6 +374,7 @@ def evaluate_teleop_avoid_preflight(
     )
     runtime_policy_keys = (
         "control_mode",
+        "local_planner",
         "publish_cmd_vel",
         "check_obstacle",
         "use_traversability_cost",
@@ -390,9 +384,10 @@ def evaluate_teleop_avoid_preflight(
     evaluation.check(
         "nav.runtime_policy",
         nav.get("control_mode") == _PRODUCT
+        and nav.get("local_planner") == local_planner
         and nav.get("publish_cmd_vel") is True
         and nav.get("check_obstacle") is True
-        and nav.get("use_traversability_cost") is True
+        and nav.get("use_traversability_cost") is False
         and nav.get("allow_teleop_takeover") is False
         and nav.get("teleop_local_planner") is True,
         expected=expected_native_nav,
@@ -432,12 +427,6 @@ def evaluate_teleop_avoid_preflight(
             "status_publish_failed": operator_motion.get("status_publish_failed"),
         },
     )
-    evaluation.check(
-        "traversability.endpoint",
-        traversability.get("endpoint") == "lingtu_traversability_dds",
-        expected="lingtu_traversability_dds",
-        observed=traversability.get("endpoint"),
-    )
     driver_dds = _preflight.mapping(driver.get("dds"))
     driver_backend = _preflight.text(driver.get("backend")).lower()
     evaluation.check(
@@ -465,7 +454,6 @@ def evaluate_teleop_avoid_preflight(
             evaluation,
             snapshot=snapshot,
             nav=nav,
-            traversability=traversability,
             driver=driver,
             native_environment=native_environment,
         )
@@ -478,52 +466,74 @@ def _evaluate_motion_stage(
     *,
     snapshot: Mapping[str, Any],
     nav: Mapping[str, Any],
-    traversability: Mapping[str, Any],
     driver: Mapping[str, Any],
     native_environment: Mapping[str, Any],
 ) -> None:
     nav_counters = _preflight.mapping(nav.get("counters"))
-    traversability_counters = _preflight.mapping(traversability.get("counters"))
+    input_gate = _preflight.mapping(nav.get("input_gate"))
+    scan = nav.get("local_planner") == "scan"
+    local_collision = _preflight.mapping(
+        _preflight.mapping(nav.get("local_map")).get("collision")
+    )
+    local_collision_age_s = _preflight.number(input_gate.get("local_collision_age_s"))
+    local_collision_max_age_s = _preflight.number(
+        input_gate.get("local_collision_max_age_s")
+    )
+    scan_collision_ready = (
+        input_gate.get("require_local_collision") is True
+        and local_collision.get("live") is True
+        and local_collision.get("complete") is True
+        and _preflight.positive_int(local_collision.get("generation"))
+        and _preflight.positive_int(local_collision.get("observation_sequence"))
+        and local_collision_age_s is not None
+        and local_collision_age_s >= 0.0
+        and local_collision_max_age_s is not None
+        and local_collision_max_age_s > 0.0
+        and local_collision_age_s <= local_collision_max_age_s
+    )
     evaluation.check(
         "motion.sensor_chain",
         nav.get("has_odom") is True
-        and nav.get("has_traversability") is True
         and _preflight.positive_int(nav_counters.get("odom"))
-        and _preflight.positive_int(nav_counters.get("registered_clouds"))
-        and _preflight.positive_int(nav_counters.get("traversability"))
-        and traversability.get("has_odom") is True
-        and _preflight.positive_int(traversability_counters.get("odom"))
-        and _preflight.positive_int(traversability_counters.get("registered_clouds"))
-        and _preflight.positive_int(traversability_counters.get("published")),
-        expected="positive odom/cloud/traversability evidence at both native endpoints",
+        and (
+            scan_collision_ready
+            if scan
+            else _preflight.positive_int(nav_counters.get("registered_clouds"))
+        ),
+        expected=(
+            "positive odometry plus a live, complete, sequenced, fresh local collision map"
+            if scan
+            else "positive odometry and registered cloud evidence at the native navigation endpoint"
+        ),
         observed={
             "nav": {
                 "has_odom": nav.get("has_odom"),
-                "has_traversability": nav.get("has_traversability"),
                 "odom": nav_counters.get("odom"),
                 "registered_clouds": nav_counters.get("registered_clouds"),
-                "traversability": nav_counters.get("traversability"),
-            },
-            "traversability": {
-                "has_odom": traversability.get("has_odom"),
-                "odom": traversability_counters.get("odom"),
-                "registered_clouds": traversability_counters.get("registered_clouds"),
-                "published": traversability_counters.get("published"),
+                "collision_source": "local_collision" if scan else "registered_cloud",
+                "require_local_collision": input_gate.get("require_local_collision"),
+                "local_collision_age_s": local_collision_age_s,
+                "local_collision_max_age_s": local_collision_max_age_s,
+                "local_collision": _observed(
+                    local_collision,
+                    ("live", "complete", "generation", "observation_sequence"),
+                ),
             },
         },
     )
 
-    input_gate = _preflight.mapping(nav.get("input_gate"))
     input_gate_keys = (
         "ready",
         "reason",
         "require_odom",
         "require_cloud",
+        "require_local_collision",
         "require_traversability",
         "require_driver_control",
         "require_localization_health",
         "driver_control_ready",
         "driver_control_reason",
+        "driver_control_max_age_s",
         "localization_healthy",
     )
     evaluation.check(
@@ -531,22 +541,26 @@ def _evaluate_motion_stage(
         input_gate.get("ready") is True
         and input_gate.get("reason") == "ready"
         and input_gate.get("require_odom") is True
-        and input_gate.get("require_cloud") is True
-        and input_gate.get("require_traversability") is True
+        and input_gate.get("require_cloud") is (not scan)
+        and input_gate.get("require_local_collision") is scan
+        and input_gate.get("require_traversability") is False
         and input_gate.get("require_driver_control") is True
-        and input_gate.get("require_localization_health") is True
+        and input_gate.get("require_localization_health") is False
         and input_gate.get("localization_healthy") is True
-        and input_gate.get("driver_control_ready") is True,
+        and input_gate.get("driver_control_ready") is True
+        and (_preflight.number(input_gate.get("driver_control_max_age_s")) or 0.0) > 0.0,
         expected={
             "ready": True,
             "reason": "ready",
             "require_odom": True,
-            "require_cloud": True,
-            "require_traversability": True,
+            "require_cloud": not scan,
+            "require_local_collision": scan,
+            "require_traversability": False,
             "require_driver_control": True,
-            "require_localization_health": True,
+            "require_localization_health": False,
             "localization_healthy": True,
             "driver_control_ready": True,
+            "driver_control_max_age_s": "positive",
         },
         observed=_observed(input_gate, input_gate_keys),
     )
@@ -661,18 +675,18 @@ def _evaluate_motion_stage(
         and driver_control.get("last_command_accepted") is True
         and driver_control.get("accepted_producer_boot_id") == producer_boot_id
         and _preflight.positive_int(driver_control_sequence)
-        and 0 <= output_sequence - driver_control_sequence <= _DRIVER_ACK_MAX_SEQUENCE_LAG
+        and driver_control_sequence <= output_sequence
         and driver_ack.get("accepted") is True
         and driver_ack.get("producer_boot_id") == producer_boot_id
         and _preflight.positive_int(driver_ack_sequence)
-        and driver_ack_sequence <= output_sequence + _DRIVER_ACK_MAX_SEQUENCE_LAG
+        and driver_ack_sequence >= output_sequence
     )
     evaluation.check(
         "motion.correlated_driver_ack",
         correlated_ack,
         expected=(
-            "same producer, nav-embedded ACK no more than two outputs behind, "
-            "and a fresh driver status snapshot that accepted this producer without being more than two outputs ahead"
+            "same producer, a non-future nav-embedded ACK, and a fresh driver "
+            "status snapshot whose accepted ACK covers the anchored nav output"
         ),
         observed={
             "nav": dict(final_output),

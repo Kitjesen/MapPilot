@@ -16,7 +16,7 @@ POWERSHELL = shutil.which("pwsh")
 
 def _run_script(*arguments: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     assert POWERSHELL is not None
-    return subprocess.run(  # noqa: S603 - executes the repository-owned helper.
+    return subprocess.run(
         [POWERSHELL, "-NoProfile", "-File", str(SCRIPT), *arguments],
         cwd=ROOT,
         check=False,
@@ -86,7 +86,7 @@ def test_dependency_preflight_detects_overlap_through_directory_junction(tmp_pat
     actual_root = tmp_path / "actual"
     actual_root.mkdir()
     junction = tmp_path / "junction"
-    subprocess.run(  # noqa: S603 - creates a disposable local junction fixture.
+    subprocess.run(
         [os.environ["ComSpec"], "/d", "/c", "mklink", "/J", str(junction), str(actual_root)],
         check=True,
         capture_output=True,
@@ -143,7 +143,7 @@ def test_dependency_prepare_checks_out_and_installs_exact_target_and_host(
         encoding="utf-8",
     )
     csc = Path("C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe")
-    subprocess.run(  # noqa: S603 - compiles a local deterministic test shim.
+    subprocess.run(
         [str(csc), "/nologo", f"/out:{vcpkg_root / 'vcpkg.exe'}", str(shim_source)],
         check=True,
         capture_output=True,

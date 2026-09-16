@@ -450,6 +450,58 @@ void testInflatedBoundedSnapshotPreservesNearestHazard() {
           "inflated bounded snapshot must retain the nearest obstacle cell");
 }
 
+void testScanHitsKeepPointCountsAndWinOverCrossingRays() {
+  lingtu::nav::endpoint::MotionLayer layer(baseConfig());
+  const lingtu::nav::endpoint::SensorOrigin origin{0.0, 0.0, 0.0, true};
+  const std::vector<float> scan{
+      2.0f, 0.0f, 0.0f, 0.4f,
+      1.01f, 0.0f, 0.0f, 0.4f,
+      1.02f, 0.0f, 0.0f, 0.7f,
+      1.03f, 0.0f, 0.0f, 0.5f,
+  };
+  for (int frame = 0; frame < 3; ++frame) {
+    const double stamp = 1.0 + 0.1 * frame;
+    layer.updateFromScan(origin, scan, stamp);
+    const auto hit = layer.query(1.01f, 0.0f, 0.0f, stamp);
+    require(hit.hits == 3 * (frame + 1) &&
+                hit.hit_frames == static_cast<std::uint32_t>(frame + 1),
+            "same-voxel points must each count as hits but only one observation frame");
+    require(hit.x == 1.02f && hit.height == 0.7f,
+            "the highest hit must remain the voxel representative");
+    require(hit.free_frames == 0 && hit.last_free_s < 0.0,
+            "another endpoint's ray must not clear a current hit");
+    require(hit.state == (frame == 2 ? lingtu::nav::endpoint::MotionCellState::Static
+                                     : lingtu::nav::endpoint::MotionCellState::Occupied),
+            "static confirmation must advance once per scan");
+  }
+}
+
+void testBoundedSnapshotReranksAfterSensorMoves() {
+  auto cfg = baseConfig();
+  cfg.ray_clearing_enabled = false;
+  lingtu::nav::endpoint::MotionLayer layer(cfg);
+  const std::vector<float> points{
+      10.0f, -4.0f, 1.0f, 0.2f,
+      12.0f, -4.0f, 1.0f, 0.4f,
+      14.0f, -4.0f, 1.0f, 0.6f,
+      16.0f, -4.0f, 1.0f, 0.8f,
+      10.0f, -4.0f, 9.0f, 1.0f,
+  };
+  layer.updateFromScan({9.0, -4.0, 1.0, true}, points, 1.0);
+  const auto before = layer.snapshot(2, 1.0);
+  require(before.size() == 8 && before[0] == 10.0f && before[4] == 12.0f &&
+              before[2] == 1.0f && before[6] == 1.0f,
+          "bounded snapshot must rank by full 3D distance and emit nearest first");
+
+  layer.updateFromScan({17.0, -4.0, 1.0, true}, points, 1.1);
+  const auto after = layer.snapshot(2, 1.1);
+  require(after.size() == 8 && after[0] == 16.0f && after[4] == 14.0f &&
+              after[3] == 0.8f && after[7] == 0.6f,
+          "distance ranking must follow the new sensor origin and preserve obstacle height");
+  require(layer.snapshot(0, 1.1).size() == points.size(),
+          "unbounded snapshot after a bounded query must still include every obstacle");
+}
+
 void testInflatedCoarseReductionCannotReplaceNearHazardWithTallerFarPoint() {
   auto cfg = baseConfig();
   cfg.ray_clearing_enabled = false;
@@ -482,6 +534,7 @@ int main() {
   testRayClearsResidueWithoutInventingMovingObject();
   testEndpointHitWinsOverRayFree();
   testOcclusionDoesNotClearBehindEndpoint();
+  testScanHitsKeepPointCountsAndWinOverCrossingRays();
   testStaticNeedsRepeatedFreeEvidence();
   testStationaryClusterDoesNotBecomeDynamic();
   testMovingCurrentClusterProducesVelocityTrack();
@@ -494,6 +547,7 @@ int main() {
   testSameFrameQueriesReusePrunePass();
   testBoundedSnapshotUsesFullBudget();
   testBoundedSnapshotPreservesNearestHazard();
+  testBoundedSnapshotReranksAfterSensorMoves();
   testInflatedBoundedSnapshotPreservesNearestHazard();
   testInflatedCoarseReductionCannotReplaceNearHazardWithTallerFarPoint();
   std::cout << "test_motion_layer passed\n";

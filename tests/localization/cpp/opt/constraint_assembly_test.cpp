@@ -117,6 +117,13 @@ void test_synthetic_sequential_constraint(const std::filesystem::path &root,
   const auto keyframes = opt::read_poses(map_dir / "poses.txt");
   const auto result = opt::generate_sequential_constraint(opt::files(map_dir), keyframes, 0);
   require(result.ok, "synthetic adjacent registration failed: " + result.code + " / " + result.message);
+  const auto memory_result = opt::generate_sequential_constraint(
+      [&](std::size_t index) { return scene(static_cast<double>(index), index != 0); },
+      keyframes, 0);
+  require(memory_result.ok &&
+              std::abs(memory_result.constraint.pose_from_to.x - result.constraint.pose_from_to.x) < 1e-9 &&
+              memory_result.constraint.information_upper == result.constraint.information_upper,
+          "online and saved-map registration disagree");
   require(result.constraint.from_index == 0 && result.constraint.to_index == 1,
           "sequential edge indices changed");
   require(std::abs(result.constraint.pose_from_to.x - 1.0) < 0.03,

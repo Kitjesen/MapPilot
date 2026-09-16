@@ -1,0 +1,134 @@
+// Stable integer values carried by the message fields. Do not renumber.
+// Scoped constants preserve the existing long fields and DDS wire layout.
+
+module NavigationControlMode {
+  const long UNKNOWN = 0;
+  const long AUTONOMY = 1;
+  const long TELEOP = 2;
+  const long TELEOP_AVOID = 3;
+};
+
+module NavigationLifecycle {
+  const long IDLE = 0;
+  const long PLANNING = 1;
+  const long EXECUTING = 2;
+  const long PAUSED = 3;
+  const long RECOVERING = 4;
+  const long SUCCESS = 5;
+  const long FAILED = 6;
+  const long CANCELLED = 7;
+};
+
+module NavigationPlanningState {
+  const long IDLE = 0;
+  const long PLANNING = 1;
+  const long READY = 2;
+  const long FAILED = 3;
+};
+
+module NavigationExecutionState {
+  const long IDLE = 0;
+  const long FOLLOWING = 1;
+  const long REACHED = 2;
+  const long BLOCKED = 3;
+};
+
+module NavigationRecoveryState {
+  const long IDLE = 0;
+  const long ACTIVE = 1;
+  const long SUCCEEDED = 2;
+  const long FAILED = 3;
+};
+
+module NavigationGoalState {
+  const long PLANNING = 1;
+  const long PATH_ACTIVE = 2;
+  const long FAILED = 3;
+  const long REACHED = 4;
+  const long CANCELLED = 5;
+  const long PAUSED = 6;
+};
+
+module InspectionTaskEventKind {
+  const long TASK_ACCEPTED = 1;
+  const long STATE_CHANGED = 2;
+  const long MILESTONE = 3;
+  const long STOP_CONFIRMATION_FAILED = 4;
+  const long EVIDENCE_RECORDED = 5;
+};
+
+module InspectionTaskState {
+  const long IDLE = 0;
+  const long VALIDATING = 1;
+  const long PLANNING = 2;
+  const long NAVIGATING = 3;
+  const long DWELLING = 4;
+  const long PAUSED = 5;
+  const long RECOVERING = 6;
+  const long SUCCEEDED = 7;
+  const long FAILED = 8;
+  const long CANCELLED = 9;
+  const long SETTLING = 10;
+  const long ACTION_PENDING = 11;
+  const long PAUSING = 12;
+  const long CANCELLING = 13;
+};
+
+module ExplorationRunEventKind {
+  const long ADMITTED = 1;
+  const long STATE_CHANGED = 2;
+  const long STOP_CONFIRMATION_FAILED = 3;
+};
+
+module ExplorationRunState {
+  const long ADMITTED = 1;
+  const long RUNNING = 2;
+  const long PAUSING = 3;
+  const long PAUSED = 4;
+  const long CANCELLING = 5;
+  const long COMPLETED = 6;
+  const long CANCELLED = 7;
+  const long FAILED = 8;
+};
+
+module NavigationCommandKind {
+  const long GOAL = 1;
+  const long TASK_CANCEL = 2;
+  const long STOP = 4;
+  const long ESTOP = 5;
+  const long CLEAR_ESTOP = 6;
+  const long RESUME_AUTONOMY = 7;
+  const long PAUSE_TASK = 8;
+  const long RESUME_TASK = 9;
+};
+
+module OperatorMotionAction {
+  const long CLAIM = 1;
+  const long RELEASE = 2;
+  const long HOLD = 3;
+};
+
+module ExplorationCommandKind {
+  const long START = 1;
+  const long PAUSE = 2;
+  const long RESUME = 3;
+  const long STOP = 4;
+  const long SET_DIRECTED_TARGET = 5;
+  const long CLEAR_DIRECTED_TARGET = 6;
+};
+
+module InspectionCommandKind {
+  const long START = 1;
+  const long PAUSE = 2;
+  const long RESUME = 3;
+  const long CANCEL = 4;
+};
+
+module GeofenceAction {
+  const long ADD = 1;
+  const long REMOVE = 2;
+  const long CLEAR = 3;
+  const long ENABLE = 4;
+  const long DISABLE = 5;
+  const long LIST = 6;
+};

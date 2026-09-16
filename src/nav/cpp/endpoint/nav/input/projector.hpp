@@ -17,6 +17,8 @@
 namespace lingtu::nav::endpoint {
 
 struct InputConfig {
+  bool use_simulation_clock{false};
+  double simulation_clock_max_age_s{0.25};
   double source_transform_max_gap_s{0.25};
   double cloud_pose_max_gap_s{0.12};
   double driver_control_max_age_s{0.35};
@@ -39,6 +41,7 @@ class InputProjector {
                  InputActions actions);
 
   void apply(SensorBatch batch, TimingDiagnostics &timing);
+  [[nodiscard]] double executionTime(double steady_now_s) const;
 
   // Pose and frame inputs.
   void projectTf(const InputSample<TransformSample> &sample, double receive_steady_s);

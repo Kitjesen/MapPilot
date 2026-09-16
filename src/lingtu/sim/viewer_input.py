@@ -169,6 +169,16 @@ class ViewerInput:
     def last_error(self) -> str:
         return self._last_error
 
+    @property
+    def status_message(self) -> str:
+        if self._last_error:
+            return "Keyboard: " + self._last_error
+        if not self._armed:
+            return "Release movement keys to enable keyboard"
+        if self._claimed:
+            return "Keyboard active; release keys to stop"
+        return "Keyboard ready (focus this window)"
+
     def start(self) -> None:
         if self._thread is not None:
             return
@@ -293,7 +303,7 @@ def viewer_input_from_run_plan(
 ) -> ViewerInput | None:
     """Build viewer input from the already-resolved simulation RunPlan."""
 
-    if os.name != "nt" or str(plan.product) not in {"teleop", "teleop_avoid"}:
+    if os.name != "nt" or not plan.host_config.get("enable_teleop"):
         return None
     host = plan.process("host")
     if host is None or host.command is None:

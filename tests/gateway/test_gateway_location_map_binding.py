@@ -62,14 +62,14 @@ def test_location_normalizer_exposes_map_binding_fields():
 
 
 def test_location_create_binds_active_map_and_rejects_caller_spoof(monkeypatch):
-    import gateway.routes.status as status
+    import gateway.maps.locations as status
     from gateway.schemas import LocationOperationResponse, LocationUpsertRequest
 
     gateway = _gateway()
     monkeypatch.setattr(status, "_active_map_from_service", lambda _gw: "yard")
     monkeypatch.setattr(
         status,
-        "mapd_query",
+        "mapd_request",
         lambda _gw, request: {
             "success": True,
             "record": {"name": request["map_id"], "content_epoch": 7},
@@ -107,7 +107,7 @@ def test_location_create_binds_active_map_and_rejects_caller_spoof(monkeypatch):
 
 
 def test_location_update_preserves_non_binding_metadata(monkeypatch):
-    import gateway.routes.status as status
+    import gateway.maps.locations as status
     from gateway.schemas import LocationUpsertRequest
 
     gateway = _gateway()
@@ -127,7 +127,7 @@ def test_location_update_preserves_non_binding_metadata(monkeypatch):
     monkeypatch.setattr(status, "_active_map_from_service", lambda _gw: "yard")
     monkeypatch.setattr(
         status,
-        "mapd_query",
+        "mapd_request",
         lambda _gw, _request: {
             "success": True,
             "record": {"name": "yard", "content_epoch": 8},
@@ -154,14 +154,14 @@ def test_location_update_preserves_non_binding_metadata(monkeypatch):
 
 
 def test_location_without_active_map_is_saved_unbound(monkeypatch):
-    import gateway.routes.status as status
+    import gateway.maps.locations as status
     from gateway.schemas import LocationOperationResponse, LocationUpsertRequest
 
     gateway = _gateway()
     monkeypatch.setattr(status, "_active_map_from_service", lambda _gw: "")
     monkeypatch.setattr(
         status,
-        "mapd_query",
+        "mapd_request",
         lambda *_args, **_kwargs: pytest.fail("map record must not be queried without an active map"),
     )
     body = LocationUpsertRequest(
@@ -193,7 +193,7 @@ def test_location_without_active_map_is_saved_unbound(monkeypatch):
 
 
 def test_location_map_query_failure_does_not_invent_content_epoch(monkeypatch):
-    import gateway.routes.status as status
+    import gateway.maps.locations as status
     from gateway.schemas import LocationUpsertRequest
 
     gateway = _gateway()
@@ -202,7 +202,7 @@ def test_location_map_query_failure_does_not_invent_content_epoch(monkeypatch):
     def fail_query(_gw, _request):
         raise RuntimeError("maps service offline")
 
-    monkeypatch.setattr(status, "mapd_query", fail_query)
+    monkeypatch.setattr(status, "mapd_request", fail_query)
     body = LocationUpsertRequest(
         name="versionless-checkpoint",
         x=1.0,
@@ -220,7 +220,7 @@ def test_location_map_query_failure_does_not_invent_content_epoch(monkeypatch):
 
 
 def test_location_binding_retries_when_active_map_changes_mid_request(monkeypatch):
-    import gateway.routes.status as status
+    import gateway.maps.locations as status
     from gateway.schemas import LocationUpsertRequest
 
     gateway = _gateway()
@@ -228,7 +228,7 @@ def test_location_binding_retries_when_active_map_changes_mid_request(monkeypatc
     monkeypatch.setattr(status, "_active_map_from_service", lambda _gw: next(active_names))
     monkeypatch.setattr(
         status,
-        "mapd_query",
+        "mapd_request",
         lambda _gw, request: {
             "success": True,
             "record": {

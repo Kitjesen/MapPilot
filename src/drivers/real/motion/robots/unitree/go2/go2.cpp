@@ -3,13 +3,16 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <unitree/idl/go2/LowState_.hpp>
 #include <unitree/idl/go2/SportModeState_.hpp>
 #include <unitree/robot/channel/channel_subscriber.hpp>
+#include <unitree/robot/go2/obstacles_avoid/obstacles_avoid_client.hpp>
 #include <unitree/robot/go2/sport/sport_client.hpp>
 
 #include "body.hpp"
@@ -20,9 +23,18 @@ namespace {
 
 using State = unitree_go::msg::dds_::SportModeState_;
 using StateSubscriber = unitree::robot::ChannelSubscriber<State>;
+using LowState = unitree_go::msg::dds_::LowState_;
+using LowStateSubscriber = unitree::robot::ChannelSubscriber<LowState>;
 
 constexpr char kSportStateTopic[] = "rt/sportmodestate";
+constexpr char kLowStateTopic[] = "rt/lowstate";
 constexpr auto kStateMaxAge = std::chrono::milliseconds(500);
+constexpr std::array<const char *, 12> kJointNames{
+    "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
+    "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+    "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
+    "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
+};
 
 bool readyMode(std::uint8_t mode) noexcept {
   return mode == 0 || mode == 1 || mode == 2 || mode == 3;
@@ -78,12 +90,19 @@ class Go2 final : public Body {
     client_ = std::make_unique<unitree::robot::go2::SportClient>();
     client_->SetTimeout(static_cast<float>(config.rpc_timeout.count()) / 1000.0F);
     client_->Init();
+    avoidance_ = std::make_unique<unitree::robot::go2::ObstaclesAvoidClient>();
+    avoidance_->SetTimeout(static_cast<float>(config.rpc_timeout.count()) / 1000.0F);
+    avoidance_->Init();
     subscriber_ = std::make_unique<StateSubscriber>(kSportStateTopic);
     subscriber_->InitChannel(std::bind(&Go2::onState, this, std::placeholders::_1), 1);
+    low_subscriber_ = std::make_unique<LowStateSubscriber>(kLowStateTopic);
+    low_subscriber_->InitChannel(std::bind(&Go2::onLowState, this, std::placeholders::_1), 1);
   }
 
   ~Go2() override {
+    low_subscriber_.reset();
     subscriber_.reset();
+    avoidance_.reset();
     client_.reset();
     unitree::robot::ChannelFactory::Instance()->Release();
   }
@@ -96,12 +115,38 @@ class Go2 final : public Body {
         return resultForCode(result, false, "initial_stop_rejected");
       }
     }
+    if (!factory_avoidance_disabled_) {
+      // Configure only after the acquisition stop, never in the motion hot path.
+      bool enabled = true;
+      int result = avoidance_->SwitchGet(enabled);
+      if (result != 0) {
+        return resultForCode(result, false, "factory_avoidance_query_failed");
+      }
+      if (enabled) {
+        result = avoidance_->SwitchSet(false);
+        if (result != 0) {
+          return resultForCode(result, false, "factory_avoidance_disable_failed");
+        }
+        result = avoidance_->SwitchGet(enabled);
+        if (result != 0) {
+          return resultForCode(result, false, "factory_avoidance_readback_failed");
+        }
+      }
+      if (enabled) {
+        return resultForCode(0, false, "factory_avoidance_still_enabled");
+      }
+      factory_avoidance_disabled_ = true;
+      std::fputs("lingtu_driver: Go2 factory avoidance disabled (confirmed)\n", stderr);
+    }
     return resultForCode(0, true, "ready");
   }
 
   Result move(const Velocity &velocity) override {
     const bool zero = std::abs(velocity.vx_mps) <= 1e-9 && std::abs(velocity.vy_mps) <= 1e-9 &&
                       std::abs(velocity.yaw_rps) <= 1e-9;
+    if (!zero && !factory_avoidance_disabled_) {
+      return resultForCode(0, false, "factory_avoidance_not_configured");
+    }
     const int result = zero ? client_->StopMove()
                             : client_->Move(static_cast<float>(velocity.vx_mps),
                                             static_cast<float>(velocity.vy_mps),
@@ -122,6 +167,7 @@ class Go2 final : public Body {
     }
     const bool stopped = result == 0;
     initial_zero_acknowledged_ = false;
+    factory_avoidance_disabled_ = false;
     Result response;
     response.ok = stopped;
     response.transport_ok = stopped;
@@ -210,6 +256,14 @@ class Go2 final : public Body {
     return state;
   }
 
+  std::optional<JointState> jointState() const override {
+    std::lock_guard<std::mutex> lock(joint_mutex_);
+    if (!joint_state_ || std::chrono::steady_clock::now() - joint_received_at_ > kStateMaxAge) {
+      return std::nullopt;
+    }
+    return joint_state_;
+  }
+
   AdapterDiagnostics diagnostics() const override {
     std::lock_guard<std::mutex> lock(state_mutex_);
     return {
@@ -224,6 +278,31 @@ class Go2 final : public Body {
   }
 
  private:
+  void onLowState(const void *message) {
+    if (message == nullptr) return;
+    const auto &state = *static_cast<const LowState *>(message);
+    std::lock_guard<std::mutex> lock(joint_mutex_);
+    if (joint_state_ && state.tick() == joint_tick_) return;
+    JointState sample;
+    sample.robot_model = "go2";
+    sample.names.assign(kJointNames.begin(), kJointNames.end());
+    sample.position.reserve(kJointNames.size());
+    sample.velocity.reserve(kJointNames.size());
+    sample.effort.reserve(kJointNames.size());
+    for (std::size_t index = 0; index < kJointNames.size(); ++index) {
+      const auto &motor = state.motor_state()[index];
+      if (!std::isfinite(motor.q()) || !std::isfinite(motor.dq()) || !std::isfinite(motor.tau_est())) return;
+      sample.position.push_back(motor.q());
+      sample.velocity.push_back(motor.dq());
+      sample.effort.push_back(motor.tau_est());
+    }
+    sample.stamp_s = std::chrono::duration<double>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    joint_tick_ = state.tick();
+    joint_received_at_ = std::chrono::steady_clock::now();
+    joint_state_ = std::move(sample);
+  }
+
   void onState(const void *message) {
     if (message == nullptr) {
       return;
@@ -256,7 +335,8 @@ class Go2 final : public Body {
     const bool mode_ready = readyMode(state_mode);
 
     Result response;
-    response.ok = accepted && transport_ok && mode_ready && initial_zero_acknowledged_;
+    response.ok = accepted && transport_ok && mode_ready && initial_zero_acknowledged_ &&
+                  factory_avoidance_disabled_;
     response.transport_ok = transport_ok;
     response.accepted = accepted && response.ok;
     response.state.connected = state_fresh;
@@ -289,7 +369,13 @@ class Go2 final : public Body {
 
   std::string target_;
   std::unique_ptr<unitree::robot::go2::SportClient> client_;
+  std::unique_ptr<unitree::robot::go2::ObstaclesAvoidClient> avoidance_;
   std::unique_ptr<StateSubscriber> subscriber_;
+  std::unique_ptr<LowStateSubscriber> low_subscriber_;
+  mutable std::mutex joint_mutex_;
+  std::optional<JointState> joint_state_;
+  std::uint32_t joint_tick_{0};
+  std::chrono::steady_clock::time_point joint_received_at_{};
   mutable std::mutex state_mutex_;
   bool state_received_{false};
   std::uint32_t state_error_code_{0};
@@ -300,6 +386,7 @@ class Go2 final : public Body {
   float state_body_height_{0.0F};
   std::chrono::steady_clock::time_point state_received_at_{};
   bool initial_zero_acknowledged_{false};
+  bool factory_avoidance_disabled_{false};
 };
 
 }  // namespace

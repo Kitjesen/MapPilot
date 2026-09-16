@@ -27,7 +27,7 @@ layers:
     title: Runtime Model
     intent: Frame/topic/communication contracts and runtime policies.
     owns:
-      - src/runtime/runtime_interface.py
+      - src/diagnostics/runtime_contract.py
       - src/runtime/runtime_policy.py
       - src/diagnostics/
       - src/diagnostics/field/gates.py
@@ -45,6 +45,7 @@ layers:
     intent: Product declarations, immutable RunPlan compilation, and Host assembly choose what runs without owning process side effects.
     owns:
       - src/lingtu/assembly/
+      - src/lingtu/assembly/graph/
       - src/lingtu/run_plan.py
       - src/lingtu/products.py
       - src/lingtu/assembly/parameters.py
@@ -53,6 +54,8 @@ layers:
     title: Adapter Layer
     intent: Native DDS, simulator, replay, runtime shims, and external protocol conversion.
     owns:
+      - src/transport/
+      - src/runtime/endpoints/dds/adapters.py
       - src/runtime/adapters/
       - src/nav/adapters/
       - src/localization/adapters/
@@ -103,6 +106,7 @@ layers:
 
 import_boundaries:
   package_forbidden_roots:
+    message: [runtime, lingtu, diagnostics, gateway, nav, drivers, perception, decision, localization, maps, memory]
     gateway: [nav, perception, decision, drivers, slam]
     nav: [perception, decision, drivers, gateway]
     perception: [nav, decision, drivers, gateway]
@@ -110,6 +114,7 @@ import_boundaries:
     drivers: [nav, perception, decision, gateway]
     maps: [nav, perception, decision, drivers, gateway]
     runtime:
+      - diagnostics
       - nav
       - perception
       - decision
@@ -148,7 +153,7 @@ import_boundaries:
     - diagnostics/field/gateway_acceptance.py
     - runtime/msgs/scene.py
     - diagnostics/field/field_check.py
-    - gateway/routes/maps.py
+    - gateway/maps/routes.py
   hardware_compat_forbidden_import_roots:
     - runtime.adapters.ros2
   hardware_compat_forbidden_dirs:

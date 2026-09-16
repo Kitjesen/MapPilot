@@ -1,6 +1,5 @@
 """Contract tests for the production SimStudio visual acceptance runner."""
 
-# ruff: noqa: D103,S101
 
 from __future__ import annotations
 

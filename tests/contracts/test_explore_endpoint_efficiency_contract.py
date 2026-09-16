@@ -1,4 +1,4 @@
-# ruff: noqa: D103, S101 - pytest contracts use assertions by design.
+
 
 from __future__ import annotations
 

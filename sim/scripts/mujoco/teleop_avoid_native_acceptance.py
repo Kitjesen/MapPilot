@@ -33,7 +33,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 
-DEFAULT_MANIFEST = ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_teleop_avoid_native_acceptance.json"
+DEFAULT_MANIFEST = ROOT / "config" / "acceptance" / "mujoco" / "teleop_avoid.json"
 DEFAULT_COMMAND_DURATION_S = 25.0
 DEFAULT_SCENARIOS = (
     "free",
@@ -447,7 +447,7 @@ def _binary_source_provenance(
 
     nav_cpp = ROOT / "src" / "nav" / "cpp"
     endpoint_cpp = nav_cpp / "endpoint"
-    message_cpp = ROOT / "src" / "message" / "cpp"
+    message_protocol = ROOT / "src" / "message" / "protocol"
     snapshot_file = ROOT / "src" / "native" / "snapshot_file.hpp"
     maps_core_sources = [
         ROOT / "src" / "maps" / "CMakeLists.txt",
@@ -464,10 +464,11 @@ def _binary_source_provenance(
     vendored_small_gicp = ROOT / "third_party" / "research_localization" / "small_gicp" / "include" / "small_gicp"
     optional_small_gicp_sources = [vendored_small_gicp] if vendored_small_gicp.is_dir() else []
     common_sources = [
-        ROOT / "src" / "message" / "idl" / "messages.idl",
-        message_cpp / "CMakeLists.txt",
-        message_cpp / "topics.hpp",
-        message_cpp / "qos.hpp",
+        ROOT / "src" / "message" / "idl",
+        ROOT / "src" / "message" / "topics",
+        ROOT / "src" / "message" / "generated" / "topics.hpp",
+        ROOT / "src" / "transport" / "dds" / "qos.hpp",
+        ROOT / "cmake" / "LingTuDDS.cmake",
     ]
     adapter_dds = ROOT / "sim" / "adapters" / "dds"
     driver_native = ROOT / "src" / "drivers" / "real" / "motion"
@@ -493,9 +494,9 @@ def _binary_source_provenance(
             endpoint_cpp / "CMakeLists.txt",
             nav_cpp / "planning" / "global" / "octoplanner" / "CMakeLists.txt",
             ROOT / "src" / "explore" / "cpp" / "explore_contract.hpp",
-            message_cpp / "inspection_command.hpp",
-            message_cpp / "navigation_command.hpp",
-            message_cpp / "operator_motion.hpp",
+            message_protocol / "inspection.hpp",
+            message_protocol / "navigation.hpp",
+            message_protocol / "operator_motion.hpp",
             snapshot_file,
             *inspection_core_sources,
             *maps_core_sources,
@@ -506,10 +507,10 @@ def _binary_source_provenance(
             endpoint_cpp / "tools" / "navctl.cpp",
             nav_cpp / "CMakeLists.txt",
             endpoint_cpp / "CMakeLists.txt",
-            message_cpp / "exploration_command.hpp",
-            message_cpp / "inspection_command.hpp",
-            message_cpp / "navigation_command.hpp",
-            message_cpp / "operator_motion.hpp",
+            message_protocol / "exploration.hpp",
+            message_protocol / "inspection.hpp",
+            message_protocol / "navigation.hpp",
+            message_protocol / "operator_motion.hpp",
             *common_sources,
         ],
         "explore": [
@@ -517,7 +518,7 @@ def _binary_source_provenance(
             ROOT / "src" / "explore" / "cpp",
             nav_cpp / "CMakeLists.txt",
             endpoint_cpp / "CMakeLists.txt",
-            message_cpp / "exploration_command.hpp",
+            message_protocol / "exploration.hpp",
             *common_sources,
         ],
         "traversability": [
@@ -582,10 +583,10 @@ def _binary_source_provenance(
                 nav_cpp / "client",
                 nav_cpp / "CMakeLists.txt",
                 endpoint_cpp / "CMakeLists.txt",
-                message_cpp / "exploration_command.hpp",
-                message_cpp / "inspection_command.hpp",
-                message_cpp / "navigation_command.hpp",
-                message_cpp / "operator_motion.hpp",
+                message_protocol / "exploration.hpp",
+                message_protocol / "inspection.hpp",
+                message_protocol / "navigation.hpp",
+                message_protocol / "operator_motion.hpp",
                 *common_sources,
             ],
         },
@@ -881,6 +882,19 @@ def prepare_runtime(args: argparse.Namespace) -> dict[str, Any]:
         slam_runtime = dict(manifest.get("slam_runtime") or {})
         slam_runtime["provider"] = str(args.state_provider)
         manifest["slam_runtime"] = slam_runtime
+        sensor_runtime = dict(manifest.get("sensor_runtime") or {})
+        fixture = args.state_provider == "mujoco_navigation_fixture"
+        sensor_runtime["scan_time_profile"] = "instantaneous" if fixture else "physical_rolling"
+        sensor_runtime["publish_odom_prior"] = fixture
+        manifest["sensor_runtime"] = sensor_runtime
+    state_provider = str((manifest.get("slam_runtime") or {}).get("provider") or "fastlio2").strip().lower()
+    scope = dict(manifest.get("acceptance_scope") or {})
+    if state_provider == "mujoco_navigation_fixture":
+        scope["coverage"] = "component"
+        scope["claims"] = ["native local-navigation acceptance with MuJoCo truth localization and synthetic ground coverage"]
+        scope["excluded_claims"] = list(dict.fromkeys([*(scope.get("excluded_claims") or ()), "Fast-LIO state estimation"]))
+        manifest["description"] = "MuJoCo truth fixture for isolated native local-navigation acceptance."
+        manifest["acceptance_scope"] = scope
 
     product_contract = _teleop_product_contract_evidence(manifest)
     asset_preparation = _prepare_teleop_scene_asset(manifest, artifact_dir)
@@ -888,7 +902,6 @@ def prepare_runtime(args: argparse.Namespace) -> dict[str, Any]:
     policy_path = Path(paths.get("policy") or "")
     policy_runtime = _policy_runtime_evidence(required=policy_path.is_file())
     blockers.extend(policy_runtime["blockers"])
-    state_provider = str(((manifest.get("slam_runtime") or {}).get("provider") or "fastlio2")).strip().lower()
     required_binaries = {
         "sensor_publisher",
         "mapd",
@@ -954,6 +967,9 @@ def prepare_runtime(args: argparse.Namespace) -> dict[str, Any]:
         "details": {
             "host_contract": "windows_wsl2_x86_64",
             "manifest": str(manifest_path),
+            "state_provider": state_provider,
+            "localization_authority": "mujoco_truth" if state_provider == "mujoco_navigation_fixture" else "slam_estimator",
+            "acceptance_scope": scope,
             "product_contract": product_contract,
             "asset_preparation": asset_preparation,
             "runtime_provenance": provenance,
@@ -1135,7 +1151,7 @@ def _status(path: Path) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _samples(path: Path, worker: threading.Thread, timeout_s: float) -> list[dict[str, Any]]:
+def _samples(path: Path, worker: threading.Thread, timeout_s: float, *, slam_path: Path) -> list[dict[str, Any]]:
     deadline = time.monotonic() + max(0.1, timeout_s)
     samples: list[dict[str, Any]] = []
     last_stamp = -math.inf
@@ -1143,7 +1159,7 @@ def _samples(path: Path, worker: threading.Thread, timeout_s: float) -> list[dic
         nav = _status(path)
         stamp = _nav_status_stamp_s(nav)
         if stamp is not None and stamp > last_stamp:
-            samples.append({"wall_s": time.time(), "nav": nav})
+            samples.append({"wall_s": time.time(), "nav": nav, "slam": _status(slam_path)})
             last_stamp = stamp
         time.sleep(0.05)
     return samples
@@ -1225,12 +1241,42 @@ def _twist_is_nonzero(value: Any) -> bool:
     return any(abs(number) > 1e-4 for number in values)
 
 
+def _attached_odometry_progress(
+    samples: Sequence[Mapping[str, Any]], command_angle_rad: float
+) -> tuple[int, float]:
+    from sim.scripts.mujoco.native_navigation_acceptance import _valid_slam_odometry
+
+    poses: list[Mapping[str, Any]] = []
+    last_stamp = -math.inf
+    for sample in samples:
+        slam = sample.get("slam")
+        if not isinstance(slam, dict) or not _valid_slam_odometry(slam):
+            continue
+        stamp = float(slam["stamp_s"])
+        if stamp <= last_stamp:
+            continue
+        poses.append(slam["odometry"]["pose"])
+        last_stamp = stamp
+    if len(poses) < 2:
+        return len(poses), 0.0
+    start, end = poses[0], poses[-1]
+    x, y, z, w = (float(start[name]) for name in ("qx", "qy", "qz", "qw"))
+    yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    # SLAM odometry may initialize at a different yaw from the world spawn.
+    heading = yaw + command_angle_rad
+    progress = (float(end["x"]) - float(start["x"])) * math.cos(heading) + (
+        float(end["y"]) - float(start["y"])
+    ) * math.sin(heading)
+    return len(poses), progress
+
+
 def _attached_metrics(
     samples: Sequence[Mapping[str, Any]],
     motion: Mapping[str, Any],
     post_stop: Sequence[Mapping[str, Any]],
     *,
     command_heading_rad: float,
+    command_angle_rad: float,
 ) -> dict[str, Any]:
     nav = [item.get("nav") for item in samples if isinstance(item.get("nav"), Mapping)]
     ready = [
@@ -1259,6 +1305,7 @@ def _attached_metrics(
         _path_lateral_offset_m(item.get("local_path"), command_heading_rad)
         for item in ready
     ]
+    odometry_samples, odometry_progress_m = _attached_odometry_progress(samples, command_angle_rad)
     return {
         "ready_samples": len(ready),
         "teleop_reasons": counts([str(item.get("reason") or "") for item in teleop]),
@@ -1273,8 +1320,14 @@ def _attached_metrics(
         ),
         "max_lateral_detour_m": max(offsets, default=0.0),
         "nonzero_output_samples": sum(
-            1 for item in teleop if _twist_is_nonzero(item.get("output"))
+            1
+            for item in ready
+            if isinstance(item.get("final_output"), Mapping)
+            and item["final_output"].get("published") is True
+            and _twist_is_nonzero(item.get("final_cmd_vel"))
         ),
+        "odometry_samples": odometry_samples,
+        "odometry_forward_progress_m": odometry_progress_m,
         "resume_required_samples": sum(
             1
             for item in ready
@@ -1299,12 +1352,15 @@ def _attached_blockers(
     *,
     minimum_lateral_detour_m: float = 0.5,
     command_heading_rad: float,
+    command_angle_rad: float,
+    minimum_forward_progress_m: float,
 ) -> list[str]:
     metrics = _attached_metrics(
         samples,
         motion,
         post_stop,
         command_heading_rad=command_heading_rad,
+        command_angle_rad=command_angle_rad,
     )
     actions = set(metrics["operator_actions"])
     blockers: list[str] = []
@@ -1316,6 +1372,10 @@ def _attached_blockers(
         blockers.append("local_detour_geometry_missing")
     if metrics["nonzero_output_samples"] <= 0:
         blockers.append("nonzero_control_missing")
+    if metrics["odometry_samples"] < 2:
+        blockers.append("odometry_progress_evidence_missing")
+    elif metrics["odometry_forward_progress_m"] + 1e-9 < minimum_forward_progress_m:
+        blockers.append("odometry_forward_progress_insufficient")
     if metrics["resume_required_samples"] > 0:
         blockers.append("resume_required_during_detour")
     if motion.get("returncode") != 0 or not {"claim", "sample", "hold", "release"} <= actions:
@@ -1348,6 +1408,7 @@ def run_attached(
     control = Path((prepared.get("binaries") or {})["navigation_control"])
     domain_id = int(args.domain_base)
     status_path = _ready_path(plan, "nav_runtime", run_plan_path.parent)
+    slam_path = _ready_path(plan, "slam_runtime", run_plan_path.parent)
     environment = dict(getattr(plan, "native_process_environment", {}) or {})
     environment["LINGTU_PRODUCT_SESSION_ID"] = product_session_id
     manifest = prepared.get("manifest")
@@ -1358,6 +1419,11 @@ def run_attached(
     duration_s = float(args.duration_s if args.duration_s is not None else configured_duration_s)
     if duration_s <= 0.0:
         raise ValueError("teleop_avoid command duration must be positive")
+    detour_acceptance = manifest.get("detour_acceptance")
+    detour_acceptance = detour_acceptance if isinstance(detour_acceptance, Mapping) else {}
+    minimum_forward_progress_m = detour_acceptance.get("minimum_forward_progress_m")
+    if not _finite_number(minimum_forward_progress_m) or minimum_forward_progress_m <= 0.0:
+        raise ValueError("teleop_avoid minimum_forward_progress_m must be positive")
     result: dict[str, Any] = {}
 
     def drive() -> None:
@@ -1392,7 +1458,7 @@ def run_attached(
 
     worker = threading.Thread(target=drive, name="teleop-avoid-acceptance")
     worker.start()
-    timeline = _samples(status_path, worker, duration_s + 8.0)
+    timeline = _samples(status_path, worker, duration_s + 8.0, slam_path=slam_path)
     worker.join(timeout=1.0)
     if worker.is_alive():
         raise RuntimeError("operator motion did not finish")
@@ -1409,19 +1475,19 @@ def run_attached(
         before_stop,
         POST_STOP_EVIDENCE_TIMEOUT_S,
     )
-    detour_acceptance = manifest.get("detour_acceptance")
-    detour_acceptance = detour_acceptance if isinstance(detour_acceptance, Mapping) else {}
     robot_geometry = manifest.get("robot_geometry")
     robot_geometry = robot_geometry if isinstance(robot_geometry, Mapping) else {}
     minimum_lateral_detour_m = float(detour_acceptance.get("minimum_lateral_detour_m") or 0.5)
     command_vx = float(args.command_vx)
     command_vy = float(getattr(args, "command_vy", 0.0))
     command_heading_rad = _initial_command_heading_rad(plan, command_vx, command_vy)
+    command_angle_rad = math.atan2(command_vy, command_vx)
     metrics = _attached_metrics(
         timeline,
         result,
         post_stop,
         command_heading_rad=command_heading_rad,
+        command_angle_rad=command_angle_rad,
     )
     blockers = _attached_blockers(
         timeline,
@@ -1430,6 +1496,8 @@ def run_attached(
         post_stop,
         minimum_lateral_detour_m=minimum_lateral_detour_m,
         command_heading_rad=command_heading_rad,
+        command_angle_rad=command_angle_rad,
+        minimum_forward_progress_m=float(minimum_forward_progress_m),
     )
     return {
         "ok": not blockers,

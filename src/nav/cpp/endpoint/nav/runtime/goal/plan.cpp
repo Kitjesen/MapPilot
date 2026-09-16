@@ -9,6 +9,16 @@
 
 namespace lingtu::nav::endpoint {
 
+bool goalPlanInputGapIsRecoverable(const std::string &reason) noexcept {
+  return reason == "recovering" || reason == "odom_missing" || reason == "odom_stale" ||
+         reason == "tf_missing" || reason == "tf_stale" || reason == "cloud_missing" ||
+         reason == "cloud_stale" || reason == "local_collision_missing" ||
+         reason == "local_collision_stale" || reason == "traversability_missing" ||
+         reason == "traversability_stale" || reason == "localization_health_missing" ||
+         reason == "localization_health_stale" || reason == "simulation_clock_missing" ||
+         reason == "simulation_clock_stale";
+}
+
 GoalPlanController::GoalPlanController(GlobalPlanTask::Planner planner, GoalPlanActions actions)
     : task_(std::move(planner)), actions_(std::move(actions)) {
   if (!actions_.preempt_rolling || !actions_.clear_external_inspection ||
@@ -71,31 +81,27 @@ GoalPlanSubmitResult GoalPlanController::submit(const GoalPlanRequest &request,
   if (!context.planner_map_configured) {
     return reject(context.planner_map_missing_reason);
   }
-  if (pending_plan_start_ && request.origin == GoalPlanOrigin::kExternal) {
+  const bool projects_to_navigation_state =
+      active_task_id_.empty() || active_task_id_ == request.task_id;
+  if (request.origin == GoalPlanOrigin::kExternal && (pending_plan_start_ || task_.busy())) {
+    task_.cancel();
     publishPendingTerminal(lingtu::message::NavigationGoalState::Cancelled,
                            "superseded_by_new_goal");
+    // A replan belongs to the still-active path; only its search is superseded.
+    if (!planning_is_replan_) {
+      finishPlanning(lingtu::message::NavigationGoalState::Cancelled, "superseded_by_new_goal");
+    }
+    clearPlanningIdentity();
     const auto pending_goal_epoch = ++goal_epoch_;
-    pending_plan_start_ = DeferredPlanStart{request, pending_goal_epoch};
+    pending_plan_start_ =
+        DeferredPlanStart{request, pending_goal_epoch, projects_to_navigation_state};
     publishStatus(request.task_id, request.request_id, pending_goal_epoch,
-                  lingtu::message::NavigationGoalState::Planning, "planning_queued", false);
+                  lingtu::message::NavigationGoalState::Planning, "planning_queued",
+                  projects_to_navigation_state);
     diagnostics_.reason = "planning_queued";
     return {true, "planning_queued", false, false, false, std::nullopt};
   }
   if (task_.busy()) {
-    if (request.origin == GoalPlanOrigin::kExternal && planning_is_replan_) {
-      task_.cancel();
-      if (pending_plan_start_) {
-        publishPendingTerminal(lingtu::message::NavigationGoalState::Cancelled,
-                               "superseded_by_new_goal");
-      }
-      const auto pending_goal_epoch = ++goal_epoch_;
-      pending_plan_start_ = DeferredPlanStart{request, pending_goal_epoch};
-      clearPlanningIdentity();
-      publishStatus(request.task_id, request.request_id, pending_goal_epoch,
-                    lingtu::message::NavigationGoalState::Planning, "planning_queued", false);
-      diagnostics_.reason = "planning_queued";
-      return {true, "planning_queued", false, false, false, std::nullopt};
-    }
     return reject("global_planner_busy");
   }
 
@@ -103,8 +109,6 @@ GoalPlanSubmitResult GoalPlanController::submit(const GoalPlanRequest &request,
     return reject("segment_preempt_zero_publish_failed", false, true);
   }
 
-  const bool projects_to_navigation_state =
-      active_task_id_.empty() || active_task_id_ == request.task_id;
   return startPlanning(request.task_id, request.request_id, *request.target, request.origin,
                        context, "planning", false, std::nullopt, projects_to_navigation_state);
 }
@@ -173,6 +177,8 @@ GoalPlanSubmitResult GoalPlanController::startPlanning(
   plan_context.start = *context.map_position;
   plan_context.goal = target.position;
   plan_context.goal_yaw = target.yaw;
+  plan_context.max_speed_mps = target.max_speed_mps;
+  plan_context.acceptance_radius_m = target.acceptance_radius_m;
   plan_context.goal_epoch = goal_epoch_;
   plan_context.frame_epoch = context.frame_epoch;
   plan_context.request.start = {
@@ -310,7 +316,7 @@ GoalPlanController::resumePending(const GoalPlanAdmissionContext &fresh_context)
   pending_plan_start_.reset();
   return startPlanning(ready.request.task_id, ready.request.request_id, *ready.request.target,
                        ready.request.origin, fresh_context, "planning", false, ready.goal_epoch,
-                       false);
+                       active_task_id_.empty() || active_task_id_ == ready.request.task_id);
 }
 
 void GoalPlanController::clearPlanningIdentity() {
@@ -509,6 +515,8 @@ GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &
       inspection_decision.tolerance,
       plan_result.map_identity,
       context.now_s,
+      completion->context.max_speed_mps,
+      completion->context.acceptance_radius_m,
   };
   const bool completing_replacement =
       !completing_replan && !planning_projects_to_navigation_state_ && !active_task_id_.empty() &&
@@ -519,7 +527,8 @@ GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &
         planning_request_id_,
         planning_goal_epoch_,
         std::move(activation),
-        GoalPlanTarget{completion->context.goal, completion->context.goal_yaw},
+        GoalPlanTarget{completion->context.goal, completion->context.goal_yaw,
+                       completion->context.max_speed_mps, completion->context.acceptance_radius_m},
         planning_origin_,
         completion->context.request.options,
     };
@@ -543,7 +552,8 @@ GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &
   active_goal_epoch_ = planning_goal_epoch_;
   active_paused_ = false;
   active_map_identity_ = plan_result.map_identity;
-  active_target_ = GoalPlanTarget{completion->context.goal, completion->context.goal_yaw};
+  active_target_ = GoalPlanTarget{completion->context.goal, completion->context.goal_yaw,
+                       completion->context.max_speed_mps, completion->context.acceptance_radius_m};
   active_origin_ = planning_origin_;
   active_planner_options_ = completion->context.request.options;
   planning_projects_to_navigation_state_ = true;
@@ -582,6 +592,13 @@ GoalPlanController::activateDeferredReplacement(double now_s,
                                          fresh_context.driver_control_blocker);
   }
   if (!fresh_context.input_ready) {
+    const std::string &reason = fresh_context.input_gate_reason;
+    if (goalPlanInputGapIsRecoverable(reason)) {
+      deferred_replacement_activation_->replan_after_input_gap = true;
+      diagnostics_.accepted = false;
+      diagnostics_.reason = std::string{"input_gate_"} + reason;
+      return result;
+    }
     return failDeferredReplacementLocked(lingtu::message::NavigationGoalState::Failed,
                                          std::string{"input_gate_"} +
                                              (fresh_context.input_gate_reason.empty()
@@ -624,6 +641,23 @@ GoalPlanController::activateDeferredReplacement(double now_s,
     deferred_replacement_activation_ = std::move(ready);
     return failDeferredReplacementLocked(lingtu::message::NavigationGoalState::Failed,
                                          "active_map_changed_before_replacement_activation");
+  }
+
+  if (ready.replan_after_input_gap) {
+    // The robot may have moved while braking. Retain the new goal identity,
+    // but rebuild its route from the fresh stopped pose before activating it.
+    GoalPlanAdmissionContext recovered = fresh_context;
+    recovered.planner_options = ready.planner_options;
+    const auto restarted = startPlanning(
+        ready.task_id, ready.request_id, ready.target, ready.origin, recovered,
+        "replacement_replanning_after_input_recovery", false, ready.goal_epoch, true);
+    if (!restarted.accepted) {
+      deferred_replacement_activation_ = std::move(ready);
+      return failDeferredReplacementLocked(lingtu::message::NavigationGoalState::Failed,
+                                           restarted.reason);
+    }
+    deferred_replacement_activation_.reset();
+    return result;
   }
 
   deferred_replacement_activation_.reset();
@@ -811,20 +845,22 @@ GoalPlanTaskTransition GoalPlanController::deferCancelPending(const std::string 
   }
 
   const std::uint64_t pending_goal_epoch = pending_plan_start_->goal_epoch;
+  const bool project_to_navigation_state = pending_plan_start_->project_to_navigation_state;
   const std::string cancel_reason = reason.empty() ? "operator_cancel" : reason;
   pending_plan_start_.reset();
   auto publish_terminal = std::make_shared<bool>(true);
   return {
       true,
       "cancel_ready",
-      [this, task_id, request_id, pending_goal_epoch, cancel_reason,
+      [this, task_id, request_id, pending_goal_epoch, cancel_reason, project_to_navigation_state,
        publish_terminal = std::move(publish_terminal)]() mutable {
         if (!*publish_terminal) {
           return;
         }
         *publish_terminal = false;
         publishStatus(task_id, request_id, pending_goal_epoch,
-                      lingtu::message::NavigationGoalState::Cancelled, cancel_reason, false);
+                      lingtu::message::NavigationGoalState::Cancelled, cancel_reason,
+                      project_to_navigation_state);
       },
   };
 }
@@ -896,7 +932,7 @@ GoalPlanController::deferAbortWithTicket(const std::string &reason,
         pending_plan_start->goal_epoch,
         lingtu::message::NavigationGoalState::Cancelled,
         reason,
-        false,
+        pending_plan_start->project_to_navigation_state,
     });
   }
   if (!active_request_id.empty()) {
@@ -1051,7 +1087,7 @@ GoalPlanController::deferPlanningAbortWithTicket(const std::string &reason,
         pending_plan_start->goal_epoch,
         lingtu::message::NavigationGoalState::Cancelled,
         reason,
-        false,
+        pending_plan_start->project_to_navigation_state,
     });
   }
   invalidateForHold(reason, false);
@@ -1114,7 +1150,8 @@ void GoalPlanController::publishPendingTerminal(lingtu::message::NavigationGoalS
     return;
   }
   publishStatus(pending_plan_start_->request.task_id, pending_plan_start_->request.request_id,
-                pending_plan_start_->goal_epoch, state, reason, false);
+                pending_plan_start_->goal_epoch, state, reason,
+                pending_plan_start_->project_to_navigation_state);
 }
 
 GoalPlanSnapshot GoalPlanController::snapshot() const {

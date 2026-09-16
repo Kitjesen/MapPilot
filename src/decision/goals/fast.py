@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from runtime.runtime_interface import map_frame_id
+from runtime.tf.frames import map_frame_id
 
 if TYPE_CHECKING:
     from .resolver import GoalResult
@@ -21,7 +21,7 @@ from runtime.msgs.numpy_compat import np
 logger = logging.getLogger(__name__)
 FAST_PATH_MAP_FRAME_ID = map_frame_id()
 
-# Loaded from config/semantic_scoring.yaml [fast_path_fusion] on first call.
+# Loaded from config/semantics/scoring.yaml [fast_path_fusion] on first call.
 # These defaults match the original hardcoded values.
 _DEFAULTS_FAST_PATH: dict = {
     "label": 0.35,
@@ -37,9 +37,9 @@ _fast_path_weights_loaded: bool = False
 
 
 def _load_semantic_scoring_yaml() -> dict:
-    """Load config/semantic_scoring.yaml from the repo root."""
+    """Load config/semantics/scoring.yaml from the repo root."""
     repo_root = Path(__file__).resolve().parents[3]
-    yaml_path = repo_root / "config" / "semantic_scoring.yaml"
+    yaml_path = repo_root / "config" / "semantics" / "scoring.yaml"
     try:
         with open(yaml_path, encoding="utf-8") as fh:
             return yaml.safe_load(fh) or {}
@@ -48,7 +48,7 @@ def _load_semantic_scoring_yaml() -> dict:
 
 
 def _load_fast_path_weights() -> None:
-    """Load fast_path_fusion weights from config/semantic_scoring.yaml (once)."""
+    """Load fast_path_fusion weights from config/semantics/scoring.yaml once."""
     global WEIGHT_LABEL_MATCH, WEIGHT_CLIP_SIM, WEIGHT_DETECTOR_SCORE
     global WEIGHT_SPATIAL_HINT, _fast_path_weights_loaded
     if _fast_path_weights_loaded:
@@ -58,7 +58,8 @@ def _load_fast_path_weights() -> None:
         section = _load_semantic_scoring_yaml().get("fast_path_fusion")
         if section is None:
             logger.info(
-                "fast_path_fusion section absent — using default weights. See config/semantic_scoring.yaml to tune."
+                "fast_path_fusion section absent — using default weights. "
+                "See config/semantics/scoring.yaml to tune."
             )
             return
         WEIGHT_LABEL_MATCH = float(section.get("label", _DEFAULTS_FAST_PATH["label"]))

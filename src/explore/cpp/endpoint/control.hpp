@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "message/cpp/exploration_command.hpp"
+#include "message/protocol/exploration.hpp"
 
 namespace lingtu::nav::endpoint {
 

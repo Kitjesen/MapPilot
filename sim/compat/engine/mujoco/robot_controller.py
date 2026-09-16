@@ -11,6 +11,8 @@ from pathlib import Path
 
 import numpy as np
 
+from sim.runtime.control import thunderv4_flat as flat
+
 # ── Original constants (ported directly from nova_nav_bridge.py) ──────────────
 # Extracted from src/drivers/sim/nova_nav_bridge.py
 
@@ -397,6 +399,33 @@ class ThunderV4OnnxPolicyRunner(TorchScriptPolicyRunner):
         return self.clamp_action(real_action)
 
 
+class ThunderV4FlatPolicyRunner(ThunderV4OnnxPolicyRunner):
+    """Single-frame 53-D G2 policy with its original observation and action layout."""
+
+    def __init__(self, policy_path: str, *, session=None, cpu_threads: int = 1):
+        super().__init__(policy_path, session=session, cpu_threads=cpu_threads)
+        self._startup_hold_steps = 25
+        self._startup_hold_remaining = self._startup_hold_steps
+        # Keep leg balance active while the existing idle controller parks the wheels.
+
+    def build_obs(self, gyroscope, projected_gravity, direction, joint_pos_16, joint_vel_16):
+        return flat.observation(
+            gyroscope, projected_gravity, direction,
+            joint_pos_16[MJ_TO_DART], joint_vel_16[MJ_TO_DART], self.last_action,
+        )
+
+    def infer(self, obs: np.ndarray) -> np.ndarray:
+        frame = np.asarray(obs, dtype=np.float32).reshape(1, 53)
+        raw_action = self.session.run([self.output_name], {self.input_name: frame})[0].reshape(-1)
+        if raw_action.size != 16 or not np.isfinite(raw_action).all():
+            raise ValueError("Thunder flat policy must produce 16 finite actions")
+        self.last_action = raw_action.astype(np.float64, copy=True)
+        if self._startup_hold_remaining > 0:
+            self._startup_hold_remaining -= 1
+            return flat.STANDING_POSE.copy()
+        return flat.action_targets(raw_action)
+
+
 def _is_thunderv4_policy(path: Path) -> bool:
     normalized = path.as_posix().lower()
     return (
@@ -413,6 +442,10 @@ def load_policy_runner(policy_path: str, *, cpu_threads: int = 1):
     if path.suffix.lower() == ".onnx":
         session = _create_onnx_session(policy_path, cpu_threads)
         input_dim = PolicyRunner._extract_input_dim(session.get_inputs()[0].shape)
+        if input_dim == 53 and _is_thunderv4_policy(path):
+            return ThunderV4FlatPolicyRunner(
+                policy_path, session=session, cpu_threads=cpu_threads
+            )
         if input_dim == OBS_DIM and _is_thunderv4_policy(path):
             return ThunderV4OnnxPolicyRunner(
                 policy_path, session=session, cpu_threads=cpu_threads

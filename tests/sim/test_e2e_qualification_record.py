@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -6,12 +5,10 @@ import hashlib
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
-
 from sim.runtime.qualification import (
     QualificationRecordError,
     build_e2e_qualification_record,
@@ -835,10 +832,6 @@ def test_build_e2e_qualification_record_rejects_artifact_symlink_before_hash(
         build_e2e_qualification_record(bundle_dir, run_dir)
 
 
-@pytest.mark.skipif(
-    sys.platform != "win32",
-    reason="creates a Windows directory junction with cmd.exe",
-)
 def test_build_e2e_qualification_record_rejects_windows_junction_before_read(
     tmp_path: Path,
 ) -> None:
@@ -846,7 +839,7 @@ def test_build_e2e_qualification_record_rejects_windows_junction_before_read(
     actual_run = tmp_path / "actual-run"
     run_dir.rename(actual_run)
     cmd = os.environ.get("ComSpec", r"C:\Windows\System32\cmd.exe")
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [cmd, "/c", "mklink", "/J", str(run_dir), str(actual_run)],
         check=False,
         capture_output=True,

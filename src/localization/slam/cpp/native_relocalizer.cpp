@@ -155,7 +155,8 @@ bool NativeRelocalizer::supportsGlobalRelocalization() const {
 NativeRelocalizationResult NativeRelocalizer::relocalize(
     const Cloud& scan_body,
     const Pose3d& map_body_guess,
-    const Pose3d& odom_body) const {
+    const Pose3d& odom_body,
+    bool refine_prediction) const {
   NativeRelocalizationResult result;
   if (!impl_ || !impl_->map_loaded.load(std::memory_order_acquire)) {
     result.message = "native_relocalizer_map_not_loaded";
@@ -169,8 +170,11 @@ NativeRelocalizationResult NativeRelocalizer::relocalize(
 
   const std::uint64_t map_generation = impl_->map_icp.mapGeneration();
   const Eigen::Matrix4f guess = poseToMatrix(map_body_guess);
-  const MapIcpResult icp_result =
-      impl_->map_icp.verifySeed(scan, guess, map_generation);
+  // A prediction from an accepted map<-odom alignment needs local drift
+  // correction. Explicit and persisted starting poses remain strict seeds.
+  const MapIcpResult icp_result = refine_prediction
+      ? impl_->map_icp.refine(scan, guess, map_generation)
+      : impl_->map_icp.verifySeed(scan, guess, map_generation);
   if (!icp_result.success) {
     fillMapIcpDiagnostics(result, icp_result.diagnostics);
     result.message = icp_result.message == "map_icp_generation_mismatch"

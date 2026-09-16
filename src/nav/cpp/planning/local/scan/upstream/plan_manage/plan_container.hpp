@@ -165,6 +165,7 @@ struct PlanParameters {
   double ctrl_pt_dist{-1.0};
   double feasibility_tolerance_{0.0};
   double planning_horizon_{5.0};
+  bool motion_intent_{false};
 
   double time_search_{0.0};
   double time_optimize_{0.0};

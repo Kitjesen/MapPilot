@@ -1,6 +1,6 @@
 """Gateway Host module for REST, SSE, WebSocket, and MCP access.
 
-Routes live under :mod:`gateway.routes`; generated API documentation is the
+Routes live under navigation, maps, and routes; generated API documentation is the
 endpoint catalogue. Physical teleoperation uses ``/ws/teleop`` and native DDS.
 """
 
@@ -9,12 +9,15 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable
 
 from fastapi.responses import JSONResponse
 
 from gateway.app_factory import build_gateway_app
+from gateway.maps.status import EnvironmentMapFeedback
+from gateway.navigation.status import handle_navigation_goal_status, handle_navigation_state
 from gateway.services.commands import (
     publish_command_ack,
     run_control_command,
@@ -25,15 +28,12 @@ from gateway.services.drift import (
     report_drift,
     watchdog_loop,
 )
-from gateway.services.environment_map_feedback import EnvironmentMapFeedback
 from gateway.services.event_handlers import (
     handle_agent_message,
     handle_exploration_run_event,
     handle_exploration_supervisor,
     handle_gnss_fusion_health,
     handle_inspection_task_event,
-    handle_navigation_goal_status,
-    handle_navigation_state,
     handle_scene_graph,
     handle_tare_stats,
     handle_visual_servo_status,
@@ -64,12 +64,6 @@ from gateway.services.init_state import (
 from gateway.services.inspection_task_lifecycle import ensure_inspection_task_timeline
 from gateway.services.lifecycle import start_background_threads, stop_background_threads
 from gateway.services.localization_status import handle_localization_status
-from gateway.services.mapd_transport import (
-    active_map as maps_active_map,
-)
-from gateway.services.mapd_transport import (
-    map_bundle as maps_map_bundle,
-)
 from gateway.services.module_refs import attach_module_refs
 from gateway.services.native_control import teleop_active as native_teleop_active
 from gateway.services.odometry import handle_odometry
@@ -134,7 +128,7 @@ from runtime.module import Module
 if TYPE_CHECKING:
     from runtime.status_provider import RuntimeStatusProvider
 from runtime.msgs.geometry import Twist
-from runtime.msgs.map import MapSceneFrame
+from runtime.msgs.map import MapObservationFrame, MapSceneFrame
 from runtime.msgs.nav import (
     ExplorationRunEvent,
     InspectionTaskEvent,
@@ -145,7 +139,7 @@ from runtime.msgs.nav import (
     Path,
 )
 from runtime.msgs.semantic import SceneGraph
-from runtime.msgs.sensor import PointCloud2
+from runtime.msgs.sensor import JointState, PointCloud2
 from runtime.registry import register
 from runtime.stream import In, Out
 
@@ -231,7 +225,9 @@ class GatewayModule(Module, layer=6):
 
     # -- Inputs (module ->cache) --------------------------------------------
     odometry: In[Odometry]
+    joint_state: In[JointState]
     lidar_scan: In[PointCloud2]  # current raw LiDAR scan for /ws/scan
+    map_observation: In[MapObservationFrame]  # scan-time registered geometry for viewing
     map_scene: In[MapSceneFrame]  # canonical layered map product
     localization_quality: In[float]  # ICP fitness from SlamBridge -lower=better
     # Canonical T_map_from_odom; converts odom coordinates into map coordinates.
@@ -471,16 +467,6 @@ class GatewayModule(Module, layer=6):
     def on_system_modules(self, modules: dict[str, Any]) -> None:
         attach_module_refs(self, modules)
 
-    def _active_map_from_mapd(self) -> str | None:
-        return maps_active_map(self)
-
-    def _map_bundle_from_mapd(
-        self,
-        map_name: str,
-        capability: str,
-    ) -> dict[str, Any] | None:
-        return maps_map_bundle(self, map_name, capability)
-
     def _explorer_backend(self) -> str:
         return explorer_backend(self)
 
@@ -577,10 +563,6 @@ class GatewayModule(Module, layer=6):
             and self._explorer_available()
         )
 
-    def _session_active_map_name(self) -> str | None:
-        """Read the active map only through native mapd."""
-        return self._active_map_from_mapd()
-
     def _session_snapshot(self) -> dict:
         snapshot = session_snapshot(self)
         if not snapshot.get("product") and self._compiled_product:
@@ -589,6 +571,9 @@ class GatewayModule(Module, layer=6):
 
     def _on_lidar_scan(self, cloud: PointCloud2) -> None:
         self._cloud_viewer.on_lidar_scan(cloud)
+
+    def _on_map_observation(self, frame: MapObservationFrame) -> None:
+        self._cloud_viewer.on_map_observation(frame)
 
     def _on_map_scene(self, frame: MapSceneFrame | dict[str, Any]) -> None:
         self._environment_map_feedback.observe_scene(frame)
@@ -646,6 +631,15 @@ class GatewayModule(Module, layer=6):
 
     def _on_native_traversability(self, data: dict[str, Any]) -> None:
         handle_native_traversability(self, data)
+
+    def _on_joint_state(self, state: JointState) -> None:
+        age_s = time.time() - state.ts
+        if age_s > 2.0 or age_s < -1.0 or state.ts <= getattr(self, "_last_joint_state_stamp", 0.0):
+            return
+        self._last_joint_state_stamp = state.ts
+        payload = state.to_dict()
+        payload.update(type="joint_state", stamp=state.ts, source_age_s=max(0.0, age_s))
+        self.push_event(payload)
 
     def _on_agent_message(self, msg: dict) -> None:
         handle_agent_message(self, msg)

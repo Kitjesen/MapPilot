@@ -497,6 +497,50 @@ def _bundle_artifacts(bundle_dir: Path, *, repo_root: Path) -> list[dict[str, An
     return artifacts
 
 
+def _resolved_presentation(
+    resolved: Any,
+    declared: Mapping[str, Any],
+) -> dict[str, Any]:
+    physics = _mapping(getattr(resolved, "physics_plan", None), "resolved physics plan")
+    world = _mapping(physics.get("world"), "resolved physics plan.world")
+    robots = _sequence(physics.get("robots"), "resolved physics plan.robots")
+    if len(robots) != 1:
+        raise GameSelectionCatalogError("game selection requires exactly one resolved robot")
+
+    def package(value: Any, display: Mapping[str, Any], context: str) -> dict[str, str]:
+        reference = _mapping(value, context)
+        return {
+            "id": _identity(reference.get("id"), f"{context}.id"),
+            "version": _identity(reference.get("version"), f"{context}.version", version=True),
+            "label": display["label"],
+        }
+
+    robot = _mapping(robots[0], "resolved physics plan.robots[0]")
+    scenario_plan = getattr(resolved, "scenario_plan", None)
+    declared_scenario = declared["scenario"]
+    scenario = None
+    if scenario_plan is not None:
+        if declared_scenario is None:
+            raise GameSelectionCatalogError("resolved scenario is missing from presentation")
+        scenario = package(
+            _mapping(scenario_plan, "resolved scenario plan").get("package"),
+            declared_scenario,
+            "resolved scenario plan.package",
+        )
+    session = _mapping(getattr(resolved, "session", None), "resolved session")
+    runtime = _mapping(session.get("runtime"), "resolved session.runtime")
+    return {
+        "robot": package(
+            robot.get("package"), declared["robot"], "resolved physics plan.robots[0].package"
+        ),
+        "world": package(
+            world.get("package"), declared["world"], "resolved physics plan.world.package"
+        ),
+        "scenario": scenario,
+        "mode": _string(runtime.get("mode"), "resolved session.runtime.mode"),
+    }
+
+
 def _compiled_entry(
     entry: Mapping[str, Any],
     *,
@@ -528,13 +572,13 @@ def _compiled_entry(
     resolved.write_bundle(bundle_dir)
     if not bundle_dir.is_dir():
         raise GameSelectionCatalogError(
-            f"selection {entry['id']} compiled bundle was not materialized"
+            f"selection {entry['id']} resolver did not materialize a bundle"
         )
     shutil.copyfile(session_path, bundle_dir / "session.yaml")
     _validate_materialized_bundle(
         bundle_dir, resolved=resolved, repo_root=repo_root
     )
-    compiled_presentation = dict(entry["presentation"])
+    compiled_presentation = _resolved_presentation(resolved, entry["presentation"])
     if compiled_presentation != dict(entry["presentation"]):
         raise GameSelectionCatalogError(
             f"selection {entry['id']}.presentation is invalid"

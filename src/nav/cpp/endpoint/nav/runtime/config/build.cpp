@@ -23,7 +23,9 @@ nav_kernel::FollowerParams followerParams(const CliConfig &cfg) {
   params.stopDisThre = cfg.path_follower_goal_tolerance_m;
   params.nominalDt = 1.0 / cfg.tick_hz;
   params.spline = cfg.scan_follower;
-  return cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu
+  const bool uses_local_planner =
+      cfg.control_mode == ControlMode::Autonomy || cfg.teleop_local_planner;
+  return uses_local_planner && cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu
              ? nav_kernel::cmuFollowerParams(params)
              : params;
 }
@@ -94,7 +96,7 @@ InputGateConfig inputGateConfig(const CliConfig &cfg) {
   out.require_local_collision =
       cfg.check_obstacle &&
       cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan;
-  out.local_collision_max_age_s = nav_kernel::ScanPlannerParams{}.collisionMaxAge;
+  out.local_collision_max_age_s = cfg.local_collision_max_age_s;
   out.require_localization_health = cfg.control_mode == ControlMode::Autonomy;
   return out;
 }
@@ -176,6 +178,8 @@ StatusWriterConfig buildStatusWriterConfig(const CliConfig &cfg,
   // Input gate fields
   out.input_require_odom = gate_cfg.require_odom;
   out.input_require_cloud = gate_cfg.require_cloud;
+  out.input_require_local_collision = gate_cfg.require_local_collision;
+  out.local_collision_max_age_s = gate_cfg.local_collision_max_age_s;
   out.input_require_traversability = gate_cfg.require_traversability;
   out.input_require_localization_health = gate_cfg.require_localization_health;
   out.input_require_driver_control = gate_cfg.require_driver_control;
@@ -192,6 +196,8 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
           ? 0.0
           : cfg.teleop_obstacle_margin_m;
   out.backend = cfg.local_planner_backend;
+  out.scan = cfg.scan_planner;
+  out.localCollisionMaxAge = cfg.local_collision_max_age_s;
   if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu) {
     // Upstream Go2 autonomous navigation is forward-only.  Planner and
     // Follower must agree, otherwise a rearward candidate makes the follower

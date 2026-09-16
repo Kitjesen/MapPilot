@@ -1,11 +1,9 @@
-# ruff: noqa: S101
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
-
 from sim.runtime.coordinator.atomic_file import replace_file_with_retry
 
 TEMPORARY = Path("session.runtime.json.tmp")

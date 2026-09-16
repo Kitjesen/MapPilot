@@ -1,4 +1,3 @@
-# ruff: noqa: S101
 
 """Rendering contracts for the FactoryPark_HF Unreal authoring script."""
 

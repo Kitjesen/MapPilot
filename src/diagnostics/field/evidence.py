@@ -8,15 +8,17 @@ from dataclasses import dataclass
 from numbers import Real
 from typing import Any, Mapping, Sequence
 
-from runtime.runtime_interface import (
-    FRAME_LINKS,
+from diagnostics.runtime_contract import (
     REAL_RUNTIME_CONTRACT,
     REAL_RUNTIME_REQUIRED_ENDPOINT_INPUT_TOPICS,
+    resolved_runtime_data_flow,
+)
+from message.topics import TOPICS
+from runtime.tf.frames import (
+    FRAME_LINKS,
     TOPIC_ALLOWED_FRAME_IDS,
-    TOPICS,
     expand_frame_id_aliases,
     normalize_frame_id,
-    resolved_runtime_data_flow,
     runtime_required_topic_frame_ids,
     runtime_topic_allowed_frame_ids,
 )

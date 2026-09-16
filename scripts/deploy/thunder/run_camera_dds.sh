@@ -14,6 +14,14 @@ fi
 : "${LINGTU_REPO:=/opt/lingtu/current}"
 : "${LINGTU_CAMERA_DDS_BIN:=${LINGTU_REPO}/bin/lingtu_camera_dds}"
 : "${LINGTU_ORBBEC_CAPTURE_BIN:=${LINGTU_REPO}/bin/orbbec_capture}"
+: "${LINGTU_CAMERA_DRIVER:=orbbec_native}"
+: "${LINGTU_REALSENSE_CAPTURE_BIN:=${LINGTU_REPO}/bin/realsense_capture}"
+: "${LINGTU_REALSENSE_SERIAL_NUMBER:=}"
+case "${LINGTU_CAMERA_DRIVER}" in
+    orbbec_native) capture_bin="${LINGTU_ORBBEC_CAPTURE_BIN}" ;;
+    realsense_native) capture_bin="${LINGTU_REALSENSE_CAPTURE_BIN}" ;;
+    *) echo "Unsupported camera driver: ${LINGTU_CAMERA_DRIVER}" >&2; exit 2 ;;
+esac
 : "${LINGTU_CAMERA_STATUS_FILE:=/dev/shm/lingtu/camera_status.json}"
 : "${LINGTU_CAMERA_FRAME_ID:=camera_link}"
 : "${LINGTU_CAMERA_COLOR_TOPIC:=rt/camera/color}"
@@ -55,9 +63,13 @@ if [ ! -x "${LINGTU_CAMERA_DDS_BIN}" ]; then
     exit 2
 fi
 
-if [ ! -x "${LINGTU_ORBBEC_CAPTURE_BIN}" ]; then
-    echo "ERROR: Orbbec native capture binary is missing or not executable: ${LINGTU_ORBBEC_CAPTURE_BIN}" >&2
-    echo "Build it with: bash scripts/build/build_orbbec_native.sh" >&2
+if [ ! -x "${capture_bin}" ]; then
+    echo "ERROR: ${LINGTU_CAMERA_DRIVER} capture binary is missing: ${capture_bin}" >&2
+    if [ "${LINGTU_CAMERA_DRIVER}" = realsense_native ]; then
+        echo "Build it with: bash scripts/build/build_realsense_native.sh" >&2
+    else
+        echo "Build it with: bash scripts/build/build_orbbec_native.sh" >&2
+    fi
     exit 2
 fi
 
@@ -70,11 +82,16 @@ capture_args=(
     --depth-width "${LINGTU_CAMERA_DEPTH_WIDTH}"
     --depth-height "${LINGTU_CAMERA_DEPTH_HEIGHT}"
     --depth-fps "${LINGTU_CAMERA_DEPTH_FPS}"
-    --connect-timeout-ms "${LINGTU_ORBBEC_CONNECT_TIMEOUT_MS}"
     --timeout-ms "${LINGTU_CAMERA_CAPTURE_TIMEOUT_MS}"
     --startup-frame-timeout-ms "${LINGTU_CAMERA_STARTUP_FRAME_TIMEOUT_MS}"
 )
 
+if [ "${LINGTU_CAMERA_DRIVER}" = realsense_native ]; then
+    if [ -n "${LINGTU_REALSENSE_SERIAL_NUMBER}" ]; then
+        capture_args+=(--serial-number "${LINGTU_REALSENSE_SERIAL_NUMBER}")
+    fi
+else
+capture_args+=(--connect-timeout-ms "${LINGTU_ORBBEC_CONNECT_TIMEOUT_MS}")
 if [ -n "${LINGTU_ORBBEC_SERIAL_NUMBER}" ]; then
     capture_args+=(--serial-number "${LINGTU_ORBBEC_SERIAL_NUMBER}")
 fi
@@ -95,13 +112,14 @@ case "${LINGTU_ORBBEC_ENABLE_FRAME_SYNC}" in
         capture_args+=(--enable-frame-sync)
         ;;
 esac
+fi
 if [ -n "${LINGTU_CAMERA_CAPTURE_MAX_FRAMES}" ]; then
     capture_args+=(--max-frames "${LINGTU_CAMERA_CAPTURE_MAX_FRAMES}")
 fi
 
 runtime_args=(
     --domain-id "${LINGTU_DDS_DOMAIN_ID}"
-    --capture-bin "${LINGTU_ORBBEC_CAPTURE_BIN}"
+    --capture-bin "${capture_bin}"
     --frame-id "${LINGTU_CAMERA_FRAME_ID}"
     --color-topic "${LINGTU_CAMERA_COLOR_TOPIC}"
     --depth-topic "${LINGTU_CAMERA_DEPTH_TOPIC}"

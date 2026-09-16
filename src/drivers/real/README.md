@@ -74,4 +74,4 @@ Field teleop does not use a Python driver Module. The Web panel sends typed
 physical velocity intent through Gateway to the native navigation endpoint;
 the native endpoint owns arbitration and final safety, and `lingtu_driver` is
 the only physical motion writer. See
-[`docs/04-deployment/operator_drive.md`](../../../docs/04-deployment/operator_drive.md).
+[`docs/operations.md`](../../../docs/operations.md).

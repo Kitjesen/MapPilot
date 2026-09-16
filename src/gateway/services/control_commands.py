@@ -10,10 +10,11 @@ from typing import Any
 
 from fastapi.responses import JSONResponse
 
+from gateway.maps.transport import active_map as read_active_map
+from gateway.navigation.commands import CommandBoundaryError, navigation_commands
 from gateway.schemas import PlanPreviewRequest
-from gateway.services.command_boundary import CommandBoundaryError, navigation_commands
 from gateway.services.safety_status import safety_stop_active, safety_summary
-from runtime.runtime_interface import map_frame_id
+from runtime.tf.frames import map_frame_id
 
 CONTROL_MAP_FRAME_ID = map_frame_id()
 
@@ -247,13 +248,14 @@ class ControlCommandService:
         command: str,
         body: Any,
     ) -> JSONResponse | None:
-        from gateway.services.runtime_status import build_navigation_status
+        from gateway.navigation.status import evaluate_navigation_gate
 
-        status = build_navigation_status(self._gw)
-        readiness = status.get("readiness", {})
-        blockers = list(readiness.get("blockers") or [])
-        if bool(status.get("can_accept_goal", False)) and not blockers:
+        gate = evaluate_navigation_gate(self._gw)
+        blockers = list(gate.get("blockers") or [])
+        if gate.get("can_accept_goal") is True and not blockers:
             return None
+        if not blockers:
+            blockers.append(str(gate.get("reason") or "navigation_state_unknown"))
         return self.rejected_response(
             command,
             body,
@@ -265,11 +267,9 @@ class ControlCommandService:
                 source="gateway_readiness",
                 path="/api/v1/navigation/status",
                 blockers=blockers,
-                advisories=list(readiness.get("advisories") or []),
-                state=status.get("state"),
-                has_odometry=status.get("has_odometry"),
+                advisories=list(gate.get("advisories") or []),
+                state=(gate.get("navigation_state") or {}).get("lifecycle_state_name"),
                 session_mode=getattr(self._gw, "_session_mode", None),
-                localization=status.get("localization", {}),
             ),
         )
 
@@ -287,9 +287,7 @@ class ControlCommandService:
 
         active_map = str(getattr(self._gw, "_session_map", None) or "").strip()
         if not active_map:
-            active_map_name = getattr(self._gw, "_session_active_map_name", None)
-            if callable(active_map_name):
-                active_map = str(active_map_name() or "").strip()
+            active_map = read_active_map(self._gw) or ""
         if active_map == requested_map:
             return None
         return self.rejected_response(

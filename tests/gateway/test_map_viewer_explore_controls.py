@@ -55,6 +55,16 @@ def test_explore_display_state_is_refreshed_only_from_status_or_sse() -> None:
     assert "else if(ev.type==='exploring')   _setExploring(ev.active);" in html
 
 
+def test_navigation_display_uses_the_unified_status_only() -> None:
+    html = VIEWER.read_text(encoding="utf-8")
+
+    assert "_task(ev.data.navigation);" in html
+    assert "ev.type==='navigation_status'" in html
+    assert "operator_state" not in html
+    assert "ev.data.mission" not in html
+    assert "ev.type==='mission'" not in html
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is required for viewer behavior test")
 def test_explore_http_failure_keeps_status_state_and_surfaces_operator_guidance() -> None:
     html = VIEWER.read_text(encoding="utf-8")

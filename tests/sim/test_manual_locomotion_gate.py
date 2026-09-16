@@ -1,6 +1,5 @@
 """Offline contracts for the manual UE-to-MuJoCo locomotion diagnostic gate."""
 
-# ruff: noqa: S101
 
 from __future__ import annotations
 
@@ -11,7 +10,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from sim.runtime.coordinator.manual_locomotion_gate import (
     ManualLocomotionGateConfig,
     build_locomotion_probe_command,

@@ -5,58 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from runtime.runtime_interface import TOPICS
+from message.catalog import load_topics
+from message.topics import TOPICS
 
 from .model import RouteBackend, RouteSpec
-
-_ROBOT_DDS_QOS = {
-    "/tf": {"qos": "state"},
-    "/tf_static": {"qos": "state", "transient_local": True},
-    TOPICS.lidar_scan: {"qos": "sensor"},
-    TOPICS.imu: {"qos": "sensor"},
-    TOPICS.odometry: {"qos": "state"},
-    TOPICS.registered_cloud: {"qos": "cloud"},
-    TOPICS.map_observation: {"qos": "cloud"},
-    TOPICS.map_cloud: {"qos": "cloud"},
-    TOPICS.saved_map_cloud: {"qos": "cloud", "required": False},
-    TOPICS.maps_activation_request: {"qos": "command"},
-    TOPICS.maps_activation_ack: {"qos": "event", "transient_local": True},
-    TOPICS.maps_state: {"qos": "state", "transient_local": True},
-    TOPICS.maps_scene: {"qos": "state", "transient_local": True},
-    TOPICS.localization_health: {"qos": "state"},
-    TOPICS.localization_quality: {"qos": "state"},
-    TOPICS.nav_command_request: {"qos": "command"},
-    TOPICS.nav_command_ack: {"qos": "event"},
-    TOPICS.plan_request: {"qos": "command"},
-    TOPICS.plan_result: {"qos": "command"},
-    TOPICS.operator_motion_control: {"qos": "command"},
-    TOPICS.operator_motion_sample: {"qos": "sensor"},
-    TOPICS.operator_motion_ack: {"qos": "event"},
-    TOPICS.operator_motion_status: {"qos": "state"},
-    TOPICS.nav_goal_status: {"qos": "event"},
-    TOPICS.nav_state: {"qos": "state", "transient_local": True},
-    TOPICS.exploration_command: {"qos": "command"},
-    TOPICS.exploration_ack: {"qos": "event"},
-    TOPICS.exploration_run_event: {"qos": "event"},
-    TOPICS.exploration_segment_request: {"qos": "command"},
-    TOPICS.exploration_segment_ack: {"qos": "event"},
-    TOPICS.exploration_segment_status: {"qos": "event"},
-    TOPICS.inspection_task_request: {"qos": "command"},
-    TOPICS.inspection_task_ack: {"qos": "event"},
-    TOPICS.inspection_status: {"qos": "state"},
-    TOPICS.inspection_task_event: {"qos": "event"},
-    TOPICS.inspection_evidence_request: {"qos": "command"},
-    TOPICS.inspection_evidence_result: {"qos": "event"},
-    TOPICS.traversability: {"qos": "state", "required": False},
-    TOPICS.local_traversability: {"qos": "local_risk_grid", "required": False},
-    TOPICS.exploration_grid: {"qos": "state"},
-    TOPICS.exploration_snapshot: {"qos": "state"},
-    TOPICS.exploration_execution_snapshot: {"qos": "state"},
-    TOPICS.global_path: {"qos": "state"},
-    TOPICS.local_path: {"qos": "state"},
-    TOPICS.nav_way_point: {"qos": "state", "required": False},
-    TOPICS.cmd_vel: {"qos": "command", "single_writer": True},
-}
 
 _REPLAY_LCM_BINDINGS = {
     TOPICS.lidar_scan: {
@@ -90,14 +42,19 @@ _REPLAY_LCM_BINDINGS = {
 def robot() -> RouteSpec:
     """Physical robot route using typed DDS at native service boundaries."""
 
+    bindings = {
+        spec["topic"]: ({"single_writer": True} if spec.get("single_writer_per_product") else {})
+        for spec in load_topics()
+        if spec.get("transport") == RouteBackend.DDS.value
+    }
+
     return RouteSpec(
         name="robot",
         description="Physical robot route. Native service boundaries use typed DDS.",
         default=RouteBackend.LOCAL.value,
-        endpoint_contract="field_dds_v1",
-        routes={topic: RouteBackend.DDS.value for topic in _ROBOT_DDS_QOS},
+        routes={topic: RouteBackend.DDS.value for topic in bindings},
         bindings={
-            RouteBackend.DDS.value: _copy_bindings(_ROBOT_DDS_QOS),
+            RouteBackend.DDS.value: bindings,
         },
     )
 
