@@ -300,6 +300,8 @@ Dds::Dds(int domain_id, DdsStatus *status, bool read_obstacle_cloud, bool read_s
              &lingtu_dds_NavigationCommandRequest_desc, "nav_command_request");
   plan_request_reader_ = reader(lingtu::message::kNavPlanRequest.dds_topic.data(),
                                 &lingtu_dds_PlanRequest_desc, "nav_plan_request");
+  semantic_view_reader_ = reader(lingtu::message::kNavSemanticViewRequest.dds_topic.data(),
+                                &lingtu_dds_SemanticViewRequest_desc, "semantic_view_request");
   geofence_command_reader_ = reader(lingtu::message::kNavGeofenceCommand.dds_topic.data(),
                                     &lingtu_dds_GeofenceCommandRequest_desc, "geofence_command");
   operator_motion_control_reader_ =
@@ -333,6 +335,8 @@ Dds::Dds(int domain_id, DdsStatus *status, bool read_obstacle_cloud, bool read_s
                                &lingtu_dds_NavigationCommandAck_desc, "nav_command_ack");
   plan_result_writer_ = writer(lingtu::message::kNavPlanResult.dds_topic.data(),
                                &lingtu_dds_PlanResult_desc, "nav_plan_result");
+  semantic_view_writer_ = writer(lingtu::message::kNavSemanticViewResult.dds_topic.data(),
+                                &lingtu_dds_SemanticViewResult_desc, "semantic_view_result");
   geofence_response_writer_ = writer(lingtu::message::kNavGeofenceResponse.dds_topic.data(),
                                      &lingtu_dds_GeofenceCommandAck_desc, "geofence_response");
   geofence_alert_writer_ = writer(lingtu::message::kNavGeofenceAlert.dds_topic.data(),
@@ -510,6 +514,23 @@ CommandBatch Dds::takeCommands(double now_steady_s) {
             stringValue(message.request_id),
             {message.goal.x, message.goal.y, message.goal.z}});
       });
+  drainReader<lingtu_dds_SemanticViewRequest>(
+      semantic_view_reader_, lingtu_dds_SemanticViewRequest_desc,
+      [&](const lingtu_dds_SemanticViewRequest &message) {
+        semantic::ViewQuery query;
+        query.request_id = stringValue(message.request_id);
+        query.boot_id = stringValue(message.boot_id);
+        query.map = {stringValue(message.map_id), message.map_content_epoch, headerFrameId(message.header)};
+        query.frame_epoch = message.frame_epoch;
+        query.reference_z = message.reference_z;
+        query.camera_range_m = message.camera_range_m;
+        query.camera_horizontal_fov_rad = message.camera_horizontal_fov_rad;
+        for (std::uint32_t i = 0; i < message.views._length; ++i) {
+          const auto &view = message.views._buffer[i];
+          query.views.push_back({view.x, view.y, view.yaw, view.range_m, view.horizontal_fov_rad});
+        }
+        batch.ordered.emplace_back(std::move(query));
+      });
   drainReader<lingtu_dds_InspectionTaskRequest>(
       inspection_task_request_reader_, lingtu_dds_InspectionTaskRequest_desc,
       [&](const lingtu_dds_InspectionTaskRequest &message) {
@@ -563,6 +584,8 @@ PublishReceipt Dds::publish(const OutputEvent &output) {
                                               event.kind, event.accepted, event.reason.c_str());
         } else if constexpr (std::is_same_v<Event, PlanResultSample>) {
           receipt.published = writePlanResult(event);
+        } else if constexpr (std::is_same_v<Event, semantic::ViewResult>) {
+          receipt.published = writeSemanticViews(event);
         } else if constexpr (std::is_same_v<Event, GeofenceCommandAckSample>) {
           receipt.published = writeGeofenceAck(event);
         } else if constexpr (std::is_same_v<Event, GeofenceAlertSample>) {
@@ -736,6 +759,32 @@ bool Dds::writePlanResult(const PlanResultSample &result) {
   const dds_return_t write_result = dds_write(plan_result_writer_, &message);
   logDdsError(write_result, "dds_write(nav_plan_result)");
   return write_result >= 0;
+}
+
+bool Dds::writeSemanticViews(const semantic::ViewResult &result) {
+  if (semantic_view_writer_ <= 0 || result.request_id.empty() || result.candidates.size() > 16U)
+    return false;
+  lingtu_dds_SemanticViewResult message{};
+  fillHeader(message.header, result.timestamp_s, result.map.frame_id.c_str());
+  message.request_id = const_cast<char *>(result.request_id.c_str());
+  message.boot_id = const_cast<char *>(result.boot_id.c_str());
+  message.map_id = const_cast<char *>(result.map.map_id.c_str());
+  message.map_content_epoch = result.map.content_epoch;
+  message.frame_epoch = result.frame_epoch;
+  message.reference_z = result.reference_z;
+  message.available = result.available;
+  message.geometry_exhausted = result.geometry_exhausted;
+  message.reason = const_cast<char *>(result.reason.c_str());
+  std::vector<lingtu_dds_SemanticViewCandidate> candidates;
+  for (const auto &view : result.candidates)
+    candidates.push_back({{view.position.x, view.position.y, view.position.z}, view.yaw,
+                          view.score, view.route_cost_m, view.visible_cells});
+  message.candidates._maximum = message.candidates._length = static_cast<std::uint32_t>(candidates.size());
+  message.candidates._buffer = candidates.data();
+  message.candidates._release = false;
+  const auto written = dds_write(semantic_view_writer_, &message);
+  logDdsError(written, "dds_write(semantic_view_result)");
+  return written >= 0;
 }
 
 bool Dds::writeGeofenceAck(const GeofenceCommandAckSample &ack) {

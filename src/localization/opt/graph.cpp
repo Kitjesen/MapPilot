@@ -860,6 +860,9 @@ Result optimize_map(const Map& map, const OptimizeOptions& options) {
         map.patch_bundle_manifest,
         staging / "patch_bundle.manifest",
         std::filesystem::copy_options::none);
+    const auto scan_origin = map.map_dir / "scan_origin.txt";
+    if (std::filesystem::is_regular_file(scan_origin))
+      std::filesystem::copy_file(scan_origin, staging / "scan_origin.txt");
 
     result.ok = true;
     result.code = "optimized";

@@ -11,6 +11,7 @@ import perception.module as perception_module
 from perception.module import PerceptionModule
 from runtime.msgs.geometry import PoseStamped
 from runtime.msgs.semantic import SceneGraph
+from runtime.msgs.sensor import Image, ImageFormat
 
 
 class _Synchronizer:
@@ -19,6 +20,7 @@ class _Synchronizer:
 
     def push_color(self, frame: Any) -> tuple[Any, ...]:
         self.color_frames += 1
+        frame.color = Image(data=np.zeros((4, 4, 3), dtype=np.uint8), format=ImageFormat.BGR, ts=frame.ts)
         return (frame,)
 
     def push_depth(self, _frame: Any) -> tuple[Any, ...]:
@@ -136,6 +138,7 @@ def test_module_keeps_the_blueprint_contract(monkeypatch: Any) -> None:
         "scene_graph",
         "detections_3d",
         "robot_pose",
+        "observation_image",
     }
     assert module.layer == 3
 
@@ -144,6 +147,7 @@ def test_worker_coalesces_pending_frames_and_preserves_publish_order(monkeypatch
     pipeline = _Pipeline(block=True)
     module = _module(monkeypatch, pipeline)
     published: list[tuple[str, float]] = []
+    module.observation_image.subscribe(lambda msg: published.append(("image", msg.ts)))
     module.robot_pose.subscribe(lambda msg: published.append(("pose", msg.ts)))
     module.detections_3d.subscribe(lambda _msg: published.append(("detections", 0.0)))
     module.scene_graph.subscribe(lambda msg: published.append(("graph", msg.ts)))
@@ -162,13 +166,16 @@ def test_worker_coalesces_pending_frames_and_preserves_publish_order(monkeypatch
 
         assert [frame.ts for frame in pipeline.processed] == [1.0, 3.0]
         assert [name for name, _ts in published] == [
+            "image",
             "pose",
             "detections",
             "graph",
+            "image",
             "pose",
             "detections",
             "graph",
         ]
+        assert [stamp for name, stamp in published if name == "image"] == [1.0, 3.0]
         health = module.health()
         assert health["processed_frames"] == 2
         assert health["coalesced_frames"] == 1

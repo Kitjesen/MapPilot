@@ -5,6 +5,7 @@ option(LINGTU_EXPLORE_CPP_BUILD_TESTS "Build LingTu explore C++ tests" OFF)
 
 add_library(lingtu_explore_core
   frontier.cpp
+  semantic_views.cpp
   keypose_graph.cpp
   tare_policy.cpp)
 
@@ -98,4 +99,5 @@ endif()
 install(FILES
   explore_contract.hpp
   tare_policy.hpp
+  semantic_views.hpp
   DESTINATION include/explore/cpp)

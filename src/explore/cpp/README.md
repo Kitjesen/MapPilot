@@ -50,6 +50,53 @@ reachable free-space flood fill
 
 ## Python bindings (nanobind)
 
+### Semantic search proposals
+
+`semantic_views.hpp` provides the transport-free `ProposeSemanticViews` query.
+It reuses `TarePolicy` for reachability and viewpoint ranking, without changing
+an executing exploration policy. It takes a saved-map snapshot, per-cell robot
+reference heights, and camera views bound to that map and reset epoch. The
+camera view footprint uses range, horizontal field of view and map occlusion;
+it is modeled geometric coverage, not proof of successful visual recognition.
+
+The result contains candidates with heights and `geometry_exhausted`, not a
+motion command or semantic task success. Unsupported heights remain unknown.
+Queries can be repeated at the same map generation as camera observations are
+added. Query cancellation and failed planning return no candidates. The query
+does not infer traversability across height discontinuities; every candidate
+still requires native 3D path admission.
+
+The native navigation endpoint now serves a read-only query on
+`/nav/semantic/views/request` and `/nav/semantic/views/result`. Its worker uses
+the active saved OctoMap and the global planner's ground-support and clearance
+predicate. Candidate heights come from the tested, snapped reference layer;
+unsupported cells stay unknown. This is a single-height query, not a
+multi-floor visibility model. It does not use the display projection sidecar.
+
+Requests carry the native boot identity, map identity, localization epoch,
+camera range/FOV, and camera-view history. Missing camera parameters are rejected
+instead of assuming a 360-degree LiDAR. History cannot cross a height-layer or
+localization change. The worker is cancellable and does not send motion.
+Camera history excludes only observed directions, not entire visited positions;
+an in-place turn can cover new geometry in a small reachable region.
+
+`visible_cells` is a bounded geometric gain estimate, not an object-detection
+confidence. Saved-map reachability and ray visibility do not prove a live
+collision-free turn or a visually observable object. Every candidate still
+needs native motion admission and new camera evidence.
+
+The persistent native client, Host registry and SemanticPlanner search loop are
+not yet connected to this request. Do not claim field semantic search is ready.
+`/nav/exploration_snapshot` still lacks per-cell support/reference height; do not
+replace the native query with a zero-filled or guessed height array.
+
+The test target `test_semantic_views` checks camera coverage versus map coverage,
+opposite views at one map generation, occlusion, unsupported connectivity,
+map-bound histories, exhaustion, cancellation and successive in-place turns.
+`test_tare_policy` covers the existing exploration policy separately.
+`test_semantic_view_query` exercises the worker using a real OctoMap fixture and
+typed DDS requests/results. These local tests do not prove field behavior.
+
 The C++ core is exposed to Python through the `lingtu_explore_kernel` nanobind
 extension. The bindings live in `bindings/`:
 

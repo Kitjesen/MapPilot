@@ -65,6 +65,33 @@ inspection route command
   -> inspection status/evidence response
 ```
 
+Saved-location goals are references, not just cached coordinates. Preview
+accepts `location_name`; the existing Web submit contract uses
+`source: saved_location` and `metadata.location_name`. Both resolve the stored
+entry and require its map ID, content epoch, and frame to match native
+navigation state. Submission resolves again inside command execution, so a
+successful preview does not authorize an entry that was deleted or became
+stale. The command returns `invalid_goal` with the specific binding failure
+and does not dispatch a goal. Lookup uses the exact saved name: deleting `dock`
+must not redirect its navigation request to `dock-east`. Fuzzy interpretation
+belongs to semantic input, not this structured target reference. This does not
+replace native motion admission.
+
+The Web's save/update-current-location actions use `use_current_pose: true`.
+The backend supplies XYZ and yaw from one odometry snapshot; the browser does
+not replace Z with zero or reuse the old location height. The snapshot must be
+in the map frame, received within the existing 2-second pose freshness limit,
+and not quarantined or reported lost/stale by localization. Rejection leaves
+the saved entry unchanged. New unbound locations can be saved for inspection,
+but cannot be submitted as navigation targets. An existing bound location
+cannot be overwritten while its new map binding is unavailable.
+
+The MCP `tag_location` tool calls the same `maps.locations.upsert_location`
+operation and uses the Gateway pose snapshot. It does not write directly from
+its separate telemetry cache. Missing Gateway, stale pose, and persistence
+failure return errors rather than claiming a location was saved. The SDK
+deletes locations using HTTP DELETE with an encoded location name.
+
 ## Folder Map
 
 | Path | Role |

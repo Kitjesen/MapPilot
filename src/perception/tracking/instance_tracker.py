@@ -264,6 +264,7 @@ class InstanceTracker(BeliefPropagationMixin):
         camera_pos: np.ndarray | None = None,
         camera_forward: np.ndarray | None = None,
         intrinsics_fx: float = 0.0,
+        source_ts: float | None = None,
     ) -> list[TrackedObject]:
         """
         用本帧检测结果更新全局物体表。
@@ -273,6 +274,7 @@ class InstanceTracker(BeliefPropagationMixin):
             camera_pos: 相机世界坐标 [x,y,z] (用于 FOV 检查)
             camera_forward: 相机朝向单位向量 [fx,fy,fz] (用于 FOV 检查)
             intrinsics_fx: 相机焦距 fx (用于 3D 包围盒估算, 0=使用默认 600)
+            source_ts: Capture timestamp for matched objects; absent means current wall time.
 
         Returns:
             本帧匹配/新建的 TrackedObject 列表
@@ -291,6 +293,7 @@ class InstanceTracker(BeliefPropagationMixin):
 
         with self._lock:
             matched: list[TrackedObject] = []
+            observed_at = time.time() if source_ts is None else float(source_ts)
 
             # Stage 1a: optionally resolve all detection->object assignments
             # globally via the Hungarian algorithm. When the gate is OFF we
@@ -309,6 +312,7 @@ class InstanceTracker(BeliefPropagationMixin):
                     best_obj = self._find_match(det)
                 if best_obj is not None:
                     best_obj.update(det)
+                    best_obj.last_observed_time = observed_at
                     matched.append(best_obj)
                 else:
                     # USS-Nav: 新实例含点云
@@ -321,6 +325,7 @@ class InstanceTracker(BeliefPropagationMixin):
                         position=det.position.copy(),
                         best_score=det.score,
                         last_seen=time.time(),
+                        last_observed_time=observed_at,
                         features=det.features.copy() if det.features.size > 0 else np.array([]),
                         points=init_points,
                     )
@@ -670,6 +675,7 @@ class InstanceTracker(BeliefPropagationMixin):
             keep.features = drop.features.copy()
         keep.detection_count += drop.detection_count
         keep.last_seen = max(keep.last_seen, drop.last_seen)
+        keep.last_observed_time = max(keep.last_observed_time, drop.last_observed_time)
         keep.best_score = max(keep.best_score, drop.best_score)
 
     @staticmethod

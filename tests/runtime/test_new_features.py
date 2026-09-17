@@ -160,7 +160,7 @@ def test_35_empty_scene_graph():
     try:
         # Track if goal_pose gets published
         published_goals = []
-        mod.goal_pose.subscribe(lambda p: published_goals.append(p))
+        mod.nav_command.subscribe(lambda p: published_goals.append(p))
 
         # Give an instruction first so the module is "active"
         mod._current_instruction = "find the table"

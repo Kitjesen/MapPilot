@@ -11,6 +11,8 @@ import os
 import tempfile
 import unittest
 
+import pytest
+
 from runtime.msgs.nav import Odometry, Pose
 
 # ---------------------------------------------------------------------------
@@ -326,3 +328,27 @@ class TestTaggedLocationsPersistence(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize("command,expected", [
+    ("save:dock", "error:save_failed"),
+    ("remove:dock", "error:remove_failed"),
+])
+def test_failed_write_is_reported_on_status_port(tmp_path, monkeypatch, command, expected):
+    from memory.modules.tagged_locations_module import TaggedLocationsModule
+
+    module = TaggedLocationsModule(json_path=str(tmp_path / "tags.json"))
+    module.setup()
+    module.store.tag("dock", x=1.0, y=2.0)
+    module._on_odom(_odom(8.0, 9.0))
+    statuses = []
+    module.tag_status.subscribe(statuses.append)
+
+    def fail_replace(*args):
+        raise OSError("disk write failed")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+    module._on_command(command)
+
+    assert statuses == [expected]
+    assert module.store.query("dock")["position"] == [1.0, 2.0, 0.0]

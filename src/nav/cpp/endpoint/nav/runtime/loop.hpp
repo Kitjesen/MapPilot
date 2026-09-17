@@ -77,6 +77,7 @@ class CommandIngressController;
 class NavigationStateTracker;
 class InspectionStatusFileWriter;
 class PlanningMapWriter;
+class SemanticViewQuery;
 
 /// All external state the endpoint main-loop needs.  Constructed once in
 /// main() after the controllers are wired; the loop reads/writes through
@@ -129,6 +130,7 @@ struct EndpointLoopContext {
   // -- Timing (current_timing is shared with setup-phase lambdas) -----------
   TimingDiagnostics *&current_timing;
   PlanningMapWriter *planning_map_writer{nullptr};
+  SemanticViewQuery *semantic_view_query{nullptr};
 };
 
 /// Run the main while(running) loop and the post-loop shutdown sequence.

@@ -450,7 +450,10 @@ def test_location_update_route_uses_current_pose_and_preserves_contract():
         tag_status=SimpleNamespace(publish=lambda _msg: None),
     )
     with gateway._state_lock:
-        gateway._odom = {"x": 3.25, "y": -1.5, "z": 0.2, "yaw": 1.1}
+        gateway._runtime_cache.record_odometry(
+            {"x": 3.25, "y": -1.5, "z": 0.2, "yaw": 1.1, "frame_id": "map"},
+            ts=time.time(),
+        )
 
     gateway._tagged_loc_module.store.tag("dock", x=0.0, y=0.0, tags=["old"])
     body = LocationUpsertRequest(

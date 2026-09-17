@@ -1,3 +1,4 @@
+import { writeCloudHeightColor } from '../services/cloudHeightColor.ts'
 import { lingtuToThree } from '../services/coordinateFrame.ts'
 
 const MAGIC = 0x44_4c_43_50 // "PCLD" as a little-endian uint32
@@ -6,8 +7,6 @@ const KNOWN_FLAGS = FLAG_HAS_COLOR
 const V1_HEADER_SIZE = 28
 const V2_HEADER_BASE_SIZE = 48
 const MAX_POINT_COUNT = 1_000_000
-const COLOR_Z_MIN = -1.0
-const COLOR_Z_SPAN = 3.5
 
 export type CloudStreamKind = 'cloud' | 'map' | 'scan' | 'reset'
 export type CloudEndpointKind = 'cloud' | 'scan'
@@ -101,20 +100,6 @@ function decodeError(message: string): never {
   throw new PointCloudDecodeError(message)
 }
 
-function turboColor(t: number, out: Float32Array, off: number): void {
-  const x = t < 0 ? 0 : t > 1 ? 1 : t
-  if (x < 0.5) {
-    const u = x * 2
-    out[off] = 0.18 + (0.55 - 0.18) * u
-    out[off + 1] = 0.55
-    out[off + 2] = 0.50 + (0.55 - 0.50) * u
-  } else {
-    const u = (x - 0.5) * 2
-    out[off] = 0.55 + (0.78 - 0.55) * u
-    out[off + 1] = 0.55 + (0.60 - 0.55) * u
-    out[off + 2] = 0.55 + (0.35 - 0.55) * u
-  }
-}
 
 function containsControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
@@ -379,7 +364,7 @@ export function decodePointCloudFrame(buf: ArrayBuffer): DecodedCloudFrame {
       colors[off + 1] = rgb[i * 3 + 1] / 255
       colors[off + 2] = rgb[i * 3 + 2] / 255
     } else {
-      turboColor((wz - COLOR_Z_MIN) / COLOR_Z_SPAN, colors, off)
+      writeCloudHeightColor(wz, colors, off)
     }
     written++
   }

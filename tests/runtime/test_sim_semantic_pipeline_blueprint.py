@@ -23,7 +23,7 @@ def test_sim_blueprint_wires_real_semantic_pipeline():
     assert camera_source in system.modules
     assert "PerceptionModule" in system.modules
     assert "VisualServoModule" in system.modules
-    assert "AgentPlannerModule" not in system.modules
+    assert "AgentPlannerModule" in system.modules
     assert "SemanticPlannerModule" in system.modules
 
     connections = set(system.connections)
@@ -36,7 +36,10 @@ def test_sim_blueprint_wires_real_semantic_pipeline():
     assert has_conn(camera_source, "PerceptionModule", "depth_image")
     assert has_conn(camera_source, "PerceptionModule", "camera_info")
     assert has_conn("PerceptionModule", "SemanticPlannerModule", "scene_graph")
+    assert has_conn("PerceptionModule", "SemanticPlannerModule", "observation_image")
     assert has_conn("PerceptionModule", "SemanticPlannerModule", "detections")
+    assert has_conn("PerceptionModule", "AgentPlannerModule", "robot_pose")
+    assert has_conn("PerceptionModule", "AgentPlannerModule", "observation_image")
     assert has_conn("SemanticMapperModule", "SemanticPlannerModule", "topo_summary")
     assert has_conn("SemanticMapperModule", "SemanticPlannerModule", "room_graph")
 

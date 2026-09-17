@@ -16,6 +16,11 @@ from runtime.msgs.sensor import (
 # ---------------------------------------------------------------------------
 
 class TestImage:
+    def test_rgba_conversion_preserves_color_channels(self):
+        image = Image.from_numpy(np.array([[[255, 0, 0, 128]]], dtype=np.uint8), ImageFormat.RGBA)
+        np.testing.assert_array_equal(image.to_rgb().data, [[[255, 0, 0]]])
+        np.testing.assert_array_equal(image.to_bgr().data, [[[0, 0, 255]]])
+
     def test_from_numpy_properties(self):
         arr = np.zeros((480, 640, 3), dtype=np.uint8)
         img = Image.from_numpy(arr, ImageFormat.RGB)

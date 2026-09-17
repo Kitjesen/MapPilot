@@ -839,6 +839,33 @@ endif()
 if(LINGTU_NAV_CPP_BUILD_ENDPOINT)
 if(LINGTU_NAV_CPP_BUILD_TESTS)
 if(TARGET octoplanner3d_runtime)
+  add_executable(test_semantic_view_query
+    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_semantic_view_query.cpp"
+    "${_ENDPOINT_DIR}/nav/dds/runtime.cpp"
+    "${_ENDPOINT_DIR}/nav/dds/codec.cpp"
+    "${_ENDPOINT_DIR}/nav/dds/frame.cpp"
+    "${_ENDPOINT_DIR}/nav/command/goal.cpp"
+    "${_ENDPOINT_DIR}/nav/input/frame.cpp"
+    "${_ENDPOINT_DIR}/nav/runtime/semantic/view_query.cpp"
+    "${_ENDPOINT_DIR}/nav/input/active/octomap.cpp"
+    "${_ENDPOINT_DIR}/nav/input/active/declared.cpp"
+    "${_LINGTU_ROOT}/src/explore/cpp/semantic_views.cpp"
+    "${_LINGTU_ROOT}/src/explore/cpp/frontier.cpp"
+    "${_LINGTU_ROOT}/src/explore/cpp/keypose_graph.cpp"
+    "${_LINGTU_ROOT}/src/explore/cpp/tare_policy.cpp")
+  target_include_directories(test_semantic_view_query PRIVATE
+    "${_LINGTU_ROOT}/src" "${LINGTU_NAV_CPP_ROOT}" "${_ENDPOINT_DIR}" "${_ENDPOINT_DIR}/nav"
+    "${_LINGTU_ROOT}/src/explore/cpp" "${_NAV_KERNEL_DIR}/include")
+  target_link_libraries(test_semantic_view_query PRIVATE
+    octoplanner3d_runtime octoplanner3d_global_planner Threads::Threads
+    lingtu_nav_local_planner lingtu_inspection_core lingtu_dds_messages
+    CycloneDDS::ddsc lingtu_dds_contracts)
+  lingtu_endpoint_enable_warnings(test_semantic_view_query)
+  add_test(NAME test_semantic_view_query COMMAND test_semantic_view_query)
+  if(WIN32)
+    set_tests_properties(test_semantic_view_query PROPERTIES
+      ENVIRONMENT "LINGTU_HOST_BOOT_ID=windows-ctest-host")
+  endif()
   add_executable(test_planning_map_writer
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_planning_map_writer.cpp"
     "${_ENDPOINT_DIR}/nav/status/planning_map_writer.cpp"

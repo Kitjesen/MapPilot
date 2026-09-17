@@ -154,6 +154,45 @@ def test_positive_observation_returns_one_coherent_emission() -> None:
     assert source.closed is True
 
 
+def test_scene_objects_keep_tracker_identity_and_actual_observation_time() -> None:
+    first = _detection()
+    first.track_id = 7
+    second = _detection()
+    second.position = np.array([3.0, 2.0, 0.5])
+    second.track_id = 8
+    source = _ObservationSource([first, second])
+    pipeline = PerceptionPipeline(_settings(), source)
+    pipeline.setup()
+    try:
+        initial = pipeline.process(replace(_frame(), timestamp=10.01234))
+        initial_objects = sorted(initial.scene_graph.objects, key=lambda obj: obj.position.x)
+        assert len(initial_objects) == 2
+        first_id, second_id = (obj.id for obj in initial_objects)
+        assert first_id != second_id
+        assert all(obj.ts == 10.01234 for obj in initial_objects)
+        assert initial.scene_graph.relations
+        object_ids = {obj.id for obj in initial_objects}
+        assert all(rel.subject_id in object_ids and rel.object_id in object_ids
+                   for rel in initial.scene_graph.relations)
+
+        # The camera still sees one chair; the other is retained as history.
+        source.detections = [first]
+        current = pipeline.process(replace(_frame(), timestamp=11.12345))
+        objects = {obj.id: obj for obj in current.scene_graph.objects}
+        assert set(objects) == object_ids
+        assert objects[first_id].ts == 11.12345
+        assert objects[second_id].ts == 10.01234
+        assert objects[first_id].bbox_2d
+        assert objects[second_id].bbox_2d == []
+
+        # Losing/reassigning a 2D track must not rename a persistent map object.
+        first.track_id = 99
+        reacquired = pipeline.process(replace(_frame(), timestamp=12.0))
+        assert {obj.id for obj in reacquired.scene_graph.objects} == object_ids
+    finally:
+        pipeline.close()
+
+
 def test_tracker_failure_falls_back_to_current_frame_not_stale_state() -> None:
     source = _ObservationSource([_detection()])
     pipeline = PerceptionPipeline(_settings(), source)

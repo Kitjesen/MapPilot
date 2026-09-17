@@ -179,6 +179,8 @@ std::vector<PointXYZI> readPcd(const std::filesystem::path &path) {
           intensity_idx >= 0 ? std::stof(values[static_cast<std::size_t>(intensity_idx)]) : 1.0F;
       points.push_back(pt);
     }
+    if (points.size() != header.points)
+      throw std::runtime_error("truncated or inconsistent ASCII PCD point data: " + path.string());
     return points;
   }
 
@@ -192,7 +194,7 @@ std::vector<PointXYZI> readPcd(const std::filesystem::path &path) {
   for (std::uint64_t i = 0; i < header.points; ++i) {
     in.read(row.data(), stride);
     if (in.gcount() != stride) {
-      break;
+      throw std::runtime_error("truncated PCD point data: " + path.string());
     }
     PointXYZI pt;
     pt.x = readScalar(row.data(), header, offsets, x_idx);
@@ -225,9 +227,14 @@ void writePcd(const std::filesystem::path &path, const std::vector<PointXYZI> &p
     const float row[4] = {pt.x, pt.y, pt.z, pt.intensity};
     out.write(reinterpret_cast<const char *>(row), sizeof(row));
   }
+  out.flush();
+  if (!out) {
+    throw std::runtime_error("failed to finish PCD output: " + path.string());
+  }
 }
 
-std::unordered_map<std::string, Pose> readLingtuPoses(const std::filesystem::path &path) {
+std::unordered_map<std::string, Pose> readLingtuPoses(const std::filesystem::path &path,
+    std::vector<std::string>* patch_order) {
   std::unordered_map<std::string, Pose> poses;
   std::ifstream in(path);
   if (!in.is_open()) {
@@ -247,9 +254,23 @@ std::unordered_map<std::string, Pose> readLingtuPoses(const std::filesystem::pat
     pose.qx = std::stod(parts[5]);
     pose.qy = std::stod(parts[6]);
     pose.qz = std::stod(parts[7]);
-    poses[parts[0]] = pose;
+    if (!poses.emplace(parts[0], pose).second)
+      throw std::runtime_error("duplicate scan in poses.txt: " + parts[0]);
+    if (patch_order) patch_order->push_back(parts[0]);
   }
   return poses;
+}
+
+std::optional<std::array<float, 3>> readSensorOrigin(const std::filesystem::path& path) {
+  std::ifstream file(path);
+  std::string line;
+  while (std::getline(file, line)) {
+    const auto parts = splitWords(line);
+    if (parts.empty() || parts[0] != "lidar_origin_in_patch") continue;
+    if (parts.size() != 4) throw std::runtime_error("invalid lidar_origin_in_patch in " + path.string());
+    return std::array<float, 3>{std::stof(parts[1]), std::stof(parts[2]), std::stof(parts[3])};
+  }
+  return std::nullopt;
 }
 
 }  // namespace lingtu::map_cleaning

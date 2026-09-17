@@ -82,8 +82,9 @@ class TestGoalService:
         assert summary["ports_in"]["visual_goal_request"]["type"] == "PoseStamped"
         assert summary["ports_in"]["visual_cancel_request"]["type"] == "str"
         assert summary["ports_in"]["navigation_goal_status"]["type"] == "NavigationGoalStatus"
-        assert set(summary["ports_out"]) == {"goal_status"}
+        assert set(summary["ports_out"]) == {"goal_status", "task_status"}
         assert summary["ports_out"]["goal_status"]["type"] == "dict"
+        assert summary["ports_out"]["task_status"]["type"] == "NavigationGoalStatus"
 
     def test_position_only_goal_keeps_yaw_unspecified(self, goal_service):
         result = goal_service.submit_goal(
@@ -1594,10 +1595,11 @@ def test_goal_limits_reach_command_and_participate_in_replay_identity(goal_servi
         captured.append(limits)
         return original(x, y, z, yaw, task_id=task_id, request_id=request_id)
     goal_service._test_commands.send_goal = send_goal
-    from gateway.navigation.routes import _publish_goal
-    from gateway.navigation.goals import construct_goal_from_request
-    from gateway.schemas import ClickNavRequest
     from types import SimpleNamespace
+
+    from gateway.navigation.goals import construct_goal_from_request
+    from gateway.navigation.routes import _publish_goal
+    from gateway.schemas import ClickNavRequest
     body = ClickNavRequest(x=2, y=1, max_speed_mps=0.2, acceptance_radius_m=0.3)
     goal = construct_goal_from_request(body, default_source="map_click")
     owner = SimpleNamespace(_goals=goal_service)
@@ -1608,3 +1610,33 @@ def test_goal_limits_reach_command_and_participate_in_replay_identity(goal_servi
         request_id="limited-request", max_speed_mps=0.4, acceptance_radius_m=0.3)
     assert rejected["accepted"] is False
     assert len(captured) == 1
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_json_goal_preserves_motion_limits(goal_service, nested):
+    captured = []
+    original = goal_service._test_commands.send_goal
+
+    def send_goal(x, y, z, yaw, *, task_id, request_id, **limits):
+        captured.append(limits)
+        return original(x, y, z, yaw, task_id=task_id, request_id=request_id)
+
+    goal_service._test_commands.send_goal = send_goal
+    target = {"x": 2, "y": 1, "max_speed_mps": 0.2, "acceptance_radius_m": 0.3}
+    command = {"action": "goto", "task_id": "limited-json-task", "request_id": "limited-json-request"}
+    command.update({"target": target} if nested else target)
+    result = _cmd(goal_service, command)
+    assert result["accepted"] is True
+    assert captured == [{"max_speed_mps": 0.2, "acceptance_radius_m": 0.3}]
+    saved = goal_service.get_task("limited-json-task")["target"]
+    assert saved["max_speed_mps"] == 0.2
+    assert saved["acceptance_radius_m"] == 0.3
+
+
+@pytest.mark.parametrize("key", ["max_speed_mps", "acceptance_radius_m"])
+@pytest.mark.parametrize("value", [0, -0.1, float("nan"), float("inf")])
+def test_invalid_json_motion_limits_do_not_dispatch(goal_service, key, value):
+    result = _cmd(goal_service, {"action": "goto", "x": 2, "y": 1, key: value})
+    assert result["accepted"] is False
+    assert "positive and finite" in result["message"]
+    assert goal_service._test_commands.goals == []

@@ -27,6 +27,13 @@ def test_semantic_nav_command_wires_to_goal_service_when_present() -> None:
     keys = {wire_key(spec) for spec in specs}
     assert ("SemanticPlannerModule", "nav_command", "nav.goals", "goal_command") in keys
     assert ("host.bus", "navigation_state", "SemanticPlannerModule", "navigation_state") in keys
+    assert ("nav.goals", "goal_status", "SemanticPlannerModule", "goal_status") in keys
+    assert ("nav.goals", "task_status", "SemanticPlannerModule", "navigation_goal_status") in keys
+    assert ("SemanticPlannerModule", "goal_pose", "nav.goals", "goal_request") not in keys
+    assert ("PerceptionModule", "robot_pose", "SemanticPlannerModule", "robot_pose") in keys
+    assert ("PerceptionModule", "robot_pose", "AgentPlannerModule", "robot_pose") in keys
+    assert ("PerceptionModule", "observation_image", "SemanticPlannerModule", "observation_image") in keys
+    assert ("AgentPlannerModule", "goal_pose", "nav.goals", "goal_request") not in keys
 
 
 def test_mcp_uses_gateway_status_projection_but_keeps_goal_events() -> None:

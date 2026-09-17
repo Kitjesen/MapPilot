@@ -588,7 +588,7 @@ class VLAModule(Module, layer=4):
         }
 
     @skill
-    def vla_status(self) -> dict:
+    def get_vla_status(self) -> dict:
         """Return current VLA health and metrics."""
         return self.health()
 

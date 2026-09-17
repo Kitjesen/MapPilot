@@ -180,7 +180,7 @@ struct InspectionEvidenceRequestOutput {
 using OutputEvent =
     std::variant<LocalPathOutput, GlobalPathOutput, WaypointOutput, FinalVelocityOutput,
                  OperatorMotionAckSample, OperatorMotionStatusSample, CommandAckOutput,
-                 PlanResultSample, GeofenceCommandAckSample, GeofenceAlertSample,
+                 PlanResultSample, semantic::ViewResult, GeofenceCommandAckSample, GeofenceAlertSample,
                  NavigationGoalStatusOutput, NavigationStateSample, ExplorationSegmentAck,
                  ExplorationSegmentStatus, InspectionTaskAckOutput, InspectionStatusOutput,
                  InspectionTaskEventEnvelope, InspectionEvidenceRequestOutput>;
@@ -381,6 +381,7 @@ class Dds {
                        lingtu::message::NavigationCommandKind kind, bool accepted,
                        const char *reason);
   bool writePlanResult(const PlanResultSample &result);
+  bool writeSemanticViews(const semantic::ViewResult &result);
   bool writeGeofenceAck(const GeofenceCommandAckSample &ack);
   bool writeGeofenceAlert(const GeofenceAlertSample &alert);
   bool writeNavigationGoalStatus(const char *task_id, const char *request_id,
@@ -470,6 +471,7 @@ class Dds {
   dds_entity_t cloud_clearing_reader_{0};
   dds_entity_t command_request_reader_{0};
   dds_entity_t plan_request_reader_{0};
+  dds_entity_t semantic_view_reader_{0};
   dds_entity_t geofence_command_reader_{0};
   dds_entity_t operator_motion_control_reader_{0};
   dds_entity_t operator_motion_sample_reader_{0};
@@ -484,6 +486,7 @@ class Dds {
   dds_entity_t cmd_vel_writer_{0};
   dds_entity_t command_ack_writer_{0};
   dds_entity_t plan_result_writer_{0};
+  dds_entity_t semantic_view_writer_{0};
   dds_entity_t geofence_response_writer_{0};
   dds_entity_t geofence_alert_writer_{0};
   dds_entity_t goal_status_writer_{0};

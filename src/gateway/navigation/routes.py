@@ -175,14 +175,13 @@ def register_navigation_routes(app, gw) -> None:
         responses=CONTROL_COMMAND_ERROR_RESPONSES,
     )
     async def post_goal(body: GoalRequest):
-        goal = construct_goal_from_request(
-            body,
-            gw=gw,
-            default_source="coordinate",
-            default_target_type="coordinate",
-        )
-
         def _publish() -> dict[str, Any]:
+            goal = construct_goal_from_request(
+                body,
+                gw=gw,
+                default_source="coordinate",
+                default_target_type="coordinate",
+            )
             ts = time.time()
             task_id = str(body.task_id or "").strip() or _new_navigation_task_id()
             ack = _publish_goal(
@@ -220,14 +219,13 @@ def register_navigation_routes(app, gw) -> None:
         responses=CONTROL_COMMAND_ERROR_RESPONSES,
     )
     async def post_navigate_click(body: ClickNavRequest):
-        goal = construct_goal_from_request(
-            body,
-            gw=gw,
-            default_source="map_click",
-            default_target_type="map_point",
-        )
-
         def _publish() -> dict[str, Any]:
+            goal = construct_goal_from_request(
+                body,
+                gw=gw,
+                default_source="map_click",
+                default_target_type="map_point",
+            )
             ts = time.time()
             task_id = str(body.task_id or "").strip() or _new_navigation_task_id()
             ack = _publish_goal(

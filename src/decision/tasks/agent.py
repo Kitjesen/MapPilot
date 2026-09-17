@@ -18,13 +18,14 @@ _BUILTIN_TOOLS = [
         "type": "function",
         "function": {
             "name": "done",
-            "description": "Mark the task as complete with a summary.",
+            "description": "Finish the task, reporting whether it succeeded or could not be completed.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "summary": {"type": "string", "description": "Task completion summary"},
+                    "success": {"type": "boolean", "description": "False if the task could not be completed"},
                 },
-                "required": ["summary"],
+                "required": ["summary", "success"],
             },
         },
     },
@@ -169,6 +170,25 @@ _PLANNER_HANDLER_TOOLS = [
     },
 ]
 
+# Motion aliases still use the planner's owned handlers, never discovered drivers.
+_PLANNER_HANDLER_TOOLS.extend([
+    {"type": "function", "function": {
+        "name": "navigate_to_deg", "description": "Navigate to map coordinates with a heading in degrees.",
+        "parameters": {"type": "object", "properties": {
+            "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"},
+            "yaw_deg": {"type": "number", "default": 0.0}}, "required": ["x", "y"]}}},
+    {"type": "function", "function": {
+        "name": "find_object", "description": "Find and visually verify the described object.",
+        "parameters": {"type": "object", "properties": {"target": {"type": "string"}}, "required": ["target"]}}},
+    {"type": "function", "function": {
+        "name": "follow_person", "description": "Follow the described person until cancellation or the task deadline.",
+        "parameters": {"type": "object", "properties": {"description": {"type": "string"}},
+                       "required": ["description"]}}},
+    {"type": "function", "function": {
+        "name": "stop_servo", "description": "Request cancellation of this Agent's own motion only.",
+        "parameters": {"type": "object", "properties": {}}}},
+])
+
 # Public descriptor collection for the built-in planner tools.
 AGENT_TOOLS = _BUILTIN_TOOLS + _PLANNER_HANDLER_TOOLS
 
@@ -237,6 +257,7 @@ class AgentState:
     max_steps: int = 10
     messages: list[dict] = field(default_factory=list)
     completed: bool = False
+    failure_reason: str = ""
     summary: str = ""
     start_time: float = 0.0
 
@@ -254,9 +275,13 @@ class AgentLoop:
         timeout: float = 120.0,
         *,
         tool_handlers: dict[str, Callable] | None = None,
+        cancelled: Callable[[], bool] | None = None,
+        completion_check: Callable[[], str | None] | None = None,
     ):
         """Init."""
         self._llm = llm_client
+        self._cancelled = cancelled or (lambda: False)
+        self._completion_check = completion_check or (lambda: None)
         discovered_tools = skills_to_openai_tools(tool_list)
         planner_tools = [
             tool
@@ -270,7 +295,7 @@ class AgentLoop:
 
         # Build OpenAI-format tools from builtins, discovered skills, and planner handlers.
         self._tools = _dedupe_tools(
-            _BUILTIN_TOOLS + discovered_tools + planner_tools
+            _BUILTIN_TOOLS + planner_tools + discovered_tools
         )
         self._context_fn = context_fn
         self._max_steps = max_steps
@@ -285,7 +310,7 @@ class AgentLoop:
         # Auto-generated from built-in and planner-handler definitions to keep
         # required-field schemas in sync with tool definitions (P0.3/P2.2).
         self._tool_schemas: dict[str, dict[str, Any]] = {}
-        for _tool in _BUILTIN_TOOLS + _PLANNER_HANDLER_TOOLS:
+        for _tool in self._tools:
             _fn = _tool["function"]
             _params = _fn.get("parameters", {})
             self._tool_schemas[_fn["name"]] = {"required": _params.get("required", [])}
@@ -330,17 +355,21 @@ class AgentLoop:
             f" someone; call stop_servo to cancel following.\n"
             f"- Use describe_scene() when you need to understand what the robot currently sees.\n"
             f"- Use assess_situation(goal) when you are unsure whether the current view is helpful.\n"
-            f"- Call done() when the task is complete.\n"
-            f"- If you cannot complete the task after several attempts, call done() with an explanation.\n"
+            f"- Call done(success=true) when the task is complete.\n"
+            f"- If you cannot complete the task, call done(success=false) with an explanation.\n"
         )
         state.messages = [
             {"role": "system", "content": system_msg},
             {"role": "user", "content": instruction},
         ]
+        deadline = time.monotonic() + self._timeout
 
         while state.step < state.max_steps and not state.completed:
-            if time.time() - state.start_time > self._timeout:
+            if self._cancelled():
+                raise asyncio.CancelledError
+            if time.monotonic() >= deadline:
                 state.summary = f"Timeout after {self._timeout}s"
+                state.failure_reason = "timeout"
                 state.completed = True
                 break
 
@@ -348,17 +377,38 @@ class AgentLoop:
 
             # LLM call with tools
             try:
-                response = await self._llm_call(state.messages)
+                response = await asyncio.wait_for(self._llm_call(state.messages),
+                                                  timeout=max(0.0, deadline - time.monotonic()))
+            except asyncio.TimeoutError:
+                state.summary = f"Timeout after {self._timeout}s"
+                state.failure_reason = "timeout"
+                state.completed = True
+                break
             except Exception as e:
                 logger.error("AgentLoop: LLM call failed at step %d: %s", state.step, e)
                 state.summary = f"LLM error: {e}"
+                state.failure_reason = "llm_error"
                 state.completed = True
                 break
 
             # Parse response
+            if self._cancelled():
+                raise asyncio.CancelledError
             if response.get("tool_calls"):
                 for tc in response["tool_calls"]:
-                    await self._execute_tool(tc, state)
+                    if time.monotonic() >= deadline:
+                        state.summary = f"Timeout after {self._timeout}s"
+                        state.failure_reason = "timeout"
+                        state.completed = True
+                        break
+                    try:
+                        await asyncio.wait_for(self._execute_tool(tc, state),
+                                               timeout=max(0.0, deadline - time.monotonic()))
+                    except asyncio.TimeoutError:
+                        state.summary = f"Timeout after {self._timeout}s"
+                        state.failure_reason = "timeout"
+                        state.completed = True
+                        break
                     if state.completed:
                         break
             elif response.get("content"):
@@ -366,10 +416,12 @@ class AgentLoop:
                 logger.debug("AgentLoop step %d: LLM text: %s", state.step, response["content"][:100])
             else:
                 state.summary = "LLM returned empty response"
+                state.failure_reason = "empty_response"
                 state.completed = True
 
         if not state.completed:
             state.summary = f"Max steps ({self._max_steps}) reached"
+            state.failure_reason = "step_limit"
             state.completed = True
 
         logger.info("AgentLoop: '%s' -> %d steps, summary: %s", instruction, state.step, state.summary)
@@ -451,10 +503,14 @@ class AgentLoop:
         for required_field in schema.get("required", []):
             if required_field not in args:
                 return f"missing required argument '{required_field}' for tool '{name}'"
+        if name == "done" and not isinstance(args.get("success"), bool):
+            return "argument 'success' must be a boolean"
         return None
 
     async def _execute_tool(self, tool_call: dict, state: AgentState) -> str:
         """Execute a single tool call and append results to message history."""
+        if self._cancelled():
+            raise asyncio.CancelledError
         fn = tool_call.get("function", {})
         name = fn.get("name", "")
         try:
@@ -497,9 +553,14 @@ class AgentLoop:
 
         # Handle done() specially
         if name == "done":
-            state.completed = True
-            state.summary = args.get("summary", "Task complete")
-            result = state.summary
+            refusal = self._completion_check() if args["success"] else None
+            if refusal:
+                result = refusal
+            else:
+                state.completed = True
+                state.summary = args.get("summary", "Task complete")
+                state.failure_reason = "" if args["success"] else "task_incomplete"
+                result = state.summary
         elif name in ("describe_scene", "assess_situation"):
             result = await self._execute_vlm_tool(name, args)
         elif name in self._handlers:

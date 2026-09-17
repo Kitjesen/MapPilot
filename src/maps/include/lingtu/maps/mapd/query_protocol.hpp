@@ -11,7 +11,8 @@ constexpr std::uint8_t kVersion = 2U;
 constexpr std::size_t kRequestHeaderSize = 18U;
 constexpr std::size_t kResponseHeaderSize = 16U;
 constexpr std::size_t kMaxRequestIdBytes = 128U;
-constexpr std::size_t kDefaultMaxJsonBytes = 1024U * 1024U;
+// The Web's 80k-point saved-map preview exceeds 1 MiB at normal XYZ precision.
+constexpr std::size_t kDefaultMaxJsonBytes = 4U * 1024U * 1024U;
 constexpr const char* kDefaultSocketPath = "/run/lingtu-mapd/mapd.sock";
 
 enum class Opcode : std::uint8_t {

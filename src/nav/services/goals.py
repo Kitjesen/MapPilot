@@ -102,6 +102,7 @@ class GoalService(Module, layer=6):
     visual_cancel_request: In[str]
     navigation_goal_status: In[NavigationGoalStatus]
     goal_status: Out[dict]
+    task_status: Out[NavigationGoalStatus]
 
     def __init__(
         self,
@@ -161,7 +162,15 @@ class GoalService(Module, layer=6):
         with self._visual_task_lock:
             visual_task = status.task_id in self._visual_task_ids
         try:
-            self._task_ledger.record_goal_status(status)
+            record = self._task_ledger.record_goal_status(status)
+            latest = record.get("last_goal_status") or {}
+            if (
+                latest.get("boot_id") != status.boot_id
+                or latest.get("sequence") != status.sequence
+                or latest.get("request_id") != status.request_id
+            ):
+                return
+            self.task_status.publish(status)
             if visual_task:
                 state_name = str(status.to_dict()["state_name"]).lower()
                 self._publish_status(
@@ -730,6 +739,8 @@ class GoalService(Module, layer=6):
             task_id=task_id,
             request_id=request_id,
             action=action,
+            max_speed_mps=target.get("max_speed_mps", cmd.get("max_speed_mps")),
+            acceptance_radius_m=target.get("acceptance_radius_m", cmd.get("acceptance_radius_m")),
         )
 
     def _dispatch_goal(

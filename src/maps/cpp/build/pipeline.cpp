@@ -557,6 +557,8 @@ std::vector<std::string> SavedSourceArtifactNames() {
   names.push_back("patch_bundle.manifest");
   names.push_back("map.clean.pcd");
   names.push_back("map.removed.pcd");
+  names.push_back("map.pcd.preclean");
+  names.push_back("scan_origin.txt");
   names.push_back("map_optimization.json");
   return names;
 }
@@ -2041,6 +2043,8 @@ void CopySavedSourceAuxiliaryArtifacts(const std::filesystem::path &source_dir,
            "patch_bundle.manifest",
            "map.clean.pcd",
            "map.removed.pcd",
+           "map.pcd.preclean",
+           "scan_origin.txt",
            "map_optimization.json",
        }) {
     const auto source = source_dir / filename;

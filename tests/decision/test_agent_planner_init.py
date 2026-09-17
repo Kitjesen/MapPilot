@@ -5,13 +5,12 @@ import time
 
 from decision.modules.agent_planner import AgentPlannerModule
 from runtime.module import Module, skill
-from runtime.msgs.geometry import Vector3
+from runtime.msgs.geometry import Pose, PoseStamped, Vector3
 from runtime.msgs.nav import (
     NavigationGoalState,
     NavigationGoalStatus,
     NavigationLifecycle,
     NavigationState,
-    Odometry,
 )
 from runtime.msgs.semantic import Detection3D, SceneGraph
 from runtime.stream import In, Out
@@ -27,12 +26,8 @@ def _make_module(**kw) -> AgentPlannerModule:
     return mod
 
 
-def _make_odom(x=0.0, y=0.0):
-    from runtime.msgs.geometry import Pose, Vector3
-
-    od = Odometry()
-    od.pose = Pose(position=Vector3(x, y, 0.0))
-    return od
+def _make_pose(x=0.0, y=0.0):
+    return PoseStamped(Pose(Vector3(x, y, 0.0)), frame_id="map", ts=time.time())
 
 
 def _make_scene_graph(labels=("chair", "door")):
@@ -53,18 +48,17 @@ class TestAgentPlannerInit:
         mod = AgentPlannerModule()
         assert isinstance(mod.agent_instruction, In)
         assert isinstance(mod.scene_graph, In)
-        assert isinstance(mod.odometry, In)
+        assert isinstance(mod.robot_pose, In)
         assert isinstance(mod.navigation_state, In)
         assert isinstance(mod.navigation_goal_status, In)
         assert isinstance(mod.mission_status, In)
 
     def test_out_ports(self):
         mod = AgentPlannerModule()
-        assert isinstance(mod.goal_pose, Out)
-        assert isinstance(mod.servo_target, Out)
         assert isinstance(mod.agent_message, Out)
         assert isinstance(mod.planner_status, Out)
-        assert isinstance(mod.cancel, Out)
+        assert "goal_pose" not in mod.ports_out
+        assert "servo_target" not in mod.ports_out
 
     def test_default_params(self):
         mod = AgentPlannerModule()
@@ -104,8 +98,8 @@ class TestAgentPlannerStateUpdate:
     def teardown_method(self):
         self.mod.stop()
 
-    def test_odometry_cached(self):
-        self.mod._on_odom(_make_odom(3.0, 4.0))
+    def test_map_pose_cached(self):
+        self.mod._on_robot_pose(_make_pose(3.0, 4.0))
         pos = self.mod._robot_pos
         assert abs(float(pos[0]) - 3.0) < 1e-6
         assert abs(float(pos[1]) - 4.0) < 1e-6
@@ -120,12 +114,10 @@ class TestAgentPlannerStateUpdate:
         self.mod._on_mission_status({"state": "NAVIGATING"})
         assert self.mod._last_nav_state == "NAVIGATING"
 
-    def test_mission_status_ignores_recovering(self):
-        """RECOVERING/STUCK/FAILED should not update _last_nav_state."""
+    def test_mission_status_retains_recovering_without_native_source(self):
         self.mod._on_mission_status({"state": "NAVIGATING"})
         self.mod._on_mission_status({"state": "RECOVERING"})
-        # RECOVERING is a terminal state, should not update _last_nav_state
-        assert self.mod._last_nav_state == "NAVIGATING"
+        assert self.mod._last_nav_state == "RECOVERING"
 
     def test_native_navigation_state_is_authoritative(self):
         self.mod._on_mission_status({"state": "EXECUTING"})

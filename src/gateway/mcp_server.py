@@ -29,9 +29,10 @@ from typing import Any
 
 from fastapi.responses import JSONResponse
 
+from gateway.maps.locations import upsert_location
 from gateway.navigation.commands import CommandBoundaryError
 from gateway.navigation.status import build_navigation_status
-from gateway.schemas import InstructionRequest
+from gateway.schemas import InstructionRequest, LocationUpsertRequest
 from gateway.services.control_commands import ControlCommandService
 from gateway.services.native_control import estop as native_estop
 from runtime.module import Module, skill
@@ -426,6 +427,7 @@ class MCPServerModule(Module, layer=6):
         if vm and hasattr(vm, "query_location"):
             try:
                 r = vm.query_location(query)
+                r = json.loads(r) if isinstance(r, str) else r
                 vector_navigable = (
                     r.get("navigable") is True
                     and r.get("semantic_encoder_ready") is True
@@ -438,7 +440,10 @@ class MCPServerModule(Module, layer=6):
                         results.append(
                             {
                                 "source": "vector",
-                                "position": [hit.get("x", 0), hit.get("y", 0)],
+                                "position": [hit["x"], hit["y"], hit.get("z", 0.0)],
+                                "frame_id": hit.get("frame_id"),
+                                "map_id": hit.get("map_id"),
+                                "map_content_epoch": hit.get("map_content_epoch"),
                                 "score": hit.get("score", 0),
                                 "labels": hit.get("labels", ""),
                                 "navigable": True,
@@ -502,13 +507,18 @@ class MCPServerModule(Module, layer=6):
     @skill
     def tag_location(self, name: str) -> str:
         """Save the robot's current position under *name* for future navigation."""
-        if not self._odom:
-            return json.dumps({"error": "no odometry -cannot tag location"})
-        tl = self._tagged_locations_mod
-        if not (tl and hasattr(tl, "store")):
-            return json.dumps({"error": "TaggedLocationsModule not running"})
-        tl.store.tag(name, x=self._odom["x"], y=self._odom["y"], z=self._odom.get("z", 0))
-        entry = tl.store.query(name)
+        gateway = (self._all_modules or {}).get("GatewayModule")
+        if gateway is None:
+            return json.dumps({"ok": False, "error": "location_service_unavailable"})
+        try:
+            body = LocationUpsertRequest(name=name, use_current_pose=True, source="mcp", client_id="mcp")
+        except ValueError as exc:
+            return json.dumps({"ok": False, "error": "invalid_location", "message": str(exc)})
+        result = upsert_location(gateway, body, path_name=None)
+        payload = json.loads(result.body) if isinstance(result, JSONResponse) else result
+        if payload.get("ok") is not True:
+            return json.dumps(payload)
+        entry = gateway._tagged_loc_module.store.query(body.name)
         return json.dumps({"tagged": name, "position": entry})
 
     @skill

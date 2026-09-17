@@ -10,23 +10,14 @@ ERASOR2_REF_DIR = CPP_DIR / "refs" / "erasor2"
 
 def test_prune_readme_defines_live_vs_saved_map_boundary() -> None:
     readme = (PRUNE_DIR / "README.md").read_text(encoding="utf-8")
-    assert "Live navigation keeps current obstacles" in readme
-    assert "Saved-map" in readme
-    assert "dynamic-object ghosts" in readme
-    assert "LingTu-owned product path" in readme
-    assert "without bringing ERASOR2 GPLv3 code" in readme
-    assert "cpp/prune" in readme
+    assert "它不处理浏览器正在显示的累计点云" in readme
+    assert "稀疏点本身不是删除理由" in readme
+    assert "不包含或链接 ERASOR2 GPLv3 代码" in readme
     assert "third_party/research_nav/ERASOR2" in readme
-    assert "Do not include upstream ERASOR2 headers" in readme
-    assert "Extracted ERASOR2 Workflow" in readme
-    assert "Runtime Local Planning" in readme
-    assert "Saved Map / Rebuild" in readme
-    assert "Current obstacles stay in `rt/nav/traversability`" in readme
-    assert "Do not feed a saved-map batch cleaner directly into the 10 Hz local planner" in readme
-    assert "Product Framework" in readme
-    assert "load -> label -> submap -> evidence -> protect -> score -> split -> save" in readme
-    assert "`score` | partial" in readme
-    assert "`lingtu_field_v1`" in readme
+    assert "--dry-run" in readme
+    assert "不能与 `--apply` 同时使用" in readme
+    assert "不会同步重建已有的 OctoMap" in readme
+    assert "空闲证据，不是语义运动识别" in readme
 
 
 def test_erasor2_stage_is_lingtu_owned_boundary_code() -> None:
@@ -57,8 +48,8 @@ def test_prune_is_clean_room_product_path() -> None:
     assert '#include "erasor2/' not in combined
     assert "#include <pcl/" not in combined
     assert "cleanStaticMap" in combined
-    assert "temporal_occupancy_v1" in combined
-    assert "lingtu_field_v1" in combined
+    assert "prune.visibility_v2" in combined
+    assert "lingtu_field_v2" in combined
     assert "S100P/MID-360 field maps" in combined
     assert "prune" in combined
     assert "map.clean.pcd" in combined
@@ -73,7 +64,7 @@ def test_prune_is_clean_room_product_path() -> None:
 def test_prune_defaults_are_lingtu_field_tuned() -> None:
     header = (CPP_DIR / "cleaner.hpp").read_text(encoding="utf-8")
     cli = (CPP_DIR / "prune.cpp").read_text(encoding="utf-8")
-    assert 'preset{"lingtu_field_v1"}' in header
+    assert 'preset{"lingtu_field_v2"}' in header
     assert "voxel_size_m{0.20F}" in header
     assert "ground_z_threshold{-0.45F}" in header
     assert "min_hit_support{3}" in header

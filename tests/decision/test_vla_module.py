@@ -520,11 +520,14 @@ def test_health_metrics(vla_module):
 
 
 def test_skills_exposed(vla_module):
-    """VLAModule exposes vla_navigate and vla_status as skills."""
+    """Status telemetry must not shadow the callable status skill."""
     module = vla_module
     skills = module.skills
     assert "vla_navigate" in skills
-    assert "vla_status" in skills
+    assert "get_vla_status" in skills
+    assert "vla_status" not in skills
+    assert {info.func_name for info in module.get_skill_infos()} == {"vla_navigate", "get_vla_status"}
+    assert skills["get_vla_status"]()["vla"]["backend"] == "mock"
 
 
 def test_scene_graph_summary(vla_module):

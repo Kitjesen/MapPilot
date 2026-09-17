@@ -98,6 +98,7 @@ layers:
       - src/lingtu/assembly/plugins.py
       - src/lingtu/control.py
       - src/lingtu/operator_drive.py
+      - src/lingtu/operator_keyboard.py
       - src/lingtu/product_lock.py
       - src/lingtu/real/
       - src/lingtu/switch_contracts.py

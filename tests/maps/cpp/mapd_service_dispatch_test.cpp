@@ -1,10 +1,13 @@
 #include <cassert>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <string>
 
 #include "lingtu/maps/json.hpp"
 #include "lingtu/maps/mapd/service_dispatch.hpp"
+#include "lingtu/maps/mapd/query_protocol.hpp"
 #include "lingtu/maps/service.hpp"
 
 namespace {
@@ -82,6 +85,24 @@ int main() {
   assert(!unknown.ok);
   assert(lingtu::maps::JsonObjectStringAtPath(unknown.json, {"reason_code"}) == "unknown_action");
 
+  // Match the saved-map preview size requested by the Web client.
+  const auto source = root / "preview.pcd";
+  {
+    std::ofstream points(source);
+    points << "VERSION .7\nFIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\n"
+              "WIDTH 80000\nHEIGHT 1\nPOINTS 80000\nDATA ascii\n";
+    for (int i = 0; i < 80000; ++i) {
+      points << "12.34567 -9.876543 0.456789\n";
+    }
+  }
+  const auto imported = service.ImportPcdJson("preview", source, 0.0, {});
+  assert(lingtu::maps::JsonObjectBoolAtPath(imported, {"success"}) == true);
+  const auto preview = DispatchServiceJson(
+      service, R"({"action":"get_map_points","map_id":"preview","max_points":80000})");
+  assert(preview.ok);
+  assert(preview.json.find("\"returned\":80000") != std::string::npos);
+  std::cout << "80k preview bytes: " << preview.json.size() << std::endl;
+  const bool preview_fits = preview.json.size() <= lingtu::maps::mapd::query::kDefaultMaxJsonBytes;
   std::filesystem::remove_all(root);
-  return 0;
+  return preview_fits ? 0 : 1;
 }

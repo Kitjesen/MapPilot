@@ -29,6 +29,7 @@ class TaggedLocationStore:
         """
         self._path = json_path
         self._lock = threading.Lock()
+        self._write_lock = threading.Lock()
         # 存储结构: {name: {"name": str, "position": [x, y, z], "yaw": float|None}}
         self._store: dict[str, dict] = {}
 
@@ -65,21 +66,28 @@ class TaggedLocationStore:
             "ts": float(ts if ts is not None else time.time()),
             "metadata": dict(metadata or {}),
         }
-        with self._lock:
-            self._store[name] = entry
-        self.save()
+        with self._write_lock:
+            with self._lock:
+                updated = dict(self._store)
+            updated[name] = entry
+            self._persist(list(updated.values()))
+            with self._lock:
+                self._store = updated
         logger.info("Tagged location '%s' at (%.2f, %.2f, %.2f)", name, x, y, z)
 
     def remove(self, name: str) -> bool:
         """删除标签。返回是否实际删除了条目。"""
-        with self._lock:
-            existed = name in self._store
-            self._store.pop(name, None)
-        if existed:
-            self.save()
-        if existed:
-            logger.info("Removed tagged location '%s'", name)
-        return existed
+        with self._write_lock:
+            with self._lock:
+                if name not in self._store:
+                    return False
+                updated = dict(self._store)
+            del updated[name]
+            self._persist(list(updated.values()))
+            with self._lock:
+                self._store = updated
+        logger.info("Removed tagged location '%s'", name)
+        return True
 
     # ── 查询操作 ──────────────────────────────────────────────────────────
 
@@ -129,6 +137,13 @@ class TaggedLocationStore:
 
     def save(self) -> None:
         """将内存状态写入 JSON 文件。路径为空时跳过。"""
+        with self._write_lock:
+            with self._lock:
+                data = list(self._store.values())
+            self._persist(data)
+
+    def _persist(self, data: list[dict]) -> None:
+        """Commit a snapshot before publishing it to readers; caller serializes writes."""
         if not self._path:
             return
         temp_path = ""
@@ -136,8 +151,6 @@ class TaggedLocationStore:
             target_path = os.path.abspath(self._path)
             target_dir = os.path.dirname(target_path)
             os.makedirs(target_dir, exist_ok=True)
-            with self._lock:
-                data = list(self._store.values())
             fd, temp_path = tempfile.mkstemp(
                 prefix=f".{os.path.basename(target_path)}.",
                 suffix=".tmp",
@@ -152,6 +165,7 @@ class TaggedLocationStore:
             logger.info("Saved %d tagged location(s) to %s", len(data), self._path)
         except Exception as e:
             logger.warning("Failed to save tagged locations to %s: %s", self._path, e)
+            raise
         finally:
             if temp_path:
                 try:

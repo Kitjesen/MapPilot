@@ -233,6 +233,12 @@ inline constexpr TopicContract kSlamSavedMapCloud{
 inline constexpr TopicContract kNavSemanticInstruction{
     "/nav/semantic/instruction", "rt/nav/semantic/instruction", "lingtu.dds.Text",
     dds::QosProfile::Event};
+inline constexpr TopicContract kNavSemanticViewRequest{
+    "/nav/semantic/views/request", "rt/nav/semantic/views/request", "lingtu.dds.SemanticViewRequest",
+    dds::QosProfile::CommandRequest};
+inline constexpr TopicContract kNavSemanticViewResult{
+    "/nav/semantic/views/result", "rt/nav/semantic/views/result", "lingtu.dds.SemanticViewResult",
+    dds::QosProfile::CommandRequest};
 inline constexpr TopicContract kSimClock{
     "/sim/clock", "rt/sim/clock", "lingtu.dds.Time",
     dds::QosProfile::SensorStream};
@@ -350,6 +356,8 @@ inline constexpr TopicContract kTopicContracts[] = {
     kRobotJointStates,
     kSlamSavedMapCloud,
     kNavSemanticInstruction,
+    kNavSemanticViewRequest,
+    kNavSemanticViewResult,
     kSimClock,
     kSimImu,
     kSimLidarRawFrame,

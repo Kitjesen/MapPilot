@@ -43,8 +43,26 @@ def test_inspection_product_only_loads_declared_semantic_planning_modules() -> N
 
     assert "SemanticPlannerModule" in names
     assert "LLMModule" in names
-    assert "AgentPlannerModule" not in names
+    assert "AgentPlannerModule" in names
     assert "VisualServoModule" in names
+    wires = {
+        f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}"
+        for wire in blueprint.export_graph().explicit_wires
+    }
+    assert {
+        "host.bus.navigation_goal_status->nav.goals.navigation_goal_status",
+        "SemanticPlannerModule.nav_command->nav.goals.goal_command",
+        "nav.goals.goal_status->SemanticPlannerModule.goal_status",
+        "nav.goals.task_status->SemanticPlannerModule.navigation_goal_status",
+        "PerceptionModule.robot_pose->SemanticPlannerModule.robot_pose",
+        "PerceptionModule.robot_pose->AgentPlannerModule.robot_pose",
+        "PerceptionModule.observation_image->AgentPlannerModule.observation_image",
+        "PerceptionModule.robot_pose->VectorMemoryModule.robot_pose",
+        "host.bus.navigation_state->VectorMemoryModule.navigation_state",
+    } <= wires
+    assert not any(wire.endswith("->SemanticPlannerModule.odometry") for wire in wires)
+    assert not any(wire.startswith("AgentPlannerModule.goal_pose->") for wire in wires)
+    assert not any(wire.startswith("AgentPlannerModule.servo_target->") for wire in wires)
 
 
 @pytest.mark.parametrize(

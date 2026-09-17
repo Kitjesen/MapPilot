@@ -77,6 +77,7 @@ std::filesystem::path make_map(const std::filesystem::path& root) {
   write_cloud(map / "patches" / "scan_000002.pcd", 0.0F);
   write_cloud(map / "map.pcd", 0.0F);
   write_manifest(map);
+  std::ofstream(map / "scan_origin.txt") << "lidar_origin_in_patch 0.16 0 0.12\n";
   return map;
 }
 
@@ -136,6 +137,8 @@ void test_optimization(const std::filesystem::path& root) {
           "bundle patch missing");
   require(std::filesystem::is_regular_file(output / "patch_bundle.manifest"),
           "bundle manifest missing");
+  require(read_all(output / "scan_origin.txt") == read_all(map_dir / "scan_origin.txt"),
+          "optimization lost or changed the calibrated scan origin");
   require(std::filesystem::is_regular_file(output / "map_optimization.json"),
           "bundle report missing");
 }

@@ -102,11 +102,21 @@ class OpenAIClient(LLMClientBase):
             except ImportError:
                 raise LLMError("openai package not installed. Run: pip install openai") from None
 
+    def _completion_options(self, temperature: float) -> dict:
+        return {"temperature": temperature}
+
     async def chat(
         self,
         messages: list[dict],
         temperature: float | None = None,
     ) -> str:
+        if not self.supports_vision and any(
+            part.get("type") == "image_url"
+            for message in messages
+            if isinstance(message.get("content"), list)
+            for part in message["content"]
+        ):
+            raise LLMError(f"Model '{self.config.model}' has no verified vision support in this adapter")
         self._ensure_client()
         temp = temperature if temperature is not None else self.config.temperature
 
@@ -115,9 +125,9 @@ class OpenAIClient(LLMClientBase):
                 kwargs = dict(
                     model=self.config.model,
                     messages=messages,
-                    temperature=temp,
                     max_tokens=4096,
                     stream=True,
+                    **self._completion_options(temp),
                 )
                 stream = await self._client.chat.completions.create(**kwargs)
                 chunks = []
@@ -141,7 +151,7 @@ class OpenAIClient(LLMClientBase):
                 raise
             except Exception as e:
                 err_str = str(e)
-                if "invalid temperature" in err_str and temp != 1.0:
+                if "invalid temperature" in err_str and temp != 1.0 and attempt < self.config.max_retries:
                     logger.info("Retrying with temperature=1.0 (model constraint)")
                     temp = 1.0
                     continue
@@ -197,9 +207,6 @@ class OpenAIClient(LLMClientBase):
         temperature: float | None = None,
     ) -> str:
         """Chat with image."""
-        self._ensure_client()
-        temp = temperature if temperature is not None else self.config.temperature
-
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -220,41 +227,7 @@ class OpenAIClient(LLMClientBase):
             }
         )
 
-        for attempt in range(self.config.max_retries + 1):
-            try:
-                model = self.config.model
-                if "mini" in model:
-                    model = model.replace("mini", "")
-                    if not model.endswith("o"):
-                        model = "gpt-4o"
-
-                response = await self._client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temp,
-                    max_tokens=4096,
-                )
-                msg = response.choices[0].message
-                return msg.content or getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None) or ""
-            except (KeyboardInterrupt, SystemExit):
-                raise
-            except LLMError:
-                raise
-            except Exception as e:
-                err_str = str(e)
-                if "invalid temperature" in err_str and temp != 1.0:
-                    temp = 1.0
-                    continue
-                if attempt < self.config.max_retries:
-                    logger.warning(
-                        "OpenAI Vision attempt %d failed (%s): %s",
-                        attempt + 1,
-                        type(e).__name__,
-                        e,
-                    )
-                    await asyncio.sleep(2**attempt + random.uniform(0, 0.5 * 2**attempt))
-                else:
-                    raise LLMError(f"OpenAI Vision failed: {e}") from e
+        return await self.chat(messages, temperature=temperature)
 
     async def close(self):
         """Close underlying HTTP client to release connections."""
@@ -502,11 +475,9 @@ class QwenClient(LLMClientBase):
 
 
 class MoonshotClient(OpenAIClient):
-    """Moonshot Client."""
+    """Moonshot Open Platform client; K2.6 uses bounded non-thinking replies."""
 
-    supports_vision = False
-
-    _DEFAULT_BASE_URL = "https://api.kimi.com/coding/v1"
+    _DEFAULT_BASE_URL = "https://api.moonshot.cn/v1"
 
     def __init__(self, config: LLMConfig):
         import copy
@@ -514,29 +485,22 @@ class MoonshotClient(OpenAIClient):
         config = copy.copy(config)
         if not config.base_url:
             config.base_url = self._DEFAULT_BASE_URL
-        if config.api_key_env == "OPENAI_API_KEY":
+        if not config.api_key_env or config.api_key_env == "OPENAI_API_KEY":
             config.api_key_env = "MOONSHOT_API_KEY"
-        if config.model in ("gpt-4o-mini", "gpt-4o"):
-            config.model = "kimi-k2.5"
+        if not config.model or config.model in ("gpt-4o-mini", "gpt-4o"):
+            config.model = "kimi-k2.6"
         super().__init__(config)
 
-    def _ensure_client(self):
-        if self._client is None:
-            try:
-                from openai import AsyncOpenAI
+    @property
+    def supports_vision(self) -> bool:
+        return self.config.model == "kimi-k2.6"
 
-                kwargs = {
-                    "api_key": self._api_key,
-                    "timeout": self.config.timeout_sec,
-                    "base_url": self.config.base_url or self._DEFAULT_BASE_URL,
-                    "default_headers": {"User-Agent": "claude-code/1.0"},
-                }
-                self._client = AsyncOpenAI(**kwargs)
-            except ImportError:
-                raise LLMError("openai package not installed. Run: pip install openai") from None
-
-    async def chat_with_image(self, *args, **kwargs) -> str:
-        raise LLMError("Moonshot Kimi does not support vision input yet")
+    def _completion_options(self, temperature: float) -> dict:
+        if self.config.model == "kimi-k2.6":
+            # K2.6 fixes temperature at 0.6 in non-thinking mode. Omit it as
+            # documented instead of forwarding the caller's 0.0/0.2 value.
+            return {"extra_body": {"thinking": {"type": "disabled"}}}
+        return super()._completion_options(temperature)
 
 
 # ================================================================

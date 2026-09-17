@@ -111,15 +111,20 @@ class ActionExecutor:
         self,
         target_position: dict[str, float],
         robot_position: dict[str, float],
+        *,
+        stop_distance: float | None = None,
     ) -> ActionCommand:
         """Generate approach command."""
+        distance = self.approach_distance if stop_distance is None else float(stop_distance)
+        if not math.isfinite(distance) or distance < 0.0:
+            raise ValueError("stop_distance must be finite and nonnegative")
         dx = target_position["x"] - robot_position["x"]
         dy = target_position["y"] - robot_position["y"]
         dist = math.sqrt(dx * dx + dy * dy)
         yaw = math.atan2(dy, dx)
 
-        if dist > self.approach_distance:
-            scale = (dist - self.approach_distance) / dist
+        if dist > distance:
+            scale = (dist - distance) / dist
             goal_x = robot_position["x"] + dx * scale
             goal_y = robot_position["y"] + dy * scale
         else:

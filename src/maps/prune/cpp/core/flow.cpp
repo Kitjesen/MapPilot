@@ -39,9 +39,9 @@ std::vector<StageSpec> productFlow() {
       {
           "load",
           "ready",
-          "map.pcd + patches/*.pcd + poses.txt",
+          "map.pcd + patches/*.pcd + poses.txt + calibrated scan origin",
           "source map points + posed scan frames",
-          "prune_v1",
+          "prune_v2",
           "Reads LingTu saved-map artifacts and matches patches to poses.",
       },
       {
@@ -49,7 +49,7 @@ std::vector<StageSpec> productFlow() {
           "partial",
           "posed scan frames",
           "ground marks + future instance marks",
-          "prune_v1",
+          "prune_v2",
           "Ground is currently a simple local-z threshold; instance labels are not product-ready.",
       },
       {
@@ -57,7 +57,7 @@ std::vector<StageSpec> productFlow() {
           "partial",
           "posed scan frames",
           "voxel evidence grid",
-          "prune_v1",
+          "prune_v2",
           "Current implementation accumulates one global evidence grid; explicit submap windows "
           "come next.",
       },
@@ -66,24 +66,24 @@ std::vector<StageSpec> productFlow() {
           "ready",
           "voxelized posed scans",
           "hits + ground_hits + frame_count",
-          "prune_v1",
-          "Temporal pseudo occupancy is implemented with conservative voxel support.",
+          "prune_v2",
+          "Counts later observed free rays once per frame; measured endpoints win within a frame.",
       },
       {
           "protect",
           "partial",
           "voxel evidence",
           "protected static voxels",
-          "prune_v1",
-          "Protects ground-like, multi-frame, and high-hit voxels; stronger terrain protection "
-          "comes next.",
+          "prune_v2",
+          "Keeps unconfirmed, low-height and locally supported planar points. Missing scans and "
+          "occlusion are not free evidence; full terrain segmentation is not implemented.",
       },
       {
           "score",
           "partial",
           "protected voxels + instance marks",
           "moving-object instance scores",
-          "prune_v1",
+          "prune_v2",
           "Scores XY instance cells by non-protected candidate ratio; this is report-only for "
           "now.",
       },
@@ -92,7 +92,7 @@ std::vector<StageSpec> productFlow() {
           "ready",
           "source map points + protected voxels",
           "static points + removed candidate points",
-          "prune_v1",
+          "prune_v2",
           "Splits map.pcd into kept and removed PCD outputs.",
       },
       {
@@ -100,8 +100,8 @@ std::vector<StageSpec> productFlow() {
           "ready",
           "static points + removed candidate points",
           "map.clean.pcd + map.removed.pcd + optional map.pcd replacement",
-          "prune_v1",
-          "Apply mode backs up map.pcd to map.pcd.preclean before replacing it.",
+          "prune_v2",
+          "Dry-run writes no files. Apply refuses empty output and preserves the first map.pcd.preclean backup.",
       },
   };
 }

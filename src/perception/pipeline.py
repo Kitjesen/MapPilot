@@ -159,11 +159,12 @@ class PerceptionPipeline:
             source_ts=frame.timestamp,
         )
         try:
-            self._tracker.update(
+            observed_objects = self._tracker.update(
                 list(detections),
                 camera_pos=frame.map_from_camera[:3, 3],
                 camera_forward=frame.map_from_camera[:3, 2],
                 intrinsics_fx=float(frame.intrinsics.fx),
+                source_ts=frame.timestamp,
             )
         except Exception as exc:
             logger.warning("Instance tracking failed; publishing current observations: %s", exc)
@@ -200,6 +201,7 @@ class PerceptionPipeline:
             scene_graph = _scene_graph_from_tracker(
                 self._tracker,
                 runtime_detections,
+                observed_ids={str(obj.object_id) for obj in observed_objects},
                 frame_id=frame.frame_id,
                 source_ts=frame.timestamp,
             )
@@ -378,6 +380,7 @@ def _scene_graph_from_tracker(
     tracker: Any,
     latest_detections: tuple[CoreDetection3D, ...],
     *,
+    observed_ids: set[str],
     frame_id: str,
     source_ts: float,
 ) -> SceneGraph:
@@ -392,12 +395,11 @@ def _scene_graph_from_tracker(
         else:
             px, py, pz = (float(position[index]) for index in range(3))
         label = str(raw.get("label", ""))
-        matched = _match_detection(latest_detections, label, px, py, pz)
         object_id = str(raw.get("id", ""))
+        matched = _match_detection(latest_detections, label, px, py, pz) if object_id in observed_ids else None
         bbox_2d: list[float] = []
         clip_feature = None
         if matched is not None:
-            object_id = matched.id or object_id
             bbox_2d = list(matched.bbox_2d)
             if matched.clip_feature is not None:
                 clip_feature = np.array(matched.clip_feature, copy=True)
@@ -409,7 +411,8 @@ def _scene_graph_from_tracker(
                 position=Vector3(px, py, pz),
                 bbox_2d=bbox_2d,
                 clip_feature=clip_feature,
-                ts=float(source_ts),
+                # Zero would be replaced with wall-clock time by Detection3D.
+                ts=float(raw["last_observed_time"]) or -1.0,
             )
         )
 

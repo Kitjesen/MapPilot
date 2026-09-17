@@ -573,7 +573,8 @@ Status writePatchIndex(
 Status writePatchBundle(
     const std::filesystem::path& map_dir,
     const std::vector<PatchSnapshot>& patches,
-    std::uint64_t dropped_count) {
+    std::uint64_t dropped_count,
+    const Eigen::Vector3d& lidar_origin_in_patch) {
   if (patches.empty()) {
     return Status::Ok("no_patches");
   }
@@ -605,6 +606,12 @@ Status writePatchBundle(
   if (!manifest) {
     return Status::Error("write_patch_bundle_manifest_failed");
   }
+  std::ofstream calibration(map_dir / "scan_origin.txt");
+  calibration << std::setprecision(12) << "lidar_origin_in_patch "
+              << lidar_origin_in_patch.x() << ' ' << lidar_origin_in_patch.y()
+              << ' ' << lidar_origin_in_patch.z() << '\n';
+  calibration.flush();
+  if (!calibration) return Status::Error("write_scan_origin_failed");
   return Status::Ok("patch_bundle_written");
 }
 
@@ -1317,7 +1324,9 @@ class FastLioBackend final : public ISlamBackend {
       return Status::Error("create_patches_dir_failed: " + ec.message());
     }
     const Status patch_status =
-        writePatchBundle(pcd.parent_path(), patches, patch_history_dropped_count_);
+        writePatchBundle(pcd.parent_path(), patches, patch_history_dropped_count_,
+            runtime_config_.navigation_body_from_imu_translation
+                + runtime_config_.navigation_body_from_imu_rotation * builder_config_.t_il);
     if (!patch_status.ok) {
       return patch_status;
     }

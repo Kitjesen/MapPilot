@@ -2,14 +2,17 @@
 
 import asyncio
 import math
+import threading
 import time
+from types import SimpleNamespace
+
+import pytest
 
 from decision.modules.agent_planner import AgentPlannerModule
 from decision.modules.semantic_planner import SemanticPlannerModule
 from decision.tasks.agent import AGENT_TOOLS, AgentLoop
 from runtime.module import Module, skill
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
-from runtime.msgs.nav import NavigationLifecycle, NavigationState, Odometry
 from runtime.msgs.semantic import Detection3D, SceneGraph
 from runtime.stream import In, Out
 
@@ -18,18 +21,28 @@ from runtime.stream import In, Out
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def immediate_observation_worker(monkeypatch):
+    thread_class = threading.Thread
+    def worker(*, target, args, name, **kwargs):
+        if name == "semantic-observation":
+            return SimpleNamespace(start=lambda: target(*args))
+        return thread_class(target=target, args=args, name=name, **kwargs)
+    monkeypatch.setattr("decision.modules.semantic_planner.threading.Thread", worker)
+
+
 def _make_module(**kw) -> SemanticPlannerModule:
     mod = SemanticPlannerModule(**kw)
     mod.setup()
+    mod.on_system_modules({"nav.commands": SimpleNamespace(preview_plan=lambda x, y, z: {
+        "feasible": True, "start_valid": True, "frame_id": "map", "path": [{"x": x, "y": y, "z": z}],
+    })})
+    mod._on_robot_pose(_make_pose())
     return mod
 
 
-def _make_odom(x=0.0, y=0.0):
-    from runtime.msgs.geometry import Pose, Vector3
-
-    od = Odometry()
-    od.pose = Pose(position=Vector3(x, y, 0.0))
-    return od
+def _make_pose(x=0.0, y=0.0):
+    return PoseStamped(Pose(position=Vector3(x, y, 0.0)), frame_id="map")
 
 
 def _make_scene_graph(labels=("chair", "door")):
@@ -60,16 +73,17 @@ class TestSemanticPlannerInit:
         mod = SemanticPlannerModule()
         assert isinstance(mod.instruction, In)
         assert isinstance(mod.scene_graph, In)
-        assert isinstance(mod.odometry, In)
+        assert isinstance(mod.robot_pose, In)
         assert isinstance(mod.detections, In)
         assert isinstance(mod.navigation_state, In)
 
     def test_out_ports(self):
         mod = SemanticPlannerModule()
-        assert isinstance(mod.goal_pose, Out)
+        assert isinstance(mod.nav_command, Out)
         assert isinstance(mod.task_plan, Out)
         assert isinstance(mod.planner_status, Out)
-        assert isinstance(mod.cancel, Out)
+        assert isinstance(mod.goal_status, In)
+        assert isinstance(mod.navigation_goal_status, In)
         assert isinstance(mod.servo_target, Out)
 
     def test_default_params(self):
@@ -120,8 +134,8 @@ class TestSemanticPlannerStateUpdate:
     def teardown_method(self):
         self.mod.stop()
 
-    def test_odometry_cached(self):
-        self.mod._on_odom(_make_odom(3.0, 4.0))
+    def test_map_pose_cached(self):
+        self.mod._on_robot_pose(_make_pose(3.0, 4.0))
         pos = self.mod._robot_pos
         assert abs(pos[0] - 3.0) < 1e-6
         assert abs(pos[1] - 4.0) < 1e-6
@@ -139,6 +153,7 @@ class TestSemanticPlannerStateUpdate:
     def test_scene_graph_does_not_republish_same_goal(self):
         class _Result:
             confidence = 1.0
+            candidate_id = "0"
             position = [1.0, 2.0, 0.0]
             frame_id = "map"
 
@@ -146,13 +161,13 @@ class TestSemanticPlannerStateUpdate:
             def maybe_reload_kg(self):
                 pass
 
-            def fast_resolve(self, instruction, sg_json):
+            def fast_resolve(self, instruction, sg_json, robot_position=None):
                 return _Result()
 
         self.mod._goal_resolver = _Resolver()
         self.mod._current_instruction = "go to chair"
         goals = []
-        self.mod.goal_pose._add_callback(goals.append)
+        self.mod.nav_command._add_callback(goals.append)
 
         sg = _make_scene_graph(["chair"])
         self.mod._on_scene_graph(sg)
@@ -168,11 +183,12 @@ class TestSemanticPlannerStateUpdate:
             def maybe_reload_kg(self):
                 pass
 
-            def fast_resolve(self, instruction, sg_json):
+            def fast_resolve(self, instruction, sg_json, robot_position=None):
                 self.calls += 1
 
                 class _Result:
                     confidence = 1.0
+                    candidate_id = "0"
                     frame_id = "map"
 
                     def __init__(self, x):
@@ -183,16 +199,19 @@ class TestSemanticPlannerStateUpdate:
         self.mod._goal_resolver = _Resolver()
         self.mod._current_instruction = "go to chair"
         goals = []
-        self.mod.goal_pose._add_callback(goals.append)
+        self.mod.nav_command._add_callback(goals.append)
 
-        self.mod._on_scene_graph(_make_scene_graph(["chair"]))
-        self.mod._on_scene_graph(_make_scene_graph(["chair"]))
+        first = _make_scene_graph(["chair"])
+        jittered = _make_scene_graph(["chair"])
+        jittered.objects[0].position.x += 0.01
+        self.mod._on_scene_graph(first)
+        self.mod._on_scene_graph(jittered)
 
         assert len(goals) == 1
 
     def test_goal_signature_includes_yaw(self):
         goals = []
-        self.mod.goal_pose._add_callback(goals.append)
+        self.mod.nav_command._add_callback(goals.append)
 
         first = PoseStamped(
             Pose(Vector3(1.0, 2.0, 0.0), Quaternion.from_yaw(0.0)),
@@ -209,7 +228,7 @@ class TestSemanticPlannerStateUpdate:
 
     def test_goal_hysteresis_suppresses_bucket_boundary_jitter(self):
         goals = []
-        self.mod.goal_pose._add_callback(goals.append)
+        self.mod.nav_command._add_callback(goals.append)
 
         first = PoseStamped(Pose(Vector3(1.024, 2.0, 0.0)), frame_id="map")
         jitter = PoseStamped(Pose(Vector3(1.026, 2.0, 0.0)), frame_id="map")
@@ -222,7 +241,7 @@ class TestSemanticPlannerStateUpdate:
 
     def test_goal_hysteresis_suppresses_small_yaw_noise(self):
         goals = []
-        self.mod.goal_pose._add_callback(goals.append)
+        self.mod.nav_command._add_callback(goals.append)
 
         first = PoseStamped(
             Pose(Vector3(1.0, 2.0, 0.0), Quaternion.from_yaw(0.0)),
@@ -246,7 +265,7 @@ class TestSemanticPlannerStateUpdate:
         self.mod._current_instruction = "go to chair"
         goals = []
         statuses = []
-        self.mod.goal_pose._add_callback(goals.append)
+        self.mod.nav_command._add_callback(goals.append)
         self.mod.planner_status._add_callback(statuses.append)
 
         self.mod._current_scene_graph = _make_scene_graph(["old chair"])
@@ -267,7 +286,7 @@ class TestSemanticPlannerStateUpdate:
         self.mod._goal_resolver = _Resolver()
         self.mod._current_instruction = "go to chair"
         goals = []
-        self.mod.goal_pose._add_callback(goals.append)
+        self.mod.nav_command._add_callback(goals.append)
 
         future = _make_scene_graph(["chair"])
         future.ts = time.time() + 10.0
@@ -283,7 +302,7 @@ class TestSemanticPlannerStateUpdate:
         self.mod._goal_resolver = _Resolver()
         self.mod._current_instruction = "go to chair"
         goals = []
-        self.mod.goal_pose._add_callback(goals.append)
+        self.mod.nav_command._add_callback(goals.append)
 
         invalid = _make_scene_graph(["chair"])
         invalid.ts = math.inf
@@ -298,7 +317,7 @@ class TestSemanticPlannerStateUpdate:
         invalid = _make_scene_graph(["chair"])
         invalid.ts = math.nan
 
-        assert mod._scene_graph_is_stale(invalid)
+        assert mod._map_sample_is_stale(invalid)
         mod.stop()
 
     def test_non_map_scene_graph_does_not_publish_motion_goal(self):
@@ -309,7 +328,7 @@ class TestSemanticPlannerStateUpdate:
         self.mod._goal_resolver = _Resolver()
         self.mod._current_instruction = "go to chair"
         goals = []
-        self.mod.goal_pose._add_callback(goals.append)
+        self.mod.nav_command._add_callback(goals.append)
 
         odom_scene = _make_scene_graph(["chair"])
         odom_scene.frame_id = "odom"
@@ -327,7 +346,7 @@ class TestSemanticPlannerInstruction:
         # Inject a scene graph so Fast Path has something to match
         self.mod = _make_module()
         sg = _make_scene_graph(["chair", "door"])
-        self.mod._on_odom(_make_odom(0.0, 0.0))
+        self.mod._on_robot_pose(_make_pose(0.0, 0.0))
         self.mod._on_scene_graph(sg)
 
     def teardown_method(self):
@@ -349,39 +368,6 @@ class TestSemanticPlannerInstruction:
         self.mod._on_instruction("find the table")
         # Give background thread a moment to run
         time.sleep(0.1)
-
-
-# ---------------------------------------------------------------------------
-# 4. native navigation-state LERa cooldown
-# ---------------------------------------------------------------------------
-
-
-class TestSemanticPlannerRecovery:
-    def test_recovering_triggers_lera_if_instruction_active(self):
-        """RECOVERING with an active instruction must trigger LERa."""
-        mod = _make_module()
-        mod._on_scene_graph(_make_scene_graph())
-        mod._on_odom(_make_odom())
-        # Simulate an active instruction
-        mod._current_instruction = "find the coffee machine"
-        mod._on_navigation_state(
-            NavigationState(boot_id="navd-test", sequence=1, lifecycle_state=NavigationLifecycle.RECOVERING)
-        )
-
-        time.sleep(0.05)
-        mod.stop()
-
-    def test_cooldown_prevents_double_lera(self):
-        """A repeated RECOVERING status must be blocked by the cooldown."""
-        mod = _make_module()
-        mod._current_instruction = "find exit"
-        state = NavigationState(boot_id="navd-test", sequence=1, lifecycle_state=NavigationLifecycle.RECOVERING)
-        mod._on_navigation_state(state)
-        last = mod._last_lera_time
-        mod._on_navigation_state(state)
-        # Second trigger is blocked by cooldown: _last_lera_time must not change
-        assert mod._last_lera_time == last
-        mod.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -490,7 +476,7 @@ class TestSemanticPlannerAgentLoop:
         mod._llm_client = _RecordingLLM(
             [
                 '{"tool":"hello","args":{"name":"lingtu"}}',
-                '{"tool":"done","args":{"summary":"ok"}}',
+                '{"tool":"done","args":{"summary":"ok","success":true}}',
             ]
         )
 

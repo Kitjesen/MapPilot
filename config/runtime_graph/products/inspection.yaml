@@ -33,6 +33,7 @@ topics:
 capabilities:
   - saved_map_relocalization
   - operator_or_semantic_goal_source
+  - bounded_multi_turn_semantic_tasks
   - octoplanner3d_global_planning
   - local_planner_collision_and_traversability_scoring
   - final_cmd_vel_single_writer

@@ -453,7 +453,8 @@ def test_host_bus_projects_map_scene_only_after_aligned_mapd_state() -> None:
     assert health["native"]["consumer_buffer_retries"] == 1
 
 
-def test_host_bus_map_readiness_rejects_generation_mismatch_and_capacity() -> None:
+@pytest.mark.parametrize("scene_generation", [4, 6])
+def test_host_bus_map_readiness_accepts_fresh_async_scene_but_rejects_capacity(scene_generation) -> None:
     timestamp_s = time.time()
     bus = HostBus(require_map_scene=True, map_scene_max_age_s=2.0)
 
@@ -462,7 +463,9 @@ def test_host_bus_map_readiness_rejects_generation_mismatch_and_capacity() -> No
             self.capacity_rejections = 0
 
         def take_map_scene(self):
-            return _map_scene_payload(timestamp_s, generation=4)
+            payload = _map_scene_payload(timestamp_s, generation=scene_generation)
+            payload["observation_sequence"] = 10 if scene_generation == 4 else 12
+            return payload
 
         def read_map_scene_health(self):
             return _map_scene_health(
@@ -476,7 +479,20 @@ def test_host_bus_map_readiness_rejects_generation_mismatch_and_capacity() -> No
     bus._map_scene_enabled = True
     bus._poll_map_scene()
 
-    assert bus.map_readiness() == "map_scene_generation_pending"
+    assert bus.map_readiness() is None
+
+    bus._scene_received_monotonic -= 3
+    assert bus.map_readiness() == "map_scene_stale"
+    bus._scene_received_monotonic = time.monotonic()
+    bus._map_health["state_reset_epoch"] = 4
+    assert bus.map_readiness() == "map_scene_epoch_mismatch"
+    bus._map_health["state_reset_epoch"] = 3
+    bus._map_health["state_producer_boot_id"] = "other-boot"
+    assert bus.map_readiness() == "map_scene_boot_mismatch"
+    bus._map_health["state_producer_boot_id"] = "mapd-boot"
+    bus._map_health["state_current_generation_published"] = False
+    assert bus.map_readiness() == "mapd_current_generation_pending"
+    bus._map_health["state_current_generation_published"] = True
 
     session.capacity_rejections = 1
     bus._poll_map_scene()

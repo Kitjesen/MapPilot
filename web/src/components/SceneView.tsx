@@ -336,7 +336,7 @@ function SceneViewComponent({
   const [maps, setMaps] = useState<MapInfo[]>([])
   const [mapListStatus, setMapListStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const mapListRequestInFlight = useRef(false)
-  const [pointSize, setPointSize] = useState(0.12)
+  const [pointSize, setPointSize] = useState(0.18)
   const [savedMapCloud, setSavedMapCloud] = useState<api.SavedMapPointCloud | undefined>()
   const savedMapFlat = savedMapCloud?.points
   const [relocOpen, setRelocOpen] = useState(false)
@@ -1032,10 +1032,7 @@ function SceneViewComponent({
     try {
       const res = await api.saveLocation({
         name: normalizedLocationName,
-        x: robotX,
-        y: robotY,
-        z: 0,
-        yaw,
+        use_current_pose: true,
         tags: ['web'],
         source: 'web',
       })
@@ -1048,7 +1045,7 @@ function SceneViewComponent({
     } finally {
       setLocationBusy(null)
     }
-  }, [normalizedLocationName, poseAvailable, robotX, robotY, yaw, showToast])
+  }, [normalizedLocationName, poseAvailable, showToast])
 
   const handleNavigateLocation = useCallback(async (loc: LocationEntry) => {
     if (!canSendGoal) {
@@ -1105,10 +1102,7 @@ function SceneViewComponent({
     try {
       const res = await api.updateLocation(loc.name, {
         name: loc.name,
-        x: robotX,
-        y: robotY,
-        z: loc.z ?? 0,
-        yaw,
+        use_current_pose: true,
         tags: loc.tags,
         source: 'web',
         metadata: { ...(loc.metadata ?? {}), updated_from: 'web_current_pose' },
@@ -1121,7 +1115,7 @@ function SceneViewComponent({
     } finally {
       setLocationBusy(null)
     }
-  }, [poseAvailable, robotX, robotY, yaw, showToast])
+  }, [poseAvailable, showToast])
 
   const handleDeleteLocation = useCallback(async () => {
     if (!locationDeleteTarget) return
@@ -2007,7 +2001,6 @@ function SceneViewComponent({
               savedMapVisible={mapView !== 'planning'}
               planningMap={planningMap}
               planningMapVisible={showPlanningMap}
-              mappingMode={isMappingSession}
               mappingObservation={mappingObservation}
               mappingObservationVisible={showMappingObservation}
               elevationState={elevationState}
@@ -2238,6 +2231,10 @@ function SceneViewComponent({
             {isMappingSession ? <>
               <div className={styles.mappingSourceStatus} role="status">
                   <span>{showMappingObservation ? '局部投影' : showGlobalMapping ? '累计建图' : '局部地图'}</span>
+                  {!showMappingObservation && cloud.count > 0 && <span className={styles.cloudHeightLegend}
+                    title="地图高度：−1 至 2.5 米，超出范围保持端点颜色；不表示可通行或障碍分类">
+                    <span>低</span><i /><span>高</span>
+                  </span>}
                   {showGlobalMapping && (cloud.mappingSummary?.droppedFrames ?? 0) > 0
                     ? <span role="status">建图数据有缺失，请先保存原始记录</span>
                     : showGlobalMapping && cloud.mappingSummary?.state === 'optimizer_quality_failed'
@@ -2388,7 +2385,7 @@ function SceneViewComponent({
                     </>}
                     <p>灰格缺少可靠的地面依据，可从不同位置和朝向补扫。窗口外不表示从未建图。</p>
                     <p>蓝绿格是已观测支撑候选，灰格是缺少依据。20 cm 网格不检查机身净空；导航仍使用三维碰撞和通行图。</p>
-                    <p>局部投影和空间点云都来自当前局部窗口；完整 SLAM 建图只在保存地图后查看。这里不计算建图完成百分比。</p>
+                    <p>局部投影和局部地图显示当前窗口；整图显示本次累计建图的采样预览。保存地图保留完整数据，预览不代表可通行或建图完成百分比。</p>
                   </details>}
                 </details>}
 

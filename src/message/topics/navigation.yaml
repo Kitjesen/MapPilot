@@ -368,6 +368,52 @@ topics:
       port: plan_result
       direction: in
       boundary: native
+  semantic_view_request:
+    topic: /nav/semantic/views/request
+    transport: dds
+    dds_topic: rt/nav/semantic/views/request
+    message_type: lingtu.dds.SemanticViewRequest
+    qos_profile: CommandRequest
+    cpp_name: kNavSemanticViewRequest
+    native_contract: true
+    role: native_semantic_view_request
+    frame: map
+    producer: persistent_cpp_navigation_client
+    consumers:
+    - native_nav_runtime
+    semantics: read_only_saved_map_camera_search_candidate_query
+    port_bindings:
+    - owner: persistent_cpp_navigation_client
+      port: semantic_view_request
+      direction: out
+      boundary: native
+    - owner: native_nav_runtime
+      port: semantic_view_request
+      direction: in
+      boundary: endpoint
+  semantic_view_result:
+    topic: /nav/semantic/views/result
+    transport: dds
+    dds_topic: rt/nav/semantic/views/result
+    message_type: lingtu.dds.SemanticViewResult
+    qos_profile: CommandRequest
+    cpp_name: kNavSemanticViewResult
+    native_contract: true
+    role: native_semantic_view_result
+    frame: map
+    producer: native_nav_runtime
+    consumers:
+    - persistent_cpp_navigation_client
+    semantics: correlated_geometry_candidates_not_motion_or_semantic_success
+    port_bindings:
+    - owner: native_nav_runtime
+      port: semantic_view_result
+      direction: out
+      boundary: endpoint
+    - owner: persistent_cpp_navigation_client
+      port: semantic_view_result
+      direction: in
+      boundary: native
   planner_status:
     topic: /nav/planner_status
     transport: local

@@ -81,7 +81,11 @@ class TaggedLocationsModule(OdomTrackingMixin, Module, layer=3):
             return
 
         odom = self._last_odom
-        self._store.tag(name, x=odom.x, y=odom.y, z=odom.z)
+        try:
+            self._store.tag(name, x=odom.x, y=odom.y, z=odom.z)
+        except OSError:
+            self.tag_status.publish("error:save_failed")
+            return
         self.tag_status.publish(f"saved:{name}")
 
     def _handle_goto(self, name: str) -> None:
@@ -110,7 +114,12 @@ class TaggedLocationsModule(OdomTrackingMixin, Module, layer=3):
         self.tag_status.publish(f"recalled:{entry['name']}")
 
     def _handle_remove(self, name: str) -> None:
-        if self._store.remove(name):
+        try:
+            removed = self._store.remove(name)
+        except OSError:
+            self.tag_status.publish("error:remove_failed")
+            return
+        if removed:
             self.tag_status.publish(f"removed:{name}")
         else:
             self.tag_status.publish(f"not_found:{name}")

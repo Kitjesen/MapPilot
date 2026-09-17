@@ -193,6 +193,20 @@ class ControlCommandService:
                     return rejection
             try:
                 return action()
+            except ValueError as exc:
+                reason = str(exc)
+                return self.rejected_response(
+                    command,
+                    body,
+                    error="invalid_goal",
+                    message="The navigation target is unavailable or belongs to another map revision.",
+                    detail=self.command_error_detail(
+                        reason_code="invalid_goal",
+                        reason=reason,
+                        source="goal_construction",
+                        blockers=[reason],
+                    ),
+                )
             except CommandBoundaryError as exc:
                 reason = str(exc)
                 return self.rejected_response(

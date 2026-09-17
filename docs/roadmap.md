@@ -47,6 +47,114 @@ in the owning code, configuration, and current documentation.
 7. Assemble and validate the canonical Linux field release.
 8. Run S100P no-motion and fault injection before supervised motion.
 
+## Map and place ownership review — 2026-09-17
+
+The reviewed path is Web/API -> place lookup -> mapd -> navigation dispatch,
+including the actual `real` Product compilation. This is a source and local
+contract review, not validation of the installed robot release.
+
+The field geometry pipeline is already native: sensors, Fast-LIO2, mapd,
+traversability, navd, and driver. Python legitimately owns Host wiring, HTTP,
+semantic names, and task intent. The remaining problem is competing place
+ownership and interface drift, not the use of Python for those functions.
+
+| Finding | Evidence and effect | Required change |
+| --- | --- | --- |
+| Two place stores | Web `/locations` and location-name goals use `TaggedLocationStore`; `/places` and semantic place resolution use the POI-backed `PlaceCatalog`. Creating an entry in one does not populate the other. | Make mapd the one map-bound place owner; retain semantic alias/floor interpretation as a Python projection. |
+| Basic locations depend on optional semantic memory | Compiling standard `map` and `nav` for `real` includes Gateway but no `TaggedLocationsModule`. `memory()` is gated by `enable_semantic_planning`, false in both Products. The location API then reports `location_store_unavailable`. | Make basic map-bound locations available through the declared maps endpoint, without enabling the entire semantic stack. |
+| Names collide across maps | The JSON store is keyed only by name. Saving `dock` with map A metadata, then `dock` with map B metadata leaves only B. | Use map-scoped identity, preserve stable place IDs, and explicitly resolve existing JSON records during consolidation. Do not silently assign unbound records to the active map. |
+| Lookup repeats management requests | `PlaceCatalog.load()` makes `1 + 2N` synchronous management requests across N maps: list maps, then record and POIs per map. A local fake endpoint confirmed seven calls for three empty maps. | Consolidate the existing mapd query contract and duplicated Gateway/semantic adapters; measure latency before adding caches or another database. |
+| Import checks have limited coverage | The current architecture checker reports an existing missing ownership entry for `src/lingtu/operator_keyboard.py`. Import rules cannot detect duplicate place stores or absent Product capabilities. | Declare that existing file's actual ownership and add acceptance coverage at the Product/API seam. A clean import check alone is insufficient. |
+
+Sources:
+
+- [Web location API](../src/gateway/maps/locations.py),
+  [location-name goal resolution](../src/gateway/navigation/goals.py),
+  [JSON storage](../src/memory/spatial/tagged_locations.py).
+- [Place API](../src/gateway/maps/places.py),
+  [semantic place catalog](../src/memory/spatial/places.py),
+  [semantic planner](../src/decision/modules/semantic_planner.py),
+  [native POI storage](../src/maps/cpp/service_places.cpp).
+- [Host stack composition](../src/lingtu/assembly/stacks/composition.py),
+  [map Product](../config/runtime_graph/products/map.yaml),
+  [nav Product](../config/runtime_graph/products/nav.yaml).
+
+Consolidation should proceed as one vertical slice: create a map-bound place
+from the Web, list it, resolve the same identity through semantic input, then
+submit it through the existing checked navigation command path. Prove this
+with `semantic_planning` disabled for basic location operations, same-name
+places on two maps, restart/reload, active-map changes, and map content updates.
+Unbound or stale entries must remain non-executable until deliberately rebound.
+Next migrate existing location records and their callers; only then remove the
+JSON owner and redundant adapters. Moving files or adding another `places/`
+wrapper before that would preserve the underlying split.
+
+Acceptance must include actual HTTP request models and I/O failure behavior,
+not just schema presence or manually injected Modules. Simulation and field
+acceptance remain separate, with no-motion checks before supervised motion.
+
+Follow-up local review reproduced and fixed four additional defects:
+
+- A deleted saved goal could fuzzy-match another name and dispatch different
+  coordinates. Structured location targets now require an exact name.
+- Saving the current location accepted a cached pose after sensor loss, a
+  localization failure, or a frame mismatch. It now requires a fresh, valid
+  map-frame snapshot and preserves the previous location on rejection.
+- SDK PCD downloads treated an early HTTP EOF as success and replaced the
+  existing map with partial or empty data. Replacement now requires the
+  advertised byte count; failure removes the temporary file only.
+- Cancelling an artifact iterator before its first read orphaned the native
+  file descriptor. Ownership now stays with the artifact until reading starts.
+
+Regression evidence uses actual Gateway request models, the standard-library
+HTTP response reader, and real temporary file descriptors. These fixes do not
+resolve the two-store/Product availability findings above and are not evidence
+of installation or motion acceptance on the robot.
+
+A subsequent entry-point review reproduced four more contract failures:
+
+- SDK `delete_location` sent POST to a DELETE-only route. It now sends DELETE
+  and encodes the location name; the regression invokes the real HTTP route.
+- MCP `tag_location` bypassed Gateway pose checks and erased existing map
+  binding/yaw by writing directly to the JSON store. HTTP and MCP now share
+  the same save operation, including failure reporting.
+- The agent's fallback sent unsupported `tag:` commands and always claimed
+  success. That fallback is removed; the registered tagging skill supplies
+  the capability when available.
+- Updating a bound location while mapd binding was unavailable silently
+  replaced it with an unbound record. The operation now fails without changing
+  the existing location.
+
+Ten new interface regressions and the adjacent SDK, MCP, agent, and location
+checks passed (190 tests, plus 65 subtests). This remains local contract
+evidence, not a robot deployment or navigation acceptance result.
+
+## Semantic navigation integration
+
+The current `inspection` Product selects semantic planning; standard `nav`
+does not, and `tracking` excludes `SemanticPlannerModule`. Do not infer a
+capability from helper classes or a directory name.
+
+Native request/task correlation and terminal handling now have local contract
+coverage, including cancellation, replacement, native recovery and map changes.
+Semantic grounding uses the synchronized map pose from perception, not raw odom.
+Same-floor observation proposals now use the registered native read-only path
+preview before dispatch, with local tests for stale tracks and delayed results.
+Reached tracked objects now have a bounded visual-verification path using the
+processed image, synchronized pose and existing vision-capable LLM interface.
+The remaining work is recorded-image/model acceptance, visibility-aware viewpoint
+changes, owner-supplied frontier input and native/field runtime acceptance.
+SG-Nav reasoning and belief-verification helpers currently
+have no runtime planner callers. Local service contracts do not establish that
+the robot searches or confirms targets correctly.
+
+The [literature and implementation review](../research/semantic/navigation_review.md)
+compares primary sources and gives the staged replay, simulation, no-motion,
+and supervised field gates. Task handoff, cached-scene freshness, delayed
+recovery, robot-position propagation and concrete strategy API regressions are
+covered in `tests/decision/test_semantic_planner_task_lifecycle.py` and
+`tests/decision/test_strategy_service_contracts.py`.
+
 ## Terrain research threshold
 
 Do not add PCA ground segmentation merely because another project uses it.

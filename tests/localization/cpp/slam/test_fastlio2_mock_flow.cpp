@@ -881,6 +881,14 @@ void checkPatchBundleRetentionManifest(
     check(first_sequence == dropped_count, "patch_bundle_first_sequence_wrong");
     check(last_sequence + 1 == dropped_count + patch_count,
           "patch_bundle_sequence_accounting_wrong");
+    std::ifstream calibration(map_path.parent_path() / "scan_origin.txt");
+    double ox = 0, oy = 0, oz = 0;
+    calibration >> key >> ox >> oy >> oz;
+    check(static_cast<bool>(calibration) && key == "lidar_origin_in_patch",
+          "scan_origin_missing_or_invalid");
+    check(std::abs(ox - 0.16) < 1e-6 && std::abs(oy - 0.02) < 1e-6 &&
+              std::abs(oz - 0.12) < 1e-6,
+          "scan_origin_not_in_exported_body_frame");
   };
   check_manifest("complete_patch_bundle", true, 0, 1);
   for (int i = 0; i < 4; ++i) {
@@ -973,6 +981,9 @@ int main() {
   {
     std::ofstream config_out(patch_bundle_config_path);
     config_out << "max_patch_snapshots: 2\n";
+    config_out << "t_il: [0.02, -0.06, 0.04]\n";
+    config_out << "navigation_body_from_imu_rotation: [0, -1, 0, 1, 0, 0, 0, 0, 1]\n";
+    config_out << "navigation_body_from_imu_translation: [0.10, 0, 0.08]\n";
     config_out << "patch_min_interval_s: 0.0\n";
     config_out << "patch_min_translation_m: 0.0\n";
     config_out << "patch_min_rotation_rad: 0.0\n";

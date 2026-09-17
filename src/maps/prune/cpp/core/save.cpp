@@ -22,24 +22,21 @@ SaveResult saveFail(std::string reason, std::string message) {
 
 SaveResult writeCleanedMap(const SaveOptions &options, const std::vector<PointXYZI> &kept,
                            const std::vector<PointXYZI> &removed) {
+  if (options.apply_to_map && kept.empty()) {
+    return saveFail("empty_clean_map", "refusing to replace map.pcd with an empty result; use --dry-run to inspect");
+  }
   writePcd(options.clean_pcd, kept);
   writePcd(options.removed_pcd, removed);
 
   if (options.apply_to_map) {
     std::error_code ec;
-    if (options.overwrite && fs::exists(options.backup_pcd)) {
-      fs::remove(options.backup_pcd, ec);
+    // Repeated cleanup must retain the first uncleaned source for recovery.
+    if (!fs::exists(options.backup_pcd)) {
+      fs::copy_file(options.map_pcd, options.backup_pcd, fs::copy_options::none, ec);
       if (ec) {
-        return saveFail("backup_remove_failed",
-                        "failed to remove existing backup: " + options.backup_pcd.string() + ": " +
-                            ec.message());
+        return saveFail("backup_failed", "failed to backup map.pcd to " +
+                                             options.backup_pcd.string() + ": " + ec.message());
       }
-    }
-    ec.clear();
-    fs::copy_file(options.map_pcd, options.backup_pcd, fs::copy_options::none, ec);
-    if (ec) {
-      return saveFail("backup_failed", "failed to backup map.pcd to " +
-                                           options.backup_pcd.string() + ": " + ec.message());
     }
 
     if (options.overwrite && fs::exists(options.tmp_map_pcd)) {

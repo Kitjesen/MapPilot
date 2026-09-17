@@ -22,6 +22,30 @@ def test_save_map_schema_rejects_public_optimizer_selection():
         MapSaveRequest.model_validate({"name": "warehouse", "optimization": "auto"})
 
 
+def test_rename_map_accepts_the_validated_http_request(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import gateway.maps.routes as map_routes
+
+    commands = []
+
+    def rename(_gw, command):
+        commands.append(command)
+        return {"success": True}
+
+    monkeypatch.setattr(map_routes, "_mapd_http_request", rename)
+    app = FastAPI()
+    map_routes.register_map_routes(app, SimpleNamespace())
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/map/rename", json={"old_name": "yard", "new_name": "yard2"})
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert commands == [{"action": "rename_map", "map_id": "yard", "new_map_id": "yard2"}]
+
+
 def test_save_map_accepts_the_validated_http_request(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

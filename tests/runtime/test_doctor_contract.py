@@ -47,9 +47,11 @@ def test_field_http_uses_configured_gateway_credentials(monkeypatch, api_key, co
 
 
 def _collect_non_motion_report(
-    monkeypatch, ready_payload, *, lidar_interface: list[str] | None = None, health_payload=None
+    monkeypatch, ready_payload, *, lidar_interface: list[str] | None = None, health_payload=None,
+    usb_text="", camera_snapshot=False, require_camera=False, camera_driver="orbbec_native",
 ):
-    plan = SimpleNamespace(product="nav", env="real", processes=())
+    plan = SimpleNamespace(product="nav", env="real", processes=(),
+                           native_process_environment={"LINGTU_CAMERA_DRIVER": camera_driver})
     monkeypatch.setattr(doctor, "current_run_path", lambda: "current.json")
     monkeypatch.setattr(doctor, "load_current_plan", lambda *_args: (plan, {}))
 
@@ -66,15 +68,42 @@ def _collect_non_motion_report(
         return 503, None, "unavailable"
 
     monkeypatch.setattr(doctor, "http_json", http_json)
-    monkeypatch.setattr(doctor, "run", lambda *_args, **_kwargs: (0, "", ""))
+    monkeypatch.setattr(doctor, "run", lambda args, **_kwargs: (0, usb_text if args == ["lsusb"] else "", ""))
     monkeypatch.setattr(
         doctor,
         "netdev_state",
         lambda name: lidar_interface.append(name) or {} if lidar_interface is not None else {},
     )
-    monkeypatch.setattr(doctor.urllib.request, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError()))
+    class CameraResponse(io.BytesIO):
+        headers = {"content-type": "image/jpeg"}
+
+        def getcode(self):
+            return 200
+
+    def camera_open(*_args, **_kwargs):
+        if camera_snapshot:
+            return CameraResponse(b"\xff\xd8\xff")
+        raise OSError()
+
+    monkeypatch.setattr(doctor.urllib.request, "urlopen", camera_open)
     monkeypatch.setattr(doctor.glob, "glob", lambda _pattern: [])
-    return doctor.collect_report(doctor.parse_args(["--non-motion"]))
+    args = ["--non-motion"] + (["--require-camera"] if require_camera else [])
+    return doctor.collect_report(doctor.parse_args(args))
+
+
+@pytest.mark.parametrize("usb_present,snapshot_ok", [(True, True), (False, True), (True, False)])
+def test_realsense_rsusb_needs_device_and_capture_but_not_v4l(monkeypatch, usb_present, snapshot_ok):
+    monkeypatch.setenv("LINGTU_CAMERA_DRIVER", "orbbec_native")
+    report = _collect_non_motion_report(
+        monkeypatch, {}, require_camera=True, camera_snapshot=snapshot_ok,
+        camera_driver="realsense_native",
+        usb_text="Bus 002 Device 002: ID 8086:0b3a Intel RealSense Depth Camera 435i" if usb_present else "",
+    )
+    checks = {c["id"]: c for c in report["checks"]}
+    assert checks["camera.usb"]["status"] == ("pass" if usb_present else "fail")
+    assert checks["camera.gateway_snapshot"]["status"] == ("pass" if snapshot_ok else "fail")
+    assert checks["camera.video_nodes"]["status"] == "warn"
+    assert checks["camera.video_nodes"]["evidence"]["required"] is False
 
 
 @pytest.mark.parametrize(

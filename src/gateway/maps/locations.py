@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -10,7 +11,9 @@ from fastapi.responses import JSONResponse
 
 from gateway.maps.transport import mapd_request
 from gateway.schemas import LocationOperationResponse, LocationsResponse, LocationUpsertRequest
+from gateway.services.runtime_status import POSE_FRESH_MAX_ODOM_AGE_MS, classify_pose_freshness
 from gateway.services.telemetry_normalizers import build_locations_response
+from runtime.tf.frames import map_frame_id
 
 _LOCATION_BINDING_METADATA_KEYS = frozenset(
     {"map_id", "map_content_epoch", "frame_id", "binding_status"}
@@ -104,7 +107,14 @@ def _location_metadata(
                 if str(key) not in _LOCATION_BINDING_METADATA_KEYS
             }
         )
-    merged.update(_location_map_binding(gw))
+    binding = _location_map_binding(gw)
+    if (
+        isinstance(existing_metadata, Mapping)
+        and existing_metadata.get("binding_status") == "bound"
+        and binding.get("binding_status") != "bound"
+    ):
+        raise ValueError("location_binding_unavailable")
+    merged.update(binding)
     return merged
 
 
@@ -126,14 +136,24 @@ def _pose_value(value: Any, key: str) -> float | None:
 
 def _current_pose(gw) -> tuple[float, float, float, float | None] | None:
     with gw._state_lock:
-        odom = gw._odom
-    if odom is None:
+        odom = dict(gw._odom or {})
+        received_at = gw._odom_timestamps[-1] if gw._odom_timestamps else None
+        invalid = bool(gw._last_invalid_odometry)
+        localization_status = dict(gw._localization_status or {})
+    if (
+        not odom
+        or invalid
+        or received_at is None
+        or not 0.0 <= (time.time() - received_at) * 1000.0 <= POSE_FRESH_MAX_ODOM_AGE_MS
+        or odom.get("frame_id") != map_frame_id()
+        or classify_pose_freshness(localization_status)[0] is False
+    ):
         return None
     x = _pose_value(odom, "x")
     y = _pose_value(odom, "y")
-    if x is None or y is None:
+    z = _pose_value(odom, "z")
+    if x is None or y is None or z is None:
         return None
-    z = _pose_value(odom, "z") or 0.0
     yaw = _pose_value(odom, "yaw")
     return x, y, z, yaw
 
@@ -170,12 +190,13 @@ def _locations_operation_payload(
     return payload
 
 
-def _upsert_location(
+def upsert_location(
     gw,
     body: LocationUpsertRequest,
     *,
     path_name: str | None,
 ) -> dict[str, Any] | JSONResponse:
+    """Save a location with shared HTTP/MCP pose, binding, and persistence rules."""
     if path_name is not None and body.name != path_name:
         payload = _locations_operation_payload(
             gw,
@@ -211,7 +232,7 @@ def _upsert_location(
                 ok=False,
                 status="invalid",
                 action="create" if path_name is None else "update",
-                message="Current robot pose is unavailable.",
+                message="A fresh, valid map-frame robot pose is required.",
                 error="current_pose_unavailable",
                 request_id=body.request_id,
                 client_id=body.client_id,
@@ -287,7 +308,7 @@ def register_location_routes(app, gw) -> None:
         response_model=LocationsResponse,
     )
     async def get_locations():
-        return build_locations_response(location_entries(gw))
+        return build_locations_response(await asyncio.to_thread(location_entries, gw))
 
     @app.post(
         "/api/v1/locations",
@@ -295,7 +316,7 @@ def register_location_routes(app, gw) -> None:
         response_model=LocationOperationResponse,
     )
     async def post_location(body: LocationUpsertRequest):
-        return _upsert_location(gw, body, path_name=None)
+        return await asyncio.to_thread(upsert_location, gw, body, path_name=None)
 
     @app.put(
         "/api/v1/locations/{name}",
@@ -303,7 +324,7 @@ def register_location_routes(app, gw) -> None:
         response_model=LocationOperationResponse,
     )
     async def put_location(name: str, body: LocationUpsertRequest):
-        return _upsert_location(gw, body, path_name=name)
+        return await asyncio.to_thread(upsert_location, gw, body, path_name=name)
 
     @app.delete(
         "/api/v1/locations/{name}",
@@ -311,6 +332,9 @@ def register_location_routes(app, gw) -> None:
         response_model=LocationOperationResponse,
     )
     async def delete_location(name: str):
+        return await asyncio.to_thread(_delete_location, name)
+
+    def _delete_location(name: str):
         tlm = gw._tagged_loc_module
         if tlm is None:
             return _locations_operation_payload(

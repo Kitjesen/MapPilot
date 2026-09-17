@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from runtime.endpoints.mapd import MapClient, MapClientError
+from runtime.endpoints.mapd import ArtifactHandle, MapClient, MapClientError
 
 _RESPONSE_HEADER = struct.Struct("!4sBBHII")
 _REQUEST_HEADER = struct.Struct("!4sBBHIHI")
@@ -102,6 +102,21 @@ def test_default_socket_follows_the_product_session(monkeypatch, tmp_path) -> No
 
     assert client.socket_path == str(tmp_path / "mapd.sock")
 
+def test_saved_map_preview_accepts_the_web_80000_point_budget() -> None:
+    payload = {"success": True, "map_id": "yard", "points": [[12.34567, -9.876543, 0.456789]] * 80000}
+    transport = _ScriptedSocket(_response(payload))
+    result = MapClient(connector=lambda: transport).service("get_map_points", map_id="yard", max_points=80000)
+    assert len(result["points"]) == 80000
+
+
+def test_response_above_preview_budget_is_rejected_before_reading_body() -> None:
+    transport = _ScriptedSocket(_RESPONSE_HEADER.pack(b"LTMR", 2, 0, 0, 4 * 1024 * 1024 + 1, 0))
+    with pytest.raises(MapClientError) as error:
+        MapClient(connector=lambda: transport).ping()
+    assert error.value.reason_code == "response_too_large"
+    assert transport.closed
+
+
 def test_open_artifact_returns_verified_regular_file_handle(tmp_path: Path) -> None:
     artifact_path = tmp_path / "map.pcd"
     artifact_path.write_bytes(b"pcd-body")
@@ -137,6 +152,28 @@ def test_open_artifact_returns_verified_regular_file_handle(tmp_path: Path) -> N
     assert transport.closed is True
     with pytest.raises(OSError):
         os.fstat(descriptor)
+
+
+@pytest.mark.parametrize("start_reading", [False, True])
+def test_abandoned_artifact_iterator_closes_descriptor(tmp_path: Path, start_reading: bool) -> None:
+    artifact_path = tmp_path / "map.pcd"
+    artifact_path.write_bytes(b"pcd-body")
+    descriptor = os.open(artifact_path, os.O_RDONLY)
+    artifact = ArtifactHandle(metadata={}, size_bytes=8, _descriptor=descriptor)
+    chunks = artifact.iter_bytes(chunk_size=3)
+    del artifact
+    try:
+        if start_reading:
+            assert next(chunks) == b"pcd"
+        chunks.close()
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+    finally:
+        # Release the descriptor even when reproducing a leak in the old code.
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
 
 
 def test_error_reply_raises_stable_client_error() -> None:

@@ -1,7 +1,7 @@
 # Map Cleaning Core
 
 This folder defines the product pipeline contract for saved-map cleaning. It is
-the LingTu-owned `lingtu_field_v1` path for S100P/MID-360 saved maps.
+the LingTu-owned `lingtu_field_v2` path for S100P/MID-360 saved maps.
 
 The product path is:
 
@@ -16,7 +16,8 @@ Current files:
 | `types.hpp` | Shared point, pose, voxel, and evidence structs. |
 | `text.hpp` / `text.cpp` | Small string, tokenization, and JSON/path helpers. |
 | `io.hpp` / `io.cpp` | PCD and LingTu `poses.txt` loading/writing. |
-| `evidence.hpp` / `evidence.cpp` | Pose transform, voxelization, and current static protection rule. |
+| `evidence.hpp` / `evidence.cpp` | Pose transform, voxelization, and report-only support classification. |
+| `visibility.hpp` / `visibility.cpp` | Chronological free-ray contradictions, calibrated origin, per-frame endpoint priority, and persistent planar-neighbor preservation. |
 | `score.hpp` / `score.cpp` | Instance-level moving-object score summary. |
 | `save.hpp` / `save.cpp` | Clean/removed output, backup, and apply semantics. |
 | `flow.hpp` / `flow.cpp` | Canonical stage names, implementation state, and JSON report shape. |

@@ -26,8 +26,6 @@ ODOMETRY_CONSUMERS = (
     "VectorMemoryModule",
     "TemporalMemoryModule",
     "MissionLoggerModule",
-    "SemanticPlannerModule",
-    "AgentPlannerModule",
     "InspectionEvidenceModule",
     "ReconstructionModule",
     "MCPServerModule",

@@ -53,26 +53,26 @@ test('the canvas click that dismisses a menu cannot select a goal, while the nex
   const upBody = sceneSource.match(/onMouseUpCapture=\{event => \{([\s\S]*?)\}\}/)?.[1]
   assert.ok(downBody)
   assert.ok(upBody)
-  const down = new Function('document', 'dismissOnlyCanvasClick', downBody)
+  const down = new Function('document', 'dismissOnlyCanvasClick', downBody.replace('<HTMLDetailsElement>', ''))
   const up = new Function('event', 'dismissOnlyCanvasClick', upBody)
   const ref = { current: false }
-  let menuOpen = true
-  const document = { querySelector: (selector: string) => {
+  const menu = { open: true }
+  const document = { querySelectorAll: (selector: string) => {
     assert.equal(selector, 'details[name="lingtu-menu"][open]')
-    return menuOpen ? {} : null
+    return menu.open ? [menu] : []
   } }
   let stopped = 0
   const event = { shiftKey: true, preventDefault() {}, stopPropagation() { stopped++ } }
   down(document, ref)
-  menuOpen = false
+  assert.equal(menu.open, false, 'canvas pointerdown must close the open menu')
   up(event, ref)
   assert.equal(stopped, 1, 'document menu dismissal must not erase the captured click guard')
   down(document, ref)
   up(event, ref)
   assert.equal(stopped, 1, 'the next ordinary or Shift click must propagate normally')
-  menuOpen = true
+  menu.open = true
   down(document, ref)
-  menuOpen = false
+  assert.equal(menu.open, false)
   up(event, ref)
   assert.equal(stopped, 2, 'touch-generated compatibility mouseup follows the same pointerdown guard')
 })
@@ -95,18 +95,19 @@ test('scene retains operational controls while showing failures outside collapse
   assert.match(sceneSource, /<summary>雷达详情<\/summary>/)
 })
 
-test('mapping opens on spatial cloud and keeps the local projection explicitly non-traversable', () => {
-  assert.match(sceneSource, /useState<'coverage' \| 'points'>\('points'\)/)
+test('mapping opens on the cumulative map and keeps the local projection explicitly non-traversable', () => {
+  assert.match(sceneSource, /useState<'coverage' \| 'points' \| 'global'>\('global'\)/)
   assert.match(sceneSource, /mappingView === 'coverage'\) scene3DRef\.current\?\.topView\(6\)/)
   assert.match(sceneSource, />局部投影<\/button>/)
   assert.match(sceneSource, />局部地图<\/button>/)
+  assert.match(sceneSource, />整图<\/button>/)
   assert.match(sceneSource, /<details className=\{styles.mappingReadingKey\} aria-label="建图显示图例">/)
   assert.match(sceneSource, /<summary>图例<\/summary>/)
   assert.match(sceneSource, /地面相对高度 · 不代表可通行/)
   assert.match(sceneSource, /二维投影不是地面高度/)
-  assert.match(sceneSource, /局部投影和空间点云都来自当前局部窗口/)
-  assert.match(sceneSource, /绿色为地图表面，不是通行判定/)
-  assert.match(sceneSource, /完整建图需保存地图后查看/)
+  assert.match(sceneSource, /当前局部窗口 · 切换整图查看累计范围/)
+  assert.match(sceneSource, /本次累计建图 · 显示经过采样/)
+  assert.doesNotMatch(sceneSource, /完整 SLAM 建图只在保存地图后查看/)
   assert.doesNotMatch(sceneSource, /空间点云 · 累计预览/)
   assert.doesNotMatch(sceneSource, /topView\(10\)/)
 })

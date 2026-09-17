@@ -164,6 +164,7 @@ PCD
 000001.pcd 4 0 0 1 0 0 0
 000002.pcd 0 4 0 1 0 0 0
 POSES
+  echo 'lidar_origin_in_patch 0 0 0' >"${root}/scan_origin.txt"
 }
 
 cd "${REPO_ROOT}" || exit 1

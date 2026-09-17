@@ -14,6 +14,7 @@ option(LINGTU_ERASOR2_USE_RERUN_STUB
 
 add_library(prune_core STATIC
   core/evidence.cpp
+  core/visibility.cpp
   core/flow.cpp
   core/io.cpp
   core/save.cpp
@@ -94,6 +95,12 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
   add_test(NAME prune_help COMMAND prune --help)
+  add_executable(prune_test "${CMAKE_CURRENT_SOURCE_DIR}/../../../../tests/maps/cpp/prune_test.cpp")
+  target_link_libraries(prune_test PRIVATE prune_core)
+  foreach(test_case report dry_run empty_apply repeat_apply output_aliases truncated_source bad_threshold
+      visibility calibrated_origin ground pose_order missing_origin surface)
+    add_test(NAME prune_${test_case} COMMAND prune_test ${test_case})
+  endforeach()
   if(LINGTU_PRUNE_ERASOR2)
     add_test(NAME erasor2_stage_help COMMAND erasor2_stage --help)
     add_test(NAME erasor2_clean_help COMMAND erasor2_clean --help)

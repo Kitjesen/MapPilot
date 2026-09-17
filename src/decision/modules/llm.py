@@ -111,15 +111,18 @@ class LLMModule(Module, layer=4):
 
     def preflight(self):
         """Check API key availability before startup."""
-        if self._backend_name == "mock":
+        from decision.llm.client import resolve_llm_backend
+
+        canonical = resolve_llm_backend(self._backend_name)
+        if canonical == "mock":
             return None
         defaults = {
-            "kimi": "MOONSHOT_API_KEY",
+            "moonshot": "MOONSHOT_API_KEY",
             "openai": "OPENAI_API_KEY",
             "claude": "ANTHROPIC_API_KEY",
             "qwen": "DASHSCOPE_API_KEY",
         }
-        env_var = self._api_key_env or defaults.get(self._backend_name, "")
+        env_var = self._api_key_env or defaults.get(canonical, "")
         if env_var and not os.environ.get(env_var):
             return (
                 f"API key env var '{env_var}' not set for backend '{self._backend_name}'. Set it or use backend='mock'."
@@ -128,7 +131,10 @@ class LLMModule(Module, layer=4):
 
     def setup(self) -> None:
         """Create LLM client and start async event loop."""
+        from decision.llm.client import resolve_llm_backend
+
         self._client = self._create_client()
+        self._canonical_backend_name = resolve_llm_backend(self._backend_name)
         self.request.subscribe(self._on_request)
 
         # Start async loop in background thread for non-blocking LLM calls
@@ -137,12 +143,16 @@ class LLMModule(Module, layer=4):
             target=self._loop.run_forever, daemon=True, name=f"llm-{self._backend_name}"
         )
         self._loop_thread.start()
-        logger.info("LLMModule: backend='%s' model='%s'", self._backend_name, self._model)
+        logger.info("LLMModule: backend='%s' model='%s'", self._backend_name, self._resolved_model)
 
     @property
     def client(self):
         """Return the initialized client for same-layer multimodal helpers."""
         return self._client
+
+    @property
+    def _resolved_model(self) -> str:
+        return getattr(getattr(self._client, "config", None), "model", "") or self._model
 
     def _create_client(self):
         """Factory: instantiate the selected LLM backend."""
@@ -170,7 +180,7 @@ class LLMModule(Module, layer=4):
 
         # Resolve defaults per backend
         defaults = {
-            "kimi": {"model": "kimi-k2.5", "api_key_env": "MOONSHOT_API_KEY", "base_url": "https://api.moonshot.cn/v1"},
+            "moonshot": {"api_key_env": "MOONSHOT_API_KEY"},
             "openai": {"model": "gpt-4o-mini", "api_key_env": "OPENAI_API_KEY"},
             "claude": {"model": "claude-3-5-sonnet-20241022", "api_key_env": "ANTHROPIC_API_KEY"},
             "qwen": {"model": "qwen-turbo", "api_key_env": "DASHSCOPE_API_KEY"},
@@ -202,7 +212,7 @@ class LLMModule(Module, layer=4):
                     LLMResponse(
                         text="",
                         request_id=req.request_id,
-                        model=self._model,
+                        model=self._resolved_model,
                         error=f"Circuit breaker open ({self._consecutive_failures} "
                         f"consecutive failures, retry in "
                         f"{self._circuit_open_until - now:.0f}s)",
@@ -214,12 +224,15 @@ class LLMModule(Module, layer=4):
 
         with self._backend_lock:
             self._in_flight += 1
+        started_at = time.monotonic()
         future = asyncio.run_coroutine_threadsafe(self._async_chat(req), self._loop)
         # Non-blocking: response published from async callback
-        future.add_done_callback(lambda f: self._handle_result(f, req))
+        future.add_done_callback(lambda f: self._handle_result(f, req, started_at))
 
     def _is_transient_error(self, error: Exception) -> bool:
         """Transient errors should count toward circuit breaker but with lower weight."""
+        if isinstance(error, (asyncio.TimeoutError, TimeoutError, ConnectionError)):
+            return True
         msg = str(error).lower()
         transient_patterns = (
             "timeout",
@@ -240,12 +253,13 @@ class LLMModule(Module, layer=4):
             timeout=self._timeout_sec,
         )
 
-    def _handle_result(self, future, req: LLMRequest):
+    def _handle_result(self, future, req: LLMRequest, started_at: float):
         """Callback when async LLM call completes."""
-        t0 = time.time()
+        latency_ms = (time.monotonic() - started_at) * 1000
         try:
-            text = future.result(timeout=self._timeout_sec + 5)
-            latency_ms = (time.time() - t0) * 1000
+            if future.cancelled():
+                return
+            text = future.result()
             self._call_count += 1
             self._total_latency_ms += latency_ms
 
@@ -257,11 +271,12 @@ class LLMModule(Module, layer=4):
                 LLMResponse(
                     text=text,
                     request_id=req.request_id,
-                    model=self._model,
+                    model=self._resolved_model,
                     latency_ms=latency_ms,
                 )
             )
         except Exception as e:
+            error = str(e) or type(e).__name__
             self._error_count += 1
             if self._is_transient_error(e):
                 self._consecutive_failures += 1
@@ -276,13 +291,14 @@ class LLMModule(Module, layer=4):
                     self._consecutive_failures,
                     self._cb_cooldown,
                 )
-            logger.error("LLMModule: call failed (%d/%d): %s", self._consecutive_failures, self._cb_threshold, e)
+            logger.error("LLMModule: call failed (%d/%d): %s", self._consecutive_failures, self._cb_threshold, error)
             self.response.publish(
                 LLMResponse(
                     text="",
                     request_id=req.request_id,
-                    model=self._model,
-                    error=str(e),
+                    model=self._resolved_model,
+                    latency_ms=latency_ms,
+                    error=error,
                 )
             )
         finally:
@@ -292,7 +308,12 @@ class LLMModule(Module, layer=4):
     def stop(self):
         """Shutdown async loop and client."""
         loop = self._loop
+        self._loop = None
         if loop is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(self._shutdown_client(), loop).result(timeout=3.0)
+            except Exception:
+                logger.exception("LLMModule: client shutdown did not finish cleanly")
             loop.call_soon_threadsafe(loop.stop)
         if self._loop_thread:
             self._loop_thread.join(timeout=3.0)
@@ -301,9 +322,18 @@ class LLMModule(Module, layer=4):
                 loop.close()
             except RuntimeError:
                 pass
-        self._loop = None
         self._loop_thread = None
+        self._client = None
         super().stop()
+
+    async def _shutdown_client(self):
+        pending = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        if self._client is not None:
+            await self._client.close()
 
     def reconfigure_backend(
         self,
@@ -338,9 +368,10 @@ class LLMModule(Module, layer=4):
             previous_backend = self._backend_name
             previous_client = self._client
             previous_status = self._backend_status
-            model = str(config.get("model", self._model) or "")
-            api_key_env = str(config.get("api_key_env", self._api_key_env) or "")
-            base_url = str(config.get("base_url", self._base_url) or "")
+            same_provider = resolve_llm_backend(backend) == resolve_llm_backend(previous_backend)
+            model = str(config.get("model", self._model if same_provider else "") or "")
+            api_key_env = str(config.get("api_key_env", self._api_key_env if same_provider else "") or "")
+            base_url = str(config.get("base_url", self._base_url if same_provider else "") or "")
             timeout_sec = float(config.get("timeout_sec", self._timeout_sec))
             temperature = float(config.get("temperature", self._temperature))
             try:
@@ -373,13 +404,17 @@ class LLMModule(Module, layer=4):
 
             self._backend_name = backend
             self._canonical_backend_name = resolve_llm_backend(backend)
-            client_config = getattr(client, "config", None)
-            self._model = model or getattr(client_config, "model", self._model)
+            self._model = model
             self._api_key_env = api_key_env
             self._base_url = base_url
             self._timeout_sec = timeout_sec
             self._temperature = temperature
             self._client = client
+            if previous_client is not None and self._loop is not None:
+                try:
+                    asyncio.run_coroutine_threadsafe(previous_client.close(), self._loop).result(timeout=3.0)
+                except Exception:
+                    logger.exception("LLMModule: previous backend client did not close cleanly")
             self._backend_status = BackendStatus.configured_as(backend)
             self._backend_status.use(backend, degraded=False)
             self._consecutive_failures = 0
@@ -401,7 +436,7 @@ class LLMModule(Module, layer=4):
         info["llm"] = {
             **self._backend_status.as_health_fields(),
             "canonical_backend": self._canonical_backend_name,
-            "model": self._model,
+            "model": self._resolved_model,
             "calls": self._call_count,
             "errors": self._error_count,
             "avg_ms": round(avg_ms, 1),

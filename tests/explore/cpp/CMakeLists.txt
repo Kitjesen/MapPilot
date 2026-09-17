@@ -27,6 +27,22 @@ if(TARGET test_tare_policy)
   lingtu_add_explore_test(test_tare_policy)
 endif()
 
+if(TARGET lingtu_explore_core)
+  add_executable(test_semantic_views test_semantic_views.cpp)
+  target_link_libraries(test_semantic_views PRIVATE lingtu_explore_core)
+elseif(DEFINED LINGTU_NAV_CPP_ROOT)
+  add_executable(test_semantic_views
+    test_semantic_views.cpp
+    "${_EXPLORE_SRC}/semantic_views.cpp"
+    "${_EXPLORE_SRC}/frontier.cpp"
+    "${_EXPLORE_SRC}/keypose_graph.cpp"
+    "${_EXPLORE_SRC}/tare_policy.cpp")
+  target_include_directories(test_semantic_views PRIVATE "${_EXPLORE_SRC}")
+endif()
+if(TARGET test_semantic_views)
+  lingtu_add_explore_test(test_semantic_views)
+endif()
+
 if(NOT DEFINED LINGTU_NAV_CPP_ROOT OR NOT LINGTU_NAV_CPP_BUILD_TESTS)
   return()
 endif()

@@ -29,7 +29,7 @@ second service pipeline are deliberately not maintained.
 color_image ─┐
 depth_image ─┤
 camera_info ─┼─> FrameSynchronizer ─> latest-frame worker ─> PerceptionPipeline
-odometry ────┤                                      │
+odometry ────┤                                      ├─> observation_image
 map_odom_tf ─┘                                      ├─> robot_pose
                                                     ├─> detections_3d
                                                     └─> scene_graph
@@ -77,9 +77,11 @@ not be duplicated in Product YAML.
   backend failure update health without fabricating an empty observation.
 - A tracker failure may emit current-frame untracked detections and a fallback
   graph, but never republishes old tracker state with a new timestamp.
-- Successful publication order is `robot_pose`, `detections_3d`, then
+- Successful publication order is `observation_image`, `robot_pose`, `detections_3d`, then
   `scene_graph`, all anchored to the source color timestamp and the `map`
-  frame.
+  frame for geometric outputs. The image retains its camera frame. This is the
+  color frame actually processed by the worker, not a newer camera sample;
+  downstream visual verification can match image, boxes and pose by timestamp.
 
 ## Lifecycle and readiness
 

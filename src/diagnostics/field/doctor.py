@@ -735,14 +735,24 @@ def collect_report(options: argparse.Namespace) -> dict[str, object]:
 
     _, lsusb_out, _ = run(["lsusb"], timeout=3)
     usb_text = lsusb_out.lower()
-    camera_usb = any(token in usb_text for token in ["orbbec", "gemini", "astra", "2bc5"])
+    camera_driver = (
+        current_plan.native_process_environment.get("LINGTU_CAMERA_DRIVER", "orbbec_native")
+        if current_plan is not None
+        else os.environ.get("LINGTU_CAMERA_DRIVER", "orbbec_native")
+    )
+    usb_tokens = (
+        ["realsense", "8086:0b3a"]
+        if camera_driver == "realsense_native"
+        else ["orbbec", "gemini", "astra", "2bc5"]
+    )
+    camera_usb = any(token in usb_text for token in usb_tokens)
     add(
         checks,
         "camera.usb",
         check_status(camera_usb, require_camera),
         check_level(require_camera),
         "camera USB device is enumerated" if camera_usb else "camera USB device is not enumerated",
-        {"matched": camera_usb, "required": require_camera},
+        {"matched": camera_usb, "required": require_camera, "driver": camera_driver},
     )
 
     camera_snapshot_ok = False
@@ -782,23 +792,28 @@ def collect_report(options: argparse.Namespace) -> dict[str, object]:
     )
 
     video_nodes = sorted(glob.glob("/dev/video*") + glob.glob("/dev/v4l/by-id/*"))
+    # Native SDKs can capture through libusb without a kernel V4L2 device.
+    require_video_nodes = require_camera and camera_driver not in {
+        "orbbec_native", "realsense_native",
+    }
     if video_nodes:
         add(
             checks,
             "camera.video_nodes",
             "pass",
-            check_level(require_camera),
+            check_level(require_video_nodes),
             "video devices exist",
-            {"nodes": video_nodes[:8], "required": require_camera},
+            {"nodes": video_nodes[:8], "required": require_video_nodes},
         )
     else:
         add(
             checks,
             "camera.video_nodes",
-            check_status(False, require_camera),
-            check_level(require_camera),
-            "no /dev/video or /dev/v4l/by-id devices found",
-            {"nodes": [], "required": require_camera},
+            check_status(False, require_video_nodes),
+            check_level(require_video_nodes),
+            "no V4L2 nodes; native SDK camera is checked through USB and Gateway capture"
+            if not require_video_nodes else "no /dev/video or /dev/v4l/by-id devices found",
+            {"nodes": [], "required": require_video_nodes},
         )
 
     summary = Counter(check["status"] for check in checks)

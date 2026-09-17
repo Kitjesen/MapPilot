@@ -49,6 +49,49 @@ struct PlanResult {
   sequence<Point> path;
 };
 @final
+struct SemanticCameraView {
+  double x;
+  double y;
+  double yaw;
+  double range_m;
+  double horizontal_fov_rad;
+};
+@final
+struct SemanticViewRequest {
+  Header header;
+  string request_id;
+  string boot_id;
+  string map_id;
+  long long map_content_epoch;
+  unsigned long long frame_epoch;
+  double reference_z;
+  double camera_range_m;
+  double camera_horizontal_fov_rad;
+  sequence<SemanticCameraView, 256> views;
+};
+@final
+struct SemanticViewCandidate {
+  Point position;
+  double yaw;
+  double score;
+  double route_cost_m;
+  unsigned long visible_cells;
+};
+@final
+struct SemanticViewResult {
+  Header header;
+  string request_id;
+  string boot_id;
+  string map_id;
+  long long map_content_epoch;
+  unsigned long long frame_epoch;
+  double reference_z;
+  boolean available;
+  boolean geometry_exhausted;
+  string reason;
+  sequence<SemanticViewCandidate, 16> candidates;
+};
+@final
 struct GeofenceCommandRequest {
   Header header;
   string request_id;

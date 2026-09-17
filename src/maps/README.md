@@ -71,6 +71,19 @@ live map state and saved-map lifecycle.
 
 ## Live Publication Timing
 
+The low-rate mapd query protocol and Python client allow JSON responses up to
+4 MiB, enough for the Web's 80,000-point saved-map preview at native XYZ
+precision. Oversized replies still fail with `response_too_large`. A custom
+`--query-max-json-bytes` setting below that budget can reject a valid Web
+preview. Full PCD downloads use the artifact stream instead; this query limit
+does not change live DDS publication or saved map contents.
+
+The SDK writes PCD downloads to a temporary file and verifies the advertised
+HTTP byte count before replacing the destination. An early EOF, including an
+empty interrupted response, preserves the previous map and removes the
+partial file. Cancelling an artifact iterator before its first read also
+releases its descriptor when the iterator and artifact are discarded.
+
 The field defaults separate control-critical local geometry from heavier map
 products:
 

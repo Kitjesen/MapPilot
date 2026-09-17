@@ -92,6 +92,8 @@ class RuntimeTopics:
     saved_map_cloud: str = "/slam/saved_map_cloud"
     semantic_instruction: str = "/nav/semantic/instruction"
     semantic_scene_graph: str = "/nav/semantic/scene_graph"
+    semantic_view_request: str = "/nav/semantic/views/request"
+    semantic_view_result: str = "/nav/semantic/views/result"
     sim_clock: str = "/sim/clock"
     sim_imu: str = "/sim/imu"
     sim_lidar_raw_frame: str = "/sim/lidar/raw_frame"
@@ -566,6 +568,18 @@ TOPIC_SPECS = {
         "rt/nav/semantic/instruction",
         "lingtu.dds.Text",
         "Event",
+    ),
+    "/nav/semantic/views/request": TopicSpec(
+        "/nav/semantic/views/request",
+        "rt/nav/semantic/views/request",
+        "lingtu.dds.SemanticViewRequest",
+        "CommandRequest",
+    ),
+    "/nav/semantic/views/result": TopicSpec(
+        "/nav/semantic/views/result",
+        "rt/nav/semantic/views/result",
+        "lingtu.dds.SemanticViewResult",
+        "CommandRequest",
     ),
     "/sim/clock": TopicSpec(
         "/sim/clock",

@@ -417,7 +417,7 @@ class InstanceTrackerSerializer:
                 "floor_level": obj.floor_level,
                 "belief": obj.to_belief_dict(),
                 "source": obj.source,
-                "last_observed_time": round(obj.last_observed_time, 2),
+                "last_observed_time": obj.last_observed_time,
                 "is_simulated": obj.is_simulated,
             }
             if obj.kg_concept_id:

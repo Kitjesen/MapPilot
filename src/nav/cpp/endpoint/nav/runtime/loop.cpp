@@ -39,6 +39,7 @@
 #include "runtime/rolling/lifecycle.hpp"
 #include "runtime/navigation.hpp"
 #include "runtime/state.hpp"
+#include "runtime/semantic/view_query.hpp"
 #include "runtime/time.hpp"
 #include "safety/command.hpp"
 #include "safety/geofence.hpp"
@@ -309,6 +310,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     }
   };
   auto cancel_preview = [&]() {
+    if (ctx.semantic_view_query) ctx.semantic_view_query->cancel();
     if (!pending_preview) {
       return;
     }
@@ -961,6 +963,23 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     }
   };
   auto drain_commands = [&]() {
+    if (ctx.semantic_view_query) {
+      if (auto result = ctx.semantic_view_query->poll()) {
+        const auto identity = current_map_identity();
+        if (!map_body || !input_gate_state.ready ||
+            result->frame_epoch != frame_epoch || !identity.identity ||
+            !plan::sameMapIdentity(result->map, *identity.identity)) {
+          result->available = false;
+          result->geometry_exhausted = false;
+          result->candidates.clear();
+          result->reason = "semantic_search_context_changed";
+        }
+        if (!dds.publish(OutputEvent{std::move(*result)}).published) {
+          frames.last_error = "semantic_view_result_publish_failed";
+          nav_status.requestImmediate();
+        }
+      }
+    }
     if (auto completion = plan_preview.poll()) {
       if (pending_preview && pending_preview->request_id == completion->context.request_id) {
         std::vector<nav_kernel::Vec3> path;
@@ -1141,6 +1160,46 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       }
       pending_preview = PendingPreview{request_id, start, goal};
     };
+    auto process_semantic_view_query = [&](const semantic::ViewQuery &request) {
+      if (request.request_id.empty()) return;
+      const auto identity = current_map_identity();
+      auto reject = [&](const std::string &reason) {
+        semantic::ViewResult result;
+        result.request_id = request.request_id;
+        result.boot_id = dds_status.producer_boot_id;
+        result.map = identity.identity.value_or(plan::MapIdentity{});
+        result.frame_epoch = frame_epoch;
+        result.timestamp_s = nowSeconds();
+        result.reason = reason;
+        (void)dds.publish(OutputEvent{std::move(result)});
+      };
+      if (!ctx.semantic_view_query || cfg.global_planner != GlobalPlannerBackend::OctoPlanner3D) {
+        reject("semantic_search_backend_unavailable");
+        return;
+      }
+      if (!map_body || !input_gate_state.ready) {
+        reject("semantic_search_inputs_not_ready");
+        return;
+      }
+      if (!identity.identity) {
+        reject("semantic_search_map_unavailable");
+        return;
+      }
+      const auto active = goal_plan.snapshot();
+      if (active.busy || active.pending_plan_queued) {
+        reject("navigation_busy");
+        return;
+      }
+      SemanticViewContext context;
+      context.query = request;
+      context.boot_id = dds_status.producer_boot_id;
+      context.map = *identity.identity;
+      context.frame_epoch = frame_epoch;
+      context.robot = {map_body->position.x, map_body->position.y, map_body->position.z};
+      context.yaw = map_body->yaw;
+      context.timestamp_s = nowSeconds();
+      if (!ctx.semantic_view_query->start(std::move(context))) reject("semantic_search_query_busy");
+    };
     auto process_inspection_command = [&](const InspectionCommandRequest &request) {
       const auto verdict = terminal_ingress(GoalTerminalIngressKind::kInspectionCommand);
       if (verdict.decision != GoalTerminalIngressDecision::kAllow) {
@@ -1176,6 +1235,8 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         process_navigation_command(*command);
       } else if (const auto *request = std::get_if<PlanPreviewRequest>(&event)) {
         process_plan_request(*request);
+      } else if (const auto *request = std::get_if<semantic::ViewQuery>(&event)) {
+        process_semantic_view_query(*request);
       } else if (const auto *request = std::get_if<InspectionCommandRequest>(&event)) {
         process_inspection_command(*request);
       } else if (const auto *request = std::get_if<GeofenceCommandView>(&event)) {

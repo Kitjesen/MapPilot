@@ -1,3 +1,4 @@
+import { writeCloudHeightColor } from '../services/cloudHeightColor.ts'
 /**
  * useBinaryCloud opens the live point-cloud stream and exposes typed arrays
  * for Scene3D. WebSocket is the primary path; HTTP polling is a fallback for
@@ -44,24 +45,7 @@ const EMPTY: BinaryCloud = {
   error: null,
 }
 
-// Map-frame height is not bounded by the robot's current floor.
-const COLOR_Z_MIN = -1.0
-const COLOR_Z_SPAN = 3.5
 
-function turboColor(t: number, out: Float32Array, off: number) {
-  const x = t < 0 ? 0 : t > 1 ? 1 : t
-  if (x < 0.5) {
-    const u = x * 2
-    out[off] = 0.18 + (0.55 - 0.18) * u
-    out[off + 1] = 0.55
-    out[off + 2] = 0.50 + (0.55 - 0.50) * u
-  } else {
-    const u = (x - 0.5) * 2
-    out[off] = 0.55 + (0.78 - 0.55) * u
-    out[off + 1] = 0.55 + (0.60 - 0.55) * u
-    out[off + 2] = 0.55 + (0.35 - 0.55) * u
-  }
-}
 
 function finitePoint(x: unknown, y: unknown, z: unknown): [number, number, number] | null {
   if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number') return null
@@ -123,7 +107,7 @@ function decodeHttpPoints(
     positions[off] = x
     positions[off + 1] = z
     positions[off + 2] = -y
-    turboColor((z - COLOR_Z_MIN) / COLOR_Z_SPAN, colors, off)
+    writeCloudHeightColor(z, colors, off)
   }
   return httpCloud(positions, colors, points.length, seq, metadata)
 }
@@ -295,7 +279,7 @@ export function useBinaryCloud(
           })
         }
       } finally {
-        if (!cancelled && httpFallbackActive) {
+        if (!cancelled && httpFallbackActive && requestGeneration === httpRequestGeneration) {
           fallbackTimer.current = setTimeout(pollHttpPoints, 1000)
         }
       }
@@ -425,8 +409,15 @@ export function useBinaryCloud(
     }
 
     const clearCloud = () => {
-      httpRequestGeneration++
-      resetCloudState()
+      stopHttpFallback()
+      clearDecodeTimer()
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
+      if (noFrameTimer.current) clearTimeout(noFrameTimer.current)
+      // Retire both queued and in-flight data from before the reset.
+      activeConnectionGeneration = ++connectionGeneration
+      wsRef.current?.close()
+      wsRef.current = null
+      connect()
     }
     window.addEventListener('lingtu:cloud-reset', clearCloud)
 

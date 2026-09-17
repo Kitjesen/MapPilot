@@ -7,15 +7,25 @@ FASTLIO_SOURCE = ROOT / "src" / "localization" / "slam" / "cpp" / "fastlio.cpp"
 DRIVER_UNIT = ROOT / "scripts" / "deploy" / "thunder" / "lt-driver.service"
 
 
-def test_fastlio_save_has_no_optimization_facade() -> None:
+def test_fastlio_save_preserves_correction_and_raw_patch_evidence() -> None:
     source = FASTLIO_SOURCE.read_text(encoding="utf-8")
 
     assert "builder_->saveMap(pcd.string())" in source
-    assert "writeTrajectory(pcd.parent_path(), pose_history_)" in source
-    assert "writePatchBundle(pcd.parent_path(), patches, patch_history_dropped_count_)" in source
+    assert "writeTrajectory(pcd.parent_path(), trajectory)" in source
+    assert "sample.odom_body = slamPose(opt::compose_pose(correction, graphPose(sample.odom_body)))" in source
+    assert "patches[i].pose = slamPose(pose)" in source
+    assert "opt::rotate_vector(pose, point.x, point.y, point.z)" in source
+    for reason in (
+        "online_mapping_busy_retry_save",
+        "online_mapping_incomplete_cannot_save_corrected_map",
+        "online_mapping_patch_identity_mismatch",
+    ):
+        assert source.index(reason) < source.index("builder_->saveMap(pcd.string())")
+    assert "writePatchBundle(pcd.parent_path(), patches, patch_history_dropped_count_," in source
+    assert 'map_dir / "scan_origin.txt"' in source
     assert "map.raw.pcd" not in source
-    assert "map_optimization" not in source
-    assert "loop_closure" not in source
+    assert '#include "map_optimization' not in source
+    assert '#include "loop_closure' not in source
     assert "hba_refine" not in source
 
 

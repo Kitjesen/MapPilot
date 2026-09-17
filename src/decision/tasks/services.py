@@ -6,6 +6,7 @@ without pulling in Blueprint, ROS, or Gateway code.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -27,7 +28,7 @@ class GoalResolutionService:
         robot_pos: dict | None = None,
     ) -> Any:
         try:
-            return self._resolver.fast_resolve(instruction, scene_graph_json)
+            return self._resolver.fast_resolve(instruction, scene_graph_json, robot_position=robot_pos)
         except Exception:
             logger.exception("Fast path resolution failed")
             return None
@@ -39,7 +40,7 @@ class GoalResolutionService:
         robot_pos: dict | None = None,
     ) -> Any:
         try:
-            return await self._resolver.slow_resolve(instruction, scene_graph_json)
+            return await self._resolver.resolve(instruction, scene_graph_json, robot_position=robot_pos)
         except Exception:
             logger.exception("Slow path resolution failed")
             return None
@@ -92,10 +93,13 @@ class FrontierExplorationService:
             frontiers = self._scorer.extract_frontiers(robot_pos)
             if not frontiers:
                 return None
+            scene = scene_graph or {}
             self._scorer.score_frontiers(
                 instruction=instruction,
-                robot_pos=robot_pos,
-                scene_graph=scene_graph or {},
+                robot_position=robot_pos,
+                scene_objects=scene.get("objects"),
+                scene_relations=scene.get("relations"),
+                scene_rooms=scene.get("rooms"),
             )
             return self._scorer.get_best_frontier()
         except Exception:
@@ -103,8 +107,7 @@ class FrontierExplorationService:
             return None
 
     def record_failure(self, frontier_pos: np.ndarray) -> None:
-        if hasattr(self._scorer, "record_failure"):
-            self._scorer.record_failure(frontier_pos)
+        self._scorer.record_frontier_failure(frontier_pos)
 
     @property
     def scorer(self) -> Any:
@@ -119,7 +122,13 @@ class ActionExecutionService:
         self._llm = llm_client
 
     def navigate(self, target_pos: np.ndarray, robot_pos: np.ndarray) -> Any:
-        return self._executor.generate_navigate_command(target_pos, robot_pos)
+        return self._executor.generate_navigate_command(
+            self._position(target_pos), self._position(robot_pos),
+        )
+
+    @staticmethod
+    def _position(position: np.ndarray) -> dict[str, float]:
+        return dict(zip(("x", "y", "z"), map(float, position)))
 
     def approach(
         self,
@@ -128,13 +137,13 @@ class ActionExecutionService:
         stop_distance: float = 1.0,
     ) -> Any:
         return self._executor.generate_approach_command(
-            target_pos,
-            robot_pos,
+            self._position(target_pos),
+            self._position(robot_pos),
             stop_distance=stop_distance,
         )
 
     def look_around(self, robot_pos: np.ndarray) -> Any:
-        return self._executor.generate_look_around_command(robot_pos)
+        return self._executor.generate_look_around_command()
 
     async def recover(
         self,
@@ -142,12 +151,14 @@ class ActionExecutionService:
         scene_state: dict,
         event_loop: Any = None,
     ) -> str:
-        if self._llm is None:
-            return "retry_different_path"
+        """Recover from current_labels, original_goal and failure_count in scene_state."""
         try:
-            return await self._executor.lera_recover(
+            return await asyncio.to_thread(
+                self._executor.lera_recover,
                 failed_action=failed_action,
-                scene_state=scene_state,
+                current_labels=scene_state.get("current_labels", []),
+                original_goal=scene_state.get("original_goal", failed_action),
+                failure_count=scene_state.get("failure_count", 1),
                 llm_client=self._llm,
                 event_loop=event_loop,
             )

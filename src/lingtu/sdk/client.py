@@ -725,6 +725,9 @@ class LingTuClient:
         temporary_path: Path | None = None
         try:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
+                content_length = response.headers.get("Content-Length")
+                expected_bytes = int(content_length) if content_length is not None else None
+                received_bytes = 0
                 with tempfile.NamedTemporaryFile(
                     mode="wb",
                     dir=destination.parent,
@@ -738,6 +741,12 @@ class LingTuClient:
                         if not chunk:
                             break
                         output.write(chunk)
+                        received_bytes += len(chunk)
+                    if expected_bytes is not None and received_bytes != expected_bytes:
+                        raise OSError(
+                            f"Incomplete map download: expected {expected_bytes} bytes, "
+                            f"received {received_bytes}"
+                        )
             temporary_path.replace(destination)
         except BaseException:
             if temporary_path is not None:
@@ -801,7 +810,7 @@ class LingTuClient:
 
     def delete_location(self, name: str) -> CommandResult:
         """Delete a tagged navigation location."""
-        return self._command(f"/api/v1/locations/{name}")
+        return self._command(f"/api/v1/locations/{quote(name, safe='')}", method="DELETE")
 
     # ------------------------------------------------------------------
     # Camera
@@ -886,7 +895,7 @@ class LingTuClient:
 
     def memory_temporal_semantic(self, query: str) -> dict[str, Any]:
         """Semantic similarity search over temporal observations."""
-        return self._post("/api/v1/memory/temporal/semantic", {"query": query})
+        return self._request_json("/api/v1/memory/temporal/semantic", {"query": query})
 
     # ------------------------------------------------------------------
     # Lease (control ownership)
@@ -956,8 +965,10 @@ class LingTuClient:
     # Internal HTTP helpers
     # ------------------------------------------------------------------
 
-    def _command(self, path: str, data: dict[str, Any] | None = None) -> CommandResult:
-        raw = self._post(path, data)
+    def _command(
+        self, path: str, data: dict[str, Any] | None = None, *, method: str = "POST",
+    ) -> CommandResult:
+        raw = self._request_json(path, data, method=method)
         return _parse_command_result(raw)
 
     def _get(self, path: str) -> dict[str, Any]:
@@ -978,14 +989,16 @@ class LingTuClient:
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise ConnectionError(f"GET {path} failed: {exc}") from exc
 
-    def _post(self, path: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _request_json(
+        self, path: str, data: dict[str, Any] | None = None, *, method: str = "POST",
+    ) -> dict[str, Any]:
         url = self.base_url + path
         body = json.dumps(data or {}).encode("utf-8")
         req = urllib.request.Request(
             url,
             data=body,
             headers={"Content-Type": "application/json"},
-            method="POST",
+            method=method,
         )
         if self._api_key:
             req.add_header("X-API-Key", self._api_key)

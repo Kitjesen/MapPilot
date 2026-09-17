@@ -8,6 +8,7 @@
 #include "command/ingress.hpp"
 #include "input/frame.hpp"
 #include "nav_kernel/types.hpp"
+#include "planning/semantic/contract.hpp"
 #include "runtime/rolling/contract.hpp"
 #include "safety/geofence.hpp"
 
@@ -82,7 +83,7 @@ struct GeofenceCommandView {
 
 using CommandEvent =
     std::variant<OperatorMotionControlSample, OperatorMotionInputSample,
-                 NavigationCommandSample, PlanPreviewRequest, InspectionCommandRequest,
+                 NavigationCommandSample, PlanPreviewRequest, semantic::ViewQuery, InspectionCommandRequest,
                  GeofenceCommandView, RollingSegmentCommand, InspectionEvidenceResultSample>;
 
 struct CommandBatch {

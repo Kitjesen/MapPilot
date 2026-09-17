@@ -143,7 +143,7 @@ _VLA navigation module._
 |-----------|------|
 | `instruction` | `str` |
 
-### `vla_status`
+### `get_vla_status`
 **Module:** `VLAModule`
 **Description:** Return current VLA health and metrics.
 **Return type:** `dict`

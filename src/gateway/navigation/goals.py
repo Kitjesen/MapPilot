@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -102,13 +103,19 @@ def construct_goal_from_request(
     location_name = _optional_text(getattr(body, "location_name", None))
     source = str(getattr(body, "source", default_source) or default_source)
     target_type = str(getattr(body, "target_type", default_target_type) or default_target_type)
+    metadata = _metadata(getattr(body, "metadata", None))
+    if source == "saved_location" or target_type == "saved_location":
+        location_name = location_name or _optional_text(metadata.get("location_name"))
+        if not location_name:
+            raise ValueError("location_name_required")
     label = _optional_text(getattr(body, "label", None))
     yaw_value = getattr(body, "yaw", None)
 
     if location_name:
         entry = _resolve_location(gw, location_name)
+        metadata.update(_validated_location_binding(gw, entry))
         x, y, z = _coordinates_from_location(entry)
-        yaw = _optional_float(yaw_value, "yaw")
+        yaw = _optional_float(yaw_value, "yaw") if "yaw" in fields_set else None
         if yaw is None:
             yaw = _optional_float(_mapping(entry).get("yaw"), "location.yaw")
         if "source" not in fields_set:
@@ -145,8 +152,29 @@ def construct_goal_from_request(
             getattr(body, "max_speed_mps", None),
             "max_speed_mps",
         ),
-        metadata=_metadata(getattr(body, "metadata", None)),
+        metadata=metadata,
     )
+
+
+def _validated_location_binding(gw: Any, entry: Mapping[str, Any]) -> dict[str, Any]:
+    binding = _metadata(entry.get("metadata"))
+    map_id = binding.get("map_id")
+    epoch = binding.get("map_content_epoch")
+    if (binding.get("binding_status") != "bound" or not map_id
+            or type(epoch) is not int or epoch <= 0
+            or binding.get("frame_id") != GOAL_MAP_FRAME_ID):
+        raise ValueError("location_map_unbound")
+    with getattr(gw, "_state_lock", nullcontext()):
+        state = dict(getattr(gw, "_navigation_state", None) or {})
+    active_epoch = state.get("map_content_epoch")
+    if not state.get("map_id") or type(active_epoch) is not int or active_epoch <= 0:
+        raise ValueError("location_active_map_unavailable")
+    if state["map_id"] != map_id:
+        raise ValueError("location_map_mismatch")
+    if active_epoch != epoch:
+        raise ValueError("location_map_version_mismatch")
+    return {"map_id": map_id, "map_content_epoch": epoch,
+            "frame_id": GOAL_MAP_FRAME_ID, "binding_status": "bound"}
 
 
 def _resolve_location(gw: Any, location_name: str) -> Mapping[str, Any]:
@@ -158,10 +186,7 @@ def _resolve_location(gw: Any, location_name: str) -> Mapping[str, Any]:
     query = getattr(store, "query", None)
     if callable(query):
         entry = query(location_name)
-    if entry is None:
-        query_fuzzy = getattr(store, "query_fuzzy", None)
-        if callable(query_fuzzy):
-            entry = query_fuzzy(location_name)
+    # A saved target is an exact reference, not a semantic search phrase.
     if not isinstance(entry, Mapping):
         raise ValueError(f"location_not_found:{location_name}")
     return entry

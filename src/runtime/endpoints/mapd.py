@@ -28,7 +28,8 @@ _VERSION = 2
 _HAS_FD = 1
 _MAX_REQUEST_ID_BYTES = 128
 _MAX_REQUEST_BYTES = 1024 * 1024
-_MAX_RESPONSE_BYTES = 1024 * 1024
+# Match native query_protocol.hpp: bounded JSON previews can contain 80k XYZ points.
+_MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 _MAX_TIMEOUT_S = 600.0
 _MAX_DEADLINE_MS = int(_MAX_TIMEOUT_S * 1000.0)
 _REQUEST_HEADER = struct.Struct("!4sBBHIHI")
@@ -86,17 +87,21 @@ class ArtifactHandle:
                 pass
 
     def iter_bytes(self, *, chunk_size: int = 1024 * 1024) -> Iterator[bytes]:
-        """Transfer descriptor ownership to a bounded streaming iterator."""
+        """Transfer descriptor ownership when the bounded iterator starts reading."""
 
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
-        descriptor = self._descriptor
-        if descriptor < 0:
+        if self._descriptor < 0:
             raise MapClientError("artifact_closed", "artifact file descriptor is closed")
-        self._descriptor = -1
 
         def chunks() -> Iterator[bytes]:
+            # Keep ownership here until iteration starts: a download can be
+            # cancelled before the generator's body has ever executed.
+            descriptor = self._descriptor
+            if descriptor < 0:
+                raise MapClientError("artifact_closed", "artifact file descriptor is closed")
             with os.fdopen(descriptor, "rb", closefd=True) as handle:
+                self._descriptor = -1
                 while True:
                     block = handle.read(chunk_size)
                     if not block:

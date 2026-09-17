@@ -70,7 +70,6 @@ interface Scene3DProps {
   savedMapVisible?: boolean
   planningMap?: ReadyPlanningMap | null
   planningMapVisible?: boolean
-  mappingMode?: boolean
   mappingObservation?: MappingObservationState
   mappingObservationVisible?: boolean
   scanVisible?: boolean
@@ -104,7 +103,7 @@ interface Scene3DProps {
   previewPath?: PathPoint[]
 }
 
-const LIVE_SCAN_COLOR = 0x587b95
+const LIVE_SCAN_COLOR = 0xf1f5f9
 // The worker owns binary decode, filtering, color mapping, and coordinate
 // conversion. Scene3D consumes those typed arrays as a true 3D Points layer.
 
@@ -150,7 +149,7 @@ function createPoseMarker(): THREE.Group {
 }
 
 export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
-  { cloud, scanCloud, savedMapFlat, savedMapFrameId, savedMapEpoch, savedMapVisible = true, planningMap, planningMapVisible = true, mappingMode = false, mappingObservation, mappingObservationVisible = false, scanVisible = true, elevationState, nativeTraversabilityState, sceneGraph, robotX, robotY, robotZ = 0, orientation, poseStampS, poseEpoch, robotModel, jointTelemetry, followRobot = false, robotValid, yaw, trail, path, localPath, localPlannerSnapshot, safetyEnvelope, safetyView = 'slice', layers, pointSize, onPendingGoal, onRelocalize, pendingGoal, pendingGoalRadius = 0.25, pendingGoalLabel = '待确认目标', previewPath },
+  { cloud, scanCloud, savedMapFlat, savedMapFrameId, savedMapEpoch, savedMapVisible = true, planningMap, planningMapVisible = true, mappingObservation, mappingObservationVisible = false, scanVisible = true, elevationState, nativeTraversabilityState, sceneGraph, robotX, robotY, robotZ = 0, orientation, poseStampS, poseEpoch, robotModel, jointTelemetry, followRobot = false, robotValid, yaw, trail, path, localPath, localPlannerSnapshot, safetyEnvelope, safetyView = 'slice', layers, pointSize, onPendingGoal, onRelocalize, pendingGoal, pendingGoalRadius = 0.25, pendingGoalLabel = '待确认目标', previewPath },
   ref,
 ) {
   const mountRef   = useRef<HTMLDivElement>(null)
@@ -251,7 +250,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const w = mount.clientWidth, h = mount.clientHeight
 
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color(0xf3f3f3)
+    scene.background = new THREE.Color(0x10151d)
     sceneRef.current = scene
 
     const camera = new THREE.PerspectiveCamera(48, w / h, 0.02, 500)
@@ -289,14 +288,8 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     scene.add(grid)
     gridRef.current = grid
 
-    const applyTheme = () => {
-      const dark = document.documentElement.dataset.theme === 'dark'
-      ;(scene.background as THREE.Color).setHex(dark ? 0x191919 : 0xf3f3f3)
-      grid.material.color.setHex(dark ? 0x303030 : 0xdedede)
-    }
-    applyTheme()
-    const themeObserver = new MutationObserver(applyTheme)
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    // Keep the sensor viewport dark independently of the surrounding app theme.
+    grid.material.color.setHex(0x283340)
 
     // Invisible floor plane for click raycasting
     const floor = new THREE.Mesh(
@@ -353,7 +346,6 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
     return () => {
       cancelAnimationFrame(rafRef.current)
-      themeObserver.disconnect()
       ro.disconnect()
       controls.dispose()
       for (const child of [...scene.children]) removeFrom(scene, child)
@@ -381,14 +373,14 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     }
 
     liveCloudRef.current = upsertLiveCloudLayer(scene, liveCloudRef.current, cloud, pointSize, {
-      color: mappingMode ? 0x368f7c : 0xffffff,
+      color: 0xffffff,
       opacity: 0.98,
       pointSizeScale: 1.5,
       renderOrder: 6,
-      vertexColors: !mappingMode,
+      vertexColors: true,
     })
     if (liveCloudRef.current) (liveCloudRef.current.material as THREE.PointsMaterial).toneMapped = false
-  }, [cloud, layers.cloud, liveCloudFrameAllowed, pointSize, mappingMode])
+  }, [cloud, layers.cloud, liveCloudFrameAllowed, pointSize])
 
   // Current scan overlay.  This is intentionally separate from the accumulated
   // map cloud so mapping mode can be stable and still show live sensor motion.

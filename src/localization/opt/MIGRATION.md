@@ -114,3 +114,22 @@ with real MID-360 data, saved cloud/trajectory/bundle alignment, corrected map
 reload/localization and supervised navigation. Direct NX SSH at
 192.168.123.18 timed out during this change; no robot-side installation or
 movement is claimed.
+
+### 2026-09-17 field update
+
+The earlier connectivity limitation above has been resolved through the Windows
+laptop's wired NX connection. Candidate `v2.3.0-go2.20260916.32` is installed on
+Go2 NX, and ProductControl started `map + camera` with its bundled DDS probe.
+Native ARM component checks passed (maps 4, SLAM/optimizer 5, navigation 2).
+The source mirror plus recorded overlay produced this candidate; its mirror Git
+HEAD is not a clean representation of the desktop working tree.
+
+The strict field doctor reports 20 pass / 2 warn / 0 fail. A 122-second static
+soak had 31 ready map samples but failed its first capabilities HTTP request
+at the 3-second timeout. A subsequent 60-second soak passed all 16 samples.
+The initial timeout remains an open finding, not a passed cold-start test.
+The browser displays the cumulative preview and live D435i video; one joint
+telemetry stale indication was observed. Camera calibration remains unverified.
+No robot motion was commanded. Closed-walk, corrected-save/reload, stop
+acknowledgement and supervised navigation acceptance remain open. See
+`NEXT_STEPS.md` for the current gates; installation does not imply merge approval.

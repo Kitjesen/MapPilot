@@ -357,6 +357,8 @@ int main() {
   const auto converter = WriteFakeConverter(root);
   const auto source_v1 = root / "snapshots" / "v1";
   WriteAsciiPcd(source_v1 / "map.pcd", 0.0);
+  std::ofstream(source_v1 / "scan_origin.txt") << "lidar_origin_in_patch 0.16 0 0.12\n";
+  WriteAsciiPcd(source_v1 / "map.pcd.preclean", 0.25);
   const auto invalid_source = root / "snapshots" / "invalid";
   std::filesystem::create_directories(invalid_source);
   {
@@ -499,6 +501,10 @@ int main() {
     Require(!status.activation_succeeded, "non-activating SaveMap reported activation success");
     Require(status.map_dir == store.MapPath("warehouse"), "SaveMap status did not expose direct map dir");
     Require(std::filesystem::is_regular_file(status.map_dir / "map.pcd"), "map.pcd missing");
+    Require(ReadFile(status.map_dir / "scan_origin.txt") == ReadFile(source_v1 / "scan_origin.txt"),
+            "SaveMap lost calibrated scan origin");
+    Require(ReadFile(status.map_dir / "map.pcd.preclean") == ReadFile(source_v1 / "map.pcd.preclean"),
+            "SaveMap lost the original pre-cleaning backup");
     const auto skip_report = ReadFile(status.map_dir / "map_optimization.json");
     Require(lingtu::maps::IsValidJsonObject(skip_report), "PGO skip report is not valid JSON");
     Require(

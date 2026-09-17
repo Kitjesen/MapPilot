@@ -601,7 +601,8 @@ def register_map_routes(app, gw) -> None:
             )
         except ValueError as exc:
             return _map_lifecycle_response(False, message=str(exc), status_code=400)
-        resp = _mapd_http_request(
+        resp = await asyncio.to_thread(
+            _mapd_http_request,
             gw,
             {
                 "action": "import_pcd",
@@ -630,7 +631,8 @@ def register_map_routes(app, gw) -> None:
         if err is not None:
             return _map_lifecycle_response(False, message=err, status_code=400)
         payload = body
-        resp = _mapd_http_request(
+        resp = await asyncio.to_thread(
+            _mapd_http_request,
             gw,
             {
                 "action": "crop_pcd",
@@ -664,7 +666,7 @@ def register_map_routes(app, gw) -> None:
         cmd = dict(body or {})
         cmd["action"] = "edit_octomap_voxels"
         cmd["map_id"] = name
-        resp = _mapd_http_request(gw, cmd)
+        resp = await asyncio.to_thread(_mapd_http_request, gw, cmd)
         ok = resp.get("success") is True
         return _customer_map_lifecycle_response(
             resp,
@@ -742,7 +744,9 @@ def register_map_routes(app, gw) -> None:
         err = public_map_name_error(name)
         if err is not None:
             return _map_lifecycle_response(False, message=err, status_code=400)
-        resp = _mapd_http_request(gw, {"action": "build_octomap_artifact", "map_id": name})
+        resp = await asyncio.to_thread(
+            _mapd_http_request, gw, {"action": "build_octomap_artifact", "map_id": name}
+        )
         ok = resp.get("success") is True
         return _customer_map_lifecycle_response(
             resp,
@@ -879,7 +883,7 @@ def register_map_routes(app, gw) -> None:
                     "message": "Invalid map ID.",
                 },
             )
-        active_map_before = active_map(gw)
+        active_map_before = await asyncio.to_thread(active_map, gw)
         if active_map_before != name:
             raise HTTPException(
                 status_code=409,
@@ -894,7 +898,8 @@ def register_map_routes(app, gw) -> None:
                 status_code=409,
                 detail="Live map scene is not bound to the requested saved map; retry",
             )
-        resp = _mapd_http_request(
+        resp = await asyncio.to_thread(
+            _mapd_http_request,
             gw,
             {
                 "action": "get_map_points",
@@ -928,7 +933,7 @@ def register_map_routes(app, gw) -> None:
                 detail=f"Saved map content_epoch unavailable: {name}",
             )
         scene_identity = gw._cloud_viewer.scene_identity()
-        active_map_after = active_map(gw)
+        active_map_after = await asyncio.to_thread(active_map, gw)
         if (
             active_map_after != name
             or scene_identity.get("map_id") != name
@@ -973,7 +978,7 @@ def register_map_routes(app, gw) -> None:
         cmd = dict(body or {})
         cmd["action"] = "edit_octomap_voxels"
         cmd["map_id"] = name
-        resp = _mapd_http_request(gw, cmd)
+        resp = await asyncio.to_thread(_mapd_http_request, gw, cmd)
         if resp.get("success") is not True:
             message = str(resp.get("message") or "voxel edit failed")
             code = 404 if "not found" in message.lower() else 400
@@ -995,7 +1000,8 @@ def register_map_routes(app, gw) -> None:
         err = public_map_name_error(name)
         if err is not None:
             return _map_lifecycle_response(False, message=err, status_code=400)
-        resp = _mapd_http_request(
+        resp = await asyncio.to_thread(
+            _mapd_http_request,
             gw,
             {"action": "get_voxel_edits", "map_id": name},
         )
@@ -1063,9 +1069,8 @@ def register_map_routes(app, gw) -> None:
         },
     )
     async def rename_map(body: MapRenameRequest):
-        payload = body
-        old = payload.get("old_name", "")
-        new = payload.get("new_name", "")
+        old = body.old_name
+        new = body.new_name
         err_old = public_map_name_error(old)
         err_new = public_map_name_error(new)
         if err_old or err_new:
@@ -1075,7 +1080,8 @@ def register_map_routes(app, gw) -> None:
                 status_code=400,
             )
         try:
-            resp = _mapd_http_request(
+            resp = await asyncio.to_thread(
+                _mapd_http_request,
                 gw,
                 {"action": "rename_map", "map_id": old, "new_map_id": new},
             )

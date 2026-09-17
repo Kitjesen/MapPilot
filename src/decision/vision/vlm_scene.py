@@ -48,7 +48,8 @@ def _encode_image_pil(image: np.ndarray) -> str | None:
 
         h, w = image.shape[:2]
         scale = min(_MAX_IMAGE_DIM / max(h, w, 1), 1.0)
-        pil = PilImage.fromarray(image)
+        rgb = image[..., ::-1] if image.ndim == 3 and image.shape[2] == 3 else image
+        pil = PilImage.fromarray(rgb)
         if scale < 1.0:
             new_w = max(1, int(w * scale))
             new_h = max(1, int(h * scale))
@@ -62,7 +63,7 @@ def _encode_image_pil(image: np.ndarray) -> str | None:
 
 
 def encode_image_b64(image: np.ndarray) -> str | None:
-    """Encode numpy image to base64 JPEG string. Tries OpenCV first, then PIL."""
+    """Encode a BGR numpy image to JPEG; both encoders preserve its colors."""
     b64 = _encode_image(image)
     if b64 is None:
         b64 = _encode_image_pil(image)
@@ -75,8 +76,8 @@ class VLMSceneAgent:
     Usage::
 
         agent = VLMSceneAgent(llm_client)
-        desc = await agent.describe_scene(rgb_frame)
-        result = await agent.find_object_in_scene(rgb_frame, "red backpack")
+        desc = await agent.describe_scene(bgr_frame)
+        result = await agent.find_object_in_scene(bgr_frame, "red backpack")
     """
 
     def __init__(self, llm_client: Any):
@@ -94,9 +95,9 @@ class VLMSceneAgent:
         if self._llm is None:
             return False
         cls_name = type(self._llm).__name__
-        # MoonshotClient explicitly raises LLMError on vision calls
+        # Capability depends on the configured model, not just its provider.
         if cls_name == "MoonshotClient":
-            return False
+            return self._llm.supports_vision is True
 
         if cls_name == "QwenClient":
             return False
@@ -116,7 +117,7 @@ class VLMSceneAgent:
         """Ask the VLM to describe what it sees in the current camera frame.
 
         Args:
-            image: RGB/BGR uint8 numpy array from the robot camera.
+            image: BGR uint8 numpy array from the robot camera.
             context: Optional hint about what the robot is trying to do.
 
         Returns:
@@ -183,7 +184,7 @@ class VLMSceneAgent:
         """Ask the VLM whether the current view helps the robot reach its goal.
 
         Args:
-            image: RGB/BGR uint8 numpy array.
+            image: BGR uint8 numpy array.
             goal: The navigation goal (natural language).
             scene_graph: Optional scene graph dict for additional context.
 

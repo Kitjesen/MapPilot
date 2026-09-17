@@ -143,6 +143,11 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     nav/input/active/declared.cpp
     nav/main.cpp
     nav/runtime/loop.cpp
+    nav/runtime/semantic/view_query.cpp
+    "${_EXPLORE_CPP_DIR}/frontier.cpp"
+    "${_EXPLORE_CPP_DIR}/keypose_graph.cpp"
+    "${_EXPLORE_CPP_DIR}/tare_policy.cpp"
+    "${_EXPLORE_CPP_DIR}/semantic_views.cpp"
     nav/input/pose.cpp
     nav/input/map.cpp
     nav/input/health.cpp

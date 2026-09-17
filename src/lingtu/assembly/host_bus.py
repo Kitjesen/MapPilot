@@ -650,23 +650,14 @@ class HostBus(Module):
             return "map_scene_not_live"
         state_boot_id = str(health.get("state_producer_boot_id") or "")
         state_epoch = int(health.get("state_reset_epoch", 0) or 0)
-        state_observation = int(
-            health.get("state_observation_sequence", 0) or 0
-        )
-        state_generation = int(health.get("state_generation", 0) or 0)
-        state_scene_generation = int(
-            health.get("state_scene_published_generation", 0) or 0
-        )
         if self._scene_cursor[0] != state_boot_id:
             return "map_scene_boot_mismatch"
         if self._scene_reset_epoch != state_epoch:
             return "map_scene_epoch_mismatch"
-        if (
-            self._scene_observation_sequence != state_observation
-            or self._scene_generation != state_generation
-            or self._scene_generation != state_scene_generation
-        ):
-            return "map_scene_generation_pending"
+        # MapScene is an internally coherent snapshot. MapState and MapScene
+        # arrive independently, so their latest generations need not coincide.
+        # Both streams must remain fresh, live, and in the same boot/reset epoch;
+        # native navigation separately owns the current collision map.
         return None
 
     def health(self) -> dict[str, object]:

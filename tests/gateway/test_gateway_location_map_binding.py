@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -26,6 +27,42 @@ def _gateway():
         tag_status=SimpleNamespace(publish=lambda _message: None),
     )
     return gateway
+
+
+@pytest.mark.parametrize("condition", ["stale", "not_received", "lost", "invalid", "odom_frame", "fresh"])
+def test_update_current_location_requires_a_fresh_map_pose(monkeypatch, condition):
+    import gateway.maps.locations as locations
+    from gateway.schemas import LocationUpsertRequest
+
+    gateway = _gateway()
+    store = gateway._tagged_loc_module.store
+    store.tag("dock", x=1, y=2, z=0.4)
+    monkeypatch.setattr(locations, "_location_map_binding", lambda gw: {
+        "map_id": "yard", "map_content_epoch": 7, "frame_id": "map", "binding_status": "bound",
+    })
+    gateway._runtime_cache.record_odometry(
+        {"x": 8.0, "y": 9.0, "z": 1.2, "yaw": 0.5, "frame_id": "map"},
+        ts=time.time() - (30 if condition == "stale" else 0),
+    )
+    if condition == "not_received":
+        gateway._odom_timestamps.clear()
+    elif condition == "lost":
+        gateway._localization_status = {"state": "LOST"}
+    elif condition == "invalid":
+        gateway._last_invalid_odometry = {"reason": "non_finite_odometry"}
+    elif condition == "odom_frame":
+        gateway._odom["frame_id"] = "odom"
+
+    response = asyncio.run(_endpoint(gateway, "/api/v1/locations/{name}", "PUT")(
+        "dock", LocationUpsertRequest(name="dock", use_current_pose=True),
+    ))
+    if condition == "fresh":
+        assert response["ok"] is True
+        assert store.query("dock")["position"] == [8.0, 9.0, 1.2]
+    else:
+        assert response["ok"] is False
+        assert response["error"] == "current_pose_unavailable"
+        assert store.query("dock")["position"] == [1, 2, 0.4]
 
 
 def test_location_normalizer_exposes_map_binding_fields():

@@ -93,7 +93,6 @@ class TestLingTuClient(unittest.TestCase):
                 "/api/v1/visual_servo",
                 {"mode": "stop"},
             ),
-            (lambda: self.robot.delete_location("test"), "/api/v1/locations/test", None),
             (self.robot.explore_start, "/api/v1/explore/start", None),
             (self.robot.explore_stop, "/api/v1/explore/stop", None),
             (self.robot.reset_map_cloud, "/api/v1/map_cloud/reset", None),
@@ -1020,6 +1019,7 @@ class TestLingTuClient(unittest.TestCase):
     @patch("urllib.request.urlopen")
     def test_download_map_pcd_streams_with_authentication(self, mock_urlopen) -> None:
         response = mock_urlopen.return_value.__enter__.return_value
+        response.headers = {"Content-Length": "9"}
         response.read.side_effect = [b"pcd-", b"bytes", b""]
         robot = LingTuClient(api_key="secret")
 
@@ -1045,6 +1045,7 @@ class TestLingTuClient(unittest.TestCase):
         mock_urlopen,
     ) -> None:
         response = mock_urlopen.return_value.__enter__.return_value
+        response.headers = {"Content-Length": "100"}
         response.read.side_effect = [b"partial", OSError("connection lost")]
         target = Path.cwd() / ".sdk-test-sync-download.pcd"
         target.write_bytes(b"previous-map")

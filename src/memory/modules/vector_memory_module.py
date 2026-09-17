@@ -4,14 +4,14 @@ Stores scene snapshots as CLIP embeddings associated with robot position.
 Supports queries like "去上次放背包的地方" → vector search → return position.
 
 Pipeline:
-  scene_graph + odometry + image → CLIP encode scene labels → ChromaDB upsert
+  scene_graph + synchronized map pose + map identity → encode labels → ChromaDB upsert
   query text → CLIP encode → ChromaDB search → top-k (position, score, labels)
 
 ChromaDB runs in-process (persistent mode, no server needed).
 Falls back to brute-force numpy search if chromadb not installed.
 
 Ports:
-  In:  scene_graph (SceneGraph), odometry (Odometry), image (np.ndarray)
+  In: scene_graph, robot_pose, navigation_state; odometry/image for query-only context
   Out: query_result (dict)  — triggered by query_location skill
 """
 
@@ -19,14 +19,17 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 import time
+import uuid
 from typing import Any
 
 from runtime.backend_status import BackendStatus
 from runtime.encoder_protocol import EncoderProtocol
 from runtime.module import Module, skill
-from runtime.msgs.nav import Odometry
+from runtime.msgs.geometry import PoseStamped
+from runtime.msgs.nav import NavigationState, Odometry
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.semantic import SceneGraph
 from runtime.registry import get, register
@@ -47,6 +50,8 @@ class VectorMemoryModule(Module, layer=3):
 
     scene_graph: In[SceneGraph]
     odometry:    In[Odometry]
+    robot_pose: In[PoseStamped]
+    navigation_state: In[NavigationState]
     image:       In[Any]
 
     query_result: Out[dict]
@@ -84,6 +89,9 @@ class VectorMemoryModule(Module, layer=3):
 
         self._robot_xy = (0.0, 0.0)
         self._robot_z = 0.0
+        self._observation_pose: PoseStamped | None = None
+        self._navigation_context: tuple[str, str, int] | None = None
+        self._navigation_sequence = 0
         self._latest_labels: list[str] = []
         self._latest_image: np.ndarray | None = None
         self._last_store_time = 0.0
@@ -92,6 +100,8 @@ class VectorMemoryModule(Module, layer=3):
     def setup(self) -> None:
         self.scene_graph.subscribe(self._on_scene_graph)
         self.odometry.subscribe(self._on_odom)
+        self.robot_pose.subscribe(self._on_robot_pose)
+        self.navigation_state.subscribe(self._on_navigation_state)
         self.image.subscribe(self._on_image)
         self.scene_graph.set_policy("throttle", interval=self._store_interval)
 
@@ -207,6 +217,33 @@ class VectorMemoryModule(Module, layer=3):
     def _on_image(self, img: np.ndarray) -> None:
         self._latest_image = img
 
+    def _on_robot_pose(self, pose: PoseStamped) -> None:
+        self._observation_pose = pose
+
+    def _on_navigation_state(self, state: NavigationState) -> None:
+        context = (state.boot_id, state.map_id, int(state.map_content_epoch))
+        previous = self._navigation_context
+        if previous is not None and previous[0] == state.boot_id and state.sequence <= self._navigation_sequence:
+            return
+        if previous != context:
+            self._observation_pose = None
+        self._navigation_context = context
+        self._navigation_sequence = int(state.sequence)
+
+    def _observation_binding(self, scene: SceneGraph) -> dict[str, Any]:
+        pose, context = self._observation_pose, self._navigation_context
+        if (
+            pose is None or context is None or not context[1] or context[2] <= 0
+            or scene.frame_id != "map" or pose.frame_id != "map"
+            or pose.ts != scene.ts or not 0.0 <= time.time() - scene.ts <= 2.0
+            or not all(math.isfinite(v) for v in (pose.x, pose.y, pose.z))
+        ):
+            return {}
+        return {
+            "map_id": context[1], "map_content_epoch": context[2], "frame_id": "map",
+            "x": float(pose.x), "y": float(pose.y), "z": float(pose.z), "ts": scene.ts,
+        }
+
     def _on_scene_graph(self, sg: SceneGraph) -> None:
         labels = [obj.label for obj in sg.objects if obj.label]
         if not labels:
@@ -217,12 +254,14 @@ class VectorMemoryModule(Module, layer=3):
         if now - self._last_store_time < self._store_interval:
             return
 
-        self._store_snapshot(labels)
+        self._store_snapshot(labels, binding=self._observation_binding(sg))
         self._last_store_time = now
 
     # ── Store ─────────────────────────────────────────────────────────────────
 
-    def _snapshot_metadata(self, text: str, embedding: np.ndarray) -> dict[str, Any]:
+    def _snapshot_metadata(
+        self, text: str, embedding: np.ndarray, binding: dict[str, Any],
+    ) -> dict[str, Any]:
         semantic_encoder_ready = self._semantic_encoder_ready()
         degraded = self._encoder_type == "lexical_hash"
         embedding_dim = int(np.array(embedding).size)
@@ -235,18 +274,19 @@ class VectorMemoryModule(Module, layer=3):
             "encoder_type": self._encoder_type,
             "semantic_encoder_ready": semantic_encoder_ready,
             "degraded": degraded,
-            "navigable": semantic_encoder_ready and not degraded,
+            "navigable": bool(binding) and semantic_encoder_ready and not degraded,
             "embedding_dim": embedding_dim,
+            **binding,
         }
 
-    def _store_snapshot(self, labels: list[str]) -> None:
+    def _store_snapshot(self, labels: list[str], *, binding: dict[str, Any] | None = None) -> None:
         text = ", ".join(sorted(set(labels)))
         embedding = self._encode_text(text)
         if embedding is None:
             return
 
-        meta = self._snapshot_metadata(text, embedding)
-        doc_id = f"snap_{self._store_count}"
+        meta = self._snapshot_metadata(text, embedding, binding or {})
+        doc_id = f"snap_{uuid.uuid4().hex}"
         self._store_count += 1
 
         if self._use_chromadb and self._collection is not None:
@@ -383,6 +423,7 @@ class VectorMemoryModule(Module, layer=3):
                     if not self._hit_matches_active_encoder(meta):
                         continue
                     hits.append({
+                        **meta,
                         "x": meta["x"],
                         "y": meta["y"],
                         "z": meta.get("z", 0.0),
@@ -446,7 +487,20 @@ class VectorMemoryModule(Module, layer=3):
         results = self._query(text)
         semantic_encoder_ready = self._semantic_encoder_ready()
         degraded = self._encoder_type == "lexical_hash"
-        navigable = semantic_encoder_ready and not degraded
+        context = self._navigation_context
+        results = [
+            {**hit, "navigable": bool(
+                semantic_encoder_ready and not degraded and hit.get("navigable") is True
+                and context and context[1] and context[2] > 0
+                and hit.get("map_id") == context[1]
+                and hit.get("map_content_epoch") == context[2]
+                and hit.get("frame_id") == "map"
+            )}
+            for hit in results
+        ]
+        # Prefer a usable same-map observation within the retrieved candidates.
+        results.sort(key=lambda hit: hit["navigable"], reverse=True)
+        navigable = bool(results and results[0]["navigable"])
         if not results:
             return json.dumps({
                 "query": text,
@@ -460,9 +514,7 @@ class VectorMemoryModule(Module, layer=3):
         return json.dumps({
             "query": text,
             "found": True,
-            "best": {"x": results[0]["x"], "y": results[0]["y"],
-                     "z": results[0].get("z", 0.0),
-                     "labels": results[0]["labels"], "score": results[0]["score"]},
+            "best": dict(results[0]),
             "results": results[:3],
             "encoder_type": self._encoder_type,
             "semantic_encoder_ready": semantic_encoder_ready,

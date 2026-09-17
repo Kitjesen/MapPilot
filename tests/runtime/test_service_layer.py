@@ -17,7 +17,7 @@ class MockGoalResolver:
     def __init__(self):
         self._fast_path_threshold = 0.75
 
-    def fast_resolve(self, instruction, scene_graph_json):
+    def fast_resolve(self, instruction, scene_graph_json, robot_position=None):
         result = MagicMock()
         result.confidence = 0.9
         result.label = "chair"
@@ -42,18 +42,18 @@ class MockFrontierScorer:
 
     def extract_frontiers(self, robot_pos):
         f = MagicMock()
-        f.position = np.array([5.0, 3.0])
+        f.center_world = np.array([5.0, 3.0])
         f.score = 0.8
         self._best = f
         return [f]
 
-    def score_frontiers(self, **kwargs):
+    def score_frontiers(self, instruction, robot_position, scene_objects=None, scene_relations=None, scene_rooms=None):
         pass
 
     def get_best_frontier(self):
         return self._best
 
-    def record_failure(self, pos):
+    def record_frontier_failure(self, pos):
         pass
 
 
@@ -69,7 +69,7 @@ class MockActionExecutor:
         cmd.action_type = "approach"
         return cmd
 
-    def generate_look_around_command(self, robot_pos):
+    def generate_look_around_command(self):
         cmd = MagicMock()
         cmd.action_type = "look_around"
         return cmd

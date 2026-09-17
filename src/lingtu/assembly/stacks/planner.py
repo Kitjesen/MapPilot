@@ -37,6 +37,10 @@ def planner(
                 seed_group="llm",
                 fallback="decision.modules.llm.LLMModule",
             )
+            AgentPlannerModule = stack_module(
+                "agent_planner", "default", seed_group="decision",
+                fallback="decision.modules.agent_planner.AgentPlannerModule",
+            )
             bp.add(
                 SemanticPlannerModule,
                 alias="SemanticPlannerModule",
@@ -44,6 +48,7 @@ def planner(
                 llm_backend=llm,
             )
             bp.add(LLMModule, alias="LLMModule", backend=llm)
+            bp.add(AgentPlannerModule, alias="AgentPlannerModule", llm_backend=llm)
         except ImportError as e:
             logger.warning("Semantic planner not available: %s", e)
 

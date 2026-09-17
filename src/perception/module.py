@@ -38,6 +38,7 @@ class PerceptionModule(Module, layer=3):
     scene_graph: Out[SceneGraph]
     detections_3d: Out[list]
     robot_pose: Out[PoseStamped]
+    observation_image: Out[Image]
 
     def __init__(
         self,
@@ -296,7 +297,7 @@ class PerceptionModule(Module, layer=3):
                     self._last_valid_frame_ts = float(frame.timestamp)
                     self._valid_frames += 1
                     self._latest_detections = len(detections)
-                self._publish_outputs(robot_pose, detections, scene_graph)
+                self._publish_outputs(robot_pose, detections, scene_graph, frame.color)
         finally:
             self._close_pipeline_once()
 
@@ -305,8 +306,12 @@ class PerceptionModule(Module, layer=3):
         robot_pose: PoseStamped,
         detections: list[Any],
         scene_graph: SceneGraph,
+        observation_image: Image,
     ) -> None:
         with self._publish_lock:
+            if not self._can_publish():
+                return
+            self.observation_image.publish(observation_image)
             if not self._can_publish():
                 return
             self.robot_pose.publish(robot_pose)

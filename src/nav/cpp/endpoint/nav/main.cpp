@@ -55,6 +55,7 @@
 #include "status/goal_terminal_status_delivery.hpp"
 #include "status/inspection_status_file_writer.hpp"
 #include "status/planning_map_writer.hpp"
+#include "runtime/semantic/view_query.hpp"
 #include "status/nav_status_endpoint_adapter.hpp"
 #include "status/nav_status_publisher.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
@@ -328,6 +329,9 @@ int main(int argc, char **argv) {
     GlobalPlanTask plan_preview(global_planner);
     lingtu::nav::endpoint::PlanningMapWriter planning_map_writer(
         cfg.status_file, cfg.product_session_id,
+        cfg.global_planner == GlobalPlannerBackend::OctoPlanner3D ? active_octomap_gate : nullptr,
+        cfg.map_path, cfg.octoplanner_options);
+    lingtu::nav::endpoint::SemanticViewQuery semantic_view_query(
         cfg.global_planner == GlobalPlannerBackend::OctoPlanner3D ? active_octomap_gate : nullptr,
         cfg.map_path, cfg.octoplanner_options);
 
@@ -1414,6 +1418,7 @@ int main(int argc, char **argv) {
         control_loop_guard_latched,
         current_timing,
         &planning_map_writer,
+        &semantic_view_query,
     };
     return runEndpointLoop(loop_ctx, g_running);
   } catch (const std::exception &exc) {

@@ -302,7 +302,7 @@ class Image:
             )
         if self.format is ImageFormat.RGBA:
             return Image(
-                data=self.data[..., :3][..., ::-1].copy(),
+                data=self.data[..., :3].copy(),
                 format=ImageFormat.RGB,
                 ts=self.ts,
                 frame_id=self.frame_id,
@@ -332,7 +332,7 @@ class Image:
             )
         if self.format is ImageFormat.RGBA:
             return Image(
-                data=self.data[..., :3].copy(),
+                data=self.data[..., :3][..., ::-1].copy(),
                 format=ImageFormat.BGR,
                 ts=self.ts,
                 frame_id=self.frame_id,

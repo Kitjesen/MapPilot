@@ -105,6 +105,8 @@ class FastPathMixin:
         scene_graph_json: str,
         robot_position: dict[str, float] | None = None,
         clip_encoder: Any | None = None,
+        *,
+        excluded_object_ids: set[str] | None = None,
     ) -> GoalResult | None:
         """Fast resolve with metrics wrapper.
 
@@ -114,7 +116,7 @@ class FastPathMixin:
         self._fast_path_attempts += 1
         t0 = time.monotonic()
         result, candidates_count, best_score = self._fast_resolve_impl(
-            instruction, scene_graph_json, robot_position, clip_encoder
+            instruction, scene_graph_json, robot_position, clip_encoder, excluded_object_ids=excluded_object_ids,
         )
         elapsed_ms = (time.monotonic() - t0) * 1000
         self._resolve_times.append(elapsed_ms)
@@ -141,6 +143,8 @@ class FastPathMixin:
         scene_graph_json: str,
         robot_position: dict[str, float] | None = None,
         clip_encoder: Any | None = None,
+        *,
+        excluded_object_ids: set[str] | None = None,
     ) -> tuple[GoalResult | None, int, float]:
         """Fast resolve implementation."""
         _load_fast_path_weights()  # idempotent, loads from config on first call
@@ -207,6 +211,9 @@ class FastPathMixin:
                     logger.debug("Batch CLIP similarity failed, falling back per-object: %s", _e)
 
         for obj in objects:
+            # A rejected goal may still be a landmark in a relational instruction.
+            if excluded_object_ids and str(obj.get("id")) in excluded_object_ids:
+                continue
             label = obj.get("label", "").lower()
             score = obj.get("score", 0.5)
             det_count = obj.get("detection_count", 1)

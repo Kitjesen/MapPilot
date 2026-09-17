@@ -1988,6 +1988,8 @@
 .diagnosticLayer p { font-size: 13px; padding: 0 10px; }
 .layerSettings .pointSizeRow { display: flex; justify-content: space-between; gap: 15px; color: var(--text-dim); font-size: 14px; }
 .layerSettings .pointSlider { flex: 1; width: 100px; min-width: 60px; }
+.cloudHeightLegend { display: inline-flex; align-items: center; gap: 6px; }
+.cloudHeightLegend i { display: inline-block; width: 72px; height: 6px; border-radius: 3px; background: linear-gradient(90deg, #278fff, #00edff, #61f87f, #fff14f, #ff713f); }
 .advancedTools > summary { padding: 7px 0; }
 .operationSettings .toolGroup { padding: 8px 0; gap: 4px; }
 .operationSettings .toolGroup > button { padding: 13px 10px; min-height: 44px; border-radius: 9px; }
