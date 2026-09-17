@@ -50,9 +50,10 @@ the field processes, while Modules and wires organize Host-local behavior.
 | --- | --- |
 | Version | `2.3.0` (`VERSION` and `pyproject.toml`) |
 | Field target | S100P / RDK X5, `aarch64`, Ubuntu |
+| Development host | Windows x64 with native MSVC and Rust tooling; WSL is optional |
 | Runtime environments | Exactly `real` and `sim` |
 | Native data plane | CycloneDDS with IDL-generated typed messages |
-| Main implementation | C++17 hot paths, Python 3.10+ Host and semantic/API layer |
+| Main implementation | C++17 services, Rust pose-graph kernel, Python 3.10+ Host and semantic/API layer |
 | Simulation | MuJoCo 3.10 physics; optional Unreal presentation workspace |
 | ROS status | Not required by the production field runtime; compatibility only |
 | Operating Products | `teleop`, `teleop_avoid`, `map`, `explore`, `nav`, `tracking`, `inspection` |
@@ -78,11 +79,31 @@ are installed into `bin/` under the selected install or release prefix.
 ## Key Capabilities
 
 - Native LiDAR, IMU, camera, GNSS, SLAM, map, navigation, and driver endpoints.
+- Fast-LIO2 keyframe mapping with background loop verification, pose-graph optimization, and cumulative-map publication.
 - Saved-map localization, 2D occupancy, 3D OctoMap, global planning, and local avoidance.
 - CMU and SCAN local-planning backends behind one Product-selected navigation runtime.
 - Assisted teleoperation, autonomous navigation, exploration, tracking, and inspection modes.
 - MuJoCo sensor/control simulation with the same typed command and data contracts used by field services.
 - Gateway, Web UI, MCP, semantic planning, perception, memory, and mission-level orchestration.
+
+### Mapping and loop-closure status
+
+Fast-LIO2 feeds a native background worker during mapping. Verified revisits
+trigger pose-graph optimization and reconstruction of historical geometry;
+current odometry remains continuous. The Web whole-map view receives cumulative
+snapshots, and corrected saving uses full-resolution keyframe patches.
+
+The design references FAST_LIO_SLAM's frontend/backend separation. LingTu uses
+its own geometric verifier and Rust/C++ optimizer, rather than a full port of
+the upstream Scan Context and GTSAM backend.
+
+Windows native Fast-LIO2 flow and online-mapping tests passed on 2026-09-17.
+The recorded 278-frame offline replay produced 10 loop constraints and 6
+successful optimizations, but 43 frames failed graph registration. Real-time
+ARM performance, supervised closed-walk testing, and corrected-map save/reload
+and localization remain acceptance work. See the
+[implementation and evidence](src/localization/opt/MIGRATION.md) and
+[remaining work](src/localization/opt/NEXT_STEPS.md).
 
 ## Runtime Pipeline
 
@@ -199,6 +220,19 @@ Common stack factories:
 | `gateway(port)` | REST, SSE, WebSocket, MCP, teleop/status surface. |
 
 ## Quick Start
+
+Use **native Windows** for local development, component tests, and simulation;
+WSL is not required. Start with PowerShell 7, Python/uv, Node.js 24, Visual
+Studio 2022 C++ Build Tools with the Windows SDK, CMake, and Rust stable/Cargo
+for the pose-graph kernel. PCL and CycloneDDS use the repository's Windows
+dependency preparation scripts.
+
+Follow [Windows setup](docs/getting-started.md#windows-native-development)
+and [native build commands](scripts/build/README.md#windows-native-development-and-simulation)
+before starting a Product. Windows binaries serve Windows development; robot
+deployments use Linux `aarch64` artifacts built on the target or a configured
+Linux build host. Build caches and binaries are not interchangeable between
+these platforms.
 
 Resolve a simulation Product without starting it:
 

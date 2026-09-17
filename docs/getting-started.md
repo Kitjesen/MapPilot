@@ -13,6 +13,8 @@ another.
 - Git and Python 3.10 or newer.
 - [uv](https://docs.astral.sh/uv/) for the locked Python environment.
 - CMake and a supported compiler for native components.
+- Rust stable with Cargo for the native pose-graph optimization kernel.
+- Node.js 24 and npm for the Web application and its tests.
 - MuJoCo for native simulation work.
 - The target-specific SDK and CycloneDDS toolchain only when that target needs
   them.
@@ -25,6 +27,45 @@ uv run --locked python -m lingtu.control --help
 ```
 
 No hardware connection or motion occurs during these commands.
+
+## Windows native development
+
+Windows x64 is the primary local development workflow. WSL is optional.
+Use PowerShell 7 and Visual Studio 2022 C++ Build Tools with the Windows SDK;
+the native build scripts require CMake 3.27 or newer. Rust/Cargo must be
+installed for Windows, with the MSVC target, to build the pose-graph kernel.
+
+From a new checkout:
+
+```powershell
+git clone --branch main https://github.com/Kitjesen/MapPilot.git lingtu
+cd lingtu
+git lfs install
+git lfs pull
+git submodule update --init --recursive
+uv sync --locked --extra dev
+uv run --locked python -m lingtu.control --help
+npm --prefix web ci
+npm --prefix web run build
+```
+
+Then prepare PCL and CycloneDDS and build the native components using
+[the Windows build instructions](../scripts/build/README.md#windows-native-development-and-simulation).
+Python and Web setup alone does not build `slamd`, `mapd`, or `navd`.
+The Product preview command below can also be entered on one PowerShell line:
+
+```powershell
+uv run --locked python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim --dry-run --json
+```
+
+Cargo builds LingTu's Rust pose-graph library; it is not required to run an
+already-built SLAM executable. Windows Cargo does not supply a Linux toolchain
+inside WSL. If choosing Linux development, install its tools separately;
+otherwise use the Windows entrypoints throughout.
+
+Robot releases still target Linux `aarch64`. Build them on the robot or a
+configured Linux build host; Windows can edit the same sources and operate
+the robot through SSH and the Web interface without WSL.
 
 ## Choose Product and environment
 

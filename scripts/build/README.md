@@ -37,13 +37,55 @@ Select a driver for a target image with
 On Windows, configure the same point-cloud codec source with a Visual Studio
 generator, then run `cmake --build src/kernels/gateway/pointcloud_codec/build --config Release`.
 
-## Windows native simulation
+## Windows native development and simulation
 
-- `prepare_cyclonedds_windows.ps1`
-- `prepare_slam_dependencies_windows.ps1`
-- `build_slam_core_windows.ps1`
-- `build_mujoco_native_dds_windows.ps1`
-- `verify_cyclonedds_windows_sdk.ps1`
+WSL is not required. Use PowerShell 7, Visual Studio 2022 C++ Build Tools
+with the Windows SDK, CMake 3.27+, Git, and Rust stable for
+`x86_64-pc-windows-msvc`. Cargo builds the Rust pose-graph kernel linked into
+the C++ SLAM backend. A missing Cargo executable is a build-environment error;
+running an already-built SLAM release does not require Cargo.
+
+For a new checkout, prepare the pinned native dependencies, then build SLAM.
+The preparation steps need network access on their first run. Run from the
+repository root in a Visual Studio developer PowerShell 7 session:
+
+```powershell
+$lingtuRoot = (Get-Location).Path
+$vcpkgRoot = Join-Path $lingtuRoot 'third_party/toolchains/vcpkg'
+$slamInstall = Join-Path $lingtuRoot 'third_party/install/slam-windows'
+$slamDeps = Join-Path $slamInstall 'x64-windows'
+$binaryCache = Join-Path $lingtuRoot 'third_party/cache/vcpkg'
+$ddsLock = Get-Content scripts/build/locks/cyclonedds-windows-x64.json -Raw | ConvertFrom-Json
+$ddsSdk = Join-Path $lingtuRoot "third_party/sdk/cyclonedds-$($ddsLock.tag)-windows-x64"
+
+& ./scripts/build/prepare_cyclonedds_windows.ps1 -SdkRoot $ddsSdk
+& ./scripts/build/prepare_slam_dependencies_windows.ps1 -VcpkgRoot $vcpkgRoot -InstallRoot $slamInstall -BinaryCache $binaryCache
+& ./scripts/build/build_slam_core_windows.ps1 -DependencyPrefix $slamDeps -CycloneDDSPrefix $ddsSdk -VcpkgRoot $vcpkgRoot -VcpkgInstallRoot $slamInstall -VcpkgBinaryCache $binaryCache
+```
+
+`build_slam_core_windows.ps1` builds `slamd`, `slamctl`, and tests, runs CTest,
+and verifies the staged executables. Existing configured trees must keep their
+original dependency prefixes; use an explicit absolute `-BuildDir` for a new
+configuration when changing SDK locations. Do not reuse WSL/Linux CMake caches
+or libraries in a Windows build.
+
+After a successful configuration, the focused Fast-LIO2 and online-loop checks
+can be rebuilt independently. Keep `$slamDeps` and `$ddsSdk` set to the actual
+prefixes used by that build so Windows can find their DLLs:
+
+```powershell
+cmake --build build/slam-core-windows-x64 --config Release --target test_fastlio2_mock_flow online_mapping_test --parallel 4
+$env:PATH = "$(Join-Path $slamDeps 'bin');$(Join-Path $ddsSdk 'bin');$env:PATH"
+ctest --test-dir build/slam-core-windows-x64 -C Release --output-on-failure -R '^(messages_fastlio2_mock_flow|online_mapping)$'
+```
+
+These two checks passed on Windows for commit `53b2845c` on 2026-09-17.
+They exercise native SLAM flow and synthetic online loop correction, not
+supervised robot motion or complete saved-map navigation acceptance.
+
+`build_mujoco_native_dds_windows.ps1` builds the simulation sensor bridge;
+`verify_cyclonedds_windows_sdk.ps1` checks a prepared DDS SDK. Preparing or
+building SLAM alone does not stage every native role required by a Product.
 
 The files under `cmake/`, `locks/`, `vcpkg/`, and `provenance/` are inputs to
 that release build. They are not Product runtime state.

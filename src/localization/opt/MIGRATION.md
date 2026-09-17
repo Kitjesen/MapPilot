@@ -7,6 +7,10 @@ then reconstruction from corrected keyframe poses. LingTu keeps its existing
 ROS-free Fast-LIO2, geometric verifier and native Rust/C++ solver. No GTSAM,
 ROS, CUDA or additional dependency is introduced.
 
+This is an architectural adaptation, not a full port of the upstream
+Scan Context/GTSAM backend. The existing pose-graph kernel requires Rust/Cargo
+at build time. Local development uses native Windows; WSL is optional.
+
 ## Migration sequence and ownership
 
 | Step | Implementation | Acceptance |
@@ -132,4 +136,20 @@ The browser displays the cumulative preview and live D435i video; one joint
 telemetry stale indication was observed. Camera calibration remains unverified.
 No robot motion was commanded. Closed-walk, corrected-save/reload, stop
 acknowledgement and supervised navigation acceptance remain open. See
-`NEXT_STEPS.md` for the current gates; installation does not imply merge approval.
+`NEXT_STEPS.md` for the current gates; installation does not establish field
+acceptance.
+
+### 2026-09-17 main merge and Windows rebuild
+
+The development work was merged and pushed to `main` at `53b2845c`.
+On that commit, the Windows MSVC Release build of `test_fastlio2_mock_flow`
+and `online_mapping_test` succeeded. CTest passed
+`messages_fastlio2_mock_flow` and `online_mapping` (2/2, 6.76 seconds).
+Existing source-encoding and Eigen deprecation warnings remain.
+
+An additional WSL build stopped during configuration because Linux Cargo was
+missing. Windows already had Cargo; the native Windows build above completes
+this focused local check without WSL. It does not establish Linux/ARM build
+parity or close the 43-frame registration gap and field acceptance work above.
+Reproduction commands are in the
+[Windows build guide](../../../scripts/build/README.md#windows-native-development-and-simulation).

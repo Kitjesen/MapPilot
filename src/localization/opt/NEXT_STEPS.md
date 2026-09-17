@@ -1,19 +1,22 @@
-# 建图迁移接续计划（2026-09-16）
+# 建图迁移接续计划（更新于 2026-09-17）
 
-当前交接分支：`codex/development-handoff-20260916`。
-这是开发检查点，不是实机发布版本。当前实现、限制和已有验证见
-[MIGRATION.md](MIGRATION.md)。不要把本次混合工作区快照中的所有功能都说成已通过验收。
+开发成果已合并并推送到 `main`，合并提交为 `53b2845c`；新电脑从主分支接续。
+本地开发、编译和仿真以原生 Windows 为主，不要求 WSL。
+同一提交的 Windows Fast-LIO2 数据流与在线闭环两项测试已通过。
+这不是实机发布验收；当前实现、证据和剩余限制见 [MIGRATION.md](MIGRATION.md)。
+下方按日期保留的“尚未合并”等描述是当时记录，以本段为当前 Git 状态。
 
 ## 先完成换机
 
-新电脑安装 Git（含 Git LFS）、Python 3.10+、uv、Node.js 24、Rust stable、
-CMake，以及 Windows 下的 Visual Studio 2022 C++ Build Tools / Windows SDK。
+新电脑安装 Git（含 Git LFS）、PowerShell 7、Python 3.10+、uv、Node.js 24、
+Windows Rust stable/Cargo（MSVC 目标）、CMake 3.27+，以及
+Visual Studio 2022 C++ Build Tools / Windows SDK。
 其他系统分别按仓库构建文档准备，不能复用 Windows 编译产物。
 
 ```powershell
-git lfs install
-git clone --branch codex/development-handoff-20260916 https://github.com/Kitjesen/MapPilot.git lingtu
+git clone --branch main https://github.com/Kitjesen/MapPilot.git lingtu
 cd lingtu
+git lfs install
 git lfs pull
 git submodule update --init --recursive
 uv sync --locked --extra dev
@@ -36,9 +39,8 @@ Windows 用 `prepare_cyclonedds_windows.ps1`、`prepare_slam_dependencies_window
 内含本轮扩大地图记录、回放结果和临时诊断源码。它不是所有历史录包的备份；
 旧电脑其他 `build/`、地图目录及原始录包暂时保留，确认需要后另行迁移。
 
-交接时本地 HEAD 为 `c37e9e03`，远端 main 为 `0de01014`，两侧分别有
-30 / 1 个独有提交。先在交接分支恢复开发；后续单独审阅并合并 main，
-不要直接 reset 到 main，也不要 force push 覆盖两侧历史。
+已有干净 checkout 可执行 `git switch main`、`git pull --ff-only`。
+此前交接分支与远端主分支的分叉已通过合并保留双方历史，无需重新执行旧合并步骤。
 
 ## 工作顺序与验收条件
 
