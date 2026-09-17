@@ -1899,6 +1899,7 @@ def test_mujoco_native_dds_parent_diagnostics_write_atomic_rolling_counters(tmp_
         "imu",
         "odom_prior",
         "registered_cloud",
+        "simulation_clock",
     }
     assert startup["record_types"]["imu"]["scheduled"] == 0
     assert startup["scheduler"]["pacing"] == {

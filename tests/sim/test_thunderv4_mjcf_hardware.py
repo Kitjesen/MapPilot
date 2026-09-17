@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import copy
@@ -8,6 +7,7 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+import pytest
 import yaml
 from sim.packages.robots.doso.thunder_v4.tools import generate_thunderv4_mjcf as generator
 from sim.scripts.mujoco import continuous_walk
