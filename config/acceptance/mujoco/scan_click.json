@@ -4,6 +4,7 @@
   "description": "Short same-source factory-workshop map click through Gateway, actual Fast-LIO2, SCAN and the current ProductControl nav preset. World goal coordinates are independent evaluation input, not SLAM input.",
   "product_contract": {
     "product": "nav",
+    "route": "standard",
     "source": "config/runtime_graph/products/nav.yaml",
     "native_control_mode": "autonomy",
     "slam_mode": "localization",
