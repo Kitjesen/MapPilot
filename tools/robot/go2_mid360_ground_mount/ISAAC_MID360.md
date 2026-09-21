@@ -17,7 +17,9 @@ URDF加载只建立形状和坐标关系，不会自动创建工作的点云传�
 
 ## OmniPerception 源码与接入边界
 
-仓库已将 [OmniPerception](https://github.com/aCodeDog/OmniPerception) 登记为研究子模块，
+仓库已将我们的开发 fork [Kitjesen/OmniPerception](https://github.com/Kitjesen/OmniPerception) 登记为子模块，
+上游为 [aCodeDog/OmniPerception](https://github.com/aCodeDog/OmniPerception)。后续适配提交到我们的 fork，
+通过本地 `upstream` remote 同步原项目。
 固定提交 `a1059ae3ffb91ebea2854f8633a28027a0477d1c`。获取源码：
 
 ```sh
