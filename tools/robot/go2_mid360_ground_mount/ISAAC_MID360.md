@@ -20,7 +20,7 @@ URDF加载只建立形状和坐标关系，不会自动创建工作的点云传�
 仓库已将我们的开发 fork [Kitjesen/OmniPerception](https://github.com/Kitjesen/OmniPerception) 登记为子模块，
 上游为 [aCodeDog/OmniPerception](https://github.com/aCodeDog/OmniPerception)。后续适配提交到我们的 fork，
 通过本地 `upstream` remote 同步原项目。
-固定提交 `a1059ae3ffb91ebea2854f8633a28027a0477d1c`。获取源码：
+固定提交 `fd37ab2e239113e28fbd816d33f83555e6076e69`（已合并 Isaac Sim 5.0 适配）。获取源码：
 
 ```sh
 git submodule update --init third_party/research/OmniPerception
@@ -29,13 +29,15 @@ git submodule update --init third_party/research/OmniPerception
 Isaac Lab 示例位于子模块内 `LidarSensor/LidarSensor/example/isaaclab/isaaclab/`，
 扫描数据位于 `LidarSensor/LidarSensor/sensor_pattern/sensor_lidar/scan_mode/mid360.npy`。
 配置应使用 `LivoxPatternCfg(sensor_type="mid360", use_simple_grid=False)`，不能以规则网格代替。
-上游 pattern 函数支持 `rolling_window_start` 切片与回绕，但当前 Lab 传感器的
-`_update_dynamic_rays()` 只是旋转已有射线，没有逐帧推进该窗口；扫描文件缺失还会回退到随机射线。
-因此后续接入必须显式定位数据文件、按采样数推进窗口，并验证逐帧方向与原始序列一致。
-上游还包含动态网格 RayCaster，适合进一步验证机器人和支架的自遮挡。
+上游曾用旋转已有射线代替扫描窗口推进，且扫描文件缺失时回退到随机射线。
+我们的 fork 已改为各环境独立推进和 reset，缺失文件直接报错；动态网格位姿改从
+PhysX 刚体及固定相对变换计算，修复 Isaac Sim 5.0 的旧 XForm 位姿问题。
 
-这里只固定研究源码，未安装其运行依赖，也未执行会覆盖 Isaac Lab 文件的上游安装脚本。
-尚未进行 Isaac Lab 运行验证，不能把现有示例称为已验证的 MID-360 时序仿真。
+已在 Isaac Sim 5.0 / Isaac Lab 2.2.1 / RTX 3090 上通过两环境无渲染测试：
+物体移动 0.2 m 时雷达距离变化约 0.2 m，MID-360 有限值观测、安装偏移和旋转、
+局部 reset、丢点及编码器反向传播通过。使用独立源码导入，没有覆盖服务器的 Isaac Lab。
+这不证明完整 PPO 训练、Go2 自遮挡或密集多环境隔离；扫描内运动畸变仍未实现。
+接入方法和验证边界见 [fork 说明](https://github.com/Kitjesen/OmniPerception/blob/main/docs/isaacsim5_rl.md)。
 
 ## 来源
 
