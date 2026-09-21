@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+reference/*.stp
+reference/*.SLDPRT

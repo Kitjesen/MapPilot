@@ -1,0 +1,55 @@
+{
+  "status": "design_prototype_not_field_calibrated",
+  "bracket_mass_kg_excluding_fasteners": 0.36155197678558937,
+  "design_revision": "V6B concept-matched long saddle and swept ribs",
+  "mass_assumption": "PLA treated as solid; slicer infill mass will differ",
+  "implicit_mesh_pitch_mm": 0.8,
+  "static_gravity_pitch_moment_Nm_including_sensor": 0.20820850103543803,
+  "camera_mount_rear_xyz_m": [
+    0.28,
+    0,
+    0.1
+  ],
+  "camera_pitch_deg": 10,
+  "camera_optical_frame_status": "vendor nominal left-imager frame; use device calibration on hardware",
+  "saddle_support_length_mm": 180,
+  "mount_interface": "Go2 head two-hole pattern from community CAD; body registration is provisional",
+  "mount_interface_xyz_m": [
+    0.19,
+    0.0,
+    0.101
+  ],
+  "head_hole_pitch_mm": 58.5,
+  "deck_in_mount_xyz_mm": [
+    23.04190749150081,
+    0.0,
+    40.49985391841737
+  ],
+  "deck_relative_pitch_deg": 35.0,
+  "design_body_from_lidar_xyz_m": [
+    0.24,
+    0.0,
+    0.18
+  ],
+  "design_body_from_lidar_pitch_rad": 0.6108652381980153,
+  "design_navigation_body_from_imu_rotation": [
+    0.8191520442889918,
+    0.0,
+    0.573576436351046,
+    0.0,
+    1.0,
+    0.0,
+    -0.573576436351046,
+    0.0,
+    0.8191520442889918
+  ],
+  "design_navigation_body_from_imu_translation": [
+    0.22370448011537075,
+    0.02329,
+    0.13754967100610815
+  ],
+  "flat_ground_front_edge_distance_m": {
+    "original_13deg": 0.9425689070099125,
+    "prototype_v6_35deg": 0.39309400711801257
+  }
+}
