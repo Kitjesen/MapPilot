@@ -25,3 +25,15 @@ Repeated meshes are loaded once per model and shared by the corresponding links.
 `web/scripts/generate-go2-urdf.py` extracts the small visual/kinematic declaration
 used by the browser; run it again after changing the official URDF. Use `--check`
 to check that the generated declaration matches the supplied source.
+
+## MID-360 ground-view mount prototype
+
+`urdf/go2_mid360_ground_mount.urdf` is a separate generated derivative, adding
+a forward 35-degree MID-360 mount, a monolithic PLA cradle with conformal
+support feet and an integrated lower 10-degree D435i carrier. The V6B structure follows the selected concept with 180 mm conformal runners, raised swept side ribs and an integral sensor seat. All custom structural parts are PLA; sensor visuals derive from official CAD. The camera optical frame uses the vendor nominal left-imager datum,
+not measured camera calibration. Its meshes live in
+`meshes/mid360_ground_mount/`. It preserves the upstream robot links and joints;
+it does not replace `go2_description.urdf` or the active browser declaration.
+The added design is not a field-calibrated robot configuration. Manufacturing
+sources, assumptions, evidence and regeneration instructions are in
+[`tools/robot/go2_mid360_ground_mount/README.md`](../../../../../tools/robot/go2_mid360_ground_mount/README.md).

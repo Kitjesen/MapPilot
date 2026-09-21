@@ -1,0 +1,69 @@
+{
+  "mid360_bottom_centers_source_mm": [
+    [
+      -24.0,
+      -25.9171,
+      -18.0
+    ],
+    [
+      -24.0,
+      -25.9171,
+      18.0
+    ],
+    [
+      24.0,
+      -25.9171,
+      -18.0
+    ],
+    [
+      24.0,
+      -25.9171,
+      18.0
+    ]
+  ],
+  "mid360_source_to_optical_rotation": [
+    [
+      -1,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      1
+    ],
+    [
+      0,
+      1,
+      0
+    ]
+  ],
+  "mid360_source_to_optical_translation_mm": [
+    0,
+    0,
+    -21.0829
+  ],
+  "d435i_source_to_rear_rotation": [
+    [
+      0,
+      0,
+      1
+    ],
+    [
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      0
+    ]
+  ],
+  "d435i_source_to_rear_translation_mm": [
+    25.05,
+    0,
+    0
+  ],
+  "display_quantization_mm": 0.25
+}
