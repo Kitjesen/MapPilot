@@ -155,9 +155,7 @@ def test_thunder_runtime_env_has_no_hidden_profile_or_deployment_identity() -> N
     assert "LINGTU_LIVOX_LIDAR_IP:=192.168" not in text
     assert "LINGTU_LIVOX_HOST_IP:=192.168" not in text
     assert "LINGTU_LIVOX_NET_IFACE:=eth1" not in text
-    assert (
-        "LINGTU_MAP_ARTIFACT_CONVERTER:=${LINGTU_REPO}/bin/octoplanner3d_pcd_to_octomap"
-    ) in text
+    assert "LINGTU_MAP_ARTIFACT_CONVERTER" not in text
     assert "LINGTU_MAPS_LIB" not in text
     assert "/opt/ros" not in text
     assert "ROS_DOMAIN_ID" not in text
@@ -436,10 +434,7 @@ def test_native_mapd_service_is_packaged_as_a_strict_cpp_boundary() -> None:
     assert "lt-slam.service" not in unit
     assert "LINGTU_MAPD_BIN=/opt/lingtu/current/bin/mapd" in unit
     assert "LINGTU_PRUNE_BIN=/opt/lingtu/current/bin/prune" in unit
-    assert (
-        "LINGTU_MAP_ARTIFACT_CONVERTER=/opt/lingtu/current/bin/"
-        "octoplanner3d_pcd_to_octomap"
-    ) in unit
+    assert "LINGTU_MAP_ARTIFACT_CONVERTER" not in unit
     assert "LINGTU_MAPD_STATUS_FILE=/dev/shm/lingtu/mapd_status.json" in unit
     assert "LINGTU_MAPD_QUERY_SOCKET=/run/lingtu-mapd/mapd.sock" in unit
     assert ' --query-socket "${LINGTU_MAPD_QUERY_SOCKET}"' in unit
@@ -462,28 +457,22 @@ def test_native_mapd_service_is_packaged_as_a_strict_cpp_boundary() -> None:
     assert "ExecStartPre=/bin/rm -f /dev/shm/lingtu/mapd_status.json" in unit
     assert "native maps runtime is missing or not executable" in unit
     assert "native map prune runtime is missing or not executable" in unit
-    assert "native OctoMap converter is missing or not executable" in unit
+    assert "OctoMap converter" not in unit
     assert "python" not in unit.lower()
     assert 'PRUNE="${PRUNE_BUILD_DIR}/prune"' in build
-    assert 'OCTOMAP_BUILD_DIR="${LINGTU_OCTOPLANNER3D_BUILD_DIR:-' in build
     assert 'export CMAKE_PREFIX_PATH="${LINGTU_CYCLONEDDS_PREFIX}' in build
     assert 'LINGTU_PRUNE_ERASOR2=OFF \\' in build
     assert 'CMAKE_BUILD_TYPE="${BUILD_TYPE}" \\' in build
     assert 'bash "${ROOT}/scripts/build/build_prune.sh"' in build
     assert "native map prune runtime is missing after build" in build
-    assert 'bash "${ROOT}/scripts/build/build_octoplanner3d.sh" --require-pcl' in build
-    assert "native OctoMap converter is missing after build" in build
+    assert "build_octoplanner3d.sh" not in build
+    assert "octoplanner3d_pcd_to_octomap" not in build
     assert "lingtu_maps_mapd_save_coordinator_test" in build
     assert "lingtu_maps_save_map_test" in build
     assert "build/prune/prune" in package_release
-    assert "build/octoplanner3d_headless/octoplanner3d_pcd_to_octomap" in package_release
     assert "packager accepted a mapd bundle without prune" in package_release
-    assert "packager accepted a mapd bundle without the OctoMap converter" in package_release
     assert "native-release/build/prune/prune" in package_release
-    assert (
-        "native-release/build/octoplanner3d_headless/octoplanner3d_pcd_to_octomap"
-        in package_release
-    )
+    assert "octoplanner3d_pcd_to_octomap" not in package_release
     assert "live/voxel/local-collision rate limit" in main
     assert "const bool scene_pending = publications.scene.Pending(state);" in main
     assert "if (scene_pending && now >= next_scene)" in main

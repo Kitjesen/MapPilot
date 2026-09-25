@@ -55,7 +55,6 @@ MAPD_EXECUTABLES=(
   build/maps/mapd
   build/maps/lingtu-mapctl
   build/prune/prune
-  build/octoplanner3d_headless/octoplanner3d_pcd_to_octomap
 )
 MAP_OPT_EXECUTABLES=(
   build/map_opt/lt_pgo
@@ -169,7 +168,6 @@ run_self_test() {
   local tar_listing
   local mapd_tar_listing
   local mapd_missing_output
-  local mapd_missing_converter_output
   local map_opt_missing_output
   local preflight_output
   local unexpected_root_output
@@ -512,21 +510,6 @@ PY
     "Standard install prefix is missing executable: ${install_prefix}/bin/prune" \
     <<<"${mapd_missing_output}"
   install -m 0755 /dev/null "${install_prefix}/bin/prune"
-  if mapd_missing_converter_output="$(
-    LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
-      LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
-      LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
-      SOURCE_DATE_EPOCH=1704067200 \
-      bash "${BASH_SOURCE[0]}" v0.0.1 "${test_root}/output-mapd-missing-converter" 2>&1
-  )"; then
-    echo "packager accepted a mapd bundle without the OctoMap converter" >&2
-    return 1
-  fi
-  grep -Fq \
-    "Standard install prefix is missing executable: ${install_prefix}/bin/octoplanner3d_pcd_to_octomap" \
-    <<<"${mapd_missing_converter_output}"
-  install -m 0755 /dev/null \
-    "${install_prefix}/bin/octoplanner3d_pcd_to_octomap"
   mkdir -p "${test_root}/source/web/dist/assets"
   printf '<html>Dashboard self-test</html>\n' \
     > "${test_root}/source/web/dist/index.html"
@@ -544,9 +527,6 @@ PY
   grep -Fq 'lingtu-0.0.1-aarch64-native-release/build/maps/lingtu-mapctl' \
     <<<"${mapd_tar_listing}"
   grep -Fq 'lingtu-0.0.1-aarch64-native-release/build/prune/prune' \
-    <<<"${mapd_tar_listing}"
-  grep -Fq \
-    'lingtu-0.0.1-aarch64-native-release/build/octoplanner3d_headless/octoplanner3d_pcd_to_octomap' \
     <<<"${mapd_tar_listing}"
   grep -Fq 'lingtu-0.0.1-aarch64-native-release/web/dist/index.html' \
     <<<"${mapd_tar_listing}"

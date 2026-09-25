@@ -78,43 +78,6 @@ def _activate_map(map_root: Path, name: str) -> None:
     (map_root / "active_map.txt").write_text(f"{name}\n", encoding="utf-8")
 
 
-def _fake_octomap_converter_command(tmp_path: Path) -> str:
-    script = tmp_path / "fake_octomap_converter.py"
-    script.write_text(
-        "from __future__ import annotations\n"
-        "import argparse\n"
-        "from pathlib import Path\n"
-        "parser = argparse.ArgumentParser()\n"
-        "parser.add_argument('--input', required=True)\n"
-        "parser.add_argument('--output', required=True)\n"
-        "parser.add_argument('--resolution', required=True)\n"
-        "parser.add_argument('--free-layers-above', required=True)\n"
-        "parser.add_argument('--free-dilation-cells', required=True)\n"
-        "parser.add_argument('--frame', required=True)\n"
-        "args = parser.parse_args()\n"
-        "Path(args.output).write_bytes(Path(args.input).read_bytes())\n",
-        encoding="utf-8",
-    )
-    return subprocess.list2cmdline(
-        [
-            sys.executable,
-            str(script),
-            "--input",
-            "{input}",
-            "--output",
-            "{output}",
-            "--resolution",
-            "{resolution}",
-            "--free-layers-above",
-            "{free_layers_above}",
-            "--free-dilation-cells",
-            "{free_dilation_cells}",
-            "--frame",
-            "{frame}",
-        ]
-    )
-
-
 class _FakeRelocalizationService:
     def __init__(
         self,

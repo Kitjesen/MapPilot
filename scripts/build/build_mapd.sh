@@ -11,17 +11,10 @@ MAPD="${BUILD_DIR}/mapd"
 MAPCTL="${BUILD_DIR}/lingtu-mapctl"
 PRUNE_BUILD_DIR="${LINGTU_PRUNE_BUILD_DIR:-${ROOT}/build/prune}"
 PRUNE="${PRUNE_BUILD_DIR}/prune"
-OCTOMAP_BUILD_DIR="${LINGTU_OCTOPLANNER3D_BUILD_DIR:-${ROOT}/build/octoplanner3d_headless}"
-OCTOMAP_CONVERTER="${OCTOMAP_BUILD_DIR}/octoplanner3d_pcd_to_octomap"
 
 if [ -n "${LINGTU_CYCLONEDDS_PREFIX:-}" ]; then
   export CMAKE_PREFIX_PATH="${LINGTU_CYCLONEDDS_PREFIX}${CMAKE_PREFIX_PATH:+:${CMAKE_PREFIX_PATH}}"
 fi
-
-# SaveMap requires a real PCL-backed .pcd -> OctoMap converter by default.
-LINGTU_OCTOPLANNER3D_BUILD_DIR="${OCTOMAP_BUILD_DIR}" \
-JOBS="${JOBS}" \
-  bash "${ROOT}/scripts/build/build_octoplanner3d.sh" --require-pcl
 
 LINGTU_PRUNE_BUILD_DIR="${PRUNE_BUILD_DIR}" \
 LINGTU_BUILD_JOBS="${JOBS}" \
@@ -66,11 +59,6 @@ if [[ ! -x "${PRUNE}" ]]; then
   echo "ERROR: native map prune runtime is missing after build: ${PRUNE}" >&2
   exit 1
 fi
-if [[ ! -x "${OCTOMAP_CONVERTER}" ]]; then
-  echo "ERROR: native OctoMap converter is missing after build: ${OCTOMAP_CONVERTER}" >&2
-  exit 1
-fi
 echo "${MAPD}"
 echo "${MAPCTL}"
 echo "${PRUNE}"
-echo "${OCTOMAP_CONVERTER}"
