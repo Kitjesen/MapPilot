@@ -306,12 +306,14 @@ class RecordingTeleopLifecycle:
     def __init__(self) -> None:
         self.connects = 0
         self.disconnects = 0
+        self.disconnected = threading.Event()
 
     def on_client_connect(self) -> None:
         self.connects += 1
 
     def on_client_disconnect(self) -> None:
         self.disconnects += 1
+        self.disconnected.set()
 
 
 
@@ -436,6 +438,11 @@ def test_websocket_velocity_reports_ingress_only_and_uses_native_command_path(mo
             assert commands.calls[1][4:8] == (0.4, -0.2, 0.3, True)
             assert 0 < commands.calls[1][8] <= 350
             assert commands.calls[1][9] == "ws-velocity-1"
+
+            # TestClient cancels the endpoint right after its own close, so
+            # close here and let the disconnect cleanup finish first.
+            ws.close()
+            assert media_lifecycle.disconnected.wait(3.0)
 
         assert commands.hold_called.wait(3.0)
         assert commands.release_called.wait(3.0)

@@ -1723,6 +1723,15 @@ def test_commands_without_request_id_preserve_existing_execute_every_time_behavi
     assert second["command"]["replay"] is False
 
 
+def _drain(queue) -> list[dict]:
+    # "lease" is a latest-state SSE type, so a slow subscriber only keeps the
+    # newest lease snapshot. Drain per command to observe every transition.
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+    return events
+
+
 def test_lease_command_uses_receipt_and_replays_duplicate_request_id():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import LeaseRequest, LeaseResponse
@@ -1740,7 +1749,9 @@ def test_lease_command_uses_receipt_and_replays_duplicate_request_id():
             request_id="lease-001",
         )
         first = asyncio.run(post_lease(acquire))
+        events = _drain(queue)
         second = asyncio.run(post_lease(acquire))
+        events += _drain(queue)
         release = asyncio.run(
             post_lease(
                 LeaseRequest(
@@ -1751,9 +1762,7 @@ def test_lease_command_uses_receipt_and_replays_duplicate_request_id():
                 )
             )
         )
-        events = []
-        while not queue.empty():
-            events.append(queue.get_nowait())
+        events += _drain(queue)
     finally:
         unsubscribe(gateway, queue)
 
@@ -1804,6 +1813,7 @@ def test_lease_conflict_emits_rejected_ack_and_lease_event():
                 )
             )
         )
+        events = _drain(queue)
         conflict = _payload(
             asyncio.run(
                 post_lease(
@@ -1816,9 +1826,7 @@ def test_lease_conflict_emits_rejected_ack_and_lease_event():
                 )
             )
         )
-        events = []
-        while not queue.empty():
-            events.append(queue.get_nowait())
+        events += _drain(queue)
     finally:
         unsubscribe(gateway, queue)
 

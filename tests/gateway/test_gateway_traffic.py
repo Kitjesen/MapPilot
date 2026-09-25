@@ -494,6 +494,42 @@ def test_scan_websocket_sends_latest_and_cleans_up():
     assert gateway._traffic_stats_snapshot()["scan"]["clients"] == 0
 
 
+class _EventRecorder(list):
+    """Record pushed events and signal when disconnect cleanup reports."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.disconnect_reported = threading.Event()
+
+    def __call__(self, event: dict) -> None:
+        self.append(event)
+        if event.get("type") == "control_rejected" and event.get("data", {}).get("error") == "disconnect_unconfirmed":
+            self.disconnect_reported.set()
+
+
+def _close_teleop(ws, events: _EventRecorder) -> None:
+    # TestClient cancels the endpoint right after its own close, which races
+    # the disconnect cleanup; close here and wait for it to report.
+    ws.close()
+    assert events.disconnect_reported.wait(3.0)
+
+
+def _send_deadman_velocity(ws, **extra) -> None:
+    # Deadman motion is admitted only inside a fresh one-use input window.
+    ws.send_json({"type": "input_request", "request_id": "input-test"})
+    window = ws.receive_json()
+    assert window["type"] == "input_ack"
+    ws.send_json({
+        "type": "velocity",
+        "vx_mps": 0.2,
+        "vy_mps": 0,
+        "yaw_rps": 0,
+        "deadman": True,
+        "input_window": window["input_window"],
+        **extra,
+    })
+
+
 def test_teleop_websocket_reports_unconfirmed_manual_hold(monkeypatch):
     from fastapi.testclient import TestClient
 
@@ -519,18 +555,19 @@ def test_teleop_websocket_reports_unconfirmed_manual_hold(monkeypatch):
     gateway = GatewayModule()
     gateway.setup()
     gateway._teleop_native_publisher = FailingPublisher()
-    events = []
-    gateway.push_event = events.append
+    events = _EventRecorder()
+    gateway.push_event = events
     client = TestClient(gateway._app)
 
     with client.websocket_connect("/ws/teleop?client_id=operator-deadman") as ws:
-        ws.send_text('{"type":"velocity","vx_mps":0.2,"vy_mps":0,"yaw_rps":0,"deadman":true}')
+        _send_deadman_velocity(ws)
         assert json.loads(ws.receive_text())["type"] == "ingress_ack"
         ws.send_text('{"type":"velocity","vx_mps":0,"vy_mps":0,"yaw_rps":0,"deadman":false}')
         payload = json.loads(ws.receive_text())
 
         assert payload["type"] == "control_rejected"
         assert payload["error"] == "hold_unconfirmed"
+        _close_teleop(ws, events)
 
     assert any(
         event["type"] == "control_rejected" and event["data"]["error"] == "disconnect_unconfirmed"
@@ -560,13 +597,14 @@ def test_teleop_websocket_reports_disconnect_zero_when_release_raises():
         },
     )()
     gateway._teleop_release = lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("release crashed"))
-    events = []
-    gateway.push_event = events.append
+    events = _EventRecorder()
+    gateway.push_event = events
     client = TestClient(gateway._app)
 
     with client.websocket_connect("/ws/teleop?client_id=operator-release-error") as ws:
-        ws.send_text('{"type":"velocity","vx_mps":0.2,"vy_mps":0,"yaw_rps":0,"deadman":true}')
+        _send_deadman_velocity(ws)
         assert json.loads(ws.receive_text())["type"] == "ingress_ack"
+        _close_teleop(ws, events)
 
     assert any(
         event["type"] == "control_rejected" and event["data"]["error"] == "disconnect_unconfirmed"
@@ -596,13 +634,14 @@ def test_teleop_websocket_rejects_truthy_non_boolean_disconnect_ack():
         },
     )()
     gateway._teleop_release = lambda **_kwargs: "true"
-    events = []
-    gateway.push_event = events.append
+    events = _EventRecorder()
+    gateway.push_event = events
     client = TestClient(gateway._app)
 
     with client.websocket_connect("/ws/teleop?client_id=operator-malformed-release") as ws:
-        ws.send_text('{"type":"velocity","vx_mps":0.2,"vy_mps":0,"yaw_rps":0,"deadman":true}')
+        _send_deadman_velocity(ws)
         assert json.loads(ws.receive_text())["type"] == "ingress_ack"
+        _close_teleop(ws, events)
 
     assert any(
         event["type"] == "control_rejected" and event["data"]["error"] == "disconnect_unconfirmed"
@@ -621,7 +660,7 @@ def test_teleop_websocket_reports_unavailable_native_command_queue():
     client = TestClient(gateway._app)
 
     with client.websocket_connect("/ws/teleop?client_id=operator-native") as ws:
-        ws.send_text('{"type":"velocity","vx_mps":0.2,"vy_mps":0,"yaw_rps":0,"deadman":true}')
+        _send_deadman_velocity(ws)
         payload = json.loads(ws.receive_text())
 
         assert payload["type"] == "control_rejected"
@@ -643,7 +682,7 @@ def test_teleop_websocket_rejects_truthy_non_boolean_claim_ack():
     client = TestClient(gateway._app)
 
     with client.websocket_connect("/ws/teleop?client_id=operator-malformed-claim") as ws:
-        ws.send_text('{"type":"velocity","vx_mps":0.2,"vy_mps":0,"yaw_rps":0,"deadman":true}')
+        _send_deadman_velocity(ws)
         payload = json.loads(ws.receive_text())
 
     assert payload["type"] == "control_rejected"
@@ -662,6 +701,7 @@ def test_teleop_websocket_success_is_ingress_ack_not_control_ack():
             self.submitted = []
             self.zeroed = False
             self.claimed = False
+            self.released = threading.Event()
 
         def claim(self, **kwargs):
             self.claimed = True
@@ -690,6 +730,7 @@ def test_teleop_websocket_success_is_ingress_ack_not_control_ack():
             )
 
         def release_source(self, **kwargs):
+            self.released.set()
             return operator_motion_receipt(
                 OperatorMotionAction.RELEASE,
                 kwargs["source_id"],
@@ -699,8 +740,20 @@ def test_teleop_websocket_success_is_ingress_ack_not_control_ack():
                 final_output_sequence=kwargs["sequence"],
             )
 
+    class MediaLifecycle:
+        def __init__(self) -> None:
+            self.disconnected = threading.Event()
+
+        def on_client_connect(self) -> None:
+            pass
+
+        def on_client_disconnect(self) -> None:
+            self.disconnected.set()
+
     gateway = GatewayModule()
     gateway.setup()
+    media_lifecycle = MediaLifecycle()
+    gateway._camera_module = media_lifecycle
     publisher = NativePublisher()
     gateway._teleop_native_publisher = publisher
     events = []
@@ -708,9 +761,12 @@ def test_teleop_websocket_success_is_ingress_ack_not_control_ack():
     client = TestClient(gateway._app)
 
     with client.websocket_connect("/ws/teleop?client_id=operator-native") as ws:
-        ws.send_text('{"type":"velocity","vx_mps":0.2,"vy_mps":0,"yaw_rps":0,"deadman":true,"request_id":"velocity-1"}')
+        _send_deadman_velocity(ws, request_id="velocity-1")
         payload = json.loads(ws.receive_text())
 
+        # Each admitted move hands back the next one-use input window.
+        next_window = payload.pop("input_window")
+        assert isinstance(next_window, str) and next_window
         assert payload == {
             "type": "ingress_ack",
             "action": "queued",
@@ -725,7 +781,13 @@ def test_teleop_websocket_success_is_ingress_ack_not_control_ack():
         assert publisher.submitted[-1][3] == "velocity-1"
         assert publisher.claimed is True
 
+        # TestClient cancels the endpoint right after its own close; close here
+        # and wait for the whole disconnect cleanup to run first.
+        ws.close()
+        assert media_lifecycle.disconnected.wait(3.0)
+
     assert publisher.zeroed is True
+    assert publisher.released.is_set()
     assert not any(
         event.get("type") == "control_rejected" and event.get("data", {}).get("error") == "disconnect_unconfirmed"
         for event in events
