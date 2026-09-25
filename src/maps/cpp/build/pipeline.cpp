@@ -51,41 +51,6 @@ std::uint64_t CurrentProcessIdValue() {
 #endif
 }
 
-std::string JsonEscape(const std::string &value) {
-  std::ostringstream stream;
-  for (const unsigned char ch : value) {
-    switch (ch) {
-      case '"':
-        stream << "\\\"";
-        break;
-      case '\\':
-        stream << "\\\\";
-        break;
-      case '\n':
-        stream << "\\n";
-        break;
-      case '\r':
-        stream << "\\r";
-        break;
-      case '\t':
-        stream << "\\t";
-        break;
-      default:
-        if (ch < 0x20U) {
-          constexpr char kHex[] = "0123456789abcdef";
-          stream << "\\u00" << kHex[(ch >> 4U) & 0x0FU] << kHex[ch & 0x0FU];
-        } else {
-          stream << static_cast<char>(ch);
-        }
-    }
-  }
-  return stream.str();
-}
-
-std::string JsonString(const std::string &value) {
-  return "\"" + JsonEscape(value) + "\"";
-}
-
 std::string NowStamp() {
   const auto now = std::chrono::system_clock::now().time_since_epoch();
   return std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());

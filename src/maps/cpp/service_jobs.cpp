@@ -1,4 +1,5 @@
 #include <algorithm>
+#include "lingtu/maps/json.hpp"
 #include <cstdlib>
 #include <filesystem>
 #include <sstream>
@@ -8,47 +9,6 @@
 
 namespace lingtu::maps {
 namespace {
-
-std::string JsonEscape(const std::string &value) {
-  std::ostringstream stream;
-  for (const unsigned char ch : value) {
-    switch (ch) {
-      case '"':
-        stream << "\\\"";
-        break;
-      case '\\':
-        stream << "\\\\";
-        break;
-      case '\b':
-        stream << "\\b";
-        break;
-      case '\f':
-        stream << "\\f";
-        break;
-      case '\n':
-        stream << "\\n";
-        break;
-      case '\r':
-        stream << "\\r";
-        break;
-      case '\t':
-        stream << "\\t";
-        break;
-      default:
-        if (ch < 0x20U) {
-          constexpr char kHex[] = "0123456789abcdef";
-          stream << "\\u00" << kHex[(ch >> 4U) & 0x0FU] << kHex[ch & 0x0FU];
-        } else {
-          stream << static_cast<char>(ch);
-        }
-    }
-  }
-  return stream.str();
-}
-
-std::string JsonString(const std::string &value) {
-  return "\"" + JsonEscape(value) + "\"";
-}
 
 std::string BoolJson(bool value) {
   return value ? "true" : "false";

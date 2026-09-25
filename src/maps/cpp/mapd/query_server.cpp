@@ -64,38 +64,6 @@ void WriteU32(unsigned char* data, std::uint32_t value) {
   data[3] = static_cast<unsigned char>(value & 0xffU);
 }
 
-std::string JsonEscape(const std::string& value) {
-  std::ostringstream out;
-  for (const unsigned char ch : value) {
-    switch (ch) {
-      case '"':
-        out << "\\\"";
-        break;
-      case '\\':
-        out << "\\\\";
-        break;
-      case '\n':
-        out << "\\n";
-        break;
-      case '\r':
-        out << "\\r";
-        break;
-      case '\t':
-        out << "\\t";
-        break;
-      default:
-        if (ch < 0x20U) {
-          constexpr char kHex[] = "0123456789abcdef";
-          out << "\\u00" << kHex[(ch >> 4U) & 0x0fU] << kHex[ch & 0x0fU];
-        } else {
-          out << static_cast<char>(ch);
-        }
-        break;
-    }
-  }
-  return out.str();
-}
-
 std::string ErrorJson(const std::string& reason, const std::string& message) {
   return "{\"success\":false,\"reason_code\":\"" + JsonEscape(reason) +
          "\",\"message\":\"" + JsonEscape(message) + "\"}";

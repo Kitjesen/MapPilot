@@ -1,4 +1,5 @@
 #include <algorithm>
+#include "lingtu/maps/json.hpp"
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -29,6 +30,9 @@
 #endif
 
 namespace {
+
+using lingtu::maps::JsonEscape;
+using lingtu::maps::JsonString;
 
 using lingtu::maps::MapStore;
 using lingtu::maps::MapStoreConfig;
@@ -414,45 +418,6 @@ ActivationResult CallMapd(int domain_id, const ActivationRequest &request,
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
   throw std::runtime_error("map_activation_timeout");
-}
-
-std::string JsonEscape(const std::string &value) {
-  std::string output;
-  for (const unsigned char character : value) {
-    switch (character) {
-      case '\\':
-        output += "\\\\";
-        break;
-      case '"':
-        output += "\\\"";
-        break;
-      case '\b':
-        output += "\\b";
-        break;
-      case '\f':
-        output += "\\f";
-        break;
-      case '\n':
-        output += "\\n";
-        break;
-      case '\r':
-        output += "\\r";
-        break;
-      case '\t':
-        output += "\\t";
-        break;
-      default:
-        if (character < 0x20U) {
-          constexpr char kHex[] = "0123456789abcdef";
-          output += "\\u00";
-          output.push_back(kHex[character >> 4U]);
-          output.push_back(kHex[character & 0x0fU]);
-        } else {
-          output.push_back(static_cast<char>(character));
-        }
-    }
-  }
-  return output;
 }
 
 int RunBuild(int argc, char **argv) {

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include "lingtu/maps/json.hpp"
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -30,6 +31,9 @@
 #include "native/snapshot_file.hpp"
 
 namespace {
+
+using lingtu::maps::JsonEscape;
+using lingtu::maps::JsonString;
 
 using lingtu::maps::MapsServiceConfig;
 using lingtu::maps::MapsServiceCore;
@@ -482,34 +486,6 @@ Options ParseOptions(int argc, char **argv) {
   }
   options.dds.max_points_per_observation = options.engine.max_points_per_observation;
   return options;
-}
-
-std::string JsonEscape(const std::string &value) {
-  std::string escaped;
-  escaped.reserve(value.size() + 8U);
-  for (const char character : value) {
-    switch (character) {
-      case '\\':
-        escaped += "\\\\";
-        break;
-      case '"':
-        escaped += "\\\"";
-        break;
-      case '\n':
-        escaped += "\\n";
-        break;
-      case '\r':
-        escaped += "\\r";
-        break;
-      case '\t':
-        escaped += "\\t";
-        break;
-      default:
-        escaped += character;
-        break;
-    }
-  }
-  return escaped;
 }
 
 std::string StatusJson(const State &state, const DdsInputState &input, const DdsOutputState &output,

@@ -1,4 +1,5 @@
 #include "lingtu/maps/mapd/query_core.hpp"
+#include "lingtu/maps/json.hpp"
 
 #include <cerrno>
 #include <cstdint>
@@ -19,42 +20,6 @@
 
 namespace lingtu::maps::mapd::query {
 namespace {
-
-std::string JsonEscape(const std::string &value) {
-  std::ostringstream out;
-  for (const unsigned char ch : value) {
-    switch (ch) {
-      case '"':
-        out << "\\\"";
-        break;
-      case '\\':
-        out << "\\\\";
-        break;
-      case '\n':
-        out << "\\n";
-        break;
-      case '\r':
-        out << "\\r";
-        break;
-      case '\t':
-        out << "\\t";
-        break;
-      default:
-        if (ch < 0x20U) {
-          constexpr char kHex[] = "0123456789abcdef";
-          out << "\\u00" << kHex[(ch >> 4U) & 0x0fU] << kHex[ch & 0x0fU];
-        } else {
-          out << static_cast<char>(ch);
-        }
-        break;
-    }
-  }
-  return out.str();
-}
-
-std::string JsonString(const std::string &value) {
-  return "\"" + JsonEscape(value) + "\"";
-}
 
 std::string ArtifactTypeName(ArtifactType type) {
   switch (type) {

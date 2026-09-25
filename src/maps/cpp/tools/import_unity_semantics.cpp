@@ -1,4 +1,5 @@
 #include "lingtu/maps/sources/unity_scene.hpp"
+#include "lingtu/maps/json.hpp"
 
 #include <cstdlib>
 #include <filesystem>
@@ -8,28 +9,8 @@
 
 namespace {
 
-std::string JsonEscape(const std::string& value) {
-  std::string out;
-  out.reserve(value.size() + 8U);
-  for (const char ch : value) {
-    switch (ch) {
-      case '"': out += "\\\""; break;
-      case '\\': out += "\\\\"; break;
-      case '\b': out += "\\b"; break;
-      case '\f': out += "\\f"; break;
-      case '\n': out += "\\n"; break;
-      case '\r': out += "\\r"; break;
-      case '\t': out += "\\t"; break;
-      default:
-        if (static_cast<unsigned char>(ch) < 0x20U) {
-          out += "?";
-        } else {
-          out.push_back(ch);
-        }
-    }
-  }
-  return out;
-}
+using lingtu::maps::JsonEscape;
+using lingtu::maps::JsonString;
 
 float ParseFloat(const std::string& text, const std::string& option) {
   std::size_t consumed = 0U;

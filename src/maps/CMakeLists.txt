@@ -36,6 +36,7 @@ add_library(lingtu_maps STATIC
   cpp/lock.cpp
   cpp/maintenance.cpp
   cpp/map_graph.cpp
+  cpp/json.cpp
   cpp/semantic_taxonomy.cpp
   cpp/build/grid_artifacts.cpp
   cpp/build/occupancy_snapshot.cpp
@@ -174,6 +175,7 @@ if(LINGTU_MAPS_BUILD_TOOLS)
     lingtu_maps_import_unity
     cpp/tools/import_unity_semantics.cpp
     cpp/sources/unity_scene.cpp
+    cpp/json.cpp
     cpp/semantic_taxonomy.cpp
     cpp/semantic_map_persistence.cpp
   )
@@ -243,6 +245,7 @@ if(BUILD_TESTING)
     lingtu_maps_unity_semantic_import_test
     ${_LINGTU_MAPS_TEST_DIR}/unity_semantic_import_test.cpp
     cpp/sources/unity_scene.cpp
+    cpp/json.cpp
     cpp/semantic_taxonomy.cpp
     cpp/semantic_map_persistence.cpp
   )

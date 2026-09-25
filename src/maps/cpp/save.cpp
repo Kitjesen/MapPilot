@@ -82,47 +82,6 @@ bool ProcessAlive(std::uint64_t pid) {
 #endif
 }
 
-std::string JsonEscape(const std::string &value) {
-  std::ostringstream out;
-  for (const unsigned char ch : value) {
-    switch (ch) {
-      case '"':
-        out << "\\\"";
-        break;
-      case '\\':
-        out << "\\\\";
-        break;
-      case '\b':
-        out << "\\b";
-        break;
-      case '\f':
-        out << "\\f";
-        break;
-      case '\n':
-        out << "\\n";
-        break;
-      case '\r':
-        out << "\\r";
-        break;
-      case '\t':
-        out << "\\t";
-        break;
-      default:
-        if (ch < 0x20U) {
-          constexpr char kHex[] = "0123456789abcdef";
-          out << "\\u00" << kHex[(ch >> 4U) & 0x0FU] << kHex[ch & 0x0FU];
-        } else {
-          out << static_cast<char>(ch);
-        }
-    }
-  }
-  return out.str();
-}
-
-std::string JsonString(const std::string &value) {
-  return "\"" + JsonEscape(value) + "\"";
-}
-
 std::string PercentEncode(const std::string &value) {
   constexpr char kHex[] = "0123456789ABCDEF";
   std::string out;
