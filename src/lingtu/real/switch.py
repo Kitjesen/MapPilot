@@ -294,9 +294,8 @@ def execute_switch(
             phases=report.phases,
         )
 
-        def on_process_ready(process: ProcessSpec) -> None:
+        def on_process_started(process: ProcessSpec) -> None:
             nonlocal map_activation
-            localize(process)
             if process.name == "maps" and map_name:
                 map_activation = backend.stage_map(map_name)
                 if map_activation.target != map_identity:
@@ -307,7 +306,8 @@ def execute_switch(
             transition_report = control._apply_plan_for_switch(
                 run_plan_path,
                 previous_plan=previous.plan if previous is not None else None,
-                on_process_ready=on_process_ready,
+                on_process_ready=localize,
+                on_process_started=on_process_started,
             )
         except ProcessFailed as exc:
             transition_report = exc.report

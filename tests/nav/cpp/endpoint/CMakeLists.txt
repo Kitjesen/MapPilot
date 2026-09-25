@@ -827,6 +827,8 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_motion_layer.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/input/obstacle.cpp")
   target_include_directories(test_motion_layer_portable PRIVATE
+    "${LINGTU_NAV_CPP_ROOT}"
+    "${LINGTU_NAV_INCLUDE_DIR}"
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav")
   target_compile_options(test_motion_layer_portable PRIVATE
@@ -866,19 +868,6 @@ if(TARGET octoplanner3d_runtime)
     set_tests_properties(test_semantic_view_query PROPERTIES
       ENVIRONMENT "LINGTU_HOST_BOOT_ID=windows-ctest-host")
   endif()
-  add_executable(test_planning_map_writer
-    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_planning_map_writer.cpp"
-    "${_ENDPOINT_DIR}/nav/status/planning_map_writer.cpp"
-    "${_ENDPOINT_DIR}/nav/status/status_snapshot_file_writer.cpp"
-    "${_ENDPOINT_DIR}/nav/input/active/octomap.cpp"
-    "${_ENDPOINT_DIR}/nav/input/active/declared.cpp")
-  target_include_directories(test_planning_map_writer PRIVATE
-    "${_LINGTU_ROOT}/src" "${LINGTU_NAV_CPP_ROOT}" "${_ENDPOINT_DIR}/nav"
-    "${_NAV_KERNEL_DIR}/include")
-  target_link_libraries(test_planning_map_writer PRIVATE
-    octoplanner3d_runtime octoplanner3d_global_planner Threads::Threads)
-  lingtu_endpoint_enable_warnings(test_planning_map_writer)
-  add_test(NAME test_planning_map_writer COMMAND test_planning_map_writer)
 endif()
 add_executable(test_nav_client
   "${_NAV_TESTS_DIR}/test_client.cpp"
@@ -1174,6 +1163,8 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_motion_layer_basics.cpp")
     "${_NAV_ENDPOINT_TESTS_DIR}/test_motion_layer_basics.cpp"
     "${_ENDPOINT_DIR}/nav/input/obstacle.cpp")
   target_include_directories(test_motion_layer_basics PRIVATE
+    "${_NAV_CPP_DIR}"
+    "${_NAV_KERNEL_DIR}/include"
     "${CMAKE_CURRENT_BINARY_DIR}"
     ${_EP_DIRS}
     "${_LINGTU_ROOT}/src")
@@ -1187,6 +1178,8 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_motion_layer.cpp")
     "${_NAV_ENDPOINT_TESTS_DIR}/test_motion_layer.cpp"
     "${_ENDPOINT_DIR}/nav/input/obstacle.cpp")
   target_include_directories(test_motion_layer PRIVATE
+    "${_NAV_CPP_DIR}"
+    "${_NAV_KERNEL_DIR}/include"
     "${CMAKE_CURRENT_BINARY_DIR}"
     ${_EP_DIRS}
     "${_LINGTU_ROOT}/src")
@@ -1360,11 +1353,22 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_geofence.cpp")
   lingtu_endpoint_enable_warnings(test_geofence)
   add_test(NAME test_geofence COMMAND test_geofence)
 endif()
+add_executable(test_motion_worker
+  "${_NAV_ENDPOINT_TESTS_DIR}/test_motion_worker.cpp"
+  "${_ENDPOINT_DIR}/nav/input/motion_worker.cpp"
+  "${_ENDPOINT_DIR}/nav/input/obstacle.cpp")
+target_include_directories(test_motion_worker PRIVATE
+  "${_NAV_CPP_DIR}" "${_NAV_KERNEL_DIR}/include" ${_EP_DIRS})
+target_link_libraries(test_motion_worker PRIVATE Threads::Threads)
+lingtu_endpoint_enable_warnings(test_motion_worker)
+add_test(NAME test_motion_worker COMMAND test_motion_worker)
+
 if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_input_projector.cpp")
   add_executable(test_input_projector
     "${_NAV_ENDPOINT_TESTS_DIR}/test_input_projector.cpp"
     "${_ENDPOINT_DIR}/nav/input/pose.cpp"
     "${_ENDPOINT_DIR}/nav/input/map.cpp"
+    "${_ENDPOINT_DIR}/nav/input/motion_worker.cpp"
     "${_ENDPOINT_DIR}/nav/input/health.cpp"
     "${_ENDPOINT_DIR}/nav/dds/codec.cpp"
     "${_ENDPOINT_DIR}/nav/command/goal.cpp"

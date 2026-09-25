@@ -51,6 +51,13 @@ SSE_DIAGNOSTIC_EVENT_TYPES = (
     "exploration_supervisor",
 )
 DROP_OLDEST_POLICY = "drop_oldest"
+SSE_LATEST_STATE_TYPES = frozenset({
+    "odometry", "joint_state", "slam_status", "map_cloud", "map_scene",
+    "scene_graph", "visual_servo_status", "safety", "navigation_status",
+    "lease", "gnss_fusion", "slam_diag", "slam_drift", "exploring",
+    "tare_stats", "exploration_supervisor", "global_path", "local_path",
+    "native_traversability",
+})
 
 RECOMMENDED_CLIENT_RATES_HZ: dict[str, float] = {
     "bootstrap": 0.0,
@@ -63,38 +70,51 @@ RECOMMENDED_CLIENT_RATES_HZ: dict[str, float] = {
 
 
 def put_latest(queue: asyncio.Queue, item: Any) -> bool:
-    """Put item without blocking, dropping one old item if the queue is full."""
-    if isinstance(item, Mapping) and item.get("type") == "joint_state":
-        retained: list[Any] = []
-        replaced = False
-        while not queue.empty():
-            queued = queue.get_nowait()
-            if isinstance(queued, Mapping) and queued.get("type") == "joint_state":
-                replaced = True
-            else:
-                retained.append(queued)
-        for queued in retained:
-            queue.put_nowait(queued)
+    """Keep current state and give one-shot events priority under pressure."""
+    if not isinstance(item, Mapping):
         if queue.full():
+            queue.get_nowait()
+            queue.put_nowait(item)
             return True
         queue.put_nowait(item)
-        return replaced
-    try:
+        return False
+
+    if item.get("type") not in SSE_LATEST_STATE_TYPES and not queue.full():
         queue.put_nowait(item)
         return False
-    except asyncio.QueueFull:
-        pass
 
-    try:
-        queue.get_nowait()
-    except asyncio.QueueEmpty:
-        pass
+    items: list[Any] = []
+    while not queue.empty():
+        items.append(queue.get_nowait())
+    dropped = put_bounded(items, item, queue.maxsize)
+    for queued in items:
+        queue.put_nowait(queued)
+    return dropped
 
-    try:
-        queue.put_nowait(item)
-    except asyncio.QueueFull:
+
+def put_bounded(items: list[Any], item: Any, capacity: int) -> bool:
+    """Apply the SSE policy before or after an event-loop handoff."""
+    event_type = item.get("type") if isinstance(item, Mapping) else None
+    is_state = event_type in SSE_LATEST_STATE_TYPES
+    if is_state:
+        for index, queued in enumerate(items):
+            if isinstance(queued, Mapping) and queued.get("type") == event_type:
+                del items[index]
+                items.append(item)
+                return True
+    if len(items) >= capacity:
+        state_index = next(
+            (index for index, queued in enumerate(items)
+             if isinstance(queued, Mapping) and queued.get("type") in SSE_LATEST_STATE_TYPES),
+            None,
+        )
+        if is_state and state_index is None:
+            return True
+        del items[state_index if state_index is not None else 0]
+        items.append(item)
         return True
-    return True
+    items.append(item)
+    return False
 
 
 def prepare_sse_delivery(event: Mapping[str, Any], *, now: float | None = None) -> dict[str, Any] | None:
@@ -156,12 +176,16 @@ def format_sse_message(
 
 def snapshot(gw: Any) -> dict[str, Any]:
     """Return one consistent traffic snapshot across SSE and binary streams."""
+    from gateway.services.sse import handoff_stats
+
     with gw._sse_lock:
         queue_depths = [queue.qsize() for queue in gw._sse_queues]
+        handoff_depths = [handoff_stats(queue)[0] for queue in gw._sse_queues]
         sse = {
             "clients": len(gw._sse_queues),
             "queue_maxsize": gw._sse_queue_maxsize,
             "queue_depths": queue_depths,
+            "handoff_depths": handoff_depths,
             "max_depth_seen": gw._sse_max_depth_seen,
             "latest_event_id": gw._sse_event_seq,
             "published_events": gw._sse_published_events,

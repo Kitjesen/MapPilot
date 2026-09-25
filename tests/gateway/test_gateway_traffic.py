@@ -87,6 +87,69 @@ def test_sse_slow_client_keeps_latest_events_and_drops_oldest():
     assert stats["sse"]["drop_policy"] == DROP_OLDEST_POLICY
 
 
+def test_sse_state_burst_preserves_command_ack():
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    queue = subscribe(gateway)
+    gateway.push_event({"type": "command_ack", "request_id": "once"})
+    for sequence in range(129):
+        gateway.push_event({"type": "odometry", "sequence": sequence})
+
+    events = [queue.get_nowait() for _ in range(queue.qsize())]
+    assert [event["request_id"] for event in events if event["type"] == "command_ack"] == ["once"]
+    assert [event["sequence"] for event in events if event["type"] == "odometry"] == [128]
+
+
+def test_sse_reliable_sequence_ignores_coalesced_and_filtered_state():
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    all_events = subscribe(gateway)
+    acknowledgements = subscribe(gateway, event_types={"command_ack"})
+    gateway.push_event({"type": "command_ack", "request_id": "first"})
+    gateway.push_event({"type": "task_event", "request_id": "task"})
+    for sequence in range(129):
+        gateway.push_event({"type": "odometry", "sequence": sequence})
+    gateway.push_event({"type": "command_ack", "request_id": "second"})
+
+    all_reliable = [event["reliable_seq"] for event in
+                    (all_events.get_nowait() for _ in range(all_events.qsize()))
+                    if "reliable_seq" in event]
+    filtered_reliable = [event["reliable_seq"] for event in
+                         (acknowledgements.get_nowait() for _ in range(acknowledgements.qsize()))]
+    assert all_reliable == [1, 2, 3]
+    assert filtered_reliable == [1, 2]
+
+
+def test_threaded_cloud_handoff_is_bounded_before_event_loop_resumes():
+    from gateway.gateway_module import GatewayModule
+
+    async def run():
+        gateway = GatewayModule()
+        queue, _ = gateway._cloud_viewer.cloud_subscribe()
+        loop = asyncio.get_running_loop()
+        ready_before = len(loop._ready)
+
+        def publish_burst():
+            for sequence in range(256):
+                gateway._cloud_viewer.publish_cloud_frame(bytes([sequence]) * 32768)
+
+        producer = threading.Thread(target=publish_burst)
+        producer.start()
+        producer.join(timeout=5.0)
+        assert not producer.is_alive()
+        assert len(loop._ready) - ready_before == 1
+        assert gateway._traffic_stats_snapshot()["cloud"]["dropped_frames"] >= 254
+        await asyncio.sleep(0)
+        assert queue.qsize() <= 2
+        assert queue.get_nowait() == bytes([254]) * 32768
+        assert queue.get_nowait() == bytes([255]) * 32768
+        gateway._cloud_viewer.cloud_unsubscribe(queue)
+
+    asyncio.run(run())
+
+
 def test_cloud_slow_client_keeps_latest_frames_and_drops_oldest():
     from gateway.gateway_module import GatewayModule
     from gateway.services.traffic import DROP_OLDEST_POLICY
@@ -743,6 +806,57 @@ def test_gateway_run_server_reports_clean_uvicorn_shutdown(monkeypatch):
 
     assert gateway._run_server() is True
     assert gateway._server is None
+
+
+def test_gateway_shutdown_finishes_with_an_active_sse_connection(monkeypatch):
+    import socket
+
+    pytest.importorskip("uvicorn")
+    from gateway.gateway_module import GatewayModule
+    from gateway.routes import realtime
+
+    monkeypatch.setattr(realtime, "build_state_snapshot", lambda _gateway: {})
+    gateway = GatewayModule(host="127.0.0.1", port=0)
+    gateway.setup()
+    results = []
+    thread = threading.Thread(target=lambda: results.append(gateway._run_server()), daemon=True)
+    connection = None
+    server = None
+    thread.start()
+    try:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            server = gateway._server
+            if server is not None and server.started:
+                break
+            time.sleep(0.01)
+        assert server is not None and server.started, "local Gateway server did not start"
+        port = server.servers[0].sockets[0].getsockname()[1]
+        connection = socket.create_connection(("127.0.0.1", port), timeout=2.0)
+        connection.sendall(b"GET /api/v1/events HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        response = b""
+        response_deadline = time.monotonic() + 3.0
+        while b'"type":"snapshot"' not in response and time.monotonic() < response_deadline:
+            chunk = connection.recv(4096)
+            assert chunk, "SSE connection closed before its initial snapshot"
+            response += chunk
+        assert b'"type":"snapshot"' in response, "SSE did not send its initial snapshot"
+        assert gateway._sse_queues, "the active SSE response must still be subscribed"
+
+        server.should_exit = True
+        thread.join(timeout=7.0)
+        assert not thread.is_alive(), "active SSE prevented bounded Gateway shutdown"
+        assert results == [True]
+        assert gateway._server is None
+        assert gateway._sse_queues == []
+    finally:
+        if server is not None:
+            server.should_exit = True
+            server.force_exit = True
+        if connection is not None:
+            connection.close()
+        thread.join(timeout=2.0)
+        gateway.stop()
 
 
 def test_gateway_run_server_reports_unexpected_uvicorn_return(monkeypatch):

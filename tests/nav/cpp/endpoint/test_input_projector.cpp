@@ -6,6 +6,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -101,6 +102,17 @@ void require(bool condition, const char *message) {
   if (!condition) {
     throw std::runtime_error(message);
   }
+}
+
+bool waitForObstacles(CoreInputProjector &projector, TimingDiagnostics &timing) {
+  const auto deadline = SteadyClock::now() + std::chrono::seconds(5);
+  while (SteadyClock::now() < deadline) {
+    if (projector.pollObstacles(timing)) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return false;
 }
 
 lingtu_dds_TFMessage tfMessage(lingtu_dds_TransformStamped &transform, double stamp_s,
@@ -218,6 +230,8 @@ struct CollisionFixture {
     message.inflated_occupied_bits._length = static_cast<std::uint32_t>(bits.size());
     message.inflated_occupied_bits._maximum = message.inflated_occupied_bits._length;
     message.inflated_occupied_bits._buffer = bits.data();
+    message.measured_occupied_bits = message.inflated_occupied_bits;
+    message.known_free_bits = message.inflated_occupied_bits;
   }
 };
 
@@ -292,7 +306,7 @@ void testTfProjectionPreservesCountersGenerationsAndReceiveClock() {
   TransformBuffer pose_buffer;
   TransformBuffer map_odom_buffer;
   MotionLayer live_obstacles;
-  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                    InputConfig{}, InputActions{});
 
   const lingtu_dds_TFMessage invalid{};
@@ -348,7 +362,7 @@ void testEpochResetClearsInputsBeforeSynchronousEffectsAndAcceptsTriggeringTf() 
     require(!map_odom_buffer.sample(10.0, 1.0),
             "transform history must clear before external effects");
   };
-  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                    InputConfig{}, std::move(actions));
 
   lingtu_dds_TransformStamped transform{};
@@ -359,6 +373,7 @@ void testEpochResetClearsInputsBeforeSynchronousEffectsAndAcceptsTriggeringTf() 
   state.last_cloud_s = 10.0;
   state.last_cloud_receive_s = 100.0;
   state.cloud_generation = 7;
+  state.prediction_source_receive_s = 100.0;
 
   auto jumped = tfMessage(transform, 11.0, 0.6);
   projector.projectTf(jumped, 101.0);
@@ -436,7 +451,7 @@ void testOdometryRejectsDuplicateSourceStampWithoutPoisoningFiniteState() {
   TransformBuffer pose_buffer;
   TransformBuffer map_odom_buffer;
   MotionLayer live_obstacles;
-  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                    InputConfig{}, InputActions{});
 
   auto initial = odometryMessage(10.0, "map", 0.0);
@@ -470,7 +485,7 @@ void testOdometryRejectsNonCanonicalChildFrames() {
   TransformBuffer pose_buffer;
   TransformBuffer map_odom_buffer;
   MotionLayer live_obstacles;
-  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                    InputConfig{}, InputActions{});
 
   auto empty_child = odometryMessage(10.0, "map", 0.0, "");
@@ -500,7 +515,7 @@ void testTfRejectsReverseMapOdomPayload() {
   TransformBuffer pose_buffer;
   TransformBuffer map_odom_buffer;
   MotionLayer live_obstacles;
-  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                    InputConfig{}, InputActions{});
 
   lingtu_dds_TransformStamped transform{};
@@ -528,7 +543,7 @@ void testDriverProjectionCopiesLoansUsesSteadyFreshnessAndPreservesBlockerPreced
   MotionLayer live_obstacles;
   InputConfig projector_config;
   projector_config.driver_control_max_age_s = 0.35;
-  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                    projector_config, InputActions{});
 
   require(projector.driverBlocker(steadyTime(1000.0)) == "driver_control_missing",
@@ -606,7 +621,7 @@ void testCloudTerrainAndSnapshotProjectionOwnDdsDataAndExactClocks() {
   InputConfig config;
   config.sensor_offset = {0.2, 0.0, 0.0};
   config.max_obstacle_points = 100;
-  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                    config, InputActions{});
 
   auto odometry = odometryMessage(10.0, "map", 0.0);
@@ -616,26 +631,23 @@ void testCloudTerrainAndSnapshotProjectionOwnDdsDataAndExactClocks() {
   projector.projectCloud(cloud.message, 100.0, 1000.0, timing);
 
   require(state.cloud_count == 1, "every cloud callback must increment cloud count");
-  require(state.cloud_generation == 1, "accepted nonempty cloud must advance generation");
+  require(state.cloud_generation == 0 && state.last_cloud_receive_s == 0.0,
+          "submitting a scan must not refresh the gate before processing completes");
+  cloud.setPoint(99.0f, 0.0f, 0.2f);
+  require(waitForObstacles(projector, timing), "accepted scan must complete asynchronously");
+  require(state.cloud_generation == 1, "completed cloud must advance generation");
   require(std::abs(state.last_cloud_s - 10.0) < 1e-9, "cloud source stamp must be retained");
   require(std::abs(state.last_cloud_receive_s - 100.0) < 1e-9,
           "cloud freshness must use explicit steady receipt time");
   require(std::abs(state.cloud_sync.last_stamp_age_s - 990.0) < 1e-9,
           "cloud wall/source age must remain diagnostic-only");
-  require(state.obstacle_xyzh.empty(),
-          "cloud ingestion must defer planner snapshot materialization");
-  require(state.obstacle_snapshot_dirty, "accepted scan must mark snapshot dirty");
   require(state.last_sensor_origin.valid && std::abs(state.last_sensor_origin.x - 0.2) < 1e-9,
           "sensor origin must rotate and translate the configured body offset");
 
-  cloud.setPoint(99.0f, 0.0f, 0.2f);
-  require(projector.materializeObstacles(timing),
-          "dirty live obstacle layer must materialize once");
   require(!state.obstacle_xyzh.empty(), "materialized live obstacle snapshot must be available");
   require(std::abs(state.obstacle_xyzh.front() - 1.0f) < 0.11f,
           "materialized obstacles must not retain the DDS loan buffer");
-  require(!state.obstacle_snapshot_dirty, "materialization must clear the dirty flag");
-  require(!projector.materializeObstacles(timing),
+  require(!projector.pollObstacles(timing),
           "clean live obstacle layer must not rematerialize");
 
   const lingtu_dds_PointCloud2 invalid{};
@@ -673,7 +685,7 @@ void testPlannerClearingUsesDistinctSynchronousReasonsWithoutResettingCloudEpoch
     invalidation_reasons.push_back(reason);
     state.frames.last_error = reason;
   };
-  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                    InputConfig{}, std::move(actions));
 
   state.terrain_xyzh = {1.0f, 0.0f, 0.0f, 0.0f};
@@ -685,8 +697,6 @@ void testPlannerClearingUsesDistinctSynchronousReasonsWithoutResettingCloudEpoch
   state.last_cloud_receive_s = 100.0;
   state.cloud_generation = 7;
   state.last_sensor_origin = {1.0, 2.0, 3.0, true};
-  state.obstacle_snapshot_dirty = true;
-  live_obstacles.update(state.obstacle_xyzh, 10.0);
 
   const lingtu_dds_Bool no_clear{};
   projector.clearPlannerInputs(no_clear, ClearSource::Map);
@@ -697,6 +707,8 @@ void testPlannerClearingUsesDistinctSynchronousReasonsWithoutResettingCloudEpoch
   clear.data = true;
   projector.clearPlannerInputs(clear, ClearSource::Map);
   require(state.map_clearing_count == 1, "map clear must increment only map counter");
+  require(state.prediction_source_receive_s == 0.0,
+          "clearing predictions must not claim a new clear observation from the previous cloud");
   require(state.cloud_clearing_count == 0, "map clear must not increment cloud counter");
   require(invalidation_reasons.size() == 1 &&
               invalidation_reasons.back() == "execution_grid_map_cleared",
@@ -721,7 +733,7 @@ void testTraversabilityAndLocalizationProjectionOwnPayloadsAndAdvanceExactGenera
   TransformBuffer pose_buffer;
   TransformBuffer map_odom_buffer;
   MotionLayer live_obstacles;
-  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                    InputConfig{}, InputActions{});
 
   TraversabilityFixture grid(20.0, "map");
@@ -782,7 +794,7 @@ void testCloudClockRebaseClearsOldMotionLayerAndDerivedSnapshots() {
   TransformBuffer map_odom_buffer;
   MotionLayer live_obstacles(
       layerConfig(0.10, 2000.0, 0.0, 4.0, 0.0, 100, 1, true));
-  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                            InputConfig{}, InputActions{});
 
   auto old_odom = odometryMessage(1000.0, "map", 0.0);
@@ -790,7 +802,9 @@ void testCloudClockRebaseClearsOldMotionLayerAndDerivedSnapshots() {
   PointCloudFixture old_cloud(1000.0, "map", 1.0f, 0.0f, 0.2f);
   TimingDiagnostics timing;
   projector.projectCloud(old_cloud.message, 100.0, 1000.0, timing);
-  require(projector.materializeObstacles(timing), "old cloud must materialize an obstacle");
+  require(waitForObstacles(projector, timing), "old cloud must materialize an obstacle");
+  require(state.prediction_source_receive_s == 100.0,
+          "prediction expiry must use the materialized cloud receive time");
   require(containsNearXy(state.obstacle_xyzh, 1.0f, 0.0f, 0.11f),
           "old obstacle fixture must be present before clock rebase");
   state.predicted_obstacle_xyzh = {1.0f, 0.0f, 0.2f, 0.4f};
@@ -804,9 +818,13 @@ void testCloudClockRebaseClearsOldMotionLayerAndDerivedSnapshots() {
   projector.projectCloud(rebased_cloud.message, 101.0, 1001.0, timing);
 
   require(state.frames.clock_rebases == 1, "accepted cloud rollback must count as a clock rebase");
+  require(state.prediction_source_receive_s == 0.0,
+          "clock rebase must invalidate prediction freshness before rematerialization");
   require(state.obstacle_xyzh.empty() && state.predicted_obstacle_xyzh.empty(),
           "cloud clock rebase must clear all derived obstacle snapshots before rematerialization");
-  require(projector.materializeObstacles(timing), "rebased cloud must materialize a new snapshot");
+  require(waitForObstacles(projector, timing), "rebased cloud must materialize a new snapshot");
+  require(state.prediction_source_receive_s == 101.0,
+          "new prediction snapshot must retain its accepted receive time");
   require(!containsNearXy(state.obstacle_xyzh, 1.0f, 0.0f, 0.11f),
           "pre-rebase obstacle must not survive the new source clock");
   require(containsNearXy(state.obstacle_xyzh, 2.0f, 0.0f, 0.11f),
@@ -824,7 +842,7 @@ void testLocalCollisionProjectionOwnsPayloadAndRejectsPreClearReplay() {
       input_gate,
       pose_buffer,
       map_odom_buffer,
-      live_obstacles,
+      std::move(live_obstacles),
       InputConfig{},
       InputActions{});
 
@@ -909,12 +927,16 @@ void testObstacleMaterializationKeepsMeasuredBudgetSeparateFromPrediction() {
 
   InputConfig config;
   config.max_obstacle_points = 20;
-  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                    config, InputActions{});
-  state.last_cloud_s = 1.3;
-  state.obstacle_snapshot_dirty = true;
+  projector.projectOdometry(odometryMessage(1.4, "map"), 101.4);
+  lingtu::nav::endpoint::PointCloudSample frame;
+  frame.header.stamp_s = 1.4;
+  frame.header.frame_id = "map";
+  frame.xyzh = movingClusterWithNearHazard(1.45f);
   TimingDiagnostics timing;
-  require(projector.materializeObstacles(timing),
+  projector.CoreInputProjector::projectCloud({std::move(frame), {}}, 101.4, 1.4, timing);
+  require(waitForObstacles(projector, timing),
           "dirty obstacle state must materialize a fused planner snapshot");
   require(state.obstacle_xyzh.size() / 4 == config.max_obstacle_points,
           "prediction must not consume any measured-obstacle budget");
@@ -942,12 +964,16 @@ void testObstacleMaterializationUsesFullCurrentBudgetWhenNothingIsPredicted() {
 
   InputConfig config;
   config.max_obstacle_points = 20;
-  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                    config, InputActions{});
-  state.last_cloud_s = 1.0;
-  state.obstacle_snapshot_dirty = true;
+  projector.projectOdometry(odometryMessage(1.1, "map"), 101.1);
+  lingtu::nav::endpoint::PointCloudSample frame;
+  frame.header.stamp_s = 1.1;
+  frame.header.frame_id = "map";
+  frame.xyzh = std::move(current);
   TimingDiagnostics timing;
-  require(projector.materializeObstacles(timing),
+  projector.CoreInputProjector::projectCloud({std::move(frame), {}}, 101.1, 1.1, timing);
+  require(waitForObstacles(projector, timing),
           "static current obstacle state must materialize");
   require(state.obstacle_xyzh.size() / 4 == config.max_obstacle_points,
           "unused prediction reserve must return to the current obstacle budget");
@@ -1007,6 +1033,18 @@ void testPlanViewUsesTickTime() {
       lingtu::nav::endpoint::makePlanView(config, data, 10.0, timing, true);
   require(collision_view.obstacles == &merged && merged.empty(),
           "authoritative collision input must bypass unused legacy obstacle fusion");
+  const std::vector<nav_kernel::PredictedObstacle> volumes{
+      {{1,-1,0},{1,1,0},.2,-.2,1.0}};
+  const auto predictions = lingtu::nav::endpoint::makePredictionView(volumes, 9.8, 10.0, .35);
+  require(predictions.observedAtS == 9.8 && predictions.horizonS == 1.0,
+          "timed prediction retains its source time and horizon");
+  require(predictions.fresh(10.0) && predictions.count == 1,
+          "SCAN must receive its separate typed prediction even with authoritative collision");
+  require(!predictions.fresh(10.16), "prediction expiry must advance independently of map polls");
+  require(!lingtu::nav::endpoint::makePredictionView(volumes, 9.8, 10.2, .35).fresh(10.2),
+          "stale source cannot be rejuvenated by reading the planner view");
+  require(lingtu::nav::endpoint::makePredictionView({}, 9.8, 10.0, .35).fresh(10.0),
+          "fresh observation of no moving objects differs from missing observations");
 }
 
 void testLocalTraversabilityProjectionKeepsOdomSeparateFromMap() {
@@ -1015,7 +1053,7 @@ void testLocalTraversabilityProjectionKeepsOdomSeparateFromMap() {
   TransformBuffer pose_buffer;
   TransformBuffer map_odom_buffer;
   MotionLayer live_obstacles;
-  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                    InputConfig{}, InputActions{});
 
   TraversabilityFixture local_grid(21.0, "odom");
@@ -1078,7 +1116,7 @@ void testEpochRecoveryBaselinesBeforeTriggeringTfGeneration() {
   TransformBuffer pose_buffer;
   TransformBuffer map_odom_buffer;
   MotionLayer live_obstacles;
-  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                    InputConfig{}, InputActions{});
 
   lingtu_dds_TransformStamped transform{};
@@ -1108,7 +1146,7 @@ void testSensorBatchOwnsDdsSamplesAndAppliesInFrameOrder() {
   TransformBuffer map_odom_buffer;
   MotionLayer live_obstacles(
       layerConfig(0.10, 1.0, 0.0, 4.0, 0.0, 100, 1, false));
-  CoreInputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+  CoreInputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                InputConfig{}, InputActions{});
 
   auto odometry = odometryMessage(42.0, "map", 1.0);
@@ -1125,7 +1163,7 @@ void testSensorBatchOwnsDdsSamplesAndAppliesInFrameOrder() {
   projector.apply(std::move(batch), timing);
   require(state.map_body && std::abs(state.map_body->position.x - 1.0) < 1e-9,
           "sensor batch must own odometry before the DDS loan is returned");
-  require(projector.materializeObstacles(timing),
+  require(state.cloud_generation == 1 || waitForObstacles(projector, timing),
           "sensor batch must apply an accepted cloud after its pose");
   require(!state.obstacle_xyzh.empty() &&
               std::abs(state.obstacle_xyzh.front() - 2.0f) < 0.11f,
@@ -1183,6 +1221,50 @@ void testSimulationClockSeparatesExecutionAndFreshness() {
           "real execution must ignore simulation clock samples");
 }
 
+void testAsyncCloudFreshnessAndEpochDiscard() {
+  EndpointState state;
+  InputGateConfig gate_config;
+  gate_config.recovery_frames = 1;
+  gate_config.odom_max_age_s = 10.0;
+  gate_config.cloud_max_age_s = 0.25;
+  InputGate gate(gate_config);
+  TransformBuffer poses, transforms;
+  InputProjector projector(state, gate, poses, transforms, MotionLayer{}, {}, {});
+  TimingDiagnostics timing;
+  projector.projectOdometry(odometryMessage(10.0, "map"), 100.0);
+  PointCloudFixture first(10.0, "map", 1.0f, 0.0f, 0.2f);
+  projector.projectCloud(first.message, 100.0, 10.0, timing);
+  require(!projector.evaluateGate(100.0, steadyTime(100.0)).ready,
+          "unprocessed cloud must not open the input gate");
+  // Reject an older source frame even when the newer frame is still in the worker.
+  PointCloudFixture older(9.99, "map", 9.0f, 0.0f, 0.2f);
+  projector.projectCloud(older.message, 100.1, 10.0, timing);
+  require(state.cloud_sync.stamp_rejected == 1, "source order must use submitted frames");
+  require(waitForObstacles(projector, timing), "async cloud must complete");
+  projector.projectOdometry(odometryMessage(10.01, "map"), 100.05);
+  require(projector.evaluateGate(100.1, steadyTime(100.1)).ready,
+          "a completed fresh frame must open the gate");
+  require(!projector.evaluateGate(100.4, steadyTime(100.4)).ready &&
+              state.last_cloud_receive_s == 100.0,
+          "polling a result must not refresh its original receive time");
+
+  // Clearing while work is pending or completed must discard that whole generation.
+  PointCloudFixture pending(10.05, "map", 2.0f, 0.0f, 0.2f);
+  projector.projectCloud(pending.message, 100.5, 10.05, timing);
+  lingtu_dds_Bool clear{};
+  clear.data = true;
+  projector.clearPlannerInputs(clear, ClearSource::Cloud);
+  PointCloudFixture fresh(10.1, "map", 3.0f, 0.0f, 0.2f);
+  projector.projectCloud(fresh.message, 100.6, 10.1, timing);
+  require(waitForObstacles(projector, timing), "post-clear frame must complete");
+  require(std::abs(state.last_cloud_s - 10.1) < 1e-8 && state.cloud_generation == 2,
+          "pre-clear completion must not advance the accepted generation");
+  require(!containsNearXy(state.obstacle_xyzh, 1.0f, 0.0f, 0.15f) &&
+              !containsNearXy(state.obstacle_xyzh, 2.0f, 0.0f, 0.15f) &&
+              containsNearXy(state.obstacle_xyzh, 3.0f, 0.0f, 0.15f),
+          "post-clear geometry must contain only new-epoch observations");
+}
+
 }  // namespace
 
 int main() {
@@ -1206,6 +1288,7 @@ int main() {
   testEpochRecoveryBaselinesBeforeTriggeringTfGeneration();
   testSensorBatchOwnsDdsSamplesAndAppliesInFrameOrder();
   testSimulationClockSeparatesExecutionAndFreshness();
+  testAsyncCloudFreshnessAndEpochDiscard();
   std::cout << "test_input_projector passed\n";
   return 0;
   } catch (const std::exception &error) {

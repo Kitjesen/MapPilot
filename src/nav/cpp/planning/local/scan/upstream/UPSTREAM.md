@@ -21,6 +21,45 @@ are not upstream navigation modes or an unconditional parity claim. Hardware
 clearance and command caps are resolved from the active RunPlan/RobotConfig;
 matching the upstream algorithm does not imply matching its effective parameters.
 
+## LingTu 3D ground-support extension
+
+The pinned upstream `grid_map.h::getInflateOccupancy` queries the two rotated
+cylinder centres in the inflated 3D occupancy buffer. Its FSM collision callback
+checks the future trajectory. That contract does not itself establish measured
+ground support, step reachability, or absence of a drop beneath the robot.
+
+For robots with a calibrated support height, LingTu's `scan/Grid` additionally
+requires measured occupied voxels with observed free space above them. A local
+surface fit and footprint samples use the candidate's actual XYZ and heading;
+the first surface below the body is checked rather than skipping a nearer slab.
+Different surfaces at the same XY remain separate. Intermediate trajectory,
+braking and boundary-departure queries also require support. Missing evidence
+blocks motion. No 2D costmap participates in these decisions.
+
+A missing surface column may be interpolated from measured support with observed
+clearance within two cells and 10 cm per axis, with returns in every quadrant
+around the query. The local plane must meet slope and voxel-height residual
+limits; the query must have observed clearance immediately above it. A grazing
+ray through the surface cell alone is not evidence of a drop: a free cell below
+the fitted surface cell, a measured lower floor, a nearer slab, one-sided
+evidence or a larger gap prevents interpolation. Occupancy/free evidence remains
+unchanged; inferred samples are never written into the map or used recursively
+to grow support. This handles bounded sampling gaps; it does
+not solve a cold-start ground blind region under the robot. Startup diagnostics
+distinguish missing returns, height mismatch, unobserved clearance and incomplete
+surface patches.
+
+Mapd publishes measured occupancy, known free space and inflated collision bits
+in one typed DDS snapshot. Evidence changes advance its generation even when
+inflation stays unchanged. Decoded immutable storage is shared with the worker.
+Mapd and navd must be rebuilt and deployed together after this IDL change.
+
+This is an intentional change to candidate acceptance at the map-query seam,
+not an upstream feature or a modification of the B-spline/L-BFGS objective.
+It is a geometric support test at voxel resolution, not a footstep/gait planner
+or evidence that Go2 can execute arbitrary vertical trajectories. Live measured
+body height and the driver IMU tilt limit still constrain actual movement.
+
 The corresponding upstream algorithm and its L-BFGS dependency are retained
 together under this directory for:
 
@@ -46,6 +85,17 @@ optimizations are permitted because they do not change a logical cell result:
 - one-bit occupancy storage replaces one byte per inflated cell on DDS;
 - wider per-frame vote counters avoid signed overflow;
 - per-frame bit sets replace the upstream `char` ray tags and their wraparound.
+
+LingTu's moving-cluster extension is separate from that measured bitmap.
+Untimed search queries conservatively use its swept region. Published spline
+validation, refinement, and future-collision callbacks use
+`getTrajectoryOccupancySegment()` to compare robot and obstacle at matching
+times, including observation age. Prediction uses constant velocity for its
+declared horizon and retains the terminal position afterward; it is not a
+full space-time optimizer. Final braking checks use the same timed geometry
+with reaction and deceleration time. Quiet trajectory derivatives use measured
+body heading instead of amplifying nearly-zero velocity noise. Failure captures
+retain prediction timing and volumes as well as the measured bitmap.
 
 The SCAN Mapd profile disables generic time decay, so occupancy changes only
 from ray evidence or rolling-window eviction. AStar node-pool reuse is likewise

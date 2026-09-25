@@ -104,6 +104,7 @@ from sim.scripts.mujoco.native_dds_sensors import (
     _driver_producer_matches_host,
     _linux_binary_command,
     _managed_wsl_command,
+    _native_nav_goal_reached,
     _read_linux_pid,
     _signal_wsl_pid,
     _wait_wsl_pid_exit,
@@ -112,7 +113,7 @@ from sim.scripts.mujoco.native_dds_sensors import (
 )
 from sim.scripts.mujoco.product_acceptance import classify_evidence
 
-from lingtu.assembly.native_nav import mapd_environment
+from lingtu.assembly.native_nav import compile_native_nav_config, mapd_environment
 from lingtu.sim.acceptance import load_manifest as _load_acceptance_manifest
 from lingtu.sim.acceptance import validate_runner_plan
 from lingtu.sim.viewer_goal import ViewerGoal
@@ -1126,6 +1127,8 @@ class NativeEvidence:
     max_consecutive_input_stale_s: float = 0.0
     max_navigation_loop_overrun_ms: float = 0.0
     navigation_loop_overrun_samples_ms: list[float] = field(default_factory=list)
+    navigation_loop_missing_samples: int = 0
+    navigation_loop_history_seen: bool = False
     max_navigation_loop_overrun_context: dict[str, Any] = field(default_factory=dict)
     near_field_stop_samples: int = 0
     pre_safety_command_samples: int = 0
@@ -1139,6 +1142,48 @@ class NativeEvidence:
     _current_input_stale_samples: int = field(default=0, repr=False)
     _motion_health_frozen: bool = field(default=False, repr=False)
     _last_loop_overrun_snapshot_key: tuple[str, Any] | None = field(default=None, repr=False)
+    _last_loop_cycle_sequence: int = field(default=0, repr=False)
+
+    def _collect_loop_history(self, nav: dict[str, Any], collect: bool) -> bool:
+        health = nav.get("control_loop_health") or {}
+        history = health.get("history")
+        if not isinstance(history, dict):
+            if collect:
+                self.navigation_loop_missing_samples += 1
+            return False
+        try:
+            first = int(history["first_sequence"])
+            values = [float(value) for value in history["overruns_ms"]]
+            total = int(health["total_samples"])
+            if (first < 1 or first + len(values) - 1 != total
+                    or total < self._last_loop_cycle_sequence
+                    or any(not math.isfinite(value) or value < 0 for value in values)):
+                raise ValueError("invalid or restarted control-loop history")
+        except (KeyError, TypeError, ValueError):
+            if collect:
+                self.navigation_loop_missing_samples += 1
+            return True
+        if collect:
+            self.navigation_loop_history_seen = True
+            self.navigation_loop_missing_samples += max(
+                0, first - self._last_loop_cycle_sequence - 1,
+            )
+            events = {event["sequence"]: event for event in history.get("overruns", [])}
+            for index in range(max(0, self._last_loop_cycle_sequence + 1 - first), len(values)):
+                value = values[index]
+                if (not self.navigation_loop_overrun_samples_ms
+                        or value > self.max_navigation_loop_overrun_ms):
+                    self.max_navigation_loop_overrun_ms = value
+                    # Stage values belong to this exact completed cycle, not
+                    # to the newer status frame that delivered the history.
+                    self.max_navigation_loop_overrun_context = {
+                        "cycle_sequence": first + index,
+                        "overrun_ms": value,
+                        "cycle_timing": dict(events.get(first + index, {})),
+                    }
+                self.navigation_loop_overrun_samples_ms.append(value)
+        self._last_loop_cycle_sequence = total
+        return True
 
     def sample(
         self,
@@ -1199,7 +1244,7 @@ class NativeEvidence:
                 int(command_boundary.get("ack_sent") or 0),
             )
             self.command_last_accepted = self.command_last_accepted or bool(command_boundary.get("last_accepted"))
-            goal_reached_now = bool((nav.get("last_local") or {}).get("goal_reached"))
+            goal_reached_now = _native_nav_goal_reached(nav)
             input_gate = nav.get("input_gate") or {}
             track_motion_health = (
                 collect_motion_health
@@ -1208,6 +1253,7 @@ class NativeEvidence:
                 and "ready" in input_gate
             )
             self.goal_reached_observed = self.goal_reached_observed or goal_reached_now
+            has_loop_history = self._collect_loop_history(nav, track_motion_health)
             if track_motion_health:
                 self.motion_health_samples += 1
                 if input_gate.get("ready") is True:
@@ -1239,7 +1285,9 @@ class NativeEvidence:
                     pass
                 try:
                     loop_overrun_ms = float(timing_ms.get("overrun") or 0.0)
-                    if math.isfinite(loop_overrun_ms):
+                    # Old snapshots remain readable for diagnosis, but cannot
+                    # pass the complete-cycle performance acceptance gate.
+                    if not has_loop_history and math.isfinite(loop_overrun_ms):
                         if nav.get("stamp_s") is not None:
                             snapshot_key = ("stamp_s", nav.get("stamp_s"))
                         elif nav.get("status_sequence") is not None:
@@ -1344,6 +1392,8 @@ class NativeEvidence:
             "max_cloud_pose_rejections": self.max_cloud_pose_rejections,
             "max_consecutive_input_stale_s": self.max_consecutive_input_stale_s,
             "navigation_loop_overrun_samples_ms": list(self.navigation_loop_overrun_samples_ms),
+            "navigation_loop_history_seen": self.navigation_loop_history_seen,
+            "navigation_loop_missing_samples": self.navigation_loop_missing_samples,
             "navigation_loop_overrun_p95_ms": self.navigation_loop_overrun_percentile_ms(95.0),
             "navigation_loop_overrun_p99_ms": self.navigation_loop_overrun_percentile_ms(99.0),
             "max_navigation_loop_overrun_ms": self.max_navigation_loop_overrun_ms,
@@ -2756,7 +2806,7 @@ def _evaluate_phase(
     }
     native_goal_reached = (
         evidence.goal_reached_observed
-        or bool(((evidence.last_nav or {}).get("last_local") or {}).get("goal_reached"))
+        or _native_nav_goal_reached(evidence.last_nav or {})
         or bool(sensor_report.get("goal_reached_early"))
     )
     goal_metrics["native_goal_reached"] = native_goal_reached
@@ -2831,6 +2881,14 @@ def _evaluate_phase(
             evidence.max_navigation_loop_overrun_context
         )
         max_navigation_loop_overrun_p99_ms = thresholds.get("max_navigation_loop_overrun_p99_ms")
+        goal_metrics["navigation_loop_history_seen"] = evidence.navigation_loop_history_seen
+        goal_metrics["navigation_loop_missing_samples"] = evidence.navigation_loop_missing_samples
+        if (max_navigation_loop_overrun_p99_ms is not None
+                or thresholds.get("max_navigation_loop_overrun_peak_ms") is not None):
+            if (not evidence.navigation_loop_history_seen
+                    or evidence.navigation_loop_missing_samples
+                    or not evidence.navigation_loop_overrun_samples_ms):
+                blockers.append("navigation_loop_complete_history_missing")
         if max_navigation_loop_overrun_p99_ms is not None and loop_overrun_p99_ms > float(
             max_navigation_loop_overrun_p99_ms
         ):
@@ -3286,7 +3344,7 @@ def _run_phase(
         _native_path_arg(binaries["navigation"], paths["planner"]),
         *_planner_constraint_args(manifest),
         "--tick-hz",
-        "20",
+        str(float(navigation_runtime_cfg.get("tick_hz", 20.0))),
         "--control-loop-deadline-miss-ratio-limit",
         str(
             float(
@@ -3494,9 +3552,22 @@ def _run_phase(
         if os.name == "nt" and binaries["navigation_control"].suffix.lower() != ".exe"
         else None
     )
+    rgbd_follow = None
+    if manifest.get("rgbd_follow"):
+        rgbd_follow = ManagedProcess(
+            "rgbd_follow",
+            [sys.executable, "-m", "sim.scripts.mujoco.rgbd_follow_worker",
+             "--world", world_arg, "--phase-dir", str(phase_dir),
+             "--control-binary", str(binaries["navigation_control"]),
+             "--domain-id", str(domain_id),
+             "--goal-deadband-m", str(manifest.get("rgbd_follow_goal_deadband_m", .25)),
+             "--timeout-s", str(float(phase_cfg.get("duration_s", 120)) /
+                                float(runtime_tolerances.get("sim_hardware_realtime_factor", 0.5)) + 120)],
+            phase_dir / "rgbd_follow.log", affinity_mask=support_affinity_mask,
+        )
     processes = [
         process
-        for process in (slam, mapd, traversability, navigation, deferred_goal, sensor)
+        for process in (slam, mapd, traversability, navigation, deferred_goal, sensor, rgbd_follow)
         if process is not None
     ]
     evidence = NativeEvidence()
@@ -3558,6 +3629,12 @@ def _run_phase(
                     "wsl_relay_prestarted": True,
                     "trigger": str(goal_trigger),
                 }
+            elif rgbd_follow is not None:
+                resume_result = _resume_when_ready(
+                    binaries["navigation_control"], domain_id, timeout_s=plan_timeout_s,
+                )
+                if int(resume_result.get("returncode", 1)) == 0:
+                    (phase_dir / "rgbd-follow.ready").touch()
             elif deferred_goal is None:
                 control_attempts: list[dict[str, Any]] = []
                 for attempt in range(1, 5):
@@ -3599,6 +3676,8 @@ def _run_phase(
             ),
         )
         while sensor.poll() is None and time.monotonic() < deadline:
+            if rgbd_follow is not None and rgbd_follow.poll() is not None:
+                raise RuntimeError("RGB-D follow worker exited before the physical run ended")
             evidence.sample(
                 nav_path=nav_status,
                 slam_path=slam_status,
@@ -3619,6 +3698,13 @@ def _run_phase(
     except Exception as exc:
         phase_error = f"{type(exc).__name__}: {exc}"
     finally:
+        if rgbd_follow is not None:
+            (phase_dir / "rgbd-follow.stop").touch()
+            if rgbd_follow.poll() is None:
+                try:
+                    rgbd_follow.wait(timeout_s=10)
+                except subprocess.TimeoutExpired:
+                    phase_error = phase_error or "rgbd_follow_shutdown_timeout"
         for process in reversed(processes):
             process.stop()
         process_cleanup.extend(process.cleanup for process in processes)
@@ -3702,7 +3788,14 @@ def _run_phase(
         blockers.append("mujoco_motion_arm_not_acknowledged")
     if int(resume_result.get("returncode") or 0) != 0 or not resume_result:
         blockers.append("native_resume_command_failed")
-    if int(goal_result.get("returncode") or 0) != 0 or not goal_result:
+    follow_report = _load_json(phase_dir / "rgbd-follow-report.json") if rgbd_follow else {}
+    if rgbd_follow:
+        goal_result = {"source": "rendered_rgbd_follow", **follow_report}
+        if int(follow_report.get("accepted_goals", 0)) < 3:
+            blockers.append("rgbd_follow_goal_updates_missing")
+        if follow_report.get("error"):
+            blockers.append("rgbd_follow_worker_failed")
+    elif int(goal_result.get("returncode") or 0) != 0 or not goal_result:
         blockers.append("native_goal_command_failed")
     if phase_error:
         blockers.append("phase_runtime_error")
@@ -3711,7 +3804,7 @@ def _run_phase(
     blockers.extend(_entity_contact_blockers(sensor_report))
     dynamic_evidence = (
         _dynamic_obstacle_evidence(manifest, sensor_report, motion_log_path)
-        if phase == "motion" else {"enabled": False, "blockers": []}
+        if phase == "motion" and not rgbd_follow else {"enabled": False, "blockers": []}
     )
     blockers.extend(dynamic_evidence["blockers"])
     if not all(bool(item.get("clean")) for item in process_cleanup):
@@ -3732,7 +3825,10 @@ def _run_phase(
         "domain_id": domain_id,
         "uses_ros": False,
         "python_planner_used": False,
-        "python_role": "mujoco_physics_sensor_bridge_process_supervisor_acceptance_only",
+        "python_role": (
+            "mujoco_physics_rgbd_projection_visual_servo_and_acceptance"
+            if rgbd_follow else "mujoco_physics_sensor_bridge_process_supervisor_acceptance_only"
+        ),
         "navigation_compute_owner": "navd",
         "navigation_state_provider": state_provider,
         "local_planner_backend": local_planner_backend,
@@ -3913,6 +4009,22 @@ def _terminal_driver_stop_evidence(
     }
 
 
+def _component_native_environment(manifest: Mapping[str, Any]) -> dict[str, str]:
+    """Match the nav Product's collision-only Mapd and explicit body envelope."""
+    environment = {"LINGTU_MAPD_EXTENDED_LAYERS": "0"}
+    geometry = manifest.get("collision_geometry")
+    if not geometry:
+        return environment
+    compiled = compile_native_nav_config(
+        "nav", {**geometry, "native_control_mode": "autonomy"}
+    )
+    environment.update({
+        key: value for key, value in compiled.environment.items()
+        if key.startswith("LINGTU_NAV_COLLISION_")
+    })
+    return environment
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     manifest_path = Path(args.manifest).expanduser().resolve()
     manifest = _load_manifest(manifest_path)
@@ -3920,7 +4032,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     native_environment = (
         validated_run_plan.native_process_environment
         if validated_run_plan is not None
-        else {}
+        else _component_native_environment(manifest)
     )
     run_plan_binary_bindings = (
         _bind_manifest_binaries_to_run_plan(

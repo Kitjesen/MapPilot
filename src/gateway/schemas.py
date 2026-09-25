@@ -516,6 +516,7 @@ class EndpointSpec(GatewayResponseModel):
 class SSEEventEnvelope(GatewayResponseModel):
     schema_version: int = 1
     event_id: int | None = None
+    reliable_seq: int | None = None
     type: str
     ts: float
     data: Any = None
@@ -1722,6 +1723,21 @@ class MapListResponse(GatewayResponseModel):
     ts: float = Field(default_factory=time.time)
 
 
+class MapSaveProcessingStep(GatewayResponseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    performed: bool | None = None
+    success: bool | None = None
+    reason_code: str | None = None
+
+
+class MapSaveProcessing(GatewayResponseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    optimization: MapSaveProcessingStep | None = None
+    cleanup: MapSaveProcessingStep | None = None
+
+
 class MapSaveOperationStatus(GatewayResponseModel):
     """Customer-visible state of one durable map-save operation."""
 
@@ -1752,6 +1768,7 @@ class MapSaveOperationStatus(GatewayResponseModel):
     recovered: bool | None = None
     replayed: bool | None = None
     attempt: int | None = None
+    processing: MapSaveProcessing | None = None
 
 
 class MapSaveOperationResponse(MapSaveOperationStatus):

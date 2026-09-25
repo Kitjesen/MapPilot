@@ -2,15 +2,21 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { ArrowLeft, Map, FolderOpen, Trash2, RefreshCw, Save, Pencil, Navigation, ChevronDown, Check, MoreHorizontal, X, Search } from 'lucide-react'
 import type { MapInfo, SessionEvent, ToastKind } from '../types'
 import * as api from '../services/api'
+import { formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, mapSaveProgressValue, mapSaveElapsedMs, formatMapSaveElapsed, type MapSaveStatus } from '../services/mapSavePresentation.ts'
 import { mapIsActivationReady, mapSaveBlockedReason, navigationRuntimeReady, navigationSessionReady } from '../services/mapReadiness'
 import { PointCloudViewer, type PointCloudPick } from './PointCloudViewer'
 import { PromptModal, ConfirmModal } from './Modal'
 import { text, type Locale } from '../i18n'
 import { isObservationMode } from '../services/observationMode.ts'
+import { parseInitialPose, type InitialPoseInput, type LocalizationInitialPose } from '../services/localizationInitialPose.ts'
 import styles from './MapView.module.css'
 
 interface MapViewProps {
   initialSelectedMap: string | null
+  onUseMap: (name: string, initialPose?: LocalizationInitialPose) => void
+  productSwitchAllowed: boolean
+  productSwitchReason: string
+  productSwitchMessage: string
   onReturnLive: () => void
   session: SessionEvent['data'] | null
   showToast: (msg: string, kind?: ToastKind) => void
@@ -19,65 +25,6 @@ interface MapViewProps {
   motionStartBlockedReason: string
 }
 // ── Map card ───────────────────────────────────────────────────
-function formatSaveMapSummary(r: api.SaveMapResult): string {
-  const source = r.map_save_source ?? r.source ?? 'unknown'
-  const savedMapReloc = r.saved_map_relocalization_supported ?? r.relocalization_supported
-  const relocText = savedMapReloc === undefined ? '未知' : savedMapReloc ? '支持' : '不支持'
-  const recovery = r.restart_recovery_supported === undefined
-    ? (r.recovery_method ?? 'unknown')
-    : `${r.restart_recovery_supported ? 'restart' : 'no-restart'}${r.recovery_method ? `/${r.recovery_method}` : ''}`
-  const warnings = r.warnings?.filter(Boolean) ?? []
-  return [
-    `来源：${source === 'unknown' ? '未知' : source}`,
-    `保存地图重定位：${relocText}`,
-    `恢复方式：${recovery === 'unknown' ? '未知' : recovery}`,
-    warnings.length > 0 ? `警告：${warnings.join('; ')}` : null,
-  ].filter((v): v is string => Boolean(v)).join(' | ')
-}
-
-interface SaveStatus {
-  name: string
-  state: 'saving' | 'saved' | 'failed'
-  detail: string
-  location?: string | null
-  summary?: string | null
-}
-
-function saveMapStringField(r: api.SaveMapResult, keys: string[]): string | null {
-  const record = r as unknown as Record<string, unknown>
-  for (const key of keys) {
-    const value = record[key]
-    if (typeof value === 'string' && value.trim()) return value.trim()
-  }
-  return null
-}
-
-function formatSaveMapLocation(r: api.SaveMapResult, name: string): string {
-  return saveMapStringField(r, [
-    'path',
-    'map_path',
-    'map_dir',
-    'save_dir',
-    'directory',
-    'pcd_path',
-    'pcd',
-  ]) ?? `网关地图目录 / ${name}`
-}
-
-function formatSaveMapDetail(r: api.SaveMapResult): string {
-  const parts: string[] = []
-  const df = r.dynamic_filter
-  if (df && df.success && typeof df.dropped === 'number' && typeof df.orig_count === 'number' && df.orig_count > 0) {
-    const pct = (100 * df.dropped / df.orig_count).toFixed(1)
-    parts.push(`动态点清理 ${df.dropped}/${df.orig_count} (${pct}%)`)
-  }
-  if (r.size) parts.push(`大小 ${r.size}`)
-  if (r.saved_map_relocalization_supported ?? r.relocalization_supported) {
-    parts.push('支持重定位')
-  }
-  return parts.length ? parts.join(' · ') : '地图已保存'
-}
-
 interface CardProps {
   m: MapInfo
   selected: boolean
@@ -127,6 +74,10 @@ function MapCard({ m, selected, readOnly, navigationReady, onPreview, onNavigate
 // ── Main ───────────────────────────────────────────────────────
 export function MapView({
   initialSelectedMap,
+  onUseMap,
+  productSwitchAllowed,
+  productSwitchReason,
+  productSwitchMessage,
   onReturnLive,
   session,
   showToast,
@@ -147,11 +98,28 @@ export function MapView({
 
   // Modal state
   const [saveOpen,   setSaveOpen  ] = useState(false)
+  const [useMapFrom, setUseMapFrom] = useState<string | null>(null)
+  const [useInitialPose, setUseInitialPose] = useState(false)
+  const [initialPose, setInitialPose] = useState<InitialPoseInput>({ x: '0', y: '0', z: '0', yaw: '0' })
+  useEffect(() => {
+    setUseInitialPose(false)
+    setInitialPose({ x: '0', y: '0', z: '0', yaw: '0' })
+  }, [selectedMap])
   const [navigateFrom, setNavigateFrom] = useState<string | null>(null)
   const [navigationPendingMap, setNavigationPendingMap] = useState<string | null>(null)
   const [renameFrom, setRenameFrom] = useState<string | null>(null)
   const [deleteFrom, setDeleteFrom] = useState<string | null>(null)
-  const [saveStatus, setSaveStatus] = useState<SaveStatus | null>(null)
+  const [saveStatus, setSaveStatus] = useState<MapSaveStatus | null>(null)
+  const [saveTiming, setSaveTiming] = useState({ elapsedMs: 0, observedAt: 0 })
+  const [saveProgress, setSaveProgress] = useState<number | undefined>()
+  const [saveClock, setSaveClock] = useState(0)
+  const saveStartedAt = useRef(0)
+  const saveActive = saveStatus?.state === 'saving' || saveStatus?.state === 'pending'
+  useEffect(() => {
+    if (!saveActive) return
+    const timer = window.setInterval(() => setSaveClock(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [saveActive])
 
   const hasAutoSelected = useRef(initialSelectedMap !== null)
 
@@ -228,30 +196,42 @@ export function MapView({
       if (selectedMap === oldName) setSelectedMap(newName); loadMaps()
     } catch { showToast('重命名失败', 'error') }
   }
-  const confirmSave = async (name: string) => {
+  const confirmSave = async (name: string, existing?: api.SaveMapResult & { operation_id: string }) => {
     setSaveOpen(false)
     const blocked = mapSaveBlockedReason(session)
-    if (blocked) {
+    if (!existing && blocked) {
       showToast(blocked, 'error')
       return
     }
+    if (!existing) saveStartedAt.current = Date.now()
+    const updateProgress = (result?: api.SaveMapResult) => {
+      const now = Date.now()
+      setSaveTiming({ elapsedMs: mapSaveElapsedMs(result, now - saveStartedAt.current), observedAt: now })
+      setSaveClock(now)
+      setSaveProgress(mapSaveProgressValue(result))
+    }
+    updateProgress(existing)
     setSaveStatus({
       name,
       state: 'saving',
-      detail: '正在写入点云、清理动态点并生成导航地图。完成后会显示保存位置。',
+      detail: existing ? formatMapSaveProgress(existing) : '正在提交保存请求',
     })
     try {
-      const admission = await api.saveMap(name)
-      const r = await api.waitForMapSaveOperation(admission)
-      const savedName = r.name
-      const summary = formatSaveMapSummary(r)
-      setSaveStatus({
-        name: savedName,
-        state: 'saved',
-        detail: formatSaveMapDetail(r),
-        location: formatSaveMapLocation(r, savedName),
-        summary,
+      const admission = existing ?? await api.saveMap(name)
+      const outcome = await api.waitForMapSaveOperation(admission, {
+        onProgress: progress => {
+          updateProgress(progress)
+          setSaveStatus({ name, state: 'saving', detail: formatMapSaveProgress(progress) })
+        },
       })
+      if (outcome.state === 'pending') {
+        setSaveStatus(pendingMapSaveStatus(outcome.result, outcome.reason))
+        return
+      }
+      const r = outcome.result
+      updateProgress(r)
+      const savedName = r.name
+      setSaveStatus(savedMapStatus(r))
       hasAutoSelected.current = true
       setSelectedMap(savedName)
       setLibraryOpen(false)
@@ -261,6 +241,7 @@ export function MapView({
       loadMaps()
     }
     catch (e: unknown) {
+      updateProgress()
       const message = e instanceof Error ? e.message : String(e)
       setSaveStatus({
         name,
@@ -338,19 +319,65 @@ export function MapView({
           </div>
         </details>}
         <div className={styles.headerActions}>
+          {!observe && selectedMap && selectedInfo && mapIsActivationReady(selectedInfo) && !selectedNavigationReady && (
+            <button className={styles.primaryButton} disabled={!productSwitchAllowed}
+              title={productSwitchReason || '加载这张地图并切换导航'} onClick={() => setUseMapFrom(selectedMap)}>
+              <Navigation size={16} />使用此地图导航
+            </button>
+          )}
           {selectedNavigationReady && !canPickGoal && <button className={styles.quietButton}
             onClick={() => handleNavigate(selectedMap!)}><Navigation size={16} />选目标</button>}
           {!observe && session?.product === 'map' && <button className={styles.primaryButton}
-            onClick={handleSave} disabled={Boolean(saveBlockedReason) || saveStatus?.state === 'saving'}
+            onClick={handleSave} disabled={Boolean(saveBlockedReason) || saveStatus?.state === 'saving' || saveStatus?.state === 'pending'}
             title={saveBlockedReason || '保存当前建图并查看整图'}>
             <Save size={16} />{saveStatus?.state === 'saving' ? '保存中…' : '保存地图'}
           </button>}
         </div>
       </header>
-      {saveStatus && saveStatus.state !== 'saved' && <div
+      {productSwitchMessage && <div className={styles.saveNotice} role="status">{productSwitchMessage}</div>}
+      <ConfirmModal open={useMapFrom !== null} title="使用此地图导航"
+        message={<>
+          <p>{session?.product === 'map'
+          ? '将结束本次建图并加载所选地图。请确认最新补扫已保存；定位成功后可以选择目标。'
+          : '将停止当前任务并加载所选地图，定位成功后可以选择目标。'}</p>
+          <label className={styles.poseOption}>
+            <input type="checkbox" checked={useInitialPose} onChange={event => setUseInitialPose(event.target.checked)} />
+            指定初始位姿
+          </label>
+          {useInitialPose ? <>
+            <p>填写机身在所选地图中的位置。Z 是地图坐标中的机身高度，航向单位为弧度。</p>
+            <div className={styles.poseFields}>
+              {(['x', 'y', 'z', 'yaw'] as const).map(key => <label key={key}>
+                {key === 'yaw' ? '航向（rad）' : `${key.toUpperCase()}（m）`}
+                <input type="number" step="0.1" value={initialPose[key]}
+                  onChange={event => setInitialPose(value => ({ ...value, [key]: event.target.value }))} />
+              </label>)}
+            </div>
+          </> : <p>优先尝试此地图的上次定位；匹配失败后自动全局搜索。已知当前位置时可指定初值。</p>}
+        </>}
+        confirmLabel="切换导航" onCancel={() => setUseMapFrom(null)}
+        onConfirm={() => {
+          try {
+            const pose = useInitialPose ? parseInitialPose(initialPose) : undefined
+            const name = useMapFrom
+            if (name) onUseMap(name, pose)
+            setUseMapFrom(null)
+          } catch (cause) { showToast(cause instanceof Error ? cause.message : String(cause), 'error') }
+        }} />
+      {saveStatus && <div
         className={`${styles.saveNotice} ${saveStatus.state === 'failed' ? styles.saveError : ''}`} role="status">
-        <span>{saveStatus.state === 'saving' ? `正在保存 ${saveStatus.name}…` : `保存失败：${saveStatus.detail}`}</span>
-        {saveStatus.state === 'failed' && <button className={styles.iconButton}
+        <span>{saveStatus.name}：{saveStatus.state === 'failed' ? '保存失败：' : ''}{saveStatus.detail}</span>
+        <span className={styles.saveTiming}>
+          {saveActive ? '已等待' : '耗时'} {formatMapSaveElapsed(saveTiming.elapsedMs + (saveActive ? Math.max(0, saveClock - saveTiming.observedAt) : 0))}
+          {saveActive && <>
+            <progress aria-label="地图保存阶段进度" max={1} value={saveProgress} />
+            <small>{saveStatus.state === 'pending' ? '状态待确认；显示最近进度' : '阶段进度，非剩余时间估计'}</small>
+          </>}
+        </span>
+        {saveStatus.summary && <span>{saveStatus.summary}</span>}
+        {saveStatus.state === 'pending' && <button className={styles.quietButton}
+          onClick={() => void confirmSave(saveStatus.name, saveStatus.operation)}><RefreshCw size={16} />继续查询</button>}
+        {(saveStatus.state === 'failed' || saveStatus.state === 'saved') && <button className={styles.iconButton}
           onClick={() => setSaveStatus(null)} aria-label="关闭保存提示"><X size={16} /></button>}
       </div>}
       <div className={styles.mapWorkspace}>
@@ -405,7 +432,7 @@ export function MapView({
       <PromptModal
         open={saveOpen}
         title="保存地图"
-        message="保存当前建图，完成后查看整图。"
+        message="保存当前建图，完成后可查看整图。同名会替换原地图；要保留原图请使用新名称。"
         placeholder="例如 building_2f"
         confirmLabel="保存"
         icon={<Save size={18} />}

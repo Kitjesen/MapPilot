@@ -935,12 +935,8 @@ bool BsplineOptimizer::rebound_optimize() {
         const Eigen::Vector3d pos_next = traj.evaluateDeBoorT(next_t);
         const Eigen::Vector3d tangent = velocity.evaluateDeBoorT(t);
         const Eigen::Vector3d next_tangent = velocity.evaluateDeBoorT(next_t);
-        const double chord_yaw = estimateSegmentYaw(pos, pos_next);
-        const int collision_state = grid_map_->getInflateOccupancySegment(
-            pos, tangent.head<2>().squaredNorm() > 1e-8
-                     ? std::atan2(tangent.y(), tangent.x()) : chord_yaw,
-            pos_next, next_tangent.head<2>().squaredNorm() > 1e-8
-                          ? std::atan2(next_tangent.y(), next_tangent.x()) : chord_yaw);
+        const int collision_state = grid_map_->getTrajectoryOccupancySegment(
+            pos, tangent, pos_next, next_tangent, t - tm, next_t - tm);
         flag_occ = collision_state != 0;
         if (flag_occ) {
           debug_.collisionValid = true;
@@ -1000,12 +996,8 @@ bool BsplineOptimizer::checkTrajectoryCollisionFree(const UniformBspline &traj) 
     const Eigen::Vector3d pos_next = traj.evaluateDeBoorT(next_t);
     const Eigen::Vector3d tangent = velocity.evaluateDeBoorT(t);
     const Eigen::Vector3d next_tangent = velocity.evaluateDeBoorT(next_t);
-    const double chord_yaw = estimateSegmentYaw(pos, pos_next);
-    const int collision_state = grid_map_->getInflateOccupancySegment(
-        pos, tangent.head<2>().squaredNorm() > 1e-8
-                 ? std::atan2(tangent.y(), tangent.x()) : chord_yaw,
-        pos_next, next_tangent.head<2>().squaredNorm() > 1e-8
-                      ? std::atan2(next_tangent.y(), next_tangent.x()) : chord_yaw);
+    const int collision_state = grid_map_->getTrajectoryOccupancySegment(
+        pos, tangent, pos_next, next_tangent, t - tm, next_t - tm);
     if (collision_state != 0) {
       debug_.reason = "collision_after_refine";
       debug_.collisionValid = true;

@@ -37,6 +37,7 @@ def run_server(gw: Any, stop_event: threading.Event | None = None) -> bool:
                 ws="auto",
                 lifespan="off",
                 timeout_keep_alive=30,
+                timeout_graceful_shutdown=5,
                 ws_max_size=2 * 1024 * 1024,
             )
             server = uvicorn.Server(config)

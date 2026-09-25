@@ -34,7 +34,7 @@ class RelocalizationService(Protocol):
     def trigger_global_relocalize(
         self,
         *,
-        timeout_s: float = 10.0,
+        timeout_s: float = 45.0,
     ) -> RelocalizationResult:
         ...
 
@@ -95,7 +95,7 @@ class Localization:
             details={"code": "unavailable", "command": command},
         )
 
-    def trigger_global_relocalize(self, *, timeout_s: float = 10.0) -> RelocalizationResult:
+    def trigger_global_relocalize(self, *, timeout_s: float = 45.0) -> RelocalizationResult:
         if self._backend is None:
             return self._unavailable("global_relocalize")
         return self._backend.trigger_global_relocalize(timeout_s=timeout_s)

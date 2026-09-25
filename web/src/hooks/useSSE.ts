@@ -210,6 +210,7 @@ export function useSSE(url: string = '/api/v1/events') {
   const everConnectedRef = useRef(false)
   const initialSnapshotSeenRef = useRef(false)
   const lastEventIdRef = useRef<number | null>(null)
+  const lastReliableSeqRef = useRef<number | null>(null)
   const connectRef = useRef<() => void>(() => {})
   const refreshRef = useRef<(reason: string, mode?: SnapshotRefreshMode) => void>(() => {})
 
@@ -383,6 +384,7 @@ export function useSSE(url: string = '/api/v1/events') {
 
     es.onopen = () => {
       if (!mountedRef.current) return
+      lastReliableSeqRef.current = null
       jointTelemetry.setConnected(true)
       setState(prev => ({ ...prev, connected: true, lastError: null }))
       if (everConnectedRef.current) {
@@ -410,10 +412,14 @@ export function useSSE(url: string = '/api/v1/events') {
           const eventId = typeof event.event_id === 'number' && Number.isFinite(event.event_id)
             ? event.event_id
             : null
-          const prevEventId = lastEventIdRef.current
-          const missedByEvent = eventId !== null && prevEventId !== null && eventId > prevEventId + 1
-            ? eventId - prevEventId - 1
+          const reliableSeq = typeof event.reliable_seq === 'number' && Number.isFinite(event.reliable_seq)
+            ? event.reliable_seq
+            : null
+          const prevReliableSeq = lastReliableSeqRef.current
+          const missedByEvent = reliableSeq !== null && prevReliableSeq !== null && reliableSeq > prevReliableSeq + 1
+            ? reliableSeq - prevReliableSeq - 1
             : 0
+          if (reliableSeq !== null) lastReliableSeqRef.current = reliableSeq
           if (eventId !== null) lastEventIdRef.current = eventId
           if (missedByEvent > 0) queueRefresh('event_id_gap')
           if (event.type === 'joint_state') {

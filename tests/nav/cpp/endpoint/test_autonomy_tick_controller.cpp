@@ -752,6 +752,27 @@ void testBrakingSlowdownRetainsActiveTrajectory() {
           "braking slowdown must preserve tracking identity and expose its limiting reason");
 }
 
+void testDynamicTimeoutStopsAndDoesNotRestartGlobalReplanning() {
+  Fixture fixture;
+  fixture.next_output.active = true;
+  fixture.next_output.recovery_exhausted = true;
+  fixture.next_output.reason = "dynamic_obstacle_timeout";
+  fixture.next_output.dynamic_avoidance = "timeout";
+  fixture.next_output.prediction_count = 2;
+  fixture.next_output.dynamic_blocked_s = 10.1;
+  AutonomyTickController controller(fixture.actions, fixture.control());
+  const auto result = controller.tick(fixture.input());
+  require(result.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
+              !result.outcome.replan_trigger && result.outcome.terminal_failure_intent,
+          "dynamic timeout must end the goal instead of restarting its wait budget");
+  require(near(result.publish.command.vx,0) && near(result.publish.command.vy,0) &&
+              near(result.publish.command.wz,0) && fixture.commit_calls == 0,
+          "dynamic timeout must publish zero without committing motion");
+  require(result.local->dynamic_avoidance == "timeout" &&
+              result.local->prediction_count == 2 && near(result.local->dynamic_blocked_s,10.1),
+          "dynamic decision evidence must survive final arbitration");
+}
+
 void testReachedOutcomesDistinguishInspectionArrival() {
   Fixture generic;
   generic.next_output.goal_reached = true;
@@ -795,6 +816,7 @@ int main() {
     testRecoveryOutcomesDistinguishRollingAndGenericGoals();
     testPrecomputedPersistentReplanBypassesPlannerAndFinalSafetyWithZeroCommand();
     testReachedOutcomesDistinguishInspectionArrival();
+    testDynamicTimeoutStopsAndDoesNotRestartGlobalReplanning();
     testActualCollisionRestartsPlannerInsteadOfHoldingUnsafeTrackingTarget();
     testBrakingSlowdownRetainsActiveTrajectory();
   } catch (const std::exception &error) {

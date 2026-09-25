@@ -272,6 +272,15 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
         ),
     ),
     ThunderServiceSpec(
+        name="control",
+        role="product_control_transport",
+        units=("lt-control.service",),
+        start_units=("lt-control.service",),
+        group="control",
+        optional=True,
+        description="Host-independent loopback transport for ProductControl.",
+    ),
+    ThunderServiceSpec(
         name="gateway",
         role="interface_runtime",
         units=("lt-host.service",),
@@ -373,6 +382,7 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
 )
 
 THUNDER_GROUP_ORDER: dict[str, tuple[str, ...]] = {
+    "control": ("control",),
     "native_dds": (
         "lidar",
         "slam",

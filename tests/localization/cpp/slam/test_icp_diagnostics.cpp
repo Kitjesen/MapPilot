@@ -174,5 +174,37 @@ int main()
     pose = M4F::Identity();
     pose(0, 3) = std::numeric_limits<float>::quiet_NaN();
     require(!localizer.align(pose), "non-finite initial guesses must be rejected");
+
+    // As registration improves, newly matched points may increase inlier-only
+    // MSE. They must still lower the capped error over the supported scan.
+    CloudType::Ptr partial_target(new CloudType);
+    CloudType::Ptr partial_scan(new CloudType);
+    for (int plane = 0; plane < 2; ++plane) {
+        for (int y = -4; y <= 4; ++y) {
+            for (int z = -4; z <= 4; ++z) {
+                PointType point;
+                point.x = 4.F * plane;
+                point.y = 0.4F * y;
+                point.z = 0.4F * z;
+                partial_target->push_back(point);
+                point.x += plane == 0 ? 0.1F : 0.25F;
+                partial_scan->push_back(point);
+            }
+        }
+    }
+    // The mapped environment extends beyond the observed two surfaces.
+    PointType far_corner;
+    far_corner.x = 6.F; far_corner.y = 4.F; far_corner.z = 4.F;
+    partial_target->push_back(far_corner);
+    ICPLocalizer partial(config);
+    require(partial.setMap(partial_target), "partial-correspondence map should load");
+    partial.setInput(partial_scan);
+    M4F partial_guess = M4F::Identity();
+    require(partial.evaluate(partial_guess, 0.2) && partial.getLastInliers() == 81,
+            "only the nearer surface should initially have correspondences");
+    require(partial.alignPlanar(partial_guess, 0.2, 20, 0.4, 0.03, 0.1),
+            "planar search must improve partial correspondences");
+    require(partial.getLastInliers() == 162 && partial_guess(0, 3) < -0.12F,
+            "new correspondences must not stop a better planar registration");
     return 0;
 }

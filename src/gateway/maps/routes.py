@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import pathlib
 import re
 import time
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from gateway.maps.status import EnvironmentMapFeedback
 from gateway.maps.transport import (
@@ -36,7 +37,7 @@ from gateway.services.exploration import (
     exploration_map_save_readiness,
     product_control_owns_explore,
 )
-from gateway.services.global_mapping import global_mapping_points
+from gateway.services.global_mapping import global_mapping_frame, global_mapping_points
 from gateway.services.native_status import read_navigation_status, read_traversability_status
 from runtime.endpoints.map_paths import map_import_root, resolve_exchange_path
 from runtime.endpoints.mapd import MapClientError
@@ -194,6 +195,26 @@ def _external_operation_reason_code(value: Any) -> str | None:
     return _PUBLIC_OPERATION_REASON_CODES.get(reason_code, reason_code)
 
 
+def _external_map_processing(value: Any) -> dict[str, Any] | None:
+    """Expose processing outcomes without publishing native reports or paths."""
+    if not isinstance(value, dict):
+        return None
+    processing: dict[str, Any] = {}
+    for public_key, native_key in (("optimization", "optimization"), ("cleanup", "dynamic_filter")):
+        report = value.get(native_key)
+        if not isinstance(report, dict):
+            continue
+        step: dict[str, Any] = {
+            key: report[key] for key in ("performed", "success") if isinstance(report.get(key), bool)
+        }
+        reason = report.get("reason_code") or report.get("code")
+        if isinstance(reason, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", reason):
+            step["reason_code"] = reason
+        if step:
+            processing[public_key] = step
+    return processing or None
+
+
 def _sanitize_external_operation_status(value: Any) -> dict[str, Any] | None:
     """Project one native SaveMap status onto the customer-safe contract."""
 
@@ -219,6 +240,9 @@ def _sanitize_external_operation_status(value: Any) -> dict[str, Any] | None:
             sanitized[key] = scalar
     if "message" not in sanitized and "reason_code" in sanitized:
         sanitized["message"] = _external_operation_message(value)
+    processing = _external_map_processing(value.get("source_report"))
+    if processing is not None:
+        sanitized["processing"] = processing
     return sanitized
 
 
@@ -1026,12 +1050,20 @@ def register_map_routes(app, gw) -> None:
         summary="Map point cloud as JSON (from ikd-tree snapshot)",
         response_model=MapPointsResponse,
     )
-    async def get_map_points(max_points: int = 80000):
-        return gw._cloud_viewer.map_points_snapshot(max_points=max_points)
+    def get_map_points(max_points: int = 80000):
+        return JSONResponse(gw._cloud_viewer.map_points_snapshot(max_points=max_points))
 
     @app.get("/api/v1/map/global/points", summary="Native online whole-map preview")
-    async def get_global_map_points(max_points: int = 80000):
-        return await asyncio.to_thread(global_mapping_points, max_points)
+    def get_global_map_points(max_points: int = 80000, format: Literal["json", "binary"] = "json"):
+        if format == "binary":
+            frame, metadata = global_mapping_frame(max_points)
+            return Response(frame, media_type="application/octet-stream", headers={
+                "Cache-Control": "no-store",
+                "X-Lingtu-Global-Mapping": json.dumps(metadata, separators=(",", ":")),
+            })
+        # Encode the large preview in the worker as well as reading it. Returning
+        # a dict would make FastAPI walk every coordinate on the teleop event loop.
+        return JSONResponse(global_mapping_points(max_points))
 
     @app.post(
         "/api/v1/map_cloud/reset",

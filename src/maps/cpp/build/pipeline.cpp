@@ -36,6 +36,8 @@
 
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
 #include "lingtu/maps/build/octomap_io.hpp"
+#include "lingtu/maps/build/sampled_octomap.hpp"
+#include "lingtu/maps/build/ray_octomap.hpp"
 #endif
 
 namespace lingtu::maps {
@@ -305,6 +307,15 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
                          const OctomapBuildOptions &options,
                          bool manual_voxel_edit = false, std::size_t manual_edit_count = 0U,
                          const std::string &last_edit_json = "null") {
+  bool saved_rays = std::filesystem::is_regular_file(map_dir / "poses.txt") &&
+                          std::filesystem::is_regular_file(map_dir / "scan_origin.txt");
+  if (manual_voxel_edit) {
+    std::ifstream previous_file(map_dir / "metadata.json");
+    std::ostringstream previous;
+    previous << previous_file.rdbuf();
+    saved_rays = JsonObjectStringAtPath(previous.str(),
+        {"artifacts", "octomap", "evidence_source"}) == "saved_rays";
+  }
   const std::filesystem::path occupancy_path = map_dir / "occupancy.npz";
   const bool has_occupancy = std::filesystem::is_regular_file(occupancy_path);
   const std::string source_profile =
@@ -334,14 +345,15 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
               << "\"frame_id\":" << JsonString(options.frame_id) << "},";
   }
   artifacts << "\"octomap\":{"
+            << "\"evidence_source\":" << JsonString(saved_rays ? "saved_rays" : "sampled_points") << ","
             << "\"path\":" << JsonString(octomap_path.filename().string()) << ","
             << "\"source_profile\":" << JsonString(source_profile) << ","
             << "\"data_source\":" << JsonString(data_source) << ","
             << "\"frame_id\":" << JsonString(options.frame_id) << ","
             << "\"resolution\":" << options.resolution << ","
-            << "\"support_dilation_cells\":" << std::max(0, options.support_dilation_cells) << ","
-            << "\"free_layers_above\":" << std::max(0, options.free_layers_above) << ","
-            << "\"free_dilation_cells\":" << std::max(0, options.free_dilation_cells) << ","
+            << "\"support_dilation_cells\":" << (saved_rays ? 0 : std::max(0, options.support_dilation_cells)) << ","
+            << "\"free_layers_above\":" << (saved_rays ? 0 : std::max(0, options.free_layers_above)) << ","
+            << "\"free_dilation_cells\":" << (saved_rays ? 0 : std::max(0, options.free_dilation_cells)) << ","
             << "\"build_mode\":" << JsonString(options.build_mode) << ","
             << (manual_voxel_edit ? "\"manual_voxel_edit\":true," : "")
             << "\"builder\":{\"name\":\"LingTu MapsPipelineCore\",\"version\":\"0.2.0\"}"
@@ -393,13 +405,13 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
          std::to_string(options.resolution) +
          ","
          "\"support_dilation_cells\":" +
-         std::to_string(std::max(0, options.support_dilation_cells)) +
+         std::to_string((saved_rays ? 0 : std::max(0, options.support_dilation_cells))) +
          ","
          "\"free_layers_above\":" +
-         std::to_string(std::max(0, options.free_layers_above)) +
+         std::to_string((saved_rays ? 0 : std::max(0, options.free_layers_above))) +
          ","
          "\"free_dilation_cells\":" +
-         std::to_string(std::max(0, options.free_dilation_cells)) +
+         std::to_string((saved_rays ? 0 : std::max(0, options.free_dilation_cells))) +
          ","
          "\"frame\":" +
          JsonString(options.frame_id) +
@@ -410,7 +422,8 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
          "}\n";
 }
 
-bool ExistingMetadataAllowsReuse(const std::filesystem::path &metadata_path) {
+bool ExistingMetadataAllowsReuse(const std::filesystem::path &metadata_path,
+                                 const OctomapBuildOptions &options, bool saved_rays) {
   if (!std::filesystem::is_regular_file(metadata_path)) {
     return false;
   }
@@ -429,7 +442,19 @@ bool ExistingMetadataAllowsReuse(const std::filesystem::path &metadata_path) {
     return false;
   }
   const std::string text = stream.str();
-  return JsonObjectStringAtPath(text, {"schema_version"}) ==
+  const auto number_matches = [&](const char* name, double expected) {
+    const auto actual = JsonObjectNumberAtPath(text, {name});
+    return actual && std::abs(*actual-expected)<1e-9;
+  };
+  return number_matches("resolution", options.resolution) &&
+         number_matches("support_dilation_cells", saved_rays ? 0 : options.support_dilation_cells) &&
+         number_matches("free_layers_above", saved_rays ? 0 : options.free_layers_above) &&
+         number_matches("free_dilation_cells", saved_rays ? 0 : options.free_dilation_cells) &&
+         JsonObjectStringAtPath(text, {"frame"}) == options.frame_id &&
+         JsonObjectStringAtPath(text, {"build_mode"}) == options.build_mode &&
+         JsonObjectStringAtPath(text, {"artifacts","octomap","evidence_source"}) ==
+             (saved_rays ? "saved_rays" : "sampled_points") &&
+         JsonObjectStringAtPath(text, {"schema_version"}) ==
              "lingtu.saved_map_artifacts.v1" &&
          JsonObjectBoolAtPath(text, {"invalidated"}) != true &&
          JsonObjectStringAtPath(text, {"octomap", "path"}) == "octomap.ot";
@@ -501,22 +526,17 @@ bool CopyPathRecursive(const std::filesystem::path &from, const std::filesystem:
   return true;
 }
 
-std::vector<std::string> NavigationPackageArtifactNames(bool include_esdf,
-                                                        bool include_traversability) {
-  std::vector<std::string> names{
+std::vector<std::string> NavigationPackageArtifactNames() {
+  // Replacing occupancy invalidates derived layers even when this build does
+  // not request their replacements. Publish their removal in the same commit.
+  return {
       "occupancy.npz", "map.pgm", "map.yaml", "octomap.ot", "octomap.bt", "metadata.json",
+      "esdf.npz", "traversability.npz",
   };
-  if (include_esdf || include_traversability) {
-    names.push_back("esdf.npz");
-  }
-  if (include_traversability) {
-    names.push_back("traversability.npz");
-  }
-  return names;
 }
 
 std::vector<std::string> OccupancySnapshotArtifactNames() {
-  return {"occupancy.npz", "map.pgm", "map.yaml"};
+  return {"occupancy.npz", "map.pgm", "map.yaml", "esdf.npz", "traversability.npz"};
 }
 
 std::vector<std::string> OctomapArtifactNames() {
@@ -528,7 +548,7 @@ std::vector<std::string> OctomapEditArtifactNames() {
 }
 
 std::vector<std::string> EsdfArtifactNames() {
-  return {"esdf.npz"};
+  return {"esdf.npz", "traversability.npz"};
 }
 
 std::vector<std::string> TraversabilityArtifactNames() {
@@ -553,6 +573,10 @@ std::vector<std::string> SavedSourceArtifactNames() {
   auto names = SourceMapMutationArtifactNames();
   names.push_back("poses.txt");
   names.push_back("trajectory.txt");
+  names.push_back("poses.raw.txt");
+  names.push_back("trajectory.raw.txt");
+  names.push_back("keyframes.timestamps.txt");
+  names.push_back("sam_loops.json");
   names.push_back("patches");
   names.push_back("patch_bundle.manifest");
   names.push_back("map.clean.pcd");
@@ -608,10 +632,9 @@ BackupNamedArtifacts(MapStore &store, const std::string &map_id,
 std::vector<TransactionArtifactBackup>
 BackupTransactionArtifacts(MapStore &store, const std::string &map_id,
                            const std::filesystem::path &map_dir,
-                           const std::filesystem::path &transaction_dir, bool include_esdf,
-                           bool include_traversability) {
+                           const std::filesystem::path &transaction_dir) {
   return BackupNamedArtifacts(store, map_id, map_dir, transaction_dir,
-                              NavigationPackageArtifactNames(include_esdf, include_traversability));
+                              NavigationPackageArtifactNames());
 }
 
 bool RollbackTransactionArtifacts(const std::vector<TransactionArtifactBackup> &backups) {
@@ -1200,25 +1223,6 @@ std::string VoxelEditsArrayJson(const std::vector<std::string> &edits) {
   return out.str();
 }
 
-struct OctomapVoxelKey {
-  unsigned int x{0U};
-  unsigned int y{0U};
-  unsigned int z{0U};
-
-  bool operator==(const OctomapVoxelKey &other) const {
-    return x == other.x && y == other.y && z == other.z;
-  }
-};
-
-struct OctomapVoxelKeyHash {
-  std::size_t operator()(const OctomapVoxelKey &key) const {
-    std::size_t seed = std::hash<unsigned int>{}(key.x);
-    seed ^= std::hash<unsigned int>{}(key.y) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
-    seed ^= std::hash<unsigned int>{}(key.z) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
-    return seed;
-  }
-};
-
 std::string BuildNativeOctomapInDirectory(const std::string &map_id,
                                           const std::filesystem::path &map_dir,
                                           const OctomapBuildOptions &options) {
@@ -1252,15 +1256,11 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
   }
 
   octomap::OcTree tree(options.resolution > 0.0 ? options.resolution : 0.20);
-  std::unordered_map<OctomapVoxelKey, int, OctomapVoxelKeyHash> counts;
-  for (const auto &point : loaded.points) {
-    octomap::OcTreeKey key;
-    if (!tree.coordToKeyChecked(point.x, point.y, point.z, key)) {
-      continue;
-    }
-    ++counts[OctomapVoxelKey{key.k[0], key.k[1], key.k[2]}];
-  }
-  if (counts.empty()) {
+  using namespace sampled_octomap;
+  std::unordered_set<VoxelKey, VoxelKeyHash> support_keys;
+  const auto occupied = buildOccupiedKeys(
+      loaded.points, tree, options.support_dilation_cells, support_keys);
+  if (occupied.empty()) {
     return "{"
            "\"action\":\"build_octomap\","
            "\"success\":false,"
@@ -1270,25 +1270,16 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
            JsonString(map_id) + "}";
   }
 
-  std::unordered_set<OctomapVoxelKey, OctomapVoxelKeyHash> occupied;
-  const int dilation = std::max(0, options.support_dilation_cells);
-  for (const auto &item : counts) {
-    if (item.second <= 0) {
-      continue;
+  const bool saved_rays = std::filesystem::is_regular_file(map_dir / "poses.txt") &&
+                          std::filesystem::is_regular_file(map_dir / "scan_origin.txt");
+  if (saved_rays) {
+    try {
+      PopulateSavedRayOctomap(tree, map_dir, options.cancel_requested);
+    } catch (const std::exception& error) {
+      return "{\"success\":false,\"reason_code\":\"saved_ray_build_failed\",\"message\":" +
+          JsonString(error.what()) + "}";
     }
-    for (int dx = -dilation; dx <= dilation; ++dx) {
-      for (int dy = -dilation; dy <= dilation; ++dy) {
-        const long long x = static_cast<long long>(item.first.x) + dx;
-        const long long y = static_cast<long long>(item.first.y) + dy;
-        if (x < 0 || y < 0) {
-          continue;
-        }
-        occupied.insert(OctomapVoxelKey{static_cast<unsigned int>(x), static_cast<unsigned int>(y),
-                                        item.first.z});
-      }
-    }
-  }
-
+  } else {
   for (const auto &key : occupied) {
     octomap::OcTreeKey octo_key;
     octo_key.k[0] = key.x;
@@ -1297,31 +1288,10 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
     tree.updateNode(tree.keyToCoord(octo_key), true);
   }
 
-  const int free_layers = std::max(0, options.free_layers_above);
-  const int free_dilation = std::max(0, options.free_dilation_cells);
-  for (const auto &key : occupied) {
-    for (int dx = -free_dilation; dx <= free_dilation; ++dx) {
-      for (int dy = -free_dilation; dy <= free_dilation; ++dy) {
-        for (int dz = 1; dz <= free_layers; ++dz) {
-          const long long x = static_cast<long long>(key.x) + dx;
-          const long long y = static_cast<long long>(key.y) + dy;
-          const long long z = static_cast<long long>(key.z) + dz;
-          if (x < 0 || y < 0 || z < 0) {
-            continue;
-          }
-          OctomapVoxelKey free_key{static_cast<unsigned int>(x), static_cast<unsigned int>(y),
-                                   static_cast<unsigned int>(z)};
-          if (occupied.count(free_key) > 0U) {
-            continue;
-          }
-          octomap::OcTreeKey octo_key;
-          octo_key.k[0] = free_key.x;
-          octo_key.k[1] = free_key.y;
-          octo_key.k[2] = free_key.z;
-          tree.updateNode(tree.keyToCoord(octo_key), false);
-        }
-      }
-    }
+  for (const auto &key : support_keys) {
+    markFreeEnvelope(tree, key, std::max(0, options.free_layers_above),
+                     std::max(0, options.free_dilation_cells), occupied);
+  }
   }
   tree.updateInnerOccupancy();
   std::filesystem::create_directories(octomap_path.parent_path());
@@ -1387,7 +1357,7 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
          std::to_string(loaded.points.size()) +
          ","
          "\"occupied_voxels\":" +
-         std::to_string(occupied.size()) +
+         std::to_string(OccupiedVoxelCount(tree)) +
          "}"
          "}";
 #else
@@ -1440,7 +1410,9 @@ std::string BuildOctomapArtifactInDirectory(const std::string &map_id,
 
   if (allow_reuse && std::filesystem::is_regular_file(octomap_path) &&
       std::filesystem::file_size(octomap_path) > 0U &&
-      ExistingMetadataAllowsReuse(metadata_path)) {
+      ExistingMetadataAllowsReuse(metadata_path, options,
+          std::filesystem::is_regular_file(map_dir / "poses.txt") &&
+          std::filesystem::is_regular_file(map_dir / "scan_origin.txt"))) {
       return "{"
              "\"action\":\"build_octomap\","
              "\"success\":true,"
@@ -2039,6 +2011,10 @@ void CopySavedSourceAuxiliaryArtifacts(const std::filesystem::path &source_dir,
   for (const auto *filename : {
            "poses.txt",
            "trajectory.txt",
+           "poses.raw.txt",
+           "trajectory.raw.txt",
+           "keyframes.timestamps.txt",
+           "sam_loops.json",
            "patches",
            "patch_bundle.manifest",
            "map.clean.pcd",
@@ -2432,6 +2408,14 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
       return FailureJson("commit_saved_source", error, "pcd_write_failed");
     }
     CopySavedSourceAuxiliaryArtifacts(source_dir, staging_map_dir);
+    std::string optimization = "null";
+    const auto optimization_path = staging_map_dir / "map_optimization.json";
+    if (std::filesystem::is_regular_file(optimization_path)) {
+      const auto report = ReadText(optimization_path);
+      if (IsValidJsonObject(report)) {
+        optimization = report;
+      }
+    }
     backups =
         BackupNamedArtifacts(store_, id, map_dir, transaction_dir, SavedSourceArtifactNames());
     std::string publish_error;
@@ -2495,6 +2479,7 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
            "\"dynamic_filter\":" +
            dynamic_filter +
            ","
+           "\"optimization\":" + optimization + ","
            "\"published_auxiliary\":{"
            "\"poses\":" +
            std::string(std::filesystem::is_regular_file(map_dir / "poses.txt") ? "true" : "false") +
@@ -2917,6 +2902,7 @@ std::string MapPipelineCore::BuildOctomapArtifactJson(const std::string &map_id,
     backups =
         BackupNamedArtifacts(store_, id, map_dir, transaction_dir, OctomapArtifactNames());
 
+    CopySavedSourceAuxiliaryArtifacts(map_dir, staging_map_dir);
     const auto octomap = BuildOctomapArtifactInDirectory(id, staging_map_dir, options, true);
     if (!JsonSucceeded(octomap)) {
       RollbackTransactionArtifacts(backups);
@@ -3308,8 +3294,7 @@ std::string MapPipelineCore::BuildNavigationPackageJson(const std::string &map_i
              "\"rolled_back\":true"
              "}";
     }
-    backups = BackupTransactionArtifacts(
-        store_, id, map_dir, transaction_dir, include_esdf, include_traversability);
+    backups = BackupTransactionArtifacts(store_, id, map_dir, transaction_dir);
 
     const auto occupancy = BuildOccupancyProjectionSnapshot(staging_map_dir, true);
     if (!occupancy.ok) {
@@ -3389,6 +3374,7 @@ std::string MapPipelineCore::BuildNavigationPackageJson(const std::string &map_i
       }
     }
 
+    CopySavedSourceAuxiliaryArtifacts(map_dir, staging_map_dir);
     const auto octomap = BuildOctomapArtifactInDirectory(id, staging_map_dir, options, false);
     if (!JsonSucceeded(octomap)) {
       RollbackTransactionArtifacts(backups);

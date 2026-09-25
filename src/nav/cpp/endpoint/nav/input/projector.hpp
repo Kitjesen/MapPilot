@@ -11,6 +11,7 @@
 #include "nav_kernel/types.hpp"
 #include "input/gate.hpp"
 #include "input/obstacle.hpp"
+#include "input/motion_worker.hpp"
 #include "status/nav_status_writer.hpp"
 #include "traversability/transform_buffer.hpp"
 
@@ -37,7 +38,7 @@ struct InputActions {
 class InputProjector {
  public:
   InputProjector(EndpointState &state, InputGate &gate, TransformBuffer &pose_buffer,
-                 TransformBuffer &map_odom_buffer, MotionLayer &obstacles, InputConfig config,
+                 TransformBuffer &map_odom_buffer, MotionLayer obstacles, InputConfig config,
                  InputActions actions);
 
   void apply(SensorBatch batch, TimingDiagnostics &timing);
@@ -60,7 +61,7 @@ class InputProjector {
                                   double receive_steady_s);
   void projectLocalCollision(InputSample<LocalCollisionMap> sample,
                              double receive_steady_s);
-  bool materializeObstacles(TimingDiagnostics &timing);
+  bool pollObstacles(TimingDiagnostics &timing);
 
   // Health and motion-readiness inputs.
   void projectDriverControl(const DriverControlSample &sample, double receive_steady_s);
@@ -79,7 +80,8 @@ class InputProjector {
   InputGate &gate_;
   TransformBuffer &pose_buffer_;
   TransformBuffer &map_odom_buffer_;
-  MotionLayer &obstacles_;
+  MotionWorker obstacles_;
+  double last_submitted_cloud_s_{0.0};
   InputConfig config_;
   InputActions actions_;
 };

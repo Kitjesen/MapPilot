@@ -1341,7 +1341,7 @@ ARM 停车屏障、通行图写出、14 项 RecoverySequence 与 7 项 Executor 
   generation。新增三项回归补丁前失败、补丁后通过；Recovery/Executor 共 25 项通过，
   包括 SCAN 从封闭起点等待新观测、后方出现唯一出口后输出有界后退指令。
   `teleop_avoid` 仍遵循操作者方向，不因这次修改擅自后退；碰撞判断没有放宽。
-- 通行图：原生全局规划器输出 `nav.status.json.planning-map.json`（实机为配置的
+- 通行图（历史功能，2026-09-24 源码已移除，尚未部署；见[当前交接](../../../../docs/operations/go2-offline-mapping.md)）：原生全局规划器曾输出 `nav.status.json.planning-map.json`（实机为配置的
   nav status 路径追加 `.planning-map.json`）。同源查询地面支撑和机身净空，单一高度层，
   不合并上下楼层。0=缺少支撑/未判定，1=满足静态通行条件，2=占据/净空受阻。
   完整投影在后台计算，同地图、同高度层复用；超过格数预算明确不可用，不抽样冒充完整图。

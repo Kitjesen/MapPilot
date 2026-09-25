@@ -39,8 +39,11 @@ _OCTOPLANNER_CONFIG = {
     "octoplanner3d_max_iterations": ("LINGTU_NAV_OCTO_MAX_ITERATIONS", 500000),
     "octoplanner3d_snap_search_radius_cells": ("LINGTU_NAV_OCTO_SNAP_RADIUS_CELLS", 24),
     "octoplanner3d_require_ground_support": ("LINGTU_NAV_OCTO_REQUIRE_GROUND_SUPPORT", True),
-    "octoplanner3d_strict_direct_ground_support": ("LINGTU_NAV_OCTO_STRICT_GROUND_SUPPORT", True),
-    "octoplanner3d_ground_support_xy_radius_cells": ("LINGTU_NAV_OCTO_GROUND_SUPPORT_XY_RADIUS_CELLS", 0),
+    # Match OctoPlanner3D's supported-neighbour fallback. A saved LiDAR map
+    # can have a missing floor voxel directly below the body while adjacent
+    # occupied floor cells still prove the robot is standing on a surface.
+    "octoplanner3d_strict_direct_ground_support": ("LINGTU_NAV_OCTO_STRICT_GROUND_SUPPORT", False),
+    "octoplanner3d_ground_support_xy_radius_cells": ("LINGTU_NAV_OCTO_GROUND_SUPPORT_XY_RADIUS_CELLS", 1),
     "octoplanner3d_ground_support_depth_cells": ("LINGTU_NAV_OCTO_GROUND_SUPPORT_DEPTH_CELLS", 2),
     "octoplanner3d_support_height_m": ("LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M", 0.0),
     "octoplanner3d_support_height_tolerance_m": ("LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M", 0.0),
@@ -312,11 +315,12 @@ class NativeNavConfig:
             "LINGTU_NAV_WAYPOINT_REACHED_M": _env_number(parameters["waypoint_reached_m"]),
         }
         env.update(_octoplanner_environment(self.native_nav["octoplanner3d"]))
-        if float(env["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M"]) > 0.0:
-            # A calibrated support height selects body-origin routes. Global
-            # body checks and Mapd inflation then consume the same envelope.
-            env["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"] = env["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"]
-            env["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"] = env["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"]
+        # Native route vertices are body poses in both envs. Ground-support
+        # calibration must not disable the physical collision envelope.
+        env["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"] = env["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"]
+        env["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"] = env["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"]
+        # A snapped route endpoint must satisfy the same XY arrival gate as execution.
+        env["LINGTU_NAV_OCTO_TERMINAL_GOAL_XY_TOLERANCE_M"] = env["LINGTU_NAV_GOAL_REACHED_M"]
         return env
 
     def as_dict(self) -> dict[str, Any]:
@@ -403,6 +407,9 @@ def compile_native_nav_config(
         raise ValueError(
             "native_nav teleop_avoid must enable obstacle checks and teleop local planner"
         )
+    # SCAN consumes Mapd's 3D collision volume, not the CMU terrain-cost grid.
+    if local_planner == "scan":
+        native_nav["use_traversability_cost"] = False
     vehicle_length_m = _finite_number(config, "vehicle_length_m", 1.0)
     vehicle_width_m = _finite_number(config, "vehicle_width_m", 0.6)
     vehicle_height_m = _finite_number(config, "vehicle_height_m", 0.5)

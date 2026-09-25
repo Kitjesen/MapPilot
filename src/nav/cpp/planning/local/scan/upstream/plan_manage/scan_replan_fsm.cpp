@@ -206,12 +206,9 @@ FsmOutput SCANReplanFSM::checkFutureCollision(const FsmInput &input) {
         info.position_traj_.evaluateDeBoorT(nextTime);
     const Eigen::Vector3d tangent = info.velocity_traj_.evaluateDeBoorT(time);
     const Eigen::Vector3d nextTangent = info.velocity_traj_.evaluateDeBoorT(nextTime);
-    const double chordYaw = estimateYawFromSegment(position, nextPosition);
-    if (plannerManager_.grid_map_->getInflateOccupancySegment(
-            position, tangent.head<2>().squaredNorm() > 1e-8
-                          ? std::atan2(tangent.y(), tangent.x()) : chordYaw,
-            nextPosition, nextTangent.head<2>().squaredNorm() > 1e-8
-                              ? std::atan2(nextTangent.y(), nextTangent.x()) : chordYaw) == 0) {
+    if (plannerManager_.grid_map_->getTrajectoryOccupancySegment(
+            position, tangent, nextPosition, nextTangent,
+            time - currentTime, nextTime - currentTime) == 0) {
       continue;
     }
 

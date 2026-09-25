@@ -67,6 +67,7 @@ def init_core_state(
     gw._sse_queue_loops: dict[asyncio.Queue, asyncio.AbstractEventLoop | None] = {}
     gw._sse_queue_event_types: dict[asyncio.Queue, set[str] | None] = {}
     gw._sse_queue_elevation_payload: dict[asyncio.Queue, bool] = {}
+    gw._sse_reliable_seq: dict[asyncio.Queue, int] = {}
     gw._sse_queue_maxsize = DEFAULT_SSE_QUEUE_MAXSIZE
     gw._sse_event_seq = 0
     gw._sse_published_events = 0

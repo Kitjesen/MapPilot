@@ -60,6 +60,10 @@ void validate(const Config &cfg) {
     throw std::runtime_error("domain id must be nonnegative");
   }
   if (cfg.robot == "go2") {
+    if (!std::isfinite(cfg.tilt_limit_deg) || cfg.tilt_limit_deg <= 0.0 ||
+        cfg.tilt_limit_deg >= 90.0) {
+      throw std::runtime_error("Go2 tilt limit must be within (0, 90) degrees");
+    }
     if (cfg.network_interface.empty() ||
         cfg.network_interface.find_first_not_of(
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.:-") !=
@@ -119,6 +123,7 @@ Config loadConfig(int argc, char **argv) {
   cfg.robot = envString("LINGTU_DRIVER_BACKEND", "");
   cfg.domain_id = static_cast<int>(envLong("LINGTU_DDS_DOMAIN_ID", 0));
   cfg.network_interface = envString("LINGTU_DRIVER_NETWORK_INTERFACE", "");
+  cfg.tilt_limit_deg = envDouble("LINGTU_DRIVER_TILT_LIMIT_DEG", 30.0);
   cfg.host = envString("LINGTU_BRAINSTEM_HOST", "127.0.0.1");
   cfg.port = checkedPort(envLong("LINGTU_BRAINSTEM_PORT", 13145));
   cfg.brainstem_tls.ca_file =

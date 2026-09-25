@@ -20,7 +20,7 @@ test.after(() => {
   else testGlobals.window = originalWindow
 })
 
-test('legacy saved-map response without epoch remains displayable at full viewer density', async () => {
+test('legacy saved-map response without epoch remains displayable within the native JSON display budget', async () => {
   const requestedUrls: string[] = []
   globalThis.fetch = async (input: string | URL | Request) => {
     requestedUrls.push(String(input))
@@ -40,7 +40,7 @@ test('legacy saved-map response without epoch remains displayable at full viewer
   assert.deepEqual(cloud.points, [0, 1, 2, 3, 4, 5])
   assert.equal(cloud.frameId, 'map')
   assert.equal(cloud.epoch, null)
-  assert.deepEqual(requestedUrls, ['/api/v1/maps/field-map/points?max_points=80000'])
+  assert.deepEqual(requestedUrls, ['/api/v1/maps/field-map/points?max_points=30000'])
 })
 
 test('present but invalid saved-map epoch is still rejected', async () => {

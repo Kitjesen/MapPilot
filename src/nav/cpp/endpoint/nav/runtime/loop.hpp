@@ -35,8 +35,12 @@ struct PostPlanningInputReadinessResult {
 inline PostPlanningInputReadinessResult enforcePostPlanningInputReadiness(
     const nav_kernel::Twist &command, const InputGateState &input_gate,
     const std::function<bool(const std::string &)> &stop_motion,
-    bool manual_mode = false) {
+    bool manual_mode = false, bool sample_fresh = true) {
   const bool command_is_zero = command.vx == 0.0 && command.vy == 0.0 && command.wz == 0.0;
+  if (!command_is_zero && !sample_fresh) {
+    const std::string reason = "teleop_sample_expired";
+    return {false, true, stop_motion(reason), reason};
+  }
   const bool manual_input_bypass = manual_mode && manualModeMayBypassInputGate(input_gate);
   if (manual_input_bypass || command_is_zero || input_gate.ready) {
     return {};
@@ -76,7 +80,6 @@ class OperatorMotionAuthority;
 class CommandIngressController;
 class NavigationStateTracker;
 class InspectionStatusFileWriter;
-class PlanningMapWriter;
 class SemanticViewQuery;
 
 /// All external state the endpoint main-loop needs.  Constructed once in
@@ -129,7 +132,6 @@ struct EndpointLoopContext {
 
   // -- Timing (current_timing is shared with setup-phase lambdas) -----------
   TimingDiagnostics *&current_timing;
-  PlanningMapWriter *planning_map_writer{nullptr};
   SemanticViewQuery *semantic_view_query{nullptr};
 };
 

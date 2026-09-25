@@ -9,6 +9,7 @@
 #endif
 #include "LingTuSimGameSelection.h"
 #include "LingTuSimHudScreenshotContract.h"
+#include "LingTuSimInspectionProjection.h"
 #include "LingTuSimRobotDriveInput.h"
 #include "LingTuSimRuntimeUIModel.h"
 #include "LingTuSimRuntimeUIPolicy.h"
@@ -1797,5 +1798,127 @@ bool FLingTuRuntimeUIFrontEndScreenshotPolicyTest::RunTest(const FString &Parame
   return true;
 }
 #endif
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLingTuRuntimeUIInspectionProjectionTrustTest,
+                                 "LingTuSim.UI.Runtime.InspectionProjection.Trust",
+                                 EAutomationTestFlags::EditorContext |
+                                     EAutomationTestFlags::EngineFilter)
+
+bool FLingTuRuntimeUIInspectionProjectionTrustTest::RunTest(const FString &Parameters) {
+  (void)Parameters;
+  const FString TaskJson = TEXT(
+      "{\"schema_version\":\"lingtu.inspection.task.v1\",\"found\":true,"
+      "\"task_id\":\"task-42\",\"current_state\":\"EXECUTING\","
+      "\"phase\":\"NAVIGATING\",\"state_source\":\"native_task_event\","
+      "\"execution_confirmed\":true,\"terminal\":false,\"reason\":\"\","
+      "\"identity\":{\"task_id\":\"task-42\",\"route_id\":\"route-a\","
+      "\"route_revision\":7,\"map_id\":\"field-map\",\"map_content_epoch\":3},"
+      "\"delivery\":{\"history_complete\":true,\"continuity\":\"verified\"},"
+      "\"progress\":{\"known\":true,\"completed_points\":1,\"point_count\":3,"
+      "\"current_point_number\":2,\"current_point_id\":\"transformer-b\","
+      "\"action\":\"capture:overview\"}}" );
+  LingTuSim::UI::FInspectionProjection Projection;
+  LingTuSim::UI::FInspectionExpectedBinding ExpectedBinding;
+  ExpectedBinding.MapId = TEXT("field-map");
+  ExpectedBinding.MapContentEpoch = 3;
+  ExpectedBinding.RouteRevision = 7;
+  ExpectedBinding.bConfigured = true;
+  FString Error;
+  TestTrue(TEXT("confirmed continuous task parses"),
+           LingTuSim::UI::FInspectionProjectionParser::ParseTask(
+               TaskJson, TEXT("task-42"), ExpectedBinding, Projection, Error));
+  TestTrue(TEXT("confirmed continuous progress is displayable"), Projection.bProgressVerified);
+  TestEqual(TEXT("current point identity is retained"), Projection.CurrentPointId,
+            FString(TEXT("transformer-b")));
+
+  const FString ReportJson = TEXT(
+      "{\"schema_version\":\"lingtu.inspection.report.v1\",\"task_id\":\"task-42\","
+      "\"report_status\":\"IN_PROGRESS\",\"acceptance\":\"PENDING\","
+      "\"terminal\":false,\"execution\":{\"state\":\"EXECUTING\",\"confirmed\":true,"
+      "\"history_complete\":true},\"identity\":{\"route_id\":\"route-a\","
+      "\"route_revision\":7,\"map_id\":\"field-map\",\"map_content_epoch\":3},"
+      "\"coverage\":{\"required_evidence\":3,\"verified_evidence\":1}}" );
+  LingTuSim::UI::FInspectionProjection WithReport;
+  TestTrue(TEXT("identity-matched report parses"),
+           LingTuSim::UI::FInspectionProjectionParser::ParseReport(
+               ReportJson, Projection, WithReport, Error));
+  TestTrue(TEXT("report acceptance is independently verified"), WithReport.bReportVerified);
+  TestEqual(TEXT("report acceptance remains pending"), WithReport.Acceptance,
+            FString(TEXT("PENDING")));
+
+  LingTuSim::UI::FInspectionProjection Rejected;
+  TestFalse(TEXT("wrong task identity is rejected"),
+            LingTuSim::UI::FInspectionProjectionParser::ParseTask(
+                TaskJson, TEXT("other-task"), ExpectedBinding, Rejected, Error));
+
+  LingTuSim::UI::FInspectionExpectedBinding WrongMap = ExpectedBinding;
+  WrongMap.MapId = TEXT("other-map");
+  TestTrue(TEXT("launcher map mismatch remains diagnosable"),
+           LingTuSim::UI::FInspectionProjectionParser::ParseTask(
+               TaskJson, TEXT("task-42"), WrongMap, Rejected, Error));
+  TestFalse(TEXT("launcher map mismatch suppresses progress"), Rejected.bProgressVerified);
+  TestFalse(TEXT("launcher map mismatch is not verified"), Rejected.bLauncherBindingVerified);
+  TestEqual(TEXT("launcher map mismatch has a blocker"), Rejected.IdentityBlocker,
+            FString(TEXT("launcher_expected_map_id_mismatch")));
+
+  LingTuSim::UI::FInspectionExpectedBinding MissingBinding;
+  TestTrue(TEXT("missing launcher binding remains diagnosable"),
+           LingTuSim::UI::FInspectionProjectionParser::ParseTask(
+               TaskJson, TEXT("task-42"), MissingBinding, Rejected, Error));
+  TestFalse(TEXT("missing launcher binding suppresses progress"), Rejected.bProgressVerified);
+  TestEqual(TEXT("missing launcher binding has a blocker"), Rejected.IdentityBlocker,
+            FString(TEXT("launcher_expected_binding_missing")));
+
+  const FString UnsafeIntegerJson =
+      TaskJson.Replace(TEXT("\"route_revision\":7"),
+                       TEXT("\"route_revision\":9007199254740992"));
+  TestFalse(TEXT("integer above JSON safe range is rejected"),
+            LingTuSim::UI::FInspectionProjectionParser::ParseTask(
+                UnsafeIntegerJson, TEXT("task-42"), ExpectedBinding, Rejected, Error));
+
+  const FString NonNativeSourceJson =
+      TaskJson.Replace(TEXT("\"state_source\":\"native_task_event\""),
+                       TEXT("\"state_source\":\"business_ack_only\""));
+  TestFalse(TEXT("confirmed execution requires a native state source"),
+            LingTuSim::UI::FInspectionProjectionParser::ParseTask(
+                NonNativeSourceJson, TEXT("task-42"), ExpectedBinding, Rejected, Error));
+
+  const FString ImpossibleTerminalJson =
+      TaskJson.Replace(TEXT("\"terminal\":false"), TEXT("\"terminal\":true"));
+  TestFalse(TEXT("nonterminal execution state cannot be terminal"),
+            LingTuSim::UI::FInspectionProjectionParser::ParseTask(
+                ImpossibleTerminalJson, TEXT("task-42"), ExpectedBinding, Rejected, Error));
+  return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLingTuRuntimeUIInspectionProjectionContinuityTest,
+                                 "LingTuSim.UI.Runtime.InspectionProjection.Continuity",
+                                 EAutomationTestFlags::EditorContext |
+                                     EAutomationTestFlags::EngineFilter)
+
+bool FLingTuRuntimeUIInspectionProjectionContinuityTest::RunTest(const FString &Parameters) {
+  (void)Parameters;
+  const FString TaskJson = TEXT(
+      "{\"schema_version\":\"lingtu.inspection.task.v1\",\"found\":true,"
+      "\"task_id\":\"task-42\",\"current_state\":\"SUCCESS\","
+      "\"phase\":\"SUCCEEDED\",\"state_source\":\"continuity_monitor\","
+      "\"execution_confirmed\":false,\"terminal\":true,\"reason\":\"endpoint_restarted\","
+      "\"identity\":{\"task_id\":\"task-42\",\"route_id\":\"route-a\","
+      "\"route_revision\":7,\"map_id\":\"field-map\",\"map_content_epoch\":3},"
+      "\"delivery\":{\"history_complete\":false,\"continuity\":\"unknown\"},"
+      "\"progress\":{\"known\":true,\"completed_points\":3,\"point_count\":3,"
+      "\"current_point_number\":null,\"current_point_id\":\"\",\"action\":\"\"}}" );
+  LingTuSim::UI::FInspectionProjection Projection;
+  LingTuSim::UI::FInspectionExpectedBinding ExpectedBinding;
+  ExpectedBinding.MapId = TEXT("field-map");
+  ExpectedBinding.MapContentEpoch = 3;
+  ExpectedBinding.RouteRevision = 7;
+  ExpectedBinding.bConfigured = true;
+  FString Error;
+  TestFalse(TEXT("unconfirmed terminal snapshot is rejected"),
+            LingTuSim::UI::FInspectionProjectionParser::ParseTask(
+                TaskJson, TEXT("task-42"), ExpectedBinding, Projection, Error));
+  return true;
+}
 
 #endif

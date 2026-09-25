@@ -1214,7 +1214,7 @@ tarball = Path(tarball_path)
 artifact = {
     "name": "lingtu-native-release",
     "category": "package",
-    "version": version.removeprefix("v"),
+    "version": version[1:],
     "filename": tarball.name,
     "sha256": tarball_sha,
     "size_bytes": tarball.stat().st_size,
@@ -1270,12 +1270,12 @@ Path(manifest_path).write_text(
 )
 
 system_manifest = {
-    "system_version": version.removeprefix("v"),
+    "system_version": version[1:],
     "build_time": build_time,
     "release_format": "lingtu.native-release.v1",
     "components": {
         "lingtu-native-release": {
-            "version": version.removeprefix("v"),
+            "version": version[1:],
             "git_commit": commit,
             "sha256": tarball_sha,
         }

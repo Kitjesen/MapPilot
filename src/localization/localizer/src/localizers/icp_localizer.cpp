@@ -562,10 +562,18 @@ bool ICPLocalizer::alignPlanar(
 
     const M4F seed = guess;
     M4F best = seed;
-    double best_fitness = m_last_fitness_score;
     int completed_iterations = 0;
     const double max_distance_sq =
         max_correspondence_distance_m * max_correspondence_distance_m;
+    // Use the same capped residual as seed candidate selection. Inlier-only
+    // MSE can rise when a better pose brings previously unmatched points into
+    // correspondence; treating that as a regression traps the search early.
+    const auto capped_error = [&]() {
+        const double overlap = static_cast<double>(m_last_inliers) /
+            static_cast<double>(m_last_evaluated_points);
+        return overlap * m_last_fitness_score + (1.0 - overlap) * max_distance_sq;
+    };
+    double best_error = capped_error();
     const double huber_threshold =
         std::max(0.02, 0.5 * max_correspondence_distance_m);
     const CloudType::ConstPtr target = m_refine_tree.getInputCloud();
@@ -699,9 +707,10 @@ bool ICPLocalizer::alignPlanar(
             break;
         }
         ++completed_iterations;
-        if (m_last_fitness_score <= best_fitness) {
+        const double candidate_error = capped_error();
+        if (candidate_error <= best_error) {
             best = candidate;
-            best_fitness = m_last_fitness_score;
+            best_error = candidate_error;
             current = candidate;
         } else {
             break;

@@ -188,11 +188,13 @@ class RgbdObservationSource:
                 K=K,
                 D=D,
             )
-            if points is not None and len(points) > 0:
-                centroid = pointcloud_centroid(points)
-                center_depth = float(np.linalg.norm(centroid - transform[:3, 3]))
-
-        if centroid is None:
+            if points is None or len(points) == 0:
+                # A supplied mask defines the target. Its missing depth cannot
+                # be replaced by unrelated background at the box centre.
+                return None
+            centroid = pointcloud_centroid(points)
+            center_depth = float(np.linalg.norm(centroid - transform[:3, 3]))
+        else:
             center_depth = bbox_center_depth(
                 depth,
                 detection.bbox,

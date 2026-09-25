@@ -46,6 +46,10 @@ the C++ SLAM backend. A missing Cargo executable is a build-environment error;
 running an already-built SLAM release does not require Cargo.
 
 For a new checkout, prepare the pinned native dependencies, then build SLAM.
+The manifest includes GTSAM for the fixed-gravity mapping optimizer. Existing
+dependency prefixes must be refreshed before rebuilding this optimizer. The
+2026-09-24 adapter was exercised on NX with GTSAM 4.0.2; that result does not
+establish Windows build parity.
 The preparation steps need network access on their first run. Run from the
 repository root in a Visual Studio developer PowerShell 7 session:
 

@@ -49,14 +49,25 @@ class LowState_ {
   std::uint32_t tick_{0};
   std::array<MotorState_, 20> motors_;
 };
+class IMUState_ {
+ public:
+  const std::array<float, 3>& rpy() const { return rpy_; }
+  std::array<float, 3>& rpy() { return rpy_; }
+ private:
+  std::array<float, 3> rpy_{};
+};
 class SportModeState_ {
  public:
+  const IMUState_& imu_state() const { return imu_; }
+  IMUState_& imu_state() { return imu_; }
   std::uint32_t error_code() const { return 0; }
   std::uint8_t mode() const { return 1; }
   std::array<float, 3> position() const { return {}; }
   std::array<float, 3> velocity() const { return {}; }
   float yaw_speed() const { return 0; }
   float body_height() const { return 0.3F; }
+ private:
+  IMUState_ imu_;
 };
 }  // namespace unitree_go::msg::dds_
 

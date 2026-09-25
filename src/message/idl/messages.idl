@@ -385,6 +385,9 @@ struct MapObservation {
   Header header;
   unsigned long long observation_sequence;
   unsigned long long reset_epoch;
+  // Empty during mapping; binds localization observations to saved geometry.
+  string reference_map_id;
+  long long reference_map_content_epoch;
   string sensor_frame;
   Transform map_sensor;
   Vector3 sensor_origin;
@@ -532,6 +535,9 @@ struct MapCollisionLayer {
   Point aabb_max;
   boolean complete;
   sequence<octet> inflated_occupied_bits;
+  // Same generation, geometry and bit order; neither bit is unknown.
+  sequence<octet> measured_occupied_bits;
+  sequence<octet> known_free_bits;
 };
 @final
 struct MapGrid {

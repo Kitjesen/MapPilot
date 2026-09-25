@@ -1,4 +1,5 @@
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 
@@ -80,7 +81,33 @@ int main() {
       require(body->refresh().ok, "reconnect failed");
       expectCalls({"stop", "get", "disable", "get"});
     }
-    std::cout << "Go2 acquisition, failures, hot path and reconnect passed\n";
+    {
+      auto body = makeBody();
+      require(body->refresh().state.ready, "level robot not ready");
+      unitree_go::msg::dds_::SportModeState_ state;
+      // Combined roll/pitch can exceed the limit even if each is below it.
+      state.imu_state().rpy() = {0.4F, 0.4F, 2.0F};
+      fake_unitree::state_callback(&state);
+      require(!body->health().healthy && body->health().reason == "tilt_limit_exceeded",
+              "combined tilt not reported");
+      require(!body->refresh().state.ready, "tilted robot ready");
+      fake_unitree::calls.clear();
+      require(!body->move({0.1, 0, 0}).accepted, "tilted robot forwarded movement");
+      expectCalls({});
+      require(body->move({}).accepted, "tilt blocked zero command");
+      expectCalls({"stop"});
+      require(body->act(lingtu::driver::BodyAction::Recover).accepted, "tilt blocked recovery");
+      state.imu_state().rpy() = {std::numeric_limits<float>::quiet_NaN(), 0, 0};
+      fake_unitree::state_callback(&state);
+      require(!body->health().healthy && body->health().reason == "imu_attitude_invalid",
+              "invalid IMU accepted");
+      require(body->stop().confirmsStop(), "invalid IMU blocked confirmed stop/release");
+      state.imu_state().rpy() = {0.1F, -0.1F, 3.0F};
+      fake_unitree::state_callback(&state);
+      require(body->health().healthy && body->refresh().state.ready,
+              "level attitude did not restore readiness");
+    }
+    std::cout << "Go2 acquisition, tilt, failures, hot path and reconnect passed\n";
     return 0;
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

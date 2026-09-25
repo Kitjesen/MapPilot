@@ -117,8 +117,8 @@ struct CliConfig {
   double live_obstacle_decay_s{0.45};
   double live_obstacle_inflation_radius_m{0.12};
   double live_obstacle_ray_clear_max_range_m{3.5};
-  double live_obstacle_ray_clearing_interval_s{0.33};
-  std::size_t live_obstacle_max_clearing_rays{160};
+  double live_obstacle_ray_clearing_interval_s{0.10};
+  std::size_t live_obstacle_max_clearing_rays{512};
   int live_obstacle_min_hits{1};
   std::size_t dynamic_min_cells{8};
   double dynamic_min_speed_mps{0.25};

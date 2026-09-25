@@ -14,7 +14,7 @@ double nearestRank(const std::vector<double> &sorted_values, double quantile) {
   return sorted_values[rank - 1];
 }
 
-MetricDistribution summarize(std::vector<double> values) {
+MetricDistribution summarize(std::vector<double> &values) {
   MetricDistribution result;
   if (values.empty()) {
     return result;
@@ -52,6 +52,9 @@ ControlLoopHealth::ControlLoopHealth(ControlLoopHealthConfig config) : config_(s
   if (config_.consecutive_miss_limit == 0) {
     throw std::invalid_argument("consecutive miss limit must be positive");
   }
+  for (auto &values : scratch_) {
+    values.reserve(config_.window_size);
+  }
 }
 
 bool ControlLoopHealth::observe(ControlLoopSample sample) {
@@ -61,8 +64,8 @@ bool ControlLoopHealth::observe(ControlLoopSample sample) {
     return false;
   }
   const double work_ms = std::max(0.0, sample.loop_ms - sample.sleep_ms);
-  const StoredSample stored{work_ms, sample.loop_ms, sample.overrun_ms, work_ms / config_.period_ms,
-                            sample.overrun_ms > 0.0};
+  const StoredSample stored{work_ms, sample.loop_ms, sample.overrun_ms,
+                            sample.overrun_ms > 0.0, sample.stages_ms};
   window_.push_back(stored);
   if (window_.size() > config_.window_size) {
     window_.pop_front();
@@ -74,10 +77,32 @@ bool ControlLoopHealth::observe(ControlLoopSample sample) {
   } else {
     current_miss_streak_ = 0;
   }
+  cache_valid_ = false;
   return true;
 }
 
-ControlLoopHealthSnapshot ControlLoopHealth::snapshot() const {
+ControlLoopHealthSnapshot ControlLoopHealth::withHistory(bool include_history) const {
+  auto result = cached_;
+  if (include_history) {
+    auto &history = result.history;
+    history.first_sequence = total_samples_ - window_.size() + 1;
+    history.overruns_ms.reserve(window_.size());
+    auto sequence = history.first_sequence;
+    for (const auto &sample : window_) {
+      history.overruns_ms.push_back(sample.overrun_ms);
+      if (sample.deadline_miss) {
+        history.overruns.push_back({sequence, sample.work_ms, sample.stages_ms});
+      }
+      ++sequence;
+    }
+  }
+  return result;
+}
+
+ControlLoopHealthSnapshot ControlLoopHealth::snapshot(bool include_history) const {
+  if (cache_valid_) {
+    return withHistory(include_history);
+  }
   ControlLoopHealthSnapshot result;
   result.period_ms = config_.period_ms;
   result.window_samples = window_.size();
@@ -85,31 +110,28 @@ ControlLoopHealthSnapshot ControlLoopHealth::snapshot() const {
   result.current_miss_streak = current_miss_streak_;
   result.max_miss_streak = max_miss_streak_;
 
-  std::vector<double> loop_values;
-  std::vector<double> work_values;
-  std::vector<double> overrun_values;
-  std::vector<double> utilization_values;
-  loop_values.reserve(window_.size());
-  work_values.reserve(window_.size());
-  overrun_values.reserve(window_.size());
-  utilization_values.reserve(window_.size());
+  auto &loop_values = scratch_[0];
+  auto &work_values = scratch_[1];
+  auto &overrun_values = scratch_[2];
+  for (auto &values : scratch_) {
+    values.clear();
+  }
 
   for (const auto &sample : window_) {
     loop_values.push_back(sample.loop_ms);
     work_values.push_back(sample.work_ms);
     overrun_values.push_back(sample.overrun_ms);
-    utilization_values.push_back(sample.utilization);
     if (sample.deadline_miss) {
       ++result.deadline_misses;
     }
   }
 
-  result.loop_ms = summarize(std::move(loop_values));
-  result.work_ms = summarize(std::move(work_values));
-  result.overrun_ms = summarize(std::move(overrun_values));
-  const auto utilization = summarize(std::move(utilization_values));
-  result.p95_utilization = utilization.p95;
-  result.max_utilization = utilization.max;
+  result.loop_ms = summarize(loop_values);
+  result.work_ms = summarize(work_values);
+  result.overrun_ms = summarize(overrun_values);
+  // Division by one fixed positive period preserves percentile ordering.
+  result.p95_utilization = result.work_ms.p95 / config_.period_ms;
+  result.max_utilization = result.work_ms.max / config_.period_ms;
 
   if (!window_.empty()) {
     result.deadline_miss_ratio =
@@ -118,7 +140,9 @@ ControlLoopHealthSnapshot ControlLoopHealth::snapshot() const {
 
   result.ready = window_.size() >= config_.minimum_samples;
   if (!result.ready) {
-    return result;
+    cached_ = result;
+    cache_valid_ = true;
+    return withHistory(include_history);
   }
 
   if (current_miss_streak_ >= config_.consecutive_miss_limit) {
@@ -131,7 +155,9 @@ ControlLoopHealthSnapshot ControlLoopHealth::snapshot() const {
     result.healthy = true;
     result.reason = "healthy";
   }
-  return result;
+  cached_ = result;
+  cache_valid_ = true;
+  return withHistory(include_history);
 }
 
 }  // namespace lingtu::nav::endpoint

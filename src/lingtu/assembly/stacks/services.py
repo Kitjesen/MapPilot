@@ -39,9 +39,15 @@ def services(
         bp.add(
             HostBus,
             alias="host.bus",
-            require_map_scene=(
-                TOPICS.maps_state in required_topic_set
-                or TOPICS.maps_scene in required_topic_set
+            # MapScene is a display stream. Native navigation owns the live
+            # collision map, so a large saved scene must not block Host
+            # readiness or ProductControl startup.
+            require_map_scene=bool(
+                config.get(
+                    "require_map_scene",
+                    TOPICS.maps_state in required_topic_set
+                    or TOPICS.maps_scene in required_topic_set,
+                )
             ),
             require_inspection_task_events=(
                 TOPICS.inspection_task_event in required_topic_set

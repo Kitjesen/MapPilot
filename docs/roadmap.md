@@ -155,6 +155,27 @@ recovery, robot-position propagation and concrete strategy API regressions are
 covered in `tests/decision/test_semantic_planner_task_lifecycle.py` and
 `tests/decision/test_strategy_service_contracts.py`.
 
+### Inspection task and motion planning
+
+The [inspection execution plan](../research/semantic/inspection_motion_plan.md)
+centres route planning, native motion and recovery, observation viewpoints,
+and explicitly selected person following. It separates existing source support
+from missing end-to-end evidence and proposes platform-specific acceptance
+targets. Start with three-point inspection and terminal motion evidence;
+shared detection and asynchronous review remain supporting workstreams.
+The proposal does not change the existing release or field safety gates.
+
+### Edge following, speech, and patrol integration
+
+The [edge integration flow](../research/semantic/edge_follow_patrol_integration.md)
+maps the reviewed RDK patrol implementation to existing LingTu owners. Open work
+includes real detector/ReID assembly, time-aligned target coordinates across
+localization corrections, shared 2-D observations for patrol rules, and offline
+speech. The current MuJoCo shirt-color fixture and local following tests do not
+establish learned person detection or field identity retention. Integrate and
+validate these capabilities without adding a second camera, lifecycle, or motion
+owner.
+
 ## Terrain research threshold
 
 Do not add PCA ground segmentation merely because another project uses it.

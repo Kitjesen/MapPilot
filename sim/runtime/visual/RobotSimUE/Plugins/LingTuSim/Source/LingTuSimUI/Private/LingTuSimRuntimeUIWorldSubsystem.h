@@ -3,6 +3,7 @@
 #include "LingTuSimFrontEndLogin.h"
 #include "LingTuSimGameSelection.h"
 #include "LingTuSimHudScreenshotContract.h"
+#include "LingTuSimInspectionProjection.h"
 #include "LingTuSimRuntimeUIModel.h"
 #include "LingTuSimRuntimeUIStatus.h"
 #include "Subsystems/WorldSubsystem.h"
@@ -12,6 +13,7 @@
 #include "LingTuSimRuntimeUIWorldSubsystem.generated.h"
 
 class IInputProcessor;
+class IHttpRequest;
 class SWidget;
 class UGameViewportClient;
 
@@ -47,6 +49,12 @@ class ULingTuSimRuntimeUIWorldSubsystem final : public UTickableWorldSubsystem {
  private:
   void DetachRuntimeUI();
   void InitializeGameSelectionFromCommandLine();
+  void InitializeInspectionProjectionFromCommandLine();
+  void TickInspectionProjection(float DeltaTime);
+  void RequestInspectionTask();
+  void RequestInspectionReport();
+  void HandleInspectionTaskResponse(bool bTransportOk, int32 ResponseCode, FString Body);
+  void HandleInspectionReportResponse(bool bTransportOk, int32 ResponseCode, FString Body);
   void HandlePreviousGameSelection();
   void HandleNextGameSelection();
   void HandleGameSelectionConfirm();
@@ -69,10 +77,12 @@ class ULingTuSimRuntimeUIWorldSubsystem final : public UTickableWorldSubsystem {
   TSharedPtr<LingTuSim::UI::FFrontEndLoginModel> FrontEndLoginModel;
   TSharedPtr<LingTuSim::UI::FGameSelectionModel> GameSelectionModel;
   TSharedPtr<LingTuSim::UI::FAssetReviewModel> AssetReviewModel;
+  TSharedPtr<LingTuSim::UI::FInspectionProjection> InspectionProjection;
   TSharedPtr<FString> GameSelectionFeedback;
   TSharedPtr<LingTuSim::UI::SLingTuSimRuntimeHUD> RuntimeHUDWidget;
   TSharedPtr<SWidget> HUDWidget;
   TSharedPtr<IInputProcessor> InputProcessor;
+  TSharedPtr<IHttpRequest> InspectionRequest;
   TWeakObjectPtr<UGameViewportClient> AttachedViewport;
   bool bInputProcessorRegistered = false;
   bool bEligibleContextRegistered = false;
@@ -85,6 +95,7 @@ class ULingTuSimRuntimeUIWorldSubsystem final : public UTickableWorldSubsystem {
   bool bGameSelector = false;
   bool bGameSelectorExitOnConfirm = false;
   bool bPlayerInputModeInitialized = false;
+  bool bInspectionRequestInFlight = false;
   LingTuSim::UI::ERuntimeUIMode AppliedPlayerInputMode = LingTuSim::UI::ERuntimeUIMode::Drive;
   int32 HudFramesSinceAttach = 0;
   int32 NextHudScreenshotIndex = 0;
@@ -93,6 +104,11 @@ class ULingTuSimRuntimeUIWorldSubsystem final : public UTickableWorldSubsystem {
   FString PendingExitEventId;
   FString GameSelectionCatalogPath;
   FString GameSelectionIntentPath;
+  FString InspectionGatewayUrl;
+  FString InspectionTaskId;
+  LingTuSim::UI::FInspectionExpectedBinding InspectionExpectedBinding;
+  float InspectionPollElapsedSeconds = 0.0F;
+  double LastSuccessfulInspectionTaskResponseSeconds = 0.0;
   TArray<FLingTuSimHudScreenshotRuntimeState> HudScreenshotCaptures;
 #if WITH_DEV_AUTOMATION_TESTS && !UE_BUILD_SHIPPING
   LingTuSim::UI::FFrontEndScreenshotDriver FrontEndScreenshotDriver;

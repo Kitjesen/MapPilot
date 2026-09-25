@@ -245,6 +245,7 @@ class Backend::Impl {
     debug_.gridTimeMs = elapsedMs(gridStarted);
     debug_.occupiedCellCount = grid.occupiedCellCount();
     debug_.collisionPointCount = grid.collisionPointCount();
+    debug_.predictedObstacleCount = grid.predictionCount();
     if (!grid.valid())
       return stop(LocalPlanStatus::InvalidInput, grid.reason());
 
@@ -428,6 +429,11 @@ class Backend::Impl {
     failure->referenceGeneration = route.generation;
     failure->referenceReachesGoal = route.reachesGoal;
     failure->collision = input.environment.collision;
+    const auto &predictions = input.environment.predictions;
+    if (predictions.count > 0 && predictions.fresh(input.clock.timestampS))
+      failure->predictions.assign(predictions.obstacles, predictions.obstacles + predictions.count);
+    failure->predictionsObservedAtS = predictions.observedAtS;
+    failure->predictionsHorizonS = predictions.horizonS;
     auto &collision = failure->collision;
     if (collision.inflatedBits != nullptr && collision.inflatedBytes > 0U &&
         (!collision.inflatedStorage ||

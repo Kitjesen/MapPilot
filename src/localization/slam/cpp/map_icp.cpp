@@ -1,5 +1,6 @@
 #include "map_icp.hpp"
 
+#include <array>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -157,53 +158,74 @@ MapIcpResult MapIcp::verifySeed(
       2.0 * std::max(
           config_.refine_scan_resolution,
           config_.refine_map_resolution));
-  if (!icp_->evaluate(map_body_guess, correspondence_distance)) {
-    fillDiagnostics(result, *icp_);
-    result.message = "map_icp_seed_unverified";
-    return result;
-  }
-  fillDiagnostics(result, *icp_);
-  result.diagnostics.refine_backend = "fixed_transform_seed_check";
-  const int evaluated_points = icp_->getLastEvaluatedPoints();
-  const double inlier_ratio = evaluated_points > 0
-      ? static_cast<double>(result.diagnostics.refine_inliers) /
-          static_cast<double>(evaluated_points)
-      : 0.0;
   constexpr double kMaxSeedRmseM = 0.12;
   const double max_seed_mse = std::min(
       kMaxSeedRmseM * kMaxSeedRmseM,
       config_.refine_score_thresh);
-  if (result.diagnostics.quality < 0.0 ||
-      result.diagnostics.quality > max_seed_mse ||
-      inlier_ratio < 0.80) {
+  const auto passes_quality = [&]() {
+    return result.diagnostics.refine_converged &&
+        result.diagnostics.quality >= 0.0 &&
+        result.diagnostics.quality <= max_seed_mse &&
+        result.diagnostics.overlap_inlier_ratio >= 0.80;
+  };
+  // A passing initial score is not a verified pose. Compare nearby solutions
+  // even for such hints, while keeping the supplied gravity/tilt fixed.
+  constexpr double kMaxXYM = 0.75;
+  constexpr double kMaxZM = 0.15;
+  constexpr double kMaxYawRad = 0.2617993877991494;
+  const std::array<Eigen::Vector3f, 7> offsets{{
+      {0.F, 0.F, 0.F}, {.3F, 0.F, 0.F}, {-.3F, 0.F, 0.F},
+      {0.F, .3F, 0.F}, {0.F, -.3F, 0.F},
+      {0.F, 0.F, static_cast<float>(kMaxYawRad / 3.)},
+      {0.F, 0.F, static_cast<float>(-kMaxYawRad / 3.)}}};
+  double best_error = std::numeric_limits<double>::infinity();
+  MapIcpResult best_result = result;
+  for (const auto& offset : offsets) {
+    M4F refined = map_body_guess;
+    refined(0, 3) += offset.x();
+    refined(1, 3) += offset.y();
+    const float c = std::cos(offset.z());
+    const float s = std::sin(offset.z());
+    Eigen::Matrix3f yaw_offset;
+    yaw_offset << c, -s, 0.F, s, c, 0.F, 0.F, 0.F, 1.F;
+    refined.block<3, 3>(0, 0) = yaw_offset * map_body_guess.block<3, 3>(0, 0);
+    const bool coarse_ok = icp_->alignPlanar(
+        refined, std::max(0.6, correspondence_distance), 40,
+        kMaxXYM, kMaxZM, kMaxYawRad);
+    const bool fine_ok = coarse_ok && icp_->alignPlanar(
+        refined, correspondence_distance, 20, kMaxXYM, kMaxZM, kMaxYawRad);
+    fillDiagnostics(result, *icp_);
+    result.diagnostics.refine_backend = "bounded_seed_planar_icp";
+    if (!fine_ok || !passes_quality()) continue;
+    const double overlap = result.diagnostics.overlap_inlier_ratio;
+    const double error = overlap * result.diagnostics.quality +
+        (1.0 - overlap) * correspondence_distance * correspondence_distance;
+    if (error < best_error) {
+      best_error = error;
+      best_result = result;
+      best_result.map_body = refined;
+      best_result.success = true;
+      best_result.message = "map_icp_seed_planar_refined";
+    }
+  }
+  if (!best_result.success) {
     result.message = "map_icp_seed_quality_rejected";
     return result;
   }
-  M4F refined = map_body_guess;
-  if (icp_->alignPlanar(refined, correspondence_distance)) {
-    fillDiagnostics(result, *icp_);
-    const int refined_points = icp_->getLastEvaluatedPoints();
-    const double refined_inlier_ratio = refined_points > 0
-        ? static_cast<double>(result.diagnostics.refine_inliers) /
-            static_cast<double>(refined_points)
-        : 0.0;
-    if (result.diagnostics.quality >= 0.0 &&
-        result.diagnostics.quality <= max_seed_mse &&
-        refined_inlier_ratio >= 0.80) {
-      result.success = true;
-      result.message = "map_icp_seed_planar_refined";
-      result.map_body = refined;
-      result.diagnostics.refine_backend = "fixed_seed_planar_icp";
-      return result;
-    }
-    icp_->evaluate(map_body_guess, correspondence_distance);
-    fillDiagnostics(result, *icp_);
-    result.diagnostics.refine_backend = "fixed_transform_seed_check";
+
+  // A better match outside the hint's capture range invalidates the hint;
+  // discarding it first would promote a worse, but in-range, false minimum.
+  const Eigen::Vector3f translation =
+      best_result.map_body.block<3, 1>(0, 3) - map_body_guess.block<3, 1>(0, 3);
+  const Eigen::Matrix3f rotation = best_result.map_body.block<3, 3>(0, 0) *
+      map_body_guess.block<3, 3>(0, 0).transpose();
+  const double yaw = std::abs(std::atan2(rotation(1, 0), rotation(0, 0)));
+  if (translation.head<2>().norm() > kMaxXYM ||
+      std::abs(translation.z()) > kMaxZM || yaw > kMaxYawRad) {
+    best_result.success = false;
+    best_result.message = "map_icp_seed_outside_search";
   }
-  result.success = true;
-  result.message = "map_icp_seed_verified";
-  result.map_body = map_body_guess;
-  return result;
+  return best_result;
 }
 
 void MapIcp::fillDiagnostics(MapIcpResult &result, const ICPLocalizer &icp) {

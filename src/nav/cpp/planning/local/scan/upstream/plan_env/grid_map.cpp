@@ -28,4 +28,13 @@ int GridMap::getInflateOccupancySegment(const Eigen::Vector3d &start, double sta
                                          {end.x(), end.y(), end.z()}, endYaw);
 }
 
+int GridMap::getTrajectoryOccupancySegment(const Eigen::Vector3d &start,
+    const Eigen::Vector3d &velocity, const Eigen::Vector3d &end,
+    const Eigen::Vector3d &endVelocity, double startAheadS, double endAheadS) const noexcept {
+  if (grid_ == nullptr) return -1;
+  return grid_->trajectoryOccupancy({start.x(), start.y(), start.z()},
+      {velocity.x(), velocity.y(), velocity.z()}, {end.x(), end.y(), end.z()},
+      {endVelocity.x(), endVelocity.y(), endVelocity.z()}, startAheadS, endAheadS);
+}
+
 }  // namespace nav_kernel::local::scan::upstream

@@ -33,6 +33,7 @@ struct ScanPlannerParams {
   double bodyClearanceBelow = 0.25;
   double bodyClearanceAbove = 0.35;
   double cylinderOffset = 0.18;
+  double cylinderRadius = 0.40;
   double controlPointSpacing = 0.20;
   double replanDistance = 1.0;
   double noReplanDistance = 0.10;
@@ -47,6 +48,12 @@ struct ScanPlannerParams {
   double velocityTolerance = 1.0;
   double accelerationTolerance = 1.0;
   double collisionDistance = 0.20;
+  // Grounded-robot extension at the GridMap seam, in metres / dz per dxy.
+  // Zero height keeps the upstream collision-only query contract.
+  double supportHeight = 0.0;
+  double supportHeightTolerance = 0.0;
+  double maxStepHeight = 0.0;
+  double maxSupportSlope = 0.0;
 };
 
 struct LocalPlannerParams {
@@ -110,6 +117,30 @@ struct LocalObstacleView {
   int count{0};
 };
 
+// Conservative swept volume of one confirmed moving cluster over a short
+// prediction horizon. Geometry is in the request's planning frame, not a map
+// mutation or a promise of time-optimal dynamic obstacle avoidance.
+struct PredictedObstacle {
+  Vec3 start{};
+  Vec3 end{};
+  double radius{0.0};
+  double minZ{0.0};
+  double maxZ{0.0};
+};
+
+struct PredictionView {
+  const PredictedObstacle *obstacles{nullptr};
+  std::size_t count{0};
+  double expiresAtS{0.0};
+  double observedAtS{0.0};
+  double horizonS{1.0};
+
+  [[nodiscard]] bool fresh(double nowS) const noexcept {
+    return (count == 0 || obstacles != nullptr) && std::isfinite(nowS) &&
+           std::isfinite(expiresAtS) && expiresAtS > 0.0 && nowS < expiresAtS;
+  }
+};
+
 struct LocalCollisionMapView {
   const std::uint8_t *inflatedBits{nullptr};
   std::size_t inflatedBytes{0U};
@@ -137,6 +168,9 @@ struct LocalCollisionMapView {
   // Endpoint-owned views cache this once while decoding the DDS bitmap.
   std::size_t occupiedCells{0U};
   bool occupiedCellsKnown{false};
+  // Immutable measured 3D evidence from the same DDS snapshot as inflation.
+  std::shared_ptr<const std::vector<std::uint8_t>> measuredOccupiedStorage{};
+  std::shared_ptr<const std::vector<std::uint8_t>> knownFreeStorage{};
 
   [[nodiscard]] bool present() const noexcept;
   [[nodiscard]] bool valid() const noexcept;
@@ -233,6 +267,7 @@ struct EnvironmentView {
   LocalObstacleView obstacles{};
   LocalCollisionMapView collision{};
   LocalTraversabilityView traversability{};
+  PredictionView predictions{};
 };
 
 using PlanIdentity = LocalPlanIdentity;
@@ -377,6 +412,8 @@ struct ScanFailureSnapshot {
   std::uint64_t referenceGeneration{0};
   bool referenceReachesGoal{false};
   LocalCollisionMapView collision;
+  std::vector<PredictedObstacle> predictions;
+  double predictionsObservedAtS{0.0}, predictionsHorizonS{1.0};
   Vec3 startPosition{}, startVelocity{}, startAcceleration{};
   Vec3 targetPosition{}, targetVelocity{};
   bool polyInit{false}, randomPolyInit{false};
@@ -397,6 +434,7 @@ struct LocalPlannerDebugSnapshot {
   int expandedNodes{0};
   int occupiedCellCount{0};
   int collisionPointCount{0};
+  std::size_t predictedObstacleCount{0};
   int trajectoryPointCount{0};
   int reboundRestarts{0};
   int optimizerEvaluations{0};

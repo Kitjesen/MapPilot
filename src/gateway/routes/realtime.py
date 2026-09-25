@@ -24,10 +24,15 @@ from gateway.services.traffic import SSE_RETRY_MS, format_sse_message, normalize
 logger = logging.getLogger(__name__)
 
 REALTIME_SEND_TIMEOUT_S = 2.0
+TELEOP_INPUT_WINDOW_S = 0.35
+TELEOP_RECEIVE_TIMEOUT_S = 3.0
 
 
 def _public_control_rejection(result: TeleopSessionResult, *, request_id: str) -> dict[str, object]:
-    if result.reason in {"authority_busy", "not_active_source", "connection_in_use"}:
+    if result.reason == "input_expired":
+        error = "input_expired"
+        message = "Teleop input expired; release and press the key again."
+    elif result.reason in {"authority_busy", "not_active_source", "connection_in_use"}:
         error = "control_in_use"
         message = "Another controller currently owns robot motion."
     else:
@@ -72,6 +77,10 @@ def register_realtime_routes(app, gw) -> None:
 
     async def ws_teleop_endpoint(ws: StarletteWebSocket):
         await ws.accept()
+
+        async def send_teleop_text(payload: str) -> None:
+            await asyncio.wait_for(ws.send_text(payload), timeout=REALTIME_SEND_TIMEOUT_S)
+
         client_id = str(ws.query_params.get("client_id") or f"teleop-ws-{id(ws)}")
         conn_id = f"teleop-{id(ws)}"
         session = NativeTeleopSession(gw, f"web:{id(ws)}")
@@ -85,27 +94,44 @@ def register_realtime_routes(app, gw) -> None:
             registry.register(conn_id, "/ws/teleop", client_id=client_id, client_ip=client_ip)
         opened = session.open()
         if not opened.accepted:
-            await ws.send_text(
-                json.dumps(
-                    {
-                        "type": "control_rejected",
-                        "error": "control_in_use",
-                        "message": "Another operator is connected.",
-                    }
+            try:
+                await send_teleop_text(
+                    json.dumps(
+                        {
+                            "type": "control_rejected",
+                            "error": "control_in_use",
+                            "message": "Another operator is connected.",
+                        }
+                    )
                 )
-            )
-            await ws.close(code=4409)
-            if registry is not None:
-                registry.unregister(conn_id)
+                await asyncio.wait_for(ws.close(code=4409), timeout=REALTIME_SEND_TIMEOUT_S)
+            except (asyncio.TimeoutError, StarletteWebSocketDisconnect):
+                pass
+            finally:
+                if registry is not None:
+                    registry.unregister(conn_id)
             return
         client_count = gw._teleop_client_connected()
         media_lifecycle = getattr(gw, "_camera_module", None)
         if media_lifecycle is not None:
             media_lifecycle.on_client_connect()
         logger.info("Teleop WS connected (%d clients)", client_count)
+        input_window: str | None = None
+        input_deadline_s = 0.0
+        input_sequence = 0
+        send_timed_out = False
+
+        def next_input_window() -> str:
+            nonlocal input_window, input_deadline_s, input_sequence
+            # Echo a one-use window; its expiry uses only the NX monotonic clock.
+            input_sequence += 1
+            input_window = str(input_sequence)
+            input_deadline_s = time.monotonic() + TELEOP_INPUT_WINDOW_S
+            return input_window
+
         try:
             while True:
-                msg = await ws.receive()
+                msg = await asyncio.wait_for(ws.receive(), timeout=TELEOP_RECEIVE_TIMEOUT_S)
                 if msg["type"] == "websocket.disconnect":
                     break
                 raw = msg.get("text")
@@ -126,17 +152,25 @@ def register_realtime_routes(app, gw) -> None:
                 if not isinstance(data, dict):
                     continue
                 msg_type = data.get("type", "")
+                if msg_type == "input_request":
+                    await send_teleop_text(json.dumps({
+                        "type": "input_ack",
+                        "request_id": str(data.get("request_id") or ""),
+                        "input_window": next_input_window(),
+                    }))
+                    continue
                 if msg_type == "velocity":
                     request_id = str(data.get("request_id") or "") or (
                         f"web-velocity-{time.monotonic_ns()}"
                     )
                     if data.get("deadman") is not True:
+                        input_window = None
                         held = await asyncio.to_thread(
                             session.hold,
                             request_id=request_id,
                         )
                         if held.accepted:
-                            await ws.send_text(
+                            await send_teleop_text(
                                 json.dumps(
                                     {
                                         "type": "control_ack",
@@ -155,7 +189,7 @@ def register_realtime_routes(app, gw) -> None:
                             )
                         else:
                             logger.error("Web teleop hold failed internally: %s", held.reason)
-                            await ws.send_text(
+                            await send_teleop_text(
                                 json.dumps(
                                     {
                                         "type": "control_rejected",
@@ -168,9 +202,21 @@ def register_realtime_routes(app, gw) -> None:
                                 )
                             )
                         continue
+                    window_valid = (
+                        input_window is not None
+                        and data.get("input_window") == input_window
+                        and time.monotonic() < input_deadline_s
+                    )
+                    input_window = None
+                    if not window_valid:
+                        await asyncio.to_thread(session.hold, request_id=request_id)
+                        await send_teleop_text(json.dumps(_public_control_rejection(
+                            TeleopSessionResult(False, "input_expired"), request_id=request_id,
+                        )))
+                        continue
                     raw_manual_mode = data.get("manual_mode", False)
                     if not isinstance(raw_manual_mode, bool):
-                        await ws.send_text(
+                        await send_teleop_text(
                             json.dumps(
                                 {
                                     "type": "control_rejected",
@@ -186,7 +232,7 @@ def register_realtime_routes(app, gw) -> None:
                         vy_mps = float(data.get("vy_mps", 0))
                         yaw_rps = float(data.get("yaw_rps", 0))
                     except (TypeError, ValueError):
-                        await ws.send_text(
+                        await send_teleop_text(
                             json.dumps(
                                 {
                                     "type": "control_rejected",
@@ -198,7 +244,7 @@ def register_realtime_routes(app, gw) -> None:
                         )
                         continue
                     if not all(math.isfinite(value) for value in (vx_mps, vy_mps, yaw_rps)):
-                        await ws.send_text(
+                        await send_teleop_text(
                             json.dumps(
                                 {
                                     "type": "control_rejected",
@@ -212,7 +258,7 @@ def register_realtime_routes(app, gw) -> None:
                     with gw._state_lock:
                         safety = getattr(gw, "_navigation_state", None)
                     if safety_stop_active(safety):
-                        await ws.send_text(
+                        await send_teleop_text(
                             json.dumps(
                                 {
                                     "type": "control_rejected",
@@ -230,13 +276,14 @@ def register_realtime_routes(app, gw) -> None:
                         yaw_rps,
                         request_id=request_id,
                         manual_mode=raw_manual_mode,
+                        deadline_monotonic_s=input_deadline_s,
                     )
                     if not submitted.accepted:
-                        await ws.send_text(
+                        await send_teleop_text(
                             json.dumps(_public_control_rejection(submitted, request_id=request_id))
                         )
                     else:
-                        await ws.send_text(
+                        await send_teleop_text(
                             json.dumps(
                                 {
                                     "type": "ingress_ack",
@@ -247,11 +294,12 @@ def register_realtime_routes(app, gw) -> None:
                                     "replaceable": True,
                                     "final_cmd_vel_confirmed": False,
                                     "motor_confirmed": False,
+                                    "input_window": next_input_window(),
                                 }
                             )
                         )
                 else:
-                    await ws.send_text(
+                    await send_teleop_text(
                         json.dumps(
                             {
                                 "type": "control_rejected",
@@ -267,12 +315,18 @@ def register_realtime_routes(app, gw) -> None:
                     )
         except StarletteWebSocketDisconnect:
             pass
+        except asyncio.TimeoutError:
+            send_timed_out = True
+            logger.warning("Teleop WS receive/send timed out; releasing control")
         finally:
             if registry is not None:
                 registry.unregister(conn_id)
             client_count = gw._teleop_client_disconnected()
             try:
-                disconnected = session.disconnect(request_id=f"web-disconnect-{time.monotonic_ns()}")
+                disconnected = await asyncio.to_thread(
+                    session.disconnect,
+                    request_id=f"web-disconnect-{time.monotonic_ns()}",
+                )
             except Exception as exc:
                 logger.error("Teleop WS disconnect zero release failed: %s", exc)
                 disconnected = TeleopSessionResult(False, "disconnect_failed")
@@ -290,6 +344,11 @@ def register_realtime_routes(app, gw) -> None:
             if media_lifecycle is not None:
                 media_lifecycle.on_client_disconnect()
             logger.info("Teleop WS disconnected (%d clients)", client_count)
+            if send_timed_out:
+                try:
+                    await asyncio.wait_for(ws.close(code=1013), timeout=REALTIME_SEND_TIMEOUT_S)
+                except Exception as exc:
+                    logger.debug("Teleop WS timeout close failed: %s", exc)
 
     async def ws_camera_endpoint(ws: StarletteWebSocket):
         await ws.accept()
@@ -446,6 +505,7 @@ def register_realtime_routes(app, gw) -> None:
                             {
                                 "type": "runtime_dataflow_subscription",
                                 "data": subscription_payload,
+                                "reliable_seq": 0,
                             },
                             event_id=snapshot_event_id,
                         ),
@@ -454,7 +514,8 @@ def register_realtime_routes(app, gw) -> None:
                 else:
                     snapshot = {
                         "type": "snapshot",
-                        "data": build_state_snapshot(gw),
+                        "data": await asyncio.to_thread(build_state_snapshot, gw),
+                        "reliable_seq": 0,
                     }
                     yield format_sse_message(
                         normalize_sse_event(snapshot, event_id=snapshot_event_id),

@@ -186,7 +186,7 @@ std::filesystem::path WriteFakePgo(const std::filesystem::path& root, bool fail 
          << "copy /y \"%~2\\map.pcd\" \"%~4\\patches\\000002.pcd\" > nul\r\n"
          << "(echo LINGTU_PATCH_BUNDLE_V1&echo complete 1&echo dropped_count 0&echo first_sequence 0&echo last_sequence 1&echo patch_count 2)>\"%~4\\patch_bundle.manifest\"\r\n"
          << "(echo 000001.pcd 0 0 0 1 0 0 0&echo 000002.pcd 1 0 0 1 0 0 0)>\"%~4\\poses.txt\"\r\n"
-         << "echo {\"schema\":\"lingtu.map_optimization.v1\",\"success\":true,\"code\":\"optimized\",\"converged\":true,\"pose_count\":2,\"patch_count\":2,\"factor_count\":2}>\"%~4\\map_optimization.json\"\r\n"
+         << "echo {\"schema\":\"lingtu.map_optimization.v1\",\"success\":true,\"performed\":true,\"code\":\"optimized\",\"converged\":true,\"pose_count\":2,\"patch_count\":2,\"factor_count\":2}>\"%~4\\map_optimization.json\"\r\n"
          << "if exist \"%~2\\bad_report\" echo {\"schema\":\"lingtu.map_optimization.v1\",\"success\":false,\"code\":\"optimized\",\"converged\":true,\"pose_count\":2,\"patch_count\":2,\"factor_count\":2}>\"%~4\\map_optimization.json\"\r\n"
          << "if exist \"%~2\\bad_counts\" echo {\"schema\":\"lingtu.map_optimization.v1\",\"success\":true,\"code\":\"optimized\",\"converged\":true,\"pose_count\":2,\"patch_count\":2,\"factor_count\":1}>\"%~4\\map_optimization.json\"\r\n"
          << "if exist \"%~2\\bad_manifest\" (echo LINGTU_PATCH_BUNDLE_V1&echo complete 1&echo dropped_count 0&echo first_sequence 0&echo last_sequence 2&echo patch_count 3)>\"%~4\\patch_bundle.manifest\"\r\n"
@@ -221,7 +221,7 @@ std::filesystem::path WriteFakePgo(const std::filesystem::path& root, bool fail 
          << "cp \"$2/map.pcd\" \"$4/patches/000002.pcd\"\n"
          << "printf 'LINGTU_PATCH_BUNDLE_V1\\ncomplete 1\\ndropped_count 0\\nfirst_sequence 0\\nlast_sequence 1\\npatch_count 2\\n' > \"$4/patch_bundle.manifest\"\n"
          << "printf '000001.pcd 0 0 0 1 0 0 0\\n000002.pcd 1 0 0 1 0 0 0\\n' > \"$4/poses.txt\"\n"
-         << "printf '{\"schema\":\"lingtu.map_optimization.v1\",\"success\":true,\"code\":\"optimized\",\"converged\":true,\"pose_count\":2,\"patch_count\":2,\"factor_count\":2}\\n' > \"$4/map_optimization.json\"\n"
+         << "printf '{\"schema\":\"lingtu.map_optimization.v1\",\"success\":true,\"performed\":true,\"code\":\"optimized\",\"converged\":true,\"pose_count\":2,\"patch_count\":2,\"factor_count\":2}\\n' > \"$4/map_optimization.json\"\n"
          << "[ ! -f \"$2/bad_report\" ] || printf '{\"schema\":\"lingtu.map_optimization.v1\",\"success\":false,\"code\":\"optimized\",\"converged\":true,\"pose_count\":2,\"patch_count\":2,\"factor_count\":2}\\n' > \"$4/map_optimization.json\"\n"
          << "[ ! -f \"$2/bad_counts\" ] || printf '{\"schema\":\"lingtu.map_optimization.v1\",\"success\":true,\"code\":\"optimized\",\"converged\":true,\"pose_count\":2,\"patch_count\":2,\"factor_count\":1}\\n' > \"$4/map_optimization.json\"\n"
          << "[ ! -f \"$2/bad_manifest\" ] || printf 'LINGTU_PATCH_BUNDLE_V1\\ncomplete 1\\ndropped_count 0\\nfirst_sequence 0\\nlast_sequence 2\\npatch_count 3\\n' > \"$4/patch_bundle.manifest\"\n"
@@ -350,14 +350,89 @@ void WaitPhase(SaveMapEngine& engine, const std::string& id, SavePhase phase) {
   Fail("SaveMap job did not enter expected phase");
 }
 
+void TestDerivedArtifactInvalidation(const std::filesystem::path& root,
+                                    const std::string& converter) {
+  MapStore store(MapStoreConfig{root / "derived_maps"});
+  lingtu::maps::MapPipelineCore pipeline(store);
+  const auto map = store.MapPath("derived");
+  WriteAsciiPcd(map / "map.pcd");
+  lingtu::maps::OctomapBuildOptions options;
+  options.converter_command = converter;
+  const auto succeeded = [](const std::string& result) {
+    Require(lingtu::maps::JsonObjectBoolAtPath(result, {"success"}) == true,
+            "artifact rebuild failed: " + result);
+  };
+  const auto no_derived = [&]() {
+    Require(!std::filesystem::exists(map / "esdf.npz") &&
+                !std::filesystem::exists(map / "traversability.npz"),
+            "occupancy rebuild retained obsolete derived layers");
+    const auto record = store.GetMapRecord("derived");
+    Require(record.has_value(), "rebuilt map disappeared");
+    for (const auto& artifact : record->artifacts) {
+      Require(artifact.type != lingtu::maps::ArtifactType::kEsdf &&
+                  artifact.type != lingtu::maps::ArtifactType::kTraversability,
+              "map still advertises an invalidated derived layer");
+    }
+  };
+  succeeded(pipeline.BuildNavigationPackageJson("derived", options, true, true));
+  const auto old_esdf = ReadFile(map / "esdf.npz");
+  const auto old_traversability = ReadFile(map / "traversability.npz");
+  const auto old_epoch = store.ContentEpoch("derived");
+#if defined(_WIN32)
+  _putenv_s("LINGTU_MAPS_INJECT_PUBLISH_FAILURE_AFTER", "3");
+#else
+  setenv("LINGTU_MAPS_INJECT_PUBLISH_FAILURE_AFTER", "3", 1);
+#endif
+  const auto failed = pipeline.BuildOccupancySnapshotJson("derived");
+#if defined(_WIN32)
+  _putenv_s("LINGTU_MAPS_INJECT_PUBLISH_FAILURE_AFTER", "");
+#else
+  unsetenv("LINGTU_MAPS_INJECT_PUBLISH_FAILURE_AFTER");
+#endif
+  Require(lingtu::maps::JsonObjectBoolAtPath(failed, {"success"}) == false &&
+              lingtu::maps::JsonObjectBoolAtPath(failed, {"rolled_back"}) == true,
+          "failed occupancy publication did not roll back");
+  Require(ReadFile(map / "esdf.npz") == old_esdf &&
+              ReadFile(map / "traversability.npz") == old_traversability &&
+              store.ContentEpoch("derived") == old_epoch,
+          "failed occupancy publication lost the previous derived layers");
+
+  succeeded(pipeline.BuildOccupancySnapshotJson("derived"));
+  no_derived();
+  succeeded(pipeline.BuildTraversabilityArtifactJson("derived"));
+  succeeded(pipeline.BuildEsdfArtifactJson("derived"));
+  Require(std::filesystem::exists(map / "esdf.npz") &&
+              !std::filesystem::exists(map / "traversability.npz"),
+          "ESDF rebuild retained obsolete traversability");
+  succeeded(pipeline.BuildNavigationPackageJson("derived", options, true, true));
+  succeeded(pipeline.BuildNavigationPackageJson("derived", options, true, false));
+  Require(std::filesystem::exists(map / "esdf.npz") &&
+              !std::filesystem::exists(map / "traversability.npz"),
+          "navigation package retained an omitted traversability layer");
+  succeeded(pipeline.BuildNavigationPackageJson("derived", options, false, false));
+  no_derived();
+
+  lingtu::maps::SourceCommitOptions source_options;
+  source_options.dynamic_filter_enabled = false;
+  const auto source = root / "no_optimization_source";
+  WriteAsciiPcd(source / "map.pcd");
+  const auto source_result = pipeline.CommitSavedSourceJson("raw", source, source_options);
+  succeeded(source_result);
+  Require(source_result.find("\"optimization\":null") != std::string::npos,
+          "missing optimization report was not reported as unknown");
+}
+
 }  // namespace
 
 int main() {
   const auto root = TempRoot();
   const auto converter = WriteFakeConverter(root);
+  TestDerivedArtifactInvalidation(root, converter);
   const auto source_v1 = root / "snapshots" / "v1";
   WriteAsciiPcd(source_v1 / "map.pcd", 0.0);
   std::ofstream(source_v1 / "scan_origin.txt") << "lidar_origin_in_patch 0.16 0 0.12\n";
+  std::ofstream(source_v1 / "poses.raw.txt") << "scan_0.pcd 0 0 0 1 0 0 0\n";
+  std::ofstream(source_v1 / "trajectory.raw.txt") << "1 0 0 0 0 0 0 1\n";
   WriteAsciiPcd(source_v1 / "map.pcd.preclean", 0.25);
   const auto invalid_source = root / "snapshots" / "invalid";
   std::filesystem::create_directories(invalid_source);
@@ -503,8 +578,16 @@ int main() {
     Require(std::filesystem::is_regular_file(status.map_dir / "map.pcd"), "map.pcd missing");
     Require(ReadFile(status.map_dir / "scan_origin.txt") == ReadFile(source_v1 / "scan_origin.txt"),
             "SaveMap lost calibrated scan origin");
+    for (const auto* filename : {"poses.raw.txt", "trajectory.raw.txt"})
+      Require(ReadFile(status.map_dir / filename) == ReadFile(source_v1 / filename),
+              "SaveMap lost original LIO evidence");
     Require(ReadFile(status.map_dir / "map.pcd.preclean") == ReadFile(source_v1 / "map.pcd.preclean"),
             "SaveMap lost the original pre-cleaning backup");
+    Require(lingtu::maps::JsonObjectBoolAtPath(
+                status.source_report_json, {"optimization", "performed"}) == false &&
+                lingtu::maps::JsonObjectStringAtPath(
+                    status.source_report_json, {"optimization", "code"}) == "patch_bundle_incomplete",
+            "SaveMap status lost the optimization skip reason");
     const auto skip_report = ReadFile(status.map_dir / "map_optimization.json");
     Require(lingtu::maps::IsValidJsonObject(skip_report), "PGO skip report is not valid JSON");
     Require(
@@ -801,6 +884,41 @@ int main() {
             {"code"}) == "optimized",
         "automatic PGO did not publish the optimized bundle");
   }
+  const auto sam_source = root / "snapshots" / "sam_online";
+  WriteCompletePatchBundle(sam_source, 19.5, 2U);
+  const std::string sam_report = R"({"schema":"lingtu.map_optimization.v1","backend":"lio_sam_isam2","success":true,"performed":true,"pose_count":2,"loop_count":1})";
+  std::ofstream(sam_source / "map_optimization.json") << sam_report;
+  std::ofstream(sam_source / "keyframes.timestamps.txt") << "scan_0.pcd 1\nscan_1.pcd 2\n";
+  std::ofstream(sam_source / "sam_loops.json") << "{\"schema\":\"lingtu.sam_loops.v1\",\"records\":[]}";
+  // The evidence sidecar must survive the native map build/save transaction.
+  {
+    SaveMapEngine engine(store);
+    auto request = Request("save_online_sam", "online_sam_map", converter);
+    request.pgo.executable = "must_not_run_old_pgo";
+    Require(engine.Begin(request).accepted, "SAM save request rejected");
+    Require(engine.ProvideSnapshot(request.request_id, Snapshot("sam_snapshot", sam_source)).accepted,
+            "SAM snapshot rejected");
+    const auto status = WaitTerminal(engine, request.request_id);
+    Require(status.state == SaveJobState::kSucceeded, "SAM save ran old PGO: " + status.message);
+    Require(ReadFile(status.map_dir / "map_optimization.json") == sam_report,
+            "SAM graph report was replaced");
+    Require(std::filesystem::exists(status.map_dir / "keyframes.timestamps.txt"),
+            "SAM replay timestamps lost in save");
+    Require(ReadFile(status.map_dir / "sam_loops.json") == ReadFile(sam_source / "sam_loops.json"),
+            "SAM loop evidence changed or disappeared in save");
+  }
+  std::ofstream(sam_source / "map_optimization.json")
+      << R"({"backend":"lio_sam_isam2","success":true,"pose_count":1})";
+  {
+    SaveMapEngine engine(store);
+    auto request = Request("save_incomplete_sam", "incomplete_sam_map", converter);
+    Require(engine.Begin(request).accepted, "incomplete SAM request rejected before snapshot");
+    Require(engine.ProvideSnapshot(request.request_id, Snapshot("bad_sam_snapshot", sam_source)).accepted,
+            "incomplete SAM snapshot rejected before worker validation");
+    const auto status = WaitTerminal(engine, request.request_id);
+    Require(status.state == SaveJobState::kFailed && status.reason_code == "online_graph_snapshot_invalid",
+            "incomplete SAM graph silently fell back to old PGO");
+  }
   const auto auto_without_loop_source =
       root / "snapshots" / "pgo_auto_performed_without_loop";
   WriteCompletePatchBundle(auto_without_loop_source, 19.75, 2U);
@@ -908,6 +1026,11 @@ int main() {
         "PGO snapshot was rejected");
     const auto status = WaitTerminal(engine, "save_with_pgo");
     Require(status.state == SaveJobState::kSucceeded, "PGO SaveMap failed: " + status.message);
+    Require(lingtu::maps::JsonObjectBoolAtPath(
+                status.source_report_json, {"optimization", "performed"}) == true &&
+                lingtu::maps::JsonObjectStringAtPath(
+                    status.source_report_json, {"optimization", "code"}) == "optimized",
+            "SaveMap status lost the completed optimization result");
     Require(saw_optimize_phase.load(), "SaveMap did not expose OPTIMIZE_SOURCE phase");
     Require(
         ReadFile(store.MapPath("optimized_map") / "poses.txt").find("000001.pcd") !=

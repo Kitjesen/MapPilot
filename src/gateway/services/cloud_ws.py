@@ -7,6 +7,7 @@ import threading
 import time
 from typing import Any, Callable
 
+from gateway.services.sse import handoff_stats
 from gateway.services.traffic import DROP_OLDEST_POLICY
 
 
@@ -81,6 +82,7 @@ class CloudWs:
     def traffic(self) -> dict[str, Any]:
         with self._lock:
             depths = [q.qsize() for q in self._subs]
+            handoffs = [handoff_stats(q) for q in self._subs]
             latest = dict(self._latest_meta)
             if latest.get("ts"):
                 latest["age_s"] = round(max(0.0, time.time() - float(latest["ts"])), 3)
@@ -88,6 +90,8 @@ class CloudWs:
                 "clients": len(self._subs),
                 "queue_maxsize": self._queue_maxsize,
                 "queue_depths": depths,
+                "handoff_depths": [depth for depth, _ in handoffs],
+                "handoff_bytes": sum(size for _, size in handoffs),
                 "max_depth_seen": self._max_depth_seen,
                 "published_frames": self._published_frames,
                 "dropped_frames": self._dropped_frames,

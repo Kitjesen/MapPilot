@@ -44,6 +44,15 @@ class TestConfigValidation(unittest.TestCase):
         errors = validate_config(cfg)
         self.assertTrue(any("slow_distance" in e for e in errors))
 
+    def test_support_height_calibration_must_be_bounded(self):
+        for height, tolerance in ((-0.1, 0.0), (float("nan"), 0.0), (0.35, -0.1),
+                                  (0.35, float("inf")), (0.0, 0.05), (0.35, 0.4)):
+            with self.subTest(height=height, tolerance=tolerance):
+                cfg = RobotConfig(geometry=GeometryConfig(
+                    support_height=height, support_height_tolerance=tolerance,
+                ))
+                self.assertTrue(any("support_height" in e for e in validate_config(cfg)))
+
     def test_driver_control_rate_must_honor_lease_refresh(self):
         cfg = RobotConfig(driver=DriverConfig(control_rate=9.0))
         errors = validate_config(cfg)

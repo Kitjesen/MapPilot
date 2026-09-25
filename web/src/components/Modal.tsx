@@ -167,7 +167,7 @@ export function PromptModal({
 interface ConfirmModalProps {
   open: boolean
   title: string
-  message: string
+  message: React.ReactNode
   confirmLabel?: string
   danger?: boolean
   busy?: boolean

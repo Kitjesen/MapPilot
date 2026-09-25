@@ -192,6 +192,10 @@ GoalPlanSubmitResult GoalPlanController::startPlanning(
       plan_context.goal.z,
   };
   plan_context.request.options = is_replan ? active_planner_options_ : context.planner_options;
+  if (target.acceptance_radius_m) {
+    plan_context.request.options.terminal_goal_xy_tolerance_m = std::min(
+        plan_context.request.options.terminal_goal_xy_tolerance_m, *target.acceptance_radius_m);
+  }
   if (is_replan) {
     plan_context.request.temporary_overlay = context.temporary_overlay;
   }

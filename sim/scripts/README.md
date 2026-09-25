@@ -35,6 +35,15 @@ the native MuJoCo entrypoints below, not in a second Python navigation stack.
 - `mujoco/continuous_walk.py` — Thunder V4 continuous-walk qualification.
 - `mujoco/native_recording_acceptance.py` — native recording acceptance.
 - `mujoco/native_navigation_video.py` — native navigation evidence video.
+- `mujoco/rgbd_goal_acceptance.py` — select a rendered image region, recover its
+  position with production RGB-D projection, and test the resulting visual goal
+  through native navigation. See the scope and commands in
+  [`docs/simulation.md`](../../docs/simulation.md#rendered-rgb-d-goal-diagnostic).
+- `mujoco/rgbd_follow_acceptance.py` — moving human-shaped pixel fixture, live
+  rendered RGB-D, production visual following and native physical navigation
+  over a 26.5 m factory aisle. See
+  [`docs/simulation.md`](../../docs/simulation.md#continuous-rgb-d-follow-diagnostic)
+  for the detector/localization limitations and measured acceptance gates.
 
 Offline navigation comparison lives at
 `python -m sim.evaluation.navigation_replay`; it is evaluation, not a Product

@@ -48,6 +48,11 @@ struct OwnedRequest {
     environment = source.environment;
     environment.obstacles = {};
     environment.traversability = {};
+    const auto &predicted = source.environment.predictions;
+    predictions.clear();
+    if (predicted.count > 0 && predicted.fresh(source.clock.timestampS))
+      predictions.assign(predicted.obstacles, predicted.obstacles + predicted.count);
+    environment.predictions.obstacles = nullptr;
     collision = std::move(collisionBits);
     if (replaceGuide) {
       if (const LocalRouteView *sourceRoute = source.referenceRoute()) {
@@ -90,6 +95,8 @@ struct OwnedRequest {
     request.reference = routeViewCopy;
 
     request.environment = environment;
+    request.environment.predictions.obstacles = predictions.data();
+    request.environment.predictions.count = predictions.size();
     request.environment.collision.inflatedBits =
         collision && !collision->empty() ? collision->data() : nullptr;
     request.environment.collision.inflatedBytes = collision ? collision->size() : 0U;
@@ -106,6 +113,7 @@ struct OwnedRequest {
   std::optional<LocalMotionIntent> intent;
   std::shared_ptr<const std::vector<Vec3>> route;
   std::shared_ptr<const std::vector<std::uint8_t>> collision;
+  std::vector<PredictedObstacle> predictions;
 };
 
 struct InputSnapshot {

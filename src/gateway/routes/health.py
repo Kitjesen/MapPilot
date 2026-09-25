@@ -505,6 +505,31 @@ def register_health_routes(app, gw) -> None:
             ),
         ] = False,
     ):
+        # ProductControl polls this endpoint during cold start. Keep the
+        # liveness/readiness probe O(1); the detailed snapshot can walk native
+        # DDS state and is exposed through /api/v1/readiness?details=true.
+        if not details and bool(getattr(gw, "_running", False)):
+            running = True
+            payload = {
+                "schema_version": 1,
+                "status": "ready" if running else "not_started",
+                "ready": running,
+                "data_ready": running,
+                "motion_ready": False,
+                "non_motion_safe": True,
+                "modules": {},
+                "module_count": 0,
+                "failed_modules": [],
+                "critical_failed_modules": [],
+                "critical_modules": [],
+                "startup_state": "ready" if running else "not_started",
+                "reasons": [] if running else ["host_not_running"],
+                "advisories": [],
+                "product_contract": {},
+                "runtime": {},
+                "ts": time.time(),
+            }
+            return JSONResponse(payload, status_code=200 if running else 503)
         payload, status_code = build_readiness_snapshot(gw, include_details=details)
         return JSONResponse(payload, status_code=status_code)
 

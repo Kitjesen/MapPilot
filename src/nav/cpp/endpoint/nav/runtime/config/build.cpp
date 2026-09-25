@@ -91,8 +91,10 @@ InputGateConfig inputGateConfig(const CliConfig &cfg) {
   out.require_odom = true;
   out.require_cloud =
       cfg.check_obstacle &&
+      (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu ||
+       cfg.control_mode == ControlMode::Autonomy);
+  out.require_traversability = cfg.use_traversability_cost &&
       cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu;
-  out.require_traversability = cfg.use_traversability_cost;
   out.require_local_collision =
       cfg.check_obstacle &&
       cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan;
@@ -197,6 +199,12 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
           : cfg.teleop_obstacle_margin_m;
   out.backend = cfg.local_planner_backend;
   out.scan = cfg.scan_planner;
+  if (cfg.octoplanner_options.require_ground_support) {
+    out.scan.supportHeight = cfg.octoplanner_options.support_height_m;
+    out.scan.supportHeightTolerance = cfg.octoplanner_options.support_height_tolerance_m;
+    out.scan.maxStepHeight = cfg.octoplanner_options.max_step_height;
+    out.scan.maxSupportSlope = cfg.octoplanner_options.max_slope;
+  }
   out.localCollisionMaxAge = cfg.local_collision_max_age_s;
   if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu) {
     // Upstream Go2 autonomous navigation is forward-only.  Planner and
@@ -212,6 +220,7 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
   out.vehicleLength = cfg.vehicle_length_m;
   out.vehicleWidth = cfg.vehicle_width_m;
   out.scan.cylinderOffset = cfg.collision_cylinder_offset_m;
+  out.scan.cylinderRadius = cfg.collision_cylinder_radius_m;
   out.scan.bodyClearanceBelow = cfg.collision_clearance_below_m;
   out.scan.bodyClearanceAbove = cfg.collision_clearance_above_m;
   // Executor receives the map->body pose.  The LiDAR extrinsic is already
@@ -237,7 +246,8 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
   if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu) {
     out.nearFieldStopDis = 0.0;
   }
-  out.useTraversabilityCost = cfg.use_traversability_cost;
+  out.useTraversabilityCost = cfg.use_traversability_cost &&
+      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu;
   out.traversabilityHardCost = cfg.traversability_hard_cost;
   out.traversabilitySoftCost = cfg.traversability_soft_cost;
   out.traversabilityWeight = cfg.traversability_weight;

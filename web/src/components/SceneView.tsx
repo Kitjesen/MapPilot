@@ -1,6 +1,6 @@
 import { isObservationMode } from '../services/observationMode.ts'
-import { usePlanningMap } from '../hooks/usePlanningMap.ts'
-import { navigationPreviewIsCurrent, planningCellAt, planningCellLabel, planningMapUnavailableLabel } from '../services/planningMap.ts'
+import { parseInitialPose } from '../services/localizationInitialPose.ts'
+import { navigationPreviewIsCurrent, sceneGoalHeight } from '../services/navigationPreview.ts'
 import { resolveMappingObservation, mappingObservationPointAt } from '../services/mappingObservation.ts'
 import { estimateSceneTime, freshSource, projectScenePose, projectScenePath, scanCanStandAlone, currentNativeLocalPath, scenePoseEpoch, sceneTrailStorageKey, sceneRelocalizationSeed, activeMapRelocalizationTarget } from '../services/sceneTelemetry.ts'
 import { useRef, useEffect, useCallback, useMemo, useState, memo, type ReactNode } from 'react'
@@ -24,6 +24,7 @@ import type {
   CameraMediaStatus,
 } from '../types'
 import * as api from '../services/api'
+import { formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, mapSaveProgressValue, mapSaveElapsedMs, formatMapSaveElapsed, type MapSaveStatus } from '../services/mapSavePresentation.ts'
 import {
   mapIsActivationReady,
   mapSaveBlockedReason,
@@ -69,6 +70,9 @@ interface SceneViewProps {
   motionStartBlockedReason: string
   onElevationSubscriptionChange?: (enabled: boolean) => void
   onOpenSavedMap: (name: string | null) => void
+  onStartMapping: () => void
+  productSwitchAllowed: boolean
+  productSwitchReason: string
 }
 
 // ── Layer flags ────────────────────────────────────────────────
@@ -96,14 +100,6 @@ const MAP_GROUPS: Array<{ label: string; filter: (m: MapInfo) => boolean }> = [
 
 type WorkbenchZoneState = 'preblocked' | 'traversable' | 'clear'
 
-interface SaveStatus {
-  name: string
-  state: 'saving' | 'saved' | 'failed'
-  detail: string
-  location?: string | null
-  summary?: string | null
-}
-
 function sceneLayerLegendClass(
   status: ElevationLayerState['status'] | NativeTraversabilityLayerState['status'],
   warn: boolean = false,
@@ -115,57 +111,6 @@ function sceneLayerLegendClass(
     classNames.push(styles.sceneLayerLegendStale)
   }
   return classNames.join(' ')
-}
-
-function formatSaveMapSummary(r: api.SaveMapResult): string {
-  const source = r.map_save_source ?? r.source ?? 'unknown'
-  const savedMapReloc = r.saved_map_relocalization_supported ?? r.relocalization_supported
-  const relocText = savedMapReloc === undefined ? '未知' : savedMapReloc ? '支持' : '不支持'
-  const recovery = r.restart_recovery_supported === undefined
-    ? (r.recovery_method ?? 'unknown')
-    : `${r.restart_recovery_supported ? 'restart' : 'no-restart'}${r.recovery_method ? `/${r.recovery_method}` : ''}`
-  const warnings = r.warnings?.filter(Boolean) ?? []
-  return [
-    `来源：${source === 'unknown' ? '未知' : source}`,
-    `保存地图重定位：${relocText}`,
-    `恢复方式：${recovery === 'unknown' ? '未知' : recovery}`,
-    warnings.length > 0 ? `警告：${warnings.join('; ')}` : null,
-  ].filter((v): v is string => Boolean(v)).join(' | ')
-}
-
-function saveMapStringField(r: api.SaveMapResult, keys: string[]): string | null {
-  const record = r as unknown as Record<string, unknown>
-  for (const key of keys) {
-    const value = record[key]
-    if (typeof value === 'string' && value.trim()) return value.trim()
-  }
-  return null
-}
-
-function formatSaveMapLocation(r: api.SaveMapResult, name: string): string {
-  return saveMapStringField(r, [
-    'path',
-    'map_path',
-    'map_dir',
-    'save_dir',
-    'directory',
-    'pcd_path',
-    'pcd',
-  ]) ?? `网关地图目录 / ${name}`
-}
-
-function formatSaveMapDetail(r: api.SaveMapResult): string {
-  const parts: string[] = []
-  const df = r.dynamic_filter
-  if (df && df.success && typeof df.dropped === 'number' && typeof df.orig_count === 'number' && df.orig_count > 0) {
-    const pct = (100 * df.dropped / df.orig_count).toFixed(1)
-    parts.push(`动态点清理 ${df.dropped}/${df.orig_count} (${pct}%)`)
-  }
-  if (r.size) parts.push(`大小 ${r.size}`)
-  if (r.saved_map_relocalization_supported ?? r.relocalization_supported) {
-    parts.push('支持重定位')
-  }
-  return parts.length ? parts.join(' · ') : '已写入地图列表，可在左侧选择加载。'
 }
 
 function formatPlanSummary(preview: PlanPreviewResponse | null | undefined): string {
@@ -276,6 +221,9 @@ function SceneViewComponent({
   motionStartBlockedReason,
   onElevationSubscriptionChange,
   onOpenSavedMap,
+  onStartMapping,
+  productSwitchAllowed,
+  productSwitchReason,
 }: SceneViewProps) {
   const scene3DRef = useRef<Scene3DHandle>(null)
   const savePreviewSession = useRef<string | null>(null)
@@ -318,7 +266,6 @@ function SceneViewComponent({
   const [resumePending, setResumePending] = useState(false)
   const [resumeError, setResumeError] = useState<string | null>(null)
   const [liveScanPreference, setLiveScanPreference] = useState<boolean | null>(null)
-  const [mapView, setMapView] = useState<'planning' | 'points'>('planning')
   const [mappingView, setMappingView] = useState<'coverage' | 'points' | 'global'>('global')
   const [mappingProbe, setMappingProbe] = useState<{ x: number; y: number; epoch: string | null } | null>(null)
   const [recordingStatus, setRecordingStatus] = useState<RecordingStatusResponse | null>(null)
@@ -338,6 +285,7 @@ function SceneViewComponent({
   const mapListRequestInFlight = useRef(false)
   const [pointSize, setPointSize] = useState(0.18)
   const [savedMapCloud, setSavedMapCloud] = useState<api.SavedMapPointCloud | undefined>()
+  const [savedMapLoadError, setSavedMapLoadError] = useState<string | null>(null)
   const savedMapFlat = savedMapCloud?.points
   const [relocOpen, setRelocOpen] = useState(false)
   const [relocDropOpen, setRelocDropOpen] = useState(false)
@@ -345,10 +293,21 @@ function SceneViewComponent({
   const relocDropRef = useRef<HTMLDivElement>(null)
   const [relocX, setRelocX] = useState('0')
   const [relocY, setRelocY] = useState('0')
+  const [relocZ, setRelocZ] = useState('0')
   const [relocYaw, setRelocYaw] = useState('0')
   const [relocPending, setRelocPending] = useState(false)
   const [restartLocalizationPending, setRestartLocalizationPending] = useState(false)
-  const [saveStatus, setSaveStatus] = useState<SaveStatus | null>(null)
+  const [saveStatus, setSaveStatus] = useState<MapSaveStatus | null>(null)
+  const [saveTiming, setSaveTiming] = useState({ elapsedMs: 0, observedAt: 0 })
+  const [saveProgress, setSaveProgress] = useState<number | undefined>()
+  const [saveClock, setSaveClock] = useState(0)
+  const saveStartedAt = useRef(0)
+  const saveActive = saveStatus?.state === 'saving' || saveStatus?.state === 'pending'
+  useEffect(() => {
+    if (!saveActive) return
+    const timer = window.setInterval(() => setSaveClock(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [saveActive])
   // Track whether the user has manually edited reloc inputs; until then we
   // mirror live odometry so the defaults reflect the robot's current pose
   // instead of the unhelpful (0, 0, 0).
@@ -482,7 +441,7 @@ function SceneViewComponent({
   const localCloud = useBinaryCloud('/ws/cloud', '/api/v1/map/points?max_points=60000', 4)
   const showGlobalMapping = sseState.session?.product === 'map' && mappingView === 'global'
   const globalCloud = useBinaryCloud(null,
-    showGlobalMapping ? '/api/v1/map/global/points?max_points=120000' : null, 1)
+    showGlobalMapping ? '/api/v1/map/global/points?max_points=120000&format=binary' : null, 1)
   const cloud = showGlobalMapping ? globalCloud : localCloud
   const scanCloud = useBinaryCloud(scanOverlayEnabled ? '/ws/scan' : null, null, 10)
   const alignedScanCloud = scanOverlayEnabled
@@ -602,17 +561,29 @@ function SceneViewComponent({
   const missionState = navigationView.task.state
   const missionStateLabel = navigationView.task.label
   const hasGoal = ['PLANNING', 'EXECUTING', 'RECOVERING', 'PAUSED'].includes(missionState)
+  const dynamicLabels: Record<string, string> = {
+    waiting: '等待移动障碍通过',
+    waiting_for_detour: '正在寻找绕行路径',
+    resuming: '障碍已离开，正在恢复行走',
+    detour: '正在避让移动障碍',
+    stale: '障碍观测未更新，已暂停',
+    timeout: '避让未完成，已停止任务',
+  }
+  const dynamicLabel = nativeFresh && hasGoal && typeof lastLocal?.dynamic_avoidance === 'string'
+    ? dynamicLabels[lastLocal.dynamic_avoidance] : undefined
   const plannerLabel = !nativeFresh ? '规划未更新'
-    : localPathPts.length > 1 && tracking?.active === true
+    : dynamicLabel ?? (localPathPts.length > 1 && tracking?.active === true
       ? tracking.execution_frozen === true ? '轨迹已暂停' : '正在跟踪轨迹'
       : requestedMotion || hasGoal ? '等待可通行路径'
-        : '无运动请求'
+        : '无运动请求')
   const currentPlannerIssue = nativeFresh && (requestedMotion || hasGoal || missionState === 'FAILED')
     && localPathPts.length < 2 && typeof lastLocal?.reason === 'string'
     && !['superseded_by_new_goal', 'local_plan_pending'].includes(lastLocal.reason)
     && lastLocal.path_found === false ? lastLocal.reason : null
   const plannerIssueLabel = currentPlannerIssue === 'scan_initialization_failed' ? '局部规划初始化失败'
     : currentPlannerIssue === 'local_trajectory_blocked_near_robot' ? '机器人附近路径受阻'
+      : currentPlannerIssue === 'dynamic_obstacle_timeout' ? '移动障碍持续阻挡，已停止任务'
+      : currentPlannerIssue === 'dynamic_resume_timeout' ? '避让后未能恢复行走，已停止任务'
       : currentPlannerIssue
   const motionHeld = navigationView.motion.permission.state === 'HELD'
     || navigationView.motion.permission.state === 'ESTOPPED'
@@ -645,17 +616,6 @@ function SceneViewComponent({
   const activeMapName = activeMap ?? null
   const showSavedMapInScene = Boolean(activeMapName && shouldShowSavedMapForProduct(currentProduct))
   const liveScanVisible = liveScanPreference ?? (!isMappingSession && !showSavedMapInScene)
-  const planningLayer = usePlanningMap(sseState.connected, showSavedMapInScene ? activeMapName : null,
-    session?.product_session_id, localNowS)
-  const planningMap = planningLayer.map
-  const showPlanningMap = mapView === 'planning' && planningMap !== null
-  const initialMapView = useRef<string | null>(null)
-  useEffect(() => {
-    const key = `${session?.product_session_id}:${activeMapName}`
-    if (!showPlanningMap || initialMapView.current === key) return
-    initialMapView.current = key
-    scene3DRef.current?.topView()
-  }, [showPlanningMap, session?.product_session_id, activeMapName])
   const savedMapForScene = showSavedMapInScene
     && savedMapCloud?.mapName === activeMapName
     ? savedMapCloud
@@ -707,8 +667,7 @@ function SceneViewComponent({
       : '导航暂未就绪'
   const canSendGoal = goalDisabledReason === ''
   const previewDisabledReason = !sseState.connected ? '连接断开，等待恢复'
-    : !poseAvailable ? '等待有效定位'
-      : showSavedMapInScene && !planningMap ? '等待当前地图' : ''
+    : !poseAvailable ? '等待有效定位' : ''
   const previewCurrent = navigationPreviewIsCurrent(pendingGoalPreview, mapOdom)
   const pendingGoalPlanSummary = previewCurrent
     ? `预览可达${typeof pendingGoalPreview?.distance_m === 'number' ? ` · 路程 ${pendingGoalPreview.distance_m.toFixed(1)} m` : ''}`
@@ -796,26 +755,26 @@ function SceneViewComponent({
   }, [trailState, trailKey])
 
   // ── Sync reloc inputs with odometry until user edits ──────────
-  // When the panel is closed (or user hasn't edited yet) keep X/Y/Yaw mirroring
+  // When the panel is closed (or user hasn't edited yet) keep X/Y/Z/Yaw mirroring
   // current odom so opening it shows useful defaults.  Once the user edits any
   // field we stop overwriting (relocDirty=true).
   useEffect(() => {
     if (relocDirty || !odom || !poseAvailable) return
     setRelocX(robotX.toFixed(2))
     setRelocY(robotY.toFixed(2))
+    setRelocZ(robotZ.toFixed(2))
     setRelocYaw(yaw.toFixed(3))
-  }, [odom, poseAvailable, robotX, robotY, yaw, relocDirty])
+  }, [odom, poseAvailable, robotX, robotY, robotZ, yaw, relocDirty])
 
   // ── Default active map for reloc panel ─────────────────────────
   const workbenchTargetMapName = workbenchMapName.trim() || (showSavedMapInScene ? activeMapName : '') || ''
-  const savedMapAutoLoadRef = useRef<string | null>(null)
   useEffect(() => {
     if (!relocMap && activeMapName) setRelocMap(activeMapName)
   }, [activeMapName, relocMap])
 
   useEffect(() => {
-    savedMapAutoLoadRef.current = null
     setSavedMapCloud(undefined)
+    setSavedMapLoadError(null)
     ++goalPreviewRequest.current
     setPendingGoal(null)
     setPendingGoalPreview(null)
@@ -832,19 +791,30 @@ function SceneViewComponent({
         { frameId: savedMapCloud.frameId, epoch: savedMapCloud.epoch },
       )
     if (savedMapFlat !== undefined && !savedMapNeedsEpochRebind) return
-    const sceneBindingKey = `${activeMapName}:${cloud.frameId ?? 'unknown'}:${cloud.epoch ?? 'unknown'}`
-    if (savedMapAutoLoadRef.current === sceneBindingKey) return
-
+    if (!sseState.connected) return
     let cancelled = false
-    savedMapAutoLoadRef.current = sceneBindingKey
-    api.fetchSavedMapPointCloud(activeMapName)
-      .then(savedMap => {
-        if (!cancelled) setSavedMapCloud(savedMap)
-      })
-      .catch(() => {
-        // Map may be live-only or PCD may not exist yet; keep the live cloud visible.
-      })
-    return () => { cancelled = true }
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    const loadSavedMap = () => {
+      api.fetchSavedMapPointCloud(activeMapName)
+        .then(savedMap => {
+          if (!cancelled) {
+            setSavedMapCloud(savedMap)
+            setSavedMapLoadError(null)
+          }
+        })
+        .catch((error: unknown) => {
+          // Activation and reconnect may briefly precede the scene binding.
+          if (!cancelled) {
+            setSavedMapLoadError(error instanceof Error ? error.message : String(error))
+            retryTimer = setTimeout(loadSavedMap, 1500)
+          }
+        })
+    }
+    loadSavedMap()
+    return () => {
+      cancelled = true
+      if (retryTimer !== null) clearTimeout(retryTimer)
+    }
   }, [
     activeMapName,
     cloud.epoch,
@@ -852,6 +822,8 @@ function SceneViewComponent({
     savedMapCloud,
     savedMapFlat,
     showSavedMapInScene,
+    session?.product_session_id,
+    sseState.connected,
   ])
 
   // ── Handlers ──────────────────────────────────────────────────
@@ -870,18 +842,18 @@ function SceneViewComponent({
 
   const handlePendingGoal = useCallback(async (x: number, y: number, selectedZ?: number) => {
     const request = ++goalPreviewRequest.current
-    const z = selectedZ ?? planningMap?.origin[2]
-    setPendingGoal({ x, y, z })
+    const z = sceneGoalHeight(mapOdom?.z, selectedZ)
+    setPendingGoal({ x, y, z: z ?? undefined })
     setPendingGoalPreview(null)
     setGoalPreviewError(null)
     setGoalPreviewPending(false)
     setFollowRobot(false)
-    if (showSavedMapInScene && !planningMap) {
-      setGoalPreviewError('等待当前高度通行图，暂时无法预览目标')
-      return
-    }
     if (previewDisabledReason) {
       setGoalPreviewError(previewDisabledReason)
+      return
+    }
+    if (z === null) {
+      setGoalPreviewError('等待有效的三维定位高度')
       return
     }
     setGoalPreviewPending(true)
@@ -900,7 +872,7 @@ function SceneViewComponent({
       if (!candidate.ok || candidate.preview?.feasible === false) {
         const reason = candidate.reasons.slice(0, 3).join(' / ') || candidate.error || '目标预检未通过'
         setGoalPreviewError(reason === 'empty_path'
-          ? '未找到连接当前位置的路径。可换选附近绿区，或检查沿途支撑与障碍。'
+          ? '未找到连接当前位置的三维路径，请检查沿途支撑与障碍。'
           : `路径预览未通过：${reason}`)
         return
       }
@@ -913,7 +885,7 @@ function SceneViewComponent({
     } finally {
       if (request === goalPreviewRequest.current) setGoalPreviewPending(false)
     }
-  }, [previewDisabledReason, goalAcceptanceRadius, goalMaxSpeed, planningMap, showSavedMapInScene])
+  }, [previewDisabledReason, goalAcceptanceRadius, goalMaxSpeed, mapOdom?.z])
 
   const handleSceneRelocalize = useCallback(async (x: number, y: number) => {
     if (!savedMapRelocalizeSupported) {
@@ -932,12 +904,12 @@ function SceneViewComponent({
     }
     showToast(`重定位中… (${x.toFixed(2)}, ${y.toFixed(2)})`, 'info')
     try {
-      await api.relocalize(mapName, seed.x, seed.y, seed.yaw)
+      await api.relocalize(mapName, seed.x, seed.y, seed.yaw, seed.z)
       const q = sseState.session?.icp_quality
       const qStr = typeof q === 'number' ? ` quality=${q.toFixed(2)}` : ''
       showToast(`重定位成功${qStr}`, 'success')
     } catch (e: unknown) {
-      showToast(`重定位失败: ${e instanceof Error ? e.message : String(e)}`, 'error')
+      showToast(`重定位: ${e instanceof Error ? e.message : String(e)}`, 'error')
     }
   }, [savedMapRelocalizeSupported, relocalizeUnavailableMessage, sseState.session, mapOdom, showToast])
 
@@ -1169,46 +1141,50 @@ function SceneViewComponent({
     setSaveModalOpen(true)
   }
 
-  const confirmSaveMap = async (name: string) => {
+  const confirmSaveMap = async (name: string, existing?: api.SaveMapResult & { operation_id: string }) => {
     const initiatingSession = savePreviewSession.current
     setSaveModalOpen(false)
-    if (saveBlockedReason) {
+    if (!existing && saveBlockedReason) {
       showToast(saveBlockedReason, 'error')
       return
     }
+    openWorkspaceTool('maps')
+    if (!existing) saveStartedAt.current = Date.now()
+    const updateProgress = (result?: api.SaveMapResult) => {
+      const now = Date.now()
+      setSaveTiming({ elapsedMs: mapSaveElapsedMs(result, now - saveStartedAt.current), observedAt: now })
+      setSaveClock(now)
+      setSaveProgress(mapSaveProgressValue(result))
+    }
+    updateProgress(existing)
     setSaveStatus({
       name,
       state: 'saving',
-      detail: '正在写入点云、清理动态点并生成导航地图。完成后会显示保存位置。',
+      detail: existing ? formatMapSaveProgress(existing) : '正在提交保存请求',
     })
-    showToast(`正在保存并清洗动态障碍: ${name}…`, 'info')
     try {
-      const admission = await api.saveMap(name)
-      const r = await api.waitForMapSaveOperation(admission)
-      const summary = formatSaveMapSummary(r)
-      const savedName = r.name
-      const location = formatSaveMapLocation(r, savedName)
-      const detail = formatSaveMapDetail(r)
-      setSaveStatus({
-        name: savedName,
-        state: 'saved',
-        detail,
-        location,
-        summary,
+      const admission = existing ?? await api.saveMap(name)
+      const outcome = await api.waitForMapSaveOperation(admission, {
+        onProgress: progress => {
+          updateProgress(progress)
+          setSaveStatus({ name, state: 'saving', detail: formatMapSaveProgress(progress) })
+        },
       })
-      const df = r.dynamic_filter
-      if (df && df.success && df.dropped !== undefined && df.orig_count) {
-        const pct = (100 * df.dropped / df.orig_count).toFixed(1)
-        showToast(`已保存: ${savedName} · 清除 ${df.dropped} 动态点 (${pct}%)`, 'success')
-      } else {
-        showToast(`已保存: ${savedName}`, 'success')
+      if (outcome.state === 'pending') {
+        setSaveStatus(pendingMapSaveStatus(outcome.result, outcome.reason))
+        return
       }
+      const r = outcome.result
+      updateProgress(r)
+      const savedName = r.name
+      setSaveStatus(savedMapStatus(r))
+      showToast(`已保存: ${savedName}`, 'success')
       if (r.warnings?.length) showToast(r.warnings.join('；'), 'info')
       if (initiatingSession !== null && savePreviewSession.current === initiatingSession) {
         loadMaps()
-        onOpenSavedMap(savedName)
       }
     } catch (e: unknown) {
+      updateProgress()
       const message = e instanceof Error ? e.message : String(e)
       setSaveStatus({
         name,
@@ -1388,8 +1364,9 @@ function SceneViewComponent({
     if (!relocMap) { showToast('请先选择地图', 'error'); return }
     setRelocPending(true)
     try {
-      await api.relocalize(relocMap, parseFloat(relocX) || 0, parseFloat(relocY) || 0, parseFloat(relocYaw) || 0)
-      showToast(`重定位已发起: ${relocMap}`, 'success')
+      const seed = parseInitialPose({ x: relocX, y: relocY, z: relocZ, yaw: relocYaw })
+      await api.relocalize(relocMap, seed.x, seed.y, seed.yaw, seed.z)
+      showToast(`重定位已完成: ${relocMap}`, 'success')
       setRelocOpen(false)
       // Load saved map cloud only after relocalization (coordinate frames now aligned)
       try {
@@ -1397,7 +1374,7 @@ function SceneViewComponent({
         setSavedMapCloud(savedMap)
       } catch { /* PCD not available — ignore */ }
     } catch (e: unknown) {
-      showToast(`重定位失败: ${e instanceof Error ? e.message : String(e)}`, 'error')
+      showToast(`重定位: ${e instanceof Error ? e.message : String(e)}`, 'error')
     } finally {
       setRelocPending(false)
     }
@@ -1425,7 +1402,7 @@ function SceneViewComponent({
         } catch { /* PCD not available — ignore */ }
       }
     } catch (e: unknown) {
-      showToast(`全局重定位失败: ${e instanceof Error ? e.message : String(e)}`, 'error')
+      showToast(`全局重定位: ${e instanceof Error ? e.message : String(e)}`, 'error')
     } finally {
       setRelocPending(false)
     }
@@ -1456,15 +1433,12 @@ function SceneViewComponent({
         title="查看本次累计建图，已验证的闭环在后台校正"
         onClick={() => { setMappingView('global'); setLayers(value => ({ ...value, cloud: true })) }}><MapPinned size={15} />整图</button>
       <button className={styles.toolbarBtn} aria-pressed={mappingView === 'coverage'}
-        title="显示相对附近地面的障碍与支撑候选，不是通行图"
+                    title="显示建图覆盖中的障碍回波与支撑候选"
         onClick={() => setMappingView('coverage')}><Grid3x3 size={15} />局部投影</button>
       <button className={styles.toolbarBtn} aria-pressed={mappingView === 'points'}
         title="显示当前局部地图表面的三维点"
         onClick={() => { setMappingView('points'); setLayers(value => ({ ...value, cloud: true })) }}><Cloud size={15} />局部地图</button>
     </div>}
-    {showSavedMapInScene && <button className={showPlanningMap ? styles.toolbarBtnSelected : styles.toolbarBtn}
-      aria-pressed={showPlanningMap} onClick={() => setMapView(value => value === 'planning' ? 'points' : 'planning')}
-      title="切换通行图与原始保存点云"><MapPinned size={15} /><span>{mapView === 'planning' ? '通行图' : '点云'}</span></button>}
     <button className={liveScanVisible ? styles.toolbarBtnSelected : styles.toolbarBtn}
       aria-pressed={liveScanVisible} onClick={() => setLiveScanPreference(!liveScanVisible)}
       title="只叠加当前扫描，不改变地图图层"><Radio size={15} /><span>当前扫描</span></button>
@@ -1487,7 +1461,7 @@ function SceneViewComponent({
     <button className={styles.toolbarBtn} disabled={!savedMapForScene?.points.length && !(isMappingSession && (cloud.count || mappingObservation.status === 'ready'))}
       onClick={() => { setFollowRobot(false); scene3DRef.current?.fitMap() }}
       aria-label={isMappingSession ? '查看当前数据全范围' : '查看完整保存地图'}
-      title={isMappingSession ? '查看当前数据全范围' : '查看完整保存地图'}><Maximize2 size={15} /><span>{isMappingSession && !showGlobalMapping ? '局部范围' : '全图'}</span></button>
+      title={isMappingSession ? '查看当前数据全范围' : '查看完整保存地图'}><Maximize2 size={15} /><span>{isMappingSession && !showGlobalMapping ? '局部范围' : '适应全图'}</span></button>
   </>
 
   return (
@@ -1544,17 +1518,21 @@ function SceneViewComponent({
                 title={saveStatus.summary ?? saveStatus.detail}
               >
                 <div className={styles.saveStatusHeader}>
-                  <span>{saveStatus.state === 'saving' ? '保存进度' : saveStatus.state === 'saved' ? '保存结果' : '保存失败'}</span>
+                  <span>{saveStatus.state === 'saving' ? '保存进度' : saveStatus.state === 'saved' ? '保存结果' : saveStatus.state === 'pending' ? '等待确认' : '保存失败'}</span>
                   <span className={styles.saveStatusName}>{saveStatus.name}</span>
                 </div>
                 <div className={styles.saveStatusDetail}>{saveStatus.detail}</div>
+                {saveStatus.state === 'pending' && <button className={styles.toolbarBtn}
+                  onClick={() => void confirmSaveMap(saveStatus.name, saveStatus.operation)}><RefreshCw size={13} />继续查询</button>}
                 {saveStatus.state === 'saved' && <button className={styles.toolbarBtn}
                   onClick={() => onOpenSavedMap(saveStatus.name)}><MapPinned size={13} /> 查看完整地图</button>}
-                {saveStatus.state === 'saving' && (
-                  <div className={styles.saveProgressBar} aria-label="保存进行中">
-                    <span />
-                  </div>
-                )}
+                <div className={styles.saveStatusDetail}>
+                  {saveActive ? '已等待' : '耗时'} {formatMapSaveElapsed(saveTiming.elapsedMs + (saveActive ? Math.max(0, saveClock - saveTiming.observedAt) : 0))}
+                </div>
+                {saveActive && <>
+                  <progress style={{ width: '100%' }} aria-label="地图保存阶段进度" max={1} value={saveProgress} />
+                  <div className={styles.saveStatusDetail}>{saveStatus.state === 'pending' ? '状态待确认；显示最近进度' : '阶段进度，非剩余时间估计'}</div>
+                </>}
                 {saveStatus.location && (
                   <div className={styles.saveLocation}>
                     <span>位置</span>
@@ -1847,7 +1825,7 @@ function SceneViewComponent({
                 {!savedMapRelocalizeSupported && <p className={styles.statusLine}>{relocalizeUnavailableMessage}</p>}
                 <details className={styles.statusDetails}>
                   <summary>手动设置初始位姿</summary>
-                  <p className={styles.statusLine}>选择保存地图并设置地图中的位置与朝向。支持时也可 Shift+点击场景进行重定位。</p>
+                  <p className={styles.statusLine}>填写机身在地图中的位置（X/Y/Z，米）与航向（弧度）。Z 是地图坐标中的机身高度。Shift+点击保留当前地图高度与朝向。</p>
                 {/* Custom dropdown */}
                 <div className={styles.customSelect} ref={relocDropRef}>
                   <button
@@ -1900,6 +1878,10 @@ function SceneViewComponent({
                   <input className={styles.relocInput} type="number" step="0.1"
                     value={relocY}
                     onChange={e => { setRelocDirty(true); setRelocY(e.target.value) }} />
+                  <label>Z</label>
+                  <input className={styles.relocInput} type="number" step="0.1" aria-label="初始位姿 Z（米）"
+                    value={relocZ}
+                    onChange={e => { setRelocDirty(true); setRelocZ(e.target.value) }} />
                   <label>航向</label>
                   <input className={styles.relocInput} type="number" step="0.1"
                     value={relocYaw}
@@ -1925,30 +1907,39 @@ function SceneViewComponent({
 
         {/* Center: 3D scene */}
         <div className={`${styles.canvasArea} ${isMappingSession ? styles.mappingCanvasArea : ''}`}>
-          <div className={styles.canvasHeader}>
+          <div className={`${styles.canvasHeader} ${teleopMode ? styles.teleopHeader : ''}`}>
             <span>{isMappingSession ? '建图' : <><Grid3x3 size={15} />现场地图</>}
               <small>{isMappingSession
                 ? observe ? '只读' : session?.env === 'sim' ? '仿真' : '实时'
                 : `${observe ? '只读 · ' : session?.env === 'sim' ? '仿真 · ' : ''}${activeMapName || '当前环境'}`}</small>
             </span>
             <div className={styles.cameraActions}>
+              {!observe && !isMappingSession && <button className={styles.toolbarBtnPrimary}
+                disabled={!productSwitchAllowed} title={productSwitchReason || '停止当前任务并开始建图'}
+                onClick={onStartMapping}><MapPinned size={15} /><span>开始建图</span></button>}
               {!observe && (currentProduct === 'teleop' || currentProduct === 'teleop_avoid' || currentProduct === 'map') && (
-                <button className={teleopMode ? styles.toolbarBtnSelected : styles.toolbarBtn}
+                teleopMode && !drawerOpen ? <TeleopPanel key={currentProduct} sseState={sseState} showToast={showToast}
+                  onExit={() => setTeleopMode(false)} /> : <button className={teleopMode ? styles.toolbarBtnSelected : styles.toolbarBtn}
                   aria-pressed={teleopMode} onClick={() => setTeleopMode(value => !value)}>
                   <Gamepad2 size={15} /><span>{teleopMode ? '退出遥控' : isMappingSession ? '遥控' : '遥控模式'}</span>
                 </button>
               )}
               {isMappingSession && <>
+                <button className={showGlobalMapping ? styles.toolbarBtnSelected : styles.toolbarBtn}
+                  aria-pressed={showGlobalMapping} title="查看本次累计扫描"
+                  onClick={() => { setMappingView('global'); setLayers(value => ({ ...value, cloud: true })) }}>
+                  <MapPinned size={15} /><span>累计地图</span>
+                </button>
                 {!observe && <button className={styles.toolbarBtnPrimary} onClick={handleSaveMap}
-                  disabled={Boolean(saveBlockedReason) || saveStatus?.state === 'saving'}
+                  disabled={Boolean(saveBlockedReason) || saveStatus?.state === 'saving' || saveStatus?.state === 'pending'}
                   title={saveBlockedReason || '保存当前建图结果后查看整图快照'}>
                   <Save size={15} /><span>{saveStatus?.state === 'saving' ? '保存中…' : '保存地图'}</span>
                 </button>}
                 <button className={styles.toolbarBtn} onClick={() => onOpenSavedMap(null)}
-                  title="查看保存的完整地图"><MapPinned size={15} /><span>已存地图</span></button>
+                  aria-label="已存地图" title="查看保存的完整地图"><MapPinned size={15} /><span className={styles.secondaryActionLabel}>已存地图</span></button>
               </>}
               {isMappingSession ? <details className={styles.mappingDisplayMenu} name="lingtu-menu">
-                <summary><SlidersHorizontal size={15} /> 视图</summary>
+                <summary aria-label="地图视图" title="地图视图"><SlidersHorizontal size={15} /><span>视图</span></summary>
                 <div className={styles.mappingDisplayOptions} onClick={event => {
                   if ((event.target as HTMLElement).closest('button')) event.currentTarget.parentElement?.removeAttribute('open')
                 }}>{sceneDisplayControls}</div>
@@ -1958,7 +1949,7 @@ function SceneViewComponent({
                 onClick={() => {
                   setInspectorOpen(!inspectorOpen || drawerOpen)
                   setDrawerOpen(false)
-                }} title="状态、图层与操作"><Activity size={15} />状态</button>}
+                }} aria-label="状态、图层与操作" title="状态、图层与操作"><Activity size={15} /><span className={styles.secondaryActionLabel}>状态</span></button>}
             </div>
           </div>
         {(!isMappingSession || operatorAttention || motionHeld || !sseState.connected) && <div className={`${styles.sceneAlert} ${!operatorAttention ? styles.sceneAlertQuiet : ''}`} role="status">
@@ -1973,10 +1964,6 @@ function SceneViewComponent({
           {isMappingSession && motionHeld && !navigationView.control.resumeRequired && <button className={styles.toolbarBtn}
             onClick={() => { setInspectorOpen(true); setDrawerOpen(false); setInspectorTab('status') }}>控制详情</button>}
         </div>}
-          {!observe && teleopMode && !drawerOpen && (
-            <TeleopPanel key={currentProduct} sseState={sseState} showToast={showToast}
-              onExit={() => setTeleopMode(false)} />
-          )}
           <div className={styles.canvasWrap}
             onPointerDownCapture={() => {
               // A canvas click closes menus before any map interaction.
@@ -1998,9 +1985,6 @@ function SceneViewComponent({
               savedMapFlat={savedMapForScene?.points}
               savedMapFrameId={savedMapForScene?.frameId}
               savedMapEpoch={savedMapForScene?.epoch}
-              savedMapVisible={mapView !== 'planning'}
-              planningMap={planningMap}
-              planningMapVisible={showPlanningMap}
               mappingObservation={mappingObservation}
               mappingObservationVisible={showMappingObservation}
               elevationState={elevationState}
@@ -2023,7 +2007,7 @@ function SceneViewComponent({
                 localPlannerSnapshot={nativeFresh ? localPlannerSnapshot : null}
                 safetyEnvelope={safetyEnvelope}
                 safetyView={safetyView}
-              layers={{ ...layers, cloud: layers.cloud && !showSavedMapInScene
+              layers={{ ...layers, cloud: layers.cloud && !savedMapForScene
                 && !showMappingObservation }}
               pointSize={pointSize}
               onPendingGoal={isMappingSession
@@ -2049,18 +2033,9 @@ function SceneViewComponent({
             {(showSavedMapInScene || layers.elevation || layers.nativeTraversability || layers.localPlanner) && (
               <div className={styles.sceneLegendStack}>
                 {showSavedMapInScene && !layers.localPlanner && <div className={styles.mapReadingKey}>
-                  {showPlanningMap && planningMap ? <>
-                    <strong>通行图 · 查询高度 {planningMap.origin[2].toFixed(2)} m</strong>
-                    <div className={styles.planningMapLegend}>
-                      <span><i style={{ background: '#63ae98' }} />可通行</span>
-                      <span><i style={{ background: '#d57164' }} />受阻</span>
-                      <span><i style={{ background: '#71767f' }} />缺少支撑</span>
-                    </div>
-                    <small>二维投影，非地面表面 · 运动中检查局部障碍</small>
-                  </> : <>
-                    <strong>{mapView === 'planning' ? planningMapUnavailableLabel(planningLayer.reason) : '保存点云 · 静态'}</strong>
-                    {mapView === 'points' && <span>点：已扫描表面 · 空白不代表可走</span>}
-                  </>}
+                  <strong>三维地图 · 保存点云</strong>
+                  <span>点：已扫描表面 · 空白不代表可走</span>
+                  <small>选点后由三维规划器预览路径</small>
                 </div>}
                 {layers.elevation && (
                   <div
@@ -2131,7 +2106,7 @@ function SceneViewComponent({
               <p>{mappingObservation.status !== 'ready' ? '连接恢复并收到新观测后再检查。'
                 : mappingProbeCell?.value === -1 ? '这里缺少有效观测。请从另一位置或朝向补扫。'
                 : mappingProbeCell?.value === 100 ? '此处有高于附近地面的回波；切换空间点云可查看三维形态。'
-                : mappingProbeCell?.value === 0 ? '此处观测到与附近低表面相连的支撑候选；仍需通行图和路径检查。'
+                : mappingProbeCell?.value === 0 ? '此处观测到与附近低表面相连的支撑候选；仍需三维路径检查。'
                 : '这里不在当前滚动窗口内，不能判断是否已经建图。'}</p>
               <small>{mappingProbeGround
                 ? `局部表面拟合 · 高度 ${mappingProbeGround.heightM.toFixed(2)} m · 残差 ${(mappingProbeGround.roughnessM * 100).toFixed(1)} cm · ${Math.round(mappingProbeGround.supportCount)} 个细 XY 支撑`
@@ -2179,7 +2154,7 @@ function SceneViewComponent({
                     {goalSendPending ? '正在提交导航…' : goalPreviewPending ? '正在预览路径…'
                       : goalPreviewError || pendingGoalPlanSummary
                         || (pendingGoalPreview?.feasible && !previewCurrent ? '当前位置已变化，请重新预览路径' : '')
-                        || planningCellLabel(planningCellAt(planningMap, pendingGoal.x, pendingGoal.y))}
+                        || '等待三维路径预览'}
                   </span>
                   <span className={styles.goalConfirmReason}>
                     {previewCurrent && goalDisabledReason ? goalDisabledReason : '预览不会移动机器人，确认后才开始导航'}
@@ -2249,6 +2224,10 @@ function SceneViewComponent({
               </div>
               <span className={styles.mappingSpeed} title={`实测前进速度 · ${poseLabel}`}>{displaySpeed}</span>
             </> : <>
+              {showSavedMapInScene && <span role="status" title={savedMapLoadError ?? undefined}>
+                {savedMapForScene ? `三维地图 · ${Math.floor(savedMapForScene.points.length / 3).toLocaleString()} 点`
+                  : savedMapLoadError ? '地图加载失败，正在重试' : '正在加载三维地图…'}
+              </span>}
               <span><i className={styles.routeKey} />执行轨迹 <i className={styles.globalKey} />全局路径 <i className={styles.trailKey} />已走轨迹</span>
               <span className={styles.canvasHint}><MousePointer2 size={14} />{observe ? '拖动旋转 · 滚轮缩放' : '选点后确认导航'}</span>
             </>}
@@ -2358,7 +2337,7 @@ function SceneViewComponent({
                   <summary>图例</summary>
                   {showMappingObservation ? <>
                     <p className={styles.mappingTruth}>地面相对高度 · 不代表可通行</p>
-                    <div className={styles.planningMapLegend}>
+                    <div className={styles.mappingObservationLegend}>
                       <span><i style={{ background: 'rgba(83, 133, 129, 0.49)' }} />支撑候选</span>
                       <span><i style={{ background: 'rgba(201, 111, 99, 0.90)' }} />障碍回波</span>
                       <span><i className={styles.unobservedSwatch} />未确认</span>
@@ -2384,7 +2363,7 @@ function SceneViewComponent({
                       <p>当前窗口 {(mappingObservation.layer.cols * mappingObservation.layer.resolution).toFixed(1)} × {(mappingObservation.layer.rows * mappingObservation.layer.resolution).toFixed(1)} m</p>
                     </>}
                     <p>灰格缺少可靠的地面依据，可从不同位置和朝向补扫。窗口外不表示从未建图。</p>
-                    <p>蓝绿格是已观测支撑候选，灰格是缺少依据。20 cm 网格不检查机身净空；导航仍使用三维碰撞和通行图。</p>
+                    <p>蓝绿格是已观测支撑候选，灰格是缺少依据。20 cm 网格不检查机身净空；导航使用三维规划与碰撞检查。</p>
                     <p>局部投影和局部地图显示当前窗口；整图显示本次累计建图的采样预览。保存地图保留完整数据，预览不代表可通行或建图完成百分比。</p>
                   </details>}
                 </details>}
@@ -2523,7 +2502,7 @@ function SceneViewComponent({
       <PromptModal
         open={saveModalOpen}
         title="保存地图"
-        message="保存完成后打开整图快照。"
+        message="保存完成后可查看整图快照。同名会替换原地图；要保留原图请使用新名称。"
         placeholder="例如 building_2f"
         confirmLabel="保存"
         icon={<Save size={18} />}

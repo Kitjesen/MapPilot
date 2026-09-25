@@ -115,11 +115,11 @@ void TestOfficialUnknownPriorRequiresRepeatedHits() {
   grid.Update(Frame(point, 20));
   assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kOccupied);
   assert(grid.InflatedContains(2.2F, 0.1F, 0.1F));
-  assert(grid.Generation() == first_generation);
+  assert(grid.Generation() == first_generation + 1U);
   grid.Update(Frame({}, 30));
   assert(grid.Contains(2.2F, 0.1F, 0.1F));
   assert(grid.InflatedContains(2.2F, 0.1F, 0.1F));
-  assert(grid.Generation() == first_generation);
+  assert(grid.Generation() == first_generation + 1U);
 }
 
 void TestRayFusionMatchesOfficialEndpointAndTraversalVotes() {
@@ -428,7 +428,7 @@ void TestInflationExcludesExactRadiusBoundary() {
   assert(!grid.InflatedContains(1.1F, 0.1F, 0.1F));
 }
 
-void TestCollisionGenerationAdvancesOnlyWhenInflatedGeometryChanges() {
+void TestCollisionGenerationAdvancesOnlyWhenEvidenceChanges() {
   auto config = TestConfig();
   config.auto_roll = false;
   RollingOccupancyGrid grid(config);
@@ -449,6 +449,57 @@ void TestCollisionGenerationAdvancesOnlyWhenInflatedGeometryChanges() {
 
   grid.Update(Frame({3.2F, 0.1F, 0.1F}, 30));
   assert(grid.Generation() == occupied_generation + 1U);
+}
+
+void TestReferenceKeepsWindowAndHonorsRetainedGeometry() {
+  RollingOccupancyGrid grid(TestConfig());
+  grid.Reset("map",0,0,0,1);
+  const auto before=grid.Snapshot();
+  const std::vector<float> distant{31.2F,.1F,.1F};
+  assert(grid.UpdateReference(Frame(distant,10,30,0,0)).accepted_points==0);
+  assert(grid.Snapshot().origin_x_m==before.origin_x_m);
+  const std::vector<float> rays{3.2F,.1F,.1F};
+  grid.UpdateReference(Frame(rays,10));
+  assert(grid.StateAt(3.2,.1,.1)==OccupancyState::kOccupied);
+  const std::vector<float> retained{2.2F,1.1F,.1F};
+  grid.ReplaceReferenceHits(Frame(retained,10).cloud,10);
+  assert(grid.StateAt(3.2,.1,.1)==OccupancyState::kUnknown);
+  assert(!grid.InflatedContains(3.2,.1,.1));
+  assert(grid.StateAt(2.2,1.1,.1)==OccupancyState::kOccupied);
+  assert(grid.StateAt(1.2,.1,.1)==OccupancyState::kFree);
+}
+
+void TestEvidenceChangesWithoutInflationChangeAdvanceGeneration() {
+  auto config = TestConfig();
+  config.auto_roll = false;
+  config.max_ray_range_m = 1.0;
+  RollingOccupancyGrid grid(config);
+  grid.Reset("map", 0, 0, 0, 1);
+  const auto before = grid.InflatedSnapshot();
+  grid.Update(Frame({4.2F, 0.1F, 0.1F}, 10)); // Clipped ray observes only free space.
+  const auto after = grid.InflatedSnapshot();
+  assert(before.occupied_bits == after.occupied_bits);
+  assert(after.generation == before.generation + 1);
+  assert(before.known_free_bits != after.known_free_bits);
+  assert(before.measured_occupied_bits == after.measured_occupied_bits);
+  const auto check = [&] {
+    const auto snapshot = grid.Snapshot();
+    const auto packed = grid.InflatedSnapshot();
+    for (std::size_t i = 0; i < snapshot.state.size(); ++i) {
+      const bool occupied = (packed.measured_occupied_bits[i/8] & (1U << (i%8))) != 0;
+      const bool free = (packed.known_free_bits[i/8] & (1U << (i%8))) != 0;
+      assert(occupied == (snapshot.state[i] == static_cast<std::uint8_t>(OccupancyState::kOccupied)));
+      assert(!free || snapshot.state[i] == static_cast<std::uint8_t>(OccupancyState::kFree));
+      assert(!occupied || !free);
+    }
+  };
+  check();
+  grid.RollToCenter(3.2, 0, 0, 20);
+  check();
+  grid.RollToCenter(-3.2, 0, 0, 30);
+  check();
+  grid.Reset("map", 0, 0, 0, 40);
+  check();
 }
 
 void TestWindowRollEmitsOutgoingAndPreservesOverlap() {
@@ -581,6 +632,22 @@ void TestFrameMismatchFailsClosed() {
     rejected = true;
   }
   assert(rejected);
+}
+
+void TestSaturatedHitRefreshesDecayClock() {
+  auto config = TestConfig();
+  config.decay_after_ns = 100;
+  config.decay_factor = 0;
+  RollingOccupancyGrid grid(config);
+  grid.Reset("map", 0, 0, 0, 1);
+  const std::vector<float> points{2.2F, .1F, .1F};
+  grid.Update(Frame(points, 10));
+  grid.Update(Frame(points, 20));
+  grid.Update(Frame(points, 90));
+  grid.Decay(150);
+  assert(grid.StateAt(2.2F, .1F, .1F) == OccupancyState::kOccupied);
+  grid.Decay(200);
+  assert(grid.StateAt(2.2F, .1F, .1F) == OccupancyState::kUnknown);
 }
 
 void TestIncrementalInflationKeepsSharedCoverageUntilLastSourceClears() {
@@ -816,6 +883,7 @@ void TestConfiguredLocalUpdateRangeMatchesUpstreamFilter() {
 }  // namespace
 
 int main() {
+  TestReferenceKeepsWindowAndHonorsRetainedGeometry();
   TestNewObstacleInKnownFreeSpaceRequiresObservedClearing();
   TestEndpointMajorityPreservesHistoryUntilObservedFree();
   TestClippedEndpointContributesOneFreeVote();
@@ -834,13 +902,15 @@ int main() {
   TestCurrentHitRollResetAndSharedInflation();
   TestRangeClippingDoesNotCreateCurrentCollisionHit();
   TestInflationExcludesExactRadiusBoundary();
-  TestCollisionGenerationAdvancesOnlyWhenInflatedGeometryChanges();
+  TestCollisionGenerationAdvancesOnlyWhenEvidenceChanges();
+  TestEvidenceChangesWithoutInflationChangeAdvanceGeneration();
   TestWindowRollEmitsOutgoingAndPreservesOverlap();
   TestSlidingThresholdIsSymmetricLikeUpstream();
   TestShortPointOutsideUpstreamLocalRangeIsIgnored();
   TestWindowRollClearsInflationFromEveryReusedCell();
   TestAutoRollAndCellMutationCommitOneGeneration();
   TestDecayAndOutOfOrderGate();
+  TestSaturatedHitRefreshesDecayClock();
   TestFrameMismatchFailsClosed();
   TestIncrementalInflationKeepsSharedCoverageUntilLastSourceClears();
   TestIncrementalInflationMatchesFullRebuildAcrossUpdates();

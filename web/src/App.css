@@ -440,3 +440,13 @@ body {
 }
 
 .view-loading { display: grid; place-items: center; flex: 1; color: var(--text-dim); font-size: 14px; }
+/* Product switches can outlive the managed Host connection. */
+.product-transition {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  font-size: 13px;
+  background: var(--bg-secondary, #f2f4f5);
+}

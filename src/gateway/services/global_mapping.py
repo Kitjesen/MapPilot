@@ -12,6 +12,7 @@ import numpy as np
 
 from gateway.services.native_status import read_json_snapshot
 from runtime.msgs.sensor import PointCloud2
+from runtime.utils.binary_codec import encode_pointcloud
 
 _epoch_lock = threading.Lock()
 _source_epoch: int | None = None
@@ -27,7 +28,7 @@ def _wire_epoch(source: int | None) -> int:
         return _viewer_epoch
 
 
-def global_mapping_points(max_points: int = 80000) -> dict[str, Any]:
+def _global_mapping_snapshot(max_points: int) -> tuple[dict[str, Any], np.ndarray]:
     session = os.environ.get("LINGTU_SESSION_ROOT", "").strip()
     default_status = (
         str(Path(session) / "slam.status.json")
@@ -50,7 +51,6 @@ def global_mapping_points(max_points: int = 80000) -> dict[str, Any]:
         }
     empty = dict(
         count=0,
-        points=[],
         source="global_mapping_preview",
         layout="xyz_rows",
         frame_id=metadata.get("frame_id") or "map",
@@ -60,6 +60,7 @@ def global_mapping_points(max_points: int = 80000) -> dict[str, Any]:
         stream_kind="map",
         global_mapping=metadata,
     )
+    no_points = np.empty((0, 3), dtype=np.float32)
     try:
         if (
             time.time() - status_path.stat().st_mtime > 5.0
@@ -67,21 +68,39 @@ def global_mapping_points(max_points: int = 80000) -> dict[str, Any]:
             or not metadata.get("points")
             or metadata.get("source_epoch") != status.get("source_epoch")
         ):
-            return empty
+            return empty, no_points
         cloud = PointCloud2.decode((cloud_dir / "global_map_cloud.bin").read_bytes())
         if (
             cloud.frame_id != metadata.get("frame_id")
             or abs(float(cloud.ts) - float(metadata.get("stamp_s", 0))) > 1e-5
         ):
-            return empty
+            return empty, no_points
         points = cloud.points[:, :3]
         points = points[np.isfinite(points).all(axis=1)]
         if not len(points):
-            return empty
+            return empty, no_points
         bounds = {"min": points.min(axis=0).tolist(), "max": points.max(axis=0).tolist()}
         limit = max(1, min(int(max_points), 200000))
         if len(points) > limit:
             points = points[np.linspace(0, len(points) - 1, limit, dtype=np.int64)]
-        return {**empty, "count": len(points), "points": points.tolist(), "bounds": bounds}
+        return {**empty, "count": len(points), "bounds": bounds}, points
     except (OSError, ValueError, TypeError, AttributeError):
-        return empty
+        return empty, no_points
+
+
+def global_mapping_points(max_points: int = 80000) -> dict[str, Any]:
+    metadata, points = _global_mapping_snapshot(max_points)
+    return {**metadata, "points": points.tolist()}
+
+
+def global_mapping_frame(max_points: int = 80000) -> tuple[bytes, dict[str, Any]]:
+    """Use the existing PCLD wire format without allocating per-coordinate objects."""
+    metadata, points = _global_mapping_snapshot(max_points)
+    return encode_pointcloud(
+        points,
+        frame_id=metadata["frame_id"],
+        epoch=metadata["epoch"],
+        stamp_s=metadata["stamp_s"],
+        sequence=metadata["sequence"],
+        stream_kind="map",
+    ), metadata["global_mapping"]

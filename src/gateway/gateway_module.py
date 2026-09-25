@@ -700,6 +700,7 @@ class GatewayModule(Module, layer=6):
         source_epoch: int = 1,
         sequence: int = 1,
         manual_mode: bool = False,
+        deadline_monotonic_s: float | None = None,
     ) -> bool:
         if (
             request_id is None
@@ -707,6 +708,7 @@ class GatewayModule(Module, layer=6):
             and source_epoch == 1
             and sequence == 1
             and not manual_mode
+            and deadline_monotonic_s is None
         ):
             return teleop_on_velocity(self, vx_mps, vy_mps, yaw_rps)
         return teleop_on_velocity_with_request_id(
@@ -719,6 +721,7 @@ class GatewayModule(Module, layer=6):
             source_epoch=source_epoch,
             sequence=sequence,
             manual_mode=manual_mode,
+            deadline_monotonic_s=deadline_monotonic_s,
         )
 
     def _teleop_claim(

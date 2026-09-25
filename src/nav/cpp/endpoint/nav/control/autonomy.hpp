@@ -30,6 +30,7 @@ struct AutonomyTickOutcome {
   std::string reason;
   bool inspection_arrival_intent{false};
   std::optional<GoalReplanTrigger> replan_trigger;
+  bool terminal_failure_intent{false};
 };
 
 struct AutonomyTickActions {

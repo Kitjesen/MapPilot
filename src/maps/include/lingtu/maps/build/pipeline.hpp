@@ -12,17 +12,17 @@ namespace lingtu::maps {
 struct OctomapBuildOptions {
   std::string converter_command;
   std::string build_mode{"external_pcl_converter"};
-  double resolution{0.20};
-  int support_dilation_cells{1};
-  int free_layers_above{3};
-  int free_dilation_cells{1};
+  double resolution{0.05};
+  int support_dilation_cells{0};
+  int free_layers_above{0};
+  int free_dilation_cells{0};
   std::string frame_id{"map"};
   std::string source_profile{"map_pipeline"};
   std::string data_source{"map_pipeline"};
   std::string slam_source{"unknown"};
   std::string localization_source{"unknown"};
   std::string mapping_source{"lingtu_maps_pipeline"};
-  double timeout_sec{60.0};
+  double timeout_sec{180.0};
   std::function<bool()> cancel_requested;
 };
 

@@ -966,7 +966,11 @@ class FieldBackend:
         while self._monotonic() < deadline:
             nav = self._http("GET", "/api/v1/navigation/status", timeout_s=3.0)
             if map_name:
-                session = self._http("GET", "/api/v1/session", timeout_s=3.0)
+                # ProductControl has already committed this map identity in
+                # the native activation transaction. The HTTP session view is
+                # a rich UI projection and may inspect large map bundles;
+                # navigation readiness must not block on that display path.
+                session = {"active_map": map_name}
             task = nav.get("task") if isinstance(nav.get("task"), Mapping) else {}
             admission = (
                 nav.get("goal_admission")
@@ -1049,6 +1053,31 @@ class FieldBackend:
                 elif control_mode == "teleop":
                     ready = ready and not any(
                         blocker not in _TELEOP_AUTONOMY_ONLY_BLOCKERS for blocker in aggregate_blockers
+                    )
+                if control_mode in {"teleop", "teleop_avoid"} and motion.get("permission") == "ESTOPPED":
+                    # A stopped operator Product must boot so the operator can
+                    # inspect it. This does not clear ESTOP or grant motion;
+                    # wait_motion_output still requires the driver's exact zero ACK.
+                    allowed = (
+                        _TELEOP_AVOID_STARTUP_BLOCKERS if control_mode == "teleop_avoid"
+                        else _TELEOP_AUTONOMY_ONLY_BLOCKERS
+                    )
+                    input_gate = native.get("input_gate") or {}
+                    loop_health = native.get("control_loop_health") or {}
+                    ready = (
+                        navigation_state_known
+                        and admission.get("state") == "BLOCKED"
+                        and motion.get("observation") == "QUIET"
+                        and motion.get("stop_confirmation") in {"NOT_REQUESTED", "CONFIRMED"}
+                        and native.get("status_available") is True
+                        and input_gate.get("ready") is True
+                        and loop_health.get("ready") is True
+                        and loop_health.get("healthy") is True
+                        and "native_estop_latched" in aggregate_blockers
+                        and not any(
+                            blocker not in allowed and blocker != "native_estop_latched"
+                            for blocker in aggregate_blockers
+                        )
                     )
             active_map = _text(session.get("active_map") or session.get("saved_active_map"))
             if ready and (not map_name or active_map == map_name):

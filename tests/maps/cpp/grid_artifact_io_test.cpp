@@ -58,10 +58,11 @@ void RequireRejected(const std::filesystem::path& path) {
 
 int main() {
   const auto root = TempRoot();
-  const std::vector<lingtu::maps::PointXyz> points = {
-      {0.0F, 0.0F, 0.0F},
-      {1.0F, 1.0F, 0.5F},
-  };
+  std::vector<lingtu::maps::PointXyz> points;
+  for (int y = 0; y < 6; ++y)
+    for (int x = 0; x < 6; ++x)
+      points.push_back({.05F + x * .2F, .05F + y * .2F, 0.F});
+  points.push_back({.25F, .25F, .5F});
   std::string write_error;
   assert(lingtu::maps::WriteBinaryXyzPcd(root / "map.pcd", points, &write_error));
   const auto built = lingtu::maps::BuildOccupancyProjectionSnapshot(root, true);
@@ -114,6 +115,34 @@ int main() {
   const auto bad_crc_path = root / "bad_crc.npz";
   WriteBytes(bad_crc_path, bad_crc);
   RequireRejected(bad_crc_path);
+
+  // A distant lower floor and a sparse low outlier must not make this ramp
+  // an obstacle. Preserve actual returns above it and never invent free space.
+  points.clear();
+  for (int y = 0; y < 9; ++y) {
+    for (int x = 0; x < 12; ++x) {
+      const float px = .05F + x * .2F, py = .05F + y * .2F;
+      points.push_back({px, py, .3F * px});
+      points.push_back({px + 4.2F, py, -.8F});
+    }
+  }
+  points.push_back({.25F, .25F, .575F});
+  points.push_back({.25F, .25F, 1.075F});
+  points.push_back({1.25F, 1.25F, -4.F});
+  assert(lingtu::maps::WriteBinaryXyzPcd(root / "map.pcd", points, &write_error));
+  const auto terrain = lingtu::maps::BuildOccupancyProjectionSnapshot(root, true);
+  assert(terrain.ok);
+  assert(terrain.occupied_count == 1);
+  assert(terrain.free_count == 0);
+
+  // Vertical-only returns cannot establish a ground plane.
+  points = {{.25F, .25F, 0.F}, {.25F, .25F, .5F}, {.25F, .25F, 1.F}};
+  assert(lingtu::maps::WriteBinaryXyzPcd(root / "map.pcd", points, &write_error));
+  const auto unsupported = lingtu::maps::BuildOccupancyProjectionSnapshot(root, true);
+  assert(unsupported.ok);
+  assert(unsupported.occupied_count == 0);
+  assert(unsupported.free_count == 0);
+  assert(unsupported.unknown_count == unsupported.rows * unsupported.cols);
 
   std::filesystem::remove_all(root);
   return 0;

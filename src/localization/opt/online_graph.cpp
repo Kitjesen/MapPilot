@@ -101,6 +101,7 @@ Result OnlinePoseGraph::start_optimization() {
   OptimizeOptions options;
   options.max_iterations = limits_.max_iterations;
   options.geometric_constraints = constraints_;
+  options.gravity_reference = keyframes_;
   const auto epoch = source_epoch_;
   const auto revision = revision_;
   const auto generation = generation_;
@@ -116,9 +117,9 @@ Result OnlinePoseGraph::start_optimization() {
         try {
           result.update.solution = optimize_graph(keyframes, options);
           if (result.update.solution.ok) {
-            result.update.map_from_odom = compose_pose(
+            result.update.map_from_odom = gravity_preserving_alignment(
                 result.update.solution.keyframes.back().pose,
-                inverse_pose(keyframes.back().pose));
+                keyframes.back().pose);
           }
         } catch (const std::exception& error) {
           result.update.solution.code = "online_optimizer_failed";

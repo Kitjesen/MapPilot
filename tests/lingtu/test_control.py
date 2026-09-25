@@ -155,7 +155,7 @@ def test_product_control_help_names_the_field_product_selector(capsys) -> None:
 
     assert exc_info.value.code == 0
     help_text = capsys.readouterr().out
-    assert "{switch,status,stop}" in help_text
+    assert "{switch,status,stop,serve}" in help_text
     assert "[product]" in help_text
     assert "product               Field Product name" in help_text
     assert "[profile]" not in help_text
@@ -810,6 +810,7 @@ def test_product_control_status_reads_current_without_writing(tmp_path: Path) ->
     assert result == {
         "ok": True,
         "status": "active",
+        "product_session_id": "1" * 32,
         "robot": "unitree/go2",
         "env": "real",
         "product": "teleop",
@@ -859,6 +860,7 @@ def test_sim_status_reports_monitored_process_failure(
     assert control.status(state_dir=tmp_path) == {
         "ok": False,
         "status": "failed",
+        "product_session_id": product_session_id,
         "robot": "doso/thunder_v4",
         "env": "sim",
         "product": "teleop_avoid",

@@ -951,6 +951,28 @@ def test_scan_mapd_profile_rejects_missing_run_plan_geometry() -> None:
         mapd_environment({"LINGTU_NAV_LOCAL_PLANNER_BACKEND": "scan"})
 
 
+def test_standalone_pedestrian_fixture_supplies_shared_collision_geometry() -> None:
+    manifest = acceptance._load_manifest(
+        acceptance.ROOT / "config/acceptance/mujoco/local_scan_pedestrian.json"
+    )
+    environment = acceptance._component_native_environment(manifest)
+    environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] = "scan"
+    profile = mapd_environment(environment)
+
+    assert profile["LINGTU_MAPD_INFLATION_RADIUS_M"] == "0.4"
+    assert profile["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.25"
+    assert profile["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.35"
+    assert environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"] == "0.4"
+    assert environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.35"
+    assert environment["LINGTU_MAPD_EXTENDED_LAYERS"] == "0"
+
+
+def test_standalone_navigation_without_geometry_uses_collision_only_mapd() -> None:
+    assert acceptance._component_native_environment({}) == {
+        "LINGTU_MAPD_EXTENDED_LAYERS": "0"
+    }
+
+
 def test_isolated_navigation_rejects_real_scene_contact_and_missing_evidence():
     assert acceptance._entity_contact_blockers({}) == ["mujoco_entity_contact_evidence_missing"]
     assert acceptance._entity_contact_blockers({"entity_contacts": {
@@ -2119,7 +2141,7 @@ def test_mujoco_sensor_record_clock_contract_separates_navigation_fixture_from_r
     assert tf_handler.index("const bool map_frame_jump") < tf_handler.index(
         "stamp_decision == SourceStampDecision::kClockRebase"
     )
-    assert "classifySourceOrder(state_.last_cloud_s" in map_input
+    assert "classifySourceOrder(last_submitted_cloud_s_" in map_input
     assert "classifySourceOrder(state_.last_traversability_s" in map_input
     assert "state_.localization_health.stamp_s" in health_input
     assert "input.odom_receive_s = state_.last_odom_receive_s;" in health_input
@@ -2164,8 +2186,14 @@ def test_motion_log_contract_captures_native_navigation_and_visual_state(tmp_pat
     )
     assert sensors._read_json_object(status)["global_path"]
     assert sensors._read_json_object(tmp_path / "missing.json") == {}
-    assert sensors._native_nav_goal_reached({"last_local": {"goal_reached": True}}) is True
-    assert sensors._native_nav_goal_reached({"last_local": {"reason": "goal_reached"}}) is True
+    for local in ({"goal_reached": True}, {"reason": "goal_reached"}):
+        assert sensors._native_nav_goal_reached({"last_local": local}) is False
+        assert sensors._native_nav_goal_reached({
+            "last_local": local, "motion_stop_evidence": {"state": "PENDING"},
+        }) is False
+        assert sensors._native_nav_goal_reached({
+            "last_local": local, "motion_stop_evidence": {"state": "CONFIRMED"},
+        }) is True
     assert sensors._native_nav_goal_reached({}) is False
 
     sensor_source = (ROOT / "sim" / "scripts" / "mujoco" / "native_dds_sensors.py").read_text(encoding="utf-8")
@@ -4221,6 +4249,7 @@ def test_native_evidence_freezes_motion_health_after_goal_reached_during_sensor_
                     "cloud_sync": {"pose_rejected": cloud_pose_rejected},
                     "timing_ms": {"overrun": overrun_ms},
                     "last_local": {"goal_reached": goal_reached},
+                    "motion_stop_evidence": {"state": "CONFIRMED" if goal_reached else "NOT_REQUESTED"},
                 }
             ),
             encoding="utf-8",
@@ -4319,6 +4348,45 @@ def test_native_evidence_reports_loop_overrun_distribution_and_peak_context(tmp_
     }
 
 
+def test_loop_history_recovers_spike_between_polls_and_deduplicates():
+    evidence = acceptance.NativeEvidence()
+    def nav(first, values, events=()):
+        return {"timing_ms": {"overrun": 0}, "control_loop_health": {
+            "total_samples": first + len(values) - 1,
+            "history": {"first_sequence": first, "overruns_ms": values, "overruns": events},
+        }}
+    evidence._collect_loop_history(nav(1, [800, 0]), False)
+    batch = nav(1, [800, 0, 0, 189, 0], [
+        {"sequence": 4, "work_ms": 199, "runtime_ms": 194},
+    ])
+    evidence._collect_loop_history(batch, True)
+    evidence._collect_loop_history(batch, True)
+    evidence._collect_loop_history(nav(3, [0, 189, 0, 0, 0]), True)
+    assert evidence.navigation_loop_overrun_samples_ms == [0, 189, 0, 0, 0]
+    assert evidence.max_navigation_loop_overrun_ms == 189
+    assert evidence.navigation_loop_overrun_percentile_ms(99) == 189
+    assert evidence.navigation_loop_missing_samples == 0
+    assert evidence.max_navigation_loop_overrun_context == {
+        "cycle_sequence": 4, "overrun_ms": 189,
+        "cycle_timing": {"sequence": 4, "work_ms": 199, "runtime_ms": 194},
+    }
+    evidence._collect_loop_history(nav(10, [0, 0]), True)
+    assert evidence.navigation_loop_missing_samples == 2
+
+
+def test_loop_history_rejects_reset_or_invalid_batch_without_faking_zero_latency():
+    evidence = acceptance.NativeEvidence()
+    for health in (
+        {"total_samples": 2, "history": {"first_sequence": 1, "overruns_ms": [0]}},
+        {"total_samples": 1, "history": {"first_sequence": 1, "overruns_ms": [float("nan")]}},
+        {},
+    ):
+        evidence._collect_loop_history({"control_loop_health": health}, True)
+    assert evidence.navigation_loop_missing_samples == 3
+    assert not evidence.navigation_loop_history_seen
+    assert not evidence.navigation_loop_overrun_samples_ms
+
+
 def test_motion_rejects_native_input_sync_and_control_loop_health_regressions():
     evidence = acceptance.NativeEvidence(
         samples=100,
@@ -4401,6 +4469,7 @@ def test_motion_loop_health_allows_one_bounded_spike_when_p99_is_healthy():
         motion_health_samples=200,
         input_gate_ready_samples=200,
         navigation_loop_overrun_samples_ms=overruns_ms,
+        navigation_loop_history_seen=True,
         max_navigation_loop_overrun_ms=110.96,
         max_navigation_loop_overrun_context={"evidence_sample": 200, "overrun_ms": 110.96},
         plan_accepted=True,
@@ -4454,6 +4523,13 @@ def test_motion_loop_health_allows_one_bounded_spike_when_p99_is_healthy():
     assert metrics["max_navigation_loop_overrun_context"]["overrun_ms"] == pytest.approx(110.96)
     assert "navigation_loop_overrun_p99_above_threshold" not in blockers
     assert "navigation_loop_overrun_peak_above_threshold" not in blockers
+    evidence.navigation_loop_history_seen = False
+    _, missing_blockers, _ = acceptance._evaluate_phase(
+        phase="motion", phase_cfg={"publish_cmd_vel": True},
+        thresholds={"max_navigation_loop_overrun_p99_ms": 100.0},
+        evidence=evidence, sensor_report=sensor_report, goal=[56.0, 32.0, 0.3, 0.0],
+    )
+    assert "navigation_loop_complete_history_missing" in missing_blockers
 
 
 def test_navigation_isolation_can_disable_continuous_map_tracking_gate():
@@ -4672,7 +4748,10 @@ def test_motion_strict_arrival_accepts_native_goal_and_pose_within_tolerance():
         max_command_requests=1,
         max_command_acks=1,
         command_last_accepted=True,
-        last_nav={"last_local": {"goal_reached": True}},
+        last_nav={
+            "last_local": {"goal_reached": True},
+            "motion_stop_evidence": {"state": "CONFIRMED"},
+        },
         last_slam={"state": "TRACKING", "track_against_map": {"successes": 10}},
     )
     sensor_report = {

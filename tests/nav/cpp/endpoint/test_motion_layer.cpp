@@ -228,6 +228,12 @@ void testConfirmedMovingClusterAddsFutureOccupancyToSnapshot() {
   require(!containsNear(current, 1.45f, 0.15f, 0.20f),
           "current snapshot must not disguise predicted occupancy as measurement");
   const auto predicted = layer.snapshotPredictedDynamic(100, 1.2);
+  const auto volumes = layer.predictedVolumes(1.2);
+  require(volumes.size() == 1, "confirmed moving cluster must feed one swept volume to SCAN");
+  require(volumes[0].end.x > volumes[0].start.x + .8,
+          "SCAN volume must continuously cover the prediction horizon");
+  require(volumes[0].minZ <= 0 && volumes[0].maxZ >= 0,
+          "prediction vertical bounds must contain the measured cluster");
   require(containsNear(predicted, 1.45f, 0.15f, 0.20f),
           "confirmed moving obstacle must add bounded future occupancy");
   require(layer.stats().predicted_points == predicted.size() / 4,
@@ -328,6 +334,67 @@ void testPriorFreeEvidenceIsRequired() {
   layer.updateFromScan(origin, cluster(1.2f), 1.2);
   require(layer.dynamicClusters(8, 1.2).empty(),
           "motion without prior confirmed free space must remain an ordinary obstacle");
+}
+
+void testClearingCadenceAtUnixEpochStamps() {
+  auto cfg = baseConfig();
+  cfg.ray_clearing_interval_s = 0.1;
+  lingtu::nav::endpoint::MotionLayer layer(cfg);
+  const lingtu::nav::endpoint::SensorOrigin origin{0.0, 0.0, 0.0, true};
+  for (int frame = 0; frame < 10; ++frame) {
+    layer.updateFromScan(origin, point(2.0f, 0.0f, 0.0f, 0.4f),
+                         1789920000.0 + 0.1 * frame);
+  }
+  require(layer.stats().raycast_rays == 10,
+          "10 Hz source timestamps must not lose alternate clearing frames to rounding");
+}
+
+void testSparseMovingReturnsUseRepeatedObjectLevelFreeEvidence() {
+  auto cfg = baseConfig();
+  cfg.dynamic_min_cells = 4;
+  cfg.dynamic_confirm_frames = 4;
+  cfg.dynamic_free_min_frames = 3;
+  lingtu::nav::endpoint::MotionLayer layer(cfg);
+  const lingtu::nav::endpoint::SensorOrigin origin{0.0, 0.0, 0.0, true};
+  // Only two rows of the object were observed free, each in a single scan.
+  std::vector<float> rays;
+  for (float x : {1.05f, 1.15f, 1.25f, 1.35f}) {
+    rays.insert(rays.end(), {3.0f, 0.05f * 3.0f / x, 0.0f, 0.4f,
+                            3.0f, 0.25f * 3.0f / x, 0.0f, 0.4f});
+  }
+  layer.updateFromScan(origin, rays, 0.1);
+  std::vector<lingtu::nav::endpoint::DynamicCluster> tracks;
+  for (int frame = 0; frame < 4; ++frame) {
+    const float x = 1.05f + 0.1f * frame;
+    std::vector<float> returns;
+    for (float y : {0.05f, 0.25f, 0.45f, 0.65f}) {
+      returns.insert(returns.end(), {x, y, 0.0f, 0.4f});
+    }
+    const double stamp = 1.0 + frame * 0.1;
+    layer.updateFromScan(origin, returns, stamp);
+    tracks = layer.dynamicClusters(8, stamp);
+    if (frame < 3) require(tracks.empty(), "sparse motion still requires temporal confirmation");
+  }
+  require(tracks.size() == 1, "sparse moving object must not require prior rays in every voxel");
+  require(tracks.front().vx > 0.5, "sparse object must retain its observed forward velocity");
+}
+
+void testChangingWallVisibilityDoesNotCreateVelocityTrack() {
+  auto cfg = baseConfig();
+  lingtu::nav::endpoint::MotionLayer layer(cfg);
+  const lingtu::nav::endpoint::SensorOrigin origin{0.0, 0.0, 0.0, true};
+  // A sliding visible patch on a fixed wall has a moving centroid, but no
+  // repeated free-to-hit evidence at the wall itself.
+  for (int frame = 0; frame < 12; ++frame) {
+    std::vector<float> patch;
+    for (int y = 0; y < 8; ++y) {
+      patch.insert(patch.end(), {2.0f, 0.1f * frame + 0.2f * y, 0.0f, 0.4f});
+    }
+    const double stamp = 1.0 + frame * 0.1;
+    layer.updateFromScan(origin, patch, stamp);
+    require(layer.dynamicClusters(8, stamp).empty(),
+            "changing visibility on a static wall must not predict wall motion");
+  }
 }
 
 void testAlternatingJitterDoesNotBecomeDynamic() {
@@ -542,6 +609,9 @@ int main() {
   testConfirmedTrackPredictsThroughBriefOcclusion();
   testUnconfirmedStationaryAndExpiredTracksDoNotPredict();
   testPriorFreeEvidenceIsRequired();
+  testClearingCadenceAtUnixEpochStamps();
+  testSparseMovingReturnsUseRepeatedObjectLevelFreeEvidence();
+  testChangingWallVisibilityDoesNotCreateVelocityTrack();
   testAlternatingJitterDoesNotBecomeDynamic();
   testImplausibleSpeedDoesNotBecomeDynamic();
   testSameFrameQueriesReusePrunePass();

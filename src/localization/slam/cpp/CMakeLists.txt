@@ -52,8 +52,8 @@ if(LINGTU_SLAM_FASTLIO2_BACKEND)
   endif()
   add_subdirectory("${FASTLIO2_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/fastlio2")
   add_subdirectory("${LOCALIZER_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/localizer")
-  if(NOT TARGET map_opt)
-    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../opt" "${CMAKE_CURRENT_BINARY_DIR}/map_opt")
+  if(NOT TARGET lingtu_online_mapping)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../opt/online" "${CMAKE_CURRENT_BINARY_DIR}/online_mapping")
   endif()
 
   target_sources(messages_contract PRIVATE
@@ -67,7 +67,7 @@ if(LINGTU_SLAM_FASTLIO2_BACKEND)
   target_include_directories(messages_contract PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../maps/include")
   target_link_libraries(messages_contract
-    PRIVATE localizer map_opt
+    PRIVATE localizer lingtu_online_mapping
     PUBLIC fastlio2_core ${LINGTU_YAML_CPP_TARGET})
 endif()
 
@@ -94,6 +94,10 @@ if(LINGTU_SLAM_BUILD_TESTS)
     "${LINGTU_SLAM_TESTS_DIR}/test_map_tracking_health.cpp")
   target_link_libraries(test_map_tracking_health PRIVATE messages_contract)
   add_test(NAME messages_map_tracking_health COMMAND test_map_tracking_health)
+  add_executable(test_manual_relocalization
+    "${LINGTU_SLAM_TESTS_DIR}/test_manual_relocalization.cpp")
+  target_link_libraries(test_manual_relocalization PRIVATE messages_contract)
+  add_test(NAME messages_manual_relocalization COMMAND test_manual_relocalization)
   add_executable(test_imu_frame_contract
     "${LINGTU_SLAM_TESTS_DIR}/test_imu_frame_contract.cpp")
   target_link_libraries(test_imu_frame_contract PRIVATE messages_contract)
@@ -138,6 +142,10 @@ if(LINGTU_SLAM_BUILD_TESTS)
       "${LINGTU_SLAM_TESTS_DIR}/test_icp_diagnostics.cpp")
     target_link_libraries(test_icp_diagnostics PRIVATE localizer)
     add_test(NAME messages_icp_diagnostics COMMAND test_icp_diagnostics)
+    add_executable(test_map_icp_seed
+      "${LINGTU_SLAM_TESTS_DIR}/test_map_icp_seed.cpp")
+    target_link_libraries(test_map_icp_seed PRIVATE messages_contract localizer)
+    add_test(NAME messages_map_icp_seed COMMAND test_map_icp_seed)
     add_executable(test_imu_acceleration_scale
       "${LINGTU_SLAM_TESTS_DIR}/test_imu_acceleration_scale.cpp")
     target_link_libraries(test_imu_acceleration_scale PRIVATE

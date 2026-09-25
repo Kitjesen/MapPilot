@@ -45,6 +45,17 @@ const EMPTY: BinaryCloud = {
   error: null,
 }
 
+function mappingSummary(raw: unknown): BinaryCloud['mappingSummary'] {
+  if (!raw || typeof raw !== 'object') return undefined
+  const mapping = raw as Record<string, unknown>
+  return {
+    registrationRejections: typeof mapping.rejected_keyframes === 'number' ? mapping.rejected_keyframes : 0,
+    state: typeof mapping.state === 'string' ? mapping.state : '',
+    loops: typeof mapping.loops === 'number' ? mapping.loops : 0,
+    optimizations: typeof mapping.optimizations === 'number' ? mapping.optimizations : 0,
+    droppedFrames: typeof mapping.dropped_frames === 'number' ? mapping.dropped_frames : 0,
+  }
+}
 
 
 function finitePoint(x: unknown, y: unknown, z: unknown): [number, number, number] | null {
@@ -144,10 +155,13 @@ export function useBinaryCloud(
     let fallbackSeq = 0
     let httpFallbackActive = false
     let httpRequestGeneration = 0
+    let httpAbortController: AbortController | null = null
     let decodeBusy = false
     let pendingWsFrame: {
       frame: ArrayBuffer
       connectionGeneration: number
+      httpRequestGeneration?: number
+      globalMapping?: Record<string, unknown>
     } | null = null
     let decodeTimer: ReturnType<typeof setTimeout> | null = null
     let lastDecodeStartedAt = 0
@@ -199,6 +213,8 @@ export function useBinaryCloud(
         {
           buffer: pending.frame,
           connectionGeneration: pending.connectionGeneration,
+          httpRequestGeneration: pending.httpRequestGeneration,
+          globalMapping: pending.globalMapping,
         },
         [pending.frame],
       )
@@ -212,6 +228,8 @@ export function useBinaryCloud(
     const stopHttpFallback = () => {
       httpFallbackActive = false
       httpRequestGeneration++
+      httpAbortController?.abort()
+      httpAbortController = null
       if (fallbackTimer.current) {
         clearTimeout(fallbackTimer.current)
         fallbackTimer.current = null
@@ -222,9 +240,29 @@ export function useBinaryCloud(
       if (cancelled || !httpFallbackActive || fallbackUrl == null) return
       const pollGeneration = activeConnectionGeneration
       const requestGeneration = httpRequestGeneration
+      const controller = new AbortController()
+      httpAbortController = controller
+      const requestTimeout = setTimeout(() => controller.abort(), 10000)
       try {
-        const res = await fetch(fallbackUrl, { cache: 'no-store' })
+        const res = await fetch(fallbackUrl, { cache: 'no-store', signal: controller.signal })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        if (res.headers.get('content-type')?.startsWith('application/octet-stream')) {
+          const frame = await res.arrayBuffer()
+          if (
+            cancelled || !httpFallbackActive
+            || pollGeneration !== activeConnectionGeneration
+            || requestGeneration !== httpRequestGeneration
+          ) return
+          const summary = res.headers.get('x-lingtu-global-mapping')
+          pendingWsFrame = {
+            frame,
+            connectionGeneration: pollGeneration,
+            httpRequestGeneration: requestGeneration,
+            globalMapping: summary ? JSON.parse(summary) as Record<string, unknown> : undefined,
+          }
+          flushPendingWsFrame()
+          return
+        }
         const payload = await res.json() as Record<string, unknown>
         const decoded = decodeHttpPoints(
           payload.points,
@@ -253,16 +291,7 @@ export function useBinaryCloud(
             'cloud',
             { epoch: null, sequence: null },
           )
-          if (payload.global_mapping && typeof payload.global_mapping === 'object') {
-            const mapping = payload.global_mapping as Record<string, unknown>
-            decoded.mappingSummary = {
-              registrationRejections: typeof mapping.rejected_keyframes === 'number' ? mapping.rejected_keyframes : 0,
-              state: typeof mapping.state === 'string' ? mapping.state : '',
-              loops: typeof mapping.loops === 'number' ? mapping.loops : 0,
-              optimizations: typeof mapping.optimizations === 'number' ? mapping.optimizations : 0,
-              droppedFrames: typeof mapping.dropped_frames === 'number' ? mapping.dropped_frames : 0,
-            }
-          }
+          decoded.mappingSummary = mappingSummary(payload.global_mapping)
           setCloud(decoded)
         }
       } catch (error) {
@@ -275,10 +304,14 @@ export function useBinaryCloud(
           resetCloudState({
             connected: false,
             transport: 'http',
-            error: error instanceof Error ? error.message : 'http_cloud_failed',
+            error: controller.signal.aborted
+              ? 'http_cloud_timeout'
+              : error instanceof Error ? error.message : 'http_cloud_failed',
           })
         }
       } finally {
+        clearTimeout(requestTimeout)
+        if (httpAbortController === controller) httpAbortController = null
         if (!cancelled && httpFallbackActive && requestGeneration === httpRequestGeneration) {
           fallbackTimer.current = setTimeout(pollHttpPoints, 1000)
         }
@@ -357,30 +390,35 @@ export function useBinaryCloud(
         type: 'error'
         error: string
         connectionGeneration: number
-      })
+      }) & { httpRequestGeneration?: number; globalMapping?: Record<string, unknown> }
       decodeBusy = false
-      if (cancelled || !isActiveGeneration(m.connectionGeneration)) {
+      const fromHttp = m.httpRequestGeneration !== undefined
+      if (cancelled || !isActiveGeneration(m.connectionGeneration)
+        || (fromHttp && (!httpFallbackActive || m.httpRequestGeneration !== httpRequestGeneration))) {
         flushPendingWsFrame()
         return
       }
       if (m.type === 'error') {
-        handleInvalidFrame(m.error, m.connectionGeneration)
+        if (fromHttp) resetCloudState({ connected: false, transport: 'http', error: m.error })
+        else handleInvalidFrame(m.error, m.connectionGeneration)
         flushPendingWsFrame()
         return
       }
       try {
-        acceptedCursor = validateCloudFrameContract(m, endpoint, acceptedCursor)
+        const cursor = validateCloudFrameContract(m, endpoint, fromHttp ? { epoch: null, sequence: null } : acceptedCursor)
+        if (!fromHttp) acceptedCursor = cursor
       } catch (error) {
-        handleInvalidFrame(
-          error instanceof Error ? error.message : 'invalid point-cloud contract',
-          m.connectionGeneration,
-        )
+        const reason = error instanceof Error ? error.message : 'invalid point-cloud contract'
+        if (fromHttp) resetCloudState({ connected: false, transport: 'http', error: reason })
+        else handleInvalidFrame(reason, m.connectionGeneration)
         flushPendingWsFrame()
         return
       }
-      sawDecodedFrame = true
-      armFrameTimeout(m.connectionGeneration)
-      stopHttpFallback()
+      if (!fromHttp) {
+        sawDecodedFrame = true
+        armFrameTimeout(m.connectionGeneration)
+        stopHttpFallback()
+      }
       setCloud({
         positions: m.positions,
         colors: m.colors,
@@ -392,10 +430,11 @@ export function useBinaryCloud(
         stampS: m.stampS,
         sequence: m.sequence,
         streamKind: m.streamKind,
-        connected: wsRef.current?.readyState === WebSocket.OPEN,
-        transport: 'ws',
+        connected: fromHttp || wsRef.current?.readyState === WebSocket.OPEN,
+        transport: fromHttp ? 'http' : 'ws',
         lastFrameAt: Date.now(),
         error: null,
+        mappingSummary: mappingSummary(m.globalMapping),
       })
       flushPendingWsFrame()
     }

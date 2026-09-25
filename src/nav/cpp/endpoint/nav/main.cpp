@@ -54,7 +54,6 @@
 #include "status/control_loop_health.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
 #include "status/inspection_status_file_writer.hpp"
-#include "status/planning_map_writer.hpp"
 #include "runtime/semantic/view_query.hpp"
 #include "status/nav_status_endpoint_adapter.hpp"
 #include "status/nav_status_publisher.hpp"
@@ -327,10 +326,6 @@ int main(int argc, char **argv) {
                                   });
     };
     GlobalPlanTask plan_preview(global_planner);
-    lingtu::nav::endpoint::PlanningMapWriter planning_map_writer(
-        cfg.status_file, cfg.product_session_id,
-        cfg.global_planner == GlobalPlannerBackend::OctoPlanner3D ? active_octomap_gate : nullptr,
-        cfg.map_path, cfg.octoplanner_options);
     lingtu::nav::endpoint::SemanticViewQuery semantic_view_query(
         cfg.global_planner == GlobalPlannerBackend::OctoPlanner3D ? active_octomap_gate : nullptr,
         cfg.map_path, cfg.octoplanner_options);
@@ -383,8 +378,6 @@ int main(int argc, char **argv) {
     // -- Setup aliases shared by the controller wiring below ------------------
     auto &map_body = state.map_body;
     auto &latest_dynamic_clusters = state.latest_dynamic_clusters;
-    auto &teleop_receive_time = state.teleop_receive_time;
-    auto &teleop_received = state.teleop_received;
     auto &last_plan = state.last_plan;
     auto &last_local = state.last_local;
     auto &last_teleop = state.last_teleop;
@@ -466,15 +459,16 @@ int main(int argc, char **argv) {
           inputs.obstacles,
       };
     };
-    nav_status_actions.sample_motion_layer = [&](double wall_now_s) {
-      latest_dynamic_clusters = live_obstacles.dynamicClusters(32, wall_now_s);
+    nav_status_actions.sample_motion_layer = [&](double) {
+      // Status reads must not advance or prune source-clock obstacle tracks.
+      // InputProjector installs these together from a completed worker snapshot.
       return StatusMotionLayerSample{
-          live_obstacles.size(),
-          live_obstacles.stats(),
+          state.motion_layer_stats.cells,
+          state.motion_layer_stats,
           &latest_dynamic_clusters,
       };
     };
-    nav_status_actions.sample_loop_health = [&]() { return control_loop_health.snapshot(); };
+    nav_status_actions.sample_loop_health = [&]() { return control_loop_health.snapshot(true); };
     nav_status_actions.sample_far_input = [&, active_occupancy_gate]() {
       lingtu::nav::endpoint::StatusFarInputSample result;
       result.required = cfg.global_planner == GlobalPlannerBackend::Far;
@@ -496,10 +490,7 @@ int main(int argc, char **argv) {
                                   std::move(nav_status_actions));
 
     auto teleop_receive_age_s = [&]() -> double {
-      if (!teleop_received) {
-        return std::numeric_limits<double>::infinity();
-      }
-      return std::chrono::duration<double>(SteadyClock::now() - teleop_receive_time).count();
+      return state.teleop_freshness.age(SteadyClock::now());
     };
 
     std::fprintf(stderr, "navd: domain=%d tick_hz=%.1f path_library=%s\n", cfg.domain_id,
@@ -899,7 +890,7 @@ int main(int argc, char **argv) {
     };
     inputs_config.check_obstacle = cfg.check_obstacle;
     inputs_config.max_obstacle_points = cfg.max_obstacle_points;
-    InputProjector inputs(state, input_gate, pose_buffer, map_odom_buffer, live_obstacles,
+    InputProjector inputs(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                           std::move(inputs_config), std::move(inputs_actions));
 
     StopConfirmationConfig stop_confirmation_config;
@@ -1223,6 +1214,14 @@ int main(int argc, char **argv) {
           state.odom_velocity_valid,
       };
       observation.collision = state.local_collision_map.view();
+      const double prediction_now = steadySeconds();
+      observation.predictions = lingtu::nav::endpoint::makePredictionView(state.predicted_obstacle_volumes,
+          state.prediction_source_receive_s, prediction_now, cfg.cloud_max_age_s);
+      if (cfg.use_simulation_clock && observation.predictions.expiresAtS > 0.0) {
+        const double offset = inputs.executionTime(prediction_now) - prediction_now;
+        observation.predictions.expiresAtS += offset;
+        observation.predictions.observedAtS += offset;
+      }
       if (cfg.use_simulation_clock && observation.collision.receiveStampS > 0.0) {
         // Preserve receive age while expressing it in the executor's clock.
         // Mapd source stamps remain wall time; simulation execution can pause.
@@ -1247,6 +1246,10 @@ int main(int argc, char **argv) {
           (cfg.control_mode != ControlMode::Autonomy && !cfg.teleop_local_planner)) return decision;
       nav_kernel::LocalPlanRequest collision_request;
       collision_request.environment.collision = state.local_collision_map.view();
+      collision_request.clock.timestampS = steadySeconds();
+      collision_request.environment.predictions = lingtu::nav::endpoint::makePredictionView(
+          state.predicted_obstacle_volumes, state.prediction_source_receive_s,
+          collision_request.clock.timestampS, cfg.cloud_max_age_s);
       nav_kernel::local::scan::Grid grid(local_planner_params, collision_request);
       const double deceleration = std::min({local_planner_params.scan.maxAcceleration,
           cfg.velocity_smoother.x.deceleration, cfg.velocity_smoother.y.deceleration});
@@ -1417,7 +1420,6 @@ int main(int argc, char **argv) {
         sync_goal_plan_diagnostics,
         control_loop_guard_latched,
         current_timing,
-        &planning_map_writer,
         &semantic_view_query,
     };
     return runEndpointLoop(loop_ctx, g_running);

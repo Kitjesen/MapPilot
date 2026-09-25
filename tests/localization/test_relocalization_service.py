@@ -164,6 +164,18 @@ def test_native_global_status_uses_typed_control_binary(monkeypatch, tmp_path) -
     assert kwargs["timeout"] == 9.0
 
 
+def test_dds_deadline_reports_unknown_outcome_not_algorithm_rejection(monkeypatch, tmp_path):
+    monkeypatch.setenv("LINGTU_SLAM_CONTROL", str(tmp_path / "slamctl"))
+    monkeypatch.setattr(
+        "localization.adapters.relocalization.subprocess.run",
+        lambda args, **kwargs: subprocess.CompletedProcess(args, 4, "", "timeout waiting for SLAM relocalization response"),
+    )
+    result = NativeSlamRelocalizationService().trigger_global_relocalize()
+    assert not result.success
+    assert result.timed_out
+    assert "结果尚未确认" in result.message
+
+
 def test_native_track_against_map_uses_current_tracking_state(monkeypatch, tmp_path) -> None:
     binary = str(tmp_path / "slamctl")
     monkeypatch.setenv("LINGTU_SLAM_CONTROL", binary)

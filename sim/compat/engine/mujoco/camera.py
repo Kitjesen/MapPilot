@@ -31,9 +31,9 @@ class MuJoCoCamera:
         if config.fovy > 0:
             model.cam_fovy[cam_id] = float(config.fovy)
         self._mujoco = mujoco
-        self._renderer_rgb: Optional[object] = None
-        self._renderer_depth: Optional[object] = None
-        self._renderer_thread_id: Optional[int] = None
+        self._renderer_rgb: object | None = None
+        self._renderer_depth: object | None = None
+        self._renderer_thread_id: int | None = None
         self._render_lock = threading.Lock()
 
         print(
@@ -70,35 +70,19 @@ class MuJoCoCamera:
 
     @staticmethod
     def _coerce_depth_meters(depth_raw: np.ndarray, near: float, far: float) -> np.ndarray:
-        """Normalize MuJoCo depth output to metric depth.
+        """Clamp metric depth returned by mujoco.Renderer.
 
-        Newer MuJoCo Python renderers can already return scene-unit depth, while
-        older paths may still expose a normalized 0..1 depth buffer. Accept both.
+        Renderer already reverses the OpenGL projection. A near-only frame is
+        still metric; its value range cannot identify a normalized Z buffer.
         """
         depth = np.asarray(depth_raw, dtype=np.float32)
-        finite = np.isfinite(depth)
-        if not finite.any():
-            return np.full(depth.shape, far, dtype=np.float32)
-
-        finite_vals = depth[finite]
-        if float(finite_vals.max()) <= 1.5 and float(finite_vals.min()) >= 0.0:
-            depth_meters = MuJoCoCamera._linearize_depth(depth, near, far)
-        else:
-            depth_meters = depth
-
         depth_meters = np.nan_to_num(
-            depth_meters,
+            depth,
             nan=far,
             posinf=far,
             neginf=0.0,
         )
         return np.clip(depth_meters, 0.0, far).astype(np.float32)
-
-    @staticmethod
-    def _linearize_depth(depth_raw: np.ndarray, near: float, far: float) -> np.ndarray:
-        """Convert normalized depth buffer to metric depth."""
-        depth = near * far / (far - depth_raw * (far - near))
-        return np.clip(depth, near, far).astype(np.float32)
 
     def get_rgb(self, data) -> np.ndarray:
         """Render RGB only, skip depth."""

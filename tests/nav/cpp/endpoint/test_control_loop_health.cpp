@@ -309,9 +309,37 @@ void testDefaultWindowAndWarmupSizes() {
   require(snapshot.total_samples == 601, "the lifetime count must exceed the default window");
 }
 
+void testPublicationHistoryRetainsUnsampledSpikeAndExactContext() {
+  ControlLoopHealthConfig config;
+  config.window_size = 4;
+  config.minimum_samples = 1;
+  ControlLoopHealth health(config);
+  health.observe({10.0, 8.0, 0.0});
+  health.observe({199.0, 0.0, 189.0, {2.0, 1.0, 0.0, 194.0, 1.0}});
+  health.observe({10.0, 8.0, 0.0});
+  require(health.snapshot().history.overruns_ms.empty(),
+          "the per-tick safety gate must not copy publication history");
+  const auto snapshot = health.snapshot(true);
+  require(snapshot.history.first_sequence == 1 && snapshot.history.overruns_ms.size() == 3,
+          "status must include every completed cycle even between status publications");
+  require(snapshot.history.overruns_ms[1] == 189.0 && snapshot.history.overruns.size() == 1,
+          "the intermediate spike must survive a fast latest cycle");
+  const auto &event = snapshot.history.overruns.front();
+  require(event.sequence == 2 && event.work_ms == 199.0 && event.stages_ms[3] == 194.0,
+          "the spike must retain its own runtime stage and sequence");
+  health.observe({10.0, 8.0, 0.0});
+  health.observe({10.0, 8.0, 0.0});
+  require(health.snapshot(true).history.first_sequence == 2,
+          "eviction must expose the first retained sequence so readers detect gaps");
+  health.observe({10.0, 8.0, 0.0});
+  require(health.snapshot(true).history.overruns.empty(),
+          "overrun context must not outlive its retained sample");
+}
+
 }  // namespace
 
 int main() {
+  testPublicationHistoryRetainsUnsampledSpikeAndExactContext();
   testStartsInWarmup();
   testAcceptsAndSummarizesOneSample();
   testUsesNearestRankPercentilesAndBecomesHealthy();
@@ -320,5 +348,23 @@ int main() {
   testHealthReasonsFollowConfiguredPriority();
   testWindowEvictsOldestSampleButKeepsLifetimeCounters();
   testDefaultWindowAndWarmupSizes();
+  ControlLoopHealthConfig config;
+  config.period_ms = 10.0;
+  config.minimum_samples = 1;
+  config.window_size = 1;
+  ControlLoopHealth cached(config);
+  require(!cached.snapshot().ready, "empty cached snapshot must remain unready");
+  cached.observe({5.0, 1.0, 0.0});
+  const auto first = cached.snapshot();
+  for (int i = 0; i < 10; ++i) {
+    require(cached.snapshot().total_samples == first.total_samples && cached.snapshot().healthy,
+            "status reads must reuse one sample without changing health");
+  }
+  cached.observe({12.0, 0.0, 2.0});
+  require(!cached.snapshot().healthy && cached.snapshot().total_samples == 2,
+          "a new overrun must invalidate cached health immediately");
+  cached.observe({5.0, 1.0, 0.0});
+  require(cached.snapshot().healthy && cached.snapshot().work_ms.max == 4.0,
+          "window eviction must invalidate the cached distribution");
   return 0;
 }

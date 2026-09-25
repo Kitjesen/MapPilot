@@ -176,7 +176,7 @@ class FakeRunner:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def apply(self, plan: RunPlan, *, dry_run: bool = False, on_process_ready=None) -> ProcessReport:
+    def apply(self, plan: RunPlan, *, dry_run: bool = False, on_process_ready=None, on_process_started=None) -> ProcessReport:
         self.calls.append("apply")
         report = ProcessReport(
             product=plan.product,
@@ -189,6 +189,8 @@ class FakeRunner:
         if on_process_ready is not None and not dry_run:
             try:
                 for process in sorted(plan.processes, key=lambda item: (item.order, item.name)):
+                    if on_process_started is not None:
+                        on_process_started(process)
                     on_process_ready(process)
             except Exception as exc:
                 from lingtu.switch_contracts import ProcessFailed
@@ -198,8 +200,8 @@ class FakeRunner:
                 raise ProcessFailed(report) from exc
         return report
 
-    def apply_deferred(self, plan: RunPlan, *, dry_run: bool = False, on_process_ready=None) -> ProcessReport:
-        return self.apply(plan, dry_run=dry_run, on_process_ready=on_process_ready)
+    def apply_deferred(self, plan: RunPlan, *, dry_run: bool = False, on_process_ready=None, on_process_started=None) -> ProcessReport:
+        return self.apply(plan, dry_run=dry_run, on_process_ready=on_process_ready, on_process_started=on_process_started)
 
     def transition(
         self,
@@ -209,9 +211,10 @@ class FakeRunner:
         dry_run: bool = False,
         defer_rollback: bool = False,
         on_process_ready=None,
+        on_process_started=None,
     ) -> ProcessReport:
         assert defer_rollback is True
-        return self.apply(plan, dry_run=dry_run, on_process_ready=on_process_ready)
+        return self.apply(plan, dry_run=dry_run, on_process_ready=on_process_ready, on_process_started=on_process_started)
 
     def ensure_transition_process_active(self, plan, transition, process_name):
         return transition
@@ -700,7 +703,54 @@ def test_saved_map_navigation_startup_still_checks_active_map(monkeypatch) -> No
         timeout_s=1.0,
     )
 
-    assert calls == ["/api/v1/navigation/status", "/api/v1/session"]
+    assert calls == ["/api/v1/navigation/status"]
+
+
+@pytest.mark.parametrize("control_mode", ["teleop", "teleop_avoid", "autonomy"])
+@pytest.mark.parametrize("fault", [None, "moving", "stop_failed", "input", "loop", "stale", "driver"])
+def test_operator_product_can_boot_estopped_without_granting_motion(monkeypatch, control_mode, fault):
+    clock = iter((0.0, 0.0, 2.0))
+    backend = FieldBackend(environment={}, monotonic=lambda: next(clock), sleep=lambda _: None)
+    navigation = {
+        "task": {"state": "IDLE"},
+        "goal_admission": {"state": "BLOCKED"},
+        "control": {"authority": "NONE", "resume_required": True},
+        "motion": {"permission": "ESTOPPED", "observation": "QUIET", "stop_confirmation": "CONFIRMED"},
+    }
+    native = {
+        "ok": False, "status_available": True, "blockers": ["native_estop_latched"],
+        "input_gate": {"ready": True}, "control_loop_health": {"ready": True, "healthy": True},
+    }
+    if fault == "moving":
+        navigation["motion"]["observation"] = "MOVING"
+    elif fault == "stop_failed":
+        navigation["motion"]["stop_confirmation"] = "FAILED"
+    elif fault == "input":
+        native["input_gate"]["ready"] = False
+    elif fault == "loop":
+        native["control_loop_health"]["healthy"] = False
+    elif fault == "stale":
+        native["status_available"] = False
+    elif fault == "driver":
+        native["blockers"].append("native_driver_not_ready")
+
+    def http(method, path, *, timeout_s):
+        assert method == "GET"
+        assert timeout_s == 3.0
+        if path == "/api/v1/readiness":
+            return {"runtime": {"navigation": {"native_endpoint": native}}}
+        assert path == "/api/v1/navigation/status"
+        return navigation
+
+    monkeypatch.setattr(backend, "_http", http)
+    if fault is None and control_mode != "autonomy":
+        backend.wait_navigation(map_name="", control_mode=control_mode, timeout_s=1.0)
+    else:
+        with pytest.raises(RuntimeError, match="navigation did not become ready"):
+            backend.wait_navigation(map_name="", control_mode=control_mode, timeout_s=1.0)
+    assert navigation["motion"]["permission"] == "ESTOPPED"
+    assert native["ok"] is False
+    assert navigation["goal_admission"]["state"] == "BLOCKED"
 
 
 def test_navigation_startup_fails_closed_when_navigation_state_is_unknown(monkeypatch) -> None:

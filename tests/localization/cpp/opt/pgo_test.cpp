@@ -2,6 +2,8 @@
 #include "localization/opt/graph.hpp"
 #include "localization/opt/map.hpp"
 #include "localization/opt/pgo.hpp"
+#include "localization/opt/pose_math.hpp"
+#include "localization/opt/loop_constraints.hpp"
 
 #include <array>
 #include <cmath>
@@ -141,6 +143,9 @@ void test_optimization(const std::filesystem::path& root) {
           "optimization lost or changed the calibrated scan origin");
   require(std::filesystem::is_regular_file(output / "map_optimization.json"),
           "bundle report missing");
+  const auto report = read_all(output / "map_optimization.json");
+  require(report.find("\"performed\": true") != std::string::npos,
+          "optimized bundle report must distinguish performed PGO from a successful skip");
 }
 
 void test_bundle_integrity(const std::filesystem::path& root) {
@@ -231,6 +236,95 @@ void test_parser(const std::filesystem::path& root) {
 
 }  // namespace
 
+void test_gravity_observations() {
+  // Re-anchoring a long map must not amplify a small accepted tilt error into height drift.
+  auto source_anchor = opt::pose_with_rpy({10, 4, .7}, .2, -.15, .8);
+  auto target_anchor = opt::pose_with_rpy({9, 3, .8}, .22, -.14, 1.1);
+  const auto alignment = opt::gravity_preserving_alignment(target_anchor, source_anchor);
+  const auto aligned = opt::compose_pose(alignment, source_anchor);
+  require(opt::pose_translation_distance(aligned,target_anchor)<1e-10, "reanchor moved current position");
+  require(opt::pose_yaw_difference(aligned,target_anchor)<1e-10, "reanchor moved current heading");
+  const auto gravity=opt::rotate_vector(alignment,0,0,1);
+  require(std::abs(gravity[0])+std::abs(gravity[1])+std::abs(gravity[2]-1)<1e-10,
+          "reanchor rotated map gravity");
+  require(std::abs(opt::pose_rpy(aligned)[0]-.2)<1e-10, "reanchor discarded real body tilt");
+  std::vector<opt::Keyframe> poses(5);
+  const double x[]{0,4,4,0,0}, y[]{0,0,4,4,0};
+  opt::OptimizeOptions options;
+  options.max_iterations = 200;
+  for (int i=0;i<5;++i) { poses[i].pose.x=x[i]; poses[i].pose.y=y[i]; }
+  for (int i=0;i<5;++i) {
+    opt::GeometricConstraint e;
+    e.from_index=i<4?i:0; e.to_index=i<4?i+1:4;
+    e.pose_from_to=opt::between_poses(poses[e.from_index].pose, poses[e.to_index].pose);
+    if(i<4) e.pose_from_to.z=.03;
+    std::array<std::array<double,4>,4> h{};
+    for(int j=0;j<4;++j) h[j][j]=100;
+    e.information_upper=opt::detail::body_right_information_upper(h,1,e.pose_from_to,opt::Pose{});
+    options.geometric_constraints.push_back(e);
+  }
+  options.gravity_reference=poses;
+  auto solved=opt::optimize_graph(poses,options);
+  require(solved.ok,solved.code);
+  for(const auto& frame:solved.keyframes) {
+    auto angles=opt::pose_rpy(frame.pose);
+    require(std::hypot(angles[0],angles[1]) < 1e-10, "rank-four graph invented tilt");
+  }
+  // Warm starts must recover the original measurement, not reinforce the last solution.
+  auto warm=poses;
+  warm[2].pose=opt::pose_with_rpy(warm[2].pose,.12,-.09,0);
+  solved=opt::optimize_graph(warm,options);
+  require(solved.ok,solved.code);
+  require(std::abs(opt::pose_rpy(solved.keyframes[2].pose)[0]) < 1e-10, "warm start replaced gravity");
+
+  // Real tilt and elevation are retained; yaw is allowed to change independently.
+  std::vector<opt::Keyframe> slope(2);
+  slope[0].pose=opt::pose_with_rpy({},.2,-.15,0);
+  slope[1].pose=opt::pose_with_rpy({2,0,.5},-.1,.25,0);
+  auto expected=slope[1].pose;
+  expected=opt::compose_pose(opt::pose_with_rpy({},0,0,.6),expected);
+  auto edge=factor(0,1,0,1000);
+  edge.pose_from_to=opt::between_poses(slope[0].pose,expected);
+  options.geometric_constraints={edge};options.gravity_reference=slope;
+  solved=opt::optimize_graph(slope,options);
+  require(solved.ok,solved.code);
+  require(std::abs(solved.keyframes[1].pose.z-.5)<1e-4, "gravity flattened elevation");
+  require(std::abs(opt::pose_rpy(solved.keyframes[1].pose)[2]-.6)<1e-4, "gravity constrained yaw");
+  std::swap(edge.from_index, edge.to_index);
+  edge.pose_from_to = opt::inverse_pose(edge.pose_from_to);
+  options.geometric_constraints = {edge};
+  solved = opt::optimize_graph(slope, options);
+  require(solved.ok && opt::pose_translation_distance(solved.keyframes[1].pose, expected)<1e-4,
+          "fixed destination factor changed pose convention");
+  std::swap(edge.from_index, edge.to_index);
+  edge.pose_from_to = opt::inverse_pose(edge.pose_from_to);
+  edge.information_upper=identity_information(1e9);
+  auto tilted=opt::pose_with_rpy(slope[1].pose,.6,.25,0);
+  edge.pose_from_to=opt::between_poses(slope[0].pose,tilted);
+  options.geometric_constraints={edge};
+  require(opt::optimize_graph(slope,options).code=="optimizer_gravity_inconsistent",
+          "low-cost but gravity-inconsistent solve was accepted");
+  options.gravity_reference.pop_back();
+  require(opt::optimize_graph(slope,options).code=="invalid_gravity_reference", "partial gravity accepted");
+}
+
+void test_disconnected_graph_recovery() {
+  std::vector<opt::Keyframe> poses(4);
+  for (std::size_t i = 0; i < poses.size(); ++i) poses[i].pose.x = i;
+  opt::OptimizeOptions options;
+  options.geometric_constraints = {factor(0, 1, 1, 100), factor(2, 3, 1, 100)};
+  require(opt::connected_pose_indices(4, options.geometric_constraints) ==
+              std::vector<std::size_t>({0, 1}), "disconnected segment counted as registered");
+  require(opt::optimize_graph(poses, options).code == "graph_disconnected",
+          "unanchored component entered optimizer");
+  // A measured non-adjacent bridge connects the retained segment without 1->2.
+  options.geometric_constraints.push_back(factor(0, 3, 3, 100));
+  require(opt::connected_pose_indices(4, options.geometric_constraints).size() == 4,
+          "verified bridge did not recover all retained nodes");
+  const auto result = opt::optimize_graph(poses, options);
+  require(result.ok, "connected graph with missing adjacent edge rejected: " + result.code);
+}
+
 int main() {
   try {
     const auto root = std::filesystem::temp_directory_path() / "lingtu-pgo-core-test";
@@ -238,6 +332,8 @@ int main() {
     std::filesystem::remove_all(root, error);
     std::filesystem::create_directories(root);
     test_optimization(root);
+    test_gravity_observations();
+    test_disconnected_graph_recovery();
     test_bundle_integrity(root);
     test_information_validation(root);
     test_optimizer_quality_gate(root);

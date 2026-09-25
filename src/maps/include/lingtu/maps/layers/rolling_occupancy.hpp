@@ -94,6 +94,9 @@ struct RollingInflatedSnapshot {
   double origin_z_m{0.0};
   std::size_t occupied_cells{0U};
   std::vector<std::uint8_t> occupied_bits;
+  // Measured 3D evidence, before inflation. Neither bit means unknown.
+  std::vector<std::uint8_t> measured_occupied_bits;
+  std::vector<std::uint8_t> known_free_bits;
 
   std::size_t CellCount() const noexcept;
   bool Occupied(std::int32_t x, std::int32_t y, std::int32_t z) const;
@@ -134,6 +137,10 @@ class RollingOccupancyGrid final {
       std::int64_t stamp_ns = 0);
 
   RollingOccupancyUpdateStats Update(const MapCloudFrame& frame);
+  // Seed a fixed local window before integrating live observations. Historical
+  // sensor positions must never roll the window away from the current robot.
+  RollingOccupancyUpdateStats UpdateReference(const MapCloudFrame& frame);
+  void ReplaceReferenceHits(const PointCloudView& retained, std::int64_t decay_stamp_ns);
   std::size_t Decay(std::int64_t now_ns);
 
   OccupancyState StateAt(double x_m, double y_m, double z_m) const;
@@ -153,6 +160,7 @@ class RollingOccupancyGrid final {
   std::uint64_t Generation() const;
 
  private:
+  RollingOccupancyUpdateStats UpdateImpl(const MapCloudFrame& frame, bool reference);
   struct Cell {
     double log_odds{0.0};
     std::uint16_t hits{0U};
@@ -231,6 +239,8 @@ class RollingOccupancyGrid final {
   std::vector<std::uint32_t> ray_total_counts_;
   std::vector<std::uint32_t> ray_hit_counts_;
   std::vector<std::uint64_t> observed_bits_;
+  std::vector<std::uint64_t> measured_occupied_bits_;
+  std::vector<std::uint64_t> known_free_bits_;
   // Collision seeds: historical occupancy united with the current scan hits.
   std::vector<std::uint64_t> occupied_bits_;
   std::vector<std::uint16_t> inflation_counts_;

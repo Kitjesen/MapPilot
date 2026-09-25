@@ -45,6 +45,9 @@ class GeometryConfig:
     collision_hard_margin: float = 0.15
     collision_clearance_below: float = 0.25
     collision_clearance_above: float = 0.35
+    # Nominal standing body-origin height above support; zero means uncalibrated.
+    support_height: float = 0.0
+    support_height_tolerance: float = 0.0
     sensor_offset_x: float = 0.3
     sensor_offset_y: float = 0.0
 
@@ -501,6 +504,12 @@ def validate_config(cfg: RobotConfig) -> list[str]:
         )
     if cfg.geometry.collision_clearance_below < 0 or cfg.geometry.collision_clearance_above < 0:
         errors.append("geometry collision clearances must be non-negative")
+    for name in ("support_height", "support_height_tolerance"):
+        value = getattr(cfg.geometry, name)
+        if not math.isfinite(value) or value < 0:
+            errors.append(f"geometry.{name} must be finite and non-negative")
+    if cfg.geometry.support_height_tolerance > cfg.geometry.support_height:
+        errors.append("geometry.support_height_tolerance must not exceed support_height")
 
     # Safety distances must be positive and ordered
     if cfg.safety.stop_distance <= 0:

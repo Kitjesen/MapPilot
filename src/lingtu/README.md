@@ -35,6 +35,19 @@ evidence, but never exposes the RunPlan path. `stop()` accepts optional
 `expected_product` and `expected_product_session_id` guards so in-repo
 coordinators can stop only the exact Product run they started.
 
+`status()` includes the current `product_session_id`. A caller can pass that
+value as `switch(expected_product_session_id=...)` to reject a stale request
+under the existing mutation lock, before resolving or stopping a Product.
+
+`python -m lingtu.control serve --robot unitree/go2 --env real` exposes a
+loopback transport on port 5051. It runs outside Host, so an accepted switch
+continues when Host restarts. Gateway forwards requests; it does not own the
+transaction. Request receipts survive transport restarts in the selected state
+directory; unfinished requests are reported as interrupted and never replayed.
+The Web offers mapping and saved-map navigation only. See
+[operations](../../docs/operations.md#web-mapping-and-navigation-switches)
+for deployment and the fixed robot/environment configuration.
+
 Standalone camera, LiDAR, SLAM, navigator, and detector wrappers were removed.
 Those capabilities live in domain Module packages and are selected by
 `lingtu.assembly`; the generic Blueprint mechanism remains in
@@ -48,6 +61,7 @@ navigation, traversability, or driver services.
 | Path | Responsibility |
 | --- | --- |
 | `control.py` | Public `switch`, `status`, `stop` and the CLI |
+| `control_server.py` | Loopback request receipts and forwarding into ProductControl, outside Host |
 | `run_plan.py` | Internal resolved Product data and JSON load/save |
 | `real/` | Real-robot switch transaction and systemd ownership |
 | `sim/` | Simulation switch transaction and direct child ownership |

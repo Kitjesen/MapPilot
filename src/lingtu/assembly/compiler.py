@@ -405,6 +405,7 @@ def _process_environment(
             "LINGTU_DRIVER_MAX_LINEAR_MPS": speed.max_linear,
             "LINGTU_DRIVER_MAX_ANGULAR_RPS": speed.max_angular,
             "LINGTU_DRIVER_CMD_TIMEOUT_MS": safety.cmd_vel_timeout_ms,
+            "LINGTU_DRIVER_TILT_LIMIT_DEG": safety.tilt_limit_deg,
             "LINGTU_DRIVER_POLL_HZ": driver.control_rate,
             "LINGTU_DRIVER_RECONNECT_MS": driver.reconnect_interval * 1000.0,
             "LINGTU_DRIVER_TLS_CA_FILE": driver.tls_ca_file,

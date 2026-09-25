@@ -361,6 +361,8 @@ nav_kernel::LocalCollisionMapView LocalCollisionMap::view() const noexcept {
       live,
   };
   result.inflatedStorage = inflated_occupied_bits;
+  result.measuredOccupiedStorage = measured_occupied_bits;
+  result.knownFreeStorage = known_free_bits;
   result.occupiedCells = occupied_cells;
   result.occupiedCellsKnown = occupied_cells_known;
   return result;
@@ -426,6 +428,18 @@ Decoded<LocalCollisionMap> decodeLocalCollisionMap(
       std::make_shared<const std::vector<std::uint8_t>>(
           msg.inflated_occupied_bits._buffer,
           msg.inflated_occupied_bits._buffer + msg.inflated_occupied_bits._length);
+  const auto copyEvidence = [&](const auto &bits, auto &storage) {
+    if (bits._maximum < bits._length || bits._length != expected_bytes ||
+        bits._buffer == nullptr) return false;
+    storage = std::make_shared<const std::vector<std::uint8_t>>(
+        bits._buffer, bits._buffer + bits._length);
+    return true;
+  };
+  if (!copyEvidence(msg.measured_occupied_bits, decoded.value.measured_occupied_bits) ||
+      !copyEvidence(msg.known_free_bits, decoded.value.known_free_bits)) {
+    decoded.error = "local_collision_evidence_invalid";
+    return decoded;
+  }
   decoded.value.occupied_cells = decoded.value.view().occupiedCount();
   decoded.value.occupied_cells_known = true;
   if (!decoded.value.view().valid()) {

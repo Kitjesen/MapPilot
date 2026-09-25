@@ -123,6 +123,9 @@ struct Fixture {
     loop_health.max_miss_streak = 4;
     loop_health.p95_utilization = 0.84;
     loop_health.max_utilization = 0.98;
+    loop_health.history.first_sequence = 139;
+    loop_health.history.overruns_ms = {5.5, 0.0};
+    loop_health.history.overruns = {{139, 55.5, {1.0, 2.0, 0.0, 50.0, 1.0}}};
 
     state.has_odom = true;
     state.has_map_odom_tf = true;
@@ -452,6 +455,10 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
               contains(autonomy, "\"deadline_miss_ratio\": 0.066667") &&
               contains(autonomy, "\"p95_utilization\": 0.840000"),
           "JSON snapshot must expose top-level control-loop health state");
+  require(contains(autonomy, "\"first_sequence\": 139, \"overruns_ms\": [5.500000,0.000000]") &&
+              contains(autonomy, "\"sequence\":139,\"work_ms\":55.500000") &&
+              contains(autonomy, "\"runtime_ms\":50.000000"),
+          "publication must preserve intermediate overruns and their own stage context");
   require(contains(autonomy,
                    "\"far_input\": {\"required\": false, \"ready\": true, \"reason\": \"not_required\"") &&
               contains(autonomy, "\"navigation_ready\": true"),
@@ -546,6 +553,9 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
 
 void testTrackingSnapshotPreservesProgressAndErrors() {
   Fixture fixture;
+  fixture.local.dynamic_avoidance = "waiting";
+  fixture.local.prediction_count = 2;
+  fixture.local.dynamic_blocked_s = .7;
   fixture.local.tracking.active = true;
   fixture.local.tracking.trajectoryId = 47;
   fixture.local.tracking.executionTimeS = 1.25;
@@ -563,6 +573,10 @@ void testTrackingSnapshotPreservesProgressAndErrors() {
   require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
           "tracking status snapshot must publish");
   publisher.flush();
+  require(contains(fixture.writes.back(), "\"dynamic_avoidance\": \"waiting\"") &&
+              contains(fixture.writes.back(), "\"prediction_count\": 2") &&
+              contains(fixture.writes.back(), "\"dynamic_blocked_s\": 0.700000"),
+          "prediction decisions must survive asynchronous status publication");
   require(contains(fixture.writes.back(),
                    "\"tracking\": {\"active\": true, \"trajectory_id\": 47, "
                    "\"execution_time_s\": 1.250000, \"duration_s\": 4.500000, "
@@ -899,7 +913,10 @@ void testScanFailureCaptureAndSafetyReasonSurviveStatusReset() {
   failure->reference.assign(514U, {1.0, 2.0, 3.0});
   failure->reference.back() = {123.0, 456.0, 789.0};
   failure->candidateControlPoints = {{0.0, 0.0, 0.4}, {1.0, 0.0, 0.4}};
-  failure->candidateIntervalS = 0.2;
+    failure->candidateIntervalS = 0.2;
+    failure->predictions = {{{1,2,.5},{2,2,.5},.25,.1,1.2}};
+    failure->predictionsObservedAtS = 11.9;
+    failure->predictionsHorizonS = 1.0;
   fixture.local_debug.scanAttempt = failure->attempt;
   fixture.local_debug.lastScanFailure = failure;
   fixture.teleop.last_safety_replan.count = 2U;
@@ -936,7 +953,11 @@ void testScanFailureCaptureAndSafetyReasonSurviveStatusReset() {
               contains(saved, "\"candidate_control_points\": [[0, 0,") &&
               contains(saved, "\"quantity\": \"speed\", \"value\": 1.1"),
           "failure input must retain full reference, candidate and measured violation");
-  const auto bits_start = saved.find("\"bits\": \"") + std::string("\"bits\": \"").size();
+    const auto bits_start = saved.find("\"bits\": \"") + std::string("\"bits\": \"").size();
+    require(contains(saved, "\"predictions\": {\"observed_at_s\": 11.9") &&
+                contains(saved, "\"horizon_s\": 1, \"volumes\": [{\"start\": [1, 2, 0.5]") &&
+                contains(saved, "\"radius\": 0.25") && contains(saved, "\"cylinderRadius\":"),
+            "failure evidence must retain timed prediction geometry and body radius");
   const auto bits_end = saved.find('"', bits_start);
   const auto bits = saved.substr(bits_start, bits_end - bits_start);
   require(bits.size() == failure->collision.inflatedBytes * 2U,

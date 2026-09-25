@@ -41,7 +41,7 @@ def _run_control(
     except subprocess.TimeoutExpired as exc:
         return RelocalizationResult(
             success=False,
-            message=f"native SLAM relocalization timeout > {float(timeout_s):g}s",
+            message=f"等待定位结果超过 {float(timeout_s):g} 秒，结果尚未确认；定位可能仍在运行，请查看定位状态后再操作。",
             timed_out=True,
             stdout=exc.stdout or "",
             stderr=exc.stderr or "",
@@ -53,6 +53,9 @@ def _run_control(
         )
 
     payload = _last_json_line(completed.stdout)
+    # slamctl exits with 4 when its DDS response deadline expires. This does
+    # not cancel the native search and is not an algorithm rejection.
+    timed_out = completed.returncode == 4
     success = completed.returncode == 0 and payload.get("success") is True
     quality = _float_or_none(payload.get("relocalization_quality", payload.get("quality")))
     message = str(
@@ -64,7 +67,9 @@ def _run_control(
     )
     return RelocalizationResult(
         success=success,
-        message=message,
+        message=("等待定位响应超时，结果尚未确认；定位可能仍在运行，请查看定位状态后再操作。"
+                 if timed_out else message),
+        timed_out=timed_out,
         quality=quality,
         stdout=completed.stdout,
         stderr=completed.stderr,
@@ -86,7 +91,7 @@ class NativeSlamRelocalizationService:
     def trigger_global_relocalize(
         self,
         *,
-        timeout_s: float = 10.0,
+        timeout_s: float = 45.0,
     ) -> RelocalizationResult:
         try:
             binary = _control_binary()

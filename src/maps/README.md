@@ -30,6 +30,14 @@ SLAM /slam/map_observation
   -> /maps/* DDS output
 ```
 
+`MapCollisionLayer` carries three packed 3D bitmaps with one geometry and
+generation: inflated collision, measured occupancy, and known free space.
+Neither measured bit means unknown. Evidence-only changes advance generation
+even if inflation is unchanged. SCAN consumes these immutable snapshots for
+body collision and calibrated ground-support queries; the display surface
+projection does not authorize motion. Rebuild/deploy mapd and navd together
+when changing this final DDS type.
+
 Saving a map:
 
 ```text
@@ -37,10 +45,25 @@ map save
   -> mapd save_map
   -> SlamMapSnapshotRequest over typed DDS
   -> slamd freezes the snapshot and returns SlamMapSnapshotAck
-  -> SaveMapEngine builds and validates the candidate
-  -> complete patch bundle automatically enters native PGO
-  -> MapStore
+  -> SaveMapEngine copies and validates the frozen source
+  -> complete patch bundle enters native PGO (or records why it was skipped)
+  -> calibrated visibility cleanup and source voxel filtering
+  -> build OctoMap, occupancy, ESDF and traversability artifacts
+  -> validate the required artifacts
+  -> transactionally commit the complete candidate to MapStore
 ```
+
+Observations acquired after the snapshot belong to a later save. Saving does
+not switch Products, activate the saved map, or publish a navigation goal.
+Successful saving under an existing name replaces that map; failed commits
+restore the previous version, but successful commits do not retain a history
+copy. Use a new name when preserving an existing field map.
+
+The public save-operation response exposes `operation.processing` with
+separate optimization and cleanup outcomes. `SUCCEEDED` means the requested
+files were saved and validated. It does not imply that PGO was performed or
+that localization, footprint clearance, and a route have passed. A skipped
+optimization is reported as such, while the source map may still be saved.
 
 Starting a Product with a saved map:
 
@@ -54,6 +77,26 @@ ProductControl switch
 The `map` Product starts LiDAR, IMU, SLAM, maps, navigation, driver, camera, and
 Host because mapping needs those dependencies. The `maps` / `mapd` process owns
 live map state and saved-map lifecycle.
+
+### Saved ground and obstacle projection
+
+`occupancy.npz` / `map.pgm` use 0.20 m cells. The exporter fits observed local
+lower surfaces over 0.60 m neighborhoods using the shared C++ ground estimator,
+then marks returns 0.10–2.00 m above that local plane as occupied. It does not
+use one whole-map height percentile: that would classify a higher floor or a
+ramp as an obstacle. Insufficient or non-planar support stays unknown. A local
+surface fit alone cannot establish that a tabletop is walkable ground.
+
+This projection has no sensor rays and therefore does not declare free cells.
+It is distinct from the native 3D OctoMap used for navigation; producing valid
+files does not prove localization, body clearance, or footprint support.
+
+Deploy `mapd`, `lingtu-mapctl`, and `prune` together. The save transaction must
+preserve `scan_origin.txt`, poses, patches, and `map.pcd.preclean` for calibrated
+visibility cleanup and later reprocessing. Preserve an existing map while
+evaluating a cleaned copy; never fill missing floor support just to pass a path
+check. If automatic PGO is skipped, inspect `map_optimization.json` rather than
+interpreting a successful save as a successful global optimization.
 
 ## Responsibilities
 

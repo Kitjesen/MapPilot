@@ -266,6 +266,74 @@ int main() {
   assert(store.ValidateActiveState());
   assert(store.DeleteMap("guarded").ok);
 
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+  assert(store.CreateMap("sampled_support").ok);
+  std::vector<lingtu::maps::PointXyz> points;
+  for (int x = 0; x < 9; ++x)
+    for (int y = 0; y < 5; ++y)
+      points.push_back({x * 0.2F + 0.1F, y * 0.2F + 0.1F, -0.3F});
+  for (int x = 0; x < 5; ++x)
+    for (int y = 0; y < 5; ++y)
+      points.push_back({x * 0.2F + 0.1F, y * 0.2F + 0.1F, -0.1F});
+  points.push_back({4.1F, 4.1F, 0.1F});
+  std::string pcd_error;
+  assert(lingtu::maps::WriteBinaryXyzPcd(
+      root / "sampled_support/map.pcd", points, &pcd_error));
+  lingtu::maps::OctomapBuildOptions sampled_options;
+  sampled_options.build_mode = "native_octomap";
+  sampled_options.resolution = 0.2;
+  const auto sampled_result = pipeline.BuildOctomapArtifactJson("sampled_support", sampled_options);
+  assert(lingtu::maps::JsonObjectBoolAtPath(sampled_result, {"success"}) == true);
+  octomap::OcTree sampled_tree(0.2);
+  assert(sampled_tree.readBinary((root / "sampled_support/octomap.ot").string()));
+  for (const auto& point : points) {
+    const auto* node = sampled_tree.search(point.x, point.y, point.z);
+    assert(node && sampled_tree.isNodeOccupied(node));
+  }
+  const auto* raised_floor = sampled_tree.search(1.1, 0.5, -0.1);
+  assert(!raised_floor || !sampled_tree.isNodeOccupied(raised_floor));
+  assert(sampled_tree.search(4.3, 4.1, 0.1) == nullptr);
+  assert(sampled_tree.search(4.1, 4.1, 0.3) == nullptr);
+  assert(store.CreateMap("ray_support").ok);
+  const auto ray_dir = root / "ray_support";
+  std::filesystem::create_directories(ray_dir / "patches");
+  assert(lingtu::maps::WriteBinaryXyzPcd(ray_dir / "map.pcd", {{1.25F,.25F,-.75F}}, &pcd_error));
+  assert(lingtu::maps::WriteBinaryXyzPcd(ray_dir / "patches/0.pcd",
+      {{1.25F,.25F,-.75F}, {1.25F,-.75F,.25F}}, &pcd_error));
+  WriteText(ray_dir / "poses.txt", "0.pcd 0 0 0 1 0 0 0\n");
+  WriteText(ray_dir / "scan_origin.txt", "lidar_origin_in_patch 0 0 0\n");
+  const auto ray_result = pipeline.BuildOctomapArtifactJson("ray_support",sampled_options);
+  assert(lingtu::maps::JsonObjectBoolAtPath(ray_result,{"success"}) == true);
+  octomap::OcTree ray_tree(.2);
+  assert(ray_tree.readBinary((ray_dir / "octomap.ot").string()));
+  const auto* ray_hit=ray_tree.search(1.25,.25,-.75);
+  assert(ray_hit && ray_tree.isNodeOccupied(ray_hit));
+  const auto* ray_free=ray_tree.search(.5,.1,-.3);
+  assert(ray_free && !ray_tree.isNodeOccupied(ray_free));
+  assert(ray_tree.search(1.25,.25,.5)==nullptr);
+  assert(ray_tree.search(1.25,-.75,.25)==nullptr);
+  // A matching external artifact can be reused; changed resolution must
+  // execute the converter rather than silently returning the old map.
+  std::ifstream metadata_file(ray_dir / "metadata.json");
+  std::string metadata((std::istreambuf_iterator<char>(metadata_file)), {});
+  const std::string native_mode = "native_octomap";
+  auto mode_pos = metadata.find(native_mode);
+  assert(mode_pos != std::string::npos);
+  while (mode_pos != std::string::npos) {
+    metadata.replace(mode_pos, native_mode.size(), "external_pcl_converter");
+    mode_pos = metadata.find(native_mode);
+  }
+  WriteText(ray_dir / "metadata.json", metadata);
+  auto reuse_options = sampled_options;
+  reuse_options.build_mode = "external_pcl_converter";
+  reuse_options.converter_command = "false";
+  assert(lingtu::maps::JsonObjectBoolAtPath(
+      pipeline.BuildOctomapArtifactJson("ray_support", reuse_options), {"success"}) == true);
+  reuse_options.resolution = .1;
+  assert(lingtu::maps::JsonObjectBoolAtPath(
+      pipeline.BuildOctomapArtifactJson("ray_support", reuse_options), {"success"}) == false);
+#endif
+
   std::filesystem::remove_all(root);
   return 0;
 }

@@ -158,11 +158,23 @@ bool sameStatuses(const std::vector<GoalPlanStatus> &lhs, const std::vector<Goal
 int main() {
   {
     Recorder recorder;
-    GoalPlanController controller(successfulPlan, recorder.actions());
+    std::atomic<int> radius_limited_plans{0};
+    GoalPlanController controller(
+        [&](const lingtu::nav::plan::GlobalPlanRequest &plan_request,
+            const lingtu::nav::plan::GlobalPlanCancelCheck &cancel) {
+          if (plan_request.options.terminal_goal_xy_tolerance_m == 0.3 &&
+              plan_request.options.terminal_goal_z_tolerance_m == 0.1) {
+            ++radius_limited_plans;
+          }
+          return successfulPlan(plan_request, cancel);
+        },
+        recorder.actions());
     auto limited = request();
     limited.target->max_speed_mps = 0.2;
     limited.target->acceptance_radius_m = 0.3;
-    require(controller.submit(limited, admissionContext()).accepted, "limited goal rejected");
+    auto limited_context = admissionContext();
+    limited_context.planner_options.terminal_goal_z_tolerance_m = 0.1;
+    require(controller.submit(limited, limited_context).accepted, "limited goal rejected");
     (void)waitForCompletion(controller, GoalPlanAdvanceContext{4U, false, 10.1});
     require(recorder.activations.size() == 1, "limited path not activated");
     require(recorder.activations.back().max_speed_mps == 0.2, "speed limit lost on activation");
@@ -172,6 +184,8 @@ int main() {
     require(recorder.activations.size() == 2, "limited replan not activated");
     require(recorder.activations.back().max_speed_mps == 0.2, "speed limit lost on replan");
     require(recorder.activations.back().acceptance_radius_m == 0.3, "radius lost on replan");
+    require(radius_limited_plans == 2,
+            "initial plan or replan ignored target radius or relaxed the configured Z bound");
   }
 
   Recorder recorder;

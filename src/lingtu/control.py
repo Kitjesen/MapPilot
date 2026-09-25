@@ -157,25 +157,27 @@ class ProductControl:
         parameter_overrides: Mapping[str, Any] | None = None,
         state_dir: str | Path | None = None,
         dry_run: bool = False,
+        expected_product_session_id: str | None = None,
     ) -> dict[str, Any]:
         """Switch to one Product and return the operator-facing state."""
 
         selected_local_planner = (
             local_planner_name(local_planner) if local_planner is not None else None
         )
-        report = self._switch(
-            SwitchRequest(
-                target_product=product_name(product),
-                variant=variant,
-                map_name=map_name,
-                relocalize=relocalize,
-                initial_pose=initial_pose,
-                local_planner=selected_local_planner,
-                parameter_overrides=dict(parameter_overrides or {}),
-            ),
-            state_dir=state_dir,
-            dry_run=dry_run,
-        )
+        with self._expected_session(expected_product_session_id, state_dir):
+            report = self._switch(
+                SwitchRequest(
+                    target_product=product_name(product),
+                    variant=variant,
+                    map_name=map_name,
+                    relocalize=relocalize,
+                    initial_pose=initial_pose,
+                    local_planner=selected_local_planner,
+                    parameter_overrides=dict(parameter_overrides or {}),
+                ),
+                state_dir=state_dir,
+                dry_run=dry_run,
+            )
         return {
             "ok": report.ok,
             "status": report.status,
@@ -192,6 +194,20 @@ class ProductControl:
             ),
             "error": report.error,
         }
+
+    @contextmanager
+    def _expected_session(self, expected: str | None, state_dir: str | Path | None) -> Iterator[None]:
+        if expected is None:
+            yield
+            return
+        with self._mutation(state_dir) as root:
+            try:
+                _, _, actual = self._current_plan_and_path(root)
+            except _CurrentProductNotFound:
+                actual = ""
+            if expected != actual:
+                raise RuntimeError("当前运行模式已改变，请刷新后重新切换")
+            yield
 
     def _switch(
         self,
@@ -300,6 +316,7 @@ class ProductControl:
                 return {
                     "ok": False,
                     "status": "failed",
+                    "product_session_id": product_session_id,
                     "robot": self.robot,
                     "env": plan.env,
                     "product": plan.product,
@@ -310,6 +327,7 @@ class ProductControl:
                 return {
                     "ok": False,
                     "status": "failed",
+                    "product_session_id": product_session_id,
                     "robot": self.robot,
                     "env": plan.env,
                     "product": plan.product,
@@ -319,6 +337,7 @@ class ProductControl:
         return {
             "ok": True,
             "status": "active",
+            "product_session_id": product_session_id,
             "robot": self.robot,
             "env": plan.env,
             "product": plan.product,
@@ -372,19 +391,24 @@ class ProductControl:
         previous_plan: RunPlan | None = None,
         dry_run: bool = False,
         on_process_ready: Callable[[ProcessSpec], None] | None = None,
+        on_process_started: Callable[[ProcessSpec], None] | None = None,
     ) -> ProcessReport:
         """Internal switch primitive for the resolved preflight artifact."""
 
         plan = RunPlan.load(path)
         runner = self._systemd_runner()
         if previous_plan is None:
-            return runner.apply_deferred(plan, dry_run=dry_run, on_process_ready=on_process_ready)
+            return runner.apply_deferred(
+                plan, dry_run=dry_run, on_process_ready=on_process_ready,
+                on_process_started=on_process_started,
+            )
         return runner.transition(
             previous_plan,
             plan,
             dry_run=dry_run,
             defer_rollback=True,
             on_process_ready=on_process_ready,
+            on_process_started=on_process_started,
         )
 
     def _quiesce_plan_for_switch(
@@ -625,6 +649,7 @@ def _parser() -> argparse.ArgumentParser:
             "switch",
             "status",
             "stop",
+            "serve",
         ),
     )
     parser.add_argument("product", nargs="?", help="Field Product name")
@@ -662,6 +687,7 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--state-dir", type=Path)
+    parser.add_argument("--port", type=int, default=5051, help="Loopback control port for serve")
     parser.add_argument(
         "--initial-pose", nargs="+", type=float, metavar="COORD",
         help="Map-frame body seed: X Y Z YAW; X Y YAW retains Z=0.",
@@ -705,10 +731,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.local_planner and args.action != "switch":
             raise ValueError("--local-planner is only valid with switch")
-        if args.variant and args.action != "switch":
-            raise ValueError("--variant is only valid with switch")
-        if args.backend and (args.action != "switch" or args.env != "sim"):
-            raise ValueError("--backend is only valid with switch --env sim")
+        if args.variant and args.action not in {"switch", "serve"}:
+            raise ValueError("--variant is only valid with switch or serve")
+        if args.backend and (args.action not in {"switch", "serve"} or args.env != "sim"):
+            raise ValueError("--backend is only valid with switch/serve --env sim")
         if args.viewer and (args.action != "switch" or args.env != "sim"):
             raise ValueError("--viewer is only valid with switch --env sim")
         env_config: dict[str, Any] = {}
@@ -723,7 +749,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.expected_product and args.action != "stop":
             raise ValueError("--expected-product is only valid with stop")
-        if args.action == "switch":
+        if args.action == "serve":
+            from lingtu.control_server import serve
+
+            if args.product or args.map_name or args.dry_run or args.initial_pose or args.set:
+                raise ValueError("serve accepts fixed robot/env configuration, not a switch request")
+            serve(control, state_dir=args.state_dir, port=args.port,
+                  variant=args.variant or os.environ.get("LINGTU_CONTROL_VARIANT"))
+            return 0
+        elif args.action == "switch":
             initial_pose = tuple(args.initial_pose) if args.initial_pose is not None else None
             requested_product = str(
                 args.product or os.environ.get("LINGTU_PRODUCT") or ""

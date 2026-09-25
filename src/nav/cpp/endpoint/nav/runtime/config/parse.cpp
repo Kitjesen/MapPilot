@@ -1180,6 +1180,9 @@ CliConfig parseArgs(int argc, char **argv) {
   } else if (cfg.control_mode == ControlMode::TeleopAvoid) {
     cfg.check_obstacle = true;
   }
+  if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan) {
+    cfg.use_traversability_cost = false;
+  }
   return cfg;
 }
 

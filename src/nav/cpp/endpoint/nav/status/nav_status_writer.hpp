@@ -111,6 +111,9 @@ struct PlanDiagnostics {
 };
 
 struct LocalDiagnostics {
+  std::string dynamic_avoidance{"clear"};
+  std::size_t prediction_count{0};
+  double dynamic_blocked_s{0.0};
   bool seen{false};
   bool active{false};
   bool goal_reached{false};
@@ -179,6 +182,7 @@ struct TimingDiagnostics {
   double input_callbacks_ms{0.0};
   double global_plan_ms{0.0};
   double cloud_convert_ms{0.0};
+  // Last completed worker job, not time spent in the main control tick.
   double motion_update_last_ms{0.0};
   double obstacle_snapshot_last_ms{0.0};
   double teleop_gate_ms{0.0};

@@ -1239,12 +1239,12 @@ def test_native_endpoint_readiness_requires_product_control_mode_and_cmd_vel_pub
     terrain_required = _native_endpoint_readiness({"mode": "navigating", "product": "nav"}, terrain_gateway)
     assert terrain_required["ok"] is True
     terrain_status = json.loads(status_path.read_text(encoding="utf-8"))
-    assert terrain_status["use_traversability_cost"] is True
-    terrain_status["use_traversability_cost"] = False
+    assert terrain_status["use_traversability_cost"] is False
+    terrain_status["use_traversability_cost"] = True
     status_path.write_text(json.dumps(terrain_status), encoding="utf-8")
     terrain_disabled = _native_endpoint_readiness({"mode": "navigating", "product": "nav"}, terrain_gateway)
     assert terrain_disabled["ok"] is False
-    assert terrain_disabled["blockers"] == ["native_traversability_cost_disabled"]
+    assert terrain_disabled["blockers"] == ["native_traversability_cost_mismatch"]
 
     write_status(
         "autonomy",

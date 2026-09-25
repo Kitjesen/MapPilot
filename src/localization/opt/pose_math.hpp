@@ -4,7 +4,7 @@
 #include <cmath>
 #include <limits>
 
-#include "localization/opt/graph.hpp"
+#include "localization/opt/poses.hpp"
 
 namespace lingtu::localization::opt {
 
@@ -115,6 +115,17 @@ inline Pose pose_with_rpy(Pose pose, double roll, double pitch, double yaw) {
 
 inline double pose_xy_distance(const Pose &lhs, const Pose &rhs) {
   return std::hypot(lhs.x - rhs.x, lhs.y - rhs.y);
+}
+
+// Align an anchor's position and heading without rotating the world's gravity.
+inline Pose gravity_preserving_alignment(const Pose& target, const Pose& source) {
+  Pose alignment = pose_with_rpy({}, 0, 0,
+      wrap_angle(pose_rpy(target)[2] - pose_rpy(source)[2]));
+  const auto position = rotate_vector(alignment, source.x, source.y, source.z);
+  alignment.x = target.x - position[0];
+  alignment.y = target.y - position[1];
+  alignment.z = target.z - position[2];
+  return alignment;
 }
 
 inline double pose_translation_distance(const Pose &lhs, const Pose &rhs) {

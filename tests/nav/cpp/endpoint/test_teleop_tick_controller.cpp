@@ -260,6 +260,54 @@ void testPublishTimeStaleOverridesAnEarlierAcceptedDecision() {
           "stale counters mismatch");
 }
 
+void testTransportAgeSurvivesAdmissionAndExpiresOnSteadyTime() {
+  using Clock = std::chrono::steady_clock;
+  const auto received_at = Clock::time_point{} + std::chrono::seconds(10);
+  lingtu::nav::endpoint::TeleopSampleFreshness freshness;
+  freshness.record(received_at, 0.30, 0.35);
+  auto now = received_at + std::chrono::milliseconds(40);
+  Fixture fixture;
+  fixture.config.publish_cmd_vel = true;
+  fixture.actions.teleop_receive_age_s = [&] { return freshness.age(now); };
+  TeleopTickController controller(fixture.actions, fixture.control());
+  auto input = fixture.input();
+  input.sample_freshness_budget_s = freshness.budget_s;
+  const auto fresh = controller.tick(input);
+  require(fresh.publish.command.vx > 0.0 && fresh.teleop.fresh,
+          "a delayed sample must remain usable within its original budget");
+
+  now = received_at + std::chrono::milliseconds(100);
+  const auto expired = controller.tick(input);
+  require(expired.teleop.stopped && !expired.teleop.fresh &&
+              expired.publish.command.vx == 0.0 && expired.teleop.reason == "stale",
+          "transport age must not be reset by admission");
+  require(std::abs(expired.teleop.age_s - 0.40) < 1e-9 &&
+              !freshness.fresh(now, fixture.config.teleop_cmd_max_age_s),
+          "source age must advance only with the steady clock after admission");
+}
+
+void testShortSampleBudgetIsRecheckedAfterPlanning() {
+  for (bool assisted : {false, true}) {
+    Fixture fixture;
+    fixture.config.publish_cmd_vel = true;
+    fixture.config.teleop_local_planner = assisted;
+    fixture.ages = {0.08, 0.12};
+    fixture.planner_output.active = true;
+    fixture.planner_output.path_found = true;
+    fixture.planner_output.cmd_vel = {0.2, 0.0, 0.0};
+    fixture.planner_output.local_path_map = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+    TeleopTickController controller(fixture.actions, fixture.control());
+    auto input = fixture.input();
+    input.sample_freshness_budget_s = 0.10;
+    const auto result = controller.tick(input);
+    require(result.publish.cmd_vel && result.publish.command.vx == 0.0 &&
+                result.teleop.stopped && !result.teleop.fresh && result.teleop.reason == "stale",
+            "the sample budget must bound the final output after planning");
+    require(fixture.velocity_stop_calls == 1 && fixture.planner_calls == (assisted ? 1 : 0),
+            "sample expiry must stop the smoother after the expected planning path");
+  }
+}
+
 void testAssistedPathReturnsPlannerArtifactsAndFinalSafetyIntent() {
   Fixture fixture;
   fixture.config.teleop_local_planner = true;
@@ -1269,6 +1317,19 @@ void testPostPlanningStaleInputStopsInsteadOfPublishingNonzeroCommand() {
       true);
   require(!driver_stale.allow_publish && driver_stale.stop_required,
           "manual mode must still fail closed when driver control is stale");
+
+  stop_called = false;
+  const auto expired_sample = enforcePostPlanningInputReadiness(
+      {0.2, 0.0, 0.0}, fresh_gate,
+      [&](const std::string &reason) {
+        stop_called = true;
+        stop_reason = reason;
+        return true;
+      },
+      true, false);
+  require(!expired_sample.allow_publish && expired_sample.stop_required && stop_called &&
+              stop_reason == "teleop_sample_expired",
+          "manual mode must not publish an expired sample after other DDS writes");
 }
 
 }  // namespace
@@ -1282,6 +1343,8 @@ int main() {
     testManualModeDoesNotBypassDriverReadiness();
     testDirectCommandIsAcceptedOrLimitedWithoutPlannerSideEffects();
     testPublishTimeStaleOverridesAnEarlierAcceptedDecision();
+    testTransportAgeSurvivesAdmissionAndExpiresOnSteadyTime();
+    testShortSampleBudgetIsRecheckedAfterPlanning();
     testAssistedPathReturnsPlannerArtifactsAndFinalSafetyIntent();
     testCmuDetourPublishesTranslationAndYawWithoutRecovery();
     testVerifiedTeleopRotationPublishesWithoutPath();

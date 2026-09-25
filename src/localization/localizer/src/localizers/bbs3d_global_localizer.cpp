@@ -1,8 +1,11 @@
 #include "bbs3d_global_localizer.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <exception>
+#include <map>
+#include <tuple>
 
 #ifdef LINGTU_ENABLE_BBS3D
 #include <cpu_bbs3d/bbs3d.hpp>
@@ -11,6 +14,7 @@ namespace cpu { class BBS3D {}; }
 #endif
 
 namespace {
+#ifdef LINGTU_ENABLE_BBS3D
 inline std::vector<Eigen::Vector3d> to_eigen(const CloudType::Ptr& c) {
     std::vector<Eigen::Vector3d> out;
     out.reserve(c->size());
@@ -20,6 +24,37 @@ inline std::vector<Eigen::Vector3d> to_eigen(const CloudType::Ptr& c) {
     }
     return out;
 }
+
+std::vector<Eigen::Vector3d> bbs_source_points(
+    const CloudType::Ptr& cloud,
+    const BBS3DGlobalLocalizer::Config& config,
+    const Eigen::Matrix3d& body_to_level) {
+    std::map<std::tuple<int, int, int>, Eigen::Vector3d> voxels;
+    std::vector<Eigen::Vector3d> points;
+    const double max_range_sq = config.source_max_range * config.source_max_range;
+    for (const auto& point : cloud->points) {
+        if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) continue;
+        const Eigen::Vector3d body(point.x, point.y, point.z);
+        if (config.source_max_range > 0.0 && body.squaredNorm() > max_range_sq) continue;
+        const Eigen::Vector3d leveled = body_to_level * body;
+        if (config.source_voxel_size <= 0.0) {
+            points.push_back(leveled);
+            continue;
+        }
+        const double inv_size = 1.0 / config.source_voxel_size;
+        const auto cell = std::make_tuple(
+            static_cast<int>(std::floor(leveled.x() * inv_size)),
+            static_cast<int>(std::floor(leveled.y() * inv_size)),
+            static_cast<int>(std::floor(leveled.z() * inv_size)));
+        voxels.emplace(cell, leveled);
+    }
+    if (config.source_voxel_size > 0.0) {
+        points.reserve(voxels.size());
+        for (const auto& entry : voxels) points.push_back(entry.second);
+    }
+    return points;
+}
+#endif
 }  // namespace
 
 #ifdef LINGTU_ENABLE_BBS3D
@@ -45,6 +80,7 @@ bool BBS3DGlobalLocalizer::available() const {
 }
 
 bool BBS3DGlobalLocalizer::set_map(const CloudType::Ptr& map_cloud) {
+    has_map_ = false;
     if (!map_cloud || map_cloud->empty()) return false;
 
     auto pts = to_eigen(map_cloud);
@@ -78,13 +114,16 @@ bool BBS3DGlobalLocalizer::set_map(const CloudType::Ptr& map_cloud) {
     return true;
 }
 
-BBS3DGlobalLocalizer::Result BBS3DGlobalLocalizer::localize(const CloudType::Ptr& scan_cloud) {
+BBS3DGlobalLocalizer::Result BBS3DGlobalLocalizer::localize(
+    const CloudType::Ptr& scan_cloud,
+    const Eigen::Matrix3d& body_to_level) {
     Result r;
     if (!has_map_) { r.message = "map not set"; return r; }
     if (!scan_cloud || scan_cloud->empty()) { r.message = "scan empty"; return r; }
 
-    auto scan_pts = to_eigen(scan_cloud);
-    if (scan_pts.empty()) { r.message = "scan has no finite points"; return r; }
+    if (!body_to_level.allFinite()) { r.message = "scan orientation invalid"; return r; }
+    auto scan_pts = bbs_source_points(scan_cloud, cfg_, body_to_level);
+    if (scan_pts.size() < 20) { r.message = "scan too small after BBS filtering"; return r; }
 
     try {
         bbs_->set_src_points(scan_pts);
@@ -95,11 +134,14 @@ BBS3DGlobalLocalizer::Result BBS3DGlobalLocalizer::localize(const CloudType::Ptr
         r.elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
         if (!bbs_->has_localized()) {
-            r.message = "bbs3d failed to converge / timed out";
+            r.message = bbs_->has_timed_out() ? "bbs3d_timed_out" : "bbs3d_no_match";
+            std::fprintf(stderr, "[BBS3D] %s: %.0f ms\n",
+                         r.message.c_str(), r.elapsed_ms);
             return r;
         }
 
         Eigen::Matrix4d pose_d = bbs_->get_global_pose();
+        pose_d.block<3, 3>(0, 0) *= body_to_level;
         r.pose = pose_d.cast<float>();
         r.score_percentage = bbs_->get_best_score_percentage();
     } catch (const std::exception& e) {
@@ -135,8 +177,11 @@ bool BBS3DGlobalLocalizer::set_map(const CloudType::Ptr& map_cloud) {
     return false;
 }
 
-BBS3DGlobalLocalizer::Result BBS3DGlobalLocalizer::localize(const CloudType::Ptr& scan_cloud) {
+BBS3DGlobalLocalizer::Result BBS3DGlobalLocalizer::localize(
+    const CloudType::Ptr& scan_cloud,
+    const Eigen::Matrix3d& body_to_level) {
     Result r;
+    (void)body_to_level;
     if (!scan_cloud || scan_cloud->empty()) {
         r.message = "scan empty";
         return r;

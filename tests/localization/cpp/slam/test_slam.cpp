@@ -71,7 +71,7 @@ int main() {
   const auto outputs = backend->outputs();
   check(outputs.alive, "not_alive");
   check(outputs.map_loaded, "map_not_loaded");
-  check(outputs.map_cloud_map.has_value(), "map_cloud_missing");
+  check((outputs.map_cloud_map != nullptr), "map_cloud_missing");
   check(outputs.observation_sequence == 1U, "observation_sequence_missing");
   check(outputs.source_epoch > 0U, "source_epoch_missing");
   check(outputs.map_cloud_map->points[0].offset_time_ns == 100, "point_offset_missing");

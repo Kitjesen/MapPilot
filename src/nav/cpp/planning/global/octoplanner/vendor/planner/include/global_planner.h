@@ -120,6 +120,9 @@ public:
     {
       None,
       StartSnapExhausted,
+      StartConnectionBlocked,
+      StartBodyOccupied,
+      StartGroundSupportMissing,
       GoalSnapExhausted,
     };
 
@@ -197,6 +200,10 @@ private:
   GridIndex worldToGrid(double x, double y, double z) const;
 
   octomap::point3d gridToWorld(const GridIndex & idx) const;
+  octomap::point3d planningPoint(const GridIndex & idx) const;
+  TraversabilityFailure queryWorld(const octomap::point3d &point, double radius,
+                                   bool require_support) const;
+  PointPose planning_offset_{};
 
   bool isInsideMetricBounds(const GridIndex & idx) const;
 

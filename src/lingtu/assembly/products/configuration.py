@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -393,6 +394,9 @@ def resolve_product_host_runtime(
                 "collision_cylinder_offset_m": geometry.collision_cylinder_offset,
                 "collision_clearance_below_m": geometry.collision_clearance_below,
                 "collision_clearance_above_m": geometry.collision_clearance_above,
+                "octoplanner3d_support_height_m": geometry.support_height,
+                "octoplanner3d_support_height_tolerance_m": geometry.support_height_tolerance,
+                "octoplanner3d_max_slope": math.tan(math.radians(robot_config.safety.tilt_limit_deg)),
                 "sensor_offset_x_m": lidar.offset_x,
                 "sensor_offset_y_m": lidar.offset_y,
                 "sensor_offset_z_m": lidar.offset_z,

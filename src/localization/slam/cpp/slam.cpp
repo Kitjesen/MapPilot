@@ -134,9 +134,9 @@ Status writePatchIndex(
 
 Status writeLatestPatch(
     const std::filesystem::path& map_dir,
-    const std::optional<Cloud>& registered_cloud_body,
+    const std::shared_ptr<const Cloud>& registered_cloud_body,
     const std::optional<Pose3d>& odometry_odom_body) {
-  if (!registered_cloud_body.has_value() || registered_cloud_body->points.empty()) {
+  if (!registered_cloud_body || registered_cloud_body->points.empty()) {
     return Status::Ok("no_registered_cloud_patch");
   }
   if (!odometry_odom_body.has_value()) {
@@ -220,14 +220,14 @@ class ContractBackend final : public ISlamBackend {
     registered.stamp_s = frame.stamp_s;
     registered.frame_id = config_.body_frame;
     registered.points = frame.points;
-    registered_cloud_body_ = registered;
+    registered_cloud_body_ = std::make_shared<Cloud>(std::move(registered));
     ++observation_sequence_;
 
     Cloud map_cloud;
     map_cloud.stamp_s = frame.stamp_s;
     map_cloud.frame_id = config_.map_frame;
     map_cloud.points = frame.points;
-    map_cloud_map_ = map_cloud;
+    map_cloud_map_ = std::make_shared<Cloud>(std::move(map_cloud));
     return Status::Ok("lidar_accepted");
   }
 
@@ -307,7 +307,7 @@ class ContractBackend final : public ISlamBackend {
     Cloud cloud;
     cloud.stamp_s = nowSeconds();
     cloud.frame_id = config_.map_frame;
-    if (map_cloud_map_.has_value()) {
+    if (map_cloud_map_) {
       cloud = *map_cloud_map_;
     }
 
@@ -332,8 +332,9 @@ class ContractBackend final : public ISlamBackend {
       return status;
     }
 
-    saved_map_cloud_map_ = cloud;
-    saved_map_points_ = static_cast<int>(cloud.points.size());
+    saved_map_cloud_map_ = std::make_shared<Cloud>(std::move(cloud));
+    ++saved_map_revision_;
+    saved_map_points_ = static_cast<int>(saved_map_cloud_map_->points.size());
     map_loaded_ = true;
     last_map_path_ = pcd.string();
     reason_ = "map_saved";
@@ -348,8 +349,9 @@ class ContractBackend final : public ISlamBackend {
     Cloud cloud;
     cloud.stamp_s = nowSeconds();
     cloud.frame_id = config_.map_frame;
-    saved_map_cloud_map_ = cloud;
-    saved_map_points_ = static_cast<int>(cloud.points.size());
+    saved_map_cloud_map_ = std::make_shared<Cloud>(std::move(cloud));
+    ++saved_map_revision_;
+    saved_map_points_ = static_cast<int>(saved_map_cloud_map_->points.size());
     map_loaded_ = true;
     last_map_path_ = pcd.string();
     reason_ = "map_loaded";
@@ -367,6 +369,7 @@ class ContractBackend final : public ISlamBackend {
     out.registered_cloud_body = registered_cloud_body_;
     out.map_cloud_map = map_cloud_map_;
     out.saved_map_cloud_map = saved_map_cloud_map_;
+    out.saved_map_revision = saved_map_revision_;
     out.map_odom_tf = Transform3d{config_.map_frame, config_.odom_frame, Pose3d{}};
     out.observation_sequence = observation_sequence_;
     out.source_epoch = source_epoch_;
@@ -431,9 +434,10 @@ class ContractBackend final : public ISlamBackend {
   int dropped_imu_frames_ = 0;
   std::optional<Pose3d> odometry_odom_body_;
   std::optional<Pose3d> state_estimation_at_scan_;
-  std::optional<Cloud> registered_cloud_body_;
-  std::optional<Cloud> map_cloud_map_;
-  std::optional<Cloud> saved_map_cloud_map_;
+  std::shared_ptr<const Cloud> registered_cloud_body_;
+  std::shared_ptr<const Cloud> map_cloud_map_;
+  std::shared_ptr<const Cloud> saved_map_cloud_map_;
+  std::uint64_t saved_map_revision_ = 0;
   int saved_map_points_ = 0;
   GnssFusionHealth gnss_health_;
   std::vector<OdomSample> pose_history_;

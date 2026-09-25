@@ -1496,9 +1496,9 @@
 
 .mapReadingKey { display: grid; gap: 4px; padding: 10px 12px; max-width: 100%; border-radius: 10px; background: var(--glass-hi); color: var(--text-dim); font-size: 13px; pointer-events: none; }
 .mapReadingKey strong { font-size: 14px; color: var(--text); }
-.planningMapLegend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 14px; color: var(--text); }
-.planningMapLegend span { display: inline-flex; align-items: center; gap: 6px; }
-.planningMapLegend i { width: 12px; height: 12px; border-radius: 3px; }
+.mappingObservationLegend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 14px; color: var(--text); }
+.mappingObservationLegend span { display: inline-flex; align-items: center; gap: 6px; }
+.mappingObservationLegend i { width: 12px; height: 12px; border-radius: 3px; }
 .mappingViewSwitch { display: flex; border: 1px solid var(--border); border-radius: 9px; padding: 2px; }
 .mappingReadingKey { display: grid; gap: 8px; max-width: 430px; padding: 13px 15px; border: 1px solid var(--border); border-radius: 12px; background: var(--glass-hi); color: var(--text-dim); font-size: 14px; line-height: 1.5; }
 .mappingReadingKey strong { font-size: 15px; color: var(--text); }
@@ -1514,7 +1514,7 @@
 @media (max-width: 800px) {
   .canvasArea.mappingCanvasArea { height: max(550px, 68vh); }
   .mappingReadingKey { padding: 10px 12px; gap: 6px; }
-  .mappingReadingKey .planningMapLegend { gap: 9px; }
+  .mappingReadingKey .mappingObservationLegend { gap: 9px; }
 }
 
 .goalControlGroup {
@@ -1906,7 +1906,8 @@
 .canvasHeader { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--glass); min-height: 55px; flex-shrink: 0; }
 .canvasHeader > span { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 14px; min-width: 0; max-width: 100%; white-space: nowrap; flex-shrink: 0; }
 .canvasHeader small { margin-left: 5px; padding-left: 12px; border-left: 1px solid var(--border); font-size: 13px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
-.cameraActions { display: flex; flex-wrap: wrap; gap: 5px; flex-shrink: 0; max-width: 100%; }
+.cameraActions { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; flex-shrink: 0; max-width: 100%; }
+.teleopHeader .secondaryActionLabel { display: none; }
 .cameraActions button { white-space: nowrap; }
 @media (max-width: 1100px) {
   .cameraActions button[aria-label] > span { display: none; }
@@ -2094,4 +2095,13 @@
   .mappingScene .cameraActions { gap: 1px; width: 100%; justify-content: space-between; }
   .mappingScene .cameraActions button { gap: 4px; padding: 7px 6px; font-size: 13px; }
   .mappingScene .mappingDisplayMenu > summary { padding: 7px 6px; font-size: 13px; }
+  .mappingScene .teleopHeader { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 30px); gap: 8px 3px; }
+  .mappingScene .teleopHeader > span { grid-column: 1; width: auto; }
+  .mappingScene .teleopHeader .cameraActions { display: contents; }
+  .mappingScene .teleopHeader .cameraActions > :first-child { grid-column: 1; grid-row: 2; justify-self: start; }
+  .mappingScene .teleopHeader .toolbarBtnPrimary { grid-column: 2 / -1; grid-row: 1; justify-self: end; }
+  .mappingScene .teleopHeader button[aria-label='已存地图'] { grid-column: 2; grid-row: 2; }
+  .mappingScene .teleopHeader .mappingDisplayMenu { grid-column: 3; grid-row: 2; }
+  .mappingScene .teleopHeader .mappingDisplayMenu > summary > span { display: none; }
+  .mappingScene .teleopHeader button[aria-controls='scene-inspector'] { grid-column: 4; grid-row: 2; }
 }

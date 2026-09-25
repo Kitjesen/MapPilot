@@ -23,6 +23,9 @@ class GridMap {
                                         double yaw) const noexcept;
   [[nodiscard]] int getInflateOccupancySegment(const Eigen::Vector3d &start, double startYaw,
                                                const Eigen::Vector3d &end, double endYaw) const noexcept;
+  [[nodiscard]] int getTrajectoryOccupancySegment(const Eigen::Vector3d &start,
+      const Eigen::Vector3d &velocity, const Eigen::Vector3d &end,
+      const Eigen::Vector3d &endVelocity, double startAheadS, double endAheadS) const noexcept;
 
  private:
   const Grid *grid_{nullptr};

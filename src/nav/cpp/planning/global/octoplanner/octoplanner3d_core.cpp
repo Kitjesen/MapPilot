@@ -314,9 +314,9 @@ global_planner::PlannerConfig plannerConfig(const PlannerOptions & options)
   return config;
 }
 
-double positiveOrDefault(double value, double fallback)
+double nonnegativeOrDefault(double value, double fallback)
 {
-  if (std::isfinite(value) && value > 0.0) {
+  if (std::isfinite(value) && value >= 0.0) {
     return value;
   }
   return fallback;
@@ -450,6 +450,12 @@ std::string endpointResolutionFailureReason(
       return resolution.start_raw_outside_bounds
         ? "start_outside_static_map"
         : "start_snap_exhausted";
+    case Failure::StartConnectionBlocked:
+      return "start_connection_blocked";
+    case Failure::StartBodyOccupied:
+      return "start_body_occupied";
+    case Failure::StartGroundSupportMissing:
+      return "start_ground_support_unconfirmed";
     case Failure::GoalSnapExhausted:
       return resolution.goal_raw_outside_bounds
         ? "goal_outside_static_map"
@@ -510,15 +516,17 @@ PlanResult runPreparedPlanner(
     result.goal_xy_error_m = xyDistanceToGoal(result.path.back(), request.goal);
     result.goal_z_error_m = zDistanceToGoal(result.path.back(), request.goal);
     const double terminal_tolerance =
-      positiveOrDefault(request.options.terminal_goal_tolerance_m, 0.5);
+      nonnegativeOrDefault(request.options.terminal_goal_tolerance_m, 0.5);
     const double terminal_xy_tolerance =
-      positiveOrDefault(request.options.terminal_goal_xy_tolerance_m, terminal_tolerance);
+      nonnegativeOrDefault(request.options.terminal_goal_xy_tolerance_m, terminal_tolerance);
     const double terminal_z_tolerance =
-      positiveOrDefault(request.options.terminal_goal_z_tolerance_m, 0.75);
+      nonnegativeOrDefault(request.options.terminal_goal_z_tolerance_m, 0.75);
+    // All configured bounds constrain the snapped endpoint, as in FAR.
+    // An in-tolerance 3D distance must not override a tighter XY or Z bound.
     result.reached_goal =
-      (result.goal_error_m <= terminal_tolerance) ||
-      (result.goal_xy_error_m <= terminal_xy_tolerance &&
-       result.goal_z_error_m <= terminal_z_tolerance);
+      result.goal_error_m <= terminal_tolerance &&
+      result.goal_xy_error_m <= terminal_xy_tolerance &&
+      result.goal_z_error_m <= terminal_z_tolerance;
   }
 
   const auto finished = std::chrono::steady_clock::now();

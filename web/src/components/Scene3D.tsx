@@ -1,6 +1,4 @@
 import { scanCanStandAlone } from '../services/sceneTelemetry.ts'
-import type { ReadyPlanningMap } from '../services/planningMap.ts'
-import { createPlanningMapLayer } from './scene3d/layers/planningMapLayer.ts'
 import { mapProjectionDisplayZ, riskProjectionDisplayZ } from '../services/mapProjectionHeight.ts'
 import type { MappingObservationState } from '../services/mappingObservation.ts'
 import { createMappingObservationLayer } from './scene3d/layers/mappingObservationLayer.ts'
@@ -68,8 +66,6 @@ interface Scene3DProps {
   savedMapFrameId?: string | null
   savedMapEpoch?: number | null
   savedMapVisible?: boolean
-  planningMap?: ReadyPlanningMap | null
-  planningMapVisible?: boolean
   mappingObservation?: MappingObservationState
   mappingObservationVisible?: boolean
   scanVisible?: boolean
@@ -149,7 +145,7 @@ function createPoseMarker(): THREE.Group {
 }
 
 export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
-  { cloud, scanCloud, savedMapFlat, savedMapFrameId, savedMapEpoch, savedMapVisible = true, planningMap, planningMapVisible = true, mappingObservation, mappingObservationVisible = false, scanVisible = true, elevationState, nativeTraversabilityState, sceneGraph, robotX, robotY, robotZ = 0, orientation, poseStampS, poseEpoch, robotModel, jointTelemetry, followRobot = false, robotValid, yaw, trail, path, localPath, localPlannerSnapshot, safetyEnvelope, safetyView = 'slice', layers, pointSize, onPendingGoal, onRelocalize, pendingGoal, pendingGoalRadius = 0.25, pendingGoalLabel = '待确认目标', previewPath },
+  { cloud, scanCloud, savedMapFlat, savedMapFrameId, savedMapEpoch, savedMapVisible = true, mappingObservation, mappingObservationVisible = false, scanVisible = true, elevationState, nativeTraversabilityState, sceneGraph, robotX, robotY, robotZ = 0, orientation, poseStampS, poseEpoch, robotModel, jointTelemetry, followRobot = false, robotValid, yaw, trail, path, localPath, localPlannerSnapshot, safetyEnvelope, safetyView = 'slice', layers, pointSize, onPendingGoal, onRelocalize, pendingGoal, pendingGoalRadius = 0.25, pendingGoalLabel = '待确认目标', previewPath },
   ref,
 ) {
   const mountRef   = useRef<HTMLDivElement>(null)
@@ -178,7 +174,6 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   const goalRef        = useRef<THREE.Mesh | null>(null)
   const elevationMeshRef = useRef<GroupedMesh | null>(null)
   const mappingObservationRef = useRef<GroupedMesh | null>(null)
-  const planningMapMeshRef = useRef<GroupedMesh | null>(null)
   const nativeTraversabilityMeshRef = useRef<GroupedMesh | null>(null)
   const localPlannerRef = useRef<THREE.Group | null>(null)
   const gridRef        = useRef<THREE.GridHelper | null>(null)
@@ -197,10 +192,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   const robotLoadStatusRef = useRef<HTMLDivElement>(null)
   const observationDisplayZ = mappingObservation?.status === 'ready'
     ? mapProjectionDisplayZ(mappingObservation.layer.origin[2], robotZ, robotModel, robotValid) : undefined
-  const planningDisplayZ = planningMap
-    ? mapProjectionDisplayZ(planningMap.origin[2], robotZ, robotModel, robotValid) : undefined
-  const underlayDisplayZ = mappingObservationVisible ? observationDisplayZ
-    : planningMapVisible ? planningDisplayZ : undefined
+  const underlayDisplayZ = mappingObservationVisible ? observationDisplayZ : undefined
   const riskDisplayZ = nativeTraversabilityState.status === 'ready'
     ? riskProjectionDisplayZ(nativeTraversabilityState.event.origin[2], robotZ, robotModel, robotValid, underlayDisplayZ)
     : undefined
@@ -210,7 +202,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     fitMap() {
       const camera = cameraRef.current
       const controls = controlsRef.current
-      const raster = planningMapMeshRef.current ?? mappingObservationRef.current
+      const raster = mappingObservationRef.current
       const points = raster ? raster._group ?? raster
         : savedMapRef.current?.visible ? savedMapRef.current : liveCloudRef.current
       if (!camera || !controls || !points) return
@@ -467,11 +459,10 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
   useEffect(() => {
     const z = mappingObservationVisible && observationDisplayZ !== undefined ? observationDisplayZ
-      : planningMapVisible && planningDisplayZ !== undefined ? planningDisplayZ
-        : mapProjectionDisplayZ(0, robotZ, robotModel, robotValid)
+      : mapProjectionDisplayZ(0, robotZ, robotModel, robotValid)
     if (gridRef.current) gridRef.current.position.y = z - .012
     if (floorRef.current) floorRef.current.position.y = z - .012
-  }, [mappingObservationVisible, observationDisplayZ, planningMapVisible, planningDisplayZ, robotZ, robotModel, robotValid])
+  }, [mappingObservationVisible, observationDisplayZ, robotZ, robotModel, robotValid])
 
   useEffect(() => {
     const robot = robotRef.current
@@ -611,21 +602,6 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     scene.add(mesh._group ?? mesh)
     elevationMeshRef.current = mesh
   }, [elevationState, layers.elevation])
-
-  useEffect(() => {
-    const scene = sceneRef.current
-    if (!scene || !planningMap || !planningMapVisible) return
-    const mesh = createPlanningMapLayer(planningMap)
-    if (!mesh) return
-    planningMapMeshRef.current = mesh
-    scene.add(mesh._group ?? mesh)
-    return () => { disposeGroupedMesh(scene, mesh); planningMapMeshRef.current = null }
-  }, [planningMap, planningMapVisible])
-
-  useEffect(() => {
-    const mesh = planningMapMeshRef.current
-    if (mesh && planningDisplayZ !== undefined) (mesh._group ?? mesh).position.y = planningDisplayZ
-  }, [planningDisplayZ, planningMap, planningMapVisible])
 
   // Native control-risk grid from the field navigation endpoint.
   useEffect(() => {
@@ -791,8 +767,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     raycaster.current.setFromCamera(ndc, camera)
     // Intersect the displayed underlay so oblique clicks retain the same XY.
     // Navigation target Z still comes from its original planning contract.
-    const pickingZ = mappingObservationVisible ? observationDisplayZ
-      : planningMapVisible ? planningDisplayZ : undefined
+    const pickingZ = mappingObservationVisible ? observationDisplayZ : undefined
     const p = pickingZ !== undefined
       ? raycaster.current.ray.intersectPlane(
         new THREE.Plane(new THREE.Vector3(0, 1, 0), -pickingZ), new THREE.Vector3())

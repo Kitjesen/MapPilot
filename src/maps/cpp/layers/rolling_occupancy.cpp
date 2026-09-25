@@ -217,6 +217,8 @@ void RollingInflatedSnapshot::Validate() const {
   if (frame_id.empty() || !(resolution_m > 0.0F) || !IsFinite(resolution_m) ||
       size_x <= 0 || size_y <= 0 || size_z <= 0 ||
       occupied_bits.size() != PackedByteCount(CellCount()) ||
+      measured_occupied_bits.size() != occupied_bits.size() ||
+      known_free_bits.size() != occupied_bits.size() ||
       occupied_cells > CellCount()) {
     throw std::invalid_argument("rolling inflated snapshot is invalid");
   }
@@ -282,6 +284,8 @@ RollingOccupancyGrid::RollingOccupancyGrid(RollingOccupancyConfig config)
   ray_total_counts_.assign(count, 0U);
   ray_hit_counts_.assign(count, 0U);
   observed_bits_.assign(BitWordCount(count), 0U);
+  measured_occupied_bits_.assign(BitWordCount(count), 0U);
+  known_free_bits_.assign(BitWordCount(count), 0U);
   occupied_bits_.assign(BitWordCount(count), 0U);
   inflation_counts_.assign(count, 0U);
   inflated_bits_.assign(BitWordCount(count), 0U);
@@ -357,6 +361,8 @@ void RollingOccupancyGrid::Reset(
   std::fill(ray_total_counts_.begin(), ray_total_counts_.end(), 0U);
   std::fill(ray_hit_counts_.begin(), ray_hit_counts_.end(), 0U);
   std::fill(observed_bits_.begin(), observed_bits_.end(), 0U);
+  std::fill(measured_occupied_bits_.begin(), measured_occupied_bits_.end(), 0U);
+  std::fill(known_free_bits_.begin(), known_free_bits_.end(), 0U);
   std::fill(occupied_bits_.begin(), occupied_bits_.end(), 0U);
   std::fill(inflation_counts_.begin(), inflation_counts_.end(), 0U);
   std::fill(inflated_bits_.begin(), inflated_bits_.end(), 0U);
@@ -470,6 +476,14 @@ void RollingOccupancyGrid::RefreshMembership(std::size_t physical_index) {
   const bool is_occupied =
       cell.unresolved_hit || StateFor(cell) == OccupancyState::kOccupied;
   SetBit(observed_bits_, physical_index, cell.observed);
+  const auto state = StateFor(cell);
+  const bool measured_occupied = state == OccupancyState::kOccupied;
+  const bool known_free = state == OccupancyState::kFree && !cell.unresolved_hit;
+  collision_dirty_ = collision_dirty_ ||
+      BitSet(measured_occupied_bits_, physical_index) != measured_occupied ||
+      BitSet(known_free_bits_, physical_index) != known_free;
+  SetBit(measured_occupied_bits_, physical_index, measured_occupied);
+  SetBit(known_free_bits_, physical_index, known_free);
   if (was_occupied != is_occupied) {
     UpdateInflation(PhysicalToLogical(physical_index), is_occupied ? 1 : -1);
     SetBit(occupied_bits_, physical_index, is_occupied);
@@ -606,6 +620,8 @@ RollingOccupancyCellChunk RollingOccupancyGrid::RollByLocked(
     std::fill(ray_total_counts_.begin(), ray_total_counts_.end(), 0U);
     std::fill(ray_hit_counts_.begin(), ray_hit_counts_.end(), 0U);
     std::fill(observed_bits_.begin(), observed_bits_.end(), 0U);
+    std::fill(measured_occupied_bits_.begin(), measured_occupied_bits_.end(), 0U);
+    std::fill(known_free_bits_.begin(), known_free_bits_.end(), 0U);
     std::fill(occupied_bits_.begin(), occupied_bits_.end(), 0U);
     std::fill(inflation_counts_.begin(), inflation_counts_.end(), 0U);
     std::fill(inflated_bits_.begin(), inflated_bits_.end(), 0U);
@@ -640,6 +656,8 @@ RollingOccupancyCellChunk RollingOccupancyGrid::RollByLocked(
       }
       cells_[index] = Cell{config_.min_log_odds - kUnknownLogOddsOffset};
       SetBit(observed_bits_, index, false);
+      SetBit(measured_occupied_bits_, index, false);
+      SetBit(known_free_bits_, index, false);
       SetBit(occupied_bits_, index, false);
       inflation_counts_[index] = 0U;
       SetBit(inflated_bits_, index, false);
@@ -887,6 +905,41 @@ std::size_t RollingOccupancyGrid::DecayLocked(std::int64_t now_ns) {
 }
 
 RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& frame) {
+  return UpdateImpl(frame, false);
+}
+
+RollingOccupancyUpdateStats RollingOccupancyGrid::UpdateReference(const MapCloudFrame& frame) {
+  return UpdateImpl(frame, true);
+}
+
+void RollingOccupancyGrid::ReplaceReferenceHits(const PointCloudView& retained, std::int64_t decay_stamp_ns) {
+  std::unique_lock<std::shared_mutex> lock(mutex_);
+  if (retained.frame_id != frame_id_)
+    throw std::invalid_argument("retained reference frame mismatch");
+  for (std::size_t i=0;i<cells_.size();++i) {
+    if (cells_[i].unresolved_hit || StateFor(cells_[i])==OccupancyState::kOccupied) {
+      cells_[i]=Cell{config_.min_log_odds-kUnknownLogOddsOffset};
+      RefreshMembership(i);
+    }
+  }
+  for (std::size_t i=0;i<retained.point_count;++i) {
+    const double x=ReadCoordinate(retained,i,0), y=ReadCoordinate(retained,i,1), z=ReadCoordinate(retained,i,2);
+    CellCoord coord;
+    if (!IsFinite(x) || !IsFinite(y) || !IsFinite(z) || !WorldToCell(x,y,z,&coord)) continue;
+    const auto index=PhysicalIndex(coord);
+    auto& cell=cells_[index];
+    cell.observed=true;
+    cell.unresolved_hit=true;
+    cell.log_odds=config_.max_log_odds;
+    cell.hits=std::max<std::uint16_t>(cell.hits,1U);
+    cell.last_observed_ns=decay_stamp_ns;
+    RefreshMembership(index);
+  }
+  if (collision_dirty_) ++generation_;
+  collision_dirty_=false;
+}
+
+RollingOccupancyUpdateStats RollingOccupancyGrid::UpdateImpl(const MapCloudFrame& frame, bool reference) {
   const PointCloudView& cloud = frame.cloud;
   const std::string incoming_frame = cloud.frame_id.empty() ? "map" : cloud.frame_id;
   if (cloud.stamp_ns < 0 || frame.decay_stamp_ns < 0 ||
@@ -910,7 +963,7 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
   RollingOccupancyUpdateStats stats;
   stats.input_points = cloud.point_count;
   collision_dirty_ = false;
-  if (config_.auto_roll) {
+  if (config_.auto_roll && !reference) {
     RollResult roll = RollToCenterLocked(
         frame.sensor_origin_x_m,
         frame.sensor_origin_y_m,
@@ -921,6 +974,15 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
     stats.rolled_out_cells = roll.chunk.Size();
   }
   stats.decayed_cells = DecayLocked(decay_stamp_ns);
+
+  // Only replay rays whose physical origins are inside this fixed window.
+  // Otherwise TraceRay cannot establish the segment's in-window free cells.
+  CellCoord origin_cell;
+  if (reference && !WorldToCell(frame.sensor_origin_x_m, frame.sensor_origin_y_m,
+                               frame.sensor_origin_z_m, &origin_cell)) {
+    stats.rejected_points = cloud.point_count;
+    return stats;
+  }
 
   std::vector<std::size_t> touched_indices;
   touched_indices.reserve(cloud.point_count * 8U);
@@ -1068,6 +1130,7 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
     cell.observed = true;
     const double update = hit ? config_.hit_log_odds : -config_.miss_log_odds;
     if (update >= 0.0 && cell.log_odds >= config_.max_log_odds) {
+      cell.last_observed_ns = decay_stamp_ns;
       RefreshMembership(physical);
       ray_total_counts_[physical] = 0U;
       ray_hit_counts_[physical] = 0U;
@@ -1245,6 +1308,8 @@ RollingInflatedSnapshot RollingOccupancyGrid::InflatedSnapshot() const {
   snapshot.origin_z_m = origin_z_m_;
   snapshot.occupied_cells = CountSetBits(inflated_bits_);
   snapshot.occupied_bits.assign(PackedByteCount(cells_.size()), 0U);
+  snapshot.measured_occupied_bits.assign(snapshot.occupied_bits.size(), 0U);
+  snapshot.known_free_bits.assign(snapshot.occupied_bits.size(), 0U);
   ForEachSetBit(inflated_bits_, cells_.size(), [&](std::size_t physical) {
     const CellCoord logical = PhysicalToLogical(physical);
     const std::size_t linear =
@@ -1254,6 +1319,20 @@ RollingInflatedSnapshot RollingOccupancyGrid::InflatedSnapshot() const {
         static_cast<std::size_t>(logical.x);
     snapshot.occupied_bits[linear / 8U] |=
         static_cast<std::uint8_t>(1U << (linear % 8U));
+  });
+  ForEachSetBit(observed_bits_, cells_.size(), [&](std::size_t physical) {
+    const CellCoord logical = PhysicalToLogical(physical);
+    const std::size_t linear =
+        (static_cast<std::size_t>(logical.z) * config_.size_y + logical.y) *
+            config_.size_x + logical.x;
+    const auto state = StateFor(cells_[physical]);
+    if (state == OccupancyState::kOccupied) {
+      snapshot.measured_occupied_bits[linear / 8U] |=
+          static_cast<std::uint8_t>(1U << (linear % 8U));
+    } else if (state == OccupancyState::kFree && !cells_[physical].unresolved_hit) {
+      snapshot.known_free_bits[linear / 8U] |=
+          static_cast<std::uint8_t>(1U << (linear % 8U));
+    }
   });
   snapshot.Validate();
   return snapshot;

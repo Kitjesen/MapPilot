@@ -171,6 +171,37 @@ def _private_operation_status() -> dict:
     }
 
 
+@pytest.mark.parametrize("performed,code", [(False, "sequential_chain_incomplete"), (True, "optimized")])
+def test_save_operation_preserves_processing_outcome_without_native_reports(monkeypatch, performed, code):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import gateway.maps.routes as map_routes
+    from gateway.schemas import MapSaveOperationResponse
+
+    status = _private_operation_status()
+    status.update(state="SUCCEEDED", phase="DONE")
+    status["source_report"].update(
+        optimization={"performed": performed, "code": code, "message": "/home/sunrise/private/graph"},
+        dynamic_filter={"success": True, "performed": True, "reason_code": "cleaned", "path": "/home/sunrise/private/raw.pcd"},
+    )
+    monkeypatch.setattr(map_routes, "_mapd_http_request", lambda *_args: {"success": True, "status": status})
+    app = FastAPI()
+    map_routes.register_map_routes(app, SimpleNamespace())
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/maps/operations/save_job_1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["operation"]["processing"] == {
+        "optimization": {"performed": performed, "reason_code": code},
+        "cleanup": {"success": True, "performed": True, "reason_code": "cleaned"},
+    }
+    assert MapSaveOperationResponse.model_validate(payload).operation.processing is not None
+    _assert_external_operation_payload_is_path_free(payload)
+
+
 def test_save_map_response_recursively_hides_native_paths(monkeypatch):
     from fastapi import FastAPI
 

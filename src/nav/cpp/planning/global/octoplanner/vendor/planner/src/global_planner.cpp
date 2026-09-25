@@ -102,6 +102,13 @@ namespace global_planner
 
         goal_point_ = goal;
         has_goal_ = true;
+        planning_offset_ = {};
+        if (octree_ && support_height_m_ > 0.0 && !lowest_traversable_only_) {
+            // Anchor the search lattice at the measured body pose. Occupancy
+            // keys stay in OctoMap coordinates; body positions are continuous.
+            const auto center = gridToWorld(worldToGrid(start.x, start.y, start.z));
+            planning_offset_ = {start.x - center.x(), start.y - center.y(), start.z - center.z()};
+        }
 
         printf("start = (%f,%f,%f),goal = (%f,%f,%f) \n",start_point_.x,start_point_.y,start_point_.z,goal_point_.x,goal_point_.y,goal_point_.z);
 
@@ -144,13 +151,34 @@ namespace global_planner
     bool OctoPlanner3D::resolvePlanEndpoints(GridIndex & start, GridIndex & goal)
     {
         const GridIndex start_raw = worldToGrid(
-            start_point_.x, start_point_.y, start_point_.z);
+            start_point_.x - planning_offset_.x, start_point_.y - planning_offset_.y,
+            start_point_.z - planning_offset_.z);
         const GridIndex goal_raw = worldToGrid(
-            goal_point_.x, goal_point_.y, goal_point_.z);
+            goal_point_.x - planning_offset_.x, goal_point_.y - planning_offset_.y,
+            goal_point_.z - planning_offset_.z);
         start = start_raw;
         goal = goal_raw;
         endpoint_resolution_.start_raw_outside_bounds = !isInsideMetricBounds(start_raw);
         endpoint_resolution_.goal_raw_outside_bounds = !isInsideMetricBounds(goal_raw);
+
+        // In the calibrated continuous-height path the start is the measured
+        // body pose. Searching for a different start cannot repair its collision
+        // or missing support, and hides the cause behind a failed snap connection.
+        if (support_height_m_ > 0.0 && !lowest_traversable_only_ &&
+            !endpoint_resolution_.start_raw_outside_bounds) {
+            const octomap::point3d actual(start_point_.x, start_point_.y, start_point_.z);
+            const auto body = queryWorld(actual, robot_radius_, false);
+            if (body == TraversabilityFailure::OccupiedBody ||
+                body == TraversabilityFailure::ExternalPreblockedBody) {
+                endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartBodyOccupied;
+                return false;
+            }
+            if (require_ground_support_ &&
+                queryWorld(actual, robot_radius_, true) == TraversabilityFailure::GroundSupport) {
+                endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartGroundSupportMissing;
+                return false;
+            }
+        }
 
         if (!findNearestFreeCell(
                 start_raw,
@@ -167,6 +195,16 @@ namespace global_planner
             return false;
         }
         endpoint_resolution_.start_snapped = !(start == start_raw);
+        // Snapping cannot teleport the robot over unsupported cells or through
+        // obstacles. Use the same segment checks as path simplification.
+        if (endpoint_resolution_.start_snapped &&
+            (!isCellTraversable(start_raw, robot_radius_, false, strict_direct_ground_support_,
+                                ground_support_xy_radius_cells_, ground_support_depth_cells_) ||
+             !hasTraversableLine(start_raw, start))) {
+            endpoint_resolution_.failure =
+                EndpointResolutionInfo::Failure::StartConnectionBlocked;
+            return false;
+        }
         if (!findNearestFreeCell(
                 goal_raw,
                 robot_radius_,
@@ -335,7 +373,7 @@ namespace global_planner
                     for (std::size_t i = 0; i < cells.size(); ++i)
                     {
                         const auto & c = cells[i];
-                        const auto p = gridToWorld(c);
+                        const auto p = planningPoint(c);
                         PointPose temp;
                         temp.x = p.x();
                         temp.y = p.y();
@@ -518,6 +556,20 @@ namespace global_planner
             }
             previous = current;
         }
+        if (support_height_m_ > 0.0 && !lowest_traversable_only_) {
+            const auto a = planningPoint(from), b = planningPoint(to);
+            const double length = (b - a).norm();
+            const int count = std::max(1, static_cast<int>(std::ceil(
+                2.0 * length / octree_->getResolution())));
+            for (int i = 0; i <= count; ++i) {
+                const double t = static_cast<double>(i) / count;
+                const octomap::point3d p(a.x() + t * (b.x() - a.x()),
+                                         a.y() + t * (b.y() - a.y()),
+                                         a.z() + t * (b.z() - a.z()));
+                if (queryWorld(p, robot_radius_, require_ground_support_) != TraversabilityFailure::None)
+                    return false;
+            }
+        }
         return previous == to;
     }
 
@@ -636,10 +688,23 @@ namespace global_planner
         if (dz > 0.0 && dxy <= 1e-9) {
         return false;
         }
-        if (max_slope_ <= 0.0 || dz <= 0.0) {
-        return true;
+        if (max_slope_ > 0.0 && dz > 0.0 && dz / dxy > max_slope_) {
+            return false;
         }
-        return (dz / dxy) <= max_slope_;
+        if (support_height_m_ > 0.0 && !lowest_traversable_only_) {
+            const auto a = planningPoint(from), b = planningPoint(to);
+            const int samples = std::max(1, static_cast<int>(std::ceil(
+                2.0 * std::sqrt(dx * dx + dy * dy + dz * dz) / r)));
+            for (int i = 1; i < samples; ++i) {
+                const double t = static_cast<double>(i) / samples;
+                const octomap::point3d p(a.x() + t * (b.x() - a.x()),
+                                         a.y() + t * (b.y() - a.y()),
+                                         a.z() + t * (b.z() - a.z()));
+                if (queryWorld(p, robot_radius_, require_ground_support_) != TraversabilityFailure::None)
+                    return false;
+            }
+        }
+        return true;
     }
 
     std::vector<GridIndex> OctoPlanner3D::makeSearchDirections(bool include_stair_connections) const
@@ -733,9 +798,17 @@ namespace global_planner
             for (int col = 0; col < result.cols; ++col) {
                 const GridIndex index{minimum.x + col, minimum.y + row, minimum.z};
                 TraversabilityFailure failure = TraversabilityFailure::None;
-                const bool allowed = isPlanningCellTraversableDetailed(
-                    index, robot_radius_, require_ground_support_, strict_direct_ground_support_,
-                    ground_support_xy_radius_cells_, ground_support_depth_cells_, &failure);
+                bool allowed;
+                if (support_height_m_ > 0.0 && !lowest_traversable_only_) {
+                    auto point = gridToWorld(index);
+                    point.z() = static_cast<float>(reference_z);
+                    failure = queryWorld(point, robot_radius_, require_ground_support_);
+                    allowed = failure == TraversabilityFailure::None;
+                } else {
+                    allowed = isPlanningCellTraversableDetailed(
+                        index, robot_radius_, require_ground_support_, strict_direct_ground_support_,
+                        ground_support_xy_radius_cells_, ground_support_depth_cells_, &failure);
+                }
                 const bool blocked = failure == TraversabilityFailure::OccupiedBody ||
                     failure == TraversabilityFailure::ExternalPreblockedBody ||
                     failure == TraversabilityFailure::ExternalPreblockedBelow ||
@@ -762,6 +835,14 @@ namespace global_planner
 
     bool OctoPlanner3D::isCellTraversableDetailed(const GridIndex & idx, double robot_radius, bool require_ground_support,bool strict_direct_ground_support,int support_xy_radius_cells, int support_depth_cells, TraversabilityFailure * failure) const
     {
+        if (support_height_m_ > 0.0 && !lowest_traversable_only_) {
+            auto cached = body_cache_.find(idx);
+            const auto result = require_ground_support && cached != body_cache_.end()
+                ? cached->second : queryWorld(planningPoint(idx), robot_radius, require_ground_support);
+            if (require_ground_support) body_cache_.emplace(idx, result);
+            if (failure) *failure = result;
+            return result == TraversabilityFailure::None;
+        }
         if (!isInsideMetricBounds(idx)) {
         if (failure) {
             *failure = TraversabilityFailure::OutsideBounds;
@@ -934,6 +1015,12 @@ namespace global_planner
             return false;
         }
         if (!isOccupiedCell(support)) {
+            return false;
+        }
+        // A support surface must be exposed above the occupied voxel. This
+        // rejects vertical walls and slab interiors when relaxed neighbouring
+        // support is enabled.
+        if (isOccupiedCell({support.x, support.y, support.z + 1})) {
             return false;
         }
         return isSupportPatch(support);
@@ -1182,10 +1269,13 @@ namespace global_planner
         const int n = std::max(1, static_cast<int>(std::ceil(robot_radius_ / r)));
         const double radius_sq = robot_radius_ * robot_radius_;
         const bool cylinder = body_clearance_below_m_ > 0.0 || body_clearance_above_m_ > 0.0;
+        // The body is centred in this voxel. Include neighbouring voxel
+        // volumes only when they overlap the configured vertical interval;
+        // ceil(clearance / r) adds a whole layer even at a shared boundary.
         const int minimum_dz = cylinder
-            ? -std::max(0, static_cast<int>(std::floor(body_clearance_below_m_ / r + 1e-9))) : 0;
+            ? -std::max(0, static_cast<int>(std::ceil(body_clearance_below_m_ / r - 0.5 - 1e-9))) : 0;
         const int maximum_dz = cylinder
-            ? std::max(0, static_cast<int>(std::ceil(body_clearance_above_m_ / r - 1e-9))) : n;
+            ? std::max(0, static_cast<int>(std::ceil(body_clearance_above_m_ / r - 0.5 - 1e-9))) : n;
         // Preserve the sampled envelope and its visitation order. Cell-centre
         // neighbours differ by integer indices; no world/grid round trip is needed.
         for (int dx = -n; dx <= n; ++dx) {
@@ -1383,6 +1473,117 @@ namespace global_planner
             cached = center == idx ? CellState::OccupiedLeafCenter : CellState::Occupied;
         }
         return cached;
+    }
+
+    octomap::point3d OctoPlanner3D::planningPoint(const GridIndex &idx) const
+    {
+        const auto p = gridToWorld(idx);
+        return octomap::point3d(p.x() + planning_offset_.x, p.y() + planning_offset_.y,
+                                p.z() + planning_offset_.z);
+    }
+
+    OctoPlanner3D::TraversabilityFailure OctoPlanner3D::queryWorld(
+        const octomap::point3d &p, double radius, bool require_support) const
+    {
+        double min_x, min_y, min_z, max_x, max_y, max_z;
+        octree_->getMetricMin(min_x, min_y, min_z);
+        octree_->getMetricMax(max_x, max_y, max_z);
+        if (p.x() < min_x || p.x() >= max_x || p.y() < min_y || p.y() >= max_y ||
+            p.z() < min_z || p.z() >= max_z) return TraversabilityFailure::OutsideBounds;
+        const double r = octree_->getResolution();
+        if (!external_preblocked_cells_.empty()) {
+            const auto column = worldToGrid(p.x(), p.y(), p.z());
+            const int bottom = worldToGrid(p.x(), p.y(), min_z).z;
+            for (int z = column.z - 1; z >= bottom; --z) {
+                const GridIndex voxel{column.x, column.y, z};
+                if (isOccupiedCell(voxel)) break;
+                if (external_preblocked_cells_.count(voxel))
+                    return TraversabilityFailure::ExternalPreblockedBelow;
+            }
+        }
+        if (require_support) {
+            // OctoPlanner3D's native support contract is an occupied surface
+            // below the planning cell. Saved scans may omit the direct floor
+            // voxel, so production mode allows the configured neighbouring
+            // support cells. An explicit free voxel in the expected support
+            // band still denotes a real drop and is rejected.
+            const GridIndex support_seed = worldToGrid(p.x(), p.y(), p.z());
+            const auto [minimum_depth, maximum_depth] =
+                supportDepthRange(ground_support_depth_cells_);
+            bool explicit_free_without_surface = false;
+            bool direct_surface_seen = false;
+            for (int dz = 1; dz <= maximum_depth; ++dz) {
+                const GridIndex below{
+                    support_seed.x, support_seed.y, support_seed.z - dz};
+                if (!isInsideMetricBounds(below)) continue;
+                const auto *node = octree_->search(
+                    (below.x + .5) * r, (below.y + .5) * r, (below.z + .5) * r);
+                if (!node) continue;
+                if (octree_->isNodeOccupied(node)) {
+                    direct_surface_seen = dz >= minimum_depth && isSupportCell(below);
+                    break;
+                }
+                // The shallow edge of the tolerance band is the normal free
+                // ray immediately above a neighbouring floor surface. Only
+                // a free/drop observation deeper than that edge is evidence
+                // against the candidate support column.
+                if (dz > minimum_depth) explicit_free_without_surface = true;
+            }
+            if (!direct_surface_seen && explicit_free_without_surface) {
+                return TraversabilityFailure::GroundSupport;
+            }
+            const int support_radius = std::max(0, ground_support_xy_radius_cells_);
+            if (!hasGroundSupport(
+                    support_seed, strict_direct_ground_support_, support_radius,
+                    ground_support_depth_cells_)) {
+                return TraversabilityFailure::GroundSupport;
+            }
+        }
+        const bool explicit_body = body_clearance_below_m_ > 0.0 || body_clearance_above_m_ > 0.0;
+        const double below = explicit_body ? std::max(0.0, body_clearance_below_m_) : r;
+        const double above = explicit_body ? std::max(0.0, body_clearance_above_m_) : r;
+        const auto low = worldToGrid(p.x() - radius, p.y() - radius, p.z() - below);
+        const auto high = worldToGrid(p.x() + radius, p.y() + radius, p.z() + above);
+        if (external_preblocked_cells_.empty()) {
+            // Visit existing leaves, not every finest-resolution cell in the
+            // body volume. Use each leaf's full extent, including pruned leaves.
+            const octomap::point3d minimum(
+                std::max((low.x + 0.5) * r, min_x + 0.5 * r),
+                std::max((low.y + 0.5) * r, min_y + 0.5 * r),
+                std::max((low.z + 0.5) * r, min_z + 0.5 * r));
+            const octomap::point3d maximum(
+                std::min((high.x + 0.5) * r, max_x - 0.5 * r),
+                std::min((high.y + 0.5) * r, max_y - 0.5 * r),
+                std::min((high.z + 0.5) * r, max_z - 0.5 * r));
+            const auto end = octree_->end_leafs_bbx();
+            for (auto it = octree_->begin_leafs_bbx(minimum, maximum); it != end; ++it) {
+                if (!octree_->isNodeOccupied(*it)) continue;
+                const double half = 0.5 * it.getSize();
+                if (it.getZ() + half <= p.z() - below + 1e-7 ||
+                    it.getZ() - half >= p.z() + above - 1e-7) continue;
+                const double dx = std::max(0.0, std::abs(it.getX() - p.x()) - half);
+                const double dy = std::max(0.0, std::abs(it.getY() - p.y()) - half);
+                if (dx * dx + dy * dy <= radius * radius + 1e-9)
+                    return TraversabilityFailure::OccupiedBody;
+            }
+            return TraversabilityFailure::None;
+        }
+        for (int x = low.x; x <= high.x; ++x) {
+            const double dx = std::max({x * r - p.x(), 0.0, p.x() - (x + 1) * r});
+            for (int y = low.y; y <= high.y; ++y) {
+                const double dy = std::max({y * r - p.y(), 0.0, p.y() - (y + 1) * r});
+                if (dx * dx + dy * dy > radius * radius + 1e-9) continue;
+                for (int z = low.z; z <= high.z; ++z) {
+                    if ((z + 1) * r <= p.z() - below + 1e-7 || z * r >= p.z() + above - 1e-7)
+                        continue;
+                    const GridIndex voxel{x, y, z};
+                    if (external_preblocked_cells_.count(voxel))
+                        return TraversabilityFailure::ExternalPreblockedBody;
+                    if (isOccupiedCell(voxel)) return TraversabilityFailure::OccupiedBody;
+                }
+            }
+        }
+        return TraversabilityFailure::None;
     }
 
     GridIndex OctoPlanner3D::worldToGrid(double x, double y, double z) const

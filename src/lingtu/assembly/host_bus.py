@@ -147,9 +147,10 @@ class HostBus(Module):
         session.ensure_goal_status_abi()
         session.ensure_path_telemetry_abi()
         capabilities = int(getattr(session, "capabilities", 0))
-        if self._require_map_scene or (
-            capabilities & NATIVE_COMMAND_CAP_MAP_SCENE
-        ):
+        # MapScene is optional display telemetry. Native mapd/nav own the
+        # executable 3D map, so capability presence alone must not force the
+        # Host to initialize a large saved scene during navigation startup.
+        if self._require_map_scene:
             session.ensure_map_scene_abi()
             self._map_scene_enabled = True
         if capabilities & NATIVE_COMMAND_CAP_TRAVERSABILITY_GRID:

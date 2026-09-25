@@ -1,5 +1,9 @@
 # Fast-LIO online mapping migration and acceptance
 
+Latest source migration: [native LIO-SAM backend](../sam/upstream/UPSTREAM.md).
+The sections below describe the earlier custom-backend stage and are historical.
+Current field release `.70` and candidate source must not be conflated.
+
 This implements the frontend/backend separation described by
 [FAST_LIO_SLAM](https://github.com/gisbi-kim/FAST_LIO_SLAM): continuous LIO,
 keyframe clouds, background place verification and pose-graph optimization,

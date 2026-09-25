@@ -48,7 +48,6 @@
 #include "status/goal_terminal_status_delivery.hpp"
 #include "status/goal_terminal_transaction.hpp"
 #include "status/inspection_status_file_writer.hpp"
-#include "status/planning_map_writer.hpp"
 #include "status/nav_status_endpoint_adapter.hpp"
 #include "status/nav_status_publisher.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
@@ -171,8 +170,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto &last_odom_linear_speed_mps = state.last_odom_linear_speed_mps;
   auto &last_odom_angular_speed_radps = state.last_odom_angular_speed_radps;
   auto &driver_authority_previous = state.driver_authority_previous;
-  auto &teleop_receive_time = state.teleop_receive_time;
-  auto &teleop_received = state.teleop_received;
   auto &input_gate_state = state.input_gate_state;
   auto &last_plan = state.last_plan;
   auto &last_local = state.last_local;
@@ -546,6 +543,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto handle_teleop = [&](const OperatorMotionInputSample &sample,
                            bool manual_mode) -> std::pair<bool, std::string> {
     ++teleop_cmd_count;
+    const auto sample_receive_time = SteadyClock::now();
     TeleopAdmissionContext context;
     context.motion_allowed = control_authority.motionAllowed();
     context.autonomy_mode = cfg.control_mode == ControlMode::Autonomy;
@@ -613,8 +611,11 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
                    admission.reason.c_str(), observation.age_s.value_or(0.0));
     }
     if (admission.update_receive_timestamp) {
-      teleop_receive_time = SteadyClock::now();
-      teleop_received = true;
+      // Preserve time already spent in transport and admission. Subsequent
+      // checks use the steady clock, so wall-clock adjustments cannot renew it.
+      state.teleop_freshness.record(sample_receive_time,
+                                   context.receive_s - request.source_stamp_s,
+                                   static_cast<double>(sample.freshness_budget_ms) * 1e-3);
     }
     if (admission.accepted) {
       control_authority.setTeleopManualMode(manual_mode);
@@ -752,10 +753,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
             NavigationMapIdentity{identity.identity->map_id, identity.identity->content_epoch};
       } else {
         navigation_map_identity.reset();
-      }
-      if (ctx.planning_map_writer) {
-        ctx.planning_map_writer->update(identity.identity,
-            map_body ? std::optional<double>{map_body->position.z} : std::nullopt, now);
       }
     }
     std::string navigation_authority = "none";
@@ -1423,7 +1420,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
               }
             }
           }
-          (void)inputs.materializeObstacles(timing);
           if (control_authority.estopLatched()) {
             last_local.seen = true;
             last_local.active = false;
@@ -1445,7 +1441,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
               cfg, safety_config, map_body, input_gate_state,
               active_teleop_request ? &*active_teleop_request : nullptr, path_active, obstacle_xyzh,
               traversability_grid, last_traversability_receive_s, last_teleop, timing,
-              control_authority.teleopManualMode()});
+              control_authority.teleopManualMode(), state.teleop_freshness.budget_s});
           if (teleop_result.handled) {
             last_teleop = std::move(teleop_result.teleop);
             if (teleop_result.local) {
@@ -1474,7 +1470,8 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
                     [&](const std::string &reason) {
                       return motion_stop.clearEndpointMotion(reason);
                     },
-                    teleop_result.teleop.manual_mode);
+                    teleop_result.teleop.manual_mode,
+                    state.teleop_freshness.fresh(SteadyClock::now(), cfg.teleop_cmd_max_age_s));
               }
               if (post_planning_readiness.stop_required) {
                 operator_motion_final_output_sequence = 0U;
@@ -1549,7 +1546,8 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
           path_active_for_tick && active_goal_identity.has_value() && map_body.has_value() &&
           input_gate_state.ready && control_authority.motionAllowed() &&
           goalPlanAcceptsReplanTrigger(goal_snapshot_for_tick) && !control_loop_guard_latched() &&
-          !inspection_executor.active() && !rolling_active;
+          !inspection_executor.active() && !rolling_active &&
+          last_local.dynamic_avoidance == "clear";
       blockage_observation.local_path_viable =
           last_local.active && last_local.path_found && !last_local.near_field_stop &&
           last_local.local_path_points >= 2U && last_local.recovery_state == 0 &&
@@ -1816,7 +1814,9 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     }
     timing.loop_ms = elapsedMs(loop_start);
     (void)control_loop_health.observe(
-        ControlLoopSample{timing.loop_ms, timing.sleep_ms, timing.overrun_ms});
+        ControlLoopSample{timing.loop_ms, timing.sleep_ms, timing.overrun_ms,
+                          {timing.sensor_drain_ms, timing.operator_drain_ms,
+                           timing.command_drain_ms, timing.runtime_ms, timing.publish_ms}});
     last_timing = timing;
   }
 

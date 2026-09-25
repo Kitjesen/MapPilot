@@ -1058,7 +1058,7 @@ def register_operation_routes(app, gw) -> None:
             if isinstance(body, LocalizationRelocalizationRequest)
             else LocalizationRelocalizationRequest.model_validate(body)
         )
-        map_id, map_response = localization_map_id(request.map_name)
+        map_id, map_response = await asyncio.to_thread(localization_map_id, request.map_name)
         if map_response is not None:
             return map_response
         unavailable_response = _relocalization_service_unavailable_response(gw)
@@ -1067,7 +1067,10 @@ def register_operation_routes(app, gw) -> None:
 
         try:
             if request.mode == "global":
-                result = gw.localization.trigger_global_relocalize(timeout_s=10.0)
+                # BBS alone can take 30 seconds, before refinement and DDS delivery.
+                result = await asyncio.to_thread(
+                    gw.localization.trigger_global_relocalize, timeout_s=45.0,
+                )
             else:
                 if request.initial_pose is None:
                     return _localization_operation_response(
@@ -1078,7 +1081,8 @@ def register_operation_routes(app, gw) -> None:
                         message="seeded relocalization requires an initial pose",
                         status_code=400,
                     )
-                result = gw.localization.relocalize_saved_map(
+                result = await asyncio.to_thread(
+                    gw.localization.relocalize_saved_map,
                     map_id,
                     request.initial_pose.x,
                     request.initial_pose.y,
@@ -1137,14 +1141,14 @@ def register_operation_routes(app, gw) -> None:
             if isinstance(body, LocalizationMapTrackingRequest)
             else LocalizationMapTrackingRequest.model_validate(body)
         )
-        map_name, map_response = localization_map_id(request.map_name)
+        map_name, map_response = await asyncio.to_thread(localization_map_id, request.map_name)
         if map_response is not None:
             return map_response
         unavailable_response = _relocalization_service_unavailable_response(gw)
         if unavailable_response is not None:
             return unavailable_response
         try:
-            result = gw.localization.start_map_tracking(timeout_s=10.0)
+            result = await asyncio.to_thread(gw.localization.start_map_tracking, timeout_s=10.0)
             if result.timed_out:
                 return _localization_operation_response(
                     False,

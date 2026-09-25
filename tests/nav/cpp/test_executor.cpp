@@ -301,6 +301,22 @@ lingtu::nav::navigation::ExecutionOutput awaitScanOutput(Tick tick) {
   return output;
 }
 
+lingtu::nav::navigation::ExecutionOutput settledGoal(
+    lingtu::nav::navigation::Executor &executor,
+    lingtu::nav::navigation::ExecutionInput input) {
+  lingtu::nav::navigation::ExecutionOutput output;
+  const double start = input.timestampS;
+  for (int index = 0; index <= 12; ++index) {
+    input.timestampS = start + index * 0.05;
+    input.observation.odom_stamp_s = input.timestampS;
+    input.observation.body_velocity_valid = true;
+    input.observation.body_linear_velocity = {};
+    input.observation.body_yaw_rate = 0.0;
+    output = executor.tick(input);
+  }
+  return output;
+}
+
 }  // namespace
 
 TEST(Executor, PlansLocalPathAndCmdVelFromGlobalPath) {
@@ -357,7 +373,7 @@ TEST(Executor, StopsWhenGoalReached) {
       {0.2, 0.0, 0.0},
   }));
 
-  const auto out = loop.tick(routeInput(pose(0.2, 0.0, 0.0, 0.0), nullptr, 0, 1.0));
+  const auto out = settledGoal(loop, routeInput(pose(0.2, 0.0, 0.0, 0.0), nullptr, 0, 1.0));
 
   EXPECT_FALSE(out.active);
   EXPECT_TRUE(out.goal_reached);
@@ -365,6 +381,72 @@ TEST(Executor, StopsWhenGoalReached) {
   EXPECT_DOUBLE_EQ(out.target.x, 0.2);
   EXPECT_EQ(out.cmd_vel.vx, 0.0);
   EXPECT_EQ(out.cmd_vel.wz, 0.0);
+}
+
+TEST(Executor, DoesNotLatchArrivalWhenBodyReboundsOutsideGoal) {
+  auto loop = makeLoop();
+  loop.setRoute(route({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, std::nullopt, 0.12));
+  auto sample = [&](double time, double x, double speed) {
+    auto input = routeInput(pose(x, 0.0, 0.0, 0.0), nullptr, 0, time);
+    input.observation.odom_stamp_s = time;
+    input.observation.body_velocity_valid = true;
+    input.observation.body_linear_velocity.x = speed;
+    return loop.tick(input);
+  };
+  // Field trace: enter the radius while moving, then settle outside it.
+  const auto entering = sample(1.0, 0.89, 0.06);
+  EXPECT_FALSE(entering.goal_reached);
+  EXPECT_TRUE(entering.active);
+  EXPECT_DOUBLE_EQ(entering.cmd_vel.vx, 0.0);
+  EXPECT_FALSE(sample(1.1, 0.90, 0.0).goal_reached);
+  EXPECT_FALSE(sample(1.2, 0.83, -0.09).goal_reached);
+  // A second entry must establish its own stationary observation window.
+  EXPECT_FALSE(sample(1.3, 0.91, 0.0).goal_reached);
+  EXPECT_FALSE(sample(1.4, 0.91, 0.0).goal_reached);
+  EXPECT_FALSE(sample(1.5, 0.91, 0.0).goal_reached);
+  EXPECT_FALSE(sample(1.6, 0.91, 0.0).goal_reached);
+  EXPECT_FALSE(sample(1.7, 0.91, 0.0).goal_reached);
+  EXPECT_TRUE(sample(1.9, 0.91, 0.0).goal_reached);
+}
+
+TEST(Executor, ArrivalRequiresFreshQuietOdometryAndResetsForNewRoute) {
+  auto loop = makeLoop();
+  const auto goal_route = route({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, std::nullopt, 0.12);
+  loop.setRoute(goal_route);
+  auto input = routeInput(pose(0.95, 0.0, 0.0, 0.0), nullptr, 0, 1.0);
+  EXPECT_FALSE(loop.tick(input).goal_reached);
+  input.observation.body_velocity_valid = true;
+  input.observation.odom_stamp_s = 1.0;
+  EXPECT_FALSE(loop.tick(input).goal_reached);
+  input.timestampS = 2.0;
+  EXPECT_FALSE(loop.tick(input).goal_reached) << "Repeated odometry cannot prove settling";
+  EXPECT_TRUE(settledGoal(loop, input).goal_reached);
+  loop.setRoute(goal_route);
+  input.timestampS = input.observation.odom_stamp_s = 2.65;
+  EXPECT_FALSE(loop.tick(input).goal_reached) << "New routes must not inherit arrival evidence";
+  input.observation.body_yaw_rate = 0.2;
+  input.timestampS = input.observation.odom_stamp_s = 2.75;
+  EXPECT_FALSE(loop.tick(input).goal_reached);
+  input.observation.body_yaw_rate = 0.0;
+  input.timestampS = 2.85;
+  EXPECT_TRUE(settledGoal(loop, input).goal_reached);
+}
+
+TEST(Executor, TightGoalKeepsFollowerMovingOutsideArrivalRadius) {
+  auto loop = makeLoop();
+  loop.setRoute(route({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, std::nullopt, 0.1));
+  lingtu::nav::navigation::ExecutionOutput out;
+  // The first acceleration step equals the follower's output deadband.
+  for (int tick = 0; tick < 5; ++tick) {
+    out = awaitScanOutput([&] {
+      return loop.tick(routeInput(pose(0.85, 0.0, 0.0, 0.0), nullptr, 0, 1.0 + tick * 0.05));
+    });
+  }
+  EXPECT_FALSE(out.goal_reached);
+  EXPECT_GT(out.cmd_vel.vx, 0.0)
+      << out.reason << " target_distance=" << out.target_distance_m
+      << " path_points=" << out.local_path_body.size()
+      << " path_end=" << (out.local_path_body.empty() ? -1.0 : out.local_path_body.back().x);
 }
 
 TEST(Executor, ScanUsesSeparatePlanarAndHeightGoalTolerances) {
@@ -377,11 +459,186 @@ TEST(Executor, ScanUsesSeparatePlanarAndHeightGoalTolerances) {
       std::nullopt, 0.10));
 
   loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0));
-  const auto reached = loop.tick(routeInput(pose(0.95, 0.0, 0.0, 0.0), nullptr, 0, 1.1));
+  const auto reached = settledGoal(loop, routeInput(pose(0.95, 0.0, 0.0, 0.0), nullptr, 0, 1.1));
 
   EXPECT_FALSE(reached.active);
   EXPECT_TRUE(reached.goal_reached);
   EXPECT_EQ(reached.reason, "goal_reached");
+}
+
+TEST(Executor, DynamicCrossingWaitsWithoutStartingRecoveryAndTimesOut) {
+  auto executor = makeScanExecutor(3.0, .6, 3, .1);
+  executor.setRoute({{{0,0,.5},{3,0,.5}}});
+  const nav_kernel::PredictedObstacle crossing{{.65,-1,.5},{.65,1,.5},.1,.1,1};
+  const auto tick = [&](double stamp) {
+    auto obs = emptyScanObservation(stamp);
+    obs.predictions = {&crossing,1,stamp+.35};
+    return executor.tick(routeInput({{0,0,.5},0},nullptr,0,stamp,{},obs));
+  };
+  auto out = tick(1.0);
+  EXPECT_EQ(out.reason,"dynamic_obstacle_wait");
+  EXPECT_DOUBLE_EQ(out.cmd_vel.vx,0);
+  EXPECT_DOUBLE_EQ(out.cmd_vel.wz,0);
+  for (int i = 1; i <= 10; ++i) out = tick(1.0 + i*.05);
+  EXPECT_EQ(out.reason,"dynamic_obstacle_wait");
+  EXPECT_EQ(out.recovery_attempt,0);
+  for (int i = 11; i <= 22; ++i) out = tick(1.0 + i*.05);
+  EXPECT_NE(out.dynamic_avoidance,"clear");
+  EXPECT_FALSE(out.recovery_verified);
+  for (int i = 23; i <= 202; ++i) out = tick(1.0 + i*.05);
+  EXPECT_EQ(out.reason,"dynamic_obstacle_timeout");
+  EXPECT_TRUE(out.recovery_exhausted);
+  EXPECT_DOUBLE_EQ(out.cmd_vel.vx,0);
+  EXPECT_DOUBLE_EQ(out.cmd_vel.wz,0);
+}
+
+TEST(Executor, DynamicCrossingNeedsFreshClearObservationAndDoesNotLeaveWaitAfterExpiry) {
+  auto executor = makeScanExecutor();
+  executor.setRoute({{{0,0,.5},{3,0,.5}}});
+  const nav_kernel::PredictedObstacle crossing{{.65,-1,.5},{.65,1,.5},.1,.1,1};
+  auto obs = emptyScanObservation(1);
+  obs.predictions = {&crossing,1,1.35};
+  ASSERT_EQ(executor.tick(routeInput({{0,0,.5},0},nullptr,0,1,{},obs)).reason,
+            "dynamic_obstacle_wait");
+  obs = emptyScanObservation(1.5);
+  obs.predictions = {&crossing,1,1.35};
+  auto out = executor.tick(routeInput({{0,0,.5},0},nullptr,0,1.5,{},obs));
+  EXPECT_EQ(out.reason,"dynamic_prediction_stale");
+  obs = emptyScanObservation(1.6);
+  obs.predictions = {nullptr,0,1.95};
+  EXPECT_EQ(executor.tick(routeInput({{0,0,.5},0},nullptr,0,1.6,{},obs)).reason,
+            "dynamic_obstacle_wait");
+  for (double stamp : {1.7, 1.8, 1.9}) {
+    obs = emptyScanObservation(stamp);
+    obs.predictions = {nullptr,0,stamp+.35};
+    executor.tick(routeInput({{0,0,.5},0},nullptr,0,stamp,{},obs));
+  }
+  obs = emptyScanObservation(1.95);
+  obs.predictions = {nullptr,0,2.3};
+  out = executor.tick(routeInput({{0,0,.5},0},nullptr,0,1.95,{},obs));
+  EXPECT_EQ(out.dynamic_avoidance,"resuming");
+  EXPECT_FALSE(out.recovery_exhausted);
+  obs = emptyScanObservation(2.0);
+  obs.predictions = {nullptr,0,2.35};
+  out = executor.tick(routeInput({{.11,0,.5},0},nullptr,0,2.0,{},obs));
+  EXPECT_EQ(out.dynamic_avoidance,"clear") << "Only observed resumed motion ends the episode";
+}
+
+TEST(Executor, ClearPredictionWithoutResumedMotionKeepsTheOriginalTimeout) {
+  auto executor = makeScanExecutor();
+  executor.setRoute({{{0,0,.5},{3,0,.5}}});
+  const nav_kernel::PredictedObstacle crossing{{.65,-1,.5},{.65,1,.5},.1,.1,1};
+  auto obs = emptyScanObservation(1);
+  obs.predictions = {&crossing,1,1.35};
+  ASSERT_EQ(executor.tick(routeInput({{0,0,.5},0},nullptr,0,1,{},obs)).reason,
+            "dynamic_obstacle_wait");
+  lingtu::nav::navigation::ExecutionOutput out;
+  for (int i = 1; i <= 202; ++i) {
+    const double stamp = 1.0 + i * .05;
+    obs = emptyScanObservation(stamp);
+    obs.predictions = {nullptr,0,stamp+.35};
+    out = executor.tick(routeInput({{0,0,.5},0},nullptr,0,stamp,{},obs));
+  }
+  EXPECT_EQ(out.reason,"dynamic_resume_timeout");
+  EXPECT_EQ(out.dynamic_avoidance,"timeout");
+  EXPECT_TRUE(out.recovery_exhausted);
+  EXPECT_DOUBLE_EQ(out.cmd_vel.vx,0);
+  EXPECT_DOUBLE_EQ(out.cmd_vel.wz,0);
+}
+
+TEST(Executor, ForwardClockGapDoesNotEraseDynamicEncounterBudget) {
+  auto executor = makeScanExecutor();
+  executor.setRoute({{{0,0,.5},{3,0,.5}}});
+  const nav_kernel::PredictedObstacle crossing{{.65,-1,.5},{.65,1,.5},.1,.1,1};
+  const auto tick = [&](double stamp) {
+    auto obs = emptyScanObservation(stamp);
+    obs.predictions = {&crossing,1,stamp+.35};
+    return executor.tick(routeInput({{0,0,.5},0},nullptr,0,stamp,{},obs));
+  };
+  tick(1.0);
+  tick(1.1);
+  const auto gap = tick(1.6);
+  EXPECT_EQ(gap.reason,"scan_execution_clock_discontinuity");
+  EXPECT_EQ(gap.dynamic_avoidance,"stale");
+  EXPECT_DOUBLE_EQ(gap.cmd_vel.vx,0);
+  lingtu::nav::navigation::ExecutionOutput out;
+  for (int i = 1; i <= 191; ++i) out = tick(1.6 + i*.05);
+  EXPECT_EQ(out.reason,"dynamic_obstacle_timeout");
+  EXPECT_TRUE(out.recovery_exhausted);
+}
+
+TEST(Executor, DynamicEpisodeHasTotalBudgetEvenWhenOdometryKeepsMoving) {
+  lingtu::nav::navigation::ExecutorConfig config;
+  config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
+  config.dynamic_episode_timeout_s = 2;
+  config.dynamic_blocked_timeout_s = 10;
+  config.dynamic_wait_s = 3;
+  nav_kernel::LocalPlannerParams params;
+  params.backend = nav_kernel::LocalPlannerBackend::Scan;
+  params.scan.voxelResolution = .1;
+  auto executor = makeConfiguredExecutor(config,params,"");
+  executor.setRoute({{{0,0,.5},{3,0,.5}}});
+  const nav_kernel::PredictedObstacle crossing{{.65,-1,.5},{.65,1,.5},.1,.1,1};
+  lingtu::nav::navigation::ExecutionOutput out;
+  for (int i = 0; i <= 41; ++i) {
+    const double stamp = 1+i*.05;
+    auto obs = emptyScanObservation(stamp);
+    obs.predictions = {&crossing,1,stamp+.35};
+    const double lateral = .13*std::sin(i*.2);
+    out = executor.tick(routeInput({{0,lateral,.5},0},nullptr,0,stamp,{},obs));
+  }
+  EXPECT_EQ(out.reason,"dynamic_obstacle_timeout");
+  EXPECT_LT(out.dynamic_blocked_s,config.dynamic_blocked_timeout_s);
+  EXPECT_TRUE(out.recovery_exhausted);
+  EXPECT_DOUBLE_EQ(out.cmd_vel.vx,0);
+}
+
+TEST(Executor, DynamicWaitTransitionsToExecutableDetour) {
+  auto executor = makeScanExecutor(3.0,.6,3,.1);
+  executor.setRoute({{{0,0,.5},{3,0,.5}}});
+  const nav_kernel::PredictedObstacle crossing{{1.0,-.2,.5},{1.0,.2,.5},.05,.1,1};
+  lingtu::nav::navigation::ExecutionOutput out;
+  bool waited = false;
+  bool moving = false;
+  for (int i = 0; i < 700; ++i) {
+    const double stamp = 1+i*.01;
+    auto obs = emptyScanObservation(stamp);
+    obs.predictions = {&crossing,1,stamp+.35};
+    out = executor.tick(routeInput({{0,0,.5},0},nullptr,0,stamp,{},obs));
+    waited = waited || out.dynamic_avoidance == "waiting";
+    moving = std::hypot(out.cmd_vel.vx,out.cmd_vel.vy) > 1e-4;
+    if (moving) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  EXPECT_TRUE(waited);
+  EXPECT_TRUE(moving) << out.reason << ": " << out.local_planner_debug.searchReason;
+  EXPECT_EQ(out.dynamic_avoidance,"detour");
+  EXPECT_FALSE(out.recovery_verified);
+  EXPECT_TRUE(out.path_found);
+}
+
+TEST(Executor, PredictionUsesMapToOdomTransformAndRouteResetClearsWaiting) {
+  lingtu::nav::navigation::ExecutorConfig config;
+  config.planning_frame = lingtu::nav::navigation::PlanningFrame::Odom;
+  nav_kernel::LocalPlannerParams params;
+  params.backend = nav_kernel::LocalPlannerBackend::Scan;
+  params.scan.voxelResolution = .1;
+  auto executor = makeConfiguredExecutor(config,params,"");
+  const lingtu::nav::navigation::MapFromOdomTransform tf{{10,5,0},M_PI/2};
+  executor.setRoute({{{10,5,.5},{10,8,.5}}});
+  lingtu::nav::tests::CollisionBitmap bitmap({5,0,-1},{15,10,2},.1);
+  const nav_kernel::PredictedObstacle crossing{{9,5.65,.5},{11,5.65,.5},.1,.1,1};
+  auto obs = emptyScanObservation(1);
+  obs.collision = bitmap.view(1,1);
+  obs.predictions = {&crossing,1,1.35};
+  auto out = executor.tick(odomInput({{10,5,.5},M_PI/2},{{0,0,.5},0},tf,
+                                        nullptr,0,1,{},obs));
+  EXPECT_EQ(out.reason,"dynamic_obstacle_wait");
+  executor.setRoute({{{10,5,.5},{10,2,.5}}});
+  obs.predictions = {nullptr,0,1.45};
+  out = executor.tick(odomInput({{10,5,.5},M_PI/2},{{0,0,.5},0},tf,
+                                    nullptr,0,1.1,{},obs));
+  EXPECT_EQ(out.dynamic_avoidance,"clear");
 }
 
 TEST(Executor, ScanAnchorsRouteHeight) {
@@ -421,7 +678,7 @@ TEST(Executor, UsesPerLegInspectionArrivalTolerance) {
   EXPECT_TRUE(outside.active);
   EXPECT_FALSE(outside.goal_reached);
 
-  const auto inside = loop.tick(routeInput(pose(0.92, 0.0, 0.0, 0.0), nullptr, 0, 1.1));
+  const auto inside = settledGoal(loop, routeInput(pose(0.92, 0.0, 0.0, 0.0), nullptr, 0, 1.1));
   EXPECT_FALSE(inside.active);
   EXPECT_TRUE(inside.goal_reached);
 }
@@ -435,7 +692,7 @@ TEST(Executor, UsesPerLegInspectionYawTolerance) {
       },
       1.0, 0.35, 0.5));
 
-  const auto reached = loop.tick(routeInput(pose(0.2, 0.0, 0.0, 0.6), nullptr, 0, 1.0));
+  const auto reached = settledGoal(loop, routeInput(pose(0.2, 0.0, 0.0, 0.6), nullptr, 0, 1.0));
   EXPECT_FALSE(reached.active);
   EXPECT_TRUE(reached.goal_reached);
 }
@@ -2004,7 +2261,7 @@ TEST(Executor, AlignsRequestedYawBeforeReportingGoalReached) {
   EXPECT_DOUBLE_EQ(aligning.cmd_vel.vx, 0.0);
   EXPECT_GT(aligning.cmd_vel.wz, 0.0);
 
-  const auto reached = loop.tick(routeInput(pose(0.2, 0.0, 0.0, 0.98), nullptr, 0, 1.1));
+  const auto reached = settledGoal(loop, routeInput(pose(0.2, 0.0, 0.0, 0.98), nullptr, 0, 1.1));
   EXPECT_FALSE(reached.active);
   EXPECT_TRUE(reached.goal_reached);
   EXPECT_EQ(reached.reason, "goal_reached");
@@ -3007,7 +3264,7 @@ TEST(Executor, OdomLocalFrameKeepsTerminalGoalInMap) {
   lingtu::nav::navigation::MapFromOdomTransform map_from_odom;
   map_from_odom.translation = {10.0, -3.0, 0.0};
   map_from_odom.yaw = right_angle;
-  const auto out = loop.tick(odomInput(pose(10.0, -2.0, 0.0, right_angle), pose(1.0, 0.0, 0.0, 0.0),
+  const auto out = settledGoal(loop, odomInput(pose(10.0, -2.0, 0.0, right_angle), pose(1.0, 0.0, 0.0, 0.0),
                                  map_from_odom, nullptr, 0, 1.0));
 
   EXPECT_FALSE(out.active);

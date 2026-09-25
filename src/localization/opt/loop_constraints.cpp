@@ -1004,6 +1004,8 @@ RegistrationResult register_4dof(const PreparedCloud &prepared_source,
       current = refinement.transform;
       all_correspondences = find_correspondences(source, target, target_index, current,
                                                  options.max_correspondence_distance_m);
+      result.inlier_ratio =
+          static_cast<double>(all_correspondences.size()) / static_cast<double>(source.size());
       trim_correspondences(all_correspondences, options);
       result.inliers = all_correspondences.size();
       if (all_correspondences.size() < options.min_inliers) {

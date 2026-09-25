@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <thread>
 #include <vector>
+#include <filesystem>
+#include <fstream>
+#include "lingtu/maps/build/pcd.hpp"
 
 #include "lingtu/maps/mapd/engine.hpp"
 
@@ -830,9 +833,82 @@ void TestGroundModelIsIndependentOfDisplayPointCap() {
   complete.Stop();
 }
 
+void TestSavedRayRestoreAndIdentityInvalidation() {
+  const auto directory = std::filesystem::temp_directory_path() /
+      ("lingtu-reference-" + std::to_string(WallTimeNs()));
+  std::filesystem::create_directories(directory / "patches");
+  std::ofstream(directory / "scan_origin.txt") << "lidar_origin_in_patch 0 0 0\n";
+  std::ofstream(directory / ".content_epoch") << "101\n";
+  std::ofstream(directory / "poses.txt") << "0.pcd 0 0 0 1 0 0 0\n";
+  std::string error;
+  assert(lingtu::maps::WriteBinaryXyzPcd(directory / "patches/0.pcd",
+      {{1.25F,.25F,-.75F}}, &error));
+  assert(lingtu::maps::WriteBinaryXyzPcd(directory / "map.pcd",
+      {{1.25F,.25F,-.75F}}, &error));
+  auto config = TestConfig();
+  config.build_extended_layers = false;
+  LiveMapEngine engine(config);
+  lingtu::maps::mapd::MapIdentity identity;
+  identity.present = true;
+  identity.map_id = "room";
+  identity.content_epoch = 101;
+  identity.frame_id = "map";
+  engine.SetReferenceMap(identity,directory);
+  engine.Start();
+  const auto observation = [](std::uint64_t epoch, std::uint64_t sequence) {
+    auto value = MakeObservation(epoch,sequence,0,0,0,{-1.25F,.25F,.25F});
+    value.reference_map_id = "room";
+    value.reference_map_content_epoch = 101;
+    return value;
+  };
+  auto wrong = observation(1,1);
+  wrong.reference_map_content_epoch = 100;
+  assert(engine.Submit(wrong).accepted());
+  assert(!engine.WaitUntilProcessed(1,1,std::chrono::milliseconds(80)));
+  assert(engine.GetSnapshot().sequence == 0);
+  assert(engine.Submit(observation(1,2)).accepted());
+  assert(engine.WaitUntilProcessed(1,2,std::chrono::seconds(2)));
+  assert(engine.GetState().reference_scans == 1);
+  const auto historical_hit = [](const auto& snapshot) {
+    const auto& c = snapshot.collision;
+    const int x = int(std::floor((1.25-c.min_x_m)/c.resolution_m));
+    const int y = int(std::floor((.25-c.min_y_m)/c.resolution_m));
+    const int z = int(std::floor((-.75-c.min_z_m)/c.resolution_m));
+    const auto i = (std::size_t(z)*c.size_y+y)*c.size_x+x;
+    return (c.measured_occupied_bits[i/8] & (1U<<(i%8))) != 0;
+  };
+  assert(historical_hit(engine.GetSnapshot()));
+  assert(engine.Submit(observation(2,1)).accepted());
+  assert(engine.WaitUntilProcessed(2,1,std::chrono::seconds(2)));
+  assert(engine.GetState().reference_scans == 1);
+  assert(historical_hit(engine.GetSnapshot()));
+  // A broken later patch must discard the earlier, partially replayed geometry.
+  std::ofstream(directory / "poses.txt",std::ios::app) << "missing.pcd 0 0 0 1 0 0 0\n";
+  assert(engine.Submit(observation(3,1)).accepted());
+  assert(engine.WaitUntilProcessed(3,1,std::chrono::seconds(2)));
+  assert(engine.GetState().reference_scans == 0);
+  assert(!historical_hit(engine.GetSnapshot()));
+  assert(engine.GetState().last_error.find("saved_scan_restore_failed") != std::string::npos);
+  // A new mapping session must not use the previously selected saved map.
+  auto mapping = MakeObservation(4,1,0,0,0,{-1.25F,.25F,.25F});
+  mapping.pose_state = "MAPPING";
+  assert(engine.Submit(mapping).accepted());
+  assert(engine.WaitUntilProcessed(4,1,std::chrono::seconds(2)));
+  assert(engine.GetState().reference_scans == 0);
+  assert(!historical_hit(engine.GetSnapshot()));
+  engine.SetReferenceMap({},{});
+  assert(!engine.GetState().live);
+  assert(engine.Submit(observation(4,2)).accepted());
+  assert(engine.WaitUntilProcessed(4,2,std::chrono::seconds(2)));
+  assert(!historical_hit(engine.GetSnapshot()));
+  engine.Stop();
+  std::filesystem::remove_all(directory);
+}
+
 }  // namespace
 
 int main() {
+  TestSavedRayRestoreAndIdentityInvalidation();
   TestGroundModelIsIndependentOfDisplayPointCap();
   TestGroundModelConsumesSoaSnapshotAndResetsWithEpoch();
   TestExactPoseTransformAndDerivedLayers();

@@ -160,6 +160,24 @@ directly instead of routing back through GatewayModule methods. Request argument
 conversion remains in the transport; `maps/routes.py` maps transport failures to
 HTTP 503. Active-map switching remains outside this Gateway interface.
 
+## Web Teleop Input Freshness
+
+`/ws/teleop` carries operator intent, never proof of motor execution. Before a
+nonzero/deadman velocity sample, request an input window with
+`{"type":"input_request","request_id":"..."}`. Echo the `input_window` from
+`input_ack` in the next velocity sample. Each window is single-use and expires
+after 350 ms on the Gateway's monotonic clock; an accepted sample's
+`ingress_ack` supplies the next window. This does not require browser/NX clock
+synchronization. The deadline also covers native claim and publisher queuing.
+
+The Web client permits only one outstanding input and never sends a stored
+velocity when an ACK arrives. Its next timer tick reads current keys. A
+`deadman:false` hold bypasses flow control and needs no input window; release
+invalidates late input ACKs. Missing ACKs close the connection and clear held
+input. Old browser bundles without input windows are rejected: deploy Gateway
+and Web together and refresh operator pages. Native motion arbitration and the
+driver watchdog remain the final command owners.
+
 ## Camera Transport
 
 The dashboard prefers go2rtc WHEP for low-latency H.264 video and falls back

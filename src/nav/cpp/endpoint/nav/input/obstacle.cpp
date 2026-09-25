@@ -153,7 +153,7 @@ void MotionLayer::markHit(const VoxelKey &key, const Cell &sample, double stamp_
 }
 
 void MotionLayer::markFree(const VoxelKey &key, double stamp_s) {
-  auto [it, inserted] = cells_.emplace(key, cellAtKey(key, stamp_s));
+  auto [it, inserted] = cells_.try_emplace(key, cellAtKey(key, stamp_s));
   Cell &cell = it->second;
   const bool had_obstacle = isObstacle(cell.state);
   if (!inserted) {
@@ -182,7 +182,7 @@ void MotionLayer::markFree(const VoxelKey &key, double stamp_s) {
 }
 
 void MotionLayer::collectRayFreeKeys(const SensorOrigin &origin, const Cell &endpoint,
-                                     std::unordered_set<VoxelKey, VoxelKeyHash> &keys) const {
+                                     std::vector<VoxelKey> &keys) const {
   if (!config_.ray_clearing_enabled || !origin.valid || config_.ray_clear_max_range_m <= 0.0) {
     return;
   }
@@ -206,7 +206,7 @@ void MotionLayer::collectRayFreeKeys(const SensorOrigin &origin, const Cell &end
     const float x = static_cast<float>(origin.x + ux * r);
     const float y = static_cast<float>(origin.y + uy * r);
     const float z = static_cast<float>(origin.z + uz * r);
-    keys.insert(makeKey(x, y, z));
+    keys.push_back(makeKey(x, y, z));
   }
 }
 
@@ -282,7 +282,8 @@ void MotionLayer::updateFromScan(const SensorOrigin &origin, const std::vector<f
           : 1;
   const bool run_clearing = config_.ray_clearing_enabled && origin.valid &&
                             (last_ray_clearing_s_ < 0.0 ||
-                             stamp_s - last_ray_clearing_s_ >= config_.ray_clearing_interval_s);
+                             stamp_s - last_ray_clearing_s_ + 1e-6 >=
+                                 config_.ray_clearing_interval_s);
   if (run_clearing) {
     free_keys_scratch_.clear();
     free_keys_scratch_.reserve(config_.max_clearing_rays * 64);
@@ -308,6 +309,16 @@ void MotionLayer::updateFromScan(const SensorOrigin &origin, const std::vector<f
       collectRayFreeKeys(origin, endpoint, free_keys_scratch_);
       ++stats_.raycast_rays;
     }
+    // Reuse contiguous ray storage instead of allocating a hash node per step.
+    std::sort(free_keys_scratch_.begin(), free_keys_scratch_.end(),
+              [](const VoxelKey &a, const VoxelKey &b) {
+                if (a.x != b.x) return a.x < b.x;
+                if (a.y != b.y) return a.y < b.y;
+                return a.z < b.z;
+              });
+    free_keys_scratch_.erase(
+        std::unique(free_keys_scratch_.begin(), free_keys_scratch_.end()),
+        free_keys_scratch_.end());
     stats_.raycast_voxels += free_keys_scratch_.size();
     // Hits are already applied; ray clearing touches only non-hit cells.
     for (const auto &key : free_keys_scratch_) {
@@ -514,6 +525,24 @@ std::vector<float> MotionLayer::snapshotPredictedDynamic(std::size_t max_points,
   return predicted;
 }
 
+std::vector<nav_kernel::PredictedObstacle> MotionLayer::predictedVolumes(double now_s) {
+  std::vector<nav_kernel::PredictedObstacle> result;
+  for (const auto &cluster : dynamicClusters(kMaxPredictedClusters, now_s)) {
+    const double speed = std::hypot(cluster.vx, cluster.vy);
+    if (!std::isfinite(speed) || speed < config_.dynamic_min_speed_mps ||
+        speed > config_.dynamic_max_speed_mps) continue;
+    const double dz = cluster.vz * kDynamicPredictionHorizonS;
+    const double half_voxel = config_.voxel_size_m * 0.5;
+    result.push_back({{cluster.x, cluster.y, cluster.z},
+                      {cluster.x + cluster.vx * kDynamicPredictionHorizonS,
+                       cluster.y + cluster.vy * kDynamicPredictionHorizonS, cluster.z + dz},
+                      cluster.radius_xy + half_voxel,
+                      cluster.min_z + std::min(0.0, dz) - half_voxel,
+                      cluster.max_z + std::max(0.0, dz) + half_voxel});
+  }
+  return result;
+}
+
 void MotionLayer::snapshotPredictedDynamic(std::vector<float> &predicted, std::size_t max_points,
                                            double now_s) {
   predicted.clear();
@@ -658,8 +687,7 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
       continue;
     }
     const Cell &cell = it->second;
-    if (cell.state == CellState::Occupied && sameFrame(cell.last_hit_s, current_stamp_s_) &&
-        cell.free_observations >= config_.dynamic_free_min_frames &&
+    if (isObstacle(cell.state) && sameFrame(cell.last_hit_s, current_stamp_s_) &&
         cell.height >= config_.dynamic_min_height_m &&
         cell.height <= config_.dynamic_max_height_m) {
       candidate_cells.emplace(key, &cell);
@@ -669,6 +697,7 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
   struct Candidate {
     DynamicCluster cluster;
     std::vector<VoxelKey> keys;
+    std::size_t prior_free_cells{0};
   };
   std::vector<Candidate> candidates;
 
@@ -701,20 +730,21 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
       sy += cell.y;
       sz += cell.z;
       candidate.keys.push_back(key);
-      for (int dx = -1; dx <= 1; ++dx) {
-        for (int dy = -1; dy <= 1; ++dy) {
-          for (int dz = -1; dz <= 1; ++dz) {
+      if (cell.free_observations > 0U) ++candidate.prior_free_cells;
+      // Sparse scans may leave one voxel between returns on the same object.
+      for (int dx = -2; dx <= 2; ++dx) {
+        for (int dy = -2; dy <= 2; ++dy) {
+          for (int dz = -2; dz <= 2; ++dz) {
             if (dx == 0 && dy == 0 && dz == 0) {
               continue;
             }
             const VoxelKey next{key.x + dx, key.y + dy, key.z + dz};
-            if (visited.find(next) != visited.end()) {
-              continue;
-            }
             if (candidate_cells.find(next) == candidate_cells.end()) {
               continue;
             }
-            visited.insert(next);
+            if (!visited.insert(next).second) {
+              continue;
+            }
             queue.push_back(next);
           }
         }
@@ -727,6 +757,8 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
     candidate.cluster.y = sy / static_cast<double>(candidate.keys.size());
     candidate.cluster.z = sz / static_cast<double>(candidate.keys.size());
     candidate.cluster.cells = candidate.keys.size();
+    candidate.cluster.min_z = std::numeric_limits<double>::infinity();
+    candidate.cluster.max_z = -std::numeric_limits<double>::infinity();
     for (const auto &key : candidate.keys) {
       const auto cell_it = candidate_cells.find(key);
       if (cell_it == candidate_cells.end()) {
@@ -738,6 +770,8 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
                    std::hypot(static_cast<double>(cell.x) - candidate.cluster.x,
                               static_cast<double>(cell.y) - candidate.cluster.y));
       candidate.cluster.height = std::max(candidate.cluster.height, cell.height);
+      candidate.cluster.min_z = std::min(candidate.cluster.min_z, static_cast<double>(cell.z));
+      candidate.cluster.max_z = std::max(candidate.cluster.max_z, static_cast<double>(cell.z));
     }
     candidates.push_back(std::move(candidate));
   }
@@ -751,6 +785,11 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
   next_tracks.reserve(candidates.size() + cluster_tracks_.size());
   for (auto &candidate : candidates) {
     auto &cluster = candidate.cluster;
+    // Require repeated free-to-hit evidence for the tracked object, rather
+    // than repeated rays through every individual 8 cm voxel. The latter is
+    // not observable with sparse LiDAR and the bounded clearing-ray budget.
+    const bool has_free_evidence = candidate.prior_free_cells >=
+        std::max<std::size_t>(2U, static_cast<std::size_t>(std::ceil(0.05 * cluster.cells)));
     double best_distance = std::numeric_limits<double>::infinity();
     std::size_t best_index = cluster_tracks_.size();
     for (std::size_t i = 0; i < cluster_tracks_.size(); ++i) {
@@ -796,9 +835,12 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
       track.age_s = cluster.age_s;
       track.observations = previous.observations + 1;
       track.moving_frames = plausible_motion ? previous.moving_frames + 1 : 0;
+      track.free_evidence_frames = (plausible_motion ? previous.free_evidence_frames : 0U) +
+                                   (has_free_evidence ? 1U : 0U);
       const std::uint32_t required_motion_frames = config_.dynamic_confirm_frames - 1;
       track.confirmed = track.observations >= config_.dynamic_confirm_frames &&
-                        track.moving_frames >= required_motion_frames;
+                        track.moving_frames >= required_motion_frames &&
+                        track.free_evidence_frames >= config_.dynamic_free_min_frames;
     } else {
       cluster.id = next_cluster_id_++;
       cluster.age_s = 0.0;
@@ -806,6 +848,7 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
       track.age_s = 0.0;
       track.observations = 1;
       track.moving_frames = 0;
+      track.free_evidence_frames = has_free_evidence ? 1U : 0U;
       track.confirmed = false;
     }
     track.x = cluster.x;
@@ -828,6 +871,8 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
     track.cells = cluster.cells;
     track.radius_xy = cluster.radius_xy;
     track.height = cluster.height;
+    track.min_z = cluster.min_z;
+    track.max_z = cluster.max_z;
     next_tracks.push_back(track);
   }
   for (std::size_t i = 0; i < cluster_tracks_.size(); ++i) {
@@ -854,6 +899,8 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
             track.cells,
             track.radius_xy,
             track.height,
+            track.min_z + track.vz * unseen_s,
+            track.max_z + track.vz * unseen_s,
         });
       }
     }

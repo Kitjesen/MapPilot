@@ -44,4 +44,8 @@ struct PlanView {
 PlanView makePlanView(const PlanConfig &config, PlanData &data, double now_s,
                       TimingDiagnostics &timing, bool collision_authoritative = false);
 
+nav_kernel::PredictionView makePredictionView(
+    const std::vector<nav_kernel::PredictedObstacle> &volumes,
+    double received_s, double now_s, double max_age_s);
+
 }  // namespace lingtu::nav::endpoint

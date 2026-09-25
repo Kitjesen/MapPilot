@@ -37,6 +37,7 @@ struct Config {
   std::uint16_t port{13145};
   BrainstemTlsConfig brainstem_tls;
   Limits limits;
+  double tilt_limit_deg{30.0};
   double poll_hz{100.0};
   std::chrono::milliseconds rpc_timeout{100};
   std::chrono::milliseconds reconnect_delay{1000};

@@ -539,6 +539,54 @@ void testLegacyRecoveryReasonWithoutTypedTriggerDoesNotArm() {
           "untyped recovery text changed motion or retry ownership");
 }
 
+void testExternalTerminalFailureWaitsForStopAndEndsWithoutReplanning() {
+  Fixture fixture;
+  fixture.activate(fixture.request());
+  auto event = fixture.recoveryEvent();
+  event.outcome.replan_trigger.reset();
+  event.outcome.terminal_failure_intent = true;
+  event.outcome.reason = "dynamic_resume_timeout";
+  const auto pending = fixture.coordinator.handleAutonomyOutcome(fixture.frameInput(10.0), event);
+  require(pending.handled && pending.terminal_after_stop && pending.terminal_intent_id != 0U &&
+              pending.terminal_task_id == "task-a" && !pending.replan_started &&
+              fixture.planner_calls.load() == 1,
+          "external terminal failure must defer one terminal without restarting planning");
+  const auto &ticket = pending.terminal_after_stop->delivery_ticket;
+  require(ticket.statuses.size() == 1U && ticket.statuses.front().state == NavigationGoalState::Failed &&
+              ticket.statuses.front().reason == "dynamic_resume_timeout" &&
+              ticket.statuses.front().request_id == "request-a",
+          "external failure terminal lost its reason or goal identity");
+  fixture.confirmation = StopConfirmationState::TimedOut;
+  require(!fixture.tryCommitTerminal(pending).accepted &&
+              fixture.countStatus("task-a", NavigationGoalState::Failed) == 0U &&
+              fixture.goal_plan.snapshot().active_task_id == "task-a",
+          "external failure committed before the driver confirmed stopping");
+  const auto retry = fixture.coordinator.advancePlanningCycle(fixture.frameInput(10.1));
+  require(retry.terminal_intent_id == pending.terminal_intent_id && !retry.replan_started,
+          "unconfirmed external failure did not retain the same terminal intent");
+  fixture.confirmation = StopConfirmationState::Confirmed;
+  fixture.commitTerminal(retry);
+  require(fixture.countStatus("task-a", NavigationGoalState::Failed) == 1U &&
+              fixture.goal_plan.snapshot().active_task_id.empty() &&
+              !fixture.coordinator.terminalPending() && fixture.planner_calls.load() == 1,
+          "confirmed external failure did not clear the goal exactly once");
+}
+
+void testStaleExternalTerminalFailureCannotEndTheCurrentGoal() {
+  Fixture fixture;
+  fixture.activate(fixture.request());
+  auto event = fixture.recoveryEvent();
+  event.outcome.replan_trigger.reset();
+  event.outcome.terminal_failure_intent = true;
+  event.outcome.reason = "dynamic_resume_timeout";
+  event.goal_snapshot.active_goal_epoch += 1U;
+  const auto ignored = fixture.coordinator.handleAutonomyOutcome(fixture.frameInput(10.0), event);
+  require(ignored.handled && ignored.reason == "stale_autonomy_failure_ignored" &&
+              !ignored.terminal_after_stop && fixture.stop_control_calls == 0 &&
+              fixture.goal_plan.snapshot().active_task_id == "task-a",
+          "a stale external timeout stopped a different goal generation");
+}
+
 void testPersistentObstructionReplaysExactOverlayAfterStopAndBackoff() {
   Fixture fixture;
   fixture.activate(fixture.request());
@@ -2528,6 +2576,8 @@ int main() {
   testRuntimeGuardHoldPausesInFlightReplanWithoutTerminal();
   testDriverBlockerPausesInFlightReplanWithoutTerminal();
   testLegacyRecoveryReasonWithoutTypedTriggerDoesNotArm();
+  testExternalTerminalFailureWaitsForStopAndEndsWithoutReplanning();
+  testStaleExternalTerminalFailureCannotEndTheCurrentGoal();
   testPersistentObstructionReplaysExactOverlayAfterStopAndBackoff();
   testHandleAutonomyOutcomeDoesNotAdvanceOrResume();
   testAdvancePlanningCycleProgressesWithoutAutonomyOutcome();

@@ -2,6 +2,7 @@ import { isObservationMode } from './services/observationMode.ts'
 import { lazy, Suspense, useState, useEffect, useCallback } from 'react'
 import { useSSE } from './hooks/useSSE'
 import { useToast } from './hooks/useToast'
+import { useProductControl } from './hooks/useProductControl'
 import { Topbar } from './components/Topbar'
 import { CameraFeed } from './components/CameraFeed'
 import { ChatPanel } from './components/ChatPanel'
@@ -67,6 +68,8 @@ function Dashboard() {
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [activeTab, setActiveTab] = useState<Tab>('scene')
   const [selectedSavedMap, setSelectedSavedMap] = useState<string | null>(null)
+  const handleProductChanged = useCallback(() => setActiveTab('scene'), [])
+  const productControl = useProductControl(handleProductChanged)
   const handleOpenSavedMap = useCallback((name: string | null) => {
     setSelectedSavedMap(name)
     setActiveTab('map')
@@ -250,6 +253,11 @@ function Dashboard() {
           </div>
         )}
         {activeTab === 'scene' && (
+          <>
+          {productControl.message && <div className="product-transition" role="status">
+            <span>{productControl.message}</span>
+            {!productControl.busy && <button onClick={productControl.dismiss}>关闭</button>}
+          </div>}
           <SceneView
             sseState={sseState}
             showToast={showToast}
@@ -258,11 +266,19 @@ function Dashboard() {
             motionStartBlockedReason={motionStartBlockedReason}
             onElevationSubscriptionChange={setElevationSubscription}
             onOpenSavedMap={handleOpenSavedMap}
+            onStartMapping={() => void productControl.switchProduct('map')}
+            productSwitchAllowed={productControl.allowed}
+            productSwitchReason={productControl.reason}
           />
+          </>
         )}
         {activeTab === 'map' && (
           <MapView
             initialSelectedMap={selectedSavedMap}
+            onUseMap={(name, pose) => void productControl.switchProduct('nav', name, pose)}
+            productSwitchAllowed={productControl.allowed}
+            productSwitchReason={productControl.reason}
+            productSwitchMessage={productControl.message}
             onReturnLive={() => handleTabChange('scene')}
             session={sseState.session}
             showToast={showToast}

@@ -4,10 +4,12 @@
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
 #include "Framework/Application/SlateApplication.h"
+#include "GenericPlatform/GenericPlatformHttp.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformMisc.h"
 #include "HAL/PlatformTime.h"
+#include "HttpModule.h"
 #include "LingTuSimControlTransport.h"
 #include "LingTuSimGameSelection.h"
 #include "LingTuSimHudScreenshotContract.h"
@@ -20,6 +22,7 @@
 #include "Misc/CommandLine.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Interfaces/IHttpResponse.h"
 #include "SLingTuSimRuntimeHUD.h"
 #include "UnrealClient.h"
 #include "Widgets/SViewport.h"
@@ -64,6 +67,18 @@ uint64 SourceMonotonicNowNs() {
                                : 0;
   LastSourceTimeNs = FMath::Max(LastSourceTimeNs + 1, Candidate);
   return LastSourceTimeNs;
+}
+
+bool ParseExpectedInspectionInteger(const FString &Value, const bool bRequirePositive,
+                                    int64 &OutValue) {
+  constexpr int64 MaxSafeInteger = 9007199254740991LL;
+  int64 Parsed = 0;
+  if (!LexTryParseString(Parsed, *Value) || Parsed < 0 || Parsed > MaxSafeInteger ||
+      (bRequirePositive && Parsed == 0)) {
+    return false;
+  }
+  OutValue = Parsed;
+  return true;
 }
 
 int32 RegisterEligibleContext(ULingTuSimRuntimeUIWorldSubsystem *Context) {
@@ -168,8 +183,10 @@ void ULingTuSimRuntimeUIWorldSubsystem::OnWorldBeginPlay(UWorld &InWorld) {
   FrontEndLoginModel = MakeShared<LingTuSim::UI::FFrontEndLoginModel>();
   GameSelectionModel = MakeShared<LingTuSim::UI::FGameSelectionModel>();
   AssetReviewModel = MakeShared<LingTuSim::UI::FAssetReviewModel>();
+  InspectionProjection = MakeShared<LingTuSim::UI::FInspectionProjection>();
   GameSelectionFeedback = MakeShared<FString>();
   InitializeGameSelectionFromCommandLine();
+  InitializeInspectionProjectionFromCommandLine();
   FrontEndLoginModel->BindSessionModel(*GameSelectionModel);
   AssetReviewModel->BindSessionModel(*GameSelectionModel);
   AssetReviewModel->SetCatalog(GameSelectionModel->GetCatalog().AssetReview);
@@ -184,6 +201,7 @@ void ULingTuSimRuntimeUIWorldSubsystem::OnWorldBeginPlay(UWorld &InWorld) {
           .LoginModel(FrontEndLoginModel)
           .SelectionModel(GameSelectionModel)
           .AssetReviewModel(AssetReviewModel)
+          .InspectionProjection(InspectionProjection)
           .SelectionFeedback(GameSelectionFeedback)
           .FrontEndLoginRequired(bGameSelector)
           .SelectionIntentConfigured(!GameSelectionIntentPath.IsEmpty())
@@ -341,7 +359,6 @@ void ULingTuSimRuntimeUIWorldSubsystem::OnWorldBeginPlay(UWorld &InWorld) {
 }
 
 void ULingTuSimRuntimeUIWorldSubsystem::Tick(const float DeltaTime) {
-  (void)DeltaTime;
   check(IsInGameThread());
   if (HUDWidget.IsValid()) {
     ++HudFramesSinceAttach;
@@ -366,6 +383,7 @@ void ULingTuSimRuntimeUIWorldSubsystem::Tick(const float DeltaTime) {
     }
   }
   SynchronizePlayerInputMode();
+  TickInspectionProjection(DeltaTime);
   TickPendingExit();
 #if WITH_DEV_AUTOMATION_TESTS && !UE_BUILD_SHIPPING
   FrontEndScreenshotDriver.Tick();
@@ -399,6 +417,11 @@ void ULingTuSimRuntimeUIWorldSubsystem::Deinitialize() {
   PendingExitEventId.Reset();
   GameSelectionCatalogPath.Reset();
   GameSelectionIntentPath.Reset();
+  InspectionGatewayUrl.Reset();
+  InspectionTaskId.Reset();
+  InspectionPollElapsedSeconds = 0.0F;
+  LastSuccessfulInspectionTaskResponseSeconds = 0.0;
+  InspectionExpectedBinding = {};
   HudScreenshotCaptures.Reset();
   Super::Deinitialize();
 }
@@ -412,6 +435,11 @@ void ULingTuSimRuntimeUIWorldSubsystem::DetachRuntimeUI() {
   }
   bInputProcessorRegistered = false;
   InputProcessor.Reset();
+  if (InspectionRequest.IsValid()) {
+    InspectionRequest->CancelRequest();
+  }
+  InspectionRequest.Reset();
+  bInspectionRequestInFlight = false;
 
   if (APlayerController *PlayerController =
           GetWorld() != nullptr ? GetWorld()->GetFirstPlayerController() : nullptr) {
@@ -433,7 +461,211 @@ void ULingTuSimRuntimeUIWorldSubsystem::DetachRuntimeUI() {
   FrontEndLoginModel.Reset();
   GameSelectionModel.Reset();
   AssetReviewModel.Reset();
+  InspectionProjection.Reset();
   GameSelectionFeedback.Reset();
+}
+
+void ULingTuSimRuntimeUIWorldSubsystem::InitializeInspectionProjectionFromCommandLine() {
+  check(InspectionProjection.IsValid());
+  InspectionTaskId.Reset();
+  FParse::Value(FCommandLine::Get(), TEXT("LingTuInspectionTaskId="), InspectionTaskId);
+  InspectionTaskId = InspectionTaskId.TrimStartAndEnd();
+  InspectionProjection->TaskId = InspectionTaskId;
+  InspectionProjection->bBound = !InspectionTaskId.IsEmpty();
+  if (InspectionTaskId.IsEmpty()) {
+    return;
+  }
+
+  FString ExpectedMapId;
+  FString ExpectedMapContentEpoch;
+  FString ExpectedRouteRevision;
+  const bool bHasExpectedMapId = FParse::Value(
+      FCommandLine::Get(), TEXT("LingTuInspectionExpectedMapId="), ExpectedMapId);
+  const bool bHasExpectedMapContentEpoch = FParse::Value(
+      FCommandLine::Get(), TEXT("LingTuInspectionExpectedMapContentEpoch="),
+      ExpectedMapContentEpoch);
+  const bool bHasExpectedRouteRevision = FParse::Value(
+      FCommandLine::Get(), TEXT("LingTuInspectionExpectedRouteRevision="),
+      ExpectedRouteRevision);
+  ExpectedMapId = ExpectedMapId.TrimStartAndEnd();
+  if (!bHasExpectedMapId || ExpectedMapId.IsEmpty() || !bHasExpectedMapContentEpoch ||
+      !bHasExpectedRouteRevision) {
+    InspectionProjection->IdentityBlocker = TEXT("launcher_expected_binding_missing");
+    return;
+  }
+  if (!ParseExpectedInspectionInteger(ExpectedMapContentEpoch, false,
+                                      InspectionExpectedBinding.MapContentEpoch) ||
+      !ParseExpectedInspectionInteger(ExpectedRouteRevision, true,
+                                      InspectionExpectedBinding.RouteRevision)) {
+    InspectionProjection->IdentityBlocker = TEXT("launcher_expected_binding_invalid");
+    return;
+  }
+  InspectionExpectedBinding.MapId = ExpectedMapId;
+  InspectionExpectedBinding.bConfigured = true;
+
+  InspectionGatewayUrl = TEXT("http://127.0.0.1:5050");
+  FString ConfiguredUrl;
+  if (FParse::Value(FCommandLine::Get(), TEXT("LingTuInspectionGatewayUrl="), ConfiguredUrl)) {
+    InspectionGatewayUrl = ConfiguredUrl.TrimStartAndEnd();
+  }
+  while (InspectionGatewayUrl.EndsWith(TEXT("/"))) {
+    InspectionGatewayUrl.LeftChopInline(1);
+  }
+  if ((!InspectionGatewayUrl.StartsWith(TEXT("http://"), ESearchCase::IgnoreCase) &&
+       !InspectionGatewayUrl.StartsWith(TEXT("https://"), ESearchCase::IgnoreCase)) ||
+      InspectionGatewayUrl.IsEmpty()) {
+    InspectionProjection->bStale = true;
+    InspectionProjection->TransportError = TEXT("invalid_gateway_url");
+    UE_LOG(LogLingTuSimUI, Error,
+           TEXT("LINGTU_INSPECTION_PROJECTION_UNAVAILABLE reason=invalid_gateway_url"));
+    return;
+  }
+  InspectionPollElapsedSeconds = 1.0F;
+}
+
+void ULingTuSimRuntimeUIWorldSubsystem::TickInspectionProjection(const float DeltaTime) {
+  if (!InspectionProjection.IsValid() || !InspectionProjection->bBound ||
+      !InspectionExpectedBinding.bConfigured || InspectionGatewayUrl.IsEmpty()) {
+    return;
+  }
+  if (LastSuccessfulInspectionTaskResponseSeconds > 0.0 &&
+      FPlatformTime::Seconds() - LastSuccessfulInspectionTaskResponseSeconds > 3.0) {
+    InspectionProjection->bStale = true;
+  }
+  if (bInspectionRequestInFlight) {
+    return;
+  }
+  InspectionPollElapsedSeconds += FMath::Max(0.0F, DeltaTime);
+  if (InspectionPollElapsedSeconds < 1.0F) {
+    return;
+  }
+  InspectionPollElapsedSeconds = 0.0F;
+  RequestInspectionTask();
+}
+
+void ULingTuSimRuntimeUIWorldSubsystem::RequestInspectionTask() {
+  bInspectionRequestInFlight = true;
+  InspectionRequest = FHttpModule::Get().CreateRequest();
+  InspectionRequest->SetVerb(TEXT("GET"));
+  InspectionRequest->SetTimeout(3.0F);
+  InspectionRequest->SetURL(FString::Printf(
+      TEXT("%s/api/v1/inspection/tasks/%s"), *InspectionGatewayUrl,
+      *FGenericPlatformHttp::UrlEncode(InspectionTaskId)));
+  const TWeakObjectPtr<ULingTuSimRuntimeUIWorldSubsystem> WeakThis(this);
+  InspectionRequest->OnProcessRequestComplete().BindLambda(
+      [WeakThis](FHttpRequestPtr Request, FHttpResponsePtr Response, const bool bConnectedSuccessfully) {
+        (void)Request;
+        if (ULingTuSimRuntimeUIWorldSubsystem *Self = WeakThis.Get()) {
+          Self->HandleInspectionTaskResponse(
+              bConnectedSuccessfully && Response.IsValid(),
+              Response.IsValid() ? Response->GetResponseCode() : 0,
+              Response.IsValid() ? Response->GetContentAsString() : FString());
+        }
+      });
+  if (!InspectionRequest->ProcessRequest()) {
+    HandleInspectionTaskResponse(false, 0, FString());
+  }
+}
+
+void ULingTuSimRuntimeUIWorldSubsystem::HandleInspectionTaskResponse(
+    const bool bTransportOk, const int32 ResponseCode, FString Body) {
+  InspectionRequest.Reset();
+  if (!InspectionProjection.IsValid()) {
+    bInspectionRequestInFlight = false;
+    return;
+  }
+  if (!bTransportOk || ResponseCode < 200 || ResponseCode >= 300) {
+    InspectionProjection->bStale = true;
+    InspectionProjection->TransportError =
+        FString::Printf(TEXT("task_http_%d"), ResponseCode);
+    bInspectionRequestInFlight = false;
+    return;
+  }
+
+  LingTuSim::UI::FInspectionProjection Parsed;
+  FString ParseError;
+  if (!LingTuSim::UI::FInspectionProjectionParser::ParseTask(
+          Body, InspectionTaskId, InspectionExpectedBinding, Parsed, ParseError)) {
+    InspectionProjection->bStale = true;
+    InspectionProjection->TransportError = FString::Printf(TEXT("invalid_task_response: %s"),
+                                                            *ParseError);
+    bInspectionRequestInFlight = false;
+    return;
+  }
+  LastSuccessfulInspectionTaskResponseSeconds = FPlatformTime::Seconds();
+  Parsed.bStale = false;
+  const bool bSameVerifiedReport =
+      InspectionProjection->bReportVerified && InspectionProjection->TaskId == Parsed.TaskId &&
+      InspectionProjection->RouteId == Parsed.RouteId &&
+      InspectionProjection->RouteRevision == Parsed.RouteRevision &&
+      InspectionProjection->MapId == Parsed.MapId &&
+      InspectionProjection->MapContentEpoch == Parsed.MapContentEpoch;
+  if (bSameVerifiedReport) {
+    Parsed.ReportStatus = InspectionProjection->ReportStatus;
+    Parsed.Acceptance = InspectionProjection->Acceptance;
+    Parsed.RequiredEvidence = InspectionProjection->RequiredEvidence;
+    Parsed.VerifiedEvidence = InspectionProjection->VerifiedEvidence;
+    Parsed.bReportVerified = true;
+    Parsed.bReportStale = true;
+  }
+  *InspectionProjection = MoveTemp(Parsed);
+  if (!InspectionProjection->bTaskAvailable || !InspectionProjection->bExecutionConfirmed ||
+      !InspectionProjection->bHistoryComplete ||
+      !InspectionProjection->bLauncherBindingVerified) {
+    bInspectionRequestInFlight = false;
+    return;
+  }
+  RequestInspectionReport();
+}
+
+void ULingTuSimRuntimeUIWorldSubsystem::RequestInspectionReport() {
+  InspectionRequest = FHttpModule::Get().CreateRequest();
+  InspectionRequest->SetVerb(TEXT("GET"));
+  InspectionRequest->SetTimeout(3.0F);
+  InspectionRequest->SetURL(FString::Printf(
+      TEXT("%s/api/v1/inspection/tasks/%s/report"), *InspectionGatewayUrl,
+      *FGenericPlatformHttp::UrlEncode(InspectionTaskId)));
+  const TWeakObjectPtr<ULingTuSimRuntimeUIWorldSubsystem> WeakThis(this);
+  InspectionRequest->OnProcessRequestComplete().BindLambda(
+      [WeakThis](FHttpRequestPtr Request, FHttpResponsePtr Response, const bool bConnectedSuccessfully) {
+        (void)Request;
+        if (ULingTuSimRuntimeUIWorldSubsystem *Self = WeakThis.Get()) {
+          Self->HandleInspectionReportResponse(
+              bConnectedSuccessfully && Response.IsValid(),
+              Response.IsValid() ? Response->GetResponseCode() : 0,
+              Response.IsValid() ? Response->GetContentAsString() : FString());
+        }
+      });
+  if (!InspectionRequest->ProcessRequest()) {
+    HandleInspectionReportResponse(false, 0, FString());
+  }
+}
+
+void ULingTuSimRuntimeUIWorldSubsystem::HandleInspectionReportResponse(
+    const bool bTransportOk, const int32 ResponseCode, FString Body) {
+  InspectionRequest.Reset();
+  bInspectionRequestInFlight = false;
+  if (!InspectionProjection.IsValid()) {
+    return;
+  }
+  if (!bTransportOk || ResponseCode >= 500 || ResponseCode == 0) {
+    InspectionProjection->bReportStale = true;
+    return;
+  }
+  if (ResponseCode < 200 || ResponseCode >= 300) {
+    InspectionProjection->bReportVerified = false;
+    InspectionProjection->bReportStale = false;
+    return;
+  }
+  LingTuSim::UI::FInspectionProjection Parsed;
+  FString ParseError;
+  if (!LingTuSim::UI::FInspectionProjectionParser::ParseReport(
+          Body, *InspectionProjection, Parsed, ParseError)) {
+    InspectionProjection->bReportStale = true;
+    return;
+  }
+  Parsed.bReportStale = false;
+  *InspectionProjection = MoveTemp(Parsed);
 }
 
 void ULingTuSimRuntimeUIWorldSubsystem::InitializeGameSelectionFromCommandLine() {

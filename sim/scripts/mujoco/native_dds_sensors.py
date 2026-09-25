@@ -3165,6 +3165,10 @@ class NativeDriverBridge:
                 if command.bridge_command_seq <= self._last_command_seq or self._commands or self._inflight:
                     raise ValueError("driver bridge command sequence is stale or concurrent")
                 self._last_command_seq = command.bridge_command_seq
+                # Native DEACTIVATE cancels the nav already in transit. Do not
+                # apply it or claim APPLIED while awaiting the terminal zero.
+                if self._deactivate_requested and command.kind == "nav":
+                    return
                 self._commands.append(command)
                 self._condition.notify_all()
                 return
@@ -3413,6 +3417,8 @@ class NativeDriverBridge:
                 self._control_seq += 1
                 line = f"LT_DRIVER_DEACTIVATE_V2\t{self.bridge_boot_id}\t{self.controller_boot_id}\t{self._control_seq}"
                 self._deactivate_requested = True
+                if self._commands and self._commands[0].kind == "nav":
+                    self._commands.popleft()
             self._write_control_or_fail(line)
 
     def wait_stopped(self, *, timeout_s: float = 3.0) -> None:
@@ -3644,7 +3650,7 @@ def _deactivate_driver_bridge(
         prepared = bridge.prepare_step(wait_for_command_s=remaining_s)
         if prepared.protocol is None:
             raise RuntimeError("driver bridge did not issue a physical deactivate zero")
-        if prepared.protocol.kind != "deactivate_zero":
+        if prepared.protocol.kind not in {"safety_zero", "deactivate_zero"}:
             raise RuntimeError("driver bridge emitted a non-deactivate command after shutdown began")
         _, step_seq = _step_with_driver_bridge(
             engine,
@@ -3655,7 +3661,8 @@ def _deactivate_driver_bridge(
         )
         if on_physics_step is not None:
             on_physics_step()
-        break
+        if prepared.protocol.kind == "deactivate_zero":
+            break
     bridge.wait_stopped(timeout_s=3.0)
     return step_seq
 
@@ -4944,7 +4951,9 @@ def _read_json_object(path: str | Path) -> dict[str, Any]:
 
 def _native_nav_goal_reached(status: dict[str, Any]) -> bool:
     local = status.get("last_local") or {}
-    return bool(local.get("goal_reached")) or local.get("reason") == "goal_reached"
+    arrived = bool(local.get("goal_reached")) or local.get("reason") == "goal_reached"
+    stop = status.get("motion_stop_evidence") or {}
+    return arrived and stop.get("state") == "CONFIRMED"
 
 
 def _slam_status_counts(path: str) -> tuple[Counter[str], dict[str, Any]]:

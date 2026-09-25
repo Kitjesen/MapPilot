@@ -1,7 +1,10 @@
 #pragma once
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -15,7 +18,33 @@
 
 namespace lingtu::nav::endpoint {
 
+struct TeleopSampleFreshness {
+  using Clock = std::chrono::steady_clock;
+  Clock::time_point received_at{};
+  double source_age_at_receive_s{0.0};
+  double budget_s{0.0};
+  bool received{false};
+
+  void record(Clock::time_point at, double source_age_s, double freshness_budget_s) noexcept {
+    received_at = at;
+    source_age_at_receive_s = std::max(0.0, source_age_s);
+    budget_s = freshness_budget_s;
+    received = true;
+  }
+
+  [[nodiscard]] double age(Clock::time_point now) const noexcept {
+    if (!received) return std::numeric_limits<double>::infinity();
+    return source_age_at_receive_s + std::chrono::duration<double>(now - received_at).count();
+  }
+
+  [[nodiscard]] bool fresh(Clock::time_point now, double max_age_s) const noexcept {
+    const double age_s = age(now);
+    return received && age_s <= budget_s && (max_age_s <= 0.0 || age_s <= max_age_s);
+  }
+};
+
 struct TeleopTickActions {
+  // Source age at admission plus elapsed steady time, including transport delay.
   std::function<double()> teleop_receive_age_s;
   std::function<double()> steady_now_s;
   std::function<PlanView(double, TimingDiagnostics &)> read_plan;
@@ -41,6 +70,7 @@ struct TeleopTickInput {
   const TeleopDiagnostics &previous_teleop;
   TimingDiagnostics &timing;
   bool manual_mode{false};
+  std::optional<double> sample_freshness_budget_s{};
 };
 
 struct TeleopTickCounterDelta {

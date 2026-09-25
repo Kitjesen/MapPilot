@@ -38,6 +38,10 @@ geometry:
   # Match the requested SCAN Go2 vertical collision extent.
   collision_clearance_below: 0.10
   collision_clearance_above: 0.10
+  # 2026-09-24 stationary MID-360: body-to-floor 0.345 m, plane RMS 0.004 m.
+  # Constrain the standing body height; planar velocity commands cannot crouch.
+  support_height: 0.35
+  support_height_tolerance: 0.05
   sensor_offset_x: 0.3
   sensor_offset_y: 0.0
 

@@ -46,6 +46,25 @@ class _Port:
         self.messages.append(message)
 
 
+def test_expired_publisher_input_is_not_restamped_as_fresh():
+    client = _Client()
+    failures = []
+    failed = threading.Event()
+
+    def on_failure(value):
+        failures.append(value)
+        failed.set()
+
+    publisher = teleop.LatestNativeTeleopPublisher(client, failure_callback=on_failure)
+    try:
+        assert publisher.submit(0.5, 0, 0, deadline_monotonic_s=time.monotonic() - 1)
+        assert failed.wait(1.0)
+        assert client.commands == []
+        assert "expired" in failures[0]["error"]
+    finally:
+        publisher.close()
+
+
 class _Client:
     def __init__(self) -> None:
         self.commands = []
@@ -338,9 +357,10 @@ def test_teleop_uses_typed_operator_motion_capability():
     finally:
         gateway._teleop_native_publisher.close()
 
+    assert 0 < client.commands[1][8] <= 350
     assert client.commands == [
         ("claim", "rest:operator-a", 42, 1, 1000, "claim-1"),
-        ("sample", "rest:operator-a", 42, 2, 0.2, -0.1, 0.4, True, 350, None),
+        ("sample", "rest:operator-a", 42, 2, 0.2, -0.1, 0.4, True, client.commands[1][8], None),
     ]
     assert gateway.cmd_vel.messages == []
 
@@ -405,9 +425,10 @@ def test_native_teleop_publisher_sequences_claim_sample_hold_and_release():
     finally:
         publisher.close()
 
+    assert 0 < client.commands[1][8] <= 350
     assert client.commands == [
         ("claim", "ws:operator-a", 42, 1, 1000, "claim-1"),
-        ("sample", "ws:operator-a", 42, 2, 0.2, -0.1, 0.5, True, 350, "sample-1"),
+        ("sample", "ws:operator-a", 42, 2, 0.2, -0.1, 0.5, True, client.commands[1][8], "sample-1"),
         ("hold", "ws:operator-a", 42, 3, "manual_hold", "hold-1"),
         ("release", "ws:operator-a", 42, 4, "disconnect", "release-1"),
     ]

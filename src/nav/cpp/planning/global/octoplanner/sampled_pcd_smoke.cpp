@@ -76,6 +76,14 @@ int main(int argc, char** argv) {
     for (int x = 0; x < 5; ++x)
       for (int y = 0; y < 5; ++y)
         points.push_back({14.1F + x * 0.2F, y * 0.2F + 0.1F, 0.5F});
+    // Even one voxel of false elevation hides the true ground surface from
+    // body-height support queries. Padding must not raise an observed floor.
+    for (int x = 0; x < 9; ++x)
+      for (int y = 0; y < 5; ++y)
+        points.push_back({18.1F + x * 0.2F, y * 0.2F + 0.1F, -0.3F});
+    for (int x = 0; x < 5; ++x)
+      for (int y = 0; y < 5; ++y)
+        points.push_back({18.1F + x * 0.2F, y * 0.2F + 0.1F, -0.1F});
     for (bool binary : {false, true}) {
       if (binary && std::string(argv[3]) != "1") continue;
       for (int dilation : {0, 1}) {
@@ -107,6 +115,9 @@ int main(int argc, char** argv) {
         const auto* invented_shelf = tree->search(15.1, 0.5, 0.5);
         require(!invented_shelf || !tree->isNodeOccupied(invented_shelf),
                 "raised support padding created a shelf over observed lower floor");
+        const auto* invented_tread = tree->search(19.1, 0.5, -0.1);
+        require(!invented_tread || !tree->isNodeOccupied(invented_tread),
+                "support padding raised the observed floor by one voxel");
       }
     }
     const auto bad_input = root / "outside_tree.pcd";

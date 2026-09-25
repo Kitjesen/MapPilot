@@ -941,9 +941,12 @@ void testScanPlannerEnvironmentReachesCore() {
               buildLocalPlannerParams(cfg).localCollisionMaxAge == 0.75,
           "input gate and recovery must consume the same collision freshness policy");
   const auto status = buildStatusWriterConfig(cfg, inputGateConfig(cfg));
-  require(status.input_require_local_collision && !status.input_require_cloud &&
+  require(status.input_require_local_collision && status.input_require_cloud &&
               status.local_collision_max_age_s == 0.75,
-          "SCAN status must expose its actual local collision gate and freshness limit");
+          "autonomous SCAN requires fresh collision and motion-prediction source inputs");
+  const auto avoid = parse({"navd", "--local-planner", "scan", "--control-mode", "teleop_avoid"});
+  require(inputGateConfig(avoid).require_local_collision && !inputGateConfig(avoid).require_cloud,
+          "assisted teleop keeps its Mapd-only observation contract");
 }
 
 void testScanPlannerRejectsInvalidRuntimeParameters() {
@@ -1091,7 +1094,14 @@ void testScanDoesNotDuplicateLiveObstacleInflation() {
   cfg.teleop_obstacle_margin_m = 0.15;
   cfg.live_obstacle_inflation_radius_m = 0.12;
   cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Scan;
+  cfg.octoplanner_options.support_height_m = .35;
+  cfg.octoplanner_options.support_height_tolerance_m = .05;
+  cfg.octoplanner_options.max_step_height = .15;
+  cfg.octoplanner_options.max_slope = .6;
   const auto scan = buildLocalPlannerParams(cfg);
+  require(scan.scan.supportHeight == .35 && scan.scan.supportHeightTolerance == .05 &&
+              scan.scan.maxStepHeight == .15 && scan.scan.maxSupportSlope == .6,
+          "SCAN must consume the same physical support limits as the global planner");
   require(std::abs(scan.footprintPadding) < 1e-12,
           "SCAN cylinder geometry already owns the complete hard envelope");
 
@@ -1102,6 +1112,12 @@ void testScanDoesNotDuplicateLiveObstacleInflation() {
 }
 
 void testLocalPlannerUsesConfiguredTraversabilityPolicy() {
+  const auto parsed_scan = parse({"navd", "--local-planner", "scan",
+                                  "--use-traversability-cost", "true"});
+  require(!parsed_scan.use_traversability_cost &&
+              !buildStatusWriterConfig(parsed_scan, inputGateConfig(parsed_scan))
+                   .use_traversability_cost,
+          "SCAN startup and status must agree that the 2D terrain policy is unused");
   CliConfig cfg;
   cfg.use_traversability_cost = true;
 
@@ -1112,8 +1128,16 @@ void testLocalPlannerUsesConfiguredTraversabilityPolicy() {
 
   cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Scan;
   const auto scan = buildLocalPlannerParams(cfg);
-  require(scan.useTraversabilityCost,
-          "SCAN must consume the configured planner traversability policy");
+  require(!scan.useTraversabilityCost,
+          "SCAN must use its 3D collision volume without the CMU terrain-cost grid");
+  const auto scan_gate = inputGateConfig(cfg);
+  require(!scan_gate.require_traversability && scan_gate.require_local_collision &&
+              scan_gate.require_localization_health && scan_gate.require_driver_control,
+          "SCAN must remove only the unused 2D terrain gate and retain motion evidence");
+
+  cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Cmu;
+  require(inputGateConfig(cfg).require_traversability,
+          "CMU must retain its configured terrain input requirement");
 
   cfg.use_traversability_cost = false;
   const auto disabled = buildLocalPlannerParams(cfg);
@@ -1167,6 +1191,8 @@ void testScanCollisionEnvelopeIsConfigurable() {
   const auto planner = buildLocalPlannerParams(cfg);
   require(std::abs(cfg.collision_cylinder_radius_m - 0.41) < 1e-12,
           "SCAN collision radius must remain available to the Mapd profile");
+  require(std::abs(planner.scan.cylinderRadius - 0.41) < 1e-12,
+          "SCAN prediction envelope must use the same radius as Mapd");
   require(std::abs(planner.scan.cylinderOffset - 0.24) < 1e-12,
           "SCAN collision offset must reach the planner");
   require(std::abs(planner.scan.bodyClearanceBelow - 0.22) < 1e-12,

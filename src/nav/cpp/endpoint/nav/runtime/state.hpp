@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "control/authority.hpp"
+#include "control/teleop.hpp"
 #include "input/frame.hpp"
 #include "input/samples.hpp"
 #include "safety/stop.hpp"
@@ -41,11 +42,13 @@ struct EndpointState {
   // Future occupancy is kept separate so it can only add planner risk and
   // can never consume the measured-obstacle budget.
   std::vector<float> predicted_obstacle_xyzh;
+  std::vector<nav_kernel::PredictedObstacle> predicted_obstacle_volumes;
+  double prediction_source_receive_s{0.0};
   std::vector<float> terrain_xyzh;
   std::vector<float> terrain_ext_xyzh;
   const std::vector<float> empty_obstacles;
   std::vector<DynamicCluster> latest_dynamic_clusters;
-  bool obstacle_snapshot_dirty{false};
+  MotionLayerStats motion_layer_stats;
   SensorOrigin last_sensor_origin;
   // Legacy /nav/traversability remains a map-frame grid. The local odom
   // projection lives separately so a frame mismatch cannot become a silent
@@ -99,8 +102,7 @@ struct EndpointState {
   bool driver_authority_previous{false};
 
   // -- Teleop -------------------------------------------------------------------
-  std::chrono::steady_clock::time_point teleop_receive_time{};
-  bool teleop_received{false};
+  TeleopSampleFreshness teleop_freshness;
 
   // -- Input --------------------------------------------------------------------
   bool odom_requires_tf{true};

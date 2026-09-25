@@ -66,6 +66,37 @@ std::vector<GeometricConstraint> merge_pose_graph_constraints(
 
 }  // namespace detail
 
+SequentialConstraintResult extend_sequential_graph(
+    const PatchCloudSource& cloud_at, const std::vector<Keyframe>& keyframes,
+    std::size_t to_index, std::vector<GeometricConstraint>& constraints,
+    const LoopConstraintOptions& options) {
+  if (to_index == 0 || to_index >= keyframes.size()) {
+    SequentialConstraintResult invalid;
+    invalid.code = "sequential_index_out_of_range";
+    invalid.message = "sequential extension requires an existing predecessor";
+    return invalid;
+  }
+  auto adjacent = generate_sequential_constraint(cloud_at, keyframes, to_index - 1, options);
+  if (adjacent.ok) constraints.push_back(adjacent.constraint);
+  else if (adjacent.code != "sequential_registration_rejected") return adjacent;
+  // A fixed local window bounds extra registration work and avoids a stale anchor.
+  for (std::size_t gap = 2; gap <= 4 && gap <= to_index; ++gap) {
+    const auto from = to_index - gap;
+    const auto component = connected_pose_indices(keyframes.size(), constraints, to_index);
+    if (std::binary_search(component.begin(), component.end(), from)) continue;
+    const std::vector<Keyframe> pair{keyframes[from], keyframes[to_index]};
+    auto bridge = generate_sequential_constraint([&](std::size_t i) {
+      return cloud_at(i == 0 ? from : to_index);
+    }, pair, 0, options);
+    if (bridge.ok) {
+      bridge.constraint.from_index = from;
+      bridge.constraint.to_index = to_index;
+      constraints.push_back(bridge.constraint);
+    } else if (bridge.code != "sequential_registration_rejected") return bridge;
+  }
+  return adjacent;
+}
+
 PoseGraphConstraintAssembly assemble_pose_graph_constraints(
     const Map &map, const LoopConstraintOptions &options) {
   PoseGraphConstraintAssembly result;
@@ -85,6 +116,11 @@ PoseGraphConstraintAssembly assemble_pose_graph_constraints(
     return result;
   }
   result.pose_count = keyframes.size();
+  if (map_result.patch_count != keyframes.size()) {
+    result.code = "patch_pose_mismatch";
+    result.message = "patch count must exactly match keyframe count";
+    return result;
+  }
   if (keyframes.size() < 2) {
     result.evidence_insufficient = true;
     result.code = "insufficient_keyframes";
@@ -95,25 +131,35 @@ PoseGraphConstraintAssembly assemble_pose_graph_constraints(
   std::vector<GeometricConstraint> sequential_constraints;
   sequential_constraints.reserve(keyframes.size() - 1);
   for (std::size_t from_index = 0; from_index + 1 < keyframes.size(); ++from_index) {
-    const auto sequential = generate_sequential_constraint(map, keyframes, from_index, options);
+    const auto sequential = extend_sequential_graph([&](std::size_t i) {
+      return read_point_cloud(map.patches_dir / keyframes.at(i).patch_name);
+    }, keyframes, from_index + 1, sequential_constraints, options);
     if (!sequential.ok) {
-      result.evidence_insufficient = sequential.code == "sequential_registration_rejected";
-      result.code = result.evidence_insufficient ? "sequential_chain_incomplete" : sequential.code;
+      // A rejected edge does not invalidate later measured edges or a loop bridge.
+      if (sequential.code == "sequential_registration_rejected") continue;
+      result.code = sequential.code;
       result.message = "edge " + std::to_string(from_index) + "->" +
                        std::to_string(from_index + 1) + ": " + sequential.code + ": " +
                        sequential.message;
       result.constraints.clear();
       return result;
     }
-    sequential_constraints.push_back(sequential.constraint);
-    ++result.sequential_count;
   }
+  result.sequential_count = sequential_constraints.size();
 
   const auto loops = generate_loop_constraints(map, keyframes, options);
   if (!loops.ok) {
     result.code = "loop_verification_failed";
     result.message = loops.code + ": " + loops.message;
     result.constraints.clear();
+    return result;
+  }
+  result.loop_count = loops.constraints.size();
+  auto constraints = detail::merge_pose_graph_constraints(sequential_constraints, loops.constraints);
+  if (connected_pose_indices(keyframes.size(), constraints).size() != keyframes.size()) {
+    result.evidence_insufficient = true;
+    result.code = "sequential_chain_incomplete";
+    result.message = "verified sequential and loop edges do not connect every saved pose";
     return result;
   }
   if (loops.constraints.empty()) {
@@ -123,11 +169,10 @@ PoseGraphConstraintAssembly assemble_pose_graph_constraints(
     result.constraints.clear();
     return result;
   }
-  result.loop_count = loops.constraints.size();
-  result.constraints = detail::merge_pose_graph_constraints(sequential_constraints, loops.constraints);
+  result.constraints = std::move(constraints);
   result.ready = true;
   result.code = "constraints_ready";
-  result.message = "complete sequential chain and verified loops are ready";
+  result.message = "connected measured graph with verified loops is ready";
   return result;
 }
 

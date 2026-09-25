@@ -58,9 +58,11 @@ test('clicked relocalization keeps map XY and uses the projected map heading, ne
   assert.ok(seed)
   assert.equal(seed.x, 20)
   assert.equal(seed.y, 30)
+  near(seed.z, 3.5)
   near(seed.yaw, Math.PI / 2)
   assert.equal(sceneRelocalizationSeed(20, 30, odom), null)
   assert.equal(sceneRelocalizationSeed(20, 30, null), null)
+  assert.equal(sceneRelocalizationSeed(20, 30, { ...odom, frame_id: 'map', z: undefined }), null)
 })
 
 test('automatic matching follows active map A to B and does not use the unchanged manual selection', () => {

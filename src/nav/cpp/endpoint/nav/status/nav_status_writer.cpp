@@ -708,7 +708,8 @@ std::string scanFailureSnapshotJson(const nav_kernel::ScanFailureSnapshot &failu
   for (const auto &[name, value] : std::initializer_list<std::pair<const char *, double>>{
       {"voxelResolution", p.voxelResolution}, {"routeZTolerance", p.routeZTolerance},
       {"bodyClearanceBelow", p.bodyClearanceBelow}, {"bodyClearanceAbove", p.bodyClearanceAbove},
-      {"cylinderOffset", p.cylinderOffset}, {"controlPointSpacing", p.controlPointSpacing},
+      {"cylinderOffset", p.cylinderOffset}, {"cylinderRadius", p.cylinderRadius},
+      {"controlPointSpacing", p.controlPointSpacing},
       {"replanDistance", p.replanDistance}, {"noReplanDistance", p.noReplanDistance},
       {"maxVelocity", p.maxVelocity}, {"maxAcceleration", p.maxAcceleration},
       {"planningHorizon", p.planningHorizon}, {"smoothWeight", p.smoothWeight},
@@ -720,7 +721,17 @@ std::string scanFailureSnapshotJson(const nav_kernel::ScanFailureSnapshot &failu
     first = false;
     out << '"' << name << "\": "; writeNumberJson(out, value);
   }
-  out << "}, \"reference_generation\": " << failure.referenceGeneration
+  out << "}, \"predictions\": {\"observed_at_s\": " << failure.predictionsObservedAtS
+      << ", \"horizon_s\": " << failure.predictionsHorizonS << ", \"volumes\": [";
+  for (std::size_t i = 0; i < failure.predictions.size(); ++i) {
+    if (i != 0U) out << ", ";
+    const auto &prediction = failure.predictions[i];
+    out << "{\"start\": "; point(prediction.start);
+    out << ", \"end\": "; point(prediction.end);
+    out << ", \"radius\": " << prediction.radius << ", \"min_z\": " << prediction.minZ
+        << ", \"max_z\": " << prediction.maxZ << '}';
+  }
+  out << "]}, \"reference_generation\": " << failure.referenceGeneration
       << ", \"reference_reaches_goal\": " << failure.referenceReachesGoal
       << ", \"reference\": ";
   points(failure.reference);
@@ -1101,6 +1112,7 @@ void writeStatusSnapshot(
             ? "null" : std::to_string(local_planner_debug.expandedNodes))
         << ", \"occupied_cells\": " << local_planner_debug.occupiedCellCount
         << ", \"collision_points_used\": " << local_planner_debug.collisionPointCount
+        << ", \"predicted_obstacle_count\": " << local_planner_debug.predictedObstacleCount
         << ", \"trajectory_points\": " << local_planner_debug.trajectoryPointCount
         << ", \"rebound_restarts\": " << (local_planner_debug.backend == nav_kernel::LocalPlannerBackend::Scan
             ? "null" : std::to_string(local_planner_debug.reboundRestarts))
@@ -1156,6 +1168,9 @@ void writeStatusSnapshot(
     out << "\n"
         << "  },\n"
         << "  \"last_local\": {\n"
+        << "    \"dynamic_avoidance\": \"" << jsonEscape(local.dynamic_avoidance) << "\",\n"
+        << "    \"prediction_count\": " << local.prediction_count << ",\n"
+        << "    \"dynamic_blocked_s\": " << local.dynamic_blocked_s << ",\n"
         << "    \"seen\": " << (local.seen ? "true" : "false") << ",\n"
         << "    \"active\": " << (local.active ? "true" : "false") << ",\n"
         << "    \"goal_reached\": " << (local.goal_reached ? "true" : "false") << ",\n"
@@ -1284,8 +1299,26 @@ void writeStatusSnapshot(
         << "    \"current_miss_streak\": " << control_loop_health.current_miss_streak << ",\n"
         << "    \"max_miss_streak\": " << control_loop_health.max_miss_streak << ",\n"
         << "    \"p95_utilization\": " << control_loop_health.p95_utilization << ",\n"
-        << "    \"max_utilization\": " << control_loop_health.max_utilization << "\n"
-        << "  },\n"
+        << "    \"max_utilization\": " << control_loop_health.max_utilization << ",\n"
+        << "    \"history\": {\"first_sequence\": "
+        << control_loop_health.history.first_sequence << ", \"overruns_ms\": [";
+    const auto &history = control_loop_health.history;
+    for (std::size_t i = 0; i < history.overruns_ms.size(); ++i) {
+      if (i != 0) out << ',';
+      out << history.overruns_ms[i];
+    }
+    out << "], \"overruns\": [";
+    for (std::size_t i = 0; i < history.overruns.size(); ++i) {
+      if (i != 0) out << ',';
+      const auto &event = history.overruns[i];
+      out << "{\"sequence\":" << event.sequence << ",\"work_ms\":" << event.work_ms
+          << ",\"sensor_drain_ms\":" << event.stages_ms[0]
+          << ",\"operator_drain_ms\":" << event.stages_ms[1]
+          << ",\"command_drain_ms\":" << event.stages_ms[2]
+          << ",\"runtime_ms\":" << event.stages_ms[3]
+          << ",\"publish_ms\":" << event.stages_ms[4] << '}';
+    }
+    out << "]}\n  },\n"
         << "  \"counters\": {\n"
         << "    \"odom\": " << odom_count << ",\n"
         << "    \"tf\": " << tf_count << ",\n"

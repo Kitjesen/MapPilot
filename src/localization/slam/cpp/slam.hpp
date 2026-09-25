@@ -187,9 +187,10 @@ struct SlamOutputs {
   std::optional<Pose3d> odometry_odom_body;
   std::optional<Pose3d> state_estimation_at_scan;
   std::optional<BodyTwist> odometry_twist_body;
-  std::optional<Cloud> registered_cloud_body;
-  std::optional<Cloud> map_cloud_map;
-  std::optional<Cloud> saved_map_cloud_map;
+  std::shared_ptr<const Cloud> registered_cloud_body;
+  std::shared_ptr<const Cloud> map_cloud_map;
+  std::shared_ptr<const Cloud> saved_map_cloud_map;
+  std::uint64_t saved_map_revision = 0;
   std::shared_ptr<const Cloud> global_map_cloud;
   std::uint64_t global_map_revision = 0;
   std::size_t global_map_keyframes = 0;
@@ -214,6 +215,7 @@ struct SlamOutputs {
   bool saved_map_relocalization_supported = false;
   std::string relocalization_state = "unsupported";
   std::string last_relocalization_message;
+  std::string relocalization_engine;
   double relocalization_quality = -1.0;
   std::optional<Pose3d> relocalization_map_body;
   std::string relocalization_refine_backend;
@@ -300,6 +302,11 @@ class ISlamBackend {
 
   virtual Status tick() = 0;
   virtual Status saveMap(const std::string& pcd_path) = 0;
+  virtual Status startSaveMapAsync(const std::string& pcd_path) {
+    return saveMap(pcd_path);
+  }
+  virtual bool saveMapAsyncInFlight() const { return false; }
+  virtual std::optional<Status> pollSaveMapAsync() { return std::nullopt; }
   virtual Status loadMap(const std::string& pcd_path) = 0;
   virtual SlamOutputs outputs() const = 0;
   virtual Status reset() = 0;

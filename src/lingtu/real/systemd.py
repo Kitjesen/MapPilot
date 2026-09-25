@@ -467,6 +467,7 @@ class SystemdRunner:
         dry_run: bool = False,
         defer_rollback: bool = False,
         on_process_ready: Callable[[ProcessSpec], None] | None = None,
+        on_process_started: Callable[[ProcessSpec], None] | None = None,
     ) -> ProcessReport:
         """Stop conflicting processes and apply one resolved RunPlan."""
 
@@ -545,6 +546,8 @@ class SystemdRunner:
                     ),
                 ):
                     process_deadline = self._process_deadline(stage_start, process)
+                    if on_process_started is not None:
+                        on_process_started(process)
                     report.ready[process.name] = self._readiness.wait(
                         process,
                         self._remaining_timeout(
@@ -576,6 +579,7 @@ class SystemdRunner:
         *,
         dry_run: bool = False,
         on_process_ready: Callable[[ProcessSpec], None] | None = None,
+        on_process_started: Callable[[ProcessSpec], None] | None = None,
     ) -> ProcessReport:
         """Apply while leaving target cleanup to an outer transaction."""
 
@@ -584,6 +588,7 @@ class SystemdRunner:
             dry_run=dry_run,
             defer_rollback=True,
             on_process_ready=on_process_ready,
+            on_process_started=on_process_started,
         )
 
     def transition(
@@ -594,6 +599,7 @@ class SystemdRunner:
         dry_run: bool = False,
         defer_rollback: bool = False,
         on_process_ready: Callable[[ProcessSpec], None] | None = None,
+        on_process_started: Callable[[ProcessSpec], None] | None = None,
     ) -> ProcessReport:
         """Cold-restart mode processes between two exact RunPlans.
 
@@ -705,6 +711,8 @@ class SystemdRunner:
                     ),
                 ):
                     process_deadline = self._process_deadline(stage_start, process)
+                    if on_process_started is not None:
+                        on_process_started(process)
                     report.ready[process.name] = self._readiness.wait(
                         process,
                         self._remaining_timeout(

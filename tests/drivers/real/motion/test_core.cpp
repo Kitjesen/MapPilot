@@ -324,6 +324,25 @@ void testLoopbackBrainstemMayUseInsecureTestTransport() {
   check(!config.brainstem_tls.enabled(), "loopback test transport may remain insecure");
 }
 
+void testGo2TiltCalibrationReachesTheDriver() {
+  ScopedEnvironment robot("LINGTU_DRIVER_BACKEND", "go2");
+  ScopedEnvironment interface("LINGTU_DRIVER_NETWORK_INTERFACE", "eth0");
+  char program[] = "test_driver_core";
+  char *argv[] = {program};
+  {
+    ScopedEnvironment tilt("LINGTU_DRIVER_TILT_LIMIT_DEG", "25");
+    close(lingtu::driver::loadConfig(1, argv).tilt_limit_deg, 25.0,
+          "physical tilt calibration must reach the adapter");
+  }
+  for (const char *value : {"0", "90", "nan"}) {
+    ScopedEnvironment tilt("LINGTU_DRIVER_TILT_LIMIT_DEG", value);
+    bool threw = false;
+    try { (void)lingtu::driver::loadConfig(1, argv); }
+    catch (const std::exception &) { threw = true; }
+    check(threw, "invalid Go2 tilt limit must not disable the attitude gate");
+  }
+}
+
 void testPollRateCanHonorLeaseRefreshCadence() {
   ScopedEnvironment robot("LINGTU_DRIVER_BACKEND", "doso");
   ScopedEnvironment host("LINGTU_BRAINSTEM_HOST", "127.0.0.1");
@@ -395,6 +414,7 @@ int main() {
     testRobotSelectionIsExplicit();
     testRemoteBrainstemRequiresCompleteTlsConfiguration();
     testLoopbackBrainstemMayUseInsecureTestTransport();
+    testGo2TiltCalibrationReachesTheDriver();
     testPollRateCanHonorLeaseRefreshCadence();
     testCmdVelWriterGateRequiresExactlyOneWriter();
     std::cout << "test_driver_core: PASS\n";

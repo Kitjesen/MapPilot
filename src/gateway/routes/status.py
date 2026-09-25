@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from gateway.schemas import LocalizationStatusResponse, SceneGraphResponse, StateResponse
 from gateway.services.runtime_status import build_localization_status
 from gateway.services.state_snapshot import build_state_snapshot
@@ -15,7 +17,8 @@ def register_status_routes(app, gw) -> None:
         response_model=StateResponse,
     )
     async def get_state():
-        return build_state_snapshot(gw)
+        # The session snapshot can wait for mapd; keep that wait off the WS loop.
+        return await asyncio.to_thread(build_state_snapshot, gw)
 
     @app.get(
         "/api/v1/scene_graph",

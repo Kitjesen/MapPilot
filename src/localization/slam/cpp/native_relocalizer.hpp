@@ -10,6 +10,7 @@ namespace lingtu::slam {
 struct NativeRelocalizationResult {
   bool success = false;
   std::string message;
+  std::string engine;
   Pose3d map_body;
   Pose3d map_odom;
   double quality = -1.0;
@@ -40,8 +41,8 @@ class NativeRelocalizer {
   // Registration is safe to run on copied scan/pose inputs while the SLAM
   // estimator continues on its owning thread. MapIcp serializes its mutable
   // localizer and rejects a result if the loaded-map generation changes.
-  // Only a prediction from an accepted alignment is locally refined;
-  // explicit and persisted initial poses use strict seed verification.
+  // Initial poses use bounded planar alignment with strict final verification;
+  // predictions from accepted alignments use the regular drift correction.
   NativeRelocalizationResult relocalize(
       const Cloud& scan_body,
       const Pose3d& map_body_guess,

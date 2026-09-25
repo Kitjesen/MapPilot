@@ -85,6 +85,8 @@ struct ObservationMessage {
     FillHeader(message.header, "map");
     message.observation_sequence = 9U;
     message.reset_epoch = 4U;
+    message.reference_map_id = const_cast<char *>("room");
+    message.reference_map_content_epoch = 101;
     message.sensor_frame = const_cast<char *>("lidar");
     message.map_sensor.translation.x = 10.0;
     message.map_sensor.translation.y = 20.0;
@@ -338,6 +340,8 @@ void TestMapdDdsRoundTrip() {
   }
   assert(decoded.has_value());
   assert(decoded->reset_epoch == 4U);
+  assert(decoded->reference_map_id == "room");
+  assert(decoded->reference_map_content_epoch == 101);
   assert(decoded->sequence == 9U);
   assert(decoded->scan.point_count == 2U);
   assert(decoded->scan.x[1] == 3.0F);
@@ -382,6 +386,10 @@ void TestMapdDdsRoundTrip() {
   snapshot.collision.complete = true;
   snapshot.collision.occupied_bits.assign(500U, 0U);
   snapshot.collision.occupied_bits.front() = 1U;
+  snapshot.collision.measured_occupied_bits.assign(500U, 0U);
+  snapshot.collision.measured_occupied_bits[3] = 4U;
+  snapshot.collision.known_free_bits.assign(500U, 0U);
+  snapshot.collision.known_free_bits[4] = 8U;
   snapshot.occupancy = lingtu::maps::layers::makeGrid2D(2, 2, 0.2, 0.0, 0.0, 0.0F);
   snapshot.surface_projection = lingtu::maps::layers::makeGrid2D(1, 3, 0.2, 0.0, 0.0, -1.0F);
   snapshot.surface_projection.data = {-1.0F, 0.0F, 100.0F};
@@ -472,6 +480,10 @@ void TestMapdDdsRoundTrip() {
   assert(collision_message.size_z == 10U);
   assert(collision_message.inflated_occupied_bits._length == 500U);
   assert(collision_message.inflated_occupied_bits._buffer[0] == 1U);
+  assert(collision_message.measured_occupied_bits._length == 500U);
+  assert(collision_message.measured_occupied_bits._buffer[3] == 4U);
+  assert(collision_message.known_free_bits._length == 500U);
+  assert(collision_message.known_free_bits._buffer[4] == 8U);
   FreeTaken(&state_message, &lingtu_dds_MapRuntimeState_desc);
   FreeTaken(&scene_message, &lingtu_dds_MapScene_desc);
   FreeTaken(&collision_message, &lingtu_dds_MapCollisionLayer_desc);

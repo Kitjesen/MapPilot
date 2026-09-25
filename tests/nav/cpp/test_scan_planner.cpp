@@ -9,6 +9,8 @@
 #include "collision_bitmap.hpp"
 #include "planning/local/scan/backend.hpp"
 #include "planning/local/scan/grid.hpp"
+#include "planning/local/scan/task.hpp"
+#include "planning/surface_support.hpp"
 #include "planning/local/scan/upstream/path_searching/dyn_a_star.h"
 #include "planning/local/scan/upstream/plan_env/grid_map.h"
 #include "planning/local/scan/upstream/plan_manage/scan_replan_fsm.h"
@@ -24,6 +26,299 @@ using nav_kernel::LocalPlanRequest;
 using nav_kernel::RouteTarget;
 using nav_kernel::SplineTarget;
 using nav_kernel::Vec3;
+
+TEST(ScanGroundSupport, Measured3dSurfacesGapsSlabsAndBraking) {
+  auto params = LocalPlannerParams{};
+  params.scan.voxelResolution = .05;
+  params.scan.supportHeight = .35;
+  params.scan.supportHeightTolerance = .05;
+  params.scan.maxStepHeight = .15;
+  params.scan.maxSupportSlope = .6;
+  params.scan.cylinderRadius = .25;
+  CollisionBitmap inflated({-2,-2,-1}, {2,2,2}, .05);
+  CollisionBitmap occupied({-2,-2,-1}, {2,2,2}, .05);
+  CollisionBitmap free({-2,-2,-1}, {2,2,2}, .05);
+  for (int x = -40; x < 40; ++x) {
+    for (int y = -40; y < 40; ++y) {
+      if (x >= 13 && x <= 17) continue; // A genuine gap in both floors.
+      for (double z : {-.325, .675}) {
+        occupied.occupy({(x+.5)*.05, (y+.5)*.05, z});
+        free.occupy({(x+.5)*.05, (y+.5)*.05, z+.05});
+      }
+    }
+  }
+  LocalPlanRequest request;
+  const auto attach = [&] {
+    request.environment.collision = inflated.view();
+    const auto o = occupied.view(), f = free.view();
+    request.environment.collision.measuredOccupiedStorage =
+        std::make_shared<const std::vector<std::uint8_t>>(o.inflatedBits, o.inflatedBits + o.inflatedBytes);
+    request.environment.collision.knownFreeStorage =
+        std::make_shared<const std::vector<std::uint8_t>>(f.inflatedBits, f.inflatedBits + f.inflatedBytes);
+  };
+  attach();
+  nav_kernel::local::scan::Grid grid(params, request);
+  ASSERT_TRUE(grid.valid()) << grid.reason();
+  EXPECT_EQ(grid.inflatedOccupancy({0,0,.025}, 0), 0);
+  EXPECT_EQ(grid.inflatedOccupancy({0,0,1.025}, 0), 0); // Same XY, another surface.
+  EXPECT_NE(grid.inflatedOccupancy({0,0,.525}, 0), 0); // Suspended between surfaces.
+  EXPECT_NE(grid.inflatedOccupancy({.35,0,.025}, 0), 0);
+  EXPECT_EQ(grid.inflatedOccupancy({.35,0,.025}, std::acos(-1.0)/2), 0);
+  EXPECT_NE(grid.segmentInflatedOccupancy({0,0,.025}, 0, {1.5,0,.025}, 0), 0);
+  EXPECT_NE(grid.brakingOccupancy({{0,0,.025},0}, {.8,0,0}, .1, .5, 1), 0);
+  EXPECT_FALSE(grid.boundaryDepartureFree({{.2,0,.025},0}, {.55,0,.025}));
+  auto transformed = request;
+  transformed.environment.collision.gridFromPlanningTranslation = {-.5, 0, 1};
+  transformed.environment.collision.gridFromPlanningYaw = std::acos(-1.0)/2;
+  EXPECT_EQ(nav_kernel::local::scan::Grid(params, transformed).inflatedOccupancy({0,0,.025}, 0), 0);
+  occupied.occupy({.025,.025,-.125}); // A nearer slab cannot use the lower floor.
+  free.occupy({.025,.025,-.075});
+  attach();
+  EXPECT_NE(nav_kernel::local::scan::Grid(params, request).inflatedOccupancy({.025,.025,.025},0), 0);
+  request.environment.collision.knownFreeStorage.reset();
+  const nav_kernel::local::scan::Grid missing(params, request);
+  EXPECT_FALSE(missing.valid());
+  EXPECT_EQ(missing.reason(), "ground_support_evidence_missing");
+}
+
+TEST(ScanGroundSupport, StartupFailureDistinguishesMissingReturnsFromWrongHeight) {
+  LocalPlannerParams params;
+  params.scan.voxelResolution = .05;
+  params.scan.supportHeight = .35;
+  params.scan.supportHeightTolerance = .05;
+  CollisionBitmap inflated({-1,-1,-1}, {1,1,1}, .05);
+  CollisionBitmap occupied({-1,-1,-1}, {1,1,1}, .05);
+  CollisionBitmap free({-1,-1,-1}, {1,1,1}, .05);
+  LocalPlanRequest request;
+  request.robot.pose.position = {.025,.025,.025};
+  const auto check = [&]() {
+    auto &map = request.environment.collision;
+    map = inflated.view();
+    const auto o = occupied.view(), f = free.view();
+    map.measuredOccupiedStorage = std::make_shared<const std::vector<std::uint8_t>>(
+        o.inflatedBits, o.inflatedBits + o.inflatedBytes);
+    map.knownFreeStorage = std::make_shared<const std::vector<std::uint8_t>>(
+        f.inflatedBits, f.inflatedBits + f.inflatedBytes);
+    return nav_kernel::local::scan::Grid(params, request);
+  };
+  EXPECT_EQ(check().reason(), "robot_ground_support_unobserved");
+  EXPECT_NE(check().inflatedOccupancy(request.robot.pose.position, 0), 0);
+  occupied.occupy({.025,.025,-.325});
+  EXPECT_EQ(check().reason(), "robot_ground_support_clearance_unobserved");
+  free.occupy({.025,.025,-.275});
+  EXPECT_EQ(check().reason(), "robot_ground_support_patch_incomplete");
+  occupied.occupy({.025,.025,-.125});
+  free.occupy({.025,.025,-.075});
+  EXPECT_EQ(check().reason(), "robot_ground_support_height_mismatch");
+  EXPECT_NE(check().inflatedOccupancy(request.robot.pose.position, 0), 0);
+}
+
+TEST(ScanGroundSupport, InterpolatesOnlyBracketedSamplingHolesWithObservedClearance) {
+  LocalPlannerParams params;
+  params.scan.voxelResolution = .05;
+  params.scan.supportHeight = .35;
+  params.scan.supportHeightTolerance = .05;
+  params.scan.maxSupportSlope = .6;
+  for (int scenario = 0; scenario < 6; ++scenario) {
+    SCOPED_TRACE(scenario);
+    CollisionBitmap inflated({-1,-1,-1}, {1,1,1}, .05);
+    CollisionBitmap occupied({-1,-1,-1}, {1,1,1}, .05);
+    CollisionBitmap free({-1,-1,-1}, {1,1,1}, .05);
+    for (int x = -20; x < 20; ++x)
+      for (int y = -20; y < 20; ++y) {
+        const bool center = x == 0 && y == 0;
+        const bool hole = center || (scenario == 3 && std::abs(x) <= 2 && std::abs(y) <= 2);
+        if (!hole) occupied.occupy({(x+.5)*.05, (y+.5)*.05, -.325});
+        if (!(scenario == 5 && center)) free.occupy({(x+.5)*.05, (y+.5)*.05, -.275});
+      }
+    if (scenario == 1) {
+      free.occupy({.025,.025,-.325});
+      free.occupy({.025,.025,-.375}); // A ray penetrated below the fitted surface cell.
+    }
+    if (scenario == 2) occupied.occupy({.025,.025,-.625}); // A lower floor.
+    if (scenario == 4) occupied.occupy({.025,.025,-.125}); // A nearer slab.
+    LocalPlanRequest request;
+    request.robot.pose.position = {.025,.025,.025};
+    auto &map = request.environment.collision;
+    map = inflated.view();
+    const auto o = occupied.view(), f = free.view();
+    map.measuredOccupiedStorage = std::make_shared<const std::vector<std::uint8_t>>(
+        o.inflatedBits, o.inflatedBits + o.inflatedBytes);
+    map.knownFreeStorage = std::make_shared<const std::vector<std::uint8_t>>(
+        f.inflatedBits, f.inflatedBits + f.inflatedBytes);
+    const nav_kernel::local::scan::Grid grid(params, request);
+    EXPECT_EQ(grid.valid(), scenario == 0) << grid.reason();
+    if (scenario == 0) {
+      EXPECT_EQ(grid.segmentInflatedOccupancy({-.15,.025,.025}, 0, {.15,.025,.025}, 0), 0);
+    } else {
+      EXPECT_NE(grid.inflatedOccupancy(request.robot.pose.position, 0), 0);
+    }
+  }
+}
+
+TEST(ScanGroundSupport, StepLimitUsesMeasuredSurfaceHeights) {
+  LocalPlannerParams params;
+  params.scan.voxelResolution = .05;
+  params.scan.supportHeight = .35;
+  params.scan.supportHeightTolerance = .08;
+  params.scan.maxSupportSlope = .6;
+  params.scan.cylinderRadius = .25;
+  params.scan.maxStepHeight = .025;
+  CollisionBitmap inflated({-1,-1,-1}, {1,1,1}, .05);
+  CollisionBitmap occupied({-1,-1,-1}, {1,1,1}, .05);
+  CollisionBitmap free({-1,-1,-1}, {1,1,1}, .05);
+  for (int x = -20; x < 20; ++x)
+    for (int y = -20; y < 20; ++y) {
+      const double height = x < 0 ? -.325 : -.275;
+      occupied.occupy({(x+.5)*.05, (y+.5)*.05, height});
+      free.occupy({(x+.5)*.05, (y+.5)*.05, height+.05});
+    }
+  LocalPlanRequest request;
+  request.robot.pose.position = {-.15, 0, .025};
+  auto &map = request.environment.collision;
+  map = inflated.view();
+  const auto o = occupied.view(), f = free.view();
+  map.measuredOccupiedStorage = std::make_shared<const std::vector<std::uint8_t>>(
+      o.inflatedBits, o.inflatedBits + o.inflatedBytes);
+  map.knownFreeStorage = std::make_shared<const std::vector<std::uint8_t>>(
+      f.inflatedBits, f.inflatedBits + f.inflatedBytes);
+  const nav_kernel::local::scan::Grid lowStepLimit(params, request);
+  EXPECT_FALSE(lowStepLimit.valid());
+  EXPECT_EQ(lowStepLimit.reason(), "robot_ground_support_unconfirmed");
+  params.scan.maxStepHeight = .1;
+  const nav_kernel::local::scan::Grid permitted(params, request);
+  ASSERT_TRUE(permitted.valid()) << permitted.reason();
+  EXPECT_EQ(permitted.inflatedOccupancy(request.robot.pose.position, 0), 0);
+}
+
+TEST(ScanPredictions, ContinuousCrossingBlocksEmptyMeasuredGridAndBraking) {
+  auto params = LocalPlannerParams{};
+  params.backend = LocalPlannerBackend::Scan;
+  params.scan.voxelResolution = .1;
+  params.scan.cylinderOffset = 0.0;
+  params.vehicleWidth = .2;
+  params.scan.cylinderRadius = .1;
+  params.footprintPadding = 0.0;
+  CollisionBitmap bitmap({-3,-3,-1}, {3,3,2}, .1);
+  const nav_kernel::PredictedObstacle crossing{{.4,-1,.4},{.4,1,.4},.1,.1,.8};
+  LocalPlanRequest request;
+  request.clock.timestampS = 1;
+  request.environment.collision = bitmap.view(1, 1);
+  request.environment.predictions = {&crossing, 1, 1.35, 1.0};
+  nav_kernel::local::scan::Grid grid(params, request);
+  ASSERT_TRUE(grid.valid());
+  EXPECT_EQ(grid.inflatedOccupancy({.4,0,.4},0), 1);
+  EXPECT_EQ(grid.segmentInflatedOccupancy({0,0,.4},0,{1,0,.4},0), 1);
+  EXPECT_EQ(grid.brakingOccupancy({{0,0,.4},0},{.5,0,0},.35,.5,1), 1);
+  EXPECT_LT(grid.brakingScale({{0,0,.4},0},{.5,0,0},.35,.5,1), 1);
+  EXPECT_EQ(grid.segmentInflatedOccupancy({0,-2,.4},0,{1,-2,.4},0), 0);
+  EXPECT_EQ(bitmap.view(1,1).occupiedCount(), 0U);
+  request.clock.timestampS = 1.36;
+  nav_kernel::local::scan::Grid expired(params, request);
+  EXPECT_EQ(expired.predictionCount(), 0U);
+  EXPECT_EQ(expired.brakingScale({{0,0,.4},0},{.5,0,0},.35,.5,1), 1);
+  bitmap.occupy({.4,0,.4});
+  request.environment.collision = bitmap.view(1.36,2);
+  nav_kernel::local::scan::Grid measured(params, request);
+  EXPECT_EQ(measured.inflatedOccupancy({.4,0,.4},0),1);
+}
+
+TEST(ScanPredictions, DoesNotTreatOverheadPredictionAsGroundObstacle) {
+  LocalPlannerParams params;
+  params.scan.voxelResolution = .1;
+  params.scan.cylinderOffset = 0;
+  CollisionBitmap bitmap({-3,-3,-1}, {3,3,3}, .1);
+  const nav_kernel::PredictedObstacle overhead{{.4,-1,2},{.4,1,2},.2,1.8,2.2};
+  LocalPlanRequest request;
+  request.clock.timestampS = 1;
+  request.environment.collision = bitmap.view(1,1);
+  request.environment.predictions = {&overhead,1,2};
+  const nav_kernel::local::scan::Grid grid(params,request);
+  EXPECT_EQ(grid.inflatedOccupancy({.4,0,.4},0),0);
+}
+
+TEST(ScanPredictions, FutureSweepAtStartAllowsTimedDepartureButRejectsSimultaneousContact) {
+  LocalPlannerParams params;
+  params.scan.voxelResolution = .1;
+  params.scan.cylinderOffset = 0;
+  params.scan.cylinderRadius = .1;
+  CollisionBitmap bitmap({-3,-3,-1}, {3,3,2}, .1);
+  const nav_kernel::PredictedObstacle crossing{{0,-1,.4},{0,1,.4},.1,.1,.8};
+  LocalPlanRequest request;
+  request.robot.pose = {{0,0,.4},0};
+  request.clock.timestampS = 1;
+  request.environment.collision = bitmap.view(1,1);
+  request.environment.predictions = {&crossing,1,2,1};
+  const nav_kernel::local::scan::Grid grid(params,request);
+  EXPECT_EQ(grid.inflatedOccupancy({0,0,.4},0),1);
+  EXPECT_EQ(grid.trajectoryOccupancy({0,0,.4},{.8,0,0},{.8,0,.4},{.8,0,0},0,1),0);
+  EXPECT_EQ(grid.trajectoryOccupancy({0,0,.4},{},{0,0,.4},{},.4,.6),1);
+  EXPECT_EQ(grid.trajectoryOccupancy({0,-2,.4},{0,2,0},{0,0,.4},{0,2,0},0,1),0);
+  // Past the prediction horizon, retain its terminal obstacle rather than erase it.
+  EXPECT_EQ(grid.trajectoryOccupancy({0,1,.4},{},{0,1,.4},{},1.2,1.3),1);
+  bitmap.occupy({0,0,.4});
+  request.environment.collision = bitmap.view(1,2);
+  const nav_kernel::local::scan::Grid measured(params,request);
+  EXPECT_EQ(measured.trajectoryOccupancy({0,0,.4},{.8,0,0},{.8,0,.4},{.8,0,0},0,1),1);
+}
+
+TEST(ScanPredictions, TimedChecksAccountForObservationAgeAndBrakingTime) {
+  LocalPlannerParams params;
+  params.scan.voxelResolution = .1;
+  params.scan.cylinderOffset = 0;
+  params.scan.cylinderRadius = .1;
+  CollisionBitmap bitmap({-3,-3,-1}, {3,3,2}, .1);
+  const nav_kernel::PredictedObstacle crossing{{0,-1,.4},{0,1,.4},.1,.1,.8};
+  LocalPlanRequest request;
+  request.robot.pose = {{0,0,.4},0};
+  request.clock.timestampS = 1;
+  request.environment.collision = bitmap.view(1,1);
+  request.environment.predictions = {&crossing,1,2,1};
+  const nav_kernel::local::scan::Grid fresh(params,request);
+  EXPECT_EQ(fresh.brakingOccupancy(request.robot.pose,{},.1,.5,1),0);
+  EXPECT_EQ(fresh.brakingOccupancy(request.robot.pose,{},.6,.5,1),1);
+  request.clock.timestampS = 1.5;
+  const nav_kernel::local::scan::Grid aged(params,request);
+  EXPECT_EQ(aged.trajectoryOccupancy({0,0,.4},{},{0,0,.4},{},0,.01),1);
+  EXPECT_EQ(aged.brakingOccupancy(request.robot.pose,{},.1,.5,1),1);
+}
+
+TEST(ScanPredictions, QuietTrajectoryUsesMeasuredHeadingWithoutClearingRealObstacles) {
+  LocalPlannerParams params;
+  params.scan.voxelResolution = .05;
+  params.scan.cylinderOffset = .25;
+  CollisionBitmap bitmap({-3,-3,-1}, {3,3,2}, .05);
+  bitmap.occupy({.25,0,.4});
+  LocalPlanRequest request;
+  request.robot.pose = {{0,0,.4},std::acos(-1.0)*.5};
+  request.clock.timestampS = 1;
+  request.environment.collision = bitmap.view(1,1);
+  const nav_kernel::local::scan::Grid grid(params,request);
+  const Vec3 noise{.00025,0,0};
+  EXPECT_EQ(grid.segmentInflatedOccupancy({0,0,.4},0,{0,0,.4},0),1);
+  EXPECT_EQ(grid.trajectoryOccupancy({0,0,.4},noise,{0,0,.4},noise,0,.01),0);
+  bitmap.occupy({0,.25,.4});
+  request.environment.collision = bitmap.view(1,2);
+  const nav_kernel::local::scan::Grid blocked(params,request);
+  EXPECT_EQ(blocked.trajectoryOccupancy({0,0,.4},noise,{0,0,.4},noise,0,.01),1);
+}
+
+TEST(ScanPredictions, BoundaryDepartureCannotIgnorePredictionAtStart) {
+  LocalPlannerParams params;
+  params.scan.voxelResolution = .1;
+  params.scan.cylinderOffset = 0;
+  params.vehicleWidth = .1;
+  params.scan.cylinderRadius = .05;
+  params.footprintPadding = 0;
+  CollisionBitmap bitmap({-3,-3,-1}, {3,3,2}, .1);
+  const nav_kernel::PredictedObstacle crossing{{0,-1,.4},{0,1,.4},.05,.1,.8};
+  LocalPlanRequest request;
+  request.clock.timestampS = 1;
+  request.environment.collision = bitmap.view(1,1);
+  request.environment.predictions = {&crossing,1,2};
+  const nav_kernel::local::scan::Grid grid(params,request);
+  EXPECT_FALSE(grid.boundaryDepartureFree({{0,0,.4},0},{.35,0,.4}));
+}
 
 LocalPlannerParams scanParams() {
   LocalPlannerParams params;
@@ -62,7 +357,81 @@ struct RequestFixture {
 
 }  // namespace
 
+TEST(ScanPredictions, WorkerConsumesPredictionUpdatesWithoutChangingMeasuredMap) {
+  RequestFixture fixture({{0, 0, .5}, {2, 0, .5}});
+  const nav_kernel::PredictedObstacle crossing{{2,-1,.5},{2,1,.5},.15,.1,1.0};
+  fixture.request.environment.predictions = {&crossing,1,100.0};
+  nav_kernel::local::scan::Task task(scanParams());
+  ASSERT_TRUE(task.configure());
+  nav_kernel::local::scan::Update update;
+  for (int tick = 0; tick < 400; ++tick) {
+    fixture.request.clock.timestampS += .005;
+    update = task.update(fixture.request);
+    if (update.debug.predictedObstacleCount == 1 && !update.plan.ready()) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  ASSERT_EQ(update.debug.predictedObstacleCount, 1U);
+  EXPECT_FALSE(update.plan.ready());
+  fixture.request.environment.predictions = {nullptr,0,100.0};
+  for (int tick = 0; tick < 400; ++tick) {
+    fixture.request.clock.timestampS += .005;
+    update = task.update(fixture.request);
+    if (update.plan.ready() && update.debug.predictedObstacleCount == 0) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  EXPECT_TRUE(update.plan.ready()) << update.debug.searchReason;
+  EXPECT_EQ(update.debug.predictedObstacleCount, 0U);
+  EXPECT_EQ(fixture.bitmap.view(1,1).occupiedCount(), 0U);
+}
+
+TEST(ScanPredictions, PlansDetourAroundFutureVolumeOnEmptyMeasuredMap) {
+  RequestFixture fixture({{0, 0, .5}, {3, 0, .5}});
+  const nav_kernel::PredictedObstacle crossing{{1.2,-.2,.5},{1.2,.2,.5},.1,.1,1.0};
+  fixture.request.environment.predictions = {&crossing,1,100.0};
+  auto params = scanParams();
+  params.vehicleWidth = .4;
+  params.scan.cylinderRadius = .3;
+  nav_kernel::local::scan::Backend backend(params);
+  LocalPlan plan;
+  for (int tick = 0; tick < 100 && !plan.ready(); ++tick) {
+    fixture.request.clock.timestampS += .01;
+    plan = backend.tick(fixture.request);
+  }
+  ASSERT_TRUE(plan.ready()) << backend.debugSnapshot().searchReason;
+  const nav_kernel::SplineView spline(std::get<SplineTarget>(plan.target()));
+  const nav_kernel::local::scan::Grid grid(params,fixture.request);
+  auto previous = spline.position(0);
+  double lateral = 0;
+  for (double t = .01; t <= spline.duration(); t += .01) {
+    const auto current = spline.position(t);
+    EXPECT_FALSE(grid.predictionIntersects(previous,0,current,0));
+    lateral = std::max(lateral,std::abs(current.y));
+    previous = current;
+  }
+  EXPECT_GT(lateral,.4);
+  EXPECT_GT(spline.position(spline.duration()).x,1.5);
+}
+
 namespace {
+
+TEST(ScanGroundSupport, DiagonalReturnsConstrainSurfaceButALineDoesNot) {
+  nav_kernel::support::SurfaceQuery query{.05,.35,.05,.6,-20,20};
+  for (int scenario=0;scenario<3;++scenario) {
+    const auto occupied=[&](int x,int y,int z) {
+      if (z!=-7) return false;
+      if (x==0 && y==0) return scenario!=2;
+      if (std::abs(x)!=1 || std::abs(y)!=1) return false;
+      return scenario!=1 || x==y;
+    };
+    const auto free=[](int,int,int z) { return z==-6; };
+    double height=0;
+    const char* reason=nullptr;
+    const bool supported=nav_kernel::support::surfacePatch(
+        query,.025,.025,.025,occupied,free,height,&reason);
+    EXPECT_EQ(supported,scenario!=1) << scenario;
+    if (scenario==1) EXPECT_STREQ(reason,"robot_ground_support_patch_incomplete");
+  }
+}
 
 struct ScanAttemptFixture {
   RequestFixture request{{{0.0, 0.0, 0.5}, {2.0, 0.0, 0.5}}};

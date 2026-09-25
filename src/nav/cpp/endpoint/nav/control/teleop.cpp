@@ -80,6 +80,15 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
 
   result.handled = true;
   const double tick_now = actions_.steady_now_s();
+  CommandSafetyConfig sample_safety = input.safety;
+  double max_age_s = input.config.teleop_cmd_max_age_s;
+  if (input.sample_freshness_budget_s) {
+    const double budget_s = *input.sample_freshness_budget_s;
+    max_age_s = max_age_s > 0.0 ? std::min(max_age_s, budget_s) : budget_s;
+    sample_safety.cmd_max_age_s = sample_safety.cmd_max_age_s > 0.0
+                                    ? std::min(sample_safety.cmd_max_age_s, budget_s)
+                                    : budget_s;
+  }
   bool velocity_stopped = false;
   bool linear_motion_paused = false;
   bool motion_replan_requested = false;
@@ -151,7 +160,7 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
       return publish_age_s;
     };
     const auto precheck =
-        arbitrateTeleopCommand(input.safety, *input.active_request, age_s);
+        arbitrateTeleopCommand(sample_safety, *input.active_request, age_s);
     auto decision = precheck;
     bool hard_zero_requested = isZeroCommand(precheck.cmd);
     // Pure rotation needs final swept-footprint safety, not a translation path.
@@ -177,7 +186,7 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
       const bool rotation_ready = isVerifiedRotation(assisted);
       if (path_ready || rotation_ready) {
         hard_zero_requested = isZeroCommand(assisted.cmd_vel);
-        CommandSafetyConfig path_safety = input.safety;
+        CommandSafetyConfig path_safety = sample_safety;
         path_safety.min_motion_speed_mps = 0.0;
         path_safety.verified_recovery_translation =
             assisted.recovery_verified && assisted.recovery_action ==
@@ -187,7 +196,7 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
             path_safety,
             assisted.cmd_vel,
             sample_publish_age(),
-            input.config.teleop_cmd_max_age_s,
+            max_age_s,
             precheck.limited,
             input.config.publish_cmd_vel,
             tick_now,
@@ -262,10 +271,10 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
       } else {
         const auto final = final_control_.finalize(FinalInput{
             FinalMode::kTeleopCommand,
-            input.safety,
+            sample_safety,
             precheck.cmd,
             sample_publish_age(),
-            input.config.teleop_cmd_max_age_s,
+            max_age_s,
             precheck.limited,
             input.config.publish_cmd_vel,
             tick_now,
@@ -285,8 +294,7 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
     }
 
     (void)sample_publish_age();
-    if (input.config.teleop_cmd_max_age_s > 0.0 &&
-        publish_age_s > input.config.teleop_cmd_max_age_s) {
+    if (max_age_s > 0.0 && publish_age_s > max_age_s) {
       decision = {};
       decision.should_publish = true;
       decision.stopped = true;
@@ -319,8 +327,7 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
 
     result.teleop.seen = true;
     result.teleop.manual_mode = input.manual_mode;
-    result.teleop.fresh = input.config.teleop_cmd_max_age_s <= 0.0 ||
-                          publish_age_s <= input.config.teleop_cmd_max_age_s;
+    result.teleop.fresh = max_age_s <= 0.0 || publish_age_s <= max_age_s;
     result.teleop.age_s = publish_age_s;
     result.teleop.request = *input.active_request;
     result.teleop.output = decision.cmd;

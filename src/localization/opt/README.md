@@ -1,16 +1,28 @@
 # Map Optimization
 
 `src/localization/opt` is the product-facing C++ entry surface for map
-optimization.
+optimization. Online mapping now uses the pinned native LIO-SAM backend in
+[`../sam`](../sam/upstream/UPSTREAM.md). Field release `.71` uses this backend; ARM integration checks pass, while
+new field loop-closure accuracy remains to be measured.
+
+The 2026-09-25 candidate splits the online target into `online/CMakeLists.txt`.
+`slamd` links `lingtu_online_mapping` without Cargo or the legacy Rust optimizer.
+The separate `opt` build still owns `lt_pgo` and its existing offline contracts.
+`poses.hpp` and `cloud_io.cpp` hold solver-independent saved-data types/readers.
+New loop verification, evidence and performance changes are documented in
+[`../sam/upstream/UPSTREAM.md`](../sam/upstream/UPSTREAM.md); they are not a claim
+that this candidate has been deployed.
 
 Short names are intentional:
 
 | File | Role |
 | --- | --- |
 | `map.*` | Resolve and check saved-map artifacts: `map.pcd`, `poses.txt`, `patches/*.pcd`. |
-| `graph.*` | Shared non-ROS pose graph, PCD patch, and bundle writer used by PGO. |
+| `graph.*` | Legacy offline pose graph and bundle writer used by PGO. |
+| `poses.hpp`, `cloud_io.cpp` | Solver-independent pose types and saved pose/PCD readers. |
+| `gravity_graph.*` | GTSAM batch LM over XYZ and yaw with the original LIO gravity held fixed. |
 | `online_graph.*` | Single-worker, bounded in-memory optimization of measured graph snapshots. |
-| `online_mapping.*` | Resident keyframe registration, verified closure, optimization and whole-map reconstruction. |
+| `online_mapping.*` | Bounded native SAM worker, loop evidence and map preview reconstruction. |
 | `pose_math.hpp` | Shared, explicit `T_parent_child` pose algebra used by loop verification. |
 | `cloud.hpp` | Portable PCD input contract shared by map optimization and loop verification. |
 | `loop_constraints.*` | Deterministic saved-map loop candidate, 4DoF verification, and audit report. |
@@ -25,51 +37,57 @@ Runtime rule:
 - `lt_pgo` is a short-lived native SaveMap helper, not a resident service;
 - Fast-LIO2 freezes `map.pcd`, `poses.txt`, body-local `patches/*.pcd`, and
   `patch_bundle.manifest`; it does not publish `pose_graph.constraints`;
-- `lt_pgo --auto-constraints` measures every adjacent single-patch edge, runs
-  loop verification once, and optimizes only when the complete N-1 chain and at
-  least one verified loop are available;
+- `lt_pgo --auto-constraints` measures every adjacent single-patch edge, retains
+  accepted edges after a rejection, checks up to three recent disconnected
+  neighbors for a measured bridge, and runs loop verification once. Optimization
+  requires all saved nodes to be connected by measured edges and at least one
+  verified loop; a loop may bridge a missing adjacent edge;
 - `lt_loop_verify` reports verified constraints but never calls PGO
   and never rewrites `map.pcd`, `poses.txt`, or patches;
-- a rejected adjacent registration or absence of verified loops is a structured
+- a disconnected measured graph or absence of verified loops is a structured
   successful skip: no optimization output or partial constraint file is left;
+- `performed` distinguishes an optimized bundle from that successful skip.
+  `sequential_chain_incomplete` means the graph remains disconnected after loop
+  verification, not that the first adjacent rejection stopped the assembly;
 - `pose_graph.constraints` is an atomically written, strictly re-read private
   optimizer input; automatic mode deletes it before publishing any output;
 - Gateway/Web do not implement optimization logic or expose an optimizer switch.
 
 ## Online backend migration
 
-Current evidence: [MIGRATION.md](MIGRATION.md). Next-machine setup and ordered
-acceptance work: [NEXT_STEPS.md](NEXT_STEPS.md).
+`OnlineMapping` retains the bounded queue, epoch reset, background-worker and
+snapshot contracts. Algorithm work now calls the native LIO-SAM extraction:
+continuous raw LIO Pose3 between factors, GTSAM iSAM2, temporal/spatial loop
+candidates, PCL ICP against a historical submap, and updates of all key poses.
+It no longer runs LingTu's four-DoF adjacent registration or descriptors online.
+Sparse clouds do not disconnect a valid continuous odometry chain. A backend
+exception stops that worker generation and prevents a corrected save.
 
-`optimize_graph` separates the existing native solver and its convergence gate
-from saved-map I/O. `optimize_map` uses the same function before rebuilding and
-publishing a saved bundle. No ROS or GTSAM dependency is introduced.
+Raw LIO deltas are measurements from the frontend; their fixed noise parameters
+are explicitly inherited upstream defaults, not statistically calibrated
+relative covariances. The candidate uses the upstream six-DoF model rather than
+combining it with the previous custom fixed-gravity factors. Preserve and
+validate this distinction in replay and field evidence.
 
-`OnlinePoseGraph` accepts keyframes in odometry coordinates, independently
-measured adjacent factors, and geometrically verified loop factors. It does not
-infer measurement weights from pose differences. `start_optimization` copies a
-graph prefix to one background worker; `poll` is nonblocking. Further keyframes
-can be accepted during optimization. Results identify their source epoch,
-revision and exact keyframe prefix; they provide corrected poses and
-`T_map_odom` at that prefix's last keyframe without mutating input odometry.
-Reset discards old-generation results without joining the worker on the caller
-thread. Destruction does join and therefore belongs to service shutdown.
+Snapshots retain the existing continuous-odometry publication frame: optimized
+history is rigidly expressed at the latest odometry anchor; live odometry is not
+mutated. Preview geometry is invalidated when iSAM2 revises old poses, including
+relinearization without a newly accepted loop. Saving captures the same poses
+and full-resolution body patches. It preserves `poses.raw.txt`,
+`trajectory.raw.txt`, and `keyframes.timestamps.txt` for independent replay.
+A complete `lio_sam_isam2` snapshot is already optimized: mapd preserves its report
+and does not run the legacy save-time PGO on it. Explicit offline constraints
+conflicting with that snapshot are rejected instead of mixing two models.
 
-The solver uses sparse batch LM for larger systems, **not incremental iSAM2**.
-The standalone graph-input utility retains its 256-frame validation budget.
-The resident `OnlineMapping` worker directly uses the shared solver after
-measuring its own factors; it retains up to 3000 keyframes and reports queue
-or capacity loss explicitly. Sparse factorization failure never allocates a
-large dense fallback.
+The generic `OnlinePoseGraph`, explicit offline `lt_pgo` and old-map
+`--auto-constraints` paths still use the previous graph utilities. They are not
+part of the new live SLAM backend. GTSAM, PCL common/filters/registration and their
+runtime libraries are required; no ROS node or DDS owner is added. The build
+still links the Rust kernel for those remaining offline utilities.
 
-Fast-LIO's mapping mode now feeds this worker. Completed whole-map snapshots
-are published on native `/slam/cumulative_map_cloud` and through the Host
-snapshot path for the Web whole-map view. Corrections rebuild historical map
-geometry without mutating current odometry or navigation arbitration.
-Corrected saving uses full-resolution patches and matching corrected poses.
-See [migration and acceptance](MIGRATION.md) for coordinate semantics, bounds,
-verification evidence and the remaining field validation. Local tests do not
-establish ARM performance or field navigation readiness.
+`lt_mapping_replay` requires original LIO poses and recorded keyframe timestamps.
+Previously optimized `poses.txt` is not a fallback. Old 903room_v2 lacks those
+inputs and cannot establish end-to-end equivalence for this new algorithm.
 
 Native commands:
 

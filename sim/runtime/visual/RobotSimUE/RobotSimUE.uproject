@@ -6,6 +6,7 @@
   "Modules": [{"Name": "RobotSimUE", "Type": "Runtime", "LoadingPhase": "Default"}],
   "Plugins": [
     {"Name": "LingTuSim", "Enabled": true},
+    {"Name": "LCC4Unreal", "Enabled": true, "SupportedTargetPlatforms": ["Win64"]},
     {"Name": "PythonScriptPlugin", "Enabled": true},
     {"Name": "EditorScriptingUtilities", "Enabled": true},
     {"Name": "ModelContextProtocol", "Enabled": true},

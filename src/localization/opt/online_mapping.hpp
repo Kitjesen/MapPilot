@@ -1,6 +1,9 @@
 #pragma once
 
-#include "localization/opt/loop_constraints.hpp"
+#include "localization/opt/poses.hpp"
+#include "localization/opt/map.hpp"
+#include "localization/opt/cloud.hpp"
+#include "localization/sam/backend.hpp"
 
 #include <deque>
 #include <future>
@@ -18,9 +21,8 @@ struct OnlineMappingOptions {
   std::size_t max_keyframes = 3000;
   std::size_t max_pending = 4;
   std::size_t preview_points = 200000;
-  std::size_t max_iterations = 60;
   double preview_voxel_m = 0.12;
-  LoopConstraintOptions verification;
+  sam::Config sam;
 };
 
 struct OnlineMappingSnapshot {
@@ -30,10 +32,16 @@ struct OnlineMappingSnapshot {
   std::string code = "waiting_for_keyframes";
   std::size_t registered_keyframes = 0;
   std::size_t registration_rejections = 0;
+  std::size_t sequential_constraints = 0;
   std::size_t loop_constraints = 0;
   std::size_t optimizations = 0;
   std::size_t optimization_failures = 0;
-  lt_pose_graph_opt_report last_optimization{};
+  sam::Config sam_config;
+  std::vector<sam::LoopResult> loop_records;
+  double worker_ms = 0;
+  double preview_ms = 0;
+  std::size_t cloud_bytes = 0;
+  std::size_t pending_high_water = 0;
   // Both outputs are in the continuous odometry frame at the newest anchor.
   // Historical geometry is corrected, while current odometry never jumps.
   std::vector<Keyframe> keyframes;
@@ -48,9 +56,16 @@ class OnlineMapping {
   explicit OnlineMapping(OnlineMappingOptions options = {});
   ~OnlineMapping();
   void reset(std::uint64_t source_epoch);
+  void configureSam(const sam::Config& config);
+  const sam::Config& samConfig() const { return options_.sam; }
   Result enqueue(MappingFrame frame);
   std::shared_ptr<const OnlineMappingSnapshot> poll();
   bool busy() const { return job_.valid() || !pending_.empty(); }
+  bool canEnqueue() const {
+    return queued_frames_ < options_.max_keyframes &&
+           pending_.size() < options_.max_pending;
+  }
+  bool capacityReached() const { return queued_frames_ >= options_.max_keyframes; }
   std::size_t dropped_frames() const { return dropped_frames_; }
 
  private:
@@ -65,6 +80,7 @@ class OnlineMapping {
   std::uint64_t generation_ = 0;
   std::size_t queued_frames_ = 0;
   std::size_t dropped_frames_ = 0;
+  std::size_t pending_high_water_ = 0;
   std::deque<MappingFrame> pending_;
   std::shared_ptr<State> state_;
   std::future<Completed> job_;

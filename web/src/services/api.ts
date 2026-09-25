@@ -1,5 +1,4 @@
 import { dashboardFetch } from './observationMode.ts'
-import type { PlanningMap } from './planningMap.ts'
 // Centralized API service layer for LingTu web dashboard
 // All fetch() calls in one place.
 
@@ -198,12 +197,12 @@ function mapPointsPath(name: string): string {
   const template =
     clientLinks.saved_map_points ??
     clientLinks.map_points ??
-    '/api/v1/maps/{name}/points?max_points=80000'
+    '/api/v1/maps/{name}/points?max_points=30000'
   const withName = template.includes('{name}')
     ? template.replace('{name}', encoded)
-    : `/api/v1/maps/${encoded}/points?max_points=80000`
+    : `/api/v1/maps/${encoded}/points?max_points=30000`
   const url = new URL(withName, window.location.origin)
-  url.searchParams.set('max_points', '80000')
+  url.searchParams.set('max_points', '30000')
   return `${url.pathname}${url.search}`
 }
 
@@ -273,7 +272,7 @@ function mapNamedPath(linkName: keyof ClientLinks, fallback: string, name: strin
     : fallback.replace('{name}', encoded)
 }
 
-function makeRequestId(prefix: string): string {
+export function makeRequestId(prefix: string): string {
   if (globalThis.crypto?.randomUUID) {
     return `${prefix}-${globalThis.crypto.randomUUID()}`
   }
@@ -423,10 +422,6 @@ export async function fetchPath(): Promise<PathResponse> {
 
 export async function fetchNavigationStatus(): Promise<NavigationStatusResponse> {
   return fetchJson<NavigationStatusResponse>(apiPath('navigation_status', '/api/v1/navigation/status'))
-}
-
-export async function fetchPlanningMap(signal?: AbortSignal): Promise<PlanningMap> {
-  return readJsonResponse<PlanningMap>(await dashboardFetch('/api/v1/navigation/planning_map', { signal }))
 }
 
 export async function fetchNavigationTaskStatus(
@@ -934,6 +929,8 @@ async function readLocalizationOperation(res: Response): Promise<LocalizationOpe
 }
 
 export interface MapSaveOperationStatus {
+  created_at_ns?: number | null
+  completed_at_ns?: number | null
   operation_id?: string | null
   map_id?: string | null
   name?: string | null
@@ -942,12 +939,27 @@ export interface MapSaveOperationStatus {
   progress?: number | null
   reason_code?: string | null
   message?: string | null
+  processing?: {
+    optimization?: MapSaveProcessingStep
+    cleanup?: MapSaveProcessingStep
+  } | null
 }
+
+export interface MapSaveProcessingStep {
+  performed?: boolean
+  success?: boolean
+  reason_code?: string
+}
+
+export type MapSaveWaitResult =
+  | { state: 'saved'; result: SaveMapResult }
+  | { state: 'pending'; result: SaveMapResult & { operation_id: string }; reason: 'timeout' | 'status_unavailable' }
 
 export interface WaitForMapSaveOptions {
   timeoutMs?: number
   pollIntervalMs?: number
   signal?: AbortSignal
+  onProgress?: (result: SaveMapResult) => void
 }
 
 function mapSaveOperationPath(operationId: string): string {
@@ -993,11 +1005,15 @@ function mapSaveFailure(response: SaveMapResult, state: string): Error {
 function waitDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.reject(new DOMException('Map save wait aborted', 'AbortError'))
   return new Promise((resolve, reject) => {
-    const timer = globalThis.setTimeout(resolve, delayMs)
-    signal?.addEventListener('abort', () => {
+    const onAbort = () => {
       globalThis.clearTimeout(timer)
       reject(new DOMException('Map save wait aborted', 'AbortError'))
-    }, { once: true })
+    }
+    const timer = globalThis.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, delayMs)
+    signal?.addEventListener('abort', onAbort, { once: true })
   })
 }
 
@@ -1010,39 +1026,53 @@ export async function saveMap(name: string): Promise<SaveMapResult> {
   return readMapLifecycle(res) as Promise<SaveMapResult>
 }
 
-export async function fetchMapSaveOperation(operationId: string): Promise<SaveMapResult> {
-  return fetchJson<SaveMapResult>(mapSaveOperationPath(operationId))
+export async function fetchMapSaveOperation(operationId: string, signal?: AbortSignal): Promise<SaveMapResult> {
+  return readJsonResponse<SaveMapResult>(await dashboardFetch(mapSaveOperationPath(operationId), { signal }))
 }
 
 export async function waitForMapSaveOperation(
   admission: SaveMapResult,
   options: WaitForMapSaveOptions = {},
-): Promise<SaveMapResult> {
-  if (admission.success === true) return admission
+): Promise<MapSaveWaitResult> {
+  const initialState = mapSaveState(admission)
+  if (['FAILED', 'CANCELLED', 'CANCELED'].includes(initialState)) throw mapSaveFailure(admission, initialState)
+  if (initialState === 'SUCCEEDED') return { state: 'saved', result: { ...admission, success: true } }
   const operationId = mapSaveOperationId(admission)
+  if (!operationId && admission.success === true) return { state: 'saved', result: admission }
   if (!operationId) {
     throw new Error('Map save was accepted without an operation_id')
   }
-  const timeoutMs = Math.max(1, options.timeoutMs ?? 180_000)
+  const timeoutMs = Math.max(1, options.timeoutMs ?? 360_000)
   const pollIntervalMs = Math.max(0, options.pollIntervalMs ?? 750)
   const deadline = Date.now() + timeoutMs
   let last = admission
+  const pending = (reason: 'timeout' | 'status_unavailable'): MapSaveWaitResult => ({
+    state: 'pending', reason,
+    result: { ...last, name: last.name || admission.name, success: null, operation_id: operationId },
+  })
+  options.onProgress?.(last)
 
   while (Date.now() <= deadline) {
     if (options.signal?.aborted) {
       throw new DOMException('Map save wait aborted', 'AbortError')
     }
-    last = await fetchMapSaveOperation(operationId)
+    try {
+      last = { ...admission, ...await fetchMapSaveOperation(operationId, options.signal) }
+    } catch (error) {
+      if (options.signal?.aborted) throw error
+      return pending('status_unavailable')
+    }
+    options.onProgress?.(last)
     const state = mapSaveState(last)
     if (state === 'SUCCEEDED') {
-      return {
+      return { state: 'saved', result: {
         ...admission,
         ...last,
         success: true,
         accepted: true,
         operation_id: operationId,
         name: last.name || admission.name,
-      }
+      } }
     }
     if (state === 'FAILED' || state === 'CANCELLED' || state === 'CANCELED') {
       throw mapSaveFailure(last, state)
@@ -1053,8 +1083,7 @@ export async function waitForMapSaveOperation(
     if (Date.now() >= deadline) break
     await waitDelay(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())), options.signal)
   }
-  const state = mapSaveState(last) || 'UNKNOWN'
-  throw new Error(`Map save operation ${operationId} timed out in state ${state}`)
+  return pending('timeout')
 }
 
 export async function importPcdMap(
@@ -1225,6 +1254,7 @@ export async function relocalize(
   x: number,
   y: number,
   yaw: number,
+  z: number = 0,
 ): Promise<LocalizationOperationResponse> {
   const res = await dashboardFetch(apiPath('localization_relocalize', '/api/v1/localization/relocalizations'), {
     method: 'POST',
@@ -1232,7 +1262,7 @@ export async function relocalize(
     body: JSON.stringify({
       map_name: mapName,
       mode: 'seeded',
-      initial_pose: { x, y, yaw },
+      initial_pose: { x, y, z, yaw },
     }),
   })
   return readLocalizationOperation(res)

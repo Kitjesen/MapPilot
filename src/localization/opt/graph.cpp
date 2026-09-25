@@ -1,6 +1,8 @@
 #include "localization/opt/graph.hpp"
+#include "localization/opt/gravity_graph.hpp"
 #include "localization/opt/cloud.hpp"
 #include "localization/opt/constraints.hpp"
+#include "localization/opt/pose_math.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -16,21 +18,6 @@
 
 namespace lingtu::localization::opt {
 namespace {
-
-struct Field {
-  std::string name;
-  int size = 0;
-  char type = 'F';
-  int count = 1;
-  std::size_t offset = 0;
-};
-
-struct PcdHeader {
-  std::vector<Field> fields;
-  std::size_t points = 0;
-  std::size_t point_step = 0;
-  std::string data;
-};
 
 bool is_finite(double value) {
   return std::isfinite(value);
@@ -94,12 +81,6 @@ Pose from_kernel_pose(const lt_pose_graph_opt_pose3& pose) {
   });
 }
 
-bool parse_double(const std::string& token, double& value) {
-  char* end = nullptr;
-  value = std::strtod(token.c_str(), &end);
-  return end != token.c_str() && end != nullptr && *end == '\0' && is_finite(value);
-}
-
 std::vector<std::string> split_ws(const std::string& line) {
   std::stringstream ss(line);
   std::vector<std::string> tokens;
@@ -108,257 +89,6 @@ std::vector<std::string> split_ws(const std::string& line) {
     tokens.push_back(token);
   }
   return tokens;
-}
-
-bool parse_pose_tokens(
-    const std::vector<std::string>& tokens,
-    Keyframe& out,
-    std::string* error) {
-  auto fail = [&](const std::string& code) {
-    if (error != nullptr) {
-      *error = code;
-    }
-    return false;
-  };
-  if (tokens.size() != 8) {
-    return fail("invalid_pose_row");
-  }
-  out.patch_name = tokens[0];
-  const std::filesystem::path patch_name(out.patch_name);
-  if (patch_name.filename() != patch_name || patch_name.extension() != ".pcd" ||
-      out.patch_name == "." || out.patch_name == "..") {
-    return fail("invalid_patch_name");
-  }
-  constexpr std::size_t offset = 1;
-  double values[7]{};
-  for (std::size_t i = 0; i < 7; ++i) {
-    if (!parse_double(tokens[offset + i], values[i])) {
-      return fail("invalid_pose_row");
-    }
-  }
-  out.pose.x = values[0];
-  out.pose.y = values[1];
-  out.pose.z = values[2];
-  // Canonical LingTu saved-map format: patch_name x y z qw qx qy qz.
-  out.pose.qw = values[3];
-  out.pose.qx = values[4];
-  out.pose.qy = values[5];
-  out.pose.qz = values[6];
-  const double quaternion_norm = std::sqrt(
-      sqr(out.pose.qw) + sqr(out.pose.qx) +
-      sqr(out.pose.qy) + sqr(out.pose.qz));
-  if (!is_finite(quaternion_norm) || quaternion_norm < 0.9 || quaternion_norm > 1.1) {
-    return fail("invalid_pose_quaternion");
-  }
-  out.pose = normalized(out.pose);
-  return true;
-}
-
-std::vector<std::filesystem::path> list_patches(const std::filesystem::path& dir) {
-  std::vector<std::filesystem::path> patches;
-  std::error_code ec;
-  for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
-    if (!ec && entry.is_regular_file(ec) && entry.path().extension() == ".pcd") {
-      patches.push_back(entry.path());
-    }
-  }
-  std::sort(patches.begin(), patches.end());
-  return patches;
-}
-
-std::string lower(std::string value) {
-  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return value;
-}
-
-std::vector<std::string> parse_names_line(const std::vector<std::string>& tokens) {
-  std::vector<std::string> values;
-  values.reserve(tokens.size() > 1 ? tokens.size() - 1 : 0);
-  for (std::size_t i = 1; i < tokens.size(); ++i) {
-    values.push_back(tokens[i]);
-  }
-  return values;
-}
-
-std::vector<int> parse_ints_line(const std::vector<std::string>& tokens, int fallback) {
-  std::vector<int> values;
-  values.reserve(tokens.size() > 1 ? tokens.size() - 1 : 0);
-  for (std::size_t i = 1; i < tokens.size(); ++i) {
-    try {
-      values.push_back(std::stoi(tokens[i]));
-    } catch (...) {
-      values.push_back(fallback);
-    }
-  }
-  return values;
-}
-
-PcdHeader read_pcd_header(std::istream& in) {
-  PcdHeader header;
-  std::vector<std::string> names;
-  std::vector<int> sizes;
-  std::vector<int> counts;
-  std::vector<std::string> types;
-
-  std::string line;
-  while (std::getline(in, line)) {
-    if (!line.empty() && line.back() == '\r') {
-      line.pop_back();
-    }
-    const auto tokens = split_ws(line);
-    if (tokens.empty()) {
-      continue;
-    }
-    const std::string key = lower(tokens[0]);
-    if (key == "fields") {
-      names = parse_names_line(tokens);
-    } else if (key == "size") {
-      sizes = parse_ints_line(tokens, 4);
-    } else if (key == "type") {
-      types = parse_names_line(tokens);
-    } else if (key == "count") {
-      counts = parse_ints_line(tokens, 1);
-    } else if (key == "points" && tokens.size() >= 2) {
-      header.points = static_cast<std::size_t>(std::stoull(tokens[1]));
-    } else if (key == "width" && header.points == 0 && tokens.size() >= 2) {
-      header.points = static_cast<std::size_t>(std::stoull(tokens[1]));
-    } else if (key == "data" && tokens.size() >= 2) {
-      header.data = lower(tokens[1]);
-      break;
-    }
-  }
-
-  if (names.empty()) {
-    names = {"x", "y", "z"};
-  }
-  if (sizes.size() < names.size()) {
-    sizes.resize(names.size(), 4);
-  }
-  if (types.size() < names.size()) {
-    types.resize(names.size(), "F");
-  }
-  if (counts.size() < names.size()) {
-    counts.resize(names.size(), 1);
-  }
-
-  std::size_t offset = 0;
-  for (std::size_t i = 0; i < names.size(); ++i) {
-    Field field;
-    field.name = lower(names[i]);
-    field.size = sizes[i];
-    field.type = types[i].empty() ? 'F' : types[i][0];
-    field.count = counts[i] <= 0 ? 1 : counts[i];
-    field.offset = offset;
-    header.fields.push_back(field);
-    offset += static_cast<std::size_t>(field.size * field.count);
-  }
-  header.point_step = offset;
-  if (header.data.empty()) {
-    throw std::runtime_error("pcd DATA line missing");
-  }
-  return header;
-}
-
-const Field* find_field(const PcdHeader& header, const std::string& name) {
-  for (const auto& field : header.fields) {
-    if (field.name == name) {
-      return &field;
-    }
-  }
-  return nullptr;
-}
-
-double read_binary_scalar(const std::vector<char>& row, const Field* field) {
-  if (field == nullptr) {
-    return 0.0;
-  }
-  const char* data = row.data() + field->offset;
-  if (field->type == 'F' && field->size == 4) {
-    float value = 0.0F;
-    std::memcpy(&value, data, sizeof(float));
-    return value;
-  }
-  if (field->type == 'F' && field->size == 8) {
-    double value = 0.0;
-    std::memcpy(&value, data, sizeof(double));
-    return value;
-  }
-  if (field->type == 'I' && field->size == 4) {
-    int32_t value = 0;
-    std::memcpy(&value, data, sizeof(int32_t));
-    return value;
-  }
-  if (field->type == 'U' && field->size == 4) {
-    uint32_t value = 0;
-    std::memcpy(&value, data, sizeof(uint32_t));
-    return value;
-  }
-  return 0.0;
-}
-
-std::vector<Point> read_pcd(const std::filesystem::path& path) {
-  std::ifstream in(path, std::ios::binary);
-  if (!in.is_open()) {
-    throw std::runtime_error("failed to open pcd: " + path.string());
-  }
-  PcdHeader header = read_pcd_header(in);
-  const Field* fx = find_field(header, "x");
-  const Field* fy = find_field(header, "y");
-  const Field* fz = find_field(header, "z");
-  const Field* fi = find_field(header, "intensity");
-  if (fx == nullptr || fy == nullptr || fz == nullptr) {
-    throw std::runtime_error("pcd missing x/y/z fields: " + path.string());
-  }
-
-  std::vector<Point> points;
-  points.reserve(header.points);
-  if (header.data == "ascii") {
-    std::string line;
-    while (std::getline(in, line)) {
-      const auto tokens = split_ws(line);
-      if (tokens.size() < header.fields.size()) {
-        continue;
-      }
-      auto value_at = [&](const Field* field) -> float {
-        if (field == nullptr) {
-          return 0.0F;
-        }
-        for (std::size_t i = 0; i < header.fields.size(); ++i) {
-          if (&header.fields[i] == field && i < tokens.size()) {
-            double value = 0.0;
-            return parse_double(tokens[i], value) ? static_cast<float>(value) : 0.0F;
-          }
-        }
-        return 0.0F;
-      };
-      points.push_back(Point{
-          value_at(fx),
-          value_at(fy),
-          value_at(fz),
-          value_at(fi),
-      });
-    }
-    return points;
-  }
-  if (header.data != "binary") {
-    throw std::runtime_error("unsupported pcd DATA mode: " + header.data);
-  }
-  std::vector<char> row(header.point_step);
-  for (std::size_t i = 0; i < header.points; ++i) {
-    in.read(row.data(), static_cast<std::streamsize>(row.size()));
-    if (in.gcount() != static_cast<std::streamsize>(row.size())) {
-      break;
-    }
-    points.push_back(Point{
-        static_cast<float>(read_binary_scalar(row, fx)),
-        static_cast<float>(read_binary_scalar(row, fy)),
-        static_cast<float>(read_binary_scalar(row, fz)),
-        static_cast<float>(read_binary_scalar(row, fi)),
-    });
-  }
-  return points;
 }
 
 void write_pcd(const std::filesystem::path& path, const std::vector<Point>& points) {
@@ -446,6 +176,7 @@ void write_report(
   out << "  \"strategy\": \"" << json_escape(options.strategy) << "\",\n";
   out << "  \"backend\": \"pose_graph_opt\",\n";
   out << "  \"success\": " << (result.ok ? "true" : "false") << ",\n";
+  out << "  \"performed\": " << (result.ok && result.changed ? "true" : "false") << ",\n";
   out << "  \"code\": \"" << json_escape(result.code) << "\",\n";
   out << "  \"message\": \"" << json_escape(result.message) << "\",\n";
   out << "  \"pose_count\": " << result.pose_count << ",\n";
@@ -541,42 +272,29 @@ Result fail_from_exception(const Result& base, const std::exception& exc, std::s
 
 }  // namespace
 
-std::vector<Point> read_point_cloud(const std::filesystem::path& path) {
-  return read_pcd(path);
-}
-
-std::vector<std::filesystem::path> sorted_point_cloud_files(
-    const std::filesystem::path& directory) {
-  return list_patches(directory);
-}
-
-std::vector<Keyframe> read_poses(const std::filesystem::path& path) {
-  std::ifstream in(path);
-  if (!in.is_open()) {
-    throw std::runtime_error("failed to open poses.txt");
+std::vector<std::size_t> connected_pose_indices(
+    std::size_t pose_count, const std::vector<GeometricConstraint>& constraints,
+    std::size_t root) {
+  std::vector<std::vector<std::size_t>> neighbors(pose_count);
+  for (const auto& edge : constraints) {
+    if (edge.from_index >= pose_count || edge.to_index >= pose_count)
+      throw std::invalid_argument("graph edge index exceeds pose count");
+    neighbors[edge.from_index].push_back(edge.to_index);
+    neighbors[edge.to_index].push_back(edge.from_index);
   }
-  std::vector<Keyframe> poses;
-  std::string line;
-  while (std::getline(in, line)) {
-    const auto comment = line.find('#');
-    if (comment != std::string::npos) {
-      line = line.substr(0, comment);
-    }
-    const auto tokens = split_ws(line);
-    if (tokens.empty()) {
-      continue;
-    }
-    Keyframe keyframe;
-    std::string parse_error;
-    if (!parse_pose_tokens(tokens, keyframe, &parse_error)) {
-      throw std::runtime_error(parse_error + ": " + line);
-    }
-    poses.push_back(keyframe);
-  }
-  if (poses.empty()) {
-    throw std::runtime_error("poses.txt has no poses");
-  }
-  return poses;
+  if (pose_count == 0) return {};
+  if (root >= pose_count) throw std::invalid_argument("graph root exceeds pose count");
+  std::vector<bool> visited(pose_count, false);
+  std::vector<std::size_t> indices{root};
+  visited[root] = true;
+  for (std::size_t head = 0; head < indices.size(); ++head)
+    for (auto next : neighbors[indices[head]])
+      if (!visited[next]) {
+        visited[next] = true;
+        indices.push_back(next);
+      }
+  std::sort(indices.begin(), indices.end());
+  return indices;
 }
 
 GraphSolution optimize_graph(const std::vector<Keyframe>& keyframes,
@@ -638,6 +356,29 @@ GraphSolution optimize_graph(const std::vector<Keyframe>& keyframes,
     std::copy(constraint.information_upper.begin(), constraint.information_upper.end(),
         std::begin(edge.information_upper));
     betweens.push_back(edge);
+  }
+
+  if (connected_pose_indices(keyframes.size(), options.geometric_constraints).size() !=
+      keyframes.size()) {
+    result.code = "graph_disconnected";
+    result.message = "measured edges do not connect every pose to the fixed first pose";
+    return result;
+  }
+
+  if (!options.gravity_reference.empty()) {
+    if (options.gravity_reference.size() != keyframes.size() ||
+        !std::isfinite(options.max_gravity_error_rad) || options.max_gravity_error_rad <= 0) {
+      result.code = "invalid_gravity_reference";
+      return result;
+    }
+    for (std::size_t i = 0; i < keyframes.size(); ++i) {
+      const auto& reference = options.gravity_reference[i];
+      if (!valid_pose(reference.pose) || reference.patch_name != keyframes[i].patch_name) {
+        result.code = "invalid_gravity_reference";
+        return result;
+      }
+    }
+    return optimize_gravity_graph(keyframes, options);
   }
 
   lt_pose_graph_opt_config config{};
@@ -702,6 +443,7 @@ GraphSolution optimize_graph(const std::vector<Keyframe>& keyframes,
   for (std::size_t i = 0; i < keyframes.size(); ++i) {
     result.keyframes[i].pose = from_kernel_pose(poses[i]);
   }
+
   result.report = report;
   result.ok = true;
   result.code = "optimized";
@@ -719,7 +461,7 @@ Result optimize_map(const Map& map, const OptimizeOptions& options) {
   std::filesystem::path staging;
   try {
     std::vector<Keyframe> keyframes = read_poses(map.poses_txt);
-    const auto patches = list_patches(map.patches_dir);
+    const auto patches = sorted_point_cloud_files(map.patches_dir);
 
     if (options.geometric_constraints.empty()) {
       result.ok = true;
@@ -813,7 +555,13 @@ Result optimize_map(const Map& map, const OptimizeOptions& options) {
       return result;
     }
 
-    const auto solution = optimize_graph(keyframes, options);
+    auto measured_options = options;
+    if (measured_options.gravity_reference.empty()) {
+      const auto raw_poses = map.map_dir / "poses.raw.txt";
+      measured_options.gravity_reference = std::filesystem::is_regular_file(raw_poses)
+          ? read_poses(raw_poses) : keyframes;
+    }
+    const auto solution = optimize_graph(keyframes, measured_options);
     if (!solution.ok) {
       result.ok = false;
       result.code = solution.code;
@@ -835,7 +583,7 @@ Result optimize_map(const Map& map, const OptimizeOptions& options) {
         result.message = "patch file missing: " + patch_path.string();
         return result;
       }
-      append_points(map_points, transform_points(read_pcd(patch_path), keyframe.pose));
+      append_points(map_points, transform_points(read_point_cloud(patch_path), keyframe.pose));
     }
 
     staging = map.output_dir;
@@ -863,6 +611,11 @@ Result optimize_map(const Map& map, const OptimizeOptions& options) {
     const auto scan_origin = map.map_dir / "scan_origin.txt";
     if (std::filesystem::is_regular_file(scan_origin))
       std::filesystem::copy_file(scan_origin, staging / "scan_origin.txt");
+    for (const auto* filename : {"poses.raw.txt", "trajectory.raw.txt"}) {
+      const auto source = map.map_dir / filename;
+      if (std::filesystem::is_regular_file(source))
+        std::filesystem::copy_file(source, staging / filename);
+    }
 
     result.ok = true;
     result.code = "optimized";

@@ -150,6 +150,7 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     "${_EXPLORE_CPP_DIR}/semantic_views.cpp"
     nav/input/pose.cpp
     nav/input/map.cpp
+    nav/input/motion_worker.cpp
     nav/input/health.cpp
     nav/input/planner.cpp
     nav/runtime/inspection/inspection_command_coordinator.cpp
@@ -181,7 +182,6 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     nav/runtime/navigation.cpp
     nav/status/navigation_state.cpp
     nav/status/status_snapshot_file_writer.cpp
-    nav/status/planning_map_writer.cpp
     nav/status/inspection_status_file_writer.cpp
     nav/command/cancel.cpp
     nav/command/ingress.cpp

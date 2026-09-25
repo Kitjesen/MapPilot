@@ -456,6 +456,8 @@ def test_real_run_plan_selects_go2_mid360_config() -> None:
         "config/robots/unitree/go2/robot.yaml"
     )
     assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == "scan"
+    assert float(plan.native_process_environment["LINGTU_DRIVER_TILT_LIMIT_DEG"]) == 30.0
+    assert 0.57 < float(plan.native_process_environment["LINGTU_NAV_OCTO_MAX_SLOPE"]) < 0.58
     assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
     assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
     assert plan.native_process_environment["LINGTU_NAV_VEHICLE_LENGTH_M"] == "0.76"
@@ -543,6 +545,19 @@ def test_persistent_sim_teleop_preserves_product_host_startup_barrier() -> None:
         "GatewayModule",
     )
     assert blueprint.required_module_names == plan.critical_modules
+
+
+@pytest.mark.parametrize("variant", ["standard", "camera"])
+def test_real_scan_nav_has_no_2d_terrain_process_dependency(variant: str) -> None:
+    plan = _compile_real("nav", product_variant=variant)
+    selected = plan.as_dict()["launch"]["process_catalog"]["selected"]
+    names = {process["name"] for process in selected}
+    assert "traversability" not in names
+    assert {"maps", "slam", "nav", "driver", "host"} <= names
+    assert ("camera" in names) is (variant == "camera")
+    assert plan.native_nav["local_planner"] == "scan"
+    assert plan.native_nav["use_traversability_cost"] is False
+    assert plan.native_nav["check_obstacle"] is True
 
 
 def test_real_nav_process_payload_keeps_strict_systemd_shape() -> None:
@@ -1048,7 +1063,6 @@ def test_sim_mujoco_every_product_compiles_for_windows_with_complete_pe_chain_an
                 "mujoco_feeder",
                 "slam_runtime",
                 "map_runtime",
-                "traversability_runtime",
                 "nav_runtime",
                 "host_runtime",
             },
@@ -1745,14 +1759,17 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
         "mujoco_feeder",
         "nav_runtime",
         "slam_runtime",
-        "traversability_runtime",
+        *(["traversability_runtime"] if product != "nav" else []),
         "host_runtime",
     ]
     assert [process.name for process in plan.processes] == expected_processes
     assert "acceptance" not in plan.as_dict()["launch"]
-    assert plan.native_process_environment["LINGTU_EXPLORE_ROUTE"] == "map"
+    if product == "nav":
+        assert "LINGTU_EXPLORE_ROUTE" not in plan.native_process_environment
+    else:
+        assert plan.native_process_environment["LINGTU_EXPLORE_ROUTE"] == "map"
     assert plan.native_process_environment["LINGTU_MAPD_EXTENDED_LAYERS"] == "0"
-    assert plan.has_process("traversability")
+    assert plan.has_process("traversability") is (product != "nav")
     assert plan.host_config["enable_camera"] is (
         product in {"inspection", "tracking"}
     )
@@ -2098,7 +2115,6 @@ def test_product_contract_is_serializable_without_starting_runtime() -> None:
         "lidar",
         "slam",
         "maps",
-        "traversability",
         "nav",
         "driver",
         "host",

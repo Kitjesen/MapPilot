@@ -31,10 +31,6 @@ def read_navigation_status() -> dict[str, Any] | None:
     return read_json_snapshot(_navigation_status_path())
 
 
-def read_planning_map() -> dict[str, Any] | None:
-    return read_json_snapshot(_navigation_status_path() + ".planning-map.json")
-
-
 def read_traversability_status() -> dict[str, Any] | None:
     session_root = os.environ.get("LINGTU_SESSION_ROOT", "").strip()
     default_path = (

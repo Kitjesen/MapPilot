@@ -360,6 +360,7 @@ def test_saved_map_relocalize_runtime_dataflow_is_readable_by_diagnostics(
     ("response", "expected"),
     [
         ({"success": True, "engine": "bbs3d_gicp"}, True),
+        ({"success": True, "engine": "saved_pose_icp"}, False),
         ({"success": False, "engine": "bbs3d_gicp"}, False),
         ({"success": True, "engine": "other", "message": "global success"}, False),
         ({"success": True, "message": "global relocalization accepted"}, False),

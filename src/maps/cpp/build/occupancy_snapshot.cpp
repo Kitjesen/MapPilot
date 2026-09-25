@@ -1,6 +1,7 @@
 #include "lingtu/maps/build/occupancy_snapshot.hpp"
 
 #include "lingtu/maps/build/pcd.hpp"
+#include "lingtu/maps/layers/ground_surface.hpp"
 
 #include <algorithm>
 #include <array>
@@ -16,6 +17,9 @@ namespace lingtu::maps {
 namespace {
 
 constexpr double kResolution = 0.20;
+// Saved clouds are downsampled at 0.20 m. Fit over several columns instead
+// of requiring three independent samples inside a single output cell.
+constexpr double kSurfaceResolution = 0.60;
 constexpr double kZMinRel = 0.10;
 constexpr double kZMaxRel = 2.00;
 
@@ -268,25 +272,19 @@ OccupancySnapshotResult BuildOccupancyProjectionSnapshot(
     return Error(loaded.message.empty() ? "PCD file empty or unparseable" : loaded.message);
   }
 
-  std::vector<float> z_values;
-  z_values.reserve(loaded.points.size());
+  std::vector<float> xyz;
+  xyz.reserve(loaded.points.size() * 3U);
   float min_x = std::numeric_limits<float>::infinity();
   float min_y = std::numeric_limits<float>::infinity();
   float max_x = -std::numeric_limits<float>::infinity();
   float max_y = -std::numeric_limits<float>::infinity();
   for (const auto& point : loaded.points) {
-    z_values.push_back(point.z);
+    xyz.insert(xyz.end(), {point.x, point.y, point.z});
     min_x = std::min(min_x, point.x);
     min_y = std::min(min_y, point.y);
     max_x = std::max(max_x, point.x);
     max_y = std::max(max_y, point.y);
   }
-  std::sort(z_values.begin(), z_values.end());
-  const size_t z_index = static_cast<size_t>(
-      std::floor(0.05 * static_cast<double>(z_values.size() - 1U)));
-  const float ground_z = z_values[z_index];
-  const double z_lo = static_cast<double>(ground_z) + kZMinRel;
-  const double z_hi = static_cast<double>(ground_z) + kZMaxRel;
 
   const double border = kResolution;
   const double origin_x = static_cast<double>(min_x) - border;
@@ -297,12 +295,29 @@ OccupancySnapshotResult BuildOccupancyProjectionSnapshot(
     return Error("grid size out of range: " + std::to_string(rows) + "x" + std::to_string(cols));
   }
 
+  const double surface_x = std::floor(min_x / kSurfaceResolution) * kSurfaceResolution;
+  const double surface_y = std::floor(min_y / kSurfaceResolution) * kSurfaceResolution;
+  const auto geometry = layers::makeGrid2D(
+      static_cast<int>(std::floor((max_y - surface_y) / kSurfaceResolution)) + 1,
+      static_cast<int>(std::floor((max_x - surface_x) / kSurfaceResolution)) + 1,
+      kSurfaceResolution, surface_x, surface_y);
+  const auto surface = layers::EstimateGroundSurface(xyz, geometry);
+
   // A projected point cloud contains obstacle hits, but no sensor-origin rays
   // from which free space can be inferred. Keep every cell unknown until there
   // is direct occupancy evidence instead of presenting unobserved space as free.
   std::vector<std::int8_t> grid(static_cast<size_t>(rows * cols), -1);
   for (const auto& point : loaded.points) {
-    if (static_cast<double>(point.z) < z_lo || static_cast<double>(point.z) > z_hi) {
+    const int sc = static_cast<int>(std::floor((point.x - surface_x) / kSurfaceResolution));
+    const int sr = static_cast<int>(std::floor((point.y - surface_y) / kSurfaceResolution));
+    const auto si = geometry.index(sr, sc);
+    // A map-wide height percentile turns slopes and raised floors into walls.
+    // Use the observed local lower surface; unsupported cells remain unknown.
+    const double ground_z = surface.height.data[si]
+        + surface.gradient_x.data[si] * (point.x - (surface_x + (sc + .5) * kSurfaceResolution))
+        + surface.gradient_y.data[si] * (point.y - (surface_y + (sr + .5) * kSurfaceResolution));
+    const double above_surface = point.z - ground_z;
+    if (!std::isfinite(ground_z) || above_surface < kZMinRel || above_surface > kZMaxRel) {
       continue;
     }
     const int col = static_cast<int>(std::floor((static_cast<double>(point.x) - origin_x) / kResolution));

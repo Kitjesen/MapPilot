@@ -554,7 +554,7 @@ GoalReplanRuntimeCoordinator::handleGoalReached(const GoalReplanRuntimeFrameInpu
 }
 
 std::optional<GoalReplanRuntimeResult>
-GoalReplanRuntimeCoordinator::handleInspectionTerminalOutcome(
+GoalReplanRuntimeCoordinator::handleTerminalFailureOutcome(
     const GoalReplanRuntimeFrameInput &input, const GoalReplanRuntimeAutonomyEvent &event,
     const GoalPlanSnapshot &current_snapshot) {
   if (event.outcome.kind != AutonomyTickOutcomeKind::kGoalFailed || event.rolling_segment_active ||
@@ -562,8 +562,14 @@ GoalReplanRuntimeCoordinator::handleInspectionTerminalOutcome(
     return std::nullopt;
   }
   if (!event.goal_snapshot.active_origin || !current_snapshot.active_origin ||
-      *event.goal_snapshot.active_origin != GoalPlanOrigin::kInspection ||
-      *current_snapshot.active_origin != GoalPlanOrigin::kInspection) {
+      event.goal_snapshot.active_origin != current_snapshot.active_origin) {
+    return std::nullopt;
+  }
+  const bool inspection = *current_snapshot.active_origin == GoalPlanOrigin::kInspection;
+  const bool external_terminal =
+      *current_snapshot.active_origin == GoalPlanOrigin::kExternal &&
+      event.outcome.terminal_failure_intent && !event.outcome.replan_trigger;
+  if (!inspection && !external_terminal) {
     return std::nullopt;
   }
 
@@ -656,8 +662,8 @@ GoalReplanRuntimeCoordinator::handleAutonomyOutcome(const GoalReplanRuntimeFrame
   if (auto reached = handleGoalReached(frame, event, current_snapshot)) {
     return std::move(*reached);
   }
-  if (auto inspection_terminal = handleInspectionTerminalOutcome(frame, event, current_snapshot)) {
-    return std::move(*inspection_terminal);
+  if (auto terminal = handleTerminalFailureOutcome(frame, event, current_snapshot)) {
+    return std::move(*terminal);
   }
   if (replacement_plan_in_progress_) {
     result.handled = true;

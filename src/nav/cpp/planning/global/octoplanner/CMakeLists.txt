@@ -193,9 +193,9 @@ if(BUILD_TESTING)
   add_test(NAME octoplanner3d_neighborhood_fallback_smoke
     COMMAND octoplanner3d_neighborhood_fallback_smoke)
 
-  add_executable(octoplanner3d_grid_query_smoke grid_query_smoke.cpp)
-  target_link_libraries(octoplanner3d_grid_query_smoke PRIVATE octoplanner3d_global_planner)
-  add_test(NAME octoplanner3d_grid_query_smoke COMMAND octoplanner3d_grid_query_smoke)
+  add_executable(octoplanner3d_grid_smoke grid_smoke.cpp)
+  target_link_libraries(octoplanner3d_grid_smoke PRIVATE octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_grid_smoke COMMAND octoplanner3d_grid_smoke)
 
   add_executable(octoplanner3d_queue_node_compare_smoke queue_node_compare_smoke.cpp)
   target_include_directories(octoplanner3d_queue_node_compare_smoke
@@ -238,6 +238,11 @@ if(BUILD_TESTING)
 endif()
 
 add_executable(octoplanner3d_pcd_to_octomap pcd_to_octomap.cpp)
+target_sources(octoplanner3d_pcd_to_octomap PRIVATE
+  "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/build/saved_scans.cpp"
+  "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/build/pcd.cpp")
+target_include_directories(octoplanner3d_pcd_to_octomap PRIVATE
+  "${LINGTU_NAV_CPP_DIR}/../../maps/include")
 target_link_libraries(octoplanner3d_pcd_to_octomap
   PRIVATE
     octomap_vendor
@@ -266,6 +271,11 @@ if(BUILD_TESTING)
       $<BOOL:${OCTOPLANNER3D_ENABLE_PCD}>)
   if(OCTOPLANNER3D_ENABLE_PCD)
     add_executable(octoplanner3d_ascii_pcd_test_converter pcd_to_octomap.cpp)
+    target_sources(octoplanner3d_ascii_pcd_test_converter PRIVATE
+      "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/build/saved_scans.cpp"
+      "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/build/pcd.cpp")
+    target_include_directories(octoplanner3d_ascii_pcd_test_converter PRIVATE
+      "${LINGTU_NAV_CPP_DIR}/../../maps/include")
     target_link_libraries(octoplanner3d_ascii_pcd_test_converter PRIVATE octomap_vendor octomath_vendor)
     add_test(NAME octoplanner3d_sampled_ascii_pcd_smoke
       COMMAND octoplanner3d_sampled_pcd_smoke

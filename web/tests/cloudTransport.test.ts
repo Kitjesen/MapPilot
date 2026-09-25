@@ -11,7 +11,7 @@ const code = ts.transpileModule(readFileSync(new URL('../src/hooks/useBinaryClou
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
 }).outputText
 
-function mount(path: string | null = '/ws/cloud', fallback: string | null = '/api/v1/map/points', payload?: Record<string, unknown>) {
+function mount(path: string | null = '/ws/cloud', fallback: string | null = '/api/v1/map/points', payload?: Record<string, unknown>, binary?: ArrayBuffer) {
   let state: BinaryCloud
   let cleanup: () => void = () => {}
   let now = 10000
@@ -37,13 +37,13 @@ function mount(path: string | null = '/ws/cloud', fallback: string | null = '/ap
     onmessage: ((event: { data: unknown }) => void) | null = null
     onerror: ((event: unknown) => void) | null = null
     constructor() { workers.push(this) }
-    requests: Array<{ connectionGeneration: number }> = []
+    requests: Array<{ connectionGeneration: number; httpRequestGeneration?: number; globalMapping?: Record<string, unknown> }> = []
     postMessage(message: { connectionGeneration: number }) { this.requests.push(message) }
     terminate() {}
-    frame(sequence: number, connectionGeneration = 1) {
+    frame(sequence: number, connectionGeneration = 1, extra: Record<string, unknown> = {}) {
       this.onmessage?.({ data: { type: 'cloud', protocolVersion: 2, frameId: 'map', epoch: 1,
         sequence, seq: sequence, stampS: now / 1000, streamKind: path?.includes('scan') ? 'scan' : 'map',
-        count: 1, positions: new Float32Array([1, 0, 0]), colors: new Float32Array(3), connectionGeneration } })
+        count: 1, positions: new Float32Array([1, 0, 0]), colors: new Float32Array(3), connectionGeneration, ...extra } })
     }
   }
   const exports: Partial<typeof import('../src/hooks/useBinaryCloud.ts')> = {}
@@ -66,8 +66,14 @@ function mount(path: string | null = '/ws/cloud', fallback: string | null = '/ap
     WebSocket: FakeSocket, Date: { now: () => now },
     setTimeout: (fn: () => void, delay: number) => { const id = nextTimer++; timers.set(id, { at: now + delay, fn }); return id },
     clearTimeout: (id: number) => timers.delete(id),
-    fetch: () => { fetches++; return payload ? Promise.resolve({ ok: true, json: async () => payload }) : new Promise(() => {}) },
-    Float32Array, ArrayBuffer, Error, console,
+    fetch: (_url: string, options?: { signal?: AbortSignal }) => { fetches++; return (payload || binary) ? Promise.resolve({ ok: true,
+      headers: { get: (name: string) => name === 'content-type' ? (binary ? 'application/octet-stream' : 'application/json') : JSON.stringify(payload?.global_mapping ?? {}) },
+      json: async () => { assert.equal(binary, undefined, 'binary cloud must not parse JSON points'); return payload },
+      arrayBuffer: async () => binary,
+    }) : new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+    }) },
+    Float32Array, ArrayBuffer, AbortController, Error, console,
   })
   assert.ok(exports.useBinaryCloud)
   exports.useBinaryCloud(path, fallback, 4)
@@ -174,5 +180,46 @@ test('whole-map preview preserves native correction quality counts', async () =>
   assert.equal(h.state().count, 1)
   assert.equal(h.state().mappingSummary.registrationRejections, 43)
   assert.equal(h.state().mappingSummary.optimizations, 3)
+  h.cleanup()
+})
+
+test('hung HTTP preview times out and schedules one new request', async () => {
+  const h = mount(null, '/api/v1/map/global/points')
+  assert.equal(h.fetches(), 1)
+  h.advance(10000)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(h.state().error, 'http_cloud_timeout')
+  h.advance(1000)
+  assert.equal(h.fetches(), 2)
+  h.cleanup()
+})
+
+test('binary HTTP preview decodes in the worker and keeps polling the same revision', async () => {
+  const h = mount(null, '/api/v1/map/global/points?format=binary', {
+    global_mapping: { rejected_keyframes: 7, loops: 2 },
+  }, new ArrayBuffer(1))
+  await new Promise(resolve => setImmediate(resolve))
+  const request = h.worker.requests[0]
+  assert.ok(request.httpRequestGeneration !== undefined)
+  assert.equal(h.state().count, 0, 'main thread must wait for worker decoding')
+  h.worker.frame(1, request.connectionGeneration, request)
+  assert.equal(h.state().transport, 'http')
+  assert.equal(h.state().connected, true)
+  assert.equal(h.state().mappingSummary?.registrationRejections, 7)
+  h.advance(1000)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(h.fetches(), 2)
+  h.worker.frame(1, request.connectionGeneration, h.worker.requests.at(-1))
+  assert.equal(h.state().error, null, 'unchanged HTTP snapshot is valid')
+  h.cleanup()
+})
+
+test('reset discards a binary HTTP decode from the previous session', async () => {
+  const h = mount(null, '/api/v1/map/global/points?format=binary', {}, new ArrayBuffer(1))
+  await new Promise(resolve => setImmediate(resolve))
+  const request = h.worker.requests[0]
+  h.reset()
+  h.worker.frame(1, request.connectionGeneration, request)
+  assert.equal(h.state().count, 0)
   h.cleanup()
 })

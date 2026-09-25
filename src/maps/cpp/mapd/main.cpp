@@ -324,7 +324,8 @@ Options ParseOptions(int argc, char **argv) {
                        "LINGTU_OCTOMAP_CONVERTER"});
   save_request.octomap.build_mode =
       EnvOr("LINGTU_MAP_SAVE_OCTOMAP_BUILD_MODE", "external_pcl_converter");
-  save_request.octomap.resolution = ParseDouble(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_RESOLUTION", "0.20"),
+  save_request.octomap.resolution = ParseDouble(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_RESOLUTION",
+                                                std::to_string(save_request.octomap.resolution)),
                                                 "LINGTU_MAP_SAVE_OCTOMAP_RESOLUTION");
   save_request.octomap.support_dilation_cells =
       ParseInt(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_SUPPORT_DILATION_CELLS", "1"),
@@ -341,7 +342,8 @@ Options ParseOptions(int argc, char **argv) {
   save_request.octomap.slam_source = "native_dds";
   save_request.octomap.localization_source = "native_dds";
   save_request.octomap.mapping_source = "save_map_product_chain";
-  save_request.octomap.timeout_sec = ParseDouble(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_TIMEOUT_SEC", "60"),
+  save_request.octomap.timeout_sec = ParseDouble(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_TIMEOUT_SEC",
+                                                 std::to_string(save_request.octomap.timeout_sec)),
                                                  "LINGTU_MAP_SAVE_OCTOMAP_TIMEOUT_SEC");
   if (EnvOr("LINGTU_ENV", "") == "sim" && options.product_session_id.empty()) {
     throw std::invalid_argument("LINGTU_PRODUCT_SESSION_ID is required in simulation");
@@ -585,6 +587,7 @@ std::string StatusJson(const State &state, const DdsInputState &input, const Dds
          "\"map_layers_published_generation\":" +
          std::to_string(publications.map_layers.generation) + "," +
          "\"scene_published_generation\":" + std::to_string(publications.scene.generation) + "," +
+         "\"reference_scans\":" + std::to_string(state.reference_scans) + "," +
          "\"engine_error\":\"" + JsonEscape(state.last_error) + "\"," + "\"input_error\":\"" +
          JsonEscape(input.last_error) + "\"," + "\"output_error\":\"" +
          JsonEscape(output.last_error) + "\"}\n";
@@ -652,6 +655,9 @@ int main(int argc, char **argv) {
           query_core, QueryServerConfig{options.query_socket, options.query_max_json_bytes});
     }
     engine.Start();
+    auto reference_identity = activation.ActiveIdentity();
+    engine.SetReferenceMap(reference_identity, reference_identity.present
+        ? maps_service.Store().ContentPath(reference_identity.map_id) : std::filesystem::path{});
     if (query_server) {
       query_server->Start();
     }
@@ -695,6 +701,12 @@ int main(int argc, char **argv) {
           continue;
         }
         ActivationResult result = activation.Execute(request);
+        const auto active_identity = activation.ActiveIdentity();
+        if (active_identity != reference_identity) {
+          reference_identity = active_identity;
+          engine.SetReferenceMap(reference_identity, reference_identity.present
+              ? maps_service.Store().ContentPath(reference_identity.map_id) : std::filesystem::path{});
+        }
         result.producer_boot_id = dds.ProducerBootId();
         activation_results.emplace(request.request_id, CachedActivationResult{request, result});
         activation_result_order.push_back(request.request_id);

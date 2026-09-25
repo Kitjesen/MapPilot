@@ -22,10 +22,32 @@ own Product lifecycle, maps, planning, final motion, or hardware.
 
 Product lifecycle uses `lingtu` / `python -m lingtu.control`, not REST
 service orchestration assembled by a client.
+Web mode switches use the separate loopback ProductControl transport:
+`GET /api/v1/product-control` returns current session/operation;
+`POST /api/v1/product-control/switch` accepts `request_id`, `product`
+(`map` or `nav`), `map_name` (required for nav), and
+`expected_product_session_id` (empty only when no Product is running).
+`GET /api/v1/product-control/operations/{request_id}` retrieves the receipt.
+Gateway only forwards these requests. A 202 response is admission, not
+completion. Query until `succeeded`, `failed`, or `interrupted`; reconnects
+must query the original ID, not create another switch. A successful switch
+does not authorize robot motion. See [Operations](./operations.md#web-mapping-and-navigation-switches).
 
 External map integrations operate on the canonical map identity
 `map_id + content_epoch` and maintained artifact contracts. They must
 not invent version directories or bypass ProductControl activation.
+
+Map saves are durable operations. A successful admission is not a completed
+save: poll `GET /api/v1/maps/operations/{operation_id}` and inspect
+`operation.state`. A client wait timeout or a lost status response leaves the
+outcome unconfirmed; continue querying that operation instead of submitting
+another save. A `SUCCEEDED` detail includes the available
+`operation.processing.optimization` and `operation.processing.cleanup`
+summaries (`performed`, `success`, `reason_code`). Optimization can successfully
+skip when measurement constraints are insufficient, so save success does not
+imply completed optimization or navigation readiness. Lightweight operation
+lists omit these summaries; fetch the individual detail. Successful same-name
+saves replace the old map, and saves do not activate a map or switch Product.
 
 ## Generation
 
@@ -64,6 +86,33 @@ blockers live at `/api/v1/readiness`, paths at `/api/v1/path`, native evidence a
 
 This inventory is generated from `@skill` decorators. The Host exposes
 these methods through MCP JSON-RPC on port 8090 and to the Agent loop.
+
+## src/decision/modules/agent_planner.py
+_AgentPlannerModule - multi-turn agent loop for complex instructions._
+
+### `run_agent_task`
+**Module:** `AgentPlannerModule`
+**Description:** Replace the current Agent task and return its cancellation identity.
+**Return type:** `str`
+**Parameters:**
+| Parameter | Type |
+|-----------|------|
+| `instruction` | `str` |
+
+### `cancel_agent_task`
+**Module:** `AgentPlannerModule`
+**Description:** Cancel only the specified Agent task; the result does not prove physical stopping.
+**Return type:** `str`
+**Parameters:**
+| Parameter | Type |
+|-----------|------|
+| `run_id` | `str` |
+
+### `get_agent_status`
+**Module:** `AgentPlannerModule`
+**Description:** Report loop state separately from verified motion and its native task.
+**Return type:** `str`
+**Parameters:** None
 
 ## src/decision/modules/semantic_planner.py
 _SemanticPlannerModule - unified semantic planning in one Module._
@@ -504,6 +553,7 @@ FastAPI's live OpenAPI UI remains available at `/docs`.
   - `POST /api/v1/places` — Create or update a canonical semantic place on a native map
   - `GET /api/v1/places/resolve` — Resolve a canonical semantic place by name or alias
 - **src/gateway/maps/routes.py**:
+  - `GET /api/v1/map/global/points` — Native online whole-map preview
   - `GET /api/v1/map/points` — Map point cloud as JSON (from ikd-tree snapshot)
   - `POST /api/v1/map/rename` — Rename a saved map
   - `POST /api/v1/map/save` — Save current SLAM map
@@ -554,6 +604,7 @@ FastAPI's live OpenAPI UI remains available at `/docs`.
   - `GET /robot/meshes/{filename}` — Serve robot STL mesh files
 - **src/gateway/routes/camera.py**:
   - `GET /api/v1/camera/snapshot` — Camera JPEG snapshot
+  - `GET /api/v1/camera/status` — Camera frame availability and rates
 - **src/gateway/routes/commands.py**:
   - `POST /api/v1/estop/reset` — Explicitly release the native software emergency-stop latch
   - `POST /api/v1/instruction` — Natural language navigation instruction
@@ -613,6 +664,10 @@ FastAPI's live OpenAPI UI remains available at `/docs`.
   - `GET /api/v1/slam/status` — SLAM service status
   - `GET /api/v1/webrtc/go2rtc/status` — Probe the go2rtc sidecar (image transmission fast path)
   - `POST /api/v1/webrtc/whep` — WHEP signalling proxy to go2rtc (image transmission path)
+- **src/gateway/routes/product_control.py**:
+  - `GET /api/v1/product-control`
+  - `GET /api/v1/product-control/operations/{request_id}`
+  - `POST /api/v1/product-control/switch`
 - **src/gateway/routes/realtime.py**:
   - `GET /api/v1/events` — SSE event stream
 - **src/gateway/routes/recordings.py**:
@@ -670,6 +725,10 @@ FastAPI's live OpenAPI UI remains available at `/docs`.
 **Handler:** `resolve_place`
 
 ### src/gateway/maps/routes.py
+
+#### `GET /api/v1/map/global/points`
+**Summary:** Native online whole-map preview
+**Handler:** `get_global_map_points`
 
 #### `GET /api/v1/map/points`
 **Summary:** Map point cloud as JSON (from ikd-tree snapshot)
@@ -889,6 +948,10 @@ FastAPI's live OpenAPI UI remains available at `/docs`.
 #### `GET /api/v1/camera/snapshot`
 **Summary:** Camera JPEG snapshot
 **Handler:** `camera_snapshot`
+
+#### `GET /api/v1/camera/status`
+**Summary:** Camera frame availability and rates
+**Handler:** `camera_status`
 
 ### src/gateway/routes/commands.py
 
@@ -1162,6 +1225,17 @@ FastAPI's live OpenAPI UI remains available at `/docs`.
 #### `POST /api/v1/webrtc/whep`
 **Summary:** WHEP signalling proxy to go2rtc (image transmission path)
 **Handler:** `post_webrtc_whep`
+
+### src/gateway/routes/product_control.py
+
+#### `GET /api/v1/product-control`
+**Handler:** `control_status`
+
+#### `GET /api/v1/product-control/operations/{request_id}`
+**Handler:** `control_operation`
+
+#### `POST /api/v1/product-control/switch`
+**Handler:** `control_switch`
 
 ### src/gateway/routes/realtime.py
 

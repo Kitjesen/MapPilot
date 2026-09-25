@@ -10,6 +10,12 @@
     "requires_map": true
   },
   "domain_id_base": 226,
+  "collision_geometry": {
+    "collision_cylinder_radius_m": 0.40,
+    "collision_cylinder_offset_m": 0.25,
+    "collision_clearance_below_m": 0.25,
+    "collision_clearance_above_m": 0.35
+  },
   "world": "sim/packages/worlds/industrial_park/physics/industrial_park_scene.xml",
   "start": [3.0, 4.0, 0.48, 0.0],
   "goal": [56.0, 32.0, 0.3, 0.0],

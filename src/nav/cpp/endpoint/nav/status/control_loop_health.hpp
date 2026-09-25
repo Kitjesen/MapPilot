@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstddef>
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <string>
+#include <vector>
 
 namespace lingtu::nav::endpoint {
 
@@ -20,6 +22,20 @@ struct ControlLoopSample {
   double loop_ms{0.0};
   double sleep_ms{0.0};
   double overrun_ms{0.0};
+  // Exclusive top-level stages: sensor, operator, command, runtime, publish.
+  std::array<double, 5> stages_ms{};
+};
+
+struct ControlLoopOverrun {
+  std::uint64_t sequence{0};
+  double work_ms{0.0};
+  std::array<double, 5> stages_ms{};
+};
+
+struct ControlLoopHistory {
+  std::uint64_t first_sequence{1};
+  std::vector<double> overruns_ms;
+  std::vector<ControlLoopOverrun> overruns;
 };
 
 struct MetricDistribution {
@@ -48,6 +64,8 @@ struct ControlLoopHealthSnapshot {
   std::size_t max_miss_streak{0};
   double p95_utilization{0.0};
   double max_utilization{0.0};
+  // Included only for status publication, not for the per-tick motion gate.
+  ControlLoopHistory history;
 };
 
 class ControlLoopHealth {
@@ -58,15 +76,15 @@ class ControlLoopHealth {
   // Returns false without changing state for a non-finite or negative sample.
   // Work is derived as max(0, loop_ms - sleep_ms).
   bool observe(ControlLoopSample sample);
-  ControlLoopHealthSnapshot snapshot() const;
+  ControlLoopHealthSnapshot snapshot(bool include_history = false) const;
 
  private:
   struct StoredSample {
     double work_ms{0.0};
     double loop_ms{0.0};
     double overrun_ms{0.0};
-    double utilization{0.0};
     bool deadline_miss{false};
+    std::array<double, 5> stages_ms{};
   };
 
   ControlLoopHealthConfig config_;
@@ -74,6 +92,12 @@ class ControlLoopHealth {
   std::uint64_t total_samples_{0};
   std::size_t current_miss_streak_{0};
   std::size_t max_miss_streak_{0};
+  // All callers run on the control thread. Reuse buffers and the same-sample
+  // snapshot for the motion gate and status publisher.
+  mutable std::array<std::vector<double>, 3> scratch_;
+  mutable ControlLoopHealthSnapshot cached_;
+  mutable bool cache_valid_{false};
+  ControlLoopHealthSnapshot withHistory(bool include_history) const;
 };
 
 }  // namespace lingtu::nav::endpoint

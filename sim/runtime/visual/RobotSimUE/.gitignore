@@ -9,3 +9,7 @@ Saved/
 Content/RobotSim/
 Content/__ExternalActors__/
 Content/__ExternalObjects__/
+
+# Locally staged XGRIDS SDK and sample data; the setup script mounts these as junctions.
+Plugins/LCC4Unreal/
+Content/3DGSData/

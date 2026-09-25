@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include "planning/local/planner.hpp"
 
 namespace lingtu::nav::endpoint {
 
@@ -21,13 +22,14 @@ struct MotionLayerConfig {
   double decay_s{0.45};
   double inflation_radius_m{0.12};
   double ray_clear_max_range_m{3.5};
-  double ray_clearing_interval_s{0.33};
-  std::size_t max_clearing_rays{160};
+  double ray_clearing_interval_s{0.10};
+  std::size_t max_clearing_rays{512};
   int min_hits{1};
   std::uint32_t static_min_frames{3};
   std::uint32_t free_min_frames{2};
   std::uint32_t static_free_min_frames{4};
   std::size_t dynamic_min_cells{8};
+  // Frames with cluster-level evidence that occupied returns entered observed free space.
   std::uint32_t dynamic_free_min_frames{3};
   double dynamic_min_speed_mps{0.25};
   double dynamic_max_speed_mps{2.50};
@@ -100,6 +102,8 @@ struct DynamicCluster {
   std::size_t cells{0};
   double radius_xy{0.0};
   float height{0.0f};
+  double min_z{0.0};
+  double max_z{0.0};
 };
 
 class MotionLayer {
@@ -115,6 +119,7 @@ class MotionLayer {
   std::vector<float> snapshotPredictedDynamic(std::size_t max_points, double now_s);
   void snapshotPredictedDynamic(std::vector<float> &out, std::size_t max_points, double now_s);
   std::vector<DynamicCluster> dynamicClusters(std::size_t max_clusters, double now_s);
+  std::vector<nav_kernel::PredictedObstacle> predictedVolumes(double now_s);
   MotionCellQuery query(float x, float y, float z, double now_s) const;
   void prune(double now_s);
   void clear();
@@ -165,11 +170,14 @@ class MotionLayer {
     double age_s{0.0};
     std::uint32_t observations{0};
     std::uint32_t moving_frames{0};
+    std::uint32_t free_evidence_frames{0};
     bool confirmed{false};
     double confidence{0.0};
     std::size_t cells{0};
     double radius_xy{0.0};
     float height{0.0f};
+    double min_z{0.0};
+    double max_z{0.0};
   };
 
   struct RankedObstacle {
@@ -181,7 +189,7 @@ class MotionLayer {
   VoxelKey makeKeyForSize(float x, float y, float z, double voxel_size_m) const;
   Cell cellAtKey(const VoxelKey &key, double stamp_s) const;
   void collectRayFreeKeys(const SensorOrigin &origin, const Cell &endpoint,
-                          std::unordered_set<VoxelKey, VoxelKeyHash> &keys) const;
+                          std::vector<VoxelKey> &keys) const;
   void markHit(const VoxelKey &key, const Cell &sample, double stamp_s);
   void markFree(const VoxelKey &key, double stamp_s);
   void refreshStats();
@@ -198,7 +206,7 @@ class MotionLayer {
   double last_prune_s_{-1.0};
   double current_stamp_s_{-1.0};
   std::unordered_set<VoxelKey, VoxelKeyHash> current_hit_keys_;
-  std::unordered_set<VoxelKey, VoxelKeyHash> free_keys_scratch_;
+  std::vector<VoxelKey> free_keys_scratch_;
   std::unordered_set<VoxelKey, VoxelKeyHash> current_dynamic_keys_;
   std::unordered_map<VoxelKey, const Cell *, VoxelKeyHash> candidate_cells_scratch_;
   std::unordered_set<VoxelKey, VoxelKeyHash> visited_scratch_;

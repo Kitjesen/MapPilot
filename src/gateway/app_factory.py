@@ -136,6 +136,9 @@ def build_gateway_app(gw: Any):
     register_status_routes(app, gw)
     register_health_routes(app, gw)
     register_session_routes(app, gw)
+    from gateway.routes.product_control import register_product_control_routes
+
+    register_product_control_routes(app)
     register_command_routes(app, gw)
     register_navigation_routes(app, gw)
     register_navigation_diagnostic_routes(app, gw)

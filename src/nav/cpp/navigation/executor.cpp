@@ -84,6 +84,7 @@ nav_kernel::LocalPlanRequest makeLocalPlanRequest(
   };
   request.environment.obstacles = {obstacle_xyzh, obstacle_count};
   request.environment.collision = observation.collision;
+  request.environment.predictions = observation.predictions;
   request.clock = {timestamp_s, execution_frozen, observation.clock_mode};
   if (traversability.valid()) {
     request.environment.traversability = {
@@ -201,6 +202,7 @@ void Executor::activateRoute(const std::vector<nav_kernel::Vec3> &path,
                              std::optional<double> goal_reached_m,
                              std::optional<double> goal_yaw_tolerance_rad,
                              std::optional<double> max_speed_mps) {
+  resetDynamicAvoidance();
   if (max_speed_mps && (!std::isfinite(*max_speed_mps) || *max_speed_mps <= 0.0))
     throw std::invalid_argument("route speed limit must be positive and finite");
   active_max_speed_mps_ = std::min(config_.max_speed, max_speed_mps.value_or(config_.max_speed));
@@ -208,6 +210,7 @@ void Executor::activateRoute(const std::vector<nav_kernel::Vec3> &path,
   autonomy_stall_stop_ = false;
   ++generation;
   final_yaw_ = final_yaw;
+  goal_quiet_since_s_ = goal_last_odom_s_ = -1.0;
   height_offset_.reset();
   active_goal_reached_m_ = std::max(0.01, goal_reached_m.value_or(config_.goal_reached_m));
   active_goal_height_tolerance_m_ = std::max(
@@ -235,6 +238,8 @@ void Executor::activateRoute(const std::vector<nav_kernel::Vec3> &path,
 }
 
 void Executor::clearRoute() {
+  resetDynamicAvoidance();
+  goal_quiet_since_s_ = goal_last_odom_s_ = -1.0;
   route.clear();
   autonomy_stall_stop_ = false;
   ++generation;
@@ -265,11 +270,18 @@ void Executor::clearRoute() {
   resetAutonomyProgress();
 }
 
+void Executor::resetDynamicAvoidance() {
+  dynamic_wait_since_s_ = dynamic_clear_since_s_ = dynamic_progress_s_ = -1.0;
+  dynamic_resuming_ = false;
+}
+
 bool Executor::hasRoute() const {
   return !route.empty();
 }
 
 void Executor::suspendAutonomy() {
+  resetDynamicAvoidance();
+  goal_quiet_since_s_ = goal_last_odom_s_ = -1.0;
   follower_.reset();
   recovery_follower_.reset();
   recovery_action_ = 0;
@@ -331,12 +343,24 @@ ExecutionOutput Executor::tick(const ExecutionInput &input) {
       const double max_gap =
           nav_kernel::local::scan::upstream::ClosedLoopController::kMaxUpdateGapS;
       if (elapsed < 0.0 || (!traj_frozen_ && elapsed > max_gap)) {
-        suspendAutonomy();
+        if (elapsed >= 0.0 && dynamic_wait_since_s_ >= 0.0) {
+          // A delayed control tick invalidates the spline, not the budget for
+          // an unresolved dynamic encounter. Otherwise repeated gaps can make
+          // a stopped robot retry forever without measured progress.
+          resetLocalPlanning();
+          pauseLinearMotion();
+          previous_kinematics_time_s_ = -1.0;
+          dynamic_clear_since_s_ = -1.0;
+          dynamic_resuming_ = false;
+        } else {
+          suspendAutonomy();
+        }
         last_scan_tick_s_ = input.timestampS;
         ExecutionOutput output;
         output.active = input.mode == ExecutionMode::MotionIntent || !route.empty();
         output.near_field_stop = output.active;
         output.reason = "scan_execution_clock_discontinuity";
+        if (dynamic_wait_since_s_ >= 0.0) output.dynamic_avoidance = "stale";
         return output;
       }
     }
@@ -397,6 +421,19 @@ ExecutionOutput Executor::tickRoute(const nav_kernel::Pose &map_body,
                                safe_obstacle_count, timestamp_s, {}, observation);
   }
   obstacle_xyzh_odom_scratch_.clear();
+  predictions_odom_scratch_.clear();
+  if (observation.predictions.fresh(timestamp_s)) {
+    for (std::size_t i = 0; i < observation.predictions.count; ++i) {
+      auto prediction = observation.predictions.obstacles[i];
+      prediction.start = map_from_odom.odomPointFromMap(prediction.start);
+      prediction.end = map_from_odom.odomPointFromMap(prediction.end);
+      prediction.minZ -= map_from_odom.translation.z;
+      prediction.maxZ -= map_from_odom.translation.z;
+      predictions_odom_scratch_.push_back(prediction);
+    }
+  }
+  observation.predictions.obstacles = predictions_odom_scratch_.data();
+  observation.predictions.count = predictions_odom_scratch_.size();
   obstacle_xyzh_odom_scratch_.reserve(static_cast<std::size_t>(safe_obstacle_count) * 4U);
   for (int index = 0; index < safe_obstacle_count; ++index) {
     const nav_kernel::Vec3 point_map{
@@ -455,6 +492,7 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     resetAutonomyProgress();
     const double yaw_error = goalYawError(map_body);
     if (final_yaw_ && std::abs(yaw_error) > active_goal_yaw_tolerance_rad_) {
+      goal_quiet_since_s_ = goal_last_odom_s_ = -1.0;
       output.path_found = true;
       output.reason = "aligning_goal_yaw";
       output.target_index = route.size() - 1;
@@ -466,16 +504,38 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
       follower_.reset();
       return output;
     }
-    output.goal_reached = true;
-    output.active = false;
-    output.reason = "goal_reached";
     output.target_index = route.size() - 1;
     output.target = route.back();
     output.target.z += height_offset_.value_or(0.0);
     output.target_distance_m = nav_kernel::distance3D(output.target, map_body.position);
     follower_.reset();
+    // Entering the radius while braking is not a settled arrival. Keep issuing
+    // zero and re-evaluate position on fresh odometry before committing success.
+    const double stamp = observation.odom_stamp_s;
+    const double speed = std::hypot(observation.body_linear_velocity.x,
+                                    observation.body_linear_velocity.y,
+                                    observation.body_linear_velocity.z);
+    const bool quiet = observation.body_velocity_valid && std::isfinite(speed) &&
+                       speed <= 0.03 && std::isfinite(observation.body_yaw_rate) &&
+                       std::abs(observation.body_yaw_rate) <= 0.08 &&
+                       std::isfinite(stamp) && stamp > 0.0;
+    if (!quiet) {
+      goal_quiet_since_s_ = goal_last_odom_s_ = -1.0;
+    } else {
+      if (goal_quiet_since_s_ < 0.0 || stamp < goal_last_odom_s_ ||
+          stamp - goal_last_odom_s_ > 0.25) {
+        goal_quiet_since_s_ = stamp;
+      }
+      goal_last_odom_s_ = stamp;
+    }
+    output.goal_reached = quiet && stamp - goal_quiet_since_s_ >= 0.5;
+    output.active = !output.goal_reached;
+    output.path_found = true;
+    output.reason = output.goal_reached ? "goal_reached" : "settling_at_goal";
     return output;
   }
+
+  goal_quiet_since_s_ = goal_last_odom_s_ = -1.0;
 
   const SegmentTarget target = buildSegment(map_body, planning_body, map_from_odom);
   buildReference(target, map_from_odom);
@@ -509,6 +569,85 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
       traj_frozen_, traversability);
   plan_request.maxLinearSpeedMps = std::min(
       active_max_speed_mps_, std::max(config_.follower.spline.maxVx, config_.follower.spline.maxVy));
+  bool dynamic_episode = false;
+  if (local_planner_.params().backend == nav_kernel::LocalPlannerBackend::Scan) {
+    const nav_kernel::local::scan::Grid grid(local_planner_.params(), plan_request);
+    output.prediction_count = grid.predictionCount();
+    bool conflict = false;
+    auto from = planning_body.position;
+    double remaining = std::max(0.5, active_max_speed_mps_ +
+        active_max_speed_mps_ * active_max_speed_mps_ /
+            (2.0 * std::max(0.05, local_planner_.params().scan.maxAcceleration)));
+    for (const auto &point : segment) {
+      const double length = nav_kernel::distance3D(from, point);
+      if (length < 1e-6) continue;
+      const double fraction = std::min(1.0, remaining / length);
+      const nav_kernel::Vec3 to{from.x+(point.x-from.x)*fraction,
+                               from.y+(point.y-from.y)*fraction,
+                               from.z+(point.z-from.z)*fraction};
+      const double heading = std::atan2(to.y-from.y, to.x-from.x);
+      conflict = conflict || grid.predictionIntersects(from, heading, to, heading);
+      remaining -= length;
+      from = to;
+      if (remaining <= 0.0) break;
+    }
+    if (conflict) {
+      dynamic_clear_since_s_ = -1.0;
+      dynamic_resuming_ = false;
+      if (dynamic_wait_since_s_ < 0.0 || timestamp_s < dynamic_wait_since_s_) {
+        dynamic_wait_since_s_ = dynamic_progress_s_ = timestamp_s;
+        dynamic_progress_position_ = planning_body.position;
+        resetLocalPlanning();
+      }
+    } else if (dynamic_wait_since_s_ >= 0.0 && observation.predictions.fresh(timestamp_s)) {
+      if (dynamic_clear_since_s_ < 0.0) dynamic_clear_since_s_ = timestamp_s;
+      if (!dynamic_resuming_ &&
+          timestamp_s-dynamic_clear_since_s_ >= config_.dynamic_clear_s) {
+        // Clear predictions allow replanning, but do not prove the robot has
+        // escaped stale occupancy or resumed motion. Keep the original budget
+        // until odometry demonstrates progress after the clear observation.
+        dynamic_resuming_ = true;
+        dynamic_progress_position_ = planning_body.position;
+        resetLocalPlanning();
+      }
+    } else if (!observation.predictions.fresh(timestamp_s)) {
+      dynamic_clear_since_s_ = -1.0;
+      dynamic_resuming_ = false;
+    }
+    if (dynamic_resuming_ && observation.predictions.fresh(timestamp_s) &&
+        nav_kernel::distance2D(planning_body.position, dynamic_progress_position_) >= 0.1) {
+      resetDynamicAvoidance();
+    }
+    dynamic_episode = dynamic_wait_since_s_ >= 0.0;
+    if (dynamic_episode) {
+      recovery_.reset();
+      recovery_follower_.stopLinear();
+      local_blocked_since_s_ = final_motion_blocked_since_s_ = -1.0;
+      if (nav_kernel::distance2D(planning_body.position, dynamic_progress_position_) >= 0.1) {
+        dynamic_progress_position_ = planning_body.position;
+        dynamic_progress_s_ = timestamp_s;
+      }
+      output.dynamic_blocked_s = std::max(0.0, timestamp_s-dynamic_progress_s_);
+      const bool expired = output.dynamic_blocked_s >= config_.dynamic_blocked_timeout_s ||
+                           timestamp_s-dynamic_wait_since_s_ >= config_.dynamic_episode_timeout_s;
+      const bool stale = !observation.predictions.fresh(timestamp_s);
+      const bool wait = expired || stale || (!dynamic_resuming_ &&
+                       (!conflict || timestamp_s-dynamic_wait_since_s_ < config_.dynamic_wait_s));
+      output.dynamic_avoidance = expired ? "timeout" : stale ? "stale" : wait ? "waiting"
+                                       : dynamic_resuming_ ? "resuming" : "detour";
+      if (wait) {
+        output.reason = expired ? (dynamic_resuming_ ? "dynamic_resume_timeout"
+                                                     : "dynamic_obstacle_timeout")
+                                : stale ? "dynamic_prediction_stale" : "dynamic_obstacle_wait";
+        output.recovery_reason = output.reason;
+        output.recovery_exhausted = expired;
+        output.near_field_stop = true;
+        follower_.stopLinear();
+        resetAutonomyProgress();
+        return output;
+      }
+    }
+  }
   nav_kernel::LocalPlan plan =
       planLocal(plan_request, map_from_odom, &output.local_planner_debug);
 
@@ -533,14 +672,23 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
            std::max(0.0, config_.recovery.blocked_interval_s));
   const bool recovery_enabled = config_.recovery.max_attempts > 0;
   const bool recovery_active = recovery_.active();
-  const bool stalled = !recovery_active && !blocked_long_enough &&
+  const bool stalled = !dynamic_episode && !recovery_active && !blocked_long_enough &&
                        autonomyMotionStalled(planning_body, timestamp_s);
   if (stalled && !recovery_enabled) autonomy_stall_stop_ = true;
   output.recovery_trigger = recovery_active
                                 ? "active"
                                 : (blocked_long_enough ? "blocked"
                                                        : (stalled ? "stalled" : "inactive"));
-  const bool force_recovery = recovery_enabled && (recovery_active || blocked_long_enough || stalled);
+  const bool force_recovery = !dynamic_episode && recovery_enabled &&
+                              (recovery_active || blocked_long_enough || stalled);
+  if (dynamic_episode && !plan_ready) {
+    output.reason = dynamic_resuming_ ? "dynamic_resume_pending" : "dynamic_obstacle_replan";
+    output.dynamic_avoidance = dynamic_resuming_ ? "resuming" : "waiting_for_detour";
+    output.near_field_stop = true;
+    follower_.stopLinear();
+    resetAutonomyProgress();
+    return output;
+  }
   RecoveryOutput recovery;
   if (force_recovery && planner_input_valid) {
     recovery = recovery_.step(plan_request);
@@ -730,6 +878,15 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   follower_state.goalDistance = std::hypot(route.back().x - map_body.position.x,
                                            route.back().y - map_body.position.y);
   follower_state.params = config_.follower;
+  if (path_provided) {
+    follower_state.params = nav_kernel::cmuFollowerParams(follower_state.params);
+    follower_state.standardPathProfile = false;
+  }
+  // The follower must be able to enter a task's tighter arrival radius.
+  follower_state.params.stopDisThre =
+      std::min(follower_state.params.stopDisThre, active_goal_reached_m_);
+  follower_state.params.spline.finishDistance =
+      std::min(follower_state.params.spline.finishDistance, active_goal_reached_m_);
   follower_state.params.maxSpeed = active_max_speed_mps_;
   follower_state.params.minSpeed = std::min(follower_state.params.minSpeed, active_max_speed_mps_);
   follower_state.params.spline.maxVx = std::min(follower_state.params.spline.maxVx, active_max_speed_mps_);

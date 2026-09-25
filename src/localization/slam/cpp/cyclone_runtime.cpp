@@ -1,5 +1,6 @@
 #include "slam.hpp"
 #include "map_tracking_health.hpp"
+#include "manual_relocalization.hpp"
 #include "imu_frame_contract.hpp"
 #include "message/generated/topics.hpp"
 #include "transport/dds/qos.hpp"
@@ -372,6 +373,7 @@ CloudMessage toDdsCloud(const Cloud& cloud) {
 
 struct MapObservationMessage {
   lingtu_dds_MapObservation msg{};
+  std::string reference_map_id;
   CloudMessage scan;
   std::string map_frame;
   std::string sensor_frame;
@@ -380,6 +382,7 @@ struct MapObservationMessage {
 
   void bindStorage() {
     scan.bindStorage();
+    msg.reference_map_id = const_cast<char*>(reference_map_id.c_str());
     scan.msg.header.frame_id = const_cast<char*>(sensor_frame.c_str());
     msg.header.frame_id = const_cast<char*>(map_frame.c_str());
     msg.sensor_frame = const_cast<char*>(sensor_frame.c_str());
@@ -391,9 +394,10 @@ struct MapObservationMessage {
 
 std::optional<MapObservationMessage> toDdsMapObservation(
     const SlamOutputs& out,
-    const Pose3d& body_sensor) {
+    const Pose3d& body_sensor,
+    SlamMode mode) {
   if (out.source_epoch == 0U || out.observation_sequence == 0U ||
-      !out.registered_cloud_body.has_value() ||
+      !(out.registered_cloud_body != nullptr) ||
       !out.state_estimation_at_scan.has_value() ||
       !out.map_odom_tf.has_value()) {
     return std::nullopt;
@@ -407,7 +411,9 @@ std::optional<MapObservationMessage> toDdsMapObservation(
   message.map_frame =
       out.map_odom_tf->frame_id.empty() ? "map" : out.map_odom_tf->frame_id;
   message.sensor_frame = scan.frame_id.empty() ? "body" : scan.frame_id;
-  message.pose_state = toString(out.state);
+  // Tracking describes estimator health; mapping must not inherit a saved-map identity.
+  message.pose_state = mode == SlamMode::Mapping && out.state == lingtu::slam::SlamState::Tracking
+      ? "MAPPING" : toString(out.state);
   message.pose_reason = out.reason;
   message.scan = toDdsCloud(scan);
 
@@ -703,22 +709,22 @@ std::string statusSnapshotJson(
           health.state == lingtu::slam::SlamState::Localizing
       ? 0.0
       : out.localization_quality;
-  const int registered_points = out.registered_cloud_body.has_value()
+  const int registered_points = (out.registered_cloud_body != nullptr)
       ? static_cast<int>(out.registered_cloud_body->points.size())
       : 0;
-  const int map_points = out.map_cloud_map.has_value()
+  const int map_points = (out.map_cloud_map != nullptr)
       ? static_cast<int>(out.map_cloud_map->points.size())
       : 0;
-  const int saved_map_points = out.saved_map_cloud_map.has_value()
+  const int saved_map_points = (out.saved_map_cloud_map != nullptr)
       ? static_cast<int>(out.saved_map_cloud_map->points.size())
       : out.saved_map_points;
-  const std::string registered_cloud_frame_id = out.registered_cloud_body.has_value()
+  const std::string registered_cloud_frame_id = (out.registered_cloud_body != nullptr)
       ? out.registered_cloud_body->frame_id
       : "";
-  const std::string map_cloud_frame_id = out.map_cloud_map.has_value()
+  const std::string map_cloud_frame_id = (out.map_cloud_map != nullptr)
       ? out.map_cloud_map->frame_id
       : "";
-  const std::string saved_map_cloud_frame_id = out.saved_map_cloud_map.has_value()
+  const std::string saved_map_cloud_frame_id = (out.saved_map_cloud_map != nullptr)
       ? out.saved_map_cloud_map->frame_id
       : (out.saved_map_points > 0 && out.map_odom_tf.has_value()
           ? out.map_odom_tf->frame_id
@@ -726,7 +732,7 @@ std::string statusSnapshotJson(
   const Pose3d pose = out.odometry_odom_body.value_or(Pose3d{});
   const std::string state_estimation_at_scan_json = out.state_estimation_at_scan.has_value()
       ? std::string("{\"stamp_s\":") +
-          std::to_string(out.registered_cloud_body.has_value()
+          std::to_string((out.registered_cloud_body != nullptr)
               ? out.registered_cloud_body->stamp_s
               : out.stamp_s) +
           ",\"frame_id\":\"odom\",\"child_frame_id\":\"body\",\"pose\":" +
@@ -1116,6 +1122,15 @@ std::optional<Pose3d> loadTrackSeed(const std::string& path, const std::string& 
       !std::isfinite(quaternion_norm) || quaternion_norm <= 1e-12) {
     return std::nullopt;
   }
+  // A persisted stance is historical. Keep its heading and let the matcher
+  // recover current roll/pitch from the synchronized odometry, as for map seeds.
+  const double yaw = std::atan2(
+      2.0 * (pose.qw * pose.qz + pose.qx * pose.qy),
+      quaternion_norm * quaternion_norm - 2.0 * (pose.qy * pose.qy + pose.qz * pose.qz));
+  pose.qx = 0.0;
+  pose.qy = 0.0;
+  pose.qz = std::sin(0.5 * yaw);
+  pose.qw = std::cos(0.5 * yaw);
   return pose;
 }
 
@@ -1229,9 +1244,9 @@ SlamMapSnapshotAckMessage snapshotAck(
   ack.product_session_id = productSessionId();
   ack.state = toString(out.state);
 
-  const Cloud* saved_cloud = out.saved_map_cloud_map.has_value()
-      ? &*out.saved_map_cloud_map
-      : (out.map_cloud_map.has_value() ? &*out.map_cloud_map : nullptr);
+  const Cloud* saved_cloud = out.saved_map_cloud_map
+      ? out.saved_map_cloud_map.get()
+      : out.map_cloud_map.get();
   ack.msg.point_count = saved_cloud == nullptr
       ? static_cast<std::uint64_t>(std::max(0, out.saved_map_points))
       : static_cast<std::uint64_t>(saved_cloud->points.size());
@@ -1246,7 +1261,9 @@ SlamMapSnapshotAckMessage snapshotAck(
   ack.msg.healthy = out.alive && out.source_epoch > 0U &&
       out.observation_sequence > 0U && ack.msg.point_count > 0U &&
       (out.state == lingtu::slam::SlamState::Mapping ||
-       out.state == lingtu::slam::SlamState::Tracking);
+       out.state == lingtu::slam::SlamState::Tracking ||
+       (out.state == lingtu::slam::SlamState::Degraded &&
+        out.reason == "mapping_keyframe_capacity_reached"));
   ack.health_message = ack.msg.healthy
       ? "SLAM snapshot accepted"
       : (out.reason.empty() ? "SLAM snapshot identity or health is incomplete" : out.reason);
@@ -1254,6 +1271,13 @@ SlamMapSnapshotAckMessage snapshotAck(
   ack.bindStorage();
   return ack;
 }
+
+struct PendingMapSnapshot {
+  std::string request_id;
+  std::string map_id;
+  std::string output_path;
+  SlamOutputs captured;
+};
 
 struct RelocalizationResponseMessage {
   lingtu_dds_RelocalizationResponse msg{};
@@ -1290,6 +1314,11 @@ RelocalizationResponseMessage relocalizationResponse(
       ? request.engine
       : (response.action == "global_relocalize" ? "bbs3d_gicp" :
          response.action == "seeded_relocalize" ? "seeded_gicp" : "auto");
+  if (success && (response.action == "global_relocalize" ||
+                  response.action == "seeded_relocalize")) {
+    response.engine = out.relocalization_engine.empty()
+        ? "unknown" : out.relocalization_engine;
+  }
   response.message = message;
   response.state = toString(out.state);
   response.refine_backend = out.relocalization_refine_backend;
@@ -1873,6 +1902,12 @@ int main(int argc, char** argv) {
     double last_cloud_snapshot_s = 0.0;
     std::uint64_t last_global_snapshot_epoch = 0;
     std::uint64_t last_global_snapshot_revision = 0;
+    std::uint64_t last_registered_snapshot_epoch = 0;
+    double last_registered_snapshot_stamp_s = -1.0;
+    std::uint64_t last_map_snapshot_epoch = 0;
+    double last_map_snapshot_stamp_s = -1.0;
+    std::uint64_t last_saved_snapshot_epoch = 0;
+    std::uint64_t last_saved_snapshot_revision = 0;
     std::uint64_t last_global_dds_epoch = 0;
     std::uint64_t last_global_dds_revision = 0;
     double last_lidar_scan_snapshot_s = 0.0;
@@ -1882,6 +1917,10 @@ int main(int argc, char** argv) {
     double last_state_estimation_stamp_s = -1.0;
     std::uint64_t last_map_observation_epoch = 0U;
     std::uint64_t last_map_observation_sequence = 0U;
+    std::string observation_reference_path;
+    std::string observation_reference_id;
+    std::int64_t observation_reference_epoch = 0;
+    std::optional<PendingMapSnapshot> pending_map_snapshot;
     double last_lidar_scan_snapshot_stamp_s = -1.0;
     const double status_json_period_s = cli.status_json_hz > 0.0
         ? 1.0 / cli.status_json_hz
@@ -1956,6 +1995,7 @@ int main(int argc, char** argv) {
       last_track_against_map_scan_s = -1.0;
       track_against_map_seed.reset();
     };
+    lingtu::slam::ManualRelocalization manual_relocalization;
     auto next_tick = std::chrono::steady_clock::now();
     while (g_running) {
       dds.drainImu([&](const lingtu_dds_Imu& msg) {
@@ -2046,9 +2086,25 @@ int main(int argc, char** argv) {
           reject("save_without_patches_unsupported");
           return;
         }
-        const Status command_status = backend->saveMap(output_path);
+        if (pending_map_snapshot) {
+          reject("map_snapshot_in_progress");
+          return;
+        }
+        const Status command_status = backend->startSaveMapAsync(output_path);
+        if (!command_status.ok) {
+          reject(command_status.message);
+          return;
+        }
+        if (backend->saveMapAsyncInFlight()) {
+          pending_map_snapshot = PendingMapSnapshot{
+              request.request_id ? request.request_id : "",
+              request.map_id ? request.map_id : "",
+              output_path,
+              backend->outputs()};
+          return;
+        }
         const SlamOutputs out = backend->outputs();
-        if (command_status.ok && out.saved_map_cloud_map.has_value()) {
+        if (command_status.ok && (out.saved_map_cloud_map != nullptr)) {
           auto saved_msg = toDdsCloud(*out.saved_map_cloud_map);
           saved_msg.bindStorage();
           dds.writeSavedMap(saved_msg.msg);
@@ -2074,6 +2130,17 @@ int main(int argc, char** argv) {
               runtime_mode == SlamMode::Localization,
               track_against_map_enabled,
               track_against_map_failures);
+          dds.writeRelocalizationResponse(response.msg);
+          return;
+        }
+        if (manual_relocalization.owns(request.request_id ? request.request_id : "")) {
+          return;  // The original request will receive its final completion.
+        }
+        if (manual_relocalization.pending() || backend->relocalizeAsyncInFlight()) {
+          auto response = relocalizationResponse(
+              request, false, "async_relocalization_in_progress", backend->outputs(),
+              runtime_mode == SlamMode::Localization,
+              track_against_map_enabled, track_against_map_failures);
           dds.writeRelocalizationResponse(response.msg);
           return;
         }
@@ -2123,8 +2190,7 @@ int main(int argc, char** argv) {
           last_track_against_map_success_s = -1.0;
           last_track_against_map_s = 0.0;
           last_track_against_map_scan_s = -1.0;
-          // Starting the Product's tracking loop must not discard its saved
-          // full-pose seed. A different map can only load a matching seed.
+          // Keep the matching saved position/heading or the explicit request.
           track_against_map_seed = trackSeedForRequest(
               request.has_initial_pose
                   ? std::optional<Pose3d>{poseFromDds(request.initial_pose)}
@@ -2227,26 +2293,23 @@ int main(int argc, char** argv) {
             track_against_map_path = map_path;
             track_against_map_seed = loadTrackSeed(cli.track_against_map_seed_file, map_path);
           }
-          command_status = backend->relocalize(
+          command_status = manual_relocalization.start(
+              *backend,
+              {request.request_id ? request.request_id : "", action,
+               request.engine ? request.engine : ""},
               action == "global_relocalize"
                   ? std::optional<Pose3d>{}
                   : std::optional<Pose3d>{poseFromDds(request.initial_pose)},
               action == "global_relocalize"
                   ? RelocalizationSearch::Global
                   : RelocalizationSearch::Automatic);
-        }
-        if (command_status.ok &&
-            (action == "seeded_relocalize" || action == "global_relocalize")) {
-          restart_track_against_map();
+          if (command_status.ok) {
+            return;  // Keep feeding sensors; reply only after the result is committed.
+          }
         }
 
         const SlamOutputs out = backend->outputs();
-        if (command_status.ok &&
-            (action == "seeded_relocalize" || action == "global_relocalize") &&
-            track_against_map_path == cli.map_path) {
-          saveTrackSeed(cli.track_against_map_seed_file, cli.map_path, out.relocalization_map_body);
-        }
-        if (command_status.ok && out.saved_map_cloud_map.has_value()) {
+        if (command_status.ok && (out.saved_map_cloud_map != nullptr)) {
           auto saved_msg = toDdsCloud(*out.saved_map_cloud_map);
           saved_msg.bindStorage();
           dds.writeSavedMap(saved_msg.msg);
@@ -2267,9 +2330,54 @@ int main(int argc, char** argv) {
       if (!status.ok) {
         std::fprintf(stderr, "tick: %s\n", status.message.c_str());
       }
+      if (pending_map_snapshot) {
+        if (const auto completed = backend->pollSaveMapAsync()) {
+          SlamOutputs captured = backend->outputs();
+          captured.source_epoch = pending_map_snapshot->captured.source_epoch;
+          captured.observation_sequence = pending_map_snapshot->captured.observation_sequence;
+          captured.stamp_s = pending_map_snapshot->captured.stamp_s;
+          captured.state = pending_map_snapshot->captured.state;
+          captured.reason = pending_map_snapshot->captured.reason;
+          lingtu_dds_SlamMapSnapshotRequest request{};
+          request.request_id = pending_map_snapshot->request_id.data();
+          request.map_id = pending_map_snapshot->map_id.data();
+          request.output_path = pending_map_snapshot->output_path.data();
+          if (completed->ok && captured.saved_map_cloud_map) {
+            auto saved_msg = toDdsCloud(*captured.saved_map_cloud_map);
+            saved_msg.bindStorage();
+            dds.writeSavedMap(saved_msg.msg);
+          }
+          auto ack = snapshotAck(request, completed->ok, completed->message, captured);
+          dds.writeMapSnapshotAck(ack);
+          pending_map_snapshot.reset();
+        }
+      }
       slam_tick_rate.mark(nowSeconds());
       SlamOutputs out = backend->outputs();
-      if (track_against_map_enabled) {
+      if (const auto completed = manual_relocalization.poll(*backend); completed) {
+        out = backend->outputs();
+        if (completed->status.ok) {
+          restart_track_against_map();
+          if (track_against_map_path == cli.map_path) {
+            saveTrackSeed(cli.track_against_map_seed_file, cli.map_path, out.relocalization_map_body);
+          }
+          if (out.saved_map_cloud_map) {
+            auto saved_msg = toDdsCloud(*out.saved_map_cloud_map);
+            saved_msg.bindStorage();
+            dds.writeSavedMap(saved_msg.msg);
+          }
+        }
+        lingtu_dds_RelocalizationRequest request{};
+        request.request_id = const_cast<char*>(completed->request.request_id.c_str());
+        request.action = const_cast<char*>(completed->request.action.c_str());
+        request.engine = const_cast<char*>(completed->request.engine.c_str());
+        auto response = relocalizationResponse(
+            request, completed->status.ok, completed->status.message, out,
+            runtime_mode == SlamMode::Localization,
+            track_against_map_enabled, track_against_map_failures);
+        dds.writeRelocalizationResponse(response.msg);
+      }
+      if (track_against_map_enabled && !manual_relocalization.pending()) {
         const double t = nowSeconds();
         if (const auto completed = backend->pollRelocalizeAsync(); completed.has_value()) {
           if (completed->ok) {
@@ -2298,19 +2406,23 @@ int main(int argc, char** argv) {
           last_track_against_map_s = t;
           if (backend->relocalizeAsyncInFlight()) {
             note_track_wait("async_relocalization_in_progress");
-          } else if (!out.registered_cloud_body.has_value()) {
+          } else if (out.observation_sequence == 0U) {
             note_track_wait("registered_cloud_unavailable");
           } else if (std::abs(
-                         out.registered_cloud_body->stamp_s -
+                         out.stamp_s -
                          last_track_against_map_scan_s) <= 1e-6) {
             note_track_wait("registered_cloud_stale");
           } else {
-            last_track_against_map_scan_s = out.registered_cloud_body->stamp_s;
+            // A time jump suppresses public clouds until alignment recovers.
+            // The backend still owns fresh scans; use its observation progress
+            // and let startRelocalizeAsync validate the private recovery input.
+            last_track_against_map_scan_s = out.stamp_s;
             ++track_against_map_attempts;
             const Status start_status =
                 backend->startRelocalizeAsync(
                     track_against_map_seed,
-                    track_against_map_failures >= kTrackAgainstMapDegradedFailureCount
+                    track_against_map_failures >= kTrackAgainstMapDegradedFailureCount ||
+                            (!out.map_odom_tf.has_value() && track_against_map_failures > 0)
                         ? RelocalizationSearch::Global
                         : RelocalizationSearch::Automatic);
             if (!start_status.ok && isTrackAgainstMapInputWait(start_status.message)) {
@@ -2322,7 +2434,7 @@ int main(int argc, char** argv) {
                   stderr,
                   "track_against_map async start scan_sequence=%llu stamp=%.6f\n",
                   static_cast<unsigned long long>(out.observation_sequence),
-                  out.registered_cloud_body->stamp_s);
+                  out.stamp_s);
             }
           }
         }
@@ -2370,7 +2482,7 @@ int main(int argc, char** argv) {
           dds.writeState(*msg);
         }
       }
-      if (out.registered_cloud_body.has_value() &&
+      if ((out.registered_cloud_body != nullptr) &&
           std::abs(
               out.registered_cloud_body->stamp_s - last_registered_cloud_stamp_s) > 1e-6) {
         last_registered_cloud_stamp_s = out.registered_cloud_body->stamp_s;
@@ -2384,13 +2496,30 @@ int main(int argc, char** argv) {
            out.observation_sequence > last_map_observation_sequence);
       if (out.source_epoch > 0U && out.observation_sequence > 0U &&
           observation_is_new) {
-        if (auto observation = toDdsMapObservation(out, body_sensor); observation.has_value()) {
+        if (auto observation = toDdsMapObservation(out, body_sensor, runtime_mode); observation.has_value()) {
+          if (track_against_map_path != observation_reference_path) {
+            observation_reference_path = track_against_map_path;
+            observation_reference_id.clear();
+            observation_reference_epoch = 0;
+            std::filesystem::path directory(track_against_map_path);
+            if (!std::filesystem::is_directory(directory)) directory = directory.parent_path();
+            directory = directory.lexically_normal();
+            if (directory.filename().empty()) directory = directory.parent_path();
+            std::ifstream epoch_file(directory / ".content_epoch");
+            if ((epoch_file >> observation_reference_epoch) && observation_reference_epoch > 0)
+              observation_reference_id = directory.filename().string();
+            else observation_reference_epoch = 0;
+          }
+          if (observation->pose_state != "MAPPING") {
+            observation->reference_map_id = observation_reference_id;
+            observation->msg.reference_map_content_epoch = observation_reference_epoch;
+          }
           dds.writeMapObservation(*observation);
           last_map_observation_epoch = out.source_epoch;
           last_map_observation_sequence = out.observation_sequence;
         }
       }
-      if (out.map_cloud_map.has_value() &&
+      if ((out.map_cloud_map != nullptr) &&
           std::abs(out.map_cloud_map->stamp_s - last_map_cloud_stamp_s) >
               1e-6) {
         last_map_cloud_stamp_s = out.map_cloud_map->stamp_s;
@@ -2412,14 +2541,26 @@ int main(int argc, char** argv) {
         if (t - last_cloud_snapshot_s >= cloud_snapshot_period_s) {
           last_cloud_snapshot_s = t;
           const std::string base = cli.cloud_snapshot_dir;
-          if (out.registered_cloud_body.has_value()) {
-            writeCloudSnapshotAtomic(base + "/registered_cloud.bin", *out.registered_cloud_body);
+          if (out.registered_cloud_body &&
+              (last_registered_snapshot_epoch != out.source_epoch ||
+               last_registered_snapshot_stamp_s != out.registered_cloud_body->stamp_s) &&
+              writeCloudSnapshotAtomic(base + "/registered_cloud.bin", *out.registered_cloud_body)) {
+            last_registered_snapshot_epoch = out.source_epoch;
+            last_registered_snapshot_stamp_s = out.registered_cloud_body->stamp_s;
           }
-          if (out.map_cloud_map.has_value()) {
-            writeCloudSnapshotAtomic(base + "/map_cloud.bin", *out.map_cloud_map);
+          if (out.map_cloud_map &&
+              (last_map_snapshot_epoch != out.source_epoch ||
+               last_map_snapshot_stamp_s != out.map_cloud_map->stamp_s) &&
+              writeCloudSnapshotAtomic(base + "/map_cloud.bin", *out.map_cloud_map)) {
+            last_map_snapshot_epoch = out.source_epoch;
+            last_map_snapshot_stamp_s = out.map_cloud_map->stamp_s;
           }
-          if (out.saved_map_cloud_map.has_value()) {
-            writeCloudSnapshotAtomic(base + "/saved_map_cloud.bin", *out.saved_map_cloud_map);
+          if (out.saved_map_cloud_map &&
+              (last_saved_snapshot_epoch != out.source_epoch ||
+               last_saved_snapshot_revision != out.saved_map_revision) &&
+              writeCloudSnapshotAtomic(base + "/saved_map_cloud.bin", *out.saved_map_cloud_map)) {
+            last_saved_snapshot_epoch = out.source_epoch;
+            last_saved_snapshot_revision = out.saved_map_revision;
           }
           if (out.global_map_cloud && (last_global_snapshot_epoch != out.source_epoch ||
               last_global_snapshot_revision != out.global_map_revision)) {
@@ -2460,10 +2601,10 @@ int main(int argc, char** argv) {
         const double t = nowSeconds();
         if (t - last_log_s >= cli.log_status_s) {
           last_log_s = t;
-          const int registered_points = out.registered_cloud_body.has_value()
+          const int registered_points = (out.registered_cloud_body != nullptr)
               ? static_cast<int>(out.registered_cloud_body->points.size())
               : 0;
-          const int map_points = out.map_cloud_map.has_value()
+          const int map_points = (out.map_cloud_map != nullptr)
               ? static_cast<int>(out.map_cloud_map->points.size())
               : 0;
           const Pose3d pose = out.odometry_odom_body.value_or(Pose3d{});

@@ -40,6 +40,7 @@ add_library(lingtu_maps STATIC
   cpp/build/grid_artifacts.cpp
   cpp/build/occupancy_snapshot.cpp
   cpp/build/pcd.cpp
+  cpp/build/saved_scans.cpp
   cpp/build/pipeline.cpp
   cpp/build/process.cpp
   cpp/semantic_map_persistence.cpp

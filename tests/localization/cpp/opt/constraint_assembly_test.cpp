@@ -4,6 +4,7 @@
 #include "localization/opt/loop_constraints.hpp"
 #include "localization/opt/graph.hpp"
 #include "localization/opt/map.hpp"
+#include "localization/opt/pose_math.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -103,6 +104,50 @@ void write_cloud(const std::filesystem::path &path, const std::vector<opt::Point
       << points.size() << "\nHEIGHT 1\nPOINTS " << points.size() << "\nDATA binary\n";
   out.write(reinterpret_cast<const char *>(points.data()),
             static_cast<std::streamsize>(points.size() * sizeof(opt::Point)));
+}
+
+void test_refined_overlap_matches_final_transform() {
+  std::vector<opt::Keyframe> keyframes(2);
+  keyframes[0].patch_name = "0.pcd";
+  keyframes[1].patch_name = "1.pcd";
+  keyframes[1].pose.x = 1.0;
+  const auto target = scene_pattern(0.0, .015F, 0.F);
+  const auto source = scene_pattern(1.0, .06F, .4F);
+  const opt::PatchCloudSource cloud_at =
+      [&](std::size_t index) { return index == 0 ? target : source; };
+  opt::LoopConstraintOptions options;
+  options.max_correspondence_distance_m = .08;
+  const auto result = opt::generate_sequential_constraint(cloud_at, keyframes, 0, options);
+  require(result.ok, "overlap fixture registration failed: " + result.message);
+  const auto sampled_target = opt::sample_mapping_cloud(
+      target, options.voxel_size_m, options.max_points_per_submap);
+  const auto sampled_source = opt::sample_mapping_cloud(
+      source, options.voxel_size_m, options.max_points_per_submap);
+  std::size_t matched = 0;
+  for (const auto &point : sampled_source) {
+    const auto rotated = opt::rotate_vector(result.constraint.pose_from_to, point.x, point.y, point.z);
+    const float x = static_cast<float>(rotated[0] + result.constraint.pose_from_to.x);
+    const float y = static_cast<float>(rotated[1] + result.constraint.pose_from_to.y);
+    const float z = static_cast<float>(rotated[2] + result.constraint.pose_from_to.z);
+    for (const auto &candidate : sampled_target) {
+      const double dx = static_cast<double>(candidate.x) - x;
+      const double dy = static_cast<double>(candidate.y) - y;
+      const double dz = static_cast<double>(candidate.z) - z;
+      if (dx * dx + dy * dy + dz * dz <
+          options.max_correspondence_distance_m * options.max_correspondence_distance_m) {
+        ++matched;
+        break;
+      }
+    }
+  }
+  const double overlap = static_cast<double>(matched) / sampled_source.size();
+  require(std::abs(result.diagnostic.inlier_ratio - overlap) < 1e-9,
+          "reported overlap must describe the final plane-refined transform");
+  // Plane refinement raises this fixture's overlap from 0.971354 to 0.973958.
+  // A gate between them must inspect the final geometry, not reject the old pose.
+  options.min_inlier_ratio = .972;
+  const auto gated = opt::generate_sequential_constraint(cloud_at, keyframes, 0, options);
+  require(gated.ok, "overlap gate rejected the final plane-refined transform: " + gated.message);
 }
 
 void test_synthetic_sequential_constraint(const std::filesystem::path &root,
@@ -289,6 +334,16 @@ void test_closed_trajectory_assembly(const std::filesystem::path &root,
             "real auto-PGO stdout contract changed: " + stdout_json);
     require(std::filesystem::is_regular_file(output / "map_optimization.json"),
             "real auto-PGO did not publish its optimization report");
+    const auto optimized = opt::read_poses(output / "poses.txt");
+    double min_z = optimized.front().pose.z, max_z = min_z;
+    for (const auto& keyframe : optimized) {
+      const auto rpy = opt::pose_rpy(keyframe.pose);
+      require(std::hypot(rpy[0], rpy[1]) < 1e-10,
+              "save-time graph tilted the observed gravity");
+      min_z = std::min(min_z, keyframe.pose.z);
+      max_z = std::max(max_z, keyframe.pose.z);
+    }
+    require(max_z - min_z < .01, "flat closed-map fixture retained height deformation");
     require(!std::filesystem::exists(output / "pose_graph.constraints"),
             "real auto-PGO published private constraints");
     auto private_path = output;
@@ -306,6 +361,7 @@ int main(int argc, char **argv) {
     std::error_code error;
     std::filesystem::remove_all(root, error);
     std::filesystem::create_directories(root);
+    test_refined_overlap_matches_final_transform();
     test_synthetic_sequential_constraint(root, argc > 1 ? argv[1] : "");
     test_closed_trajectory_assembly(root, argc > 1 ? argv[1] : "");
     std::filesystem::remove_all(root, error);

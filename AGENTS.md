@@ -124,6 +124,12 @@ imports. Machine-enforced ownership lives in
 - In `real`, native navigation owns final motion arbitration. Only
   `lingtu-driver` may forward the checked command to Brainstem. Do not bypass
   planning, safety, or the declared command owner.
+- Keep the OctoPlanner3D + SCAN navigation chain based on 3D geometry. Fix
+  collision, swept-path, ground-support, and elevation queries in 3D; do not
+  substitute a 2D cost or traversability map. Local surface fits must preserve
+  distinct surfaces at the same XY. Retain observed ground, unknown-space
+  evidence, and the robot's executable motion constraints. A projection may
+  suggest candidates or aid inspection, but cannot authorize motion.
 - Field `mapd` owns live map state, standalone traversability owns
   `/nav/traversability`, and save-time pruning owns persistent-map cleanup.
   Python map layers are development/simulation fallbacks and must not compete
@@ -172,6 +178,8 @@ imports. Machine-enforced ownership lives in
 - ProductControl package guide: [`src/lingtu/README.md`](src/lingtu/README.md)
 - Products, environments, lifecycle, and build: [`docs/getting-started.md`](docs/getting-started.md)
 - Robot-side operations: [`docs/operations.md`](docs/operations.md)
+- Go2/NX connections and field handoff:
+  [`docs/operations/go2-offline-mapping.md`](docs/operations/go2-offline-mapping.md)
 - Validation levels and gates: [`docs/testing.md`](docs/testing.md)
 - Simulation architecture: [`sim/ARCHITECTURE.md`](sim/ARCHITECTURE.md)
 - External/Gateway integration boundary: [`docs/api.md`](docs/api.md)

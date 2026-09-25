@@ -3,6 +3,10 @@
   "name": "mujoco_local_common",
   "description": "Shared MuJoCo baseline for fair CMU and SCAN local-planner comparison.",
   "start": [3.0, 4.0, 0.6, 0.0],
+  "planner_constraints": {
+    "support_height_m": 0.45,
+    "support_height_tolerance_m": 0.11
+  },
   "windows_cpu_isolation": true,
   "windows_navigation_physical_cores": 3,
   "paths": {

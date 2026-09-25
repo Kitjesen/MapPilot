@@ -2,6 +2,7 @@
 
 #include "LingTuSimFrontEndLogin.h"
 #include "LingTuSimGameSelection.h"
+#include "LingTuSimInspectionProjection.h"
 #include "LingTuSimRuntimeUIStatus.h"
 #include "Widgets/SCompoundWidget.h"
 
@@ -24,6 +25,7 @@ class SLingTuSimRuntimeHUD final : public SCompoundWidget {
   SLATE_ARGUMENT(TSharedPtr<FFrontEndLoginModel>, LoginModel)
   SLATE_ARGUMENT(TSharedPtr<FGameSelectionModel>, SelectionModel)
   SLATE_ARGUMENT(TSharedPtr<FAssetReviewModel>, AssetReviewModel)
+  SLATE_ARGUMENT(TSharedPtr<FInspectionProjection>, InspectionProjection)
   SLATE_ARGUMENT(TSharedPtr<FString>, SelectionFeedback)
   SLATE_ARGUMENT(bool, FrontEndLoginRequired)
   SLATE_ARGUMENT(bool, SelectionIntentConfigured)
@@ -48,6 +50,13 @@ class SLingTuSimRuntimeHUD final : public SCompoundWidget {
   TSharedRef<SWidget> BuildAssetFilmstrip();
   FText GetIdentityText() const;
   FText GetReadinessText() const;
+  FText GetDriveMissionText() const;
+  FText GetInspectionProgressText() const;
+  FText GetInspectionReportText() const;
+  FSlateColor GetInspectionStatusColor() const;
+  FText GetDriveSessionText() const;
+  FText GetDriveTelemetryText() const;
+  FSlateColor GetDriveStatusColor() const;
   FText GetModeText() const;
   FText GetInputText() const;
   FText GetRequestedAxesText() const;
@@ -107,6 +116,7 @@ class SLingTuSimRuntimeHUD final : public SCompoundWidget {
   EVisibility GetLogoutVisibility() const;
   EVisibility GetFrontEndStaticBackdropVisibility() const;
   EVisibility GetRuntimeHudChromeVisibility() const;
+  EVisibility GetDriveHudVisibility() const;
   EVisibility GetNonPauseVisibility() const;
 
   TWeakObjectPtr<UWorld> World;
@@ -115,6 +125,7 @@ class SLingTuSimRuntimeHUD final : public SCompoundWidget {
   TSharedPtr<FFrontEndLoginModel> LoginModel;
   TSharedPtr<FGameSelectionModel> SelectionModel;
   TSharedPtr<FAssetReviewModel> AssetReviewModel;
+  TSharedPtr<FInspectionProjection> InspectionProjection;
   TSharedPtr<FString> SelectionFeedback;
   FSimpleDelegate OnSelectionPrevious;
   FSimpleDelegate OnSelectionNext;

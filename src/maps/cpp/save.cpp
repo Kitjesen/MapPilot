@@ -2086,7 +2086,22 @@ class SaveMapEngine::Impl {
       const auto constraints = source_work / job->request.pgo.constraints_file;
       std::filesystem::path processed_source = source_work;
       const bool explicit_constraints = std::filesystem::is_regular_file(constraints);
-      const bool auto_constraints = !explicit_constraints && HasCompletePatchBundle(source_work);
+      const auto online_report_path = source_work / "map_optimization.json";
+      const auto online_report = std::filesystem::is_regular_file(online_report_path)
+          ? ReadText(online_report_path) : std::string{};
+      const bool online_sam = JsonObjectStringAtPath(online_report, {"backend"}) == "lio_sam_isam2";
+      if (online_sam) {
+        std::size_t count = 0;
+        if (explicit_constraints || JsonObjectBoolAtPath(online_report, {"success"}) != true ||
+            !HasCompletePatchBundle(source_work) ||
+            !ReadPatchManifest(source_work / "patch_bundle.manifest", &count) ||
+            JsonObjectNumberAtPath(online_report, {"pose_count"}) != static_cast<double>(count)) {
+          finish(SaveJobState::kFailed, "online LIO-SAM snapshot is incomplete or conflicts with offline factors",
+                 "online_graph_snapshot_invalid");
+          return;
+        }
+      }
+      const bool auto_constraints = !online_sam && !explicit_constraints && HasCompletePatchBundle(source_work);
       if (explicit_constraints || auto_constraints) {
         ProcessRunOptions options;
         options.cwd = source_work;
@@ -2150,7 +2165,7 @@ class SaveMapEngine::Impl {
             processed_source = optimized_work;
           }
         }
-      } else {
+      } else if (!online_sam) {
         WritePgoNotPerformedReport(
             source_work,
             PgoCliResult{true, false, "patch_bundle_incomplete",

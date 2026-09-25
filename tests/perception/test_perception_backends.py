@@ -227,6 +227,35 @@ def test_mask_projection_receives_runtime_camera_distortion(monkeypatch) -> None
     np.testing.assert_allclose(captured["D"], frame.intrinsics.D_vector)
 
 
+@pytest.mark.parametrize("valid_target_pixels", [0, 4])
+def test_mask_without_enough_target_depth_does_not_project_background(valid_target_pixels) -> None:
+    mask = np.zeros((20, 20), dtype=bool)
+    mask[4:16, 4:8] = True
+
+    class MaskedDetector(_OneBoxDetector):
+        def detect(self, _image: np.ndarray, _prompt: str) -> list[Detection2D]:
+            return [Detection2D(
+                bbox=np.array([4, 4, 16, 16], dtype=np.float32),
+                score=0.9, label="person", mask=mask,
+            )]
+
+    # The target has missing depth, while the background at the box centre is valid.
+    depth = np.full((20, 20), 4.0, dtype=np.float32)
+    depth[mask] = 0.0
+    vs, us = np.where(mask)
+    depth[vs[:valid_target_pixels], us[:valid_target_pixels]] = 2.0
+    source = RgbdObservationSource(
+        MaskedDetector(), min_depth=0.3, max_depth=6.0, u16_depth_scale=0.001,
+    )
+    source.load()
+    try:
+        detections = source.observe(_frame(Image(data=depth, format=ImageFormat.DEPTH_F32)), "person")
+        assert len(detections) == 0
+        assert detections.observed_count == 1
+    finally:
+        source.close()
+
+
 def test_backend_resource_is_closed_once_by_identity() -> None:
     detector = _OneBoxDetector()
     source = RgbdObservationSource(

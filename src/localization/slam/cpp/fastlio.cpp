@@ -7,12 +7,14 @@
 #include "relocalization_gate.hpp"
 #include "localization/opt/online_mapping.hpp"
 #include "localization/opt/pose_math.hpp"
+#include "localization/sam/config_yaml.hpp"
 
 #include <pcl/io/pcd_io.h>
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <deque>
@@ -36,6 +38,7 @@ opt::Pose graphPose(const Pose3d& p) { return {p.x, p.y, p.z, p.qw, p.qx, p.qy, 
 Pose3d slamPose(const opt::Pose& p) { return {p.x, p.y, p.z, p.qx, p.qy, p.qz, p.qw}; }
 
 struct RuntimeConfig {
+  lingtu::localization::sam::Config sam;
   double acc_scale = 1.0;
   double time_diff_lidar_to_imu = 0.0;
   double max_imu_gap_s = 0.25;
@@ -99,6 +102,11 @@ struct PatchSnapshot {
   Cloud cloud;
 };
 
+struct SavedPatch {
+  std::shared_ptr<const PatchSnapshot> source;
+  Pose3d pose;
+};
+
 bool finite(double value) {
   return std::isfinite(value);
 }
@@ -147,6 +155,11 @@ Status loadYamlConfig(
   }
 
   readIfPresent(config, "body_frame", slam_config.body_frame);
+  try {
+    runtime_config.sam = lingtu::localization::sam::readConfig(config["sam"]);
+  } catch (const std::exception& error) {
+    return Status::Error(std::string("invalid_sam_config: ") + error.what());
+  }
   readIfPresent(config, "world_frame", slam_config.odom_frame);
   readIfPresent(config, "acc_scale", runtime_config.acc_scale);
   readIfPresent(config, "time_diff_lidar_to_imu", runtime_config.time_diff_lidar_to_imu);
@@ -512,8 +525,9 @@ VoxelKey voxelKeyForPoint(const PointType& point, double resolution) {
 
 Status writeTrajectory(
     const std::filesystem::path& map_dir,
-    const std::vector<OdomSample>& pose_history) {
-  std::ofstream out(map_dir / "trajectory.txt");
+    const std::vector<OdomSample>& pose_history,
+    const char* filename = "trajectory.txt") {
+  std::ofstream out(map_dir / filename);
   if (!out) {
     return Status::Error("open_trajectory_txt_failed");
   }
@@ -523,6 +537,8 @@ Status writeTrajectory(
     out << sample.stamp_s << ' ' << p.x << ' ' << p.y << ' ' << p.z << ' '
         << p.qx << ' ' << p.qy << ' ' << p.qz << ' ' << p.qw << '\n';
   }
+  out.flush();
+  if (!out) return Status::Error("write_trajectory_txt_failed");
   return Status::Ok("trajectory_txt_written");
 }
 
@@ -556,34 +572,37 @@ Status writeContractPcdBinary(const std::filesystem::path& path, const Cloud& cl
 
 Status writePatchIndex(
     const std::filesystem::path& map_dir,
-    const std::vector<PatchSnapshot>& patches) {
-  std::ofstream out(map_dir / "poses.txt");
+    const std::vector<SavedPatch>& patches,
+    const char* filename = "poses.txt") {
+  std::ofstream out(map_dir / filename);
   if (!out) {
     return Status::Error("open_poses_txt_failed");
   }
   out << std::setprecision(12);
   for (const auto& patch : patches) {
     const auto& pose = patch.pose;
-    out << patch.name << ' ' << pose.x << ' ' << pose.y << ' ' << pose.z << ' '
+    out << patch.source->name << ' ' << pose.x << ' ' << pose.y << ' ' << pose.z << ' '
         << pose.qw << ' ' << pose.qx << ' ' << pose.qy << ' ' << pose.qz << '\n';
   }
+  out.flush();
+  if (!out) return Status::Error("write_poses_txt_failed");
   return Status::Ok("poses_txt_written");
 }
 
 Status writePatchBundle(
     const std::filesystem::path& map_dir,
-    const std::vector<PatchSnapshot>& patches,
+    const std::vector<SavedPatch>& patches,
     std::uint64_t dropped_count,
     const Eigen::Vector3d& lidar_origin_in_patch) {
   if (patches.empty()) {
     return Status::Ok("no_patches");
   }
   for (const auto& patch : patches) {
-    if (patch.cloud.points.empty()) {
+    if (patch.source->cloud.points.empty()) {
       continue;
     }
     const Status patch_status =
-        writeContractPcdBinary(map_dir / "patches" / patch.name, patch.cloud);
+        writeContractPcdBinary(map_dir / "patches" / patch.source->name, patch.source->cloud);
     if (!patch_status.ok) {
       return patch_status;
     }
@@ -599,8 +618,8 @@ Status writePatchBundle(
   manifest << "LINGTU_PATCH_BUNDLE_V1\n"
            << "complete " << (dropped_count == 0 ? 1 : 0) << '\n'
            << "dropped_count " << dropped_count << '\n'
-           << "first_sequence " << patches.front().sequence << '\n'
-           << "last_sequence " << patches.back().sequence << '\n'
+           << "first_sequence " << patches.front().source->sequence << '\n'
+           << "last_sequence " << patches.back().source->sequence << '\n'
            << "patch_count " << patches.size() << '\n';
   manifest.flush();
   if (!manifest) {
@@ -615,6 +634,130 @@ Status writePatchBundle(
   return Status::Ok("patch_bundle_written");
 }
 
+struct SaveCapture {
+  std::filesystem::path pcd;
+  CloudType cloud;
+  std::vector<OdomSample> trajectory;
+  std::vector<SavedPatch> patches;
+  std::shared_ptr<const opt::OnlineMappingSnapshot> correction;
+  std::shared_ptr<const opt::OnlineMappingSnapshot> evidence;
+  lingtu::localization::sam::Config sam_config;
+  bool sam_snapshot = false;
+  std::uint64_t dropped_patches = 0;
+  Eigen::Vector3d lidar_origin;
+  double stamp_s = 0.0;
+  std::string frame_id;
+};
+
+struct SaveComputeState {
+  Status status = Status::Error("map_snapshot_in_progress");
+  CloudType cloud;
+  std::shared_ptr<NativeRelocalizer> relocalizer;
+  std::string relocalizer_message;
+  std::string pcd_path;
+  std::atomic<bool> ready{false};
+};
+
+Status writeCapturedMap(SaveCapture& capture, SaveComputeState& result) {
+  std::error_code ec;
+  std::filesystem::create_directories(capture.pcd.parent_path(), ec);
+  if (ec) return Status::Error("create_map_dir_failed: " + ec.message());
+
+  const auto raw_trajectory = writeTrajectory(capture.pcd.parent_path(), capture.trajectory,
+                                               "trajectory.raw.txt");
+  if (!raw_trajectory.ok) return raw_trajectory;
+  const auto raw_poses = writePatchIndex(capture.pcd.parent_path(), capture.patches, "poses.raw.txt");
+  if (!raw_poses.ok) return raw_poses;
+  std::ofstream timestamps(capture.pcd.parent_path() / "keyframes.timestamps.txt");
+  timestamps << std::setprecision(17);
+  for (const auto& patch : capture.patches)
+    timestamps << patch.source->name << ' ' << patch.source->stamp_s << '\n';
+  timestamps.flush();
+  if (!timestamps) return Status::Error("write_keyframe_timestamps_failed");
+
+
+  if (capture.correction) {
+    capture.cloud.clear();
+    for (std::size_t i = 0; i < capture.patches.size(); ++i) {
+      const auto& pose = capture.correction->keyframes[i].pose;
+      capture.patches[i].pose = slamPose(pose);
+    }
+  }
+  // The localization tree is downsampled. Preserve recorded surface returns
+  // even when pose-graph optimization did not run. Without a correction keep
+  // its snapshot too, since scans after the last keyframe can add geometry.
+  std::size_t saved_points = capture.cloud.size();
+  for (const auto& patch : capture.patches) saved_points += patch.source->cloud.points.size();
+  capture.cloud.reserve(saved_points);
+  for (const auto& patch : capture.patches) {
+    const auto pose = graphPose(patch.pose);
+    for (const auto& point : patch.source->cloud.points) {
+      const auto xyz = opt::rotate_vector(pose, point.x, point.y, point.z);
+      PointType transformed;
+      transformed.x = static_cast<float>(xyz[0] + pose.x);
+      transformed.y = static_cast<float>(xyz[1] + pose.y);
+      transformed.z = static_cast<float>(xyz[2] + pose.z);
+      transformed.intensity = point.intensity;
+      capture.cloud.push_back(transformed);
+    }
+  }
+  if (capture.correction) {
+    std::size_t anchor = 0;
+    for (auto& sample : capture.trajectory) {
+      while (anchor + 1 < capture.patches.size() &&
+             capture.patches[anchor + 1].source->stamp_s <= sample.stamp_s)
+        ++anchor;
+      const auto correction = opt::compose_pose(
+          graphPose(capture.patches[anchor].pose),
+          opt::inverse_pose(graphPose(capture.patches[anchor].source->pose)));
+      sample.odom_body = slamPose(opt::compose_pose(correction, graphPose(sample.odom_body)));
+    }
+    if (capture.cloud.empty()) return Status::Error("corrected_map_pcd_write_failed");
+  }
+  if (pcl::io::savePCDFileBinary(capture.pcd.string(), capture.cloud) != 0)
+    return Status::Error(capture.correction
+        ? "corrected_map_pcd_write_failed" : "map_pcd_write_failed");
+
+  const Status trajectory_status = writeTrajectory(capture.pcd.parent_path(), capture.trajectory);
+  if (!trajectory_status.ok) return trajectory_status;
+  std::filesystem::create_directories(capture.pcd.parent_path() / "patches", ec);
+  if (ec) return Status::Error("create_patches_dir_failed: " + ec.message());
+  const Status patch_status = writePatchBundle(
+      capture.pcd.parent_path(), capture.patches, capture.dropped_patches,
+      capture.lidar_origin);
+  if (!patch_status.ok) return patch_status;
+  if (capture.sam_snapshot) {
+    std::ofstream loops(capture.pcd.parent_path() / "sam_loops.json");
+    lingtu::localization::sam::writeLoopEvidence(loops, capture.sam_config,
+        capture.evidence ? capture.evidence->loop_records
+                         : std::vector<lingtu::localization::sam::LoopResult>{});
+    loops.flush();
+    if (!loops) return Status::Error("write_sam_loop_evidence_failed");
+    std::ofstream report(capture.pcd.parent_path() / "map_optimization.json");
+    report << "{\"schema\":\"lingtu.map_optimization.v1\",\"backend\":\"lio_sam_isam2\","
+           << "\"success\":true,\"performed\":" << (capture.correction ? "true" : "false")
+           << ",\"code\":\"" << (capture.correction ? "online_graph_snapshot" : "lio_snapshot_without_loop_correction") << "\","
+           << "\"pose_count\":" << capture.patches.size()
+           << ",\"loop_count\":" << (capture.correction ? capture.correction->loop_constraints : 0)
+           << ",\"evidence_pose_count\":" << (capture.evidence ? capture.evidence->keyframes.size() : 0)
+           << ",\"evidence_complete\":" << (capture.evidence &&
+               capture.evidence->keyframes.size()==capture.patches.size() ? "true" : "false")
+           << ",\"worker_ms\":" << (capture.evidence ? capture.evidence->worker_ms : 0)
+           << ",\"preview_ms\":" << (capture.evidence ? capture.evidence->preview_ms : 0)
+           << ",\"cloud_bytes\":" << (capture.evidence ? capture.evidence->cloud_bytes : 0)
+           << ",\"pending_high_water\":" << (capture.evidence ? capture.evidence->pending_high_water : 0) << "}\n";
+    report.flush();
+    if (!report) return Status::Error("write_online_graph_report_failed");
+  }
+
+
+  result.relocalizer = std::make_shared<NativeRelocalizer>();
+  result.relocalizer->loadMap(capture.pcd.string(), &result.relocalizer_message);
+  result.pcd_path = capture.pcd.string();
+  result.cloud = std::move(capture.cloud);
+  return Status::Ok("map_saved");
+}
+
 double planarDistance(const Pose3d& a, const Pose3d& b) {
   const double dx = a.x - b.x;
   const double dy = a.y - b.y;
@@ -627,58 +770,9 @@ std::string patchName(std::uint64_t sequence) {
   return out.str();
 }
 
-std::string jsonEscape(const std::string& value) {
-  std::ostringstream out;
-  for (const char ch : value) {
-    switch (ch) {
-      case '"':
-        out << "\\\"";
-        break;
-      case '\\':
-        out << "\\\\";
-        break;
-      case '\b':
-        out << "\\b";
-        break;
-      case '\f':
-        out << "\\f";
-        break;
-      case '\n':
-        out << "\\n";
-        break;
-      case '\r':
-        out << "\\r";
-        break;
-      case '\t':
-        out << "\\t";
-        break;
-      default:
-        if (static_cast<unsigned char>(ch) < 0x20) {
-          out << "\\u" << std::hex << std::setw(4) << std::setfill('0')
-              << static_cast<int>(static_cast<unsigned char>(ch));
-        } else {
-          out << ch;
-        }
-    }
-  }
-  return out.str();
-}
-
-double wrapAngle(double angle) {
-  constexpr double kPi = 3.14159265358979323846;
-  while (angle > kPi) {
-    angle -= 2.0 * kPi;
-  }
-  while (angle < -kPi) {
-    angle += 2.0 * kPi;
-  }
-  return angle;
-}
-
 double yawFromPose(const Pose3d& pose) {
-  const Eigen::Quaterniond q(pose.qw, pose.qx, pose.qy, pose.qz);
-  const Eigen::Vector3d ypr = q.normalized().toRotationMatrix().eulerAngles(2, 1, 0);
-  return ypr[0];
+  const Eigen::Matrix3d rotation = rotationFromPose(pose);
+  return std::atan2(rotation(1, 0), rotation(0, 0));
 }
 
 Pose3d planarSeedWithOdomHeightAndTilt(
@@ -700,8 +794,10 @@ Pose3d planarSeedWithOdomHeightAndTilt(
   return out;
 }
 
-double yawDistance(const Pose3d& a, const Pose3d& b) {
-  return std::abs(wrapAngle(yawFromPose(a) - yawFromPose(b)));
+double rotationDistance(const Pose3d& a, const Pose3d& b) {
+  const Eigen::Quaterniond qa(rotationFromPose(a));
+  const Eigen::Quaterniond qb(rotationFromPose(b));
+  return qa.angularDistance(qb);
 }
 
 struct AsyncRelocalizationComputeState {
@@ -719,6 +815,13 @@ struct AsyncRelocalizationJob {
   std::shared_ptr<AsyncRelocalizationComputeState> compute;
 };
 
+struct AsyncSaveJob {
+  std::uint64_t source_epoch = 0;
+  double stamp_s = 0.0;
+  std::string frame_id;
+  std::shared_ptr<SaveComputeState> compute;
+};
+
 class FastLioBackend final : public ISlamBackend {
  public:
   Status configure(const SlamConfig& config) override {
@@ -733,6 +836,13 @@ class FastLioBackend final : public ISlamBackend {
       state_ = SlamState::Failed;
       reason_ = status.message;
       return status;
+    }
+    try {
+      online_mapping_.configureSam(runtime_config_.sam);
+    } catch (const std::exception& error) {
+      state_ = SlamState::Failed;
+      reason_ = std::string("invalid_sam_config: ") + error.what();
+      return Status::Error(reason_);
     }
     resetCore();
     alive_ = true;
@@ -763,6 +873,8 @@ class FastLioBackend final : public ISlamBackend {
   }
 
   Status feedImu(const ImuSample& sample) override {
+    if (mappingCapacityReached())
+      return Status::Ok("mapping_paused_at_keyframe_capacity");
     if (!finite(sample.stamp_s) || !finite(sample.gx) || !finite(sample.gy) ||
         !finite(sample.gz) || !finite(sample.ax) || !finite(sample.ay) ||
         !finite(sample.az)) {
@@ -793,6 +905,8 @@ class FastLioBackend final : public ISlamBackend {
   }
 
   Status feedLidar(const LidarFrame& frame) override {
+    if (mappingCapacityReached())
+      return Status::Ok("mapping_paused_at_keyframe_capacity");
     if (!finite(frame.stamp_s)) {
       ++dropped_lidar_frames_;
       return Status::Error("invalid_lidar_frame");
@@ -812,7 +926,6 @@ class FastLioBackend final : public ISlamBackend {
       reason_ = "lidar_time_rollback";
     }
     last_lidar_time_ = frame.stamp_s;
-    last_stamp_s_ = frame.stamp_s;
     pushLidarFrame(frame);
     return Status::Ok("lidar_accepted");
   }
@@ -914,7 +1027,7 @@ class FastLioBackend final : public ISlamBackend {
           global_search ? "global_relocalization_unavailable" : "initial_pose_required",
           preserve_tracking_on_relocalization_failure, reason_before_relocalization);
     }
-    if (!registered_cloud_body_.has_value() || registered_cloud_body_->points.empty()) {
+    if (!(registered_cloud_body_ != nullptr) || registered_cloud_body_->points.empty()) {
       return failRelocalization(
           "waiting_for_scan",
           "registered_cloud_unavailable",
@@ -972,7 +1085,7 @@ class FastLioBackend final : public ISlamBackend {
           global_search ? "global_relocalization_unavailable" : "initial_pose_required",
           preserve_tracking_on_failure, reason_before_relocalization);
     }
-    if (!registered_cloud_body_.has_value() || registered_cloud_body_->points.empty()) {
+    if (!(registered_cloud_body_ != nullptr) || registered_cloud_body_->points.empty()) {
       return failRelocalization(
           "waiting_for_scan",
           "registered_cloud_unavailable",
@@ -1097,6 +1210,13 @@ class FastLioBackend final : public ISlamBackend {
       enforceCatastrophicHealthFault();
       return Status::Ok(reason_);
     }
+    if (mappingCapacityReached()) {
+      state_ = SlamState::Degraded;
+      confidence_ = 0.0;
+      localization_quality_ = 0.0;
+      reason_ = "mapping_keyframe_capacity_reached";
+      return Status::Ok(reason_);
+    }
     if (!prepareFastLioPackage()) {
       updateWaitingReason();
       return Status::Ok(reason_);
@@ -1119,7 +1239,6 @@ class FastLioBackend final : public ISlamBackend {
         builder_->status() == BuilderStatus::MAP_INIT) {
       anchorInitialNavigationBodyFrame(kf_->x(), runtime_config_);
     }
-    last_stamp_s_ = package_.cloud_end_time;
     if (builder_->status() != BuilderStatus::MAPPING) {
       updateBuilderState();
       if (relocalization_required_after_time_jump_) {
@@ -1203,7 +1322,7 @@ class FastLioBackend final : public ISlamBackend {
     auto body_cloud = transformLidarCloudToNavigationBody(
         package_.cloud, builder_config_, runtime_config_);
     registered_cloud_body_ =
-        toContractCloud(body_cloud, package_.cloud_end_time, config_.body_frame);
+        std::make_shared<Cloud>(toContractCloud(body_cloud, package_.cloud_end_time, config_.body_frame));
     ++observation_sequence_;
 
     auto world_cloud = odom_prior.has_value()
@@ -1217,7 +1336,8 @@ class FastLioBackend final : public ISlamBackend {
             builder_->lidar_processor()->r_wl(),
             builder_->lidar_processor()->t_wl());
     map_cloud_map_ =
-        toContractCloud(world_cloud, package_.cloud_end_time, config_.map_frame);
+        std::make_shared<Cloud>(toContractCloud(world_cloud, package_.cloud_end_time, config_.map_frame));
+    last_stamp_s_ = package_.cloud_end_time;
     if (odom_prior.has_value()) {
       addOdomPriorMapCloud(world_cloud);
     }
@@ -1244,13 +1364,22 @@ class FastLioBackend final : public ISlamBackend {
   }
 
   Status saveMap(const std::string& pcd_path) override {
-    if (!builder_) {
-      return Status::Error("not_configured");
+    const Status started = startSaveMapAsync(pcd_path);
+    if (!started.ok) return started;
+    while (true) {
+      if (auto completed = pollSaveMapAsync()) return *completed;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    if (builder_->status() != BuilderStatus::MAPPING) {
+  }
+
+  Status startSaveMapAsync(const std::string& pcd_path) override {
+    if (save_job_) return Status::Error("map_snapshot_in_progress");
+    if (!builder_) return Status::Error("not_configured");
+    if (builder_->status() != BuilderStatus::MAPPING)
       return Status::Error("map_not_ready");
-    }
     pollOnlineMapping();
+    if (online_mapping_state_.find("online_mapping_failed:") == 0)
+      return Status::Error("online_mapping_failed_cannot_save");
     const bool corrected_save = mode_ == SlamMode::Mapping && global_mapping_ &&
         global_mapping_->optimizations > 0;
     if (corrected_save && online_mapping_.busy())
@@ -1261,100 +1390,83 @@ class FastLioBackend final : public ISlamBackend {
       return Status::Error("online_mapping_incomplete_cannot_save_corrected_map");
     if (corrected_save) {
       for (std::size_t i = 0; i < patch_history_.size(); ++i)
-        if (patch_history_[i].name != global_mapping_->keyframes[i].patch_name)
+        if (patch_history_[i]->name != global_mapping_->keyframes[i].patch_name)
           return Status::Error("online_mapping_patch_identity_mismatch");
     }
-    const auto pcd = mapPcdPath(pcd_path);
-    std::error_code ec;
-    std::filesystem::create_directories(pcd.parent_path(), ec);
-    if (ec) {
-      return Status::Error("create_map_dir_failed: " + ec.message());
-    }
-    CloudType saved_cloud;
-    const bool save_odom_prior_map =
-        runtime_config_.odom_prior_enabled && !odom_prior_map_.empty();
-    if (save_odom_prior_map) {
-      saved_cloud = odomPriorMapPclCloud();
-      if (pcl::io::savePCDFileBinary(pcd.string(), saved_cloud) != 0) {
-        return Status::Error("map_pcd_write_failed");
-      }
-    } else {
-      builder_->saveMap(pcd.string());
-      if (!std::filesystem::exists(pcd)) {
-        return Status::Error("map_pcd_write_failed");
-      }
-      if (pcl::io::loadPCDFile<PointType>(pcd.string(), saved_cloud) < 0) {
-        saved_cloud.clear();
-      }
-    }
-    auto trajectory = pose_history_;
-    std::vector<PatchSnapshot> patches(patch_history_.begin(), patch_history_.end());
+
+    SaveCapture capture;
+    capture.pcd = mapPcdPath(pcd_path);
+    capture.sam_snapshot = mode_ == SlamMode::Mapping;
+    capture.sam_config = online_mapping_.samConfig();
+    if (capture.sam_snapshot) capture.evidence = global_mapping_;
+    capture.trajectory = pose_history_;
+    capture.patches.reserve(patch_history_.size());
+    for (const auto& patch : patch_history_)
+      capture.patches.push_back({patch, patch->pose});
+    capture.dropped_patches = patch_history_dropped_count_;
+    capture.lidar_origin = runtime_config_.navigation_body_from_imu_translation
+        + runtime_config_.navigation_body_from_imu_rotation * builder_config_.t_il;
+    capture.stamp_s = last_stamp_s_;
+    capture.frame_id = config_.map_frame;
     if (corrected_save) {
-      saved_cloud.clear();
-      for (std::size_t i = 0; i < patches.size(); ++i) {
-        const auto& pose = global_mapping_->keyframes[i].pose;
-        patches[i].pose = slamPose(pose);
-        for (const auto& point : patches[i].cloud.points) {
-          const auto xyz = opt::rotate_vector(pose, point.x, point.y, point.z);
-          PointType transformed;
-          transformed.x = static_cast<float>(xyz[0] + pose.x);
-          transformed.y = static_cast<float>(xyz[1] + pose.y);
-          transformed.z = static_cast<float>(xyz[2] + pose.z);
-          transformed.intensity = point.intensity;
-          saved_cloud.push_back(transformed);
+      capture.correction = global_mapping_;
+    } else if (runtime_config_.odom_prior_enabled && !odom_prior_map_.empty()) {
+      capture.cloud = odomPriorMapPclCloud();
+    } else {
+      capture.cloud = builder_->lidar_processor()->mapSnapshot();
+    }
+
+    auto compute = std::make_shared<SaveComputeState>();
+    AsyncSaveJob job;
+    job.source_epoch = source_epoch_;
+    job.stamp_s = capture.stamp_s;
+    job.frame_id = capture.frame_id;
+    job.compute = compute;
+    try {
+      std::thread worker([compute, capture = std::move(capture)]() mutable {
+        try {
+          compute->status = writeCapturedMap(capture, *compute);
+        } catch (const std::exception& error) {
+          compute->status = Status::Error(std::string("map_snapshot_failed: ") + error.what());
+        } catch (...) {
+          compute->status = Status::Error("map_snapshot_unknown_failure");
         }
-      }
-      std::size_t anchor = 0;
-      for (auto& sample : trajectory) {
-        while (anchor + 1 < patches.size() && patches[anchor + 1].stamp_s <= sample.stamp_s)
-          ++anchor;
-        const auto correction = opt::compose_pose(graphPose(patches[anchor].pose),
-            opt::inverse_pose(graphPose(patch_history_[anchor].pose)));
-        sample.odom_body = slamPose(opt::compose_pose(correction, graphPose(sample.odom_body)));
-      }
-      if (saved_cloud.empty() || pcl::io::savePCDFileBinary(pcd.string(), saved_cloud) != 0)
-        return Status::Error("corrected_map_pcd_write_failed");
+        compute->ready.store(true, std::memory_order_release);
+      });
+      worker.detach();
+    } catch (const std::exception& error) {
+      return Status::Error(std::string("map_snapshot_start_failed: ") + error.what());
     }
-    const Status trajectory_status = writeTrajectory(pcd.parent_path(), trajectory);
-    if (!trajectory_status.ok) {
-      return trajectory_status;
-    }
-    std::filesystem::create_directories(pcd.parent_path() / "patches", ec);
-    if (ec) {
-      return Status::Error("create_patches_dir_failed: " + ec.message());
-    }
-    const Status patch_status =
-        writePatchBundle(pcd.parent_path(), patches, patch_history_dropped_count_,
-            runtime_config_.navigation_body_from_imu_translation
-                + runtime_config_.navigation_body_from_imu_rotation * builder_config_.t_il);
-    if (!patch_status.ok) {
-      return patch_status;
-    }
-    saved_map_cloud_map_ = save_odom_prior_map && !corrected_save
-        ? std::optional<Cloud>{odomPriorMapContractCloud(last_stamp_s_)}
-        : toContractCloud(
-              CloudType::Ptr(new CloudType(saved_cloud)),
-              last_stamp_s_,
-              config_.map_frame);
-    if (!saved_cloud.empty()) {
-      updateMapBounds(saved_cloud);
-    }
-    saved_map_points_ = saved_map_cloud_map_.has_value()
-        ? static_cast<int>(saved_map_cloud_map_->points.size())
-        : 0;
+    save_job_ = std::move(job);
+    return Status::Ok("map_snapshot_started");
+  }
+
+  bool saveMapAsyncInFlight() const override { return save_job_.has_value(); }
+
+  std::optional<Status> pollSaveMapAsync() override {
+    if (!save_job_ || !save_job_->compute->ready.load(std::memory_order_acquire))
+      return std::nullopt;
+    AsyncSaveJob job = std::move(*save_job_);
+    save_job_.reset();
+    if (job.source_epoch != source_epoch_)
+      return Status::Error("map_snapshot_source_changed");
+    auto& completed = *job.compute;
+    if (!completed.status.ok) return completed.status;
+
+    updateMapBounds(completed.cloud);
+    saved_map_cloud_map_ = std::make_shared<Cloud>(toContractCloud(
+        CloudType::Ptr(new CloudType(std::move(completed.cloud))),
+        job.stamp_s, job.frame_id));
+    ++saved_map_revision_;
+    saved_map_points_ = static_cast<int>(saved_map_cloud_map_->points.size());
     map_loaded_ = true;
-    last_map_path_ = pcd.string();
-    if (!relocalizer_) {
-      relocalizer_ = std::make_shared<NativeRelocalizer>();
-    }
-    std::string relocalizer_message;
-    const bool relocalizer_loaded =
-        relocalizer_->loadMap(pcd.string(), &relocalizer_message);
-    if (relocalizer_loaded) {
-      advanceRelocalizationMapEpoch();
-    }
-    last_relocalization_message_ = relocalizer_message;
-    relocalization_state_ = relocalizer_->hasMap() ? "idle" : "map_load_failed";
+    last_map_path_ = completed.pcd_path;
+    relocalizer_ = std::move(completed.relocalizer);
+    if (relocalizer_ && relocalizer_->hasMap()) advanceRelocalizationMapEpoch();
+    last_relocalization_message_ = completed.relocalizer_message;
+    relocalization_engine_.clear();
+    relocalization_state_ = relocalizer_ && relocalizer_->hasMap()
+        ? "idle" : "map_load_failed";
     reason_ = "map_saved";
     return Status::Ok(reason_);
   }
@@ -1376,15 +1488,18 @@ class FastLioBackend final : public ISlamBackend {
     if (!relocalizer_->loadMap(pcd.string(), &relocalizer_message)) {
       relocalization_state_ = "map_load_failed";
       last_relocalization_message_ = relocalizer_message;
+      relocalization_engine_.clear();
       return Status::Error(relocalizer_message);
     }
     advanceRelocalizationMapEpoch();
     saved_map_cloud_map_.reset();
+    ++saved_map_revision_;
     saved_map_points_ = static_cast<int>(cloud.size());
     map_loaded_ = true;
     last_map_path_ = pcd.string();
     relocalization_state_ = "idle";
     last_relocalization_message_ = relocalizer_message;
+    relocalization_engine_.clear();
     reason_ = "map_loaded";
     return Status::Ok(reason_);
   }
@@ -1403,6 +1518,7 @@ class FastLioBackend final : public ISlamBackend {
       out.map_cloud_map = map_cloud_map_;
     }
     out.saved_map_cloud_map = saved_map_cloud_map_;
+    out.saved_map_revision = saved_map_revision_;
     if (mode_ == SlamMode::Mapping) {
       out.global_map_cloud = global_map_cloud_;
       out.global_map_busy = online_mapping_.busy();
@@ -1438,6 +1554,7 @@ class FastLioBackend final : public ISlamBackend {
         out.relocalization_supported && map_loaded_ && relocalizer_ && relocalizer_->hasMap();
     out.relocalization_state = relocalization_state_;
     out.last_relocalization_message = last_relocalization_message_;
+    out.relocalization_engine = relocalization_engine_;
     out.relocalization_quality = relocalization_quality_;
     out.relocalization_map_body = map_body_pose_at_relocalization_;
     out.relocalization_refine_backend = relocalization_refine_backend_;
@@ -1574,6 +1691,7 @@ class FastLioBackend final : public ISlamBackend {
     relocalization_refine_pos_cov_trace_ = -1.0;
     relocalization_state_ = "idle";
     last_relocalization_message_ = "reset";
+    relocalization_engine_.clear();
     reason_ = "reset";
     state_ = SlamState::Initializing;
     if (preserve_catastrophic_fault) {
@@ -1629,6 +1747,7 @@ class FastLioBackend final : public ISlamBackend {
       const std::string& reason_before_relocalization) {
     relocalization_quality_ = result.quality;
     last_relocalization_message_ = result.message;
+    relocalization_engine_ = result.engine;
     relocalization_refine_backend_ = result.refine_backend;
     relocalization_refine_iterations_ = result.refine_iterations;
     relocalization_refine_inliers_ = result.refine_inliers;
@@ -1869,6 +1988,7 @@ class FastLioBackend final : public ISlamBackend {
     pose_history_.clear();
     patch_history_.clear();
     patch_history_dropped_count_ = 0;
+    next_patch_to_queue_ = 0;
     latest_odom_prior_.reset();
     odom_prior_buffer_.clear();
     odom_prior_active_ = false;
@@ -1907,6 +2027,7 @@ class FastLioBackend final : public ISlamBackend {
     pose_history_.push_back(OdomSample{last_stamp_s_, pose});
     patch_history_.clear();
     patch_history_dropped_count_ = 0;
+    next_patch_to_queue_ = 0;
     latest_odom_prior_.reset();
     odom_prior_buffer_.clear();
     odom_prior_active_ = false;
@@ -2048,7 +2169,6 @@ class FastLioBackend final : public ISlamBackend {
       }
     }
 
-    last_stamp_s_ = package_.cloud_end_time;
     odom_prior_error_xy_m_ = -1.0;
     applyPose(
         kf_->x(),
@@ -2069,7 +2189,7 @@ class FastLioBackend final : public ISlamBackend {
     auto body_cloud = transformLidarCloudToNavigationBody(
         package_.cloud, builder_config_, runtime_config_);
     registered_cloud_body_ =
-        toContractCloud(body_cloud, package_.cloud_end_time, config_.body_frame);
+        std::make_shared<Cloud>(toContractCloud(body_cloud, package_.cloud_end_time, config_.body_frame));
     ++observation_sequence_;
     auto world_cloud = transformLidarCloudWithBodyPose(
         package_.cloud,
@@ -2077,7 +2197,8 @@ class FastLioBackend final : public ISlamBackend {
         builder_config_,
         runtime_config_);
     map_cloud_map_ =
-        toContractCloud(world_cloud, package_.cloud_end_time, config_.map_frame);
+        std::make_shared<Cloud>(toContractCloud(world_cloud, package_.cloud_end_time, config_.map_frame));
+    last_stamp_s_ = package_.cloud_end_time;
     addOdomPriorMapCloud(world_cloud);
     recordPatchSnapshot();
 
@@ -2108,11 +2229,19 @@ class FastLioBackend final : public ISlamBackend {
     if (fastlio_health_fault_active_ || relocalization_required_after_time_jump_) {
       return;
     }
+    if (runtime_config_.max_imu_gap_s > 0.0 && last_imu_time_ >= 0.0 &&
+        last_lidar_time_ - last_imu_time_ > runtime_config_.max_imu_gap_s) {
+      state_ = SlamState::Degraded;
+      confidence_ = 0.0;
+      localization_quality_ = 0.0;
+      reason_ = "imu_gap_waiting_for_scan";
+      return;
+    }
     if (runtime_config_.odom_prior_bypass_fastlio &&
         odom_prior_active_ &&
         state_ == SlamState::Tracking &&
         odometry_odom_body_.has_value() &&
-        map_cloud_map_.has_value()) {
+        (map_cloud_map_ != nullptr)) {
       confidence_ = 1.0;
       localization_quality_ = 1.0;
       reason_ = "tracking_with_odom_prior_bypass";
@@ -2120,7 +2249,7 @@ class FastLioBackend final : public ISlamBackend {
     }
     if (state_ == SlamState::Tracking &&
         odometry_odom_body_.has_value() &&
-        map_cloud_map_.has_value()) {
+        (map_cloud_map_ != nullptr)) {
       reason_ = "tracking";
       updateBuilderState();
       return;
@@ -2136,7 +2265,7 @@ class FastLioBackend final : public ISlamBackend {
   }
 
   void recordPatchSnapshot() {
-    if (!registered_cloud_body_.has_value() || registered_cloud_body_->points.empty()) {
+    if (!(registered_cloud_body_ != nullptr) || registered_cloud_body_->points.empty()) {
       return;
     }
     if (!odometry_odom_body_.has_value()) {
@@ -2152,9 +2281,12 @@ class FastLioBackend final : public ISlamBackend {
     const bool time_ready =
         last_patch_stamp_s_ <= 0.0 || (stamp - last_patch_stamp_s_) >= min_interval_s;
     const bool motion_ready =
-        !has_last_patch_pose_ || planarDistance(pose, last_patch_pose_) >= min_translation_m;
+        !has_last_patch_pose_ ||
+        std::hypot(pose.x - last_patch_pose_.x,
+                   pose.y - last_patch_pose_.y,
+                   pose.z - last_patch_pose_.z) >= min_translation_m;
     const bool rotation_ready =
-        !has_last_patch_pose_ || yawDistance(pose, last_patch_pose_) >= min_rotation_rad;
+        !has_last_patch_pose_ || rotationDistance(pose, last_patch_pose_) >= min_rotation_rad;
     if (!patch_history_.empty()) {
       if (!time_ready) {
         return;
@@ -2164,28 +2296,20 @@ class FastLioBackend final : public ISlamBackend {
       }
     }
 
-    PatchSnapshot patch;
-    patch.sequence = patch_sequence_++;
-    patch.name = patchName(patch.sequence);
-    patch.stamp_s = stamp;
-    patch.pose = pose;
-    patch.cloud = *registered_cloud_body_;
-    if (mode_ == SlamMode::Mapping) {
-      opt::MappingFrame frame;
-      frame.keyframe = {patch.name, graphPose(patch.pose)};
-      frame.stamp_s = stamp;
-      frame.body_cloud.reserve(patch.cloud.points.size());
-      for (const auto& point : patch.cloud.points)
-        frame.body_cloud.push_back({point.x, point.y, point.z, point.intensity});
-      const auto queued = online_mapping_.enqueue(std::move(frame));
-      if (!queued.ok) online_mapping_state_ = queued.code;
-    }
+    auto patch = std::make_shared<PatchSnapshot>();
+    patch->sequence = patch_sequence_++;
+    patch->name = patchName(patch->sequence);
+    patch->stamp_s = stamp;
+    patch->pose = pose;
+    patch->cloud = *registered_cloud_body_;
     patch_history_.push_back(std::move(patch));
+    pumpOnlineMappingFrames();
     const std::size_t max_snapshots =
         std::max<std::size_t>(1, runtime_config_.max_patch_snapshots);
     while (patch_history_.size() > max_snapshots) {
       patch_history_.pop_front();
       ++patch_history_dropped_count_;
+      if (next_patch_to_queue_ > 0) --next_patch_to_queue_;
     }
     last_patch_stamp_s_ = stamp;
     last_patch_pose_ = pose;
@@ -2194,26 +2318,56 @@ class FastLioBackend final : public ISlamBackend {
 
   void pollOnlineMapping() {
     if (mode_ != SlamMode::Mapping) return;
-    if (auto update = online_mapping_.poll()) {
+    auto update = online_mapping_.poll();
+    if (update) {
       online_mapping_state_ = update->code;
-      if (update->keyframes.empty()) return;
-      auto cloud = std::make_shared<Cloud>();
-      cloud->frame_id = config_.map_frame;
-      cloud->stamp_s = update->stamp_s;
-      cloud->points.reserve(update->cloud.size());
-      for (const auto& point : update->cloud) {
-        PointXYZIT value;
-        const auto tf = graphPose(has_map_odom_pose_ ? map_odom_pose_ : Pose3d{});
-        const auto xyz = opt::rotate_vector(tf, point.x, point.y, point.z);
-        value.x = static_cast<float>(xyz[0] + tf.x);
-        value.y = static_cast<float>(xyz[1] + tf.y);
-        value.z = static_cast<float>(xyz[2] + tf.z);
-        value.intensity = point.intensity;
-        cloud->points.push_back(value);
+      if (!update->keyframes.empty()) {
+        auto cloud = std::make_shared<Cloud>();
+        cloud->frame_id = config_.map_frame;
+        cloud->stamp_s = update->stamp_s;
+        cloud->points.reserve(update->cloud.size());
+        for (const auto& point : update->cloud) {
+          PointXYZIT value;
+          const auto tf = graphPose(has_map_odom_pose_ ? map_odom_pose_ : Pose3d{});
+          const auto xyz = opt::rotate_vector(tf, point.x, point.y, point.z);
+          value.x = static_cast<float>(xyz[0] + tf.x);
+          value.y = static_cast<float>(xyz[1] + tf.y);
+          value.z = static_cast<float>(xyz[2] + tf.z);
+          value.intensity = point.intensity;
+          cloud->points.push_back(value);
+        }
+        global_mapping_ = std::move(update);
+        global_map_cloud_ = std::move(cloud);
       }
-      global_mapping_ = std::move(update);
-      global_map_cloud_ = std::move(cloud);
     }
+    pumpOnlineMappingFrames();
+  }
+
+  bool mappingCapacityReached() const {
+    return mode_ == SlamMode::Mapping &&
+        (patch_history_.size() >= std::max<std::size_t>(1, runtime_config_.max_patch_snapshots) ||
+         online_mapping_.capacityReached());
+  }
+
+  void pumpOnlineMappingFrames() {
+    if (mode_ != SlamMode::Mapping) return;
+    while (next_patch_to_queue_ < patch_history_.size() && online_mapping_.canEnqueue()) {
+      const auto& patch = *patch_history_[next_patch_to_queue_];
+      opt::MappingFrame frame;
+      frame.keyframe = {patch.name, graphPose(patch.pose)};
+      frame.stamp_s = patch.stamp_s;
+      frame.body_cloud.reserve(patch.cloud.points.size());
+      for (const auto& point : patch.cloud.points)
+        frame.body_cloud.push_back({point.x, point.y, point.z, point.intensity});
+      const auto queued = online_mapping_.enqueue(std::move(frame));
+      if (!queued.ok) {
+        online_mapping_state_ = queued.code;
+        return;
+      }
+      ++next_patch_to_queue_;
+    }
+    if (next_patch_to_queue_ < patch_history_.size() && online_mapping_.capacityReached())
+      online_mapping_state_ = "online_mapping_capacity_reached";
   }
 
   std::optional<OdomSample> freshOdomPrior(double stamp_s) {
@@ -2322,6 +2476,7 @@ class FastLioBackend final : public ISlamBackend {
   std::shared_ptr<IESKF> kf_;
   std::unique_ptr<MapBuilder> builder_;
   std::shared_ptr<NativeRelocalizer> relocalizer_;
+  std::optional<AsyncSaveJob> save_job_;
   std::optional<AsyncRelocalizationJob> async_relocalization_job_;
   std::uint64_t async_relocalization_sequence_ = 0U;
   std::uint64_t relocalization_map_epoch_ = 0U;
@@ -2359,6 +2514,7 @@ class FastLioBackend final : public ISlamBackend {
   double relocalization_refine_pos_cov_trace_ = -1.0;
   std::string relocalization_state_ = "idle";
   std::string last_relocalization_message_;
+  std::string relocalization_engine_;
   int imu_batch_ = 0;
   int sync_wait_count_ = 0;
   int imu_rollback_count_ = 0;
@@ -2368,11 +2524,12 @@ class FastLioBackend final : public ISlamBackend {
   std::optional<Pose3d> odometry_odom_body_;
   std::optional<Pose3d> state_estimation_at_scan_;
   std::optional<BodyTwist> odometry_twist_body_;
-  std::optional<Cloud> registered_cloud_body_;
+  std::shared_ptr<const Cloud> registered_cloud_body_;
   std::uint64_t observation_sequence_ = 0U;
   std::uint64_t source_epoch_ = newSourceEpoch() - 1U;
-  std::optional<Cloud> map_cloud_map_;
-  std::optional<Cloud> saved_map_cloud_map_;
+  std::shared_ptr<const Cloud> map_cloud_map_;
+  std::shared_ptr<const Cloud> saved_map_cloud_map_;
+  std::uint64_t saved_map_revision_ = 0;
   opt::OnlineMapping online_mapping_;
   std::shared_ptr<const opt::OnlineMappingSnapshot> global_mapping_;
   std::shared_ptr<const Cloud> global_map_cloud_;
@@ -2386,9 +2543,10 @@ class FastLioBackend final : public ISlamBackend {
   std::unordered_map<VoxelKey, PointType, VoxelKeyHash> odom_prior_map_;
   GnssFusionHealth gnss_health_;
   std::vector<OdomSample> pose_history_;
-  std::deque<PatchSnapshot> patch_history_;
+  std::deque<std::shared_ptr<const PatchSnapshot>> patch_history_;
   std::uint64_t patch_history_dropped_count_ = 0;
   std::uint64_t patch_sequence_ = 0;
+  std::size_t next_patch_to_queue_ = 0;
   double last_patch_stamp_s_ = 0.0;
   Pose3d last_patch_pose_;
   bool has_last_patch_pose_ = false;

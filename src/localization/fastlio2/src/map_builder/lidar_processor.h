@@ -17,6 +17,7 @@ class LidarProcessor
 {
 public:
     LidarProcessor(Config &config, std::shared_ptr<IESKF> kf);
+    CloudType mapSnapshot();
     void saveMap(const std::string &path);
 
     void trimCloudMap();

@@ -1,12 +1,49 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from types import SimpleNamespace
 
 import pytest
 
 pytest.importorskip("fastapi")
+
+
+@pytest.mark.parametrize("endpoint", ["/api/v1/state", "/api/v1/events", "/api/v1/navigation/status"])
+def test_state_reads_do_not_block_the_teleop_event_loop(monkeypatch, endpoint):
+    from gateway.gateway_module import GatewayModule
+    from gateway.navigation import routes as navigation_routes
+    from gateway.routes import realtime, status
+
+    gateway = GatewayModule()
+    gateway.setup()
+    threads = []
+
+    def blocking_snapshot(_gateway):
+        threads.append(threading.get_ident())
+        return {"probe": "state"}
+
+    monkeypatch.setattr(status, "build_state_snapshot", blocking_snapshot)
+    monkeypatch.setattr(realtime, "build_state_snapshot", blocking_snapshot)
+    monkeypatch.setattr(navigation_routes, "build_navigation_status", blocking_snapshot)
+    route = next(route for route in gateway._app.routes if route.path == endpoint)
+
+    async def read():
+        loop_thread = threading.get_ident()
+        response = await route.endpoint()
+        if endpoint.endswith("events"):
+            try:
+                first = await anext(response.body_iterator)
+                assert '"probe":"state"' in first
+            finally:
+                await response.body_iterator.aclose()
+        else:
+            assert response == {"probe": "state"}
+        assert len(threads) == 1
+        assert threads[0] != loop_thread
+
+    asyncio.run(read())
 
 
 def test_state_snapshot_exposes_native_navigation_state_and_client_contract():
@@ -99,7 +136,7 @@ def test_state_localization_preserves_bound_runtime_identity():
     gateway._compiled_env = "sim"
     gateway._compiled_product = "nav"
     gateway._compiled_product_session_id = "session-1"
-    gateway._compiled_run_plan = SimpleNamespace(required_topics=())
+    gateway._compiled_run_plan = SimpleNamespace(required_topics=(), has_process=lambda _role: False)
 
     snapshot = build_state_snapshot(gateway)
     status = build_localization_status(gateway)

@@ -96,7 +96,7 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "LINGTU_NAV_RECOVERY_ROTATION_CANDIDATE_STEP_RAD": "0.2",
         "LINGTU_NAV_RECOVERY_ROTATION_SAMPLE_STEP_RAD": "0.05",
         "LINGTU_PRODUCT": "nav",
-        "LINGTU_NAV_USE_TRAVERSABILITY_COST": "1",
+        "LINGTU_NAV_USE_TRAVERSABILITY_COST": "0",
         "LINGTU_NAV_ALLOW_TELEOP_TAKEOVER": "1",
         "LINGTU_TELEOP_PLANNER_HORIZON_M": "3.5",
         "LINGTU_TELEOP_PLANNER_MAX_DEVIATION_DEG": "55",
@@ -130,6 +130,27 @@ def test_go2_collision_hard_margin_reaches_native_endpoint() -> None:
     assert compiled.environment["LINGTU_TELEOP_OBSTACLE_MARGIN_M"] == "0.1"
 
 
+def test_go2_standing_height_reaches_native_planner() -> None:
+    compiled = compile_native_nav_config("nav", _compiled_product_config("nav"))
+
+    assert compiled.environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M"] == "0.35"
+    assert compiled.environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M"] == "0.05"
+    assert compiled.environment["LINGTU_NAV_OCTO_STRICT_GROUND_SUPPORT"] == "0"
+    assert compiled.environment["LINGTU_NAV_OCTO_GROUND_SUPPORT_XY_RADIUS_CELLS"] == "1"
+    assert compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"] == "0.42"
+    assert compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"] == "0.25"
+    assert compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.18"
+
+
+@pytest.mark.parametrize("tolerance", [0.15, 0.25])
+def test_snapped_global_goal_uses_execution_arrival_tolerance(tolerance: float) -> None:
+    config = _compiled_product_config("nav")
+    config["native_nav"]["goal_reached_m"] = tolerance
+    compiled = compile_native_nav_config("nav", config)
+
+    assert float(compiled.environment["LINGTU_NAV_OCTO_TERMINAL_GOAL_XY_TOLERANCE_M"]) == tolerance
+
+
 def test_scan_mapd_inflation_covers_asymmetric_body_clearances() -> None:
     config = _compiled_product_config("nav")
     config["collision_clearance_below_m"] = 0.25
@@ -146,6 +167,7 @@ def test_go2_vertical_clearance_reaches_nav_and_mapd(product: str) -> None:
     compiled = compile_native_nav_config(product, _compiled_product_config(product))
     for direction in ("BELOW", "ABOVE"):
         assert compiled.environment[f"LINGTU_NAV_COLLISION_CLEARANCE_{direction}_M"] == "0.1"
+        assert compiled.environment[f"LINGTU_NAV_OCTO_BODY_CLEARANCE_{direction}_M"] == "0.1"
     environment = mapd_environment(compiled.environment)
     assert environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.1"
     assert environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.1"
@@ -182,6 +204,7 @@ def test_native_nav_config_accepts_scan_as_second_local_backend() -> None:
     assert compiled.environment["LINGTU_NAV_DDS_TICK_HZ"] == "100"
     assert compiled.native_nav["use_traversability_cost"] is False
 
+
     with pytest.raises(ValueError, match="tick_hz must be 100"):
         compile_native_nav_config(
             "nav",
@@ -199,6 +222,24 @@ def test_native_nav_config_accepts_scan_as_second_local_backend() -> None:
                 "native_nav": {"local_planner": "unknown"},
             },
         )
+
+
+@pytest.mark.parametrize("mode", ["autonomy", "teleop_avoid"])
+def test_scan_does_not_compile_an_unused_2d_terrain_dependency(mode: str) -> None:
+    compiled = compile_native_nav_config(
+        "nav",
+        {
+            "native_control_mode": mode,
+            "native_nav": {
+                "local_planner": "scan",
+                "tick_hz": 100.0,
+                "use_traversability_cost": True,
+            },
+        },
+    )
+    assert compiled.native_nav["use_traversability_cost"] is False
+    assert compiled.environment["LINGTU_NAV_USE_TRAVERSABILITY_COST"] == "0"
+    assert compiled.native_nav["check_obstacle"] is True
 
 
 def test_octoplanner_explicit_override_reaches_environment() -> None:

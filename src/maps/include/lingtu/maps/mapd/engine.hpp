@@ -15,6 +15,7 @@
 #include "lingtu/maps/layers/ground_surface.hpp"
 #include "lingtu/maps/layers/rolling_occupancy.hpp"
 #include "lingtu/maps/layers/voxel.hpp"
+#include "lingtu/maps/mapd/activation.hpp"
 
 namespace lingtu::maps::mapd {
 
@@ -29,6 +30,8 @@ struct Pose {
 };
 
 struct Observation {
+  std::string reference_map_id;
+  std::int64_t reference_map_content_epoch{0};
   std::uint64_t reset_epoch{0U};
   std::uint64_t sequence{0U};
   std::int64_t stamp_ns{0};
@@ -107,6 +110,7 @@ struct SubmitResult {
 };
 
 struct State {
+  std::size_t reference_scans{0U};
   bool running{false};
   bool live{false};
   bool extended_layers_enabled{true};
@@ -165,6 +169,8 @@ struct Snapshot {
     std::size_t occupied_cells{0U};
     bool complete{false};
     std::vector<std::uint8_t> occupied_bits;
+    std::vector<std::uint8_t> measured_occupied_bits;
+    std::vector<std::uint8_t> known_free_bits;
   } collision;
   BlockGridSnapshot accumulated_cloud;
   layers::Grid2D occupancy;
@@ -195,6 +201,7 @@ class LiveMapEngine final {
   void Start();
   void Stop();
   SubmitResult Submit(Observation observation);
+  void SetReferenceMap(MapIdentity identity, std::filesystem::path directory);
 
   State GetState() const;
   Snapshot GetSnapshot() const;
@@ -251,6 +258,11 @@ class LiveMapEngine final {
   Snapshot RealtimeSnapshotLocked() const;
 
   Config config_;
+  MapIdentity reference_map_;
+  std::filesystem::path reference_directory_;
+  bool reference_attempted_{false};
+  std::size_t reference_scans_{0U};
+  std::string reference_error_;
   layers::VoxelLayerCore voxel_;
   layers::RollingOccupancyGrid occupancy_;
   PersistentBlockGrid accumulated_;

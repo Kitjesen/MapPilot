@@ -7,6 +7,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import threading
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -819,6 +820,8 @@ def test_session_snapshot_does_not_claim_invalid_map_activation(maps):
 
 
 def test_map_routes_validate_json_contracts(monkeypatch):
+    from fastapi.testclient import TestClient
+
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import (
         MapLifecycleResponse,
@@ -866,7 +869,8 @@ def test_map_routes_validate_json_contracts(monkeypatch):
         gateway._map_client = map_client
 
         maps_payload = asyncio.run(_endpoint(gateway, "/api/v1/slam/maps")())
-        live_points_payload = asyncio.run(_endpoint(gateway, "/api/v1/map/points")())
+        with TestClient(gateway._app) as client:
+            live_points_payload = client.get("/api/v1/map/points").json()
         saved_points_payload = asyncio.run(_endpoint(gateway, "/api/v1/maps/{name}/points")("demo"))
         pcd_response = asyncio.run(_endpoint(gateway, "/api/v1/maps/{name}/pcd")("demo"))
         pcd_body = asyncio.run(_stream_body(pcd_response))
@@ -1510,6 +1514,63 @@ def test_seeded_relocalization_passes_map_id_to_service(monkeypatch, tmp_path, h
     assert service.saved_calls == [("demo", 1.0, 2.0, height, 0.3, 30.0)]
 
 
+@pytest.mark.parametrize("blocking_stage", ["global", "seeded", "tracking", "map_lookup"])
+def test_localization_wait_keeps_gateway_event_loop_responsive(monkeypatch, tmp_path, blocking_stage):
+    from gateway.gateway_module import GatewayModule
+    from gateway.routes import operations
+    from localization.service import RelocalizationResult
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._localization_status = {"backend": "fastlio2", "saved_map_relocalization_supported": True}
+    map_dir = tmp_path / "maps"
+    (map_dir / "demo").mkdir(parents=True)
+    (map_dir / "demo" / "map.pcd").write_text("pcd", encoding="utf-8")
+    _attach_test_map_client(gateway, map_dir)
+    result = RelocalizationResult(True, "completed")
+    service = _FakeRelocalizationService(global_result=result, saved_result=result, track_result=result)
+    gateway.localization.bind(service)
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_call(*args, **kwargs):
+        entered.set()
+        assert release.wait(2), "localization blocked the Gateway event loop"
+        return result
+
+    if blocking_stage == "map_lookup":
+        original = operations.mapd_request
+
+        def slow_lookup(*args, **kwargs):
+            slow_call()
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(operations, "mapd_request", slow_lookup)
+    else:
+        method = {"global": "trigger_global_relocalize", "seeded": "relocalize_saved_map",
+                  "tracking": "track_against_map"}[blocking_stage]
+        monkeypatch.setattr(service, method, slow_call)
+
+    async def exercise():
+        path = "/api/v1/localization/map-tracking" if blocking_stage == "tracking" else "/api/v1/localization/relocalizations"
+        body = {"map_name": "demo", "mode": "global"}
+        if blocking_stage == "seeded":
+            body.update(mode="seeded", initial_pose={"x": 1, "y": 2, "z": 0.3, "yaw": 0})
+        if blocking_stage == "tracking":
+            body.pop("mode")
+        pending = asyncio.create_task(_endpoint(gateway, path)(body))
+        try:
+            assert await asyncio.to_thread(entered.wait, 1)
+            # This represents heartbeat / teleop work on the same event loop.
+            release.set()
+            payload = await pending
+            assert isinstance(payload, dict) and payload["success"] is True
+        finally:
+            release.set()
+            await pending
+
+    asyncio.run(exercise())
+
+
 def test_field_seeded_relocalization_rejects_map_outside_active_product(tmp_path):
     from gateway.gateway_module import GatewayModule
     from localization.service import RelocalizationResult
@@ -1620,7 +1681,7 @@ def test_global_relocalization_delegates_to_service_and_preserves_success_payloa
         _endpoint(gateway, "/api/v1/localization/relocalizations")({"map_name": "demo", "mode": "global"})
     )
 
-    assert service.global_calls == [10.0]
+    assert service.global_calls == [45.0]
     assert subprocess_calls == []
     assert payload["schema_version"] == 1
     assert payload["ok"] is True

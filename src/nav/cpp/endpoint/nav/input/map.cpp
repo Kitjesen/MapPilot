@@ -69,7 +69,7 @@ void InputProjector::projectCloud(InputSample<PointCloudSample> sample,
   const double stamp_s = message.header.stamp_s;
   state_.cloud_sync.last_stamp_age_s = receive_wall_s - stamp_s;
   const auto stamp_decision =
-      classifySourceOrder(state_.last_cloud_s, stamp_s, kSourceClockRebaseThresholdS);
+      classifySourceOrder(last_submitted_cloud_s_, stamp_s, kSourceClockRebaseThresholdS);
   if (stamp_decision == SourceStampDecision::kReject) {
     ++state_.cloud_sync.stamp_rejected;
     state_.frames.last_error = "cloud_stamp_invalid";
@@ -79,9 +79,14 @@ void InputProjector::projectCloud(InputSample<PointCloudSample> sample,
     ++state_.frames.clock_rebases;
     obstacles_.clear();
     state_.latest_dynamic_clusters.clear();
-    state_.obstacle_snapshot_dirty = false;
+    state_.motion_layer_stats = {};
+    last_submitted_cloud_s_ = 0.0;
+    state_.last_cloud_s = 0.0;
+    state_.last_cloud_receive_s = 0.0;
     state_.obstacle_xyzh.clear();
     state_.predicted_obstacle_xyzh.clear();
+    state_.predicted_obstacle_volumes.clear();
+    state_.prediction_source_receive_s = 0.0;
   }
   if (!sample.ok()) {
     return;
@@ -122,15 +127,9 @@ void InputProjector::projectCloud(InputSample<PointCloudSample> sample,
     return;
   }
 
-  const auto motion_start = SteadyClock::now();
-  state_.last_sensor_origin = sensorOriginFromBody(*cloud_pose, config_.sensor_offset);
-  obstacles_.updateFromScan(state_.last_sensor_origin, xyzh, stamp_s);
-  state_.latest_dynamic_clusters = obstacles_.dynamicClusters(32, stamp_s);
-  timing.motion_update_last_ms = elapsedMs(motion_start);
-  state_.obstacle_snapshot_dirty = true;
-  state_.last_cloud_s = stamp_s;
-  state_.last_cloud_receive_s = receive_steady_s;
-  ++state_.cloud_generation;
+  obstacles_.submit({std::move(xyzh), sensorOriginFromBody(*cloud_pose, config_.sensor_offset),
+                     stamp_s, receive_steady_s});
+  last_submitted_cloud_s_ = stamp_s;
 }
 
 void InputProjector::projectTerrainMap(InputSample<PointCloudSample> sample,
@@ -242,9 +241,11 @@ void InputProjector::clearPlannerInputs(const PlannerClearSample &sample) {
   clearPlanState();
   obstacles_.clear();
   state_.latest_dynamic_clusters.clear();
-  state_.obstacle_snapshot_dirty = false;
+  state_.motion_layer_stats = {};
   state_.obstacle_xyzh.clear();
   state_.predicted_obstacle_xyzh.clear();
+  state_.predicted_obstacle_volumes.clear();
+  state_.prediction_source_receive_s = 0.0;
 
   const std::string reason = sample.source == ClearSource::Map ? "execution_grid_map_cleared"
                                                                : "execution_grid_cloud_cleared";
@@ -260,17 +261,36 @@ void InputProjector::clearPlannerInputs(const PlannerClearSample &sample) {
   }
 }
 
-bool InputProjector::materializeObstacles(TimingDiagnostics &timing) {
-  if (!config_.check_obstacle || !state_.obstacle_snapshot_dirty) {
+bool InputProjector::pollObstacles(TimingDiagnostics &timing) {
+  auto result = obstacles_.poll();
+  if (!result) {
     return false;
   }
-
-  const auto snapshot_start = SteadyClock::now();
-  obstacles_.snapshot(state_.obstacle_xyzh, config_.max_obstacle_points, state_.last_cloud_s);
-  obstacles_.snapshotPredictedDynamic(state_.predicted_obstacle_xyzh,
-                                      kMaxDynamicPredictionPoints, state_.last_cloud_s);
-  timing.obstacle_snapshot_last_ms = elapsedMs(snapshot_start);
-  state_.obstacle_snapshot_dirty = false;
+  if (!result->error.empty()) {
+    state_.frames.last_error = "motion_processing_failed: " + result->error;
+    state_.last_cloud_s = 0.0;
+    state_.last_cloud_receive_s = 0.0;
+    state_.prediction_source_receive_s = 0.0;
+    state_.obstacle_xyzh.clear();
+    state_.predicted_obstacle_xyzh.clear();
+    state_.predicted_obstacle_volumes.clear();
+    state_.latest_dynamic_clusters.clear();
+    state_.motion_layer_stats = {};
+    return false;
+  }
+  state_.obstacle_xyzh = std::move(result->obstacles);
+  state_.predicted_obstacle_xyzh = std::move(result->predicted_points);
+  state_.predicted_obstacle_volumes = std::move(result->predictions);
+  state_.latest_dynamic_clusters = std::move(result->clusters);
+  state_.motion_layer_stats = result->stats;
+  state_.last_sensor_origin = result->origin;
+  state_.last_cloud_s = result->stamp_s;
+  // Completion time must never make a delayed observation look fresh.
+  state_.last_cloud_receive_s = result->receive_s;
+  state_.prediction_source_receive_s = config_.check_obstacle ? result->receive_s : 0.0;
+  ++state_.cloud_generation;
+  timing.motion_update_last_ms = result->update_ms;
+  timing.obstacle_snapshot_last_ms = result->snapshot_ms;
   return true;
 }
 

@@ -2735,6 +2735,8 @@ struct Client::Impl {
       int timeout_ms,
       const std::string& requested_id,
       bool manual_mode) const {
+    const auto sample_deadline =
+        SteadyClock::now() + std::chrono::milliseconds(freshness_budget_ms);
     requireOperatorSource(source_id, source_epoch);
     if (sequence == 0U) {
       throw std::invalid_argument("operator motion sequence is required");
@@ -2766,8 +2768,15 @@ struct Client::Impl {
     message.velocity.linear.x = vx;
     message.velocity.linear.y = vy;
     message.velocity.angular.z = wz;
-    message.freshness_budget_ms = freshness_budget_ms;
     const double send_source_stamp_s = sourceNowSeconds();
+    // Discovery, clock synchronization and lane contention consume the input's
+    // remaining lifetime; publication must not make an old axis value fresh.
+    const auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        sample_deadline - SteadyClock::now()).count();
+    if (remaining_ms <= 0) {
+      throw std::runtime_error("operator motion sample expired before DDS submission");
+    }
+    message.freshness_budget_ms = static_cast<std::uint32_t>(remaining_ms);
     message.source_stamp_ns = sourceStampNs(send_source_stamp_s);
     fillHeader(message.header, send_source_stamp_s, "body");
     checked(

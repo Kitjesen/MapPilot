@@ -148,7 +148,6 @@ def test_systemd_runner_dry_run_has_no_process_side_effects() -> None:
         "lt-lidar.service",
         "lt-slam.service",
         "lt-maps.service",
-        "lt-terrain.service",
         "lt-nav.service",
         "lt-driver.service",
         "lt-host.service",
@@ -177,7 +176,6 @@ def test_systemd_runner_applies_plan_in_order_and_restarts_active_mode_driver() 
         "lt-lidar.service",
         "lt-slam.service",
         "lt-maps.service",
-        "lt-terrain.service",
         "lt-nav.service",
         "lt-driver.service",
         "lt-host.service",
@@ -187,7 +185,6 @@ def test_systemd_runner_applies_plan_in_order_and_restarts_active_mode_driver() 
         "lidar",
         "slam",
         "maps",
-        "traversability",
         "nav",
         "driver",
         "host",
@@ -237,6 +234,43 @@ def test_localization_barrier_precedes_maps_and_driver(operation, localization_f
         assert control.started.index("lt-slam.service") < control.started.index("lt-maps.service")
 
 
+@pytest.mark.parametrize("operation", ["apply", "transition"])
+@pytest.mark.parametrize("activation_fails", [False, True])
+def test_map_activation_precedes_map_observation_readiness(operation, activation_fails):
+    plan = _field_product()
+    targets = {process.target for process in plan.processes}
+    control = FakeControl(targets if operation == "transition" else set())
+    activated = False
+
+    class Readiness(FakeReadiness):
+        def wait(self, process, timeout_s):
+            if process.name == "maps":
+                assert activated, "new-map observations require the target map to be active"
+            return super().wait(process, timeout_s)
+
+    def on_started(process):
+        nonlocal activated
+        if process.name == "maps":
+            assert process.target in control.started
+            if activation_fails:
+                raise RuntimeError("map activation failed")
+            activated = True
+
+    runner = SystemdRunner(control, Readiness())
+
+    def invoke():
+        if operation == "apply":
+            return runner.apply_deferred(plan, on_process_started=on_started)
+        return runner.transition(plan, plan, on_process_started=on_started)
+
+    if activation_fails:
+        with pytest.raises(ProcessFailed, match="map activation failed"):
+            invoke()
+        assert "lt-driver.service" not in control.started
+    else:
+        assert invoke().ok
+
+
 def test_systemd_runner_rolls_back_only_processes_started_by_failed_transaction() -> None:
     control = FakeControl({"lt-driver.service"})
     readiness = FakeReadiness(fail="nav")
@@ -249,7 +283,6 @@ def test_systemd_runner_rolls_back_only_processes_started_by_failed_transaction(
     assert report.error == "nav readiness failed"
     assert report.rolled_back == [
         "lt-nav.service",
-        "lt-terrain.service",
         "lt-maps.service",
         "lt-slam.service",
         "lt-lidar.service",
@@ -284,7 +317,6 @@ def test_systemd_runner_stop_stops_all_mode_processes() -> None:
         "lt-host.service",
         "lt-nav.service",
         "lt-driver.service",
-        "lt-terrain.service",
         "lt-maps.service",
         "lt-slam.service",
         "lt-lidar.service",

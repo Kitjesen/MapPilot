@@ -8,7 +8,8 @@ Product operations use `switch / status / stop` through ProductControl. Build,
 packaging, installation, service diagnosis, and Product lifecycle remain
 separate responsibilities.
 
-调试速查：[Go2 连接说明](../config/robots/unitree/go2/README.md#连接-nx-与网络核对) ·
+调试速查：[Go2/NX 连接与当前交接](operations/go2-offline-mapping.md) ·
+[早期 Go2 连接记录](../config/robots/unitree/go2/README.md#连接-nx-与网络核对) ·
 [MuJoCo SCAN 时钟修复记录](#mujoco-scan-clock-debugging-status)。
 
 ## Production layout
@@ -119,6 +120,55 @@ readiness, and commits only on success.
 Native processes 可按各自角色独立观测；它们的启动、停止、回滚和当前状态由当前 RunPlan 与 ProductControl 统一拥有。
 `systemctl` is for diagnosis, not a second Product startup path.
 
+## Web mapping and navigation switches
+
+The Web controls are **开始建图 → 累计地图 → 保存地图 → 使用此地图导航**.
+Saving opens the saved PCD preview. Loading a map ends the current mapping
+session; save any recent scans before confirming. A successful switch does not
+send a motion goal: the existing map, localization, and navigation readiness
+checks still gate goal selection and execution. `?observe=1` remains read-only.
+
+The new controls require `lt-control.service` alongside the existing Host. This
+service is outside the Product's process set and remains running during Host
+replacement. It only listens on robot loopback port 5051; Gateway forwards the
+three `/api/v1/product-control` routes. No extra laptop software or internet
+connection is required. A running Host is needed to access these Web routes.
+
+After installing a release containing the new service, configure the fixed
+robot in `/etc/lingtu/control.env` on the robot:
+
+```ini
+LINGTU_ROBOT=unitree/go2
+# Set only when the deployed map/nav Products should include the camera:
+# LINGTU_CONTROL_VARIANT=camera
+```
+
+Use the actual robot profile for other platforms. Install the optional
+transport and start it once; it does not start or switch a Product by itself:
+
+```bash
+sudo bash /opt/lingtu/current/scripts/deploy/thunder/install_catalog_service.sh control
+sudo systemctl enable --now lt-control.service
+curl http://127.0.0.1:5051/status
+```
+
+The service and CLI must use the same current-run directory (`/run/lingtu` in
+the field unit). On Windows simulation the equivalent standalone process is
+`uv run --locked python -m lingtu.control serve --robot unitree/go2 --env sim
+--backend mujoco --state-dir PATH_TO_EXISTING_SESSION_ROOT`, using the actual
+session path. Keep the existing simulation supervisor as process owner.
+
+The browser retains a request ID before submission. After a Host disconnect it
+queries that request instead of repeating the switch. A service restart marks
+unfinished requests `interrupted`; inspect the current Product before retrying.
+Receipts are kept in `web-control-operations.json` under the state directory
+(latest 32 requests; `/run` is not durable across a robot reboot). If Host cannot
+recover, inspect `http://127.0.0.1:5051/operations/REQUEST_ID` on the robot and use
+the normal ProductControl CLI; the Web must not report success from a timeout.
+
+This transport has local contract coverage. Deployment, complete browser
+interaction, and robot mapping/navigation acceptance are separate gates.
+
 ## Service roles
 
 | Unit | Role |
@@ -132,6 +182,7 @@ Native processes 可按各自角色独立观测；它们的启动、停止、回
 | `lt-camera` | Native camera capture and publication |
 | `lt-explore` | Native exploration policy when declared |
 | `lt-host` | Python Host with Gateway, Agent, MCP, and adapters |
+| `lt-control` | Optional Host-independent transport for ProductControl; not a Product process |
 
 There is no separate Gateway unit; Gateway runs inside `lt-host`. Unit
 liveness alone does not prove Product readiness.
@@ -281,3 +332,41 @@ retains final arbitration and `lingtu-driver` remains the only hardware writer.
 An API or navigation ACK does not prove actuator motion. Stop evidence includes
 terminal zero output and driver acknowledgement. Follow
 [Testing](./testing.md) before any motion-capable procedure.
+
+## 动态避障的运动证据采集
+
+默认 SCAN 使用测量占据图和独立的短时运动预测。状态快照的
+`last_local.dynamic_avoidance` 区分等待、寻找绕行、绕行、观测过期和超时；
+`prediction_count` 是当前参与查询的预测体数量，不是识别到的人数。
+
+在另一个终端启动只读采集，再通过正常控制页面进行已经确认场地条件的测试：
+
+```powershell
+python tools/diagnostics/navigation_motion_evidence.py --platform go2-nx --url http://127.0.0.1:15052 --seconds 30 --output build/dynamic-avoidance-run-01
+```
+
+输出目录需使用新的名字，原始记录不会被覆盖。`samples.jsonl` 保留完整状态；
+`summary.json` 分开统计最终指令、同一输出序号的驱动确认及新鲜里程计运动。
+此工具只发送 GET，不申请控制权、不发送目标。驱动确认不等于机身已运动；
+安静的单个里程计样本也不等于停车距离达标。横穿、迎面、堵路、观测断流的验收仍需
+结合场景录像、距离和连续停车证据；Go2/NX、S100P、原生仿真分别保存结果。
+
+## 导航控制周期与后台点云处理
+
+`navd` 的主线程仍按 RunPlan 配置的周期运行，使用单调时钟和 deadline sleep。
+动态障碍更新、跟踪与障碍快照由 C++ `MotionWorker` 独立线程计算；主线程负责
+接收完整结果、输入新鲜度检查、命令仲裁和最终停车检查。
+
+后台最多保留一帧待处理点云；新帧替换尚未开始的旧帧，避免处理队列越来越落后。
+正在处理的一帧会完成，但地图/坐标纪元重置或地图清理后，其结果不能重新进入规划。
+只有完成的结果才推进 `cloud_generation`。结果沿用原始接收时间，后台延迟会消耗
+新鲜度预算，不能以“刚处理完”为由恢复运动许可。
+
+查看耗时时注意：`timing_ms.motion_update_last` 和 `obstacle_snapshot_last` 是最近
+完成的后台任务耗时；`control_loop_health.work_ms` 才是主控制线程每轮工作耗时。
+后台计算与主循环同时进行，不应将两者相加当作控制周期。健康统计复用缓冲区和
+同一样本的结果；每个新样本仍立即更新健康判定，阈值保持不变。
+
+MuJoCo 组件验收可通过 manifest 的 `navigation_runtime.tick_hz` 指定被测频率，
+默认保留原组件基线 20 Hz。测试正式导航的 100 Hz 时必须检查报告中的实际
+`period_ms = 10`，20 Hz 通过不能替代 100 Hz 或实机时序验收。

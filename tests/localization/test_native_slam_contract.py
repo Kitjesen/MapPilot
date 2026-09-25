@@ -374,49 +374,44 @@ def test_native_cyclone_runtime_dedupes_odom_and_scan_state_by_output_stamp() ->
     odom_block = source[odom_start:odom_end]
     assert "std::abs(out.stamp_s - last_odometry_stamp_s) > 1e-6" in odom_block
     assert odom_block.index("last_odometry_stamp_s = out.stamp_s;") < odom_block.index(
-        "dds.writeOdom(msg);"
+        "dds.writeOdom(*msg);"
     )
     assert "registered_cloud_body->stamp_s" not in odom_block
     assert "map_cloud_map->stamp_s" not in odom_block
 
     state_start = source.index("if (out.state_estimation_at_scan.has_value() &&")
-    state_end = source.index("if (out.registered_cloud_body.has_value() &&", state_start)
+    state_end = source.index("if ((out.registered_cloud_body != nullptr) &&", state_start)
     state_block = source[state_start:state_end]
     assert "std::abs(out.stamp_s - last_state_estimation_stamp_s) > 1e-6" in state_block
     assert state_block.index("last_state_estimation_stamp_s = out.stamp_s;") < state_block.index(
-        "dds.writeState(msg);"
+        "dds.writeState(*msg);"
     )
     assert "registered_cloud_body->stamp_s" not in state_block
     assert "map_cloud_map->stamp_s" not in state_block
 
 
-def test_native_cyclone_runtime_maps_fastlio_velocity_into_odom_twist_directly() -> None:
+def test_native_cyclone_runtime_requires_synchronized_body_twist_for_odom() -> None:
     source = _cyclone_runtime_source()
     odom_converter = source[
-        source.index("lingtu_dds_Odometry toDdsOdom(") : source.index("struct TfMessage")
+        source.index("std::optional<lingtu_dds_Odometry> toDdsOdom(") : source.index("struct TfMessage")
     ]
 
-    assert "double vx" in odom_converter
-    assert "double vy" in odom_converter
-    assert "double vz" in odom_converter
-    assert "out.twist.twist.linear.x = vx;" in odom_converter
-    assert "out.twist.twist.linear.y = vy;" in odom_converter
-    assert "out.twist.twist.linear.z = vz;" in odom_converter
-    assert "std::isfinite" not in odom_converter
-    assert "0.0" not in odom_converter
+    assert "if (!twist_body) return std::nullopt;" in odom_converter
+    for axis in ("x", "y", "z"):
+        assert f"out.twist.twist.linear.{axis} = twist_body->v{axis};" in odom_converter
+        assert f"out.twist.twist.angular.{axis} = twist_body->w{axis};" in odom_converter
 
     odom_start = source.index("const auto msg = toDdsOdom(\n            *out.odometry_odom_body")
-    odom_end = source.index("dds.writeOdom(msg);", odom_start)
+    odom_end = source.index("dds.writeOdom(*msg);", odom_start)
     odom_call = source[odom_start:odom_end]
     state_start = source.index(
         "const auto msg = toDdsOdom(\n            *out.state_estimation_at_scan"
     )
-    state_end = source.index("dds.writeState(msg);", state_start)
+    state_end = source.index("dds.writeState(*msg);", state_start)
     state_call = source[state_start:state_end]
     for call in (odom_call, state_call):
-        assert "out.fastlio_velocity_x" in call
-        assert "out.fastlio_velocity_y" in call
-        assert "out.fastlio_velocity_z" in call
+        assert "out.odometry_twist_body" in call
+        assert "if (msg)" in call
 
 
 def test_native_slam_forwards_structured_fastlio_lidar_update_diagnostics() -> None:
@@ -638,31 +633,26 @@ def test_native_slam_adapter_wiring_covers_host_consumers() -> None:
 
 def test_native_mapping_save_path_writes_only_real_map_artifacts() -> None:
     fastlio = Path("src/localization/slam/cpp/fastlio.cpp").read_text(encoding="utf-8")
-    header = Path("src/localization/slam/cpp/slam.hpp").read_text(encoding="utf-8")
     cyclone_runtime = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(encoding="utf-8")
 
     assert "Status saveMap(const std::string& pcd_path) override" in fastlio
-    assert "builder_->saveMap(pcd.string())" in fastlio
-    assert "writeTrajectory(pcd.parent_path(), pose_history_)" in fastlio
-    assert (
-        "writePatchBundle(pcd.parent_path(), patches, patch_history_dropped_count_)"
-        in fastlio
-    )
+    assert "builder_->lidar_processor()->mapSnapshot()" in fastlio
+    assert "writeTrajectory(capture.pcd.parent_path(), capture.trajectory)" in fastlio
+    assert "writePatchBundle(" in fastlio
+    assert "backend->startSaveMapAsync(output_path)" in cyclone_runtime
+    assert "backend->pollSaveMapAsync()" in cyclone_runtime
     assert "max_patch_snapshots" in fastlio
     assert "patch_min_translation_m" in fastlio
     assert "patch_min_rotation_rad" in fastlio
     assert "patch_history_.size() > max_snapshots" in fastlio
     assert "patch_history_.size() > 300" not in fastlio
     assert "map.raw.pcd" not in fastlio
-    assert "map_optimization" not in fastlio
     assert "MapOptimizationReport" not in fastlio
     assert "OptimizedMapResult" not in fastlio
 
     assert 'action == "track_against_map"' in cyclone_runtime
     assert "if (runtime_mode != SlamMode::Localization)" in cyclone_runtime
     assert '"localization_mode_required"' in cyclone_runtime
-    assert "map_optimization" not in header
-    assert "map_optimization" not in cyclone_runtime
 
 
 def test_slam_cpp_build_declares_native_dds_runtime() -> None:
@@ -748,7 +738,7 @@ def test_slam_cpp_build_declares_native_dds_runtime() -> None:
     assert "poseInsideMapBounds" in fastlio
     assert "relocalization_refine_backend" in cyclone_runtime
     assert "relocalization_map_body" in cyclone_runtime
-    assert "dds.writeTf(msg.msg)" in cyclone_runtime
+    assert "dds.writeTf(msg)" in cyclone_runtime
     assert "backend->feedLidar" in cyclone_runtime
     assert "backend->feedImu" in cyclone_runtime
     assert "--log-status-s" in cyclone_runtime
@@ -776,7 +766,7 @@ def test_native_slam_product_binary_names_hide_transport_details() -> None:
 def test_slam_relocalization_has_typed_dds_request_reply_contract() -> None:
     idl = Path("src/message/idl/localization.idl").read_text(encoding="utf-8")
     topics = Path("src/message/generated/topics.hpp").read_text(encoding="utf-8")
-    runtime_topics = Path("src/diagnostics/runtime_contract.py").read_text(encoding="utf-8")
+    runtime_topics = Path("src/message/topics.py").read_text(encoding="utf-8")
     cyclone_runtime = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(encoding="utf-8")
     slam_control = Path("src/localization/slam/cpp/slam_control.cpp").read_text(encoding="utf-8")
 
@@ -862,9 +852,10 @@ def test_slam_global_fallback_preserves_search_intent_and_commit_gates() -> None
     runtime = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(encoding="utf-8")
     fastlio = Path("src/localization/slam/cpp/fastlio.cpp").read_text(encoding="utf-8")
 
-    synchronous = runtime.split("command_status = backend->relocalize(", 1)[1].split(";", 1)[0]
-    assert 'action == "global_relocalize"' in synchronous
-    assert "RelocalizationSearch::Global" in synchronous
+    manual = runtime.split("command_status = manual_relocalization.start(", 1)[1].split(";", 1)[0]
+    assert 'action == "global_relocalize"' in manual
+    assert "RelocalizationSearch::Global" in manual
+    assert "backend->relocalize(" not in runtime
     periodic = runtime.split("backend->startRelocalizeAsync(", 1)[1].split(";", 1)[0]
     assert "track_against_map_failures >= kTrackAgainstMapDegradedFailureCount" in periodic
     assert "RelocalizationSearch::Global" in periodic
@@ -909,7 +900,8 @@ def test_native_relocalization_uses_map_icp_with_generation_guard() -> None:
     assert "map_icp_generation_mismatch" in map_icp_source
     assert "map_icp_failed" in map_icp_source
     assert "alignPlanar" in map_icp_source
-    assert "fixed_seed_planar_icp" in map_icp_source
+    assert "bounded_seed_planar_icp" in map_icp_source
+    assert "native_relocalizer_seed_outside_search" in native_relocalizer
     assert "map_icp.cpp" in cmake
 
     success_gate = fastlio.index("if (!result.success)")

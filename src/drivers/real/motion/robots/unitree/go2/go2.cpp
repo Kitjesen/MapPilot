@@ -85,7 +85,8 @@ Posture postureForMode(std::uint8_t mode) noexcept {
 class Go2 final : public Body {
  public:
   explicit Go2(const Config &config)
-      : target_("dds://" + config.network_interface + "/rt/api/sport/request") {
+      : target_("dds://" + config.network_interface + "/rt/api/sport/request"),
+        tilt_limit_cos_(std::cos(config.tilt_limit_deg * std::acos(-1.0) / 180.0)) {
     unitree::robot::ChannelFactory::Instance()->Init(0, config.network_interface);
     client_ = std::make_unique<unitree::robot::go2::SportClient>();
     client_->SetTimeout(static_cast<float>(config.rpc_timeout.count()) / 1000.0F);
@@ -147,12 +148,22 @@ class Go2 final : public Body {
     if (!zero && !factory_avoidance_disabled_) {
       return resultForCode(0, false, "factory_avoidance_not_configured");
     }
+    if (!zero) {
+      const auto current_health = health();
+      if (!current_health.healthy) {
+        return resultForCode(0, false, current_health.reason);
+      }
+    }
     const int result = zero ? client_->StopMove()
                             : client_->Move(static_cast<float>(velocity.vx_mps),
                                             static_cast<float>(velocity.vy_mps),
                                             static_cast<float>(velocity.yaw_rps));
-    return resultForCode(result, result == 0,
-                         result == 0 ? "command_accepted" : "command_rejected");
+    auto response = resultForCode(result, result == 0,
+                                 result == 0 ? "command_accepted" : "command_rejected");
+    if (zero && result == 0) {
+      response.accepted = true;
+    }
+    return response;
   }
 
   Result stop() noexcept override {
@@ -251,8 +262,10 @@ class Go2 final : public Body {
         state_received_ && std::chrono::steady_clock::now() - state_received_at_ <= kStateMaxAge;
     HealthState state;
     state.fresh = fresh;
-    state.healthy = fresh;
-    state.reason = fresh ? "sport_state_available" : "sport_state_stale";
+    const char *attitude_fault = attitudeFaultLocked();
+    state.healthy = fresh && attitude_fault == nullptr;
+    state.reason = !fresh ? "sport_state_stale"
+                         : attitude_fault ? attitude_fault : "sport_state_available";
     return state;
   }
 
@@ -278,6 +291,15 @@ class Go2 final : public Body {
   }
 
  private:
+  const char *attitudeFaultLocked() const noexcept {
+    if (!std::isfinite(state_roll_) || !std::isfinite(state_pitch_)) {
+      return "imu_attitude_invalid";
+    }
+    // Dot product of the body up axis with gravity up; yaw is irrelevant.
+    return std::cos(state_roll_) * std::cos(state_pitch_) < tilt_limit_cos_
+               ? "tilt_limit_exceeded" : nullptr;
+  }
+
   void onLowState(const void *message) {
     if (message == nullptr) return;
     const auto &state = *static_cast<const LowState *>(message);
@@ -316,6 +338,8 @@ class Go2 final : public Body {
     state_velocity_ = state.velocity();
     state_yaw_speed_ = state.yaw_speed();
     state_body_height_ = state.body_height();
+    state_roll_ = state.imu_state().rpy()[0];
+    state_pitch_ = state.imu_state().rpy()[1];
     state_received_at_ = std::chrono::steady_clock::now();
   }
 
@@ -323,11 +347,13 @@ class Go2 final : public Body {
     bool state_received = false;
     std::uint8_t state_mode = 255;
     std::chrono::steady_clock::time_point state_received_at;
+    const char *attitude_fault = nullptr;
     {
       std::lock_guard<std::mutex> lock(state_mutex_);
       state_received = state_received_;
       state_mode = state_mode_;
       state_received_at = state_received_at_;
+      attitude_fault = attitudeFaultLocked();
     }
     const bool state_fresh =
         state_received && std::chrono::steady_clock::now() - state_received_at <= kStateMaxAge;
@@ -336,7 +362,7 @@ class Go2 final : public Body {
 
     Result response;
     response.ok = accepted && transport_ok && mode_ready && initial_zero_acknowledged_ &&
-                  factory_avoidance_disabled_;
+                  factory_avoidance_disabled_ && attitude_fault == nullptr;
     response.transport_ok = transport_ok;
     response.accepted = accepted && response.ok;
     response.state.connected = state_fresh;
@@ -348,7 +374,8 @@ class Go2 final : public Body {
     response.state.initial_zero_acknowledged = initial_zero_acknowledged_;
     response.state.fsm = modeName(state_mode);
     response.state.reason =
-        response.ok ? reason : failureReason(result, state_fresh, mode_ready, reason);
+        response.ok ? reason : failureReason(result, state_fresh, mode_ready,
+                                             attitude_fault ? attitude_fault : reason);
     response.error = response.ok ? "" : response.state.reason;
     return response;
   }
@@ -368,6 +395,7 @@ class Go2 final : public Body {
   }
 
   std::string target_;
+  double tilt_limit_cos_;
   std::unique_ptr<unitree::robot::go2::SportClient> client_;
   std::unique_ptr<unitree::robot::go2::ObstaclesAvoidClient> avoidance_;
   std::unique_ptr<StateSubscriber> subscriber_;
@@ -384,6 +412,8 @@ class Go2 final : public Body {
   std::array<float, 3> state_velocity_{};
   float state_yaw_speed_{0.0F};
   float state_body_height_{0.0F};
+  float state_roll_{0.0F};
+  float state_pitch_{0.0F};
   std::chrono::steady_clock::time_point state_received_at_{};
   bool initial_zero_acknowledged_{false};
   bool factory_avoidance_disabled_{false};

@@ -31,6 +31,37 @@ observed MuJoCo truth in separate fields. Blueprint widgets and presentation eff
 react to these values, but the subsystem does not publish control requests, mutate robot
 Actors as physics truth, or create another runtime authority.
 
+## Inspection interface slice
+
+The in-game Drive HUD uses a compact dark overlay so the scene stays visible. It shows
+the selected session title when confirmed, plus Session/Control state, applied-truth
+sequence, recording state, and stale-status feedback from the existing read-only UI
+snapshot. `Tab` opens the detailed Tactical view. An optional read-only Gateway
+projection displays a bound inspection task's native state, route point progress, and
+separate report acceptance. A selected game session is not an inspection route or
+point, so UE never infers a task from the current session or the latest task list.
+
+To follow an inspection in UE, start the task in the Web Inspection Workbench, then
+find its **Task ID**, route revision, map ID, and map content epoch under System
+details → Task details. The launcher must independently assert the compiled scene's
+matching map identity and intended route revision. Pass all four bindings to UE:
+`-LingTuInspectionTaskId=<task-id>`, `-LingTuInspectionExpectedMapId=<map-id>`,
+`-LingTuInspectionExpectedMapContentEpoch=<epoch>`, and
+`-LingTuInspectionExpectedRouteRevision=<revision>`. The projection uses
+`http://127.0.0.1:5050` by default; set
+`-LingTuInspectionGatewayUrl=http://<gateway-host>:5050` when Gateway is elsewhere.
+This launcher assertion is checked against Gateway task identity; it is not automatic
+proof that the rendered world matches the saved map. Missing or mismatched binding,
+unconfirmed execution, and disconnection block progress and acceptance in the HUD.
+
+The Web Inspection Workbench (`web/src/components/InspectionWorkbench.tsx`) is the
+current operator path for saved-route selection, native task start/pause/resume/cancel,
+evidence review, and report acceptance. Its task state and report come from Gateway's
+inspection APIs. Do not infer native point completion or evidence acceptance from an
+Unreal Actor, the HUD, or a control-command ACK. In the UE viewport, `Shift` with
+`W/A/S/D/Q/E` sends robot motion intent, `C` changes camera, `R` requests recording,
+`Tab` opens Tactical, and `Esc` opens the menu; the menu does not pause MuJoCo.
+
 ## Compiled artifact boundary
 
 The session runtime may consume only these compiler-produced JSON artifact names:

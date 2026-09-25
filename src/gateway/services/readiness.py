@@ -202,6 +202,11 @@ def _native_maps_readiness(
     host_bus = modules.get("host.bus")
     if host_bus is None:
         return ["maps:host_bus_missing"], {"required": True}
+    # MapScene is optional display telemetry. Do not call into its snapshot
+    # path during the synchronous /ready probe unless this Product explicitly
+    # enabled the scene contract.
+    if not bool(getattr(host_bus, "_require_map_scene", True)):
+        return [], {}
     try:
         reason = (
             host_bus.map_readiness()

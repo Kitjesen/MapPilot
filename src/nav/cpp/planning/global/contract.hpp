@@ -39,8 +39,11 @@ struct GlobalPlannerOptions {
   int max_iterations{500000};
   int snap_search_radius_cells{12};
   bool require_ground_support{true};
-  bool strict_direct_ground_support{true};
-  int ground_support_xy_radius_cells{0};
+  // The saved-map path uses OctoPlanner3D's neighbouring support fallback by
+  // default. A single missing floor voxel must not block an otherwise
+  // supported stance; strict direct support remains available for diagnostics.
+  bool strict_direct_ground_support{false};
+  int ground_support_xy_radius_cells{1};
   int ground_support_depth_cells{1};
   double support_height_m{0.0};
   double support_height_tolerance_m{0.0};

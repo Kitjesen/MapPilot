@@ -12,8 +12,8 @@ namespace cpu { class BBS3D; }  // fwd-decl from libcpu_bbs3d
 /**
  * Branch-and-bound global localization in a pre-built point cloud map.
  *
- * One-shot, no initial guess required. Pose returned in map frame is used
- * to seed ICPLocalizer.align() for final refinement.
+ * One-shot, no initial guess required. Translation search covers the map
+ * bounding box plus margin. Pose returned in map frame seeds ICPLocalizer.align().
  *
  * Reference: Aoki et al. "3D-BBS: Global Localization for 3D Point Cloud
  * Scan Matching Using Branch-and-Bound Algorithm", ICRA 2024.
@@ -21,15 +21,17 @@ namespace cpu { class BBS3D; }  // fwd-decl from libcpu_bbs3d
 class BBS3DGlobalLocalizer {
 public:
     struct Config {
-        double min_level_res       = 1.0;   // coarsest voxel (m) - wider = faster on CPU
-        int    max_level           = 5;     // pyramid levels (wider search range)
-        double score_threshold     = 0.0;   // 0 = disabled; else inlier-ratio gate
+        double min_level_res       = 0.2;   // finest voxel (m); level 5 is 6.4 m
+        int    max_level           = 5;
+        double score_threshold     = 0.9;   // BBS lower bound on scan-to-map support
         double trans_search_margin = 1.0;   // expand map bbox by N m each side
-        double roll_pitch_margin   = 0.2;   // rad (~11 deg); IMU should mostly level it
+        double roll_pitch_margin   = 0.02;  // rad after odometry gravity alignment
         double yaw_search_min      = -3.14159;
         double yaw_search_max      =  3.14159;
-        int    num_threads         = 1;     // Keep CPU BBS3D in-process recovery crash-isolated.
+        int    num_threads         = 1;     // Conservative CPU budget on the field host
         int    timeout_ms          = 30000; // 30 s; CPU version needs more headroom
+        double source_max_range    = 8.0;   // m; compact indoor recovery scan
+        double source_voxel_size   = 0.5;   // m; keep BBS branching bounded on CPU
         Config() {}
     };
 
@@ -53,9 +55,13 @@ public:
 
     bool has_map() const { return has_map_; }
 
-    // One-shot global localization. scan = current LiDAR scan (body frame,
-    // gravity-aligned preferred).
-    Result localize(const CloudType::Ptr& scan_cloud);
+    // body_to_level removes the measured odometry yaw from body orientation,
+    // leaving the scan gravity aligned while preserving its body-frame origin.
+    // The returned pose is map<-body. Standalone gravity-aligned scans may omit
+    // the transform.
+    Result localize(
+        const CloudType::Ptr& scan_cloud,
+        const Eigen::Matrix3d& body_to_level = Eigen::Matrix3d::Identity());
 
 private:
     Config cfg_;

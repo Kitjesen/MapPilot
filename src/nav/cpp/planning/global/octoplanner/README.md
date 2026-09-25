@@ -98,10 +98,10 @@ climbing capability.
 
 ## Support surfaces and collision envelopes
 
-The default surface route uses direct support below the centre and four
-footprint samples. Side samples may lie on different tread heights within the
-step limit (rounded outward for voxelized support heights); isolated narrow
-ridges cannot substitute for a supported stance. Actual search edges retain
+The production route uses OctoPlanner3D's neighbouring occupied-support query
+so a single missing floor voxel in a saved scan does not block an otherwise
+supported stance. Strict direct support and the optional four-footprint
+diagnostic remain available for map-quality tests. Actual search edges retain
 the metric step and slope checks.
 
 For an uneven supported stance, the surface-rooted envelope distinguishes a
@@ -123,7 +123,7 @@ to climb the resulting staircase.
 | `make_test_octomap.cpp` | Generates deterministic two-floor and spiral-stair OctoMaps for tests. |
 | `no_air_climb_smoke.cpp` | Checks ground support, body clearance, floor continuity, overlays, and no-air-climb behavior. |
 | `neighborhood_fallback_smoke.cpp` | Checks basic-first routing, stair fallback, blocked routes, shared budgets, cancellation, and runtime failure reasons. |
-| `grid_query_smoke.cpp` | Compares cached grid occupancy and leaf-center queries with OctoMap, including map and overlay invalidation. |
+| `grid_smoke.cpp` | Compares cached grid occupancy and leaf-center queries with OctoMap, including map and overlay invalidation. |
 | `queue_node_compare_smoke.cpp` | Checks the vendored planner priority-queue ordering. |
 | `edit_octomap_smoke.cmake` | Drives the binary OctoMap edit/read/write smoke test. |
 | `vendor/planner/include/global_planner.h` | Vendored constrained search types and `OctoPlanner3D` interface. |

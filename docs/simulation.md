@@ -126,6 +126,102 @@ collision hits and the MID360 angular sampling clock, run 04 still records
 Current results, outstanding frame/throughput work and field boundaries are
 recorded in the [Go2 README](../config/robots/unitree/go2/README.md#2026-09-10-扩展验收).
 
+## Rendered RGB-D goal diagnostic
+
+`sim.scripts.mujoco.rgbd_goal_acceptance` tests an operator-selected region in a
+real MuJoCo-rendered RGB/depth frame. It calls `RgbdObservationSource` and
+`VisualServoModule` to compute the map target and its 1.5 m standoff goal, then
+passes that computed goal to the existing native navigation acceptance runner.
+The known fixture target position is used only to evaluate projection error.
+It never supplies the navigation goal.
+
+Use the saved `industrial_park_tracking` map corresponding to
+`industrial_park/physics/industrial_park_scene.xml`, with current Windows native
+navigation, mapd, sensor-publisher and driver-bridge builds:
+
+```powershell
+.venv/Scripts/python.exe -m sim.scripts.mujoco.rgbd_goal_acceptance --map-dir C:/Users/99563/data/lingtu/maps/industrial_park_tracking --out-dir build/rgbd-clear-new --case clear
+.venv/Scripts/python.exe -m sim.scripts.mujoco.rgbd_goal_acceptance --map-dir C:/Users/99563/data/lingtu/maps/industrial_park_tracking --out-dir build/rgbd-obstacle-new --case obstacle
+```
+
+Each output directory must be new. `--prepare-only` writes the camera images,
+metric depth, projection evidence and generated navigation manifest without
+starting motion. The default ROI selects the centre of the visible rack face.
+`obstacle` adds a low box between the robot and goal that is absent from the
+saved map, so real-time simulated LiDAR and local collision processing must
+handle it. `vision.json` records projection; `native/report.json` records native
+arrival, physical contact, input health and stop checks; `summary.json` links
+the results. A valid goal or a reached status alone is not a pass.
+
+This is a **component diagnostic**, using ThunderV4 physics and explicit truth
+localization to isolate visual projection and planning. Initial capture uses a
+stationary engine; motion uses the native runner and locomotion policy. It does
+not test automatic object detection, moving-person tracking, Fast-LIO2,
+traversability-service qualification, Gateway/ProductControl lifecycle, or Go2
+hardware. The compiled RunPlan supplies current native artifacts and robot
+geometry, but this diagnostic does not claim a realized Product run.
+
+## Continuous RGB-D follow diagnostic
+
+`sim.scripts.mujoco.rgbd_follow_acceptance` adds a moving humanoid to the same
+60 x 40 m industrial park. Its 26.5 m route follows the aisle at X=41 m. The
+camera observes a distinctive magenta shirt: this is an explicit **pixel
+detector fixture**, not learned human recognition or multi-person identity.
+Production `RgbdObservationSource`, `PersonTracker` and `VisualServoModule`
+compute successive goals; native OctoPlanner3D/SCAN and the physical Thunder
+policy execute them. LiDAR still observes the moving body for collision checks.
+
+```powershell
+.venv/Scripts/python.exe -m sim.scripts.mujoco.rgbd_follow_acceptance --smoke --out-dir build/rgbd-follow-short-new
+.venv/Scripts/python.exe -m sim.scripts.mujoco.rgbd_follow_acceptance --out-dir build/rgbd-follow-long-new
+```
+
+Rendering uses a separate process that restores the latest physical snapshot
+including joints, body pose and the moving actor. Actor coordinates are used
+only to render the scene and independently score position error; they are not
+the perception input. RGB, metric depth and camera pose come from one snapshot.
+The diagnostic uses truth localization and the existing saved map. It does not
+start a tracking Product, implement Go2 locomotion, or qualify field following.
+
+`native/motion/rgbd-camera.avi` shows RGB and depth side by side;
+`rgbd-follow.jsonl` records image-derived positions and actual native receipts.
+`summary.json` combines physical contacts, terminal stop, target travel,
+following separation, visibility and projection accuracy. A long run requires
+at least 25 m robot displacement, 26.4 m target displacement, separation between
+1 and 4 m, at least 95% target visibility and under 0.4 m P95 projection error.
+
+Generic goal replacement deliberately confirms a stop between tasks. Frequent
+visual goals can therefore starve motion even when every command is accepted.
+`--goal-deadband-m` adjusts the existing VisualServo spatial update threshold
+for diagnosis; its default is the production 0.25 m. A larger threshold is a
+test tuning experiment, not proof of smooth continuous retargeting. Do not
+remove terminal stop checks or feed scene ground truth to make this gate pass.
+
+On 2026-09-18, the short 3 m target-motion case passed. The full route with the
+default threshold failed: the robot travelled 2.76 m, repeatedly replaced its
+task, lost the target beyond the depth range, and stopped. With a 1.25 m update
+threshold the robot travelled 25.93 m, retained the target in all 1,295 sampled
+frames, and stayed 1.92–3.56 m away. Both runs had zero physical entity contacts
+and confirmed terminal zero/cleanup. The tuned run still failed its final-goal
+gate (1.25 m XY error): the larger deadband suppressed the final smaller target
+change. This is evidence of two follow-control limitations, not qualification
+of reliable following. Continuous same-task retargeting and final standoff
+convergence remain work; the live Product defaults have not been changed.
+
+MuJoCo 3.10 `Renderer` already returns metric depth. The camera adapter must
+preserve that unit even when the entire image is closer than 1.5 m. Rendered
+near-wall, rotated-camera projection and missing-depth regression tests live in
+`tests/sim/test_rgbd_visual_goal.py`.
+
+On 2026-09-18 the two Windows component runs passed their unchanged native
+acceptance gates: `build/rgbd-goal-20260918/clear-02` travelled 2.978 m with
+0.116 m XY goal error; `obstacle-01` travelled 3.732 m with 0.153 m error. Both
+recorded zero entity-contact steps and an exact terminal zero acknowledgement.
+The obstacle run deviated about 1.10 m sideways around the new box. The
+comparison, input images and playable recordings are collected in
+`build/rgbd-goal-20260918/report.html`. These results retain the component scope
+above and are not qualification of all navigation scenarios.
+
 ## Canonical chain
 
 ```text
@@ -306,6 +402,13 @@ Direct-process records may contain `launcher` and `launcher_args`. Those are
 private implementation details after RunPlan selection.
 
 ## Stable component commands
+
+Standalone native-navigation fixtures declare `collision_geometry` explicitly;
+the harness compiles that body envelope into both Mapd inflation and navd's SCAN
+configuration. Product runs continue to use their resolved RunPlan environment.
+The `local_base.json` Thunder fixture uses 0.45 m support height, matching its
+standing base height. A failed start connector must be diagnosed against that
+physical height instead of making the global planner accept a vertical jump.
 
 Resolve an example session:
 

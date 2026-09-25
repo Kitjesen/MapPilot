@@ -71,9 +71,9 @@ export function projectScenePose(odom: OdometryEvent | null, transform: unknown)
 }
 
 /** A clicked map point needs a heading from the same valid map-frame pose. */
-export function sceneRelocalizationSeed(x: number, y: number, mapPose: OdometryEvent | null): { x: number; y: number; yaw: number } | null {
-  if (!mapPose || mapPose.frame_id !== 'map' || ![x, y, mapPose.yaw].every(Number.isFinite)) return null
-  return { x, y, yaw: mapPose.yaw }
+export function sceneRelocalizationSeed(x: number, y: number, mapPose: OdometryEvent | null): { x: number; y: number; z: number; yaw: number } | null {
+  if (!mapPose || mapPose.frame_id !== 'map' || typeof mapPose.z !== 'number' || ![x, y, mapPose.z, mapPose.yaw].every(Number.isFinite)) return null
+  return { x, y, z: mapPose.z, yaw: mapPose.yaw }
 }
 
 /** Automatic matching targets the running session, not a manual-panel selection. */

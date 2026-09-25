@@ -1895,6 +1895,7 @@ export interface AgentMessageEvent {
 export interface SSEEnvelopeFields {
   schema_version?: number
   event_id?: number
+  reliable_seq?: number
   ts?: number
 }
 

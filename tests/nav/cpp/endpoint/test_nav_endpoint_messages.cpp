@@ -244,6 +244,9 @@ void testPointCloudLayoutValidation() {
 void testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity() {
   std::vector<std::uint8_t> bits(50000U, 0U);
   bits[42] = 0x05U;
+  std::vector<std::uint8_t> measured(bits.size(), 0U), free(bits.size(), 0U);
+  measured[7] = 0x20U;
+  free[8] = 0x40U;
   lingtu_dds_MapCollisionLayer message{};
   message.header = header("map");
   message.reset_epoch = 4U;
@@ -264,6 +267,10 @@ void testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity() {
   message.inflated_occupied_bits._length = static_cast<std::uint32_t>(bits.size());
   message.inflated_occupied_bits._maximum = message.inflated_occupied_bits._length;
   message.inflated_occupied_bits._buffer = bits.data();
+  message.measured_occupied_bits = message.inflated_occupied_bits;
+  message.known_free_bits = message.inflated_occupied_bits;
+  message.measured_occupied_bits._buffer = measured.data();
+  message.known_free_bits._buffer = free.data();
 
   auto decoded = lingtu::nav::endpoint::decodeLocalCollisionMap(message);
   require(decoded.ok(), "structurally valid incomplete collision layer must decode");
@@ -274,6 +281,14 @@ void testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity() {
   require(view.present(), "decoded collision view must be present");
   require(view.inflatedStorage == decoded.value.inflated_occupied_bits,
           "planner view must share the decoded collision bitmap");
+  require(view.measuredOccupiedStorage == decoded.value.measured_occupied_bits &&
+              view.knownFreeStorage == decoded.value.known_free_bits &&
+              *view.measuredOccupiedStorage == measured && *view.knownFreeStorage == free,
+          "3D evidence must survive the DDS loan and share lifetime with planner views");
+  message.known_free_bits._length = 0;
+  require(!lingtu::nav::endpoint::decodeLocalCollisionMap(message).ok(),
+          "missing ground evidence must reject the incomplete wire payload");
+  message.known_free_bits._length = message.inflated_occupied_bits._length;
   require(decoded.value.occupied_cells_known && view.occupiedCount() == 2U,
           "collision occupancy count must be cached while the DDS loan is decoded");
   require(!view.complete, "wire completeness flag must survive the owning copy");

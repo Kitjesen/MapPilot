@@ -25,23 +25,27 @@ void requirePose(const std::optional<Pose3d>& actual, const Pose3d& expected,
 void testSeedSelection(const std::filesystem::path& file) {
   const std::string map_a = "/var/lib/lingtu/maps/a/map.pcd";
   const std::string map_b = "/var/lib/lingtu/maps/b/map.pcd";
-  // Preserve a complete map-body pose, including roll/pitch. It is only an
-  // estimate for the matcher; seed selection must not award alignment success.
+  // Persist the complete observation but reuse only its position and heading;
+  // current gravity must replace the historical stance after a reboot.
   const Pose3d saved{-2.662586, 0.561693, -0.260770,
                      -0.846364, 0.092310, -0.042798, 0.522796};
   const Pose3d explicit_pose{2.0, 3.0, 0.1, 0.0, 0.0, 0.6, 0.8};
+  const Pose3d saved_heading{-2.662586, 0.561693, -0.260770,
+                            0.0, 0.0, -0.101048790872, 0.994881471263};
   saveTrackSeed(file.string(), map_a, saved);
   const auto startup_seed = loadTrackSeed(file.string(), map_a);
-  requirePose(startup_seed, saved, "startup must load the full same-map seed");
+  requirePose(startup_seed, saved_heading, "startup must discard historical tilt");
 
   // This is the real ProductControl sequence: startup loads the seed, then
   // track-against-map arrives with neither a map path nor an initial pose.
   requirePose(trackSeedForRequest(std::nullopt, startup_seed, map_a, "", file.string()),
-              saved, "Product start discarded the persisted full-pose seed");
+              saved_heading, "Product start discarded the persisted position/heading");
   requirePose(trackSeedForRequest(std::nullopt, startup_seed, map_a, map_a, ""),
-              saved, "same-map request must preserve an already loaded seed");
+              saved_heading, "same-map request must preserve an already loaded seed");
   requirePose(trackSeedForRequest(std::nullopt, std::nullopt, map_a, "", file.string()),
-              saved, "same-map request must reload its persisted seed when needed");
+              saved_heading, "same-map request must reload its persisted seed when needed");
+  requirePose(trackSeedForRequest(saved, startup_seed, map_a, "", file.string()),
+              saved, "an explicit full-attitude request must retain its tilt");
   requirePose(trackSeedForRequest(explicit_pose, startup_seed, map_a, "", file.string()),
               explicit_pose, "explicit request pose must override the saved seed");
   requirePose(trackSeedForRequest(explicit_pose, startup_seed, map_a, map_b, file.string()),

@@ -239,6 +239,29 @@ int main()
       return 26;
     }
 
+    // Each terminal bound is independent. A nearby voxel must not bypass a
+    // tighter requested XY, Z, or total-distance limit through another bound.
+    const octoplanner3d::runtime::Point terminal_goal{center(18), center(0), center(1)};
+    for (int bound = 0; bound < 4; ++bound) {
+      auto options = testOptions();
+      auto goal = terminal_goal;
+      if (bound == 0) {
+        goal.x += 0.08;
+        options.terminal_goal_xy_tolerance_m = 0.02;
+      } else {
+        goal.z += 0.08;
+        if (bound == 1) options.terminal_goal_z_tolerance_m = 0.02;
+        if (bound == 2) options.terminal_goal_tolerance_m = 0.02;
+        if (bound == 3) options.terminal_goal_z_tolerance_m = 0.0;
+      }
+      const auto result = plan(map_path.string(), start, goal, options);
+      if (!result.ok || result.reached_goal) {
+        std::cerr << "snapped endpoint bypassed terminal bound " << bound
+                  << "; ok=" << result.ok << " error=" << result.goal_error_m << "\n";
+        return 29;
+      }
+    }
+
     auto support_footprint_options = testOptions();
     support_footprint_options.snap_search_radius_cells = 4;
     support_footprint_options.robot_radius = 0.1;
@@ -490,6 +513,19 @@ int main()
       return 16;
     }
 
+    auto displaced_start_options = testOptions();
+    displaced_start_options.snap_search_radius_cells = 6;
+    const auto displaced_start_result = plan(
+      map_path.string(),
+      {center(-18), center(0), center(4)},
+      {center(18), center(0), center(1)},
+      displaced_start_options);
+    if (displaced_start_result.ok ||
+        displaced_start_result.failure_reason != "start_connection_blocked") {
+      std::cerr << "unsupported actual start was connected to a distant snapped start\n";
+      return 30;
+    }
+
     auto supported_layer_options = testOptions();
     supported_layer_options.snap_search_radius_cells = 6;
     supported_layer_options.ground_support_depth_cells = 5;
@@ -500,7 +536,7 @@ int main()
     // the positive case on a flat floor, not through the narrow raised rail.
     const auto supported_layer_result = plan(
       writeOverlayMap().string(),
-      {center(-18), center(0), center(5)},
+      {center(-18), center(0), center(3)},
       {center(18), center(0), center(5)},
       supported_layer_options);
     if (!supported_layer_result.ok || !supported_layer_result.reached_goal) {
@@ -515,7 +551,7 @@ int main()
     }
     const auto hidden_floor_support_result = plan(
       map_path.string(),
-      {center(-18), center(0), center(5)},
+      {center(-18), center(0), center(3)},
       {center(18), center(0), center(5)},
       supported_layer_options);
     if (hidden_floor_support_result.ok) {
@@ -528,7 +564,7 @@ int main()
     body_envelope_options.body_clearance_above_m = 0.10;
     const auto body_envelope_result = plan(
       map_path.string(),
-      {center(-18), center(0), center(5)},
+      {center(-18), center(0), center(3)},
       {center(18), center(0), center(5)},
       body_envelope_options);
     if (body_envelope_result.ok) {

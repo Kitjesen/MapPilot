@@ -1,6 +1,7 @@
 #pragma once
 
 #include "localization/opt/map.hpp"
+#include "localization/opt/poses.hpp"
 
 #include "lingtu_pose_graph_opt.h"
 
@@ -10,21 +11,6 @@
 #include <vector>
 
 namespace lingtu::localization::opt {
-
-struct Pose {
-  double x = 0.0;
-  double y = 0.0;
-  double z = 0.0;
-  double qw = 1.0;
-  double qx = 0.0;
-  double qy = 0.0;
-  double qz = 0.0;
-};
-
-struct Keyframe {
-  std::string patch_name;
-  Pose pose;
-};
 
 struct GeometricConstraint {
   std::size_t from_index = 0;
@@ -41,6 +27,10 @@ struct OptimizeOptions {
   std::string strategy = "pgo";
   std::size_t max_iterations = 30;
   std::vector<GeometricConstraint> geometric_constraints;
+  // Original LIO attitudes, independent of warm-started optimizer estimates.
+  // Empty is reserved for generic graphs without gravity measurements.
+  std::vector<Keyframe> gravity_reference;
+  double max_gravity_error_rad = 0.03;
 };
 
 struct GraphSolution {
@@ -51,6 +41,11 @@ struct GraphSolution {
   lt_pose_graph_opt_report report{};
 };
 
+// Nodes reachable from the fixed first pose through measured edges only.
+std::vector<std::size_t> connected_pose_indices(
+    std::size_t pose_count, const std::vector<GeometricConstraint>& constraints,
+    std::size_t root = 0);
+
 // Pure in-memory solve. Input poses are estimates, never synthesized factors.
 // Both the save-time writer and the online worker use this quality gate.
 GraphSolution optimize_graph(const std::vector<Keyframe>& keyframes,
@@ -58,6 +53,5 @@ GraphSolution optimize_graph(const std::vector<Keyframe>& keyframes,
 
 Result optimize_map(const Map& map, const OptimizeOptions& options);
 
-std::vector<Keyframe> read_poses(const std::filesystem::path& path);
 
 }  // namespace lingtu::localization::opt

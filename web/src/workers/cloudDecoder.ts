@@ -14,10 +14,12 @@ let presentationSequence = 0
 interface DecodeRequest {
   buffer: ArrayBuffer
   connectionGeneration: number
+  httpRequestGeneration?: number
+  globalMapping?: Record<string, unknown>
 }
 
 self.onmessage = (event: MessageEvent<DecodeRequest>) => {
-  const { buffer, connectionGeneration } = event.data
+  const { buffer, connectionGeneration, httpRequestGeneration, globalMapping } = event.data
   try {
     const decoded = decodePointCloudFrame(buffer)
     const positions = new Float32Array(decoded.positions)
@@ -36,6 +38,8 @@ self.onmessage = (event: MessageEvent<DecodeRequest>) => {
         sequence: decoded.sequence,
         streamKind: decoded.streamKind,
         connectionGeneration,
+        httpRequestGeneration,
+        globalMapping,
       },
       [positions.buffer, colors.buffer],
     )
@@ -47,6 +51,7 @@ self.onmessage = (event: MessageEvent<DecodeRequest>) => {
       type: 'error',
       error: message,
       connectionGeneration,
+      httpRequestGeneration,
     })
   }
 }

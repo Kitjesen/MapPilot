@@ -15,7 +15,6 @@ from gateway.navigation.commands import (
     submit_resume,
 )
 from gateway.navigation.goals import construct_goal_from_request
-from gateway.navigation.planning_map import build_planning_map_view
 from gateway.schemas import (
     CancelRequest,
     ClickNavRequest,
@@ -566,11 +565,7 @@ def register_navigation_routes(app, gw) -> None:
         response_model=NavigationStatusResponse,
     )
     async def get_navigation_status():
-        return build_navigation_status(gw)
-
-    @app.get("/api/v1/navigation/planning_map", summary="Current native planning eligibility layer")
-    async def get_navigation_planning_map():
-        return await asyncio.to_thread(build_planning_map_view, gw)
+        return await asyncio.to_thread(build_navigation_status, gw)
 
     @app.get(
         "/api/v1/navigation/goals/{request_id}",

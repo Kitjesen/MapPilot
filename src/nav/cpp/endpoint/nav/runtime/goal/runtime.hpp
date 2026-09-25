@@ -132,7 +132,7 @@ class GoalReplanRuntimeCoordinator {
                     const GoalReplanRuntimeAutonomyEvent &event,
                     const GoalPlanSnapshot &current_snapshot);
   [[nodiscard]] std::optional<GoalReplanRuntimeResult>
-  handleInspectionTerminalOutcome(const GoalReplanRuntimeFrameInput &frame,
+  handleTerminalFailureOutcome(const GoalReplanRuntimeFrameInput &frame,
                                   const GoalReplanRuntimeAutonomyEvent &event,
                                   const GoalPlanSnapshot &current_snapshot);
 

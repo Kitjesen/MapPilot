@@ -306,9 +306,12 @@ std::optional<Observation> DecodeObservation(const lingtu_dds_MapObservation &me
                                              const DdsLimits &limits, std::string *error) {
   Observation observation;
   observation.reset_epoch = message.reset_epoch;
+  observation.reference_map_content_epoch = message.reference_map_content_epoch;
   observation.sequence = message.observation_sequence;
   observation.stamp_ns = HeaderStampNs(message.header);
-  if (!CopyBoundedString(message.header.frame_id, limits.max_string_bytes, "map frame_id",
+  if (!CopyBoundedString(message.reference_map_id, limits.max_string_bytes, "reference_map_id",
+                         &observation.reference_map_id, error) ||
+      !CopyBoundedString(message.header.frame_id, limits.max_string_bytes, "map frame_id",
                          &observation.map_frame, error) ||
       !CopyBoundedString(message.sensor_frame, limits.max_string_bytes, "sensor_frame",
                          &observation.sensor_frame, error) ||
@@ -492,6 +495,16 @@ struct CollisionMessage {
     message.inflated_occupied_bits._buffer =
         const_cast<std::uint8_t *>(snapshot.collision.occupied_bits.data());
     message.inflated_occupied_bits._release = false;
+    message.measured_occupied_bits._maximum = message.measured_occupied_bits._length =
+        static_cast<std::uint32_t>(snapshot.collision.measured_occupied_bits.size());
+    message.measured_occupied_bits._buffer =
+        const_cast<std::uint8_t *>(snapshot.collision.measured_occupied_bits.data());
+    message.measured_occupied_bits._release = false;
+    message.known_free_bits._maximum = message.known_free_bits._length =
+        static_cast<std::uint32_t>(snapshot.collision.known_free_bits.size());
+    message.known_free_bits._buffer =
+        const_cast<std::uint8_t *>(snapshot.collision.known_free_bits.data());
+    message.known_free_bits._release = false;
   }
 };
 

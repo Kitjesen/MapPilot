@@ -14,11 +14,6 @@ double elapsedMs(Clock::time_point start) {
   return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
 
-const std::vector<float> &obstaclesOrEmpty(const PlanView &inputs) {
-  static const std::vector<float> empty;
-  return inputs.obstacles != nullptr ? *inputs.obstacles : empty;
-}
-
 LocalDiagnostics activeDiagnostics(const lingtu::nav::navigation::ExecutionOutput &output,
                                    const CommandSafetyDecision *final_safety,
                                    bool safety_applied) {
@@ -39,6 +34,9 @@ LocalDiagnostics activeDiagnostics(const lingtu::nav::navigation::ExecutionOutpu
   local.recovery_progress = output.recovery_progress;
   local.recovery_trigger = output.recovery_trigger;
   local.recovery_reason = output.recovery_reason;
+  local.dynamic_avoidance = output.dynamic_avoidance;
+  local.prediction_count = output.prediction_count;
+  local.dynamic_blocked_s = output.dynamic_blocked_s;
   local.recovery_exhausted = output.recovery_exhausted;
   local.target_index = output.target_index;
   local.target_distance_m = output.target_distance_m;
@@ -239,7 +237,9 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
       result.outcome.kind = input.rolling_segment_active
                                 ? AutonomyTickOutcomeKind::kRollingRecoveryExhausted
                                 : AutonomyTickOutcomeKind::kGoalFailed;
-      if (!input.rolling_segment_active) {
+      result.outcome.terminal_failure_intent =
+          !input.rolling_segment_active && output.dynamic_avoidance == "timeout";
+      if (!input.rolling_segment_active && output.dynamic_avoidance != "timeout") {
         GoalReplanTrigger trigger;
         trigger.kind = GoalReplanTriggerKind::kLocalRecoveryExhausted;
         trigger.reason = result.outcome.reason;

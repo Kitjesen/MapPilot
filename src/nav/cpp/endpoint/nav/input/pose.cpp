@@ -9,12 +9,13 @@ namespace lingtu::nav::endpoint {
 
 InputProjector::InputProjector(EndpointState &state, InputGate &gate,
                                TransformBuffer &pose_buffer, TransformBuffer &map_odom_buffer,
-                               MotionLayer &obstacles, InputConfig config, InputActions actions)
+                               MotionLayer obstacles, InputConfig config, InputActions actions)
     : state_(state),
       gate_(gate),
       pose_buffer_(pose_buffer),
       map_odom_buffer_(map_odom_buffer),
-      obstacles_(obstacles),
+      obstacles_(std::move(obstacles), config.max_obstacle_points, config.check_obstacle),
+      last_submitted_cloud_s_(state.last_cloud_s),
       config_(std::move(config)),
       actions_(std::move(actions)) {}
 
@@ -67,6 +68,8 @@ void InputProjector::apply(SensorBatch batch, TimingDiagnostics &timing) {
   if (batch.localization_health) {
     projectLocalizationHealth(std::move(*batch.localization_health), batch.receive_steady_s);
   }
+  // Accept a complete snapshot before the control loop evaluates input freshness.
+  (void)pollObstacles(timing);
 }
 
 double InputProjector::executionTime(double steady_now_s) const {
@@ -229,7 +232,10 @@ void InputProjector::resetEpoch(double epoch_start_s, const std::string &reason,
   state_.latest_dynamic_clusters.clear();
   state_.obstacle_xyzh.clear();
   state_.predicted_obstacle_xyzh.clear();
-  state_.obstacle_snapshot_dirty = false;
+  state_.predicted_obstacle_volumes.clear();
+  state_.prediction_source_receive_s = 0.0;
+  state_.motion_layer_stats = {};
+  last_submitted_cloud_s_ = 0.0;
   state_.last_sensor_origin = SensorOrigin{};
   state_.last_tf_s = 0.0;
   state_.last_tf_receive_s = 0.0;

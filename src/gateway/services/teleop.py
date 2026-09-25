@@ -86,6 +86,7 @@ class _OperatorMotionSample:
     request_id: str | None
     manual_mode: bool
     freshness_budget_ms: int
+    deadline_monotonic_s: float
 
 
 class LatestNativeTeleopPublisher:
@@ -136,6 +137,7 @@ class LatestNativeTeleopPublisher:
         sequence: int = 1,
         manual_mode: bool = False,
         freshness_budget_ms: int = 350,
+        deadline_monotonic_s: float | None = None,
     ) -> bool:
         with self._condition:
             if self._closed or not self._accepting:
@@ -150,6 +152,9 @@ class LatestNativeTeleopPublisher:
                 request_id,
                 bool(manual_mode),
                 int(freshness_budget_ms),
+                min(time.monotonic() + freshness_budget_ms * 1e-3, deadline_monotonic_s)
+                if deadline_monotonic_s is not None
+                else time.monotonic() + freshness_budget_ms * 1e-3,
             )
             self._condition.notify()
             return True
@@ -316,6 +321,9 @@ class LatestNativeTeleopPublisher:
             assert command is not None
             failure: dict[str, Any] | None = None
             try:
+                remaining_ms = int((command.deadline_monotonic_s - time.monotonic()) * 1000)
+                if remaining_ms <= 0:
+                    raise CommandBoundaryError("operator input expired before DDS submission")
                 client_sample = getattr(self._client, "sample", None)
                 if client_sample is not None:
                     accepted = client_sample(
@@ -327,7 +335,7 @@ class LatestNativeTeleopPublisher:
                         command.wz,
                         deadman=True,
                         manual_mode=command.manual_mode,
-                        freshness_budget_ms=command.freshness_budget_ms,
+                        freshness_budget_ms=min(command.freshness_budget_ms, remaining_ms),
                         request_id=command.request_id,
                     )
                     _require_literal_true_ack(
@@ -427,12 +435,15 @@ class NativeTeleopSession:
         *,
         request_id: str,
         manual_mode: bool = False,
+        deadline_monotonic_s: float | None = None,
     ) -> TeleopSessionResult:
         """Claim native authority when needed and queue the latest velocity."""
 
         if not self._opened:
             return TeleopSessionResult(False, "session_closed")
         now = time.monotonic()
+        if deadline_monotonic_s is not None and now >= deadline_monotonic_s:
+            return TeleopSessionResult(False, "input_expired")
         if (
             self._claim_before_move
             or not self._owns_native_authority
@@ -441,6 +452,8 @@ class NativeTeleopSession:
             claimed = self._ensure_native_authority()
             if not claimed.accepted:
                 return claimed
+        if deadline_monotonic_s is not None and time.monotonic() >= deadline_monotonic_s:
+            return TeleopSessionResult(False, "input_expired")
         sequence = self._next_sequence()
         accepted = bool(
             self._gw._teleop_on_velocity(
@@ -452,6 +465,7 @@ class NativeTeleopSession:
                 source_epoch=self._source_epoch,
                 sequence=sequence,
                 manual_mode=manual_mode,
+                deadline_monotonic_s=deadline_monotonic_s,
             )
         )
         if not accepted:
@@ -694,6 +708,7 @@ def on_velocity_with_request_id(
     source_epoch: int = 1,
     sequence: int = 1,
     manual_mode: bool = False,
+    deadline_monotonic_s: float | None = None,
 ) -> bool:
     request = twist_from_velocity(gw, vx_mps, vy_mps, yaw_rps)
     publisher = getattr(gw, "_teleop_native_publisher", None)
@@ -709,6 +724,7 @@ def on_velocity_with_request_id(
         source_epoch=source_epoch,
         sequence=sequence,
         manual_mode=manual_mode,
+        deadline_monotonic_s=deadline_monotonic_s,
     ):
         logger.debug("GatewayModule: teleop request rejected by stop/release barrier")
         return False

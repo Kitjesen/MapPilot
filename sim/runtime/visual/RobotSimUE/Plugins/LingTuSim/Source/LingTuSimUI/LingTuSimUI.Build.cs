@@ -17,6 +17,7 @@ public class LingTuSimUI : ModuleRules
         PrivateDependencyModuleNames.AddRange(new[]
         {
             "Json",
+            "HTTP",
             "LingTuSimRuntime",
             "LingTuSimVisual",
             "PlatformCryptoContext",

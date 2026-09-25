@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import threading
 import time
+import weakref
 from typing import Any, Callable
 
-from gateway.services.traffic import normalize_sse_event, put_latest
+from gateway.services.traffic import SSE_LATEST_STATE_TYPES, normalize_sse_event, put_bounded, put_latest
 
 
 def _elevation_layer(event: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -151,6 +153,17 @@ def running_loop_or_none() -> asyncio.AbstractEventLoop | None:
         return None
 
 
+_handoff_lock = threading.Lock()
+_handoff_pending: weakref.WeakKeyDictionary[asyncio.Queue, list[Any]] = weakref.WeakKeyDictionary()
+_handoff_scheduled: weakref.WeakSet[asyncio.Queue] = weakref.WeakSet()
+
+
+def handoff_stats(q: asyncio.Queue) -> tuple[int, int]:
+    with _handoff_lock:
+        pending = _handoff_pending.get(q, [])
+        return len(pending), sum(len(value) for value in pending if isinstance(value, bytes))
+
+
 def call_queue_put_latest(
     q: asyncio.Queue,
     item: Any,
@@ -163,10 +176,42 @@ def call_queue_put_latest(
 
     if loop is not None and loop.is_running():
         try:
-            loop.call_soon_threadsafe(_put_and_record)
-            return
+            if asyncio.get_running_loop() is loop:
+                _put_and_record()
+                return
         except RuntimeError:
             pass
+
+        with _handoff_lock:
+            pending = _handoff_pending.setdefault(q, [])
+            dropped = put_bounded(pending, item, q.maxsize)
+            schedule = q not in _handoff_scheduled
+            if schedule:
+                _handoff_scheduled.add(q)
+            depth = q.qsize() + len(pending)
+        record(dropped, depth)
+        if not schedule:
+            return
+
+        def _flush() -> None:
+            with _handoff_lock:
+                ready = _handoff_pending.pop(q, [])
+                _handoff_scheduled.discard(q)
+            for value in ready:
+                dropped_at_queue = put_latest(q, value)
+                record(dropped_at_queue, q.qsize())
+
+        try:
+            loop.call_soon_threadsafe(_flush)
+            return
+        except RuntimeError:
+            with _handoff_lock:
+                ready = _handoff_pending.pop(q, [])
+                _handoff_scheduled.discard(q)
+            for value in ready:
+                dropped_at_queue = put_latest(q, value)
+                record(dropped_at_queue, q.qsize())
+            return
     _put_and_record()
 
 
@@ -191,27 +236,37 @@ def should_emit_raster(gw: Any, event_type: str) -> bool:
         return True
 
 
+def _next_reliable_seq_locked(gw: Any, q: asyncio.Queue) -> int:
+    sequence = gw._sse_reliable_seq[q] + 1
+    gw._sse_reliable_seq[q] = sequence
+    return sequence
+
+
 def push_event(gw: Any, event: dict) -> None:
     with gw._sse_lock:
         _update_latest_elevation_locked(gw, event)
         gw._sse_event_seq += 1
         event_id = gw._sse_event_seq
+        event_type = str(event.get("type") or "event")
         subscribers = [
             (
                 q,
                 gw._sse_queue_loops.get(q),
                 getattr(gw, "_sse_queue_elevation_payload", {}).get(q, False),
+                _next_reliable_seq_locked(gw, q) if event_type not in SSE_LATEST_STATE_TYPES else None,
             )
             for q in gw._sse_queues
-            if _subscriber_accepts_locked(gw, q, str(event.get("type") or "event"))
+            if _subscriber_accepts_locked(gw, q, event_type)
         ]
         gw._sse_published_events += 1
     payload = normalize_sse_event(event, event_id=event_id)
-    for q, loop, include_elevation_payload in subscribers:
+    for q, loop, include_elevation_payload, reliable_seq in subscribers:
         subscriber_payload = _event_for_subscriber(
-            payload,
+            dict(payload),
             include_elevation_payload=include_elevation_payload,
         )
+        if reliable_seq is not None:
+            subscriber_payload["reliable_seq"] = reliable_seq
         call_queue_put_latest(
             q,
             subscriber_payload,
@@ -235,6 +290,7 @@ def subscribe_with_event_id(
         gw._sse_queue_loops[q] = loop
         gw._sse_queue_event_types[q] = set(event_types) if event_types is not None else None
         gw._sse_queue_elevation_payload[q] = bool(include_elevation_payload)
+        gw._sse_reliable_seq[q] = 0
         replay = _latest_elevation_replay_locked(gw)
         if replay is not None and not _subscriber_accepts_locked(gw, q, "map_scene"):
             replay = None
@@ -266,6 +322,7 @@ def subscribe(
         gw._sse_queue_loops[q] = loop
         gw._sse_queue_event_types[q] = set(event_types) if event_types is not None else None
         gw._sse_queue_elevation_payload[q] = bool(include_elevation_payload)
+        gw._sse_reliable_seq[q] = 0
         replay = _latest_elevation_replay_locked(gw)
         if replay is not None and not _subscriber_accepts_locked(gw, q, "map_scene"):
             replay = None
@@ -293,3 +350,4 @@ def unsubscribe(gw: Any, q: asyncio.Queue) -> None:
         gw._sse_queue_loops.pop(q, None)
         getattr(gw, "_sse_queue_event_types", {}).pop(q, None)
         getattr(gw, "_sse_queue_elevation_payload", {}).pop(q, None)
+        gw._sse_reliable_seq.pop(q, None)

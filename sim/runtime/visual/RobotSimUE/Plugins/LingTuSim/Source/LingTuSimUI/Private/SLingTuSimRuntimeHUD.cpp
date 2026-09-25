@@ -22,7 +22,12 @@
 
 namespace LingTuSim::UI {
 namespace {
-// Light, airy gameplay HUD tokens. The world remains the primary surface.
+// The drive overlay stays quiet over the world; detailed readouts live in Tactical.
+const FLinearColor RuntimeGlass(0.012F, 0.025F, 0.030F, 0.78F);
+const FLinearColor RuntimeText(0.93F, 0.95F, 0.92F, 1.0F);
+const FLinearColor RuntimeMuted(0.65F, 0.72F, 0.70F, 1.0F);
+const FLinearColor RuntimeAccent(0.28F, 0.78F, 0.69F, 1.0F);
+// Front-end and diagnostic panels retain their lighter visual treatment.
 const FLinearColor WarmWhiteGlass(0.97F, 0.95F, 0.90F, 0.88F);
 const FLinearColor WarmWhitePanel(0.99F, 0.98F, 0.94F, 0.92F);
 const FLinearColor WarmWhiteSoft(0.98F, 0.97F, 0.93F, 0.80F);
@@ -185,6 +190,7 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
   LoginModel = InArgs._LoginModel;
   SelectionModel = InArgs._SelectionModel;
   AssetReviewModel = InArgs._AssetReviewModel;
+  InspectionProjection = InArgs._InspectionProjection;
   SelectionFeedback = InArgs._SelectionFeedback;
   bFrontEndLoginRequired = InArgs._FrontEndLoginRequired;
   bSelectionIntentConfigured = InArgs._SelectionIntentConfigured;
@@ -198,6 +204,7 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
   check(LoginModel.IsValid());
   check(SelectionModel.IsValid());
   check(AssetReviewModel.IsValid());
+  check(InspectionProjection.IsValid());
   check(SelectionFeedback.IsValid());
   CachedStatus = FRuntimeUIStatusReader::Read(World.Get(), LocalState.Get());
   SetVisibility(EVisibility::SelfHitTestInvisible);
@@ -276,6 +283,84 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
 
   ChildSlot
       [SNew(SOverlay)
+
+       + SOverlay::Slot()
+             .HAlign(HAlign_Left)
+             .VAlign(VAlign_Top)
+             .Padding(FMargin(28.0F, 24.0F, 0.0F, 0.0F))
+                 [SNew(SBox).WidthOverride(370.0F).Visibility(
+                     this, &SLingTuSimRuntimeHUD::GetDriveHudVisibility)
+                      [SNew(SBorder)
+                           .BorderImage(WhiteBrush())
+                           .BorderBackgroundColor(RuntimeGlass)
+                           .Padding(FMargin(18.0F, 13.0F))
+                               [SNew(SHorizontalBox) +
+                                SHorizontalBox::Slot().AutoWidth().Padding(0.0F, 1.0F, 12.0F,
+                                                                           1.0F)
+                                    [SNew(SBox).WidthOverride(3.0F)
+                                         [SNew(SBorder)
+                                              .BorderImage(WhiteBrush())
+                                              .BorderBackgroundColor(RuntimeAccent)]] +
+                                SHorizontalBox::Slot().FillWidth(1.0F)
+                                    [SNew(SVerticalBox) +
+                                     SVerticalBox::Slot().AutoHeight()
+                                         [StaticLabel(TEXT("LINGTU  /  FIELD OPERATIONS"), 9,
+                                                      RuntimeAccent)] +
+                                     SVerticalBox::Slot().AutoHeight().Padding(0.0F, 5.0F, 0.0F,
+                                                                              0.0F)
+                                         [SNew(STextBlock)
+                                              .Text(this,
+                                                    &SLingTuSimRuntimeHUD::GetDriveMissionText)
+                                              .Font(Font(16, true))
+                                              .ColorAndOpacity(RuntimeText)
+                                              .AutoWrapText(true)] +
+                                     SVerticalBox::Slot().AutoHeight().Padding(0.0F, 4.0F, 0.0F,
+                                                                              0.0F)
+                                         [SNew(STextBlock)
+                                              .Text(this, &SLingTuSimRuntimeHUD::GetInspectionProgressText)
+                                              .Font(Font(9, true))
+                                              .ColorAndOpacity(this,
+                                                               &SLingTuSimRuntimeHUD::GetInspectionStatusColor)
+                                              .AutoWrapText(true)] +
+                                     SVerticalBox::Slot().AutoHeight().Padding(0.0F, 3.0F, 0.0F,
+                                                                              0.0F)
+                                         [SNew(STextBlock)
+                                              .Text(this, &SLingTuSimRuntimeHUD::GetInspectionReportText)
+                                              .Font(Font(8))
+                                              .ColorAndOpacity(RuntimeMuted)
+                                              .AutoWrapText(true)]]]]]
+
+       + SOverlay::Slot()
+             .HAlign(HAlign_Right)
+             .VAlign(VAlign_Top)
+             .Padding(FMargin(0.0F, 24.0F, 28.0F, 0.0F))
+                 [SNew(SBox).WidthOverride(340.0F).Visibility(
+                     this, &SLingTuSimRuntimeHUD::GetDriveHudVisibility)
+                      [SNew(SBorder)
+                           .BorderImage(WhiteBrush())
+                           .BorderBackgroundColor(RuntimeGlass)
+                           .Padding(FMargin(16.0F, 11.0F))
+                               [SNew(SVerticalBox) +
+                                SVerticalBox::Slot().AutoHeight()
+                                    [SNew(STextBlock)
+                                         .Text(FText::FromString(TEXT("RUNTIME STATUS")))
+                                         .Font(Font(9, true))
+                                         .ColorAndOpacity(this,
+                                                          &SLingTuSimRuntimeHUD::GetDriveStatusColor)] +
+                                SVerticalBox::Slot().AutoHeight().Padding(0.0F, 5.0F, 0.0F,
+                                                                         0.0F)
+                                    [SNew(STextBlock)
+                                         .Text(this, &SLingTuSimRuntimeHUD::GetDriveSessionText)
+                                         .Font(Font(10, true))
+                                         .ColorAndOpacity(RuntimeText)
+                                         .AutoWrapText(true)] +
+                                SVerticalBox::Slot().AutoHeight().Padding(0.0F, 3.0F, 0.0F,
+                                                                         0.0F)
+                                    [SNew(STextBlock)
+                                         .Text(this, &SLingTuSimRuntimeHUD::GetDriveTelemetryText)
+                                         .Font(Font(9))
+                                         .ColorAndOpacity(RuntimeMuted)
+                                         .AutoWrapText(true)]]]]
 
        + SOverlay::Slot()
              .HAlign(HAlign_Fill)
@@ -942,12 +1027,12 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
                  [SNew(SBorder)
                       .Visibility(this, &SLingTuSimRuntimeHUD::GetNonPauseVisibility)
                       .BorderImage(WhiteBrush())
-                      .BorderBackgroundColor(WarmWhiteGlass)
+                      .BorderBackgroundColor(RuntimeGlass)
                       .Padding(FMargin(
-                          15.0F, 7.0F))[SNew(STextBlock)
+                          13.0F, 6.0F))[SNew(STextBlock)
                                             .Text(this, &SLingTuSimRuntimeHUD::GetModeHintText)
                                             .Font(Font(9, true))
-                                            .ColorAndOpacity(Ink)]]];
+                                            .ColorAndOpacity(RuntimeText)]]];
 
   if (bFrontEndLoginRequired && !LoginModel->IsLoggedIn() && LocalWorkspaceButton.IsValid()) {
     FocusFrontEndLoginCTA();
@@ -1346,6 +1431,125 @@ FText SLingTuSimRuntimeHUD::GetReadinessText() const {
       CachedStatus.bFullStatusFresh ? TEXT("CURRENT") : TEXT("STALE")));
 }
 
+FText SLingTuSimRuntimeHUD::GetDriveMissionText() const {
+  if (InspectionProjection.IsValid() && InspectionProjection->bTaskAvailable &&
+      InspectionProjection->bLauncherBindingVerified && !InspectionProjection->bStale &&
+      !InspectionProjection->RouteId.IsEmpty()) {
+    return FText::FromString(
+        FString::Printf(TEXT("机器狗巡检  ·  %s"), *InspectionProjection->RouteId));
+  }
+  const FGameSelectionOption *Option =
+      SelectionModel->IsConfirmed() ? SelectionModel->GetSelectedOption() : nullptr;
+  return Option != nullptr && !Option->Title.IsEmpty()
+             ? FText::FromString(Option->Title)
+             : FText::FromString(TEXT("机器狗巡检"));
+}
+
+FText SLingTuSimRuntimeHUD::GetInspectionProgressText() const {
+  if (!InspectionProjection.IsValid() || !InspectionProjection->bBound) {
+    return FText::FromString(TEXT("巡检任务未绑定"));
+  }
+  if (!InspectionProjection->IdentityBlocker.IsEmpty()) {
+    if (InspectionProjection->IdentityBlocker == TEXT("launcher_expected_binding_missing")) {
+      return FText::FromString(TEXT("任务已阻断  ·  启动器未声明地图与路线版本断言"));
+    }
+    if (InspectionProjection->IdentityBlocker == TEXT("launcher_expected_binding_invalid")) {
+      return FText::FromString(TEXT("任务已阻断  ·  启动器版本断言无效"));
+    }
+    return FText::FromString(TEXT("任务已阻断  ·  任务身份与启动器断言不一致"));
+  }
+  if (InspectionProjection->bStale) {
+    return FText::FromString(TEXT("任务投影已过期  ·  Gateway 连接或响应异常"));
+  }
+  if (!InspectionProjection->bTaskAvailable) {
+    return FText::FromString(TEXT("等待 Gateway 返回指定任务"));
+  }
+  if (!InspectionProjection->bProgressVerified) {
+    return FText::FromString(FString::Printf(
+        TEXT("%s  ·  等待原生事件确认与连续历史"),
+        InspectionProjection->Phase.IsEmpty() ? TEXT("状态待确认")
+                                               : *InspectionProjection->Phase));
+  }
+  const FString Point = InspectionProjection->CurrentPointId.IsEmpty()
+                            ? TEXT("路线收尾")
+                            : FString::Printf(TEXT("点位 %d  ·  %s"),
+                                              InspectionProjection->CurrentPointNumber,
+                                              *InspectionProjection->CurrentPointId);
+  return FText::FromString(FString::Printf(
+      TEXT("%s   ·   %d / %d 完成   ·   %s"),
+      InspectionProjection->State.IsEmpty() ? TEXT("执行中") : *InspectionProjection->State,
+      InspectionProjection->CompletedPoints, InspectionProjection->PointCount, *Point));
+}
+
+FText SLingTuSimRuntimeHUD::GetInspectionReportText() const {
+  if (!InspectionProjection.IsValid() || !InspectionProjection->bBound) {
+    return FText::FromString(TEXT("UE 仅显示任务真值，不自动选择最新任务"));
+  }
+  if (!InspectionProjection->IdentityBlocker.IsEmpty()) {
+    return FText::FromString(TEXT("进度与验收已关闭  ·  启动器断言不是自动场景证明"));
+  }
+  if (InspectionProjection->bStale) {
+    return FText::FromString(TEXT("验收状态已过期  ·  等待 Gateway 恢复"));
+  }
+  if (InspectionProjection->bReportStale) {
+    return FText::FromString(TEXT("验收报告等待刷新"));
+  }
+  if (InspectionProjection->bReportVerified) {
+    return FText::FromString(FString::Printf(
+        TEXT("报告 %s  ·  验收 %s  ·  证据 %d/%d"), *InspectionProjection->ReportStatus,
+        *InspectionProjection->Acceptance, InspectionProjection->VerifiedEvidence,
+        InspectionProjection->RequiredEvidence));
+  }
+  if (InspectionProjection->bTaskAvailable && InspectionProjection->bExecutionConfirmed) {
+    return FText::FromString(TEXT("执行已确认  ·  验收报告等待独立校验"));
+  }
+  return FText::FromString(TEXT("执行、证据与验收状态保持分离"));
+}
+
+FSlateColor SLingTuSimRuntimeHUD::GetInspectionStatusColor() const {
+  if (!InspectionProjection.IsValid() || !InspectionProjection->bBound ||
+      InspectionProjection->bStale || !InspectionProjection->bProgressVerified) {
+    return FieldAmber;
+  }
+  if (InspectionProjection->State == TEXT("FAILED") ||
+      InspectionProjection->State == TEXT("CANCELLED")) {
+    return AlertInk;
+  }
+  return RuntimeAccent;
+}
+
+FText SLingTuSimRuntimeHUD::GetDriveSessionText() const {
+  return FText::FromString(FString::Printf(
+      TEXT("SESSION  %s   ·   CONTROL  %s"), *CachedStatus.SessionState,
+      *CachedStatus.ControlState));
+}
+
+FText SLingTuSimRuntimeHUD::GetDriveTelemetryText() const {
+  const bool bTrustedFullStatus = CachedStatus.bFullStatusAvailable &&
+                                  CachedStatus.bFullStatusFresh &&
+                                  CachedStatus.bFullStatusIdentityCoherent;
+  const FString Truth =
+      CachedStatus.bLatestAppliedTruthAvailable
+          ? FString::Printf(TEXT("#%llu"),
+                            static_cast<unsigned long long>(CachedStatus.TruthSequence))
+          : TEXT("不可用");
+  const TCHAR *Recording =
+      bTrustedFullStatus
+          ? RecordingStateName(CachedStatus.FullStatus.Recording.State)
+          : TEXT("UNAVAILABLE");
+  return FText::FromString(FString::Printf(
+      TEXT("TRUTH  %s   ·   RECORD  %s%s"), *Truth, Recording,
+      bTrustedFullStatus ? TEXT("") : TEXT("   ·   STATUS UNVERIFIED")));
+}
+
+FSlateColor SLingTuSimRuntimeHUD::GetDriveStatusColor() const {
+  return CachedStatus.bSessionAvailable && CachedStatus.bControlBindingAvailable &&
+                 CachedStatus.bIdentityCoherent && CachedStatus.bFullStatusFresh &&
+                 CachedStatus.bFullStatusIdentityCoherent
+             ? RuntimeAccent
+             : FieldAmber;
+}
+
 FText SLingTuSimRuntimeHUD::GetModeText() const {
   const TCHAR *Name = TEXT("DRIVE");
   switch (ModeController->GetMode()) {
@@ -1480,8 +1684,7 @@ FText SLingTuSimRuntimeHUD::GetModeHintText() const {
     case ERuntimeUIMode::Drive:
     default:
       return FText::FromString(
-          TEXT("HOLD SHIFT + W/S/A/D/Q/E   ·   C  CAMERA   ·   R  RECORD   ·   B  BUILD   ·   TAB  "
-               "TACTICAL   ·   ESC  MENU"));
+          TEXT("按住 SHIFT + W/A/S/D/Q/E 移动   ·   C 视角   ·   R 录制   ·   B 预览   ·   TAB 信息   ·   ESC 菜单"));
   }
 }
 
@@ -1905,7 +2108,15 @@ EVisibility SLingTuSimRuntimeHUD::GetFrontEndStaticBackdropVisibility() const {
 }
 
 EVisibility SLingTuSimRuntimeHUD::GetRuntimeHudChromeVisibility() const {
-  return bFrontEndLoginRequired ? EVisibility::Collapsed : EVisibility::Visible;
+  return !bFrontEndLoginRequired && ModeController->GetMode() != ERuntimeUIMode::Drive
+             ? EVisibility::Visible
+             : EVisibility::Collapsed;
+}
+
+EVisibility SLingTuSimRuntimeHUD::GetDriveHudVisibility() const {
+  return !bFrontEndLoginRequired && ModeController->GetMode() == ERuntimeUIMode::Drive
+             ? EVisibility::HitTestInvisible
+             : EVisibility::Collapsed;
 }
 
 EVisibility SLingTuSimRuntimeHUD::GetNonPauseVisibility() const {

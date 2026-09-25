@@ -1,4 +1,7 @@
 #include "localization/opt/online_mapping.hpp"
+#include "localization/opt/pose_math.hpp"
+#include "localization/sam/config_yaml.hpp"
+#include <sstream>
 #include <chrono>
 #include <cmath>
 #include <iostream>
@@ -37,6 +40,17 @@ std::shared_ptr<const opt::OnlineMappingSnapshot> finish(opt::OnlineMapping& map
 
 int main() {
   try {
+    namespace sam = lingtu::localization::sam;
+    auto tuning=sam::readConfig(YAML::Load("rotation_sigma_rad: 0.08\nodom_variance: [1,2,3,4,5,6]"));
+    std::ostringstream evidence;
+    sam::writeLoopEvidence(evidence,tuning,{});
+    const auto restored=sam::readConfig(YAML::Load(evidence.str())["config"]);
+    require(restored.rotation_sigma_rad==.08 && restored.odom_variance==tuning.odom_variance,
+            "saved configuration cannot reproduce field tuning");
+    bool malformed=false;
+    try { sam::readConfig(YAML::Load("odom_variance: [1,2]")); }
+    catch(const std::invalid_argument&) { malformed=true; }
+    require(malformed,"malformed odometry variances silently defaulted");
     opt::OnlineMappingOptions options;
     options.max_keyframes = 3;
     options.max_pending = 2;
@@ -70,53 +84,56 @@ int main() {
     bad.keyframe.pose.z = std::nan("");
     require(!mapper.enqueue(std::move(bad)).ok, "nonfinite frame accepted");
 
+    opt::OnlineMappingOptions deferred_options;
+    deferred_options.max_keyframes = 6;
+    deferred_options.max_pending = 4;
+    deferred_options.preview_points = 16;
+    opt::OnlineMapping deferred(deferred_options);
+    for (int i = 0; i < 4; ++i)
+      require(deferred.enqueue(frame(i)).ok, "deferred fixture rejected initial frame");
+    require(!deferred.canEnqueue(), "full pending queue accepted another frame");
+    deferred.poll();
+    require(deferred.canEnqueue(), "worker did not release pending slots");
+    require(deferred.enqueue(frame(4)).ok && deferred.enqueue(frame(5)).ok,
+            "deferred frames were lost after worker started");
+    const auto deferred_snapshot = finish(deferred);
+    require(deferred.dropped_frames() == 0 && deferred_snapshot &&
+                deferred_snapshot->keyframes.size() == 6 &&
+                deferred_snapshot->cloud.size() <= deferred_options.preview_points,
+            "deferred frames or bounded preview were lost");
+
     opt::OnlineMappingOptions loop_options;
-    loop_options.verification.min_index_separation = 6;
-    loop_options.verification.min_path_separation_m = 2.0;
-    loop_options.verification.submap_half_window = 0;
+    loop_options.sam.voxel_m = .15;
+    loop_options.sam.min_time_s = 30;
+    loop_options.sam.submap_half_window = 2;
     opt::OnlineMapping loop_mapper(loop_options);
-    loop_mapper.reset(20);
     std::shared_ptr<const opt::OnlineMappingSnapshot> closed;
-    for (int i = 0; i <= 12; ++i) {
-      const int place = i <= 5 ? i : i <= 10 ? 10-i : i-10;
-      auto sample = frame(place);
-      sample.keyframe.patch_name = std::to_string(i) + ".pcd";
-      sample.stamp_s = i + 1.0;
-      sample.keyframe.pose.x += i * .02;
-      require(loop_mapper.enqueue(std::move(sample)).ok, "loop input rejected");
-      closed = finish(loop_mapper);
-      if (closed && closed->code == "optimizer_quality_failed")
-        std::cout << "failed frame=" << i << " iterations=" << closed->last_optimization.iterations
-                  << " accepted=" << closed->last_optimization.accepted_steps
-                  << " rejected=" << closed->last_optimization.rejected_steps
-                  << " cost=" << closed->last_optimization.initial_cost << " -> "
-                  << closed->last_optimization.final_cost << '\n';
+    for (int i=0;i<16;++i) {
+      auto sample=frame(i<=7?i:15-i);
+      sample.keyframe.patch_name=std::to_string(i)+".pcd";
+      sample.stamp_s=i*3.+1;
+      sample.keyframe.pose.x+=i*.005;
+      sample.keyframe.pose.z+=i*.003;
+      if(i==3) sample.body_cloud={{0,0,0,1}};
+      require(loop_mapper.enqueue(std::move(sample)).ok,"SAM input rejected");
+      closed=finish(loop_mapper);
     }
-    if (closed) std::cout << "loop frames=" << closed->registered_keyframes
-        << " loops=" << closed->loop_constraints << " solves=" << closed->optimizations
-        << " state=" << closed->code << " correction=" << closed->global_from_odom.x << '\n';
-    require(closed && closed->loop_constraints > 0 && closed->optimizations > 0,
-            "cloud-based online loop never reached optimization");
-    require(std::abs(closed->global_from_odom.x + .24) < .02,
-            "verified loop did not recover the injected odometry drift");
-    require(std::abs(closed->keyframes.back().pose.x - .84) < .02,
-            "loop correction jumped the current odometry anchor");
-    loop_options.max_iterations = 1;
-    opt::OnlineMapping limited_solver(loop_options);
-    for (int i = 0; i <= 12; ++i) {
-      const int place = i <= 5 ? i : i <= 10 ? 10-i : i-10;
-      auto sample = frame(place);
-      sample.keyframe.patch_name = std::to_string(i) + ".pcd";
-      sample.stamp_s = i + 1.0;
-      sample.keyframe.pose.x += i * .02;
-      require(limited_solver.enqueue(std::move(sample)).ok, "limited solver input rejected");
-      closed = finish(limited_solver);
-    }
-    require(closed && closed->optimization_failures > 0, "nonconverged solve fixture did not fail");
-    require(closed->optimizations == 0 && closed->loop_constraints == 0,
-            "failed solve committed new loop constraints");
-    require(std::abs(closed->global_from_odom.x) < 1e-12,
-            "failed solve published a map correction");
+    require(closed && closed->registered_keyframes==16 && closed->keyframes.size()==16,
+            "sparse scan disconnected continuous LIO graph");
+    require(closed->loop_constraints>0 && closed->optimizations>0,
+            "upstream ICP loop did not update online map");
+    require(std::abs(closed->keyframes.back().pose.x-.075)<1e-7 &&
+            std::abs(closed->keyframes.back().pose.z-.045)<1e-7,
+            "SAM correction jumped the continuous odometry anchor");
+    require(closed->cloud.size()<=loop_options.preview_points,
+            "corrected preview exceeded memory budget");
+    require(closed->loop_records.size()==16 && closed->cloud_bytes>0 &&
+            closed->worker_ms>0 && closed->preview_ms>0,
+            "loop evidence or performance counters missing");
+    for (const auto& record:closed->loop_records)
+      for (auto target:record.target_frames)
+        require(target<record.current && (record.current-target)*3.>30,
+                "recent keyframe leaked into loop target");
     std::cout << "online mapping passed\n";
   } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
 }

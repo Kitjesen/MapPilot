@@ -86,7 +86,10 @@ processes:
     target: lt-host.service
     lifecycle: mode
     order: 90
-    timeout_s: 45
+    # Native DDS services and the Python Host must finish their cold start
+    # before readiness is judged; a saved 5 cm OctoMap can take over a minute
+    # to open on the NX.
+    timeout_s: 120
 stop_before_start:
   # ProductControl confirms zero + driver ACK + odometry stillness before this
   # process plan starts. Keep command producers ahead of nav and driver here.

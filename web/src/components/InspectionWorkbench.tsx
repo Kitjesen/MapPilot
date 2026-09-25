@@ -13,6 +13,7 @@ import {
   Trash2,
   XCircle,
   MapPin,
+  ClipboardCheck,
 } from 'lucide-react'
 import type {
   InspectionFailurePolicy,
@@ -499,13 +500,15 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
         setError(null)
         return
       }
-      const message = err instanceof Error ? err.message : String(err)
+      const message = api.isGatewayApiError(err) && err.statusCode === 502
+        ? text(locale, 'Inspection service is unavailable (HTTP 502). Check Gateway and refresh.', '巡检服务暂时不可用（HTTP 502），请检查 Gateway 后刷新。')
+        : err instanceof Error ? err.message : String(err)
       setError(message)
       showToast(message, 'error')
     } finally {
       setBusy(null)
     }
-  }, [applyRouteToEditor, mapId, selectInspectionTask, selectedRouteId, showToast])
+  }, [applyRouteToEditor, locale, mapId, selectInspectionTask, selectedRouteId, showToast])
 
   useEffect(() => {
     void load()
@@ -810,9 +813,16 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
   return (
     <div className={styles.page} role="tabpanel" id="panel-inspection">
       <header className={styles.header}>
-        <h1 className={styles.title}>{text(locale, 'Inspection', '巡检任务')}</h1>
+        <div>
+          <span className={styles.kicker}>{text(locale, 'LINGTU / FIELD OPERATIONS', '灵途 / 现场任务')}</span>
+          <h1 className={styles.title}>{text(locale, 'Inspection', '巡检任务')}</h1>
+          <p className={styles.subtitle}>{text(locale,
+            'Choose a route, follow the robot’s task state, and review the result.',
+            '选择路线，跟随机器人的任务状态，复核巡检结果。',
+          )}</p>
+        </div>
         <div className={styles.actions}>
-          <button type="button" className={styles.iconButton} onClick={() => void load()} disabled={busy !== null} title={text(locale, 'Refresh', '刷新')}>
+          <button type="button" className={styles.iconButton} onClick={() => void load()} disabled={busy !== null} title={text(locale, 'Refresh', '刷新')} aria-label={text(locale, 'Refresh inspection data', '刷新巡检数据')}>
             <RefreshCcw size={16} />
           </button>
         </div>
@@ -839,6 +849,16 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
       )}
 
       <section className={styles.runPanel} aria-label={text(locale, 'Inspection controls', '巡检运行')}>
+        <div className={styles.missionHeading}>
+          <span>{text(locale, 'MISSION CONTROL', '任务控制')}</span>
+          <span className={styles.missionSignal}>{activeTaskId
+            ? taskReadError
+              ? text(locale, 'State may be stale', '状态可能已过期')
+              : taskStatus
+                ? taskTruthLabel(taskStatus, locale)
+                : text(locale, 'Awaiting task confirmation', '等待任务确认')
+            : text(locale, 'Awaiting selection', '等待选择任务')}</span>
+        </div>
         <div className={styles.routeSelection}>
           <label>
             <span>{text(locale, 'Route', '路线')}</span>
@@ -872,14 +892,16 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
             </select>
           </label>
           <div className={styles.taskState}>
+            <span>{text(locale, 'Task state', '任务状态')}</span>
             <strong>{taskStatus ? inspectionTaskStateLabel(taskStatus.current_state, locale)
               : activeTaskId || taskReadError || error || inspectionAvailability !== 'available'
                 ? text(locale, 'Unconfirmed', '待确认') : text(locale, 'Not started', '未开始')}</strong>
-            {activeTaskId && <span role="status">{taskReadError ? text(locale, 'State may be stale', '状态可能已过期') : taskTruthLabel(taskStatus, locale)}</span>}
+            {activeTaskId && <small role="status">{taskReadError ? text(locale, 'State may be stale', '状态可能已过期') : taskTruthLabel(taskStatus, locale)}</small>}
           </div>
           {activeTaskId && <div className={styles.taskProgress}>
+            <span>{text(locale, 'Route progress', '路线进度')}</span>
             <strong>{progressLabel}</strong>
-            <span>{statusText(taskProgress?.current_point_id)}</span>
+            <small>{text(locale, 'Current point', '当前点')} · {statusText(taskProgress?.current_point_id)}</small>
           </div>}
         </div>
         {taskStatus && ['FAILED', 'PAUSED'].includes(taskStatus.current_state) && taskStatus.reason &&
@@ -914,11 +936,45 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
             {taskStatus?.current_state === 'PAUSED' && <button type="button" onClick={() => void runAction('resume', resumeRoute)} disabled={inspectionAvailability !== 'available' || busy !== null || !taskStatus?.can_resume || manualTakeoverReleaseRequired || Boolean(taskReadError || statusReadError)}>
               <RotateCcw size={15} />{text(locale, 'Resume', '恢复')}
             </button>}
-            <button type="button" onClick={() => void runAction('cancel', cancelRoute)} disabled={inspectionAvailability !== 'available' || busy !== null || !taskStatus?.can_cancel}>
+            <button type="button" className={styles.cancelButton} onClick={() => void runAction('cancel', cancelRoute)} disabled={inspectionAvailability !== 'available' || busy !== null || !taskStatus?.can_cancel}>
               <Square size={15} />{text(locale, 'Cancel task', '取消任务')}
             </button>
             </>}
           </div>}
+        <div className={styles.missionOutcome} aria-label={text(locale, 'Task report at a glance', '任务报告概览')}>
+          <div className={styles.outcomeHeading}>
+            <ClipboardCheck size={17} aria-hidden="true" />
+            <span>{text(locale, 'TASK REPORT', '任务报告')}</span>
+          </div>
+          <div className={styles.outcomeFacts}>
+            <div>
+              <span>{text(locale, 'Inspection result', '巡检结果')}</span>
+              <strong>{!activeTaskId
+                ? text(locale, 'No task selected', '未选择任务')
+                : taskReportError
+                ? text(locale, 'Unavailable', '暂不可用')
+                : taskReport
+                  ? inspectionReportStatusLabel(taskReport.report_status, locale)
+                  : text(locale, 'Awaiting report', '等待报告')}</strong>
+            </div>
+            <div>
+              <span>{text(locale, 'Acceptance', '验收结论')}</span>
+              <strong>{!activeTaskId
+                ? text(locale, 'No task selected', '未选择任务')
+                : taskReportError
+                ? text(locale, 'Unavailable', '暂不可用')
+                : taskReport
+                  ? inspectionAcceptanceLabel(taskReport.acceptance, locale)
+                  : text(locale, 'Awaiting report', '等待报告')}</strong>
+            </div>
+            <div>
+              <span>{text(locale, 'Verified evidence', '已验证证据')}</span>
+              <strong>{taskReport
+                ? `${taskReport.coverage.verified_evidence}/${taskReport.coverage.required_evidence}`
+                : '--'}</strong>
+            </div>
+          </div>
+        </div>
       </section>
 
       {activeTaskId && <details className={styles.reportPanel}>
@@ -1341,6 +1397,18 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
           <div>
             <span>{text(locale, 'Route ID', '路线 ID')}</span>
             <strong>{statusText(taskStatus?.identity.route_id ?? selectedRouteId)}</strong>
+          </div>
+          <div>
+            <span>{text(locale, 'Route revision', '路线修订')}</span>
+            <strong>{statusText(taskStatus?.identity.route_revision)}</strong>
+          </div>
+          <div>
+            <span>{text(locale, 'Map ID', '地图 ID')}</span>
+            <strong>{statusText(taskStatus?.identity.map_id)}</strong>
+          </div>
+          <div>
+            <span>{text(locale, 'Map epoch', '地图纪元')}</span>
+            <strong>{statusText(taskStatus?.identity.map_content_epoch)}</strong>
           </div>
           <div>
             <span>{text(locale, 'Latest evidence ID', '最近证据 ID')}</span>

@@ -366,15 +366,21 @@ CloudType::Ptr LidarProcessor::transformCloud(CloudType::Ptr inp, const M3D &r, 
     return ret;
 }
 
-void LidarProcessor::saveMap(const std::string &path)
+CloudType LidarProcessor::mapSnapshot()
 {
     PointVec points;
     m_ikdtree->flatten(m_ikdtree->Root_Node, points, NOT_RECORD);
-    CloudType::Ptr cloud(new CloudType);
-    cloud->resize(points.size());
-    for (int i = 0; i < points.size(); i++)
+    CloudType cloud;
+    cloud.resize(points.size());
+    for (std::size_t i = 0; i < points.size(); i++)
     {
-        cloud->points[i] = points[i];
+        cloud.points[i] = points[i];
     }
-    pcl::io::savePCDFileBinary(path, *cloud);
+    return cloud;
+}
+
+void LidarProcessor::saveMap(const std::string &path)
+{
+    const CloudType cloud = mapSnapshot();
+    pcl::io::savePCDFileBinary(path, cloud);
 }

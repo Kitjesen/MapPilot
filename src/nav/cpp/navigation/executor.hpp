@@ -36,6 +36,10 @@ struct ExecutorConfig {
   double slow_rate_2{0.5};
   double slow_rate_3{0.75};
   nav_kernel::FollowerParams follower{};
+  double dynamic_wait_s{1.0};
+  double dynamic_clear_s{0.3};
+  double dynamic_blocked_timeout_s{10.0};
+  double dynamic_episode_timeout_s{30.0};
 };
 
 struct ExecutionOutput {
@@ -65,6 +69,9 @@ struct ExecutionOutput {
   nav_kernel::LocalPlannerDebugSnapshot local_planner_debug;
   nav_kernel::Twist cmd_vel{};
   nav_kernel::FollowerTracking tracking{};
+  std::string dynamic_avoidance{"clear"};
+  std::size_t prediction_count{0};
+  double dynamic_blocked_s{0.0};
 };
 
 struct ExecutionObservation {
@@ -79,6 +86,7 @@ struct ExecutionObservation {
   bool body_velocity_valid{false};
   nav_kernel::LocalCollisionMapView collision{};
   nav_kernel::PlanClockMode clock_mode{nav_kernel::PlanClockMode::Steady};
+  nav_kernel::PredictionView predictions{};
 };
 
 struct TraversabilityGridView {
@@ -212,6 +220,7 @@ class Executor {
   void resetAutonomyProgress();
   bool recoveryObservationAdvanced(const ExecutionObservation &observation) const;
   void clearRecoveryObservationWait();
+  void resetDynamicAvoidance();
 
   ExecutorConfig config_;
   nav_kernel::local::Planner local_planner_;
@@ -237,8 +246,11 @@ class Executor {
   double active_max_speed_mps_{0.5};
   double active_goal_height_tolerance_m_{0.35};
   double active_goal_yaw_tolerance_rad_{0.08726646259971647};
+  double goal_quiet_since_s_{-1.0};
+  double goal_last_odom_s_{-1.0};
   std::size_t progress{0};
   std::vector<float> obstacle_xyzh_odom_scratch_;
+  std::vector<nav_kernel::PredictedObstacle> predictions_odom_scratch_;
   int recovery_action_{0};
   int recovery_attempt_{-1};
   bool recovery_observation_waiting_{false};
@@ -259,6 +271,11 @@ class Executor {
   double final_motion_blocked_since_s_{-1.0};
   bool traj_frozen_{false};
   bool intent_mode_{false};
+  double dynamic_wait_since_s_{-1.0};
+  double dynamic_clear_since_s_{-1.0};
+  double dynamic_progress_s_{-1.0};
+  nav_kernel::Vec3 dynamic_progress_position_{};
+  bool dynamic_resuming_{false};
 };
 
 }  // namespace lingtu::nav::navigation

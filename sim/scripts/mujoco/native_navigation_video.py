@@ -1329,6 +1329,10 @@ def render_native_navigation_video(
             qpos_count = min(len(qpos), len(data.qpos))
             data.qpos[:qpos_count] = qpos[:qpos_count]
             data.qvel[:] = 0.0
+            actor = row.get("mocap_pose")
+            if actor:
+                actor_body = model.body(actor["body_name"]).id
+                data.mocap_pos[model.body_mocapid[actor_body]] = actor["position_m"]
             mujoco.mj_forward(model, data)
             robot = np.asarray([row["x"], row["y"], row["z"]], dtype=np.float64)
             if not trail or float(np.linalg.norm(robot[:2] - trail[-1][:2])) >= 0.015:
@@ -1346,6 +1350,15 @@ def render_native_navigation_video(
                     robot[1] + lookahead_xy[1],
                     max(0.42, float(robot[2]) + 0.14),
                 ]
+                if actor:
+                    actor_position = np.asarray(actor["position_m"], dtype=np.float64)
+                    camera.lookat[:] = [
+                        (robot[0] + actor_position[0]) * 0.5,
+                        (robot[1] + actor_position[1]) * 0.5,
+                        0.8,
+                    ]
+                    camera.distance = max(6.5, float(np.linalg.norm(robot[:2] - actor_position[:2])) + 3.0)
+                    camera.elevation = -42.0
             renderer.update_scene(data, camera, scene_option=scene_option)
             scene = renderer.scene
             scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 1

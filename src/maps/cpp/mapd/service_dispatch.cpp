@@ -215,17 +215,17 @@ OctomapBuildOptions OctomapOptions(const Fields &fields) {
   OctomapBuildOptions options;
   options.converter_command = fields.StringOr("octomap_converter_command", "");
   options.build_mode = fields.StringOr("octomap_build_mode", "external_pcl_converter");
-  options.resolution = fields.NumberOr("octomap_resolution", 0.20);
-  options.support_dilation_cells = fields.IntOr("octomap_support_dilation_cells", 1);
-  options.free_layers_above = fields.IntOr("octomap_free_layers_above", 3);
-  options.free_dilation_cells = fields.IntOr("octomap_free_dilation_cells", 1);
+  options.resolution = fields.NumberOr("octomap_resolution", options.resolution);
+  options.support_dilation_cells = fields.IntOr("octomap_support_dilation_cells", 0);
+  options.free_layers_above = fields.IntOr("octomap_free_layers_above", 0);
+  options.free_dilation_cells = fields.IntOr("octomap_free_dilation_cells", 0);
   options.frame_id = fields.StringOr("octomap_frame_id", "map");
   options.source_profile = fields.StringOr("octomap_source_profile", "map_pipeline");
   options.data_source = fields.StringOr("octomap_data_source", options.source_profile);
   options.slam_source = fields.StringOr("octomap_slam_source", "unknown");
   options.localization_source = fields.StringOr("octomap_localization_source", options.slam_source);
   options.mapping_source = fields.StringOr("octomap_mapping_source", "lingtu_maps_pipeline");
-  options.timeout_sec = fields.NumberOr("octomap_timeout_sec", 60.0);
+  options.timeout_sec = fields.NumberOr("octomap_timeout_sec", options.timeout_sec);
   return options;
 }
 

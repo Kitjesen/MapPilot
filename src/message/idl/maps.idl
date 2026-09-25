@@ -70,6 +70,9 @@ struct MapCollisionLayer {
   Point aabb_max;
   boolean complete;
   sequence<octet> inflated_occupied_bits;
+  // Same generation, geometry and bit order; neither bit is unknown.
+  sequence<octet> measured_occupied_bits;
+  sequence<octet> known_free_bits;
 };
 @final
 struct MapGrid {

@@ -809,6 +809,41 @@ def test_driver_bridge_never_holds_state_condition_during_control_pipe_writes(
     ]
 
 
+@pytest.mark.parametrize("nav_queued_before_deactivate", [True, False])
+def test_driver_bridge_deactivate_cancels_transit_nav_without_ack(
+    monkeypatch, tmp_path, nav_queued_before_deactivate
+):
+    source, process, events, _ = _make_driver_bridge(monkeypatch, tmp_path)
+    nav = (
+        f"LT_DRIVER_COMMAND_V2\t{'a' * 32}\t{'b' * 32}"
+        "\t2\tnav\thost-boot-a:1234:567890\t91\t0.2\t0\t0"
+    )
+    if nav_queued_before_deactivate:
+        source._handle_stdout_line(nav)
+    source.begin_deactivate()
+    if not nav_queued_before_deactivate:
+        source._handle_stdout_line(nav)
+    source._handle_stdout_line(
+        f"LT_DRIVER_COMMAND_V2\t{'a' * 32}\t{'b' * 32}"
+        "\t3\tdeactivate_zero\t-\t0\t0\t0\t0"
+    )
+    prepared = source.prepare_step()
+    assert prepared.protocol.kind == "deactivate_zero"
+    assert prepared.velocity.linear_x == 0.0
+    source.complete_step(prepared.protocol, step_seq=4)
+    source._handle_stdout_line(
+        f"LT_DRIVER_STOPPED_V2\t{'a' * 32}\t{'b' * 32}"
+        "\t3\t4\tdeactivate_zero"
+    )
+    process.returncode = 0
+    source.wait_stopped(timeout_s=0.1)
+    source.close()
+    applied = [value for kind, value in events if kind == "write" and "LT_DRIVER_APPLIED_V2" in value]
+    assert len(applied) == 1
+    assert "\tdeactivate_zero\t" in applied[0]
+    assert source.stats()["process_cleanup"]["clean"] is True
+
+
 def test_driver_bridge_deactivate_is_clean_only_after_physical_zero_applied(
     monkeypatch, tmp_path
 ):
@@ -928,14 +963,16 @@ def test_driver_bridge_retains_historical_nav_ack_after_terminal_authority_is_cl
     assert stats["fault"] == ""
 
 
-def test_driver_bridge_shutdown_drains_pending_command_then_applies_terminal_zero():
+@pytest.mark.parametrize("pending_safety", [False, True])
+def test_driver_bridge_shutdown_drains_pending_command_then_applies_terminal_zero(pending_safety):
     from sim.compat.engine.core.engine import VelocityCommand
 
     events = []
     nav = bridge.DriverBridgeCommand(
         2, "nav", "host-boot-a:1234:567890", 91, 0.2, 0.0, 0.0
     )
-    terminal = bridge.DriverBridgeCommand(3, "deactivate_zero", "", 0, 0.0, 0.0, 0.0)
+    safety = bridge.DriverBridgeCommand(3, "safety_zero", "", 0, 0.0, 0.0, 0.0)
+    terminal = bridge.DriverBridgeCommand(4, "deactivate_zero", "", 0, 0.0, 0.0, 0.0)
 
     class Engine:
         def step_sensor_tick(self, command, *, dt_s):
@@ -950,6 +987,8 @@ def test_driver_bridge_shutdown_drains_pending_command_then_applies_terminal_zer
                 bridge.PreparedDriverBridgeStep(VelocityCommand(linear_x=0.2), nav),
                 bridge.PreparedDriverBridgeStep(VelocityCommand(), terminal),
             ]
+            if pending_safety:
+                self._prepared.insert(1, bridge.PreparedDriverBridgeStep(VelocityCommand(), safety))
 
         def prepare_step(self, *, wait_for_command_s=0.0):
             events.append(("prepare", wait_for_command_s))
@@ -972,8 +1011,8 @@ def test_driver_bridge_shutdown_drains_pending_command_then_applies_terminal_zer
         on_physics_step=lambda: events.append(("contact_observation",)),
     )
 
-    assert last_step == 42
-    assert events == [
+    assert last_step == 42 + int(pending_safety)
+    expected = [
         ("prepare", 0.0),
         ("step", 0.2, 0.005),
         ("applied", "nav", 41),
@@ -981,10 +1020,18 @@ def test_driver_bridge_shutdown_drains_pending_command_then_applies_terminal_zer
         ("deactivate",),
         ("prepare", pytest.approx(3.0, abs=0.05)),
         ("step", 0.0, 0.005),
-        ("applied", "deactivate_zero", 42),
+        ("applied", "deactivate_zero", last_step),
         ("contact_observation",),
         ("stopped", 3.0),
     ]
+    if pending_safety:
+        expected[5:5] = [
+            ("prepare", pytest.approx(3.0, abs=0.05)),
+            ("step", 0.0, 0.005),
+            ("applied", "safety_zero", 42),
+            ("contact_observation",),
+        ]
+    assert events == expected
 
 
 def test_driver_bridge_shutdown_rejects_late_nav_without_physical_step():

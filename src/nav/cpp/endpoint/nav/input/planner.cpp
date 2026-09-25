@@ -2,12 +2,26 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 
 #include "input/obstacle.hpp"
 #include "safety/command.hpp"
 #include "status/nav_status_writer.hpp"
 
 namespace lingtu::nav::endpoint {
+
+nav_kernel::PredictionView makePredictionView(
+    const std::vector<nav_kernel::PredictedObstacle> &volumes,
+    double received_s, double now_s, double max_age_s) {
+  // Prediction must age from the last accepted cloud, not from repeated status
+  // polls or a newer collision bitmap produced by a different input stream.
+  if (!std::isfinite(received_s) || received_s <= 0.0 ||
+      !std::isfinite(now_s) || now_s < received_s ||
+      !std::isfinite(max_age_s) || max_age_s <= 0.0 || now_s-received_s >= max_age_s)
+    return {};
+  return {volumes.data(), volumes.size(), received_s + max_age_s,
+          received_s, kDynamicPredictionHorizonS};
+}
 
 PlanView makePlanView(const PlanConfig &config, PlanData &data, double now_s,
                       TimingDiagnostics &timing, bool collision_authoritative) {
@@ -27,6 +41,8 @@ PlanView makePlanView(const PlanConfig &config, PlanData &data, double now_s,
        now_s - data.terrain_ext_received_s <= config.terrain_max_age_s);
 
   data.planner_obstacles.clear();
+  // SCAN consumes confirmed swept volumes through ExecutionObservation and
+  // EnvironmentView::predictions, separately from Mapd's measured bitmap.
   if (config.check_obstacle && !collision_authoritative) {
     const auto merge_start = std::chrono::steady_clock::now();
     const std::vector<float> &measured =
