@@ -43,6 +43,9 @@
 namespace lingtu::maps {
 namespace {
 
+// Map artifacts are built only by the embedded OctoMap implementation.
+constexpr char kOctomapBuildMode[] = "native_octomap";
+
 std::uint64_t CurrentProcessIdValue() {
 #if defined(_WIN32)
   return static_cast<std::uint64_t>(GetCurrentProcessId());
@@ -126,31 +129,6 @@ std::string FirstNonEmpty(const std::string &first, const std::string &second,
   return fallback;
 }
 
-std::string SupportedOctomapBuildModesJson() {
-#if defined(LINGTU_MAPS_HAS_OCTOMAP)
-  return "[\"native_octomap\",\"external_pcl_converter\"]";
-#else
-  return "[\"external_pcl_converter\"]";
-#endif
-}
-
-std::string ResolveConverterCommand(const OctomapBuildOptions &options) {
-  if (!options.converter_command.empty()) {
-    return options.converter_command;
-  }
-  for (const char *env_name : {
-           "LINGTU_MAP_ARTIFACT_CONVERTER",
-           "LINGTU_OCTOPLANNER3D_PCD_CONVERTER",
-           "LINGTU_OCTOMAP_CONVERTER",
-       }) {
-    const std::string value = EnvValue(env_name);
-    if (!value.empty()) {
-      return value;
-    }
-  }
-  return {};
-}
-
 std::string ShellQuote(const std::string &value) {
 #if defined(_WIN32)
   std::string out = "\"";
@@ -177,32 +155,6 @@ std::string ShellQuote(const std::string &value) {
 #endif
 }
 
-std::string PosixShellQuote(const std::string &value) {
-  std::string out = "'";
-  for (const char ch : value) {
-    if (ch == '\'') {
-      out += "'\\''";
-    } else {
-      out.push_back(ch);
-    }
-  }
-  out += "'";
-  return out;
-}
-
-std::string WslPath(const std::filesystem::path &path) {
-  std::string value = std::filesystem::absolute(path).string();
-  std::replace(value.begin(), value.end(), '\\', '/');
-#if defined(_WIN32)
-  if (value.size() >= 3U && value[1] == ':' && value[2] == '/') {
-    const char drive = static_cast<char>(
-        std::tolower(static_cast<unsigned char>(value.front())));
-    value = "/mnt/" + std::string(1U, drive) + "/" + value.substr(3U);
-  }
-#endif
-  return value;
-}
-
 void ReplaceAll(std::string &value, const std::string &needle, const std::string &replacement) {
   if (needle.empty()) {
     return;
@@ -221,41 +173,6 @@ std::string NormalizeShellCommandForSystem(std::string command) {
   }
 #endif
   return command;
-}
-
-std::string BuildConverterShellCommand(std::string command, const std::filesystem::path &pcd_path,
-                                       const std::filesystem::path &octomap_path,
-                                       const std::filesystem::path &map_dir,
-                                       const OctomapBuildOptions &options) {
-  const bool has_placeholder =
-      command.find('{') != std::string::npos && command.find('}') != std::string::npos;
-  if (has_placeholder) {
-    ReplaceAll(command, "{input_wsl}", PosixShellQuote(WslPath(pcd_path)));
-    ReplaceAll(command, "{output_wsl}", PosixShellQuote(WslPath(octomap_path)));
-    ReplaceAll(command, "{map_dir_wsl}", PosixShellQuote(WslPath(map_dir)));
-    ReplaceAll(command, "{frame_wsl}", PosixShellQuote(options.frame_id));
-    ReplaceAll(command, "{input}", ShellQuote(std::filesystem::absolute(pcd_path).string()));
-    ReplaceAll(command, "{output}", ShellQuote(std::filesystem::absolute(octomap_path).string()));
-    ReplaceAll(command, "{map_dir}", ShellQuote(std::filesystem::absolute(map_dir).string()));
-    ReplaceAll(command, "{resolution}", std::to_string(options.resolution));
-    ReplaceAll(command, "{support_dilation_cells}",
-               std::to_string(std::max(0, options.support_dilation_cells)));
-    ReplaceAll(command, "{free_layers_above}",
-               std::to_string(std::max(0, options.free_layers_above)));
-    ReplaceAll(command, "{free_dilation_cells}",
-               std::to_string(std::max(0, options.free_dilation_cells)));
-    ReplaceAll(command, "{frame}", ShellQuote(options.frame_id));
-    return NormalizeShellCommandForSystem(command);
-  }
-
-  std::ostringstream stream;
-  stream << command << " --input " << ShellQuote(std::filesystem::absolute(pcd_path).string())
-         << " --output " << ShellQuote(std::filesystem::absolute(octomap_path).string())
-         << " --resolution " << options.resolution << " --support-dilation-cells "
-         << std::max(0, options.support_dilation_cells) << " --free-layers-above "
-         << std::max(0, options.free_layers_above) << " --free-dilation-cells "
-         << std::max(0, options.free_dilation_cells) << " --frame " << ShellQuote(options.frame_id);
-  return NormalizeShellCommandForSystem(stream.str());
 }
 
 std::string MetadataJson(const std::string &map_id, const std::filesystem::path &map_dir,
@@ -311,7 +228,7 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
             << "\"support_dilation_cells\":" << (saved_rays ? 0 : std::max(0, options.support_dilation_cells)) << ","
             << "\"free_layers_above\":" << (saved_rays ? 0 : std::max(0, options.free_layers_above)) << ","
             << "\"free_dilation_cells\":" << (saved_rays ? 0 : std::max(0, options.free_dilation_cells)) << ","
-            << "\"build_mode\":" << JsonString(options.build_mode) << ","
+            << "\"build_mode\":" << JsonString(kOctomapBuildMode) << ","
             << (manual_voxel_edit ? "\"manual_voxel_edit\":true," : "")
             << "\"builder\":{\"name\":\"LingTu MapsPipelineCore\",\"version\":\"0.2.0\"}"
             << "}";
@@ -353,10 +270,7 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
          ","
          "\"source\":\"lingtu_maps_pipeline\","
          "\"build_mode\":" +
-         JsonString(options.build_mode) +
-         ","
-         "\"supported_build_modes\":" +
-         SupportedOctomapBuildModesJson() +
+         JsonString(kOctomapBuildMode) +
          ","
          "\"resolution\":" +
          std::to_string(options.resolution) +
@@ -408,7 +322,7 @@ bool ExistingMetadataAllowsReuse(const std::filesystem::path &metadata_path,
          number_matches("free_layers_above", saved_rays ? 0 : options.free_layers_above) &&
          number_matches("free_dilation_cells", saved_rays ? 0 : options.free_dilation_cells) &&
          JsonObjectStringAtPath(text, {"frame"}) == options.frame_id &&
-         JsonObjectStringAtPath(text, {"build_mode"}) == options.build_mode &&
+         JsonObjectStringAtPath(text, {"build_mode"}) == kOctomapBuildMode &&
          JsonObjectStringAtPath(text, {"artifacts","octomap","evidence_source"}) ==
              (saved_rays ? "saved_rays" : "sampled_points") &&
          JsonObjectStringAtPath(text, {"schema_version"}) ==
@@ -928,45 +842,6 @@ double UnixSecondsNow() {
       std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-std::string ResolveOctomapEditorCommand(const OctomapEditOptions &options) {
-  if (!options.editor_command.empty()) {
-    return options.editor_command;
-  }
-  return EnvValue("LINGTU_OCTOMAP_EDITOR");
-}
-
-std::string BuildEditorShellCommand(std::string command,
-                                    const std::filesystem::path &input,
-                                    const std::filesystem::path &output,
-                                    const OctomapEditOptions &options) {
-  const std::string x = std::to_string(options.x_m);
-  const std::string y = std::to_string(options.y_m);
-  const std::string z = std::to_string(options.z_m);
-  const std::string radius = std::to_string(options.radius_m);
-  const bool has_placeholder =
-      command.find('{') != std::string::npos && command.find('}') != std::string::npos;
-  if (has_placeholder) {
-    ReplaceAll(command, "{map}", ShellQuote(std::filesystem::absolute(input).string()));
-    ReplaceAll(command, "{input}", ShellQuote(std::filesystem::absolute(input).string()));
-    ReplaceAll(command, "{output}", ShellQuote(std::filesystem::absolute(output).string()));
-    ReplaceAll(command, "{state}", ShellQuote(options.state));
-    ReplaceAll(command, "{shape}", ShellQuote(options.shape));
-    ReplaceAll(command, "{x}", x);
-    ReplaceAll(command, "{y}", y);
-    ReplaceAll(command, "{z}", z);
-    ReplaceAll(command, "{radius}", radius);
-    return NormalizeShellCommandForSystem(command);
-  }
-  std::ostringstream stream;
-  stream << command
-         << " --map " << ShellQuote(std::filesystem::absolute(input).string())
-         << " --output " << ShellQuote(std::filesystem::absolute(output).string())
-         << " --state " << ShellQuote(options.state)
-         << " --x " << x << " --y " << y << " --z " << z
-         << " --radius " << radius << " --shape " << ShellQuote(options.shape);
-  return NormalizeShellCommandForSystem(stream.str());
-}
-
 struct OctomapEditRun {
   bool ok{false};
   std::string reason_code;
@@ -974,8 +849,6 @@ struct OctomapEditRun {
   std::string mode;
   std::string effective_state;
   std::uint64_t edited_voxels{0U};
-  std::string command;
-  ProcessRunResult process;
 };
 
 OctomapEditRun RunNativeOctomapEdit(const std::filesystem::path &input,
@@ -1055,64 +928,8 @@ OctomapEditRun RunNativeOctomapEdit(const std::filesystem::path &input,
   (void)options;
   return {false, "native_octomap_unavailable",
           "embedded OctoMap editing requires OctoMap development libraries",
-          "native_octomap", "", 0U, "", {}};
+          "native_octomap", "", 0U};
 #endif
-}
-
-OctomapEditRun RunExternalOctomapEdit(const std::filesystem::path &input,
-                                      const std::filesystem::path &output,
-                                      const OctomapEditOptions &options) {
-  OctomapEditRun result;
-  result.mode = "external_editor";
-  result.effective_state =
-      options.state == "occupied" || options.state == "preblocked" ? "occupied" : "free";
-  const auto editor = ResolveOctomapEditorCommand(options);
-  if (editor.empty()) {
-    result.reason_code = "octomap_editor_unavailable";
-    result.message = "no native OctoMap support and LINGTU_OCTOMAP_EDITOR is not configured";
-    return result;
-  }
-  result.command = BuildEditorShellCommand(editor, input, output, options);
-  ProcessRunOptions run_options;
-  run_options.cwd = input.parent_path();
-  run_options.timeout_sec = options.timeout_sec > 0.0 ? options.timeout_sec : 15.0;
-  run_options.cancel_requested = options.cancel_requested;
-  result.process = RunShellCommand(result.command, run_options);
-  if (result.process.cancelled) {
-    result.reason_code = "editor_cancelled";
-    result.message = "OctoMap editor was cancelled";
-    return result;
-  }
-  if (result.process.timed_out) {
-    result.reason_code = "editor_timeout";
-    result.message = "OctoMap editor timed out";
-    return result;
-  }
-  if (result.process.launch_failed) {
-    result.reason_code = "editor_launch_failed";
-    result.message = result.process.error.empty() ? "OctoMap editor launch failed" : result.process.error;
-    return result;
-  }
-  if (result.process.exit_code != 0) {
-    result.reason_code = "editor_failed";
-    result.message = !result.process.stderr_text.empty()
-        ? result.process.stderr_text
-        : (!result.process.stdout_text.empty() ? result.process.stdout_text
-                                               : "OctoMap editor failed");
-    return result;
-  }
-  if (!std::filesystem::is_regular_file(output) || std::filesystem::file_size(output) == 0U) {
-    result.reason_code = "editor_output_missing";
-    result.message = "OctoMap editor did not produce a non-empty output artifact";
-    return result;
-  }
-  result.edited_voxels = static_cast<std::uint64_t>(
-      JsonIntegerField(result.process.stdout_text, "edited_voxels", 0));
-  result.effective_state = JsonStringField(
-      result.process.stdout_text, "effective_state", result.effective_state);
-  result.ok = true;
-  result.message = "OctoMap edited by native process boundary";
-  return result;
 }
 
 OctomapBuildOptions MetadataOptions(const std::filesystem::path &metadata_path) {
@@ -1122,7 +939,6 @@ OctomapBuildOptions MetadataOptions(const std::filesystem::path &metadata_path) 
   if (!ReadTextFileLimited(metadata_path, 4U * 1024U * 1024U, &metadata, &error)) {
     return options;
   }
-  options.build_mode = JsonStringField(metadata, "build_mode", options.build_mode);
   options.frame_id = JsonStringField(metadata, "frame_id", options.frame_id);
   options.source_profile = JsonStringField(metadata, "source_profile", options.source_profile);
   options.data_source = JsonStringField(metadata, "data_source", options.data_source);
@@ -1329,27 +1145,13 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
          "\"map_id\":" +
          JsonString(map_id) +
          ","
-         "\"algorithm_embedded\":false,"
-         "\"supported_build_modes\":" +
-         SupportedOctomapBuildModesJson() + "}";
+         "\"algorithm_embedded\":false}";
 #endif
 }
 
 std::string BuildOctomapArtifactInDirectory(const std::string &map_id,
                                             const std::filesystem::path &map_dir,
                                             const OctomapBuildOptions &options, bool allow_reuse) {
-  if (options.build_mode == "native_octomap") {
-    return BuildNativeOctomapInDirectory(map_id, map_dir, options);
-  }
-  if (options.build_mode != "external_pcl_converter") {
-    return "{"
-           "\"action\":\"build_octomap\","
-           "\"success\":false,"
-           "\"reason_code\":\"unsupported_build_mode\","
-           "\"message\":" +
-           JsonString("unsupported octomap build mode: " + options.build_mode) + "}";
-  }
-
   const auto pcd_path = map_dir / "map.pcd";
   const auto octomap_path = map_dir / "octomap.ot";
   const auto metadata_path = map_dir / "metadata.json";
@@ -1374,7 +1176,7 @@ std::string BuildOctomapArtifactInDirectory(const std::string &map_id,
              "\"action\":\"build_octomap\","
              "\"success\":true,"
              "\"status\":\"reused\","
-             "\"mode\":\"native_external_pcl_converter\","
+             "\"mode\":\"native_octomap\","
              "\"map_id\":" +
              JsonString(map_id) +
              ","
@@ -1402,7 +1204,7 @@ std::string BuildOctomapArtifactInDirectory(const std::string &map_id,
              JsonString(metadata_path.string()) +
              ","
              "\"build_mode\":" +
-             JsonString(options.build_mode) +
+             JsonString(kOctomapBuildMode) +
              ","
              "\"resolution\":" +
              std::to_string(options.resolution) +
@@ -1413,190 +1215,7 @@ std::string BuildOctomapArtifactInDirectory(const std::string &map_id,
              "}";
   }
 
-  const std::string converter = ResolveConverterCommand(options);
-  if (converter.empty()) {
-    return "{"
-           "\"action\":\"build_octomap\","
-           "\"success\":false,"
-           "\"reason_code\":\"missing_converter\","
-           "\"message\":\"no external PCL/OctoMap converter configured; pass converter_command or "
-           "set LINGTU_MAP_ARTIFACT_CONVERTER\","
-           "\"map_id\":" +
-           JsonString(map_id) + "}";
-  }
-
-  const std::string command =
-      BuildConverterShellCommand(converter, pcd_path, octomap_path, map_dir, options);
-  ProcessRunOptions process_options;
-  process_options.cwd = map_dir;
-  process_options.timeout_sec = options.timeout_sec;
-  process_options.cancel_requested = options.cancel_requested;
-  const ProcessRunResult process = RunShellCommand(command, process_options);
-  if (process.timed_out) {
-    return "{"
-           "\"action\":\"build_octomap\","
-           "\"success\":false,"
-           "\"reason_code\":\"converter_timeout\","
-           "\"status\":\"converter_timeout\","
-           "\"message\":" +
-           JsonString("converter timed out after " + std::to_string(options.timeout_sec) + "s") +
-           ","
-           "\"map_id\":" +
-           JsonString(map_id) +
-           ","
-           "\"converter\":{\"command\":" +
-           JsonString(command) + ",\"returncode\":" + std::to_string(process.exit_code) +
-           ",\"timeout_sec\":" + std::to_string(options.timeout_sec) +
-           ",\"timeout_supported\":true,"
-           "\"stdout\":" +
-           JsonString(process.stdout_text) +
-           ","
-           "\"stderr\":" +
-           JsonString(process.stderr_text) +
-           ","
-           "\"stdout_truncated\":" +
-           std::string(process.stdout_truncated ? "true" : "false") +
-           ","
-           "\"stderr_truncated\":" +
-           std::string(process.stderr_truncated ? "true" : "false") +
-           "}"
-           "}";
-  }
-  if (process.launch_failed) {
-    return "{"
-           "\"action\":\"build_octomap\","
-           "\"success\":false,"
-           "\"reason_code\":\"converter_launch_failed\","
-           "\"status\":\"converter_launch_failed\","
-           "\"message\":" +
-           JsonString(process.error.empty() ? "failed to launch converter" : process.error) +
-           ","
-           "\"map_id\":" +
-           JsonString(map_id) +
-           ","
-           "\"converter\":{\"command\":" +
-           JsonString(command) + ",\"returncode\":" + std::to_string(process.exit_code) +
-           ",\"timeout_supported\":true}"
-           "}";
-  }
-  if (process.exit_code != 0) {
-    return "{"
-           "\"action\":\"build_octomap\","
-           "\"success\":false,"
-           "\"reason_code\":\"converter_failed\","
-           "\"status\":\"converter_failed\","
-           "\"message\":" +
-           JsonString("converter exited with code " + std::to_string(process.exit_code)) +
-           ","
-           "\"map_id\":" +
-           JsonString(map_id) +
-           ","
-           "\"converter\":{\"command\":" +
-           JsonString(command) + ",\"returncode\":" + std::to_string(process.exit_code) +
-           ",\"timeout_sec\":" + std::to_string(options.timeout_sec) +
-           ",\"timeout_supported\":true,"
-           "\"stdout\":" +
-           JsonString(process.stdout_text) +
-           ","
-           "\"stderr\":" +
-           JsonString(process.stderr_text) +
-           ","
-           "\"stdout_truncated\":" +
-           std::string(process.stdout_truncated ? "true" : "false") +
-           ","
-           "\"stderr_truncated\":" +
-           std::string(process.stderr_truncated ? "true" : "false") +
-           "}"
-           "}";
-  }
-  if (!std::filesystem::is_regular_file(octomap_path) ||
-      std::filesystem::file_size(octomap_path) == 0U) {
-    return "{"
-           "\"action\":\"build_octomap\","
-           "\"success\":false,"
-           "\"reason_code\":\"converter_missing_output\","
-           "\"message\":\"converter succeeded but did not write non-empty octomap.ot\","
-           "\"map_id\":" +
-           JsonString(map_id) + "}";
-  }
-
-  if (!WriteTextFile(
-          metadata_path,
-          MetadataJson(map_id, map_dir, pcd_path, octomap_path, options))) {
-    return "{"
-           "\"action\":\"build_octomap\","
-           "\"success\":false,"
-           "\"reason_code\":\"metadata_write_failed\","
-           "\"message\":\"failed to write metadata.json\","
-           "\"map_id\":" +
-           JsonString(map_id) + "}";
-  }
-
-  return "{"
-         "\"action\":\"build_octomap\","
-         "\"success\":true,"
-         "\"status\":\"built\","
-         "\"mode\":\"native_external_pcl_converter\","
-         "\"map_id\":" +
-         JsonString(map_id) +
-         ","
-         "\"octomap\":" +
-         JsonString(octomap_path.string()) +
-         ","
-         "\"metadata\":{\"ok\":true,\"path\":" +
-         JsonString(metadata_path.string()) +
-         "},"
-         "\"report\":{"
-         "\"ok\":true,"
-         "\"success\":true,"
-         "\"status\":\"built\","
-         "\"reused\":false,"
-         "\"map_dir\":" +
-         JsonString(map_dir.string()) +
-         ","
-         "\"pcd_path\":" +
-         JsonString(pcd_path.string()) +
-         ","
-         "\"octomap_path\":" +
-         JsonString(octomap_path.string()) +
-         ","
-         "\"metadata_path\":" +
-         JsonString(metadata_path.string()) +
-         ","
-         "\"build_mode\":" +
-         JsonString(options.build_mode) +
-         ","
-         "\"resolution\":" +
-         std::to_string(options.resolution) +
-         ","
-         "\"frame_id\":" +
-         JsonString(options.frame_id) +
-         ","
-         "\"artifacts\":{"
-         "\"map_pcd\":{\"path\":\"map.pcd\"},"
-         "\"octomap\":{\"path\":\"octomap.ot\"}"
-         "},"
-         "\"converter\":{\"command\":" +
-         JsonString(command) +
-         ",\"returncode\":0,"
-         "\"timeout_sec\":" +
-         std::to_string(options.timeout_sec) +
-         ","
-         "\"timeout_supported\":true,"
-         "\"stdout\":" +
-         JsonString(process.stdout_text) +
-         ","
-         "\"stderr\":" +
-         JsonString(process.stderr_text) +
-         ","
-         "\"stdout_truncated\":" +
-         std::string(process.stdout_truncated ? "true" : "false") +
-         ","
-         "\"stderr_truncated\":" +
-         std::string(process.stderr_truncated ? "true" : "false") +
-         "}"
-         "}"
-         "}";
+  return BuildNativeOctomapInDirectory(map_id, map_dir, options);
 }
 
 bool PublishTransactionArtifacts(MapStore &store, const std::string &map_id,
@@ -3062,12 +2681,8 @@ std::string MapPipelineCore::EditOctomapVoxelsJson(
     const auto staged_octomap = staging_map_dir / octomap_path.filename();
     const auto edited_octomap = staged_octomap.string() + ".edited";
     std::filesystem::remove(edited_octomap);
-    OctomapEditRun edit_run;
-    if (!ResolveOctomapEditorCommand(options).empty()) {
-      edit_run = RunExternalOctomapEdit(staged_octomap, edited_octomap, options);
-    } else {
-      edit_run = RunNativeOctomapEdit(staged_octomap, edited_octomap, options);
-    }
+    const OctomapEditRun edit_run =
+        RunNativeOctomapEdit(staged_octomap, edited_octomap, options);
     if (!edit_run.ok) {
       WriteStatus(id, build_id, "OCTOMAP_EDIT", "FAILED", 0.0, edit_run.message);
       std::filesystem::remove_all(LockPath(id));
@@ -3079,9 +2694,7 @@ std::string MapPipelineCore::EditOctomapVoxelsJson(
           ",\"map_id\":" + JsonString(id) +
           ",\"mode\":" + JsonString(edit_run.mode) +
           ",\"transactional_visibility\":\"staged_until_commit\","
-          "\"rolled_back\":true,\"stdout\":" +
-          JsonString(edit_run.process.stdout_text) +
-          ",\"stderr\":" + JsonString(edit_run.process.stderr_text) + "}";
+          "\"rolled_back\":true}";
     }
 
     std::error_code ec;

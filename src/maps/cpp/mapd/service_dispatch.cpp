@@ -213,8 +213,11 @@ PcdBounds Bounds(const Fields &fields) {
 
 OctomapBuildOptions OctomapOptions(const Fields &fields) {
   OctomapBuildOptions options;
-  options.converter_command = fields.StringOr("octomap_converter_command", "");
-  options.build_mode = fields.StringOr("octomap_build_mode", "external_pcl_converter");
+  const std::string build_mode = fields.StringOr("octomap_build_mode", "native_octomap");
+  if (build_mode != "native_octomap") {
+    throw std::invalid_argument("unsupported octomap_build_mode: " + build_mode +
+                                "; maps are built by the embedded OctoMap builder");
+  }
   options.resolution = fields.NumberOr("octomap_resolution", options.resolution);
   options.support_dilation_cells = fields.IntOr("octomap_support_dilation_cells", 0);
   options.free_layers_above = fields.IntOr("octomap_free_layers_above", 0);
@@ -332,7 +335,6 @@ std::string Invoke(MapsServiceCore &service, mapd::SaveCoordinator *save_coordin
     return service.GetVoxelEditsJson(f.String("map_id"));
   if (action == "edit_octomap_voxels") {
     OctomapEditOptions options;
-    options.editor_command = f.StringOr("editor_command", "");
     options.state = f.String("state");
     options.shape = f.StringOr("shape", "sphere");
     options.x_m = f.NumberOr("x_m", 0.0);

@@ -10,8 +10,6 @@
 namespace lingtu::maps {
 
 struct OctomapBuildOptions {
-  std::string converter_command;
-  std::string build_mode{"external_pcl_converter"};
   double resolution{0.05};
   int support_dilation_cells{0};
   int free_layers_above{0};
@@ -36,7 +34,6 @@ struct SourceCommitOptions {
 };
 
 struct OctomapEditOptions {
-  std::string editor_command;
   std::string state;
   std::string shape{"sphere"};
   double x_m{0.0};

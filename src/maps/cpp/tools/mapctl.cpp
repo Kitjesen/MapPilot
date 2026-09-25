@@ -133,7 +133,6 @@ BuildOptions ParseBuildOptions(int argc, char **argv) {
   BuildOptions options;
   options.map_id = argv[2];
   options.map_root = ResolveMapRoot();
-  options.build.build_mode = "native_octomap";
   options.build.source_profile = "mapctl";
   options.build.data_source = "mapctl";
   for (int index = 3; index < argc; ++index) {
@@ -146,10 +145,6 @@ BuildOptions ParseBuildOptions(int argc, char **argv) {
     };
     if (argument == "--map-root") {
       options.map_root = std::filesystem::absolute(next()).lexically_normal();
-    } else if (argument == "--build-mode") {
-      options.build.build_mode = next();
-    } else if (argument == "--converter") {
-      options.build.converter_command = next();
     } else if (argument == "--resolution") {
       options.build.resolution = ParseDouble(next(), "--resolution");
     } else if (argument == "--support-dilation-cells") {

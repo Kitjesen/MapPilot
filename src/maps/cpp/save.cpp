@@ -318,8 +318,6 @@ std::string RequestCanonical(const SaveMapRequest &request) {
       << request.source.dynamic_filter_enabled << request.source.dynamic_filter_required << '\n'
       << request.source.dynamic_filter_command << '\n'
       << request.source.dynamic_filter_timeout_sec << '\n'
-      << request.octomap.converter_command << '\n'
-      << request.octomap.build_mode << '\n'
       << request.octomap.resolution << '\n'
       << request.octomap.support_dilation_cells << '\n'
       << request.octomap.free_layers_above << '\n'
@@ -1486,8 +1484,6 @@ class SaveMapEngine::Impl {
     AppendKey(out, "dynamic_filter_command", job.request.source.dynamic_filter_command);
     AppendKey(out, "dynamic_filter_timeout_sec",
               PreciseDouble(job.request.source.dynamic_filter_timeout_sec));
-    AppendKey(out, "octomap_converter_command", job.request.octomap.converter_command);
-    AppendKey(out, "octomap_build_mode", job.request.octomap.build_mode);
     AppendKey(out, "octomap_resolution", PreciseDouble(job.request.octomap.resolution));
     AppendKey(out, "octomap_support_dilation_cells",
               std::to_string(job.request.octomap.support_dilation_cells));
@@ -1592,9 +1588,6 @@ class SaveMapEngine::Impl {
     job->request.source.dynamic_filter_command = GetValue(values, "dynamic_filter_command");
     job->request.source.dynamic_filter_timeout_sec =
         ParseDouble(GetValue(values, "dynamic_filter_timeout_sec"), 300.0);
-    job->request.octomap.converter_command = GetValue(values, "octomap_converter_command");
-    job->request.octomap.build_mode =
-        GetValue(values, "octomap_build_mode", "external_pcl_converter");
     job->request.octomap.resolution = ParseDouble(GetValue(values, "octomap_resolution"), 0.20);
     job->request.octomap.support_dilation_cells =
         ParseIntegerStrict<int>(GetValue(values, "octomap_support_dilation_cells"), 1);

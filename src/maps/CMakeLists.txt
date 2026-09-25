@@ -85,6 +85,11 @@ endif()
 option(LINGTU_MAPS_BUILD_MAPD "Build the native typed-DDS mapd process" OFF)
 
 if(LINGTU_MAPS_BUILD_MAPD)
+  if(NOT octomap_FOUND)
+    message(FATAL_ERROR
+      "mapd builds saved-map OctoMap artifacts in-process. Install liboctomap-dev "
+      "or add the OctoMap install prefix to CMAKE_PREFIX_PATH.")
+  endif()
   enable_language(C)
   find_package(CycloneDDS REQUIRED)
   function(lingtu_maps_bundle_cyclonedds target)

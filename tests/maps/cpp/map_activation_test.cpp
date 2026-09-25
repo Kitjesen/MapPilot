@@ -93,7 +93,6 @@ void CreateReadyMap(const std::filesystem::path &root, const std::string &id) {
   MapStore fixture_store(MapStoreConfig{root});
   lingtu::maps::MapPipelineCore pipeline(fixture_store);
   lingtu::maps::OctomapBuildOptions options;
-  options.build_mode = "native_octomap";
   options.resolution = 0.1;
   const auto octomap_result = pipeline.BuildOctomapArtifactJson(id, options);
   if (lingtu::maps::JsonObjectBoolAtPath(octomap_result, {"success"}) != true) {

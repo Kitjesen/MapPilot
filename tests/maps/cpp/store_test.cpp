@@ -280,7 +280,6 @@ int main() {
   assert(lingtu::maps::WriteBinaryXyzPcd(
       root / "sampled_support/map.pcd", points, &pcd_error));
   lingtu::maps::OctomapBuildOptions sampled_options;
-  sampled_options.build_mode = "native_octomap";
   sampled_options.resolution = 0.2;
   const auto sampled_result = pipeline.BuildOctomapArtifactJson("sampled_support", sampled_options);
   assert(lingtu::maps::JsonObjectBoolAtPath(sampled_result, {"success"}) == true);
@@ -312,26 +311,28 @@ int main() {
   assert(ray_free && !ray_tree.isNodeOccupied(ray_free));
   assert(ray_tree.search(1.25,.25,.5)==nullptr);
   assert(ray_tree.search(1.25,-.75,.25)==nullptr);
-  // A matching external artifact can be reused; changed resolution must
-  // execute the converter rather than silently returning the old map.
-  std::ifstream metadata_file(ray_dir / "metadata.json");
-  std::string metadata((std::istreambuf_iterator<char>(metadata_file)), {});
+  // An artifact written by the retired external converter, or one built at
+  // another resolution, is rebuilt by the embedded builder.
+  const auto read_metadata = [&]() {
+    std::ifstream file(ray_dir / "metadata.json");
+    return std::string((std::istreambuf_iterator<char>(file)), {});
+  };
+  std::string metadata = read_metadata();
   const std::string native_mode = "native_octomap";
-  auto mode_pos = metadata.find(native_mode);
-  assert(mode_pos != std::string::npos);
-  while (mode_pos != std::string::npos) {
-    metadata.replace(mode_pos, native_mode.size(), "external_pcl_converter");
-    mode_pos = metadata.find(native_mode);
+  assert(metadata.find(native_mode) != std::string::npos);
+  for (auto pos = metadata.find(native_mode); pos != std::string::npos;
+       pos = metadata.find(native_mode)) {
+    metadata.replace(pos, native_mode.size(), "external_pcl_converter");
   }
   WriteText(ray_dir / "metadata.json", metadata);
-  auto reuse_options = sampled_options;
-  reuse_options.build_mode = "external_pcl_converter";
-  reuse_options.converter_command = "false";
   assert(lingtu::maps::JsonObjectBoolAtPath(
-      pipeline.BuildOctomapArtifactJson("ray_support", reuse_options), {"success"}) == true);
-  reuse_options.resolution = .1;
+      pipeline.BuildOctomapArtifactJson("ray_support", sampled_options), {"success"}) == true);
+  assert(lingtu::maps::JsonObjectStringAtPath(read_metadata(), {"build_mode"}) == native_mode);
+  auto finer_options = sampled_options;
+  finer_options.resolution = .1;
   assert(lingtu::maps::JsonObjectBoolAtPath(
-      pipeline.BuildOctomapArtifactJson("ray_support", reuse_options), {"success"}) == false);
+      pipeline.BuildOctomapArtifactJson("ray_support", finer_options), {"success"}) == true);
+  assert(lingtu::maps::JsonObjectNumberAtPath(read_metadata(), {"resolution"}) == .1);
 #endif
 
   std::filesystem::remove_all(root);

@@ -95,53 +95,6 @@ void ReplaceStateValue(
   file << output.str();
 }
 
-std::string QuoteCommandPath(const std::filesystem::path& path) {
-#if defined(_WIN32)
-  return "\"" + path.string() + "\"";
-#else
-  std::string out = "'";
-  for (const char ch : path.string()) {
-    out += ch == '\'' ? "'\\''" : std::string(1, ch);
-  }
-  return out + "'";
-#endif
-}
-
-std::string WriteFakeConverter(const std::filesystem::path& root, bool slow = false) {
-#if defined(_WIN32)
-  const auto script = root / (slow ? "slow_converter.cmd" : "converter.cmd");
-  std::ofstream file(script, std::ios::binary);
-    file << "@echo off\r\n";
-  if (slow) {
-    file << "ping -n 20 127.0.0.1 > nul\r\n";
-  }
-  file << "(\r\n"
-       << "echo # Octomap OcTree binary file\r\n"
-       << "echo id OcTree\r\n"
-       << "echo size 1\r\n"
-       << "echo res 0.1\r\n"
-       << "echo data\r\n"
-       << "echo x\r\n"
-       << ") > \"%~2\"\r\n";
-#else
-  const auto script = root / (slow ? "slow_converter.sh" : "converter.sh");
-  std::ofstream file(script, std::ios::binary);
-  file << "#!/bin/sh\n";
-  if (slow) {
-    file << "sleep 20\n";
-  }
-  file << "printf '# Octomap OcTree binary file\\nid OcTree\\nsize 1\\nres 0.1\\ndata\\nx' > \"$2\"\n";
-  file.close();
-  std::filesystem::permissions(
-      script,
-      std::filesystem::perms::owner_exec |
-          std::filesystem::perms::owner_read |
-          std::filesystem::perms::owner_write,
-      std::filesystem::perm_options::add);
-#endif
-  return QuoteCommandPath(script) + " {input} {output}";
-}
-
 void WriteCompletePatchBundle(
     const std::filesystem::path& root,
     double offset = 0.0,
@@ -277,26 +230,14 @@ void WriteValidConstraints(const std::filesystem::path& path) {
 
 SaveMapRequest Request(
     const std::string& request_id,
-    const std::string& map_id,
-    const std::string& converter) {
+    const std::string& map_id) {
   SaveMapRequest request;
   request.request_id = request_id;
   request.map_id = map_id;
   request.source.dynamic_filter_enabled = false;
-  request.octomap.converter_command = converter;
-  request.octomap.build_mode = "external_pcl_converter";
   request.octomap.timeout_sec = 30.0;
   request.require.semantic = false;
   return request;
-}
-
-void UseValidActivationOctomap(SaveMapRequest& request) {
-#if defined(LINGTU_MAPS_HAS_OCTOMAP)
-  request.octomap.build_mode = "native_octomap";
-  request.octomap.converter_command.clear();
-#else
-  (void)request;
-#endif
 }
 
 MapSnapshot Snapshot(const std::string& id, const std::filesystem::path& source) {
@@ -350,14 +291,12 @@ void WaitPhase(SaveMapEngine& engine, const std::string& id, SavePhase phase) {
   Fail("SaveMap job did not enter expected phase");
 }
 
-void TestDerivedArtifactInvalidation(const std::filesystem::path& root,
-                                    const std::string& converter) {
+void TestDerivedArtifactInvalidation(const std::filesystem::path& root) {
   MapStore store(MapStoreConfig{root / "derived_maps"});
   lingtu::maps::MapPipelineCore pipeline(store);
   const auto map = store.MapPath("derived");
   WriteAsciiPcd(map / "map.pcd");
   lingtu::maps::OctomapBuildOptions options;
-  options.converter_command = converter;
   const auto succeeded = [](const std::string& result) {
     Require(lingtu::maps::JsonObjectBoolAtPath(result, {"success"}) == true,
             "artifact rebuild failed: " + result);
@@ -426,8 +365,7 @@ void TestDerivedArtifactInvalidation(const std::filesystem::path& root,
 
 int main() {
   const auto root = TempRoot();
-  const auto converter = WriteFakeConverter(root);
-  TestDerivedArtifactInvalidation(root, converter);
+  TestDerivedArtifactInvalidation(root);
   const auto source_v1 = root / "snapshots" / "v1";
   WriteAsciiPcd(source_v1 / "map.pcd", 0.0);
   std::ofstream(source_v1 / "scan_origin.txt") << "lidar_origin_in_patch 0.16 0 0.12\n";
@@ -455,7 +393,7 @@ int main() {
     }
     Require(rejected, "map root accepted two concurrent SaveMap engines");
   }
-  SaveMapRequest persisted_pgo = Request("persisted_pgo", "persisted_pgo_map", converter);
+  SaveMapRequest persisted_pgo = Request("persisted_pgo", "persisted_pgo_map");
   persisted_pgo.pgo.executable = "custom-lt-pgo";
   persisted_pgo.pgo.constraints_file = "custom.constraints";
   persisted_pgo.pgo.timeout_sec = 12.5;
@@ -485,7 +423,7 @@ int main() {
   }
   {
     SaveMapEngine engine(store);
-    auto invalid_pgo_request = Request("invalid_pgo", "invalid_pgo", converter);
+    auto invalid_pgo_request = Request("invalid_pgo", "invalid_pgo");
     invalid_pgo_request.pgo.constraints_file = "nested/pose_graph.constraints";
     bool invalid_pgo_rejected = false;
     try {
@@ -495,7 +433,7 @@ int main() {
     }
     Require(invalid_pgo_rejected, "SaveMap accepted a non-basename PGO constraints file");
 
-    auto unsafe_native_request = Request("unsafe_native", "unsafe_native_map", converter);
+    auto unsafe_native_request = Request("unsafe_native", "unsafe_native_map");
     unsafe_native_request.octomap.slam_source = "native_dds";
     unsafe_native_request.allow_unverified_snapshot = true;
     bool unsafe_native_rejected = false;
@@ -508,7 +446,7 @@ int main() {
         unsafe_native_rejected,
         "native_dds SaveMap accepted the unverified snapshot compatibility mode");
 
-    const auto strict_request = Request("missing_receipt", "receipt_gate", converter);
+    const auto strict_request = Request("missing_receipt", "receipt_gate");
     Require(engine.Begin(strict_request).accepted, "strict SaveMap request was not accepted");
     auto unverified = Snapshot("missing_receipt_snapshot", source_v1);
     unverified.slam_boot_id.clear();
@@ -522,7 +460,7 @@ int main() {
         rejected.reason_code == "snapshot_receipt_required",
         "missing snapshot receipt returned the wrong reason");
 
-    auto minimum_request = Request("receipt_too_small", "receipt_too_small", converter);
+    auto minimum_request = Request("receipt_too_small", "receipt_too_small");
     minimum_request.minimum_point_count = 5U;
     Require(engine.Begin(minimum_request).accepted, "minimum receipt request was not accepted");
     const auto minimum_rejected =
@@ -533,7 +471,7 @@ int main() {
         "small receipt returned the wrong reason");
 
     Require(
-        engine.Begin(Request("empty_snapshot", "empty_snapshot", converter)).accepted,
+        engine.Begin(Request("empty_snapshot", "empty_snapshot")).accepted,
         "empty snapshot request was not accepted");
     const auto empty_rejected =
         engine.ProvideSnapshot("empty_snapshot", Snapshot("empty_snapshot", empty_source));
@@ -543,7 +481,7 @@ int main() {
         "empty map.pcd returned the wrong reason");
 
     Require(
-        engine.Begin(Request("invalid_snapshot", "invalid_snapshot", converter)).accepted,
+        engine.Begin(Request("invalid_snapshot", "invalid_snapshot")).accepted,
         "invalid snapshot request was not accepted");
     const auto invalid_provided =
         engine.ProvideSnapshot("invalid_snapshot", Snapshot("invalid_snapshot", invalid_source));
@@ -555,7 +493,7 @@ int main() {
             "invalid PCD did not fail in source processing");
 
     Require(
-        engine.Begin(Request("receipt_count_differs", "receipt_count_differs", converter)).accepted,
+        engine.Begin(Request("receipt_count_differs", "receipt_count_differs")).accepted,
         "receipt-count fixture was not accepted");
     auto differing_receipt = Snapshot("receipt_count_differs", source_v1);
     differing_receipt.source_point_count = 99U;
@@ -564,7 +502,7 @@ int main() {
     Require(WaitTerminal(engine, "receipt_count_differs").state == SaveJobState::kSucceeded,
             "valid source with a sufficient receipt point count did not save");
 
-    const auto request = Request("save_v1", "warehouse", converter);
+    const auto request = Request("save_v1", "warehouse");
     const auto begin = engine.Begin(request);
     Require(begin.accepted && !begin.replayed, "first SaveMap request was not accepted");
     Require(std::filesystem::is_directory(begin.status.capture_dir), "capture dir missing");
@@ -649,7 +587,7 @@ int main() {
     Require(!conflict.accepted && conflict.reason_code == "idempotency_conflict",
             "request_id conflict was not rejected");
 
-    auto session_request = Request("session_bound", "session_bound_map", converter);
+    auto session_request = Request("session_bound", "session_bound_map");
     session_request.product_session_id = "product-11111111111111111111111111111111";
     const auto session_begin = engine.Begin(session_request);
     Require(session_begin.accepted && !session_begin.replayed,
@@ -686,8 +624,7 @@ int main() {
 
   {
     SaveMapEngine engine(store);
-    auto request = Request("activate_success", "activated_map", converter);
-    UseValidActivationOctomap(request);
+    auto request = Request("activate_success", "activated_map");
     request.activate_on_success = true;
     Require(engine.Begin(request).accepted, "activation success request rejected");
     Require(
@@ -736,7 +673,7 @@ int main() {
     for (const auto& fixture : std::vector<std::pair<std::string, std::string>>{
              {"empty_required_artifact", "empty_required_map"},
              {"wrong_metadata_frame", "wrong_metadata_map"}}) {
-      const auto checked_request = Request(fixture.first, fixture.second, converter);
+      const auto checked_request = Request(fixture.first, fixture.second);
       Require(checked.Begin(checked_request).accepted, "artifact validation request rejected");
       Require(checked.ProvideSnapshot(
                   fixture.first, Snapshot(fixture.first + "_snapshot", source_v1)).accepted,
@@ -752,7 +689,7 @@ int main() {
   {
     SaveMapEngine engine(store);
     Require(engine.Begin(Request(
-                "new_map_interrupted", "new_map_interrupted", converter)).accepted,
+                "new_map_interrupted", "new_map_interrupted")).accepted,
             "new-map recovery fixture was rejected");
   }
   {
@@ -778,8 +715,7 @@ int main() {
 
   {
     SaveMapEngine engine(store);
-    auto request = Request("recover_activation_gap", "activation_gap_map", converter);
-    UseValidActivationOctomap(request);
+    auto request = Request("recover_activation_gap", "activation_gap_map");
     request.activate_on_success = true;
     Require(engine.Begin(request).accepted, "activation gap request rejected");
     Require(
@@ -839,7 +775,7 @@ int main() {
   std::ofstream(auto_pgo_source / "auto_skip", std::ios::binary) << "1\n";
   {
     SaveMapEngine engine(store);
-    auto request = Request("save_with_auto_pgo_skip", "auto_pgo_map", converter);
+    auto request = Request("save_with_auto_pgo_skip", "auto_pgo_map");
     request.pgo.executable = fake_pgo.string();
     Require(engine.Begin(request).accepted, "automatic PGO SaveMap request was rejected");
     Require(
@@ -867,7 +803,7 @@ int main() {
   WriteCompletePatchBundle(auto_pgo_opt_source, 19.5, 2U);
   {
     SaveMapEngine engine(store);
-    auto request = Request("save_with_auto_pgo", "auto_optimized_map", converter);
+    auto request = Request("save_with_auto_pgo", "auto_optimized_map");
     request.pgo.executable = fake_pgo.string();
     Require(engine.Begin(request).accepted, "automatic PGO optimization request was rejected");
     Require(
@@ -893,7 +829,7 @@ int main() {
   // The evidence sidecar must survive the native map build/save transaction.
   {
     SaveMapEngine engine(store);
-    auto request = Request("save_online_sam", "online_sam_map", converter);
+    auto request = Request("save_online_sam", "online_sam_map");
     request.pgo.executable = "must_not_run_old_pgo";
     Require(engine.Begin(request).accepted, "SAM save request rejected");
     Require(engine.ProvideSnapshot(request.request_id, Snapshot("sam_snapshot", sam_source)).accepted,
@@ -911,7 +847,7 @@ int main() {
       << R"({"backend":"lio_sam_isam2","success":true,"pose_count":1})";
   {
     SaveMapEngine engine(store);
-    auto request = Request("save_incomplete_sam", "incomplete_sam_map", converter);
+    auto request = Request("save_incomplete_sam", "incomplete_sam_map");
     Require(engine.Begin(request).accepted, "incomplete SAM request rejected before snapshot");
     Require(engine.ProvideSnapshot(request.request_id, Snapshot("bad_sam_snapshot", sam_source)).accepted,
             "incomplete SAM snapshot rejected before worker validation");
@@ -928,8 +864,7 @@ int main() {
     SaveMapEngine engine(store);
     auto request = Request(
         "save_auto_performed_without_loop",
-        "auto_performed_without_loop",
-        converter);
+        "auto_performed_without_loop");
     request.pgo.executable = fake_pgo.string();
     Require(engine.Begin(request).accepted, "invalid automatic PGO request was rejected");
     Require(
@@ -950,7 +885,7 @@ int main() {
   const auto slow_pgo = WriteSlowPgo(root);
   {
     SaveMapEngine engine(store);
-    auto request = Request("save_auto_pgo_timeout", "auto_timeout_map", converter);
+    auto request = Request("save_auto_pgo_timeout", "auto_timeout_map");
     request.pgo.executable = slow_pgo.string();
     request.pgo.timeout_sec = 0.05;
     Require(engine.Begin(request).accepted, "automatic PGO timeout request was rejected");
@@ -970,7 +905,7 @@ int main() {
   }
   {
     SaveMapEngine engine(store);
-    auto request = Request("save_explicit_pgo_timeout", "explicit_timeout_map", converter);
+    auto request = Request("save_explicit_pgo_timeout", "explicit_timeout_map");
     request.pgo.executable = slow_pgo.string();
     request.pgo.timeout_sec = 0.05;
     Require(engine.Begin(request).accepted, "explicit PGO timeout request was rejected");
@@ -992,7 +927,7 @@ int main() {
   std::ofstream(explicit_skip_source / "force_skip", std::ios::binary) << "1\n";
   {
     SaveMapEngine engine(store);
-    auto request = Request("save_explicit_pgo_skip", "explicit_skip_map", converter);
+    auto request = Request("save_explicit_pgo_skip", "explicit_skip_map");
     request.pgo.executable = fake_pgo.string();
     Require(engine.Begin(request).accepted, "explicit PGO skip request was rejected");
     Require(
@@ -1018,7 +953,7 @@ int main() {
   };
   {
     SaveMapEngine engine(store, pgo_hooks);
-    auto request = Request("save_with_pgo", "optimized_map", converter);
+    auto request = Request("save_with_pgo", "optimized_map");
     request.pgo.executable = fake_pgo.string();
     Require(engine.Begin(request).accepted, "PGO SaveMap request was rejected");
     Require(
@@ -1068,7 +1003,7 @@ int main() {
       << "factor\n";
   {
     SaveMapEngine engine(store);
-    auto request = Request("save_pgo_bad_constraints", "warehouse", converter);
+    auto request = Request("save_pgo_bad_constraints", "warehouse");
     request.pgo.executable = fake_pgo.string();
     Require(engine.Begin(request).accepted, "invalid-constraints PGO request was rejected");
     Require(
@@ -1094,7 +1029,7 @@ int main() {
     std::ofstream(invalid_output_source / invalid_output, std::ios::binary) << "1\n";
     SaveMapEngine engine(store);
     const std::string job_id = "save_pgo_" + invalid_output;
-    auto request = Request(job_id, "warehouse", converter);
+    auto request = Request(job_id, "warehouse");
     request.pgo.executable = fake_pgo.string();
     Require(engine.Begin(request).accepted, "invalid PGO output request was rejected");
     Require(
@@ -1124,7 +1059,7 @@ int main() {
       }
     };
     auto interrupted = std::make_unique<SaveMapEngine>(store, legacy_hooks);
-    auto request = Request("legacy_v3_interrupted", "warehouse", converter);
+    auto request = Request("legacy_v3_interrupted", "warehouse");
     request.pgo.executable = fake_pgo.string();
     Require(interrupted->Begin(request).accepted, "legacy-v3 fixture request was rejected");
     Require(
@@ -1166,7 +1101,7 @@ int main() {
   const auto failing_pgo = WriteFakePgo(root, true);
   {
     SaveMapEngine engine(store);
-    auto request = Request("save_pgo_fail", "warehouse", converter);
+    auto request = Request("save_pgo_fail", "warehouse");
     request.pgo.executable = failing_pgo.string();
     Require(engine.Begin(request).accepted, "failing PGO request was rejected");
     Require(
@@ -1195,7 +1130,7 @@ int main() {
   };
   {
     SaveMapEngine engine(store, fail_hooks);
-    const auto request = Request("save_v2_fail", "warehouse", converter);
+    const auto request = Request("save_v2_fail", "warehouse");
     Require(engine.Begin(request).accepted, "v2 failure request rejected");
     Require(engine.ProvideSnapshot("save_v2_fail", Snapshot("snapshot_v2", source_v2)).accepted,
             "v2 failure snapshot rejected");
@@ -1230,7 +1165,7 @@ int main() {
 
   {
     SaveMapEngine engine(store);
-    const auto request = Request("cancel_before_snapshot", "warehouse", converter);
+    const auto request = Request("cancel_before_snapshot", "warehouse");
     Require(engine.Begin(request).accepted, "cancel request setup failed");
     const auto cancelled = engine.Cancel("cancel_before_snapshot");
     Require(cancelled.accepted, "cancel request rejected");
@@ -1263,7 +1198,7 @@ int main() {
     };
     SaveMapEngine engine(store, hooks);
     const auto request = Request(
-        "cancel_during_snapshot_copy", "cancel_during_snapshot_copy_map", converter);
+        "cancel_during_snapshot_copy", "cancel_during_snapshot_copy_map");
     Require(engine.Begin(request).accepted, "snapshot-copy cancel request rejected");
 
     SaveMapResult provided;
@@ -1310,7 +1245,7 @@ int main() {
     };
     SaveMapEngine engine(store, hooks);
     const auto request = Request(
-        "cancel_during_snapshot_failure", "cancel_during_snapshot_failure_map", converter);
+        "cancel_during_snapshot_failure", "cancel_during_snapshot_failure_map");
     Require(engine.Begin(request).accepted, "snapshot-failure cancel request rejected");
 
     SaveMapResult rejected;
@@ -1340,7 +1275,7 @@ int main() {
 
   {
     SaveMapEngine engine(store);
-    const auto request = Request("snapshot_race", "snapshot_race_map", converter);
+    const auto request = Request("snapshot_race", "snapshot_race_map");
     Require(engine.Begin(request).accepted, "snapshot race request rejected");
     SaveMapResult first_result;
     SaveMapResult second_result;
@@ -1374,8 +1309,8 @@ int main() {
 
   {
     SaveMapEngine engine(store);
-    const auto first = Request("concurrent_first", "concurrent_map", converter);
-    const auto second = Request("concurrent_second", "concurrent_map", converter);
+    const auto first = Request("concurrent_first", "concurrent_map");
+    const auto second = Request("concurrent_second", "concurrent_map");
     Require(engine.Begin(first).accepted && engine.Begin(second).accepted,
             "concurrent SaveMap submissions were rejected");
     Require(engine.ProvideSnapshot(
@@ -1402,15 +1337,16 @@ int main() {
             "concurrent saves retained version history");
   }
 
-  const auto slow_converter = WriteFakeConverter(root, true);
   {
+    // Hold the job inside a running PGO child process, then cancel it.
     SaveMapEngine engine(store);
-    auto request = Request("cancel_running", "cancel_map", slow_converter);
-    request.octomap.timeout_sec = 60.0;
+    auto request = Request("cancel_running", "cancel_map");
+    request.pgo.executable = slow_pgo.string();
+    request.pgo.timeout_sec = 60.0;
     Require(engine.Begin(request).accepted, "running cancel request rejected");
-    Require(engine.ProvideSnapshot("cancel_running", Snapshot("snapshot_cancel", source_v2)).accepted,
+    Require(engine.ProvideSnapshot("cancel_running", Snapshot("snapshot_cancel", pgo_source)).accepted,
             "running cancel snapshot rejected");
-    WaitPhase(engine, "cancel_running", SavePhase::kBuildArtifacts);
+    WaitPhase(engine, "cancel_running", SavePhase::kOptimizeSource);
     Require(!store.DeleteMap("cancel_map").ok,
             "map deletion bypassed the active SaveMap write lock");
     Require(!store.RenameMap("cancel_map", "cancel_map_renamed").ok,
@@ -1434,7 +1370,7 @@ int main() {
     }
   };
   auto interrupted = std::make_unique<SaveMapEngine>(store, recovery_hooks);
-  const auto recover_request = Request("recover_job", "recovered_map", converter);
+  const auto recover_request = Request("recover_job", "recovered_map");
   Require(interrupted->Begin(recover_request).accepted, "recovery request rejected");
   Require(interrupted->ProvideSnapshot("recover_job", Snapshot("recover_snapshot", source_v2)).accepted,
           "recovery snapshot rejected");
@@ -1461,8 +1397,7 @@ int main() {
     std::filesystem::remove_all(active_state);
     std::filesystem::create_directory(active_state);
     SaveMapEngine engine(store);
-    auto request = Request("activation_failure", "activation_failure_map", converter);
-    UseValidActivationOctomap(request);
+    auto request = Request("activation_failure", "activation_failure_map");
     request.activate_on_success = true;
     Require(engine.Begin(request).accepted, "activation failure request rejected");
     Require(
@@ -1488,9 +1423,9 @@ int main() {
 
   {
     SaveMapEngine engine(store);
-    Require(engine.Begin(Request("corrupt_save_state", "corrupt_save_map", converter)).accepted,
+    Require(engine.Begin(Request("corrupt_save_state", "corrupt_save_map")).accepted,
             "failed to create SaveMap state-corruption fixture");
-    Require(engine.Begin(Request("duplicate_save_key", "duplicate_save_map", converter)).accepted,
+    Require(engine.Begin(Request("duplicate_save_key", "duplicate_save_map")).accepted,
             "failed to create SaveMap duplicate-key fixture");
   }
   ReplaceStateValue(
@@ -1517,7 +1452,7 @@ int main() {
               "corrupt SaveMap journal was allowed to retry: " + job_id);
     }
     const auto replay = recovered.Begin(
-        Request("corrupt_save_state", "corrupt_save_map", converter));
+        Request("corrupt_save_state", "corrupt_save_map"));
     Require(!replay.accepted && replay.reason_code == "journal_corrupt",
             "corrupt SaveMap request identity was allowed to execute again");
   }
@@ -1552,7 +1487,7 @@ int main() {
   {
     SaveMapEngine engine(store);
     const auto request = Request(
-        "save_over_obsolete_pointer", "concurrent_map", converter);
+        "save_over_obsolete_pointer", "concurrent_map");
     const auto begin = engine.Begin(request);
     Require(begin.accepted, "SaveMap did not accept direct-map replacement fixture");
     const auto provided = engine.ProvideSnapshot(

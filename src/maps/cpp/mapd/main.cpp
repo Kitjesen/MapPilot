@@ -107,15 +107,6 @@ bool EnvEnabled(const char *name, bool fallback) {
   throw std::invalid_argument(std::string(name) + " is invalid");
 }
 
-std::string FirstConfigured(std::initializer_list<const char *> names) {
-  for (const char *name : names) {
-    const std::string value = EnvOr(name, "");
-    if (!value.empty())
-      return value;
-  }
-  return {};
-}
-
 double ParseDouble(const std::string &value, const char *name) {
   std::size_t consumed = 0U;
   const double parsed = std::stod(value, &consumed);
@@ -323,11 +314,6 @@ Options ParseOptions(int argc, char **argv) {
   save_request.source.dynamic_filter_timeout_sec =
       ParseDouble(EnvOr("LINGTU_MAP_SAVE_DYNAMIC_FILTER_TIMEOUT_SEC", "300"),
                   "LINGTU_MAP_SAVE_DYNAMIC_FILTER_TIMEOUT_SEC");
-  save_request.octomap.converter_command =
-      FirstConfigured({"LINGTU_MAP_ARTIFACT_CONVERTER", "LINGTU_OCTOPLANNER3D_PCD_CONVERTER",
-                       "LINGTU_OCTOMAP_CONVERTER"});
-  save_request.octomap.build_mode =
-      EnvOr("LINGTU_MAP_SAVE_OCTOMAP_BUILD_MODE", "external_pcl_converter");
   save_request.octomap.resolution = ParseDouble(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_RESOLUTION",
                                                 std::to_string(save_request.octomap.resolution)),
                                                 "LINGTU_MAP_SAVE_OCTOMAP_RESOLUTION");

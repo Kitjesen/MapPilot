@@ -138,9 +138,9 @@ std::string NativeOctomapEmbeddedJson() {
 
 std::string SupportedOctomapBuildModesJson() {
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
-  return "[\"native_octomap\",\"external_pcl_converter\"]";
+  return "[\"native_octomap\"]";
 #else
-  return "[\"external_pcl_converter\"]";
+  return "[]";
 #endif
 }
 
