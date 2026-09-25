@@ -17,8 +17,7 @@
 }
 
 /* ─── Tabs ────────────────────────────────────────────────────────── */
-/* z-index 10 overrides FloatingWidget's dragStrip (z-index 5) so tabs
- * stay clickable no matter where the widget is dragged to. */
+/* z-index 10 keeps the tabs above sibling overlays so they stay clickable. */
 .tabs {
   position: relative;
   z-index: 10;

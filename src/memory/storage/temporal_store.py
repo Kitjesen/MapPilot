@@ -1,7 +1,6 @@
 """TemporalStore — flat SQLite backend for per-entity temporal observations.
 
-Flat schema optimised for label + time + spatial queries, unlike the
-generic SqliteStore (pickle BLOB). Both TemporalMemoryModule (writer)
+Flat schema optimised for label + time + spatial queries. Both TemporalMemoryModule (writer)
 and GatewayModule (reader) instantiate this class pointing at the same
 file — SQLite's WAL mode keeps concurrent access safe.
 
