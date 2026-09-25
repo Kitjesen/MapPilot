@@ -29,7 +29,7 @@ import {
   mapIsActivationReady,
   mapSaveBlockedReason,
 } from '../services/mapReadiness'
-import { presentNavigationStatus } from '../services/navigationStatus'
+import { liveNavigationStatus, presentNavigationStatus } from '../services/navigationStatus'
 import { useCamera } from '../hooks/useCamera'
 import { useBinaryCloud } from '../hooks/useBinaryCloud'
 import {
@@ -546,9 +546,9 @@ function SceneViewComponent({
     : !telemetryFresh ? '定位未更新'
       : !poseAvailable ? '等待定位' : '定位有效'
 
-  const navigationStatus = sseState.navigationStatus
-  const navigationFresh = sseState.connected && freshSource(navigationStatus?.ts, rasterNowS, 7)
-  const navigationView = presentNavigationStatus(navigationFresh ? navigationStatus : null, locale)
+  const navigationStatus = liveNavigationStatus(sseState, localNowS)
+  const navigationFresh = navigationStatus !== null
+  const navigationView = presentNavigationStatus(navigationStatus, locale)
   useEffect(() => {
     if (!resumePending) return
     const confirmed = navigationFresh && !navigationView.control.resumeRequired

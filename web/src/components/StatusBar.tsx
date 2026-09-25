@@ -2,7 +2,7 @@ import { Activity } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { SSEState } from '../types'
 import { text, type Locale } from '../i18n'
-import { presentNavigationStatus } from '../services/navigationStatus'
+import { liveNavigationStatus, presentNavigationStatus } from '../services/navigationStatus'
 import styles from './StatusBar.module.css'
 
 interface StatusBarProps {
@@ -50,8 +50,8 @@ function numericMetric(data: Record<string, unknown> | undefined, key: string): 
 export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
   const odom = sseState.odometry
   const safety = sseState.safetyState
-  const navigation = sseState.navigationStatus
-  const [now, setNow] = useState(0)
+  const [now, setNow] = useState(() => Date.now())
+  const navigation = liveNavigationStatus(sseState, now / 1000)
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -80,7 +80,7 @@ export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
     typeof lidarHz === 'number' ? `${text(locale, 'LiDAR input', '雷达输入')} ${lidarHz.toFixed(1)} Hz` : null,
     sseState.slamStatus ? `${text(locale, 'Degeneracy', '退化')} ${sseState.slamStatus.degeneracy_count}` : null,
     sseState.robotStatus ? `${text(locale, 'Battery', '电量')} ${sseState.robotStatus.battery.toFixed(0)}%` : null,
-    `${text(locale, 'Version', '版本')} 1.8`,
+    `${text(locale, 'Version', '版本')} ${import.meta.env.VITE_APP_VERSION ?? '--'}`,
   ].filter(Boolean).join(' · ')
 
   return (

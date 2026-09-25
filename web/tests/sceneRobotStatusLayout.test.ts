@@ -26,7 +26,8 @@ test('robot status value slots reserve stable widths', () => {
 })
 
 test('navigation details render all operator axes from navigation status', () => {
-  assert.match(sceneSource, /presentNavigationStatus\(navigationFresh \? navigationStatus : null/)
+  assert.match(sceneSource, /navigationStatus = liveNavigationStatus\(sseState, localNowS\)/)
+  assert.match(sceneSource, /presentNavigationStatus\(navigationStatus, locale\)/)
   assert.match(sceneSource, /navigationView\.task\.label/)
   assert.match(sceneSource, /navigationView\.goalAdmission\.label/)
   assert.match(sceneSource, /navigationView\.control\.label/)

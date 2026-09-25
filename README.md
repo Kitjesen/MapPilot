@@ -159,9 +159,9 @@ not import lower-level implementation details directly.
 
 ## Local/Host Blueprint API
 
-This API is implemented and usable. The stack factories are exported from
-`lingtu.assembly.stacks`, and `autoconnect()` builds a module graph by
-combining explicit wires with type/name-based port matching.
+This API is implemented and usable. Each stack factory lives in its own
+`lingtu.assembly.stacks.<name>` module, and `autoconnect()` builds a module
+graph by combining explicit wires with type/name-based port matching.
 
 Verified locally with:
 
@@ -169,12 +169,12 @@ Verified locally with:
 $env:PYTHONPATH="src"
 @'
 from runtime.blueprint import autoconnect
-from lingtu.assembly.stacks import driver, planner, safety
+from lingtu.assembly.stacks.driver import driver
+from lingtu.assembly.stacks.planner import planner
 
 system = autoconnect(
     driver("stub"),
     planner("mock"),
-    safety(),
 ).build()
 
 print(system.health())
@@ -185,12 +185,12 @@ Example API:
 
 ```python
 from runtime.blueprint import autoconnect
-from lingtu.assembly.stacks import driver, planner, safety
+from lingtu.assembly.stacks.driver import driver
+from lingtu.assembly.stacks.planner import planner
 
 system = autoconnect(
     driver("stub"),
     planner("mock"),
-    safety(),
 ).build()
 
 system.start()
@@ -210,13 +210,11 @@ Common stack factories:
 | `driver(robot)` | Robot or simulation driver. |
 | `lidar(enabled=True)` | Livox MID-360 module. |
 | `slam(profile)` | SLAM/localization module or adapter. |
-| `maps()` | Development/simulation map layers plus the low-rate Host map adapter. |
 | `perception(detector)` | RGB-D detection, tracking, scene graph, and optional reconstruction. |
 | `memory()` | Semantic, episodic, tagged, vector, and temporal memory modules. |
 | `planner(llm)` | Semantic planner, LLM module, visual servo module. |
-| `navigation(planner_backend)` | Development/simulation navigation Modules; field Products use native `navd`. |
+| `navigation()` | Host navigation skills; native `navd` owns planning and motion. |
 | `exploration(backend)` | `none` or TARE; wavefront is enabled from the navigation stack, not this factory. |
-| `safety()` | Safety ring, geofence, velocity mux. |
 | `gateway(port)` | REST, SSE, WebSocket, MCP, teleop/status surface. |
 
 ## Quick Start

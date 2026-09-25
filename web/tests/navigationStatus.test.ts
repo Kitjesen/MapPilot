@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { presentNavigationStatus } from '../src/services/navigationStatus.ts'
+import { liveNavigationStatus, presentNavigationStatus } from '../src/services/navigationStatus.ts'
 import type { NavigationStatusResponse } from '../src/types/index.ts'
 
 type StatusInput = {
@@ -99,4 +99,14 @@ test('nominal and emergency axes have stable labels', () => {
   }), 'zh')
   assert.equal(emergency.control.label, '无控制者')
   assert.equal(emergency.motion.permission.label, '急停保持')
+})
+
+test('stale or disconnected status is never presented as motion clear', () => {
+  const fresh = { ...status(), ts: 100 }
+  const stream = { connected: true, navigationStatus: fresh, stateSnapshot: null, stateSnapshotReceivedAt: null }
+
+  assert.equal(liveNavigationStatus(stream, 103), fresh)
+  assert.equal(liveNavigationStatus(stream, 108), null)
+  assert.equal(liveNavigationStatus({ ...stream, connected: false }, 103), null)
+  assert.equal(presentNavigationStatus(liveNavigationStatus(stream, 108), 'zh').motion.permission.state, 'UNKNOWN')
 })

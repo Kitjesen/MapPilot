@@ -174,11 +174,7 @@ def test_readiness_snapshot_requires_native_endpoint_for_teleop_product(
     assert serialized["product_contract"]["native_readiness_required"] is True
 
 
-@pytest.mark.parametrize("product", ["map", "teleop", "nav"])
-@pytest.mark.parametrize("endpoint_blocker", ["", "native_endpoint_status_missing_or_stale", "native_estop_latched"])
-def test_operator_product_readiness_does_not_require_navigation_session(
-    monkeypatch, product, endpoint_blocker,
-):
+def _readiness_with_endpoint_blocker(monkeypatch, product: str, session_mode: str, endpoint_blocker: str):
     from gateway.gateway_module import GatewayModule
     from gateway.navigation import status as navigation_status
     from gateway.services import runtime_status
@@ -187,7 +183,7 @@ def test_operator_product_readiness_does_not_require_navigation_session(
     plan = _real_run_plan(product)
     gateway = GatewayModule(run_plan=plan)
     gateway._all_modules = {"host.bus": SimpleNamespace(map_readiness=lambda: "")}
-    _set_session_mode(gateway, "mapping" if product != "teleop" else "idle")
+    _set_session_mode(gateway, session_mode)
     monkeypatch.setattr(runtime_status, "build_localization_status", lambda *_a, **_kw: {
         "state": "tracking", "pose_fresh": True, "runtime": {}, "frames": {},
     })
@@ -199,12 +195,39 @@ def test_operator_product_readiness_does_not_require_navigation_session(
         "input_gate": {"ready": True},
         "control_authority": {},
     })
-
     payload, _ = build_readiness_snapshot(gateway)
+    return payload
 
-    assert payload["motion_ready"] is (product != "nav" and not endpoint_blocker)
+
+@pytest.mark.parametrize("product", ["map", "teleop"])
+@pytest.mark.parametrize("endpoint_blocker", ["", "native_endpoint_status_missing_or_stale", "native_estop_latched"])
+def test_operator_product_readiness_does_not_require_navigation_session(
+    monkeypatch, product, endpoint_blocker,
+):
+    payload = _readiness_with_endpoint_blocker(
+        monkeypatch, product, "mapping" if product == "map" else "idle", endpoint_blocker,
+    )
+
+    assert payload["motion_ready"] is not endpoint_blocker
     assert payload["runtime"]["navigation"]["can_accept_goal"] is False
     assert "navigation_session_inactive" in payload["runtime"]["navigation"]["blockers"]
+    if endpoint_blocker:
+        assert f"navigation_blocked:{endpoint_blocker}" in payload["reasons"]
+
+
+@pytest.mark.parametrize(
+    ("endpoint_blocker", "can_accept_goal"),
+    [("", True), ("native_endpoint_status_missing_or_stale", None), ("native_estop_latched", False)],
+)
+def test_nav_product_session_comes_from_compiled_run_plan(monkeypatch, endpoint_blocker, can_accept_goal):
+    # The compiled nav lifecycle is the session truth; a stray runtime session
+    # snapshot must neither activate nor deactivate navigation.
+    payload = _readiness_with_endpoint_blocker(monkeypatch, "nav", "mapping", endpoint_blocker)
+
+    navigation = payload["runtime"]["navigation"]
+    assert "navigation_session_inactive" not in navigation["blockers"]
+    assert navigation["can_accept_goal"] is can_accept_goal
+    assert payload["motion_ready"] is not endpoint_blocker
     if endpoint_blocker:
         assert f"navigation_blocked:{endpoint_blocker}" in payload["reasons"]
 

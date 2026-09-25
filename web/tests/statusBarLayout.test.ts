@@ -36,3 +36,13 @@ test('navigation axes are rendered from the live navigation status projection', 
   assert.doesNotMatch(statusSource, /navigationView\.summary/)
   assert.doesNotMatch(statusSource, /missionStatus/)
 })
+
+test('status bar only presents live navigation status', () => {
+  assert.match(statusSource, /liveNavigationStatus\(sseState, now \/ 1000\)/)
+  assert.doesNotMatch(statusSource, /= sseState\.navigationStatus/)
+})
+
+test('status bar version comes from the web package, not a literal', () => {
+  assert.match(statusSource, /import\.meta\.env\.VITE_APP_VERSION/)
+  assert.doesNotMatch(statusSource, /'版本'\)\} \d/)
+})

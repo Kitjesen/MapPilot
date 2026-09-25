@@ -4,7 +4,7 @@
 
 import type { PlanPreviewResponse, SSEState } from '../types'
 import * as api from '../services/api'
-import { presentNavigationStatus } from '../services/navigationStatus'
+import { liveNavigationStatus, presentNavigationStatus } from '../services/navigationStatus'
 
 // ── Command registry — single source of truth for dropdown + help ──
 
@@ -110,7 +110,7 @@ export async function executeSlashCommand(raw: string, sseState: SSEState): Prom
   }
 
   if (cmd === '/status') {
-    const view = presentNavigationStatus(sseState.navigationStatus, 'zh')
+    const view = presentNavigationStatus(liveNavigationStatus(sseState, Date.now() / 1000), 'zh')
     const odom = sseState.odometry
     const pos =
       typeof odom?.x === 'number' && typeof odom?.y === 'number'

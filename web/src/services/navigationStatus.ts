@@ -7,7 +7,22 @@ import type {
   NavigationStopConfirmation,
   NavigationTaskState,
   NavigationStatusResponse,
+  SSEState,
 } from '../types/index.ts'
+import { estimateSceneTime, freshSource } from './sceneTelemetry.ts'
+
+/** Older navigation status is presented as unknown, never as the last good state. */
+export const NAVIGATION_STATUS_MAX_AGE_S = 7
+
+/** Return navigation status only while the stream is connected and the status is fresh. */
+export function liveNavigationStatus(
+  sseState: Pick<SSEState, 'connected' | 'navigationStatus' | 'stateSnapshot' | 'stateSnapshotReceivedAt'>,
+  localNowS: number,
+): NavigationStatusResponse | null {
+  const status = sseState.navigationStatus
+  const nowS = estimateSceneTime(localNowS, sseState.stateSnapshot?.ts, sseState.stateSnapshotReceivedAt)
+  return sseState.connected && freshSource(status?.ts, nowS, NAVIGATION_STATUS_MAX_AGE_S) ? status : null
+}
 
 interface LabeledState<T extends string> {
   state: T
