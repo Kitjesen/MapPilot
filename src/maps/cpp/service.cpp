@@ -891,7 +891,6 @@ health::MapHealthModel* MapsServiceCore::HealthModelFor(const MapRecord& record)
 const MapArtifact* MapsServiceCore::FindArtifactForCapability(
     const MapRecord& record,
     const std::string& capability) const {
-  bool known = false;
   const auto wanted = ArtifactTypeForCapability(capability);
   if (!wanted.has_value()) {
     return nullptr;

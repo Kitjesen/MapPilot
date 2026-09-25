@@ -126,14 +126,6 @@ std::string FirstNonEmpty(const std::string &first, const std::string &second,
   return fallback;
 }
 
-std::string NativeOctomapEmbeddedJson() {
-#if defined(LINGTU_MAPS_HAS_OCTOMAP)
-  return "true";
-#else
-  return "false";
-#endif
-}
-
 std::string SupportedOctomapBuildModesJson() {
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
   return "[\"native_octomap\",\"external_pcl_converter\"]";
