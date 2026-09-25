@@ -1,0 +1,21 @@
+[Unit]
+Description=LingTu ProductControl web lifecycle transport
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/lingtu/current
+Environment=LINGTU_REPO=/opt/lingtu/current
+Environment=LINGTU_ENV=real
+EnvironmentFile=-/etc/lingtu/gateway.env
+EnvironmentFile=-/opt/lingtu/current/etc/lingtu/release-runtime.env
+EnvironmentFile=/etc/lingtu/control.env
+ExecStart=/bin/bash /opt/lingtu/current/scripts/lingtu serve --robot ${LINGTU_ROBOT} --env real --state-dir /run/lingtu
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target

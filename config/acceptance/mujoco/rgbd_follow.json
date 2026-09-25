@@ -1,0 +1,30 @@
+{
+  "extends": "rgbd_goal.json",
+  "name": "industrial_park_rgbd_long_follow",
+  "description": "26.5 m shirt-pixel RGB-D follow diagnostic in the 60 x 40 m industrial park, with native navigation and Thunder physical locomotion.",
+  "start": [41, 4, 0.6, 1.5707963267948966],
+  "goal": [41, 31, 0.55, 1.5707963267948966],
+  "rgbd_follow": true,
+  "dynamic_obstacle": {
+    "proxy_mjcf": "sim/packages/scenarios/industrial_park_walking_person/physics/person_rgbd.xml",
+    "attach_root": "proxy_root",
+    "start_xyz": [41, 6.5, 0],
+    "end_xyz": [41, 33, 0],
+    "start_s": 8,
+    "duration_s": 106
+  },
+  "sensor_runtime": {"stop_on_nav_goal_reached": false},
+  "phases": {"motion": {"duration_s": 135, "warmup_s": 10}},
+  "thresholds": {
+    "require_goal_reached": false,
+    "max_goal_error_m": 1.0,
+    "min_motion_m": 25,
+    "min_net_displacement_m": 25,
+    "min_goal_distance_reduction_m": 25
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": ["controlled shirt pixels to RGB-D projection", "production VisualServo and PersonTracker", "native local collision checks", "physical locomotion and terminal stop"],
+    "excluded_claims": ["learned person detection", "multi-person identity or reacquisition", "Fast-LIO2", "Product/Gateway", "Go2 locomotion", "field motion"]
+  }
+}

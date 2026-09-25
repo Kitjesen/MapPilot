@@ -1,0 +1,9 @@
+{
+  "extends": "local_scan_pedestrian.json",
+  "name": "mujoco_local_scan_physical_pedestrian_reverse",
+  "description": "The same physical pedestrian encounter crosses from right to left to check direction-dependent LiDAR coverage.",
+  "dynamic_obstacle": {
+    "start_xyz": [45.0, 8.0, 0.0],
+    "end_xyz": [39.0, 8.0, 0.0]
+  }
+}
