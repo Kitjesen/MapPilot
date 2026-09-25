@@ -16,3 +16,6 @@
 [submodule "research/semantic/vlmaps"]
 	path = research/semantic/vlmaps
 	url = https://github.com/vlmaps/vlmaps.git
+[submodule "third_party/research/OmniPerception"]
+	path = third_party/research/OmniPerception
+	url = https://github.com/Kitjesen/OmniPerception.git

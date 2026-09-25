@@ -38,6 +38,7 @@ def _inspection_plan() -> RunPlan:
     )._resolve("map")
     lifecycle = base.lifecycle
     lifecycle["product"] = "inspection"
+    lifecycle.pop("product_variant", None)
     runtime = resolve_product_variant_spec(
         "inspection",
         load_runtime_graph().products["inspection"],
