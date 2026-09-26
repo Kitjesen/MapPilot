@@ -303,6 +303,7 @@ export function MapView({
     && session !== null && navigationSessionReady(session, selectedMap)
   const selectedNavigationReady = !observe && selectedMap !== null && selectedInfo !== undefined
     && mapIsActivationReady(selectedInfo) && session !== null && navigationSessionReady(session, selectedMap)
+  const selectedMapActive = selectedMap !== null && session?.active_map === selectedMap
 
   return (
     <section className={styles.mapTab} aria-label="已保存地图">
@@ -334,6 +335,11 @@ export function MapView({
           )}
           {selectedNavigationReady && !canPickGoal && <button className={styles.quietButton}
             onClick={() => handleNavigate(selectedMap!)}><Navigation size={16} />选目标</button>}
+          {!observe && selectedMapActive && !selectedNavigationReady && selectedInfo && mapIsActivationReady(selectedInfo) && (
+            <button className={styles.quietButton} disabled title="等待定位和导航准入状态就绪">
+              <Navigation size={16} />等待定位
+            </button>
+          )}
           {!observe && session?.product === 'map' && <button className={styles.primaryButton}
             onClick={handleSave} disabled={Boolean(saveBlockedReason) || saveStatus?.state === 'saving' || saveStatus?.state === 'pending'}
             title={saveBlockedReason || '保存当前建图并查看整图'}>

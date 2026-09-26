@@ -57,6 +57,8 @@ test('scene map-list failures retain prior maps and never claim an empty library
 test('map page navigates only when the current Product is ready', () => {
   assert.match(source, /onNavigate/)
   assert.match(source, /ensureNavigationSession\(name\)/)
+  assert.match(source, /selectedMapActive/)
+  assert.match(source, /等待定位/)
   assert.doesNotMatch(source, /onActivate|激活地图/)
   assert.doesNotMatch(apiSource, /activateMap|\/api\/v1\/map\/activate/)
 })

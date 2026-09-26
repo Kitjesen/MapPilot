@@ -412,6 +412,19 @@ int main() {
   WriteText(root / "building_1f" / "patch_bundle.manifest",
             "LINGTU_PATCH_BUNDLE_V1\ncomplete 1\ndropped_count 0\n"
             "first_sequence 0\nlast_sequence 0\npatch_count 1\n");
+  std::filesystem::remove(root / "building_1f" / "patches" / "0.pcd");
+  const auto missing_patch = store.CheckMapActivation("building_1f");
+  assert(!missing_patch.ok);
+  bool missing_patch_blocker = false;
+  for (const auto& blocker : missing_patch.blockers) {
+    missing_patch_blocker |= blocker.find("saved scans are missing or incomplete") !=
+                             std::string::npos;
+  }
+  assert(missing_patch_blocker);
+  std::string error;
+  assert(lingtu::maps::WriteBinaryXyzPcd(
+      root / "building_1f" / "patches" / "0.pcd",
+      {{0.0F, 0.0F, 0.5F}, {1.0F, 1.0F, 0.5F}}, &error));
   assert(store.CheckMapActivation("building_1f").ok);
 
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)

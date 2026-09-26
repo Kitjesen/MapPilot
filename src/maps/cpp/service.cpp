@@ -71,14 +71,14 @@ std::string BoolJson(bool value) {
 // saved_rays: the OctoMap was replayed from the saved scans and may drive
 // navigation. preview: built from point samples (an imported cloud), for
 // viewing and localization only. none: no OctoMap yet.
-std::string MapEvidence(const std::filesystem::path& dir) {
+std::string MapEvidence(const std::filesystem::path& dir, bool activation_ready) {
   std::ifstream file(dir / "metadata.json", std::ios::binary);
   const std::string metadata((std::istreambuf_iterator<char>(file)), {});
   if (!JsonObjectHasPath(metadata, {"artifacts", "octomap"})) return "none";
-  return JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "evidence_source"}) ==
+  return activation_ready &&
+                 JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "evidence_source"}) ==
                      "saved_rays" &&
-                 JsonObjectBoolAtPath(metadata, {"artifacts", "octomap", "navigation_ready"}) ==
-                     true
+                 JsonObjectBoolAtPath(metadata, {"artifacts", "octomap", "navigation_ready"}) == true
              ? "saved_rays"
              : "preview";
 }
@@ -347,7 +347,7 @@ std::string MapsServiceCore::ListMapsJson() const {
           << "\"has_esdf\":" << BoolJson(has_esdf) << ","
           << "\"has_traversability\":" << BoolJson(has_traversability) << ","
           << "\"can_activate\":" << BoolJson(activation_ready) << ","
-          << "\"map_evidence\":" << JsonString(MapEvidence(dir)) << ","
+          << "\"map_evidence\":" << JsonString(MapEvidence(dir, activation_ready)) << ","
           << "\"is_active\":" << BoolJson(record->state == MapState::kActive) << ","
           << "\"size_mb\":" << size_mb << ","
           << "\"patch_count\":" << patch_count << ","

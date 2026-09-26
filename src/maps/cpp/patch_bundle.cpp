@@ -126,11 +126,12 @@ bool HasCompletePatchBundle(const std::filesystem::path &source) {
 }
 
 bool HasSavedRays(const std::filesystem::path &dir) {
-  std::size_t patch_count = 0U;
-  return std::filesystem::is_regular_file(dir / "poses.txt") &&
-         std::filesystem::is_regular_file(dir / "scan_origin.txt") &&
-         (!std::filesystem::exists(dir / "patch_bundle.manifest") ||
-          ReadPatchManifest(dir / "patch_bundle.manifest", &patch_count));
+  // A replay is only navigation-grade when every pose has a corresponding
+  // non-empty patch and the manifest proves that no sequence was dropped.
+  // Checking only the marker files can publish a map whose geometry has no
+  // scans to replay; it then looks ready until the build fails on the field.
+  return IsNonEmptyRegularFile(dir / "scan_origin.txt") &&
+         HasCompletePatchBundle(dir);
 }
 
 }  // namespace lingtu::maps
