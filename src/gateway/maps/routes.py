@@ -537,6 +537,7 @@ def register_map_routes(app, gw) -> None:
                     "has_occupancy": bool(item.get("has_occupancy")),
                     "has_octomap": bool(item.get("has_octomap")),
                     "can_activate": item["can_activate"],
+                    "map_evidence": str(item.get("map_evidence") or "none"),
                     "state": (
                         state
                         if (state := str(item.get("state") or "").strip().upper())
@@ -677,6 +678,35 @@ def register_map_routes(app, gw) -> None:
             success_message="Map cropped.",
             failure_message="Map could not be cropped.",
             live_cloud_reset=ok,
+        )
+
+    @app.post(
+        "/api/v1/maps/{name}/approve_navigation",
+        summary="Approve a checked point-cloud map for navigation",
+        response_model=MapLifecycleResponse,
+    )
+    async def approve_map_navigation(name: str, body: dict[str, Any] | None = None):
+        err = public_map_name_error(name)
+        if err is not None:
+            return _map_lifecycle_response(False, message=err, status_code=400)
+        cmd = {
+            "action": "approve_map_navigation",
+            "map_id": name,
+            "approved_by": str((body or {}).get("approved_by") or "operator"),
+        }
+        resp = await asyncio.to_thread(_mapd_http_request, gw, cmd)
+        ok = resp.get("success") is True
+        check = resp.get("check") if isinstance(resp.get("check"), dict) else {}
+        errors = [str(blocker) for blocker in check.get("blockers") or []]
+        if not ok and not errors and resp.get("message"):
+            errors = [str(resp["message"])]
+        return _customer_map_lifecycle_response(
+            resp,
+            name=name,
+            status_code=200 if ok else 400,
+            success_message="Map approved for navigation.",
+            failure_message="Map could not be approved for navigation.",
+            errors=errors or None,
         )
 
     @app.post(

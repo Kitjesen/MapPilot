@@ -565,6 +565,7 @@ FastAPI's live OpenAPI UI remains available at `/docs`.
   - `POST /api/v1/maps/operations/{operation_id}/cancel` — Cancel a durable map-save operation
   - `POST /api/v1/maps/operations/{operation_id}/retry` — Retry a failed durable map-save operation
   - `DELETE /api/v1/maps/{name}` — Delete a saved map
+  - `POST /api/v1/maps/{name}/approve_navigation` — Approve a checked point-cloud map for navigation
   - `POST /api/v1/maps/{name}/build_occupancy` — Build a 2D occupancy artifact from a saved map
   - `POST /api/v1/maps/{name}/build_octomap` — Build OctoPlanner3D octomap.ot from saved map.pcd
   - `POST /api/v1/maps/{name}/crop` — Crop a saved map point cloud and invalidate derived artifacts
@@ -783,6 +784,11 @@ FastAPI's live OpenAPI UI remains available at `/docs`.
 **Summary:** Delete a saved map
 **Response model:** `MapLifecycleResponse`
 **Handler:** `delete_saved_map`
+
+#### `POST /api/v1/maps/{name}/approve_navigation`
+**Summary:** Approve a checked point-cloud map for navigation
+**Response model:** `MapLifecycleResponse`
+**Handler:** `approve_map_navigation`
 
 #### `POST /api/v1/maps/{name}/build_occupancy`
 **Summary:** Build a 2D occupancy artifact from a saved map

@@ -101,6 +101,7 @@ CLIENT_LINKS: dict[str, str] = {
     "map_import_pcd": "/api/v1/maps/import_pcd",
     "map_crop": "/api/v1/maps/{name}/crop",
     "map_mark_zone": "/api/v1/maps/{name}/mark_zone",
+    "map_approve_navigation": "/api/v1/maps/{name}/approve_navigation",
     "map_build_octomap": "/api/v1/maps/{name}/build_octomap",
     "map_validate_plan": "/api/v1/maps/{name}/validate_plan",
     "map_cloud_reset": "/api/v1/map_cloud/reset",
@@ -224,6 +225,7 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
         "map_import_pcd": {"method": "POST", "path": CLIENT_LINKS["map_import_pcd"]},
         "map_crop": {"method": "POST", "path": CLIENT_LINKS["map_crop"]},
         "map_mark_zone": {"method": "POST", "path": CLIENT_LINKS["map_mark_zone"]},
+        "map_approve_navigation": {"method": "POST", "path": CLIENT_LINKS["map_approve_navigation"]},
         "map_build_octomap": {
             "method": "POST",
             "path": CLIENT_LINKS["map_build_octomap"],

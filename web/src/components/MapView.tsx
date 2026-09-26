@@ -34,8 +34,16 @@ interface CardProps {
   onNavigate: (name: string) => void
   onRename:   (name: string) => void
   onDelete:   (name: string) => void
+  onApprove:  (name: string) => void
 }
-function MapCard({ m, selected, readOnly, navigationReady, onPreview, onNavigate, onRename, onDelete }: CardProps) {
+
+const MAP_EVIDENCE_LABEL: Record<string, string> = {
+  saved_rays: '射线建图',
+  approved_point_cloud: '点云导入·已确认',
+  preview: '预览·需重建或确认',
+}
+
+function MapCard({ m, selected, readOnly, navigationReady, onPreview, onNavigate, onRename, onDelete, onApprove }: CardProps) {
   const [detailsOpen, setDetailsOpen] = useState(false)
   return (
     <li className={`${styles.mapRow} ${selected ? styles.mapRowSelected : ''}`}>
@@ -57,12 +65,15 @@ function MapCard({ m, selected, readOnly, navigationReady, onPreview, onNavigate
         {m.is_active && <p>当前加载的地图</p>}
         <div className={styles.mapMeta}>
           {m.has_pcd && <span>点云</span>}{m.has_octomap && <span>规划地图</span>}
+          {m.map_evidence && MAP_EVIDENCE_LABEL[m.map_evidence] && <span>{MAP_EVIDENCE_LABEL[m.map_evidence]}</span>}
           {!!m.size_mb && <span>{m.size_mb.toFixed(1)} MB</span>}
           {!!m.patch_count && <span>{m.patch_count} 子图</span>}
         </div>
         {!readOnly && <div className={styles.rowActions}>
           {navigationReady && mapIsActivationReady(m) && <button className={styles.quietButton}
             onClick={() => onNavigate(m.name)}><Navigation size={15} />选目标</button>}
+          {m.map_evidence === 'preview' && m.has_octomap && <button className={styles.quietButton}
+            onClick={() => onApprove(m.name)}><Check size={15} />确认用于导航</button>}
           <button className={styles.quietButton} onClick={() => onRename(m.name)}><Pencil size={15} />重命名</button>
           <button className={styles.dangerButton} onClick={() => onDelete(m.name)}><Trash2 size={15} />删除</button>
         </div>}
@@ -146,6 +157,17 @@ export function MapView({
   const handleNavigate = (name: string) => setNavigateFrom(name)
   const handleDelete = (name: string) => setDeleteFrom(name)
   const handleRename = (name: string) => setRenameFrom(name)
+  const handleApprove = async (name: string) => {
+    try {
+      const res = await api.approveMapNavigation(name)
+      const reasons = (res.errors ?? []).map(String).join('；')
+      showToast(res.ok ? `${name} 已确认用于导航` : `${name} 未通过检查：${reasons || res.message || '未知原因'}`,
+        res.ok ? 'success' : 'error')
+      await loadMaps()
+    } catch (error) {
+      showToast(`确认失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+    }
+  }
   const handleSave = () => setSaveOpen(true)
 
   const ensureNavigationSession = async (mapName: string) => {
@@ -405,7 +427,7 @@ export function MapView({
             {!loading && <ul className={styles.mapList}>
               {filteredMaps.map(map => <MapCard key={map.name} m={map} selected={selectedMap === map.name}
                 readOnly={observe} navigationReady={session !== null && navigationSessionReady(session, map.name)}
-                onPreview={togglePreview} onNavigate={handleNavigate} onRename={handleRename} onDelete={handleDelete} />)}
+                onPreview={togglePreview} onNavigate={handleNavigate} onRename={handleRename} onDelete={handleDelete} onApprove={handleApprove} />)}
             </ul>}
             {!loading && maps.length > 0 && filteredMaps.length === 0 && <p className={styles.stateMsg}>没有找到匹配的地图</p>}
           </div>

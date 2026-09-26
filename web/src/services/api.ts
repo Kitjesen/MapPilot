@@ -1111,6 +1111,14 @@ export async function cropMap(
   return readMapLifecycle(res)
 }
 
+export async function approveMapNavigation(name: string): Promise<MapLifecycleResponse> {
+  const res = await dashboardFetch(
+    mapNamedPath('map_approve_navigation', '/api/v1/maps/{name}/approve_navigation', name),
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+  )
+  return readMapLifecycle(res)
+}
+
 export async function markMapZone(
   name: string,
   body: Record<string, unknown>,

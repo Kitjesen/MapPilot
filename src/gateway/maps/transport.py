@@ -129,7 +129,8 @@ def _canonical_request(command: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     map_actions = {
         "delete_map", "rename_map", "import_pcd", "crop_pcd", "get_record",
         "get_bundle", "get_map_points", "validate_artifacts",
-        "get_voxel_edits", "edit_octomap_voxels", "build_occupancy_snapshot",
+        "get_voxel_edits", "edit_octomap_voxels", "approve_map_navigation",
+        "build_occupancy_snapshot",
         "build_octomap_artifact",
     }
     if action in map_actions:
@@ -159,6 +160,8 @@ def _canonical_request(command: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     elif action == "validate_artifacts":
         for key in ("require_octomap", "require_occupancy", "expected_frame_id", "expected_data_source", "expected_source_profile"):
             arguments[key] = command.get(key, False if key.startswith("require_") else "")
+    elif action == "approve_map_navigation":
+        arguments["approved_by"] = str(command.get("approved_by") or "operator")
     elif action == "edit_octomap_voxels":
         center = voxel_edit_center(command)
         if center is None:
