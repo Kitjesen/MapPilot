@@ -3,12 +3,17 @@
 import json
 import math
 import struct
+import sys
 import unittest
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools/robot/go2_mid360_ground_mount"))
 from assembly_geometry import read_collada
 from generate import ASSETS, CAD, HERE, MESHES, mass_properties, ry
+sys.path.pop(0)
 
 
 def read_stl(path):

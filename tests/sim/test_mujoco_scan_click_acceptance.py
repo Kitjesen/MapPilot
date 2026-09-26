@@ -14,10 +14,11 @@ from lingtu.assembly.compiler import compile_run_plan
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "config/acceptance/mujoco/scan_click.json"
 SESSION = "a" * 32
+pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
 
 
-@pytest.fixture(scope="module")
-def plan():
+@pytest.fixture
+def plan(allow_unbuilt_process_artifacts):
     return compile_run_plan("nav", "sim", robot="doso/thunder_v4", local_planner="scan",
                             env_config={"backend": "mujoco", "localization": "fastlio2"})
 

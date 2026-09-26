@@ -49,7 +49,7 @@ MID-360 官方手册推荐金属散热安装面；全 PLA 不满足该推荐。8
 $env:OMP_NUM_THREADS='1'
 $env:OPENBLAS_NUM_THREADS='1'
 C:/Users/99563/miniconda3/python.exe tools/robot/go2_mid360_ground_mount/generate.py
-C:/Users/99563/miniconda3/python.exe tools/robot/go2_mid360_ground_mount/test_design.py
+python -m pytest tests/tools/test_go2_mid360_ground_mount.py -q
 C:/Users/99563/miniconda3/python.exe tools/robot/go2_mid360_ground_mount/preview.py
 C:/Users/99563/miniconda3/python.exe tools/robot/go2_mid360_ground_mount/scan_preview.py
 ```
