@@ -369,6 +369,10 @@ int main() {
   const auto source_v1 = root / "snapshots" / "v1";
   WriteAsciiPcd(source_v1 / "map.pcd", 0.0);
   std::ofstream(source_v1 / "scan_origin.txt") << "lidar_origin_in_patch 0.16 0 0.12\n";
+  // Like a SLAM save, keep the scan the map came from, so the saved map is
+  // replayed from rays and is navigation-ready.
+  WriteAsciiPcd(source_v1 / "patches" / "scan_0.pcd", 0.0);
+  std::ofstream(source_v1 / "poses.txt") << "scan_0.pcd 0 0 0 1 0 0 0\n";
   std::ofstream(source_v1 / "poses.raw.txt") << "scan_0.pcd 0 0 0 1 0 0 0\n";
   std::ofstream(source_v1 / "trajectory.raw.txt") << "1 0 0 0 0 0 0 1\n";
   WriteAsciiPcd(source_v1 / "map.pcd.preclean", 0.25);

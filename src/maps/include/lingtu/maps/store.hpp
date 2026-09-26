@@ -26,6 +26,9 @@ struct MapStoreResult {
 struct ArtifactValidationOptions {
   bool require_octomap{false};
   bool require_occupancy{false};
+  // Activation is the motion boundary: only an OctoMap built from saved
+  // rays (metadata artifacts.octomap.navigation_ready) may be activated.
+  bool require_navigation_evidence{false};
   bool validate_metadata_identity{false};
   std::string expected_frame_id;
   std::string expected_data_source;

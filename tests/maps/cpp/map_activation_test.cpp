@@ -111,7 +111,7 @@ void CreateReadyMap(const std::filesystem::path &root, const std::string &id) {
       map / "metadata.json",
       "{\"frame_id\":\"map\",\"artifacts\":{"
       "\"map_pcd\":{\"path\":\"map.pcd\"},"
-      "\"octomap\":{\"path\":\"octomap.ot\"},"
+      "\"octomap\":{\"path\":\"octomap.ot\",\"navigation_ready\":true},"
       "\"occupancy_grid\":{\"path\":\"occupancy.npz\"}}}");
 }
 
@@ -151,7 +151,7 @@ void TestMetadataMtimeDoesNotChangeContentEpoch() {
       metadata_path,
       "{\"frame_id\":\"map\",\"created_at\":\"replacement\",\"artifacts\":{"
       "\"map_pcd\":{\"path\":\"map.pcd\"},"
-      "\"octomap\":{\"path\":\"octomap.ot\"},"
+      "\"octomap\":{\"path\":\"octomap.ot\",\"navigation_ready\":true},"
       "\"occupancy_grid\":{\"path\":\"occupancy.npz\"}}}");
   std::filesystem::last_write_time(metadata_path, first_time + std::chrono::seconds(1));
 

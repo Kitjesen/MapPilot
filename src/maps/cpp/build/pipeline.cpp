@@ -183,12 +183,17 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
                          const std::string &last_edit_json = "null") {
   bool saved_rays = std::filesystem::is_regular_file(map_dir / "poses.txt") &&
                           std::filesystem::is_regular_file(map_dir / "scan_origin.txt");
+  // Only an OctoMap replayed from saved scan rays may drive navigation; one
+  // built from sampled points invents free space above every surface.
+  bool navigation_ready = saved_rays;
   if (manual_voxel_edit) {
     std::ifstream previous_file(map_dir / "metadata.json");
     std::ostringstream previous;
     previous << previous_file.rdbuf();
     saved_rays = JsonObjectStringAtPath(previous.str(),
         {"artifacts", "octomap", "evidence_source"}) == "saved_rays";
+    navigation_ready = JsonObjectBoolAtPath(previous.str(),
+        {"artifacts", "octomap", "navigation_ready"}).value_or(false);
   }
   const std::filesystem::path occupancy_path = map_dir / "occupancy.npz";
   const bool has_occupancy = std::filesystem::is_regular_file(occupancy_path);
@@ -220,6 +225,7 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
   }
   artifacts << "\"octomap\":{"
             << "\"evidence_source\":" << JsonString(saved_rays ? "saved_rays" : "sampled_points") << ","
+            << "\"navigation_ready\":" << (navigation_ready ? "true" : "false") << ","
             << "\"path\":" << JsonString(octomap_path.filename().string()) << ","
             << "\"source_profile\":" << JsonString(source_profile) << ","
             << "\"data_source\":" << JsonString(data_source) << ","
@@ -1427,7 +1433,7 @@ bool StageExistingArtifacts(const std::filesystem::path &map_dir,
 void MarkSourceAuxiliaryArtifactsStale(const std::filesystem::path &map_dir) {
   const auto now = std::chrono::system_clock::now().time_since_epoch();
   const auto stamp = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
-  for (const auto *filename : {"poses.txt", "patches"}) {
+  for (const auto *filename : {"poses.txt", "patches", "scan_origin.txt"}) {
     const auto path = map_dir / filename;
     if (!std::filesystem::exists(path)) {
       continue;
@@ -3678,7 +3684,7 @@ void MapPipelineCore::ClearDerivedArtifacts(const std::filesystem::path &map_dir
   }
   const auto now = std::chrono::system_clock::now().time_since_epoch();
   const auto stamp = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
-  for (const auto *filename : {"poses.txt", "patches"}) {
+  for (const auto *filename : {"poses.txt", "patches", "scan_origin.txt"}) {
     const auto path = map_dir / filename;
     if (std::filesystem::exists(path)) {
       std::filesystem::rename(

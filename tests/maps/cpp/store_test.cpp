@@ -55,7 +55,8 @@ void WriteValidOccupancyMetadata(const std::filesystem::path& path) {
        << "\"occupancy_grid\":{\"path\":\"occupancy.npz\",\"frame_id\":\"map\","
           "\"data_source\":\"field\",\"source_profile\":\"fastlio2\"},"
        << "\"octomap\":{\"path\":\"octomap.ot\",\"frame_id\":\"map\","
-          "\"data_source\":\"field\",\"source_profile\":\"fastlio2\"}}}";
+          "\"data_source\":\"field\",\"source_profile\":\"fastlio2\","
+          "\"navigation_ready\":true}}}";
 }
 
 void WriteValidPlanningArtifacts(const std::filesystem::path& map_dir) {
@@ -324,6 +325,31 @@ int main() {
   assert(activation_check.ok);
   assert(activation_check.content_epoch == store.ContentEpoch("building_1f"));
 
+  // Only an OctoMap built from saved rays may be activated; a point-cloud
+  // preview or an artifact that predates the marker is refused.
+  const auto metadata_file = root / "building_1f" / "metadata.json";
+  const auto valid_metadata = [&] {
+    std::ifstream file(metadata_file);
+    return std::string((std::istreambuf_iterator<char>(file)), {});
+  }();
+  const auto blocked_with = [&](const std::string& metadata, const std::string& reason) {
+    WriteText(metadata_file, metadata);
+    const auto check = store.CheckMapActivation("building_1f");
+    assert(!check.ok);
+    bool found = false;
+    for (const auto& blocker : check.blockers) found |= blocker.find(reason) != std::string::npos;
+    assert(found);
+  };
+  std::string preview = valid_metadata;
+  preview.replace(preview.find("\"navigation_ready\":true"), 23, "\"navigation_ready\":false");
+  blocked_with(preview, "point-cloud preview");
+  std::string legacy = valid_metadata;
+  legacy.replace(legacy.find(",\"navigation_ready\":true"), 24, "");
+  blocked_with(legacy, "predates navigation evidence");
+  assert(store.ValidateArtifacts("building_1f", validation_options).ok);
+  WriteText(metadata_file, valid_metadata);
+  assert(store.CheckMapActivation("building_1f").ok);
+
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
   lingtu::maps::MapPipelineCore pipeline(store);
   lingtu::maps::OctomapEditOptions edit;
@@ -446,6 +472,12 @@ int main() {
   sampled_options.resolution = 0.2;
   const auto sampled_result = pipeline.BuildOctomapArtifactJson("sampled_support", sampled_options);
   assert(lingtu::maps::JsonObjectBoolAtPath(sampled_result, {"success"}) == true);
+  {
+    std::ifstream file(root / "sampled_support/metadata.json");
+    const std::string sampled_metadata((std::istreambuf_iterator<char>(file)), {});
+    assert(lingtu::maps::JsonObjectBoolAtPath(
+               sampled_metadata, {"artifacts", "octomap", "navigation_ready"}) == false);
+  }
   const auto sampled_loaded = lingtu::maps::LoadOctomapTree(root / "sampled_support/octomap.ot");
   assert(sampled_loaded != nullptr);
   const auto& sampled_tree = *sampled_loaded;
@@ -509,6 +541,8 @@ int main() {
   metadata = read_metadata();
   assert(lingtu::maps::JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "encoding"}) ==
          "full_log_odds");
+  assert(lingtu::maps::JsonObjectBoolAtPath(
+             metadata, {"artifacts", "octomap", "navigation_ready"}) == true);
   assert(lingtu::maps::JsonObjectNumberAtPath(
              metadata, {"artifacts", "octomap", "sensor_model", "prob_hit"}) ==
          lingtu::maps::kSavedMapSensorModel.prob_hit);

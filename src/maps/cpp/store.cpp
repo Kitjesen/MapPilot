@@ -871,6 +871,7 @@ ArtifactValidationResult MapStore::CheckMapActivationWhileLocked(
 ArtifactValidationResult MapStore::CheckMapActivationUnlocked(const std::string& map_id) const {
   ArtifactValidationOptions options;
   options.require_octomap = true;
+  options.require_navigation_evidence = true;
   options.require_occupancy = false;
   options.expected_frame_id = "map";
   return ValidateArtifactsUnlocked(map_id, options);
@@ -915,6 +916,17 @@ ArtifactValidationResult MapStore::ValidateArtifactsUnlocked(
       result.metadata_ok ? ReadSmallTextFile(metadata_path) : std::string{};
   result.metadata_ok = result.metadata_ok && IsValidJsonObject(metadata);
   result.metadata_identity_ok = result.metadata_ok;
+  if (options.require_navigation_evidence && result.metadata_ok) {
+    const auto navigation_ready =
+        JsonObjectBoolAtPath(metadata, {"artifacts", "octomap", "navigation_ready"});
+    if (!navigation_ready.has_value()) {
+      result.blockers.push_back(
+          "octomap predates navigation evidence tracking; rebuild it from the saved scans");
+    } else if (!*navigation_ready) {
+      result.blockers.push_back(
+          "octomap is a point-cloud preview, not built from saved scan rays");
+    }
+  }
   if (options.validate_metadata_identity) {
     const auto add_metadata_blocker = [&](const std::string& blocker) {
       result.metadata_identity_ok = false;
