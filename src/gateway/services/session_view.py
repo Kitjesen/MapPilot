@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from gateway.maps.transport import active_map as read_active_map
-from gateway.maps.transport import map_bundle, mapd_request
+from gateway.maps.transport import map_bundle, map_query_request
 from gateway.services.runtime_status import (
     backend_capability_defaults,
     classify_pose_freshness,
@@ -117,7 +117,7 @@ def session_snapshot(gw: Any) -> dict[str, Any]:
     can_activate = False
     if saved_active_map:
         try:
-            maps_response = mapd_request(gw, {"action": "list_maps"})
+            maps_response = map_query_request(gw, {"action": "list_maps"})
         except Exception:
             pass
         else:

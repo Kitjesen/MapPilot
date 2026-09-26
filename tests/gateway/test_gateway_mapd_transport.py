@@ -103,6 +103,34 @@ def test_voxel_edit_without_center_is_rejected() -> None:
     assert client.calls == []
 
 
+def test_active_map_holds_the_last_answer_through_a_failed_query(monkeypatch) -> None:
+    from gateway.maps import transport
+
+    answers: list[object] = [{"success": True, "active": "floor_2"}, TimeoutError("late")]
+
+    class Client:
+        def service(self, action: str, **_arguments: object) -> dict[str, object]:
+            answer = answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+    clock = [100.0]
+    monkeypatch.setattr(transport.time, "monotonic", lambda: clock[0])
+    gateway = SimpleNamespace(_map_client=Client())
+
+    assert transport.active_map(gateway) == "floor_2"
+    clock[0] += 1.0
+    assert transport.active_map(gateway) == "floor_2"
+
+    answers.append(TimeoutError("still late"))
+    clock[0] += transport._ACTIVE_MAP_HOLD_S + 1.0
+    assert transport.active_map(gateway) is None
+
+    answers.append({"success": True, "active": ""})
+    assert transport.active_map(gateway) is None
+
+
 def test_mapd_request_uses_native_save_map_entrypoint() -> None:
     from gateway.maps.transport import mapd_request
 

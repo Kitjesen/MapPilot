@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import uuid
 from typing import Any
 
@@ -11,6 +12,8 @@ from runtime.endpoints.mapd import ArtifactHandle, MapClient
 
 logger = logging.getLogger(__name__)
 _MANAGEMENT_TIMEOUT_S = 360.0
+_QUERY_TIMEOUT_S = 0.2
+_ACTIVE_MAP_HOLD_S = 5.0
 _MAP_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 _ACTIVE_MUTATIONS = frozenset({"set_active_map", "clear_active_map"})
@@ -43,13 +46,24 @@ def safe_map_name(name: str) -> str | None:
     return None
 
 
-def map_client(gw: Any) -> MapClient:
-    """Return the same-host UDS transport; it owns no map state."""
-    client = getattr(gw, "_map_client", None)
+def map_client(gw: Any, *, timeout_s: float | None = None) -> MapClient:
+    """Return the same-host UDS transport; it owns no map state.
+
+    Long map-management operations (notably save) use the management client.
+    Read-only status queries use a separate short-deadline client so a stalled
+    mapd query cannot block the Gateway state snapshot and its control UI.
+    """
+    # Tests and embedders may provide a lightweight injected client. Preserve
+    # that seam for bounded queries instead of silently bypassing it.
+    injected = getattr(gw, "_map_client", None)
+    if timeout_s is not None and injected is not None and not isinstance(injected, MapClient):
+        return injected
+    attribute = "_map_client" if timeout_s is None else "_map_query_client"
+    client = getattr(gw, attribute, None)
     if client is None:
-        client = MapClient(timeout_s=_MANAGEMENT_TIMEOUT_S)
+        client = MapClient(timeout_s=_MANAGEMENT_TIMEOUT_S if timeout_s is None else timeout_s)
         try:
-            gw._map_client = client
+            setattr(gw, attribute, client)
         except (AttributeError, TypeError):
             pass
     return client
@@ -161,27 +175,48 @@ def _canonical_request(command: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     return action, {key: value for key, value in arguments.items() if value is not None}
 
 
-def mapd_request(gw: Any, cmd: dict[str, Any]) -> dict[str, Any]:
+def mapd_request(gw: Any, cmd: dict[str, Any], *, timeout_s: float | None = None) -> dict[str, Any]:
     """Adapt one Gateway request to the canonical mapd action."""
     action, arguments = _canonical_request(dict(cmd))
-    return map_client(gw).service(action, **arguments)
+    return map_client(gw, timeout_s=timeout_s).service(action, **arguments)
+
+
+def map_query_request(gw: Any, cmd: dict[str, Any]) -> dict[str, Any]:
+    """Run one bounded read-only mapd query for status/readiness paths."""
+    return mapd_request(gw, cmd, timeout_s=_QUERY_TIMEOUT_S)
 
 
 def active_map(gw: Any) -> str | None:
-    """Return mapd's active map identity, if its query endpoint is available."""
+    """Return mapd's active map identity, or ``None`` when no map is active.
+
+    The query has a short deadline. A failed or late answer says nothing about
+    the active map, so it returns the identity mapd last reported within
+    ``_ACTIVE_MAP_HOLD_S`` instead of ``None``: callers such as the scene cache
+    and the goal gate treat ``None`` as "no map" and would otherwise flap.
+    """
     try:
-        resp = mapd_request(gw, {"action": "get_active_map"})
+        resp = map_query_request(gw, {"action": "get_active_map"})
     except Exception as exc:
         logger.debug("mapd active-map query failed: %s", exc)
-        return None
-    active = str(resp.get("active") or "").strip() if isinstance(resp, dict) else ""
-    return active or None
+        resp = None
+    now = time.monotonic()
+    if isinstance(resp, dict) and resp.get("success") is not False:
+        active = str(resp.get("active") or "").strip() or None
+        try:
+            gw._active_map_observation = (active, now)
+        except (AttributeError, TypeError):
+            pass
+        return active
+    observed = getattr(gw, "_active_map_observation", None)
+    if isinstance(observed, tuple) and now - observed[1] <= _ACTIVE_MAP_HOLD_S:
+        return observed[0]
+    return None
 
 
 def map_bundle(gw: Any, map_name: str, capability: str) -> dict[str, Any] | None:
     """Return mapd artifact metadata without resolving a local file path."""
     try:
-        resp = mapd_request(gw, {"action": "get_bundle", "map_id": map_name, "capability": capability})
+        resp = map_query_request(gw, {"action": "get_bundle", "map_id": map_name, "capability": capability})
     except Exception as exc:
         logger.debug("mapd bundle query failed: %s", exc)
         return None
@@ -200,7 +235,7 @@ def validate_map_artifacts(
 ) -> dict[str, Any] | None:
     """Ask mapd to validate one saved-map artifact set."""
     try:
-        resp = mapd_request(gw, {
+        resp = map_query_request(gw, {
             "action": "validate_artifacts", "map_id": map_name,
             "require_octomap": require_octomap, "require_occupancy": require_occupancy,
             "expected_data_source": expected_data_source, "expected_source_profile": expected_source_profile,
