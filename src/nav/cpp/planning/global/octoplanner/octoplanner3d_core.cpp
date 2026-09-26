@@ -450,12 +450,6 @@ std::string endpointResolutionFailureReason(
       return resolution.start_raw_outside_bounds
         ? "start_outside_static_map"
         : "start_snap_exhausted";
-    case Failure::StartConnectionBlocked:
-      return "start_connection_blocked";
-    case Failure::StartBodyOccupied:
-      return "start_body_occupied";
-    case Failure::StartGroundSupportMissing:
-      return "start_ground_support_unconfirmed";
     case Failure::GoalSnapExhausted:
       return resolution.goal_raw_outside_bounds
         ? "goal_outside_static_map"
