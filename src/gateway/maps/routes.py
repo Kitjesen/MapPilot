@@ -20,6 +20,7 @@ from gateway.maps.transport import (
     mapd_request,
     open_artifact,
     safe_map_name,
+    voxel_edit_center,
 )
 from gateway.schemas import (
     GatewayErrorResponse,
@@ -688,6 +689,10 @@ def register_map_routes(app, gw) -> None:
         if err is not None:
             return _map_lifecycle_response(False, message=err, status_code=400)
         cmd = dict(body or {})
+        if voxel_edit_center(cmd) is None:
+            return _map_lifecycle_response(
+                False, message="voxel edit center is required", status_code=400
+            )
         cmd["action"] = "edit_octomap_voxels"
         cmd["map_id"] = name
         resp = await asyncio.to_thread(_mapd_http_request, gw, cmd)
@@ -1000,6 +1005,10 @@ def register_map_routes(app, gw) -> None:
         if err is not None:
             return _map_lifecycle_response(False, message=err, status_code=400)
         cmd = dict(body or {})
+        if voxel_edit_center(cmd) is None:
+            return _map_lifecycle_response(
+                False, message="voxel edit center is required", status_code=400
+            )
         cmd["action"] = "edit_octomap_voxels"
         cmd["map_id"] = name
         resp = await asyncio.to_thread(_mapd_http_request, gw, cmd)

@@ -1135,7 +1135,7 @@ def test_map_workbench_routes_forward_canonical_mapd_actions(monkeypatch, tmp_pa
         asyncio.run(
             _endpoint(gateway, "/api/v1/maps/{name}/mark_zone")(
                 "demo",
-                {"state": "preblocked", "center": [0, 0, 0], "radius": 0.5},
+                {"state": "preblocked", "center": {"x": 1.5, "y": -2.0, "z": 0.3}, "radius": 0.5},
             )
         )
     )
@@ -1170,12 +1170,11 @@ def test_map_workbench_routes_forward_canonical_mapd_actions(monkeypatch, tmp_pa
         {
             "action": "edit_octomap_voxels",
             "map_id": "demo",
-            "editor_command": "",
             "state": "preblocked",
             "shape": "sphere",
-            "x_m": 0.0,
-            "y_m": 0.0,
-            "z_m": 0.0,
+            "x_m": 1.5,
+            "y_m": -2.0,
+            "z_m": 0.3,
             "radius_m": 0.5,
             "timeout_sec": 15.0,
         },

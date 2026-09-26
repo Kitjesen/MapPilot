@@ -87,6 +87,21 @@ def _bounds_arguments(value: Any) -> dict[str, Any]:
     }
 
 
+def voxel_edit_center(command: dict[str, Any]) -> tuple[float, float, float] | None:
+    """Return the edit center from ``center`` ({x,y,z} or [x,y,z]) or flat x/y/z keys."""
+    center = command.get("center")
+    if isinstance(center, dict) and "x" in center and "y" in center:
+        return float(center["x"]), float(center["y"]), float(center.get("z") or 0.0)
+    if isinstance(center, (list, tuple)) and len(center) >= 2:
+        z = center[2] if len(center) > 2 else 0.0
+        return float(center[0]), float(center[1]), float(z or 0.0)
+    x = command.get("x_m", command.get("x"))
+    y = command.get("y_m", command.get("y"))
+    if x is None or y is None:
+        return None
+    return float(x), float(y), float(command.get("z_m", command.get("z")) or 0.0)
+
+
 def _canonical_request(command: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     requested = str(command.get("action") or "").strip()
     if requested in _ACTIVE_MUTATIONS:
@@ -131,12 +146,15 @@ def _canonical_request(command: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         for key in ("require_octomap", "require_occupancy", "expected_frame_id", "expected_data_source", "expected_source_profile"):
             arguments[key] = command.get(key, False if key.startswith("require_") else "")
     elif action == "edit_octomap_voxels":
+        center = voxel_edit_center(command)
+        if center is None:
+            raise ValueError("voxel edit center is required")
         arguments.update(
-            editor_command=str(command.get("editor_command") or ""), state=str(command.get("state") or ""),
+            state=str(command.get("state") or ""),
             shape=str(command.get("shape") or "sphere"),
-            x_m=float(command.get("x_m", command.get("x", 0.0)) or 0.0),
-            y_m=float(command.get("y_m", command.get("y", 0.0)) or 0.0),
-            z_m=float(command.get("z_m", command.get("z", 0.0)) or 0.0),
+            x_m=center[0],
+            y_m=center[1],
+            z_m=center[2],
             radius_m=float(command.get("radius_m", command.get("radius", 0.2)) or 0.2),
             timeout_sec=float(command.get("timeout_sec") or 15.0),
         )

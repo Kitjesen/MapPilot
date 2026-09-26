@@ -1273,7 +1273,7 @@ function SceneViewComponent({
       const res = await api.markMapZone(workbenchTargetMapName, {
         state: workbenchZoneState,
         shape: 'sphere',
-        center: { x: pendingGoal.x, y: pendingGoal.y, z: 0 },
+        center: { x: pendingGoal.x, y: pendingGoal.y, z: pendingGoal.z ?? 0 },
         radius: Number(workbenchZoneRadius) || 0.5,
       })
       publishWorkbenchResult(res)

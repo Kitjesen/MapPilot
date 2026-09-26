@@ -69,6 +69,40 @@ def test_mapd_request_flattens_structured_gateway_arguments() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"center": {"x": 1.5, "y": -2.0, "z": 0.3}},
+        {"center": [1.5, -2.0, 0.3]},
+        {"x": 1.5, "y": -2.0, "z": 0.3},
+        {"x_m": 1.5, "y_m": -2.0, "z_m": 0.3},
+    ],
+)
+def test_voxel_edit_forwards_the_requested_center(body: dict[str, object]) -> None:
+    from gateway.maps.transport import mapd_request
+
+    client = RecordingMapClient()
+    mapd_request(
+        SimpleNamespace(_map_client=client),
+        {"action": "edit_octomap_voxels", "map_id": "demo", "state": "preblocked", **body},
+    )
+
+    arguments = client.calls[0][1]
+    assert (arguments["x_m"], arguments["y_m"], arguments["z_m"]) == (1.5, -2.0, 0.3)
+
+
+def test_voxel_edit_without_center_is_rejected() -> None:
+    from gateway.maps.transport import mapd_request
+
+    client = RecordingMapClient()
+    with pytest.raises(ValueError, match="center is required"):
+        mapd_request(
+            SimpleNamespace(_map_client=client),
+            {"action": "edit_octomap_voxels", "map_id": "demo", "state": "clear"},
+        )
+    assert client.calls == []
+
+
 def test_mapd_request_uses_native_save_map_entrypoint() -> None:
     from gateway.maps.transport import mapd_request
 
