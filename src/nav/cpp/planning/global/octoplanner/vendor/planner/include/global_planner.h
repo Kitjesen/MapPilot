@@ -120,6 +120,9 @@ public:
     {
       None,
       StartSnapExhausted,
+      StartConnectionBlocked,
+      StartBodyOccupied,
+      StartGroundSupportMissing,
       GoalSnapExhausted,
     };
 
