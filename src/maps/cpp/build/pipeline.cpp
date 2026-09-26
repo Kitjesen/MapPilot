@@ -1073,9 +1073,10 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
 
   const bool saved_rays = std::filesystem::is_regular_file(map_dir / "poses.txt") &&
                           std::filesystem::is_regular_file(map_dir / "scan_origin.txt");
+  SavedRayBuildStats ray_stats;
   if (saved_rays) {
     try {
-      PopulateSavedRayOctomap(tree, map_dir, options.cancel_requested);
+      ray_stats = PopulateSavedRayOctomap(tree, map_dir, options.cancel_requested);
     } catch (const std::exception& error) {
       return "{\"success\":false,\"reason_code\":\"saved_ray_build_failed\",\"message\":" +
           JsonString(error.what()) + "}";
@@ -1159,6 +1160,11 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
          ","
          "\"occupied_voxels\":" +
          std::to_string(OccupiedVoxelCount(tree)) +
+         (saved_rays ? ",\"saved_rays\":{\"inserted_points\":" +
+                           std::to_string(ray_stats.inserted_points) +
+                           ",\"retained_voxels\":" + std::to_string(ray_stats.retained_voxels) +
+                           ",\"raised_voxels\":" + std::to_string(ray_stats.raised_voxels) + "}"
+                     : std::string{}) +
          "}"
          "}";
 #else

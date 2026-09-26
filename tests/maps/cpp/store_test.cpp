@@ -127,6 +127,64 @@ void TestOctomapRoundTripKeepsEvidence(const std::filesystem::path& root) {
   assert(leaves(tree) == before);
 }
 
+// Saved-ray replay keeps the evidence each voxel accumulated, keeps every
+// surface the cleaned map retained, and leaves no trace of filtered returns.
+void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
+  const std::string map_id = "ray_evidence";
+  assert(store.CreateMap(map_id).ok);
+  const auto dir = root / map_id;
+  std::filesystem::create_directories(dir / "patches");
+  const lingtu::maps::PointXyz floor{1.05F, 0.05F, 0.05F};   // later crossed by rays
+  const lingtu::maps::PointXyz wall{2.05F, 0.05F, 0.05F};    // hit by every scan
+  const lingtu::maps::PointXyz post{2.05F, 1.05F, 0.05F};    // hit once
+  const lingtu::maps::PointXyz person{1.05F, -1.05F, 0.05F}; // filtered at save time
+  std::string error;
+  assert(lingtu::maps::WriteBinaryXyzPcd(dir / "map.pcd", {floor, wall, post}, &error));
+  assert(lingtu::maps::WriteBinaryXyzPcd(dir / "patches/0.pcd", {floor, wall, post}, &error));
+  assert(lingtu::maps::WriteBinaryXyzPcd(dir / "patches/1.pcd", {wall, person}, &error));
+  assert(lingtu::maps::WriteBinaryXyzPcd(dir / "patches/2.pcd", {wall}, &error));
+  assert(lingtu::maps::WriteBinaryXyzPcd(dir / "patches/3.pcd", {wall}, &error));
+  WriteText(dir / "poses.txt",
+            "0.pcd 0 0 0 1 0 0 0\n1.pcd 0 0 0 1 0 0 0\n"
+            "2.pcd 0 0 0 1 0 0 0\n3.pcd 0 0 0 1 0 0 0\n");
+  WriteText(dir / "scan_origin.txt", "lidar_origin_in_patch 0 0 0\n");
+
+  lingtu::maps::MapPipelineCore pipeline(store);
+  lingtu::maps::OctomapBuildOptions options;
+  options.resolution = 0.1;
+  const auto result = pipeline.BuildOctomapArtifactJson(map_id, options);
+  assert(lingtu::maps::JsonObjectBoolAtPath(result, {"success"}) == true);
+  const auto stat = [&](const char* name) {
+    return lingtu::maps::JsonObjectNumberAtPath(result, {"octomap_result", "report", "saved_rays", name});
+  };
+  assert(stat("retained_voxels") == 3.0);
+  assert(stat("inserted_points") == 6.0);
+  assert(stat("raised_voxels") == 1.0);
+
+  const auto tree = lingtu::maps::LoadOctomapTree(dir / "octomap.ot");
+  assert(tree != nullptr);
+  const auto log_odds = [&](const lingtu::maps::PointXyz& at) {
+    const auto* node = tree->search(at.x, at.y, at.z);
+    assert(node != nullptr && tree->isNodeOccupied(node));
+    return node->getLogOdds();
+  };
+  const float one_hit = tree->getProbHitLog();
+  // Evidence strength survives: four hits outweigh one, neither is clamped.
+  assert(std::abs(log_odds(post) - one_hit) < 1e-5F);
+  assert(log_odds(wall) > log_odds(post));
+  assert(log_odds(wall) < tree->getClampingThresMaxLog());
+  // Three rays through the floor voxel outvoted its one hit; the cleaned map
+  // keeps the surface, so it comes back as one-hit occupied.
+  assert(std::abs(log_odds(floor) - one_hit) < 1e-5F);
+  // Space the rays crossed is free; space they never reached stays unknown.
+  const auto* crossed = tree->search(0.55, 0.05, 0.05);
+  assert(crossed != nullptr && !tree->isNodeOccupied(crossed));
+  assert(tree->search(2.05, 0.05, 1.05) == nullptr);
+  // A return the dynamic filter discarded leaves no hit and no carved ray.
+  assert(tree->search(person.x, person.y, person.z) == nullptr);
+  assert(tree->search(0.55, -0.55, 0.05) == nullptr);
+}
+
 // One operator edit must decide a voxel regardless of how much ray evidence
 // it holds, and must not disturb the evidence of voxels outside the edit.
 void TestVoxelEditsSetState(MapStore& store, const std::filesystem::path& root) {
@@ -466,6 +524,7 @@ int main() {
              read_metadata(), {"artifacts", "octomap", "encoding"}) == lossless);
 
   TestOctomapRoundTripKeepsEvidence(root);
+  TestSavedRayEvidence(store, root);
   TestVoxelEditsSetState(store, root);
 #endif
 
