@@ -98,16 +98,18 @@ The navigation OctoMap has its own evidence contract:
   that the cleaned `map.pcd` retained are inserted, so returns removed by the
   save-time dynamic filter leave neither hits nor carved free space. Voxels keep
   the hit/miss log-odds their rays accumulated; space no ray reached stays
-  unknown. The last metre of a ray does not lower a retained voxel: near its
-  endpoint a ray grazing a floor stays within one voxel of the surface, and
-  OctoMap would mark those surface cells free although the ray never passed
-  below the surface. The rest of the ray still clears retained voxels, so a
-  person the dynamic filter missed is carved away by later rays through where
-  they stood. Every occupied voxel is a measured hit; a retained point no
-  endpoint reached stays unknown. On 903room at 5 cm the Go2 planner accepts
-  81% of the path the robot walked while mapping, against 56% for plain replay
-  (which freed 37% of the retained voxels) and 61% when every retained voxel
-  was forced occupied (which also put unmeasured points on the walked path).
+  unknown. The last metre of a ray does not lower a retained voxel, or a cell
+  beside one in the same layer: near its endpoint a ray grazing a floor stays
+  within one voxel of the surface, and OctoMap would mark those surface cells
+  (and 5 cm holes in the sampled floor) free although the ray never passed
+  below the surface; the planner reads such a free cell as a drop. The rest of
+  the ray still clears them, so a person the dynamic filter missed is carved
+  away by later rays through where they stood. Every occupied voxel is a
+  measured hit; a guarded cell no endpoint reached stays unknown. On 903room at
+  5 cm the Go2 planner accepts 91% of the path the robot walked while mapping
+  (22 of 1356 samples lack ground support), against 56% for plain replay (which
+  freed 37% of the retained voxels) and 61% when every retained voxel was forced
+  occupied (which also put unmeasured points on the walked path).
 - Without those files the builder marks occupied voxels from sampled points and
   adds the configured free envelope above supports. That artifact is a preview.
 - `octomap.ot` is written with OctoMap's full encoding, never `writeBinary()`,

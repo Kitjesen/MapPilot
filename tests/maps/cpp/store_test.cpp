@@ -189,6 +189,9 @@ void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
   // Three later rays cross the floor voxel within a metre of their wall
   // endpoint: grazing misses do not erase its one measured hit.
   assert(std::abs(log_odds(floor) - one_hit) < 1e-5F);
+  // The cell beside the floor voxel, a hole in the sampled floor, is crossed
+  // by the same grazing ray ends and stays unknown rather than free.
+  assert(tree->search(floor.x - 0.1, floor.y, floor.z) == nullptr);
   // The same rays cross the ghost far from their endpoint and outvote its hit.
   const auto* ghost_node = tree->search(ghost.x, ghost.y, ghost.z);
   assert(ghost_node != nullptr && !tree->isNodeOccupied(ghost_node));
