@@ -28,6 +28,7 @@ from gateway.services.safety_status import safety_stop_active
 
 logger = logging.getLogger(__name__)
 NAVIGATION_STATUS_SCHEMA_VERSION = 3
+_NATIVE_STATUS_UNSET = object()
 
 
 def _as_int(value: Any, default: int = 0) -> int:
@@ -52,6 +53,8 @@ def _session_mode(session: Mapping[str, Any]) -> str:
 def _native_endpoint_readiness(
     session: Mapping[str, Any],
     gw: Any | None = None,
+    *,
+    native_status: Mapping[str, Any] | None | object = _NATIVE_STATUS_UNSET,
 ) -> dict[str, Any]:
     plan = getattr(gw, "_compiled_run_plan", None) if gw is not None else None
     raw_product = str(
@@ -114,7 +117,13 @@ def _native_endpoint_readiness(
                 "status_available": None,
             },
         }
-    snapshot = read_navigation_status()
+    # A caller that already captured a status snapshot must be able to reuse
+    # that exact sample.  ``None`` is a valid captured result, so the caller
+    # uses the private sentinel below when it did not capture one.
+    if native_status is _NATIVE_STATUS_UNSET:
+        snapshot = read_navigation_status()
+    else:
+        snapshot = dict(native_status) if isinstance(native_status, Mapping) else None
     if not native_control_status_is_fresh(snapshot):
         return {
             "required": True,
@@ -443,7 +452,15 @@ def evaluate_navigation_gate(
         break
 
     session = compiled_session_context(gw) or safe_session(gw)
-    native_endpoint = _native_endpoint_readiness(session, gw=gw)
+    native_endpoint = _native_endpoint_readiness(
+        session,
+        gw=gw,
+        native_status=(
+            facts["native_endpoint_status"]
+            if "native_endpoint_status" in facts
+            else _NATIVE_STATUS_UNSET
+        ),
+    )
     session_mode = _session_mode(session)
     reported_pose_fresh, _ = classify_pose_freshness(localization_status)
     received_odom_fresh = (

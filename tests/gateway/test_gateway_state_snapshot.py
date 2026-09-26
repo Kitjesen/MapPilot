@@ -78,7 +78,11 @@ def test_state_snapshot_exposes_native_navigation_state_and_client_contract():
             "follow_available": True,
         }
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr("gateway.gateway_module.native_teleop_active", lambda: True)
+    monkeypatch.setattr(
+        "gateway.services.runtime_facts.read_navigation_status",
+        lambda: {"control_mode": "teleop", "stamp_s": time.time()},
+    )
+    monkeypatch.setattr("gateway.services.runtime_facts.native_teleop_active", lambda _payload: True)
 
     payload = build_state_snapshot(gateway)
     monkeypatch.undo()
@@ -108,6 +112,34 @@ def test_state_snapshot_exposes_native_navigation_state_and_client_contract():
     assert payload["links"]["capabilities"] == "/api/v1/app/capabilities"
     assert payload["links"]["localization_status"] == "/api/v1/localization/status"
     assert payload["links"]["navigation_status"] == "/api/v1/navigation/status"
+
+
+def test_runtime_facts_reads_native_status_once(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.services import runtime_facts
+
+    gateway = GatewayModule()
+    native_status = {"stamp_s": time.time(), "control_mode": "teleop"}
+    reads: list[None] = []
+    observed: list[dict[str, object] | None] = []
+
+    def read_status():
+        reads.append(None)
+        return native_status
+
+    monkeypatch.setattr(runtime_facts, "read_navigation_status", read_status)
+    monkeypatch.setattr(
+        runtime_facts,
+        "native_teleop_active",
+        lambda payload: observed.append(payload) or True,
+    )
+
+    facts = runtime_facts.capture_runtime_facts(gateway)
+
+    assert len(reads) == 1
+    assert observed == [native_status]
+    assert facts["native_endpoint_status"] == native_status
+    assert facts["teleop_active"] is True
 
 
 def test_state_route_returns_stable_snapshot():

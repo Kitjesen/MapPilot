@@ -6,11 +6,19 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from gateway.services.native_control import teleop_active as native_teleop_active
+from gateway.services.native_status import read_navigation_status
+
 
 def capture_runtime_facts(gw: Any) -> dict[str, Any]:
     """Capture the mutable facts shared by Gateway status projections."""
 
     now = time.time()
+    # Read the native snapshot once and pass it through the projection.  The
+    # status file is independent of the Host lock, so parsing it while holding
+    # that lock only makes unrelated callbacks wait.
+    native_endpoint_status = read_navigation_status()
+    teleop_is_active = native_teleop_active(native_endpoint_status)
     with gw._state_lock:
         navigation_state = getattr(gw, "_navigation_state", None)
         localization_status = getattr(gw, "_localization_status", None)
@@ -35,8 +43,9 @@ def capture_runtime_facts(gw: Any) -> dict[str, Any]:
             "navigation_goal_status_by_request": dict(
                 getattr(gw, "_navigation_goal_status_by_request", {})
             ),
+            "native_endpoint_status": native_endpoint_status,
             "mode": str(getattr(gw, "_mode", "") or "").strip().lower(),
-            "teleop_active": bool(gw._teleop_active),
+            "teleop_active": bool(teleop_is_active),
             "scene_graph_json": gw._sg_json,
             "path_len": len(gw._last_path),
             "visual_servo_status": (
