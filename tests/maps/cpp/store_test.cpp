@@ -12,6 +12,8 @@
 
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
 #include <octomap/OcTree.h>
+
+#include "lingtu/maps/build/octomap_io.hpp"
 #endif
 
 using lingtu::maps::ArtifactType;
@@ -80,6 +82,66 @@ void WriteDuplicateFrameMetadata(const std::filesystem::path& path) {
        << "\"map_pcd\":{\"path\":\"map.pcd\"},"
        << "\"occupancy_grid\":{\"path\":\"occupancy.npz\"}}}";
 }
+
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+// One operator edit must decide a voxel regardless of how much ray evidence
+// it holds, and must not disturb the evidence of voxels outside the edit.
+void TestVoxelEditsSetState(MapStore& store, const std::filesystem::path& root) {
+  const std::string map_id = "edit_semantics";
+  assert(store.CreateMap(map_id).ok);
+  const auto map_dir = root / map_id;
+  WriteValidPlanningArtifacts(map_dir);
+  WriteValidOccupancyMetadata(map_dir / "metadata.json");
+
+  const octomap::point3d wall(0.05F, 0.05F, 0.55F);
+  const octomap::point3d corridor(1.05F, 0.05F, 0.55F);
+  const octomap::point3d weak(2.05F, 0.05F, 0.55F);
+  const octomap::point3d unseen(3.05F, 0.05F, 0.55F);
+  octomap::OcTree tree(0.1);
+  for (int i = 0; i < 20; ++i) {
+    tree.updateNode(wall, true);
+    tree.updateNode(corridor, false);
+  }
+  tree.updateNode(weak, true);
+  tree.updateInnerOccupancy();
+  const float weak_log_odds = tree.search(weak)->getLogOdds();
+  assert(lingtu::maps::SaveOctomapTree(tree, map_dir / "octomap.ot"));
+
+  lingtu::maps::MapPipelineCore pipeline(store);
+  const auto edit = [&](const octomap::point3d& at, const char* state) {
+    lingtu::maps::OctomapEditOptions options;
+    options.state = state;
+    options.x_m = at.x();
+    options.y_m = at.y();
+    options.z_m = at.z();
+    options.radius_m = 0.04;
+    const auto result = pipeline.EditOctomapVoxelsJson(map_id, options);
+    assert(lingtu::maps::JsonObjectBoolAtPath(result, {"success"}) == true);
+    assert(lingtu::maps::JsonObjectNumberAtPath(result, {"edit", "edited_voxels"}) == 1.0);
+    return *lingtu::maps::JsonObjectNumberAtPath(result, {"edit", "changed_voxels"});
+  };
+  const auto occupied = [&](const octomap::point3d& at) {
+    const auto saved = lingtu::maps::LoadOctomapTree(map_dir / "octomap.ot");
+    assert(saved != nullptr);
+    const auto* node = saved->search(at);
+    assert(node != nullptr);
+    return saved->isNodeOccupied(node);
+  };
+
+  assert(edit(wall, "free") == 1.0);
+  assert(!occupied(wall));
+  assert(edit(corridor, "preblocked") == 1.0);
+  assert(occupied(corridor));
+  assert(edit(corridor, "occupied") == 0.0);
+  assert(edit(unseen, "traversable") == 1.0);
+  assert(!occupied(unseen));
+  assert(edit(wall, "clear") == 0.0);
+  assert(!occupied(wall));
+
+  const auto saved = lingtu::maps::LoadOctomapTree(map_dir / "octomap.ot");
+  assert(saved->search(weak)->getLogOdds() == weak_log_odds);
+}
+#endif
 
 }  // namespace
 
@@ -333,6 +395,8 @@ int main() {
   assert(lingtu::maps::JsonObjectBoolAtPath(
       pipeline.BuildOctomapArtifactJson("ray_support", finer_options), {"success"}) == true);
   assert(lingtu::maps::JsonObjectNumberAtPath(read_metadata(), {"resolution"}) == .1);
+
+  TestVoxelEditsSetState(store, root);
 #endif
 
   std::filesystem::remove_all(root);

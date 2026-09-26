@@ -849,6 +849,7 @@ struct OctomapEditRun {
   std::string mode;
   std::string effective_state;
   std::uint64_t edited_voxels{0U};
+  std::uint64_t changed_voxels{0U};
 };
 
 OctomapEditRun RunNativeOctomapEdit(const std::filesystem::path &input,
@@ -892,6 +893,7 @@ OctomapEditRun RunNativeOctomapEdit(const std::filesystem::path &input,
   }
   const bool occupied = result.effective_state == "occupied";
   const double radius_squared = options.radius_m * options.radius_m;
+  octomap::KeySet keys;
   for (std::int64_t ix = -radius_cells; ix <= radius_cells; ++ix) {
     for (std::int64_t iy = -radius_cells; iy <= radius_cells; ++iy) {
       for (std::int64_t iz = -radius_cells; iz <= radius_cells; ++iz) {
@@ -901,22 +903,32 @@ OctomapEditRun RunNativeOctomapEdit(const std::filesystem::path &input,
         if (options.shape == "sphere" && dx * dx + dy * dy + dz * dz > radius_squared) {
           continue;
         }
-        const octomap::point3d point(
-            static_cast<float>(options.x_m + dx),
-            static_cast<float>(options.y_m + dy),
-            static_cast<float>(options.z_m + dz));
-        if (tree.updateNode(point, occupied) != nullptr) {
-          ++result.edited_voxels;
+        octomap::OcTreeKey key;
+        if (tree.coordToKeyChecked(options.x_m + dx, options.y_m + dy, options.z_m + dz, key)) {
+          keys.insert(key);
         }
       }
     }
   }
+  // An operator edit is a decision, not one more sensor observation: set each
+  // voxel to the clamped occupied/free value so a single edit always wins over
+  // however many hits or misses the saved rays accumulated there.
+  const float target_log_odds =
+      occupied ? tree.getClampingThresMaxLog() : tree.getClampingThresMinLog();
+  for (const auto &key : keys) {
+    const auto *before = tree.search(key);
+    if (before == nullptr || tree.isNodeOccupied(before) != occupied) {
+      ++result.changed_voxels;
+    }
+    tree.setNodeValue(key, target_log_odds, true);
+  }
+  result.edited_voxels = keys.size();
   tree.updateInnerOccupancy();
   tree.prune();
   std::filesystem::create_directories(output.parent_path());
-  if (!tree.writeBinary(output.string())) {
+  if (!SaveOctomapTree(tree, output, input.extension() == ".bt")) {
     result.reason_code = "octomap_write_failed";
-    result.message = "OctoMap OcTree::writeBinary failed";
+    result.message = "OctoMap write failed";
     return result;
   }
   result.ok = true;
@@ -928,7 +940,7 @@ OctomapEditRun RunNativeOctomapEdit(const std::filesystem::path &input,
   (void)options;
   return {false, "native_octomap_unavailable",
           "embedded OctoMap editing requires OctoMap development libraries",
-          "native_octomap", "", 0U};
+          "native_octomap", "", 0U, 0U};
 #endif
 }
 
@@ -2717,6 +2729,7 @@ std::string MapPipelineCore::EditOctomapVoxelsJson(
               << ",\"z\":" << options.z_m << "},"
               << "\"radius\":" << options.radius_m << ","
               << "\"edited_voxels\":" << edit_run.edited_voxels << ","
+              << "\"changed_voxels\":" << edit_run.changed_voxels << ","
               << "\"mode\":" << JsonString(edit_run.mode)
               << "}";
 
