@@ -137,21 +137,23 @@ void TestOctomapRoundTripKeepsEvidence(const std::filesystem::path& root) {
 }
 
 // Saved-ray replay keeps the evidence each voxel accumulated, writes no
-// occupancy that no ray measured, lets no miss erase a retained surface, and
-// leaves no trace of filtered returns.
+// occupancy that no ray measured, keeps a ray's grazing end from erasing a
+// retained surface while its far part still clears one, and leaves no trace of
+// filtered returns.
 void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
   const std::string map_id = "ray_evidence";
   assert(store.CreateMap(map_id).ok);
   const auto dir = root / map_id;
   std::filesystem::create_directories(dir / "patches");
-  const lingtu::maps::PointXyz floor{1.05F, 0.05F, 0.05F};   // later crossed by rays
+  const lingtu::maps::PointXyz floor{1.65F, 0.05F, 0.05F};   // crossed 0.4 m before the wall
+  const lingtu::maps::PointXyz ghost{0.35F, 0.05F, 0.05F};   // crossed 1.7 m before the wall
   const lingtu::maps::PointXyz wall{2.05F, 0.05F, 0.05F};    // hit by every scan
   const lingtu::maps::PointXyz post{2.05F, 1.05F, 0.05F};    // hit once
   const lingtu::maps::PointXyz person{1.05F, -1.05F, 0.05F}; // filtered at save time
   const lingtu::maps::PointXyz unhit{3.05F, 3.05F, 0.05F};    // retained, never measured
   std::string error;
-  assert(lingtu::maps::WriteBinaryXyzPcd(dir / "map.pcd", {floor, wall, post, unhit}, &error));
-  assert(lingtu::maps::WriteBinaryXyzPcd(dir / "patches/0.pcd", {floor, wall, post}, &error));
+  assert(lingtu::maps::WriteBinaryXyzPcd(dir / "map.pcd", {floor, ghost, wall, post, unhit}, &error));
+  assert(lingtu::maps::WriteBinaryXyzPcd(dir / "patches/0.pcd", {floor, ghost, wall, post}, &error));
   assert(lingtu::maps::WriteBinaryXyzPcd(dir / "patches/1.pcd", {wall, person}, &error));
   assert(lingtu::maps::WriteBinaryXyzPcd(dir / "patches/2.pcd", {wall}, &error));
   assert(lingtu::maps::WriteBinaryXyzPcd(dir / "patches/3.pcd", {wall}, &error));
@@ -168,7 +170,7 @@ void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
   const auto stat = [&](const char* name) {
     return lingtu::maps::JsonObjectNumberAtPath(result, {"octomap_result", "report", "saved_rays", name});
   };
-  assert(stat("inserted_points") == 6.0);
+  assert(stat("inserted_points") == 7.0);
   assert(!lingtu::maps::JsonObjectNumberAtPath(
       result, {"octomap_result", "report", "saved_rays", "raised_voxels"}).has_value());
 
@@ -184,9 +186,12 @@ void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
   assert(std::abs(log_odds(post) - one_hit) < 1e-5F);
   assert(log_odds(wall) > log_odds(post));
   assert(log_odds(wall) < tree->getClampingThresMaxLog());
-  // Three later rays cross the floor voxel on their way to the wall. It is a
-  // retained surface, so the misses do not erase its one measured hit.
+  // Three later rays cross the floor voxel within a metre of their wall
+  // endpoint: grazing misses do not erase its one measured hit.
   assert(std::abs(log_odds(floor) - one_hit) < 1e-5F);
+  // The same rays cross the ghost far from their endpoint and outvote its hit.
+  const auto* ghost_node = tree->search(ghost.x, ghost.y, ghost.z);
+  assert(ghost_node != nullptr && !tree->isNodeOccupied(ghost_node));
   // A retained point no scan endpoint reached is not invented as occupied.
   assert(tree->search(unhit.x, unhit.y, unhit.z) == nullptr);
   // Space the rays crossed is free; space they never reached stays unknown.

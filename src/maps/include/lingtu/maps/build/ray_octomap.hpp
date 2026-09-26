@@ -17,18 +17,23 @@ inline std::size_t OccupiedVoxelCount(const octomap::OcTree& tree) {
   return count;
 }
 
+// Near its endpoint a ray grazing a floor stays within one voxel of the
+// surface: from a sensor 0.4 m up, a 5 cm cell for the last metre of a ray that
+// lands 8 m away. OctoMap marks those surface cells free although the ray never
+// passed below the surface.
+inline constexpr double kGrazingGuardM = 1.0;
+
 // Replays the saved scans into `tree` from their sensor origins. The
 // save-time cleaned map.pcd decides which surfaces are static:
 //  * only endpoints inside a retained voxel are inserted, so returns the
 //    dynamic filter discarded leave neither hits nor carved free space;
-//  * a miss never lowers a retained voxel. A ray grazing a floor at a
-//    shallow angle traverses the surface cell next to its endpoint; OctoMap
-//    labels that cell free although the ray did not pass below the surface.
-//    On 903room at 5 cm, plain replay turned 37% of the retained voxels free;
-//    the Go2 planner then accepted 56% of the path the robot had walked while
-//    mapping, against 75% with this rule.
-// Every occupied voxel is a measured hit; nothing is written that no ray
-// produced, and a retained voxel no endpoint reached stays unknown.
+//  * the last kGrazingGuardM of a ray does not lower a retained voxel; the
+//    rest of the ray still clears it, so a person the filter missed is carved
+//    away by the rays that later pass through where they stood.
+// Every occupied voxel is a measured hit, and a retained point no endpoint
+// reached stays unknown. On 903room at 5 cm the Go2 planner accepts 81% of the
+// path the robot walked while mapping; plain replay (which freed 37% of the
+// retained voxels) 56%, and forcing every retained voxel occupied 61%.
 inline std::size_t PopulateSavedRayOctomap(
     octomap::OcTree& tree, const std::filesystem::path& directory,
     const std::function<bool()>& cancelled = {}) {
@@ -45,27 +50,32 @@ inline std::size_t PopulateSavedRayOctomap(
   if (retained_keys.empty())
     throw std::runtime_error("saved ray build retained map.pcd has no valid OctoMap keys");
 
+  const auto guard_cells = static_cast<std::size_t>(kGrazingGuardM / tree.getResolution());
   std::size_t count = 0;
+  octomap::KeyRay ray;
   VisitSavedScans(directory, [&](const SavedScan& scan) {
     if (cancelled && cancelled()) throw std::runtime_error("saved ray build cancelled");
-    octomap::Pointcloud cloud;
-    for (std::size_t i = 0; i + 2 < scan.xyz.size(); i += 3) {
-      octomap::OcTreeKey key;
-      if (std::isfinite(scan.xyz[i]) && std::isfinite(scan.xyz[i + 1]) &&
-          std::isfinite(scan.xyz[i + 2]) &&
-          tree.coordToKeyChecked(scan.xyz[i], scan.xyz[i + 1], scan.xyz[i + 2], key) &&
-          retained_keys.count(key) != 0U)
-        cloud.push_back(scan.xyz[i], scan.xyz[i + 1], scan.xyz[i + 2]);
-    }
-    if (cloud.size() == 0U) return;
-    // insertPointCloud(lazy, no discretize) without the misses on retained voxels.
+    const octomap::point3d origin(scan.origin[0], scan.origin[1], scan.origin[2]);
+    // One scan updates each cell once, and its hits win over its misses, as in
+    // OcTree::insertPointCloud.
     octomap::KeySet free_cells, occupied_cells;
-    tree.computeUpdate(cloud, octomap::point3d(scan.origin[0], scan.origin[1], scan.origin[2]),
-                       free_cells, occupied_cells, -1);
-    for (const auto& key : free_cells)
-      if (retained_keys.count(key) == 0U) tree.updateNode(key, false, true);
-    for (const auto& key : occupied_cells) tree.updateNode(key, true, true);
-    count += cloud.size();
+    for (std::size_t i = 0; i + 2 < scan.xyz.size(); i += 3) {
+      const octomap::point3d end(scan.xyz[i], scan.xyz[i + 1], scan.xyz[i + 2]);
+      octomap::OcTreeKey key;
+      if (!std::isfinite(end.x()) || !std::isfinite(end.y()) || !std::isfinite(end.z()) ||
+          !tree.coordToKeyChecked(end, key) || retained_keys.count(key) == 0U)
+        continue;
+      occupied_cells.insert(key);
+      ++count;
+      if (!tree.computeRayKeys(origin, end, ray)) continue;
+      std::size_t to_end = ray.size();
+      for (const auto& cell : ray) {
+        if (to_end-- > guard_cells || retained_keys.count(cell) == 0U) free_cells.insert(cell);
+      }
+    }
+    for (const auto& cell : free_cells)
+      if (occupied_cells.count(cell) == 0U) tree.updateNode(cell, false, true);
+    for (const auto& cell : occupied_cells) tree.updateNode(cell, true, true);
   });
   if (count == 0U)
     throw std::runtime_error("saved ray build retained map.pcd matched no saved scan endpoints");
