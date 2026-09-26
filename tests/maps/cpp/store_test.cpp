@@ -7,8 +7,11 @@
 #include <cassert>
 #include <chrono>
 #include <filesystem>
+#include <cmath>
 #include <fstream>
+#include <map>
 #include <string>
+#include <tuple>
 
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
 #include <octomap/OcTree.h>
@@ -84,6 +87,46 @@ void WriteDuplicateFrameMetadata(const std::filesystem::path& path) {
 }
 
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
+// A saved .ot must return every voxel with the log-odds it was saved with,
+// keep unknown space unknown, and be read back under the recorded sensor model.
+void TestOctomapRoundTripKeepsEvidence(const std::filesystem::path& root) {
+  octomap::OcTree tree(0.1);
+  for (int hits = 1; hits <= 6; ++hits) {
+    for (int i = 0; i < hits; ++i) {
+      tree.updateNode(octomap::point3d(0.1F * static_cast<float>(hits), 0.05F, 0.05F), true);
+      tree.updateNode(octomap::point3d(0.1F * static_cast<float>(hits), 1.05F, 0.05F), false);
+    }
+  }
+  tree.updateInnerOccupancy();
+  const auto leaves = [](const octomap::OcTree& source) {
+    std::map<std::tuple<unsigned, unsigned, unsigned, unsigned>, float> out;
+    for (auto it = source.begin_leafs(), end = source.end_leafs(); it != end; ++it) {
+      const auto key = it.getKey();
+      out[{key[0], key[1], key[2], it.getDepth()}] = it->getLogOdds();
+    }
+    return out;
+  };
+  const auto before = leaves(tree);
+
+  const auto ot_path = root / "round_trip.ot";
+  assert(lingtu::maps::SaveOctomapTree(tree, ot_path));
+  const auto loaded = lingtu::maps::LoadOctomapTree(ot_path);
+  assert(loaded != nullptr);
+  assert(leaves(*loaded) == before);
+  assert(loaded->search(5.05, 5.05, 5.05) == nullptr);
+  const auto& model = lingtu::maps::kSavedMapSensorModel;
+  const auto near = [](double a, double b) { return std::abs(a - b) < 1e-4; };
+  assert(near(loaded->getProbHit(), model.prob_hit));
+  assert(near(loaded->getProbMiss(), model.prob_miss));
+  assert(near(loaded->getOccupancyThres(), model.occupancy_threshold));
+  assert(near(loaded->getClampingThresMin(), model.clamping_min));
+  assert(near(loaded->getClampingThresMax(), model.clamping_max));
+
+  // Writing a .bt must not collapse the tree that is still in memory.
+  assert(lingtu::maps::SaveOctomapTree(tree, root / "round_trip.bt", true));
+  assert(leaves(tree) == before);
+}
+
 // One operator edit must decide a voxel regardless of how much ray evidence
 // it holds, and must not disturb the evidence of voxels outside the edit.
 void TestVoxelEditsSetState(MapStore& store, const std::filesystem::path& root) {
@@ -345,8 +388,9 @@ int main() {
   sampled_options.resolution = 0.2;
   const auto sampled_result = pipeline.BuildOctomapArtifactJson("sampled_support", sampled_options);
   assert(lingtu::maps::JsonObjectBoolAtPath(sampled_result, {"success"}) == true);
-  octomap::OcTree sampled_tree(0.2);
-  assert(sampled_tree.readBinary((root / "sampled_support/octomap.ot").string()));
+  const auto sampled_loaded = lingtu::maps::LoadOctomapTree(root / "sampled_support/octomap.ot");
+  assert(sampled_loaded != nullptr);
+  const auto& sampled_tree = *sampled_loaded;
   for (const auto& point : points) {
     const auto* node = sampled_tree.search(point.x, point.y, point.z);
     assert(node && sampled_tree.isNodeOccupied(node));
@@ -365,14 +409,20 @@ int main() {
   WriteText(ray_dir / "scan_origin.txt", "lidar_origin_in_patch 0 0 0\n");
   const auto ray_result = pipeline.BuildOctomapArtifactJson("ray_support",sampled_options);
   assert(lingtu::maps::JsonObjectBoolAtPath(ray_result,{"success"}) == true);
-  octomap::OcTree ray_tree(.2);
-  assert(ray_tree.readBinary((ray_dir / "octomap.ot").string()));
+  const auto ray_loaded = lingtu::maps::LoadOctomapTree(ray_dir / "octomap.ot");
+  assert(ray_loaded != nullptr);
+  const auto& ray_tree = *ray_loaded;
   const auto* ray_hit=ray_tree.search(1.25,.25,-.75);
   assert(ray_hit && ray_tree.isNodeOccupied(ray_hit));
   const auto* ray_free=ray_tree.search(.5,.1,-.3);
   assert(ray_free && !ray_tree.isNodeOccupied(ray_free));
   assert(ray_tree.search(1.25,.25,.5)==nullptr);
   assert(ray_tree.search(1.25,-.75,.25)==nullptr);
+  {
+    std::ifstream octomap_file(ray_dir / "octomap.ot");
+    std::string header;
+    assert(std::getline(octomap_file, header) && header == "# Octomap OcTree file");
+  }
   // An artifact written by the retired external converter, or one built at
   // another resolution, is rebuilt by the embedded builder.
   const auto read_metadata = [&]() {
@@ -396,6 +446,26 @@ int main() {
       pipeline.BuildOctomapArtifactJson("ray_support", finer_options), {"success"}) == true);
   assert(lingtu::maps::JsonObjectNumberAtPath(read_metadata(), {"resolution"}) == .1);
 
+  // The artifact records its encoding and sensor model; a lossy binary
+  // artifact is never reused as a saved-map OctoMap.
+  metadata = read_metadata();
+  assert(lingtu::maps::JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "encoding"}) ==
+         "full_log_odds");
+  assert(lingtu::maps::JsonObjectNumberAtPath(
+             metadata, {"artifacts", "octomap", "sensor_model", "prob_hit"}) ==
+         lingtu::maps::kSavedMapSensorModel.prob_hit);
+  assert(lingtu::maps::JsonObjectNumberAtPath(
+             metadata, {"artifacts", "octomap", "sensor_model", "clamping_max"}) ==
+         lingtu::maps::kSavedMapSensorModel.clamping_max);
+  const std::string lossless = "full_log_odds";
+  metadata.replace(metadata.find(lossless), lossless.size(), "binary_max_likelihood");
+  WriteText(ray_dir / "metadata.json", metadata);
+  const auto rebuilt = pipeline.BuildOctomapArtifactJson("ray_support", finer_options);
+  assert(lingtu::maps::JsonObjectStringAtPath(rebuilt, {"status"}) != "reused");
+  assert(lingtu::maps::JsonObjectStringAtPath(
+             read_metadata(), {"artifacts", "octomap", "encoding"}) == lossless);
+
+  TestOctomapRoundTripKeepsEvidence(root);
   TestVoxelEditsSetState(store, root);
 #endif
 

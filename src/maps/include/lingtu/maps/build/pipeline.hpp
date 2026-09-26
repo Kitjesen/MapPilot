@@ -9,6 +9,19 @@
 
 namespace lingtu::maps {
 
+// Sensor model of saved-map OctoMaps. An .ot file keeps every voxel's
+// log-odds but not the model that interprets them, so every reader applies
+// OctoMap's defaults. These are those defaults; builds set them explicitly
+// and metadata.json records them next to the artifact.
+struct OctomapSensorModel {
+  double prob_hit{0.7};
+  double prob_miss{0.4};
+  double occupancy_threshold{0.5};
+  double clamping_min{0.1192};
+  double clamping_max{0.971};
+};
+inline constexpr OctomapSensorModel kSavedMapSensorModel{};
+
 struct OctomapBuildOptions {
   double resolution{0.05};
   int support_dilation_cells{0};

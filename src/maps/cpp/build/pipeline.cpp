@@ -229,6 +229,16 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
             << "\"free_layers_above\":" << (saved_rays ? 0 : std::max(0, options.free_layers_above)) << ","
             << "\"free_dilation_cells\":" << (saved_rays ? 0 : std::max(0, options.free_dilation_cells)) << ","
             << "\"build_mode\":" << JsonString(kOctomapBuildMode) << ","
+            << "\"encoding\":"
+            << JsonString(octomap_path.extension() == ".bt" ? "binary_max_likelihood"
+                                                            : "full_log_odds")
+            << ","
+            << "\"sensor_model\":{"
+            << "\"prob_hit\":" << kSavedMapSensorModel.prob_hit << ","
+            << "\"prob_miss\":" << kSavedMapSensorModel.prob_miss << ","
+            << "\"occupancy_threshold\":" << kSavedMapSensorModel.occupancy_threshold << ","
+            << "\"clamping_min\":" << kSavedMapSensorModel.clamping_min << ","
+            << "\"clamping_max\":" << kSavedMapSensorModel.clamping_max << "},"
             << (manual_voxel_edit ? "\"manual_voxel_edit\":true," : "")
             << "\"builder\":{\"name\":\"LingTu MapsPipelineCore\",\"version\":\"0.2.0\"}"
             << "}";
@@ -323,6 +333,7 @@ bool ExistingMetadataAllowsReuse(const std::filesystem::path &metadata_path,
          number_matches("free_dilation_cells", saved_rays ? 0 : options.free_dilation_cells) &&
          JsonObjectStringAtPath(text, {"frame"}) == options.frame_id &&
          JsonObjectStringAtPath(text, {"build_mode"}) == kOctomapBuildMode &&
+         JsonObjectStringAtPath(text, {"artifacts", "octomap", "encoding"}) == "full_log_odds" &&
          JsonObjectStringAtPath(text, {"artifacts","octomap","evidence_source"}) ==
              (saved_rays ? "saved_rays" : "sampled_points") &&
          JsonObjectStringAtPath(text, {"schema_version"}) ==
@@ -1041,6 +1052,11 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
   }
 
   octomap::OcTree tree(options.resolution > 0.0 ? options.resolution : 0.20);
+  tree.setProbHit(kSavedMapSensorModel.prob_hit);
+  tree.setProbMiss(kSavedMapSensorModel.prob_miss);
+  tree.setOccupancyThres(kSavedMapSensorModel.occupancy_threshold);
+  tree.setClampingThresMin(kSavedMapSensorModel.clamping_min);
+  tree.setClampingThresMax(kSavedMapSensorModel.clamping_max);
   using namespace sampled_octomap;
   std::unordered_set<VoxelKey, VoxelKeyHash> support_keys;
   const auto occupied = buildOccupiedKeys(
@@ -1080,12 +1096,12 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
   }
   tree.updateInnerOccupancy();
   std::filesystem::create_directories(octomap_path.parent_path());
-  if (!tree.writeBinary(octomap_path.string())) {
+  if (!SaveOctomapTree(tree, octomap_path)) {
     return "{"
            "\"action\":\"build_octomap\","
            "\"success\":false,"
            "\"reason_code\":\"octomap_write_failed\","
-           "\"message\":\"OctoMap OcTree::writeBinary failed\","
+           "\"message\":\"OctoMap write failed\","
            "\"map_id\":" +
            JsonString(map_id) + "}";
   }
