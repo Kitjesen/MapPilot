@@ -38,6 +38,8 @@ Grid::Grid(const LocalPlannerParams &params, const LocalPlanRequest &input)
     : checkObstacle_(params.checkObstacle),
       configuredResolution_(params.scan.voxelResolution),
       cylinderOffset_(std::max(0.0, params.scan.cylinderOffset)),
+      supportHalfLength_(0.5 * params.vehicleLength),
+      supportHalfWidth_(0.5 * params.vehicleWidth),
       support_(params.scan),
       robotYaw_(input.robot.pose.yaw),
       collision_(input.environment.collision) {
@@ -466,11 +468,14 @@ bool Grid::supported(const Vec3 &center, double yaw,
                collision_.gridFromPlanningTranslation.y + s * center.x + c * center.y,
                collision_.gridFromPlanningTranslation.z + center.z};
   const double cy = std::cos(yaw), sy = std::sin(yaw);
-  const double width = support_.cylinderRadius;
+  // Ground evidence belongs under the robot's declared physical footprint,
+  // not under the obstacle-clearance halo of its collision cylinders.
   const std::array<Vec3, 7> samples{{{0, 0, 0},
-      {cylinderOffset_, width, 0}, {cylinderOffset_, -width, 0},
-      {-cylinderOffset_, width, 0}, {-cylinderOffset_, -width, 0},
-      {cylinderOffset_ + width, 0, 0}, {-cylinderOffset_ - width, 0, 0}}};
+      {supportHalfLength_, supportHalfWidth_, 0},
+      {supportHalfLength_, -supportHalfWidth_, 0},
+      {-supportHalfLength_, supportHalfWidth_, 0},
+      {-supportHalfLength_, -supportHalfWidth_, 0},
+      {supportHalfLength_, 0, 0}, {-supportHalfLength_, 0, 0}}};
   double baseHeight = 0.0;
   for (std::size_t i = 0; i < samples.size(); ++i) {
     const auto &o = samples[i];
@@ -490,7 +495,8 @@ bool Grid::supportedSegment(const Vec3 &start, double startYaw,
       !std::isfinite(startYaw) || !std::isfinite(endYaw)) return false;
   const double yawDelta = std::remainder(endYaw - startYaw, 2.0 * std::acos(-1.0));
   const double distance = std::hypot(std::hypot(end.x - start.x, end.y - start.y), end.z - start.z);
-  const double swept = distance + (cylinderOffset_ + support_.cylinderRadius) * std::abs(yawDelta);
+  const double supportRadius = std::hypot(supportHalfLength_, supportHalfWidth_);
+  const double swept = distance + supportRadius * std::abs(yawDelta);
   const int count = std::max(1, static_cast<int>(std::ceil(swept / (0.5 * collision_.resolution))));
   for (int i = 0; i <= count; ++i) {
     const double t = static_cast<double>(i) / count;

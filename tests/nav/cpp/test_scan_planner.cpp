@@ -4,6 +4,7 @@
 #include <cmath>
 #include <chrono>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "collision_bitmap.hpp"
@@ -29,12 +30,15 @@ using nav_kernel::Vec3;
 
 TEST(ScanGroundSupport, Measured3dSurfacesGapsSlabsAndBraking) {
   auto params = LocalPlannerParams{};
+  params.vehicleLength = .76;
+  params.vehicleWidth = .31;
   params.scan.voxelResolution = .05;
   params.scan.supportHeight = .35;
   params.scan.supportHeightTolerance = .05;
   params.scan.maxStepHeight = .15;
   params.scan.maxSupportSlope = .6;
   params.scan.cylinderRadius = .25;
+  params.scan.cylinderOffset = .19;
   CollisionBitmap inflated({-2,-2,-1}, {2,2,2}, .05);
   CollisionBitmap occupied({-2,-2,-1}, {2,2,2}, .05);
   CollisionBitmap free({-2,-2,-1}, {2,2,2}, .05);
@@ -79,6 +83,38 @@ TEST(ScanGroundSupport, Measured3dSurfacesGapsSlabsAndBraking) {
   const nav_kernel::local::scan::Grid missing(params, request);
   EXPECT_FALSE(missing.valid());
   EXPECT_EQ(missing.reason(), "ground_support_evidence_missing");
+}
+
+TEST(ScanGroundSupport, CollisionClearanceDoesNotExpandSupportFootprint) {
+  LocalPlannerParams params;
+  params.vehicleLength = .76;
+  params.vehicleWidth = .31;
+  params.scan.voxelResolution = .05;
+  params.scan.supportHeight = .35;
+  params.scan.supportHeightTolerance = .05;
+  CollisionBitmap inflated({-1,-1,-1}, {1,1,1}, .05);
+  CollisionBitmap occupied({-1,-1,-1}, {1,1,1}, .05);
+  CollisionBitmap free({-1,-1,-1}, {1,1,1}, .05);
+  for (int x = -8; x < 8; ++x)
+    for (int y = -4; y < 4; ++y) {
+      occupied.occupy({(x+.5)*.05, (y+.5)*.05, -.325});
+      free.occupy({(x+.5)*.05, (y+.5)*.05, -.275});
+    }
+  LocalPlanRequest request;
+  request.robot.pose.position = {0,0,.025};
+  request.environment.collision = inflated.view();
+  const auto o = occupied.view(), f = free.view();
+  request.environment.collision.measuredOccupiedStorage =
+      std::make_shared<const std::vector<std::uint8_t>>(o.inflatedBits, o.inflatedBits + o.inflatedBytes);
+  request.environment.collision.knownFreeStorage =
+      std::make_shared<const std::vector<std::uint8_t>>(f.inflatedBits, f.inflatedBits + f.inflatedBytes);
+  for (const auto [radius, offset] : {std::pair{.25, .19}, std::pair{.35, .30}}) {
+    params.scan.cylinderRadius = radius;
+    params.scan.cylinderOffset = offset;
+    const nav_kernel::local::scan::Grid grid(params, request);
+    EXPECT_TRUE(grid.valid()) << radius << ": " << grid.reason();
+    EXPECT_EQ(grid.inflatedOccupancy(request.robot.pose.position, 0), 0);
+  }
 }
 
 TEST(ScanGroundSupport, StartupFailureDistinguishesMissingReturnsFromWrongHeight) {

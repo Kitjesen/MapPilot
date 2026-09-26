@@ -61,6 +61,8 @@ class Grid {
   bool checkObstacle_{false};
   double configuredResolution_{0.0};
   double cylinderOffset_{0.0};
+  double supportHalfLength_{0.0};
+  double supportHalfWidth_{0.0};
   ScanPlannerParams support_{};
   std::optional<double> bodyHeading_{};
   double robotYaw_{0.0};
