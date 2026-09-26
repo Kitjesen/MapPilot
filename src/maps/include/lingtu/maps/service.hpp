@@ -71,6 +71,7 @@ class MapsServiceCore {
                                        const OctomapBuildOptions &options);
   std::string GetVoxelEditsJson(const std::string &map_id) const;
   std::string EditOctomapVoxelsJson(const std::string &map_id, const OctomapEditOptions &options);
+  std::string ApproveNavigationJson(const std::string &map_id, const std::string &approved_by);
   std::string BuildNavigationPackageJson(const std::string &map_id,
                                          const OctomapBuildOptions &options, bool include_esdf,
                                          bool include_traversability);

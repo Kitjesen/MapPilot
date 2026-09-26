@@ -39,6 +39,7 @@ add_library(lingtu_maps STATIC
   cpp/json.cpp
   cpp/semantic_taxonomy.cpp
   cpp/build/grid_artifacts.cpp
+  cpp/build/import_check.cpp
   cpp/build/occupancy_snapshot.cpp
   cpp/build/pcd.cpp
   cpp/build/saved_scans.cpp
@@ -289,6 +290,11 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME lingtu_maps_store_test COMMAND lingtu_maps_store_test)
 
+  add_executable(lingtu_maps_point_cloud_import_test
+    ${_LINGTU_MAPS_TEST_DIR}/point_cloud_import_test.cpp)
+  target_link_libraries(lingtu_maps_point_cloud_import_test PRIVATE lingtu_maps)
+  add_test(NAME lingtu_maps_point_cloud_import_test COMMAND lingtu_maps_point_cloud_import_test)
+
   add_executable(lingtu_maps_map_health_test ${_LINGTU_MAPS_TEST_DIR}/map_health_test.cpp)
   target_link_libraries(lingtu_maps_map_health_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_map_health_test COMMAND lingtu_maps_map_health_test)
@@ -463,6 +469,7 @@ if(BUILD_TESTING)
     lingtu_maps_map_graph_test
     lingtu_maps_save_map_test
     lingtu_maps_grid_artifact_io_test
+    lingtu_maps_point_cloud_import_test
     lingtu_maps_semantic_localization_client_test
   )
   if(LINGTU_MAPS_BUILD_MAPD)

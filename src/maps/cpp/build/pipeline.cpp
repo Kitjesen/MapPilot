@@ -1,4 +1,5 @@
 #include "lingtu/maps/build/pipeline.hpp"
+#include "lingtu/maps/build/import_check.hpp"
 
 #include <algorithm>
 #include <array>
@@ -186,6 +187,8 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
   // Only an OctoMap replayed from saved scan rays may drive navigation; one
   // built from sampled points invents free space above every surface.
   bool navigation_ready = saved_rays;
+  std::optional<std::string> approved_by;
+  std::optional<std::string> approved_at;
   if (manual_voxel_edit) {
     std::ifstream previous_file(map_dir / "metadata.json");
     std::ostringstream previous;
@@ -194,6 +197,10 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
         {"artifacts", "octomap", "evidence_source"}) == "saved_rays";
     navigation_ready = JsonObjectBoolAtPath(previous.str(),
         {"artifacts", "octomap", "navigation_ready"}).value_or(false);
+    approved_by = JsonObjectStringAtPath(previous.str(),
+        {"artifacts", "octomap", "navigation_approved_by"});
+    approved_at = JsonObjectStringAtPath(previous.str(),
+        {"artifacts", "octomap", "navigation_approved_at"});
   }
   const std::filesystem::path occupancy_path = map_dir / "occupancy.npz";
   const bool has_occupancy = std::filesystem::is_regular_file(occupancy_path);
@@ -226,6 +233,10 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
   artifacts << "\"octomap\":{"
             << "\"evidence_source\":" << JsonString(saved_rays ? "saved_rays" : "sampled_points") << ","
             << "\"navigation_ready\":" << (navigation_ready ? "true" : "false") << ","
+            << (approved_by && approved_at
+                    ? "\"navigation_approved_by\":" + JsonString(*approved_by) +
+                          ",\"navigation_approved_at\":" + JsonString(*approved_at) + ","
+                    : std::string{})
             << "\"path\":" << JsonString(octomap_path.filename().string()) << ","
             << "\"source_profile\":" << JsonString(source_profile) << ","
             << "\"data_source\":" << JsonString(data_source) << ","
@@ -2828,6 +2839,84 @@ std::string MapPipelineCore::EditOctomapVoxelsJson(
       std::filesystem::remove_all(transaction_dir);
     }
     return FailureJson("edit_voxels", exc.what(), "octomap_edit_failed");
+  }
+}
+
+std::string MapPipelineCore::ApproveNavigationJson(const std::string &map_id,
+                                                   const std::string &approved_by) {
+  try {
+    const std::string id = MapStore::NormalizeMapId(map_id);
+    const auto map_dir = store_.MapPath(id);
+    const auto metadata_path = map_dir / "metadata.json";
+    if (!std::filesystem::is_regular_file(metadata_path) ||
+        !std::filesystem::is_regular_file(map_dir / "octomap.ot")) {
+      return FailureJson("approve_navigation", "map has no built OctoMap: " + id,
+                         "octomap_missing");
+    }
+    static_cast<void>(RecoverInterruptedBuild(id));
+    const std::string build_id = MakeBuildId("NAVIGATION_APPROVAL");
+    std::filesystem::create_directories(BuildDir(id));
+    if (!TryCreateBuildLock(id, build_id + "\nNAVIGATION_APPROVAL\n")) {
+      return FailureJson("approve_navigation", "map build already running", "build_in_progress");
+    }
+    struct LockRelease {
+      std::filesystem::path path;
+      ~LockRelease() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+      }
+    } release{LockPath(id)};
+
+    const std::string metadata = ReadText(metadata_path);
+    const auto ready = JsonObjectBoolAtPath(metadata, {"artifacts", "octomap", "navigation_ready"});
+    const std::string head = "{\"action\":\"approve_navigation\",\"map_id\":" + JsonString(id);
+    if (ready == true) {
+      return head + ",\"success\":true,\"status\":\"already_navigation_ready\"}";
+    }
+    if (!ready.has_value() ||
+        JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "evidence_source"}) !=
+            "sampled_points") {
+      return FailureJson("approve_navigation", "rebuild the OctoMap before approving it",
+                         "octomap_rebuild_required");
+    }
+    const auto cloud = LoadPcdXyz(map_dir / "map.pcd");
+    if (!cloud.ok) {
+      return FailureJson("approve_navigation", cloud.message, "map_pcd_unreadable");
+    }
+    const double resolution =
+        JsonObjectNumberAtPath(metadata, {"artifacts", "octomap", "resolution"}).value_or(0.0);
+    auto check = CheckPointCloudForNavigation(cloud.points, resolution > 0.0 ? resolution : 0.05);
+    if (JsonObjectNumberAtPath(metadata, {"artifacts", "octomap", "support_dilation_cells"}) !=
+        0.0) {
+      check.blockers.push_back(
+          "rebuild the OctoMap without support dilation; dilated support can extend a floor "
+          "over a drop");
+    }
+    const std::string check_json = PointCloudNavigationCheckJson(check);
+    if (!check.ok()) {
+      return head + ",\"success\":false,\"reason_code\":\"point_cloud_check_failed\","
+             "\"message\":" + JsonString(check.blockers.front()) + ",\"check\":" + check_json + "}";
+    }
+
+    const std::string marker = "\"navigation_ready\":false";
+    const auto at = metadata.find(marker);
+    if (at == std::string::npos || metadata.find(marker, at + 1U) != std::string::npos) {
+      return FailureJson("approve_navigation", "metadata.json has no single navigation_ready field",
+                         "metadata_invalid");
+    }
+    std::string approved = metadata;
+    approved.replace(at, marker.size(),
+                     "\"navigation_ready\":true,\"navigation_approved_by\":" +
+                         JsonString(approved_by.empty() ? "operator" : approved_by) +
+                         ",\"navigation_approved_at\":" + JsonString(NowStamp()));
+    const auto staged = metadata_path.string() + ".approval";
+    if (!WriteTextFile(staged, approved)) {
+      return FailureJson("approve_navigation", "failed to write metadata.json", "metadata_write_failed");
+    }
+    std::filesystem::rename(staged, metadata_path);
+    return head + ",\"success\":true,\"status\":\"approved\",\"check\":" + check_json + "}";
+  } catch (const std::exception &exc) {
+    return FailureJson("approve_navigation", exc.what(), "approval_failed");
   }
 }
 

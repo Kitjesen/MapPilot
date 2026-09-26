@@ -83,6 +83,9 @@ class MapPipelineCore {
   std::string EditOctomapVoxelsJson(
       const std::string& map_id,
       const OctomapEditOptions& options);
+  // Marks a point-cloud OctoMap (no saved rays) navigation_ready once its
+  // map.pcd passes CheckPointCloudForNavigation; records who approved it.
+  std::string ApproveNavigationJson(const std::string& map_id, const std::string& approved_by);
   std::string BuildNavigationPackageJson(
       const std::string& map_id,
       const OctomapBuildOptions& options,

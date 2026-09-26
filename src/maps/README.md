@@ -113,6 +113,21 @@ The navigation OctoMap has its own evidence contract:
 - MapStore activation requires `navigation_ready: true`. A preview, or an
   artifact built before the field existed, is refused with a blocker; rebuilding
   the OctoMap re-marks a map that still has its saved scans.
+- A map without saved scans, such as an imported PCD, becomes
+  `navigation_ready` through `approve_map_navigation` (Gateway
+  `POST /api/v1/maps/{name}/approve_navigation`, the map card's "确认用于导航").
+  Its `map.pcd` must pass `CheckPointCloudForNavigation`: the largest
+  near-horizontal plane is level within 3 degrees (z points up), the cloud spans
+  1 to 2000 m in x/y and at most 100 m in z (metres, not millimetres), and at
+  least half of the floor cells at the map resolution have 6 of 8 neighbours.
+  The OctoMap must be built with `support_dilation_cells` 0. The approval is
+  recorded as `navigation_approved_by`/`navigation_approved_at`, survives voxel
+  edits, and is dropped by any rebuild. With the current planner, which treats
+  unknown space as passable, such a map plans exactly like a saved-ray map of
+  the same cloud: both mark the same occupied voxels; only the observed-free
+  space differs. `list_maps` reports `map_evidence`: `saved_rays`,
+  `approved_point_cloud`, `preview`, or `none`.
+- PCD import reads `ascii`, `binary`, and PCL `binary_compressed` (LZF) data.
 - A voxel edit (`edit_octomap_voxels`, the workbench zone marker) sets each
   voxel in the zone to the clamped occupied or free value, keeps the evidence of
   every other voxel, and reports `changed_voxels` next to `edited_voxels`.

@@ -301,6 +301,84 @@ PcdIoResult MakeError(const std::string& message) {
   return result;
 }
 
+// LZF decompression as used by PCL (liblzf format). Returns false on any
+// out-of-range literal or back reference, or when the output size differs.
+bool LzfDecompress(const unsigned char* in, std::size_t in_size, unsigned char* out,
+                   std::size_t out_size) {
+  std::size_t ip = 0;
+  std::size_t op = 0;
+  while (ip < in_size) {
+    std::size_t control = in[ip++];
+    if (control < 32U) {
+      const std::size_t length = control + 1U;
+      if (ip + length > in_size || op + length > out_size) return false;
+      std::memcpy(out + op, in + ip, length);
+      ip += length;
+      op += length;
+      continue;
+    }
+    std::size_t length = control >> 5U;
+    if (length == 7U) {
+      if (ip >= in_size) return false;
+      length += in[ip++];
+    }
+    if (ip >= in_size) return false;
+    const std::size_t back = ((control & 0x1fU) << 8U) + in[ip++] + 1U;
+    length += 2U;
+    if (back > op || op + length > out_size) return false;
+    for (std::size_t i = 0; i < length; ++i, ++op) out[op] = out[op - back];
+  }
+  return op == out_size;
+}
+
+// PCL binary_compressed: uint32 compressed size, uint32 uncompressed size,
+// then LZF data that expands to each field stored for all points in turn
+// (every x, then every y, ...), so a field starts at points * its byte offset.
+PcdIoResult LoadCompressedPoints(std::istream& stream, const PcdHeader& header) {
+  PcdIoResult result;
+  ScalarLayout layout;
+  if (!BuildLayout(header, &layout, &result.message)) {
+    return result;
+  }
+  std::uint32_t sizes[2] = {0U, 0U};
+  if (!stream.read(reinterpret_cast<char*>(sizes), sizeof(sizes))) {
+    result.message = "PCD binary_compressed header is truncated";
+    return result;
+  }
+  const std::uint64_t point_count = header.points_declared ? static_cast<std::uint64_t>(header.points) : 0U;
+  if (static_cast<std::uint64_t>(sizes[1]) != point_count * static_cast<std::uint64_t>(layout.byte_stride)) {
+    result.message = "PCD binary_compressed size does not match its fields and point count";
+    return result;
+  }
+  std::string compressed(sizes[0], '\0');
+  if (!stream.read(compressed.data(), static_cast<std::streamsize>(compressed.size()))) {
+    result.message = "PCD binary_compressed payload is truncated";
+    return result;
+  }
+  std::string data(sizes[1], '\0');
+  if (!LzfDecompress(reinterpret_cast<const unsigned char*>(compressed.data()), compressed.size(),
+                     reinterpret_cast<unsigned char*>(data.data()), data.size())) {
+    result.message = "PCD binary_compressed payload is corrupt";
+    return result;
+  }
+  const std::size_t n = static_cast<std::size_t>(point_count);
+  const char* x = data.data() + n * static_cast<std::size_t>(layout.x_byte);
+  const char* y = data.data() + n * static_cast<std::size_t>(layout.y_byte);
+  const char* z = data.data() + n * static_cast<std::size_t>(layout.z_byte);
+  result.points.reserve(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    PointXyz point;
+    std::memcpy(&point.x, x + i * sizeof(float), sizeof(float));
+    std::memcpy(&point.y, y + i * sizeof(float), sizeof(float));
+    std::memcpy(&point.z, z + i * sizeof(float), sizeof(float));
+    if (IsFinitePoint(point)) {
+      result.points.push_back(point);
+    }
+  }
+  result.ok = true;
+  return result;
+}
+
 }  // namespace
 
 PcdIoResult LoadPcdXyz(const std::filesystem::path& path) {
@@ -414,6 +492,9 @@ PcdIoResult LoadPcdXyz(const std::filesystem::path& path) {
   }
   if (header.data == "binary") {
     return LoadBinaryPoints(file, header);
+  }
+  if (header.data == "binary_compressed") {
+    return LoadCompressedPoints(file, header);
   }
   return MakeError("unsupported PCD DATA format: " + header.data);
 }

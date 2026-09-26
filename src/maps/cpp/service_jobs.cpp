@@ -76,6 +76,11 @@ std::string MapsServiceCore::EditOctomapVoxelsJson(const std::string &map_id,
   return pipeline_.EditOctomapVoxelsJson(map_id, options);
 }
 
+std::string MapsServiceCore::ApproveNavigationJson(const std::string &map_id,
+                                                   const std::string &approved_by) {
+  return pipeline_.ApproveNavigationJson(map_id, approved_by);
+}
+
 std::string MapsServiceCore::BuildNavigationPackageJson(const std::string &map_id,
                                                         const OctomapBuildOptions &options,
                                                         bool include_esdf,
