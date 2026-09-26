@@ -91,6 +91,34 @@ This projection has no sensor rays and therefore does not declare free cells.
 It is distinct from the native 3D OctoMap used for navigation; producing valid
 files does not prove localization, body clearance, or footprint support.
 
+The navigation OctoMap has its own evidence contract:
+
+- When a save keeps `poses.txt`, `scan_origin.txt`, and `patches/`, the builder
+  replays each saved scan from its sensor origin. Only endpoints inside a voxel
+  that the cleaned `map.pcd` retained are inserted, so returns removed by the
+  save-time dynamic filter leave neither hits nor carved free space. Voxels keep
+  the hit/miss log-odds their rays accumulated; space no ray reached stays
+  unknown. A retained voxel the rays still left free or unknown (grazing rays
+  wear floor voxels away) is raised to one-hit occupied, because the cleaned map
+  is the authority on which surfaces exist. The build report lists
+  `saved_rays.{inserted_points, retained_voxels, raised_voxels}`.
+- Without those files the builder marks occupied voxels from sampled points and
+  adds the configured free envelope above supports. That artifact is a preview.
+- `octomap.ot` is written with OctoMap's full encoding, never `writeBinary()`,
+  which would reduce every voxel to occupied/free. `metadata.json` records
+  `artifacts.octomap.encoding: full_log_odds`, the `sensor_model` the build used
+  (OctoMap's defaults, which is what every reader applies), and
+  `navigation_ready`: `true` only for a saved-ray build. An artifact that is not
+  `full_log_odds` is rebuilt rather than reused.
+- MapStore activation requires `navigation_ready: true`. A preview, or an
+  artifact built before the field existed, is refused with a blocker; rebuilding
+  the OctoMap re-marks a map that still has its saved scans.
+- A voxel edit (`edit_octomap_voxels`, the workbench zone marker) sets each
+  voxel in the zone to the clamped occupied or free value, keeps the evidence of
+  every other voxel, and reports `changed_voxels` next to `edited_voxels`.
+  `occupied`/`preblocked` mark occupied; `free`/`traversable`/`clear` mark free.
+  The edited artifact keeps the `navigation_ready` value of the one it replaced.
+
 Deploy `mapd`, `lingtu-mapctl`, and `prune` together. The save transaction must
 preserve `scan_origin.txt`, poses, patches, and `map.pcd.preclean` for calibrated
 visibility cleanup and later reprocessing. Preserve an existing map while

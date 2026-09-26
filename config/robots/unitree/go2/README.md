@@ -658,13 +658,11 @@ SCAN 已接通行人运动预测。本轮建议是验收和修正这些已有能
 
 ### 应先修的本库一致性问题
 
-本次追加确认两个公开 OctoMap 构建模式仍有语义差异：
-`src/maps/cpp/build/pipeline.cpp::BuildNativeOctomapInDirectory` 的 native 路径对所有
-占据点做 XY 支撑扩展并在其上方生成 free；
-`src/nav/cpp/planning/global/octoplanner/pcd_to_octomap.cpp` 的 external 路径先提取
-水平支撑，限制桌面向低地面侧向扩展，并只从支撑生成上方自由层。
-`native_octomap` 是公开支持模式，但默认 `build_mode` 是 `external_pcl_converter`。
-这是需要统一的本地代码缺口，未据此断定当前现场卡点来自 native 路径。
+（2026-09-26 已处理）OctoMap 构建模式不再分叉：外部转换器路径已删除，
+OctoMap 只由 mapd 进程内构建；无射线时的采样点路径与离线工具共用
+`sampled_octomap.hpp` 的支撑/净空逻辑。有保存扫描时按射线回放并保留 log-odds，
+`octomap.ot` 以无损格式保存，只有射线构建（`navigation_ready: true`）的地图可激活。
+语义与验证见 `src/maps/README.md`。
 
 优先顺序：先统一支撑/净空与地图转换语义、核对实际阻挡来源；再验收自主恢复和
 轨迹衔接；最后完善保存地图去残影并评估额外算法。基础验收至少覆盖空地连续行走、
