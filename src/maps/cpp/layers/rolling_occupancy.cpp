@@ -1310,30 +1310,30 @@ RollingInflatedSnapshot RollingOccupancyGrid::InflatedSnapshot() const {
   snapshot.occupied_bits.assign(PackedByteCount(cells_.size()), 0U);
   snapshot.measured_occupied_bits.assign(snapshot.occupied_bits.size(), 0U);
   snapshot.known_free_bits.assign(snapshot.occupied_bits.size(), 0U);
-  ForEachSetBit(inflated_bits_, cells_.size(), [&](std::size_t physical) {
-    const CellCoord logical = PhysicalToLogical(physical);
-    const std::size_t linear =
-        (static_cast<std::size_t>(logical.z) * static_cast<std::size_t>(config_.size_y) +
-         static_cast<std::size_t>(logical.y)) *
-            static_cast<std::size_t>(config_.size_x) +
-        static_cast<std::size_t>(logical.x);
-    snapshot.occupied_bits[linear / 8U] |=
-        static_cast<std::uint8_t>(1U << (linear % 8U));
-  });
-  ForEachSetBit(observed_bits_, cells_.size(), [&](std::size_t physical) {
-    const CellCoord logical = PhysicalToLogical(physical);
-    const std::size_t linear =
-        (static_cast<std::size_t>(logical.z) * config_.size_y + logical.y) *
-            config_.size_x + logical.x;
-    const auto state = StateFor(cells_[physical]);
-    if (state == OccupancyState::kOccupied) {
-      snapshot.measured_occupied_bits[linear / 8U] |=
-          static_cast<std::uint8_t>(1U << (linear % 8U));
-    } else if (state == OccupancyState::kFree && !cells_[physical].unresolved_hit) {
-      snapshot.known_free_bits[linear / 8U] |=
-          static_cast<std::uint8_t>(1U << (linear % 8U));
+  const auto pack = [&](const std::vector<std::uint64_t>& physical_bits,
+                        std::vector<std::uint8_t>& logical_bits) {
+    if (ring_x_ == 0 && ring_y_ == 0 && ring_z_ == 0) {
+      std::size_t byte = 0U;
+      for (const std::uint64_t word : physical_bits) {
+        for (unsigned shift = 0U; shift < 64U && byte < logical_bits.size(); shift += 8U) {
+          logical_bits[byte++] = static_cast<std::uint8_t>(word >> shift);
+        }
+      }
+      return;
     }
-  });
+    ForEachSetBit(physical_bits, cells_.size(), [&](std::size_t physical) {
+      const CellCoord logical = PhysicalToLogical(physical);
+      const std::size_t linear =
+          (static_cast<std::size_t>(logical.z) * static_cast<std::size_t>(config_.size_y) +
+           static_cast<std::size_t>(logical.y)) *
+              static_cast<std::size_t>(config_.size_x) +
+          static_cast<std::size_t>(logical.x);
+      logical_bits[linear / 8U] |= static_cast<std::uint8_t>(1U << (linear % 8U));
+    });
+  };
+  pack(inflated_bits_, snapshot.occupied_bits);
+  pack(measured_occupied_bits_, snapshot.measured_occupied_bits);
+  pack(known_free_bits_, snapshot.known_free_bits);
   snapshot.Validate();
   return snapshot;
 }

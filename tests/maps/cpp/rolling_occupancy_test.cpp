@@ -488,6 +488,15 @@ void TestEvidenceChangesWithoutInflationChangeAdvanceGeneration() {
     for (std::size_t i = 0; i < snapshot.state.size(); ++i) {
       const bool occupied = (packed.measured_occupied_bits[i/8] & (1U << (i%8))) != 0;
       const bool free = (packed.known_free_bits[i/8] & (1U << (i%8))) != 0;
+      const int x = static_cast<int>(i % static_cast<std::size_t>(packed.size_x));
+      const int y = static_cast<int>((i / static_cast<std::size_t>(packed.size_x)) %
+                                     static_cast<std::size_t>(packed.size_y));
+      const int z = static_cast<int>(i / (static_cast<std::size_t>(packed.size_x) *
+                                          static_cast<std::size_t>(packed.size_y)));
+      const float center_x = packed.origin_x_m + (static_cast<float>(x) + 0.5F) * packed.resolution_m;
+      const float center_y = packed.origin_y_m + (static_cast<float>(y) + 0.5F) * packed.resolution_m;
+      const float center_z = packed.origin_z_m + (static_cast<float>(z) + 0.5F) * packed.resolution_m;
+      assert(packed.Occupied(x, y, z) == grid.InflatedContains(center_x, center_y, center_z));
       assert(occupied == (snapshot.state[i] == static_cast<std::uint8_t>(OccupancyState::kOccupied)));
       assert(!free || snapshot.state[i] == static_cast<std::uint8_t>(OccupancyState::kFree));
       assert(!occupied || !free);
