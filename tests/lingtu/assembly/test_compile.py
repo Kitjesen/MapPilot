@@ -464,7 +464,7 @@ def test_real_run_plan_selects_go2_mid360_config() -> None:
     assert plan.native_process_environment["LINGTU_NAV_VEHICLE_WIDTH_M"] == "0.31"
     assert plan.native_process_environment["LINGTU_TELEOP_OBSTACLE_MARGIN_M"] == "0.1"
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"] == "0.25"
-    assert plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.18"
+    assert plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.19"
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] == "0.1"
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.1"
     assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.1"

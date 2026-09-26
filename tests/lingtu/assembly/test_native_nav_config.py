@@ -36,7 +36,7 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
     assert payload["parameters"] == {
         "collision_clearance_above_m": 0.10,
         "collision_clearance_below_m": 0.10,
-        "collision_cylinder_offset_m": 0.18,
+        "collision_cylinder_offset_m": 0.19,
         "collision_cylinder_radius_m": 0.25,
         "collision_hard_margin_m": 0.10,
         "corridor_lookahead_m": 3.5,
@@ -105,7 +105,7 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "LINGTU_NAV_VEHICLE_LENGTH_M": "0.76",
         "LINGTU_NAV_VEHICLE_WIDTH_M": "0.31",
         "LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M": "0.25",
-        "LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M": "0.18",
+        "LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M": "0.19",
         "LINGTU_NAV_SENSOR_OFFSET_X_M": "0.16143",
         "LINGTU_NAV_SENSOR_OFFSET_Y_M": "0",
         "LINGTU_NAV_SENSOR_OFFSET_Z_M": "0.12262",
@@ -119,6 +119,15 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "rotate",
     )
     assert payload["native_nav"]["recovery"]["max_attempts"] == 3
+
+
+def test_go2_double_cylinders_cover_declared_outline() -> None:
+    parameters = compile_native_nav_config("nav", _compiled_product_config("nav")).parameters
+    half_length = 0.5 * parameters["vehicle_length_m"]
+    half_width = 0.5 * parameters["vehicle_width_m"]
+    offset = parameters["collision_cylinder_offset_m"]
+    required_radius = math.hypot(half_width, max(offset, half_length - offset))
+    assert parameters["collision_cylinder_radius_m"] >= required_radius
 
 
 def test_go2_collision_hard_margin_reaches_native_endpoint() -> None:
@@ -137,9 +146,9 @@ def test_go2_standing_height_reaches_native_planner() -> None:
     assert compiled.environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M"] == "0.05"
     assert compiled.environment["LINGTU_NAV_OCTO_STRICT_GROUND_SUPPORT"] == "0"
     assert compiled.environment["LINGTU_NAV_OCTO_GROUND_SUPPORT_XY_RADIUS_CELLS"] == "1"
-    assert compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"] == "0.42"
+    assert compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"] == "0.25"
     assert compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"] == "0.25"
-    assert compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.18"
+    assert compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.19"
 
 
 @pytest.mark.parametrize("tolerance", [0.15, 0.25])

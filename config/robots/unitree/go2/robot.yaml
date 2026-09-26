@@ -31,7 +31,8 @@ geometry:
   vehicle_length: 0.76
   # SCAN-Planner's Go2-tuned heading-aligned double-cylinder hard envelope.
   collision_cylinder_radius: 0.25
-  collision_cylinder_offset: 0.18
+  # One quarter of the 0.76 m length centres both circles over the full outline.
+  collision_cylinder_offset: 0.19
   # One horizontal hard margin for rectangular CMU/final-safety checks.
   # The double-cylinder values above already include their own hard clearance.
   collision_hard_margin: 0.10
