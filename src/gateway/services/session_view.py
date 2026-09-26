@@ -159,7 +159,9 @@ def session_snapshot(gw: Any) -> dict[str, Any]:
         backend = "native_dds"
     pose_fresh, pose_freshness = classify_pose_freshness(localization_status)
     algorithm_healthy = localizer_algorithm_healthy(localization_status, icp)
-    loc_ready = algorithm_healthy and pose_fresh is not False
+    # Unknown freshness is not enough to authorize a navigation session.  The
+    # native motion boundary may only receive an explicit fresh pose.
+    loc_ready = algorithm_healthy and pose_fresh is True
     capability_defaults = backend_capability_defaults(backend)
     relocalization_supported = localization_status.get("relocalization_supported")
     if relocalization_supported is None:

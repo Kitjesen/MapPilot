@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { ArrowLeft, Map, FolderOpen, Trash2, RefreshCw, Save, Pencil, Navigation, ChevronDown, Check, MoreHorizontal, X, Search } from 'lucide-react'
-import type { MapInfo, SessionEvent, ToastKind } from '../types'
+import type { MapInfo, NavigationStatusResponse, SessionEvent, ToastKind } from '../types'
 import * as api from '../services/api'
 import { formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, mapSaveProgressValue, mapSaveElapsedMs, formatMapSaveElapsed, type MapSaveStatus } from '../services/mapSavePresentation.ts'
 import { mapIsActivationReady, mapSaveBlockedReason, navigationRuntimeReady, navigationSessionReady } from '../services/mapReadiness'
@@ -19,6 +19,7 @@ interface MapViewProps {
   productSwitchMessage: string
   onReturnLive: () => void
   session: SessionEvent['data'] | null
+  navigationStatus: NavigationStatusResponse | null
   showToast: (msg: string, kind?: ToastKind) => void
   locale: Locale
   motionStartAllowed: boolean
@@ -87,6 +88,7 @@ export function MapView({
   productSwitchMessage,
   onReturnLive,
   session,
+  navigationStatus,
   showToast,
   locale,
   motionStartAllowed,
@@ -301,8 +303,10 @@ export function MapView({
   const selectedInfo = maps.find(map => map.name === selectedMap)
   const canPickGoal = !observe && selectedMap !== null && goalPickingMap === selectedMap
     && session !== null && navigationSessionReady(session, selectedMap)
+  const goalAdmissionReady = navigationStatus?.goal_admission.state === 'ACCEPTING'
   const selectedNavigationReady = !observe && selectedMap !== null && selectedInfo !== undefined
     && mapIsActivationReady(selectedInfo) && session !== null && navigationSessionReady(session, selectedMap)
+    && goalAdmissionReady
   const selectedMapActive = selectedMap !== null && session?.active_map === selectedMap
 
   return (
@@ -337,7 +341,7 @@ export function MapView({
             onClick={() => handleNavigate(selectedMap!)}><Navigation size={16} />选目标</button>}
           {!observe && selectedMapActive && !selectedNavigationReady && selectedInfo && mapIsActivationReady(selectedInfo) && (
             <button className={styles.quietButton} disabled title="等待定位和导航准入状态就绪">
-              <Navigation size={16} />等待定位
+              <Navigation size={16} />等待定位/准入
             </button>
           )}
           {!observe && session?.product === 'map' && <button className={styles.primaryButton}
@@ -417,20 +421,22 @@ export function MapView({
             </div>}
             {!loading && <ul className={styles.mapList}>
               {filteredMaps.map(map => <MapCard key={map.name} m={map} selected={selectedMap === map.name}
-                readOnly={observe} navigationReady={session !== null && navigationSessionReady(session, map.name)}
+                readOnly={observe}
+                navigationReady={navigationStatus !== null && goalAdmissionReady
+                  && session !== null && navigationSessionReady(session, map.name)}
                 onPreview={togglePreview} onNavigate={handleNavigate} onRename={handleRename} onDelete={handleDelete} />)}
             </ul>}
             {!loading && maps.length > 0 && filteredMaps.length === 0 && <p className={styles.stateMsg}>没有找到匹配的地图</p>}
           </div>
         </aside>}
         <div className={styles.mapCanvas}>
-          {selectedMap ? <PointCloudViewer mapName={selectedMap} pickedPoint={canPickGoal ? pickedPoint : null}
-            onPick={canPickGoal ? setPickedPoint : undefined} /> : <div className={styles.emptyCanvas}>
+          {selectedMap ? <PointCloudViewer mapName={selectedMap} pickedPoint={canPickGoal && goalAdmissionReady ? pickedPoint : null}
+            onPick={canPickGoal && goalAdmissionReady ? setPickedPoint : undefined} /> : <div className={styles.emptyCanvas}>
               <Map size={36} strokeWidth={1.2} /><h2>查看已保存的地图</h2>
               <p>选择一张地图，查看完整建图范围。</p>
               {!libraryOpen && <button className={styles.quietButton} onClick={() => setLibraryOpen(true)}>打开地图库</button>}
             </div>}
-          {canPickGoal && <div className={styles.pickPanel}>
+          {canPickGoal && goalAdmissionReady && <div className={styles.pickPanel}>
             <div className={styles.pickInfo}>
               <strong>{pickedPoint ? '导航目标' : '点击地图选择目标'}</strong>
               {pickedPoint && <span>{pickedPoint.x.toFixed(2)}, {pickedPoint.y.toFixed(2)}, {pickedPoint.z.toFixed(2)} m</span>}

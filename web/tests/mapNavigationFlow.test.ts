@@ -110,6 +110,8 @@ test('navigation session must match the map and have live localization', () => {
   assert.equal(navigationSessionReady({ ...base, localizer_ready: false }, 'demo'), false)
   assert.equal(navigationSessionReady({ ...base, map_has_octomap: false }, 'demo'), false)
   assert.equal(navigationSessionReady({ ...base, product: null }, 'demo'), false)
+  assert.equal(navigationSessionReady({ ...base, pose_fresh: undefined }, 'demo'), false)
+  assert.equal(navigationSessionReady({ ...base, pose_fresh: null }, 'demo'), false)
 
   const navigation = { goal_admission: { state: 'ACCEPTING' } }
   assert.equal(navigationRuntimeReady(base, navigation as never, 'demo'), true)

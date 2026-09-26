@@ -22,6 +22,7 @@ import { readStoredLocale, text, writeStoredLocale, type Locale } from './i18n'
 import { ToastContainer } from './components/Toast'
 import * as api from './services/api'
 import { currentNavigationTaskStore } from './services/currentNavigationTask'
+import { liveNavigationStatus } from './services/navigationStatus'
 import {
   MotionAction,
   MotionGateReason,
@@ -281,6 +282,7 @@ function Dashboard() {
             productSwitchMessage={productControl.message}
             onReturnLive={() => handleTabChange('scene')}
             session={sseState.session}
+            navigationStatus={liveNavigationStatus(sseState, nowMs / 1000)}
             showToast={showToast}
             locale={locale}
             motionStartAllowed={motionStartGate.allowed}

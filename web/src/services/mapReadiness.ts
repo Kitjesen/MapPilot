@@ -54,7 +54,7 @@ export function navigationSessionReady(
     && session.map_has_pcd === true
     && session.map_has_octomap === true
     && session.localizer_ready === true
-    && session.pose_fresh !== false
+    && session.pose_fresh === true
 }
 
 export function navigationRuntimeReady(
@@ -92,7 +92,7 @@ export function productReady(
       && session.map_has_pcd === true
       && session.map_has_octomap === true
       && session.localizer_ready === true
-      && session.pose_fresh !== false
+      && session.pose_fresh === true
   }
   if (!SAVED_MAP_PRODUCTS.has(targetProduct)) return true
 
@@ -119,7 +119,7 @@ export function productTransitionDetail(
   if (expectsSavedMap) {
     if (!session.map_has_pcd) return '等待保存地图就绪'
     if (!session.localizer_ready) return '等待定位器就绪'
-    if (session.pose_fresh === false) return '等待新鲜定位数据'
+    if (session.pose_fresh !== true) return '等待新鲜定位数据'
   }
   if (targetProduct === 'explore' && !mapName?.trim() && session.active_map) {
     return '等待实时探索会话启动'
