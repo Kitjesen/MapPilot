@@ -803,7 +803,9 @@ def test_slam_profile_prefers_live_native_dds_status_over_stopped_session():
 
     assert model.slam_profile == "native_dds"
     assert model.localization_backend == "native_dds"
-    assert model.map_save_supported is True
+    # Native map save is gated on a committed map Product; none is committed here.
+    assert model.product is None
+    assert model.map_save_supported is False
 
 
 def test_slam_profile_keeps_native_dds_runtime_profile():

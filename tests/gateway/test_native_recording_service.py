@@ -36,14 +36,18 @@ def _inspection_plan() -> RunPlan:
         env_config={"backend": "mujoco"},
         process_env={},
     )._resolve("map")
-    lifecycle = base.lifecycle
-    lifecycle["product"] = "inspection"
     runtime = resolve_product_variant_spec(
         "inspection",
         load_runtime_graph().products["inspection"],
     )
+    # The lifecycle is borrowed from the map plan, so its variant identity must
+    # be rewritten along with the product or RunPlan rejects the mismatch.
+    lifecycle = base.lifecycle
+    lifecycle["product"] = "inspection"
+    lifecycle["product_variant"] = runtime.get("product_variant")
     return RunPlan.create(
         product="inspection",
+        product_variant=runtime.get("product_variant"),
         env=base.env,
         robot=base.robot,
         process_control=base.process_control,
