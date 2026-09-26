@@ -227,8 +227,6 @@ def _build_octomap_native(
         map_id,
         "--map-root",
         str(map_root),
-        "--build-mode",
-        "external_pcl_converter" if args.converter else "native_octomap",
         "--resolution",
         str(float(args.resolution)),
         "--support-dilation-cells",
@@ -254,11 +252,9 @@ def _build_octomap_native(
             else f"mujoco_{scene_preset}_saved_map_plan_gate"
         ),
         "--timeout-s",
-        str(float(args.converter_timeout)),
+        str(float(args.build_timeout)),
     ]
-    if args.converter:
-        command.extend(["--converter", str(args.converter)])
-    result = _run_json_process(command, timeout_s=float(args.converter_timeout) + 5.0)
+    result = _run_json_process(command, timeout_s=float(args.build_timeout) + 5.0)
     result["ok"] = result.get("success") is True
     return result
 
@@ -2178,9 +2174,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Free-space envelope layers; auto-scales from robot body height when negative.",
     )
     parser.add_argument("--free-dilation-cells", type=int, default=1)
-    parser.add_argument("--converter", default="")
-    parser.add_argument("--no-env-converter", action="store_true")
-    parser.add_argument("--converter-timeout", type=float, default=60.0)
+    parser.add_argument("--build-timeout", type=float, default=60.0)
     parser.add_argument("--planner-executable", default="")
     parser.add_argument("--planner-timeout", type=float, default=30.0)
     parser.add_argument("--planner-no-ground-support", action="store_true")

@@ -319,8 +319,7 @@ def test_saved_map_build_does_not_activate(monkeypatch, tmp_path):
         lambda command, **_kwargs: commands.append(command) or {"success": True},
     )
     args = SimpleNamespace(
-        converter="",
-        converter_timeout=5.0,
+        build_timeout=5.0,
         free_dilation_cells=1,
         free_layers_above=1,
         resolution=0.1,
@@ -337,6 +336,8 @@ def test_saved_map_build_does_not_activate(monkeypatch, tmp_path):
 
     assert result["ok"] is True
     assert "--activate" not in commands[0]
+    assert "--build-mode" not in commands[0]
+    assert "--converter" not in commands[0]
 
 
 def test_asset_builder_locks_support_dilation(monkeypatch, tmp_path):
