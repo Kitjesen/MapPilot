@@ -89,6 +89,13 @@ void CreateReadyMap(const std::filesystem::path &root, const std::string &id) {
   };
   std::string error;
   assert(lingtu::maps::WriteBinaryXyzPcd(map / "map.pcd", points, &error));
+  std::filesystem::create_directories(map / "patches");
+  assert(lingtu::maps::WriteBinaryXyzPcd(map / "patches/0.pcd", points, &error));
+  Write(map / "poses.txt", "0.pcd 0 0 0 1 0 0 0\n");
+  Write(map / "scan_origin.txt", "lidar_origin_in_patch 0 0 0\n");
+  Write(map / "patch_bundle.manifest",
+        "LINGTU_PATCH_BUNDLE_V1\ncomplete 1\ndropped_count 0\n"
+        "first_sequence 0\nlast_sequence 0\npatch_count 1\n");
   assert(lingtu::maps::BuildOccupancyProjectionSnapshot(map, true).ok);
   MapStore fixture_store(MapStoreConfig{root});
   lingtu::maps::MapPipelineCore pipeline(fixture_store);
@@ -111,7 +118,8 @@ void CreateReadyMap(const std::filesystem::path &root, const std::string &id) {
       map / "metadata.json",
       "{\"frame_id\":\"map\",\"artifacts\":{"
       "\"map_pcd\":{\"path\":\"map.pcd\"},"
-      "\"octomap\":{\"path\":\"octomap.ot\",\"navigation_ready\":true},"
+      "\"octomap\":{\"path\":\"octomap.ot\",\"evidence_source\":\"saved_rays\","
+      "\"build_mode\":\"native_octomap\",\"navigation_ready\":true},"
       "\"occupancy_grid\":{\"path\":\"occupancy.npz\"}}}");
 }
 
@@ -151,7 +159,8 @@ void TestMetadataMtimeDoesNotChangeContentEpoch() {
       metadata_path,
       "{\"frame_id\":\"map\",\"created_at\":\"replacement\",\"artifacts\":{"
       "\"map_pcd\":{\"path\":\"map.pcd\"},"
-      "\"octomap\":{\"path\":\"octomap.ot\",\"navigation_ready\":true},"
+      "\"octomap\":{\"path\":\"octomap.ot\",\"evidence_source\":\"saved_rays\","
+      "\"build_mode\":\"native_octomap\",\"navigation_ready\":true},"
       "\"occupancy_grid\":{\"path\":\"occupancy.npz\"}}}");
   std::filesystem::last_write_time(metadata_path, first_time + std::chrono::seconds(1));
 

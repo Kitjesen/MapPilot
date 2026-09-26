@@ -98,10 +98,10 @@ The navigation OctoMap has its own evidence contract:
   that the cleaned `map.pcd` retained are inserted, so returns removed by the
   save-time dynamic filter leave neither hits nor carved free space. Voxels keep
   the hit/miss log-odds their rays accumulated; space no ray reached stays
-  unknown. A retained voxel the rays still left free or unknown (grazing rays
-  wear floor voxels away) is raised to one-hit occupied, because the cleaned map
-  is the authority on which surfaces exist. The build report lists
-  `saved_rays.{inserted_points, retained_voxels, raised_voxels}`.
+  unknown. The replay never raises a retained voxel after ray integration: a
+  hit, miss, or unknown result remains the result of the recorded rays. The
+  build report exposes only `saved_rays.inserted_points`; it does not invent
+  occupancy for a point that the sensor evidence did not support.
 - Without those files the builder marks occupied voxels from sampled points and
   adds the configured free envelope above supports. That artifact is a preview.
 - `octomap.ot` is written with OctoMap's full encoding, never `writeBinary()`,
@@ -110,29 +110,35 @@ The navigation OctoMap has its own evidence contract:
   (OctoMap's defaults, which is what every reader applies), and
   `navigation_ready`: `true` only for a saved-ray build. An artifact that is not
   `full_log_odds` is rebuilt rather than reused.
-- MapStore activation requires `navigation_ready: true`. A preview, or an
-  artifact built before the field existed, is refused with a blocker; rebuilding
-  the OctoMap re-marks a map that still has its saved scans.
-- A map without saved scans, such as an imported PCD, becomes
-  `navigation_ready` through `approve_map_navigation` (Gateway
-  `POST /api/v1/maps/{name}/approve_navigation`, the map card's "确认用于导航").
-  Its `map.pcd` must pass `CheckPointCloudForNavigation`: the largest
-  near-horizontal plane is level within 3 degrees (z points up), the cloud spans
-  1 to 2000 m in x/y and at most 100 m in z (metres, not millimetres), and at
-  least half of the floor cells at the map resolution have 6 of 8 neighbours.
-  The OctoMap must be built with `support_dilation_cells` 0. The approval is
-  recorded as `navigation_approved_by`/`navigation_approved_at`, survives voxel
-  edits, and is dropped by any rebuild. With the current planner, which treats
-  unknown space as passable, such a map plans exactly like a saved-ray map of
-  the same cloud: both mark the same occupied voxels; only the observed-free
-  space differs. `list_maps` reports `map_evidence`: `saved_rays`,
-  `approved_point_cloud`, `preview`, or `none`.
+- MapStore activation accepts a saved-ray map only when `navigation_ready` is
+  `true`, `evidence_source` is `saved_rays`, `build_mode` is `native_octomap`,
+  and the complete saved-scan bundle (`map.pcd`, `poses.txt`,
+  `scan_origin.txt`, `patch_bundle.manifest`, and the referenced `patches/`)
+  is present. A preview or an artifact built before this evidence contract is
+  refused with a blocker.
+- A map without saved scans, such as an imported PCD, remains
+  `navigation_ready: false`. `approve_map_navigation` (Gateway
+  `POST /api/v1/maps/{name}/approve_navigation`) may record a separate nested
+  `navigation_approval` with the current content epoch after the cloud passes
+  `CheckPointCloudForNavigation`. The checker uses the lowest sufficiently
+  supported near-horizontal plane as the floor (z points up), requires a level
+  plane within 3 degrees, spans of 1 to 2000 m in x/y and at most 100 m in z
+  (metres, not millimetres), and at least half of the floor cells at the map
+  resolution with 6 of 8 neighbours. `support_dilation_cells`,
+  `free_layers_above`, and `free_dilation_cells` must all be zero: approval
+  cannot turn inferred support or synthetic free space into sensor evidence.
+  Rebuilds and voxel edits clear point-cloud approval. Point-cloud approval
+  also does not create free-ray evidence; the 3-D planner may still reject
+  unknown cells, so saved-ray maps remain the field navigation path.
+  `list_maps` reports `map_evidence`: `saved_rays`, `approved_point_cloud`,
+  `preview`, or `none`.
 - PCD import reads `ascii`, `binary`, and PCL `binary_compressed` (LZF) data.
 - A voxel edit (`edit_octomap_voxels`, the workbench zone marker) sets each
   voxel in the zone to the clamped occupied or free value, keeps the evidence of
   every other voxel, and reports `changed_voxels` next to `edited_voxels`.
   `occupied`/`preblocked` mark occupied; `free`/`traversable`/`clear` mark free.
-  The edited artifact keeps the `navigation_ready` value of the one it replaced.
+  Saved-ray provenance is retained only for a saved-ray artifact; editing a
+  point-cloud artifact clears its separate navigation approval.
 
 Deploy `mapd`, `lingtu-mapctl`, and `prune` together. The save transaction must
 preserve `scan_origin.txt`, poses, patches, and `map.pcd.preclean` for calibrated

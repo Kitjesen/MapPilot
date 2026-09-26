@@ -6,13 +6,18 @@
 #include "lingtu/maps/lock.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <chrono>
 #include <cctype>
+#include <cstdint>
 #include <fstream>
+#include <cmath>
 #include <iterator>
 #include <limits>
 #include <stdexcept>
+#include <set>
+#include <sstream>
 #include <unordered_map>
 
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
@@ -331,6 +336,109 @@ std::string JoinBlockers(const std::vector<std::string>& blockers) {
     message += blocker;
   }
   return message;
+}
+
+bool IsNonEmptyRegularFile(const std::filesystem::path& path) {
+  std::error_code error;
+  return std::filesystem::is_regular_file(path, error) && !error &&
+      std::filesystem::file_size(path, error) > 0U && !error;
+}
+
+// Check the saved-ray inputs without loading every PCD point. The map gate is
+// called while listing maps, so it must validate the bundle cheaply but still
+// reject a marker-only or partial trajectory.
+bool ReadSavedPatchManifest(const std::filesystem::path& path,
+                            std::size_t* patch_count) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) return false;
+  const std::array<const char*, 6> expected_keys = {
+      "LINGTU_PATCH_BUNDLE_V1", "complete", "dropped_count",
+      "first_sequence", "last_sequence", "patch_count"};
+  std::array<std::uint64_t, 5> values{};
+  std::string line;
+  if (!std::getline(input, line)) return false;
+  if (!line.empty() && line.back() == '\r') line.pop_back();
+  if (line != expected_keys[0]) return false;
+  for (std::size_t index = 1; index < expected_keys.size(); ++index) {
+    if (!std::getline(input, line)) return false;
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    std::istringstream row(line);
+    std::string key;
+    std::string token;
+    std::string extra;
+    std::uint64_t parsed = 0U;
+    if (!(row >> key >> token) || row >> extra || key != expected_keys[index] ||
+        token.empty() || token.front() == '-') {
+      return false;
+    }
+    const auto result = std::from_chars(token.data(), token.data() + token.size(), parsed);
+    if (result.ec != std::errc{} || result.ptr != token.data() + token.size()) return false;
+    values[index - 1] = parsed;
+  }
+  if (std::getline(input, line) || values[0] != 1U || values[1] != 0U ||
+      values[4] == 0U || values[2] != 0U || values[3] != values[4] - 1U ||
+      values[4] > std::numeric_limits<std::size_t>::max()) {
+    return false;
+  }
+  *patch_count = static_cast<std::size_t>(values[4]);
+  return true;
+}
+
+// Check the saved-ray inputs without loading every PCD point. The map gate is
+// called while listing maps, so it validates the same manifest/pose/patch
+// relationship required by the save transaction while staying cheap.
+bool HasCompleteSavedRayInputs(const std::filesystem::path& dir) {
+  if (!IsNonEmptyRegularFile(dir / "map.pcd") ||
+      !IsNonEmptyRegularFile(dir / "poses.txt") ||
+      !IsNonEmptyRegularFile(dir / "scan_origin.txt") ||
+      !IsNonEmptyRegularFile(dir / "patch_bundle.manifest") ||
+      !std::filesystem::is_directory(dir / "patches")) {
+    return false;
+  }
+  std::size_t manifest_patch_count = 0U;
+  if (!ReadSavedPatchManifest(dir / "patch_bundle.manifest", &manifest_patch_count)) {
+    return false;
+  }
+  std::ifstream origins(dir / "scan_origin.txt", std::ios::binary);
+  std::string tag;
+  std::array<double, 3> origin{};
+  std::string extra_origin;
+  if (!(origins >> tag >> origin[0] >> origin[1] >> origin[2]) ||
+      origins >> extra_origin || tag != "lidar_origin_in_patch" ||
+      !std::all_of(origin.begin(), origin.end(), [](double value) {
+        return std::isfinite(value);
+      })) {
+    return false;
+  }
+  std::set<std::string> disk_patches;
+  for (const auto& entry : std::filesystem::directory_iterator(dir / "patches")) {
+    if (entry.is_regular_file() && entry.path().extension() == ".pcd" &&
+        IsNonEmptyRegularFile(entry.path())) {
+      disk_patches.insert(entry.path().filename().string());
+    }
+  }
+  std::set<std::string> pose_patches;
+  std::ifstream poses(dir / "poses.txt", std::ios::binary);
+  if (!poses) return false;
+  std::string line;
+  while (std::getline(poses, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line.empty()) return false;
+    std::istringstream row(line);
+    std::string name;
+    std::array<double, 7> pose{};
+    std::string extra;
+    if (!(row >> name) || std::filesystem::path(name).filename() != name ||
+        std::filesystem::path(name).extension() != ".pcd") {
+      return false;
+    }
+    for (double& value : pose) {
+      if (!(row >> value) || !std::isfinite(value)) return false;
+    }
+    if (row >> extra || !pose_patches.insert(name).second) return false;
+  }
+  return !pose_patches.empty() && pose_patches == disk_patches &&
+         pose_patches.size() == manifest_patch_count;
 }
 
 }  // namespace
@@ -919,12 +1027,54 @@ ArtifactValidationResult MapStore::ValidateArtifactsUnlocked(
   if (options.require_navigation_evidence && result.metadata_ok) {
     const auto navigation_ready =
         JsonObjectBoolAtPath(metadata, {"artifacts", "octomap", "navigation_ready"});
-    if (!navigation_ready.has_value()) {
+    const auto evidence =
+        JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "evidence_source"});
+    const auto build_mode =
+        JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "build_mode"});
+    if (evidence == "saved_rays") {
+      if (navigation_ready != true) {
+        result.blockers.push_back(
+            navigation_ready.has_value()
+                ? "octomap navigation evidence is preview-only"
+                : "octomap navigation evidence marker is missing");
+      }
+      if (build_mode != "native_octomap") {
+        result.blockers.push_back("saved-ray OctoMap was not built by native_octomap");
+      }
+      if (!HasCompleteSavedRayInputs(content)) {
+        result.blockers.push_back(
+            "saved-ray inputs are missing or incomplete (map.pcd, poses, patches, "
+            "patch_bundle.manifest, scan_origin.txt)");
+      }
+    } else if (evidence == "sampled_points") {
+      if (navigation_ready == true) {
+        result.blockers.push_back(
+            "point-cloud approval must not set navigation_ready; rebuild metadata");
+      }
+      if (build_mode != "native_octomap") {
+        result.blockers.push_back("approved point-cloud OctoMap was not built by native_octomap");
+      }
+      if (JsonObjectStringAtPath(
+              metadata, {"artifacts", "octomap", "navigation_approval", "status"}) !=
+          "approved") {
+        result.blockers.push_back("point-cloud map has no operator navigation approval");
+      }
+      const auto approval_epoch = JsonObjectNumberAtPath(
+          metadata, {"artifacts", "octomap", "navigation_approval", "content_epoch"});
+      if (!approval_epoch.has_value() ||
+          *approval_epoch != static_cast<double>(result.content_epoch)) {
+        result.blockers.push_back("point-cloud navigation approval is stale for this map content");
+      }
+      for (const auto* field : {"support_dilation_cells", "free_layers_above",
+                                "free_dilation_cells"}) {
+        if (JsonObjectNumberAtPath(metadata, {field}).value_or(-1.0) != 0.0) {
+          result.blockers.push_back(
+              std::string("point-cloud map has inferred ") + field + "; rebuild with it set to 0");
+        }
+      }
+    } else {
       result.blockers.push_back(
-          "octomap predates navigation evidence tracking; rebuild it from the saved scans");
-    } else if (!*navigation_ready) {
-      result.blockers.push_back(
-          "octomap is a point-cloud preview, not built from saved scan rays");
+          "octomap evidence_source is missing or unsupported");
     }
   }
   if (options.validate_metadata_identity) {

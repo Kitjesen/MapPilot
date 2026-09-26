@@ -56,7 +56,8 @@ void WriteValidOccupancyMetadata(const std::filesystem::path& path) {
           "\"data_source\":\"field\",\"source_profile\":\"fastlio2\"},"
        << "\"octomap\":{\"path\":\"octomap.ot\",\"frame_id\":\"map\","
           "\"data_source\":\"field\",\"source_profile\":\"fastlio2\","
-          "\"navigation_ready\":true}}}";
+          "\"evidence_source\":\"saved_rays\",\"navigation_ready\":true,"
+          "\"build_mode\":\"native_octomap\"}}}";
 }
 
 void WriteValidPlanningArtifacts(const std::filesystem::path& map_dir) {
@@ -66,6 +67,13 @@ void WriteValidPlanningArtifacts(const std::filesystem::path& map_dir) {
   };
   std::string error;
   assert(lingtu::maps::WriteBinaryXyzPcd(map_dir / "map.pcd", points, &error));
+  std::filesystem::create_directories(map_dir / "patches");
+  assert(lingtu::maps::WriteBinaryXyzPcd(map_dir / "patches/0.pcd", points, &error));
+  WriteText(map_dir / "poses.txt", "0.pcd 0 0 0 1 0 0 0\n");
+  WriteText(map_dir / "scan_origin.txt", "lidar_origin_in_patch 0 0 0\n");
+  WriteText(map_dir / "patch_bundle.manifest",
+            "LINGTU_PATCH_BUNDLE_V1\ncomplete 1\ndropped_count 0\n"
+            "first_sequence 0\nlast_sequence 0\npatch_count 1\n");
   const auto occupancy = lingtu::maps::BuildOccupancyProjectionSnapshot(map_dir, true);
   assert(occupancy.ok);
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
@@ -158,9 +166,9 @@ void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
   const auto stat = [&](const char* name) {
     return lingtu::maps::JsonObjectNumberAtPath(result, {"octomap_result", "report", "saved_rays", name});
   };
-  assert(stat("retained_voxels") == 3.0);
   assert(stat("inserted_points") == 6.0);
-  assert(stat("raised_voxels") == 1.0);
+  assert(!lingtu::maps::JsonObjectNumberAtPath(
+      result, {"octomap_result", "report", "saved_rays", "raised_voxels"}).has_value());
 
   const auto tree = lingtu::maps::LoadOctomapTree(dir / "octomap.ot");
   assert(tree != nullptr);
@@ -174,9 +182,10 @@ void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
   assert(std::abs(log_odds(post) - one_hit) < 1e-5F);
   assert(log_odds(wall) > log_odds(post));
   assert(log_odds(wall) < tree->getClampingThresMaxLog());
-  // Three rays through the floor voxel outvoted its one hit; the cleaned map
-  // keeps the surface, so it comes back as one-hit occupied.
-  assert(std::abs(log_odds(floor) - one_hit) < 1e-5F);
+  // Three recorded misses through the floor voxel outvote its one hit. The
+  // retained endpoint is not raised back to occupied after replay.
+  const auto* floor_node = tree->search(floor.x, floor.y, floor.z);
+  assert(floor_node != nullptr && !tree->isNodeOccupied(floor_node));
   // Space the rays crossed is free; space they never reached stays unknown.
   const auto* crossed = tree->search(0.55, 0.05, 0.05);
   assert(crossed != nullptr && !tree->isNodeOccupied(crossed));
@@ -187,8 +196,8 @@ void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
 }
 
 // An imported point cloud has no saved rays: its OctoMap is a preview until
-// the cloud passes the point-cloud check and an operator approves it. A
-// rebuild drops the approval; a voxel edit keeps it.
+// the cloud passes the point-cloud check and an operator approves it. Approval
+// is separate from evidence provenance and is cleared by an edit or rebuild.
 void TestPointCloudApproval(MapStore& store, const std::filesystem::path& root) {
   const std::string map_id = "imported_room";
   assert(store.CreateMap(map_id).ok);
@@ -221,12 +230,19 @@ void TestPointCloudApproval(MapStore& store, const std::filesystem::path& root) 
   assert(lingtu::maps::JsonObjectStringAtPath(approved, {"status"}) == "approved");
   assert(lingtu::maps::JsonObjectBoolAtPath(approved, {"check", "ok"}) == true);
   assert(lingtu::maps::JsonObjectBoolAtPath(
-             metadata(), {"artifacts", "octomap", "navigation_ready"}) == true);
+             metadata(), {"artifacts", "octomap", "navigation_ready"}) == false);
   assert(lingtu::maps::JsonObjectStringAtPath(
-             metadata(), {"artifacts", "octomap", "navigation_approved_by"}) == "tester");
+             metadata(), {"artifacts", "octomap", "navigation_approval", "status"}) ==
+         "approved");
+  assert(lingtu::maps::JsonObjectStringAtPath(
+             metadata(), {"artifacts", "octomap", "navigation_approval", "approved_by"}) ==
+         "tester");
+  assert(lingtu::maps::JsonObjectNumberAtPath(
+             metadata(), {"artifacts", "octomap", "navigation_approval", "content_epoch"}) ==
+         static_cast<double>(store.ContentEpoch(map_id)));
   assert(store.CheckMapActivation(map_id).ok);
   assert(lingtu::maps::JsonObjectStringAtPath(pipeline.ApproveNavigationJson(map_id, "tester"),
-                                              {"status"}) == "already_navigation_ready");
+                                              {"status"}) == "already_approved");
 
   lingtu::maps::OctomapEditOptions edit;
   edit.state = "preblocked";
@@ -236,9 +252,9 @@ void TestPointCloudApproval(MapStore& store, const std::filesystem::path& root) 
   edit.radius_m = 0.2;
   assert(lingtu::maps::JsonObjectBoolAtPath(pipeline.EditOctomapVoxelsJson(map_id, edit),
                                             {"success"}) == true);
-  assert(lingtu::maps::JsonObjectStringAtPath(
-             metadata(), {"artifacts", "octomap", "navigation_approved_by"}) == "tester");
-  assert(store.CheckMapActivation(map_id).ok);
+  assert(!lingtu::maps::JsonObjectStringAtPath(
+             metadata(), {"artifacts", "octomap", "navigation_approval", "status"}).has_value());
+  assert(!store.CheckMapActivation(map_id).ok);
 
   options.resolution = 0.05;
   assert(lingtu::maps::JsonObjectBoolAtPath(
@@ -255,6 +271,21 @@ void TestPointCloudApproval(MapStore& store, const std::filesystem::path& root) 
   assert(lingtu::maps::JsonObjectStringAtPath(dilated, {"message"})->find("support dilation") !=
          std::string::npos);
   assert(blocked_as_preview());
+
+  for (const auto field : {std::string("free_layers_above"),
+                           std::string("free_dilation_cells")}) {
+    options.support_dilation_cells = 0;
+    options.free_layers_above = field == "free_layers_above" ? 1 : 0;
+    options.free_dilation_cells = field == "free_dilation_cells" ? 1 : 0;
+    assert(lingtu::maps::JsonObjectBoolAtPath(
+               pipeline.BuildOctomapArtifactJson(map_id, options), {"success"}) == true);
+    const auto synthetic = pipeline.ApproveNavigationJson(map_id, "tester");
+    assert(lingtu::maps::JsonObjectStringAtPath(synthetic, {"reason_code"}) ==
+           "point_cloud_check_failed");
+    assert(lingtu::maps::JsonObjectStringAtPath(synthetic, {"message"})->find(field) !=
+           std::string::npos);
+    assert(blocked_as_preview());
+  }
 }
 
 // One operator edit must decide a voxel regardless of how much ray evidence
@@ -413,12 +444,25 @@ int main() {
   };
   std::string preview = valid_metadata;
   preview.replace(preview.find("\"navigation_ready\":true"), 23, "\"navigation_ready\":false");
-  blocked_with(preview, "point-cloud preview");
+  blocked_with(preview, "navigation evidence is preview-only");
   std::string legacy = valid_metadata;
   legacy.replace(legacy.find(",\"navigation_ready\":true"), 24, "");
-  blocked_with(legacy, "predates navigation evidence");
+  blocked_with(legacy, "navigation evidence marker is missing");
   assert(store.ValidateArtifacts("building_1f", validation_options).ok);
   WriteText(metadata_file, valid_metadata);
+  assert(store.CheckMapActivation("building_1f").ok);
+  WriteText(root / "building_1f" / "patch_bundle.manifest", "patches=1\n");
+  const auto incomplete_bundle = store.CheckMapActivation("building_1f");
+  assert(!incomplete_bundle.ok);
+  bool incomplete_blocker = false;
+  for (const auto& blocker : incomplete_bundle.blockers) {
+    incomplete_blocker |= blocker.find("saved-ray inputs are missing or incomplete") !=
+                          std::string::npos;
+  }
+  assert(incomplete_blocker);
+  WriteText(root / "building_1f" / "patch_bundle.manifest",
+            "LINGTU_PATCH_BUNDLE_V1\ncomplete 1\ndropped_count 0\n"
+            "first_sequence 0\nlast_sequence 0\npatch_count 1\n");
   assert(store.CheckMapActivation("building_1f").ok);
 
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)

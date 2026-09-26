@@ -4,6 +4,7 @@
 #include <octomap/OcTree.h>
 #include <stdexcept>
 #include <cmath>
+#include <unordered_set>
 
 namespace lingtu::maps {
 
@@ -17,69 +18,79 @@ inline std::size_t OccupiedVoxelCount(const octomap::OcTree& tree) {
   return count;
 }
 
-struct SavedRayBuildStats {
-  std::size_t inserted_points{0};
-  std::size_t retained_voxels{0};
-  // Retained voxels the replayed rays left free or unknown. The cleaned map
-  // keeps them as surfaces, so they are raised to one-hit occupied.
-  std::size_t raised_voxels{0};
-};
-
-// Replays the saved scans into `tree` as OctoMap ray evidence and keeps the
-// save-time cleaned map.pcd as the authority on which surfaces exist:
-//  * only endpoints inside a retained map.pcd voxel are inserted, so returns
-//    the dynamic filter discarded leave neither hits nor free carving behind;
-//  * every voxel keeps the hit/miss log-odds its rays accumulated;
-//  * a retained voxel the rays still left free or unknown (grazing rays over
-//    floors erode surface voxels) is raised to one-hit occupied rather than
-//    dropped. On 903room at 5 cm, 39% of retained voxels, and a quarter of the
-//    walkable surface support, would otherwise disappear.
-inline SavedRayBuildStats PopulateSavedRayOctomap(
+inline std::size_t PopulateSavedRayOctomap(
     octomap::OcTree& tree, const std::filesystem::path& directory,
     const std::function<bool()>& cancelled = {}) {
+  // The retained PCD is the result of the save-time dynamic filter.  Filter
+  // scan endpoints before ray insertion so discarded dynamic returns cannot
+  // leave occupied leaves (or free carving) in the persistent tree.  The
+  // previous implementation inserted every scan, then cleared the tree and
+  // reconstructed it from free leaves plus retained endpoints.  That erased
+  // OctoMap's hit/miss log-odds and made the saved map semantically different
+  // from the measured rays.
   const auto retained = LoadPcdXyz(directory / "map.pcd");
   if (!retained.ok || retained.points.empty())
     throw std::runtime_error("saved ray build requires retained map.pcd geometry");
-  octomap::KeySet retained_keys;
+
+  struct Key {
+    unsigned int x = 0;
+    unsigned int y = 0;
+    unsigned int z = 0;
+    bool operator==(const Key& other) const {
+      return x == other.x && y == other.y && z == other.z;
+    }
+  };
+  struct KeyHash {
+    std::size_t operator()(const Key& key) const {
+      std::size_t seed = std::hash<unsigned int>{}(key.x);
+      seed ^= std::hash<unsigned int>{}(key.y) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
+      seed ^= std::hash<unsigned int>{}(key.z) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
+      return seed;
+    }
+  };
+  std::unordered_set<Key, KeyHash> retained_keys;
+  retained_keys.reserve(retained.points.size());
   for (const auto& point : retained.points) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+        !std::isfinite(point.z)) {
+      continue;
+    }
     octomap::OcTreeKey key;
-    if (std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z) &&
-        tree.coordToKeyChecked(point.x, point.y, point.z, key))
-      retained_keys.insert(key);
+    if (tree.coordToKeyChecked(point.x, point.y, point.z, key)) {
+      retained_keys.insert(Key{key.k[0], key.k[1], key.k[2]});
+    }
   }
   if (retained_keys.empty())
     throw std::runtime_error("saved ray build retained map.pcd has no valid OctoMap keys");
 
-  SavedRayBuildStats stats;
-  stats.retained_voxels = retained_keys.size();
+  std::size_t count = 0;
   VisitSavedScans(directory, [&](const SavedScan& scan) {
     if (cancelled && cancelled()) throw std::runtime_error("saved ray build cancelled");
     octomap::Pointcloud cloud;
     for (std::size_t i = 0; i + 2 < scan.xyz.size(); i += 3) {
+      const float x = static_cast<float>(scan.xyz[i]);
+      const float y = static_cast<float>(scan.xyz[i + 1]);
+      const float z = static_cast<float>(scan.xyz[i + 2]);
       octomap::OcTreeKey key;
-      if (std::isfinite(scan.xyz[i]) && std::isfinite(scan.xyz[i + 1]) &&
-          std::isfinite(scan.xyz[i + 2]) &&
-          tree.coordToKeyChecked(scan.xyz[i], scan.xyz[i + 1], scan.xyz[i + 2], key) &&
-          retained_keys.count(key) != 0U)
-        cloud.push_back(scan.xyz[i], scan.xyz[i + 1], scan.xyz[i + 2]);
+      if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
+          !tree.coordToKeyChecked(x, y, z, key) ||
+          retained_keys.count(Key{key.k[0], key.k[1], key.k[2]}) == 0U) {
+        continue;
+      }
+      cloud.push_back(x, y, z);
     }
+    // Integrate only retained measured segments.  OctoMap keeps the
+    // accumulated hit/miss log-odds and unknown leaves exactly as observed;
+    // no post-integration clear/rebuild is allowed here.
     if (cloud.size() == 0U) return;
     tree.insertPointCloud(cloud,
         octomap::point3d(scan.origin[0],scan.origin[1],scan.origin[2]), -1, true, false);
-    stats.inserted_points += cloud.size();
+    count += cloud.size();
   });
-  if (stats.inserted_points == 0U)
-    throw std::runtime_error("saved ray build: no saved scan endpoint lies in map.pcd");
-
-  const float one_hit = tree.getProbHitLog();
-  for (const auto& key : retained_keys) {
-    const auto* node = tree.search(key);
-    if (node != nullptr && tree.isNodeOccupied(node)) continue;
-    tree.setNodeValue(key, one_hit, true);
-    ++stats.raised_voxels;
-  }
+  if (count == 0U)
+    throw std::runtime_error("saved ray build retained map.pcd matched no saved scan endpoints");
   tree.updateInnerOccupancy();
-  return stats;
+  return count;
 }
 
 }  // namespace lingtu::maps

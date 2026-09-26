@@ -116,7 +116,7 @@ bool ParseNonNegativeInt64(const std::string& value, int64_t* output) {
 
 bool IsFinitePoint(const PointXyz& point) {
   return std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z) &&
-      std::abs(point.x) < 500.0F && std::abs(point.y) < 500.0F && std::abs(point.z) < 500.0F;
+      std::abs(point.x) < 2000.0F && std::abs(point.y) < 2000.0F && std::abs(point.z) < 2000.0F;
 }
 
 bool InBounds(const PointXyz& point, const PcdBounds& bounds) {

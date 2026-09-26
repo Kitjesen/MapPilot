@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <unordered_set>
@@ -88,13 +89,21 @@ PointCloudNavigationCheck CheckPointCloudForNavigation(const std::vector<PointXy
                              " in z; expected at most 100 m, check the units and the up axis");
   }
 
-  // RANSAC over near-horizontal planes (normal within 15 degrees of z); the
-  // largest one is taken as the floor.
+  // RANSAC over near-horizontal planes (normal within 15 degrees of z). The
+  // lowest sufficiently supported plane is treated as the floor, while a
+  // narrow wall slice is rejected because it has no 2-D support footprint.
   const double tolerance = kFloorToleranceM;
   const double min_normal_z = std::cos(15.0 * kPi / 180.0);
   std::mt19937 random(7U);
   std::uniform_int_distribution<std::size_t> pick(0U, sample.size() - 1U);
+  const double reference_x = Percentile(xs, 0.5);
+  const double reference_y = Percentile(ys, 0.5);
+  const double minimum_observed_z = Percentile(zs, 0.01);
+  const std::size_t min_floor_inliers = std::max<std::size_t>(
+      3U, static_cast<std::size_t>(
+              std::ceil(kMinFloorShare * static_cast<double>(sample.size()))));
   std::size_t best_inliers = 0;
+  double best_height = std::numeric_limits<double>::infinity();
   std::array<double, 4> best{};
   for (int iteration = 0; iteration < kRansacIterations; ++iteration) {
     const auto& p0 = sample[pick(random)];
@@ -109,11 +118,32 @@ PointCloudNavigationCheck CheckPointCloudForNavigation(const std::vector<PointXy
     if (std::abs(nz) < min_normal_z) continue;
     const double d = -(nx * p0.x + ny * p0.y + nz * p0.z);
     std::size_t inliers = 0;
+    double min_x = std::numeric_limits<double>::infinity();
+    double max_x = -std::numeric_limits<double>::infinity();
+    double min_y = std::numeric_limits<double>::infinity();
+    double max_y = -std::numeric_limits<double>::infinity();
     for (const auto& p : sample) {
-      if (std::abs(nx * p.x + ny * p.y + nz * p.z + d) <= tolerance) ++inliers;
+      if (std::abs(nx * p.x + ny * p.y + nz * p.z + d) <= tolerance) {
+        ++inliers;
+        min_x = std::min(min_x, static_cast<double>(p.x));
+        max_x = std::max(max_x, static_cast<double>(p.x));
+        min_y = std::min(min_y, static_cast<double>(p.y));
+        max_y = std::max(max_y, static_cast<double>(p.y));
+      }
     }
-    if (inliers > best_inliers) {
+    const double reference_height =
+        -(nx * reference_x + ny * reference_y + d) / nz;
+    const double min_floor_span = std::max(0.20, resolution * 4.0);
+    const bool has_area_support =
+        inliers >= min_floor_inliers && max_x - min_x >= min_floor_span &&
+        max_y - min_y >= min_floor_span &&
+        reference_height + tolerance >= minimum_observed_z;
+    if (has_area_support &&
+        (reference_height < best_height - 1e-6 ||
+         (std::abs(reference_height - best_height) <= 1e-6 &&
+          inliers > best_inliers))) {
       best_inliers = inliers;
+      best_height = reference_height;
       best = {nx, ny, nz, d};
     }
   }

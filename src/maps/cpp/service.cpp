@@ -68,19 +68,38 @@ std::string BoolJson(bool value) {
   return value ? "true" : "false";
 }
 
-// How the map's OctoMap may be used: saved_rays and approved_point_cloud are
-// navigation_ready; preview needs a rebuild or an approval; none has no OctoMap.
-std::string MapEvidence(const std::filesystem::path& dir) {
+// Evidence provenance and operator approval are separate facts. Unknown or
+// missing metadata stays a preview instead of being classified as approved.
+std::string MapEvidence(const std::filesystem::path& dir, std::int64_t content_epoch) {
   std::ifstream file(dir / "metadata.json", std::ios::binary);
   const std::string metadata((std::istreambuf_iterator<char>(file)), {});
   if (!JsonObjectHasPath(metadata, {"artifacts", "octomap"})) return "none";
-  if (JsonObjectBoolAtPath(metadata, {"artifacts", "octomap", "navigation_ready"}) != true) {
-    return "preview";
+  const auto evidence =
+      JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "evidence_source"});
+  const auto ready =
+      JsonObjectBoolAtPath(metadata, {"artifacts", "octomap", "navigation_ready"});
+  const auto build_mode =
+      JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "build_mode"});
+  if (evidence == "saved_rays" && ready == true && build_mode == "native_octomap") {
+    return "saved_rays";
   }
-  return JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "evidence_source"}) ==
-                 "saved_rays"
-             ? "saved_rays"
-             : "approved_point_cloud";
+  if (evidence == "sampled_points" &&
+      build_mode == "native_octomap" &&
+      JsonObjectStringAtPath(
+          metadata, {"artifacts", "octomap", "navigation_approval", "status"}) ==
+          "approved" &&
+      JsonObjectNumberAtPath(
+          metadata, {"artifacts", "octomap", "navigation_approval", "content_epoch"}) ==
+          static_cast<double>(content_epoch)) {
+    for (const auto* field : {"support_dilation_cells", "free_layers_above",
+                              "free_dilation_cells"}) {
+      if (JsonObjectNumberAtPath(metadata, {field}).value_or(-1.0) != 0.0) {
+        return "preview";
+      }
+    }
+    return "approved_point_cloud";
+  }
+  return "preview";
 }
 
 bool IsNonEmptyRegularFile(const std::filesystem::path& path) {
@@ -347,7 +366,7 @@ std::string MapsServiceCore::ListMapsJson() const {
           << "\"has_esdf\":" << BoolJson(has_esdf) << ","
           << "\"has_traversability\":" << BoolJson(has_traversability) << ","
           << "\"can_activate\":" << BoolJson(activation_ready) << ","
-          << "\"map_evidence\":" << JsonString(MapEvidence(dir)) << ","
+          << "\"map_evidence\":" << JsonString(MapEvidence(dir, record->content_epoch)) << ","
           << "\"is_active\":" << BoolJson(record->state == MapState::kActive) << ","
           << "\"size_mb\":" << size_mb << ","
           << "\"patch_count\":" << patch_count << ","

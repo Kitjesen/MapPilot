@@ -183,24 +183,22 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
                          bool manual_voxel_edit = false, std::size_t manual_edit_count = 0U,
                          const std::string &last_edit_json = "null") {
   bool saved_rays = std::filesystem::is_regular_file(map_dir / "poses.txt") &&
-                          std::filesystem::is_regular_file(map_dir / "scan_origin.txt");
-  // Only an OctoMap replayed from saved scan rays may drive navigation; one
-  // built from sampled points invents free space above every surface.
+                    std::filesystem::is_regular_file(map_dir / "scan_origin.txt");
+  // navigation_ready is provenance, not operator intent: only a native
+  // replay of saved sensor rays may set it. Point-cloud approval is recorded
+  // separately and is validated by MapStore at the motion boundary.
   bool navigation_ready = saved_rays;
-  std::optional<std::string> approved_by;
-  std::optional<std::string> approved_at;
   if (manual_voxel_edit) {
     std::ifstream previous_file(map_dir / "metadata.json");
     std::ostringstream previous;
     previous << previous_file.rdbuf();
     saved_rays = JsonObjectStringAtPath(previous.str(),
         {"artifacts", "octomap", "evidence_source"}) == "saved_rays";
-    navigation_ready = JsonObjectBoolAtPath(previous.str(),
-        {"artifacts", "octomap", "navigation_ready"}).value_or(false);
-    approved_by = JsonObjectStringAtPath(previous.str(),
-        {"artifacts", "octomap", "navigation_approved_by"});
-    approved_at = JsonObjectStringAtPath(previous.str(),
-        {"artifacts", "octomap", "navigation_approved_at"});
+    navigation_ready = saved_rays &&
+        JsonObjectBoolAtPath(previous.str(),
+            {"artifacts", "octomap", "navigation_ready"}).value_or(false);
+    // A voxel edit changes the navigation artifact. Drop any point-cloud
+    // approval so the operator must confirm the edited map again.
   }
   const std::filesystem::path occupancy_path = map_dir / "occupancy.npz";
   const bool has_occupancy = std::filesystem::is_regular_file(occupancy_path);
@@ -233,10 +231,6 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
   artifacts << "\"octomap\":{"
             << "\"evidence_source\":" << JsonString(saved_rays ? "saved_rays" : "sampled_points") << ","
             << "\"navigation_ready\":" << (navigation_ready ? "true" : "false") << ","
-            << (approved_by && approved_at
-                    ? "\"navigation_approved_by\":" + JsonString(*approved_by) +
-                          ",\"navigation_approved_at\":" + JsonString(*approved_at) + ","
-                    : std::string{})
             << "\"path\":" << JsonString(octomap_path.filename().string()) << ","
             << "\"source_profile\":" << JsonString(source_profile) << ","
             << "\"data_source\":" << JsonString(data_source) << ","
@@ -596,6 +590,28 @@ bool WriteTextFile(const std::filesystem::path &path, const std::string &text) {
   file.write(text.data(), static_cast<std::streamsize>(text.size()));
   file.flush();
   return file.good();
+}
+
+bool ReplaceTextFile(const std::filesystem::path &source,
+                     const std::filesystem::path &target,
+                     std::error_code *error) {
+#if defined(_WIN32)
+  if (MoveFileExW(source.wstring().c_str(), target.wstring().c_str(),
+                  MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == 0) {
+    if (error != nullptr) {
+      *error = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+    }
+    return false;
+  }
+  return true;
+#else
+  std::error_code local_error;
+  std::filesystem::rename(source, target, local_error);
+  if (local_error && error != nullptr) {
+    *error = local_error;
+  }
+  return !local_error;
+#endif
 }
 
 const char *TransactionPhaseName(TransactionPhase phase) {
@@ -1090,10 +1106,10 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
 
   const bool saved_rays = std::filesystem::is_regular_file(map_dir / "poses.txt") &&
                           std::filesystem::is_regular_file(map_dir / "scan_origin.txt");
-  SavedRayBuildStats ray_stats;
+  std::size_t saved_ray_points = 0U;
   if (saved_rays) {
     try {
-      ray_stats = PopulateSavedRayOctomap(tree, map_dir, options.cancel_requested);
+      saved_ray_points = PopulateSavedRayOctomap(tree, map_dir, options.cancel_requested);
     } catch (const std::exception& error) {
       return "{\"success\":false,\"reason_code\":\"saved_ray_build_failed\",\"message\":" +
           JsonString(error.what()) + "}";
@@ -1178,9 +1194,7 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
          "\"occupied_voxels\":" +
          std::to_string(OccupiedVoxelCount(tree)) +
          (saved_rays ? ",\"saved_rays\":{\"inserted_points\":" +
-                           std::to_string(ray_stats.inserted_points) +
-                           ",\"retained_voxels\":" + std::to_string(ray_stats.retained_voxels) +
-                           ",\"raised_voxels\":" + std::to_string(ray_stats.raised_voxels) + "}"
+                           std::to_string(saved_ray_points) + "}"
                      : std::string{}) +
          "}"
          "}";
@@ -2869,28 +2883,44 @@ std::string MapPipelineCore::ApproveNavigationJson(const std::string &map_id,
 
     const std::string metadata = ReadText(metadata_path);
     const auto ready = JsonObjectBoolAtPath(metadata, {"artifacts", "octomap", "navigation_ready"});
+    const auto evidence =
+        JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "evidence_source"});
+    const auto build_mode =
+        JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "build_mode"});
     const std::string head = "{\"action\":\"approve_navigation\",\"map_id\":" + JsonString(id);
-    if (ready == true) {
+    const std::int64_t content_epoch = store_.ContentEpoch(id);
+    const auto approval_status = JsonObjectStringAtPath(
+        metadata, {"artifacts", "octomap", "navigation_approval", "status"});
+    const auto approval_epoch = JsonObjectNumberAtPath(
+        metadata, {"artifacts", "octomap", "navigation_approval", "content_epoch"});
+    if (evidence == "saved_rays" && ready == true) {
       return head + ",\"success\":true,\"status\":\"already_navigation_ready\"}";
     }
-    if (!ready.has_value() ||
-        JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "evidence_source"}) !=
-            "sampled_points") {
-      return FailureJson("approve_navigation", "rebuild the OctoMap before approving it",
-                         "octomap_rebuild_required");
+    if (approval_status == "approved" && approval_epoch.has_value() &&
+        *approval_epoch == static_cast<double>(content_epoch)) {
+      return head + ",\"success\":true,\"status\":\"already_approved\"}";
     }
-    const auto cloud = LoadPcdXyz(map_dir / "map.pcd");
-    if (!cloud.ok) {
-      return FailureJson("approve_navigation", cloud.message, "map_pcd_unreadable");
+    if (ready != false || evidence != "sampled_points" || build_mode != kOctomapBuildMode) {
+      return FailureJson(
+          "approve_navigation",
+          "point-cloud approval requires a native sampled-point OctoMap preview",
+          "octomap_rebuild_required");
     }
-    const double resolution =
-        JsonObjectNumberAtPath(metadata, {"artifacts", "octomap", "resolution"}).value_or(0.0);
-    auto check = CheckPointCloudForNavigation(cloud.points, resolution > 0.0 ? resolution : 0.05);
-    if (JsonObjectNumberAtPath(metadata, {"artifacts", "octomap", "support_dilation_cells"}) !=
-        0.0) {
-      check.blockers.push_back(
-          "rebuild the OctoMap without support dilation; dilated support can extend a floor "
-          "over a drop");
+
+    const auto loaded = LoadPcdXyz(map_dir / "map.pcd");
+    if (!loaded.ok) {
+      return FailureJson("approve_navigation", loaded.message, "map_pcd_unreadable");
+    }
+    auto check = CheckPointCloudForNavigation(
+        loaded.points,
+        JsonObjectNumberAtPath(metadata, {"artifacts", "octomap", "resolution"}).value_or(0.05));
+    for (const auto *field : {"support_dilation_cells", "free_layers_above",
+                              "free_dilation_cells"}) {
+      if (JsonObjectNumberAtPath(metadata, {field}).value_or(-1.0) != 0.0) {
+        check.blockers.push_back(
+            std::string("rebuild the OctoMap with ") + field + "=0; "
+            "inferred support/free space cannot be approved as measured evidence");
+      }
     }
     const std::string check_json = PointCloudNavigationCheckJson(check);
     if (!check.ok()) {
@@ -2898,22 +2928,29 @@ std::string MapPipelineCore::ApproveNavigationJson(const std::string &map_id,
              "\"message\":" + JsonString(check.blockers.front()) + ",\"check\":" + check_json + "}";
     }
 
-    const std::string marker = "\"navigation_ready\":false";
+    const std::string marker = "\"navigation_ready\":false,";
     const auto at = metadata.find(marker);
     if (at == std::string::npos || metadata.find(marker, at + 1U) != std::string::npos) {
       return FailureJson("approve_navigation", "metadata.json has no single navigation_ready field",
                          "metadata_invalid");
     }
+    const std::string approval =
+        "\"navigation_ready\":false,\"navigation_approval\":{"
+        "\"status\":\"approved\",\"approved_by\":" +
+        JsonString(approved_by.empty() ? "operator" : approved_by) +
+        ",\"approved_at\":" + JsonString(NowStamp()) +
+        ",\"content_epoch\":" + std::to_string(content_epoch) + "},";
     std::string approved = metadata;
-    approved.replace(at, marker.size(),
-                     "\"navigation_ready\":true,\"navigation_approved_by\":" +
-                         JsonString(approved_by.empty() ? "operator" : approved_by) +
-                         ",\"navigation_approved_at\":" + JsonString(NowStamp()));
+    approved.replace(at, marker.size(), approval);
     const auto staged = metadata_path.string() + ".approval";
     if (!WriteTextFile(staged, approved)) {
       return FailureJson("approve_navigation", "failed to write metadata.json", "metadata_write_failed");
     }
-    std::filesystem::rename(staged, metadata_path);
+    std::error_code rename_error;
+    if (!ReplaceTextFile(staged, metadata_path, &rename_error)) {
+      std::filesystem::remove(staged);
+      return FailureJson("approve_navigation", rename_error.message(), "metadata_write_failed");
+    }
     return head + ",\"success\":true,\"status\":\"approved\",\"check\":" + check_json + "}";
   } catch (const std::exception &exc) {
     return FailureJson("approve_navigation", exc.what(), "approval_failed");
