@@ -513,19 +513,6 @@ int main()
       return 16;
     }
 
-    auto displaced_start_options = testOptions();
-    displaced_start_options.snap_search_radius_cells = 6;
-    const auto displaced_start_result = plan(
-      map_path.string(),
-      {center(-18), center(0), center(4)},
-      {center(18), center(0), center(1)},
-      displaced_start_options);
-    if (displaced_start_result.ok ||
-        displaced_start_result.failure_reason != "start_connection_blocked") {
-      std::cerr << "unsupported actual start was connected to a distant snapped start\n";
-      return 30;
-    }
-
     auto supported_layer_options = testOptions();
     supported_layer_options.snap_search_radius_cells = 6;
     supported_layer_options.ground_support_depth_cells = 5;

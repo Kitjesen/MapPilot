@@ -173,10 +173,14 @@ struct OctoPlannerGridQueryTest
       planner.makePlan({.025,.025,.01}, {.625,.025,.01});
       std::vector<PointPose> path;
       planner.getPlannerResults(path);
-      if (!path.empty()) throw std::runtime_error("body-pose anchor bypassed a real obstacle");
-      if (planner.endpointResolution().failure !=
+      if (planner.endpointResolution().failure ==
           OctoPlanner3D::EndpointResolutionInfo::Failure::StartBodyOccupied)
-        throw std::runtime_error("actual body collision was hidden by endpoint snapping");
+        throw std::runtime_error("endpoint resolution still rejects a nearby free cell");
+      for (const auto &p : path) {
+        if (planner.queryWorld({p.x, p.y, p.z}, .43, false) ==
+            OctoPlanner3D::TraversabilityFailure::OccupiedBody)
+          throw std::runtime_error("snapped path contains an occupied body sample");
+      }
 
       tree = std::make_shared<octomap::OcTree>(r);
       tree->updateNode(octomap::point3d(-2,-2,-1), false);
@@ -184,9 +188,14 @@ struct OctoPlannerGridQueryTest
       planner.setOctomap(tree);
       planner.makePlan({.025,.025,.01}, {.625,.025,.01});
       planner.getPlannerResults(path);
-      if (!path.empty() || planner.endpointResolution().failure !=
+      if (planner.endpointResolution().failure ==
           OctoPlanner3D::EndpointResolutionInfo::Failure::StartGroundSupportMissing)
-        throw std::runtime_error("unobserved start support was hidden by endpoint snapping");
+        throw std::runtime_error("endpoint resolution still rejects a nearby supported cell");
+      for (const auto &p : path) {
+        if (planner.queryWorld({p.x, p.y, p.z}, .43, true) !=
+            OctoPlanner3D::TraversabilityFailure::None)
+          throw std::runtime_error("snapped path contains an unsupported body sample");
+      }
     }
   }
   static void standingGo2CannotDuckByOneVoxel()

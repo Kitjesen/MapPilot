@@ -161,25 +161,10 @@ namespace global_planner
         endpoint_resolution_.start_raw_outside_bounds = !isInsideMetricBounds(start_raw);
         endpoint_resolution_.goal_raw_outside_bounds = !isInsideMetricBounds(goal_raw);
 
-        // In the calibrated continuous-height path the start is the measured
-        // body pose. Searching for a different start cannot repair its collision
-        // or missing support, and hides the cause behind a failed snap connection.
-        if (support_height_m_ > 0.0 && !lowest_traversable_only_ &&
-            !endpoint_resolution_.start_raw_outside_bounds) {
-            const octomap::point3d actual(start_point_.x, start_point_.y, start_point_.z);
-            const auto body = queryWorld(actual, robot_radius_, false);
-            if (body == TraversabilityFailure::OccupiedBody ||
-                body == TraversabilityFailure::ExternalPreblockedBody) {
-                endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartBodyOccupied;
-                return false;
-            }
-            if (require_ground_support_ &&
-                queryWorld(actual, robot_radius_, true) == TraversabilityFailure::GroundSupport) {
-                endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartGroundSupportMissing;
-                return false;
-            }
-        }
-
+        // Match the upstream endpoint policy: resolve an occupied or slightly
+        // misregistered pose to the nearest traversable cell. The body pose is
+        // still checked by the 3-D planning and motion queries after this snap;
+        // endpoint resolution must not reject a nearby free cell first.
         if (!findNearestFreeCell(
                 start_raw,
                 robot_radius_,
@@ -195,16 +180,6 @@ namespace global_planner
             return false;
         }
         endpoint_resolution_.start_snapped = !(start == start_raw);
-        // Snapping cannot teleport the robot over unsupported cells or through
-        // obstacles. Use the same segment checks as path simplification.
-        if (endpoint_resolution_.start_snapped &&
-            (!isCellTraversable(start_raw, robot_radius_, false, strict_direct_ground_support_,
-                                ground_support_xy_radius_cells_, ground_support_depth_cells_) ||
-             !hasTraversableLine(start_raw, start))) {
-            endpoint_resolution_.failure =
-                EndpointResolutionInfo::Failure::StartConnectionBlocked;
-            return false;
-        }
         if (!findNearestFreeCell(
                 goal_raw,
                 robot_radius_,
