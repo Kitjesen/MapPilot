@@ -491,14 +491,11 @@ def compile_native_nav_config(
         "octoplanner3d_robot_radius" not in native_nav_config
         and "octoplanner3d_robot_radius" not in config
     ):
-        # The global route must clear the same hard XY envelope that the local
-        # planner will execute.  A heading-aligned double cylinder reaches
-        # radius + offset from the body origin; one Product-wide constant made
-        # Thunder routes too tight and Go2 routes unnecessarily wide.
-        native_nav["octoplanner3d"]["octoplanner3d_robot_radius"] = (
-            parameters["collision_cylinder_radius_m"]
-            + parameters["collision_cylinder_offset_m"]
-        )
+        # Global and SCAN use the same cylinder radius. The native planner
+        # takes the cylinder offset from the same robot geometry.
+        native_nav["octoplanner3d"]["octoplanner3d_robot_radius"] = parameters[
+            "collision_cylinder_radius_m"
+        ]
     if parameters["teleop_planner_horizon_m"] < 0.5:
         raise ValueError("teleop_planner_horizon_m must be at least 0.5")
     if parameters["tick_hz"] <= 0.0:

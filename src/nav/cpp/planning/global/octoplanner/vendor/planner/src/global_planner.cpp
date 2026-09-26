@@ -24,6 +24,7 @@ namespace global_planner
     void OctoPlanner3D::setConfig(const PlannerConfig & config)
     {
         robot_radius_ = config.robot_radius;
+        cylinder_offset_m_ = config.cylinder_offset_m;
         body_clearance_below_m_ = config.body_clearance_below_m;
         body_clearance_above_m_ = config.body_clearance_above_m;
         max_iterations_ = config.max_iterations;
@@ -90,7 +91,7 @@ namespace global_planner
         rebuildDerivedLayers();
     }
 
-    void OctoPlanner3D::makePlan(const PointPose start,const PointPose goal)
+    void OctoPlanner3D::makePlan(const PointPose start,const PointPose goal,double start_yaw_rad)
     {
         occupied_blocks_.clear();
         last_occupied_block_ = nullptr;
@@ -98,6 +99,7 @@ namespace global_planner
         endpoint_resolution_ = {};
         search_info_ = {};
         start_point_ = start;
+        start_yaw_rad_ = start_yaw_rad;
         has_start_ = true;
 
         goal_point_ = goal;
@@ -167,14 +169,14 @@ namespace global_planner
         if (support_height_m_ > 0.0 && !lowest_traversable_only_ &&
             !endpoint_resolution_.start_raw_outside_bounds) {
             const octomap::point3d actual(start_point_.x, start_point_.y, start_point_.z);
-            const auto body = queryWorld(actual, robot_radius_, false);
+            const auto body = queryBody(actual, start_yaw_rad_, false);
             if (body == TraversabilityFailure::OccupiedBody ||
                 body == TraversabilityFailure::ExternalPreblockedBody) {
                 endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartBodyOccupied;
                 return false;
             }
             if (require_ground_support_ &&
-                queryWorld(actual, robot_radius_, true) == TraversabilityFailure::GroundSupport) {
+                queryBody(actual, start_yaw_rad_, true) == TraversabilityFailure::GroundSupport) {
                 endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartGroundSupportMissing;
                 return false;
             }
@@ -558,17 +560,9 @@ namespace global_planner
         }
         if (support_height_m_ > 0.0 && !lowest_traversable_only_) {
             const auto a = planningPoint(from), b = planningPoint(to);
-            const double length = (b - a).norm();
-            const int count = std::max(1, static_cast<int>(std::ceil(
-                2.0 * length / octree_->getResolution())));
-            for (int i = 0; i <= count; ++i) {
-                const double t = static_cast<double>(i) / count;
-                const octomap::point3d p(a.x() + t * (b.x() - a.x()),
-                                         a.y() + t * (b.y() - a.y()),
-                                         a.z() + t * (b.z() - a.z()));
-                if (queryWorld(p, robot_radius_, require_ground_support_) != TraversabilityFailure::None)
-                    return false;
-            }
+            const double yaw = std::hypot(b.x() - a.x(), b.y() - a.y()) > 1e-9
+                ? std::atan2(b.y() - a.y(), b.x() - a.x()) : start_yaw_rad_;
+            if (!sweptBodyFree(a, b, yaw)) return false;
         }
         return previous == to;
     }
@@ -693,16 +687,8 @@ namespace global_planner
         }
         if (support_height_m_ > 0.0 && !lowest_traversable_only_) {
             const auto a = planningPoint(from), b = planningPoint(to);
-            const int samples = std::max(1, static_cast<int>(std::ceil(
-                2.0 * std::sqrt(dx * dx + dy * dy + dz * dz) / r)));
-            for (int i = 1; i < samples; ++i) {
-                const double t = static_cast<double>(i) / samples;
-                const octomap::point3d p(a.x() + t * (b.x() - a.x()),
-                                         a.y() + t * (b.y() - a.y()),
-                                         a.z() + t * (b.z() - a.z()));
-                if (queryWorld(p, robot_radius_, require_ground_support_) != TraversabilityFailure::None)
-                    return false;
-            }
+            const double yaw = dxy > 1e-9 ? std::atan2(dy, dx) : start_yaw_rad_;
+            if (!sweptBodyFree(a, b, yaw)) return false;
         }
         return true;
     }
@@ -837,8 +823,11 @@ namespace global_planner
     {
         if (support_height_m_ > 0.0 && !lowest_traversable_only_) {
             auto cached = body_cache_.find(idx);
+            // A heading-free vertex checks its centre and ground; the swept
+            // edge checks both SCAN cylinders at its actual heading.
+            const double cell_radius = cylinder_offset_m_ > 0.0 ? 0.0 : robot_radius;
             const auto result = require_ground_support && cached != body_cache_.end()
-                ? cached->second : queryWorld(planningPoint(idx), robot_radius, require_ground_support);
+                ? cached->second : queryWorld(planningPoint(idx), cell_radius, require_ground_support);
             if (require_ground_support) body_cache_.emplace(idx, result);
             if (failure) *failure = result;
             return result == TraversabilityFailure::None;
@@ -1584,6 +1573,44 @@ namespace global_planner
             }
         }
         return TraversabilityFailure::None;
+    }
+
+    OctoPlanner3D::TraversabilityFailure OctoPlanner3D::queryBody(
+        const octomap::point3d &point, double yaw, bool require_support) const
+    {
+        if (cylinder_offset_m_ <= 0.0) {
+            return queryWorld(point, robot_radius_, require_support);
+        }
+        if (require_support) {
+            const auto support = queryWorld(point, 0.0, true);
+            if (support != TraversabilityFailure::None) return support;
+        }
+        for (const double sign : {-1.0, 1.0}) {
+            const octomap::point3d center(
+                point.x() + sign * cylinder_offset_m_ * std::cos(yaw),
+                point.y() + sign * cylinder_offset_m_ * std::sin(yaw), point.z());
+            const auto body = queryWorld(center, robot_radius_, false);
+            if (body != TraversabilityFailure::None) return body;
+        }
+        return TraversabilityFailure::None;
+    }
+
+    bool OctoPlanner3D::sweptBodyFree(
+        const octomap::point3d &from, const octomap::point3d &to, double yaw) const
+    {
+        const double length = (to - from).norm();
+        const int count = std::max(1, static_cast<int>(std::ceil(
+            2.0 * length / octree_->getResolution())));
+        for (int i = 0; i <= count; ++i) {
+            const double t = static_cast<double>(i) / count;
+            const octomap::point3d point(
+                from.x() + t * (to.x() - from.x()),
+                from.y() + t * (to.y() - from.y()),
+                from.z() + t * (to.z() - from.z()));
+            if (queryBody(point, yaw, require_ground_support_) != TraversabilityFailure::None)
+                return false;
+        }
+        return true;
     }
 
     GridIndex OctoPlanner3D::worldToGrid(double x, double y, double z) const

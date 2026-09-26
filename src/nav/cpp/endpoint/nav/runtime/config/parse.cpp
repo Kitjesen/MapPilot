@@ -1143,6 +1143,11 @@ CliConfig parseArgs(int argc, char **argv) {
   cfg.collision_clearance_above_m = std::max(0.0, cfg.collision_clearance_above_m);
   auto &octo = cfg.octoplanner_options;
   octo.robot_radius = std::max(0.0, octo.robot_radius);
+  if (cfg.global_planner == GlobalPlannerBackend::OctoPlanner3D &&
+      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan) {
+    octo.robot_radius = cfg.collision_cylinder_radius_m;
+    octo.cylinder_offset_m = cfg.collision_cylinder_offset_m;
+  }
   octo.body_clearance_below_m = std::max(0.0, octo.body_clearance_below_m);
   octo.body_clearance_above_m = std::max(0.0, octo.body_clearance_above_m);
   octo.max_iterations = std::max(1, octo.max_iterations);

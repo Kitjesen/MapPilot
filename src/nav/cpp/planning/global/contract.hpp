@@ -34,6 +34,7 @@ struct GlobalPlanTemporaryOverlay {
 
 struct GlobalPlannerOptions {
   double robot_radius{0.25};
+  double cylinder_offset_m{0.0};
   double body_clearance_below_m{0.0};
   double body_clearance_above_m{0.0};
   int max_iterations{500000};
@@ -84,6 +85,7 @@ inline bool sameMapIdentity(const MapIdentity& lhs, const MapIdentity& rhs) {
 
 struct GlobalPlanRequest {
   GlobalPlanPoint start{};
+  double start_yaw_rad{0.0};
   GlobalPlanPoint goal{};
   GlobalPlannerOptions options{};
   MapIdentity map_identity{};

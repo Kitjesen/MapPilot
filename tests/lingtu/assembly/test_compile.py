@@ -2263,7 +2263,6 @@ def test_nav_octoplanner_radius_comes_from_native_nav_contract() -> None:
 
     assert float(plan.native_process_environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"]) == pytest.approx(
         float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"])
-        + float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"])
     )
 
 

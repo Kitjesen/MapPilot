@@ -255,14 +255,14 @@ def test_octoplanner_explicit_override_reaches_environment() -> None:
 
 
 @pytest.mark.parametrize(
-    ("radius", "offset", "expected"),
+    ("radius", "offset"),
     [
-        (0.40, 0.25, 0.65),
-        (0.25, 0.18, 0.43),
+        (0.40, 0.25),
+        (0.25, 0.18),
     ],
 )
 def test_octoplanner_default_radius_follows_robot_footprint(
-    radius: float, offset: float, expected: float
+    radius: float, offset: float
 ) -> None:
     compiled = compile_native_nav_config(
         "nav",
@@ -274,7 +274,7 @@ def test_octoplanner_default_radius_follows_robot_footprint(
     )
 
     assert float(compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"]) == pytest.approx(
-        expected
+        radius
     )
 
 

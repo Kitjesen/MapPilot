@@ -99,10 +99,6 @@ native_nav:
   # Match SCAN's upstream 100 Hz FSM and closed-loop controller cadence.
   tick_hz: 100.0
   global_planner: octoplanner3d
-  # The measured 0.76 x 0.31 m Go2 envelope has a 0.410 m circumscribed
-  # radius. Keep 1 cm of global-route margin; SCAN's local double cylinder
-  # remains the stricter 0.43 m swept collision check.
-  octoplanner3d_robot_radius: 0.42
   local_planner: scan
   local_planners: [cmu, scan]
   use_traversability_cost: false

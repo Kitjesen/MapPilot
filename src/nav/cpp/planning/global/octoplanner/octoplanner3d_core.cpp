@@ -252,6 +252,9 @@ global_planner::PlannerConfig plannerConfig(const PlannerOptions & options)
   if (std::isfinite(options.robot_radius) && options.robot_radius > 0.0) {
     config.robot_radius = options.robot_radius;
   }
+  config.cylinder_offset_m =
+    std::isfinite(options.cylinder_offset_m) && options.cylinder_offset_m > 0.0
+    ? options.cylinder_offset_m : 0.0;
   config.body_clearance_below_m =
     std::isfinite(options.body_clearance_below_m) && options.body_clearance_below_m > 0.0
     ? options.body_clearance_below_m
@@ -348,6 +351,7 @@ bool hasAcceptableSameFloorExcursion(
 bool sameOptions(const PlannerOptions & lhs, const PlannerOptions & rhs)
 {
   return lhs.robot_radius == rhs.robot_radius &&
+         lhs.cylinder_offset_m == rhs.cylinder_offset_m &&
          lhs.body_clearance_below_m == rhs.body_clearance_below_m &&
          lhs.body_clearance_above_m == rhs.body_clearance_above_m &&
          lhs.max_iterations == rhs.max_iterations &&
@@ -475,12 +479,19 @@ PlanResult runPreparedPlanner(
   if (cancel_check && cancel_check()) {
     return cancelledResult(request, started);
   }
+  if (!std::isfinite(request.start_yaw_rad)) {
+    PlanResult result;
+    result.options = request.options;
+    copyOverlayIdentity(request, result);
+    result.failure_reason = "invalid_start_heading";
+    return result;
+  }
   const auto start = toPlannerPoint(request.start);
   const auto goal = toPlannerPoint(request.goal);
 
   std::vector<global_planner::PointPose> native_path;
   planner.setCancelCheck(cancel_check);
-  planner.makePlan(start, goal);
+  planner.makePlan(start, goal, request.start_yaw_rad);
   planner.getPlannerResults(native_path);
   const auto endpoint_resolution = planner.endpointResolution();
   const auto search_info = planner.searchInfo();

@@ -41,6 +41,7 @@ struct GoalPlanAdmissionContext {
   std::string driver_control_blocker;
   double autonomy_request_not_before_s{0.0};
   std::optional<nav_kernel::Vec3> map_position;
+  double map_yaw_rad{0.0};
   bool odometry_ready{false};
   bool input_ready{true};
   std::string input_gate_reason;

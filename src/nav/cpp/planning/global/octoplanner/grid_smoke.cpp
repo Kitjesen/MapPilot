@@ -11,6 +11,40 @@ namespace global_planner {
 
 struct OctoPlannerGridQueryTest
 {
+  static void headingAlignedFootprintKeepsSideClearance() {
+    auto tree = std::make_shared<octomap::OcTree>(.05);
+    tree->updateNode(octomap::point3d(-1,-1,-1), false);
+    tree->updateNode(octomap::point3d(1,1,1), false);
+    tree->updateNode(octomap::point3d(.025,.375,.025), true);
+    PlannerConfig config;
+    config.robot_radius = .25;
+    config.cylinder_offset_m = .18;
+    config.body_clearance_below_m = config.body_clearance_above_m = .10;
+    OctoPlanner3D planner;
+    planner.setConfig(config);
+    planner.setOctomap(tree);
+    const octomap::point3d body(.025,.025,.025);
+    if (planner.queryBody(body, 0.0, false) != OctoPlanner3D::TraversabilityFailure::None)
+      throw std::runtime_error("side clearance was blocked by the old global circle");
+    if (planner.queryBody(body, 1.5707963267948966, false) !=
+        OctoPlanner3D::TraversabilityFailure::OccupiedBody)
+      throw std::runtime_error("heading-aligned front cylinder missed an obstacle");
+    config.support_height_m = .35;
+    config.require_ground_support = false;
+    planner.setConfig(config);
+    planner.makePlan({.025,.025,.025}, {.625,.025,.025}, 0.0);
+    std::vector<PointPose> path;
+    planner.getPlannerResults(path);
+    if (path.empty())
+      throw std::runtime_error("side clearance still blocks a heading-aligned route");
+    if (planner.endpointResolution().failure ==
+        OctoPlanner3D::EndpointResolutionInfo::Failure::StartBodyOccupied)
+      throw std::runtime_error("side clearance still rejects the real start");
+    planner.makePlan({.025,.025,.025}, {.625,.025,.025}, 1.5707963267948966);
+    if (planner.endpointResolution().failure !=
+        OctoPlanner3D::EndpointResolutionInfo::Failure::StartBodyOccupied)
+      throw std::runtime_error("start collision ignored the real body heading");
+  }
   static void sampledSurfaceInterpolationKeepsEvidenceBoundaries() {
     for (int scenario=0;scenario<8;++scenario) {
       const auto occupied=[&](int x,int y,int z) {
@@ -436,6 +470,7 @@ void checkResolution(double resolution)
 int main()
 {
   try {
+    global_planner::OctoPlannerGridQueryTest::headingAlignedFootprintKeepsSideClearance();
     global_planner::OctoPlannerGridQueryTest::sampledSurfaceInterpolationKeepsEvidenceBoundaries();
     global_planner::OctoPlannerGridQueryTest::fineVoxelsResolveGo2ClearanceWithoutShrinkingBody();
     checkResolution(0.1);

@@ -348,6 +348,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     admission.autonomy_request_not_before_s = autonomy_request_not_before_s;
     if (map_body) {
       admission.map_position = map_body->position;
+      admission.map_yaw_rad = map_body->yaw;
     }
     admission.odometry_ready = odom_body.has_value();
     admission.planner_map_configured = !cfg.map_path.empty();
@@ -400,6 +401,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     context.input_gate_reason = input_gate_state.reason;
     if (map_body) {
       context.map_position = map_body->position;
+      context.map_yaw_rad = map_body->yaw;
     }
     context.odometry_ready = odom_body.has_value();
     context.planner_map_configured = !cfg.map_path.empty();
@@ -1149,6 +1151,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       context.goal = goal;
       context.frame_epoch = frame_epoch;
       context.request.start = {start.x, start.y, start.z};
+      context.request.start_yaw_rad = map_body->yaw;
       context.request.goal = {goal.x, goal.y, goal.z};
       context.request.options = cfg.octoplanner_options;
       if (!plan_preview.start(std::move(context))) {

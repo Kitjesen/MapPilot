@@ -1195,6 +1195,9 @@ void testScanCollisionEnvelopeIsConfigurable() {
           "SCAN prediction envelope must use the same radius as Mapd");
   require(std::abs(planner.scan.cylinderOffset - 0.24) < 1e-12,
           "SCAN collision offset must reach the planner");
+  require(std::abs(cfg.octoplanner_options.robot_radius - planner.scan.cylinderRadius) < 1e-12 &&
+              std::abs(cfg.octoplanner_options.cylinder_offset_m - planner.scan.cylinderOffset) < 1e-12,
+          "global OctoPlanner and local SCAN must use the same double cylinder");
   require(std::abs(planner.scan.bodyClearanceBelow - 0.22) < 1e-12,
           "SCAN lower body clearance must reach the planner");
   require(std::abs(planner.scan.bodyClearanceAbove - 0.36) < 1e-12,
